@@ -373,7 +373,573 @@
             border-color: #2196F3;
             box-shadow: 0 0 5px rgba(33, 150, 243, 0.5);
         }
+
+        /* Node Graph Viewer Panel */
+        #node-graph-wrapper {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            width: 80vw;
+            height: 80vh;
+            background: rgba(0, 0, 0, 0.95);
+            border-radius: 8px;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.8);
+            display: none;
+            z-index: 300;
+            flex-direction: column;
+        }
+
+        #node-graph-wrapper.visible {
+            display: flex;
+        }
+
+        #node-graph-header {
+            background: linear-gradient(135deg, #673AB7 0%, #512DA8 100%);
+            color: white;
+            padding: 12px 16px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            border-radius: 8px 8px 0 0;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+        }
+
+        #node-graph-header h3 {
+            margin: 0;
+            font-size: 16px;
+            font-weight: 500;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        #node-graph-buttons {
+            display: flex;
+            gap: 8px;
+        }
+
+        #node-graph-buttons button {
+            background: rgba(255, 255, 255, 0.2);
+            border: none;
+            color: white;
+            padding: 6px 12px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 12px;
+            transition: background 0.2s;
+        }
+
+        #node-graph-buttons button:hover {
+            background: rgba(255, 255, 255, 0.3);
+        }
+
+        #node-graph-container {
+            flex: 1;
+            position: relative;
+            background: #1a1a1a;
+            border-radius: 0 0 8px 8px;
+            overflow: hidden;
+        }
+
+        #node-graph-canvas {
+            width: 100%;
+            height: 100%;
+        }
+
+        #node-graph-info {
+            position: absolute;
+            bottom: 10px;
+            left: 10px;
+            background: rgba(0, 0, 0, 0.7);
+            color: white;
+            padding: 8px 12px;
+            border-radius: 4px;
+            font-size: 11px;
+            font-family: monospace;
+            pointer-events: none;
+        }
+
+        /* Button to open node graph */
+        .btn.node-graph {
+            background: #673AB7;
+        }
+
+        .btn.node-graph:hover {
+            background: #512DA8;
+        }
+
+        /* LiteGraph overrides for better styling */
+        .litegraph {
+            background: #1a1a1a !important;
+        }
+
+        .litegraph .node {
+            border-radius: 4px !important;
+        }
+
+        .litegraph .node.selected {
+            box-shadow: 0 0 10px rgba(103, 58, 183, 0.8) !important;
+        }
+
+        /* Material JSON Viewer Panel */
+        #material-json-wrapper {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            width: 70vw;
+            max-width: 900px;
+            height: 70vh;
+            background: rgba(0, 0, 0, 0.95);
+            border-radius: 8px;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.8);
+            display: none;
+            z-index: 350;
+            flex-direction: column;
+        }
+
+        #material-json-wrapper.visible {
+            display: flex;
+        }
+
+        #material-json-header {
+            background: linear-gradient(135deg, #FF9800 0%, #F57C00 100%);
+            color: white;
+            padding: 12px 16px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            border-radius: 8px 8px 0 0;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+        }
+
+        #material-json-header h3 {
+            margin: 0;
+            font-size: 16px;
+            font-weight: 500;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        #material-json-buttons {
+            display: flex;
+            gap: 8px;
+        }
+
+        #material-json-buttons button {
+            background: rgba(255, 255, 255, 0.2);
+            border: none;
+            color: white;
+            padding: 6px 12px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 12px;
+            transition: background 0.2s;
+        }
+
+        #material-json-buttons button:hover {
+            background: rgba(255, 255, 255, 0.3);
+        }
+
+        #material-json-tabs {
+            background: #2a2a2a;
+            padding: 8px 16px;
+            display: flex;
+            gap: 8px;
+            border-bottom: 1px solid #444;
+        }
+
+        .material-json-tab {
+            padding: 6px 16px;
+            background: transparent;
+            border: none;
+            color: #999;
+            cursor: pointer;
+            border-radius: 4px 4px 0 0;
+            font-size: 13px;
+            transition: all 0.2s;
+        }
+
+        .material-json-tab:hover {
+            background: rgba(255, 255, 255, 0.05);
+            color: #fff;
+        }
+
+        .material-json-tab.active {
+            background: #1a1a1a;
+            color: #FF9800;
+            font-weight: 500;
+        }
+
+        #material-json-container {
+            flex: 1;
+            position: relative;
+            background: #1a1a1a;
+            border-radius: 0 0 8px 8px;
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .material-json-content {
+            flex: 1;
+            overflow: auto;
+            padding: 16px;
+            font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+            font-size: 12px;
+            line-height: 1.6;
+            display: none;
+        }
+
+        .material-json-content.active {
+            display: block;
+        }
+
+        .material-json-content pre {
+            margin: 0;
+            color: #e0e0e0;
+            white-space: pre-wrap;
+            word-wrap: break-word;
+        }
+
+        /* JSON Syntax Highlighting */
+        .json-key {
+            color: #79B8FF;
+        }
+
+        .json-string {
+            color: #9ECBFF;
+        }
+
+        .json-number {
+            color: #F97583;
+        }
+
+        .json-boolean {
+            color: #FFAB70;
+        }
+
+        .json-null {
+            color: #B392F0;
+        }
+
+        /* Button to open JSON viewer */
+        .btn.json-viewer {
+            background: #FF9800;
+        }
+
+        .btn.json-viewer:hover {
+            background: #F57C00;
+        }
+
+        /* Color Picker Panel */
+        #color-picker-panel {
+            position: absolute;
+            top: 100px;
+            left: 10px;
+            background: rgba(0, 0, 0, 0.85);
+            color: white;
+            padding: 12px;
+            border-radius: 5px;
+            font-size: 12px;
+            z-index: 150;
+            min-width: 220px;
+            display: none;
+            border: 2px solid #00BCD4;
+        }
+
+        #color-picker-panel.active {
+            display: block;
+        }
+
+        #color-picker-panel h4 {
+            margin: 0 0 10px 0;
+            font-size: 13px;
+            color: #00BCD4;
+            border-bottom: 1px solid #00BCD4;
+            padding-bottom: 5px;
+        }
+
+        #color-picker-panel .picker-mode {
+            background: rgba(0, 188, 212, 0.2);
+            padding: 6px;
+            border-radius: 3px;
+            margin-bottom: 10px;
+            text-align: center;
+            font-size: 11px;
+            color: #00BCD4;
+            font-weight: 500;
+        }
+
+        #color-picker-panel .color-display {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 10px;
+        }
+
+        #color-picker-panel .color-swatch {
+            width: 60px;
+            height: 60px;
+            border-radius: 4px;
+            border: 2px solid #666;
+            flex-shrink: 0;
+        }
+
+        #color-picker-panel .color-values {
+            flex: 1;
+            font-family: 'Consolas', 'Monaco', monospace;
+            font-size: 11px;
+            line-height: 1.5;
+        }
+
+        #color-picker-panel .color-value-row {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 3px;
+        }
+
+        #color-picker-panel .color-label {
+            color: #999;
+            min-width: 45px;
+        }
+
+        #color-picker-panel .color-value {
+            color: #0ff;
+            font-weight: 500;
+            font-family: 'Consolas', 'Monaco', monospace;
+        }
+
+        #color-picker-panel .picker-info {
+            font-size: 10px;
+            color: #666;
+            margin-top: 8px;
+            padding-top: 8px;
+            border-top: 1px solid #333;
+        }
+
+        #color-picker-panel .copy-buttons {
+            display: flex;
+            gap: 5px;
+            margin-top: 8px;
+        }
+
+        #color-picker-panel .copy-btn {
+            flex: 1;
+            background: #00BCD4;
+            color: white;
+            border: none;
+            padding: 4px 8px;
+            border-radius: 3px;
+            cursor: pointer;
+            font-size: 10px;
+            transition: background 0.2s;
+        }
+
+        #color-picker-panel .copy-btn:hover {
+            background: #0097A7;
+        }
+
+        #color-picker-panel .copy-btn:active {
+            background: #00838F;
+        }
+
+        /* Material Property Picker Panel */
+        #material-property-panel {
+            position: absolute;
+            top: 100px;
+            right: 10px;
+            background: rgba(0, 0, 0, 0.85);
+            color: white;
+            padding: 12px;
+            border-radius: 5px;
+            z-index: 120;
+            min-width: 260px;
+            display: none;
+            border: 2px solid #9C27B0;
+        }
+
+        #material-property-panel.active {
+            display: block;
+        }
+
+        #material-property-panel h4 {
+            margin: 0 0 10px 0;
+            font-size: 13px;
+            color: #9C27B0;
+            border-bottom: 1px solid #9C27B0;
+            padding-bottom: 5px;
+        }
+
+        #material-property-panel .picker-mode {
+            background: rgba(156, 39, 176, 0.2);
+            padding: 6px;
+            border-radius: 3px;
+            margin-bottom: 10px;
+            text-align: center;
+            font-size: 10px;
+            color: #CE93D8;
+            font-weight: 500;
+        }
+
+        #material-property-panel .property-display {
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+            margin-bottom: 10px;
+        }
+
+        #material-property-panel .property-section {
+            background: rgba(156, 39, 176, 0.1);
+            padding: 8px;
+            border-radius: 4px;
+            border: 1px solid rgba(156, 39, 176, 0.3);
+        }
+
+        #material-property-panel .property-section-title {
+            font-size: 11px;
+            color: #CE93D8;
+            font-weight: 600;
+            margin-bottom: 6px;
+            border-bottom: 1px solid rgba(156, 39, 176, 0.3);
+            padding-bottom: 3px;
+        }
+
+        #material-property-panel .color-display {
+            display: flex;
+            gap: 10px;
+        }
+
+        #material-property-panel .color-swatch {
+            width: 50px;
+            height: 50px;
+            border-radius: 4px;
+            border: 2px solid #666;
+            flex-shrink: 0;
+        }
+
+        #material-property-panel .color-values {
+            flex: 1;
+            font-family: 'Consolas', 'Monaco', monospace;
+            font-size: 10px;
+            line-height: 1.4;
+        }
+
+        #material-property-panel .color-value-row {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 2px;
+        }
+
+        #material-property-panel .color-label {
+            color: #999;
+            min-width: 45px;
+        }
+
+        #material-property-panel .color-value {
+            color: #CE93D8;
+            font-weight: 500;
+            font-family: 'Consolas', 'Monaco', monospace;
+        }
+
+        #material-property-panel .property-value-row {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 4px;
+            font-size: 11px;
+        }
+
+        #material-property-panel .property-label {
+            color: #999;
+        }
+
+        #material-property-panel .property-value {
+            color: #CE93D8;
+            font-weight: 600;
+            font-family: 'Consolas', 'Monaco', monospace;
+        }
+
+        #material-property-panel .copy-buttons {
+            display: flex;
+            gap: 4px;
+            margin-top: 8px;
+        }
+
+        #material-property-panel .copy-btn {
+            flex: 1;
+            background: #9C27B0;
+            color: white;
+            border: none;
+            padding: 4px 6px;
+            border-radius: 3px;
+            cursor: pointer;
+            font-size: 9px;
+            transition: background 0.2s;
+            white-space: nowrap;
+        }
+
+        #material-property-panel .copy-btn:hover {
+            background: #7B1FA2;
+        }
+
+        #material-property-panel .copy-btn:active {
+            background: #6A1B9A;
+        }
+
+        #material-property-panel .picker-info {
+            font-size: 10px;
+            color: #666;
+            margin-top: 8px;
+            padding-top: 8px;
+            border-top: 1px solid #333;
+        }
+
+        /* Material property picker toggle button */
+        .btn.material-property-picker {
+            background: #9C27B0;
+        }
+
+        .btn.material-property-picker:hover {
+            background: #7B1FA2;
+        }
+
+        .btn.material-property-picker.active {
+            background: #6A1B9A;
+            box-shadow: 0 0 10px rgba(156, 39, 176, 0.5);
+        }
+
+        /* Material property picker cursor mode */
+        body.material-property-picker-mode * {
+            cursor: crosshair !important;
+        }
+
+        /* Color picker toggle button */
+        .btn.color-picker {
+            background: #00BCD4;
+        }
+
+        .btn.color-picker:hover {
+            background: #0097A7;
+        }
+
+        .btn.color-picker.active {
+            background: #00838F;
+            box-shadow: inset 0 2px 4px rgba(0,0,0,0.3);
+        }
+
+        /* Color picker cursor */
+        body.color-picker-mode {
+            cursor: crosshair !important;
+        }
+
+        body.color-picker-mode * {
+            cursor: crosshair !important;
+        }
     </style>
+
+    <!-- LiteGraph.js CSS -->
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/litegraph.js@0.7.0/css/litegraph.css">
 </head>
 <body>
     <div id="canvas-container"></div>
@@ -417,6 +983,18 @@
         <button class="btn" onclick="loadHDRTextureForMaterial()" title="Load HDR/EXR texture">
             🖼️ Load Texture(TODO)
         </button>
+        <button class="btn node-graph" onclick="toggleNodeGraph()" title="View MaterialX Node Graph">
+            🔗 Node Graph
+        </button>
+        <button class="btn json-viewer" onclick="toggleMaterialJSON()" title="View Material JSON Data">
+            📋 Material JSON
+        </button>
+        <button class="btn color-picker" id="color-picker-btn" onclick="toggleColorPicker()" title="Pick Color from Framebuffer">
+            🎨 Color Picker
+        </button>
+        <button class="btn material-property-picker" id="material-property-btn" onclick="toggleMaterialPropertyPicker()" title="Pick Material Properties (before lighting)">
+            🔍 Material Props
+        </button>
         <input type="file" id="file-input" accept=".usd,.usda,.usdc,.usdz">
     </div>
 
@@ -452,6 +1030,169 @@
     <div id="loading-overlay">
         <div class="loading-spinner"></div>
     </div>
+
+    <!-- Color Picker Panel -->
+    <div id="color-picker-panel">
+        <h4>🎨 Color Picker</h4>
+        <div class="picker-mode">Click anywhere to pick color</div>
+        <div class="color-display">
+            <div class="color-swatch" id="color-swatch"></div>
+            <div class="color-values">
+                <div class="color-value-row">
+                    <span class="color-label">RGB:</span>
+                    <span class="color-value" id="color-rgb">-</span>
+                </div>
+                <div class="color-value-row">
+                    <span class="color-label">Hex:</span>
+                    <span class="color-value" id="color-hex">-</span>
+                </div>
+                <div class="color-value-row">
+                    <span class="color-label">Float:</span>
+                    <span class="color-value" id="color-float">-</span>
+                </div>
+                <div class="color-value-row">
+                    <span class="color-label">Linear:</span>
+                    <span class="color-value" id="color-linear">-</span>
+                </div>
+            </div>
+        </div>
+        <div class="copy-buttons">
+            <button class="copy-btn" onclick="copyColorValue('rgb')">Copy RGB</button>
+            <button class="copy-btn" onclick="copyColorValue('hex')">Copy Hex</button>
+            <button class="copy-btn" onclick="copyColorValue('float')">Copy Float</button>
+        </div>
+        <div class="picker-info">
+            Position: <span id="color-position">-</span><br>
+            Click to toggle picker mode
+        </div>
+    </div>
+
+    <!-- Material Property Picker Panel -->
+    <div id="material-property-panel">
+        <h4>🔍 Material Properties</h4>
+        <div class="picker-mode">Click to pick material values (before lighting)</div>
+        <div class="property-display">
+            <div class="property-section">
+                <div class="property-section-title">Base Color (Texel)</div>
+                <div class="color-display">
+                    <div class="color-swatch" id="material-property-swatch"></div>
+                    <div class="color-values">
+                        <div class="color-value-row">
+                            <span class="color-label">RGB:</span>
+                            <span class="color-value" id="material-property-rgb">-</span>
+                        </div>
+                        <div class="color-value-row">
+                            <span class="color-label">Hex:</span>
+                            <span class="color-value" id="material-property-hex">-</span>
+                        </div>
+                        <div class="color-value-row">
+                            <span class="color-label">Float:</span>
+                            <span class="color-value" id="material-property-float">-</span>
+                        </div>
+                        <div class="color-value-row">
+                            <span class="color-label">Linear:</span>
+                            <span class="color-value" id="material-property-linear">-</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="property-section">
+                <div class="property-section-title">Material Parameters</div>
+                <div class="property-value-row">
+                    <span class="property-label">Metalness:</span>
+                    <span class="property-value" id="material-property-metalness">-</span>
+                </div>
+                <div class="property-value-row">
+                    <span class="property-label">Roughness:</span>
+                    <span class="property-value" id="material-property-roughness">-</span>
+                </div>
+            </div>
+        </div>
+        <div class="copy-buttons">
+            <button class="copy-btn" onclick="copyMaterialProperty('rgb')">RGB</button>
+            <button class="copy-btn" onclick="copyMaterialProperty('hex')">Hex</button>
+            <button class="copy-btn" onclick="copyMaterialProperty('float')">Float</button>
+            <button class="copy-btn" onclick="copyMaterialProperty('linear')">Linear</button>
+        </div>
+        <div class="copy-buttons" style="margin-top: 5px;">
+            <button class="copy-btn" onclick="copyMaterialProperty('metalness')">Metalness</button>
+            <button class="copy-btn" onclick="copyMaterialProperty('roughness')">Roughness</button>
+            <button class="copy-btn" onclick="copyMaterialProperty('all')">All (JSON)</button>
+        </div>
+        <div class="picker-info">
+            Position: <span id="material-property-position">-</span><br>
+            Shows material values before lighting/IBL
+        </div>
+    </div>
+
+    <!-- Node Graph Viewer Panel -->
+    <div id="node-graph-wrapper">
+        <div id="node-graph-header">
+            <h3>
+                <span>🔗</span>
+                <span id="node-graph-title">MaterialX Node Graph</span>
+            </h3>
+            <div id="node-graph-buttons">
+                <button onclick="centerNodeGraph()">Center</button>
+                <button onclick="exportNodeGraphJSON()">Export JSON</button>
+                <button onclick="toggleNodeGraph()">Close</button>
+            </div>
+        </div>
+        <div id="node-graph-container">
+            <canvas id="node-graph-canvas"></canvas>
+            <div id="node-graph-info">
+                <div>Zoom: <span id="graph-zoom">1.0x</span></div>
+                <div>Nodes: <span id="graph-node-count">0</span></div>
+                <div>Scroll to zoom • Drag to pan • Right-click for menu</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Material JSON Viewer Panel -->
+    <div id="material-json-wrapper">
+        <div id="material-json-header">
+            <h3>
+                <span>📋</span>
+                <span id="material-json-title">Material Data (Tydra Converted)</span>
+            </h3>
+            <div id="material-json-buttons">
+                <button onclick="copyMaterialJSON()">Copy to Clipboard</button>
+                <button onclick="downloadMaterialJSON()">Download JSON</button>
+                <button onclick="toggleMaterialJSON()">Close</button>
+            </div>
+        </div>
+        <div id="material-json-tabs">
+            <button class="material-json-tab active" data-tab="openpbr" onclick="switchMaterialTab('openpbr')">
+                OpenPBR Surface
+            </button>
+            <button class="material-json-tab" data-tab="usdpreview" onclick="switchMaterialTab('usdpreview')">
+                UsdPreviewSurface
+            </button>
+            <button class="material-json-tab" data-tab="raw" onclick="switchMaterialTab('raw')">
+                Raw Material Data
+            </button>
+            <button class="material-json-tab" data-tab="threejs" onclick="switchMaterialTab('threejs')">
+                Three.js Material
+            </button>
+        </div>
+        <div id="material-json-container">
+            <div class="material-json-content active" id="json-content-openpbr">
+                <pre>No OpenPBR data available</pre>
+            </div>
+            <div class="material-json-content" id="json-content-usdpreview">
+                <pre>No UsdPreviewSurface data available</pre>
+            </div>
+            <div class="material-json-content" id="json-content-raw">
+                <pre>No material selected</pre>
+            </div>
+            <div class="material-json-content" id="json-content-threejs">
+                <pre>No Three.js material data available</pre>
+            </div>
+        </div>
+    </div>
+
+    <!-- LiteGraph.js Library -->
+    <script src="https://cdn.jsdelivr.net/npm/litegraph.js@0.7.0/build/litegraph.js"></script>
 
     <!-- Import maps for Three.js ES modules -->
     <script type="importmap">
