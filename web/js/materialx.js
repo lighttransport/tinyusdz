@@ -57,6 +57,7 @@ import {
 } from './reference-materials.js';
 import { IBLContributionAnalyzer } from './ibl-contribution-analyzer.js';
 import { GBufferViewer } from './gbuffer-viewer.js';
+import { MipMapVisualizer } from './mipmap-visualizer.js';
 
 // Embedded default OpenPBR scene (simple sphere with material)
 const EMBEDDED_USDA_SCENE = `#usda 1.0
@@ -3463,6 +3464,98 @@ function setupGUI() {
 
     gbufferFolder.close();
 
+    // Mip-Map Level Visualizer
+    const mipmapFolder = gui.addFolder('Mip-Map Visualizer');
+    const mipmapParams = {
+        enabled: false,
+        textureType: 'baseColor',
+        showLegend: true,
+        enable: function() {
+            if (!window.mipmapVisualizer) {
+                window.mipmapVisualizer = new MipMapVisualizer();
+            }
+            window.mipmapVisualizer.enable(scene, mipmapParams.textureType);
+            mipmapParams.enabled = true;
+
+            // Show legend in console
+            if (mipmapParams.showLegend) {
+                console.group('🗺️ Mip-Map Level Color Legend');
+                window.mipmapVisualizer.getLegend().forEach(item => {
+                    console.log(`%cLevel ${item.level}: ${item.label}`, `color: ${item.color}; font-weight: bold`);
+                });
+                console.groupEnd();
+                console.log('Red = Highest detail (close), Blue/Purple = Low detail (far)');
+            }
+
+            updateStatus('Mip-map visualization enabled', 'success');
+        },
+        disable: function() {
+            if (window.mipmapVisualizer) {
+                window.mipmapVisualizer.disable(scene);
+                mipmapParams.enabled = false;
+                updateStatus('Mip-map visualization disabled', 'success');
+            }
+        },
+        analyzeScene: function() {
+            if (!window.mipmapVisualizer) {
+                window.mipmapVisualizer = new MipMapVisualizer();
+            }
+            const analysis = window.mipmapVisualizer.analyzeScene(scene);
+            const report = window.mipmapVisualizer.generateReport(analysis);
+
+            console.group('📊 Mip-Map Analysis');
+            console.log(report);
+            console.groupEnd();
+
+            updateStatus(`Analyzed ${analysis.objectsWithTextures} objects with textures`, 'success');
+        },
+        exportReport: function() {
+            if (!window.mipmapVisualizer) {
+                window.mipmapVisualizer = new MipMapVisualizer();
+            }
+            const analysis = window.mipmapVisualizer.analyzeScene(scene);
+            const report = window.mipmapVisualizer.generateReport(analysis);
+
+            // Download report
+            const blob = new Blob([report], { type: 'text/markdown' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = 'mipmap-analysis-report.md';
+            a.click();
+            URL.revokeObjectURL(url);
+
+            updateStatus('Mip-map analysis report exported', 'success');
+        }
+    };
+
+    mipmapFolder.add(mipmapParams, 'enabled').name('Enable Visualization').onChange(value => {
+        if (value) {
+            mipmapParams.enable();
+        } else {
+            mipmapParams.disable();
+        }
+    });
+
+    mipmapFolder.add(mipmapParams, 'textureType', {
+        'Base Color Map': 'baseColor',
+        'Normal Map': 'normal',
+        'Roughness Map': 'roughness',
+        'Metalness Map': 'metalness'
+    }).name('Texture to Analyze').onChange(type => {
+        if (window.mipmapVisualizer && mipmapParams.enabled) {
+            // Re-enable with new texture type
+            window.mipmapVisualizer.disable(scene);
+            window.mipmapVisualizer.setTextureType(type);
+            window.mipmapVisualizer.enable(scene, type);
+        }
+    });
+
+    mipmapFolder.add(mipmapParams, 'showLegend').name('Show Legend in Console');
+    mipmapFolder.add(mipmapParams, 'analyzeScene').name('Analyze Scene');
+    mipmapFolder.add(mipmapParams, 'exportReport').name('Export Report');
+    mipmapFolder.close();
+
     // Split View Comparison System
     const splitViewFolder = gui.addFolder('Split View Compare');
     const splitViewParams = {
@@ -5812,6 +5905,7 @@ window.TextureInspector = TextureInspector;
 window.MaterialComplexityAnalyzer = MaterialComplexityAnalyzer;
 window.IBLContributionAnalyzer = IBLContributionAnalyzer;
 window.GBufferViewer = GBufferViewer;
+window.MipMapVisualizer = MipMapVisualizer;
 window.REFERENCE_MATERIALS = REFERENCE_MATERIALS;
 window.applyReferenceMaterial = applyReferenceMaterial;
 window.getReferencesByCategory = getReferencesByCategory;
