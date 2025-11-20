@@ -397,7 +397,9 @@ Based on user request and effort/impact:
 
 ## 📊 Overall Progress
 
-**Completed**: 9 / 9 Priority 1 features (100%) 🎉
+### Priority 1 Features
+
+**Completed**: 9 / 9 (100%) 🎉
 - ✅ Advanced AOV Modes (7 new modes) - Commit: 19fa32ca
 - ✅ UV Layout Overlay (included in AOV) - Commit: 19fa32ca
 - ✅ Shader Error Visualization (included in AOV) - Commit: 19fa32ca
@@ -408,17 +410,27 @@ Based on user request and effort/impact:
 - ✅ Texture Channel Inspector - Commit: f701001f
 - ✅ Documentation - Commits: multiple
 
+### Priority 2 Features
+
+**Completed**: 4 / 4 (100%) 🎉
+- ✅ Material Complexity Analyzer - Commit: 94d1d040
+- ✅ Reference Material Library (30+ materials) - Commit: 7c6ba2a1
+- ✅ IBL Contribution Analyzer - Commit: ea200c44
+- ✅ Real-Time G-Buffer Viewer - Commit: e1ce1473
+
+**Total Features Completed**: 13 / 13 (100%) ✨
+
 **In Progress**: 0
 
-**Remaining**: 0 - All Priority 1 features complete!
-
-**Estimated Total Effort**: 3-4 weeks for all Priority 1 features
+**Remaining**: 0 - All Priority 1 & 2 features complete!
 
 ---
 
 ## 🚀 Quick Start Guide
 
-### Using New AOV Modes
+### Priority 1 Features
+
+#### Using New AOV Modes
 
 1. Load a USD file with PBR materials
 2. Open AOV dropdown (if exposed in UI)
@@ -431,7 +443,7 @@ Based on user request and effort/impact:
    - `uv_layout` - See UV grid and seams
    - `shader_error` - Detect NaN/Inf (magenta/yellow/orange)
 
-### Color Coding
+#### Color Coding
 
 **Normal Quality Check**:
 - 🟢 Green = Valid normals
@@ -449,6 +461,77 @@ Based on user request and effort/impact:
 - Red/Green channels = UV coordinates
 - White grid lines = UV layout
 - 🔴 Red highlights = UV seams
+
+### Priority 2 Features
+
+#### Material Complexity Analyzer
+
+1. Open "Performance Analysis" folder in GUI
+2. Click "Analyze Scene Now"
+3. View statistics:
+   - Total texture memory usage
+   - Material complexity distribution (Low/Medium/High/Very High)
+   - Performance suggestions
+4. Console shows detailed per-material analysis with optimization tips
+
+**Suggestions include**:
+- Texture resolution reduction (4K → 2K saves 75% memory)
+- Texture packing (combine R/M/AO into single ORM texture)
+- Feature cost warnings (transmission, iridescence, clearcoat)
+- Power-of-2 texture warnings
+
+#### Reference Material Library
+
+1. Open "Reference Materials" folder in GUI
+2. Select category (Metal, Plastic, Glass, Wood, Stone, Fabric, Skin, Leather)
+3. Select material from dropdown
+4. Click "Show Properties" to see PBR values in console
+5. Click "Apply to Selected" to apply to selected object
+6. Click "Apply to All Materials" to apply globally
+
+**Available Materials (30+)**:
+- **Metals**: Gold, Silver, Copper, Aluminum, Iron, Chrome
+- **Plastics**: Glossy, Matte, Rubber
+- **Glass**: Clear, Frosted
+- **Natural**: Water, Oak Wood, Polished Wood, Concrete, Marble
+- **Organics**: Caucasian Skin, African Skin, Leather
+- **Fabrics**: Cotton, Silk
+
+Each material includes measured real-world PBR values (baseColor, metalness, roughness, IOR, F0).
+
+#### IBL Contribution Analyzer
+
+1. Open "IBL Contribution" folder in GUI
+2. Select visualization mode:
+   - **Full IBL**: Normal rendering (diffuse + specular)
+   - **Diffuse Only**: Force non-metallic, high roughness
+   - **Specular Only**: Force metallic, low roughness
+   - **No IBL**: Disable environment map
+3. Click "Analyze Scene" to get statistics
+4. Click "Export Report" to download markdown analysis
+
+**Analysis provides**:
+- Materials with IBL count
+- Average envMapIntensity, metalness, roughness
+- Contribution breakdown (diffuse-dominant, specular-dominant, balanced)
+- Per-material estimated contributions
+
+#### Real-Time G-Buffer Viewer
+
+1. Open "G-Buffer Viewer" folder in GUI
+2. Select grid layout (2×2, 3×3, or 4×4)
+3. Toggle channels on/off in "Channels" subfolder
+4. Check "Enable G-Buffer View"
+5. View all channels simultaneously in real-time grid
+
+**Available Channels (9)**:
+- Final Render, Albedo, Normal, Depth, Metalness, Roughness, Emissive, AO, UV
+
+**Use Cases**:
+- Comprehensive material debugging (see all properties at once)
+- Spot issues across multiple channels quickly
+- Educational demonstrations
+- Material comparison workflows
 
 ---
 
@@ -494,5 +577,9 @@ For each new feature:
 
 For questions, issues, or feature requests, please update the proposal document or create implementation tickets.
 
-**Last Updated**: 2025-01-21 (Commits: 19fa32ca, 40e9cccf, 5d9b10d9, f701001f)
-**Status**: ✅ **100% COMPLETE** - All Priority 1 features implemented!
+**Last Updated**: 2025-01-21
+**Latest Commits**:
+- Priority 1: 19fa32ca, 40e9cccf, 5d9b10d9, f701001f
+- Priority 2: 94d1d040, 7c6ba2a1, ea200c44, e1ce1473
+
+**Status**: ✅ **100% COMPLETE** - All Priority 1 & 2 features implemented! (13/13)
