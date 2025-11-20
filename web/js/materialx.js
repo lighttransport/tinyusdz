@@ -56,6 +56,7 @@ import {
     getCategories
 } from './reference-materials.js';
 import { IBLContributionAnalyzer } from './ibl-contribution-analyzer.js';
+import { GBufferViewer } from './gbuffer-viewer.js';
 
 // Embedded default OpenPBR scene (simple sphere with material)
 const EMBEDDED_USDA_SCENE = `#usda 1.0
@@ -3366,6 +3367,102 @@ function setupGUI() {
     iblFolder.add(iblParams, 'reset').name('Reset to Original');
     iblFolder.close();
 
+    // G-Buffer Viewer (Real-Time Multi-Channel Display)
+    const gbufferFolder = gui.addFolder('G-Buffer Viewer');
+    const gbufferParams = {
+        enabled: false,
+        gridLayout: '3x3',
+        channelFinalRender: true,
+        channelAlbedo: true,
+        channelNormal: true,
+        channelDepth: true,
+        channelMetalness: true,
+        channelRoughness: true,
+        channelEmissive: false,
+        channelAO: true,
+        channelUV: true,
+        enable: function() {
+            if (!window.gbufferViewer) {
+                window.gbufferViewer = new GBufferViewer(renderer, scene, camera);
+            }
+
+            // Update channel visibility
+            window.gbufferViewer.toggleChannel('Final Render', gbufferParams.channelFinalRender);
+            window.gbufferViewer.toggleChannel('Albedo', gbufferParams.channelAlbedo);
+            window.gbufferViewer.toggleChannel('Normal', gbufferParams.channelNormal);
+            window.gbufferViewer.toggleChannel('Depth', gbufferParams.channelDepth);
+            window.gbufferViewer.toggleChannel('Metalness', gbufferParams.channelMetalness);
+            window.gbufferViewer.toggleChannel('Roughness', gbufferParams.channelRoughness);
+            window.gbufferViewer.toggleChannel('Emissive', gbufferParams.channelEmissive);
+            window.gbufferViewer.toggleChannel('AO', gbufferParams.channelAO);
+            window.gbufferViewer.toggleChannel('UV', gbufferParams.channelUV);
+
+            window.gbufferViewer.setGridLayout(gbufferParams.gridLayout);
+            window.gbufferViewer.enable();
+            gbufferParams.enabled = true;
+
+            updateStatus('G-Buffer viewer enabled', 'success');
+        },
+        disable: function() {
+            if (window.gbufferViewer) {
+                window.gbufferViewer.disable();
+                gbufferParams.enabled = false;
+                updateStatus('G-Buffer viewer disabled', 'success');
+            }
+        }
+    };
+
+    gbufferFolder.add(gbufferParams, 'enabled').name('Enable G-Buffer View').onChange(value => {
+        if (value) {
+            gbufferParams.enable();
+        } else {
+            gbufferParams.disable();
+        }
+    });
+
+    gbufferFolder.add(gbufferParams, 'gridLayout', {
+        '2×2 Grid': '2x2',
+        '3×3 Grid': '3x3',
+        '4×4 Grid': '4x4'
+    }).name('Grid Layout').onChange(layout => {
+        if (window.gbufferViewer) {
+            window.gbufferViewer.setGridLayout(layout);
+        }
+    });
+
+    // Channel toggles
+    const channelsFolder = gbufferFolder.addFolder('Channels');
+    channelsFolder.add(gbufferParams, 'channelFinalRender').name('Final Render').onChange(value => {
+        if (window.gbufferViewer) window.gbufferViewer.toggleChannel('Final Render', value);
+    });
+    channelsFolder.add(gbufferParams, 'channelAlbedo').name('Albedo').onChange(value => {
+        if (window.gbufferViewer) window.gbufferViewer.toggleChannel('Albedo', value);
+    });
+    channelsFolder.add(gbufferParams, 'channelNormal').name('Normal').onChange(value => {
+        if (window.gbufferViewer) window.gbufferViewer.toggleChannel('Normal', value);
+    });
+    channelsFolder.add(gbufferParams, 'channelDepth').name('Depth').onChange(value => {
+        if (window.gbufferViewer) window.gbufferViewer.toggleChannel('Depth', value);
+    });
+    channelsFolder.add(gbufferParams, 'channelMetalness').name('Metalness').onChange(value => {
+        if (window.gbufferViewer) window.gbufferViewer.toggleChannel('Metalness', value);
+    });
+    channelsFolder.add(gbufferParams, 'channelRoughness').name('Roughness').onChange(value => {
+        if (window.gbufferViewer) window.gbufferViewer.toggleChannel('Roughness', value);
+    });
+    channelsFolder.add(gbufferParams, 'channelEmissive').name('Emissive').onChange(value => {
+        if (window.gbufferViewer) window.gbufferViewer.toggleChannel('Emissive', value);
+    });
+    channelsFolder.add(gbufferParams, 'channelAO').name('AO').onChange(value => {
+        if (window.gbufferViewer) window.gbufferViewer.toggleChannel('AO', value);
+    });
+    channelsFolder.add(gbufferParams, 'channelUV').name('UV').onChange(value => {
+        if (window.gbufferViewer) window.gbufferViewer.toggleChannel('UV', value);
+    });
+    channelsFolder.close();
+
+    gbufferFolder.close();
+
     // Split View Comparison System
     const splitViewFolder = gui.addFolder('Split View Compare');
     const splitViewParams = {
@@ -5671,8 +5768,11 @@ function animate() {
         boundingBoxHelper.update();
     }
 
-    // Check if split view comparison is enabled
-    if (window.splitViewComparison && window.splitViewComparison.getState().active) {
+    // Check if G-Buffer viewer is enabled (highest priority)
+    if (window.gbufferViewer && window.gbufferViewer.enabled) {
+        // G-Buffer viewer renders all channels in grid
+        window.gbufferViewer.render();
+    } else if (window.splitViewComparison && window.splitViewComparison.getState().active) {
         // Split view renders both scenes
         window.splitViewComparison.render();
     } else {
@@ -5711,6 +5811,7 @@ window.SplitViewComparison = SplitViewComparison;
 window.TextureInspector = TextureInspector;
 window.MaterialComplexityAnalyzer = MaterialComplexityAnalyzer;
 window.IBLContributionAnalyzer = IBLContributionAnalyzer;
+window.GBufferViewer = GBufferViewer;
 window.REFERENCE_MATERIALS = REFERENCE_MATERIALS;
 window.applyReferenceMaterial = applyReferenceMaterial;
 window.getReferencesByCategory = getReferencesByCategory;
