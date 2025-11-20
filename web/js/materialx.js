@@ -64,6 +64,7 @@ import { PBRTheoryGuide } from './pbr-theory-guide.js';
 import { TextureTilingDetector } from './texture-tiling-detector.js';
 import { GradientRampEditor } from './gradient-ramp-editor.js';
 import { LightProbeVisualizer } from './light-probe-visualizer.js';
+import { BRDFVisualizer } from './brdf-visualizer.js';
 
 // Embedded default OpenPBR scene (simple sphere with material)
 const EMBEDDED_USDA_SCENE = `#usda 1.0
@@ -4167,6 +4168,121 @@ function setupGUI() {
     lightProbeFolder.add(lightProbeParams, 'exportReport').name('Export Report');
     lightProbeFolder.close();
 
+    // BRDF Visualizer
+    const brdfVisualizerFolder = gui.addFolder('BRDF Visualizer');
+    const brdfVisualizerParams = {
+        enabled: false,
+        viewAngle: 0,
+        lightAngle: 45,
+        resolution: 64,
+        enable: function() {
+            if (!window.brdfVisualizer) {
+                window.brdfVisualizer = new BRDFVisualizer(renderer);
+            }
+
+            // Set material from selected object
+            if (selectedObject && selectedObject.material) {
+                window.brdfVisualizer.setMaterial(selectedObject.material);
+            }
+
+            window.brdfVisualizer.enable();
+            brdfVisualizerParams.enabled = true;
+            updateStatus('BRDF visualizer enabled', 'success');
+        },
+        disable: function() {
+            if (window.brdfVisualizer) {
+                window.brdfVisualizer.disable();
+                brdfVisualizerParams.enabled = false;
+                updateStatus('BRDF visualizer disabled', 'info');
+            }
+        },
+        updateMaterial: function() {
+            if (!window.brdfVisualizer) {
+                updateStatus('BRDF visualizer not enabled', 'error');
+                return;
+            }
+
+            if (!selectedObject || !selectedObject.material) {
+                updateStatus('No object with material selected', 'error');
+                return;
+            }
+
+            window.brdfVisualizer.setMaterial(selectedObject.material);
+            updateStatus('BRDF visualization updated', 'success');
+        },
+        analyzeAndLog: function() {
+            if (!window.brdfVisualizer) {
+                window.brdfVisualizer = new BRDFVisualizer(renderer);
+            }
+
+            if (selectedObject && selectedObject.material) {
+                window.brdfVisualizer.setMaterial(selectedObject.material);
+            }
+
+            window.brdfVisualizer.logAnalysis();
+            updateStatus('BRDF analysis logged to console', 'success');
+        },
+        exportReport: function() {
+            if (!window.brdfVisualizer) {
+                window.brdfVisualizer = new BRDFVisualizer(renderer);
+            }
+
+            if (selectedObject && selectedObject.material) {
+                window.brdfVisualizer.setMaterial(selectedObject.material);
+            }
+
+            const report = window.brdfVisualizer.generateReport();
+
+            const blob = new Blob([report], { type: 'text/markdown' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = 'brdf_analysis.md';
+            a.click();
+            URL.revokeObjectURL(url);
+
+            updateStatus('BRDF analysis report exported', 'success');
+        }
+    };
+
+    brdfVisualizerFolder.add(brdfVisualizerParams, 'enabled').name('Enable Visualizer').onChange(value => {
+        if (value) {
+            brdfVisualizerParams.enable();
+        } else {
+            brdfVisualizerParams.disable();
+        }
+    });
+
+    brdfVisualizerFolder.add(brdfVisualizerParams, 'viewAngle', 0, 90, 1)
+        .name('View Angle (degrees)')
+        .onChange(value => {
+            if (window.brdfVisualizer) {
+                window.brdfVisualizer.setViewAngle(value);
+            }
+        });
+
+    brdfVisualizerFolder.add(brdfVisualizerParams, 'lightAngle', 0, 90, 1)
+        .name('Light Angle (degrees)')
+        .onChange(value => {
+            if (window.brdfVisualizer) {
+                window.brdfVisualizer.setLightAngle(value);
+            }
+        });
+
+    brdfVisualizerFolder.add(brdfVisualizerParams, 'resolution', [32, 64, 128])
+        .name('Resolution')
+        .onChange(value => {
+            if (window.brdfVisualizer) {
+                window.brdfVisualizer.resolution = value;
+                window.brdfVisualizer.updateVisualization();
+            }
+        });
+
+    brdfVisualizerFolder.add(brdfVisualizerParams, 'updateMaterial').name('Update from Selected Object');
+    brdfVisualizerFolder.add(brdfVisualizerParams, 'analyzeAndLog').name('Analyze and Log');
+    brdfVisualizerFolder.add(brdfVisualizerParams, 'exportReport').name('Export Report');
+    brdfVisualizerFolder.close();
+
     // Split View Comparison System
     const splitViewFolder = gui.addFolder('Split View Compare');
     const splitViewParams = {
@@ -6523,6 +6639,7 @@ window.PBRTheoryGuide = PBRTheoryGuide;
 window.TextureTilingDetector = TextureTilingDetector;
 window.GradientRampEditor = GradientRampEditor;
 window.LightProbeVisualizer = LightProbeVisualizer;
+window.BRDFVisualizer = BRDFVisualizer;
 window.REFERENCE_MATERIALS = REFERENCE_MATERIALS;
 window.applyReferenceMaterial = applyReferenceMaterial;
 window.getReferencesByCategory = getReferencesByCategory;
