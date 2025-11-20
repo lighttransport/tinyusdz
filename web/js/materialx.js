@@ -91,9 +91,10 @@ let gui = null;
 let paramFolder = null;
 let environmentType = 'goegap_1k'; // 'studio', 'white', 'goegap_1k', or 'env_sunsky_sunset'
 let showBackgroundEnvmap = true; // Toggle for showing environment map as background
-let toneMappingType = 'none'; // 'none', 'aces', 'agx', 'neutral'
+let toneMappingType = 'none'; // 'none', 'aces', 'agx', 'neutral', 'aces13', 'aces20'
 let exposureValue = 1.0; // Exposure value (works independently of tone mapping)
 let pmremGenerator = null;
+let acesTonemapPass = null; // Custom ACES tonemapping pass
 let currentColorSpace = 'srgb'; // 'srgb' or 'display-p3'
 let displayP3Supported = false;
 let textureCache = new Map(); // Cache for loaded textures
@@ -113,6 +114,7 @@ let useNodeMaterial = false; // Toggle between MeshPhysicalMaterial and NodeMate
 let materialXLoader = null; // MaterialXLoader instance
 let currentAOVMode = AOV_MODES.NONE; // Current AOV visualization mode
 let aovOriginalMaterials = new Map(); // Store original materials when showing AOVs
+let preferredMaterialType = 'auto'; // 'auto', 'openpbr', 'usdpreviewsurface' - Which material type to prefer when both are available
 
 // Available texture color spaces
 const TEXTURE_COLOR_SPACES = {
@@ -296,6 +298,156 @@ const FalseColorShader = {
             vec3 falseColor = evToFalseColor(ev);
 
             gl_FragColor = vec4(falseColor, 1.0);
+        }
+    `
+};
+
+// ACES Tonemapping Shader
+// Supports ACES 1.3 and ACES 2.0 as used in Blender 5.0
+const ACESTonemapShader = {
+    uniforms: {
+        'tDiffuse': { value: null },
+        'exposure': { value: 1.0 },
+        'acesVersion': { value: 0 } // 0 = ACES 1.3, 1 = ACES 2.0
+    },
+
+    vertexShader: `
+        varying vec2 vUv;
+        void main() {
+            vUv = uv;
+            gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+        }
+    `,
+
+    fragmentShader: `
+        uniform sampler2D tDiffuse;
+        uniform float exposure;
+        uniform int acesVersion;
+        varying vec2 vUv;
+
+        // ACES matrices and functions
+
+        // sRGB to ACES AP0 (ACES2065-1) conversion matrix
+        mat3 sRGB_to_AP0 = mat3(
+            0.4397010, 0.3829780, 0.1773350,
+            0.0897923, 0.8134230, 0.0967616,
+            0.0175440, 0.1115440, 0.8707040
+        );
+
+        // ACES AP0 to sRGB conversion matrix
+        mat3 AP0_to_sRGB = mat3(
+            2.52169, -1.13413, -0.38756,
+            -0.27648, 1.37272, -0.09624,
+            -0.01538, -0.15298, 1.16835
+        );
+
+        // ACES AP1 (ACEScg) to AP0 conversion
+        mat3 AP1_to_AP0 = mat3(
+            0.6954522, 0.1406787, 0.1638691,
+            0.0447946, 0.8596711, 0.0955343,
+            -0.0055259, 0.0040253, 1.0015006
+        );
+
+        // ACES AP0 to AP1 conversion
+        mat3 AP0_to_AP1 = mat3(
+            1.4514393, -0.2365107, -0.2149286,
+            -0.0765538, 1.1762297, -0.0996759,
+            0.0083161, -0.0060324, 0.9977163
+        );
+
+        // ACES 1.3 RRT + ODT (Reference Rendering Transform + Output Device Transform)
+        // This is the ACES Filmic tonemapper used in Blender 4.x and earlier
+        vec3 ACESFilmic_1_3(vec3 color) {
+            // Convert from AP0 to AP1 (ACEScg)
+            // Stephen Hill's fit is designed for AP1 color space
+            vec3 x = AP0_to_AP1 * color;
+
+            // Apply the ACES filmic curve (RRT + ODT approximation)
+            // This approximation combines RRT and sRGB ODT into one formula
+            float a = 2.51;
+            float b = 0.03;
+            float c = 2.43;
+            float d = 0.59;
+            float e = 0.14;
+            vec3 mapped = (x * (a * x + b)) / (x * (c * x + d) + e);
+
+            // Convert from AP1 to linear sRGB
+            mat3 AP1_to_sRGB = mat3(
+                1.70505, -0.62179, -0.08326,
+                -0.13026, 1.14080, -0.01055,
+                0.00610, -0.00969, 1.00360
+            );
+
+            return clamp(AP1_to_sRGB * mapped, 0.0, 1.0);
+        }
+
+        // ACES 2.0 OpenDRT (Open Display Rendering Transform)
+        // New tonemapper introduced in Blender 5.0
+        vec3 OpenDRT_2_0(vec3 color) {
+            // Convert from AP0 to AP1 (ACEScg) for OpenDRT processing
+            vec3 aces = AP0_to_AP1 * color;
+
+            // OpenDRT operates in AP1 space
+            // Simplified approximation of the OpenDRT tone curve
+
+            // Calculate luminance in AP1 space
+            const vec3 AP1_RGB2Y = vec3(0.2722287, 0.6740818, 0.0536895);
+            float Y = max(dot(aces, AP1_RGB2Y), 1e-10);
+
+            // Tonescale parameters (simplified OpenDRT-like curve)
+            const float c_t = 1.55; // Toe compression
+            const float s_t = 0.99; // Toe smoothness
+            const float c_d = 10.5; // Shoulder compression (controls peak)
+            const float w_g = 0.14; // Gray point
+
+            // Generalized Reinhard-style curve with toe and shoulder control
+            float peak = 100.0; // Display peak luminance in nits
+            float norm = Y / peak;
+
+            // Toe-shoulder curve
+            float num = norm * (1.0 + norm / (c_d * c_d));
+            float denom = 1.0 + norm;
+            float Y_out = num / denom;
+
+            // Apply subtle S-curve for contrast
+            Y_out = pow(Y_out, 0.9);
+
+            // Preserve color ratios (chromatic adaptation)
+            vec3 rgb_out = aces * (Y_out / Y);
+
+            // Convert from AP1 to linear sRGB for display
+            mat3 AP1_to_sRGB = mat3(
+                1.70505, -0.62179, -0.08326,
+                -0.13026, 1.14080, -0.01055,
+                0.00610, -0.00969, 1.00360
+            );
+
+            vec3 result = AP1_to_sRGB * rgb_out;
+
+            return clamp(result, 0.0, 1.0);
+        }
+
+        void main() {
+            vec4 texel = texture2D(tDiffuse, vUv);
+            vec3 color = texel.rgb;
+
+            // Apply exposure
+            color *= exposure;
+
+            // Convert from sRGB to ACES AP0 (ACES2065-1)
+            vec3 aces = sRGB_to_AP0 * color;
+
+            // Apply selected ACES tonemapping
+            vec3 result;
+            if (acesVersion == 1) {
+                // ACES 2.0 OpenDRT (Blender 5.0)
+                result = OpenDRT_2_0(aces);
+            } else {
+                // ACES 1.3 Filmic (default, Blender 4.x)
+                result = ACESFilmic_1_3(aces);
+            }
+
+            gl_FragColor = vec4(result, texel.a);
         }
     `
 };
@@ -1267,6 +1419,36 @@ function exportSelectedMaterialMTLX() {
     }
 }
 
+// UsdPreviewSurface parameter definitions with ranges and defaults
+const USDPREVIEWSURFACE_PARAMS = {
+    diffuse: {
+        diffuseColor: { default: [0.18, 0.18, 0.18], type: 'color' }
+    },
+    specular: {
+        roughness: { min: 0, max: 1, default: 0.5, step: 0.01 },
+        metallic: { min: 0, max: 1, default: 0, step: 0.01 },
+        specularColor: { default: [1, 1, 1], type: 'color' },
+        ior: { min: 1, max: 3, default: 1.5, step: 0.01 }
+    },
+    clearcoat: {
+        clearcoat: { min: 0, max: 1, default: 0, step: 0.01 },
+        clearcoatRoughness: { min: 0, max: 1, default: 0.01, step: 0.01 }
+    },
+    emission: {
+        emissiveColor: { default: [0, 0, 0], type: 'color' }
+    },
+    geometry: {
+        opacity: { min: 0, max: 1, default: 1, step: 0.01 },
+        normal: { default: [0, 0, 1], type: 'vector' }
+    },
+    displacement: {
+        displacement: { min: -10, max: 10, default: 0, step: 0.01 }
+    },
+    occlusion: {
+        occlusion: { min: 0, max: 1, default: 1, step: 0.01 }
+    }
+};
+
 // OpenPBR parameter definitions with ranges and defaults
 const OPENPBR_PARAMS = {
     base: {
@@ -1773,7 +1955,7 @@ function setupInteraction() {
     renderer.domElement.addEventListener('mousemove', onMouseMove, false);
 }
 
-// Setup post-processing composer with false color effect
+// Setup post-processing composer with false color and ACES tonemap effects
 function setupComposer() {
     // Create effect composer
     composer = new EffectComposer(renderer);
@@ -1782,12 +1964,18 @@ function setupComposer() {
     const renderPass = new RenderPass(scene, camera);
     composer.addPass(renderPass);
 
+    // Add ACES tonemap pass (for custom ACES 1.3 / 2.0 tonemapping)
+    acesTonemapPass = new ShaderPass(ACESTonemapShader);
+    acesTonemapPass.enabled = false; // Will be enabled when ACES 1.3/2.0 is selected
+    acesTonemapPass.uniforms['exposure'].value = exposureValue;
+    composer.addPass(acesTonemapPass);
+
     // Add false color pass (initially disabled via renderToScreen)
     falseColorPass = new ShaderPass(FalseColorShader);
     falseColorPass.enabled = false; // Will be enabled when false color is toggled
     composer.addPass(falseColorPass);
 
-    console.log('Effect composer initialized with false color pass');
+    console.log('Effect composer initialized with ACES tonemap and false color passes');
 }
 
 // Toggle false color view transform
@@ -1801,12 +1989,20 @@ function toggleFalseColor() {
     if (falseColorPass) {
         falseColorPass.enabled = showingFalseColor;
         // When false color is enabled, make it render to screen
-        // When disabled, the renderPass will render to screen
+        // When disabled, check if ACES pass should render to screen
         falseColorPass.renderToScreen = showingFalseColor;
 
-        // Also update the render pass
+        // Update ACES pass renderToScreen
+        if (acesTonemapPass && acesTonemapPass.enabled) {
+            acesTonemapPass.renderToScreen = !showingFalseColor;
+        }
+
+        // Update the render pass
         if (composer.passes[0]) {
-            composer.passes[0].renderToScreen = !showingFalseColor;
+            // Render pass should render to screen only if no post-processing is active
+            const hasActivePostProcess = showingFalseColor ||
+                                         (acesTonemapPass && acesTonemapPass.enabled);
+            composer.passes[0].renderToScreen = !hasActivePostProcess;
         }
     }
 
@@ -1842,6 +2038,11 @@ function getToneMappingConstant(type) {
             return THREE.NoToneMapping;
         case 'aces':
             return THREE.ACESFilmicToneMapping;
+        case 'aces13':
+        case 'aces20':
+            // Custom ACES tonemapping handled via post-processing
+            // Use NoToneMapping for renderer, post-process will handle it
+            return THREE.NoToneMapping;
         case 'agx':
             // AgX was added in Three.js r152
             return THREE.AgXToneMapping || THREE.ACESFilmicToneMapping;
@@ -1856,6 +2057,45 @@ function getToneMappingConstant(type) {
             return THREE.CineonToneMapping;
         default:
             return THREE.NoToneMapping;
+    }
+}
+
+// Apply custom tonemapping if needed (for ACES 1.3/2.0)
+function applyCustomToneMapping(type) {
+    if (!composer || !acesTonemapPass) {
+        setupComposer();
+    }
+
+    // Disable ACES pass by default
+    if (acesTonemapPass) {
+        acesTonemapPass.enabled = false;
+        acesTonemapPass.renderToScreen = false;
+    }
+
+    // Enable custom ACES tonemapping if needed
+    if (type === 'aces13' || type === 'aces20') {
+        if (acesTonemapPass) {
+            acesTonemapPass.enabled = true;
+            // ACES should render to screen if false color is not enabled
+            acesTonemapPass.renderToScreen = !showingFalseColor;
+
+            // Set ACES version: 0 = ACES 1.3, 1 = ACES 2.0
+            acesTonemapPass.uniforms['acesVersion'].value = type === 'aces20' ? 1 : 0;
+            acesTonemapPass.uniforms['exposure'].value = exposureValue;
+
+            console.log(`Enabled custom ${type.toUpperCase()} tonemapping via post-processing`);
+        }
+    } else {
+        // For built-in tonemappers, disable ACES pass
+        if (acesTonemapPass) {
+            acesTonemapPass.enabled = false;
+        }
+    }
+
+    // Update render pass renderToScreen based on active post-processing
+    if (composer && composer.passes[0]) {
+        const needsComposer = (type === 'aces13' || type === 'aces20') || showingFalseColor;
+        composer.passes[0].renderToScreen = !needsComposer;
     }
 }
 
@@ -2189,7 +2429,9 @@ function setupGUI() {
     envFolder.add(envParams, 'toneMapping', {
         'None': 'none',
         'AgX (Blender)': 'agx',
-        'ACES Filmic': 'aces',
+        'ACES 1.3 (Blender 4.x)': 'aces13',
+        'ACES 2.0 OpenDRT (Blender 5.0)': 'aces20',
+        'ACES Filmic (Three.js)': 'aces',
         'Neutral': 'neutral',
         'Linear': 'linear',
         'Reinhard': 'reinhard',
@@ -2197,11 +2439,18 @@ function setupGUI() {
     }).name('Tone Mapping').onChange(value => {
         toneMappingType = value;
         renderer.toneMapping = getToneMappingConstant(value);
+        applyCustomToneMapping(value);
     });
 
     envFolder.add(envParams, 'exposure', 0, 3, 0.01).name('Exposure').onChange(value => {
         exposureValue = value;
         renderer.toneMappingExposure = value;
+
+        // Update ACES tonemap pass exposure if active
+        if (acesTonemapPass && acesTonemapPass.enabled) {
+            acesTonemapPass.uniforms['exposure'].value = value;
+        }
+
         // Apply exposure to all materials by adjusting environment intensity
         scene.traverse((object) => {
             if (object.isMesh && object.material) {
@@ -2257,12 +2506,23 @@ function setupGUI() {
     // Material Rendering controls
     const materialFolder = gui.addFolder('Material Rendering');
     const materialParams = {
+        preferredType: preferredMaterialType,
         useNodeMaterial: useNodeMaterial,
         reloadMaterials: async function() {
             console.log("Reloading materials with new settings...");
             await loadMaterials();
         }
     };
+
+    materialFolder.add(materialParams, 'preferredType', {
+        'Auto (Prefer OpenPBR)': 'auto',
+        'OpenPBR/MaterialX': 'openpbr',
+        'UsdPreviewSurface': 'usdpreviewsurface'
+    }).name('Material Type').onChange(async (value) => {
+        preferredMaterialType = value;
+        console.log(`Preferred material type changed to: ${value}`);
+        await loadMaterials();
+    });
 
     materialFolder.add(materialParams, 'useNodeMaterial').name('Use NodeMaterial (MaterialX)').onChange(async (value) => {
         useNodeMaterial = value;
@@ -2532,12 +2792,23 @@ async function loadMaterials() {
                 throw new Error('Failed to create Three.js material');
             }
 
+            // Extract parameters based on which material type is active
+            const activeMaterialType = threeMaterial.userData.activeMaterialType;
+            let parameters = {};
+
+            if (activeMaterialType === 'UsdPreviewSurface') {
+                parameters = extractUsdPreviewSurfaceParams(materialData);
+            } else if (activeMaterialType === 'OpenPBR') {
+                parameters = extractOpenPBRParams(materialData);
+            }
+
             materials.push({
                 index: i,
                 name: materialData.name || `Material_${i}`,
                 data: materialData,
                 threeMaterial: threeMaterial,
-                parameters: extractOpenPBRParams(materialData)
+                parameters: parameters,
+                materialType: activeMaterialType || 'Unknown'
             });
 
         } catch (error) {
@@ -2561,11 +2832,34 @@ async function loadMaterials() {
     console.log(`Successfully loaded ${materials.length} materials`);
 }
 
-// Create Three.js material from OpenPBR data
+// Create Three.js material from OpenPBR/UsdPreviewSurface data
 async function createOpenPBRMaterial(materialData) {
 
+    // Determine which material type to use based on preference and availability
+    const hasOpenPBR = materialData.hasOpenPBR;
+    const hasUsdPreviewSurface = materialData.hasUsdPreviewSurface;
+
+    let useOpenPBR = false;
+    let useUsdPreview = false;
+
+    if (preferredMaterialType === 'auto') {
+        // Auto mode: prefer OpenPBR if available, otherwise UsdPreviewSurface
+        useOpenPBR = hasOpenPBR;
+        useUsdPreview = !hasOpenPBR && hasUsdPreviewSurface;
+    } else if (preferredMaterialType === 'openpbr') {
+        // Force OpenPBR if available
+        useOpenPBR = hasOpenPBR;
+        useUsdPreview = !hasOpenPBR && hasUsdPreviewSurface; // Fallback
+    } else if (preferredMaterialType === 'usdpreviewsurface') {
+        // Force UsdPreviewSurface if available
+        useUsdPreview = hasUsdPreviewSurface;
+        useOpenPBR = !hasUsdPreviewSurface && hasOpenPBR; // Fallback
+    }
+
+    console.log(`Material type selection: hasOpenPBR=${hasOpenPBR}, hasUsdPreviewSurface=${hasUsdPreviewSurface}, preferredType=${preferredMaterialType}, using OpenPBR=${useOpenPBR}, using UsdPreview=${useUsdPreview}`);
+
     // === NodeMaterial Support via MaterialXLoader ===
-    if (useNodeMaterial && materialData.hasOpenPBR) {
+    if (useNodeMaterial && useOpenPBR) {
         console.log("=== Creating NodeMaterial via MaterialXLoader ===");
         try {
             const mtlxXML = convertOpenPBRToMaterialXML(materialData, materialData.name || 'Material');
@@ -2610,7 +2904,10 @@ async function createOpenPBRMaterial(materialData) {
     // Store texture references for later management
     material.userData.textures = {};
 
-    if (materialData.hasOpenPBR) {
+    // Store which material type is being used
+    material.userData.activeMaterialType = useOpenPBR ? 'OpenPBR' : (useUsdPreview ? 'UsdPreviewSurface' : 'None');
+
+    if (useOpenPBR && materialData.hasOpenPBR) {
         console.log("=== Material has OpenPBR ===");
         console.log("Available keys:", Object.keys(materialData));
 
@@ -3036,7 +3333,7 @@ async function createOpenPBRMaterial(materialData) {
         //}
         } // end of else if (pbrGrouped)
 
-    } else if (materialData.hasUsdPreviewSurface && materialData.usdPreviewSurface) {
+    } else if (useUsdPreview && materialData.hasUsdPreviewSurface && materialData.usdPreviewSurface) {
         // Fallback to UsdPreviewSurface
         const preview = materialData.usdPreviewSurface;
 
@@ -3090,6 +3387,85 @@ async function createOpenPBRMaterial(materialData) {
 
     material.needsUpdate = true;
     return material;
+}
+
+// Extract UsdPreviewSurface parameters for GUI
+function extractUsdPreviewSurfaceParams(materialData) {
+    if (!materialData.hasUsdPreviewSurface || !materialData.usdPreviewSurface) {
+        return {};
+    }
+
+    const preview = materialData.usdPreviewSurface;
+    const params = {
+        diffuse: {},
+        specular: {},
+        clearcoat: {},
+        emission: {},
+        geometry: {},
+        displacement: {},
+        occlusion: {}
+    };
+
+    // Helper to unwrap value
+    const unwrapValue = (val) => {
+        if (val && typeof val === 'object' && val.value !== undefined) {
+            return val.value;
+        }
+        return val;
+    };
+
+    // Diffuse
+    if (preview.diffuseColor !== undefined) {
+        params.diffuse.diffuseColor = unwrapValue(preview.diffuseColor);
+    }
+
+    // Specular
+    if (preview.roughness !== undefined) {
+        params.specular.roughness = unwrapValue(preview.roughness);
+    }
+    if (preview.metallic !== undefined) {
+        params.specular.metallic = unwrapValue(preview.metallic);
+    }
+    if (preview.specularColor !== undefined) {
+        params.specular.specularColor = unwrapValue(preview.specularColor);
+    }
+    if (preview.ior !== undefined) {
+        params.specular.ior = unwrapValue(preview.ior);
+    }
+
+    // Clearcoat
+    if (preview.clearcoat !== undefined) {
+        params.clearcoat.clearcoat = unwrapValue(preview.clearcoat);
+    }
+    if (preview.clearcoatRoughness !== undefined) {
+        params.clearcoat.clearcoatRoughness = unwrapValue(preview.clearcoatRoughness);
+    }
+
+    // Emission
+    if (preview.emissiveColor !== undefined) {
+        params.emission.emissiveColor = unwrapValue(preview.emissiveColor);
+    }
+
+    // Geometry
+    if (preview.opacity !== undefined) {
+        params.geometry.opacity = unwrapValue(preview.opacity);
+    }
+    if (preview.normal !== undefined) {
+        params.geometry.normal = unwrapValue(preview.normal);
+    }
+
+    // Displacement
+    if (preview.displacement !== undefined) {
+        params.displacement.displacement = unwrapValue(preview.displacement);
+    }
+
+    // Occlusion
+    if (preview.occlusion !== undefined) {
+        params.occlusion.occlusion = unwrapValue(preview.occlusion);
+    }
+
+    console.log("=== Extracted UsdPreviewSurface params ===", params);
+    return params;
 }
 
 // Extract OpenPBR parameters for GUI
@@ -3919,10 +4295,11 @@ function createParameterControls(material) {
         gui.removeFolder(paramFolder);
     }
 
-    paramFolder = gui.addFolder(`Material: ${material.name}`);
+    const materialTypeLabel = material.materialType || 'Unknown';
+    paramFolder = gui.addFolder(`Material: ${material.name} [${materialTypeLabel}]`);
 
     if (!material.parameters || Object.keys(material.parameters).length === 0) {
-        paramFolder.add({ message: 'No OpenPBR parameters' }, 'message').name('Info');
+        paramFolder.add({ message: `No ${materialTypeLabel} parameters` }, 'message').name('Info');
         paramFolder.open();
         return;
     }
@@ -3930,8 +4307,11 @@ function createParameterControls(material) {
     const params = material.parameters;
     const threeMat = material.threeMaterial;
 
+    // Determine which parameter definitions to use
+    const paramDefs = material.materialType === 'UsdPreviewSurface' ? USDPREVIEWSURFACE_PARAMS : OPENPBR_PARAMS;
+
     // Create controls for each parameter group
-    Object.entries(OPENPBR_PARAMS).forEach(([groupName, groupParams]) => {
+    Object.entries(paramDefs).forEach(([groupName, groupParams]) => {
         if (params[groupName]) {
             // Add support status labels to certain groups
             let folderLabel = groupName;
@@ -4375,8 +4755,11 @@ function animate() {
         boundingBoxHelper.update();
     }
 
-    // Use composer if false color is enabled, otherwise use regular renderer
-    if (showingFalseColor && composer) {
+    // Use composer if any post-processing is enabled (false color or custom ACES)
+    const useComposer = showingFalseColor ||
+                        (toneMappingType === 'aces13' || toneMappingType === 'aces20');
+
+    if (useComposer && composer) {
         composer.render();
     } else {
         renderer.render(scene, camera);
