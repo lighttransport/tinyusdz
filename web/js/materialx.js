@@ -47,6 +47,7 @@ import {
 } from './material-override.js';
 import { MaterialValidator } from './material-validator.js';
 import { SplitViewComparison, COMPARISON_PRESETS } from './split-view-comparison.js';
+import { TextureInspector } from './texture-inspector.js';
 
 // Embedded default OpenPBR scene (simple sphere with material)
 const EMBEDDED_USDA_SCENE = `#usda 1.0
@@ -5497,8 +5498,178 @@ window.resetMaterialOverrides = resetMaterialOverrides;
 window.applyOverridePreset = applyOverridePreset;
 window.MaterialValidator = MaterialValidator;
 window.SplitViewComparison = SplitViewComparison;
+window.TextureInspector = TextureInspector;
 window.COMPARISON_PRESETS = COMPARISON_PRESETS;
 window.OVERRIDE_PRESETS = OVERRIDE_PRESETS;
+window.inspectTexture = inspectTexture;
+window.toggleTextureInspector = toggleTextureInspector;
+window.exportTextureReport = exportTextureReport;
+
+// Texture Inspector functions
+let textureInspector = null;
+let currentInspectedTexture = null;
+
+function inspectTexture(texture, textureName = 'Unknown') {
+    if (!texture) {
+        console.error('No texture provided to inspect');
+        return;
+    }
+
+    if (!textureInspector) {
+        textureInspector = new TextureInspector();
+    }
+
+    // Analyze texture
+    const stats = textureInspector.analyzeTexture(texture);
+    if (!stats) {
+        console.error('Failed to analyze texture');
+        return;
+    }
+
+    currentInspectedTexture = { texture, name: textureName, stats };
+
+    // Show panel
+    const wrapper = document.getElementById('texture-inspector-wrapper');
+    wrapper.style.display = 'flex';
+
+    // Update title
+    document.getElementById('texture-inspector-title').textContent = `Texture Inspector: ${textureName}`;
+
+    // Update preview
+    const preview = document.getElementById('texture-inspector-preview');
+    if (texture.image && texture.image.src) {
+        preview.src = texture.image.src;
+    } else if (texture.image) {
+        // Convert HTMLImageElement or canvas to data URL
+        const canvas = document.createElement('canvas');
+        canvas.width = texture.image.width;
+        canvas.height = texture.image.height;
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(texture.image, 0, 0);
+        preview.src = canvas.toDataURL();
+    }
+
+    // Update texture info
+    const infoDetails = document.getElementById('texture-info-details');
+    infoDetails.innerHTML = `
+        <strong>Name:</strong> ${textureName}<br>
+        <strong>Dimensions:</strong> ${stats.width} × ${stats.height}<br>
+        <strong>Total Pixels:</strong> ${stats.pixelCount.toLocaleString()}<br>
+        <strong>Format:</strong> RGBA (8-bit per channel)
+    `;
+
+    // Render histograms
+    const colors = {
+        r: '#f44336',
+        g: '#4CAF50',
+        b: '#2196F3',
+        a: '#9E9E9E'
+    };
+
+    ['r', 'g', 'b', 'a'].forEach(ch => {
+        const canvas = document.getElementById(`histogram-${ch}`);
+        textureInspector.renderHistogram(canvas, stats.channels[ch], colors[ch]);
+    });
+
+    // Update statistics table
+    const tbody = document.getElementById('texture-stats-tbody');
+    tbody.innerHTML = '';
+
+    ['r', 'g', 'b', 'a'].forEach(ch => {
+        const channel = stats.channels[ch];
+        const row = tbody.insertRow();
+
+        const colorMap = {
+            r: '#f44336',
+            g: '#4CAF50',
+            b: '#2196F3',
+            a: '#9E9E9E'
+        };
+
+        row.innerHTML = `
+            <td style="padding: 8px; border-bottom: 1px solid rgba(156, 39, 176, 0.2); color: ${colorMap[ch]}; font-weight: bold;">${ch.toUpperCase()}</td>
+            <td style="padding: 8px; border-bottom: 1px solid rgba(156, 39, 176, 0.2); text-align: right;">${channel.min}</td>
+            <td style="padding: 8px; border-bottom: 1px solid rgba(156, 39, 176, 0.2); text-align: right;">${channel.max}</td>
+            <td style="padding: 8px; border-bottom: 1px solid rgba(156, 39, 176, 0.2); text-align: right;">${channel.mean.toFixed(2)}</td>
+            <td style="padding: 8px; border-bottom: 1px solid rgba(156, 39, 176, 0.2); text-align: right;">${channel.median}</td>
+            <td style="padding: 8px; border-bottom: 1px solid rgba(156, 39, 176, 0.2); text-align: right;">${channel.stdDev.toFixed(2)}</td>
+            <td style="padding: 8px; border-bottom: 1px solid rgba(156, 39, 176, 0.2); text-align: right;">${channel.uniqueCount}</td>
+        `;
+    });
+
+    // Update issues list
+    const issuesList = document.getElementById('texture-issues-list');
+    if (stats.issues.length === 0) {
+        issuesList.innerHTML = '<div style="color: #4CAF50;">✓ No issues detected</div>';
+    } else {
+        let html = '';
+        const errors = stats.issues.filter(i => i.severity === 'error');
+        const warnings = stats.issues.filter(i => i.severity === 'warning');
+        const infos = stats.issues.filter(i => i.severity === 'info');
+
+        if (errors.length > 0) {
+            html += '<div style="margin-bottom: 10px;"><strong style="color: #f44336;">❌ Errors:</strong><ul style="margin: 5px 0; padding-left: 20px;">';
+            errors.forEach(issue => {
+                html += `<li style="color: #e0e0e0;">${issue.message}</li>`;
+            });
+            html += '</ul></div>';
+        }
+
+        if (warnings.length > 0) {
+            html += '<div style="margin-bottom: 10px;"><strong style="color: #FF9800;">⚠️ Warnings:</strong><ul style="margin: 5px 0; padding-left: 20px;">';
+            warnings.forEach(issue => {
+                html += `<li style="color: #e0e0e0;">${issue.message}</li>`;
+            });
+            html += '</ul></div>';
+        }
+
+        if (infos.length > 0) {
+            html += '<div><strong style="color: #2196F3;">ℹ️ Info:</strong><ul style="margin: 5px 0; padding-left: 20px;">';
+            infos.forEach(issue => {
+                html += `<li style="color: #e0e0e0;">${issue.message}</li>`;
+            });
+            html += '</ul></div>';
+        }
+
+        issuesList.innerHTML = html;
+    }
+
+    // Log to console
+    textureInspector.logResults(stats);
+
+    updateStatus(`Inspecting texture: ${textureName}`, 'success');
+}
+
+function toggleTextureInspector() {
+    const wrapper = document.getElementById('texture-inspector-wrapper');
+    if (wrapper.style.display === 'flex') {
+        wrapper.style.display = 'none';
+    } else {
+        wrapper.style.display = 'flex';
+    }
+}
+
+function exportTextureReport() {
+    if (!currentInspectedTexture || !currentInspectedTexture.stats) {
+        console.error('No texture analyzed');
+        return;
+    }
+
+    if (!textureInspector) {
+        textureInspector = new TextureInspector();
+    }
+
+    const report = textureInspector.generateReport(currentInspectedTexture.stats);
+    const blob = new Blob([report], { type: 'text/markdown' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `texture-report-${currentInspectedTexture.name}.md`;
+    a.click();
+    URL.revokeObjectURL(url);
+
+    updateStatus(`Exported texture report for ${currentInspectedTexture.name}`, 'success');
+}
 
 // Import MaterialX XML file and apply to selected object
 async function importMaterialXFile() {
