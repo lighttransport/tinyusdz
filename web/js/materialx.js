@@ -39,6 +39,14 @@ import {
     handleMaterialPropertyPickerClick,
     resizeMaterialPropertyTargets
 } from './material-property-picker.js';
+import {
+    applyMaterialOverrides,
+    resetMaterialOverrides,
+    applyOverridePreset,
+    OVERRIDE_PRESETS
+} from './material-override.js';
+import { MaterialValidator } from './material-validator.js';
+import { SplitViewComparison, COMPARISON_PRESETS } from './split-view-comparison.js';
 
 // Embedded default OpenPBR scene (simple sphere with material)
 const EMBEDDED_USDA_SCENE = `#usda 1.0
@@ -3016,6 +3024,7 @@ function setupGUI() {
         'Binormals': AOV_MODES.BINORMALS,
         'UV Coords 0': AOV_MODES.TEXCOORD_0,
         'UV Coords 1': AOV_MODES.TEXCOORD_1,
+        'UV Layout Overlay': AOV_MODES.UV_LAYOUT,
         'World Position': AOV_MODES.POSITION_WORLD,
         'View Position': AOV_MODES.POSITION_VIEW,
         'Depth': AOV_MODES.DEPTH,
@@ -3027,6 +3036,13 @@ function setupGUI() {
         'Coat': AOV_MODES.COAT,
         'Transmission': AOV_MODES.TRANSMISSION,
         'Emissive': AOV_MODES.EMISSIVE,
+        'Ambient Occlusion': AOV_MODES.AO,
+        'Anisotropy': AOV_MODES.ANISOTROPY,
+        'Sheen': AOV_MODES.SHEEN,
+        'Iridescence': AOV_MODES.IRIDESCENCE,
+        '─── Quality Check ───': '',
+        'Normal Quality Check': AOV_MODES.NORMAL_QUALITY,
+        'Shader Error Detection': AOV_MODES.SHADER_ERROR,
         '─── Utility ───': '',
         'Material ID': AOV_MODES.MATERIAL_ID
     }).name('AOV Mode').onChange(value => {
@@ -3036,6 +3052,188 @@ function setupGUI() {
     });
 
     aovFolder.close();
+
+    // Material Override System
+    const overrideFolder = gui.addFolder('Material Override');
+    const overrideParams = {
+        enabled: false,
+        roughness: null,
+        metalness: null,
+        disableNormalMaps: false,
+        disableAllTextures: false,
+        preset: 'none',
+        reset: function() {
+            window.resetMaterialOverrides(scene);
+            overrideParams.enabled = false;
+            overrideParams.roughness = null;
+            overrideParams.metalness = null;
+            overrideParams.disableNormalMaps = false;
+            overrideParams.disableAllTextures = false;
+            overrideParams.preset = 'none';
+            gui.controllersRecursive().forEach(c => c.updateDisplay());
+        }
+    };
+
+    overrideFolder.add(overrideParams, 'enabled').name('Enable Overrides').onChange(value => {
+        if (!value) {
+            window.resetMaterialOverrides(scene);
+        }
+    });
+
+    overrideFolder.add(overrideParams, 'roughness', 0, 1, 0.01).name('Roughness Override').onChange(value => {
+        if (overrideParams.enabled && value !== null) {
+            window.applyMaterialOverrides(scene, { roughness: value });
+        }
+    });
+
+    overrideFolder.add(overrideParams, 'metalness', 0, 1, 0.01).name('Metalness Override').onChange(value => {
+        if (overrideParams.enabled && value !== null) {
+            window.applyMaterialOverrides(scene, { metalness: value });
+        }
+    });
+
+    overrideFolder.add(overrideParams, 'disableNormalMaps').name('Disable Normal Maps').onChange(value => {
+        if (overrideParams.enabled) {
+            window.applyMaterialOverrides(scene, { disableNormalMaps: value });
+        }
+    });
+
+    overrideFolder.add(overrideParams, 'disableAllTextures').name('Disable All Textures').onChange(value => {
+        if (overrideParams.enabled) {
+            window.applyMaterialOverrides(scene, { disableAllTextures: value });
+        }
+    });
+
+    overrideFolder.add(overrideParams, 'preset', {
+        'None': 'none',
+        'Base Color Only': 'BASE_COLOR_ONLY',
+        'Normals Only': 'NORMALS_ONLY',
+        'Flat Shading': 'FLAT_SHADING',
+        'Mirror': 'MIRROR',
+        'Matte': 'MATTE',
+        'White Clay': 'WHITE_CLAY'
+    }).name('Apply Preset').onChange(value => {
+        if (value !== 'none') {
+            overrideParams.enabled = true;
+            window.applyOverridePreset(scene, value);
+            gui.controllersRecursive().forEach(c => c.updateDisplay());
+        }
+    });
+
+    overrideFolder.add(overrideParams, 'reset').name('Reset All Overrides');
+    overrideFolder.close();
+
+    // Material Validation System
+    const validationFolder = gui.addFolder('Material Validation');
+    const validationParams = {
+        autoValidate: false,
+        errorCount: 0,
+        warningCount: 0,
+        infoCount: 0,
+        validateNow: function() {
+            const validator = new window.MaterialValidator();
+            const results = validator.validateScene(scene);
+
+            validationParams.errorCount = results.totalErrors;
+            validationParams.warningCount = results.totalWarnings;
+            validationParams.infoCount = results.totalInfo;
+
+            console.log(validator.generateReport(results));
+            validator.logResults(results);
+
+            updateStatus(`Validation: ${results.totalErrors} errors, ${results.totalWarnings} warnings`,
+                        results.totalErrors > 0 ? 'error' : 'success');
+
+            gui.controllersRecursive().forEach(c => c.updateDisplay());
+        }
+    };
+
+    validationFolder.add(validationParams, 'validateNow').name('🔍 Validate Scene');
+    validationFolder.add(validationParams, 'errorCount').name('Errors').listen().disable();
+    validationFolder.add(validationParams, 'warningCount').name('Warnings').listen().disable();
+    validationFolder.add(validationParams, 'infoCount').name('Info').listen().disable();
+    validationFolder.add(validationParams, 'autoValidate').name('Auto-validate on Load');
+    validationFolder.close();
+
+    // Split View Comparison System
+    const splitViewFolder = gui.addFolder('Split View Compare');
+    const splitViewParams = {
+        enabled: false,
+        mode: 'vertical',
+        position: 0.5,
+        secondaryAOV: AOV_MODES.ALBEDO,
+        enable: function() {
+            if (!window.splitViewComparison) {
+                window.splitViewComparison = new window.SplitViewComparison(renderer, scene, camera);
+            }
+            window.splitViewComparison.enable();
+            window.splitViewComparison.setSplitMode(splitViewParams.mode);
+            window.splitViewComparison.setSplitPosition(splitViewParams.position);
+
+            // Apply AOV to secondary scene
+            if (splitViewParams.secondaryAOV !== AOV_MODES.NONE) {
+                window.splitViewComparison.secondaryScene.traverse(obj => {
+                    if (obj.isMesh && obj.material) {
+                        const aovMaterial = createAOVMaterial(obj.material, splitViewParams.secondaryAOV);
+                        if (aovMaterial) {
+                            obj.material = aovMaterial;
+                        }
+                    }
+                });
+            }
+
+            splitViewParams.enabled = true;
+            updateStatus('Split view comparison enabled', 'success');
+        },
+        disable: function() {
+            if (window.splitViewComparison) {
+                window.splitViewComparison.disable();
+                splitViewParams.enabled = false;
+                updateStatus('Split view comparison disabled', 'success');
+            }
+        }
+    };
+
+    splitViewFolder.add(splitViewParams, 'enabled').name('Enable Split View').onChange(value => {
+        if (value) {
+            splitViewParams.enable();
+        } else {
+            splitViewParams.disable();
+        }
+    });
+
+    splitViewFolder.add(splitViewParams, 'mode', {
+        'Vertical (Left/Right)': 'vertical',
+        'Horizontal (Top/Bottom)': 'horizontal',
+        'Diagonal': 'diagonal'
+    }).name('Split Mode').onChange(value => {
+        if (window.splitViewComparison && splitViewParams.enabled) {
+            window.splitViewComparison.setSplitMode(value);
+        }
+    });
+
+    splitViewFolder.add(splitViewParams, 'position', 0, 1, 0.01).name('Split Position').onChange(value => {
+        if (window.splitViewComparison && splitViewParams.enabled) {
+            window.splitViewComparison.setSplitPosition(value);
+        }
+    });
+
+    splitViewFolder.add(splitViewParams, 'secondaryAOV', {
+        'Material (Original)': AOV_MODES.NONE,
+        'Albedo': AOV_MODES.ALBEDO,
+        'Normals (World)': AOV_MODES.NORMALS_WORLD,
+        'Roughness': AOV_MODES.ROUGHNESS,
+        'Metalness': AOV_MODES.METALNESS,
+        'UV Layout': AOV_MODES.UV_LAYOUT
+    }).name('Secondary View').onChange(value => {
+        if (window.splitViewComparison && splitViewParams.enabled) {
+            // Re-enable to apply new AOV
+            splitViewParams.disable();
+            splitViewParams.enable();
+        }
+    });
+
+    splitViewFolder.close();
 }
 
 // Load USD file
@@ -3298,6 +3496,18 @@ async function loadMaterials() {
     }
 
     console.log(`Successfully loaded ${materials.length} materials`);
+
+    // Auto-validate materials if enabled
+    if (gui) {
+        const validationController = gui.controllers.find(c => c.property === 'autoValidate');
+        if (validationController && validationController.object.autoValidate) {
+            // Run validation automatically
+            const validator = new MaterialValidator();
+            const results = validator.validateScene(scene);
+            console.log('Auto-validation results:');
+            validator.logResults(results);
+        }
+    }
 }
 
 // Create Three.js material from OpenPBR/UsdPreviewSurface data
@@ -5250,14 +5460,20 @@ function animate() {
         boundingBoxHelper.update();
     }
 
-    // Use composer if any post-processing is enabled (false color or custom ACES)
-    const useComposer = showingFalseColor ||
-                        (toneMappingType === 'aces13' || toneMappingType === 'aces20');
-
-    if (useComposer && composer) {
-        composer.render();
+    // Check if split view comparison is enabled
+    if (window.splitViewComparison && window.splitViewComparison.getState().active) {
+        // Split view renders both scenes
+        window.splitViewComparison.render();
     } else {
-        renderer.render(scene, camera);
+        // Use composer if any post-processing is enabled (false color or custom ACES)
+        const useComposer = showingFalseColor ||
+                            (toneMappingType === 'aces13' || toneMappingType === 'aces20');
+
+        if (useComposer && composer) {
+            composer.render();
+        } else {
+            renderer.render(scene, camera);
+        }
     }
 }
 
@@ -5274,6 +5490,15 @@ window.importMaterialXFile = importMaterialXFile;
 window.loadHDRTextureForMaterial = loadHDRTextureForMaterial;
 window.exportSelectedMaterialJSON = exportSelectedMaterialJSON;
 window.exportSelectedMaterialMTLX = exportSelectedMaterialMTLX;
+
+// Expose PBR debugging tools to global scope
+window.applyMaterialOverrides = applyMaterialOverrides;
+window.resetMaterialOverrides = resetMaterialOverrides;
+window.applyOverridePreset = applyOverridePreset;
+window.MaterialValidator = MaterialValidator;
+window.SplitViewComparison = SplitViewComparison;
+window.COMPARISON_PRESETS = COMPARISON_PRESETS;
+window.OVERRIDE_PRESETS = OVERRIDE_PRESETS;
 
 // Import MaterialX XML file and apply to selected object
 async function importMaterialXFile() {
