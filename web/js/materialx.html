@@ -1191,6 +1191,85 @@
         </div>
     </div>
 
+    <!-- Texture Inspector Panel -->
+    <div id="texture-inspector-wrapper" style="display: none; position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); width: 80vw; max-width: 1000px; height: 80vh; background: rgba(0, 0, 0, 0.95); border-radius: 8px; box-shadow: 0 8px 32px rgba(0, 0, 0, 0.8); z-index: 400; flex-direction: column;">
+        <div id="texture-inspector-header" style="background: linear-gradient(135deg, #9C27B0 0%, #7B1FA2 100%); color: white; padding: 12px 16px; display: flex; justify-content: space-between; align-items: center; border-radius: 8px 8px 0 0; border-bottom: 1px solid rgba(255, 255, 255, 0.1);">
+            <h3 style="margin: 0; font-size: 16px; font-weight: 500; display: flex; align-items: center; gap: 10px;">
+                <span>🔬</span>
+                <span id="texture-inspector-title">Texture Channel Inspector</span>
+            </h3>
+            <div id="texture-inspector-buttons" style="display: flex; gap: 8px;">
+                <button onclick="exportTextureReport()" style="background: rgba(255, 255, 255, 0.2); border: none; color: white; padding: 6px 12px; border-radius: 4px; cursor: pointer; font-size: 12px; transition: background 0.2s;">Export Report</button>
+                <button onclick="toggleTextureInspector()" style="background: rgba(255, 255, 255, 0.2); border: none; color: white; padding: 6px 12px; border-radius: 4px; cursor: pointer; font-size: 12px; transition: background 0.2s;">Close</button>
+            </div>
+        </div>
+        <div id="texture-inspector-container" style="flex: 1; background: #1a1a1a; border-radius: 0 0 8px 8px; overflow: auto; padding: 20px;">
+            <div id="texture-inspector-content">
+                <!-- Texture preview -->
+                <div style="margin-bottom: 20px;">
+                    <h4 style="margin: 0 0 10px 0; color: #CE93D8;">Texture Preview</h4>
+                    <img id="texture-inspector-preview" style="max-width: 100%; max-height: 300px; border: 2px solid #9C27B0; border-radius: 4px; display: block;">
+                </div>
+
+                <!-- Texture info -->
+                <div id="texture-inspector-info" style="margin-bottom: 20px; padding: 15px; background: rgba(156, 39, 176, 0.1); border-radius: 4px; border: 1px solid rgba(156, 39, 176, 0.3);">
+                    <h4 style="margin: 0 0 10px 0; color: #CE93D8;">Texture Information</h4>
+                    <div id="texture-info-details" style="font-family: monospace; font-size: 12px; line-height: 1.6; color: #e0e0e0;"></div>
+                </div>
+
+                <!-- Histograms -->
+                <div style="margin-bottom: 20px;">
+                    <h4 style="margin: 0 0 10px 0; color: #CE93D8;">Channel Histograms</h4>
+                    <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 15px;">
+                        <div>
+                            <div style="color: #f44336; font-weight: bold; margin-bottom: 5px;">Red Channel</div>
+                            <canvas id="histogram-r" width="400" height="150" style="width: 100%; border: 1px solid rgba(244, 67, 54, 0.5); border-radius: 4px;"></canvas>
+                        </div>
+                        <div>
+                            <div style="color: #4CAF50; font-weight: bold; margin-bottom: 5px;">Green Channel</div>
+                            <canvas id="histogram-g" width="400" height="150" style="width: 100%; border: 1px solid rgba(76, 175, 80, 0.5); border-radius: 4px;"></canvas>
+                        </div>
+                        <div>
+                            <div style="color: #2196F3; font-weight: bold; margin-bottom: 5px;">Blue Channel</div>
+                            <canvas id="histogram-b" width="400" height="150" style="width: 100%; border: 1px solid rgba(33, 150, 243, 0.5); border-radius: 4px;"></canvas>
+                        </div>
+                        <div>
+                            <div style="color: #9E9E9E; font-weight: bold; margin-bottom: 5px;">Alpha Channel</div>
+                            <canvas id="histogram-a" width="400" height="150" style="width: 100%; border: 1px solid rgba(158, 158, 158, 0.5); border-radius: 4px;"></canvas>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Statistics table -->
+                <div style="margin-bottom: 20px;">
+                    <h4 style="margin: 0 0 10px 0; color: #CE93D8;">Channel Statistics</h4>
+                    <div style="overflow-x: auto;">
+                        <table id="texture-stats-table" style="width: 100%; border-collapse: collapse; font-family: monospace; font-size: 12px;">
+                            <thead>
+                                <tr style="background: rgba(156, 39, 176, 0.2); border-bottom: 2px solid #9C27B0;">
+                                    <th style="padding: 8px; text-align: left; color: #CE93D8;">Channel</th>
+                                    <th style="padding: 8px; text-align: right; color: #CE93D8;">Min</th>
+                                    <th style="padding: 8px; text-align: right; color: #CE93D8;">Max</th>
+                                    <th style="padding: 8px; text-align: right; color: #CE93D8;">Mean</th>
+                                    <th style="padding: 8px; text-align: right; color: #CE93D8;">Median</th>
+                                    <th style="padding: 8px; text-align: right; color: #CE93D8;">Std Dev</th>
+                                    <th style="padding: 8px; text-align: right; color: #CE93D8;">Unique</th>
+                                </tr>
+                            </thead>
+                            <tbody id="texture-stats-tbody" style="color: #e0e0e0;"></tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <!-- Issues -->
+                <div id="texture-inspector-issues" style="padding: 15px; background: rgba(156, 39, 176, 0.1); border-radius: 4px; border: 1px solid rgba(156, 39, 176, 0.3);">
+                    <h4 style="margin: 0 0 10px 0; color: #CE93D8;">Issues Detected</h4>
+                    <div id="texture-issues-list" style="font-size: 12px; line-height: 1.8;"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <!-- LiteGraph.js Library -->
     <script src="https://cdn.jsdelivr.net/npm/litegraph.js@0.7.0/build/litegraph.js"></script>
 
@@ -1209,6 +1288,7 @@
     <script type="module" src="material-override.js"></script>
     <script type="module" src="material-validator.js"></script>
     <script type="module" src="split-view-comparison.js"></script>
+    <script type="module" src="texture-inspector.js"></script>
 
     <!-- Main application script as module -->
     <script type="module" src="materialx.js"></script>
