@@ -13,6 +13,32 @@ import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js';
 import { ShaderPass } from 'three/examples/jsm/postprocessing/ShaderPass.js';
 import { MaterialXLoader } from 'three/examples/jsm/loaders/MaterialXLoader.js';
 import { convertOpenPBRToMaterialXML } from './convert-openpbr-to-mtlx.js';
+import {
+    initializeNodeGraph,
+    registerMaterialXNodeTypes,
+    showNodeGraph,
+    hideNodeGraph,
+    toggleNodeGraphVisibility
+} from './materialx-node-graph.js';
+import {
+    showMaterialJSON,
+    hideMaterialJSON,
+    toggleMaterialJSONVisibility,
+    switchMaterialTab
+} from './material-json-viewer.js';
+import {
+    initializeColorPicker,
+    toggleColorPickerMode,
+    isColorPickerActive,
+    handleColorPickerClick
+} from './color-picker.js';
+import {
+    initializeMaterialPropertyPicker,
+    toggleMaterialPropertyPickerMode,
+    isMaterialPropertyPickerActive,
+    handleMaterialPropertyPickerClick,
+    resizeMaterialPropertyTargets
+} from './material-property-picker.js';
 
 // Embedded default OpenPBR scene (simple sphere with material)
 const EMBEDDED_USDA_SCENE = `#usda 1.0
@@ -1848,6 +1874,20 @@ async function init() {
 
     // Setup file input
     setupFileInput();
+
+    // Initialize node graph system
+    if (initializeNodeGraph()) {
+        registerMaterialXNodeTypes();
+        console.log('Node graph system initialized');
+    }
+
+    // Initialize color picker
+    initializeColorPicker(renderer);
+    console.log('Color picker initialized');
+
+    // Initialize material property picker
+    initializeMaterialPropertyPicker(renderer, scene, camera);
+    console.log('Material property picker initialized');
 
     // Load embedded default scene
     await loadEmbeddedScene();
@@ -4273,6 +4313,9 @@ function selectMaterial(index) {
     // Set selected material for export
     selectedMaterialForExport = material;
 
+    // Make globally accessible for node graph
+    window.selectedMaterialForExport = material;
+
     // Show export buttons
     const exportSection = document.getElementById('material-export');
     if (exportSection) {
@@ -4652,6 +4695,25 @@ async function loadSampleModel() {
 
 // Mouse interaction handlers
 function onMouseClick(event) {
+    // Check if material property picker mode is active (priority 1)
+    if (isMaterialPropertyPickerActive()) {
+        // Handle material property picking
+        const handled = handleMaterialPropertyPickerClick(event, renderer);
+        if (handled) {
+            return; // Don't do other modes
+        }
+    }
+
+    // Check if color picker mode is active (priority 2)
+    if (isColorPickerActive()) {
+        // Handle color picking
+        const handled = handleColorPickerClick(event, renderer);
+        if (handled) {
+            return; // Don't do object selection in color picker mode
+        }
+    }
+
+    // Normal object selection mode
     // Calculate mouse position in normalized device coordinates
     mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
     mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
@@ -4744,6 +4806,11 @@ function onWindowResize() {
     if (composer) {
         composer.setSize(window.innerWidth, window.innerHeight);
     }
+
+    // Update material property picker render targets
+    const width = renderer.domElement.width;
+    const height = renderer.domElement.height;
+    resizeMaterialPropertyTargets(width, height);
 }
 
 function animate() {
