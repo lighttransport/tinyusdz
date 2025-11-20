@@ -62,6 +62,7 @@ import { PixelInspector } from './pixel-inspector.js';
 import { MaterialPresetManager } from './material-preset.js';
 import { PBRTheoryGuide } from './pbr-theory-guide.js';
 import { TextureTilingDetector } from './texture-tiling-detector.js';
+import { GradientRampEditor } from './gradient-ramp-editor.js';
 
 // Embedded default OpenPBR scene (simple sphere with material)
 const EMBEDDED_USDA_SCENE = `#usda 1.0
@@ -3910,6 +3911,127 @@ function setupGUI() {
     tilingDetectorFolder.add(tilingDetectorParams, 'exportReport').name('Export Report');
     tilingDetectorFolder.close();
 
+    // Gradient/Ramp Editor
+    const gradientEditorFolder = gui.addFolder('Gradient/Ramp Editor');
+    const gradientEditorParams = {
+        enabled: false,
+        selectedGradient: 'Grayscale',
+        property: 'baseColor',
+        textureWidth: 256,
+        gradients: [],
+        enable: function() {
+            if (!window.gradientRampEditor) {
+                window.gradientRampEditor = new GradientRampEditor();
+            }
+            gradientEditorParams.enabled = true;
+            gradientEditorParams.gradients = window.gradientRampEditor.getGradientNames();
+            updateStatus('Gradient/Ramp editor enabled', 'success');
+        },
+        disable: function() {
+            gradientEditorParams.enabled = false;
+            updateStatus('Gradient/Ramp editor disabled', 'info');
+        },
+        applyToSelected: function() {
+            if (!window.gradientRampEditor) {
+                window.gradientRampEditor = new GradientRampEditor();
+            }
+
+            if (!selectedObject || !selectedObject.material) {
+                updateStatus('No object with material selected', 'error');
+                return;
+            }
+
+            const success = window.gradientRampEditor.applyToMaterial(
+                selectedObject.material,
+                gradientEditorParams.property,
+                gradientEditorParams.selectedGradient
+            );
+
+            if (success) {
+                updateStatus(`Applied "${gradientEditorParams.selectedGradient}" gradient to ${gradientEditorParams.property}`, 'success');
+            } else {
+                updateStatus('Failed to apply gradient', 'error');
+            }
+        },
+        generateTexture: function() {
+            if (!window.gradientRampEditor) {
+                window.gradientRampEditor = new GradientRampEditor();
+            }
+
+            const texture = window.gradientRampEditor.generateTexture(
+                gradientEditorParams.selectedGradient,
+                gradientEditorParams.textureWidth,
+                1
+            );
+
+            if (texture) {
+                updateStatus(`Generated ${gradientEditorParams.textureWidth}x1 gradient texture`, 'success');
+            }
+        },
+        previewGradient: function() {
+            if (!window.gradientRampEditor) {
+                window.gradientRampEditor = new GradientRampEditor();
+            }
+
+            const dataUrl = window.gradientRampEditor.getGradientPreview(
+                gradientEditorParams.selectedGradient,
+                256, 32
+            );
+
+            if (dataUrl) {
+                const win = window.open('', '_blank', 'width=300,height=100');
+                win.document.write(`<img src="${dataUrl}" style="width:100%;"/>`);
+                updateStatus('Gradient preview opened', 'success');
+            }
+        },
+        exportGradient: function() {
+            if (!window.gradientRampEditor) {
+                window.gradientRampEditor = new GradientRampEditor();
+            }
+
+            window.gradientRampEditor.exportGradient(gradientEditorParams.selectedGradient);
+            updateStatus(`Exported gradient "${gradientEditorParams.selectedGradient}"`, 'success');
+        },
+        logGradients: function() {
+            if (!window.gradientRampEditor) {
+                window.gradientRampEditor = new GradientRampEditor();
+            }
+
+            window.gradientRampEditor.logGradients();
+            updateStatus('Gradient library logged to console', 'success');
+        }
+    };
+
+    gradientEditorFolder.add(gradientEditorParams, 'enabled').name('Enable Editor').onChange(value => {
+        if (value) {
+            gradientEditorParams.enable();
+        } else {
+            gradientEditorParams.disable();
+        }
+    });
+
+    // Initialize gradients list
+    if (!window.gradientRampEditor) {
+        window.gradientRampEditor = new GradientRampEditor();
+    }
+    gradientEditorParams.gradients = window.gradientRampEditor.getGradientNames();
+
+    gradientEditorFolder.add(gradientEditorParams, 'selectedGradient', gradientEditorParams.gradients)
+        .name('Select Gradient');
+
+    gradientEditorFolder.add(gradientEditorParams, 'property', ['baseColor', 'emissive', 'roughness', 'metalness'])
+        .name('Target Property');
+
+    gradientEditorFolder.add(gradientEditorParams, 'textureWidth', [64, 128, 256, 512, 1024])
+        .name('Texture Width');
+
+    gradientEditorFolder.add(gradientEditorParams, 'applyToSelected').name('Apply to Selected Object');
+    gradientEditorFolder.add(gradientEditorParams, 'generateTexture').name('Generate Texture');
+    gradientEditorFolder.add(gradientEditorParams, 'previewGradient').name('Preview Gradient');
+    gradientEditorFolder.add(gradientEditorParams, 'exportGradient').name('Export as JSON');
+    gradientEditorFolder.add(gradientEditorParams, 'logGradients').name('Log All Gradients');
+    gradientEditorFolder.close();
+
     // Split View Comparison System
     const splitViewFolder = gui.addFolder('Split View Compare');
     const splitViewParams = {
@@ -6264,6 +6386,7 @@ window.PixelInspector = PixelInspector;
 window.MaterialPresetManager = MaterialPresetManager;
 window.PBRTheoryGuide = PBRTheoryGuide;
 window.TextureTilingDetector = TextureTilingDetector;
+window.GradientRampEditor = GradientRampEditor;
 window.REFERENCE_MATERIALS = REFERENCE_MATERIALS;
 window.applyReferenceMaterial = applyReferenceMaterial;
 window.getReferencesByCategory = getReferencesByCategory;
