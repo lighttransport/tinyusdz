@@ -7,6 +7,9 @@ assignees: ''
 
 ---
 
+** You should first investigate your issue using your coding agent, and prepare minimal reproducible codes/scenes **
+** We don't provide free-of-charge issue investigation**
+
 **Describe the bug**
 A clear and concise description of what the bug is.
 
