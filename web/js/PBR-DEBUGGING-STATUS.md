@@ -427,11 +427,20 @@ Based on user request and effort/impact:
 - ✅ Pixel Inspector (Magnifying Glass) - Commit: 1f572a7e
 - ✅ Material Preset Save/Load - Commit: c25921e7
 
-**Total Features Completed**: 17 / 17 (100%) 🎉✨
+### Priority 4 Features
+
+**Completed**: 2 / 5 (40%)
+- ✅ Interactive PBR Theory Guide - Commit: a43a67e7
+- ✅ Texture Tiling Detector - Commit: 3ee1b64a
 
 **In Progress**: 0
 
-**Remaining**: 0 - All Priority 1, 2 & 3 features complete!
+**Remaining**: 3
+- ⏳ Material Gradient/Ramp Editor
+- ⏳ Light Probe Visualizer
+- ⏳ BRDF Visualizer
+
+**Total Features Completed**: 19 / 22 (86%) 🎉✨
 
 ---
 
@@ -607,6 +616,61 @@ Each material includes measured real-world PBR values (baseColor, metalness, rou
 
 **Categories**: Custom, Metal, Plastic, Glass, Wood, Stone, Fabric, Organic
 
+### Priority 4 Features
+
+#### Interactive PBR Theory Guide
+
+1. Open "PBR Theory Guide" folder in GUI
+2. Check "Enable Guide" to activate tooltip system
+3. Select topic from dropdown to view educational content
+
+**Topics Available** (11 total):
+- **Base Color (Albedo)**: Color theory, value ranges, metal vs dielectric
+- **Metalness**: Binary nature (0.0 or 1.0), examples
+- **Roughness**: Microfacet theory, typical ranges (0.0-1.0)
+- **IOR**: Index of refraction, Fresnel F0 relationship
+- **Transmission**: Glass/transparency, performance notes
+- **Clearcoat**: Multi-layer BRDF, car paint examples
+- **Sheen**: Fabric rendering, grazing angle effects
+- **Normal Map**: Tangent space, colorspace requirements
+- **AO Map**: Ambient occlusion theory, usage
+- **Energy Conservation**: Physical laws, violations to avoid
+- **Fresnel Effect**: Grazing angle reflections, observations
+
+**Each Topic Includes**:
+- Description and theory explanation
+- Typical value ranges
+- Practical tips and warnings
+- Real-world examples with values
+- Common issues to avoid
+
+**Export**: Click "Export Full Guide" for complete markdown reference
+
+#### Texture Tiling Detector
+
+1. Open "Texture Tiling Detector" folder in GUI
+2. Load a scene with textures
+3. Click "Analyze Scene Textures"
+4. Check console for detailed results
+
+**Analysis Features**:
+- Edge seam detection (left/right, top/bottom comparison)
+- Repetition pattern detection (horizontal, vertical, diagonal)
+- Grid pattern detection (regular line spacing)
+- Low resolution warnings (< 512×512)
+- Multi-texture analysis (base color, normal, roughness, metalness)
+
+**Scoring System**:
+- **Tiling Score**: 0.0-1.0 (>0.3 = tiling detected, >0.6 = strong repetition)
+- **Edge Seam Score**: 0.0-1.0 (>0.1 = seams visible, >0.3 = high severity)
+
+**Issues Reported**:
+- 🔴 High severity: Strong tiling (>0.6) or visible seams (>0.3)
+- 🟡 Medium severity: Moderate tiling/seams, grid patterns
+- ℹ️ Info: Low resolution warnings
+
+**Export**: Click "Export Report" for markdown analysis with recommendations
+
 ---
 
 ## 📝 Notes for Developers
@@ -656,5 +720,6 @@ For questions, issues, or feature requests, please update the proposal document 
 - Priority 1: 19fa32ca, 40e9cccf, 5d9b10d9, f701001f
 - Priority 2: 94d1d040, 7c6ba2a1, ea200c44, e1ce1473
 - Priority 3: dbe9cd03, 1f572a7e, c25921e7
+- Priority 4: a43a67e7, 3ee1b64a
 
-**Status**: ✅ **100% COMPLETE** - All Priority 1, 2 & 3 features implemented! (17/17) 🎉✨
+**Status**: 🚀 **Priority 4 In Progress** - 19/22 features complete (86%), 3 remaining
