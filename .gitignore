@@ -355,3 +355,5 @@ compile_commands.json
 
 # Cmake
 CMakeUserPresets.json
+test_listprims
+test_listprims_manual

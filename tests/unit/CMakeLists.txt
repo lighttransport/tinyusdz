@@ -15,6 +15,7 @@ set(TEST_SOURCES
 	unit-math.cc
 	unit-ioutil.cc
 	unit-timesamples.cc
+	unit-listprims.cc
    )
 
 if (TINYUSDZ_WITH_PXR_COMPAT_API)

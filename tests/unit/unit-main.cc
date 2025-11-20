@@ -16,6 +16,7 @@
 #include "unit-strutil.h"
 #include "unit-timesamples.h"
 #include "unit-pprint.h"
+#include "unit-listprims.h"
 
 #if defined(TINYUSDZ_WITH_PXR_COMPAT_API)
 #include "unit-pxr-compat-api.h"
@@ -38,6 +39,7 @@ TEST_LIST = {
   { "ioutil_test", ioutil_test },
   { "strutil_test", strutil_test },
   { "timesamples_test", timesamples_test },
+  { "listprims_test", listprims_test },
 #if defined(TINYUSDZ_WITH_PXR_COMPAT_API)
   { "pxr_compat_api_test", pxr_compat_api_test },
 #endif
