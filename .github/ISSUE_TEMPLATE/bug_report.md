@@ -9,6 +9,7 @@ assignees: ''
 
 **You should first investigate your issue using your coding agent, and prepare minimal reproducible codes/scenes**
 **We don't provide free-of-charge issue investigation**
+**Users must research issues thoroughly before posting a report, or they will have a chance to be blocked**
 
 **Describe the bug**
 A clear and concise description of what the bug is.
