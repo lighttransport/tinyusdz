@@ -63,6 +63,7 @@ import { MaterialPresetManager } from './material-preset.js';
 import { PBRTheoryGuide } from './pbr-theory-guide.js';
 import { TextureTilingDetector } from './texture-tiling-detector.js';
 import { GradientRampEditor } from './gradient-ramp-editor.js';
+import { LightProbeVisualizer } from './light-probe-visualizer.js';
 
 // Embedded default OpenPBR scene (simple sphere with material)
 const EMBEDDED_USDA_SCENE = `#usda 1.0
@@ -4032,6 +4033,140 @@ function setupGUI() {
     gradientEditorFolder.add(gradientEditorParams, 'logGradients').name('Log All Gradients');
     gradientEditorFolder.close();
 
+    // Light Probe Visualizer
+    const lightProbeFolder = gui.addFolder('Light Probe Visualizer');
+    const lightProbeParams = {
+        enabled: false,
+        visualizationMode: 'sphere',
+        sphereX: 2,
+        sphereY: 1,
+        sphereZ: 0,
+        sphereSize: 0.5,
+        showMipLevels: false,
+        mipLevel: 0,
+        enable: function() {
+            if (!window.lightProbeVisualizer) {
+                window.lightProbeVisualizer = new LightProbeVisualizer(scene, renderer);
+            }
+            window.lightProbeVisualizer.enable();
+            lightProbeParams.enabled = true;
+            updateStatus('Light probe visualizer enabled', 'success');
+        },
+        disable: function() {
+            if (window.lightProbeVisualizer) {
+                window.lightProbeVisualizer.disable();
+                lightProbeParams.enabled = false;
+                updateStatus('Light probe visualizer disabled', 'info');
+            }
+        },
+        analyzeEnvironment: function() {
+            if (!window.lightProbeVisualizer) {
+                window.lightProbeVisualizer = new LightProbeVisualizer(scene, renderer);
+            }
+
+            window.lightProbeVisualizer.logAnalysis();
+            updateStatus('Environment map analysis logged to console', 'success');
+        },
+        exportReport: function() {
+            if (!window.lightProbeVisualizer) {
+                window.lightProbeVisualizer = new LightProbeVisualizer(scene, renderer);
+            }
+
+            const report = window.lightProbeVisualizer.generateReport();
+
+            const blob = new Blob([report], { type: 'text/markdown' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = 'light_probe_analysis.md';
+            a.click();
+            URL.revokeObjectURL(url);
+
+            updateStatus('Light probe report exported', 'success');
+        }
+    };
+
+    lightProbeFolder.add(lightProbeParams, 'enabled').name('Enable Visualizer').onChange(value => {
+        if (value) {
+            lightProbeParams.enable();
+        } else {
+            lightProbeParams.disable();
+        }
+    });
+
+    lightProbeFolder.add(lightProbeParams, 'visualizationMode', ['sphere', 'skybox', 'split'])
+        .name('Visualization Mode')
+        .onChange(value => {
+            if (window.lightProbeVisualizer) {
+                window.lightProbeVisualizer.setVisualizationMode(value);
+                updateStatus(`Visualization mode: ${value}`, 'success');
+            }
+        });
+
+    lightProbeFolder.add(lightProbeParams, 'sphereX', -5, 5, 0.1)
+        .name('Sphere Position X')
+        .onChange(value => {
+            if (window.lightProbeVisualizer) {
+                window.lightProbeVisualizer.setSpherePosition(
+                    value,
+                    lightProbeParams.sphereY,
+                    lightProbeParams.sphereZ
+                );
+            }
+        });
+
+    lightProbeFolder.add(lightProbeParams, 'sphereY', -5, 5, 0.1)
+        .name('Sphere Position Y')
+        .onChange(value => {
+            if (window.lightProbeVisualizer) {
+                window.lightProbeVisualizer.setSpherePosition(
+                    lightProbeParams.sphereX,
+                    value,
+                    lightProbeParams.sphereZ
+                );
+            }
+        });
+
+    lightProbeFolder.add(lightProbeParams, 'sphereZ', -5, 5, 0.1)
+        .name('Sphere Position Z')
+        .onChange(value => {
+            if (window.lightProbeVisualizer) {
+                window.lightProbeVisualizer.setSpherePosition(
+                    lightProbeParams.sphereX,
+                    lightProbeParams.sphereY,
+                    value
+                );
+            }
+        });
+
+    lightProbeFolder.add(lightProbeParams, 'sphereSize', 0.1, 2.0, 0.1)
+        .name('Sphere Size')
+        .onChange(value => {
+            if (window.lightProbeVisualizer) {
+                window.lightProbeVisualizer.setSphereSize(value);
+            }
+        });
+
+    lightProbeFolder.add(lightProbeParams, 'showMipLevels')
+        .name('Show Mip Levels')
+        .onChange(value => {
+            if (window.lightProbeVisualizer) {
+                window.lightProbeVisualizer.setShowMipLevels(value);
+            }
+        });
+
+    lightProbeFolder.add(lightProbeParams, 'mipLevel', 0, 10, 1)
+        .name('Mip Level')
+        .onChange(value => {
+            if (window.lightProbeVisualizer) {
+                window.lightProbeVisualizer.setMipLevel(value);
+            }
+        });
+
+    lightProbeFolder.add(lightProbeParams, 'analyzeEnvironment').name('Analyze Environment Map');
+    lightProbeFolder.add(lightProbeParams, 'exportReport').name('Export Report');
+    lightProbeFolder.close();
+
     // Split View Comparison System
     const splitViewFolder = gui.addFolder('Split View Compare');
     const splitViewParams = {
@@ -6387,6 +6522,7 @@ window.MaterialPresetManager = MaterialPresetManager;
 window.PBRTheoryGuide = PBRTheoryGuide;
 window.TextureTilingDetector = TextureTilingDetector;
 window.GradientRampEditor = GradientRampEditor;
+window.LightProbeVisualizer = LightProbeVisualizer;
 window.REFERENCE_MATERIALS = REFERENCE_MATERIALS;
 window.applyReferenceMaterial = applyReferenceMaterial;
 window.getReferencesByCategory = getReferencesByCategory;
