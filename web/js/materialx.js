@@ -49,6 +49,12 @@ import { MaterialValidator } from './material-validator.js';
 import { SplitViewComparison, COMPARISON_PRESETS } from './split-view-comparison.js';
 import { TextureInspector } from './texture-inspector.js';
 import { MaterialComplexityAnalyzer } from './material-complexity-analyzer.js';
+import {
+    REFERENCE_MATERIALS,
+    applyReferenceMaterial,
+    getReferencesByCategory,
+    getCategories
+} from './reference-materials.js';
 
 // Embedded default OpenPBR scene (simple sphere with material)
 const EMBEDDED_USDA_SCENE = `#usda 1.0
@@ -3195,6 +3201,89 @@ function setupGUI() {
     complexityFolder.add(complexityParams, 'highCount').name('High Complexity').listen().disable();
     complexityFolder.close();
 
+    // Reference Material Library
+    const referenceFolder = gui.addFolder('Reference Materials');
+    const referenceParams = {
+        category: 'Metal',
+        material: 'gold',
+        materialsList: {},
+        applyToSelected: function() {
+            if (selectedObject && selectedObject.material) {
+                const success = applyReferenceMaterial(selectedObject.material, referenceParams.material);
+                if (success) {
+                    updateStatus(`Applied reference: ${REFERENCE_MATERIALS[referenceParams.material].name}`, 'success');
+                } else {
+                    updateStatus(`Failed to apply reference material`, 'error');
+                }
+            } else {
+                updateStatus('No material selected. Click on an object first.', 'warning');
+            }
+        },
+        applyToAll: function() {
+            let count = 0;
+            scene.traverse(obj => {
+                if (obj.isMesh && obj.material) {
+                    applyReferenceMaterial(obj.material, referenceParams.material);
+                    count++;
+                }
+            });
+            updateStatus(`Applied reference to ${count} materials: ${REFERENCE_MATERIALS[referenceParams.material].name}`, 'success');
+        },
+        showInfo: function() {
+            const ref = REFERENCE_MATERIALS[referenceParams.material];
+            if (ref) {
+                console.group(`📚 Reference Material: ${ref.name}`);
+                console.log(`Category: ${ref.category}`);
+                console.log(`Description: ${ref.description}`);
+                console.log(`Base Color: RGB(${ref.baseColor.map(v => v.toFixed(3)).join(', ')})`);
+                console.log(`Metalness: ${ref.metalness}`);
+                console.log(`Roughness: ${ref.roughness}`);
+                console.log(`IOR: ${ref.ior}`);
+                if (ref.f0) console.log(`F0: RGB(${ref.f0.map(v => v.toFixed(3)).join(', ')})`);
+                if (ref.transmission !== undefined) console.log(`Transmission: ${ref.transmission}`);
+                if (ref.sheen !== undefined) console.log(`Sheen: ${ref.sheen}`);
+                if (ref.subsurface !== undefined) console.log(`Subsurface: ${ref.subsurface}`);
+                console.groupEnd();
+            }
+        }
+    };
+
+    // Update materials list when category changes
+    function updateReferenceMaterialsList(category) {
+        const materials = getReferencesByCategory(category);
+        const materialOptions = {};
+        materials.forEach(mat => {
+            materialOptions[mat.name] = mat.key;
+        });
+        referenceParams.materialsList = materialOptions;
+
+        // Set first material as default
+        if (materials.length > 0) {
+            referenceParams.material = materials[0].key;
+        }
+
+        return materialOptions;
+    }
+
+    // Category dropdown
+    const categoryController = referenceFolder.add(referenceParams, 'category', getCategories())
+        .name('Category')
+        .onChange(category => {
+            // Update material dropdown options
+            const newOptions = updateReferenceMaterialsList(category);
+            materialController.options(newOptions);
+        });
+
+    // Material dropdown (initially populated with Metal category)
+    const initialMaterials = updateReferenceMaterialsList('Metal');
+    const materialController = referenceFolder.add(referenceParams, 'material', initialMaterials)
+        .name('Reference Material');
+
+    referenceFolder.add(referenceParams, 'showInfo').name('Show Properties');
+    referenceFolder.add(referenceParams, 'applyToSelected').name('Apply to Selected');
+    referenceFolder.add(referenceParams, 'applyToAll').name('Apply to All Materials');
+    referenceFolder.close();
+
     // Split View Comparison System
     const splitViewFolder = gui.addFolder('Split View Compare');
     const splitViewParams = {
@@ -5539,6 +5628,10 @@ window.MaterialValidator = MaterialValidator;
 window.SplitViewComparison = SplitViewComparison;
 window.TextureInspector = TextureInspector;
 window.MaterialComplexityAnalyzer = MaterialComplexityAnalyzer;
+window.REFERENCE_MATERIALS = REFERENCE_MATERIALS;
+window.applyReferenceMaterial = applyReferenceMaterial;
+window.getReferencesByCategory = getReferencesByCategory;
+window.getCategories = getCategories;
 window.COMPARISON_PRESETS = COMPARISON_PRESETS;
 window.OVERRIDE_PRESETS = OVERRIDE_PRESETS;
 window.inspectTexture = inspectTexture;
