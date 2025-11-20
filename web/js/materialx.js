@@ -60,6 +60,7 @@ import { GBufferViewer } from './gbuffer-viewer.js';
 import { MipMapVisualizer } from './mipmap-visualizer.js';
 import { PixelInspector } from './pixel-inspector.js';
 import { MaterialPresetManager } from './material-preset.js';
+import { PBRTheoryGuide } from './pbr-theory-guide.js';
 
 // Embedded default OpenPBR scene (simple sphere with material)
 const EMBEDDED_USDA_SCENE = `#usda 1.0
@@ -3772,6 +3773,77 @@ function setupGUI() {
     presetFolder.add(presetParams, 'viewLibrary').name('View Library');
     presetFolder.close();
 
+    // PBR Theory Guide
+    const theoryGuideFolder = gui.addFolder('PBR Theory Guide');
+    const theoryGuideParams = {
+        enabled: false,
+        currentTopic: 'baseColor',
+        enable: function() {
+            if (!window.pbrTheoryGuide) {
+                window.pbrTheoryGuide = new PBRTheoryGuide();
+            }
+            window.pbrTheoryGuide.enable();
+            theoryGuideParams.enabled = true;
+
+            // Show initial topic
+            window.pbrTheoryGuide.showTooltip(theoryGuideParams.currentTopic);
+
+            updateStatus('PBR Theory Guide enabled (see bottom-left panel)', 'success');
+        },
+        disable: function() {
+            if (window.pbrTheoryGuide) {
+                window.pbrTheoryGuide.disable();
+                theoryGuideParams.enabled = false;
+                updateStatus('PBR Theory Guide disabled', 'success');
+            }
+        },
+        exportGuide: function() {
+            if (!window.pbrTheoryGuide) {
+                window.pbrTheoryGuide = new PBRTheoryGuide();
+            }
+
+            const guide = window.pbrTheoryGuide.generateGuide();
+            const blob = new Blob([guide], { type: 'text/markdown' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = 'PBR_Theory_Guide.md';
+            a.click();
+            URL.revokeObjectURL(url);
+
+            updateStatus('PBR Theory Guide exported', 'success');
+        }
+    };
+
+    theoryGuideFolder.add(theoryGuideParams, 'enabled').name('Enable Guide').onChange(value => {
+        if (value) {
+            theoryGuideParams.enable();
+        } else {
+            theoryGuideParams.disable();
+        }
+    });
+
+    theoryGuideFolder.add(theoryGuideParams, 'currentTopic', {
+        'Base Color': 'baseColor',
+        'Metalness': 'metalness',
+        'Roughness': 'roughness',
+        'IOR (Index of Refraction)': 'ior',
+        'Transmission': 'transmission',
+        'Clearcoat': 'clearcoat',
+        'Sheen': 'sheen',
+        'Normal Map': 'normalMap',
+        'AO Map': 'aoMap',
+        'Energy Conservation': 'energyConservation',
+        'Fresnel Effect': 'fresnel'
+    }).name('Topic').onChange(topic => {
+        if (window.pbrTheoryGuide && theoryGuideParams.enabled) {
+            window.pbrTheoryGuide.showTooltip(topic);
+        }
+    });
+
+    theoryGuideFolder.add(theoryGuideParams, 'exportGuide').name('Export Full Guide');
+    theoryGuideFolder.close();
+
     // Split View Comparison System
     const splitViewFolder = gui.addFolder('Split View Compare');
     const splitViewParams = {
@@ -6124,6 +6196,7 @@ window.GBufferViewer = GBufferViewer;
 window.MipMapVisualizer = MipMapVisualizer;
 window.PixelInspector = PixelInspector;
 window.MaterialPresetManager = MaterialPresetManager;
+window.PBRTheoryGuide = PBRTheoryGuide;
 window.REFERENCE_MATERIALS = REFERENCE_MATERIALS;
 window.applyReferenceMaterial = applyReferenceMaterial;
 window.getReferencesByCategory = getReferencesByCategory;
