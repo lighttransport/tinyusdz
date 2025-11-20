@@ -74,8 +74,16 @@ bool TraverseRec(const std::string &path_prefix, const tinyusdz::Prim &prim,
     return false;
   }
 
-  std::string prim_abs_path =
-      path_prefix + "/" + prim.local_path().full_path_name();
+  std::string prim_abs_path;
+  
+  // Use absolute_path if it's been computed (after Stage::compute_absolute_prim_path_and_assign_prim_id)
+  // Otherwise, construct the path manually from element_name
+  if (prim.absolute_path().is_valid() && !prim.absolute_path().prim_part().empty()) {
+    prim_abs_path = prim.absolute_path().full_path_name();
+  } else {
+    // Fallback: construct path from element_name
+    prim_abs_path = path_prefix + "/" + prim.element_name();
+  }
 
   if (prim.is<T>()) {
     if (const T *pv = prim.as<T>()) {
@@ -103,8 +111,16 @@ bool TraverseShaderRec(const std::string &path_prefix,
     return false;
   }
 
-  std::string prim_abs_path =
-      path_prefix + "/" + prim.local_path().full_path_name();
+  std::string prim_abs_path;
+  
+  // Use absolute_path if it's been computed (after Stage::compute_absolute_prim_path_and_assign_prim_id)
+  // Otherwise, construct the path manually from element_name
+  if (prim.absolute_path().is_valid() && !prim.absolute_path().prim_part().empty()) {
+    prim_abs_path = prim.absolute_path().full_path_name();
+  } else {
+    // Fallback: construct path from element_name
+    prim_abs_path = path_prefix + "/" + prim.element_name();
+  }
 
   // First check if type is Shader Prim.
   if (const Shader *ps = prim.as<Shader>()) {
