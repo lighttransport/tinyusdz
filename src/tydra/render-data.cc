@@ -1872,19 +1872,21 @@ bool TriangulatePolygon(
         if (ntris > 0) {
           for (size_t k = 0; k < ntris; k++) {
             triangulatedFaceVertexCounts.push_back(3);
+            // earcut returns clockwise triangles, but USD expects CCW
+            // so we reverse the winding order by swapping indices 1 and 2
             triangulatedFaceVertexIndices.push_back(
                 faceVertexIndices[faceIndexOffset + indices[3 * k + 0]]);
             triangulatedFaceVertexIndices.push_back(
-                faceVertexIndices[faceIndexOffset + indices[3 * k + 1]]);
-            triangulatedFaceVertexIndices.push_back(
                 faceVertexIndices[faceIndexOffset + indices[3 * k + 2]]);
+            triangulatedFaceVertexIndices.push_back(
+                faceVertexIndices[faceIndexOffset + indices[3 * k + 1]]);
 
             triangulatedToOrigFaceVertexIndexMap.push_back(faceIndexOffset +
                                                            indices[3 * k + 0]);
             triangulatedToOrigFaceVertexIndexMap.push_back(faceIndexOffset +
-                                                           indices[3 * k + 1]);
-            triangulatedToOrigFaceVertexIndexMap.push_back(faceIndexOffset +
                                                            indices[3 * k + 2]);
+            triangulatedToOrigFaceVertexIndexMap.push_back(faceIndexOffset +
+                                                           indices[3 * k + 1]);
           }
           triangulatedFaceCounts.push_back(uint32_t(ntris));
         }
