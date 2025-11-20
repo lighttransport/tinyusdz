@@ -48,6 +48,7 @@ import {
 import { MaterialValidator } from './material-validator.js';
 import { SplitViewComparison, COMPARISON_PRESETS } from './split-view-comparison.js';
 import { TextureInspector } from './texture-inspector.js';
+import { MaterialComplexityAnalyzer } from './material-complexity-analyzer.js';
 
 // Embedded default OpenPBR scene (simple sphere with material)
 const EMBEDDED_USDA_SCENE = `#usda 1.0
@@ -3156,6 +3157,44 @@ function setupGUI() {
     validationFolder.add(validationParams, 'autoValidate').name('Auto-validate on Load');
     validationFolder.close();
 
+    // Material Complexity Analyzer
+    const complexityFolder = gui.addFolder('Performance Analysis');
+    const complexityParams = {
+        totalMemoryMB: 0,
+        totalTextures: 0,
+        averageComplexity: 0,
+        lowCount: 0,
+        mediumCount: 0,
+        highCount: 0,
+        analyzeNow: function() {
+            const analyzer = new MaterialComplexityAnalyzer();
+            const results = analyzer.analyzeScene(scene);
+
+            complexityParams.totalMemoryMB = results.totalMemoryMB.toFixed(1);
+            complexityParams.totalTextures = results.totalTextures;
+            complexityParams.averageComplexity = results.averageComplexity.toFixed(0);
+            complexityParams.lowCount = results.complexityDistribution['Low'];
+            complexityParams.mediumCount = results.complexityDistribution['Medium'];
+            complexityParams.highCount = results.complexityDistribution['High'] + results.complexityDistribution['Very High'];
+
+            console.log(analyzer.generateReport(results));
+            analyzer.logResults(results);
+
+            updateStatus(`Complexity: ${complexityParams.averageComplexity} avg, ${complexityParams.totalMemoryMB}MB`, 'success');
+
+            gui.controllersRecursive().forEach(c => c.updateDisplay());
+        }
+    };
+
+    complexityFolder.add(complexityParams, 'analyzeNow').name('⚡ Analyze Performance');
+    complexityFolder.add(complexityParams, 'totalMemoryMB').name('Texture Memory (MB)').listen().disable();
+    complexityFolder.add(complexityParams, 'totalTextures').name('Total Textures').listen().disable();
+    complexityFolder.add(complexityParams, 'averageComplexity').name('Avg Complexity').listen().disable();
+    complexityFolder.add(complexityParams, 'lowCount').name('Low Complexity').listen().disable();
+    complexityFolder.add(complexityParams, 'mediumCount').name('Medium Complexity').listen().disable();
+    complexityFolder.add(complexityParams, 'highCount').name('High Complexity').listen().disable();
+    complexityFolder.close();
+
     // Split View Comparison System
     const splitViewFolder = gui.addFolder('Split View Compare');
     const splitViewParams = {
@@ -5499,6 +5538,7 @@ window.applyOverridePreset = applyOverridePreset;
 window.MaterialValidator = MaterialValidator;
 window.SplitViewComparison = SplitViewComparison;
 window.TextureInspector = TextureInspector;
+window.MaterialComplexityAnalyzer = MaterialComplexityAnalyzer;
 window.COMPARISON_PRESETS = COMPARISON_PRESETS;
 window.OVERRIDE_PRESETS = OVERRIDE_PRESETS;
 window.inspectTexture = inspectTexture;
