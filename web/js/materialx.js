@@ -101,7 +101,15 @@ const AOV_MODES = {
     SPECULAR: 'specular',
     COAT: 'coat',
     TRANSMISSION: 'transmission',
-    EMISSIVE: 'emissive'
+    EMISSIVE: 'emissive',
+    // New Priority 1 AOV Modes
+    AO: 'ambient_occlusion',
+    ANISOTROPY: 'anisotropy',
+    SHEEN: 'sheen',
+    IRIDESCENCE: 'iridescence',
+    NORMAL_QUALITY: 'normal_quality',
+    UV_LAYOUT: 'uv_layout',
+    SHADER_ERROR: 'shader_error'
 };
 
 // Global variables
@@ -964,6 +972,426 @@ function createAOVMaterial(aovMode, materialData = null) {
                     material.uniforms.hasEmissiveMap.value = true;
                 }
                 material.uniforms.emissiveIntensity.value = srcMat.emissiveIntensity || 0.0;
+            }
+            break;
+
+        case AOV_MODES.AO:
+            material = new THREE.ShaderMaterial({
+                vertexShader: `
+                    varying vec2 vUv;
+                    void main() {
+                        vUv = uv;
+                        gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+                    }
+                `,
+                fragmentShader: `
+                    varying vec2 vUv;
+                    uniform sampler2D aoMap;
+                    uniform bool hasAOMap;
+                    uniform float aoIntensity;
+
+                    void main() {
+                        float ao = 1.0;
+                        if (hasAOMap) {
+                            ao = texture2D(aoMap, vUv).r;
+                        }
+                        // Visualize AO with intensity control
+                        float visualAO = mix(1.0, ao, aoIntensity);
+                        gl_FragColor = vec4(vec3(visualAO), 1.0);
+                    }
+                `,
+                uniforms: {
+                    aoMap: { value: null },
+                    hasAOMap: { value: false },
+                    aoIntensity: { value: 1.0 }
+                },
+                name: 'AOV_AO'
+            });
+
+            if (materialData && materialData.threeMaterial) {
+                const srcMat = materialData.threeMaterial;
+                if (srcMat.aoMap) {
+                    material.uniforms.aoMap.value = srcMat.aoMap;
+                    material.uniforms.hasAOMap.value = true;
+                }
+                material.uniforms.aoIntensity.value = srcMat.aoMapIntensity || 1.0;
+            }
+            break;
+
+        case AOV_MODES.ANISOTROPY:
+            material = new THREE.ShaderMaterial({
+                vertexShader: `
+                    varying vec2 vUv;
+                    void main() {
+                        vUv = uv;
+                        gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+                    }
+                `,
+                fragmentShader: `
+                    varying vec2 vUv;
+                    uniform float anisotropy;
+                    uniform float anisotropyRotation;
+                    uniform sampler2D anisotropyMap;
+                    uniform bool hasAnisotropyMap;
+
+                    void main() {
+                        float anisoStrength = anisotropy;
+                        float anisoRotation = anisotropyRotation;
+
+                        if (hasAnisotropyMap) {
+                            // Anisotropy map: RG = direction, B = strength
+                            vec3 anisoSample = texture2D(anisotropyMap, vUv).rgb;
+                            anisoStrength = anisoSample.b * anisotropy;
+                            anisoRotation = atan(anisoSample.g, anisoSample.r);
+                        }
+
+                        // Visualize: direction as hue, strength as brightness
+                        float hue = (anisoRotation + 3.14159) / (2.0 * 3.14159); // Normalize to [0,1]
+                        vec3 color = vec3(hue, anisoStrength, anisoStrength * 0.5);
+                        gl_FragColor = vec4(color, 1.0);
+                    }
+                `,
+                uniforms: {
+                    anisotropy: { value: 0.0 },
+                    anisotropyRotation: { value: 0.0 },
+                    anisotropyMap: { value: null },
+                    hasAnisotropyMap: { value: false }
+                },
+                name: 'AOV_Anisotropy'
+            });
+
+            if (materialData && materialData.threeMaterial) {
+                const srcMat = materialData.threeMaterial;
+                material.uniforms.anisotropy.value = srcMat.anisotropy || 0.0;
+                material.uniforms.anisotropyRotation.value = srcMat.anisotropyRotation || 0.0;
+                if (srcMat.anisotropyMap) {
+                    material.uniforms.anisotropyMap.value = srcMat.anisotropyMap;
+                    material.uniforms.hasAnisotropyMap.value = true;
+                }
+            }
+            break;
+
+        case AOV_MODES.SHEEN:
+            material = new THREE.ShaderMaterial({
+                vertexShader: `
+                    varying vec2 vUv;
+                    void main() {
+                        vUv = uv;
+                        gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+                    }
+                `,
+                fragmentShader: `
+                    varying vec2 vUv;
+                    uniform float sheen;
+                    uniform vec3 sheenColor;
+                    uniform float sheenRoughness;
+                    uniform sampler2D sheenColorMap;
+                    uniform sampler2D sheenRoughnessMap;
+                    uniform bool hasSheenColorMap;
+                    uniform bool hasSheenRoughnessMap;
+
+                    void main() {
+                        vec3 sColor = sheenColor * sheen;
+                        float sRoughness = sheenRoughness;
+
+                        if (hasSheenColorMap) {
+                            sColor *= texture2D(sheenColorMap, vUv).rgb;
+                        }
+                        if (hasSheenRoughnessMap) {
+                            sRoughness *= texture2D(sheenRoughnessMap, vUv).a;
+                        }
+
+                        // Visualize: sheen color with roughness as overlay
+                        gl_FragColor = vec4(sColor, sRoughness);
+                    }
+                `,
+                uniforms: {
+                    sheen: { value: 0.0 },
+                    sheenColor: { value: new THREE.Color(1, 1, 1) },
+                    sheenRoughness: { value: 1.0 },
+                    sheenColorMap: { value: null },
+                    sheenRoughnessMap: { value: null },
+                    hasSheenColorMap: { value: false },
+                    hasSheenRoughnessMap: { value: false }
+                },
+                name: 'AOV_Sheen'
+            });
+
+            if (materialData && materialData.threeMaterial) {
+                const srcMat = materialData.threeMaterial;
+                material.uniforms.sheen.value = srcMat.sheen || 0.0;
+                if (srcMat.sheenColor) {
+                    material.uniforms.sheenColor.value.copy(srcMat.sheenColor);
+                }
+                material.uniforms.sheenRoughness.value = srcMat.sheenRoughness || 1.0;
+                if (srcMat.sheenColorMap) {
+                    material.uniforms.sheenColorMap.value = srcMat.sheenColorMap;
+                    material.uniforms.hasSheenColorMap.value = true;
+                }
+                if (srcMat.sheenRoughnessMap) {
+                    material.uniforms.sheenRoughnessMap.value = srcMat.sheenRoughnessMap;
+                    material.uniforms.hasSheenRoughnessMap.value = true;
+                }
+            }
+            break;
+
+        case AOV_MODES.IRIDESCENCE:
+            material = new THREE.ShaderMaterial({
+                vertexShader: `
+                    varying vec2 vUv;
+                    void main() {
+                        vUv = uv;
+                        gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+                    }
+                `,
+                fragmentShader: `
+                    varying vec2 vUv;
+                    uniform float iridescence;
+                    uniform float iridescenceIOR;
+                    uniform vec2 iridescenceThicknessRange;
+                    uniform sampler2D iridescenceMap;
+                    uniform sampler2D iridescenceThicknessMap;
+                    uniform bool hasIridescenceMap;
+                    uniform bool hasIridescenceThicknessMap;
+
+                    void main() {
+                        float irid = iridescence;
+                        float thickness = iridescenceThicknessRange.x;
+
+                        if (hasIridescenceMap) {
+                            irid *= texture2D(iridescenceMap, vUv).r;
+                        }
+                        if (hasIridescenceThicknessMap) {
+                            thickness = texture2D(iridescenceThicknessMap, vUv).g;
+                            thickness = mix(iridescenceThicknessRange.x, iridescenceThicknessRange.y, thickness);
+                        }
+
+                        // Visualize: R=iridescence strength, G=normalized thickness, B=IOR
+                        vec3 color = vec3(
+                            irid,
+                            (thickness - iridescenceThicknessRange.x) /
+                                (iridescenceThicknessRange.y - iridescenceThicknessRange.x + 0.001),
+                            (iridescenceIOR - 1.0) / 2.0  // Normalize IOR to [0,1] range
+                        );
+                        gl_FragColor = vec4(color, 1.0);
+                    }
+                `,
+                uniforms: {
+                    iridescence: { value: 0.0 },
+                    iridescenceIOR: { value: 1.3 },
+                    iridescenceThicknessRange: { value: new THREE.Vector2(100, 400) },
+                    iridescenceMap: { value: null },
+                    iridescenceThicknessMap: { value: null },
+                    hasIridescenceMap: { value: false },
+                    hasIridescenceThicknessMap: { value: false }
+                },
+                name: 'AOV_Iridescence'
+            });
+
+            if (materialData && materialData.threeMaterial) {
+                const srcMat = materialData.threeMaterial;
+                material.uniforms.iridescence.value = srcMat.iridescence || 0.0;
+                material.uniforms.iridescenceIOR.value = srcMat.iridescenceIOR || 1.3;
+                if (srcMat.iridescenceThicknessRange) {
+                    material.uniforms.iridescenceThicknessRange.value.copy(srcMat.iridescenceThicknessRange);
+                }
+                if (srcMat.iridescenceMap) {
+                    material.uniforms.iridescenceMap.value = srcMat.iridescenceMap;
+                    material.uniforms.hasIridescenceMap.value = true;
+                }
+                if (srcMat.iridescenceThicknessMap) {
+                    material.uniforms.iridescenceThicknessMap.value = srcMat.iridescenceThicknessMap;
+                    material.uniforms.hasIridescenceThicknessMap.value = true;
+                }
+            }
+            break;
+
+        case AOV_MODES.NORMAL_QUALITY:
+            material = new THREE.ShaderMaterial({
+                vertexShader: `
+                    varying vec2 vUv;
+                    varying mat3 vTBN;
+
+                    attribute vec4 tangent;
+
+                    void main() {
+                        vUv = uv;
+
+                        // Build TBN matrix
+                        vec3 T = normalize(normalMatrix * tangent.xyz);
+                        vec3 N = normalize(normalMatrix * normal);
+                        vec3 B = cross(N, T) * tangent.w;
+                        vTBN = mat3(T, B, N);
+
+                        gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+                    }
+                `,
+                fragmentShader: `
+                    varying vec2 vUv;
+                    varying mat3 vTBN;
+                    uniform sampler2D normalMap;
+                    uniform bool hasNormalMap;
+                    uniform float normalScale;
+
+                    void main() {
+                        vec3 color = vec3(0.5, 1.0, 0.5); // Green = valid
+
+                        if (hasNormalMap) {
+                            vec3 normalMapSample = texture2D(normalMap, vUv).rgb * 2.0 - 1.0;
+                            normalMapSample.xy *= normalScale;
+
+                            // Check normal map quality
+                            float len = length(normalMapSample);
+                            float error = abs(len - 1.0);
+
+                            if (error > 0.1) {
+                                // Red = invalid (length too far from 1.0)
+                                color = vec3(1.0, 0.0, 0.0);
+                            } else if (error > 0.05) {
+                                // Yellow = warning (slight deviation)
+                                color = vec3(1.0, 1.0, 0.0);
+                            } else {
+                                // Show normal direction (valid)
+                                vec3 N = normalize(vTBN * normalMapSample);
+                                color = N * 0.5 + 0.5;
+                            }
+                        }
+
+                        gl_FragColor = vec4(color, 1.0);
+                    }
+                `,
+                uniforms: {
+                    normalMap: { value: null },
+                    hasNormalMap: { value: false },
+                    normalScale: { value: 1.0 }
+                },
+                name: 'AOV_NormalQuality'
+            });
+
+            if (materialData && materialData.threeMaterial) {
+                const srcMat = materialData.threeMaterial;
+                if (srcMat.normalMap) {
+                    material.uniforms.normalMap.value = srcMat.normalMap;
+                    material.uniforms.hasNormalMap.value = true;
+                    material.uniforms.normalScale.value = srcMat.normalScale?.x || 1.0;
+                }
+            }
+            break;
+
+        case AOV_MODES.UV_LAYOUT:
+            material = new THREE.ShaderMaterial({
+                vertexShader: `
+                    varying vec2 vUv;
+                    void main() {
+                        vUv = uv;
+                        gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+                    }
+                `,
+                fragmentShader: `
+                    varying vec2 vUv;
+                    uniform float gridFrequency;
+                    uniform float lineWidth;
+                    uniform vec3 gridColor;
+                    uniform vec3 seamColor;
+
+                    void main() {
+                        // Draw UV grid
+                        vec2 grid = fract(vUv * gridFrequency);
+                        float gridLine = step(grid.x, lineWidth) + step(grid.y, lineWidth);
+                        gridLine = min(gridLine, 1.0);
+
+                        // Detect UV seams using derivatives
+                        vec2 uvDx = dFdx(vUv * gridFrequency);
+                        vec2 uvDy = dFdy(vUv * gridFrequency);
+                        float seam = (length(uvDx) > 2.0 || length(uvDy) > 2.0) ? 1.0 : 0.0;
+
+                        // Base color from UV coordinates
+                        vec3 baseColor = vec3(vUv, 0.0);
+
+                        // Mix with grid and seams
+                        vec3 color = mix(baseColor, gridColor, gridLine * 0.7);
+                        color = mix(color, seamColor, seam);
+
+                        gl_FragColor = vec4(color, 1.0);
+                    }
+                `,
+                uniforms: {
+                    gridFrequency: { value: 8.0 },
+                    lineWidth: { value: 0.05 },
+                    gridColor: { value: new THREE.Color(1, 1, 1) },
+                    seamColor: { value: new THREE.Color(1, 0, 0) }
+                },
+                name: 'AOV_UVLayout'
+            });
+            break;
+
+        case AOV_MODES.SHADER_ERROR:
+            material = new THREE.ShaderMaterial({
+                vertexShader: `
+                    varying vec2 vUv;
+                    varying vec3 vNormal;
+                    void main() {
+                        vUv = uv;
+                        vNormal = normalize(normalMatrix * normal);
+                        gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+                    }
+                `,
+                fragmentShader: `
+                    varying vec2 vUv;
+                    varying vec3 vNormal;
+                    uniform sampler2D testTexture;
+                    uniform bool hasTexture;
+
+                    bool isNaN(float val) {
+                        return (val < 0.0 || 0.0 < val || val == 0.0) ? false : true;
+                    }
+
+                    bool isInf(float val) {
+                        return (val != 0.0 && val * 2.0 == val) ? true : false;
+                    }
+
+                    void main() {
+                        // Sample texture if available
+                        vec4 texSample = hasTexture ? texture2D(testTexture, vUv) : vec4(1.0);
+
+                        // Simulate potential shader errors
+                        vec3 testValue = vNormal * texSample.rgb;
+
+                        // Check for errors
+                        bool hasNaN = isNaN(testValue.r) || isNaN(testValue.g) || isNaN(testValue.b);
+                        bool hasInf = isInf(testValue.r) || isInf(testValue.g) || isInf(testValue.b);
+                        bool tooHigh = any(greaterThan(testValue, vec3(10000.0)));
+                        bool negative = any(lessThan(testValue, vec3(0.0)));
+
+                        vec3 color;
+                        if (hasNaN) {
+                            color = vec3(1.0, 0.0, 1.0); // Magenta = NaN
+                        } else if (hasInf) {
+                            color = vec3(1.0, 1.0, 0.0); // Yellow = Infinity
+                        } else if (tooHigh) {
+                            color = vec3(1.0, 0.5, 0.0); // Orange = Too high
+                        } else if (negative) {
+                            color = vec3(0.0, 1.0, 1.0); // Cyan = Negative (where shouldn't be)
+                        } else {
+                            color = vec3(0.0, 1.0, 0.0); // Green = Valid
+                        }
+
+                        gl_FragColor = vec4(color, 1.0);
+                    }
+                `,
+                uniforms: {
+                    testTexture: { value: null },
+                    hasTexture: { value: false }
+                },
+                name: 'AOV_ShaderError'
+            });
+
+            if (materialData && materialData.threeMaterial) {
+                const srcMat = materialData.threeMaterial;
+                if (srcMat.map) {
+                    material.uniforms.testTexture.value = srcMat.map;
+                    material.uniforms.hasTexture.value = true;
+                }
             }
             break;
 
