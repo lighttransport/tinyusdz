@@ -55,6 +55,7 @@ import {
     getReferencesByCategory,
     getCategories
 } from './reference-materials.js';
+import { IBLContributionAnalyzer } from './ibl-contribution-analyzer.js';
 
 // Embedded default OpenPBR scene (simple sphere with material)
 const EMBEDDED_USDA_SCENE = `#usda 1.0
@@ -3284,6 +3285,87 @@ function setupGUI() {
     referenceFolder.add(referenceParams, 'applyToAll').name('Apply to All Materials');
     referenceFolder.close();
 
+    // IBL Contribution Analyzer
+    const iblFolder = gui.addFolder('IBL Contribution');
+    const iblParams = {
+        mode: 'full',
+        materialsWithIBL: 0,
+        avgIntensity: 0,
+        diffuseDominant: 0,
+        specularDominant: 0,
+        balanced: 0,
+        analyzeNow: function() {
+            if (!window.iblAnalyzer) {
+                window.iblAnalyzer = new IBLContributionAnalyzer(scene, renderer);
+            }
+            const results = window.iblAnalyzer.analyzeScene(scene);
+
+            // Update display values
+            iblParams.materialsWithIBL = results.materialsWithIBL;
+            iblParams.avgIntensity = parseFloat(results.averageEnvMapIntensity.toFixed(2));
+            iblParams.diffuseDominant = results.contributionBreakdown.diffuseDominant;
+            iblParams.specularDominant = results.contributionBreakdown.specularDominant;
+            iblParams.balanced = results.contributionBreakdown.balanced;
+
+            // Update GUI displays
+            iblFolder.controllers.forEach(c => c.updateDisplay());
+
+            // Log to console
+            window.iblAnalyzer.logResults(results);
+
+            updateStatus(`IBL Analysis: ${results.materialsWithIBL} materials with IBL`, 'success');
+        },
+        exportReport: function() {
+            if (!window.iblAnalyzer) {
+                window.iblAnalyzer = new IBLContributionAnalyzer(scene, renderer);
+            }
+            const results = window.iblAnalyzer.analyzeScene(scene);
+            const report = window.iblAnalyzer.generateReport(results);
+
+            // Download report
+            const blob = new Blob([report], { type: 'text/markdown' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = 'ibl-analysis-report.md';
+            a.click();
+            URL.revokeObjectURL(url);
+
+            updateStatus('IBL analysis report exported', 'success');
+        },
+        reset: function() {
+            if (window.iblAnalyzer) {
+                window.iblAnalyzer.reset();
+                iblParams.mode = 'full';
+                iblFolder.controllers.forEach(c => c.updateDisplay());
+                updateStatus('IBL mode reset to full', 'success');
+            }
+        }
+    };
+
+    iblFolder.add(iblParams, 'mode', {
+        'Full IBL (Diffuse + Specular)': 'full',
+        'Diffuse Only': 'diffuse',
+        'Specular Only': 'specular',
+        'No IBL': 'none'
+    }).name('Visualization Mode').onChange(mode => {
+        if (!window.iblAnalyzer) {
+            window.iblAnalyzer = new IBLContributionAnalyzer(scene, renderer);
+        }
+        window.iblAnalyzer.setMode(mode);
+        updateStatus(`IBL mode: ${mode}`, 'success');
+    });
+
+    iblFolder.add(iblParams, 'analyzeNow').name('Analyze Scene');
+    iblFolder.add(iblParams, 'materialsWithIBL').name('Materials w/ IBL').listen().disable();
+    iblFolder.add(iblParams, 'avgIntensity').name('Avg Intensity').listen().disable();
+    iblFolder.add(iblParams, 'diffuseDominant').name('Diffuse Dominant').listen().disable();
+    iblFolder.add(iblParams, 'specularDominant').name('Specular Dominant').listen().disable();
+    iblFolder.add(iblParams, 'balanced').name('Balanced').listen().disable();
+    iblFolder.add(iblParams, 'exportReport').name('Export Report');
+    iblFolder.add(iblParams, 'reset').name('Reset to Original');
+    iblFolder.close();
+
     // Split View Comparison System
     const splitViewFolder = gui.addFolder('Split View Compare');
     const splitViewParams = {
@@ -5628,6 +5710,7 @@ window.MaterialValidator = MaterialValidator;
 window.SplitViewComparison = SplitViewComparison;
 window.TextureInspector = TextureInspector;
 window.MaterialComplexityAnalyzer = MaterialComplexityAnalyzer;
+window.IBLContributionAnalyzer = IBLContributionAnalyzer;
 window.REFERENCE_MATERIALS = REFERENCE_MATERIALS;
 window.applyReferenceMaterial = applyReferenceMaterial;
 window.getReferencesByCategory = getReferencesByCategory;
