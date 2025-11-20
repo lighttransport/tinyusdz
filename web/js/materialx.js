@@ -61,6 +61,7 @@ import { MipMapVisualizer } from './mipmap-visualizer.js';
 import { PixelInspector } from './pixel-inspector.js';
 import { MaterialPresetManager } from './material-preset.js';
 import { PBRTheoryGuide } from './pbr-theory-guide.js';
+import { TextureTilingDetector } from './texture-tiling-detector.js';
 
 // Embedded default OpenPBR scene (simple sphere with material)
 const EMBEDDED_USDA_SCENE = `#usda 1.0
@@ -3844,6 +3845,71 @@ function setupGUI() {
     theoryGuideFolder.add(theoryGuideParams, 'exportGuide').name('Export Full Guide');
     theoryGuideFolder.close();
 
+    // Texture Tiling Detector
+    const tilingDetectorFolder = gui.addFolder('Texture Tiling Detector');
+    const tilingDetectorParams = {
+        enabled: false,
+        lastAnalysis: null,
+        enable: function() {
+            if (!window.textureTilingDetector) {
+                window.textureTilingDetector = new TextureTilingDetector();
+            }
+            tilingDetectorParams.enabled = true;
+            updateStatus('Texture tiling detector enabled', 'success');
+        },
+        disable: function() {
+            tilingDetectorParams.enabled = false;
+            updateStatus('Texture tiling detector disabled', 'info');
+        },
+        analyzeScene: function() {
+            if (!window.textureTilingDetector) {
+                window.textureTilingDetector = new TextureTilingDetector();
+            }
+
+            const analysis = window.textureTilingDetector.analyzeScene(scene);
+            tilingDetectorParams.lastAnalysis = analysis;
+
+            window.textureTilingDetector.logResults(analysis);
+
+            updateStatus(`Analyzed ${analysis.totalTextures} textures. Tiling: ${analysis.texturesWithTiling}, Seams: ${analysis.texturesWithSeams}`,
+                        analysis.texturesWithTiling > 0 || analysis.texturesWithSeams > 0 ? 'warning' : 'success');
+        },
+        exportReport: function() {
+            if (!tilingDetectorParams.lastAnalysis) {
+                updateStatus('No analysis data. Run "Analyze Scene" first.', 'error');
+                return;
+            }
+
+            if (!window.textureTilingDetector) {
+                window.textureTilingDetector = new TextureTilingDetector();
+            }
+
+            const report = window.textureTilingDetector.generateReport(tilingDetectorParams.lastAnalysis);
+
+            const blob = new Blob([report], { type: 'text/markdown' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = 'texture_tiling_analysis.md';
+            a.click();
+            URL.revokeObjectURL(url);
+
+            updateStatus('Tiling analysis report exported', 'success');
+        }
+    };
+
+    tilingDetectorFolder.add(tilingDetectorParams, 'enabled').name('Enable Detector').onChange(value => {
+        if (value) {
+            tilingDetectorParams.enable();
+        } else {
+            tilingDetectorParams.disable();
+        }
+    });
+
+    tilingDetectorFolder.add(tilingDetectorParams, 'analyzeScene').name('Analyze Scene Textures');
+    tilingDetectorFolder.add(tilingDetectorParams, 'exportReport').name('Export Report');
+    tilingDetectorFolder.close();
+
     // Split View Comparison System
     const splitViewFolder = gui.addFolder('Split View Compare');
     const splitViewParams = {
@@ -6197,6 +6263,7 @@ window.MipMapVisualizer = MipMapVisualizer;
 window.PixelInspector = PixelInspector;
 window.MaterialPresetManager = MaterialPresetManager;
 window.PBRTheoryGuide = PBRTheoryGuide;
+window.TextureTilingDetector = TextureTilingDetector;
 window.REFERENCE_MATERIALS = REFERENCE_MATERIALS;
 window.applyReferenceMaterial = applyReferenceMaterial;
 window.getReferencesByCategory = getReferencesByCategory;
