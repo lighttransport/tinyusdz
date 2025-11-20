@@ -59,6 +59,7 @@ import { IBLContributionAnalyzer } from './ibl-contribution-analyzer.js';
 import { GBufferViewer } from './gbuffer-viewer.js';
 import { MipMapVisualizer } from './mipmap-visualizer.js';
 import { PixelInspector } from './pixel-inspector.js';
+import { MaterialPresetManager } from './material-preset.js';
 
 // Embedded default OpenPBR scene (simple sphere with material)
 const EMBEDDED_USDA_SCENE = `#usda 1.0
@@ -3602,6 +3603,175 @@ function setupGUI() {
 
     pixelInspectorFolder.close();
 
+    // Material Preset Save/Load
+    const presetFolder = gui.addFolder('Material Presets');
+    const presetParams = {
+        presetName: 'My Material',
+        category: 'Custom',
+        selectedPreset: null,
+        presetsList: {},
+        saveCurrentMaterial: function() {
+            if (!window.presetManager) {
+                window.presetManager = new MaterialPresetManager();
+            }
+
+            if (!selectedObject || !selectedObject.material) {
+                updateStatus('No material selected. Click on an object first.', 'warning');
+                return;
+            }
+
+            const preset = window.presetManager.saveMaterialPreset(
+                selectedObject.material,
+                presetParams.presetName,
+                presetParams.category
+            );
+
+            updateStatus(`Saved preset: ${presetParams.presetName}`, 'success');
+            presetParams.updatePresetsList();
+        },
+        applyPreset: function() {
+            if (!window.presetManager || !presetParams.selectedPreset) {
+                updateStatus('No preset selected', 'warning');
+                return;
+            }
+
+            if (!selectedObject || !selectedObject.material) {
+                updateStatus('No material selected. Click on an object first.', 'warning');
+                return;
+            }
+
+            const preset = window.presetManager.getPreset(presetParams.selectedPreset);
+            if (preset) {
+                window.presetManager.applyPreset(preset, selectedObject.material);
+                updateStatus(`Applied preset: ${preset.name}`, 'success');
+            }
+        },
+        deletePreset: function() {
+            if (!window.presetManager || !presetParams.selectedPreset) {
+                updateStatus('No preset selected', 'warning');
+                return;
+            }
+
+            if (confirm(`Delete preset "${presetParams.selectedPreset}"?`)) {
+                window.presetManager.deletePreset(presetParams.selectedPreset);
+                updateStatus(`Deleted preset: ${presetParams.selectedPreset}`, 'success');
+                presetParams.updatePresetsList();
+            }
+        },
+        exportPreset: function() {
+            if (!window.presetManager || !presetParams.selectedPreset) {
+                updateStatus('No preset selected', 'warning');
+                return;
+            }
+
+            window.presetManager.exportPresetToFile(presetParams.selectedPreset);
+            updateStatus('Preset exported as JSON', 'success');
+        },
+        importPreset: function() {
+            const input = document.createElement('input');
+            input.type = 'file';
+            input.accept = '.json';
+            input.onchange = async (e) => {
+                const file = e.target.files[0];
+                if (file) {
+                    if (!window.presetManager) {
+                        window.presetManager = new MaterialPresetManager();
+                    }
+
+                    try {
+                        const preset = await window.presetManager.importPresetFromFile(file);
+                        updateStatus(`Imported preset: ${preset.name}`, 'success');
+                        presetParams.updatePresetsList();
+                    } catch (err) {
+                        updateStatus(`Import failed: ${err.message}`, 'error');
+                    }
+                }
+            };
+            input.click();
+        },
+        exportAll: function() {
+            if (!window.presetManager) {
+                updateStatus('No presets to export', 'warning');
+                return;
+            }
+
+            window.presetManager.exportAllPresets();
+            updateStatus('All presets exported', 'success');
+        },
+        importAll: function() {
+            const input = document.createElement('input');
+            input.type = 'file';
+            input.accept = '.json';
+            input.onchange = async (e) => {
+                const file = e.target.files[0];
+                if (file) {
+                    if (!window.presetManager) {
+                        window.presetManager = new MaterialPresetManager();
+                    }
+
+                    try {
+                        const count = await window.presetManager.importPresetsFromFile(file);
+                        updateStatus(`Imported ${count} presets`, 'success');
+                        presetParams.updatePresetsList();
+                    } catch (err) {
+                        updateStatus(`Import failed: ${err.message}`, 'error');
+                    }
+                }
+            };
+            input.click();
+        },
+        viewLibrary: function() {
+            if (!window.presetManager) {
+                window.presetManager = new MaterialPresetManager();
+            }
+
+            const report = window.presetManager.generateReport();
+            console.group('📚 Material Presets Library');
+            console.log(report);
+            console.groupEnd();
+
+            updateStatus(`Presets library: ${window.presetManager.presets.size} presets`, 'success');
+        },
+        updatePresetsList: function() {
+            if (!window.presetManager) {
+                window.presetManager = new MaterialPresetManager();
+            }
+
+            const allPresets = window.presetManager.getAllPresets();
+            presetParams.presetsList = {};
+
+            allPresets.forEach(preset => {
+                presetParams.presetsList[preset.name] = preset.name;
+            });
+
+            // Update dropdown if it exists
+            if (presetController) {
+                presetController.options(presetParams.presetsList);
+            }
+        }
+    };
+
+    presetFolder.add(presetParams, 'presetName').name('Preset Name');
+    presetFolder.add(presetParams, 'category', [
+        'Custom', 'Metal', 'Plastic', 'Glass', 'Wood', 'Stone', 'Fabric', 'Organic'
+    ]).name('Category');
+    presetFolder.add(presetParams, 'saveCurrentMaterial').name('Save Current Material');
+
+    // Initialize presets list
+    presetParams.updatePresetsList();
+
+    const presetController = presetFolder.add(presetParams, 'selectedPreset', presetParams.presetsList)
+        .name('Select Preset');
+
+    presetFolder.add(presetParams, 'applyPreset').name('Apply to Selected');
+    presetFolder.add(presetParams, 'deletePreset').name('Delete Preset');
+    presetFolder.add(presetParams, 'exportPreset').name('Export Preset');
+    presetFolder.add(presetParams, 'importPreset').name('Import Preset');
+    presetFolder.add(presetParams, 'exportAll').name('Export All Presets');
+    presetFolder.add(presetParams, 'importAll').name('Import All Presets');
+    presetFolder.add(presetParams, 'viewLibrary').name('View Library');
+    presetFolder.close();
+
     // Split View Comparison System
     const splitViewFolder = gui.addFolder('Split View Compare');
     const splitViewParams = {
@@ -5953,6 +6123,7 @@ window.IBLContributionAnalyzer = IBLContributionAnalyzer;
 window.GBufferViewer = GBufferViewer;
 window.MipMapVisualizer = MipMapVisualizer;
 window.PixelInspector = PixelInspector;
+window.MaterialPresetManager = MaterialPresetManager;
 window.REFERENCE_MATERIALS = REFERENCE_MATERIALS;
 window.applyReferenceMaterial = applyReferenceMaterial;
 window.getReferencesByCategory = getReferencesByCategory;
