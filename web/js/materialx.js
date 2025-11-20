@@ -3174,7 +3174,7 @@ function setupGUI() {
             if (splitViewParams.secondaryAOV !== AOV_MODES.NONE) {
                 window.splitViewComparison.secondaryScene.traverse(obj => {
                     if (obj.isMesh && obj.material) {
-                        const aovMaterial = createAOVMaterial(obj.material, splitViewParams.secondaryAOV);
+                        const aovMaterial = createAOVMaterial(splitViewParams.secondaryAOV, obj.material);
                         if (aovMaterial) {
                             obj.material = aovMaterial;
                         }
