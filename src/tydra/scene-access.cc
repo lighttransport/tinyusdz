@@ -77,6 +77,11 @@ bool TraverseRec(const std::string &path_prefix, const tinyusdz::Prim &prim,
   std::string prim_abs_path =
       path_prefix + "/" + prim.local_path().full_path_name();
 
+  // Set the absolute path on the prim object so users can access it
+  // Note: This is a carefully considered const_cast to fix the missing path information
+  tinyusdz::Prim &mutable_prim = const_cast<tinyusdz::Prim &>(prim);
+  mutable_prim.absolute_path() = tinyusdz::Path(prim_abs_path, /* prop part */ "");
+
   if (prim.is<T>()) {
     if (const T *pv = prim.as<T>()) {
       DCOUT("Path : <" << prim_abs_path << "> is " << tinyusdz::value::TypeTraits<T>::type_name());
@@ -105,6 +110,11 @@ bool TraverseShaderRec(const std::string &path_prefix,
 
   std::string prim_abs_path =
       path_prefix + "/" + prim.local_path().full_path_name();
+
+  // Set the absolute path on the prim object so users can access it
+  // Note: This is a carefully considered const_cast to fix the missing path information
+  tinyusdz::Prim &mutable_prim = const_cast<tinyusdz::Prim &>(prim);
+  mutable_prim.absolute_path() = tinyusdz::Path(prim_abs_path, /* prop part */ "");
 
   // First check if type is Shader Prim.
   if (const Shader *ps = prim.as<Shader>()) {
