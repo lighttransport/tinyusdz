@@ -58,6 +58,7 @@ import {
 import { IBLContributionAnalyzer } from './ibl-contribution-analyzer.js';
 import { GBufferViewer } from './gbuffer-viewer.js';
 import { MipMapVisualizer } from './mipmap-visualizer.js';
+import { PixelInspector } from './pixel-inspector.js';
 
 // Embedded default OpenPBR scene (simple sphere with material)
 const EMBEDDED_USDA_SCENE = `#usda 1.0
@@ -3556,6 +3557,51 @@ function setupGUI() {
     mipmapFolder.add(mipmapParams, 'exportReport').name('Export Report');
     mipmapFolder.close();
 
+    // Pixel Inspector (Magnifying Glass)
+    const pixelInspectorFolder = gui.addFolder('Pixel Inspector');
+    const pixelInspectorParams = {
+        enabled: false,
+        gridSize: 5,
+        enable: function() {
+            if (!window.pixelInspector) {
+                window.pixelInspector = new PixelInspector(renderer, scene, camera, renderer.domElement);
+            }
+            window.pixelInspector.setGridSize(pixelInspectorParams.gridSize);
+            window.pixelInspector.enable();
+            pixelInspectorParams.enabled = true;
+            updateStatus('Pixel inspector enabled (hover over scene)', 'success');
+        },
+        disable: function() {
+            if (window.pixelInspector) {
+                window.pixelInspector.disable();
+                pixelInspectorParams.enabled = false;
+                updateStatus('Pixel inspector disabled', 'success');
+            }
+        }
+    };
+
+    pixelInspectorFolder.add(pixelInspectorParams, 'enabled').name('Enable Inspector').onChange(value => {
+        if (value) {
+            pixelInspectorParams.enable();
+        } else {
+            pixelInspectorParams.disable();
+        }
+    });
+
+    pixelInspectorFolder.add(pixelInspectorParams, 'gridSize', {
+        '3×3 Grid': 3,
+        '5×5 Grid (Default)': 5,
+        '7×7 Grid': 7,
+        '9×9 Grid': 9
+    }).name('Grid Size').onChange(size => {
+        pixelInspectorParams.gridSize = size;
+        if (window.pixelInspector && pixelInspectorParams.enabled) {
+            window.pixelInspector.setGridSize(size);
+        }
+    });
+
+    pixelInspectorFolder.close();
+
     // Split View Comparison System
     const splitViewFolder = gui.addFolder('Split View Compare');
     const splitViewParams = {
@@ -5906,6 +5952,7 @@ window.MaterialComplexityAnalyzer = MaterialComplexityAnalyzer;
 window.IBLContributionAnalyzer = IBLContributionAnalyzer;
 window.GBufferViewer = GBufferViewer;
 window.MipMapVisualizer = MipMapVisualizer;
+window.PixelInspector = PixelInspector;
 window.REFERENCE_MATERIALS = REFERENCE_MATERIALS;
 window.applyReferenceMaterial = applyReferenceMaterial;
 window.getReferencesByCategory = getReferencesByCategory;
