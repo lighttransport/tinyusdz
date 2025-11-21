@@ -1436,8 +1436,14 @@ class OpenPBRSurfaceShader {
   ShaderParam<float> opacity{1.0f};
   ShaderParam<vec3> normal{{0.0f, 0.0f, 1.0f}};
   ShaderParam<vec3> tangent{{1.0f, 0.0f, 0.0f}};
-  
+
   uint64_t handle{0};  // Handle ID for Graphics API. 0 = invalid
+
+  // MaterialX Node Graph representation as JSON
+  // Stores the complete node-based shader graph for reconstruction in JS/WASM
+  // Schema follows MaterialX XML structure for compatibility
+  // Empty string if no node graph exists (direct parameter values only)
+  std::string nodeGraphJson;
 };
 
 #if defined(__GNUC__) && !defined(__clang__)
