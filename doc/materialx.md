@@ -108,7 +108,7 @@ MaterialX files typically specify color spaces at multiple levels:
 
 1. **Document Level**: Set in the root `<materialx>` element
    ```xml
-   <materialx version="1.38" colorspace="lin_rec709">
+   <materialx version="1.39" colorspace="lin_rec709">
    ```
 
 2. **Texture Level**: Specified on `<image>` and `<tiledimage>` nodes
@@ -430,7 +430,7 @@ make
 1. **Basic MaterialX XML Parsing**
    - XML parser in `src/usdMtlx.cc` using pugixml
    - Secure MaterialX parser in `sandbox/mtlx-parser/` (dependency-free)
-   - Support for MaterialX v1.36, v1.37, v1.38
+   - Support for MaterialX v1.36, v1.37, v1.38, v1.39 (Blender 4.5+)
 
 2. **Color Space Support**
    - Complete color space conversion functions in `src/image-util.cc`
@@ -476,7 +476,7 @@ make
 - [ ] **Extend MaterialXConfigAPI structure**
   ```cpp
   struct MaterialXConfigAPI {
-    TypedAttributeWithFallback<std::string> mtlx_version{"1.38"};
+    TypedAttributeWithFallback<std::string> mtlx_version{"1.39"};  // Blender 4.5+ compatible
     TypedAttributeWithFallback<std::string> mtlx_namespace{""};
     TypedAttributeWithFallback<std::string> mtlx_colorspace{"lin_rec709"};
     TypedAttributeWithFallback<std::string> mtlx_sourceUri{""};
@@ -717,9 +717,9 @@ make
    - Maintain compatibility with pxrUSD
 
 2. **MaterialX Version Support**
-   - Primary: MaterialX 1.38 (current)
-   - Legacy: MaterialX 1.36, 1.37
-   - Future: MaterialX 1.39+ preparation
+   - Primary: MaterialX 1.39 (current - Blender 4.5+ compatible)
+   - Legacy: MaterialX 1.36, 1.37, 1.38
+   - Future: MaterialX 1.40+ preparation
 
 ## Validation Checklist
 

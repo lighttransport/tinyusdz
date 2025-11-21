@@ -123,7 +123,7 @@ bool ConvertMtlxNodeGraphToJson(
 
   std::stringstream ss;
   ss << "{\n";
-  ss << "  \"version\": \"1.38\",\n"; // MaterialX version
+  ss << "  \"version\": \"1.39\",\n"; // MaterialX version (Blender 4.5+ compatible)
   ss << "  \"nodegraph\": {\n";
   ss << "    \"name\": \"" << EscapeJsonString(nodegraph.GetName()) << "\",\n";
 
