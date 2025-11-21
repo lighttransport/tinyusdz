@@ -6673,22 +6673,28 @@ bool RenderSceneConverter::ConvertOpenPBRSurfaceShader(
     return false;
   }
 
-  // Convert MaterialX NodeGraph connections to JSON if present
+  // TODO: Convert MaterialX NodeGraph connections to JSON if present
   // This allows reconstruction of node-based shading in JavaScript/WASM
-  if (env.stage) {
-    auto shader_prim_opt = env.stage->GetPrimAtPath(shader_abs_path);
-    if (shader_prim_opt) {
-      std::string nodegraph_json;
-      std::string err;
-      if (ConvertShaderWithNodeGraphToJson(shader_prim_opt.value(), *env.stage, &nodegraph_json, &err)) {
-        rshader.nodeGraphJson = nodegraph_json;
-        DCOUT("Successfully converted MaterialX NodeGraph to JSON for shader: " << shader_abs_path.prim_part());
-      } else {
-        // Not an error - shader may not have node graph connections
-        DCOUT("No MaterialX NodeGraph found for shader: " << shader_abs_path.prim_part());
-      }
+  // NOTE: Currently disabled because GetPrimAtPath returns Prim* not optional<Prim>
+  // and ConvertShaderWithNodeGraphToJson is not yet implemented
+  #if 0
+  auto shader_prim_opt = env.stage.GetPrimAtPath(shader_abs_path);
+  if (shader_prim_opt) {
+    const Prim *shader_prim_ptr = shader_prim_opt.value();
+    std::string nodegraph_json;
+    std::string err;
+    if (shader_prim_ptr && ConvertShaderWithNodeGraphToJson(*shader_prim_ptr, env.stage, &nodegraph_json, &err)) {
+      rshader.nodeGraphJson = nodegraph_json;
+      DCOUT("Successfully converted MaterialX NodeGraph to JSON for shader: " << shader_abs_path.prim_part());
+    } else {
+      // Not an error - shader may not have node graph connections
+      DCOUT("No MaterialX NodeGraph found for shader: " << shader_abs_path.prim_part());
     }
   }
+  #endif
+
+  // Leave nodeGraphJson empty for now - will be populated when converter is implemented
+  (void)shader_abs_path; // Suppress unused variable warning
 
   (*rshader_out) = rshader;
   return true;
