@@ -48,6 +48,7 @@
 #include "logger.hh"
 #include "bone-util.hh"
 #include "shape-to-mesh.hh"
+#include "materialx-to-json.hh"
 
 //#include <iostream>
 
@@ -6670,6 +6671,23 @@ bool RenderSceneConverter::ConvertOpenPBRSurfaceShader(
           rshader.tangent)) {
     PushWarn(fmt::format("Failed to convert tangent parameter for shader: {}", shader_abs_path.prim_part()));
     return false;
+  }
+
+  // Convert MaterialX NodeGraph connections to JSON if present
+  // This allows reconstruction of node-based shading in JavaScript/WASM
+  if (env.stage) {
+    auto shader_prim_opt = env.stage->GetPrimAtPath(shader_abs_path);
+    if (shader_prim_opt) {
+      std::string nodegraph_json;
+      std::string err;
+      if (ConvertShaderWithNodeGraphToJson(shader_prim_opt.value(), *env.stage, &nodegraph_json, &err)) {
+        rshader.nodeGraphJson = nodegraph_json;
+        DCOUT("Successfully converted MaterialX NodeGraph to JSON for shader: " << shader_abs_path.prim_part());
+      } else {
+        // Not an error - shader may not have node graph connections
+        DCOUT("No MaterialX NodeGraph found for shader: " << shader_abs_path.prim_part());
+      }
+    }
   }
 
   (*rshader_out) = rshader;
