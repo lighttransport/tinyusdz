@@ -35,7 +35,7 @@ namespace tydra {
 /// Follows MaterialX XML structure as closely as possible for compatibility
 /// Schema format (JSON):
 /// {
-///   "version": "1.38",           // MaterialX version
+///   "version": "1.39",           // MaterialX version (Blender 4.5+ compatible)
 ///   "nodegraph": {
 ///     "name": "NG_shader1",      // NodeGraph name
 ///     "nodes": [                 // Array of nodes
