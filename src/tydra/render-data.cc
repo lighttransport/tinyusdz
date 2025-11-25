@@ -6648,7 +6648,7 @@ bool RenderSceneConverter::ConvertOpenPBRSurfaceShader(
   }
   if (!ConvertPreviewSurfaceShaderParam(
           env, shader_abs_path, shader.emission_color, "emission_color",
-          rshader.emission_color)) {
+          rshader.emission_color, true)) {
     PushWarn(fmt::format("Failed to convert emission_color parameter for shader: {}", shader_abs_path.prim_part()));
     return false;
   }
