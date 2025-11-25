@@ -2403,9 +2403,22 @@ function setupScene() {
     controls = new OrbitControls(camera, renderer.domElement);
     controls.enableDamping = true;
     controls.dampingFactor = 0.05;
-    controls.screenSpacePanning = false;
-    controls.minDistance = 0.5;
-    controls.maxDistance = 50;
+    controls.screenSpacePanning = true; // Enable pan controls
+    controls.minDistance = 0.1;
+    controls.maxDistance = 500; // Allow much more zoom out for large scenes
+    controls.mouseButtons = {
+        LEFT: THREE.MOUSE.ROTATE,
+        MIDDLE: THREE.MOUSE.PAN,
+        RIGHT: THREE.MOUSE.DOLLY  // Right mouse drag for zoom (dolly)
+    };
+    controls.keys = {
+        LEFT: 'ArrowLeft',
+        UP: 'ArrowUp',
+        RIGHT: 'ArrowRight',
+        BOTTOM: 'ArrowDown'
+    };
+    controls.enableKeys = true;
+    controls.keyPanSpeed = 20.0;
 
     // Lights (basic setup, will be enhanced with HDR)
     const ambientLight = new THREE.AmbientLight(0xffffff, 0.3);
@@ -3075,16 +3088,16 @@ function setupGUI() {
     const overrideFolder = gui.addFolder('Material Override');
     const overrideParams = {
         enabled: false,
-        roughness: null,
-        metalness: null,
+        roughness: 0.5,
+        metalness: 0.0,
         disableNormalMaps: false,
         disableAllTextures: false,
         preset: 'none',
         reset: function() {
             window.resetMaterialOverrides(scene);
             overrideParams.enabled = false;
-            overrideParams.roughness = null;
-            overrideParams.metalness = null;
+            overrideParams.roughness = 0.5;
+            overrideParams.metalness = 0.0;
             overrideParams.disableNormalMaps = false;
             overrideParams.disableAllTextures = false;
             overrideParams.preset = 'none';
@@ -3099,13 +3112,13 @@ function setupGUI() {
     });
 
     overrideFolder.add(overrideParams, 'roughness', 0, 1, 0.01).name('Roughness Override').onChange(value => {
-        if (overrideParams.enabled && value !== null) {
+        if (overrideParams.enabled) {
             window.applyMaterialOverrides(scene, { roughness: value });
         }
     });
 
     overrideFolder.add(overrideParams, 'metalness', 0, 1, 0.01).name('Metalness Override').onChange(value => {
-        if (overrideParams.enabled && value !== null) {
+        if (overrideParams.enabled) {
             window.applyMaterialOverrides(scene, { metalness: value });
         }
     });
@@ -3610,6 +3623,7 @@ function setupGUI() {
 
     // Material Preset Save/Load
     const presetFolder = gui.addFolder('Material Presets');
+    let presetController; // Declare early to avoid reference errors in updatePresetsList
     const presetParams = {
         presetName: 'My Material',
         category: 'Custom',
@@ -3765,7 +3779,7 @@ function setupGUI() {
     // Initialize presets list
     presetParams.updatePresetsList();
 
-    const presetController = presetFolder.add(presetParams, 'selectedPreset', presetParams.presetsList)
+    presetController = presetFolder.add(presetParams, 'selectedPreset', presetParams.presetsList)
         .name('Select Preset');
 
     presetFolder.add(presetParams, 'applyPreset').name('Apply to Selected');
@@ -4463,8 +4477,7 @@ async function loadUSDFile(arrayBuffer, filename) {
         console.log(`  sceneRoot: ${!!sceneRoot}`);
         console.log(`  sceneRoot.children.length: ${sceneRoot ? sceneRoot.children.length : 'N/A'}`);
 
-        // HACK
-        //applyUpAxisConversionToScene();
+        applyUpAxisConversionToScene();
         console.log(`\nIMMEDIATELY AFTER applyUpAxisConversionToScene():`);
         console.log(`  sceneRoot.rotation: x=${sceneRoot?.rotation.x.toFixed(4)}, y=${sceneRoot?.rotation.y.toFixed(4)}, z=${sceneRoot?.rotation.z.toFixed(4)}`);
 
@@ -5467,16 +5480,17 @@ function loadMeshes() {
                 geometry.setIndex(new THREE.BufferAttribute(indices, 1));
             }
 
-            // Get material index
-            const materialIndex = meshData.materialIndex || 0;
-            const material = materials[materialIndex]?.threeMaterial || new THREE.MeshPhysicalMaterial({ envMapIntensity: exposureValue });
+            // Get material index (materialId comes from C++ RenderMesh.material_id)
+            const materialId = meshData.materialId !== undefined ? meshData.materialId : 0;
+            console.log(`Mesh ${i} (${meshData.name}): materialId = ${materialId}, available materials:`, materials.length);
+            const material = materials[materialId]?.threeMaterial || new THREE.MeshPhysicalMaterial({ envMapIntensity: exposureValue });
 
             // Create mesh
             const mesh = new THREE.Mesh(geometry, material);
             mesh.name = meshData.name || `Mesh_${i}`;
             mesh.userData = {
                 index: i,
-                materialIndex: materialIndex,
+                materialId: materialId,
                 usdData: meshData
             };
             mesh.castShadow = true;
@@ -5738,7 +5752,7 @@ function updateTexturePanel(material) {
 // Create UV set selector for a texture
 function createUVSetSelector(material, mapName) {
     // Get the associated mesh to determine available UV sets
-    const meshWithMaterial = meshes.find(m => m.userData.materialIndex === material.index);
+    const meshWithMaterial = meshes.find(m => m.userData.materialId === material.index);
     if (!meshWithMaterial) {
         return null; // No mesh found with this material
     }
@@ -6306,7 +6320,7 @@ function updateMaterialFromParams(material, params) {
 }
 
 // Highlight meshes with specific material
-function highlightMeshesWithMaterial(materialIndex) {
+function highlightMeshesWithMaterial(materialId) {
     // Reset all meshes
     meshes.forEach(mesh => {
         mesh.scale.set(1, 1, 1);
@@ -6314,7 +6328,7 @@ function highlightMeshesWithMaterial(materialIndex) {
 
     // Highlight meshes with selected material
     meshes.forEach(mesh => {
-        if (mesh.userData.materialIndex === materialIndex) {
+        if (mesh.userData.materialId === materialId) {
             mesh.scale.set(1.05, 1.05, 1.05);
         }
     });
@@ -6384,22 +6398,62 @@ function clearScene() {
 function fitCameraToScene() {
     if (meshes.length === 0) return;
 
+    // Compute scene bounding box
     const box = new THREE.Box3();
     meshes.forEach(mesh => {
         box.expandByObject(mesh);
     });
 
+    // Get bounding box center and size
     const center = box.getCenter(new THREE.Vector3());
     const size = box.getSize(new THREE.Vector3());
-    const maxDim = Math.max(size.x, size.y, size.z);
-    const fov = camera.fov * (Math.PI / 180);
-    let cameraZ = Math.abs(maxDim / 2 / Math.tan(fov / 2));
-    cameraZ *= 1.5; // Add some padding
 
-    camera.position.set(center.x, center.y + size.y * 0.5, center.z + cameraZ);
+    // Calculate the bounding sphere radius (diagonal distance from center)
+    const maxDim = Math.max(size.x, size.y, size.z);
+    const boundingSphereRadius = size.length() * 0.5;
+
+    // Calculate camera distance based on FOV and bounding sphere
+    // We want the entire bounding sphere to fit in the view frustum
+    const fov = camera.fov * (Math.PI / 180);
+    const aspectRatio = camera.aspect;
+
+    // Calculate distance needed to fit sphere in both horizontal and vertical FOV
+    const verticalFOV = fov;
+    const horizontalFOV = 2 * Math.atan(Math.tan(verticalFOV / 2) * aspectRatio);
+
+    // Use the smaller FOV to ensure object fits in both dimensions
+    const effectiveFOV = Math.min(verticalFOV, horizontalFOV);
+
+    // Distance from center to camera to fit bounding sphere
+    let cameraDistance = boundingSphereRadius / Math.sin(effectiveFOV / 2);
+
+    // Add padding (20% extra distance)
+    cameraDistance *= 1.2;
+
+    // Position camera at a nice 45-degree viewing angle
+    const cameraOffset = new THREE.Vector3(
+        cameraDistance * 0.5,  // X offset
+        cameraDistance * 0.5,  // Y offset (elevated view)
+        cameraDistance * 0.866 // Z offset (sqrt(3)/2 for 30-degree angle)
+    );
+
+    const cameraPosition = center.clone().add(cameraOffset);
+
+    // Update camera position and orientation
+    camera.position.copy(cameraPosition);
     camera.lookAt(center);
+
+    // Update controls target to scene center
     controls.target.copy(center);
+
+    // Update camera near/far planes based on scene size
+    camera.near = Math.max(0.1, cameraDistance / 100);
+    camera.far = Math.max(1000, cameraDistance * 10);
+    camera.updateProjectionMatrix();
+
     controls.update();
+
+    console.log(`Scene fitted: bounds=${size.x.toFixed(2)}×${size.y.toFixed(2)}×${size.z.toFixed(2)}, radius=${boundingSphereRadius.toFixed(2)}, distance=${cameraDistance.toFixed(2)}`);
 }
 
 // Setup file input
@@ -6530,9 +6584,9 @@ function selectObject(object) {
     console.log(`Selected: ${object.name}, BBox added`);
 
     // Select corresponding material
-    const materialIndex = object.userData.materialIndex;
-    if (materialIndex !== undefined) {
-        selectMaterial(materialIndex);
+    const materialId = object.userData.materialId;
+    if (materialId !== undefined) {
+        selectMaterial(materialId);
     }
 }
 
