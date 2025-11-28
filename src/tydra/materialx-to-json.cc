@@ -13,6 +13,7 @@
 #include "prim-types.hh"
 #include "stage.hh"
 #include "value-pprint.hh"
+#include "color-space.hh"
 
 namespace tinyusdz {
 namespace tydra {
@@ -159,6 +160,13 @@ bool ConvertMtlxNodeGraphToJson(
         // Direct value
         ss << ",\n";
         ss << "            \"value\": " << MtlxValueToJsonValue(input->GetValue());
+      }
+
+      // Add colorspace if present and not default (lin_rec709_scene)
+      std::string colorspace = input->GetColorSpace();
+      if (!colorspace.empty() && colorspace != colorspace::kLinRec709Scene) {
+        ss << ",\n";
+        ss << "            \"colorspace\": \"" << EscapeJsonString(colorspace) << "\"";
       }
 
       ss << "\n          }";
