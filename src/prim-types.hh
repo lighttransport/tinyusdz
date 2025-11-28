@@ -3052,6 +3052,17 @@ struct VariantSetSpec
 };
 
 // Collection API
+///
+/// ColorSpaceAPI - API schema for specifying color space of a prim
+/// See: https://openusd.org/dev/user_guides/color_user_guide.html
+///
+/// Apply to prims: prepend apiSchemas = ["ColorSpaceAPI"]
+/// Sets source color space via: uniform token colorSpace:name
+///
+struct ColorSpaceAPI {
+  TypedAttributeWithFallback<Animatable<value::token>> colorSpace_name;  // uniform token colorSpace:name
+};
+
 // https://openusd.org/release/api/class_usd_collection_a_p_i.html
 
 constexpr auto kExpandPrims = "expandPrims";
@@ -4301,6 +4312,7 @@ DEFINE_TYPE_TRAIT(value::TimeSamples, "TimeSamples", TYPE_ID_TIMESAMPLES, 1);
 
 DEFINE_TYPE_TRAIT(Collection, "Collection", TYPE_ID_COLLECTION, 1);
 DEFINE_TYPE_TRAIT(CollectionInstance, "CollectionInstance", TYPE_ID_COLLECTION_INSTANCE, 1);
+DEFINE_TYPE_TRAIT(ColorSpaceAPI, "ColorSpaceAPI", TYPE_ID_COLOR_SPACE_API, 1);
 
 DEFINE_TYPE_TRAIT(Model, "Model", TYPE_ID_MODEL, 1);
 DEFINE_TYPE_TRAIT(Scope, "Scope", TYPE_ID_SCOPE, 1);

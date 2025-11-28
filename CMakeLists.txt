@@ -436,6 +436,8 @@ set(TINYUSDZ_SOURCES
     ${PROJECT_SOURCE_DIR}/src/str-util.cc
     ${PROJECT_SOURCE_DIR}/src/value-pprint.cc
     ${PROJECT_SOURCE_DIR}/src/value-types.cc
+    ${PROJECT_SOURCE_DIR}/src/color-space.cc
+    ${PROJECT_SOURCE_DIR}/src/color-space.hh
     ${PROJECT_SOURCE_DIR}/src/tiny-format.cc
     ${PROJECT_SOURCE_DIR}/src/tiny-string.cc
     ${PROJECT_SOURCE_DIR}/src/io-util.cc
