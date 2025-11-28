@@ -122,10 +122,19 @@ public:
     }
     return false;
   }
-  
+
+  // ColorSpace access
+  std::string GetColorSpace() const {
+    auto it = extra_attributes_.find("colorspace");
+    if (it != extra_attributes_.end()) {
+      return it->second;
+    }
+    return "";
+  }
+
   // Parse from XML node
   virtual bool ParseFromXML(XMLNodePtr xml_node);
-  
+
   // Get element type name
   virtual std::string GetElementType() const { return "element"; }
   

@@ -47,7 +47,8 @@ namespace tydra {
 ///           {
 ///             "name": "file",
 ///             "type": "filename",
-///             "value": "texture.png"
+///             "value": "texture.png",
+///             "colorspace": "srgb_texture"  // Optional, omitted if lin_rec709_scene
 ///           }
 ///         ],
 ///         "outputs": [
