@@ -1,0 +1,13 @@
+prefix=@CMAKE_INSTALL_PREFIX@
+exec_prefix=${prefix}
+libdir=${exec_prefix}/@CMAKE_INSTALL_LIBDIR@
+includedir=${prefix}/@CMAKE_INSTALL_INCLUDEDIR@
+
+Name: TinyUSDZ C API
+Description: C99 API for Universal Scene Description (USD) file parsing
+Version: @PROJECT_VERSION@
+URL: https://github.com/syoyo/tinyusdz
+
+Libs: -L${libdir} -ltinyusdz_c
+Libs.private: -lstdc++ -lm
+Cflags: -I${includedir}/tinyusdz

@@ -6,6 +6,8 @@ This document describes the MaterialX integration, color space support, and impl
 
 TinyUSDZ provides comprehensive support for MaterialX, including a full suite of color space conversions required for proper MaterialX document processing. The library can parse MaterialX (.mtlx) files and handle all standard MaterialX color spaces. This document also outlines the current state of MaterialX support and provides a comprehensive todo list for complete MaterialX and MaterialXConfigAPI implementation in both the core library and Tydra render material conversion pipeline.
 
+**New in this document:** Comprehensive Blender 4.5+ MaterialX export documentation, including complete Principled BSDF to OpenPBR Surface parameter mapping tables with conversion formulas and usage notes for production pipelines.
+
 ## Color Space Support
 
 ### Supported Color Spaces
@@ -106,7 +108,7 @@ MaterialX files typically specify color spaces at multiple levels:
 
 1. **Document Level**: Set in the root `<materialx>` element
    ```xml
-   <materialx version="1.38" colorspace="lin_rec709">
+   <materialx version="1.39" colorspace="lin_rec709">
    ```
 
 2. **Texture Level**: Specified on `<image>` and `<tiledimage>` nodes
@@ -150,6 +152,179 @@ tinyusdz::srgb_8bit_to_linear_f32(
     &linear_data
 );
 ```
+
+## Blender MaterialX Export Support (4.5+)
+
+### Overview
+
+Starting with Blender 4.5 LTS, the USD/MaterialX exporter writes Principled BSDF materials as OpenPBR Surface shading nodes, which provides significantly better compatibility than the previous Standard Surface approach. The Principled BSDF shader in Blender is based on the OpenPBR Surface shading model, making the parameter mapping more natural and accurate.
+
+### Export Behavior
+
+When MaterialX export is enabled in Blender's USD exporter:
+- **Dual Export**: Both MaterialX (OpenPBR) and UsdPreviewSurface networks are exported on the same USD Material
+- **Fallback Support**: Renderers that don't support MaterialX can fall back to UsdPreviewSurface
+- **Better Matching**: Coat, emission, and sheen parameters more closely match Cycles renderer with OpenPBR export
+- **Known Limitations**: Anisotropy conversion remains challenging (neither old nor new conversion is a perfect match)
+
+### Principled BSDF to OpenPBR Parameter Mapping
+
+Blender's Principled BSDF uses slightly different naming conventions than OpenPBR. Below is the comprehensive parameter mapping:
+
+#### Base Layer
+
+| Blender Principled BSDF | OpenPBR Surface | Notes |
+|------------------------|-----------------|-------|
+| **Base Color** | `base_color` | Direct mapping - Diffuse/metallic base color |
+| **Weight** | `base_weight` | Overall multiplier for base layer |
+| **Diffuse Roughness** | `base_diffuse_roughness` | Oren-Nayar roughness (0 = Lambertian) |
+| **Metallic** | `base_metalness` | Mix weight between metal and dielectric (0-1) |
+
+#### Specular Layer
+
+| Blender Principled BSDF | OpenPBR Surface | Notes |
+|------------------------|-----------------|-------|
+| **IOR** | `specular_ior` | Index of refraction (default: 1.5 for glass) |
+| **IOR Level** | `specular_weight` | **Conversion: multiply by 2.0** - Blender uses 0.5 as neutral, OpenPBR uses 1.0 |
+| **Specular Tint** | `specular_color` | Color tint for dielectric Fresnel reflection |
+| **Roughness** | `specular_roughness` | Microfacet distribution roughness (0-1) |
+| **Anisotropic** | `specular_roughness_anisotropy` | Stretches microfacet distribution (0-1) |
+| **Anisotropic Rotation** | *(tangent vector)* | **Complex**: OpenPBR uses tangent rotation instead of explicit parameter |
+| **Tangent** | `geometry_tangent` | Anisotropy direction reference |
+
+#### Subsurface Scattering
+
+| Blender Principled BSDF | OpenPBR Surface | Notes |
+|------------------------|-----------------|-------|
+| **Subsurface Weight** | `subsurface_weight` | Direct mapping - Mix between SSS and diffuse (0-1) |
+| **Subsurface Scale** | `subsurface_radius` | Mean free path scale |
+| **Subsurface Radius** | `subsurface_radius_scale` | Per-channel RGB multiplier |
+| **Subsurface IOR** | `specular_ior` | Uses same IOR as specular layer |
+| **Subsurface Anisotropy** | `subsurface_scatter_anisotropy` | Phase function directionality (-1 to 1) |
+
+#### Transmission (Translucency)
+
+| Blender Principled BSDF | OpenPBR Surface | Notes |
+|------------------------|-----------------|-------|
+| **Transmission Weight** | `transmission_weight` | Mix between translucent and opaque (0-1) |
+| **Transmission Color** | `transmission_color` | Extinction coefficient color |
+| **Transmission Depth** | `transmission_depth` | Distance for color attenuation |
+| *(N/A)* | `transmission_scatter` | OpenPBR-specific: interior scattering coefficient |
+| *(N/A)* | `transmission_scatter_anisotropy` | OpenPBR-specific: scatter directionality |
+| *(N/A)* | `transmission_dispersion_scale` | OpenPBR-specific: chromatic dispersion amount |
+| *(N/A)* | `transmission_dispersion_abbe_number` | OpenPBR-specific: physical Abbe number |
+
+#### Coat Layer (Clearcoat)
+
+| Blender Principled BSDF | OpenPBR Surface | Notes |
+|------------------------|-----------------|-------|
+| **Coat Weight** | `coat_weight` | **Renamed** from "Clearcoat" in Blender 4.0+ |
+| **Coat Tint** | `coat_color` | Color tint for coat layer |
+| **Coat Roughness** | `coat_roughness` | Coat surface roughness (default: 0.03) |
+| **Coat IOR** | `coat_ior` | Coat refractive index (default: 1.5) |
+| *(N/A)* | `coat_roughness_anisotropy` | OpenPBR-specific: coat anisotropy direction |
+| **Coat Normal** | `geometry_coat_normal` | Separate normal map for coat |
+| *(N/A)* | `geometry_coat_tangent` | OpenPBR-specific: coat anisotropy tangent |
+| *(N/A)* | `coat_affect_color` | OpenPBR-specific: saturation effect on base |
+| *(N/A)* | `coat_affect_roughness` | OpenPBR-specific: roughness modification |
+
+#### Sheen Layer (Fuzz)
+
+| Blender Principled BSDF | OpenPBR Surface | Notes |
+|------------------------|-----------------|-------|
+| **Sheen Weight** | `fuzz_weight` | **Renamed**: "sheen" in Blender, "fuzz" in OpenPBR |
+| **Sheen Tint** | `fuzz_color` | **Renamed**: color → tint mapping |
+| **Sheen Roughness** | `fuzz_roughness` | Microfiber surface roughness (default: 1.0) |
+
+#### Thin Film (Iridescence)
+
+| Blender Principled BSDF | OpenPBR Surface | Notes |
+|------------------------|-----------------|-------|
+| **Thin Film Weight** | `thin_film_weight` | Film coverage/presence (0-1) |
+| **Thin Film Thickness** | `thin_film_thickness` | Thickness in micrometers (default: 0.5 μm) |
+| **Thin Film IOR** | `thin_film_ior` | Film refractive index |
+
+#### Emission
+
+| Blender Principled BSDF | OpenPBR Surface | Notes |
+|------------------------|-----------------|-------|
+| **Emission Color** | `emission_color` | Direct mapping - emissive color |
+| **Emission Strength** | `emission_luminance` | Luminance intensity |
+
+#### Geometry & Opacity
+
+| Blender Principled BSDF | OpenPBR Surface | Notes |
+|------------------------|-----------------|-------|
+| **Alpha** | `geometry_opacity` | Overall transparency (0-1) |
+| **Normal** | `geometry_normal` | Base surface normal map |
+
+### Key Conversion Notes
+
+#### 1. Specular IOR Level Conversion
+The most important conversion is for specular intensity:
+```
+OpenPBR specular_weight = Blender IOR_Level × 2.0
+```
+- **Blender**: 0.5 = neutral (no change), 0 = no reflections, 1.0 = doubled reflections
+- **OpenPBR**: 1.0 = standard reflections, 0 = no reflections, >1.0 = increased reflections
+
+#### 2. Anisotropic Rotation Challenge
+Blender's **Anisotropic Rotation** parameter (0-1 angle) doesn't directly map to OpenPBR's tangent vector approach:
+- **Blender**: Uses rotation angle around normal
+- **OpenPBR**: Uses explicit tangent vector for orientation
+- **Export Solution**: Blender rotates the tangent vector around the normal using the rotation value
+
+#### 3. Parameter Renaming Summary
+- `fuzz` (OpenPBR) ↔ `sheen` (Blender)
+- `color` (OpenPBR) ↔ `tint` (Blender) in various contexts
+- `specular_weight` (OpenPBR) ↔ `IOR Level` (Blender)
+- `coat` (OpenPBR/Blender 4.0+) ↔ `clearcoat` (older Blender)
+
+#### 4. Missing Blender Parameters
+OpenPBR includes several parameters not exposed in Blender's Principled BSDF:
+- `coat_affect_color` - Coat saturation effect
+- `coat_affect_roughness` - Coat roughness modification
+- `coat_roughness_anisotropy` - Anisotropic coat
+- `transmission_scatter` - Interior scattering
+- `transmission_dispersion_*` - Chromatic dispersion
+
+These are set to defaults when exporting from Blender.
+
+### Export Quality Notes
+
+Based on Blender 4.5 development:
+- ✅ **Improved**: Coat, emission, and sheen match Cycles more accurately
+- ⚠️ **Challenging**: Anisotropy conversion is approximate (formulas differ between systems)
+- ⚠️ **Approximate**: IOR Level requires 2× scaling
+- ✅ **Good**: Overall material appearance is well-preserved
+
+### Usage in Production Pipelines
+
+**Enable MaterialX Export in Blender:**
+1. File → Export → Universal Scene Description (.usd/.usdc/.usda)
+2. Check "MaterialX" option in export settings
+3. Materials will be exported as both OpenPBR and UsdPreviewSurface
+
+**Benefits:**
+- **Interoperability**: Works across Maya, Houdini, USD Hydra renderers
+- **Fallback**: UsdPreviewSurface ensures broad compatibility
+- **Accuracy**: OpenPBR more closely matches Blender's Cycles renderer
+
+**Limitations:**
+- MaterialX export is experimental (off by default in 4.5)
+- Complex node setups may not fully translate
+- Custom nodes require manual MaterialX equivalent
+
+### Related Blender Features
+
+**Blender 4.5 USD Export Improvements:**
+- Point Instancing support through Geometry Nodes
+- Text object export (as mesh data)
+- `UsdPrimvarReader` support for `Attribute` nodes
+
+**MaterialX Version Support:**
+- MaterialX 1.39.0+ includes OpenPBR Surface
+- MaterialX 1.39.1 added Standard Surface ↔ OpenPBR translation graphs
 
 ## Implementation Details
 
@@ -255,7 +430,7 @@ make
 1. **Basic MaterialX XML Parsing**
    - XML parser in `src/usdMtlx.cc` using pugixml
    - Secure MaterialX parser in `sandbox/mtlx-parser/` (dependency-free)
-   - Support for MaterialX v1.36, v1.37, v1.38
+   - Support for MaterialX v1.36, v1.37, v1.38, v1.39 (Blender 4.5+)
 
 2. **Color Space Support**
    - Complete color space conversion functions in `src/image-util.cc`
@@ -301,7 +476,7 @@ make
 - [ ] **Extend MaterialXConfigAPI structure**
   ```cpp
   struct MaterialXConfigAPI {
-    TypedAttributeWithFallback<std::string> mtlx_version{"1.38"};
+    TypedAttributeWithFallback<std::string> mtlx_version{"1.39"};  // Blender 4.5+ compatible
     TypedAttributeWithFallback<std::string> mtlx_namespace{""};
     TypedAttributeWithFallback<std::string> mtlx_colorspace{"lin_rec709"};
     TypedAttributeWithFallback<std::string> mtlx_sourceUri{""};
@@ -542,9 +717,9 @@ make
    - Maintain compatibility with pxrUSD
 
 2. **MaterialX Version Support**
-   - Primary: MaterialX 1.38 (current)
-   - Legacy: MaterialX 1.36, 1.37
-   - Future: MaterialX 1.39+ preparation
+   - Primary: MaterialX 1.39 (current - Blender 4.5+ compatible)
+   - Legacy: MaterialX 1.36, 1.37, 1.38
+   - Future: MaterialX 1.40+ preparation
 
 ## Validation Checklist
 
@@ -567,10 +742,23 @@ make
 
 ## References
 
+### MaterialX & OpenPBR
 - [MaterialX Specification v1.38](https://www.materialx.org/docs/api/MaterialX_v1_38_Spec.pdf)
-- [USD MaterialX Schema](https://openusd.org/release/api/usd_mtlx_page.html)
-- [OpenPBR Specification](https://github.com/AcademySoftwareFoundation/OpenPBR)
 - [MaterialX GitHub Repository](https://github.com/AcademySoftwareFoundation/MaterialX)
+- [OpenPBR Specification](https://academysoftwarefoundation.github.io/OpenPBR/)
+- [OpenPBR GitHub Repository](https://github.com/AcademySoftwareFoundation/OpenPBR)
+
+### USD Integration
+- [USD MaterialX Schema](https://openusd.org/release/api/usd_mtlx_page.html)
+- [PBR Material Interoperability (MaterialX, USD, glTF)](https://metaverse-standards.org/wp-content/uploads/PBR-material-interoperability.pdf)
+
+### Blender Documentation
+- [Blender 4.5 LTS Release Notes - Pipeline & I/O](https://developer.blender.org/docs/release_notes/4.5/pipeline_assets_io/)
+- [Principled BSDF - Blender 4.5 Manual](https://docs.blender.org/manual/en/latest/render/shader_nodes/shader/principled.html)
+- [Blender Principled BSDF v2 Development](https://projects.blender.org/blender/blender/issues/99447)
+- [Blender MaterialX Export Implementation](https://projects.blender.org/blender/blender/pulls/138165)
+
+### Color Space Standards
 - [ITU-R BT.709](https://www.itu.int/rec/R-REC-BT.709)
 - [ITU-R BT.2020](https://www.itu.int/rec/R-REC-BT.2020)
 - [ACES Documentation](https://www.oscars.org/science-technology/sci-tech-projects/aces)
