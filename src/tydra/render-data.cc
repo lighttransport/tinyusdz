@@ -49,6 +49,7 @@
 #include "logger.hh"
 #include "bone-util.hh"
 #include "shape-to-mesh.hh"
+#include "materialx-to-json.hh"
 
 //#include <iostream>
 
@@ -1650,7 +1651,9 @@ bool TriangulatePolygon(
     std::vector<uint32_t> &triangulatedFaceVertexCounts,
     std::vector<uint32_t> &triangulatedFaceVertexIndices,
     std::vector<size_t> &triangulatedToOrigFaceVertexIndexMap,
-    std::vector<uint32_t> &triangulatedFaceCounts, std::string &warn, std::string &err) {
+    std::vector<uint32_t> &triangulatedFaceCounts,
+    MeshConverterConfig::TriangulationMethod triangulation_method,
+    std::string &warn, std::string &err) {
   triangulatedFaceVertexCounts.clear();
   triangulatedFaceVertexIndices.clear();
 
@@ -1721,143 +1724,174 @@ bool TriangulatePolygon(
       triangulatedFaceCounts.push_back(2);
 #endif
     } else {
-      // Use double for accuracy. `float` precision may classify small-are polygon as degenerated.
-      // Find the normal axis of the polygon using Newell's method
-      value::double3 n = {0, 0, 0};
+      // Polygon with 5+ vertices
+      if (triangulation_method == MeshConverterConfig::TriangulationMethod::TriangleFan) {
+        // Simple triangle fan triangulation
+        // This assumes the polygon is convex
+        // Creates triangles: (0,1,2), (0,2,3), (0,3,4), ...
 
-      size_t vi0;
-      size_t vi0_2;
+        size_t ntris = npolys - 2;
 
-      //std::cout << "npoly " << npolys << "\n";
-
-      for (size_t k = 0; k < npolys; ++k) {
-        vi0 = faceVertexIndices[faceIndexOffset + k];
-
-        size_t j = (k + 1) % npolys;
-        vi0_2 = faceVertexIndices[faceIndexOffset + j];
-
-        if (vi0 >= points.size()) {
-          err = fmt::format("Invalid vertex index.\n");
-          return false;
-        }
-
-        if (vi0_2 >= points.size()) {
-          err = fmt::format("Invalid vertex index.\n");
-          return false;
-        }
-
-        T v0 = points[vi0];
-        T v1 = points[vi0_2];
-
-        const T point1 = {v0[0], v0[1], v0[2]};
-        const T point2 = {v1[0], v1[1], v1[2]};
-
-        T a = {point1[0] - point2[0], point1[1] - point2[1],
-               point1[2] - point2[2]};
-        T b = {point1[0] + point2[0], point1[1] + point2[1],
-               point1[2] + point2[2]};
-
-        n[0] += double(a[1] * b[2]);
-        n[1] += double(a[2] * b[0]);
-        n[2] += double(a[0] * b[1]);
-        DCOUT("v0 " << v0);
-        DCOUT("v1 " << v1);
-        DCOUT("n " << n);
-      }
-      //BaseTy length_n = vlength(n);
-      double length_n = vlength(n);
-
-      // Check if zero length normal
-      if (std::fabs(length_n) < std::numeric_limits<double>::epsilon()) {
-        DCOUT("length_n " << length_n);
-        err = "Degenerated polygon found.\n";
-        return false;
-      }
-
-      // Negative is to flip the normal to the correct direction
-      n = vnormalize(n);
-
-      T axis_w, axis_v, axis_u;
-      axis_w[0] = BaseTy(n[0]);
-      axis_w[1] = BaseTy(n[1]);
-      axis_w[2] = BaseTy(n[2]);
-      T a;
-      if (std::fabs(axis_w[0]) > BaseTy(0.9999999)) {  // TODO: use 1.0 - eps?
-        a = {BaseTy(0), BaseTy(1), BaseTy(0)};
-      } else {
-        a = {BaseTy(1), BaseTy(0), BaseTy(0)};
-      }
-      axis_v = vnormalize(vcross(axis_w, a));
-      axis_u = vcross(axis_w, axis_v);
-
-      using Point3D = std::array<BaseTy, 3>;
-      using Point2D = std::array<BaseTy, 2>;
-      std::vector<Point2D> polyline;
-
-      // TMW change: Find best normal and project v0x and v0y to those
-      // coordinates, instead of picking a plane aligned with an axis (which
-      // can flip polygons).
-
-      // Fill polygon data.
-      for (size_t k = 0; k < npolys; k++) {
-        size_t vidx = faceVertexIndices[faceIndexOffset + k];
-
-        value::float3 v = points[vidx];
-        // Point3 polypoint = {v0[0],v0[1],v0[2]};
-
-        // world to local
-        Point3D loc = {vdot(v, axis_u), vdot(v, axis_v), vdot(v, axis_w)};
-
-        polyline.push_back({loc[0], loc[1]});
-      }
-
-      std::vector<std::vector<Point2D>> polygon_2d;
-      polygon_2d.push_back(polyline);
-      // Single polygon only(no holes)
-
-      std::vector<uint32_t> indices = mapbox::earcut<uint32_t>(polygon_2d);
-      //  => result = 3 * faces, clockwise
-
-      if (indices.empty()) {
-        warn += "Failed to triangualte a polygon. input is not CCW, have holes or invalid topology.\n";
-
-        //DumpTriangle(points, indices);
-      }
-
-      if ((indices.size() % 3) != 0) {
-        // This should not be happen, though.
-        err = "Failed to triangulate.\n";
-        return false;
-      }
-
-      size_t ntris = indices.size() / 3;
-      //std::cout << "ntris " << ntris << "\n";
-
-
-      // Up to 2GB tris.
-      if (ntris > size_t((std::numeric_limits<int32_t>::max)())) {
-        err = "Too many triangles are generated.\n";
-        return false;
-      }
-
-      if (ntris > 0) {
         for (size_t k = 0; k < ntris; k++) {
           triangulatedFaceVertexCounts.push_back(3);
-          triangulatedFaceVertexIndices.push_back(
-              faceVertexIndices[faceIndexOffset + indices[3 * k + 0]]);
-          triangulatedFaceVertexIndices.push_back(
-              faceVertexIndices[faceIndexOffset + indices[3 * k + 1]]);
-          triangulatedFaceVertexIndices.push_back(
-              faceVertexIndices[faceIndexOffset + indices[3 * k + 2]]);
 
-          triangulatedToOrigFaceVertexIndexMap.push_back(faceIndexOffset +
-                                                         indices[3 * k + 0]);
-          triangulatedToOrigFaceVertexIndexMap.push_back(faceIndexOffset +
-                                                         indices[3 * k + 1]);
-          triangulatedToOrigFaceVertexIndexMap.push_back(faceIndexOffset +
-                                                         indices[3 * k + 2]);
+          // First vertex is always the pivot (index 0)
+          triangulatedFaceVertexIndices.push_back(
+              faceVertexIndices[faceIndexOffset + 0]);
+          triangulatedFaceVertexIndices.push_back(
+              faceVertexIndices[faceIndexOffset + k + 1]);
+          triangulatedFaceVertexIndices.push_back(
+              faceVertexIndices[faceIndexOffset + k + 2]);
+
+          triangulatedToOrigFaceVertexIndexMap.push_back(faceIndexOffset + 0);
+          triangulatedToOrigFaceVertexIndexMap.push_back(faceIndexOffset + k + 1);
+          triangulatedToOrigFaceVertexIndexMap.push_back(faceIndexOffset + k + 2);
         }
+
         triangulatedFaceCounts.push_back(uint32_t(ntris));
+
+      } else {
+        // Use earcut algorithm (default, handles complex polygons)
+        // Use double for accuracy. `float` precision may classify small-are polygon as degenerated.
+        // Find the normal axis of the polygon using Newell's method
+        value::double3 n = {0, 0, 0};
+
+        size_t vi0;
+        size_t vi0_2;
+
+        //std::cout << "npoly " << npolys << "\n";
+
+        for (size_t k = 0; k < npolys; ++k) {
+          vi0 = faceVertexIndices[faceIndexOffset + k];
+
+          size_t j = (k + 1) % npolys;
+          vi0_2 = faceVertexIndices[faceIndexOffset + j];
+
+          if (vi0 >= points.size()) {
+            err = fmt::format("Invalid vertex index.\n");
+            return false;
+          }
+
+          if (vi0_2 >= points.size()) {
+            err = fmt::format("Invalid vertex index.\n");
+            return false;
+          }
+
+          T v0 = points[vi0];
+          T v1 = points[vi0_2];
+
+          const T point1 = {v0[0], v0[1], v0[2]};
+          const T point2 = {v1[0], v1[1], v1[2]};
+
+          T a = {point1[0] - point2[0], point1[1] - point2[1],
+                 point1[2] - point2[2]};
+          T b = {point1[0] + point2[0], point1[1] + point2[1],
+                 point1[2] + point2[2]};
+
+          n[0] += double(a[1] * b[2]);
+          n[1] += double(a[2] * b[0]);
+          n[2] += double(a[0] * b[1]);
+          DCOUT("v0 " << v0);
+          DCOUT("v1 " << v1);
+          DCOUT("n " << n);
+        }
+        //BaseTy length_n = vlength(n);
+        double length_n = vlength(n);
+
+        // Check if zero length normal
+        if (std::fabs(length_n) < std::numeric_limits<double>::epsilon()) {
+          DCOUT("length_n " << length_n);
+          err = "Degenerated polygon found.\n";
+          return false;
+        }
+
+        // Negative is to flip the normal to the correct direction
+        n = vnormalize(n);
+
+        T axis_w, axis_v, axis_u;
+        axis_w[0] = BaseTy(n[0]);
+        axis_w[1] = BaseTy(n[1]);
+        axis_w[2] = BaseTy(n[2]);
+        T a;
+        if (std::fabs(axis_w[0]) > BaseTy(0.9999999)) {  // TODO: use 1.0 - eps?
+          a = {BaseTy(0), BaseTy(1), BaseTy(0)};
+        } else {
+          a = {BaseTy(1), BaseTy(0), BaseTy(0)};
+        }
+        axis_v = vnormalize(vcross(axis_w, a));
+        axis_u = vcross(axis_w, axis_v);
+
+        using Point3D = std::array<BaseTy, 3>;
+        using Point2D = std::array<BaseTy, 2>;
+        std::vector<Point2D> polyline;
+
+        // TMW change: Find best normal and project v0x and v0y to those
+        // coordinates, instead of picking a plane aligned with an axis (which
+        // can flip polygons).
+
+        // Fill polygon data.
+        for (size_t k = 0; k < npolys; k++) {
+          size_t vidx = faceVertexIndices[faceIndexOffset + k];
+
+          value::float3 v = points[vidx];
+          // Point3 polypoint = {v0[0],v0[1],v0[2]};
+
+          // world to local
+          Point3D loc = {vdot(v, axis_u), vdot(v, axis_v), vdot(v, axis_w)};
+
+          polyline.push_back({loc[0], loc[1]});
+        }
+
+        std::vector<std::vector<Point2D>> polygon_2d;
+        polygon_2d.push_back(polyline);
+        // Single polygon only(no holes)
+
+        std::vector<uint32_t> indices = mapbox::earcut<uint32_t>(polygon_2d);
+        //  => result = 3 * faces, clockwise
+
+        if (indices.empty()) {
+          warn += "Failed to triangualte a polygon. input is not CCW, have holes or invalid topology.\n";
+
+          //DumpTriangle(points, indices);
+        }
+
+        if ((indices.size() % 3) != 0) {
+          // This should not be happen, though.
+          err = "Failed to triangulate.\n";
+          return false;
+        }
+
+        size_t ntris = indices.size() / 3;
+        //std::cout << "ntris " << ntris << "\n";
+
+
+        // Up to 2GB tris.
+        if (ntris > size_t((std::numeric_limits<int32_t>::max)())) {
+          err = "Too many triangles are generated.\n";
+          return false;
+        }
+
+        if (ntris > 0) {
+          for (size_t k = 0; k < ntris; k++) {
+            triangulatedFaceVertexCounts.push_back(3);
+            // earcut returns clockwise triangles, but USD expects CCW
+            // so we reverse the winding order by swapping indices 1 and 2
+            triangulatedFaceVertexIndices.push_back(
+                faceVertexIndices[faceIndexOffset + indices[3 * k + 0]]);
+            triangulatedFaceVertexIndices.push_back(
+                faceVertexIndices[faceIndexOffset + indices[3 * k + 2]]);
+            triangulatedFaceVertexIndices.push_back(
+                faceVertexIndices[faceIndexOffset + indices[3 * k + 1]]);
+
+            triangulatedToOrigFaceVertexIndexMap.push_back(faceIndexOffset +
+                                                           indices[3 * k + 0]);
+            triangulatedToOrigFaceVertexIndexMap.push_back(faceIndexOffset +
+                                                           indices[3 * k + 2]);
+            triangulatedToOrigFaceVertexIndexMap.push_back(faceIndexOffset +
+                                                           indices[3 * k + 1]);
+          }
+          triangulatedFaceCounts.push_back(uint32_t(ntris));
+        }
       }
     }
 
@@ -4218,6 +4252,7 @@ bool RenderSceneConverter::ConvertMesh(
             dst.points, dst.usdFaceVertexCounts, dst.usdFaceVertexIndices,
             triangulatedFaceVertexCounts, triangulatedFaceVertexIndices,
             triangulatedToOrigFaceVertexIndexMap, triangulatedFaceCounts,
+            env.mesh_config.triangulation_method,
             _warn, err)) {
       PUSH_ERROR_AND_RETURN("Triangulation failed: " + err);
     }
@@ -5379,10 +5414,10 @@ nonstd::expected<bool, std::string> GetConnectedMtlxTexture(
     const Prim *current_prim{nullptr};
 
     // First, try regular stage lookup
-    bool found_current_in_stage = stage.find_prim_at_path(Path(current_prim_part, ""), current_prim, &err);
+    bool current_found_in_stage = stage.find_prim_at_path(Path(current_prim_part, ""), current_prim, &err);
 
     // If not found and this is under a NodeGraph, look in NodeGraph children
-    if (!found_current_in_stage || !current_prim) {
+    if (!current_found_in_stage || !current_prim) {
       // Check if this path is under the NodeGraph we found earlier
       size_t last_slash = current_prim_part.rfind('/');
       if (last_slash != std::string::npos) {
@@ -6703,7 +6738,7 @@ bool RenderSceneConverter::ConvertOpenPBRSurfaceShader(
   }
   if (!ConvertPreviewSurfaceShaderParam(
           env, shader_abs_path, shader.emission_color, "emission_color",
-          rshader.emission_color)) {
+          rshader.emission_color, true)) {
     PushWarn(fmt::format("Failed to convert emission_color parameter for shader: {}", shader_abs_path.prim_part()));
     return false;
   }
@@ -6727,6 +6762,29 @@ bool RenderSceneConverter::ConvertOpenPBRSurfaceShader(
     PushWarn(fmt::format("Failed to convert tangent parameter for shader: {}", shader_abs_path.prim_part()));
     return false;
   }
+
+  // TODO: Convert MaterialX NodeGraph connections to JSON if present
+  // This allows reconstruction of node-based shading in JavaScript/WASM
+  // NOTE: Currently disabled because GetPrimAtPath returns Prim* not optional<Prim>
+  // and ConvertShaderWithNodeGraphToJson is not yet implemented
+  #if 0
+  auto shader_prim_opt = env.stage.GetPrimAtPath(shader_abs_path);
+  if (shader_prim_opt) {
+    const Prim *shader_prim_ptr = shader_prim_opt.value();
+    std::string nodegraph_json;
+    std::string err;
+    if (shader_prim_ptr && ConvertShaderWithNodeGraphToJson(*shader_prim_ptr, env.stage, &nodegraph_json, &err)) {
+      rshader.nodeGraphJson = nodegraph_json;
+      DCOUT("Successfully converted MaterialX NodeGraph to JSON for shader: " << shader_abs_path.prim_part());
+    } else {
+      // Not an error - shader may not have node graph connections
+      DCOUT("No MaterialX NodeGraph found for shader: " << shader_abs_path.prim_part());
+    }
+  }
+  #endif
+
+  // Leave nodeGraphJson empty for now - will be populated when converter is implemented
+  (void)shader_abs_path; // Suppress unused variable warning
 
   (*rshader_out) = rshader;
   return true;
@@ -7621,6 +7679,18 @@ bool RenderSceneConverter::ConvertSkelAnimation(const RenderSceneConverterEnv &e
         translation_samples.push_back(sample_value);
         if (float(sample_t) > anim_out->duration) anim_out->duration = float(sample_t);
       FOREACH_TIMESAMPLES_END()
+    } else if (translations.has_value()) {
+      // Handle static (non-time-sampled) values as a single keyframe at time 0.0
+      std::vector<value::float3> default_value;
+      if (!translations.get_scalar(&default_value)) {
+        PUSH_ERROR_AND_RETURN(fmt::format("Failed to get default value for translations in SkelAnimation: {}", abs_path));
+      }
+      if (default_value.size() != joints.size()) {
+        PUSH_ERROR_AND_RETURN(fmt::format("Array length mismatch: translations.size {} != joints.size {}",
+          default_value.size(), joints.size()));
+      }
+      translation_times.push_back(0.0);
+      translation_samples.push_back(default_value);
     }
 
     if (rotations.has_timesamples()) {
@@ -7634,6 +7704,18 @@ bool RenderSceneConverter::ConvertSkelAnimation(const RenderSceneConverterEnv &e
         rotation_samples.push_back(sample_value);
         if (float(sample_t) > anim_out->duration) anim_out->duration = float(sample_t);
       FOREACH_TIMESAMPLES_END()
+    } else if (rotations.has_value()) {
+      // Handle static (non-time-sampled) values as a single keyframe at time 0.0
+      std::vector<value::quatf> default_value;
+      if (!rotations.get_scalar(&default_value)) {
+        PUSH_ERROR_AND_RETURN(fmt::format("Failed to get default value for rotations in SkelAnimation: {}", abs_path));
+      }
+      if (default_value.size() != joints.size()) {
+        PUSH_ERROR_AND_RETURN(fmt::format("Array length mismatch: rotations.size {} != joints.size {}",
+          default_value.size(), joints.size()));
+      }
+      rotation_times.push_back(0.0);
+      rotation_samples.push_back(default_value);
     }
 
     if (scales.has_timesamples()) {
@@ -7647,6 +7729,18 @@ bool RenderSceneConverter::ConvertSkelAnimation(const RenderSceneConverterEnv &e
         scale_samples.push_back(sample_value);
         if (float(sample_t) > anim_out->duration) anim_out->duration = float(sample_t);
       FOREACH_TIMESAMPLES_END()
+    } else if (scales.has_value()) {
+      // Handle static (non-time-sampled) values as a single keyframe at time 0.0
+      std::vector<value::half3> default_value;
+      if (!scales.get_scalar(&default_value)) {
+        PUSH_ERROR_AND_RETURN(fmt::format("Failed to get default value for scales in SkelAnimation: {}", abs_path));
+      }
+      if (default_value.size() != joints.size()) {
+        PUSH_ERROR_AND_RETURN(fmt::format("Array length mismatch: scales.size {} != joints.size {}",
+          default_value.size(), joints.size()));
+      }
+      scale_times.push_back(0.0);
+      scale_samples.push_back(default_value);
     }
 
     // Create glTF-style samplers and channels for each joint

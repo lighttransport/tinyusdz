@@ -1788,6 +1788,68 @@ class TinyUSDZLoaderNative {
 
     anim.set("tracks", tracks);
 
+    // Also expose raw channels and samplers arrays for advanced use (skeletal animation, etc.)
+    emscripten::val channels = emscripten::val::array();
+    for (const auto &channel : clip.channels) {
+      emscripten::val ch = emscripten::val::object();
+      ch.set("sampler", channel.sampler);
+      ch.set("target_node", channel.target_node);
+      ch.set("skeleton_id", channel.skeleton_id);
+      ch.set("joint_id", channel.joint_id);
+
+      // Set target_type string
+      std::string targetTypeStr = (channel.target_type == tinyusdz::tydra::ChannelTargetType::SkeletonJoint)
+        ? "SkeletonJoint" : "SceneNode";
+      ch.set("target_type", targetTypeStr);
+
+      // Set path string
+      std::string pathStr;
+      switch (channel.path) {
+        case tinyusdz::tydra::AnimationPath::Translation:
+          pathStr = "Translation";
+          break;
+        case tinyusdz::tydra::AnimationPath::Rotation:
+          pathStr = "Rotation";
+          break;
+        case tinyusdz::tydra::AnimationPath::Scale:
+          pathStr = "Scale";
+          break;
+        case tinyusdz::tydra::AnimationPath::Weights:
+          pathStr = "Weights";
+          break;
+      }
+      ch.set("path", pathStr);
+
+      channels.call<void>("push", ch);
+    }
+    anim.set("channels", channels);
+
+    // Expose samplers array
+    emscripten::val samplers = emscripten::val::array();
+    for (const auto &sampler : clip.samplers) {
+      emscripten::val samp = emscripten::val::object();
+      samp.set("times", emscripten::typed_memory_view(sampler.times.size(), sampler.times.data()));
+      samp.set("values", emscripten::typed_memory_view(sampler.values.size(), sampler.values.data()));
+
+      std::string interpolation;
+      switch (sampler.interpolation) {
+        case tinyusdz::tydra::AnimationInterpolation::Step:
+          interpolation = "STEP";
+          break;
+        case tinyusdz::tydra::AnimationInterpolation::CubicSpline:
+          interpolation = "CUBICSPLINE";
+          break;
+        case tinyusdz::tydra::AnimationInterpolation::Linear:
+        default:
+          interpolation = "LINEAR";
+          break;
+      }
+      samp.set("interpolation", interpolation);
+
+      samplers.call<void>("push", samp);
+    }
+    anim.set("samplers", samplers);
+
     return anim;
   }
 

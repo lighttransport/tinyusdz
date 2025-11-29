@@ -81,6 +81,7 @@ int main(int argc, char **argv) {
     std::cout << "  --timecode VALUE: Specify timecode value(e.g. 3.14)\n";
     std::cout << "  --noidxbuild: Do not rebuild vertex indices\n";
     std::cout << "  --notri: Do not triangulate mesh\n";
+    std::cout << "  --trifan: Use triangle fan triangulation (instead of earcut)\n";
     std::cout << "  --notexload: Do not load textures\n";
     std::cout << "  --noar: Do not use (default) AssertResolver\n";
     std::cout << "  --nousdprint: Do not print parsed USD\n";
@@ -97,6 +98,7 @@ int main(int argc, char **argv) {
 
   bool build_indices = true;
   bool triangulate = true;
+  bool use_triangle_fan = false;
   bool export_obj = false;
   bool export_usd = false;
   bool no_usdprint = false;
@@ -107,6 +109,8 @@ int main(int argc, char **argv) {
   for (int i = 1; i < argc; i++) {
     if (strcmp(argv[i], "--notri") == 0) {
       triangulate = false;
+    } else if (strcmp(argv[i], "--trifan") == 0) {
+      use_triangle_fan = true;
     } else if (strcmp(argv[i], "--noidxbuild") == 0) {
       build_indices = false;
     } else if (strcmp(argv[i], "--nousdprint") == 0) {
@@ -171,6 +175,13 @@ int main(int argc, char **argv) {
 
   std::cout << "Triangulate : " << (triangulate ? "true" : "false") << "\n";
   env.mesh_config.triangulate = triangulate;
+  if (use_triangle_fan) {
+    std::cout << "Triangulation method : TriangleFan\n";
+    env.mesh_config.triangulation_method = tinyusdz::tydra::MeshConverterConfig::TriangulationMethod::TriangleFan;
+  } else {
+    std::cout << "Triangulation method : Earcut\n";
+    env.mesh_config.triangulation_method = tinyusdz::tydra::MeshConverterConfig::TriangulationMethod::Earcut;
+  }
   std::cout << "Rebuild vertex indices : " << (build_indices ? "true" : "false")
             << "\n";
   env.mesh_config.build_vertex_indices = build_indices;

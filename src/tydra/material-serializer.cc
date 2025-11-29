@@ -37,18 +37,6 @@ std::string vec3ToJson(const std::array<float, 3>& vec) {
   return ss.str();
 }
 
-// Helper for value serialization
-template<typename T>
-void serializeValue(std::stringstream& json, const T& value) {
-  json << value;
-}
-
-// Specialization for array<float, 3>
-template<>
-void serializeValue<std::array<float, 3>>(std::stringstream& json, const std::array<float, 3>& value) {
-  json << vec3ToJson(value);
-}
-
 
 // Serialize OpenPBRSurfaceShader to JSON
 std::string serializeOpenPBRToJson(const OpenPBRSurfaceShader& shader, const RenderScene* renderScene = nullptr) {

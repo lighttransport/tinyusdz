@@ -1360,6 +1360,121 @@ struct UDIMTexture {
   std::unordered_map<uint32_t, int32_t> imageTileIds;
 };
 
+// ============================================================================
+// LTE SpectralAPI Support
+// Spectral data structures for wavelength-dependent material properties
+// See doc/lte_spectral_api.md for specification
+// ============================================================================
+
+///
+/// Interpolation method for spectral data
+///
+enum class SpectralInterpolation {
+  Linear,    ///< Piecewise linear interpolation (default)
+  Held,      ///< USD Held interpolation (step function)
+  Cubic,     ///< Piecewise cubic interpolation (smooth)
+  Sellmeier, ///< Sellmeier equation (for IOR data only)
+};
+
+///
+/// Standard illuminant presets for wavelength:emission
+///
+enum class IlluminantPreset {
+  None,  ///< No preset, use explicit SPD values
+  A,     ///< CIE Standard Illuminant A (incandescent/tungsten, 2856K)
+  D50,   ///< CIE Standard Illuminant D50 (horizon daylight, 5003K)
+  D65,   ///< CIE Standard Illuminant D65 (noon daylight, 6504K)
+  E,     ///< CIE Standard Illuminant E (equal energy)
+  F1,    ///< CIE Fluorescent Illuminant F1 (daylight fluorescent)
+  F2,    ///< CIE Fluorescent Illuminant F2 (cool white fluorescent)
+  F7,    ///< CIE Fluorescent Illuminant F7 (D65 simulator)
+  F11,   ///< CIE Fluorescent Illuminant F11 (narrow-band cool white)
+};
+
+///
+/// Wavelength unit for spectral data
+///
+enum class WavelengthUnit {
+  Nanometers,   ///< nanometers (nm), default, range [380, 780]
+  Micrometers,  ///< micrometers (um), range [0.38, 0.78]
+};
+
+///
+/// Spectral data container
+/// Stores (wavelength, value) pairs for wavelength-dependent properties
+///
+struct SpectralData {
+  std::vector<vec2> samples;  ///< (wavelength, value) pairs
+  SpectralInterpolation interpolation{SpectralInterpolation::Linear};
+  WavelengthUnit unit{WavelengthUnit::Nanometers};
+
+  /// Check if spectral data is present
+  bool has_data() const { return !samples.empty(); }
+
+  /// Get number of samples
+  size_t size() const { return samples.size(); }
+
+  /// Evaluate spectral value at given wavelength using interpolation
+  float evaluate(float wavelength) const;
+
+  /// Convert wavelength to nanometers (for internal processing)
+  float to_nanometers(float wavelength) const {
+    if (unit == WavelengthUnit::Micrometers) {
+      return wavelength * 1000.0f;
+    }
+    return wavelength;
+  }
+};
+
+///
+/// Spectral IOR data with Sellmeier coefficient support
+///
+struct SpectralIOR {
+  std::vector<vec2> samples;  ///< (wavelength, IOR) pairs or Sellmeier coefficients
+  SpectralInterpolation interpolation{SpectralInterpolation::Linear};
+  WavelengthUnit unit{WavelengthUnit::Nanometers};
+
+  /// Sellmeier coefficients (B1, B2, B3, C1, C2, C3)
+  /// Used when interpolation == Sellmeier
+  /// Note: C1, C2, C3 are in [um^2]
+  float sellmeier_B1{0.0f}, sellmeier_B2{0.0f}, sellmeier_B3{0.0f};
+  float sellmeier_C1{0.0f}, sellmeier_C2{0.0f}, sellmeier_C3{0.0f};
+
+  bool has_data() const {
+    return !samples.empty() || interpolation == SpectralInterpolation::Sellmeier;
+  }
+
+  /// Evaluate IOR at given wavelength
+  float evaluate(float wavelength_nm) const;
+};
+
+///
+/// Spectral emission data for light sources
+///
+struct SpectralEmission {
+  std::vector<vec2> samples;  ///< (wavelength, irradiance) pairs
+  SpectralInterpolation interpolation{SpectralInterpolation::Linear};
+  WavelengthUnit unit{WavelengthUnit::Nanometers};
+  IlluminantPreset preset{IlluminantPreset::None};
+
+  bool has_data() const {
+    return !samples.empty() || preset != IlluminantPreset::None;
+  }
+
+  /// Evaluate emission at given wavelength
+  /// Returns irradiance in W m^-2 nm^-1 (normalized to nanometers)
+  float evaluate(float wavelength_nm) const;
+};
+
+// String conversion functions for spectral types
+std::string to_string(SpectralInterpolation interp);
+std::string to_string(IlluminantPreset preset);
+std::string to_string(WavelengthUnit unit);
+
+// ============================================================================
+// End of LTE SpectralAPI Support
+// ============================================================================
+
 // workaround for GCC
 #if defined(__GNUC__) && !defined(__clang__)
 #pragma GCC diagnostic push
@@ -1410,7 +1525,22 @@ class PreviewSurfaceShader {
   ShaderParam<float> displacement{0.0f};
   ShaderParam<float> occlusion{0.0f};
 
+  // LTE SpectralAPI: Optional spectral properties
+  // Only exported if has_data() returns true
+  nonstd::optional<SpectralData> spd_reflectance;  ///< wavelength:reflectance
+  nonstd::optional<SpectralIOR> spd_ior;           ///< wavelength:ior
+
   uint64_t handle{0};  // Handle ID for Graphics API. 0 = invalid
+
+  /// Check if material has spectral reflectance data
+  bool hasSpectralReflectance() const {
+    return spd_reflectance.has_value() && spd_reflectance->has_data();
+  }
+
+  /// Check if material has spectral IOR data
+  bool hasSpectralIOR() const {
+    return spd_ior.has_value() && spd_ior->has_data();
+  }
 };
 
 // MaterialX OpenPBR Surface shader optimized for WebGL/Vulkan rendering
@@ -1464,13 +1594,46 @@ class OpenPBRSurfaceShader {
   // Emission - light emission
   ShaderParam<float> emission_luminance{0.0f};
   ShaderParam<vec3> emission_color{{1.0f, 1.0f, 1.0f}};
-  
+
   // Geometry modifiers
   ShaderParam<float> opacity{1.0f};
   ShaderParam<vec3> normal{{0.0f, 0.0f, 1.0f}};
   ShaderParam<vec3> tangent{{1.0f, 0.0f, 0.0f}};
-  
+
+  // LTE SpectralAPI: Optional spectral properties
+  // Only exported to JSON if has_data() returns true
+  // MaterialX property names use "spd_" prefix (e.g., "spd_reflectance", "spd_ior")
+  nonstd::optional<SpectralData> spd_reflectance;  ///< wavelength:reflectance -> spd_reflectance
+  nonstd::optional<SpectralIOR> spd_ior;           ///< wavelength:ior -> spd_ior
+  nonstd::optional<SpectralEmission> spd_emission; ///< wavelength:emission -> spd_emission
+
   uint64_t handle{0};  // Handle ID for Graphics API. 0 = invalid
+
+  // MaterialX Node Graph representation as JSON
+  // Stores the complete node-based shader graph for reconstruction in JS/WASM
+  // Schema follows MaterialX XML structure for compatibility
+  // Empty string if no node graph exists (direct parameter values only)
+  std::string nodeGraphJson;
+
+  /// Check if material has spectral reflectance data
+  bool hasSpectralReflectance() const {
+    return spd_reflectance.has_value() && spd_reflectance->has_data();
+  }
+
+  /// Check if material has spectral IOR data
+  bool hasSpectralIOR() const {
+    return spd_ior.has_value() && spd_ior->has_data();
+  }
+
+  /// Check if material has spectral emission data
+  bool hasSpectralEmission() const {
+    return spd_emission.has_value() && spd_emission->has_data();
+  }
+
+  /// Check if material has any spectral data
+  bool hasAnySpectralData() const {
+    return hasSpectralReflectance() || hasSpectralIOR() || hasSpectralEmission();
+  }
 };
 
 #if defined(__GNUC__) && !defined(__clang__)
@@ -1728,6 +1891,14 @@ bool DefaultTextureImageLoaderFunction(const value::AssetPath &assetPath,
 
 struct MeshConverterConfig {
   bool triangulate{true};
+
+  // Triangulation method for polygons with 5+ vertices
+  enum class TriangulationMethod {
+    Earcut,     // Use earcut algorithm (robust, handles complex polygons)
+    TriangleFan // Use simple triangle fan (faster, only for convex polygons)
+  };
+
+  TriangulationMethod triangulation_method{TriangulationMethod::Earcut};
 
   bool validate_geomsubset{true};  // Validate GeomSubset.
 
