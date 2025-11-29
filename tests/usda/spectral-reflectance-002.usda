@@ -1,0 +1,16 @@
+#usda 1.0
+(
+    doc = "Test: Spectral reflectance with interpolation metadata"
+)
+
+def Shader "TestShader"
+{
+    uniform token info:id = "UsdPreviewSurface"
+    float2[] wavelength:reflectance = [
+        (380, 0.10), (500, 0.30), (600, 0.70), (780, 0.85)
+    ] (
+        customData = {
+            string interpolation = "linear"
+        }
+    )
+}
