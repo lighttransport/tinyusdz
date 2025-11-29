@@ -1,0 +1,12 @@
+#usda 1.0
+(
+    doc = "Test: Basic spectral emission attribute"
+)
+
+def DistantLight "TestLight"
+{
+    float inputs:intensity = 1.0
+    float2[] wavelength:emission = [
+        (380, 0.5), (450, 0.8), (550, 1.0), (650, 0.9), (780, 0.7)
+    ]
+}

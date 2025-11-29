@@ -1,0 +1,13 @@
+#usda 1.0
+(
+    doc = "Test: Basic spectral IOR attribute"
+)
+
+def Shader "TestShader"
+{
+    uniform token info:id = "UsdPreviewSurface"
+    float inputs:ior = 1.5
+    float2[] wavelength:ior = [
+        (380, 1.53), (450, 1.52), (550, 1.50), (650, 1.49), (780, 1.48)
+    ]
+}

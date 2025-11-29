@@ -1,0 +1,12 @@
+#usda 1.0
+(
+    doc = "Test: Basic spectral reflectance attribute"
+)
+
+def Shader "TestShader"
+{
+    uniform token info:id = "UsdPreviewSurface"
+    float2[] wavelength:reflectance = [
+        (380, 0.05), (450, 0.10), (550, 0.50), (650, 0.80), (780, 0.90)
+    ]
+}
