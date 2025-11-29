@@ -1675,15 +1675,73 @@ struct RenderCamera {
 
 };
 
-// Simple light
+// Light source for rendering
 struct RenderLight
 {
-  std::string name;  // elementName in USD (e.g. "frontCamera")
-  std::string
-      abs_path;  // abosolute GeomCamera Prim path in USD (e.g. "/xform/camera")
+  std::string name;       // elementName in USD (e.g. "sunLight")
+  std::string abs_path;   // absolute Prim path in USD (e.g. "/scene/lights/sun")
+  std::string display_name;
 
+  enum class Type {
+    Point,        ///< SphereLight with small radius
+    Sphere,       ///< SphereLight
+    Disk,         ///< DiskLight
+    Rect,         ///< RectLight
+    Cylinder,     ///< CylinderLight
+    Distant,      ///< DistantLight (directional)
+    Dome,         ///< DomeLight (environment)
+    Geometry,     ///< GeometryLight
+    Portal,       ///< PortalLight
+  };
 
-  // TODO..
+  Type type{Type::Point};
+
+  // Common light properties
+  vec3 color{1.0f, 1.0f, 1.0f};       ///< Light color (linear RGB)
+  float intensity{1.0f};              ///< Light intensity multiplier
+  float exposure{0.0f};               ///< Exposure value (EV)
+  float diffuse{1.0f};                ///< Diffuse contribution multiplier
+  float specular{1.0f};               ///< Specular contribution multiplier
+  bool normalize{false};              ///< Normalize by surface area
+
+  // Color temperature
+  bool enableColorTemperature{false}; ///< Use color temperature instead of color
+  float colorTemperature{6500.0f};    ///< Color temperature in Kelvin
+
+  // Transform (world space)
+  mat4 transform;                     ///< World transformation matrix
+  vec3 position{0.0f, 0.0f, 0.0f};    ///< World position
+  vec3 direction{0.0f, -1.0f, 0.0f};  ///< Light direction (for distant/spot)
+
+  // Type-specific parameters
+  float radius{0.5f};                 ///< Sphere/Disk radius
+  float width{1.0f};                  ///< RectLight width
+  float height{1.0f};                 ///< RectLight height
+  float length{1.0f};                 ///< CylinderLight length
+  float angle{0.53f};                 ///< DistantLight angle (degrees)
+
+  // Shaping (spotlight)
+  float shapingConeAngle{90.0f};      ///< Cone angle (degrees)
+  float shapingConeSoftness{0.0f};    ///< Cone edge softness
+  float shapingFocus{0.0f};           ///< Focus adjustment
+
+  // Shadow
+  bool shadowEnable{true};            ///< Enable shadows
+  vec3 shadowColor{0.0f, 0.0f, 0.0f}; ///< Shadow color
+
+  // Environment (DomeLight)
+  int32_t envmap_texture_id{-1};      ///< Index to textures for environment map
+
+  // LTE SpectralAPI: Spectral emission support
+  // Only exported if has_data() returns true
+  nonstd::optional<SpectralEmission> spd_emission;  ///< wavelength:emission
+
+  uint64_t handle{0};  // Handle ID for Graphics API. 0 = invalid
+
+  /// Check if light has spectral emission data
+  bool hasSpectralEmission() const {
+    return spd_emission.has_value() && spd_emission->has_data();
+  }
 };
 
 struct SceneMetadata
