@@ -14,6 +14,7 @@
 #include "stage.hh"
 #include "value-pprint.hh"
 #include "color-space.hh"
+#include "render-data.hh"  // For SpectralData, SpectralIOR, SpectralEmission
 
 namespace tinyusdz {
 namespace tydra {
@@ -244,6 +245,86 @@ bool ConvertShaderWithNodeGraphToJson(
   // STUB: Not yet implemented - requires proper understanding of Prim API
   if (err) *err = "ConvertShaderWithNodeGraphToJson not yet implemented";
   return false;
+}
+
+// ============================================================================
+// LTE SpectralAPI JSON Conversion Implementations
+// ============================================================================
+
+std::string Vec2ArrayToJsonArray(const std::vector<value::float2> &vec) {
+  std::stringstream ss;
+  ss << "[";
+  for (size_t i = 0; i < vec.size(); i++) {
+    if (i > 0) ss << ", ";
+    ss << "[" << vec[i][0] << ", " << vec[i][1] << "]";
+  }
+  ss << "]";
+  return ss.str();
+}
+
+std::string SpectralDataToJson(const SpectralData &data) {
+  if (!data.has_data()) {
+    return "null";
+  }
+
+  std::stringstream ss;
+  ss << "{\n";
+  ss << "    \"samples\": " << Vec2ArrayToJsonArray(data.samples) << ",\n";
+  ss << "    \"interpolation\": \"" << to_string(data.interpolation) << "\",\n";
+  ss << "    \"unit\": \"" << to_string(data.unit) << "\"\n";
+  ss << "  }";
+  return ss.str();
+}
+
+std::string SpectralIORToJson(const SpectralIOR &data) {
+  if (!data.has_data()) {
+    return "null";
+  }
+
+  std::stringstream ss;
+  ss << "{\n";
+
+  if (!data.samples.empty()) {
+    ss << "    \"samples\": " << Vec2ArrayToJsonArray(data.samples) << ",\n";
+  }
+
+  ss << "    \"interpolation\": \"" << to_string(data.interpolation) << "\",\n";
+  ss << "    \"unit\": \"" << to_string(data.unit) << "\"";
+
+  // Add Sellmeier coefficients if using Sellmeier interpolation
+  if (data.interpolation == SpectralInterpolation::Sellmeier) {
+    ss << ",\n    \"sellmeier\": {\n";
+    ss << "      \"B\": [" << data.sellmeier_B1 << ", " << data.sellmeier_B2 << ", " << data.sellmeier_B3 << "],\n";
+    ss << "      \"C\": [" << data.sellmeier_C1 << ", " << data.sellmeier_C2 << ", " << data.sellmeier_C3 << "]\n";
+    ss << "    }";
+  }
+
+  ss << "\n  }";
+  return ss.str();
+}
+
+std::string SpectralEmissionToJson(const SpectralEmission &data) {
+  if (!data.has_data()) {
+    return "null";
+  }
+
+  std::stringstream ss;
+  ss << "{\n";
+
+  if (!data.samples.empty()) {
+    ss << "    \"samples\": " << Vec2ArrayToJsonArray(data.samples) << ",\n";
+  }
+
+  ss << "    \"interpolation\": \"" << to_string(data.interpolation) << "\",\n";
+  ss << "    \"unit\": \"" << to_string(data.unit) << "\"";
+
+  // Add preset if specified
+  if (data.preset != IlluminantPreset::None) {
+    ss << ",\n    \"preset\": \"" << to_string(data.preset) << "\"";
+  }
+
+  ss << "\n  }";
+  return ss.str();
 }
 
 } // namespace tydra

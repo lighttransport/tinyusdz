@@ -42,6 +42,19 @@
 #include "nonstd/optional.hpp"
 #include "value-types.hh"
 
+// Forward declare spectral types from render-data.hh
+// Full definitions available when including render-data.hh
+namespace tinyusdz {
+namespace tydra {
+  struct SpectralData;
+  struct SpectralIOR;
+  struct SpectralEmission;
+  enum class SpectralInterpolation;
+  enum class IlluminantPreset;
+  enum class WavelengthUnit;
+}
+}
+
 namespace tinyusdz {
 
 // Forward declarations
@@ -314,6 +327,36 @@ struct RTMaterial {
   float anisotropic_rotation{0.0f};   ///< Anisotropic rotation (0-1)
   int32_t anisotropic_texture{-1};    ///< Anisotropic texture
 
+  // === LTE SpectralAPI: Spectral Material Properties ===
+  // Optional wavelength-dependent material data for spectral rendering
+  // See doc/lte_spectral_api.md for specification
+
+  /// Spectral reflectance: (wavelength, reflectance) pairs
+  /// Use for wavelength-dependent diffuse/specular reflectance
+  std::vector<vec2> spd_reflectance;
+
+  /// Spectral IOR: (wavelength, IOR) pairs
+  /// Use for wavelength-dependent index of refraction (dispersion)
+  std::vector<vec2> spd_ior;
+
+  /// Spectral emission: (wavelength, irradiance) pairs
+  /// Use for wavelength-dependent emission (spectral light sources)
+  std::vector<vec2> spd_emission;
+
+  /// Interpolation method for spectral reflectance
+  int32_t spd_reflectance_interp{0};  ///< 0=Linear, 1=Held, 2=Cubic
+
+  /// Interpolation method for spectral IOR (0=Linear, 1=Held, 2=Cubic, 3=Sellmeier)
+  int32_t spd_ior_interp{0};
+
+  /// Sellmeier coefficients for IOR (when spd_ior_interp == 3)
+  /// B1, B2, B3, C1, C2, C3 (C values in um^2)
+  float sellmeier_B[3]{0.0f, 0.0f, 0.0f};
+  float sellmeier_C[3]{0.0f, 0.0f, 0.0f};
+
+  /// Wavelength unit: 0=nanometers (default), 1=micrometers
+  int32_t wavelength_unit{0};
+
   // === Material Behavior Flags ===
 
   bool is_double_sided{false};        ///< Two-sided material
@@ -344,6 +387,22 @@ struct RTMaterial {
   bool has_textures() const {
     return base_color_texture >= 0 || normal_texture >= 0 ||
            emission_texture >= 0 || metallic_roughness_texture >= 0;
+  }
+
+  /// Check if material has spectral reflectance data
+  bool has_spectral_reflectance() const { return !spd_reflectance.empty(); }
+
+  /// Check if material has spectral IOR data
+  bool has_spectral_ior() const {
+    return !spd_ior.empty() || spd_ior_interp == 3; // 3 = Sellmeier
+  }
+
+  /// Check if material has spectral emission data
+  bool has_spectral_emission() const { return !spd_emission.empty(); }
+
+  /// Check if material has any spectral data
+  bool has_any_spectral_data() const {
+    return has_spectral_reflectance() || has_spectral_ior() || has_spectral_emission();
   }
 };
 
@@ -420,6 +479,21 @@ struct RTLight {
   };
   nonstd::optional<EnvmapSamplingData> envmap_sampling;
 
+  // === LTE SpectralAPI: Spectral Light Emission ===
+
+  /// Spectral emission: (wavelength, irradiance) pairs
+  /// Unit: W m^-2 nm^-1 for nanometers, W m^-2 um^-1 for micrometers
+  std::vector<vec2> spd_emission;
+
+  /// Interpolation method for spectral emission (0=Linear, 1=Held, 2=Cubic)
+  int32_t spd_emission_interp{0};
+
+  /// Wavelength unit: 0=nanometers (default), 1=micrometers
+  int32_t wavelength_unit{0};
+
+  /// Standard illuminant preset: 0=None, 1=A, 2=D50, 3=D65, 4=E, 5=F1, 6=F2, 7=F7, 8=F11
+  int32_t illuminant_preset{0};
+
   // === Visibility Flags ===
 
   bool cast_shadows{true};            ///< Cast shadows
@@ -429,6 +503,11 @@ struct RTLight {
   // === Source Reference ===
 
   int32_t source_light_id{-1};  ///< Index to RenderScene::lights
+
+  /// Check if light has spectral emission data
+  bool has_spectral_emission() const {
+    return !spd_emission.empty() || illuminant_preset != 0;
+  }
 };
 
 ///
