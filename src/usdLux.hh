@@ -72,6 +72,14 @@ class BoundableLight : public Xformable, public Collection {
   TypedAttributeWithFallback<Animatable<float>> shapingConeAngle{90.0f}; // float inputs:shaping:cone:angle = 90
   TypedAttributeWithFallback<Animatable<float>> shapingConeSoftness{0.0f}; // float inputs:shaping:cone:softness = 0
 
+  // LTE SpectralAPI: Spectral emission support
+  // See doc/lte_spectral_api.md for specification
+  TypedAttribute<std::vector<value::float2>> spectralEmission; // float2[] wavelength:emission
+  // Metadata stored in attribute's customData:
+  // - string interpolation: "linear" (default), "held", "cubic"
+  // - string illuminantPreset: "d65", "d50", "a", "e", "f1", "f2", "f7", "f11"
+  // - string unitForWavelength: "nanometers" (default), "micrometers"
+
   std::pair<ListEditQual, std::vector<Reference>> references;
   std::pair<ListEditQual, std::vector<Payload>> payload;
   std::map<std::string, VariantSet> variantSet;
@@ -122,6 +130,13 @@ class NonboundableLight : public Xformable, public Collection {
   TypedAttributeWithFallback<Animatable<float>> shadowFalloff{-1.0f}; // float inputs:shadow:falloff = -1
   TypedAttributeWithFallback<Animatable<float>> shadowFalloffGamma{1.0f}; // float inputs:shadow:falloffGamma = 1
 
+  // LTE SpectralAPI: Spectral emission support
+  // See doc/lte_spectral_api.md for specification
+  TypedAttribute<std::vector<value::float2>> spectralEmission; // float2[] wavelength:emission
+  // Metadata stored in attribute's customData:
+  // - string interpolation: "linear" (default), "held", "cubic"
+  // - string illuminantPreset: "d65", "d50", "a", "e", "f1", "f2", "f7", "f11"
+  // - string unitForWavelength: "nanometers" (default), "micrometers"
 
   std::pair<ListEditQual, std::vector<Reference>> references;
   std::pair<ListEditQual, std::vector<Payload>> payload;
