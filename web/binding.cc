@@ -1373,6 +1373,168 @@ class TinyUSDZLoaderNative {
     return result;
   }
 
+  int numLights() const { return static_cast<int>(render_scene_.lights.size()); }
+
+  emscripten::val getLight(int light_id) const {
+    emscripten::val light = emscripten::val::object();
+
+    if (!loaded_) {
+      light.set("error", "Scene not loaded");
+      return light;
+    }
+
+    if (light_id < 0 || light_id >= static_cast<int>(render_scene_.lights.size())) {
+      light.set("error", "Invalid light ID");
+      return light;
+    }
+
+    const auto &l = render_scene_.lights[static_cast<size_t>(light_id)];
+
+    light.set("name", l.name);
+    light.set("absPath", l.abs_path);
+    light.set("displayName", l.display_name);
+
+    // Light type as string
+    std::string typeStr;
+    switch (l.type) {
+      case tinyusdz::tydra::RenderLight::Type::Point: typeStr = "point"; break;
+      case tinyusdz::tydra::RenderLight::Type::Sphere: typeStr = "sphere"; break;
+      case tinyusdz::tydra::RenderLight::Type::Disk: typeStr = "disk"; break;
+      case tinyusdz::tydra::RenderLight::Type::Rect: typeStr = "rect"; break;
+      case tinyusdz::tydra::RenderLight::Type::Cylinder: typeStr = "cylinder"; break;
+      case tinyusdz::tydra::RenderLight::Type::Distant: typeStr = "distant"; break;
+      case tinyusdz::tydra::RenderLight::Type::Dome: typeStr = "dome"; break;
+      case tinyusdz::tydra::RenderLight::Type::Geometry: typeStr = "geometry"; break;
+      case tinyusdz::tydra::RenderLight::Type::Portal: typeStr = "portal"; break;
+    }
+    light.set("type", typeStr);
+
+    // Common light properties
+    emscripten::val color = emscripten::val::array();
+    color.call<void>("push", l.color[0]);
+    color.call<void>("push", l.color[1]);
+    color.call<void>("push", l.color[2]);
+    light.set("color", color);
+
+    light.set("intensity", l.intensity);
+    light.set("exposure", l.exposure);
+    light.set("diffuse", l.diffuse);
+    light.set("specular", l.specular);
+    light.set("normalize", l.normalize);
+
+    // Color temperature
+    light.set("enableColorTemperature", l.enableColorTemperature);
+    light.set("colorTemperature", l.colorTemperature);
+
+    // Transform
+    emscripten::val transform = emscripten::val::array();
+    for (int i = 0; i < 4; i++) {
+      for (int j = 0; j < 4; j++) {
+        transform.call<void>("push", l.transform.m[i][j]);
+      }
+    }
+    light.set("transform", transform);
+
+    emscripten::val position = emscripten::val::array();
+    position.call<void>("push", l.position[0]);
+    position.call<void>("push", l.position[1]);
+    position.call<void>("push", l.position[2]);
+    light.set("position", position);
+
+    emscripten::val direction = emscripten::val::array();
+    direction.call<void>("push", l.direction[0]);
+    direction.call<void>("push", l.direction[1]);
+    direction.call<void>("push", l.direction[2]);
+    light.set("direction", direction);
+
+    // Type-specific parameters
+    light.set("radius", l.radius);
+    light.set("width", l.width);
+    light.set("height", l.height);
+    light.set("length", l.length);
+    light.set("angle", l.angle);
+
+    // Shaping (spotlight)
+    light.set("shapingConeAngle", l.shapingConeAngle);
+    light.set("shapingConeSoftness", l.shapingConeSoftness);
+    light.set("shapingFocus", l.shapingFocus);
+
+    // Shadow
+    light.set("shadowEnable", l.shadowEnable);
+    emscripten::val shadowColor = emscripten::val::array();
+    shadowColor.call<void>("push", l.shadowColor[0]);
+    shadowColor.call<void>("push", l.shadowColor[1]);
+    shadowColor.call<void>("push", l.shadowColor[2]);
+    light.set("shadowColor", shadowColor);
+
+    // Environment map texture ID (for DomeLight)
+    light.set("envmapTextureId", l.envmap_texture_id);
+
+    // LTE SpectralAPI: Spectral emission
+    if (l.hasSpectralEmission()) {
+      emscripten::val spd = emscripten::val::object();
+      const auto &emission = *l.spd_emission;
+
+      // Samples as array of [wavelength, value] pairs
+      emscripten::val samples = emscripten::val::array();
+      for (const auto &s : emission.samples) {
+        emscripten::val sample = emscripten::val::array();
+        sample.call<void>("push", s[0]);
+        sample.call<void>("push", s[1]);
+        samples.call<void>("push", sample);
+      }
+      spd.set("samples", samples);
+
+      // Interpolation method
+      std::string interpStr;
+      switch (emission.interpolation) {
+        case tinyusdz::tydra::SpectralInterpolation::Linear: interpStr = "linear"; break;
+        case tinyusdz::tydra::SpectralInterpolation::Held: interpStr = "held"; break;
+        case tinyusdz::tydra::SpectralInterpolation::Cubic: interpStr = "cubic"; break;
+        case tinyusdz::tydra::SpectralInterpolation::Sellmeier: interpStr = "sellmeier"; break;
+      }
+      spd.set("interpolation", interpStr);
+
+      // Wavelength unit
+      std::string unitStr = (emission.unit == tinyusdz::tydra::WavelengthUnit::Nanometers)
+                            ? "nanometers" : "micrometers";
+      spd.set("unit", unitStr);
+
+      // Illuminant preset
+      std::string presetStr;
+      switch (emission.preset) {
+        case tinyusdz::tydra::IlluminantPreset::None: presetStr = "none"; break;
+        case tinyusdz::tydra::IlluminantPreset::A: presetStr = "a"; break;
+        case tinyusdz::tydra::IlluminantPreset::D50: presetStr = "d50"; break;
+        case tinyusdz::tydra::IlluminantPreset::D65: presetStr = "d65"; break;
+        case tinyusdz::tydra::IlluminantPreset::E: presetStr = "e"; break;
+        case tinyusdz::tydra::IlluminantPreset::F1: presetStr = "f1"; break;
+        case tinyusdz::tydra::IlluminantPreset::F2: presetStr = "f2"; break;
+        case tinyusdz::tydra::IlluminantPreset::F7: presetStr = "f7"; break;
+        case tinyusdz::tydra::IlluminantPreset::F11: presetStr = "f11"; break;
+      }
+      spd.set("preset", presetStr);
+
+      light.set("spectralEmission", spd);
+    }
+
+    return light;
+  }
+
+  emscripten::val getAllLights() const {
+    emscripten::val lights = emscripten::val::array();
+
+    if (!loaded_) {
+      return lights;
+    }
+
+    for (int i = 0; i < static_cast<int>(render_scene_.lights.size()); i++) {
+      lights.call<void>("push", getLight(i));
+    }
+
+    return lights;
+  }
+
   emscripten::val getTexture(int tex_id) const {
     emscripten::val tex = emscripten::val::object();
 
@@ -2781,6 +2943,9 @@ EMSCRIPTEN_BINDINGS(tinyusdz_module) {
       .function("getMaterial", select_overload<emscripten::val(int) const>(&TinyUSDZLoaderNative::getMaterial))
       .function("getMaterialWithFormat", select_overload<emscripten::val(int, const std::string&) const>(&TinyUSDZLoaderNative::getMaterial))
       .function("numMaterials", &TinyUSDZLoaderNative::numMaterials)
+      .function("getLight", &TinyUSDZLoaderNative::getLight)
+      .function("getAllLights", &TinyUSDZLoaderNative::getAllLights)
+      .function("numLights", &TinyUSDZLoaderNative::numLights)
       .function("getTexture", &TinyUSDZLoaderNative::getTexture)
       .function("getImage", &TinyUSDZLoaderNative::getImage)
       .function("getDefaultRootNodeId",
