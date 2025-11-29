@@ -13,6 +13,58 @@ import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js';
 import { ShaderPass } from 'three/examples/jsm/postprocessing/ShaderPass.js';
 import { MaterialXLoader } from 'three/examples/jsm/loaders/MaterialXLoader.js';
 import { convertOpenPBRToMaterialXML } from './convert-openpbr-to-mtlx.js';
+import {
+    initializeNodeGraph,
+    registerMaterialXNodeTypes,
+    showNodeGraph,
+    hideNodeGraph,
+    toggleNodeGraphVisibility
+} from './materialx-node-graph.js';
+import {
+    showMaterialJSON,
+    hideMaterialJSON,
+    toggleMaterialJSONVisibility,
+    switchMaterialTab
+} from './material-json-viewer.js';
+import {
+    initializeColorPicker,
+    toggleColorPickerMode,
+    isColorPickerActive,
+    handleColorPickerClick
+} from './color-picker.js';
+import {
+    initializeMaterialPropertyPicker,
+    toggleMaterialPropertyPickerMode,
+    isMaterialPropertyPickerActive,
+    handleMaterialPropertyPickerClick,
+    resizeMaterialPropertyTargets
+} from './material-property-picker.js';
+import {
+    applyMaterialOverrides,
+    resetMaterialOverrides,
+    applyOverridePreset,
+    OVERRIDE_PRESETS
+} from './material-override.js';
+import { MaterialValidator } from './material-validator.js';
+import { SplitViewComparison, COMPARISON_PRESETS } from './split-view-comparison.js';
+import { TextureInspector } from './texture-inspector.js';
+import { MaterialComplexityAnalyzer } from './material-complexity-analyzer.js';
+import {
+    REFERENCE_MATERIALS,
+    applyReferenceMaterial,
+    getReferencesByCategory,
+    getCategories
+} from './reference-materials.js';
+import { IBLContributionAnalyzer } from './ibl-contribution-analyzer.js';
+import { GBufferViewer } from './gbuffer-viewer.js';
+import { MipMapVisualizer } from './mipmap-visualizer.js';
+import { PixelInspector } from './pixel-inspector.js';
+import { MaterialPresetManager } from './material-preset.js';
+import { PBRTheoryGuide } from './pbr-theory-guide.js';
+import { TextureTilingDetector } from './texture-tiling-detector.js';
+import { GradientRampEditor } from './gradient-ramp-editor.js';
+import { LightProbeVisualizer } from './light-probe-visualizer.js';
+import { BRDFVisualizer } from './brdf-visualizer.js';
 
 // Embedded default OpenPBR scene (simple sphere with material)
 const EMBEDDED_USDA_SCENE = `#usda 1.0
@@ -75,7 +127,15 @@ const AOV_MODES = {
     SPECULAR: 'specular',
     COAT: 'coat',
     TRANSMISSION: 'transmission',
-    EMISSIVE: 'emissive'
+    EMISSIVE: 'emissive',
+    // New Priority 1 AOV Modes
+    AO: 'ambient_occlusion',
+    ANISOTROPY: 'anisotropy',
+    SHEEN: 'sheen',
+    IRIDESCENCE: 'iridescence',
+    NORMAL_QUALITY: 'normal_quality',
+    UV_LAYOUT: 'uv_layout',
+    SHADER_ERROR: 'shader_error'
 };
 
 // Global variables
@@ -91,9 +151,10 @@ let gui = null;
 let paramFolder = null;
 let environmentType = 'goegap_1k'; // 'studio', 'white', 'goegap_1k', or 'env_sunsky_sunset'
 let showBackgroundEnvmap = true; // Toggle for showing environment map as background
-let toneMappingType = 'none'; // 'none', 'aces', 'agx', 'neutral'
+let toneMappingType = 'none'; // 'none', 'aces', 'agx', 'neutral', 'aces13', 'aces20'
 let exposureValue = 1.0; // Exposure value (works independently of tone mapping)
 let pmremGenerator = null;
+let acesTonemapPass = null; // Custom ACES tonemapping pass
 let currentColorSpace = 'srgb'; // 'srgb' or 'display-p3'
 let displayP3Supported = false;
 let textureCache = new Map(); // Cache for loaded textures
@@ -113,6 +174,7 @@ let useNodeMaterial = false; // Toggle between MeshPhysicalMaterial and NodeMate
 let materialXLoader = null; // MaterialXLoader instance
 let currentAOVMode = AOV_MODES.NONE; // Current AOV visualization mode
 let aovOriginalMaterials = new Map(); // Store original materials when showing AOVs
+let preferredMaterialType = 'auto'; // 'auto', 'openpbr', 'usdpreviewsurface' - Which material type to prefer when both are available
 
 // Available texture color spaces
 const TEXTURE_COLOR_SPACES = {
@@ -296,6 +358,156 @@ const FalseColorShader = {
             vec3 falseColor = evToFalseColor(ev);
 
             gl_FragColor = vec4(falseColor, 1.0);
+        }
+    `
+};
+
+// ACES Tonemapping Shader
+// Supports ACES 1.3 and ACES 2.0 as used in Blender 5.0
+const ACESTonemapShader = {
+    uniforms: {
+        'tDiffuse': { value: null },
+        'exposure': { value: 1.0 },
+        'acesVersion': { value: 0 } // 0 = ACES 1.3, 1 = ACES 2.0
+    },
+
+    vertexShader: `
+        varying vec2 vUv;
+        void main() {
+            vUv = uv;
+            gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+        }
+    `,
+
+    fragmentShader: `
+        uniform sampler2D tDiffuse;
+        uniform float exposure;
+        uniform int acesVersion;
+        varying vec2 vUv;
+
+        // ACES matrices and functions
+
+        // sRGB to ACES AP0 (ACES2065-1) conversion matrix
+        mat3 sRGB_to_AP0 = mat3(
+            0.4397010, 0.3829780, 0.1773350,
+            0.0897923, 0.8134230, 0.0967616,
+            0.0175440, 0.1115440, 0.8707040
+        );
+
+        // ACES AP0 to sRGB conversion matrix
+        mat3 AP0_to_sRGB = mat3(
+            2.52169, -1.13413, -0.38756,
+            -0.27648, 1.37272, -0.09624,
+            -0.01538, -0.15298, 1.16835
+        );
+
+        // ACES AP1 (ACEScg) to AP0 conversion
+        mat3 AP1_to_AP0 = mat3(
+            0.6954522, 0.1406787, 0.1638691,
+            0.0447946, 0.8596711, 0.0955343,
+            -0.0055259, 0.0040253, 1.0015006
+        );
+
+        // ACES AP0 to AP1 conversion
+        mat3 AP0_to_AP1 = mat3(
+            1.4514393, -0.2365107, -0.2149286,
+            -0.0765538, 1.1762297, -0.0996759,
+            0.0083161, -0.0060324, 0.9977163
+        );
+
+        // ACES 1.3 RRT + ODT (Reference Rendering Transform + Output Device Transform)
+        // This is the ACES Filmic tonemapper used in Blender 4.x and earlier
+        vec3 ACESFilmic_1_3(vec3 color) {
+            // Convert from AP0 to AP1 (ACEScg)
+            // Stephen Hill's fit is designed for AP1 color space
+            vec3 x = AP0_to_AP1 * color;
+
+            // Apply the ACES filmic curve (RRT + ODT approximation)
+            // This approximation combines RRT and sRGB ODT into one formula
+            float a = 2.51;
+            float b = 0.03;
+            float c = 2.43;
+            float d = 0.59;
+            float e = 0.14;
+            vec3 mapped = (x * (a * x + b)) / (x * (c * x + d) + e);
+
+            // Convert from AP1 to linear sRGB
+            mat3 AP1_to_sRGB = mat3(
+                1.70505, -0.62179, -0.08326,
+                -0.13026, 1.14080, -0.01055,
+                0.00610, -0.00969, 1.00360
+            );
+
+            return clamp(AP1_to_sRGB * mapped, 0.0, 1.0);
+        }
+
+        // ACES 2.0 OpenDRT (Open Display Rendering Transform)
+        // New tonemapper introduced in Blender 5.0
+        vec3 OpenDRT_2_0(vec3 color) {
+            // Convert from AP0 to AP1 (ACEScg) for OpenDRT processing
+            vec3 aces = AP0_to_AP1 * color;
+
+            // OpenDRT operates in AP1 space
+            // Simplified approximation of the OpenDRT tone curve
+
+            // Calculate luminance in AP1 space
+            const vec3 AP1_RGB2Y = vec3(0.2722287, 0.6740818, 0.0536895);
+            float Y = max(dot(aces, AP1_RGB2Y), 1e-10);
+
+            // Tonescale parameters (simplified OpenDRT-like curve)
+            const float c_t = 1.55; // Toe compression
+            const float s_t = 0.99; // Toe smoothness
+            const float c_d = 10.5; // Shoulder compression (controls peak)
+            const float w_g = 0.14; // Gray point
+
+            // Generalized Reinhard-style curve with toe and shoulder control
+            float peak = 100.0; // Display peak luminance in nits
+            float norm = Y / peak;
+
+            // Toe-shoulder curve
+            float num = norm * (1.0 + norm / (c_d * c_d));
+            float denom = 1.0 + norm;
+            float Y_out = num / denom;
+
+            // Apply subtle S-curve for contrast
+            Y_out = pow(Y_out, 0.9);
+
+            // Preserve color ratios (chromatic adaptation)
+            vec3 rgb_out = aces * (Y_out / Y);
+
+            // Convert from AP1 to linear sRGB for display
+            mat3 AP1_to_sRGB = mat3(
+                1.70505, -0.62179, -0.08326,
+                -0.13026, 1.14080, -0.01055,
+                0.00610, -0.00969, 1.00360
+            );
+
+            vec3 result = AP1_to_sRGB * rgb_out;
+
+            return clamp(result, 0.0, 1.0);
+        }
+
+        void main() {
+            vec4 texel = texture2D(tDiffuse, vUv);
+            vec3 color = texel.rgb;
+
+            // Apply exposure
+            color *= exposure;
+
+            // Convert from sRGB to ACES AP0 (ACES2065-1)
+            vec3 aces = sRGB_to_AP0 * color;
+
+            // Apply selected ACES tonemapping
+            vec3 result;
+            if (acesVersion == 1) {
+                // ACES 2.0 OpenDRT (Blender 5.0)
+                result = OpenDRT_2_0(aces);
+            } else {
+                // ACES 1.3 Filmic (default, Blender 4.x)
+                result = ACESFilmic_1_3(aces);
+            }
+
+            gl_FragColor = vec4(result, texel.a);
         }
     `
 };
@@ -789,6 +1001,426 @@ function createAOVMaterial(aovMode, materialData = null) {
             }
             break;
 
+        case AOV_MODES.AO:
+            material = new THREE.ShaderMaterial({
+                vertexShader: `
+                    varying vec2 vUv;
+                    void main() {
+                        vUv = uv;
+                        gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+                    }
+                `,
+                fragmentShader: `
+                    varying vec2 vUv;
+                    uniform sampler2D aoMap;
+                    uniform bool hasAOMap;
+                    uniform float aoIntensity;
+
+                    void main() {
+                        float ao = 1.0;
+                        if (hasAOMap) {
+                            ao = texture2D(aoMap, vUv).r;
+                        }
+                        // Visualize AO with intensity control
+                        float visualAO = mix(1.0, ao, aoIntensity);
+                        gl_FragColor = vec4(vec3(visualAO), 1.0);
+                    }
+                `,
+                uniforms: {
+                    aoMap: { value: null },
+                    hasAOMap: { value: false },
+                    aoIntensity: { value: 1.0 }
+                },
+                name: 'AOV_AO'
+            });
+
+            if (materialData && materialData.threeMaterial) {
+                const srcMat = materialData.threeMaterial;
+                if (srcMat.aoMap) {
+                    material.uniforms.aoMap.value = srcMat.aoMap;
+                    material.uniforms.hasAOMap.value = true;
+                }
+                material.uniforms.aoIntensity.value = srcMat.aoMapIntensity || 1.0;
+            }
+            break;
+
+        case AOV_MODES.ANISOTROPY:
+            material = new THREE.ShaderMaterial({
+                vertexShader: `
+                    varying vec2 vUv;
+                    void main() {
+                        vUv = uv;
+                        gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+                    }
+                `,
+                fragmentShader: `
+                    varying vec2 vUv;
+                    uniform float anisotropy;
+                    uniform float anisotropyRotation;
+                    uniform sampler2D anisotropyMap;
+                    uniform bool hasAnisotropyMap;
+
+                    void main() {
+                        float anisoStrength = anisotropy;
+                        float anisoRotation = anisotropyRotation;
+
+                        if (hasAnisotropyMap) {
+                            // Anisotropy map: RG = direction, B = strength
+                            vec3 anisoSample = texture2D(anisotropyMap, vUv).rgb;
+                            anisoStrength = anisoSample.b * anisotropy;
+                            anisoRotation = atan(anisoSample.g, anisoSample.r);
+                        }
+
+                        // Visualize: direction as hue, strength as brightness
+                        float hue = (anisoRotation + 3.14159) / (2.0 * 3.14159); // Normalize to [0,1]
+                        vec3 color = vec3(hue, anisoStrength, anisoStrength * 0.5);
+                        gl_FragColor = vec4(color, 1.0);
+                    }
+                `,
+                uniforms: {
+                    anisotropy: { value: 0.0 },
+                    anisotropyRotation: { value: 0.0 },
+                    anisotropyMap: { value: null },
+                    hasAnisotropyMap: { value: false }
+                },
+                name: 'AOV_Anisotropy'
+            });
+
+            if (materialData && materialData.threeMaterial) {
+                const srcMat = materialData.threeMaterial;
+                material.uniforms.anisotropy.value = srcMat.anisotropy || 0.0;
+                material.uniforms.anisotropyRotation.value = srcMat.anisotropyRotation || 0.0;
+                if (srcMat.anisotropyMap) {
+                    material.uniforms.anisotropyMap.value = srcMat.anisotropyMap;
+                    material.uniforms.hasAnisotropyMap.value = true;
+                }
+            }
+            break;
+
+        case AOV_MODES.SHEEN:
+            material = new THREE.ShaderMaterial({
+                vertexShader: `
+                    varying vec2 vUv;
+                    void main() {
+                        vUv = uv;
+                        gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+                    }
+                `,
+                fragmentShader: `
+                    varying vec2 vUv;
+                    uniform float sheen;
+                    uniform vec3 sheenColor;
+                    uniform float sheenRoughness;
+                    uniform sampler2D sheenColorMap;
+                    uniform sampler2D sheenRoughnessMap;
+                    uniform bool hasSheenColorMap;
+                    uniform bool hasSheenRoughnessMap;
+
+                    void main() {
+                        vec3 sColor = sheenColor * sheen;
+                        float sRoughness = sheenRoughness;
+
+                        if (hasSheenColorMap) {
+                            sColor *= texture2D(sheenColorMap, vUv).rgb;
+                        }
+                        if (hasSheenRoughnessMap) {
+                            sRoughness *= texture2D(sheenRoughnessMap, vUv).a;
+                        }
+
+                        // Visualize: sheen color with roughness as overlay
+                        gl_FragColor = vec4(sColor, sRoughness);
+                    }
+                `,
+                uniforms: {
+                    sheen: { value: 0.0 },
+                    sheenColor: { value: new THREE.Color(1, 1, 1) },
+                    sheenRoughness: { value: 1.0 },
+                    sheenColorMap: { value: null },
+                    sheenRoughnessMap: { value: null },
+                    hasSheenColorMap: { value: false },
+                    hasSheenRoughnessMap: { value: false }
+                },
+                name: 'AOV_Sheen'
+            });
+
+            if (materialData && materialData.threeMaterial) {
+                const srcMat = materialData.threeMaterial;
+                material.uniforms.sheen.value = srcMat.sheen || 0.0;
+                if (srcMat.sheenColor) {
+                    material.uniforms.sheenColor.value.copy(srcMat.sheenColor);
+                }
+                material.uniforms.sheenRoughness.value = srcMat.sheenRoughness || 1.0;
+                if (srcMat.sheenColorMap) {
+                    material.uniforms.sheenColorMap.value = srcMat.sheenColorMap;
+                    material.uniforms.hasSheenColorMap.value = true;
+                }
+                if (srcMat.sheenRoughnessMap) {
+                    material.uniforms.sheenRoughnessMap.value = srcMat.sheenRoughnessMap;
+                    material.uniforms.hasSheenRoughnessMap.value = true;
+                }
+            }
+            break;
+
+        case AOV_MODES.IRIDESCENCE:
+            material = new THREE.ShaderMaterial({
+                vertexShader: `
+                    varying vec2 vUv;
+                    void main() {
+                        vUv = uv;
+                        gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+                    }
+                `,
+                fragmentShader: `
+                    varying vec2 vUv;
+                    uniform float iridescence;
+                    uniform float iridescenceIOR;
+                    uniform vec2 iridescenceThicknessRange;
+                    uniform sampler2D iridescenceMap;
+                    uniform sampler2D iridescenceThicknessMap;
+                    uniform bool hasIridescenceMap;
+                    uniform bool hasIridescenceThicknessMap;
+
+                    void main() {
+                        float irid = iridescence;
+                        float thickness = iridescenceThicknessRange.x;
+
+                        if (hasIridescenceMap) {
+                            irid *= texture2D(iridescenceMap, vUv).r;
+                        }
+                        if (hasIridescenceThicknessMap) {
+                            thickness = texture2D(iridescenceThicknessMap, vUv).g;
+                            thickness = mix(iridescenceThicknessRange.x, iridescenceThicknessRange.y, thickness);
+                        }
+
+                        // Visualize: R=iridescence strength, G=normalized thickness, B=IOR
+                        vec3 color = vec3(
+                            irid,
+                            (thickness - iridescenceThicknessRange.x) /
+                                (iridescenceThicknessRange.y - iridescenceThicknessRange.x + 0.001),
+                            (iridescenceIOR - 1.0) / 2.0  // Normalize IOR to [0,1] range
+                        );
+                        gl_FragColor = vec4(color, 1.0);
+                    }
+                `,
+                uniforms: {
+                    iridescence: { value: 0.0 },
+                    iridescenceIOR: { value: 1.3 },
+                    iridescenceThicknessRange: { value: new THREE.Vector2(100, 400) },
+                    iridescenceMap: { value: null },
+                    iridescenceThicknessMap: { value: null },
+                    hasIridescenceMap: { value: false },
+                    hasIridescenceThicknessMap: { value: false }
+                },
+                name: 'AOV_Iridescence'
+            });
+
+            if (materialData && materialData.threeMaterial) {
+                const srcMat = materialData.threeMaterial;
+                material.uniforms.iridescence.value = srcMat.iridescence || 0.0;
+                material.uniforms.iridescenceIOR.value = srcMat.iridescenceIOR || 1.3;
+                if (srcMat.iridescenceThicknessRange) {
+                    material.uniforms.iridescenceThicknessRange.value.copy(srcMat.iridescenceThicknessRange);
+                }
+                if (srcMat.iridescenceMap) {
+                    material.uniforms.iridescenceMap.value = srcMat.iridescenceMap;
+                    material.uniforms.hasIridescenceMap.value = true;
+                }
+                if (srcMat.iridescenceThicknessMap) {
+                    material.uniforms.iridescenceThicknessMap.value = srcMat.iridescenceThicknessMap;
+                    material.uniforms.hasIridescenceThicknessMap.value = true;
+                }
+            }
+            break;
+
+        case AOV_MODES.NORMAL_QUALITY:
+            material = new THREE.ShaderMaterial({
+                vertexShader: `
+                    varying vec2 vUv;
+                    varying mat3 vTBN;
+
+                    attribute vec4 tangent;
+
+                    void main() {
+                        vUv = uv;
+
+                        // Build TBN matrix
+                        vec3 T = normalize(normalMatrix * tangent.xyz);
+                        vec3 N = normalize(normalMatrix * normal);
+                        vec3 B = cross(N, T) * tangent.w;
+                        vTBN = mat3(T, B, N);
+
+                        gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+                    }
+                `,
+                fragmentShader: `
+                    varying vec2 vUv;
+                    varying mat3 vTBN;
+                    uniform sampler2D normalMap;
+                    uniform bool hasNormalMap;
+                    uniform float normalScale;
+
+                    void main() {
+                        vec3 color = vec3(0.5, 1.0, 0.5); // Green = valid
+
+                        if (hasNormalMap) {
+                            vec3 normalMapSample = texture2D(normalMap, vUv).rgb * 2.0 - 1.0;
+                            normalMapSample.xy *= normalScale;
+
+                            // Check normal map quality
+                            float len = length(normalMapSample);
+                            float error = abs(len - 1.0);
+
+                            if (error > 0.1) {
+                                // Red = invalid (length too far from 1.0)
+                                color = vec3(1.0, 0.0, 0.0);
+                            } else if (error > 0.05) {
+                                // Yellow = warning (slight deviation)
+                                color = vec3(1.0, 1.0, 0.0);
+                            } else {
+                                // Show normal direction (valid)
+                                vec3 N = normalize(vTBN * normalMapSample);
+                                color = N * 0.5 + 0.5;
+                            }
+                        }
+
+                        gl_FragColor = vec4(color, 1.0);
+                    }
+                `,
+                uniforms: {
+                    normalMap: { value: null },
+                    hasNormalMap: { value: false },
+                    normalScale: { value: 1.0 }
+                },
+                name: 'AOV_NormalQuality'
+            });
+
+            if (materialData && materialData.threeMaterial) {
+                const srcMat = materialData.threeMaterial;
+                if (srcMat.normalMap) {
+                    material.uniforms.normalMap.value = srcMat.normalMap;
+                    material.uniforms.hasNormalMap.value = true;
+                    material.uniforms.normalScale.value = srcMat.normalScale?.x || 1.0;
+                }
+            }
+            break;
+
+        case AOV_MODES.UV_LAYOUT:
+            material = new THREE.ShaderMaterial({
+                vertexShader: `
+                    varying vec2 vUv;
+                    void main() {
+                        vUv = uv;
+                        gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+                    }
+                `,
+                fragmentShader: `
+                    varying vec2 vUv;
+                    uniform float gridFrequency;
+                    uniform float lineWidth;
+                    uniform vec3 gridColor;
+                    uniform vec3 seamColor;
+
+                    void main() {
+                        // Draw UV grid
+                        vec2 grid = fract(vUv * gridFrequency);
+                        float gridLine = step(grid.x, lineWidth) + step(grid.y, lineWidth);
+                        gridLine = min(gridLine, 1.0);
+
+                        // Detect UV seams using derivatives
+                        vec2 uvDx = dFdx(vUv * gridFrequency);
+                        vec2 uvDy = dFdy(vUv * gridFrequency);
+                        float seam = (length(uvDx) > 2.0 || length(uvDy) > 2.0) ? 1.0 : 0.0;
+
+                        // Base color from UV coordinates
+                        vec3 baseColor = vec3(vUv, 0.0);
+
+                        // Mix with grid and seams
+                        vec3 color = mix(baseColor, gridColor, gridLine * 0.7);
+                        color = mix(color, seamColor, seam);
+
+                        gl_FragColor = vec4(color, 1.0);
+                    }
+                `,
+                uniforms: {
+                    gridFrequency: { value: 8.0 },
+                    lineWidth: { value: 0.05 },
+                    gridColor: { value: new THREE.Color(1, 1, 1) },
+                    seamColor: { value: new THREE.Color(1, 0, 0) }
+                },
+                name: 'AOV_UVLayout'
+            });
+            break;
+
+        case AOV_MODES.SHADER_ERROR:
+            material = new THREE.ShaderMaterial({
+                vertexShader: `
+                    varying vec2 vUv;
+                    varying vec3 vNormal;
+                    void main() {
+                        vUv = uv;
+                        vNormal = normalize(normalMatrix * normal);
+                        gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+                    }
+                `,
+                fragmentShader: `
+                    varying vec2 vUv;
+                    varying vec3 vNormal;
+                    uniform sampler2D testTexture;
+                    uniform bool hasTexture;
+
+                    bool isNaN(float val) {
+                        return (val < 0.0 || 0.0 < val || val == 0.0) ? false : true;
+                    }
+
+                    bool isInf(float val) {
+                        return (val != 0.0 && val * 2.0 == val) ? true : false;
+                    }
+
+                    void main() {
+                        // Sample texture if available
+                        vec4 texSample = hasTexture ? texture2D(testTexture, vUv) : vec4(1.0);
+
+                        // Simulate potential shader errors
+                        vec3 testValue = vNormal * texSample.rgb;
+
+                        // Check for errors
+                        bool hasNaN = isNaN(testValue.r) || isNaN(testValue.g) || isNaN(testValue.b);
+                        bool hasInf = isInf(testValue.r) || isInf(testValue.g) || isInf(testValue.b);
+                        bool tooHigh = any(greaterThan(testValue, vec3(10000.0)));
+                        bool negative = any(lessThan(testValue, vec3(0.0)));
+
+                        vec3 color;
+                        if (hasNaN) {
+                            color = vec3(1.0, 0.0, 1.0); // Magenta = NaN
+                        } else if (hasInf) {
+                            color = vec3(1.0, 1.0, 0.0); // Yellow = Infinity
+                        } else if (tooHigh) {
+                            color = vec3(1.0, 0.5, 0.0); // Orange = Too high
+                        } else if (negative) {
+                            color = vec3(0.0, 1.0, 1.0); // Cyan = Negative (where shouldn't be)
+                        } else {
+                            color = vec3(0.0, 1.0, 0.0); // Green = Valid
+                        }
+
+                        gl_FragColor = vec4(color, 1.0);
+                    }
+                `,
+                uniforms: {
+                    testTexture: { value: null },
+                    hasTexture: { value: false }
+                },
+                name: 'AOV_ShaderError'
+            });
+
+            if (materialData && materialData.threeMaterial) {
+                const srcMat = materialData.threeMaterial;
+                if (srcMat.map) {
+                    material.uniforms.testTexture.value = srcMat.map;
+                    material.uniforms.hasTexture.value = true;
+                }
+            }
+            break;
+
         default:
             return null;
     }
@@ -1267,6 +1899,36 @@ function exportSelectedMaterialMTLX() {
     }
 }
 
+// UsdPreviewSurface parameter definitions with ranges and defaults
+const USDPREVIEWSURFACE_PARAMS = {
+    diffuse: {
+        diffuseColor: { default: [0.18, 0.18, 0.18], type: 'color' }
+    },
+    specular: {
+        roughness: { min: 0, max: 1, default: 0.5, step: 0.01 },
+        metallic: { min: 0, max: 1, default: 0, step: 0.01 },
+        specularColor: { default: [1, 1, 1], type: 'color' },
+        ior: { min: 1, max: 3, default: 1.5, step: 0.01 }
+    },
+    clearcoat: {
+        clearcoat: { min: 0, max: 1, default: 0, step: 0.01 },
+        clearcoatRoughness: { min: 0, max: 1, default: 0.01, step: 0.01 }
+    },
+    emission: {
+        emissiveColor: { default: [0, 0, 0], type: 'color' }
+    },
+    geometry: {
+        opacity: { min: 0, max: 1, default: 1, step: 0.01 },
+        normal: { default: [0, 0, 1], type: 'vector' }
+    },
+    displacement: {
+        displacement: { min: -10, max: 10, default: 0, step: 0.01 }
+    },
+    occlusion: {
+        occlusion: { min: 0, max: 1, default: 1, step: 0.01 }
+    }
+};
+
 // OpenPBR parameter definitions with ranges and defaults
 const OPENPBR_PARAMS = {
     base: {
@@ -1667,6 +2329,20 @@ async function init() {
     // Setup file input
     setupFileInput();
 
+    // Initialize node graph system
+    if (initializeNodeGraph()) {
+        registerMaterialXNodeTypes();
+        console.log('Node graph system initialized');
+    }
+
+    // Initialize color picker
+    initializeColorPicker(renderer);
+    console.log('Color picker initialized');
+
+    // Initialize material property picker
+    initializeMaterialPropertyPicker(renderer, scene, camera);
+    console.log('Material property picker initialized');
+
     // Load embedded default scene
     await loadEmbeddedScene();
 
@@ -1727,9 +2403,22 @@ function setupScene() {
     controls = new OrbitControls(camera, renderer.domElement);
     controls.enableDamping = true;
     controls.dampingFactor = 0.05;
-    controls.screenSpacePanning = false;
-    controls.minDistance = 0.5;
-    controls.maxDistance = 50;
+    controls.screenSpacePanning = true; // Enable pan controls
+    controls.minDistance = 0.1;
+    controls.maxDistance = 500; // Allow much more zoom out for large scenes
+    controls.mouseButtons = {
+        LEFT: THREE.MOUSE.ROTATE,
+        MIDDLE: THREE.MOUSE.PAN,
+        RIGHT: THREE.MOUSE.DOLLY  // Right mouse drag for zoom (dolly)
+    };
+    controls.keys = {
+        LEFT: 'ArrowLeft',
+        UP: 'ArrowUp',
+        RIGHT: 'ArrowRight',
+        BOTTOM: 'ArrowDown'
+    };
+    controls.enableKeys = true;
+    controls.keyPanSpeed = 20.0;
 
     // Lights (basic setup, will be enhanced with HDR)
     const ambientLight = new THREE.AmbientLight(0xffffff, 0.3);
@@ -1773,7 +2462,7 @@ function setupInteraction() {
     renderer.domElement.addEventListener('mousemove', onMouseMove, false);
 }
 
-// Setup post-processing composer with false color effect
+// Setup post-processing composer with false color and ACES tonemap effects
 function setupComposer() {
     // Create effect composer
     composer = new EffectComposer(renderer);
@@ -1782,12 +2471,18 @@ function setupComposer() {
     const renderPass = new RenderPass(scene, camera);
     composer.addPass(renderPass);
 
+    // Add ACES tonemap pass (for custom ACES 1.3 / 2.0 tonemapping)
+    acesTonemapPass = new ShaderPass(ACESTonemapShader);
+    acesTonemapPass.enabled = false; // Will be enabled when ACES 1.3/2.0 is selected
+    acesTonemapPass.uniforms['exposure'].value = exposureValue;
+    composer.addPass(acesTonemapPass);
+
     // Add false color pass (initially disabled via renderToScreen)
     falseColorPass = new ShaderPass(FalseColorShader);
     falseColorPass.enabled = false; // Will be enabled when false color is toggled
     composer.addPass(falseColorPass);
 
-    console.log('Effect composer initialized with false color pass');
+    console.log('Effect composer initialized with ACES tonemap and false color passes');
 }
 
 // Toggle false color view transform
@@ -1801,12 +2496,20 @@ function toggleFalseColor() {
     if (falseColorPass) {
         falseColorPass.enabled = showingFalseColor;
         // When false color is enabled, make it render to screen
-        // When disabled, the renderPass will render to screen
+        // When disabled, check if ACES pass should render to screen
         falseColorPass.renderToScreen = showingFalseColor;
 
-        // Also update the render pass
+        // Update ACES pass renderToScreen
+        if (acesTonemapPass && acesTonemapPass.enabled) {
+            acesTonemapPass.renderToScreen = !showingFalseColor;
+        }
+
+        // Update the render pass
         if (composer.passes[0]) {
-            composer.passes[0].renderToScreen = !showingFalseColor;
+            // Render pass should render to screen only if no post-processing is active
+            const hasActivePostProcess = showingFalseColor ||
+                                         (acesTonemapPass && acesTonemapPass.enabled);
+            composer.passes[0].renderToScreen = !hasActivePostProcess;
         }
     }
 
@@ -1842,6 +2545,11 @@ function getToneMappingConstant(type) {
             return THREE.NoToneMapping;
         case 'aces':
             return THREE.ACESFilmicToneMapping;
+        case 'aces13':
+        case 'aces20':
+            // Custom ACES tonemapping handled via post-processing
+            // Use NoToneMapping for renderer, post-process will handle it
+            return THREE.NoToneMapping;
         case 'agx':
             // AgX was added in Three.js r152
             return THREE.AgXToneMapping || THREE.ACESFilmicToneMapping;
@@ -1856,6 +2564,45 @@ function getToneMappingConstant(type) {
             return THREE.CineonToneMapping;
         default:
             return THREE.NoToneMapping;
+    }
+}
+
+// Apply custom tonemapping if needed (for ACES 1.3/2.0)
+function applyCustomToneMapping(type) {
+    if (!composer || !acesTonemapPass) {
+        setupComposer();
+    }
+
+    // Disable ACES pass by default
+    if (acesTonemapPass) {
+        acesTonemapPass.enabled = false;
+        acesTonemapPass.renderToScreen = false;
+    }
+
+    // Enable custom ACES tonemapping if needed
+    if (type === 'aces13' || type === 'aces20') {
+        if (acesTonemapPass) {
+            acesTonemapPass.enabled = true;
+            // ACES should render to screen if false color is not enabled
+            acesTonemapPass.renderToScreen = !showingFalseColor;
+
+            // Set ACES version: 0 = ACES 1.3, 1 = ACES 2.0
+            acesTonemapPass.uniforms['acesVersion'].value = type === 'aces20' ? 1 : 0;
+            acesTonemapPass.uniforms['exposure'].value = exposureValue;
+
+            console.log(`Enabled custom ${type.toUpperCase()} tonemapping via post-processing`);
+        }
+    } else {
+        // For built-in tonemappers, disable ACES pass
+        if (acesTonemapPass) {
+            acesTonemapPass.enabled = false;
+        }
+    }
+
+    // Update render pass renderToScreen based on active post-processing
+    if (composer && composer.passes[0]) {
+        const needsComposer = (type === 'aces13' || type === 'aces20') || showingFalseColor;
+        composer.passes[0].renderToScreen = !needsComposer;
     }
 }
 
@@ -2189,7 +2936,9 @@ function setupGUI() {
     envFolder.add(envParams, 'toneMapping', {
         'None': 'none',
         'AgX (Blender)': 'agx',
-        'ACES Filmic': 'aces',
+        'ACES 1.3 (Blender 4.x)': 'aces13',
+        'ACES 2.0 OpenDRT (Blender 5.0)': 'aces20',
+        'ACES Filmic (Three.js)': 'aces',
         'Neutral': 'neutral',
         'Linear': 'linear',
         'Reinhard': 'reinhard',
@@ -2197,11 +2946,18 @@ function setupGUI() {
     }).name('Tone Mapping').onChange(value => {
         toneMappingType = value;
         renderer.toneMapping = getToneMappingConstant(value);
+        applyCustomToneMapping(value);
     });
 
     envFolder.add(envParams, 'exposure', 0, 3, 0.01).name('Exposure').onChange(value => {
         exposureValue = value;
         renderer.toneMappingExposure = value;
+
+        // Update ACES tonemap pass exposure if active
+        if (acesTonemapPass && acesTonemapPass.enabled) {
+            acesTonemapPass.uniforms['exposure'].value = value;
+        }
+
         // Apply exposure to all materials by adjusting environment intensity
         scene.traverse((object) => {
             if (object.isMesh && object.material) {
@@ -2257,12 +3013,23 @@ function setupGUI() {
     // Material Rendering controls
     const materialFolder = gui.addFolder('Material Rendering');
     const materialParams = {
+        preferredType: preferredMaterialType,
         useNodeMaterial: useNodeMaterial,
         reloadMaterials: async function() {
             console.log("Reloading materials with new settings...");
             await loadMaterials();
         }
     };
+
+    materialFolder.add(materialParams, 'preferredType', {
+        'Auto (Prefer OpenPBR)': 'auto',
+        'OpenPBR/MaterialX': 'openpbr',
+        'UsdPreviewSurface': 'usdpreviewsurface'
+    }).name('Material Type').onChange(async (value) => {
+        preferredMaterialType = value;
+        console.log(`Preferred material type changed to: ${value}`);
+        await loadMaterials();
+    });
 
     materialFolder.add(materialParams, 'useNodeMaterial').name('Use NodeMaterial (MaterialX)').onChange(async (value) => {
         useNodeMaterial = value;
@@ -2288,6 +3055,7 @@ function setupGUI() {
         'Binormals': AOV_MODES.BINORMALS,
         'UV Coords 0': AOV_MODES.TEXCOORD_0,
         'UV Coords 1': AOV_MODES.TEXCOORD_1,
+        'UV Layout Overlay': AOV_MODES.UV_LAYOUT,
         'World Position': AOV_MODES.POSITION_WORLD,
         'View Position': AOV_MODES.POSITION_VIEW,
         'Depth': AOV_MODES.DEPTH,
@@ -2299,6 +3067,13 @@ function setupGUI() {
         'Coat': AOV_MODES.COAT,
         'Transmission': AOV_MODES.TRANSMISSION,
         'Emissive': AOV_MODES.EMISSIVE,
+        'Ambient Occlusion': AOV_MODES.AO,
+        'Anisotropy': AOV_MODES.ANISOTROPY,
+        'Sheen': AOV_MODES.SHEEN,
+        'Iridescence': AOV_MODES.IRIDESCENCE,
+        '─── Quality Check ───': '',
+        'Normal Quality Check': AOV_MODES.NORMAL_QUALITY,
+        'Shader Error Detection': AOV_MODES.SHADER_ERROR,
         '─── Utility ───': '',
         'Material ID': AOV_MODES.MATERIAL_ID
     }).name('AOV Mode').onChange(value => {
@@ -2308,6 +3083,1299 @@ function setupGUI() {
     });
 
     aovFolder.close();
+
+    // Material Override System
+    const overrideFolder = gui.addFolder('Material Override');
+    const overrideParams = {
+        enabled: false,
+        roughness: 0.5,
+        metalness: 0.0,
+        disableNormalMaps: false,
+        disableAllTextures: false,
+        preset: 'none',
+        reset: function() {
+            window.resetMaterialOverrides(scene);
+            overrideParams.enabled = false;
+            overrideParams.roughness = 0.5;
+            overrideParams.metalness = 0.0;
+            overrideParams.disableNormalMaps = false;
+            overrideParams.disableAllTextures = false;
+            overrideParams.preset = 'none';
+            gui.controllersRecursive().forEach(c => c.updateDisplay());
+        }
+    };
+
+    overrideFolder.add(overrideParams, 'enabled').name('Enable Overrides').onChange(value => {
+        if (!value) {
+            window.resetMaterialOverrides(scene);
+        }
+    });
+
+    overrideFolder.add(overrideParams, 'roughness', 0, 1, 0.01).name('Roughness Override').onChange(value => {
+        if (overrideParams.enabled) {
+            window.applyMaterialOverrides(scene, { roughness: value });
+        }
+    });
+
+    overrideFolder.add(overrideParams, 'metalness', 0, 1, 0.01).name('Metalness Override').onChange(value => {
+        if (overrideParams.enabled) {
+            window.applyMaterialOverrides(scene, { metalness: value });
+        }
+    });
+
+    overrideFolder.add(overrideParams, 'disableNormalMaps').name('Disable Normal Maps').onChange(value => {
+        if (overrideParams.enabled) {
+            window.applyMaterialOverrides(scene, { disableNormalMaps: value });
+        }
+    });
+
+    overrideFolder.add(overrideParams, 'disableAllTextures').name('Disable All Textures').onChange(value => {
+        if (overrideParams.enabled) {
+            window.applyMaterialOverrides(scene, { disableAllTextures: value });
+        }
+    });
+
+    overrideFolder.add(overrideParams, 'preset', {
+        'None': 'none',
+        'Base Color Only': 'BASE_COLOR_ONLY',
+        'Normals Only': 'NORMALS_ONLY',
+        'Flat Shading': 'FLAT_SHADING',
+        'Mirror': 'MIRROR',
+        'Matte': 'MATTE',
+        'White Clay': 'WHITE_CLAY'
+    }).name('Apply Preset').onChange(value => {
+        if (value !== 'none') {
+            overrideParams.enabled = true;
+            window.applyOverridePreset(scene, value);
+            gui.controllersRecursive().forEach(c => c.updateDisplay());
+        }
+    });
+
+    overrideFolder.add(overrideParams, 'reset').name('Reset All Overrides');
+    overrideFolder.close();
+
+    // Material Validation System
+    const validationFolder = gui.addFolder('Material Validation');
+    const validationParams = {
+        autoValidate: false,
+        errorCount: 0,
+        warningCount: 0,
+        infoCount: 0,
+        validateNow: function() {
+            const validator = new window.MaterialValidator();
+            const results = validator.validateScene(scene);
+
+            validationParams.errorCount = results.totalErrors;
+            validationParams.warningCount = results.totalWarnings;
+            validationParams.infoCount = results.totalInfo;
+
+            console.log(validator.generateReport(results));
+            validator.logResults(results);
+
+            updateStatus(`Validation: ${results.totalErrors} errors, ${results.totalWarnings} warnings`,
+                        results.totalErrors > 0 ? 'error' : 'success');
+
+            gui.controllersRecursive().forEach(c => c.updateDisplay());
+        }
+    };
+
+    validationFolder.add(validationParams, 'validateNow').name('🔍 Validate Scene');
+    validationFolder.add(validationParams, 'errorCount').name('Errors').listen().disable();
+    validationFolder.add(validationParams, 'warningCount').name('Warnings').listen().disable();
+    validationFolder.add(validationParams, 'infoCount').name('Info').listen().disable();
+    validationFolder.add(validationParams, 'autoValidate').name('Auto-validate on Load');
+    validationFolder.close();
+
+    // Material Complexity Analyzer
+    const complexityFolder = gui.addFolder('Performance Analysis');
+    const complexityParams = {
+        totalMemoryMB: 0,
+        totalTextures: 0,
+        averageComplexity: 0,
+        lowCount: 0,
+        mediumCount: 0,
+        highCount: 0,
+        analyzeNow: function() {
+            const analyzer = new MaterialComplexityAnalyzer();
+            const results = analyzer.analyzeScene(scene);
+
+            complexityParams.totalMemoryMB = results.totalMemoryMB.toFixed(1);
+            complexityParams.totalTextures = results.totalTextures;
+            complexityParams.averageComplexity = results.averageComplexity.toFixed(0);
+            complexityParams.lowCount = results.complexityDistribution['Low'];
+            complexityParams.mediumCount = results.complexityDistribution['Medium'];
+            complexityParams.highCount = results.complexityDistribution['High'] + results.complexityDistribution['Very High'];
+
+            console.log(analyzer.generateReport(results));
+            analyzer.logResults(results);
+
+            updateStatus(`Complexity: ${complexityParams.averageComplexity} avg, ${complexityParams.totalMemoryMB}MB`, 'success');
+
+            gui.controllersRecursive().forEach(c => c.updateDisplay());
+        }
+    };
+
+    complexityFolder.add(complexityParams, 'analyzeNow').name('⚡ Analyze Performance');
+    complexityFolder.add(complexityParams, 'totalMemoryMB').name('Texture Memory (MB)').listen().disable();
+    complexityFolder.add(complexityParams, 'totalTextures').name('Total Textures').listen().disable();
+    complexityFolder.add(complexityParams, 'averageComplexity').name('Avg Complexity').listen().disable();
+    complexityFolder.add(complexityParams, 'lowCount').name('Low Complexity').listen().disable();
+    complexityFolder.add(complexityParams, 'mediumCount').name('Medium Complexity').listen().disable();
+    complexityFolder.add(complexityParams, 'highCount').name('High Complexity').listen().disable();
+    complexityFolder.close();
+
+    // Reference Material Library
+    const referenceFolder = gui.addFolder('Reference Materials');
+    const referenceParams = {
+        category: 'Metal',
+        material: 'gold',
+        materialsList: {},
+        applyToSelected: function() {
+            if (selectedObject && selectedObject.material) {
+                const success = applyReferenceMaterial(selectedObject.material, referenceParams.material);
+                if (success) {
+                    updateStatus(`Applied reference: ${REFERENCE_MATERIALS[referenceParams.material].name}`, 'success');
+                } else {
+                    updateStatus(`Failed to apply reference material`, 'error');
+                }
+            } else {
+                updateStatus('No material selected. Click on an object first.', 'warning');
+            }
+        },
+        applyToAll: function() {
+            let count = 0;
+            scene.traverse(obj => {
+                if (obj.isMesh && obj.material) {
+                    applyReferenceMaterial(obj.material, referenceParams.material);
+                    count++;
+                }
+            });
+            updateStatus(`Applied reference to ${count} materials: ${REFERENCE_MATERIALS[referenceParams.material].name}`, 'success');
+        },
+        showInfo: function() {
+            const ref = REFERENCE_MATERIALS[referenceParams.material];
+            if (ref) {
+                console.group(`📚 Reference Material: ${ref.name}`);
+                console.log(`Category: ${ref.category}`);
+                console.log(`Description: ${ref.description}`);
+                console.log(`Base Color: RGB(${ref.baseColor.map(v => v.toFixed(3)).join(', ')})`);
+                console.log(`Metalness: ${ref.metalness}`);
+                console.log(`Roughness: ${ref.roughness}`);
+                console.log(`IOR: ${ref.ior}`);
+                if (ref.f0) console.log(`F0: RGB(${ref.f0.map(v => v.toFixed(3)).join(', ')})`);
+                if (ref.transmission !== undefined) console.log(`Transmission: ${ref.transmission}`);
+                if (ref.sheen !== undefined) console.log(`Sheen: ${ref.sheen}`);
+                if (ref.subsurface !== undefined) console.log(`Subsurface: ${ref.subsurface}`);
+                console.groupEnd();
+            }
+        }
+    };
+
+    // Update materials list when category changes
+    function updateReferenceMaterialsList(category) {
+        const materials = getReferencesByCategory(category);
+        const materialOptions = {};
+        materials.forEach(mat => {
+            materialOptions[mat.name] = mat.key;
+        });
+        referenceParams.materialsList = materialOptions;
+
+        // Set first material as default
+        if (materials.length > 0) {
+            referenceParams.material = materials[0].key;
+        }
+
+        return materialOptions;
+    }
+
+    // Category dropdown
+    const categoryController = referenceFolder.add(referenceParams, 'category', getCategories())
+        .name('Category')
+        .onChange(category => {
+            // Update material dropdown options
+            const newOptions = updateReferenceMaterialsList(category);
+            materialController.options(newOptions);
+        });
+
+    // Material dropdown (initially populated with Metal category)
+    const initialMaterials = updateReferenceMaterialsList('Metal');
+    const materialController = referenceFolder.add(referenceParams, 'material', initialMaterials)
+        .name('Reference Material');
+
+    referenceFolder.add(referenceParams, 'showInfo').name('Show Properties');
+    referenceFolder.add(referenceParams, 'applyToSelected').name('Apply to Selected');
+    referenceFolder.add(referenceParams, 'applyToAll').name('Apply to All Materials');
+    referenceFolder.close();
+
+    // IBL Contribution Analyzer
+    const iblFolder = gui.addFolder('IBL Contribution');
+    const iblParams = {
+        mode: 'full',
+        materialsWithIBL: 0,
+        avgIntensity: 0,
+        diffuseDominant: 0,
+        specularDominant: 0,
+        balanced: 0,
+        analyzeNow: function() {
+            if (!window.iblAnalyzer) {
+                window.iblAnalyzer = new IBLContributionAnalyzer(scene, renderer);
+            }
+            const results = window.iblAnalyzer.analyzeScene(scene);
+
+            // Update display values
+            iblParams.materialsWithIBL = results.materialsWithIBL;
+            iblParams.avgIntensity = parseFloat(results.averageEnvMapIntensity.toFixed(2));
+            iblParams.diffuseDominant = results.contributionBreakdown.diffuseDominant;
+            iblParams.specularDominant = results.contributionBreakdown.specularDominant;
+            iblParams.balanced = results.contributionBreakdown.balanced;
+
+            // Update GUI displays
+            iblFolder.controllers.forEach(c => c.updateDisplay());
+
+            // Log to console
+            window.iblAnalyzer.logResults(results);
+
+            updateStatus(`IBL Analysis: ${results.materialsWithIBL} materials with IBL`, 'success');
+        },
+        exportReport: function() {
+            if (!window.iblAnalyzer) {
+                window.iblAnalyzer = new IBLContributionAnalyzer(scene, renderer);
+            }
+            const results = window.iblAnalyzer.analyzeScene(scene);
+            const report = window.iblAnalyzer.generateReport(results);
+
+            // Download report
+            const blob = new Blob([report], { type: 'text/markdown' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = 'ibl-analysis-report.md';
+            a.click();
+            URL.revokeObjectURL(url);
+
+            updateStatus('IBL analysis report exported', 'success');
+        },
+        reset: function() {
+            if (window.iblAnalyzer) {
+                window.iblAnalyzer.reset();
+                iblParams.mode = 'full';
+                iblFolder.controllers.forEach(c => c.updateDisplay());
+                updateStatus('IBL mode reset to full', 'success');
+            }
+        }
+    };
+
+    iblFolder.add(iblParams, 'mode', {
+        'Full IBL (Diffuse + Specular)': 'full',
+        'Diffuse Only': 'diffuse',
+        'Specular Only': 'specular',
+        'No IBL': 'none'
+    }).name('Visualization Mode').onChange(mode => {
+        if (!window.iblAnalyzer) {
+            window.iblAnalyzer = new IBLContributionAnalyzer(scene, renderer);
+        }
+        window.iblAnalyzer.setMode(mode);
+        updateStatus(`IBL mode: ${mode}`, 'success');
+    });
+
+    iblFolder.add(iblParams, 'analyzeNow').name('Analyze Scene');
+    iblFolder.add(iblParams, 'materialsWithIBL').name('Materials w/ IBL').listen().disable();
+    iblFolder.add(iblParams, 'avgIntensity').name('Avg Intensity').listen().disable();
+    iblFolder.add(iblParams, 'diffuseDominant').name('Diffuse Dominant').listen().disable();
+    iblFolder.add(iblParams, 'specularDominant').name('Specular Dominant').listen().disable();
+    iblFolder.add(iblParams, 'balanced').name('Balanced').listen().disable();
+    iblFolder.add(iblParams, 'exportReport').name('Export Report');
+    iblFolder.add(iblParams, 'reset').name('Reset to Original');
+    iblFolder.close();
+
+    // G-Buffer Viewer (Real-Time Multi-Channel Display)
+    const gbufferFolder = gui.addFolder('G-Buffer Viewer');
+    const gbufferParams = {
+        enabled: false,
+        gridLayout: '3x3',
+        channelFinalRender: true,
+        channelAlbedo: true,
+        channelNormal: true,
+        channelDepth: true,
+        channelMetalness: true,
+        channelRoughness: true,
+        channelEmissive: false,
+        channelAO: true,
+        channelUV: true,
+        enable: function() {
+            if (!window.gbufferViewer) {
+                window.gbufferViewer = new GBufferViewer(renderer, scene, camera);
+            }
+
+            // Update channel visibility
+            window.gbufferViewer.toggleChannel('Final Render', gbufferParams.channelFinalRender);
+            window.gbufferViewer.toggleChannel('Albedo', gbufferParams.channelAlbedo);
+            window.gbufferViewer.toggleChannel('Normal', gbufferParams.channelNormal);
+            window.gbufferViewer.toggleChannel('Depth', gbufferParams.channelDepth);
+            window.gbufferViewer.toggleChannel('Metalness', gbufferParams.channelMetalness);
+            window.gbufferViewer.toggleChannel('Roughness', gbufferParams.channelRoughness);
+            window.gbufferViewer.toggleChannel('Emissive', gbufferParams.channelEmissive);
+            window.gbufferViewer.toggleChannel('AO', gbufferParams.channelAO);
+            window.gbufferViewer.toggleChannel('UV', gbufferParams.channelUV);
+
+            window.gbufferViewer.setGridLayout(gbufferParams.gridLayout);
+            window.gbufferViewer.enable();
+            gbufferParams.enabled = true;
+
+            updateStatus('G-Buffer viewer enabled', 'success');
+        },
+        disable: function() {
+            if (window.gbufferViewer) {
+                window.gbufferViewer.disable();
+                gbufferParams.enabled = false;
+                updateStatus('G-Buffer viewer disabled', 'success');
+            }
+        }
+    };
+
+    gbufferFolder.add(gbufferParams, 'enabled').name('Enable G-Buffer View').onChange(value => {
+        if (value) {
+            gbufferParams.enable();
+        } else {
+            gbufferParams.disable();
+        }
+    });
+
+    gbufferFolder.add(gbufferParams, 'gridLayout', {
+        '2×2 Grid': '2x2',
+        '3×3 Grid': '3x3',
+        '4×4 Grid': '4x4'
+    }).name('Grid Layout').onChange(layout => {
+        if (window.gbufferViewer) {
+            window.gbufferViewer.setGridLayout(layout);
+        }
+    });
+
+    // Channel toggles
+    const channelsFolder = gbufferFolder.addFolder('Channels');
+    channelsFolder.add(gbufferParams, 'channelFinalRender').name('Final Render').onChange(value => {
+        if (window.gbufferViewer) window.gbufferViewer.toggleChannel('Final Render', value);
+    });
+    channelsFolder.add(gbufferParams, 'channelAlbedo').name('Albedo').onChange(value => {
+        if (window.gbufferViewer) window.gbufferViewer.toggleChannel('Albedo', value);
+    });
+    channelsFolder.add(gbufferParams, 'channelNormal').name('Normal').onChange(value => {
+        if (window.gbufferViewer) window.gbufferViewer.toggleChannel('Normal', value);
+    });
+    channelsFolder.add(gbufferParams, 'channelDepth').name('Depth').onChange(value => {
+        if (window.gbufferViewer) window.gbufferViewer.toggleChannel('Depth', value);
+    });
+    channelsFolder.add(gbufferParams, 'channelMetalness').name('Metalness').onChange(value => {
+        if (window.gbufferViewer) window.gbufferViewer.toggleChannel('Metalness', value);
+    });
+    channelsFolder.add(gbufferParams, 'channelRoughness').name('Roughness').onChange(value => {
+        if (window.gbufferViewer) window.gbufferViewer.toggleChannel('Roughness', value);
+    });
+    channelsFolder.add(gbufferParams, 'channelEmissive').name('Emissive').onChange(value => {
+        if (window.gbufferViewer) window.gbufferViewer.toggleChannel('Emissive', value);
+    });
+    channelsFolder.add(gbufferParams, 'channelAO').name('AO').onChange(value => {
+        if (window.gbufferViewer) window.gbufferViewer.toggleChannel('AO', value);
+    });
+    channelsFolder.add(gbufferParams, 'channelUV').name('UV').onChange(value => {
+        if (window.gbufferViewer) window.gbufferViewer.toggleChannel('UV', value);
+    });
+    channelsFolder.close();
+
+    gbufferFolder.close();
+
+    // Mip-Map Level Visualizer
+    const mipmapFolder = gui.addFolder('Mip-Map Visualizer');
+    const mipmapParams = {
+        enabled: false,
+        textureType: 'baseColor',
+        showLegend: true,
+        enable: function() {
+            if (!window.mipmapVisualizer) {
+                window.mipmapVisualizer = new MipMapVisualizer();
+            }
+            window.mipmapVisualizer.enable(scene, mipmapParams.textureType);
+            mipmapParams.enabled = true;
+
+            // Show legend in console
+            if (mipmapParams.showLegend) {
+                console.group('🗺️ Mip-Map Level Color Legend');
+                window.mipmapVisualizer.getLegend().forEach(item => {
+                    console.log(`%cLevel ${item.level}: ${item.label}`, `color: ${item.color}; font-weight: bold`);
+                });
+                console.groupEnd();
+                console.log('Red = Highest detail (close), Blue/Purple = Low detail (far)');
+            }
+
+            updateStatus('Mip-map visualization enabled', 'success');
+        },
+        disable: function() {
+            if (window.mipmapVisualizer) {
+                window.mipmapVisualizer.disable(scene);
+                mipmapParams.enabled = false;
+                updateStatus('Mip-map visualization disabled', 'success');
+            }
+        },
+        analyzeScene: function() {
+            if (!window.mipmapVisualizer) {
+                window.mipmapVisualizer = new MipMapVisualizer();
+            }
+            const analysis = window.mipmapVisualizer.analyzeScene(scene);
+            const report = window.mipmapVisualizer.generateReport(analysis);
+
+            console.group('📊 Mip-Map Analysis');
+            console.log(report);
+            console.groupEnd();
+
+            updateStatus(`Analyzed ${analysis.objectsWithTextures} objects with textures`, 'success');
+        },
+        exportReport: function() {
+            if (!window.mipmapVisualizer) {
+                window.mipmapVisualizer = new MipMapVisualizer();
+            }
+            const analysis = window.mipmapVisualizer.analyzeScene(scene);
+            const report = window.mipmapVisualizer.generateReport(analysis);
+
+            // Download report
+            const blob = new Blob([report], { type: 'text/markdown' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = 'mipmap-analysis-report.md';
+            a.click();
+            URL.revokeObjectURL(url);
+
+            updateStatus('Mip-map analysis report exported', 'success');
+        }
+    };
+
+    mipmapFolder.add(mipmapParams, 'enabled').name('Enable Visualization').onChange(value => {
+        if (value) {
+            mipmapParams.enable();
+        } else {
+            mipmapParams.disable();
+        }
+    });
+
+    mipmapFolder.add(mipmapParams, 'textureType', {
+        'Base Color Map': 'baseColor',
+        'Normal Map': 'normal',
+        'Roughness Map': 'roughness',
+        'Metalness Map': 'metalness'
+    }).name('Texture to Analyze').onChange(type => {
+        if (window.mipmapVisualizer && mipmapParams.enabled) {
+            // Re-enable with new texture type
+            window.mipmapVisualizer.disable(scene);
+            window.mipmapVisualizer.setTextureType(type);
+            window.mipmapVisualizer.enable(scene, type);
+        }
+    });
+
+    mipmapFolder.add(mipmapParams, 'showLegend').name('Show Legend in Console');
+    mipmapFolder.add(mipmapParams, 'analyzeScene').name('Analyze Scene');
+    mipmapFolder.add(mipmapParams, 'exportReport').name('Export Report');
+    mipmapFolder.close();
+
+    // Pixel Inspector (Magnifying Glass)
+    const pixelInspectorFolder = gui.addFolder('Pixel Inspector');
+    const pixelInspectorParams = {
+        enabled: false,
+        gridSize: 5,
+        enable: function() {
+            if (!window.pixelInspector) {
+                window.pixelInspector = new PixelInspector(renderer, scene, camera, renderer.domElement);
+            }
+            window.pixelInspector.setGridSize(pixelInspectorParams.gridSize);
+            window.pixelInspector.enable();
+            pixelInspectorParams.enabled = true;
+            updateStatus('Pixel inspector enabled (hover over scene)', 'success');
+        },
+        disable: function() {
+            if (window.pixelInspector) {
+                window.pixelInspector.disable();
+                pixelInspectorParams.enabled = false;
+                updateStatus('Pixel inspector disabled', 'success');
+            }
+        }
+    };
+
+    pixelInspectorFolder.add(pixelInspectorParams, 'enabled').name('Enable Inspector').onChange(value => {
+        if (value) {
+            pixelInspectorParams.enable();
+        } else {
+            pixelInspectorParams.disable();
+        }
+    });
+
+    pixelInspectorFolder.add(pixelInspectorParams, 'gridSize', {
+        '3×3 Grid': 3,
+        '5×5 Grid (Default)': 5,
+        '7×7 Grid': 7,
+        '9×9 Grid': 9
+    }).name('Grid Size').onChange(size => {
+        pixelInspectorParams.gridSize = size;
+        if (window.pixelInspector && pixelInspectorParams.enabled) {
+            window.pixelInspector.setGridSize(size);
+        }
+    });
+
+    pixelInspectorFolder.close();
+
+    // Material Preset Save/Load
+    const presetFolder = gui.addFolder('Material Presets');
+    let presetController; // Declare early to avoid reference errors in updatePresetsList
+    const presetParams = {
+        presetName: 'My Material',
+        category: 'Custom',
+        selectedPreset: null,
+        presetsList: {},
+        saveCurrentMaterial: function() {
+            if (!window.presetManager) {
+                window.presetManager = new MaterialPresetManager();
+            }
+
+            if (!selectedObject || !selectedObject.material) {
+                updateStatus('No material selected. Click on an object first.', 'warning');
+                return;
+            }
+
+            const preset = window.presetManager.saveMaterialPreset(
+                selectedObject.material,
+                presetParams.presetName,
+                presetParams.category
+            );
+
+            updateStatus(`Saved preset: ${presetParams.presetName}`, 'success');
+            presetParams.updatePresetsList();
+        },
+        applyPreset: function() {
+            if (!window.presetManager || !presetParams.selectedPreset) {
+                updateStatus('No preset selected', 'warning');
+                return;
+            }
+
+            if (!selectedObject || !selectedObject.material) {
+                updateStatus('No material selected. Click on an object first.', 'warning');
+                return;
+            }
+
+            const preset = window.presetManager.getPreset(presetParams.selectedPreset);
+            if (preset) {
+                window.presetManager.applyPreset(preset, selectedObject.material);
+                updateStatus(`Applied preset: ${preset.name}`, 'success');
+            }
+        },
+        deletePreset: function() {
+            if (!window.presetManager || !presetParams.selectedPreset) {
+                updateStatus('No preset selected', 'warning');
+                return;
+            }
+
+            if (confirm(`Delete preset "${presetParams.selectedPreset}"?`)) {
+                window.presetManager.deletePreset(presetParams.selectedPreset);
+                updateStatus(`Deleted preset: ${presetParams.selectedPreset}`, 'success');
+                presetParams.updatePresetsList();
+            }
+        },
+        exportPreset: function() {
+            if (!window.presetManager || !presetParams.selectedPreset) {
+                updateStatus('No preset selected', 'warning');
+                return;
+            }
+
+            window.presetManager.exportPresetToFile(presetParams.selectedPreset);
+            updateStatus('Preset exported as JSON', 'success');
+        },
+        importPreset: function() {
+            const input = document.createElement('input');
+            input.type = 'file';
+            input.accept = '.json';
+            input.onchange = async (e) => {
+                const file = e.target.files[0];
+                if (file) {
+                    if (!window.presetManager) {
+                        window.presetManager = new MaterialPresetManager();
+                    }
+
+                    try {
+                        const preset = await window.presetManager.importPresetFromFile(file);
+                        updateStatus(`Imported preset: ${preset.name}`, 'success');
+                        presetParams.updatePresetsList();
+                    } catch (err) {
+                        updateStatus(`Import failed: ${err.message}`, 'error');
+                    }
+                }
+            };
+            input.click();
+        },
+        exportAll: function() {
+            if (!window.presetManager) {
+                updateStatus('No presets to export', 'warning');
+                return;
+            }
+
+            window.presetManager.exportAllPresets();
+            updateStatus('All presets exported', 'success');
+        },
+        importAll: function() {
+            const input = document.createElement('input');
+            input.type = 'file';
+            input.accept = '.json';
+            input.onchange = async (e) => {
+                const file = e.target.files[0];
+                if (file) {
+                    if (!window.presetManager) {
+                        window.presetManager = new MaterialPresetManager();
+                    }
+
+                    try {
+                        const count = await window.presetManager.importPresetsFromFile(file);
+                        updateStatus(`Imported ${count} presets`, 'success');
+                        presetParams.updatePresetsList();
+                    } catch (err) {
+                        updateStatus(`Import failed: ${err.message}`, 'error');
+                    }
+                }
+            };
+            input.click();
+        },
+        viewLibrary: function() {
+            if (!window.presetManager) {
+                window.presetManager = new MaterialPresetManager();
+            }
+
+            const report = window.presetManager.generateReport();
+            console.group('📚 Material Presets Library');
+            console.log(report);
+            console.groupEnd();
+
+            updateStatus(`Presets library: ${window.presetManager.presets.size} presets`, 'success');
+        },
+        updatePresetsList: function() {
+            if (!window.presetManager) {
+                window.presetManager = new MaterialPresetManager();
+            }
+
+            const allPresets = window.presetManager.getAllPresets();
+            presetParams.presetsList = {};
+
+            allPresets.forEach(preset => {
+                presetParams.presetsList[preset.name] = preset.name;
+            });
+
+            // Update dropdown if it exists
+            if (presetController) {
+                presetController.options(presetParams.presetsList);
+            }
+        }
+    };
+
+    presetFolder.add(presetParams, 'presetName').name('Preset Name');
+    presetFolder.add(presetParams, 'category', [
+        'Custom', 'Metal', 'Plastic', 'Glass', 'Wood', 'Stone', 'Fabric', 'Organic'
+    ]).name('Category');
+    presetFolder.add(presetParams, 'saveCurrentMaterial').name('Save Current Material');
+
+    // Initialize presets list
+    presetParams.updatePresetsList();
+
+    presetController = presetFolder.add(presetParams, 'selectedPreset', presetParams.presetsList)
+        .name('Select Preset');
+
+    presetFolder.add(presetParams, 'applyPreset').name('Apply to Selected');
+    presetFolder.add(presetParams, 'deletePreset').name('Delete Preset');
+    presetFolder.add(presetParams, 'exportPreset').name('Export Preset');
+    presetFolder.add(presetParams, 'importPreset').name('Import Preset');
+    presetFolder.add(presetParams, 'exportAll').name('Export All Presets');
+    presetFolder.add(presetParams, 'importAll').name('Import All Presets');
+    presetFolder.add(presetParams, 'viewLibrary').name('View Library');
+    presetFolder.close();
+
+    // PBR Theory Guide
+    const theoryGuideFolder = gui.addFolder('PBR Theory Guide');
+    const theoryGuideParams = {
+        enabled: false,
+        currentTopic: 'baseColor',
+        enable: function() {
+            if (!window.pbrTheoryGuide) {
+                window.pbrTheoryGuide = new PBRTheoryGuide();
+            }
+            window.pbrTheoryGuide.enable();
+            theoryGuideParams.enabled = true;
+
+            // Show initial topic
+            window.pbrTheoryGuide.showTooltip(theoryGuideParams.currentTopic);
+
+            updateStatus('PBR Theory Guide enabled (see bottom-left panel)', 'success');
+        },
+        disable: function() {
+            if (window.pbrTheoryGuide) {
+                window.pbrTheoryGuide.disable();
+                theoryGuideParams.enabled = false;
+                updateStatus('PBR Theory Guide disabled', 'success');
+            }
+        },
+        exportGuide: function() {
+            if (!window.pbrTheoryGuide) {
+                window.pbrTheoryGuide = new PBRTheoryGuide();
+            }
+
+            const guide = window.pbrTheoryGuide.generateGuide();
+            const blob = new Blob([guide], { type: 'text/markdown' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = 'PBR_Theory_Guide.md';
+            a.click();
+            URL.revokeObjectURL(url);
+
+            updateStatus('PBR Theory Guide exported', 'success');
+        }
+    };
+
+    theoryGuideFolder.add(theoryGuideParams, 'enabled').name('Enable Guide').onChange(value => {
+        if (value) {
+            theoryGuideParams.enable();
+        } else {
+            theoryGuideParams.disable();
+        }
+    });
+
+    theoryGuideFolder.add(theoryGuideParams, 'currentTopic', {
+        'Base Color': 'baseColor',
+        'Metalness': 'metalness',
+        'Roughness': 'roughness',
+        'IOR (Index of Refraction)': 'ior',
+        'Transmission': 'transmission',
+        'Clearcoat': 'clearcoat',
+        'Sheen': 'sheen',
+        'Normal Map': 'normalMap',
+        'AO Map': 'aoMap',
+        'Energy Conservation': 'energyConservation',
+        'Fresnel Effect': 'fresnel'
+    }).name('Topic').onChange(topic => {
+        if (window.pbrTheoryGuide && theoryGuideParams.enabled) {
+            window.pbrTheoryGuide.showTooltip(topic);
+        }
+    });
+
+    theoryGuideFolder.add(theoryGuideParams, 'exportGuide').name('Export Full Guide');
+    theoryGuideFolder.close();
+
+    // Texture Tiling Detector
+    const tilingDetectorFolder = gui.addFolder('Texture Tiling Detector');
+    const tilingDetectorParams = {
+        enabled: false,
+        lastAnalysis: null,
+        enable: function() {
+            if (!window.textureTilingDetector) {
+                window.textureTilingDetector = new TextureTilingDetector();
+            }
+            tilingDetectorParams.enabled = true;
+            updateStatus('Texture tiling detector enabled', 'success');
+        },
+        disable: function() {
+            tilingDetectorParams.enabled = false;
+            updateStatus('Texture tiling detector disabled', 'info');
+        },
+        analyzeScene: function() {
+            if (!window.textureTilingDetector) {
+                window.textureTilingDetector = new TextureTilingDetector();
+            }
+
+            const analysis = window.textureTilingDetector.analyzeScene(scene);
+            tilingDetectorParams.lastAnalysis = analysis;
+
+            window.textureTilingDetector.logResults(analysis);
+
+            updateStatus(`Analyzed ${analysis.totalTextures} textures. Tiling: ${analysis.texturesWithTiling}, Seams: ${analysis.texturesWithSeams}`,
+                        analysis.texturesWithTiling > 0 || analysis.texturesWithSeams > 0 ? 'warning' : 'success');
+        },
+        exportReport: function() {
+            if (!tilingDetectorParams.lastAnalysis) {
+                updateStatus('No analysis data. Run "Analyze Scene" first.', 'error');
+                return;
+            }
+
+            if (!window.textureTilingDetector) {
+                window.textureTilingDetector = new TextureTilingDetector();
+            }
+
+            const report = window.textureTilingDetector.generateReport(tilingDetectorParams.lastAnalysis);
+
+            const blob = new Blob([report], { type: 'text/markdown' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = 'texture_tiling_analysis.md';
+            a.click();
+            URL.revokeObjectURL(url);
+
+            updateStatus('Tiling analysis report exported', 'success');
+        }
+    };
+
+    tilingDetectorFolder.add(tilingDetectorParams, 'enabled').name('Enable Detector').onChange(value => {
+        if (value) {
+            tilingDetectorParams.enable();
+        } else {
+            tilingDetectorParams.disable();
+        }
+    });
+
+    tilingDetectorFolder.add(tilingDetectorParams, 'analyzeScene').name('Analyze Scene Textures');
+    tilingDetectorFolder.add(tilingDetectorParams, 'exportReport').name('Export Report');
+    tilingDetectorFolder.close();
+
+    // Gradient/Ramp Editor
+    const gradientEditorFolder = gui.addFolder('Gradient/Ramp Editor');
+    const gradientEditorParams = {
+        enabled: false,
+        selectedGradient: 'Grayscale',
+        property: 'baseColor',
+        textureWidth: 256,
+        gradients: [],
+        enable: function() {
+            if (!window.gradientRampEditor) {
+                window.gradientRampEditor = new GradientRampEditor();
+            }
+            gradientEditorParams.enabled = true;
+            gradientEditorParams.gradients = window.gradientRampEditor.getGradientNames();
+            updateStatus('Gradient/Ramp editor enabled', 'success');
+        },
+        disable: function() {
+            gradientEditorParams.enabled = false;
+            updateStatus('Gradient/Ramp editor disabled', 'info');
+        },
+        applyToSelected: function() {
+            if (!window.gradientRampEditor) {
+                window.gradientRampEditor = new GradientRampEditor();
+            }
+
+            if (!selectedObject || !selectedObject.material) {
+                updateStatus('No object with material selected', 'error');
+                return;
+            }
+
+            const success = window.gradientRampEditor.applyToMaterial(
+                selectedObject.material,
+                gradientEditorParams.property,
+                gradientEditorParams.selectedGradient
+            );
+
+            if (success) {
+                updateStatus(`Applied "${gradientEditorParams.selectedGradient}" gradient to ${gradientEditorParams.property}`, 'success');
+            } else {
+                updateStatus('Failed to apply gradient', 'error');
+            }
+        },
+        generateTexture: function() {
+            if (!window.gradientRampEditor) {
+                window.gradientRampEditor = new GradientRampEditor();
+            }
+
+            const texture = window.gradientRampEditor.generateTexture(
+                gradientEditorParams.selectedGradient,
+                gradientEditorParams.textureWidth,
+                1
+            );
+
+            if (texture) {
+                updateStatus(`Generated ${gradientEditorParams.textureWidth}x1 gradient texture`, 'success');
+            }
+        },
+        previewGradient: function() {
+            if (!window.gradientRampEditor) {
+                window.gradientRampEditor = new GradientRampEditor();
+            }
+
+            const dataUrl = window.gradientRampEditor.getGradientPreview(
+                gradientEditorParams.selectedGradient,
+                256, 32
+            );
+
+            if (dataUrl) {
+                const win = window.open('', '_blank', 'width=300,height=100');
+                win.document.write(`<img src="${dataUrl}" style="width:100%;"/>`);
+                updateStatus('Gradient preview opened', 'success');
+            }
+        },
+        exportGradient: function() {
+            if (!window.gradientRampEditor) {
+                window.gradientRampEditor = new GradientRampEditor();
+            }
+
+            window.gradientRampEditor.exportGradient(gradientEditorParams.selectedGradient);
+            updateStatus(`Exported gradient "${gradientEditorParams.selectedGradient}"`, 'success');
+        },
+        logGradients: function() {
+            if (!window.gradientRampEditor) {
+                window.gradientRampEditor = new GradientRampEditor();
+            }
+
+            window.gradientRampEditor.logGradients();
+            updateStatus('Gradient library logged to console', 'success');
+        }
+    };
+
+    gradientEditorFolder.add(gradientEditorParams, 'enabled').name('Enable Editor').onChange(value => {
+        if (value) {
+            gradientEditorParams.enable();
+        } else {
+            gradientEditorParams.disable();
+        }
+    });
+
+    // Initialize gradients list
+    if (!window.gradientRampEditor) {
+        window.gradientRampEditor = new GradientRampEditor();
+    }
+    gradientEditorParams.gradients = window.gradientRampEditor.getGradientNames();
+
+    gradientEditorFolder.add(gradientEditorParams, 'selectedGradient', gradientEditorParams.gradients)
+        .name('Select Gradient');
+
+    gradientEditorFolder.add(gradientEditorParams, 'property', ['baseColor', 'emissive', 'roughness', 'metalness'])
+        .name('Target Property');
+
+    gradientEditorFolder.add(gradientEditorParams, 'textureWidth', [64, 128, 256, 512, 1024])
+        .name('Texture Width');
+
+    gradientEditorFolder.add(gradientEditorParams, 'applyToSelected').name('Apply to Selected Object');
+    gradientEditorFolder.add(gradientEditorParams, 'generateTexture').name('Generate Texture');
+    gradientEditorFolder.add(gradientEditorParams, 'previewGradient').name('Preview Gradient');
+    gradientEditorFolder.add(gradientEditorParams, 'exportGradient').name('Export as JSON');
+    gradientEditorFolder.add(gradientEditorParams, 'logGradients').name('Log All Gradients');
+    gradientEditorFolder.close();
+
+    // Light Probe Visualizer
+    const lightProbeFolder = gui.addFolder('Light Probe Visualizer');
+    const lightProbeParams = {
+        enabled: false,
+        visualizationMode: 'sphere',
+        sphereX: 2,
+        sphereY: 1,
+        sphereZ: 0,
+        sphereSize: 0.5,
+        showMipLevels: false,
+        mipLevel: 0,
+        enable: function() {
+            if (!window.lightProbeVisualizer) {
+                window.lightProbeVisualizer = new LightProbeVisualizer(scene, renderer);
+            }
+            window.lightProbeVisualizer.enable();
+            lightProbeParams.enabled = true;
+            updateStatus('Light probe visualizer enabled', 'success');
+        },
+        disable: function() {
+            if (window.lightProbeVisualizer) {
+                window.lightProbeVisualizer.disable();
+                lightProbeParams.enabled = false;
+                updateStatus('Light probe visualizer disabled', 'info');
+            }
+        },
+        analyzeEnvironment: function() {
+            if (!window.lightProbeVisualizer) {
+                window.lightProbeVisualizer = new LightProbeVisualizer(scene, renderer);
+            }
+
+            window.lightProbeVisualizer.logAnalysis();
+            updateStatus('Environment map analysis logged to console', 'success');
+        },
+        exportReport: function() {
+            if (!window.lightProbeVisualizer) {
+                window.lightProbeVisualizer = new LightProbeVisualizer(scene, renderer);
+            }
+
+            const report = window.lightProbeVisualizer.generateReport();
+
+            const blob = new Blob([report], { type: 'text/markdown' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = 'light_probe_analysis.md';
+            a.click();
+            URL.revokeObjectURL(url);
+
+            updateStatus('Light probe report exported', 'success');
+        }
+    };
+
+    lightProbeFolder.add(lightProbeParams, 'enabled').name('Enable Visualizer').onChange(value => {
+        if (value) {
+            lightProbeParams.enable();
+        } else {
+            lightProbeParams.disable();
+        }
+    });
+
+    lightProbeFolder.add(lightProbeParams, 'visualizationMode', ['sphere', 'skybox', 'split'])
+        .name('Visualization Mode')
+        .onChange(value => {
+            if (window.lightProbeVisualizer) {
+                window.lightProbeVisualizer.setVisualizationMode(value);
+                updateStatus(`Visualization mode: ${value}`, 'success');
+            }
+        });
+
+    lightProbeFolder.add(lightProbeParams, 'sphereX', -5, 5, 0.1)
+        .name('Sphere Position X')
+        .onChange(value => {
+            if (window.lightProbeVisualizer) {
+                window.lightProbeVisualizer.setSpherePosition(
+                    value,
+                    lightProbeParams.sphereY,
+                    lightProbeParams.sphereZ
+                );
+            }
+        });
+
+    lightProbeFolder.add(lightProbeParams, 'sphereY', -5, 5, 0.1)
+        .name('Sphere Position Y')
+        .onChange(value => {
+            if (window.lightProbeVisualizer) {
+                window.lightProbeVisualizer.setSpherePosition(
+                    lightProbeParams.sphereX,
+                    value,
+                    lightProbeParams.sphereZ
+                );
+            }
+        });
+
+    lightProbeFolder.add(lightProbeParams, 'sphereZ', -5, 5, 0.1)
+        .name('Sphere Position Z')
+        .onChange(value => {
+            if (window.lightProbeVisualizer) {
+                window.lightProbeVisualizer.setSpherePosition(
+                    lightProbeParams.sphereX,
+                    lightProbeParams.sphereY,
+                    value
+                );
+            }
+        });
+
+    lightProbeFolder.add(lightProbeParams, 'sphereSize', 0.1, 2.0, 0.1)
+        .name('Sphere Size')
+        .onChange(value => {
+            if (window.lightProbeVisualizer) {
+                window.lightProbeVisualizer.setSphereSize(value);
+            }
+        });
+
+    lightProbeFolder.add(lightProbeParams, 'showMipLevels')
+        .name('Show Mip Levels')
+        .onChange(value => {
+            if (window.lightProbeVisualizer) {
+                window.lightProbeVisualizer.setShowMipLevels(value);
+            }
+        });
+
+    lightProbeFolder.add(lightProbeParams, 'mipLevel', 0, 10, 1)
+        .name('Mip Level')
+        .onChange(value => {
+            if (window.lightProbeVisualizer) {
+                window.lightProbeVisualizer.setMipLevel(value);
+            }
+        });
+
+    lightProbeFolder.add(lightProbeParams, 'analyzeEnvironment').name('Analyze Environment Map');
+    lightProbeFolder.add(lightProbeParams, 'exportReport').name('Export Report');
+    lightProbeFolder.close();
+
+    // BRDF Visualizer
+    const brdfVisualizerFolder = gui.addFolder('BRDF Visualizer');
+    const brdfVisualizerParams = {
+        enabled: false,
+        viewAngle: 0,
+        lightAngle: 45,
+        resolution: 64,
+        enable: function() {
+            if (!window.brdfVisualizer) {
+                window.brdfVisualizer = new BRDFVisualizer(renderer);
+            }
+
+            // Set material from selected object
+            if (selectedObject && selectedObject.material) {
+                window.brdfVisualizer.setMaterial(selectedObject.material);
+            }
+
+            window.brdfVisualizer.enable();
+            brdfVisualizerParams.enabled = true;
+            updateStatus('BRDF visualizer enabled', 'success');
+        },
+        disable: function() {
+            if (window.brdfVisualizer) {
+                window.brdfVisualizer.disable();
+                brdfVisualizerParams.enabled = false;
+                updateStatus('BRDF visualizer disabled', 'info');
+            }
+        },
+        updateMaterial: function() {
+            if (!window.brdfVisualizer) {
+                updateStatus('BRDF visualizer not enabled', 'error');
+                return;
+            }
+
+            if (!selectedObject || !selectedObject.material) {
+                updateStatus('No object with material selected', 'error');
+                return;
+            }
+
+            window.brdfVisualizer.setMaterial(selectedObject.material);
+            updateStatus('BRDF visualization updated', 'success');
+        },
+        analyzeAndLog: function() {
+            if (!window.brdfVisualizer) {
+                window.brdfVisualizer = new BRDFVisualizer(renderer);
+            }
+
+            if (selectedObject && selectedObject.material) {
+                window.brdfVisualizer.setMaterial(selectedObject.material);
+            }
+
+            window.brdfVisualizer.logAnalysis();
+            updateStatus('BRDF analysis logged to console', 'success');
+        },
+        exportReport: function() {
+            if (!window.brdfVisualizer) {
+                window.brdfVisualizer = new BRDFVisualizer(renderer);
+            }
+
+            if (selectedObject && selectedObject.material) {
+                window.brdfVisualizer.setMaterial(selectedObject.material);
+            }
+
+            const report = window.brdfVisualizer.generateReport();
+
+            const blob = new Blob([report], { type: 'text/markdown' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = 'brdf_analysis.md';
+            a.click();
+            URL.revokeObjectURL(url);
+
+            updateStatus('BRDF analysis report exported', 'success');
+        }
+    };
+
+    brdfVisualizerFolder.add(brdfVisualizerParams, 'enabled').name('Enable Visualizer').onChange(value => {
+        if (value) {
+            brdfVisualizerParams.enable();
+        } else {
+            brdfVisualizerParams.disable();
+        }
+    });
+
+    brdfVisualizerFolder.add(brdfVisualizerParams, 'viewAngle', 0, 90, 1)
+        .name('View Angle (degrees)')
+        .onChange(value => {
+            if (window.brdfVisualizer) {
+                window.brdfVisualizer.setViewAngle(value);
+            }
+        });
+
+    brdfVisualizerFolder.add(brdfVisualizerParams, 'lightAngle', 0, 90, 1)
+        .name('Light Angle (degrees)')
+        .onChange(value => {
+            if (window.brdfVisualizer) {
+                window.brdfVisualizer.setLightAngle(value);
+            }
+        });
+
+    brdfVisualizerFolder.add(brdfVisualizerParams, 'resolution', [32, 64, 128])
+        .name('Resolution')
+        .onChange(value => {
+            if (window.brdfVisualizer) {
+                window.brdfVisualizer.resolution = value;
+                window.brdfVisualizer.updateVisualization();
+            }
+        });
+
+    brdfVisualizerFolder.add(brdfVisualizerParams, 'updateMaterial').name('Update from Selected Object');
+    brdfVisualizerFolder.add(brdfVisualizerParams, 'analyzeAndLog').name('Analyze and Log');
+    brdfVisualizerFolder.add(brdfVisualizerParams, 'exportReport').name('Export Report');
+    brdfVisualizerFolder.close();
+
+    // Split View Comparison System
+    const splitViewFolder = gui.addFolder('Split View Compare');
+    const splitViewParams = {
+        enabled: false,
+        mode: 'vertical',
+        position: 0.5,
+        secondaryAOV: AOV_MODES.ALBEDO,
+        enable: function() {
+            if (!window.splitViewComparison) {
+                window.splitViewComparison = new window.SplitViewComparison(renderer, scene, camera);
+            }
+            window.splitViewComparison.enable();
+            window.splitViewComparison.setSplitMode(splitViewParams.mode);
+            window.splitViewComparison.setSplitPosition(splitViewParams.position);
+
+            // Apply AOV to secondary scene
+            if (splitViewParams.secondaryAOV !== AOV_MODES.NONE) {
+                window.splitViewComparison.secondaryScene.traverse(obj => {
+                    if (obj.isMesh && obj.material) {
+                        const aovMaterial = createAOVMaterial(splitViewParams.secondaryAOV, obj.material);
+                        if (aovMaterial) {
+                            obj.material = aovMaterial;
+                        }
+                    }
+                });
+            }
+
+            splitViewParams.enabled = true;
+            updateStatus('Split view comparison enabled', 'success');
+        },
+        disable: function() {
+            if (window.splitViewComparison) {
+                window.splitViewComparison.disable();
+                splitViewParams.enabled = false;
+                updateStatus('Split view comparison disabled', 'success');
+            }
+        }
+    };
+
+    splitViewFolder.add(splitViewParams, 'enabled').name('Enable Split View').onChange(value => {
+        if (value) {
+            splitViewParams.enable();
+        } else {
+            splitViewParams.disable();
+        }
+    });
+
+    splitViewFolder.add(splitViewParams, 'mode', {
+        'Vertical (Left/Right)': 'vertical',
+        'Horizontal (Top/Bottom)': 'horizontal',
+        'Diagonal': 'diagonal'
+    }).name('Split Mode').onChange(value => {
+        if (window.splitViewComparison && splitViewParams.enabled) {
+            window.splitViewComparison.setSplitMode(value);
+        }
+    });
+
+    splitViewFolder.add(splitViewParams, 'position', 0, 1, 0.01).name('Split Position').onChange(value => {
+        if (window.splitViewComparison && splitViewParams.enabled) {
+            window.splitViewComparison.setSplitPosition(value);
+        }
+    });
+
+    splitViewFolder.add(splitViewParams, 'secondaryAOV', {
+        'Material (Original)': AOV_MODES.NONE,
+        'Albedo': AOV_MODES.ALBEDO,
+        'Normals (World)': AOV_MODES.NORMALS_WORLD,
+        'Roughness': AOV_MODES.ROUGHNESS,
+        'Metalness': AOV_MODES.METALNESS,
+        'UV Layout': AOV_MODES.UV_LAYOUT
+    }).name('Secondary View').onChange(value => {
+        if (window.splitViewComparison && splitViewParams.enabled) {
+            // Re-enable to apply new AOV
+            splitViewParams.disable();
+            splitViewParams.enable();
+        }
+    });
+
+    splitViewFolder.close();
 }
 
 // Load USD file
@@ -2409,8 +4477,7 @@ async function loadUSDFile(arrayBuffer, filename) {
         console.log(`  sceneRoot: ${!!sceneRoot}`);
         console.log(`  sceneRoot.children.length: ${sceneRoot ? sceneRoot.children.length : 'N/A'}`);
 
-        // HACK
-        //applyUpAxisConversionToScene();
+        applyUpAxisConversionToScene();
         console.log(`\nIMMEDIATELY AFTER applyUpAxisConversionToScene():`);
         console.log(`  sceneRoot.rotation: x=${sceneRoot?.rotation.x.toFixed(4)}, y=${sceneRoot?.rotation.y.toFixed(4)}, z=${sceneRoot?.rotation.z.toFixed(4)}`);
 
@@ -2532,12 +4599,23 @@ async function loadMaterials() {
                 throw new Error('Failed to create Three.js material');
             }
 
+            // Extract parameters based on which material type is active
+            const activeMaterialType = threeMaterial.userData.activeMaterialType;
+            let parameters = {};
+
+            if (activeMaterialType === 'UsdPreviewSurface') {
+                parameters = extractUsdPreviewSurfaceParams(materialData);
+            } else if (activeMaterialType === 'OpenPBR') {
+                parameters = extractOpenPBRParams(materialData);
+            }
+
             materials.push({
                 index: i,
                 name: materialData.name || `Material_${i}`,
                 data: materialData,
                 threeMaterial: threeMaterial,
-                parameters: extractOpenPBRParams(materialData)
+                parameters: parameters,
+                materialType: activeMaterialType || 'Unknown'
             });
 
         } catch (error) {
@@ -2559,13 +4637,48 @@ async function loadMaterials() {
     }
 
     console.log(`Successfully loaded ${materials.length} materials`);
+
+    // Auto-validate materials if enabled
+    if (gui) {
+        const validationController = gui.controllers.find(c => c.property === 'autoValidate');
+        if (validationController && validationController.object.autoValidate) {
+            // Run validation automatically
+            const validator = new MaterialValidator();
+            const results = validator.validateScene(scene);
+            console.log('Auto-validation results:');
+            validator.logResults(results);
+        }
+    }
 }
 
-// Create Three.js material from OpenPBR data
+// Create Three.js material from OpenPBR/UsdPreviewSurface data
 async function createOpenPBRMaterial(materialData) {
 
+    // Determine which material type to use based on preference and availability
+    const hasOpenPBR = materialData.hasOpenPBR;
+    const hasUsdPreviewSurface = materialData.hasUsdPreviewSurface;
+
+    let useOpenPBR = false;
+    let useUsdPreview = false;
+
+    if (preferredMaterialType === 'auto') {
+        // Auto mode: prefer OpenPBR if available, otherwise UsdPreviewSurface
+        useOpenPBR = hasOpenPBR;
+        useUsdPreview = !hasOpenPBR && hasUsdPreviewSurface;
+    } else if (preferredMaterialType === 'openpbr') {
+        // Force OpenPBR if available
+        useOpenPBR = hasOpenPBR;
+        useUsdPreview = !hasOpenPBR && hasUsdPreviewSurface; // Fallback
+    } else if (preferredMaterialType === 'usdpreviewsurface') {
+        // Force UsdPreviewSurface if available
+        useUsdPreview = hasUsdPreviewSurface;
+        useOpenPBR = !hasUsdPreviewSurface && hasOpenPBR; // Fallback
+    }
+
+    console.log(`Material type selection: hasOpenPBR=${hasOpenPBR}, hasUsdPreviewSurface=${hasUsdPreviewSurface}, preferredType=${preferredMaterialType}, using OpenPBR=${useOpenPBR}, using UsdPreview=${useUsdPreview}`);
+
     // === NodeMaterial Support via MaterialXLoader ===
-    if (useNodeMaterial && materialData.hasOpenPBR) {
+    if (useNodeMaterial && useOpenPBR) {
         console.log("=== Creating NodeMaterial via MaterialXLoader ===");
         try {
             const mtlxXML = convertOpenPBRToMaterialXML(materialData, materialData.name || 'Material');
@@ -2610,7 +4723,10 @@ async function createOpenPBRMaterial(materialData) {
     // Store texture references for later management
     material.userData.textures = {};
 
-    if (materialData.hasOpenPBR) {
+    // Store which material type is being used
+    material.userData.activeMaterialType = useOpenPBR ? 'OpenPBR' : (useUsdPreview ? 'UsdPreviewSurface' : 'None');
+
+    if (useOpenPBR && materialData.hasOpenPBR) {
         console.log("=== Material has OpenPBR ===");
         console.log("Available keys:", Object.keys(materialData));
 
@@ -3036,7 +5152,7 @@ async function createOpenPBRMaterial(materialData) {
         //}
         } // end of else if (pbrGrouped)
 
-    } else if (materialData.hasUsdPreviewSurface && materialData.usdPreviewSurface) {
+    } else if (useUsdPreview && materialData.hasUsdPreviewSurface && materialData.usdPreviewSurface) {
         // Fallback to UsdPreviewSurface
         const preview = materialData.usdPreviewSurface;
 
@@ -3090,6 +5206,85 @@ async function createOpenPBRMaterial(materialData) {
 
     material.needsUpdate = true;
     return material;
+}
+
+// Extract UsdPreviewSurface parameters for GUI
+function extractUsdPreviewSurfaceParams(materialData) {
+    if (!materialData.hasUsdPreviewSurface || !materialData.usdPreviewSurface) {
+        return {};
+    }
+
+    const preview = materialData.usdPreviewSurface;
+    const params = {
+        diffuse: {},
+        specular: {},
+        clearcoat: {},
+        emission: {},
+        geometry: {},
+        displacement: {},
+        occlusion: {}
+    };
+
+    // Helper to unwrap value
+    const unwrapValue = (val) => {
+        if (val && typeof val === 'object' && val.value !== undefined) {
+            return val.value;
+        }
+        return val;
+    };
+
+    // Diffuse
+    if (preview.diffuseColor !== undefined) {
+        params.diffuse.diffuseColor = unwrapValue(preview.diffuseColor);
+    }
+
+    // Specular
+    if (preview.roughness !== undefined) {
+        params.specular.roughness = unwrapValue(preview.roughness);
+    }
+    if (preview.metallic !== undefined) {
+        params.specular.metallic = unwrapValue(preview.metallic);
+    }
+    if (preview.specularColor !== undefined) {
+        params.specular.specularColor = unwrapValue(preview.specularColor);
+    }
+    if (preview.ior !== undefined) {
+        params.specular.ior = unwrapValue(preview.ior);
+    }
+
+    // Clearcoat
+    if (preview.clearcoat !== undefined) {
+        params.clearcoat.clearcoat = unwrapValue(preview.clearcoat);
+    }
+    if (preview.clearcoatRoughness !== undefined) {
+        params.clearcoat.clearcoatRoughness = unwrapValue(preview.clearcoatRoughness);
+    }
+
+    // Emission
+    if (preview.emissiveColor !== undefined) {
+        params.emission.emissiveColor = unwrapValue(preview.emissiveColor);
+    }
+
+    // Geometry
+    if (preview.opacity !== undefined) {
+        params.geometry.opacity = unwrapValue(preview.opacity);
+    }
+    if (preview.normal !== undefined) {
+        params.geometry.normal = unwrapValue(preview.normal);
+    }
+
+    // Displacement
+    if (preview.displacement !== undefined) {
+        params.displacement.displacement = unwrapValue(preview.displacement);
+    }
+
+    // Occlusion
+    if (preview.occlusion !== undefined) {
+        params.occlusion.occlusion = unwrapValue(preview.occlusion);
+    }
+
+    console.log("=== Extracted UsdPreviewSurface params ===", params);
+    return params;
 }
 
 // Extract OpenPBR parameters for GUI
@@ -3285,16 +5480,17 @@ function loadMeshes() {
                 geometry.setIndex(new THREE.BufferAttribute(indices, 1));
             }
 
-            // Get material index
-            const materialIndex = meshData.materialIndex || 0;
-            const material = materials[materialIndex]?.threeMaterial || new THREE.MeshPhysicalMaterial({ envMapIntensity: exposureValue });
+            // Get material index (materialId comes from C++ RenderMesh.material_id)
+            const materialId = meshData.materialId !== undefined ? meshData.materialId : 0;
+            console.log(`Mesh ${i} (${meshData.name}): materialId = ${materialId}, available materials:`, materials.length);
+            const material = materials[materialId]?.threeMaterial || new THREE.MeshPhysicalMaterial({ envMapIntensity: exposureValue });
 
             // Create mesh
             const mesh = new THREE.Mesh(geometry, material);
             mesh.name = meshData.name || `Mesh_${i}`;
             mesh.userData = {
                 index: i,
-                materialIndex: materialIndex,
+                materialId: materialId,
                 usdData: meshData
             };
             mesh.castShadow = true;
@@ -3556,7 +5752,7 @@ function updateTexturePanel(material) {
 // Create UV set selector for a texture
 function createUVSetSelector(material, mapName) {
     // Get the associated mesh to determine available UV sets
-    const meshWithMaterial = meshes.find(m => m.userData.materialIndex === material.index);
+    const meshWithMaterial = meshes.find(m => m.userData.materialId === material.index);
     if (!meshWithMaterial) {
         return null; // No mesh found with this material
     }
@@ -3897,6 +6093,9 @@ function selectMaterial(index) {
     // Set selected material for export
     selectedMaterialForExport = material;
 
+    // Make globally accessible for node graph
+    window.selectedMaterialForExport = material;
+
     // Show export buttons
     const exportSection = document.getElementById('material-export');
     if (exportSection) {
@@ -3919,10 +6118,11 @@ function createParameterControls(material) {
         gui.removeFolder(paramFolder);
     }
 
-    paramFolder = gui.addFolder(`Material: ${material.name}`);
+    const materialTypeLabel = material.materialType || 'Unknown';
+    paramFolder = gui.addFolder(`Material: ${material.name} [${materialTypeLabel}]`);
 
     if (!material.parameters || Object.keys(material.parameters).length === 0) {
-        paramFolder.add({ message: 'No OpenPBR parameters' }, 'message').name('Info');
+        paramFolder.add({ message: `No ${materialTypeLabel} parameters` }, 'message').name('Info');
         paramFolder.open();
         return;
     }
@@ -3930,8 +6130,11 @@ function createParameterControls(material) {
     const params = material.parameters;
     const threeMat = material.threeMaterial;
 
+    // Determine which parameter definitions to use
+    const paramDefs = material.materialType === 'UsdPreviewSurface' ? USDPREVIEWSURFACE_PARAMS : OPENPBR_PARAMS;
+
     // Create controls for each parameter group
-    Object.entries(OPENPBR_PARAMS).forEach(([groupName, groupParams]) => {
+    Object.entries(paramDefs).forEach(([groupName, groupParams]) => {
         if (params[groupName]) {
             // Add support status labels to certain groups
             let folderLabel = groupName;
@@ -4117,7 +6320,7 @@ function updateMaterialFromParams(material, params) {
 }
 
 // Highlight meshes with specific material
-function highlightMeshesWithMaterial(materialIndex) {
+function highlightMeshesWithMaterial(materialId) {
     // Reset all meshes
     meshes.forEach(mesh => {
         mesh.scale.set(1, 1, 1);
@@ -4125,7 +6328,7 @@ function highlightMeshesWithMaterial(materialIndex) {
 
     // Highlight meshes with selected material
     meshes.forEach(mesh => {
-        if (mesh.userData.materialIndex === materialIndex) {
+        if (mesh.userData.materialId === materialId) {
             mesh.scale.set(1.05, 1.05, 1.05);
         }
     });
@@ -4195,22 +6398,62 @@ function clearScene() {
 function fitCameraToScene() {
     if (meshes.length === 0) return;
 
+    // Compute scene bounding box
     const box = new THREE.Box3();
     meshes.forEach(mesh => {
         box.expandByObject(mesh);
     });
 
+    // Get bounding box center and size
     const center = box.getCenter(new THREE.Vector3());
     const size = box.getSize(new THREE.Vector3());
-    const maxDim = Math.max(size.x, size.y, size.z);
-    const fov = camera.fov * (Math.PI / 180);
-    let cameraZ = Math.abs(maxDim / 2 / Math.tan(fov / 2));
-    cameraZ *= 1.5; // Add some padding
 
-    camera.position.set(center.x, center.y + size.y * 0.5, center.z + cameraZ);
+    // Calculate the bounding sphere radius (diagonal distance from center)
+    const maxDim = Math.max(size.x, size.y, size.z);
+    const boundingSphereRadius = size.length() * 0.5;
+
+    // Calculate camera distance based on FOV and bounding sphere
+    // We want the entire bounding sphere to fit in the view frustum
+    const fov = camera.fov * (Math.PI / 180);
+    const aspectRatio = camera.aspect;
+
+    // Calculate distance needed to fit sphere in both horizontal and vertical FOV
+    const verticalFOV = fov;
+    const horizontalFOV = 2 * Math.atan(Math.tan(verticalFOV / 2) * aspectRatio);
+
+    // Use the smaller FOV to ensure object fits in both dimensions
+    const effectiveFOV = Math.min(verticalFOV, horizontalFOV);
+
+    // Distance from center to camera to fit bounding sphere
+    let cameraDistance = boundingSphereRadius / Math.sin(effectiveFOV / 2);
+
+    // Add padding (20% extra distance)
+    cameraDistance *= 1.2;
+
+    // Position camera at a nice 45-degree viewing angle
+    const cameraOffset = new THREE.Vector3(
+        cameraDistance * 0.5,  // X offset
+        cameraDistance * 0.5,  // Y offset (elevated view)
+        cameraDistance * 0.866 // Z offset (sqrt(3)/2 for 30-degree angle)
+    );
+
+    const cameraPosition = center.clone().add(cameraOffset);
+
+    // Update camera position and orientation
+    camera.position.copy(cameraPosition);
     camera.lookAt(center);
+
+    // Update controls target to scene center
     controls.target.copy(center);
+
+    // Update camera near/far planes based on scene size
+    camera.near = Math.max(0.1, cameraDistance / 100);
+    camera.far = Math.max(1000, cameraDistance * 10);
+    camera.updateProjectionMatrix();
+
     controls.update();
+
+    console.log(`Scene fitted: bounds=${size.x.toFixed(2)}×${size.y.toFixed(2)}×${size.z.toFixed(2)}, radius=${boundingSphereRadius.toFixed(2)}, distance=${cameraDistance.toFixed(2)}`);
 }
 
 // Setup file input
@@ -4272,6 +6515,25 @@ async function loadSampleModel() {
 
 // Mouse interaction handlers
 function onMouseClick(event) {
+    // Check if material property picker mode is active (priority 1)
+    if (isMaterialPropertyPickerActive()) {
+        // Handle material property picking
+        const handled = handleMaterialPropertyPickerClick(event, renderer);
+        if (handled) {
+            return; // Don't do other modes
+        }
+    }
+
+    // Check if color picker mode is active (priority 2)
+    if (isColorPickerActive()) {
+        // Handle color picking
+        const handled = handleColorPickerClick(event, renderer);
+        if (handled) {
+            return; // Don't do object selection in color picker mode
+        }
+    }
+
+    // Normal object selection mode
     // Calculate mouse position in normalized device coordinates
     mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
     mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
@@ -4322,9 +6584,9 @@ function selectObject(object) {
     console.log(`Selected: ${object.name}, BBox added`);
 
     // Select corresponding material
-    const materialIndex = object.userData.materialIndex;
-    if (materialIndex !== undefined) {
-        selectMaterial(materialIndex);
+    const materialId = object.userData.materialId;
+    if (materialId !== undefined) {
+        selectMaterial(materialId);
     }
 }
 
@@ -4364,6 +6626,11 @@ function onWindowResize() {
     if (composer) {
         composer.setSize(window.innerWidth, window.innerHeight);
     }
+
+    // Update material property picker render targets
+    const width = renderer.domElement.width;
+    const height = renderer.domElement.height;
+    resizeMaterialPropertyTargets(width, height);
 }
 
 function animate() {
@@ -4375,11 +6642,23 @@ function animate() {
         boundingBoxHelper.update();
     }
 
-    // Use composer if false color is enabled, otherwise use regular renderer
-    if (showingFalseColor && composer) {
-        composer.render();
+    // Check if G-Buffer viewer is enabled (highest priority)
+    if (window.gbufferViewer && window.gbufferViewer.enabled) {
+        // G-Buffer viewer renders all channels in grid
+        window.gbufferViewer.render();
+    } else if (window.splitViewComparison && window.splitViewComparison.getState().active) {
+        // Split view renders both scenes
+        window.splitViewComparison.render();
     } else {
-        renderer.render(scene, camera);
+        // Use composer if any post-processing is enabled (false color or custom ACES)
+        const useComposer = showingFalseColor ||
+                            (toneMappingType === 'aces13' || toneMappingType === 'aces20');
+
+        if (useComposer && composer) {
+            composer.render();
+        } else {
+            renderer.render(scene, camera);
+        }
     }
 }
 
@@ -4396,6 +6675,200 @@ window.importMaterialXFile = importMaterialXFile;
 window.loadHDRTextureForMaterial = loadHDRTextureForMaterial;
 window.exportSelectedMaterialJSON = exportSelectedMaterialJSON;
 window.exportSelectedMaterialMTLX = exportSelectedMaterialMTLX;
+
+// Expose PBR debugging tools to global scope
+window.applyMaterialOverrides = applyMaterialOverrides;
+window.resetMaterialOverrides = resetMaterialOverrides;
+window.applyOverridePreset = applyOverridePreset;
+window.MaterialValidator = MaterialValidator;
+window.SplitViewComparison = SplitViewComparison;
+window.TextureInspector = TextureInspector;
+window.MaterialComplexityAnalyzer = MaterialComplexityAnalyzer;
+window.IBLContributionAnalyzer = IBLContributionAnalyzer;
+window.GBufferViewer = GBufferViewer;
+window.MipMapVisualizer = MipMapVisualizer;
+window.PixelInspector = PixelInspector;
+window.MaterialPresetManager = MaterialPresetManager;
+window.PBRTheoryGuide = PBRTheoryGuide;
+window.TextureTilingDetector = TextureTilingDetector;
+window.GradientRampEditor = GradientRampEditor;
+window.LightProbeVisualizer = LightProbeVisualizer;
+window.BRDFVisualizer = BRDFVisualizer;
+window.REFERENCE_MATERIALS = REFERENCE_MATERIALS;
+window.applyReferenceMaterial = applyReferenceMaterial;
+window.getReferencesByCategory = getReferencesByCategory;
+window.getCategories = getCategories;
+window.COMPARISON_PRESETS = COMPARISON_PRESETS;
+window.OVERRIDE_PRESETS = OVERRIDE_PRESETS;
+window.inspectTexture = inspectTexture;
+window.toggleTextureInspector = toggleTextureInspector;
+window.exportTextureReport = exportTextureReport;
+
+// Texture Inspector functions
+let textureInspector = null;
+let currentInspectedTexture = null;
+
+function inspectTexture(texture, textureName = 'Unknown') {
+    if (!texture) {
+        console.error('No texture provided to inspect');
+        return;
+    }
+
+    if (!textureInspector) {
+        textureInspector = new TextureInspector();
+    }
+
+    // Analyze texture
+    const stats = textureInspector.analyzeTexture(texture);
+    if (!stats) {
+        console.error('Failed to analyze texture');
+        return;
+    }
+
+    currentInspectedTexture = { texture, name: textureName, stats };
+
+    // Show panel
+    const wrapper = document.getElementById('texture-inspector-wrapper');
+    wrapper.style.display = 'flex';
+
+    // Update title
+    document.getElementById('texture-inspector-title').textContent = `Texture Inspector: ${textureName}`;
+
+    // Update preview
+    const preview = document.getElementById('texture-inspector-preview');
+    if (texture.image && texture.image.src) {
+        preview.src = texture.image.src;
+    } else if (texture.image) {
+        // Convert HTMLImageElement or canvas to data URL
+        const canvas = document.createElement('canvas');
+        canvas.width = texture.image.width;
+        canvas.height = texture.image.height;
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(texture.image, 0, 0);
+        preview.src = canvas.toDataURL();
+    }
+
+    // Update texture info
+    const infoDetails = document.getElementById('texture-info-details');
+    infoDetails.innerHTML = `
+        <strong>Name:</strong> ${textureName}<br>
+        <strong>Dimensions:</strong> ${stats.width} × ${stats.height}<br>
+        <strong>Total Pixels:</strong> ${stats.pixelCount.toLocaleString()}<br>
+        <strong>Format:</strong> RGBA (8-bit per channel)
+    `;
+
+    // Render histograms
+    const colors = {
+        r: '#f44336',
+        g: '#4CAF50',
+        b: '#2196F3',
+        a: '#9E9E9E'
+    };
+
+    ['r', 'g', 'b', 'a'].forEach(ch => {
+        const canvas = document.getElementById(`histogram-${ch}`);
+        textureInspector.renderHistogram(canvas, stats.channels[ch], colors[ch]);
+    });
+
+    // Update statistics table
+    const tbody = document.getElementById('texture-stats-tbody');
+    tbody.innerHTML = '';
+
+    ['r', 'g', 'b', 'a'].forEach(ch => {
+        const channel = stats.channels[ch];
+        const row = tbody.insertRow();
+
+        const colorMap = {
+            r: '#f44336',
+            g: '#4CAF50',
+            b: '#2196F3',
+            a: '#9E9E9E'
+        };
+
+        row.innerHTML = `
+            <td style="padding: 8px; border-bottom: 1px solid rgba(156, 39, 176, 0.2); color: ${colorMap[ch]}; font-weight: bold;">${ch.toUpperCase()}</td>
+            <td style="padding: 8px; border-bottom: 1px solid rgba(156, 39, 176, 0.2); text-align: right;">${channel.min}</td>
+            <td style="padding: 8px; border-bottom: 1px solid rgba(156, 39, 176, 0.2); text-align: right;">${channel.max}</td>
+            <td style="padding: 8px; border-bottom: 1px solid rgba(156, 39, 176, 0.2); text-align: right;">${channel.mean.toFixed(2)}</td>
+            <td style="padding: 8px; border-bottom: 1px solid rgba(156, 39, 176, 0.2); text-align: right;">${channel.median}</td>
+            <td style="padding: 8px; border-bottom: 1px solid rgba(156, 39, 176, 0.2); text-align: right;">${channel.stdDev.toFixed(2)}</td>
+            <td style="padding: 8px; border-bottom: 1px solid rgba(156, 39, 176, 0.2); text-align: right;">${channel.uniqueCount}</td>
+        `;
+    });
+
+    // Update issues list
+    const issuesList = document.getElementById('texture-issues-list');
+    if (stats.issues.length === 0) {
+        issuesList.innerHTML = '<div style="color: #4CAF50;">✓ No issues detected</div>';
+    } else {
+        let html = '';
+        const errors = stats.issues.filter(i => i.severity === 'error');
+        const warnings = stats.issues.filter(i => i.severity === 'warning');
+        const infos = stats.issues.filter(i => i.severity === 'info');
+
+        if (errors.length > 0) {
+            html += '<div style="margin-bottom: 10px;"><strong style="color: #f44336;">❌ Errors:</strong><ul style="margin: 5px 0; padding-left: 20px;">';
+            errors.forEach(issue => {
+                html += `<li style="color: #e0e0e0;">${issue.message}</li>`;
+            });
+            html += '</ul></div>';
+        }
+
+        if (warnings.length > 0) {
+            html += '<div style="margin-bottom: 10px;"><strong style="color: #FF9800;">⚠️ Warnings:</strong><ul style="margin: 5px 0; padding-left: 20px;">';
+            warnings.forEach(issue => {
+                html += `<li style="color: #e0e0e0;">${issue.message}</li>`;
+            });
+            html += '</ul></div>';
+        }
+
+        if (infos.length > 0) {
+            html += '<div><strong style="color: #2196F3;">ℹ️ Info:</strong><ul style="margin: 5px 0; padding-left: 20px;">';
+            infos.forEach(issue => {
+                html += `<li style="color: #e0e0e0;">${issue.message}</li>`;
+            });
+            html += '</ul></div>';
+        }
+
+        issuesList.innerHTML = html;
+    }
+
+    // Log to console
+    textureInspector.logResults(stats);
+
+    updateStatus(`Inspecting texture: ${textureName}`, 'success');
+}
+
+function toggleTextureInspector() {
+    const wrapper = document.getElementById('texture-inspector-wrapper');
+    if (wrapper.style.display === 'flex') {
+        wrapper.style.display = 'none';
+    } else {
+        wrapper.style.display = 'flex';
+    }
+}
+
+function exportTextureReport() {
+    if (!currentInspectedTexture || !currentInspectedTexture.stats) {
+        console.error('No texture analyzed');
+        return;
+    }
+
+    if (!textureInspector) {
+        textureInspector = new TextureInspector();
+    }
+
+    const report = textureInspector.generateReport(currentInspectedTexture.stats);
+    const blob = new Blob([report], { type: 'text/markdown' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `texture-report-${currentInspectedTexture.name}.md`;
+    a.click();
+    URL.revokeObjectURL(url);
+
+    updateStatus(`Exported texture report for ${currentInspectedTexture.name}`, 'success');
+}
 
 // Import MaterialX XML file and apply to selected object
 async function importMaterialXFile() {
