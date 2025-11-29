@@ -1,0 +1,231 @@
+#usda 1.0
+(
+    doc = """LTE SpectralAPI Material Examples
+    Demonstrates wavelength-dependent material properties using the wavelength: namespace.
+    See doc/lte_spectral_api.md for specification.
+
+    Examples include:
+    - Spectral reflectance (wavelength:reflectance)
+    - Spectral IOR with various interpolation methods
+    - Sellmeier coefficients for glass dispersion
+    """
+    metersPerUnit = 1
+    upAxis = "Y"
+    customLayerData = {
+        string unitForWavelength = "nanometers"
+    }
+)
+
+def Scope "Materials"
+{
+    # Basic spectral material with reflectance data
+    def Material "SpectralRedMaterial"
+    {
+        token outputs:surface.connect = </Materials/SpectralRedMaterial/PBRShader.outputs:surface>
+
+        def Shader "PBRShader"
+        {
+            uniform token info:id = "UsdPreviewSurface"
+            color3f inputs:diffuseColor = (0.8, 0.1, 0.1)
+            float inputs:roughness = 0.4
+            float inputs:metallic = 0.0
+            float inputs:ior = 1.5
+            token outputs:surface
+
+            # LTE SpectralAPI: Spectral reflectance
+            # Red-shifted reflectance curve
+            float2[] wavelength:reflectance = [
+                (380, 0.05), (400, 0.05), (420, 0.05), (440, 0.05),
+                (460, 0.06), (480, 0.07), (500, 0.08), (520, 0.10),
+                (540, 0.15), (560, 0.25), (580, 0.45), (600, 0.65),
+                (620, 0.78), (640, 0.85), (660, 0.88), (680, 0.90),
+                (700, 0.91), (720, 0.92), (740, 0.92), (760, 0.93), (780, 0.93)
+            ] (
+                customData = {
+                    string interpolation = "linear"
+                }
+            )
+        }
+    }
+
+    # Spectral material with IOR dispersion (crown glass)
+    def Material "SpectralGlassMaterial"
+    {
+        token outputs:surface.connect = </Materials/SpectralGlassMaterial/PBRShader.outputs:surface>
+
+        def Shader "PBRShader"
+        {
+            uniform token info:id = "UsdPreviewSurface"
+            color3f inputs:diffuseColor = (1.0, 1.0, 1.0)
+            float inputs:roughness = 0.0
+            float inputs:metallic = 0.0
+            float inputs:opacity = 0.1
+            float inputs:ior = 1.52
+            token outputs:surface
+
+            # LTE SpectralAPI: Spectral IOR (BK7 Crown Glass)
+            # IOR varies with wavelength (dispersion)
+            float2[] wavelength:ior = [
+                (380, 1.5308), (400, 1.5253), (420, 1.5214),
+                (440, 1.5183), (460, 1.5158), (480, 1.5137),
+                (500, 1.5120), (520, 1.5105), (540, 1.5092),
+                (560, 1.5080), (580, 1.5070), (600, 1.5061),
+                (620, 1.5053), (640, 1.5046), (660, 1.5039),
+                (680, 1.5033), (700, 1.5028), (720, 1.5023),
+                (740, 1.5018), (760, 1.5014), (780, 1.5010)
+            ] (
+                customData = {
+                    string interpolation = "linear"
+                }
+            )
+        }
+    }
+
+    # Spectral material with Sellmeier IOR (fused silica)
+    def Material "SpectralFusedSilicaMaterial"
+    {
+        token outputs:surface.connect = </Materials/SpectralFusedSilicaMaterial/PBRShader.outputs:surface>
+
+        def Shader "PBRShader"
+        {
+            uniform token info:id = "UsdPreviewSurface"
+            color3f inputs:diffuseColor = (1.0, 1.0, 1.0)
+            float inputs:roughness = 0.0
+            float inputs:metallic = 0.0
+            float inputs:opacity = 0.05
+            float inputs:ior = 1.458
+            token outputs:surface
+
+            # LTE SpectralAPI: Sellmeier coefficients for fused silica
+            # n^2 = 1 + B1*l^2/(l^2-C1) + B2*l^2/(l^2-C2) + B3*l^2/(l^2-C3)
+            # where l is wavelength in micrometers
+            float2[] wavelength:ior = [
+                (0.6961663, 0.0684043),   # (B1, C1) - C1 in um^2
+                (0.4079426, 0.1162414),   # (B2, C2)
+                (0.8974794, 9.896161)     # (B3, C3)
+            ] (
+                customData = {
+                    string interpolation = "sellmeier"
+                    string unitForWavelength = "micrometers"
+                }
+            )
+        }
+    }
+
+    # Spectral material with green foliage reflectance
+    def Material "SpectralFoliageMaterial"
+    {
+        token outputs:surface.connect = </Materials/SpectralFoliageMaterial/PBRShader.outputs:surface>
+
+        def Shader "PBRShader"
+        {
+            uniform token info:id = "UsdPreviewSurface"
+            color3f inputs:diffuseColor = (0.2, 0.5, 0.15)
+            float inputs:roughness = 0.6
+            float inputs:metallic = 0.0
+            token outputs:surface
+
+            # LTE SpectralAPI: Typical green foliage reflectance
+            # Shows chlorophyll absorption (low blue/red, high green/NIR)
+            float2[] wavelength:reflectance = [
+                (380, 0.03), (400, 0.04), (420, 0.04), (440, 0.05),
+                (460, 0.05), (480, 0.06), (500, 0.08), (520, 0.12),
+                (540, 0.18), (560, 0.20), (580, 0.15), (600, 0.10),
+                (620, 0.08), (640, 0.07), (660, 0.06), (680, 0.08),
+                (700, 0.35), (720, 0.45), (740, 0.48), (760, 0.50), (780, 0.52)
+            ] (
+                customData = {
+                    string interpolation = "linear"
+                }
+            )
+        }
+    }
+
+    # Gold metal with spectral reflectance
+    def Material "SpectralGoldMaterial"
+    {
+        token outputs:surface.connect = </Materials/SpectralGoldMaterial/PBRShader.outputs:surface>
+
+        def Shader "PBRShader"
+        {
+            uniform token info:id = "UsdPreviewSurface"
+            color3f inputs:diffuseColor = (1.0, 0.84, 0.0)
+            float inputs:roughness = 0.2
+            float inputs:metallic = 1.0
+            token outputs:surface
+
+            # LTE SpectralAPI: Gold reflectance spectrum
+            # High reflectance in red/IR, absorption in blue/green
+            float2[] wavelength:reflectance = [
+                (380, 0.35), (400, 0.38), (420, 0.38), (440, 0.37),
+                (460, 0.36), (480, 0.36), (500, 0.42), (520, 0.62),
+                (540, 0.82), (560, 0.90), (580, 0.93), (600, 0.95),
+                (620, 0.96), (640, 0.97), (660, 0.97), (680, 0.98),
+                (700, 0.98), (720, 0.98), (740, 0.99), (760, 0.99), (780, 0.99)
+            ] (
+                customData = {
+                    string interpolation = "linear"
+                }
+            )
+        }
+    }
+}
+
+def Xform "Geometry"
+{
+    # Sphere with red spectral material
+    def Sphere "RedSphere"
+    {
+        double radius = 0.5
+        double3 xformOp:translate = (-2, 0.5, 0)
+        uniform token[] xformOpOrder = ["xformOp:translate"]
+        rel material:binding = </Materials/SpectralRedMaterial>
+    }
+
+    # Sphere with glass material (IOR dispersion)
+    def Sphere "GlassSphere"
+    {
+        double radius = 0.5
+        double3 xformOp:translate = (-1, 0.5, 0)
+        uniform token[] xformOpOrder = ["xformOp:translate"]
+        rel material:binding = </Materials/SpectralGlassMaterial>
+    }
+
+    # Sphere with fused silica (Sellmeier)
+    def Sphere "SilicaSphere"
+    {
+        double radius = 0.5
+        double3 xformOp:translate = (0, 0.5, 0)
+        uniform token[] xformOpOrder = ["xformOp:translate"]
+        rel material:binding = </Materials/SpectralFusedSilicaMaterial>
+    }
+
+    # Sphere with foliage material
+    def Sphere "FoliageSphere"
+    {
+        double radius = 0.5
+        double3 xformOp:translate = (1, 0.5, 0)
+        uniform token[] xformOpOrder = ["xformOp:translate"]
+        rel material:binding = </Materials/SpectralFoliageMaterial>
+    }
+
+    # Sphere with gold material
+    def Sphere "GoldSphere"
+    {
+        double radius = 0.5
+        double3 xformOp:translate = (2, 0.5, 0)
+        uniform token[] xformOpOrder = ["xformOp:translate"]
+        rel material:binding = </Materials/SpectralGoldMaterial>
+    }
+
+    # Ground plane
+    def Mesh "Ground"
+    {
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0, 1, 2, 3]
+        point3f[] points = [(-5, 0, -5), (5, 0, -5), (5, 0, 5), (-5, 0, 5)]
+        normal3f[] primvars:normals = [(0, 1, 0), (0, 1, 0), (0, 1, 0), (0, 1, 0)] (
+            interpolation = "vertex"
+        )
+    }
+}
