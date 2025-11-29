@@ -1,0 +1,20 @@
+#usda 1.0
+(
+    doc = "Test: Spectral IOR with Sellmeier coefficients (fused silica)"
+)
+
+def Shader "TestShader"
+{
+    uniform token info:id = "UsdPreviewSurface"
+    float inputs:ior = 1.458
+    float2[] wavelength:ior = [
+        (0.6961663, 0.0684043),
+        (0.4079426, 0.1162414),
+        (0.8974794, 9.896161)
+    ] (
+        customData = {
+            string interpolation = "sellmeier"
+            string unitForWavelength = "micrometers"
+        }
+    )
+}
