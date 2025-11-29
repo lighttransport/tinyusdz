@@ -1,0 +1,87 @@
+#usda 1.0
+(
+    doc = """Chrome sphere for HDR/lighting calibration and reflection reference.
+    A perfectly reflective metallic sphere used for:
+    - HDR environment map capture and reconstruction
+    - Lighting verification and color grading reference
+    - Reflection probe reference for VFX
+    - On-set lighting reference for match-moving
+    Uses MaterialX metal BSDF with maximum metallic and minimum roughness.
+
+    References:
+    - Paul Debevec's Light Probe Image Gallery
+      http://www.pauldebevec.com/Probes/
+    - "Rendering with Natural Light" (Debevec, 1998)
+      SIGGRAPH 1998 paper on light probe acquisition
+    - "A Reflectance and BRDF Database" (Matusik et al., 2003)
+      MIT CSAIL database including chrome sphere measurements
+    - Marmoset Toolbag HDR capture documentation
+      https://marmoset.co/posts/basic-theory-of-physically-based-rendering/
+    - Chrome/mirror ball technique in VFX
+      Industry standard for on-set HDRI acquisition
+
+    Physical properties of chrome:
+    - Metalness: 1.0 (fully metallic conductor)
+    - Roughness: 0.01-0.05 (polished chrome surface)
+    - IOR: ~2.5-3.5 for chromium metal
+    - Base color: Slight blue-grey tint (0.95, 0.95, 0.95)
+    """
+    metersPerUnit = 1
+    upAxis = "Y"
+)
+
+def Scope "Materials"
+{
+    def Material "Chrome" (
+        prepend apiSchemas = ["MaterialXConfigAPI"]
+        doc = "Chrome material: fully metallic, mirror-like reflective surface"
+    )
+    {
+        token outputs:mtlx:surface.connect = </Materials/Chrome/Surface.outputs:out>
+
+        def Shader "Surface"
+        {
+            uniform token info:id = "ND_standard_surface_surfaceshader"
+            color3f inputs:base_color = (0.95, 0.95, 0.95) (
+                colorSpace = "lin_srgb"
+                doc = "Slightly tinted white for realistic chrome"
+            )
+            float inputs:base = 1.0
+            float inputs:metalness = 1.0 (
+                doc = "Fully metallic for perfect mirror reflection"
+            )
+            float inputs:specular = 1.0
+            float inputs:specular_roughness = 0.01 (
+                doc = "Near-zero roughness for mirror-like reflection"
+            )
+            float inputs:specular_IOR = 20.0 (
+                doc = "High IOR for chrome"
+            )
+            color3f inputs:specular_color = (1.0, 1.0, 1.0)
+            token outputs:out
+        }
+    }
+}
+
+def Xform "ChromeBall" (
+    doc = "Chrome sphere for lighting reference and HDR capture"
+)
+{
+    def Sphere "Sphere" (
+        prepend apiSchemas = ["MaterialBindingAPI"]
+        doc = "High-resolution sphere geometry"
+    )
+    {
+        rel material:binding = </Materials/Chrome>
+
+        double radius = 0.5 (
+            doc = "Sphere radius: 0.5 units = 1 unit diameter"
+        )
+
+        float3[] extent = [(-0.5, -0.5, -0.5), (0.5, 0.5, 0.5)]
+
+        uniform token subdivisionScheme = "catmullClark" (
+            doc = "Catmull-Clark subdivision for smooth sphere"
+        )
+    }
+}
