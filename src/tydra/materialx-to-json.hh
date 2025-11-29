@@ -13,6 +13,7 @@
 #include <map>
 
 #include "nonstd/expected.hpp"
+#include "value-types.hh"  // For value::float2
 
 namespace tinyusdz {
 
@@ -143,6 +144,60 @@ std::string IntVectorToJsonArray(const std::vector<int> &vec);
 /// e.g., ["a", "b", "c"]
 ///
 std::string StringVectorToJsonArray(const std::vector<std::string> &vec);
+
+// ============================================================================
+// LTE SpectralAPI JSON Conversion
+// Converts spectral data to JSON with spd_ prefix for MaterialX
+// ============================================================================
+
+// Forward declarations
+struct SpectralData;
+struct SpectralIOR;
+struct SpectralEmission;
+enum class SpectralInterpolation;
+enum class IlluminantPreset;
+enum class WavelengthUnit;
+
+///
+/// Convert SpectralData to JSON object string
+/// Output format:
+/// {
+///   "samples": [[wavelength, value], ...],
+///   "interpolation": "linear",
+///   "unit": "nanometers"
+/// }
+///
+std::string SpectralDataToJson(const SpectralData &data);
+
+///
+/// Convert SpectralIOR to JSON object string
+/// Output format:
+/// {
+///   "samples": [[wavelength, ior], ...],
+///   "interpolation": "linear" | "sellmeier",
+///   "unit": "nanometers",
+///   "sellmeier": {"B": [B1, B2, B3], "C": [C1, C2, C3]}  // optional
+/// }
+///
+std::string SpectralIORToJson(const SpectralIOR &data);
+
+///
+/// Convert SpectralEmission to JSON object string
+/// Output format:
+/// {
+///   "samples": [[wavelength, irradiance], ...],
+///   "interpolation": "linear",
+///   "unit": "nanometers",
+///   "preset": "d65"  // optional, only if preset != None
+/// }
+///
+std::string SpectralEmissionToJson(const SpectralEmission &data);
+
+///
+/// Convert vec2 array (wavelength, value pairs) to JSON array
+/// e.g., [[450.0, 0.2], [550.0, 0.4], [650.0, 0.9]]
+///
+std::string Vec2ArrayToJsonArray(const std::vector<value::float2> &vec);
 
 } // namespace tydra
 } // namespace tinyusdz
