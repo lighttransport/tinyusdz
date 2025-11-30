@@ -5747,6 +5747,8 @@ bool ReconstructShader<OpenPBRSurface>(
                          surface->base_roughness)
     PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:base_metalness", OpenPBRSurface,
                          surface->base_metalness)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:base_diffuse_roughness", OpenPBRSurface,
+                         surface->base_diffuse_roughness)
 
     // Specular layer properties
     PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:specular_weight", OpenPBRSurface,
@@ -5790,6 +5792,30 @@ bool ReconstructShader<OpenPBRSurface>(
     PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:subsurface_anisotropy", OpenPBRSurface,
                          surface->subsurface_anisotropy)
 
+    // Sheen properties
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:sheen_weight", OpenPBRSurface,
+                         surface->sheen_weight)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:sheen_color", OpenPBRSurface,
+                         surface->sheen_color)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:sheen_roughness", OpenPBRSurface,
+                         surface->sheen_roughness)
+
+    // Fuzz properties (velvet/fabric-like appearance)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:fuzz_weight", OpenPBRSurface,
+                         surface->fuzz_weight)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:fuzz_color", OpenPBRSurface,
+                         surface->fuzz_color)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:fuzz_roughness", OpenPBRSurface,
+                         surface->fuzz_roughness)
+
+    // Thin film properties (iridescence from thin film interference)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:thin_film_weight", OpenPBRSurface,
+                         surface->thin_film_weight)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:thin_film_thickness", OpenPBRSurface,
+                         surface->thin_film_thickness)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:thin_film_ior", OpenPBRSurface,
+                         surface->thin_film_ior)
+
     // Coat properties
     PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:coat_weight", OpenPBRSurface,
                          surface->coat_weight)
@@ -5817,6 +5843,8 @@ bool ReconstructShader<OpenPBRSurface>(
     // Geometry properties
     PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:opacity", OpenPBRSurface,
                          surface->opacity)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:geometry_opacity", OpenPBRSurface,
+                         surface->opacity)  // OpenPBR standard name, maps to same opacity field
     PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:normal", OpenPBRSurface,
                          surface->normal)
     PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:tangent", OpenPBRSurface,

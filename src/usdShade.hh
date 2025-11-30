@@ -348,6 +348,7 @@ struct OpenPBRSurface : ShaderNode {
   TypedAttributeWithFallback<Animatable<value::color3f>> base_color{value::color3f{0.8f, 0.8f, 0.8f}}; // "inputs:base_color"
   TypedAttributeWithFallback<Animatable<float>> base_roughness{0.0f}; // "inputs:base_roughness"
   TypedAttributeWithFallback<Animatable<float>> base_metalness{0.0f}; // "inputs:base_metalness"
+  TypedAttributeWithFallback<Animatable<float>> base_diffuse_roughness{0.0f}; // "inputs:base_diffuse_roughness"
 
   // Specular properties  
   TypedAttributeWithFallback<Animatable<float>> specular_weight{1.0f}; // "inputs:specular_weight"
@@ -378,6 +379,16 @@ struct OpenPBRSurface : ShaderNode {
   TypedAttributeWithFallback<Animatable<value::color3f>> sheen_color{value::color3f{1.0f, 1.0f, 1.0f}}; // "inputs:sheen_color"
   TypedAttributeWithFallback<Animatable<float>> sheen_roughness{0.3f}; // "inputs:sheen_roughness"
 
+  // Fuzz properties - velvet/fabric-like appearance
+  TypedAttributeWithFallback<Animatable<float>> fuzz_weight{0.0f}; // "inputs:fuzz_weight"
+  TypedAttributeWithFallback<Animatable<value::color3f>> fuzz_color{value::color3f{1.0f, 1.0f, 1.0f}}; // "inputs:fuzz_color"
+  TypedAttributeWithFallback<Animatable<float>> fuzz_roughness{0.5f}; // "inputs:fuzz_roughness"
+
+  // Thin film properties - iridescence from thin film interference
+  TypedAttributeWithFallback<Animatable<float>> thin_film_weight{0.0f}; // "inputs:thin_film_weight"
+  TypedAttributeWithFallback<Animatable<float>> thin_film_thickness{500.0f}; // "inputs:thin_film_thickness" (nanometers)
+  TypedAttributeWithFallback<Animatable<float>> thin_film_ior{1.5f}; // "inputs:thin_film_ior"
+
   // Coat properties
   TypedAttributeWithFallback<Animatable<float>> coat_weight{0.0f}; // "inputs:coat_weight"
   TypedAttributeWithFallback<Animatable<value::color3f>> coat_color{value::color3f{1.0f, 1.0f, 1.0f}}; // "inputs:coat_color"
@@ -393,7 +404,7 @@ struct OpenPBRSurface : ShaderNode {
   TypedAttributeWithFallback<Animatable<value::color3f>> emission_color{value::color3f{1.0f, 1.0f, 1.0f}}; // "inputs:emission_color"
 
   // Geometry properties
-  TypedAttributeWithFallback<Animatable<float>> opacity{1.0f}; // "inputs:opacity"
+  TypedAttributeWithFallback<Animatable<float>> opacity{1.0f}; // "inputs:opacity" or "inputs:geometry_opacity" (maps to alpha in Three.js)
   TypedAttributeWithFallback<Animatable<value::normal3f>> normal{value::normal3f{0.0f, 0.0f, 1.0f}}; // "inputs:normal"
   TypedAttributeWithFallback<Animatable<value::vector3f>> tangent{value::vector3f{1.0f, 0.0f, 0.0f}}; // "inputs:tangent"
 

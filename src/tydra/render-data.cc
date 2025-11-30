@@ -6544,6 +6544,12 @@ bool RenderSceneConverter::ConvertOpenPBRSurfaceShader(
     PushWarn(fmt::format("Failed to convert base_metalness parameter for shader: {}", shader_abs_path.prim_part()));
     return false;
   }
+  if (!ConvertPreviewSurfaceShaderParam(
+          env, shader_abs_path, shader.base_diffuse_roughness, "base_diffuse_roughness",
+          rshader.base_diffuse_roughness)) {
+    PushWarn(fmt::format("Failed to convert base_diffuse_roughness parameter for shader: {}", shader_abs_path.prim_part()));
+    return false;
+  }
 
   // Convert specular layer parameters
   if (!ConvertPreviewSurfaceShaderParam(
@@ -6676,6 +6682,46 @@ bool RenderSceneConverter::ConvertOpenPBRSurfaceShader(
           env, shader_abs_path, shader.sheen_roughness, "sheen_roughness",
           rshader.sheen_roughness)) {
     PushWarn(fmt::format("Failed to convert sheen_roughness parameter for shader: {}", shader_abs_path.prim_part()));
+    return false;
+  }
+
+  // Convert fuzz parameters (velvet/fabric-like appearance)
+  if (!ConvertPreviewSurfaceShaderParam(
+          env, shader_abs_path, shader.fuzz_weight, "fuzz_weight",
+          rshader.fuzz_weight)) {
+    PushWarn(fmt::format("Failed to convert fuzz_weight parameter for shader: {}", shader_abs_path.prim_part()));
+    return false;
+  }
+  if (!ConvertPreviewSurfaceShaderParam(
+          env, shader_abs_path, shader.fuzz_color, "fuzz_color",
+          rshader.fuzz_color)) {
+    PushWarn(fmt::format("Failed to convert fuzz_color parameter for shader: {}", shader_abs_path.prim_part()));
+    return false;
+  }
+  if (!ConvertPreviewSurfaceShaderParam(
+          env, shader_abs_path, shader.fuzz_roughness, "fuzz_roughness",
+          rshader.fuzz_roughness)) {
+    PushWarn(fmt::format("Failed to convert fuzz_roughness parameter for shader: {}", shader_abs_path.prim_part()));
+    return false;
+  }
+
+  // Convert thin film parameters (iridescence from thin film interference)
+  if (!ConvertPreviewSurfaceShaderParam(
+          env, shader_abs_path, shader.thin_film_weight, "thin_film_weight",
+          rshader.thin_film_weight)) {
+    PushWarn(fmt::format("Failed to convert thin_film_weight parameter for shader: {}", shader_abs_path.prim_part()));
+    return false;
+  }
+  if (!ConvertPreviewSurfaceShaderParam(
+          env, shader_abs_path, shader.thin_film_thickness, "thin_film_thickness",
+          rshader.thin_film_thickness)) {
+    PushWarn(fmt::format("Failed to convert thin_film_thickness parameter for shader: {}", shader_abs_path.prim_part()));
+    return false;
+  }
+  if (!ConvertPreviewSurfaceShaderParam(
+          env, shader_abs_path, shader.thin_film_ior, "thin_film_ior",
+          rshader.thin_film_ior)) {
+    PushWarn(fmt::format("Failed to convert thin_film_ior parameter for shader: {}", shader_abs_path.prim_part()));
     return false;
   }
 
@@ -6903,6 +6949,7 @@ bool RenderSceneConverter::ConvertMaterial(const RenderSceneConverterEnv &env,
       converted_openpbr.base_color = mtlx_openpbr->base_color;
       converted_openpbr.base_roughness = mtlx_openpbr->base_diffuse_roughness;
       converted_openpbr.base_metalness = mtlx_openpbr->base_metalness;
+      converted_openpbr.base_diffuse_roughness = mtlx_openpbr->base_diffuse_roughness;
 
       // Copy specular properties
       converted_openpbr.specular_weight = mtlx_openpbr->specular_weight;
@@ -6937,6 +6984,16 @@ bool RenderSceneConverter::ConvertMaterial(const RenderSceneConverterEnv &env,
       // Just skip coat_affect_color conversion for now since types don't match easily
       // TODO: Proper type conversion if needed
       converted_openpbr.coat_affect_roughness = mtlx_openpbr->coat_affect_roughness;
+
+      // Copy fuzz properties (velvet/fabric-like appearance)
+      converted_openpbr.fuzz_weight = mtlx_openpbr->fuzz_weight;
+      converted_openpbr.fuzz_color = mtlx_openpbr->fuzz_color;
+      converted_openpbr.fuzz_roughness = mtlx_openpbr->fuzz_roughness;
+
+      // Copy thin film properties (iridescence)
+      converted_openpbr.thin_film_weight = mtlx_openpbr->thin_film_weight;
+      converted_openpbr.thin_film_thickness = mtlx_openpbr->thin_film_thickness;
+      converted_openpbr.thin_film_ior = mtlx_openpbr->thin_film_ior;
 
       // Copy emission properties
       converted_openpbr.emission_luminance = mtlx_openpbr->emission_luminance;
@@ -7088,6 +7145,7 @@ bool RenderSceneConverter::ConvertMaterial(const RenderSceneConverterEnv &env,
               converted_openpbr.base_color = mtlx_openpbr->base_color;
               converted_openpbr.base_roughness = mtlx_openpbr->base_diffuse_roughness;
               converted_openpbr.base_metalness = mtlx_openpbr->base_metalness;
+              converted_openpbr.base_diffuse_roughness = mtlx_openpbr->base_diffuse_roughness;
 
               // Copy specular properties
               converted_openpbr.specular_weight = mtlx_openpbr->specular_weight;
@@ -7119,6 +7177,16 @@ bool RenderSceneConverter::ConvertMaterial(const RenderSceneConverterEnv &env,
               converted_openpbr.coat_rotation = mtlx_openpbr->coat_rotation;
               converted_openpbr.coat_ior = mtlx_openpbr->coat_ior;
               converted_openpbr.coat_affect_roughness = mtlx_openpbr->coat_affect_roughness;
+
+              // Copy fuzz properties (velvet/fabric-like appearance)
+              converted_openpbr.fuzz_weight = mtlx_openpbr->fuzz_weight;
+              converted_openpbr.fuzz_color = mtlx_openpbr->fuzz_color;
+              converted_openpbr.fuzz_roughness = mtlx_openpbr->fuzz_roughness;
+
+              // Copy thin film properties (iridescence)
+              converted_openpbr.thin_film_weight = mtlx_openpbr->thin_film_weight;
+              converted_openpbr.thin_film_thickness = mtlx_openpbr->thin_film_thickness;
+              converted_openpbr.thin_film_ior = mtlx_openpbr->thin_film_ior;
 
               // Copy emission properties
               converted_openpbr.emission_luminance = mtlx_openpbr->emission_luminance;
