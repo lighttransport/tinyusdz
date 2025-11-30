@@ -154,7 +154,8 @@ std::string serializeOpenPBRToJson(const OpenPBRSurfaceShader& shader, const Ren
   serializeFloatParam("base_weight", shader.base_weight); json << ",";
   serializeVec3Param("base_color", shader.base_color); json << ",";
   serializeFloatParam("base_roughness", shader.base_roughness); json << ",";
-  serializeFloatParam("base_metalness", shader.base_metalness);
+  serializeFloatParam("base_metalness", shader.base_metalness); json << ",";
+  serializeFloatParam("base_diffuse_roughness", shader.base_diffuse_roughness);
   json << "},";
 
   // Specular layer
@@ -185,6 +186,27 @@ std::string serializeOpenPBRToJson(const OpenPBRSurfaceShader& shader, const Ren
   serializeFloatParam("subsurface_anisotropy", shader.subsurface_anisotropy);
   json << "},";
 
+  // Sheen layer - fabric-like reflection
+  json << "\"sheen\": {";
+  serializeFloatParam("sheen_weight", shader.sheen_weight); json << ",";
+  serializeVec3Param("sheen_color", shader.sheen_color); json << ",";
+  serializeFloatParam("sheen_roughness", shader.sheen_roughness);
+  json << "},";
+
+  // Fuzz layer - velvet/fabric-like appearance
+  json << "\"fuzz\": {";
+  serializeFloatParam("fuzz_weight", shader.fuzz_weight); json << ",";
+  serializeVec3Param("fuzz_color", shader.fuzz_color); json << ",";
+  serializeFloatParam("fuzz_roughness", shader.fuzz_roughness);
+  json << "},";
+
+  // Thin film layer - iridescence from thin film interference
+  json << "\"thin_film\": {";
+  serializeFloatParam("thin_film_weight", shader.thin_film_weight); json << ",";
+  serializeFloatParam("thin_film_thickness", shader.thin_film_thickness); json << ",";
+  serializeFloatParam("thin_film_ior", shader.thin_film_ior);
+  json << "},";
+
   // Coat layer
   json << "\"coat\": {";
   serializeFloatParam("coat_weight", shader.coat_weight); json << ",";
@@ -206,6 +228,7 @@ std::string serializeOpenPBRToJson(const OpenPBRSurfaceShader& shader, const Ren
   // Geometry
   json << "\"geometry\": {";
   serializeFloatParam("opacity", shader.opacity); json << ",";
+  serializeFloatParam("geometry_opacity", shader.opacity); json << ",";  // alias for Three.js alpha mapping
   serializeVec3Param("normal", shader.normal); json << ",";
   serializeVec3Param("tangent", shader.tangent);
   json << "}";
@@ -276,6 +299,23 @@ std::string serializeOpenPBRToXml(const OpenPBRSurfaceShader& shader) {
 
   if (shader.transmission_weight.value > 0.0f) {
     xml << "    <input name=\"transmission_weight\" type=\"float\" value=\"" << shader.transmission_weight.value << "\" />\n";
+  }
+
+  // Fuzz layer - velvet/fabric-like appearance
+  if (shader.fuzz_weight.value > 0.0f) {
+    xml << "    <input name=\"fuzz_weight\" type=\"float\" value=\"" << shader.fuzz_weight.value << "\" />\n";
+    xml << "    <input name=\"fuzz_color\" type=\"color3\" value=\""
+        << shader.fuzz_color.value[0] << ", "
+        << shader.fuzz_color.value[1] << ", "
+        << shader.fuzz_color.value[2] << "\" />\n";
+    xml << "    <input name=\"fuzz_roughness\" type=\"float\" value=\"" << shader.fuzz_roughness.value << "\" />\n";
+  }
+
+  // Thin film layer - iridescence from thin film interference
+  if (shader.thin_film_weight.value > 0.0f) {
+    xml << "    <input name=\"thin_film_weight\" type=\"float\" value=\"" << shader.thin_film_weight.value << "\" />\n";
+    xml << "    <input name=\"thin_film_thickness\" type=\"float\" value=\"" << shader.thin_film_thickness.value << "\" />\n";
+    xml << "    <input name=\"thin_film_ior\" type=\"float\" value=\"" << shader.thin_film_ior.value << "\" />\n";
   }
 
   if (shader.emission_luminance.value > 0.0f) {

@@ -1551,7 +1551,8 @@ class OpenPBRSurfaceShader {
   ShaderParam<vec3> base_color{{0.8f, 0.8f, 0.8f}};
   ShaderParam<float> base_roughness{0.0f};
   ShaderParam<float> base_metalness{0.0f};
-  
+  ShaderParam<float> base_diffuse_roughness{0.0f};  // Oren-Nayar diffuse roughness
+
   // Specular layer - dielectric reflection
   ShaderParam<float> specular_weight{1.0f};
   ShaderParam<vec3> specular_color{{1.0f, 1.0f, 1.0f}};
@@ -1580,7 +1581,17 @@ class OpenPBRSurfaceShader {
   ShaderParam<float> sheen_weight{0.0f};
   ShaderParam<vec3> sheen_color{{1.0f, 1.0f, 1.0f}};
   ShaderParam<float> sheen_roughness{0.3f};
-  
+
+  // Fuzz - velvet/fabric-like appearance
+  ShaderParam<float> fuzz_weight{0.0f};
+  ShaderParam<vec3> fuzz_color{{1.0f, 1.0f, 1.0f}};
+  ShaderParam<float> fuzz_roughness{0.5f};
+
+  // Thin film - iridescence from thin film interference
+  ShaderParam<float> thin_film_weight{0.0f};
+  ShaderParam<float> thin_film_thickness{500.0f};  // in nanometers
+  ShaderParam<float> thin_film_ior{1.5f};
+
   // Coat layer - clear coat over surface
   ShaderParam<float> coat_weight{0.0f};
   ShaderParam<vec3> coat_color{{1.0f, 1.0f, 1.0f}};
@@ -1596,7 +1607,7 @@ class OpenPBRSurfaceShader {
   ShaderParam<vec3> emission_color{{1.0f, 1.0f, 1.0f}};
 
   // Geometry modifiers
-  ShaderParam<float> opacity{1.0f};
+  ShaderParam<float> opacity{1.0f};  // "opacity" or "geometry_opacity" (maps to alpha in Three.js)
   ShaderParam<vec3> normal{{0.0f, 0.0f, 1.0f}};
   ShaderParam<vec3> tangent{{1.0f, 0.0f, 0.0f}};
 
