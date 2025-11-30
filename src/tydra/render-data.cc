@@ -8712,7 +8712,7 @@ bool RenderSceneConverter::ConvertSphereLight(
   RenderLight rlight;
   rlight.name = light.name;
   rlight.abs_path = light_abs_path.full_path_name();
-  rlight.lightType = RenderLight::LightType::Point;
+  rlight.type = RenderLight::Type::Sphere;
 
   // Extract common properties
   if (!ExtractCommonLightProperties(env, light, &rlight)) {
@@ -8749,7 +8749,7 @@ bool RenderSceneConverter::ConvertDistantLight(
   RenderLight rlight;
   rlight.name = light.name;
   rlight.abs_path = light_abs_path.full_path_name();
-  rlight.lightType = RenderLight::LightType::Directional;
+  rlight.type = RenderLight::Type::Distant;
 
   // Extract common properties
   if (!ExtractCommonLightProperties(env, light, &rlight)) {
@@ -8781,7 +8781,7 @@ bool RenderSceneConverter::ConvertDomeLight(
   RenderLight rlight;
   rlight.name = light.name;
   rlight.abs_path = light_abs_path.full_path_name();
-  rlight.lightType = RenderLight::LightType::Dome;
+  rlight.type = RenderLight::Type::Dome;
 
   // Extract common properties
   if (!ExtractCommonLightProperties(env, light, &rlight)) {
@@ -8847,7 +8847,7 @@ bool RenderSceneConverter::ConvertRectLight(
   RenderLight rlight;
   rlight.name = light.name;
   rlight.abs_path = light_abs_path.full_path_name();
-  rlight.lightType = RenderLight::LightType::Rect;
+  rlight.type = RenderLight::Type::Rect;
 
   // Extract common properties
   if (!ExtractCommonLightProperties(env, light, &rlight)) {
@@ -8900,7 +8900,7 @@ bool RenderSceneConverter::ConvertDiskLight(
   RenderLight rlight;
   rlight.name = light.name;
   rlight.abs_path = light_abs_path.full_path_name();
-  rlight.lightType = RenderLight::LightType::Disk;
+  rlight.type = RenderLight::Type::Disk;
 
   // Extract common properties
   if (!ExtractCommonLightProperties(env, light, &rlight)) {
@@ -8932,7 +8932,7 @@ bool RenderSceneConverter::ConvertCylinderLight(
   RenderLight rlight;
   rlight.name = light.name;
   rlight.abs_path = light_abs_path.full_path_name();
-  rlight.lightType = RenderLight::LightType::Cylinder;
+  rlight.type = RenderLight::Type::Cylinder;
 
   // Extract common properties
   if (!ExtractCommonLightProperties(env, light, &rlight)) {
@@ -8972,7 +8972,7 @@ bool RenderSceneConverter::ConvertGeometryLight(
   RenderLight rlight;
   rlight.name = light.name;
   rlight.abs_path = light_abs_path.full_path_name();
-  rlight.lightType = RenderLight::LightType::Geometry;
+  rlight.type = RenderLight::Type::Geometry;
 
   // Extract common properties
   if (!ExtractCommonLightProperties(env, light, &rlight)) {
