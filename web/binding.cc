@@ -1375,6 +1375,7 @@ class TinyUSDZLoaderNative {
 
   int numLights() const { return static_cast<int>(render_scene_.lights.size()); }
 
+  // Get light as direct object with all properties
   emscripten::val getLight(int light_id) const {
     emscripten::val light = emscripten::val::object();
 
@@ -1453,11 +1454,20 @@ class TinyUSDZLoaderNative {
     light.set("height", l.height);
     light.set("length", l.length);
     light.set("angle", l.angle);
+    light.set("textureFile", l.textureFile);
 
-    // Shaping (spotlight)
+    // Shaping (spotlight/IES)
     light.set("shapingConeAngle", l.shapingConeAngle);
     light.set("shapingConeSoftness", l.shapingConeSoftness);
     light.set("shapingFocus", l.shapingFocus);
+    emscripten::val shapingFocusTint = emscripten::val::array();
+    shapingFocusTint.call<void>("push", l.shapingFocusTint[0]);
+    shapingFocusTint.call<void>("push", l.shapingFocusTint[1]);
+    shapingFocusTint.call<void>("push", l.shapingFocusTint[2]);
+    light.set("shapingFocusTint", shapingFocusTint);
+    light.set("shapingIesFile", l.shapingIesFile);
+    light.set("shapingIesAngleScale", l.shapingIesAngleScale);
+    light.set("shapingIesNormalize", l.shapingIesNormalize);
 
     // Shadow
     light.set("shadowEnable", l.shadowEnable);
@@ -1466,9 +1476,25 @@ class TinyUSDZLoaderNative {
     shadowColor.call<void>("push", l.shadowColor[1]);
     shadowColor.call<void>("push", l.shadowColor[2]);
     light.set("shadowColor", shadowColor);
+    light.set("shadowDistance", l.shadowDistance);
+    light.set("shadowFalloff", l.shadowFalloff);
+    light.set("shadowFalloffGamma", l.shadowFalloffGamma);
 
-    // Environment map texture ID (for DomeLight)
+    // DomeLight specific
+    std::string domeTexFmtStr;
+    switch (l.domeTextureFormat) {
+      case tinyusdz::tydra::RenderLight::DomeTextureFormat::Automatic: domeTexFmtStr = "automatic"; break;
+      case tinyusdz::tydra::RenderLight::DomeTextureFormat::Latlong: domeTexFmtStr = "latlong"; break;
+      case tinyusdz::tydra::RenderLight::DomeTextureFormat::MirroredBall: domeTexFmtStr = "mirroredBall"; break;
+      case tinyusdz::tydra::RenderLight::DomeTextureFormat::Angular: domeTexFmtStr = "angular"; break;
+    }
+    light.set("domeTextureFormat", domeTexFmtStr);
+    light.set("guideRadius", l.guideRadius);
     light.set("envmapTextureId", l.envmap_texture_id);
+
+    // GeometryLight specific
+    light.set("geometryMeshId", l.geometry_mesh_id);
+    light.set("materialSyncMode", l.material_sync_mode);
 
     // LTE SpectralAPI: Spectral emission
     if (l.hasSpectralEmission()) {
@@ -1519,6 +1545,46 @@ class TinyUSDZLoaderNative {
     }
 
     return light;
+  }
+
+  // Get light with format parameter (json or xml) - serialized output
+  emscripten::val getLightWithFormat(int light_id, const std::string& format) const {
+    emscripten::val result = emscripten::val::object();
+
+    if (!loaded_) {
+      result.set("error", "Scene not loaded");
+      return result;
+    }
+
+    if (light_id < 0 || light_id >= static_cast<int>(render_scene_.lights.size())) {
+      result.set("error", "Invalid light ID");
+      return result;
+    }
+
+    const auto &light = render_scene_.lights[static_cast<size_t>(light_id)];
+
+    // Determine serialization format
+    tinyusdz::tydra::SerializationFormat serFormat;
+    if (format == "xml") {
+      serFormat = tinyusdz::tydra::SerializationFormat::XML;
+    } else if (format == "json") {
+      serFormat = tinyusdz::tydra::SerializationFormat::JSON;
+    } else {
+      result.set("error", "Unsupported format. Use 'json' or 'xml'");
+      return result;
+    }
+
+    // Use the serialization function with RenderScene for mesh info
+    auto serialized = tinyusdz::tydra::serializeLight(light, serFormat, &render_scene_);
+
+    if (serialized.has_value()) {
+      result.set("data", serialized.value());
+      result.set("format", format);
+    } else {
+      result.set("error", serialized.error());
+    }
+
+    return result;
   }
 
   emscripten::val getAllLights() const {
@@ -1686,6 +1752,17 @@ class TinyUSDZLoaderNative {
 
     mesh.set("materialId", rmesh.material_id);
     mesh.set("doubleSided", rmesh.doubleSided);
+
+    // Export area light properties (MeshLightAPI)
+    mesh.set("isAreaLight", rmesh.is_area_light);
+    if (rmesh.is_area_light) {
+      const float *light_color_ptr = rmesh.light_color.data();
+      mesh.set("lightColor", emscripten::typed_memory_view(3, light_color_ptr));
+      mesh.set("lightIntensity", rmesh.light_intensity);
+      mesh.set("lightExposure", rmesh.light_exposure);
+      mesh.set("lightNormalize", rmesh.light_normalize);
+      mesh.set("lightMaterialSyncMode", emscripten::val(rmesh.light_material_sync_mode));
+    }
 
     // Export skinning data (joint indices, joint weights)
     if (!rmesh.joint_and_weights.jointIndices.empty()) {
@@ -2944,6 +3021,7 @@ EMSCRIPTEN_BINDINGS(tinyusdz_module) {
       .function("getMaterialWithFormat", select_overload<emscripten::val(int, const std::string&) const>(&TinyUSDZLoaderNative::getMaterial))
       .function("numMaterials", &TinyUSDZLoaderNative::numMaterials)
       .function("getLight", &TinyUSDZLoaderNative::getLight)
+      .function("getLightWithFormat", &TinyUSDZLoaderNative::getLightWithFormat)
       .function("getAllLights", &TinyUSDZLoaderNative::getAllLights)
       .function("numLights", &TinyUSDZLoaderNative::numLights)
       .function("getTexture", &TinyUSDZLoaderNative::getTexture)
