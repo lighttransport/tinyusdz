@@ -32,6 +32,11 @@ constexpr auto kMtlxOpenPBRSurface = "MtlxOpenPBRSurface";
 // MaterialX node definition IDs (as used in info:id attribute)
 constexpr auto kNdOpenPbrSurfaceSurfaceshader = "ND_open_pbr_surface_surfaceshader";
 
+// MaterialX Light Shader Nodes
+constexpr auto kMtlxUniformEdf = "uniform_edf";
+constexpr auto kMtlxConicalEdf = "conical_edf";
+constexpr auto kMtlxMeasuredEdf = "measured_edf";
+constexpr auto kMtlxLight = "light";
 
 namespace mtlx {
 
@@ -77,6 +82,7 @@ struct MtlxModel {
 
   std::map<std::string, MtlxMaterial> surface_materials;
   std::map<std::string, value::Value> shaders; // MtlxUsdPreviewSurface, MtlxAutodeskStandardSurface, or OpenPBRSurface
+  std::map<std::string, value::Value> light_shaders; // Light shaders (EDF nodes)
   std::map<std::string, PrimSpec> nodegraphs; // NodeGraph PrimSpecs
   std::map<std::string, std::vector<MtlxShaderConnection>> shader_connections; // Shader name -> list of connections
 };
@@ -253,6 +259,54 @@ struct MtlxAutodeskStandardSurface : ShaderNode {
 };
 
 //
+// MaterialX Light Shader Nodes (EDF - Emission Distribution Functions)
+//
+
+// uniform_edf: Constructs an EDF emitting light uniformly in all directions
+struct MtlxUniformEdf : ShaderNode {
+  TypedAttributeWithFallback<Animatable<value::color3f>> color{
+      value::color3f{1.0f, 1.0f, 1.0f}};  // color3 - Radiant emittance
+
+  // Output
+  TypedTerminalAttribute<value::token> out;  // 'out' (EDF type)
+};
+
+// conical_edf: Constructs an EDF emitting light inside a cone around the normal direction
+struct MtlxConicalEdf : ShaderNode {
+  TypedAttributeWithFallback<Animatable<value::color3f>> color{
+      value::color3f{1.0f, 1.0f, 1.0f}};  // color3 - Radiant emittance
+  TypedAttribute<Animatable<value::normal3f>> normal;  // vector3 - Surface normal (default: world space normal)
+  TypedAttributeWithFallback<Animatable<float>> inner_angle{60.0f};  // float - Inner cone angle in degrees
+  TypedAttribute<Animatable<float>> outer_angle;  // float - Outer cone angle for intensity falloff
+
+  // Output
+  TypedTerminalAttribute<value::token> out;  // 'out' (EDF type)
+};
+
+// measured_edf: Constructs an EDF emitting light according to a measured IES light profile
+struct MtlxMeasuredEdf : ShaderNode {
+  TypedAttributeWithFallback<Animatable<value::color3f>> color{
+      value::color3f{1.0f, 1.0f, 1.0f}};  // color3 - Radiant emittance
+  TypedAttribute<Animatable<value::AssetPath>> file;  // filename - Path to IES light profile data
+
+  // Output
+  TypedTerminalAttribute<value::token> out;  // 'out' (EDF type)
+};
+
+// light: Constructs a light shader from an emission distribution function (EDF)
+struct MtlxLight : ShaderNode {
+  TypedAttribute<value::token> edf;  // EDF - Emission distribution function (connection to EDF node)
+  TypedAttributeWithFallback<Animatable<value::color3f>> intensity{
+      value::color3f{1.0f, 1.0f, 1.0f}};  // color3 - Intensity multiplier for EDF emittance
+
+  // Optional: exposure (EV) - some renderers support this
+  TypedAttribute<Animatable<float>> exposure;  // float - Exposure value
+
+  // Output
+  TypedTerminalAttribute<value::token> out;  // 'out' (lightshader type)
+};
+
+//
 // IO
 //
 
@@ -297,6 +351,15 @@ bool LoadMaterialXFromAsset(const Asset &asset,
                             const std::string &asset_path, PrimSpec &ps /* inout */,
                             std::string *warn, std::string *err);
 
+///
+/// Convert MaterialX Light shader to UsdLux light
+/// This helps map MaterialX light shaders to corresponding USD light types
+///
+bool ConvertMtlxLightToUsdLux(const MtlxLight &mtlx_light,
+                               const std::map<std::string, value::Value> &light_shaders,
+                               value::Value *usd_light,
+                               std::string *warn, std::string *err);
+
 // import DEFINE_TYPE_TRAIT and DEFINE_ROLE_TYPE_TRAIT
 #include "define-type-trait.inc"
 
@@ -309,6 +372,16 @@ DEFINE_TYPE_TRAIT(MtlxAutodeskStandardSurface, kMtlxAutodeskStandardSurface,
                   TYPE_ID_IMAGING_MTLX_STANDARDSURFACE, 1);
 DEFINE_TYPE_TRAIT(MtlxOpenPBRSurface, kMtlxOpenPBRSurface,
                   TYPE_ID_IMAGING_MTLX_OPENPBRSURFACE, 1);
+
+// Light ShaderNodes (EDF and Light)
+DEFINE_TYPE_TRAIT(MtlxUniformEdf, kMtlxUniformEdf,
+                  TYPE_ID_IMAGING_MTLX_UNIFORMEDF, 1);
+DEFINE_TYPE_TRAIT(MtlxConicalEdf, kMtlxConicalEdf,
+                  TYPE_ID_IMAGING_MTLX_CONICALEDF, 1);
+DEFINE_TYPE_TRAIT(MtlxMeasuredEdf, kMtlxMeasuredEdf,
+                  TYPE_ID_IMAGING_MTLX_MEASUREDEDF, 1);
+DEFINE_TYPE_TRAIT(MtlxLight, kMtlxLight,
+                  TYPE_ID_IMAGING_MTLX_LIGHT, 1);
 
 #undef DEFINE_TYPE_TRAIT
 #undef DEFINE_ROLE_TYPE_TRAIT

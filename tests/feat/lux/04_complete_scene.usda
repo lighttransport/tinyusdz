@@ -1,0 +1,274 @@
+#usda 1.0
+(
+    doc = """Complete MaterialX Lighting and Material Scene
+
+    This comprehensive example demonstrates:
+    - Multiple MaterialX light types (uniform_edf, conical_edf, measured_edf)
+    - Advanced materials using UsdPreviewSurface
+    - Proper light-material interaction setup
+    - Color temperature and exposure controls
+    - Three-point lighting setup
+    """
+    defaultPrim = "Scene"
+    metersPerUnit = 1
+    upAxis = "Y"
+)
+
+def Xform "Scene"
+{
+    def Xform "Geometry"
+    {
+        def Mesh "Floor" (
+            prepend apiSchemas = ["MaterialBindingAPI"]
+        )
+        {
+            rel material:binding = </Scene/Materials/ConcreteMaterial>
+
+            int[] faceVertexCounts = [4]
+            int[] faceVertexIndices = [0, 1, 2, 3]
+            point3f[] points = [(-10, 0, -10), (10, 0, -10), (10, 0, 10), (-10, 0, 10)]
+            normal3f[] normals = [(0, 1, 0), (0, 1, 0), (0, 1, 0), (0, 1, 0)] (
+                interpolation = "vertex"
+            )
+            texCoord2f[] primvars:st = [(0, 0), (5, 0), (5, 5), (0, 5)] (
+                interpolation = "vertex"
+            )
+        }
+
+        def Sphere "CenterSphere" (
+            prepend apiSchemas = ["MaterialBindingAPI"]
+        )
+        {
+            rel material:binding = </Scene/Materials/MetallicMaterial>
+            double radius = 1.0
+            double3 xformOp:translate = (0, 1, 0)
+            uniform token[] xformOpOrder = ["xformOp:translate"]
+        }
+
+        def Cube "LeftCube" (
+            prepend apiSchemas = ["MaterialBindingAPI"]
+        )
+        {
+            rel material:binding = </Scene/Materials/DielectricMaterial>
+            double size = 1.5
+            double3 xformOp:translate = (-3, 0.75, 2)
+            uniform token[] xformOpOrder = ["xformOp:translate"]
+        }
+
+        def Cylinder "RightCylinder" (
+            prepend apiSchemas = ["MaterialBindingAPI"]
+        )
+        {
+            rel material:binding = </Scene/Materials/DiffuseMaterial>
+            double height = 2.5
+            double radius = 0.6
+            double3 xformOp:translate = (3, 1.25, -1)
+            uniform token[] xformOpOrder = ["xformOp:translate"]
+        }
+    }
+
+    def Scope "Materials"
+    {
+        def Material "ConcreteMaterial"
+        {
+            token outputs:surface.connect = </Scene/Materials/ConcreteMaterial/Surface.outputs:surface>
+
+            def Shader "Surface"
+            {
+                uniform token info:id = "UsdPreviewSurface"
+                color3f inputs:diffuseColor = (0.5, 0.5, 0.52)
+                float inputs:roughness = 0.9
+                float inputs:metallic = 0.0
+                token outputs:surface
+            }
+        }
+
+        def Material "MetallicMaterial"
+        {
+            token outputs:surface.connect = </Scene/Materials/MetallicMaterial/Surface.outputs:surface>
+
+            def Shader "Surface"
+            {
+                uniform token info:id = "UsdPreviewSurface"
+                color3f inputs:diffuseColor = (0.95, 0.7, 0.2)  # Gold
+                float inputs:roughness = 0.2
+                float inputs:metallic = 1.0
+                token outputs:surface
+            }
+        }
+
+        def Material "DielectricMaterial"
+        {
+            token outputs:surface.connect = </Scene/Materials/DielectricMaterial/Surface.outputs:surface>
+
+            def Shader "Surface"
+            {
+                uniform token info:id = "UsdPreviewSurface"
+                color3f inputs:diffuseColor = (0.1, 0.3, 0.8)  # Blue glass
+                float inputs:roughness = 0.05
+                float inputs:metallic = 0.0
+                float inputs:opacity = 0.3
+                float inputs:ior = 1.5
+                token outputs:surface
+            }
+        }
+
+        def Material "DiffuseMaterial"
+        {
+            token outputs:surface.connect = </Scene/Materials/DiffuseMaterial/Surface.outputs:surface>
+
+            def Shader "Surface"
+            {
+                uniform token info:id = "UsdPreviewSurface"
+                color3f inputs:diffuseColor = (0.8, 0.2, 0.2)  # Red
+                float inputs:roughness = 0.6
+                float inputs:metallic = 0.0
+                token outputs:surface
+            }
+        }
+    }
+
+    def Scope "Lights"
+    {
+        # KEY LIGHT: Main directional light using uniform_edf
+        def Scope "KeyLightSetup" (
+            doc = "Primary light source - warm white uniform emission"
+        )
+        {
+            def Shader "KeyEDF"
+            {
+                uniform token info:id = "uniform_edf"
+                color3f inputs:color = (1.0, 0.95, 0.85)  # Warm white
+                token outputs:out
+            }
+
+            def Shader "KeyShader"
+            {
+                uniform token info:id = "light"
+                token inputs:edf.connect = </Scene/Lights/KeyLightSetup/KeyEDF.outputs:out>
+                color3f inputs:intensity = (8.0, 8.0, 8.0)
+                float inputs:exposure = 1.0
+                token outputs:out
+            }
+
+            # USD equivalent
+            def SphereLight "KeyLight"
+            {
+                color3f inputs:color = (1.0, 0.95, 0.85)
+                float inputs:intensity = 8.0
+                float inputs:exposure = 1.0
+                bool inputs:enableColorTemperature = true
+                float inputs:colorTemperature = 5500  # Warm daylight
+                float inputs:radius = 0.5
+                float3 xformOp:rotateXYZ = (0, 45, 0)
+                double3 xformOp:translate = (5, 7, 5)
+                uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:rotateXYZ"]
+            }
+        }
+
+        # FILL LIGHT: Softer light using conical_edf with wide cone
+        def Scope "FillLightSetup" (
+            doc = "Fill light - cool tone, wide spread"
+        )
+        {
+            def Shader "FillEDF"
+            {
+                uniform token info:id = "conical_edf"
+                color3f inputs:color = (0.8, 0.9, 1.0)  # Cool white
+                vector3f inputs:normal = (0.7, -0.5, 0.5)
+                float inputs:inner_angle = 60.0  # Wide coverage
+                float inputs:outer_angle = 75.0
+                token outputs:out
+            }
+
+            def Shader "FillShader"
+            {
+                uniform token info:id = "light"
+                token inputs:edf.connect = </Scene/Lights/FillLightSetup/FillEDF.outputs:out>
+                color3f inputs:intensity = (3.0, 3.0, 3.0)
+                float inputs:exposure = 0.0
+                token outputs:out
+            }
+
+            # USD equivalent
+            def RectLight "FillLight" (
+                prepend apiSchemas = ["ShapingAPI"]
+            )
+            {
+                color3f inputs:color = (0.8, 0.9, 1.0)
+                float inputs:intensity = 3.0
+                float inputs:exposure = 0.0
+                bool inputs:enableColorTemperature = true
+                float inputs:colorTemperature = 7000  # Cool daylight
+                float inputs:width = 2.0
+                float inputs:height = 2.0
+
+                # ShapingAPI
+                float inputs:shaping:cone:angle = 60.0
+                float inputs:shaping:cone:softness = 0.25
+
+                float3 xformOp:rotateXYZ = (30, -135, 0)
+                double3 xformOp:translate = (-4, 4, 3)
+                uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:rotateXYZ"]
+            }
+        }
+
+        # BACK LIGHT: Rim light using conical_edf spotlight
+        def Scope "BackLightSetup" (
+            doc = "Back/rim light - tight cone for edge highlighting"
+        )
+        {
+            def Shader "BackEDF"
+            {
+                uniform token info:id = "conical_edf"
+                color3f inputs:color = (1.0, 1.0, 1.0)
+                vector3f inputs:normal = (0, -0.3, 1)
+                float inputs:inner_angle = 25.0  # Tight spotlight
+                float inputs:outer_angle = 35.0
+                token outputs:out
+            }
+
+            def Shader "BackShader"
+            {
+                uniform token info:id = "light"
+                token inputs:edf.connect = </Scene/Lights/BackLightSetup/BackEDF.outputs:out>
+                color3f inputs:intensity = (6.0, 6.0, 6.0)
+                float inputs:exposure = 0.5
+                token outputs:out
+            }
+
+            # USD equivalent
+            def RectLight "BackLight" (
+                prepend apiSchemas = ["ShapingAPI", "ShadowAPI"]
+            )
+            {
+                color3f inputs:color = (1.0, 1.0, 1.0)
+                float inputs:intensity = 6.0
+                float inputs:exposure = 0.5
+                float inputs:width = 0.3
+                float inputs:height = 0.3
+
+                # ShapingAPI for spotlight
+                float inputs:shaping:cone:angle = 25.0
+                float inputs:shaping:cone:softness = 0.4
+                float inputs:shaping:focus = 0.2
+
+                # ShadowAPI
+                bool inputs:shadow:enable = true
+                color3f inputs:shadow:color = (0.1, 0.1, 0.15)
+
+                float3 xformOp:rotateXYZ = (20, 0, 0)
+                double3 xformOp:translate = (0, 3, -6)
+                uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:rotateXYZ"]
+            }
+        }
+
+        # AMBIENT/DOME: Environment light (simulated with DomeLight)
+        def DomeLight "EnvironmentLight"
+        {
+            color3f inputs:color = (0.4, 0.45, 0.5)  # Sky blue tint
+            float inputs:intensity = 0.3
+            float inputs:exposure = -1.0  # Dimmer ambient
+        }
+    }
+}

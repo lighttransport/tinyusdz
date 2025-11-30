@@ -43,6 +43,7 @@
 #include "tinyusdz.hh"
 #include "usdGeom.hh"
 #include "usdShade.hh"
+#include "usdLux.hh"
 #include "usdMtlx.hh"
 #include "value-pprint.hh"
 #include "logger.hh"
@@ -4906,6 +4907,95 @@ bool RenderSceneConverter::ConvertMesh(
   dst.abs_path = abs_prim_path.full_path_name();
   dst.display_name = mesh.metas().displayName.value_or("");
 
+  //
+  // Check for MeshLightAPI - if present, mark this mesh as an area light
+  //
+  const auto &prim_metas = mesh.metas();
+  if (prim_metas.apiSchemas) {
+    const auto &api_schemas = prim_metas.apiSchemas.value();
+    bool has_meshlight_api = false;
+
+    for (const auto &schema_pair : api_schemas.names) {
+      if (schema_pair.first == APISchemas::APIName::MeshLightAPI) {
+        has_meshlight_api = true;
+        break;
+      }
+    }
+
+    if (has_meshlight_api) {
+      DCOUT("Mesh has MeshLightAPI: " << abs_prim_path.full_path_name());
+
+      dst.is_area_light = true;
+
+      // Extract MeshLightAPI properties from mesh
+      // MeshLightAPI inherits from LightAPI, which uses "inputs:" prefix
+
+      // color
+      if (mesh.props.count("inputs:color")) {
+        const Property &prop = mesh.props.at("inputs:color");
+        const Attribute &attr = prop.get_attribute();
+        const primvar::PrimVar &pvar = attr.get_var();
+        if (auto val = pvar.get_value<value::color3f>()) {
+          dst.light_color[0] = val.value()[0];
+          dst.light_color[1] = val.value()[1];
+          dst.light_color[2] = val.value()[2];
+        }
+      }
+
+      // intensity
+      if (mesh.props.count("inputs:intensity")) {
+        const Property &prop = mesh.props.at("inputs:intensity");
+        const Attribute &attr = prop.get_attribute();
+        const primvar::PrimVar &pvar = attr.get_var();
+        if (auto val = pvar.get_value<float>()) {
+          dst.light_intensity = val.value();
+        }
+      }
+
+      // exposure (optional)
+      if (mesh.props.count("inputs:exposure")) {
+        const Property &prop = mesh.props.at("inputs:exposure");
+        const Attribute &attr = prop.get_attribute();
+        const primvar::PrimVar &pvar = attr.get_var();
+        if (auto val = pvar.get_value<float>()) {
+          dst.light_exposure = val.value();
+        }
+      }
+
+      // normalize
+      if (mesh.props.count("inputs:normalize")) {
+        const Property &prop = mesh.props.at("inputs:normalize");
+        const Attribute &attr = prop.get_attribute();
+        const primvar::PrimVar &pvar = attr.get_var();
+        if (auto val = pvar.get_value<bool>()) {
+          dst.light_normalize = val.value();
+        }
+      }
+
+      // materialSyncMode
+      if (mesh.props.count("inputs:materialSyncMode")) {
+        const Property &prop = mesh.props.at("inputs:materialSyncMode");
+        const Attribute &attr = prop.get_attribute();
+        const primvar::PrimVar &pvar = attr.get_var();
+        if (auto val = pvar.get_value<value::token>()) {
+          dst.light_material_sync_mode = val.value().str();
+        }
+      }
+
+      // Set default if not specified
+      if (dst.light_material_sync_mode.empty()) {
+        dst.light_material_sync_mode = "materialGlowTintsLight";  // USD default
+      }
+
+      DCOUT("  Area light properties:"
+            << " color=(" << dst.light_color[0] << "," << dst.light_color[1] << "," << dst.light_color[2] << ")"
+            << " intensity=" << dst.light_intensity
+            << " exposure=" << dst.light_exposure
+            << " normalize=" << dst.light_normalize
+            << " materialSyncMode=" << dst.light_material_sync_mode);
+    }
+  }
+
 #if 0 // TODO
 #if defined(TINYUSDZ_WITH_MESHOPT)
   TUSDZ_LOG_I("Optimize indices");
@@ -8312,6 +8402,9 @@ bool RenderSceneConverter::BuildNodeHierarchyImpl(
       } else {
         rnode.id = -1;
       }
+
+      // Note: MeshLightAPI is now handled in ConvertMesh, which sets
+      // mesh.is_area_light = true and stores light properties directly in RenderMesh
     } else if (prim->type_id() == value::TYPE_ID_GEOM_CAMERA) {
       rnode.local_matrix = node.get_local_matrix();
       rnode.global_matrix = node.get_world_matrix();
@@ -8359,16 +8452,70 @@ bool RenderSceneConverter::BuildNodeHierarchyImpl(
       rnode.local_matrix = node.get_local_matrix();
       rnode.global_matrix = node.get_world_matrix();
       rnode.has_resetXform = node.has_resetXformStack();
-      if (prim->type_id() == value::TYPE_ID_LUX_DISTANT) {
-        rnode.nodeType = NodeType::DirectionalLight;
-      } else if (prim->type_id() == value::TYPE_ID_LUX_SPHERE) {
-        // treat sphereLight as pointLight
-        rnode.nodeType = NodeType::PointLight;
+
+      // Convert USD light to RenderLight and add to scene
+      RenderLight rlight;
+      bool light_converted = false;
+      std::string light_abs_path = primPath;
+      Path lightPath(light_abs_path, /* prop_part */ "");
+
+      if (prim->type_id() == value::TYPE_ID_LUX_SPHERE) {
+        const SphereLight *sphereLight = prim->as<SphereLight>();
+        if (sphereLight && ConvertSphereLight(env, lightPath, *sphereLight, &rlight)) {
+          rnode.nodeType = NodeType::PointLight;
+          light_converted = true;
+        }
+      } else if (prim->type_id() == value::TYPE_ID_LUX_DISTANT) {
+        const DistantLight *distantLight = prim->as<DistantLight>();
+        if (distantLight && ConvertDistantLight(env, lightPath, *distantLight, &rlight)) {
+          rnode.nodeType = NodeType::DirectionalLight;
+          light_converted = true;
+        }
+      } else if (prim->type_id() == value::TYPE_ID_LUX_DOME) {
+        const DomeLight *domeLight = prim->as<DomeLight>();
+        if (domeLight && ConvertDomeLight(env, lightPath, *domeLight, &rlight)) {
+          rnode.nodeType = NodeType::EnvmapLight;
+          light_converted = true;
+        }
+      } else if (prim->type_id() == value::TYPE_ID_LUX_RECT) {
+        const RectLight *rectLight = prim->as<RectLight>();
+        if (rectLight && ConvertRectLight(env, lightPath, *rectLight, &rlight)) {
+          rnode.nodeType = NodeType::Xform;  // No specific node type yet
+          light_converted = true;
+        }
+      } else if (prim->type_id() == value::TYPE_ID_LUX_DISK) {
+        const DiskLight *diskLight = prim->as<DiskLight>();
+        if (diskLight && ConvertDiskLight(env, lightPath, *diskLight, &rlight)) {
+          rnode.nodeType = NodeType::Xform;  // No specific node type yet
+          light_converted = true;
+        }
+      } else if (prim->type_id() == value::TYPE_ID_LUX_CYLINDER) {
+        const CylinderLight *cylinderLight = prim->as<CylinderLight>();
+        if (cylinderLight && ConvertCylinderLight(env, lightPath, *cylinderLight, &rlight)) {
+          rnode.nodeType = NodeType::Xform;  // No specific node type yet
+          light_converted = true;
+        }
+      } else if (prim->type_id() == value::TYPE_ID_LUX_GEOMETRY) {
+        const GeometryLight *geometryLight = prim->as<GeometryLight>();
+        if (geometryLight && ConvertGeometryLight(env, lightPath, *geometryLight, &rlight)) {
+          rnode.nodeType = NodeType::Xform;  // No specific node type yet
+          light_converted = true;
+        }
       } else {
-        // TODO
+        // Unsupported light type
+        DCOUT("Unsupported light type: " << prim->type_name());
         rnode.nodeType = NodeType::Xform;
       }
-      rnode.id = -1;  // TODO: index to lights
+
+      if (light_converted) {
+        // Add light to the lights array
+        size_t light_id = lights.size();
+        lightMap.add(light_abs_path, light_id);
+        lights.push_back(std::move(rlight));
+        rnode.id = int32_t(light_id);
+      } else {
+        rnode.id = -1;
+      }
     } else {
       // ignore other node types.
       DCOUT("Unknown/Unsupported prim. " << prim->type_name());
@@ -8392,6 +8539,473 @@ bool RenderSceneConverter::BuildNodeHierarchyImpl(
 
   out_rnode = std::move(rnode);
 
+  return true;
+}
+
+//
+// Light conversion implementations
+//
+
+// Helper to extract common light properties
+template<typename LightType>
+static bool ExtractCommonLightProperties(
+    const RenderSceneConverterEnv &env,
+    const LightType &light,  // BoundableLight or NonboundableLight
+    RenderLight *rlight) {
+
+  // Extract color
+  if (light.color.authored() && !light.color.is_blocked()) {
+    value::color3f col;
+    if (light.color.get_value().get(env.timecode, &col)) {
+      rlight->color[0] = col[0];
+      rlight->color[1] = col[1];
+      rlight->color[2] = col[2];
+    }
+  }
+
+  // Extract intensity
+  if (light.intensity.authored() && !light.intensity.is_blocked()) {
+    float val;
+    if (light.intensity.get_value().get(env.timecode, &val)) {
+      rlight->intensity = val;
+    }
+  }
+
+  // Extract exposure
+  if (light.exposure.authored() && !light.exposure.is_blocked()) {
+    float val;
+    if (light.exposure.get_value().get(env.timecode, &val)) {
+      rlight->exposure = val;
+    }
+  }
+
+  // Extract diffuse multiplier
+  if (light.diffuse.authored() && !light.diffuse.is_blocked()) {
+    float val;
+    if (light.diffuse.get_value().get(env.timecode, &val)) {
+      rlight->diffuse = val;
+    }
+  }
+
+  // Extract specular multiplier
+  if (light.specular.authored() && !light.specular.is_blocked()) {
+    float val;
+    if (light.specular.get_value().get(env.timecode, &val)) {
+      rlight->specular = val;
+    }
+  }
+
+  // Extract normalize flag
+  if (light.normalize.authored() && !light.normalize.is_blocked()) {
+    bool val;
+    if (light.normalize.get_value().get(env.timecode, &val)) {
+      rlight->normalize = val;
+    }
+  }
+
+  // Extract color temperature
+  if (light.enableColorTemperature.authored() && !light.enableColorTemperature.is_blocked()) {
+    bool val;
+    if (light.enableColorTemperature.get_value().get(env.timecode, &val)) {
+      rlight->enableColorTemperature = val;
+    }
+  }
+
+  if (light.colorTemperature.authored() && !light.colorTemperature.is_blocked()) {
+    float val;
+    if (light.colorTemperature.get_value().get(env.timecode, &val)) {
+      rlight->colorTemperature = val;
+    }
+  }
+
+  // Extract shadow properties
+  if (light.shadowEnable.authored() && !light.shadowEnable.is_blocked()) {
+    bool val;
+    if (light.shadowEnable.get_value().get(env.timecode, &val)) {
+      rlight->shadowEnable = val;
+    }
+  }
+
+  if (light.shadowColor.authored() && !light.shadowColor.is_blocked()) {
+    value::color3f col;
+    if (light.shadowColor.get_value().get(env.timecode, &col)) {
+      rlight->shadowColor[0] = col[0];
+      rlight->shadowColor[1] = col[1];
+      rlight->shadowColor[2] = col[2];
+    }
+  }
+
+  if (light.shadowDistance.authored() && !light.shadowDistance.is_blocked()) {
+    float val;
+    if (light.shadowDistance.get_value().get(env.timecode, &val)) {
+      rlight->shadowDistance = val;
+    }
+  }
+
+  if (light.shadowFalloff.authored() && !light.shadowFalloff.is_blocked()) {
+    float val;
+    if (light.shadowFalloff.get_value().get(env.timecode, &val)) {
+      rlight->shadowFalloff = val;
+    }
+  }
+
+  if (light.shadowFalloffGamma.authored() && !light.shadowFalloffGamma.is_blocked()) {
+    float val;
+    if (light.shadowFalloffGamma.get_value().get(env.timecode, &val)) {
+      rlight->shadowFalloffGamma = val;
+    }
+  }
+
+  return true;
+}
+
+// Helper to extract shaping properties (for SphereLight and RectLight)
+template<typename LightType>
+static bool ExtractShapingProperties(
+    const RenderSceneConverterEnv &env,
+    const LightType &light,  // BoundableLight with shapingFocus, etc.
+    RenderLight *rlight) {
+
+  if (light.shapingFocus.authored() && !light.shapingFocus.is_blocked()) {
+    float val;
+    if (light.shapingFocus.get_value().get(env.timecode, &val)) {
+      rlight->shapingFocus = val;
+    }
+  }
+
+  if (light.shapingFocusTint.authored() && !light.shapingFocusTint.is_blocked()) {
+    value::color3f col;
+    if (light.shapingFocusTint.get_value().get(env.timecode, &col)) {
+      rlight->shapingFocusTint[0] = col[0];
+      rlight->shapingFocusTint[1] = col[1];
+      rlight->shapingFocusTint[2] = col[2];
+    }
+  }
+
+  if (light.shapingConeAngle.authored() && !light.shapingConeAngle.is_blocked()) {
+    float val;
+    if (light.shapingConeAngle.get_value().get(env.timecode, &val)) {
+      rlight->shapingConeAngle = val;
+    }
+  }
+
+  if (light.shapingConeSoftness.authored() && !light.shapingConeSoftness.is_blocked()) {
+    float val;
+    if (light.shapingConeSoftness.get_value().get(env.timecode, &val)) {
+      rlight->shapingConeSoftness = val;
+    }
+  }
+
+  return true;
+}
+
+bool RenderSceneConverter::ConvertSphereLight(
+    const RenderSceneConverterEnv &env,
+    const Path &light_abs_path,
+    const SphereLight &light,
+    RenderLight *rlight_out) {
+
+  if (!rlight_out) {
+    PUSH_ERROR_AND_RETURN("rlight_out arg is nullptr.");
+  }
+
+  RenderLight rlight;
+  rlight.name = light.name;
+  rlight.abs_path = light_abs_path.full_path_name();
+  rlight.lightType = RenderLight::LightType::Point;
+
+  // Extract common properties
+  if (!ExtractCommonLightProperties(env, light, &rlight)) {
+    return false;
+  }
+
+  // Extract shaping properties
+  if (!ExtractShapingProperties(env, light, &rlight)) {
+    return false;
+  }
+
+  // Extract radius
+  if (light.radius.authored() && !light.radius.is_blocked()) {
+    float val;
+    if (light.radius.get_value().get(env.timecode, &val)) {
+      rlight.radius = val;
+    }
+  }
+
+  (*rlight_out) = std::move(rlight);
+  return true;
+}
+
+bool RenderSceneConverter::ConvertDistantLight(
+    const RenderSceneConverterEnv &env,
+    const Path &light_abs_path,
+    const DistantLight &light,
+    RenderLight *rlight_out) {
+
+  if (!rlight_out) {
+    PUSH_ERROR_AND_RETURN("rlight_out arg is nullptr.");
+  }
+
+  RenderLight rlight;
+  rlight.name = light.name;
+  rlight.abs_path = light_abs_path.full_path_name();
+  rlight.lightType = RenderLight::LightType::Directional;
+
+  // Extract common properties
+  if (!ExtractCommonLightProperties(env, light, &rlight)) {
+    return false;
+  }
+
+  // Extract angle (angular diameter in degrees)
+  if (light.angle.authored() && !light.angle.is_blocked()) {
+    float val;
+    if (light.angle.get_value().get(env.timecode, &val)) {
+      rlight.angle = val;
+    }
+  }
+
+  (*rlight_out) = std::move(rlight);
+  return true;
+}
+
+bool RenderSceneConverter::ConvertDomeLight(
+    const RenderSceneConverterEnv &env,
+    const Path &light_abs_path,
+    const DomeLight &light,
+    RenderLight *rlight_out) {
+
+  if (!rlight_out) {
+    PUSH_ERROR_AND_RETURN("rlight_out arg is nullptr.");
+  }
+
+  RenderLight rlight;
+  rlight.name = light.name;
+  rlight.abs_path = light_abs_path.full_path_name();
+  rlight.lightType = RenderLight::LightType::Dome;
+
+  // Extract common properties
+  if (!ExtractCommonLightProperties(env, light, &rlight)) {
+    return false;
+  }
+
+  // Extract texture file
+  if (light.file.authored() && !light.file.is_blocked()) {
+    value::AssetPath asset;
+    if (light.file.get_value()->get(env.timecode, &asset)) {
+      rlight.textureFile = asset.GetAssetPath();
+    }
+  }
+
+  // Extract texture format
+  // Note: textureFormat is typically not time-sampled, use fallback/default
+  if (light.textureFormat.authored() && !light.textureFormat.is_blocked()) {
+    const auto& fmt_animatable = light.textureFormat.get_value();
+    // Get default value directly from Animatable (not time-sampled)
+    if (fmt_animatable.is_scalar()) {
+      DomeLight::TextureFormat fmt;
+      if (fmt_animatable.get_scalar(&fmt)) {
+        switch (fmt) {
+          case DomeLight::TextureFormat::Automatic:
+            rlight.domeTextureFormat = RenderLight::DomeTextureFormat::Automatic;
+            break;
+          case DomeLight::TextureFormat::Latlong:
+            rlight.domeTextureFormat = RenderLight::DomeTextureFormat::Latlong;
+            break;
+          case DomeLight::TextureFormat::MirroredBall:
+            rlight.domeTextureFormat = RenderLight::DomeTextureFormat::MirroredBall;
+            break;
+          case DomeLight::TextureFormat::Angular:
+            rlight.domeTextureFormat = RenderLight::DomeTextureFormat::Angular;
+            break;
+        }
+      }
+    }
+  }
+
+  // Extract guide radius
+  if (light.guideRadius.authored() && !light.guideRadius.is_blocked()) {
+    float val;
+    if (light.guideRadius.get_value().get(env.timecode, &val)) {
+      rlight.guideRadius = val;
+    }
+  }
+
+  (*rlight_out) = std::move(rlight);
+  return true;
+}
+
+bool RenderSceneConverter::ConvertRectLight(
+    const RenderSceneConverterEnv &env,
+    const Path &light_abs_path,
+    const RectLight &light,
+    RenderLight *rlight_out) {
+
+  if (!rlight_out) {
+    PUSH_ERROR_AND_RETURN("rlight_out arg is nullptr.");
+  }
+
+  RenderLight rlight;
+  rlight.name = light.name;
+  rlight.abs_path = light_abs_path.full_path_name();
+  rlight.lightType = RenderLight::LightType::Rect;
+
+  // Extract common properties
+  if (!ExtractCommonLightProperties(env, light, &rlight)) {
+    return false;
+  }
+
+  // Extract shaping properties
+  if (!ExtractShapingProperties(env, light, &rlight)) {
+    return false;
+  }
+
+  // Extract width
+  if (light.width.authored() && !light.width.is_blocked()) {
+    float val;
+    if (light.width.get_value().get(env.timecode, &val)) {
+      rlight.width = val;
+    }
+  }
+
+  // Extract height
+  if (light.height.authored() && !light.height.is_blocked()) {
+    float val;
+    if (light.height.get_value().get(env.timecode, &val)) {
+      rlight.height = val;
+    }
+  }
+
+  // Extract texture file (optional)
+  if (light.file.authored() && !light.file.is_blocked()) {
+    value::AssetPath asset;
+    if (light.file.get_value()->get(env.timecode, &asset)) {
+      rlight.textureFile = asset.GetAssetPath();
+    }
+  }
+
+  (*rlight_out) = std::move(rlight);
+  return true;
+}
+
+bool RenderSceneConverter::ConvertDiskLight(
+    const RenderSceneConverterEnv &env,
+    const Path &light_abs_path,
+    const DiskLight &light,
+    RenderLight *rlight_out) {
+
+  if (!rlight_out) {
+    PUSH_ERROR_AND_RETURN("rlight_out arg is nullptr.");
+  }
+
+  RenderLight rlight;
+  rlight.name = light.name;
+  rlight.abs_path = light_abs_path.full_path_name();
+  rlight.lightType = RenderLight::LightType::Disk;
+
+  // Extract common properties
+  if (!ExtractCommonLightProperties(env, light, &rlight)) {
+    return false;
+  }
+
+  // Extract radius
+  if (light.radius.authored() && !light.radius.is_blocked()) {
+    float val;
+    if (light.radius.get_value().get(env.timecode, &val)) {
+      rlight.radius = val;
+    }
+  }
+
+  (*rlight_out) = std::move(rlight);
+  return true;
+}
+
+bool RenderSceneConverter::ConvertCylinderLight(
+    const RenderSceneConverterEnv &env,
+    const Path &light_abs_path,
+    const CylinderLight &light,
+    RenderLight *rlight_out) {
+
+  if (!rlight_out) {
+    PUSH_ERROR_AND_RETURN("rlight_out arg is nullptr.");
+  }
+
+  RenderLight rlight;
+  rlight.name = light.name;
+  rlight.abs_path = light_abs_path.full_path_name();
+  rlight.lightType = RenderLight::LightType::Cylinder;
+
+  // Extract common properties
+  if (!ExtractCommonLightProperties(env, light, &rlight)) {
+    return false;
+  }
+
+  // Extract length
+  if (light.length.authored() && !light.length.is_blocked()) {
+    float val;
+    if (light.length.get_value().get(env.timecode, &val)) {
+      rlight.length = val;
+    }
+  }
+
+  // Extract radius
+  if (light.radius.authored() && !light.radius.is_blocked()) {
+    float val;
+    if (light.radius.get_value().get(env.timecode, &val)) {
+      rlight.radius = val;
+    }
+  }
+
+  (*rlight_out) = std::move(rlight);
+  return true;
+}
+
+bool RenderSceneConverter::ConvertGeometryLight(
+    const RenderSceneConverterEnv &env,
+    const Path &light_abs_path,
+    const GeometryLight &light,
+    RenderLight *rlight_out) {
+
+  if (!rlight_out) {
+    PUSH_ERROR_AND_RETURN("rlight_out arg is nullptr.");
+  }
+
+  RenderLight rlight;
+  rlight.name = light.name;
+  rlight.abs_path = light_abs_path.full_path_name();
+  rlight.lightType = RenderLight::LightType::Geometry;
+
+  // Extract common properties
+  if (!ExtractCommonLightProperties(env, light, &rlight)) {
+    return false;
+  }
+
+  // Extract geometry relationship to find the target mesh
+  // GeometryLight uses a relationship to point to the mesh geometry
+  if (light.geometry.authored() && !light.geometry.is_blocked()) {
+    const std::vector<Path> targets = light.geometry.get_targetPaths();
+    if (!targets.empty()) {
+      // Use the first target path
+      const Path &target_path = targets[0];
+      std::string geometry_path = target_path.full_path_name();
+
+      // Try to find the mesh in the meshMap
+      // Note: The actual mesh_id will be resolved during scene building
+      // For now, we store the path and mark geometry_mesh_id as unresolved (-1)
+      // The renderer should resolve this later by looking up the mesh by path
+      rlight.geometry_mesh_id = -1;  // Will be resolved during BuildNodeHierarchy
+
+      DCOUT("GeometryLight " << rlight.abs_path << " references geometry: " << geometry_path);
+    } else {
+      PUSH_WARN("GeometryLight " << rlight.abs_path << " has no geometry targets");
+    }
+  } else {
+    PUSH_WARN("GeometryLight " << rlight.abs_path << " missing geometry relationship");
+  }
+
+  // Default material sync mode for GeometryLight
+  rlight.material_sync_mode = "materialGlowTintsLight";
+
+  (*rlight_out) = std::move(rlight);
   return true;
 }
 
@@ -8434,8 +9048,7 @@ bool RenderSceneConverter::ConvertToRenderScene(
   // 2. Convert Material/Texture
   // 3. Convert Mesh/SkinWeights/BlendShapes
   // 4. Convert Skeleton(bones)
-  // 5. Build node hierarchy
-  // TODO: Convert lights
+  // 5. Build node hierarchy (includes lights and cameras)
 
   //
   // 1. Build Xform at specified time.
@@ -8586,6 +9199,8 @@ bool RenderSceneConverter::ConvertToRenderScene(
   render_scene.images = std::move(images);
   render_scene.buffers = std::move(buffers);
   render_scene.materials = std::move(materials);
+  render_scene.cameras = std::move(cameras);
+  render_scene.lights = std::move(lights);
   render_scene.skeletons = std::move(skeletons);
   render_scene.animations = std::move(animations);
 
