@@ -1096,13 +1096,15 @@ bool AsciiParser::ReadBasicType(uint32_t *value) {
     }
   }
 
-  if (has_sign && (ss.str().size() == 1)) {
+  std::string str = ss.str();
+
+  if (has_sign && (str.size() == 1)) {
     // sign only
     PushError("Integer value expected but got sign character only.\n");
     return false;
   }
 
-  if ((ss.str().size() > 1) && (ss.str()[0] == '0')) {
+  if ((str.size() > 1) && (str[0] == '0')) {
     PushError("Zero padded integer value is not allowed.\n");
     return false;
   }
@@ -1111,7 +1113,7 @@ bool AsciiParser::ReadBasicType(uint32_t *value) {
 
 #if defined(__cpp_exceptions) || defined(__EXCEPTIONS)
   try {
-    (*value) = uint32_t(std::stoull(ss.str()));
+    (*value) = uint32_t(std::stoull(str));
   } catch (const std::invalid_argument &e) {
     (void)e;
     PushError("Not an 64bit unsigned integer literal.\n");
@@ -1125,7 +1127,6 @@ bool AsciiParser::ReadBasicType(uint32_t *value) {
 #else
   // use jsteemann/atoi
   // IMPORTANT: Store the string first to avoid temporary object issues
-  std::string str = ss.str();
   const char* start = str.c_str();
   const char* end = str.c_str() + str.size();
 
@@ -1210,13 +1211,15 @@ bool AsciiParser::ReadBasicType(int64_t *value) {
     }
   }
 
-  if (has_sign && (ss.str().size() == 1)) {
+  std::string str = ss.str();
+
+  if (has_sign && (str.size() == 1)) {
     // sign only
     PushError("Integer value expected but got sign character only.\n");
     return false;
   }
 
-  if ((ss.str().size() > 1) && (ss.str()[0] == '0')) {
+  if ((str.size() > 1) && (str[0] == '0')) {
     PushError("Zero padded integer value is not allowed.\n");
     return false;
   }
@@ -1240,8 +1243,6 @@ bool AsciiParser::ReadBasicType(int64_t *value) {
   return true;
 #else
   // use jsteemann/atoi
-  // IMPORTANT: Store the string first to avoid temporary object issues
-  std::string str = ss.str();
   const char* start = str.c_str();
   const char* end = str.c_str() + str.size();
 
@@ -1329,13 +1330,15 @@ bool AsciiParser::ReadBasicType(uint64_t *value) {
     }
   }
 
-  if (has_sign && (ss.str().size() == 1)) {
+  std::string str = ss.str();
+
+  if (has_sign && (str.size() == 1)) {
     // sign only
     PushError("Integer value expected but got sign character only.\n");
     return false;
   }
 
-  if ((ss.str().size() > 1) && (ss.str()[0] == '0')) {
+  if ((str.size() > 1) && (str[0] == '0')) {
     PushError("Zero padded integer value is not allowed.\n");
     return false;
   }
@@ -1345,7 +1348,7 @@ bool AsciiParser::ReadBasicType(uint64_t *value) {
   // TODO(syoyo): Use ryu parse.
 #if defined(__cpp_exceptions) || defined(__EXCEPTIONS)
   try {
-    (*value) = std::stoull(ss.str());
+    (*value) = std::stoull(str);
   } catch (const std::invalid_argument &e) {
     (void)e;
     PushError("Not an 64bit unsigned integer literal.\n");
@@ -1359,8 +1362,6 @@ bool AsciiParser::ReadBasicType(uint64_t *value) {
   return true;
 #else
   // use jsteemann/atoi
-  // IMPORTANT: Store the string first to avoid temporary object issues
-  std::string str = ss.str();
   const char* start = str.c_str();
   const char* end = str.c_str() + str.size();
 
