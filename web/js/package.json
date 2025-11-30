@@ -14,6 +14,8 @@
     "test:memory": "vite-node memory-usage-test.js",
     "test:streaming": "vite-node load-test-node.js",
     "dump-materialx": "vite-node dump-materialx-cli.js",
+    "dump-lights": "vite-node dump-usdlux-cli.js",
+    "test:usdlux": "node test-usdlux-parsing.js",
     "anim-info": "vite-node animation-info.js",
     "anim-info:detailed": "vite-node animation-info.js --detailed",
     "verify-materialx": "vite-node verify-materialx.js",

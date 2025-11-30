@@ -1211,6 +1211,39 @@ struct RenderMesh {
   // If you want to access user-defined primvars or custom property,
   // Plese look into corresponding Prim( stage::find_prim_at_path(abs_path) )
 
+  //
+  // Area light properties (MeshLightAPI)
+  // When is_area_light = true, this mesh emits light.
+  //
+  // Renderer integration guide:
+  //   1. Calculate effective light color: light_color * light_intensity * pow(2, light_exposure)
+  //   2. Apply materialSyncMode:
+  //      - "materialGlowTintsLight" (default): material.emissiveColor tints the light color
+  //           finalEmission = effectiveLightColor * material.emissiveColor
+  //      - "independent": material emission and light are independent
+  //           finalEmission = effectiveLightColor + material.emissiveColor
+  //      - "noMaterialResponse": material doesn't respond to light (only emits)
+  //           finalEmission = effectiveLightColor
+  //   3. If light_normalize = true, divide by surface area for energy conservation
+  //
+  bool is_area_light{false};  // true if MeshLightAPI is applied
+  std::array<float, 3> light_color{{1.0f, 1.0f, 1.0f}};  // inputs:color (linear RGB)
+  float light_intensity{1.0f};  // inputs:intensity
+  float light_exposure{0.0f};  // inputs:exposure (optional, in EV)
+  bool light_normalize{false};  // inputs:normalize - divide by surface area if true
+  std::string light_material_sync_mode;  // inputs:materialSyncMode
+                                         // "materialGlowTintsLight" (default), "independent", or "noMaterialResponse"
+
+  // Helper: Calculate effective light color with intensity and exposure applied
+  inline std::array<float, 3> get_effective_light_color() const {
+    float multiplier = light_intensity * std::pow(2.0f, light_exposure);
+    return {{
+      light_color[0] * multiplier,
+      light_color[1] * multiplier,
+      light_color[2] * multiplier
+    }};
+  }
+
   uint64_t handle{0};  // Handle ID for Graphics API. 0 = invalid
   
   ///
@@ -1694,9 +1727,16 @@ struct RenderLight
     Portal,       ///< PortalLight
   };
 
+  enum class DomeTextureFormat {
+    Automatic,
+    Latlong,
+    MirroredBall,
+    Angular
+  };
+
   Type type{Type::Point};
 
-  // Common light properties
+  // Common light properties (LightAPI)
   vec3 color{1.0f, 1.0f, 1.0f};       ///< Light color (linear RGB)
   float intensity{1.0f};              ///< Light intensity multiplier
   float exposure{0.0f};               ///< Exposure value (EV)
@@ -1719,18 +1759,32 @@ struct RenderLight
   float height{1.0f};                 ///< RectLight height
   float length{1.0f};                 ///< CylinderLight length
   float angle{0.53f};                 ///< DistantLight angle (degrees)
+  std::string textureFile;            ///< Texture for RectLight/DomeLight
 
-  // Shaping (spotlight)
+  // Shaping properties (ShapingAPI)
   float shapingConeAngle{90.0f};      ///< Cone angle (degrees)
   float shapingConeSoftness{0.0f};    ///< Cone edge softness
   float shapingFocus{0.0f};           ///< Focus adjustment
+  vec3 shapingFocusTint{0.0f, 0.0f, 0.0f}; ///< Focus tint color
+  std::string shapingIesFile;         ///< IES profile file path
+  float shapingIesAngleScale{0.0f};   ///< IES angle scale
+  bool shapingIesNormalize{false};    ///< Normalize IES profile
 
-  // Shadow
+  // Shadow properties (ShadowAPI)
   bool shadowEnable{true};            ///< Enable shadows
   vec3 shadowColor{0.0f, 0.0f, 0.0f}; ///< Shadow color
+  float shadowDistance{-1.0f};        ///< Shadow distance (-1 = infinite)
+  float shadowFalloff{-1.0f};         ///< Shadow falloff (-1 = no falloff)
+  float shadowFalloffGamma{1.0f};     ///< Shadow falloff gamma
 
-  // Environment (DomeLight)
+  // DomeLight specific
+  DomeTextureFormat domeTextureFormat{DomeTextureFormat::Automatic};
+  float guideRadius{1.0e5f};          ///< Radius for visualization
   int32_t envmap_texture_id{-1};      ///< Index to textures for environment map
+
+  // GeometryLight (mesh lights with MeshLightAPI)
+  int32_t geometry_mesh_id{-1};       ///< Index to meshes array for geometry lights
+  std::string material_sync_mode;     ///< MeshLightAPI materialSyncMode
 
   // LTE SpectralAPI: Spectral emission support
   // Only exported if has_data() returns true
@@ -2985,6 +3039,45 @@ class RenderSceneConverter {
   /// @param[in] root XformNode
   ///
   bool BuildNodeHierarchy(const RenderSceneConverterEnv &env, const XformNode &node);
+
+  ///
+  /// Convert UsdLux lights to renderer-friendly RenderLight
+  ///
+
+  bool ConvertSphereLight(const RenderSceneConverterEnv &env,
+                          const Path &light_abs_path,
+                          const SphereLight &light,
+                          RenderLight *rlight_out);
+
+  bool ConvertDistantLight(const RenderSceneConverterEnv &env,
+                           const Path &light_abs_path,
+                           const DistantLight &light,
+                           RenderLight *rlight_out);
+
+  bool ConvertDomeLight(const RenderSceneConverterEnv &env,
+                        const Path &light_abs_path,
+                        const DomeLight &light,
+                        RenderLight *rlight_out);
+
+  bool ConvertRectLight(const RenderSceneConverterEnv &env,
+                        const Path &light_abs_path,
+                        const RectLight &light,
+                        RenderLight *rlight_out);
+
+  bool ConvertDiskLight(const RenderSceneConverterEnv &env,
+                        const Path &light_abs_path,
+                        const DiskLight &light,
+                        RenderLight *rlight_out);
+
+  bool ConvertCylinderLight(const RenderSceneConverterEnv &env,
+                            const Path &light_abs_path,
+                            const CylinderLight &light,
+                            RenderLight *rlight_out);
+
+  bool ConvertGeometryLight(const RenderSceneConverterEnv &env,
+                            const Path &light_abs_path,
+                            const GeometryLight &light,
+                            RenderLight *rlight_out);
 
  private:
   ///
