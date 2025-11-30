@@ -1025,8 +1025,9 @@ json ThreeJSSceneExporter::ConvertLight(const RenderLight& light) {
   light_json["intensity"] = effective_intensity;
 
   // Map RenderLight types to Three.js light types
-  switch (light.lightType) {
-    case RenderLight::LightType::Point:
+  switch (light.type) {
+    case RenderLight::Type::Point:
+    case RenderLight::Type::Sphere:
       light_json["type"] = "PointLight";
       // Three.js PointLight doesn't have a physical radius, but we can store it in userData
       if (light.radius > 0.0f) {
@@ -1038,7 +1039,7 @@ json ThreeJSSceneExporter::ConvertLight(const RenderLight& light) {
       light_json["decay"] = 2.0f;
       break;
 
-    case RenderLight::LightType::Directional:
+    case RenderLight::Type::Distant:
       light_json["type"] = "DirectionalLight";
       // Directional lights have uniform intensity, no attenuation
       // Store angle for disk shape if specified
@@ -1050,7 +1051,7 @@ json ThreeJSSceneExporter::ConvertLight(const RenderLight& light) {
       }
       break;
 
-    case RenderLight::LightType::Rect:
+    case RenderLight::Type::Rect:
       // Three.js has RectAreaLight (requires RectAreaLightUniformsLib)
       light_json["type"] = "RectAreaLight";
       light_json["width"] = light.width;
@@ -1065,7 +1066,7 @@ json ThreeJSSceneExporter::ConvertLight(const RenderLight& light) {
       }
       break;
 
-    case RenderLight::LightType::Disk:
+    case RenderLight::Type::Disk:
       // Three.js doesn't have a disk light, use PointLight as approximation
       light_json["type"] = "PointLight";
       light_json["distance"] = 0.0f;
@@ -1077,7 +1078,7 @@ json ThreeJSSceneExporter::ConvertLight(const RenderLight& light) {
       };
       break;
 
-    case RenderLight::LightType::Cylinder:
+    case RenderLight::Type::Cylinder:
       // Cylinder lights with shaping are like spotlights
       if (light.shapingConeAngle > 0.0f) {
         light_json["type"] = "SpotLight";
@@ -1112,7 +1113,7 @@ json ThreeJSSceneExporter::ConvertLight(const RenderLight& light) {
       }
       break;
 
-    case RenderLight::LightType::Dome:
+    case RenderLight::Type::Dome:
       // Dome lights are environment maps, closest is HemisphereLight or PMREMGenerator
       light_json["type"] = "HemisphereLight";
       // HemisphereLight has groundColor (opposite hemisphere)
@@ -1146,7 +1147,7 @@ json ThreeJSSceneExporter::ConvertLight(const RenderLight& light) {
       }
       break;
 
-    case RenderLight::LightType::Geometry:
+    case RenderLight::Type::Geometry:
       // Geometry lights are meshes with emissive materials
       light_json["type"] = "MeshEmissive";
       light_json["geometry_mesh_id"] = light.geometry_mesh_id;
@@ -1157,6 +1158,11 @@ json ThreeJSSceneExporter::ConvertLight(const RenderLight& light) {
         }
         light_json["userData"]["material_sync_mode"] = light.material_sync_mode;
       }
+      break;
+
+    case RenderLight::Type::Portal:
+      // Portal lights are special lights for portals
+      light_json["type"] = "PortalLight";
       break;
   }
 
@@ -1192,7 +1198,7 @@ json ThreeJSSceneExporter::ConvertLight(const RenderLight& light) {
   }
 
   // Shaping properties for lights that support them (but aren't spotlights)
-  if (light.lightType != RenderLight::LightType::Cylinder &&
+  if (light.type != RenderLight::Type::Cylinder &&
       (light.shapingConeAngle > 0.0f || light.shapingFocus != 0.0f || !light.shapingIesFile.empty())) {
     light_json["userData"]["shaping"] = {
       {"focus", light.shapingFocus},
