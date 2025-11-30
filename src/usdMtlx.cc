@@ -1704,6 +1704,173 @@ bool ReadMaterialXFromString(const std::string &str,
     }
   }
 
+  // uniform_edf
+  for (auto uniform_edf : root.children("uniform_edf")) {
+    std::string node_name;
+    {
+      std::string typeName;
+      GET_ATTR_VALUE(uniform_edf, "name", std::string, node_name);
+      GET_ATTR_VALUE(uniform_edf, "type", std::string, typeName);
+
+      if (typeName != "EDF") {
+        PUSH_ERROR_AND_RETURN(
+            fmt::format("`EDF` expected for type of uniform_edf, but got `{}`",
+                        typeName));
+      }
+    }
+
+    MtlxUniformEdf edf;
+    for (auto inp : uniform_edf.children("input")) {
+      std::string name;
+      std::string typeName;
+      std::string valueStr;
+      GET_ATTR_VALUE(inp, "name", std::string, name);
+      GET_ATTR_VALUE(inp, "type", std::string, typeName);
+      GET_ATTR_VALUE(inp, "value", std::string, valueStr);
+
+      GET_SHADER_PARAM(name, typeName, "color", "color3", value::color3f,
+                       valueStr, edf.color) {
+        PUSH_WARN("Unknown/unsupported input " << name);
+      }
+    }
+
+    mtlx->light_shaders[node_name] = edf;
+  }
+
+  // conical_edf
+  for (auto conical_edf : root.children("conical_edf")) {
+    std::string node_name;
+    {
+      std::string typeName;
+      GET_ATTR_VALUE(conical_edf, "name", std::string, node_name);
+      GET_ATTR_VALUE(conical_edf, "type", std::string, typeName);
+
+      if (typeName != "EDF") {
+        PUSH_ERROR_AND_RETURN(
+            fmt::format("`EDF` expected for type of conical_edf, but got `{}`",
+                        typeName));
+      }
+    }
+
+    MtlxConicalEdf edf;
+    for (auto inp : conical_edf.children("input")) {
+      std::string name;
+      std::string typeName;
+      std::string valueStr;
+      GET_ATTR_VALUE(inp, "name", std::string, name);
+      GET_ATTR_VALUE(inp, "type", std::string, typeName);
+      GET_ATTR_VALUE(inp, "value", std::string, valueStr);
+
+      GET_SHADER_PARAM(name, typeName, "color", "color3", value::color3f,
+                       valueStr, edf.color)
+      GET_SHADER_PARAM(name, typeName, "normal", "vector3", value::normal3f,
+                       valueStr, edf.normal)
+      GET_SHADER_PARAM(name, typeName, "inner_angle", "float", float, valueStr,
+                       edf.inner_angle)
+      GET_SHADER_PARAM(name, typeName, "outer_angle", "float", float, valueStr,
+                       edf.outer_angle) {
+        PUSH_WARN("Unknown/unsupported input " << name);
+      }
+    }
+
+    mtlx->light_shaders[node_name] = edf;
+  }
+
+  // measured_edf
+  for (auto measured_edf : root.children("measured_edf")) {
+    std::string node_name;
+    {
+      std::string typeName;
+      GET_ATTR_VALUE(measured_edf, "name", std::string, node_name);
+      GET_ATTR_VALUE(measured_edf, "type", std::string, typeName);
+
+      if (typeName != "EDF") {
+        PUSH_ERROR_AND_RETURN(
+            fmt::format("`EDF` expected for type of measured_edf, but got `{}`",
+                        typeName));
+      }
+    }
+
+    MtlxMeasuredEdf edf;
+    for (auto inp : measured_edf.children("input")) {
+      std::string name;
+      std::string typeName;
+      std::string valueStr;
+      GET_ATTR_VALUE(inp, "name", std::string, name);
+      GET_ATTR_VALUE(inp, "type", std::string, typeName);
+      GET_ATTR_VALUE(inp, "value", std::string, valueStr);
+
+      GET_SHADER_PARAM(name, typeName, "color", "color3", value::color3f,
+                       valueStr, edf.color)
+      // file is a filename type
+      if (name == "file") {
+        if (typeName != "filename") {
+          PUSH_ERROR_AND_RETURN(
+              fmt::format("type `{}` expected for input `{}`, but got `{}`",
+                          "filename", "file", typeName));
+        }
+        std::string filepath;
+        if (!detail::ParseMaterialXValue(valueStr, &filepath, err)) {
+          return false;
+        }
+        edf.file.set_value(value::AssetPath(filepath));
+      } else {
+        PUSH_WARN("Unknown/unsupported input " << name);
+      }
+    }
+
+    mtlx->light_shaders[node_name] = edf;
+  }
+
+  // light
+  for (auto light : root.children("light")) {
+    std::string node_name;
+    {
+      std::string typeName;
+      GET_ATTR_VALUE(light, "name", std::string, node_name);
+      GET_ATTR_VALUE(light, "type", std::string, typeName);
+
+      if (typeName != "lightshader") {
+        PUSH_ERROR_AND_RETURN(
+            fmt::format("`lightshader` expected for type of light, but got `{}`",
+                        typeName));
+      }
+    }
+
+    MtlxLight light_shader;
+    for (auto inp : light.children("input")) {
+      std::string name;
+      std::string typeName;
+      std::string valueStr;
+      mtlx::pugi::xml_attribute nodename_attr = inp.attribute("nodename");
+
+      GET_ATTR_VALUE(inp, "name", std::string, name);
+      GET_ATTR_VALUE(inp, "type", std::string, typeName);
+
+      // Handle connections via nodename
+      if (nodename_attr) {
+        std::string nodename = nodename_attr.as_string();
+        if (name == "edf") {
+          light_shader.edf.set_value(value::token(nodename));
+        } else {
+          PUSH_WARN("Unknown/unsupported connection input " << name);
+        }
+      } else {
+        // Handle direct values
+        GET_ATTR_VALUE(inp, "value", std::string, valueStr);
+
+        GET_SHADER_PARAM(name, typeName, "intensity", "color3", value::color3f,
+                         valueStr, light_shader.intensity)
+        GET_SHADER_PARAM(name, typeName, "exposure", "float", float, valueStr,
+                         light_shader.exposure) {
+          PUSH_WARN("Unknown/unsupported input " << name);
+        }
+      }
+    }
+
+    mtlx->light_shaders[node_name] = light_shader;
+  }
+
   // standard_surface
   for (auto usd_surface : root.children("UsdPreviewSurface")) {
     std::string surface_name;
@@ -2146,6 +2313,149 @@ bool LoadMaterialXFromAsset(const Asset &asset, const std::string &asset_path,
   }
 
   return true;
+}
+
+///
+/// Convert MaterialX Light shader to UsdLux light
+///
+bool ConvertMtlxLightToUsdLux(const MtlxLight &mtlx_light,
+                               const std::map<std::string, value::Value> &light_shaders,
+                               value::Value *usd_light,
+                               std::string *warn, std::string *err) {
+  (void)warn;
+
+  if (!usd_light) {
+    PUSH_ERROR_AND_RETURN("usd_light is nullptr");
+  }
+
+  // Get the EDF node name from the light shader
+  value::token edf_name;
+  if (!mtlx_light.edf.get_value(&edf_name)) {
+    PUSH_ERROR_AND_RETURN("Light shader has no EDF connection");
+  }
+
+  // Find the EDF node in light_shaders
+  auto edf_it = light_shaders.find(edf_name.str());
+  if (edf_it == light_shaders.end()) {
+    PUSH_ERROR_AND_RETURN(fmt::format("EDF node '{}' not found", edf_name.str()));
+  }
+
+  const value::Value &edf_value = edf_it->second;
+
+  // Get intensity and exposure from the light shader
+  value::color3f intensity{1.0f, 1.0f, 1.0f};
+  mtlx_light.intensity.get_value().get_scalar(&intensity);
+
+  float exposure = 0.0f;
+  if (mtlx_light.exposure.authored()) {
+    if (auto exp_val = mtlx_light.exposure.get_value()) {
+      exp_val.value().get_scalar(&exposure);
+    }
+  }
+
+  // Convert based on EDF type
+  if (auto uniform_edf = edf_value.as<MtlxUniformEdf>()) {
+    // uniform_edf -> SphereLight (omnidirectional point light)
+    SphereLight light;
+
+    value::color3f edf_color{1.0f, 1.0f, 1.0f};
+    uniform_edf->color.get_value().get_scalar(&edf_color);
+
+    // Combine EDF color with light intensity
+    value::color3f final_color{
+      edf_color[0] * intensity[0],
+      edf_color[1] * intensity[1],
+      edf_color[2] * intensity[2]
+    };
+
+    light.color.set_value(final_color);
+    light.exposure.set_value(exposure);
+    light.intensity.set_value(1.0f); // Already baked into color
+
+    (*usd_light) = light;
+    return true;
+
+  } else if (auto conical_edf = edf_value.as<MtlxConicalEdf>()) {
+    // conical_edf -> RectLight with ShapingAPI (spot light effect)
+    RectLight light;
+
+    value::color3f edf_color{1.0f, 1.0f, 1.0f};
+    conical_edf->color.get_value().get_scalar(&edf_color);
+
+    // Combine EDF color with light intensity
+    value::color3f final_color{
+      edf_color[0] * intensity[0],
+      edf_color[1] * intensity[1],
+      edf_color[2] * intensity[2]
+    };
+
+    light.color.set_value(final_color);
+    light.exposure.set_value(exposure);
+    light.intensity.set_value(1.0f);
+
+    // Add ShapingAPI for cone control
+    ShapingAPI shaping;
+
+    float inner_angle = 60.0f;
+    conical_edf->inner_angle.get_value().get_scalar(&inner_angle);
+    shaping.shapingConeAngle.set_value(inner_angle);
+
+    if (conical_edf->outer_angle.authored()) {
+      float outer_angle = 60.0f;
+      if (auto oa_val = conical_edf->outer_angle.get_value()) {
+        oa_val.value().get_scalar(&outer_angle);
+        // Use softness to represent the difference between inner and outer angles
+        float softness = (outer_angle - inner_angle) / inner_angle;
+        shaping.shapingConeSoftness.set_value(std::max(0.0f, softness));
+      }
+    }
+
+    light.shaping = shaping;
+
+    (*usd_light) = light;
+    return true;
+
+  } else if (auto measured_edf = edf_value.as<MtlxMeasuredEdf>()) {
+    // measured_edf -> RectLight or SphereLight with IES profile via ShapingAPI
+    SphereLight light;
+
+    value::color3f edf_color{1.0f, 1.0f, 1.0f};
+    measured_edf->color.get_value().get_scalar(&edf_color);
+
+    // Combine EDF color with light intensity
+    value::color3f final_color{
+      edf_color[0] * intensity[0],
+      edf_color[1] * intensity[1],
+      edf_color[2] * intensity[2]
+    };
+
+    light.color.set_value(final_color);
+    light.exposure.set_value(exposure);
+    light.intensity.set_value(1.0f);
+
+    // Add ShapingAPI with IES profile
+    if (measured_edf->file.authored()) {
+      ShapingAPI shaping;
+
+      if (auto file_val = measured_edf->file.get_value()) {
+        value::AssetPath ies_file;
+        if (file_val.value().get_scalar(&ies_file)) {
+          shaping.shapingIesFile.set_value(ies_file);
+          shaping.shapingIesNormalize.set_value(true);
+        }
+      }
+
+      light.shaping = shaping;
+    }
+
+    (*usd_light) = light;
+    return true;
+
+  } else {
+    PUSH_ERROR_AND_RETURN(fmt::format("Unknown EDF type for node '{}'", edf_name.str()));
+  }
+
+  return false;
 }
 
 //} // namespace usdMtlx

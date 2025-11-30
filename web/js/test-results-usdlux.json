@@ -1,0 +1,611 @@
+{
+  "passed": 4,
+  "failed": 0,
+  "tests": [
+    {
+      "name": "Basic Lights",
+      "file": "../../tests/usda/usdlux_basic_lights.usda",
+      "passed": true,
+      "error": null,
+      "numLights": 5,
+      "lights": [
+        {
+          "name": "KeyLight",
+          "abs_path": "/World/Lights/KeyLight",
+          "type": "Point",
+          "color": [
+            1,
+            0.95,
+            0.85
+          ],
+          "intensity": 100,
+          "exposure": 0,
+          "diffuse": 1,
+          "specular": 1,
+          "normalize": false,
+          "enableColorTemperature": false,
+          "colorTemperature": 6500,
+          "shadow": {
+            "enable": true,
+            "color": [
+              0,
+              0,
+              0
+            ],
+            "distance": -1,
+            "falloff": -1,
+            "falloffGamma": 1
+          },
+          "shaping": {
+            "focus": 0,
+            "focusTint": [
+              0,
+              0,
+              0
+            ],
+            "coneAngle": 90,
+            "coneSoftness": 0,
+            "iesFile": "",
+            "iesAngleScale": 0,
+            "iesNormalize": false
+          },
+          "properties": {
+            "radius": 0.5
+          }
+        },
+        {
+          "name": "SunLight",
+          "abs_path": "/World/Lights/SunLight",
+          "type": "Directional",
+          "color": [
+            1,
+            1,
+            0.95
+          ],
+          "intensity": 50,
+          "exposure": 0.5,
+          "diffuse": 1,
+          "specular": 1,
+          "normalize": false,
+          "enableColorTemperature": true,
+          "colorTemperature": 5800,
+          "shadow": {
+            "enable": true,
+            "color": [
+              0,
+              0,
+              0
+            ],
+            "distance": -1,
+            "falloff": -1,
+            "falloffGamma": 1
+          },
+          "shaping": {
+            "focus": 0,
+            "focusTint": [
+              0,
+              0,
+              0
+            ],
+            "coneAngle": 90,
+            "coneSoftness": 0,
+            "iesFile": "",
+            "iesAngleScale": 0,
+            "iesNormalize": false
+          },
+          "properties": {
+            "angle": 0.53
+          }
+        },
+        {
+          "name": "RimLight",
+          "abs_path": "/World/Lights/RimLight",
+          "type": "Disk",
+          "color": [
+            1,
+            0.9,
+            0.8
+          ],
+          "intensity": 150,
+          "exposure": 0,
+          "diffuse": 1,
+          "specular": 1,
+          "normalize": false,
+          "enableColorTemperature": false,
+          "colorTemperature": 6500,
+          "shadow": {
+            "enable": true,
+            "color": [
+              0,
+              0,
+              0
+            ],
+            "distance": -1,
+            "falloff": -1,
+            "falloffGamma": 1
+          },
+          "shaping": {
+            "focus": 0,
+            "focusTint": [
+              0,
+              0,
+              0
+            ],
+            "coneAngle": 90,
+            "coneSoftness": 0,
+            "iesFile": "",
+            "iesAngleScale": 0,
+            "iesNormalize": false
+          },
+          "properties": {
+            "radius": 0.75
+          }
+        },
+        {
+          "name": "Spotlight",
+          "abs_path": "/World/Lights/Spotlight",
+          "type": "Cylinder",
+          "color": [
+            1,
+            1,
+            1
+          ],
+          "intensity": 1,
+          "exposure": 0,
+          "diffuse": 1,
+          "specular": 1,
+          "normalize": false,
+          "enableColorTemperature": false,
+          "colorTemperature": 6500,
+          "shadow": {
+            "enable": true,
+            "color": [
+              0,
+              0,
+              0
+            ],
+            "distance": -1,
+            "falloff": 1,
+            "falloffGamma": 1
+          },
+          "shaping": {
+            "focus": 0,
+            "focusTint": [
+              0,
+              0,
+              0
+            ],
+            "coneAngle": 90,
+            "coneSoftness": 0,
+            "iesFile": "",
+            "iesAngleScale": 0,
+            "iesNormalize": false
+          },
+          "properties": {
+            "radius": 0.2,
+            "length": 0.5
+          }
+        },
+        {
+          "name": "EnvironmentLight",
+          "abs_path": "/World/Lights/EnvironmentLight",
+          "type": "Dome",
+          "color": [
+            0.4,
+            0.5,
+            0.6
+          ],
+          "intensity": 0.5,
+          "exposure": 0,
+          "diffuse": 1,
+          "specular": 1,
+          "normalize": false,
+          "enableColorTemperature": false,
+          "colorTemperature": 6500,
+          "shadow": {
+            "enable": true,
+            "color": [
+              0,
+              0,
+              0
+            ],
+            "distance": -1,
+            "falloff": -1,
+            "falloffGamma": 1
+          },
+          "shaping": {
+            "focus": 0,
+            "focusTint": [
+              0,
+              0,
+              0
+            ],
+            "coneAngle": 90,
+            "coneSoftness": 0,
+            "iesFile": "",
+            "iesAngleScale": 0,
+            "iesNormalize": false
+          },
+          "properties": {
+            "textureFormat": "automatic",
+            "guideRadius": 100000
+          }
+        }
+      ],
+      "numAreaLightMeshes": 0,
+      "areaLightMeshes": []
+    },
+    {
+      "name": "Advanced Features",
+      "file": "../../tests/usda/usdlux_advanced_features.usda",
+      "passed": true,
+      "error": null,
+      "numLights": 4,
+      "lights": [
+        {
+          "name": "IESLight",
+          "abs_path": "/Scene/Lights/IESLight",
+          "type": "Point",
+          "color": [
+            1,
+            0.9,
+            0.8
+          ],
+          "intensity": 500,
+          "exposure": 0,
+          "diffuse": 1,
+          "specular": 1,
+          "normalize": false,
+          "enableColorTemperature": false,
+          "colorTemperature": 6500,
+          "shadow": {
+            "enable": true,
+            "color": [
+              0,
+              0,
+              0
+            ],
+            "distance": -1,
+            "falloff": -1,
+            "falloffGamma": 1
+          },
+          "shaping": {
+            "focus": 0,
+            "focusTint": [
+              0,
+              0,
+              0
+            ],
+            "coneAngle": 90,
+            "coneSoftness": 0,
+            "iesFile": "",
+            "iesAngleScale": 0,
+            "iesNormalize": false
+          },
+          "properties": {
+            "radius": 0.1
+          }
+        },
+        {
+          "name": "GoboLight",
+          "abs_path": "/Scene/Lights/GoboLight",
+          "type": "Cylinder",
+          "color": [
+            1,
+            1,
+            1
+          ],
+          "intensity": 1,
+          "exposure": 0,
+          "diffuse": 1,
+          "specular": 1,
+          "normalize": false,
+          "enableColorTemperature": false,
+          "colorTemperature": 6500,
+          "shadow": {
+            "enable": true,
+            "color": [
+              0,
+              0,
+              0
+            ],
+            "distance": -1,
+            "falloff": -1,
+            "falloffGamma": 1
+          },
+          "shaping": {
+            "focus": 0,
+            "focusTint": [
+              0,
+              0,
+              0
+            ],
+            "coneAngle": 90,
+            "coneSoftness": 0,
+            "iesFile": "",
+            "iesAngleScale": 0,
+            "iesNormalize": false
+          },
+          "properties": {
+            "radius": 0.15,
+            "length": 0.3
+          }
+        },
+        {
+          "name": "StudioHDRI",
+          "abs_path": "/Scene/Lights/StudioHDRI",
+          "type": "Dome",
+          "color": [
+            1,
+            1,
+            1
+          ],
+          "intensity": 1,
+          "exposure": 0,
+          "diffuse": 1,
+          "specular": 1,
+          "normalize": false,
+          "enableColorTemperature": false,
+          "colorTemperature": 6500,
+          "shadow": {
+            "enable": true,
+            "color": [
+              0,
+              0,
+              0
+            ],
+            "distance": -1,
+            "falloff": -1,
+            "falloffGamma": 1
+          },
+          "shaping": {
+            "focus": 0,
+            "focusTint": [
+              0,
+              0,
+              0
+            ],
+            "coneAngle": 90,
+            "coneSoftness": 0,
+            "iesFile": "",
+            "iesAngleScale": 0,
+            "iesNormalize": false
+          },
+          "properties": {
+            "textureFormat": "automatic",
+            "guideRadius": 100000,
+            "textureFile": "./hdri/studio_4k.exr"
+          }
+        },
+        {
+          "name": "ControlledLight",
+          "abs_path": "/Scene/Lights/ControlledLight",
+          "type": "Point",
+          "color": [
+            1,
+            1,
+            1
+          ],
+          "intensity": 150,
+          "exposure": 0,
+          "diffuse": 1,
+          "specular": 1,
+          "normalize": false,
+          "enableColorTemperature": false,
+          "colorTemperature": 6500,
+          "shadow": {
+            "enable": true,
+            "color": [
+              0,
+              0,
+              0
+            ],
+            "distance": -1,
+            "falloff": -1,
+            "falloffGamma": 1
+          },
+          "shaping": {
+            "focus": 0,
+            "focusTint": [
+              0,
+              0,
+              0
+            ],
+            "coneAngle": 90,
+            "coneSoftness": 0,
+            "iesFile": "",
+            "iesAngleScale": 0,
+            "iesNormalize": false
+          },
+          "properties": {
+            "radius": 0.3
+          }
+        }
+      ],
+      "numAreaLightMeshes": 0,
+      "areaLightMeshes": []
+    },
+    {
+      "name": "Mesh Lights",
+      "file": "../../tests/usda/usdlux_mesh_lights_simple.usda",
+      "passed": true,
+      "error": null,
+      "numLights": 1,
+      "lights": [
+        {
+          "name": "StandardLight",
+          "abs_path": "/World/Lights/StandardLight",
+          "type": "Point",
+          "color": [
+            1,
+            1,
+            1
+          ],
+          "intensity": 75,
+          "exposure": 0,
+          "diffuse": 1,
+          "specular": 1,
+          "normalize": false,
+          "enableColorTemperature": false,
+          "colorTemperature": 6500,
+          "shadow": {
+            "enable": true,
+            "color": [
+              0,
+              0,
+              0
+            ],
+            "distance": -1,
+            "falloff": -1,
+            "falloffGamma": 1
+          },
+          "shaping": {
+            "focus": 0,
+            "focusTint": [
+              0,
+              0,
+              0
+            ],
+            "coneAngle": 90,
+            "coneSoftness": 0,
+            "iesFile": "",
+            "iesAngleScale": 0,
+            "iesNormalize": false
+          },
+          "properties": {
+            "radius": 0.3
+          }
+        }
+      ],
+      "numAreaLightMeshes": 2,
+      "areaLightMeshes": [
+        {
+          "name": "EmissiveCube",
+          "abs_path": "/World/Lights/EmissiveCube",
+          "lightColor": [
+            1,
+            0.800000011920929,
+            0.6000000238418579
+          ],
+          "lightIntensity": 50,
+          "lightExposure": 0,
+          "lightNormalize": true,
+          "lightMaterialSyncMode": "materialGlowTintsLight"
+        },
+        {
+          "name": "LightPanel",
+          "abs_path": "/World/Lights/LightPanel",
+          "lightColor": [
+            0.8999999761581421,
+            0.949999988079071,
+            1
+          ],
+          "lightIntensity": 100,
+          "lightExposure": 0,
+          "lightNormalize": false,
+          "lightMaterialSyncMode": "independent"
+        }
+      ]
+    },
+    {
+      "name": "Complete Scene",
+      "file": "../../tests/feat/lux/04_complete_scene.usda",
+      "passed": true,
+      "error": null,
+      "numLights": 2,
+      "lights": [
+        {
+          "name": "KeyLight",
+          "abs_path": "/Scene/Lights/KeyLightSetup/KeyLight",
+          "type": "Point",
+          "color": [
+            1,
+            0.95,
+            0.85
+          ],
+          "intensity": 8,
+          "exposure": 0,
+          "diffuse": 1,
+          "specular": 1,
+          "normalize": false,
+          "enableColorTemperature": false,
+          "colorTemperature": 6500,
+          "shadow": {
+            "enable": true,
+            "color": [
+              0,
+              0,
+              0
+            ],
+            "distance": -1,
+            "falloff": -1,
+            "falloffGamma": 1
+          },
+          "shaping": {
+            "focus": 0,
+            "focusTint": [
+              0,
+              0,
+              0
+            ],
+            "coneAngle": 90,
+            "coneSoftness": 0,
+            "iesFile": "",
+            "iesAngleScale": 0,
+            "iesNormalize": false
+          },
+          "properties": {
+            "radius": 0.5
+          }
+        },
+        {
+          "name": "EnvironmentLight",
+          "abs_path": "/Scene/Lights/EnvironmentLight",
+          "type": "Dome",
+          "color": [
+            0.4,
+            0.45,
+            0.5
+          ],
+          "intensity": 0.3,
+          "exposure": 0,
+          "diffuse": 1,
+          "specular": 1,
+          "normalize": false,
+          "enableColorTemperature": false,
+          "colorTemperature": 6500,
+          "shadow": {
+            "enable": true,
+            "color": [
+              0,
+              0,
+              0
+            ],
+            "distance": -1,
+            "falloff": -1,
+            "falloffGamma": 1
+          },
+          "shaping": {
+            "focus": 0,
+            "focusTint": [
+              0,
+              0,
+              0
+            ],
+            "coneAngle": 90,
+            "coneSoftness": 0,
+            "iesFile": "",
+            "iesAngleScale": 0,
+            "iesNormalize": false
+          },
+          "properties": {
+            "textureFormat": "automatic",
+            "guideRadius": 100000
+          }
+        }
+      ],
+      "numAreaLightMeshes": 0,
+      "areaLightMeshes": []
+    }
+  ]
+}
