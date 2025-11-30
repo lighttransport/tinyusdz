@@ -369,27 +369,33 @@ nonstd::expected<std::string, std::string> serializeLight(
 
     // Light type
     json << "\"type\": \"";
-    switch (light.lightType) {
-      case RenderLight::LightType::Point:
+    switch (light.type) {
+      case RenderLight::Type::Point:
         json << "Point";
         break;
-      case RenderLight::LightType::Directional:
-        json << "Directional";
+      case RenderLight::Type::Sphere:
+        json << "Sphere";
         break;
-      case RenderLight::LightType::Rect:
+      case RenderLight::Type::Distant:
+        json << "Distant";
+        break;
+      case RenderLight::Type::Rect:
         json << "Rect";
         break;
-      case RenderLight::LightType::Disk:
+      case RenderLight::Type::Disk:
         json << "Disk";
         break;
-      case RenderLight::LightType::Cylinder:
+      case RenderLight::Type::Cylinder:
         json << "Cylinder";
         break;
-      case RenderLight::LightType::Dome:
+      case RenderLight::Type::Dome:
         json << "Dome";
         break;
-      case RenderLight::LightType::Geometry:
+      case RenderLight::Type::Geometry:
         json << "Geometry";
+        break;
+      case RenderLight::Type::Portal:
+        json << "Portal";
         break;
     }
     json << "\",";
@@ -429,18 +435,19 @@ nonstd::expected<std::string, std::string> serializeLight(
     // Type-specific properties
     json << "\"properties\": {";
 
-    switch (light.lightType) {
-      case RenderLight::LightType::Point:
-      case RenderLight::LightType::Disk:
+    switch (light.type) {
+      case RenderLight::Type::Point:
+      case RenderLight::Type::Sphere:
+      case RenderLight::Type::Disk:
         json << "\"radius\": " << light.radius;
         break;
 
-      case RenderLight::LightType::Cylinder:
+      case RenderLight::Type::Cylinder:
         json << "\"radius\": " << light.radius << ",";
         json << "\"length\": " << light.length;
         break;
 
-      case RenderLight::LightType::Rect:
+      case RenderLight::Type::Rect:
         json << "\"width\": " << light.width << ",";
         json << "\"height\": " << light.height;
         if (!light.textureFile.empty()) {
@@ -448,11 +455,11 @@ nonstd::expected<std::string, std::string> serializeLight(
         }
         break;
 
-      case RenderLight::LightType::Directional:
+      case RenderLight::Type::Distant:
         json << "\"angle\": " << light.angle;
         break;
 
-      case RenderLight::LightType::Dome:
+      case RenderLight::Type::Dome:
         json << "\"textureFormat\": \"";
         switch (light.domeTextureFormat) {
           case RenderLight::DomeTextureFormat::Automatic:
@@ -475,7 +482,7 @@ nonstd::expected<std::string, std::string> serializeLight(
         }
         break;
 
-      case RenderLight::LightType::Geometry:
+      case RenderLight::Type::Geometry:
         json << "\"geometryMeshId\": " << light.geometry_mesh_id << ",";
         json << "\"materialSyncMode\": \"" << light.material_sync_mode << "\"";
 
@@ -486,6 +493,10 @@ nonstd::expected<std::string, std::string> serializeLight(
           json << ",\"meshName\": \"" << mesh.prim_name << "\"";
           json << ",\"meshPath\": \"" << mesh.abs_path << "\"";
         }
+        break;
+
+      case RenderLight::Type::Portal:
+        // Portal lights don't have special properties
         break;
     }
 
