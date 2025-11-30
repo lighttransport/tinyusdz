@@ -1,0 +1,650 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <title>TinyUSDZ UsdLux Light Demo</title>
+    <style>
+        * {
+            box-sizing: border-box;
+        }
+        body {
+            margin: 0;
+            overflow: hidden;
+            font-family: 'Segoe UI', Arial, sans-serif;
+            background: #1a1a2e;
+        }
+        canvas {
+            display: block;
+        }
+        #info {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            color: white;
+            background: rgba(0, 0, 0, 0.85);
+            padding: 15px;
+            border-radius: 8px;
+            font-size: 13px;
+            max-width: 380px;
+            max-height: calc(100vh - 40px);
+            overflow-y: auto;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+        #info h3 {
+            margin-top: 0;
+            margin-bottom: 12px;
+            color: #ffd700;
+            font-size: 16px;
+        }
+        #info p {
+            margin: 5px 0;
+            font-size: 12px;
+            color: #ccc;
+        }
+        #file-controls {
+            margin-top: 12px;
+            padding-top: 12px;
+            border-top: 1px solid rgba(255, 255, 255, 0.2);
+        }
+        #fileInput {
+            display: none;
+        }
+        .button {
+            display: inline-block;
+            padding: 8px 14px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 12px;
+            margin-right: 6px;
+            margin-bottom: 6px;
+            transition: all 0.2s;
+        }
+        .button:hover {
+            transform: translateY(-1px);
+            box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
+        }
+        .button.secondary {
+            background: linear-gradient(135deg, #11998e 0%, #38ef7d 100%);
+        }
+        .button.danger {
+            background: linear-gradient(135deg, #eb3349 0%, #f45c43 100%);
+        }
+        #light-info {
+            margin-top: 12px;
+            padding-top: 12px;
+            border-top: 1px solid rgba(255, 255, 255, 0.2);
+        }
+        #light-info h4 {
+            margin: 0 0 10px 0;
+            color: #6bb6ff;
+            font-size: 14px;
+        }
+        .light-list {
+            max-height: 300px;
+            overflow-y: auto;
+        }
+        .light-item {
+            padding: 10px;
+            margin: 6px 0;
+            background: rgba(255, 255, 255, 0.08);
+            border-radius: 6px;
+            border-left: 3px solid #ffd700;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        .light-item:hover {
+            background: rgba(255, 255, 255, 0.12);
+        }
+        .light-item.selected {
+            background: rgba(102, 126, 234, 0.3);
+            border-left-color: #667eea;
+        }
+        .light-item .light-name {
+            font-weight: bold;
+            color: #fff;
+            margin-bottom: 4px;
+        }
+        .light-item .light-type {
+            display: inline-block;
+            padding: 2px 8px;
+            background: rgba(255, 215, 0, 0.2);
+            color: #ffd700;
+            border-radius: 10px;
+            font-size: 10px;
+            text-transform: uppercase;
+            margin-left: 8px;
+        }
+        .light-item .light-details {
+            font-size: 11px;
+            color: #aaa;
+            margin-top: 4px;
+        }
+        .light-color-swatch {
+            display: inline-block;
+            width: 14px;
+            height: 14px;
+            border-radius: 3px;
+            vertical-align: middle;
+            margin-right: 6px;
+            border: 1px solid rgba(255, 255, 255, 0.3);
+        }
+        #loadingIndicator {
+            display: none;
+            color: #ffd700;
+            font-weight: bold;
+            margin-top: 8px;
+        }
+        #loadingIndicator.active {
+            display: block;
+        }
+        #drop-zone {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(102, 126, 234, 0.9);
+            display: none;
+            justify-content: center;
+            align-items: center;
+            z-index: 1000;
+        }
+        #drop-zone.active {
+            display: flex;
+        }
+        #drop-zone-content {
+            text-align: center;
+            color: white;
+        }
+        #drop-zone-content h2 {
+            font-size: 32px;
+            margin-bottom: 10px;
+        }
+        #drop-zone-content p {
+            font-size: 16px;
+            opacity: 0.8;
+        }
+        #scene-stats {
+            position: absolute;
+            bottom: 10px;
+            left: 10px;
+            color: white;
+            background: rgba(0, 0, 0, 0.7);
+            padding: 10px 15px;
+            border-radius: 6px;
+            font-size: 11px;
+        }
+        #scene-stats span {
+            margin-right: 15px;
+        }
+        .stat-label {
+            color: #888;
+        }
+        .stat-value {
+            color: #6bb6ff;
+            font-weight: bold;
+        }
+        #controls-info {
+            position: absolute;
+            bottom: 10px;
+            right: 10px;
+            color: white;
+            background: rgba(0, 0, 0, 0.7);
+            padding: 10px 15px;
+            border-radius: 6px;
+            font-size: 11px;
+            text-align: right;
+        }
+        #embedded-select, #tonemap-select {
+            width: 100%;
+            padding: 6px;
+            margin-bottom: 8px;
+            border-radius: 4px;
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            background: rgba(255, 255, 255, 0.1);
+            color: white;
+            font-size: 12px;
+        }
+        #embedded-select option, #tonemap-select option {
+            background: #1a1a2e;
+            color: white;
+        }
+        .settings-section {
+            margin-top: 12px;
+            padding-top: 12px;
+            border-top: 1px solid rgba(255, 255, 255, 0.2);
+        }
+        .settings-section h4 {
+            margin: 0 0 10px 0;
+            color: #95e06c;
+            font-size: 13px;
+        }
+        .setting-row {
+            display: flex;
+            align-items: center;
+            margin-bottom: 8px;
+        }
+        .setting-row label {
+            flex: 0 0 80px;
+            font-size: 11px;
+            color: #888;
+        }
+        .setting-row select, .setting-row input[type="range"] {
+            flex: 1;
+        }
+        .setting-value {
+            width: 45px;
+            text-align: right;
+            font-size: 11px;
+            color: #6bb6ff;
+            margin-left: 8px;
+        }
+        input[type="range"] {
+            -webkit-appearance: none;
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 4px;
+            height: 6px;
+        }
+        input[type="range"]::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            width: 14px;
+            height: 14px;
+            background: #667eea;
+            border-radius: 50%;
+            cursor: pointer;
+        }
+        .tonemap-info {
+            font-size: 10px;
+            color: #666;
+            margin-top: 4px;
+            font-style: italic;
+        }
+        #spectral-section {
+            margin-top: 12px;
+            padding-top: 12px;
+            border-top: 1px solid rgba(255, 255, 255, 0.2);
+        }
+        #spectral-section h4 {
+            margin: 0 0 10px 0;
+            color: #e066ff;
+            font-size: 13px;
+        }
+        #spectral-canvas {
+            width: 100%;
+            height: 120px;
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            border-radius: 4px;
+            margin-bottom: 8px;
+        }
+        #spectral-info {
+            font-size: 10px;
+            color: #aaa;
+            margin-top: 6px;
+            padding: 6px;
+            background: rgba(255, 255, 255, 0.05);
+            border-radius: 4px;
+        }
+        #spectral-info div {
+            margin-bottom: 2px;
+        }
+        #spectral-info strong {
+            color: #e066ff;
+        }
+        .wavelength-preview {
+            display: inline-block;
+            width: 20px;
+            height: 14px;
+            vertical-align: middle;
+            border-radius: 3px;
+            border: 1px solid rgba(255, 255, 255, 0.3);
+            margin-left: 8px;
+        }
+        #monochrome-controls {
+            display: none;
+        }
+        #monochrome-controls.visible {
+            display: block;
+        }
+    </style>
+</head>
+<body>
+    <div id="drop-zone">
+        <div id="drop-zone-content">
+            <h2>Drop USD File Here</h2>
+            <p>Supports .usd, .usda, .usdc, .usdz</p>
+        </div>
+    </div>
+
+    <div id="info">
+        <h3>UsdLux Light Demo</h3>
+        <p>
+            Visualize USD lights in Three.js.<br>
+            Drag & drop or use the button to load USD files.
+        </p>
+
+        <div id="file-controls">
+            <label for="embedded-select" style="font-size: 11px; color: #888;">Embedded Scenes:</label>
+            <select id="embedded-select">
+                <option value="basic">Basic Lights</option>
+                <option value="spotlight">Spotlight with IES</option>
+                <option value="area">Area Lights</option>
+                <option value="dome">Dome Light (IBL)</option>
+                <option value="complete" selected>Complete Scene</option>
+            </select>
+            <input type="file" id="fileInput" accept=".usd,.usda,.usdc,.usdz">
+            <button class="button" onclick="document.getElementById('fileInput').click()">Load USD File</button>
+            <button class="button secondary" onclick="window.loadEmbeddedScene()">Load Embedded</button>
+            <button class="button danger" onclick="window.clearLights()">Clear Lights</button>
+        </div>
+
+        <p>
+            <strong>Current:</strong> <span id="currentFile">Embedded Scene</span>
+            <span id="loadingIndicator">Loading...</span>
+        </p>
+
+        <div id="light-info">
+            <h4>Lights (<span id="lightCount">0</span>)</h4>
+            <div class="light-list" id="lightList">
+                <p style="color: #666; font-style: italic;">No lights loaded</p>
+            </div>
+        </div>
+
+        <div class="settings-section">
+            <h4>Display Settings</h4>
+            <div class="setting-row">
+                <label>Tone Map:</label>
+                <select id="tonemap-select">
+                    <option value="raw">Raw (Linear)</option>
+                    <option value="reinhard">Reinhard</option>
+                    <option value="aces1" selected>ACES 1.3</option>
+                    <option value="aces2">ACES 2.0</option>
+                    <option value="agx">AgX</option>
+                    <option value="neutral">Neutral</option>
+                </select>
+            </div>
+            <div class="tonemap-info" id="tonemap-info">Film-like response with highlight roll-off</div>
+            <div class="setting-row">
+                <label>Exposure:</label>
+                <input type="range" id="exposure-slider" min="-3" max="3" step="0.1" value="0">
+                <span class="setting-value" id="exposure-value">0.0 EV</span>
+            </div>
+            <div class="setting-row">
+                <label>Gamma:</label>
+                <input type="range" id="gamma-slider" min="1.0" max="3.0" step="0.1" value="2.2">
+                <span class="setting-value" id="gamma-value">2.2</span>
+            </div>
+        </div>
+
+        <div id="spectral-section">
+            <h4>Spectral Settings</h4>
+            <canvas id="spectral-canvas" width="340" height="120"></canvas>
+            <div class="setting-row">
+                <label>Color Mode:</label>
+                <select id="spectral-mode-select">
+                    <option value="rgb" selected>RGB (USD color)</option>
+                    <option value="spectral">Spectral (SPD to RGB)</option>
+                    <option value="monochrome">Monochrome</option>
+                </select>
+            </div>
+            <div id="monochrome-controls">
+                <div class="setting-row">
+                    <label>Wavelength:</label>
+                    <input type="range" id="wavelength-slider" min="380" max="780" step="1" value="550">
+                    <span class="setting-value" id="wavelength-value">550nm</span>
+                    <span class="wavelength-preview" id="wavelength-preview"></span>
+                </div>
+            </div>
+            <div style="margin-top: 8px;">
+                <button class="button" style="font-size: 10px; padding: 5px 10px;" onclick="window.applyDemoSpectralData()">Apply Demo SPD</button>
+            </div>
+            <div class="setting-row" style="margin-top: 8px;">
+                <label>Blackbody:</label>
+                <input type="range" id="blackbody-slider" min="1000" max="10000" step="100" value="5500">
+                <span class="setting-value" id="blackbody-value">5500K</span>
+            </div>
+            <div id="spectral-info">
+                <span style="color: #666;">Select a light to view spectral data</span>
+            </div>
+        </div>
+    </div>
+
+    <div id="scene-stats">
+        <span><span class="stat-label">Lights:</span> <span class="stat-value" id="statLights">0</span></span>
+        <span><span class="stat-label">Meshes:</span> <span class="stat-value" id="statMeshes">1</span></span>
+        <span><span class="stat-label">FPS:</span> <span class="stat-value" id="statFPS">60</span></span>
+    </div>
+
+    <div id="controls-info">
+        <strong>Controls:</strong><br>
+        Left-click + drag: Rotate<br>
+        Right-click + drag: Pan<br>
+        Scroll: Zoom
+    </div>
+
+    <script type="module">
+        // Handle file upload
+        document.getElementById('fileInput').addEventListener('change', async (event) => {
+            const file = event.target.files[0];
+            if (!file) return;
+
+            document.getElementById('loadingIndicator').classList.add('active');
+            document.getElementById('currentFile').textContent = file.name;
+
+            const customEvent = new CustomEvent('loadUSDFile', { detail: { file } });
+            window.dispatchEvent(customEvent);
+
+            event.target.value = '';
+        });
+
+        // Drag and drop handling
+        const dropZone = document.getElementById('drop-zone');
+
+        ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(eventName => {
+            document.body.addEventListener(eventName, (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+            });
+        });
+
+        document.body.addEventListener('dragenter', () => {
+            dropZone.classList.add('active');
+        });
+
+        dropZone.addEventListener('dragleave', (e) => {
+            if (e.target === dropZone) {
+                dropZone.classList.remove('active');
+            }
+        });
+
+        dropZone.addEventListener('drop', (e) => {
+            dropZone.classList.remove('active');
+
+            const files = e.dataTransfer.files;
+            if (files.length > 0) {
+                const file = files[0];
+                const ext = file.name.toLowerCase().split('.').pop();
+
+                if (['usd', 'usda', 'usdc', 'usdz'].includes(ext)) {
+                    document.getElementById('loadingIndicator').classList.add('active');
+                    document.getElementById('currentFile').textContent = file.name;
+
+                    const customEvent = new CustomEvent('loadUSDFile', { detail: { file } });
+                    window.dispatchEvent(customEvent);
+                } else {
+                    alert('Please drop a USD file (.usd, .usda, .usdc, .usdz)');
+                }
+            }
+        });
+
+        // Global functions
+        window.hideLoadingIndicator = function() {
+            document.getElementById('loadingIndicator').classList.remove('active');
+        };
+
+        window.updateLightList = function(lights) {
+            const lightList = document.getElementById('lightList');
+            const lightCount = document.getElementById('lightCount');
+            const statLights = document.getElementById('statLights');
+
+            lightCount.textContent = lights.length;
+            statLights.textContent = lights.length;
+
+            if (lights.length === 0) {
+                lightList.innerHTML = '<p style="color: #666; font-style: italic;">No lights loaded</p>';
+                return;
+            }
+
+            lightList.innerHTML = '';
+
+            lights.forEach((light, index) => {
+                const item = document.createElement('div');
+                item.className = 'light-item';
+                item.dataset.index = index;
+
+                const colorHex = light.color ?
+                    `#${Math.round(light.color[0] * 255).toString(16).padStart(2, '0')}${Math.round(light.color[1] * 255).toString(16).padStart(2, '0')}${Math.round(light.color[2] * 255).toString(16).padStart(2, '0')}`
+                    : '#ffffff';
+
+                let details = `Intensity: ${(light.intensity || 1).toFixed(2)}`;
+                if (light.exposure && light.exposure !== 0) {
+                    details += ` | Exp: ${light.exposure.toFixed(1)} EV`;
+                }
+                if (light.radius && light.type !== 'distant' && light.type !== 'dome') {
+                    details += ` | R: ${light.radius.toFixed(2)}`;
+                }
+                if (light.type === 'rect' && light.width && light.height) {
+                    details += ` | ${light.width.toFixed(1)}x${light.height.toFixed(1)}`;
+                }
+                if (light.shapingConeAngle && light.shapingConeAngle < 90) {
+                    details += ` | Cone: ${light.shapingConeAngle.toFixed(0)}`;
+                }
+
+                // Spectral indicator
+                const hasSpectral = light.spectralEmission &&
+                    ((light.spectralEmission.samples && light.spectralEmission.samples.length > 0) ||
+                     (light.spectralEmission.preset && light.spectralEmission.preset !== 'none'));
+                const spectralBadge = hasSpectral ?
+                    '<span style="background: linear-gradient(90deg, #ff0000, #ff7f00, #ffff00, #00ff00, #0000ff, #8b00ff); -webkit-background-clip: text; -webkit-text-fill-color: transparent; font-size: 9px; margin-left: 5px;">SPD</span>' : '';
+
+                item.innerHTML = `
+                    <div class="light-name">
+                        <span class="light-color-swatch" style="background: ${colorHex}"></span>
+                        ${light.name || 'Light ' + index}
+                        <span class="light-type">${light.type || 'unknown'}</span>
+                        ${spectralBadge}
+                    </div>
+                    <div class="light-details">${details}</div>
+                `;
+
+                item.addEventListener('click', () => {
+                    // Remove selected from all items
+                    lightList.querySelectorAll('.light-item').forEach(i => i.classList.remove('selected'));
+                    item.classList.add('selected');
+
+                    // Focus camera on this light
+                    window.focusOnLight(index);
+
+                    // Select light for spectral display
+                    if (window.selectLightForSpectral) {
+                        window.selectLightForSpectral(index);
+                    }
+                });
+
+                lightList.appendChild(item);
+            });
+        };
+
+        // Embedded scene selector
+        document.getElementById('embedded-select').addEventListener('change', (e) => {
+            window.loadEmbeddedScene(e.target.value);
+        });
+
+        // Tone mapping descriptions
+        const tonemapDescriptions = {
+            'raw': 'No tone mapping - linear HDR values clamped',
+            'reinhard': 'Simple curve, preserves detail in highlights',
+            'aces1': 'ACES 1.3 - Film-like response with highlight roll-off',
+            'aces2': 'ACES 2.0 - Improved gamut mapping and desaturation',
+            'agx': 'AgX - Modern filmic look, similar to Blender',
+            'neutral': 'Neutral - Balanced tone curve for general use'
+        };
+
+        // Tone mapping selector
+        document.getElementById('tonemap-select').addEventListener('change', (e) => {
+            const value = e.target.value;
+            window.setToneMapping(value);
+            document.getElementById('tonemap-info').textContent = tonemapDescriptions[value] || '';
+        });
+
+        // Exposure slider
+        document.getElementById('exposure-slider').addEventListener('input', (e) => {
+            const value = parseFloat(e.target.value);
+            document.getElementById('exposure-value').textContent = value.toFixed(1) + ' EV';
+            window.setExposure(value);
+        });
+
+        // Gamma slider
+        document.getElementById('gamma-slider').addEventListener('input', (e) => {
+            const value = parseFloat(e.target.value);
+            document.getElementById('gamma-value').textContent = value.toFixed(1);
+            window.setGamma(value);
+        });
+
+        // Spectral mode selector
+        document.getElementById('spectral-mode-select').addEventListener('change', (e) => {
+            const mode = e.target.value;
+            window.setSpectralMode(mode);
+
+            // Show/hide monochrome controls
+            const monoControls = document.getElementById('monochrome-controls');
+            if (mode === 'monochrome') {
+                monoControls.classList.add('visible');
+                updateWavelengthPreview(parseInt(document.getElementById('wavelength-slider').value));
+            } else {
+                monoControls.classList.remove('visible');
+            }
+        });
+
+        // Wavelength slider for monochrome mode
+        document.getElementById('wavelength-slider').addEventListener('input', (e) => {
+            const wavelength = parseInt(e.target.value);
+            document.getElementById('wavelength-value').textContent = wavelength + 'nm';
+            updateWavelengthPreview(wavelength);
+            window.setMonochromeWavelength(wavelength);
+        });
+
+        // Update wavelength preview color
+        function updateWavelengthPreview(wavelength) {
+            const rgb = window.wavelengthToRGB ? window.wavelengthToRGB(wavelength) : { r: 0.5, g: 0.5, b: 0.5 };
+            const preview = document.getElementById('wavelength-preview');
+            if (preview) {
+                preview.style.backgroundColor = `rgb(${Math.round(rgb.r * 255)}, ${Math.round(rgb.g * 255)}, ${Math.round(rgb.b * 255)})`;
+            }
+        }
+
+        // Initialize wavelength preview
+        setTimeout(() => {
+            updateWavelengthPreview(550);
+        }, 500);
+
+        // Blackbody temperature slider
+        document.getElementById('blackbody-slider').addEventListener('input', (e) => {
+            const temp = parseInt(e.target.value);
+            document.getElementById('blackbody-value').textContent = temp + 'K';
+        });
+
+        // Apply blackbody on slider change end
+        document.getElementById('blackbody-slider').addEventListener('change', (e) => {
+            const temp = parseInt(e.target.value);
+            if (window.applyBlackbodyToSelected) {
+                window.applyBlackbodyToSelected(temp);
+            }
+        });
+    </script>
+
+    <script type="module" src="./usdlux.js"></script>
+</body>
+</html>
