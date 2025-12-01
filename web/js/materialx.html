@@ -3,14 +3,19 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>TinyUSDZ MaterialX/OpenPBR Demo</title>
+    <title>TinyUSDZ MaterialX Demo</title>
     <style>
+        * {
+            box-sizing: border-box;
+        }
+
         body {
             margin: 0;
             padding: 0;
             overflow: hidden;
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
             background: #1a1a1a;
+            color: #fff;
         }
 
         #canvas-container {
@@ -19,63 +24,96 @@
             height: 100vh;
         }
 
-        #info {
+        #canvas-container.drag-over {
+            box-shadow: inset 0 0 50px rgba(33, 150, 243, 0.5);
+        }
+
+        #canvas-container.drag-over::after {
+            content: 'Drop USD file here';
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            font-size: 24px;
+            color: #2196F3;
+            pointer-events: none;
+            text-shadow: 0 2px 10px rgba(0,0,0,0.5);
+        }
+
+        #info-panel {
             position: absolute;
             top: 10px;
             left: 10px;
-            color: white;
-            background: rgba(0, 0, 0, 0.7);
-            padding: 10px;
-            border-radius: 5px;
-            font-size: 14px;
-            max-width: 400px;
-            z-index: 100;
+            background: rgba(0, 0, 0, 0.8);
+            padding: 15px;
+            border-radius: 8px;
+            min-width: 250px;
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
         }
 
-        #info h2 {
+        #info-panel h2 {
             margin: 0 0 10px 0;
-            font-size: 18px;
-            border-bottom: 1px solid #666;
-            padding-bottom: 5px;
+            font-size: 16px;
+            font-weight: 500;
+            color: #2196F3;
         }
 
-        #info .status {
-            margin: 5px 0;
+        #status {
+            font-size: 13px;
+            color: #999;
+            margin-bottom: 10px;
+            padding-bottom: 10px;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.1);
         }
 
-        #info .status.success {
+        #model-info {
+            display: none;
+            font-size: 12px;
+            line-height: 1.8;
+        }
+
+        #model-info span {
             color: #4CAF50;
+            font-weight: 500;
         }
 
-        #info .status.error {
-            color: #f44336;
-        }
-
-        #file-input-container {
+        #toolbar {
             position: absolute;
             top: 10px;
-            right: 10px;
-            z-index: 100;
-        }
-
-        #file-input {
-            display: none;
+            left: 50%;
+            transform: translateX(-50%);
+            display: flex;
+            gap: 10px;
+            background: rgba(0, 0, 0, 0.8);
+            padding: 10px 15px;
+            border-radius: 8px;
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
         }
 
         .btn {
             background: #2196F3;
             color: white;
             border: none;
-            padding: 10px 20px;
+            padding: 8px 16px;
             border-radius: 5px;
             cursor: pointer;
-            font-size: 14px;
-            transition: background 0.3s;
-            margin: 0 5px;
+            font-size: 13px;
+            font-weight: 500;
+            transition: all 0.2s;
+            display: flex;
+            align-items: center;
+            gap: 6px;
         }
 
         .btn:hover {
             background: #1976D2;
+            transform: translateY(-1px);
+        }
+
+        .btn:active {
+            transform: translateY(0);
         }
 
         .btn.secondary {
@@ -86,6 +124,60 @@
             background: #388E3C;
         }
 
+        .btn.warning {
+            background: #FF9800;
+        }
+
+        .btn.warning:hover {
+            background: #F57C00;
+        }
+
+        #file-input {
+            display: none;
+        }
+
+        /* Help overlay */
+        #help-overlay {
+            position: absolute;
+            bottom: 10px;
+            left: 10px;
+            background: rgba(0, 0, 0, 0.7);
+            padding: 10px 15px;
+            border-radius: 5px;
+            font-size: 11px;
+            color: #888;
+            line-height: 1.6;
+        }
+
+        #help-overlay kbd {
+            background: rgba(255, 255, 255, 0.1);
+            padding: 2px 6px;
+            border-radius: 3px;
+            font-family: monospace;
+        }
+
+        /* Toast notifications */
+        #toast {
+            position: fixed;
+            bottom: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: rgba(0, 0, 0, 0.9);
+            color: white;
+            padding: 12px 24px;
+            border-radius: 8px;
+            font-size: 14px;
+            opacity: 0;
+            transition: opacity 0.3s;
+            pointer-events: none;
+            z-index: 1000;
+        }
+
+        #toast.visible {
+            opacity: 1;
+        }
+
+        /* Loading overlay */
         #loading-overlay {
             position: fixed;
             top: 0;
@@ -96,1182 +188,106 @@
             display: none;
             justify-content: center;
             align-items: center;
-            z-index: 1000;
+            z-index: 9999;
         }
 
-        .loading-spinner {
-            border: 4px solid #f3f3f3;
-            border-top: 4px solid #2196F3;
+        #loading-overlay.visible {
+            display: flex;
+        }
+
+        .spinner {
+            width: 50px;
+            height: 50px;
+            border: 3px solid rgba(255, 255, 255, 0.1);
+            border-top-color: #2196F3;
             border-radius: 50%;
-            width: 40px;
-            height: 40px;
             animation: spin 1s linear infinite;
         }
 
         @keyframes spin {
-            0% { transform: rotate(0deg); }
-            100% { transform: rotate(360deg); }
+            to { transform: rotate(360deg); }
         }
 
-        #material-panel {
-            position: absolute;
-            bottom: 10px;
-            left: 10px;
-            background: rgba(0, 0, 0, 0.8);
-            color: white;
-            padding: 10px;
-            border-radius: 5px;
-            font-size: 12px;
-            max-height: 300px;
-            overflow-y: auto;
-            z-index: 100;
-            min-width: 250px;
-        }
-
-        #material-panel h3 {
-            margin: 0 0 10px 0;
-            font-size: 14px;
-            border-bottom: 1px solid #666;
-            padding-bottom: 5px;
-        }
-
-        .material-item {
-            padding: 5px;
-            cursor: pointer;
-            border: 1px solid transparent;
-            margin: 2px 0;
-            transition: background 0.3s;
-        }
-
-        .material-item:hover {
-            background: rgba(255, 255, 255, 0.1);
-        }
-
-        .material-item.selected {
-            background: rgba(33, 150, 243, 0.3);
-            border-color: #2196F3;
-        }
-
-        /* Override dat.GUI styling for better integration */
-        .dg.ac {
-            z-index: 200 !important;
-        }
-
-        .dg .property-name {
-            width: 45% !important;
-        }
-
-        .dg .c {
-            width: 55% !important;
-        }
-
-        /* Floatable Controls Panel */
-        #controls-wrapper {
-            position: absolute;
-            top: 150px;
-            right: 10px;
-            z-index: 200;
-            background: rgba(0, 0, 0, 0.85);
-            border-radius: 5px;
-            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
-            overflow: visible;
-            min-width: 350px;
-            max-width: 600px;
-        }
-
-        #controls-wrapper.minimized .lil-gui {
-            display: none;
-        }
-
-        #controls-header {
-            background: linear-gradient(135deg, #2196F3 0%, #1976D2 100%);
-            color: white;
-            padding: 8px 12px;
-            cursor: move;
-            user-select: none;
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            font-size: 13px;
-            font-weight: 500;
-            border-bottom: 1px solid rgba(255, 255, 255, 0.1);
-            position: relative;
-            z-index: 1;
-        }
-
-        #controls-header:active {
-            cursor: grabbing;
-        }
-
-        #controls-title {
-            display: flex;
-            align-items: center;
-            gap: 8px;
-        }
-
-        #controls-buttons {
-            display: flex;
-            gap: 5px;
-        }
-
-        .control-btn {
-            background: rgba(255, 255, 255, 0.2);
-            border: none;
-            color: white;
-            width: 24px;
-            height: 24px;
-            border-radius: 3px;
-            cursor: pointer;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-size: 14px;
-            transition: background 0.2s;
-        }
-
-        .control-btn:hover {
-            background: rgba(255, 255, 255, 0.3);
-        }
-
-        .control-btn:active {
-            background: rgba(255, 255, 255, 0.4);
-        }
-
-        #controls-wrapper .lil-gui {
-            position: relative !important;
-            top: 0 !important;
-            right: 0 !important;
-            max-height: calc(100vh - 200px);
-            overflow-y: auto;
-            border-radius: 0 0 5px 5px;
-            z-index: 2;
-            pointer-events: auto;
-        }
-
-        #controls-wrapper .lil-gui * {
-            pointer-events: auto;
-        }
-
-        /* Override resize cursor when dragging */
-        #controls-wrapper.dragging,
-        #texture-panel-wrapper.dragging {
-            cursor: grabbing !important;
-        }
-
-        #controls-wrapper.dragging .lil-gui,
-        #controls-wrapper.dragging .lil-gui * {
-            cursor: default !important;
-        }
-
-        #texture-panel-wrapper.dragging * {
-            cursor: grabbing !important;
-        }
-
-        /* Floatable Texture Panel */
-        #texture-panel-wrapper {
-            resize: both;
-            min-width: 300px;
-            max-width: 600px;
-            z-index: 150;
-        }
-
-        #texture-panel-wrapper.minimized #texture-panel {
-            display: none;
-        }
-
-        #texture-panel-header:active {
-            cursor: grabbing;
-        }
-
-        /* Texture panel styling */
-        #texture-panel .texture-item {
-            margin: 10px 0;
-            padding: 10px;
-            background: rgba(255, 255, 255, 0.05);
-            border-radius: 3px;
-            border: 1px solid rgba(255, 255, 255, 0.1);
-        }
-
-        #texture-panel .texture-item.disabled {
-            opacity: 0.5;
-        }
-
-        #texture-panel .texture-header {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            margin-bottom: 8px;
-        }
-
-        #texture-panel .texture-name {
-            font-weight: bold;
-            color: #4CAF50;
-        }
-
-        #texture-panel .texture-toggle {
-            background: #2196F3;
-            color: white;
-            border: none;
-            padding: 3px 8px;
-            border-radius: 3px;
-            cursor: pointer;
-            font-size: 10px;
-        }
-
-        #texture-panel .texture-toggle:hover {
-            background: #1976D2;
-        }
-
-        #texture-panel .texture-toggle.disabled {
-            background: #666;
-        }
-
-        #texture-panel .texture-preview {
-            width: 100%;
-            max-width: 200px;
-            height: auto;
-            border-radius: 3px;
-            margin-top: 5px;
-            cursor: pointer;
-            border: 2px solid transparent;
-            transition: border-color 0.3s;
-        }
-
-        #texture-panel .texture-preview:hover {
-            border-color: #2196F3;
-        }
-
-        #texture-panel .texture-info {
-            margin-top: 5px;
-            font-size: 10px;
-            color: #999;
-        }
-
-        #texture-panel .texture-colorspace {
-            margin-top: 8px;
-            padding-top: 8px;
-            border-top: 1px solid rgba(255, 255, 255, 0.1);
-        }
-
-        #texture-panel .texture-colorspace select {
-            font-size: 10px;
-            padding: 3px 6px;
-            background: #333;
-            color: white;
-            border: 1px solid #555;
-            border-radius: 3px;
-            cursor: pointer;
-            transition: border-color 0.3s;
-        }
-
-        #texture-panel .texture-colorspace select:hover {
-            border-color: #2196F3;
-        }
-
-        #texture-panel .texture-colorspace select:focus {
-            outline: none;
-            border-color: #2196F3;
-            box-shadow: 0 0 5px rgba(33, 150, 243, 0.5);
-        }
-
-        /* Node Graph Viewer Panel */
-        #node-graph-wrapper {
-            position: absolute;
-            top: 50%;
-            left: 50%;
-            transform: translate(-50%, -50%);
-            width: 80vw;
-            height: 80vh;
-            background: rgba(0, 0, 0, 0.95);
-            border-radius: 8px;
-            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.8);
-            display: none;
-            z-index: 300;
-            flex-direction: column;
-        }
-
-        #node-graph-wrapper.visible {
-            display: flex;
-        }
-
-        #node-graph-header {
-            background: linear-gradient(135deg, #673AB7 0%, #512DA8 100%);
-            color: white;
-            padding: 12px 16px;
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            border-radius: 8px 8px 0 0;
-            border-bottom: 1px solid rgba(255, 255, 255, 0.1);
-        }
-
-        #node-graph-header h3 {
-            margin: 0;
-            font-size: 16px;
-            font-weight: 500;
-            display: flex;
-            align-items: center;
-            gap: 10px;
-        }
-
-        #node-graph-buttons {
-            display: flex;
-            gap: 8px;
-        }
-
-        #node-graph-buttons button {
-            background: rgba(255, 255, 255, 0.2);
-            border: none;
-            color: white;
-            padding: 6px 12px;
+        /* Material type badge */
+        .material-type-badge {
+            display: inline-block;
+            padding: 2px 8px;
             border-radius: 4px;
-            cursor: pointer;
-            font-size: 12px;
-            transition: background 0.2s;
+            font-size: 10px;
+            font-weight: 600;
+            text-transform: uppercase;
+            margin-left: 8px;
         }
 
-        #node-graph-buttons button:hover {
-            background: rgba(255, 255, 255, 0.3);
-        }
-
-        #node-graph-container {
-            flex: 1;
-            position: relative;
-            background: #1a1a1a;
-            border-radius: 0 0 8px 8px;
-            overflow: hidden;
-        }
-
-        #node-graph-canvas {
-            width: 100%;
-            height: 100%;
-        }
-
-        #node-graph-info {
-            position: absolute;
-            bottom: 10px;
-            left: 10px;
-            background: rgba(0, 0, 0, 0.7);
+        .material-type-badge.openpbr {
+            background: #9C27B0;
             color: white;
-            padding: 8px 12px;
-            border-radius: 4px;
-            font-size: 11px;
-            font-family: monospace;
-            pointer-events: none;
         }
 
-        /* Button to open node graph */
-        .btn.node-graph {
-            background: #673AB7;
-        }
-
-        .btn.node-graph:hover {
-            background: #512DA8;
-        }
-
-        /* LiteGraph overrides for better styling */
-        .litegraph {
-            background: #1a1a1a !important;
-        }
-
-        .litegraph .node {
-            border-radius: 4px !important;
-        }
-
-        .litegraph .node.selected {
-            box-shadow: 0 0 10px rgba(103, 58, 183, 0.8) !important;
-        }
-
-        /* Material JSON Viewer Panel */
-        #material-json-wrapper {
-            position: absolute;
-            top: 50%;
-            left: 50%;
-            transform: translate(-50%, -50%);
-            width: 70vw;
-            max-width: 900px;
-            height: 70vh;
-            background: rgba(0, 0, 0, 0.95);
-            border-radius: 8px;
-            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.8);
-            display: none;
-            z-index: 350;
-            flex-direction: column;
-        }
-
-        #material-json-wrapper.visible {
-            display: flex;
-        }
-
-        #material-json-header {
-            background: linear-gradient(135deg, #FF9800 0%, #F57C00 100%);
-            color: white;
-            padding: 12px 16px;
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            border-radius: 8px 8px 0 0;
-            border-bottom: 1px solid rgba(255, 255, 255, 0.1);
-        }
-
-        #material-json-header h3 {
-            margin: 0;
-            font-size: 16px;
-            font-weight: 500;
-            display: flex;
-            align-items: center;
-            gap: 10px;
-        }
-
-        #material-json-buttons {
-            display: flex;
-            gap: 8px;
-        }
-
-        #material-json-buttons button {
-            background: rgba(255, 255, 255, 0.2);
-            border: none;
-            color: white;
-            padding: 6px 12px;
-            border-radius: 4px;
-            cursor: pointer;
-            font-size: 12px;
-            transition: background 0.2s;
-        }
-
-        #material-json-buttons button:hover {
-            background: rgba(255, 255, 255, 0.3);
-        }
-
-        #material-json-tabs {
-            background: #2a2a2a;
-            padding: 8px 16px;
-            display: flex;
-            gap: 8px;
-            border-bottom: 1px solid #444;
-        }
-
-        .material-json-tab {
-            padding: 6px 16px;
-            background: transparent;
-            border: none;
-            color: #999;
-            cursor: pointer;
-            border-radius: 4px 4px 0 0;
-            font-size: 13px;
-            transition: all 0.2s;
-        }
-
-        .material-json-tab:hover {
-            background: rgba(255, 255, 255, 0.05);
-            color: #fff;
-        }
-
-        .material-json-tab.active {
-            background: #1a1a1a;
-            color: #FF9800;
-            font-weight: 500;
-        }
-
-        #material-json-container {
-            flex: 1;
-            position: relative;
-            background: #1a1a1a;
-            border-radius: 0 0 8px 8px;
-            overflow: hidden;
-            display: flex;
-            flex-direction: column;
-        }
-
-        .material-json-content {
-            flex: 1;
-            overflow: auto;
-            padding: 16px;
-            font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
-            font-size: 12px;
-            line-height: 1.6;
-            display: none;
-        }
-
-        .material-json-content.active {
-            display: block;
-        }
-
-        .material-json-content pre {
-            margin: 0;
-            color: #e0e0e0;
-            white-space: pre-wrap;
-            word-wrap: break-word;
-        }
-
-        /* JSON Syntax Highlighting */
-        .json-key {
-            color: #79B8FF;
-        }
-
-        .json-string {
-            color: #9ECBFF;
-        }
-
-        .json-number {
-            color: #F97583;
-        }
-
-        .json-boolean {
-            color: #FFAB70;
-        }
-
-        .json-null {
-            color: #B392F0;
-        }
-
-        /* Button to open JSON viewer */
-        .btn.json-viewer {
+        .material-type-badge.usdpreview {
             background: #FF9800;
-        }
-
-        .btn.json-viewer:hover {
-            background: #F57C00;
-        }
-
-        /* Color Picker Panel */
-        #color-picker-panel {
-            position: absolute;
-            top: 100px;
-            left: 10px;
-            background: rgba(0, 0, 0, 0.85);
             color: white;
-            padding: 12px;
-            border-radius: 5px;
-            font-size: 12px;
-            z-index: 150;
-            min-width: 220px;
-            display: none;
-            border: 2px solid #00BCD4;
         }
 
-        #color-picker-panel.active {
-            display: block;
-        }
-
-        #color-picker-panel h4 {
-            margin: 0 0 10px 0;
-            font-size: 13px;
-            color: #00BCD4;
-            border-bottom: 1px solid #00BCD4;
-            padding-bottom: 5px;
-        }
-
-        #color-picker-panel .picker-mode {
-            background: rgba(0, 188, 212, 0.2);
-            padding: 6px;
-            border-radius: 3px;
-            margin-bottom: 10px;
-            text-align: center;
-            font-size: 11px;
-            color: #00BCD4;
-            font-weight: 500;
-        }
-
-        #color-picker-panel .color-display {
-            display: flex;
-            gap: 10px;
-            margin-bottom: 10px;
-        }
-
-        #color-picker-panel .color-swatch {
-            width: 60px;
-            height: 60px;
-            border-radius: 4px;
-            border: 2px solid #666;
-            flex-shrink: 0;
-        }
-
-        #color-picker-panel .color-values {
-            flex: 1;
-            font-family: 'Consolas', 'Monaco', monospace;
-            font-size: 11px;
-            line-height: 1.5;
-        }
-
-        #color-picker-panel .color-value-row {
-            display: flex;
-            justify-content: space-between;
-            margin-bottom: 3px;
-        }
-
-        #color-picker-panel .color-label {
-            color: #999;
-            min-width: 45px;
-        }
-
-        #color-picker-panel .color-value {
-            color: #0ff;
-            font-weight: 500;
-            font-family: 'Consolas', 'Monaco', monospace;
-        }
-
-        #color-picker-panel .picker-info {
-            font-size: 10px;
-            color: #666;
-            margin-top: 8px;
-            padding-top: 8px;
-            border-top: 1px solid #333;
-        }
-
-        #color-picker-panel .copy-buttons {
-            display: flex;
-            gap: 5px;
-            margin-top: 8px;
-        }
-
-        #color-picker-panel .copy-btn {
-            flex: 1;
-            background: #00BCD4;
+        .material-type-badge.both {
+            background: linear-gradient(90deg, #9C27B0, #FF9800);
             color: white;
-            border: none;
-            padding: 4px 8px;
-            border-radius: 3px;
-            cursor: pointer;
-            font-size: 10px;
-            transition: background 0.2s;
         }
 
-        #color-picker-panel .copy-btn:hover {
-            background: #0097A7;
-        }
+        /* Responsive adjustments */
+        @media (max-width: 768px) {
+            #toolbar {
+                flex-wrap: wrap;
+                max-width: 90%;
+            }
 
-        #color-picker-panel .copy-btn:active {
-            background: #00838F;
-        }
-
-        /* Material Property Picker Panel */
-        #material-property-panel {
-            position: absolute;
-            top: 100px;
-            right: 10px;
-            background: rgba(0, 0, 0, 0.85);
-            color: white;
-            padding: 12px;
-            border-radius: 5px;
-            z-index: 120;
-            min-width: 260px;
-            display: none;
-            border: 2px solid #9C27B0;
-        }
-
-        #material-property-panel.active {
-            display: block;
-        }
-
-        #material-property-panel h4 {
-            margin: 0 0 10px 0;
-            font-size: 13px;
-            color: #9C27B0;
-            border-bottom: 1px solid #9C27B0;
-            padding-bottom: 5px;
-        }
-
-        #material-property-panel .picker-mode {
-            background: rgba(156, 39, 176, 0.2);
-            padding: 6px;
-            border-radius: 3px;
-            margin-bottom: 10px;
-            text-align: center;
-            font-size: 10px;
-            color: #CE93D8;
-            font-weight: 500;
-        }
-
-        #material-property-panel .property-display {
-            display: flex;
-            flex-direction: column;
-            gap: 10px;
-            margin-bottom: 10px;
-        }
-
-        #material-property-panel .property-section {
-            background: rgba(156, 39, 176, 0.1);
-            padding: 8px;
-            border-radius: 4px;
-            border: 1px solid rgba(156, 39, 176, 0.3);
-        }
-
-        #material-property-panel .property-section-title {
-            font-size: 11px;
-            color: #CE93D8;
-            font-weight: 600;
-            margin-bottom: 6px;
-            border-bottom: 1px solid rgba(156, 39, 176, 0.3);
-            padding-bottom: 3px;
-        }
-
-        #material-property-panel .color-display {
-            display: flex;
-            gap: 10px;
-        }
-
-        #material-property-panel .color-swatch {
-            width: 50px;
-            height: 50px;
-            border-radius: 4px;
-            border: 2px solid #666;
-            flex-shrink: 0;
-        }
-
-        #material-property-panel .color-values {
-            flex: 1;
-            font-family: 'Consolas', 'Monaco', monospace;
-            font-size: 10px;
-            line-height: 1.4;
-        }
-
-        #material-property-panel .color-value-row {
-            display: flex;
-            justify-content: space-between;
-            margin-bottom: 2px;
-        }
-
-        #material-property-panel .color-label {
-            color: #999;
-            min-width: 45px;
-        }
-
-        #material-property-panel .color-value {
-            color: #CE93D8;
-            font-weight: 500;
-            font-family: 'Consolas', 'Monaco', monospace;
-        }
-
-        #material-property-panel .property-value-row {
-            display: flex;
-            justify-content: space-between;
-            margin-bottom: 4px;
-            font-size: 11px;
-        }
-
-        #material-property-panel .property-label {
-            color: #999;
-        }
-
-        #material-property-panel .property-value {
-            color: #CE93D8;
-            font-weight: 600;
-            font-family: 'Consolas', 'Monaco', monospace;
-        }
-
-        #material-property-panel .copy-buttons {
-            display: flex;
-            gap: 4px;
-            margin-top: 8px;
-        }
-
-        #material-property-panel .copy-btn {
-            flex: 1;
-            background: #9C27B0;
-            color: white;
-            border: none;
-            padding: 4px 6px;
-            border-radius: 3px;
-            cursor: pointer;
-            font-size: 9px;
-            transition: background 0.2s;
-            white-space: nowrap;
-        }
-
-        #material-property-panel .copy-btn:hover {
-            background: #7B1FA2;
-        }
-
-        #material-property-panel .copy-btn:active {
-            background: #6A1B9A;
-        }
-
-        #material-property-panel .picker-info {
-            font-size: 10px;
-            color: #666;
-            margin-top: 8px;
-            padding-top: 8px;
-            border-top: 1px solid #333;
-        }
-
-        /* Material property picker toggle button */
-        .btn.material-property-picker {
-            background: #9C27B0;
-        }
-
-        .btn.material-property-picker:hover {
-            background: #7B1FA2;
-        }
-
-        .btn.material-property-picker.active {
-            background: #6A1B9A;
-            box-shadow: 0 0 10px rgba(156, 39, 176, 0.5);
-        }
-
-        /* Material property picker cursor mode */
-        body.material-property-picker-mode * {
-            cursor: crosshair !important;
-        }
-
-        /* Color picker toggle button */
-        .btn.color-picker {
-            background: #00BCD4;
-        }
-
-        .btn.color-picker:hover {
-            background: #0097A7;
-        }
-
-        .btn.color-picker.active {
-            background: #00838F;
-            box-shadow: inset 0 2px 4px rgba(0,0,0,0.3);
-        }
-
-        /* Color picker cursor */
-        body.color-picker-mode {
-            cursor: crosshair !important;
-        }
-
-        body.color-picker-mode * {
-            cursor: crosshair !important;
+            #info-panel {
+                max-width: calc(100% - 20px);
+            }
         }
     </style>
-
-    <!-- LiteGraph.js CSS -->
-    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/litegraph.js@0.7.0/css/litegraph.css">
 </head>
 <body>
     <div id="canvas-container"></div>
 
-    <div id="info">
-        <h2>TinyUSDZ MaterialX/OpenPBR Demo</h2>
-        <div id="status" class="status">Loading WASM module...</div>
-        <div id="model-info" style="display: none;">
-            <div>Objects: <span id="object-count">0</span></div>
+    <!-- Info Panel -->
+    <div id="info-panel">
+        <h2>TinyUSDZ MaterialX Demo</h2>
+        <div id="status">Initializing...</div>
+        <div id="model-info">
+            <div>Meshes: <span id="mesh-count">0</span></div>
             <div>Materials: <span id="material-count">0</span></div>
-            <div>Selected: <span id="selected-object">None</span></div>
-        </div>
-        <div id="scene-metadata" style="display: none; margin-top: 10px; padding-top: 10px; border-top: 1px solid #666;">
-            <h3 style="margin: 0 0 5px 0; font-size: 13px;">Scene Metadata</h3>
-            <div id="metadata-content" style="font-size: 11px; line-height: 1.6;"></div>
         </div>
     </div>
 
-    <div id="file-input-container">
-        <button class="btn" onclick="document.getElementById('file-input').click()">
-            Load USD File(TODO)
-        </button>
-        <button class="btn secondary" onclick="loadSampleModel()">
-            Load Sample(TODO)
-        </button>
-        <button class="btn" onclick="toggleEnvironment()">
-            Toggle HDR
-        </button>
-        <button class="btn" onclick="toggleBackgroundEnvmap()">
-            Toggle Envmap BG
-        </button>
-        <button class="btn" onclick="toggleFalseColor()">
-            False Color
-        </button>
-        <button class="btn" id="color-space-btn" onclick="toggleColorSpace()" style="display: none;">
-            Toggle P3(TODO)
-        </button>
-        <button class="btn" onclick="importMaterialXFile()" title="Import MaterialX XML file">
-            📥 Import MTLX(TODO)
-        </button>
-        <button class="btn" onclick="loadHDRTextureForMaterial()" title="Load HDR/EXR texture">
-            🖼️ Load Texture(TODO)
-        </button>
-        <button class="btn node-graph" onclick="toggleNodeGraph()" title="View MaterialX Node Graph">
-            🔗 Node Graph
-        </button>
-        <button class="btn json-viewer" onclick="toggleMaterialJSON()" title="View Material JSON Data">
-            📋 Material JSON
-        </button>
-        <button class="btn color-picker" id="color-picker-btn" onclick="toggleColorPicker()" title="Pick Color from Framebuffer">
-            🎨 Color Picker
-        </button>
-        <button class="btn material-property-picker" id="material-property-btn" onclick="toggleMaterialPropertyPicker()" title="Pick Material Properties (before lighting)">
-            🔍 Material Props
+    <!-- Toolbar -->
+    <div id="toolbar">
+        <button class="btn" onclick="loadFile()">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                <polyline points="17 8 12 3 7 8"/>
+                <line x1="12" y1="3" x2="12" y2="15"/>
+            </svg>
+            Load USD
         </button>
         <input type="file" id="file-input" accept=".usd,.usda,.usdc,.usdz">
     </div>
 
-    <div id="material-panel" style="display: none;">
-        <h3>Materials</h3>
-        <div id="material-list"></div>
-        <div id="material-export" style="display: none; margin-top: 15px; padding-top: 15px; border-top: 1px solid #666;">
-            <div style="font-size: 11px; color: #999; margin-bottom: 8px;">Export Selected Material:</div>
-            <button class="btn" style="width: 100%; margin-bottom: 5px; padding: 8px; font-size: 11px;" onclick="exportSelectedMaterialJSON()">
-                📄 Export JSON
-            </button>
-            <button class="btn" style="width: 100%; padding: 8px; font-size: 11px;" onclick="exportSelectedMaterialMTLX()">
-                📄 Export MaterialX (.mtlx)
-            </button>
-        </div>
+    <!-- Help Overlay -->
+    <div id="help-overlay">
+        <kbd>Drag & Drop</kbd> USD files to load |
+        <kbd>Scroll</kbd> to zoom |
+        <kbd>Drag</kbd> to orbit |
+        <kbd>Right-drag</kbd> to pan
     </div>
 
-    <div id="texture-panel-wrapper" style="display: none; position: absolute; bottom: 10px; right: 10px;">
-        <div id="texture-panel-header" style="background: linear-gradient(135deg, #4CAF50 0%, #388E3C 100%); color: white; padding: 8px 12px; cursor: move; user-select: none; display: flex; justify-content: space-between; align-items: center; font-size: 13px; font-weight: 500; border-radius: 5px 5px 0 0; border-bottom: 1px solid rgba(255, 255, 255, 0.1);">
-            <div style="display: flex; align-items: center; gap: 8px;">
-                <span>🖼️</span>
-                <span>Textures</span>
-            </div>
-            <div style="display: flex; gap: 5px;">
-                <button class="control-btn" id="texture-minimize-btn" style="background: rgba(255, 255, 255, 0.2); border: none; color: white; width: 24px; height: 24px; border-radius: 3px; cursor: pointer; display: flex; align-items: center; justify-content: center; font-size: 14px; transition: background 0.2s;">−</button>
-            </div>
-        </div>
-        <div id="texture-panel" style="background: rgba(0, 0, 0, 0.85); color: white; padding: 15px; border-radius: 0 0 5px 5px; font-size: 12px; max-width: 400px; max-height: 500px; overflow-y: auto; box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);">
-            <div id="texture-list"></div>
-        </div>
-    </div>
-
+    <!-- Loading Overlay -->
     <div id="loading-overlay">
-        <div class="loading-spinner"></div>
+        <div class="spinner"></div>
     </div>
 
-    <!-- Color Picker Panel -->
-    <div id="color-picker-panel">
-        <h4>🎨 Color Picker</h4>
-        <div class="picker-mode">Click anywhere to pick color</div>
-        <div class="color-display">
-            <div class="color-swatch" id="color-swatch"></div>
-            <div class="color-values">
-                <div class="color-value-row">
-                    <span class="color-label">RGB:</span>
-                    <span class="color-value" id="color-rgb">-</span>
-                </div>
-                <div class="color-value-row">
-                    <span class="color-label">Hex:</span>
-                    <span class="color-value" id="color-hex">-</span>
-                </div>
-                <div class="color-value-row">
-                    <span class="color-label">Float:</span>
-                    <span class="color-value" id="color-float">-</span>
-                </div>
-                <div class="color-value-row">
-                    <span class="color-label">Linear:</span>
-                    <span class="color-value" id="color-linear">-</span>
-                </div>
-            </div>
-        </div>
-        <div class="copy-buttons">
-            <button class="copy-btn" onclick="copyColorValue('rgb')">Copy RGB</button>
-            <button class="copy-btn" onclick="copyColorValue('hex')">Copy Hex</button>
-            <button class="copy-btn" onclick="copyColorValue('float')">Copy Float</button>
-        </div>
-        <div class="picker-info">
-            Position: <span id="color-position">-</span><br>
-            Click to toggle picker mode
-        </div>
-    </div>
-
-    <!-- Material Property Picker Panel -->
-    <div id="material-property-panel">
-        <h4>🔍 Material Properties</h4>
-        <div class="picker-mode">Click to pick material values (before lighting)</div>
-        <div class="property-display">
-            <div class="property-section">
-                <div class="property-section-title">Base Color (Texel)</div>
-                <div class="color-display">
-                    <div class="color-swatch" id="material-property-swatch"></div>
-                    <div class="color-values">
-                        <div class="color-value-row">
-                            <span class="color-label">RGB:</span>
-                            <span class="color-value" id="material-property-rgb">-</span>
-                        </div>
-                        <div class="color-value-row">
-                            <span class="color-label">Hex:</span>
-                            <span class="color-value" id="material-property-hex">-</span>
-                        </div>
-                        <div class="color-value-row">
-                            <span class="color-label">Float:</span>
-                            <span class="color-value" id="material-property-float">-</span>
-                        </div>
-                        <div class="color-value-row">
-                            <span class="color-label">Linear:</span>
-                            <span class="color-value" id="material-property-linear">-</span>
-                        </div>
-                    </div>
-                </div>
-            </div>
-            <div class="property-section">
-                <div class="property-section-title">Material Parameters</div>
-                <div class="property-value-row">
-                    <span class="property-label">Metalness:</span>
-                    <span class="property-value" id="material-property-metalness">-</span>
-                </div>
-                <div class="property-value-row">
-                    <span class="property-label">Roughness:</span>
-                    <span class="property-value" id="material-property-roughness">-</span>
-                </div>
-            </div>
-        </div>
-        <div class="copy-buttons">
-            <button class="copy-btn" onclick="copyMaterialProperty('rgb')">RGB</button>
-            <button class="copy-btn" onclick="copyMaterialProperty('hex')">Hex</button>
-            <button class="copy-btn" onclick="copyMaterialProperty('float')">Float</button>
-            <button class="copy-btn" onclick="copyMaterialProperty('linear')">Linear</button>
-        </div>
-        <div class="copy-buttons" style="margin-top: 5px;">
-            <button class="copy-btn" onclick="copyMaterialProperty('metalness')">Metalness</button>
-            <button class="copy-btn" onclick="copyMaterialProperty('roughness')">Roughness</button>
-            <button class="copy-btn" onclick="copyMaterialProperty('all')">All (JSON)</button>
-        </div>
-        <div class="picker-info">
-            Position: <span id="material-property-position">-</span><br>
-            Shows material values before lighting/IBL
-        </div>
-    </div>
-
-    <!-- Node Graph Viewer Panel -->
-    <div id="node-graph-wrapper">
-        <div id="node-graph-header">
-            <h3>
-                <span>🔗</span>
-                <span id="node-graph-title">MaterialX Node Graph</span>
-            </h3>
-            <div id="node-graph-buttons">
-                <button onclick="centerNodeGraph()">Center</button>
-                <button onclick="exportNodeGraphJSON()">Export JSON</button>
-                <button onclick="toggleNodeGraph()">Close</button>
-            </div>
-        </div>
-        <div id="node-graph-container">
-            <canvas id="node-graph-canvas"></canvas>
-            <div id="node-graph-info">
-                <div>Zoom: <span id="graph-zoom">1.0x</span></div>
-                <div>Nodes: <span id="graph-node-count">0</span></div>
-                <div>Scroll to zoom • Drag to pan • Right-click for menu</div>
-            </div>
-        </div>
-    </div>
-
-    <!-- Material JSON Viewer Panel -->
-    <div id="material-json-wrapper">
-        <div id="material-json-header">
-            <h3>
-                <span>📋</span>
-                <span id="material-json-title">Material Data (Tydra Converted)</span>
-            </h3>
-            <div id="material-json-buttons">
-                <button onclick="copyMaterialJSON()">Copy to Clipboard</button>
-                <button onclick="downloadMaterialJSON()">Download JSON</button>
-                <button onclick="toggleMaterialJSON()">Close</button>
-            </div>
-        </div>
-        <div id="material-json-tabs">
-            <button class="material-json-tab active" data-tab="openpbr" onclick="switchMaterialTab('openpbr')">
-                OpenPBR Surface
-            </button>
-            <button class="material-json-tab" data-tab="usdpreview" onclick="switchMaterialTab('usdpreview')">
-                UsdPreviewSurface
-            </button>
-            <button class="material-json-tab" data-tab="raw" onclick="switchMaterialTab('raw')">
-                Raw Material Data
-            </button>
-            <button class="material-json-tab" data-tab="threejs" onclick="switchMaterialTab('threejs')">
-                Three.js Material
-            </button>
-        </div>
-        <div id="material-json-container">
-            <div class="material-json-content active" id="json-content-openpbr">
-                <pre>No OpenPBR data available</pre>
-            </div>
-            <div class="material-json-content" id="json-content-usdpreview">
-                <pre>No UsdPreviewSurface data available</pre>
-            </div>
-            <div class="material-json-content" id="json-content-raw">
-                <pre>No material selected</pre>
-            </div>
-            <div class="material-json-content" id="json-content-threejs">
-                <pre>No Three.js material data available</pre>
-            </div>
-        </div>
-    </div>
-
-    <!-- Texture Inspector Panel -->
-    <div id="texture-inspector-wrapper" style="display: none; position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); width: 80vw; max-width: 1000px; height: 80vh; background: rgba(0, 0, 0, 0.95); border-radius: 8px; box-shadow: 0 8px 32px rgba(0, 0, 0, 0.8); z-index: 400; flex-direction: column;">
-        <div id="texture-inspector-header" style="background: linear-gradient(135deg, #9C27B0 0%, #7B1FA2 100%); color: white; padding: 12px 16px; display: flex; justify-content: space-between; align-items: center; border-radius: 8px 8px 0 0; border-bottom: 1px solid rgba(255, 255, 255, 0.1);">
-            <h3 style="margin: 0; font-size: 16px; font-weight: 500; display: flex; align-items: center; gap: 10px;">
-                <span>🔬</span>
-                <span id="texture-inspector-title">Texture Channel Inspector</span>
-            </h3>
-            <div id="texture-inspector-buttons" style="display: flex; gap: 8px;">
-                <button onclick="exportTextureReport()" style="background: rgba(255, 255, 255, 0.2); border: none; color: white; padding: 6px 12px; border-radius: 4px; cursor: pointer; font-size: 12px; transition: background 0.2s;">Export Report</button>
-                <button onclick="toggleTextureInspector()" style="background: rgba(255, 255, 255, 0.2); border: none; color: white; padding: 6px 12px; border-radius: 4px; cursor: pointer; font-size: 12px; transition: background 0.2s;">Close</button>
-            </div>
-        </div>
-        <div id="texture-inspector-container" style="flex: 1; background: #1a1a1a; border-radius: 0 0 8px 8px; overflow: auto; padding: 20px;">
-            <div id="texture-inspector-content">
-                <!-- Texture preview -->
-                <div style="margin-bottom: 20px;">
-                    <h4 style="margin: 0 0 10px 0; color: #CE93D8;">Texture Preview</h4>
-                    <img id="texture-inspector-preview" style="max-width: 100%; max-height: 300px; border: 2px solid #9C27B0; border-radius: 4px; display: block;">
-                </div>
-
-                <!-- Texture info -->
-                <div id="texture-inspector-info" style="margin-bottom: 20px; padding: 15px; background: rgba(156, 39, 176, 0.1); border-radius: 4px; border: 1px solid rgba(156, 39, 176, 0.3);">
-                    <h4 style="margin: 0 0 10px 0; color: #CE93D8;">Texture Information</h4>
-                    <div id="texture-info-details" style="font-family: monospace; font-size: 12px; line-height: 1.6; color: #e0e0e0;"></div>
-                </div>
-
-                <!-- Histograms -->
-                <div style="margin-bottom: 20px;">
-                    <h4 style="margin: 0 0 10px 0; color: #CE93D8;">Channel Histograms</h4>
-                    <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 15px;">
-                        <div>
-                            <div style="color: #f44336; font-weight: bold; margin-bottom: 5px;">Red Channel</div>
-                            <canvas id="histogram-r" width="400" height="150" style="width: 100%; border: 1px solid rgba(244, 67, 54, 0.5); border-radius: 4px;"></canvas>
-                        </div>
-                        <div>
-                            <div style="color: #4CAF50; font-weight: bold; margin-bottom: 5px;">Green Channel</div>
-                            <canvas id="histogram-g" width="400" height="150" style="width: 100%; border: 1px solid rgba(76, 175, 80, 0.5); border-radius: 4px;"></canvas>
-                        </div>
-                        <div>
-                            <div style="color: #2196F3; font-weight: bold; margin-bottom: 5px;">Blue Channel</div>
-                            <canvas id="histogram-b" width="400" height="150" style="width: 100%; border: 1px solid rgba(33, 150, 243, 0.5); border-radius: 4px;"></canvas>
-                        </div>
-                        <div>
-                            <div style="color: #9E9E9E; font-weight: bold; margin-bottom: 5px;">Alpha Channel</div>
-                            <canvas id="histogram-a" width="400" height="150" style="width: 100%; border: 1px solid rgba(158, 158, 158, 0.5); border-radius: 4px;"></canvas>
-                        </div>
-                    </div>
-                </div>
-
-                <!-- Statistics table -->
-                <div style="margin-bottom: 20px;">
-                    <h4 style="margin: 0 0 10px 0; color: #CE93D8;">Channel Statistics</h4>
-                    <div style="overflow-x: auto;">
-                        <table id="texture-stats-table" style="width: 100%; border-collapse: collapse; font-family: monospace; font-size: 12px;">
-                            <thead>
-                                <tr style="background: rgba(156, 39, 176, 0.2); border-bottom: 2px solid #9C27B0;">
-                                    <th style="padding: 8px; text-align: left; color: #CE93D8;">Channel</th>
-                                    <th style="padding: 8px; text-align: right; color: #CE93D8;">Min</th>
-                                    <th style="padding: 8px; text-align: right; color: #CE93D8;">Max</th>
-                                    <th style="padding: 8px; text-align: right; color: #CE93D8;">Mean</th>
-                                    <th style="padding: 8px; text-align: right; color: #CE93D8;">Median</th>
-                                    <th style="padding: 8px; text-align: right; color: #CE93D8;">Std Dev</th>
-                                    <th style="padding: 8px; text-align: right; color: #CE93D8;">Unique</th>
-                                </tr>
-                            </thead>
-                            <tbody id="texture-stats-tbody" style="color: #e0e0e0;"></tbody>
-                        </table>
-                    </div>
-                </div>
-
-                <!-- Issues -->
-                <div id="texture-inspector-issues" style="padding: 15px; background: rgba(156, 39, 176, 0.1); border-radius: 4px; border: 1px solid rgba(156, 39, 176, 0.3);">
-                    <h4 style="margin: 0 0 10px 0; color: #CE93D8;">Issues Detected</h4>
-                    <div id="texture-issues-list" style="font-size: 12px; line-height: 1.8;"></div>
-                </div>
-            </div>
-        </div>
-    </div>
-
-    <!-- LiteGraph.js Library -->
-    <script src="https://cdn.jsdelivr.net/npm/litegraph.js@0.7.0/build/litegraph.js"></script>
+    <!-- Toast -->
+    <div id="toast"></div>
 
     <!-- Import maps for Three.js ES modules -->
     <script type="importmap">
@@ -1284,25 +300,7 @@
         }
     </script>
 
-    <!-- PBR Debugging Tools (must load before main script) -->
-    <script type="module" src="material-override.js"></script>
-    <script type="module" src="material-validator.js"></script>
-    <script type="module" src="split-view-comparison.js"></script>
-    <script type="module" src="texture-inspector.js"></script>
-    <script type="module" src="material-complexity-analyzer.js"></script>
-    <script type="module" src="reference-materials.js"></script>
-    <script type="module" src="ibl-contribution-analyzer.js"></script>
-    <script type="module" src="gbuffer-viewer.js"></script>
-    <script type="module" src="mipmap-visualizer.js"></script>
-    <script type="module" src="pixel-inspector.js"></script>
-    <script type="module" src="material-preset.js"></script>
-    <script type="module" src="pbr-theory-guide.js"></script>
-    <script type="module" src="texture-tiling-detector.js"></script>
-    <script type="module" src="gradient-ramp-editor.js"></script>
-    <script type="module" src="light-probe-visualizer.js"></script>
-    <script type="module" src="brdf-visualizer.js"></script>
-
-    <!-- Main application script as module -->
+    <!-- Main application script -->
     <script type="module" src="materialx.js"></script>
 </body>
 </html>
