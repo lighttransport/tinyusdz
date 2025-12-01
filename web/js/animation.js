@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
+import { RGBELoader } from 'three/examples/jsm/loaders/RGBELoader.js';
 import GUI from 'three/examples/jsm/libs/lil-gui.module.min.js';
 import { TinyUSDZLoader } from 'tinyusdz/TinyUSDZLoader.js';
 import { TinyUSDZLoaderUtils } from 'tinyusdz/TinyUSDZLoaderUtils.js';
@@ -99,6 +100,36 @@ let currentSceneMetadata = {
 
 // Store currently selected object for transform display
 let selectedObject = null;
+
+// ===========================================
+// Environment Map and Material Settings
+// ===========================================
+
+// PMREM generator for environment maps
+let pmremGenerator = null;
+
+// Current environment map
+let envMap = null;
+
+// Texture cache for material conversion
+let textureCache = new Map();
+
+// Environment map presets
+const ENV_PRESETS = {
+	'goegap_1k': 'assets/textures/goegap_1k.hdr',
+	'env_sunsky_sunset': 'assets/textures/env_sunsky_sunset.hdr',
+	'studio': null // Will use synthetic studio lighting
+};
+
+// Material and environment settings
+const materialSettings = {
+	materialType: 'auto', // 'auto', 'openpbr', 'usdpreviewsurface'
+	envMapPreset: 'goegap_1k',
+	envMapIntensity: 1.0,
+	showEnvBackground: false,
+	exposure: 1.0,
+	toneMapping: 'aces'
+};
 
 // Store bounding box helpers for each object
 const objectBBoxHelpers = new Map(); // uuid -> BoxHelper
@@ -459,8 +490,193 @@ function getUSDInterpolationMode(interpolation) {
 	}
 }
 
+// ===========================================
+// Environment Map Functions
+// ===========================================
+
+/**
+ * Initialize PMREM generator and renderer settings for PBR
+ */
+function initializePBRRenderer() {
+	// Create PMREM generator for environment maps
+	pmremGenerator = new THREE.PMREMGenerator(renderer);
+	pmremGenerator.compileEquirectangularShader();
+
+	// Set up tone mapping
+	renderer.toneMapping = THREE.ACESFilmicToneMapping;
+	renderer.toneMappingExposure = materialSettings.exposure;
+	renderer.outputColorSpace = THREE.SRGBColorSpace;
+
+	console.log('PBR renderer initialized with ACES tone mapping');
+}
+
+/**
+ * Load environment map from preset
+ * @param {string} preset - Environment preset name
+ */
+async function loadEnvironment(preset) {
+	materialSettings.envMapPreset = preset;
+	const path = ENV_PRESETS[preset];
+
+	if (!path) {
+		// Studio lighting - create synthetic environment
+		envMap = createStudioEnvironment();
+		applyEnvironment();
+		console.log('Using synthetic studio environment');
+		return;
+	}
+
+	console.log(`Loading environment: ${preset}...`);
+	try {
+		const rgbeLoader = new RGBELoader();
+		const texture = await rgbeLoader.loadAsync(path);
+		envMap = pmremGenerator.fromEquirectangular(texture).texture;
+		texture.dispose();
+		applyEnvironment();
+		console.log(`Environment loaded: ${preset}`);
+	} catch (error) {
+		console.error('Failed to load environment:', error);
+		// Fall back to synthetic
+		envMap = createStudioEnvironment();
+		applyEnvironment();
+	}
+}
+
+/**
+ * Create a synthetic studio environment
+ * @returns {THREE.Texture} Environment texture
+ */
+function createStudioEnvironment() {
+	const canvas = document.createElement('canvas');
+	canvas.width = 256;
+	canvas.height = 256;
+	const ctx = canvas.getContext('2d');
+
+	// Create gradient (light from top)
+	const gradient = ctx.createLinearGradient(0, 0, 0, 256);
+	gradient.addColorStop(0, '#ffffff');
+	gradient.addColorStop(0.5, '#cccccc');
+	gradient.addColorStop(1, '#666666');
+	ctx.fillStyle = gradient;
+	ctx.fillRect(0, 0, 256, 256);
+
+	const texture = new THREE.CanvasTexture(canvas);
+	texture.mapping = THREE.EquirectangularReflectionMapping;
+	return pmremGenerator.fromEquirectangular(texture).texture;
+}
+
+/**
+ * Apply the current environment map to the scene
+ */
+function applyEnvironment() {
+	scene.environment = envMap;
+	updateEnvBackground();
+	updateEnvIntensity();
+}
+
+/**
+ * Update environment background visibility
+ */
+function updateEnvBackground() {
+	if (materialSettings.showEnvBackground && envMap) {
+		scene.background = envMap;
+	} else {
+		scene.background = new THREE.Color(0x1a1a1a);
+	}
+}
+
+/**
+ * Update environment map intensity on all materials
+ */
+function updateEnvIntensity() {
+	usdSceneRoot.traverse((child) => {
+		if (child.isMesh && child.material) {
+			const materials = Array.isArray(child.material) ? child.material : [child.material];
+			materials.forEach(mat => {
+				if (mat.envMapIntensity !== undefined) {
+					mat.envMapIntensity = materialSettings.envMapIntensity;
+				}
+			});
+		}
+	});
+}
+
+/**
+ * Update tone mapping type
+ * @param {string} value - Tone mapping type
+ */
+function updateToneMapping(value) {
+	const mappings = {
+		'none': THREE.NoToneMapping,
+		'linear': THREE.LinearToneMapping,
+		'reinhard': THREE.ReinhardToneMapping,
+		'cineon': THREE.CineonToneMapping,
+		'aces': THREE.ACESFilmicToneMapping,
+		'agx': THREE.AgXToneMapping,
+		'neutral': THREE.NeutralToneMapping
+	};
+	renderer.toneMapping = mappings[value] || THREE.ACESFilmicToneMapping;
+}
+
+/**
+ * Reload all materials with current settings
+ */
+async function reloadMaterials() {
+	if (!usdContentNode) return;
+
+	console.log(`Reloading materials with type: ${materialSettings.materialType}`);
+
+	// Get the current USD scene loader
+	const loader = new TinyUSDZLoader();
+	await loader.init({ useZstdCompressedWasm: false, useMemory64: false });
+
+	// Clear texture cache for fresh reload
+	textureCache.clear();
+
+	// Traverse and update materials on all meshes
+	usdContentNode.traverse(async (child) => {
+		if (child.isMesh && child.userData.materialData) {
+			try {
+				const newMaterial = await TinyUSDZLoaderUtils.convertMaterial(
+					child.userData.materialData,
+					child.userData.usdScene,
+					{
+						preferredMaterialType: materialSettings.materialType,
+						envMap: envMap,
+						envMapIntensity: materialSettings.envMapIntensity,
+						textureCache: textureCache
+					}
+				);
+
+				// Preserve shadow settings
+				if (child.material) {
+					child.material.dispose();
+				}
+				child.material = newMaterial;
+				child.material.needsUpdate = true;
+
+				// Apply double-sided if enabled
+				if (animationParams.doubleSided) {
+					child.material.side = THREE.DoubleSide;
+				}
+			} catch (e) {
+				console.warn(`Failed to reload material for ${child.name}:`, e);
+			}
+		}
+	});
+
+	console.log('Materials reloaded');
+}
+
 // Load USD model asynchronously
 async function loadUSDModel() {
+	// Initialize PBR renderer if not already done
+	if (!pmremGenerator) {
+		initializePBRRenderer();
+		// Load default environment
+		await loadEnvironment(materialSettings.envMapPreset);
+	}
+
 	const loader = new TinyUSDZLoader();
 
 	// Initialize the loader (wait for WASM module to load)
@@ -521,17 +737,36 @@ async function loadUSDModel() {
 	// Update metadata UI
 	updateMetadataUI();
 
-	// Create default material
-	const defaultMtl = TinyUSDZLoaderUtils.createDefaultMaterial();
+	// Create default material with environment map
+	const defaultMtl = new THREE.MeshPhysicalMaterial({
+		color: 0x888888,
+		roughness: 0.5,
+		metalness: 0.0,
+		envMap: envMap,
+		envMapIntensity: materialSettings.envMapIntensity
+	});
+
+	// Clear texture cache for fresh load
+	textureCache.clear();
 
 	const options = {
 		overrideMaterial: false,
-		envMap: null,
-		envMapIntensity: 1.0,
+		envMap: envMap,
+		envMapIntensity: materialSettings.envMapIntensity,
+		preferredMaterialType: materialSettings.materialType,
+		textureCache: textureCache,
+		storeMaterialData: true
 	};
 
-	// Build Three.js node from USD
+	// Build Three.js node from USD with MaterialX/OpenPBR support
 	const threeNode = TinyUSDZLoaderUtils.buildThreeNode(usdRootNode, defaultMtl, usd_scene, options);
+
+	// Store USD scene reference for material reloading
+	threeNode.traverse((child) => {
+		if (child.isMesh) {
+			child.userData.usdScene = usd_scene;
+		}
+	});
 
 	// Store reference to USD content node for mixer creation
 	usdContentNode = threeNode;
@@ -1615,6 +1850,49 @@ scaleFolder.open();
 
 renderingFolder.open();
 
+// ===========================================
+// Material & Environment GUI
+// ===========================================
+const materialFolder = gui.addFolder('Material & Environment');
+
+// Material type selector
+materialFolder.add(materialSettings, 'materialType', ['auto', 'openpbr', 'usdpreviewsurface'])
+	.name('Material Type')
+	.onChange(() => reloadMaterials());
+
+// Environment preset selector
+materialFolder.add(materialSettings, 'envMapPreset', Object.keys(ENV_PRESETS))
+	.name('Environment')
+	.onChange((value) => loadEnvironment(value));
+
+// Environment intensity
+materialFolder.add(materialSettings, 'envMapIntensity', 0, 3, 0.1)
+	.name('Env Intensity')
+	.onChange(() => updateEnvIntensity());
+
+// Show environment as background
+materialFolder.add(materialSettings, 'showEnvBackground')
+	.name('Show Env Background')
+	.onChange(() => updateEnvBackground());
+
+// Exposure control
+materialFolder.add(materialSettings, 'exposure', 0, 3, 0.1)
+	.name('Exposure')
+	.onChange((value) => {
+		renderer.toneMappingExposure = value;
+	});
+
+// Tone mapping selector
+materialFolder.add(materialSettings, 'toneMapping', ['none', 'linear', 'reinhard', 'cineon', 'aces', 'agx', 'neutral'])
+	.name('Tone Mapping')
+	.onChange((value) => updateToneMapping(value));
+
+// Reload materials button
+materialFolder.add({ reload: () => reloadMaterials() }, 'reload')
+	.name('Reload Materials');
+
+materialFolder.open();
+
 // Scene Metadata - will be populated dynamically
 const metadataFolder = gui.addFolder('Scene Metadata');
 window.metadataFolder = metadataFolder;
@@ -1882,6 +2160,13 @@ function onMouseClick(event) {
 
 // Function to load a USD file from ArrayBuffer
 async function loadUSDFromArrayBuffer(arrayBuffer, filename) {
+	// Initialize PBR renderer if not already done
+	if (!pmremGenerator) {
+		initializePBRRenderer();
+		// Load default environment
+		await loadEnvironment(materialSettings.envMapPreset);
+	}
+
 	// Clear existing USD scene
 	while (usdSceneRoot.children.length > 0) {
 		usdSceneRoot.remove(usdSceneRoot.children[0]);
@@ -1970,17 +2255,36 @@ async function loadUSDFromArrayBuffer(arrayBuffer, filename) {
 	// Update metadata UI
 	updateMetadataUI();
 
-	// Create default material
-	const defaultMtl = TinyUSDZLoaderUtils.createDefaultMaterial();
+	// Create default material with environment map
+	const defaultMtl = new THREE.MeshPhysicalMaterial({
+		color: 0x888888,
+		roughness: 0.5,
+		metalness: 0.0,
+		envMap: envMap,
+		envMapIntensity: materialSettings.envMapIntensity
+	});
+
+	// Clear texture cache for fresh load
+	textureCache.clear();
 
 	const options = {
 		overrideMaterial: false,
-		envMap: null,
-		envMapIntensity: 1.0,
+		envMap: envMap,
+		envMapIntensity: materialSettings.envMapIntensity,
+		preferredMaterialType: materialSettings.materialType,
+		textureCache: textureCache,
+		storeMaterialData: true
 	};
 
-	// Build Three.js node from USD
+	// Build Three.js node from USD with MaterialX/OpenPBR support
 	const threeNode = TinyUSDZLoaderUtils.buildThreeNode(usdRootNode, defaultMtl, usd_scene, options);
+
+	// Store USD scene reference for material reloading
+	threeNode.traverse((child) => {
+		if (child.isMesh) {
+			child.userData.usdScene = usd_scene;
+		}
+	});
 
 	// Store reference to USD content node for mixer creation
 	usdContentNode = threeNode;
