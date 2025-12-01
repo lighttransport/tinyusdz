@@ -162,6 +162,30 @@ const openPBR = new TinyUSDZOpenPBR({
 const threeMaterial = openPBR.toMeshPhysicalMaterial();
 ```
 
+## Demo Pages
+
+The following demo pages are available:
+
+| Demo | File | Description |
+|------|------|-------------|
+| **MaterialX Demo** | `materialx.html` | Simple MaterialX/OpenPBR viewer with drag-and-drop USD loading, material parameter UI, and preset environment lighting |
+| **MaterialX Debug Demo** | `mtlx-debug.html` | Advanced debugging demo with AOV visualization, node graph viewer, texture inspector, and comprehensive PBR debugging tools |
+| **Animation Demo** | `animation.html` | USD animation playback demo |
+| **Skinning Demo** | `skining-anim.html` | Skeletal animation and skinning demo |
+| **UsdLux Demo** | `usdlux.html` | USD Lighting demo |
+| **Basic Viewer** | `index.html` | Basic USD viewer with main.js |
+
+### Running Demos
+
+```bash
+# Start development server
+bun run dev
+
+# Open in browser
+# http://localhost:5173/materialx.html      # Simple MaterialX demo
+# http://localhost:5173/mtlx-debug.html     # Advanced debug demo
+```
+
 ## NPM packaging
 
 NPM packaing is not handled in this folder.
