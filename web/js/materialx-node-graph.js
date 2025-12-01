@@ -381,10 +381,27 @@ export function showNodeGraph(materialData) {
         nodeGraphCanvas.default_link_color = "#9FA8DA";
         nodeGraphCanvas.highquality_render = true;
 
-        // Handle zoom updates
+        // Set zoom limits for better control
+        nodeGraphCanvas.ds.min_scale = 0.05;  // Allow zooming out to 5%
+        nodeGraphCanvas.ds.max_scale = 2.0;   // Allow zooming in to 200%
+
+        // Handle node selection
         nodeGraphCanvas.onNodeSelected = function(node) {
             updateNodeGraphInfo();
         };
+
+        // Handle zoom/pan updates by listening to mouse wheel and drag events
+        canvas.addEventListener('wheel', function() {
+            // Update info after wheel zoom with a small delay
+            setTimeout(updateNodeGraphInfo, 10);
+        });
+
+        canvas.addEventListener('mousemove', function(e) {
+            // Update info during pan (when mouse button is held)
+            if (e.buttons > 0) {
+                updateNodeGraphInfo();
+            }
+        });
     }
 
     // Start graph execution
@@ -453,17 +470,17 @@ export function centerNodeGraph() {
     const width = maxX - minX;
     const height = maxY - minY;
 
-    // Calculate zoom to fit
+    // Calculate zoom to fit with lower initial zoom (0.25x max)
     const canvasWidth = nodeGraphCanvas.canvas.width;
     const canvasHeight = nodeGraphCanvas.canvas.height;
     const zoomX = canvasWidth / (width + 200);
     const zoomY = canvasHeight / (height + 200);
-    const zoom = Math.min(zoomX, zoomY, 1.0); // Don't zoom in more than 1x
+    const zoom = Math.min(zoomX, zoomY, 0.25); // Lower initial zoom factor (0.25x max)
 
-    // Set camera
+    // Set camera - offset positions the graph center at canvas center
     nodeGraphCanvas.ds.scale = zoom;
-    nodeGraphCanvas.ds.offset[0] = -centerX * zoom + canvasWidth / 2;
-    nodeGraphCanvas.ds.offset[1] = -centerY * zoom + canvasHeight / 2;
+    nodeGraphCanvas.ds.offset[0] = (canvasWidth / 2) - (centerX * zoom);
+    nodeGraphCanvas.ds.offset[1] = (canvasHeight / 2) - (centerY * zoom);
 
     nodeGraphCanvas.setDirty(true, true);
     updateNodeGraphInfo();
