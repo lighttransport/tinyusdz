@@ -2840,7 +2840,8 @@ function applyUpAxisConversionToScene() {
     if (applyUpAxisConversion && currentFileUpAxis === 'Z') {
         // Apply Z-up to Y-up conversion (-90 degrees around X axis)
         console.log(`  -> Applying Z-up to Y-up conversion...`);
-        sceneRoot.rotation.x = -Math.PI / 2;
+        // HACK
+        //sceneRoot.rotation.x = -Math.PI / 2;
         sceneRoot.rotation.y = 0;
         sceneRoot.rotation.z = 0;
         console.log(`  ✓ Applied Z-up to Y-up conversion (file upAxis="${currentFileUpAxis}")`);
@@ -2859,6 +2860,9 @@ function applyUpAxisConversionToScene() {
         }
         console.log(`    sceneRoot.rotation: x=${sceneRoot.rotation.x}, y=${sceneRoot.rotation.y}, z=${sceneRoot.rotation.z}`);
     }
+
+    // Update the matrix world to ensure rotation is applied immediately
+    sceneRoot.updateMatrixWorld(true);
 }
 
 // Toggle upAxis conversion
@@ -6398,11 +6402,21 @@ function clearScene() {
 function fitCameraToScene() {
     if (meshes.length === 0) return;
 
-    // Compute scene bounding box
+    // Update sceneRoot matrix to ensure rotation is applied
+    if (sceneRoot) {
+        sceneRoot.updateMatrixWorld(true);
+    }
+
+    // Compute scene bounding box from sceneRoot (includes upAxis rotation)
     const box = new THREE.Box3();
-    meshes.forEach(mesh => {
-        box.expandByObject(mesh);
-    });
+    if (sceneRoot && sceneRoot.children.length > 0) {
+        box.setFromObject(sceneRoot);
+    } else {
+        // Fallback to meshes if sceneRoot is not available
+        meshes.forEach(mesh => {
+            box.expandByObject(mesh);
+        });
+    }
 
     // Get bounding box center and size
     const center = box.getCenter(new THREE.Vector3());
