@@ -54,6 +54,114 @@ console.log(`Native default memory limit: ${defaultLimit} MB`);
 - Lower limits are recommended for untrusted USD files
 - Memory limit applies to both Stage and Layer loading operations
 
+## Material Conversion
+
+TinyUSDZ supports both UsdPreviewSurface and OpenPBR (MaterialX) materials. The library provides utilities to convert these materials to Three.js `MeshPhysicalMaterial`.
+
+### Checking Material Type
+
+```javascript
+import { TinyUSDZLoaderUtils } from 'tinyusdz/TinyUSDZLoaderUtils.js';
+
+// Get material data as JSON
+const materialData = usdScene.getMaterial(materialId, 'json');
+
+// Check what material types are available
+const typeInfo = TinyUSDZLoaderUtils.getMaterialType(materialData);
+console.log(`Has OpenPBR: ${typeInfo.hasOpenPBR}`);
+console.log(`Has UsdPreviewSurface: ${typeInfo.hasUsdPreviewSurface}`);
+console.log(`Has both: ${typeInfo.hasBoth}`);
+console.log(`Recommended: ${typeInfo.recommended}`);
+
+// Or get a simple string representation
+const typeString = TinyUSDZLoaderUtils.getMaterialTypeString(materialData);
+// Returns: 'OpenPBR', 'UsdPreviewSurface', 'Both', or 'None'
+```
+
+### Converting Materials
+
+```javascript
+import { TinyUSDZLoaderUtils } from 'tinyusdz/TinyUSDZLoaderUtils.js';
+
+// Get material data as JSON
+const materialData = usdScene.getMaterial(materialId, 'json');
+
+// Smart conversion (auto-selects best material type)
+// Prefers OpenPBR when both types are available
+const material = await TinyUSDZLoaderUtils.convertMaterial(materialData, usdScene, {
+    preferredMaterialType: 'auto',  // 'auto' | 'openpbr' | 'usdpreviewsurface'
+    envMap: myEnvironmentMap,
+    envMapIntensity: 1.0
+});
+
+// Force OpenPBR conversion
+const openPBRMaterial = await TinyUSDZLoaderUtils.convertOpenPBRMaterialToMeshPhysicalMaterial(
+    materialData, usdScene, { envMap: myEnvMap }
+);
+
+// Force UsdPreviewSurface conversion
+const usdMaterial = TinyUSDZLoaderUtils.convertUsdMaterialToMeshPhysicalMaterial(
+    materialData, usdScene
+);
+```
+
+### Material Type Preference Options
+
+| Option | Behavior |
+|--------|----------|
+| `'auto'` | Prefer OpenPBR when both are available (default) |
+| `'openpbr'` | Force OpenPBR, fallback to UsdPreviewSurface if unavailable |
+| `'usdpreviewsurface'` | Force UsdPreviewSurface, fallback to OpenPBR if unavailable |
+
+### Supported OpenPBR Parameters
+
+The OpenPBR to Three.js conversion supports the following parameter mappings:
+
+| OpenPBR Layer | Parameters | Three.js Property |
+|---------------|------------|-------------------|
+| **Base** | `base_color` | `color`, `map` |
+| | `base_metalness` | `metalness`, `metalnessMap` |
+| **Specular** | `specular_roughness` | `roughness`, `roughnessMap` |
+| | `specular_ior` | `ior` |
+| | `specular_color` | `specularColor` |
+| | `specular_anisotropy` | `anisotropy` |
+| **Transmission** | `transmission_weight` | `transmission` |
+| | `transmission_color` | `attenuationColor` |
+| **Coat** | `coat_weight` | `clearcoat` |
+| | `coat_roughness` | `clearcoatRoughness` |
+| **Sheen/Fuzz** | `sheen_weight`, `fuzz_weight` | `sheen` |
+| | `sheen_color`, `fuzz_color` | `sheenColor` |
+| | `sheen_roughness`, `fuzz_roughness` | `sheenRoughness` |
+| **Thin Film** | `thin_film_weight` | `iridescence` |
+| | `thin_film_thickness` | `iridescenceThicknessRange` |
+| | `thin_film_ior` | `iridescenceIOR` |
+| **Emission** | `emission_color` | `emissive`, `emissiveMap` |
+| | `emission_luminance` | `emissiveIntensity` |
+| **Geometry** | `opacity`, `geometry_opacity` | `opacity`, `alphaMap` |
+| | `normal`, `geometry_normal` | `normalMap` |
+
+### Direct OpenPBR Class Usage
+
+For manual material creation:
+
+```javascript
+import { TinyUSDZOpenPBR } from 'tinyusdz/TinyUSDZMaterialX.js';
+
+// Create OpenPBR material manually
+const openPBR = new TinyUSDZOpenPBR({
+    baseColor: 0xff8844,
+    metallic: 0.2,
+    roughness: 0.6,
+    emissive: 0x000000,
+    emissiveIntensity: 0.0,
+    opacity: 1.0,
+    name: 'MyMaterial'
+});
+
+// Convert to Three.js MeshPhysicalMaterial
+const threeMaterial = openPBR.toMeshPhysicalMaterial();
+```
+
 ## NPM packaging
 
 NPM packaing is not handled in this folder.
