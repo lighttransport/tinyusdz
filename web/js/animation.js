@@ -759,7 +759,7 @@ async function loadUSDModel() {
 	};
 
 	// Build Three.js node from USD with MaterialX/OpenPBR support
-	const threeNode = TinyUSDZLoaderUtils.buildThreeNode(usdRootNode, defaultMtl, usd_scene, options);
+	const threeNode = await TinyUSDZLoaderUtils.buildThreeNode(usdRootNode, defaultMtl, usd_scene, options);
 
 	// Store USD scene reference for material reloading
 	threeNode.traverse((child) => {
@@ -2277,7 +2277,7 @@ async function loadUSDFromArrayBuffer(arrayBuffer, filename) {
 	};
 
 	// Build Three.js node from USD with MaterialX/OpenPBR support
-	const threeNode = TinyUSDZLoaderUtils.buildThreeNode(usdRootNode, defaultMtl, usd_scene, options);
+	const threeNode = await TinyUSDZLoaderUtils.buildThreeNode(usdRootNode, defaultMtl, usd_scene, options);
 
 	// Store USD scene reference for material reloading
 	threeNode.traverse((child) => {
