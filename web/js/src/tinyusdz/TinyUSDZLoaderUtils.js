@@ -641,7 +641,7 @@ class TinyUSDZLoaderUtils extends LoaderUtils {
         return geometry;
     }
 
-    static setupMesh(mesh /* TinyUSDZLoaderNative::RenderMesh */, defaultMtl, usdScene, options) {
+    static async setupMesh(mesh /* TinyUSDZLoaderNative::RenderMesh */, defaultMtl, usdScene, options) {
 
         const geometry = this.convertUsdMeshToThreeMesh(mesh);
 
@@ -654,13 +654,47 @@ class TinyUSDZLoaderUtils extends LoaderUtils {
             mtl = defaultMtl || normalMtl
         } else {
 
-            const usdMaterial = usdScene.getMaterial(mesh.materialId);
-            //console.log("usdMaterial:", usdMaterial);
-         
+            // Validate materialId before attempting to get material
+            // materialId can be undefined, -1 (no material), or out of range
+            const hasMaterial = mesh.materialId !== undefined && mesh.materialId >= 0;
 
-            const pbrMaterial = this.convertUsdMaterialToMeshPhysicalMaterial(usdMaterial, usdScene);
-            //console.log("pbrMaterial:", pbrMaterial);
+            // Get material data in JSON format to access OpenPBR/MaterialX data
+            // Using getMaterialWithFormat ensures we get the full material structure including OpenPBR
+            let usdMaterialData = null;
+            if (hasMaterial) {
+                if (typeof usdScene.getMaterialWithFormat === 'function') {
+                    const result = usdScene.getMaterialWithFormat(mesh.materialId, 'json');
+                    if (!result.error) {
+                        usdMaterialData = JSON.parse(result.data);
+                    } else {
+                        console.warn(`Failed to get material ${mesh.materialId} with format: ${result.error}`);
+                    }
+                } else {
+                    // Fallback to getMaterial if getMaterialWithFormat is not available
+                    usdMaterialData = usdScene.getMaterial(mesh.materialId);
+                }
+            }
 
+            console.log(`Mesh materialId: ${mesh.materialId}, hasMaterial: ${hasMaterial}, usdMaterial: ${usdMaterialData ? 'valid' : 'null'}`);
+
+            let pbrMaterial;
+            if (usdMaterialData) {
+                // Use smart convertMaterial to handle both OpenPBR and UsdPreviewSurface
+                pbrMaterial = await this.convertMaterial(usdMaterialData, usdScene, {
+                    preferredMaterialType: options.preferredMaterialType || 'auto',
+                    envMap: options.envMap || null,
+                    envMapIntensity: options.envMapIntensity || 1.0,
+                    textureCache: options.textureCache || new Map(),
+                    doubleSided: geometry.userData['doubleSided']
+                });
+            } else {
+                // No valid material - create default material
+                pbrMaterial = defaultMtl || new THREE.MeshPhysicalMaterial({
+                    color: 0x888888,
+                    roughness: 0.5,
+                    metalness: 0.0
+                });
+            }
 
             // Setting envmap is required for PBR materials to work correctly(e.g. clearcoat)
             pbrMaterial.envMap = options.envMap || null;
@@ -672,7 +706,6 @@ class TinyUSDZLoaderUtils extends LoaderUtils {
             if (Object.prototype.hasOwnProperty.call(geometry.userData, 'doubleSided')) {
               if (geometry.userData.doubleSided) {
                 console.log(`  Setting material to DoubleSide (from USD doubleSided=true)`);
-                usdMaterial.side = THREE.DoubleSide;
                 pbrMaterial.side = THREE.DoubleSide;
               } else {
                 console.log(`  Setting material to FrontSide (from USD doubleSided=false)`);
@@ -712,7 +745,7 @@ class TinyUSDZLoaderUtils extends LoaderUtils {
     // Supported options
     // 'overrideMaterial' : Override usd material with defaultMtl.
 
-    static buildThreeNode(usdNode /* TinyUSDZLoader.Node */, defaultMtl = null, usdScene /* TinyUSDZLoader.Scene */ = null, options = {})
+    static async buildThreeNode(usdNode /* TinyUSDZLoader.Node */, defaultMtl = null, usdScene /* TinyUSDZLoader.Scene */ = null, options = {})
    /* => THREE.Object3D */ {
 
         var node = new THREE.Group();
@@ -742,7 +775,7 @@ class TinyUSDZLoaderUtils extends LoaderUtils {
             // contentId is the mesh ID in the USD scene.
             const mesh = usdScene.getMesh(usdNode.contentId);
 
-            const threeMesh = this.setupMesh(mesh, defaultMtl, usdScene, options);
+            const threeMesh = await this.setupMesh(mesh, defaultMtl, usdScene, options);
             node = threeMesh;
 
             // Apply transform to mesh nodes as well
@@ -774,7 +807,7 @@ class TinyUSDZLoaderUtils extends LoaderUtils {
 
             // traverse children
             for (const child of usdNode.children) {
-                const childNode = this.buildThreeNode(child, defaultMtl, usdScene, options);
+                const childNode = await this.buildThreeNode(child, defaultMtl, usdScene, options);
                 node.add(childNode);
             }
         }
