@@ -26,6 +26,8 @@ let materialData = [];
 let textureCache = new Map();
 let currentFileUpAxis = 'Y'; // Store the current file's upAxis (Y or Z)
 let currentSceneMetadata = null; // Store current USD scene metadata
+let showingNormals = false; // Track if normal visualization is active
+let originalMaterialsMap = new Map(); // Store original materials when showing normals
 
 // Settings
 const settings = {
@@ -35,7 +37,8 @@ const settings = {
     showBackground: true,
     exposure: 1.0,
     toneMapping: 'aces',
-    applyUpAxisConversion: true // Apply Z-up to Y-up conversion by default
+    applyUpAxisConversion: true, // Apply Z-up to Y-up conversion by default
+    showNormals: false // Show normals visualization
 };
 
 // Environment map presets
@@ -182,6 +185,9 @@ function setupGUI() {
     sceneFolder.add(settings, 'applyUpAxisConversion')
         .name('Z-up to Y-up Fix')
         .onChange(toggleUpAxisConversion);
+    sceneFolder.add(settings, 'showNormals')
+        .name('Show Normals')
+        .onChange(toggleNormalDisplay);
 
     // Material type selector
     const materialTypeFolder = gui.addFolder('Material Type');
@@ -330,6 +336,44 @@ function applyUpAxisConversion() {
 function toggleUpAxisConversion() {
     console.log(`Toggle upAxis conversion: ${settings.applyUpAxisConversion}`);
     applyUpAxisConversion();
+}
+
+// ============================================================================
+// Normal Display Mode
+// ============================================================================
+
+function toggleNormalDisplay() {
+    if (!sceneRoot) {
+        console.warn('Cannot toggle normal display: sceneRoot is null');
+        return;
+    }
+
+    if (settings.showNormals) {
+        // Switch to normal visualization
+        showingNormals = true;
+        sceneRoot.traverse(obj => {
+            if (obj.isMesh && obj.material) {
+                // Store original material
+                originalMaterialsMap.set(obj, obj.material);
+                // Replace with normal material
+                obj.material = new THREE.MeshNormalMaterial({
+                    flatShading: false
+                });
+            }
+        });
+        console.log('Normal visualization enabled');
+    } else {
+        // Restore original materials
+        showingNormals = false;
+        sceneRoot.traverse(obj => {
+            if (obj.isMesh && originalMaterialsMap.has(obj)) {
+                // Restore original material
+                obj.material = originalMaterialsMap.get(obj);
+            }
+        });
+        originalMaterialsMap.clear();
+        console.log('Normal visualization disabled');
+    }
 }
 
 // ============================================================================
@@ -685,15 +729,50 @@ function updateMaterialUI() {
             matFolder.add(mat, 'transmission', 0, 1, 0.01).name('Transmission');
         }
 
-        // Sheen
+        // Fuzz (formerly Sheen)
         if (mat.sheen !== undefined) {
-            matFolder.add(mat, 'sheen', 0, 1, 0.01).name('Sheen');
+            matFolder.add(mat, 'sheen', 0, 1, 0.01).name('Fuzz');
         }
 
-        // Iridescence
-        if (mat.iridescence !== undefined) {
-            matFolder.add(mat, 'iridescence', 0, 1, 0.01).name('Iridescence');
+        // Diffuse Roughness (base_diffuse_roughness) - OpenPBR Oren-Nayar parameter
+        // Check multiple possible locations for the value
+        let diffuseRoughnessValue = undefined;
+        if (mat.userData.rawData?.base_diffuse_roughness !== undefined) {
+            diffuseRoughnessValue = mat.userData.rawData.base_diffuse_roughness;
+        } else if (mat.userData.rawData?.openPBR?.base_diffuse_roughness !== undefined) {
+            diffuseRoughnessValue = mat.userData.rawData.openPBR.base_diffuse_roughness;
+        } else if (mat.userData.rawData?.openPBRShader?.base_diffuse_roughness !== undefined) {
+            diffuseRoughnessValue = mat.userData.rawData.openPBRShader.base_diffuse_roughness;
         }
+
+        if (diffuseRoughnessValue !== undefined) {
+            // Store as custom property on material for easy access
+            if (!mat.userData.customParams) {
+                mat.userData.customParams = {};
+            }
+            mat.userData.customParams.baseDiffuseRoughness = diffuseRoughnessValue;
+
+            matFolder.add(mat.userData.customParams, 'baseDiffuseRoughness', 0, 1, 0.01)
+                .name('Diffuse Roughness')
+                .onChange(v => {
+                    // Update in all possible locations
+                    if (mat.userData.rawData?.base_diffuse_roughness !== undefined) {
+                        mat.userData.rawData.base_diffuse_roughness = v;
+                    }
+                    if (mat.userData.rawData?.openPBR?.base_diffuse_roughness !== undefined) {
+                        mat.userData.rawData.openPBR.base_diffuse_roughness = v;
+                    }
+                    if (mat.userData.rawData?.openPBRShader?.base_diffuse_roughness !== undefined) {
+                        mat.userData.rawData.openPBRShader.base_diffuse_roughness = v;
+                    }
+                    mat.needsUpdate = true;
+                });
+        }
+
+        // Iridescence (disabled)
+        // if (mat.iridescence !== undefined) {
+        //     matFolder.add(mat, 'iridescence', 0, 1, 0.01).name('Iridescence');
+        // }
 
         // Emissive
         if (mat.emissive) {
@@ -730,7 +809,7 @@ function addTextureUI(material, index) {
         { prop: 'alphaMap', name: 'Alpha' },
         { prop: 'clearcoatMap', name: 'Clearcoat' },
         { prop: 'clearcoatRoughnessMap', name: 'Clearcoat Roughness' },
-        { prop: 'sheenColorMap', name: 'Sheen Color' },
+        { prop: 'sheenColorMap', name: 'Fuzz Color' },
         { prop: 'iridescenceMap', name: 'Iridescence' }
     ];
 
