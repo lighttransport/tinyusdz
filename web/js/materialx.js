@@ -24,6 +24,8 @@ let sceneRoot = null;
 let currentMaterials = [];
 let materialData = [];
 let textureCache = new Map();
+let currentFileUpAxis = 'Y'; // Store the current file's upAxis (Y or Z)
+let currentSceneMetadata = null; // Store current USD scene metadata
 
 // Settings
 const settings = {
@@ -32,7 +34,8 @@ const settings = {
     envMapIntensity: 1.0,
     showBackground: true,
     exposure: 1.0,
-    toneMapping: 'aces'
+    toneMapping: 'aces',
+    applyUpAxisConversion: true // Apply Z-up to Y-up conversion by default
 };
 
 // Environment map presets
@@ -110,6 +113,22 @@ async function init() {
     controls = new OrbitControls(camera, renderer.domElement);
     controls.enableDamping = true;
     controls.dampingFactor = 0.05;
+    controls.screenSpacePanning = true; // Enable pan controls
+    controls.minDistance = 0.1;
+    controls.maxDistance = 500; // Allow much more zoom out for large scenes
+    controls.mouseButtons = {
+        LEFT: THREE.MOUSE.ROTATE,
+        MIDDLE: THREE.MOUSE.PAN,
+        RIGHT: THREE.MOUSE.DOLLY  // Right mouse drag for zoom (dolly)
+    };
+    controls.keys = {
+        LEFT: 'ArrowLeft',
+        UP: 'ArrowUp',
+        RIGHT: 'ArrowRight',
+        BOTTOM: 'ArrowDown'
+    };
+    controls.enableKeys = true;
+    controls.keyPanSpeed = 20.0;
 
     // Create PMREM generator for environment maps
     pmremGenerator = new THREE.PMREMGenerator(renderer);
@@ -130,8 +149,8 @@ async function init() {
     // Load default environment
     await loadEnvironment(settings.envMapPreset);
 
-    // Load default scene
-    await loadDefaultScene();
+    // Load default scene - fancy teapot with MaterialX
+    await loadDefaultUSDFile();
 
     // Start render loop
     animate();
@@ -160,6 +179,9 @@ function setupGUI() {
     sceneFolder.add(settings, 'toneMapping', ['none', 'linear', 'reinhard', 'cineon', 'aces', 'agx', 'neutral'])
         .name('Tone Mapping')
         .onChange(updateToneMapping);
+    sceneFolder.add(settings, 'applyUpAxisConversion')
+        .name('Z-up to Y-up Fix')
+        .onChange(toggleUpAxisConversion);
 
     // Material type selector
     const materialTypeFolder = gui.addFolder('Material Type');
@@ -281,6 +303,36 @@ function updateToneMapping(value) {
 }
 
 // ============================================================================
+// UpAxis Conversion
+// ============================================================================
+
+function applyUpAxisConversion() {
+    if (!sceneRoot) {
+        console.warn('Cannot apply upAxis conversion: sceneRoot is null');
+        return;
+    }
+
+    if (settings.applyUpAxisConversion && currentFileUpAxis === 'Z') {
+        // Apply Z-up to Y-up conversion: rotate -90 degrees around X axis
+        sceneRoot.rotation.x = -Math.PI / 2;
+        console.log(`Applied Z-up to Y-up conversion (rotation.x = ${sceneRoot.rotation.x.toFixed(4)})`);
+    } else {
+        // Reset rotation
+        sceneRoot.rotation.x = 0;
+        if (currentFileUpAxis === 'Z') {
+            console.log(`Z-up to Y-up conversion disabled (rotation.x = 0)`);
+        } else {
+            console.log(`No upAxis conversion needed (file upAxis: ${currentFileUpAxis})`);
+        }
+    }
+}
+
+function toggleUpAxisConversion() {
+    console.log(`Toggle upAxis conversion: ${settings.applyUpAxisConversion}`);
+    applyUpAxisConversion();
+}
+
+// ============================================================================
 // USD Loading
 // ============================================================================
 
@@ -289,6 +341,24 @@ async function loadDefaultScene() {
     const encoder = new TextEncoder();
     const data = encoder.encode(DEFAULT_USDA_SCENE);
     await loadUSDFromData(data, 'default.usda');
+}
+
+async function loadDefaultUSDFile() {
+    updateStatus('Loading fancy teapot...');
+    try {
+        const response = await fetch('./assets/fancy-teapot-mtlx.usdz');
+        if (!response.ok) {
+            throw new Error(`Failed to fetch: ${response.statusText}`);
+        }
+        const arrayBuffer = await response.arrayBuffer();
+        const data = new Uint8Array(arrayBuffer);
+        await loadUSDFromData(data, 'fancy-teapot-mtlx.usdz');
+    } catch (error) {
+        console.error('Failed to load default USD file:', error);
+        updateStatus('Failed to load teapot, loading fallback scene...');
+        // Fallback to embedded scene
+        await loadDefaultScene();
+    }
 }
 
 async function loadUSDFromFile(file) {
@@ -316,10 +386,22 @@ async function loadUSDFromData(data, filename) {
         return;
     }
 
+    // Get scene metadata (including upAxis)
+    const sceneMetadata = nativeLoader.getSceneMetadata ? nativeLoader.getSceneMetadata() : {};
+    currentFileUpAxis = sceneMetadata.upAxis || 'Y';
+    currentSceneMetadata = {
+        upAxis: currentFileUpAxis,
+        metersPerUnit: sceneMetadata.metersPerUnit || 1.0,
+        timeCodesPerSecond: sceneMetadata.timeCodesPerSecond || 24.0
+    };
+
+    console.log(`USD Scene Metadata:`, currentSceneMetadata);
+    console.log(`File upAxis: "${currentFileUpAxis}"`);
+
     const numMeshes = nativeLoader.numMeshes();
     const numMaterials = nativeLoader.numMaterials();
 
-    updateStatus(`Loaded: ${numMeshes} meshes, ${numMaterials} materials`);
+    updateStatus(`Loaded: ${numMeshes} meshes, ${numMaterials} materials (upAxis: ${currentFileUpAxis})`);
 
     // Load materials
     materialData = [];
@@ -365,6 +447,9 @@ async function loadUSDFromData(data, filename) {
         mesh.name = meshData.name || `Mesh_${i}`;
         sceneRoot.add(mesh);
     }
+
+    // Apply upAxis conversion if needed
+    applyUpAxisConversion();
 
     // Fit camera to scene
     fitCameraToScene();
@@ -454,23 +539,87 @@ function clearScene() {
     currentMaterials = [];
     materialData = [];
     textureCache.clear();
+
+    // Reset upAxis to default
+    currentFileUpAxis = 'Y';
+    currentSceneMetadata = null;
 }
 
 function fitCameraToScene() {
     if (!sceneRoot) return;
 
+    // Compute scene bounding box
     const box = new THREE.Box3().setFromObject(sceneRoot);
     const size = box.getSize(new THREE.Vector3());
     const center = box.getCenter(new THREE.Vector3());
 
-    const maxDim = Math.max(size.x, size.y, size.z);
-    const fov = camera.fov * (Math.PI / 180);
-    const distance = (maxDim / 2) / Math.tan(fov / 2) * 1.5;
+    // Calculate the bounding sphere radius (diagonal distance from center)
+    const boundingSphereRadius = size.length() * 0.5;
 
-    camera.position.set(center.x + distance * 0.5, center.y + distance * 0.3, center.z + distance);
+    // Calculate camera distance based on FOV and bounding sphere
+    const fov = camera.fov * (Math.PI / 180);
+    const aspectRatio = camera.aspect;
+
+    // Calculate distance needed to fit sphere in both horizontal and vertical FOV
+    const verticalFOV = fov;
+    const horizontalFOV = 2 * Math.atan(Math.tan(verticalFOV / 2) * aspectRatio);
+
+    // Use the smaller FOV to ensure object fits in both dimensions
+    const effectiveFOV = Math.min(verticalFOV, horizontalFOV);
+
+    // Distance from center to camera to fit bounding sphere
+    let cameraDistance = boundingSphereRadius / Math.sin(effectiveFOV / 2);
+
+    // Add padding (20% extra distance)
+    cameraDistance *= 1.2;
+
+    // Position camera at a nice 45-degree viewing angle
+    const cameraOffset = new THREE.Vector3(
+        cameraDistance * 0.5,    // X offset
+        cameraDistance * 0.5,    // Y offset (elevated view)
+        cameraDistance * 0.866   // Z offset (sqrt(3)/2 for 30-degree angle)
+    );
+
+    const cameraPosition = center.clone().add(cameraOffset);
+
+    // Update camera position and orientation
+    camera.position.copy(cameraPosition);
     camera.lookAt(center);
+
+    // Update controls target to scene center
     controls.target.copy(center);
+
+    // Update camera near/far planes based on scene size
+    camera.near = Math.max(0.1, cameraDistance / 100);
+    camera.far = Math.max(1000, cameraDistance * 10);
+    camera.updateProjectionMatrix();
+
     controls.update();
+
+    console.log(`Scene fitted: bounds=${size.x.toFixed(2)}×${size.y.toFixed(2)}×${size.z.toFixed(2)}, radius=${boundingSphereRadius.toFixed(2)}, distance=${cameraDistance.toFixed(2)}`);
+}
+
+// ============================================================================
+// Color Space Utilities
+// ============================================================================
+
+// Convert sRGB to Linear (Rec.709)
+// MaterialX assumes linear Rec.709 as working colorspace
+function sRGBToLinear(color) {
+    // sRGB to linear transformation
+    const r = color.r <= 0.04045 ? color.r / 12.92 : Math.pow((color.r + 0.055) / 1.055, 2.4);
+    const g = color.g <= 0.04045 ? color.g / 12.92 : Math.pow((color.g + 0.055) / 1.055, 2.4);
+    const b = color.b <= 0.04045 ? color.b / 12.92 : Math.pow((color.b + 0.055) / 1.055, 2.4);
+    return new THREE.Color(r, g, b);
+}
+
+// Convert Linear (Rec.709) to sRGB
+function linearToSRGB(color) {
+    // Linear to sRGB transformation
+    const r = color.r <= 0.0031308 ? color.r * 12.92 : 1.055 * Math.pow(color.r, 1.0 / 2.4) - 0.055;
+    const g = color.g <= 0.0031308 ? color.g * 12.92 : 1.055 * Math.pow(color.g, 1.0 / 2.4) - 0.055;
+    const b = color.b <= 0.0031308 ? color.b * 12.92 : 1.055 * Math.pow(color.b, 1.0 / 2.4) - 0.055;
+    return new THREE.Color(r, g, b);
 }
 
 // ============================================================================
@@ -496,9 +645,15 @@ function updateMaterialUI() {
 
         // Color
         if (mat.color) {
-            const colorObj = { color: '#' + mat.color.getHexString() };
-            matFolder.addColor(colorObj, 'color').name('Base Color').onChange(v => {
-                mat.color.set(v);
+            // Convert from linear (material internal) to sRGB for display in color picker
+            const displayColor = linearToSRGB(mat.color.clone());
+            const colorObj = { color: '#' + displayColor.getHexString() };
+            matFolder.addColor(colorObj, 'color').name('Base Color (sRGB)').onChange(v => {
+                // Convert from sRGB (color picker) to linear (material internal)
+                // MaterialX assumes linear Rec.709 as working colorspace
+                const pickerColor = new THREE.Color(v);
+                const linearColor = sRGBToLinear(pickerColor);
+                mat.color.copy(linearColor);
             });
         }
 
@@ -542,9 +697,15 @@ function updateMaterialUI() {
 
         // Emissive
         if (mat.emissive) {
-            const emissiveObj = { emissive: '#' + mat.emissive.getHexString() };
-            matFolder.addColor(emissiveObj, 'emissive').name('Emissive').onChange(v => {
-                mat.emissive.set(v);
+            // Convert from linear (material internal) to sRGB for display in color picker
+            const displayEmissive = linearToSRGB(mat.emissive.clone());
+            const emissiveObj = { emissive: '#' + displayEmissive.getHexString() };
+            matFolder.addColor(emissiveObj, 'emissive').name('Emissive (sRGB)').onChange(v => {
+                // Convert from sRGB (color picker) to linear (material internal)
+                // MaterialX assumes linear Rec.709 as working colorspace
+                const pickerColor = new THREE.Color(v);
+                const linearColor = sRGBToLinear(pickerColor);
+                mat.emissive.copy(linearColor);
             });
         }
         if (mat.emissiveIntensity !== undefined) {
