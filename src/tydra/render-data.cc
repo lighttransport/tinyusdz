@@ -5807,22 +5807,29 @@ bool RenderSceneConverter::ConvertUVTexture(const RenderSceneConverterEnv &env,
 
   UVTexture tex;
 
-  if (!texture.file.authored()) {
-    PUSH_ERROR_AND_RETURN(fmt::format("`asset:file` is not authored. Path = {}",
-                                      tex_abs_path.prim_part()));
-  }
+  // Workaround for Blender export bug: UsdUVTexture without asset:file
+  // This happens when Blender exports materials incorrectly
+  bool has_file = texture.file.authored();
 
   value::AssetPath assetPath;
-  if (auto apath = texture.file.get_value()) {
-    if (!apath.value().get(env.timecode, &assetPath)) {
-      PUSH_ERROR_AND_RETURN(fmt::format(
-          "Failed to get `asset:file` value from Path {} at time {}",
-          tex_abs_path.prim_part(), env.timecode));
+  if (has_file) {
+    if (auto apath = texture.file.get_value()) {
+      if (!apath.value().get(env.timecode, &assetPath)) {
+        PUSH_ERROR_AND_RETURN(fmt::format(
+            "Failed to get `asset:file` value from Path {} at time {}",
+            tex_abs_path.prim_part(), env.timecode));
+      }
+    } else {
+      PUSH_ERROR_AND_RETURN(
+          fmt::format("Failed to get `asset:file` value from Path {}",
+                      tex_abs_path.prim_part()));
     }
   } else {
-    PUSH_ERROR_AND_RETURN(
-        fmt::format("Failed to get `asset:file` value from Path {}",
-                    tex_abs_path.prim_part()));
+    // Blender export bug workaround: create placeholder texture
+    PUSH_WARN(fmt::format("`asset:file` is not authored for UsdUVTexture at {}. "
+                         "This is likely a Blender export bug. Creating placeholder texture.",
+                         tex_abs_path.prim_part()));
+    assetPath = value::AssetPath("");  // empty path
   }
 
   // TextureImage and BufferData
@@ -5915,7 +5922,7 @@ bool RenderSceneConverter::ConvertUVTexture(const RenderSceneConverterEnv &env,
     // exists, `colorSpace` metadata supercedes.
     // NOTE: `inputs:sourceColorSpace` attribute should be deprecated in favor of `colorSpace` metadata.
     bool inferColorSpaceFailed = false;
-    if (texture.file.metas().has_colorSpace()) {
+    if (has_file && texture.file.metas().has_colorSpace()) {
       ColorSpace cs;
       value::token cs_token = texture.file.metas().get_colorSpace();
       if (InferColorSpace(cs_token, &cs)) {
@@ -5927,7 +5934,7 @@ bool RenderSceneConverter::ConvertUVTexture(const RenderSceneConverterEnv &env,
     }
 
     bool sourceColorSpaceSet = false;
-    if (inferColorSpaceFailed || !texture.file.metas().has_colorSpace()) {
+    if (inferColorSpaceFailed || !has_file || !texture.file.metas().has_colorSpace()) {
       if (texture.sourceColorSpace.authored()) {
         UsdUVTexture::SourceColorSpace cs;
         if (texture.sourceColorSpace.get_value().get(env.timecode, &cs)) {
@@ -5966,7 +5973,7 @@ bool RenderSceneConverter::ConvertUVTexture(const RenderSceneConverterEnv &env,
       }
     }
 
-    if (!sourceColorSpaceSet && inferColorSpaceFailed) {
+    if (!sourceColorSpaceSet && inferColorSpaceFailed && has_file) {
       value::token cs_token = texture.file.metas().get_colorSpace();
       PUSH_ERROR_AND_RETURN(
           fmt::format("Invalid or unknown colorSpace metadataum: {}. Please "
