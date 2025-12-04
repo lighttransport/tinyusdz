@@ -4169,7 +4169,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
 
       if (rep.IsArray()) {
         if (rep.GetPayload() == 0) { // empty array
-          TypedArray<value::double2> empty_v;
+          std::vector<value::double2> empty_v;
           value->Set(std::move(empty_v));
           return true;
         }
@@ -4195,7 +4195,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
         }
 
         if (n == 0) {
-          TypedArray<value::double2> empty_v;
+          std::vector<value::double2> empty_v;
           value->Set(std::move(empty_v));
           return true;
         }
@@ -4206,29 +4206,14 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
 
         CHECK_MEMORY_USAGE(n * sizeof(value::double2));
 
-        TypedArray<value::double2> v;
-        if (!rep.IsCompressed() && _config.use_mmap) {
-          // Use TypedArray view mode - no allocation, just point to mmap'd data
-          uint64_t current_pos = _sr->tell();
-          const uint8_t* data_ptr = _sr->data() + current_pos;
-          
-          // Create a view over the mmap'd data
-          v = TypedArray<value::double2>(new TypedArrayImpl<value::double2>(const_cast<value::double2*>(reinterpret_cast<const value::double2*>(data_ptr)), static_cast<size_t>(n), true), true);
-          
-          // Advance stream reader position
-          if (!_sr->seek_set(current_pos + n * sizeof(value::double2))) {
-            PUSH_ERROR("Failed to advance stream reader position.");
-            return false;
-          }
-        } else {
-          // Regular allocation for compressed data or when mmap is disabled
-          v.resize(static_cast<size_t>(n));
-          if (!_sr->read(size_t(n) * sizeof(value::double2),
-                         size_t(n) * sizeof(value::double2),
-                         reinterpret_cast<uint8_t *>(v.data()))) {
-            PUSH_ERROR("Failed to read double2 array.");
-            return false;
-          }
+        std::vector<value::double2> v;
+        // Always use std::vector - no mmap view mode
+        v.resize(static_cast<size_t>(n));
+        if (!_sr->read(size_t(n) * sizeof(value::double2),
+                       size_t(n) * sizeof(value::double2),
+                       reinterpret_cast<uint8_t *>(v.data()))) {
+          PUSH_ERROR("Failed to read double2 array.");
+          return false;
         }
 
         DCOUT("double2[] = " << value::print_array_snipped(v));
@@ -4256,7 +4241,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
 
       if (rep.IsArray()) {
         if (rep.GetPayload() == 0) { // empty array
-          TypedArray<value::float2> empty_v;
+          std::vector<value::float2> empty_v;
           value->Set(std::move(empty_v));
           return true;
         }
@@ -4286,42 +4271,26 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
         }
 
         if (n == 0) {
-          TypedArray<value::float2> empty_v;
+          std::vector<value::float2> empty_v;
           value->Set(std::move(empty_v));
           return true;
         }
 
         CHECK_MEMORY_USAGE(n * sizeof(value::float2));
 
-        TypedArray<value::float2> v;
-        if (!rep.IsCompressed() && _config.use_mmap) {
-          // Use TypedArray view mode - no allocation, just point to mmap'd data
-          uint64_t current_pos = _sr->tell();
-          const uint8_t* data_ptr = _sr->data() + current_pos;
-          
-          // Create a view over the mmap'd data
-          v = TypedArray<value::float2>(new TypedArrayImpl<value::float2>(const_cast<value::float2*>(reinterpret_cast<const value::float2*>(data_ptr)), static_cast<size_t>(n), true), true);
-          
-          // Advance stream reader position
-          if (!_sr->seek_set(current_pos + n * sizeof(value::float2))) {
-            PUSH_ERROR("Failed to advance stream reader position.");
-            return false;
-          }
-        } else {
-          // Regular allocation for compressed data or when mmap is disabled
-          if (!v.resize(static_cast<size_t>(n))) {
-            PUSH_ERROR_AND_RETURN_TAG(kTag, "Internal error. failed to resize TypedArray.");
-          }
-          if (!_sr->read(size_t(n) * sizeof(value::float2),
-                         size_t(n) * sizeof(value::float2),
-                         reinterpret_cast<uint8_t *>(v.data()))) {
-            PUSH_ERROR("Failed to read float2 array.");
-            return false;
-          }
+        std::vector<value::float2> v;
+        // Always use std::vector - no mmap view mode
+        v.resize(static_cast<size_t>(n));
+        if (!_sr->read(size_t(n) * sizeof(value::float2),
+                       size_t(n) * sizeof(value::float2),
+                       reinterpret_cast<uint8_t *>(v.data()))) {
+          PUSH_ERROR("Failed to read float2 array.");
+          return false;
         }
 
         DCOUT("float2[] = " << value::print_array_snipped(v));
         //TUSDZ_LOG_D("float2[] = " << value::print_array_snipped(v));
+        //TUSDZ_LOG_I("float2[].size" << v.size());
 
         value->Set(std::move(v));
         return true;
@@ -4346,7 +4315,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
 
       if (rep.IsArray()) {
         if (rep.GetPayload() == 0) { // empty array
-          TypedArray<value::half2> empty_v;
+          std::vector<value::half2> empty_v;
           value->Set(std::move(empty_v));
           return true;
         }
@@ -4376,29 +4345,14 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
 
         CHECK_MEMORY_USAGE(n * sizeof(value::half2));
 
-        TypedArray<value::half2> v;
-        if (!rep.IsCompressed() && _config.use_mmap) {
-          // Use TypedArray view mode - no allocation, just point to mmap'd data
-          uint64_t current_pos = _sr->tell();
-          const uint8_t* data_ptr = _sr->data() + current_pos;
-          
-          // Create a view over the mmap'd data
-          v = TypedArray<value::half2>(new TypedArrayImpl<value::half2>(const_cast<value::half2*>(reinterpret_cast<const value::half2*>(data_ptr)), static_cast<size_t>(n), true), true);
-          
-          // Advance stream reader position
-          if (!_sr->seek_set(current_pos + n * sizeof(value::half2))) {
-            PUSH_ERROR("Failed to advance stream reader position.");
-            return false;
-          }
-        } else {
-          // Regular allocation for compressed data or when mmap is disabled
-          v.resize(static_cast<size_t>(n));
-          if (!_sr->read(size_t(n) * sizeof(value::half2),
-                         size_t(n) * sizeof(value::half2),
-                         reinterpret_cast<uint8_t *>(v.data()))) {
-            PUSH_ERROR("Failed to read half2 array.");
-            return false;
-          }
+        std::vector<value::half2> v;
+        // Always use std::vector - no mmap view mode
+        v.resize(static_cast<size_t>(n));
+        if (!_sr->read(size_t(n) * sizeof(value::half2),
+                       size_t(n) * sizeof(value::half2),
+                       reinterpret_cast<uint8_t *>(v.data()))) {
+          PUSH_ERROR("Failed to read half2 array.");
+          return false;
         }
 
         DCOUT("half2[] = " << value::print_array_snipped(v));
@@ -4488,7 +4442,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
 
       if (rep.IsArray()) {
         if (rep.GetPayload() == 0) { // empty array
-          TypedArray<value::double3> empty_v;
+          std::vector<value::double3> empty_v;
           value->Set(std::move(empty_v));
           return true;
         }
@@ -4519,29 +4473,14 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
 
         CHECK_MEMORY_USAGE(n * sizeof(value::double3));
 
-        TypedArray<value::double3> v;
-        if (!rep.IsCompressed() && _config.use_mmap) {
-          // Use TypedArray view mode - no allocation, just point to mmap'd data
-          uint64_t current_pos = _sr->tell();
-          const uint8_t* data_ptr = _sr->data() + current_pos;
-          
-          // Create a view over the mmap'd data
-          v = TypedArray<value::double3>(new TypedArrayImpl<value::double3>(const_cast<value::double3*>(reinterpret_cast<const value::double3*>(data_ptr)), static_cast<size_t>(n), true), true);
-          
-          // Advance stream reader position
-          if (!_sr->seek_set(current_pos + n * sizeof(value::double3))) {
-            PUSH_ERROR("Failed to advance stream reader position.");
-            return false;
-          }
-        } else {
-          // Regular allocation for compressed data or when mmap is disabled
-          v.resize(static_cast<size_t>(n));
-          if (!_sr->read(size_t(n) * sizeof(value::double3),
-                         size_t(n) * sizeof(value::double3),
-                         reinterpret_cast<uint8_t *>(v.data()))) {
-            PUSH_ERROR("Failed to read double3 array.");
-            return false;
-          }
+        std::vector<value::double3> v;
+        // Always use std::vector - no mmap view mode
+        v.resize(static_cast<size_t>(n));
+        if (!_sr->read(size_t(n) * sizeof(value::double3),
+                       size_t(n) * sizeof(value::double3),
+                       reinterpret_cast<uint8_t *>(v.data()))) {
+          PUSH_ERROR("Failed to read double3 array.");
+          return false;
         }
 
         DCOUT("double3[] = " << value::print_array_snipped(v));
@@ -4992,7 +4931,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
 
       if (rep.IsArray()) {
         if (rep.GetPayload() == 0) { // empty array
-          TypedArray<value::half4> empty_v;
+          std::vector<value::half4> empty_v;
           value->Set(std::move(empty_v));
           return true;
         }
@@ -5022,29 +4961,14 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
 
         CHECK_MEMORY_USAGE(n * sizeof(value::half4));
 
-        TypedArray<value::half4> v;
-        if (!rep.IsCompressed() && _config.use_mmap) {
-          // Use TypedArray view mode - no allocation, just point to mmap'd data
-          uint64_t current_pos = _sr->tell();
-          const uint8_t* data_ptr = _sr->data() + current_pos;
-          
-          // Create a view over the mmap'd data
-          v = TypedArray<value::half4>(new TypedArrayImpl<value::half4>(const_cast<value::half4*>(reinterpret_cast<const value::half4*>(data_ptr)), static_cast<size_t>(n), true), true);
-          
-          // Advance stream reader position
-          if (!_sr->seek_set(current_pos + n * sizeof(value::half4))) {
-            PUSH_ERROR("Failed to advance stream reader position.");
-            return false;
-          }
-        } else {
-          // Regular allocation for compressed data or when mmap is disabled
-          v.resize(static_cast<size_t>(n));
-          if (!_sr->read(size_t(n) * sizeof(value::half4),
-                         size_t(n) * sizeof(value::half4),
-                         reinterpret_cast<uint8_t *>(v.data()))) {
-            PUSH_ERROR("Failed to read half4 array.");
-            return false;
-          }
+        std::vector<value::half4> v;
+        // Always use std::vector - no mmap view mode
+        v.resize(static_cast<size_t>(n));
+        if (!_sr->read(size_t(n) * sizeof(value::half4),
+                       size_t(n) * sizeof(value::half4),
+                       reinterpret_cast<uint8_t *>(v.data()))) {
+          PUSH_ERROR("Failed to read half4 array.");
+          return false;
         }
 
         DCOUT("half4[] = " << value::print_array_snipped(v));

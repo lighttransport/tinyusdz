@@ -26,8 +26,17 @@
 namespace tinyusdz {
 
 constexpr auto kMtlxUsdPreviewSurface = "MtlxUsdPreviewSurface";
-constexpr auto kMtlxAutodeskStandardSurface = "MtlxAutodeskStandaradSurface";
+constexpr auto kMtlxAutodeskStandardSurface = "MtlxAutodeskStandardSurface";
+constexpr auto kMtlxOpenPBRSurface = "MtlxOpenPBRSurface";
 
+// MaterialX node definition IDs (as used in info:id attribute)
+constexpr auto kNdOpenPbrSurfaceSurfaceshader = "ND_open_pbr_surface_surfaceshader";
+
+// MaterialX Light Shader Nodes
+constexpr auto kMtlxUniformEdf = "uniform_edf";
+constexpr auto kMtlxConicalEdf = "conical_edf";
+constexpr auto kMtlxMeasuredEdf = "measured_edf";
+constexpr auto kMtlxLight = "light";
 
 namespace mtlx {
 
@@ -37,6 +46,14 @@ enum class ColorSpace {
 };
 
 } // namespace mtlx
+
+// MaterialX shader input connection information
+struct MtlxShaderConnection {
+  std::string input_name;      // e.g., "base_color"
+  std::string nodegraph;        // Reference to nodegraph name (if using nodegraph output)
+  std::string output;           // Output name from nodegraph (e.g., "out_color")
+  std::string nodename;         // Direct node reference (alternative to nodegraph)
+};
 
 // <surfacematerial>
 struct MtlxMaterial {
@@ -60,44 +77,233 @@ struct MtlxModel {
   std::string shader_name;
 
   // Content of shader.
-  // MtlxUsdPreviewSurface or MtlxAutodeskStandaradSurface
-  value::Value shader; 
+  // MtlxUsdPreviewSurface or MtlxAutodeskStandardSurface
+  value::Value shader;
 
   std::map<std::string, MtlxMaterial> surface_materials;
-  std::map<std::string, value::Value> shaders; // MtlxUsdPreviewSurface or MtlxAutodeskStandaradSurface
+  std::map<std::string, value::Value> shaders; // MtlxUsdPreviewSurface, MtlxAutodeskStandardSurface, or OpenPBRSurface
+  std::map<std::string, value::Value> light_shaders; // Light shaders (EDF nodes)
+  std::map<std::string, PrimSpec> nodegraphs; // NodeGraph PrimSpecs
+  std::map<std::string, std::vector<MtlxShaderConnection>> shader_connections; // Shader name -> list of connections
 };
 
 struct MtlxUsdPreviewSurface : UsdPreviewSurface {
   //  TODO: add mtlx specific attribute.
 };
 
+// OpenPBR Surface Shader
+// https://github.com/AcademySoftwareFoundation/OpenPBR
+// MaterialX implementation of OpenPBR specification
+struct MtlxOpenPBRSurface : ShaderNode {
+  // Base properties
+  TypedAttributeWithFallback<Animatable<float>> base_weight{1.0f};
+  TypedAttributeWithFallback<Animatable<value::color3f>> base_color{
+      value::color3f{0.8f, 0.8f, 0.8f}};
+  TypedAttributeWithFallback<Animatable<float>> base_metalness{0.0f};
+  TypedAttributeWithFallback<Animatable<float>> base_diffuse_roughness{0.0f};
+
+  // Specular properties
+  TypedAttributeWithFallback<Animatable<float>> specular_weight{1.0f};
+  TypedAttributeWithFallback<Animatable<value::color3f>> specular_color{
+      value::color3f{1.0f, 1.0f, 1.0f}};
+  TypedAttributeWithFallback<Animatable<float>> specular_roughness{0.3f};
+  TypedAttributeWithFallback<Animatable<float>> specular_ior{1.5f};
+  TypedAttributeWithFallback<Animatable<float>> specular_anisotropy{0.0f};
+  TypedAttributeWithFallback<Animatable<float>> specular_rotation{0.0f};
+  TypedAttributeWithFallback<Animatable<float>> specular_roughness_anisotropy{0.0f};
+
+  // Transmission properties
+  TypedAttributeWithFallback<Animatable<float>> transmission_weight{0.0f};
+  TypedAttributeWithFallback<Animatable<value::color3f>> transmission_color{
+      value::color3f{1.0f, 1.0f, 1.0f}};
+  TypedAttributeWithFallback<Animatable<float>> transmission_depth{0.0f};
+  TypedAttributeWithFallback<Animatable<value::color3f>> transmission_scatter{
+      value::color3f{0.0f, 0.0f, 0.0f}};
+  TypedAttributeWithFallback<Animatable<float>> transmission_scatter_anisotropy{0.0f};
+  TypedAttributeWithFallback<Animatable<float>> transmission_dispersion{0.0f};
+  TypedAttributeWithFallback<Animatable<float>> transmission_dispersion_abbe_number{0.0f};
+  TypedAttributeWithFallback<Animatable<float>> transmission_dispersion_scale{0.0f};
+
+  // Subsurface properties
+  TypedAttributeWithFallback<Animatable<float>> subsurface_weight{0.0f};
+  TypedAttributeWithFallback<Animatable<value::color3f>> subsurface_color{
+      value::color3f{0.8f, 0.8f, 0.8f}};
+  TypedAttributeWithFallback<Animatable<float>> subsurface_radius{0.05f};  // Blender uses float, not color3f
+  TypedAttributeWithFallback<Animatable<value::color3f>> subsurface_radius_scale{
+      value::color3f{1.0f, 0.2f, 0.1f}};
+  TypedAttributeWithFallback<Animatable<float>> subsurface_scale{1.0f};
+  TypedAttributeWithFallback<Animatable<float>> subsurface_anisotropy{0.0f};
+  TypedAttributeWithFallback<Animatable<float>> subsurface_scatter_anisotropy{0.0f};
+
+  // Coat properties
+  TypedAttributeWithFallback<Animatable<float>> coat_weight{0.0f};
+  TypedAttributeWithFallback<Animatable<value::color3f>> coat_color{
+      value::color3f{1.0f, 1.0f, 1.0f}};
+  TypedAttributeWithFallback<Animatable<float>> coat_roughness{0.1f};
+  TypedAttributeWithFallback<Animatable<float>> coat_anisotropy{0.0f};
+  TypedAttributeWithFallback<Animatable<float>> coat_rotation{0.0f};
+  TypedAttributeWithFallback<Animatable<float>> coat_roughness_anisotropy{0.0f};
+  TypedAttributeWithFallback<Animatable<float>> coat_ior{1.6f};
+  TypedAttributeWithFallback<Animatable<float>> coat_darkening{0.0f};
+  TypedAttributeWithFallback<Animatable<float>> coat_affect_color{0.0f};
+  TypedAttributeWithFallback<Animatable<float>> coat_affect_roughness{0.0f};
+
+  // Fuzz properties (fabric/cloth layer)
+  TypedAttributeWithFallback<Animatable<float>> fuzz_weight{0.0f};
+  TypedAttributeWithFallback<Animatable<value::color3f>> fuzz_color{
+      value::color3f{1.0f, 1.0f, 1.0f}};
+  TypedAttributeWithFallback<Animatable<float>> fuzz_roughness{0.5f};
+
+  // Thin film properties
+  TypedAttributeWithFallback<Animatable<float>> thin_film_thickness{0.0f};
+  TypedAttributeWithFallback<Animatable<float>> thin_film_ior{1.5f};
+  TypedAttributeWithFallback<Animatable<float>> thin_film_weight{0.0f};
+
+  // Emission properties
+  TypedAttributeWithFallback<Animatable<float>> emission_luminance{0.0f};
+  TypedAttributeWithFallback<Animatable<value::color3f>> emission_color{
+      value::color3f{1.0f, 1.0f, 1.0f}};
+
+  // Geometry properties
+  TypedAttributeWithFallback<Animatable<float>> geometry_opacity{1.0f};
+  TypedAttributeWithFallback<Animatable<bool>> geometry_thin_walled{false};
+
+  // Normal and tangent
+  TypedAttribute<Animatable<value::normal3f>> geometry_normal;
+  TypedAttribute<Animatable<value::vector3f>> geometry_tangent;
+  TypedAttribute<Animatable<value::normal3f>> geometry_coat_normal;
+  TypedAttribute<Animatable<value::vector3f>> geometry_coat_tangent;
+
+  // Output
+  TypedTerminalAttribute<value::token> surface;  // 'outputs:surface'
+};
+
 // https://github.com/Autodesk/standard-surface/blob/master/reference/standard_surface.mtlx
 // We only support v1.0.1
 struct MtlxAutodeskStandardSurface : ShaderNode {
+  // Base properties
   TypedAttributeWithFallback<Animatable<float>> base{1.0f};
-  TypedAttributeWithFallback<Animatable<value::color3f>> baseColor{
+  TypedAttributeWithFallback<Animatable<value::color3f>> base_color{
       value::color3f{0.8f, 0.8f, 0.8f}};  // color3
+  TypedAttributeWithFallback<Animatable<float>> diffuse_roughness{0.0f};
+  TypedAttributeWithFallback<Animatable<float>> metalness{0.0f};
 
-  // TODO
-  // ...
+  // Specular properties
+  TypedAttributeWithFallback<Animatable<float>> specular{1.0f};
+  TypedAttributeWithFallback<Animatable<value::color3f>> specular_color{
+      value::color3f{1.0f, 1.0f, 1.0f}};
+  TypedAttributeWithFallback<Animatable<float>> specular_roughness{0.2f};
+  TypedAttributeWithFallback<Animatable<float>> specular_IOR{1.5f};
+  TypedAttributeWithFallback<Animatable<float>> specular_anisotropy{0.0f};
+  TypedAttributeWithFallback<Animatable<float>> specular_rotation{0.0f};
 
-  // (coat_affect_roughness * coat) * coat_roughness
-  TypedAttribute<Animatable<float>> coat_affect_roughness;
-  TypedAttribute<Animatable<float>> coat;
-  TypedAttribute<Animatable<float>> coat_roughness;
+  // Transmission properties
+  TypedAttributeWithFallback<Animatable<float>> transmission{0.0f};
+  TypedAttributeWithFallback<Animatable<value::color3f>> transmission_color{
+      value::color3f{1.0f, 1.0f, 1.0f}};
+  TypedAttributeWithFallback<Animatable<float>> transmission_depth{0.0f};
+  TypedAttributeWithFallback<Animatable<value::color3f>> transmission_scatter{
+      value::color3f{0.0f, 0.0f, 0.0f}};
+  TypedAttributeWithFallback<Animatable<float>> transmission_scatter_anisotropy{0.0f};
+  TypedAttributeWithFallback<Animatable<float>> transmission_dispersion{0.0f};
+  TypedAttributeWithFallback<Animatable<float>> transmission_extra_roughness{0.0f};
 
-  // (specular_roughness + transmission_extra_roughness)
-  TypedAttribute<Animatable<float>> specular_roughness;
-  TypedAttribute<Animatable<float>> transmission_extra_roughness;
-  TypedAttribute<Animatable<float>> transmission_roughness_add;
+  // Subsurface properties
+  TypedAttributeWithFallback<Animatable<float>> subsurface{0.0f};
+  TypedAttributeWithFallback<Animatable<value::color3f>> subsurface_color{
+      value::color3f{1.0f, 1.0f, 1.0f}};
+  TypedAttributeWithFallback<Animatable<value::color3f>> subsurface_radius{
+      value::color3f{1.0f, 1.0f, 1.0f}};
+  TypedAttributeWithFallback<Animatable<float>> subsurface_scale{1.0f};
+  TypedAttributeWithFallback<Animatable<float>> subsurface_anisotropy{0.0f};
 
-  // tangent_rotate_normalize
-  // normalize(rotate3d(/* in */tangent, /*amount*/(specular_rotation * 360), /*
-  // axis */normal))
-  TypedAttribute<Animatable<float>> specular_rotation;
+  // Sheen properties
+  TypedAttributeWithFallback<Animatable<float>> sheen{0.0f};
+  TypedAttributeWithFallback<Animatable<value::color3f>> sheen_color{
+      value::color3f{1.0f, 1.0f, 1.0f}};
+  TypedAttributeWithFallback<Animatable<float>> sheen_roughness{0.3f};
+
+  // Coat properties
+  TypedAttributeWithFallback<Animatable<float>> coat{0.0f};
+  TypedAttributeWithFallback<Animatable<value::color3f>> coat_color{
+      value::color3f{1.0f, 1.0f, 1.0f}};
+  TypedAttributeWithFallback<Animatable<float>> coat_roughness{0.1f};
+  TypedAttributeWithFallback<Animatable<float>> coat_anisotropy{0.0f};
+  TypedAttributeWithFallback<Animatable<float>> coat_rotation{0.0f};
+  TypedAttributeWithFallback<Animatable<float>> coat_IOR{1.5f};
+  TypedAttributeWithFallback<Animatable<float>> coat_affect_color{0.0f};
+  TypedAttributeWithFallback<Animatable<float>> coat_affect_roughness{0.0f};
+
+  // Thin film properties
+  TypedAttributeWithFallback<Animatable<float>> thin_film_thickness{0.0f};
+  TypedAttributeWithFallback<Animatable<float>> thin_film_IOR{1.5f};
+
+  // Emission properties
+  TypedAttributeWithFallback<Animatable<float>> emission{0.0f};
+  TypedAttributeWithFallback<Animatable<value::color3f>> emission_color{
+      value::color3f{1.0f, 1.0f, 1.0f}};
+
+  // Opacity
+  TypedAttributeWithFallback<Animatable<value::color3f>> opacity{
+      value::color3f{1.0f, 1.0f, 1.0f}};
+
+  // Thin walled
+  TypedAttributeWithFallback<Animatable<bool>> thin_walled{false};
+
+  // Normal and tangent
+  TypedAttribute<Animatable<value::normal3f>> normal;
+  TypedAttribute<Animatable<value::vector3f>> tangent;
 
   // Output
   TypedTerminalAttribute<value::token> out;  // 'out'
+};
+
+//
+// MaterialX Light Shader Nodes (EDF - Emission Distribution Functions)
+//
+
+// uniform_edf: Constructs an EDF emitting light uniformly in all directions
+struct MtlxUniformEdf : ShaderNode {
+  TypedAttributeWithFallback<Animatable<value::color3f>> color{
+      value::color3f{1.0f, 1.0f, 1.0f}};  // color3 - Radiant emittance
+
+  // Output
+  TypedTerminalAttribute<value::token> out;  // 'out' (EDF type)
+};
+
+// conical_edf: Constructs an EDF emitting light inside a cone around the normal direction
+struct MtlxConicalEdf : ShaderNode {
+  TypedAttributeWithFallback<Animatable<value::color3f>> color{
+      value::color3f{1.0f, 1.0f, 1.0f}};  // color3 - Radiant emittance
+  TypedAttribute<Animatable<value::normal3f>> normal;  // vector3 - Surface normal (default: world space normal)
+  TypedAttributeWithFallback<Animatable<float>> inner_angle{60.0f};  // float - Inner cone angle in degrees
+  TypedAttribute<Animatable<float>> outer_angle;  // float - Outer cone angle for intensity falloff
+
+  // Output
+  TypedTerminalAttribute<value::token> out;  // 'out' (EDF type)
+};
+
+// measured_edf: Constructs an EDF emitting light according to a measured IES light profile
+struct MtlxMeasuredEdf : ShaderNode {
+  TypedAttributeWithFallback<Animatable<value::color3f>> color{
+      value::color3f{1.0f, 1.0f, 1.0f}};  // color3 - Radiant emittance
+  TypedAttribute<Animatable<value::AssetPath>> file;  // filename - Path to IES light profile data
+
+  // Output
+  TypedTerminalAttribute<value::token> out;  // 'out' (EDF type)
+};
+
+// light: Constructs a light shader from an emission distribution function (EDF)
+struct MtlxLight : ShaderNode {
+  TypedAttribute<value::token> edf;  // EDF - Emission distribution function (connection to EDF node)
+  TypedAttributeWithFallback<Animatable<value::color3f>> intensity{
+      value::color3f{1.0f, 1.0f, 1.0f}};  // color3 - Intensity multiplier for EDF emittance
+
+  // Optional: exposure (EV) - some renderers support this
+  TypedAttribute<Animatable<float>> exposure;  // float - Exposure value
+
+  // Output
+  TypedTerminalAttribute<value::token> out;  // 'out' (lightshader type)
 };
 
 //
@@ -145,6 +351,15 @@ bool LoadMaterialXFromAsset(const Asset &asset,
                             const std::string &asset_path, PrimSpec &ps /* inout */,
                             std::string *warn, std::string *err);
 
+///
+/// Convert MaterialX Light shader to UsdLux light
+/// This helps map MaterialX light shaders to corresponding USD light types
+///
+bool ConvertMtlxLightToUsdLux(const MtlxLight &mtlx_light,
+                               const std::map<std::string, value::Value> &light_shaders,
+                               value::Value *usd_light,
+                               std::string *warn, std::string *err);
+
 // import DEFINE_TYPE_TRAIT and DEFINE_ROLE_TYPE_TRAIT
 #include "define-type-trait.inc"
 
@@ -155,6 +370,18 @@ DEFINE_TYPE_TRAIT(MtlxUsdPreviewSurface, kMtlxUsdPreviewSurface,
                   TYPE_ID_IMAGING_MTLX_PREVIEWSURFACE, 1);
 DEFINE_TYPE_TRAIT(MtlxAutodeskStandardSurface, kMtlxAutodeskStandardSurface,
                   TYPE_ID_IMAGING_MTLX_STANDARDSURFACE, 1);
+DEFINE_TYPE_TRAIT(MtlxOpenPBRSurface, kMtlxOpenPBRSurface,
+                  TYPE_ID_IMAGING_MTLX_OPENPBRSURFACE, 1);
+
+// Light ShaderNodes (EDF and Light)
+DEFINE_TYPE_TRAIT(MtlxUniformEdf, kMtlxUniformEdf,
+                  TYPE_ID_IMAGING_MTLX_UNIFORMEDF, 1);
+DEFINE_TYPE_TRAIT(MtlxConicalEdf, kMtlxConicalEdf,
+                  TYPE_ID_IMAGING_MTLX_CONICALEDF, 1);
+DEFINE_TYPE_TRAIT(MtlxMeasuredEdf, kMtlxMeasuredEdf,
+                  TYPE_ID_IMAGING_MTLX_MEASUREDEDF, 1);
+DEFINE_TYPE_TRAIT(MtlxLight, kMtlxLight,
+                  TYPE_ID_IMAGING_MTLX_LIGHT, 1);
 
 #undef DEFINE_TYPE_TRAIT
 #undef DEFINE_ROLE_TYPE_TRAIT

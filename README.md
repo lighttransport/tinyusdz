@@ -24,6 +24,18 @@
 
 More on the status: https://github.com/lighttransport/tinyusdz/blob/release/doc/status.md
 
+## Next release(Early 2026 planned)
+
+* We plan to use C++17 by default: https://github.com/lighttransport/tinyusdz/issues/220
+* JS/WASM binding
+* MCP(ModelContextProtocol) support
+  * USDJ(JSON representation of USD)
+  * Scripting USD with JavaScript(using embedded JS runtime(QuickJS-ng)) 
+* Various optimization
+* Better animation(TimeSamples) support
+* MaterialX support
+* USDC writer(experimental)
+  
 ## Branches
 
 * `release` Release branch
@@ -34,7 +46,17 @@ More on the status: https://github.com/lighttransport/tinyusdz/blob/release/doc/
 ## High priority
 
 * Support MCP interface for AI agents: https://github.com/lighttransport/tinyusdz/issues/243
-
+* MaterialX https://github.com/syoyo/tinyusdz/issues/86
+  * Write our own MaterialX parser
+  * OpenPBR shading model support https://github.com/lighttransport/tinyusdz/issues/172
+  * USD + MateriralX + OpenPBR rendering verification using pbrlab? https://github.com/lighttransport/pbrlab
+* Enhancement for wasm, webgpu https://github.com/syoyo/tinyusdz/issues/118
+  * Three.js loader addon(TinyUSDZLoader) https://github.com/lighttransport/tinyusdz/issues/185 
+* Improve Animation(timeSamples) support in JS/WASM
+  * Support rigid node animation(xformOp + timeSamples)
+  * Skinning support
+  * Convert USD animation data to Three.js friendly format.
+    
 ## Mid-term todo
 
 * USD import/export feature using TinyUSDZ for robotics/sim2real/digitalTwin/genAI tools https://github.com/lighttransport/tinyusdz/issues/226
@@ -43,13 +65,7 @@ More on the status: https://github.com/lighttransport/tinyusdz/blob/release/doc/
   * For OpenGL + MaterialX example, please refer ASF MaterialXViewer fork to load USD model through TinyUSDZ https://github.com/lighttransport/materialx
 * Support PLY and point primitive for Gaussian Splatting https://github.com/lighttransport/tinyusdz/issues/190
 * Performace optimization https://github.com/syoyo/tinyusdz/issues/164
-* MaterialX https://github.com/syoyo/tinyusdz/issues/86
-  * Write our own MaterialX parser
-  * OpenPBR shading model support https://github.com/lighttransport/tinyusdz/issues/172
-  * USD + MateriralX + OpenPBR rendering verification using pbrlab? https://github.com/lighttransport/pbrlab
 * Nested variantSet https://github.com/lighttransport/tinyusdz/issues/94 
-* Enhancement for wasm, webgpu https://github.com/syoyo/tinyusdz/issues/118
-  * Three.js loader addon(TinyUSDZLoader) https://github.com/lighttransport/tinyusdz/issues/185 
 * better colorspace + wide-gamut support https://github.com/syoyo/tinyusdz/issues/142
 * Better skinning + blendshapes support
   * Write example using mediapipe for motion tracking and face tracking with rigged USDZ model.  
@@ -442,24 +458,27 @@ Please see [tydra_api](examples/tydra_api/)
 
 ### Higher priority
 
-* [ ] Built-in usdObj(wavefront .obj mesh) support.
-  * via tinyobjloader.
 * [x] Support Crate(binary) version 0.8.0(USD v20.11 default)
-* [ ] usdSkel utilities
-  * [ ] Joint hierachy reconstruction and compute skinning matrix(usdSkel)
-  * [ ] Blend shapes
-    * [x] Basic Blendshapes support
-    * [ ] In-between blend shapes
-* [ ] Read USD data with bounded memory size. This feature is especially useful for mobile platform(e.g. in terms of security, memory consumption, etc)
+* [x] Read USD data with bounded memory size. This feature is especially useful for mobile platform(e.g. in terms of security, memory consumption, etc)
+  * Mostly done
 * [ ] USDC writer
-* [ ] Support Nested USDZ
-* [ ] UDIM texture support
 * [ ] MaterialX support
   * [ ] Parse XML file using tinyxml2
 
 ### Middle priority
 
+* [ ] Support Nested USDZ
+* [ ] UDIM texture support
+* [ ] usdSkel utilities
+  * [ ] Joint hierachy reconstruction and compute skinning matrix(usdSkel)
+  * [ ] Blend shapes
+    * [x] Basic Blendshapes support
+    * [ ] In-between blend shapes
+* [ ] Built-in usdObj(wavefront .obj mesh) support.
+  * via tinyobjloader.
 * [ ] Composition arcs
+  * [x] Basic composition
+  * [ ] Advanced composition 
 * [ ] Code refactoring, code optimization
 
 ### Lower priority

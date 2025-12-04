@@ -285,7 +285,7 @@ enum TypeId {
 
   // -- begin value type
   TYPE_ID_VALUE_BEGIN,
-  
+
   TYPE_ID_TOKEN,
   TYPE_ID_STRING,
   TYPE_ID_STRING_DATA,  // String for primvar and metadata. Includes multi-line
@@ -395,11 +395,11 @@ enum TypeId {
   TYPE_ID_DICT,        // Generic dict type. TODO: remove?
   TYPE_ID_CUSTOMDATA,  // similar to `dictionary`, but limited types are allowed
                        // to use. for metadatum(e.g. `customData` in Prim Meta)
-                       
+
   TYPE_ID_VALUE_END,
 
   // -- end value type
-  
+
   TYPE_ID_LAYER_OFFSET,
   TYPE_ID_PAYLOAD,
 
@@ -502,6 +502,12 @@ enum TypeId {
 
   TYPE_ID_IMAGING_MTLX_PREVIEWSURFACE,
   TYPE_ID_IMAGING_MTLX_STANDARDSURFACE,
+  TYPE_ID_IMAGING_MTLX_OPENPBRSURFACE,
+  TYPE_ID_IMAGING_MTLX_UNIFORMEDF,
+  TYPE_ID_IMAGING_MTLX_CONICALEDF,
+  TYPE_ID_IMAGING_MTLX_MEASUREDEDF,
+  TYPE_ID_IMAGING_MTLX_LIGHT,
+  TYPE_ID_IMAGING_OPENPBR_SURFACE,
 
   TYPE_ID_IMAGING_END,
 
@@ -519,12 +525,14 @@ enum TypeId {
 
   TYPE_ID_MODEL_END,
 
-  
+
   // Types for API
   TYPE_ID_API_BEGIN = 1 << 14,
   TYPE_ID_COLLECTION,
   TYPE_ID_COLLECTION_INSTANCE,
   TYPE_ID_MATERIAL_BINDING,
+  TYPE_ID_MATERIALX_CONFIG_API,
+  TYPE_ID_COLOR_SPACE_API,
   TYPE_ID_API_END,
 
   // Base ID for user data type(less than `TYPE_ID_STL_ARRAY_BIT-1`)
@@ -992,7 +1000,7 @@ bool operator==(const matrix4d &a, const matrix4d &b);
 //
 // p * S * R * T = p'
 // p' = Mult(Mult(S, R), T)
-// 
+//
 // you can express world matrix as
 //
 // node.world = parent.world * node.local
@@ -1000,7 +1008,7 @@ bool operator==(const matrix4d &a, const matrix4d &b);
 template <typename MTy, typename STy, size_t N>
 MTy Mult(const MTy &m, const MTy &n) {
   MTy ret;
-  //memset(ret.m, 0, sizeof(MTy)); 
+  //memset(ret.m, 0, sizeof(MTy));
 
   for (size_t j = 0; j < N; j++) {
     for (size_t i = 0; i < N; i++) {
@@ -2007,7 +2015,7 @@ class Value {
   //
   // Returns a view over array data if the value contains an array type that's compatible
   // with the requested element type T. For non-array types, returns an empty view.
-  // 
+  //
   // The view provides zero-copy access to the underlying data with type safety validation.
   //
   // Template parameter T: the desired element type for the view
@@ -2064,7 +2072,7 @@ class Value {
         return TypedArrayView<T>();
       }
     } else {
-      // Non-strict cast - allow compatible types (same underlying type)  
+      // Non-strict cast - allow compatible types (same underlying type)
       if (underlying_type_id != target_type_id) {
         return TypedArrayView<T>();
       }
@@ -2086,6 +2094,36 @@ class Value {
   }
 #endif
 
+#if 0
+  // Helper to log vector size
+  template <typename T>
+  static void log_vector_size(const std::vector<T>& vec) {
+    //TUSDZ_LOG_I("  vector size: " << vec.size());
+  }
+
+  template <typename T>
+  static void log_vector_size(const T&) {
+    // Non-vector type, do nothing
+  }
+#endif
+
+  // Helper to check vector size bounds
+  template <typename T>
+  static bool check_vector_size(const std::vector<T>& vec) {
+    constexpr size_t MAX_REASONABLE_SIZE = 100000000; // 100M
+    if (vec.size() > MAX_REASONABLE_SIZE) {
+      TUSDZ_LOG_E("ERROR: Vector size " << vec.size() << " exceeds reasonable limit (" << MAX_REASONABLE_SIZE << "). Data is likely corrupted!");
+      return false;
+    }
+    return true;
+  }
+
+  template <typename T>
+  static bool check_vector_size(const T&) {
+    // Non-vector type, always OK
+    return true;
+  }
+
   // Type-safe way to get concrete value.
   template <class T>
   nonstd::optional<T> get_value(bool strict_cast = false) const {
@@ -2096,14 +2134,26 @@ class Value {
         return nonstd::nullopt;
       }
 
+      //TUSDZ_LOG_I("get_value: about to move/copy value of type " << TypeTraits<T>::type_name());
+      //log_vector_size(*pv);
       return std::move(*pv);
     } else if (!strict_cast) {
 
+      // TODO: support TYPED_ARRAY
       if (TypeTraits<T>::is_array() && (v_.type_id() & value::TYPE_ID_STL_ARRAY_BIT)) { // both are array type
         if ((TypeTraits<T>::underlying_type_id() & (~value::TYPE_ID_STL_ARRAY_BIT)) == (v_.underlying_type_id() & (~value::TYPE_ID_STL_ARRAY_BIT))) {
-          return std::move(*linb::cast<const T>(&v_));
+          //TUSDZ_LOG_I("get_value: strict_cast=false, both are array types, about to cast for type " << TypeTraits<T>::type_name());
+          const T* pv = linb::cast<const T>(&v_);
+          //TUSDZ_LOG_I("get_value: cast successful, pv=" << (pv ? "valid" : "null"));
+          if (pv) {
+            //log_vector_size(*pv);
+            if (!check_vector_size(*pv)) {
+              return nonstd::nullopt;
+            }
+          }
+          return std::move(*pv);
         }
-      } else if (!TypeTraits<T>::is_array() && !(v_.type_id() & value::TYPE_ID_STL_ARRAY_BIT)) { // both are scalar type.
+      } else if (!TypeTraits<T>::is_array() && !(v_.type_id() & value::TYPE_ID_ARRAY_BIT_MASK)) { // both are scalar type.
         if (TypeTraits<T>::underlying_type_id() == v_.underlying_type_id()) {
           return std::move(*linb::cast<const T>(&v_));
         }
@@ -2183,17 +2233,17 @@ class Value {
   template <class T>
   TypedArrayView<const T> create_array_view_helper(bool strict_cast) const {
     // Try common array types that could contain T elements
-    
+
     // Direct type match - try std::vector<T>
     if (auto* vec = as<std::vector<T>>(strict_cast)) {
       return TypedArrayView<const T>(*vec);
     }
-    
+
     // Try related types based on underlying type compatibility
     if (!strict_cast) {
       // Handle role type conversions (e.g., float3 <-> vector3f <-> normal3f)
       uint32_t target_underlying_id = TypeTraits<T>::underlying_type_id();
-      
+
       switch (target_underlying_id) {
         case TYPE_ID_FLOAT: {
           if (auto* vec = as<std::vector<float>>(false)) {
@@ -2262,7 +2312,7 @@ class Value {
           break;
       }
     }
-    
+
     // No compatible type found
     return TypedArrayView<const T>();
   }
@@ -2270,17 +2320,17 @@ class Value {
   template <class T>
   TypedArrayView<T> create_array_view_helper_mutable(bool strict_cast) {
     // Try common array types that could contain T elements
-    
+
     // Direct type match - try std::vector<T>
     if (auto* vec = as<std::vector<T>>(strict_cast)) {
       return TypedArrayView<T>(*vec);
     }
-    
+
     // Try related types based on underlying type compatibility
     if (!strict_cast) {
       // Handle role type conversions (e.g., float3 <-> vector3f <-> normal3f)
       uint32_t target_underlying_id = TypeTraits<T>::underlying_type_id();
-      
+
       switch (target_underlying_id) {
         case TYPE_ID_FLOAT: {
           if (auto* vec = as<std::vector<float>>(false)) {
@@ -2349,7 +2399,7 @@ class Value {
           break;
       }
     }
-    
+
     // No compatible type found
     return TypedArrayView<T>();
   }
@@ -3238,7 +3288,7 @@ struct LerpTraits<std::vector<ty>> { \
   static constexpr bool supported() { \
     return true; \
   } \
-}; 
+};
 
 DEFINE_LERP_TRAIT(value::half)
 DEFINE_LERP_TRAIT(value::half2)

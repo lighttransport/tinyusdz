@@ -437,6 +437,151 @@ std::string DumpCamera(const RenderCamera &camera, uint32_t indent) {
   return ss.str();
 }
 
+std::string DumpOpenPBRSurface(const OpenPBRSurfaceShader &shader,
+                               uint32_t indent) {
+  std::stringstream ss;
+
+  ss << "OpenPBRSurfaceShader {\n";
+
+  // Base layer
+  ss << pprint::Indent(indent + 1) << "base_weight = ";
+  if (shader.base_weight.is_texture()) {
+    ss << "texture_id[" << shader.base_weight.texture_id << "]";
+  } else {
+    ss << shader.base_weight.value;
+  }
+  ss << "\n";
+
+  ss << pprint::Indent(indent + 1) << "base_color = ";
+  if (shader.base_color.is_texture()) {
+    ss << "texture_id[" << shader.base_color.texture_id << "]";
+  } else {
+    ss << shader.base_color.value;
+  }
+  ss << "\n";
+
+  ss << pprint::Indent(indent + 1) << "base_roughness = ";
+  if (shader.base_roughness.is_texture()) {
+    ss << "texture_id[" << shader.base_roughness.texture_id << "]";
+  } else {
+    ss << shader.base_roughness.value;
+  }
+  ss << "\n";
+
+  ss << pprint::Indent(indent + 1) << "base_metalness = ";
+  if (shader.base_metalness.is_texture()) {
+    ss << "texture_id[" << shader.base_metalness.texture_id << "]";
+  } else {
+    ss << shader.base_metalness.value;
+  }
+  ss << "\n";
+
+  // Specular layer
+  ss << pprint::Indent(indent + 1) << "specular_weight = ";
+  if (shader.specular_weight.is_texture()) {
+    ss << "texture_id[" << shader.specular_weight.texture_id << "]";
+  } else {
+    ss << shader.specular_weight.value;
+  }
+  ss << "\n";
+
+  ss << pprint::Indent(indent + 1) << "specular_color = ";
+  if (shader.specular_color.is_texture()) {
+    ss << "texture_id[" << shader.specular_color.texture_id << "]";
+  } else {
+    ss << shader.specular_color.value;
+  }
+  ss << "\n";
+
+  ss << pprint::Indent(indent + 1) << "specular_roughness = ";
+  if (shader.specular_roughness.is_texture()) {
+    ss << "texture_id[" << shader.specular_roughness.texture_id << "]";
+  } else {
+    ss << shader.specular_roughness.value;
+  }
+  ss << "\n";
+
+  ss << pprint::Indent(indent + 1) << "specular_ior = ";
+  if (shader.specular_ior.is_texture()) {
+    ss << "texture_id[" << shader.specular_ior.texture_id << "]";
+  } else {
+    ss << shader.specular_ior.value;
+  }
+  ss << "\n";
+
+  // Coat layer
+  ss << pprint::Indent(indent + 1) << "coat_weight = ";
+  if (shader.coat_weight.is_texture()) {
+    ss << "texture_id[" << shader.coat_weight.texture_id << "]";
+  } else {
+    ss << shader.coat_weight.value;
+  }
+  ss << "\n";
+
+  ss << pprint::Indent(indent + 1) << "coat_color = ";
+  if (shader.coat_color.is_texture()) {
+    ss << "texture_id[" << shader.coat_color.texture_id << "]";
+  } else {
+    ss << shader.coat_color.value;
+  }
+  ss << "\n";
+
+  ss << pprint::Indent(indent + 1) << "coat_roughness = ";
+  if (shader.coat_roughness.is_texture()) {
+    ss << "texture_id[" << shader.coat_roughness.texture_id << "]";
+  } else {
+    ss << shader.coat_roughness.value;
+  }
+  ss << "\n";
+
+  // Emission
+  ss << pprint::Indent(indent + 1) << "emission_luminance = ";
+  if (shader.emission_luminance.is_texture()) {
+    ss << "texture_id[" << shader.emission_luminance.texture_id << "]";
+  } else {
+    ss << shader.emission_luminance.value;
+  }
+  ss << "\n";
+
+  ss << pprint::Indent(indent + 1) << "emission_color = ";
+  if (shader.emission_color.is_texture()) {
+    ss << "texture_id[" << shader.emission_color.texture_id << "]";
+  } else {
+    ss << shader.emission_color.value;
+  }
+  ss << "\n";
+
+  // Transmission
+  ss << pprint::Indent(indent + 1) << "transmission_weight = ";
+  if (shader.transmission_weight.is_texture()) {
+    ss << "texture_id[" << shader.transmission_weight.texture_id << "]";
+  } else {
+    ss << shader.transmission_weight.value;
+  }
+  ss << "\n";
+
+  // Subsurface
+  ss << pprint::Indent(indent + 1) << "subsurface_weight = ";
+  if (shader.subsurface_weight.is_texture()) {
+    ss << "texture_id[" << shader.subsurface_weight.texture_id << "]";
+  } else {
+    ss << shader.subsurface_weight.value;
+  }
+  ss << "\n";
+
+  ss << pprint::Indent(indent + 1) << "subsurface_color = ";
+  if (shader.subsurface_color.is_texture()) {
+    ss << "texture_id[" << shader.subsurface_color.texture_id << "]";
+  } else {
+    ss << shader.subsurface_color.value;
+  }
+  ss << "\n";
+
+  ss << pprint::Indent(indent) << "}";
+
+  return ss.str();
+}
+
 std::string DumpPreviewSurface(const PreviewSurfaceShader &shader,
                                uint32_t indent) {
   std::stringstream ss;
@@ -535,7 +680,7 @@ std::string DumpPreviewSurface(const PreviewSurfaceShader &shader,
   }
   ss << "\n";
 
-  ss << pprint::Indent(indent) << "}\n";
+  ss << pprint::Indent(indent) << "}";
 
   return ss.str();
 }
@@ -552,7 +697,19 @@ std::string DumpMaterial(const RenderMaterial &material, uint32_t indent) {
      << quote(material.display_name) << "\n";
 
   ss << pprint::Indent(indent + 1) << "surfaceShader = ";
-  ss << DumpPreviewSurface(material.surfaceShader, indent + 1);
+  if (material.surfaceShader.has_value()) {
+    ss << DumpPreviewSurface(*material.surfaceShader, indent + 1);
+  } else {
+    ss << "null";
+  }
+  ss << "\n";
+
+  ss << pprint::Indent(indent + 1) << "openPBRShader = ";
+  if (material.openPBRShader.has_value()) {
+    ss << DumpOpenPBRSurface(*material.openPBRShader, indent + 1);
+  } else {
+    ss << "null";
+  }
   ss << "\n";
 
   ss << pprint::Indent(indent) << "}\n";

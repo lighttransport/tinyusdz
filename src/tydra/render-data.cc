@@ -43,9 +43,13 @@
 #include "tinyusdz.hh"
 #include "usdGeom.hh"
 #include "usdShade.hh"
+#include "usdLux.hh"
+#include "usdMtlx.hh"
 #include "value-pprint.hh"
 #include "logger.hh"
 #include "bone-util.hh"
+#include "shape-to-mesh.hh"
+#include "materialx-to-json.hh"
 
 //#include <iostream>
 
@@ -1144,7 +1148,7 @@ nonstd::expected<VertexAttribute, std::string> GetTextureCoordinate(
                                    "\n");
   }
 
-  TUSDZ_LOG_I("get tex\n");
+  //TUSDZ_LOG_I("get tex\n");
   // TODO: allow float2?
   if (primvar.get_type_id() !=
       value::TypeTraits<std::vector<value::texcoord2f>>::type_id()) {
@@ -1153,10 +1157,10 @@ nonstd::expected<VertexAttribute, std::string> GetTextureCoordinate(
         primvar.get_type_name() + "\n");
   }
 
-  TUSDZ_LOG_I("flatten_with_indices\n");
+  //TUSDZ_LOG_I("flatten_with_indices\n");
   std::vector<value::texcoord2f> uvs;
   if (!primvar.flatten_with_indices(t, &uvs, tinterp)) {
-    TUSDZ_LOG_I("flatten_with_indices failed\n");
+    //TUSDZ_LOG_I("flatten_with_indices failed\n");
     return nonstd::make_unexpected(
         "Failed to retrieve texture coordinate primvar with concrete type.\n");
   }
@@ -1174,7 +1178,7 @@ nonstd::expected<VertexAttribute, std::string> GetTextureCoordinate(
   }
 
 
-  TUSDZ_LOG_I("texcoord. " << name << ", " << uvs.size());
+  //TUSDZ_LOG_I("texcoord. " << name << ", " << uvs.size());
   DCOUT("texcoord " << name << " : " << uvs);
 
   vattr.format = VertexAttributeFormat::Vec2;
@@ -1183,7 +1187,7 @@ nonstd::expected<VertexAttribute, std::string> GetTextureCoordinate(
   vattr.indices.clear();  // just in case.
 
   vattr.name = name;  // TODO: add "primvars:" namespace?
-  TUSDZ_LOG_I("end");
+  //TUSDZ_LOG_I("end");
 
   return std::move(vattr);
 }
@@ -1647,7 +1651,9 @@ bool TriangulatePolygon(
     std::vector<uint32_t> &triangulatedFaceVertexCounts,
     std::vector<uint32_t> &triangulatedFaceVertexIndices,
     std::vector<size_t> &triangulatedToOrigFaceVertexIndexMap,
-    std::vector<uint32_t> &triangulatedFaceCounts, std::string &warn, std::string &err) {
+    std::vector<uint32_t> &triangulatedFaceCounts,
+    MeshConverterConfig::TriangulationMethod triangulation_method,
+    std::string &warn, std::string &err) {
   triangulatedFaceVertexCounts.clear();
   triangulatedFaceVertexIndices.clear();
 
@@ -1718,143 +1724,174 @@ bool TriangulatePolygon(
       triangulatedFaceCounts.push_back(2);
 #endif
     } else {
-      // Use double for accuracy. `float` precision may classify small-are polygon as degenerated.
-      // Find the normal axis of the polygon using Newell's method
-      value::double3 n = {0, 0, 0};
+      // Polygon with 5+ vertices
+      if (triangulation_method == MeshConverterConfig::TriangulationMethod::TriangleFan) {
+        // Simple triangle fan triangulation
+        // This assumes the polygon is convex
+        // Creates triangles: (0,1,2), (0,2,3), (0,3,4), ...
 
-      size_t vi0;
-      size_t vi0_2;
+        size_t ntris = npolys - 2;
 
-      //std::cout << "npoly " << npolys << "\n";
-
-      for (size_t k = 0; k < npolys; ++k) {
-        vi0 = faceVertexIndices[faceIndexOffset + k];
-
-        size_t j = (k + 1) % npolys;
-        vi0_2 = faceVertexIndices[faceIndexOffset + j];
-
-        if (vi0 >= points.size()) {
-          err = fmt::format("Invalid vertex index.\n");
-          return false;
-        }
-
-        if (vi0_2 >= points.size()) {
-          err = fmt::format("Invalid vertex index.\n");
-          return false;
-        }
-
-        T v0 = points[vi0];
-        T v1 = points[vi0_2];
-
-        const T point1 = {v0[0], v0[1], v0[2]};
-        const T point2 = {v1[0], v1[1], v1[2]};
-
-        T a = {point1[0] - point2[0], point1[1] - point2[1],
-               point1[2] - point2[2]};
-        T b = {point1[0] + point2[0], point1[1] + point2[1],
-               point1[2] + point2[2]};
-
-        n[0] += double(a[1] * b[2]);
-        n[1] += double(a[2] * b[0]);
-        n[2] += double(a[0] * b[1]);
-        DCOUT("v0 " << v0);
-        DCOUT("v1 " << v1);
-        DCOUT("n " << n);
-      }
-      //BaseTy length_n = vlength(n);
-      double length_n = vlength(n);
-
-      // Check if zero length normal
-      if (std::fabs(length_n) < std::numeric_limits<double>::epsilon()) {
-        DCOUT("length_n " << length_n);
-        err = "Degenerated polygon found.\n";
-        return false;
-      }
-
-      // Negative is to flip the normal to the correct direction
-      n = vnormalize(n);
-
-      T axis_w, axis_v, axis_u;
-      axis_w[0] = BaseTy(n[0]);
-      axis_w[1] = BaseTy(n[1]);
-      axis_w[2] = BaseTy(n[2]);
-      T a;
-      if (std::fabs(axis_w[0]) > BaseTy(0.9999999)) {  // TODO: use 1.0 - eps?
-        a = {BaseTy(0), BaseTy(1), BaseTy(0)};
-      } else {
-        a = {BaseTy(1), BaseTy(0), BaseTy(0)};
-      }
-      axis_v = vnormalize(vcross(axis_w, a));
-      axis_u = vcross(axis_w, axis_v);
-
-      using Point3D = std::array<BaseTy, 3>;
-      using Point2D = std::array<BaseTy, 2>;
-      std::vector<Point2D> polyline;
-
-      // TMW change: Find best normal and project v0x and v0y to those
-      // coordinates, instead of picking a plane aligned with an axis (which
-      // can flip polygons).
-
-      // Fill polygon data.
-      for (size_t k = 0; k < npolys; k++) {
-        size_t vidx = faceVertexIndices[faceIndexOffset + k];
-
-        value::float3 v = points[vidx];
-        // Point3 polypoint = {v0[0],v0[1],v0[2]};
-
-        // world to local
-        Point3D loc = {vdot(v, axis_u), vdot(v, axis_v), vdot(v, axis_w)};
-
-        polyline.push_back({loc[0], loc[1]});
-      }
-
-      std::vector<std::vector<Point2D>> polygon_2d;
-      polygon_2d.push_back(polyline);
-      // Single polygon only(no holes)
-
-      std::vector<uint32_t> indices = mapbox::earcut<uint32_t>(polygon_2d);
-      //  => result = 3 * faces, clockwise
-
-      if (indices.empty()) {
-        warn += "Failed to triangualte a polygon. input is not CCW, have holes or invalid topology.\n";
-
-        //DumpTriangle(points, indices);
-      }
-
-      if ((indices.size() % 3) != 0) {
-        // This should not be happen, though.
-        err = "Failed to triangulate.\n";
-        return false;
-      }
-
-      size_t ntris = indices.size() / 3;
-      //std::cout << "ntris " << ntris << "\n";
-
-
-      // Up to 2GB tris.
-      if (ntris > size_t((std::numeric_limits<int32_t>::max)())) {
-        err = "Too many triangles are generated.\n";
-        return false;
-      }
-
-      if (ntris > 0) {
         for (size_t k = 0; k < ntris; k++) {
           triangulatedFaceVertexCounts.push_back(3);
-          triangulatedFaceVertexIndices.push_back(
-              faceVertexIndices[faceIndexOffset + indices[3 * k + 0]]);
-          triangulatedFaceVertexIndices.push_back(
-              faceVertexIndices[faceIndexOffset + indices[3 * k + 1]]);
-          triangulatedFaceVertexIndices.push_back(
-              faceVertexIndices[faceIndexOffset + indices[3 * k + 2]]);
 
-          triangulatedToOrigFaceVertexIndexMap.push_back(faceIndexOffset +
-                                                         indices[3 * k + 0]);
-          triangulatedToOrigFaceVertexIndexMap.push_back(faceIndexOffset +
-                                                         indices[3 * k + 1]);
-          triangulatedToOrigFaceVertexIndexMap.push_back(faceIndexOffset +
-                                                         indices[3 * k + 2]);
+          // First vertex is always the pivot (index 0)
+          triangulatedFaceVertexIndices.push_back(
+              faceVertexIndices[faceIndexOffset + 0]);
+          triangulatedFaceVertexIndices.push_back(
+              faceVertexIndices[faceIndexOffset + k + 1]);
+          triangulatedFaceVertexIndices.push_back(
+              faceVertexIndices[faceIndexOffset + k + 2]);
+
+          triangulatedToOrigFaceVertexIndexMap.push_back(faceIndexOffset + 0);
+          triangulatedToOrigFaceVertexIndexMap.push_back(faceIndexOffset + k + 1);
+          triangulatedToOrigFaceVertexIndexMap.push_back(faceIndexOffset + k + 2);
         }
+
         triangulatedFaceCounts.push_back(uint32_t(ntris));
+
+      } else {
+        // Use earcut algorithm (default, handles complex polygons)
+        // Use double for accuracy. `float` precision may classify small-are polygon as degenerated.
+        // Find the normal axis of the polygon using Newell's method
+        value::double3 n = {0, 0, 0};
+
+        size_t vi0;
+        size_t vi0_2;
+
+        //std::cout << "npoly " << npolys << "\n";
+
+        for (size_t k = 0; k < npolys; ++k) {
+          vi0 = faceVertexIndices[faceIndexOffset + k];
+
+          size_t j = (k + 1) % npolys;
+          vi0_2 = faceVertexIndices[faceIndexOffset + j];
+
+          if (vi0 >= points.size()) {
+            err = fmt::format("Invalid vertex index.\n");
+            return false;
+          }
+
+          if (vi0_2 >= points.size()) {
+            err = fmt::format("Invalid vertex index.\n");
+            return false;
+          }
+
+          T v0 = points[vi0];
+          T v1 = points[vi0_2];
+
+          const T point1 = {v0[0], v0[1], v0[2]};
+          const T point2 = {v1[0], v1[1], v1[2]};
+
+          T a = {point1[0] - point2[0], point1[1] - point2[1],
+                 point1[2] - point2[2]};
+          T b = {point1[0] + point2[0], point1[1] + point2[1],
+                 point1[2] + point2[2]};
+
+          n[0] += double(a[1] * b[2]);
+          n[1] += double(a[2] * b[0]);
+          n[2] += double(a[0] * b[1]);
+          DCOUT("v0 " << v0);
+          DCOUT("v1 " << v1);
+          DCOUT("n " << n);
+        }
+        //BaseTy length_n = vlength(n);
+        double length_n = vlength(n);
+
+        // Check if zero length normal
+        if (std::fabs(length_n) < std::numeric_limits<double>::epsilon()) {
+          DCOUT("length_n " << length_n);
+          err = "Degenerated polygon found.\n";
+          return false;
+        }
+
+        // Negative is to flip the normal to the correct direction
+        n = vnormalize(n);
+
+        T axis_w, axis_v, axis_u;
+        axis_w[0] = BaseTy(n[0]);
+        axis_w[1] = BaseTy(n[1]);
+        axis_w[2] = BaseTy(n[2]);
+        T a;
+        if (std::fabs(axis_w[0]) > BaseTy(0.9999999)) {  // TODO: use 1.0 - eps?
+          a = {BaseTy(0), BaseTy(1), BaseTy(0)};
+        } else {
+          a = {BaseTy(1), BaseTy(0), BaseTy(0)};
+        }
+        axis_v = vnormalize(vcross(axis_w, a));
+        axis_u = vcross(axis_w, axis_v);
+
+        using Point3D = std::array<BaseTy, 3>;
+        using Point2D = std::array<BaseTy, 2>;
+        std::vector<Point2D> polyline;
+
+        // TMW change: Find best normal and project v0x and v0y to those
+        // coordinates, instead of picking a plane aligned with an axis (which
+        // can flip polygons).
+
+        // Fill polygon data.
+        for (size_t k = 0; k < npolys; k++) {
+          size_t vidx = faceVertexIndices[faceIndexOffset + k];
+
+          value::float3 v = points[vidx];
+          // Point3 polypoint = {v0[0],v0[1],v0[2]};
+
+          // world to local
+          Point3D loc = {vdot(v, axis_u), vdot(v, axis_v), vdot(v, axis_w)};
+
+          polyline.push_back({loc[0], loc[1]});
+        }
+
+        std::vector<std::vector<Point2D>> polygon_2d;
+        polygon_2d.push_back(polyline);
+        // Single polygon only(no holes)
+
+        std::vector<uint32_t> indices = mapbox::earcut<uint32_t>(polygon_2d);
+        //  => result = 3 * faces, clockwise
+
+        if (indices.empty()) {
+          warn += "Failed to triangualte a polygon. input is not CCW, have holes or invalid topology.\n";
+
+          //DumpTriangle(points, indices);
+        }
+
+        if ((indices.size() % 3) != 0) {
+          // This should not be happen, though.
+          err = "Failed to triangulate.\n";
+          return false;
+        }
+
+        size_t ntris = indices.size() / 3;
+        //std::cout << "ntris " << ntris << "\n";
+
+
+        // Up to 2GB tris.
+        if (ntris > size_t((std::numeric_limits<int32_t>::max)())) {
+          err = "Too many triangles are generated.\n";
+          return false;
+        }
+
+        if (ntris > 0) {
+          for (size_t k = 0; k < ntris; k++) {
+            triangulatedFaceVertexCounts.push_back(3);
+            // earcut returns clockwise triangles, but USD expects CCW
+            // so we reverse the winding order by swapping indices 1 and 2
+            triangulatedFaceVertexIndices.push_back(
+                faceVertexIndices[faceIndexOffset + indices[3 * k + 0]]);
+            triangulatedFaceVertexIndices.push_back(
+                faceVertexIndices[faceIndexOffset + indices[3 * k + 2]]);
+            triangulatedFaceVertexIndices.push_back(
+                faceVertexIndices[faceIndexOffset + indices[3 * k + 1]]);
+
+            triangulatedToOrigFaceVertexIndexMap.push_back(faceIndexOffset +
+                                                           indices[3 * k + 0]);
+            triangulatedToOrigFaceVertexIndexMap.push_back(faceIndexOffset +
+                                                           indices[3 * k + 2]);
+            triangulatedToOrigFaceVertexIndexMap.push_back(faceIndexOffset +
+                                                           indices[3 * k + 1]);
+          }
+          triangulatedFaceCounts.push_back(uint32_t(ntris));
+        }
       }
     }
 
@@ -2593,6 +2630,11 @@ namespace {
 bool ListUVNames(const RenderMaterial &material,
                  const std::vector<UVTexture> &textures,
                  StringAndIdMap &si_map) {
+  // Check if material has surface shader
+  if (!material.surfaceShader.has_value()) {
+    return true;  // No surface shader, return success but empty map
+  }
+  
   // TODO: Use auto
   auto fun_vec3 = [&](const ShaderParam<vec3> &param) {
     int32_t texId = param.texture_id;
@@ -2622,17 +2664,17 @@ bool ListUVNames(const RenderMaterial &material,
     }
   };
 
-  fun_vec3(material.surfaceShader.diffuseColor);
-  fun_vec3(material.surfaceShader.normal);
-  fun_float(material.surfaceShader.metallic);
-  fun_float(material.surfaceShader.roughness);
-  fun_float(material.surfaceShader.clearcoat);
-  fun_float(material.surfaceShader.clearcoatRoughness);
-  fun_float(material.surfaceShader.opacity);
-  fun_float(material.surfaceShader.opacityThreshold);
-  fun_float(material.surfaceShader.ior);
-  fun_float(material.surfaceShader.displacement);
-  fun_float(material.surfaceShader.occlusion);
+  fun_vec3(material.surfaceShader->diffuseColor);
+  fun_vec3(material.surfaceShader->normal);
+  fun_float(material.surfaceShader->metallic);
+  fun_float(material.surfaceShader->roughness);
+  fun_float(material.surfaceShader->clearcoat);
+  fun_float(material.surfaceShader->clearcoatRoughness);
+  fun_float(material.surfaceShader->opacity);
+  fun_float(material.surfaceShader->opacityThreshold);
+  fun_float(material.surfaceShader->ior);
+  fun_float(material.surfaceShader->displacement);
+  fun_float(material.surfaceShader->occlusion);
 
   return true;
 }
@@ -2750,7 +2792,7 @@ bool RenderSceneConverter::BuildVertexIndicesImpl(RenderMesh &mesh) {
   // - Reorder vertex attributes to 'vertex' variability.
   //
 
-  TUSDZ_LOG_I("BuildVertexIndicesImpl");
+  //TUSDZ_LOG_I("BuildVertexIndicesImpl");
 
   const std::vector<uint32_t> &fvIndices =
       mesh.triangulatedFaceVertexIndices.size()
@@ -3149,7 +3191,7 @@ bool RenderSceneConverter::BuildVertexIndicesFastImpl(RenderMesh &mesh) {
   // - Reorder vertex attributes to 'vertex' variability.
   //
 
-  TUSDZ_LOG_I("BuildVertexIndicesFastImpl");
+  //TUSDZ_LOG_I("BuildVertexIndicesFastImpl");
 
   const std::vector<uint32_t> &fvIndices =
       mesh.triangulatedFaceVertexIndices.size()
@@ -3356,7 +3398,7 @@ bool RenderSceneConverter::BuildVertexIndicesFastImpl(RenderMesh &mesh) {
 
     }
 
-    TUSDZ_LOG_I("proc normal");
+    //TUSDZ_LOG_I("proc normal");
 
   }
 
@@ -3389,7 +3431,7 @@ bool RenderSceneConverter::BuildVertexIndicesFastImpl(RenderMesh &mesh) {
   }
 
 
-  TUSDZ_LOG_I("build indices");
+  //TUSDZ_LOG_I("build indices");
 
   // TODO: omit indices.
   std::vector<uint32_t> out_indices;
@@ -3404,9 +3446,155 @@ bool RenderSceneConverter::BuildVertexIndicesFastImpl(RenderMesh &mesh) {
     mesh.usdFaceVertexIndices = std::move(out_indices);
   }
 
-  TUSDZ_LOG_I("done build indices");
+  //TUSDZ_LOG_I("done build indices");
 
   return true;
+}
+
+//
+// Convert GeomCube to RenderMesh by generating tessellated geometry
+//
+bool RenderSceneConverter::ConvertCube(
+    const RenderSceneConverterEnv &env, const Path &abs_prim_path,
+    const GeomCube &cube, const MaterialPath &material_path,
+    const std::map<std::string, MaterialPath> &subset_material_path_map,
+    const StringAndIdMap &rmaterial_map,
+    const std::vector<const tinyusdz::GeomSubset *> &material_subsets,
+    const std::vector<std::pair<std::string, const tinyusdz::BlendShape *>> &blendshapes,
+    RenderMesh *dstMesh) {
+
+  // Extract cube size
+  double size;
+  if (!cube.size.get_value().get_scalar(&size)) {
+    size = 2.0;  // Use default value if not available
+  }
+
+  // Generate cube mesh geometry
+  std::vector<value::float3> points_f3;
+  std::vector<int> faceVertexCounts;
+  std::vector<int> faceVertexIndices;
+  std::vector<value::float3> normals_f3;
+  std::vector<value::float2> uvs_f2;
+
+  GenerateCubeMesh(size, points_f3, faceVertexCounts, faceVertexIndices, normals_f3, uvs_f2);
+
+  // Create temporary GeomMesh with generated data
+  GeomMesh temp_mesh;
+
+  // Convert points from float3 to point3f
+  std::vector<value::point3f> points;
+  for (const auto &p : points_f3) {
+    points.push_back(value::point3f{p[0], p[1], p[2]});
+  }
+  temp_mesh.points.set_value(points);
+  temp_mesh.faceVertexCounts.set_value(faceVertexCounts);
+  temp_mesh.faceVertexIndices.set_value(faceVertexIndices);
+
+  // Copy properties from cube
+  temp_mesh.orientation = cube.orientation;
+  temp_mesh.doubleSided = cube.doubleSided;
+
+  // Set normals as face-varying primvar
+  {
+    std::vector<value::normal3f> normal3f_data;
+    for (const auto &n : normals_f3) {
+      normal3f_data.push_back(value::normal3f{n[0], n[1], n[2]});
+    }
+    temp_mesh.normals.set_value(normal3f_data);
+  }
+
+  // Set UVs as st primvar (face-varying)
+  {
+    GeomPrimvar primvar;
+    primvar.set_name("st");
+    primvar.set_interpolation(Interpolation::FaceVarying);
+    std::vector<value::texcoord2f> uv_data;
+    for (const auto &uv : uvs_f2) {
+      uv_data.push_back(value::texcoord2f{uv[0], uv[1]});
+    }
+    primvar.set_value(uv_data);
+    temp_mesh.set_primvar(primvar);
+  }
+
+  // Forward to ConvertMesh
+  return ConvertMesh(env, abs_prim_path, temp_mesh, material_path,
+                     subset_material_path_map, rmaterial_map,
+                     material_subsets, blendshapes, dstMesh);
+}
+
+//
+// Convert GeomSphere to RenderMesh by generating tessellated geometry
+//
+bool RenderSceneConverter::ConvertSphere(
+    const RenderSceneConverterEnv &env, const Path &abs_prim_path,
+    const GeomSphere &sphere, const MaterialPath &material_path,
+    const std::map<std::string, MaterialPath> &subset_material_path_map,
+    const StringAndIdMap &rmaterial_map,
+    const std::vector<const tinyusdz::GeomSubset *> &material_subsets,
+    const std::vector<std::pair<std::string, const tinyusdz::BlendShape *>> &blendshapes,
+    RenderMesh *dstMesh) {
+
+  // Extract sphere radius
+  double radius;
+  if (!sphere.radius.get_value().get_scalar(&radius)) {
+    radius = 2.0;  // Use default value if not available
+  }
+
+  // Generate sphere mesh geometry
+  // Default to icosphere with 2 subdivisions (4 divisions as per user request seems to mean subdivisions)
+  std::vector<value::float3> points_f3;
+  std::vector<int> faceVertexCounts;
+  std::vector<int> faceVertexIndices;
+  std::vector<value::float3> normals_f3;
+  std::vector<value::float2> uvs_f2;
+
+  // TODO: Make tessellation mode and subdivisions configurable via RenderSceneConverterEnv
+  // For now, use icosphere with 2 subdivisions as default
+  int subdivisions = 2;
+  GenerateIcosphereMesh(radius, subdivisions, points_f3, faceVertexCounts, faceVertexIndices, normals_f3, uvs_f2);
+
+  // Create temporary GeomMesh with generated data
+  GeomMesh temp_mesh;
+
+  // Convert points from float3 to point3f
+  std::vector<value::point3f> points;
+  for (const auto &p : points_f3) {
+    points.push_back(value::point3f{p[0], p[1], p[2]});
+  }
+  temp_mesh.points.set_value(points);
+  temp_mesh.faceVertexCounts.set_value(faceVertexCounts);
+  temp_mesh.faceVertexIndices.set_value(faceVertexIndices);
+
+  // Copy properties from sphere
+  temp_mesh.orientation = sphere.orientation;
+  temp_mesh.doubleSided = sphere.doubleSided;
+
+  // Set normals as face-varying primvar
+  {
+    std::vector<value::normal3f> normal3f_data;
+    for (const auto &n : normals_f3) {
+      normal3f_data.push_back(value::normal3f{n[0], n[1], n[2]});
+    }
+    temp_mesh.normals.set_value(normal3f_data);
+  }
+
+  // Set UVs as st primvar (face-varying)
+  {
+    GeomPrimvar primvar;
+    primvar.set_name("st");
+    primvar.set_interpolation(Interpolation::FaceVarying);
+    std::vector<value::texcoord2f> uv_data;
+    for (const auto &uv : uvs_f2) {
+      uv_data.push_back(value::texcoord2f{uv[0], uv[1]});
+    }
+    primvar.set_value(uv_data);
+    temp_mesh.set_primvar(primvar);
+  }
+
+  // Forward to ConvertMesh
+  return ConvertMesh(env, abs_prim_path, temp_mesh, material_path,
+                     subset_material_path_map, rmaterial_map,
+                     material_subsets, blendshapes, dstMesh);
 }
 
 bool RenderSceneConverter::ConvertMesh(
@@ -3643,7 +3831,7 @@ bool RenderSceneConverter::ConvertMesh(
       if (ret) {
         const VertexAttribute &vattr = ret.value();
 
-        TUSDZ_LOG_I("uv attr");
+        //TUSDZ_LOG_I("uv attr");
 
         // Use slotId 0
         uvAttrs[0] = vattr;
@@ -3710,7 +3898,7 @@ bool RenderSceneConverter::ConvertMesh(
     }
   }
 
-  TUSDZ_LOG_I("done uvAttr");
+  //TUSDZ_LOG_I("done uvAttr");
 
   if (mesh.has_primvar(env.mesh_config.default_tangents_primvar_name)) {
     GeomPrimvar pvar;
@@ -4064,6 +4252,7 @@ bool RenderSceneConverter::ConvertMesh(
             dst.points, dst.usdFaceVertexCounts, dst.usdFaceVertexIndices,
             triangulatedFaceVertexCounts, triangulatedFaceVertexIndices,
             triangulatedToOrigFaceVertexIndexMap, triangulatedFaceCounts,
+            env.mesh_config.triangulation_method,
             _warn, err)) {
       PUSH_ERROR_AND_RETURN("Triangulation failed: " + err);
     }
@@ -4580,7 +4769,7 @@ bool RenderSceneConverter::ConvertMesh(
        (dst.binormals.empty() == 0 && dst.tangents.empty() == 0));
 
   if (compute_normals || (compute_tangents && dst.normals.empty())) {
-    TUSDZ_LOG_I("Build normals");
+    //TUSDZ_LOG_I("Build normals");
     DCOUT("Compute normals");
     std::vector<vec3> normals;
     if (!ComputeNormals(dst.points, dst.faceVertexCounts(),
@@ -4619,7 +4808,7 @@ bool RenderSceneConverter::ConvertMesh(
   if (env.mesh_config.build_vertex_indices && (!is_single_indexable)) {
     if (!env.mesh_config.prefer_non_indexed) {
       DCOUT("Build vertex indices");
-      TUSDZ_LOG_I("Build vertex indices");
+      //TUSDZ_LOG_I("Build vertex indices");
 
       if (!BuildVertexIndicesFastImpl(dst)) {
         return false;
@@ -4634,7 +4823,7 @@ bool RenderSceneConverter::ConvertMesh(
   //
   if (compute_tangents) {
     DCOUT("Compute tangents.");
-    TUSDZ_LOG_I("Build tangents");
+    //TUSDZ_LOG_I("Build tangents");
 
     std::vector<vec2> texcoords;
     std::vector<vec3> normals;
@@ -4717,6 +4906,95 @@ bool RenderSceneConverter::ConvertMesh(
   dst.prim_name = mesh.name;
   dst.abs_path = abs_prim_path.full_path_name();
   dst.display_name = mesh.metas().displayName.value_or("");
+
+  //
+  // Check for MeshLightAPI - if present, mark this mesh as an area light
+  //
+  const auto &prim_metas = mesh.metas();
+  if (prim_metas.apiSchemas) {
+    const auto &api_schemas = prim_metas.apiSchemas.value();
+    bool has_meshlight_api = false;
+
+    for (const auto &schema_pair : api_schemas.names) {
+      if (schema_pair.first == APISchemas::APIName::MeshLightAPI) {
+        has_meshlight_api = true;
+        break;
+      }
+    }
+
+    if (has_meshlight_api) {
+      DCOUT("Mesh has MeshLightAPI: " << abs_prim_path.full_path_name());
+
+      dst.is_area_light = true;
+
+      // Extract MeshLightAPI properties from mesh
+      // MeshLightAPI inherits from LightAPI, which uses "inputs:" prefix
+
+      // color
+      if (mesh.props.count("inputs:color")) {
+        const Property &prop = mesh.props.at("inputs:color");
+        const Attribute &attr = prop.get_attribute();
+        const primvar::PrimVar &pvar = attr.get_var();
+        if (auto val = pvar.get_value<value::color3f>()) {
+          dst.light_color[0] = val.value()[0];
+          dst.light_color[1] = val.value()[1];
+          dst.light_color[2] = val.value()[2];
+        }
+      }
+
+      // intensity
+      if (mesh.props.count("inputs:intensity")) {
+        const Property &prop = mesh.props.at("inputs:intensity");
+        const Attribute &attr = prop.get_attribute();
+        const primvar::PrimVar &pvar = attr.get_var();
+        if (auto val = pvar.get_value<float>()) {
+          dst.light_intensity = val.value();
+        }
+      }
+
+      // exposure (optional)
+      if (mesh.props.count("inputs:exposure")) {
+        const Property &prop = mesh.props.at("inputs:exposure");
+        const Attribute &attr = prop.get_attribute();
+        const primvar::PrimVar &pvar = attr.get_var();
+        if (auto val = pvar.get_value<float>()) {
+          dst.light_exposure = val.value();
+        }
+      }
+
+      // normalize
+      if (mesh.props.count("inputs:normalize")) {
+        const Property &prop = mesh.props.at("inputs:normalize");
+        const Attribute &attr = prop.get_attribute();
+        const primvar::PrimVar &pvar = attr.get_var();
+        if (auto val = pvar.get_value<bool>()) {
+          dst.light_normalize = val.value();
+        }
+      }
+
+      // materialSyncMode
+      if (mesh.props.count("inputs:materialSyncMode")) {
+        const Property &prop = mesh.props.at("inputs:materialSyncMode");
+        const Attribute &attr = prop.get_attribute();
+        const primvar::PrimVar &pvar = attr.get_var();
+        if (auto val = pvar.get_value<value::token>()) {
+          dst.light_material_sync_mode = val.value().str();
+        }
+      }
+
+      // Set default if not specified
+      if (dst.light_material_sync_mode.empty()) {
+        dst.light_material_sync_mode = "materialGlowTintsLight";  // USD default
+      }
+
+      DCOUT("  Area light properties:"
+            << " color=(" << dst.light_color[0] << "," << dst.light_color[1] << "," << dst.light_color[2] << ")"
+            << " intensity=" << dst.light_intensity
+            << " exposure=" << dst.light_exposure
+            << " normalize=" << dst.light_normalize
+            << " materialSyncMode=" << dst.light_material_sync_mode);
+    }
+  }
 
 #if 0 // TODO
 #if defined(TINYUSDZ_WITH_MESHOPT)
@@ -4918,33 +5196,217 @@ nonstd::expected<bool, std::string> GetConnectedUVTexture(
   constexpr auto kOutputsB = "outputs:b";
   constexpr auto kOutputsA = "outputs:a";
 
-  if (prop_part == kOutputsRGB) {
-    // ok
-  } else if (prop_part == kOutputsR) {
-    // ok
-  } else if (prop_part == kOutputsG) {
-    // ok
-  } else if (prop_part == kOutputsB) {
-    // ok
-  } else if (prop_part == kOutputsA) {
-    // ok
-  } else {
-    return nonstd::make_unexpected(fmt::format(
-        "connection Path's property part must be `{}`, `{}`, `{}` or `{}` "
-        "for "
-        "UsdUVTexture, but got `{}`\n",
-        kOutputsRGB, kOutputsR, kOutputsG, kOutputsB, kOutputsA, prop_part));
-  }
+  TUSDZ_LOG_I("path: " << path);
+
+  // Check if prop_part is a standard UsdUVTexture output
+  bool is_standard_output = (prop_part == kOutputsRGB) ||
+                            (prop_part == kOutputsR) ||
+                            (prop_part == kOutputsG) ||
+                            (prop_part == kOutputsB) ||
+                            (prop_part == kOutputsA);
 
   const Prim *prim{nullptr};
   std::string err;
-  if (!stage.find_prim_at_path(Path(prim_part, ""), prim, &err)) {
-    return nonstd::make_unexpected(
-        fmt::format("Prim {} not found in the Stage: {}\n", prim_part, err));
+  bool found_in_stage = stage.find_prim_at_path(Path(prim_part, ""), prim, &err);
+
+  // If not found in stage lookup, try to navigate through Material's children
+  // This handles the case where NodeGraph is a child of Material but not in the Stage index
+  if (!found_in_stage || !prim) {
+    DCOUT("Prim not found in stage lookup, trying Material children approach");
+
+    // Extract Material path - it should be everything before the last element
+    size_t last_slash = prim_part.rfind('/');
+    if (last_slash == std::string::npos) {
+      return nonstd::make_unexpected(
+          fmt::format("Prim {} not found in the Stage: {}\n", prim_part, err));
+    }
+
+    std::string material_path = prim_part.substr(0, last_slash);
+    std::string child_name = prim_part.substr(last_slash + 1);
+
+    DCOUT("Looking for Material at: " << material_path);
+    DCOUT("Child name: " << child_name);
+
+    // Find the Material
+    const Prim *mat_prim{nullptr};
+    if (!stage.find_prim_at_path(Path(material_path, ""), mat_prim, &err)) {
+      return nonstd::make_unexpected(
+          fmt::format("Prim {} not found (material lookup also failed): {}\n", prim_part, err));
+    }
+
+    // Look for child prim
+    if (mat_prim) {
+      std::string children_info = "Material has " + std::to_string(mat_prim->children().size()) + " children: ";
+      for (const auto& child : mat_prim->children()) {
+        std::string elem_name = child.element_name();
+        std::string child_type = child.data().type_name();
+        children_info += "'" + elem_name + "'(" + child_type + ") ";
+
+        // Check by name match
+        if (elem_name == child_name) {
+          prim = &child;
+          break;
+        }
+        // Also check if it's a NodeGraph/Shader by type name
+        // This handles cases where element_name might not be set properly
+        // e.g., looking for "NodeGraphs" and finding type "NodeGraph" with empty name
+        if (child_type == "NodeGraph" && (child_name == "NodeGraphs" || child_name == "NodeGraph")) {
+          prim = &child;
+          break;
+        }
+        if (child_type == "Shader" && child_name == "Shader") {
+          prim = &child;
+          break;
+        }
+      }
+
+      if (!prim) {
+        DCOUT(children_info);
+        return nonstd::make_unexpected(
+            fmt::format("Child prim '{}' not found in Material {}. {}\n", child_name, material_path, children_info));
+      }
+    } else {
+      return nonstd::make_unexpected(
+          fmt::format("Material prim {} is null\n", material_path));
+    }
   }
 
   if (!prim) {
     return nonstd::make_unexpected("[InternalError] Prim ptr is null.\n");
+  }
+
+  // Check if this is a NodeGraph - if so, we need to traverse through it
+  if (const NodeGraph *ng = prim->as<NodeGraph>()) {
+    DCOUT("Connection goes through NodeGraph: " << prim_part);
+
+    // Look for the output property in the NodeGraph's props
+    const auto &props = ng->props;
+    auto it = props.find(prop_part);
+    if (it == props.end()) {
+      return nonstd::make_unexpected(
+          fmt::format("NodeGraph {} does not have output property {}", prim_part, prop_part));
+    }
+
+    const Property &output_prop = it->second;
+    if (!output_prop.is_attribute()) {
+      return nonstd::make_unexpected(
+          fmt::format("NodeGraph output {} is not an attribute", prop_part));
+    }
+
+    const Attribute &output_attr = output_prop.get_attribute();
+    if (!output_attr.has_connections()) {
+      return nonstd::make_unexpected(
+          fmt::format("NodeGraph output {} has no connections", prop_part));
+    }
+
+    // Get the connection from the NodeGraph output
+    const auto &output_conns = output_attr.connections();
+    if (output_conns.size() != 1) {
+      return nonstd::make_unexpected(
+          fmt::format("NodeGraph output {} must have exactly one connection, got {}",
+                      prop_part, output_conns.size()));
+    }
+
+    const Path &ng_output_path = output_conns[0];
+    DCOUT("NodeGraph output connects to: " << ng_output_path);
+
+    // Recursively follow the connection through the NodeGraph
+    // We need to traverse to the next node in the chain
+    std::string next_prim_part = ng_output_path.prim_part();
+    std::string next_prop_part = ng_output_path.prop_part();
+
+    // Find the next prim in the chain
+    // It might be a child of the NodeGraph, so use the same child lookup logic
+    const Prim *next_prim{nullptr};
+    bool found_next = stage.find_prim_at_path(Path(next_prim_part, ""), next_prim, &err);
+
+    // If not found in stage, it might be a child of the current NodeGraph
+    if (!found_next || !next_prim) {
+      DCOUT("Next prim not found in stage, checking NodeGraph children");
+
+      // Check if it's a child of this NodeGraph
+      size_t last_slash = next_prim_part.rfind('/');
+      if (last_slash != std::string::npos) {
+        std::string parent_path = next_prim_part.substr(0, last_slash);
+        std::string child_name = next_prim_part.substr(last_slash + 1);
+
+        // If the parent is this NodeGraph, look in its children
+        if (parent_path == prim_part) {
+          for (const auto& child : prim->children()) {
+            std::string elem_name = child.element_name();
+            if (elem_name == child_name) {
+              next_prim = &child;
+              break;
+            }
+          }
+
+          if (!next_prim) {
+            return nonstd::make_unexpected(
+                fmt::format("Child prim '{}' not found in NodeGraph {}\n", child_name, prim_part));
+          }
+        } else {
+          return nonstd::make_unexpected(
+              fmt::format("Prim {} not found in the Stage: {}\n", next_prim_part, err));
+        }
+      } else {
+        return nonstd::make_unexpected(
+            fmt::format("Prim {} not found in the Stage: {}\n", next_prim_part, err));
+      }
+    }
+
+    if (!next_prim) {
+      return nonstd::make_unexpected("[InternalError] next_prim is null.\n");
+    }
+
+    // For nested NodeGraphs or other intermediate nodes, we would need to continue traversing
+    // For now, we only support the common pattern: NodeGraph -> Shader(UsdUVTexture)
+    // Nested NodeGraphs are rare and can be handled if needed
+
+    // Check if it's a Shader with UsdUVTexture
+    if (const Shader *pshader = next_prim->as<Shader>()) {
+      if (const UsdUVTexture *ptex = pshader->value.as<UsdUVTexture>()) {
+        // Verify the property part is valid for UsdUVTexture
+        if (next_prop_part != kOutputsRGB && next_prop_part != kOutputsR &&
+            next_prop_part != kOutputsG && next_prop_part != kOutputsB &&
+            next_prop_part != kOutputsA) {
+          return nonstd::make_unexpected(fmt::format(
+              "UsdUVTexture connection property part must be outputs:rgb/r/g/b/a, got {}",
+              next_prop_part));
+        }
+
+        DCOUT("Found UsdUVTexture through NodeGraph: " << next_prim_part);
+        (*dst) = ptex;
+
+        if (shader_out) {
+          (*shader_out) = pshader;
+        }
+
+        if (tex_abs_path) {
+          (*tex_abs_path) = ng_output_path;
+        }
+
+        return true;
+      }
+      // Shader exists but it's not a UsdUVTexture - this is OK, NodeGraph might connect to other shader types
+      // Return false (not found) rather than error
+      DCOUT(fmt::format("NodeGraph {} output {} connects to Shader {} but it's not UsdUVTexture",
+                        prim_part, prop_part, next_prim_part));
+      return false;
+    }
+
+    // If we get here, the NodeGraph doesn't connect to a UsdUVTexture
+    // This is not necessarily an error - the connection might be to a MaterialX shader or other node type
+    DCOUT(fmt::format("NodeGraph {} output {} connects to {} (type: {}), not a UsdUVTexture",
+                      prim_part, prop_part, next_prim_part, next_prim->prim_type_name()));
+    return false;
+  }
+
+  // Not a NodeGraph - must be a direct UsdUVTexture connection
+  if (!is_standard_output) {
+    return nonstd::make_unexpected(fmt::format(
+        "connection Path's property part must be `{}`, `{}`, `{}`, `{}` or `{}` "
+        "for UsdUVTexture, but got `{}`(prim_part: {}).",
+        kOutputsRGB, kOutputsR, kOutputsG, kOutputsB, kOutputsA, prop_part, prim_part));
   }
 
   if (tex_abs_path) {
@@ -4967,6 +5429,311 @@ nonstd::expected<bool, std::string> GetConnectedUVTexture(
   return nonstd::make_unexpected(
       fmt::format("Prim {} must be `Shader` Prim type, but got `{}`", prim_part,
                   prim->prim_type_name()));
+}
+
+// Helper function to find ND_image_color4 texture nodes in a MaterialX NodeGraph
+// by traversing connections from the given output
+template <typename T>
+nonstd::expected<bool, std::string> GetConnectedMtlxTexture(
+    const Stage &stage, const TypedAnimatableAttributeWithFallback<T> &src,
+    Path *tex_abs_path, const Shader **image_shader_out,
+    std::string *st_varname_out, const AssetInfo **assetInfo_out) {
+
+  if (!src.is_connection()) {
+    return nonstd::make_unexpected("Attribute must be connection.\n");
+  }
+
+  if (src.get_connections().size() != 1) {
+    return nonstd::make_unexpected(
+        "Attribute connections must be single connection Path.\n");
+  }
+
+  const Path &path = src.get_connections()[0];
+  const std::string prim_part = path.prim_part();
+  const std::string prop_part = path.prop_part();
+
+  DCOUT("Checking MaterialX connection: " << path.full_path_name());
+  DCOUT("  prim_part: " << prim_part);
+  DCOUT("  prop_part: " << prop_part);
+
+  // The prim_part should be the NodeGraph path itself
+  // For </root/_materials/Material/NodeGraphs.outputs:node_out>,
+  // prim_part = "/root/_materials/Material/NodeGraphs"
+
+  // First, try to find via stage lookup
+  const Prim *ng_prim{nullptr};
+  std::string err;
+  bool found_in_stage = stage.find_prim_at_path(Path(prim_part, ""), ng_prim, &err);
+
+  // If not found in stage lookup, try to navigate through Material's children
+  if (!found_in_stage || !ng_prim) {
+    DCOUT("Prim not found in stage lookup, trying Material children approach");
+
+    // Extract Material path - it should be everything before the last element
+    size_t last_slash = prim_part.rfind('/');
+    if (last_slash == std::string::npos) {
+      return nonstd::make_unexpected(
+          fmt::format("Invalid NodeGraph path structure: {}\n", prim_part));
+    }
+
+    std::string material_path = prim_part.substr(0, last_slash);
+    std::string nodegraph_name = prim_part.substr(last_slash + 1);
+
+    DCOUT("Looking for Material at: " << material_path);
+    DCOUT("NodeGraph name: " << nodegraph_name);
+
+    // Find the Material
+    const Prim *mat_prim{nullptr};
+    if (!stage.find_prim_at_path(Path(material_path, ""), mat_prim, &err)) {
+      return nonstd::make_unexpected(
+          fmt::format("Material {} not found: {}\n", material_path, err));
+    }
+
+    // Look for NodeGraph child
+    if (mat_prim) {
+      std::string children_info = "Material has " + std::to_string(mat_prim->children().size()) + " children: ";
+      for (const auto& child : mat_prim->children()) {
+        std::string child_name = child.element_name();
+        std::string child_type = child.data().type_name();
+        children_info += "'" + child_name + "'(" + child_type + ") ";
+
+        // Check if this is a NodeGraph (by type, since name might be empty)
+        if (child_type == "NodeGraph") {
+          // If the child has no name but is the right type, use it
+          // This handles the case where the NodeGraph doesn't have element_name set
+          ng_prim = &child;
+          break;
+        } else if (child_name == nodegraph_name) {
+          // Also check by exact name match
+          ng_prim = &child;
+          break;
+        }
+      }
+
+      if (!ng_prim) {
+        return nonstd::make_unexpected(
+            fmt::format("NodeGraph '{}' not found. {}\n", nodegraph_name, children_info));
+      }
+    } else {
+      return nonstd::make_unexpected(
+          fmt::format("Material prim is null\n"));
+    }
+  }
+
+  DCOUT("Found prim: " << prim_part << ", type: " << (ng_prim ? ng_prim->data().type_name() : "null"));
+
+  const NodeGraph *ng = ng_prim ? ng_prim->as<NodeGraph>() : nullptr;
+  if (!ng) {
+    // Debug output to understand why it's not a NodeGraph
+    if (ng_prim) {
+      return nonstd::make_unexpected(
+          fmt::format("{} is not a NodeGraph, prim_type: {}\n", prim_part, ng_prim->data().type_name()));
+    }
+    return nonstd::make_unexpected(
+        fmt::format("{} is not a NodeGraph\n", prim_part));
+  }
+
+  // Find the output connection we're looking for
+  // The prop_part should be like "outputs:node_out"
+  std::string output_name = prop_part;
+  if (startsWith(output_name, "outputs:")) {
+    output_name = output_name.substr(8); // Remove "outputs:" prefix
+  }
+
+  // Look for the connection in props
+  // Try both with and without ".connect" suffix
+  std::string conn_prop_name = "outputs:" + output_name + ".connect";
+  auto it = ng->props.find(conn_prop_name);
+
+  if (it == ng->props.end()) {
+    // Try without .connect suffix
+    conn_prop_name = "outputs:" + output_name;
+    it = ng->props.find(conn_prop_name);
+
+    if (it == ng->props.end()) {
+      // List available props for debugging
+      std::string available_props = "Available props: ";
+      for (const auto& prop : ng->props) {
+        available_props += prop.first + " ";
+      }
+      return nonstd::make_unexpected(
+          fmt::format("Output connection '{}' not found in NodeGraph. {}\n",
+                      conn_prop_name, available_props));
+    }
+  }
+
+  // NodeGraph outputs can be stored as attributes or relationships
+  Path current_path;
+  bool found_connection = false;
+
+  if (it->second.is_attribute()) {
+    // It's an attribute - look for connections on the attribute
+    const Attribute &attr = it->second.get_attribute();
+    if (attr.has_connections() && !attr.connections().empty()) {
+      current_path = attr.connections()[0];
+      found_connection = true;
+    }
+  } else if (it->second.is_relationship()) {
+    // Also support relationship format
+    auto targets = it->second.get_relationTargets();
+    if (!targets.empty()) {
+      current_path = targets[0];
+      found_connection = true;
+    }
+  }
+
+  if (!found_connection) {
+    return nonstd::make_unexpected(
+        fmt::format("Output {} has no connection targets\n", conn_prop_name));
+  }
+  const Shader *image_shader = nullptr;
+
+  // Traverse the node connections to find ND_image_color4
+  // Maximum depth to prevent infinite loops
+  int max_depth = 10;
+  std::string traversal_log = "Traversal: ";
+  while (max_depth-- > 0) {
+    std::string current_prim_part = current_path.prim_part();
+
+    const Prim *current_prim{nullptr};
+
+    // First, try regular stage lookup
+    bool current_found_in_stage = stage.find_prim_at_path(Path(current_prim_part, ""), current_prim, &err);
+
+    // If not found and this is under a NodeGraph, look in NodeGraph children
+    if (!current_found_in_stage || !current_prim) {
+      // Check if this path is under the NodeGraph we found earlier
+      size_t last_slash = current_prim_part.rfind('/');
+      if (last_slash != std::string::npos) {
+        std::string parent_path = current_prim_part.substr(0, last_slash);
+        std::string child_name = current_prim_part.substr(last_slash + 1);
+
+        // Check if parent is our NodeGraph
+        if (ng_prim && parent_path.find("NodeGraphs") != std::string::npos) {
+          // Look for the child in the NodeGraph prim
+          for (const auto& child : ng_prim->children()) {
+            if (child.element_name() == child_name) {
+              current_prim = &child;
+              break;
+            }
+          }
+        }
+      }
+
+      if (!current_prim) {
+        return nonstd::make_unexpected(
+            fmt::format("Shader {} not found\n", current_prim_part));
+      }
+    }
+
+    const Shader *current_shader = current_prim ? current_prim->as<Shader>() : nullptr;
+    if (!current_shader) {
+      return nonstd::make_unexpected(
+          fmt::format("{} is not a Shader. {}\n", current_prim_part, traversal_log));
+    }
+
+    // Log this node
+    traversal_log += current_shader->info_id + " -> ";
+
+    // Check if this is an ND_image_color4 node
+    if (current_shader->info_id == "ND_image_color4" ||
+        current_shader->info_id == "ND_image_color3") {
+      image_shader = current_shader;
+      if (tex_abs_path) {
+        *tex_abs_path = current_path;
+      }
+      if (image_shader_out) {
+        *image_shader_out = image_shader;
+      }
+      if (assetInfo_out) {
+        // get_assetInfo returns AssetInfo converted from customData/assetInfo
+        bool authored = false;
+        const AssetInfo &info = current_shader->metas().get_assetInfo(&authored);
+        if (authored) {
+          *assetInfo_out = &info;
+        }
+      }
+
+      // For MaterialX, we don't have an explicit st varname,
+      // so we'll use "st" as default (same as UsdPreviewSurface)
+      if (st_varname_out) {
+        *st_varname_out = "st";
+      }
+
+      return true;
+    }
+
+    // Check if this node has an input connection we should follow
+    // For ND_convert_color4_color3, follow inputs:in
+    bool found_next = false;
+    DCOUT("Checking shader " << current_shader->info_id << " at " << current_prim_part);
+
+    // Debug: log all properties from both Shader and ShaderNode
+    std::string props_list = "ShaderProps: ";
+    for (const auto& prop : current_shader->props) {
+      props_list += prop.first + " ";
+    }
+
+    // Check if the shader has a ShaderNode value with properties
+    const ShaderNode *shader_node = current_shader->value.as<ShaderNode>();
+    if (shader_node && !shader_node->props.empty()) {
+      props_list += " NodeProps: ";
+      for (const auto& prop : shader_node->props) {
+        props_list += prop.first + " ";
+      }
+    }
+    traversal_log += "[" + props_list + "] ";
+
+    // Helper lambda to check for connections in a property map
+    auto find_connection = [&](const std::map<std::string, Property>& props_map) -> bool {
+      for (const auto& prop : props_map) {
+        if (startsWith(prop.first, "inputs:")) {
+          bool is_connection = false;
+          Path next_path;
+
+          if (endsWith(prop.first, ".connect")) {
+            // Explicit .connect suffix
+            is_connection = true;
+            if (prop.second.is_relationship()) {
+              auto next_targets = prop.second.get_relationTargets();
+              if (!next_targets.empty()) {
+                next_path = next_targets[0];
+              }
+            }
+          } else if (prop.second.is_attribute()) {
+            // Check if attribute has connections
+            const Attribute &attr = prop.second.get_attribute();
+            if (attr.has_connections() && !attr.connections().empty()) {
+              is_connection = true;
+              next_path = attr.connections()[0];
+            }
+          }
+
+          if (is_connection && !next_path.full_path_name().empty()) {
+            DCOUT("  Following connection from " << prop.first << " to " << next_path);
+            current_path = next_path;
+            return true;
+          }
+        }
+      }
+      return false;
+    };
+
+    // Try shader_node->props first, then fall back to current_shader->props
+    if (shader_node && !shader_node->props.empty()) {
+      found_next = find_connection(shader_node->props);
+    }
+    if (!found_next) {
+      found_next = find_connection(current_shader->props);
+    }
+
+    if (!found_next) {
+      break;
+    }
+  }
+
+  return nonstd::make_unexpected(
+      fmt::format("No ND_image_color4 texture node found. {}\n", traversal_log));
 }
 
 static bool RawAssetRead(
@@ -5040,22 +5807,29 @@ bool RenderSceneConverter::ConvertUVTexture(const RenderSceneConverterEnv &env,
 
   UVTexture tex;
 
-  if (!texture.file.authored()) {
-    PUSH_ERROR_AND_RETURN(fmt::format("`asset:file` is not authored. Path = {}",
-                                      tex_abs_path.prim_part()));
-  }
+  // Workaround for Blender export bug: UsdUVTexture without asset:file
+  // This happens when Blender exports materials incorrectly
+  bool has_file = texture.file.authored();
 
   value::AssetPath assetPath;
-  if (auto apath = texture.file.get_value()) {
-    if (!apath.value().get(env.timecode, &assetPath)) {
-      PUSH_ERROR_AND_RETURN(fmt::format(
-          "Failed to get `asset:file` value from Path {} at time {}",
-          tex_abs_path.prim_part(), env.timecode));
+  if (has_file) {
+    if (auto apath = texture.file.get_value()) {
+      if (!apath.value().get(env.timecode, &assetPath)) {
+        PUSH_ERROR_AND_RETURN(fmt::format(
+            "Failed to get `asset:file` value from Path {} at time {}",
+            tex_abs_path.prim_part(), env.timecode));
+      }
+    } else {
+      PUSH_ERROR_AND_RETURN(
+          fmt::format("Failed to get `asset:file` value from Path {}",
+                      tex_abs_path.prim_part()));
     }
   } else {
-    PUSH_ERROR_AND_RETURN(
-        fmt::format("Failed to get `asset:file` value from Path {}",
-                    tex_abs_path.prim_part()));
+    // Blender export bug workaround: create placeholder texture
+    PUSH_WARN(fmt::format("`asset:file` is not authored for UsdUVTexture at {}. "
+                         "This is likely a Blender export bug. Creating placeholder texture.",
+                         tex_abs_path.prim_part()));
+    assetPath = value::AssetPath("");  // empty path
   }
 
   // TextureImage and BufferData
@@ -5148,7 +5922,7 @@ bool RenderSceneConverter::ConvertUVTexture(const RenderSceneConverterEnv &env,
     // exists, `colorSpace` metadata supercedes.
     // NOTE: `inputs:sourceColorSpace` attribute should be deprecated in favor of `colorSpace` metadata.
     bool inferColorSpaceFailed = false;
-    if (texture.file.metas().has_colorSpace()) {
+    if (has_file && texture.file.metas().has_colorSpace()) {
       ColorSpace cs;
       value::token cs_token = texture.file.metas().get_colorSpace();
       if (InferColorSpace(cs_token, &cs)) {
@@ -5160,7 +5934,7 @@ bool RenderSceneConverter::ConvertUVTexture(const RenderSceneConverterEnv &env,
     }
 
     bool sourceColorSpaceSet = false;
-    if (inferColorSpaceFailed || !texture.file.metas().has_colorSpace()) {
+    if (inferColorSpaceFailed || !has_file || !texture.file.metas().has_colorSpace()) {
       if (texture.sourceColorSpace.authored()) {
         UsdUVTexture::SourceColorSpace cs;
         if (texture.sourceColorSpace.get_value().get(env.timecode, &cs)) {
@@ -5199,7 +5973,7 @@ bool RenderSceneConverter::ConvertUVTexture(const RenderSceneConverterEnv &env,
       }
     }
 
-    if (!sourceColorSpaceSet && inferColorSpaceFailed) {
+    if (!sourceColorSpaceSet && inferColorSpaceFailed && has_file) {
       value::token cs_token = texture.file.metas().get_colorSpace();
       PUSH_ERROR_AND_RETURN(
           fmt::format("Invalid or unknown colorSpace metadataum: {}. Please "
@@ -5547,7 +6321,7 @@ bool RenderSceneConverter::ConvertUVTexture(const RenderSceneConverterEnv &env,
       }
 
     } else {
-      TUSDZ_LOG_I("get_value");
+      //TUSDZ_LOG_I("get_value");
       Animatable<value::texcoord2f> fallbacks = texture.st.get_value();
       value::texcoord2f uv;
       if (fallbacks.get(env.timecode, &uv)) {
@@ -5557,7 +6331,7 @@ bool RenderSceneConverter::ConvertUVTexture(const RenderSceneConverterEnv &env,
         // TODO: report warning.
         PUSH_WARN("Failed to get fallback `st` texcoord attribute.");
       }
-      TUSDZ_LOG_I("uv done");
+      //TUSDZ_LOG_I("uv done");
     }
   }
 
@@ -5611,7 +6385,8 @@ template <typename T, typename Dty>
 bool RenderSceneConverter::ConvertPreviewSurfaceShaderParam(
     const RenderSceneConverterEnv &env, const Path &shader_abs_path,
     const TypedAttributeWithFallback<Animatable<T>> &param,
-    const std::string &param_name, ShaderParam<Dty> &dst_param) {
+    const std::string &param_name, ShaderParam<Dty> &dst_param,
+    bool is_materialx) {
   if (!param.authored()) {
     return true;
   }
@@ -5621,6 +6396,139 @@ bool RenderSceneConverter::ConvertPreviewSurfaceShaderParam(
   } else if (param.is_connection()) {
     DCOUT(fmt::format("{} is attribute connection.", param_name));
 
+    // Check if this is a MaterialX connection to a NodeGraph
+    if (is_materialx && param.get_connections().size() == 1) {
+      const Path &conn_path = param.get_connections()[0];
+      if (conn_path.prim_part().find("/NodeGraphs") != std::string::npos) {
+        // This is a MaterialX NodeGraph connection, traverse to find texture
+        const Shader *image_shader{nullptr};
+        Path texPath;
+        std::string st_varname;
+        const AssetInfo *assetInfo{nullptr};
+
+        auto mtlx_result = GetConnectedMtlxTexture(
+            env.stage, param, &texPath, &image_shader, &st_varname, &assetInfo);
+
+        if (mtlx_result) {
+          // Found a MaterialX texture node
+          DCOUT("Found MaterialX texture node: " << texPath);
+
+          // Extract the file path from the image shader
+          value::AssetPath texAssetPath;
+          bool found_file = false;
+
+          // Helper lambda to find file input in a property map
+          auto find_file_input = [&](const std::map<std::string, Property>& props_map) -> bool {
+            for (const auto& prop : props_map) {
+              if (prop.first == "inputs:file" && prop.second.is_attribute()) {
+                const Attribute &attr = prop.second.get_attribute();
+                if (attr.has_value()) {
+                  auto asset_val = attr.get_value<value::AssetPath>();
+                  if (asset_val) {
+                    texAssetPath = *asset_val;
+                    return true;
+                  }
+                }
+              }
+            }
+            return false;
+          };
+
+          // Check both ShaderNode props and Shader props
+          const ShaderNode *shader_node = image_shader->value.as<ShaderNode>();
+          if (shader_node && !shader_node->props.empty()) {
+            found_file = find_file_input(shader_node->props);
+          }
+          if (!found_file) {
+            found_file = find_file_input(image_shader->props);
+          }
+
+          if (!found_file) {
+            PUSH_WARN(fmt::format("MaterialX image node {} has no file input", texPath.prim_part()));
+            return true;
+          }
+
+          // Create a synthetic UsdUVTexture to pass to ConvertUVTexture
+          UsdUVTexture synth_tex;
+          synth_tex.file.set_value(texAssetPath);
+
+          // Helper lambda to extract wrap mode from properties
+          auto extract_wrap_modes = [&](const std::map<std::string, Property>& props_map) {
+            for (const auto& prop : props_map) {
+              if (prop.first == "inputs:uaddressmode" && prop.second.is_attribute()) {
+                const Attribute &attr = prop.second.get_attribute();
+                if (attr.has_value()) {
+                  auto val = attr.get_value<std::string>();
+                  if (val) {
+                    if (*val == "periodic") {
+                      synth_tex.wrapS.set_value(UsdUVTexture::Wrap::Repeat);
+                    } else if (*val == "clamp") {
+                      synth_tex.wrapS.set_value(UsdUVTexture::Wrap::Clamp);
+                    }
+                  }
+                }
+              }
+              if (prop.first == "inputs:vaddressmode" && prop.second.is_attribute()) {
+                const Attribute &attr = prop.second.get_attribute();
+                if (attr.has_value()) {
+                  auto val = attr.get_value<std::string>();
+                  if (val) {
+                    if (*val == "periodic") {
+                      synth_tex.wrapT.set_value(UsdUVTexture::Wrap::Repeat);
+                    } else if (*val == "clamp") {
+                      synth_tex.wrapT.set_value(UsdUVTexture::Wrap::Clamp);
+                    }
+                  }
+                }
+              }
+            }
+          };
+
+          // Map MaterialX wrap modes to USD - check both ShaderNode and Shader props
+          if (shader_node && !shader_node->props.empty()) {
+            extract_wrap_modes(shader_node->props);
+          }
+          extract_wrap_modes(image_shader->props);
+
+          // Use ConvertUVTexture to properly handle the texture
+          UVTexture rtex;
+          AssetInfo mtlx_assetInfo; // Use the assetInfo if available
+          if (assetInfo) {
+            mtlx_assetInfo = *assetInfo;
+          }
+
+          // Handle colorSpace from attribute metadata if available
+          // AssetInfo doesn't have set_string, so we'll need to handle this differently
+          // For now, just use the assetInfo as-is
+
+          if (!ConvertUVTexture(env, texPath, mtlx_assetInfo, synth_tex, &rtex)) {
+            PUSH_ERROR_AND_RETURN(fmt::format(
+                "Failed to convert MaterialX texture for {}", param_name));
+          }
+
+          // Set the connected output channel and UV primvar name
+          rtex.connectedOutputChannel = tydra::UVTexture::Channel::RGB;
+          rtex.varname_uv = st_varname;
+
+          uint64_t texId = textures.size();
+          textures.push_back(rtex);
+
+          textureMap.add(texId, shader_abs_path.prim_part() + "." + param_name);
+
+          DCOUT(fmt::format("MaterialX TexId {}.{} = {}",
+                            shader_abs_path.prim_part(), param_name, texId));
+
+          dst_param.texture_id = int32_t(texId);
+
+          return true;
+        } else {
+          PUSH_WARN(fmt::format("Failed to find MaterialX texture for {}: {}",
+                                param_name, mtlx_result.error()));
+        }
+      }
+    }
+
+    // Fall back to standard UsdUVTexture handling
     const UsdUVTexture *ptex{nullptr};
     const Shader *pshader{nullptr};
     Path texPath;
@@ -5793,6 +6701,332 @@ bool RenderSceneConverter::ConvertPreviewSurfaceShader(
   return true;
 }
 
+bool RenderSceneConverter::ConvertOpenPBRSurfaceShader(
+    const RenderSceneConverterEnv &env, const Path &shader_abs_path,
+    const OpenPBRSurface &shader, OpenPBRSurfaceShader *rshader_out) {
+  if (!rshader_out) {
+    PUSH_ERROR_AND_RETURN("rshader_out argument is nullptr.");
+  }
+
+  OpenPBRSurfaceShader rshader;
+
+  // Convert base layer parameters
+  if (!ConvertPreviewSurfaceShaderParam(
+          env, shader_abs_path, shader.base_weight, "base_weight",
+          rshader.base_weight, true)) {
+    PushWarn(fmt::format("Failed to convert base_weight parameter for shader: {}", shader_abs_path.prim_part()));
+    return false;
+  }
+  if (!ConvertPreviewSurfaceShaderParam(
+          env, shader_abs_path, shader.base_color, "base_color",
+          rshader.base_color, true)) {
+    PushWarn(fmt::format("Failed to convert base_color parameter for shader: {}", shader_abs_path.prim_part()));
+    return false;
+  }
+  if (!ConvertPreviewSurfaceShaderParam(
+          env, shader_abs_path, shader.base_roughness, "base_roughness",
+          rshader.base_roughness, true)) {
+    PushWarn(fmt::format("Failed to convert base_roughness parameter for shader: {}", shader_abs_path.prim_part()));
+    return false;
+  }
+  if (!ConvertPreviewSurfaceShaderParam(
+          env, shader_abs_path, shader.base_metalness, "base_metalness",
+          rshader.base_metalness, true)) {
+    PushWarn(fmt::format("Failed to convert base_metalness parameter for shader: {}", shader_abs_path.prim_part()));
+    return false;
+  }
+  if (!ConvertPreviewSurfaceShaderParam(
+          env, shader_abs_path, shader.base_diffuse_roughness, "base_diffuse_roughness",
+          rshader.base_diffuse_roughness, true)) {
+    PushWarn(fmt::format("Failed to convert base_diffuse_roughness parameter for shader: {}", shader_abs_path.prim_part()));
+    return false;
+  }
+
+  // Convert specular layer parameters
+  if (!ConvertPreviewSurfaceShaderParam(
+          env, shader_abs_path, shader.specular_weight, "specular_weight",
+          rshader.specular_weight, true)) {
+    PushWarn(fmt::format("Failed to convert specular_weight parameter for shader: {}", shader_abs_path.prim_part()));
+    return false;
+  }
+  if (!ConvertPreviewSurfaceShaderParam(
+          env, shader_abs_path, shader.specular_color, "specular_color",
+          rshader.specular_color, true)) {
+    PushWarn(fmt::format("Failed to convert specular_color parameter for shader: {}", shader_abs_path.prim_part()));
+    return false;
+  }
+  if (!ConvertPreviewSurfaceShaderParam(
+          env, shader_abs_path, shader.specular_roughness, "specular_roughness",
+          rshader.specular_roughness, true)) {
+    PushWarn(fmt::format("Failed to convert specular_roughness parameter for shader: {}", shader_abs_path.prim_part()));
+    return false;
+  }
+  if (!ConvertPreviewSurfaceShaderParam(
+          env, shader_abs_path, shader.specular_ior, "specular_ior",
+          rshader.specular_ior, true)) {
+    PushWarn(fmt::format("Failed to convert specular_ior parameter for shader: {}", shader_abs_path.prim_part()));
+    return false;
+  }
+  if (!ConvertPreviewSurfaceShaderParam(
+          env, shader_abs_path, shader.specular_ior_level, "specular_ior_level",
+          rshader.specular_ior_level)) {
+    PushWarn(fmt::format("Failed to convert specular_ior_level parameter for shader: {}", shader_abs_path.prim_part()));
+    return false;
+  }
+  if (!ConvertPreviewSurfaceShaderParam(
+          env, shader_abs_path, shader.specular_anisotropy, "specular_anisotropy",
+          rshader.specular_anisotropy)) {
+    PushWarn(fmt::format("Failed to convert specular_anisotropy parameter for shader: {}", shader_abs_path.prim_part()));
+    return false;
+  }
+  if (!ConvertPreviewSurfaceShaderParam(
+          env, shader_abs_path, shader.specular_rotation, "specular_rotation",
+          rshader.specular_rotation)) {
+    PushWarn(fmt::format("Failed to convert specular_rotation parameter for shader: {}", shader_abs_path.prim_part()));
+    return false;
+  }
+
+  // Convert transmission parameters
+  if (!ConvertPreviewSurfaceShaderParam(
+          env, shader_abs_path, shader.transmission_weight, "transmission_weight",
+          rshader.transmission_weight, true)) {
+    PushWarn(fmt::format("Failed to convert transmission_weight parameter for shader: {}", shader_abs_path.prim_part()));
+    return false;
+  }
+  if (!ConvertPreviewSurfaceShaderParam(
+          env, shader_abs_path, shader.transmission_color, "transmission_color",
+          rshader.transmission_color, true)) {
+    PushWarn(fmt::format("Failed to convert transmission_color parameter for shader: {}", shader_abs_path.prim_part()));
+    return false;
+  }
+  if (!ConvertPreviewSurfaceShaderParam(
+          env, shader_abs_path, shader.transmission_depth, "transmission_depth",
+          rshader.transmission_depth)) {
+    PushWarn(fmt::format("Failed to convert transmission_depth parameter for shader: {}", shader_abs_path.prim_part()));
+    return false;
+  }
+  if (!ConvertPreviewSurfaceShaderParam(
+          env, shader_abs_path, shader.transmission_scatter, "transmission_scatter",
+          rshader.transmission_scatter)) {
+    PushWarn(fmt::format("Failed to convert transmission_scatter parameter for shader: {}", shader_abs_path.prim_part()));
+    return false;
+  }
+  if (!ConvertPreviewSurfaceShaderParam(
+          env, shader_abs_path, shader.transmission_scatter_anisotropy,
+          "transmission_scatter_anisotropy", rshader.transmission_scatter_anisotropy)) {
+    PushWarn(fmt::format("Failed to convert transmission_scatter_anisotropy parameter for shader: {}", shader_abs_path.prim_part()));
+    return false;
+  }
+  if (!ConvertPreviewSurfaceShaderParam(
+          env, shader_abs_path, shader.transmission_dispersion,
+          "transmission_dispersion", rshader.transmission_dispersion)) {
+    PushWarn(fmt::format("Failed to convert transmission_dispersion parameter for shader: {}", shader_abs_path.prim_part()));
+    return false;
+  }
+
+  // Convert subsurface parameters
+  if (!ConvertPreviewSurfaceShaderParam(
+          env, shader_abs_path, shader.subsurface_weight, "subsurface_weight",
+          rshader.subsurface_weight, true)) {
+    PushWarn(fmt::format("Failed to convert subsurface_weight parameter for shader: {}", shader_abs_path.prim_part()));
+    return false;
+  }
+  if (!ConvertPreviewSurfaceShaderParam(
+          env, shader_abs_path, shader.subsurface_color, "subsurface_color",
+          rshader.subsurface_color, true)) {
+    PushWarn(fmt::format("Failed to convert subsurface_color parameter for shader: {}", shader_abs_path.prim_part()));
+    return false;
+  }
+  if (!ConvertPreviewSurfaceShaderParam(
+          env, shader_abs_path, shader.subsurface_radius, "subsurface_radius",
+          rshader.subsurface_radius, true)) {
+    PushWarn(fmt::format("Failed to convert subsurface_radius parameter for shader: {}", shader_abs_path.prim_part()));
+    return false;
+  }
+  if (!ConvertPreviewSurfaceShaderParam(
+          env, shader_abs_path, shader.subsurface_scale, "subsurface_scale",
+          rshader.subsurface_scale, true)) {
+    PushWarn(fmt::format("Failed to convert subsurface_scale parameter for shader: {}", shader_abs_path.prim_part()));
+    return false;
+  }
+  if (!ConvertPreviewSurfaceShaderParam(
+          env, shader_abs_path, shader.subsurface_anisotropy,
+          "subsurface_anisotropy", rshader.subsurface_anisotropy, true)) {
+    PushWarn(fmt::format("Failed to convert subsurface_anisotropy parameter for shader: {}", shader_abs_path.prim_part()));
+    return false;
+  }
+
+  // Convert sheen parameters
+  if (!ConvertPreviewSurfaceShaderParam(
+          env, shader_abs_path, shader.sheen_weight, "sheen_weight",
+          rshader.sheen_weight, true)) {
+    PushWarn(fmt::format("Failed to convert sheen_weight parameter for shader: {}", shader_abs_path.prim_part()));
+    return false;
+  }
+  if (!ConvertPreviewSurfaceShaderParam(
+          env, shader_abs_path, shader.sheen_color, "sheen_color",
+          rshader.sheen_color, true)) {
+    PushWarn(fmt::format("Failed to convert sheen_color parameter for shader: {}", shader_abs_path.prim_part()));
+    return false;
+  }
+  if (!ConvertPreviewSurfaceShaderParam(
+          env, shader_abs_path, shader.sheen_roughness, "sheen_roughness",
+          rshader.sheen_roughness, true)) {
+    PushWarn(fmt::format("Failed to convert sheen_roughness parameter for shader: {}", shader_abs_path.prim_part()));
+    return false;
+  }
+
+  // Convert fuzz parameters (velvet/fabric-like appearance)
+  if (!ConvertPreviewSurfaceShaderParam(
+          env, shader_abs_path, shader.fuzz_weight, "fuzz_weight",
+          rshader.fuzz_weight, true)) {
+    PushWarn(fmt::format("Failed to convert fuzz_weight parameter for shader: {}", shader_abs_path.prim_part()));
+    return false;
+  }
+  if (!ConvertPreviewSurfaceShaderParam(
+          env, shader_abs_path, shader.fuzz_color, "fuzz_color",
+          rshader.fuzz_color, true)) {
+    PushWarn(fmt::format("Failed to convert fuzz_color parameter for shader: {}", shader_abs_path.prim_part()));
+    return false;
+  }
+  if (!ConvertPreviewSurfaceShaderParam(
+          env, shader_abs_path, shader.fuzz_roughness, "fuzz_roughness",
+          rshader.fuzz_roughness, true)) {
+    PushWarn(fmt::format("Failed to convert fuzz_roughness parameter for shader: {}", shader_abs_path.prim_part()));
+    return false;
+  }
+
+  // Convert thin film parameters (iridescence from thin film interference)
+  if (!ConvertPreviewSurfaceShaderParam(
+          env, shader_abs_path, shader.thin_film_weight, "thin_film_weight",
+          rshader.thin_film_weight, true)) {
+    PushWarn(fmt::format("Failed to convert thin_film_weight parameter for shader: {}", shader_abs_path.prim_part()));
+    return false;
+  }
+  if (!ConvertPreviewSurfaceShaderParam(
+          env, shader_abs_path, shader.thin_film_thickness, "thin_film_thickness",
+          rshader.thin_film_thickness, true)) {
+    PushWarn(fmt::format("Failed to convert thin_film_thickness parameter for shader: {}", shader_abs_path.prim_part()));
+    return false;
+  }
+  if (!ConvertPreviewSurfaceShaderParam(
+          env, shader_abs_path, shader.thin_film_ior, "thin_film_ior",
+          rshader.thin_film_ior, true)) {
+    PushWarn(fmt::format("Failed to convert thin_film_ior parameter for shader: {}", shader_abs_path.prim_part()));
+    return false;
+  }
+
+  // Convert coat layer parameters
+  if (!ConvertPreviewSurfaceShaderParam(
+          env, shader_abs_path, shader.coat_weight, "coat_weight",
+          rshader.coat_weight, true)) {
+    PushWarn(fmt::format("Failed to convert coat_weight parameter for shader: {}", shader_abs_path.prim_part()));
+    return false;
+  }
+  if (!ConvertPreviewSurfaceShaderParam(
+          env, shader_abs_path, shader.coat_color, "coat_color",
+          rshader.coat_color, true)) {
+    PushWarn(fmt::format("Failed to convert coat_color parameter for shader: {}", shader_abs_path.prim_part()));
+    return false;
+  }
+  if (!ConvertPreviewSurfaceShaderParam(
+          env, shader_abs_path, shader.coat_roughness, "coat_roughness",
+          rshader.coat_roughness, true)) {
+    PushWarn(fmt::format("Failed to convert coat_roughness parameter for shader: {}", shader_abs_path.prim_part()));
+    return false;
+  }
+  if (!ConvertPreviewSurfaceShaderParam(
+          env, shader_abs_path, shader.coat_anisotropy, "coat_anisotropy",
+          rshader.coat_anisotropy, true)) {
+    PushWarn(fmt::format("Failed to convert coat_anisotropy parameter for shader: {}", shader_abs_path.prim_part()));
+    return false;
+  }
+  if (!ConvertPreviewSurfaceShaderParam(
+          env, shader_abs_path, shader.coat_rotation, "coat_rotation",
+          rshader.coat_rotation, true)) {
+    PushWarn(fmt::format("Failed to convert coat_rotation parameter for shader: {}", shader_abs_path.prim_part()));
+    return false;
+  }
+  if (!ConvertPreviewSurfaceShaderParam(
+          env, shader_abs_path, shader.coat_ior, "coat_ior",
+          rshader.coat_ior, true)) {
+    PushWarn(fmt::format("Failed to convert coat_ior parameter for shader: {}", shader_abs_path.prim_part()));
+    return false;
+  }
+  if (!ConvertPreviewSurfaceShaderParam(
+          env, shader_abs_path, shader.coat_affect_color, "coat_affect_color",
+          rshader.coat_affect_color, true)) {
+    PushWarn(fmt::format("Failed to convert coat_affect_color parameter for shader: {}", shader_abs_path.prim_part()));
+    return false;
+  }
+  if (!ConvertPreviewSurfaceShaderParam(
+          env, shader_abs_path, shader.coat_affect_roughness, "coat_affect_roughness",
+          rshader.coat_affect_roughness, true)) {
+    PushWarn(fmt::format("Failed to convert coat_affect_roughness parameter for shader: {}", shader_abs_path.prim_part()));
+    return false;
+  }
+
+  // Convert emission parameters
+  if (!ConvertPreviewSurfaceShaderParam(
+          env, shader_abs_path, shader.emission_luminance, "emission_luminance",
+          rshader.emission_luminance, true)) {
+    PushWarn(fmt::format("Failed to convert emission_luminance parameter for shader: {}", shader_abs_path.prim_part()));
+    return false;
+  }
+  if (!ConvertPreviewSurfaceShaderParam(
+          env, shader_abs_path, shader.emission_color, "emission_color",
+          rshader.emission_color, true)) {
+    PushWarn(fmt::format("Failed to convert emission_color parameter for shader: {}", shader_abs_path.prim_part()));
+    return false;
+  }
+
+  // Convert geometry parameters
+  if (!ConvertPreviewSurfaceShaderParam(
+          env, shader_abs_path, shader.opacity, "opacity",
+          rshader.opacity, true)) {
+    PushWarn(fmt::format("Failed to convert opacity parameter for shader: {}", shader_abs_path.prim_part()));
+    return false;
+  }
+  if (!ConvertPreviewSurfaceShaderParam(
+          env, shader_abs_path, shader.normal, "normal",
+          rshader.normal, true)) {
+    PushWarn(fmt::format("Failed to convert normal parameter for shader: {}", shader_abs_path.prim_part()));
+    return false;
+  }
+  if (!ConvertPreviewSurfaceShaderParam(
+          env, shader_abs_path, shader.tangent, "tangent",
+          rshader.tangent, true)) {
+    PushWarn(fmt::format("Failed to convert tangent parameter for shader: {}", shader_abs_path.prim_part()));
+    return false;
+  }
+
+  // TODO: Convert MaterialX NodeGraph connections to JSON if present
+  // This allows reconstruction of node-based shading in JavaScript/WASM
+  // NOTE: Currently disabled because GetPrimAtPath returns Prim* not optional<Prim>
+  // and ConvertShaderWithNodeGraphToJson is not yet implemented
+  #if 0
+  auto shader_prim_opt = env.stage.GetPrimAtPath(shader_abs_path);
+  if (shader_prim_opt) {
+    const Prim *shader_prim_ptr = shader_prim_opt.value();
+    std::string nodegraph_json;
+    std::string err;
+    if (shader_prim_ptr && ConvertShaderWithNodeGraphToJson(*shader_prim_ptr, env.stage, &nodegraph_json, &err)) {
+      rshader.nodeGraphJson = nodegraph_json;
+      DCOUT("Successfully converted MaterialX NodeGraph to JSON for shader: " << shader_abs_path.prim_part());
+    } else {
+      // Not an error - shader may not have node graph connections
+      DCOUT("No MaterialX NodeGraph found for shader: " << shader_abs_path.prim_part());
+    }
+  }
+  #endif
+
+  // Leave nodeGraphJson empty for now - will be populated when converter is implemented
+  (void)shader_abs_path; // Suppress unused variable warning
+
+  (*rshader_out) = rshader;
+  return true;
+}
+
 bool RenderSceneConverter::ConvertMaterial(const RenderSceneConverterEnv &env,
                                            const Path &mat_abs_path,
                                            const tinyusdz::Material &material,
@@ -5811,6 +7045,7 @@ bool RenderSceneConverter::ConvertMaterial(const RenderSceneConverterEnv &env,
 
   //
   // surface shader
+  // First try outputs:surface (standard USD), then outputs:mtlx:surface (MaterialX)
   {
     if (material.surface.authored()) {
       auto paths = material.surface.get_connections();
@@ -5862,13 +7097,10 @@ bool RenderSceneConverter::ConvertMaterial(const RenderSceneConverterEnv &env,
                       shaderPrim->prim_type_name()));
     }
 
-    // Currently must be UsdPreviewSurface
+    // Check for UsdPreviewSurface, OpenPBRSurface, or MtlxOpenPBRSurface (Blender v4.5+ export)
     const UsdPreviewSurface *psurface = shader->value.as<UsdPreviewSurface>();
-    if (!psurface) {
-      PUSH_ERROR_AND_RETURN(
-          fmt::format("Shader's info:id must be UsdPreviewSurface, but got {}",
-                      shader->info_id));
-    }
+    const OpenPBRSurface *openpbr = shader->value.as<OpenPBRSurface>();
+    const MtlxOpenPBRSurface *mtlx_openpbr = shader->value.as<MtlxOpenPBRSurface>();
 
     // prop part must be `outputs:surface` for now.
     if (surfacePath.prop_part() != "outputs:surface") {
@@ -5878,13 +7110,317 @@ bool RenderSceneConverter::ConvertMaterial(const RenderSceneConverterEnv &env,
                       mat_abs_path.full_path_name(), surfacePath.prop_part()));
     }
 
-    PreviewSurfaceShader pss;
-    if (!ConvertPreviewSurfaceShader(env, surfacePath, *psurface, &pss)) {
-      PUSH_ERROR_AND_RETURN(fmt::format(
-          "Failed to convert UsdPreviewSurface : {}", surfacePath.prim_part()));
+    if (psurface) {
+      // Convert UsdPreviewSurface
+      PreviewSurfaceShader pss;
+      if (!ConvertPreviewSurfaceShader(env, surfacePath, *psurface, &pss)) {
+        PUSH_ERROR_AND_RETURN(fmt::format(
+            "Failed to convert UsdPreviewSurface : {}", surfacePath.prim_part()));
+      }
+      rmat.surfaceShader = pss;
     }
 
-    rmat.surfaceShader = pss;
+    if (openpbr) {
+      // Convert OpenPBRSurface
+      OpenPBRSurfaceShader openpbr_shader;
+      if (!ConvertOpenPBRSurfaceShader(env, surfacePath, *openpbr, &openpbr_shader)) {
+        PUSH_ERROR_AND_RETURN(fmt::format(
+            "Failed to convert OpenPBRSurface : {}", surfacePath.prim_part()));
+      }
+      rmat.openPBRShader = openpbr_shader;
+    }
+
+    if (mtlx_openpbr) {
+      // Convert MtlxOpenPBRSurface (Blender v4.5+ MaterialX export with ND_open_pbr_surface_surfaceshader)
+      // For now, convert it to OpenPBRSurface format by copying compatible parameters
+      OpenPBRSurface converted_openpbr;
+
+      // Copy base layer properties
+      converted_openpbr.base_weight = mtlx_openpbr->base_weight;
+      converted_openpbr.base_color = mtlx_openpbr->base_color;
+      converted_openpbr.base_roughness = mtlx_openpbr->base_diffuse_roughness;
+      converted_openpbr.base_metalness = mtlx_openpbr->base_metalness;
+      converted_openpbr.base_diffuse_roughness = mtlx_openpbr->base_diffuse_roughness;
+
+      // Copy specular properties
+      converted_openpbr.specular_weight = mtlx_openpbr->specular_weight;
+      converted_openpbr.specular_color = mtlx_openpbr->specular_color;
+      converted_openpbr.specular_roughness = mtlx_openpbr->specular_roughness;
+      converted_openpbr.specular_ior = mtlx_openpbr->specular_ior;
+      converted_openpbr.specular_anisotropy = mtlx_openpbr->specular_anisotropy;
+      converted_openpbr.specular_rotation = mtlx_openpbr->specular_rotation;
+
+      // Copy transmission properties
+      converted_openpbr.transmission_weight = mtlx_openpbr->transmission_weight;
+      converted_openpbr.transmission_color = mtlx_openpbr->transmission_color;
+      converted_openpbr.transmission_depth = mtlx_openpbr->transmission_depth;
+      converted_openpbr.transmission_scatter = mtlx_openpbr->transmission_scatter;
+      converted_openpbr.transmission_scatter_anisotropy = mtlx_openpbr->transmission_scatter_anisotropy;
+      converted_openpbr.transmission_dispersion = mtlx_openpbr->transmission_dispersion;
+
+      // Copy subsurface properties
+      converted_openpbr.subsurface_weight = mtlx_openpbr->subsurface_weight;
+      converted_openpbr.subsurface_color = mtlx_openpbr->subsurface_color;
+      converted_openpbr.subsurface_scale = mtlx_openpbr->subsurface_scale;
+      converted_openpbr.subsurface_anisotropy = mtlx_openpbr->subsurface_anisotropy;
+
+      // Copy coat properties
+      converted_openpbr.coat_weight = mtlx_openpbr->coat_weight;
+      converted_openpbr.coat_color = mtlx_openpbr->coat_color;
+      converted_openpbr.coat_roughness = mtlx_openpbr->coat_roughness;
+      converted_openpbr.coat_anisotropy = mtlx_openpbr->coat_anisotropy;
+      converted_openpbr.coat_rotation = mtlx_openpbr->coat_rotation;
+      converted_openpbr.coat_ior = mtlx_openpbr->coat_ior;
+      // Note: MtlxOpenPBRSurface has float coat_affect_color, OpenPBRSurface has color3f
+      // Just skip coat_affect_color conversion for now since types don't match easily
+      // TODO: Proper type conversion if needed
+      converted_openpbr.coat_affect_roughness = mtlx_openpbr->coat_affect_roughness;
+
+      // Copy fuzz properties (velvet/fabric-like appearance)
+      converted_openpbr.fuzz_weight = mtlx_openpbr->fuzz_weight;
+      converted_openpbr.fuzz_color = mtlx_openpbr->fuzz_color;
+      converted_openpbr.fuzz_roughness = mtlx_openpbr->fuzz_roughness;
+
+      // Copy thin film properties (iridescence)
+      converted_openpbr.thin_film_weight = mtlx_openpbr->thin_film_weight;
+      converted_openpbr.thin_film_thickness = mtlx_openpbr->thin_film_thickness;
+      converted_openpbr.thin_film_ior = mtlx_openpbr->thin_film_ior;
+
+      // Copy emission properties
+      converted_openpbr.emission_luminance = mtlx_openpbr->emission_luminance;
+      converted_openpbr.emission_color = mtlx_openpbr->emission_color;
+
+      // Copy geometry properties
+      converted_openpbr.opacity = mtlx_openpbr->geometry_opacity;
+      // Copy normal and tangent if they have values (TypedAttribute -> TypedAttributeWithFallback)
+      if (mtlx_openpbr->geometry_normal.has_value()) {
+        auto normal_val = mtlx_openpbr->geometry_normal.get_value();
+        if (normal_val) {
+          converted_openpbr.normal = normal_val.value();
+        }
+      }
+      if (mtlx_openpbr->geometry_tangent.has_value()) {
+        auto tangent_val = mtlx_openpbr->geometry_tangent.get_value();
+        if (tangent_val) {
+          converted_openpbr.tangent = tangent_val.value();
+        }
+      }
+
+      // Convert to OpenPBRSurfaceShader
+      OpenPBRSurfaceShader openpbr_shader;
+      if (!ConvertOpenPBRSurfaceShader(env, surfacePath, converted_openpbr, &openpbr_shader)) {
+        PUSH_ERROR_AND_RETURN(fmt::format(
+            "Failed to convert MtlxOpenPBRSurface : {}", surfacePath.prim_part()));
+      }
+      rmat.openPBRShader = openpbr_shader;
+    }
+
+    if (!psurface && !openpbr && !mtlx_openpbr) {
+      PUSH_ERROR_AND_RETURN(
+          fmt::format("Shader's info:id must be UsdPreviewSurface, OpenPBRSurface, or ND_open_pbr_surface_surfaceshader, but got {}",
+                      shader->info_id));
+    }
+  }
+
+  //
+  // Process MaterialX-specific surface shader when MaterialXConfigAPI is present
+  // When MaterialXConfigAPI is authored, we look for MaterialX shaders
+  {
+    // Check if MaterialXConfigAPI is applied (via materialXConfig field)
+    // For now, we only check the materialXConfig field as apiSchemas checking would need
+    // proper MaterialXConfigAPI enum support in APISchemas::APIName
+    bool has_materialx_api = material.materialXConfig.has_value();
+
+    PUSH_WARN(fmt::format("Material {}: materialXConfig.has_value = {}",
+                          mat_abs_path.full_path_name(), has_materialx_api));
+
+    if (has_materialx_api) {
+      DCOUT("Material has MaterialXConfigAPI, looking for MaterialX shaders");
+      PUSH_WARN("Material has MaterialXConfigAPI, looking for MaterialX shaders");
+
+      // First try to parse outputs:mtlx:surface connection
+      Path mtlxSurfacePath;
+      bool has_mtlx_surface = false;
+
+      // Try to find the connection in various forms
+      for (const auto& prop_name : {"outputs:mtlx:surface.connect", "outputs:mtlx:surface"}) {
+        auto it = material.props.find(prop_name);
+        if (it != material.props.end()) {
+          if (it->second.is_relationship()) {
+            auto targets = it->second.get_relationTargets();
+            if (!targets.empty()) {
+              mtlxSurfacePath = targets[0];
+              has_mtlx_surface = true;
+              DCOUT("Found MaterialX surface connection via relationship: " << mtlxSurfacePath);
+              break;
+            }
+          } else if (it->second.is_attribute()) {
+            // Try to extract path from attribute
+            auto attr = it->second.get_attribute();
+            if (auto token_val = attr.get_value<value::token>()) {
+              std::string path_str = token_val.value().str();
+              if (!path_str.empty()) {
+                // Remove brackets if present
+                if (path_str.front() == '<' && path_str.back() == '>') {
+                  path_str = path_str.substr(1, path_str.size() - 2);
+                }
+                // Parse the path
+                size_t pos = path_str.find(".outputs:");
+                if (pos != std::string::npos) {
+                  std::string prim_path = path_str.substr(0, pos);
+                  mtlxSurfacePath = Path(prim_path, "");
+                  has_mtlx_surface = true;
+                  DCOUT("Found MaterialX surface connection via token: " << mtlxSurfacePath);
+                  break;
+                }
+              }
+            }
+          }
+        }
+      }
+
+      // If direct connection parsing failed, look for child Shader prims with OpenPBR info:id
+      if (!has_mtlx_surface) {
+        DCOUT("Direct connection not found, searching for child shaders with OpenPBR info:id");
+        PUSH_WARN("Direct connection not found, searching for child shaders with OpenPBR info:id");
+
+        // Get the material prim from the stage to access its children
+        const Prim* mat_prim = nullptr;
+        if (env.stage.find_prim_at_path(mat_abs_path, mat_prim, &err)) {
+          if (mat_prim) {
+            // Iterate through children to find OpenPBR shader
+            for (const auto& child : mat_prim->children()) {
+              const Shader* shader = child.as<Shader>();
+              if (shader) {
+                // Check if this is an OpenPBR shader by its info:id
+                if (shader->info_id == kNdOpenPbrSurfaceSurfaceshader ||
+                    shader->info_id == "ND_open_pbr_surface_surfaceshader") {
+                  Path child_path = mat_abs_path;
+                  child_path = child_path.append_element(child.element_name());
+                  mtlxSurfacePath = child_path;
+                  has_mtlx_surface = true;
+                  DCOUT("Found OpenPBR shader child: " << child_path);
+                  PUSH_WARN(fmt::format("Found OpenPBR shader child: {}", child_path.full_path_name()));
+                  break;
+                }
+              }
+            }
+          }
+        }
+      }
+
+      // Process the found MaterialX shader
+      if (has_mtlx_surface) {
+        const Prim *mtlxShaderPrim{nullptr};
+        if (!env.stage.find_prim_at_path(
+                Path(mtlxSurfacePath.prim_part(), /* prop part */ ""), mtlxShaderPrim,
+                &err)) {
+          PUSH_WARN(fmt::format(
+              "MaterialX shader path {} not found in stage",
+              mtlxSurfacePath.full_path_name()));
+        } else if (mtlxShaderPrim) {
+          const Shader *mtlxShader = mtlxShaderPrim->as<Shader>();
+
+          if (mtlxShader) {
+            // Check if it's an OpenPBR shader
+            const MtlxOpenPBRSurface *mtlx_openpbr = mtlxShader->value.as<MtlxOpenPBRSurface>();
+
+            if (mtlx_openpbr) {
+              DCOUT("Converting MtlxOpenPBRSurface to RenderMaterial");
+
+              // Convert MtlxOpenPBRSurface to OpenPBRSurface
+              OpenPBRSurface converted_openpbr;
+
+              // Copy base layer properties
+              converted_openpbr.base_weight = mtlx_openpbr->base_weight;
+              converted_openpbr.base_color = mtlx_openpbr->base_color;
+              converted_openpbr.base_roughness = mtlx_openpbr->base_diffuse_roughness;
+              converted_openpbr.base_metalness = mtlx_openpbr->base_metalness;
+              converted_openpbr.base_diffuse_roughness = mtlx_openpbr->base_diffuse_roughness;
+
+              // Copy specular properties
+              converted_openpbr.specular_weight = mtlx_openpbr->specular_weight;
+              converted_openpbr.specular_color = mtlx_openpbr->specular_color;
+              converted_openpbr.specular_roughness = mtlx_openpbr->specular_roughness;
+              converted_openpbr.specular_ior = mtlx_openpbr->specular_ior;
+              converted_openpbr.specular_anisotropy = mtlx_openpbr->specular_anisotropy;
+              converted_openpbr.specular_rotation = mtlx_openpbr->specular_rotation;
+
+              // Copy transmission properties
+              converted_openpbr.transmission_weight = mtlx_openpbr->transmission_weight;
+              converted_openpbr.transmission_color = mtlx_openpbr->transmission_color;
+              converted_openpbr.transmission_depth = mtlx_openpbr->transmission_depth;
+              converted_openpbr.transmission_scatter = mtlx_openpbr->transmission_scatter;
+              converted_openpbr.transmission_scatter_anisotropy = mtlx_openpbr->transmission_scatter_anisotropy;
+              converted_openpbr.transmission_dispersion = mtlx_openpbr->transmission_dispersion;
+
+              // Copy subsurface properties
+              converted_openpbr.subsurface_weight = mtlx_openpbr->subsurface_weight;
+              converted_openpbr.subsurface_color = mtlx_openpbr->subsurface_color;
+              converted_openpbr.subsurface_scale = mtlx_openpbr->subsurface_scale;
+              converted_openpbr.subsurface_anisotropy = mtlx_openpbr->subsurface_anisotropy;
+
+              // Copy coat properties
+              converted_openpbr.coat_weight = mtlx_openpbr->coat_weight;
+              converted_openpbr.coat_color = mtlx_openpbr->coat_color;
+              converted_openpbr.coat_roughness = mtlx_openpbr->coat_roughness;
+              converted_openpbr.coat_anisotropy = mtlx_openpbr->coat_anisotropy;
+              converted_openpbr.coat_rotation = mtlx_openpbr->coat_rotation;
+              converted_openpbr.coat_ior = mtlx_openpbr->coat_ior;
+              converted_openpbr.coat_affect_roughness = mtlx_openpbr->coat_affect_roughness;
+
+              // Copy fuzz properties (velvet/fabric-like appearance)
+              converted_openpbr.fuzz_weight = mtlx_openpbr->fuzz_weight;
+              converted_openpbr.fuzz_color = mtlx_openpbr->fuzz_color;
+              converted_openpbr.fuzz_roughness = mtlx_openpbr->fuzz_roughness;
+
+              // Copy thin film properties (iridescence)
+              converted_openpbr.thin_film_weight = mtlx_openpbr->thin_film_weight;
+              converted_openpbr.thin_film_thickness = mtlx_openpbr->thin_film_thickness;
+              converted_openpbr.thin_film_ior = mtlx_openpbr->thin_film_ior;
+
+              // Copy emission properties
+              converted_openpbr.emission_luminance = mtlx_openpbr->emission_luminance;
+              converted_openpbr.emission_color = mtlx_openpbr->emission_color;
+
+              // Copy geometry properties
+              converted_openpbr.opacity = mtlx_openpbr->geometry_opacity;
+              // Copy normal and tangent if they have values
+              if (mtlx_openpbr->geometry_normal.has_value()) {
+                auto normal_val = mtlx_openpbr->geometry_normal.get_value();
+                if (normal_val) {
+                  converted_openpbr.normal = normal_val.value();
+                }
+              }
+              if (mtlx_openpbr->geometry_tangent.has_value()) {
+                auto tangent_val = mtlx_openpbr->geometry_tangent.get_value();
+                if (tangent_val) {
+                  converted_openpbr.tangent = tangent_val.value();
+                }
+              }
+
+              // Convert to OpenPBRSurfaceShader
+              OpenPBRSurfaceShader openpbr_shader;
+              if (!ConvertOpenPBRSurfaceShader(env, mtlxSurfacePath, converted_openpbr, &openpbr_shader)) {
+                PUSH_WARN(fmt::format(
+                    "Failed to convert MtlxOpenPBRSurface : {}", mtlxSurfacePath.prim_part()));
+              } else {
+                rmat.openPBRShader = openpbr_shader;
+                DCOUT("Successfully attached MaterialX OpenPBR shader to RenderMaterial");
+                PUSH_WARN(fmt::format("Successfully attached MaterialX OpenPBR shader to RenderMaterial: {}",
+                                      mtlxSurfacePath.full_path_name()));
+              }
+            } else {
+              PUSH_WARN(fmt::format(
+                  "Found shader {} but it's not ND_open_pbr_surface_surfaceshader (got {})",
+                  mtlxSurfacePath.prim_part(), mtlxShader->info_id));
+            }
+          }
+        }
+      } else {
+        DCOUT("No MaterialX OpenPBR shader found for material with MaterialXConfigAPI");
+      }
+    }
   }
 
   DCOUT("Converted Material: " << mat_abs_path);
@@ -5919,6 +7455,70 @@ bool MeshVisitor(const tinyusdz::Path &abs_path, const tinyusdz::Prim &prim,
     return false;
   }
 
+  // Lambda to convert and cache bound materials - shared by all geometry types
+  auto ConvertBoundMaterial = [&](const Path &bound_material_path,
+                                  const tinyusdz::Material *bound_material,
+                                  int64_t &rmaterial_id) -> bool {
+    std::vector<RenderMaterial> &rmaterials =
+        visitorEnv->converter->materials;
+
+    const auto matIt = visitorEnv->converter->materialMap.find(
+        bound_material_path.full_path_name());
+
+    if (matIt != visitorEnv->converter->materialMap.s_end()) {
+      // Got material in the cache.
+      uint64_t mat_id = matIt->second;
+      if (mat_id >= visitorEnv->converter->materials
+                        .size()) {  // this should not happen though
+        if (err) {
+          (*err) += "Material index out-of-range.\n";
+        }
+        return false;
+      }
+
+      if (mat_id >= size_t((std::numeric_limits<int32_t>::max)())) {
+        if (err) {
+          (*err) += "Material index too large.\n";
+        }
+        return false;
+      }
+
+      rmaterial_id = int64_t(mat_id);
+
+    } else {
+      RenderMaterial rmat;
+      if (!visitorEnv->converter->ConvertMaterial(*visitorEnv->env,
+                                                  bound_material_path,
+                                                  *bound_material, &rmat)) {
+        if (err) {
+          (*err) += fmt::format("Material conversion failed: {}",
+                                bound_material_path);
+        }
+        return false;
+      }
+
+      // Assign new material ID
+      uint64_t mat_id = rmaterials.size();
+
+      if (mat_id >= uint64_t((std::numeric_limits<int32_t>::max)())) {
+        if (err) {
+          (*err) += "Material index too large.\n";
+        }
+        return false;
+      }
+      rmaterial_id = int64_t(mat_id);
+
+      visitorEnv->converter->materialMap.add(
+          bound_material_path.full_path_name(), uint64_t(rmaterial_id));
+      DCOUT("Added renderMaterial: " << mat_id << " " << rmat.abs_path
+                                     << " ( " << rmat.name << " ) ");
+
+      rmaterials.push_back(rmat);
+    }
+
+    return true;
+  };
+
   if (const tinyusdz::GeomMesh *pmesh = prim.as<tinyusdz::GeomMesh>()) {
     // Collect GeomSubsets
     // std::vector<const tinyusdz::GeomSubset *> subsets = GetGeomSubsets(;
@@ -5938,69 +7538,6 @@ bool MeshVisitor(const tinyusdz::Path &abs_path, const tinyusdz::Prim &prim,
     // material.
     // - If prim has materialBind, convert it to RenderMesh's material.
     //
-
-    auto ConvertBoundMaterial = [&](const Path &bound_material_path,
-                                    const tinyusdz::Material *bound_material,
-                                    int64_t &rmaterial_id) -> bool {
-      std::vector<RenderMaterial> &rmaterials =
-          visitorEnv->converter->materials;
-
-      const auto matIt = visitorEnv->converter->materialMap.find(
-          bound_material_path.full_path_name());
-
-      if (matIt != visitorEnv->converter->materialMap.s_end()) {
-        // Got material in the cache.
-        uint64_t mat_id = matIt->second;
-        if (mat_id >= visitorEnv->converter->materials
-                          .size()) {  // this should not happen though
-          if (err) {
-            (*err) += "Material index out-of-range.\n";
-          }
-          return false;
-        }
-
-        if (mat_id >= size_t((std::numeric_limits<int32_t>::max)())) {
-          if (err) {
-            (*err) += "Material index too large.\n";
-          }
-          return false;
-        }
-
-        rmaterial_id = int64_t(mat_id);
-
-      } else {
-        RenderMaterial rmat;
-        if (!visitorEnv->converter->ConvertMaterial(*visitorEnv->env,
-                                                    bound_material_path,
-                                                    *bound_material, &rmat)) {
-          if (err) {
-            (*err) += fmt::format("Material conversion failed: {}",
-                                  bound_material_path);
-          }
-          return false;
-        }
-
-        // Assign new material ID
-        uint64_t mat_id = rmaterials.size();
-
-        if (mat_id >= uint64_t((std::numeric_limits<int32_t>::max)())) {
-          if (err) {
-            (*err) += "Material index too large.\n";
-          }
-          return false;
-        }
-        rmaterial_id = int64_t(mat_id);
-
-        visitorEnv->converter->materialMap.add(
-            bound_material_path.full_path_name(), uint64_t(rmaterial_id));
-        DCOUT("Added renderMaterial: " << mat_id << " " << rmat.abs_path
-                                       << " ( " << rmat.name << " ) ");
-
-        rmaterials.push_back(rmat);
-      }
-
-      return true;
-    };
 
     // Convert bound materials in GeomSubsets
     //
@@ -6192,6 +7729,128 @@ bool MeshVisitor(const tinyusdz::Path &abs_path, const tinyusdz::Prim &prim,
     }
   }
 
+  // Handle GeomCube primitives by converting to mesh
+  if (const tinyusdz::GeomCube *pcube = prim.as<tinyusdz::GeomCube>()) {
+    DCOUT("Cube: " << abs_path);
+
+    // Get material binding (same logic as GeomMesh)
+    MaterialPath material_path;
+    std::map<std::string, MaterialPath> subset_material_path_map;
+
+    {
+      const Material *bound_material{nullptr};
+      Path bound_material_path;
+
+      bool ret = GetBoundMaterial(
+          visitorEnv->env->stage, abs_path,
+          /* purpose */ "",
+          &bound_material_path, &bound_material, err);
+
+      if (ret && bound_material) {
+        int64_t rmaterial_id = -1;
+
+        if (!ConvertBoundMaterial(
+                bound_material_path, bound_material, rmaterial_id)) {
+          if (err) {
+            (*err) += "Convert boundMaterial failed: " +
+                      bound_material_path.full_path_name();
+          }
+          return false;
+        }
+
+        material_path.material_path = bound_material_path.full_path_name();
+        DCOUT("Bound material path: " << material_path.material_path);
+      }
+    }
+
+    RenderMesh rmesh;
+    std::vector<const tinyusdz::GeomSubset *> material_subsets;  // Cubes don't have subsets
+    std::vector<std::pair<std::string, const tinyusdz::BlendShape *>> blendshapes;  // Cubes don't have blendshapes
+
+    if (!visitorEnv->converter->ConvertCube(
+            *visitorEnv->env, abs_path, *pcube, material_path,
+            subset_material_path_map, visitorEnv->converter->materialMap,
+            material_subsets, blendshapes, &rmesh)) {
+      if (err) {
+        (*err) += fmt::format("Cube conversion failed: {}",
+                              abs_path.full_path_name());
+        (*err) += "\n" + visitorEnv->converter->GetError() + "\n";
+      }
+      return false;
+    }
+
+    uint64_t mesh_id = uint64_t(visitorEnv->converter->meshes.size());
+    if (mesh_id >= size_t((std::numeric_limits<int32_t>::max)())) {
+      if (err) {
+        (*err) += "Mesh index too large.\n";
+      }
+      return false;
+    }
+    visitorEnv->converter->meshMap.add(abs_path.full_path_name(), mesh_id);
+    visitorEnv->converter->meshes.emplace_back(std::move(rmesh));
+  }
+
+  // Handle GeomSphere primitives by converting to mesh
+  if (const tinyusdz::GeomSphere *psphere = prim.as<tinyusdz::GeomSphere>()) {
+    DCOUT("Sphere: " << abs_path);
+
+    // Get material binding (same logic as GeomMesh)
+    MaterialPath material_path;
+    std::map<std::string, MaterialPath> subset_material_path_map;
+
+    {
+      const Material *bound_material{nullptr};
+      Path bound_material_path;
+
+      bool ret = GetBoundMaterial(
+          visitorEnv->env->stage, abs_path,
+          /* purpose */ "",
+          &bound_material_path, &bound_material, err);
+
+      if (ret && bound_material) {
+        int64_t rmaterial_id = -1;
+
+        if (!ConvertBoundMaterial(
+                bound_material_path, bound_material, rmaterial_id)) {
+          if (err) {
+            (*err) += "Convert boundMaterial failed: " +
+                      bound_material_path.full_path_name();
+          }
+          return false;
+        }
+
+        material_path.material_path = bound_material_path.full_path_name();
+        DCOUT("Bound material path: " << material_path.material_path);
+      }
+    }
+
+    RenderMesh rmesh;
+    std::vector<const tinyusdz::GeomSubset *> material_subsets;  // Spheres don't have subsets
+    std::vector<std::pair<std::string, const tinyusdz::BlendShape *>> blendshapes;  // Spheres don't have blendshapes
+
+    if (!visitorEnv->converter->ConvertSphere(
+            *visitorEnv->env, abs_path, *psphere, material_path,
+            subset_material_path_map, visitorEnv->converter->materialMap,
+            material_subsets, blendshapes, &rmesh)) {
+      if (err) {
+        (*err) += fmt::format("Sphere conversion failed: {}",
+                              abs_path.full_path_name());
+        (*err) += "\n" + visitorEnv->converter->GetError() + "\n";
+      }
+      return false;
+    }
+
+    uint64_t mesh_id = uint64_t(visitorEnv->converter->meshes.size());
+    if (mesh_id >= size_t((std::numeric_limits<int32_t>::max)())) {
+      if (err) {
+        (*err) += "Mesh index too large.\n";
+      }
+      return false;
+    }
+    visitorEnv->converter->meshMap.add(abs_path.full_path_name(), mesh_id);
+    visitorEnv->converter->meshes.emplace_back(std::move(rmesh));
+  }
+
   return true;  // continue traversal
 }
 
@@ -6279,6 +7938,18 @@ bool RenderSceneConverter::ConvertSkelAnimation(const RenderSceneConverterEnv &e
         translation_samples.push_back(sample_value);
         if (float(sample_t) > anim_out->duration) anim_out->duration = float(sample_t);
       FOREACH_TIMESAMPLES_END()
+    } else if (translations.has_value()) {
+      // Handle static (non-time-sampled) values as a single keyframe at time 0.0
+      std::vector<value::float3> default_value;
+      if (!translations.get_scalar(&default_value)) {
+        PUSH_ERROR_AND_RETURN(fmt::format("Failed to get default value for translations in SkelAnimation: {}", abs_path));
+      }
+      if (default_value.size() != joints.size()) {
+        PUSH_ERROR_AND_RETURN(fmt::format("Array length mismatch: translations.size {} != joints.size {}",
+          default_value.size(), joints.size()));
+      }
+      translation_times.push_back(0.0);
+      translation_samples.push_back(default_value);
     }
 
     if (rotations.has_timesamples()) {
@@ -6292,6 +7963,18 @@ bool RenderSceneConverter::ConvertSkelAnimation(const RenderSceneConverterEnv &e
         rotation_samples.push_back(sample_value);
         if (float(sample_t) > anim_out->duration) anim_out->duration = float(sample_t);
       FOREACH_TIMESAMPLES_END()
+    } else if (rotations.has_value()) {
+      // Handle static (non-time-sampled) values as a single keyframe at time 0.0
+      std::vector<value::quatf> default_value;
+      if (!rotations.get_scalar(&default_value)) {
+        PUSH_ERROR_AND_RETURN(fmt::format("Failed to get default value for rotations in SkelAnimation: {}", abs_path));
+      }
+      if (default_value.size() != joints.size()) {
+        PUSH_ERROR_AND_RETURN(fmt::format("Array length mismatch: rotations.size {} != joints.size {}",
+          default_value.size(), joints.size()));
+      }
+      rotation_times.push_back(0.0);
+      rotation_samples.push_back(default_value);
     }
 
     if (scales.has_timesamples()) {
@@ -6305,6 +7988,18 @@ bool RenderSceneConverter::ConvertSkelAnimation(const RenderSceneConverterEnv &e
         scale_samples.push_back(sample_value);
         if (float(sample_t) > anim_out->duration) anim_out->duration = float(sample_t);
       FOREACH_TIMESAMPLES_END()
+    } else if (scales.has_value()) {
+      // Handle static (non-time-sampled) values as a single keyframe at time 0.0
+      std::vector<value::half3> default_value;
+      if (!scales.get_scalar(&default_value)) {
+        PUSH_ERROR_AND_RETURN(fmt::format("Failed to get default value for scales in SkelAnimation: {}", abs_path));
+      }
+      if (default_value.size() != joints.size()) {
+        PUSH_ERROR_AND_RETURN(fmt::format("Array length mismatch: scales.size {} != joints.size {}",
+          default_value.size(), joints.size()));
+      }
+      scale_times.push_back(0.0);
+      scale_samples.push_back(default_value);
     }
 
     // Create glTF-style samplers and channels for each joint
@@ -6966,6 +8661,9 @@ bool RenderSceneConverter::BuildNodeHierarchyImpl(
       } else {
         rnode.id = -1;
       }
+
+      // Note: MeshLightAPI is now handled in ConvertMesh, which sets
+      // mesh.is_area_light = true and stores light properties directly in RenderMesh
     } else if (prim->type_id() == value::TYPE_ID_GEOM_CAMERA) {
       rnode.local_matrix = node.get_local_matrix();
       rnode.global_matrix = node.get_world_matrix();
@@ -6991,8 +8689,20 @@ bool RenderSceneConverter::BuildNodeHierarchyImpl(
       rnode.global_matrix = node.get_world_matrix();
       rnode.has_resetXform = node.has_resetXformStack();
       rnode.nodeType = NodeType::Xform;
+    } else if (prim->type_id() == value::TYPE_ID_GEOM_CUBE || prim->type_id() == value::TYPE_ID_GEOM_SPHERE) {
+      // GeomCube and GeomSphere are converted to meshes
+      rnode.local_matrix = node.get_local_matrix();
+      rnode.global_matrix = node.get_world_matrix();
+      rnode.nodeType = NodeType::Mesh;
+      rnode.has_resetXform = node.has_resetXformStack();
+
+      if (meshMap.count(primPath)) {
+        rnode.id = int32_t(meshMap.at(primPath));
+      } else {
+        rnode.id = -1;
+      }
     } else if ((prim->type_id() > value::TYPE_ID_MODEL_BEGIN) && (prim->type_id() < value::TYPE_ID_GEOM_END)) {
-      // Other Geom prims(e.g. GeomCube)
+      // Other Geom prims (e.g. GeomCone, GeomCylinder) - not yet converted to meshes
       rnode.local_matrix = node.get_local_matrix();
       rnode.global_matrix = node.get_world_matrix();
       rnode.has_resetXform = node.has_resetXformStack();
@@ -7001,16 +8711,70 @@ bool RenderSceneConverter::BuildNodeHierarchyImpl(
       rnode.local_matrix = node.get_local_matrix();
       rnode.global_matrix = node.get_world_matrix();
       rnode.has_resetXform = node.has_resetXformStack();
-      if (prim->type_id() == value::TYPE_ID_LUX_DISTANT) {
-        rnode.nodeType = NodeType::DirectionalLight;
-      } else if (prim->type_id() == value::TYPE_ID_LUX_SPHERE) {
-        // treat sphereLight as pointLight
-        rnode.nodeType = NodeType::PointLight;
+
+      // Convert USD light to RenderLight and add to scene
+      RenderLight rlight;
+      bool light_converted = false;
+      std::string light_abs_path = primPath;
+      Path lightPath(light_abs_path, /* prop_part */ "");
+
+      if (prim->type_id() == value::TYPE_ID_LUX_SPHERE) {
+        const SphereLight *sphereLight = prim->as<SphereLight>();
+        if (sphereLight && ConvertSphereLight(env, lightPath, *sphereLight, &rlight)) {
+          rnode.nodeType = NodeType::PointLight;
+          light_converted = true;
+        }
+      } else if (prim->type_id() == value::TYPE_ID_LUX_DISTANT) {
+        const DistantLight *distantLight = prim->as<DistantLight>();
+        if (distantLight && ConvertDistantLight(env, lightPath, *distantLight, &rlight)) {
+          rnode.nodeType = NodeType::DirectionalLight;
+          light_converted = true;
+        }
+      } else if (prim->type_id() == value::TYPE_ID_LUX_DOME) {
+        const DomeLight *domeLight = prim->as<DomeLight>();
+        if (domeLight && ConvertDomeLight(env, lightPath, *domeLight, &rlight)) {
+          rnode.nodeType = NodeType::EnvmapLight;
+          light_converted = true;
+        }
+      } else if (prim->type_id() == value::TYPE_ID_LUX_RECT) {
+        const RectLight *rectLight = prim->as<RectLight>();
+        if (rectLight && ConvertRectLight(env, lightPath, *rectLight, &rlight)) {
+          rnode.nodeType = NodeType::Xform;  // No specific node type yet
+          light_converted = true;
+        }
+      } else if (prim->type_id() == value::TYPE_ID_LUX_DISK) {
+        const DiskLight *diskLight = prim->as<DiskLight>();
+        if (diskLight && ConvertDiskLight(env, lightPath, *diskLight, &rlight)) {
+          rnode.nodeType = NodeType::Xform;  // No specific node type yet
+          light_converted = true;
+        }
+      } else if (prim->type_id() == value::TYPE_ID_LUX_CYLINDER) {
+        const CylinderLight *cylinderLight = prim->as<CylinderLight>();
+        if (cylinderLight && ConvertCylinderLight(env, lightPath, *cylinderLight, &rlight)) {
+          rnode.nodeType = NodeType::Xform;  // No specific node type yet
+          light_converted = true;
+        }
+      } else if (prim->type_id() == value::TYPE_ID_LUX_GEOMETRY) {
+        const GeometryLight *geometryLight = prim->as<GeometryLight>();
+        if (geometryLight && ConvertGeometryLight(env, lightPath, *geometryLight, &rlight)) {
+          rnode.nodeType = NodeType::Xform;  // No specific node type yet
+          light_converted = true;
+        }
       } else {
-        // TODO
+        // Unsupported light type
+        DCOUT("Unsupported light type: " << prim->type_name());
         rnode.nodeType = NodeType::Xform;
       }
-      rnode.id = -1;  // TODO: index to lights
+
+      if (light_converted) {
+        // Add light to the lights array
+        size_t light_id = lights.size();
+        lightMap.add(light_abs_path, light_id);
+        lights.push_back(std::move(rlight));
+        rnode.id = int32_t(light_id);
+      } else {
+        rnode.id = -1;
+      }
     } else {
       // ignore other node types.
       DCOUT("Unknown/Unsupported prim. " << prim->type_name());
@@ -7034,6 +8798,473 @@ bool RenderSceneConverter::BuildNodeHierarchyImpl(
 
   out_rnode = std::move(rnode);
 
+  return true;
+}
+
+//
+// Light conversion implementations
+//
+
+// Helper to extract common light properties
+template<typename LightType>
+static bool ExtractCommonLightProperties(
+    const RenderSceneConverterEnv &env,
+    const LightType &light,  // BoundableLight or NonboundableLight
+    RenderLight *rlight) {
+
+  // Extract color
+  if (light.color.authored() && !light.color.is_blocked()) {
+    value::color3f col;
+    if (light.color.get_value().get(env.timecode, &col)) {
+      rlight->color[0] = col[0];
+      rlight->color[1] = col[1];
+      rlight->color[2] = col[2];
+    }
+  }
+
+  // Extract intensity
+  if (light.intensity.authored() && !light.intensity.is_blocked()) {
+    float val;
+    if (light.intensity.get_value().get(env.timecode, &val)) {
+      rlight->intensity = val;
+    }
+  }
+
+  // Extract exposure
+  if (light.exposure.authored() && !light.exposure.is_blocked()) {
+    float val;
+    if (light.exposure.get_value().get(env.timecode, &val)) {
+      rlight->exposure = val;
+    }
+  }
+
+  // Extract diffuse multiplier
+  if (light.diffuse.authored() && !light.diffuse.is_blocked()) {
+    float val;
+    if (light.diffuse.get_value().get(env.timecode, &val)) {
+      rlight->diffuse = val;
+    }
+  }
+
+  // Extract specular multiplier
+  if (light.specular.authored() && !light.specular.is_blocked()) {
+    float val;
+    if (light.specular.get_value().get(env.timecode, &val)) {
+      rlight->specular = val;
+    }
+  }
+
+  // Extract normalize flag
+  if (light.normalize.authored() && !light.normalize.is_blocked()) {
+    bool val;
+    if (light.normalize.get_value().get(env.timecode, &val)) {
+      rlight->normalize = val;
+    }
+  }
+
+  // Extract color temperature
+  if (light.enableColorTemperature.authored() && !light.enableColorTemperature.is_blocked()) {
+    bool val;
+    if (light.enableColorTemperature.get_value().get(env.timecode, &val)) {
+      rlight->enableColorTemperature = val;
+    }
+  }
+
+  if (light.colorTemperature.authored() && !light.colorTemperature.is_blocked()) {
+    float val;
+    if (light.colorTemperature.get_value().get(env.timecode, &val)) {
+      rlight->colorTemperature = val;
+    }
+  }
+
+  // Extract shadow properties
+  if (light.shadowEnable.authored() && !light.shadowEnable.is_blocked()) {
+    bool val;
+    if (light.shadowEnable.get_value().get(env.timecode, &val)) {
+      rlight->shadowEnable = val;
+    }
+  }
+
+  if (light.shadowColor.authored() && !light.shadowColor.is_blocked()) {
+    value::color3f col;
+    if (light.shadowColor.get_value().get(env.timecode, &col)) {
+      rlight->shadowColor[0] = col[0];
+      rlight->shadowColor[1] = col[1];
+      rlight->shadowColor[2] = col[2];
+    }
+  }
+
+  if (light.shadowDistance.authored() && !light.shadowDistance.is_blocked()) {
+    float val;
+    if (light.shadowDistance.get_value().get(env.timecode, &val)) {
+      rlight->shadowDistance = val;
+    }
+  }
+
+  if (light.shadowFalloff.authored() && !light.shadowFalloff.is_blocked()) {
+    float val;
+    if (light.shadowFalloff.get_value().get(env.timecode, &val)) {
+      rlight->shadowFalloff = val;
+    }
+  }
+
+  if (light.shadowFalloffGamma.authored() && !light.shadowFalloffGamma.is_blocked()) {
+    float val;
+    if (light.shadowFalloffGamma.get_value().get(env.timecode, &val)) {
+      rlight->shadowFalloffGamma = val;
+    }
+  }
+
+  return true;
+}
+
+// Helper to extract shaping properties (for SphereLight and RectLight)
+template<typename LightType>
+static bool ExtractShapingProperties(
+    const RenderSceneConverterEnv &env,
+    const LightType &light,  // BoundableLight with shapingFocus, etc.
+    RenderLight *rlight) {
+
+  if (light.shapingFocus.authored() && !light.shapingFocus.is_blocked()) {
+    float val;
+    if (light.shapingFocus.get_value().get(env.timecode, &val)) {
+      rlight->shapingFocus = val;
+    }
+  }
+
+  if (light.shapingFocusTint.authored() && !light.shapingFocusTint.is_blocked()) {
+    value::color3f col;
+    if (light.shapingFocusTint.get_value().get(env.timecode, &col)) {
+      rlight->shapingFocusTint[0] = col[0];
+      rlight->shapingFocusTint[1] = col[1];
+      rlight->shapingFocusTint[2] = col[2];
+    }
+  }
+
+  if (light.shapingConeAngle.authored() && !light.shapingConeAngle.is_blocked()) {
+    float val;
+    if (light.shapingConeAngle.get_value().get(env.timecode, &val)) {
+      rlight->shapingConeAngle = val;
+    }
+  }
+
+  if (light.shapingConeSoftness.authored() && !light.shapingConeSoftness.is_blocked()) {
+    float val;
+    if (light.shapingConeSoftness.get_value().get(env.timecode, &val)) {
+      rlight->shapingConeSoftness = val;
+    }
+  }
+
+  return true;
+}
+
+bool RenderSceneConverter::ConvertSphereLight(
+    const RenderSceneConverterEnv &env,
+    const Path &light_abs_path,
+    const SphereLight &light,
+    RenderLight *rlight_out) {
+
+  if (!rlight_out) {
+    PUSH_ERROR_AND_RETURN("rlight_out arg is nullptr.");
+  }
+
+  RenderLight rlight;
+  rlight.name = light.name;
+  rlight.abs_path = light_abs_path.full_path_name();
+  rlight.type = RenderLight::Type::Sphere;
+
+  // Extract common properties
+  if (!ExtractCommonLightProperties(env, light, &rlight)) {
+    return false;
+  }
+
+  // Extract shaping properties
+  if (!ExtractShapingProperties(env, light, &rlight)) {
+    return false;
+  }
+
+  // Extract radius
+  if (light.radius.authored() && !light.radius.is_blocked()) {
+    float val;
+    if (light.radius.get_value().get(env.timecode, &val)) {
+      rlight.radius = val;
+    }
+  }
+
+  (*rlight_out) = std::move(rlight);
+  return true;
+}
+
+bool RenderSceneConverter::ConvertDistantLight(
+    const RenderSceneConverterEnv &env,
+    const Path &light_abs_path,
+    const DistantLight &light,
+    RenderLight *rlight_out) {
+
+  if (!rlight_out) {
+    PUSH_ERROR_AND_RETURN("rlight_out arg is nullptr.");
+  }
+
+  RenderLight rlight;
+  rlight.name = light.name;
+  rlight.abs_path = light_abs_path.full_path_name();
+  rlight.type = RenderLight::Type::Distant;
+
+  // Extract common properties
+  if (!ExtractCommonLightProperties(env, light, &rlight)) {
+    return false;
+  }
+
+  // Extract angle (angular diameter in degrees)
+  if (light.angle.authored() && !light.angle.is_blocked()) {
+    float val;
+    if (light.angle.get_value().get(env.timecode, &val)) {
+      rlight.angle = val;
+    }
+  }
+
+  (*rlight_out) = std::move(rlight);
+  return true;
+}
+
+bool RenderSceneConverter::ConvertDomeLight(
+    const RenderSceneConverterEnv &env,
+    const Path &light_abs_path,
+    const DomeLight &light,
+    RenderLight *rlight_out) {
+
+  if (!rlight_out) {
+    PUSH_ERROR_AND_RETURN("rlight_out arg is nullptr.");
+  }
+
+  RenderLight rlight;
+  rlight.name = light.name;
+  rlight.abs_path = light_abs_path.full_path_name();
+  rlight.type = RenderLight::Type::Dome;
+
+  // Extract common properties
+  if (!ExtractCommonLightProperties(env, light, &rlight)) {
+    return false;
+  }
+
+  // Extract texture file
+  if (light.file.authored() && !light.file.is_blocked()) {
+    value::AssetPath asset;
+    if (light.file.get_value()->get(env.timecode, &asset)) {
+      rlight.textureFile = asset.GetAssetPath();
+    }
+  }
+
+  // Extract texture format
+  // Note: textureFormat is typically not time-sampled, use fallback/default
+  if (light.textureFormat.authored() && !light.textureFormat.is_blocked()) {
+    const auto& fmt_animatable = light.textureFormat.get_value();
+    // Get default value directly from Animatable (not time-sampled)
+    if (fmt_animatable.is_scalar()) {
+      DomeLight::TextureFormat fmt;
+      if (fmt_animatable.get_scalar(&fmt)) {
+        switch (fmt) {
+          case DomeLight::TextureFormat::Automatic:
+            rlight.domeTextureFormat = RenderLight::DomeTextureFormat::Automatic;
+            break;
+          case DomeLight::TextureFormat::Latlong:
+            rlight.domeTextureFormat = RenderLight::DomeTextureFormat::Latlong;
+            break;
+          case DomeLight::TextureFormat::MirroredBall:
+            rlight.domeTextureFormat = RenderLight::DomeTextureFormat::MirroredBall;
+            break;
+          case DomeLight::TextureFormat::Angular:
+            rlight.domeTextureFormat = RenderLight::DomeTextureFormat::Angular;
+            break;
+        }
+      }
+    }
+  }
+
+  // Extract guide radius
+  if (light.guideRadius.authored() && !light.guideRadius.is_blocked()) {
+    float val;
+    if (light.guideRadius.get_value().get(env.timecode, &val)) {
+      rlight.guideRadius = val;
+    }
+  }
+
+  (*rlight_out) = std::move(rlight);
+  return true;
+}
+
+bool RenderSceneConverter::ConvertRectLight(
+    const RenderSceneConverterEnv &env,
+    const Path &light_abs_path,
+    const RectLight &light,
+    RenderLight *rlight_out) {
+
+  if (!rlight_out) {
+    PUSH_ERROR_AND_RETURN("rlight_out arg is nullptr.");
+  }
+
+  RenderLight rlight;
+  rlight.name = light.name;
+  rlight.abs_path = light_abs_path.full_path_name();
+  rlight.type = RenderLight::Type::Rect;
+
+  // Extract common properties
+  if (!ExtractCommonLightProperties(env, light, &rlight)) {
+    return false;
+  }
+
+  // Extract shaping properties
+  if (!ExtractShapingProperties(env, light, &rlight)) {
+    return false;
+  }
+
+  // Extract width
+  if (light.width.authored() && !light.width.is_blocked()) {
+    float val;
+    if (light.width.get_value().get(env.timecode, &val)) {
+      rlight.width = val;
+    }
+  }
+
+  // Extract height
+  if (light.height.authored() && !light.height.is_blocked()) {
+    float val;
+    if (light.height.get_value().get(env.timecode, &val)) {
+      rlight.height = val;
+    }
+  }
+
+  // Extract texture file (optional)
+  if (light.file.authored() && !light.file.is_blocked()) {
+    value::AssetPath asset;
+    if (light.file.get_value()->get(env.timecode, &asset)) {
+      rlight.textureFile = asset.GetAssetPath();
+    }
+  }
+
+  (*rlight_out) = std::move(rlight);
+  return true;
+}
+
+bool RenderSceneConverter::ConvertDiskLight(
+    const RenderSceneConverterEnv &env,
+    const Path &light_abs_path,
+    const DiskLight &light,
+    RenderLight *rlight_out) {
+
+  if (!rlight_out) {
+    PUSH_ERROR_AND_RETURN("rlight_out arg is nullptr.");
+  }
+
+  RenderLight rlight;
+  rlight.name = light.name;
+  rlight.abs_path = light_abs_path.full_path_name();
+  rlight.type = RenderLight::Type::Disk;
+
+  // Extract common properties
+  if (!ExtractCommonLightProperties(env, light, &rlight)) {
+    return false;
+  }
+
+  // Extract radius
+  if (light.radius.authored() && !light.radius.is_blocked()) {
+    float val;
+    if (light.radius.get_value().get(env.timecode, &val)) {
+      rlight.radius = val;
+    }
+  }
+
+  (*rlight_out) = std::move(rlight);
+  return true;
+}
+
+bool RenderSceneConverter::ConvertCylinderLight(
+    const RenderSceneConverterEnv &env,
+    const Path &light_abs_path,
+    const CylinderLight &light,
+    RenderLight *rlight_out) {
+
+  if (!rlight_out) {
+    PUSH_ERROR_AND_RETURN("rlight_out arg is nullptr.");
+  }
+
+  RenderLight rlight;
+  rlight.name = light.name;
+  rlight.abs_path = light_abs_path.full_path_name();
+  rlight.type = RenderLight::Type::Cylinder;
+
+  // Extract common properties
+  if (!ExtractCommonLightProperties(env, light, &rlight)) {
+    return false;
+  }
+
+  // Extract length
+  if (light.length.authored() && !light.length.is_blocked()) {
+    float val;
+    if (light.length.get_value().get(env.timecode, &val)) {
+      rlight.length = val;
+    }
+  }
+
+  // Extract radius
+  if (light.radius.authored() && !light.radius.is_blocked()) {
+    float val;
+    if (light.radius.get_value().get(env.timecode, &val)) {
+      rlight.radius = val;
+    }
+  }
+
+  (*rlight_out) = std::move(rlight);
+  return true;
+}
+
+bool RenderSceneConverter::ConvertGeometryLight(
+    const RenderSceneConverterEnv &env,
+    const Path &light_abs_path,
+    const GeometryLight &light,
+    RenderLight *rlight_out) {
+
+  if (!rlight_out) {
+    PUSH_ERROR_AND_RETURN("rlight_out arg is nullptr.");
+  }
+
+  RenderLight rlight;
+  rlight.name = light.name;
+  rlight.abs_path = light_abs_path.full_path_name();
+  rlight.type = RenderLight::Type::Geometry;
+
+  // Extract common properties
+  if (!ExtractCommonLightProperties(env, light, &rlight)) {
+    return false;
+  }
+
+  // Extract geometry relationship to find the target mesh
+  // GeometryLight uses a relationship to point to the mesh geometry
+  if (light.geometry.authored() && !light.geometry.is_blocked()) {
+    const std::vector<Path> targets = light.geometry.get_targetPaths();
+    if (!targets.empty()) {
+      // Use the first target path
+      const Path &target_path = targets[0];
+      std::string geometry_path = target_path.full_path_name();
+
+      // Try to find the mesh in the meshMap
+      // Note: The actual mesh_id will be resolved during scene building
+      // For now, we store the path and mark geometry_mesh_id as unresolved (-1)
+      // The renderer should resolve this later by looking up the mesh by path
+      rlight.geometry_mesh_id = -1;  // Will be resolved during BuildNodeHierarchy
+
+      DCOUT("GeometryLight " << rlight.abs_path << " references geometry: " << geometry_path);
+    } else {
+      PUSH_WARN("GeometryLight " << rlight.abs_path << " has no geometry targets");
+    }
+  } else {
+    PUSH_WARN("GeometryLight " << rlight.abs_path << " missing geometry relationship");
+  }
+
+  // Default material sync mode for GeometryLight
+  rlight.material_sync_mode = "materialGlowTintsLight";
+
+  (*rlight_out) = std::move(rlight);
   return true;
 }
 
@@ -7076,8 +9307,7 @@ bool RenderSceneConverter::ConvertToRenderScene(
   // 2. Convert Material/Texture
   // 3. Convert Mesh/SkinWeights/BlendShapes
   // 4. Convert Skeleton(bones)
-  // 5. Build node hierarchy
-  // TODO: Convert lights
+  // 5. Build node hierarchy (includes lights and cameras)
 
   //
   // 1. Build Xform at specified time.
@@ -7228,6 +9458,8 @@ bool RenderSceneConverter::ConvertToRenderScene(
   render_scene.images = std::move(images);
   render_scene.buffers = std::move(buffers);
   render_scene.materials = std::move(materials);
+  render_scene.cameras = std::move(cameras);
+  render_scene.lights = std::move(lights);
   render_scene.skeletons = std::move(skeletons);
   render_scene.animations = std::move(animations);
 
@@ -7517,12 +9749,28 @@ bool InferColorSpace(const value::token &tok, ColorSpace *cty) {
     (*cty) = ColorSpace::sRGB;
   } else if (tok.str() == "sRGB") {
     (*cty) = ColorSpace::sRGB;
+  } else if (tok.str() == "srgb_texture") {  // MaterialX texture colorspace
+    (*cty) = ColorSpace::sRGB_Texture;
   } else if (tok.str() == "linear") { // guess linear_srgb
     (*cty) = ColorSpace::Lin_sRGB;
   } else if (tok.str() == "lin_srgb") {
     (*cty) = ColorSpace::Lin_sRGB;
   } else if (tok.str() == "rec709") {
     (*cty) = ColorSpace::Rec709;
+  } else if (tok.str() == "lin_rec709") {  // MaterialX linear Rec.709
+    (*cty) = ColorSpace::Lin_Rec709;
+  } else if (tok.str() == "g22_rec709") {  // MaterialX gamma 2.2 Rec.709
+    (*cty) = ColorSpace::g22_Rec709;
+  } else if (tok.str() == "g18_rec709") {  // MaterialX gamma 1.8 Rec.709
+    (*cty) = ColorSpace::g18_Rec709;
+  } else if (tok.str() == "lin_rec2020") {  // Linear Rec.2020
+    (*cty) = ColorSpace::Lin_Rec2020;
+  } else if (tok.str() == "acescg") {  // Alternative ACES CG naming
+    (*cty) = ColorSpace::Lin_ACEScg;
+  } else if (tok.str() == "lin_ap1") {  // Linear AP1 (same as ACEScg)
+    (*cty) = ColorSpace::Lin_ACEScg;
+  } else if (tok.str() == "aces2065-1") {  // ACES 2065-1
+    (*cty) = ColorSpace::ACES2065_1;
   } else if (tok.str() == "ocio") {
     (*cty) = ColorSpace::OCIO;
   } else if (tok.str() == "lin_displayp3") {
@@ -7548,6 +9796,8 @@ bool InferColorSpace(const value::token &tok, ColorSpace *cty) {
 
   return true;
 }
+
+#if 0  // Deprecated: Use implementation in render-scene-dump.cc instead
 
 namespace {
 
@@ -8067,7 +10317,11 @@ std::string DumpMaterial(const RenderMaterial &material, uint32_t indent) {
      << quote(material.display_name) << "\n";
 
   ss << pprint::Indent(indent + 1) << "surfaceShader = ";
-  ss << DumpPreviewSurface(material.surfaceShader, indent + 1);
+  if (material.surfaceShader.has_value()) {
+    ss << DumpPreviewSurface(*material.surfaceShader, indent + 1);
+  } else {
+    ss << "null";
+  }
   ss << "\n";
 
   ss << pprint::Indent(indent) << "}\n";
@@ -8254,6 +10508,8 @@ std::string DumpRenderScene(const RenderScene &scene,
 
   return ss.str();
 }
+
+#endif  // Deprecated dump functions
 
 // Memory usage estimation implementations
 

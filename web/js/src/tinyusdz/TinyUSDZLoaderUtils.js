@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 
 import { LoaderUtils } from "three"
+import { convertOpenPBRToMeshPhysicalMaterial } from './TinyUSDZMaterialX.js';
 
 class TinyUSDZLoaderUtils extends LoaderUtils {
 
@@ -361,6 +362,230 @@ class TinyUSDZLoaderUtils extends LoaderUtils {
         return material;
     }
 
+    //
+    // Material Type Detection
+    //
+    // Returns an object describing what material types are available:
+    // {
+    //   hasOpenPBR: boolean,           // Has OpenPBR (MaterialX) data
+    //   hasUsdPreviewSurface: boolean, // Has UsdPreviewSurface data
+    //   hasBoth: boolean,              // Has both material types
+    //   hasNone: boolean,              // Has no material data
+    //   recommended: string            // Recommended type: 'openpbr', 'usdpreviewsurface', or 'none'
+    // }
+    //
+    // Usage:
+    //   const materialData = usdScene.getMaterial(materialId, 'json');
+    //   const typeInfo = TinyUSDZLoaderUtils.getMaterialType(materialData);
+    //   console.log(`Material has OpenPBR: ${typeInfo.hasOpenPBR}, UsdPreviewSurface: ${typeInfo.hasUsdPreviewSurface}`);
+    //
+    static getMaterialType(materialData) {
+        // Parse JSON if needed
+        let parsedMaterial = materialData;
+        if (typeof materialData === 'string') {
+            try {
+                parsedMaterial = JSON.parse(materialData);
+            } catch (e) {
+                console.error('Failed to parse material JSON:', e);
+                return {
+                    hasOpenPBR: false,
+                    hasUsdPreviewSurface: false,
+                    hasBoth: false,
+                    hasNone: true,
+                    recommended: 'none'
+                };
+            }
+        }
+
+        if (!parsedMaterial) {
+            return {
+                hasOpenPBR: false,
+                hasUsdPreviewSurface: false,
+                hasBoth: false,
+                hasNone: true,
+                recommended: 'none'
+            };
+        }
+
+        const hasOpenPBR = !!parsedMaterial.hasOpenPBR;
+        const hasUsdPreviewSurface = !!parsedMaterial.hasUsdPreviewSurface;
+        const hasBoth = hasOpenPBR && hasUsdPreviewSurface;
+        const hasNone = !hasOpenPBR && !hasUsdPreviewSurface;
+
+        // Determine recommended type (prefer OpenPBR when both are available)
+        let recommended = 'none';
+        if (hasOpenPBR) {
+            recommended = 'openpbr';
+        } else if (hasUsdPreviewSurface) {
+            recommended = 'usdpreviewsurface';
+        }
+
+        return {
+            hasOpenPBR,
+            hasUsdPreviewSurface,
+            hasBoth,
+            hasNone,
+            recommended
+        };
+    }
+
+    //
+    // Get material type as a human-readable string
+    //
+    // Returns: 'OpenPBR', 'UsdPreviewSurface', 'Both', or 'None'
+    //
+    static getMaterialTypeString(materialData) {
+        const typeInfo = this.getMaterialType(materialData);
+
+        if (typeInfo.hasBoth) return 'Both';
+        if (typeInfo.hasOpenPBR) return 'OpenPBR';
+        if (typeInfo.hasUsdPreviewSurface) return 'UsdPreviewSurface';
+        return 'None';
+    }
+
+    //
+    // Convert OpenPBR (MaterialX) to MeshPhysicalMaterial
+    // Supports all OpenPBR layers: base, specular, transmission, coat, sheen, fuzz, thin_film, emission
+    //
+    // Usage:
+    //   const materialData = usdScene.getMaterial(materialId, 'json');
+    //   const material = await TinyUSDZLoaderUtils.convertOpenPBRMaterialToMeshPhysicalMaterial(materialData, usdScene, options);
+    //
+    static async convertOpenPBRMaterialToMeshPhysicalMaterial(materialData, usdScene, options = {}) {
+        // Parse JSON material data if it's a string
+        let parsedMaterial = materialData;
+        if (typeof materialData === 'string') {
+            try {
+                parsedMaterial = JSON.parse(materialData);
+            } catch (e) {
+                console.error('Failed to parse material JSON:', e);
+                return this.createDefaultMaterial();
+            }
+        }
+
+        // Check if material has OpenPBR data
+        if (!parsedMaterial || !parsedMaterial.hasOpenPBR) {
+            console.warn('Material does not have OpenPBR data, falling back to UsdPreviewSurface');
+            // Fall back to UsdPreviewSurface if available
+            if (parsedMaterial && parsedMaterial.hasUsdPreviewSurface) {
+                return this.convertUsdMaterialToMeshPhysicalMaterial(parsedMaterial, usdScene);
+            }
+            return this.createDefaultMaterial();
+        }
+
+        try {
+            // Use the TinyUSDZMaterialX converter
+            const material = await convertOpenPBRToMeshPhysicalMaterial(parsedMaterial, usdScene, {
+                envMap: options.envMap || null,
+                envMapIntensity: options.envMapIntensity || 1.0,
+                textureCache: options.textureCache || new Map()
+            });
+
+            // Apply sideness based on USD doubleSided attribute
+            if (options.doubleSided !== undefined) {
+                material.side = options.doubleSided ? THREE.DoubleSide : THREE.FrontSide;
+            }
+
+            return material;
+
+        } catch (error) {
+            console.error('Failed to convert OpenPBR material:', error);
+            return this.createDefaultMaterial();
+        }
+    }
+
+    //
+    // Smart material conversion: automatically selects OpenPBR or UsdPreviewSurface
+    //
+    // Options:
+    //   preferredMaterialType: 'auto' | 'openpbr' | 'usdpreviewsurface'
+    //     - 'auto': Prefer OpenPBR when both are available (recommended)
+    //     - 'openpbr': Force OpenPBR if available, fallback to UsdPreviewSurface
+    //     - 'usdpreviewsurface': Force UsdPreviewSurface if available, fallback to OpenPBR
+    //
+    // Usage:
+    //   const materialData = usdScene.getMaterial(materialId, 'json');
+    //   const material = await TinyUSDZLoaderUtils.convertMaterial(materialData, usdScene, options);
+    //
+    static async convertMaterial(materialData, usdScene, options = {}) {
+        // Get material type info
+        const typeInfo = this.getMaterialType(materialData);
+
+        // If no material data, return default
+        if (typeInfo.hasNone) {
+            return this.createDefaultMaterial();
+        }
+
+        // Parse material data for conversion
+        let parsedMaterial = materialData;
+        if (typeof materialData === 'string') {
+            try {
+                parsedMaterial = JSON.parse(materialData);
+            } catch (e) {
+                console.error('Failed to parse material JSON:', e);
+                return this.createDefaultMaterial();
+            }
+        }
+
+        // Determine which material type to use based on preference
+        const preferredType = options.preferredMaterialType || 'auto';
+        let useOpenPBR = false;
+        let useUsdPreviewSurface = false;
+
+        switch (preferredType) {
+            case 'auto':
+                // Auto mode: prefer OpenPBR when available (including when both are present)
+                if (typeInfo.hasOpenPBR) {
+                    useOpenPBR = true;
+                } else if (typeInfo.hasUsdPreviewSurface) {
+                    useUsdPreviewSurface = true;
+                }
+                break;
+
+            case 'openpbr':
+                // Force OpenPBR if available, fallback to UsdPreviewSurface
+                if (typeInfo.hasOpenPBR) {
+                    useOpenPBR = true;
+                } else if (typeInfo.hasUsdPreviewSurface) {
+                    useUsdPreviewSurface = true;
+                    console.warn('OpenPBR requested but not available, falling back to UsdPreviewSurface');
+                }
+                break;
+
+            case 'usdpreviewsurface':
+                // Force UsdPreviewSurface if available, fallback to OpenPBR
+                if (typeInfo.hasUsdPreviewSurface) {
+                    useUsdPreviewSurface = true;
+                } else if (typeInfo.hasOpenPBR) {
+                    useOpenPBR = true;
+                    console.warn('UsdPreviewSurface requested but not available, falling back to OpenPBR');
+                }
+                break;
+
+            default:
+                // Unknown preference, use auto behavior
+                if (typeInfo.hasOpenPBR) {
+                    useOpenPBR = true;
+                } else if (typeInfo.hasUsdPreviewSurface) {
+                    useUsdPreviewSurface = true;
+                }
+        }
+
+        // Log material type selection for debugging
+        if (typeInfo.hasBoth) {
+            console.log(`Material has both OpenPBR and UsdPreviewSurface. Using: ${useOpenPBR ? 'OpenPBR' : 'UsdPreviewSurface'} (preferred: ${preferredType})`);
+        }
+
+        // Convert using selected material type
+        if (useOpenPBR) {
+            return this.convertOpenPBRMaterialToMeshPhysicalMaterial(parsedMaterial, usdScene, options);
+        } else if (useUsdPreviewSurface) {
+            return this.convertUsdMaterialToMeshPhysicalMaterial(parsedMaterial, usdScene);
+        }
+
+        return this.createDefaultMaterial();
+    }
+
     static convertUsdMeshToThreeMesh(mesh) {
         const geometry = new THREE.BufferGeometry();
         geometry.setAttribute('position', new THREE.BufferAttribute(mesh.points, 3));
@@ -408,12 +633,15 @@ class TinyUSDZLoaderUtils extends LoaderUtils {
         // Store doubleSided param to customData
         if (Object.prototype.hasOwnProperty.call(mesh, 'doubleSided')) {
           geometry.userData['doubleSided'] = mesh.doubleSided;
+          console.log(`USD Mesh doubleSided attribute: ${mesh.doubleSided}`);
+        } else {
+          console.log('USD Mesh has no doubleSided attribute (will default to FrontSide)');
         }
 
         return geometry;
     }
 
-    static setupMesh(mesh /* TinyUSDZLoaderNative::RenderMesh */, defaultMtl, usdScene, options) {
+    static async setupMesh(mesh /* TinyUSDZLoaderNative::RenderMesh */, defaultMtl, usdScene, options) {
 
         const geometry = this.convertUsdMeshToThreeMesh(mesh);
 
@@ -426,13 +654,47 @@ class TinyUSDZLoaderUtils extends LoaderUtils {
             mtl = defaultMtl || normalMtl
         } else {
 
-            const usdMaterial = usdScene.getMaterial(mesh.materialId);
-            //console.log("usdMaterial:", usdMaterial);
-         
+            // Validate materialId before attempting to get material
+            // materialId can be undefined, -1 (no material), or out of range
+            const hasMaterial = mesh.materialId !== undefined && mesh.materialId >= 0;
 
-            const pbrMaterial = this.convertUsdMaterialToMeshPhysicalMaterial(usdMaterial, usdScene);
-            //console.log("pbrMaterial:", pbrMaterial);
+            // Get material data in JSON format to access OpenPBR/MaterialX data
+            // Using getMaterialWithFormat ensures we get the full material structure including OpenPBR
+            let usdMaterialData = null;
+            if (hasMaterial) {
+                if (typeof usdScene.getMaterialWithFormat === 'function') {
+                    const result = usdScene.getMaterialWithFormat(mesh.materialId, 'json');
+                    if (!result.error) {
+                        usdMaterialData = JSON.parse(result.data);
+                    } else {
+                        console.warn(`Failed to get material ${mesh.materialId} with format: ${result.error}`);
+                    }
+                } else {
+                    // Fallback to getMaterial if getMaterialWithFormat is not available
+                    usdMaterialData = usdScene.getMaterial(mesh.materialId);
+                }
+            }
 
+            console.log(`Mesh materialId: ${mesh.materialId}, hasMaterial: ${hasMaterial}, usdMaterial: ${usdMaterialData ? 'valid' : 'null'}`);
+
+            let pbrMaterial;
+            if (usdMaterialData) {
+                // Use smart convertMaterial to handle both OpenPBR and UsdPreviewSurface
+                pbrMaterial = await this.convertMaterial(usdMaterialData, usdScene, {
+                    preferredMaterialType: options.preferredMaterialType || 'auto',
+                    envMap: options.envMap || null,
+                    envMapIntensity: options.envMapIntensity || 1.0,
+                    textureCache: options.textureCache || new Map(),
+                    doubleSided: geometry.userData['doubleSided']
+                });
+            } else {
+                // No valid material - create default material
+                pbrMaterial = defaultMtl || new THREE.MeshPhysicalMaterial({
+                    color: 0x888888,
+                    roughness: 0.5,
+                    metalness: 0.0
+                });
+            }
 
             // Setting envmap is required for PBR materials to work correctly(e.g. clearcoat)
             pbrMaterial.envMap = options.envMap || null;
@@ -440,14 +702,20 @@ class TinyUSDZLoaderUtils extends LoaderUtils {
 
             //console.log("envmap:", options.envMap);
 
-            // Sideness is determined by the mesh
+            // Sideness is determined by the mesh's USD doubleSided attribute
             if (Object.prototype.hasOwnProperty.call(geometry.userData, 'doubleSided')) {
               if (geometry.userData.doubleSided) {
-                 
-                usdMaterial.side = THREE.DoubleSide;
+                console.log(`  Setting material to DoubleSide (from USD doubleSided=true)`);
                 pbrMaterial.side = THREE.DoubleSide;
+              } else {
+                console.log(`  Setting material to FrontSide (from USD doubleSided=false)`);
+                pbrMaterial.side = THREE.FrontSide;
               }
-            } 
+            } else {
+              // No doubleSided attribute in USD - default to FrontSide
+              console.log(`  Setting material to FrontSide (no USD doubleSided attribute)`);
+              pbrMaterial.side = THREE.FrontSide;
+            }
 
             mtl = pbrMaterial || defaultMtl || normalMtl;
         }
@@ -462,10 +730,14 @@ class TinyUSDZLoaderUtils extends LoaderUtils {
     static toMatrix4(a) {
         const m = new THREE.Matrix4();
 
-        m.set(a[0], a[1], a[2], a[3],
-            a[4], a[5], a[6], a[7],
-            a[8], a[9], a[10], a[11],
-            a[12], a[13], a[14], a[15]);
+        //m.set(a[0], a[1], a[2], a[3],
+        //    a[4], a[5], a[6], a[7],
+        //    a[8], a[9], a[10], a[11],
+        //    a[12], a[13], a[14], a[15]);
+        m.set(a[0], a[4], a[8], a[12],
+            a[1], a[5], a[9], a[13],
+            a[2], a[6], a[10], a[14],
+            a[3], a[7], a[11], a[15]);
 
         return m;
     }
@@ -473,29 +745,58 @@ class TinyUSDZLoaderUtils extends LoaderUtils {
     // Supported options
     // 'overrideMaterial' : Override usd material with defaultMtl.
 
-    static buildThreeNode(usdNode /* TinyUSDZLoader.Node */, defaultMtl = null, usdScene /* TinyUSDZLoader.Scene */ = null, options = {})
+    static async buildThreeNode(usdNode /* TinyUSDZLoader.Node */, defaultMtl = null, usdScene /* TinyUSDZLoader.Scene */ = null, options = {})
    /* => THREE.Object3D */ {
 
         var node = new THREE.Group();
 
-        //console.log("usdNode.nodeType:", usdNode.nodeType, "primName:", usdNode.primName, "absPath:", usdNode.absPath);
+        console.log("usdNode.nodeType:", usdNode.nodeType, "primName:", usdNode.primName, "absPath:", usdNode.absPath);
         if (usdNode.nodeType == 'xform') {
 
             // intermediate xform node
-            // TODO: create THREE.Group and apply transform.
-            node.matrix = this.toMatrix4(usdNode.localMatrix);
+            // Apply the USD local transform matrix to the Three.js node
+            const matrix = this.toMatrix4(usdNode.localMatrix);
+            console.log("  Applied localMatrix:", {
+                matrix: matrix});
+
+            // Decompose the matrix into position, rotation, and scale
+            // This is necessary for Three.js to properly handle the transform
+            node.applyMatrix4(matrix);
+
+            // Log transform for debugging
+            console.log("  Applied xform matrix:", {
+                position: [node.position.x, node.position.y, node.position.z],
+                rotation: [node.rotation.x, node.rotation.y, node.rotation.z],
+                scale: [node.scale.x, node.scale.y, node.scale.z]
+            });
 
         } else if (usdNode.nodeType == 'mesh') {
 
             // contentId is the mesh ID in the USD scene.
             const mesh = usdScene.getMesh(usdNode.contentId);
 
-            const threeMesh = this.setupMesh(mesh, defaultMtl, usdScene, options);
+            const threeMesh = await this.setupMesh(mesh, defaultMtl, usdScene, options);
             node = threeMesh;
 
-        } else {
-            // ???
+            // Apply transform to mesh nodes as well
+            // Mesh nodes can also have transforms in USD
+            if (usdNode.localMatrix) {
+                const matrix = this.toMatrix4(usdNode.localMatrix);
+                node.applyMatrix4(matrix);
 
+                console.log("  Applied mesh matrix:", {
+                    position: [node.position.x, node.position.y, node.position.z],
+                    rotation: [node.rotation.x, node.rotation.y, node.rotation.z],
+                    scale: [node.scale.x, node.scale.y, node.scale.z]
+                });
+            }
+
+        } else {
+            // Unknown node type - still try to apply transform if available
+            if (usdNode.localMatrix) {
+                const matrix = this.toMatrix4(usdNode.localMatrix);
+                node.applyMatrix4(matrix);
+            }
         }
 
         node.name = usdNode.primName;
@@ -506,7 +807,7 @@ class TinyUSDZLoaderUtils extends LoaderUtils {
 
             // traverse children
             for (const child of usdNode.children) {
-                const childNode = this.buildThreeNode(child, defaultMtl, usdScene, options);
+                const childNode = await this.buildThreeNode(child, defaultMtl, usdScene, options);
                 node.add(childNode);
             }
         }

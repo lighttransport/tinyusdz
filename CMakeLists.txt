@@ -445,6 +445,8 @@ set(TINYUSDZ_SOURCES
     ${PROJECT_SOURCE_DIR}/src/str-util.cc
     ${PROJECT_SOURCE_DIR}/src/value-pprint.cc
     ${PROJECT_SOURCE_DIR}/src/value-types.cc
+    ${PROJECT_SOURCE_DIR}/src/color-space.cc
+    ${PROJECT_SOURCE_DIR}/src/color-space.hh
     ${PROJECT_SOURCE_DIR}/src/tiny-format.cc
     ${PROJECT_SOURCE_DIR}/src/tiny-string.cc
     ${PROJECT_SOURCE_DIR}/src/io-util.cc
@@ -457,6 +459,10 @@ set(TINYUSDZ_SOURCES
     ${PROJECT_SOURCE_DIR}/src/usdShade.cc
     ${PROJECT_SOURCE_DIR}/src/usdLux.cc
     # usdMtlX has less dependency(pugixml), so add it to core component
+    ${PROJECT_SOURCE_DIR}/src/mtlx-xml-tokenizer.cc
+    ${PROJECT_SOURCE_DIR}/src/mtlx-xml-parser.cc
+    ${PROJECT_SOURCE_DIR}/src/mtlx-dom.cc
+    ${PROJECT_SOURCE_DIR}/src/mtlx-simple-parser.cc
     ${PROJECT_SOURCE_DIR}/src/usdMtlx.cc
     ${PROJECT_SOURCE_DIR}/src/usdObj.cc
     ${PROJECT_SOURCE_DIR}/src/image-loader.cc
@@ -504,6 +510,14 @@ if (TINYUSDZ_WITH_TYDRA)
         ${PROJECT_SOURCE_DIR}/src/tydra/bone-util.hh
         ${PROJECT_SOURCE_DIR}/src/tydra/render-data-pprint.cc
         ${PROJECT_SOURCE_DIR}/src/tydra/render-data-pprint.hh
+        ${PROJECT_SOURCE_DIR}/src/tydra/raytracing-data.cc
+        ${PROJECT_SOURCE_DIR}/src/tydra/raytracing-data.hh
+        ${PROJECT_SOURCE_DIR}/src/tydra/raytracing-scene-converter.cc
+        ${PROJECT_SOURCE_DIR}/src/tydra/raytracing-scene-converter.hh
+        ${PROJECT_SOURCE_DIR}/src/tydra/material-serializer.cc
+        ${PROJECT_SOURCE_DIR}/src/tydra/material-serializer.hh
+        ${PROJECT_SOURCE_DIR}/src/tydra/materialx-to-json.cc
+        ${PROJECT_SOURCE_DIR}/src/tydra/materialx-to-json.hh
         ${PROJECT_SOURCE_DIR}/src/tydra/render-scene-dump.cc
         ${PROJECT_SOURCE_DIR}/src/tydra/render-scene-dump.hh
         ${PROJECT_SOURCE_DIR}/src/tydra/layer-to-renderscene.cc
@@ -521,6 +535,8 @@ if (TINYUSDZ_WITH_TYDRA)
         ${PROJECT_SOURCE_DIR}/src/tydra/diff-and-compare.hh
         ${PROJECT_SOURCE_DIR}/src/tydra/js-script.hh
         ${PROJECT_SOURCE_DIR}/src/tydra/js-script.cc
+        ${PROJECT_SOURCE_DIR}/src/tydra/threejs-exporter.hh
+        ${PROJECT_SOURCE_DIR}/src/tydra/threejs-exporter.cc
         )
     
     if(TINYUSDZ_WITH_WAMR)

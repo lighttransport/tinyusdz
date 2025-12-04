@@ -237,18 +237,18 @@ class TinyUSDZLoader extends Loader {
             if (url.searchParams.get("memory64") == "true") {
               use_memory64 = true;
             }
-            console.log(use_memory64);
+            //console.log(use_memory64);
 
 
             let initTinyUSDZNative = null;
 
             // Use dynamic import based on memory64 parameter
             if (use_memory64) {
-                console.log("Loading 64bit module");
+                //console.log("Loading 64bit module");
                 const module = await import('./tinyusdz_64.js');
                 initTinyUSDZNative = module.default;
             } else {
-                console.log("Loading 32bit module");
+                //console.log("Loading 32bit module");
                 const module = await import('./tinyusdz.js');
                 initTinyUSDZNative = module.default;
             }

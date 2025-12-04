@@ -247,16 +247,16 @@ try_zero_copy_flatten(const Attribute &attr, const double t, const std::vector<i
     return false;  // Can't use zero-copy for timesampled values
   }
 
-  TUSDZ_LOG_I("Using TypedArrayView (zero-copy)");
+  //TUSDZ_LOG_I("Using TypedArrayView (zero-copy)");
   TypedArrayView<const T> value_view = attr.get_value_view<T>();
 
   if (value_view.empty()) {
-    TUSDZ_LOG_I("TypedArrayView is empty, falling back to get_value");
+    //TUSDZ_LOG_I("TypedArrayView is empty, falling back to get_value");
     return false;
   }
 
   uint32_t elementSize = attr.metas().elementSize.value_or(1);
-  TUSDZ_LOG_I("elementSize " << elementSize << ", view size " << value_view.size());
+  //TUSDZ_LOG_I("elementSize " << elementSize << ", view size " << value_view.size());
 
   // Sanity check: if view size is unreasonably large, data is corrupted
   constexpr size_t MAX_REASONABLE_SIZE = 100000000;
@@ -268,13 +268,13 @@ try_zero_copy_flatten(const Attribute &attr, const double t, const std::vector<i
     return false;
   }
 
-  TUSDZ_LOG_I("indices.size " << default_indices.size());
+  //TUSDZ_LOG_I("indices.size " << default_indices.size());
 
   // Convert view to vector for ExpandWithIndices
   std::vector<T> value(value_view.begin(), value_view.end());
   std::vector<T> expanded_val;
   auto ret = ExpandWithIndices(value, elementSize, default_indices, &expanded_val);
-  TUSDZ_LOG_I("ExpandWithIndices done");
+  //TUSDZ_LOG_I("ExpandWithIndices done");
   if (ret) {
     (*dest) = expanded_val;
     return true;
@@ -308,7 +308,7 @@ bool GeomPrimvar::flatten_with_indices(const double t, std::vector<T> *dest, con
     }
     return false;
   }
-  TUSDZ_LOG_I("flatten_with_indices. has_timesamples " << _attr.has_timesamples() << ", has_value " << _attr.has_value());
+  //TUSDZ_LOG_I("flatten_with_indices. has_timesamples " << _attr.has_timesamples() << ", has_value " << _attr.has_value());
 
   if (_attr.has_timesamples() || _attr.has_value()) {
 
@@ -320,8 +320,9 @@ bool GeomPrimvar::flatten_with_indices(const double t, std::vector<T> *dest, con
       return false;
     }
 
-    TUSDZ_LOG_I("get_value");
+    //TUSDZ_LOG_I("get_value");
 
+#if 0 // FIXME: seems not work in emscripten build
     // Try to use TypedArrayView for zero-copy access when possible (default values only)
     // Only for trivially copyable types (excluding bool due to std::vector<bool> specialization)
     // Using SFINAE helper function for C++14 compatibility (avoids 'if constexpr' requirement)
@@ -334,13 +335,26 @@ bool GeomPrimvar::flatten_with_indices(const double t, std::vector<T> *dest, con
         return true;  // Zero-copy path succeeded
       }
     }
+#endif
 
-    // Fallback to std::vector for timesamples or if view failed
+    // Use std::vector instead of TypedArray to avoid potential corruption issues
     std::vector<T> value;
     if (_attr.get_value<std::vector<T>>(t, &value, tinterp)) {
 
+      //TUSDZ_LOG_I("vsize " << value.size());
+
+      // Sanity check for corrupted size
+      if (value.size() > 1000000000) {  // 1 billion elements is unreasonable
+        if (err) {
+          (*err) += fmt::format(
+              "[Internal Error] Array has invalid size: {} for attribute type `{}`",
+              value.size(), _attr.type_name());
+        }
+        return false;
+      }
+      
       uint32_t elementSize = _attr.metas().elementSize.value_or(1);
-      TUSDZ_LOG_I("elementSize" << elementSize);
+      //TUSDZ_LOG_I("elementSize" << elementSize);
 
       // Get indices at specified time
       std::vector<int32_t> indices;
@@ -353,11 +367,11 @@ bool GeomPrimvar::flatten_with_indices(const double t, std::vector<T> *dest, con
       } else {
         _ts_indices.get(&indices, t, tinterp);
       }
-      TUSDZ_LOG_I("indices.size " << indices.size());
+      //TUSDZ_LOG_I("indices.size " << indices.size());
 
       std::vector<T> expanded_val;
       auto ret = ExpandWithIndices(value, elementSize, indices, &expanded_val);
-      TUSDZ_LOG_I("ExpandWithIndices done");
+      //TUSDZ_LOG_I("ExpandWithIndices done");
       if (ret) {
         (*dest) = expanded_val;
         // Currently we ignore ret.value()
@@ -384,7 +398,7 @@ bool GeomPrimvar::flatten_with_indices(const double t, std::vector<T> *dest, con
     // TODO: Report error?
   }
 
-  TUSDZ_LOG_I("???");
+  //TUSDZ_LOG_I("???");
 
   return false;
 }

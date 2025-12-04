@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
+import { RGBELoader } from 'three/examples/jsm/loaders/RGBELoader.js';
 import GUI from 'three/examples/jsm/libs/lil-gui.module.min.js';
 import { TinyUSDZLoader } from 'tinyusdz/TinyUSDZLoader.js';
 import { TinyUSDZLoaderUtils } from 'tinyusdz/TinyUSDZLoaderUtils.js';
@@ -64,6 +65,11 @@ scene.add(ground);
 let gridHelper = new THREE.GridHelper(200, 20, 0x666666, 0x444444);
 scene.add(gridHelper);
 
+// Axis helper at center
+const axisHelper = new THREE.AxesHelper(50); // Size 50
+axisHelper.name = 'AxisHelper';
+scene.add(axisHelper);
+
 // Virtual root object for USD scene (name = "/")
 const usdSceneRoot = new THREE.Group();
 usdSceneRoot.name = "/";
@@ -92,8 +98,48 @@ let currentSceneMetadata = {
 	copyright: ""
 };
 
+// Store currently selected object for transform display
+let selectedObject = null;
+
+// ===========================================
+// Environment Map and Material Settings
+// ===========================================
+
+// PMREM generator for environment maps
+let pmremGenerator = null;
+
+// Current environment map
+let envMap = null;
+
+// Texture cache for material conversion
+let textureCache = new Map();
+
+// Environment map presets
+const ENV_PRESETS = {
+	'goegap_1k': 'assets/textures/goegap_1k.hdr',
+	'env_sunsky_sunset': 'assets/textures/env_sunsky_sunset.hdr',
+	'studio': null // Will use synthetic studio lighting
+};
+
+// Material and environment settings
+const materialSettings = {
+	materialType: 'auto', // 'auto', 'openpbr', 'usdpreviewsurface'
+	envMapPreset: 'goegap_1k',
+	envMapIntensity: 1.0,
+	showEnvBackground: false,
+	exposure: 1.0,
+	toneMapping: 'aces'
+};
+
 // Store bounding box helpers for each object
 const objectBBoxHelpers = new Map(); // uuid -> BoxHelper
+
+// Raycaster for object selection
+const raycaster = new THREE.Raycaster();
+const mouse = new THREE.Vector2();
+
+// Highlight selected object
+let selectionHelper = null;
 
 // ===========================================
 // USD Animation Extraction Functions
@@ -122,7 +168,7 @@ function convertUSDAnimationsToThreeJS(usdLoader, sceneRoot) {
 	let nodeIndex = 0;
 	sceneRoot.traverse((obj) => {
 		nodeIndexMap.set(nodeIndex, obj);
-		console.log(`Node index ${nodeIndex}: name="${obj.name}", type=${obj.type}, uuid=${obj.uuid}`);
+		//console.log(`Node index ${nodeIndex}: name="${obj.name}", type=${obj.type}, uuid=${obj.uuid}`);
 		nodeIndex++;
 	});
 	console.log(`Built node index map with ${nodeIndexMap.size} nodes`);
@@ -444,8 +490,193 @@ function getUSDInterpolationMode(interpolation) {
 	}
 }
 
+// ===========================================
+// Environment Map Functions
+// ===========================================
+
+/**
+ * Initialize PMREM generator and renderer settings for PBR
+ */
+function initializePBRRenderer() {
+	// Create PMREM generator for environment maps
+	pmremGenerator = new THREE.PMREMGenerator(renderer);
+	pmremGenerator.compileEquirectangularShader();
+
+	// Set up tone mapping
+	renderer.toneMapping = THREE.ACESFilmicToneMapping;
+	renderer.toneMappingExposure = materialSettings.exposure;
+	renderer.outputColorSpace = THREE.SRGBColorSpace;
+
+	console.log('PBR renderer initialized with ACES tone mapping');
+}
+
+/**
+ * Load environment map from preset
+ * @param {string} preset - Environment preset name
+ */
+async function loadEnvironment(preset) {
+	materialSettings.envMapPreset = preset;
+	const path = ENV_PRESETS[preset];
+
+	if (!path) {
+		// Studio lighting - create synthetic environment
+		envMap = createStudioEnvironment();
+		applyEnvironment();
+		console.log('Using synthetic studio environment');
+		return;
+	}
+
+	console.log(`Loading environment: ${preset}...`);
+	try {
+		const rgbeLoader = new RGBELoader();
+		const texture = await rgbeLoader.loadAsync(path);
+		envMap = pmremGenerator.fromEquirectangular(texture).texture;
+		texture.dispose();
+		applyEnvironment();
+		console.log(`Environment loaded: ${preset}`);
+	} catch (error) {
+		console.error('Failed to load environment:', error);
+		// Fall back to synthetic
+		envMap = createStudioEnvironment();
+		applyEnvironment();
+	}
+}
+
+/**
+ * Create a synthetic studio environment
+ * @returns {THREE.Texture} Environment texture
+ */
+function createStudioEnvironment() {
+	const canvas = document.createElement('canvas');
+	canvas.width = 256;
+	canvas.height = 256;
+	const ctx = canvas.getContext('2d');
+
+	// Create gradient (light from top)
+	const gradient = ctx.createLinearGradient(0, 0, 0, 256);
+	gradient.addColorStop(0, '#ffffff');
+	gradient.addColorStop(0.5, '#cccccc');
+	gradient.addColorStop(1, '#666666');
+	ctx.fillStyle = gradient;
+	ctx.fillRect(0, 0, 256, 256);
+
+	const texture = new THREE.CanvasTexture(canvas);
+	texture.mapping = THREE.EquirectangularReflectionMapping;
+	return pmremGenerator.fromEquirectangular(texture).texture;
+}
+
+/**
+ * Apply the current environment map to the scene
+ */
+function applyEnvironment() {
+	scene.environment = envMap;
+	updateEnvBackground();
+	updateEnvIntensity();
+}
+
+/**
+ * Update environment background visibility
+ */
+function updateEnvBackground() {
+	if (materialSettings.showEnvBackground && envMap) {
+		scene.background = envMap;
+	} else {
+		scene.background = new THREE.Color(0x1a1a1a);
+	}
+}
+
+/**
+ * Update environment map intensity on all materials
+ */
+function updateEnvIntensity() {
+	usdSceneRoot.traverse((child) => {
+		if (child.isMesh && child.material) {
+			const materials = Array.isArray(child.material) ? child.material : [child.material];
+			materials.forEach(mat => {
+				if (mat.envMapIntensity !== undefined) {
+					mat.envMapIntensity = materialSettings.envMapIntensity;
+				}
+			});
+		}
+	});
+}
+
+/**
+ * Update tone mapping type
+ * @param {string} value - Tone mapping type
+ */
+function updateToneMapping(value) {
+	const mappings = {
+		'none': THREE.NoToneMapping,
+		'linear': THREE.LinearToneMapping,
+		'reinhard': THREE.ReinhardToneMapping,
+		'cineon': THREE.CineonToneMapping,
+		'aces': THREE.ACESFilmicToneMapping,
+		'agx': THREE.AgXToneMapping,
+		'neutral': THREE.NeutralToneMapping
+	};
+	renderer.toneMapping = mappings[value] || THREE.ACESFilmicToneMapping;
+}
+
+/**
+ * Reload all materials with current settings
+ */
+async function reloadMaterials() {
+	if (!usdContentNode) return;
+
+	console.log(`Reloading materials with type: ${materialSettings.materialType}`);
+
+	// Get the current USD scene loader
+	const loader = new TinyUSDZLoader();
+	await loader.init({ useZstdCompressedWasm: false, useMemory64: false });
+
+	// Clear texture cache for fresh reload
+	textureCache.clear();
+
+	// Traverse and update materials on all meshes
+	usdContentNode.traverse(async (child) => {
+		if (child.isMesh && child.userData.materialData) {
+			try {
+				const newMaterial = await TinyUSDZLoaderUtils.convertMaterial(
+					child.userData.materialData,
+					child.userData.usdScene,
+					{
+						preferredMaterialType: materialSettings.materialType,
+						envMap: envMap,
+						envMapIntensity: materialSettings.envMapIntensity,
+						textureCache: textureCache
+					}
+				);
+
+				// Preserve shadow settings
+				if (child.material) {
+					child.material.dispose();
+				}
+				child.material = newMaterial;
+				child.material.needsUpdate = true;
+
+				// Apply double-sided if enabled
+				if (animationParams.doubleSided) {
+					child.material.side = THREE.DoubleSide;
+				}
+			} catch (e) {
+				console.warn(`Failed to reload material for ${child.name}:`, e);
+			}
+		}
+	});
+
+	console.log('Materials reloaded');
+}
+
 // Load USD model asynchronously
 async function loadUSDModel() {
+	// Initialize PBR renderer if not already done
+	if (!pmremGenerator) {
+		initializePBRRenderer();
+		// Load default environment
+		await loadEnvironment(materialSettings.envMapPreset);
+	}
+
 	const loader = new TinyUSDZLoader();
 
 	// Initialize the loader (wait for WASM module to load)
@@ -453,10 +684,11 @@ async function loadUSDModel() {
 	// Use useZstdCompressedWasm: false since compressed WASM is not available
 	await loader.init({ useZstdCompressedWasm: false, useMemory64: false });
 
+	// USD FILES
 	//const usd_filename = "./assets/cube-animation.usda";
 	//const usd_filename = "./assets/hierarchical-node-animation.usdc";
-	const usd_filename = "./assets/test-004.usdc";
-	//const usd_filename = "./assets/suzanne-xform.usdc";
+	//const usd_filename = "./assets/test-001.usdc";
+	const usd_filename = "./assets/suzanne-xform.usdc";
 
 	// Load USD scene
 	const usd_scene = await loader.loadAsync(usd_filename);
@@ -505,17 +737,36 @@ async function loadUSDModel() {
 	// Update metadata UI
 	updateMetadataUI();
 
-	// Create default material
-	const defaultMtl = TinyUSDZLoaderUtils.createDefaultMaterial();
+	// Create default material with environment map
+	const defaultMtl = new THREE.MeshPhysicalMaterial({
+		color: 0x888888,
+		roughness: 0.5,
+		metalness: 0.0,
+		envMap: envMap,
+		envMapIntensity: materialSettings.envMapIntensity
+	});
+
+	// Clear texture cache for fresh load
+	textureCache.clear();
 
 	const options = {
 		overrideMaterial: false,
-		envMap: null,
-		envMapIntensity: 1.0,
+		envMap: envMap,
+		envMapIntensity: materialSettings.envMapIntensity,
+		preferredMaterialType: materialSettings.materialType,
+		textureCache: textureCache,
+		storeMaterialData: true
 	};
 
-	// Build Three.js node from USD
-	const threeNode = TinyUSDZLoaderUtils.buildThreeNode(usdRootNode, defaultMtl, usd_scene, options);
+	// Build Three.js node from USD with MaterialX/OpenPBR support
+	const threeNode = await TinyUSDZLoaderUtils.buildThreeNode(usdRootNode, defaultMtl, usd_scene, options);
+
+	// Store USD scene reference for material reloading
+	threeNode.traverse((child) => {
+		if (child.isMesh) {
+			child.userData.usdScene = usd_scene;
+		}
+	});
 
 	// Store reference to USD content node for mixer creation
 	usdContentNode = threeNode;
@@ -631,6 +882,9 @@ async function loadUSDModel() {
 		} else {
 			// No USD animations found
 			console.log('No USD animations found in this USD file');
+
+			// Still build scene graph UI for static scenes
+			buildSceneGraphUI();
 		}
 	} catch (error) {
 		console.log('No animations found in USD file or animation extraction not supported:', error);
@@ -723,6 +977,14 @@ function buildSceneGraphUI() {
 			// Create a folder for objects with children
 			const folder = parentFolder.addFolder(objectName + (isAnimated ? ' 🎬' : ''));
 
+			// Add select button to show transform info
+			const selectControl = {
+				select: function() {
+					selectObject(obj);
+				}
+			};
+			folder.add(selectControl, 'select').name('👁️ Select');
+
 			// Add animation toggle if this object is animated
 			if (isAnimated) {
 				const animControl = {
@@ -763,7 +1025,15 @@ function buildSceneGraphUI() {
 				addObjectToUI(child, folder);
 			});
 		} else {
-			// Leaf node - add as a simple control if animated
+			// Leaf node - add select button
+			const selectControl = {
+				select: function() {
+					selectObject(obj);
+				}
+			};
+			parentFolder.add(selectControl, 'select').name(`👁️ ${objectName}`);
+
+			// Add animation toggle if this object is animated
 			if (isAnimated) {
 				const animControl = {
 					enabled: true,
@@ -807,6 +1077,94 @@ function buildSceneGraphUI() {
 		window.sceneGraphFolder.show();
 		console.log('Scene graph UI built');
 	}
+}
+
+// Select an object and display its transform info
+function selectObject(obj) {
+	selectedObject = obj;
+
+	// Remove previous selection helper
+	if (selectionHelper) {
+		scene.remove(selectionHelper);
+		if (selectionHelper.geometry) selectionHelper.geometry.dispose();
+		if (selectionHelper.material) selectionHelper.material.dispose();
+		selectionHelper = null;
+	}
+
+	// Create selection helper (wireframe box)
+	if (obj.isMesh || obj.isGroup) {
+		const bbox = new THREE.Box3().setFromObject(obj);
+		selectionHelper = new THREE.Box3Helper(bbox, 0xffff00); // Yellow color
+		selectionHelper.name = 'SelectionHelper';
+		scene.add(selectionHelper);
+	}
+
+	// Update transform info UI
+	updateTransformInfoUI(obj);
+
+	console.log('Selected object:', obj.name, obj);
+}
+
+// Update transform info UI
+function updateTransformInfoUI(obj) {
+	if (!window.transformInfoFolder) return;
+
+	// Clear existing controls
+	window.transformInfoFolder.controllers.forEach(c => c.destroy());
+
+	if (!obj) {
+		window.transformInfoFolder.hide();
+		return;
+	}
+
+	// Create display object
+	const transformInfo = {
+		name: obj.name || 'unnamed',
+		type: obj.type,
+		posX: obj.position.x.toFixed(4),
+		posY: obj.position.y.toFixed(4),
+		posZ: obj.position.z.toFixed(4),
+		rotX: (obj.rotation.x * 180 / Math.PI).toFixed(2) + '°',
+		rotY: (obj.rotation.y * 180 / Math.PI).toFixed(2) + '°',
+		rotZ: (obj.rotation.z * 180 / Math.PI).toFixed(2) + '°',
+		scaleX: obj.scale.x.toFixed(4),
+		scaleY: obj.scale.y.toFixed(4),
+		scaleZ: obj.scale.z.toFixed(4),
+	};
+
+	// Add USD metadata if available
+	if (obj.userData['primMeta.absPath']) {
+		transformInfo.usdPath = obj.userData['primMeta.absPath'];
+	}
+	if (obj.userData['primMeta.displayName']) {
+		transformInfo.displayName = obj.userData['primMeta.displayName'];
+	}
+
+	// Add read-only controllers
+	window.transformInfoFolder.add(transformInfo, 'name').name('Name').disable().listen();
+	window.transformInfoFolder.add(transformInfo, 'type').name('Type').disable().listen();
+
+	if (transformInfo.usdPath) {
+		window.transformInfoFolder.add(transformInfo, 'usdPath').name('USD Path').disable().listen();
+	}
+	if (transformInfo.displayName) {
+		window.transformInfoFolder.add(transformInfo, 'displayName').name('Display Name').disable().listen();
+	}
+
+	window.transformInfoFolder.add(transformInfo, 'posX').name('Position X').disable().listen();
+	window.transformInfoFolder.add(transformInfo, 'posY').name('Position Y').disable().listen();
+	window.transformInfoFolder.add(transformInfo, 'posZ').name('Position Z').disable().listen();
+
+	window.transformInfoFolder.add(transformInfo, 'rotX').name('Rotation X').disable().listen();
+	window.transformInfoFolder.add(transformInfo, 'rotY').name('Rotation Y').disable().listen();
+	window.transformInfoFolder.add(transformInfo, 'rotZ').name('Rotation Z').disable().listen();
+
+	window.transformInfoFolder.add(transformInfo, 'scaleX').name('Scale X').disable().listen();
+	window.transformInfoFolder.add(transformInfo, 'scaleY').name('Scale Y').disable().listen();
+	window.transformInfoFolder.add(transformInfo, 'scaleZ').name('Scale Z').disable().listen();
+
+	window.transformInfoFolder.show();
+	console.log('Transform info updated for:', obj.name);
 }
 
 // Store per-object animation actions for individual control
@@ -1226,6 +1584,68 @@ const animationParams = {
 		}
 	},
 
+	// Show all helpers toggle
+	showHelpers: true,
+	toggleAllHelpers: function() {
+		// Update individual toggles to match
+		this.showAxisHelper = this.showHelpers;
+		this.showGroundPlane = this.showHelpers;
+		this.showGrid = this.showHelpers;
+
+		// Apply changes
+		axisHelper.visible = this.showAxisHelper;
+		ground.visible = this.showGroundPlane;
+		gridHelper.visible = this.showGrid;
+
+		console.log(`All helpers ${this.showHelpers ? 'shown' : 'hidden'}`);
+	},
+
+	// Ground plane Y position
+	groundPlaneY: 0.0,
+	showGroundPlane: true,
+	showGrid: true,
+	applyGroundPlaneY: function() {
+		ground.position.y = this.groundPlaneY;
+		gridHelper.position.y = this.groundPlaneY;
+		console.log(`Ground plane Y position set to: ${this.groundPlaneY}`);
+	},
+	toggleGroundPlane: function() {
+		ground.visible = this.showGroundPlane;
+		// Update master toggle if needed
+		this.updateShowHelpersMasterToggle();
+	},
+	toggleGrid: function() {
+		gridHelper.visible = this.showGrid;
+		// Update master toggle if needed
+		this.updateShowHelpersMasterToggle();
+	},
+	updateShowHelpersMasterToggle: function() {
+		// Update master toggle to reflect if all helpers are shown
+		this.showHelpers = this.showAxisHelper && this.showGroundPlane && this.showGrid;
+	},
+	fitGroundToScene: function() {
+		// Calculate scene bounding box
+		const bbox = new THREE.Box3();
+		if (usdContentNode && usdContentNode.children.length > 0) {
+			bbox.setFromObject(usdContentNode);
+		} else if (usdSceneRoot && usdSceneRoot.children.length > 0) {
+			bbox.setFromObject(usdSceneRoot);
+		} else {
+			console.warn('No scene content to fit ground to');
+			return;
+		}
+
+		if (bbox.isEmpty()) {
+			console.warn('Scene bounding box is empty');
+			return;
+		}
+
+		// Set ground plane to the minimum Y of the bounding box
+		this.groundPlaneY = bbox.min.y;
+		this.applyGroundPlaneY();
+		console.log(`Ground plane fitted to scene bottom: Y = ${this.groundPlaneY.toFixed(4)}`);
+	},
+
 	// Fit to scene
 	fitToScene: function() {
 		fitToScene();
@@ -1378,6 +1798,39 @@ renderingFolder.add(animationParams, 'doubleSided')
 renderingFolder.add(animationParams, 'showNormals')
 	.name('Show Normals')
 	.onChange(() => animationParams.toggleNormalVisualization());
+
+// Add master helpers toggle
+renderingFolder.add(animationParams, 'showHelpers')
+	.name('🔧 Show Helpers (All)')
+	.onChange(() => animationParams.toggleAllHelpers());
+
+// Add axis helper toggle
+animationParams.showAxisHelper = true;
+animationParams.toggleAxisHelper = function() {
+	axisHelper.visible = this.showAxisHelper;
+	// Update master toggle if needed
+	this.updateShowHelpersMasterToggle();
+};
+renderingFolder.add(animationParams, 'showAxisHelper')
+	.name('Show Axis')
+	.onChange(() => animationParams.toggleAxisHelper());
+
+// Ground plane controls
+const groundFolder = renderingFolder.addFolder('Ground Plane');
+groundFolder.add(animationParams, 'showGroundPlane')
+	.name('Show Ground')
+	.onChange(() => animationParams.toggleGroundPlane());
+groundFolder.add(animationParams, 'showGrid')
+	.name('Show Grid')
+	.onChange(() => animationParams.toggleGrid());
+groundFolder.add(animationParams, 'groundPlaneY', -1000, 1000, 0.01)
+	.name('Y Position')
+	.onChange(() => animationParams.applyGroundPlaneY())
+	.listen();
+groundFolder.add(animationParams, 'fitGroundToScene')
+	.name('Fit to Scene Bottom');
+groundFolder.open();
+
 renderingFolder.add(animationParams, 'fitToScene')
 	.name('Fit to Scene');
 
@@ -1397,10 +1850,58 @@ scaleFolder.open();
 
 renderingFolder.open();
 
+// ===========================================
+// Material & Environment GUI
+// ===========================================
+const materialFolder = gui.addFolder('Material & Environment');
+
+// Material type selector
+materialFolder.add(materialSettings, 'materialType', ['auto', 'openpbr', 'usdpreviewsurface'])
+	.name('Material Type')
+	.onChange(() => reloadMaterials());
+
+// Environment preset selector
+materialFolder.add(materialSettings, 'envMapPreset', Object.keys(ENV_PRESETS))
+	.name('Environment')
+	.onChange((value) => loadEnvironment(value));
+
+// Environment intensity
+materialFolder.add(materialSettings, 'envMapIntensity', 0, 3, 0.1)
+	.name('Env Intensity')
+	.onChange(() => updateEnvIntensity());
+
+// Show environment as background
+materialFolder.add(materialSettings, 'showEnvBackground')
+	.name('Show Env Background')
+	.onChange(() => updateEnvBackground());
+
+// Exposure control
+materialFolder.add(materialSettings, 'exposure', 0, 3, 0.1)
+	.name('Exposure')
+	.onChange((value) => {
+		renderer.toneMappingExposure = value;
+	});
+
+// Tone mapping selector
+materialFolder.add(materialSettings, 'toneMapping', ['none', 'linear', 'reinhard', 'cineon', 'aces', 'agx', 'neutral'])
+	.name('Tone Mapping')
+	.onChange((value) => updateToneMapping(value));
+
+// Reload materials button
+materialFolder.add({ reload: () => reloadMaterials() }, 'reload')
+	.name('Reload Materials');
+
+materialFolder.open();
+
 // Scene Metadata - will be populated dynamically
 const metadataFolder = gui.addFolder('Scene Metadata');
 window.metadataFolder = metadataFolder;
 metadataFolder.hide(); // Hide until scene is loaded
+
+// Transform Info - will be populated when object is selected
+const transformInfoFolder = gui.addFolder('Transform Info');
+window.transformInfoFolder = transformInfoFolder;
+transformInfoFolder.hide(); // Hide until object is selected
 
 // Scene Graph Tree - will be populated dynamically
 const sceneGraphFolder = gui.addFolder('Scene Graph');
@@ -1537,22 +2038,25 @@ function fitToScene() {
 	// Remove old grid
 	scene.remove(gridHelper);
 
-	// Create new grid at scene center height (Y position)
+	// Create new grid at the bottom of the scene (bbox minimum Y)
 	gridHelper = new THREE.GridHelper(gridSize, gridDivisions, 0x666666, 0x444444);
-	gridHelper.position.y = center.y;
+	gridHelper.position.y = bbox.min.y;
 	scene.add(gridHelper);
 
 	console.log('Grid updated:', {
 		size: gridSize,
 		divisions: gridDivisions,
 		divisionSize: gridSize / gridDivisions,
-		centerY: center.y
+		groundY: bbox.min.y
 	});
 
 	// Update ground plane to match grid
 	ground.geometry.dispose();
 	ground.geometry = new THREE.PlaneGeometry(gridSize, gridSize);
-	ground.position.y = center.y;
+	ground.position.y = bbox.min.y;
+
+	// Update ground plane Y parameter in UI
+	animationParams.groundPlaneY = bbox.min.y;
 
 	// Update shadow frustum to cover the scene (with padding)
 	const shadowSize = maxDim * 1.5; // 1.5x padding for shadows
@@ -1603,12 +2107,80 @@ function onWindowResize() {
 	renderer.setSize(window.innerWidth, window.innerHeight);
 }
 
+// Mouse click handler for object selection
+window.addEventListener('click', onMouseClick, false);
+
+function onMouseClick(event) {
+	// Ignore clicks on GUI
+	const guiElement = document.querySelector('.lil-gui');
+	if (guiElement && guiElement.contains(event.target)) {
+		return;
+	}
+
+	// Calculate mouse position in normalized device coordinates (-1 to +1)
+	mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
+	mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
+
+	// Update the picking ray with the camera and mouse position
+	raycaster.setFromCamera(mouse, camera);
+
+	// Calculate objects intersecting the picking ray
+	// Only check USD scene objects, not helpers/grid/ground
+	const intersectables = [];
+	if (usdSceneRoot) {
+		usdSceneRoot.traverse((obj) => {
+			if (obj.isMesh) {
+				intersectables.push(obj);
+			}
+		});
+	}
+
+	const intersects = raycaster.intersectObjects(intersectables, false);
+
+	if (intersects.length > 0) {
+		// Select the first intersected object
+		const selectedObj = intersects[0].object;
+		selectObject(selectedObj);
+		console.log('Clicked object:', selectedObj.name);
+	} else {
+		// Deselect if clicking on empty space
+		if (selectedObject) {
+			selectedObject = null;
+			if (selectionHelper) {
+				scene.remove(selectionHelper);
+				if (selectionHelper.geometry) selectionHelper.geometry.dispose();
+				if (selectionHelper.material) selectionHelper.material.dispose();
+				selectionHelper = null;
+			}
+			updateTransformInfoUI(null);
+			console.log('Deselected object');
+		}
+	}
+}
+
 // Function to load a USD file from ArrayBuffer
 async function loadUSDFromArrayBuffer(arrayBuffer, filename) {
+	// Initialize PBR renderer if not already done
+	if (!pmremGenerator) {
+		initializePBRRenderer();
+		// Load default environment
+		await loadEnvironment(materialSettings.envMapPreset);
+	}
+
 	// Clear existing USD scene
 	while (usdSceneRoot.children.length > 0) {
 		usdSceneRoot.remove(usdSceneRoot.children[0]);
 	}
+
+	// Clear selection
+	selectedObject = null;
+	if (selectionHelper) {
+		scene.remove(selectionHelper);
+		if (selectionHelper.geometry) selectionHelper.geometry.dispose();
+		if (selectionHelper.material) selectionHelper.material.dispose();
+		selectionHelper = null;
+	}
+	updateTransformInfoUI(null);
 
 	// Clear bounding box helpers
 	objectBBoxHelpers.forEach((helper) => {
@@ -1683,17 +2255,36 @@ async function loadUSDFromArrayBuffer(arrayBuffer, filename) {
 	// Update metadata UI
 	updateMetadataUI();
 
-	// Create default material
-	const defaultMtl = TinyUSDZLoaderUtils.createDefaultMaterial();
+	// Create default material with environment map
+	const defaultMtl = new THREE.MeshPhysicalMaterial({
+		color: 0x888888,
+		roughness: 0.5,
+		metalness: 0.0,
+		envMap: envMap,
+		envMapIntensity: materialSettings.envMapIntensity
+	});
+
+	// Clear texture cache for fresh load
+	textureCache.clear();
 
 	const options = {
 		overrideMaterial: false,
-		envMap: null,
-		envMapIntensity: 1.0,
+		envMap: envMap,
+		envMapIntensity: materialSettings.envMapIntensity,
+		preferredMaterialType: materialSettings.materialType,
+		textureCache: textureCache,
+		storeMaterialData: true
 	};
 
-	// Build Three.js node from USD
-	const threeNode = TinyUSDZLoaderUtils.buildThreeNode(usdRootNode, defaultMtl, usd_scene, options);
+	// Build Three.js node from USD with MaterialX/OpenPBR support
+	const threeNode = await TinyUSDZLoaderUtils.buildThreeNode(usdRootNode, defaultMtl, usd_scene, options);
+
+	// Store USD scene reference for material reloading
+	threeNode.traverse((child) => {
+		if (child.isMesh) {
+			child.userData.usdScene = usd_scene;
+		}
+	});
 
 	// Store reference to USD content node for mixer creation
 	usdContentNode = threeNode;
@@ -1798,15 +2389,14 @@ async function loadUSDFromArrayBuffer(arrayBuffer, filename) {
 			// No USD animations found
 			console.log('No USD animations found in USD file');
 
-			// USD animations folder deprecated
+			// Still build scene graph UI for static scenes
+			buildSceneGraphUI();
 		}
 	} catch (error) {
 		console.log('No animations found in USD file or animation extraction not supported:', error);
 
-		// Hide USD animations folder
-		if (window.usdAnimationFolder) {
-			window.usdAnimationFolder.hide();
-		}
+		// Still build scene graph UI for static scenes
+		buildSceneGraphUI();
 	}
 }
 
@@ -1819,9 +2409,19 @@ window.addEventListener('loadUSDFile', async (event) => {
 		const arrayBuffer = await file.arrayBuffer();
 		await loadUSDFromArrayBuffer(arrayBuffer, file.name);
 		console.log('USD file loaded successfully:', file.name);
+
+		// Hide loading indicator
+		if (window.hideLoadingIndicator) {
+			window.hideLoadingIndicator();
+		}
 	} catch (error) {
 		console.error('Failed to load USD file:', error);
 		alert('Failed to load USD file: ' + error.message);
+
+		// Hide loading indicator on error too
+		if (window.hideLoadingIndicator) {
+			window.hideLoadingIndicator();
+		}
 	}
 });
 
@@ -1916,6 +2516,12 @@ function animate() {
 			});
 		}
 	});
+
+	// Update selection helper to follow selected object
+	if (selectionHelper && selectedObject) {
+		const bbox = new THREE.Box3().setFromObject(selectedObject);
+		selectionHelper.box = bbox;
+	}
 
 	// Update controls
 	controls.update();

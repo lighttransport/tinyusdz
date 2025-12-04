@@ -23,6 +23,7 @@
 #include "value-types.hh"
 #include "tydra/render-data.hh"
 #include "tydra/scene-access.hh"
+#include "tydra/material-serializer.hh"
 
 #include "tydra/mcp-context.hh"
 #include "tydra/mcp-resources.hh"
@@ -1238,114 +1239,366 @@ class TinyUSDZLoaderNative {
 
   int numMeshes() const { return render_scene_.meshes.size(); }
 
+  int numMaterials() const { return render_scene_.materials.size(); }
+
+  // Legacy method for backward compatibility
   emscripten::val getMaterial(int mat_id) const {
-    emscripten::val mat = emscripten::val::object();
+    // Default to JSON format for backward compatibility
+    return getMaterial(mat_id, "json");
+  }
+
+  // New method that supports format parameter (json or xml)
+  emscripten::val getMaterial(int mat_id, const std::string& format) const {
+    emscripten::val result = emscripten::val::object();
 
     if (!loaded_) {
-      return mat;
+      result.set("error", "Scene not loaded");
+      return result;
     }
 
-    if (mat_id >= render_scene_.materials.size()) {
-      return mat;
+    if (mat_id < 0 || mat_id >= render_scene_.materials.size()) {
+      result.set("error", "Invalid material ID");
+      return result;
     }
 
-    const auto &m = render_scene_.materials[mat_id];
+    const auto &material = render_scene_.materials[mat_id];
 
-    // UsdPreviewSurface like shader param
-    // [x] diffuseColor : color3f or texture
-    // [x] emissiveColor : color3f or texture
-    // [x] useSpecularWorkflow : bool
-    // * SpecularWorkflow
-    //   [x] specularColor : color3f or texture
-    // * MetalnessWorkflow
-    //   [x] metallic : float or texture
-    // [x] roughness : float or texture
-    // [x] clearcoat : float or texture
-    // [x] clearcoatRoughness : float or texture
-    // [x] opacity : float or texture
-    // [ ] opacityMode(from 2.6) : transparent or presence
-    // [x] opacityThreshold : float or texture
-    // [x] ior : float or texture
-    // [x] normal : normal3f or texture
-    // [x] displacement : float or texture
-    // [x] occlusion : float or texture
-
-    mat.set("diffuseColor", m.surfaceShader.diffuseColor.value);
-    if (m.surfaceShader.diffuseColor.is_texture()) {
-      mat.set("diffuseColorTextureId", m.surfaceShader.diffuseColor.texture_id);
-    }
-
-    mat.set("emissiveColor", m.surfaceShader.emissiveColor.value);
-    if (m.surfaceShader.emissiveColor.is_texture()) {
-      mat.set("emissiveColorTextureId",
-              m.surfaceShader.emissiveColor.texture_id);
-    }
-    mat.set("useSpecularWorkflow", m.surfaceShader.useSpecularWorkflow);
-    if (m.surfaceShader.useSpecularWorkflow) {
-      mat.set("specularColor", m.surfaceShader.specularColor.value);
-      if (m.surfaceShader.specularColor.is_texture()) {
-        mat.set("specularColorTextureId",
-                m.surfaceShader.specularColor.texture_id);
-      }
-
+    // Determine serialization format
+    tinyusdz::tydra::SerializationFormat serFormat;
+    if (format == "xml") {
+      serFormat = tinyusdz::tydra::SerializationFormat::XML;
+    } else if (format == "json") {
+      serFormat = tinyusdz::tydra::SerializationFormat::JSON;
     } else {
-      mat.set("metallic", m.surfaceShader.metallic.value);
-      if (m.surfaceShader.metallic.is_texture()) {
-        mat.set("metallicTextureId", m.surfaceShader.metallic.texture_id);
+      // For backward compatibility, if format is not recognized,
+      // return the old format
+      if (format.empty() || format == "legacy") {
+        // Return legacy format for backward compatibility
+        emscripten::val mat = emscripten::val::object();
+
+        // Check if material has UsdPreviewSurface
+        if (!material.hasUsdPreviewSurface()) {
+          mat.set("error", "Material does not have UsdPreviewSurface shader");
+          return mat;
+        }
+
+        const auto &m = material;
+        const auto &shader = *m.surfaceShader;
+
+        mat.set("diffuseColor", shader.diffuseColor.value);
+        if (shader.diffuseColor.is_texture()) {
+          mat.set("diffuseColorTextureId", shader.diffuseColor.texture_id);
+        }
+
+        mat.set("emissiveColor", shader.emissiveColor.value);
+        if (shader.emissiveColor.is_texture()) {
+          mat.set("emissiveColorTextureId", shader.emissiveColor.texture_id);
+        }
+
+        mat.set("useSpecularWorkflow", shader.useSpecularWorkflow);
+        if (shader.useSpecularWorkflow) {
+          mat.set("specularColor", shader.specularColor.value);
+          if (shader.specularColor.is_texture()) {
+            mat.set("specularColorTextureId", shader.specularColor.texture_id);
+          }
+        } else {
+          mat.set("metallic", shader.metallic.value);
+          if (shader.metallic.is_texture()) {
+            mat.set("metallicTextureId", shader.metallic.texture_id);
+          }
+        }
+
+        mat.set("roughness", shader.roughness.value);
+        if (shader.roughness.is_texture()) {
+          mat.set("roughnessTextureId", shader.roughness.texture_id);
+        }
+
+        mat.set("clearcoat", shader.clearcoat.value);
+        if (shader.clearcoat.is_texture()) {
+          mat.set("clearcoatTextureId", shader.clearcoat.texture_id);
+        }
+
+        mat.set("clearcoatRoughness", shader.clearcoatRoughness.value);
+        if (shader.clearcoatRoughness.is_texture()) {
+          mat.set("clearcoatRoughnessTextureId", shader.clearcoatRoughness.texture_id);
+        }
+
+        mat.set("opacity", shader.opacity.value);
+        if (shader.opacity.is_texture()) {
+          mat.set("opacityTextureId", shader.opacity.texture_id);
+        }
+
+        mat.set("opacityThreshold", shader.opacityThreshold.value);
+        if (shader.opacityThreshold.is_texture()) {
+          mat.set("opacityThresholdTextureId", shader.opacityThreshold.texture_id);
+        }
+
+        mat.set("ior", shader.ior.value);
+        if (shader.ior.is_texture()) {
+          mat.set("iorTextureId", shader.ior.texture_id);
+        }
+
+        mat.set("normal", shader.normal.value);
+        if (shader.normal.is_texture()) {
+          mat.set("normalTextureId", shader.normal.texture_id);
+        }
+
+        mat.set("displacement", shader.displacement.value);
+        if (shader.displacement.is_texture()) {
+          mat.set("displacementTextureId", shader.displacement.texture_id);
+        }
+
+        mat.set("occlusion", shader.occlusion.value);
+        if (shader.occlusion.is_texture()) {
+          mat.set("occlusionTextureId", shader.occlusion.texture_id);
+        }
+
+        return mat;
+      }
+
+      result.set("error", "Unsupported format. Use 'json' or 'xml'");
+      return result;
+    }
+
+    // Use the new serialization function with RenderScene for texture info
+    auto serialized = tinyusdz::tydra::serializeMaterial(material, serFormat, &render_scene_);
+
+    if (serialized.has_value()) {
+      result.set("data", serialized.value());
+      result.set("format", format);
+    } else {
+      result.set("error", serialized.error());
+    }
+
+    return result;
+  }
+
+  int numLights() const { return static_cast<int>(render_scene_.lights.size()); }
+
+  // Get light as direct object with all properties
+  emscripten::val getLight(int light_id) const {
+    emscripten::val light = emscripten::val::object();
+
+    if (!loaded_) {
+      light.set("error", "Scene not loaded");
+      return light;
+    }
+
+    if (light_id < 0 || light_id >= static_cast<int>(render_scene_.lights.size())) {
+      light.set("error", "Invalid light ID");
+      return light;
+    }
+
+    const auto &l = render_scene_.lights[static_cast<size_t>(light_id)];
+
+    light.set("name", l.name);
+    light.set("absPath", l.abs_path);
+    light.set("displayName", l.display_name);
+
+    // Light type as string
+    std::string typeStr;
+    switch (l.type) {
+      case tinyusdz::tydra::RenderLight::Type::Point: typeStr = "point"; break;
+      case tinyusdz::tydra::RenderLight::Type::Sphere: typeStr = "sphere"; break;
+      case tinyusdz::tydra::RenderLight::Type::Disk: typeStr = "disk"; break;
+      case tinyusdz::tydra::RenderLight::Type::Rect: typeStr = "rect"; break;
+      case tinyusdz::tydra::RenderLight::Type::Cylinder: typeStr = "cylinder"; break;
+      case tinyusdz::tydra::RenderLight::Type::Distant: typeStr = "distant"; break;
+      case tinyusdz::tydra::RenderLight::Type::Dome: typeStr = "dome"; break;
+      case tinyusdz::tydra::RenderLight::Type::Geometry: typeStr = "geometry"; break;
+      case tinyusdz::tydra::RenderLight::Type::Portal: typeStr = "portal"; break;
+    }
+    light.set("type", typeStr);
+
+    // Common light properties
+    emscripten::val color = emscripten::val::array();
+    color.call<void>("push", l.color[0]);
+    color.call<void>("push", l.color[1]);
+    color.call<void>("push", l.color[2]);
+    light.set("color", color);
+
+    light.set("intensity", l.intensity);
+    light.set("exposure", l.exposure);
+    light.set("diffuse", l.diffuse);
+    light.set("specular", l.specular);
+    light.set("normalize", l.normalize);
+
+    // Color temperature
+    light.set("enableColorTemperature", l.enableColorTemperature);
+    light.set("colorTemperature", l.colorTemperature);
+
+    // Transform
+    emscripten::val transform = emscripten::val::array();
+    for (int i = 0; i < 4; i++) {
+      for (int j = 0; j < 4; j++) {
+        transform.call<void>("push", l.transform.m[i][j]);
       }
     }
+    light.set("transform", transform);
 
-    mat.set("roughness", m.surfaceShader.roughness.value);
-    if (m.surfaceShader.roughness.is_texture()) {
-      mat.set("roughnessTextureId", m.surfaceShader.roughness.texture_id);
+    emscripten::val position = emscripten::val::array();
+    position.call<void>("push", l.position[0]);
+    position.call<void>("push", l.position[1]);
+    position.call<void>("push", l.position[2]);
+    light.set("position", position);
+
+    emscripten::val direction = emscripten::val::array();
+    direction.call<void>("push", l.direction[0]);
+    direction.call<void>("push", l.direction[1]);
+    direction.call<void>("push", l.direction[2]);
+    light.set("direction", direction);
+
+    // Type-specific parameters
+    light.set("radius", l.radius);
+    light.set("width", l.width);
+    light.set("height", l.height);
+    light.set("length", l.length);
+    light.set("angle", l.angle);
+    light.set("textureFile", l.textureFile);
+
+    // Shaping (spotlight/IES)
+    light.set("shapingConeAngle", l.shapingConeAngle);
+    light.set("shapingConeSoftness", l.shapingConeSoftness);
+    light.set("shapingFocus", l.shapingFocus);
+    emscripten::val shapingFocusTint = emscripten::val::array();
+    shapingFocusTint.call<void>("push", l.shapingFocusTint[0]);
+    shapingFocusTint.call<void>("push", l.shapingFocusTint[1]);
+    shapingFocusTint.call<void>("push", l.shapingFocusTint[2]);
+    light.set("shapingFocusTint", shapingFocusTint);
+    light.set("shapingIesFile", l.shapingIesFile);
+    light.set("shapingIesAngleScale", l.shapingIesAngleScale);
+    light.set("shapingIesNormalize", l.shapingIesNormalize);
+
+    // Shadow
+    light.set("shadowEnable", l.shadowEnable);
+    emscripten::val shadowColor = emscripten::val::array();
+    shadowColor.call<void>("push", l.shadowColor[0]);
+    shadowColor.call<void>("push", l.shadowColor[1]);
+    shadowColor.call<void>("push", l.shadowColor[2]);
+    light.set("shadowColor", shadowColor);
+    light.set("shadowDistance", l.shadowDistance);
+    light.set("shadowFalloff", l.shadowFalloff);
+    light.set("shadowFalloffGamma", l.shadowFalloffGamma);
+
+    // DomeLight specific
+    std::string domeTexFmtStr;
+    switch (l.domeTextureFormat) {
+      case tinyusdz::tydra::RenderLight::DomeTextureFormat::Automatic: domeTexFmtStr = "automatic"; break;
+      case tinyusdz::tydra::RenderLight::DomeTextureFormat::Latlong: domeTexFmtStr = "latlong"; break;
+      case tinyusdz::tydra::RenderLight::DomeTextureFormat::MirroredBall: domeTexFmtStr = "mirroredBall"; break;
+      case tinyusdz::tydra::RenderLight::DomeTextureFormat::Angular: domeTexFmtStr = "angular"; break;
+    }
+    light.set("domeTextureFormat", domeTexFmtStr);
+    light.set("guideRadius", l.guideRadius);
+    light.set("envmapTextureId", l.envmap_texture_id);
+
+    // GeometryLight specific
+    light.set("geometryMeshId", l.geometry_mesh_id);
+    light.set("materialSyncMode", l.material_sync_mode);
+
+    // LTE SpectralAPI: Spectral emission
+    if (l.hasSpectralEmission()) {
+      emscripten::val spd = emscripten::val::object();
+      const auto &emission = *l.spd_emission;
+
+      // Samples as array of [wavelength, value] pairs
+      emscripten::val samples = emscripten::val::array();
+      for (const auto &s : emission.samples) {
+        emscripten::val sample = emscripten::val::array();
+        sample.call<void>("push", s[0]);
+        sample.call<void>("push", s[1]);
+        samples.call<void>("push", sample);
+      }
+      spd.set("samples", samples);
+
+      // Interpolation method
+      std::string interpStr;
+      switch (emission.interpolation) {
+        case tinyusdz::tydra::SpectralInterpolation::Linear: interpStr = "linear"; break;
+        case tinyusdz::tydra::SpectralInterpolation::Held: interpStr = "held"; break;
+        case tinyusdz::tydra::SpectralInterpolation::Cubic: interpStr = "cubic"; break;
+        case tinyusdz::tydra::SpectralInterpolation::Sellmeier: interpStr = "sellmeier"; break;
+      }
+      spd.set("interpolation", interpStr);
+
+      // Wavelength unit
+      std::string unitStr = (emission.unit == tinyusdz::tydra::WavelengthUnit::Nanometers)
+                            ? "nanometers" : "micrometers";
+      spd.set("unit", unitStr);
+
+      // Illuminant preset
+      std::string presetStr;
+      switch (emission.preset) {
+        case tinyusdz::tydra::IlluminantPreset::None: presetStr = "none"; break;
+        case tinyusdz::tydra::IlluminantPreset::A: presetStr = "a"; break;
+        case tinyusdz::tydra::IlluminantPreset::D50: presetStr = "d50"; break;
+        case tinyusdz::tydra::IlluminantPreset::D65: presetStr = "d65"; break;
+        case tinyusdz::tydra::IlluminantPreset::E: presetStr = "e"; break;
+        case tinyusdz::tydra::IlluminantPreset::F1: presetStr = "f1"; break;
+        case tinyusdz::tydra::IlluminantPreset::F2: presetStr = "f2"; break;
+        case tinyusdz::tydra::IlluminantPreset::F7: presetStr = "f7"; break;
+        case tinyusdz::tydra::IlluminantPreset::F11: presetStr = "f11"; break;
+      }
+      spd.set("preset", presetStr);
+
+      light.set("spectralEmission", spd);
     }
 
-    mat.set("cleacoat", m.surfaceShader.clearcoat.value);
-    if (m.surfaceShader.clearcoat.is_texture()) {
-      mat.set("cleacoatTextureId", m.surfaceShader.clearcoat.texture_id);
+    return light;
+  }
+
+  // Get light with format parameter (json or xml) - serialized output
+  emscripten::val getLightWithFormat(int light_id, const std::string& format) const {
+    emscripten::val result = emscripten::val::object();
+
+    if (!loaded_) {
+      result.set("error", "Scene not loaded");
+      return result;
     }
 
-    mat.set("clearcoatRoughness", m.surfaceShader.clearcoatRoughness.value);
-    if (m.surfaceShader.clearcoatRoughness.is_texture()) {
-      mat.set("clearcoatRoughnessTextureId",
-              m.surfaceShader.clearcoatRoughness.texture_id);
+    if (light_id < 0 || light_id >= static_cast<int>(render_scene_.lights.size())) {
+      result.set("error", "Invalid light ID");
+      return result;
     }
 
-    mat.set("opacity", m.surfaceShader.opacity.value);
-    if (m.surfaceShader.opacity.is_texture()) {
-      mat.set("opacityTextureId", m.surfaceShader.opacity.texture_id);
+    const auto &light = render_scene_.lights[static_cast<size_t>(light_id)];
+
+    // Determine serialization format
+    tinyusdz::tydra::SerializationFormat serFormat;
+    if (format == "xml") {
+      serFormat = tinyusdz::tydra::SerializationFormat::XML;
+    } else if (format == "json") {
+      serFormat = tinyusdz::tydra::SerializationFormat::JSON;
+    } else {
+      result.set("error", "Unsupported format. Use 'json' or 'xml'");
+      return result;
     }
 
-    // TODO
-    // mat.set("opacityMode", m.surfaceShader.opacityMode);
+    // Use the serialization function with RenderScene for mesh info
+    auto serialized = tinyusdz::tydra::serializeLight(light, serFormat, &render_scene_);
 
-    mat.set("opacityThreshold", m.surfaceShader.opacityThreshold.value);
-    if (m.surfaceShader.opacityThreshold.is_texture()) {
-      mat.set("opacityThresholdTextureId",
-              m.surfaceShader.opacityThreshold.texture_id);
+    if (serialized.has_value()) {
+      result.set("data", serialized.value());
+      result.set("format", format);
+    } else {
+      result.set("error", serialized.error());
     }
 
-    mat.set("ior", m.surfaceShader.ior.value);
-    if (m.surfaceShader.ior.is_texture()) {
-      mat.set("iorTextureId", m.surfaceShader.ior.texture_id);
+    return result;
+  }
+
+  emscripten::val getAllLights() const {
+    emscripten::val lights = emscripten::val::array();
+
+    if (!loaded_) {
+      return lights;
     }
 
-    mat.set("normal", m.surfaceShader.normal.value);
-    if (m.surfaceShader.normal.is_texture()) {
-      mat.set("normalTextureId", m.surfaceShader.normal.texture_id);
+    for (int i = 0; i < static_cast<int>(render_scene_.lights.size()); i++) {
+      lights.call<void>("push", getLight(i));
     }
 
-    mat.set("displacement", m.surfaceShader.displacement.value);
-    if (m.surfaceShader.displacement.is_texture()) {
-      mat.set("displacementTextureId", m.surfaceShader.displacement.texture_id);
-    }
-
-    mat.set("occlusion", m.surfaceShader.occlusion.value);
-    if (m.surfaceShader.occlusion.is_texture()) {
-      mat.set("occlusionTextureId", m.surfaceShader.occlusion.texture_id);
-    }
-
-    return mat;
+    return lights;
   }
 
   emscripten::val getTexture(int tex_id) const {
@@ -1456,16 +1709,36 @@ class TinyUSDZLoaderNative {
     }
 
     {
-      // slot 0 hardcoded.
-      uint32_t uvSlotId = 0;
-      if (rmesh.texcoords.count(uvSlotId)) {
-        const float *uvs_ptr = reinterpret_cast<const float *>(
-            rmesh.texcoords.at(uvSlotId).data.data());
+      // Export all UV sets
+      emscripten::val uvSets = emscripten::val::object();
 
-        // assume vec2
+      for (const auto& uv_pair : rmesh.texcoords) {
+        uint32_t uvSlotId = uv_pair.first;
+        const auto& uv_data = uv_pair.second;
+
+        const float *uvs_ptr = reinterpret_cast<const float *>(uv_data.data.data());
+
+        // Create UV set object with metadata
+        emscripten::val uvSet = emscripten::val::object();
+        uvSet.set("data", emscripten::typed_memory_view(
+                     uv_data.vertex_count() * 2, uvs_ptr));
+        uvSet.set("vertexCount", uv_data.vertex_count());
+        uvSet.set("slotId", int(uvSlotId));
+
+        // Add to UV sets collection
+        std::string slotKey = "uv" + std::to_string(uvSlotId);
+        uvSets.set(slotKey.c_str(), uvSet);
+      }
+
+      mesh.set("uvSets", uvSets);
+
+      // Keep backward compatibility - slot 0 as "texcoords"
+      if (rmesh.texcoords.count(0)) {
+        const float *uvs_ptr = reinterpret_cast<const float *>(
+            rmesh.texcoords.at(0).data.data());
         mesh.set("texcoords",
                  emscripten::typed_memory_view(
-                     rmesh.texcoords.at(uvSlotId).vertex_count() * 2, uvs_ptr));
+                     rmesh.texcoords.at(0).vertex_count() * 2, uvs_ptr));
       }
     }
 
@@ -1479,6 +1752,49 @@ class TinyUSDZLoaderNative {
 
     mesh.set("materialId", rmesh.material_id);
     mesh.set("doubleSided", rmesh.doubleSided);
+
+    // Export area light properties (MeshLightAPI)
+    mesh.set("isAreaLight", rmesh.is_area_light);
+    if (rmesh.is_area_light) {
+      const float *light_color_ptr = rmesh.light_color.data();
+      mesh.set("lightColor", emscripten::typed_memory_view(3, light_color_ptr));
+      mesh.set("lightIntensity", rmesh.light_intensity);
+      mesh.set("lightExposure", rmesh.light_exposure);
+      mesh.set("lightNormalize", rmesh.light_normalize);
+      mesh.set("lightMaterialSyncMode", emscripten::val(rmesh.light_material_sync_mode));
+    }
+
+    // Export skinning data (joint indices, joint weights)
+    if (!rmesh.joint_and_weights.jointIndices.empty()) {
+      const int *joint_indices_ptr = rmesh.joint_and_weights.jointIndices.data();
+      mesh.set("jointIndices",
+               emscripten::typed_memory_view(
+                   rmesh.joint_and_weights.jointIndices.size(),
+                   joint_indices_ptr));
+    }
+
+    if (!rmesh.joint_and_weights.jointWeights.empty()) {
+      const float *joint_weights_ptr = rmesh.joint_and_weights.jointWeights.data();
+      mesh.set("jointWeights",
+               emscripten::typed_memory_view(
+                   rmesh.joint_and_weights.jointWeights.size(),
+                   joint_weights_ptr));
+    }
+
+    // Export element size (influences per vertex)
+    mesh.set("elementSize", rmesh.joint_and_weights.elementSize);
+
+    // Export skeleton ID
+    if (rmesh.skel_id >= 0) {
+      mesh.set("skel_id", rmesh.skel_id);
+    }
+
+    // Export geomBindTransform matrix (4x4 matrix as 16 doubles)
+    const double *geom_bind_ptr =
+        reinterpret_cast<const double *>(
+            rmesh.joint_and_weights.geomBindTransform.m);
+    mesh.set("geomBindTransform",
+             emscripten::typed_memory_view(16, geom_bind_ptr));
 
     return mesh;
   }
@@ -1652,6 +1968,68 @@ class TinyUSDZLoaderNative {
     }
 
     anim.set("tracks", tracks);
+
+    // Also expose raw channels and samplers arrays for advanced use (skeletal animation, etc.)
+    emscripten::val channels = emscripten::val::array();
+    for (const auto &channel : clip.channels) {
+      emscripten::val ch = emscripten::val::object();
+      ch.set("sampler", channel.sampler);
+      ch.set("target_node", channel.target_node);
+      ch.set("skeleton_id", channel.skeleton_id);
+      ch.set("joint_id", channel.joint_id);
+
+      // Set target_type string
+      std::string targetTypeStr = (channel.target_type == tinyusdz::tydra::ChannelTargetType::SkeletonJoint)
+        ? "SkeletonJoint" : "SceneNode";
+      ch.set("target_type", targetTypeStr);
+
+      // Set path string
+      std::string pathStr;
+      switch (channel.path) {
+        case tinyusdz::tydra::AnimationPath::Translation:
+          pathStr = "Translation";
+          break;
+        case tinyusdz::tydra::AnimationPath::Rotation:
+          pathStr = "Rotation";
+          break;
+        case tinyusdz::tydra::AnimationPath::Scale:
+          pathStr = "Scale";
+          break;
+        case tinyusdz::tydra::AnimationPath::Weights:
+          pathStr = "Weights";
+          break;
+      }
+      ch.set("path", pathStr);
+
+      channels.call<void>("push", ch);
+    }
+    anim.set("channels", channels);
+
+    // Expose samplers array
+    emscripten::val samplers = emscripten::val::array();
+    for (const auto &sampler : clip.samplers) {
+      emscripten::val samp = emscripten::val::object();
+      samp.set("times", emscripten::typed_memory_view(sampler.times.size(), sampler.times.data()));
+      samp.set("values", emscripten::typed_memory_view(sampler.values.size(), sampler.values.data()));
+
+      std::string interpolation;
+      switch (sampler.interpolation) {
+        case tinyusdz::tydra::AnimationInterpolation::Step:
+          interpolation = "STEP";
+          break;
+        case tinyusdz::tydra::AnimationInterpolation::CubicSpline:
+          interpolation = "CUBICSPLINE";
+          break;
+        case tinyusdz::tydra::AnimationInterpolation::Linear:
+        default:
+          interpolation = "LINEAR";
+          break;
+      }
+      samp.set("interpolation", interpolation);
+
+      samplers.call<void>("push", samp);
+    }
+    anim.set("samplers", samplers);
 
     return anim;
   }
@@ -2639,7 +3017,13 @@ EMSCRIPTEN_BINDINGS(tinyusdz_module) {
       .function("getURI", &TinyUSDZLoaderNative::getURI)
       .function("getMesh", &TinyUSDZLoaderNative::getMesh)
       .function("numMeshes", &TinyUSDZLoaderNative::numMeshes)
-      .function("getMaterial", &TinyUSDZLoaderNative::getMaterial)
+      .function("getMaterial", select_overload<emscripten::val(int) const>(&TinyUSDZLoaderNative::getMaterial))
+      .function("getMaterialWithFormat", select_overload<emscripten::val(int, const std::string&) const>(&TinyUSDZLoaderNative::getMaterial))
+      .function("numMaterials", &TinyUSDZLoaderNative::numMaterials)
+      .function("getLight", &TinyUSDZLoaderNative::getLight)
+      .function("getLightWithFormat", &TinyUSDZLoaderNative::getLightWithFormat)
+      .function("getAllLights", &TinyUSDZLoaderNative::getAllLights)
+      .function("numLights", &TinyUSDZLoaderNative::numLights)
       .function("getTexture", &TinyUSDZLoaderNative::getTexture)
       .function("getImage", &TinyUSDZLoaderNative::getImage)
       .function("getDefaultRootNodeId",

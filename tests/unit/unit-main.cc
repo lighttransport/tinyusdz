@@ -4,6 +4,7 @@
 
 #include "acutest.h"
 
+#include "unit-ascii-parse.h"
 #include "unit-prim-types.h"
 #include "unit-primvar.h"
 #include "unit-pathutil.h"
@@ -16,6 +17,7 @@
 #include "unit-strutil.h"
 #include "unit-timesamples.h"
 #include "unit-pprint.h"
+#include "unit-materialx.h"
 #include "unit-task-queue.h"
 
 #if defined(TINYUSDZ_WITH_PXR_COMPAT_API)
@@ -25,6 +27,10 @@
 
 
 TEST_LIST = {
+  { "ascii_parse_int64_valid_test", ascii_parse_int64_valid_test },
+  { "ascii_parse_int64_excessive_digits_test", ascii_parse_int64_excessive_digits_test },
+  { "ascii_parse_uint64_valid_test", ascii_parse_uint64_valid_test },
+  { "ascii_parse_uint64_excessive_digits_test", ascii_parse_uint64_excessive_digits_test },
   { "prim_type_test", prim_type_test },
   { "prim_add_test", prim_add_test },
   { "primvar_test", primvar_test },
@@ -41,6 +47,13 @@ TEST_LIST = {
   { "tinystring_test", tinystring_test },
   { "parse_int_test", parse_int_test },
   { "timesamples_test", timesamples_test },
+  { "materialx_config_api_struct_test", materialx_config_api_struct_test },
+  { "materialx_config_api_parsing_test", materialx_config_api_parsing_test },
+  { "openpbr_surface_reconstruction_test", openpbr_surface_reconstruction_test },
+  { "mtlx_standard_surface_reconstruction_test", mtlx_standard_surface_reconstruction_test },
+  { "nodegraph_support_test", nodegraph_support_test },
+  { "materialx_shader_constants_test", materialx_shader_constants_test },
+  { "materialx_shader_fallback_values_test", materialx_shader_fallback_values_test },
   { "task_queue_basic_test", task_queue_basic_test },
   { "task_queue_func_test", task_queue_func_test },
   { "task_queue_full_test", task_queue_full_test },

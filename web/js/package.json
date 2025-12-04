@@ -7,13 +7,19 @@
     "dev": "vite",
     "dev:anim": "vite --open /animation.html",
     "dev:skel": "vite --open /skining-anim.html",
+    "dev:mtlx": "vite --open /materialx.html",
     "build": "vite build",
     "preview": "vite preview",
     "cli": "vite-node load-test-node.js",
     "test:memory": "vite-node memory-usage-test.js",
     "test:streaming": "vite-node load-test-node.js",
+    "dump-materialx": "vite-node dump-materialx-cli.js",
+    "dump-lights": "vite-node dump-usdlux-cli.js",
+    "test:usdlux": "node test-usdlux-parsing.js",
     "anim-info": "vite-node animation-info.js",
-    "anim-info:detailed": "vite-node animation-info.js --detailed"
+    "anim-info:detailed": "vite-node animation-info.js --detailed",
+    "verify-materialx": "vite-node verify-materialx.js",
+    "test:colorspace": "vite-node tests/colorspace-test.js"
   },
   "devDependencies": {
     "@types/bun": "latest",
@@ -23,10 +29,14 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.16.0",
+    "commander": "^12.1.0",
     "fzstd": "^0.1.1",
+    "pixelmatch": "^6.0.0",
+    "pngjs": "^7.0.0",
     "puppeteer": "^24.25.0",
     "three": ">=0.177.0",
-    "vite-node": "^3.2.4"
+    "vite-node": "^3.2.4",
+    "yaml": "^2.6.1"
   },
   "0module": "index.ts"
 }

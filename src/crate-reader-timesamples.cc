@@ -534,7 +534,7 @@ add_sample_to_timesamples(value::TimeSamples *d, double time, const T &val,
 // TODO: Use pod path for array type.
 template<typename T>
 bool add_sample_to_timesamples(value::TimeSamples *d, double time, const std::vector<T>& val, std::string *err) {
-  TUSDZ_LOG_I("arr non pod_ty: " << value::TypeTraits<T>::type_name());
+  //TUSDZ_LOG_I("arr non pod_ty: " << value::TypeTraits<T>::type_name());
   return d->add_sample(time, value::Value(val), err);
 }
 #else
