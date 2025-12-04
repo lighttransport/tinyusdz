@@ -1148,7 +1148,7 @@ nonstd::expected<VertexAttribute, std::string> GetTextureCoordinate(
                                    "\n");
   }
 
-  TUSDZ_LOG_I("get tex\n");
+  //TUSDZ_LOG_I("get tex\n");
   // TODO: allow float2?
   if (primvar.get_type_id() !=
       value::TypeTraits<std::vector<value::texcoord2f>>::type_id()) {
@@ -1157,10 +1157,10 @@ nonstd::expected<VertexAttribute, std::string> GetTextureCoordinate(
         primvar.get_type_name() + "\n");
   }
 
-  TUSDZ_LOG_I("flatten_with_indices\n");
+  //TUSDZ_LOG_I("flatten_with_indices\n");
   std::vector<value::texcoord2f> uvs;
   if (!primvar.flatten_with_indices(t, &uvs, tinterp)) {
-    TUSDZ_LOG_I("flatten_with_indices failed\n");
+    //TUSDZ_LOG_I("flatten_with_indices failed\n");
     return nonstd::make_unexpected(
         "Failed to retrieve texture coordinate primvar with concrete type.\n");
   }
@@ -1178,7 +1178,7 @@ nonstd::expected<VertexAttribute, std::string> GetTextureCoordinate(
   }
 
 
-  TUSDZ_LOG_I("texcoord. " << name << ", " << uvs.size());
+  //TUSDZ_LOG_I("texcoord. " << name << ", " << uvs.size());
   DCOUT("texcoord " << name << " : " << uvs);
 
   vattr.format = VertexAttributeFormat::Vec2;
@@ -1187,7 +1187,7 @@ nonstd::expected<VertexAttribute, std::string> GetTextureCoordinate(
   vattr.indices.clear();  // just in case.
 
   vattr.name = name;  // TODO: add "primvars:" namespace?
-  TUSDZ_LOG_I("end");
+  //TUSDZ_LOG_I("end");
 
   return std::move(vattr);
 }
@@ -2792,7 +2792,7 @@ bool RenderSceneConverter::BuildVertexIndicesImpl(RenderMesh &mesh) {
   // - Reorder vertex attributes to 'vertex' variability.
   //
 
-  TUSDZ_LOG_I("BuildVertexIndicesImpl");
+  //TUSDZ_LOG_I("BuildVertexIndicesImpl");
 
   const std::vector<uint32_t> &fvIndices =
       mesh.triangulatedFaceVertexIndices.size()
@@ -3191,7 +3191,7 @@ bool RenderSceneConverter::BuildVertexIndicesFastImpl(RenderMesh &mesh) {
   // - Reorder vertex attributes to 'vertex' variability.
   //
 
-  TUSDZ_LOG_I("BuildVertexIndicesFastImpl");
+  //TUSDZ_LOG_I("BuildVertexIndicesFastImpl");
 
   const std::vector<uint32_t> &fvIndices =
       mesh.triangulatedFaceVertexIndices.size()
@@ -3398,7 +3398,7 @@ bool RenderSceneConverter::BuildVertexIndicesFastImpl(RenderMesh &mesh) {
 
     }
 
-    TUSDZ_LOG_I("proc normal");
+    //TUSDZ_LOG_I("proc normal");
 
   }
 
@@ -3431,7 +3431,7 @@ bool RenderSceneConverter::BuildVertexIndicesFastImpl(RenderMesh &mesh) {
   }
 
 
-  TUSDZ_LOG_I("build indices");
+  //TUSDZ_LOG_I("build indices");
 
   // TODO: omit indices.
   std::vector<uint32_t> out_indices;
@@ -3446,7 +3446,7 @@ bool RenderSceneConverter::BuildVertexIndicesFastImpl(RenderMesh &mesh) {
     mesh.usdFaceVertexIndices = std::move(out_indices);
   }
 
-  TUSDZ_LOG_I("done build indices");
+  //TUSDZ_LOG_I("done build indices");
 
   return true;
 }
@@ -3831,7 +3831,7 @@ bool RenderSceneConverter::ConvertMesh(
       if (ret) {
         const VertexAttribute &vattr = ret.value();
 
-        TUSDZ_LOG_I("uv attr");
+        //TUSDZ_LOG_I("uv attr");
 
         // Use slotId 0
         uvAttrs[0] = vattr;
@@ -3898,7 +3898,7 @@ bool RenderSceneConverter::ConvertMesh(
     }
   }
 
-  TUSDZ_LOG_I("done uvAttr");
+  //TUSDZ_LOG_I("done uvAttr");
 
   if (mesh.has_primvar(env.mesh_config.default_tangents_primvar_name)) {
     GeomPrimvar pvar;
@@ -4769,7 +4769,7 @@ bool RenderSceneConverter::ConvertMesh(
        (dst.binormals.empty() == 0 && dst.tangents.empty() == 0));
 
   if (compute_normals || (compute_tangents && dst.normals.empty())) {
-    TUSDZ_LOG_I("Build normals");
+    //TUSDZ_LOG_I("Build normals");
     DCOUT("Compute normals");
     std::vector<vec3> normals;
     if (!ComputeNormals(dst.points, dst.faceVertexCounts(),
@@ -4808,7 +4808,7 @@ bool RenderSceneConverter::ConvertMesh(
   if (env.mesh_config.build_vertex_indices && (!is_single_indexable)) {
     if (!env.mesh_config.prefer_non_indexed) {
       DCOUT("Build vertex indices");
-      TUSDZ_LOG_I("Build vertex indices");
+      //TUSDZ_LOG_I("Build vertex indices");
 
       if (!BuildVertexIndicesFastImpl(dst)) {
         return false;
@@ -4823,7 +4823,7 @@ bool RenderSceneConverter::ConvertMesh(
   //
   if (compute_tangents) {
     DCOUT("Compute tangents.");
-    TUSDZ_LOG_I("Build tangents");
+    //TUSDZ_LOG_I("Build tangents");
 
     std::vector<vec2> texcoords;
     std::vector<vec3> normals;
@@ -5196,33 +5196,217 @@ nonstd::expected<bool, std::string> GetConnectedUVTexture(
   constexpr auto kOutputsB = "outputs:b";
   constexpr auto kOutputsA = "outputs:a";
 
-  if (prop_part == kOutputsRGB) {
-    // ok
-  } else if (prop_part == kOutputsR) {
-    // ok
-  } else if (prop_part == kOutputsG) {
-    // ok
-  } else if (prop_part == kOutputsB) {
-    // ok
-  } else if (prop_part == kOutputsA) {
-    // ok
-  } else {
-    return nonstd::make_unexpected(fmt::format(
-        "connection Path's property part must be `{}`, `{}`, `{}` or `{}` "
-        "for "
-        "UsdUVTexture, but got `{}`\n",
-        kOutputsRGB, kOutputsR, kOutputsG, kOutputsB, kOutputsA, prop_part));
-  }
+  TUSDZ_LOG_I("path: " << path);
+
+  // Check if prop_part is a standard UsdUVTexture output
+  bool is_standard_output = (prop_part == kOutputsRGB) ||
+                            (prop_part == kOutputsR) ||
+                            (prop_part == kOutputsG) ||
+                            (prop_part == kOutputsB) ||
+                            (prop_part == kOutputsA);
 
   const Prim *prim{nullptr};
   std::string err;
-  if (!stage.find_prim_at_path(Path(prim_part, ""), prim, &err)) {
-    return nonstd::make_unexpected(
-        fmt::format("Prim {} not found in the Stage: {}\n", prim_part, err));
+  bool found_in_stage = stage.find_prim_at_path(Path(prim_part, ""), prim, &err);
+
+  // If not found in stage lookup, try to navigate through Material's children
+  // This handles the case where NodeGraph is a child of Material but not in the Stage index
+  if (!found_in_stage || !prim) {
+    DCOUT("Prim not found in stage lookup, trying Material children approach");
+
+    // Extract Material path - it should be everything before the last element
+    size_t last_slash = prim_part.rfind('/');
+    if (last_slash == std::string::npos) {
+      return nonstd::make_unexpected(
+          fmt::format("Prim {} not found in the Stage: {}\n", prim_part, err));
+    }
+
+    std::string material_path = prim_part.substr(0, last_slash);
+    std::string child_name = prim_part.substr(last_slash + 1);
+
+    DCOUT("Looking for Material at: " << material_path);
+    DCOUT("Child name: " << child_name);
+
+    // Find the Material
+    const Prim *mat_prim{nullptr};
+    if (!stage.find_prim_at_path(Path(material_path, ""), mat_prim, &err)) {
+      return nonstd::make_unexpected(
+          fmt::format("Prim {} not found (material lookup also failed): {}\n", prim_part, err));
+    }
+
+    // Look for child prim
+    if (mat_prim) {
+      std::string children_info = "Material has " + std::to_string(mat_prim->children().size()) + " children: ";
+      for (const auto& child : mat_prim->children()) {
+        std::string elem_name = child.element_name();
+        std::string child_type = child.data().type_name();
+        children_info += "'" + elem_name + "'(" + child_type + ") ";
+
+        // Check by name match
+        if (elem_name == child_name) {
+          prim = &child;
+          break;
+        }
+        // Also check if it's a NodeGraph/Shader by type name
+        // This handles cases where element_name might not be set properly
+        // e.g., looking for "NodeGraphs" and finding type "NodeGraph" with empty name
+        if (child_type == "NodeGraph" && (child_name == "NodeGraphs" || child_name == "NodeGraph")) {
+          prim = &child;
+          break;
+        }
+        if (child_type == "Shader" && child_name == "Shader") {
+          prim = &child;
+          break;
+        }
+      }
+
+      if (!prim) {
+        DCOUT(children_info);
+        return nonstd::make_unexpected(
+            fmt::format("Child prim '{}' not found in Material {}. {}\n", child_name, material_path, children_info));
+      }
+    } else {
+      return nonstd::make_unexpected(
+          fmt::format("Material prim {} is null\n", material_path));
+    }
   }
 
   if (!prim) {
     return nonstd::make_unexpected("[InternalError] Prim ptr is null.\n");
+  }
+
+  // Check if this is a NodeGraph - if so, we need to traverse through it
+  if (const NodeGraph *ng = prim->as<NodeGraph>()) {
+    DCOUT("Connection goes through NodeGraph: " << prim_part);
+
+    // Look for the output property in the NodeGraph's props
+    const auto &props = ng->props;
+    auto it = props.find(prop_part);
+    if (it == props.end()) {
+      return nonstd::make_unexpected(
+          fmt::format("NodeGraph {} does not have output property {}", prim_part, prop_part));
+    }
+
+    const Property &output_prop = it->second;
+    if (!output_prop.is_attribute()) {
+      return nonstd::make_unexpected(
+          fmt::format("NodeGraph output {} is not an attribute", prop_part));
+    }
+
+    const Attribute &output_attr = output_prop.get_attribute();
+    if (!output_attr.has_connections()) {
+      return nonstd::make_unexpected(
+          fmt::format("NodeGraph output {} has no connections", prop_part));
+    }
+
+    // Get the connection from the NodeGraph output
+    const auto &output_conns = output_attr.connections();
+    if (output_conns.size() != 1) {
+      return nonstd::make_unexpected(
+          fmt::format("NodeGraph output {} must have exactly one connection, got {}",
+                      prop_part, output_conns.size()));
+    }
+
+    const Path &ng_output_path = output_conns[0];
+    DCOUT("NodeGraph output connects to: " << ng_output_path);
+
+    // Recursively follow the connection through the NodeGraph
+    // We need to traverse to the next node in the chain
+    std::string next_prim_part = ng_output_path.prim_part();
+    std::string next_prop_part = ng_output_path.prop_part();
+
+    // Find the next prim in the chain
+    // It might be a child of the NodeGraph, so use the same child lookup logic
+    const Prim *next_prim{nullptr};
+    bool found_next = stage.find_prim_at_path(Path(next_prim_part, ""), next_prim, &err);
+
+    // If not found in stage, it might be a child of the current NodeGraph
+    if (!found_next || !next_prim) {
+      DCOUT("Next prim not found in stage, checking NodeGraph children");
+
+      // Check if it's a child of this NodeGraph
+      size_t last_slash = next_prim_part.rfind('/');
+      if (last_slash != std::string::npos) {
+        std::string parent_path = next_prim_part.substr(0, last_slash);
+        std::string child_name = next_prim_part.substr(last_slash + 1);
+
+        // If the parent is this NodeGraph, look in its children
+        if (parent_path == prim_part) {
+          for (const auto& child : prim->children()) {
+            std::string elem_name = child.element_name();
+            if (elem_name == child_name) {
+              next_prim = &child;
+              break;
+            }
+          }
+
+          if (!next_prim) {
+            return nonstd::make_unexpected(
+                fmt::format("Child prim '{}' not found in NodeGraph {}\n", child_name, prim_part));
+          }
+        } else {
+          return nonstd::make_unexpected(
+              fmt::format("Prim {} not found in the Stage: {}\n", next_prim_part, err));
+        }
+      } else {
+        return nonstd::make_unexpected(
+            fmt::format("Prim {} not found in the Stage: {}\n", next_prim_part, err));
+      }
+    }
+
+    if (!next_prim) {
+      return nonstd::make_unexpected("[InternalError] next_prim is null.\n");
+    }
+
+    // For nested NodeGraphs or other intermediate nodes, we would need to continue traversing
+    // For now, we only support the common pattern: NodeGraph -> Shader(UsdUVTexture)
+    // Nested NodeGraphs are rare and can be handled if needed
+
+    // Check if it's a Shader with UsdUVTexture
+    if (const Shader *pshader = next_prim->as<Shader>()) {
+      if (const UsdUVTexture *ptex = pshader->value.as<UsdUVTexture>()) {
+        // Verify the property part is valid for UsdUVTexture
+        if (next_prop_part != kOutputsRGB && next_prop_part != kOutputsR &&
+            next_prop_part != kOutputsG && next_prop_part != kOutputsB &&
+            next_prop_part != kOutputsA) {
+          return nonstd::make_unexpected(fmt::format(
+              "UsdUVTexture connection property part must be outputs:rgb/r/g/b/a, got {}",
+              next_prop_part));
+        }
+
+        DCOUT("Found UsdUVTexture through NodeGraph: " << next_prim_part);
+        (*dst) = ptex;
+
+        if (shader_out) {
+          (*shader_out) = pshader;
+        }
+
+        if (tex_abs_path) {
+          (*tex_abs_path) = ng_output_path;
+        }
+
+        return true;
+      }
+      // Shader exists but it's not a UsdUVTexture - this is OK, NodeGraph might connect to other shader types
+      // Return false (not found) rather than error
+      DCOUT(fmt::format("NodeGraph {} output {} connects to Shader {} but it's not UsdUVTexture",
+                        prim_part, prop_part, next_prim_part));
+      return false;
+    }
+
+    // If we get here, the NodeGraph doesn't connect to a UsdUVTexture
+    // This is not necessarily an error - the connection might be to a MaterialX shader or other node type
+    DCOUT(fmt::format("NodeGraph {} output {} connects to {} (type: {}), not a UsdUVTexture",
+                      prim_part, prop_part, next_prim_part, next_prim->prim_type_name()));
+    return false;
+  }
+
+  // Not a NodeGraph - must be a direct UsdUVTexture connection
+  if (!is_standard_output) {
+    return nonstd::make_unexpected(fmt::format(
+        "connection Path's property part must be `{}`, `{}`, `{}`, `{}` or `{}` "
+        "for UsdUVTexture, but got `{}`(prim_part: {}).",
+        kOutputsRGB, kOutputsR, kOutputsG, kOutputsB, kOutputsA, prop_part, prim_part));
   }
 
   if (tex_abs_path) {
@@ -6130,7 +6314,7 @@ bool RenderSceneConverter::ConvertUVTexture(const RenderSceneConverterEnv &env,
       }
 
     } else {
-      TUSDZ_LOG_I("get_value");
+      //TUSDZ_LOG_I("get_value");
       Animatable<value::texcoord2f> fallbacks = texture.st.get_value();
       value::texcoord2f uv;
       if (fallbacks.get(env.timecode, &uv)) {
@@ -6140,7 +6324,7 @@ bool RenderSceneConverter::ConvertUVTexture(const RenderSceneConverterEnv &env,
         // TODO: report warning.
         PUSH_WARN("Failed to get fallback `st` texcoord attribute.");
       }
-      TUSDZ_LOG_I("uv done");
+      //TUSDZ_LOG_I("uv done");
     }
   }
 
