@@ -2075,7 +2075,7 @@ class Value {
   // Helper to log vector size
   template <typename T>
   static void log_vector_size(const std::vector<T>& vec) {
-    TUSDZ_LOG_I("  vector size: " << vec.size());
+    //TUSDZ_LOG_I("  vector size: " << vec.size());
   }
 
   template <typename T>
