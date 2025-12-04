@@ -4290,7 +4290,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
 
         DCOUT("float2[] = " << value::print_array_snipped(v));
         //TUSDZ_LOG_D("float2[] = " << value::print_array_snipped(v));
-        TUSDZ_LOG_I("float2[].size" << v.size());
+        //TUSDZ_LOG_I("float2[].size" << v.size());
 
         value->Set(std::move(v));
         return true;
