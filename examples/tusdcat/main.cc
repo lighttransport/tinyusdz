@@ -1,7 +1,9 @@
 #include <algorithm>
 #include <cctype>
+#include <chrono>
 #include <cstdlib>
 #include <cstring>
+#include <iomanip>
 #include <iostream>
 #include <sstream>
 
@@ -41,12 +43,12 @@ static std::string format_memory_size(size_t bytes) {
   const char* units[] = {"B", "KB", "MB", "GB", "TB"};
   int unit_index = 0;
   double size = static_cast<double>(bytes);
-  
+
   while (size >= 1024.0 && unit_index < 4) {
     size /= 1024.0;
     unit_index++;
   }
-  
+
   std::stringstream ss;
   if (unit_index == 0) {
     ss << static_cast<size_t>(size) << " " << units[unit_index];
@@ -57,22 +59,87 @@ static std::string format_memory_size(size_t bytes) {
   return ss.str();
 }
 
-void print_help() {
-    std::cout << "Usage tusdcat [--flatten] [--loadOnly] [--composition=STRLIST] [--relative] [--extract-variants] [--memstat] [--loglevel INT] [-j|--json] input.usda/usdc/usdz\n";
-    std::cout << "\n --flatten (not fully implemented yet) Do composition(load sublayers, refences, payload, evaluate `over`, inherit, variants..)";
-    std::cout << "  --composition: Specify which composition feature to be "
-                 "enabled(valid when `--flatten` is supplied). Comma separated "
-                 "list. \n    l "
-                 "`subLayers`, i `inherits`, v `variantSets`, r `references`, "
-                 "p `payload`, s `specializes`. \n    Example: "
-                 "--composition=r,p --composition=references,subLayers\n";
-    std::cout << "\n --extract-variants (w.i.p) Dump variants information to .json\n";
-    std::cout << "\n --relative (not implemented yet) Print Path as relative Path\n";
-    std::cout << "\n -l, --loadOnly Load(Parse) USD file only(Check if input USD is valid or not)\n";
-    std::cout << "\n -j, --json Output parsed USD as JSON string\n";
-    std::cout << "\n --memstat Print memory usage statistics for loaded Layer and Stage\n";
-    std::cout << "\n --loglevel INT Set logging level (0=Debug, 1=Warn, 2=Info, 3=Error, 4=Critical, 5=Off)\n";
+// Progress bar state
+struct ProgressState {
+  std::chrono::steady_clock::time_point start_time;
+  bool display_started{false};
+  float last_progress{0.0f};
+  static constexpr int kBarWidth = 40;
+  static constexpr double kDelaySeconds = 3.0;  // Don't show progress under 3 seconds
+};
 
+static bool progress_callback(float progress, void *userptr) {
+  ProgressState *state = static_cast<ProgressState*>(userptr);
+  if (!state) {
+    return true;
+  }
+
+  auto now = std::chrono::steady_clock::now();
+  double elapsed = std::chrono::duration<double>(now - state->start_time).count();
+
+  // Don't show progress if loading takes less than 3 seconds
+  if (elapsed < ProgressState::kDelaySeconds) {
+    return true;
+  }
+
+  // Only update display if progress changed significantly (1% or more)
+  if (progress - state->last_progress < 0.01f && progress < 1.0f) {
+    return true;
+  }
+  state->last_progress = progress;
+
+  if (!state->display_started) {
+    state->display_started = true;
+    std::cerr << "\n";  // Start on new line
+  }
+
+  int percent = static_cast<int>(progress * 100.0f);
+  int filled = static_cast<int>(progress * ProgressState::kBarWidth);
+
+  std::cerr << "\r[";
+  for (int i = 0; i < ProgressState::kBarWidth; ++i) {
+    if (i < filled) {
+      std::cerr << "=";
+    } else if (i == filled) {
+      std::cerr << ">";
+    } else {
+      std::cerr << " ";
+    }
+  }
+  std::cerr << "] " << std::setw(3) << percent << " %" << std::flush;
+
+  if (progress >= 1.0f) {
+    std::cerr << "\n";  // Finish with newline
+  }
+
+  return true;  // Continue parsing
+}
+
+void print_help() {
+  std::cout << "Usage: tusdcat [OPTIONS] input.usda/usdc/usdz\n";
+  std::cout << "\n";
+  std::cout << "Options:\n";
+  std::cout << "  -h, --help          Show this help message\n";
+  std::cout << "  -f, --flatten       Do composition (load sublayers, references,\n";
+  std::cout << "                      payload, evaluate `over`, inherit, variants)\n";
+  std::cout << "                      (not fully implemented yet)\n";
+  std::cout << "  --composition=LIST  Specify which composition features to enable\n";
+  std::cout << "                      (valid when --flatten is supplied).\n";
+  std::cout << "                      Comma-separated list of:\n";
+  std::cout << "                        l or subLayers, i or inherits,\n";
+  std::cout << "                        v or variantSets, r or references,\n";
+  std::cout << "                        p or payload, s or specializes\n";
+  std::cout << "                      Example: --composition=r,p\n";
+  std::cout << "  --extract-variants  Dump variants information to JSON (w.i.p)\n";
+  std::cout << "  --relative          Print Path as relative Path (not implemented)\n";
+  std::cout << "  -l, --loadOnly      Load/parse USD file only (validate input)\n";
+  std::cout << "  -j, --json          Output parsed USD as JSON string\n";
+  std::cout << "  --memstat           Print memory usage statistics\n";
+  std::cout << "  --progress          Show ASCII progress bar\n";
+  std::cout << "                      (only shown if loading takes > 3 seconds)\n";
+  std::cout << "  --loglevel INT      Set logging level:\n";
+  std::cout << "                        0=Debug, 1=Warn, 2=Info,\n";
+  std::cout << "                        3=Error, 4=Critical, 5=Off\n";
 }
 
 int main(int argc, char **argv) {
@@ -94,6 +161,7 @@ int main(int argc, char **argv) {
   bool load_only{false};
   bool json_output{false};
   bool memstat{false};
+  bool show_progress{false};
 
   constexpr int kMaxIteration = 128;
 
@@ -119,6 +187,8 @@ int main(int argc, char **argv) {
       has_extract_variants = true;
     } else if (arg.compare("--memstat") == 0) {
       memstat = true;
+    } else if (arg.compare("--progress") == 0) {
+      show_progress = true;
     } else if (arg.compare("--loglevel") == 0) {
       if (i + 1 >= argc) {
         std::cerr << "--loglevel requires an integer argument\n";
@@ -205,8 +275,17 @@ int main(int argc, char **argv) {
       std::cout << "--flatten is ignored for USDZ at the moment.\n";
 
       tinyusdz::Stage stage;
+      tinyusdz::USDLoadOptions usdz_options;
 
-      bool ret = tinyusdz::LoadUSDZFromFile(filepath, &stage, &warn, &err);
+      // Set up progress callback if requested
+      ProgressState usdz_progress_state;
+      if (show_progress) {
+        usdz_progress_state.start_time = std::chrono::steady_clock::now();
+        usdz_options.progress_callback = progress_callback;
+        usdz_options.progress_userptr = &usdz_progress_state;
+      }
+
+      bool ret = tinyusdz::LoadUSDZFromFile(filepath, &stage, &warn, &err, usdz_options);
       if (!warn.empty()) {
         std::cerr << "WARN : " << warn << "\n";
       }
@@ -475,6 +554,14 @@ int main(int argc, char **argv) {
     tinyusdz::Stage stage;
 
     tinyusdz::USDLoadOptions options;
+
+    // Set up progress callback if requested
+    ProgressState progress_state;
+    if (show_progress) {
+      progress_state.start_time = std::chrono::steady_clock::now();
+      options.progress_callback = progress_callback;
+      options.progress_userptr = &progress_state;
+    }
 
     // auto detect format.
     bool ret = tinyusdz::LoadUSDFromFile(filepath, &stage, &warn, &err, options);
