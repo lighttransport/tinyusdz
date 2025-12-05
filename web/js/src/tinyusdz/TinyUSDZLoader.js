@@ -295,6 +295,23 @@ class TinyUSDZLoader extends Loader {
     }
 
     /**
+     * Set progress callback for load operations
+     * Note: Due to WASM synchronous execution, progress updates are limited.
+     * For true async progress, use loadWithProgressAsync() or Web Workers.
+     * @param {Function} callback - Progress callback (progress: 0-1, stage: string) => void
+     */
+    setProgressCallback(callback) {
+        this.progressCallback_ = callback;
+    }
+
+    /**
+     * Clear the progress callback
+     */
+    clearProgressCallback() {
+        this.progressCallback_ = null;
+    }
+
+    /**
      * Get current maximum memory limit in MB
      * @returns {number|undefined} Memory limit in megabytes, or undefined if using native default
      */
@@ -454,6 +471,202 @@ class TinyUSDZLoader extends Loader {
             _onError(new Error('TinyUSDZLoader: Failed to load USD from binary data.', {cause: usd.error()}));
         } else {
             onLoad(usd);
+        }
+    }
+
+    /**
+     * Parse USD binary data with progress reporting
+     * Uses the native progress callback mechanism for cancellation support.
+     *
+     * Note: Due to WASM being synchronous, progress updates only occur at
+     * checkpoint boundaries in the parser. The onProgress callback is called
+     * after parsing completes with final status information.
+     *
+     * For true async progress reporting in the UI, use Web Workers.
+     *
+     * @param {ArrayBuffer} binary - Binary USD data
+     * @param {string} filePath - Optional file path
+     * @param {Object} options - Parsing options
+     * @param {number} options.maxMemoryLimitMB - Override memory limit
+     * @param {Function} options.onProgress - Progress callback (progressInfo) => void
+     * @param {AbortSignal} options.signal - AbortController signal for cancellation
+     * @returns {Promise<Object>} Parsed USD object
+     */
+    async parseWithProgress(binary /* ArrayBuffer */, filePath /* optional */, options = {}) {
+        if (!this.native_) {
+            await this.init();
+        }
+
+        return new Promise((resolve, reject) => {
+            const usd = new this.native_.TinyUSDZLoaderNative();
+
+            // Set memory limit before loading if specified
+            const memoryLimit = options.maxMemoryLimitMB || this.maxMemoryLimitMB_;
+            if (memoryLimit !== undefined) {
+                usd.setMaxMemoryLimitMB(memoryLimit);
+            }
+
+            // Set bone reduction configuration
+            if (this.enableBoneReduction_) {
+                usd.setEnableBoneReduction(true);
+                usd.setTargetBoneCount(this.targetBoneCount_ || 4);
+            }
+
+            // Handle AbortController cancellation
+            if (options.signal) {
+                if (options.signal.aborted) {
+                    reject(new DOMException('Parsing aborted', 'AbortError'));
+                    return;
+                }
+                options.signal.addEventListener('abort', () => {
+                    usd.cancelParsing();
+                });
+            }
+
+            // Reset progress state
+            usd.resetProgress();
+
+            // Report initial progress
+            if (options.onProgress) {
+                options.onProgress({
+                    progress: 0,
+                    stage: 'parsing',
+                    percentage: 0,
+                    message: 'Starting parse...'
+                });
+            }
+
+            // Use setTimeout to allow UI to update before blocking parse
+            setTimeout(() => {
+                try {
+                    const ok = usd.loadFromBinaryWithProgress(binary, filePath);
+
+                    // Get final progress state
+                    const progressInfo = usd.getProgress();
+
+                    // Report final progress
+                    if (options.onProgress) {
+                        options.onProgress(progressInfo);
+                    }
+
+                    if (!ok) {
+                        if (usd.wasCancelled()) {
+                            reject(new DOMException('Parsing cancelled', 'AbortError'));
+                        } else {
+                            reject(new Error('TinyUSDZLoader: Failed to load USD from binary data.', {cause: usd.error()}));
+                        }
+                    } else {
+                        resolve(usd);
+                    }
+                } catch (e) {
+                    reject(e);
+                }
+            }, 0);
+        });
+    }
+
+    /**
+     * Load USD file from URL with progress reporting
+     *
+     * @param {string} url - URL to load from
+     * @param {Object} options - Loading options
+     * @param {number} options.maxMemoryLimitMB - Override memory limit
+     * @param {Function} options.onProgress - Progress callback (progressInfo) => void
+     * @param {Function} options.onFetchProgress - Fetch progress callback (loaded, total) => void
+     * @param {AbortSignal} options.signal - AbortController signal for cancellation
+     * @returns {Promise<Object>} Parsed USD object
+     */
+    async loadWithProgress(url, options = {}) {
+        if (!this.native_) {
+            await this.init();
+        }
+
+        // Check for cancellation before starting
+        if (options.signal?.aborted) {
+            throw new DOMException('Loading aborted', 'AbortError');
+        }
+
+        // Fetch the file with progress
+        const response = await fetch(url, { signal: options.signal });
+        if (!response.ok) {
+            throw new Error(`Failed to fetch: ${response.statusText}`);
+        }
+
+        // Get content length for progress calculation
+        const contentLength = response.headers.get('content-length');
+        const total = contentLength ? parseInt(contentLength, 10) : 0;
+
+        // Read response with progress
+        const reader = response.body.getReader();
+        const chunks = [];
+        let loaded = 0;
+
+        while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+
+            chunks.push(value);
+            loaded += value.length;
+
+            if (options.onFetchProgress) {
+                options.onFetchProgress(loaded, total);
+            }
+            if (options.onProgress) {
+                options.onProgress({
+                    progress: total > 0 ? (loaded / total) * 0.3 : 0, // Fetch is ~30% of total
+                    stage: 'fetching',
+                    percentage: total > 0 ? (loaded / total) * 30 : 0,
+                    message: `Downloading... ${Math.round(loaded / 1024)}KB`
+                });
+            }
+        }
+
+        // Combine chunks
+        const totalLength = chunks.reduce((acc, chunk) => acc + chunk.length, 0);
+        const binary = new Uint8Array(totalLength);
+        let offset = 0;
+        for (const chunk of chunks) {
+            binary.set(chunk, offset);
+            offset += chunk.length;
+        }
+
+        // Parse with progress
+        const parseOptions = {
+            ...options,
+            onProgress: options.onProgress ? (info) => {
+                // Adjust progress to account for fetch phase
+                const adjustedProgress = 0.3 + (info.progress * 0.7);
+                options.onProgress({
+                    ...info,
+                    progress: adjustedProgress,
+                    percentage: adjustedProgress * 100,
+                    message: info.stage === 'complete' ? 'Complete' : `${info.currentOperation || info.stage}`
+                });
+            } : undefined
+        };
+
+        return this.parseWithProgress(binary, url, parseOptions);
+    }
+
+    /**
+     * Get the current progress state from a USD loader instance
+     * @param {Object} usd - TinyUSDZLoaderNative instance
+     * @returns {Object} Progress information
+     */
+    static getProgress(usd) {
+        if (usd && typeof usd.getProgress === 'function') {
+            return usd.getProgress();
+        }
+        return null;
+    }
+
+    /**
+     * Request cancellation of parsing on a USD loader instance
+     * @param {Object} usd - TinyUSDZLoaderNative instance
+     */
+    static cancelParsing(usd) {
+        if (usd && typeof usd.cancelParsing === 'function') {
+            usd.cancelParsing();
         }
     }
 
