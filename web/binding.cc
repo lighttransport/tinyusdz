@@ -543,6 +543,75 @@ struct EMAssetResolutionResolver {
   AssetCacheEntry empty_entry_;
 };
 
+///
+/// Parsing progress state for JS/WASM polling-based progress reporting
+///
+/// Since we cannot call async JS functions from C++ without Asyncify,
+/// we use a polling approach where:
+/// 1. C++ updates progress state via a callback
+/// 2. JS can poll the progress state at any time
+/// 3. JS can request cancellation which C++ checks at progress points
+///
+struct ParsingProgress {
+  enum class Stage {
+    Idle,
+    Parsing,
+    Converting,
+    Complete,
+    Error,
+    Cancelled
+  };
+
+  float progress{0.0f};          // 0.0 to 1.0
+  Stage stage{Stage::Idle};
+  std::string stage_name{"idle"};
+  std::string current_operation{""};
+  std::atomic<bool> cancel_requested{false};
+  std::string error_message{""};
+  uint64_t bytes_processed{0};
+  uint64_t total_bytes{0};
+
+  void reset() {
+    progress = 0.0f;
+    stage = Stage::Idle;
+    stage_name = "idle";
+    current_operation = "";
+    cancel_requested.store(false);
+    error_message = "";
+    bytes_processed = 0;
+    total_bytes = 0;
+  }
+
+  void setStage(Stage s) {
+    stage = s;
+    switch (s) {
+      case Stage::Idle: stage_name = "idle"; break;
+      case Stage::Parsing: stage_name = "parsing"; break;
+      case Stage::Converting: stage_name = "converting"; break;
+      case Stage::Complete: stage_name = "complete"; break;
+      case Stage::Error: stage_name = "error"; break;
+      case Stage::Cancelled: stage_name = "cancelled"; break;
+    }
+  }
+
+  bool shouldCancel() const {
+    return cancel_requested.load();
+  }
+
+  emscripten::val toJS() const {
+    emscripten::val result = emscripten::val::object();
+    result.set("progress", progress);
+    result.set("stage", stage_name);
+    result.set("currentOperation", current_operation);
+    result.set("cancelRequested", cancel_requested.load());
+    result.set("errorMessage", error_message);
+    result.set("bytesProcessed", double(bytes_processed));
+    result.set("totalBytes", double(total_bytes));
+    result.set("percentage", progress * 100.0f);
+    return result;
+  }
+};
+
 bool SetupEMAssetResolution(
     tinyusdz::AssetResolutionResolver &resolver,
     /* must be the persistent pointer address until usd load finishes */
@@ -2728,6 +2797,145 @@ class TinyUSDZLoaderNative {
     return success;
   }
 
+  //
+  // Progress reporting methods for polling-based async progress
+  //
+
+  /// Get current parsing progress as a JS object
+  emscripten::val getProgress() const {
+    return parsing_progress_.toJS();
+  }
+
+  /// Request cancellation of current parsing operation
+  void cancelParsing() {
+    parsing_progress_.cancel_requested.store(true);
+  }
+
+  /// Check if parsing was cancelled
+  bool wasCancelled() const {
+    return parsing_progress_.stage == ParsingProgress::Stage::Cancelled;
+  }
+
+  /// Check if parsing is currently in progress
+  bool isParsingInProgress() const {
+    return parsing_progress_.stage == ParsingProgress::Stage::Parsing ||
+           parsing_progress_.stage == ParsingProgress::Stage::Converting;
+  }
+
+  /// Reset progress state (call before starting a new parse)
+  void resetProgress() {
+    parsing_progress_.reset();
+  }
+
+  /// Load from binary with progress reporting
+  /// Returns immediately, progress can be polled via getProgress()
+  bool loadFromBinaryWithProgress(const std::string &binary, const std::string &filename) {
+    // Reset progress state
+    parsing_progress_.reset();
+    parsing_progress_.setStage(ParsingProgress::Stage::Parsing);
+    parsing_progress_.total_bytes = binary.size();
+    parsing_progress_.current_operation = "Loading USD file";
+
+    bool is_usdz = tinyusdz::IsUSDZ(
+        reinterpret_cast<const uint8_t *>(binary.c_str()), binary.size());
+
+    tinyusdz::USDLoadOptions options;
+    options.max_memory_limit_in_mb = max_memory_limit_mb_;
+
+    // Set up progress callback
+    options.progress_callback = [](float progress, void *userptr) -> bool {
+      ParsingProgress *pp = static_cast<ParsingProgress *>(userptr);
+      pp->progress = progress * 0.8f;  // Parsing is 80% of total work
+      pp->bytes_processed = static_cast<uint64_t>(progress * pp->total_bytes);
+      // Return false to cancel, true to continue
+      return !pp->shouldCancel();
+    };
+    options.progress_userptr = &parsing_progress_;
+
+    tinyusdz::Stage stage;
+    loaded_ = tinyusdz::LoadUSDFromMemory(
+        reinterpret_cast<const uint8_t *>(binary.c_str()), binary.size(),
+        filename, &stage, &warn_, &error_, options);
+
+    if (!loaded_) {
+      if (parsing_progress_.shouldCancel()) {
+        parsing_progress_.setStage(ParsingProgress::Stage::Cancelled);
+        parsing_progress_.error_message = "Parsing cancelled by user";
+      } else {
+        parsing_progress_.setStage(ParsingProgress::Stage::Error);
+        parsing_progress_.error_message = error_;
+      }
+      return false;
+    }
+
+    loaded_as_layer_ = false;
+    filename_ = filename;
+
+    // Now convert to render scene
+    parsing_progress_.setStage(ParsingProgress::Stage::Converting);
+    parsing_progress_.current_operation = "Converting to render scene";
+    parsing_progress_.progress = 0.8f;
+
+    bool render_ok = stageToRenderScene(stage, is_usdz, binary);
+
+    if (!render_ok) {
+      parsing_progress_.setStage(ParsingProgress::Stage::Error);
+      parsing_progress_.error_message = error_;
+      return false;
+    }
+
+    parsing_progress_.progress = 1.0f;
+    parsing_progress_.setStage(ParsingProgress::Stage::Complete);
+    parsing_progress_.current_operation = "Complete";
+
+    return true;
+  }
+
+  /// Load as layer with progress reporting
+  bool loadAsLayerFromBinaryWithProgress(const std::string &binary, const std::string &filename) {
+    // Reset progress state
+    parsing_progress_.reset();
+    parsing_progress_.setStage(ParsingProgress::Stage::Parsing);
+    parsing_progress_.total_bytes = binary.size();
+    parsing_progress_.current_operation = "Loading USD layer";
+
+    tinyusdz::USDLoadOptions options;
+    options.max_memory_limit_in_mb = max_memory_limit_mb_;
+
+    // Set up progress callback
+    options.progress_callback = [](float progress, void *userptr) -> bool {
+      ParsingProgress *pp = static_cast<ParsingProgress *>(userptr);
+      pp->progress = progress;
+      pp->bytes_processed = static_cast<uint64_t>(progress * pp->total_bytes);
+      return !pp->shouldCancel();
+    };
+    options.progress_userptr = &parsing_progress_;
+
+    loaded_ = tinyusdz::LoadLayerFromMemory(
+        reinterpret_cast<const uint8_t *>(binary.c_str()), binary.size(),
+        filename, &layer_, &warn_, &error_, options);
+
+    if (!loaded_) {
+      if (parsing_progress_.shouldCancel()) {
+        parsing_progress_.setStage(ParsingProgress::Stage::Cancelled);
+        parsing_progress_.error_message = "Parsing cancelled by user";
+      } else {
+        parsing_progress_.setStage(ParsingProgress::Stage::Error);
+        parsing_progress_.error_message = error_;
+      }
+      return false;
+    }
+
+    loaded_as_layer_ = true;
+    filename_ = filename;
+
+    parsing_progress_.progress = 1.0f;
+    parsing_progress_.setStage(ParsingProgress::Stage::Complete);
+    parsing_progress_.current_operation = "Complete";
+
+    return true;
+  }
+
   // TODO: Deprecate
   bool ok() const { return loaded_; }
 
@@ -2807,6 +3015,9 @@ class TinyUSDZLoaderNative {
   std::string mcp_session_id_;
 
   tinyusdz::tydra::mcp::Context mcp_global_ctx_;
+
+  // Progress tracking for polling-based progress reporting
+  ParsingProgress parsing_progress_;
 };
 
 ///
@@ -3174,6 +3385,15 @@ EMSCRIPTEN_BINDINGS(tinyusdz_module) {
       .function("mcpResourcesRead", &TinyUSDZLoaderNative::mcpResourcesRead)
       .function("mcpToolsList", &TinyUSDZLoaderNative::mcpToolsList)
       .function("mcpToolsCall", &TinyUSDZLoaderNative::mcpToolsCall)
+
+      // Progress reporting for async parsing
+      .function("getProgress", &TinyUSDZLoaderNative::getProgress)
+      .function("cancelParsing", &TinyUSDZLoaderNative::cancelParsing)
+      .function("wasCancelled", &TinyUSDZLoaderNative::wasCancelled)
+      .function("isParsingInProgress", &TinyUSDZLoaderNative::isParsingInProgress)
+      .function("resetProgress", &TinyUSDZLoaderNative::resetProgress)
+      .function("loadFromBinaryWithProgress", &TinyUSDZLoaderNative::loadFromBinaryWithProgress)
+      .function("loadAsLayerFromBinaryWithProgress", &TinyUSDZLoaderNative::loadAsLayerFromBinaryWithProgress)
 
       .function("ok", &TinyUSDZLoaderNative::ok)
       .function("error", &TinyUSDZLoaderNative::error);
