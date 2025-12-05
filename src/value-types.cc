@@ -270,6 +270,9 @@ nonstd::optional<std::string> TryGetTypeName(uint32_t tyid) {
           {TYPE_ID_TEXCOORD3F, kTexCoord3f},
           {TYPE_ID_TEXCOORD3D, kTexCoord3d},
           {TYPE_ID_RELATIONSHIP, kRelationship},
+          // Special vector types with dedicated type IDs
+          {TYPE_ID_TOKEN_VECTOR, "token[]"},
+          {TYPE_ID_PATH_VECTOR, "Path[]"},
       });
 
   bool array_bit = (TYPE_ID_STL_ARRAY_BIT & tyid);
@@ -442,6 +445,55 @@ uint32_t GetUnderlyingTypeId(const std::string &tyname) {
   return ret.value();
 }
 
+nonstd::optional<uint32_t> TryGetUnderlyingTypeId(uint32_t tyid) {
+  MAPBOX_ETERNAL_CONSTEXPR const auto utyidmap =
+      mapbox::eternal::map<uint32_t, uint32_t>({
+        {TYPE_ID_POINT3H, TYPE_ID_HALF3},
+        {TYPE_ID_POINT3F, TYPE_ID_FLOAT3},
+        {TYPE_ID_POINT3D, TYPE_ID_DOUBLE3},
+        {TYPE_ID_NORMAL3H, TYPE_ID_HALF3},
+        {TYPE_ID_NORMAL3F, TYPE_ID_FLOAT3},
+        {TYPE_ID_NORMAL3D, TYPE_ID_DOUBLE3},
+        {TYPE_ID_VECTOR3H, TYPE_ID_HALF3},
+        {TYPE_ID_VECTOR3F, TYPE_ID_FLOAT3},
+        {TYPE_ID_VECTOR3D, TYPE_ID_DOUBLE3},
+        {TYPE_ID_COLOR3H, TYPE_ID_HALF3},
+        {TYPE_ID_COLOR3F, TYPE_ID_FLOAT3},
+        {TYPE_ID_COLOR3D, TYPE_ID_DOUBLE3},
+        {TYPE_ID_COLOR4H, TYPE_ID_HALF4},
+        {TYPE_ID_COLOR4F, TYPE_ID_FLOAT4},
+        {TYPE_ID_COLOR4D, TYPE_ID_DOUBLE4},
+        {TYPE_ID_TEXCOORD2H, TYPE_ID_HALF2},
+        {TYPE_ID_TEXCOORD2F, TYPE_ID_FLOAT2},
+        {TYPE_ID_TEXCOORD2D, TYPE_ID_DOUBLE2},
+        {TYPE_ID_TEXCOORD3H, TYPE_ID_HALF3},
+        {TYPE_ID_TEXCOORD3F, TYPE_ID_FLOAT3},
+        {TYPE_ID_TEXCOORD3D, TYPE_ID_DOUBLE3},
+        {TYPE_ID_FRAME4D, TYPE_ID_MATRIX4D},
+  });
+
+  uint32_t array_bit = (TYPE_ID_STL_ARRAY_BIT & tyid);
+  uint32_t scalar_tid = tyid & (~TYPE_ID_STL_ARRAY_BIT);
+
+  auto ret = utyidmap.find(scalar_tid);
+  if (ret != utyidmap.end()) {
+    return ret->second | array_bit;
+  }
+
+  // Not a role type, return the original type id
+  return tyid;
+}
+
+uint32_t GetUnderlyingTypeId(uint32_t tyid) {
+  auto ret = TryGetUnderlyingTypeId(tyid);
+
+  if (!ret) {
+    return TYPE_ID_INVALID;
+  }
+
+  return ret.value();
+}
+
 nonstd::optional<std::string> TryGetUnderlyingTypeName(const uint32_t tyid) {
   MAPBOX_ETERNAL_CONSTEXPR const auto utynamemap =
       mapbox::eternal::map<uint32_t, mapbox::eternal::string>({
@@ -503,7 +555,10 @@ bool IsRoleType(const std::string &tyname) {
 }
 
 bool IsRoleType(const uint32_t tyid) {
-  return GetUnderlyingTypeId(GetTypeName(tyid)) != value::TYPE_ID_INVALID;
+  // For role types, GetUnderlyingTypeId returns a different type id
+  // For non-role types, it returns the same type id
+  uint32_t scalar_tid = tyid & (~TYPE_ID_STL_ARRAY_BIT);
+  return GetUnderlyingTypeId(scalar_tid) != scalar_tid;
 }
 
 //
@@ -812,7 +867,7 @@ matrix4d &matrix4d::operator=(const matrix4f &src) {
 // NOTE: RoleTypeCast and UpcastType are utility functions needed by both implementations
 // They will be defined after the Value class implementation methods
 
-#ifndef TUSDZ_NEW_VALUE_TYPE
+#if !defined(TUSDZ_NEW_32BYTE_VALUE) && !defined(TUSDZ_NEW_VALUE_TYPE)
 
 size_t Value::array_size() const {
   if (!is_array()) {
@@ -894,7 +949,7 @@ size_t Value::array_size() const {
 #undef APPLY_FUNC_TO_TYPES
 }
 
-#endif // TUSDZ_NEW_VALUE_TYPE
+#endif // !TUSDZ_NEW_32BYTE_VALUE && !TUSDZ_NEW_VALUE_TYPE
 
 bool RoleTypeCast(const uint32_t roleTyId, value::Value &inout) {
   const uint32_t srcUnderlyingTyId = inout.underlying_type_id();
@@ -1092,7 +1147,7 @@ bool FlexibleTypeCast(const value::Value &src, value::Value &dst) {
 }
 #endif
 
-#ifndef TUSDZ_NEW_VALUE_TYPE
+#if !defined(TUSDZ_NEW_32BYTE_VALUE) && !defined(TUSDZ_NEW_VALUE_TYPE)
 
 // Get byte size for a given type_id
 static size_t GetTypeSize(uint32_t type_id) {
@@ -1224,9 +1279,9 @@ static size_t GetTypeSize(uint32_t type_id) {
   }
 }
 
-#endif // TUSDZ_NEW_VALUE_TYPE
+#endif // !TUSDZ_NEW_32BYTE_VALUE && !TUSDZ_NEW_VALUE_TYPE
 
-#ifndef TUSDZ_NEW_VALUE_TYPE
+#if !defined(TUSDZ_NEW_32BYTE_VALUE) && !defined(TUSDZ_NEW_VALUE_TYPE)
 
 size_t Value::estimate_memory_usage() const {
   size_t total_size = sizeof(Value); // Base object size
@@ -1301,7 +1356,7 @@ size_t Value::estimate_memory_usage() const {
   return total_size;
 }
 
-#endif // TUSDZ_NEW_VALUE_TYPE
+#endif // !TUSDZ_NEW_32BYTE_VALUE && !TUSDZ_NEW_VALUE_TYPE
 
 bool TimeSamples::has_sample_at(const double t) const {
   if (_dirty) {
@@ -1335,9 +1390,9 @@ bool TimeSamples::get_sample_at(const double t, Sample **dst) {
   return false;
 }
 
-#ifdef TUSDZ_NEW_VALUE_TYPE
+#if defined(TUSDZ_NEW_32BYTE_VALUE) || defined(TUSDZ_NEW_VALUE_TYPE)
 //
-// New optimized Value implementation
+// New optimized Value implementation (32 bytes)
 //
 
 //
@@ -1405,8 +1460,18 @@ bool TimeSamples::get_sample_at(const double t, Sample **dst) {
 
 #define DISPATCH_STRING_TYPE(MACRO) \
   MACRO(std::string) \
+  MACRO(StringData) \
   MACRO(token) \
   MACRO(AssetPath)
+
+// Complex types that are always heap-allocated
+// Only types that are visible in value-types.cc are included here
+// Note: Path and TimeSamples have TypeTraits in prim-types.hh (not included here)
+// so they are handled separately using TYPE_ID constants
+#define DISPATCH_COMPLEX_TYPE(MACRO) \
+  MACRO(dict) \
+  MACRO(timecode) \
+  MACRO(ValueBlock)
 
 // Helper to get array class from flags
 static inline Value::ArrayClass GetArrayClass(uint8_t flags) {
@@ -1446,6 +1511,7 @@ void Value::copy_data_from(const Value& rhs) {
       return; \
     }
 
+// Check both std::vector (STL_ARRAY_BIT only) and TypedArray (both STL_ARRAY_BIT and TYPED_ARRAY_BIT)
 #define COPY_ARRAY_TYPE_VECTOR(T) \
     if (rhs.type_id_ == (TypeTraits<T>::type_id() | TYPE_ID_STL_ARRAY_BIT)) { \
       ArrayClass aclass = GetArrayClass(rhs.flags_); \
@@ -1455,7 +1521,13 @@ void Value::copy_data_from(const Value& rhs) {
         void* dst_ptr = reinterpret_cast<void*>(dst); \
         std::memcpy(data_, &dst_ptr, sizeof(void*)); \
         return; \
-      } else if (aclass == ArrayClass::TypedArray) { \
+      } \
+    }
+
+#define COPY_TYPED_ARRAY_TYPE(T) \
+    if (rhs.type_id_ == (TypeTraits<T>::type_id() | TYPE_ID_STL_ARRAY_BIT | TYPE_ID_TYPED_ARRAY_BIT)) { \
+      ArrayClass aclass = GetArrayClass(rhs.flags_); \
+      if (aclass == ArrayClass::TypedArray) { \
         const TypedArray<T>* src = reinterpret_cast<const TypedArray<T>*>(src_ptr); \
         TypedArray<T>* dst = new TypedArray<T>(*src); \
         void* dst_ptr = reinterpret_cast<void*>(dst); \
@@ -1466,17 +1538,74 @@ void Value::copy_data_from(const Value& rhs) {
 
     DISPATCH_SCALAR_TYPE(COPY_SCALAR_TYPE)
     DISPATCH_SCALAR_TYPE(COPY_ARRAY_TYPE_VECTOR)
+    DISPATCH_SCALAR_TYPE(COPY_TYPED_ARRAY_TYPE)
     DISPATCH_STRING_TYPE(COPY_SCALAR_TYPE)
     DISPATCH_STRING_TYPE(COPY_ARRAY_TYPE_VECTOR)
+    DISPATCH_STRING_TYPE(COPY_TYPED_ARRAY_TYPE)
+    DISPATCH_COMPLEX_TYPE(COPY_SCALAR_TYPE)
+
+    // Special vector types with dedicated type IDs (not following base_type | array_bits pattern)
+    if (rhs.type_id_ == TYPE_ID_TOKEN_VECTOR) {
+      const std::vector<token>* src = reinterpret_cast<const std::vector<token>*>(src_ptr);
+      std::vector<token>* dst = new std::vector<token>(*src);
+      void* dst_ptr = reinterpret_cast<void*>(dst);
+      std::memcpy(data_, &dst_ptr, sizeof(void*));
+      return;
+    }
 
 #undef COPY_SCALAR_TYPE
 #undef COPY_ARRAY_TYPE_VECTOR
+#undef COPY_TYPED_ARRAY_TYPE
 
-    // Fallback for unknown types - this shouldn't happen in correct usage
-    // Clear everything to safe state
+    // Handle types defined in prim-types.hh/cc
+    // These can't be handled via TypeTraits here since we can't include prim-types.hh
+    if (rhs.type_id_ == TYPE_ID_CUSTOMDATA ||
+        rhs.type_id_ == TYPE_ID_PAYLOAD ||
+        rhs.type_id_ == TYPE_ID_REFERENCE ||
+        rhs.type_id_ == TYPE_ID_PATH ||
+        rhs.type_id_ == TYPE_ID_PATH_VECTOR ||
+        rhs.type_id_ == (TYPE_ID_PAYLOAD | TYPE_ID_STL_ARRAY_BIT) ||
+        rhs.type_id_ == (TYPE_ID_REFERENCE | TYPE_ID_STL_ARRAY_BIT) ||
+        rhs.type_id_ == TYPE_ID_LIST_OP_TOKEN ||
+        rhs.type_id_ == TYPE_ID_LIST_OP_STRING ||
+        rhs.type_id_ == TYPE_ID_LIST_OP_PATH ||
+        rhs.type_id_ == TYPE_ID_LIST_OP_REFERENCE ||
+        rhs.type_id_ == TYPE_ID_LIST_OP_PAYLOAD ||
+        rhs.type_id_ == TYPE_ID_TIMESAMPLES ||
+        rhs.type_id_ == TYPE_ID_VARIANT_SELECION_MAP ||
+        rhs.type_id_ == (TYPE_ID_LAYER_OFFSET | TYPE_ID_STL_ARRAY_BIT)) {
+      void* dst_ptr = nullptr;
+      if (CopyModelValue(rhs.type_id_, &dst_ptr, src_ptr)) {
+        std::memcpy(data_, &dst_ptr, sizeof(void*));
+        return;
+      }
+    }
+
+    // Handle MODEL types (Prim types like Xform, GeomMesh, etc.)
+    // These are defined in prim-types.hh/cc which we can't include here
+    if (rhs.type_id_ >= TYPE_ID_MODEL_BEGIN && rhs.type_id_ < TYPE_ID_MODEL_END) {
+      void* dst_ptr = nullptr;
+      if (CopyModelValue(rhs.type_id_, &dst_ptr, src_ptr)) {
+        std::memcpy(data_, &dst_ptr, sizeof(void*));
+        return;
+      }
+      // If CopyModelValue returns false, fall through to fallback
+    }
+
+    // Fallback for unknown types - cannot safely deep copy
+    // Rather than creating a dangling pointer (shallow copy that becomes invalid when
+    // original is destroyed), we set the Value to null to indicate copy failure.
+    // This prevents use-after-free crashes at the cost of losing the data.
+    // NOTE: If you encounter this, add the type to the appropriate DISPATCH macro.
+    //
+    // Log warning for debugging (in debug builds)
+#if !defined(NDEBUG)
+    std::cerr << "[WARNING] Value::copy_data_from: Unknown heap-allocated type_id="
+              << rhs.type_id_ << ", cannot deep copy. Setting to null." << std::endl;
+#endif
+    type_id_ = TYPE_ID_NULL;
+    flags_ = 0;
     std::memset(data_, 0, sizeof(data_));
-    type_id_ = TYPE_ID_INVALID;
-    flags_ = 0;  // CRITICAL: Clear heap flag to prevent invalid free!
   } else {
     // Inline data - simple copy
     std::memcpy(data_, rhs.data_, sizeof(data_));
@@ -1559,24 +1688,78 @@ void Value::destroy() {
 
 #define DESTROY_ARRAY_TYPE(T) \
   if (type_id_ == (TypeTraits<T>::type_id() | TYPE_ID_STL_ARRAY_BIT)) { \
-    ArrayClass aclass = GetArrayClass(flags_); \
-    if (aclass == ArrayClass::StdVector) { \
-      std::vector<T>* typed_ptr = reinterpret_cast<std::vector<T>*>(ptr); \
-      delete typed_ptr; \
-    } else if (aclass == ArrayClass::TypedArray) { \
-      TypedArray<T>* typed_ptr = reinterpret_cast<TypedArray<T>*>(ptr); \
-      delete typed_ptr; \
-    } \
+    std::vector<T>* typed_ptr = reinterpret_cast<std::vector<T>*>(ptr); \
+    delete typed_ptr; \
+    return; \
+  }
+
+#define DESTROY_TYPED_ARRAY_TYPE(T) \
+  if (type_id_ == (TypeTraits<T>::type_id() | TYPE_ID_STL_ARRAY_BIT | TYPE_ID_TYPED_ARRAY_BIT)) { \
+    TypedArray<T>* typed_ptr = reinterpret_cast<TypedArray<T>*>(ptr); \
+    delete typed_ptr; \
     return; \
   }
 
   DISPATCH_SCALAR_TYPE(DESTROY_SCALAR_TYPE)
   DISPATCH_SCALAR_TYPE(DESTROY_ARRAY_TYPE)
+  DISPATCH_SCALAR_TYPE(DESTROY_TYPED_ARRAY_TYPE)
   DISPATCH_STRING_TYPE(DESTROY_SCALAR_TYPE)
   DISPATCH_STRING_TYPE(DESTROY_ARRAY_TYPE)
+  DISPATCH_STRING_TYPE(DESTROY_TYPED_ARRAY_TYPE)
+  DISPATCH_COMPLEX_TYPE(DESTROY_SCALAR_TYPE)
+
+  // Special vector types with dedicated type IDs (not following base_type | array_bits pattern)
+  if (type_id_ == TYPE_ID_TOKEN_VECTOR) {
+    std::vector<token>* typed_ptr = reinterpret_cast<std::vector<token>*>(ptr);
+    delete typed_ptr;
+    return;
+  }
 
 #undef DESTROY_SCALAR_TYPE
 #undef DESTROY_ARRAY_TYPE
+#undef DESTROY_TYPED_ARRAY_TYPE
+
+  // Handle types defined in prim-types.hh/cc
+  if (type_id_ == TYPE_ID_CUSTOMDATA ||
+      type_id_ == TYPE_ID_PAYLOAD ||
+      type_id_ == TYPE_ID_REFERENCE ||
+      type_id_ == TYPE_ID_PATH ||
+      type_id_ == TYPE_ID_PATH_VECTOR ||
+      type_id_ == (TYPE_ID_PAYLOAD | TYPE_ID_STL_ARRAY_BIT) ||
+      type_id_ == (TYPE_ID_REFERENCE | TYPE_ID_STL_ARRAY_BIT) ||
+      type_id_ == TYPE_ID_LIST_OP_TOKEN ||
+      type_id_ == TYPE_ID_LIST_OP_STRING ||
+      type_id_ == TYPE_ID_LIST_OP_PATH ||
+      type_id_ == TYPE_ID_LIST_OP_REFERENCE ||
+      type_id_ == TYPE_ID_LIST_OP_PAYLOAD ||
+      type_id_ == TYPE_ID_TIMESAMPLES ||
+      type_id_ == TYPE_ID_VARIANT_SELECION_MAP ||
+      type_id_ == (TYPE_ID_LAYER_OFFSET | TYPE_ID_STL_ARRAY_BIT)) {
+    if (DestroyModelValue(type_id_, ptr)) {
+      return;
+    }
+  }
+
+  // Handle MODEL types (Prim types like Xform, GeomMesh, etc.)
+  // These are defined in prim-types.hh/cc which we can't include here
+  if (type_id_ >= TYPE_ID_MODEL_BEGIN && type_id_ < TYPE_ID_MODEL_END) {
+    if (DestroyModelValue(type_id_, ptr)) {
+      return;
+    }
+    // If DestroyModelValue returns false, fall through to generic delete
+  }
+
+  // Fallback for unknown types - free the memory but can't call destructor
+  // WARNING: This may cause resource leaks for types with non-trivial destructors
+  if (ptr) {
+    // Use operator delete to free the memory
+    // Note: This doesn't call the destructor, so resources owned by the object may leak
+#if !defined(NDEBUG)
+    std::cerr << "[WARNING] Value::destroy: Unknown heap-allocated type_id="
+              << type_id_ << ", using raw delete (destructor not called)." << std::endl;
+#endif
+    ::operator delete(ptr);
+  }
 }
 
 //
@@ -1597,21 +1780,23 @@ size_t Value::array_size() const {
   void* ptr;
   std::memcpy(&ptr, data_, sizeof(void*));
 
-#define GET_ARRAY_SIZE(T) \
+#define GET_ARRAY_SIZE_VECTOR(T) \
   if (type_id_ == (TypeTraits<T>::type_id() | TYPE_ID_STL_ARRAY_BIT)) { \
-    ArrayClass aclass = GetArrayClass(flags_); \
-    if (aclass == ArrayClass::StdVector) { \
-      const std::vector<T>* vec = reinterpret_cast<const std::vector<T>*>(ptr); \
-      return vec->size(); \
-    } else if (aclass == ArrayClass::TypedArray) { \
-      const TypedArray<T>* arr = reinterpret_cast<const TypedArray<T>*>(ptr); \
-      return arr->size(); \
-    } \
+    const std::vector<T>* vec = reinterpret_cast<const std::vector<T>*>(ptr); \
+    return vec->size(); \
   }
 
-  DISPATCH_SCALAR_TYPE(GET_ARRAY_SIZE)
+#define GET_ARRAY_SIZE_TYPED(T) \
+  if (type_id_ == (TypeTraits<T>::type_id() | TYPE_ID_STL_ARRAY_BIT | TYPE_ID_TYPED_ARRAY_BIT)) { \
+    const TypedArray<T>* arr = reinterpret_cast<const TypedArray<T>*>(ptr); \
+    return arr->size(); \
+  }
 
-#undef GET_ARRAY_SIZE
+  DISPATCH_SCALAR_TYPE(GET_ARRAY_SIZE_VECTOR)
+  DISPATCH_SCALAR_TYPE(GET_ARRAY_SIZE_TYPED)
+
+#undef GET_ARRAY_SIZE_VECTOR
+#undef GET_ARRAY_SIZE_TYPED
 
   return 0;
 }
@@ -1638,25 +1823,29 @@ size_t Value::estimate_memory_usage() const {
     return total + sizeof(T); \
   }
 
-#define ESTIMATE_ARRAY_SIZE(T) \
+#define ESTIMATE_ARRAY_SIZE_VECTOR(T) \
   if (type_id_ == (TypeTraits<T>::type_id() | TYPE_ID_STL_ARRAY_BIT)) { \
     void* ptr; \
     std::memcpy(&ptr, data_, sizeof(void*)); \
-    ArrayClass aclass = GetArrayClass(flags_); \
-    if (aclass == ArrayClass::StdVector) { \
-      const std::vector<T>* vec = reinterpret_cast<const std::vector<T>*>(ptr); \
-      return total + sizeof(std::vector<T>) + (vec->capacity() * sizeof(T)); \
-    } else if (aclass == ArrayClass::TypedArray) { \
-      const TypedArray<T>* arr = reinterpret_cast<const TypedArray<T>*>(ptr); \
-      return total + sizeof(TypedArray<T>) + (arr->size() * sizeof(T)); \
-    } \
+    const std::vector<T>* vec = reinterpret_cast<const std::vector<T>*>(ptr); \
+    return total + sizeof(std::vector<T>) + (vec->capacity() * sizeof(T)); \
+  }
+
+#define ESTIMATE_ARRAY_SIZE_TYPED(T) \
+  if (type_id_ == (TypeTraits<T>::type_id() | TYPE_ID_STL_ARRAY_BIT | TYPE_ID_TYPED_ARRAY_BIT)) { \
+    void* ptr; \
+    std::memcpy(&ptr, data_, sizeof(void*)); \
+    const TypedArray<T>* arr = reinterpret_cast<const TypedArray<T>*>(ptr); \
+    return total + sizeof(TypedArray<T>) + (arr->size() * sizeof(T)); \
   }
 
   DISPATCH_SCALAR_TYPE(ESTIMATE_SCALAR_SIZE)
-  DISPATCH_SCALAR_TYPE(ESTIMATE_ARRAY_SIZE)
+  DISPATCH_SCALAR_TYPE(ESTIMATE_ARRAY_SIZE_VECTOR)
+  DISPATCH_SCALAR_TYPE(ESTIMATE_ARRAY_SIZE_TYPED)
 
 #undef ESTIMATE_SCALAR_SIZE
-#undef ESTIMATE_ARRAY_SIZE
+#undef ESTIMATE_ARRAY_SIZE_VECTOR
+#undef ESTIMATE_ARRAY_SIZE_TYPED
 
   // String types need special handling
   void* ptr;
@@ -1697,7 +1886,7 @@ size_t Value::estimate_memory_usage() const {
 #undef DISPATCH_SCALAR_TYPE
 #undef DISPATCH_STRING_TYPE
 
-#endif // TUSDZ_NEW_VALUE_TYPE
+#endif // TUSDZ_NEW_32BYTE_VALUE || TUSDZ_NEW_VALUE_TYPE
 
 // Matrix comparison operators
 bool operator==(const matrix2f &a, const matrix2f &b) {

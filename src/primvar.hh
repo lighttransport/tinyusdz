@@ -275,7 +275,7 @@ struct PrimVar {
     //TUSDZ_LOG_I("set_value move");
 
     // With NEW Value implementation, we can use templated move constructor
-#ifdef TUSDZ_NEW_VALUE_TYPE
+#if defined(TUSDZ_NEW_32BYTE_VALUE) || defined(TUSDZ_NEW_VALUE_TYPE)
     _value = value::Value(std::move(v));
 #else
     // OLD implementation: linb::any does not provide templated move constructor.

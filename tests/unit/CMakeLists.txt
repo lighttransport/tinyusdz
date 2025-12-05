@@ -50,4 +50,14 @@ if (TINYUSDZ_WITH_PXR_COMPAT_API)
   target_compile_definitions(${TEST_TARGET_NAME} PRIVATE "PXR_STATIC")
 endif ()
 
+# Propagate Value type implementation choice to tests (must match library for ODR compliance)
+if (TUSDZ_NEW_VALUE_TYPE)
+  message(DEPRECATION "TUSDZ_NEW_VALUE_TYPE is deprecated and broken. Please use TUSDZ_NEW_32BYTE_VALUE instead.")
+  target_compile_definitions(${TEST_TARGET_NAME} PRIVATE "TUSDZ_NEW_VALUE_TYPE")
+endif ()
+
+if (TUSDZ_NEW_32BYTE_VALUE)
+  target_compile_definitions(${TEST_TARGET_NAME} PRIVATE "TUSDZ_NEW_32BYTE_VALUE")
+endif ()
+
 

@@ -108,8 +108,12 @@ class NewValue {
 
   //
   // Constructor from concrete type T (copy)
+  // SFINAE: Disabled when T is NewValue to avoid shadowing copy constructor
   //
-  template <typename T>
+  template <typename T,
+            typename std::enable_if<
+              !std::is_same<typename std::decay<T>::type, NewValue>::value,
+              int>::type = 0>
   NewValue(const T& value) : type_id_(TypeTraits<T>::type_id()), flags_(0) {
     std::memset(padding_, 0, sizeof(padding_));
 
@@ -122,8 +126,12 @@ class NewValue {
   }
 
   // Constructor from concrete type T (move)
+  // SFINAE: Disabled when T is NewValue to avoid shadowing move constructor
   //
-  template <typename T>
+  template <typename T,
+            typename std::enable_if<
+              !std::is_same<typename std::decay<T>::type, NewValue>::value,
+              int>::type = 0>
   NewValue(T&& value) : type_id_(TypeTraits<typename std::remove_reference<T>::type>::type_id()), flags_(0) {
     using DecayedType = typename std::remove_reference<T>::type;
     std::memset(padding_, 0, sizeof(padding_));

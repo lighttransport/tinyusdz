@@ -62,11 +62,11 @@
 #include "common-macros.inc"
 
 // forward decl
-#ifndef TUSDZ_NEW_VALUE_TYPE
+#if !defined(TUSDZ_NEW_32BYTE_VALUE) && !defined(TUSDZ_NEW_VALUE_TYPE)
 namespace linb {
 class any;
 };
-#endif  // TUSDZ_NEW_VALUE_TYPE
+#endif  // !TUSDZ_NEW_32BYTE_VALUE && !TUSDZ_NEW_VALUE_TYPE
 
 namespace tinyusdz {
 
@@ -1618,7 +1618,7 @@ using double4 = std::array<double, 4>;
 // struct any_value;
 // using dict = std::map<std::string, any_value>;
 
-#ifndef TUSDZ_NEW_VALUE_TYPE
+#if !defined(TUSDZ_NEW_32BYTE_VALUE) && !defined(TUSDZ_NEW_VALUE_TYPE)
 // OLD implementation: dict uses linb::any for type-erasure
 using dict = std::map<std::string, linb::any>;
 #else
@@ -1888,7 +1888,10 @@ std::string GetUnderlyingTypeName(uint32_t tyid);
 nonstd::optional<uint32_t> TryGetUnderlyingTypeId(const std::string &tyname);
 uint32_t GetUnderlyingTypeId(const std::string &tyname);
 
-// TODO: uint32_t GetUnderlyingTypeId(const uint32_t tyid)
+// Get underlying type id from type id (e.g., TYPE_ID_POINT3F -> TYPE_ID_FLOAT3)
+// For non-Role types, returns the original type id.
+nonstd::optional<uint32_t> TryGetUnderlyingTypeId(uint32_t tyid);
+uint32_t GetUnderlyingTypeId(uint32_t tyid);
 
 /// @brief Check if given typeName string is a role-type(e.g. "vector3f")
 /// @param[in] tyname typeName string
@@ -1900,13 +1903,33 @@ bool IsRoleType(const std::string &tyname);
 /// @return true if a type is role-type.
 bool IsRoleType(const uint32_t tyid);
 
+#if defined(TUSDZ_NEW_32BYTE_VALUE) || defined(TUSDZ_NEW_VALUE_TYPE)
+///
+/// Helper functions for MODEL types (Prim types like Xform, GeomMesh, etc.)
+/// These are defined in prim-types.cc which has access to all MODEL type definitions.
+///
+
+/// @brief Destroy (delete) a heap-allocated MODEL type value
+/// @param[in] type_id The type ID of the MODEL type
+/// @param[in] ptr Pointer to the heap-allocated object
+/// @return true if the type was handled, false if unknown
+bool DestroyModelValue(uint32_t type_id, void* ptr);
+
+/// @brief Deep copy a MODEL type value
+/// @param[in] type_id The type ID of the MODEL type
+/// @param[out] dst_ptr Will be set to pointer to newly allocated copy
+/// @param[in] src_ptr Pointer to source object
+/// @return true if the type was handled, false if unknown
+bool CopyModelValue(uint32_t type_id, void** dst_ptr, const void* src_ptr);
+#endif // TUSDZ_NEW_32BYTE_VALUE || TUSDZ_NEW_VALUE_TYPE
+
 }  // namespace value
 }  // namespace tinyusdz
 
-#ifndef TUSDZ_NEW_VALUE_TYPE
-// linb::any implementation - used only in OLD Value class
+// linb::any implementation - used only in OLD Value class (not for 32-byte implementations)
+#if !defined(TUSDZ_NEW_32BYTE_VALUE) && !defined(TUSDZ_NEW_VALUE_TYPE)
 #include "tiny-any.inc"
-#endif  // TUSDZ_NEW_VALUE_TYPE
+#endif  // !TUSDZ_NEW_32BYTE_VALUE && !TUSDZ_NEW_VALUE_TYPE
 
 namespace tinyusdz {
 namespace value {
@@ -1916,8 +1939,8 @@ namespace value {
 /// TODO: Type-check when casting with underlying_type(Need to modify linb::any
 /// class)
 ///
-#ifndef TUSDZ_NEW_VALUE_TYPE
-// Original implementation using linb::any
+#if !defined(TUSDZ_NEW_32BYTE_VALUE) && !defined(TUSDZ_NEW_VALUE_TYPE)
+// Original implementation using linb::any (24 bytes)
 class Value {
  public:
   Value() {
@@ -2318,7 +2341,7 @@ class Value {
           if (auto* tarr = as<TypedArray<ElementType>>(false)) { \
             return TypedArrayView<const T>(reinterpret_cast<const T*>(tarr->data()), tarr->size()); \
           } \
-        }
+        } (void)0
 
       switch (target_underlying_id) {
         case TYPE_ID_FLOAT: {
@@ -2400,7 +2423,7 @@ class Value {
           if (auto* tarr = as<TypedArray<ElementType>>(false)) { \
             return TypedArrayView<T>(reinterpret_cast<T*>(tarr->data()), tarr->size()); \
           } \
-        }
+        } (void)0
 
       switch (target_underlying_id) {
         case TYPE_ID_FLOAT: {
@@ -2452,11 +2475,10 @@ class Value {
   }
 
 };
-#elif defined(TUSDZ_NEW_VALUE_TYPE)
+#else  // TUSDZ_NEW_32BYTE_VALUE or TUSDZ_NEW_VALUE_TYPE
 //
 // New optimized Value implementation (32 bytes, inspired by crate::ValueRep)
-// Enabled with TUSDZ_NEW_VALUE_TYPE preprocessor flag
-// WARNING: This implementation is DEPRECATED and BROKEN - use TUSDZ_NEW_32BYTE_VALUE instead
+// Enabled with TUSDZ_NEW_32BYTE_VALUE or TUSDZ_NEW_VALUE_TYPE preprocessor flags
 //
 // Layout (32 bytes total):
 // - 24 bytes: data_ (stores pointer or inlined value if sizeof(T) <= 24)
@@ -2552,8 +2574,12 @@ class Value {
 
   //
   // Constructor from concrete type T (copy)
+  // SFINAE: Disabled when T is Value to avoid shadowing copy constructor
   //
-  template <typename T>
+  template <typename T,
+            typename std::enable_if<
+              !std::is_same<typename std::decay<T>::type, Value>::value,
+              int>::type = 0>
   Value(const T& value) : type_id_(TypeTraits<T>::type_id()), flags_(0) {
     // Prohibit C-style arrays at compile time - must use std::vector or TypedArray
     static_assert(!std::is_array<T>::value,
@@ -2570,14 +2596,18 @@ class Value {
   }
 
   // Constructor from concrete type T (move)
+  // SFINAE: Disabled when T is Value to avoid shadowing move constructor
   //
-  template <typename T>
-  Value(T&& value) : type_id_(TypeTraits<typename std::remove_reference<T>::type>::type_id()), flags_(0) {
+  template <typename T,
+            typename std::enable_if<
+              !std::is_same<typename std::decay<T>::type, Value>::value,
+              int>::type = 0>
+  Value(T&& value) : type_id_(TypeTraits<typename std::decay<T>::type>::type_id()), flags_(0) {
     // Prohibit C-style arrays at compile time - must use std::vector or TypedArray
-    static_assert(!std::is_array<typename std::remove_reference<T>::type>::value,
+    static_assert(!std::is_array<typename std::decay<T>::type>::value,
       "C-style arrays are not allowed. Use std::vector<T> or TypedArray<T> instead.");
 
-    using DecayedType = typename std::remove_reference<T>::type;
+    using DecayedType = typename std::decay<T>::type;
     std::memset(padding_, 0, sizeof(padding_));
 
     // Determine if this is an array type
@@ -2610,12 +2640,14 @@ class Value {
   //
   uint32_t type_id() const noexcept { return type_id_; }
 
-  uint32_t underlying_type_id() const noexcept {
+  uint32_t underlying_type_id() const {
     if (is_array()) {
-      return type_id_ & (~TYPE_ID_STL_ARRAY_BIT);
+      // For arrays, strip array bits and get underlying scalar type
+      uint32_t scalar_type_id = type_id_ & (~TYPE_ID_ARRAY_BIT_MASK);
+      return GetUnderlyingTypeId(scalar_type_id);
     }
-    // TODO: Handle role types - map to underlying type
-    return type_id_;
+    // For scalars, map role types (like color3f) to underlying type (like float3)
+    return GetUnderlyingTypeId(type_id_);
   }
 
   const std::string type_name() const {
@@ -2813,7 +2845,8 @@ class Value {
 
     // Handle array types
     if (TypeTraits<T>::is_array() && is_array()) {
-      uint32_t target_underlying = TypeTraits<T>::underlying_type_id() & (~TYPE_ID_STL_ARRAY_BIT);
+      // Strip all array bits to get scalar underlying type
+      uint32_t target_underlying = TypeTraits<T>::underlying_type_id() & (~TYPE_ID_ARRAY_BIT_MASK);
       uint32_t stored_underlying = underlying_type_id();
       return target_underlying == stored_underlying;
     }
@@ -2986,17 +3019,7 @@ class Value {
 
 static_assert(sizeof(Value) == 32, "Value must be exactly 32 bytes");
 
-#elif defined(TUSDZ_NEW_32BYTE_VALUE)
-//
-// New handler-based 32-byte Value implementation
-// This is the recommended safe implementation
-//
-#include "value-types-handler.hh"
-
-// Use Value32 as Value
-using Value = Value32;
-
-#endif // TUSDZ_NEW_VALUE_TYPE / TUSDZ_NEW_32BYTE_VALUE
+#endif // !TUSDZ_NEW_32BYTE_VALUE && !TUSDZ_NEW_VALUE_TYPE
 
 ///
 /// ValueView - A compact view to typed data

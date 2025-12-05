@@ -2,6 +2,8 @@
 #define NOMINMAX
 #endif
 
+#include <iostream>
+
 #define TEST_NO_MAIN
 #include "acutest.h"
 
@@ -18,12 +20,15 @@ void value_types_test(void) {
   // sizeof(Value) test - ensure Value class size stays compact
   //
   {
-#ifdef TUSDZ_NEW_VALUE_TYPE
-    // NewValue should be exactly 32 bytes (24 data + 4 type_id + 1 flags + 3 padding)
-    TEST_CHECK(sizeof(value::NewValue) == 32);
+#if defined(TUSDZ_NEW_32BYTE_VALUE) || defined(TUSDZ_NEW_VALUE_TYPE)
+    // With TUSDZ_NEW_32BYTE_VALUE or TUSDZ_NEW_VALUE_TYPE, Value should be exactly 32 bytes
+    // Layout: 24 bytes data + 4 bytes type_id + 1 byte flags + 3 bytes padding
+    TEST_CHECK(sizeof(value::Value) == 32);
+    std::cout << "sizeof(Value) = " << sizeof(value::Value) << " bytes (32-byte implementation)" << std::endl;
 #else
-    // Current Value uses any_value which is 24 bytes (3 x 8-byte fields)
+    // Default: Value uses any_value which is 24 bytes (3 x 8-byte fields)
     TEST_CHECK(sizeof(value::Value) == 24);
+    std::cout << "sizeof(Value) = " << sizeof(value::Value) << " bytes (24-byte linb::any)" << std::endl;
 #endif
   }
 

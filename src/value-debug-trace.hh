@@ -7,7 +7,7 @@
 #include <iomanip>
 #include <cstring>
 
-#ifdef TUSDZ_NEW_VALUE_TYPE
+#if defined(TUSDZ_NEW_32BYTE_VALUE) || defined(TUSDZ_NEW_VALUE_TYPE)
 
 namespace tinyusdz {
 namespace value {
@@ -50,11 +50,11 @@ inline void DebugTracePrimVar(const char* location, const char* context, const p
 #define DEBUG_TRACE_PRIMVAR(location, context, pv) \
   tinyusdz::value::DebugTracePrimVar(location, context, pv)
 
-#else // TUSDZ_NEW_VALUE_TYPE
+#else // !TUSDZ_NEW_32BYTE_VALUE && !TUSDZ_NEW_VALUE_TYPE
 
 // For OLD implementation, disable tracing
 #define DEBUG_TRACE_VALUE(location, context, v) do {} while(0)
 #define DEBUG_TRACE_VALUE_PTR(location, context, v) do {} while(0)
 #define DEBUG_TRACE_PRIMVAR(location, context, pv) do {} while(0)
 
-#endif // TUSDZ_NEW_VALUE_TYPE
+#endif // TUSDZ_NEW_32BYTE_VALUE || TUSDZ_NEW_VALUE_TYPE

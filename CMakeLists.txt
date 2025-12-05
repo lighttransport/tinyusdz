@@ -1293,13 +1293,15 @@ foreach(TINYUSDZ_LIB_TARGET ${TINYUSDZ_LIBS})
   endif()
 
   if(TUSDZ_NEW_VALUE_TYPE)
+    message(DEPRECATION "TUSDZ_NEW_VALUE_TYPE is deprecated and broken. Please use TUSDZ_NEW_32BYTE_VALUE instead (enabled by default).")
     target_compile_definitions(${TINYUSDZ_LIB_TARGET}
-                               PRIVATE "TUSDZ_NEW_VALUE_TYPE")
+                               PUBLIC "TUSDZ_NEW_VALUE_TYPE")
   endif()
 
+  # MUST be PUBLIC so consumers of the library use the same Value class ABI
   if(TUSDZ_NEW_32BYTE_VALUE)
     target_compile_definitions(${TINYUSDZ_LIB_TARGET}
-                               PRIVATE "TUSDZ_NEW_32BYTE_VALUE")
+                               PUBLIC "TUSDZ_NEW_32BYTE_VALUE")
   endif()
 
   # default = enable module, so invert definition
