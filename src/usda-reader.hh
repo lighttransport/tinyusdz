@@ -69,6 +69,14 @@ class USDAReader {
   void set_reader_config(const USDAReaderConfig &config);
 
   ///
+  /// Set progress callback for monitoring parsing progress.
+  ///
+  /// @param[in] callback Function to call during parsing to report progress
+  /// @param[in] userptr User-provided pointer for custom data
+  ///
+  void SetProgressCallback(std::function<bool(float progress, void *userptr)> callback, void *userptr = nullptr);
+
+  ///
   /// Get reader option
   ///
   const USDAReaderConfig get_reader_config() const; // NOTE: Not returning reference to avoid static memory allocation.
