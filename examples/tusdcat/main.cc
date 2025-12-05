@@ -13,6 +13,7 @@
 #include "str-util.hh"
 #include "io-util.hh"
 #include "usd-to-json.hh"
+#include "usd-dump.hh"
 #include "logger.hh"
 
 #include "tydra/scene-access.hh"
@@ -140,6 +141,20 @@ void print_help() {
   std::cout << "  --loglevel INT      Set logging level:\n";
   std::cout << "                        0=Debug, 1=Warn, 2=Info,\n";
   std::cout << "                        3=Error, 4=Critical, 5=Off\n";
+  std::cout << "\n";
+  std::cout << "Inspect options (YAML-like tree output):\n";
+  std::cout << "  --inspect           Inspect Layer structure (YAML-like output)\n";
+  std::cout << "  --inspect-json      Inspect Layer structure (JSON output)\n";
+  std::cout << "  --value=MODE        Value printing mode:\n";
+  std::cout << "                        none = schema only, no values\n";
+  std::cout << "                        snip = first N items (default)\n";
+  std::cout << "                        full = all values\n";
+  std::cout << "  --snip=N            Show first N items in snip mode (default: 8)\n";
+  std::cout << "  --path=PATTERN      Filter prims by path glob pattern\n";
+  std::cout << "                      (* = any chars, ** = any path segments)\n";
+  std::cout << "  --attr=PATTERN      Filter attributes by name glob pattern\n";
+  std::cout << "  --time=T            Query TimeSamples at time T\n";
+  std::cout << "  --time=S:E          Query TimeSamples in range [S, E]\n";
 }
 
 int main(int argc, char **argv) {
@@ -162,6 +177,10 @@ int main(int argc, char **argv) {
   bool json_output{false};
   bool memstat{false};
   bool show_progress{false};
+
+  // Inspect options
+  bool do_inspect{false};
+  tinyusdz::InspectOptions inspect_opts;
 
   constexpr int kMaxIteration = 128;
 
@@ -189,6 +208,69 @@ int main(int argc, char **argv) {
       memstat = true;
     } else if (arg.compare("--progress") == 0) {
       show_progress = true;
+    } else if (arg.compare("--inspect") == 0) {
+      do_inspect = true;
+      inspect_opts.format = tinyusdz::InspectOutputFormat::Yaml;
+    } else if (arg.compare("--inspect-json") == 0) {
+      do_inspect = true;
+      inspect_opts.format = tinyusdz::InspectOutputFormat::Json;
+    } else if (tinyusdz::startsWith(arg, "--value=")) {
+      std::string value_str = tinyusdz::removePrefix(arg, "--value=");
+      if (value_str == "none") {
+        inspect_opts.value_mode = tinyusdz::InspectValueMode::NoValue;
+      } else if (value_str == "snip") {
+        inspect_opts.value_mode = tinyusdz::InspectValueMode::Snip;
+      } else if (value_str == "full") {
+        inspect_opts.value_mode = tinyusdz::InspectValueMode::Full;
+      } else {
+        std::cerr << "Invalid value mode: " << value_str
+                  << ". Use: none, snip, or full\n";
+        return EXIT_FAILURE;
+      }
+    } else if (tinyusdz::startsWith(arg, "--snip=")) {
+      std::string snip_str = tinyusdz::removePrefix(arg, "--snip=");
+      try {
+        int snip_val = std::stoi(snip_str);
+        if (snip_val < 1) {
+          std::cerr << "Invalid snip value: " << snip_val
+                    << ". Must be >= 1\n";
+          return EXIT_FAILURE;
+        }
+        inspect_opts.snip_count = static_cast<size_t>(snip_val);
+      } catch (...) {
+        std::cerr << "Invalid snip value: " << snip_str << "\n";
+        return EXIT_FAILURE;
+      }
+    } else if (tinyusdz::startsWith(arg, "--path=")) {
+      inspect_opts.prim_path_pattern = tinyusdz::removePrefix(arg, "--path=");
+    } else if (tinyusdz::startsWith(arg, "--attr=")) {
+      inspect_opts.attr_pattern = tinyusdz::removePrefix(arg, "--attr=");
+    } else if (tinyusdz::startsWith(arg, "--time=")) {
+      std::string time_str = tinyusdz::removePrefix(arg, "--time=");
+      inspect_opts.has_time_query = true;
+      // Check for range format "start:end"
+      size_t colon_pos = time_str.find(':');
+      if (colon_pos != std::string::npos) {
+        std::string start_str = time_str.substr(0, colon_pos);
+        std::string end_str = time_str.substr(colon_pos + 1);
+        try {
+          inspect_opts.time_start = std::stod(start_str);
+          inspect_opts.time_end = std::stod(end_str);
+        } catch (...) {
+          std::cerr << "Invalid time range: " << time_str << "\n";
+          return EXIT_FAILURE;
+        }
+      } else {
+        // Single time value
+        try {
+          double t = std::stod(time_str);
+          inspect_opts.time_start = t;
+          inspect_opts.time_end = t;
+        } catch (...) {
+          std::cerr << "Invalid time value: " << time_str << "\n";
+          return EXIT_FAILURE;
+        }
+      }
     } else if (arg.compare("--loglevel") == 0) {
       if (i + 1 >= argc) {
         std::cerr << "--loglevel requires an integer argument\n";
@@ -261,6 +343,31 @@ int main(int argc, char **argv) {
   std::string ext = str_tolower(GetFileExtension(filepath));
   std::string base_dir;
   base_dir = tinyusdz::io::GetBaseDir(filepath);
+
+  // Handle --inspect mode
+  if (do_inspect) {
+    // Load as Layer for inspection
+    tinyusdz::Layer layer;
+    bool ret = tinyusdz::LoadLayerFromFile(filepath, &layer, &warn, &err);
+
+    if (!warn.empty()) {
+      std::cerr << "WARN: " << warn << "\n";
+    }
+
+    if (!ret) {
+      std::cerr << "Failed to load USD file as Layer: " << filepath << "\n";
+      if (!err.empty()) {
+        std::cerr << err << "\n";
+      }
+      return EXIT_FAILURE;
+    }
+
+    // Output inspection result
+    std::string output = tinyusdz::InspectLayer(layer, inspect_opts);
+    std::cout << output;
+
+    return EXIT_SUCCESS;
+  }
 
   if (has_flatten) {
 
