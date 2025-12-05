@@ -15,6 +15,19 @@ using namespace tinyusdz;
 void value_types_test(void) {
 
   //
+  // sizeof(Value) test - ensure Value class size stays compact
+  //
+  {
+#ifdef TUSDZ_NEW_VALUE_TYPE
+    // NewValue should be exactly 32 bytes (24 data + 4 type_id + 1 flags + 3 padding)
+    TEST_CHECK(sizeof(value::NewValue) == 32);
+#else
+    // Current Value uses any_value which is 24 bytes (3 x 8-byte fields)
+    TEST_CHECK(sizeof(value::Value) == 24);
+#endif
+  }
+
+  //
   // Basic token tests
   //
   {
