@@ -334,6 +334,10 @@ class USDAReader::Impl {
     return _config;
   }
 
+  void SetProgressCallback(std::function<bool(float progress, void *userptr)> callback, void *userptr) {
+    _parser.SetProgressCallback(callback, userptr);
+  }
+
   std::string GetCurrentPath() {
     if (_path_stack.empty()) {
       return "/";
@@ -1783,6 +1787,10 @@ const USDAReaderConfig USDAReader::get_reader_config() const {
   return _impl->get_reader_config();
 }
 
+void USDAReader::SetProgressCallback(std::function<bool(float progress, void *userptr)> callback, void *userptr) {
+  _impl->SetProgressCallback(callback, userptr);
+}
+
 }  // namespace usda
 }  // namespace tinyusdz
 
@@ -1833,6 +1841,11 @@ void USDAReader::set_reader_config(const USDAReaderConfig &config) {
 
 USDAReaderConfig USDAReader::get_reader_config() const {
   return USDAReaderConfig();
+}
+
+void USDAReader::SetProgressCallback(std::function<bool(float progress, void *userptr)> callback, void *userptr) {
+  (void)callback;
+  (void)userptr;
 }
 
 }  // namespace usda
