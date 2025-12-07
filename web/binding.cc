@@ -3251,6 +3251,9 @@ class TinyUSDZLoaderNative {
     node.set("displayName", rnode.display_name);
     node.set("absPath", rnode.abs_path);
 
+    std::string nodeKindStr = to_string(rnode.kind);
+    node.set("nodeKind", nodeKindStr);
+
     std::string nodeTypeStr = to_string(rnode.nodeType);
     node.set("nodeType", nodeTypeStr);
 
