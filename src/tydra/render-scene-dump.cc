@@ -154,6 +154,8 @@ std::string DumpNode(const Node &node, uint32_t indent) {
 
   ss << pprint::Indent(indent) << "node {\n";
 
+  ss << pprint::Indent(indent + 1) << "kind " << quote(to_string(node.kind))
+     << "\n";
   ss << pprint::Indent(indent + 1) << "type " << quote(to_string(node.nodeType))
      << "\n";
 
