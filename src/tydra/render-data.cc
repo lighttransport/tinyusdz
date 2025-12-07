@@ -8623,6 +8623,28 @@ bool RenderSceneConverter::ExtractXformOpAnimation(
   return !anim_out->channels.empty();
 }
 
+// Helper to get NodeKind from NodeType
+static NodeKind GetNodeKindFromType(NodeType nodeType) {
+  switch (nodeType) {
+    case NodeType::Xform:
+      return NodeKind::Group;
+    case NodeType::Mesh:
+      return NodeKind::Geom;
+    case NodeType::Camera:
+      return NodeKind::Camera;
+    case NodeType::Skeleton:
+      return NodeKind::Skeleton;
+    case NodeType::PointLight:
+    case NodeType::DirectionalLight:
+    case NodeType::EnvmapLight:
+    case NodeType::RectLight:
+    case NodeType::DiskLight:
+    case NodeType::CylinderLight:
+    case NodeType::GeometryLight:
+      return NodeKind::Light;
+  }
+  return NodeKind::Group;  // Default
+}
 
 bool RenderSceneConverter::BuildNodeHierarchyImpl(
     const RenderSceneConverterEnv &env, const std::string &parentPrimPath,
@@ -8739,25 +8761,25 @@ bool RenderSceneConverter::BuildNodeHierarchyImpl(
       } else if (prim->type_id() == value::TYPE_ID_LUX_RECT) {
         const RectLight *rectLight = prim->as<RectLight>();
         if (rectLight && ConvertRectLight(env, lightPath, *rectLight, &rlight)) {
-          rnode.nodeType = NodeType::Xform;  // No specific node type yet
+          rnode.nodeType = NodeType::RectLight;
           light_converted = true;
         }
       } else if (prim->type_id() == value::TYPE_ID_LUX_DISK) {
         const DiskLight *diskLight = prim->as<DiskLight>();
         if (diskLight && ConvertDiskLight(env, lightPath, *diskLight, &rlight)) {
-          rnode.nodeType = NodeType::Xform;  // No specific node type yet
+          rnode.nodeType = NodeType::DiskLight;
           light_converted = true;
         }
       } else if (prim->type_id() == value::TYPE_ID_LUX_CYLINDER) {
         const CylinderLight *cylinderLight = prim->as<CylinderLight>();
         if (cylinderLight && ConvertCylinderLight(env, lightPath, *cylinderLight, &rlight)) {
-          rnode.nodeType = NodeType::Xform;  // No specific node type yet
+          rnode.nodeType = NodeType::CylinderLight;
           light_converted = true;
         }
       } else if (prim->type_id() == value::TYPE_ID_LUX_GEOMETRY) {
         const GeometryLight *geometryLight = prim->as<GeometryLight>();
         if (geometryLight && ConvertGeometryLight(env, lightPath, *geometryLight, &rlight)) {
-          rnode.nodeType = NodeType::Xform;  // No specific node type yet
+          rnode.nodeType = NodeType::GeometryLight;
           light_converted = true;
         }
       } else {
@@ -8785,6 +8807,9 @@ bool RenderSceneConverter::BuildNodeHierarchyImpl(
       rnode.has_resetXform = node.has_resetXformStack();
       rnode.nodeType = NodeType::Xform;
     }
+
+    // Set kind based on nodeType
+    rnode.kind = GetNodeKindFromType(rnode.nodeType);
   }
 
   for (const auto &child : node.children) {
@@ -9919,6 +9944,8 @@ std::string DumpNode(const Node &node, uint32_t indent) {
 
   ss << pprint::Indent(indent) << "node {\n";
 
+  ss << pprint::Indent(indent + 1) << "kind " << quote(to_string(node.kind))
+     << "\n";
   ss << pprint::Indent(indent + 1) << "type " << quote(to_string(node.nodeType))
      << "\n";
 

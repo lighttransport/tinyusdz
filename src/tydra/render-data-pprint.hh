@@ -6,6 +6,7 @@ namespace tinyusdz {
 namespace tydra {
 
 // forward decl.
+enum class NodeKind;
 enum class NodeType;
 enum class ComponentType;
 enum class VertexAttributeFormat;
@@ -20,6 +21,7 @@ struct UVTexture;
 
 // to_string functions for various enum types
 std::string to_string(VertexVariability variability);
+std::string to_string(NodeKind kind);
 std::string to_string(NodeType ntype);
 std::string to_string(ComponentType ty);
 std::string to_string(VertexAttributeFormat f);
