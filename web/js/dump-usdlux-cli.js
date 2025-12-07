@@ -23,7 +23,8 @@ function parseArgs() {
     showSpectral: false, // Show spectral emission data
     showAll: false, // Show all optional data
     serialized: false, // Use serialized format from getLightWithFormat
-    colorMode: 'rgb' // 'rgb', 'hex', or 'kelvin'
+    colorMode: 'rgb', // 'rgb', 'hex', or 'kelvin'
+    showNodes: false // Show node hierarchy with kind info
   };
 
   for (let i = 0; i < args.length; i++) {
@@ -60,6 +61,9 @@ function parseArgs() {
       options.showMaterials = true;
       options.showTransform = true;
       options.showSpectral = true;
+      options.showNodes = true;
+    } else if (arg === '--show-nodes' || arg === '-n') {
+      options.showNodes = true;
     } else if (arg === '--serialized') {
       options.serialized = true;
     } else if (arg === '--color-mode') {
@@ -102,9 +106,10 @@ Options:
   -l, --light <id>        Dump only specific light by ID (default: all)
   --no-pretty             Disable pretty-printing for JSON/YAML
   -v, --verbose           Enable verbose logging
-  -a, --all               Show all optional data (meshes, materials, transform, spectral)
+  -a, --all               Show all optional data (meshes, materials, transform, spectral, nodes)
   -t, --show-transform    Include transform matrices in output
   -s, --show-spectral     Include spectral emission data (LTE SpectralAPI)
+  -n, --show-nodes        Show node hierarchy with kind/type info
   --show-meshes           Include mesh geometry data for mesh lights
   --show-materials        Include material data for mesh lights
   --serialized            Use serialized format from WASM (required for XML)
@@ -143,6 +148,12 @@ Examples:
 
   # Dump mesh lights with geometry and material info
   node dump-usdlux-cli.js tests/feat/lux/06_mesh_lights.usda --show-meshes --show-materials
+
+  # Dump with node hierarchy (shows nodeKind for each node)
+  node dump-usdlux-cli.js tests/feat/lux/04_complete_scene.usda -f summary --show-nodes
+
+  # Dump JSON with node hierarchy including nodeKind
+  node dump-usdlux-cli.js tests/feat/lux/04_complete_scene.usda -f json --show-nodes
 `);
 }
 
@@ -232,6 +243,53 @@ function formatSpectralEmission(spectral, indent = '│   ') {
     if (spectral.samples.length > maxSamples) {
       output += `${indent}  ... and ${spectral.samples.length - maxSamples} more\n`;
     }
+  }
+
+  return output;
+}
+
+// Format a single node recursively
+function formatNodeRec(node, indent = '  ', depth = 0) {
+  let output = '';
+  const prefix = indent.repeat(depth);
+  const kindStr = node.nodeKind ? `[${node.nodeKind}]` : '';
+  const typeStr = node.nodeType || 'unknown';
+  const idStr = node.contentId >= 0 ? `#${node.contentId}` : '';
+
+  output += `${prefix}├── ${node.primName} ${kindStr} (${typeStr}) ${idStr}\n`;
+  output += `${prefix}│   Path: ${node.absPath}\n`;
+
+  if (node.displayName) {
+    output += `${prefix}│   Display: ${node.displayName}\n`;
+  }
+
+  if (node.children && node.children.length > 0) {
+    for (const child of node.children) {
+      output += formatNodeRec(child, indent, depth + 1);
+    }
+  }
+
+  return output;
+}
+
+// Format node hierarchy for summary output
+function formatNodeHierarchy(usd) {
+  let output = '';
+  output += `\n  ╔════════════════════════════════════════════════════════════════╗\n`;
+  output += `  ║              Node Hierarchy (with Kind)                        ║\n`;
+  output += `  ╚════════════════════════════════════════════════════════════════╝\n\n`;
+
+  const numRootNodes = usd.numRootNodes();
+  output += `  Root Nodes: ${numRootNodes}\n`;
+  output += `  Default Root: ${usd.getDefaultRootNodeId()}\n\n`;
+
+  // Get and format the default root node
+  const rootNode = usd.getDefaultRootNode();
+  if (rootNode && rootNode.primName) {
+    output += `  Node Tree:\n`;
+    output += formatNodeRec(rootNode, '  ', 1);
+  } else {
+    output += `  (No nodes found)\n`;
   }
 
   return output;
@@ -633,11 +691,31 @@ async function dumpLights(options) {
   let output;
 
   if (options.format === 'json') {
+    let jsonOutput = { lights: results };
+
+    // Add node hierarchy if requested
+    if (options.showNodes) {
+      const rootNode = usd.getDefaultRootNode();
+      if (rootNode && rootNode.primName) {
+        jsonOutput.nodeHierarchy = rootNode;
+      }
+    }
+
     output = options.pretty
-      ? JSON.stringify(results, null, 2)
-      : JSON.stringify(results);
+      ? JSON.stringify(jsonOutput, null, 2)
+      : JSON.stringify(jsonOutput);
   } else if (options.format === 'yaml') {
-    output = YAML.stringify(results, {
+    let yamlOutput = { lights: results };
+
+    // Add node hierarchy if requested
+    if (options.showNodes) {
+      const rootNode = usd.getDefaultRootNode();
+      if (rootNode && rootNode.primName) {
+        yamlOutput.nodeHierarchy = rootNode;
+      }
+    }
+
+    output = YAML.stringify(yamlOutput, {
       indent: 2,
       lineWidth: 0,
       minContentWidth: 0,
@@ -660,6 +738,11 @@ async function dumpLights(options) {
       showSpectral: options.showSpectral || options.showAll,
       colorMode: options.colorMode
     });
+
+    // Append node hierarchy if requested
+    if (options.showNodes) {
+      output += formatNodeHierarchy(usd);
+    }
   }
 
   // Write to file or stdout
