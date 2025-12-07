@@ -100,14 +100,14 @@ std::string to_string(ColorSpace cty) {
   return s;
 }
 
-std::string to_string(NodeKind kind) {
-  switch (kind) {
-    case NodeKind::Group:    return "group";
-    case NodeKind::Geom:     return "geom";
-    case NodeKind::Light:    return "light";
-    case NodeKind::Camera:   return "camera";
-    case NodeKind::Material: return "material";
-    case NodeKind::Skeleton: return "skeleton";
+std::string to_string(NodeCategory category) {
+  switch (category) {
+    case NodeCategory::Group:    return "group";
+    case NodeCategory::Geom:     return "geom";
+    case NodeCategory::Light:    return "light";
+    case NodeCategory::Camera:   return "camera";
+    case NodeCategory::Material: return "material";
+    case NodeCategory::Skeleton: return "skeleton";
   }
   return "???";
 }
