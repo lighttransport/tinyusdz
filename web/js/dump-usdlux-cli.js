@@ -109,7 +109,7 @@ Options:
   -a, --all               Show all optional data (meshes, materials, transform, spectral, nodes)
   -t, --show-transform    Include transform matrices in output
   -s, --show-spectral     Include spectral emission data (LTE SpectralAPI)
-  -n, --show-nodes        Show node hierarchy with kind/type info
+  -n, --show-nodes        Show node hierarchy with category/type info
   --show-meshes           Include mesh geometry data for mesh lights
   --show-materials        Include material data for mesh lights
   --serialized            Use serialized format from WASM (required for XML)
@@ -149,10 +149,10 @@ Examples:
   # Dump mesh lights with geometry and material info
   node dump-usdlux-cli.js tests/feat/lux/06_mesh_lights.usda --show-meshes --show-materials
 
-  # Dump with node hierarchy (shows nodeKind for each node)
+  # Dump with node hierarchy (shows nodeCategory for each node)
   node dump-usdlux-cli.js tests/feat/lux/04_complete_scene.usda -f summary --show-nodes
 
-  # Dump JSON with node hierarchy including nodeKind
+  # Dump JSON with node hierarchy including nodeCategory
   node dump-usdlux-cli.js tests/feat/lux/04_complete_scene.usda -f json --show-nodes
 `);
 }
@@ -252,11 +252,11 @@ function formatSpectralEmission(spectral, indent = '│   ') {
 function formatNodeRec(node, indent = '  ', depth = 0) {
   let output = '';
   const prefix = indent.repeat(depth);
-  const kindStr = node.nodeKind ? `[${node.nodeKind}]` : '';
+  const categoryStr = node.nodeCategory ? `[${node.nodeCategory}]` : '';
   const typeStr = node.nodeType || 'unknown';
   const idStr = node.contentId >= 0 ? `#${node.contentId}` : '';
 
-  output += `${prefix}├── ${node.primName} ${kindStr} (${typeStr}) ${idStr}\n`;
+  output += `${prefix}├── ${node.primName} ${categoryStr} (${typeStr}) ${idStr}\n`;
   output += `${prefix}│   Path: ${node.absPath}\n`;
 
   if (node.displayName) {
@@ -276,7 +276,7 @@ function formatNodeRec(node, indent = '  ', depth = 0) {
 function formatNodeHierarchy(usd) {
   let output = '';
   output += `\n  ╔════════════════════════════════════════════════════════════════╗\n`;
-  output += `  ║              Node Hierarchy (with Kind)                        ║\n`;
+  output += `  ║              Node Hierarchy (with Category)                    ║\n`;
   output += `  ╚════════════════════════════════════════════════════════════════╝\n\n`;
 
   const numRootNodes = usd.numRootNodes();
