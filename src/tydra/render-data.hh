@@ -227,7 +227,7 @@ enum class NodeType {
 };
 
 // High-level categorization of USD Prim types
-enum class NodeKind {
+enum class NodeCategory {
   Group,     // Organizational: Xform, Scope, Model
   Geom,      // Geometry: Mesh, Points, Curves, etc.
   Light,     // Lights: RectLight, DomeLight, SphereLight, etc.
@@ -959,7 +959,7 @@ struct Node {
   std::string abs_path;      // Absolute prim path
   std::string display_name;  // `displayName` prim meta
 
-  NodeKind kind{NodeKind::Group};      // High-level category (Group, Geom, Light, Camera, etc.)
+  NodeCategory category{NodeCategory::Group};  // High-level category (Group, Geom, Light, Camera, etc.)
   NodeType nodeType{NodeType::Xform};  // Specific type within the category
 
   int32_t id{-1};  // Index to node content(e.g. meshes[id] when nodeTypes ==

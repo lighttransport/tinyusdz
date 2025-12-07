@@ -8623,17 +8623,17 @@ bool RenderSceneConverter::ExtractXformOpAnimation(
   return !anim_out->channels.empty();
 }
 
-// Helper to get NodeKind from NodeType
-static NodeKind GetNodeKindFromType(NodeType nodeType) {
+// Helper to get NodeCategory from NodeType
+static NodeCategory GetNodeCategoryFromType(NodeType nodeType) {
   switch (nodeType) {
     case NodeType::Xform:
-      return NodeKind::Group;
+      return NodeCategory::Group;
     case NodeType::Mesh:
-      return NodeKind::Geom;
+      return NodeCategory::Geom;
     case NodeType::Camera:
-      return NodeKind::Camera;
+      return NodeCategory::Camera;
     case NodeType::Skeleton:
-      return NodeKind::Skeleton;
+      return NodeCategory::Skeleton;
     case NodeType::PointLight:
     case NodeType::DirectionalLight:
     case NodeType::EnvmapLight:
@@ -8641,9 +8641,9 @@ static NodeKind GetNodeKindFromType(NodeType nodeType) {
     case NodeType::DiskLight:
     case NodeType::CylinderLight:
     case NodeType::GeometryLight:
-      return NodeKind::Light;
+      return NodeCategory::Light;
   }
-  return NodeKind::Group;  // Default
+  return NodeCategory::Group;  // Default
 }
 
 bool RenderSceneConverter::BuildNodeHierarchyImpl(
@@ -8808,8 +8808,8 @@ bool RenderSceneConverter::BuildNodeHierarchyImpl(
       rnode.nodeType = NodeType::Xform;
     }
 
-    // Set kind based on nodeType
-    rnode.kind = GetNodeKindFromType(rnode.nodeType);
+    // Set category based on nodeType
+    rnode.category = GetNodeCategoryFromType(rnode.nodeType);
   }
 
   for (const auto &child : node.children) {
@@ -9944,7 +9944,7 @@ std::string DumpNode(const Node &node, uint32_t indent) {
 
   ss << pprint::Indent(indent) << "node {\n";
 
-  ss << pprint::Indent(indent + 1) << "kind " << quote(to_string(node.kind))
+  ss << pprint::Indent(indent + 1) << "category " << quote(to_string(node.category))
      << "\n";
   ss << pprint::Indent(indent + 1) << "type " << quote(to_string(node.nodeType))
      << "\n";
