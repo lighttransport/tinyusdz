@@ -217,12 +217,24 @@ enum class NodeType {
   Mesh,  // Polygon mesh
   Camera,
   Skeleton, // SkelHierarchy
-  PointLight,
-  DirectionalLight,
-  EnvmapLight, // DomeLight in USD
-  // TODO(more lights)...
+  PointLight,       // SphereLight in USD
+  DirectionalLight, // DistantLight in USD
+  EnvmapLight,      // DomeLight in USD
+  RectLight,
+  DiskLight,
+  CylinderLight,
+  GeometryLight,
 };
 
+// High-level categorization of USD Prim types
+enum class NodeKind {
+  Group,     // Organizational: Xform, Scope, Model
+  Geom,      // Geometry: Mesh, Points, Curves, etc.
+  Light,     // Lights: RectLight, DomeLight, SphereLight, etc.
+  Camera,    // Camera
+  Material,  // Material, Shader, NodeGraph
+  Skeleton,  // SkelRoot, Skeleton, SkelAnimation
+};
 
 enum class ComponentType {
   UInt8,
@@ -947,7 +959,8 @@ struct Node {
   std::string abs_path;      // Absolute prim path
   std::string display_name;  // `displayName` prim meta
 
-  NodeType nodeType{NodeType::Xform};
+  NodeKind kind{NodeKind::Group};      // High-level category (Group, Geom, Light, Camera, etc.)
+  NodeType nodeType{NodeType::Xform};  // Specific type within the category
 
   int32_t id{-1};  // Index to node content(e.g. meshes[id] when nodeTypes ==
                    // Mesh). -1 = no corresponding content exists for this node.
