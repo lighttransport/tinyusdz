@@ -9072,11 +9072,94 @@ bool RenderSceneConverter::ConvertDomeLight(
     return false;
   }
 
-  // Extract texture file
+  // Extract texture file and load envmap image
   if (light.file.authored() && !light.file.is_blocked()) {
-    value::AssetPath asset;
-    if (light.file.get_value()->get(env.timecode, &asset)) {
-      rlight.textureFile = asset.GetAssetPath();
+    value::AssetPath assetPath;
+    if (light.file.get_value()->get(env.timecode, &assetPath)) {
+      rlight.textureFile = assetPath.GetAssetPath();
+
+      // Load the envmap texture if scene config allows
+      if (env.scene_config.load_texture_assets && !assetPath.GetAssetPath().empty()) {
+        TextureImage texImage;
+        BufferData imageBuffer;
+        imageBuffer.componentType = ComponentType::UInt8;
+
+        std::string warn, err;
+
+        TextureImageLoaderFunction tex_loader_fun =
+            env.material_config.texture_image_loader_function;
+        if (!tex_loader_fun) {
+          tex_loader_fun = DefaultTextureImageLoaderFunction;
+        }
+
+        AssetInfo assetInfo;  // Empty asset info for now
+        bool tex_loaded = tex_loader_fun(
+            assetPath, assetInfo, env.asset_resolver, &texImage,
+            &imageBuffer.data,
+            env.material_config.texture_image_loader_function_userdata,
+            &warn, &err);
+
+        if (warn.size()) {
+          PushWarn(warn);
+        }
+
+        if (tex_loaded) {
+          texImage.asset_identifier = assetPath.GetAssetPath();
+          texImage.decoded = true;
+
+          // HDR images (like EXR) should be treated as linear/Raw colorspace
+          // Most envmaps are HDR and should not have sRGB gamma
+          texImage.usdColorSpace = ColorSpace::Raw;
+          texImage.colorSpace = ColorSpace::Lin_sRGB;
+
+          // Add buffer
+          texImage.buffer_id = int64_t(buffers.size());
+          buffers.emplace_back(imageBuffer);
+
+          // Add image and set envmap_texture_id
+          rlight.envmap_texture_id = int32_t(images.size());
+          images.emplace_back(texImage);
+
+          DCOUT("Loaded envmap texture: " << assetPath.GetAssetPath()
+                << " width=" << texImage.width
+                << " height=" << texImage.height
+                << " channels=" << texImage.channels);
+        } else {
+          if (err.size()) {
+            PushWarn(fmt::format("Failed to load envmap texture: `{}`. reason = {}",
+                                 assetPath.GetAssetPath(), err));
+          }
+        }
+      } else if (!env.scene_config.load_texture_assets) {
+        // Store asset path only without decoding
+        Asset asset;
+        std::string resolvedPath;
+        std::string err;
+        AssetInfo assetInfo;
+
+        if (RawAssetRead(assetPath, assetInfo, env.asset_resolver, &asset,
+                         resolvedPath, nullptr, nullptr, &err)) {
+          TextureImage texImage;
+          BufferData imageBuffer;
+          imageBuffer.componentType = ComponentType::UInt8;
+
+          texImage.asset_identifier = resolvedPath;
+
+          imageBuffer.data.resize(asset.size());
+          memcpy(imageBuffer.data.data(), asset.data(), asset.size());
+
+          texImage.buffer_id = int64_t(buffers.size());
+          buffers.emplace_back(imageBuffer);
+
+          texImage.decoded = false;
+          texImage.usdColorSpace = ColorSpace::Raw;
+
+          rlight.envmap_texture_id = int32_t(images.size());
+          images.emplace_back(texImage);
+
+          DCOUT("Stored envmap asset: " << resolvedPath);
+        }
+      }
     }
   }
 
