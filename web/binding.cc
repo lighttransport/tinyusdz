@@ -2118,6 +2118,68 @@ class TinyUSDZLoaderNative {
     mesh.set("geomBindTransform",
              emscripten::typed_memory_view(16, geom_bind_ptr));
 
+    // Export GeomSubsets (per-face materials) as optimized submeshes
+    // Pre-compute contiguous face ranges in C++ for optimal performance
+    if (!rmesh.material_subsetMap.empty()) {
+      // Step 1: Group face indices by material
+      std::map<int, std::vector<int>> materialToFaces;
+
+      for (const auto& subset_pair : rmesh.material_subsetMap) {
+        const tinyusdz::tydra::MaterialSubset& subset = subset_pair.second;
+        const std::vector<int>& faceIndices = subset.indices();
+
+        int matId = subset.material_id;
+        if (materialToFaces.find(matId) == materialToFaces.end()) {
+          materialToFaces[matId] = std::vector<int>();
+        }
+
+        // Collect all face indices for this material
+        materialToFaces[matId].insert(materialToFaces[matId].end(),
+                                      faceIndices.begin(), faceIndices.end());
+      }
+
+      // Step 2: Sort and find contiguous ranges per material
+      emscripten::val submeshes = emscripten::val::array();
+
+      for (auto& mat_pair : materialToFaces) {
+        int materialId = mat_pair.first;
+        std::vector<int>& faceIndices = mat_pair.second;
+
+        // Sort face indices
+        std::sort(faceIndices.begin(), faceIndices.end());
+
+        // Find contiguous ranges
+        if (faceIndices.empty()) continue;
+
+        int rangeStart = faceIndices[0];
+        int rangeEnd = faceIndices[0];
+
+        for (size_t i = 1; i <= faceIndices.size(); i++) {
+          int faceIdx = (i < faceIndices.size()) ? faceIndices[i] : -1;
+
+          if (faceIdx == rangeEnd + 1) {
+            // Continue current range
+            rangeEnd = faceIdx;
+          } else {
+            // Range ended, output submesh group
+            emscripten::val submesh = emscripten::val::object();
+            submesh.set("start", rangeStart * 3);  // Convert face index to vertex index
+            submesh.set("count", (rangeEnd - rangeStart + 1) * 3);  // Number of vertices
+            submesh.set("materialId", materialId);
+            submeshes.call<void>("push", submesh);
+
+            // Start new range
+            if (faceIdx >= 0) {
+              rangeStart = faceIdx;
+              rangeEnd = faceIdx;
+            }
+          }
+        }
+      }
+
+      mesh.set("submeshes", submeshes);
+    }
+
     return mesh;
   }
 
