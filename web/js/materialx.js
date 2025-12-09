@@ -390,7 +390,7 @@ async function loadDefaultScene() {
 async function loadDefaultUSDFile() {
     updateStatus('Loading fancy teapot...');
     try {
-        const response = await fetch('./assets/textest.usdz');
+        const response = await fetch('./assets/fancy-teapot-mtlx.usdz');
         if (!response.ok) {
             throw new Error(`Failed to fetch: ${response.statusText}`);
         }
