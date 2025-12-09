@@ -4792,12 +4792,16 @@ bool RenderSceneConverter::ConvertMesh(
           dst.normals.get_data(), dst.normals.stride_bytes(),
           dst.faceVertexCounts(), dst.faceVertexIndices());
       if (!result) {
-        PUSH_ERROR_AND_RETURN(fmt::format(
-            "Convert vertex/varying `normals` attribute to failed: {}",
-            result.error()));
+        PUSH_WARN(fmt::format(
+            "Convert vertex/varying `normals` attribute failed for Mesh '{}': {}. Normals removed from RenderMesh.",
+            abs_prim_path.full_path_name(), result.error()));
+        // Clear normals from RenderMesh since conversion failed
+        dst.normals.data.clear();
+        dst.normals.indices.clear();
+      } else {
+        dst.normals.data = result.value();
+        dst.normals.variability = VertexVariability::FaceVarying;
       }
-      dst.normals.data = result.value();
-      dst.normals.variability = VertexVariability::FaceVarying;
     }
   }
 
@@ -6540,12 +6544,18 @@ bool RenderSceneConverter::ConvertPreviewSurfaceShaderParam(
     }
 
     if (!ptex) {
-      PUSH_ERROR_AND_RETURN("[InternalError] ptex is nullptr.");
+      PUSH_WARN(fmt::format("[InternalError] ptex is nullptr for parameter '{}' in shader '{}'. Texture not assigned.",
+                            param_name, shader_abs_path.full_path_name()));
+      // Treat as no texture assigned (e.g., if nullptr for normal map, treat as no normal map)
+      return true;
     }
     DCOUT("ptex = " << ptex->name);
 
     if (!pshader) {
-      PUSH_ERROR_AND_RETURN("[InternalError] pshader is nullptr.");
+      PUSH_WARN(fmt::format("[InternalError] pshader is nullptr for parameter '{}' in shader '{}'. Texture not assigned.",
+                            param_name, shader_abs_path.full_path_name()));
+      // Treat as no texture assigned (e.g., if nullptr for normal map, treat as no normal map)
+      return true;
     }
 
     DCOUT("Get connected UsdUVTexture Prim: " << texPath);

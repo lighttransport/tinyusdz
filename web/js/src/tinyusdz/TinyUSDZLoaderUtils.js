@@ -638,6 +638,12 @@ class TinyUSDZLoaderUtils extends LoaderUtils {
           console.log('USD Mesh has no doubleSided attribute (will default to FrontSide)');
         }
 
+        // Store submesh data for multi-material support (pre-computed in C++)
+        if (Object.prototype.hasOwnProperty.call(mesh, 'submeshes') && mesh.submeshes.length > 0) {
+          geometry.userData['submeshes'] = mesh.submeshes;
+          console.log(`USD Mesh has ${mesh.submeshes.length} pre-computed submesh group(s)`);
+        }
+
         return geometry;
     }
 
@@ -720,9 +726,66 @@ class TinyUSDZLoaderUtils extends LoaderUtils {
             mtl = pbrMaterial || defaultMtl || normalMtl;
         }
 
-        const threeMesh = new THREE.Mesh(geometry, mtl);
+        // Handle GeomSubsets (per-face materials)
+        if (geometry.userData['submeshes'] && geometry.userData['submeshes'].length > 0) {
+            const submeshes = geometry.userData['submeshes'];
+            console.log(`Setting up multi-material mesh with ${submeshes.length} pre-computed submesh groups`);
 
-        return threeMesh;
+            // Build materials array indexed by materialId
+            const materials = [];
+            const materialIdToIndex = new Map();
+
+            // First pass: collect unique material IDs
+            for (const submesh of submeshes) {
+                const matId = submesh.materialId;
+                if (!materialIdToIndex.has(matId)) {
+                    materialIdToIndex.set(matId, materials.length);
+                    materials.push(null); // Placeholder
+                }
+            }
+
+            // Second pass: load materials
+            for (const [matId, matIndex] of materialIdToIndex.entries()) {
+                if (matId >= 0) {
+                    const materialData = usdScene.getMaterialWithFormat ?
+                        JSON.parse(usdScene.getMaterialWithFormat(matId, 'json').data) :
+                        usdScene.getMaterial(matId);
+
+                    const material = await this.convertMaterial(materialData, usdScene, {
+                        preferredMaterialType: options.preferredMaterialType || 'auto',
+                        envMap: options.envMap || null,
+                        envMapIntensity: options.envMapIntensity || 1.0,
+                        textureCache: options.textureCache || new Map(),
+                        doubleSided: geometry.userData['doubleSided']
+                    });
+
+                    material.envMap = options.envMap || null;
+                    material.envMapIntensity = options.envMapIntensity || 1.0;
+                    material.side = geometry.userData['doubleSided'] ? THREE.DoubleSide : THREE.FrontSide;
+
+                    materials[matIndex] = material;
+                    console.log(`  Loaded material ${matId} -> index ${matIndex}`);
+                } else {
+                    materials[matIndex] = mtl; // Use default material
+                }
+            }
+
+            // Third pass: add geometry groups using pre-computed submesh data (from C++)
+            for (const submesh of submeshes) {
+                const matIndex = materialIdToIndex.get(submesh.materialId);
+                geometry.addGroup(submesh.start, submesh.count, matIndex);
+            }
+
+            console.log(`  Created ${submeshes.length} geometry groups for ${materials.length} unique materials (pre-computed in WASM)`);
+
+            // Create mesh with multi-material array
+            const threeMesh = new THREE.Mesh(geometry, materials);
+            return threeMesh;
+        } else {
+            // Single material mesh
+            const threeMesh = new THREE.Mesh(geometry, mtl);
+            return threeMesh;
+        }
     }
 
 

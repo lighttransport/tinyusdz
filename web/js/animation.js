@@ -682,13 +682,14 @@ async function loadUSDModel() {
 	// Initialize the loader (wait for WASM module to load)
 	// Use memory64: false for browser compatibility
 	// Use useZstdCompressedWasm: false since compressed WASM is not available
-	await loader.init({ useZstdCompressedWasm: false, useMemory64: false });
+	await loader.init({ useZstdCompressedWasm: false, useMemory64: true });
 
 	// USD FILES
 	//const usd_filename = "./assets/cube-animation.usda";
 	//const usd_filename = "./assets/hierarchical-node-animation.usdc";
 	//const usd_filename = "./assets/test-001.usdc";
-	const usd_filename = "./assets/suzanne-xform.usdc";
+	//const usd_filename = "./assets/suzanne-xform.usdc";
+	const usd_filename = "./assets/WesternDesertTown2-mtlx.usdz";
 
 	// Load USD scene
 	const usd_scene = await loader.loadAsync(usd_filename);
