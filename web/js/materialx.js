@@ -37,7 +37,7 @@ const settings = {
     showBackground: true,
     exposure: 1.0,
     toneMapping: 'aces',
-    applyUpAxisConversion: true, // Apply Z-up to Y-up conversion by default
+    applyUpAxisConversion: false, // HACK. disabled for a while. Apply Z-up to Y-up conversion by default
     showNormals: false // Show normals visualization
 };
 
@@ -390,7 +390,7 @@ async function loadDefaultScene() {
 async function loadDefaultUSDFile() {
     updateStatus('Loading fancy teapot...');
     try {
-        const response = await fetch('./assets/fancy-teapot-mtlx.usdz');
+        const response = await fetch('./assets/textest.usdz');
         if (!response.ok) {
             throw new Error(`Failed to fetch: ${response.statusText}`);
         }
@@ -481,13 +481,46 @@ async function loadUSDFromData(data, filename) {
         const geometry = TinyUSDZLoaderUtils.convertUsdMeshToThreeMesh(meshData);
         if (!geometry) continue;
 
-        // Get material
-        let material = new THREE.MeshPhysicalMaterial({ color: 0x888888 });
-        if (meshData.materialId !== undefined && meshData.materialId >= 0 && meshData.materialId < currentMaterials.length) {
-            material = currentMaterials[meshData.materialId];
+        // Check for submeshes (pre-computed in WASM)
+        let mesh;
+        if (geometry.userData['submeshes'] && geometry.userData['submeshes'].length > 0) {
+            const submeshes = geometry.userData['submeshes'];
+            console.log(`Mesh ${i} has ${submeshes.length} pre-computed submesh groups`);
+
+            // Build materials array from unique material IDs
+            const materials = [];
+            const materialIdToIndex = new Map();
+
+            // Collect unique material IDs
+            for (const submesh of submeshes) {
+                const matId = submesh.materialId;
+                if (!materialIdToIndex.has(matId)) {
+                    let material = new THREE.MeshPhysicalMaterial({ color: 0x888888 });
+                    if (matId >= 0 && matId < currentMaterials.length) {
+                        material = currentMaterials[matId];
+                    }
+                    materialIdToIndex.set(matId, materials.length);
+                    materials.push(material);
+                }
+            }
+
+            // Add geometry groups using pre-computed submesh data (already optimized in C++)
+            for (const submesh of submeshes) {
+                const matIndex = materialIdToIndex.get(submesh.materialId);
+                geometry.addGroup(submesh.start, submesh.count, matIndex);
+            }
+
+            mesh = new THREE.Mesh(geometry, materials);
+            console.log(`  Created multi-material mesh: ${materials.length} materials, ${submeshes.length} draw groups (pre-computed in WASM)`);
+        } else {
+            // Single material mesh
+            let material = new THREE.MeshPhysicalMaterial({ color: 0x888888 });
+            if (meshData.materialId !== undefined && meshData.materialId >= 0 && meshData.materialId < currentMaterials.length) {
+                material = currentMaterials[meshData.materialId];
+            }
+            mesh = new THREE.Mesh(geometry, material);
         }
 
-        const mesh = new THREE.Mesh(geometry, material);
         mesh.name = meshData.name || `Mesh_${i}`;
         sceneRoot.add(mesh);
     }
