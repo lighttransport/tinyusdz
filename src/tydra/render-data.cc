@@ -10705,10 +10705,10 @@ bool RenderSceneConverter::IsMeshMergeable(const RenderMesh &mesh) const {
 // Helper function to transform a vec3 point by a matrix4d
 static vec3 TransformPoint(const value::matrix4d &m, const vec3 &p) {
   // Apply full 4x4 transform (position)
-  double x = m.m[0][0] * p[0] + m.m[1][0] * p[1] + m.m[2][0] * p[2] + m.m[3][0];
-  double y = m.m[0][1] * p[0] + m.m[1][1] * p[1] + m.m[2][1] * p[2] + m.m[3][1];
-  double z = m.m[0][2] * p[0] + m.m[1][2] * p[1] + m.m[2][2] * p[2] + m.m[3][2];
-  double w = m.m[0][3] * p[0] + m.m[1][3] * p[1] + m.m[2][3] * p[2] + m.m[3][3];
+  double x = m.m[0][0] * double(p[0]) + m.m[1][0] * double(p[1]) + m.m[2][0] * double(p[2]) + m.m[3][0];
+  double y = m.m[0][1] * double(p[0]) + m.m[1][1] * double(p[1]) + m.m[2][1] * double(p[2]) + m.m[3][1];
+  double z = m.m[0][2] * double(p[0]) + m.m[1][2] * double(p[1]) + m.m[2][2] * double(p[2]) + m.m[3][2];
+  double w = m.m[0][3] * double(p[0]) + m.m[1][3] * double(p[1]) + m.m[2][3] * double(p[2]) + m.m[3][3];
 
   if (std::abs(w) > 1e-10) {
     x /= w;
@@ -10725,9 +10725,9 @@ static vec3 TransformNormal(const value::matrix4d &m, const vec3 &n) {
   // For normals, we need the inverse transpose of the upper-left 3x3
   // For now, we use the upper-left 3x3 directly (correct for uniform scale and rotation only)
   // TODO: Proper inverse-transpose for non-uniform scale
-  double x = m.m[0][0] * n[0] + m.m[1][0] * n[1] + m.m[2][0] * n[2];
-  double y = m.m[0][1] * n[0] + m.m[1][1] * n[1] + m.m[2][1] * n[2];
-  double z = m.m[0][2] * n[0] + m.m[1][2] * n[1] + m.m[2][2] * n[2];
+  double x = m.m[0][0] * double(n[0]) + m.m[1][0] * double(n[1]) + m.m[2][0] * double(n[2]);
+  double y = m.m[0][1] * double(n[0]) + m.m[1][1] * double(n[1]) + m.m[2][1] * double(n[2]);
+  double z = m.m[0][2] * double(n[0]) + m.m[1][2] * double(n[1]) + m.m[2][2] * double(n[2]);
 
   // Normalize the result
   double len = std::sqrt(x*x + y*y + z*z);
@@ -10927,9 +10927,9 @@ bool RenderSceneConverter::MergeMeshesImpl(const RenderSceneConverterEnv &env) {
   std::function<void(Node &)> collectMeshNodes = [&](Node &node) {
     if (node.nodeType == NodeType::Mesh && node.id >= 0 &&
         size_t(node.id) < meshes.size()) {
-      mesh_node_infos[node.id].node = &node;
-      mesh_node_infos[node.id].global_matrix = node.global_matrix;
-      mesh_node_infos[node.id].mesh_index = size_t(node.id);
+      mesh_node_infos[size_t(node.id)].node = &node;
+      mesh_node_infos[size_t(node.id)].global_matrix = node.global_matrix;
+      mesh_node_infos[size_t(node.id)].mesh_index = size_t(node.id);
     }
     for (auto &child : node.children) {
       collectMeshNodes(child);
