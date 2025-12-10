@@ -2119,10 +2119,11 @@ class TinyUSDZLoaderNative {
              emscripten::typed_memory_view(16, geom_bind_ptr));
 
     // Export GeomSubsets (per-face materials) as optimized submeshes
-    // Pre-compute contiguous face ranges in C++ for optimal performance
+    // Reorder triangles by material so each material has exactly one contiguous group
     if (!rmesh.material_subsetMap.empty()) {
       // Step 1: Group face indices by material
       std::map<int, std::vector<int>> materialToFaces;
+      size_t totalFaces = 0;
 
       for (const auto& subset_pair : rmesh.material_subsetMap) {
         const tinyusdz::tydra::MaterialSubset& subset = subset_pair.second;
@@ -2136,48 +2137,141 @@ class TinyUSDZLoaderNative {
         // Collect all face indices for this material
         materialToFaces[matId].insert(materialToFaces[matId].end(),
                                       faceIndices.begin(), faceIndices.end());
+        totalFaces += faceIndices.size();
       }
 
-      // Step 2: Sort and find contiguous ranges per material
+      // Step 2: Build reordering map - new triangle index -> old triangle index
+      // Group all triangles by material, creating contiguous ranges
+      std::vector<int> reorderMap;
+      reorderMap.reserve(totalFaces);
+
       emscripten::val submeshes = emscripten::val::array();
+      int currentStart = 0;
 
       for (auto& mat_pair : materialToFaces) {
         int materialId = mat_pair.first;
         std::vector<int>& faceIndices = mat_pair.second;
 
-        // Sort face indices
-        std::sort(faceIndices.begin(), faceIndices.end());
-
-        // Find contiguous ranges
         if (faceIndices.empty()) continue;
 
-        int rangeStart = faceIndices[0];
-        int rangeEnd = faceIndices[0];
+        // Sort face indices within this material group (optional, helps cache coherence)
+        std::sort(faceIndices.begin(), faceIndices.end());
 
-        for (size_t i = 1; i <= faceIndices.size(); i++) {
-          int faceIdx = (i < faceIndices.size()) ? faceIndices[i] : -1;
-
-          if (faceIdx == rangeEnd + 1) {
-            // Continue current range
-            rangeEnd = faceIdx;
-          } else {
-            // Range ended, output submesh group
-            emscripten::val submesh = emscripten::val::object();
-            submesh.set("start", rangeStart * 3);  // Convert face index to vertex index
-            submesh.set("count", (rangeEnd - rangeStart + 1) * 3);  // Number of vertices
-            submesh.set("materialId", materialId);
-            submeshes.call<void>("push", submesh);
-
-            // Start new range
-            if (faceIdx >= 0) {
-              rangeStart = faceIdx;
-              rangeEnd = faceIdx;
-            }
-          }
+        // Add all faces for this material to the reorder map
+        for (int faceIdx : faceIndices) {
+          reorderMap.push_back(faceIdx);
         }
+
+        // Create one submesh group for this material
+        emscripten::val submesh = emscripten::val::object();
+        submesh.set("start", currentStart * 3);  // Convert face index to vertex index
+        submesh.set("count", static_cast<int>(faceIndices.size()) * 3);  // Number of vertices
+        submesh.set("materialId", materialId);
+        submeshes.call<void>("push", submesh);
+
+        currentStart += static_cast<int>(faceIndices.size());
       }
 
       mesh.set("submeshes", submeshes);
+
+      // Step 3: Reorder vertex attributes based on reorderMap
+      // For facevarying attributes, each triangle has 3 vertices
+      size_t numNewTriangles = reorderMap.size();
+
+      // Reorder points (vec3)
+      if (!rmesh.points.empty()) {
+        std::vector<float> reorderedPoints(numNewTriangles * 3 * 3);  // numTris * 3 verts * 3 components
+        for (size_t newTriIdx = 0; newTriIdx < numNewTriangles; newTriIdx++) {
+          int oldTriIdx = reorderMap[newTriIdx];
+          for (int v = 0; v < 3; v++) {  // 3 vertices per triangle
+            size_t oldVertIdx = static_cast<size_t>(oldTriIdx) * 3 + static_cast<size_t>(v);
+            size_t newVertIdx = newTriIdx * 3 + static_cast<size_t>(v);
+            if (oldVertIdx < rmesh.points.size()) {
+              reorderedPoints[newVertIdx * 3 + 0] = rmesh.points[oldVertIdx][0];
+              reorderedPoints[newVertIdx * 3 + 1] = rmesh.points[oldVertIdx][1];
+              reorderedPoints[newVertIdx * 3 + 2] = rmesh.points[oldVertIdx][2];
+            }
+          }
+        }
+        // Store in cache and update mesh pointer
+        auto& cache = reordered_mesh_cache_[mesh_id];
+        cache.points = std::move(reorderedPoints);
+        mesh.set("points", emscripten::typed_memory_view(cache.points.size(), cache.points.data()));
+      }
+
+      // Reorder normals (vec3) - data is raw uint8_t buffer, cast to float*
+      if (!rmesh.normals.empty()) {
+        const float* normalsData = reinterpret_cast<const float*>(rmesh.normals.data.data());
+        std::vector<float> reorderedNormals(numNewTriangles * 3 * 3);
+        for (size_t newTriIdx = 0; newTriIdx < numNewTriangles; newTriIdx++) {
+          int oldTriIdx = reorderMap[newTriIdx];
+          for (int v = 0; v < 3; v++) {
+            size_t oldVertIdx = static_cast<size_t>(oldTriIdx) * 3 + static_cast<size_t>(v);
+            size_t newVertIdx = newTriIdx * 3 + static_cast<size_t>(v);
+            if (oldVertIdx < rmesh.normals.vertex_count()) {
+              reorderedNormals[newVertIdx * 3 + 0] = normalsData[oldVertIdx * 3 + 0];
+              reorderedNormals[newVertIdx * 3 + 1] = normalsData[oldVertIdx * 3 + 1];
+              reorderedNormals[newVertIdx * 3 + 2] = normalsData[oldVertIdx * 3 + 2];
+            }
+          }
+        }
+        auto& cache = reordered_mesh_cache_[mesh_id];
+        cache.normals = std::move(reorderedNormals);
+        mesh.set("normals", emscripten::typed_memory_view(cache.normals.size(), cache.normals.data()));
+      }
+
+      // Reorder texcoords (vec2) - slot 0
+      if (rmesh.texcoords.count(0) && !rmesh.texcoords.at(0).data.empty()) {
+        const auto& uvData = rmesh.texcoords.at(0);
+        const float* uvDataPtr = reinterpret_cast<const float*>(uvData.data.data());
+        std::vector<float> reorderedTexcoords(numNewTriangles * 3 * 2);
+        for (size_t newTriIdx = 0; newTriIdx < numNewTriangles; newTriIdx++) {
+          int oldTriIdx = reorderMap[newTriIdx];
+          for (int v = 0; v < 3; v++) {
+            size_t oldVertIdx = static_cast<size_t>(oldTriIdx) * 3 + static_cast<size_t>(v);
+            size_t newVertIdx = newTriIdx * 3 + static_cast<size_t>(v);
+            if (oldVertIdx < uvData.vertex_count()) {
+              reorderedTexcoords[newVertIdx * 2 + 0] = uvDataPtr[oldVertIdx * 2 + 0];
+              reorderedTexcoords[newVertIdx * 2 + 1] = uvDataPtr[oldVertIdx * 2 + 1];
+            }
+          }
+        }
+        auto& cache = reordered_mesh_cache_[mesh_id];
+        cache.texcoords = std::move(reorderedTexcoords);
+        mesh.set("texcoords", emscripten::typed_memory_view(cache.texcoords.size(), cache.texcoords.data()));
+      }
+
+      // Reorder tangents (vec3)
+      if (!rmesh.tangents.empty()) {
+        const float* tangentsData = reinterpret_cast<const float*>(rmesh.tangents.data.data());
+        std::vector<float> reorderedTangents(numNewTriangles * 3 * 3);
+        for (size_t newTriIdx = 0; newTriIdx < numNewTriangles; newTriIdx++) {
+          int oldTriIdx = reorderMap[newTriIdx];
+          for (int v = 0; v < 3; v++) {
+            size_t oldVertIdx = static_cast<size_t>(oldTriIdx) * 3 + static_cast<size_t>(v);
+            size_t newVertIdx = newTriIdx * 3 + static_cast<size_t>(v);
+            if (oldVertIdx < rmesh.tangents.vertex_count()) {
+              reorderedTangents[newVertIdx * 3 + 0] = tangentsData[oldVertIdx * 3 + 0];
+              reorderedTangents[newVertIdx * 3 + 1] = tangentsData[oldVertIdx * 3 + 1];
+              reorderedTangents[newVertIdx * 3 + 2] = tangentsData[oldVertIdx * 3 + 2];
+            }
+          }
+        }
+        auto& cache = reordered_mesh_cache_[mesh_id];
+        cache.tangents = std::move(reorderedTangents);
+        mesh.set("tangents", emscripten::typed_memory_view(cache.tangents.size(), cache.tangents.data()));
+      }
+
+      // Generate new sequential indices (0, 1, 2, 3, 4, 5, ...)
+      // Since we reordered the vertex data, indices are now sequential
+      std::vector<uint32_t> newIndices(numNewTriangles * 3);
+      for (size_t i = 0; i < numNewTriangles * 3; i++) {
+        newIndices[i] = static_cast<uint32_t>(i);
+      }
+      auto& cache = reordered_mesh_cache_[mesh_id];
+      cache.faceVertexIndices = std::move(newIndices);
+      mesh.set("faceVertexIndices", emscripten::typed_memory_view(
+          cache.faceVertexIndices.size(), cache.faceVertexIndices.data()));
     }
 
     return mesh;
@@ -3369,6 +3463,16 @@ class TinyUSDZLoaderNative {
   tinyusdz::tydra::RenderScene render_scene_;
   tinyusdz::USDZAsset usdz_asset_;
   EMAssetResolutionResolver em_resolver_;
+
+  // Cache for reordered mesh data (triangles sorted by material for optimal submesh grouping)
+  struct ReorderedMeshCache {
+    std::vector<float> points;
+    std::vector<float> normals;
+    std::vector<float> texcoords;
+    std::vector<float> tangents;
+    std::vector<uint32_t> faceVertexIndices;
+  };
+  mutable std::unordered_map<int, ReorderedMeshCache> reordered_mesh_cache_;
 
   // key = session_id
   std::unordered_map<std::string, tinyusdz::tydra::mcp::Context> mcp_ctx_;
