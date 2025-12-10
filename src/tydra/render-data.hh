@@ -2070,6 +2070,41 @@ struct RenderSceneConverterConfig {
   // false: no actual texture file/asset access.
   // App/User must setup TextureImage manually after the conversion.
   bool load_texture_assets{true};
+
+  //
+  // Merge meshes with the same material for performant rendering.
+  //
+  // When enabled, meshes that share the same material and have compatible
+  // properties (static transforms, no per-face materials, no skeletal animation,
+  // no blend shapes) will be merged into a single mesh.
+  //
+  // This optimization reduces draw calls in renderers like Three.js, WebGL,
+  // and other GPU-based renderers where draw call overhead is significant.
+  //
+  // Merge criteria:
+  // - Same material_id (whole mesh material, not per-face)
+  // - No material_subsetMap (per-face materials prevent merging)
+  // - Static mesh (no skeletal animation: skel_id == -1)
+  // - No blend shapes (targets.empty())
+  // - Same global transform matrix (meshes must be in the same world space,
+  //   or transforms will be baked into vertex positions)
+  //
+  // When `bake_transform` is true:
+  // - Meshes with different transforms can be merged by baking their
+  //   global transforms into vertex positions/normals
+  // - This allows more aggressive merging at the cost of losing
+  //   individual mesh transforms
+  //
+  bool merge_meshes{false};
+
+  //
+  // When merging meshes, bake global transforms into vertex data.
+  // This allows merging meshes with different transforms by transforming
+  // their vertices into world space.
+  //
+  // Only effective when merge_meshes is true.
+  //
+  bool merge_meshes_bake_transform{true};
 };
 
 //
@@ -3150,6 +3185,41 @@ class RenderSceneConverter {
     const std::string &parentPrimPath,
     const XformNode &node,
     Node &out_rnode);
+
+  ///
+  /// Merge meshes with the same material for performant rendering.
+  ///
+  /// This function merges meshes that share the same material and have
+  /// compatible properties into a single mesh. It reduces draw calls
+  /// for GPU-based renderers.
+  ///
+  /// @param[in] env Converter environment containing configuration
+  /// @param[inout] nodes Node hierarchy (mesh node IDs will be updated)
+  /// @param[inout] meshes Mesh array (merged meshes will be added, originals marked)
+  ///
+  /// @return true upon success
+  ///
+  bool MergeMeshesImpl(const RenderSceneConverterEnv &env);
+
+  ///
+  /// Helper to check if a mesh can be merged with others.
+  /// Returns true if the mesh has no skeletal animation, no blend shapes,
+  /// and no per-face materials.
+  ///
+  bool IsMeshMergeable(const RenderMesh &mesh) const;
+
+  ///
+  /// Merge two RenderMesh instances into a single mesh.
+  /// The source mesh data is appended to the destination mesh.
+  ///
+  /// @param[in] src Source mesh to merge from
+  /// @param[in] src_transform Transform to apply to source vertices (identity if no transform baking)
+  /// @param[inout] dst Destination mesh to merge into
+  ///
+  /// @return true upon success
+  ///
+  bool MergeMeshData(const RenderMesh &src, const value::matrix4d &src_transform,
+                     RenderMesh &dst);
 
   void PushInfo(const std::string &msg) { _info += msg + "\n"; }
   void PushWarn(const std::string &msg) { _warn += msg + "\n"; }
