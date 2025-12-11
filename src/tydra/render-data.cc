@@ -130,6 +130,14 @@
 #include "tydra/scene-access.hh"
 #include "tydra/shader-network.hh"
 
+#if defined(TINYUSDZ_ENABLE_THREAD)
+#include <thread>
+#include <atomic>
+#include <mutex>
+#include <set>
+#include "task-queue.hh"
+#endif  // TINYUSDZ_ENABLE_THREAD
+
 namespace tinyusdz {
 
 namespace tydra {
@@ -7461,6 +7469,265 @@ struct MeshVisitorEnv {
   const RenderSceneConverterEnv *env{nullptr};
 };
 
+#if defined(TINYUSDZ_ENABLE_THREAD)
+
+//
+// Data structure for parallel mesh conversion
+//
+
+// Holds bound material information for a mesh/subset
+struct BoundMaterialInfo {
+  std::string material_path;
+  std::string backface_material_path;
+  const tinyusdz::Material *material{nullptr};
+  const tinyusdz::Material *backface_material{nullptr};
+};
+
+// Information collected during material pre-collection pass
+struct MeshMaterialInfo {
+  Path abs_path;
+  const Prim *prim{nullptr};
+
+  // Mesh-level material binding
+  BoundMaterialInfo mesh_material;
+
+  // GeomSubset material bindings (key = subset prim name)
+  std::map<std::string, BoundMaterialInfo> subset_materials;
+
+  // Type of geometry
+  enum class GeomType {
+    Mesh,
+    Cube,
+    Sphere
+  };
+  GeomType geom_type{GeomType::Mesh};
+};
+
+// Environment for material collection pass
+struct MaterialCollectorEnv {
+  RenderSceneConverter *converter{nullptr};
+  const RenderSceneConverterEnv *env{nullptr};
+
+  // Output: collected mesh material info (for parallel mesh conversion)
+  std::vector<MeshMaterialInfo> mesh_infos;
+
+  // Set of unique material paths to convert
+  std::set<std::string> material_paths;
+
+  // Map from material path to (Material*, backface purpose)
+  std::map<std::string, const tinyusdz::Material *> material_ptr_map;
+};
+
+// Visitor that only collects materials without converting meshes
+bool MaterialCollectorVisitor(const tinyusdz::Path &abs_path,
+                               const tinyusdz::Prim &prim,
+                               const int32_t level, void *userdata,
+                               std::string *err) {
+  if (!userdata) {
+    if (err) {
+      (*err) += "userdata pointer must be filled.";
+    }
+    return false;
+  }
+
+  MaterialCollectorEnv *collectorEnv =
+      reinterpret_cast<MaterialCollectorEnv *>(userdata);
+
+  if (level > 1024 * 1024) {
+    if (err) {
+      (*err) += "Scene graph is too deep.\n";
+    }
+    return false;
+  }
+
+  // Lambda to collect bound material info
+  auto CollectBoundMaterial = [&](const Path &prim_path,
+                                   const std::string &purpose,
+                                   BoundMaterialInfo &out_info) {
+    tinyusdz::Path bound_material_path;
+    const tinyusdz::Material *bound_material{nullptr};
+
+    bool ret = tinyusdz::tydra::GetBoundMaterial(
+        collectorEnv->env->stage, prim_path, purpose,
+        &bound_material_path, &bound_material, err);
+
+    if (ret && bound_material) {
+      std::string path_str = bound_material_path.full_path_name();
+      if (purpose.empty()) {
+        out_info.material_path = path_str;
+        out_info.material = bound_material;
+      } else {
+        out_info.backface_material_path = path_str;
+        out_info.backface_material = bound_material;
+      }
+
+      // Record unique material paths
+      collectorEnv->material_paths.insert(path_str);
+      collectorEnv->material_ptr_map[path_str] = bound_material;
+    }
+  };
+
+  // Process mesh geometry
+  if (const tinyusdz::GeomMesh *pmesh = prim.as<tinyusdz::GeomMesh>()) {
+    if (!pmesh->points.authored()) {
+      return true;  // Skip meshes without points
+    }
+
+    MeshMaterialInfo info;
+    info.abs_path = abs_path;
+    info.prim = &prim;
+    info.geom_type = MeshMaterialInfo::GeomType::Mesh;
+
+    // Collect mesh-level material binding
+    CollectBoundMaterial(abs_path, "", info.mesh_material);
+
+    std::string backface_purpose =
+        collectorEnv->env->material_config.default_backface_material_purpose_name;
+    if (!backface_purpose.empty() &&
+        pmesh->has_materialBinding(value::token(backface_purpose))) {
+      CollectBoundMaterial(abs_path, backface_purpose, info.mesh_material);
+    }
+
+    // Collect GeomSubset material bindings
+    std::vector<const GeomSubset *> material_subsets =
+        GetMaterialBindGeomSubsets(prim);
+
+    for (const auto &psubset : material_subsets) {
+      Path subset_abs_path = abs_path.AppendElement(psubset->name);
+      BoundMaterialInfo subset_info;
+
+      CollectBoundMaterial(subset_abs_path, "", subset_info);
+
+      if (!backface_purpose.empty() &&
+          psubset->has_materialBinding(value::token(backface_purpose))) {
+        CollectBoundMaterial(subset_abs_path, backface_purpose, subset_info);
+      }
+
+      info.subset_materials[psubset->name] = subset_info;
+    }
+
+    collectorEnv->mesh_infos.push_back(std::move(info));
+  }
+
+  // Process cube geometry
+  if (const tinyusdz::GeomCube *pcube = prim.as<tinyusdz::GeomCube>()) {
+    (void)pcube;  // Used for type check only
+    MeshMaterialInfo info;
+    info.abs_path = abs_path;
+    info.prim = &prim;
+    info.geom_type = MeshMaterialInfo::GeomType::Cube;
+
+    CollectBoundMaterial(abs_path, "", info.mesh_material);
+
+    collectorEnv->mesh_infos.push_back(std::move(info));
+  }
+
+  // Process sphere geometry
+  if (const tinyusdz::GeomSphere *psphere = prim.as<tinyusdz::GeomSphere>()) {
+    (void)psphere;  // Used for type check only
+    MeshMaterialInfo info;
+    info.abs_path = abs_path;
+    info.prim = &prim;
+    info.geom_type = MeshMaterialInfo::GeomType::Sphere;
+
+    CollectBoundMaterial(abs_path, "", info.mesh_material);
+
+    collectorEnv->mesh_infos.push_back(std::move(info));
+  }
+
+  return true;  // continue traversal
+}
+
+// Task data for parallel mesh conversion
+struct MeshConversionTask {
+  const MeshMaterialInfo *mesh_info{nullptr};
+  RenderSceneConverter *converter{nullptr};
+  const RenderSceneConverterEnv *env{nullptr};
+  size_t output_index{0};
+  RenderMesh *output_mesh{nullptr};
+  std::string *output_error{nullptr};
+  std::atomic<bool> *success{nullptr};
+};
+
+// Worker function for parallel mesh conversion
+void MeshConversionWorker(void *user_data) {
+  MeshConversionTask *task = static_cast<MeshConversionTask *>(user_data);
+  if (!task || !task->mesh_info || !task->output_mesh) {
+    return;
+  }
+
+  const MeshMaterialInfo &info = *task->mesh_info;
+  std::string local_err;
+
+  // Build MaterialPath from pre-collected info
+  MaterialPath material_path;
+  material_path.default_texcoords_primvar_name =
+      task->env->mesh_config.default_texcoords_primvar_name;
+  material_path.material_path = info.mesh_material.material_path;
+  material_path.backface_material_path = info.mesh_material.backface_material_path;
+
+  // Build subset material path map
+  std::map<std::string, MaterialPath> subset_material_path_map;
+  for (const auto &subset_pair : info.subset_materials) {
+    MaterialPath mpath;
+    mpath.default_texcoords_primvar_name =
+        task->env->mesh_config.default_texcoords_primvar_name;
+    mpath.material_path = subset_pair.second.material_path;
+    mpath.backface_material_path = subset_pair.second.backface_material_path;
+    subset_material_path_map[subset_pair.first] = mpath;
+  }
+
+  bool conversion_success = false;
+
+  if (info.geom_type == MeshMaterialInfo::GeomType::Mesh) {
+    const tinyusdz::GeomMesh *pmesh = info.prim->as<tinyusdz::GeomMesh>();
+    if (pmesh) {
+      std::vector<const GeomSubset *> material_subsets =
+          GetMaterialBindGeomSubsets(*info.prim);
+
+      std::vector<std::pair<std::string, const BlendShape *>> blendshapes;
+      blendshapes = GetBlendShapes(task->env->stage, *info.prim, &local_err);
+
+      conversion_success = task->converter->ConvertMesh(
+          *task->env, info.abs_path, *pmesh, material_path,
+          subset_material_path_map, task->converter->materialMap,
+          material_subsets, blendshapes, task->output_mesh);
+    }
+  } else if (info.geom_type == MeshMaterialInfo::GeomType::Cube) {
+    const tinyusdz::GeomCube *pcube = info.prim->as<tinyusdz::GeomCube>();
+    if (pcube) {
+      std::vector<const tinyusdz::GeomSubset *> empty_subsets;
+      std::vector<std::pair<std::string, const tinyusdz::BlendShape *>> empty_blendshapes;
+
+      conversion_success = task->converter->ConvertCube(
+          *task->env, info.abs_path, *pcube, material_path,
+          subset_material_path_map, task->converter->materialMap,
+          empty_subsets, empty_blendshapes, task->output_mesh);
+    }
+  } else if (info.geom_type == MeshMaterialInfo::GeomType::Sphere) {
+    const tinyusdz::GeomSphere *psphere = info.prim->as<tinyusdz::GeomSphere>();
+    if (psphere) {
+      std::vector<const tinyusdz::GeomSubset *> empty_subsets;
+      std::vector<std::pair<std::string, const tinyusdz::BlendShape *>> empty_blendshapes;
+
+      conversion_success = task->converter->ConvertSphere(
+          *task->env, info.abs_path, *psphere, material_path,
+          subset_material_path_map, task->converter->materialMap,
+          empty_subsets, empty_blendshapes, task->output_mesh);
+    }
+  }
+
+  if (!conversion_success) {
+    task->success->store(false, std::memory_order_release);
+    if (task->output_error) {
+      *(task->output_error) = local_err.empty() ?
+          "Mesh conversion failed" : local_err;
+    }
+  }
+}
+
+#endif  // TINYUSDZ_ENABLE_THREAD
+
 bool MeshVisitor(const tinyusdz::Path &abs_path, const tinyusdz::Prim &prim,
                  const int32_t level, void *userdata, std::string *err) {
   if (!userdata) {
@@ -9356,16 +9623,168 @@ bool RenderSceneConverter::ConvertToRenderScene(
   // 3. Convert Mesh/SkinWeights/BlendShapes
   // 4. Convert Skeleton(bones) and SkelAnimation
   //
-  // Material conversion will be done in MeshVisitor.
+
+#if defined(TINYUSDZ_ENABLE_THREAD)
   //
-  MeshVisitorEnv menv;
-  menv.env = &env;
-  menv.converter = this;
+  // Parallel mesh conversion path:
+  // 1. Collect all materials (single-threaded to build material cache)
+  // 2. Convert materials sequentially (populates materialMap)
+  // 3. Convert meshes in parallel (materials already cached, read-only access)
+  //
+  if (env.scene_config.enable_parallel_mesh_conversion) {
+    // Phase 1: Collect all materials and mesh info
+    MaterialCollectorEnv collector_env;
+    collector_env.env = &env;
+    collector_env.converter = this;
 
-  bool ret = tydra::VisitPrims(env.stage, MeshVisitor, &menv, &err);
+    bool collect_ret = tydra::VisitPrims(env.stage, MaterialCollectorVisitor,
+                                          &collector_env, &err);
+    if (!collect_ret) {
+      PUSH_ERROR_AND_RETURN(err);
+    }
 
-  if (!ret) {
-    PUSH_ERROR_AND_RETURN(err);
+    // Check if parallel conversion is worthwhile
+    size_t num_meshes = collector_env.mesh_infos.size();
+    bool use_parallel = num_meshes >= env.scene_config.min_meshes_for_parallel;
+
+    if (use_parallel) {
+      // Phase 2: Convert all materials sequentially (builds material cache)
+      for (const auto &mat_path : collector_env.material_paths) {
+        if (materialMap.count(mat_path)) {
+          continue;  // Already converted
+        }
+
+        auto mat_it = collector_env.material_ptr_map.find(mat_path);
+        if (mat_it == collector_env.material_ptr_map.end() || !mat_it->second) {
+          continue;
+        }
+
+        RenderMaterial rmat;
+        Path mat_prim_path(mat_path, "");
+        if (!ConvertMaterial(env, mat_prim_path, *(mat_it->second), &rmat)) {
+          PUSH_ERROR_AND_RETURN(fmt::format("Material conversion failed: {}", mat_path));
+        }
+
+        uint64_t mat_id = materials.size();
+        materialMap.add(mat_path, mat_id);
+        materials.push_back(std::move(rmat));
+      }
+
+      // Report progress after material conversion (40%)
+      if (!CallProgressCallback(0.4f)) {
+        PushError("Conversion cancelled by user.\n");
+        return false;
+      }
+
+      // Phase 3: Convert meshes in parallel
+      size_t num_threads = env.scene_config.num_mesh_conversion_threads;
+      if (num_threads == 0) {
+        num_threads = std::thread::hardware_concurrency();
+        if (num_threads == 0) {
+          num_threads = 4;  // Fallback
+        }
+      }
+
+      // Pre-allocate output arrays
+      std::vector<RenderMesh> output_meshes(num_meshes);
+      std::vector<std::string> output_errors(num_meshes);
+      std::vector<MeshConversionTask> tasks(num_meshes);
+      std::atomic<bool> all_success(true);
+
+      // Initialize tasks
+      for (size_t i = 0; i < num_meshes; i++) {
+        tasks[i].mesh_info = &collector_env.mesh_infos[i];
+        tasks[i].converter = this;
+        tasks[i].env = &env;
+        tasks[i].output_index = i;
+        tasks[i].output_mesh = &output_meshes[i];
+        tasks[i].output_error = &output_errors[i];
+        tasks[i].success = &all_success;
+      }
+
+      // Create task queue
+      TaskQueue queue(env.scene_config.mesh_task_queue_capacity);
+      std::atomic<bool> producer_done(false);
+
+      // Launch worker threads
+      std::vector<std::thread> workers;
+      workers.reserve(num_threads);
+
+      for (size_t t = 0; t < num_threads; t++) {
+        workers.emplace_back([&queue, &producer_done]() {
+          TaskItem task;
+          while (!producer_done.load(std::memory_order_acquire) || !queue.Empty()) {
+            if (queue.Pop(task)) {
+              if (task.func) {
+                task.func(task.user_data);
+              }
+            } else {
+              std::this_thread::yield();
+            }
+          }
+        });
+      }
+
+      // Producer: push all tasks
+      for (size_t i = 0; i < tasks.size(); i++) {
+        while (!queue.Push(MeshConversionWorker, &tasks[i])) {
+          std::this_thread::yield();
+        }
+      }
+
+      producer_done.store(true, std::memory_order_release);
+
+      // Wait for all workers to finish
+      for (auto &worker : workers) {
+        worker.join();
+      }
+
+      // Check for errors
+      if (!all_success.load(std::memory_order_acquire)) {
+        std::string combined_err;
+        for (size_t i = 0; i < num_meshes; i++) {
+          if (!output_errors[i].empty()) {
+            combined_err += fmt::format("Mesh {} ({}): {}\n",
+                i, collector_env.mesh_infos[i].abs_path.full_path_name(),
+                output_errors[i]);
+          }
+        }
+        PUSH_ERROR_AND_RETURN("Parallel mesh conversion failed:\n" + combined_err);
+      }
+
+      // Move converted meshes to final storage and build meshMap
+      meshes.reserve(meshes.size() + num_meshes);
+      for (size_t i = 0; i < num_meshes; i++) {
+        const std::string &path = collector_env.mesh_infos[i].abs_path.full_path_name();
+        uint64_t mesh_id = meshes.size();
+        meshMap.add(path, mesh_id);
+        meshes.emplace_back(std::move(output_meshes[i]));
+      }
+    } else {
+      // Fall back to sequential conversion for small scenes
+      MeshVisitorEnv menv;
+      menv.env = &env;
+      menv.converter = this;
+
+      bool ret = tydra::VisitPrims(env.stage, MeshVisitor, &menv, &err);
+      if (!ret) {
+        PUSH_ERROR_AND_RETURN(err);
+      }
+    }
+  } else
+#endif  // TINYUSDZ_ENABLE_THREAD
+  {
+    // Sequential conversion path (original behavior)
+    // Material conversion will be done in MeshVisitor.
+    MeshVisitorEnv menv;
+    menv.env = &env;
+    menv.converter = this;
+
+    bool ret = tydra::VisitPrims(env.stage, MeshVisitor, &menv, &err);
+
+    if (!ret) {
+      PUSH_ERROR_AND_RETURN(err);
+    }
   }
 
   // Report progress after mesh/material conversion (70%)

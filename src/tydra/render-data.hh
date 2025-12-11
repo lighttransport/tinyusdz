@@ -2105,6 +2105,41 @@ struct RenderSceneConverterConfig {
   // Only effective when merge_meshes is true.
   //
   bool merge_meshes_bake_transform{true};
+
+#if defined(TINYUSDZ_ENABLE_THREAD)
+  //
+  // Enable parallel mesh conversion for faster processing of scenes
+  // with multiple meshes. When enabled:
+  //
+  // 1. Materials are pre-collected and converted first (single-threaded
+  //    to populate material cache)
+  // 2. Meshes are then converted in parallel using worker threads
+  //
+  // This reduces conversion time for scenes with many objects by
+  // utilizing multiple CPU cores for the expensive mesh conversion step.
+  //
+  // Only effective when TINYUSDZ_ENABLE_THREAD is defined.
+  //
+  bool enable_parallel_mesh_conversion{true};
+
+  //
+  // Number of worker threads for parallel mesh conversion.
+  // 0 = use hardware_concurrency() (number of logical cores)
+  //
+  size_t num_mesh_conversion_threads{0};
+
+  //
+  // Minimum number of meshes required to trigger parallel conversion.
+  // For small scenes, sequential conversion may be faster due to
+  // thread creation overhead.
+  //
+  size_t min_meshes_for_parallel{4};
+
+  //
+  // Task queue capacity for parallel mesh conversion.
+  //
+  size_t mesh_task_queue_capacity{1024};
+#endif  // TINYUSDZ_ENABLE_THREAD
 };
 
 //

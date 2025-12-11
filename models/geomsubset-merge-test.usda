@@ -1,0 +1,194 @@
+#usda 1.0
+(
+    defaultPrim = "root"
+    doc = "Test for GeomSubset merging with same material"
+    metersPerUnit = 1
+    upAxis = "Y"
+)
+
+# Test case: A 3x3 grid of quads where multiple GeomSubsets share the same material
+# 6 GeomSubsets total: 2 red, 2 green, 2 blue -> should merge to 3 submeshes
+
+def Xform "root"
+{
+    def Mesh "grid_mesh" (
+        prepend apiSchemas = ["MaterialBindingAPI"]
+    )
+    {
+        uniform bool doubleSided = 1
+        float3[] extent = [(-1.5, 0, -1.5), (1.5, 0, 1.5)]
+
+        # 9 quads in a 3x3 grid
+        int[] faceVertexCounts = [4, 4, 4, 4, 4, 4, 4, 4, 4]
+
+        # Each quad is CCW when viewed from +Y
+        # Grid layout (face indices):
+        #   0  1  2
+        #   3  4  5
+        #   6  7  8
+        int[] faceVertexIndices = [
+            0, 1, 5, 4,    # Face 0 (top-left)
+            1, 2, 6, 5,    # Face 1 (top-center)
+            2, 3, 7, 6,    # Face 2 (top-right)
+            4, 5, 9, 8,    # Face 3 (middle-left)
+            5, 6, 10, 9,   # Face 4 (center)
+            6, 7, 11, 10,  # Face 5 (middle-right)
+            8, 9, 13, 12,  # Face 6 (bottom-left)
+            9, 10, 14, 13, # Face 7 (bottom-center)
+            10, 11, 15, 14 # Face 8 (bottom-right)
+        ]
+
+        # 4x4 grid of vertices
+        point3f[] points = [
+            (-1.5, 0, -1.5), (-0.5, 0, -1.5), (0.5, 0, -1.5), (1.5, 0, -1.5),
+            (-1.5, 0, -0.5), (-0.5, 0, -0.5), (0.5, 0, -0.5), (1.5, 0, -0.5),
+            (-1.5, 0, 0.5),  (-0.5, 0, 0.5),  (0.5, 0, 0.5),  (1.5, 0, 0.5),
+            (-1.5, 0, 1.5),  (-0.5, 0, 1.5),  (0.5, 0, 1.5),  (1.5, 0, 1.5)
+        ]
+
+        # Face-varying normals (all pointing up)
+        normal3f[] normals = [
+            (0, 1, 0), (0, 1, 0), (0, 1, 0), (0, 1, 0),  # Face 0
+            (0, 1, 0), (0, 1, 0), (0, 1, 0), (0, 1, 0),  # Face 1
+            (0, 1, 0), (0, 1, 0), (0, 1, 0), (0, 1, 0),  # Face 2
+            (0, 1, 0), (0, 1, 0), (0, 1, 0), (0, 1, 0),  # Face 3
+            (0, 1, 0), (0, 1, 0), (0, 1, 0), (0, 1, 0),  # Face 4
+            (0, 1, 0), (0, 1, 0), (0, 1, 0), (0, 1, 0),  # Face 5
+            (0, 1, 0), (0, 1, 0), (0, 1, 0), (0, 1, 0),  # Face 6
+            (0, 1, 0), (0, 1, 0), (0, 1, 0), (0, 1, 0),  # Face 7
+            (0, 1, 0), (0, 1, 0), (0, 1, 0), (0, 1, 0)   # Face 8
+        ] (
+            interpolation = "faceVarying"
+        )
+
+        # UV coordinates per face vertex
+        texCoord2f[] primvars:st = [
+            (0, 0), (0.333, 0), (0.333, 0.333), (0, 0.333),       # Face 0
+            (0.333, 0), (0.666, 0), (0.666, 0.333), (0.333, 0.333), # Face 1
+            (0.666, 0), (1, 0), (1, 0.333), (0.666, 0.333),       # Face 2
+            (0, 0.333), (0.333, 0.333), (0.333, 0.666), (0, 0.666), # Face 3
+            (0.333, 0.333), (0.666, 0.333), (0.666, 0.666), (0.333, 0.666), # Face 4
+            (0.666, 0.333), (1, 0.333), (1, 0.666), (0.666, 0.666), # Face 5
+            (0, 0.666), (0.333, 0.666), (0.333, 1), (0, 1),       # Face 6
+            (0.333, 0.666), (0.666, 0.666), (0.666, 1), (0.333, 1), # Face 7
+            (0.666, 0.666), (1, 0.666), (1, 1), (0.666, 1)        # Face 8
+        ] (
+            interpolation = "faceVarying"
+        )
+
+        uniform token subdivisionScheme = "none"
+        uniform token subsetFamily:materialBind:familyType = "partition"
+
+        # Pattern: checkerboard-like with 3 colors
+        # Red: faces 0, 4, 8 (diagonal)
+        # Green: faces 1, 3, 5, 7 (cross)
+        # Blue: faces 2, 6 (corners)
+
+        # Split each material into 2 GeomSubsets to test merging
+
+        # RED material - split into 2 subsets
+        def GeomSubset "red_subset_A" (
+            prepend apiSchemas = ["MaterialBindingAPI"]
+        )
+        {
+            uniform token elementType = "face"
+            uniform token familyName = "materialBind"
+            int[] indices = [0, 8]  # Non-contiguous faces
+            rel material:binding = </root/Materials/Red>
+        }
+
+        def GeomSubset "red_subset_B" (
+            prepend apiSchemas = ["MaterialBindingAPI"]
+        )
+        {
+            uniform token elementType = "face"
+            uniform token familyName = "materialBind"
+            int[] indices = [4]  # Center face
+            rel material:binding = </root/Materials/Red>
+        }
+
+        # GREEN material - split into 2 subsets
+        def GeomSubset "green_subset_A" (
+            prepend apiSchemas = ["MaterialBindingAPI"]
+        )
+        {
+            uniform token elementType = "face"
+            uniform token familyName = "materialBind"
+            int[] indices = [1, 7]  # Top-center and bottom-center
+            rel material:binding = </root/Materials/Green>
+        }
+
+        def GeomSubset "green_subset_B" (
+            prepend apiSchemas = ["MaterialBindingAPI"]
+        )
+        {
+            uniform token elementType = "face"
+            uniform token familyName = "materialBind"
+            int[] indices = [3, 5]  # Middle-left and middle-right
+            rel material:binding = </root/Materials/Green>
+        }
+
+        # BLUE material - split into 2 subsets
+        def GeomSubset "blue_subset_A" (
+            prepend apiSchemas = ["MaterialBindingAPI"]
+        )
+        {
+            uniform token elementType = "face"
+            uniform token familyName = "materialBind"
+            int[] indices = [2]  # Top-right corner
+            rel material:binding = </root/Materials/Blue>
+        }
+
+        def GeomSubset "blue_subset_B" (
+            prepend apiSchemas = ["MaterialBindingAPI"]
+        )
+        {
+            uniform token elementType = "face"
+            uniform token familyName = "materialBind"
+            int[] indices = [6]  # Bottom-left corner
+            rel material:binding = </root/Materials/Blue>
+        }
+    }
+
+    def Scope "Materials"
+    {
+        def Material "Red"
+        {
+            token outputs:surface.connect = </root/Materials/Red/Shader.outputs:surface>
+
+            def Shader "Shader"
+            {
+                uniform token info:id = "UsdPreviewSurface"
+                color3f inputs:diffuseColor = (1, 0, 0)
+                float inputs:roughness = 0.5
+                token outputs:surface
+            }
+        }
+
+        def Material "Green"
+        {
+            token outputs:surface.connect = </root/Materials/Green/Shader.outputs:surface>
+
+            def Shader "Shader"
+            {
+                uniform token info:id = "UsdPreviewSurface"
+                color3f inputs:diffuseColor = (0, 1, 0)
+                float inputs:roughness = 0.5
+                token outputs:surface
+            }
+        }
+
+        def Material "Blue"
+        {
+            token outputs:surface.connect = </root/Materials/Blue/Shader.outputs:surface>
+
+            def Shader "Shader"
+            {
+                uniform token info:id = "UsdPreviewSurface"
+                color3f inputs:diffuseColor = (0, 0, 1)
+                float inputs:roughness = 0.5
+                token outputs:surface
+            }
+        }
+    }
+}
