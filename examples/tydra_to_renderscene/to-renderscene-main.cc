@@ -82,9 +82,9 @@ int main(int argc, char **argv) {
     std::cout << "  --noidxbuild: Do not rebuild vertex indices\n";
     std::cout << "  --notri: Do not triangulate mesh\n";
     std::cout << "  --trifan: Use triangle fan triangulation (instead of earcut)\n";
-    std::cout << "  --notexload: Do not load textures\n";
+    std::cout << "  --texload: Load textures\n";
     std::cout << "  --noar: Do not use (default) AssertResolver\n";
-    std::cout << "  --nousdprint: Do not print parsed USD\n";
+    std::cout << "  --usdprint: Print parsed USD\n";
     std::cout
         << "  --dumpobj: Dump mesh as wavefront .obj(for visual debugging)\n";
     std::cout << "  --dumpusd: Dump scene as USD(USDA Ascii)\n";
@@ -101,8 +101,8 @@ int main(int argc, char **argv) {
   bool use_triangle_fan = false;
   bool export_obj = false;
   bool export_usd = false;
-  bool no_usdprint = false;
-  bool no_texload = false;
+  bool usdprint = false;
+  bool texload = false;
   bool no_assetresolver = false;
 
   std::string filepath;
@@ -113,10 +113,10 @@ int main(int argc, char **argv) {
       use_triangle_fan = true;
     } else if (strcmp(argv[i], "--noidxbuild") == 0) {
       build_indices = false;
-    } else if (strcmp(argv[i], "--nousdprint") == 0) {
-      no_usdprint = true;
-    } else if (strcmp(argv[i], "--notexload") == 0) {
-      no_texload = true;
+    } else if (strcmp(argv[i], "--usdprint") == 0) {
+      usdprint = true;
+    } else if (strcmp(argv[i], "--texload") == 0) {
+      texload = true;
     } else if (strcmp(argv[i], "--noar") == 0) {
       no_assetresolver = true;
     } else if (strcmp(argv[i], "--dumpobj") == 0) {
@@ -161,7 +161,7 @@ int main(int argc, char **argv) {
 
   bool is_usdz = tinyusdz::IsUSDZ(filepath);
 
-  if (!no_usdprint) {
+  if (usdprint) {
     std::string s = stage.ExportToString();
     std::cout << s << "\n";
     std::cout << "--------------------------------------"
@@ -186,8 +186,8 @@ int main(int argc, char **argv) {
             << "\n";
   env.mesh_config.build_vertex_indices = build_indices;
 
-  std::cout << "Load texture data : " << (!no_texload ? "true" : "false") << "\n";
-  env.scene_config.load_texture_assets = !no_texload;
+  std::cout << "Load texture data : " << (texload ? "true" : "false") << "\n";
+  env.scene_config.load_texture_assets = texload;
 
   // Add base directory of .usd file to search path.
   std::string usd_basedir = tinyusdz::io::GetBaseDir(filepath);
