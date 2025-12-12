@@ -32,6 +32,9 @@ struct Prim::Impl {
     // Custom data dictionary (nested under customData)
     std::map<std::string, Value> custom_data_;
 
+    // Asset info dictionary (nested under assetInfo)
+    std::map<std::string, Value> asset_info_;
+
     // Properties stored by name
     std::unordered_map<std::string, Property> properties_;
 
@@ -73,6 +76,7 @@ struct Prim::Impl {
         , instanceable_(other.instanceable_)
         , metadata_(other.metadata_)
         , custom_data_(other.custom_data_)
+        , asset_info_(other.asset_info_)
         , properties_(other.properties_)
         , property_order_(other.property_order_)
         , variant_sets_(other.variant_sets_)
@@ -97,6 +101,7 @@ struct Prim::Impl {
         , instanceable_(other.instanceable_)
         , metadata_(std::move(other.metadata_))
         , custom_data_(std::move(other.custom_data_))
+        , asset_info_(std::move(other.asset_info_))
         , properties_(std::move(other.properties_))
         , property_order_(std::move(other.property_order_))
         , children_(std::move(other.children_))
@@ -382,6 +387,81 @@ const Value* Prim::get_custom_data(const std::string& key) const {
 
 void Prim::set_custom_data(const std::string& key, const Value& value) {
     impl_->custom_data_[key] = value;
+}
+
+// ============================================================================
+// Asset Info
+// ============================================================================
+
+bool Prim::has_asset_info(const std::string& key) const {
+    return impl_->asset_info_.find(key) != impl_->asset_info_.end();
+}
+
+const Value* Prim::get_asset_info(const std::string& key) const {
+    auto it = impl_->asset_info_.find(key);
+    if (it == impl_->asset_info_.end()) {
+        return nullptr;
+    }
+    return &it->second;
+}
+
+void Prim::set_asset_info(const std::string& key, const Value& value) {
+    impl_->asset_info_[key] = value;
+}
+
+std::vector<std::string> Prim::asset_info_keys() const {
+    std::vector<std::string> keys;
+    keys.reserve(impl_->asset_info_.size());
+    for (const auto& pair : impl_->asset_info_) {
+        keys.push_back(pair.first);
+    }
+    return keys;
+}
+
+size_t Prim::asset_info_count() const {
+    return impl_->asset_info_.size();
+}
+
+std::string Prim::asset_identifier() const {
+    const Value* v = get_asset_info("identifier");
+    if (v) {
+        if (const std::string* s = v->as_string()) {
+            return *s;
+        }
+    }
+    return "";
+}
+
+void Prim::set_asset_identifier(const std::string& path) {
+    set_asset_info("identifier", Value::from_string(path));
+}
+
+std::string Prim::asset_name() const {
+    const Value* v = get_asset_info("name");
+    if (v) {
+        if (const std::string* s = v->as_string()) {
+            return *s;
+        }
+    }
+    return "";
+}
+
+void Prim::set_asset_name(const std::string& name) {
+    set_asset_info("name", Value::from_string(name));
+}
+
+std::string Prim::asset_version() const {
+    const Value* v = get_asset_info("version");
+    if (v) {
+        if (const std::string* s = v->as_string()) {
+            return *s;
+        }
+    }
+    return "";
+}
+
+void Prim::set_asset_version(const std::string& version) {
+    set_asset_info("version", Value::from_string(version));
 }
 
 // ============================================================================
@@ -803,6 +883,7 @@ void Prim::clear() {
     impl_->instanceable_ = false;
     impl_->metadata_.clear();
     impl_->custom_data_.clear();
+    impl_->asset_info_.clear();
     impl_->properties_.clear();
     impl_->property_order_.clear();
     impl_->children_.clear();

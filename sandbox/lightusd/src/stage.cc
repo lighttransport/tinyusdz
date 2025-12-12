@@ -21,6 +21,9 @@ namespace v1 {
 struct Stage::Impl {
     std::vector<std::unique_ptr<Prim>> root_prims_;
 
+    // Sublayers
+    std::vector<SubLayer> sublayers_;
+
     // Stage metadata (specific well-known fields)
     double start_time_code_ = 0.0;
     double end_time_code_ = 0.0;
@@ -39,7 +42,8 @@ struct Stage::Impl {
     Impl() = default;
 
     Impl(const Impl& other)
-        : start_time_code_(other.start_time_code_)
+        : sublayers_(other.sublayers_)
+        , start_time_code_(other.start_time_code_)
         , end_time_code_(other.end_time_code_)
         , frames_per_second_(other.frames_per_second_)
         , time_codes_per_second_(other.time_codes_per_second_)
@@ -57,6 +61,7 @@ struct Stage::Impl {
 
     Impl(Impl&& other) noexcept
         : root_prims_(std::move(other.root_prims_))
+        , sublayers_(std::move(other.sublayers_))
         , start_time_code_(other.start_time_code_)
         , end_time_code_(other.end_time_code_)
         , frames_per_second_(other.frames_per_second_)
@@ -478,6 +483,70 @@ size_t Stage::custom_layer_data_count() const {
 }
 
 // ============================================================================
+// Sublayers
+// ============================================================================
+
+size_t Stage::sublayer_count() const {
+    return impl_->sublayers_.size();
+}
+
+const SubLayer* Stage::sublayer(size_t index) const {
+    if (index >= impl_->sublayers_.size()) {
+        return nullptr;
+    }
+    return &impl_->sublayers_[index];
+}
+
+const std::vector<SubLayer>& Stage::sublayers() const {
+    return impl_->sublayers_;
+}
+
+void Stage::add_sublayer(const SubLayer& sublayer) {
+    impl_->sublayers_.push_back(sublayer);
+}
+
+void Stage::add_sublayer(const std::string& path) {
+    impl_->sublayers_.push_back(SubLayer(path));
+}
+
+void Stage::add_sublayer(const std::string& path, const LayerOffset& offset) {
+    impl_->sublayers_.push_back(SubLayer(path, offset));
+}
+
+void Stage::insert_sublayer(size_t index, const SubLayer& sublayer) {
+    if (index > impl_->sublayers_.size()) {
+        index = impl_->sublayers_.size();
+    }
+    impl_->sublayers_.insert(impl_->sublayers_.begin() + static_cast<ptrdiff_t>(index), sublayer);
+}
+
+bool Stage::remove_sublayer(size_t index) {
+    if (index >= impl_->sublayers_.size()) {
+        return false;
+    }
+    impl_->sublayers_.erase(impl_->sublayers_.begin() + static_cast<ptrdiff_t>(index));
+    return true;
+}
+
+bool Stage::remove_sublayer(const std::string& path) {
+    for (auto it = impl_->sublayers_.begin(); it != impl_->sublayers_.end(); ++it) {
+        if (it->asset_path == path) {
+            impl_->sublayers_.erase(it);
+            return true;
+        }
+    }
+    return false;
+}
+
+void Stage::clear_sublayers() {
+    impl_->sublayers_.clear();
+}
+
+void Stage::set_sublayers(const std::vector<SubLayer>& sublayers) {
+    impl_->sublayers_ = sublayers;
+}
+
+// ============================================================================
 // Default Prim
 // ============================================================================
 
@@ -537,6 +606,7 @@ void Stage::swap(Stage& other) noexcept {
 
 void Stage::clear() {
     impl_->root_prims_.clear();
+    impl_->sublayers_.clear();
     impl_->start_time_code_ = 0.0;
     impl_->end_time_code_ = 0.0;
     impl_->frames_per_second_ = 24.0;

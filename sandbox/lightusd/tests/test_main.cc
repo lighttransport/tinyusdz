@@ -1360,6 +1360,109 @@ def Xform "Instance" (
     }
 }
 
+TEST(Prim_AssetInfo) {
+    Prim prim("Model", "Mesh");
+
+    // Initially empty
+    EXPECT_EQ(prim.asset_info_count(), 0u);
+    EXPECT_TRUE(prim.asset_identifier().empty());
+    EXPECT_TRUE(prim.asset_name().empty());
+    EXPECT_TRUE(prim.asset_version().empty());
+
+    // Set asset info
+    prim.set_asset_identifier("@./model.usd@");
+    prim.set_asset_name("MyModel");
+    prim.set_asset_version("1.0.0");
+    prim.set_asset_info("author", Value::from_string("Artist Name"));
+
+    EXPECT_EQ(prim.asset_info_count(), 4u);
+    EXPECT_EQ(prim.asset_identifier(), "@./model.usd@");
+    EXPECT_EQ(prim.asset_name(), "MyModel");
+    EXPECT_EQ(prim.asset_version(), "1.0.0");
+
+    const Value* author = prim.get_asset_info("author");
+    EXPECT_TRUE(author != nullptr);
+    if (author) {
+        const std::string* s = author->as_string();
+        EXPECT_TRUE(s != nullptr);
+        if (s) EXPECT_EQ(*s, "Artist Name");
+    }
+
+    // Get all keys
+    std::vector<std::string> keys = prim.asset_info_keys();
+    EXPECT_EQ(keys.size(), 4u);
+}
+
+TEST(Prim_AssetInfo_Writer) {
+    Stage stage = Stage::create();
+
+    Prim prim("Model", "Mesh");
+    prim.set_asset_identifier("@./source_model.usd@");
+    prim.set_asset_name("TestModel");
+    prim.set_asset_version("2.0");
+
+    stage.add_root_prim(std::move(prim));
+
+    std::string usda = stage.to_usda();
+    printf("\nAssetInfo USDA:\n%s\n", usda.c_str());
+
+    EXPECT_TRUE(usda.find("assetInfo = {") != std::string::npos);
+    EXPECT_TRUE(usda.find("identifier") != std::string::npos);
+    EXPECT_TRUE(usda.find("name") != std::string::npos);
+    EXPECT_TRUE(usda.find("version") != std::string::npos);
+}
+
+TEST(Stage_Sublayers) {
+    Stage stage = Stage::create();
+
+    // Initially empty
+    EXPECT_EQ(stage.sublayer_count(), 0u);
+
+    // Add sublayers
+    stage.add_sublayer("./base.usd");
+    stage.add_sublayer("./overrides.usd", LayerOffset(10.0, 2.0));
+
+    EXPECT_EQ(stage.sublayer_count(), 2u);
+
+    const SubLayer* sl0 = stage.sublayer(0);
+    EXPECT_TRUE(sl0 != nullptr);
+    if (sl0) {
+        EXPECT_EQ(sl0->asset_path, "./base.usd");
+        EXPECT_TRUE(sl0->layer_offset.is_identity());
+    }
+
+    const SubLayer* sl1 = stage.sublayer(1);
+    EXPECT_TRUE(sl1 != nullptr);
+    if (sl1) {
+        EXPECT_EQ(sl1->asset_path, "./overrides.usd");
+        EXPECT_FALSE(sl1->layer_offset.is_identity());
+        EXPECT_EQ(sl1->layer_offset.offset, 10.0);
+        EXPECT_EQ(sl1->layer_offset.scale, 2.0);
+    }
+
+    // Remove sublayer
+    EXPECT_TRUE(stage.remove_sublayer("./base.usd"));
+    EXPECT_EQ(stage.sublayer_count(), 1u);
+}
+
+TEST(Stage_Sublayers_Writer) {
+    Stage stage = Stage::create();
+
+    stage.add_sublayer("./base_layer.usd");
+    stage.add_sublayer("./animation.usd", LayerOffset(100.0, 1.0));
+
+    Prim prim("Root", "Xform");
+    stage.add_root_prim(std::move(prim));
+
+    std::string usda = stage.to_usda();
+    printf("\nSublayers USDA:\n%s\n", usda.c_str());
+
+    EXPECT_TRUE(usda.find("subLayers = [") != std::string::npos);
+    EXPECT_TRUE(usda.find("@./base_layer.usd@") != std::string::npos);
+    EXPECT_TRUE(usda.find("@./animation.usd@") != std::string::npos);
+    EXPECT_TRUE(usda.find("offset = 100") != std::string::npos);
+}
+
 TEST(Prim_Property_Ordering) {
     Prim prim("Test", "Xform");
 

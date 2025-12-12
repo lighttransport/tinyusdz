@@ -677,7 +677,8 @@ std::string UsdaWriter::format(const Prim& prim, int depth) const {
     bool has_metadata = prim.metadata_count() > 0 || !prim.is_active() ||
                         prim.is_instanceable() || prim.has_references() ||
                         prim.has_payloads() || prim.has_inherits() ||
-                        prim.has_specializes() || !prim.variant_selections().empty();
+                        prim.has_specializes() || !prim.variant_selections().empty() ||
+                        prim.asset_info_count() > 0;
     if (has_metadata) {
         oss << " (" << options_.newline;
 
@@ -733,6 +734,21 @@ std::string UsdaWriter::format(const Prim& prim, int depth) const {
             for (const auto& sel : selections) {
                 oss << ind2 << sel.variant_set_name << " = \""
                     << sel.variant_name << "\"" << options_.newline;
+            }
+            oss << ind1 << "}" << options_.newline;
+        }
+
+        // assetInfo
+        if (prim.asset_info_count() > 0) {
+            oss << ind1 << "assetInfo = {" << options_.newline;
+            std::vector<std::string> ai_keys = prim.asset_info_keys();
+            std::sort(ai_keys.begin(), ai_keys.end());
+            for (const std::string& key : ai_keys) {
+                const Value* val = prim.get_asset_info(key);
+                if (val) {
+                    oss << ind2 << format_type_name(val->type_id()) << " " << key
+                        << " = " << format(*val) << options_.newline;
+                }
             }
             oss << ind1 << "}" << options_.newline;
         }
@@ -877,6 +893,26 @@ std::string UsdaWriter::format(const Stage& stage) const {
 
     // Stage metadata
     std::string ind = options_.indent_string;
+
+    // Sublayers (output first, before other metadata)
+    if (stage.sublayer_count() > 0) {
+        oss << ind << "subLayers = [" << options_.newline;
+        std::string ind2 = ind + options_.indent_string;
+        const std::vector<SubLayer>& sublayers = stage.sublayers();
+        for (size_t i = 0; i < sublayers.size(); ++i) {
+            const SubLayer& sl = sublayers[i];
+            oss << ind2 << "@" << sl.asset_path << "@";
+            if (!sl.layer_offset.is_identity()) {
+                oss << " (offset = " << sl.layer_offset.offset
+                    << "; scale = " << sl.layer_offset.scale << ")";
+            }
+            if (i + 1 < sublayers.size()) {
+                oss << ",";
+            }
+            oss << options_.newline;
+        }
+        oss << ind << "]" << options_.newline;
+    }
 
     // Common layer metadata (sorted alphabetically)
     std::string comment_str = stage.comment();

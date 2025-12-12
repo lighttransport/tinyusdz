@@ -147,6 +147,36 @@ public:
     /// Set custom data value
     void set_custom_data(const std::string& key, const Value& value);
 
+    // ========== Asset Info (nested dictionary) ==========
+
+    /// Check if has asset info key
+    bool has_asset_info(const std::string& key) const;
+
+    /// Get asset info value
+    const Value* get_asset_info(const std::string& key) const;
+
+    /// Set asset info value
+    void set_asset_info(const std::string& key, const Value& value);
+
+    /// Get all asset info keys
+    std::vector<std::string> asset_info_keys() const;
+
+    /// Get asset info count
+    size_t asset_info_count() const;
+
+    // Common asset info accessors
+    /// Get asset identifier (returns empty if not set)
+    std::string asset_identifier() const;
+    void set_asset_identifier(const std::string& path);
+
+    /// Get asset name
+    std::string asset_name() const;
+    void set_asset_name(const std::string& name);
+
+    /// Get asset version
+    std::string asset_version() const;
+    void set_asset_version(const std::string& version);
+
     // ========== Properties ==========
 
     /// Check if has property with name

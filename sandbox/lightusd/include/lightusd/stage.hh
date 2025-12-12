@@ -13,9 +13,21 @@
 #include "lightusd/result.hh"
 #include "lightusd/path.hh"
 #include "lightusd/prim.hh"
+#include "lightusd/composition.hh"
 
 namespace lightusd {
 namespace v1 {
+
+/// SubLayer - reference to a sublayer with optional offset
+struct SubLayer {
+    std::string asset_path;
+    LayerOffset layer_offset;
+
+    SubLayer() = default;
+    explicit SubLayer(const std::string& path) : asset_path(path) {}
+    SubLayer(const std::string& path, const LayerOffset& offset)
+        : asset_path(path), layer_offset(offset) {}
+};
 
 /// Stage - the root container for a USD scene.
 /// Contains root prims and stage-level metadata.
@@ -184,6 +196,41 @@ public:
 
     /// Get custom layer data count
     size_t custom_layer_data_count() const;
+
+    // ========== Sublayers ==========
+
+    /// Get sublayer count
+    size_t sublayer_count() const;
+
+    /// Get sublayer by index
+    const SubLayer* sublayer(size_t index) const;
+
+    /// Get all sublayers
+    const std::vector<SubLayer>& sublayers() const;
+
+    /// Add sublayer at end
+    void add_sublayer(const SubLayer& sublayer);
+
+    /// Add sublayer at end (convenience)
+    void add_sublayer(const std::string& path);
+
+    /// Add sublayer with offset
+    void add_sublayer(const std::string& path, const LayerOffset& offset);
+
+    /// Insert sublayer at index
+    void insert_sublayer(size_t index, const SubLayer& sublayer);
+
+    /// Remove sublayer by index
+    bool remove_sublayer(size_t index);
+
+    /// Remove sublayer by path
+    bool remove_sublayer(const std::string& path);
+
+    /// Clear all sublayers
+    void clear_sublayers();
+
+    /// Set all sublayers (replaces existing)
+    void set_sublayers(const std::vector<SubLayer>& sublayers);
 
     // ========== Default Prim ==========
 
