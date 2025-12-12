@@ -288,6 +288,65 @@ bool Parser::parse_stage_metadata(Stage& stage) {
             }
             stage.set_owner(current_.str_value);
             advance();
+        } else if (key == "subLayers") {
+            // Parse sublayers list: subLayers = [@./base.usd@, @./anim.usd@ (offset=10; scale=1)]
+            if (!expect(TokenType::LBracket, "Expected '[' for subLayers")) {
+                return false;
+            }
+            while (!check(TokenType::RBracket) && !check(TokenType::Eof)) {
+                // Parse @asset_path@
+                if (!check(TokenType::AssetPath)) {
+                    error("Expected asset path in subLayers");
+                    return false;
+                }
+                std::string asset_path = current_.str_value;
+                advance();
+
+                // Parse optional layer offset: (offset = 10; scale = 1)
+                LayerOffset layer_offset;
+                if (check(TokenType::LParen)) {
+                    advance();
+                    while (!check(TokenType::RParen) && !check(TokenType::Eof)) {
+                        if (check(TokenType::Identifier)) {
+                            std::string offset_key = current_.str_value;
+                            advance();
+                            if (!expect(TokenType::Equals, "Expected '='")) {
+                                return false;
+                            }
+                            if (offset_key == "offset") {
+                                if (check(TokenType::Integer)) {
+                                    layer_offset.offset = static_cast<double>(current_.int_value);
+                                } else if (check(TokenType::Float)) {
+                                    layer_offset.offset = current_.float_value;
+                                }
+                                advance();
+                            } else if (offset_key == "scale") {
+                                if (check(TokenType::Integer)) {
+                                    layer_offset.scale = static_cast<double>(current_.int_value);
+                                } else if (check(TokenType::Float)) {
+                                    layer_offset.scale = current_.float_value;
+                                }
+                                advance();
+                            }
+                        }
+                        if (check(TokenType::Semicolon)) {
+                            advance();
+                        }
+                    }
+                    if (!expect(TokenType::RParen, "Expected ')'")) {
+                        return false;
+                    }
+                }
+
+                stage.add_sublayer(asset_path, layer_offset);
+
+                if (check(TokenType::Comma)) {
+                    advance();
+                }
+            }
+            if (!expect(TokenType::RBracket, "Expected ']'")) {
+                return false;
+            }
         } else if (key == "customLayerData") {
             // Parse dictionary
             if (!expect(TokenType::LBrace, "Expected '{' for customLayerData")) {
@@ -603,6 +662,45 @@ bool Parser::parse_prim_metadata(Prim& prim) {
                 }
             } else {
                 error("Expected '{' for 'customData'");
+                return false;
+            }
+        }
+        // assetInfo = { ... }
+        else if (key == "assetInfo") {
+            if (check(TokenType::LBrace)) {
+                advance();
+                // Parse dictionary entries
+                while (!check(TokenType::RBrace) && !check(TokenType::Eof)) {
+                    // type key = value (e.g., string name = "Model")
+                    std::string type_name;
+                    if (check(TokenType::Identifier)) {
+                        type_name = current_.str_value;
+                        advance();
+                    }
+
+                    std::string asset_key;
+                    if (check(TokenType::Identifier) || check(TokenType::String)) {
+                        asset_key = current_.str_value;
+                        advance();
+                    }
+
+                    if (!expect(TokenType::Equals, "Expected '='")) {
+                        return false;
+                    }
+
+                    // Parse the value based on type
+                    bool is_array = false;
+                    TypeId type_id = lookup_type(type_name, &is_array);
+                    auto value_result = parse_value(type_id);
+                    if (value_result.ok()) {
+                        prim.set_asset_info(asset_key, value_result.value());
+                    }
+                }
+                if (!expect(TokenType::RBrace, "Expected '}'")) {
+                    return false;
+                }
+            } else {
+                error("Expected '{' for 'assetInfo'");
                 return false;
             }
         }

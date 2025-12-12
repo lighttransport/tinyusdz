@@ -1445,6 +1445,79 @@ TEST(Stage_Sublayers) {
     EXPECT_EQ(stage.sublayer_count(), 1u);
 }
 
+TEST(Prim_AssetInfo_Parser) {
+    const char* usda = R"(#usda 1.0
+
+def Mesh "Model" (
+    assetInfo = {
+        string identifier = "@./source.usd@"
+        string name = "TestModel"
+        string version = "1.0"
+    }
+)
+{
+}
+)";
+
+    auto result = read_usda_string(usda);
+    if (!result.ok()) {
+        printf("Parse error: %s\n", result.error_summary.c_str());
+    }
+    EXPECT_TRUE(result.ok());
+
+    if (result.ok()) {
+        auto prim_result = result.stage.get_prim_at_path(Path("/Model"));
+        EXPECT_TRUE(prim_result.ok());
+        if (prim_result.ok()) {
+            const Prim* prim = prim_result.value();
+            EXPECT_EQ(prim->asset_info_count(), 3u);
+            EXPECT_EQ(prim->asset_identifier(), "@./source.usd@");
+            EXPECT_EQ(prim->asset_name(), "TestModel");
+            EXPECT_EQ(prim->asset_version(), "1.0");
+        }
+    }
+}
+
+TEST(Stage_Sublayers_Parser) {
+    const char* usda = R"(#usda 1.0
+(
+    subLayers = [
+        @./base.usd@,
+        @./animation.usd@ (offset = 100; scale = 2)
+    ]
+)
+
+def Xform "Root"
+{
+}
+)";
+
+    auto result = read_usda_string(usda);
+    if (!result.ok()) {
+        printf("Parse error: %s\n", result.error_summary.c_str());
+    }
+    EXPECT_TRUE(result.ok());
+
+    if (result.ok()) {
+        EXPECT_EQ(result.stage.sublayer_count(), 2u);
+
+        const SubLayer* sl0 = result.stage.sublayer(0);
+        EXPECT_TRUE(sl0 != nullptr);
+        if (sl0) {
+            EXPECT_EQ(sl0->asset_path, "./base.usd");
+            EXPECT_TRUE(sl0->layer_offset.is_identity());
+        }
+
+        const SubLayer* sl1 = result.stage.sublayer(1);
+        EXPECT_TRUE(sl1 != nullptr);
+        if (sl1) {
+            EXPECT_EQ(sl1->asset_path, "./animation.usd");
+            EXPECT_EQ(sl1->layer_offset.offset, 100.0);
+            EXPECT_EQ(sl1->layer_offset.scale, 2.0);
+        }
+    }
+}
+
 TEST(Stage_Sublayers_Writer) {
     Stage stage = Stage::create();
 
