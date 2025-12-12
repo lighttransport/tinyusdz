@@ -170,11 +170,18 @@ public:
     /// Remove property
     bool remove_property(const std::string& name);
 
-    /// Get all property names
+    /// Get all property names (in current order)
     std::vector<std::string> property_names() const;
 
     /// Get property count
     size_t property_count() const;
+
+    /// Set explicit property order (names must match existing properties)
+    /// Properties not in the list will be appended in their current order
+    bool set_property_order(const std::vector<std::string>& order);
+
+    /// Reorder properties lexicographically (OpenUSD default)
+    void reorder_properties_lexicographic();
 
     // ========== Attribute Helpers ==========
 
@@ -213,8 +220,15 @@ public:
     /// Remove child by name
     bool remove_child(const std::string& name);
 
-    /// Get all child names
+    /// Get all child names (in current order)
     std::vector<std::string> child_names() const;
+
+    /// Set explicit child order (names must match existing children)
+    /// Children not in the list will be appended in their current order
+    bool set_child_order(const std::vector<std::string>& order);
+
+    /// Reorder children lexicographically (OpenUSD default)
+    void reorder_children_lexicographic();
 
     // ========== Instanceable ==========
 

@@ -1360,6 +1360,84 @@ def Xform "Instance" (
     }
 }
 
+TEST(Prim_Property_Ordering) {
+    Prim prim("Test", "Xform");
+
+    // Add properties in specific order
+    Attribute attr_c(TypeId::Float);
+    attr_c.set_default(Value::from_float(3.0f));
+    prim.set_attribute("c_prop", std::move(attr_c));
+
+    Attribute attr_a(TypeId::Float);
+    attr_a.set_default(Value::from_float(1.0f));
+    prim.set_attribute("a_prop", std::move(attr_a));
+
+    Attribute attr_b(TypeId::Float);
+    attr_b.set_default(Value::from_float(2.0f));
+    prim.set_attribute("b_prop", std::move(attr_b));
+
+    // Should be in insertion order: c, a, b
+    auto names = prim.property_names();
+    EXPECT_EQ(names.size(), 3u);
+    EXPECT_EQ(names[0], "c_prop");
+    EXPECT_EQ(names[1], "a_prop");
+    EXPECT_EQ(names[2], "b_prop");
+
+    // Reorder lexicographically
+    prim.reorder_properties_lexicographic();
+    names = prim.property_names();
+    EXPECT_EQ(names[0], "a_prop");
+    EXPECT_EQ(names[1], "b_prop");
+    EXPECT_EQ(names[2], "c_prop");
+
+    // Explicit reorder
+    EXPECT_TRUE(prim.set_property_order({"b_prop", "c_prop", "a_prop"}));
+    names = prim.property_names();
+    EXPECT_EQ(names[0], "b_prop");
+    EXPECT_EQ(names[1], "c_prop");
+    EXPECT_EQ(names[2], "a_prop");
+
+    // Invalid reorder (non-existent property)
+    EXPECT_FALSE(prim.set_property_order({"z_prop"}));
+}
+
+TEST(Prim_Child_Ordering) {
+    Prim parent("Parent", "Xform");
+
+    // Add children in specific order
+    Prim child_c("charlie");
+    Prim child_a("alpha");
+    Prim child_b("beta");
+
+    parent.add_child(std::move(child_c));
+    parent.add_child(std::move(child_a));
+    parent.add_child(std::move(child_b));
+
+    // Should be in insertion order
+    auto names = parent.child_names();
+    EXPECT_EQ(names.size(), 3u);
+    EXPECT_EQ(names[0], "charlie");
+    EXPECT_EQ(names[1], "alpha");
+    EXPECT_EQ(names[2], "beta");
+
+    // Reorder lexicographically
+    parent.reorder_children_lexicographic();
+    names = parent.child_names();
+    EXPECT_EQ(names[0], "alpha");
+    EXPECT_EQ(names[1], "beta");
+    EXPECT_EQ(names[2], "charlie");
+
+    // Explicit reorder
+    EXPECT_TRUE(parent.set_child_order({"beta", "charlie", "alpha"}));
+    names = parent.child_names();
+    EXPECT_EQ(names[0], "beta");
+    EXPECT_EQ(names[1], "charlie");
+    EXPECT_EQ(names[2], "alpha");
+
+    // Invalid reorder (non-existent child)
+    EXPECT_FALSE(parent.set_child_order({"nonexistent"}));
+}
+
 TEST(Composition_Parser_VariantSelection) {
     const char* usda = R"(#usda 1.0
 

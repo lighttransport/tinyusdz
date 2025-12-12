@@ -35,6 +35,9 @@ struct Prim::Impl {
     // Properties stored by name
     std::unordered_map<std::string, Property> properties_;
 
+    // Property insertion order (for explicit ordering)
+    std::vector<std::string> property_order_;
+
     // Children (ordered)
     std::vector<std::unique_ptr<Prim>> children_;
 
@@ -71,6 +74,7 @@ struct Prim::Impl {
         , metadata_(other.metadata_)
         , custom_data_(other.custom_data_)
         , properties_(other.properties_)
+        , property_order_(other.property_order_)
         , variant_sets_(other.variant_sets_)
         , variant_selections_(other.variant_selections_)
         , references_(other.references_)
@@ -94,6 +98,7 @@ struct Prim::Impl {
         , metadata_(std::move(other.metadata_))
         , custom_data_(std::move(other.custom_data_))
         , properties_(std::move(other.properties_))
+        , property_order_(std::move(other.property_order_))
         , children_(std::move(other.children_))
         , variant_sets_(std::move(other.variant_sets_))
         , variant_selections_(std::move(other.variant_selections_))
@@ -404,34 +409,81 @@ Property* Prim::get_property_mutable(const std::string& name) {
 }
 
 void Prim::set_property(const std::string& name, Property prop) {
+    // Track insertion order if this is a new property
+    if (impl_->properties_.find(name) == impl_->properties_.end()) {
+        impl_->property_order_.push_back(name);
+    }
     impl_->properties_[name] = std::move(prop);
 }
 
 void Prim::set_attribute(const std::string& name, Attribute attr) {
+    // Track insertion order if this is a new property
+    if (impl_->properties_.find(name) == impl_->properties_.end()) {
+        impl_->property_order_.push_back(name);
+    }
     impl_->properties_[name] = Property(std::move(attr));
 }
 
 void Prim::set_relationship(const std::string& name, Relationship rel) {
+    // Track insertion order if this is a new property
+    if (impl_->properties_.find(name) == impl_->properties_.end()) {
+        impl_->property_order_.push_back(name);
+    }
     impl_->properties_[name] = Property(std::move(rel));
 }
 
 bool Prim::remove_property(const std::string& name) {
-    return impl_->properties_.erase(name) > 0;
+    if (impl_->properties_.erase(name) > 0) {
+        // Remove from property order
+        auto it = std::find(impl_->property_order_.begin(),
+                            impl_->property_order_.end(), name);
+        if (it != impl_->property_order_.end()) {
+            impl_->property_order_.erase(it);
+        }
+        return true;
+    }
+    return false;
 }
 
 std::vector<std::string> Prim::property_names() const {
-    std::vector<std::string> names;
-    names.reserve(impl_->properties_.size());
-    for (const auto& pair : impl_->properties_) {
-        names.push_back(pair.first);
-    }
-    // Sort for deterministic order
-    std::sort(names.begin(), names.end());
-    return names;
+    // Return in current order (insertion order by default)
+    return impl_->property_order_;
 }
 
 size_t Prim::property_count() const {
     return impl_->properties_.size();
+}
+
+bool Prim::set_property_order(const std::vector<std::string>& order) {
+    // Validate that all names in order exist
+    for (const auto& name : order) {
+        if (impl_->properties_.find(name) == impl_->properties_.end()) {
+            return false;
+        }
+    }
+
+    // Build new order: specified names first, then remaining in current order
+    std::vector<std::string> new_order;
+    new_order.reserve(impl_->properties_.size());
+
+    // Add specified names
+    for (const auto& name : order) {
+        new_order.push_back(name);
+    }
+
+    // Add remaining properties not in order
+    for (const auto& name : impl_->property_order_) {
+        if (std::find(order.begin(), order.end(), name) == order.end()) {
+            new_order.push_back(name);
+        }
+    }
+
+    impl_->property_order_ = std::move(new_order);
+    return true;
+}
+
+void Prim::reorder_properties_lexicographic() {
+    std::sort(impl_->property_order_.begin(), impl_->property_order_.end());
 }
 
 // ============================================================================
@@ -537,6 +589,45 @@ std::vector<std::string> Prim::child_names() const {
         names.push_back(child->name());
     }
     return names;
+}
+
+bool Prim::set_child_order(const std::vector<std::string>& order) {
+    // Validate that all names in order exist
+    for (const auto& name : order) {
+        if (!impl_->find_child(name)) {
+            return false;
+        }
+    }
+
+    // Build map of current children
+    std::unordered_map<std::string, std::unique_ptr<Prim>> child_map;
+    for (auto& child : impl_->children_) {
+        child_map[child->name()] = std::move(child);
+    }
+    impl_->children_.clear();
+
+    // Add in specified order
+    for (const auto& name : order) {
+        auto it = child_map.find(name);
+        if (it != child_map.end()) {
+            impl_->children_.push_back(std::move(it->second));
+            child_map.erase(it);
+        }
+    }
+
+    // Add remaining children not in order
+    for (auto& pair : child_map) {
+        impl_->children_.push_back(std::move(pair.second));
+    }
+
+    return true;
+}
+
+void Prim::reorder_children_lexicographic() {
+    std::sort(impl_->children_.begin(), impl_->children_.end(),
+              [](const std::unique_ptr<Prim>& a, const std::unique_ptr<Prim>& b) {
+                  return a->name() < b->name();
+              });
 }
 
 // ============================================================================
@@ -713,6 +804,7 @@ void Prim::clear() {
     impl_->metadata_.clear();
     impl_->custom_data_.clear();
     impl_->properties_.clear();
+    impl_->property_order_.clear();
     impl_->children_.clear();
     impl_->variant_sets_.clear();
     impl_->variant_selections_.clear();
