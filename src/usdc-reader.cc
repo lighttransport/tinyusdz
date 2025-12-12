@@ -39,6 +39,7 @@
 #include "crate-format.hh"
 #include "crate-pprint.hh"
 #include "crate-reader.hh"
+#include "tiny-container.hh"
 #include "integerCoding.h"
 #include "lz4-compression.hh"
 #include "path-util.hh"
@@ -293,11 +294,12 @@ class USDCReader::Impl {
   /// Returns reconstruct Prim to `primOut`
   /// When `current` is 0(StageMeta), `primOut` is not set.
   /// `is_parent_variant` : True when parent path is Variant
+  /// Uses unique_ptr for move-friendly output (no Prim copies)
   ///
   bool ReconstructPrimNode(int parent, int current, int level,
                            bool is_parent_variant,
                            const PathIndexToSpecIndexMap &psmap, Stage *stage,
-                           nonstd::optional<Prim> *primOut);
+                           std::unique_ptr<Prim> *primOut);
 
   ///
   /// Reconstrcut PrimSpec node.
@@ -2378,7 +2380,7 @@ bool USDCReader::Impl::ReconstructPrimNode(int parent, int current, int level,
                                            bool is_parent_variant,
                                            const PathIndexToSpecIndexMap &psmap,
                                            Stage *stage,
-                                           nonstd::optional<Prim> *primOut) {
+                                           std::unique_ptr<Prim> *primOut) {
   (void)level;
   const crate::CrateReader::Node &node = (*_nodes)[size_t(current)];
 
@@ -2572,8 +2574,9 @@ bool USDCReader::Impl::ReconstructPrimNode(int parent, int current, int level,
           }
         }
 
-        if (primOut) {
-          (*primOut) = std::move(prim);
+        // Move from optional to unique_ptr (no copy, only move)
+        if (primOut && prim) {
+          primOut->reset(new Prim(std::move(prim.value())));
         }
       }
 
@@ -2743,7 +2746,8 @@ bool USDCReader::Impl::ReconstructPrimNode(int parent, int current, int level,
           if (_variantPrims.count(current)) {
             DCOUT("??? prim idx already set " << current);
           } else {
-            _variantPrims.emplace(current,  variantPrim.value());
+            // Use std::move to avoid Prim copy
+            _variantPrims.emplace(current, std::move(*variantPrim));
             _variantPrimChildren[parent].push_back(current);
           }
         } else {
@@ -2766,7 +2770,8 @@ bool USDCReader::Impl::ReconstructPrimNode(int parent, int current, int level,
               if (_variantPrims.count(current)) {
                 DCOUT("??? prim idx already set " << current);
               } else {
-                _variantPrims.emplace(current, variantPrim.value());
+                // Use std::move to avoid Prim copy
+                _variantPrims.emplace(current, std::move(*variantPrim));
                 _variantPrimChildren[parent].push_back(current);
               }
             } else {
@@ -3339,7 +3344,265 @@ bool USDCReader::Impl::ReconstructPrimSpecNode(int parent, int current, int leve
   return true;
 }
 
+// Switch between recursive and iterative implementation
+// Set to 1 to use iterative implementation, 0 to use original recursive implementation
+#define TINYUSDZ_USE_ITERATIVE_RECONSTRUCT_PRIM 1
+
+#if TINYUSDZ_USE_ITERATIVE_RECONSTRUCT_PRIM
+
 //
+// Iterative version of ReconstructPrimRecursively using explicit stack
+// This avoids stack overflow for deeply nested prim hierarchies
+//
+// Uses std::unique_ptr<Prim> instead of nonstd::optional<Prim> for move-friendly
+// semantics. unique_ptr has noexcept move constructor, so vector reallocation
+// will move (not copy) StackEntry objects efficiently.
+//
+bool USDCReader::Impl::ReconstructPrimRecursively(
+    int parent, int current, Prim *parentPrim, int level,
+    const PathIndexToSpecIndexMap &psmap, Stage *stage) {
+
+  // parentPrim is not used in iterative version - we track via parent_entry_idx
+  (void)parentPrim;
+
+  // Stack entry for iterative processing
+  // We use indices to parent entries to maintain parent-child relationships
+  // Using unique_ptr<Prim> for move-only semantics (no Prim copies)
+  struct StackEntry {
+    int parent_id;           // Parent node id
+    int current_id;          // Current node id
+    int level;               // Nesting level
+    size_t child_idx;        // Which child we're processing next
+    size_t parent_entry_idx; // Index of parent entry in stack (SIZE_MAX for none)
+    std::unique_ptr<Prim> prim;  // Reconstructed prim for this node (nullptr if none)
+
+    StackEntry(int p, int c, int lv, size_t parent_idx)
+        : parent_id(p), current_id(c), level(lv), child_idx(0),
+          parent_entry_idx(parent_idx), prim(nullptr) {}
+
+    // Move-only
+    StackEntry(StackEntry &&) noexcept = default;
+    StackEntry &operator=(StackEntry &&) noexcept = default;
+    StackEntry(const StackEntry &) = delete;
+    StackEntry &operator=(const StackEntry &) = delete;
+  };
+
+  // Use vector as stack - reserve space to minimize reallocations
+  std::vector<StackEntry> stack;
+  stack.reserve(size_t(_config.kMaxPrimNestLevel) + 16);
+
+  // Push initial entry
+  stack.emplace_back(parent, current, level, SIZE_MAX);
+
+  while (!stack.empty()) {
+    StackEntry &entry = stack.back();
+
+    // Validate current node id
+    if ((entry.current_id < 0) || (entry.current_id >= int(_nodes->size()))) {
+      PUSH_ERROR("Invalid current node id: " + std::to_string(entry.current_id) +
+                 ". Must be in range [0, " + std::to_string(_nodes->size()) + ")");
+      return false;
+    }
+
+    // Check nesting level
+    if (entry.level > int32_t(_config.kMaxPrimNestLevel)) {
+      PUSH_ERROR_AND_RETURN_TAG(kTag, "Prim hierarchy is too deep.");
+    }
+
+    const crate::CrateReader::Node &node = (*_nodes)[size_t(entry.current_id)];
+    const auto &children = node.GetChildren();
+
+    // First time visiting this node - reconstruct prim
+    if (entry.child_idx == 0 && !entry.prim) {
+      DCOUT("ReconstructPrimRecursively: parent = "
+            << std::to_string(entry.parent_id) << ", current = " << entry.current_id
+            << ", level = " << std::to_string(entry.level));
+
+      bool is_parent_variant = _variantPrims.count(entry.parent_id);
+
+      std::unique_ptr<Prim> temp_prim;
+      if (!ReconstructPrimNode(entry.parent_id, entry.current_id, entry.level,
+                               is_parent_variant, psmap, stage, &temp_prim)) {
+        return false;
+      }
+      // Direct move of unique_ptr (no intermediate optional, no copy)
+      if (temp_prim) {
+        entry.prim = std::move(temp_prim);
+      }
+
+      DCOUT("node.Children.size = " << children.size());
+    }
+
+    // Process children
+    if (entry.child_idx < children.size()) {
+      size_t idx = entry.child_idx++;
+      int child_id = int(children[idx]);
+
+      DCOUT("Reconstuct Prim children: " << idx << " / " << children.size());
+
+      // Get current stack size as parent index for the new entry
+      size_t current_entry_idx = stack.size() - 1;
+
+      // Push child entry
+      stack.emplace_back(entry.current_id, child_id, entry.level + 1, current_entry_idx);
+    } else {
+      // All children processed - finalize this node
+      DCOUT("DONE processing children for node: " << entry.current_id);
+
+      //
+      // Reconstruct variant
+      //
+      DCOUT(fmt::format("parent {}, current {}", entry.parent_id, entry.current_id));
+
+      DCOUT(fmt::format("  has variant properties {}, has variant children {}",
+        _variantPropChildren.count(entry.current_id),
+        _variantPrimChildren.count(entry.current_id)));
+
+      // Get parent prim pointer
+      Prim *parentPrimPtr = nullptr;
+      if (entry.parent_entry_idx != SIZE_MAX && entry.parent_entry_idx < stack.size()) {
+        parentPrimPtr = stack[entry.parent_entry_idx].prim.get();
+      }
+
+      if (_variantPropChildren.count(entry.current_id)) {
+
+        // - parentPrim
+        //   - variantPrim(SpecTypeVariant) <- current
+        //     - variant property(SpecTypeAttribute)
+
+        //
+        // `current` must be VariantPrim and `parentPrim` should exist
+        //
+        if (!_variantPrims.count(entry.current_id)) {
+          PUSH_ERROR_AND_RETURN("Internal error: variant attribute is not a child of VariantPrim.");
+        }
+
+        if (!parentPrimPtr) {
+          PUSH_ERROR_AND_RETURN("Internal error: parentPrim should exist.");
+        }
+
+        const Prim &variantPrim = _variantPrims.at(entry.current_id);
+
+        DCOUT("variant prim name: " << variantPrim.element_name());
+
+        // element_name must be variant: "{variant=value}"
+        if (!is_variantElementName(variantPrim.element_name())) {
+          PUSH_ERROR_AND_RETURN("Corrupted Crate. VariantAttribute is not the child of VariantPrim.");
+        }
+
+        std::array<std::string, 2> toks;
+        if (!tokenize_variantElement(variantPrim.element_name(), &toks)) {
+          PUSH_ERROR_AND_RETURN("Invalid variant element_name.");
+        }
+
+        std::string variantSetName = toks[0];
+        std::string variantName = toks[1];
+
+        Variant variant;
+
+        for (const auto &item : _variantPropChildren.at(entry.current_id)) {
+          // item should exist in _variantProps.
+          if (!_variantProps.count(item)) {
+            PUSH_ERROR_AND_RETURN("Internal error: variant Property not found.");
+          }
+          const std::pair<Path, Property> &pp = _variantProps.at(item);
+
+          std::string prop_name = std::get<0>(pp).prop_part();
+          DCOUT(fmt::format("  node_index = {}, prop name {}", item, prop_name));
+
+          variant.properties()[prop_name] = std::get<1>(pp);
+        }
+
+        VariantSet &vs = parentPrimPtr->variantSets()[variantSetName];
+
+        if (vs.name.empty()) {
+          vs.name = variantSetName;
+        }
+        vs.variantSet[variantName] = variant;
+
+      }
+
+      if (_variantPrimChildren.count(entry.current_id)) {
+
+        // - currentPrim <- current
+        //   - variant Prim children
+
+        if (!entry.prim) {
+          PUSH_ERROR_AND_RETURN("Internal error: must be Prim.");
+        }
+
+        DCOUT(fmt::format("{} has variant Prim ", entry.prim->element_name()));
+
+        for (const auto &item : _variantPrimChildren.at(entry.current_id)) {
+
+          if (!_variantPrims.count(item)) {
+            PUSH_ERROR_AND_RETURN("Internal error: variant Prim children not found.");
+          }
+
+          const Prim &vp = _variantPrims.at(item);
+
+          DCOUT(fmt::format("  variantPrim name {}", vp.element_name()));
+
+          // element_name must be variant: "{variant=value}"
+          if (!is_variantElementName(vp.element_name())) {
+            PUSH_ERROR_AND_RETURN("Corrupted Crate. Variant Prim has invalid element_name.");
+          }
+
+          std::array<std::string, 2> toks;
+          if (!tokenize_variantElement(vp.element_name(), &toks)) {
+            PUSH_ERROR_AND_RETURN("Invalid variant element_name.");
+          }
+
+          std::string variantSetName = toks[0];
+          std::string variantName = toks[1];
+
+          VariantSet &vs = entry.prim->variantSets()[variantSetName];
+
+          if (vs.name.empty()) {
+            vs.name = variantSetName;
+          }
+          vs.variantSet[variantName].metas() = vp.metas();
+          DCOUT("# of primChildren = " << vp.children().size());
+          vs.variantSet[variantName].primChildren() = std::move(vp.children());
+
+        }
+      }
+
+      // Add prim to parent or root_prims (move out of unique_ptr)
+      if (entry.parent_id == 0) {  // root prim
+        if (entry.prim) {
+          stage->root_prims().emplace_back(std::move(*entry.prim));
+        }
+      } else {
+        if (_variantPrims.count(entry.parent_id)) {
+          // Add to variantPrim
+          DCOUT("parent is variantPrim: " << entry.parent_id);
+          if (!entry.prim) {
+            // FIXME: Validate current should be Prim.
+            PUSH_WARN("parent is variantPrim, but current is not Prim.");
+          } else {
+            DCOUT("Adding prim to child...");
+            Prim &vp = _variantPrims.at(entry.parent_id);
+            vp.children().emplace_back(std::move(*entry.prim));
+          }
+        } else if (entry.prim && parentPrimPtr) {
+          // Add to parent prim.
+          parentPrimPtr->children().emplace_back(std::move(*entry.prim));
+        }
+      }
+
+      // Pop this entry
+      stack.pop_back();
+    }
+  }
+
+  return true;
+}
+
+#else // !TINYUSDZ_USE_ITERATIVE_RECONSTRUCT_PRIM
+
+//
+// Original recursive implementation
 // TODO: rewrite code in bottom-up manner
 //
 bool USDCReader::Impl::ReconstructPrimRecursively(
@@ -3366,7 +3629,7 @@ bool USDCReader::Impl::ReconstructPrimRecursively(
   // null : parent node is Property or other Spec type.
   // non-null : parent node is Prim
   Prim *currPrimPtr = nullptr;
-  nonstd::optional<Prim> prim;
+  std::unique_ptr<Prim> prim;
 
   bool is_parent_variant = _variantPrims.count(parent);
 
@@ -3376,7 +3639,7 @@ bool USDCReader::Impl::ReconstructPrimRecursively(
   }
 
   if (prim) {
-    currPrimPtr = &(prim.value());
+    currPrimPtr = prim.get();
   }
 
   // Traverse children
@@ -3512,7 +3775,7 @@ bool USDCReader::Impl::ReconstructPrimRecursively(
 
   if (parent == 0) {  // root prim
     if (prim) {
-      stage->root_prims().emplace_back(std::move(prim.value()));
+      stage->root_prims().emplace_back(std::move(*prim));
     }
   } else {
     if (_variantPrims.count(parent)) {
@@ -3524,16 +3787,18 @@ bool USDCReader::Impl::ReconstructPrimRecursively(
       } else {
         DCOUT("Adding prim to child...");
         Prim &vp = _variantPrims.at(parent);
-        vp.children().emplace_back(std::move(prim.value()));
+        vp.children().emplace_back(std::move(*prim));
       }
     } else if (prim && parentPrim) {
       // Add to parent prim.
-      parentPrim->children().emplace_back(std::move(prim.value()));
+      parentPrim->children().emplace_back(std::move(*prim));
     }
   }
 
   return true;
 }
+
+#endif // TINYUSDZ_USE_ITERATIVE_RECONSTRUCT_PRIM
 
 bool USDCReader::Impl::ReconstructStage(Stage *stage) {
 
