@@ -19,6 +19,8 @@
 #include "unit-pprint.h"
 #include "unit-materialx.h"
 #include "unit-task-queue.h"
+#include "unit-stage.h"
+#include "unit-tiny-container.h"
 
 #if defined(TINYUSDZ_WITH_PXR_COMPAT_API)
 #include "unit-pxr-compat-api.h"
@@ -59,6 +61,14 @@ TEST_LIST = {
   { "task_queue_full_test", task_queue_full_test },
   { "task_queue_multithreaded_test", task_queue_multithreaded_test },
   { "task_queue_clear_test", task_queue_clear_test },
+  { "stage_get_prim_at_path_test", stage_get_prim_at_path_test },
+  { "stage_find_prim_by_id_test", stage_find_prim_by_id_test },
+  { "stack_vector_basic_test", stack_vector_basic_test },
+  { "stack_vector_overflow_test", stack_vector_overflow_test },
+  { "stack_vector_copy_test", stack_vector_copy_test },
+  { "stack_vector_move_test", stack_vector_move_test },
+  { "stack_vector_iterator_test", stack_vector_iterator_test },
+  { "stack_vector_complex_type_test", stack_vector_complex_type_test },
 #if defined(TINYUSDZ_WITH_PXR_COMPAT_API)
   { "pxr_compat_api_test", pxr_compat_api_test },
 #endif
