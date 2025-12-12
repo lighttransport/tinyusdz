@@ -10,6 +10,8 @@
  </a>
 </p>
 
+[![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/lighttransport/tinyusdz)
+
 [![npm version](https://img.shields.io/npm/v/tinyusdz.svg)](https://www.npmjs.com/package/tinyusdz)
 
 ## Releases
