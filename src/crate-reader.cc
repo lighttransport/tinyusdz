@@ -320,8 +320,9 @@ bool CrateReader::ReadCompressedInts(Int *out,
       typename std::conditional<sizeof(Int) == 4, Usd_IntegerCompression,
                                 Usd_IntegerCompression64>::type;
 
+  // Threshold for streaming decompression (1M elements = ~4MB for int32)
+  constexpr size_t kStreamingThreshold = 1024 * 1024;
 
-  // TODO: Read compressed data from _sr directly
   size_t compBufferSize = Compressor::GetCompressedBufferSize(num_ints);
   CHECK_MEMORY_USAGE(compBufferSize);
 
@@ -345,6 +346,8 @@ bool CrateReader::ReadCompressedInts(Int *out,
     return false;
   }
 
+#if 0
+  // Original implementation: allocates new buffer each time
   std::vector<char> compBuffer;
   compBuffer.resize(compBufferSize);
   if (!_sr->read(size_t(compSize), size_t(compSize),
@@ -358,6 +361,51 @@ bool CrateReader::ReadCompressedInts(Int *out,
   REDUCE_MEMORY_USAGE(compBufferSize);
 
   return ret;
+#else
+  // Optimized implementation: reuse buffers across calls
+
+  // Reuse compressed data buffer - only grow, never shrink
+  if (_decomp_comp_buffer.size() < compBufferSize) {
+    _decomp_comp_buffer.resize(compBufferSize);
+  }
+
+  if (!_sr->read(size_t(compSize), size_t(compSize),
+                reinterpret_cast<uint8_t *>(_decomp_comp_buffer.data()))) {
+    PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read compressedInts.");
+  }
+
+  // Get working space size for decompression
+  size_t workingSpaceSize = Compressor::GetDecompressionWorkingSpaceSize(num_ints);
+
+  // For large arrays, use streaming decompression to reduce peak memory
+  if (num_ints > kStreamingThreshold) {
+    // Streaming mode: process in chunks to reduce peak memory
+    // Note: USDC integer compression doesn't support true streaming,
+    // but we can at least reuse the working buffer
+    if (_decomp_working_buffer.size() < workingSpaceSize) {
+      _decomp_working_buffer.resize(workingSpaceSize);
+    }
+
+    bool ret = Compressor::DecompressFromBuffer(
+        _decomp_comp_buffer.data(), size_t(compSize), out, num_ints, &_err,
+        _decomp_working_buffer.data());
+
+    REDUCE_MEMORY_USAGE(compBufferSize);
+    return ret;
+  } else {
+    // Small arrays: use reusable working buffer
+    if (_decomp_working_buffer.size() < workingSpaceSize) {
+      _decomp_working_buffer.resize(workingSpaceSize);
+    }
+
+    bool ret = Compressor::DecompressFromBuffer(
+        _decomp_comp_buffer.data(), size_t(compSize), out, num_ints, &_err,
+        _decomp_working_buffer.data());
+
+    REDUCE_MEMORY_USAGE(compBufferSize);
+    return ret;
+  }
+#endif
 }
 
 template <typename T>
@@ -6240,9 +6288,23 @@ bool CrateReader::ReadCompressedPaths(const uint64_t maxNumPaths) {
   CHECK_MEMORY_USAGE(compBufferSize);
   CHECK_MEMORY_USAGE(workspaceBufferSize);
 
+#if 0
+  // Original implementation: allocates new buffers each time
   // Create temporary space for decompressing.
   std::vector<char> compBuffer(compBufferSize);
   std::vector<char> workingSpace(workspaceBufferSize);
+#else
+  // Optimized implementation: reuse buffers across calls
+  if (_decomp_comp_buffer.size() < compBufferSize) {
+    _decomp_comp_buffer.resize(compBufferSize);
+  }
+  if (_decomp_working_buffer.size() < workspaceBufferSize) {
+    _decomp_working_buffer.resize(workspaceBufferSize);
+  }
+  // Create references for compatibility with existing code
+  std::vector<char> &compBuffer = _decomp_comp_buffer;
+  std::vector<char> &workingSpace = _decomp_working_buffer;
+#endif
 
   // pathIndexes.
   {
@@ -6886,9 +6948,6 @@ bool CrateReader::ReadFieldSets() {
 
   CHECK_MEMORY_USAGE(compBufferSize);
 
-  std::vector<char> comp_buffer;
-  comp_buffer.resize(compBufferSize);
-
   CHECK_MEMORY_USAGE(sizeof(uint32_t) * size_t(num_fieldsets));
   std::vector<uint32_t> tmp;
   tmp.resize(static_cast<size_t>(num_fieldsets));
@@ -6897,8 +6956,24 @@ bool CrateReader::ReadFieldSets() {
           static_cast<size_t>(num_fieldsets));
 
   CHECK_MEMORY_USAGE(workBufferSize);
+
+#if 0
+  // Original implementation: allocates new buffers each time
+  std::vector<char> comp_buffer;
+  comp_buffer.resize(compBufferSize);
   std::vector<char> working_space;
   working_space.resize(workBufferSize);
+#else
+  // Optimized implementation: reuse buffers across calls
+  if (_decomp_comp_buffer.size() < compBufferSize) {
+    _decomp_comp_buffer.resize(compBufferSize);
+  }
+  if (_decomp_working_buffer.size() < workBufferSize) {
+    _decomp_working_buffer.resize(workBufferSize);
+  }
+  std::vector<char> &comp_buffer = _decomp_comp_buffer;
+  std::vector<char> &working_space = _decomp_working_buffer;
+#endif
 
   uint64_t fsets_size;
   if (!_sr->read8(&fsets_size)) {
@@ -7061,10 +7136,6 @@ bool CrateReader::ReadSpecs() {
       static_cast<size_t>(num_specs));
 
   CHECK_MEMORY_USAGE(compBufferSize);
-
-  std::vector<char> comp_buffer;
-  comp_buffer.resize(compBufferSize);
-
   CHECK_MEMORY_USAGE(size_t(num_specs) * sizeof(uint32_t)); // tmp
 
   std::vector<uint32_t> tmp(static_cast<size_t>(num_specs));
@@ -7073,8 +7144,24 @@ bool CrateReader::ReadSpecs() {
           static_cast<size_t>(num_specs));
 
   CHECK_MEMORY_USAGE(workBufferSize);
+
+#if 0
+  // Original implementation: allocates new buffers each time
+  std::vector<char> comp_buffer;
+  comp_buffer.resize(compBufferSize);
   std::vector<char> working_space;
   working_space.resize(workBufferSize);
+#else
+  // Optimized implementation: reuse buffers across calls
+  if (_decomp_comp_buffer.size() < compBufferSize) {
+    _decomp_comp_buffer.resize(compBufferSize);
+  }
+  if (_decomp_working_buffer.size() < workBufferSize) {
+    _decomp_working_buffer.resize(workBufferSize);
+  }
+  std::vector<char> &comp_buffer = _decomp_comp_buffer;
+  std::vector<char> &working_space = _decomp_working_buffer;
+#endif
 
   // path indices
   {

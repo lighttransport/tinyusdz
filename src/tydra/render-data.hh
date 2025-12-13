@@ -3239,6 +3239,9 @@ class RenderSceneConverter {
   // Progress callback
   ProgressCallback _progress_callback{nullptr};
   void *_progress_userptr{nullptr};
+
+  // Reusable buffers for mesh conversion to avoid repeated allocation
+  mutable std::vector<value::float3> _tmp_points_buffer;
 };
 
 // For debug
