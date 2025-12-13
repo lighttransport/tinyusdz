@@ -528,6 +528,304 @@ fn fragmentMain(input: VertexOutput) -> @location(0) vec4<f32> {
 const INV_PI: f32 = 0.31830988618;
 `;
 
+// Shader with texture and IBL support
+const IBL_SHADER = /* wgsl */`
+struct CameraUniforms {
+    viewProjection: mat4x4<f32>,
+    view: mat4x4<f32>,
+    projection: mat4x4<f32>,
+    cameraPosition: vec3<f32>,
+    _pad0: f32,
+    invViewProjection: mat4x4<f32>,
+};
+
+struct SceneUniforms {
+    envIntensity: f32,
+    exposure: f32,
+    toneMapping: u32,
+    time: f32,
+    resolution: vec2<f32>,
+    _pad: vec2<f32>,
+};
+
+struct MaterialParams {
+    baseColor: vec3<f32>,
+    baseWeight: f32,
+    baseMetalness: f32,
+    baseDiffuseRoughness: f32,
+    _pad0: vec2<f32>,
+    specularColor: vec3<f32>,
+    specularWeight: f32,
+    specularRoughness: f32,
+    specularIOR: f32,
+    specularAnisotropy: f32,
+    _pad1: f32,
+    transmissionWeight: f32,
+    transmissionDepth: f32,
+    transmissionDispersion: f32,
+    _pad2: f32,
+    coatColor: vec3<f32>,
+    coatWeight: f32,
+    coatRoughness: f32,
+    coatIOR: f32,
+    _pad3: vec2<f32>,
+    emissionColor: vec3<f32>,
+    emissionLuminance: f32,
+    sheenColor: vec3<f32>,
+    sheenWeight: f32,
+    baseColorTexIdx: i32,
+    normalTexIdx: i32,
+    roughnessTexIdx: i32,
+    metalnessTexIdx: i32,
+    emissiveTexIdx: i32,
+    aoTexIdx: i32,
+    _texPad: vec2<i32>,
+};
+
+struct InstanceData {
+    modelMatrix: mat4x4<f32>,
+    normalMatrix: mat4x4<f32>,
+    materialIndex: u32,
+    _pad: vec3<u32>,
+};
+
+@group(0) @binding(0) var<uniform> camera: CameraUniforms;
+@group(0) @binding(1) var<uniform> scene: SceneUniforms;
+@group(1) @binding(0) var<storage, read> materials: array<MaterialParams>;
+@group(1) @binding(1) var<storage, read> instances: array<InstanceData>;
+
+// Textures
+@group(2) @binding(0) var texSampler: sampler;
+@group(2) @binding(1) var baseColorTex: texture_2d<f32>;
+@group(2) @binding(2) var normalTex: texture_2d<f32>;
+@group(2) @binding(3) var ormTex: texture_2d<f32>;
+@group(2) @binding(4) var emissiveTex: texture_2d<f32>;
+
+// IBL
+@group(3) @binding(0) var envSampler: sampler;
+@group(3) @binding(1) var irradianceMap: texture_cube<f32>;
+@group(3) @binding(2) var prefilteredMap: texture_cube<f32>;
+@group(3) @binding(3) var brdfLUT: texture_2d<f32>;
+
+struct VertexInput {
+    @location(0) position: vec3<f32>,
+    @location(1) normal: vec3<f32>,
+    @location(2) uv: vec2<f32>,
+    @location(3) tangent: vec4<f32>,
+    @builtin(instance_index) instanceIndex: u32,
+};
+
+struct VertexOutput {
+    @builtin(position) position: vec4<f32>,
+    @location(0) worldPosition: vec3<f32>,
+    @location(1) worldNormal: vec3<f32>,
+    @location(2) uv: vec2<f32>,
+    @location(3) @interpolate(flat) materialIndex: u32,
+    @location(4) worldTangent: vec3<f32>,
+    @location(5) worldBitangent: vec3<f32>,
+};
+
+@vertex
+fn vertexMain(input: VertexInput) -> VertexOutput {
+    var output: VertexOutput;
+    let instance = instances[input.instanceIndex];
+    let worldPos = instance.modelMatrix * vec4<f32>(input.position, 1.0);
+    output.position = camera.viewProjection * worldPos;
+    output.worldPosition = worldPos.xyz;
+    output.worldNormal = normalize((instance.normalMatrix * vec4<f32>(input.normal, 0.0)).xyz);
+    output.uv = input.uv;
+    output.materialIndex = instance.materialIndex;
+
+    let worldTangent = normalize((instance.modelMatrix * vec4<f32>(input.tangent.xyz, 0.0)).xyz);
+    output.worldTangent = worldTangent;
+    output.worldBitangent = cross(output.worldNormal, worldTangent) * input.tangent.w;
+
+    return output;
+}
+
+const PI: f32 = 3.14159265359;
+const INV_PI: f32 = 0.31830988618;
+
+fn fresnelSchlick(cosTheta: f32, F0: vec3<f32>) -> vec3<f32> {
+    return F0 + (1.0 - F0) * pow(saturate(1.0 - cosTheta), 5.0);
+}
+
+fn fresnelSchlickRoughness(cosTheta: f32, F0: vec3<f32>, roughness: f32) -> vec3<f32> {
+    return F0 + (max(vec3<f32>(1.0 - roughness), F0) - F0) * pow(saturate(1.0 - cosTheta), 5.0);
+}
+
+fn distributionGGX(NdotH: f32, roughness: f32) -> f32 {
+    let a = roughness * roughness;
+    let a2 = a * a;
+    let denom = NdotH * NdotH * (a2 - 1.0) + 1.0;
+    return a2 / (PI * denom * denom);
+}
+
+fn geometrySchlickGGX(NdotV: f32, roughness: f32) -> f32 {
+    let r = roughness + 1.0;
+    let k = (r * r) / 8.0;
+    return NdotV / (NdotV * (1.0 - k) + k);
+}
+
+fn geometrySmith(NdotV: f32, NdotL: f32, roughness: f32) -> f32 {
+    return geometrySchlickGGX(NdotV, roughness) * geometrySchlickGGX(NdotL, roughness);
+}
+
+fn sRGBToLinear(color: vec3<f32>) -> vec3<f32> {
+    return pow(color, vec3<f32>(2.2));
+}
+
+fn linearToSRGB(color: vec3<f32>) -> vec3<f32> {
+    return pow(color, vec3<f32>(1.0 / 2.2));
+}
+
+fn acesToneMap(color: vec3<f32>) -> vec3<f32> {
+    let a = 2.51;
+    let b = 0.03;
+    let c = 2.43;
+    let d = 0.59;
+    let e = 0.14;
+    return saturate((color * (a * color + b)) / (color * (c * color + d) + e));
+}
+
+@fragment
+fn fragmentMain(input: VertexOutput) -> @location(0) vec4<f32> {
+    let mat = materials[input.materialIndex];
+
+    // Sample ALL textures unconditionally (WGSL requires uniform control flow for textureSample)
+    let baseColorSample = textureSample(baseColorTex, texSampler, input.uv);
+    let ormSample = textureSample(ormTex, texSampler, input.uv);
+    let normalSample = textureSample(normalTex, texSampler, input.uv);
+    let emissiveSample = textureSample(emissiveTex, texSampler, input.uv);
+
+    // Apply base color texture if available
+    var baseColor = mat.baseColor;
+    if (mat.baseColorTexIdx >= 0) {
+        baseColor = sRGBToLinear(baseColorSample.rgb) * mat.baseColor;
+    }
+
+    // Apply ORM texture (Occlusion, Roughness, Metalness) if available
+    var roughness = mat.specularRoughness;
+    var metalness = mat.baseMetalness;
+    var ao = 1.0;
+    if (mat.roughnessTexIdx >= 0) {
+        ao = ormSample.r;
+        roughness = ormSample.g * mat.specularRoughness;
+        metalness = ormSample.b * mat.baseMetalness;
+    }
+
+    // Normal mapping
+    var N = normalize(input.worldNormal);
+    if (mat.normalTexIdx >= 0) {
+        let tangentNormal = normalSample.rgb * 2.0 - 1.0;
+        let TBN = mat3x3<f32>(
+            normalize(input.worldTangent),
+            normalize(input.worldBitangent),
+            N
+        );
+        N = normalize(TBN * tangentNormal);
+    }
+
+    // Emission
+    var emission = mat.emissionColor * mat.emissionLuminance;
+    if (mat.emissiveTexIdx >= 0) {
+        emission = sRGBToLinear(emissiveSample.rgb) * mat.emissionLuminance;
+    }
+
+    let V = normalize(camera.cameraPosition - input.worldPosition);
+    let R = reflect(-V, N);
+    let NdotV = max(dot(N, V), 0.001);
+
+    // Calculate F0
+    let dielectricF0 = vec3<f32>(pow((mat.specularIOR - 1.0) / (mat.specularIOR + 1.0), 2.0));
+    let F0 = mix(dielectricF0 * mat.specularColor, baseColor, metalness);
+
+    // IBL - Diffuse
+    let irradiance = textureSample(irradianceMap, envSampler, N).rgb * scene.envIntensity;
+    let kS = fresnelSchlickRoughness(NdotV, F0, roughness);
+    let kD = (1.0 - kS) * (1.0 - metalness);
+    let diffuseIBL = kD * irradiance * baseColor;
+
+    // IBL - Specular
+    let maxMipLevel = 4.0;
+    let mipLevel = roughness * maxMipLevel;
+    let prefilteredColor = textureSampleLevel(prefilteredMap, envSampler, R, mipLevel).rgb * scene.envIntensity;
+    let brdf = textureSample(brdfLUT, texSampler, vec2<f32>(NdotV, roughness)).rg;
+    let specularIBL = prefilteredColor * (kS * brdf.x + brdf.y);
+
+    // Simple directional light for additional lighting
+    let lightDir = normalize(vec3<f32>(1.0, 1.0, 0.5));
+    let lightColor = vec3<f32>(1.0, 0.98, 0.95);
+    let NdotL = max(dot(N, lightDir), 0.0);
+    let H = normalize(V + lightDir);
+    let NdotH = max(dot(N, H), 0.0);
+
+    let D = distributionGGX(NdotH, roughness);
+    let G = geometrySmith(NdotV, NdotL, roughness);
+    let F = fresnelSchlick(max(dot(H, V), 0.0), F0);
+
+    let numerator = D * G * F;
+    let denominator = 4.0 * NdotV * NdotL + 0.0001;
+    let specularDirect = numerator / denominator;
+
+    let diffuseDirect = baseColor * (1.0 - metalness) * INV_PI;
+    let directLight = (diffuseDirect + specularDirect) * lightColor * NdotL * 0.5;
+
+    // Combine
+    var finalColor = (diffuseIBL + specularIBL) * ao + directLight + emission;
+
+    // Coat layer
+    if (mat.coatWeight > 0.0) {
+        let coatF0 = vec3<f32>(pow((mat.coatIOR - 1.0) / (mat.coatIOR + 1.0), 2.0));
+        let coatF = fresnelSchlickRoughness(NdotV, coatF0, mat.coatRoughness);
+        let coatMipLevel = mat.coatRoughness * maxMipLevel;
+        let coatSpecular = textureSampleLevel(prefilteredMap, envSampler, R, coatMipLevel).rgb;
+        finalColor += coatSpecular * coatF * mat.coatColor * mat.coatWeight * scene.envIntensity;
+    }
+
+    // Exposure
+    finalColor *= scene.exposure;
+
+    // Tone mapping (ACES)
+    finalColor = acesToneMap(finalColor);
+
+    // Gamma correction
+    finalColor = linearToSRGB(finalColor);
+
+    return vec4<f32>(finalColor, 1.0);
+}
+`;
+
+// Float32 to Float16 conversion
+function floatToHalf(value) {
+    const floatView = new Float32Array(1);
+    const int32View = new Int32Array(floatView.buffer);
+    floatView[0] = value;
+    const x = int32View[0];
+
+    let bits = (x >> 16) & 0x8000; // sign
+    let m = (x >> 12) & 0x07ff;    // mantissa
+    let e = (x >> 23) & 0xff;      // exponent
+
+    if (e < 103) {
+        return bits;
+    }
+    if (e > 142) {
+        bits |= 0x7c00;
+        bits |= ((e === 255) ? 0 : 1) && (x & 0x007fffff);
+        return bits;
+    }
+    if (e < 113) {
+        m |= 0x0800;
+        bits |= (m >> (114 - e)) + ((m >> (113 - e)) & 1);
+        return bits;
+    }
+
+    bits |= ((e - 112) << 10) | (m >> 1);
+    bits += m & 1;
+    return bits;
+}
+
 // ============================================================================
 // WebGPU Renderer Class
 // ============================================================================
@@ -646,9 +944,10 @@ class WebGPURenderer {
     }
 
     async createBuffers() {
-        // Camera uniform buffer (256 bytes aligned)
+        // Camera uniform buffer (288 bytes aligned to 16)
+        // Layout: viewProjection(64) + view(64) + projection(64) + cameraPosition(16) + invViewProjection(64) = 272, rounded to 288
         this.cameraBuffer = this.device.createBuffer({
-            size: 256,
+            size: 288,
             usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST
         });
 
@@ -675,64 +974,58 @@ class WebGPURenderer {
     }
 
     async createPlaceholderTextures() {
-        // Create 1x1 placeholder textures
-        const placeholderData = new Uint8Array([255, 255, 255, 255]);
+        // Create 1x1 white placeholder texture
+        const whiteData = new Uint8Array([255, 255, 255, 255]);
+        // Create 1x1 normal placeholder (pointing up: 128,128,255)
+        const normalData = new Uint8Array([128, 128, 255, 255]);
 
-        // Placeholder texture array (single layer)
-        this.baseColorTextureArray = this.device.createTexture({
-            size: [1, 1, 1],
-            format: 'rgba8unorm',
-            usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST
-        });
+        // Placeholder 2D textures (will be replaced when textures are loaded)
+        this.textureCache = new Map(); // Cache loaded textures by URL/path
+        this.loadedTextures = [];      // Array of loaded GPU textures
+        this.textureIndexMap = new Map(); // Map texture path to index
 
-        this.normalTextureArray = this.device.createTexture({
-            size: [1, 1, 1],
-            format: 'rgba8unorm',
-            usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST
-        });
-
-        this.pbrTextureArray = this.device.createTexture({
-            size: [1, 1, 1],
-            format: 'rgba8unorm',
-            usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST
-        });
-
-        // Placeholder cube map
-        this.envMap = this.device.createTexture({
-            size: [1, 1, 6],
-            format: 'rgba8unorm',
-            usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST,
-            dimension: '2d'
-        });
-
-        this.irradianceMap = this.device.createTexture({
-            size: [1, 1, 6],
-            format: 'rgba8unorm',
-            usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST,
-            dimension: '2d'
-        });
-
-        this.prefilteredMap = this.device.createTexture({
-            size: [1, 1, 6],
-            format: 'rgba8unorm',
-            usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST,
-            dimension: '2d'
-        });
-
-        // Placeholder BRDF LUT
-        this.brdfLUT = this.device.createTexture({
+        // Create single placeholder texture for when no textures are loaded
+        this.placeholderTexture = this.device.createTexture({
             size: [1, 1],
             format: 'rgba8unorm',
             usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST
         });
+        this.device.queue.writeTexture(
+            { texture: this.placeholderTexture },
+            whiteData,
+            { bytesPerRow: 4 },
+            { width: 1, height: 1 }
+        );
 
-        // Create sampler
+        this.placeholderNormalTexture = this.device.createTexture({
+            size: [1, 1],
+            format: 'rgba8unorm',
+            usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST
+        });
+        this.device.queue.writeTexture(
+            { texture: this.placeholderNormalTexture },
+            normalData,
+            { bytesPerRow: 4 },
+            { width: 1, height: 1 }
+        );
+
+        // Environment map placeholders (will be replaced when env map is loaded)
+        this.envCubeMap = this.createPlaceholderCubeMap();
+        this.irradianceMap = this.createPlaceholderCubeMap();
+        this.prefilteredMap = this.createPlaceholderCubeMap(true); // with mipmaps
+        this.envMapLoaded = false;
+
+        // Generate BRDF LUT
+        await this.generateBRDFLUT();
+
+        // Create samplers
         this.textureSampler = this.device.createSampler({
             magFilter: 'linear',
             minFilter: 'linear',
             mipmapFilter: 'linear',
             addressModeU: 'repeat',
-            addressModeV: 'repeat'
+            addressModeV: 'repeat',
+            maxAnisotropy: 16
         });
 
         this.envSampler = this.device.createSampler({
@@ -740,80 +1033,955 @@ class WebGPURenderer {
             minFilter: 'linear',
             mipmapFilter: 'linear',
             addressModeU: 'clamp-to-edge',
-            addressModeV: 'clamp-to-edge'
+            addressModeV: 'clamp-to-edge',
+            addressModeW: 'clamp-to-edge'
         });
+    }
+
+    createPlaceholderCubeMap(withMipmaps = false) {
+        const size = 4;
+        const mipLevelCount = withMipmaps ? Math.floor(Math.log2(size)) + 1 : 1;
+        return this.device.createTexture({
+            size: [size, size, 6],
+            format: 'rgba8unorm',
+            usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST,
+            mipLevelCount
+        });
+    }
+
+    async generateBRDFLUT() {
+        const size = 256;
+        this.brdfLUT = this.device.createTexture({
+            size: [size, size],
+            format: 'rgba16float',
+            usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.STORAGE_BINDING
+        });
+
+        // BRDF LUT compute shader
+        const brdfComputeShader = /* wgsl */`
+            @group(0) @binding(0) var outputTexture: texture_storage_2d<rgba16float, write>;
+
+            const PI: f32 = 3.14159265359;
+
+            fn radicalInverse_VdC(bits_in: u32) -> f32 {
+                var bits = bits_in;
+                bits = (bits << 16u) | (bits >> 16u);
+                bits = ((bits & 0x55555555u) << 1u) | ((bits & 0xAAAAAAAAu) >> 1u);
+                bits = ((bits & 0x33333333u) << 2u) | ((bits & 0xCCCCCCCCu) >> 2u);
+                bits = ((bits & 0x0F0F0F0Fu) << 4u) | ((bits & 0xF0F0F0F0u) >> 4u);
+                bits = ((bits & 0x00FF00FFu) << 8u) | ((bits & 0xFF00FF00u) >> 8u);
+                return f32(bits) * 2.3283064365386963e-10;
+            }
+
+            fn hammersley(i: u32, N: u32) -> vec2<f32> {
+                return vec2<f32>(f32(i) / f32(N), radicalInverse_VdC(i));
+            }
+
+            fn importanceSampleGGX(Xi: vec2<f32>, N: vec3<f32>, roughness: f32) -> vec3<f32> {
+                let a = roughness * roughness;
+                let phi = 2.0 * PI * Xi.x;
+                let cosTheta = sqrt((1.0 - Xi.y) / (1.0 + (a * a - 1.0) * Xi.y));
+                let sinTheta = sqrt(1.0 - cosTheta * cosTheta);
+
+                let H = vec3<f32>(cos(phi) * sinTheta, sin(phi) * sinTheta, cosTheta);
+
+                let up = select(vec3<f32>(1.0, 0.0, 0.0), vec3<f32>(0.0, 0.0, 1.0), abs(N.z) < 0.999);
+                let tangent = normalize(cross(up, N));
+                let bitangent = cross(N, tangent);
+
+                return normalize(tangent * H.x + bitangent * H.y + N * H.z);
+            }
+
+            fn geometrySchlickGGX(NdotV: f32, roughness: f32) -> f32 {
+                let a = roughness;
+                let k = (a * a) / 2.0;
+                return NdotV / (NdotV * (1.0 - k) + k);
+            }
+
+            fn geometrySmith(N: vec3<f32>, V: vec3<f32>, L: vec3<f32>, roughness: f32) -> f32 {
+                let NdotV = max(dot(N, V), 0.0);
+                let NdotL = max(dot(N, L), 0.0);
+                return geometrySchlickGGX(NdotV, roughness) * geometrySchlickGGX(NdotL, roughness);
+            }
+
+            fn integrateBRDF(NdotV: f32, roughness: f32) -> vec2<f32> {
+                let V = vec3<f32>(sqrt(1.0 - NdotV * NdotV), 0.0, NdotV);
+                var A = 0.0;
+                var B = 0.0;
+                let N = vec3<f32>(0.0, 0.0, 1.0);
+                let SAMPLE_COUNT = 1024u;
+
+                for (var i = 0u; i < SAMPLE_COUNT; i++) {
+                    let Xi = hammersley(i, SAMPLE_COUNT);
+                    let H = importanceSampleGGX(Xi, N, roughness);
+                    let L = normalize(2.0 * dot(V, H) * H - V);
+
+                    let NdotL = max(L.z, 0.0);
+                    let NdotH = max(H.z, 0.0);
+                    let VdotH = max(dot(V, H), 0.0);
+
+                    if (NdotL > 0.0) {
+                        let G = geometrySmith(N, V, L, roughness);
+                        let G_Vis = (G * VdotH) / (NdotH * NdotV);
+                        let Fc = pow(1.0 - VdotH, 5.0);
+
+                        A += (1.0 - Fc) * G_Vis;
+                        B += Fc * G_Vis;
+                    }
+                }
+
+                return vec2<f32>(A, B) / f32(SAMPLE_COUNT);
+            }
+
+            @compute @workgroup_size(16, 16)
+            fn main(@builtin(global_invocation_id) id: vec3<u32>) {
+                let dimensions = textureDimensions(outputTexture);
+                if (id.x >= dimensions.x || id.y >= dimensions.y) {
+                    return;
+                }
+
+                let NdotV = (f32(id.x) + 0.5) / f32(dimensions.x);
+                let roughness = (f32(id.y) + 0.5) / f32(dimensions.y);
+
+                let brdf = integrateBRDF(max(NdotV, 0.001), max(roughness, 0.001));
+                textureStore(outputTexture, vec2<i32>(id.xy), vec4<f32>(brdf, 0.0, 1.0));
+            }
+        `;
+
+        const brdfModule = this.device.createShaderModule({ code: brdfComputeShader });
+        const brdfPipeline = this.device.createComputePipeline({
+            layout: 'auto',
+            compute: { module: brdfModule, entryPoint: 'main' }
+        });
+
+        const brdfBindGroup = this.device.createBindGroup({
+            layout: brdfPipeline.getBindGroupLayout(0),
+            entries: [{ binding: 0, resource: this.brdfLUT.createView() }]
+        });
+
+        const commandEncoder = this.device.createCommandEncoder();
+        const passEncoder = commandEncoder.beginComputePass();
+        passEncoder.setPipeline(brdfPipeline);
+        passEncoder.setBindGroup(0, brdfBindGroup);
+        passEncoder.dispatchWorkgroups(Math.ceil(size / 16), Math.ceil(size / 16));
+        passEncoder.end();
+        this.device.queue.submit([commandEncoder.finish()]);
+
+        console.log('BRDF LUT generated');
+    }
+
+    async loadTexture(imageData, width, height, format = 'rgba8unorm', sRGB = true) {
+        const texture = this.device.createTexture({
+            size: [width, height],
+            format: format,
+            usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST | GPUTextureUsage.RENDER_ATTACHMENT,
+            mipLevelCount: Math.floor(Math.log2(Math.max(width, height))) + 1
+        });
+
+        this.device.queue.writeTexture(
+            { texture },
+            imageData,
+            { bytesPerRow: width * 4 },
+            { width, height }
+        );
+
+        // Generate mipmaps
+        await this.generateMipmaps(texture, width, height);
+
+        return texture;
+    }
+
+    async generateMipmaps(texture, width, height) {
+        const mipLevelCount = Math.floor(Math.log2(Math.max(width, height))) + 1;
+        if (mipLevelCount <= 1) return;
+
+        // Simple blit-based mipmap generation
+        const mipmapShader = /* wgsl */`
+            @group(0) @binding(0) var srcTexture: texture_2d<f32>;
+            @group(0) @binding(1) var srcSampler: sampler;
+
+            struct VertexOutput {
+                @builtin(position) position: vec4<f32>,
+                @location(0) uv: vec2<f32>,
+            }
+
+            @vertex
+            fn vertexMain(@builtin(vertex_index) vertexIndex: u32) -> VertexOutput {
+                var pos = array<vec2<f32>, 3>(
+                    vec2<f32>(-1.0, -1.0),
+                    vec2<f32>(3.0, -1.0),
+                    vec2<f32>(-1.0, 3.0)
+                );
+                var output: VertexOutput;
+                output.position = vec4<f32>(pos[vertexIndex], 0.0, 1.0);
+                output.uv = (pos[vertexIndex] + 1.0) * 0.5;
+                output.uv.y = 1.0 - output.uv.y;
+                return output;
+            }
+
+            @fragment
+            fn fragmentMain(@location(0) uv: vec2<f32>) -> @location(0) vec4<f32> {
+                return textureSample(srcTexture, srcSampler, uv);
+            }
+        `;
+
+        const shaderModule = this.device.createShaderModule({ code: mipmapShader });
+        const pipeline = this.device.createRenderPipeline({
+            layout: 'auto',
+            vertex: { module: shaderModule, entryPoint: 'vertexMain' },
+            fragment: {
+                module: shaderModule,
+                entryPoint: 'fragmentMain',
+                targets: [{ format: texture.format }]
+            },
+            primitive: { topology: 'triangle-list' }
+        });
+
+        const sampler = this.device.createSampler({
+            magFilter: 'linear',
+            minFilter: 'linear'
+        });
+
+        const commandEncoder = this.device.createCommandEncoder();
+
+        let srcView = texture.createView({ baseMipLevel: 0, mipLevelCount: 1 });
+        let mipWidth = width;
+        let mipHeight = height;
+
+        for (let level = 1; level < mipLevelCount; level++) {
+            mipWidth = Math.max(1, Math.floor(mipWidth / 2));
+            mipHeight = Math.max(1, Math.floor(mipHeight / 2));
+
+            const dstView = texture.createView({ baseMipLevel: level, mipLevelCount: 1 });
+
+            const bindGroup = this.device.createBindGroup({
+                layout: pipeline.getBindGroupLayout(0),
+                entries: [
+                    { binding: 0, resource: srcView },
+                    { binding: 1, resource: sampler }
+                ]
+            });
+
+            const renderPass = commandEncoder.beginRenderPass({
+                colorAttachments: [{
+                    view: dstView,
+                    loadOp: 'clear',
+                    storeOp: 'store'
+                }]
+            });
+
+            renderPass.setPipeline(pipeline);
+            renderPass.setBindGroup(0, bindGroup);
+            renderPass.draw(3);
+            renderPass.end();
+
+            srcView = dstView;
+        }
+
+        this.device.queue.submit([commandEncoder.finish()]);
+    }
+
+    async loadEnvironmentMap(url) {
+        console.log('Loading environment map:', url);
+
+        try {
+            const response = await fetch(url);
+            if (!response.ok) {
+                throw new Error(`Failed to fetch ${url}: ${response.status} ${response.statusText}`);
+            }
+
+            // Check content type to detect if server returned HTML error page
+            const contentType = response.headers.get('content-type') || '';
+            if (contentType.includes('text/html')) {
+                throw new Error(`Server returned HTML instead of HDR file for ${url}`);
+            }
+
+            const ext = url.split('.').pop().toLowerCase();
+            let cubeMapData;
+
+            if (ext === 'hdr') {
+                const buffer = await response.arrayBuffer();
+                cubeMapData = await this.parseHDRToCubemap(buffer);
+            } else {
+                // Assume it's a single equirectangular image
+                const blob = await response.blob();
+                const imageBitmap = await createImageBitmap(blob);
+                cubeMapData = await this.equirectangularToCubemap(imageBitmap);
+            }
+
+            // Create environment cubemap
+            const cubeSize = cubeMapData.size;
+            const mipLevels = Math.floor(Math.log2(cubeSize)) + 1;
+
+            this.envCubeMap = this.device.createTexture({
+                size: [cubeSize, cubeSize, 6],
+                format: 'rgba16float',
+                usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST | GPUTextureUsage.RENDER_ATTACHMENT,
+                mipLevelCount: mipLevels
+            });
+
+            // Copy faces to cubemap
+            for (let face = 0; face < 6; face++) {
+                this.device.queue.writeTexture(
+                    { texture: this.envCubeMap, origin: [0, 0, face] },
+                    cubeMapData.faces[face],
+                    { bytesPerRow: cubeSize * 8 },  // 4 channels * 2 bytes (float16)
+                    { width: cubeSize, height: cubeSize }
+                );
+            }
+
+            // Generate irradiance map
+            await this.generateIrradianceMap(cubeSize);
+
+            // Generate prefiltered map
+            await this.generatePrefilteredMap(cubeSize);
+
+            // Update bind groups
+            this.envMapLoaded = true;
+            this.recreateBindGroups();
+
+            console.log('Environment map loaded successfully');
+
+        } catch (error) {
+            console.error('Failed to load environment map:', error);
+            throw error; // Re-throw so caller can handle it
+        }
+    }
+
+    createFallbackEnvironment() {
+        // Create simple gradient environment cubemap for fallback
+        const size = 64;
+
+        // Helper to create cubemap texture
+        const createCube = (cubeSize, withMips) => {
+            const mipLevels = withMips ? Math.floor(Math.log2(cubeSize)) + 1 : 1;
+            return this.device.createTexture({
+                size: [cubeSize, cubeSize, 6],
+                format: 'rgba8unorm',
+                usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST,
+                mipLevelCount: mipLevels
+            });
+        };
+
+        // Create cubemap textures with a simple gradient
+        this.envCubeMap = createCube(size, false);
+        this.irradianceMap = createCube(32, false);
+        this.prefilteredMap = createCube(size, true);
+
+        // Fill with a simple gradient color (sky blue to horizon white)
+        const faceData = new Uint8Array(size * size * 4);
+        for (let y = 0; y < size; y++) {
+            for (let x = 0; x < size; x++) {
+                const idx = (y * size + x) * 4;
+                // Gradient from top (sky blue) to bottom (warm white)
+                const t = y / size;
+                faceData[idx] = Math.floor(200 + 55 * t);     // R
+                faceData[idx + 1] = Math.floor(220 + 35 * t); // G
+                faceData[idx + 2] = 255;                       // B
+                faceData[idx + 3] = 255;                       // A
+            }
+        }
+
+        // Write to all 6 faces
+        for (let face = 0; face < 6; face++) {
+            this.device.queue.writeTexture(
+                { texture: this.envCubeMap, origin: [0, 0, face] },
+                faceData,
+                { bytesPerRow: size * 4 },
+                { width: size, height: size }
+            );
+            this.device.queue.writeTexture(
+                { texture: this.prefilteredMap, origin: [0, 0, face] },
+                faceData,
+                { bytesPerRow: size * 4 },
+                { width: size, height: size }
+            );
+        }
+
+        // Irradiance map (smaller, solid average color)
+        const irrSize = 32;
+        const irrData = new Uint8Array(irrSize * irrSize * 4);
+        for (let i = 0; i < irrSize * irrSize; i++) {
+            irrData[i * 4] = 230;     // R
+            irrData[i * 4 + 1] = 235; // G
+            irrData[i * 4 + 2] = 255; // B
+            irrData[i * 4 + 3] = 255; // A
+        }
+        for (let face = 0; face < 6; face++) {
+            this.device.queue.writeTexture(
+                { texture: this.irradianceMap, origin: [0, 0, face] },
+                irrData,
+                { bytesPerRow: irrSize * 4 },
+                { width: irrSize, height: irrSize }
+            );
+        }
+
+        this.envMapLoaded = true;
+        this.recreateBindGroups();
+        console.log('Fallback environment created');
+    }
+
+    async parseHDRToCubemap(buffer) {
+        // Robust HDR parser for Radiance RGBE format
+        const data = new Uint8Array(buffer);
+        let offset = 0;
+
+        console.log('Parsing HDR, buffer size:', buffer.byteLength);
+
+        // Read header as text
+        const textDecoder = new TextDecoder('ascii');
+        const headerEnd = Math.min(data.length, 4096); // Headers shouldn't be more than 4KB
+        const headerText = textDecoder.decode(data.subarray(0, headerEnd));
+
+        console.log('HDR header preview:', headerText.substring(0, 100));
+
+        // Check for valid HDR signature
+        if (!headerText.startsWith('#?RADIANCE') && !headerText.startsWith('#?RGBE')) {
+            console.error('HDR header bytes:', Array.from(data.subarray(0, 20)).map(b => b.toString(16).padStart(2, '0')).join(' '));
+            throw new Error('Invalid HDR format: missing RADIANCE/RGBE signature');
+        }
+
+        // Find the resolution line (starts with -Y or +Y after blank line)
+        const resMatch = headerText.match(/\n\n(-?\+?Y\s+\d+\s+-?\+?X\s+\d+)\n/);
+        if (!resMatch) {
+            // Try alternative: single newline before resolution
+            const altMatch = headerText.match(/\n(-Y\s+(\d+)\s+\+X\s+(\d+))\n/);
+            if (!altMatch) throw new Error('Invalid HDR format: cannot find resolution');
+            offset = headerText.indexOf(altMatch[1]) + altMatch[1].length + 1;
+            var height = parseInt(altMatch[2]);
+            var width = parseInt(altMatch[3]);
+        } else {
+            const resLine = resMatch[1];
+            offset = headerText.indexOf(resMatch[0]) + resMatch[0].length;
+            const dimMatch = resLine.match(/-?Y\s+(\d+)\s+[+-]?X\s+(\d+)/);
+            if (!dimMatch) throw new Error('Invalid HDR format: cannot parse resolution');
+            var height = parseInt(dimMatch[1]);
+            var width = parseInt(dimMatch[2]);
+        }
+
+        console.log(`HDR: ${width}x${height}, data offset: ${offset}`);
+
+        // Decode RGBE data
+        const pixels = new Float32Array(width * height * 4);
+        let pixelIndex = 0;
+
+        for (let y = 0; y < height; y++) {
+            // Check for new RLE format (adaptive RLE)
+            if (data[offset] === 2 && data[offset + 1] === 2 &&
+                ((data[offset + 2] << 8) | data[offset + 3]) === width) {
+                const scanlineWidth = (data[offset + 2] << 8) | data[offset + 3];
+                offset += 4;
+
+                const scanline = new Uint8Array(scanlineWidth * 4);
+
+                for (let c = 0; c < 4; c++) {
+                    let x = 0;
+                    while (x < scanlineWidth) {
+                        const count = data[offset++];
+                        if (count > 128) {
+                            const runLength = count - 128;
+                            const value = data[offset++];
+                            for (let i = 0; i < runLength; i++) {
+                                scanline[x * 4 + c] = value;
+                                x++;
+                            }
+                        } else {
+                            for (let i = 0; i < count; i++) {
+                                scanline[x * 4 + c] = data[offset++];
+                                x++;
+                            }
+                        }
+                    }
+                }
+
+                for (let x = 0; x < scanlineWidth; x++) {
+                    const r = scanline[x * 4];
+                    const g = scanline[x * 4 + 1];
+                    const b = scanline[x * 4 + 2];
+                    const e = scanline[x * 4 + 3];
+
+                    if (e === 0) {
+                        pixels[pixelIndex++] = 0;
+                        pixels[pixelIndex++] = 0;
+                        pixels[pixelIndex++] = 0;
+                        pixels[pixelIndex++] = 1;
+                    } else {
+                        const scale = Math.pow(2, e - 128 - 8);
+                        pixels[pixelIndex++] = r * scale;
+                        pixels[pixelIndex++] = g * scale;
+                        pixels[pixelIndex++] = b * scale;
+                        pixels[pixelIndex++] = 1;
+                    }
+                }
+            } else {
+                // Uncompressed or old RLE format - read raw RGBE pixels
+                for (let x = 0; x < width; x++) {
+                    const r = data[offset++];
+                    const g = data[offset++];
+                    const b = data[offset++];
+                    const e = data[offset++];
+
+                    if (e === 0) {
+                        pixels[pixelIndex++] = 0;
+                        pixels[pixelIndex++] = 0;
+                        pixels[pixelIndex++] = 0;
+                        pixels[pixelIndex++] = 1;
+                    } else {
+                        const scale = Math.pow(2, e - 128 - 8);
+                        pixels[pixelIndex++] = r * scale;
+                        pixels[pixelIndex++] = g * scale;
+                        pixels[pixelIndex++] = b * scale;
+                        pixels[pixelIndex++] = 1;
+                    }
+                }
+            }
+        }
+
+        // Convert equirectangular to cubemap
+        return this.equirectangularDataToCubemap(pixels, width, height);
+    }
+
+    equirectangularDataToCubemap(srcPixels, srcWidth, srcHeight) {
+        const cubeSize = Math.min(512, Math.max(srcWidth / 4, srcHeight / 2));
+        const faces = [];
+
+        // Face directions
+        const faceVectors = [
+            { right: [0, 0, -1], up: [0, 1, 0], forward: [1, 0, 0] },   // +X
+            { right: [0, 0, 1], up: [0, 1, 0], forward: [-1, 0, 0] },  // -X
+            { right: [1, 0, 0], up: [0, 0, 1], forward: [0, 1, 0] },   // +Y
+            { right: [1, 0, 0], up: [0, 0, -1], forward: [0, -1, 0] }, // -Y
+            { right: [1, 0, 0], up: [0, 1, 0], forward: [0, 0, 1] },   // +Z
+            { right: [-1, 0, 0], up: [0, 1, 0], forward: [0, 0, -1] }  // -Z
+        ];
+
+        for (let face = 0; face < 6; face++) {
+            const faceData = new Uint16Array(cubeSize * cubeSize * 4); // RGBA16F
+            const { right, up, forward } = faceVectors[face];
+
+            for (let y = 0; y < cubeSize; y++) {
+                for (let x = 0; x < cubeSize; x++) {
+                    const u = (x + 0.5) / cubeSize * 2 - 1;
+                    const v = (y + 0.5) / cubeSize * 2 - 1;
+
+                    // Direction vector
+                    const dir = [
+                        forward[0] + right[0] * u + up[0] * (-v),
+                        forward[1] + right[1] * u + up[1] * (-v),
+                        forward[2] + right[2] * u + up[2] * (-v)
+                    ];
+
+                    // Normalize
+                    const len = Math.sqrt(dir[0] * dir[0] + dir[1] * dir[1] + dir[2] * dir[2]);
+                    dir[0] /= len; dir[1] /= len; dir[2] /= len;
+
+                    // Convert to equirectangular UV
+                    const theta = Math.atan2(dir[2], dir[0]);
+                    const phi = Math.asin(Math.max(-1, Math.min(1, dir[1])));
+
+                    const srcU = (theta / Math.PI + 1) * 0.5;
+                    const srcV = 0.5 - phi / Math.PI;
+
+                    // Sample source
+                    const srcX = Math.floor(srcU * srcWidth) % srcWidth;
+                    const srcY = Math.min(srcHeight - 1, Math.max(0, Math.floor(srcV * srcHeight)));
+                    const srcIdx = (srcY * srcWidth + srcX) * 4;
+
+                    const dstIdx = (y * cubeSize + x) * 4;
+
+                    // Convert to float16
+                    faceData[dstIdx] = floatToHalf(srcPixels[srcIdx]);
+                    faceData[dstIdx + 1] = floatToHalf(srcPixels[srcIdx + 1]);
+                    faceData[dstIdx + 2] = floatToHalf(srcPixels[srcIdx + 2]);
+                    faceData[dstIdx + 3] = floatToHalf(1.0);
+                }
+            }
+
+            faces.push(faceData);
+        }
+
+        return { size: cubeSize, faces };
+    }
+
+    async equirectangularToCubemap(imageBitmap) {
+        const canvas = document.createElement('canvas');
+        canvas.width = imageBitmap.width;
+        canvas.height = imageBitmap.height;
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(imageBitmap, 0, 0);
+        const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+
+        // Convert to float
+        const floatData = new Float32Array(imageData.data.length);
+        for (let i = 0; i < imageData.data.length; i += 4) {
+            // Assume sRGB, convert to linear
+            floatData[i] = Math.pow(imageData.data[i] / 255, 2.2);
+            floatData[i + 1] = Math.pow(imageData.data[i + 1] / 255, 2.2);
+            floatData[i + 2] = Math.pow(imageData.data[i + 2] / 255, 2.2);
+            floatData[i + 3] = 1.0;
+        }
+
+        return this.equirectangularDataToCubemap(floatData, canvas.width, canvas.height);
+    }
+
+    async generateIrradianceMap(sourceSize) {
+        const size = 32; // Irradiance map can be small
+        this.irradianceMap = this.device.createTexture({
+            size: [size, size, 6],
+            format: 'rgba16float',
+            usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.STORAGE_BINDING
+        });
+
+        const irradianceShader = /* wgsl */`
+            @group(0) @binding(0) var envMap: texture_cube<f32>;
+            @group(0) @binding(1) var envSampler: sampler;
+            @group(0) @binding(2) var outputTex: texture_storage_2d_array<rgba16float, write>;
+
+            const PI: f32 = 3.14159265359;
+
+            fn getFaceDirection(face: u32, uv: vec2<f32>) -> vec3<f32> {
+                let u = uv.x * 2.0 - 1.0;
+                let v = uv.y * 2.0 - 1.0;
+
+                switch(face) {
+                    case 0u: { return normalize(vec3<f32>(1.0, -v, -u)); }   // +X
+                    case 1u: { return normalize(vec3<f32>(-1.0, -v, u)); }   // -X
+                    case 2u: { return normalize(vec3<f32>(u, 1.0, v)); }     // +Y
+                    case 3u: { return normalize(vec3<f32>(u, -1.0, -v)); }   // -Y
+                    case 4u: { return normalize(vec3<f32>(u, -v, 1.0)); }    // +Z
+                    default: { return normalize(vec3<f32>(-u, -v, -1.0)); }  // -Z
+                }
+            }
+
+            @compute @workgroup_size(8, 8, 1)
+            fn main(@builtin(global_invocation_id) id: vec3<u32>) {
+                let dims = textureDimensions(outputTex);
+                if (id.x >= dims.x || id.y >= dims.y || id.z >= 6u) { return; }
+
+                let uv = (vec2<f32>(id.xy) + 0.5) / vec2<f32>(dims.xy);
+                let N = getFaceDirection(id.z, uv);
+
+                var irradiance = vec3<f32>(0.0);
+                var up = select(vec3<f32>(0.0, 1.0, 0.0), vec3<f32>(1.0, 0.0, 0.0), abs(N.y) > 0.999);
+                let right = normalize(cross(up, N));
+                up = cross(N, right);
+
+                let sampleDelta = 0.025;
+                var nrSamples = 0.0;
+
+                for (var phi = 0.0; phi < 2.0 * PI; phi += sampleDelta) {
+                    for (var theta = 0.0; theta < 0.5 * PI; theta += sampleDelta) {
+                        let tangentSample = vec3<f32>(sin(theta) * cos(phi), sin(theta) * sin(phi), cos(theta));
+                        let sampleVec = tangentSample.x * right + tangentSample.y * up + tangentSample.z * N;
+
+                        irradiance += textureSampleLevel(envMap, envSampler, sampleVec, 0.0).rgb * cos(theta) * sin(theta);
+                        nrSamples += 1.0;
+                    }
+                }
+
+                irradiance = PI * irradiance / nrSamples;
+                textureStore(outputTex, vec2<i32>(id.xy), i32(id.z), vec4<f32>(irradiance, 1.0));
+            }
+        `;
+
+        const module = this.device.createShaderModule({ code: irradianceShader });
+        const pipeline = this.device.createComputePipeline({
+            layout: 'auto',
+            compute: { module, entryPoint: 'main' }
+        });
+
+        const bindGroup = this.device.createBindGroup({
+            layout: pipeline.getBindGroupLayout(0),
+            entries: [
+                { binding: 0, resource: this.envCubeMap.createView({ dimension: 'cube' }) },
+                { binding: 1, resource: this.envSampler },
+                { binding: 2, resource: this.irradianceMap.createView() }
+            ]
+        });
+
+        const commandEncoder = this.device.createCommandEncoder();
+        const pass = commandEncoder.beginComputePass();
+        pass.setPipeline(pipeline);
+        pass.setBindGroup(0, bindGroup);
+        pass.dispatchWorkgroups(Math.ceil(size / 8), Math.ceil(size / 8), 6);
+        pass.end();
+        this.device.queue.submit([commandEncoder.finish()]);
+
+        console.log('Irradiance map generated');
+    }
+
+    async generatePrefilteredMap(sourceSize) {
+        const size = 128;
+        const mipLevels = 5;
+
+        this.prefilteredMap = this.device.createTexture({
+            size: [size, size, 6],
+            format: 'rgba16float',
+            usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.STORAGE_BINDING,
+            mipLevelCount: mipLevels
+        });
+
+        const prefilterShader = /* wgsl */`
+            struct Params {
+                roughness: f32,
+                mipLevel: u32,
+            }
+
+            @group(0) @binding(0) var envMap: texture_cube<f32>;
+            @group(0) @binding(1) var envSampler: sampler;
+            @group(0) @binding(2) var outputTex: texture_storage_2d_array<rgba16float, write>;
+            @group(0) @binding(3) var<uniform> params: Params;
+
+            const PI: f32 = 3.14159265359;
+
+            fn radicalInverse_VdC(bits_in: u32) -> f32 {
+                var bits = bits_in;
+                bits = (bits << 16u) | (bits >> 16u);
+                bits = ((bits & 0x55555555u) << 1u) | ((bits & 0xAAAAAAAAu) >> 1u);
+                bits = ((bits & 0x33333333u) << 2u) | ((bits & 0xCCCCCCCCu) >> 2u);
+                bits = ((bits & 0x0F0F0F0Fu) << 4u) | ((bits & 0xF0F0F0F0u) >> 4u);
+                bits = ((bits & 0x00FF00FFu) << 8u) | ((bits & 0xFF00FF00u) >> 8u);
+                return f32(bits) * 2.3283064365386963e-10;
+            }
+
+            fn hammersley(i: u32, N: u32) -> vec2<f32> {
+                return vec2<f32>(f32(i) / f32(N), radicalInverse_VdC(i));
+            }
+
+            fn importanceSampleGGX(Xi: vec2<f32>, N: vec3<f32>, roughness: f32) -> vec3<f32> {
+                let a = roughness * roughness;
+                let phi = 2.0 * PI * Xi.x;
+                let cosTheta = sqrt((1.0 - Xi.y) / (1.0 + (a * a - 1.0) * Xi.y));
+                let sinTheta = sqrt(1.0 - cosTheta * cosTheta);
+
+                let H = vec3<f32>(cos(phi) * sinTheta, sin(phi) * sinTheta, cosTheta);
+
+                let up = select(vec3<f32>(1.0, 0.0, 0.0), vec3<f32>(0.0, 0.0, 1.0), abs(N.z) < 0.999);
+                let tangent = normalize(cross(up, N));
+                let bitangent = cross(N, tangent);
+
+                return normalize(tangent * H.x + bitangent * H.y + N * H.z);
+            }
+
+            fn getFaceDirection(face: u32, uv: vec2<f32>) -> vec3<f32> {
+                let u = uv.x * 2.0 - 1.0;
+                let v = uv.y * 2.0 - 1.0;
+
+                switch(face) {
+                    case 0u: { return normalize(vec3<f32>(1.0, -v, -u)); }
+                    case 1u: { return normalize(vec3<f32>(-1.0, -v, u)); }
+                    case 2u: { return normalize(vec3<f32>(u, 1.0, v)); }
+                    case 3u: { return normalize(vec3<f32>(u, -1.0, -v)); }
+                    case 4u: { return normalize(vec3<f32>(u, -v, 1.0)); }
+                    default: { return normalize(vec3<f32>(-u, -v, -1.0)); }
+                }
+            }
+
+            @compute @workgroup_size(8, 8, 1)
+            fn main(@builtin(global_invocation_id) id: vec3<u32>) {
+                let dims = textureDimensions(outputTex);
+                if (id.x >= dims.x || id.y >= dims.y || id.z >= 6u) { return; }
+
+                let uv = (vec2<f32>(id.xy) + 0.5) / vec2<f32>(dims.xy);
+                let N = getFaceDirection(id.z, uv);
+                let R = N;
+                let V = R;
+
+                let SAMPLE_COUNT = 1024u;
+                var prefilteredColor = vec3<f32>(0.0);
+                var totalWeight = 0.0;
+
+                for (var i = 0u; i < SAMPLE_COUNT; i++) {
+                    let Xi = hammersley(i, SAMPLE_COUNT);
+                    let H = importanceSampleGGX(Xi, N, params.roughness);
+                    let L = normalize(2.0 * dot(V, H) * H - V);
+
+                    let NdotL = max(dot(N, L), 0.0);
+                    if (NdotL > 0.0) {
+                        prefilteredColor += textureSampleLevel(envMap, envSampler, L, 0.0).rgb * NdotL;
+                        totalWeight += NdotL;
+                    }
+                }
+
+                prefilteredColor = prefilteredColor / totalWeight;
+                textureStore(outputTex, vec2<i32>(id.xy), i32(id.z), vec4<f32>(prefilteredColor, 1.0));
+            }
+        `;
+
+        const module = this.device.createShaderModule({ code: prefilterShader });
+        const pipeline = this.device.createComputePipeline({
+            layout: 'auto',
+            compute: { module, entryPoint: 'main' }
+        });
+
+        for (let mip = 0; mip < mipLevels; mip++) {
+            const mipSize = size >> mip;
+            const roughness = mip / (mipLevels - 1);
+
+            const paramsBuffer = this.device.createBuffer({
+                size: 8,
+                usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST
+            });
+            const paramsData = new ArrayBuffer(8);
+            new Float32Array(paramsData, 0, 1)[0] = roughness;
+            new Uint32Array(paramsData, 4, 1)[0] = mip;
+            this.device.queue.writeBuffer(paramsBuffer, 0, paramsData);
+
+            const mipView = this.prefilteredMap.createView({
+                baseMipLevel: mip,
+                mipLevelCount: 1
+            });
+
+            const bindGroup = this.device.createBindGroup({
+                layout: pipeline.getBindGroupLayout(0),
+                entries: [
+                    { binding: 0, resource: this.envCubeMap.createView({ dimension: 'cube' }) },
+                    { binding: 1, resource: this.envSampler },
+                    { binding: 2, resource: mipView },
+                    { binding: 3, resource: { buffer: paramsBuffer } }
+                ]
+            });
+
+            const commandEncoder = this.device.createCommandEncoder();
+            const pass = commandEncoder.beginComputePass();
+            pass.setPipeline(pipeline);
+            pass.setBindGroup(0, bindGroup);
+            pass.dispatchWorkgroups(Math.ceil(mipSize / 8), Math.ceil(mipSize / 8), 6);
+            pass.end();
+            this.device.queue.submit([commandEncoder.finish()]);
+
+            paramsBuffer.destroy();
+        }
+
+        console.log('Prefiltered environment map generated');
+    }
+
+    recreateBindGroups() {
+        // Recreate bind groups with new textures/environment maps
+        if (this.envMapLoaded) {
+            this.createIBLBindGroup();
+        }
+    }
+
+    createIBLBindGroup() {
+        if (!this.iblBindGroupLayout) return;
+
+        this.iblBindGroup = this.device.createBindGroup({
+            layout: this.iblBindGroupLayout,
+            entries: [
+                { binding: 0, resource: this.envSampler },
+                { binding: 1, resource: this.irradianceMap.createView({ dimension: 'cube' }) },
+                { binding: 2, resource: this.prefilteredMap.createView({ dimension: 'cube' }) },
+                { binding: 3, resource: this.brdfLUT.createView() }
+            ]
+        });
+    }
+
+    // Load a single texture from image data and return its index
+    async loadTextureFromData(imageData, width, height, texturePath) {
+        if (this.textureIndexMap.has(texturePath)) {
+            return this.textureIndexMap.get(texturePath);
+        }
+
+        const texture = await this.loadTexture(imageData, width, height);
+        const index = this.loadedTextures.length;
+        this.loadedTextures.push(texture);
+        this.textureIndexMap.set(texturePath, index);
+
+        // Update texture bind group
+        this.updateTextureBindGroup();
+
+        return index;
+    }
+
+    updateTextureBindGroup() {
+        if (this.loadedTextures.length === 0) return;
+
+        // Recreate texture bind group with all loaded textures
+        // For simplicity, we'll use individual textures instead of texture arrays
+        // since WebGPU texture arrays require same dimensions
     }
 
     async createPipelines() {
         // Create bind group layouts
-        const cameraBindGroupLayout = this.device.createBindGroupLayout({
+        this.cameraBindGroupLayout = this.device.createBindGroupLayout({
             entries: [
                 { binding: 0, visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT, buffer: { type: 'uniform' } },
                 { binding: 1, visibility: GPUShaderStage.FRAGMENT, buffer: { type: 'uniform' } }
             ]
         });
 
-        const materialBindGroupLayout = this.device.createBindGroupLayout({
+        this.materialBindGroupLayout = this.device.createBindGroupLayout({
             entries: [
                 { binding: 0, visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT, buffer: { type: 'read-only-storage' } },
                 { binding: 1, visibility: GPUShaderStage.VERTEX, buffer: { type: 'read-only-storage' } }
             ]
         });
 
-        // Simplified texture bind group (textures without cube maps)
-        const textureBindGroupLayout = this.device.createBindGroupLayout({
+        // Texture bind group layout
+        this.textureBindGroupLayout = this.device.createBindGroupLayout({
             entries: [
                 { binding: 0, visibility: GPUShaderStage.FRAGMENT, sampler: { type: 'filtering' } },
-                { binding: 1, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'float', viewDimension: '2d-array' } },
-                { binding: 2, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'float', viewDimension: '2d-array' } },
-                { binding: 3, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'float', viewDimension: '2d-array' } }
+                { binding: 1, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'float', viewDimension: '2d' } },
+                { binding: 2, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'float', viewDimension: '2d' } },
+                { binding: 3, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'float', viewDimension: '2d' } },
+                { binding: 4, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'float', viewDimension: '2d' } }
             ]
         });
 
-        // Pipeline layout for simple shader
-        const simplePipelineLayout = this.device.createPipelineLayout({
-            bindGroupLayouts: [cameraBindGroupLayout, materialBindGroupLayout]
+        // IBL bind group layout
+        this.iblBindGroupLayout = this.device.createBindGroupLayout({
+            entries: [
+                { binding: 0, visibility: GPUShaderStage.FRAGMENT, sampler: { type: 'filtering' } },
+                { binding: 1, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'float', viewDimension: 'cube' } },
+                { binding: 2, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'float', viewDimension: 'cube' } },
+                { binding: 3, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'float', viewDimension: '2d' } }
+            ]
         });
+
+        // Pipeline layout for simple shader (no textures)
+        const simplePipelineLayout = this.device.createPipelineLayout({
+            bindGroupLayouts: [this.cameraBindGroupLayout, this.materialBindGroupLayout]
+        });
+
+        // Pipeline layout for IBL shader (with textures and IBL)
+        const iblPipelineLayout = this.device.createPipelineLayout({
+            bindGroupLayouts: [this.cameraBindGroupLayout, this.materialBindGroupLayout, this.textureBindGroupLayout, this.iblBindGroupLayout]
+        });
+
+        const vertexBufferLayout = {
+            arrayStride: 48, // position(12) + normal(12) + uv(8) + tangent(16)
+            attributes: [
+                { shaderLocation: 0, offset: 0, format: 'float32x3' },  // position
+                { shaderLocation: 1, offset: 12, format: 'float32x3' }, // normal
+                { shaderLocation: 2, offset: 24, format: 'float32x2' }, // uv
+                { shaderLocation: 3, offset: 32, format: 'float32x4' }  // tangent
+            ]
+        };
 
         // Create simple pipeline (without IBL)
-        const simpleShaderModule = this.device.createShaderModule({
-            code: SIMPLE_SHADER
-        });
-
+        const simpleShaderModule = this.device.createShaderModule({ code: SIMPLE_SHADER });
         this.simplePipeline = this.device.createRenderPipeline({
             layout: simplePipelineLayout,
-            vertex: {
-                module: simpleShaderModule,
-                entryPoint: 'vertexMain',
-                buffers: [{
-                    arrayStride: 48, // position(12) + normal(12) + uv(8) + tangent(16)
-                    attributes: [
-                        { shaderLocation: 0, offset: 0, format: 'float32x3' },  // position
-                        { shaderLocation: 1, offset: 12, format: 'float32x3' }, // normal
-                        { shaderLocation: 2, offset: 24, format: 'float32x2' }, // uv
-                        { shaderLocation: 3, offset: 32, format: 'float32x4' }  // tangent
-                    ]
-                }]
-            },
-            fragment: {
-                module: simpleShaderModule,
-                entryPoint: 'fragmentMain',
-                targets: [{ format: this.format }]
-            },
-            primitive: {
-                topology: 'triangle-list',
-                cullMode: 'back'
-            },
-            depthStencil: {
-                depthWriteEnabled: true,
-                depthCompare: 'less',
-                format: 'depth24plus'
-            }
+            vertex: { module: simpleShaderModule, entryPoint: 'vertexMain', buffers: [vertexBufferLayout] },
+            fragment: { module: simpleShaderModule, entryPoint: 'fragmentMain', targets: [{ format: this.format }] },
+            primitive: { topology: 'triangle-list', cullMode: 'back' },
+            depthStencil: { depthWriteEnabled: true, depthCompare: 'less', format: 'depth24plus' }
+        });
+
+        // Create IBL pipeline (with textures and IBL)
+        const iblShaderModule = this.device.createShaderModule({ code: IBL_SHADER });
+        this.iblPipeline = this.device.createRenderPipeline({
+            layout: iblPipelineLayout,
+            vertex: { module: iblShaderModule, entryPoint: 'vertexMain', buffers: [vertexBufferLayout] },
+            fragment: { module: iblShaderModule, entryPoint: 'fragmentMain', targets: [{ format: this.format }] },
+            primitive: { topology: 'triangle-list', cullMode: 'back' },
+            depthStencil: { depthWriteEnabled: true, depthCompare: 'less', format: 'depth24plus' }
         });
 
         // Create bind groups
         this.cameraBindGroup = this.device.createBindGroup({
-            layout: cameraBindGroupLayout,
+            layout: this.cameraBindGroupLayout,
             entries: [
                 { binding: 0, resource: { buffer: this.cameraBuffer } },
                 { binding: 1, resource: { buffer: this.sceneBuffer } }
@@ -821,10 +1989,33 @@ class WebGPURenderer {
         });
 
         this.materialBindGroup = this.device.createBindGroup({
-            layout: materialBindGroupLayout,
+            layout: this.materialBindGroupLayout,
             entries: [
                 { binding: 0, resource: { buffer: this.materialBuffer } },
                 { binding: 1, resource: { buffer: this.instanceBuffer } }
+            ]
+        });
+
+        // Create default texture bind group with placeholders
+        this.textureBindGroup = this.device.createBindGroup({
+            layout: this.textureBindGroupLayout,
+            entries: [
+                { binding: 0, resource: this.textureSampler },
+                { binding: 1, resource: this.placeholderTexture.createView() },
+                { binding: 2, resource: this.placeholderNormalTexture.createView() },
+                { binding: 3, resource: this.placeholderTexture.createView() },
+                { binding: 4, resource: this.placeholderTexture.createView() }
+            ]
+        });
+
+        // Create default IBL bind group with placeholders
+        this.iblBindGroup = this.device.createBindGroup({
+            layout: this.iblBindGroupLayout,
+            entries: [
+                { binding: 0, resource: this.envSampler },
+                { binding: 1, resource: this.irradianceMap.createView({ dimension: 'cube' }) },
+                { binding: 2, resource: this.prefilteredMap.createView({ dimension: 'cube' }) },
+                { binding: 3, resource: this.brdfLUT.createView() }
             ]
         });
     }
@@ -857,13 +2048,13 @@ class WebGPURenderer {
         const viewProjection = mat4Multiply(projection, view);
         const invViewProjection = mat4Inverse(viewProjection);
 
-        // Pack into buffer (256 bytes)
-        const data = new Float32Array(64);
-        data.set(viewProjection, 0);      // viewProjection: 64 bytes
-        data.set(view, 16);               // view: 64 bytes
-        data.set(projection, 32);         // projection: 64 bytes
-        data.set(this.camera.position, 48); // cameraPosition: 12 bytes + padding
-        data.set(invViewProjection, 52);  // invViewProjection: 64 bytes
+        // Pack into buffer (288 bytes)
+        const data = new Float32Array(72);
+        data.set(viewProjection, 0);      // viewProjection: 64 bytes (offset 0)
+        data.set(view, 16);               // view: 64 bytes (offset 64)
+        data.set(projection, 32);         // projection: 64 bytes (offset 128)
+        data.set(this.camera.position, 48); // cameraPosition: 12 bytes + 4 padding (offset 192)
+        data.set(invViewProjection, 52);  // invViewProjection: 64 bytes (offset 208)
 
         this.device.queue.writeBuffer(this.cameraBuffer, 0, data);
     }
@@ -1071,9 +2262,20 @@ class WebGPURenderer {
             }
         });
 
-        renderPass.setPipeline(this.simplePipeline);
-        renderPass.setBindGroup(0, this.cameraBindGroup);
-        renderPass.setBindGroup(1, this.materialBindGroup);
+        // Use IBL pipeline if we have textures or env map, otherwise use simple pipeline
+        const useIBL = this.iblPipeline && this.textureBindGroup && this.iblBindGroup;
+
+        if (useIBL) {
+            renderPass.setPipeline(this.iblPipeline);
+            renderPass.setBindGroup(0, this.cameraBindGroup);
+            renderPass.setBindGroup(1, this.materialBindGroup);
+            renderPass.setBindGroup(2, this.textureBindGroup);
+            renderPass.setBindGroup(3, this.iblBindGroup);
+        } else {
+            renderPass.setPipeline(this.simplePipeline);
+            renderPass.setBindGroup(0, this.cameraBindGroup);
+            renderPass.setBindGroup(1, this.materialBindGroup);
+        }
 
         // Draw all meshes
         for (const mesh of this.meshes) {
@@ -1094,19 +2296,57 @@ class WebGPURenderer {
         this.device.queue.submit([commandEncoder.finish()]);
     }
 
+    // Update texture bind group with loaded textures
+    setTextures(baseColorTex, normalTex, ormTex, emissiveTex) {
+        this.textureBindGroup = this.device.createBindGroup({
+            layout: this.textureBindGroupLayout,
+            entries: [
+                { binding: 0, resource: this.textureSampler },
+                { binding: 1, resource: (baseColorTex || this.placeholderTexture).createView() },
+                { binding: 2, resource: (normalTex || this.placeholderNormalTexture).createView() },
+                { binding: 3, resource: (ormTex || this.placeholderTexture).createView() },
+                { binding: 4, resource: (emissiveTex || this.placeholderTexture).createView() }
+            ]
+        });
+    }
+
+    // Update IBL bind group after environment map is loaded
+    updateIBLBindGroup() {
+        this.iblBindGroup = this.device.createBindGroup({
+            layout: this.iblBindGroupLayout,
+            entries: [
+                { binding: 0, resource: this.envSampler },
+                { binding: 1, resource: this.irradianceMap.createView({ dimension: 'cube' }) },
+                { binding: 2, resource: this.prefilteredMap.createView({ dimension: 'cube' }) },
+                { binding: 3, resource: this.brdfLUT.createView() }
+            ]
+        });
+    }
+
+    // Clear mesh buffers only (used when loading a new scene)
+    clearMeshes() {
+        for (const mesh of this.meshes) {
+            mesh.vertexBuffer?.destroy();
+            mesh.indexBuffer?.destroy();
+        }
+        this.meshes = [];
+    }
+
+    // Full destroy (used when shutting down the renderer)
     destroy() {
+        this.clearMeshes();
+
         this.cameraBuffer?.destroy();
         this.sceneBuffer?.destroy();
         this.materialBuffer?.destroy();
         this.instanceBuffer?.destroy();
         this.depthTexture?.destroy();
 
-        for (const mesh of this.meshes) {
-            mesh.vertexBuffer?.destroy();
-            mesh.indexBuffer?.destroy();
-        }
-
-        this.meshes = [];
+        this.cameraBuffer = null;
+        this.sceneBuffer = null;
+        this.materialBuffer = null;
+        this.instanceBuffer = null;
+        this.depthTexture = null;
     }
 }
 
@@ -1416,6 +2656,10 @@ class Application {
             this.resize();
             window.addEventListener('resize', () => this.resize());
 
+            // Load default environment map
+            this.updateStatus('Loading environment map...');
+            await this.loadEnvironmentMap('studio');
+
             // Load default scene
             await this.loadDefaultScene();
 
@@ -1430,11 +2674,36 @@ class Application {
         }
     }
 
+    async loadEnvironmentMap(preset) {
+        // Environment map presets - using actual HDR files in the assets folder
+        const envMaps = {
+            'studio': './assets/textures/goegap_1k.hdr',
+            'outdoor': './assets/textures/goegap_1k.hdr',
+            'sunset': './assets/textures/env_sunsky_sunset.hdr',
+            'night': './assets/textures/goegap_1k.hdr'
+        };
+
+        const url = envMaps[preset] || envMaps['studio'];
+
+        try {
+            await this.renderer.loadEnvironmentMap(url);
+            console.log(`Environment map '${preset}' loaded`);
+        } catch (error) {
+            console.warn(`Failed to load environment map '${preset}':`, error);
+            // Create fallback environment - solid color cubemap
+            this.renderer.createFallbackEnvironment();
+        }
+    }
+
     setupUI() {
         // Environment select
-        document.getElementById('env-select').addEventListener('change', (e) => {
-            this.settings.envMapPreset = e.target.value;
-        });
+        const envSelect = document.getElementById('env-select');
+        if (envSelect) {
+            envSelect.addEventListener('change', async (e) => {
+                this.settings.envMapPreset = e.target.value;
+                await this.loadEnvironmentMap(e.target.value);
+            });
+        }
 
         // Env intensity
         const envIntensitySlider = document.getElementById('env-intensity');
@@ -1556,9 +2825,8 @@ class Application {
     }
 
     async loadUSDFromData(data, filename) {
-        // Clear previous scene
-        this.renderer.destroy();
-        this.renderer.meshes = [];
+        // Clear previous scene (only mesh buffers, keep uniform buffers)
+        this.renderer.clearMeshes();
 
         // Create new native loader
         this.nativeLoader = new this.loader.native_.TinyUSDZLoaderNative();
@@ -1571,8 +2839,51 @@ class Application {
 
         const numMeshes = this.nativeLoader.numMeshes();
         const numMaterials = this.nativeLoader.numMaterials();
+        const numTextures = this.nativeLoader.numTextures ? this.nativeLoader.numTextures() : 0;
 
-        this.updateStatus(`Processing: ${numMeshes} meshes, ${numMaterials} materials...`);
+        this.updateStatus(`Processing: ${numMeshes} meshes, ${numMaterials} materials, ${numTextures} textures...`);
+
+        // Load textures from USD
+        const loadedTextures = new Map();
+        let baseColorTex = null;
+        let normalTex = null;
+        let ormTex = null;
+        let emissiveTex = null;
+
+        if (numTextures > 0 && this.nativeLoader.getTexture) {
+            for (let i = 0; i < numTextures; i++) {
+                try {
+                    const texData = this.nativeLoader.getTexture(i);
+                    if (texData && texData.data && texData.width > 0 && texData.height > 0) {
+                        const texture = await this.renderer.loadTexture(
+                            texData.data,
+                            texData.width,
+                            texData.height
+                        );
+                        loadedTextures.set(i, texture);
+
+                        // Assign textures based on usage (simplified - first texture is base color, etc.)
+                        const name = (texData.name || '').toLowerCase();
+                        if (name.includes('color') || name.includes('diffuse') || name.includes('albedo') || i === 0) {
+                            if (!baseColorTex) baseColorTex = texture;
+                        } else if (name.includes('normal')) {
+                            if (!normalTex) normalTex = texture;
+                        } else if (name.includes('rough') || name.includes('metal') || name.includes('orm')) {
+                            if (!ormTex) ormTex = texture;
+                        } else if (name.includes('emissive') || name.includes('emission')) {
+                            if (!emissiveTex) emissiveTex = texture;
+                        }
+
+                        console.log(`Loaded texture ${i}: ${texData.name || 'unnamed'} (${texData.width}x${texData.height})`);
+                    }
+                } catch (e) {
+                    console.warn(`Failed to load texture ${i}:`, e);
+                }
+            }
+        }
+
+        // Update renderer texture bind group
+        this.renderer.setTextures(baseColorTex, normalTex, ormTex, emissiveTex);
 
         // Load materials
         const materials = [];
@@ -1581,7 +2892,15 @@ class Application {
                 const result = this.nativeLoader.getMaterialWithFormat(i, 'json');
                 if (!result.error) {
                     const matData = JSON.parse(result.data);
-                    materials.push(this.convertMaterialToWebGPU(matData, i));
+                    const material = this.convertMaterialToWebGPU(matData, i);
+
+                    // Set texture indices if textures were loaded
+                    if (baseColorTex) material.baseColorTexIdx = 0;
+                    if (normalTex) material.normalTexIdx = 0;
+                    if (ormTex) material.roughnessTexIdx = 0;
+                    if (emissiveTex) material.emissiveTexIdx = 0;
+
+                    materials.push(material);
                 } else {
                     materials.push(this.createDefaultMaterial());
                 }
