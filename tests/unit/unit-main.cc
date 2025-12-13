@@ -37,6 +37,7 @@ TEST_LIST = {
   { "prim_add_test", prim_add_test },
   { "primvar_test", primvar_test },
   { "value_types_test", value_types_test },
+  { "role_type_cast_test", role_type_cast_test },
   { "xformOp_test", xformOp_test },
   { "customdata_test", customdata_test },
   { "handle_allocator_test", handle_allocator_test },
