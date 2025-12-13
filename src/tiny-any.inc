@@ -220,6 +220,21 @@ public:
     }
 #endif
 
+    /// Reinterpret the stored value as a different type without copying.
+    /// This only changes the vtable pointer, not the underlying storage.
+    /// SAFETY: Caller must ensure that:
+    ///   1. The object is not empty
+    ///   2. NewType has the exact same memory layout as the current type
+    ///   3. Both types have the same storage requirement (stack vs dynamic)
+    /// This is primarily used for role type casting (e.g., float3 -> normal3f)
+    template<typename NewType>
+    void unsafe_reinterpret_as() noexcept
+    {
+        if (!empty()) {
+            this->vtable = vtable_for_type<NewType>();
+        }
+    }
+
     /// Exchange the states of *this and rhs.
     void swap(any& rhs) noexcept
     {

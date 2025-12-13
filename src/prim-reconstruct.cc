@@ -437,7 +437,7 @@ static ParseResult ParseTypedAttribute(std::set<std::string> &table, /* inout */
           }
 
           if (auto pv = attr.get_value<T>()) {
-            target.set_value(pv.value());
+            target.set_value(std::move(pv.value()));  // Use move to avoid copy
           } else {
             ret.code = ParseResult::ResultCode::TypeMismatch;
             ret.err = fmt::format("Fallback. Failed to retrieve value with requested type `{}`.", value::TypeTraits<T>::type_name());
@@ -445,14 +445,14 @@ static ParseResult ParseTypedAttribute(std::set<std::string> &table, /* inout */
           }
 
         }
-      
+
         Animatable<T> animatable_value;
 
         if (attr.get_var().has_timesamples()) {
           // e.g. "float radius.timeSamples = {0: 1.2, 1: 2.3}"
 
           if (auto av = ConvertToAnimatable<T>(attr.get_var())) {
-            animatable_value = av.value();
+            animatable_value = std::move(av.value());  // Use move to avoid copy
             //target.set_value(anim);
           } else {
             // Conversion failed.
@@ -464,11 +464,11 @@ static ParseResult ParseTypedAttribute(std::set<std::string> &table, /* inout */
 
           has_timesamples = true;
         }
-        
+
         if (attr.get_var().has_value()) {
           if (auto pv = attr.get_var().get_value<T>()) {
             //target.set_value(pv.value());
-            animatable_value.set(pv.value());
+            animatable_value.set(std::move(pv.value()));  // Use move to avoid copy
           } else {
             ret.code = ParseResult::ResultCode::InternalError;
             ret.err = fmt::format("Internal error. Invalid attribute value? get_value<{}> failed. Attribute has type {}", value::TypeTraits<T>::type_name(), attr.get_var().type_name());
@@ -479,7 +479,7 @@ static ParseResult ParseTypedAttribute(std::set<std::string> &table, /* inout */
         }
 
         if (has_timesamples || has_default) {
-          target.set_value(animatable_value);
+          target.set_value(std::move(animatable_value));  // Use move to avoid copy
         }
       }
 
@@ -610,7 +610,7 @@ static ParseResult ParseTypedAttribute(std::set<std::string> &table, /* inout */
           target.set_blocked(true);
         } else if (attr.get_var().has_default()) {
           if (auto pv = attr.get_value<T>()) {
-            target.set_value(pv.value());
+            target.set_value(std::move(pv.value()));  // Use move to avoid copy
           } else {
             ret.code = ParseResult::ResultCode::InternalError;
             ret.err = "Internal data corrupsed.";
@@ -735,7 +735,7 @@ static ParseResult ParseTypedAttribute(std::set<std::string> &table, /* inout */
 
         if (var.has_default() || var.has_timesamples()) {
           if (auto av = ConvertToAnimatable<T>(var)) {
-            target.set_value(av.value());
+            target.set_value(std::move(av.value()));  // Use move to avoid copy
           } else {
             DCOUT("ConvertToAnimatable failed.");
             ret.code = ParseResult::ResultCode::InternalError;
@@ -779,7 +779,7 @@ static ParseResult ParseTypedAttribute(std::set<std::string> &table, /* inout */
       DCOUT("Attribute has no value, using default-constructed value.");
 
       // Set an empty/default value so the attribute is valid but empty
-      target.set_value(Animatable<T>());
+      target.set_value(Animatable<T>());  // Default-constructed, no need for move
       target.metas() = attr.metas();
       table.insert(prop_name);
       ret.code = ParseResult::ResultCode::Success;
@@ -882,7 +882,7 @@ static ParseResult ParseTypedAttribute(std::set<std::string> &table, /* inout */
           has_default = true;
         } else if (attr.get_var().has_default()) {
           if (auto pv = attr.get_value<T>()) {
-            target.set_value(pv.value());
+            target.set_value(std::move(pv.value()));  // Use move to avoid copy
             has_default = true;
           } else {
             ret.code = ParseResult::ResultCode::VariabilityMismatch;
@@ -1061,7 +1061,7 @@ static ParseResult ParseExtentAttribute(std::set<std::string> &table, /* inout *
 
       if (var.has_default() || var.has_timesamples()) {
         if (auto av = ConvertToAnimatable<Extent>(var)) {
-          target.set_value(av.value());
+          target.set_value(std::move(av.value()));  // Use move to avoid copy
         } else {
           DCOUT("ConvertToAnimatable failed.");
           ret.code = ParseResult::ResultCode::InternalError;
