@@ -869,20 +869,47 @@ bool CrateReader::UnpackTimeSampleValue_BOOL(double t,
       return true;
     }
 
-    if (!ReadArray(&v_uint8)) {
-      PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read bool array.");
-    }
+    // Check deduplication cache for bool array
+    auto it = _dedup_bool_array.find(rep);
+    if (it != _dedup_bool_array.end()) {
+      // Reuse cached array via ref_index
+      size_t ref_index = it->second;
+      DCOUT("Reusing cached BOOL array at sample index " << ref_index);
 
-    // Convert uint8_t array to bool array
-    std::vector<bool> v_bool;
-    v_bool.reserve(v_uint8.size());
-    for (uint8_t val : v_uint8) {
-      v_bool.push_back(val != 0);
-    }
+      if (dst.is_using_pod()) {
+        if (!dst.add_dedup_bool_array_sample_pod(t, ref_index, &_err)) {
+          PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add dedup sample to TimeSamples.");
+        }
+      } else {
+        PUSH_ERROR_AND_RETURN_TAG(kTag, "Non-POD path not supported for bool dedup.");
+      }
+    } else {
+      // First occurrence - read and cache array
+      if (!ReadArray(&v_uint8)) {
+        PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read bool array.");
+      }
 
-    if (!add_array_sample_to_timesamples<bool>(&dst, t, v_bool, &_err,
-                                                  expected_total_samples)) {
-      PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add sample to TimeSamples.");
+      // Convert uint8_t array to bool array
+      std::vector<bool> v_bool;
+      v_bool.reserve(v_uint8.size());
+      for (uint8_t val : v_uint8) {
+        v_bool.push_back(val != 0);
+      }
+
+      if (dst.is_using_pod()) {
+        // Store current index before adding
+        size_t current_index = dst.size();
+        _dedup_bool_array[rep] = current_index;
+        DCOUT("Caching BOOL array at sample index " << current_index);
+
+        if (!dst.add_array_sample_pod<bool>(t, v_bool, &_err, expected_total_samples)) {
+          PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add sample to TimeSamples.");
+        }
+      } else {
+        if (!dst.add_sample(t, value::Value(v_bool), &_err)) {
+          PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add sample to TimeSamples.");
+        }
+      }
     }
 
   } else {

@@ -1597,6 +1597,57 @@ struct TimeSamples {
     return false; // Not using POD storage
   }
 
+  /// Add a deduplicated bool array sample - reuses data from an existing sample
+  /// Special handling for bool since std::vector<bool> doesn't satisfy POD requirements
+  /// @param t Time value for this sample
+  /// @param ref_index Index of the existing sample whose data/offset to reuse
+  /// @param err Optional error string
+  bool add_dedup_bool_array_sample_pod(double t, size_t ref_index, std::string *err = nullptr) {
+    if (_use_pod) {
+      // Bool arrays are stored internally as uint8_t, but with bool type_id
+      // The dedup mechanism works the same way - just reference the existing sample
+      size_t new_idx = _pod_samples._times.size();
+
+      // Validate reference
+      if (ref_index >= new_idx) {
+        if (err) {
+          (*err) += "Invalid ref_index in add_dedup_bool_array_sample_pod: " +
+                    std::to_string(ref_index) + " >= " + std::to_string(new_idx) + ".\n";
+        }
+        return false;
+      }
+
+      if (PODTimeSamples::is_dedup(_pod_samples._offsets[ref_index])) {
+        if (err) {
+          (*err) += "Cannot deduplicate from deduplicated sample.\n";
+        }
+        return false;
+      }
+
+      _pod_samples._times.push_back(t);
+      _pod_samples._blocked.push_back(0);  // false = 0
+
+      // Copy array count from the referenced sample
+      size_t ref_array_count = (ref_index < _pod_samples._array_counts.size())
+                                   ? _pod_samples._array_counts[ref_index]
+                                   : _pod_samples._array_size;
+      _pod_samples._array_counts.push_back(ref_array_count);
+
+      // Create dedup offset: bit 63=1 (dedup), bit 62=1 (array), bits 61-0=ref_index
+      uint64_t dedup_offset = PODTimeSamples::make_dedup_offset(ref_index, true);
+      _pod_samples._offsets.push_back(dedup_offset);
+
+      _pod_samples._dirty = true;
+      _dirty = true;
+      return true;
+    }
+
+    if (err) {
+      (*err) += "Not using POD storage for dedup bool array.\n";
+    }
+    return false;
+  }
+
   /// Typed add blocked sample for POD types (optimization path)
   template<typename T>
   bool add_blocked_sample_pod(double t, std::string *err = nullptr, size_t expected_total_samples = 0) {
