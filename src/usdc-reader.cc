@@ -1482,8 +1482,8 @@ bool USDCReader::Impl::ParseProperty(const SpecType spec_type,
         rel.set_varying_authored();
       }
     }
-    rel.metas() = meta;
-    (*prop) = Property(rel, custom);
+    rel.metas() = std::move(meta);  // Move instead of copy
+    (*prop) = Property(std::move(rel), custom);
   } else if (hasDefault || hasTimeSamples || hasConnectionPaths) {
 
     // Attribute
@@ -1494,7 +1494,7 @@ bool USDCReader::Impl::ParseProperty(const SpecType spec_type,
     if (variability) {
       attr.variability() = variability.value();
     }
-    attr.metas() = meta;
+    attr.metas() = std::move(meta);  // Move instead of copy
     (*prop) = Property(std::move(attr), custom);
 
   } else {
@@ -1522,9 +1522,9 @@ bool USDCReader::Impl::ParseProperty(const SpecType spec_type,
       if (variability) {
         p.attribute().variability() = variability.value();
       }
-      p.attribute().metas() = meta;
+      p.attribute().metas() = std::move(meta);  // Move instead of copy
 
-      (*prop) = p;
+      (*prop) = std::move(p);  // Move instead of copy
 
     } else {
       DCOUT("spec_type = " << to_string(spec_type));
@@ -1535,8 +1535,8 @@ bool USDCReader::Impl::ParseProperty(const SpecType spec_type,
         if (variability == Variability::Varying) {
           rel.set_varying_authored();
         }
-        rel.metas() = meta;
-        (*prop) = Property(rel, custom);
+        rel.metas() = std::move(meta);  // Move instead of copy
+        (*prop) = Property(std::move(rel), custom);  // Move instead of copy
       } else {
         PUSH_ERROR_AND_RETURN_TAG(kTag, "`typeName` field is missing.");
       }
@@ -3049,7 +3049,7 @@ bool USDCReader::Impl::ReconstructPrimSpecNode(int parent, int current, int leve
         //TUSDZ_LOG_I("props add");
         primspec.props() = std::move(props);
         //TUSDZ_LOG_I("props add done");
-        primspec.metas() = primMeta;
+        primspec.metas() = std::move(primMeta);  // Move instead of copy
         // TODO: primChildren, properties
 
         if (primOut) {
@@ -3270,15 +3270,15 @@ bool USDCReader::Impl::ReconstructPrimSpecNode(int parent, int current, int leve
         if (!BuildPropertyMap(node.GetChildren(), psmap, &props)) {
           PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to build PropertyMap.");
         }
-        variantPrimSpec.props() = props;
-        variantPrimSpec.metas() = primMeta;
+        variantPrimSpec.props() = std::move(props);  // Move instead of copy
+        variantPrimSpec.metas() = std::move(primMeta);  // Move metas too
 
         // Store variantPrimSpec to temporary buffer.
         DCOUT(fmt::format("parent {} add primspec idx {} as variant: ", parent, current));
         if (_variantPrimSpecs.count(current)) {
           DCOUT("??? prim idx already set " << current);
         } else {
-          _variantPrimSpecs[current] = variantPrimSpec;
+          _variantPrimSpecs[current] = std::move(variantPrimSpec);  // Move instead of copy
           _variantPrimChildren[parent].push_back(current);
         }
 
@@ -3569,9 +3569,12 @@ bool USDCReader::Impl::ReconstructPrimRecursively(
       }
 
       // Add prim to parent or root_prims (move out of unique_ptr)
+      // Use resize + move assignment to avoid Prim copy (Prim now has default ctor)
       if (entry.parent_id == 0) {  // root prim
         if (entry.prim) {
-          stage->root_prims().emplace_back(std::move(*entry.prim));
+          auto &prims = stage->root_prims();
+          prims.resize(prims.size() + 1);
+          prims.back() = std::move(*entry.prim);
         }
       } else {
         if (_variantPrims.count(entry.parent_id)) {
@@ -3583,11 +3586,15 @@ bool USDCReader::Impl::ReconstructPrimRecursively(
           } else {
             DCOUT("Adding prim to child...");
             Prim &vp = _variantPrims.at(entry.parent_id);
-            vp.children().emplace_back(std::move(*entry.prim));
+            auto &vp_children = vp.children();
+            vp_children.resize(vp_children.size() + 1);
+            vp_children.back() = std::move(*entry.prim);
           }
         } else if (entry.prim && parentPrimPtr) {
           // Add to parent prim.
-          parentPrimPtr->children().emplace_back(std::move(*entry.prim));
+          auto &parent_children = parentPrimPtr->children();
+          parent_children.resize(parent_children.size() + 1);
+          parent_children.back() = std::move(*entry.prim);
         }
       }
 
@@ -3773,9 +3780,12 @@ bool USDCReader::Impl::ReconstructPrimRecursively(
     }
   }
 
+  // Use resize + move assignment to avoid Prim copy (Prim now has default ctor)
   if (parent == 0) {  // root prim
     if (prim) {
-      stage->root_prims().emplace_back(std::move(*prim));
+      auto &prims = stage->root_prims();
+      prims.resize(prims.size() + 1);
+      prims.back() = std::move(*prim);
     }
   } else {
     if (_variantPrims.count(parent)) {
@@ -3787,11 +3797,15 @@ bool USDCReader::Impl::ReconstructPrimRecursively(
       } else {
         DCOUT("Adding prim to child...");
         Prim &vp = _variantPrims.at(parent);
-        vp.children().emplace_back(std::move(*prim));
+        auto &children = vp.children();
+        children.resize(children.size() + 1);
+        children.back() = std::move(*prim);
       }
     } else if (prim && parentPrim) {
       // Add to parent prim.
-      parentPrim->children().emplace_back(std::move(*prim));
+      auto &children = parentPrim->children();
+      children.resize(children.size() + 1);
+      children.back() = std::move(*prim);
     }
   }
 
