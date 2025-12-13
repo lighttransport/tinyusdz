@@ -726,7 +726,7 @@ bool ToProperty(const TypedAttribute<Animatable<T>> &input, Property &output, st
 
       if (aval.value().has_timesamples()) {
         value::TimeSamples ts = ToTypelessTimeSamples(aval.value().get_timesamples());
-        pvar.set_timesamples(ts);
+        pvar.set_timesamples(std::move(ts));
       }
 
       if (aval.value().has_value() || aval.value().has_timesamples()) {
@@ -802,7 +802,7 @@ bool ToProperty(const TypedAttributeWithFallback<Animatable<T>> &input,
 
     if (v.is_timesamples()) {
       value::TimeSamples ts = ToTypelessTimeSamples(v.get_timesamples());
-      pvar.set_timesamples(ts);
+      pvar.set_timesamples(std::move(ts));
     } else if (v.is_scalar()) {
       T a;
       if (v.get_scalar(&a)) {
@@ -855,7 +855,7 @@ bool ToProperty(const TypedAttributeWithFallback<Animatable<T>> &input,
 
     if (v.has_timesamples()) {
       value::TimeSamples ts = ToTypelessTimeSamples(v.get_timesamples());
-      pvar.set_timesamples(ts);
+      pvar.set_timesamples(std::move(ts));
     }
 
     if (v.has_value()) {
@@ -934,7 +934,7 @@ bool ToTokenProperty(const TypedAttributeWithFallback<Animatable<T>> &input,
     if (v.is_timesamples()) {
       value::TimeSamples ts =
           EnumTimeSamplesToTypelessTimeSamples(v.get_timesamples());
-      pvar.set_timesamples(ts);
+      pvar.set_timesamples(std::move(ts));
     } else if (v.is_scalar()) {
       T a;
       if (v.get_scalar(&a)) {
@@ -983,7 +983,7 @@ bool ToTokenProperty(const TypedAttributeWithFallback<Animatable<T>> &input,
     if (v.has_timesamples()) {
       value::TimeSamples ts =
           EnumTimeSamplesToTypelessTimeSamples(v.get_timesamples());
-      pvar.set_timesamples(ts);
+      pvar.set_timesamples(std::move(ts));
     }
 
     if (v.has_default()) {

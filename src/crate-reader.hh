@@ -549,6 +549,7 @@ class CrateReader {
 
   // Integer types (scalar and array)
   std::unordered_map<crate::ValueRep, bool, crate::ValueRep::Hash> _dedup_bool;
+  std::unordered_map<crate::ValueRep, size_t, crate::ValueRep::Hash> _dedup_bool_array;
   std::unordered_map<crate::ValueRep, int32_t, crate::ValueRep::Hash> _dedup_int32;
   std::unordered_map<crate::ValueRep, uint32_t, crate::ValueRep::Hash> _dedup_uint32;
   std::unordered_map<crate::ValueRep, int64_t, crate::ValueRep::Hash> _dedup_int64;
