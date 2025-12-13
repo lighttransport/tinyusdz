@@ -2047,7 +2047,7 @@ static bool ReconstructXformOpFromToken(
           }
 
           op.op_type = XformOp::OpType::ResetXformStack;
-          xformOps->emplace_back(op);
+          xformOps->emplace_back(std::move(op));
 
           // skip looking up property
           return true;
@@ -2545,7 +2545,7 @@ static bool ReconstructXformOpFromToken(
               "token for xformOpOrder must have namespace `xformOp:***`, or .");
         }
 
-        xformOps->emplace_back(op);
+        xformOps->emplace_back(std::move(op));
         table.insert(tok);
 
     return true;
