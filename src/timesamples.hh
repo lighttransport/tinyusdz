@@ -2824,7 +2824,7 @@ struct TimeSamples {
   }
 
   static size_t get_value_array_index(uint64_t ref) {
-    return ref & ~VALUE_ARRAY_DEDUP_BIT;
+    return static_cast<size_t>(ref & ~VALUE_ARRAY_DEDUP_BIT);
   }
 };
 
