@@ -5,7 +5,9 @@
 // UsdGeom API implementations
 
 
+#include <cstring>
 #include <sstream>
+#include <type_traits>
 
 #include "pprinter.hh"
 #include "value-types.hh"
@@ -36,6 +38,32 @@ namespace {
 constexpr auto kPrimvars = "primvars:";
 constexpr auto kIndices = ":indices";
 
+// Helper trait: can use data() pointer (excludes std::vector<bool>)
+template <typename T>
+struct can_use_data_ptr : std::integral_constant<bool,
+    !std::is_same<T, bool>::value> {};
+
+// Helper trait: can use memcpy for block copy
+template <typename T>
+struct can_use_memcpy : std::integral_constant<bool,
+    std::is_trivially_copyable<T>::value && !std::is_same<T, bool>::value> {};
+
+// Block copy with memcpy for trivially copyable types
+template <typename T>
+inline typename std::enable_if<can_use_memcpy<T>::value>::type
+CopyBlockElements(T* dest, const T* src, size_t count) {
+  memcpy(dest, src, count * sizeof(T));
+}
+
+// Block copy with loop for non-trivially copyable types
+template <typename T>
+inline typename std::enable_if<!can_use_memcpy<T>::value>::type
+CopyBlockElements(T* dest, const T* src, size_t count) {
+  for (size_t k = 0; k < count; k++) {
+    dest[k] = src[k];
+  }
+}
+
 ///
 /// Computes
 ///
@@ -45,8 +73,11 @@ constexpr auto kIndices = ":indices";
 ///
 /// `dest` is set to `values` when `indices` is empty
 ///
+/// Optimized version for types that support data() (not std::vector<bool>)
+///
 template <typename T>
-nonstd::expected<bool, std::string> ExpandWithIndices(
+typename std::enable_if<can_use_data_ptr<T>::value, nonstd::expected<bool, std::string>>::type
+ExpandWithIndices(
     const std::vector<T> &values, uint32_t elementSize, const std::vector<int32_t> &indices,
     std::vector<T> *dest) {
   if (!dest) {
@@ -69,17 +100,31 @@ nonstd::expected<bool, std::string> ExpandWithIndices(
   dest->resize(indices.size() * elementSize);
 
   std::vector<size_t> invalidIndices;
+  const size_t numValues = values.size();
+  const size_t numIndices = indices.size();
+  T* destData = dest->data();
+  const T* srcData = values.data();
 
-  bool valid = true;
-  for (size_t i = 0; i < indices.size(); i++) {
-    int32_t idx = indices[i];
-    if ((idx >= 0) && ((size_t(idx+1) * size_t(elementSize)) <= values.size())) {
-      for (size_t k = 0; k < elementSize; k++) {
-        (*dest)[i*elementSize + k] = values[size_t(idx)*elementSize + k];
+  // Fast path for elementSize == 1 (most common case)
+  if (elementSize == 1) {
+    for (size_t i = 0; i < numIndices; i++) {
+      int32_t idx = indices[i];
+      if ((idx >= 0) && (size_t(idx) < numValues)) {
+        destData[i] = srcData[idx];
+      } else {
+        invalidIndices.push_back(i);
       }
-    } else {
-      invalidIndices.push_back(i);
-      valid = false;
+    }
+  }
+  // Optimized path for elementSize > 1
+  else {
+    for (size_t i = 0; i < numIndices; i++) {
+      int32_t idx = indices[i];
+      if ((idx >= 0) && ((size_t(idx+1) * size_t(elementSize)) <= numValues)) {
+        CopyBlockElements(destData + i * elementSize, srcData + size_t(idx) * elementSize, elementSize);
+      } else {
+        invalidIndices.push_back(i);
+      }
     }
   }
 
@@ -90,7 +135,59 @@ nonstd::expected<bool, std::string> ExpandWithIndices(
                                    /* N to display */ 5));
   }
 
-  return valid;
+  return true;
+}
+
+///
+/// Fallback for std::vector<bool> (no data() method available)
+///
+template <typename T>
+typename std::enable_if<!can_use_data_ptr<T>::value, nonstd::expected<bool, std::string>>::type
+ExpandWithIndices(
+    const std::vector<T> &values, uint32_t elementSize, const std::vector<int32_t> &indices,
+    std::vector<T> *dest) {
+  if (!dest) {
+    return nonstd::make_unexpected("`dest` is nullptr.");
+  }
+
+  if (indices.empty()) {
+    (*dest) = values;
+    return true;
+  }
+
+  if (elementSize == 0) {
+    return false;
+  }
+
+  if ((values.size() % elementSize) != 0) {
+    return false;
+  }
+
+  dest->resize(indices.size() * elementSize);
+
+  std::vector<size_t> invalidIndices;
+  const size_t numValues = values.size();
+  const size_t numIndices = indices.size();
+
+  for (size_t i = 0; i < numIndices; i++) {
+    int32_t idx = indices[i];
+    if ((idx >= 0) && ((size_t(idx+1) * size_t(elementSize)) <= numValues)) {
+      for (size_t k = 0; k < elementSize; k++) {
+        (*dest)[i*elementSize + k] = values[size_t(idx)*elementSize + k];
+      }
+    } else {
+      invalidIndices.push_back(i);
+    }
+  }
+
+  if (invalidIndices.size()) {
+    return nonstd::make_unexpected(
+        "Invalid indices found: " +
+        value::print_array_snipped(invalidIndices,
+                                   /* N to display */ 5));
+  }
+
+  return true;
 }
 
 }  // namespace
