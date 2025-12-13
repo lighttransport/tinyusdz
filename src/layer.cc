@@ -5,6 +5,7 @@
 #include "prim-types.hh"  // For PrimSpec, LayerMetas, etc.
 #include "path-util.hh"   // For Path
 #include "str-util.hh"    // For split function
+#include "tiny-container.hh"
 #include "common-macros.inc"
 #include "tiny-format.hh"
 
@@ -16,169 +17,163 @@ namespace tinyusdz {
 
 namespace {
 
-// Forward declare helper functions
-bool HasReferencesRec(uint32_t depth, const PrimSpec &primspec, const uint32_t max_depth);
-bool HasPayloadRec(uint32_t depth, const PrimSpec &primspec, const uint32_t max_depth);
-bool HasVariantRec(uint32_t depth, const PrimSpec &primspec, const uint32_t max_depth);
-bool HasInheritsRec(uint32_t depth, const PrimSpec &primspec, const uint32_t max_depth);
-bool HasSpecializesRec(uint32_t depth, const PrimSpec &primspec, const uint32_t max_depth);
-bool HasOverRec(uint32_t depth, const PrimSpec &primspec, const uint32_t max_depth);
-nonstd::optional<const PrimSpec *> GetPrimSpecAtPathRec(
-    const PrimSpec *parent, const std::string &parent_path, const Path &path,
-    uint32_t depth);
-
-bool HasReferencesRec(uint32_t depth, const PrimSpec &primspec,
-                      const uint32_t max_depth = 1024 * 128) {
-  if (depth > max_depth) {
-    // too deep
-    return false;
-  }
-
-  if (primspec.metas().references) {
+// Generic iterative tree search using explicit stack
+// Returns true if any PrimSpec satisfies the predicate
+template <typename Predicate>
+bool HasPrimSpecWithCondition(const PrimSpec &root, Predicate pred) {
+  // Check root first
+  if (pred(root)) {
     return true;
   }
 
-  for (auto &child : primspec.children()) {
-    if (HasReferencesRec(depth + 1, child, max_depth)) {
+  // Use explicit stack for DFS traversal (StackVector for stack allocation)
+  StackVector<std::pair<const PrimSpec *, size_t>, 4> stack;
+  stack.reserve(64);
+
+  if (!root.children().empty()) {
+    stack.emplace_back(&root, 0);
+  }
+
+  while (!stack.empty()) {
+    auto &top = stack.back();
+    const PrimSpec *current = top.first;
+    size_t &child_idx = top.second;
+
+    if (child_idx >= current->children().size()) {
+      stack.pop_back();
+      continue;
+    }
+
+    const PrimSpec &child = current->children()[child_idx];
+    ++child_idx;
+
+    if (pred(child)) {
       return true;
+    }
+
+    if (!child.children().empty()) {
+      stack.emplace_back(&child, 0);
     }
   }
 
   return false;
 }
 
-bool HasPayloadRec(uint32_t depth, const PrimSpec &primspec,
-                   const uint32_t max_depth = 1024 * 128) {
-  if (depth > max_depth) {
-    // too deep
-    return false;
-  }
-
-  if (primspec.metas().payload) {
-    return true;
-  }
-
-  for (auto &child : primspec.children()) {
-    if (HasPayloadRec(depth + 1, child, max_depth)) {
-      return true;
-    }
-  }
-
-  return false;
+// Iterative predicates for each Has* function
+bool HasReferencesIterative(const PrimSpec &primspec) {
+  return HasPrimSpecWithCondition(primspec, [](const PrimSpec &ps) {
+    return ps.metas().references.has_value();
+  });
 }
 
-bool HasVariantRec(uint32_t depth, const PrimSpec &primspec,
-                   const uint32_t max_depth = 1024 * 128) {
-  if (depth > max_depth) {
-    // too deep
-    return false;
-  }
-
-  // TODO: Also check if PrimSpec::variantSets is empty?
-  if (primspec.metas().variants && primspec.metas().variantSets) {
-    return true;
-  }
-
-  for (auto &child : primspec.children()) {
-    if (HasVariantRec(depth + 1, child, max_depth)) {
-      return true;
-    }
-  }
-
-  return false;
+bool HasPayloadIterative(const PrimSpec &primspec) {
+  return HasPrimSpecWithCondition(primspec, [](const PrimSpec &ps) {
+    return ps.metas().payload.has_value();
+  });
 }
 
-bool HasInheritsRec(uint32_t depth, const PrimSpec &primspec,
-                    const uint32_t max_depth = 1024 * 128) {
-  if (depth > max_depth) {
-    // too deep
-    return false;
-  }
-
-  if (primspec.metas().inherits) {
-    return true;
-  }
-
-  for (auto &child : primspec.children()) {
-    if (HasInheritsRec(depth + 1, child, max_depth)) {
-      return true;
-    }
-  }
-
-  return false;
+bool HasVariantIterative(const PrimSpec &primspec) {
+  return HasPrimSpecWithCondition(primspec, [](const PrimSpec &ps) {
+    // TODO: Also check if PrimSpec::variantSets is empty?
+    return ps.metas().variants.has_value() && ps.metas().variantSets.has_value();
+  });
 }
 
-bool HasSpecializesRec(uint32_t depth, const PrimSpec &primspec,
-                    const uint32_t max_depth = 1024 * 128) {
-  if (depth > max_depth) {
-    // too deep
-    return false;
-  }
-
-  if (primspec.metas().specializes) {
-    return true;
-  }
-
-  for (auto &child : primspec.children()) {
-    if (HasSpecializesRec(depth + 1, child, max_depth)) {
-      return true;
-    }
-  }
-
-  return false;
+bool HasInheritsIterative(const PrimSpec &primspec) {
+  return HasPrimSpecWithCondition(primspec, [](const PrimSpec &ps) {
+    return ps.metas().inherits.has_value();
+  });
 }
 
-bool HasOverRec(uint32_t depth, const PrimSpec &primspec,
-                       const uint32_t max_depth = 1024 * 128) {
-  if (depth > max_depth) {
-    // too deep
-    return false;
-  }
-
-  if (primspec.specifier() == Specifier::Over) {
-    return true;
-  }
-
-  for (auto &child : primspec.children()) {
-    if (HasOverRec(depth + 1, child, max_depth)) {
-      return true;
-    }
-  }
-
-  return false;
+bool HasSpecializesIterative(const PrimSpec &primspec) {
+  return HasPrimSpecWithCondition(primspec, [](const PrimSpec &ps) {
+    return ps.metas().specializes.has_value();
+  });
 }
 
-nonstd::optional<const PrimSpec *> GetPrimSpecAtPathRec(
-    const PrimSpec *parent, const std::string &parent_path, const Path &path,
-    uint32_t depth) {
-  if (depth > (1024 * 1024 * 128)) {
-    // Too deep.
+bool HasOverIterative(const PrimSpec &primspec) {
+  return HasPrimSpecWithCondition(primspec, [](const PrimSpec &ps) {
+    return ps.specifier() == Specifier::Over;
+  });
+}
+
+// Optimized iterative path lookup starting from a single root PrimSpec
+// Uses direct path component matching without string allocation
+nonstd::optional<const PrimSpec *> GetPrimSpecAtPathFromRoot(
+    const PrimSpec &root, const Path &path) {
+  const std::string &target_path = path.full_path_name();
+
+  // Must be absolute path starting with '/'
+  if (target_path.empty() || target_path[0] != '/') {
     return nonstd::nullopt;
   }
 
-  if (!parent) {
+  // Root path "/" has no primspec
+  if (target_path.size() == 1) {
     return nonstd::nullopt;
   }
 
-  std::string abs_path;
-  {
-    std::string elementName = parent->name();
+  // Parse first component to check if it matches root
+  size_t start = 1;  // skip leading '/'
+  const size_t len = target_path.size();
 
-    abs_path = parent_path + "/" + elementName;
-
-    if (abs_path == path.full_path_name()) {
-      return parent;
-    }
+  size_t end = start;
+  while (end < len && target_path[end] != '/') {
+    ++end;
   }
 
-  for (const auto &child : parent->children()) {
-    if (auto pv = GetPrimSpecAtPathRec(&child, abs_path, path, depth + 1)) {
-      return pv.value();
-    }
+  // Check if first component matches root name
+  const size_t first_len = end - start;
+  const std::string &root_name = root.name();
+  if (root_name.size() != first_len ||
+      target_path.compare(start, first_len, root_name) != 0) {
+    return nonstd::nullopt;
   }
 
-  // not found
-  return nonstd::nullopt;
+  // If path is just the root, return it
+  if (end >= len) {
+    return &root;
+  }
+
+  // Navigate down the tree
+  const PrimSpec *current = &root;
+  start = end + 1;
+
+  while (start < len) {
+    // Find end of current component
+    end = start;
+    while (end < len && target_path[end] != '/') {
+      ++end;
+    }
+
+    if (end == start) {
+      // Empty component (double slash), skip
+      start = end + 1;
+      continue;
+    }
+
+    // Search for matching child
+    const PrimSpec *found = nullptr;
+    const size_t component_len = end - start;
+
+    for (const auto &child : current->children()) {
+      const std::string &name = child.name();
+      if (name.size() == component_len &&
+          target_path.compare(start, component_len, name) == 0) {
+        found = &child;
+        break;
+      }
+    }
+
+    if (!found) {
+      return nonstd::nullopt;
+    }
+
+    current = found;
+    start = end + 1;
+  }
+
+  return current;
 }
 
 // Helper function to estimate PrimSpec memory usage
@@ -468,10 +463,9 @@ bool Layer::find_primspec_at(const Path &path, const PrimSpec **ps,
     }
   }
 
-  // Brute-force search.
+  // Direct path-based lookup (iterative, no string allocation)
   for (const auto &parent : _impl->_prim_specs) {
-    if (auto pv = GetPrimSpecAtPathRec(&parent.second, /* parent_path */ "",
-                                       path, /* depth */ 0)) {
+    if (auto pv = GetPrimSpecAtPathFromRoot(parent.second, path)) {
       (*ps) = pv.value();
 
       // Add to cache.
@@ -487,10 +481,11 @@ bool Layer::find_primspec_at(const Path &path, const PrimSpec **ps,
 }
 
 bool Layer::check_unresolved_references(const uint32_t max_depth) const {
+  (void)max_depth;  // Not needed for iterative version
   bool ret = false;
 
   for (const auto &item : _impl->_prim_specs) {
-    if (HasReferencesRec(/* depth */ 0, item.second, max_depth)) {
+    if (HasReferencesIterative(item.second)) {
       ret = true;
       break;
     }
@@ -501,10 +496,11 @@ bool Layer::check_unresolved_references(const uint32_t max_depth) const {
 }
 
 bool Layer::check_unresolved_payload(const uint32_t max_depth) const {
+  (void)max_depth;  // Not needed for iterative version
   bool ret = false;
 
   for (const auto &item : _impl->_prim_specs) {
-    if (HasPayloadRec(/* depth */ 0, item.second, max_depth)) {
+    if (HasPayloadIterative(item.second)) {
       ret = true;
       break;
     }
@@ -515,10 +511,11 @@ bool Layer::check_unresolved_payload(const uint32_t max_depth) const {
 }
 
 bool Layer::check_unresolved_variant(const uint32_t max_depth) const {
+  (void)max_depth;  // Not needed for iterative version
   bool ret = false;
 
   for (const auto &item : _impl->_prim_specs) {
-    if (HasVariantRec(/* depth */ 0, item.second, max_depth)) {
+    if (HasVariantIterative(item.second)) {
       ret = true;
       break;
     }
@@ -529,10 +526,11 @@ bool Layer::check_unresolved_variant(const uint32_t max_depth) const {
 }
 
 bool Layer::check_unresolved_inherits(const uint32_t max_depth) const {
+  (void)max_depth;  // Not needed for iterative version
   bool ret = false;
 
   for (const auto &item : _impl->_prim_specs) {
-    if (HasInheritsRec(/* depth */ 0, item.second, max_depth)) {
+    if (HasInheritsIterative(item.second)) {
       ret = true;
       break;
     }
@@ -543,10 +541,11 @@ bool Layer::check_unresolved_inherits(const uint32_t max_depth) const {
 }
 
 bool Layer::check_unresolved_specializes(const uint32_t max_depth) const {
+  (void)max_depth;  // Not needed for iterative version
   bool ret = false;
 
   for (const auto &item : _impl->_prim_specs) {
-    if (HasSpecializesRec(/* depth */ 0, item.second, max_depth)) {
+    if (HasSpecializesIterative(item.second)) {
       ret = true;
       break;
     }
@@ -557,10 +556,11 @@ bool Layer::check_unresolved_specializes(const uint32_t max_depth) const {
 }
 
 bool Layer::check_over_primspec(const uint32_t max_depth) const {
+  (void)max_depth;  // Not needed for iterative version
   bool ret = false;
 
   for (const auto &item : _impl->_prim_specs) {
-    if (HasOverRec(/* depth */ 0, item.second, max_depth)) {
+    if (HasOverIterative(item.second)) {
       ret = true;
       break;
     }
