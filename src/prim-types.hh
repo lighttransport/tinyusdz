@@ -1278,7 +1278,7 @@ struct Animatable {
   }
 
   void set_timesamples(TypedTimeSamples<T> &&ts) {
-    return set(ts);
+    return set(std::move(ts));
   }
 
   void clear_scalar() {
@@ -2959,7 +2959,7 @@ struct XformOp {
 
   void set_timesamples(const value::TimeSamples &v) { _var.set_timesamples(v); }
 
-  void set_timesamples(value::TimeSamples &&v) { _var.set_timesamples(v); }
+  void set_timesamples(value::TimeSamples &&v) { _var.set_timesamples(std::move(v)); }
 
   bool is_timesamples() const { return _var.is_timesamples(); }
   bool has_timesamples() const { return _var.has_timesamples(); }
