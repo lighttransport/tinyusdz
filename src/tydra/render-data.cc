@@ -1682,8 +1682,24 @@ bool TriangulatePolygon(
     std::string &warn, std::string &err) {
   triangulatedFaceVertexCounts.clear();
   triangulatedFaceVertexIndices.clear();
-
   triangulatedToOrigFaceVertexIndexMap.clear();
+  triangulatedFaceCounts.clear();
+
+  // Pre-allocate based on estimated triangle count.
+  // For each face with N vertices, we generate N-2 triangles, each with 3 indices.
+  // Total triangles ≈ total_vertex_indices - 2*num_faces
+  // This is an upper bound estimate.
+  size_t numFaces = faceVertexCounts.size();
+  size_t numFaceVertexIndices = faceVertexIndices.size();
+  size_t estimatedTriangles = numFaceVertexIndices > 2 * numFaces
+                             ? numFaceVertexIndices - 2 * numFaces
+                             : numFaces;
+  size_t estimatedIndices = estimatedTriangles * 3;
+
+  triangulatedFaceVertexCounts.reserve(estimatedTriangles);
+  triangulatedFaceVertexIndices.reserve(estimatedIndices);
+  triangulatedToOrigFaceVertexIndexMap.reserve(estimatedIndices);
+  triangulatedFaceCounts.reserve(numFaces);
 
   size_t faceIndexOffset = 0;
 
@@ -3323,15 +3339,16 @@ bool RenderSceneConverter::BuildVertexIndicesFastImpl(RenderMesh &mesh) {
   {
     uint32_t numPoints = uint32_t(fvIndices.size());
     {
-      std::vector<value::float3> tmp_points(numPoints);
+      // Reuse buffer to avoid repeated allocation across multiple mesh conversions
+      _tmp_points_buffer.resize(numPoints);
       // TODO: Use vertex_output[i].point_index?
       for (size_t i = 0; i < fvIndices.size(); i++) {
         if (fvIndices[i] >= mesh.points.size()) {
           PUSH_ERROR_AND_RETURN("Internal error. point index out-of-range.");
         }
-        tmp_points[i] = mesh.points[fvIndices[i]];
+        _tmp_points_buffer[i] = mesh.points[fvIndices[i]];
       }
-      mesh.points.swap(tmp_points);
+      mesh.points.swap(_tmp_points_buffer);
     }
 
     if (mesh.joint_and_weights.jointIndices.size()) {
@@ -3713,6 +3730,7 @@ bool RenderSceneConverter::ConvertMesh(
       return false;
     }
 
+    dst.usdFaceVertexIndices.reserve(indices.size());
     for (size_t i = 0; i < indices.size(); i++) {
       if (indices[i] < 0) {
         PUSH_ERROR_AND_RETURN(fmt::format(
@@ -3739,6 +3757,7 @@ bool RenderSceneConverter::ConvertMesh(
 
     size_t sumCounts = 0;
     dst.usdFaceVertexCounts.clear();
+    dst.usdFaceVertexCounts.reserve(counts.size());
     for (size_t i = 0; i < counts.size(); i++) {
       if (counts[i] < 3) {
         PUSH_ERROR_AND_RETURN(
@@ -3855,12 +3874,10 @@ bool RenderSceneConverter::ConvertMesh(
           env.stage, mesh, env.mesh_config.default_texcoords_primvar_name,
           env.timecode, env.tinterp);
       if (ret) {
-        const VertexAttribute &vattr = ret.value();
-
         //TUSDZ_LOG_I("uv attr");
 
-        // Use slotId 0
-        uvAttrs[0] = vattr;
+        // Use slotId 0 - use move to avoid copy
+        uvAttrs[0] = std::move(ret.value());
       } else {
         PUSH_WARN("Failed to get texture coordinate for `"
                   << env.mesh_config.default_texcoords_primvar_name
@@ -3890,7 +3907,7 @@ bool RenderSceneConverter::ConvertMesh(
             auto ret = GetTextureCoordinate(env.stage, mesh, uvname,
                                             env.timecode, env.tinterp);
             if (ret) {
-              const VertexAttribute &vattr = ret.value();
+              VertexAttribute &vattr = ret.value();
 
               if (vattr.is_vertex()) {
                 if (vattr.vertex_count() != num_vertices) {
@@ -3913,7 +3930,8 @@ bool RenderSceneConverter::ConvertMesh(
                 return false;
               }
 
-              uvAttrs[uint32_t(slotId)] = vattr;
+              // Use move to avoid copy
+              uvAttrs[uint32_t(slotId)] = std::move(vattr);
             } else {
               PUSH_WARN("Failed to get texture coordinate for `"
                         << uvname << "` : " << ret.error());
@@ -4125,9 +4143,9 @@ bool RenderSceneConverter::ConvertMesh(
   // Convert UVs
   //
 
-  for (const auto &it : uvAttrs) {
+  for (auto &it : uvAttrs) {
     uint64_t slotId = it.first;
-    const VertexAttribute &vattr = it.second;
+    VertexAttribute &vattr = it.second;
 
     if (vattr.format != VertexAttributeFormat::Vec2) {
       PUSH_ERROR_AND_RETURN(
@@ -4148,21 +4166,22 @@ bool RenderSceneConverter::ConvertMesh(
               vattr, &va_uvs, dst.usdFaceVertexIndices, &_warn,
               env.mesh_config.facevarying_to_vertex_eps)) {
         DCOUT("texcoord[" << slotId << "] is converted to 'vertex' varying.");
-        dst.texcoords[uint32_t(slotId)] = va_uvs;
+        dst.texcoords[uint32_t(slotId)] = std::move(va_uvs);
       } else {
         DCOUT("texcoord[" << slotId
                           << "] cannot be converted to 'vertex' varying. "
                              "Staying 'facevarying'");
         is_single_indexable = false;
-        dst.texcoords[uint32_t(slotId)] = vattr;
+        dst.texcoords[uint32_t(slotId)] = std::move(vattr);
       }
     } else {
-      dst.texcoords[uint32_t(slotId)] = vattr;
+      dst.texcoords[uint32_t(slotId)] = std::move(vattr);
     }
   }
 
   if (dst.vertex_colors.vertex_count() > 1) {
-    VertexAttribute vattr = dst.vertex_colors;  // copy
+    // Use const reference instead of copy for validation
+    const VertexAttribute &vattr = dst.vertex_colors;
 
     if (vattr.format != VertexAttributeFormat::Vec3) {
       PUSH_ERROR_AND_RETURN(
@@ -4176,7 +4195,7 @@ bool RenderSceneConverter::ConvertMesh(
     }
 
     if (is_single_indexable &&
-        (dst.vertex_colors.variability == VertexVariability::FaceVarying)) {
+        (vattr.variability == VertexVariability::FaceVarying)) {
       VertexAttribute va;
       if (TryConvertFacevaryingToVertex(
               dst.vertex_colors, &va, dst.usdFaceVertexIndices, &_warn,
@@ -4192,7 +4211,8 @@ bool RenderSceneConverter::ConvertMesh(
   }
 
   if (dst.vertex_opacities.vertex_count() > 1) {
-    VertexAttribute vattr = dst.vertex_opacities;  // copy
+    // Use const reference instead of copy for validation
+    const VertexAttribute &vattr = dst.vertex_opacities;
 
     if (vattr.format != VertexAttributeFormat::Float) {
       PUSH_ERROR_AND_RETURN(
@@ -4206,7 +4226,7 @@ bool RenderSceneConverter::ConvertMesh(
     }
 
     if (is_single_indexable &&
-        (dst.vertex_opacities.variability == VertexVariability::FaceVarying)) {
+        (vattr.variability == VertexVariability::FaceVarying)) {
       VertexAttribute va;
       if (TryConvertFacevaryingToVertex(
               dst.vertex_opacities, &va, dst.usdFaceVertexIndices, &_warn,
