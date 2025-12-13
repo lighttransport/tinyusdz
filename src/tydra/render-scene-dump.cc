@@ -149,9 +149,8 @@ std::string DumpVertexAttribute(const VertexAttribute &vattr, uint32_t indent) {
 }
 
 
-std::string DumpNode(const Node &node, uint32_t indent) {
-  std::stringstream ss;
-
+// Internal helper to avoid creating new stringstream for each recursive call
+static void DumpNodeImpl(std::stringstream &ss, const Node &node, uint32_t indent) {
   ss << pprint::Indent(indent) << "node {\n";
 
   ss << pprint::Indent(indent + 1) << "type " << quote(to_string(node.nodeType))
@@ -173,13 +172,17 @@ std::string DumpNode(const Node &node, uint32_t indent) {
   if (node.children.size()) {
     ss << pprint::Indent(indent + 1) << "children {\n";
     for (const auto &child : node.children) {
-      ss << DumpNode(child, indent + 1);
+      DumpNodeImpl(ss, child, indent + 1);  // Reuse same stringstream
     }
     ss << pprint::Indent(indent + 1) << "}\n";
   }
 
   ss << pprint::Indent(indent) << "}\n";
+}
 
+std::string DumpNode(const Node &node, uint32_t indent) {
+  std::stringstream ss;
+  DumpNodeImpl(ss, node, indent);
   return ss.str();
 }
 
