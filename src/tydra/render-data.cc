@@ -392,7 +392,6 @@ nonstd::expected<std::vector<uint8_t>, std::string> VertexToFaceVarying(
     const std::vector<uint8_t> &src, const size_t stride_bytes,
     const std::vector<uint32_t> &faceVertexCounts,
     const std::vector<uint32_t> &faceVertexIndices) {
-  std::vector<uint8_t> dst;
 
   if (src.empty()) {
     return nonstd::make_unexpected("src data is empty.");
@@ -410,8 +409,13 @@ nonstd::expected<std::vector<uint8_t>, std::string> VertexToFaceVarying(
 
   const size_t num_vertices = src.size() / stride_bytes;
 
-  std::vector<uint8_t> buf;
-  buf.resize(stride_bytes);
+  // Pre-allocate output buffer to exact size needed
+  const size_t total_face_vertices = faceVertexIndices.size();
+  std::vector<uint8_t> dst;
+  dst.resize(total_face_vertices * stride_bytes);
+
+  const uint8_t* src_data = src.data();
+  uint8_t* dst_ptr = dst.data();
 
   size_t faceVertexIndexOffset{0};
 
@@ -435,8 +439,9 @@ nonstd::expected<std::vector<uint8_t>, std::string> VertexToFaceVarying(
             v_idx, num_vertices));
       }
 
-      memcpy(buf.data(), src.data() + v_idx * stride_bytes, stride_bytes);
-      dst.insert(dst.end(), buf.begin(), buf.end());
+      // Direct memcpy to pre-allocated destination
+      std::memcpy(dst_ptr, src_data + v_idx * stride_bytes, stride_bytes);
+      dst_ptr += stride_bytes;
     }
 
     faceVertexIndexOffset += cnt;
@@ -1055,7 +1060,14 @@ static bool TriangulateVertexAttribute(
     }
 
     size_t num_vs = vattr.vertex_count();
+    const size_t stride = vattr.stride_bytes();
+    const size_t total_size = triangulatedFaceVertexIndices.size() * stride;
+
     std::vector<uint8_t> buf;
+    buf.resize(total_size);  // Pre-allocate exact size
+
+    const uint8_t* src_data = vattr.get_data().data();
+    uint8_t* dst_ptr = buf.data();
 
     for (uint32_t f = 0; f < triangulatedFaceVertexIndices.size(); f++) {
       // Array index to faceVertexIndices(before triangulation).
@@ -1066,9 +1078,9 @@ static bool TriangulateVertexAttribute(
             fmt::format("triangulatedToOrigFaceVertexIndexMap[{}] {} exceeds num_vs {}.", f, src_fvIdx, num_vs));
       }
 
-      buf.insert(
-          buf.end(), vattr.get_data().data() + src_fvIdx * vattr.stride_bytes(),
-          vattr.get_data().data() + (1 + src_fvIdx) * vattr.stride_bytes());
+      // Use memcpy instead of insert for better performance
+      std::memcpy(dst_ptr, src_data + src_fvIdx * stride, stride);
+      dst_ptr += stride;
     }
 
     vattr.data = std::move(buf);
@@ -1078,16 +1090,30 @@ static bool TriangulateVertexAttribute(
   } else if (vattr.is_indexed()) {
     PUSH_ERROR_AND_RETURN("Indexed VertexAttribute is not supported.");
   } else if (vattr.is_constant()) {
+    const size_t stride = vattr.stride_bytes();
+
+    // Pre-calculate total size to avoid reallocations
+    size_t total_triangles = 0;
+    for (size_t f = 0; f < triangulatedFaceCounts.size(); f++) {
+      total_triangles += triangulatedFaceCounts[f];
+    }
+    // Each triangle has 3 vertices
+    const size_t total_size = total_triangles * 3 * stride;
+
     std::vector<uint8_t> buf;
+    buf.resize(total_size);
+
+    const uint8_t* src_data = vattr.get_data().data();
+    uint8_t* dst_ptr = buf.data();
 
     for (size_t f = 0; f < triangulatedFaceCounts.size(); f++) {
       uint32_t nf = triangulatedFaceCounts[f];
+      const uint8_t* face_data = src_data + f * stride;
 
-      // copy `nf` times.
-      for (size_t k = 0; k < nf; k++) {
-        buf.insert(buf.end(),
-                   vattr.get_data().data() + f * vattr.stride_bytes(),
-                   vattr.get_data().data() + (1 + f) * vattr.stride_bytes());
+      // copy `nf` triangles (each with 3 vertices)
+      for (size_t k = 0; k < nf * 3; k++) {
+        std::memcpy(dst_ptr, face_data, stride);
+        dst_ptr += stride;
       }
     }
 
