@@ -88,6 +88,8 @@ int main(int argc, char **argv) {
     std::cout
         << "  --dumpobj: Dump mesh as wavefront .obj(for visual debugging)\n";
     std::cout << "  --dumpusd: Dump scene as USD(USDA Ascii)\n";
+    std::cout << "  --yaml: Output RenderScene as YAML (human-readable)\n";
+    std::cout << "  --json: Output RenderScene as JSON (machine-readable)\n";
     return EXIT_FAILURE;
   }
 
@@ -104,6 +106,7 @@ int main(int argc, char **argv) {
   bool usdprint = false;
   bool texload = false;
   bool no_assetresolver = false;
+  std::string output_format = "yaml";  // "yaml" (human-readable), "json" (machine-readable)
 
   std::string filepath;
   for (int i = 1; i < argc; i++) {
@@ -131,6 +134,10 @@ int main(int argc, char **argv) {
       timecode = std::stod(argv[i + 1]);
       std::cout << "Use timecode: " << timecode << "\n";
       i++;
+    } else if (strcmp(argv[i], "--yaml") == 0) {
+      output_format = "yaml";
+    } else if (strcmp(argv[i], "--json") == 0) {
+      output_format = "json";
     } else {
       filepath = argv[i];
     }
@@ -145,7 +152,33 @@ int main(int argc, char **argv) {
     std::cerr << "File not found or not a USD format: " << filepath << "\n";
   }
 
-  bool ret = tinyusdz::LoadUSDFromFile(filepath, &stage, &warn, &err);
+  bool is_usdz = tinyusdz::IsUSDZ(filepath);
+
+  // Collect config info for formatted output
+  std::vector<std::pair<std::string, std::string>> config_info;
+
+  // Use mmap if available to save memory (avoids copying entire file)
+  tinyusdz::io::MMapFileHandle mmap_handle;
+  bool using_mmap = false;
+  bool ret = false;
+
+  if (tinyusdz::io::IsMMapSupported()) {
+    config_info.push_back({"loading_method", "mmap"});
+    if (!tinyusdz::io::MMapFile(filepath, &mmap_handle, /* writable */false, &err)) {
+      std::cerr << "Failed to mmap USD file: " << err << "\n";
+      return EXIT_FAILURE;
+    }
+    using_mmap = true;
+
+    // Load USD from mmap'd memory
+    ret = tinyusdz::LoadUSDFromMemory(mmap_handle.addr, mmap_handle.size,
+                                       filepath, &stage, &warn, &err);
+  } else {
+    // Fallback to file-based loading
+    config_info.push_back({"loading_method", "file"});
+    ret = tinyusdz::LoadUSDFromFile(filepath, &stage, &warn, &err);
+  }
+
   if (!warn.empty()) {
     std::cerr << "WARN : " << warn << "\n";
   }
@@ -156,10 +189,11 @@ int main(int argc, char **argv) {
 
   if (!ret) {
     std::cerr << "Failed to load USD file: " << filepath << "\n";
+    if (using_mmap) {
+      tinyusdz::io::UnmapFile(mmap_handle, &err);
+    }
     return EXIT_FAILURE;
   }
-
-  bool is_usdz = tinyusdz::IsUSDZ(filepath);
 
   if (usdprint) {
     std::string s = stage.ExportToString();
@@ -173,33 +207,51 @@ int main(int argc, char **argv) {
   tinyusdz::tydra::RenderSceneConverter converter;
   tinyusdz::tydra::RenderSceneConverterEnv env(stage);
 
-  std::cout << "Triangulate : " << (triangulate ? "true" : "false") << "\n";
+  config_info.push_back({"input_file", filepath});
+  config_info.push_back({"is_usdz", is_usdz ? "true" : "false"});
+  config_info.push_back({"output_format", output_format});
+  config_info.push_back({"triangulate", triangulate ? "true" : "false"});
   env.mesh_config.triangulate = triangulate;
   if (use_triangle_fan) {
-    std::cout << "Triangulation method : TriangleFan\n";
+    config_info.push_back({"triangulation_method", "TriangleFan"});
     env.mesh_config.triangulation_method = tinyusdz::tydra::MeshConverterConfig::TriangulationMethod::TriangleFan;
   } else {
-    std::cout << "Triangulation method : Earcut\n";
+    config_info.push_back({"triangulation_method", "Earcut"});
     env.mesh_config.triangulation_method = tinyusdz::tydra::MeshConverterConfig::TriangulationMethod::Earcut;
   }
-  std::cout << "Rebuild vertex indices : " << (build_indices ? "true" : "false")
-            << "\n";
+  config_info.push_back({"build_vertex_indices", build_indices ? "true" : "false"});
   env.mesh_config.build_vertex_indices = build_indices;
 
-  std::cout << "Load texture data : " << (texload ? "true" : "false") << "\n";
+  config_info.push_back({"load_texture_data", texload ? "true" : "false"});
   env.scene_config.load_texture_assets = texload;
 
   // Add base directory of .usd file to search path.
   std::string usd_basedir = tinyusdz::io::GetBaseDir(filepath);
-  std::cout << "Add seach path: " << usd_basedir << "\n";
+  config_info.push_back({"search_path", usd_basedir});
 
   tinyusdz::USDZAsset usdz_asset;
+
   if (is_usdz) {
-    // Setup AssetResolutionResolver to read a asset(file) from memory.
-    if (!tinyusdz::ReadUSDZAssetInfoFromFile(filepath, &usdz_asset, &warn,
-                                             &err)) {
-      std::cerr << "Failed to read USDZ assetInfo from file: " << err << "\n";
-      exit(-1);
+    // Setup AssetResolutionResolver to read assets from USDZ container.
+    // Reuse the mmap handle if already mmap'd, otherwise fall back to file-based.
+    if (using_mmap) {
+      // Use ReadUSDZAssetInfoFromMemory with asset_on_memory=true
+      // This avoids copying the USDZ data, just references the mmap'd address
+      if (!tinyusdz::ReadUSDZAssetInfoFromMemory(
+            mmap_handle.addr, mmap_handle.size,
+            /* asset_on_memory */ true,
+            &usdz_asset, &warn, &err)) {
+        std::cerr << "Failed to read USDZ assetInfo from memory: " << err << "\n";
+        tinyusdz::io::UnmapFile(mmap_handle, &err);
+        return EXIT_FAILURE;
+      }
+    } else {
+      // Fallback to file-based loading (copies entire file into memory)
+      if (!tinyusdz::ReadUSDZAssetInfoFromFile(filepath, &usdz_asset, &warn,
+                                               &err)) {
+        std::cerr << "Failed to read USDZ assetInfo from file: " << err << "\n";
+        return EXIT_FAILURE;
+      }
     }
     if (warn.size()) {
       std::cout << warn << "\n";
@@ -209,6 +261,7 @@ int main(int argc, char **argv) {
 
     if (no_assetresolver) {
       SetupNullAssetResolution(arr);
+      config_info.push_back({"asset_resolver", "null"});
     } else {
       // NOTE: Pointer address of usdz_asset must be valid until the call of
       // RenderSceneConverter::ConvertToRenderScene.
@@ -216,6 +269,7 @@ int main(int argc, char **argv) {
         std::cerr << "Failed to setup AssetResolution for USDZ asset\n";
         exit(-1);
       };
+      config_info.push_back({"asset_resolver", "usdz"});
     }
 
     env.asset_resolver = arr;
@@ -225,12 +279,16 @@ int main(int argc, char **argv) {
 
     if (no_assetresolver) {
       SetupNullAssetResolution(env.asset_resolver);
-      std::cout << "Null asset resolver\n";
+      config_info.push_back({"asset_resolver", "null"});
+    } else {
+      config_info.push_back({"asset_resolver", "default"});
     }
   }
 
   if (!tinyusdz::value::TimeCode(timecode).is_default()) {
-    std::cout << "Use timecode : " << timecode << "\n";
+    config_info.push_back({"timecode", std::to_string(timecode)});
+  } else {
+    config_info.push_back({"timecode", "default"});
   }
   env.timecode = timecode;
   ret = converter.ConvertToRenderScene(env, &render_scene);
@@ -240,12 +298,56 @@ int main(int argc, char **argv) {
     return EXIT_FAILURE;
   }
 
-  if (converter.GetWarning().size()) {
-    std::cout << "ConvertToRenderScene warn: " << converter.GetWarning()
-              << "\n";
+  std::string converter_warn = converter.GetWarning();
+  if (!converter_warn.empty()) {
+    config_info.push_back({"converter_warning", converter_warn});
   }
 
-  std::cout << DumpRenderScene(render_scene) << "\n";
+  // Helper to escape value for single-line output
+  auto escape_for_comment = [](const std::string &s) -> std::string {
+    std::string result;
+    result.reserve(s.size());
+    for (char c : s) {
+      if (c == '\n') {
+        result += "\\n";
+      } else if (c == '\r') {
+        result += "\\r";
+      } else if (c == '\t') {
+        result += "\\t";
+      } else {
+        result += c;
+      }
+    }
+    return result;
+  };
+
+  // Output config info in appropriate format
+  if (output_format == "yaml") {
+    // YAML: Output as comments
+    std::cout << "# TinyUSDZ tydra_to_renderscene Configuration\n";
+    std::cout << "# ==========================================\n";
+    for (const auto &kv : config_info) {
+      std::cout << "# " << kv.first << ": " << escape_for_comment(kv.second) << "\n";
+    }
+    std::cout << "#\n";
+  } else if (output_format == "json") {
+    // JSON: Output config as a separate JSON object before main output
+    std::cout << "// TinyUSDZ tydra_to_renderscene Configuration\n";
+    std::cout << "// config: {\n";
+    for (size_t i = 0; i < config_info.size(); i++) {
+      std::cout << "//   \"" << config_info[i].first << "\": \"" << escape_for_comment(config_info[i].second) << "\"";
+      if (i < config_info.size() - 1) std::cout << ",";
+      std::cout << "\n";
+    }
+    std::cout << "// }\n";
+  } else {
+    // KDL or other: output as comments
+    for (const auto &kv : config_info) {
+      std::cout << "// " << kv.first << ": " << escape_for_comment(kv.second) << "\n";
+    }
+  }
+
+  std::cout << DumpRenderScene(render_scene, output_format) << "\n";
 
   if (export_obj) {
     std::cout << "Dump RenderMesh as wavefront .obj\n";
@@ -294,6 +396,14 @@ int main(int argc, char **argv) {
       ofs << usda_str;
     }
     std::cout << "Exported RenderScene as USDA: " << usd_filename << "\n";
+  }
+
+  // Cleanup mmap if used
+  if (using_mmap) {
+    std::string unmap_err;
+    if (!tinyusdz::io::UnmapFile(mmap_handle, &unmap_err)) {
+      std::cerr << "WARN: Failed to unmap file: " << unmap_err << "\n";
+    }
   }
 
   return EXIT_SUCCESS;
