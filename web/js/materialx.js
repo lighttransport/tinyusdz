@@ -602,24 +602,96 @@ async function reloadMaterials() {
 }
 
 function clearScene() {
+    // If showing normals, the mesh materials are MeshNormalMaterial instances
+    // and the original materials are stored in originalMaterialsMap
+    // Dispose the normal materials first before clearing sceneRoot
+    if (showingNormals && sceneRoot) {
+        sceneRoot.traverse(obj => {
+            if (obj.isMesh && obj.material) {
+                // This is a MeshNormalMaterial - dispose it
+                if (obj.material.dispose) {
+                    obj.material.dispose();
+                }
+            }
+        });
+    }
+    originalMaterialsMap.clear();
+    showingNormals = false;
+    // Reset GUI checkbox state to match
+    if (settings.showNormals) {
+        settings.showNormals = false;
+        // Update GUI if it exists
+        if (gui) {
+            gui.controllersRecursive().forEach(controller => {
+                if (controller.property === 'showNormals') {
+                    controller.updateDisplay();
+                }
+            });
+        }
+    }
+
+    // Clear Three.js scene objects
     if (sceneRoot) {
         sceneRoot.traverse(obj => {
             if (obj.isMesh) {
                 obj.geometry?.dispose();
+                // Dispose material if not already disposed (when not in normal mode)
+                if (obj.material && obj.material.dispose) {
+                    if (Array.isArray(obj.material)) {
+                        obj.material.forEach(m => m.dispose());
+                    } else {
+                        obj.material.dispose();
+                    }
+                }
             }
         });
         scene.remove(sceneRoot);
         sceneRoot = null;
     }
 
-    currentMaterials.forEach(mat => mat.dispose());
+    // Clear material references (already disposed above)
     currentMaterials = [];
     materialData = [];
+
+    // Dispose textures in cache
+    textureCache.forEach((texture) => {
+        if (texture && texture.dispose) {
+            texture.dispose();
+        }
+    });
     textureCache.clear();
 
     // Reset upAxis to default
     currentFileUpAxis = 'Y';
     currentSceneMetadata = null;
+
+    // Clear WASM memory - reset the native loader to free render scene, assets, etc.
+    if (nativeLoader) {
+        // Log memory stats before clearing (for debugging)
+        try {
+            const stats = nativeLoader.getMemoryStats();
+            console.log('Memory before reset:', stats);
+        } catch (e) {
+            // getMemoryStats may not exist in older builds
+        }
+
+        // Reset WASM state to free memory
+        try {
+            nativeLoader.reset();
+            console.log('WASM memory reset complete');
+        } catch (e) {
+            // reset() may not exist in older builds, try clearAssets as fallback
+            try {
+                nativeLoader.clearAssets();
+                console.log('WASM assets cleared (fallback)');
+            } catch (e2) {
+                console.warn('Could not clear WASM memory:', e2);
+            }
+        }
+
+        // Set to null to allow GC - a new instance will be created on next load
+        nativeLoader = null;
+    }
 }
 
 function fitCameraToScene() {
