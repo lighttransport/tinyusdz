@@ -2864,6 +2864,69 @@ class TinyUSDZLoaderNative {
     em_resolver_.clear();
   }
 
+  /// Reset all state - clears render scene, assets, and all cached data
+  /// Call this before loading a new USD file to free memory
+  void reset() {
+    // Clear loaded flag
+    loaded_ = false;
+    loaded_as_layer_ = false;
+    composited_ = false;
+
+    // Clear strings
+    filename_.clear();
+    warn_.clear();
+    error_.clear();
+
+    // Clear render scene (meshes, materials, textures, buffers, etc.)
+    render_scene_ = tinyusdz::tydra::RenderScene();
+
+    // Clear layers
+    layer_ = tinyusdz::Layer();
+    composed_layer_ = tinyusdz::Layer();
+
+    // Clear USDZ asset
+    usdz_asset_ = tinyusdz::USDZAsset();
+
+    // Clear asset resolver cache
+    em_resolver_.clear();
+
+    // Clear reordered mesh cache
+    reordered_mesh_cache_.clear();
+
+    // Reset parsing progress
+    parsing_progress_.reset();
+  }
+
+  /// Get memory usage statistics
+  emscripten::val getMemoryStats() const {
+    emscripten::val stats = emscripten::val::object();
+
+    // Count meshes
+    stats.set("numMeshes", static_cast<int>(render_scene_.meshes.size()));
+    stats.set("numMaterials", static_cast<int>(render_scene_.materials.size()));
+    stats.set("numTextures", static_cast<int>(render_scene_.textures.size()));
+    stats.set("numImages", static_cast<int>(render_scene_.images.size()));
+    stats.set("numBuffers", static_cast<int>(render_scene_.buffers.size()));
+    stats.set("numNodes", static_cast<int>(render_scene_.nodes.size()));
+    stats.set("numLights", static_cast<int>(render_scene_.lights.size()));
+
+    // Estimate buffer memory
+    size_t bufferMemory = 0;
+    for (const auto &buf : render_scene_.buffers) {
+      bufferMemory += buf.data.size();
+    }
+    stats.set("bufferMemoryBytes", static_cast<double>(bufferMemory));
+    stats.set("bufferMemoryMB", static_cast<double>(bufferMemory) / (1024.0 * 1024.0));
+
+    // Asset cache count
+    stats.set("assetCacheCount", static_cast<int>(em_resolver_.cache.size()));
+
+    // Reordered mesh cache count
+    stats.set("reorderedMeshCacheCount", static_cast<int>(reordered_mesh_cache_.size()));
+
+    return stats;
+  }
+
   void setAsset(const std::string &name, const std::string &binary) {
     em_resolver_.add(name, binary);
   }
@@ -3844,6 +3907,10 @@ EMSCRIPTEN_BINDINGS(tinyusdz_module) {
                 &TinyUSDZLoaderNative::assetExists)
       .function("clearAssets",
                 &TinyUSDZLoaderNative::clearAssets)
+      .function("reset",
+                &TinyUSDZLoaderNative::reset)
+      .function("getMemoryStats",
+                &TinyUSDZLoaderNative::getMemoryStats)
 
       .function("layerToString",
                 &TinyUSDZLoaderNative::layerToString)
