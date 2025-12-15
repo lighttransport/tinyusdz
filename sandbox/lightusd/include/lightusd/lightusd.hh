@@ -36,6 +36,13 @@
 #include "lightusd/layer.hh"
 #include "lightusd/prim_index.hh"
 
+// PCP (Prim Cache Populate)
+#include "lightusd/layer_registry.hh"
+#include "lightusd/pcp_node.hh"
+#include "lightusd/pcp_layer_stack.hh"
+#include "lightusd/pcp_prim_index.hh"
+#include "lightusd/pcp_cache.hh"
+
 // Value Clips
 #include "lightusd/clips.hh"
 

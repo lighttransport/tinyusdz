@@ -8,6 +8,8 @@
 #include <string>
 #include <cstddef>
 #include <functional>
+#include <vector>
+#include <utility>
 
 #include "lightusd/result.hh"
 
@@ -91,6 +93,27 @@ public:
 
     /// Replace prefix
     Path replace_prefix(const Path& old_prefix, const Path& new_prefix) const;
+
+    // ========== Variant Selection Support ==========
+
+    /// Append variant selection to path
+    /// e.g., Path("/World/Model").append_variant_selection("LOD", "high") -> "/World/Model{LOD=high}"
+    Path append_variant_selection(const std::string& variant_set,
+                                   const std::string& variant_name) const;
+
+    /// Check if path contains variant selections
+    bool has_variant_selections() const;
+
+    /// Get all variant selections as (variant_set, variant_name) pairs
+    std::vector<std::pair<std::string, std::string>> get_variant_selections() const;
+
+    /// Strip variant selections from path
+    /// e.g., "/World/Model{LOD=high}/Child" -> "/World/Model/Child"
+    Path strip_variant_selections() const;
+
+    /// Get prim path without variant selections (for looking up in layer)
+    /// e.g., "/World/Model{LOD=high}" -> "/World/Model"
+    std::string prim_path_without_variants() const;
 
     /// Comparison operators
     bool operator==(const Path& other) const;

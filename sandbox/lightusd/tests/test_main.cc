@@ -1639,6 +1639,980 @@ def Xform "Model" (
 }
 
 // ============================================================================
+// Clips Tests
+// ============================================================================
+
+TEST(Clips_ClipSet_Basic) {
+    ClipSet cs;
+    EXPECT_TRUE(cs.name().empty());
+    EXPECT_TRUE(cs.asset_paths().empty());
+    EXPECT_TRUE(cs.active().empty());
+    EXPECT_TRUE(cs.times().empty());
+    EXPECT_FALSE(cs.has_manifest());
+    EXPECT_FALSE(cs.has_template());
+    EXPECT_FALSE(cs.is_valid());
+
+    // Set asset paths
+    cs.set_asset_paths({"@./walk.usd@", "@./run.usd@"});
+    EXPECT_EQ(cs.asset_paths().size(), 2u);
+    EXPECT_TRUE(cs.is_valid());
+
+    // Add active entries
+    cs.add_active(0.0, 0);    // Walk at frame 0
+    cs.add_active(24.0, 1);   // Run at frame 24
+    EXPECT_EQ(cs.active().size(), 2u);
+
+    // Add time mappings
+    cs.add_time(0.0, 0.0);
+    cs.add_time(24.0, 24.0);
+    cs.add_time(48.0, 48.0);
+    EXPECT_EQ(cs.times().size(), 3u);
+
+    // Set prim path
+    cs.set_prim_path(Path("/Character"));
+    EXPECT_EQ(cs.prim_path().prim_part(), "/Character");
+
+    // Manifest
+    cs.set_manifest_asset_path("@./manifest.usd@");
+    EXPECT_TRUE(cs.has_manifest());
+    EXPECT_EQ(cs.manifest_asset_path(), "@./manifest.usd@");
+}
+
+TEST(Clips_ClipSet_Template) {
+    ClipSet cs;
+
+    // Set template path
+    cs.set_template_asset_path("clips/frame.###.usd");
+    cs.set_template_start_time(1.0);
+    cs.set_template_end_time(10.0);
+    cs.set_template_stride(1.0);
+
+    EXPECT_TRUE(cs.has_template());
+    EXPECT_TRUE(cs.is_valid());  // Valid because of template
+    EXPECT_EQ(cs.template_start_time(), 1.0);
+    EXPECT_EQ(cs.template_end_time(), 10.0);
+    EXPECT_EQ(cs.template_stride(), 1.0);
+}
+
+TEST(Clips_ClipSets) {
+    ClipSets sets;
+    EXPECT_TRUE(sets.empty());
+    EXPECT_EQ(sets.size(), 0u);
+    EXPECT_FALSE(sets.has("default"));
+
+    // Add a clip set
+    ClipSet cs1;
+    cs1.set_asset_paths({"@./walk.usd@"});
+    cs1.add_active(0.0, 0);
+    sets.set("default", cs1);
+
+    EXPECT_FALSE(sets.empty());
+    EXPECT_EQ(sets.size(), 1u);
+    EXPECT_TRUE(sets.has("default"));
+
+    // Get clip set
+    const ClipSet* retrieved = sets.get("default");
+    EXPECT_TRUE(retrieved != nullptr);
+    EXPECT_EQ(retrieved->name(), "default");
+    EXPECT_EQ(retrieved->asset_paths().size(), 1u);
+
+    // Add another clip set
+    ClipSet cs2;
+    cs2.set_asset_paths({"@./run.usd@"});
+    sets.set("run", cs2);
+    EXPECT_EQ(sets.size(), 2u);
+
+    // Get names
+    auto names = sets.names();
+    EXPECT_EQ(names.size(), 2u);
+
+    // Remove
+    EXPECT_TRUE(sets.remove("run"));
+    EXPECT_EQ(sets.size(), 1u);
+    EXPECT_FALSE(sets.has("run"));
+}
+
+TEST(Clips_TemplateExpansion) {
+    // Test hash-based template
+    EXPECT_EQ(expand_template_path("frame.###.usd", 1.0), "frame.001.usd");
+    EXPECT_EQ(expand_template_path("frame.###.usd", 42.0), "frame.042.usd");
+    EXPECT_EQ(expand_template_path("frame.####.usd", 123.0), "frame.0123.usd");
+
+    // Test printf-style template
+    EXPECT_EQ(expand_template_path("frame.%03d.usd", 1.0), "frame.001.usd");
+    EXPECT_EQ(expand_template_path("frame.%04d.usd", 42.0), "frame.0042.usd");
+
+    // Generate paths
+    auto paths = generate_template_paths("frame.###.usd", 1.0, 3.0, 1.0);
+    EXPECT_EQ(paths.size(), 3u);
+    EXPECT_EQ(paths[0], "frame.001.usd");
+    EXPECT_EQ(paths[1], "frame.002.usd");
+    EXPECT_EQ(paths[2], "frame.003.usd");
+}
+
+TEST(Clips_TimeUtilities) {
+    // Test lerp
+    EXPECT_EQ(lerp_time(0.0, 10.0, 0.0), 0.0);
+    EXPECT_EQ(lerp_time(0.0, 10.0, 0.5), 5.0);
+    EXPECT_EQ(lerp_time(0.0, 10.0, 1.0), 10.0);
+
+    // Test inverse_lerp
+    EXPECT_EQ(inverse_lerp(0.0, 10.0, 0.0), 0.0);
+    EXPECT_EQ(inverse_lerp(0.0, 10.0, 5.0), 0.5);
+    EXPECT_EQ(inverse_lerp(0.0, 10.0, 10.0), 1.0);
+
+    // Clamping
+    EXPECT_EQ(inverse_lerp(0.0, 10.0, -5.0), 0.0);  // Below range
+    EXPECT_EQ(inverse_lerp(0.0, 10.0, 15.0), 1.0);  // Above range
+}
+
+TEST(Clips_ClipResolver_Basic) {
+    ClipSet cs;
+    cs.set_asset_paths({"@./walk.usd@", "@./run.usd@"});
+    cs.set_prim_path(Path("/Character"));
+
+    // Active array: walk from 0-24, run from 24+
+    cs.add_active(0.0, 0);   // Walk (index 0) at time 0
+    cs.add_active(24.0, 1);  // Run (index 1) at time 24
+
+    // Times array: identity mapping
+    cs.add_time(0.0, 0.0);
+    cs.add_time(48.0, 48.0);
+
+    ClipResolver resolver;
+    resolver.set_clip_set(cs);
+    EXPECT_TRUE(resolver.is_valid());
+
+    // Test active clip at different times
+    EXPECT_EQ(resolver.active_clip_index(0.0), 0);   // Walk
+    EXPECT_EQ(resolver.active_clip_index(12.0), 0);  // Still walk
+    EXPECT_EQ(resolver.active_clip_index(24.0), 1);  // Run
+    EXPECT_EQ(resolver.active_clip_index(36.0), 1);  // Still run
+
+    // Test resolve
+    ClipInfo info = resolver.resolve(0.0);
+    EXPECT_TRUE(info.is_valid());
+    EXPECT_EQ(info.clip_index, 0u);
+    EXPECT_EQ(info.asset_path, "@./walk.usd@");
+    EXPECT_EQ(info.prim_path.prim_part(), "/Character");
+
+    info = resolver.resolve(30.0);
+    EXPECT_TRUE(info.is_valid());
+    EXPECT_EQ(info.clip_index, 1u);
+    EXPECT_EQ(info.asset_path, "@./run.usd@");
+}
+
+TEST(Clips_ClipResolver_TimeMapping) {
+    ClipSet cs;
+    cs.set_asset_paths({"@./anim.usd@"});
+    cs.add_active(0.0, 0);
+
+    // Non-linear time mapping: stage time 0-100 maps to clip time 0-50
+    cs.add_time(0.0, 0.0);
+    cs.add_time(100.0, 50.0);
+
+    ClipResolver resolver;
+    resolver.set_clip_set(cs);
+
+    // Test time mapping
+    EXPECT_EQ(resolver.map_time(0.0), 0.0);
+    EXPECT_EQ(resolver.map_time(50.0), 25.0);
+    EXPECT_EQ(resolver.map_time(100.0), 50.0);
+
+    ClipInfo info = resolver.resolve(50.0);
+    EXPECT_EQ(info.clip_time, 25.0);
+}
+
+TEST(Clips_ClipResolver_Boundaries) {
+    ClipSet cs;
+    cs.set_asset_paths({"@./a.usd@", "@./b.usd@", "@./c.usd@"});
+    cs.add_active(0.0, 0);
+    cs.add_active(10.0, 1);
+    cs.add_active(20.0, 2);
+
+    ClipResolver resolver;
+    resolver.set_clip_set(cs);
+
+    auto boundaries = resolver.clip_boundaries();
+    EXPECT_EQ(boundaries.size(), 3u);
+    EXPECT_EQ(boundaries[0], 0.0);
+    EXPECT_EQ(boundaries[1], 10.0);
+    EXPECT_EQ(boundaries[2], 20.0);
+}
+
+TEST(Clips_Prim_Integration) {
+    Prim prim("Character", "SkelRoot");
+
+    EXPECT_FALSE(prim.has_clips());
+    EXPECT_TRUE(prim.clip_set_names().empty());
+
+    // Add a clip set
+    ClipSet cs;
+    cs.set_asset_paths({"@./walk.usd@", "@./run.usd@"});
+    cs.set_prim_path(Path("/Character"));
+    cs.add_active(0.0, 0);
+    cs.add_active(24.0, 1);
+
+    prim.set_clip_set("default", cs);
+
+    EXPECT_TRUE(prim.has_clips());
+    EXPECT_TRUE(prim.has_clip_set("default"));
+    EXPECT_EQ(prim.clip_set_names().size(), 1u);
+
+    // Get clip set
+    const ClipSet* retrieved = prim.get_clip_set("default");
+    EXPECT_TRUE(retrieved != nullptr);
+    EXPECT_EQ(retrieved->asset_paths().size(), 2u);
+
+    // Create resolver from prim
+    ClipResolver resolver = prim.create_clip_resolver();
+    EXPECT_TRUE(resolver.is_valid());
+    EXPECT_EQ(resolver.active_clip_index(0.0), 0);
+    EXPECT_EQ(resolver.active_clip_index(24.0), 1);
+
+    // Remove clip set
+    EXPECT_TRUE(prim.remove_clip_set("default"));
+    EXPECT_FALSE(prim.has_clips());
+}
+
+TEST(Clips_Copy_Move) {
+    ClipSet cs1;
+    cs1.set_name("test");
+    cs1.set_asset_paths({"@./a.usd@"});
+    cs1.add_active(0.0, 0);
+
+    // Copy
+    ClipSet cs2 = cs1;
+    EXPECT_EQ(cs2.name(), "test");
+    EXPECT_EQ(cs2.asset_paths().size(), 1u);
+
+    // Move
+    ClipSet cs3 = std::move(cs2);
+    EXPECT_EQ(cs3.name(), "test");
+
+    // ClipSets copy
+    ClipSets sets1;
+    sets1.set("default", cs1);
+
+    ClipSets sets2 = sets1;
+    EXPECT_TRUE(sets2.has("default"));
+
+    // ClipResolver copy
+    ClipResolver r1;
+    r1.set_clip_set(cs1);
+
+    ClipResolver r2 = r1;
+    EXPECT_TRUE(r2.is_valid());
+}
+
+// ============================================================================
+// TypedArray Tests
+// ============================================================================
+
+TEST(TypedArray_Basic) {
+    TypedArray<int> arr;
+    EXPECT_TRUE(arr.empty());
+    EXPECT_EQ(arr.size(), 0u);
+
+    arr.push_back(10);
+    arr.push_back(20);
+    arr.push_back(30);
+
+    EXPECT_EQ(arr.size(), 3u);
+    EXPECT_FALSE(arr.empty());
+    EXPECT_EQ(arr[0], 10);
+    EXPECT_EQ(arr[1], 20);
+    EXPECT_EQ(arr[2], 30);
+
+    EXPECT_EQ(arr.front(), 10);
+    EXPECT_EQ(arr.back(), 30);
+
+    arr.pop_back();
+    EXPECT_EQ(arr.size(), 2u);
+    EXPECT_EQ(arr.back(), 20);
+}
+
+TEST(TypedArray_Initializer) {
+    TypedArray<int> arr = {1, 2, 3, 4, 5};
+    EXPECT_EQ(arr.size(), 5u);
+    EXPECT_EQ(arr[0], 1);
+    EXPECT_EQ(arr[4], 5);
+
+    TypedArray<double> arr2(10, 3.14);
+    EXPECT_EQ(arr2.size(), 10u);
+    EXPECT_EQ(arr2[5], 3.14);
+}
+
+TEST(TypedArray_Iterator) {
+    TypedArray<int> arr = {10, 20, 30, 40, 50};
+
+    // Forward iteration
+    int sum = 0;
+    for (auto it = arr.begin(); it != arr.end(); ++it) {
+        sum += *it;
+    }
+    EXPECT_EQ(sum, 150);
+
+    // Range-based for
+    sum = 0;
+    for (int val : arr) {
+        sum += val;
+    }
+    EXPECT_EQ(sum, 150);
+
+    // Iterator arithmetic
+    auto it = arr.begin();
+    EXPECT_EQ(*it, 10);
+    it += 2;
+    EXPECT_EQ(*it, 30);
+    it -= 1;
+    EXPECT_EQ(*it, 20);
+
+    EXPECT_EQ(arr.end() - arr.begin(), 5);
+}
+
+TEST(TypedArray_Resize) {
+    TypedArray<int> arr;
+    arr.resize(100);
+    EXPECT_EQ(arr.size(), 100u);
+    EXPECT_EQ(arr[50], 0);  // Default initialized
+
+    arr.resize(200, 42);
+    EXPECT_EQ(arr.size(), 200u);
+    EXPECT_EQ(arr[150], 42);  // New elements are 42
+    EXPECT_EQ(arr[50], 0);    // Old elements unchanged
+
+    arr.resize(50);
+    EXPECT_EQ(arr.size(), 50u);
+}
+
+TEST(TypedArray_Reserve) {
+    TypedArray<int> arr;
+    arr.reserve(1000);
+    EXPECT_TRUE(arr.capacity() >= 1000u);
+    EXPECT_EQ(arr.size(), 0u);  // Size unchanged
+
+    for (int i = 0; i < 100; ++i) {
+        arr.push_back(i);
+    }
+    EXPECT_EQ(arr.size(), 100u);
+}
+
+TEST(TypedArray_InsertErase) {
+    TypedArray<int> arr = {1, 2, 3, 4, 5};
+
+    // Insert at beginning
+    arr.insert(arr.begin(), 0);
+    EXPECT_EQ(arr.size(), 6u);
+    EXPECT_EQ(arr[0], 0);
+    EXPECT_EQ(arr[1], 1);
+
+    // Insert in middle
+    arr.insert(arr.begin() + 3, 100);
+    EXPECT_EQ(arr.size(), 7u);
+    EXPECT_EQ(arr[3], 100);
+
+    // Erase
+    arr.erase(arr.begin());
+    EXPECT_EQ(arr.size(), 6u);
+    EXPECT_EQ(arr[0], 1);
+
+    // Erase range
+    arr.erase(arr.begin() + 1, arr.begin() + 3);
+    EXPECT_EQ(arr.size(), 4u);
+}
+
+TEST(TypedArray_CopyMove) {
+    TypedArray<int> arr1 = {1, 2, 3, 4, 5};
+
+    // Copy
+    TypedArray<int> arr2 = arr1;
+    EXPECT_EQ(arr2.size(), 5u);
+    EXPECT_EQ(arr2[2], 3);
+    arr2[2] = 100;
+    EXPECT_EQ(arr1[2], 3);  // Original unchanged
+
+    // Move
+    TypedArray<int> arr3 = std::move(arr1);
+    EXPECT_EQ(arr3.size(), 5u);
+    EXPECT_EQ(arr3[2], 3);
+    EXPECT_TRUE(arr1.empty());
+}
+
+TEST(TypedArray_SBO) {
+    // TypedArray<int, 16> should fit 4 ints in SBO (4 * 4 = 16 bytes)
+    TypedArray<int, 16> arr;
+
+    // Add elements within SBO
+    arr.push_back(1);
+    arr.push_back(2);
+    arr.push_back(3);
+    arr.push_back(4);
+
+    EXPECT_EQ(arr.size(), 4u);
+    EXPECT_TRUE(arr.is_contiguous());
+    EXPECT_TRUE(arr.data() != nullptr);
+
+    // Add more to exceed SBO
+    for (int i = 0; i < 100; ++i) {
+        arr.push_back(i);
+    }
+
+    EXPECT_EQ(arr.size(), 104u);
+    EXPECT_EQ(arr[0], 1);
+    EXPECT_EQ(arr[4], 0);
+}
+
+TEST(TypedArray_LargeChunked) {
+    // Create a large array that will use chunked storage
+    TypedArray<int> arr;
+    arr.set_chunk_size(1024);  // 1KB chunks for testing
+
+    // Add many elements
+    size_t count = 10000;
+    for (size_t i = 0; i < count; ++i) {
+        arr.push_back(static_cast<int>(i));
+    }
+
+    EXPECT_EQ(arr.size(), count);
+
+    // Verify all values
+    bool all_correct = true;
+    for (size_t i = 0; i < count; ++i) {
+        if (arr[i] != static_cast<int>(i)) {
+            all_correct = false;
+            break;
+        }
+    }
+    EXPECT_TRUE(all_correct);
+
+    // Test iteration
+    int sum = 0;
+    for (size_t i = 0; i < 100; ++i) {
+        sum += arr[i];
+    }
+    EXPECT_EQ(sum, 4950);  // Sum 0..99
+}
+
+TEST(TypedArray_EmplaceBack) {
+    struct Point {
+        int x, y;
+        Point() : x(0), y(0) {}
+        Point(int x_, int y_) : x(x_), y(y_) {}
+    };
+
+    TypedArray<Point> arr;
+    arr.emplace_back(10, 20);
+    arr.emplace_back(30, 40);
+
+    EXPECT_EQ(arr.size(), 2u);
+    EXPECT_EQ(arr[0].x, 10);
+    EXPECT_EQ(arr[0].y, 20);
+    EXPECT_EQ(arr[1].x, 30);
+    EXPECT_EQ(arr[1].y, 40);
+}
+
+TEST(TypedArray_Clear) {
+    TypedArray<int> arr = {1, 2, 3, 4, 5};
+    EXPECT_EQ(arr.size(), 5u);
+
+    arr.clear();
+    EXPECT_TRUE(arr.empty());
+    EXPECT_EQ(arr.size(), 0u);
+
+    // Can reuse after clear
+    arr.push_back(100);
+    EXPECT_EQ(arr.size(), 1u);
+    EXPECT_EQ(arr[0], 100);
+}
+
+TEST(TypedArray_At) {
+    TypedArray<int> arr = {1, 2, 3};
+
+    EXPECT_EQ(arr.at(0), 1);
+    EXPECT_EQ(arr.at(1), 2);
+    EXPECT_EQ(arr.at(2), 3);
+
+    bool threw = false;
+    try {
+        arr.at(10);
+    } catch (const std::out_of_range&) {
+        threw = true;
+    }
+    EXPECT_TRUE(threw);
+}
+
+TEST(TypedArray_Comparison) {
+    TypedArray<int> arr1 = {1, 2, 3};
+    TypedArray<int> arr2 = {1, 2, 3};
+    TypedArray<int> arr3 = {1, 2, 4};
+    TypedArray<int> arr4 = {1, 2};
+
+    EXPECT_TRUE(arr1 == arr2);
+    EXPECT_FALSE(arr1 != arr2);
+    EXPECT_FALSE(arr1 == arr3);
+    EXPECT_FALSE(arr1 == arr4);
+}
+
+TEST(Buffer_Basic) {
+    Buffer<16> buf;
+    EXPECT_TRUE(buf.empty());
+    EXPECT_EQ(buf.size(), 0u);
+    EXPECT_EQ(buf.mode(), Buffer<16>::StorageMode::Inline);
+
+    buf.resize(10);
+    EXPECT_EQ(buf.size(), 10u);
+    EXPECT_EQ(buf.mode(), Buffer<16>::StorageMode::Inline);
+
+    // Fill with data
+    for (size_t i = 0; i < 10; ++i) {
+        buf[i] = static_cast<uint8_t>(i * 10);
+    }
+
+    EXPECT_EQ(buf[5], 50);
+}
+
+TEST(Buffer_Chunked) {
+    Buffer<16> buf(1024 * 100, Buffer<16>::StorageMode::Chunked);  // 100KB
+
+    EXPECT_EQ(buf.size(), 1024u * 100);
+    EXPECT_EQ(buf.mode(), Buffer<16>::StorageMode::Chunked);
+    EXPECT_TRUE(buf.chunk_count() > 1);
+
+    // Write and read across chunks
+    for (size_t i = 0; i < buf.size(); ++i) {
+        buf[i] = static_cast<uint8_t>(i % 256);
+    }
+
+    bool all_correct = true;
+    for (size_t i = 0; i < buf.size(); ++i) {
+        if (buf[i] != static_cast<uint8_t>(i % 256)) {
+            all_correct = false;
+            break;
+        }
+    }
+    EXPECT_TRUE(all_correct);
+}
+
+TEST(Buffer_Contiguous) {
+    Buffer<16> buf(1000, Buffer<16>::StorageMode::Contiguous);
+
+    EXPECT_EQ(buf.size(), 1000u);
+    EXPECT_EQ(buf.mode(), Buffer<16>::StorageMode::Contiguous);
+    EXPECT_TRUE(buf.is_contiguous());
+    EXPECT_TRUE(buf.data() != nullptr);
+
+    for (size_t i = 0; i < 1000; ++i) {
+        buf[i] = static_cast<uint8_t>(i % 256);
+    }
+
+    EXPECT_EQ(buf[500], static_cast<uint8_t>(500 % 256));
+}
+
+TEST(Buffer_CopyMove) {
+    Buffer<16> buf1(100, Buffer<16>::StorageMode::Chunked);
+    for (size_t i = 0; i < 100; ++i) {
+        buf1[i] = static_cast<uint8_t>(i);
+    }
+
+    // Copy
+    Buffer<16> buf2 = buf1;
+    EXPECT_EQ(buf2.size(), 100u);
+    EXPECT_EQ(buf2[50], 50);
+
+    // Move
+    Buffer<16> buf3 = std::move(buf1);
+    EXPECT_EQ(buf3.size(), 100u);
+    EXPECT_EQ(buf3[50], 50);
+    EXPECT_TRUE(buf1.empty());
+}
+
+// ============================================================================
+// PCP (Prim Cache Populate) Tests
+// ============================================================================
+
+TEST(PCP_LayerStack_Basic) {
+    // Test basic layer stack creation
+    LayerRegistry registry;
+
+    // Create a simple layer
+    Layer layer;
+    layer.set_identifier("test_layer.usda");
+
+    // Test identifier
+    PcpLayerStackIdentifier id;
+    id.root_layer_path = "test_layer.usda";
+    EXPECT_TRUE(id.is_valid());
+    EXPECT_TRUE(id.session_layer_path.empty());
+
+    // Test identifier with session
+    PcpLayerStackIdentifier id2;
+    id2.root_layer_path = "test.usda";
+    id2.session_layer_path = "session.usda";
+    EXPECT_TRUE(id2.is_valid());
+    EXPECT_FALSE(id2.session_layer_path.empty());
+
+    // Invalid identifier (no root)
+    PcpLayerStackIdentifier id3;
+    EXPECT_FALSE(id3.is_valid());
+}
+
+TEST(PCP_Node_Basic) {
+    // Test PcpNode creation
+    PcpNode node;
+    node.arc_type = CompositionArcType::None;
+    node.site_path = Path("/World");
+    node.layer_stack = nullptr;
+    node.sibling_index = 0;
+    node.depth = 0;
+    node.has_specs = true;
+    node.is_culled = false;
+
+    EXPECT_TRUE(node.is_root());
+    EXPECT_EQ(node.site_path.prim_part(), "/World");
+    EXPECT_EQ(node.depth, 0);
+    EXPECT_TRUE(node.has_specs);
+    EXPECT_TRUE(node.children.empty());
+}
+
+TEST(PCP_Node_Strength_Order) {
+    // Test that children maintain LIVRPS strength order
+    PcpNode root;
+    root.arc_type = CompositionArcType::None;
+    root.site_path = Path("/World");
+
+    // Insert specialize (weakest)
+    PcpNode spec_node;
+    spec_node.arc_type = CompositionArcType::Specialize;
+    spec_node.sibling_index = 0;
+    spec_node.depth = 1;
+    root.insert_child(spec_node);
+
+    // Insert inherit (stronger than specialize)
+    PcpNode inherit_node;
+    inherit_node.arc_type = CompositionArcType::Inherit;
+    inherit_node.sibling_index = 0;
+    inherit_node.depth = 1;
+    root.insert_child(inherit_node);
+
+    // Insert reference (between inherit and specialize)
+    PcpNode ref_node;
+    ref_node.arc_type = CompositionArcType::Reference;
+    ref_node.sibling_index = 0;
+    ref_node.depth = 1;
+    root.insert_child(ref_node);
+
+    // Check order: Inherit < Reference < Specialize
+    EXPECT_EQ(root.children.size(), 3u);
+    if (root.children.size() == 3) {
+        EXPECT_EQ(root.children[0].arc_type, CompositionArcType::Inherit);
+        EXPECT_EQ(root.children[1].arc_type, CompositionArcType::Reference);
+        EXPECT_EQ(root.children[2].arc_type, CompositionArcType::Specialize);
+    }
+}
+
+TEST(PCP_PrimIndex_Basic) {
+    // Test basic PcpPrimIndex creation
+    PcpPrimIndex index;
+    index.set_path(Path("/World/Model"));
+
+    EXPECT_EQ(index.path().prim_part(), "/World/Model");
+    EXPECT_FALSE(index.is_valid());  // Not finalized yet
+    EXPECT_FALSE(index.has_specs());  // No specs yet
+    EXPECT_TRUE(index.child_names().empty());
+    EXPECT_TRUE(index.property_names().empty());
+    EXPECT_FALSE(index.has_errors());
+}
+
+TEST(PCP_PrimIndex_WithSpecs) {
+    // Test PcpPrimIndex with prim stack entries
+    PcpPrimIndex index;
+    index.set_path(Path("/World/Model"));
+
+    // Create a layer to use in prim stack
+    Layer layer;
+    layer.set_identifier("model.usda");
+
+    // Add prim stack entry
+    PrimStackEntry entry;
+    entry.layer = &layer;
+    entry.path = Path("/World/Model");
+    index.add_prim_stack_entry(entry);
+
+    // Set child and property names
+    std::vector<Token> children = {Token("Child1"), Token("Child2")};
+    std::vector<Token> props = {Token("xformOp:translate"), Token("visibility")};
+    index.set_child_names(children);
+    index.set_property_names(props);
+
+    // Finalize
+    index.finalize();
+
+    EXPECT_TRUE(index.is_valid());
+    EXPECT_TRUE(index.has_specs());
+    EXPECT_EQ(index.prim_stack_size(), 1u);
+    EXPECT_EQ(index.child_names().size(), 2u);
+    EXPECT_EQ(index.property_names().size(), 2u);
+
+    EXPECT_TRUE(index.has_child(Token("Child1")));
+    EXPECT_TRUE(index.has_child(Token("Child2")));
+    EXPECT_FALSE(index.has_child(Token("NonExistent")));
+
+    EXPECT_TRUE(index.has_property(Token("visibility")));
+    EXPECT_FALSE(index.has_property(Token("unknown")));
+}
+
+TEST(PCP_PrimIndex_Deduplication) {
+    // Test that finalize() deduplicates child and property names
+    PcpPrimIndex index;
+    index.set_path(Path("/World"));
+
+    // Set duplicate names
+    std::vector<Token> children = {Token("A"), Token("B"), Token("A"), Token("C"), Token("B")};
+    std::vector<Token> props = {Token("x"), Token("y"), Token("x")};
+    index.set_child_names(children);
+    index.set_property_names(props);
+
+    index.finalize();
+
+    // Should have deduplicated while preserving order
+    EXPECT_EQ(index.child_names().size(), 3u);  // A, B, C
+    EXPECT_EQ(index.property_names().size(), 2u);  // x, y
+}
+
+TEST(PCP_PrimIndex_Errors) {
+    // Test error handling
+    PcpPrimIndex index;
+    index.set_path(Path("/World"));
+
+    EXPECT_FALSE(index.has_errors());
+
+    PcpError error;
+    error.type = PcpErrorType::ArcCycle;
+    error.site_path = Path("/World");
+    error.layer_id = "test.usda";
+    error.message = "Composition cycle detected";
+
+    index.add_error(error);
+
+    EXPECT_TRUE(index.has_errors());
+    EXPECT_EQ(index.errors().size(), 1u);
+    EXPECT_EQ(index.errors()[0].type, PcpErrorType::ArcCycle);
+}
+
+TEST(PCP_Cache_Basic) {
+    // Test basic PcpCache creation
+    PcpCacheConfig config;
+    config.root_layer_path = "/nonexistent/test.usda";
+    config.include_payloads = false;
+
+    PcpCache cache(config);
+
+    EXPECT_EQ(cache.config().root_layer_path, "/nonexistent/test.usda");
+    EXPECT_FALSE(cache.config().include_payloads);
+    EXPECT_EQ(cache.cached_prim_index_count(), 0u);
+    EXPECT_TRUE(cache.layer_registry() != nullptr);
+}
+
+TEST(PCP_Cache_PayloadControl) {
+    // Test payload inclusion/exclusion
+    PcpCacheConfig config;
+    config.root_layer_path = "test.usda";
+    config.include_payloads = false;
+
+    PcpCache cache(config);
+
+    Path path1("/World/HeavyAsset");
+    Path path2("/World/Light");
+
+    // Initially not included
+    EXPECT_FALSE(cache.is_payload_included(path1));
+    EXPECT_FALSE(cache.is_payload_included(path2));
+
+    // Request payload
+    cache.request_payloads({path1});
+    EXPECT_TRUE(cache.is_payload_included(path1));
+    EXPECT_FALSE(cache.is_payload_included(path2));
+
+    // Request exclusion
+    cache.request_payloads_exclusion({path1});
+    EXPECT_FALSE(cache.is_payload_included(path1));
+
+    // Get included payloads
+    cache.request_payloads({path1, path2});
+    auto included = cache.get_included_payloads();
+    EXPECT_EQ(included.size(), 2u);
+}
+
+TEST(PCP_Cache_VariantControl) {
+    // Test variant selection control
+    PcpCacheConfig config;
+    config.root_layer_path = "test.usda";
+    config.variant_fallbacks["LOD"] = "medium";
+
+    PcpCache cache(config);
+
+    Path prim_path("/World/Model");
+    Token lod_set("LOD");
+    Token color_set("displayColor");
+
+    // Get fallback
+    EXPECT_EQ(cache.get_variant_fallback(lod_set).str(), "medium");
+    EXPECT_TRUE(cache.get_variant_fallback(color_set).empty());
+
+    // Get selection returns fallback when no explicit selection
+    EXPECT_EQ(cache.get_variant_selection(prim_path, lod_set).str(), "medium");
+
+    // Set variant selection overrides fallback
+    cache.set_variant_selection(prim_path, lod_set, Token("high"));
+    EXPECT_EQ(cache.get_variant_selection(prim_path, lod_set).str(), "high");
+
+    // Clear explicit selection reverts to fallback
+    cache.clear_variant_selection(prim_path, lod_set);
+    EXPECT_EQ(cache.get_variant_selection(prim_path, lod_set).str(), "medium");
+
+    // Selection for variant without fallback
+    cache.set_variant_selection(prim_path, color_set, Token("red"));
+    EXPECT_EQ(cache.get_variant_selection(prim_path, color_set).str(), "red");
+
+    // Clear returns empty when no fallback
+    cache.clear_variant_selection(prim_path, color_set);
+    EXPECT_TRUE(cache.get_variant_selection(prim_path, color_set).empty());
+}
+
+TEST(PCP_Cache_Invalidation) {
+    // Test cache invalidation
+    PcpCacheConfig config;
+    config.root_layer_path = "test.usda";
+
+    PcpCache cache(config);
+
+    // Initially empty
+    EXPECT_EQ(cache.cached_prim_index_count(), 0u);
+
+    // Clear should work on empty cache
+    cache.clear_prim_indexes();
+    EXPECT_EQ(cache.cached_prim_index_count(), 0u);
+
+    // Full clear
+    cache.clear();
+    EXPECT_EQ(cache.cached_prim_index_count(), 0u);
+    EXPECT_EQ(cache.cached_layer_stack_count(), 0u);
+}
+
+TEST(PCP_LayerOffset_Basic) {
+    // Test LayerOffset
+    LayerOffset offset1;  // Identity
+    EXPECT_TRUE(offset1.is_identity());
+    EXPECT_EQ(offset1.offset, 0.0);
+    EXPECT_EQ(offset1.scale, 1.0);
+
+    LayerOffset offset2(100.0, 2.0);
+    EXPECT_FALSE(offset2.is_identity());
+    EXPECT_EQ(offset2.offset, 100.0);
+    EXPECT_EQ(offset2.scale, 2.0);
+
+    // Test equality
+    LayerOffset offset3(100.0, 2.0);
+    EXPECT_TRUE(offset2 == offset3);
+    EXPECT_FALSE(offset1 == offset2);
+
+    // Test copy
+    LayerOffset offset4 = offset2;
+    EXPECT_EQ(offset4.offset, 100.0);
+    EXPECT_EQ(offset4.scale, 2.0);
+}
+
+TEST(PCP_LayerRegistry_Basic) {
+    // Test LayerRegistry basic operations
+    LayerRegistry registry;
+
+    EXPECT_EQ(registry.size(), 0u);
+    EXPECT_TRUE(registry.get_all_layers().empty());
+    EXPECT_TRUE(registry.get_all_identifiers().empty());
+
+    // Search paths
+    registry.add_search_paths({"/path1", "/path2"});
+    EXPECT_EQ(registry.search_paths().size(), 2u);
+
+    registry.set_search_paths({"/new/path"});
+    EXPECT_EQ(registry.search_paths().size(), 1u);
+
+    // Clear
+    registry.clear();
+    EXPECT_EQ(registry.size(), 0u);
+}
+
+TEST(Path_VariantSelection_Basic) {
+    // Test append_variant_selection
+    Path base("/World/Model");
+    Path with_variant = base.append_variant_selection("LOD", "high");
+
+    EXPECT_TRUE(with_variant.is_valid());
+    EXPECT_EQ(with_variant.prim_part(), "/World/Model{LOD=high}");
+    EXPECT_TRUE(with_variant.has_variant_selections());
+}
+
+TEST(Path_VariantSelection_Multiple) {
+    // Test multiple variant selections
+    Path p("/World/Model");
+    p = p.append_variant_selection("LOD", "high");
+    p = p.append_variant_selection("color", "red");
+
+    EXPECT_TRUE(p.is_valid());
+    EXPECT_EQ(p.prim_part(), "/World/Model{LOD=high}{color=red}");
+    EXPECT_TRUE(p.has_variant_selections());
+
+    // Get all variant selections
+    auto selections = p.get_variant_selections();
+    EXPECT_EQ(selections.size(), 2u);
+    if (selections.size() >= 2) {
+        EXPECT_EQ(selections[0].first, "LOD");
+        EXPECT_EQ(selections[0].second, "high");
+        EXPECT_EQ(selections[1].first, "color");
+        EXPECT_EQ(selections[1].second, "red");
+    }
+}
+
+TEST(Path_VariantSelection_Strip) {
+    // Test stripping variant selections
+    Path p("/World/Model{LOD=high}/Child{color=red}");
+    EXPECT_TRUE(p.has_variant_selections());
+
+    Path stripped = p.strip_variant_selections();
+    EXPECT_EQ(stripped.prim_part(), "/World/Model/Child");
+    EXPECT_FALSE(stripped.has_variant_selections());
+
+    // Test prim_path_without_variants
+    std::string without = p.prim_path_without_variants();
+    EXPECT_EQ(without, "/World/Model/Child");
+}
+
+TEST(Path_VariantSelection_NoVariants) {
+    // Test path without variants
+    Path p("/World/Model");
+    EXPECT_FALSE(p.has_variant_selections());
+
+    auto selections = p.get_variant_selections();
+    EXPECT_TRUE(selections.empty());
+
+    Path stripped = p.strip_variant_selections();
+    EXPECT_EQ(stripped.prim_part(), "/World/Model");
+}
+
+TEST(Path_VariantSelection_Invalid) {
+    // Test invalid variant selection appends
+    Path p("/World/Model.property");  // property path
+    Path result = p.append_variant_selection("LOD", "high");
+    EXPECT_FALSE(result.is_valid());  // Cannot append variant to property path
+
+    // Empty variant set/name
+    Path base("/World/Model");
+    EXPECT_FALSE(base.append_variant_selection("", "high").is_valid());
+    EXPECT_FALSE(base.append_variant_selection("LOD", "").is_valid());
+}
+
+// ============================================================================
 // Main
 // ============================================================================
 

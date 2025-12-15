@@ -45,6 +45,13 @@ set(LIGHTUSD_SOURCES
     src/lz4_compression.cc
     src/integer_coding.cc
     src/lz4/lz4.c
+    # PCP (Prim Cache Populate)
+    src/layer_registry.cc
+    src/pcp_layer_stack.cc
+    src/pcp_prim_index.cc
+    src/pcp_cache.cc
+    # Render Data (WebGPU conversion)
+    src/render_data.cc
 )
 
 # Header files (for IDE support)
@@ -80,6 +87,14 @@ set(LIGHTUSD_HEADERS
     include/lightusd/usdc_fetch.hh
     include/lightusd/lz4_compression.hh
     include/lightusd/integer_coding.hh
+    # PCP (Prim Cache Populate)
+    include/lightusd/layer_registry.hh
+    include/lightusd/pcp_layer_stack.hh
+    include/lightusd/pcp_node.hh
+    include/lightusd/pcp_prim_index.hh
+    include/lightusd/pcp_cache.hh
+    # Render Data (WebGPU conversion)
+    include/lightusd/render_data.hh
 )
 
 # Library target

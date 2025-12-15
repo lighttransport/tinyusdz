@@ -376,5 +376,112 @@ void Path::swap(Path& other) noexcept {
     std::swap(valid_, other.valid_);
 }
 
+// ============================================================================
+// Variant Selection Support
+// ============================================================================
+
+Path Path::append_variant_selection(const std::string& variant_set,
+                                     const std::string& variant_name) const {
+    if (!valid_ || variant_set.empty() || variant_name.empty()) {
+        return Path();
+    }
+
+    // Cannot append variant to property path
+    if (!prop_part_.empty()) {
+        return Path();
+    }
+
+    Path p;
+    p.prim_part_ = prim_part_ + "{" + variant_set + "=" + variant_name + "}";
+    p.valid_ = true;
+    return p;
+}
+
+bool Path::has_variant_selections() const {
+    if (!valid_) {
+        return false;
+    }
+    return prim_part_.find('{') != std::string::npos;
+}
+
+std::vector<std::pair<std::string, std::string>> Path::get_variant_selections() const {
+    std::vector<std::pair<std::string, std::string>> result;
+
+    if (!valid_) {
+        return result;
+    }
+
+    size_t pos = 0;
+    while (pos < prim_part_.size()) {
+        // Find opening brace
+        size_t start = prim_part_.find('{', pos);
+        if (start == std::string::npos) {
+            break;
+        }
+
+        // Find closing brace
+        size_t end = prim_part_.find('}', start);
+        if (end == std::string::npos) {
+            break;
+        }
+
+        // Extract variant selection: {variantSet=variantName}
+        std::string selection = prim_part_.substr(start + 1, end - start - 1);
+
+        // Find '=' separator
+        size_t eq_pos = selection.find('=');
+        if (eq_pos != std::string::npos) {
+            std::string variant_set = selection.substr(0, eq_pos);
+            std::string variant_name = selection.substr(eq_pos + 1);
+            result.emplace_back(variant_set, variant_name);
+        }
+
+        pos = end + 1;
+    }
+
+    return result;
+}
+
+Path Path::strip_variant_selections() const {
+    if (!valid_) {
+        return Path();
+    }
+
+    if (!has_variant_selections()) {
+        return *this;
+    }
+
+    std::string stripped;
+    stripped.reserve(prim_part_.size());
+
+    size_t i = 0;
+    while (i < prim_part_.size()) {
+        if (prim_part_[i] == '{') {
+            // Skip until closing brace
+            size_t close = prim_part_.find('}', i);
+            if (close != std::string::npos) {
+                i = close + 1;
+            } else {
+                // Malformed, keep the rest
+                stripped += prim_part_[i];
+                ++i;
+            }
+        } else {
+            stripped += prim_part_[i];
+            ++i;
+        }
+    }
+
+    Path p;
+    p.prim_part_ = stripped;
+    p.prop_part_ = prop_part_;
+    p.valid_ = true;
+    return p;
+}
+
+std::string Path::prim_path_without_variants() const {
+    return strip_variant_selections().prim_part();
+}
+
 } // namespace v1
 } // namespace lightusd
