@@ -936,7 +936,11 @@ class TinyUSDZLoaderNative {
     // RenderScene: Scene graph object which is suited for GL/Vulkan renderer
     tinyusdz::tydra::RenderSceneConverter converter;
 
-    // env.timecode = timecode; // TODO
+    // Set timecode to startTimeCode if authored, so xformOps with TimeSamples
+    // are evaluated at the start time (initial pose) for static viewers
+    if (stage.metas().startTimeCode.authored()) {
+      env.timecode = stage.metas().startTimeCode.get_value();
+    }
     loaded_ = converter.ConvertToRenderScene(env, &render_scene_);
     if (!loaded_) {
       std::cerr << "Failed to convert USD Stage to RenderScene: \n"
@@ -1047,7 +1051,11 @@ class TinyUSDZLoaderNative {
     // RenderScene: Scene graph object which is suited for GL/Vulkan renderer
     tinyusdz::tydra::RenderSceneConverter converter;
 
-    // env.timecode = timecode; // TODO
+    // Set timecode to startTimeCode if authored, so xformOps with TimeSamples
+    // are evaluated at the start time (initial pose) for static viewers
+    if (stage.metas().startTimeCode.authored()) {
+      env.timecode = stage.metas().startTimeCode.get_value();
+    }
     loaded_ = converter.ConvertToRenderScene(env, &render_scene_);
     if (!loaded_) {
       std::cerr << "Failed to convert USD Stage to RenderScene: \n"
