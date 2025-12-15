@@ -9,6 +9,7 @@
 #include "lightusd/variant.hh"
 #include <cstring>
 #include <cmath>
+#include <limits>
 
 namespace lightusd {
 namespace v1 {
@@ -189,6 +190,14 @@ bool Parser::parse_stage_metadata(Stage& stage) {
     }
 
     while (!check(TokenType::RParen) && !check(TokenType::Eof)) {
+        // Handle bare string (documentation comment)
+        if (check(TokenType::String)) {
+            // Bare doc string - store as "documentation"
+            stage.set_metadata("documentation", Value::from_string(current_.str_value));
+            advance();
+            continue;
+        }
+
         // Parse key = value pairs
         if (!check(TokenType::Identifier)) {
             error("Expected metadata key");
@@ -348,72 +357,14 @@ bool Parser::parse_stage_metadata(Stage& stage) {
                 return false;
             }
         } else if (key == "customLayerData") {
-            // Parse dictionary
+            // Parse dictionary with nested dictionary support
             if (!expect(TokenType::LBrace, "Expected '{' for customLayerData")) {
                 return false;
             }
-            while (!check(TokenType::RBrace) && !check(TokenType::Eof)) {
-                // Parse key
-                std::string dict_key;
-                // Check for type prefix (e.g., "string creator")
-                if (check(TokenType::Identifier)) {
-                    // Skip type prefix if present
-                    std::string type_name = current_.str_value;
-                    advance();
-                    if (check(TokenType::Identifier)) {
-                        // We had a type prefix, now get the actual key
-                        dict_key = current_.str_value;
-                        advance();
-                    } else {
-                        // No type prefix, first identifier was the key
-                        dict_key = type_name;
-                    }
-                } else if (check(TokenType::String)) {
-                    dict_key = current_.str_value;
-                    advance();
-                } else {
-                    error("Expected key in customLayerData");
-                    return false;
-                }
-
-                if (!expect(TokenType::Equals, "Expected '='")) {
-                    return false;
-                }
-
-                // Parse value
-                Value val;
-                if (check(TokenType::String)) {
-                    val = Value::from_string(current_.str_value);
-                    advance();
-                } else if (check(TokenType::Integer)) {
-                    val = Value::from_int64(current_.int_value);
-                    advance();
-                } else if (check(TokenType::Float)) {
-                    val = Value::from_double(current_.float_value);
-                    advance();
-                } else if (check(TokenType::Kw_true)) {
-                    val = Value::from_bool(true);
-                    advance();
-                } else if (check(TokenType::Kw_false)) {
-                    val = Value::from_bool(false);
-                    advance();
-                } else {
-                    // Skip complex values for now
-                    int depth = 0;
-                    do {
-                        if (check(TokenType::LParen) || check(TokenType::LBracket) ||
-                            check(TokenType::LBrace)) {
-                            depth++;
-                        } else if (check(TokenType::RParen) || check(TokenType::RBracket) ||
-                                   check(TokenType::RBrace)) {
-                            if (depth == 0) break;
-                            depth--;
-                        }
-                        advance();
-                    } while (depth > 0 && !check(TokenType::Eof));
-                    continue;
-                }
-                stage.set_custom_layer_data(dict_key, val);
+            if (!parse_dict_entries([&stage](const std::string& k, const Value& v) {
+                stage.set_custom_layer_data(k, v);
+            })) {
+                return false;
             }
             if (!expect(TokenType::RBrace, "Expected '}'")) {
                 return false;
@@ -457,6 +408,9 @@ bool Parser::parse_stage_metadata(Stage& stage) {
                 } while (depth > 0 && !check(TokenType::Eof));
             }
         }
+
+        // Optional semicolon after metadata entry
+        match(TokenType::Semicolon);
     }
 
     return expect(TokenType::RParen, "Expected ')'");
@@ -525,6 +479,14 @@ bool Parser::parse_prim_metadata(Prim& prim) {
     }
 
     while (!check(TokenType::RParen) && !check(TokenType::Eof)) {
+        // Handle bare string (documentation comment)
+        if (check(TokenType::String)) {
+            // Bare doc string - store as "documentation" metadata
+            prim.set_metadata("documentation", Value::from_string(current_.str_value));
+            advance();
+            continue;
+        }
+
         // Parse key = value pairs
         // Note: list edit qualifiers like prepend/append/delete are keywords, not identifiers
         bool is_list_edit_keyword = (check(TokenType::Kw_prepend) || check(TokenType::Kw_append) ||
@@ -555,6 +517,8 @@ bool Parser::parse_prim_metadata(Prim& prim) {
                 prim.set_active(true);
             } else if (check(TokenType::Kw_false)) {
                 prim.set_active(false);
+            } else if (check(TokenType::Integer)) {
+                prim.set_active(current_.int_value != 0);
             } else {
                 error("Expected true or false for 'active'");
                 return false;
@@ -630,32 +594,11 @@ bool Parser::parse_prim_metadata(Prim& prim) {
         else if (key == "customData") {
             if (check(TokenType::LBrace)) {
                 advance();
-                // Parse dictionary entries
-                while (!check(TokenType::RBrace) && !check(TokenType::Eof)) {
-                    // type key = value
-                    std::string type_name;
-                    if (check(TokenType::Identifier)) {
-                        type_name = current_.str_value;
-                        advance();
-                    }
-
-                    std::string custom_key;
-                    if (check(TokenType::Identifier) || check(TokenType::String)) {
-                        custom_key = current_.str_value;
-                        advance();
-                    }
-
-                    if (!expect(TokenType::Equals, "Expected '='")) {
-                        return false;
-                    }
-
-                    // Parse the value based on type
-                    bool is_array = false;
-                    TypeId type_id = lookup_type(type_name, &is_array);
-                    auto value_result = parse_value(type_id);
-                    if (value_result.ok()) {
-                        prim.set_custom_data(custom_key, value_result.value());
-                    }
+                // Parse dictionary entries (allow nested dictionaries)
+                if (!parse_dict_entries([&prim](const std::string& k, const Value& v) {
+                    prim.set_custom_data(k, v);
+                })) {
+                    return false;
                 }
                 if (!expect(TokenType::RBrace, "Expected '}'")) {
                     return false;
@@ -669,32 +612,11 @@ bool Parser::parse_prim_metadata(Prim& prim) {
         else if (key == "assetInfo") {
             if (check(TokenType::LBrace)) {
                 advance();
-                // Parse dictionary entries
-                while (!check(TokenType::RBrace) && !check(TokenType::Eof)) {
-                    // type key = value (e.g., string name = "Model")
-                    std::string type_name;
-                    if (check(TokenType::Identifier)) {
-                        type_name = current_.str_value;
-                        advance();
-                    }
-
-                    std::string asset_key;
-                    if (check(TokenType::Identifier) || check(TokenType::String)) {
-                        asset_key = current_.str_value;
-                        advance();
-                    }
-
-                    if (!expect(TokenType::Equals, "Expected '='")) {
-                        return false;
-                    }
-
-                    // Parse the value based on type
-                    bool is_array = false;
-                    TypeId type_id = lookup_type(type_name, &is_array);
-                    auto value_result = parse_value(type_id);
-                    if (value_result.ok()) {
-                        prim.set_asset_info(asset_key, value_result.value());
-                    }
+                // Parse dictionary entries (allow nested dictionaries)
+                if (!parse_dict_entries([&prim](const std::string& k, const Value& v) {
+                    prim.set_asset_info(k, v);
+                })) {
+                    return false;
                 }
                 if (!expect(TokenType::RBrace, "Expected '}'")) {
                     return false;
@@ -716,8 +638,8 @@ bool Parser::parse_prim_metadata(Prim& prim) {
             }
             advance();
         }
-        // references = [...] or prepend references = [...] or append references = [...]
-        else if (key == "references" || is_list_edit_qualifier) {
+        // references = [...] or payload = ... or prepend references = [...] etc.
+        else if (key == "references" || key == "payload" || key == "payloads" || is_list_edit_qualifier) {
             ListEditOp op = ListEditOp::Explicit;
             std::string target_key = key;
 
@@ -779,11 +701,15 @@ bool Parser::parse_prim_metadata(Prim& prim) {
                 skip_value();
             }
         }
-        // variants = { variantSetName = "variantName" }
+        // variants = { [string] variantSetName = "variantName" }
         else if (key == "variants") {
             if (check(TokenType::LBrace)) {
                 advance();
                 while (!check(TokenType::RBrace) && !check(TokenType::Eof)) {
+                    // Skip optional "string" type prefix
+                    if (check(TokenType::Identifier) && current_.str_value == "string") {
+                        advance();
+                    }
                     std::string vs_name;
                     if (check(TokenType::Identifier) || check(TokenType::String)) {
                         vs_name = current_.str_value;
@@ -866,12 +792,15 @@ bool Parser::parse_prim_contents(Prim& prim) {
         bool is_uniform = false;
 
         while (check(TokenType::Kw_custom) || check(TokenType::Kw_uniform) ||
-               current_.is_list_edit_qual()) {
+               check(TokenType::Kw_varying) || current_.is_list_edit_qual()) {
             if (check(TokenType::Kw_custom)) {
                 is_custom = true;
                 advance();
             } else if (check(TokenType::Kw_uniform)) {
                 is_uniform = true;
+                advance();
+            } else if (check(TokenType::Kw_varying)) {
+                // varying is the default, just skip it
                 advance();
             } else {
                 // Skip list edit qualifiers
@@ -892,6 +821,8 @@ bool Parser::parse_prim_contents(Prim& prim) {
             if (!parse_relationship(rel_name, prim)) {
                 return false;
             }
+            // Optional semicolon after relationship
+            match(TokenType::Semicolon);
             continue;
         }
 
@@ -916,6 +847,9 @@ bool Parser::parse_prim_contents(Prim& prim) {
         if (!parse_property(type_name, is_custom, is_uniform, prim)) {
             return false;
         }
+
+        // Optional semicolon after property
+        match(TokenType::Semicolon);
     }
 
     return true;
@@ -987,6 +921,15 @@ bool Parser::parse_attribute(const std::string& type_name, const std::string& at
         }
     }
 
+    // Check for attribute metadata without value: type name (metadata)
+    if (check(TokenType::LParen)) {
+        if (!parse_attribute_metadata(attr)) {
+            return false;
+        }
+        prim.set_attribute(attr_name, std::move(attr));
+        return true;
+    }
+
     // Default value
     if (!check(TokenType::Equals)) {
         // Attribute declaration without value
@@ -1005,6 +948,14 @@ bool Parser::parse_attribute(const std::string& type_name, const std::string& at
     }
 
     attr.set_default(value_result.value());
+
+    // Check for optional attribute metadata
+    if (check(TokenType::LParen)) {
+        if (!parse_attribute_metadata(attr)) {
+            return false;
+        }
+    }
+
     prim.set_attribute(attr_name, std::move(attr));
     return true;
 }
@@ -1022,7 +973,88 @@ bool Parser::parse_relationship(const std::string& rel_name, Prim& prim) {
         rel.set_targets(paths);
     }
 
+    // Check for optional relationship metadata
+    if (check(TokenType::LParen)) {
+        if (!parse_relationship_metadata(rel)) {
+            return false;
+        }
+    }
+
     prim.set_relationship(rel_name, std::move(rel));
+    return true;
+}
+
+bool Parser::parse_attribute_metadata(Attribute& attr) {
+    (void)attr;  // Will store metadata later
+
+    if (!expect(TokenType::LParen, "Expected '('")) {
+        return false;
+    }
+
+    // Parse key = value pairs until ')'
+    while (!check(TokenType::RParen) && !check(TokenType::Eof)) {
+        // Handle bare string (documentation comment)
+        if (check(TokenType::String)) {
+            // Bare doc string - skip it
+            advance();
+            continue;
+        }
+
+        // Parse key
+        if (!check(TokenType::Identifier)) {
+            error("Expected metadata key");
+            return false;
+        }
+
+        std::string key = current_.str_value;
+        advance();
+
+        if (!expect(TokenType::Equals, "Expected '='")) {
+            return false;
+        }
+
+        // Skip value - for now just consume it without storing
+        // Common attribute metadata: interpolation, colorSpace, renderType, etc.
+        skip_value();
+    }
+
+    if (!expect(TokenType::RParen, "Expected ')'")) {
+        return false;
+    }
+
+    return true;
+}
+
+bool Parser::parse_relationship_metadata(Relationship& rel) {
+    (void)rel;  // Will store metadata later
+
+    if (!expect(TokenType::LParen, "Expected '('")) {
+        return false;
+    }
+
+    // Parse key = value pairs until ')'
+    while (!check(TokenType::RParen) && !check(TokenType::Eof)) {
+        // Parse key
+        if (!check(TokenType::Identifier)) {
+            error("Expected metadata key");
+            return false;
+        }
+
+        std::string key = current_.str_value;
+        advance();
+
+        if (!expect(TokenType::Equals, "Expected '='")) {
+            return false;
+        }
+
+        // Skip value
+        skip_value();
+    }
+
+    if (!expect(TokenType::RParen, "Expected ')'")) {
+        return false;
+    }
+
     return true;
 }
 
@@ -1106,6 +1138,20 @@ Result<Value> Parser::parse_scalar_value(TypeId type) {
             case TypeId::Path: return Value::from_path(Path(val));
             default: return Value::from_string(val);
         }
+    }
+
+    // Asset path: @...@
+    if (check(TokenType::AssetPath)) {
+        std::string val = current_.str_value;
+        advance();
+        return Value::from_asset_path(val);
+    }
+
+    // Path reference: </...>
+    if (check(TokenType::PathRef)) {
+        std::string val = current_.str_value;
+        advance();
+        return Value::from_path(Path(val));
     }
 
     // Identifier (could be token value)
@@ -1310,7 +1356,8 @@ Result<Value> Parser::parse_array_value(TypeId element_type) {
                      element_type == TypeId::Vector3f || element_type == TypeId::Normal3f ||
                      element_type == TypeId::TexCoord2f);
     bool is_int = (element_type == TypeId::Int32 || element_type == TypeId::Int2 ||
-                   element_type == TypeId::Int3 || element_type == TypeId::Int4);
+                   element_type == TypeId::Int3 || element_type == TypeId::Int4 ||
+                   element_type == TypeId::Bool);
     bool is_string = (element_type == TypeId::String || element_type == TypeId::Token);
 
     while (!check(TokenType::RBracket) && !check(TokenType::Eof)) {
@@ -1380,7 +1427,23 @@ Result<Value> Parser::parse_array_value(TypeId element_type) {
             string_values.push_back(current_.str_value);
             advance();
         } else if (check(TokenType::Identifier)) {
-            string_values.push_back(current_.str_value);
+            // Handle nan/inf as float values
+            if (is_float && (current_.str_value == "nan" || current_.str_value == "inf")) {
+                if (current_.str_value == "nan") {
+                    float_values.push_back(std::numeric_limits<float>::quiet_NaN());
+                } else {
+                    float_values.push_back(std::numeric_limits<float>::infinity());
+                }
+            } else {
+                string_values.push_back(current_.str_value);
+            }
+            advance();
+        } else if (check(TokenType::Kw_true)) {
+            // Boolean array element
+            int_values.push_back(1);
+            advance();
+        } else if (check(TokenType::Kw_false)) {
+            int_values.push_back(0);
             advance();
         } else {
             return Error("Expected array element");
@@ -1510,6 +1573,83 @@ bool Parser::parse_connections(std::vector<Path>& paths) {
 
     error("Expected path or [paths]");
     return false;
+}
+
+// ============================================================================
+// Dictionary Entry Parsing (with nested dictionary support)
+// ============================================================================
+
+bool Parser::parse_dict_entries(std::function<void(const std::string&, const Value&)> handler) {
+    while (!check(TokenType::RBrace) && !check(TokenType::Eof)) {
+        // type key = value
+        std::string type_name;
+        bool is_dictionary_type = false;
+
+        // Handle 'dictionary' keyword specially
+        if (check(TokenType::Kw_dictionary)) {
+            type_name = "dictionary";
+            is_dictionary_type = true;
+            advance();
+        } else if (check(TokenType::Identifier)) {
+            type_name = current_.str_value;
+            advance();
+            // Check for array type suffix []
+            if (check(TokenType::LBracket)) {
+                advance();
+                if (!expect(TokenType::RBracket, "Expected ']'")) {
+                    return false;
+                }
+                type_name += "[]";
+            }
+        } else {
+            error("Expected type name in dictionary entry");
+            return false;
+        }
+
+        std::string entry_key;
+        if (check(TokenType::Identifier) || check(TokenType::String)) {
+            entry_key = current_.str_value;
+            advance();
+        } else {
+            error("Expected key name in dictionary entry");
+            return false;
+        }
+
+        if (!expect(TokenType::Equals, "Expected '='")) {
+            return false;
+        }
+
+        // Handle nested dictionary specially
+        if (is_dictionary_type) {
+            if (!check(TokenType::LBrace)) {
+                error("Expected '{' for nested dictionary");
+                return false;
+            }
+            advance();
+            // Recursively parse nested dictionary (skip for now, just consume)
+            if (!parse_dict_entries([](const std::string&, const Value&) {})) {
+                return false;
+            }
+            if (!expect(TokenType::RBrace, "Expected '}'")) {
+                return false;
+            }
+            // Store as null for now (could store dict representation later)
+            handler(entry_key, Value::make_null());
+        } else {
+            // Parse the value based on type
+            bool is_array = false;
+            TypeId type_id = lookup_type(type_name, &is_array);
+            TypeId value_type = is_array ? make_array_type(type_id) : type_id;
+            auto value_result = parse_value(value_type);
+            if (value_result.ok()) {
+                handler(entry_key, value_result.value());
+            } else {
+                // Skip on error but continue
+                skip_value();
+            }
+        }
+    }
+    return true;
 }
 
 // ============================================================================
@@ -1897,6 +2037,27 @@ bool Parser::parse_variant_set(Prim& prim) {
 
         Variant var;
         var.set_name(variant_name);
+
+        // Optional variant metadata: "VariantName" ( ... ) { ... }
+        if (check(TokenType::LParen)) {
+            advance();
+            // Skip variant metadata for now
+            while (!check(TokenType::RParen) && !check(TokenType::Eof)) {
+                // Parse key = value pairs
+                if (check(TokenType::Identifier)) {
+                    advance();
+                    if (check(TokenType::Equals)) {
+                        advance();
+                        skip_value();
+                    }
+                } else {
+                    advance();
+                }
+            }
+            if (!expect(TokenType::RParen, "Expected ')'")) {
+                return false;
+            }
+        }
 
         // Variant content (prim-like)
         if (check(TokenType::LBrace)) {

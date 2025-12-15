@@ -8,6 +8,7 @@
 #include "lightusd/path.hh"
 #include <cstring>
 #include <algorithm>
+#include <vector>
 
 namespace lightusd {
 namespace v1 {
@@ -64,31 +65,50 @@ void Value::destroy() {
     if (is_heap() && storage_.heap_) {
         TypeId base = get_base_type(type_id_);
 
-        // Handle heap-allocated types
-        switch (base) {
-            case TypeId::String:
-            case TypeId::AssetPath:
-                delete static_cast<std::string*>(storage_.heap_);
-                break;
-            case TypeId::Token:
-                delete static_cast<Token*>(storage_.heap_);
-                break;
-            case TypeId::Path:
-                delete static_cast<Path*>(storage_.heap_);
-                break;
-            case TypeId::Matrix4d:
-            case TypeId::Matrix4f:
-            case TypeId::Matrix3d:
-            case TypeId::Matrix3f:
-                // Matrices are POD, just free memory
-                delete[] static_cast<uint8_t*>(storage_.heap_);
-                break;
-            default:
-                // Arrays
-                if (is_array_type(type_id_)) {
+        // Handle arrays of non-POD types first
+        if (is_array_type(type_id_)) {
+            switch (base) {
+                case TypeId::String:
+                case TypeId::AssetPath:
+                    delete static_cast<std::vector<std::string>*>(storage_.heap_);
+                    break;
+                case TypeId::Token:
+                    delete static_cast<std::vector<Token>*>(storage_.heap_);
+                    break;
+                case TypeId::Path:
+                    delete static_cast<std::vector<Path>*>(storage_.heap_);
+                    break;
+                default:
+                    // POD arrays
                     delete[] static_cast<uint8_t*>(storage_.heap_);
-                }
-                break;
+                    break;
+            }
+        } else {
+            // Handle heap-allocated scalar types
+            switch (base) {
+                case TypeId::String:
+                case TypeId::AssetPath:
+                    delete static_cast<std::string*>(storage_.heap_);
+                    break;
+                case TypeId::Token:
+                    delete static_cast<Token*>(storage_.heap_);
+                    break;
+                case TypeId::Path:
+                    delete static_cast<Path*>(storage_.heap_);
+                    break;
+                case TypeId::Matrix4d:
+                case TypeId::Matrix4f:
+                case TypeId::Matrix3d:
+                case TypeId::Matrix3f:
+                case TypeId::Matrix2d:
+                case TypeId::Double4:
+                case TypeId::Quatd:
+                    // Large types stored on heap
+                    delete[] static_cast<uint8_t*>(storage_.heap_);
+                    break;
+                default:
+                    break;
+            }
         }
         storage_.heap_ = nullptr;
     }
@@ -107,29 +127,58 @@ void Value::copy_from(const Value& other) {
     } else {
         // Heap storage - deep copy
         TypeId base = get_base_type(type_id_);
-        switch (base) {
-            case TypeId::String:
-            case TypeId::AssetPath:
-                storage_.heap_ = new std::string(*static_cast<const std::string*>(other.storage_.heap_));
-                break;
-            case TypeId::Token:
-                storage_.heap_ = new Token(*static_cast<const Token*>(other.storage_.heap_));
-                break;
-            case TypeId::Path:
-                storage_.heap_ = new Path(*static_cast<const Path*>(other.storage_.heap_));
-                break;
-            default: {
-                // POD arrays/matrices - copy raw bytes
-                const TypeDescriptor* desc = get_type_descriptor(base);
-                size_t size = desc ? desc->size : 0;
-                if (is_array_type(type_id_)) {
+
+        // Handle arrays of non-POD types first
+        if (is_array_type(type_id_)) {
+            switch (base) {
+                case TypeId::String:
+                case TypeId::AssetPath:
+                    storage_.heap_ = new std::vector<std::string>(
+                        *static_cast<const std::vector<std::string>*>(other.storage_.heap_));
+                    break;
+                case TypeId::Token:
+                    storage_.heap_ = new std::vector<Token>(
+                        *static_cast<const std::vector<Token>*>(other.storage_.heap_));
+                    break;
+                case TypeId::Path:
+                    storage_.heap_ = new std::vector<Path>(
+                        *static_cast<const std::vector<Path>*>(other.storage_.heap_));
+                    break;
+                default: {
+                    // POD arrays - copy raw bytes
+                    const TypeDescriptor* desc = get_type_descriptor(base);
+                    size_t size = desc ? desc->size : 0;
                     size *= (flags_ & kArraySizeMask);
+                    if (size > 0) {
+                        storage_.heap_ = new uint8_t[size];
+                        std::memcpy(storage_.heap_, other.storage_.heap_, size);
+                    }
+                    break;
                 }
-                if (size > 0) {
-                    storage_.heap_ = new uint8_t[size];
-                    std::memcpy(storage_.heap_, other.storage_.heap_, size);
+            }
+        } else {
+            // Handle scalar heap types
+            switch (base) {
+                case TypeId::String:
+                case TypeId::AssetPath:
+                    storage_.heap_ = new std::string(*static_cast<const std::string*>(other.storage_.heap_));
+                    break;
+                case TypeId::Token:
+                    storage_.heap_ = new Token(*static_cast<const Token*>(other.storage_.heap_));
+                    break;
+                case TypeId::Path:
+                    storage_.heap_ = new Path(*static_cast<const Path*>(other.storage_.heap_));
+                    break;
+                default: {
+                    // Large POD types (matrices, quatd, etc.) - copy raw bytes
+                    const TypeDescriptor* desc = get_type_descriptor(base);
+                    size_t size = desc ? desc->size : 0;
+                    if (size > 0) {
+                        storage_.heap_ = new uint8_t[size];
+                        std::memcpy(storage_.heap_, other.storage_.heap_, size);
+                    }
+                    break;
                 }
-                break;
             }
         }
     }

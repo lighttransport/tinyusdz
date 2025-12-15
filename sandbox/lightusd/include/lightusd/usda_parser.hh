@@ -89,7 +89,9 @@ private:
                         bool is_uniform, Prim& prim);
     bool parse_attribute(const std::string& type_name, const std::string& attr_name,
                          bool is_custom, bool is_uniform, Prim& prim);
+    bool parse_attribute_metadata(Attribute& attr);
     bool parse_relationship(const std::string& rel_name, Prim& prim);
+    bool parse_relationship_metadata(Relationship& rel);
 
     // Values
     Result<Value> parse_value(TypeId expected_type);
@@ -108,6 +110,7 @@ private:
     TypeId lookup_type(const std::string& type_name, bool* is_array);
     Specifier token_to_specifier(TokenType type);
     bool parse_metadata_dict(std::function<void(const std::string&, const Value&)> handler);
+    bool parse_dict_entries(std::function<void(const std::string&, const Value&)> handler);
     void skip_value();
 
     // Composition arc parsing

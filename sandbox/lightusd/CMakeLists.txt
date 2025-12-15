@@ -4,7 +4,7 @@
 # LightUSD - Lightweight USD library CMake configuration
 
 cmake_minimum_required(VERSION 3.14)
-project(lightusd VERSION 0.1.0 LANGUAGES CXX)
+project(lightusd VERSION 0.1.0 LANGUAGES C CXX)
 
 # C++ standard
 set(CMAKE_CXX_STANDARD 14)
@@ -14,6 +14,8 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 # Options
 option(LIGHTUSD_BUILD_TESTS "Build LightUSD tests" ON)
 option(LIGHTUSD_BUILD_EXAMPLES "Build LightUSD examples" ON)
+option(LIGHTUSD_PRODUCTION_BUILD "Production build (disable debug output)" OFF)
+option(LIGHTUSD_DEBUG_PRINT "Enable DCOUT debug macro (non-production only)" OFF)
 
 # Source files
 set(LIGHTUSD_SOURCES
@@ -31,10 +33,18 @@ set(LIGHTUSD_SOURCES
     src/prim_index.cc
     src/prim.cc
     src/stage.cc
+    src/clips.cc
+    src/debug.cc
     src/usda_lexer.cc
     src/usda_parser.cc
     src/usda_reader.cc
     src/usda_writer.cc
+    src/crate_format.cc
+    src/usdc_reader.cc
+    src/usdc_fetch_handlers.cc
+    src/lz4_compression.cc
+    src/integer_coding.cc
+    src/lz4/lz4.c
 )
 
 # Header files (for IDE support)
@@ -44,6 +54,7 @@ set(LIGHTUSD_HEADERS
     include/lightusd/result.hh
     include/lightusd/cursor.hh
     include/lightusd/diagnostic.hh
+    include/lightusd/debug.hh
     include/lightusd/token.hh
     include/lightusd/path.hh
     include/lightusd/value.hh
@@ -57,10 +68,18 @@ set(LIGHTUSD_HEADERS
     include/lightusd/prim_index.hh
     include/lightusd/prim.hh
     include/lightusd/stage.hh
+    include/lightusd/clips.hh
+    include/lightusd/typed_array.hh
+    include/lightusd/stream_reader.hh
+    include/lightusd/crate_format.hh
     include/lightusd/usda_lexer.hh
     include/lightusd/usda_parser.hh
     include/lightusd/usda_reader.hh
     include/lightusd/usda_writer.hh
+    include/lightusd/usdc_reader.hh
+    include/lightusd/usdc_fetch.hh
+    include/lightusd/lz4_compression.hh
+    include/lightusd/integer_coding.hh
 )
 
 # Library target
@@ -70,7 +89,20 @@ target_include_directories(lightusd
     PUBLIC
         $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
         $<INSTALL_INTERFACE:include>
+    PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
 )
+
+# Debug/Production build configuration
+if(LIGHTUSD_PRODUCTION_BUILD)
+    target_compile_definitions(lightusd PUBLIC LIGHTUSD_PRODUCTION_BUILD)
+    message(STATUS "LightUSD: Production build enabled (debug output disabled)")
+else()
+    if(LIGHTUSD_DEBUG_PRINT)
+        target_compile_definitions(lightusd PUBLIC LIGHTUSD_DEBUG_PRINT)
+        message(STATUS "LightUSD: Debug print (DCOUT) enabled")
+    endif()
+endif()
 
 # Compiler warnings
 if(MSVC)

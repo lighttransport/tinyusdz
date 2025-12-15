@@ -53,6 +53,7 @@ enum class TokenType : uint8_t {
     Kw_class,
     Kw_rel,
     Kw_uniform,
+    Kw_varying,
     Kw_custom,
     Kw_add,
     Kw_delete,

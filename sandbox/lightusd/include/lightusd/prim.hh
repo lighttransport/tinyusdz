@@ -14,6 +14,7 @@
 #include "lightusd/path.hh"
 #include "lightusd/value.hh"
 #include "lightusd/property.hh"
+#include "lightusd/clips.hh"
 
 namespace lightusd {
 namespace v1 {
@@ -339,6 +340,45 @@ public:
 
     /// Check if has any specializes
     bool has_specializes() const;
+
+    // ========== Value Clips ==========
+
+    /// Check if prim has any clip sets
+    bool has_clips() const;
+
+    /// Get clip sets (for reading)
+    const ClipSets& clips() const;
+
+    /// Get mutable clip sets
+    ClipSets& clips_mutable();
+
+    /// Set all clip sets
+    void set_clips(const ClipSets& clips);
+    void set_clips(ClipSets&& clips);
+
+    /// Check if has specific clip set
+    bool has_clip_set(const std::string& name) const;
+
+    /// Get clip set by name (returns nullptr if not found)
+    const ClipSet* get_clip_set(const std::string& name) const;
+    ClipSet* get_clip_set_mutable(const std::string& name);
+
+    /// Add or replace clip set
+    void set_clip_set(const std::string& name, ClipSet clip_set);
+
+    /// Remove clip set by name
+    bool remove_clip_set(const std::string& name);
+
+    /// Get all clip set names
+    std::vector<std::string> clip_set_names() const;
+
+    /// Create a clip resolver for a specific clip set.
+    /// Returns resolver configured with the named clip set.
+    /// Returns invalid resolver if clip set not found.
+    ClipResolver create_clip_resolver(const std::string& clip_set_name) const;
+
+    /// Create a clip resolver for the "default" clip set (if exists).
+    ClipResolver create_clip_resolver() const;
 
     // ========== Utility ==========
 

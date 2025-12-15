@@ -56,6 +56,9 @@ struct Prim::Impl {
     PathList inherits_;
     PathList specializes_;
 
+    // Value clips
+    ClipSets clips_;
+
     Impl() = default;
 
     Impl(const std::string& name)
@@ -84,7 +87,8 @@ struct Prim::Impl {
         , references_(other.references_)
         , payloads_(other.payloads_)
         , inherits_(other.inherits_)
-        , specializes_(other.specializes_) {
+        , specializes_(other.specializes_)
+        , clips_(other.clips_) {
         // Deep copy children
         children_.reserve(other.children_.size());
         for (const auto& child : other.children_) {
@@ -110,7 +114,8 @@ struct Prim::Impl {
         , references_(std::move(other.references_))
         , payloads_(std::move(other.payloads_))
         , inherits_(std::move(other.inherits_))
-        , specializes_(std::move(other.specializes_)) {
+        , specializes_(std::move(other.specializes_))
+        , clips_(std::move(other.clips_)) {
     }
 
     Prim* find_child(const std::string& name) {
@@ -867,6 +872,67 @@ bool Prim::has_specializes() const {
 }
 
 // ============================================================================
+// Value Clips
+// ============================================================================
+
+bool Prim::has_clips() const {
+    return !impl_->clips_.empty();
+}
+
+const ClipSets& Prim::clips() const {
+    return impl_->clips_;
+}
+
+ClipSets& Prim::clips_mutable() {
+    return impl_->clips_;
+}
+
+void Prim::set_clips(const ClipSets& clips) {
+    impl_->clips_ = clips;
+}
+
+void Prim::set_clips(ClipSets&& clips) {
+    impl_->clips_ = std::move(clips);
+}
+
+bool Prim::has_clip_set(const std::string& name) const {
+    return impl_->clips_.has(name);
+}
+
+const ClipSet* Prim::get_clip_set(const std::string& name) const {
+    return impl_->clips_.get(name);
+}
+
+ClipSet* Prim::get_clip_set_mutable(const std::string& name) {
+    return impl_->clips_.get_mutable(name);
+}
+
+void Prim::set_clip_set(const std::string& name, ClipSet clip_set) {
+    impl_->clips_.set(name, std::move(clip_set));
+}
+
+bool Prim::remove_clip_set(const std::string& name) {
+    return impl_->clips_.remove(name);
+}
+
+std::vector<std::string> Prim::clip_set_names() const {
+    return impl_->clips_.names();
+}
+
+ClipResolver Prim::create_clip_resolver(const std::string& clip_set_name) const {
+    ClipResolver resolver;
+    const ClipSet* cs = impl_->clips_.get(clip_set_name);
+    if (cs) {
+        resolver.set_clip_set(*cs);
+    }
+    return resolver;
+}
+
+ClipResolver Prim::create_clip_resolver() const {
+    return create_clip_resolver("default");
+}
+
+// ============================================================================
 // Utility
 // ============================================================================
 
@@ -893,6 +959,7 @@ void Prim::clear() {
     impl_->payloads_.clear();
     impl_->inherits_.clear();
     impl_->specializes_.clear();
+    impl_->clips_.clear();
 }
 
 // ============================================================================

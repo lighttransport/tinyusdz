@@ -43,6 +43,7 @@ const char* token_type_name(TokenType type) {
         case TokenType::Kw_class:    return "class";
         case TokenType::Kw_rel:      return "rel";
         case TokenType::Kw_uniform:  return "uniform";
+        case TokenType::Kw_varying:  return "varying";
         case TokenType::Kw_custom:   return "custom";
         case TokenType::Kw_add:      return "add";
         case TokenType::Kw_delete:   return "delete";
@@ -181,6 +182,7 @@ TokenType Lexer::lookup_keyword(const std::string& name) {
     if (name == "class")       return TokenType::Kw_class;
     if (name == "rel")         return TokenType::Kw_rel;
     if (name == "uniform")     return TokenType::Kw_uniform;
+    if (name == "varying")     return TokenType::Kw_varying;
     if (name == "custom")      return TokenType::Kw_custom;
     if (name == "add")         return TokenType::Kw_add;
     if (name == "delete")      return TokenType::Kw_delete;
@@ -235,7 +237,12 @@ LexToken Lexer::scan_token() {
         case '=': return make_token(TokenType::Equals);
         case ':': return make_token(TokenType::Colon);
         case ',': return make_token(TokenType::Comma);
-        case '.': return make_token(TokenType::Dot);
+        case '.':
+            // Check if this is a float like .001
+            if (is_digit(peek_char())) {
+                return scan_number();
+            }
+            return make_token(TokenType::Dot);
         case ';': return make_token(TokenType::Semicolon);
         case '>': return make_token(TokenType::RAngle);
     }
@@ -250,9 +257,12 @@ LexToken Lexer::scan_token() {
         return scan_path();
     }
 
-    // Number
+    // Number (including .001 style floats, and -inf/-nan/+inf/+nan)
     if (is_digit(c) || (c == '-' && is_digit(peek_char())) ||
-        (c == '+' && is_digit(peek_char()))) {
+        (c == '+' && is_digit(peek_char())) ||
+        (c == '.' && is_digit(peek_char())) ||
+        (c == '-' && (peek_char() == 'i' || peek_char() == 'n')) ||
+        (c == '+' && (peek_char() == 'i' || peek_char() == 'n'))) {
         return scan_number();
     }
 
@@ -465,6 +475,24 @@ LexToken Lexer::scan_asset_path() {
 
     std::string value;
     while (!at_end()) {
+        // Handle escape sequences
+        if (current() == '\\') {
+            advance();
+            if (!at_end()) {
+                if (triple && current() == '@' && peek_char(1) == '@' && peek_char(2) == '@') {
+                    // \@@@ -> @@@ (escaped triple @)
+                    value += "@@@";
+                    advance(); advance(); advance();
+                } else {
+                    // \@ -> @ (escaped @)
+                    // \\ -> \ (escaped backslash)
+                    value += current();
+                    advance();
+                }
+            }
+            continue;
+        }
+
         if (triple) {
             if (current() == '@' && peek_char(1) == '@' && peek_char(2) == '@') {
                 advance(); advance(); advance();

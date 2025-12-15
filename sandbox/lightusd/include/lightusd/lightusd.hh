@@ -10,6 +10,9 @@
 #include "lightusd/types.hh"
 #include "lightusd/result.hh"
 
+// Debug and logging
+#include "lightusd/debug.hh"
+
 // Error reporting
 #include "lightusd/cursor.hh"
 #include "lightusd/diagnostic.hh"
@@ -33,6 +36,12 @@
 #include "lightusd/layer.hh"
 #include "lightusd/prim_index.hh"
 
+// Value Clips
+#include "lightusd/clips.hh"
+
+// Containers
+#include "lightusd/typed_array.hh"
+
 // Scene graph
 #include "lightusd/prim.hh"
 #include "lightusd/stage.hh"
@@ -40,6 +49,11 @@
 // USDA reader/writer
 #include "lightusd/usda_reader.hh"
 #include "lightusd/usda_writer.hh"
+
+// USDC (Crate) reader
+#include "lightusd/stream_reader.hh"
+#include "lightusd/crate_format.hh"
+#include "lightusd/usdc_reader.hh"
 
 /// LightUSD namespace
 namespace lightusd {
