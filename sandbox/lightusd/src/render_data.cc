@@ -13,6 +13,7 @@
 #include <algorithm>
 #include <cmath>
 #include <limits>
+#include <map>
 #include <unordered_map>
 
 namespace lightusd {
@@ -509,7 +510,8 @@ public:
 
     Result<RenderMesh> convert_mesh_prim(const Prim& prim, const RenderConverterConfig& config);
     void traverse_prims(const Prim& prim, const Mat4& parent_transform,
-                        RenderScene& scene, const RenderConverterConfig& config);
+                        RenderScene& scene, const RenderConverterConfig& config,
+                        std::map<std::string, int32_t>& material_index_map);
 
     // Texture loading
     Result<RenderTexture> load_texture(const std::string& uri,
@@ -910,7 +912,8 @@ std::string RenderConverter::Impl::find_bound_material(const Prim& prim) {
 
 void RenderConverter::Impl::traverse_prims(
     const Prim& prim, const Mat4& parent_transform,
-    RenderScene& scene, const RenderConverterConfig& config) {
+    RenderScene& scene, const RenderConverterConfig& config,
+    std::map<std::string, int32_t>& material_index_map) {
 
     Mat4 local_transform = parent_transform;
 
@@ -924,8 +927,31 @@ void RenderConverter::Impl::traverse_prims(
             if (config.apply_transforms) {
                 mesh.transform = local_transform;
             }
+
+            // Find and bind material
+            std::string mat_path = find_bound_material(prim);
+            if (!mat_path.empty()) {
+                auto it = material_index_map.find(mat_path);
+                if (it != material_index_map.end()) {
+                    // Update submesh material index
+                    for (auto& submesh : mesh.submeshes) {
+                        submesh.material_index = it->second;
+                    }
+                }
+            }
+
             scene.bounds.expand(mesh.bounds);
             scene.meshes.push_back(std::move(mesh));
+        }
+    }
+    // Check if this is a Material
+    else if (prim.type_name() == "Material") {
+        auto result = extract_material(prim, config);
+        if (result) {
+            RenderMaterial mat = std::move(result).value();
+            int32_t index = static_cast<int32_t>(scene.materials.size());
+            material_index_map[mat.path] = index;
+            scene.materials.push_back(std::move(mat));
         }
     }
 
@@ -933,7 +959,7 @@ void RenderConverter::Impl::traverse_prims(
     for (const auto& child_name : prim.child_names()) {
         auto child = prim.child(child_name);
         if (child) {
-            traverse_prims(*child, local_transform, scene, config);
+            traverse_prims(*child, local_transform, scene, config, material_index_map);
         }
     }
 }
@@ -948,11 +974,14 @@ Result<RenderScene> RenderConverter::convert(
 
     Mat4 root_transform = Mat4::identity();
 
-    // Traverse all root prims
+    // Material path -> index map for binding resolution
+    std::map<std::string, int32_t> material_index_map;
+
+    // Traverse all root prims (collects both materials and meshes)
     for (const auto& root_name : stage.root_prim_names()) {
         auto root_prim = stage.root_prim(root_name);
         if (root_prim) {
-            impl_->traverse_prims(*root_prim, root_transform, scene, config);
+            impl_->traverse_prims(*root_prim, root_transform, scene, config, material_index_map);
         }
     }
 

@@ -6,6 +6,7 @@
 
 /**
  * Simple WebGPU renderer for LightUSD RenderScene
+ * Supports UsdPreviewSurface PBR materials
  */
 export class WebGPURenderer {
     constructor(canvas) {
@@ -26,12 +27,14 @@ export class WebGPURenderer {
             far: 1000
         };
 
-        // Uniform buffer
+        // Uniform buffers
         this.uniformBuffer = null;
+        this.materialBuffer = null;
         this.uniformBindGroup = null;
 
         // Scene data
         this.meshBuffers = [];
+        this.materials = [];
 
         // Light
         this.lightDir = [0.5, 1.0, 0.8];
@@ -69,10 +72,11 @@ export class WebGPURenderer {
     }
 
     /**
-     * Create render pipeline
+     * Create render pipeline with PBR material support
      */
     _createPipeline() {
         const shaderCode = `
+            // Scene uniforms
             struct Uniforms {
                 viewProj: mat4x4<f32>,
                 model: mat4x4<f32>,
@@ -82,7 +86,19 @@ export class WebGPURenderer {
                 _pad2: f32,
             }
 
+            // PBR Material properties (UsdPreviewSurface)
+            struct Material {
+                baseColor: vec4<f32>,      // RGB + alpha
+                emissive: vec3<f32>,
+                metallic: f32,
+                roughness: f32,
+                normalScale: f32,
+                occlusionStrength: f32,
+                alphaCutoff: f32,
+            }
+
             @group(0) @binding(0) var<uniform> uniforms: Uniforms;
+            @group(0) @binding(1) var<uniform> material: Material;
 
             struct VertexInput {
                 @location(0) position: vec3<f32>,
@@ -106,6 +122,40 @@ export class WebGPURenderer {
                 return output;
             }
 
+            // Simplified PBR (GGX) functions
+            const PI: f32 = 3.14159265359;
+
+            fn fresnelSchlick(cosTheta: f32, F0: vec3<f32>) -> vec3<f32> {
+                return F0 + (1.0 - F0) * pow(clamp(1.0 - cosTheta, 0.0, 1.0), 5.0);
+            }
+
+            fn distributionGGX(N: vec3<f32>, H: vec3<f32>, roughness: f32) -> f32 {
+                let a = roughness * roughness;
+                let a2 = a * a;
+                let NdotH = max(dot(N, H), 0.0);
+                let NdotH2 = NdotH * NdotH;
+                let num = a2;
+                var denom = (NdotH2 * (a2 - 1.0) + 1.0);
+                denom = PI * denom * denom;
+                return num / denom;
+            }
+
+            fn geometrySchlickGGX(NdotV: f32, roughness: f32) -> f32 {
+                let r = roughness + 1.0;
+                let k = (r * r) / 8.0;
+                let num = NdotV;
+                let denom = NdotV * (1.0 - k) + k;
+                return num / denom;
+            }
+
+            fn geometrySmith(N: vec3<f32>, V: vec3<f32>, L: vec3<f32>, roughness: f32) -> f32 {
+                let NdotV = max(dot(N, V), 0.0);
+                let NdotL = max(dot(N, L), 0.0);
+                let ggx2 = geometrySchlickGGX(NdotV, roughness);
+                let ggx1 = geometrySchlickGGX(NdotL, roughness);
+                return ggx1 * ggx2;
+            }
+
             @fragment
             fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
                 let N = normalize(input.normal);
@@ -113,30 +163,69 @@ export class WebGPURenderer {
                 let V = normalize(uniforms.cameraPos - input.worldPos);
                 let H = normalize(L + V);
 
-                // Ambient
-                let ambient = vec3<f32>(0.1, 0.1, 0.12);
+                // Material properties
+                let albedo = material.baseColor.rgb;
+                let metallic = material.metallic;
+                let roughness = max(material.roughness, 0.04); // Prevent division issues
+                let alpha = material.baseColor.a;
 
-                // Diffuse
+                // Fresnel reflectance at normal incidence
+                let F0 = mix(vec3<f32>(0.04), albedo, metallic);
+
+                // Cook-Torrance BRDF
+                let NDF = distributionGGX(N, H, roughness);
+                let G = geometrySmith(N, V, L, roughness);
+                let F = fresnelSchlick(max(dot(H, V), 0.0), F0);
+
+                let kS = F;
+                let kD = (vec3<f32>(1.0) - kS) * (1.0 - metallic);
+
                 let NdotL = max(dot(N, L), 0.0);
-                let diffuse = vec3<f32>(0.8, 0.8, 0.8) * NdotL;
 
-                // Specular
-                let NdotH = max(dot(N, H), 0.0);
-                let specular = vec3<f32>(1.0, 1.0, 1.0) * pow(NdotH, 32.0) * 0.3;
+                let numerator = NDF * G * F;
+                let denominator = 4.0 * max(dot(N, V), 0.0) * NdotL + 0.0001;
+                let specular = numerator / denominator;
 
-                let color = ambient + diffuse + specular;
-                return vec4<f32>(color, 1.0);
+                // Light contribution (single directional light)
+                let lightColor = vec3<f32>(1.0, 0.98, 0.95);
+                let lightIntensity = 2.5;
+                let Lo = (kD * albedo / PI + specular) * lightColor * lightIntensity * NdotL;
+
+                // Ambient (image-based lighting approximation)
+                let ambientStrength = 0.15;
+                let ambient = albedo * ambientStrength * (1.0 - metallic * 0.5);
+
+                // Emissive
+                let emissive = material.emissive;
+
+                // Final color
+                var color = ambient + Lo + emissive;
+
+                // Tone mapping (ACES approximation)
+                color = color / (color + vec3<f32>(1.0));
+
+                // Gamma correction
+                color = pow(color, vec3<f32>(1.0 / 2.2));
+
+                return vec4<f32>(color, alpha);
             }
         `;
 
         const shaderModule = this.device.createShaderModule({ code: shaderCode });
 
         const uniformBindGroupLayout = this.device.createBindGroupLayout({
-            entries: [{
-                binding: 0,
-                visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT,
-                buffer: { type: 'uniform' }
-            }]
+            entries: [
+                {
+                    binding: 0,
+                    visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT,
+                    buffer: { type: 'uniform' }
+                },
+                {
+                    binding: 1,
+                    visibility: GPUShaderStage.FRAGMENT,
+                    buffer: { type: 'uniform' }
+                }
+            ]
         });
 
         const pipelineLayout = this.device.createPipelineLayout({
@@ -162,7 +251,21 @@ export class WebGPURenderer {
             fragment: {
                 module: shaderModule,
                 entryPoint: 'fs_main',
-                targets: [{ format: this.format }]
+                targets: [{
+                    format: this.format,
+                    blend: {
+                        color: {
+                            srcFactor: 'src-alpha',
+                            dstFactor: 'one-minus-src-alpha',
+                            operation: 'add'
+                        },
+                        alpha: {
+                            srcFactor: 'one',
+                            dstFactor: 'one-minus-src-alpha',
+                            operation: 'add'
+                        }
+                    }
+                }]
             },
             primitive: {
                 topology: 'triangle-list',
@@ -180,21 +283,33 @@ export class WebGPURenderer {
     }
 
     /**
-     * Create uniform buffer
+     * Create uniform buffers (scene and material)
      */
     _createUniformBuffer() {
-        // viewProj (64) + model (64) + lightDir (12) + pad (4) + cameraPos (12) + pad (4) = 160 bytes
+        // Scene uniforms: viewProj (64) + model (64) + lightDir (12) + pad (4) + cameraPos (12) + pad (4) = 160 bytes
         this.uniformBuffer = this.device.createBuffer({
             size: 160,
             usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST
         });
 
+        // Material uniforms: baseColor (16) + emissive (12) + metallic (4) + roughness (4) + normalScale (4) + occlusionStrength (4) + alphaCutoff (4) = 48 bytes
+        this.materialBuffer = this.device.createBuffer({
+            size: 48,
+            usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST
+        });
+
         this.uniformBindGroup = this.device.createBindGroup({
             layout: this.uniformBindGroupLayout,
-            entries: [{
-                binding: 0,
-                resource: { buffer: this.uniformBuffer }
-            }]
+            entries: [
+                {
+                    binding: 0,
+                    resource: { buffer: this.uniformBuffer }
+                },
+                {
+                    binding: 1,
+                    resource: { buffer: this.materialBuffer }
+                }
+            ]
         });
     }
 
@@ -220,6 +335,27 @@ export class WebGPURenderer {
             mb.indexBuffer.destroy();
         }
         this.meshBuffers = [];
+        this.materials = [];
+
+        // Load materials first
+        for (let i = 0; i < renderScene.materialCount(); i++) {
+            const mat = renderScene.material(i);
+            const baseColor = mat.baseColor();
+            const emissive = mat.emissive();
+            this.materials.push({
+                name: mat.name(),
+                path: mat.path(),
+                baseColor: baseColor,
+                metallic: mat.metallic(),
+                roughness: mat.roughness(),
+                emissive: emissive,
+                normalScale: mat.normalScale(),
+                occlusionStrength: mat.occlusionStrength(),
+                alphaCutoff: mat.alphaCutoff(),
+                doubleSided: mat.doubleSided()
+            });
+            mat.delete();
+        }
 
         // Load each mesh
         for (let i = 0; i < renderScene.meshCount(); i++) {
@@ -270,6 +406,15 @@ export class WebGPURenderer {
             // Get transform matrix
             const transform = mesh.transform();
 
+            // Get material index from first submesh
+            let materialIndex = -1;
+            if (mesh.submeshCount() > 0) {
+                const submesh = mesh.submesh(0);
+                if (submesh) {
+                    materialIndex = submesh.materialIndex;
+                }
+            }
+
             this.meshBuffers.push({
                 name: mesh.name(),
                 positionBuffer,
@@ -277,7 +422,8 @@ export class WebGPURenderer {
                 indexBuffer,
                 indexCount: indices.length,
                 transform: transform ? new Float32Array(transform) : null,
-                doubleSided: mesh.doubleSided()
+                doubleSided: mesh.doubleSided(),
+                materialIndex: materialIndex
             });
 
             mesh.delete();
@@ -391,6 +537,53 @@ export class WebGPURenderer {
 
             this.device.queue.writeBuffer(this.uniformBuffer, 0, uniformData);
 
+            // Update material buffer
+            // Material struct: baseColor (16) + emissive (12) + metallic (4) + roughness (4) + normalScale (4) + occlusionStrength (4) + alphaCutoff (4) = 48 bytes
+            const materialData = new Float32Array(12);
+
+            // Get material from mesh or use defaults
+            const mat = mb.materialIndex >= 0 && mb.materialIndex < this.materials.length
+                ? this.materials[mb.materialIndex]
+                : null;
+
+            if (mat) {
+                // baseColor (vec4)
+                materialData[0] = mat.baseColor[0];
+                materialData[1] = mat.baseColor[1];
+                materialData[2] = mat.baseColor[2];
+                materialData[3] = mat.baseColor[3];
+                // emissive (vec3)
+                materialData[4] = mat.emissive[0];
+                materialData[5] = mat.emissive[1];
+                materialData[6] = mat.emissive[2];
+                // metallic
+                materialData[7] = mat.metallic;
+                // roughness
+                materialData[8] = mat.roughness;
+                // normalScale
+                materialData[9] = mat.normalScale;
+                // occlusionStrength
+                materialData[10] = mat.occlusionStrength;
+                // alphaCutoff
+                materialData[11] = mat.alphaCutoff;
+            } else {
+                // Default material (gray, non-metallic, slightly rough)
+                materialData[0] = 0.7; // baseColor.r
+                materialData[1] = 0.7; // baseColor.g
+                materialData[2] = 0.7; // baseColor.b
+                materialData[3] = 1.0; // baseColor.a
+                materialData[4] = 0.0; // emissive.r
+                materialData[5] = 0.0; // emissive.g
+                materialData[6] = 0.0; // emissive.b
+                materialData[7] = 0.0; // metallic
+                materialData[8] = 0.5; // roughness
+                materialData[9] = 1.0; // normalScale
+                materialData[10] = 1.0; // occlusionStrength
+                materialData[11] = 0.5; // alphaCutoff
+            }
+
+            this.device.queue.writeBuffer(this.materialBuffer, 0, materialData);
+
             renderPass.setVertexBuffer(0, mb.positionBuffer);
             renderPass.setVertexBuffer(1, mb.normalBuffer);
             renderPass.setIndexBuffer(mb.indexBuffer, 'uint32');
@@ -471,6 +664,24 @@ export class WebGPURenderer {
     }
 
     /**
+     * Get loaded materials
+     */
+    getMaterials() {
+        return this.materials;
+    }
+
+    /**
+     * Get loaded mesh info
+     */
+    getMeshes() {
+        return this.meshBuffers.map(mb => ({
+            name: mb.name,
+            indexCount: mb.indexCount,
+            materialIndex: mb.materialIndex
+        }));
+    }
+
+    /**
      * Clean up resources
      */
     destroy() {
@@ -480,9 +691,13 @@ export class WebGPURenderer {
             mb.indexBuffer.destroy();
         }
         this.meshBuffers = [];
+        this.materials = [];
 
         if (this.uniformBuffer) {
             this.uniformBuffer.destroy();
+        }
+        if (this.materialBuffer) {
+            this.materialBuffer.destroy();
         }
         if (this.depthTexture) {
             this.depthTexture.destroy();
