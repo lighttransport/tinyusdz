@@ -8694,6 +8694,28 @@ bool RenderSceneConverter::ExtractXformOpAnimation(
   return !anim_out->channels.empty();
 }
 
+// Helper to get NodeCategory from NodeType
+static NodeCategory GetNodeCategoryFromType(NodeType nodeType) {
+  switch (nodeType) {
+    case NodeType::Xform:
+      return NodeCategory::Group;
+    case NodeType::Mesh:
+      return NodeCategory::Geom;
+    case NodeType::Camera:
+      return NodeCategory::Camera;
+    case NodeType::Skeleton:
+      return NodeCategory::Skeleton;
+    case NodeType::PointLight:
+    case NodeType::DirectionalLight:
+    case NodeType::EnvmapLight:
+    case NodeType::RectLight:
+    case NodeType::DiskLight:
+    case NodeType::CylinderLight:
+    case NodeType::GeometryLight:
+      return NodeCategory::Light;
+  }
+  return NodeCategory::Group;  // Default
+}
 
 bool RenderSceneConverter::BuildNodeHierarchyImpl(
     const RenderSceneConverterEnv &env, const std::string &parentPrimPath,
@@ -8810,25 +8832,25 @@ bool RenderSceneConverter::BuildNodeHierarchyImpl(
       } else if (prim->type_id() == value::TYPE_ID_LUX_RECT) {
         const RectLight *rectLight = prim->as<RectLight>();
         if (rectLight && ConvertRectLight(env, lightPath, *rectLight, &rlight)) {
-          rnode.nodeType = NodeType::Xform;  // No specific node type yet
+          rnode.nodeType = NodeType::RectLight;
           light_converted = true;
         }
       } else if (prim->type_id() == value::TYPE_ID_LUX_DISK) {
         const DiskLight *diskLight = prim->as<DiskLight>();
         if (diskLight && ConvertDiskLight(env, lightPath, *diskLight, &rlight)) {
-          rnode.nodeType = NodeType::Xform;  // No specific node type yet
+          rnode.nodeType = NodeType::DiskLight;
           light_converted = true;
         }
       } else if (prim->type_id() == value::TYPE_ID_LUX_CYLINDER) {
         const CylinderLight *cylinderLight = prim->as<CylinderLight>();
         if (cylinderLight && ConvertCylinderLight(env, lightPath, *cylinderLight, &rlight)) {
-          rnode.nodeType = NodeType::Xform;  // No specific node type yet
+          rnode.nodeType = NodeType::CylinderLight;
           light_converted = true;
         }
       } else if (prim->type_id() == value::TYPE_ID_LUX_GEOMETRY) {
         const GeometryLight *geometryLight = prim->as<GeometryLight>();
         if (geometryLight && ConvertGeometryLight(env, lightPath, *geometryLight, &rlight)) {
-          rnode.nodeType = NodeType::Xform;  // No specific node type yet
+          rnode.nodeType = NodeType::GeometryLight;
           light_converted = true;
         }
       } else {
@@ -8856,6 +8878,9 @@ bool RenderSceneConverter::BuildNodeHierarchyImpl(
       rnode.has_resetXform = node.has_resetXformStack();
       rnode.nodeType = NodeType::Xform;
     }
+
+    // Set category based on nodeType
+    rnode.category = GetNodeCategoryFromType(rnode.nodeType);
   }
 
   for (const auto &child : node.children) {
@@ -9118,11 +9143,94 @@ bool RenderSceneConverter::ConvertDomeLight(
     return false;
   }
 
-  // Extract texture file
+  // Extract texture file and load envmap image
   if (light.file.authored() && !light.file.is_blocked()) {
-    value::AssetPath asset;
-    if (light.file.get_value()->get(env.timecode, &asset)) {
-      rlight.textureFile = asset.GetAssetPath();
+    value::AssetPath assetPath;
+    if (light.file.get_value()->get(env.timecode, &assetPath)) {
+      rlight.textureFile = assetPath.GetAssetPath();
+
+      // Load the envmap texture if scene config allows
+      if (env.scene_config.load_texture_assets && !assetPath.GetAssetPath().empty()) {
+        TextureImage texImage;
+        BufferData imageBuffer;
+        imageBuffer.componentType = ComponentType::UInt8;
+
+        std::string warn, err;
+
+        TextureImageLoaderFunction tex_loader_fun =
+            env.material_config.texture_image_loader_function;
+        if (!tex_loader_fun) {
+          tex_loader_fun = DefaultTextureImageLoaderFunction;
+        }
+
+        AssetInfo assetInfo;  // Empty asset info for now
+        bool tex_loaded = tex_loader_fun(
+            assetPath, assetInfo, env.asset_resolver, &texImage,
+            &imageBuffer.data,
+            env.material_config.texture_image_loader_function_userdata,
+            &warn, &err);
+
+        if (warn.size()) {
+          PushWarn(warn);
+        }
+
+        if (tex_loaded) {
+          texImage.asset_identifier = assetPath.GetAssetPath();
+          texImage.decoded = true;
+
+          // HDR images (like EXR) should be treated as linear/Raw colorspace
+          // Most envmaps are HDR and should not have sRGB gamma
+          texImage.usdColorSpace = ColorSpace::Raw;
+          texImage.colorSpace = ColorSpace::Lin_sRGB;
+
+          // Add buffer
+          texImage.buffer_id = int64_t(buffers.size());
+          buffers.emplace_back(imageBuffer);
+
+          // Add image and set envmap_texture_id
+          rlight.envmap_texture_id = int32_t(images.size());
+          images.emplace_back(texImage);
+
+          DCOUT("Loaded envmap texture: " << assetPath.GetAssetPath()
+                << " width=" << texImage.width
+                << " height=" << texImage.height
+                << " channels=" << texImage.channels);
+        } else {
+          if (err.size()) {
+            PushWarn(fmt::format("Failed to load envmap texture: `{}`. reason = {}",
+                                 assetPath.GetAssetPath(), err));
+          }
+        }
+      } else if (!env.scene_config.load_texture_assets) {
+        // Store asset path only without decoding
+        Asset asset;
+        std::string resolvedPath;
+        std::string err;
+        AssetInfo assetInfo;
+
+        if (RawAssetRead(assetPath, assetInfo, env.asset_resolver, &asset,
+                         resolvedPath, nullptr, nullptr, &err)) {
+          TextureImage texImage;
+          BufferData imageBuffer;
+          imageBuffer.componentType = ComponentType::UInt8;
+
+          texImage.asset_identifier = resolvedPath;
+
+          imageBuffer.data.resize(asset.size());
+          memcpy(imageBuffer.data.data(), asset.data(), asset.size());
+
+          texImage.buffer_id = int64_t(buffers.size());
+          buffers.emplace_back(imageBuffer);
+
+          texImage.decoded = false;
+          texImage.usdColorSpace = ColorSpace::Raw;
+
+          rlight.envmap_texture_id = int32_t(images.size());
+          images.emplace_back(texImage);
+
+          DCOUT("Stored envmap asset: " << resolvedPath);
+        }
+      }
     }
   }
 
@@ -10005,6 +10113,8 @@ std::string DumpNode(const Node &node, uint32_t indent) {
 
   ss << pprint::Indent(indent) << "node {\n";
 
+  ss << pprint::Indent(indent + 1) << "category " << quote(to_string(node.category))
+     << "\n";
   ss << pprint::Indent(indent + 1) << "type " << quote(to_string(node.nodeType))
      << "\n";
 
