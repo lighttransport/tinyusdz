@@ -3,6 +3,8 @@
 // Copyright 2023 - Present, Light Transport Entertainment Inc.
 #include "value-types.hh"
 
+#include <type_traits>
+
 #include "str-util.hh"
 #include "value-pprint.hh"
 #include "value-eval-util.hh"
@@ -891,39 +893,84 @@ size_t Value::array_size() const {
 
 }
 
+//
+// Compile-time validation for safe role type casting.
+// These static_asserts ensure that the zero-copy cast is safe:
+//   1. Both types must have the same size
+//   2. Both types must have the same alignment
+//   3. Both types must be trivially copyable (standard layout)
+//
+#define VALIDATE_ROLE_TYPE_CAST(__roleTy, __srcBaseTy)                         \
+  static_assert(sizeof(__roleTy) == sizeof(__srcBaseTy),                       \
+                "Role type and base type must have same size");                \
+  static_assert(alignof(__roleTy) == alignof(__srcBaseTy),                     \
+                "Role type and base type must have same alignment");           \
+  static_assert(std::is_trivially_copyable<__roleTy>::value,                   \
+                "Role type must be trivially copyable");                       \
+  static_assert(std::is_trivially_copyable<__srcBaseTy>::value,                \
+                "Base type must be trivially copyable");
+
+// Validate all supported role type cast combinations at compile time
+// texcoord types
+VALIDATE_ROLE_TYPE_CAST(value::texcoord2h, value::half2)
+VALIDATE_ROLE_TYPE_CAST(value::texcoord2f, value::float2)
+VALIDATE_ROLE_TYPE_CAST(value::texcoord2d, value::double2)
+VALIDATE_ROLE_TYPE_CAST(value::texcoord3h, value::half3)
+VALIDATE_ROLE_TYPE_CAST(value::texcoord3f, value::float3)
+VALIDATE_ROLE_TYPE_CAST(value::texcoord3d, value::double3)
+
+// normal types
+VALIDATE_ROLE_TYPE_CAST(value::normal3h, value::half3)
+VALIDATE_ROLE_TYPE_CAST(value::normal3f, value::float3)
+VALIDATE_ROLE_TYPE_CAST(value::normal3d, value::double3)
+
+// vector types
+VALIDATE_ROLE_TYPE_CAST(value::vector3h, value::half3)
+VALIDATE_ROLE_TYPE_CAST(value::vector3f, value::float3)
+VALIDATE_ROLE_TYPE_CAST(value::vector3d, value::double3)
+
+// point types
+VALIDATE_ROLE_TYPE_CAST(value::point3h, value::half3)
+VALIDATE_ROLE_TYPE_CAST(value::point3f, value::float3)
+VALIDATE_ROLE_TYPE_CAST(value::point3d, value::double3)
+
+// color types
+VALIDATE_ROLE_TYPE_CAST(value::color3h, value::half3)
+VALIDATE_ROLE_TYPE_CAST(value::color3f, value::float3)
+VALIDATE_ROLE_TYPE_CAST(value::color3d, value::double3)
+VALIDATE_ROLE_TYPE_CAST(value::color4h, value::half4)
+VALIDATE_ROLE_TYPE_CAST(value::color4f, value::float4)
+VALIDATE_ROLE_TYPE_CAST(value::color4d, value::double4)
+
+// frame type
+VALIDATE_ROLE_TYPE_CAST(value::frame4d, value::matrix4d)
+
+#undef VALIDATE_ROLE_TYPE_CAST
+
 bool RoleTypeCast(const uint32_t roleTyId, value::Value &inout) {
   const uint32_t srcUnderlyingTyId = inout.underlying_type_id();
 
   DCOUT("input type = " << inout.type_name());
 
-  // scalar and array
+  // Zero-copy role type cast: just change the vtable pointer.
+  // This works because role types have identical memory layout to their base types.
+  // The compile-time validation above ensures this is always safe.
 #define ROLE_TYPE_CAST(__roleTy, __srcBaseTy)                                  \
   {                                                                            \
     static_assert(value::TypeTraits<__roleTy>::size() ==                       \
                       value::TypeTraits<__srcBaseTy>::size(),                  \
-                  "");                                                         \
+                  "Role type and base type must have same size");              \
     if (srcUnderlyingTyId == value::TypeTraits<__srcBaseTy>::type_id()) {      \
       if (roleTyId == value::TypeTraits<__roleTy>::type_id()) {                \
-        if (auto pv = inout.get_value<__srcBaseTy>()) {                        \
-          __srcBaseTy val = pv.value();                                        \
-          __roleTy newval;                                                     \
-          memcpy(reinterpret_cast<__srcBaseTy *>(&newval), &val, sizeof(__srcBaseTy));                          \
-          inout = newval;                                                      \
-          return true;                                                         \
-        }                                                                      \
+        inout.get_raw_mutable().unsafe_reinterpret_as<__roleTy>();             \
+        return true;                                                           \
       }                                                                        \
     } else if (srcUnderlyingTyId ==                                            \
                (value::TypeTraits<__srcBaseTy>::type_id() |                    \
                 value::TYPE_ID_1D_ARRAY_BIT)) {                                \
       if (roleTyId == value::TypeTraits<std::vector<__roleTy>>::type_id()) {   \
-        if (auto pv = inout.get_value<std::vector<__srcBaseTy>>()) {           \
-          std::vector<__srcBaseTy> val = pv.value();                           \
-          std::vector<__roleTy> newval;                                        \
-          newval.resize(val.size());                                           \
-          memcpy(reinterpret_cast<__srcBaseTy *>(newval.data()), val.data(), sizeof(__srcBaseTy) * val.size()); \
-          inout = newval;                                                      \
-          return true;                                                         \
-        }                                                                      \
+        inout.get_raw_mutable().unsafe_reinterpret_as<std::vector<__roleTy>>();\
+        return true;                                                           \
       }                                                                        \
     }                                                                          \
   }

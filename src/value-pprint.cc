@@ -779,7 +779,8 @@ namespace value {
   __FUNC(SkelAnimation)         \
   __FUNC(BlendShape)            \
   __FUNC(Material)              \
-  __FUNC(Shader)
+  __FUNC(Shader)                \
+  __FUNC(NodeGraph)
 
 #if 0  // remove
 // std::ostream &operator<<(std::ostream &os, const any_value &v) {

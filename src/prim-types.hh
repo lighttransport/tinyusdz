@@ -393,16 +393,10 @@ class Path {
   //    : prim_part(prim), prop_part(prop) {}
 
   Path(const Path &rhs) = default;
+  Path(Path &&rhs) noexcept = default;
 
-  Path &operator=(const Path &rhs) {
-    this->_valid = rhs._valid;
-
-    this->_prim_part = rhs._prim_part;
-    this->_prop_part = rhs._prop_part;
-    this->_element = rhs._element;
-
-    return (*this);
-  }
+  Path &operator=(const Path &rhs) = default;
+  Path &operator=(Path &&rhs) noexcept = default;
 
   std::string full_path_name() const {
     std::string s;
@@ -788,21 +782,15 @@ void OverrideDictionary(Dictionary &customData, const Dictionary &src, const boo
 //
 class MetaVariable {
  public:
-  MetaVariable &operator=(const MetaVariable &rhs) {
-    _name = rhs._name;
-    _value = rhs._value;
-
-    return *this;
-  }
+  MetaVariable() = default;
+  MetaVariable(const MetaVariable &rhs) = default;
+  MetaVariable(MetaVariable &&rhs) noexcept = default;
+  MetaVariable &operator=(const MetaVariable &rhs) = default;
+  MetaVariable &operator=(MetaVariable &&rhs) noexcept = default;
 
   template <typename T>
   MetaVariable(const T &v) {
     set_value(v);
-  }
-
-  MetaVariable(const MetaVariable &rhs) {
-    _name = rhs._name;
-    _value = rhs._value;
   }
 
   template <typename T>
@@ -818,11 +806,6 @@ class MetaVariable {
   bool is_valid() const {
     return _value.type_id() != value::TypeTraits<std::nullptr_t>::type_id();
   }
-
-  //// TODO
-  // bool is_timesamples() const { return false; }
-
-  MetaVariable() = default;
 
   //
   // custom data must have some value, so no set_type()
@@ -988,6 +971,12 @@ struct Payload {
 
 // Metadata for Prim
 struct PrimMetas {
+  PrimMetas() = default;
+  PrimMetas(const PrimMetas &) = default;
+  PrimMetas(PrimMetas &&) noexcept = default;
+  PrimMetas &operator=(const PrimMetas &) = default;
+  PrimMetas &operator=(PrimMetas &&) noexcept = default;
+
   nonstd::optional<bool> active;  // 'active'
   nonstd::optional<bool> hidden;  // 'hidden'
   nonstd::optional<Kind> kind;    // 'kind'. user-defined kind value is stored in _kind_str;
@@ -1261,8 +1250,19 @@ struct Animatable {
     _has_value = true;
   }
 
+  // Move overload for scalar - avoids copy for large vectors
+  void set(T &&v) {
+    _value = std::move(v);
+    _blocked = false;
+    _has_value = true;
+  }
+
   void set_default(const T &v) {
     set(v);
+  }
+
+  void set_default(T &&v) {
+    set(std::move(v));
   }
 
   void set(const TypedTimeSamples<T> &ts) {
@@ -1278,7 +1278,7 @@ struct Animatable {
   }
 
   void set_timesamples(TypedTimeSamples<T> &&ts) {
-    return set(ts);
+    return set(std::move(ts));
   }
 
   void clear_scalar() {
@@ -1353,8 +1353,19 @@ class TypedAttribute {
     return (*this);
   }
 
+  // Move overload for operator= - avoids copy for large vectors
+  TypedAttribute &operator=(T &&value) {
+    _attrib = std::move(value);
+
+    return (*this);
+  }
+
   // 'default' value or timeSampled value(when T = Animatable)
   void set_value(const T &v) { _attrib = v; }
+
+  // Move overload for set_value - avoids copy for large vectors
+  void set_value(T &&v) { _attrib = std::move(v); }
+
   bool has_value() const { return _attrib.has_value(); }
 
   const nonstd::optional<T> get_value() const {
@@ -1570,6 +1581,9 @@ class TypedAttributeWithFallback {
   // }
 
   void set_value(const T &v) { _attrib = v; }
+
+  // Move overload for set_value - avoids copy for large vectors
+  void set_value(T &&v) { _attrib = std::move(v); }
 
   void set_value_empty() { _empty = true; }
 
@@ -1923,6 +1937,12 @@ struct ConnectionPath {
 //
 class Relationship {
  public:
+  Relationship() = default;
+  Relationship(const Relationship &) = default;
+  Relationship(Relationship &&) noexcept = default;
+  Relationship &operator=(const Relationship &) = default;
+  Relationship &operator=(Relationship &&) noexcept = default;
+
   // NOTE: no explicit `uniform` variability for Relationship
   // Relatinship have `uniform` variability implicitly.
   // (in Crate, variability is encoded as `uniform`)
@@ -1998,6 +2018,10 @@ class Relationship {
 class RelationshipProperty {
  public:
   RelationshipProperty() = default;
+  RelationshipProperty(const RelationshipProperty &) = default;
+  RelationshipProperty(RelationshipProperty &&) noexcept = default;
+  RelationshipProperty &operator=(const RelationshipProperty &) = default;
+  RelationshipProperty &operator=(RelationshipProperty &&) noexcept = default;
 
   RelationshipProperty(const Relationship &rel)
       : _authored(true), _relationship(rel) {}
@@ -2935,7 +2959,7 @@ struct XformOp {
 
   void set_timesamples(const value::TimeSamples &v) { _var.set_timesamples(v); }
 
-  void set_timesamples(value::TimeSamples &&v) { _var.set_timesamples(v); }
+  void set_timesamples(value::TimeSamples &&v) { _var.set_timesamples(std::move(v)); }
 
   bool is_timesamples() const { return _var.is_timesamples(); }
   bool has_timesamples() const { return _var.has_timesamples(); }
@@ -3008,6 +3032,12 @@ class PrimSpec;
 // Variant item in VariantSet.
 // Variant can contain Prim metas, Prim tree and properties.
 struct Variant {
+  Variant() = default;
+  Variant(const Variant &) = default;
+  Variant(Variant &&) noexcept = default;
+  Variant &operator=(const Variant &) = default;
+  Variant &operator=(Variant &&) noexcept = default;
+
   // const std::string &name() const { return _name; }
   // std::string &name() { return _name; }
 
@@ -3034,6 +3064,12 @@ struct Variant {
 
 
 struct VariantSet {
+  VariantSet() = default;
+  VariantSet(const VariantSet &) = default;
+  VariantSet(VariantSet &&) noexcept = default;
+  VariantSet &operator=(const VariantSet &) = default;
+  VariantSet &operator=(VariantSet &&) noexcept = default;
+
   // variantSet name = {
   //   "variant1" ...
   //   "variant2" ...
@@ -3047,6 +3083,12 @@ struct VariantSet {
 // For variantSet statement in PrimSpec(composition).
 struct VariantSetSpec
 {
+  VariantSetSpec() = default;
+  VariantSetSpec(const VariantSetSpec &) = default;
+  VariantSetSpec(VariantSetSpec &&) noexcept = default;
+  VariantSetSpec &operator=(const VariantSetSpec &) = default;
+  VariantSetSpec &operator=(VariantSetSpec &&) noexcept = default;
+
   std::string name;
   std::map<std::string, PrimSpec> variantSet;
 };
@@ -3087,6 +3129,12 @@ struct CollectionInstance {
 class Collection
 {
  public:
+  Collection() = default;
+  Collection(const Collection &) = default;
+  Collection(Collection &&) noexcept = default;
+  Collection &operator=(const Collection &) = default;
+  Collection &operator=(Collection &&) noexcept = default;
+
   const ordered_dict<CollectionInstance> instances() const {
     return _instances;
   }
@@ -3140,6 +3188,11 @@ std::string to_string(const MaterialBindingStrength strength);
 
 class MaterialBinding {
  public:
+  MaterialBinding() = default;
+  MaterialBinding(const MaterialBinding &) = default;
+  MaterialBinding(MaterialBinding &&) noexcept = default;
+  MaterialBinding &operator=(const MaterialBinding &) = default;
+  MaterialBinding &operator=(MaterialBinding &&) noexcept = default;
 
   static value::token kAllPurpose() {
     return value::token("");
@@ -3363,6 +3416,12 @@ class MaterialBinding {
 // Generic primspec container.
 // Unknown or unsupported Prim type are also reprenseted as Model for now.
 struct Model : public Collection, MaterialBinding {
+  Model() = default;
+  Model(const Model &) = default;
+  Model(Model &&) noexcept = default;
+  Model &operator=(const Model &) = default;
+  Model &operator=(Model &&) noexcept = default;
+
   std::string name;
 
   std::string prim_type_name;  // e.g. "" for `def "bora" {}`, "UnknownPrim" for
@@ -3534,6 +3593,12 @@ struct Volume {
 // From USD doc: Scope is the simplest grouping primitive, and does not carry
 // the baggage of transformability.
 struct Scope : Collection, MaterialBinding {
+  Scope() = default;
+  Scope(const Scope &) = default;
+  Scope(Scope &&) noexcept = default;
+  Scope &operator=(const Scope &) = default;
+  Scope &operator=(Scope &&) noexcept = default;
+
   std::string name;
   Specifier spec{Specifier::Def};
 
@@ -3600,11 +3665,14 @@ class Prim {
     set_primdata(elementName, prim);
   }
 
+  // Default constructor (creates empty/invalid Prim)
+  Prim() = default;
+
   // Special member functions (copy and move)
   Prim(const Prim&) = default;
   Prim& operator=(const Prim&) = default;
-  Prim(Prim&&) = default;
-  Prim& operator=(Prim&&) = default;
+  Prim(Prim&&) noexcept = default;
+  Prim& operator=(Prim&&) noexcept = default;
 
   // Replace exting prim
   template <typename T>

@@ -154,11 +154,25 @@ async function dumpMaterials(options) {
     console.error('USD file loaded successfully');
   }
 
-  // Get number of materials
+  // Get number of materials and meshes
   const numMaterials = usd.numMaterials();
+  const numMeshes = usd.numMeshes();
 
   if (options.verbose) {
-    console.error(`Found ${numMaterials} material(s)`);
+    console.error(`Found ${numMaterials} material(s), ${numMeshes} mesh(es)`);
+
+    // Check for meshes with GeomSubsets
+    let subsetsFound = 0;
+    for (let i = 0; i < numMeshes; i++) {
+      const mesh = usd.getMesh(i);
+      if (mesh.materialSubsets && mesh.materialSubsets.length > 0) {
+        subsetsFound++;
+        console.error(`  Mesh ${i} "${mesh.primName}" has ${mesh.materialSubsets.length} material subset(s)`);
+      }
+    }
+    if (subsetsFound > 0) {
+      console.error(`Total: ${subsetsFound} mesh(es) with GeomSubsets (per-face materials)`);
+    }
   }
 
   if (numMaterials === 0) {

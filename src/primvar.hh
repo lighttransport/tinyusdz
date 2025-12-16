@@ -264,25 +264,34 @@ struct PrimVar {
     return _value.as<T>();
   }
 
+  // Const ref version for lvalue arguments
   template <class T>
   void set_value(const T &v) {
-    //TUSDZ_LOG_I("set_value cosnt_ref");
+    //TUSDZ_LOG_I("set_value const_ref");
     _value = v;
   }
 
-#if 0 // TODO
+  // Move version for rvalue arguments - avoids copy when caller passes temporary
   template <class T>
-  void set_value(T &&v) {
+  void set_value(T &&v, typename std::enable_if<!std::is_lvalue_reference<T>::value && !std::is_same<typename std::decay<T>::type, value::Value>::value>::type* = nullptr) {
     //TUSDZ_LOG_I("set_value move");
 
-    // _value = std::move(v) is not possible since
     // Value's underlying linb::any does not provide templated move constructor.
     // so create Value object first, then call move ctor.
     value::Value src(std::move(v));
-
     _value = std::move(src);
   }
-#endif
+
+  // Special overload for value::Value to avoid double-wrapping
+  void set_value(value::Value &&v) {
+    //TUSDZ_LOG_I("set_value Value move");
+    _value = std::move(v);
+  }
+
+  void set_value(const value::Value &v) {
+    //TUSDZ_LOG_I("set_value Value copy");
+    _value = v;
+  }
 
   void clear_value() {
     _value = nullptr;

@@ -162,6 +162,147 @@ const openPBR = new TinyUSDZOpenPBR({
 const threeMaterial = openPBR.toMeshPhysicalMaterial();
 ```
 
+## UsdLux Light Support
+
+TinyUSDZ supports USD lighting (UsdLux) with conversion to Three.js lights. The library handles various light types and environment maps.
+
+### Supported Light Types
+
+| USD Light Type | Three.js Equivalent | Notes |
+|----------------|---------------------|-------|
+| `SphereLight` | `PointLight` / `SpotLight` | SpotLight when shaping cone is defined |
+| `DistantLight` | `DirectionalLight` | Infinite distance directional light |
+| `RectLight` | `RectAreaLight` | Area light with width/height |
+| `DiskLight` | `PointLight` | Approximated (no native Three.js equivalent) |
+| `CylinderLight` | `PointLight` | Approximated (no native Three.js equivalent) |
+| `DomeLight` | `HemisphereLight` + Environment | IBL/environment lighting |
+
+### Accessing Light Data
+
+```javascript
+// Get number of lights
+const numLights = usdScene.numLights();
+
+// Get light data as JavaScript object
+const light = usdScene.getLight(lightId);
+console.log(light.type);      // 'point', 'sphere', 'distant', 'rect', 'disk', 'cylinder', 'dome'
+console.log(light.color);     // [r, g, b] - linear RGB
+console.log(light.intensity); // intensity multiplier
+console.log(light.exposure);  // exposure value (EV)
+
+// Get light data as JSON string (for serialization)
+const lightJson = usdScene.getLightWithFormat(lightId, 'json');
+
+// Get all lights at once
+const allLights = usdScene.getAllLights();
+```
+
+### DomeLight Environment Maps
+
+DomeLights can have HDR environment textures for image-based lighting (IBL):
+
+```javascript
+const light = usdScene.getLight(lightId);
+
+if (light.type === 'dome') {
+    console.log(light.textureFile);        // Asset path: "./textures/env.exr"
+    console.log(light.envmapTextureId);    // Image ID: 0, or -1 if not loaded
+    console.log(light.domeTextureFormat);  // 'automatic', 'latlong', 'mirroredBall', 'angular'
+    console.log(light.guideRadius);        // Visualization radius
+
+    // If envmapTextureId >= 0, the texture is loaded and available
+    if (light.envmapTextureId >= 0) {
+        const imageData = usdScene.getImage(light.envmapTextureId);
+        console.log(`Envmap: ${imageData.width}x${imageData.height}`);
+        console.log(`Channels: ${imageData.channels}`);
+        console.log(`Decoded: ${imageData.decoded}`);
+        // imageData.data contains raw pixel data (Uint8Array or Float32Array for HDR)
+    }
+}
+```
+
+### Three.js Environment Lighting Integration
+
+The `usdlux.js` demo shows how to apply DomeLight envmaps to Three.js scenes:
+
+```javascript
+// Create Three.js texture from loaded image data
+function createEnvMapFromUSD(usdScene, envmapTextureId) {
+    const imageData = usdScene.getImage(envmapTextureId);
+    if (!imageData || !imageData.decoded) return null;
+
+    const { width, height, channels, data } = imageData;
+
+    // Create float texture for HDR
+    const floatData = new Float32Array(width * height * 4);
+    // ... convert data to RGBA float ...
+
+    const texture = new THREE.DataTexture(
+        floatData, width, height,
+        THREE.RGBAFormat, THREE.FloatType
+    );
+    texture.mapping = THREE.EquirectangularReflectionMapping;
+    texture.colorSpace = THREE.LinearSRGBColorSpace;
+    texture.needsUpdate = true;
+
+    return texture;
+}
+
+// Apply to scene using PMREMGenerator
+const pmremGenerator = new THREE.PMREMGenerator(renderer);
+const envMap = pmremGenerator.fromEquirectangular(texture).texture;
+scene.environment = envMap;  // PBR environment lighting
+scene.background = envMap;   // Optional: use as background
+pmremGenerator.dispose();
+```
+
+### Light Properties Reference
+
+| Property | Type | Description |
+|----------|------|-------------|
+| `name` | string | Light prim name |
+| `absPath` | string | Absolute USD prim path |
+| `type` | string | Light type identifier |
+| `color` | [r,g,b] | Linear RGB color |
+| `intensity` | number | Intensity multiplier |
+| `exposure` | number | Exposure value (EV stops) |
+| `diffuse` | number | Diffuse contribution (0-1) |
+| `specular` | number | Specular contribution (0-1) |
+| `normalize` | boolean | Normalize by surface area |
+| `enableColorTemperature` | boolean | Use color temperature |
+| `colorTemperature` | number | Color temperature in Kelvin |
+| `transform` | number[16] | World transformation matrix |
+| `position` | [x,y,z] | World position |
+| `direction` | [x,y,z] | Light direction (distant/spot) |
+| `radius` | number | Sphere/Disk radius |
+| `width` | number | RectLight width |
+| `height` | number | RectLight height |
+| `length` | number | CylinderLight length |
+| `angle` | number | DistantLight angle (degrees) |
+| `textureFile` | string | Texture asset path |
+| `shapingConeAngle` | number | Spotlight cone angle |
+| `shapingConeSoftness` | number | Cone edge softness |
+| `shadowEnable` | boolean | Enable shadows |
+| `shadowColor` | [r,g,b] | Shadow color |
+| `domeTextureFormat` | string | Envmap format |
+| `guideRadius` | number | DomeLight visualization radius |
+| `envmapTextureId` | number | Index to images array (-1 if none) |
+
+### CLI Light Dump Tool
+
+Use `dump-usdlux-cli.js` to inspect USD lights:
+
+```bash
+# Dump all lights as summary
+node dump-usdlux-cli.js scene.usda -f summary
+
+# Dump as JSON with node hierarchy
+node dump-usdlux-cli.js scene.usda -f json --show-nodes
+
+# Show all details including transforms
+node dump-usdlux-cli.js scene.usda -f summary --all
+```
+
 ## Demo Pages
 
 The following demo pages are available:
