@@ -9196,9 +9196,42 @@ bool RenderSceneConverter::ConvertDomeLight(
                 << " height=" << texImage.height
                 << " channels=" << texImage.channels);
         } else {
+          // Fallback: store raw asset when decoding fails (e.g., EXR/HDR not supported)
           if (err.size()) {
-            PushWarn(fmt::format("Failed to load envmap texture: `{}`. reason = {}",
+            PushWarn(fmt::format("Failed to decode envmap texture: `{}`. reason = {}. Falling back to raw asset storage.",
                                  assetPath.GetAssetPath(), err));
+          }
+
+          // Try to store the raw asset for later decoding (e.g., in JS layer)
+          Asset asset;
+          std::string resolvedPath;
+          std::string readErr;
+          AssetInfo fallbackAssetInfo;
+
+          if (RawAssetRead(assetPath, fallbackAssetInfo, env.asset_resolver, &asset,
+                           resolvedPath, nullptr, nullptr, &readErr)) {
+            TextureImage fallbackTexImage;
+            BufferData fallbackImageBuffer;
+            fallbackImageBuffer.componentType = ComponentType::UInt8;
+
+            fallbackTexImage.asset_identifier = resolvedPath;
+
+            fallbackImageBuffer.data.resize(asset.size());
+            memcpy(fallbackImageBuffer.data.data(), asset.data(), asset.size());
+
+            fallbackTexImage.buffer_id = int64_t(buffers.size());
+            buffers.emplace_back(fallbackImageBuffer);
+
+            fallbackTexImage.decoded = false;
+            fallbackTexImage.usdColorSpace = ColorSpace::Raw;
+
+            rlight.envmap_texture_id = int32_t(images.size());
+            images.emplace_back(fallbackTexImage);
+
+            DCOUT("Stored envmap asset (fallback): " << resolvedPath);
+          } else {
+            PushWarn(fmt::format("Failed to read envmap asset: `{}`. reason = {}",
+                                 assetPath.GetAssetPath(), readErr));
           }
         }
       } else if (!env.scene_config.load_texture_assets) {
@@ -9229,6 +9262,9 @@ bool RenderSceneConverter::ConvertDomeLight(
           images.emplace_back(texImage);
 
           DCOUT("Stored envmap asset: " << resolvedPath);
+        } else {
+          PushWarn(fmt::format("Failed to read envmap asset (load_texture_assets=false): `{}`. reason = {}",
+                               assetPath.GetAssetPath(), err));
         }
       }
     }
@@ -9896,7 +9932,7 @@ bool DefaultTextureImageLoaderFunction(
       return false;
     }
 
-  } else if (imgret.image.bpp == 16) {
+  } else if (imgret.image.bpp == 32) {
     if (imgret.image.format == Image::PixelFormat::UInt) {
       texImage.assetTexelComponentType = ComponentType::UInt32;
     } else if (imgret.image.format == Image::PixelFormat::Int) {
