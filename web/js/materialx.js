@@ -3,7 +3,8 @@
 
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
-import { RGBELoader } from 'three/examples/jsm/loaders/RGBELoader.js';
+import { HDRLoader } from 'three/examples/jsm/loaders/HDRLoader.js';
+import { EXRLoader } from 'three/examples/jsm/loaders/EXRLoader.js';
 import GUI from 'three/examples/jsm/libs/lil-gui.module.min.js';
 import { TinyUSDZLoader } from 'tinyusdz/TinyUSDZLoader.js';
 import { TinyUSDZLoaderUtils } from 'tinyusdz/TinyUSDZLoaderUtils.js';
@@ -20,6 +21,9 @@ let nativeLoader = null;
 let gui = null;
 let materialFolder = null;
 let textureFolder = null;
+let animationFolder = null;
+let timeController = null; // GUI controller for timeline scrubbing
+let envPresetController = null; // GUI controller for environment preset
 let sceneRoot = null;
 let currentMaterials = [];
 let materialData = [];
@@ -28,12 +32,29 @@ let currentFileUpAxis = 'Y'; // Store the current file's upAxis (Y or Z)
 let currentSceneMetadata = null; // Store current USD scene metadata
 let showingNormals = false; // Track if normal visualization is active
 let originalMaterialsMap = new Map(); // Store original materials when showing normals
+let usdDomeLightData = null; // Store DomeLight data from USD file
+
+// Animation-related state
+let mixer = null; // Three.js AnimationMixer
+let animationClips = []; // USD animation clips converted to Three.js format
+let animationAction = null; // Main animation action for playback control
+let clock = new THREE.Clock(); // Clock for animation timing
+let animationParams = {
+    isPlaying: true,
+    time: 0,
+    beginTime: 0,
+    endTime: 10,
+    speed: 24.0, // FPS (frames per second)
+    autoPlay: true
+};
 
 // Settings
 const settings = {
     materialType: 'auto', // 'auto', 'openpbr', 'usdpreviewsurface'
-    envMapPreset: 'goegap_1k', // 'goegap_1k', 'env_sunsky_sunset', 'studio'
+    envMapPreset: 'goegap_1k', // 'goegap_1k', 'env_sunsky_sunset', 'studio', 'constant_color'
     envMapIntensity: 1.0,
+    envConstantColor: '#ffffff', // Color for constant color environment
+    envColorspace: 'sRGB', // 'sRGB' (convert to linear) or 'linear' (no conversion)
     showBackground: true,
     exposure: 1.0,
     toneMapping: 'aces',
@@ -43,9 +64,11 @@ const settings = {
 
 // Environment map presets
 const ENV_PRESETS = {
+    'usd_dome': 'usd', // Special marker for USD DomeLight (if available)
     'goegap_1k': 'assets/textures/goegap_1k.hdr',
     'env_sunsky_sunset': 'assets/textures/env_sunsky_sunset.hdr',
-    'studio': null // Will use synthetic studio lighting
+    'studio': null, // Will use synthetic studio lighting
+    'constant_color': 'constant' // Special marker for constant color environment
 };
 
 // Default embedded USDA scene with OpenPBR material
@@ -167,9 +190,15 @@ function setupGUI() {
 
     // Scene settings
     const sceneFolder = gui.addFolder('Scene');
-    sceneFolder.add(settings, 'envMapPreset', Object.keys(ENV_PRESETS))
+    envPresetController = sceneFolder.add(settings, 'envMapPreset', Object.keys(ENV_PRESETS))
         .name('Environment')
         .onChange(loadEnvironment);
+    sceneFolder.addColor(settings, 'envConstantColor')
+        .name('Env Color')
+        .onChange(updateConstantColorEnvironment);
+    sceneFolder.add(settings, 'envColorspace', ['sRGB', 'linear'])
+        .name('Env Colorspace')
+        .onChange(updateConstantColorEnvironment);
     sceneFolder.add(settings, 'envMapIntensity', 0, 3, 0.1)
         .name('Env Intensity')
         .onChange(updateEnvIntensity);
@@ -188,6 +217,28 @@ function setupGUI() {
     sceneFolder.add(settings, 'showNormals')
         .name('Show Normals')
         .onChange(toggleNormalDisplay);
+
+    // Animation controls (will be shown when animations are loaded)
+    animationFolder = gui.addFolder('Animation');
+    animationFolder.add(animationParams, 'isPlaying')
+        .name('Play/Pause')
+        .listen();
+    timeController = animationFolder.add(animationParams, 'time', 0, 10, 0.01)
+        .name('Time')
+        .listen()
+        .onChange(scrubToTime);
+    animationFolder.add(animationParams, 'speed', 0.1, 120, 0.1)
+        .name('Speed (FPS)')
+        .listen();
+    animationFolder.add(animationParams, 'beginTime')
+        .name('Begin Time')
+        .listen()
+        .disable();
+    animationFolder.add(animationParams, 'endTime')
+        .name('End Time')
+        .listen()
+        .disable();
+    animationFolder.close(); // Start closed, will open when animations are loaded
 
     // Material type selector
     const materialTypeFolder = gui.addFolder('Material Type');
@@ -222,6 +273,416 @@ function setupEventListeners() {
 }
 
 // ============================================================================
+// Colorspace Conversion Utilities
+// ============================================================================
+
+/**
+ * Convert sRGB component to linear
+ * @param {number} c - sRGB component value [0, 1]
+ * @returns {number} Linear component value [0, 1]
+ */
+function sRGBComponentToLinear(c) {
+    if (c <= 0.04045) {
+        return c / 12.92;
+    } else {
+        return Math.pow((c + 0.055) / 1.055, 2.4);
+    }
+}
+
+/**
+ * Parse hex color and convert to RGB [0, 1] with optional linear conversion
+ * @param {string} hexColor - Hex color string (e.g., '#ff8800')
+ * @param {boolean} toLinear - If true, convert from sRGB to linear
+ * @returns {object} {r, g, b} values in [0, 1]
+ */
+function parseHexColor(hexColor, toLinear = false) {
+    // Remove # if present
+    const hex = hexColor.replace('#', '');
+
+    // Parse RGB components
+    const r = parseInt(hex.substring(0, 2), 16) / 255;
+    const g = parseInt(hex.substring(2, 4), 16) / 255;
+    const b = parseInt(hex.substring(4, 6), 16) / 255;
+
+    if (toLinear) {
+        return {
+            r: sRGBComponentToLinear(r),
+            g: sRGBComponentToLinear(g),
+            b: sRGBComponentToLinear(b)
+        };
+    }
+
+    return { r, g, b };
+}
+
+/**
+ * Convert RGB [0, 1] to hex color string for canvas
+ * @param {number} r - Red [0, 1]
+ * @param {number} g - Green [0, 1]
+ * @param {number} b - Blue [0, 1]
+ * @returns {string} Hex color string
+ */
+function rgbToHex(r, g, b) {
+    const toHex = (c) => {
+        const clamped = Math.max(0, Math.min(1, c));
+        const val = Math.round(clamped * 255);
+        return val.toString(16).padStart(2, '0');
+    };
+    return `#${toHex(r)}${toHex(g)}${toHex(b)}`;
+}
+
+// ============================================================================
+// Animation Control Functions
+// ============================================================================
+
+/**
+ * Scrub animation to a specific time
+ * @param {number} time - Target time in seconds
+ */
+function scrubToTime(time) {
+    if (!mixer || !animationAction) return;
+
+    // Pause playback during scrubbing
+    const wasPaused = !animationParams.isPlaying;
+
+    // Reset mixer's internal time
+    mixer.timeScale = 1.0;
+    mixer.time = 0;
+
+    // Set all actions to the target time
+    animationClips.forEach((clip) => {
+        const action = mixer.clipAction(clip);
+        action.paused = false;
+        action.enabled = true;
+        action.time = time;
+        action.weight = 1.0;
+    });
+
+    // Force mixer to evaluate
+    const deltaForEval = 0.0001;
+    mixer.update(deltaForEval);
+
+    // Compensate for the small delta
+    animationClips.forEach((clip) => {
+        const action = mixer.clipAction(clip);
+        action.time = time;
+    });
+
+    // Restore paused state if needed
+    if (wasPaused) {
+        animationClips.forEach((clip) => {
+            const action = mixer.clipAction(clip);
+            action.paused = true;
+        });
+    }
+
+    console.log(`Scrubbed to time ${time.toFixed(3)}s`);
+}
+
+// ============================================================================
+// USD Animation Extraction Functions
+// ============================================================================
+
+/**
+ * Convert USD animation data to Three.js AnimationClip
+ * Supports both channel/sampler and track-based animation structures
+ * @param {Object} usdLoader - TinyUSDZ loader instance
+ * @param {THREE.Object3D} sceneRoot - Three.js scene containing the loaded geometry
+ * @returns {Array<THREE.AnimationClip>} Array of Three.js AnimationClips
+ */
+function convertUSDAnimationsToThreeJS(usdLoader, sceneRoot) {
+    const animationClips = [];
+
+    // Get number of animations
+    const numAnimations = usdLoader.numAnimations();
+    console.log(`Found ${numAnimations} animations in USD file`);
+
+    if (numAnimations === 0) {
+        return animationClips;
+    }
+
+    // Get summary of all animations
+    const animationInfos = usdLoader.getAllAnimationInfos();
+    console.log('Animation summaries:', animationInfos);
+
+    // Build node index map for faster lookup
+    const nodeIndexMap = new Map();
+    let nodeIndex = 0;
+    sceneRoot.traverse((obj) => {
+        nodeIndexMap.set(nodeIndex, obj);
+        nodeIndex++;
+    });
+    console.log(`Built node index map with ${nodeIndexMap.size} nodes`);
+
+    // Convert each animation to Three.js format
+    for (let i = 0; i < numAnimations; i++) {
+        const usdAnimation = usdLoader.getAnimation(i);
+        console.log(`Processing animation ${i}: ${usdAnimation.name}`);
+
+        // Check if this is a track-based animation (legacy format)
+        if (usdAnimation.tracks && usdAnimation.tracks.length > 0) {
+            console.log(`Animation ${i} uses track-based format with ${usdAnimation.tracks.length} tracks`);
+
+            // Process track-based animation
+            const keyframeTracks = [];
+
+            // Find the target object - for track animations, usually the first child after scene root
+            let targetObject = sceneRoot;
+            // Try to find the animated object by name from the animation
+            if (usdAnimation.name) {
+                let searchName = usdAnimation.name;
+                // Remove common suffixes
+                searchName = searchName.replace(/_xform$/, '');
+                searchName = searchName.replace(/_anim$/, '');
+
+                console.log(`Searching for target object with name: "${searchName}"`);
+
+                // First try exact match
+                let found = false;
+                sceneRoot.traverse((obj) => {
+                    if (obj.name === searchName) {
+                        targetObject = obj;
+                        found = true;
+                        console.log(`  Found exact match: "${obj.name}"`);
+                    }
+                });
+
+                // If no exact match, try matching without the mesh suffix
+                if (!found) {
+                    sceneRoot.traverse((obj) => {
+                        if (obj.name && obj.name.startsWith(searchName)) {
+                            targetObject = obj;
+                            found = true;
+                            console.log(`  Found prefix match: "${obj.name}"`);
+                        }
+                    });
+                }
+            }
+
+            // If we can't find it by name, use the first mesh or group
+            if (targetObject === sceneRoot) {
+                console.warn(`Could not find target object for animation "${usdAnimation.name}", using first mesh/group`);
+                sceneRoot.traverse((obj) => {
+                    if ((obj.isMesh || obj.isGroup) && obj !== sceneRoot) {
+                        targetObject = obj;
+                        return;
+                    }
+                });
+            }
+
+            const targetName = targetObject.name || 'AnimatedObject';
+            const targetUUID = targetObject.uuid;
+            console.log(`Target object for track-based animation: "${targetName}" (UUID: ${targetUUID})`);
+
+            // Process each track
+            for (const track of usdAnimation.tracks) {
+                if (!track.times || !track.values) {
+                    console.warn('Track missing times or values');
+                    continue;
+                }
+
+                // Convert times and values to arrays
+                const times = Array.isArray(track.times) ? track.times : Array.from(track.times);
+                const values = Array.isArray(track.values) ? track.values : Array.from(track.values);
+                const interpolation = getUSDInterpolationMode(track.interpolation);
+
+                console.log(`Processing track: ${track.path}, ${times.length} keyframes`);
+
+                // Create appropriate Three.js KeyframeTrack based on path
+                let keyframeTrack;
+
+                // Use UUID-based targeting for reliability
+                switch (track.path) {
+                    case 'translation':
+                    case 'Translation':
+                        keyframeTrack = new THREE.VectorKeyframeTrack(
+                            `${targetUUID}.position`,
+                            times,
+                            values,
+                            interpolation
+                        );
+                        break;
+
+                    case 'rotation':
+                    case 'Rotation':
+                        // Rotation is stored as quaternions (x, y, z, w)
+                        keyframeTrack = new THREE.QuaternionKeyframeTrack(
+                            `${targetUUID}.quaternion`,
+                            times,
+                            values,
+                            interpolation
+                        );
+                        break;
+
+                    case 'scale':
+                    case 'Scale':
+                        keyframeTrack = new THREE.VectorKeyframeTrack(
+                            `${targetUUID}.scale`,
+                            times,
+                            values,
+                            interpolation
+                        );
+                        break;
+
+                    default:
+                        console.warn(`Unknown track path: ${track.path}`);
+                        continue;
+                }
+
+                if (keyframeTrack) {
+                    keyframeTracks.push(keyframeTrack);
+                }
+            }
+
+            // Create Three.js AnimationClip from tracks
+            if (keyframeTracks.length > 0) {
+                const clip = new THREE.AnimationClip(
+                    usdAnimation.name || `Animation_${i}`,
+                    usdAnimation.duration || -1,
+                    keyframeTracks
+                );
+
+                animationClips.push(clip);
+                console.log(`Created clip: ${clip.name}, duration: ${clip.duration}s, tracks: ${clip.tracks.length}`);
+            }
+
+            continue;
+        }
+
+        // Handle channel-based animation (newer format)
+        if (!usdAnimation.channels || !usdAnimation.samplers) {
+            console.warn(`Animation ${i} missing channels/samplers and tracks`);
+            continue;
+        }
+
+        // Filter for node animations only (skip skeletal animations)
+        const nodeChannels = usdAnimation.channels.filter(channel => {
+            const targetType = channel.target_type || 'SceneNode';
+            return targetType === 'SceneNode';
+        });
+
+        if (nodeChannels.length === 0) {
+            console.log(`Animation ${i} has no SceneNode channels (skipping skeletal-only animation)`);
+            continue;
+        }
+
+        console.log(`Animation ${i}: ${nodeChannels.length} node channels`);
+
+        // Create Three.js KeyframeTracks from USD animation channels
+        const keyframeTracks = [];
+
+        for (const channel of nodeChannels) {
+            // Get sampler data
+            const sampler = usdAnimation.samplers[channel.sampler];
+            if (!sampler || !sampler.times || !sampler.values) {
+                console.warn(`Invalid sampler for channel`);
+                continue;
+            }
+
+            // Find the Three.js object for this channel
+            const targetObject = nodeIndexMap.get(channel.target_node);
+            if (!targetObject) {
+                console.warn(`Could not find object at node index: ${channel.target_node}`);
+                continue;
+            }
+
+            // Convert times and values to arrays
+            const times = Array.isArray(sampler.times) ? sampler.times : Array.from(sampler.times);
+            const values = Array.isArray(sampler.values) ? sampler.values : Array.from(sampler.values);
+
+            // Create appropriate Three.js KeyframeTrack based on path
+            let keyframeTrack;
+            const targetUUID = targetObject.uuid;
+            const targetName = targetObject.name || `node_${channel.target_node}`;
+            const interpolation = getUSDInterpolationMode(sampler.interpolation);
+
+            console.log(`Channel: target_node=${channel.target_node}, path=${channel.path}, target_name="${targetName}"`);
+
+            switch (channel.path) {
+                case 'Translation':
+                    keyframeTrack = new THREE.VectorKeyframeTrack(
+                        `${targetUUID}.position`,
+                        times,
+                        values,
+                        interpolation
+                    );
+                    break;
+
+                case 'Rotation':
+                    keyframeTrack = new THREE.QuaternionKeyframeTrack(
+                        `${targetUUID}.quaternion`,
+                        times,
+                        values,
+                        interpolation
+                    );
+                    break;
+
+                case 'Scale':
+                    keyframeTrack = new THREE.VectorKeyframeTrack(
+                        `${targetUUID}.scale`,
+                        times,
+                        values,
+                        interpolation
+                    );
+                    break;
+
+                case 'Weights':
+                    keyframeTrack = new THREE.NumberKeyframeTrack(
+                        `.uuid[${targetUUID}].morphTargetInfluences`,
+                        times,
+                        values,
+                        interpolation
+                    );
+                    break;
+
+                default:
+                    console.warn(`Unknown animation path: ${channel.path}`);
+                    continue;
+            }
+
+            if (keyframeTrack) {
+                keyframeTracks.push(keyframeTrack);
+                console.log(`  Track "${keyframeTrack.name}": ${keyframeTrack.times.length} keyframes`);
+            }
+        }
+
+        // Create Three.js AnimationClip
+        if (keyframeTracks.length > 0) {
+            const clip = new THREE.AnimationClip(
+                usdAnimation.name || `Animation_${i}`,
+                usdAnimation.duration || -1,
+                keyframeTracks
+            );
+
+            animationClips.push(clip);
+            console.log(`Created clip: ${clip.name}, duration: ${clip.duration}s, tracks: ${clip.tracks.length}`);
+        }
+    }
+
+    return animationClips;
+}
+
+/**
+ * Convert USD interpolation mode to Three.js InterpolateMode
+ * @param {string} interpolation - USD interpolation mode (Linear, Step, CubicSpline)
+ * @returns {number} Three.js InterpolateMode constant
+ */
+function getUSDInterpolationMode(interpolation) {
+    switch (interpolation) {
+        case 'Step':
+        case 'STEP':
+            return THREE.InterpolateDiscrete;
+        case 'CubicSpline':
+        case 'CUBICSPLINE':
+            return THREE.InterpolateSmooth;
+        case 'Linear':
+        case 'LINEAR':
+        default:
+            return THREE.InterpolateLinear;
+    }
+}
+
+// ============================================================================
 // Environment Loading
 // ============================================================================
 
@@ -236,10 +697,33 @@ async function loadEnvironment(preset) {
         return;
     }
 
+    if (path === 'usd') {
+        // USD DomeLight - use stored DomeLight data
+        if (usdDomeLightData) {
+            console.log('Using USD DomeLight environment');
+            // Environment map already loaded by loadDomeLightFromUSD
+            // Just update the status
+            updateStatus('Using USD DomeLight environment');
+        } else {
+            console.warn('USD DomeLight selected but no DomeLight data available');
+            updateStatus('No USD DomeLight available - using studio lighting');
+            envMap = createStudioEnvironment();
+            applyEnvironment();
+        }
+        return;
+    }
+
+    if (path === 'constant') {
+        // Constant color environment
+        envMap = createConstantColorEnvironment(settings.envConstantColor, settings.envColorspace);
+        applyEnvironment();
+        return;
+    }
+
     updateStatus(`Loading environment: ${preset}...`);
     try {
-        const rgbeLoader = new RGBELoader();
-        const texture = await rgbeLoader.loadAsync(path);
+        const hdrLoader = new HDRLoader();
+        const texture = await hdrLoader.loadAsync(path);
         envMap = pmremGenerator.fromEquirectangular(texture).texture;
         texture.dispose();
         applyEnvironment();
@@ -273,10 +757,49 @@ function createStudioEnvironment() {
     return pmremGenerator.fromEquirectangular(texture).texture;
 }
 
+function createConstantColorEnvironment(color, colorspace = 'sRGB') {
+    // Create a solid color environment
+    const canvas = document.createElement('canvas');
+    canvas.width = 256;
+    canvas.height = 256;
+    const ctx = canvas.getContext('2d');
+
+    // Parse and potentially convert color based on colorspace
+    let fillColor = color;
+    if (colorspace === 'sRGB') {
+        // Convert sRGB to linear for proper PBR workflow
+        const rgb = parseHexColor(color, true); // true = convert to linear
+        fillColor = rgbToHex(rgb.r, rgb.g, rgb.b);
+    }
+    // else: linear colorspace - use color as-is (no conversion)
+
+    // Fill with solid color
+    ctx.fillStyle = fillColor;
+    ctx.fillRect(0, 0, 256, 256);
+
+    const texture = new THREE.CanvasTexture(canvas);
+    texture.mapping = THREE.EquirectangularReflectionMapping;
+
+    // Set colorspace based on setting
+    if (colorspace === 'sRGB') {
+        texture.colorSpace = THREE.LinearSRGBColorSpace;
+    } else {
+        texture.colorSpace = THREE.LinearSRGBColorSpace; // Already linear
+    }
+
+    return pmremGenerator.fromEquirectangular(texture).texture;
+}
+
 function applyEnvironment() {
     scene.environment = envMap;
     updateBackground();
     updateEnvIntensity();
+
+    // Update envMap reference on all existing materials
+    currentMaterials.forEach(mat => {
+        mat.envMap = envMap;
+        mat.needsUpdate = true;  // Flag material for shader recompilation
+    });
 }
 
 function updateBackground() {
@@ -284,6 +807,14 @@ function updateBackground() {
         scene.background = envMap;
     } else {
         scene.background = new THREE.Color(0x1a1a1a);
+    }
+}
+
+function updateConstantColorEnvironment() {
+    // Only update if constant color environment is selected
+    if (settings.envMapPreset === 'constant_color') {
+        envMap = createConstantColorEnvironment(settings.envConstantColor, settings.envColorspace);
+        applyEnvironment();
     }
 }
 
@@ -306,6 +837,252 @@ function updateToneMapping(value) {
         'neutral': THREE.NeutralToneMapping
     };
     renderer.toneMapping = mappings[value] || THREE.ACESFilmicToneMapping;
+}
+
+// ============================================================================
+// DomeLight Environment Map Loading
+// ============================================================================
+
+/**
+ * Extract DomeLight from USD scene and load its environment map
+ * @param {Object} usdLoader - Native USD loader instance
+ * @returns {Promise<Object|null>} DomeLight data or null if not found
+ */
+async function loadDomeLightFromUSD(usdLoader) {
+    try {
+        const numLights = usdLoader.numLights ? usdLoader.numLights() : 0;
+        console.log(`Checking USD for lights (found ${numLights})`);
+
+        if (numLights === 0) {
+            return null;
+        }
+
+        // Look for DomeLight
+        for (let i = 0; i < numLights; i++) {
+            const light = usdLoader.getLight(i);
+
+            if (light.error) {
+                console.warn(`Error getting light ${i}:`, light.error);
+                continue;
+            }
+
+            console.log(`Light ${i}:`, light);
+
+            // Check if this is a DomeLight
+            if (light.type === 'dome' || light.type === 'Dome' || light.type === 'DomeLight') {
+                console.log(`Found DomeLight: "${light.name || 'unnamed'}"`);
+
+                // Extract texture file path
+                const textureFile = light.textureFile || light.texture_file;
+
+                if (textureFile) {
+                    console.log(`DomeLight has texture: ${textureFile}`);
+
+                    // Load the environment texture from USD
+                    try {
+                        // Get texture data from USD loader
+                        const textureData = usdLoader.getTextureImage ?
+                            usdLoader.getTextureImage(textureFile) : null;
+
+                        if (textureData && !textureData.error) {
+                            console.log(`Loaded DomeLight texture from USD: ${textureFile}`);
+
+                            // Create texture from image data
+                            const texture = await createTextureFromData(
+                                textureData.data,
+                                textureData.width,
+                                textureData.height,
+                                textureData.channels,
+                                textureData.format
+                            );
+
+                            if (texture) {
+                                // Generate environment map
+                                envMap = pmremGenerator.fromEquirectangular(texture).texture;
+                                texture.dispose();
+
+                                // Apply intensity and exposure
+                                let intensity = light.intensity !== undefined ? light.intensity : 1.0;
+                                if (light.exposure !== undefined && light.exposure !== 0) {
+                                    intensity *= Math.pow(2, light.exposure);
+                                }
+
+                                settings.envMapIntensity = intensity;
+                                settings.envMapPreset = 'usd_dome'; // Set to USD DomeLight
+
+                                applyEnvironment();
+                                updateStatus(`Loaded DomeLight environment from USD: ${textureFile}`);
+
+                                // Store DomeLight data
+                                usdDomeLightData = {
+                                    name: light.name,
+                                    textureFile: textureFile,
+                                    intensity: intensity,
+                                    color: light.color,
+                                    exposure: light.exposure
+                                };
+
+                                return usdDomeLightData;
+                            }
+                        } else {
+                            // Fallback: Try loading the texture directly using Three.js loaders
+                            console.log(`USD layer could not provide texture data, trying direct load: ${textureFile}`);
+                            console.log(`File extension check: .exr=${textureFile.toLowerCase().endsWith('.exr')}, .hdr=${textureFile.toLowerCase().endsWith('.hdr')}`);
+
+                            try {
+                                let texture = null;
+
+                                // Check file extension to determine loader
+                                if (textureFile.toLowerCase().endsWith('.exr')) {
+                                    console.log(`Detected EXR file, using EXRLoader: ${textureFile}`);
+                                    const exrLoader = new EXRLoader();
+                                    texture = await exrLoader.loadAsync(textureFile);
+                                    texture.mapping = THREE.EquirectangularReflectionMapping;
+                                    console.log(`Successfully loaded EXR texture`);
+                                } else if (textureFile.toLowerCase().endsWith('.hdr')) {
+                                    console.log(`Detected HDR file, using HDRLoader: ${textureFile}`);
+                                    const hdrLoader = new HDRLoader();
+                                    texture = await hdrLoader.loadAsync(textureFile);
+                                    texture.mapping = THREE.EquirectangularReflectionMapping;
+                                    console.log(`Successfully loaded HDR texture`);
+                                } else {
+                                    console.warn(`Unknown texture format for file: ${textureFile}`);
+                                }
+
+                                if (texture) {
+                                    // Generate environment map
+                                    envMap = pmremGenerator.fromEquirectangular(texture).texture;
+                                    texture.dispose();
+
+                                    // Apply intensity and exposure
+                                    let intensity = light.intensity !== undefined ? light.intensity : 1.0;
+                                    if (light.exposure !== undefined && light.exposure !== 0) {
+                                        intensity *= Math.pow(2, light.exposure);
+                                    }
+
+                                    settings.envMapIntensity = intensity;
+                                    settings.envMapPreset = 'usd_dome'; // Set to USD DomeLight
+
+                                    applyEnvironment();
+                                    updateStatus(`Loaded DomeLight environment directly: ${textureFile}`);
+
+                                    // Store DomeLight data
+                                    usdDomeLightData = {
+                                        name: light.name,
+                                        textureFile: textureFile,
+                                        intensity: intensity,
+                                        color: light.color,
+                                        exposure: light.exposure
+                                    };
+
+                                    return usdDomeLightData;
+                                } else {
+                                    console.warn(`Could not load texture data for: ${textureFile}`);
+                                }
+                            } catch (fallbackError) {
+                                console.warn(`Failed to load texture directly: ${fallbackError.message}`);
+                            }
+                        }
+                    } catch (error) {
+                        console.warn(`Failed to load DomeLight texture: ${error.message}`);
+                    }
+                } else {
+                    console.log(`DomeLight has no texture file, using constant color`);
+
+                    // Use DomeLight color as constant environment
+                    if (light.color && light.color.length >= 3) {
+                        const colorHex = rgbToHex(light.color[0], light.color[1], light.color[2]);
+                        settings.envConstantColor = colorHex;
+                        settings.envMapPreset = 'usd_dome'; // Set to USD DomeLight
+
+                        let intensity = light.intensity !== undefined ? light.intensity : 1.0;
+                        if (light.exposure !== undefined && light.exposure !== 0) {
+                            intensity *= Math.pow(2, light.exposure);
+                        }
+                        settings.envMapIntensity = intensity;
+
+                        envMap = createConstantColorEnvironment(colorHex, 'linear');
+                        applyEnvironment();
+
+                        // Store DomeLight data
+                        usdDomeLightData = {
+                            name: light.name,
+                            color: light.color,
+                            intensity: intensity,
+                            exposure: light.exposure
+                        };
+
+                        return usdDomeLightData;
+                    }
+                }
+            }
+        }
+
+        console.log('No DomeLight found in USD file');
+        return null;
+    } catch (error) {
+        console.warn('Error loading DomeLight from USD:', error);
+        return null;
+    }
+}
+
+/**
+ * Create Three.js texture from raw image data
+ * @param {Uint8Array} data - Raw image data
+ * @param {number} width - Image width
+ * @param {number} height - Image height
+ * @param {number} channels - Number of channels (3 or 4)
+ * @param {string} format - Image format (e.g., 'rgb', 'rgba', 'float')
+ * @returns {Promise<THREE.Texture|null>}
+ */
+async function createTextureFromData(data, width, height, channels, format) {
+    try {
+        // Create canvas for image data
+        const canvas = document.createElement('canvas');
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext('2d');
+
+        // Convert to ImageData
+        const imageData = ctx.createImageData(width, height);
+
+        // Handle different formats
+        if (format === 'float' || format === 'hdr') {
+            // HDR data - assume float values
+            const floatData = new Float32Array(data.buffer);
+            for (let i = 0; i < width * height; i++) {
+                const srcIdx = i * channels;
+                const dstIdx = i * 4;
+                // Convert float to 8-bit (simple tone mapping)
+                imageData.data[dstIdx + 0] = Math.min(255, floatData[srcIdx + 0] * 255);
+                imageData.data[dstIdx + 1] = Math.min(255, floatData[srcIdx + 1] * 255);
+                imageData.data[dstIdx + 2] = Math.min(255, floatData[srcIdx + 2] * 255);
+                imageData.data[dstIdx + 3] = 255;
+            }
+        } else {
+            // Regular 8-bit data
+            for (let i = 0; i < width * height; i++) {
+                const srcIdx = i * channels;
+                const dstIdx = i * 4;
+                imageData.data[dstIdx + 0] = data[srcIdx + 0];
+                imageData.data[dstIdx + 1] = data[srcIdx + 1];
+                imageData.data[dstIdx + 2] = data[srcIdx + 2];
+                imageData.data[dstIdx + 3] = channels === 4 ? data[srcIdx + 3] : 255;
+            }
+        }
+
+        ctx.putImageData(imageData, 0, 0);
+
+        // Create Three.js texture
+        const texture = new THREE.CanvasTexture(canvas);
+        texture.mapping = THREE.EquirectangularReflectionMapping;
+        texture.colorSpace = THREE.LinearSRGBColorSpace;
+
+        return texture;
+    } catch (error) {
+        console.error('Error creating texture from data:', error);
+        return null;
+    }
 }
 
 // ============================================================================
@@ -436,7 +1213,10 @@ async function loadUSDFromData(data, filename) {
     currentSceneMetadata = {
         upAxis: currentFileUpAxis,
         metersPerUnit: sceneMetadata.metersPerUnit || 1.0,
-        timeCodesPerSecond: sceneMetadata.timeCodesPerSecond || 24.0
+        framesPerSecond: sceneMetadata.framesPerSecond || 24.0,
+        timeCodesPerSecond: sceneMetadata.timeCodesPerSecond || 24.0,
+        startTimeCode: sceneMetadata.startTimeCode,
+        endTimeCode: sceneMetadata.endTimeCode
     };
 
     console.log(`USD Scene Metadata:`, currentSceneMetadata);
@@ -446,6 +1226,20 @@ async function loadUSDFromData(data, filename) {
     const numMaterials = nativeLoader.numMaterials();
 
     updateStatus(`Loaded: ${numMeshes} meshes, ${numMaterials} materials (upAxis: ${currentFileUpAxis})`);
+
+    // Try to load DomeLight environment from USD
+    try {
+        const domeLightData = await loadDomeLightFromUSD(nativeLoader);
+        if (domeLightData) {
+            console.log('Loaded DomeLight from USD:', domeLightData);
+            // Update GUI to show USD DomeLight is selected
+            if (envPresetController) {
+                envPresetController.updateDisplay();
+            }
+        }
+    } catch (error) {
+        console.warn('Error checking for DomeLight:', error);
+    }
 
     // Load materials
     materialData = [];
@@ -523,6 +1317,84 @@ async function loadUSDFromData(data, filename) {
 
         mesh.name = meshData.name || `Mesh_${i}`;
         sceneRoot.add(mesh);
+    }
+
+    // Extract USD animations if available
+    try {
+        animationClips = convertUSDAnimationsToThreeJS(nativeLoader, sceneRoot);
+
+        if (animationClips.length > 0) {
+            console.log(`Extracted ${animationClips.length} animations from USD file`);
+
+            // Create animation mixer on sceneRoot
+            mixer = new THREE.AnimationMixer(sceneRoot);
+            console.log('Created AnimationMixer on sceneRoot');
+
+            // Update metadata with animation info
+            if (currentSceneMetadata.startTimeCode !== undefined && currentSceneMetadata.endTimeCode !== undefined) {
+                animationParams.beginTime = currentSceneMetadata.startTimeCode;
+                animationParams.endTime = currentSceneMetadata.endTimeCode;
+            } else if (animationClips.length > 0) {
+                // Fallback to first clip duration
+                animationParams.beginTime = 0;
+                animationParams.endTime = animationClips[0].duration;
+            }
+
+            // Set FPS from metadata
+            if (currentSceneMetadata.framesPerSecond) {
+                animationParams.speed = currentSceneMetadata.framesPerSecond;
+            } else if (currentSceneMetadata.timeCodesPerSecond) {
+                animationParams.speed = currentSceneMetadata.timeCodesPerSecond;
+            }
+
+            // Set initial time to startTimeCode if available
+            if (currentSceneMetadata.startTimeCode !== undefined) {
+                animationParams.time = currentSceneMetadata.startTimeCode;
+            } else {
+                animationParams.time = 0;
+            }
+
+            // Play all animation clips
+            animationClips.forEach((clip, index) => {
+                const action = mixer.clipAction(clip);
+                action.loop = THREE.LoopRepeat;
+
+                // Set time to startTimeCode for initial evaluation
+                if (currentSceneMetadata.startTimeCode !== undefined) {
+                    action.time = currentSceneMetadata.startTimeCode;
+                }
+
+                action.play();
+                console.log(`Playing animation ${index}: ${clip.name}, duration: ${clip.duration}s`);
+            });
+
+            // Store first action as main action
+            if (animationClips.length > 0) {
+                animationAction = mixer.clipAction(animationClips[0]);
+            }
+
+            // Reset clock to start fresh
+            clock.start();
+
+            // Update GUI time slider max value
+            if (timeController) {
+                timeController.max(animationParams.endTime);
+                timeController.updateDisplay();
+            }
+
+            // Open animation folder to show controls
+            if (animationFolder) {
+                animationFolder.open();
+            }
+
+            updateStatus(`Loaded: ${numMeshes} meshes, ${numMaterials} materials, ${animationClips.length} animations`);
+        } else {
+            console.log('No USD animations found in this USD file');
+            updateStatus(`Loaded: ${numMeshes} meshes, ${numMaterials} materials (upAxis: ${currentFileUpAxis})`);
+        }
+    } catch (error) {
+        console.log('No animations found in USD file or animation extraction not supported:', error);
+        updateStatus(`Loaded: ${numMeshes} meshes, ${numMaterials} materials (upAxis: ${currentFileUpAxis})`);
     }
 
     // Apply upAxis conversion if needed
@@ -661,9 +1533,25 @@ function clearScene() {
     });
     textureCache.clear();
 
+    // Clear animation state
+    if (mixer) {
+        mixer.stopAllAction();
+        mixer = null;
+    }
+    animationClips = [];
+    animationAction = null;
+    animationParams.isPlaying = true;
+    animationParams.time = 0;
+    animationParams.beginTime = 0;
+    animationParams.endTime = 10;
+    clock.stop();
+
     // Reset upAxis to default
     currentFileUpAxis = 'Y';
     currentSceneMetadata = null;
+
+    // Clear USD DomeLight data
+    usdDomeLightData = null;
 
     // Clear WASM memory - reset the native loader to free render scene, assets, etc.
     if (nativeLoader) {
@@ -1074,6 +1962,20 @@ window.loadFile = () => document.getElementById('file-input').click();
 function animate() {
     requestAnimationFrame(animate);
     controls.update();
+
+    // Update animation mixer if animations are loaded
+    if (mixer && animationParams.isPlaying) {
+        const delta = clock.getDelta();
+        // Scale delta by speed (FPS)
+        const scaledDelta = delta * (animationParams.speed / 24.0);
+        mixer.update(scaledDelta);
+
+        // Update time parameter for GUI
+        if (animationAction) {
+            animationParams.time = animationAction.time;
+        }
+    }
+
     renderer.render(scene, camera);
 }
 
