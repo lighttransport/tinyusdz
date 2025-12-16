@@ -139,12 +139,11 @@ const animationState = {
     clips: [],
     action: null,
     params: {
-        isPlaying: true,
+        isPlaying: false,  // Do not auto-play by default
         time: 0,
         beginTime: 0,
         endTime: 10,
-        speed: 24.0,
-        autoPlay: true
+        speed: 24.0
     }
 };
 
@@ -326,7 +325,8 @@ function setupGUI() {
     guiState.textureFolder = guiState.gui.addFolder('Textures');
     guiState.textureFolder.close();
 
-    setupAnimationFolder();
+    // Animation disabled for now - may revisit later
+    // setupAnimationFolder();
 }
 
 function setupSceneFolder() {
@@ -352,7 +352,7 @@ function setupSceneFolder() {
         .name('Env Colorspace')
         .onChange(updateConstantColorEnvironment);
 
-    sceneFolder.add(settings, 'envMapIntensity', 0, 1000, 0.1)
+    sceneFolder.add(settings, 'envMapIntensity', 0, 100, 0.1)
         .name('Env Intensity')
         .onChange(updateEnvIntensity);
 
@@ -385,12 +385,41 @@ function setupSceneFolder() {
         .onChange(toggleAxes);
 }
 
+/*
+ * Animation UI - disabled for now, may revisit later
+ *
 function setupAnimationFolder() {
     guiState.animationFolder = guiState.gui.addFolder('Animation');
 
+    // Play/Pause button
+    const playPauseBtn = {
+        toggle: toggleAnimationPlayback
+    };
+    guiState.animationFolder.add(playPauseBtn, 'toggle').name('Play / Pause');
+
+    // Reset button
+    const resetBtn = {
+        reset: resetAnimation
+    };
+    guiState.animationFolder.add(resetBtn, 'reset').name('Reset');
+
+    // Playing state indicator (read-only checkbox)
     guiState.animationFolder.add(animationState.params, 'isPlaying')
-        .name('Play/Pause')
-        .listen();
+        .name('Playing')
+        .listen()
+        .onChange((value) => {
+            // Sync the playing state with actions
+            if (animationState.mixer) {
+                animationState.clips.forEach((clip) => {
+                    const action = animationState.mixer.clipAction(clip);
+                    action.paused = !value;
+                });
+                // Reset clock delta to avoid jump
+                if (value) {
+                    threeState.clock.getDelta();
+                }
+            }
+        });
 
     guiState.timeController = guiState.animationFolder.add(animationState.params, 'time', 0, 10, 0.01)
         .name('Time')
@@ -413,6 +442,7 @@ function setupAnimationFolder() {
 
     guiState.animationFolder.close();
 }
+*/
 
 function setupMaterialTypeFolder() {
     const materialTypeFolder = guiState.gui.addFolder('Material Type');
@@ -437,9 +467,10 @@ function setupEventListeners() {
     container.addEventListener('click', onCanvasClick);
 }
 
-// ============================================================================
-// Animation Control
-// ============================================================================
+/*
+ * ============================================================================
+ * Animation Control - disabled for now, may revisit later
+ * ============================================================================
 
 function scrubToTime(time) {
     if (!animationState.mixer || !animationState.action) return;
@@ -632,6 +663,9 @@ function getUSDInterpolationMode(interpolation) {
     if (mode === 'CUBICSPLINE') return THREE.InterpolateSmooth;
     return THREE.InterpolateLinear;
 }
+
+End of Animation Control block
+*/
 
 // ============================================================================
 // Environment Loading
@@ -995,7 +1029,8 @@ async function loadUSDFromData(data, filename) {
     loadSceneMetadata();
     await buildSceneGraph();
     await loadDomeLight();
-    loadAnimations();
+    // Animation disabled for now - may revisit later
+    // loadAnimations();
     initUpAxisConversion();
     applyUpAxisConversion();
     fitCameraToScene();
@@ -1195,13 +1230,31 @@ async function loadDomeLight() {
 
 function loadAnimations() {
     try {
+        const numAnimations = loaderState.nativeLoader.numAnimations();
+        console.log(`USD file contains ${numAnimations} animations`);
+
+        if (numAnimations === 0) {
+            console.log('No animations in USD file');
+            return;
+        }
+
         animationState.clips = convertUSDAnimationsToThreeJS(loaderState.nativeLoader, sceneState.root);
+        console.log(`Converted ${animationState.clips.length} animation clips`);
 
         if (animationState.clips.length > 0) {
+            // Create mixer on the scene root
             animationState.mixer = new THREE.AnimationMixer(sceneState.root);
+            console.log('Created AnimationMixer on sceneState.root:', sceneState.root.name, 'uuid:', sceneState.root.uuid);
+
+            // Debug: List objects in the scene that could be animation targets
+            console.log('=== Scene objects available for animation ===');
+            sceneState.root.traverse((obj) => {
+                console.log(`  "${obj.name}" (${obj.type}) uuid: ${obj.uuid.slice(0, 8)}`);
+            });
+            console.log('============================================');
 
             updateAnimationParams();
-            playAnimationClips();
+            prepareAnimationClips();  // Prepare but don't auto-play
 
             if (guiState.timeController) {
                 guiState.timeController.max(animationState.params.endTime);
@@ -1214,10 +1267,10 @@ function loadAnimations() {
 
             const numMeshes = loaderState.nativeLoader.numMeshes();
             const numMaterials = loaderState.nativeLoader.numMaterials();
-            updateStatus(`Loaded: ${numMeshes} meshes, ${numMaterials} materials, ${animationState.clips.length} animations`);
+            updateStatus(`Loaded: ${numMeshes} meshes, ${numMaterials} materials, ${animationState.clips.length} animations (paused)`);
         }
     } catch (error) {
-        // Animation extraction not supported or no animations
+        console.error('Error loading animations:', error);
     }
 }
 
@@ -1236,21 +1289,91 @@ function updateAnimationParams() {
     animationState.params.time = metadata.startTimeCode !== undefined ? metadata.startTimeCode : 0;
 }
 
-function playAnimationClips() {
-    animationState.clips.forEach((clip) => {
+/**
+ * Prepare animation clips for playback (but don't auto-play)
+ * Sets up all clips with proper loop settings and initial time
+ */
+function prepareAnimationClips() {
+    const startTime = sceneState.metadata?.startTimeCode ?? 0;
+
+    animationState.clips.forEach((clip, clipIndex) => {
         const action = animationState.mixer.clipAction(clip);
         action.loop = THREE.LoopRepeat;
-        if (sceneState.metadata.startTimeCode !== undefined) {
-            action.time = sceneState.metadata.startTimeCode;
-        }
-        action.play();
+        action.clampWhenFinished = false;
+        action.enabled = true;
+        action.setEffectiveWeight(1.0);
+        action.time = startTime;
+        action.paused = true;  // Start paused
+        action.play();  // Register the action (but it's paused)
+
+        console.log(`Prepared animation clip ${clipIndex}: "${clip.name}", ${clip.tracks.length} tracks, duration: ${clip.duration}s`);
+
+        // Debug: log track targets
+        clip.tracks.forEach(track => {
+            console.log(`  Track: ${track.name}`);
+        });
     });
 
     if (animationState.clips.length > 0) {
         animationState.action = animationState.mixer.clipAction(animationState.clips[0]);
     }
 
+    // Force initial pose evaluation
+    // This is critical - without this, the paused animation won't show initial state
+    animationState.mixer.update(0);
+
+    // Start the clock but don't start playing
     threeState.clock.start();
+    threeState.clock.getDelta(); // Reset delta to avoid large jump when playing starts
+
+    console.log(`Animation prepared: ${animationState.clips.length} clips, starting paused at time ${startTime}`);
+}
+
+/**
+ * Toggle animation playback
+ */
+function toggleAnimationPlayback() {
+    if (!animationState.mixer) {
+        console.warn('No animation mixer - cannot toggle playback');
+        return;
+    }
+
+    animationState.params.isPlaying = !animationState.params.isPlaying;
+    console.log(`Animation playback: ${animationState.params.isPlaying ? 'PLAYING' : 'PAUSED'}`);
+
+    animationState.clips.forEach((clip) => {
+        const action = animationState.mixer.clipAction(clip);
+        action.paused = !animationState.params.isPlaying;
+        console.log(`  Action "${clip.name}": paused=${action.paused}, time=${action.time.toFixed(3)}`);
+    });
+
+    // Reset clock delta to avoid large jump when resuming
+    if (animationState.params.isPlaying) {
+        threeState.clock.getDelta();
+    }
+}
+
+/**
+ * Reset animation to beginning
+ */
+function resetAnimation() {
+    if (!animationState.mixer) return;
+
+    animationState.params.time = animationState.params.beginTime;
+
+    animationState.clips.forEach((clip) => {
+        const action = animationState.mixer.clipAction(clip);
+        action.time = animationState.params.beginTime;
+    });
+
+    // Force update to show the reset position
+    animationState.mixer.update(0.0001);
+
+    // Reset to exact time after evaluation
+    animationState.clips.forEach((clip) => {
+        const action = animationState.mixer.clipAction(clip);
+        action.time = animationState.params.beginTime;
+    });
 }
 
 function updateModelInfo() {
@@ -1404,7 +1527,7 @@ function clearScene() {
     }
     animationState.clips = [];
     animationState.action = null;
-    animationState.params.isPlaying = true;
+    animationState.params.isPlaying = false;  // Reset to not playing
     animationState.params.time = 0;
     animationState.params.beginTime = 0;
     animationState.params.endTime = 10;
@@ -1507,9 +1630,9 @@ function updateMaterialUI() {
         });
         headerText = 'Single Mesh';
     } else {
-        // Show all materials
-        materialsToShow = sceneState.materials;
-        headerText = 'All Materials';
+        // Multiple objects - show nothing initially, require selection
+        materialsToShow = [];
+        headerText = 'Click object to select';
     }
 
     // Add header info
@@ -1879,22 +2002,23 @@ function updateStatus(message) {
 window.loadFile = () => document.getElementById('file-input').click();
 
 // ============================================================================
-// Animation Loop
+// Render Loop
 // ============================================================================
 
 function animate() {
     requestAnimationFrame(animate);
     threeState.controls.update();
 
-    if (animationState.mixer && animationState.params.isPlaying) {
-        const delta = threeState.clock.getDelta();
-        const scaledDelta = delta * (animationState.params.speed / 24.0);
-        animationState.mixer.update(scaledDelta);
-
-        if (animationState.action) {
-            animationState.params.time = animationState.action.time;
-        }
-    }
+    // Animation disabled for now - may revisit later
+    // if (animationState.mixer && animationState.params.isPlaying) {
+    //     const delta = threeState.clock.getDelta();
+    //     const scaledDelta = delta * (animationState.params.speed / 24.0);
+    //     animationState.mixer.update(scaledDelta);
+    //
+    //     if (animationState.action) {
+    //         animationState.params.time = animationState.action.time;
+    //     }
+    // }
 
     threeState.renderer.render(threeState.scene, threeState.camera);
 }
