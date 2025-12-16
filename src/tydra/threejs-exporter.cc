@@ -973,6 +973,18 @@ json ThreeJSSceneExporter::ConvertNode(const Node& node, const RenderScene& scen
     case NodeType::EnvmapLight:
       obj["type"] = "EnvironmentLight";
       break;
+    case NodeType::RectLight:
+      obj["type"] = "RectAreaLight";
+      break;
+    case NodeType::DiskLight:
+      obj["type"] = "DiskLight";
+      break;
+    case NodeType::CylinderLight:
+      obj["type"] = "CylinderLight";
+      break;
+    case NodeType::GeometryLight:
+      obj["type"] = "GeometryLight";
+      break;
   }
 
   // Transform matrix

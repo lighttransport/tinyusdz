@@ -100,6 +100,18 @@ std::string to_string(ColorSpace cty) {
   return s;
 }
 
+std::string to_string(NodeCategory category) {
+  switch (category) {
+    case NodeCategory::Group:    return "group";
+    case NodeCategory::Geom:     return "geom";
+    case NodeCategory::Light:    return "light";
+    case NodeCategory::Camera:   return "camera";
+    case NodeCategory::Material: return "material";
+    case NodeCategory::Skeleton: return "skeleton";
+  }
+  return "???";
+}
+
 std::string to_string(NodeType ntype) {
   if (ntype == NodeType::Xform) {
     return "xform";
@@ -113,6 +125,16 @@ std::string to_string(NodeType ntype) {
     return "directionalLight";
   } else if (ntype == NodeType::Skeleton) {
     return "skeleton";
+  } else if (ntype == NodeType::EnvmapLight) {
+    return "envmapLight";
+  } else if (ntype == NodeType::RectLight) {
+    return "rectLight";
+  } else if (ntype == NodeType::DiskLight) {
+    return "diskLight";
+  } else if (ntype == NodeType::CylinderLight) {
+    return "cylinderLight";
+  } else if (ntype == NodeType::GeometryLight) {
+    return "geometryLight";
   }
   return "???";
 }
