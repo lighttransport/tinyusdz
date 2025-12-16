@@ -53,6 +53,13 @@
 #include "lightusd/prim.hh"
 #include "lightusd/stage.hh"
 
+// Primvar support
+#include "lightusd/primvar.hh"
+
+// Schema validation
+#include "lightusd/schema.hh"
+#include "lightusd/schema_registry.hh"
+
 // USDA reader/writer
 #include "lightusd/usda_reader.hh"
 #include "lightusd/usda_writer.hh"

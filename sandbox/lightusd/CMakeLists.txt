@@ -6,8 +6,8 @@
 cmake_minimum_required(VERSION 3.14)
 project(lightusd VERSION 0.1.0 LANGUAGES C CXX)
 
-# C++ standard
-set(CMAKE_CXX_STANDARD 14)
+# C++ standard - C++17 required for std::optional, std::string_view, if constexpr, etc.
+set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
@@ -52,6 +52,11 @@ set(LIGHTUSD_SOURCES
     src/pcp_cache.cc
     # Render Data (WebGPU conversion)
     src/render_data.cc
+    # Primvar support
+    src/primvar.cc
+    # Schema validation
+    src/schema.cc
+    src/schema_registry.cc
 )
 
 # Header files (for IDE support)
@@ -95,6 +100,11 @@ set(LIGHTUSD_HEADERS
     include/lightusd/pcp_cache.hh
     # Render Data (WebGPU conversion)
     include/lightusd/render_data.hh
+    # Primvar support
+    include/lightusd/primvar.hh
+    # Schema validation
+    include/lightusd/schema.hh
+    include/lightusd/schema_registry.hh
 )
 
 # Library target
