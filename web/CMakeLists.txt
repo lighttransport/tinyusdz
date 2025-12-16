@@ -8,6 +8,7 @@ list(APPEND CMAKE_MODULE_PATH ${PROJECT_SOURCE_DIR}/../cmake)
 
 
 option(TINYUSDZ_WASM64 "Use wasm64(memory64). Available only for Chrome and Firefox as of 2025 Jul" OFF)
+option(TINYUSDZ_WASM_DEBUG "Enable WASM debug mode with source maps and assertions" OFF)
 
 if (TINYUSDZ_WASM64)
   set(BUILD_TARGET "tinyusdz_64")
@@ -25,12 +26,24 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 
 if (CMAKE_BUILD_TYPE STREQUAL "Debug")
 
-  if (TINYUSDZ_WASM64)
-    set(CMAKE_CXX_FLAGS_DEBUG "-g4 -sMEMORY64")
-    set(CMAKE_C_FLAGS_DEBUG "-g4 -sMEMORY64")
+  if (TINYUSDZ_WASM_DEBUG)
+    # Enhanced debug mode with source maps
+    if (TINYUSDZ_WASM64)
+      set(CMAKE_CXX_FLAGS_DEBUG "-g -gsource-map -sMEMORY64")
+      set(CMAKE_C_FLAGS_DEBUG "-g -gsource-map -sMEMORY64")
+    else()
+      set(CMAKE_CXX_FLAGS_DEBUG "-g -gsource-map")
+      set(CMAKE_C_FLAGS_DEBUG "-g -gsource-map")
+    endif()
   else()
-    set(CMAKE_CXX_FLAGS_DEBUG "-g4") # -sMEMORY64"
-    set(CMAKE_C_FLAGS_DEBUG "-g4") # -sMEMORY64"
+    # Standard debug mode
+    if (TINYUSDZ_WASM64)
+      set(CMAKE_CXX_FLAGS_DEBUG "-g4 -sMEMORY64")
+      set(CMAKE_C_FLAGS_DEBUG "-g4 -sMEMORY64")
+    else()
+      set(CMAKE_CXX_FLAGS_DEBUG "-g4")
+      set(CMAKE_C_FLAGS_DEBUG "-g4")
+    endif()
   endif()
 
 elseif (CMAKE_BUILD_TYPE STREQUAL "MinSizeRel")
@@ -109,18 +122,37 @@ endif()
 # flags = try to lower heap memory use
 
 if (CMAKE_BUILD_TYPE STREQUAL "Debug")
-  set(TINYUSDZ_EMCC_LINK_FLAGS "-g4 -sENVIRONMENT='web,worker,node' \
-   -sMALLOC=emmalloc \
-   -sSTACK_SIZE=1024000 \
-   -sALLOW_MEMORY_GROWTH=1 \
-   -sFILESYSTEM=0 \
-   -sSAFE_HEAP=1 \
-   -sWASM_BIGINT=1 \
-   -sMODULARIZE=1 -sEXPORT_ES6 \
-   -sINVOKE_RUN=0 --bind \
-   -sDISABLE_EXCEPTION_CATCHING=0 \
-   -sNO_DISABLE_EXCEPTION_CATCHING \
-   --source-map-base http://localhost:5173/ ")
+  if (TINYUSDZ_WASM_DEBUG)
+    # Enhanced debug mode with source maps, stack traces, and runtime checks
+    set(TINYUSDZ_EMCC_LINK_FLAGS "-g -gsource-map -sENVIRONMENT='web,worker,node' \
+     -sMALLOC=emmalloc \
+     -sSTACK_SIZE=1024000 \
+     -sALLOW_MEMORY_GROWTH=1 \
+     -sFILESYSTEM=0 \
+     -sSAFE_HEAP=1 \
+     -sSTACK_OVERFLOW_CHECK=2 \
+     -sASSERTIONS=2 \
+     -sWASM_BIGINT=1 \
+     -sMODULARIZE=1 -sEXPORT_ES6 \
+     -sINVOKE_RUN=0 --bind \
+     -sDISABLE_EXCEPTION_CATCHING=0 \
+     -sNO_DISABLE_EXCEPTION_CATCHING \
+     --source-map-base http://localhost:5173/ ")
+  else()
+    # Standard debug mode
+    set(TINYUSDZ_EMCC_LINK_FLAGS "-g4 -sENVIRONMENT='web,worker,node' \
+     -sMALLOC=emmalloc \
+     -sSTACK_SIZE=1024000 \
+     -sALLOW_MEMORY_GROWTH=1 \
+     -sFILESYSTEM=0 \
+     -sSAFE_HEAP=1 \
+     -sWASM_BIGINT=1 \
+     -sMODULARIZE=1 -sEXPORT_ES6 \
+     -sINVOKE_RUN=0 --bind \
+     -sDISABLE_EXCEPTION_CATCHING=0 \
+     -sNO_DISABLE_EXCEPTION_CATCHING \
+     --source-map-base http://localhost:5173/ ")
+  endif()
 else()
   set(TINYUSDZ_EMCC_LINK_FLAGS "-Oz -sENVIRONMENT='web,worker,node' \
    -sMALLOC=emmalloc \
@@ -139,6 +171,9 @@ if (TINYUSDZ_WASM64)
 else()
   string(APPEND TINYUSDZ_EMCC_LINK_FLAGS " -sASSERTIONS=1 ")
 endif()
+
+# Export HEAPU8 for zero-copy streaming transfer from JS to WASM
+string(APPEND TINYUSDZ_EMCC_LINK_FLAGS " -sEXPORTED_RUNTIME_METHODS=['HEAPU8']")
 message(STATUS ${TINYUSDZ_EMCC_LINK_FLAGS})
 
 set_target_properties(${BUILD_TARGET} PROPERTIES LINK_FLAGS "${TINYUSDZ_EMCC_LINK_FLAGS}")

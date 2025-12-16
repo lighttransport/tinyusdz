@@ -8,6 +8,7 @@
     "dev:anim": "vite --open /animation.html",
     "dev:skel": "vite --open /skining-anim.html",
     "dev:mtlx": "vite --open /materialx.html",
+    "dev:webgpu": "vite --open /mtlx-webgpu.html",
     "build": "vite build",
     "preview": "vite preview",
     "cli": "vite-node load-test-node.js",

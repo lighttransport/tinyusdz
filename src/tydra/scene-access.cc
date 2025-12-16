@@ -8,6 +8,7 @@
 #include "prim-pprint.hh"
 #include "prim-types.hh"
 #include "primvar.hh"
+#include "tiny-container.hh"
 #include "tiny-format.hh"
 #include "tydra/prim-apply.hh"
 #include "usdGeom.hh"
@@ -108,57 +109,135 @@ value::TimeSamples EnumTimeSamplesToTypelessTimeSamples(
   return dst;
 }
 
+// Optimized iterative traversal using explicit stack
+// Avoids recursion and reuses path buffer to minimize string allocations
 template <typename T>
-bool TraverseRec(const std::string &path_prefix, const tinyusdz::Prim &prim,
-                 uint32_t depth, PathPrimMap<T> &itemmap) {
-  if (depth > 1024 * 128) {
-    // Too deep
-    return false;
-  }
+bool TraverseIterative(const tinyusdz::Prim &root_prim, PathPrimMap<T> &itemmap) {
+  // Stack stores: (prim pointer, child index, path length before this prim)
+  StackVector<std::tuple<const tinyusdz::Prim *, size_t, size_t>, 4> stack;
+  stack.reserve(64);
 
-  std::string prim_abs_path =
-      path_prefix + "/" + prim.local_path().full_path_name();
+  // Shared path buffer - reuse to avoid allocations
+  std::string path_buffer;
+  path_buffer.reserve(256);
 
-  if (prim.is<T>()) {
-    if (const T *pv = prim.as<T>()) {
-      DCOUT("Path : <" << prim_abs_path << "> is " << tinyusdz::value::TypeTraits<T>::type_name());
-      itemmap[prim_abs_path] = pv;
+  // Process root prim
+  path_buffer = "/" + root_prim.local_path().full_path_name();
+
+  if (root_prim.is<T>()) {
+    if (const T *pv = root_prim.as<T>()) {
+      DCOUT("Path : <" << path_buffer << "> is " << tinyusdz::value::TypeTraits<T>::type_name());
+      itemmap[path_buffer] = pv;
     }
   }
 
-  for (const auto &child : prim.children()) {
-    if (!TraverseRec(prim_abs_path, child, depth + 1, itemmap)) {
-      return false;
+  if (!root_prim.children().empty()) {
+    stack.emplace_back(&root_prim, 0, 0);  // path_len=0 since "/" is implicit
+  }
+
+  while (!stack.empty()) {
+    auto &top = stack.back();
+    const tinyusdz::Prim *parent = std::get<0>(top);
+    size_t &child_idx = std::get<1>(top);
+    const size_t parent_path_len = std::get<2>(top);
+
+    if (child_idx >= parent->children().size()) {
+      // All children processed, backtrack
+      // Restore path to parent's length
+      path_buffer.resize(parent_path_len);
+      stack.pop_back();
+      continue;
+    }
+
+    const tinyusdz::Prim &child = parent->children()[child_idx];
+    ++child_idx;
+
+    // Build path for this child
+    size_t current_path_len = path_buffer.size();
+    path_buffer += "/";
+    path_buffer += child.local_path().full_path_name();
+
+    // Check and add to map if type matches
+    if (child.is<T>()) {
+      if (const T *pv = child.as<T>()) {
+        DCOUT("Path : <" << path_buffer << "> is " << tinyusdz::value::TypeTraits<T>::type_name());
+        itemmap[path_buffer] = pv;
+      }
+    }
+
+    // Push child to stack if it has children
+    if (!child.children().empty()) {
+      stack.emplace_back(&child, 0, current_path_len);
+    } else {
+      // No children, restore path immediately
+      path_buffer.resize(current_path_len);
     }
   }
 
   return true;
 }
 
-// Specialization for Shader type.
+// Optimized iterative shader traversal using explicit stack
+// Avoids recursion and reuses path buffer to minimize string allocations
 template <typename ShaderTy>
-bool TraverseShaderRec(const std::string &path_prefix,
-                       const tinyusdz::Prim &prim, uint32_t depth,
-                       PathShaderMap<ShaderTy> &itemmap) {
-  if (depth > 1024 * 128) {
-    // Too deep
-    return false;
-  }
+bool TraverseShaderIterative(const tinyusdz::Prim &root_prim,
+                             PathShaderMap<ShaderTy> &itemmap) {
+  // Stack stores: (prim pointer, child index, path length before this prim)
+  StackVector<std::tuple<const tinyusdz::Prim *, size_t, size_t>, 4> stack;
+  stack.reserve(64);
 
-  std::string prim_abs_path =
-      path_prefix + "/" + prim.local_path().full_path_name();
+  // Shared path buffer - reuse to avoid allocations
+  std::string path_buffer;
+  path_buffer.reserve(256);
 
-  // First check if type is Shader Prim.
-  if (const Shader *ps = prim.as<Shader>()) {
-    // Then check if wanted Shder type
+  // Process root prim
+  path_buffer = "/" + root_prim.local_path().full_path_name();
+
+  // Check if root is a Shader of the wanted type
+  if (const Shader *ps = root_prim.as<Shader>()) {
     if (const ShaderTy *s = ps->value.as<ShaderTy>()) {
-      itemmap[prim_abs_path] = std::make_pair(ps, s);
+      itemmap[path_buffer] = std::make_pair(ps, s);
     }
   }
 
-  for (const auto &child : prim.children()) {
-    if (!TraverseShaderRec(prim_abs_path, child, depth + 1, itemmap)) {
-      return false;
+  if (!root_prim.children().empty()) {
+    stack.emplace_back(&root_prim, 0, 0);
+  }
+
+  while (!stack.empty()) {
+    auto &top = stack.back();
+    const tinyusdz::Prim *parent = std::get<0>(top);
+    size_t &child_idx = std::get<1>(top);
+    const size_t parent_path_len = std::get<2>(top);
+
+    if (child_idx >= parent->children().size()) {
+      // All children processed, backtrack
+      path_buffer.resize(parent_path_len);
+      stack.pop_back();
+      continue;
+    }
+
+    const tinyusdz::Prim &child = parent->children()[child_idx];
+    ++child_idx;
+
+    // Build path for this child
+    size_t current_path_len = path_buffer.size();
+    path_buffer += "/";
+    path_buffer += child.local_path().full_path_name();
+
+    // Check if this is a Shader of the wanted type
+    if (const Shader *ps = child.as<Shader>()) {
+      if (const ShaderTy *s = ps->value.as<ShaderTy>()) {
+        itemmap[path_buffer] = std::make_pair(ps, s);
+      }
+    }
+
+    // Push child to stack if it has children
+    if (!child.children().empty()) {
+      stack.emplace_back(&child, 0, current_path_len);
+    } else {
+      // No children, restore path immediately
+      path_buffer.resize(current_path_len);
     }
   }
 
@@ -205,7 +284,7 @@ bool ListPrims(const tinyusdz::Stage &stage, PathPrimMap<T> &m /* output */) {
   }
 
   for (const auto &root_prim : stage.root_prims()) {
-    TraverseRec(/* root path is empty */ "", root_prim, /* depth */ 0, m);
+    TraverseIterative(root_prim, m);
   }
 
   return true;
@@ -232,7 +311,7 @@ bool ListShaders(const tinyusdz::Stage &stage,
   }
 
   for (const auto &root_prim : stage.root_prims()) {
-    TraverseShaderRec(/* root path is empty */ "", root_prim, /* depth */ 0, m);
+    TraverseShaderIterative(root_prim, m);
   }
 
   return true;
@@ -315,62 +394,144 @@ template bool ListShaders(const tinyusdz::Stage &stage,
 
 namespace {
 
-bool VisitPrimsRec(const tinyusdz::Path &root_abs_path,
-                   const tinyusdz::Prim &root, int32_t level,
-                   VisitPrimFunction visitor_fun, void *userdata,
-                   std::string *err) {
-  std::string fun_error;
-  bool ret = visitor_fun(root_abs_path, root, level, userdata, &fun_error);
-  if (!ret) {
-    if (fun_error.empty()) {
-      // early termination request.
-      DCOUT("Early termination requested");
+// Optimized iterative version of VisitPrimsRec
+// Handles primChildren ordering and early termination
+bool VisitPrimsIterative(const tinyusdz::Path &start_abs_path,
+                         const tinyusdz::Prim &start_prim, int32_t start_level,
+                         VisitPrimFunction visitor_fun, void *userdata,
+                         std::string *err) {
+  // Stack entry: (prim pointer, ordered children to visit, current child index, level, parent path)
+  struct StackEntry {
+    const tinyusdz::Prim *prim;
+    std::vector<const tinyusdz::Prim *> ordered_children;
+    size_t child_idx;
+    int32_t level;
+    tinyusdz::Path abs_path;
+
+    StackEntry(const tinyusdz::Prim *p, int32_t lvl, tinyusdz::Path path)
+        : prim(p), child_idx(0), level(lvl), abs_path(std::move(path)) {}
+  };
+
+  StackVector<StackEntry, 4> stack;
+  stack.reserve(64);
+
+  // Helper to get ordered children list
+  auto get_ordered_children = [err](const tinyusdz::Prim &prim)
+      -> std::pair<bool, std::vector<const tinyusdz::Prim *>> {
+    std::vector<const tinyusdz::Prim *> result;
+
+    if (prim.children().empty()) {
+      return {true, result};
+    }
+
+    // If primChildren metadata matches children count, use it for ordering
+    if (prim.metas().primChildren.size() == prim.children().size()) {
+      std::map<std::string, const tinyusdz::Prim *> primNameTable;
+      for (size_t i = 0; i < prim.children().size(); i++) {
+        primNameTable.emplace(prim.children()[i].element_name(),
+                              &prim.children()[i]);
+      }
+
+      for (size_t i = 0; i < prim.metas().primChildren.size(); i++) {
+        value::token nameTok = prim.metas().primChildren[i];
+        const auto it = primNameTable.find(nameTok.str());
+        if (it != primNameTable.end()) {
+          result.push_back(it->second);
+        } else {
+          if (err) {
+            (*err) += fmt::format(
+                "Prim name `{}` in `primChildren` metadatum not found in this "
+                "Prim's children",
+                nameTok.str());
+          }
+          return {false, {}};
+        }
+      }
     } else {
-      if (err) {
-        (*err) += fmt::format(
-            "Visit function returned an error for Prim {} (id {}). err = {}",
-            root_abs_path.full_path_name(), root.prim_id(), fun_error);
+      // Use natural order
+      for (const auto &child : prim.children()) {
+        result.push_back(&child);
       }
     }
-    return false;
-  }
 
-  // if `primChildren` is available, use it
-  if (root.metas().primChildren.size() == root.children().size()) {
-    std::map<std::string, const Prim *> primNameTable;
-    for (size_t i = 0; i < root.children().size(); i++) {
-      primNameTable.emplace(root.children()[i].element_name(),
-                            &root.children()[i]);
-    }
+    return {true, result};
+  };
 
-    for (size_t i = 0; i < root.metas().primChildren.size(); i++) {
-      value::token nameTok = root.metas().primChildren[i];
-      const auto it = primNameTable.find(nameTok.str());
-      if (it != primNameTable.end()) {
-        const Path child_abs_path = root_abs_path.AppendPrim(nameTok.str());
-        if (!VisitPrimsRec(child_abs_path, *it->second, level + 1, visitor_fun,
-                           userdata, err)) {
-          return false;
-        }
+  // Visit start prim first
+  {
+    std::string fun_error;
+    bool ret = visitor_fun(start_abs_path, start_prim, start_level, userdata, &fun_error);
+    if (!ret) {
+      if (fun_error.empty()) {
+        DCOUT("Early termination requested");
       } else {
         if (err) {
           (*err) += fmt::format(
-              "Prim name `{}` in `primChildren` metadatum not found in this "
-              "Prim's children",
-              nameTok.str());
+              "Visit function returned an error for Prim {} (id {}). err = {}",
+              start_abs_path.full_path_name(), start_prim.prim_id(), fun_error);
         }
-        return false;
       }
+      return false;
+    }
+  }
+
+  // Get ordered children for start prim
+  std::pair<bool, std::vector<const tinyusdz::Prim *>> start_result =
+      get_ordered_children(start_prim);
+  if (!start_result.first) {
+    return false;
+  }
+
+  if (!start_result.second.empty()) {
+    StackEntry entry(&start_prim, start_level, start_abs_path);
+    entry.ordered_children = std::move(start_result.second);
+    stack.push_back(std::move(entry));
+  }
+
+  // Iterative traversal
+  while (!stack.empty()) {
+    auto &top = stack.back();
+
+    if (top.child_idx >= top.ordered_children.size()) {
+      // All children processed, backtrack
+      stack.pop_back();
+      continue;
     }
 
-  } else {
-    for (const auto &child : root.children()) {
-      const Path child_abs_path =
-          root_abs_path.AppendPrim(child.element_name());
-      if (!VisitPrimsRec(child_abs_path, child, level + 1, visitor_fun,
-                         userdata, err)) {
-        return false;
+    const tinyusdz::Prim *child = top.ordered_children[top.child_idx];
+    ++top.child_idx;
+
+    // Build path for this child
+    tinyusdz::Path child_abs_path = top.abs_path.AppendPrim(child->element_name());
+    int32_t child_level = top.level + 1;
+
+    // Call visitor
+    std::string fun_error;
+    bool ret = visitor_fun(child_abs_path, *child, child_level, userdata, &fun_error);
+    if (!ret) {
+      if (fun_error.empty()) {
+        DCOUT("Early termination requested");
+      } else {
+        if (err) {
+          (*err) += fmt::format(
+              "Visit function returned an error for Prim {} (id {}). err = {}",
+              child_abs_path.full_path_name(), child->prim_id(), fun_error);
+        }
       }
+      return false;
+    }
+
+    // Get ordered children for this child
+    std::pair<bool, std::vector<const tinyusdz::Prim *>> child_result =
+        get_ordered_children(*child);
+    if (!child_result.first) {
+      return false;
+    }
+
+    if (!child_result.second.empty()) {
+      StackEntry entry(child, child_level, std::move(child_abs_path));
+      entry.ordered_children = std::move(child_result.second);
+      stack.push_back(std::move(entry));
     }
   }
 
@@ -565,7 +726,7 @@ bool ToProperty(const TypedAttribute<Animatable<T>> &input, Property &output, st
 
       if (aval.value().has_timesamples()) {
         value::TimeSamples ts = ToTypelessTimeSamples(aval.value().get_timesamples());
-        pvar.set_timesamples(ts);
+        pvar.set_timesamples(std::move(ts));
       }
 
       if (aval.value().has_value() || aval.value().has_timesamples()) {
@@ -641,7 +802,7 @@ bool ToProperty(const TypedAttributeWithFallback<Animatable<T>> &input,
 
     if (v.is_timesamples()) {
       value::TimeSamples ts = ToTypelessTimeSamples(v.get_timesamples());
-      pvar.set_timesamples(ts);
+      pvar.set_timesamples(std::move(ts));
     } else if (v.is_scalar()) {
       T a;
       if (v.get_scalar(&a)) {
@@ -694,7 +855,7 @@ bool ToProperty(const TypedAttributeWithFallback<Animatable<T>> &input,
 
     if (v.has_timesamples()) {
       value::TimeSamples ts = ToTypelessTimeSamples(v.get_timesamples());
-      pvar.set_timesamples(ts);
+      pvar.set_timesamples(std::move(ts));
     }
 
     if (v.has_value()) {
@@ -773,7 +934,7 @@ bool ToTokenProperty(const TypedAttributeWithFallback<Animatable<T>> &input,
     if (v.is_timesamples()) {
       value::TimeSamples ts =
           EnumTimeSamplesToTypelessTimeSamples(v.get_timesamples());
-      pvar.set_timesamples(ts);
+      pvar.set_timesamples(std::move(ts));
     } else if (v.is_scalar()) {
       T a;
       if (v.get_scalar(&a)) {
@@ -822,7 +983,7 @@ bool ToTokenProperty(const TypedAttributeWithFallback<Animatable<T>> &input,
     if (v.has_timesamples()) {
       value::TimeSamples ts =
           EnumTimeSamplesToTypelessTimeSamples(v.get_timesamples());
-      pvar.set_timesamples(ts);
+      pvar.set_timesamples(std::move(ts));
     }
 
     if (v.has_default()) {
@@ -1929,8 +2090,8 @@ bool VisitPrims(const tinyusdz::Stage &stage, VisitPrimFunction visitor_fun,
       const auto it = primNameTable.find(nameTok.str());
       if (it != primNameTable.end()) {
         const Path root_abs_path("/" + nameTok.str(), "");
-        if (!VisitPrimsRec(root_abs_path, *it->second, 0, visitor_fun, userdata,
-                           err)) {
+        if (!VisitPrimsIterative(root_abs_path, *it->second, 0, visitor_fun,
+                                 userdata, err)) {
           return false;
         }
       } else {
@@ -1947,8 +2108,8 @@ bool VisitPrims(const tinyusdz::Stage &stage, VisitPrimFunction visitor_fun,
   } else {
     for (const auto &root : stage.root_prims()) {
       const Path root_abs_path("/" + root.element_name(), /* prop part */ "");
-      if (!VisitPrimsRec(root_abs_path, root, /* root level */ 0, visitor_fun,
-                         userdata, err)) {
+      if (!VisitPrimsIterative(root_abs_path, root, /* root level */ 0,
+                               visitor_fun, userdata, err)) {
         return false;
       }
     }
@@ -2132,20 +2293,12 @@ bool ListSceneNames(const tinyusdz::Prim &root,
 
 namespace {
 
-bool BuildXformNodeFromStageRec(
-    const tinyusdz::Stage &stage, const Path &parent_abs_path, const Prim *prim,
-    XformNode *nodeOut, /* out */
-    value::matrix4d rootMat, const double t,
-    const tinyusdz::value::TimeSampleInterpolationType tinterp) {
-  if (!nodeOut) {
-    return false;
-  }
-
-  XformNode node;
-
-  if (prim->element_name().empty()) {
-    // TODO: report error
-  }
+// Helper to compute XformNode properties from a Prim
+static void ComputeXformNodeProperties(
+    const Prim *prim, const Path &parent_abs_path,
+    const value::matrix4d &parent_world_mat, const double t,
+    const tinyusdz::value::TimeSampleInterpolationType tinterp,
+    XformNode &node) {
 
   node.element_name = prim->element_name();
   node.absolute_path = parent_abs_path.AppendPrim(prim->element_name());
@@ -2161,7 +2314,6 @@ bool BuildXformNodeFromStageRec(
         GetLocalTransform(*prim, &resetXformStack, t, tinterp);
     DCOUT("local mat = " << localMat);
 
-    value::matrix4d worldMat = rootMat;
     node.has_resetXformStack() = resetXformStack;
 
     value::matrix4d m;
@@ -2171,10 +2323,10 @@ bool BuildXformNodeFromStageRec(
       m = localMat;
     } else {
       // matrix is row-major, so local first
-      m = localMat * worldMat;
+      m = localMat * parent_world_mat;
     }
 
-    node.set_parent_world_matrix(rootMat);
+    node.set_parent_world_matrix(parent_world_mat);
     node.set_local_matrix(localMat);
     node.set_world_matrix(m);
     node.has_xform() = true;
@@ -2182,46 +2334,131 @@ bool BuildXformNodeFromStageRec(
     DCOUT("Not xformable");
     node.has_xform() = false;
     node.has_resetXformStack() = false;
-    node.set_parent_world_matrix(rootMat);
-    node.set_world_matrix(rootMat);
+    node.set_parent_world_matrix(parent_world_mat);
+    node.set_world_matrix(parent_world_mat);
     node.set_local_matrix(value::matrix4d::identity());
   }
+}
 
-  for (const auto &childPrim : prim->children()) {
-    XformNode childNode;
-    if (!BuildXformNodeFromStageRec(stage, node.absolute_path, &childPrim,
-                                    &childNode, node.get_world_matrix(), t,
-                                    tinterp)) {
-      return false;
-    }
+// Iterative version of BuildXformNodeFromStage using explicit stack
+bool BuildXformNodeFromStageIterative(
+    const tinyusdz::Stage &stage, const Path &initial_parent_path, const Prim *root_prim,
+    XformNode *nodeOut, /* out */
+    value::matrix4d rootMat, const double t,
+    const tinyusdz::value::TimeSampleInterpolationType tinterp) {
 
-    childNode.parent = &node;
-    node.children.emplace_back(std::move(childNode));
+  (void)stage;  // Currently unused
+
+  if (!nodeOut) {
+    return false;
   }
 
-  (*nodeOut) = node;
+  // Stack entry for iterative processing
+  struct StackEntry {
+    const Prim *prim;
+    Path parent_path;
+    value::matrix4d parent_world_mat;
+    size_t child_idx;
+    XformNode node;
+
+    StackEntry(const Prim *p, Path pp, value::matrix4d pwm)
+        : prim(p), parent_path(std::move(pp)), parent_world_mat(pwm), child_idx(0) {}
+  };
+
+  StackVector<StackEntry, 4> stack;
+  stack.reserve(64);
+
+  // Initialize with root prim
+  stack.emplace_back(root_prim, initial_parent_path, rootMat);
+
+  // Compute root node properties
+  ComputeXformNodeProperties(root_prim, initial_parent_path, rootMat, t, tinterp,
+                             stack.back().node);
+
+  while (!stack.empty()) {
+    StackEntry &curr = stack.back();
+    const auto &children = curr.prim->children();
+
+    if (curr.child_idx < children.size()) {
+      // Push next child
+      const Prim &child = children[curr.child_idx];
+      curr.child_idx++;
+
+      stack.emplace_back(&child, curr.node.absolute_path, curr.node.get_world_matrix());
+
+      // Compute new child's properties
+      StackEntry &new_entry = stack.back();
+      ComputeXformNodeProperties(new_entry.prim, new_entry.parent_path,
+                                 new_entry.parent_world_mat, t, tinterp,
+                                 new_entry.node);
+    } else {
+      // All children processed
+      if (stack.size() > 1) {
+        // Move completed node to parent's children
+        XformNode completed = std::move(curr.node);
+        stack.pop_back();
+        // Note: parent pointer will point to stack.back().node, which will be
+        // moved later. This preserves the same behavior as the recursive version.
+        completed.parent = &stack.back().node;
+        stack.back().node.children.emplace_back(std::move(completed));
+      } else {
+        // Root node - copy to output
+        *nodeOut = std::move(curr.node);
+        stack.pop_back();
+      }
+    }
+  }
 
   return true;
 }
 
-std::string DumpXformNodeRec(const XformNode &node, uint32_t indent) {
+// Iterative version of DumpXformNode using explicit stack
+std::string DumpXformNodeIterative(const XformNode &root) {
   std::stringstream ss;
 
-  ss << pprint::Indent(indent) << "Prim name: " << node.element_name
-     << " PrimID: " << node.prim_id << " (Path " << node.absolute_path
-     << ") Xformable? " << node.has_xform() << " resetXformStack? "
-     << node.has_resetXformStack() << " {\n";
-  ss << pprint::Indent(indent + 1)
-     << "parent_world: " << node.get_parent_world_matrix() << "\n";
-  ss << pprint::Indent(indent + 1) << "world: " << node.get_world_matrix()
-     << "\n";
-  ss << pprint::Indent(indent + 1) << "local: " << node.get_local_matrix()
-     << "\n";
+  // Stack entry: (node pointer, indent, child index, closing_brace_pending)
+  // child_idx == SIZE_MAX means we haven't printed this node yet
+  struct StackEntry {
+    const XformNode *node;
+    uint32_t indent;
+    size_t child_idx;
+    StackEntry(const XformNode *n, uint32_t i)
+        : node(n), indent(i), child_idx(SIZE_MAX) {}
+  };
 
-  for (const auto &child : node.children) {
-    ss << DumpXformNodeRec(child, indent + 1);
+  StackVector<StackEntry, 4> stack;
+  stack.reserve(64);
+  stack.emplace_back(&root, 0);
+
+  while (!stack.empty()) {
+    StackEntry &entry = stack.back();
+
+    if (entry.child_idx == SIZE_MAX) {
+      // First visit: print node info
+      ss << pprint::Indent(entry.indent) << "Prim name: " << entry.node->element_name
+         << " PrimID: " << entry.node->prim_id << " (Path " << entry.node->absolute_path
+         << ") Xformable? " << entry.node->has_xform() << " resetXformStack? "
+         << entry.node->has_resetXformStack() << " {\n";
+      ss << pprint::Indent(entry.indent + 1)
+         << "parent_world: " << entry.node->get_parent_world_matrix() << "\n";
+      ss << pprint::Indent(entry.indent + 1) << "world: " << entry.node->get_world_matrix()
+         << "\n";
+      ss << pprint::Indent(entry.indent + 1) << "local: " << entry.node->get_local_matrix()
+         << "\n";
+      entry.child_idx = 0;
+    }
+
+    // Process children
+    const auto &children = entry.node->children;
+    if (entry.child_idx < children.size()) {
+      size_t idx = entry.child_idx++;
+      stack.emplace_back(&children[idx], entry.indent + 1);
+    } else {
+      // All children processed, print closing brace and pop
+      ss << pprint::Indent(entry.indent + 1) << "}\n";
+      stack.pop_back();
+    }
   }
-  ss << pprint::Indent(indent + 1) << "}\n";
 
   return ss.str();
 }
@@ -2253,8 +2490,8 @@ bool BuildXformNodeFromStage(
 
     value::matrix4d rootMat{value::matrix4d::identity()};
 
-    if (!BuildXformNodeFromStageRec(stage, stage_root.absolute_path, &root,
-                                    &node, rootMat, t, tinterp)) {
+    if (!BuildXformNodeFromStageIterative(stage, stage_root.absolute_path, &root,
+                                          &node, rootMat, t, tinterp)) {
       return false;
     }
 
@@ -2267,7 +2504,7 @@ bool BuildXformNodeFromStage(
 }
 
 std::string DumpXformNode(const XformNode &node) {
-  return DumpXformNodeRec(node, 0);
+  return DumpXformNodeIterative(node);
 }
 
 template <typename T>
@@ -3113,16 +3350,33 @@ bool BuildSkelHierarchy(const Skeleton &skel, SkelNode &dst, std::string *err) {
 
 namespace {
 
-void BuildSkelNameToIndexMapRec(const SkelNode &node, std::map<std::string, int> &m) {
+// Iterative version of BuildSkelNameToIndexMap using explicit stack
+void BuildSkelNameToIndexMapIterative(const SkelNode &root, std::map<std::string, int> &m) {
+  // Stack for DFS traversal
+  StackVector<std::pair<const SkelNode *, size_t>, 4> stack;
+  stack.reserve(64);
+  stack.emplace_back(&root, 0);
 
-  if (node.joint_name.size() && (node.joint_id >= 0)) {
-    m[node.joint_name] = node.joint_id;
+  while (!stack.empty()) {
+    std::pair<const SkelNode *, size_t> &entry = stack.back();
+    const SkelNode *node = entry.first;
+    size_t &child_idx = entry.second;
+
+    // Process current node on first visit (child_idx == 0)
+    if (child_idx == 0) {
+      if (node->joint_name.size() && (node->joint_id >= 0)) {
+        m[node->joint_name] = node->joint_id;
+      }
+    }
+
+    // Process children
+    if (child_idx < node->children.size()) {
+      size_t idx = child_idx++;
+      stack.emplace_back(&node->children[idx], 0);
+    } else {
+      stack.pop_back();
+    }
   }
-
-  for (const auto &child : node.children) {
-    BuildSkelNameToIndexMapRec(child, m);
-  }
-
 }
 
 } // namespace
@@ -3131,8 +3385,8 @@ std::map<std::string, int> BuildSkelNameToIndexMap(const SkelHierarchy &skel) {
 
   std::map<std::string, int> m;
 
-  BuildSkelNameToIndexMapRec(skel.root_node, m);
-  
+  BuildSkelNameToIndexMapIterative(skel.root_node, m);
+
   return m;
 }
 

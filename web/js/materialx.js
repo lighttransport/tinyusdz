@@ -3,52 +3,51 @@
 
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
-import { RGBELoader } from 'three/examples/jsm/loaders/RGBELoader.js';
+import { HDRLoader } from 'three/examples/jsm/loaders/HDRLoader.js';
+import { EXRLoader } from 'three/examples/jsm/loaders/EXRLoader.js';
 import GUI from 'three/examples/jsm/libs/lil-gui.module.min.js';
 import { TinyUSDZLoader } from 'tinyusdz/TinyUSDZLoader.js';
 import { TinyUSDZLoaderUtils } from 'tinyusdz/TinyUSDZLoaderUtils.js';
 
 // ============================================================================
-// Global State
+// Constants
 // ============================================================================
 
-let scene, camera, renderer, controls;
-let pmremGenerator = null;
-let envMap = null;
-let loader = null;
-let nativeLoader = null;
-let gui = null;
-let materialFolder = null;
-let textureFolder = null;
-let sceneRoot = null;
-let currentMaterials = [];
-let materialData = [];
-let textureCache = new Map();
-let currentFileUpAxis = 'Y'; // Store the current file's upAxis (Y or Z)
-let currentSceneMetadata = null; // Store current USD scene metadata
-let showingNormals = false; // Track if normal visualization is active
-let originalMaterialsMap = new Map(); // Store original materials when showing normals
+const DEFAULT_BACKGROUND_COLOR = 0x1a1a1a;
+const CAMERA_PADDING = 1.2;
 
-// Settings
-const settings = {
-    materialType: 'auto', // 'auto', 'openpbr', 'usdpreviewsurface'
-    envMapPreset: 'goegap_1k', // 'goegap_1k', 'env_sunsky_sunset', 'studio'
-    envMapIntensity: 1.0,
-    showBackground: true,
-    exposure: 1.0,
-    toneMapping: 'aces',
-    applyUpAxisConversion: true, // Apply Z-up to Y-up conversion by default
-    showNormals: false // Show normals visualization
-};
-
-// Environment map presets
 const ENV_PRESETS = {
+    'usd_dome': 'usd',
     'goegap_1k': 'assets/textures/goegap_1k.hdr',
     'env_sunsky_sunset': 'assets/textures/env_sunsky_sunset.hdr',
-    'studio': null // Will use synthetic studio lighting
+    'studio': null,
+    'constant_color': 'constant'
 };
 
-// Default embedded USDA scene with OpenPBR material
+const TONE_MAPPINGS = {
+    'none': THREE.NoToneMapping,
+    'linear': THREE.LinearToneMapping,
+    'reinhard': THREE.ReinhardToneMapping,
+    'cineon': THREE.CineonToneMapping,
+    'aces': THREE.ACESFilmicToneMapping,
+    'agx': THREE.AgXToneMapping,
+    'neutral': THREE.NeutralToneMapping
+};
+
+const TEXTURE_MAPS = [
+    { prop: 'map', name: 'Base Color' },
+    { prop: 'normalMap', name: 'Normal' },
+    { prop: 'roughnessMap', name: 'Roughness' },
+    { prop: 'metalnessMap', name: 'Metalness' },
+    { prop: 'emissiveMap', name: 'Emissive' },
+    { prop: 'aoMap', name: 'AO' },
+    { prop: 'alphaMap', name: 'Alpha' },
+    { prop: 'clearcoatMap', name: 'Clearcoat' },
+    { prop: 'clearcoatRoughnessMap', name: 'Clearcoat Roughness' },
+    { prop: 'sheenColorMap', name: 'Fuzz Color' },
+    { prop: 'iridescenceMap', name: 'Iridescence' }
+];
+
 const DEFAULT_USDA_SCENE = `#usda 1.0
 (
     defaultPrim = "World"
@@ -91,135 +90,582 @@ def Xform "World"
 `;
 
 // ============================================================================
+// Global State
+// ============================================================================
+
+// Three.js core objects
+const threeState = {
+    scene: null,
+    camera: null,
+    renderer: null,
+    controls: null,
+    pmremGenerator: null,
+    envMap: null,
+    clock: new THREE.Clock(),
+    gridHelper: null,
+    axesHelper: null
+};
+
+// USD loader state
+const loaderState = {
+    loader: null,
+    nativeLoader: null
+};
+
+// Scene state
+const sceneState = {
+    root: null,
+    materials: [],
+    materialData: [],
+    textureCache: new Map(),
+    upAxis: 'Y',
+    metadata: null,
+    showingNormals: false,
+    originalMaterialsMap: new Map(),
+    domeLightData: null
+};
+
+// Picking state
+const pickState = {
+    raycaster: new THREE.Raycaster(),
+    mouse: new THREE.Vector2(),
+    selectedObject: null,
+    selectionHelper: null
+};
+
+// Animation state
+const animationState = {
+    mixer: null,
+    clips: [],
+    action: null,
+    params: {
+        isPlaying: false,  // Do not auto-play by default
+        time: 0,
+        beginTime: 0,
+        endTime: 10,
+        speed: 24.0
+    }
+};
+
+// GUI state
+const guiState = {
+    gui: null,
+    materialFolder: null,
+    textureFolder: null,
+    animationFolder: null,
+    timeController: null,
+    envPresetController: null
+};
+
+// User settings
+const settings = {
+    materialType: 'auto',
+    envMapPreset: 'goegap_1k',
+    envMapIntensity: 1.0,
+    envConstantColor: '#ffffff',
+    envColorspace: 'sRGB',
+    showBackground: true,
+    exposure: 1.0,
+    toneMapping: 'aces',
+    applyUpAxisConversion: false,
+    showNormals: false,
+    showGrid: false,
+    showAxes: false,
+    gridSize: 10,
+    gridDivisions: 10
+};
+
+// ============================================================================
+// Colorspace Utilities
+// ============================================================================
+
+/**
+ * Convert sRGB component to linear
+ */
+function sRGBComponentToLinear(c) {
+    return c <= 0.04045 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4);
+}
+
+/**
+ * Convert linear component to sRGB
+ */
+function linearComponentToSRGB(c) {
+    return c <= 0.0031308 ? c * 12.92 : 1.055 * Math.pow(c, 1.0 / 2.4) - 0.055;
+}
+
+/**
+ * Parse hex color and convert to RGB [0, 1] with optional linear conversion
+ */
+function parseHexColor(hexColor, toLinear = false) {
+    const hex = hexColor.replace('#', '');
+    const r = parseInt(hex.substring(0, 2), 16) / 255;
+    const g = parseInt(hex.substring(2, 4), 16) / 255;
+    const b = parseInt(hex.substring(4, 6), 16) / 255;
+
+    if (toLinear) {
+        return {
+            r: sRGBComponentToLinear(r),
+            g: sRGBComponentToLinear(g),
+            b: sRGBComponentToLinear(b)
+        };
+    }
+    return { r, g, b };
+}
+
+/**
+ * Convert RGB [0, 1] to hex color string
+ */
+function rgbToHex(r, g, b) {
+    const toHex = (c) => {
+        const clamped = Math.max(0, Math.min(1, c));
+        return Math.round(clamped * 255).toString(16).padStart(2, '0');
+    };
+    return `#${toHex(r)}${toHex(g)}${toHex(b)}`;
+}
+
+/**
+ * Convert sRGB THREE.Color to linear
+ */
+function sRGBToLinear(color) {
+    return new THREE.Color(
+        sRGBComponentToLinear(color.r),
+        sRGBComponentToLinear(color.g),
+        sRGBComponentToLinear(color.b)
+    );
+}
+
+/**
+ * Convert linear THREE.Color to sRGB
+ */
+function linearToSRGB(color) {
+    return new THREE.Color(
+        linearComponentToSRGB(color.r),
+        linearComponentToSRGB(color.g),
+        linearComponentToSRGB(color.b)
+    );
+}
+
+// ============================================================================
 // Initialization
 // ============================================================================
 
 async function init() {
-    // Create scene
-    scene = new THREE.Scene();
-    scene.background = new THREE.Color(0x1a1a1a);
+    initThreeJS();
+    initControls();
+    await initLoader();
+    setupGUI();
+    setupEventListeners();
+    await loadEnvironment(settings.envMapPreset);
+    await loadDefaultUSDFile();
+    animate();
+}
 
-    // Create camera
-    camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 1000);
-    camera.position.set(3, 2, 5);
+function initThreeJS() {
+    threeState.scene = new THREE.Scene();
+    threeState.scene.background = new THREE.Color(DEFAULT_BACKGROUND_COLOR);
 
-    // Create renderer
-    renderer = new THREE.WebGLRenderer({ antialias: true });
-    renderer.setSize(window.innerWidth, window.innerHeight);
-    renderer.setPixelRatio(window.devicePixelRatio);
-    renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    renderer.toneMappingExposure = settings.exposure;
-    renderer.outputColorSpace = THREE.SRGBColorSpace;
-    document.getElementById('canvas-container').appendChild(renderer.domElement);
+    threeState.camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 1000);
+    threeState.camera.position.set(3, 2, 5);
 
-    // Create controls
-    controls = new OrbitControls(camera, renderer.domElement);
-    controls.enableDamping = true;
-    controls.dampingFactor = 0.05;
-    controls.screenSpacePanning = true; // Enable pan controls
-    controls.minDistance = 0.1;
-    controls.maxDistance = 500; // Allow much more zoom out for large scenes
-    controls.mouseButtons = {
+    threeState.renderer = new THREE.WebGLRenderer({ antialias: true });
+    threeState.renderer.setSize(window.innerWidth, window.innerHeight);
+    threeState.renderer.setPixelRatio(window.devicePixelRatio);
+    threeState.renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    threeState.renderer.toneMappingExposure = settings.exposure;
+    threeState.renderer.outputColorSpace = THREE.SRGBColorSpace;
+    document.getElementById('canvas-container').appendChild(threeState.renderer.domElement);
+
+    threeState.pmremGenerator = new THREE.PMREMGenerator(threeState.renderer);
+    threeState.pmremGenerator.compileEquirectangularShader();
+}
+
+function initControls() {
+    threeState.controls = new OrbitControls(threeState.camera, threeState.renderer.domElement);
+    threeState.controls.enableDamping = true;
+    threeState.controls.dampingFactor = 0.05;
+    threeState.controls.screenSpacePanning = true;
+    threeState.controls.minDistance = 0.1;
+    threeState.controls.maxDistance = 500;
+    threeState.controls.mouseButtons = {
         LEFT: THREE.MOUSE.ROTATE,
         MIDDLE: THREE.MOUSE.PAN,
-        RIGHT: THREE.MOUSE.DOLLY  // Right mouse drag for zoom (dolly)
+        RIGHT: THREE.MOUSE.DOLLY
     };
-    controls.keys = {
+    threeState.controls.keys = {
         LEFT: 'ArrowLeft',
         UP: 'ArrowUp',
         RIGHT: 'ArrowRight',
         BOTTOM: 'ArrowDown'
     };
-    controls.enableKeys = true;
-    controls.keyPanSpeed = 20.0;
+    threeState.controls.enableKeys = true;
+    threeState.controls.keyPanSpeed = 20.0;
+}
 
-    // Create PMREM generator for environment maps
-    pmremGenerator = new THREE.PMREMGenerator(renderer);
-    pmremGenerator.compileEquirectangularShader();
-
-    // Initialize TinyUSDZ loader
+async function initLoader() {
     updateStatus('Initializing TinyUSDZ WASM...');
-    loader = new TinyUSDZLoader(null, { maxMemoryLimitMB: 512 });
-    await loader.init({ useMemory64: false });
+    loaderState.loader = new TinyUSDZLoader(null, { maxMemoryLimitMB: 512 });
+    await loaderState.loader.init({ useMemory64: false });
     updateStatus('TinyUSDZ initialized');
-
-    // Setup GUI
-    setupGUI();
-
-    // Setup event listeners
-    setupEventListeners();
-
-    // Load default environment
-    await loadEnvironment(settings.envMapPreset);
-
-    // Load default scene - fancy teapot with MaterialX
-    await loadDefaultUSDFile();
-
-    // Start render loop
-    animate();
 }
 
 function setupGUI() {
-    gui = new GUI({ title: 'MaterialX Demo' });
-    gui.domElement.style.position = 'absolute';
-    gui.domElement.style.top = '10px';
-    gui.domElement.style.right = '10px';
+    guiState.gui = new GUI({ title: 'MaterialX Demo' });
+    guiState.gui.domElement.style.position = 'absolute';
+    guiState.gui.domElement.style.top = '10px';
+    guiState.gui.domElement.style.right = '10px';
+    guiState.gui.domElement.style.maxHeight = 'calc(100vh - 20px)';
+    guiState.gui.domElement.style.overflowY = 'auto';
 
-    // Scene settings
-    const sceneFolder = gui.addFolder('Scene');
-    sceneFolder.add(settings, 'envMapPreset', Object.keys(ENV_PRESETS))
+    setupSceneFolder();
+    setupMaterialTypeFolder();
+
+    guiState.materialFolder = guiState.gui.addFolder('Material Parameters');
+    guiState.materialFolder.open();
+
+    guiState.textureFolder = guiState.gui.addFolder('Textures');
+    guiState.textureFolder.close();
+
+    // Animation disabled for now - may revisit later
+    // setupAnimationFolder();
+}
+
+function setupSceneFolder() {
+    const sceneFolder = guiState.gui.addFolder('Scene');
+
+    // Action buttons
+    const actions = {
+        fitToScene: fitCameraToScene,
+        clearSelection: clearSelection
+    };
+    sceneFolder.add(actions, 'fitToScene').name('Fit to Scene');
+    sceneFolder.add(actions, 'clearSelection').name('Clear Selection');
+
+    guiState.envPresetController = sceneFolder.add(settings, 'envMapPreset', Object.keys(ENV_PRESETS))
         .name('Environment')
         .onChange(loadEnvironment);
-    sceneFolder.add(settings, 'envMapIntensity', 0, 3, 0.1)
+
+    sceneFolder.addColor(settings, 'envConstantColor')
+        .name('Env Color')
+        .onChange(updateConstantColorEnvironment);
+
+    sceneFolder.add(settings, 'envColorspace', ['sRGB', 'linear'])
+        .name('Env Colorspace')
+        .onChange(updateConstantColorEnvironment);
+
+    sceneFolder.add(settings, 'envMapIntensity', 0, 100, 0.1)
         .name('Env Intensity')
         .onChange(updateEnvIntensity);
+
     sceneFolder.add(settings, 'showBackground')
         .name('Show Background')
         .onChange(updateBackground);
-    sceneFolder.add(settings, 'exposure', 0, 3, 0.1)
+
+    sceneFolder.add(settings, 'exposure', 0, 100, 0.1)
         .name('Exposure')
-        .onChange(v => { renderer.toneMappingExposure = v; });
-    sceneFolder.add(settings, 'toneMapping', ['none', 'linear', 'reinhard', 'cineon', 'aces', 'agx', 'neutral'])
+        .onChange(v => { threeState.renderer.toneMappingExposure = v; });
+
+    sceneFolder.add(settings, 'toneMapping', Object.keys(TONE_MAPPINGS))
         .name('Tone Mapping')
-        .onChange(updateToneMapping);
+        .onChange(v => { threeState.renderer.toneMapping = TONE_MAPPINGS[v] || THREE.ACESFilmicToneMapping; });
+
     sceneFolder.add(settings, 'applyUpAxisConversion')
         .name('Z-up to Y-up Fix')
-        .onChange(toggleUpAxisConversion);
+        .onChange(applyUpAxisConversion);
+
     sceneFolder.add(settings, 'showNormals')
         .name('Show Normals')
         .onChange(toggleNormalDisplay);
 
-    // Material type selector
-    const materialTypeFolder = gui.addFolder('Material Type');
+    sceneFolder.add(settings, 'showGrid')
+        .name('Show Grid')
+        .onChange(toggleGrid);
+
+    sceneFolder.add(settings, 'showAxes')
+        .name('Show Axes')
+        .onChange(toggleAxes);
+}
+
+/*
+ * Animation UI - disabled for now, may revisit later
+ *
+function setupAnimationFolder() {
+    guiState.animationFolder = guiState.gui.addFolder('Animation');
+
+    // Play/Pause button
+    const playPauseBtn = {
+        toggle: toggleAnimationPlayback
+    };
+    guiState.animationFolder.add(playPauseBtn, 'toggle').name('Play / Pause');
+
+    // Reset button
+    const resetBtn = {
+        reset: resetAnimation
+    };
+    guiState.animationFolder.add(resetBtn, 'reset').name('Reset');
+
+    // Playing state indicator (read-only checkbox)
+    guiState.animationFolder.add(animationState.params, 'isPlaying')
+        .name('Playing')
+        .listen()
+        .onChange((value) => {
+            // Sync the playing state with actions
+            if (animationState.mixer) {
+                animationState.clips.forEach((clip) => {
+                    const action = animationState.mixer.clipAction(clip);
+                    action.paused = !value;
+                });
+                // Reset clock delta to avoid jump
+                if (value) {
+                    threeState.clock.getDelta();
+                }
+            }
+        });
+
+    guiState.timeController = guiState.animationFolder.add(animationState.params, 'time', 0, 10, 0.01)
+        .name('Time')
+        .listen()
+        .onChange(scrubToTime);
+
+    guiState.animationFolder.add(animationState.params, 'speed', 0.1, 120, 0.1)
+        .name('Speed (FPS)')
+        .listen();
+
+    guiState.animationFolder.add(animationState.params, 'beginTime')
+        .name('Begin Time')
+        .listen()
+        .disable();
+
+    guiState.animationFolder.add(animationState.params, 'endTime')
+        .name('End Time')
+        .listen()
+        .disable();
+
+    guiState.animationFolder.close();
+}
+*/
+
+function setupMaterialTypeFolder() {
+    const materialTypeFolder = guiState.gui.addFolder('Material Type');
     materialTypeFolder.add(settings, 'materialType', ['auto', 'openpbr', 'usdpreviewsurface'])
         .name('Preferred Type')
         .onChange(reloadMaterials);
-
     materialTypeFolder.open();
-
-    // Material parameters folder (populated when material is loaded)
-    materialFolder = gui.addFolder('Material Parameters');
-    materialFolder.open();
-
-    // Texture preview folder
-    textureFolder = gui.addFolder('Textures');
-    textureFolder.close();
 }
 
 function setupEventListeners() {
-    // Window resize
     window.addEventListener('resize', onWindowResize);
 
-    // File input
     const fileInput = document.getElementById('file-input');
     fileInput.addEventListener('change', onFileSelect);
 
-    // Drag and drop
     const container = document.getElementById('canvas-container');
     container.addEventListener('dragover', onDragOver);
     container.addEventListener('drop', onFileDrop);
     container.addEventListener('dragleave', onDragLeave);
+
+    // Object picking - use click event
+    container.addEventListener('click', onCanvasClick);
 }
+
+/*
+ * ============================================================================
+ * Animation Control - disabled for now, may revisit later
+ * ============================================================================
+
+function scrubToTime(time) {
+    if (!animationState.mixer || !animationState.action) return;
+
+    const wasPaused = !animationState.params.isPlaying;
+
+    animationState.mixer.timeScale = 1.0;
+    animationState.mixer.time = 0;
+
+    animationState.clips.forEach((clip) => {
+        const action = animationState.mixer.clipAction(clip);
+        action.paused = false;
+        action.enabled = true;
+        action.time = time;
+        action.weight = 1.0;
+    });
+
+    animationState.mixer.update(0.0001);
+
+    animationState.clips.forEach((clip) => {
+        const action = animationState.mixer.clipAction(clip);
+        action.time = time;
+    });
+
+    if (wasPaused) {
+        animationState.clips.forEach((clip) => {
+            const action = animationState.mixer.clipAction(clip);
+            action.paused = true;
+        });
+    }
+}
+
+// ============================================================================
+// USD Animation Extraction
+// ============================================================================
+
+function convertUSDAnimationsToThreeJS(usdLoader, root) {
+    const clips = [];
+    const numAnimations = usdLoader.numAnimations();
+
+    if (numAnimations === 0) return clips;
+
+    const nodeIndexMap = buildNodeIndexMap(root);
+
+    for (let i = 0; i < numAnimations; i++) {
+        const usdAnimation = usdLoader.getAnimation(i);
+        const clip = convertSingleAnimation(usdAnimation, i, root, nodeIndexMap);
+        if (clip) clips.push(clip);
+    }
+
+    return clips;
+}
+
+function buildNodeIndexMap(root) {
+    const map = new Map();
+    let index = 0;
+    root.traverse((obj) => {
+        map.set(index++, obj);
+    });
+    return map;
+}
+
+function convertSingleAnimation(usdAnimation, index, root, nodeIndexMap) {
+    // Handle track-based animation (legacy format)
+    if (usdAnimation.tracks && usdAnimation.tracks.length > 0) {
+        return convertTrackBasedAnimation(usdAnimation, index, root);
+    }
+
+    // Handle channel-based animation
+    if (usdAnimation.channels && usdAnimation.samplers) {
+        return convertChannelBasedAnimation(usdAnimation, index, nodeIndexMap);
+    }
+
+    return null;
+}
+
+function convertTrackBasedAnimation(usdAnimation, index, root) {
+    const keyframeTracks = [];
+    const targetObject = findAnimationTarget(usdAnimation.name, root);
+    const targetUUID = targetObject.uuid;
+
+    for (const track of usdAnimation.tracks) {
+        if (!track.times || !track.values) continue;
+
+        const times = Array.isArray(track.times) ? track.times : Array.from(track.times);
+        const values = Array.isArray(track.values) ? track.values : Array.from(track.values);
+        const interpolation = getUSDInterpolationMode(track.interpolation);
+
+        const keyframeTrack = createKeyframeTrack(track.path, targetUUID, times, values, interpolation);
+        if (keyframeTrack) keyframeTracks.push(keyframeTrack);
+    }
+
+    if (keyframeTracks.length === 0) return null;
+
+    return new THREE.AnimationClip(
+        usdAnimation.name || `Animation_${index}`,
+        usdAnimation.duration || -1,
+        keyframeTracks
+    );
+}
+
+function convertChannelBasedAnimation(usdAnimation, index, nodeIndexMap) {
+    const nodeChannels = usdAnimation.channels.filter(channel => {
+        const targetType = channel.target_type || 'SceneNode';
+        return targetType === 'SceneNode';
+    });
+
+    if (nodeChannels.length === 0) return null;
+
+    const keyframeTracks = [];
+
+    for (const channel of nodeChannels) {
+        const sampler = usdAnimation.samplers[channel.sampler];
+        if (!sampler || !sampler.times || !sampler.values) continue;
+
+        const targetObject = nodeIndexMap.get(channel.target_node);
+        if (!targetObject) continue;
+
+        const times = Array.isArray(sampler.times) ? sampler.times : Array.from(sampler.times);
+        const values = Array.isArray(sampler.values) ? sampler.values : Array.from(sampler.values);
+        const interpolation = getUSDInterpolationMode(sampler.interpolation);
+
+        const keyframeTrack = createKeyframeTrack(channel.path, targetObject.uuid, times, values, interpolation);
+        if (keyframeTrack) keyframeTracks.push(keyframeTrack);
+    }
+
+    if (keyframeTracks.length === 0) return null;
+
+    return new THREE.AnimationClip(
+        usdAnimation.name || `Animation_${index}`,
+        usdAnimation.duration || -1,
+        keyframeTracks
+    );
+}
+
+function findAnimationTarget(animationName, root) {
+    let targetObject = root;
+
+    if (animationName) {
+        let searchName = animationName.replace(/_xform$/, '').replace(/_anim$/, '');
+
+        // Try exact match
+        root.traverse((obj) => {
+            if (obj.name === searchName) targetObject = obj;
+        });
+
+        // Try prefix match
+        if (targetObject === root) {
+            root.traverse((obj) => {
+                if (obj.name && obj.name.startsWith(searchName)) targetObject = obj;
+            });
+        }
+    }
+
+    // Fallback to first mesh or group
+    if (targetObject === root) {
+        root.traverse((obj) => {
+            if ((obj.isMesh || obj.isGroup) && obj !== root) {
+                targetObject = obj;
+                return;
+            }
+        });
+    }
+
+    return targetObject;
+}
+
+function createKeyframeTrack(path, targetUUID, times, values, interpolation) {
+    const normalizedPath = path.toLowerCase();
+
+    if (normalizedPath === 'translation') {
+        return new THREE.VectorKeyframeTrack(`${targetUUID}.position`, times, values, interpolation);
+    }
+    if (normalizedPath === 'rotation') {
+        return new THREE.QuaternionKeyframeTrack(`${targetUUID}.quaternion`, times, values, interpolation);
+    }
+    if (normalizedPath === 'scale') {
+        return new THREE.VectorKeyframeTrack(`${targetUUID}.scale`, times, values, interpolation);
+    }
+    if (normalizedPath === 'weights') {
+        return new THREE.NumberKeyframeTrack(`.uuid[${targetUUID}].morphTargetInfluences`, times, values, interpolation);
+    }
+
+    return null;
+}
+
+function getUSDInterpolationMode(interpolation) {
+    const mode = (interpolation || '').toUpperCase();
+    if (mode === 'STEP') return THREE.InterpolateDiscrete;
+    if (mode === 'CUBICSPLINE') return THREE.InterpolateSmooth;
+    return THREE.InterpolateLinear;
+}
+
+End of Animation Control block
+*/
 
 // ============================================================================
 // Environment Loading
@@ -230,37 +676,57 @@ async function loadEnvironment(preset) {
     const path = ENV_PRESETS[preset];
 
     if (!path) {
-        // Studio lighting - create synthetic environment
-        envMap = createStudioEnvironment();
+        threeState.envMap = createStudioEnvironment();
+        applyEnvironment();
+        return;
+    }
+
+    if (path === 'usd') {
+        loadUSDDomeEnvironment();
+        return;
+    }
+
+    if (path === 'constant') {
+        threeState.envMap = createConstantColorEnvironment(settings.envConstantColor, settings.envColorspace);
         applyEnvironment();
         return;
     }
 
     updateStatus(`Loading environment: ${preset}...`);
     try {
-        const rgbeLoader = new RGBELoader();
-        const texture = await rgbeLoader.loadAsync(path);
-        envMap = pmremGenerator.fromEquirectangular(texture).texture;
+        const hdrLoader = new HDRLoader();
+        const texture = await hdrLoader.loadAsync(path);
+        threeState.envMap = threeState.pmremGenerator.fromEquirectangular(texture).texture;
         texture.dispose();
         applyEnvironment();
         updateStatus('Environment loaded');
     } catch (error) {
         console.error('Failed to load environment:', error);
         updateStatus('Failed to load environment');
-        // Fall back to synthetic
-        envMap = createStudioEnvironment();
+        threeState.envMap = createStudioEnvironment();
+        applyEnvironment();
+    }
+}
+
+function loadUSDDomeEnvironment() {
+    if (sceneState.domeLightData && sceneState.domeLightData.envMap) {
+        threeState.envMap = sceneState.domeLightData.envMap;
+        settings.envMapIntensity = sceneState.domeLightData.intensity || 1.0;
+        applyEnvironment();
+        updateStatus('Using USD DomeLight environment');
+    } else {
+        updateStatus('No USD DomeLight available - using studio lighting');
+        threeState.envMap = createStudioEnvironment();
         applyEnvironment();
     }
 }
 
 function createStudioEnvironment() {
-    // Create a simple gradient environment
     const canvas = document.createElement('canvas');
     canvas.width = 256;
     canvas.height = 256;
     const ctx = canvas.getContext('2d');
 
-    // Create gradient (light from top)
     const gradient = ctx.createLinearGradient(0, 0, 0, 256);
     gradient.addColorStop(0, '#ffffff');
     gradient.addColorStop(0.5, '#cccccc');
@@ -270,72 +736,137 @@ function createStudioEnvironment() {
 
     const texture = new THREE.CanvasTexture(canvas);
     texture.mapping = THREE.EquirectangularReflectionMapping;
-    return pmremGenerator.fromEquirectangular(texture).texture;
+    return threeState.pmremGenerator.fromEquirectangular(texture).texture;
+}
+
+function createConstantColorEnvironment(color, colorspace = 'sRGB') {
+    const canvas = document.createElement('canvas');
+    canvas.width = 256;
+    canvas.height = 256;
+    const ctx = canvas.getContext('2d');
+
+    let fillColor = color;
+    if (colorspace === 'sRGB') {
+        const rgb = parseHexColor(color, true);
+        fillColor = rgbToHex(rgb.r, rgb.g, rgb.b);
+    }
+
+    ctx.fillStyle = fillColor;
+    ctx.fillRect(0, 0, 256, 256);
+
+    const texture = new THREE.CanvasTexture(canvas);
+    texture.mapping = THREE.EquirectangularReflectionMapping;
+    texture.colorSpace = THREE.LinearSRGBColorSpace;
+
+    return threeState.pmremGenerator.fromEquirectangular(texture).texture;
 }
 
 function applyEnvironment() {
-    scene.environment = envMap;
+    threeState.scene.environment = threeState.envMap;
     updateBackground();
     updateEnvIntensity();
+
+    sceneState.materials.forEach((mat) => {
+        mat.envMap = threeState.envMap;
+        mat.needsUpdate = true;
+    });
 }
 
 function updateBackground() {
-    if (settings.showBackground && envMap) {
-        scene.background = envMap;
-    } else {
-        scene.background = new THREE.Color(0x1a1a1a);
+    threeState.scene.background = (settings.showBackground && threeState.envMap)
+        ? threeState.envMap
+        : new THREE.Color(DEFAULT_BACKGROUND_COLOR);
+}
+
+function updateConstantColorEnvironment() {
+    if (settings.envMapPreset === 'constant_color') {
+        threeState.envMap = createConstantColorEnvironment(settings.envConstantColor, settings.envColorspace);
+        applyEnvironment();
     }
 }
 
 function updateEnvIntensity() {
-    currentMaterials.forEach(mat => {
+    sceneState.materials.forEach(mat => {
         if (mat.envMapIntensity !== undefined) {
             mat.envMapIntensity = settings.envMapIntensity;
         }
     });
 }
 
-function updateToneMapping(value) {
-    const mappings = {
-        'none': THREE.NoToneMapping,
-        'linear': THREE.LinearToneMapping,
-        'reinhard': THREE.ReinhardToneMapping,
-        'cineon': THREE.CineonToneMapping,
-        'aces': THREE.ACESFilmicToneMapping,
-        'agx': THREE.AgXToneMapping,
-        'neutral': THREE.NeutralToneMapping
-    };
-    renderer.toneMapping = mappings[value] || THREE.ACESFilmicToneMapping;
+// ============================================================================
+// DomeLight Loading (uses TinyUSDZLoaderUtils)
+// ============================================================================
+
+/**
+ * Load DomeLight from USD and apply to scene
+ * Uses TinyUSDZLoaderUtils.loadDomeLightFromUSD for the heavy lifting
+ */
+async function loadDomeLightFromUSD(usdLoader) {
+    const result = await TinyUSDZLoaderUtils.loadDomeLightFromUSD(usdLoader, threeState.pmremGenerator);
+
+    if (result) {
+        // Apply result to app state
+        threeState.envMap = result.texture;
+        settings.envMapIntensity = result.intensity;
+        settings.envMapPreset = 'usd_dome';
+
+        if (result.colorHex) {
+            settings.envConstantColor = result.colorHex;
+        }
+
+        applyEnvironment();
+
+        // Store DomeLight data for reference
+        sceneState.domeLightData = {
+            name: result.name,
+            textureFile: result.textureFile,
+            envmapTextureId: result.envmapTextureId,
+            intensity: result.intensity,
+            color: result.color,
+            exposure: result.exposure,
+            envMap: threeState.envMap
+        };
+
+        return sceneState.domeLightData;
+    }
+
+    return null;
 }
 
 // ============================================================================
 // UpAxis Conversion
 // ============================================================================
 
-function applyUpAxisConversion() {
-    if (!sceneRoot) {
-        console.warn('Cannot apply upAxis conversion: sceneRoot is null');
-        return;
+/**
+ * Initialize upAxis conversion setting based on USD file's upAxis
+ * Called once when a new file is loaded
+ */
+function initUpAxisConversion() {
+    // Automatically enable Z-up to Y-up conversion when USD file has upAxis = 'Z'
+    if (sceneState.upAxis === 'Z') {
+        settings.applyUpAxisConversion = true;
+    } else {
+        settings.applyUpAxisConversion = false;
     }
 
-    if (settings.applyUpAxisConversion && currentFileUpAxis === 'Z') {
-        // Apply Z-up to Y-up conversion: rotate -90 degrees around X axis
-        sceneRoot.rotation.x = -Math.PI / 2;
-        console.log(`Applied Z-up to Y-up conversion (rotation.x = ${sceneRoot.rotation.x.toFixed(4)})`);
-    } else {
-        // Reset rotation
-        sceneRoot.rotation.x = 0;
-        if (currentFileUpAxis === 'Z') {
-            console.log(`Z-up to Y-up conversion disabled (rotation.x = 0)`);
-        } else {
-            console.log(`No upAxis conversion needed (file upAxis: ${currentFileUpAxis})`);
-        }
+    // Update GUI checkbox if available
+    if (guiState.gui) {
+        guiState.gui.controllersRecursive().forEach(controller => {
+            if (controller.property === 'applyUpAxisConversion') {
+                controller.updateDisplay();
+            }
+        });
     }
 }
 
-function toggleUpAxisConversion() {
-    console.log(`Toggle upAxis conversion: ${settings.applyUpAxisConversion}`);
-    applyUpAxisConversion();
+function applyUpAxisConversion() {
+    if (!sceneState.root) return;
+
+    if (settings.applyUpAxisConversion && sceneState.upAxis === 'Z') {
+        sceneState.root.rotation.x = -Math.PI / 2;
+    } else {
+        sceneState.root.rotation.x = 0;
+    }
 }
 
 // ============================================================================
@@ -343,36 +874,103 @@ function toggleUpAxisConversion() {
 // ============================================================================
 
 function toggleNormalDisplay() {
-    if (!sceneRoot) {
-        console.warn('Cannot toggle normal display: sceneRoot is null');
-        return;
-    }
+    if (!sceneState.root) return;
 
     if (settings.showNormals) {
-        // Switch to normal visualization
-        showingNormals = true;
-        sceneRoot.traverse(obj => {
+        sceneState.showingNormals = true;
+        sceneState.root.traverse(obj => {
             if (obj.isMesh && obj.material) {
-                // Store original material
-                originalMaterialsMap.set(obj, obj.material);
-                // Replace with normal material
-                obj.material = new THREE.MeshNormalMaterial({
-                    flatShading: false
-                });
+                sceneState.originalMaterialsMap.set(obj, obj.material);
+                obj.material = new THREE.MeshNormalMaterial({ flatShading: false });
             }
         });
-        console.log('Normal visualization enabled');
     } else {
-        // Restore original materials
-        showingNormals = false;
-        sceneRoot.traverse(obj => {
-            if (obj.isMesh && originalMaterialsMap.has(obj)) {
-                // Restore original material
-                obj.material = originalMaterialsMap.get(obj);
+        sceneState.showingNormals = false;
+        sceneState.root.traverse(obj => {
+            if (obj.isMesh && sceneState.originalMaterialsMap.has(obj)) {
+                obj.material = sceneState.originalMaterialsMap.get(obj);
             }
         });
-        originalMaterialsMap.clear();
-        console.log('Normal visualization disabled');
+        sceneState.originalMaterialsMap.clear();
+    }
+}
+
+// ============================================================================
+// Grid and Axes Helpers
+// ============================================================================
+
+function toggleGrid() {
+    if (settings.showGrid) {
+        if (!threeState.gridHelper) {
+            createGridHelper();
+        }
+        threeState.gridHelper.visible = true;
+    } else {
+        if (threeState.gridHelper) {
+            threeState.gridHelper.visible = false;
+        }
+    }
+}
+
+function toggleAxes() {
+    if (settings.showAxes) {
+        if (!threeState.axesHelper) {
+            createAxesHelper();
+        }
+        threeState.axesHelper.visible = true;
+    } else {
+        if (threeState.axesHelper) {
+            threeState.axesHelper.visible = false;
+        }
+    }
+}
+
+function createGridHelper() {
+    const size = settings.gridSize;
+    const divisions = settings.gridDivisions;
+
+    threeState.gridHelper = new THREE.GridHelper(size, divisions, 0x444444, 0x222222);
+    threeState.gridHelper.visible = settings.showGrid;
+    threeState.scene.add(threeState.gridHelper);
+}
+
+function createAxesHelper() {
+    const size = settings.gridSize / 2;
+
+    threeState.axesHelper = new THREE.AxesHelper(size);
+    threeState.axesHelper.visible = settings.showAxes;
+    threeState.scene.add(threeState.axesHelper);
+}
+
+function updateHelpersSize() {
+    // Update grid size based on scene bounds
+    if (sceneState.root) {
+        const box = new THREE.Box3().setFromObject(sceneState.root);
+        const size = box.getSize(new THREE.Vector3());
+        const maxDim = Math.max(size.x, size.y, size.z);
+
+        // Set grid size to be larger than the scene
+        settings.gridSize = Math.ceil(maxDim * 2);
+        settings.gridDivisions = Math.min(20, Math.max(10, Math.ceil(settings.gridSize)));
+
+        // Recreate helpers with new size
+        if (threeState.gridHelper) {
+            threeState.scene.remove(threeState.gridHelper);
+            threeState.gridHelper.dispose();
+            threeState.gridHelper = null;
+            if (settings.showGrid) {
+                createGridHelper();
+            }
+        }
+
+        if (threeState.axesHelper) {
+            threeState.scene.remove(threeState.axesHelper);
+            threeState.axesHelper.dispose();
+            threeState.axesHelper = null;
+            if (settings.showAxes) {
+                createAxesHelper();
+            }
+        }
     }
 }
 
@@ -388,19 +986,19 @@ async function loadDefaultScene() {
 }
 
 async function loadDefaultUSDFile() {
-    updateStatus('Loading fancy teapot...');
+    const defaultFile = './assets/fancy-teapot-mtlx.usdz';
+    updateStatus(`Loading ${defaultFile}...`);
     try {
-        const response = await fetch('./assets/fancy-teapot-mtlx.usdz');
+        const response = await fetch(defaultFile);
         if (!response.ok) {
-            throw new Error(`Failed to fetch: ${response.statusText}`);
+            throw new Error(`Failed to fetch ${defaultFile}: ${response.statusText}`);
         }
         const arrayBuffer = await response.arrayBuffer();
         const data = new Uint8Array(arrayBuffer);
-        await loadUSDFromData(data, 'fancy-teapot-mtlx.usdz');
+        await loadUSDFromData(data, defaultFile);
     } catch (error) {
-        console.error('Failed to load default USD file:', error);
-        updateStatus('Failed to load teapot, loading fallback scene...');
-        // Fallback to embedded scene
+        console.error(`Failed to load default USD file (${defaultFile}):`, error);
+        updateStatus(`Failed to load ${defaultFile}, loading fallback scene...`);
         await loadDefaultScene();
     }
 }
@@ -418,88 +1016,369 @@ async function loadUSDFromFile(file) {
 }
 
 async function loadUSDFromData(data, filename) {
-    // Clear previous scene
     clearScene();
 
-    // Create new native loader
-    nativeLoader = new loader.native_.TinyUSDZLoaderNative();
+    loaderState.nativeLoader = new loaderState.loader.native_.TinyUSDZLoaderNative();
 
-    const success = nativeLoader.loadFromBinary(data, filename);
+    const success = loaderState.nativeLoader.loadFromBinary(data, filename);
     if (!success) {
-        updateStatus('Failed to parse USD file');
+        updateStatus(`Failed to parse USD file: ${filename}`);
         return;
     }
 
-    // Get scene metadata (including upAxis)
-    const sceneMetadata = nativeLoader.getSceneMetadata ? nativeLoader.getSceneMetadata() : {};
-    currentFileUpAxis = sceneMetadata.upAxis || 'Y';
-    currentSceneMetadata = {
-        upAxis: currentFileUpAxis,
-        metersPerUnit: sceneMetadata.metersPerUnit || 1.0,
-        timeCodesPerSecond: sceneMetadata.timeCodesPerSecond || 24.0
+    loadSceneMetadata();
+    await buildSceneGraph();
+    await loadDomeLight();
+    // Animation disabled for now - may revisit later
+    // loadAnimations();
+    initUpAxisConversion();
+    applyUpAxisConversion();
+    fitCameraToScene();
+    updateHelpersSize();
+    updateMaterialUI();
+    updateModelInfo();
+}
+
+function loadSceneMetadata() {
+    const metadata = loaderState.nativeLoader.getSceneMetadata ? loaderState.nativeLoader.getSceneMetadata() : {};
+    sceneState.upAxis = metadata.upAxis || 'Y';
+    sceneState.metadata = {
+        upAxis: sceneState.upAxis,
+        metersPerUnit: metadata.metersPerUnit || 1.0,
+        framesPerSecond: metadata.framesPerSecond || 24.0,
+        timeCodesPerSecond: metadata.timeCodesPerSecond || 24.0,
+        startTimeCode: metadata.startTimeCode,
+        endTimeCode: metadata.endTimeCode
+    };
+}
+
+/**
+ * Build scene graph using TinyUSDZLoaderUtils.buildThreeNode
+ * This properly reflects USD Prim xformOps hierarchy
+ */
+async function buildSceneGraph() {
+    // Clear state
+    sceneState.materialData = [];
+    sceneState.materials = [];
+    sceneState.textureCache.clear();
+
+    // Get the USD root node for hierarchy traversal
+    const usdRootNode = loaderState.nativeLoader.getDefaultRootNode();
+    if (!usdRootNode) {
+        console.warn('No default root node found, falling back to flat mesh loading');
+        await buildMeshesFallback();
+        return;
+    }
+
+    // Create default material with environment map
+    const defaultMtl = new THREE.MeshPhysicalMaterial({
+        color: 0x888888,
+        roughness: 0.5,
+        metalness: 0.0,
+        envMap: threeState.envMap,
+        envMapIntensity: settings.envMapIntensity
+    });
+
+    // Build options for material conversion
+    const options = {
+        overrideMaterial: false,
+        envMap: threeState.envMap,
+        envMapIntensity: settings.envMapIntensity,
+        preferredMaterialType: settings.materialType,
+        textureCache: sceneState.textureCache
     };
 
-    console.log(`USD Scene Metadata:`, currentSceneMetadata);
-    console.log(`File upAxis: "${currentFileUpAxis}"`);
+    // Build Three.js scene graph from USD hierarchy
+    sceneState.root = await TinyUSDZLoaderUtils.buildThreeNode(
+        usdRootNode,
+        defaultMtl,
+        loaderState.nativeLoader,
+        options
+    );
 
-    const numMeshes = nativeLoader.numMeshes();
-    const numMaterials = nativeLoader.numMaterials();
+    // Add to scene
+    threeState.scene.add(sceneState.root);
 
-    updateStatus(`Loaded: ${numMeshes} meshes, ${numMaterials} materials (upAxis: ${currentFileUpAxis})`);
+    // Collect materials and material data from the scene graph
+    collectMaterialsFromScene();
 
-    // Load materials
-    materialData = [];
-    currentMaterials = [];
-    textureCache.clear();
+    // Store USD scene reference on meshes for material reloading
+    sceneState.root.traverse((child) => {
+        if (child.isMesh) {
+            child.userData.usdScene = loaderState.nativeLoader;
+        }
+    });
 
+    const numMeshes = loaderState.nativeLoader.numMeshes();
+    const numMaterials = sceneState.materials.length;
+    updateStatus(`Loaded: ${numMeshes} meshes, ${numMaterials} materials (upAxis: ${sceneState.upAxis})`);
+}
+
+/**
+ * Collect materials from the scene graph after buildThreeNode
+ * This extracts materials from meshes for UI and management
+ */
+function collectMaterialsFromScene() {
+    const materialSet = new Set();
+
+    sceneState.root.traverse((obj) => {
+        if (obj.isMesh && obj.material) {
+            if (Array.isArray(obj.material)) {
+                obj.material.forEach(mat => materialSet.add(mat));
+            } else {
+                materialSet.add(obj.material);
+            }
+        }
+    });
+
+    sceneState.materials = Array.from(materialSet);
+
+    // Extract material data from userData if available
+    sceneState.materialData = sceneState.materials.map(mat => {
+        return mat.userData?.rawData || null;
+    });
+}
+
+/**
+ * Fallback to flat mesh loading if getDefaultRootNode is not available
+ */
+async function buildMeshesFallback() {
+    const numMeshes = loaderState.nativeLoader.numMeshes();
+    const numMaterials = loaderState.nativeLoader.numMaterials();
+
+    // Pre-load materials
     for (let i = 0; i < numMaterials; i++) {
         try {
-            const result = nativeLoader.getMaterialWithFormat(i, 'json');
+            const result = loaderState.nativeLoader.getMaterialWithFormat(i, 'json');
             if (!result.error) {
-                materialData.push(JSON.parse(result.data));
+                sceneState.materialData.push(JSON.parse(result.data));
             }
         } catch (e) {
             console.warn(`Failed to get material ${i}:`, e);
         }
     }
 
-    // Convert materials
-    for (let i = 0; i < materialData.length; i++) {
-        const mat = await convertMaterial(materialData[i], i);
-        currentMaterials.push(mat);
+    for (let i = 0; i < sceneState.materialData.length; i++) {
+        const mat = await convertMaterial(sceneState.materialData[i], i);
+        sceneState.materials.push(mat);
     }
 
-    // Create scene root
-    sceneRoot = new THREE.Group();
-    scene.add(sceneRoot);
+    sceneState.root = new THREE.Group();
+    threeState.scene.add(sceneState.root);
 
-    // Build meshes
     for (let i = 0; i < numMeshes; i++) {
-        const meshData = nativeLoader.getMesh(i);
+        const meshData = loaderState.nativeLoader.getMesh(i);
         if (!meshData) continue;
 
         const geometry = TinyUSDZLoaderUtils.convertUsdMeshToThreeMesh(meshData);
         if (!geometry) continue;
 
-        // Get material
-        let material = new THREE.MeshPhysicalMaterial({ color: 0x888888 });
-        if (meshData.materialId !== undefined && meshData.materialId >= 0 && meshData.materialId < currentMaterials.length) {
-            material = currentMaterials[meshData.materialId];
-        }
-
-        const mesh = new THREE.Mesh(geometry, material);
+        const mesh = createMeshWithMaterialsFallback(geometry, meshData, i);
         mesh.name = meshData.name || `Mesh_${i}`;
-        sceneRoot.add(mesh);
+        sceneState.root.add(mesh);
     }
 
-    // Apply upAxis conversion if needed
-    applyUpAxisConversion();
+    updateStatus(`Loaded: ${numMeshes} meshes, ${numMaterials} materials (upAxis: ${sceneState.upAxis}) [fallback mode]`);
+}
 
-    // Fit camera to scene
-    fitCameraToScene();
+/**
+ * Create mesh with materials for fallback mode
+ */
+function createMeshWithMaterialsFallback(geometry, meshData, index) {
+    const submeshes = geometry.userData['submeshes'];
 
-    // Update material UI
-    updateMaterialUI();
+    if (submeshes && submeshes.length > 0) {
+        const materials = [];
+        const materialIdToIndex = new Map();
+
+        for (const submesh of submeshes) {
+            const matId = submesh.materialId;
+            if (!materialIdToIndex.has(matId)) {
+                const material = (matId >= 0 && matId < sceneState.materials.length)
+                    ? sceneState.materials[matId]
+                    : new THREE.MeshPhysicalMaterial({ color: 0x888888 });
+                materialIdToIndex.set(matId, materials.length);
+                materials.push(material);
+            }
+        }
+
+        for (const submesh of submeshes) {
+            const matIndex = materialIdToIndex.get(submesh.materialId);
+            geometry.addGroup(submesh.start, submesh.count, matIndex);
+        }
+
+        return new THREE.Mesh(geometry, materials);
+    }
+
+    const material = (meshData.materialId !== undefined && meshData.materialId >= 0 && meshData.materialId < sceneState.materials.length)
+        ? sceneState.materials[meshData.materialId]
+        : new THREE.MeshPhysicalMaterial({ color: 0x888888 });
+
+    return new THREE.Mesh(geometry, material);
+}
+
+async function loadDomeLight() {
+    try {
+        const domeLightData = await loadDomeLightFromUSD(loaderState.nativeLoader);
+        if (domeLightData && guiState.envPresetController) {
+            guiState.envPresetController.updateDisplay();
+        }
+    } catch (error) {
+        console.warn('Error checking for DomeLight:', error);
+    }
+}
+
+function loadAnimations() {
+    try {
+        const numAnimations = loaderState.nativeLoader.numAnimations();
+        console.log(`USD file contains ${numAnimations} animations`);
+
+        if (numAnimations === 0) {
+            console.log('No animations in USD file');
+            return;
+        }
+
+        animationState.clips = convertUSDAnimationsToThreeJS(loaderState.nativeLoader, sceneState.root);
+        console.log(`Converted ${animationState.clips.length} animation clips`);
+
+        if (animationState.clips.length > 0) {
+            // Create mixer on the scene root
+            animationState.mixer = new THREE.AnimationMixer(sceneState.root);
+            console.log('Created AnimationMixer on sceneState.root:', sceneState.root.name, 'uuid:', sceneState.root.uuid);
+
+            // Debug: List objects in the scene that could be animation targets
+            console.log('=== Scene objects available for animation ===');
+            sceneState.root.traverse((obj) => {
+                console.log(`  "${obj.name}" (${obj.type}) uuid: ${obj.uuid.slice(0, 8)}`);
+            });
+            console.log('============================================');
+
+            updateAnimationParams();
+            prepareAnimationClips();  // Prepare but don't auto-play
+
+            if (guiState.timeController) {
+                guiState.timeController.max(animationState.params.endTime);
+                guiState.timeController.updateDisplay();
+            }
+
+            if (guiState.animationFolder) {
+                guiState.animationFolder.open();
+            }
+
+            const numMeshes = loaderState.nativeLoader.numMeshes();
+            const numMaterials = loaderState.nativeLoader.numMaterials();
+            updateStatus(`Loaded: ${numMeshes} meshes, ${numMaterials} materials, ${animationState.clips.length} animations (paused)`);
+        }
+    } catch (error) {
+        console.error('Error loading animations:', error);
+    }
+}
+
+function updateAnimationParams() {
+    const metadata = sceneState.metadata;
+
+    if (metadata.startTimeCode !== undefined && metadata.endTimeCode !== undefined) {
+        animationState.params.beginTime = metadata.startTimeCode;
+        animationState.params.endTime = metadata.endTimeCode;
+    } else if (animationState.clips.length > 0) {
+        animationState.params.beginTime = 0;
+        animationState.params.endTime = animationState.clips[0].duration;
+    }
+
+    animationState.params.speed = metadata.framesPerSecond || metadata.timeCodesPerSecond || 24.0;
+    animationState.params.time = metadata.startTimeCode !== undefined ? metadata.startTimeCode : 0;
+}
+
+/**
+ * Prepare animation clips for playback (but don't auto-play)
+ * Sets up all clips with proper loop settings and initial time
+ */
+function prepareAnimationClips() {
+    const startTime = sceneState.metadata?.startTimeCode ?? 0;
+
+    animationState.clips.forEach((clip, clipIndex) => {
+        const action = animationState.mixer.clipAction(clip);
+        action.loop = THREE.LoopRepeat;
+        action.clampWhenFinished = false;
+        action.enabled = true;
+        action.setEffectiveWeight(1.0);
+        action.time = startTime;
+        action.paused = true;  // Start paused
+        action.play();  // Register the action (but it's paused)
+
+        console.log(`Prepared animation clip ${clipIndex}: "${clip.name}", ${clip.tracks.length} tracks, duration: ${clip.duration}s`);
+
+        // Debug: log track targets
+        clip.tracks.forEach(track => {
+            console.log(`  Track: ${track.name}`);
+        });
+    });
+
+    if (animationState.clips.length > 0) {
+        animationState.action = animationState.mixer.clipAction(animationState.clips[0]);
+    }
+
+    // Force initial pose evaluation
+    // This is critical - without this, the paused animation won't show initial state
+    animationState.mixer.update(0);
+
+    // Start the clock but don't start playing
+    threeState.clock.start();
+    threeState.clock.getDelta(); // Reset delta to avoid large jump when playing starts
+
+    console.log(`Animation prepared: ${animationState.clips.length} clips, starting paused at time ${startTime}`);
+}
+
+/**
+ * Toggle animation playback
+ */
+function toggleAnimationPlayback() {
+    if (!animationState.mixer) {
+        console.warn('No animation mixer - cannot toggle playback');
+        return;
+    }
+
+    animationState.params.isPlaying = !animationState.params.isPlaying;
+    console.log(`Animation playback: ${animationState.params.isPlaying ? 'PLAYING' : 'PAUSED'}`);
+
+    animationState.clips.forEach((clip) => {
+        const action = animationState.mixer.clipAction(clip);
+        action.paused = !animationState.params.isPlaying;
+        console.log(`  Action "${clip.name}": paused=${action.paused}, time=${action.time.toFixed(3)}`);
+    });
+
+    // Reset clock delta to avoid large jump when resuming
+    if (animationState.params.isPlaying) {
+        threeState.clock.getDelta();
+    }
+}
+
+/**
+ * Reset animation to beginning
+ */
+function resetAnimation() {
+    if (!animationState.mixer) return;
+
+    animationState.params.time = animationState.params.beginTime;
+
+    animationState.clips.forEach((clip) => {
+        const action = animationState.mixer.clipAction(clip);
+        action.time = animationState.params.beginTime;
+    });
+
+    // Force update to show the reset position
+    animationState.mixer.update(0.0001);
+
+    // Reset to exact time after evaluation
+    animationState.clips.forEach((clip) => {
+        const action = animationState.mixer.clipAction(clip);
+        action.time = animationState.params.beginTime;
+    });
+}
+
+function updateModelInfo() {
+    const numMeshes = loaderState.nativeLoader.numMeshes();
+    const numMaterials = loaderState.nativeLoader.numMaterials();
 
     document.getElementById('model-info').style.display = 'block';
     document.getElementById('mesh-count').textContent = numMeshes;
@@ -507,21 +1386,18 @@ async function loadUSDFromData(data, filename) {
 }
 
 async function convertMaterial(matData, index) {
-    // Get material type info
     const typeInfo = TinyUSDZLoaderUtils.getMaterialType(matData);
     const typeString = TinyUSDZLoaderUtils.getMaterialTypeString(matData);
-
-    console.log(`Material ${index}: ${typeString} (hasOpenPBR: ${typeInfo.hasOpenPBR}, hasUsdPreviewSurface: ${typeInfo.hasUsdPreviewSurface})`);
 
     try {
         const material = await TinyUSDZLoaderUtils.convertMaterial(
             matData,
-            nativeLoader,
+            loaderState.nativeLoader,
             {
                 preferredMaterialType: settings.materialType,
-                envMap: envMap,
+                envMap: threeState.envMap,
                 envMapIntensity: settings.envMapIntensity,
-                textureCache: textureCache
+                textureCache: sceneState.textureCache
             }
         );
         material.userData.typeInfo = typeInfo;
@@ -539,131 +1415,181 @@ async function convertMaterial(matData, index) {
 }
 
 async function reloadMaterials() {
-    if (!materialData.length) return;
+    if (!sceneState.root) return;
 
     updateStatus('Reloading materials...');
 
-    // Re-convert materials with new preference
-    const newMaterials = [];
-    for (let i = 0; i < materialData.length; i++) {
-        const mat = await convertMaterial(materialData[i], i);
-        newMaterials.push(mat);
+    // Build a map from old material to new material for replacement
+    const oldToNewMaterialMap = new Map();
+    const newMaterialSet = new Set();
+
+    // Traverse scene and reload each unique material
+    for (const mat of sceneState.materials) {
+        if (oldToNewMaterialMap.has(mat)) continue;
+
+        // Get raw material data from userData (stored by buildThreeNode)
+        const rawData = mat.userData?.rawData;
+        if (rawData) {
+            const newMat = await convertMaterial(rawData, sceneState.materials.indexOf(mat));
+            oldToNewMaterialMap.set(mat, newMat);
+            newMaterialSet.add(newMat);
+        } else {
+            // No raw data available, keep original material
+            oldToNewMaterialMap.set(mat, mat);
+            newMaterialSet.add(mat);
+        }
     }
 
-    // Update meshes with new materials
-    sceneRoot?.traverse(obj => {
+    // Replace materials on meshes
+    sceneState.root.traverse(obj => {
         if (obj.isMesh && obj.material) {
-            const matIndex = currentMaterials.indexOf(obj.material);
-            if (matIndex >= 0 && matIndex < newMaterials.length) {
-                obj.material = newMaterials[matIndex];
+            if (Array.isArray(obj.material)) {
+                obj.material = obj.material.map(mat => oldToNewMaterialMap.get(mat) || mat);
+            } else {
+                const newMat = oldToNewMaterialMap.get(obj.material);
+                if (newMat && newMat !== obj.material) {
+                    obj.material = newMat;
+                }
             }
         }
     });
 
-    // Dispose old materials
-    currentMaterials.forEach(mat => mat.dispose());
-    currentMaterials = newMaterials;
+    // Dispose old materials that were replaced
+    for (const [oldMat, newMat] of oldToNewMaterialMap) {
+        if (oldMat !== newMat && oldMat.dispose) {
+            oldMat.dispose();
+        }
+    }
+
+    // Update state
+    sceneState.materials = Array.from(newMaterialSet);
+    sceneState.materialData = sceneState.materials.map(mat => mat.userData?.rawData || null);
 
     updateMaterialUI();
     updateStatus('Materials reloaded');
 }
 
 function clearScene() {
-    if (sceneRoot) {
-        sceneRoot.traverse(obj => {
-            if (obj.isMesh) {
-                obj.geometry?.dispose();
+    // Dispose normal visualization materials
+    if (sceneState.showingNormals && sceneState.root) {
+        sceneState.root.traverse(obj => {
+            if (obj.isMesh && obj.material && obj.material.dispose) {
+                obj.material.dispose();
             }
         });
-        scene.remove(sceneRoot);
-        sceneRoot = null;
+    }
+    sceneState.originalMaterialsMap.clear();
+    sceneState.showingNormals = false;
+
+    // Reset GUI checkbox
+    if (settings.showNormals) {
+        settings.showNormals = false;
+        if (guiState.gui) {
+            guiState.gui.controllersRecursive().forEach(controller => {
+                if (controller.property === 'showNormals') {
+                    controller.updateDisplay();
+                }
+            });
+        }
     }
 
-    currentMaterials.forEach(mat => mat.dispose());
-    currentMaterials = [];
-    materialData = [];
-    textureCache.clear();
+    // Clear scene objects
+    if (sceneState.root) {
+        sceneState.root.traverse(obj => {
+            if (obj.isMesh) {
+                obj.geometry?.dispose();
+                if (obj.material) {
+                    if (Array.isArray(obj.material)) {
+                        obj.material.forEach(m => m.dispose());
+                    } else {
+                        obj.material.dispose();
+                    }
+                }
+            }
+        });
+        threeState.scene.remove(sceneState.root);
+        sceneState.root = null;
+    }
 
-    // Reset upAxis to default
-    currentFileUpAxis = 'Y';
-    currentSceneMetadata = null;
+    sceneState.materials = [];
+    sceneState.materialData = [];
+
+    // Dispose texture cache
+    sceneState.textureCache.forEach(texture => {
+        if (texture && texture.dispose) texture.dispose();
+    });
+    sceneState.textureCache.clear();
+
+    // Clear animation state
+    if (animationState.mixer) {
+        animationState.mixer.stopAllAction();
+        animationState.mixer = null;
+    }
+    animationState.clips = [];
+    animationState.action = null;
+    animationState.params.isPlaying = false;  // Reset to not playing
+    animationState.params.time = 0;
+    animationState.params.beginTime = 0;
+    animationState.params.endTime = 10;
+    threeState.clock.stop();
+
+    // Clear pick state
+    clearSelectionHighlight();
+    pickState.selectedObject = null;
+
+    // Reset scene state
+    sceneState.upAxis = 'Y';
+    sceneState.metadata = null;
+    sceneState.domeLightData = null;
+
+    // Clear WASM memory
+    if (loaderState.nativeLoader) {
+        try {
+            loaderState.nativeLoader.reset();
+        } catch (e) {
+            try {
+                loaderState.nativeLoader.clearAssets();
+            } catch (e2) {
+                // Ignore
+            }
+        }
+        loaderState.nativeLoader = null;
+    }
 }
 
 function fitCameraToScene() {
-    if (!sceneRoot) return;
+    if (!sceneState.root) return;
 
-    // Compute scene bounding box
-    const box = new THREE.Box3().setFromObject(sceneRoot);
+    const box = new THREE.Box3().setFromObject(sceneState.root);
     const size = box.getSize(new THREE.Vector3());
     const center = box.getCenter(new THREE.Vector3());
 
-    // Calculate the bounding sphere radius (diagonal distance from center)
     const boundingSphereRadius = size.length() * 0.5;
+    const fov = threeState.camera.fov * (Math.PI / 180);
+    const aspectRatio = threeState.camera.aspect;
 
-    // Calculate camera distance based on FOV and bounding sphere
-    const fov = camera.fov * (Math.PI / 180);
-    const aspectRatio = camera.aspect;
-
-    // Calculate distance needed to fit sphere in both horizontal and vertical FOV
     const verticalFOV = fov;
     const horizontalFOV = 2 * Math.atan(Math.tan(verticalFOV / 2) * aspectRatio);
-
-    // Use the smaller FOV to ensure object fits in both dimensions
     const effectiveFOV = Math.min(verticalFOV, horizontalFOV);
 
-    // Distance from center to camera to fit bounding sphere
     let cameraDistance = boundingSphereRadius / Math.sin(effectiveFOV / 2);
+    cameraDistance *= CAMERA_PADDING;
 
-    // Add padding (20% extra distance)
-    cameraDistance *= 1.2;
-
-    // Position camera at a nice 45-degree viewing angle
     const cameraOffset = new THREE.Vector3(
-        cameraDistance * 0.5,    // X offset
-        cameraDistance * 0.5,    // Y offset (elevated view)
-        cameraDistance * 0.866   // Z offset (sqrt(3)/2 for 30-degree angle)
+        cameraDistance * 0.5,
+        cameraDistance * 0.5,
+        cameraDistance * 0.866
     );
 
-    const cameraPosition = center.clone().add(cameraOffset);
+    threeState.camera.position.copy(center.clone().add(cameraOffset));
+    threeState.camera.lookAt(center);
+    threeState.controls.target.copy(center);
 
-    // Update camera position and orientation
-    camera.position.copy(cameraPosition);
-    camera.lookAt(center);
+    threeState.camera.near = Math.max(0.1, cameraDistance / 100);
+    threeState.camera.far = Math.max(1000, cameraDistance * 10);
+    threeState.camera.updateProjectionMatrix();
 
-    // Update controls target to scene center
-    controls.target.copy(center);
-
-    // Update camera near/far planes based on scene size
-    camera.near = Math.max(0.1, cameraDistance / 100);
-    camera.far = Math.max(1000, cameraDistance * 10);
-    camera.updateProjectionMatrix();
-
-    controls.update();
-
-    console.log(`Scene fitted: bounds=${size.x.toFixed(2)}×${size.y.toFixed(2)}×${size.z.toFixed(2)}, radius=${boundingSphereRadius.toFixed(2)}, distance=${cameraDistance.toFixed(2)}`);
-}
-
-// ============================================================================
-// Color Space Utilities
-// ============================================================================
-
-// Convert sRGB to Linear (Rec.709)
-// MaterialX assumes linear Rec.709 as working colorspace
-function sRGBToLinear(color) {
-    // sRGB to linear transformation
-    const r = color.r <= 0.04045 ? color.r / 12.92 : Math.pow((color.r + 0.055) / 1.055, 2.4);
-    const g = color.g <= 0.04045 ? color.g / 12.92 : Math.pow((color.g + 0.055) / 1.055, 2.4);
-    const b = color.b <= 0.04045 ? color.b / 12.92 : Math.pow((color.b + 0.055) / 1.055, 2.4);
-    return new THREE.Color(r, g, b);
-}
-
-// Convert Linear (Rec.709) to sRGB
-function linearToSRGB(color) {
-    // Linear to sRGB transformation
-    const r = color.r <= 0.0031308 ? color.r * 12.92 : 1.055 * Math.pow(color.r, 1.0 / 2.4) - 0.055;
-    const g = color.g <= 0.0031308 ? color.g * 12.92 : 1.055 * Math.pow(color.g, 1.0 / 2.4) - 0.055;
-    const b = color.b <= 0.0031308 ? color.b * 12.92 : 1.055 * Math.pow(color.b, 1.0 / 2.4) - 0.055;
-    return new THREE.Color(r, g, b);
+    threeState.controls.update();
 }
 
 // ============================================================================
@@ -671,151 +1597,164 @@ function linearToSRGB(color) {
 // ============================================================================
 
 function updateMaterialUI() {
-    // Clear existing folders
-    while (materialFolder.folders.length > 0) {
-        materialFolder.folders[0].destroy();
+    // Clear existing controllers and folders
+    while (guiState.materialFolder.controllers.length > 0) {
+        guiState.materialFolder.controllers[0].destroy();
     }
-    while (textureFolder.folders.length > 0) {
-        textureFolder.folders[0].destroy();
+    while (guiState.materialFolder.folders.length > 0) {
+        guiState.materialFolder.folders[0].destroy();
+    }
+    while (guiState.textureFolder.controllers.length > 0) {
+        guiState.textureFolder.controllers[0].destroy();
+    }
+    while (guiState.textureFolder.folders.length > 0) {
+        guiState.textureFolder.folders[0].destroy();
     }
 
-    // Add controls for each material
-    currentMaterials.forEach((mat, index) => {
-        const matFolder = materialFolder.addFolder(`Material ${index}`);
+    // Determine which materials to show
+    let materialsToShow = [];
+    let headerText = '';
+    const meshCount = countMeshes();
 
-        // Show material type
-        const typeString = mat.userData.typeString || 'Unknown';
-        matFolder.add({ type: typeString }, 'type').name('Type').disable();
-
-        // Color
-        if (mat.color) {
-            // Convert from linear (material internal) to sRGB for display in color picker
-            const displayColor = linearToSRGB(mat.color.clone());
-            const colorObj = { color: '#' + displayColor.getHexString() };
-            matFolder.addColor(colorObj, 'color').name('Base Color (sRGB)').onChange(v => {
-                // Convert from sRGB (color picker) to linear (material internal)
-                // MaterialX assumes linear Rec.709 as working colorspace
-                const pickerColor = new THREE.Color(v);
-                const linearColor = sRGBToLinear(pickerColor);
-                mat.color.copy(linearColor);
-            });
-        }
-
-        // Metalness
-        if (mat.metalness !== undefined) {
-            matFolder.add(mat, 'metalness', 0, 1, 0.01).name('Metalness');
-        }
-
-        // Roughness
-        if (mat.roughness !== undefined) {
-            matFolder.add(mat, 'roughness', 0, 1, 0.01).name('Roughness');
-        }
-
-        // IOR
-        if (mat.ior !== undefined) {
-            matFolder.add(mat, 'ior', 1, 3, 0.01).name('IOR');
-        }
-
-        // Clearcoat
-        if (mat.clearcoat !== undefined) {
-            matFolder.add(mat, 'clearcoat', 0, 1, 0.01).name('Clearcoat');
-        }
-        if (mat.clearcoatRoughness !== undefined) {
-            matFolder.add(mat, 'clearcoatRoughness', 0, 1, 0.01).name('Clearcoat Roughness');
-        }
-
-        // Transmission
-        if (mat.transmission !== undefined) {
-            matFolder.add(mat, 'transmission', 0, 1, 0.01).name('Transmission');
-        }
-
-        // Fuzz (formerly Sheen)
-        if (mat.sheen !== undefined) {
-            matFolder.add(mat, 'sheen', 0, 1, 0.01).name('Fuzz');
-        }
-
-        // Diffuse Roughness (base_diffuse_roughness) - OpenPBR Oren-Nayar parameter
-        // Check multiple possible locations for the value
-        let diffuseRoughnessValue = undefined;
-        if (mat.userData.rawData?.base_diffuse_roughness !== undefined) {
-            diffuseRoughnessValue = mat.userData.rawData.base_diffuse_roughness;
-        } else if (mat.userData.rawData?.openPBR?.base_diffuse_roughness !== undefined) {
-            diffuseRoughnessValue = mat.userData.rawData.openPBR.base_diffuse_roughness;
-        } else if (mat.userData.rawData?.openPBRShader?.base_diffuse_roughness !== undefined) {
-            diffuseRoughnessValue = mat.userData.rawData.openPBRShader.base_diffuse_roughness;
-        }
-
-        if (diffuseRoughnessValue !== undefined) {
-            // Store as custom property on material for easy access
-            if (!mat.userData.customParams) {
-                mat.userData.customParams = {};
+    if (pickState.selectedObject) {
+        // Show only materials from selected object
+        materialsToShow = getMaterialsFromObject(pickState.selectedObject);
+        const objName = pickState.selectedObject.name || 'Unnamed';
+        headerText = `Selected: ${objName}`;
+    } else if (meshCount === 1) {
+        // Single mesh in scene - auto-select its materials
+        sceneState.root?.traverse(obj => {
+            if (obj.isMesh && materialsToShow.length === 0) {
+                materialsToShow = getMaterialsFromObject(obj);
             }
-            mat.userData.customParams.baseDiffuseRoughness = diffuseRoughnessValue;
+        });
+        headerText = 'Single Mesh';
+    } else {
+        // Multiple objects - show nothing initially, require selection
+        materialsToShow = [];
+        headerText = 'Click object to select';
+    }
 
-            matFolder.add(mat.userData.customParams, 'baseDiffuseRoughness', 0, 1, 0.01)
-                .name('Diffuse Roughness')
-                .onChange(v => {
-                    // Update in all possible locations
-                    if (mat.userData.rawData?.base_diffuse_roughness !== undefined) {
-                        mat.userData.rawData.base_diffuse_roughness = v;
-                    }
-                    if (mat.userData.rawData?.openPBR?.base_diffuse_roughness !== undefined) {
-                        mat.userData.rawData.openPBR.base_diffuse_roughness = v;
-                    }
-                    if (mat.userData.rawData?.openPBRShader?.base_diffuse_roughness !== undefined) {
-                        mat.userData.rawData.openPBRShader.base_diffuse_roughness = v;
-                    }
-                    mat.needsUpdate = true;
-                });
-        }
+    // Add header info
+    if (headerText) {
+        guiState.materialFolder.add({ info: headerText }, 'info').name('Showing').disable();
+    }
 
-        // Iridescence (disabled)
-        // if (mat.iridescence !== undefined) {
-        //     matFolder.add(mat, 'iridescence', 0, 1, 0.01).name('Iridescence');
-        // }
-
-        // Emissive
-        if (mat.emissive) {
-            // Convert from linear (material internal) to sRGB for display in color picker
-            const displayEmissive = linearToSRGB(mat.emissive.clone());
-            const emissiveObj = { emissive: '#' + displayEmissive.getHexString() };
-            matFolder.addColor(emissiveObj, 'emissive').name('Emissive (sRGB)').onChange(v => {
-                // Convert from sRGB (color picker) to linear (material internal)
-                // MaterialX assumes linear Rec.709 as working colorspace
-                const pickerColor = new THREE.Color(v);
-                const linearColor = sRGBToLinear(pickerColor);
-                mat.emissive.copy(linearColor);
-            });
-        }
-        if (mat.emissiveIntensity !== undefined) {
-            matFolder.add(mat, 'emissiveIntensity', 0, 10, 0.1).name('Emissive Intensity');
-        }
-
-        // Add texture info
-        addTextureUI(mat, index);
+    // Add material controls
+    materialsToShow.forEach((mat, index) => {
+        const globalIndex = sceneState.materials.indexOf(mat);
+        const matName = globalIndex >= 0 ? `Material ${globalIndex}` : `Material ${index}`;
+        const matFolder = guiState.materialFolder.addFolder(matName);
+        addMaterialControls(matFolder, mat);
+        addTextureUI(mat, globalIndex >= 0 ? globalIndex : index);
     });
+
+    // If no materials, show message
+    if (materialsToShow.length === 0) {
+        guiState.materialFolder.add({ info: 'No materials' }, 'info').name('Status').disable();
+    }
+}
+
+function addMaterialControls(folder, mat) {
+    // Get material name from raw data
+    const rawData = mat.userData?.rawData;
+    const materialName = rawData?.name || rawData?.materialName || mat.name || 'Unnamed';
+    folder.add({ name: materialName }, 'name').name('Name').disable();
+
+    const typeString = mat.userData.typeString || 'Unknown';
+    folder.add({ type: typeString }, 'type').name('Type').disable();
+
+    if (mat.color) {
+        const displayColor = linearToSRGB(mat.color.clone());
+        const colorObj = { color: '#' + displayColor.getHexString() };
+        folder.addColor(colorObj, 'color').name('Base Color (sRGB)').onChange(v => {
+            mat.color.copy(sRGBToLinear(new THREE.Color(v)));
+        });
+    }
+
+    if (mat.metalness !== undefined) {
+        folder.add(mat, 'metalness', 0, 1, 0.01).name('Metalness');
+    }
+
+    if (mat.roughness !== undefined) {
+        folder.add(mat, 'roughness', 0, 1, 0.01).name('Roughness');
+    }
+
+    if (mat.ior !== undefined) {
+        folder.add(mat, 'ior', 1, 3, 0.01).name('IOR');
+    }
+
+    if (mat.clearcoat !== undefined) {
+        folder.add(mat, 'clearcoat', 0, 1, 0.01).name('Clearcoat');
+    }
+
+    if (mat.clearcoatRoughness !== undefined) {
+        folder.add(mat, 'clearcoatRoughness', 0, 1, 0.01).name('Clearcoat Roughness');
+    }
+
+    if (mat.transmission !== undefined) {
+        folder.add(mat, 'transmission', 0, 1, 0.01).name('Transmission');
+    }
+
+    if (mat.sheen !== undefined) {
+        folder.add(mat, 'sheen', 0, 1, 0.01).name('Fuzz');
+    }
+
+    addDiffuseRoughnessControl(folder, mat);
+
+    if (mat.emissive) {
+        const displayEmissive = linearToSRGB(mat.emissive.clone());
+        const emissiveObj = { emissive: '#' + displayEmissive.getHexString() };
+        folder.addColor(emissiveObj, 'emissive').name('Emissive (sRGB)').onChange(v => {
+            mat.emissive.copy(sRGBToLinear(new THREE.Color(v)));
+        });
+    }
+
+    if (mat.emissiveIntensity !== undefined) {
+        folder.add(mat, 'emissiveIntensity', 0, 10, 0.1).name('Emissive Intensity');
+    }
+}
+
+function addDiffuseRoughnessControl(folder, mat) {
+    let diffuseRoughnessValue;
+    const rawData = mat.userData.rawData;
+
+    if (rawData?.base_diffuse_roughness !== undefined) {
+        diffuseRoughnessValue = rawData.base_diffuse_roughness;
+    } else if (rawData?.openPBR?.base_diffuse_roughness !== undefined) {
+        diffuseRoughnessValue = rawData.openPBR.base_diffuse_roughness;
+    } else if (rawData?.openPBRShader?.base_diffuse_roughness !== undefined) {
+        diffuseRoughnessValue = rawData.openPBRShader.base_diffuse_roughness;
+    }
+
+    if (diffuseRoughnessValue === undefined) return;
+
+    if (!mat.userData.customParams) {
+        mat.userData.customParams = {};
+    }
+    mat.userData.customParams.baseDiffuseRoughness = diffuseRoughnessValue;
+
+    folder.add(mat.userData.customParams, 'baseDiffuseRoughness', 0, 1, 0.01)
+        .name('Diffuse Roughness')
+        .onChange(v => {
+            if (rawData?.base_diffuse_roughness !== undefined) {
+                rawData.base_diffuse_roughness = v;
+            }
+            if (rawData?.openPBR?.base_diffuse_roughness !== undefined) {
+                rawData.openPBR.base_diffuse_roughness = v;
+            }
+            if (rawData?.openPBRShader?.base_diffuse_roughness !== undefined) {
+                rawData.openPBRShader.base_diffuse_roughness = v;
+            }
+            mat.needsUpdate = true;
+        });
 }
 
 function addTextureUI(material, index) {
-    const texFolder = textureFolder.addFolder(`Material ${index} Textures`);
-
-    const textureMaps = [
-        { prop: 'map', name: 'Base Color' },
-        { prop: 'normalMap', name: 'Normal' },
-        { prop: 'roughnessMap', name: 'Roughness' },
-        { prop: 'metalnessMap', name: 'Metalness' },
-        { prop: 'emissiveMap', name: 'Emissive' },
-        { prop: 'aoMap', name: 'AO' },
-        { prop: 'alphaMap', name: 'Alpha' },
-        { prop: 'clearcoatMap', name: 'Clearcoat' },
-        { prop: 'clearcoatRoughnessMap', name: 'Clearcoat Roughness' },
-        { prop: 'sheenColorMap', name: 'Fuzz Color' },
-        { prop: 'iridescenceMap', name: 'Iridescence' }
-    ];
-
+    const texFolder = guiState.textureFolder.addFolder(`Material ${index} Textures`);
     let hasTextures = false;
 
-    textureMaps.forEach(({ prop, name }) => {
+    TEXTURE_MAPS.forEach(({ prop, name }) => {
         const tex = material[prop];
         if (tex) {
             hasTextures = true;
@@ -825,11 +1764,7 @@ function addTextureUI(material, index) {
             };
             const folder = texFolder.addFolder(name);
             folder.add(texInfo, 'enabled').name('Enabled').onChange(v => {
-                if (v) {
-                    material[prop] = tex;
-                } else {
-                    material[prop] = null;
-                }
+                material[prop] = v ? tex : null;
                 material.needsUpdate = true;
             });
             folder.add(texInfo, 'preview').name('Preview');
@@ -843,34 +1778,22 @@ function addTextureUI(material, index) {
 }
 
 function previewTexture(texture, name) {
-    // Create preview modal
     const existing = document.getElementById('texture-preview-modal');
     if (existing) existing.remove();
 
     const modal = document.createElement('div');
     modal.id = 'texture-preview-modal';
     modal.style.cssText = `
-        position: fixed;
-        top: 0;
-        left: 0;
-        width: 100%;
-        height: 100%;
-        background: rgba(0, 0, 0, 0.8);
-        display: flex;
-        justify-content: center;
-        align-items: center;
-        z-index: 10000;
-        cursor: pointer;
+        position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+        background: rgba(0, 0, 0, 0.8); display: flex;
+        justify-content: center; align-items: center; z-index: 10000; cursor: pointer;
     `;
     modal.onclick = () => modal.remove();
 
     const container = document.createElement('div');
     container.style.cssText = `
-        background: #2a2a2a;
-        padding: 20px;
-        border-radius: 10px;
-        max-width: 80%;
-        max-height: 80%;
+        background: #2a2a2a; padding: 20px; border-radius: 10px;
+        max-width: 80%; max-height: 80%;
     `;
 
     const title = document.createElement('h3');
@@ -878,7 +1801,6 @@ function previewTexture(texture, name) {
     title.style.cssText = 'color: white; margin: 0 0 10px 0;';
     container.appendChild(title);
 
-    // Render texture to canvas
     const canvas = document.createElement('canvas');
     canvas.width = 512;
     canvas.height = 512;
@@ -890,7 +1812,7 @@ function previewTexture(texture, name) {
     const material = new THREE.MeshBasicMaterial({ map: texture });
     tempScene.add(new THREE.Mesh(geometry, material));
 
-    const tempRenderer = new THREE.WebGLRenderer({ canvas: canvas });
+    const tempRenderer = new THREE.WebGLRenderer({ canvas });
     tempRenderer.setSize(512, 512);
     tempRenderer.render(tempScene, tempCamera);
     tempRenderer.dispose();
@@ -903,13 +1825,132 @@ function previewTexture(texture, name) {
 }
 
 // ============================================================================
+// Object Picking
+// ============================================================================
+
+/**
+ * Handle canvas click for object picking
+ */
+function onCanvasClick(event) {
+    // Ignore if clicking on GUI
+    if (event.target !== threeState.renderer.domElement) return;
+
+    // Calculate normalized device coordinates
+    const rect = threeState.renderer.domElement.getBoundingClientRect();
+    pickState.mouse.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
+    pickState.mouse.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
+
+    // Perform raycasting
+    pickState.raycaster.setFromCamera(pickState.mouse, threeState.camera);
+
+    if (!sceneState.root) return;
+
+    const intersects = pickState.raycaster.intersectObjects(sceneState.root.children, true);
+
+    if (intersects.length > 0) {
+        // Find the first mesh
+        const hit = intersects.find(i => i.object.isMesh);
+        if (hit) {
+            selectObject(hit.object);
+        } else {
+            // Clicked on non-mesh object, clear selection
+            clearSelection();
+        }
+    } else {
+        // Clicked on background, clear selection
+        clearSelection();
+    }
+}
+
+/**
+ * Select an object and update UI
+ */
+function selectObject(object) {
+    // Clear previous selection
+    clearSelectionHighlight();
+
+    pickState.selectedObject = object;
+
+    // Create selection highlight (wireframe box)
+    const box = new THREE.Box3().setFromObject(object);
+    const helper = new THREE.Box3Helper(box, 0x00ff00);
+    helper.name = '__selectionHelper__';
+    threeState.scene.add(helper);
+    pickState.selectionHelper = helper;
+
+    // Update material UI for selected object
+    updateMaterialUI();
+
+    // Update status
+    const objName = object.name || 'Unnamed';
+    const absPath = object.userData['primMeta.absPath'] || '';
+    updateStatus(`Selected: ${objName}${absPath ? ' (' + absPath + ')' : ''}`);
+}
+
+/**
+ * Clear selection highlight
+ */
+function clearSelectionHighlight() {
+    if (pickState.selectionHelper) {
+        threeState.scene.remove(pickState.selectionHelper);
+        pickState.selectionHelper.dispose();
+        pickState.selectionHelper = null;
+    }
+}
+
+/**
+ * Clear selection and show all materials
+ */
+function clearSelection() {
+    clearSelectionHighlight();
+    pickState.selectedObject = null;
+    updateMaterialUI();
+    updateStatus('Selection cleared - showing all materials');
+}
+
+/**
+ * Get materials from a specific object
+ */
+function getMaterialsFromObject(object) {
+    const materials = [];
+    if (!object) return materials;
+
+    if (object.material) {
+        if (Array.isArray(object.material)) {
+            object.material.forEach(mat => {
+                if (!materials.includes(mat)) materials.push(mat);
+            });
+        } else {
+            if (!materials.includes(object.material)) {
+                materials.push(object.material);
+            }
+        }
+    }
+
+    return materials;
+}
+
+/**
+ * Count meshes in the scene
+ */
+function countMeshes() {
+    let count = 0;
+    if (sceneState.root) {
+        sceneState.root.traverse(obj => {
+            if (obj.isMesh) count++;
+        });
+    }
+    return count;
+}
+
+// ============================================================================
 // Event Handlers
 // ============================================================================
 
 function onWindowResize() {
-    camera.aspect = window.innerWidth / window.innerHeight;
-    camera.updateProjectionMatrix();
-    renderer.setSize(window.innerWidth, window.innerHeight);
+    threeState.camera.aspect = window.innerWidth / window.innerHeight;
+    threeState.camera.updateProjectionMatrix();
+    threeState.renderer.setSize(window.innerWidth, window.innerHeight);
 }
 
 function onFileSelect(event) {
@@ -956,20 +1997,30 @@ function updateStatus(message) {
     if (statusEl) {
         statusEl.textContent = message;
     }
-    console.log(message);
 }
 
-// Make functions available globally for HTML buttons
 window.loadFile = () => document.getElementById('file-input').click();
 
 // ============================================================================
-// Animation Loop
+// Render Loop
 // ============================================================================
 
 function animate() {
     requestAnimationFrame(animate);
-    controls.update();
-    renderer.render(scene, camera);
+    threeState.controls.update();
+
+    // Animation disabled for now - may revisit later
+    // if (animationState.mixer && animationState.params.isPlaying) {
+    //     const delta = threeState.clock.getDelta();
+    //     const scaledDelta = delta * (animationState.params.speed / 24.0);
+    //     animationState.mixer.update(scaledDelta);
+    //
+    //     if (animationState.action) {
+    //         animationState.params.time = animationState.action.time;
+    //     }
+    // }
+
+    threeState.renderer.render(threeState.scene, threeState.camera);
 }
 
 // ============================================================================
