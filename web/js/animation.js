@@ -777,6 +777,80 @@ function updateToneMapping(value) {
 // ===========================================
 
 /**
+ * Ensure texture meets minimum size for PMREM (64x64).
+ * For smaller textures, upscale to CanvasTexture with average color.
+ * @param {THREE.Texture} texture - Input texture
+ * @returns {THREE.Texture} - Original texture if large enough, or upscaled CanvasTexture
+ */
+function ensureMinPMREMSize(texture) {
+	const MIN_PMREM_SIZE = 64;
+	const origWidth = texture.image?.width || 0;
+	const origHeight = texture.image?.height || 0;
+
+	if (origWidth >= MIN_PMREM_SIZE && origHeight >= MIN_PMREM_SIZE) {
+		return texture; // No upscaling needed
+	}
+
+	console.log(`Upscaling ${origWidth}x${origHeight} envmap to ${MIN_PMREM_SIZE}x${MIN_PMREM_SIZE} CanvasTexture`);
+
+	// Extract average color from original texture
+	let avgR = 1.0, avgG = 1.0, avgB = 1.0;
+	const texData = texture.image?.data;
+	if (texData && origWidth > 0 && origHeight > 0) {
+		const isHalfFloat = texData instanceof Uint16Array;
+		const pixelCount = origWidth * origHeight;
+		let sumR = 0, sumG = 0, sumB = 0;
+
+		// Helper to decode half-float
+		const decodeHF = (h) => {
+			const s = (h & 0x8000) >> 15;
+			const e = (h & 0x7C00) >> 10;
+			const f = h & 0x03FF;
+			if (e === 0) return (s ? -1 : 1) * Math.pow(2, -14) * (f / 1024);
+			if (e === 0x1F) return f ? NaN : (s ? -Infinity : Infinity);
+			return (s ? -1 : 1) * Math.pow(2, e - 15) * (1 + f / 1024);
+		};
+
+		for (let i = 0; i < pixelCount; i++) {
+			if (isHalfFloat) {
+				sumR += decodeHF(texData[i * 4 + 0]);
+				sumG += decodeHF(texData[i * 4 + 1]);
+				sumB += decodeHF(texData[i * 4 + 2]);
+			} else {
+				sumR += texData[i * 4 + 0];
+				sumG += texData[i * 4 + 1];
+				sumB += texData[i * 4 + 2];
+			}
+		}
+		avgR = sumR / pixelCount;
+		avgG = sumG / pixelCount;
+		avgB = sumB / pixelCount;
+		console.log(`  Extracted avg color: R=${avgR.toFixed(4)}, G=${avgG.toFixed(4)}, B=${avgB.toFixed(4)}`);
+	}
+
+	texture.dispose();
+
+	// Convert linear HDR values to sRGB for canvas (clamp to 0-1 range)
+	const toSRGB = (v) => Math.pow(Math.max(0, Math.min(1, v)), 1/2.2);
+	const r = Math.round(toSRGB(avgR) * 255);
+	const g = Math.round(toSRGB(avgG) * 255);
+	const b = Math.round(toSRGB(avgB) * 255);
+
+	const canvas = document.createElement('canvas');
+	canvas.width = MIN_PMREM_SIZE;
+	canvas.height = MIN_PMREM_SIZE;
+	const ctx = canvas.getContext('2d');
+	ctx.fillStyle = `rgb(${r}, ${g}, ${b})`;
+	ctx.fillRect(0, 0, MIN_PMREM_SIZE, MIN_PMREM_SIZE);
+
+	const canvasTexture = new THREE.CanvasTexture(canvas);
+	canvasTexture.mapping = THREE.EquirectangularReflectionMapping;
+
+	console.log(`  Created ${MIN_PMREM_SIZE}x${MIN_PMREM_SIZE} CanvasTexture with color rgb(${r}, ${g}, ${b})`);
+	return canvasTexture;
+}
+
+/**
  * Extract DomeLight from USD scene and load its environment map
  * @param {Object} usdScene - USD scene object from TinyUSDZLoader
  * @returns {Promise<Object|null>} DomeLight data or null if not found
@@ -831,6 +905,8 @@ async function loadDomeLightFromUSD(usdScene) {
 							);
 
 							if (texture) {
+								// Ensure minimum texture size for PMREM (64x64)
+								texture = ensureMinPMREMSize(texture);
 								// Generate environment map
 								envMap = pmremGenerator.fromEquirectangular(texture).texture;
 								texture.dispose();
@@ -884,6 +960,8 @@ async function loadDomeLightFromUSD(usdScene) {
 								}
 
 								if (texture) {
+									// Ensure minimum texture size for PMREM (64x64)
+									texture = ensureMinPMREMSize(texture);
 									// Generate environment map
 									envMap = pmremGenerator.fromEquirectangular(texture).texture;
 									texture.dispose();
