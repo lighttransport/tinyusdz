@@ -27,6 +27,7 @@
 #include "prim-pprint.hh"
 #include "prim-pprint-parallel.hh"
 #include "str-util.hh"
+#include "tiny-container.hh"
 #include "tiny-format.hh"
 #include "tinyusdz.hh"
 #include "usdLux.hh"
@@ -46,44 +47,69 @@ namespace tinyusdz {
 
 namespace {
 
-nonstd::optional<const Prim *> GetPrimAtPathRec(const Prim *parent,
-                                                const std::string &parent_path,
-                                                const Path &path,
-                                                const uint32_t depth) {
+// Optimized version: iterative traversal using path components
+// Avoids string concatenation and recursion by directly navigating to target
+nonstd::optional<const Prim *> GetPrimAtPathIterative(
+    const std::vector<Prim> &root_nodes,
+    const Path &path) {
 
-  if (!parent) {
+  const std::string &target_path = path.full_path_name();
+
+  // Must be absolute path starting with '/'
+  if (target_path.empty() || target_path[0] != '/') {
     return nonstd::nullopt;
   }
 
-  std::string abs_path;
-  // if (auto pv = GetPrimElementName(parent->data())) {
-  {
-    std::string elementName = parent->element_path().prim_part();
-    // DCOUT(pprint::Indent(depth) << "Prim elementName = " << elementName);
-    // DCOUT(pprint::Indent(depth) << "Given Path = " << path);
-    //  fully absolute path
-    abs_path = parent_path + "/" + elementName;
-    // DCOUT(pprint::Indent(depth) << "abs_path = " << abs_path);
-    // DCOUT(pprint::Indent(depth)
-    //       << "queriying path = " << path.full_path_name());
-    if (abs_path == path.full_path_name()) {
-      // DCOUT(pprint::Indent(depth)
-      //       << "Got it! Found Prim at Path = " << abs_path);
-      return parent;
-    }
+  // For paths like "/" only (root path), we don't have a prim
+  if (target_path.size() == 1) {
+    return nonstd::nullopt;
   }
 
-  // DCOUT(pprint::Indent(depth)
-  //       << "# of children : " << parent->children().size());
-  for (const auto &child : parent->children()) {
-    // const std::string &p = parent->elementPath.full_path_name();
-    // DCOUT(pprint::Indent(depth + 1) << "Parent path : " << abs_path);
-    if (auto pv = GetPrimAtPathRec(&child, abs_path, path, depth + 1)) {
-      return pv.value();
+  // Iteratively parse and traverse path components
+  // No string allocations - uses compare() with indices
+  const Prim *current = nullptr;
+  const std::vector<Prim> *current_children = &root_nodes;
+
+  size_t start = 1;  // skip leading '/'
+  const size_t len = target_path.size();
+
+  while (start < len) {
+    // Find end of current component
+    size_t end = start;
+    while (end < len && target_path[end] != '/') {
+      ++end;
     }
+
+    if (end == start) {
+      // Empty component (double slash), skip
+      start = end + 1;
+      continue;
+    }
+
+    // Search for matching child using direct string comparison
+    // No string allocation - compare against substring
+    const Prim *found = nullptr;
+    const size_t component_len = end - start;
+
+    for (const auto &child : *current_children) {
+      const std::string &name = child.element_name();
+      if (name.size() == component_len &&
+          target_path.compare(start, component_len, name) == 0) {
+        found = &child;
+        break;
+      }
+    }
+
+    if (!found) {
+      return nonstd::nullopt;
+    }
+
+    current = found;
+    current_children = &current->children();
+    start = end + 1;
   }
 
-  return nonstd::nullopt;
+  return current;
 }
 
 }  // namespace
@@ -130,15 +156,12 @@ nonstd::expected<const Prim *, std::string> Stage::GetPrimAtPath(
   }
 
 
-  // Brute-force search.
-  for (const auto &parent : _root_nodes) {
-    if (auto pv =
-            GetPrimAtPathRec(&parent, /* root */ "", path, /* depth */ 0)) {
-      // Add to cache.
-      // Assume pointer address does not change unless dirty state.
-      _prim_path_cache[path.prim_part()] = pv.value();
-      return pv.value();
-    }
+  // Direct path-based lookup (no brute-force search)
+  if (auto pv = GetPrimAtPathIterative(_root_nodes, path)) {
+    // Add to cache.
+    // Assume pointer address does not change unless dirty state.
+    _prim_path_cache[path.prim_part()] = pv.value();
+    return pv.value();
   }
 
   DCOUT("Not found.");
@@ -181,35 +204,60 @@ bool Stage::find_prim_at_path(const Path &path, int64_t *prim_id,
   }
 }
 
-namespace {
-
-bool FindPrimByPrimIdRec(uint64_t prim_id, const Prim *root,
-                         const Prim **primFound, int level, std::string *err) {
-  if (level > 1024 * 1024 * 128) {
-    // too deep node.
-    return false;
-  }
-
+// Optimized iterative version using explicit stack
+// Avoids recursion to save stack memory for deep hierarchies
+static bool FindPrimByPrimIdIterative(uint64_t prim_id,
+                               const std::vector<Prim> &root_nodes,
+                               const Prim **primFound) {
   if (!primFound) {
     return false;
   }
 
-  if (root->prim_id() == int64_t(prim_id)) {
-    (*primFound) = root;
-    return true;
+  // Use explicit stack for DFS traversal (StackVector for stack allocation)
+  // Store pointer to prim and current child index
+  StackVector<std::pair<const Prim *, size_t>, 4> stack;
+  stack.reserve(64);  // Pre-allocate for typical depth
+
+  // Initialize stack with root nodes
+  for (const auto &root : root_nodes) {
+    if (root.prim_id() == int64_t(prim_id)) {
+      (*primFound) = &root;
+      return true;
+    }
+    if (!root.children().empty()) {
+      stack.emplace_back(&root, 0);
+    }
   }
 
-  // Brute-force search.
-  for (const auto &child : root->children()) {
-    if (FindPrimByPrimIdRec(prim_id, &child, primFound, level + 1, err)) {
+  // Iterative DFS
+  while (!stack.empty()) {
+    auto &top = stack.back();
+    const Prim *current = top.first;
+    size_t &child_idx = top.second;
+
+    if (child_idx >= current->children().size()) {
+      // All children processed, backtrack
+      stack.pop_back();
+      continue;
+    }
+
+    const Prim &child = current->children()[child_idx];
+    ++child_idx;  // Move to next child for when we return
+
+    // Check if this is the target
+    if (child.prim_id() == int64_t(prim_id)) {
+      (*primFound) = &child;
       return true;
+    }
+
+    // Push child to stack if it has children
+    if (!child.children().empty()) {
+      stack.emplace_back(&child, 0);
     }
   }
 
   return false;
 }
-
-}  // namespace
 
 bool Stage::find_prim_by_prim_id(const uint64_t prim_id, const Prim *&prim,
                                  std::string *err) const {
@@ -237,12 +285,10 @@ bool Stage::find_prim_by_prim_id(const uint64_t prim_id, const Prim *&prim,
   }
 
   const Prim *p{nullptr};
-  for (const auto &root : root_prims()) {
-    if (FindPrimByPrimIdRec(prim_id, &root, &p, 0, err)) {
-      _prim_id_cache[prim_id] = p;
-      prim = p;
-      return true;
-    }
+  if (FindPrimByPrimIdIterative(prim_id, _root_nodes, &p)) {
+    _prim_id_cache[prim_id] = p;
+    prim = p;
+    return true;
   }
 
   return false;
@@ -577,49 +623,98 @@ bool Stage::has_prim_id(const uint64_t prim_id) const {
 
 namespace {
 
-bool ComputeAbsPathAndAssignPrimIdRec(const Stage &stage, Prim &prim,
-                                      const Path &parentPath, uint32_t depth,
-                                      bool assign_prim_id,
-                                      bool force_assign_prim_id = true,
-                                      std::string *err = nullptr) {
-  if (depth > 1024 * 1024 * 128) {
-    // too deep node.
-    if (err) {
-      (*err) += "Prim hierarchy too deep.\n";
+// Iterative version of ComputeAbsPathAndAssignPrimIdRec
+// Uses explicit stack to avoid recursion
+bool ComputeAbsPathAndAssignPrimIdIterative(const Stage &stage,
+                                            std::vector<Prim> &root_prims,
+                                            bool assign_prim_id,
+                                            bool force_assign_prim_id,
+                                            std::string *err) {
+  // Stack entry: (prim pointer, parent path, child index)
+  struct StackEntry {
+    Prim *prim;
+    Path parent_path;
+    size_t child_idx;
+
+    StackEntry(Prim *p, Path pp) : prim(p), parent_path(std::move(pp)), child_idx(0) {}
+  };
+
+  StackVector<StackEntry, 4> stack;
+  stack.reserve(64);
+
+  Path root_path("/", "");
+
+  // Process each root prim
+  for (Prim &root : root_prims) {
+    if (root.element_name().empty()) {
+      if (err) {
+        (*err) += "Prim's elementName is empty. Prim's parent Path = /\n";
+      }
+      return false;
     }
-    return false;
-  }
 
-  if (prim.element_name().empty()) {
-    // Prim's elementName must not be empty.
-    if (err) {
-      (*err) += "Prim's elementName is empty. Prim's parent Path = " +
-                parentPath.full_path_name() + "\n";
+    // Compute path and assign ID for root
+    Path abs_path = root_path.AppendPrim(root.element_name());
+    root.absolute_path() = abs_path;
+
+    if (assign_prim_id) {
+      if (force_assign_prim_id || (root.prim_id() < 1)) {
+        uint64_t prim_id{0};
+        if (!stage.allocate_prim_id(&prim_id)) {
+          if (err) {
+            (*err) += "Failed to assign unique Prim ID.\n";
+          }
+          return false;
+        }
+        root.prim_id() = int64_t(prim_id);
+      }
     }
-    return false;
-  }
 
-  Path abs_path = parentPath.AppendPrim(prim.element_name());
+    if (!root.children().empty()) {
+      stack.emplace_back(&root, abs_path);
+    }
 
-  prim.absolute_path() = abs_path;
-  if (assign_prim_id) {
-    if (force_assign_prim_id || (prim.prim_id() < 1)) {
-      uint64_t prim_id{0};
-      if (!stage.allocate_prim_id(&prim_id)) {
+    // Process tree iteratively
+    while (!stack.empty()) {
+      auto &top = stack.back();
+      Prim *current = top.prim;
+      size_t &child_idx = top.child_idx;
+
+      if (child_idx >= current->children().size()) {
+        stack.pop_back();
+        continue;
+      }
+
+      Prim &child = current->children()[child_idx];
+      ++child_idx;
+
+      if (child.element_name().empty()) {
         if (err) {
-          (*err) += "Failed to assign unique Prim ID.\n";
+          (*err) += "Prim's elementName is empty. Prim's parent Path = " +
+                    top.parent_path.full_path_name() + "\n";
         }
         return false;
       }
-      prim.prim_id() = int64_t(prim_id);
-    }
-  }
 
-  for (Prim &child : prim.children()) {
-    if (!ComputeAbsPathAndAssignPrimIdRec(stage, child, abs_path, depth + 1,
-                                          assign_prim_id, force_assign_prim_id,
-                                          err)) {
-      return false;
+      Path child_abs_path = top.parent_path.AppendPrim(child.element_name());
+      child.absolute_path() = child_abs_path;
+
+      if (assign_prim_id) {
+        if (force_assign_prim_id || (child.prim_id() < 1)) {
+          uint64_t prim_id{0};
+          if (!stage.allocate_prim_id(&prim_id)) {
+            if (err) {
+              (*err) += "Failed to assign unique Prim ID.\n";
+            }
+            return false;
+          }
+          child.prim_id() = int64_t(prim_id);
+        }
+      }
+
+      if (!child.children().empty()) {
+        stack.emplace_back(&child, child_abs_path);
+      }
     }
   }
 
@@ -630,13 +725,10 @@ bool ComputeAbsPathAndAssignPrimIdRec(const Stage &stage, Prim &prim,
 
 bool Stage::compute_absolute_prim_path_and_assign_prim_id(
     bool force_assign_prim_id) {
-  Path rootPath("/", "");
-  for (Prim &root : root_prims()) {
-    if (!ComputeAbsPathAndAssignPrimIdRec(*this, root, rootPath, 1,
-                                          /* assign_prim_id */ true,
-                                          force_assign_prim_id, &_err)) {
-      return false;
-    }
+  if (!ComputeAbsPathAndAssignPrimIdIterative(*this, _root_nodes,
+                                              /* assign_prim_id */ true,
+                                              force_assign_prim_id, &_err)) {
+    return false;
   }
 
   // TODO: Only set dirty when prim_id changed.
@@ -646,13 +738,11 @@ bool Stage::compute_absolute_prim_path_and_assign_prim_id(
 }
 
 bool Stage::compute_absolute_prim_path() {
-  Path rootPath("/", "");
-  for (Prim &root : root_prims()) {
-    if (!ComputeAbsPathAndAssignPrimIdRec(
-            *this, root, rootPath, 1, /* assign prim_id */ false,
-            /* force_assign_prim_id */ true, &_err)) {
-      return false;
-    }
+  if (!ComputeAbsPathAndAssignPrimIdIterative(*this, _root_nodes,
+                                              /* assign_prim_id */ false,
+                                              /* force_assign_prim_id */ true,
+                                              &_err)) {
+    return false;
   }
 
   return true;
@@ -782,21 +872,57 @@ bool Stage::replace_root_prim(const std::string &prim_name, Prim &&prim) {
 
 namespace {
 
-std::string DumpPrimTreeRec(const Prim &prim, uint32_t depth) {
+// Iterative version of DumpPrimTree using explicit stack
+// Avoids recursion to save stack memory for deep hierarchies
+std::string DumpPrimTreeIterative(const std::vector<Prim> &root_prims) {
   std::stringstream ss;
 
-  if (depth > 1024 * 1024 * 128) {
-    // too deep node.
-    return ss.str();
+  // Stack entries: (prim pointer, depth, child index)
+  // child_idx == SIZE_MAX means we haven't processed this node yet
+  struct StackEntry {
+    const Prim *prim;
+    uint32_t depth;
+    size_t child_idx;
+    StackEntry(const Prim *p, uint32_t d) : prim(p), depth(d), child_idx(SIZE_MAX) {}
+  };
+
+  StackVector<StackEntry, 4> stack;
+  stack.reserve(64);
+
+  // Push root prims in reverse order to process in forward order
+  for (auto it = root_prims.rbegin(); it != root_prims.rend(); ++it) {
+    stack.emplace_back(&(*it), 0);
   }
 
-  ss << pprint::Indent(depth) << "\"" << prim.element_name() << "\" "
-     << prim.absolute_path() << "\n";
-  ss << pprint::Indent(depth + 1) << fmt::format("prim_id {}", prim.prim_id())
-     << "\n";
+  constexpr uint32_t kMaxDepth = 1024 * 1024 * 128;
 
-  for (const Prim &child : prim.children()) {
-    ss << DumpPrimTreeRec(child, depth + 1);
+  while (!stack.empty()) {
+    StackEntry &entry = stack.back();
+
+    if (entry.depth > kMaxDepth) {
+      stack.pop_back();
+      continue;
+    }
+
+    if (entry.child_idx == SIZE_MAX) {
+      // First visit: output this node
+      ss << pprint::Indent(entry.depth) << "\"" << entry.prim->element_name() << "\" "
+         << entry.prim->absolute_path() << "\n";
+      ss << pprint::Indent(entry.depth + 1) << fmt::format("prim_id {}", entry.prim->prim_id())
+         << "\n";
+      entry.child_idx = 0;
+    }
+
+    // Process children
+    const auto &children = entry.prim->children();
+    if (entry.child_idx < children.size()) {
+      // Push next child and increment index
+      size_t idx = entry.child_idx++;
+      stack.emplace_back(&children[idx], entry.depth + 1);
+    } else {
+      // All children processed, pop this node
+      stack.pop_back();
+    }
   }
 
   return ss.str();
@@ -805,12 +931,7 @@ std::string DumpPrimTreeRec(const Prim &prim, uint32_t depth) {
 }  // namespace
 
 std::string Stage::dump_prim_tree() const {
-  std::stringstream ss;
-
-  for (const Prim &root : root_prims()) {
-    ss << DumpPrimTreeRec(root, 0);
-  }
-  return ss.str();
+  return DumpPrimTreeIterative(_root_nodes);
 }
 
 size_t Stage::estimate_memory_usage() const {

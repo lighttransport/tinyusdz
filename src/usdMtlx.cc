@@ -1272,15 +1272,13 @@ static bool ConvertNoise(const tinyusdz::mtlx::pugi::xml_node &node, PrimSpec &p
   return true;
 }
 
-static bool ConvertNodeGraphRec(const uint32_t depth,
-                                const tinyusdz::mtlx::pugi::xml_node &node, PrimSpec &ps_out,
-                                std::string *warn, std::string *err) {
-  if (depth > (1024 * 1024)) {
-    PUSH_ERROR_AND_RETURN("Network too deep.\n");
-  }
-
-  PrimSpec ps;
-
+// Helper to convert a single MaterialX node to PrimSpec
+// Returns true if successful (including skip case), false on error
+// Sets is_skip to true if the node should be skipped (input/output/unknown)
+static bool ConvertSingleNode(const tinyusdz::mtlx::pugi::xml_node &node,
+                              PrimSpec &ps, bool &is_skip,
+                              std::string *warn, std::string *err) {
+  is_skip = false;
   std::string node_name = node.name();
 
   // Convert MaterialX nodes to USD shader nodes
@@ -1330,27 +1328,102 @@ static bool ConvertNodeGraphRec(const uint32_t depth,
     }
   } else if (node_name == "input" || node_name == "output") {
     // Skip input/output nodes - they are handled separately
+    is_skip = true;
     return true;
   } else {
     PUSH_WARN(fmt::format("Unknown/unsupported Shader Node: {}. Skipping.\n", node.name()));
+    is_skip = true;
     return true; // Don't fail, just skip unknown nodes
   }
 
-  // Recursively process child nodes
-  for (const auto &child : node) {
-    PrimSpec child_ps;
-    if (!ConvertNodeGraphRec(depth + 1, child, child_ps, warn, err)) {
-      return false;
+  return true;
+}
+
+// Iterative version of ConvertNodeGraph using explicit stack
+static bool ConvertNodeGraphIterative(const tinyusdz::mtlx::pugi::xml_node &root_node,
+                                      PrimSpec &ps_out,
+                                      std::string *warn, std::string *err) {
+  constexpr size_t kMaxDepth = 1024 * 1024;
+
+  // Stack entry for iterative processing
+  // We need to collect children into a vector since the iterator is temporary
+  struct StackEntry {
+    tinyusdz::mtlx::pugi::xml_node xml_node;
+    std::vector<tinyusdz::mtlx::pugi::xml_node> children;
+    size_t child_idx;
+    PrimSpec ps;
+    bool is_skip;
+
+    explicit StackEntry(const tinyusdz::mtlx::pugi::xml_node &n)
+        : xml_node(n), child_idx(0), is_skip(false) {
+      // Collect children into vector
+      for (auto it = n.begin(); it != n.end(); ++it) {
+        children.push_back(*it);
+      }
+    }
+  };
+
+  std::vector<StackEntry> stack;
+  stack.reserve(64);
+
+  // Initialize with root node
+  stack.emplace_back(root_node);
+
+  // Convert root node
+  if (!ConvertSingleNode(root_node, stack.back().ps, stack.back().is_skip, warn, err)) {
+    return false;
+  }
+
+  while (!stack.empty()) {
+    if (stack.size() > kMaxDepth) {
+      PUSH_ERROR_AND_RETURN("Network too deep.\n");
     }
 
-    if (!child_ps.name().empty()) {
-      ps.children().emplace_back(std::move(child_ps));
+    StackEntry &curr = stack.back();
+
+    // Check if there are more children to process
+    if (curr.child_idx < curr.children.size()) {
+      // Get current child and advance index
+      tinyusdz::mtlx::pugi::xml_node child = curr.children[curr.child_idx];
+      curr.child_idx++;
+
+      // Push child onto stack
+      stack.emplace_back(child);
+
+      // Convert the child node
+      if (!ConvertSingleNode(child, stack.back().ps, stack.back().is_skip, warn, err)) {
+        return false;
+      }
+    } else {
+      // All children processed
+      if (stack.size() > 1) {
+        // Move completed node to parent's children if not skipped and has name
+        PrimSpec completed = std::move(curr.ps);
+        bool was_skip = curr.is_skip;
+        stack.pop_back();
+
+        if (!was_skip && !completed.name().empty()) {
+          stack.back().ps.children().emplace_back(std::move(completed));
+        }
+      } else {
+        // Root node - copy to output
+        if (!curr.is_skip) {
+          ps_out = std::move(curr.ps);
+        }
+        stack.pop_back();
+      }
     }
   }
 
-  ps_out = std::move(ps);
-
   return true;
+}
+
+// Wrapper to maintain backward compatibility with ConvertNodeGraphRec signature
+static bool ConvertNodeGraphRec(const uint32_t depth,
+                                const tinyusdz::mtlx::pugi::xml_node &node, PrimSpec &ps_out,
+                                std::string *warn, std::string *err) {
+  (void)depth;  // Iterative version handles depth internally
+  return ConvertNodeGraphIterative(node, ps_out, warn, err);
 }
 
 #if 0  // TODO

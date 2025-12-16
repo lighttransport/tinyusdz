@@ -18,6 +18,8 @@ set(TEST_SOURCES
 	unit-timesamples.cc
 	unit-materialx.cc
 	unit-task-queue.cc
+	unit-stage.cc
+	unit-tiny-container.cc
    )
 
 if (TINYUSDZ_WITH_PXR_COMPAT_API)

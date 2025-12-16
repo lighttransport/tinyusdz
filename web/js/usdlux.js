@@ -1660,8 +1660,39 @@ function convertUSDLightToThreeJS(usdLight) {
     }
 
     case 'dome': {
-      // Use hemisphere light for dome/environment
-      light = new THREE.HemisphereLight(color, new THREE.Color(0x444444), intensity);
+      // DomeLight - environment/IBL lighting
+      // Check if we have an envmap texture
+      if (usdLight.envmapTextureId >= 0 && usdLight._envmapTexture) {
+        // Use the preloaded envmap texture for environment lighting
+        const pmremGenerator = new THREE.PMREMGenerator(renderer);
+        pmremGenerator.compileEquirectangularShader();
+
+        const envMap = pmremGenerator.fromEquirectangular(usdLight._envmapTexture).texture;
+        scene.environment = envMap;
+
+        // Optionally use as background
+        if (usdLight.guideRadius && usdLight.guideRadius < 1e4) {
+          // If guide radius is small, show the environment as background
+          scene.background = envMap;
+        }
+
+        pmremGenerator.dispose();
+
+        console.log(`Applied envmap from DomeLight: ${usdLight.name}, textureFile: ${usdLight.textureFile}`);
+
+        // Still create a hemisphere light as fallback visualization
+        light = new THREE.HemisphereLight(color, new THREE.Color(0x444444), intensity * 0.1);
+      } else if (usdLight.textureFile) {
+        // Texture file specified but not loaded - create placeholder and log
+        console.log(`DomeLight ${usdLight.name} has textureFile: ${usdLight.textureFile} (not loaded)`);
+        console.log(`Use envmapTextureId: ${usdLight.envmapTextureId} for preloaded textures`);
+
+        // Use hemisphere light as fallback
+        light = new THREE.HemisphereLight(color, new THREE.Color(0x444444), intensity);
+      } else {
+        // No texture - use hemisphere light for basic environment lighting
+        light = new THREE.HemisphereLight(color, new THREE.Color(0x444444), intensity);
+      }
       break;
     }
 
@@ -1705,6 +1736,106 @@ function convertUSDLightToThreeJS(usdLight) {
 }
 
 /**
+ * Create Three.js texture from image data
+ * @param {Object} imageData - Image data from getImage()
+ * @returns {THREE.Texture|null} Three.js texture or null
+ */
+function createTextureFromImageData(imageData) {
+  if (!imageData) {
+    console.warn('No image data provided');
+    return null;
+  }
+
+  const width = imageData.width;
+  const height = imageData.height;
+  const channels = imageData.channels;
+  const decoded = imageData.decoded;
+
+  console.log(`Creating texture from image: ${width}x${height}, ${channels} channels, decoded: ${decoded}`);
+
+  // Check if we have raw pixel data
+  if (!imageData.data || imageData.data.length === 0) {
+    console.warn('No pixel data available in image');
+    return null;
+  }
+
+  // Determine if this is HDR data (float) or LDR data (uint8)
+  // HDR images like EXR are typically decoded as float32
+  const bytesPerPixel = imageData.data.length / (width * height);
+  const isHDR = bytesPerPixel >= channels * 4; // 4 bytes per float per channel
+
+  console.log(`Image bytes per pixel: ${bytesPerPixel}, isHDR: ${isHDR}`);
+
+  let texture;
+
+  if (isHDR || decoded) {
+    // Create float texture for HDR data
+    // Assume float32 RGBA data
+    const floatData = new Float32Array(width * height * 4);
+
+    if (bytesPerPixel === channels * 4) {
+      // Data is already float32
+      const srcData = new Float32Array(imageData.data.buffer, imageData.data.byteOffset, width * height * channels);
+
+      for (let i = 0; i < width * height; i++) {
+        floatData[i * 4 + 0] = channels > 0 ? srcData[i * channels + 0] : 0;
+        floatData[i * 4 + 1] = channels > 1 ? srcData[i * channels + 1] : 0;
+        floatData[i * 4 + 2] = channels > 2 ? srcData[i * channels + 2] : 0;
+        floatData[i * 4 + 3] = channels > 3 ? srcData[i * channels + 3] : 1;
+      }
+    } else {
+      // Data is uint8, convert to float
+      for (let i = 0; i < width * height; i++) {
+        floatData[i * 4 + 0] = channels > 0 ? imageData.data[i * channels + 0] / 255 : 0;
+        floatData[i * 4 + 1] = channels > 1 ? imageData.data[i * channels + 1] / 255 : 0;
+        floatData[i * 4 + 2] = channels > 2 ? imageData.data[i * channels + 2] / 255 : 0;
+        floatData[i * 4 + 3] = channels > 3 ? imageData.data[i * channels + 3] / 255 : 1;
+      }
+    }
+
+    texture = new THREE.DataTexture(
+      floatData,
+      width,
+      height,
+      THREE.RGBAFormat,
+      THREE.FloatType
+    );
+    texture.colorSpace = THREE.LinearSRGBColorSpace;
+  } else {
+    // Create uint8 texture for LDR data
+    const rgbaData = new Uint8Array(width * height * 4);
+
+    for (let i = 0; i < width * height; i++) {
+      rgbaData[i * 4 + 0] = channels > 0 ? imageData.data[i * channels + 0] : 0;
+      rgbaData[i * 4 + 1] = channels > 1 ? imageData.data[i * channels + 1] : 0;
+      rgbaData[i * 4 + 2] = channels > 2 ? imageData.data[i * channels + 2] : 0;
+      rgbaData[i * 4 + 3] = channels > 3 ? imageData.data[i * channels + 3] : 255;
+    }
+
+    texture = new THREE.DataTexture(
+      rgbaData,
+      width,
+      height,
+      THREE.RGBAFormat,
+      THREE.UnsignedByteType
+    );
+    texture.colorSpace = THREE.SRGBColorSpace;
+  }
+
+  // Configure texture for equirectangular environment map
+  texture.mapping = THREE.EquirectangularReflectionMapping;
+  texture.wrapS = THREE.RepeatWrapping;
+  texture.wrapT = THREE.ClampToEdgeWrapping;
+  texture.minFilter = THREE.LinearMipmapLinearFilter;
+  texture.magFilter = THREE.LinearFilter;
+  texture.generateMipmaps = true;
+  texture.needsUpdate = true;
+
+  console.log(`Created envmap texture: ${width}x${height}`);
+  return texture;
+}
+
+/**
  * Load lights from USD data
  * @param {Object} usdLoader - TinyUSDZ loader instance
  */
@@ -1723,6 +1854,20 @@ function loadLightsFromUSD(usdLoader) {
     }
 
     console.log(`Light ${i}:`, usdLight);
+
+    // For dome lights with envmap texture, try to load the texture
+    if (usdLight.type === 'dome' && usdLight.envmapTextureId >= 0) {
+      console.log(`DomeLight has envmap texture ID: ${usdLight.envmapTextureId}`);
+      const imageData = usdLoader.getImage(usdLight.envmapTextureId);
+      if (imageData && !imageData.error) {
+        console.log(`Envmap image: ${imageData.width}x${imageData.height}, decoded: ${imageData.decoded}`);
+        const envTexture = createTextureFromImageData(imageData);
+        if (envTexture) {
+          usdLight._envmapTexture = envTexture;
+        }
+      }
+    }
+
     lightData.push(usdLight);
 
     const threeLight = convertUSDLightToThreeJS(usdLight);
