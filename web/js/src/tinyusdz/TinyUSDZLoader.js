@@ -468,7 +468,8 @@ class TinyUSDZLoader extends Loader {
 
         const ok = usd.loadFromBinary(binary, filePath);
         if (!ok) {
-            _onError(new Error('TinyUSDZLoader: Failed to load USD from binary data.', {cause: usd.error()}));
+            const fileInfo = filePath ? ` (file: ${filePath})` : '';
+            _onError(new Error(`TinyUSDZLoader: Failed to load USD from binary data${fileInfo}.`, {cause: usd.error()}));
         } else {
             onLoad(usd);
         }
@@ -553,7 +554,8 @@ class TinyUSDZLoader extends Loader {
                         if (usd.wasCancelled()) {
                             reject(new DOMException('Parsing cancelled', 'AbortError'));
                         } else {
-                            reject(new Error('TinyUSDZLoader: Failed to load USD from binary data.', {cause: usd.error()}));
+                            const fileInfo = filePath ? ` (file: ${filePath})` : '';
+                            reject(new Error(`TinyUSDZLoader: Failed to load USD from binary data${fileInfo}.`, {cause: usd.error()}));
                         }
                     } else {
                         resolve(usd);
