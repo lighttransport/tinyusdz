@@ -199,13 +199,13 @@ function setupGUI() {
     sceneFolder.add(settings, 'envColorspace', ['sRGB', 'linear'])
         .name('Env Colorspace')
         .onChange(updateConstantColorEnvironment);
-    sceneFolder.add(settings, 'envMapIntensity', 0, 3, 0.1)
+    sceneFolder.add(settings, 'envMapIntensity', 0, 1000, 0.1)
         .name('Env Intensity')
         .onChange(updateEnvIntensity);
     sceneFolder.add(settings, 'showBackground')
         .name('Show Background')
         .onChange(updateBackground);
-    sceneFolder.add(settings, 'exposure', 0, 3, 0.1)
+    sceneFolder.add(settings, 'exposure', 0, 100, 0.1)
         .name('Exposure')
         .onChange(v => { renderer.toneMappingExposure = v; });
     sceneFolder.add(settings, 'toneMapping', ['none', 'linear', 'reinhard', 'cineon', 'aces', 'agx', 'neutral'])
@@ -699,13 +699,15 @@ async function loadEnvironment(preset) {
 
     if (path === 'usd') {
         // USD DomeLight - use stored DomeLight data
-        if (usdDomeLightData) {
-            console.log('Using USD DomeLight environment');
-            // Environment map already loaded by loadDomeLightFromUSD
-            // Just update the status
+        if (usdDomeLightData && usdDomeLightData.envMap) {
+            console.log('Restoring USD DomeLight environment');
+            // Restore the stored envMap and reapply
+            envMap = usdDomeLightData.envMap;
+            settings.envMapIntensity = usdDomeLightData.intensity || 1.0;
+            applyEnvironment();
             updateStatus('Using USD DomeLight environment');
         } else {
-            console.warn('USD DomeLight selected but no DomeLight data available');
+            console.warn('USD DomeLight selected but no DomeLight data/envMap available');
             updateStatus('No USD DomeLight available - using studio lighting');
             envMap = createStudioEnvironment();
             applyEnvironment();
@@ -791,14 +793,22 @@ function createConstantColorEnvironment(color, colorspace = 'sRGB') {
 }
 
 function applyEnvironment() {
+    console.log('applyEnvironment called:');
+    console.log('  envMap:', envMap);
+    console.log('  scene.environment before:', scene.environment);
     scene.environment = envMap;
+    console.log('  scene.environment after:', scene.environment);
     updateBackground();
     updateEnvIntensity();
 
     // Update envMap reference on all existing materials
-    currentMaterials.forEach(mat => {
+    console.log(`  Updating ${currentMaterials.length} materials with envMap`);
+    currentMaterials.forEach((mat, idx) => {
         mat.envMap = envMap;
         mat.needsUpdate = true;  // Flag material for shader recompilation
+        if (idx === 0) {
+            console.log(`  Material[0] envMap: ${mat.envMap ? 'set' : 'null'}, envMapIntensity: ${mat.envMapIntensity}`);
+        }
     });
 }
 
@@ -872,144 +882,265 @@ async function loadDomeLightFromUSD(usdLoader) {
             if (light.type === 'dome' || light.type === 'Dome' || light.type === 'DomeLight') {
                 console.log(`Found DomeLight: "${light.name || 'unnamed'}"`);
 
-                // Extract texture file path
+                // Check if envmapTextureId is available (texture loaded via Tydra)
+                const envmapTextureId = light.envmapTextureId;
                 const textureFile = light.textureFile || light.texture_file;
 
-                if (textureFile) {
-                    console.log(`DomeLight has texture: ${textureFile}`);
+                if (envmapTextureId !== undefined && envmapTextureId >= 0) {
+                    // Use envmapTextureId to get the image data from Tydra's images array
+                    console.log(`DomeLight has envmapTextureId: ${envmapTextureId}`);
 
-                    // Load the environment texture from USD
                     try {
-                        // Get texture data from USD loader
-                        const textureData = usdLoader.getTextureImage ?
-                            usdLoader.getTextureImage(textureFile) : null;
+                        const imageData = usdLoader.getImage(envmapTextureId);
 
-                        if (textureData && !textureData.error) {
-                            console.log(`Loaded DomeLight texture from USD: ${textureFile}`);
+                        if (imageData && imageData.data && imageData.data.length > 0) {
+                            console.log(`Loaded DomeLight envmap image: ${imageData.uri || textureFile}`);
+                            console.log(`  Size: ${imageData.width}x${imageData.height}, channels: ${imageData.channels}, decoded: ${imageData.decoded}`);
 
-                            // Create texture from image data
-                            const texture = await createTextureFromData(
-                                textureData.data,
-                                textureData.width,
-                                textureData.height,
-                                textureData.channels,
-                                textureData.format
-                            );
+                            let texture = null;
+
+                            if (imageData.decoded) {
+                                // Image is already decoded - create texture from raw pixel data
+                                texture = await createTextureFromDecodedData(
+                                    imageData.data,
+                                    imageData.width,
+                                    imageData.height,
+                                    imageData.channels,
+                                    imageData.colorSpace
+                                );
+                            } else {
+                                // Image is raw file data - decode using Three.js loaders
+                                const uri = imageData.uri || textureFile || '';
+                                texture = await decodeEnvmapFromBuffer(imageData.data, uri);
+                            }
 
                             if (texture) {
-                                // Generate environment map
-                                envMap = pmremGenerator.fromEquirectangular(texture).texture;
+                                // PMREM requires minimum 64x64 texture. For tiny textures, upscale to CanvasTexture
+                                const MIN_PMREM_SIZE = 64;
+                                const origWidth = texture.image?.width || 0;
+                                const origHeight = texture.image?.height || 0;
+
+                                if (origWidth < MIN_PMREM_SIZE || origHeight < MIN_PMREM_SIZE) {
+                                    console.log(`Upscaling ${origWidth}x${origHeight} envmap to ${MIN_PMREM_SIZE}x${MIN_PMREM_SIZE} CanvasTexture`);
+
+                                    // Extract average color from original texture
+                                    let avgR = 1.0, avgG = 1.0, avgB = 1.0;
+                                    const texData = texture.image?.data;
+                                    if (texData && origWidth > 0 && origHeight > 0) {
+                                        const isHalfFloat = texData instanceof Uint16Array;
+                                        const pixelCount = origWidth * origHeight;
+                                        let sumR = 0, sumG = 0, sumB = 0;
+
+                                        // Helper to decode half-float
+                                        const decodeHF = (h) => {
+                                            const s = (h & 0x8000) >> 15;
+                                            const e = (h & 0x7C00) >> 10;
+                                            const f = h & 0x03FF;
+                                            if (e === 0) return (s ? -1 : 1) * Math.pow(2, -14) * (f / 1024);
+                                            if (e === 0x1F) return f ? NaN : (s ? -Infinity : Infinity);
+                                            return (s ? -1 : 1) * Math.pow(2, e - 15) * (1 + f / 1024);
+                                        };
+
+                                        for (let i = 0; i < pixelCount; i++) {
+                                            if (isHalfFloat) {
+                                                sumR += decodeHF(texData[i * 4 + 0]);
+                                                sumG += decodeHF(texData[i * 4 + 1]);
+                                                sumB += decodeHF(texData[i * 4 + 2]);
+                                            } else {
+                                                sumR += texData[i * 4 + 0];
+                                                sumG += texData[i * 4 + 1];
+                                                sumB += texData[i * 4 + 2];
+                                            }
+                                        }
+                                        avgR = sumR / pixelCount;
+                                        avgG = sumG / pixelCount;
+                                        avgB = sumB / pixelCount;
+                                        console.log(`  Extracted avg color: R=${avgR.toFixed(4)}, G=${avgG.toFixed(4)}, B=${avgB.toFixed(4)}`);
+                                    }
+
+                                    texture.dispose();
+
+                                    // Convert linear HDR values to sRGB for canvas (clamp to 0-1 range)
+                                    const toSRGB = (v) => Math.pow(Math.max(0, Math.min(1, v)), 1/2.2);
+                                    const r = Math.round(toSRGB(avgR) * 255);
+                                    const g = Math.round(toSRGB(avgG) * 255);
+                                    const b = Math.round(toSRGB(avgB) * 255);
+
+                                    const canvas = document.createElement('canvas');
+                                    canvas.width = MIN_PMREM_SIZE;
+                                    canvas.height = MIN_PMREM_SIZE;
+                                    const ctx = canvas.getContext('2d');
+                                    ctx.fillStyle = `rgb(${r}, ${g}, ${b})`;
+                                    ctx.fillRect(0, 0, MIN_PMREM_SIZE, MIN_PMREM_SIZE);
+
+                                    texture = new THREE.CanvasTexture(canvas);
+                                    texture.mapping = THREE.EquirectangularReflectionMapping;
+
+                                    console.log(`  Created ${MIN_PMREM_SIZE}x${MIN_PMREM_SIZE} CanvasTexture with color rgb(${r}, ${g}, ${b})`);
+                                }
+
+                                // Generate environment map using PMREM
+                                const pmremResult = pmremGenerator.fromEquirectangular(texture);
+                                envMap = pmremResult.texture;
                                 texture.dispose();
 
                                 // Apply intensity and exposure
+                                // Default exposure to 1.0 if not set or 0 (provides 2x intensity boost)
                                 let intensity = light.intensity !== undefined ? light.intensity : 1.0;
-                                if (light.exposure !== undefined && light.exposure !== 0) {
-                                    intensity *= Math.pow(2, light.exposure);
-                                }
+                                const exposure = (light.exposure !== undefined && light.exposure !== 0) ? light.exposure : 1.0;
+                                intensity *= Math.pow(2, exposure);
 
+                                console.log(`DomeLight: intensity=${intensity.toFixed(2)} (base: ${light.intensity}, exposure: ${exposure})`);
                                 settings.envMapIntensity = intensity;
-                                settings.envMapPreset = 'usd_dome'; // Set to USD DomeLight
+                                settings.envMapPreset = 'usd_dome';
 
                                 applyEnvironment();
-                                updateStatus(`Loaded DomeLight environment from USD: ${textureFile}`);
+                                updateStatus(`Loaded DomeLight environment from USD: ${imageData.uri || textureFile || 'embedded'}`);
 
-                                // Store DomeLight data
+                                // Store DomeLight data (including envMap for restoration)
                                 usdDomeLightData = {
                                     name: light.name,
                                     textureFile: textureFile,
+                                    envmapTextureId: envmapTextureId,
                                     intensity: intensity,
                                     color: light.color,
-                                    exposure: light.exposure
+                                    exposure: light.exposure,
+                                    envMap: envMap  // Store reference for restoration
+                                };
+
+                                return usdDomeLightData;
+                            } else {
+                                // Failed to decode - create fallback white CanvasTexture (PMREM needs 64x64 minimum)
+                                console.warn('Failed to decode envmap, creating white fallback CanvasTexture');
+                                const fallbackSize = 64;
+                                const canvas = document.createElement('canvas');
+                                canvas.width = fallbackSize;
+                                canvas.height = fallbackSize;
+                                const ctx = canvas.getContext('2d');
+                                ctx.fillStyle = '#ffffff';
+                                ctx.fillRect(0, 0, fallbackSize, fallbackSize);
+
+                                let fallbackTexture = new THREE.CanvasTexture(canvas);
+                                fallbackTexture.mapping = THREE.EquirectangularReflectionMapping;
+                                console.log(`  Created white fallback CanvasTexture ${fallbackSize}x${fallbackSize}`);
+
+                                // Generate environment map using PMREM
+                                console.log('Generating PMREM from fallback texture...');
+                                const pmremResult = pmremGenerator.fromEquirectangular(fallbackTexture);
+                                envMap = pmremResult.texture;
+                                fallbackTexture.dispose();
+
+                                // Apply with default intensity
+                                let intensity = light.intensity !== undefined ? light.intensity : 1.0;
+                                const exposure = (light.exposure !== undefined && light.exposure !== 0) ? light.exposure : 1.0;
+                                intensity *= Math.pow(2, exposure);
+
+                                console.log(`DomeLight fallback intensity: ${intensity}`);
+                                settings.envMapIntensity = intensity;
+                                settings.envMapPreset = 'usd_dome';
+
+                                applyEnvironment();
+
+                                usdDomeLightData = {
+                                    name: light.name,
+                                    textureFile: textureFile,
+                                    envmapTextureId: envmapTextureId,
+                                    intensity: intensity,
+                                    color: light.color,
+                                    exposure: light.exposure,
+                                    envMap: envMap
                                 };
 
                                 return usdDomeLightData;
                             }
                         } else {
-                            // Fallback: Try loading the texture directly using Three.js loaders
-                            console.log(`USD layer could not provide texture data, trying direct load: ${textureFile}`);
-                            console.log(`File extension check: .exr=${textureFile.toLowerCase().endsWith('.exr')}, .hdr=${textureFile.toLowerCase().endsWith('.hdr')}`);
-
-                            try {
-                                let texture = null;
-
-                                // Check file extension to determine loader
-                                if (textureFile.toLowerCase().endsWith('.exr')) {
-                                    console.log(`Detected EXR file, using EXRLoader: ${textureFile}`);
-                                    const exrLoader = new EXRLoader();
-                                    texture = await exrLoader.loadAsync(textureFile);
-                                    texture.mapping = THREE.EquirectangularReflectionMapping;
-                                    console.log(`Successfully loaded EXR texture`);
-                                } else if (textureFile.toLowerCase().endsWith('.hdr')) {
-                                    console.log(`Detected HDR file, using HDRLoader: ${textureFile}`);
-                                    const hdrLoader = new HDRLoader();
-                                    texture = await hdrLoader.loadAsync(textureFile);
-                                    texture.mapping = THREE.EquirectangularReflectionMapping;
-                                    console.log(`Successfully loaded HDR texture`);
-                                } else {
-                                    console.warn(`Unknown texture format for file: ${textureFile}`);
-                                }
-
-                                if (texture) {
-                                    // Generate environment map
-                                    envMap = pmremGenerator.fromEquirectangular(texture).texture;
-                                    texture.dispose();
-
-                                    // Apply intensity and exposure
-                                    let intensity = light.intensity !== undefined ? light.intensity : 1.0;
-                                    if (light.exposure !== undefined && light.exposure !== 0) {
-                                        intensity *= Math.pow(2, light.exposure);
-                                    }
-
-                                    settings.envMapIntensity = intensity;
-                                    settings.envMapPreset = 'usd_dome'; // Set to USD DomeLight
-
-                                    applyEnvironment();
-                                    updateStatus(`Loaded DomeLight environment directly: ${textureFile}`);
-
-                                    // Store DomeLight data
-                                    usdDomeLightData = {
-                                        name: light.name,
-                                        textureFile: textureFile,
-                                        intensity: intensity,
-                                        color: light.color,
-                                        exposure: light.exposure
-                                    };
-
-                                    return usdDomeLightData;
-                                } else {
-                                    console.warn(`Could not load texture data for: ${textureFile}`);
-                                }
-                            } catch (fallbackError) {
-                                console.warn(`Failed to load texture directly: ${fallbackError.message}`);
-                            }
+                            console.warn(`Image data at index ${envmapTextureId} is empty or invalid`);
                         }
                     } catch (error) {
-                        console.warn(`Failed to load DomeLight texture: ${error.message}`);
+                        console.warn(`Failed to load envmap from image index ${envmapTextureId}:`, error);
                     }
-                } else {
-                    console.log(`DomeLight has no texture file, using constant color`);
+                }
 
-                    // Use DomeLight color as constant environment
+                // Fallback: Try loading from textureFile path directly (for external files)
+                if (textureFile) {
+                    console.log(`Falling back to direct file load: ${textureFile}`);
+
+                    try {
+                        let texture = null;
+
+                        // Check file extension to determine loader
+                        if (textureFile.toLowerCase().endsWith('.exr')) {
+                            console.log(`Detected EXR file, using EXRLoader: ${textureFile}`);
+                            const exrLoader = new EXRLoader();
+                            texture = await exrLoader.loadAsync(textureFile);
+                            texture.mapping = THREE.EquirectangularReflectionMapping;
+                        } else if (textureFile.toLowerCase().endsWith('.hdr')) {
+                            console.log(`Detected HDR file, using HDRLoader: ${textureFile}`);
+                            const hdrLoader = new HDRLoader();
+                            texture = await hdrLoader.loadAsync(textureFile);
+                            texture.mapping = THREE.EquirectangularReflectionMapping;
+                        } else {
+                            console.warn(`Unknown texture format for file: ${textureFile}`);
+                        }
+
+                        if (texture) {
+                            // Generate environment map
+                            envMap = pmremGenerator.fromEquirectangular(texture).texture;
+                            texture.dispose();
+
+                            // Apply intensity and exposure (default exposure to 1.0)
+                            let intensity = light.intensity !== undefined ? light.intensity : 1.0;
+                            const exposure = (light.exposure !== undefined && light.exposure !== 0) ? light.exposure : 1.0;
+                            intensity *= Math.pow(2, exposure);
+
+                            settings.envMapIntensity = intensity;
+                            settings.envMapPreset = 'usd_dome';
+
+                            applyEnvironment();
+                            updateStatus(`Loaded DomeLight environment directly: ${textureFile}`);
+
+                            // Store DomeLight data (including envMap for restoration)
+                            usdDomeLightData = {
+                                name: light.name,
+                                textureFile: textureFile,
+                                intensity: intensity,
+                                color: light.color,
+                                exposure: light.exposure,
+                                envMap: envMap
+                            };
+
+                            return usdDomeLightData;
+                        }
+                    } catch (fallbackError) {
+                        console.warn(`Failed to load texture directly: ${fallbackError.message}`);
+                    }
+                }
+
+                // Final fallback: Use DomeLight color as constant environment
+                if (!textureFile || (envmapTextureId === undefined || envmapTextureId < 0)) {
+                    console.log(`DomeLight has no texture, using constant color`);
+
                     if (light.color && light.color.length >= 3) {
                         const colorHex = rgbToHex(light.color[0], light.color[1], light.color[2]);
                         settings.envConstantColor = colorHex;
-                        settings.envMapPreset = 'usd_dome'; // Set to USD DomeLight
+                        settings.envMapPreset = 'usd_dome';
 
+                        // Apply intensity and exposure (default exposure to 1.0)
                         let intensity = light.intensity !== undefined ? light.intensity : 1.0;
-                        if (light.exposure !== undefined && light.exposure !== 0) {
-                            intensity *= Math.pow(2, light.exposure);
-                        }
+                        const exposure = (light.exposure !== undefined && light.exposure !== 0) ? light.exposure : 1.0;
+                        intensity *= Math.pow(2, exposure);
                         settings.envMapIntensity = intensity;
 
                         envMap = createConstantColorEnvironment(colorHex, 'linear');
                         applyEnvironment();
 
-                        // Store DomeLight data
+                        // Store DomeLight data (including envMap for restoration)
                         usdDomeLightData = {
                             name: light.name,
                             color: light.color,
                             intensity: intensity,
-                            exposure: light.exposure
+                            exposure: light.exposure,
+                            envMap: envMap
                         };
 
                         return usdDomeLightData;
@@ -1027,60 +1158,216 @@ async function loadDomeLightFromUSD(usdLoader) {
 }
 
 /**
- * Create Three.js texture from raw image data
- * @param {Uint8Array} data - Raw image data
+ * Create Three.js texture from decoded image data (already decoded by Tydra)
+ * @param {Uint8Array|Float32Array} data - Decoded pixel data
  * @param {number} width - Image width
  * @param {number} height - Image height
- * @param {number} channels - Number of channels (3 or 4)
- * @param {string} format - Image format (e.g., 'rgb', 'rgba', 'float')
+ * @param {number} channels - Number of channels (1, 2, 3, or 4)
+ * @param {string} colorSpace - Color space (e.g., 'Lin_sRGB', 'sRGB', 'Raw')
  * @returns {Promise<THREE.Texture|null>}
  */
-async function createTextureFromData(data, width, height, channels, format) {
+async function createTextureFromDecodedData(data, width, height, channels, colorSpace) {
     try {
-        // Create canvas for image data
-        const canvas = document.createElement('canvas');
-        canvas.width = width;
-        canvas.height = height;
-        const ctx = canvas.getContext('2d');
-
-        // Convert to ImageData
-        const imageData = ctx.createImageData(width, height);
-
-        // Handle different formats
-        if (format === 'float' || format === 'hdr') {
-            // HDR data - assume float values
-            const floatData = new Float32Array(data.buffer);
-            for (let i = 0; i < width * height; i++) {
-                const srcIdx = i * channels;
-                const dstIdx = i * 4;
-                // Convert float to 8-bit (simple tone mapping)
-                imageData.data[dstIdx + 0] = Math.min(255, floatData[srcIdx + 0] * 255);
-                imageData.data[dstIdx + 1] = Math.min(255, floatData[srcIdx + 1] * 255);
-                imageData.data[dstIdx + 2] = Math.min(255, floatData[srcIdx + 2] * 255);
-                imageData.data[dstIdx + 3] = 255;
-            }
-        } else {
-            // Regular 8-bit data
-            for (let i = 0; i < width * height; i++) {
-                const srcIdx = i * channels;
-                const dstIdx = i * 4;
-                imageData.data[dstIdx + 0] = data[srcIdx + 0];
-                imageData.data[dstIdx + 1] = data[srcIdx + 1];
-                imageData.data[dstIdx + 2] = data[srcIdx + 2];
-                imageData.data[dstIdx + 3] = channels === 4 ? data[srcIdx + 3] : 255;
-            }
+        if (!data || !width || !height) {
+            console.warn('Invalid image data for texture creation');
+            return null;
         }
 
-        ctx.putImageData(imageData, 0, 0);
+        // Determine if data is float or uint8
+        const isFloat = data instanceof Float32Array ||
+                        (data.buffer && data.BYTES_PER_ELEMENT === 4);
 
-        // Create Three.js texture
-        const texture = new THREE.CanvasTexture(canvas);
+        let texture;
+
+        if (isFloat) {
+            // Float data - use DataTexture for HDR
+            const floatData = data instanceof Float32Array ? data : new Float32Array(data.buffer);
+
+            // Ensure we have RGBA data
+            let rgbaData;
+            if (channels === 4) {
+                rgbaData = floatData;
+            } else if (channels === 3) {
+                rgbaData = new Float32Array(width * height * 4);
+                for (let i = 0; i < width * height; i++) {
+                    rgbaData[i * 4 + 0] = floatData[i * 3 + 0];
+                    rgbaData[i * 4 + 1] = floatData[i * 3 + 1];
+                    rgbaData[i * 4 + 2] = floatData[i * 3 + 2];
+                    rgbaData[i * 4 + 3] = 1.0;
+                }
+            } else {
+                console.warn(`Unsupported channel count for float data: ${channels}`);
+                return null;
+            }
+
+            texture = new THREE.DataTexture(rgbaData, width, height, THREE.RGBAFormat, THREE.FloatType);
+        } else {
+            // Uint8 data - use canvas approach
+            const canvas = document.createElement('canvas');
+            canvas.width = width;
+            canvas.height = height;
+            const ctx = canvas.getContext('2d');
+            const imageData = ctx.createImageData(width, height);
+
+            // Convert to RGBA
+            for (let i = 0; i < width * height; i++) {
+                const srcIdx = i * channels;
+                const dstIdx = i * 4;
+
+                if (channels === 1) {
+                    imageData.data[dstIdx + 0] = data[srcIdx];
+                    imageData.data[dstIdx + 1] = data[srcIdx];
+                    imageData.data[dstIdx + 2] = data[srcIdx];
+                    imageData.data[dstIdx + 3] = 255;
+                } else if (channels === 2) {
+                    imageData.data[dstIdx + 0] = data[srcIdx];
+                    imageData.data[dstIdx + 1] = data[srcIdx];
+                    imageData.data[dstIdx + 2] = data[srcIdx];
+                    imageData.data[dstIdx + 3] = data[srcIdx + 1];
+                } else if (channels === 3) {
+                    imageData.data[dstIdx + 0] = data[srcIdx + 0];
+                    imageData.data[dstIdx + 1] = data[srcIdx + 1];
+                    imageData.data[dstIdx + 2] = data[srcIdx + 2];
+                    imageData.data[dstIdx + 3] = 255;
+                } else if (channels === 4) {
+                    imageData.data[dstIdx + 0] = data[srcIdx + 0];
+                    imageData.data[dstIdx + 1] = data[srcIdx + 1];
+                    imageData.data[dstIdx + 2] = data[srcIdx + 2];
+                    imageData.data[dstIdx + 3] = data[srcIdx + 3];
+                }
+            }
+
+            ctx.putImageData(imageData, 0, 0);
+            texture = new THREE.CanvasTexture(canvas);
+        }
+
+        // Set mapping for environment map
         texture.mapping = THREE.EquirectangularReflectionMapping;
-        texture.colorSpace = THREE.LinearSRGBColorSpace;
+
+        // Set color space based on USD colorSpace
+        if (colorSpace === 'sRGB' || colorSpace === 'sRGB_Texture') {
+            texture.colorSpace = THREE.SRGBColorSpace;
+        } else {
+            // Linear (Lin_sRGB, Raw, etc.)
+            texture.colorSpace = THREE.LinearSRGBColorSpace;
+        }
+
+        texture.needsUpdate = true;
+        return texture;
+    } catch (error) {
+        console.error('Error creating texture from decoded data:', error);
+        return null;
+    }
+}
+
+/**
+ * Decode environment map from raw buffer data using Three.js loaders
+ * @param {Uint8Array} buffer - Raw file data
+ * @param {string} uri - File URI/path for format detection
+ * @returns {Promise<THREE.Texture|null>}
+ */
+async function decodeEnvmapFromBuffer(buffer, uri) {
+    try {
+        const lowerUri = uri.toLowerCase();
+
+        // Create a Blob and Object URL for the buffer
+        let mimeType = 'application/octet-stream';
+        if (lowerUri.endsWith('.exr')) {
+            mimeType = 'image/x-exr';
+        } else if (lowerUri.endsWith('.hdr')) {
+            mimeType = 'image/vnd.radiance';
+        } else if (lowerUri.endsWith('.png')) {
+            mimeType = 'image/png';
+        } else if (lowerUri.endsWith('.jpg') || lowerUri.endsWith('.jpeg')) {
+            mimeType = 'image/jpeg';
+        }
+
+        console.log(`decodeEnvmapFromBuffer: buffer size = ${buffer.length} bytes, uri = ${uri}`);
+        // Show first few bytes to verify it's HDR format (should start with #?RADIANCE or similar)
+        if (buffer.length > 20) {
+            const header = new TextDecoder().decode(buffer.slice(0, Math.min(100, buffer.length)));
+            console.log(`  Buffer header: "${header.substring(0, 50)}..."`);
+        }
+
+        const blob = new Blob([buffer], { type: mimeType });
+        const objectUrl = URL.createObjectURL(blob);
+
+        let texture = null;
+
+        try {
+            if (lowerUri.endsWith('.exr')) {
+                console.log('Decoding EXR envmap from buffer');
+                const exrLoader = new EXRLoader();
+                texture = await exrLoader.loadAsync(objectUrl);
+            } else if (lowerUri.endsWith('.hdr')) {
+                console.log(`Decoding HDR envmap from buffer (${buffer.length} bytes)`);
+                const hdrLoader = new HDRLoader();
+                texture = await hdrLoader.loadAsync(objectUrl);
+            } else {
+                // Try as regular image
+                console.log('Decoding envmap as regular image from buffer');
+                const loader = new THREE.TextureLoader();
+                texture = await loader.loadAsync(objectUrl);
+            }
+
+            if (texture) {
+                texture.mapping = THREE.EquirectangularReflectionMapping;
+
+                // Debug: analyze HDR texture data
+                if (texture.image && texture.image.data) {
+                    const data = texture.image.data;
+                    const width = texture.image.width;
+                    const height = texture.image.height;
+                    let min = Infinity, max = -Infinity, sum = 0;
+                    let validCount = 0;
+
+                    // Helper to decode half-float (float16) to float32
+                    const decodeHalfFloat = (h) => {
+                        const s = (h & 0x8000) >> 15;
+                        const e = (h & 0x7C00) >> 10;
+                        const f = h & 0x03FF;
+                        if (e === 0) {
+                            return (s ? -1 : 1) * Math.pow(2, -14) * (f / 1024);
+                        } else if (e === 0x1F) {
+                            return f ? NaN : (s ? -Infinity : Infinity);
+                        }
+                        return (s ? -1 : 1) * Math.pow(2, e - 15) * (1 + f / 1024);
+                    };
+
+                    const isHalfFloat = data instanceof Uint16Array;
+
+                    for (let i = 0; i < data.length; i++) {
+                        let val = data[i];
+                        if (isHalfFloat) {
+                            val = decodeHalfFloat(val);
+                        }
+                        if (isFinite(val)) {
+                            if (val < min) min = val;
+                            if (val > max) max = val;
+                            sum += val;
+                            validCount++;
+                        }
+                    }
+
+                    const avg = validCount > 0 ? sum / validCount : 0;
+                    console.log(`HDR texture loaded: ${width}x${height}`);
+                    console.log(`  Data type: ${data.constructor.name}, length: ${data.length}${isHalfFloat ? ' (half-float)' : ''}`);
+                    console.log(`  Values (decoded) - min: ${min.toFixed(6)}, max: ${max.toFixed(6)}, avg: ${avg.toFixed(6)}`);
+                    console.log(`  Texture type: ${texture.type}, format: ${texture.format}`);
+                    console.log(`  ColorSpace: ${texture.colorSpace}`);
+                } else {
+                    console.log('HDR texture loaded but no image.data available');
+                    console.log('  Texture:', texture);
+                }
+            }
+        } finally {
+            // Clean up object URL
+            URL.revokeObjectURL(objectUrl);
+        }
 
         return texture;
     } catch (error) {
-        console.error('Error creating texture from data:', error);
+        console.error('Error decoding envmap from buffer:', error);
         return null;
     }
 }
@@ -1167,7 +1454,7 @@ async function loadDefaultScene() {
 async function loadDefaultUSDFile() {
     updateStatus('Loading fancy teapot...');
     try {
-        const response = await fetch('./assets/fancy-teapot-mtlx.usdz');
+        const response = await fetch('./assets/envmap-constant-test.usdz');
         if (!response.ok) {
             throw new Error(`Failed to fetch: ${response.statusText}`);
         }
@@ -1226,20 +1513,6 @@ async function loadUSDFromData(data, filename) {
     const numMaterials = nativeLoader.numMaterials();
 
     updateStatus(`Loaded: ${numMeshes} meshes, ${numMaterials} materials (upAxis: ${currentFileUpAxis})`);
-
-    // Try to load DomeLight environment from USD
-    try {
-        const domeLightData = await loadDomeLightFromUSD(nativeLoader);
-        if (domeLightData) {
-            console.log('Loaded DomeLight from USD:', domeLightData);
-            // Update GUI to show USD DomeLight is selected
-            if (envPresetController) {
-                envPresetController.updateDisplay();
-            }
-        }
-    } catch (error) {
-        console.warn('Error checking for DomeLight:', error);
-    }
 
     // Load materials
     materialData = [];
@@ -1317,6 +1590,20 @@ async function loadUSDFromData(data, filename) {
 
         mesh.name = meshData.name || `Mesh_${i}`;
         sceneRoot.add(mesh);
+    }
+
+    // Try to load DomeLight environment from USD (after materials are created)
+    try {
+        const domeLightData = await loadDomeLightFromUSD(nativeLoader);
+        if (domeLightData) {
+            console.log('Loaded DomeLight from USD:', domeLightData);
+            // Update GUI to show USD DomeLight is selected
+            if (envPresetController) {
+                envPresetController.updateDisplay();
+            }
+        }
+    } catch (error) {
+        console.warn('Error checking for DomeLight:', error);
     }
 
     // Extract USD animations if available

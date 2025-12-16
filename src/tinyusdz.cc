@@ -1773,6 +1773,9 @@ bool SetupUSDZAssetResolution(
   resolver.register_asset_resolution_handler("JPEG", handler);
   resolver.register_asset_resolution_handler("exr", handler);
   resolver.register_asset_resolution_handler("EXR", handler);
+  // HDR (Radiance HDR format) - commonly used for environment maps
+  resolver.register_asset_resolution_handler("hdr", handler);
+  resolver.register_asset_resolution_handler("HDR", handler);
 
   return true;
 }
