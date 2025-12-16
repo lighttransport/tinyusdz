@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
-import { RGBELoader } from 'three/examples/jsm/loaders/RGBELoader.js';
+import { HDRLoader } from 'three/examples/jsm/loaders/HDRLoader.js';
+import { EXRLoader } from 'three/examples/jsm/loaders/EXRLoader.js';
 import GUI from 'three/examples/jsm/libs/lil-gui.module.min.js';
 import { TinyUSDZLoader } from 'tinyusdz/TinyUSDZLoader.js';
 import { TinyUSDZLoaderUtils } from 'tinyusdz/TinyUSDZLoaderUtils.js';
@@ -114,11 +115,18 @@ let envMap = null;
 // Texture cache for material conversion
 let textureCache = new Map();
 
+// TinyUSDZ loader and scene references for cleanup
+let currentLoader = null;
+let currentUSDScene = null;
+let usdDomeLightData = null; // Store DomeLight data from USD file
+
 // Environment map presets
 const ENV_PRESETS = {
+	'usd_dome': 'usd', // Special marker for USD DomeLight (if available)
 	'goegap_1k': 'assets/textures/goegap_1k.hdr',
 	'env_sunsky_sunset': 'assets/textures/env_sunsky_sunset.hdr',
-	'studio': null // Will use synthetic studio lighting
+	'studio': null, // Will use synthetic studio lighting
+	'constant_color': 'constant' // Special marker for constant color environment
 };
 
 // Material and environment settings
@@ -126,6 +134,8 @@ const materialSettings = {
 	materialType: 'auto', // 'auto', 'openpbr', 'usdpreviewsurface'
 	envMapPreset: 'goegap_1k',
 	envMapIntensity: 1.0,
+	envConstantColor: '#ffffff', // Color for constant color environment
+	envColorspace: 'sRGB', // 'sRGB' (convert to linear) or 'linear' (no conversion)
 	showEnvBackground: false,
 	exposure: 1.0,
 	toneMapping: 'aces'
@@ -510,6 +520,69 @@ function initializePBRRenderer() {
 	console.log('PBR renderer initialized with ACES tone mapping');
 }
 
+// ===========================================
+// Colorspace Conversion Utilities
+// ===========================================
+
+/**
+ * Convert sRGB component to linear
+ * @param {number} c - sRGB component value [0, 1]
+ * @returns {number} Linear component value [0, 1]
+ */
+function sRGBComponentToLinear(c) {
+	if (c <= 0.04045) {
+		return c / 12.92;
+	} else {
+		return Math.pow((c + 0.055) / 1.055, 2.4);
+	}
+}
+
+/**
+ * Parse hex color and convert to RGB [0, 1] with optional linear conversion
+ * @param {string} hexColor - Hex color string (e.g., '#ff8800')
+ * @param {boolean} toLinear - If true, convert from sRGB to linear
+ * @returns {object} {r, g, b} values in [0, 1]
+ */
+function parseHexColor(hexColor, toLinear = false) {
+	// Remove # if present
+	const hex = hexColor.replace('#', '');
+
+	// Parse RGB components
+	const r = parseInt(hex.substring(0, 2), 16) / 255;
+	const g = parseInt(hex.substring(2, 4), 16) / 255;
+	const b = parseInt(hex.substring(4, 6), 16) / 255;
+
+	if (toLinear) {
+		return {
+			r: sRGBComponentToLinear(r),
+			g: sRGBComponentToLinear(g),
+			b: sRGBComponentToLinear(b)
+		};
+	}
+
+	return { r, g, b };
+}
+
+/**
+ * Convert RGB [0, 1] to hex color string for canvas
+ * @param {number} r - Red [0, 1]
+ * @param {number} g - Green [0, 1]
+ * @param {number} b - Blue [0, 1]
+ * @returns {string} Hex color string
+ */
+function rgbToHex(r, g, b) {
+	const toHex = (c) => {
+		const clamped = Math.max(0, Math.min(1, c));
+		const val = Math.round(clamped * 255);
+		return val.toString(16).padStart(2, '0');
+	};
+	return `#${toHex(r)}${toHex(g)}${toHex(b)}`;
+}
+
+// ===========================================
+// Environment Loading
+// ===========================================
+
 /**
  * Load environment map from preset
  * @param {string} preset - Environment preset name
@@ -526,10 +599,31 @@ async function loadEnvironment(preset) {
 		return;
 	}
 
+	if (path === 'usd') {
+		// USD DomeLight - use stored DomeLight data
+		if (usdDomeLightData) {
+			console.log('Using USD DomeLight environment');
+			// Environment map already loaded by loadDomeLightFromUSD
+		} else {
+			console.warn('USD DomeLight selected but no DomeLight data available');
+			envMap = createStudioEnvironment();
+			applyEnvironment();
+		}
+		return;
+	}
+
+	if (path === 'constant') {
+		// Constant color environment
+		envMap = createConstantColorEnvironment(materialSettings.envConstantColor, materialSettings.envColorspace);
+		applyEnvironment();
+		console.log('Using constant color environment');
+		return;
+	}
+
 	console.log(`Loading environment: ${preset}...`);
 	try {
-		const rgbeLoader = new RGBELoader();
-		const texture = await rgbeLoader.loadAsync(path);
+		const hdrLoader = new HDRLoader();
+		const texture = await hdrLoader.loadAsync(path);
 		envMap = pmremGenerator.fromEquirectangular(texture).texture;
 		texture.dispose();
 		applyEnvironment();
@@ -566,12 +660,61 @@ function createStudioEnvironment() {
 }
 
 /**
+ * Create a constant color environment
+ * @param {string} color - Hex color string
+ * @param {string} colorspace - 'sRGB' or 'linear'
+ * @returns {THREE.Texture} Environment texture
+ */
+function createConstantColorEnvironment(color, colorspace = 'sRGB') {
+	const canvas = document.createElement('canvas');
+	canvas.width = 256;
+	canvas.height = 256;
+	const ctx = canvas.getContext('2d');
+
+	// Parse and potentially convert color based on colorspace
+	let fillColor = color;
+	if (colorspace === 'sRGB') {
+		// Convert sRGB to linear for proper PBR workflow
+		const rgb = parseHexColor(color, true); // true = convert to linear
+		fillColor = rgbToHex(rgb.r, rgb.g, rgb.b);
+	}
+	// else: linear colorspace - use color as-is (no conversion)
+
+	// Fill with solid color
+	ctx.fillStyle = fillColor;
+	ctx.fillRect(0, 0, 256, 256);
+
+	const texture = new THREE.CanvasTexture(canvas);
+	texture.mapping = THREE.EquirectangularReflectionMapping;
+
+	// Set colorspace based on setting
+	if (colorspace === 'sRGB') {
+		texture.colorSpace = THREE.LinearSRGBColorSpace;
+	} else {
+		texture.colorSpace = THREE.LinearSRGBColorSpace; // Already linear
+	}
+
+	return pmremGenerator.fromEquirectangular(texture).texture;
+}
+
+/**
  * Apply the current environment map to the scene
  */
 function applyEnvironment() {
 	scene.environment = envMap;
 	updateEnvBackground();
 	updateEnvIntensity();
+
+	// Update envMap reference on all existing materials
+	usdSceneRoot.traverse((child) => {
+		if (child.isMesh && child.material) {
+			const materials = Array.isArray(child.material) ? child.material : [child.material];
+			materials.forEach(mat => {
+				mat.envMap = envMap;
+				mat.needsUpdate = true;  // Flag material for shader recompilation
+			});
+		}
+	});
 }
 
 /**
@@ -582,6 +725,17 @@ function updateEnvBackground() {
 		scene.background = envMap;
 	} else {
 		scene.background = new THREE.Color(0x1a1a1a);
+	}
+}
+
+/**
+ * Update constant color environment when color changes
+ */
+function updateConstantColorEnvironment() {
+	// Only update if constant color environment is selected
+	if (materialSettings.envMapPreset === 'constant_color') {
+		envMap = createConstantColorEnvironment(materialSettings.envConstantColor, materialSettings.envColorspace);
+		applyEnvironment();
 	}
 }
 
@@ -616,6 +770,253 @@ function updateToneMapping(value) {
 		'neutral': THREE.NeutralToneMapping
 	};
 	renderer.toneMapping = mappings[value] || THREE.ACESFilmicToneMapping;
+}
+
+// ===========================================
+// DomeLight Environment Map Loading
+// ===========================================
+
+/**
+ * Extract DomeLight from USD scene and load its environment map
+ * @param {Object} usdScene - USD scene object from TinyUSDZLoader
+ * @returns {Promise<Object|null>} DomeLight data or null if not found
+ */
+async function loadDomeLightFromUSD(usdScene) {
+	try {
+		// Try to access numLights from the USD scene
+		const numLights = usdScene.numLights ? usdScene.numLights() : 0;
+		console.log(`Checking USD for lights (found ${numLights})`);
+
+		if (numLights === 0) {
+			return null;
+		}
+
+		// Look for DomeLight
+		for (let i = 0; i < numLights; i++) {
+			const light = usdScene.getLight(i);
+
+			if (light.error) {
+				console.warn(`Error getting light ${i}:`, light.error);
+				continue;
+			}
+
+			console.log(`Light ${i}:`, light);
+
+			// Check if this is a DomeLight
+			if (light.type === 'dome' || light.type === 'Dome' || light.type === 'DomeLight') {
+				console.log(`Found DomeLight: "${light.name || 'unnamed'}"`);
+
+				// Extract texture file path
+				const textureFile = light.textureFile || light.texture_file;
+
+				if (textureFile) {
+					console.log(`DomeLight has texture: ${textureFile}`);
+
+					// Load the environment texture from USD
+					try {
+						// Get texture data from USD scene
+						const textureData = usdScene.getTextureImage ?
+							usdScene.getTextureImage(textureFile) : null;
+
+						if (textureData && !textureData.error) {
+							console.log(`Loaded DomeLight texture from USD: ${textureFile}`);
+
+							// Create texture from image data
+							const texture = await createTextureFromData(
+								textureData.data,
+								textureData.width,
+								textureData.height,
+								textureData.channels,
+								textureData.format
+							);
+
+							if (texture) {
+								// Generate environment map
+								envMap = pmremGenerator.fromEquirectangular(texture).texture;
+								texture.dispose();
+
+								// Apply intensity and exposure
+								let intensity = light.intensity !== undefined ? light.intensity : 1.0;
+								if (light.exposure !== undefined && light.exposure !== 0) {
+									intensity *= Math.pow(2, light.exposure);
+								}
+
+								materialSettings.envMapIntensity = intensity;
+								materialSettings.envMapPreset = 'usd_dome'; // Set to USD DomeLight
+
+								applyEnvironment();
+								console.log(`Loaded DomeLight environment from USD: ${textureFile}`);
+
+								// Store DomeLight data
+								usdDomeLightData = {
+									name: light.name,
+									textureFile: textureFile,
+									intensity: intensity,
+									color: light.color,
+									exposure: light.exposure
+								};
+
+								return usdDomeLightData;
+							}
+						} else {
+							// Fallback: Try loading the texture directly using Three.js loaders
+							console.log(`USD layer could not provide texture data, trying direct load: ${textureFile}`);
+							console.log(`File extension check: .exr=${textureFile.toLowerCase().endsWith('.exr')}, .hdr=${textureFile.toLowerCase().endsWith('.hdr')}`);
+
+							try {
+								let texture = null;
+
+								// Check file extension to determine loader
+								if (textureFile.toLowerCase().endsWith('.exr')) {
+									console.log(`Detected EXR file, using EXRLoader: ${textureFile}`);
+									const exrLoader = new EXRLoader();
+									texture = await exrLoader.loadAsync(textureFile);
+									texture.mapping = THREE.EquirectangularReflectionMapping;
+									console.log(`Successfully loaded EXR texture`);
+								} else if (textureFile.toLowerCase().endsWith('.hdr')) {
+									console.log(`Detected HDR file, using HDRLoader: ${textureFile}`);
+									const hdrLoader = new HDRLoader();
+									texture = await hdrLoader.loadAsync(textureFile);
+									texture.mapping = THREE.EquirectangularReflectionMapping;
+									console.log(`Successfully loaded HDR texture`);
+								} else {
+									console.warn(`Unknown texture format for file: ${textureFile}`);
+								}
+
+								if (texture) {
+									// Generate environment map
+									envMap = pmremGenerator.fromEquirectangular(texture).texture;
+									texture.dispose();
+
+									// Apply intensity and exposure
+									let intensity = light.intensity !== undefined ? light.intensity : 1.0;
+									if (light.exposure !== undefined && light.exposure !== 0) {
+										intensity *= Math.pow(2, light.exposure);
+									}
+
+									materialSettings.envMapIntensity = intensity;
+									materialSettings.envMapPreset = 'usd_dome'; // Set to USD DomeLight
+
+									applyEnvironment();
+									console.log(`Loaded DomeLight environment directly: ${textureFile}`);
+
+									// Store DomeLight data
+									usdDomeLightData = {
+										name: light.name,
+										textureFile: textureFile,
+										intensity: intensity,
+										color: light.color,
+										exposure: light.exposure
+									};
+
+									return usdDomeLightData;
+								} else {
+									console.warn(`Could not load texture data for: ${textureFile}`);
+								}
+							} catch (fallbackError) {
+								console.warn(`Failed to load texture directly: ${fallbackError.message}`);
+							}
+						}
+					} catch (error) {
+						console.warn(`Failed to load DomeLight texture: ${error.message}`);
+					}
+				} else {
+					console.log(`DomeLight has no texture file, using constant color`);
+
+					// Use DomeLight color as constant environment
+					if (light.color && light.color.length >= 3) {
+						const colorHex = rgbToHex(light.color[0], light.color[1], light.color[2]);
+						materialSettings.envConstantColor = colorHex;
+						materialSettings.envMapPreset = 'usd_dome'; // Set to USD DomeLight
+
+						let intensity = light.intensity !== undefined ? light.intensity : 1.0;
+						if (light.exposure !== undefined && light.exposure !== 0) {
+							intensity *= Math.pow(2, light.exposure);
+						}
+						materialSettings.envMapIntensity = intensity;
+
+						envMap = createConstantColorEnvironment(colorHex, 'linear');
+						applyEnvironment();
+
+						// Store DomeLight data
+						usdDomeLightData = {
+							name: light.name,
+							color: light.color,
+							intensity: intensity,
+							exposure: light.exposure
+						};
+
+						return usdDomeLightData;
+					}
+				}
+			}
+		}
+
+		console.log('No DomeLight found in USD file');
+		return null;
+	} catch (error) {
+		console.warn('Error loading DomeLight from USD:', error);
+		return null;
+	}
+}
+
+/**
+ * Create Three.js texture from raw image data
+ * @param {Uint8Array} data - Raw image data
+ * @param {number} width - Image width
+ * @param {number} height - Image height
+ * @param {number} channels - Number of channels (3 or 4)
+ * @param {string} format - Image format (e.g., 'rgb', 'rgba', 'float')
+ * @returns {Promise<THREE.Texture|null>}
+ */
+async function createTextureFromData(data, width, height, channels, format) {
+	try {
+		// Create canvas for image data
+		const canvas = document.createElement('canvas');
+		canvas.width = width;
+		canvas.height = height;
+		const ctx = canvas.getContext('2d');
+
+		// Convert to ImageData
+		const imageData = ctx.createImageData(width, height);
+
+		// Handle different formats
+		if (format === 'float' || format === 'hdr') {
+			// HDR data - assume float values
+			const floatData = new Float32Array(data.buffer);
+			for (let i = 0; i < width * height; i++) {
+				const srcIdx = i * channels;
+				const dstIdx = i * 4;
+				// Convert float to 8-bit (simple tone mapping)
+				imageData.data[dstIdx + 0] = Math.min(255, floatData[srcIdx + 0] * 255);
+				imageData.data[dstIdx + 1] = Math.min(255, floatData[srcIdx + 1] * 255);
+				imageData.data[dstIdx + 2] = Math.min(255, floatData[srcIdx + 2] * 255);
+				imageData.data[dstIdx + 3] = 255;
+			}
+		} else {
+			// Regular 8-bit data
+			for (let i = 0; i < width * height; i++) {
+				const srcIdx = i * channels;
+				const dstIdx = i * 4;
+				imageData.data[dstIdx + 0] = data[srcIdx + 0];
+				imageData.data[dstIdx + 1] = data[srcIdx + 1];
+				imageData.data[dstIdx + 2] = data[srcIdx + 2];
+				imageData.data[dstIdx + 3] = channels === 4 ? data[srcIdx + 3] : 255;
+			}
+		}
+
+		ctx.putImageData(imageData, 0, 0);
+
+		// Create Three.js texture
+		const texture = new THREE.CanvasTexture(canvas);
+		texture.mapping = THREE.EquirectangularReflectionMapping;
+		texture.colorSpace = THREE.LinearSRGBColorSpace;
+
+		return texture;
+	} catch (error) {
+		console.error('Error creating texture from data:', error);
+		return null;
+	}
 }
 
 /**
@@ -683,6 +1084,7 @@ async function loadUSDModel() {
 	// Use memory64: false for browser compatibility
 	// Use useZstdCompressedWasm: false since compressed WASM is not available
 	await loader.init({ useZstdCompressedWasm: false, useMemory64: true });
+	currentLoader = loader; // Store reference for cleanup
 
 	// USD FILES
 	//const usd_filename = "./assets/cube-animation.usda";
@@ -693,6 +1095,7 @@ async function loadUSDModel() {
 
 	// Load USD scene
 	const usd_scene = await loader.loadAsync(usd_filename);
+	currentUSDScene = usd_scene; // Store reference for cleanup
 
 	// Get the default root node from USD
 	const usdRootNode = usd_scene.getDefaultRootNode();
@@ -737,6 +1140,19 @@ async function loadUSDModel() {
 
 	// Update metadata UI
 	updateMetadataUI();
+
+	// Try to load DomeLight environment from USD
+	try {
+		const domeLightData = await loadDomeLightFromUSD(usd_scene);
+		if (domeLightData) {
+			console.log('Loaded DomeLight from USD:', domeLightData);
+			if (envPresetController) {
+				envPresetController.updateDisplay();
+			}
+		}
+	} catch (error) {
+		console.warn('Error checking for DomeLight:', error);
+	}
 
 	// Create default material with environment map
 	const defaultMtl = new THREE.MeshPhysicalMaterial({
@@ -1666,6 +2082,7 @@ gui.title('Animation Controls');
 let timelineController = null;
 let beginTimeController = null;
 let endTimeController = null;
+let envPresetController = null;
 
 // Playback controls
 const playbackFolder = gui.addFolder('Playback');
@@ -1862,9 +2279,19 @@ materialFolder.add(materialSettings, 'materialType', ['auto', 'openpbr', 'usdpre
 	.onChange(() => reloadMaterials());
 
 // Environment preset selector
-materialFolder.add(materialSettings, 'envMapPreset', Object.keys(ENV_PRESETS))
+envPresetController = materialFolder.add(materialSettings, 'envMapPreset', Object.keys(ENV_PRESETS))
 	.name('Environment')
 	.onChange((value) => loadEnvironment(value));
+
+// Constant color environment color picker
+materialFolder.addColor(materialSettings, 'envConstantColor')
+	.name('Env Color')
+	.onChange(() => updateConstantColorEnvironment());
+
+// Environment colorspace workflow
+materialFolder.add(materialSettings, 'envColorspace', ['sRGB', 'linear'])
+	.name('Env Colorspace')
+	.onChange(() => updateConstantColorEnvironment());
 
 // Environment intensity
 materialFolder.add(materialSettings, 'envMapIntensity', 0, 3, 0.1)
@@ -2170,7 +2597,21 @@ async function loadUSDFromArrayBuffer(arrayBuffer, filename) {
 
 	// Clear existing USD scene
 	while (usdSceneRoot.children.length > 0) {
-		usdSceneRoot.remove(usdSceneRoot.children[0]);
+		const child = usdSceneRoot.children[0];
+		// Dispose geometries and materials
+		child.traverse((obj) => {
+			if (obj.isMesh) {
+				obj.geometry?.dispose();
+				if (obj.material) {
+					if (Array.isArray(obj.material)) {
+						obj.material.forEach(m => m.dispose());
+					} else {
+						obj.material.dispose();
+					}
+				}
+			}
+		});
+		usdSceneRoot.remove(child);
 	}
 
 	// Clear selection
@@ -2193,11 +2634,64 @@ async function loadUSDFromArrayBuffer(arrayBuffer, filename) {
 	});
 	objectBBoxHelpers.clear();
 
+	// Stop animation playback
+	animationParams.isPlaying = false;
+
+	// Stop and clear animation mixer
+	if (mixer) {
+		mixer.stopAllAction();
+		mixer = null;
+	}
+	animationAction = null;
+
 	// Reset animations
 	usdAnimations = [];
 
+	// Dispose textures in cache
+	textureCache.forEach((texture) => {
+		if (texture && texture.dispose) {
+			texture.dispose();
+		}
+	});
+	textureCache.clear();
+
+	// Clean up WASM memory from previous load
+	if (currentUSDScene) {
+		try {
+			// Try to delete the USD scene if it has a delete method
+			if (typeof currentUSDScene.delete === 'function') {
+				currentUSDScene.delete();
+				console.log('USD scene deleted');
+			}
+		} catch (e) {
+			console.warn('Could not delete USD scene:', e);
+		}
+		currentUSDScene = null;
+	}
+
+	// Clean up previous loader
+	if (currentLoader) {
+		try {
+			// Try to access native loader for memory cleanup
+			if (currentLoader.native_ && typeof currentLoader.native_.reset === 'function') {
+				currentLoader.native_.reset();
+				console.log('WASM memory reset via native loader');
+			} else if (currentLoader.native_ && typeof currentLoader.native_.clearAssets === 'function') {
+				currentLoader.native_.clearAssets();
+				console.log('WASM assets cleared via native loader');
+			}
+		} catch (e) {
+			console.warn('Could not reset WASM memory:', e);
+		}
+		currentLoader = null;
+	}
+
+	// Clear USD DomeLight data
+	usdDomeLightData = null;
+
 	const loader = new TinyUSDZLoader();
 	await loader.init({ useZstdCompressedWasm: false, useMemory64: false });
+	currentLoader = loader; // Store reference for cleanup
 
 	// Create a Blob URL from the ArrayBuffer
 	// This allows the loader to load the file as if it were a normal URL
@@ -2208,6 +2702,7 @@ async function loadUSDFromArrayBuffer(arrayBuffer, filename) {
 
 	// Load USD scene from Blob URL
 	const usd_scene = await loader.loadAsync(blobUrl);
+	currentUSDScene = usd_scene; // Store reference for cleanup
 
 	// Clean up the Blob URL after loading
 	URL.revokeObjectURL(blobUrl);
@@ -2255,6 +2750,19 @@ async function loadUSDFromArrayBuffer(arrayBuffer, filename) {
 
 	// Update metadata UI
 	updateMetadataUI();
+
+	// Try to load DomeLight environment from USD
+	try {
+		const domeLightData = await loadDomeLightFromUSD(usd_scene);
+		if (domeLightData) {
+			console.log('Loaded DomeLight from USD:', domeLightData);
+			if (envPresetController) {
+				envPresetController.updateDisplay();
+			}
+		}
+	} catch (error) {
+		console.warn('Error checking for DomeLight:', error);
+	}
 
 	// Create default material with environment map
 	const defaultMtl = new THREE.MeshPhysicalMaterial({
