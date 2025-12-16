@@ -434,6 +434,7 @@ set(TINYUSDZ_SOURCES
     ${PROJECT_SOURCE_DIR}/src/layer.cc
     ${PROJECT_SOURCE_DIR}/src/primvar.cc
     ${PROJECT_SOURCE_DIR}/src/str-util.cc
+    ${PROJECT_SOURCE_DIR}/src/usd-dump.cc
     ${PROJECT_SOURCE_DIR}/src/value-pprint.cc
     ${PROJECT_SOURCE_DIR}/src/value-types.cc
     ${PROJECT_SOURCE_DIR}/src/color-space.cc

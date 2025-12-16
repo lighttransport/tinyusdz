@@ -8,6 +8,7 @@
 #include "io-util.hh"
 #include "value-pprint.hh"
 #include "str-util.hh"
+#include "logger.hh"
 
 namespace tinyusdz {
 
@@ -85,6 +86,11 @@ bool AssetResolutionResolver::find(const std::string &assetPath) const {
     return false;
   }
 
+#if defined(__EMSCRIPTEN__) || defined(__wasi__)
+  TUSDZ_LOG_E("Failed to find asssetPath: " << assetPath);
+  
+  return false;
+#else
   // default fallback: File-based
   if ((_current_working_path == ".") || (_current_working_path == "./")) {
     std::string rpath = io::FindFile(assetPath, {});
@@ -99,6 +105,7 @@ bool AssetResolutionResolver::find(const std::string &assetPath) const {
   // TODO: Cache resolition.
   std::string fpath = io::FindFile(assetPath, _search_paths);
   return fpath.size();
+#endif
 
 }
 
@@ -150,6 +157,10 @@ std::string AssetResolutionResolver::resolve(
     //DCOUT("cwd = " << _current_working_path);
     //DCOUT("search_paths = " << _search_paths);
     //DCOUT("assetPath = " << assetPath);
+    
+#if defined(__EMSCRIPTEN__) || defined(__wasi__)
+    TUSDZ_LOG_E("Failed to resolve asssetPath: " << assetPath);
+#else
 
     std::string rpath;
     if ((_current_working_path == ".") || (_current_working_path == "./")) {
@@ -164,6 +175,7 @@ std::string AssetResolutionResolver::resolve(
       // TODO: Cache resolution.
       resolvedPath = io::FindFile(assetPath, _search_paths);
     }
+#endif
   }
 
   return resolvedPath;
@@ -279,6 +291,14 @@ bool AssetResolutionResolver::open_asset(const std::string &resolvedPath, const 
     return false;
   }
 
+#if defined(__EMSCRIPTEN__) || defined(__wasi__)
+  if (err) {
+    (*err) += "(wasm) Open asset failed.\n";
+  }
+
+  return false;
+#else
+
   // Default: read from a file.
   std::vector<uint8_t> data;
   size_t max_bytes = 1024 * 1024 * _max_asset_bytes_in_mb;
@@ -295,6 +315,7 @@ bool AssetResolutionResolver::open_asset(const std::string &resolvedPath, const 
   asset_out->set_data(std::move(data));
 
   return true;
+#endif
 }
 
 }  // namespace tinyusdz

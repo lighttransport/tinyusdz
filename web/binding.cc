@@ -207,24 +207,24 @@ struct StreamingAssetEntry {
   std::string sha256_hash;
   std::string uuid;
   ProgressCallback progress_callback;
-  
+
   StreamingAssetEntry() : expected_size(0), current_size(0), uuid(generateUUID()) {}
-  
+
   bool appendChunk(const std::string& chunk) {
     binary.append(chunk);
     current_size = binary.size();
-    
+
     if (progress_callback && expected_size > 0) {
       progress_callback(sha256_hash, current_size, expected_size);
     }
-    
+
     return current_size <= expected_size;
   }
-  
+
   bool isComplete() const {
     return expected_size > 0 && current_size >= expected_size;
   }
-  
+
   AssetCacheEntry finalize() {
     if (isComplete()) {
       sha256_hash = tinyusdz::sha256(binary.c_str(), binary.size());
@@ -235,6 +235,101 @@ struct StreamingAssetEntry {
       return entry;
     }
     return AssetCacheEntry();
+  }
+};
+
+///
+/// Zero-copy streaming buffer for memory-efficient JS->WASM transfer
+///
+/// This allows JS to write directly into pre-allocated WASM memory,
+/// avoiding the need to hold the entire file in JS memory.
+/// The workflow is:
+/// 1. JS calls allocateStreamingBuffer() to pre-allocate WASM memory
+/// 2. JS gets the buffer pointer via getStreamingBufferPtr()
+/// 3. JS writes chunks directly to WASM heap using HEAPU8.set(chunk, ptr + offset)
+/// 4. JS can immediately free each chunk after writing
+/// 5. JS calls markChunkWritten() to update progress
+/// 6. JS calls finalizeStreamingBuffer() when complete
+///
+struct ZeroCopyStreamingBuffer {
+  std::string buffer;           // Pre-allocated buffer
+  size_t total_size{0};         // Total expected size
+  size_t bytes_written{0};      // Bytes written so far
+  std::string uuid;             // Unique identifier (key for buffer map)
+  std::string asset_name;       // Asset path/name (key for cache when finalized)
+  bool finalized{false};
+
+  ZeroCopyStreamingBuffer() : uuid(generateUUID()) {}
+
+  bool allocate(size_t size, const std::string &name = "") {
+    if (size == 0) return false;
+    try {
+      buffer.resize(size);
+      total_size = size;
+      bytes_written = 0;
+      finalized = false;
+      asset_name = name;
+      return true;
+    } catch (const std::bad_alloc&) {
+      return false;
+    }
+  }
+
+  // Get raw pointer for direct memory access
+  uintptr_t getBufferPtr() const {
+    if (buffer.empty()) return 0;
+    return reinterpret_cast<uintptr_t>(buffer.data());
+  }
+
+  // Get pointer at specific offset
+  uintptr_t getBufferPtrAtOffset(size_t offset) const {
+    if (buffer.empty() || offset >= total_size) return 0;
+    return reinterpret_cast<uintptr_t>(buffer.data() + offset);
+  }
+
+  // Mark bytes as written (for progress tracking)
+  bool markBytesWritten(size_t count) {
+    if (bytes_written + count > total_size) {
+      bytes_written = total_size;
+      return false;  // Overflow
+    }
+    bytes_written += count;
+    return true;
+  }
+
+  float getProgress() const {
+    if (total_size == 0) return 0.0f;
+    return static_cast<float>(bytes_written) / static_cast<float>(total_size);
+  }
+
+  bool isComplete() const {
+    return bytes_written >= total_size;
+  }
+
+  AssetCacheEntry finalize() {
+    if (!isComplete()) {
+      return AssetCacheEntry();
+    }
+    finalized = true;
+    std::string hash = tinyusdz::sha256(buffer.c_str(), buffer.size());
+    AssetCacheEntry entry;
+    entry.sha256_hash = hash;
+    entry.binary = std::move(buffer);
+    entry.uuid = uuid;
+    return entry;
+  }
+
+  emscripten::val toJS() const {
+    emscripten::val result = emscripten::val::object();
+    result.set("uuid", uuid);
+    result.set("assetName", asset_name);
+    result.set("totalSize", double(total_size));
+    result.set("bytesWritten", double(bytes_written));
+    result.set("progress", getProgress());
+    result.set("isComplete", isComplete());
+    result.set("finalized", finalized);
+    result.set("bufferPtr", double(getBufferPtr()));
+    return result;
   }
 };
 
@@ -535,12 +630,201 @@ struct EMAssetResolutionResolver {
     return progress;
   }
 
+  //
+  // Zero-copy streaming buffer methods
+  //
+
+  /// Allocate a zero-copy buffer for streaming transfer
+  /// @param asset_name The asset path/name (used as cache key when finalized)
+  /// @param size Buffer size in bytes
+  /// Returns buffer info including UUID and pointer for direct memory access
+  emscripten::val allocateZeroCopyBuffer(const std::string &asset_name, size_t size) {
+    emscripten::val result = emscripten::val::object();
+
+    if (size == 0) {
+      result.set("success", false);
+      result.set("error", "Size must be greater than 0");
+      return result;
+    }
+
+    // Create a new buffer with unique UUID
+    ZeroCopyStreamingBuffer buf;
+    if (!buf.allocate(size, asset_name)) {
+      result.set("success", false);
+      result.set("error", "Failed to allocate buffer");
+      return result;
+    }
+
+    std::string uuid = buf.uuid;
+    zerocopy_buffers[uuid] = std::move(buf);
+
+    result.set("success", true);
+    result.set("uuid", uuid);
+    result.set("assetName", asset_name);
+    result.set("bufferPtr", double(zerocopy_buffers[uuid].getBufferPtr()));
+    result.set("totalSize", double(size));
+    return result;
+  }
+
+  /// Get buffer pointer for direct memory access
+  /// @param uuid The buffer UUID returned from allocateZeroCopyBuffer
+  double getZeroCopyBufferPtr(const std::string &uuid) {
+    if (!zerocopy_buffers.count(uuid)) {
+      return 0;
+    }
+    return double(zerocopy_buffers.at(uuid).getBufferPtr());
+  }
+
+  /// Get buffer pointer at specific offset
+  /// @param uuid The buffer UUID
+  double getZeroCopyBufferPtrAtOffset(const std::string &uuid, size_t offset) {
+    if (!zerocopy_buffers.count(uuid)) {
+      return 0;
+    }
+    return double(zerocopy_buffers.at(uuid).getBufferPtrAtOffset(offset));
+  }
+
+  /// Mark bytes as written and update progress
+  /// @param uuid The buffer UUID
+  bool markZeroCopyBytesWritten(const std::string &uuid, size_t count) {
+    if (!zerocopy_buffers.count(uuid)) {
+      return false;
+    }
+    return zerocopy_buffers[uuid].markBytesWritten(count);
+  }
+
+  /// Get current zero-copy buffer progress
+  /// @param uuid The buffer UUID
+  emscripten::val getZeroCopyProgress(const std::string &uuid) const {
+    if (!zerocopy_buffers.count(uuid)) {
+      emscripten::val result = emscripten::val::object();
+      result.set("exists", false);
+      return result;
+    }
+
+    emscripten::val result = zerocopy_buffers.at(uuid).toJS();
+    result.set("exists", true);
+    return result;
+  }
+
+  /// Finalize zero-copy buffer and move to asset cache
+  /// Uses the asset_name stored in the buffer as the cache key
+  /// @param uuid The buffer UUID
+  bool finalizeZeroCopyBuffer(const std::string &uuid) {
+    if (!zerocopy_buffers.count(uuid)) {
+      return false;
+    }
+
+    ZeroCopyStreamingBuffer& buf = zerocopy_buffers[uuid];
+    if (!buf.isComplete()) {
+      return false;
+    }
+
+    // Use the stored asset_name as the cache key
+    std::string cache_key = buf.asset_name.empty() ? uuid : buf.asset_name;
+    cache[cache_key] = buf.finalize();
+    zerocopy_buffers.erase(uuid);
+    return true;
+  }
+
+  /// Cancel and free zero-copy buffer
+  /// @param uuid The buffer UUID
+  bool cancelZeroCopyBuffer(const std::string &uuid) {
+    if (!zerocopy_buffers.count(uuid)) {
+      return false;
+    }
+    zerocopy_buffers.erase(uuid);
+    return true;
+  }
+
+  /// Get all active zero-copy buffers
+  emscripten::val getActiveZeroCopyBuffers() const {
+    emscripten::val result = emscripten::val::array();
+    for (const auto& pair : zerocopy_buffers) {
+      emscripten::val item = emscripten::val::object();
+      item.set("uuid", pair.first);
+      item.set("info", pair.second.toJS());
+      result.call<void>("push", item);
+    }
+    return result;
+  }
+
   // TODO: Use IndexDB?
   //
   // <uri, AssetCacheEntry>
   std::map<std::string, AssetCacheEntry> cache;
   std::map<std::string, StreamingAssetEntry> streaming_cache;
+  std::map<std::string, ZeroCopyStreamingBuffer> zerocopy_buffers;
   AssetCacheEntry empty_entry_;
+};
+
+///
+/// Parsing progress state for JS/WASM polling-based progress reporting
+///
+/// Since we cannot call async JS functions from C++ without Asyncify,
+/// we use a polling approach where:
+/// 1. C++ updates progress state via a callback
+/// 2. JS can poll the progress state at any time
+/// 3. JS can request cancellation which C++ checks at progress points
+///
+struct ParsingProgress {
+  enum class Stage {
+    Idle,
+    Parsing,
+    Converting,
+    Complete,
+    Error,
+    Cancelled
+  };
+
+  float progress{0.0f};          // 0.0 to 1.0
+  Stage stage{Stage::Idle};
+  std::string stage_name{"idle"};
+  std::string current_operation{""};
+  std::atomic<bool> cancel_requested{false};
+  std::string error_message{""};
+  uint64_t bytes_processed{0};
+  uint64_t total_bytes{0};
+
+  void reset() {
+    progress = 0.0f;
+    stage = Stage::Idle;
+    stage_name = "idle";
+    current_operation = "";
+    cancel_requested.store(false);
+    error_message = "";
+    bytes_processed = 0;
+    total_bytes = 0;
+  }
+
+  void setStage(Stage s) {
+    stage = s;
+    switch (s) {
+      case Stage::Idle: stage_name = "idle"; break;
+      case Stage::Parsing: stage_name = "parsing"; break;
+      case Stage::Converting: stage_name = "converting"; break;
+      case Stage::Complete: stage_name = "complete"; break;
+      case Stage::Error: stage_name = "error"; break;
+      case Stage::Cancelled: stage_name = "cancelled"; break;
+    }
+  }
+
+  bool shouldCancel() const {
+    return cancel_requested.load();
+  }
+
+  emscripten::val toJS() const {
+    emscripten::val result = emscripten::val::object();
+    result.set("progress", progress);
+    result.set("stage", stage_name);
+    result.set("currentOperation", current_operation);
+    result.set("cancelRequested", cancel_requested.load());
+    result.set("errorMessage", error_message);
+    result.set("bytesProcessed", double(bytes_processed));
+    result.set("totalBytes", double(total_bytes));
+    result.set("percentage", progress * 100.0f);
+    return result;
+  }
 };
 
 bool SetupEMAssetResolution(
@@ -652,8 +936,20 @@ class TinyUSDZLoaderNative {
     // RenderScene: Scene graph object which is suited for GL/Vulkan renderer
     tinyusdz::tydra::RenderSceneConverter converter;
 
-    // env.timecode = timecode; // TODO
+    // Set timecode to startTimeCode if authored, so xformOps with TimeSamples
+    // are evaluated at the start time (initial pose) for static viewers
+    if (stage.metas().startTimeCode.authored()) {
+      env.timecode = stage.metas().startTimeCode.get_value();
+    }
     loaded_ = converter.ConvertToRenderScene(env, &render_scene_);
+
+    // Capture warnings from converter (available via warn() method)
+    if (!converter.GetWarning().empty()) {
+      if (!warn_.empty()) warn_ += "\n";
+      warn_ += converter.GetWarning();
+      // Note: Not printing to cerr to avoid console error spam
+    }
+
     if (!loaded_) {
       std::cerr << "Failed to convert USD Stage to RenderScene: \n"
                 << converter.GetError() << "\n";
@@ -763,8 +1059,20 @@ class TinyUSDZLoaderNative {
     // RenderScene: Scene graph object which is suited for GL/Vulkan renderer
     tinyusdz::tydra::RenderSceneConverter converter;
 
-    // env.timecode = timecode; // TODO
+    // Set timecode to startTimeCode if authored, so xformOps with TimeSamples
+    // are evaluated at the start time (initial pose) for static viewers
+    if (stage.metas().startTimeCode.authored()) {
+      env.timecode = stage.metas().startTimeCode.get_value();
+    }
     loaded_ = converter.ConvertToRenderScene(env, &render_scene_);
+
+    // Capture warnings from converter (available via warn() method)
+    if (!converter.GetWarning().empty()) {
+      if (!warn_.empty()) warn_ += "\n";
+      warn_ += converter.GetWarning();
+      // Note: Not printing to cerr to avoid console error spam
+    }
+
     if (!loaded_) {
       std::cerr << "Failed to convert USD Stage to RenderScene: \n"
                 << converter.GetError() << "\n";
@@ -817,6 +1125,44 @@ class TinyUSDZLoaderNative {
     //std::cout << "loaded\n";
 
     return true;
+  }
+
+  /// Load USD from a cached asset (previously streamed via zero-copy transfer)
+  /// @param asset_name The name/path used when the asset was cached
+  /// @returns true on success
+  bool loadFromCachedAsset(const std::string &asset_name) {
+    if (!em_resolver_.has(asset_name)) {
+      error_ = "Asset not found in cache: " + asset_name;
+      return false;
+    }
+
+    const AssetCacheEntry &entry = em_resolver_.get(asset_name);
+    if (entry.binary.empty()) {
+      error_ = "Cached asset is empty: " + asset_name;
+      return false;
+    }
+
+    // Delegate to loadFromBinary with the cached data
+    return loadFromBinary(entry.binary, asset_name);
+  }
+
+  /// Load USD as Layer from a cached asset
+  /// @param asset_name The name/path used when the asset was cached
+  /// @returns true on success
+  bool loadAsLayerFromCachedAsset(const std::string &asset_name) {
+    if (!em_resolver_.has(asset_name)) {
+      error_ = "Asset not found in cache: " + asset_name;
+      return false;
+    }
+
+    const AssetCacheEntry &entry = em_resolver_.get(asset_name);
+    if (entry.binary.empty()) {
+      error_ = "Cached asset is empty: " + asset_name;
+      return false;
+    }
+
+    // Delegate to loadAsLayerFromBinary with the cached data
+    return loadAsLayerFromBinary(entry.binary, asset_name);
   }
 
   // Test function for value::Value memory usage estimation
@@ -1240,6 +1586,10 @@ class TinyUSDZLoaderNative {
   int numMeshes() const { return render_scene_.meshes.size(); }
 
   int numMaterials() const { return render_scene_.materials.size(); }
+
+  int numTextures() const { return render_scene_.textures.size(); }
+
+  int numImages() const { return render_scene_.images.size(); }
 
   // Legacy method for backward compatibility
   emscripten::val getMaterial(int mat_id) const {
@@ -1795,6 +2145,162 @@ class TinyUSDZLoaderNative {
             rmesh.joint_and_weights.geomBindTransform.m);
     mesh.set("geomBindTransform",
              emscripten::typed_memory_view(16, geom_bind_ptr));
+
+    // Export GeomSubsets (per-face materials) as optimized submeshes
+    // Reorder triangles by material so each material has exactly one contiguous group
+    if (!rmesh.material_subsetMap.empty()) {
+      // Step 1: Group face indices by material
+      std::map<int, std::vector<int>> materialToFaces;
+      size_t totalFaces = 0;
+
+      for (const auto& subset_pair : rmesh.material_subsetMap) {
+        const tinyusdz::tydra::MaterialSubset& subset = subset_pair.second;
+        const std::vector<int>& faceIndices = subset.indices();
+
+        int matId = subset.material_id;
+        if (materialToFaces.find(matId) == materialToFaces.end()) {
+          materialToFaces[matId] = std::vector<int>();
+        }
+
+        // Collect all face indices for this material
+        materialToFaces[matId].insert(materialToFaces[matId].end(),
+                                      faceIndices.begin(), faceIndices.end());
+        totalFaces += faceIndices.size();
+      }
+
+      // Step 2: Build reordering map - new triangle index -> old triangle index
+      // Group all triangles by material, creating contiguous ranges
+      std::vector<int> reorderMap;
+      reorderMap.reserve(totalFaces);
+
+      emscripten::val submeshes = emscripten::val::array();
+      int currentStart = 0;
+
+      for (auto& mat_pair : materialToFaces) {
+        int materialId = mat_pair.first;
+        std::vector<int>& faceIndices = mat_pair.second;
+
+        if (faceIndices.empty()) continue;
+
+        // Sort face indices within this material group (optional, helps cache coherence)
+        std::sort(faceIndices.begin(), faceIndices.end());
+
+        // Add all faces for this material to the reorder map
+        for (int faceIdx : faceIndices) {
+          reorderMap.push_back(faceIdx);
+        }
+
+        // Create one submesh group for this material
+        emscripten::val submesh = emscripten::val::object();
+        submesh.set("start", currentStart * 3);  // Convert face index to vertex index
+        submesh.set("count", static_cast<int>(faceIndices.size()) * 3);  // Number of vertices
+        submesh.set("materialId", materialId);
+        submeshes.call<void>("push", submesh);
+
+        currentStart += static_cast<int>(faceIndices.size());
+      }
+
+      mesh.set("submeshes", submeshes);
+
+      // Step 3: Reorder vertex attributes based on reorderMap
+      // For facevarying attributes, each triangle has 3 vertices
+      size_t numNewTriangles = reorderMap.size();
+
+      // Reorder points (vec3)
+      if (!rmesh.points.empty()) {
+        std::vector<float> reorderedPoints(numNewTriangles * 3 * 3);  // numTris * 3 verts * 3 components
+        for (size_t newTriIdx = 0; newTriIdx < numNewTriangles; newTriIdx++) {
+          int oldTriIdx = reorderMap[newTriIdx];
+          for (int v = 0; v < 3; v++) {  // 3 vertices per triangle
+            size_t oldVertIdx = static_cast<size_t>(oldTriIdx) * 3 + static_cast<size_t>(v);
+            size_t newVertIdx = newTriIdx * 3 + static_cast<size_t>(v);
+            if (oldVertIdx < rmesh.points.size()) {
+              reorderedPoints[newVertIdx * 3 + 0] = rmesh.points[oldVertIdx][0];
+              reorderedPoints[newVertIdx * 3 + 1] = rmesh.points[oldVertIdx][1];
+              reorderedPoints[newVertIdx * 3 + 2] = rmesh.points[oldVertIdx][2];
+            }
+          }
+        }
+        // Store in cache and update mesh pointer
+        auto& cache = reordered_mesh_cache_[mesh_id];
+        cache.points = std::move(reorderedPoints);
+        mesh.set("points", emscripten::typed_memory_view(cache.points.size(), cache.points.data()));
+      }
+
+      // Reorder normals (vec3) - data is raw uint8_t buffer, cast to float*
+      if (!rmesh.normals.empty()) {
+        const float* normalsData = reinterpret_cast<const float*>(rmesh.normals.data.data());
+        std::vector<float> reorderedNormals(numNewTriangles * 3 * 3);
+        for (size_t newTriIdx = 0; newTriIdx < numNewTriangles; newTriIdx++) {
+          int oldTriIdx = reorderMap[newTriIdx];
+          for (int v = 0; v < 3; v++) {
+            size_t oldVertIdx = static_cast<size_t>(oldTriIdx) * 3 + static_cast<size_t>(v);
+            size_t newVertIdx = newTriIdx * 3 + static_cast<size_t>(v);
+            if (oldVertIdx < rmesh.normals.vertex_count()) {
+              reorderedNormals[newVertIdx * 3 + 0] = normalsData[oldVertIdx * 3 + 0];
+              reorderedNormals[newVertIdx * 3 + 1] = normalsData[oldVertIdx * 3 + 1];
+              reorderedNormals[newVertIdx * 3 + 2] = normalsData[oldVertIdx * 3 + 2];
+            }
+          }
+        }
+        auto& cache = reordered_mesh_cache_[mesh_id];
+        cache.normals = std::move(reorderedNormals);
+        mesh.set("normals", emscripten::typed_memory_view(cache.normals.size(), cache.normals.data()));
+      }
+
+      // Reorder texcoords (vec2) - slot 0
+      if (rmesh.texcoords.count(0) && !rmesh.texcoords.at(0).data.empty()) {
+        const auto& uvData = rmesh.texcoords.at(0);
+        const float* uvDataPtr = reinterpret_cast<const float*>(uvData.data.data());
+        std::vector<float> reorderedTexcoords(numNewTriangles * 3 * 2);
+        for (size_t newTriIdx = 0; newTriIdx < numNewTriangles; newTriIdx++) {
+          int oldTriIdx = reorderMap[newTriIdx];
+          for (int v = 0; v < 3; v++) {
+            size_t oldVertIdx = static_cast<size_t>(oldTriIdx) * 3 + static_cast<size_t>(v);
+            size_t newVertIdx = newTriIdx * 3 + static_cast<size_t>(v);
+            if (oldVertIdx < uvData.vertex_count()) {
+              reorderedTexcoords[newVertIdx * 2 + 0] = uvDataPtr[oldVertIdx * 2 + 0];
+              reorderedTexcoords[newVertIdx * 2 + 1] = uvDataPtr[oldVertIdx * 2 + 1];
+            }
+          }
+        }
+        auto& cache = reordered_mesh_cache_[mesh_id];
+        cache.texcoords = std::move(reorderedTexcoords);
+        mesh.set("texcoords", emscripten::typed_memory_view(cache.texcoords.size(), cache.texcoords.data()));
+      }
+
+      // Reorder tangents (vec3)
+      if (!rmesh.tangents.empty()) {
+        const float* tangentsData = reinterpret_cast<const float*>(rmesh.tangents.data.data());
+        std::vector<float> reorderedTangents(numNewTriangles * 3 * 3);
+        for (size_t newTriIdx = 0; newTriIdx < numNewTriangles; newTriIdx++) {
+          int oldTriIdx = reorderMap[newTriIdx];
+          for (int v = 0; v < 3; v++) {
+            size_t oldVertIdx = static_cast<size_t>(oldTriIdx) * 3 + static_cast<size_t>(v);
+            size_t newVertIdx = newTriIdx * 3 + static_cast<size_t>(v);
+            if (oldVertIdx < rmesh.tangents.vertex_count()) {
+              reorderedTangents[newVertIdx * 3 + 0] = tangentsData[oldVertIdx * 3 + 0];
+              reorderedTangents[newVertIdx * 3 + 1] = tangentsData[oldVertIdx * 3 + 1];
+              reorderedTangents[newVertIdx * 3 + 2] = tangentsData[oldVertIdx * 3 + 2];
+            }
+          }
+        }
+        auto& cache = reordered_mesh_cache_[mesh_id];
+        cache.tangents = std::move(reorderedTangents);
+        mesh.set("tangents", emscripten::typed_memory_view(cache.tangents.size(), cache.tangents.data()));
+      }
+
+      // Generate new sequential indices (0, 1, 2, 3, 4, 5, ...)
+      // Since we reordered the vertex data, indices are now sequential
+      std::vector<uint32_t> newIndices(numNewTriangles * 3);
+      for (size_t i = 0; i < numNewTriangles * 3; i++) {
+        newIndices[i] = static_cast<uint32_t>(i);
+      }
+      auto& cache = reordered_mesh_cache_[mesh_id];
+      cache.faceVertexIndices = std::move(newIndices);
+      mesh.set("faceVertexIndices", emscripten::typed_memory_view(
+          cache.faceVertexIndices.size(), cache.faceVertexIndices.data()));
+    }
 
     return mesh;
   }
@@ -2386,6 +2892,69 @@ class TinyUSDZLoaderNative {
     em_resolver_.clear();
   }
 
+  /// Reset all state - clears render scene, assets, and all cached data
+  /// Call this before loading a new USD file to free memory
+  void reset() {
+    // Clear loaded flag
+    loaded_ = false;
+    loaded_as_layer_ = false;
+    composited_ = false;
+
+    // Clear strings
+    filename_.clear();
+    warn_.clear();
+    error_.clear();
+
+    // Clear render scene (meshes, materials, textures, buffers, etc.)
+    render_scene_ = tinyusdz::tydra::RenderScene();
+
+    // Clear layers
+    layer_ = tinyusdz::Layer();
+    composed_layer_ = tinyusdz::Layer();
+
+    // Clear USDZ asset
+    usdz_asset_ = tinyusdz::USDZAsset();
+
+    // Clear asset resolver cache
+    em_resolver_.clear();
+
+    // Clear reordered mesh cache
+    reordered_mesh_cache_.clear();
+
+    // Reset parsing progress
+    parsing_progress_.reset();
+  }
+
+  /// Get memory usage statistics
+  emscripten::val getMemoryStats() const {
+    emscripten::val stats = emscripten::val::object();
+
+    // Count meshes
+    stats.set("numMeshes", static_cast<int>(render_scene_.meshes.size()));
+    stats.set("numMaterials", static_cast<int>(render_scene_.materials.size()));
+    stats.set("numTextures", static_cast<int>(render_scene_.textures.size()));
+    stats.set("numImages", static_cast<int>(render_scene_.images.size()));
+    stats.set("numBuffers", static_cast<int>(render_scene_.buffers.size()));
+    stats.set("numNodes", static_cast<int>(render_scene_.nodes.size()));
+    stats.set("numLights", static_cast<int>(render_scene_.lights.size()));
+
+    // Estimate buffer memory
+    size_t bufferMemory = 0;
+    for (const auto &buf : render_scene_.buffers) {
+      bufferMemory += buf.data.size();
+    }
+    stats.set("bufferMemoryBytes", static_cast<double>(bufferMemory));
+    stats.set("bufferMemoryMB", static_cast<double>(bufferMemory) / (1024.0 * 1024.0));
+
+    // Asset cache count
+    stats.set("assetCacheCount", static_cast<int>(em_resolver_.cache.size()));
+
+    // Reordered mesh cache count
+    stats.set("reorderedMeshCacheCount", static_cast<int>(reordered_mesh_cache_.size()));
+
+    return stats;
+  }
+
   void setAsset(const std::string &name, const std::string &binary) {
     em_resolver_.add(name, binary);
   }
@@ -2409,6 +2978,51 @@ class TinyUSDZLoaderNative {
   
   emscripten::val getStreamingProgress(const std::string &name) const {
     return em_resolver_.getStreamingProgress(name);
+  }
+
+  //
+  // Zero-copy streaming buffer methods for memory-efficient transfer
+  //
+
+  /// Allocate a zero-copy buffer for streaming transfer from JS
+  /// Returns object with {success, uuid, bufferPtr, totalSize} or {success: false, error}
+  emscripten::val allocateZeroCopyBuffer(const std::string &name, size_t size) {
+    return em_resolver_.allocateZeroCopyBuffer(name, size);
+  }
+
+  /// Get the buffer pointer for direct memory writes
+  double getZeroCopyBufferPtr(const std::string &name) {
+    return em_resolver_.getZeroCopyBufferPtr(name);
+  }
+
+  /// Get buffer pointer at specific offset for chunked writes
+  double getZeroCopyBufferPtrAtOffset(const std::string &name, size_t offset) {
+    return em_resolver_.getZeroCopyBufferPtrAtOffset(name, offset);
+  }
+
+  /// Mark bytes as written (call after each chunk write)
+  bool markZeroCopyBytesWritten(const std::string &name, size_t count) {
+    return em_resolver_.markZeroCopyBytesWritten(name, count);
+  }
+
+  /// Get zero-copy buffer progress
+  emscripten::val getZeroCopyProgress(const std::string &name) const {
+    return em_resolver_.getZeroCopyProgress(name);
+  }
+
+  /// Finalize the zero-copy buffer and move to asset cache
+  bool finalizeZeroCopyBuffer(const std::string &name) {
+    return em_resolver_.finalizeZeroCopyBuffer(name);
+  }
+
+  /// Cancel and free zero-copy buffer
+  bool cancelZeroCopyBuffer(const std::string &name) {
+    return em_resolver_.cancelZeroCopyBuffer(name);
+  }
+
+  /// Get all active zero-copy buffers
+  emscripten::val getActiveZeroCopyBuffers() const {
+    return em_resolver_.getActiveZeroCopyBuffers();
   }
 
   bool hasAsset(const std::string &name) const {
@@ -2728,6 +3342,145 @@ class TinyUSDZLoaderNative {
     return success;
   }
 
+  //
+  // Progress reporting methods for polling-based async progress
+  //
+
+  /// Get current parsing progress as a JS object
+  emscripten::val getProgress() const {
+    return parsing_progress_.toJS();
+  }
+
+  /// Request cancellation of current parsing operation
+  void cancelParsing() {
+    parsing_progress_.cancel_requested.store(true);
+  }
+
+  /// Check if parsing was cancelled
+  bool wasCancelled() const {
+    return parsing_progress_.stage == ParsingProgress::Stage::Cancelled;
+  }
+
+  /// Check if parsing is currently in progress
+  bool isParsingInProgress() const {
+    return parsing_progress_.stage == ParsingProgress::Stage::Parsing ||
+           parsing_progress_.stage == ParsingProgress::Stage::Converting;
+  }
+
+  /// Reset progress state (call before starting a new parse)
+  void resetProgress() {
+    parsing_progress_.reset();
+  }
+
+  /// Load from binary with progress reporting
+  /// Returns immediately, progress can be polled via getProgress()
+  bool loadFromBinaryWithProgress(const std::string &binary, const std::string &filename) {
+    // Reset progress state
+    parsing_progress_.reset();
+    parsing_progress_.setStage(ParsingProgress::Stage::Parsing);
+    parsing_progress_.total_bytes = binary.size();
+    parsing_progress_.current_operation = "Loading USD file";
+
+    bool is_usdz = tinyusdz::IsUSDZ(
+        reinterpret_cast<const uint8_t *>(binary.c_str()), binary.size());
+
+    tinyusdz::USDLoadOptions options;
+    options.max_memory_limit_in_mb = max_memory_limit_mb_;
+
+    // Set up progress callback
+    options.progress_callback = [](float progress, void *userptr) -> bool {
+      ParsingProgress *pp = static_cast<ParsingProgress *>(userptr);
+      pp->progress = progress * 0.8f;  // Parsing is 80% of total work
+      pp->bytes_processed = static_cast<uint64_t>(progress * pp->total_bytes);
+      // Return false to cancel, true to continue
+      return !pp->shouldCancel();
+    };
+    options.progress_userptr = &parsing_progress_;
+
+    tinyusdz::Stage stage;
+    loaded_ = tinyusdz::LoadUSDFromMemory(
+        reinterpret_cast<const uint8_t *>(binary.c_str()), binary.size(),
+        filename, &stage, &warn_, &error_, options);
+
+    if (!loaded_) {
+      if (parsing_progress_.shouldCancel()) {
+        parsing_progress_.setStage(ParsingProgress::Stage::Cancelled);
+        parsing_progress_.error_message = "Parsing cancelled by user";
+      } else {
+        parsing_progress_.setStage(ParsingProgress::Stage::Error);
+        parsing_progress_.error_message = error_;
+      }
+      return false;
+    }
+
+    loaded_as_layer_ = false;
+    filename_ = filename;
+
+    // Now convert to render scene
+    parsing_progress_.setStage(ParsingProgress::Stage::Converting);
+    parsing_progress_.current_operation = "Converting to render scene";
+    parsing_progress_.progress = 0.8f;
+
+    bool render_ok = stageToRenderScene(stage, is_usdz, binary);
+
+    if (!render_ok) {
+      parsing_progress_.setStage(ParsingProgress::Stage::Error);
+      parsing_progress_.error_message = error_;
+      return false;
+    }
+
+    parsing_progress_.progress = 1.0f;
+    parsing_progress_.setStage(ParsingProgress::Stage::Complete);
+    parsing_progress_.current_operation = "Complete";
+
+    return true;
+  }
+
+  /// Load as layer with progress reporting
+  bool loadAsLayerFromBinaryWithProgress(const std::string &binary, const std::string &filename) {
+    // Reset progress state
+    parsing_progress_.reset();
+    parsing_progress_.setStage(ParsingProgress::Stage::Parsing);
+    parsing_progress_.total_bytes = binary.size();
+    parsing_progress_.current_operation = "Loading USD layer";
+
+    tinyusdz::USDLoadOptions options;
+    options.max_memory_limit_in_mb = max_memory_limit_mb_;
+
+    // Set up progress callback
+    options.progress_callback = [](float progress, void *userptr) -> bool {
+      ParsingProgress *pp = static_cast<ParsingProgress *>(userptr);
+      pp->progress = progress;
+      pp->bytes_processed = static_cast<uint64_t>(progress * pp->total_bytes);
+      return !pp->shouldCancel();
+    };
+    options.progress_userptr = &parsing_progress_;
+
+    loaded_ = tinyusdz::LoadLayerFromMemory(
+        reinterpret_cast<const uint8_t *>(binary.c_str()), binary.size(),
+        filename, &layer_, &warn_, &error_, options);
+
+    if (!loaded_) {
+      if (parsing_progress_.shouldCancel()) {
+        parsing_progress_.setStage(ParsingProgress::Stage::Cancelled);
+        parsing_progress_.error_message = "Parsing cancelled by user";
+      } else {
+        parsing_progress_.setStage(ParsingProgress::Stage::Error);
+        parsing_progress_.error_message = error_;
+      }
+      return false;
+    }
+
+    loaded_as_layer_ = true;
+    filename_ = filename;
+
+    parsing_progress_.progress = 1.0f;
+    parsing_progress_.setStage(ParsingProgress::Stage::Complete);
+    parsing_progress_.current_operation = "Complete";
+
+    return true;
+  }
+
   // TODO: Deprecate
   bool ok() const { return loaded_; }
 
@@ -2744,6 +3497,9 @@ class TinyUSDZLoaderNative {
     node.set("primName", rnode.prim_name);
     node.set("displayName", rnode.display_name);
     node.set("absPath", rnode.abs_path);
+
+    std::string nodeCategoryStr = to_string(rnode.category);
+    node.set("nodeCategory", nodeCategoryStr);
 
     std::string nodeTypeStr = to_string(rnode.nodeType);
     node.set("nodeType", nodeTypeStr);
@@ -2802,11 +3558,24 @@ class TinyUSDZLoaderNative {
   tinyusdz::USDZAsset usdz_asset_;
   EMAssetResolutionResolver em_resolver_;
 
+  // Cache for reordered mesh data (triangles sorted by material for optimal submesh grouping)
+  struct ReorderedMeshCache {
+    std::vector<float> points;
+    std::vector<float> normals;
+    std::vector<float> texcoords;
+    std::vector<float> tangents;
+    std::vector<uint32_t> faceVertexIndices;
+  };
+  mutable std::unordered_map<int, ReorderedMeshCache> reordered_mesh_cache_;
+
   // key = session_id
   std::unordered_map<std::string, tinyusdz::tydra::mcp::Context> mcp_ctx_;
   std::string mcp_session_id_;
 
   tinyusdz::tydra::mcp::Context mcp_global_ctx_;
+
+  // Progress tracking for polling-based progress reporting
+  ParsingProgress parsing_progress_;
 };
 
 ///
@@ -3008,6 +3777,8 @@ EMSCRIPTEN_BINDINGS(tinyusdz_module) {
       .function("loadAsLayerFromBinary", &TinyUSDZLoaderNative::loadAsLayerFromBinary)
       .function("loadFromBinary", &TinyUSDZLoaderNative::loadFromBinary)
       .function("loadTest", &TinyUSDZLoaderNative::loadTest)
+      .function("loadFromCachedAsset", &TinyUSDZLoaderNative::loadFromCachedAsset)
+      .function("loadAsLayerFromCachedAsset", &TinyUSDZLoaderNative::loadAsLayerFromCachedAsset)
       .function("testValueMemoryUsage", &TinyUSDZLoaderNative::testValueMemoryUsage)
       .function("testLayer", &TinyUSDZLoaderNative::testLayer)
       //.function("loadAndCompositeFromBinary", &TinyUSDZLoaderNative::loadFromBinary)
@@ -3025,7 +3796,9 @@ EMSCRIPTEN_BINDINGS(tinyusdz_module) {
       .function("getAllLights", &TinyUSDZLoaderNative::getAllLights)
       .function("numLights", &TinyUSDZLoaderNative::numLights)
       .function("getTexture", &TinyUSDZLoaderNative::getTexture)
+      .function("numTextures", &TinyUSDZLoaderNative::numTextures)
       .function("getImage", &TinyUSDZLoaderNative::getImage)
+      .function("numImages", &TinyUSDZLoaderNative::numImages)
       .function("getDefaultRootNodeId",
                 &TinyUSDZLoaderNative::getDefaultRootNodeId)
       .function("getRootNode", &TinyUSDZLoaderNative::getRootNode)
@@ -3114,6 +3887,25 @@ EMSCRIPTEN_BINDINGS(tinyusdz_module) {
                 &TinyUSDZLoaderNative::isStreamingAssetComplete)
       .function("getStreamingProgress",
                 &TinyUSDZLoaderNative::getStreamingProgress)
+
+      // Zero-copy streaming buffer methods
+      .function("allocateZeroCopyBuffer",
+                &TinyUSDZLoaderNative::allocateZeroCopyBuffer)
+      .function("getZeroCopyBufferPtr",
+                &TinyUSDZLoaderNative::getZeroCopyBufferPtr)
+      .function("getZeroCopyBufferPtrAtOffset",
+                &TinyUSDZLoaderNative::getZeroCopyBufferPtrAtOffset)
+      .function("markZeroCopyBytesWritten",
+                &TinyUSDZLoaderNative::markZeroCopyBytesWritten)
+      .function("getZeroCopyProgress",
+                &TinyUSDZLoaderNative::getZeroCopyProgress)
+      .function("finalizeZeroCopyBuffer",
+                &TinyUSDZLoaderNative::finalizeZeroCopyBuffer)
+      .function("cancelZeroCopyBuffer",
+                &TinyUSDZLoaderNative::cancelZeroCopyBuffer)
+      .function("getActiveZeroCopyBuffers",
+                &TinyUSDZLoaderNative::getActiveZeroCopyBuffers)
+
       .function("hasAsset",
                 &TinyUSDZLoaderNative::hasAsset)
       .function("getAsset",
@@ -3148,6 +3940,10 @@ EMSCRIPTEN_BINDINGS(tinyusdz_module) {
                 &TinyUSDZLoaderNative::assetExists)
       .function("clearAssets",
                 &TinyUSDZLoaderNative::clearAssets)
+      .function("reset",
+                &TinyUSDZLoaderNative::reset)
+      .function("getMemoryStats",
+                &TinyUSDZLoaderNative::getMemoryStats)
 
       .function("layerToString",
                 &TinyUSDZLoaderNative::layerToString)
@@ -3175,8 +3971,18 @@ EMSCRIPTEN_BINDINGS(tinyusdz_module) {
       .function("mcpToolsList", &TinyUSDZLoaderNative::mcpToolsList)
       .function("mcpToolsCall", &TinyUSDZLoaderNative::mcpToolsCall)
 
+      // Progress reporting for async parsing
+      .function("getProgress", &TinyUSDZLoaderNative::getProgress)
+      .function("cancelParsing", &TinyUSDZLoaderNative::cancelParsing)
+      .function("wasCancelled", &TinyUSDZLoaderNative::wasCancelled)
+      .function("isParsingInProgress", &TinyUSDZLoaderNative::isParsingInProgress)
+      .function("resetProgress", &TinyUSDZLoaderNative::resetProgress)
+      .function("loadFromBinaryWithProgress", &TinyUSDZLoaderNative::loadFromBinaryWithProgress)
+      .function("loadAsLayerFromBinaryWithProgress", &TinyUSDZLoaderNative::loadAsLayerFromBinaryWithProgress)
+
       .function("ok", &TinyUSDZLoaderNative::ok)
-      .function("error", &TinyUSDZLoaderNative::error);
+      .function("error", &TinyUSDZLoaderNative::error)
+      .function("warn", &TinyUSDZLoaderNative::warn);
 
   class_<TinyUSDZComposerNative>("TinyUSDZComposerNative")
       .constructor<>()  // Default constructor for async loading

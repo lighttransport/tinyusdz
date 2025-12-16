@@ -2075,7 +2075,7 @@ class Value {
   // Helper to log vector size
   template <typename T>
   static void log_vector_size(const std::vector<T>& vec) {
-    TUSDZ_LOG_I("  vector size: " << vec.size());
+    //TUSDZ_LOG_I("  vector size: " << vec.size());
   }
 
   template <typename T>
@@ -2174,6 +2174,7 @@ class Value {
 #endif
 
   const linb::any &get_raw() const { return v_; }
+  linb::any &get_raw_mutable() { return v_; }
 
   bool is_array() const { return (v_.type_id() & value::TYPE_ID_1D_ARRAY_BIT); }
 
