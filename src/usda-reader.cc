@@ -1696,6 +1696,8 @@ bool USDAReader::Impl::Read(const uint32_t state_flags, bool as_primspec) {
   RegisterReconstructCallback<DiskLight>();
   RegisterReconstructCallback<DistantLight>();
   RegisterReconstructCallback<CylinderLight>();
+  RegisterReconstructCallback<RectLight>();
+  RegisterReconstructCallback<GeometryLight>();
 
   RegisterReconstructCallback<SkelRoot>();
   RegisterReconstructCallback<Skeleton>();

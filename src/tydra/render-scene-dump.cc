@@ -153,6 +153,8 @@ std::string DumpVertexAttribute(const VertexAttribute &vattr, uint32_t indent) {
 static void DumpNodeImpl(std::stringstream &ss, const Node &node, uint32_t indent) {
   ss << pprint::Indent(indent) << "node {\n";
 
+  ss << pprint::Indent(indent + 1) << "category " << quote(to_string(node.category))
+     << "\n";
   ss << pprint::Indent(indent + 1) << "type " << quote(to_string(node.nodeType))
      << "\n";
 
