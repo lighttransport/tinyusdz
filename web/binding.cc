@@ -942,6 +942,14 @@ class TinyUSDZLoaderNative {
       env.timecode = stage.metas().startTimeCode.get_value();
     }
     loaded_ = converter.ConvertToRenderScene(env, &render_scene_);
+
+    // Capture warnings from converter (available via warn() method)
+    if (!converter.GetWarning().empty()) {
+      if (!warn_.empty()) warn_ += "\n";
+      warn_ += converter.GetWarning();
+      // Note: Not printing to cerr to avoid console error spam
+    }
+
     if (!loaded_) {
       std::cerr << "Failed to convert USD Stage to RenderScene: \n"
                 << converter.GetError() << "\n";
@@ -1057,6 +1065,14 @@ class TinyUSDZLoaderNative {
       env.timecode = stage.metas().startTimeCode.get_value();
     }
     loaded_ = converter.ConvertToRenderScene(env, &render_scene_);
+
+    // Capture warnings from converter (available via warn() method)
+    if (!converter.GetWarning().empty()) {
+      if (!warn_.empty()) warn_ += "\n";
+      warn_ += converter.GetWarning();
+      // Note: Not printing to cerr to avoid console error spam
+    }
+
     if (!loaded_) {
       std::cerr << "Failed to convert USD Stage to RenderScene: \n"
                 << converter.GetError() << "\n";
@@ -1570,6 +1586,10 @@ class TinyUSDZLoaderNative {
   int numMeshes() const { return render_scene_.meshes.size(); }
 
   int numMaterials() const { return render_scene_.materials.size(); }
+
+  int numTextures() const { return render_scene_.textures.size(); }
+
+  int numImages() const { return render_scene_.images.size(); }
 
   // Legacy method for backward compatibility
   emscripten::val getMaterial(int mat_id) const {
@@ -3776,7 +3796,9 @@ EMSCRIPTEN_BINDINGS(tinyusdz_module) {
       .function("getAllLights", &TinyUSDZLoaderNative::getAllLights)
       .function("numLights", &TinyUSDZLoaderNative::numLights)
       .function("getTexture", &TinyUSDZLoaderNative::getTexture)
+      .function("numTextures", &TinyUSDZLoaderNative::numTextures)
       .function("getImage", &TinyUSDZLoaderNative::getImage)
+      .function("numImages", &TinyUSDZLoaderNative::numImages)
       .function("getDefaultRootNodeId",
                 &TinyUSDZLoaderNative::getDefaultRootNodeId)
       .function("getRootNode", &TinyUSDZLoaderNative::getRootNode)
@@ -3959,7 +3981,8 @@ EMSCRIPTEN_BINDINGS(tinyusdz_module) {
       .function("loadAsLayerFromBinaryWithProgress", &TinyUSDZLoaderNative::loadAsLayerFromBinaryWithProgress)
 
       .function("ok", &TinyUSDZLoaderNative::ok)
-      .function("error", &TinyUSDZLoaderNative::error);
+      .function("error", &TinyUSDZLoaderNative::error)
+      .function("warn", &TinyUSDZLoaderNative::warn);
 
   class_<TinyUSDZComposerNative>("TinyUSDZComposerNative")
       .constructor<>()  // Default constructor for async loading
