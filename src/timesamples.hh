@@ -61,7 +61,7 @@ inline bool is_pod_type_id(uint32_t type_id) {
   // and their vector variants (float2, float3, etc.)
   
   // turn off 1D array flag
-  uint32_t tid = type_id & (~TYPE_ID_1D_ARRAY_BIT);
+  uint32_t tid = type_id & (~TYPE_ID_STL_ARRAY_BIT);
   
   return (tid >= uint32_t(TYPE_ID_BOOL) && tid <= uint32_t(TYPE_ID_TIMECODE));
 }

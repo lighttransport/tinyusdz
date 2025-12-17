@@ -14,6 +14,8 @@
 #include "usdLux.hh"
 #include "usdShade.hh"
 #include "usdSkel.hh"
+#include "usdMtlx.hh"
+#include "timesamples.hh"
 //
 #include "common-macros.inc"
 #include "pprinter.hh"
@@ -2057,5 +2059,633 @@ size_t Attribute::estimate_memory_usage() const {
 
   return total;
 }
+
+// Implementation of MODEL type helper functions for Value class
+// These are declared in value-types.hh but defined here because we have
+// access to all MODEL type definitions
+#if defined(TUSDZ_NEW_32BYTE_VALUE) || defined(TUSDZ_NEW_VALUE_TYPE)
+
+namespace value {
+
+bool DestroyModelValue(uint32_t type_id, void* ptr) {
+  if (!ptr) {
+    return false;
+  }
+
+  switch (type_id) {
+    // Types not in MODEL range, but defined in prim-types.hh
+    case TYPE_ID_CUSTOMDATA: {
+      delete static_cast<CustomDataType*>(ptr);
+      return true;
+    }
+    case TYPE_ID_PAYLOAD: {
+      delete static_cast<Payload*>(ptr);
+      return true;
+    }
+    case TYPE_ID_REFERENCE: {
+      delete static_cast<Reference*>(ptr);
+      return true;
+    }
+    case TYPE_ID_PATH: {
+      delete static_cast<Path*>(ptr);
+      return true;
+    }
+    case TYPE_ID_PATH_VECTOR: {
+      delete static_cast<std::vector<Path>*>(ptr);
+      return true;
+    }
+    // Array types of prim-types
+    case (TYPE_ID_PAYLOAD | TYPE_ID_STL_ARRAY_BIT): {
+      delete static_cast<std::vector<Payload>*>(ptr);
+      return true;
+    }
+    case (TYPE_ID_REFERENCE | TYPE_ID_STL_ARRAY_BIT): {
+      delete static_cast<std::vector<Reference>*>(ptr);
+      return true;
+    }
+
+    // ListOp types
+    case TYPE_ID_LIST_OP_TOKEN: {
+      delete static_cast<ListOp<value::token>*>(ptr);
+      return true;
+    }
+    case TYPE_ID_LIST_OP_STRING: {
+      delete static_cast<ListOp<std::string>*>(ptr);
+      return true;
+    }
+    case TYPE_ID_LIST_OP_PATH: {
+      delete static_cast<ListOp<Path>*>(ptr);
+      return true;
+    }
+    case TYPE_ID_LIST_OP_REFERENCE: {
+      delete static_cast<ListOp<Reference>*>(ptr);
+      return true;
+    }
+    case TYPE_ID_LIST_OP_PAYLOAD: {
+      delete static_cast<ListOp<Payload>*>(ptr);
+      return true;
+    }
+
+    // VariantSelectionMap
+    case TYPE_ID_VARIANT_SELECION_MAP: {
+      delete static_cast<VariantSelectionMap*>(ptr);
+      return true;
+    }
+
+    // TimeSamples
+    case TYPE_ID_TIMESAMPLES: {
+      delete static_cast<value::TimeSamples*>(ptr);
+      return true;
+    }
+
+    // LayerOffset array
+    case (TYPE_ID_LAYER_OFFSET | TYPE_ID_STL_ARRAY_BIT): {
+      delete static_cast<std::vector<LayerOffset>*>(ptr);
+      return true;
+    }
+
+    // Base model type
+    case TYPE_ID_MODEL: {
+      delete static_cast<Model*>(ptr);
+      return true;
+    }
+
+    // Geometry types
+    case TYPE_ID_SCOPE: {
+      delete static_cast<Scope*>(ptr);
+      return true;
+    }
+    case TYPE_ID_GEOM_XFORM: {
+      delete static_cast<Xform*>(ptr);
+      return true;
+    }
+    case TYPE_ID_GEOM_MESH: {
+      delete static_cast<GeomMesh*>(ptr);
+      return true;
+    }
+    case TYPE_ID_GEOM_BASIS_CURVES: {
+      delete static_cast<GeomBasisCurves*>(ptr);
+      return true;
+    }
+    case TYPE_ID_GEOM_NURBS_CURVES: {
+      delete static_cast<GeomNurbsCurves*>(ptr);
+      return true;
+    }
+    case TYPE_ID_GEOM_SPHERE: {
+      delete static_cast<GeomSphere*>(ptr);
+      return true;
+    }
+    case TYPE_ID_GEOM_CUBE: {
+      delete static_cast<GeomCube*>(ptr);
+      return true;
+    }
+    case TYPE_ID_GEOM_CYLINDER: {
+      delete static_cast<GeomCylinder*>(ptr);
+      return true;
+    }
+    case TYPE_ID_GEOM_CONE: {
+      delete static_cast<GeomCone*>(ptr);
+      return true;
+    }
+    case TYPE_ID_GEOM_CAPSULE: {
+      delete static_cast<GeomCapsule*>(ptr);
+      return true;
+    }
+    case TYPE_ID_GEOM_POINTS: {
+      delete static_cast<GeomPoints*>(ptr);
+      return true;
+    }
+    case TYPE_ID_GEOM_GEOMSUBSET: {
+      delete static_cast<GeomSubset*>(ptr);
+      return true;
+    }
+    case TYPE_ID_GEOM_POINT_INSTANCER: {
+      delete static_cast<GeomPointInstancer*>(ptr);
+      return true;
+    }
+    case TYPE_ID_GEOM_CAMERA: {
+      delete static_cast<GeomCamera*>(ptr);
+      return true;
+    }
+
+    // Light types
+    case TYPE_ID_LUX_SPHERE: {
+      delete static_cast<SphereLight*>(ptr);
+      return true;
+    }
+    case TYPE_ID_LUX_DOME: {
+      delete static_cast<DomeLight*>(ptr);
+      return true;
+    }
+    case TYPE_ID_LUX_CYLINDER: {
+      delete static_cast<CylinderLight*>(ptr);
+      return true;
+    }
+    case TYPE_ID_LUX_DISK: {
+      delete static_cast<DiskLight*>(ptr);
+      return true;
+    }
+    case TYPE_ID_LUX_RECT: {
+      delete static_cast<RectLight*>(ptr);
+      return true;
+    }
+    case TYPE_ID_LUX_DISTANT: {
+      delete static_cast<DistantLight*>(ptr);
+      return true;
+    }
+    case TYPE_ID_LUX_GEOMETRY: {
+      delete static_cast<GeometryLight*>(ptr);
+      return true;
+    }
+    case TYPE_ID_LUX_PORTAL: {
+      delete static_cast<PortalLight*>(ptr);
+      return true;
+    }
+    case TYPE_ID_LUX_PLUGIN: {
+      delete static_cast<PluginLight*>(ptr);
+      return true;
+    }
+
+    // Shader types
+    case TYPE_ID_SHADER: {
+      delete static_cast<Shader*>(ptr);
+      return true;
+    }
+    case TYPE_ID_MATERIAL: {
+      delete static_cast<Material*>(ptr);
+      return true;
+    }
+    case TYPE_ID_NODEGRAPH: {
+      delete static_cast<NodeGraph*>(ptr);
+      return true;
+    }
+
+    // Imaging types
+    case TYPE_ID_IMAGING_SHADER_NODE: {
+      delete static_cast<ShaderNode*>(ptr);
+      return true;
+    }
+    case TYPE_ID_IMAGING_PREVIEWSURFACE: {
+      delete static_cast<UsdPreviewSurface*>(ptr);
+      return true;
+    }
+    case TYPE_ID_IMAGING_UVTEXTURE: {
+      delete static_cast<UsdUVTexture*>(ptr);
+      return true;
+    }
+    case TYPE_ID_IMAGING_PRIMVAR_READER_FLOAT: {
+      delete static_cast<UsdPrimvarReader_float*>(ptr);
+      return true;
+    }
+    case TYPE_ID_IMAGING_PRIMVAR_READER_FLOAT2: {
+      delete static_cast<UsdPrimvarReader_float2*>(ptr);
+      return true;
+    }
+    case TYPE_ID_IMAGING_PRIMVAR_READER_FLOAT3: {
+      delete static_cast<UsdPrimvarReader_float3*>(ptr);
+      return true;
+    }
+    case TYPE_ID_IMAGING_PRIMVAR_READER_FLOAT4: {
+      delete static_cast<UsdPrimvarReader_float4*>(ptr);
+      return true;
+    }
+    case TYPE_ID_IMAGING_PRIMVAR_READER_INT: {
+      delete static_cast<UsdPrimvarReader_int*>(ptr);
+      return true;
+    }
+    case TYPE_ID_IMAGING_PRIMVAR_READER_STRING: {
+      delete static_cast<UsdPrimvarReader_string*>(ptr);
+      return true;
+    }
+    case TYPE_ID_IMAGING_PRIMVAR_READER_NORMAL: {
+      delete static_cast<UsdPrimvarReader_normal*>(ptr);
+      return true;
+    }
+    case TYPE_ID_IMAGING_PRIMVAR_READER_POINT: {
+      delete static_cast<UsdPrimvarReader_point*>(ptr);
+      return true;
+    }
+    case TYPE_ID_IMAGING_PRIMVAR_READER_VECTOR: {
+      delete static_cast<UsdPrimvarReader_vector*>(ptr);
+      return true;
+    }
+    case TYPE_ID_IMAGING_PRIMVAR_READER_MATRIX: {
+      delete static_cast<UsdPrimvarReader_matrix*>(ptr);
+      return true;
+    }
+    case TYPE_ID_IMAGING_TRANSFORM_2D: {
+      delete static_cast<UsdTransform2d*>(ptr);
+      return true;
+    }
+
+    // Skeleton types
+    case TYPE_ID_SKEL_ROOT: {
+      delete static_cast<SkelRoot*>(ptr);
+      return true;
+    }
+    case TYPE_ID_SKELETON: {
+      delete static_cast<Skeleton*>(ptr);
+      return true;
+    }
+    case TYPE_ID_SKELANIMATION: {
+      delete static_cast<SkelAnimation*>(ptr);
+      return true;
+    }
+    case TYPE_ID_BLENDSHAPE: {
+      delete static_cast<BlendShape*>(ptr);
+      return true;
+    }
+
+    // MaterialX types
+    case TYPE_ID_IMAGING_MTLX_PREVIEWSURFACE: {
+      delete static_cast<MtlxUsdPreviewSurface*>(ptr);
+      return true;
+    }
+    case TYPE_ID_IMAGING_MTLX_STANDARDSURFACE: {
+      delete static_cast<MtlxAutodeskStandardSurface*>(ptr);
+      return true;
+    }
+    case TYPE_ID_IMAGING_MTLX_OPENPBRSURFACE: {
+      delete static_cast<MtlxOpenPBRSurface*>(ptr);
+      return true;
+    }
+    case TYPE_ID_IMAGING_MTLX_UNIFORMEDF: {
+      delete static_cast<MtlxUniformEdf*>(ptr);
+      return true;
+    }
+    case TYPE_ID_IMAGING_MTLX_CONICALEDF: {
+      delete static_cast<MtlxConicalEdf*>(ptr);
+      return true;
+    }
+    case TYPE_ID_IMAGING_MTLX_MEASUREDEDF: {
+      delete static_cast<MtlxMeasuredEdf*>(ptr);
+      return true;
+    }
+    case TYPE_ID_IMAGING_MTLX_LIGHT: {
+      delete static_cast<MtlxLight*>(ptr);
+      return true;
+    }
+    case TYPE_ID_IMAGING_OPENPBR_SURFACE: {
+      delete static_cast<OpenPBRSurface*>(ptr);
+      return true;
+    }
+
+    default:
+      return false;
+  }
+}
+
+bool CopyModelValue(uint32_t type_id, void** dst_ptr, const void* src_ptr) {
+  if (!dst_ptr || !src_ptr) {
+    return false;
+  }
+
+  switch (type_id) {
+    // Types not in MODEL range, but defined in prim-types.hh
+    case TYPE_ID_CUSTOMDATA: {
+      *dst_ptr = new CustomDataType(*static_cast<const CustomDataType*>(src_ptr));
+      return true;
+    }
+    case TYPE_ID_PAYLOAD: {
+      *dst_ptr = new Payload(*static_cast<const Payload*>(src_ptr));
+      return true;
+    }
+    case TYPE_ID_REFERENCE: {
+      *dst_ptr = new Reference(*static_cast<const Reference*>(src_ptr));
+      return true;
+    }
+    case TYPE_ID_PATH: {
+      *dst_ptr = new Path(*static_cast<const Path*>(src_ptr));
+      return true;
+    }
+    case TYPE_ID_PATH_VECTOR: {
+      *dst_ptr = new std::vector<Path>(*static_cast<const std::vector<Path>*>(src_ptr));
+      return true;
+    }
+    // Array types of prim-types
+    case (TYPE_ID_PAYLOAD | TYPE_ID_STL_ARRAY_BIT): {
+      *dst_ptr = new std::vector<Payload>(*static_cast<const std::vector<Payload>*>(src_ptr));
+      return true;
+    }
+    case (TYPE_ID_REFERENCE | TYPE_ID_STL_ARRAY_BIT): {
+      *dst_ptr = new std::vector<Reference>(*static_cast<const std::vector<Reference>*>(src_ptr));
+      return true;
+    }
+
+    // ListOp types
+    case TYPE_ID_LIST_OP_TOKEN: {
+      *dst_ptr = new ListOp<value::token>(*static_cast<const ListOp<value::token>*>(src_ptr));
+      return true;
+    }
+    case TYPE_ID_LIST_OP_STRING: {
+      *dst_ptr = new ListOp<std::string>(*static_cast<const ListOp<std::string>*>(src_ptr));
+      return true;
+    }
+    case TYPE_ID_LIST_OP_PATH: {
+      *dst_ptr = new ListOp<Path>(*static_cast<const ListOp<Path>*>(src_ptr));
+      return true;
+    }
+    case TYPE_ID_LIST_OP_REFERENCE: {
+      *dst_ptr = new ListOp<Reference>(*static_cast<const ListOp<Reference>*>(src_ptr));
+      return true;
+    }
+    case TYPE_ID_LIST_OP_PAYLOAD: {
+      *dst_ptr = new ListOp<Payload>(*static_cast<const ListOp<Payload>*>(src_ptr));
+      return true;
+    }
+
+    // VariantSelectionMap
+    case TYPE_ID_VARIANT_SELECION_MAP: {
+      *dst_ptr = new VariantSelectionMap(*static_cast<const VariantSelectionMap*>(src_ptr));
+      return true;
+    }
+
+    // TimeSamples
+    case TYPE_ID_TIMESAMPLES: {
+      *dst_ptr = new value::TimeSamples(*static_cast<const value::TimeSamples*>(src_ptr));
+      return true;
+    }
+
+    // LayerOffset array
+    case (TYPE_ID_LAYER_OFFSET | TYPE_ID_STL_ARRAY_BIT): {
+      *dst_ptr = new std::vector<LayerOffset>(*static_cast<const std::vector<LayerOffset>*>(src_ptr));
+      return true;
+    }
+
+    // Base model type
+    case TYPE_ID_MODEL: {
+      *dst_ptr = new Model(*static_cast<const Model*>(src_ptr));
+      return true;
+    }
+
+    // Geometry types
+    case TYPE_ID_SCOPE: {
+      *dst_ptr = new Scope(*static_cast<const Scope*>(src_ptr));
+      return true;
+    }
+    case TYPE_ID_GEOM_XFORM: {
+      *dst_ptr = new Xform(*static_cast<const Xform*>(src_ptr));
+      return true;
+    }
+    case TYPE_ID_GEOM_MESH: {
+      *dst_ptr = new GeomMesh(*static_cast<const GeomMesh*>(src_ptr));
+      return true;
+    }
+    case TYPE_ID_GEOM_BASIS_CURVES: {
+      *dst_ptr = new GeomBasisCurves(*static_cast<const GeomBasisCurves*>(src_ptr));
+      return true;
+    }
+    case TYPE_ID_GEOM_NURBS_CURVES: {
+      *dst_ptr = new GeomNurbsCurves(*static_cast<const GeomNurbsCurves*>(src_ptr));
+      return true;
+    }
+    case TYPE_ID_GEOM_SPHERE: {
+      *dst_ptr = new GeomSphere(*static_cast<const GeomSphere*>(src_ptr));
+      return true;
+    }
+    case TYPE_ID_GEOM_CUBE: {
+      *dst_ptr = new GeomCube(*static_cast<const GeomCube*>(src_ptr));
+      return true;
+    }
+    case TYPE_ID_GEOM_CYLINDER: {
+      *dst_ptr = new GeomCylinder(*static_cast<const GeomCylinder*>(src_ptr));
+      return true;
+    }
+    case TYPE_ID_GEOM_CONE: {
+      *dst_ptr = new GeomCone(*static_cast<const GeomCone*>(src_ptr));
+      return true;
+    }
+    case TYPE_ID_GEOM_CAPSULE: {
+      *dst_ptr = new GeomCapsule(*static_cast<const GeomCapsule*>(src_ptr));
+      return true;
+    }
+    case TYPE_ID_GEOM_POINTS: {
+      *dst_ptr = new GeomPoints(*static_cast<const GeomPoints*>(src_ptr));
+      return true;
+    }
+    case TYPE_ID_GEOM_GEOMSUBSET: {
+      *dst_ptr = new GeomSubset(*static_cast<const GeomSubset*>(src_ptr));
+      return true;
+    }
+    case TYPE_ID_GEOM_POINT_INSTANCER: {
+      *dst_ptr = new GeomPointInstancer(*static_cast<const GeomPointInstancer*>(src_ptr));
+      return true;
+    }
+    case TYPE_ID_GEOM_CAMERA: {
+      *dst_ptr = new GeomCamera(*static_cast<const GeomCamera*>(src_ptr));
+      return true;
+    }
+
+    // Light types
+    case TYPE_ID_LUX_SPHERE: {
+      *dst_ptr = new SphereLight(*static_cast<const SphereLight*>(src_ptr));
+      return true;
+    }
+    case TYPE_ID_LUX_DOME: {
+      *dst_ptr = new DomeLight(*static_cast<const DomeLight*>(src_ptr));
+      return true;
+    }
+    case TYPE_ID_LUX_CYLINDER: {
+      *dst_ptr = new CylinderLight(*static_cast<const CylinderLight*>(src_ptr));
+      return true;
+    }
+    case TYPE_ID_LUX_DISK: {
+      *dst_ptr = new DiskLight(*static_cast<const DiskLight*>(src_ptr));
+      return true;
+    }
+    case TYPE_ID_LUX_RECT: {
+      *dst_ptr = new RectLight(*static_cast<const RectLight*>(src_ptr));
+      return true;
+    }
+    case TYPE_ID_LUX_DISTANT: {
+      *dst_ptr = new DistantLight(*static_cast<const DistantLight*>(src_ptr));
+      return true;
+    }
+    case TYPE_ID_LUX_GEOMETRY: {
+      *dst_ptr = new GeometryLight(*static_cast<const GeometryLight*>(src_ptr));
+      return true;
+    }
+    case TYPE_ID_LUX_PORTAL: {
+      *dst_ptr = new PortalLight(*static_cast<const PortalLight*>(src_ptr));
+      return true;
+    }
+    case TYPE_ID_LUX_PLUGIN: {
+      *dst_ptr = new PluginLight(*static_cast<const PluginLight*>(src_ptr));
+      return true;
+    }
+
+    // Shader types
+    case TYPE_ID_SHADER: {
+      *dst_ptr = new Shader(*static_cast<const Shader*>(src_ptr));
+      return true;
+    }
+    case TYPE_ID_MATERIAL: {
+      *dst_ptr = new Material(*static_cast<const Material*>(src_ptr));
+      return true;
+    }
+    case TYPE_ID_NODEGRAPH: {
+      *dst_ptr = new NodeGraph(*static_cast<const NodeGraph*>(src_ptr));
+      return true;
+    }
+
+    // Imaging types
+    case TYPE_ID_IMAGING_SHADER_NODE: {
+      *dst_ptr = new ShaderNode(*static_cast<const ShaderNode*>(src_ptr));
+      return true;
+    }
+    case TYPE_ID_IMAGING_PREVIEWSURFACE: {
+      *dst_ptr = new UsdPreviewSurface(*static_cast<const UsdPreviewSurface*>(src_ptr));
+      return true;
+    }
+    case TYPE_ID_IMAGING_UVTEXTURE: {
+      *dst_ptr = new UsdUVTexture(*static_cast<const UsdUVTexture*>(src_ptr));
+      return true;
+    }
+    case TYPE_ID_IMAGING_PRIMVAR_READER_FLOAT: {
+      *dst_ptr = new UsdPrimvarReader_float(*static_cast<const UsdPrimvarReader_float*>(src_ptr));
+      return true;
+    }
+    case TYPE_ID_IMAGING_PRIMVAR_READER_FLOAT2: {
+      *dst_ptr = new UsdPrimvarReader_float2(*static_cast<const UsdPrimvarReader_float2*>(src_ptr));
+      return true;
+    }
+    case TYPE_ID_IMAGING_PRIMVAR_READER_FLOAT3: {
+      *dst_ptr = new UsdPrimvarReader_float3(*static_cast<const UsdPrimvarReader_float3*>(src_ptr));
+      return true;
+    }
+    case TYPE_ID_IMAGING_PRIMVAR_READER_FLOAT4: {
+      *dst_ptr = new UsdPrimvarReader_float4(*static_cast<const UsdPrimvarReader_float4*>(src_ptr));
+      return true;
+    }
+    case TYPE_ID_IMAGING_PRIMVAR_READER_INT: {
+      *dst_ptr = new UsdPrimvarReader_int(*static_cast<const UsdPrimvarReader_int*>(src_ptr));
+      return true;
+    }
+    case TYPE_ID_IMAGING_PRIMVAR_READER_STRING: {
+      *dst_ptr = new UsdPrimvarReader_string(*static_cast<const UsdPrimvarReader_string*>(src_ptr));
+      return true;
+    }
+    case TYPE_ID_IMAGING_PRIMVAR_READER_NORMAL: {
+      *dst_ptr = new UsdPrimvarReader_normal(*static_cast<const UsdPrimvarReader_normal*>(src_ptr));
+      return true;
+    }
+    case TYPE_ID_IMAGING_PRIMVAR_READER_POINT: {
+      *dst_ptr = new UsdPrimvarReader_point(*static_cast<const UsdPrimvarReader_point*>(src_ptr));
+      return true;
+    }
+    case TYPE_ID_IMAGING_PRIMVAR_READER_VECTOR: {
+      *dst_ptr = new UsdPrimvarReader_vector(*static_cast<const UsdPrimvarReader_vector*>(src_ptr));
+      return true;
+    }
+    case TYPE_ID_IMAGING_PRIMVAR_READER_MATRIX: {
+      *dst_ptr = new UsdPrimvarReader_matrix(*static_cast<const UsdPrimvarReader_matrix*>(src_ptr));
+      return true;
+    }
+    case TYPE_ID_IMAGING_TRANSFORM_2D: {
+      *dst_ptr = new UsdTransform2d(*static_cast<const UsdTransform2d*>(src_ptr));
+      return true;
+    }
+
+    // Skeleton types
+    case TYPE_ID_SKEL_ROOT: {
+      *dst_ptr = new SkelRoot(*static_cast<const SkelRoot*>(src_ptr));
+      return true;
+    }
+    case TYPE_ID_SKELETON: {
+      *dst_ptr = new Skeleton(*static_cast<const Skeleton*>(src_ptr));
+      return true;
+    }
+    case TYPE_ID_SKELANIMATION: {
+      *dst_ptr = new SkelAnimation(*static_cast<const SkelAnimation*>(src_ptr));
+      return true;
+    }
+    case TYPE_ID_BLENDSHAPE: {
+      *dst_ptr = new BlendShape(*static_cast<const BlendShape*>(src_ptr));
+      return true;
+    }
+
+    // MaterialX types
+    case TYPE_ID_IMAGING_MTLX_PREVIEWSURFACE: {
+      *dst_ptr = new MtlxUsdPreviewSurface(*static_cast<const MtlxUsdPreviewSurface*>(src_ptr));
+      return true;
+    }
+    case TYPE_ID_IMAGING_MTLX_STANDARDSURFACE: {
+      *dst_ptr = new MtlxAutodeskStandardSurface(*static_cast<const MtlxAutodeskStandardSurface*>(src_ptr));
+      return true;
+    }
+    case TYPE_ID_IMAGING_MTLX_OPENPBRSURFACE: {
+      *dst_ptr = new MtlxOpenPBRSurface(*static_cast<const MtlxOpenPBRSurface*>(src_ptr));
+      return true;
+    }
+    case TYPE_ID_IMAGING_MTLX_UNIFORMEDF: {
+      *dst_ptr = new MtlxUniformEdf(*static_cast<const MtlxUniformEdf*>(src_ptr));
+      return true;
+    }
+    case TYPE_ID_IMAGING_MTLX_CONICALEDF: {
+      *dst_ptr = new MtlxConicalEdf(*static_cast<const MtlxConicalEdf*>(src_ptr));
+      return true;
+    }
+    case TYPE_ID_IMAGING_MTLX_MEASUREDEDF: {
+      *dst_ptr = new MtlxMeasuredEdf(*static_cast<const MtlxMeasuredEdf*>(src_ptr));
+      return true;
+    }
+    case TYPE_ID_IMAGING_MTLX_LIGHT: {
+      *dst_ptr = new MtlxLight(*static_cast<const MtlxLight*>(src_ptr));
+      return true;
+    }
+    case TYPE_ID_IMAGING_OPENPBR_SURFACE: {
+      *dst_ptr = new OpenPBRSurface(*static_cast<const OpenPBRSurface*>(src_ptr));
+      return true;
+    }
+
+    default:
+      *dst_ptr = nullptr;
+      return false;
+  }
+}
+
+}  // namespace value
+
+#endif // TUSDZ_NEW_32BYTE_VALUE || TUSDZ_NEW_VALUE_TYPE
 
 }  // namespace tinyusdz

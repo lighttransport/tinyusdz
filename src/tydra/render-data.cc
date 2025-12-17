@@ -1485,7 +1485,7 @@ bool ToVertexAttribute(const GeomPrimvar &primvar, const std::string &name,
     PUSH_ERROR_AND_RETURN("Failed to flatten primvar");
   }
 
-  bool is_array = value.type_id() & value::TYPE_ID_1D_ARRAY_BIT;
+  bool is_array = value.type_id() & value::TYPE_ID_STL_ARRAY_BIT;
   DCOUT("is_array " << (is_array ? "true" : "false"));
 
   VertexVariability variability;
@@ -1504,7 +1504,7 @@ bool ToVertexAttribute(const GeomPrimvar &primvar, const std::string &name,
   }
 
   uint32_t baseUnderlyingTypeId =
-      value.underlying_type_id() & (~value::TYPE_ID_1D_ARRAY_BIT);
+      value.underlying_type_id() & (~value::TYPE_ID_STL_ARRAY_BIT);
   DCOUT("flattened primvar type: " << value.type_name() << ", underlying type "
                                    << value::GetTypeName(baseUnderlyingTypeId));
 

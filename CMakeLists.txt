@@ -192,6 +192,15 @@ option(
   "Build for production release(e.g. disables debug print, do not include full filepath in error messages)"
   OFF)
 
+option(
+  TUSDZ_NEW_VALUE_TYPE
+  "Use new optimized 16-byte Value implementation (experimental, DEPRECATED - broken)"
+  OFF)
+
+option(
+  TUSDZ_NEW_32BYTE_VALUE
+  "Use new safe 32-byte handler-based Value implementation (RECOMMENDED - enabled by default)"
+  ON)
 
 option(
   TINYUSDZ_DEBUG_PRINT
@@ -498,6 +507,8 @@ if (TINYUSDZ_WITH_TYDRA)
         ${PROJECT_SOURCE_DIR}/src/tydra/shader-network.hh
         ${PROJECT_SOURCE_DIR}/src/tydra/render-data.cc
         ${PROJECT_SOURCE_DIR}/src/tydra/render-data.hh
+        ${PROJECT_SOURCE_DIR}/src/tydra/bone-util.cc
+        ${PROJECT_SOURCE_DIR}/src/tydra/bone-util.hh
         ${PROJECT_SOURCE_DIR}/src/tydra/render-data-pprint.cc
         ${PROJECT_SOURCE_DIR}/src/tydra/render-data-pprint.hh
         ${PROJECT_SOURCE_DIR}/src/tydra/raytracing-data.cc
@@ -510,8 +521,6 @@ if (TINYUSDZ_WITH_TYDRA)
         ${PROJECT_SOURCE_DIR}/src/tydra/materialx-to-json.hh
         ${PROJECT_SOURCE_DIR}/src/tydra/render-scene-dump.cc
         ${PROJECT_SOURCE_DIR}/src/tydra/render-scene-dump.hh
-        ${PROJECT_SOURCE_DIR}/src/tydra/bone-util.cc
-        ${PROJECT_SOURCE_DIR}/src/tydra/bone-util.hh
         ${PROJECT_SOURCE_DIR}/src/tydra/layer-to-renderscene.cc
         ${PROJECT_SOURCE_DIR}/src/tydra/layer-to-renderscene.hh
         ${PROJECT_SOURCE_DIR}/src/tydra/texture-util.cc
@@ -1284,6 +1293,18 @@ foreach(TINYUSDZ_LIB_TARGET ${TINYUSDZ_LIBS})
                                PRIVATE "TINYUSDZ_PRODUCTION_BUILD")
   endif()
 
+  if(TUSDZ_NEW_VALUE_TYPE)
+    message(DEPRECATION "TUSDZ_NEW_VALUE_TYPE is deprecated and broken. Please use TUSDZ_NEW_32BYTE_VALUE instead (enabled by default).")
+    target_compile_definitions(${TINYUSDZ_LIB_TARGET}
+                               PUBLIC "TUSDZ_NEW_VALUE_TYPE")
+  endif()
+
+  # MUST be PUBLIC so consumers of the library use the same Value class ABI
+  if(TUSDZ_NEW_32BYTE_VALUE)
+    target_compile_definitions(${TINYUSDZ_LIB_TARGET}
+                               PUBLIC "TUSDZ_NEW_32BYTE_VALUE")
+  endif()
+
   # default = enable module, so invert definition
   if(NOT TINYUSDZ_WITH_MODULE_USDA_READER)
     target_compile_definitions(${TINYUSDZ_LIB_TARGET}
@@ -1351,11 +1372,6 @@ foreach(TINYUSDZ_LIB_TARGET ${TINYUSDZ_LIBS})
     target_link_libraries(${TINYUSDZ_LIB_TARGET} Threads::Threads)
   endif()
 
-  # On 32-bit systems, 64-bit atomic operations require libatomic
-  # (Skip for emscripten as libatomic doesn't exist in wasm environment)
-  if (CMAKE_SIZEOF_VOID_P EQUAL 4 AND NOT EMSCRIPTEN)
-    target_link_libraries(${TINYUSDZ_LIB_TARGET} atomic)
-  endif()
 
   if(IOS)
     target_compile_definitions(${TINYUSDZ_LIB_TARGET}

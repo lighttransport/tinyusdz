@@ -200,7 +200,7 @@ bool IsSupportedGeomPrimvarType(uint32_t tyid) {
   case value::TypeTraits<__ty>::type_id(): {                                 \
     return true;                                                           \
   }                                                                        \
-  case (value::TypeTraits<__ty>::type_id() | value::TYPE_ID_1D_ARRAY_BIT): { \
+  case (value::TypeTraits<__ty>::type_id() | value::TYPE_ID_STL_ARRAY_BIT): { \
     return true;                                                           \
   }
 
@@ -286,7 +286,7 @@ bool GPrim::get_primvar(const std::string &varname, GeomPrimvar *out_primvar,
   if (indexIt != props.end()) {
     if (indexIt->second.is_attribute()) {
 
-      if (!(primvar.get_attribute().type_id() & value::TYPE_ID_1D_ARRAY_BIT)) {
+      if (!(primvar.get_attribute().type_id() & value::TYPE_ID_STL_ARRAY_BIT)) {
         SET_ERROR_AND_RETURN(
             fmt::format("Indexed GeomPrimVar with scalar PrimVar Attribute is not supported. PrimVar name: {}", primvar_name));
       }
@@ -582,7 +582,7 @@ bool GeomPrimvar::flatten_with_indices(const double t, value::Value *dest, const
 
     value::Value val;
 
-    if (!(_attr.type_id() & value::TYPE_ID_1D_ARRAY_BIT)) {
+    if (!(_attr.type_id() & value::TYPE_ID_STL_ARRAY_BIT)) {
 
       // evaluate value at specified time and return it for scalar type.
       value::Value v;
@@ -607,7 +607,7 @@ bool GeomPrimvar::flatten_with_indices(const double t, value::Value *dest, const
       }
 
 #define APPLY_FUN(__ty)                                                  \
-  case value::TypeTraits<__ty>::type_id() | value::TYPE_ID_1D_ARRAY_BIT: { \
+  case value::TypeTraits<__ty>::type_id() | value::TYPE_ID_STL_ARRAY_BIT: { \
     std::vector<__ty> value; \
     std::vector<__ty> expanded_val;                                      \
     if (_attr.get_value(t, &value, tinterp)) {                \

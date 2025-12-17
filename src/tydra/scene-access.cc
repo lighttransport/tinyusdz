@@ -2943,7 +2943,7 @@ bool GetGeomPrimvar(const Stage &stage, const GPrim *gprim,
     if (indexIt->second.is_attribute()) {
       const Attribute &indexAttr = indexIt->second.get_attribute();
 
-      if (!(primvar.get_attribute().type_id() & value::TYPE_ID_1D_ARRAY_BIT)) {
+      if (!(primvar.get_attribute().type_id() & value::TYPE_ID_STL_ARRAY_BIT)) {
         PUSH_ERROR_AND_RETURN(
             fmt::format("Indexed GeomPrimVar with scalar PrimVar Attribute is "
                         "not supported. PrimVar name: {}",

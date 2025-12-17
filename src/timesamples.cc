@@ -1748,12 +1748,12 @@ void TimeSamples::clear() {
 
 static bool IsPODType(uint32_t type_id) {
   // Check if type_id corresponds to a POD type or array of POD type
-  // Arrays have the TYPE_ID_1D_ARRAY_BIT set (bit 20)
+  // Arrays have the TYPE_ID_STL_ARRAY_BIT set (bit 20)
   // We need to check both the scalar type and array type
   
   // Extract the base type by masking off the array bit
-  // TYPE_ID_1D_ARRAY_BIT is already defined in value-types.hh
-  uint32_t base_type_id = type_id & (~TYPE_ID_1D_ARRAY_BIT);
+  // TYPE_ID_STL_ARRAY_BIT is already defined in value-types.hh
+  uint32_t base_type_id = type_id & (~TYPE_ID_STL_ARRAY_BIT);
   
   // Check if the base type is a POD type
   switch (base_type_id) {
