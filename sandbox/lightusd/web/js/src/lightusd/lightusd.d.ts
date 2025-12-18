@@ -10,6 +10,12 @@ export interface LightUSDModule {
     // USDA Reader
     readUsdaString(content: string): UsdaReaderResult;
 
+    // USDZ Support
+    isUsdz(data: string): boolean;
+    loadUsdz(data: string): UsdzLoaderResult;
+    usdzToRenderScene(data: string, time?: number, triangulate?: boolean,
+                      computeNormals?: boolean, computeTangents?: boolean): UsdzRenderResult;
+
     // Classes
     Token: TokenConstructor;
     Path: PathConstructor;
@@ -23,6 +29,11 @@ export interface LightUSDModule {
     RenderConverter: RenderConverterConstructor;
     RenderScene: RenderSceneClass;
     RenderMesh: RenderMeshClass;
+
+    // USDZ classes
+    UsdzArchive: UsdzArchiveConstructor;
+    UsdzLoaderResult: UsdzLoaderResultClass;
+    UsdzRenderResult: UsdzRenderResultClass;
 }
 
 // RenderConverter constructor
@@ -267,6 +278,114 @@ export interface RenderConverter {
     delete(): void;
 }
 
+// ============================================================================
+// USDZ Support
+// ============================================================================
+
+// UsdzArchive constructor
+export interface UsdzArchiveConstructor {
+    new(): UsdzArchive;
+}
+
+// UsdzArchive - Low-level USDZ archive access
+export interface UsdzArchive {
+    /** Open USDZ from binary data (pass ArrayBuffer as string via Emscripten) */
+    open(data: string): boolean;
+    /** Check if archive is open */
+    isOpen(): boolean;
+    /** Close archive and release memory */
+    close(): void;
+    /** Get total archive size in bytes */
+    archiveSize(): number;
+    /** Get number of assets in archive */
+    assetCount(): number;
+    /** Get list of all asset filenames */
+    assetNames(): string[];
+    /** Check if asset exists */
+    hasAsset(name: string): boolean;
+    /** Get the root USD layer filename (first .usdc or .usda) */
+    rootLayerName(): string;
+    /** Check if archive has a valid root layer */
+    hasRootLayer(): boolean;
+    /** Read asset data as Uint8Array (zero-copy view into WASM memory) */
+    readAsset(name: string): Uint8Array | null;
+    /** Get MIME type for asset based on extension */
+    getMimeType(name: string): string;
+    /** Load root layer as Stage */
+    loadStage(): Stage;
+    /** Get last error message */
+    error(): string;
+    delete(): void;
+}
+
+// UsdzLoaderResult class
+export interface UsdzLoaderResultClass {
+    // No public constructor - created by loadUsdz()
+}
+
+// UsdzLoaderResult - Result of loading USDZ (Stage + archive access)
+export interface UsdzLoaderResult {
+    /** Check if loading succeeded */
+    ok(): boolean;
+    /** Get error message (if failed) */
+    error(): string;
+    /** Get warning message */
+    warning(): string;
+    /** Get loaded Stage */
+    stage(): Stage;
+    /** Get list of all asset filenames in archive */
+    assetNames(): string[];
+    /** Read asset data as Uint8Array (for textures, etc.) */
+    readAsset(name: string): Uint8Array | null;
+    delete(): void;
+}
+
+// UsdzRenderResult class
+export interface UsdzRenderResultClass {
+    // No public constructor - created by usdzToRenderScene()
+}
+
+// UsdzRenderResult - Result of converting USDZ directly to RenderScene
+export interface UsdzRenderResult {
+    /** Check if conversion succeeded */
+    ok(): boolean;
+    /** Get error message (if failed) */
+    error(): string;
+    /** Get warning message */
+    warning(): string;
+    /** Get converted RenderScene (textures have file_data populated) */
+    scene(): RenderScene;
+    /** Read additional asset data from archive if needed */
+    readAsset(name: string): Uint8Array | null;
+    delete(): void;
+}
+
 // Module loader
 declare function createLightUSDModule(): Promise<LightUSDModule>;
 export default createLightUSDModule;
+
+// ============================================================================
+// Progressive Loading (re-exported from ProgressiveScene.ts)
+// ============================================================================
+
+export type { PrimState, LoadPriority, SceneState } from './ProgressiveScene';
+export type { PrimSkeleton, AssetRequest, LoadOptions, FrustumInfo } from './ProgressiveScene';
+export { PrimProxy, ProgressiveScene, loadUSDProgressive } from './ProgressiveScene';
+
+// ============================================================================
+// Worker Bridge (re-exported from WorkerBridge.ts)
+// ============================================================================
+
+export type {
+    PrimSkeletonData,
+    PrimGeometryData,
+    AssetRequestData,
+    ProcessQueueResult,
+    ParseStructureResult,
+    LoaderState,
+    PrimLoadState,
+    LoadPriority as WorkerLoadPriority,
+    WorkerBridgeConfig,
+    WorkerBridgeEvents
+} from './WorkerBridge';
+export { WorkerBridge } from './WorkerBridge';

@@ -8,6 +8,7 @@
 
 #include "lightusd/lightusd.hh"
 #include "lightusd/render_data.hh"
+#include "lightusd/usdz_archive.hh"
 
 #include <string>
 #include <vector>
@@ -707,6 +708,274 @@ private:
 };
 
 // ============================================================================
+// USDZ Archive wrapper
+// ============================================================================
+
+class UsdzArchiveWrapper {
+public:
+    UsdzArchiveWrapper() {}
+
+    bool open(const std::string& data) {
+        auto result = archive_.open(
+            reinterpret_cast<const uint8_t*>(data.data()), data.size());
+        if (!result) {
+            last_error_ = result.error().message;
+            return false;
+        }
+        return true;
+    }
+
+    bool is_open() const { return archive_.is_open(); }
+    void close() { archive_.close(); }
+
+    size_t archive_size() const { return archive_.archive_size(); }
+    size_t asset_count() const { return archive_.asset_count(); }
+
+    val asset_names() const {
+        val arr = val::array();
+        for (const auto& name : archive_.asset_names()) {
+            arr.call<void>("push", name);
+        }
+        return arr;
+    }
+
+    bool has_asset(const std::string& name) const {
+        return archive_.has_asset(name);
+    }
+
+    std::string root_layer_name() const {
+        return archive_.root_layer_name();
+    }
+
+    bool has_root_layer() const {
+        return archive_.has_root_layer();
+    }
+
+    // Read asset and return as typed array
+    val read_asset(const std::string& name) const {
+        const uint8_t* data = nullptr;
+        size_t size = 0;
+        if (!archive_.get_asset_ptr(name, &data, &size)) {
+            return val::null();
+        }
+        return val(typed_memory_view(size, data));
+    }
+
+    // Get asset MIME type based on extension
+    std::string get_mime_type(const std::string& name) const {
+        size_t dot = name.rfind('.');
+        if (dot == std::string::npos) return "application/octet-stream";
+
+        std::string ext = name.substr(dot);
+        for (auto& c : ext) {
+            if (c >= 'A' && c <= 'Z') c = c - 'A' + 'a';
+        }
+
+        if (ext == ".png") return "image/png";
+        if (ext == ".jpg" || ext == ".jpeg") return "image/jpeg";
+        if (ext == ".usda") return "text/plain";
+        if (ext == ".usdc") return "application/octet-stream";
+        if (ext == ".exr") return "image/x-exr";
+        if (ext == ".hdr") return "image/vnd.radiance";
+        return "application/octet-stream";
+    }
+
+    StageWrapper load_stage() const {
+        auto result = archive_.load_stage();
+        if (!result) {
+            return StageWrapper();
+        }
+        return StageWrapper(std::move(result).value());
+    }
+
+    std::string error() const { return last_error_; }
+
+    UsdzArchive& get() { return archive_; }
+    const UsdzArchive& get() const { return archive_; }
+
+private:
+    mutable UsdzArchive archive_;
+    std::string last_error_;
+};
+
+// ============================================================================
+// USDZ Loader result wrapper
+// ============================================================================
+
+class UsdzLoaderResultWrapper {
+public:
+    UsdzLoaderResultWrapper() : ok_(false) {}
+    UsdzLoaderResultWrapper(UsdzLoadResult&& result)
+        : ok_(result.ok)
+        , stage_(result.stage)
+        , archive_(std::make_shared<UsdzArchive>(std::move(result.archive)))
+        , error_(result.error)
+        , warning_(result.warning) {}
+
+    bool ok() const { return ok_; }
+    std::string error() const { return error_; }
+    std::string warning() const { return warning_; }
+    StageWrapper stage() const { return StageWrapper(stage_); }
+
+    // Access archive for reading textures
+    val asset_names() const {
+        val arr = val::array();
+        if (archive_) {
+            for (const auto& name : archive_->asset_names()) {
+                arr.call<void>("push", name);
+            }
+        }
+        return arr;
+    }
+
+    val read_asset(const std::string& name) const {
+        if (!archive_) return val::null();
+        const uint8_t* data = nullptr;
+        size_t size = 0;
+        if (!archive_->get_asset_ptr(name, &data, &size)) {
+            return val::null();
+        }
+        return val(typed_memory_view(size, data));
+    }
+
+private:
+    bool ok_;
+    Stage stage_;
+    std::shared_ptr<UsdzArchive> archive_;
+    std::string error_;
+    std::string warning_;
+};
+
+// ============================================================================
+// USDZ RenderScene result wrapper
+// ============================================================================
+
+class UsdzRenderResultWrapper {
+public:
+    UsdzRenderResultWrapper() : ok_(false) {}
+    UsdzRenderResultWrapper(RenderScene&& scene, std::shared_ptr<UsdzArchive> archive,
+                            const std::string& error = "", const std::string& warning = "")
+        : ok_(true), scene_(std::move(scene)), archive_(archive), error_(error), warning_(warning) {}
+
+    bool ok() const { return ok_; }
+    std::string error() const { return error_; }
+    std::string warning() const { return warning_; }
+
+    RenderSceneWrapper scene() const {
+        RenderScene copy = scene_;
+        return RenderSceneWrapper(std::move(copy));
+    }
+
+    // Access archive for reading textures
+    val read_asset(const std::string& name) const {
+        if (!archive_) return val::null();
+        const uint8_t* data = nullptr;
+        size_t size = 0;
+        if (!archive_->get_asset_ptr(name, &data, &size)) {
+            return val::null();
+        }
+        return val(typed_memory_view(size, data));
+    }
+
+    void set_error(const std::string& err) {
+        ok_ = false;
+        error_ = err;
+    }
+
+private:
+    bool ok_;
+    RenderScene scene_;
+    std::shared_ptr<UsdzArchive> archive_;
+    std::string error_;
+    std::string warning_;
+};
+
+// ============================================================================
+// USDZ loading free functions
+// ============================================================================
+
+// Check if data is USDZ format
+bool is_usdz(const std::string& data) {
+    return UsdzArchive::is_usdz(
+        reinterpret_cast<const uint8_t*>(data.data()), data.size());
+}
+
+// Load USDZ and return Stage + Archive
+UsdzLoaderResultWrapper load_usdz_data(const std::string& data) {
+    auto result = load_usdz(
+        reinterpret_cast<const uint8_t*>(data.data()), data.size());
+    return UsdzLoaderResultWrapper(std::move(result));
+}
+
+// Load USDZ and convert directly to RenderScene
+UsdzRenderResultWrapper usdz_to_render_scene_wrapper(const std::string& data,
+                                                      double time,
+                                                      bool triangulate,
+                                                      bool compute_normals,
+                                                      bool compute_tangents) {
+    // Open archive
+    auto archive = std::make_shared<UsdzArchive>();
+    auto open_result = archive->open(
+        reinterpret_cast<const uint8_t*>(data.data()), data.size());
+    if (!open_result) {
+        UsdzRenderResultWrapper result;
+        result.set_error(open_result.error().message);
+        return result;
+    }
+
+    // Load stage
+    auto stage_result = archive->load_stage();
+    if (!stage_result) {
+        UsdzRenderResultWrapper result;
+        result.set_error(stage_result.error().message);
+        return result;
+    }
+
+    // Convert to RenderScene
+    RenderConverterConfig config;
+    config.time = time;
+    config.triangulate = triangulate;
+    config.compute_normals = compute_normals;
+    config.compute_tangents = compute_tangents;
+    config.texture_decode = TextureDecodeMode::Browser;
+
+    RenderConverter converter;
+    auto render_result = converter.convert(stage_result.value(), config);
+    if (!render_result) {
+        UsdzRenderResultWrapper result;
+        result.set_error(render_result.error().message);
+        return result;
+    }
+
+    // Load textures from archive into RenderScene
+    RenderScene scene = std::move(render_result).value();
+    for (auto& tex : scene.textures) {
+        if (!tex.uri.empty() && tex.file_data.empty()) {
+            const uint8_t* tex_data = nullptr;
+            size_t tex_size = 0;
+            if (archive->get_asset_ptr(tex.uri, &tex_data, &tex_size)) {
+                tex.file_data.assign(tex_data, tex_data + tex_size);
+
+                // Determine MIME type
+                size_t dot = tex.uri.rfind('.');
+                if (dot != std::string::npos) {
+                    std::string ext = tex.uri.substr(dot);
+                    for (auto& c : ext) {
+                        if (c >= 'A' && c <= 'Z') c = c - 'A' + 'a';
+                    }
+                    if (ext == ".png") tex.mime_type = "image/png";
+                    else if (ext == ".jpg" || ext == ".jpeg") tex.mime_type = "image/jpeg";
+                    else if (ext == ".exr") tex.mime_type = "image/x-exr";
+                    else if (ext == ".hdr") tex.mime_type = "image/vnd.radiance";
+                }
+            }
+        }
+    }
+
+    return UsdzRenderResultWrapper(std::move(scene), archive);
+}
+
+// ============================================================================
 // Emscripten bindings
 // ============================================================================
 
@@ -903,4 +1172,43 @@ EMSCRIPTEN_BINDINGS(lightusd) {
         .constructor<>()
         .function("convert", &RenderConverterWrapper::convert)
         .function("error", &RenderConverterWrapper::error);
+
+    // USDZ Archive
+    class_<UsdzArchiveWrapper>("UsdzArchive")
+        .constructor<>()
+        .function("open", &UsdzArchiveWrapper::open)
+        .function("isOpen", &UsdzArchiveWrapper::is_open)
+        .function("close", &UsdzArchiveWrapper::close)
+        .function("archiveSize", &UsdzArchiveWrapper::archive_size)
+        .function("assetCount", &UsdzArchiveWrapper::asset_count)
+        .function("assetNames", &UsdzArchiveWrapper::asset_names)
+        .function("hasAsset", &UsdzArchiveWrapper::has_asset)
+        .function("rootLayerName", &UsdzArchiveWrapper::root_layer_name)
+        .function("hasRootLayer", &UsdzArchiveWrapper::has_root_layer)
+        .function("readAsset", &UsdzArchiveWrapper::read_asset)
+        .function("getMimeType", &UsdzArchiveWrapper::get_mime_type)
+        .function("loadStage", &UsdzArchiveWrapper::load_stage)
+        .function("error", &UsdzArchiveWrapper::error);
+
+    // USDZ Loader Result (Stage + Archive access)
+    class_<UsdzLoaderResultWrapper>("UsdzLoaderResult")
+        .function("ok", &UsdzLoaderResultWrapper::ok)
+        .function("error", &UsdzLoaderResultWrapper::error)
+        .function("warning", &UsdzLoaderResultWrapper::warning)
+        .function("stage", &UsdzLoaderResultWrapper::stage)
+        .function("assetNames", &UsdzLoaderResultWrapper::asset_names)
+        .function("readAsset", &UsdzLoaderResultWrapper::read_asset);
+
+    // USDZ RenderScene Result (with texture data from archive)
+    class_<UsdzRenderResultWrapper>("UsdzRenderResult")
+        .function("ok", &UsdzRenderResultWrapper::ok)
+        .function("error", &UsdzRenderResultWrapper::error)
+        .function("warning", &UsdzRenderResultWrapper::warning)
+        .function("scene", &UsdzRenderResultWrapper::scene)
+        .function("readAsset", &UsdzRenderResultWrapper::read_asset);
+
+    // USDZ free functions
+    function("isUsdz", &is_usdz);
+    function("loadUsdz", &load_usdz_data);
+    function("usdzToRenderScene", &usdz_to_render_scene_wrapper);
 }

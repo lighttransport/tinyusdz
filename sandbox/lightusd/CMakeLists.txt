@@ -57,6 +57,10 @@ set(LIGHTUSD_SOURCES
     # Schema validation
     src/schema.cc
     src/schema_registry.cc
+    # USDZ archive support
+    src/usdz_archive.cc
+    # Progressive/Streaming loader
+    src/streaming_loader.cc
 )
 
 # Header files (for IDE support)
@@ -105,6 +109,10 @@ set(LIGHTUSD_HEADERS
     # Schema validation
     include/lightusd/schema.hh
     include/lightusd/schema_registry.hh
+    # USDZ archive support
+    include/lightusd/usdz_archive.hh
+    # Progressive/Streaming loader
+    include/lightusd/streaming_loader.hh
 )
 
 # Library target
@@ -154,6 +162,52 @@ endif()
 # Examples
 if(LIGHTUSD_BUILD_EXAMPLES)
     add_subdirectory(examples)
+endif()
+
+# ============================================================================
+# Emscripten Web Worker Build
+# ============================================================================
+if(EMSCRIPTEN)
+    # Worker module - separate WASM module for Web Worker thread
+    add_executable(lightusd_worker
+        web/worker.cc
+    )
+
+    target_link_libraries(lightusd_worker PRIVATE lightusd)
+
+    # Emscripten settings for worker
+    set_target_properties(lightusd_worker PROPERTIES
+        SUFFIX ".js"
+        LINK_FLAGS "\
+            -s MODULARIZE=1 \
+            -s EXPORT_NAME='createLightUSDWorker' \
+            -s ENVIRONMENT='worker' \
+            -s ALLOW_MEMORY_GROWTH=1 \
+            -s MAXIMUM_MEMORY=2GB \
+            -s EXPORTED_RUNTIME_METHODS=['cwrap','ccall','UTF8ToString'] \
+            --bind \
+            -s NO_EXIT_RUNTIME=1 \
+            -s FILESYSTEM=0 \
+        "
+    )
+
+    # Production optimizations
+    if(LIGHTUSD_PRODUCTION_BUILD)
+        set_property(TARGET lightusd_worker APPEND_STRING PROPERTY LINK_FLAGS
+            " -O3 -flto --closure 1"
+        )
+    else()
+        set_property(TARGET lightusd_worker APPEND_STRING PROPERTY LINK_FLAGS
+            " -O2 -g -s ASSERTIONS=1"
+        )
+    endif()
+
+    # Output directory for worker
+    set_target_properties(lightusd_worker PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/web"
+    )
+
+    message(STATUS "LightUSD: Emscripten Worker build enabled")
 endif()
 
 # Install rules
