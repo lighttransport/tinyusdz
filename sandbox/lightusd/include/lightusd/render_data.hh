@@ -49,6 +49,12 @@ struct Mat4 {
     static Mat4 identity();
     static Mat4 translate(float x, float y, float z);
     static Mat4 scale(float x, float y, float z);
+    static Mat4 rotate_x(float radians);
+    static Mat4 rotate_y(float radians);
+    static Mat4 rotate_z(float radians);
+    static Mat4 rotate_xyz(float rx, float ry, float rz);  // Euler angles in radians
+    static Mat4 from_quaternion(float x, float y, float z, float w);
+    static Mat4 from_double_matrix(const double* m16);  // Convert from double[16]
     Mat4 operator*(const Mat4& other) const;
     Vec3 transform_point(const Vec3& p) const;
     Vec3 transform_normal(const Vec3& n) const;

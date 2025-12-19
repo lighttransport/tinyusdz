@@ -161,6 +161,12 @@ public:
     std::unordered_map<std::string, std::string> asset_errors_;
     std::unordered_set<std::string> prims_waiting_assets_;
 
+    // Map from asset path -> prim paths waiting for this asset
+    std::unordered_map<std::string, std::vector<std::string>> asset_to_waiting_prims_;
+
+    // Map from prim path -> assets it's waiting for
+    std::unordered_map<std::string, std::unordered_set<std::string>> prim_to_waiting_assets_;
+
     // Ready prims (to be picked up by main thread)
     mutable std::mutex ready_mutex_;
     std::queue<PrimGeometry> ready_prims_;
@@ -544,13 +550,61 @@ uint32_t StreamingLoader::process_queue(uint32_t max_count) {
 void StreamingLoader::provide_asset(const std::string& path, std::vector<uint8_t> data) {
     impl_->asset_cache_->put(path, std::move(data));
 
-    // TODO: Resume prims waiting for this asset
+    // Resume prims waiting for this asset
+    auto it = impl_->asset_to_waiting_prims_.find(path);
+    if (it != impl_->asset_to_waiting_prims_.end()) {
+        for (const auto& prim_path : it->second) {
+            // Remove this asset from the prim's waiting set
+            auto prim_it = impl_->prim_to_waiting_assets_.find(prim_path);
+            if (prim_it != impl_->prim_to_waiting_assets_.end()) {
+                prim_it->second.erase(path);
+
+                // If no more assets to wait for, re-queue the prim
+                if (prim_it->second.empty()) {
+                    impl_->prim_to_waiting_assets_.erase(prim_it);
+                    impl_->prims_waiting_assets_.erase(prim_path);
+
+                    // Re-queue with high priority (it was already in progress)
+                    LoadRequest req;
+                    req.prim_path = prim_path;
+                    req.priority = LoadPriority::High;
+                    req.time = 0.0;
+
+                    impl_->load_queue_.push(req);
+                    impl_->queued_paths_.insert(prim_path);
+                    impl_->prim_states_[prim_path] = PrimLoadState::Queued;
+                }
+            }
+        }
+        impl_->asset_to_waiting_prims_.erase(it);
+    }
+
+    // Remove from pending assets list
+    impl_->pending_assets_.erase(
+        std::remove_if(impl_->pending_assets_.begin(), impl_->pending_assets_.end(),
+            [&path](const AssetRequest& req) { return req.path == path; }),
+        impl_->pending_assets_.end());
 }
 
 void StreamingLoader::fail_asset(const std::string& path, const std::string& error) {
     impl_->asset_errors_[path] = error;
 
-    // TODO: Mark prims waiting for this asset as failed
+    // Mark prims waiting for this asset as failed
+    auto it = impl_->asset_to_waiting_prims_.find(path);
+    if (it != impl_->asset_to_waiting_prims_.end()) {
+        for (const auto& prim_path : it->second) {
+            impl_->prim_states_[prim_path] = PrimLoadState::Error;
+            impl_->prims_waiting_assets_.erase(prim_path);
+            impl_->prim_to_waiting_assets_.erase(prim_path);
+        }
+        impl_->asset_to_waiting_prims_.erase(it);
+    }
+
+    // Remove from pending assets list
+    impl_->pending_assets_.erase(
+        std::remove_if(impl_->pending_assets_.begin(), impl_->pending_assets_.end(),
+            [&path](const AssetRequest& req) { return req.path == path; }),
+        impl_->pending_assets_.end());
 }
 
 std::vector<AssetRequest> StreamingLoader::pending_assets() const {
@@ -696,6 +750,134 @@ LoadPriority calculate_priority(
 namespace {
     std::unique_ptr<StreamingLoader> g_worker_loader;
     std::queue<std::pair<WorkerMessageType, std::vector<uint8_t>>> g_outgoing_messages;
+
+    // Helper: Write string to buffer
+    void write_string(std::vector<uint8_t>& buf, const std::string& str) {
+        uint32_t len = static_cast<uint32_t>(str.size());
+        buf.insert(buf.end(), reinterpret_cast<uint8_t*>(&len),
+                   reinterpret_cast<uint8_t*>(&len) + 4);
+        buf.insert(buf.end(), str.begin(), str.end());
+    }
+
+    // Helper: Write float array to buffer
+    void write_floats(std::vector<uint8_t>& buf, const std::vector<float>& arr) {
+        uint32_t count = static_cast<uint32_t>(arr.size());
+        buf.insert(buf.end(), reinterpret_cast<const uint8_t*>(&count),
+                   reinterpret_cast<const uint8_t*>(&count) + 4);
+        buf.insert(buf.end(), reinterpret_cast<const uint8_t*>(arr.data()),
+                   reinterpret_cast<const uint8_t*>(arr.data() + arr.size()));
+    }
+
+    // Helper: Write uint32 array to buffer
+    void write_uint32s(std::vector<uint8_t>& buf, const std::vector<uint32_t>& arr) {
+        uint32_t count = static_cast<uint32_t>(arr.size());
+        buf.insert(buf.end(), reinterpret_cast<const uint8_t*>(&count),
+                   reinterpret_cast<const uint8_t*>(&count) + 4);
+        buf.insert(buf.end(), reinterpret_cast<const uint8_t*>(arr.data()),
+                   reinterpret_cast<const uint8_t*>(arr.data() + arr.size()));
+    }
+
+    // Serialize PrimSkeleton to bytes
+    std::vector<uint8_t> serialize_skeleton(const PrimSkeleton& skel) {
+        std::vector<uint8_t> buf;
+        write_string(buf, skel.path);
+        write_string(buf, skel.name);
+        write_string(buf, skel.type_name);
+        write_string(buf, skel.parent_path);
+
+        // Child paths
+        uint32_t child_count = static_cast<uint32_t>(skel.child_paths.size());
+        buf.insert(buf.end(), reinterpret_cast<uint8_t*>(&child_count),
+                   reinterpret_cast<uint8_t*>(&child_count) + 4);
+        for (const auto& child : skel.child_paths) {
+            write_string(buf, child);
+        }
+
+        // Flags
+        uint8_t flags = 0;
+        if (skel.has_geometry) flags |= 0x01;
+        if (skel.has_material) flags |= 0x02;
+        if (skel.has_transform) flags |= 0x04;
+        if (skel.has_timesamples) flags |= 0x08;
+        buf.push_back(flags);
+
+        // Estimates
+        buf.insert(buf.end(), reinterpret_cast<const uint8_t*>(&skel.estimated_vertices),
+                   reinterpret_cast<const uint8_t*>(&skel.estimated_vertices) + 4);
+        buf.insert(buf.end(), reinterpret_cast<const uint8_t*>(&skel.estimated_faces),
+                   reinterpret_cast<const uint8_t*>(&skel.estimated_faces) + 4);
+
+        return buf;
+    }
+
+    // Serialize PrimGeometry to bytes
+    std::vector<uint8_t> serialize_geometry(const PrimGeometry& geom) {
+        std::vector<uint8_t> buf;
+        write_string(buf, geom.path);
+
+        int32_t mat_idx = geom.material_index;
+        buf.insert(buf.end(), reinterpret_cast<uint8_t*>(&mat_idx),
+                   reinterpret_cast<uint8_t*>(&mat_idx) + 4);
+
+        write_floats(buf, geom.positions);
+        write_floats(buf, geom.normals);
+        write_floats(buf, geom.texcoords);
+        write_floats(buf, geom.tangents);
+        write_uint32s(buf, geom.indices);
+
+        // Bounds
+        buf.insert(buf.end(), reinterpret_cast<const uint8_t*>(&geom.mesh.bounds.min),
+                   reinterpret_cast<const uint8_t*>(&geom.mesh.bounds.min) + sizeof(Vec3));
+        buf.insert(buf.end(), reinterpret_cast<const uint8_t*>(&geom.mesh.bounds.max),
+                   reinterpret_cast<const uint8_t*>(&geom.mesh.bounds.max) + sizeof(Vec3));
+
+        // Transform
+        buf.insert(buf.end(), reinterpret_cast<const uint8_t*>(geom.mesh.transform.m),
+                   reinterpret_cast<const uint8_t*>(geom.mesh.transform.m) + 16 * sizeof(float));
+
+        // Double-sided flag
+        buf.push_back(geom.mesh.double_sided ? 1 : 0);
+
+        return buf;
+    }
+
+    // Send STRUCTURE_READY message
+    void send_structure_ready(const std::vector<PrimSkeleton>& skeletons, bool ok, const std::string& error) {
+        std::vector<uint8_t> buf;
+
+        // Status
+        buf.push_back(ok ? 1 : 0);
+
+        if (!ok) {
+            write_string(buf, error);
+        } else {
+            // Skeleton count
+            uint32_t count = static_cast<uint32_t>(skeletons.size());
+            buf.insert(buf.end(), reinterpret_cast<uint8_t*>(&count),
+                       reinterpret_cast<uint8_t*>(&count) + 4);
+
+            // Serialize each skeleton
+            for (const auto& skel : skeletons) {
+                auto skel_bytes = serialize_skeleton(skel);
+                buf.insert(buf.end(), skel_bytes.begin(), skel_bytes.end());
+            }
+        }
+
+        g_outgoing_messages.push({WorkerMessageType::StructureReady, std::move(buf)});
+    }
+
+    // Send PRIM_READY message
+    void send_prim_ready(const PrimGeometry& geom) {
+        auto buf = serialize_geometry(geom);
+        g_outgoing_messages.push({WorkerMessageType::PrimReady, std::move(buf)});
+    }
+
+    // Send ERROR message
+    void send_error(const std::string& error) {
+        std::vector<uint8_t> buf;
+        write_string(buf, error);
+        g_outgoing_messages.push({WorkerMessageType::Error, std::move(buf)});
+    }
 }
 
 void worker_init() {
@@ -720,10 +902,18 @@ void worker_handle_message(MainMessageType msg_type, const uint8_t* data, size_t
             // Check if USDZ
             if (UsdzArchive::is_usdz(file_data, file_size)) {
                 auto result = g_worker_loader->parse_usdz_structure(file_data, file_size);
-                // TODO: Send STRUCTURE_READY message
+                if (result) {
+                    send_structure_ready(result.value(), true, "");
+                } else {
+                    send_structure_ready({}, false, result.error().message);
+                }
             } else {
                 auto result = g_worker_loader->parse_structure(file_data, file_size, filename);
-                // TODO: Send STRUCTURE_READY message
+                if (result) {
+                    send_structure_ready(result.value(), true, "");
+                } else {
+                    send_structure_ready({}, false, result.error().message);
+                }
             }
             break;
         }
@@ -791,12 +981,11 @@ bool worker_poll_message(WorkerMessageType* out_type,
     if (g_worker_loader) {
         g_worker_loader->process_queue(1);  // Process one item per poll
 
-        // Check for ready prims
+        // Check for ready prims and serialize them
         while (g_worker_loader->has_ready_prims()) {
             auto geom = g_worker_loader->take_ready_prim();
             if (geom) {
-                // Serialize geometry to message
-                // TODO: Implement serialization
+                send_prim_ready(geom.value());
             }
         }
     }

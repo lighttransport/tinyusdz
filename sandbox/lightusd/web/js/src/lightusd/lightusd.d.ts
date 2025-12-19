@@ -389,3 +389,27 @@ export type {
     WorkerBridgeEvents
 } from './WorkerBridge';
 export { WorkerBridge } from './WorkerBridge';
+
+// ============================================================================
+// Async Fetch (Asyncify/JSPI/Coroutine support)
+// ============================================================================
+
+export type { FetchResult, FetchConfig } from './async-fetch';
+export { initAsyncFetch, prefetchAssets, clearFetchCache, getFetchCacheStats } from './async-fetch';
+
+// ============================================================================
+// Module extensions for Asyncify/JSPI builds
+// ============================================================================
+
+declare module './lightusd' {
+    interface LightUSDModule {
+        // Async fetch utilities (available when LIGHTUSD_WASM_ASYNCIFY=ON or LIGHTUSD_WASM_JSPI=ON)
+        clearFetchCache?(): void;
+        getFetchCacheStats?(): { size: number; maxSize: number; hitCount: number; missCount: number };
+        setFetchCacheMaxSize?(size: number): void;
+        prefetchAssets?(urls: string[]): Promise<void>;
+
+        // JSPI support check (available when LIGHTUSD_WASM_JSPI=ON)
+        isJSPISupported?(): boolean;
+    }
+}

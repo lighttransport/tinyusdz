@@ -102,5 +102,11 @@ export type {
     LoadPriority as WorkerLoadPriority,
 } from './WorkerBridge';
 
+// Async fetch (Asyncify/JSPI support)
+export type {
+    FetchResult,
+    FetchConfig,
+} from './async-fetch';
+
 // Default export is the module loader
 export { default } from './lightusd';

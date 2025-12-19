@@ -7,6 +7,7 @@ cmake_minimum_required(VERSION 3.14)
 project(lightusd VERSION 0.1.0 LANGUAGES C CXX)
 
 # C++ standard - C++17 required for std::optional, std::string_view, if constexpr, etc.
+# Upgraded to C++20 when coroutines are enabled
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
@@ -16,6 +17,18 @@ option(LIGHTUSD_BUILD_TESTS "Build LightUSD tests" ON)
 option(LIGHTUSD_BUILD_EXAMPLES "Build LightUSD examples" ON)
 option(LIGHTUSD_PRODUCTION_BUILD "Production build (disable debug output)" OFF)
 option(LIGHTUSD_DEBUG_PRINT "Enable DCOUT debug macro (non-production only)" OFF)
+option(LIGHTUSD_WASM_ASYNCIFY "Enable Asyncify for async JavaScript calls (Emscripten only)" OFF)
+option(LIGHTUSD_WASM_JSPI "Enable JSPI for async JavaScript calls - more efficient than Asyncify (Emscripten only, requires browser support)" OFF)
+option(LIGHTUSD_COROUTINE "Enable C++20 coroutine API for async operations (requires JSPI or Asyncify)" OFF)
+
+# Coroutine support requires C++20 and either JSPI or Asyncify
+if(LIGHTUSD_COROUTINE)
+    if(NOT LIGHTUSD_WASM_JSPI AND NOT LIGHTUSD_WASM_ASYNCIFY)
+        message(FATAL_ERROR "LIGHTUSD_COROUTINE requires either LIGHTUSD_WASM_JSPI or LIGHTUSD_WASM_ASYNCIFY to be enabled")
+    endif()
+    set(CMAKE_CXX_STANDARD 20)
+    message(STATUS "LightUSD: C++20 coroutine API enabled")
+endif()
 
 # Source files
 set(LIGHTUSD_SOURCES
@@ -61,6 +74,8 @@ set(LIGHTUSD_SOURCES
     src/usdz_archive.cc
     # Progressive/Streaming loader
     src/streaming_loader.cc
+    # Async fetch (WASM/Asyncify)
+    src/async_fetch.cc
 )
 
 # Header files (for IDE support)
@@ -113,6 +128,10 @@ set(LIGHTUSD_HEADERS
     include/lightusd/usdz_archive.hh
     # Progressive/Streaming loader
     include/lightusd/streaming_loader.hh
+    # Async fetch (WASM/Asyncify/JSPI)
+    include/lightusd/async_fetch.hh
+    # C++20 Coroutine support
+    include/lightusd/coro_fetch.hh
 )
 
 # Library target
@@ -165,33 +184,114 @@ if(LIGHTUSD_BUILD_EXAMPLES)
 endif()
 
 # ============================================================================
-# Emscripten Web Worker Build
+# Emscripten WASM Builds
 # ============================================================================
 if(EMSCRIPTEN)
-    # Worker module - separate WASM module for Web Worker thread
+    # Common Emscripten link flags
+    set(LIGHTUSD_WASM_COMMON_FLAGS "\
+        -s MODULARIZE=1 \
+        -s ALLOW_MEMORY_GROWTH=1 \
+        -s MAXIMUM_MEMORY=2GB \
+        -s EXPORTED_RUNTIME_METHODS=['cwrap','ccall','UTF8ToString','addFunction'] \
+        --bind \
+        -s NO_EXIT_RUNTIME=1 \
+        -s FILESYSTEM=0 \
+    ")
+
+    # ========================================================================
+    # Main thread module (with optional Asyncify)
+    # ========================================================================
+    add_executable(lightusd_wasm
+        web/binding.cc
+    )
+
+    target_link_libraries(lightusd_wasm PRIVATE lightusd)
+
+    set(LIGHTUSD_MAIN_FLAGS "${LIGHTUSD_WASM_COMMON_FLAGS} \
+        -s EXPORT_NAME='createLightUSD' \
+        -s ENVIRONMENT='web' \
+        -s RESERVED_FUNCTION_POINTERS=16 \
+    ")
+
+    # Async support: JSPI or Asyncify (mutually exclusive)
+    if(LIGHTUSD_WASM_JSPI AND LIGHTUSD_WASM_ASYNCIFY)
+        message(FATAL_ERROR "LIGHTUSD_WASM_JSPI and LIGHTUSD_WASM_ASYNCIFY are mutually exclusive. Choose one.")
+    endif()
+
+    if(LIGHTUSD_WASM_JSPI)
+        # JSPI (JavaScript Promise Integration) - more efficient, requires browser support
+        # Chrome 109+, Firefox 121+, Safari (behind flag)
+        set(LIGHTUSD_MAIN_FLAGS "${LIGHTUSD_MAIN_FLAGS} \
+            -s JSPI=1 \
+            -s JSPI_IMPORTS=['js_fetch_asset_sync'] \
+            -s JSPI_EXPORTS=['lightusd_load_usd_async','lightusd_fetch_texture_async'] \
+            --pre-js ${CMAKE_CURRENT_SOURCE_DIR}/web/jspi-imports.js \
+        ")
+        target_compile_definitions(lightusd_wasm PRIVATE LIGHTUSD_JSPI=1)
+        target_compile_definitions(lightusd PRIVATE LIGHTUSD_JSPI=1)
+        message(STATUS "LightUSD: JSPI enabled for main thread module (requires browser support)")
+    elseif(LIGHTUSD_WASM_ASYNCIFY)
+        # Asyncify - works everywhere but has overhead
+        set(LIGHTUSD_MAIN_FLAGS "${LIGHTUSD_MAIN_FLAGS} \
+            -s ASYNCIFY=1 \
+            -s ASYNCIFY_STACK_SIZE=65536 \
+            -s ASYNCIFY_IMPORTS=['js_fetch_asset','js_fetch_asset_sync'] \
+            --pre-js ${CMAKE_CURRENT_SOURCE_DIR}/web/asyncify-imports.js \
+        ")
+        target_compile_definitions(lightusd_wasm PRIVATE LIGHTUSD_ASYNCIFY=1)
+        target_compile_definitions(lightusd PRIVATE LIGHTUSD_ASYNCIFY=1)
+        message(STATUS "LightUSD: Asyncify enabled for main thread module")
+    endif()
+
+    # C++20 Coroutine support
+    if(LIGHTUSD_COROUTINE)
+        target_compile_definitions(lightusd_wasm PRIVATE LIGHTUSD_COROUTINE=1)
+        target_compile_definitions(lightusd PRIVATE LIGHTUSD_COROUTINE=1)
+        # Emscripten may need -fcoroutines flag for older versions
+        if(CMAKE_CXX_COMPILER_VERSION VERSION_LESS "3.0")
+            target_compile_options(lightusd PRIVATE -fcoroutines)
+            target_compile_options(lightusd_wasm PRIVATE -fcoroutines)
+        endif()
+    endif()
+
+    set_target_properties(lightusd_wasm PROPERTIES
+        SUFFIX ".js"
+        LINK_FLAGS "${LIGHTUSD_MAIN_FLAGS}"
+    )
+
+    # Production optimizations for main module
+    if(LIGHTUSD_PRODUCTION_BUILD)
+        set_property(TARGET lightusd_wasm APPEND_STRING PROPERTY LINK_FLAGS
+            " -O3 -flto --closure 1"
+        )
+    else()
+        set_property(TARGET lightusd_wasm APPEND_STRING PROPERTY LINK_FLAGS
+            " -O2 -g -s ASSERTIONS=1"
+        )
+    endif()
+
+    set_target_properties(lightusd_wasm PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/web"
+    )
+
+    # ========================================================================
+    # Worker module (no Asyncify - uses message passing)
+    # ========================================================================
     add_executable(lightusd_worker
         web/worker.cc
     )
 
     target_link_libraries(lightusd_worker PRIVATE lightusd)
 
-    # Emscripten settings for worker
     set_target_properties(lightusd_worker PROPERTIES
         SUFFIX ".js"
-        LINK_FLAGS "\
-            -s MODULARIZE=1 \
+        LINK_FLAGS "${LIGHTUSD_WASM_COMMON_FLAGS} \
             -s EXPORT_NAME='createLightUSDWorker' \
             -s ENVIRONMENT='worker' \
-            -s ALLOW_MEMORY_GROWTH=1 \
-            -s MAXIMUM_MEMORY=2GB \
-            -s EXPORTED_RUNTIME_METHODS=['cwrap','ccall','UTF8ToString'] \
-            --bind \
-            -s NO_EXIT_RUNTIME=1 \
-            -s FILESYSTEM=0 \
         "
     )
 
-    # Production optimizations
+    # Production optimizations for worker
     if(LIGHTUSD_PRODUCTION_BUILD)
         set_property(TARGET lightusd_worker APPEND_STRING PROPERTY LINK_FLAGS
             " -O3 -flto --closure 1"
@@ -202,12 +302,11 @@ if(EMSCRIPTEN)
         )
     endif()
 
-    # Output directory for worker
     set_target_properties(lightusd_worker PROPERTIES
         RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/web"
     )
 
-    message(STATUS "LightUSD: Emscripten Worker build enabled")
+    message(STATUS "LightUSD: Emscripten builds enabled (main + worker)")
 endif()
 
 # Install rules

@@ -52,6 +52,80 @@ Mat4 Mat4::scale(float x, float y, float z) {
     return result;
 }
 
+Mat4 Mat4::rotate_x(float radians) {
+    Mat4 result = identity();
+    float c = std::cos(radians);
+    float s = std::sin(radians);
+    result.m[5] = c;
+    result.m[6] = s;
+    result.m[9] = -s;
+    result.m[10] = c;
+    return result;
+}
+
+Mat4 Mat4::rotate_y(float radians) {
+    Mat4 result = identity();
+    float c = std::cos(radians);
+    float s = std::sin(radians);
+    result.m[0] = c;
+    result.m[2] = -s;
+    result.m[8] = s;
+    result.m[10] = c;
+    return result;
+}
+
+Mat4 Mat4::rotate_z(float radians) {
+    Mat4 result = identity();
+    float c = std::cos(radians);
+    float s = std::sin(radians);
+    result.m[0] = c;
+    result.m[1] = s;
+    result.m[4] = -s;
+    result.m[5] = c;
+    return result;
+}
+
+Mat4 Mat4::rotate_xyz(float rx, float ry, float rz) {
+    // Apply rotations in XYZ order
+    return rotate_x(rx) * rotate_y(ry) * rotate_z(rz);
+}
+
+Mat4 Mat4::from_quaternion(float x, float y, float z, float w) {
+    Mat4 result = identity();
+
+    float xx = x * x;
+    float yy = y * y;
+    float zz = z * z;
+    float xy = x * y;
+    float xz = x * z;
+    float yz = y * z;
+    float wx = w * x;
+    float wy = w * y;
+    float wz = w * z;
+
+    result.m[0] = 1.0f - 2.0f * (yy + zz);
+    result.m[1] = 2.0f * (xy + wz);
+    result.m[2] = 2.0f * (xz - wy);
+
+    result.m[4] = 2.0f * (xy - wz);
+    result.m[5] = 1.0f - 2.0f * (xx + zz);
+    result.m[6] = 2.0f * (yz + wx);
+
+    result.m[8] = 2.0f * (xz + wy);
+    result.m[9] = 2.0f * (yz - wx);
+    result.m[10] = 1.0f - 2.0f * (xx + yy);
+
+    return result;
+}
+
+Mat4 Mat4::from_double_matrix(const double* m16) {
+    Mat4 result;
+    for (int i = 0; i < 16; i++) {
+        result.m[i] = static_cast<float>(m16[i]);
+    }
+    return result;
+}
+
 Mat4 Mat4::operator*(const Mat4& other) const {
     Mat4 result;
     for (int row = 0; row < 4; row++) {
@@ -513,6 +587,9 @@ public:
                         RenderScene& scene, const RenderConverterConfig& config,
                         std::map<std::string, int32_t>& material_index_map);
 
+    // Extract transform from xformOps
+    Mat4 extract_transform(const Prim& prim, double time);
+
     // Texture loading
     Result<RenderTexture> load_texture(const std::string& uri,
                                        const std::vector<uint8_t>& file_data,
@@ -910,14 +987,180 @@ std::string RenderConverter::Impl::find_bound_material(const Prim& prim) {
     return "";
 }
 
+// Degrees to radians conversion
+static constexpr float kDegToRad = 3.14159265358979323846f / 180.0f;
+
+Mat4 RenderConverter::Impl::extract_transform(const Prim& prim, double time) {
+    Mat4 result = Mat4::identity();
+
+    // Get property names and look for xformOpOrder
+    auto prop_names = prim.property_names();
+
+    // Collect xformOp names in order
+    std::vector<std::string> xform_ops;
+
+    // First check for explicit xformOpOrder
+    const Attribute* order_attr = prim.get_attribute("xformOpOrder");
+    if (order_attr) {
+        // xformOpOrder is a token[] - get the value and parse
+        auto order_result = order_attr->get_value(time);
+        if (order_result && order_result.value().is_array()) {
+            // Parse the array - check type
+            std::string type_name = order_result.value().type_name();
+            if (type_name.find("token") != std::string::npos) {
+                // For token arrays, iterate by checking property names that match
+                for (const auto& prop : prop_names) {
+                    if (prop.find("xformOp:") == 0 && prop != "xformOpOrder") {
+                        xform_ops.push_back(prop);
+                    }
+                }
+            }
+        }
+    }
+
+    // If no xformOpOrder found, collect all xformOp:* attributes
+    if (xform_ops.empty()) {
+        for (const auto& prop : prop_names) {
+            if (prop.find("xformOp:") == 0) {
+                xform_ops.push_back(prop);
+            }
+        }
+    }
+
+    // Process each xformOp in order
+    for (const auto& op_name : xform_ops) {
+        const Attribute* attr = prim.get_attribute(op_name);
+        if (!attr) continue;
+
+        auto val_result = attr->get_value(time);
+        if (!val_result) continue;
+
+        const Value& val = val_result.value();
+
+        // Parse operation type from name
+        // Format: xformOp:type or xformOp:type:suffix
+        std::string op_type;
+        size_t colon1 = op_name.find(':');
+        if (colon1 != std::string::npos) {
+            size_t colon2 = op_name.find(':', colon1 + 1);
+            if (colon2 != std::string::npos) {
+                op_type = op_name.substr(colon1 + 1, colon2 - colon1 - 1);
+            } else {
+                op_type = op_name.substr(colon1 + 1);
+            }
+        }
+
+        Mat4 op_mat = Mat4::identity();
+
+        if (op_type == "translate") {
+            // double3 or float3
+            if (const double* d = val.as_double3()) {
+                op_mat = Mat4::translate(static_cast<float>(d[0]),
+                                         static_cast<float>(d[1]),
+                                         static_cast<float>(d[2]));
+            } else if (const float* f = val.as_float3()) {
+                op_mat = Mat4::translate(f[0], f[1], f[2]);
+            }
+        }
+        else if (op_type == "scale") {
+            // float3 or double3
+            if (const float* f = val.as_float3()) {
+                op_mat = Mat4::scale(f[0], f[1], f[2]);
+            } else if (const double* d = val.as_double3()) {
+                op_mat = Mat4::scale(static_cast<float>(d[0]),
+                                     static_cast<float>(d[1]),
+                                     static_cast<float>(d[2]));
+            }
+        }
+        else if (op_type == "rotateX") {
+            // float or double (degrees)
+            if (const float* f = val.as_float()) {
+                op_mat = Mat4::rotate_x(*f * kDegToRad);
+            } else if (const double* d = val.as_double()) {
+                op_mat = Mat4::rotate_x(static_cast<float>(*d) * kDegToRad);
+            }
+        }
+        else if (op_type == "rotateY") {
+            if (const float* f = val.as_float()) {
+                op_mat = Mat4::rotate_y(*f * kDegToRad);
+            } else if (const double* d = val.as_double()) {
+                op_mat = Mat4::rotate_y(static_cast<float>(*d) * kDegToRad);
+            }
+        }
+        else if (op_type == "rotateZ") {
+            if (const float* f = val.as_float()) {
+                op_mat = Mat4::rotate_z(*f * kDegToRad);
+            } else if (const double* d = val.as_double()) {
+                op_mat = Mat4::rotate_z(static_cast<float>(*d) * kDegToRad);
+            }
+        }
+        else if (op_type == "rotateXYZ" || op_type == "rotateZYX" ||
+                 op_type == "rotateXZY" || op_type == "rotateYXZ" ||
+                 op_type == "rotateYZX" || op_type == "rotateZXY") {
+            // float3 or double3 (degrees)
+            float rx = 0, ry = 0, rz = 0;
+            if (const float* f = val.as_float3()) {
+                rx = f[0] * kDegToRad;
+                ry = f[1] * kDegToRad;
+                rz = f[2] * kDegToRad;
+            } else if (const double* d = val.as_double3()) {
+                rx = static_cast<float>(d[0]) * kDegToRad;
+                ry = static_cast<float>(d[1]) * kDegToRad;
+                rz = static_cast<float>(d[2]) * kDegToRad;
+            }
+
+            // Apply in specified order
+            if (op_type == "rotateXYZ") {
+                op_mat = Mat4::rotate_x(rx) * Mat4::rotate_y(ry) * Mat4::rotate_z(rz);
+            } else if (op_type == "rotateXZY") {
+                op_mat = Mat4::rotate_x(rx) * Mat4::rotate_z(rz) * Mat4::rotate_y(ry);
+            } else if (op_type == "rotateYXZ") {
+                op_mat = Mat4::rotate_y(ry) * Mat4::rotate_x(rx) * Mat4::rotate_z(rz);
+            } else if (op_type == "rotateYZX") {
+                op_mat = Mat4::rotate_y(ry) * Mat4::rotate_z(rz) * Mat4::rotate_x(rx);
+            } else if (op_type == "rotateZXY") {
+                op_mat = Mat4::rotate_z(rz) * Mat4::rotate_x(rx) * Mat4::rotate_y(ry);
+            } else if (op_type == "rotateZYX") {
+                op_mat = Mat4::rotate_z(rz) * Mat4::rotate_y(ry) * Mat4::rotate_x(rx);
+            }
+        }
+        else if (op_type == "orient") {
+            // quatf or quatd (x, y, z, w)
+            if (const float* q = val.as_quatf()) {
+                op_mat = Mat4::from_quaternion(q[0], q[1], q[2], q[3]);
+            } else if (const double* q = val.as_quatd()) {
+                op_mat = Mat4::from_quaternion(static_cast<float>(q[0]),
+                                               static_cast<float>(q[1]),
+                                               static_cast<float>(q[2]),
+                                               static_cast<float>(q[3]));
+            }
+        }
+        else if (op_type == "transform") {
+            // matrix4d
+            if (const double* m = val.as_matrix4d()) {
+                op_mat = Mat4::from_double_matrix(m);
+            } else if (const float* m = val.as_matrix4f()) {
+                for (int i = 0; i < 16; i++) {
+                    op_mat.m[i] = m[i];
+                }
+            }
+        }
+
+        // Concatenate this operation
+        result = result * op_mat;
+    }
+
+    return result;
+}
+
 void RenderConverter::Impl::traverse_prims(
     const Prim& prim, const Mat4& parent_transform,
     RenderScene& scene, const RenderConverterConfig& config,
     std::map<std::string, int32_t>& material_index_map) {
 
-    Mat4 local_transform = parent_transform;
-
-    // TODO: Extract transform from xformOps
+    // Extract local transform from xformOps and combine with parent
+    Mat4 prim_transform = extract_transform(prim, config.time);
+    Mat4 local_transform = parent_transform * prim_transform;
 
     // Check if this is a mesh
     if (prim.type_name() == "Mesh") {
