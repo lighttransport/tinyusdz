@@ -5,6 +5,7 @@
 
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
+import { TransformControls } from 'three/examples/jsm/controls/TransformControls.js';
 import { RectAreaLightHelper } from 'three/examples/jsm/helpers/RectAreaLightHelper.js';
 import { RectAreaLightUniformsLib } from 'three/examples/jsm/lights/RectAreaLightUniformsLib.js';
 import { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer.js';
@@ -12,6 +13,15 @@ import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js';
 import { ShaderPass } from 'three/examples/jsm/postprocessing/ShaderPass.js';
 import { OutputPass } from 'three/examples/jsm/postprocessing/OutputPass.js';
 import { TinyUSDZLoader } from 'tinyusdz/TinyUSDZLoader.js';
+
+// Light-to-HDRI projection (no TinyUSDZ dependency)
+import {
+  LightHDRIProjection,
+  SphereLight,
+  AreaLight,
+  DiskLight,
+  writeEXR
+} from './light-hdri-projection.js';
 
 // ============================================
 // CIE 1931 2-degree Standard Observer Color Matching Functions
@@ -727,6 +737,11 @@ function updateSpectralInfo(light) {
  * This adds synthetic spectral emission data for demonstration purposes
  */
 function applyDemoSpectralData() {
+  if (lightData.length === 0) {
+    console.warn('No lights loaded - cannot apply spectral data');
+    return;
+  }
+
   const spectralPresets = [
     // D65 daylight
     { preset: 'd65', interpolation: 'linear', unit: 'nanometers', samples: [] },
@@ -779,7 +794,12 @@ function applyDemoSpectralData() {
     lightData[i].spectralEmission = { ...spectralPresets[presetIdx] };
   }
 
-  // Update display if a light is selected
+  // Auto-select first light if none selected
+  if (selectedLightIndex < 0 && lightData.length > 0) {
+    selectedLightIndex = 0;
+  }
+
+  // Update display
   if (selectedLightIndex >= 0 && selectedLightIndex < lightData.length) {
     drawSpectralCurve(lightData[selectedLightIndex].spectralEmission);
     updateSpectralInfo(lightData[selectedLightIndex]);
@@ -790,7 +810,7 @@ function applyDemoSpectralData() {
     updateLightColors();
   }
 
-  console.log('Demo spectral data applied to lights');
+  console.log(`Demo spectral data applied to ${lightData.length} lights`);
 }
 
 /**
@@ -1305,6 +1325,177 @@ controls.minDistance = 2;
 controls.maxDistance = 50;
 
 // ============================================
+// HDRI Position Locator
+// ============================================
+
+// HDRI locator mesh and transform controls
+let hdriLocator = null;
+let hdriLocatorTransformControls = null;
+let hdriLocatorVisible = false;
+
+/**
+ * Create the HDRI position locator mesh
+ */
+function createHDRILocator() {
+  if (hdriLocator) return hdriLocator;
+
+  // Create a group to hold the locator visual elements
+  hdriLocator = new THREE.Group();
+  hdriLocator.name = 'HDRILocator';
+
+  // Central sphere (position indicator)
+  const sphereGeom = new THREE.SphereGeometry(0.15, 16, 16);
+  const sphereMat = new THREE.MeshBasicMaterial({
+    color: 0x00ffff,
+    transparent: true,
+    opacity: 0.8,
+    depthTest: false
+  });
+  const sphere = new THREE.Mesh(sphereGeom, sphereMat);
+  sphere.renderOrder = 999;
+  hdriLocator.add(sphere);
+
+  // Create axes helper showing projection directions
+  const axesSize = 0.5;
+  const axesHelper = new THREE.AxesHelper(axesSize);
+  axesHelper.renderOrder = 999;
+  hdriLocator.add(axesHelper);
+
+  // Create small wireframe sphere showing approximate projection range
+  const rangeGeom = new THREE.SphereGeometry(1, 16, 8);
+  const rangeMat = new THREE.MeshBasicMaterial({
+    color: 0x00ffff,
+    wireframe: true,
+    transparent: true,
+    opacity: 0.2,
+    depthTest: false
+  });
+  const rangeIndicator = new THREE.Mesh(rangeGeom, rangeMat);
+  rangeIndicator.name = 'RangeIndicator';
+  rangeIndicator.renderOrder = 998;
+  hdriLocator.add(rangeIndicator);
+
+  // Set initial position from hdriSettings
+  hdriLocator.position.set(
+    hdriSettings.center.x,
+    hdriSettings.center.y,
+    hdriSettings.center.z
+  );
+
+  // Create TransformControls
+  hdriLocatorTransformControls = new TransformControls(camera, renderer.domElement);
+  hdriLocatorTransformControls.setMode('translate');
+  hdriLocatorTransformControls.setSize(1.0);
+
+  // Disable orbit controls while dragging the locator
+  hdriLocatorTransformControls.addEventListener('dragging-changed', (event) => {
+    controls.enabled = !event.value;
+  });
+
+  // Update hdriSettings.center when locator is moved
+  hdriLocatorTransformControls.addEventListener('objectChange', () => {
+    if (hdriLocator) {
+      hdriSettings.center.x = hdriLocator.position.x;
+      hdriSettings.center.y = hdriLocator.position.y;
+      hdriSettings.center.z = hdriLocator.position.z;
+
+      // Update UI position inputs if they exist
+      if (window.updateHDRIPositionUI) {
+        window.updateHDRIPositionUI(hdriSettings.center);
+      }
+    }
+  });
+
+  // Add TransformControls to scene first (it renders the gizmo)
+  scene.add(hdriLocatorTransformControls);
+
+  // Add locator to scene
+  scene.add(hdriLocator);
+
+  // Attach after adding to scene
+  hdriLocatorTransformControls.attach(hdriLocator);
+
+  // Initially hidden - use enabled property and detach
+  hdriLocator.visible = false;
+  hdriLocatorTransformControls.detach();
+  hdriLocatorTransformControls.enabled = false;
+
+  return hdriLocator;
+}
+
+/**
+ * Show/hide the HDRI position locator
+ */
+function toggleHDRILocator(visible) {
+  // Create locator if it doesn't exist
+  if (!hdriLocator) {
+    createHDRILocator();
+  }
+
+  if (visible === undefined) {
+    hdriLocatorVisible = !hdriLocatorVisible;
+  } else {
+    hdriLocatorVisible = visible;
+  }
+
+  hdriLocator.visible = hdriLocatorVisible;
+
+  if (hdriLocatorVisible) {
+    // Show gizmo - attach and enable
+    hdriLocatorTransformControls.attach(hdriLocator);
+    hdriLocatorTransformControls.enabled = true;
+  } else {
+    // Hide gizmo - detach and disable
+    hdriLocatorTransformControls.detach();
+    hdriLocatorTransformControls.enabled = false;
+  }
+
+  return hdriLocatorVisible;
+}
+
+/**
+ * Set the HDRI locator position
+ */
+function setHDRILocatorPosition(x, y, z) {
+  // Update settings
+  hdriSettings.center.x = x;
+  hdriSettings.center.y = y;
+  hdriSettings.center.z = z;
+
+  // Update locator if it exists
+  if (hdriLocator) {
+    hdriLocator.position.set(x, y, z);
+  }
+
+  // Update UI if callback exists
+  if (window.updateHDRIPositionUI) {
+    window.updateHDRIPositionUI({ x, y, z });
+  }
+
+  return hdriSettings.center;
+}
+
+/**
+ * Get the current HDRI center position
+ */
+function getHDRICenter() {
+  return { ...hdriSettings.center };
+}
+
+/**
+ * Update range indicator size based on maxDistance
+ */
+function updateHDRIRangeIndicator(distance) {
+  if (hdriLocator) {
+    const rangeIndicator = hdriLocator.getObjectByName('RangeIndicator');
+    if (rangeIndicator) {
+      const scale = Math.min(distance * 0.1, 5); // Cap visual scale
+      rangeIndicator.scale.set(scale, scale, scale);
+    }
+  }
+}
+
+// ============================================
 // Scene Objects
 // ============================================
 
@@ -1382,10 +1573,242 @@ const threeLights = [];
 const lightHelpers = [];
 const lightData = []; // Store RenderLight data
 
+// ============================================
+// Light Selection and Transform Controls
+// ============================================
+
+let selectedLight3DIndex = -1;
+let lightTransformControls = null;
+const raycaster = new THREE.Raycaster();
+const mouse = new THREE.Vector2();
+
+/**
+ * Initialize light transform controls
+ */
+function initLightTransformControls() {
+  if (lightTransformControls) return;
+
+  lightTransformControls = new TransformControls(camera, renderer.domElement);
+  lightTransformControls.setSize(0.8);
+
+  // Disable orbit controls while dragging
+  lightTransformControls.addEventListener('dragging-changed', (event) => {
+    controls.enabled = !event.value;
+  });
+
+  // Update light data when transformed
+  lightTransformControls.addEventListener('objectChange', () => {
+    if (selectedLight3DIndex >= 0 && selectedLight3DIndex < threeLights.length) {
+      updateLightDataFromTransform(selectedLight3DIndex);
+    }
+  });
+
+  scene.add(lightTransformControls);
+}
+
+/**
+ * Update lightData from the transformed Three.js light
+ */
+function updateLightDataFromTransform(lightIndex) {
+  const threeLight = threeLights[lightIndex];
+  const usdLight = lightData[lightIndex];
+  if (!threeLight || !usdLight) return;
+
+  // Get world position and quaternion
+  const position = new THREE.Vector3();
+  const quaternion = new THREE.Quaternion();
+  const scale = new THREE.Vector3();
+
+  if (threeLight.isGroup) {
+    threeLight.getWorldPosition(position);
+    threeLight.getWorldQuaternion(quaternion);
+    threeLight.getWorldScale(scale);
+  } else {
+    position.copy(threeLight.position);
+    quaternion.copy(threeLight.quaternion);
+    scale.set(1, 1, 1);
+  }
+
+  // Update position in lightData
+  usdLight.position = [position.x, position.y, position.z];
+
+  // Build new transform matrix
+  const matrix = new THREE.Matrix4();
+  matrix.compose(position, quaternion, scale);
+  usdLight.transform = matrix.toArray();
+
+  // Sync helper position
+  const helper = lightHelpers[lightIndex];
+  if (helper) {
+    helper.position.copy(position);
+    helper.quaternion.copy(quaternion);
+  }
+
+  // Update UI if callback exists
+  if (window.updateLightListItem) {
+    window.updateLightListItem(lightIndex, usdLight);
+  }
+}
+
+/**
+ * Select a light in 3D scene for editing
+ */
+function selectLight3D(lightIndex) {
+  // Deselect previous
+  if (selectedLight3DIndex >= 0 && lightHelpers[selectedLight3DIndex]) {
+    setHelperSelected(lightHelpers[selectedLight3DIndex], false);
+  }
+
+  selectedLight3DIndex = lightIndex;
+
+  if (lightIndex < 0 || lightIndex >= threeLights.length) {
+    // Deselect
+    if (lightTransformControls) {
+      lightTransformControls.detach();
+    }
+    selectedLight3DIndex = -1;
+    return;
+  }
+
+  // Initialize transform controls if needed
+  initLightTransformControls();
+
+  const threeLight = threeLights[lightIndex];
+  const usdLight = lightData[lightIndex];
+  const helper = lightHelpers[lightIndex];
+
+  // Highlight selected helper
+  if (helper) {
+    setHelperSelected(helper, true);
+  }
+
+  // Attach transform controls to the light (or its group)
+  const target = threeLight.isGroup ? threeLight : threeLight;
+  lightTransformControls.attach(target);
+
+  // Set transform mode based on light type
+  const lightType = usdLight?.type || 'point';
+  if (lightType === 'distant' || lightType === 'dome') {
+    // Infinite lights - rotate only
+    lightTransformControls.setMode('rotate');
+    lightTransformControls.showX = true;
+    lightTransformControls.showY = true;
+    lightTransformControls.showZ = true;
+  } else {
+    // Finite lights - translate by default
+    lightTransformControls.setMode('translate');
+    lightTransformControls.showX = true;
+    lightTransformControls.showY = true;
+    lightTransformControls.showZ = true;
+  }
+
+  // Also select in spectral view
+  selectLightForSpectral(lightIndex);
+
+  console.log(`Selected light ${lightIndex}: ${usdLight?.name || usdLight?.type || 'unnamed'}`);
+}
+
+/**
+ * Set light transform mode
+ */
+function setLightTransformMode(mode) {
+  if (lightTransformControls && selectedLight3DIndex >= 0) {
+    lightTransformControls.setMode(mode);
+  }
+}
+
+/**
+ * Set helper visual selected state
+ */
+function setHelperSelected(helper, selected) {
+  helper.traverse((child) => {
+    if (child.material) {
+      if (selected) {
+        child.material._originalColor = child.material.color?.clone();
+        child.material.color?.setHex(0x00ffff);
+        child.material._originalOpacity = child.material.opacity;
+        child.material.opacity = Math.min(1, (child.material.opacity || 0.5) + 0.3);
+      } else if (child.material._originalColor) {
+        child.material.color?.copy(child.material._originalColor);
+        child.material.opacity = child.material._originalOpacity || 0.5;
+      }
+    }
+  });
+}
+
+/**
+ * Handle click on 3D canvas to select lights
+ */
+function onCanvasClick(event) {
+  // Ignore if transform controls is being used
+  if (lightTransformControls && lightTransformControls.dragging) return;
+
+  // Calculate mouse position in normalized device coordinates
+  const rect = renderer.domElement.getBoundingClientRect();
+  mouse.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
+  mouse.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
+
+  // Update raycaster
+  raycaster.setFromCamera(mouse, camera);
+
+  // Check intersection with light helpers
+  const intersects = raycaster.intersectObjects(lightHelpers, true);
+
+  if (intersects.length > 0) {
+    // Find the light helper group
+    let helperGroup = intersects[0].object;
+    while (helperGroup && !helperGroup.userData.isLightHelper) {
+      helperGroup = helperGroup.parent;
+    }
+
+    if (helperGroup && helperGroup.userData.lightIndex !== undefined) {
+      selectLight3D(helperGroup.userData.lightIndex);
+
+      // Also update UI selection
+      if (window.highlightLightInList) {
+        window.highlightLightInList(helperGroup.userData.lightIndex);
+      }
+      return;
+    }
+  }
+
+  // Click on empty space - deselect
+  // selectLight3D(-1);
+}
+
+// Add click event listener to canvas
+renderer.domElement.addEventListener('click', onCanvasClick);
+
+// Add keyboard shortcuts for transform modes
+document.addEventListener('keydown', (event) => {
+  if (selectedLight3DIndex < 0) return;
+
+  switch (event.key.toLowerCase()) {
+    case 'g': // Grab/translate
+      setLightTransformMode('translate');
+      break;
+    case 'r': // Rotate
+      setLightTransformMode('rotate');
+      break;
+    case 's': // Scale (for area lights)
+      setLightTransformMode('scale');
+      break;
+    case 'escape':
+      selectLight3D(-1);
+      break;
+  }
+});
+
 /**
  * Clear all USD lights from the scene
  */
 function clearLights() {
+  // Deselect and detach transform controls
+  if (lightTransformControls) {
+    lightTransformControls.detach();
+  }
+  selectedLight3DIndex = -1;
+
   // Remove lights
   for (const light of threeLights) {
     scene.remove(light);
@@ -1407,90 +1830,172 @@ function clearLights() {
   if (window.updateLightList) {
     window.updateLightList([]);
   }
+
+  // Hide envmap section
+  hideEnvmapSection();
 }
 
 /**
  * Create a light helper/visualizer for finite lights
  * @param {THREE.Light} light - Three.js light
  * @param {Object} usdLight - USD light data
+ * @param {number} lightIndex - Index in lightData array
  * @returns {THREE.Object3D|null} Helper object
  */
-function createLightHelper(light, usdLight) {
+function createLightHelper(light, usdLight, lightIndex) {
   const type = usdLight.type || 'unknown';
+  const lightColor = new THREE.Color(usdLight.color?.[0] || 1, usdLight.color?.[1] || 1, usdLight.color?.[2] || 1);
 
-  // Create position marker sphere for finite lights
+  // Create a group to hold all helper elements
+  const helperGroup = new THREE.Group();
+  helperGroup.userData.lightIndex = lightIndex;
+  helperGroup.userData.lightType = type;
+  helperGroup.userData.isLightHelper = true;
+
   if (type === 'point' || type === 'sphere') {
     const helperGeom = new THREE.SphereGeometry(usdLight.radius || 0.1, 16, 16);
     const helperMat = new THREE.MeshBasicMaterial({
-      color: new THREE.Color(usdLight.color?.[0] || 1, usdLight.color?.[1] || 1, usdLight.color?.[2] || 1),
+      color: lightColor,
       transparent: true,
       opacity: 0.6,
       wireframe: true
     });
-    const helper = new THREE.Mesh(helperGeom, helperMat);
-    helper.position.copy(light.position);
-    return helper;
+    const sphereMesh = new THREE.Mesh(helperGeom, helperMat);
+    helperGroup.add(sphereMesh);
+    helperGroup.position.copy(light.position);
+    return helperGroup;
   }
 
   if (type === 'disk') {
-    const helperGeom = new THREE.CircleGeometry(usdLight.radius || 0.5, 32);
+    const radius = usdLight.radius || 0.5;
+    const helperGeom = new THREE.CircleGeometry(radius, 32);
     const helperMat = new THREE.MeshBasicMaterial({
-      color: new THREE.Color(usdLight.color?.[0] || 1, usdLight.color?.[1] || 1, usdLight.color?.[2] || 1),
+      color: lightColor,
       transparent: true,
       opacity: 0.5,
       side: THREE.DoubleSide
     });
-    const helper = new THREE.Mesh(helperGeom, helperMat);
+    const diskMesh = new THREE.Mesh(helperGeom, helperMat);
+    helperGroup.add(diskMesh);
+
+    // Add direction arrow (pointing in -Z local, which is light direction)
+    const arrow = new THREE.ArrowHelper(
+      new THREE.Vector3(0, 0, -1),
+      new THREE.Vector3(0, 0, 0),
+      radius * 1.5,
+      0xffff00, 0.15, 0.1
+    );
+    helperGroup.add(arrow);
+
     if (light.parent) {
-      helper.position.copy(light.parent.position);
-      helper.quaternion.copy(light.parent.quaternion);
+      helperGroup.position.copy(light.parent.position);
+      helperGroup.quaternion.copy(light.parent.quaternion);
     }
-    return helper;
+    return helperGroup;
   }
 
-  if (type === 'rect' && light.isRectAreaLight) {
-    return new RectAreaLightHelper(light);
+  if (type === 'rect') {
+    const width = usdLight.width || 1;
+    const height = usdLight.height || 1;
+
+    // Create rectangle outline
+    const rectGeom = new THREE.PlaneGeometry(width, height);
+    const rectMat = new THREE.MeshBasicMaterial({
+      color: lightColor,
+      transparent: true,
+      opacity: 0.3,
+      side: THREE.DoubleSide
+    });
+    const rectMesh = new THREE.Mesh(rectGeom, rectMat);
+    helperGroup.add(rectMesh);
+
+    // Add wireframe edge
+    const edgeGeom = new THREE.EdgesGeometry(rectGeom);
+    const edgeMat = new THREE.LineBasicMaterial({ color: lightColor });
+    const edge = new THREE.LineSegments(edgeGeom, edgeMat);
+    helperGroup.add(edge);
+
+    // Add direction arrow (pointing in -Z local, which is light direction)
+    const arrowLength = Math.max(width, height) * 0.8;
+    const arrow = new THREE.ArrowHelper(
+      new THREE.Vector3(0, 0, -1),
+      new THREE.Vector3(0, 0, 0),
+      arrowLength,
+      0xffff00, 0.2, 0.15
+    );
+    helperGroup.add(arrow);
+
+    if (light.parent) {
+      helperGroup.position.copy(light.parent.position);
+      helperGroup.quaternion.copy(light.parent.quaternion);
+    } else if (light.isRectAreaLight) {
+      helperGroup.position.copy(light.position);
+      helperGroup.quaternion.copy(light.quaternion);
+    }
+    return helperGroup;
   }
 
   if (type === 'cylinder') {
-    const helperGeom = new THREE.CylinderGeometry(
-      usdLight.radius || 0.1,
-      usdLight.radius || 0.1,
-      usdLight.length || 1,
-      16
-    );
+    const radius = usdLight.radius || 0.1;
+    const length = usdLight.length || 1;
+    const helperGeom = new THREE.CylinderGeometry(radius, radius, length, 16);
     const helperMat = new THREE.MeshBasicMaterial({
-      color: new THREE.Color(usdLight.color?.[0] || 1, usdLight.color?.[1] || 1, usdLight.color?.[2] || 1),
+      color: lightColor,
       transparent: true,
       opacity: 0.5,
       wireframe: true
     });
-    const helper = new THREE.Mesh(helperGeom, helperMat);
+    const cylMesh = new THREE.Mesh(helperGeom, helperMat);
+    helperGroup.add(cylMesh);
+
     if (light.parent) {
-      helper.position.copy(light.parent.position);
-      helper.quaternion.copy(light.parent.quaternion);
+      helperGroup.position.copy(light.parent.position);
+      helperGroup.quaternion.copy(light.parent.quaternion);
     }
-    return helper;
+    return helperGroup;
   }
 
   if (type === 'distant') {
-    // Arrow helper for directional light
-    const dir = new THREE.Vector3(0, -1, 0);
-    if (light.target) {
-      dir.subVectors(light.target.position, light.position).normalize();
+    // Arrow helper for directional light - show direction
+    const dir = new THREE.Vector3(0, 0, -1);
+    if (light.parent) {
+      dir.applyQuaternion(light.parent.quaternion);
     }
-    const helper = new THREE.ArrowHelper(dir, light.position, 3, light.color.getHex(), 0.5, 0.3);
-    return helper;
+    const arrow = new THREE.ArrowHelper(dir, new THREE.Vector3(0, 0, 0), 3, lightColor.getHex(), 0.5, 0.3);
+    helperGroup.add(arrow);
+
+    // Add a small sphere at the "sun" position for clickability
+    const sunGeom = new THREE.SphereGeometry(0.3, 16, 16);
+    const sunMat = new THREE.MeshBasicMaterial({ color: lightColor, transparent: true, opacity: 0.8 });
+    const sunMesh = new THREE.Mesh(sunGeom, sunMat);
+    helperGroup.add(sunMesh);
+
+    if (light.parent) {
+      helperGroup.position.copy(light.parent.position);
+    }
+    return helperGroup;
   }
 
-  // SpotLight helper for lights with shaping
+  // SpotLight helper
   if (light.isSpotLight) {
-    return new THREE.SpotLightHelper(light);
+    const spotHelper = new THREE.SpotLightHelper(light);
+    helperGroup.add(spotHelper);
+    // Add sphere for clickability
+    const sphereGeom = new THREE.SphereGeometry(0.15, 16, 16);
+    const sphereMat = new THREE.MeshBasicMaterial({ color: lightColor, transparent: true, opacity: 0.6 });
+    const sphereMesh = new THREE.Mesh(sphereGeom, sphereMat);
+    helperGroup.add(sphereMesh);
+    if (light.parent) {
+      helperGroup.position.copy(light.parent.position);
+    }
+    return helperGroup;
   }
 
   // Point light helper
   if (light.isPointLight) {
-    return new THREE.PointLightHelper(light, usdLight.radius || 0.2);
+    const pointHelper = new THREE.PointLightHelper(light, usdLight.radius || 0.2);
+    helperGroup.add(pointHelper);
+    return helperGroup;
   }
 
   return null;
@@ -1515,24 +2020,31 @@ function convertUSDLightToThreeJS(usdLight) {
     intensity *= Math.pow(2, usdLight.exposure);
   }
 
-  // Get position from transform or position array
+  // Extract full transform (position, rotation, scale) from matrix
   const position = new THREE.Vector3(
     usdLight.position?.[0] || 0,
     usdLight.position?.[1] || 0,
     usdLight.position?.[2] || 0
   );
+  const quaternion = new THREE.Quaternion();
+  const scale = new THREE.Vector3(1, 1, 1);
 
-  // Extract position from transform matrix if available
+  // Decompose transform matrix if available
   if (usdLight.transform && usdLight.transform.length === 16) {
-    position.set(
-      usdLight.transform[12],
-      usdLight.transform[13],
-      usdLight.transform[14]
-    );
+    const matrix = new THREE.Matrix4();
+    matrix.fromArray(usdLight.transform);
+    matrix.decompose(position, quaternion, scale);
   }
 
   let light = null;
   let lightGroup = null;
+
+  // Helper to apply transform to a light group
+  const applyTransformToGroup = (group) => {
+    group.position.copy(position);
+    group.quaternion.copy(quaternion);
+    group.scale.copy(scale);
+  };
 
   switch (type) {
     case 'point':
@@ -1547,30 +2059,16 @@ function convertUSDLightToThreeJS(usdLight) {
 
         // Create a group to hold the spotlight and its target
         lightGroup = new THREE.Group();
-        lightGroup.position.copy(position);
         lightGroup.add(light);
 
-        // Position target based on direction
-        const targetOffset = new THREE.Vector3(0, -5, 0);
-        if (usdLight.direction) {
-          targetOffset.set(
-            usdLight.direction[0] * 5,
-            usdLight.direction[1] * 5,
-            usdLight.direction[2] * 5
-          );
-        }
-        light.target.position.copy(targetOffset);
+        // USD lights face -Z, so target is in -Z direction
+        light.target.position.set(0, 0, -5);
         lightGroup.add(light.target);
 
-        // Apply rotation from transform
-        if (usdLight.transform && usdLight.transform.length === 16) {
-          const matrix = new THREE.Matrix4();
-          matrix.fromArray(usdLight.transform);
-          const rotation = new THREE.Euler();
-          rotation.setFromRotationMatrix(matrix);
-          lightGroup.rotation.copy(rotation);
-        }
+        // Apply full transform
+        applyTransformToGroup(lightGroup);
       } else {
+        // Point light - position only matters (omnidirectional)
         light = new THREE.PointLight(color, intensity);
         light.decay = 2;
         light.distance = 0;
@@ -1582,20 +2080,21 @@ function convertUSDLightToThreeJS(usdLight) {
     case 'distant': {
       light = new THREE.DirectionalLight(color, intensity);
 
-      // Position far away to simulate infinite distance
-      light.position.set(10, 10, 10);
+      // Create group to apply transform
+      lightGroup = new THREE.Group();
 
-      // Apply rotation from transform to determine direction
-      if (usdLight.transform && usdLight.transform.length === 16) {
-        const matrix = new THREE.Matrix4();
-        matrix.fromArray(usdLight.transform);
-        const direction = new THREE.Vector3(0, 0, -1);
-        direction.applyMatrix4(matrix).normalize();
-        light.position.copy(direction.multiplyScalar(-10));
-      }
+      // Light at origin of group, pointing in -Z
+      light.position.set(0, 0, 0);
+      light.target.position.set(0, 0, -1);
+      lightGroup.add(light);
+      lightGroup.add(light.target);
 
-      light.target.position.set(0, 0, 0);
-      scene.add(light.target);
+      // Apply transform - position doesn't matter for distant light, only rotation
+      lightGroup.quaternion.copy(quaternion);
+
+      // Move the group far from origin so shadow mapping works
+      const direction = new THREE.Vector3(0, 0, -1).applyQuaternion(quaternion);
+      lightGroup.position.copy(direction.multiplyScalar(-50));
       break;
     }
 
@@ -1604,38 +2103,25 @@ function convertUSDLightToThreeJS(usdLight) {
       const height = usdLight.height || 1;
       light = new THREE.RectAreaLight(color, intensity, width, height);
 
+      // RectAreaLight faces -Z by default (same as USD)
       lightGroup = new THREE.Group();
-      lightGroup.position.copy(position);
       lightGroup.add(light);
 
-      // Apply rotation from transform
-      if (usdLight.transform && usdLight.transform.length === 16) {
-        const matrix = new THREE.Matrix4();
-        matrix.fromArray(usdLight.transform);
-        const rotation = new THREE.Euler();
-        rotation.setFromRotationMatrix(matrix);
-        lightGroup.rotation.copy(rotation);
-      }
+      // Apply full transform
+      applyTransformToGroup(lightGroup);
       break;
     }
 
     case 'disk': {
-      // Three.js doesn't have disk light, approximate with point light
-      light = new THREE.PointLight(color, intensity);
-      light.decay = 2;
-      light.distance = 0;
+      // Three.js doesn't have disk light, approximate with RectAreaLight (circular appearance)
+      const radius = usdLight.radius || 0.5;
+      light = new THREE.RectAreaLight(color, intensity, radius * 2, radius * 2);
 
       lightGroup = new THREE.Group();
-      lightGroup.position.copy(position);
       lightGroup.add(light);
 
-      if (usdLight.transform && usdLight.transform.length === 16) {
-        const matrix = new THREE.Matrix4();
-        matrix.fromArray(usdLight.transform);
-        const rotation = new THREE.Euler();
-        rotation.setFromRotationMatrix(matrix);
-        lightGroup.rotation.copy(rotation);
-      }
+      // Apply full transform
+      applyTransformToGroup(lightGroup);
       break;
     }
 
@@ -1646,16 +2132,10 @@ function convertUSDLightToThreeJS(usdLight) {
       light.distance = 0;
 
       lightGroup = new THREE.Group();
-      lightGroup.position.copy(position);
       lightGroup.add(light);
 
-      if (usdLight.transform && usdLight.transform.length === 16) {
-        const matrix = new THREE.Matrix4();
-        matrix.fromArray(usdLight.transform);
-        const rotation = new THREE.Euler();
-        rotation.setFromRotationMatrix(matrix);
-        lightGroup.rotation.copy(rotation);
-      }
+      // Apply full transform
+      applyTransformToGroup(lightGroup);
       break;
     }
 
@@ -1664,24 +2144,30 @@ function convertUSDLightToThreeJS(usdLight) {
       // Check if we have an envmap texture
       if (usdLight.envmapTextureId >= 0 && usdLight._envmapTexture) {
         // Use the preloaded envmap texture for environment lighting
-        const pmremGenerator = new THREE.PMREMGenerator(renderer);
-        pmremGenerator.compileEquirectangularShader();
+        try {
+          const pmremGenerator = new THREE.PMREMGenerator(renderer);
+          pmremGenerator.compileEquirectangularShader();
 
-        const envMap = pmremGenerator.fromEquirectangular(usdLight._envmapTexture).texture;
-        scene.environment = envMap;
+          const envMap = pmremGenerator.fromEquirectangular(usdLight._envmapTexture).texture;
+          scene.environment = envMap;
 
-        // Optionally use as background
-        if (usdLight.guideRadius && usdLight.guideRadius < 1e4) {
-          // If guide radius is small, show the environment as background
-          scene.background = envMap;
+          // Optionally use as background
+          if (usdLight.guideRadius && usdLight.guideRadius < 1e4) {
+            // If guide radius is small, show the environment as background
+            scene.background = envMap;
+          }
+
+          pmremGenerator.dispose();
+
+          console.log(`Applied envmap from DomeLight: ${usdLight.name}, textureFile: ${usdLight.textureFile}`);
+
+          // Still create a hemisphere light as fallback visualization
+          light = new THREE.HemisphereLight(color, new THREE.Color(0x444444), intensity * 0.1);
+        } catch (e) {
+          console.warn(`Failed to process envmap for DomeLight: ${e.message}`);
+          // Fall back to hemisphere light
+          light = new THREE.HemisphereLight(color, new THREE.Color(0x444444), intensity);
         }
-
-        pmremGenerator.dispose();
-
-        console.log(`Applied envmap from DomeLight: ${usdLight.name}, textureFile: ${usdLight.textureFile}`);
-
-        // Still create a hemisphere light as fallback visualization
-        light = new THREE.HemisphereLight(color, new THREE.Color(0x444444), intensity * 0.1);
       } else if (usdLight.textureFile) {
         // Texture file specified but not loaded - create placeholder and log
         console.log(`DomeLight ${usdLight.name} has textureFile: ${usdLight.textureFile} (not loaded)`);
@@ -1736,6 +2222,328 @@ function convertUSDLightToThreeJS(usdLight) {
 }
 
 /**
+ * Detect image format from magic bytes
+ * @param {Uint8Array} data - Raw image data
+ * @returns {string} Format name: 'exr', 'png', 'jpeg', 'hdr', or 'unknown'
+ */
+function detectImageFormat(data) {
+  if (!data || data.length < 4) return 'unknown';
+
+  // EXR: magic number 0x76, 0x2f, 0x31, 0x01
+  if (data[0] === 0x76 && data[1] === 0x2f && data[2] === 0x31 && data[3] === 0x01) {
+    return 'exr';
+  }
+
+  // PNG: magic number 0x89, 0x50, 0x4E, 0x47
+  if (data[0] === 0x89 && data[1] === 0x50 && data[2] === 0x4E && data[3] === 0x47) {
+    return 'png';
+  }
+
+  // JPEG: magic number 0xFF, 0xD8, 0xFF
+  if (data[0] === 0xFF && data[1] === 0xD8 && data[2] === 0xFF) {
+    return 'jpeg';
+  }
+
+  // Radiance HDR: starts with "#?"
+  if (data[0] === 0x23 && data[1] === 0x3F) {
+    return 'hdr';
+  }
+
+  return 'unknown';
+}
+
+/**
+ * Decode image data using browser APIs
+ * @param {Uint8Array} data - Raw compressed image data
+ * @param {string} format - Image format
+ * @returns {Promise<{width: number, height: number, data: Uint8Array|Float32Array, channels: number}|null>}
+ */
+async function decodeImageData(data, format) {
+  if (format === 'png' || format === 'jpeg') {
+    // Use browser's built-in image decoding
+    return new Promise((resolve) => {
+      const blob = new Blob([data], { type: format === 'png' ? 'image/png' : 'image/jpeg' });
+      const url = URL.createObjectURL(blob);
+      const img = new Image();
+
+      img.onload = () => {
+        const canvas = document.createElement('canvas');
+        canvas.width = img.width;
+        canvas.height = img.height;
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(img, 0, 0);
+        const imageData = ctx.getImageData(0, 0, img.width, img.height);
+        URL.revokeObjectURL(url);
+
+        resolve({
+          width: img.width,
+          height: img.height,
+          data: imageData.data,
+          channels: 4,
+          decoded: true
+        });
+      };
+
+      img.onerror = () => {
+        URL.revokeObjectURL(url);
+        console.warn(`Failed to decode ${format} image`);
+        resolve(null);
+      };
+
+      img.src = url;
+    });
+  }
+
+  if (format === 'hdr') {
+    // Parse Radiance HDR format
+    return parseRadianceHDR(data);
+  }
+
+  if (format === 'exr') {
+    // For EXR, we'll need external decoder or return raw for now
+    console.log('EXR format detected - attempting to parse');
+    return parseSimpleEXR(data);
+  }
+
+  return null;
+}
+
+/**
+ * Parse simple Radiance HDR format
+ * @param {Uint8Array} data - Raw HDR data
+ * @returns {{width: number, height: number, data: Float32Array, channels: number}|null}
+ */
+function parseRadianceHDR(data) {
+  try {
+    const text = new TextDecoder('ascii').decode(data);
+    const lines = text.split('\n');
+
+    let width = 0, height = 0;
+    let dataStart = 0;
+
+    // Find dimensions and data start
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i].trim();
+      if (line.match(/-Y\s+(\d+)\s+\+X\s+(\d+)/)) {
+        const match = line.match(/-Y\s+(\d+)\s+\+X\s+(\d+)/);
+        height = parseInt(match[1]);
+        width = parseInt(match[2]);
+        // Calculate byte offset to data
+        let offset = 0;
+        for (let j = 0; j <= i; j++) {
+          offset += lines[j].length + 1; // +1 for newline
+        }
+        dataStart = offset;
+        break;
+      }
+    }
+
+    if (width <= 0 || height <= 0) {
+      console.warn('Could not parse HDR dimensions');
+      return null;
+    }
+
+    // Parse RGBE data (simplified - no RLE)
+    const rgbeData = data.slice(dataStart);
+    const floatData = new Float32Array(width * height * 3);
+
+    for (let i = 0; i < width * height && i * 4 + 3 < rgbeData.length; i++) {
+      const r = rgbeData[i * 4];
+      const g = rgbeData[i * 4 + 1];
+      const b = rgbeData[i * 4 + 2];
+      const e = rgbeData[i * 4 + 3];
+
+      if (e === 0) {
+        floatData[i * 3] = 0;
+        floatData[i * 3 + 1] = 0;
+        floatData[i * 3 + 2] = 0;
+      } else {
+        const scale = Math.pow(2, e - 128 - 8);
+        floatData[i * 3] = r * scale;
+        floatData[i * 3 + 1] = g * scale;
+        floatData[i * 3 + 2] = b * scale;
+      }
+    }
+
+    return {
+      width,
+      height,
+      data: floatData,
+      channels: 3,
+      decoded: true
+    };
+  } catch (e) {
+    console.warn('Failed to parse HDR:', e);
+    return null;
+  }
+}
+
+/**
+ * Parse simple EXR format (scanline, uncompressed or ZIP)
+ * This is a minimal parser - complex EXR files may not work
+ * @param {Uint8Array} data - Raw EXR data
+ * @returns {{width: number, height: number, data: Float32Array, channels: number}|null}
+ */
+function parseSimpleEXR(data) {
+  try {
+    // EXR header parsing
+    const view = new DataView(data.buffer, data.byteOffset, data.byteLength);
+
+    // Check magic number
+    if (view.getUint32(0, true) !== 0x01312f76) {
+      console.warn('Invalid EXR magic number');
+      return null;
+    }
+
+    // Version (byte 4)
+    const version = view.getUint8(4);
+    console.log(`EXR version: ${version}`);
+
+    // Parse header attributes
+    let offset = 8;
+    let width = 0, height = 0;
+    let compression = 0;
+    let channels = [];
+
+    while (offset < data.length - 1) {
+      // Read attribute name
+      let nameEnd = offset;
+      while (data[nameEnd] !== 0 && nameEnd < data.length) nameEnd++;
+      if (nameEnd === offset) break; // Empty name = end of header
+
+      const name = new TextDecoder().decode(data.slice(offset, nameEnd));
+      offset = nameEnd + 1;
+
+      // Read type name
+      let typeEnd = offset;
+      while (data[typeEnd] !== 0 && typeEnd < data.length) typeEnd++;
+      const typeName = new TextDecoder().decode(data.slice(offset, typeEnd));
+      offset = typeEnd + 1;
+
+      // Read attribute size
+      const attrSize = view.getInt32(offset, true);
+      offset += 4;
+
+      // Parse known attributes
+      if (name === 'displayWindow' || name === 'dataWindow') {
+        const xMin = view.getInt32(offset, true);
+        const yMin = view.getInt32(offset + 4, true);
+        const xMax = view.getInt32(offset + 8, true);
+        const yMax = view.getInt32(offset + 12, true);
+        if (name === 'dataWindow') {
+          width = xMax - xMin + 1;
+          height = yMax - yMin + 1;
+        }
+      } else if (name === 'compression') {
+        compression = data[offset];
+      } else if (name === 'channels') {
+        // Parse channel list
+        let chOffset = offset;
+        while (chOffset < offset + attrSize - 1) {
+          let chNameEnd = chOffset;
+          while (data[chNameEnd] !== 0 && chNameEnd < offset + attrSize) chNameEnd++;
+          if (chNameEnd === chOffset) break;
+
+          const chName = new TextDecoder().decode(data.slice(chOffset, chNameEnd));
+          chOffset = chNameEnd + 1;
+
+          const pixelType = view.getInt32(chOffset, true); // 0=uint, 1=half, 2=float
+          chOffset += 16; // Skip rest of channel info
+
+          channels.push({ name: chName, type: pixelType });
+        }
+      }
+
+      offset += attrSize;
+    }
+
+    console.log(`EXR: ${width}x${height}, compression: ${compression}, channels: ${channels.length}`);
+
+    if (width <= 0 || height <= 0) {
+      console.warn('Could not parse EXR dimensions');
+      return null;
+    }
+
+    // For now, return basic info even if we can't decode the pixel data
+    // Full EXR decoding requires handling compression (PIZ, ZIP, etc.)
+    console.log('EXR parsing: dimensions found, pixel decoding not fully implemented');
+
+    // Try to find and decode uncompressed data
+    // Skip to end of header (null byte)
+    while (offset < data.length && data[offset] !== 0) offset++;
+    offset++; // Skip null byte
+
+    // Check if we have enough data for uncompressed scanlines
+    const expectedSize = width * height * channels.length * 2; // Assuming half float
+    const remainingData = data.length - offset;
+
+    if (compression === 0 && remainingData >= expectedSize) {
+      // Uncompressed - try to read half float data
+      const floatData = new Float32Array(width * height * 3);
+
+      // Read scanline offsets table
+      const numScanlines = height;
+      offset += numScanlines * 8; // Skip offset table
+
+      // Read scanlines (simplified)
+      for (let y = 0; y < height; y++) {
+        // Each scanline: y-coord (4 bytes) + size (4 bytes) + data
+        const scanY = view.getInt32(offset, true);
+        const scanSize = view.getInt32(offset + 4, true);
+        offset += 8;
+
+        // Read pixel data
+        for (let x = 0; x < width && offset + channels.length * 2 <= data.length; x++) {
+          for (let c = 0; c < Math.min(3, channels.length); c++) {
+            const halfBits = view.getUint16(offset + c * 2, true);
+            floatData[(y * width + x) * 3 + c] = halfToFloat(halfBits);
+          }
+          offset += channels.length * 2;
+        }
+      }
+
+      return {
+        width,
+        height,
+        data: floatData,
+        channels: 3,
+        decoded: true
+      };
+    }
+
+    // Return dimensions at least, even without pixel data
+    return {
+      width,
+      height,
+      data: new Float32Array(width * height * 3),
+      channels: 3,
+      decoded: false,
+      partial: true
+    };
+  } catch (e) {
+    console.warn('Failed to parse EXR:', e);
+    return null;
+  }
+}
+
+/**
+ * Convert half-float (16-bit) to float (32-bit)
+ */
+function halfToFloat(h) {
+  const s = (h & 0x8000) >> 15;
+  const e = (h & 0x7C00) >> 10;
+  const f = h & 0x03FF;
+
+  if (e === 0) {
+    return (s ? -1 : 1) * Math.pow(2, -14) * (f / 1024);
+  } else if (e === 0x1F) {
+    return f ? NaN : ((s ? -1 : 1) * Infinity);
+  }
+
+  return (s ? -1 : 1) * Math.pow(2, e - 15) * (1 + f / 1024);
+}
+
+/**
  * Create Three.js texture from image data
  * @param {Object} imageData - Image data from getImage()
  * @returns {THREE.Texture|null} Three.js texture or null
@@ -1752,6 +2560,12 @@ function createTextureFromImageData(imageData) {
   const decoded = imageData.decoded;
 
   console.log(`Creating texture from image: ${width}x${height}, ${channels} channels, decoded: ${decoded}`);
+
+  // Validate dimensions
+  if (width <= 0 || height <= 0) {
+    console.warn(`Invalid image dimensions: ${width}x${height}`);
+    return null;
+  }
 
   // Check if we have raw pixel data
   if (!imageData.data || imageData.data.length === 0) {
@@ -1839,7 +2653,7 @@ function createTextureFromImageData(imageData) {
  * Load lights from USD data
  * @param {Object} usdLoader - TinyUSDZ loader instance
  */
-function loadLightsFromUSD(usdLoader) {
+async function loadLightsFromUSD(usdLoader) {
   clearLights();
 
   const numLights = usdLoader.numLights();
@@ -1856,16 +2670,45 @@ function loadLightsFromUSD(usdLoader) {
     console.log(`Light ${i}:`, usdLight);
 
     // For dome lights with envmap texture, try to load the texture
-    if (usdLight.type === 'dome' && usdLight.envmapTextureId >= 0) {
-      console.log(`DomeLight has envmap texture ID: ${usdLight.envmapTextureId}`);
-      const imageData = usdLoader.getImage(usdLight.envmapTextureId);
-      if (imageData && !imageData.error) {
-        console.log(`Envmap image: ${imageData.width}x${imageData.height}, decoded: ${imageData.decoded}`);
-        const envTexture = createTextureFromImageData(imageData);
-        if (envTexture) {
-          usdLight._envmapTexture = envTexture;
+    if (usdLight.type === 'dome') {
+      let imageData = null;
+      let decodedImageData = null;
+
+      if (usdLight.envmapTextureId >= 0) {
+        console.log(`DomeLight has envmap texture ID: ${usdLight.envmapTextureId}`);
+        imageData = usdLoader.getImage(usdLight.envmapTextureId);
+
+        if (imageData && !imageData.error) {
+          console.log(`Envmap image: ${imageData.width}x${imageData.height}, decoded: ${imageData.decoded}`);
+
+          // If image is not decoded (has invalid dimensions), try to decode it
+          if (!imageData.decoded || imageData.width <= 0 || imageData.height <= 0) {
+            if (imageData.data && imageData.data.length > 0) {
+              const format = detectImageFormat(imageData.data);
+              console.log(`Detected image format: ${format}`);
+
+              if (format !== 'unknown') {
+                try {
+                  decodedImageData = await decodeImageData(imageData.data, format);
+                  if (decodedImageData) {
+                    console.log(`Decoded image: ${decodedImageData.width}x${decodedImageData.height}`);
+                    imageData = decodedImageData;
+                  }
+                } catch (e) {
+                  console.warn('Failed to decode image:', e);
+                }
+              }
+            }
+          }
+
+          const envTexture = createTextureFromImageData(imageData);
+          if (envTexture) {
+            usdLight._envmapTexture = envTexture;
+          }
         }
       }
+      // Show envmap section with dome light info and image data
+      showEnvmapSection(usdLight, imageData);
     }
 
     lightData.push(usdLight);
@@ -1879,8 +2722,9 @@ function loadLightsFromUSD(usdLoader) {
       const actualLight = threeLight.isGroup ?
         threeLight.children.find(c => c.isLight) : threeLight;
 
+      const lightIndex = lightData.length - 1; // Index of just-pushed light
       if (actualLight) {
-        const helper = createLightHelper(actualLight, usdLight);
+        const helper = createLightHelper(actualLight, usdLight, lightIndex);
         if (helper) {
           scene.add(helper);
           lightHelpers.push(helper);
@@ -1897,6 +2741,785 @@ function loadLightsFromUSD(usdLoader) {
   // Update stats
   document.getElementById('statMeshes').textContent =
     scene.children.filter(c => c.isMesh).length;
+}
+
+// ============================================
+// HDRI Projection from Lights
+// ============================================
+
+// HDRI state
+let hdriProjection = null;
+let projectedHDRI = null;
+let hdriTexture = null;
+let hdriPreviewVisible = false;
+let hdriAppliedToScene = false;
+
+// HDRI settings
+let hdriSettings = {
+  width: 1024,
+  height: 512,
+  maxDistance: 100,
+  supersampling: 1,
+  center: { x: 0, y: 0, z: 0 }
+};
+
+/**
+ * Extract position and orientation from USD light transform
+ * @param {Object} usdLight - USD light data
+ * @returns {Object} Extracted position and orientation vectors
+ */
+function extractLightTransform(usdLight) {
+  // Default position from position array
+  let position = {
+    x: usdLight.position?.[0] || 0,
+    y: usdLight.position?.[1] || 0,
+    z: usdLight.position?.[2] || 0
+  };
+
+  // Default orientation vectors (USD light default faces -Z in local space)
+  let normal = { x: 0, y: 0, z: -1 };  // Light facing direction
+  let tangent = { x: 1, y: 0, z: 0 };  // Width direction
+
+  // Extract from transform matrix if available (column-major 4x4)
+  if (usdLight.transform && usdLight.transform.length === 16) {
+    const m = usdLight.transform;
+
+    // Position from translation column (indices 12, 13, 14)
+    position.x = m[12];
+    position.y = m[13];
+    position.z = m[14];
+
+    // Extract rotation columns for orientation
+    // Column 0 = X axis (tangent/width direction)
+    tangent.x = m[0];
+    tangent.y = m[1];
+    tangent.z = m[2];
+
+    // Column 2 = Z axis (facing direction, USD lights face -Z)
+    // Negate to get the direction the light is pointing
+    normal.x = -m[8];
+    normal.y = -m[9];
+    normal.z = -m[10];
+
+    // Normalize vectors
+    const normLen = Math.sqrt(normal.x * normal.x + normal.y * normal.y + normal.z * normal.z);
+    if (normLen > 0) {
+      normal.x /= normLen;
+      normal.y /= normLen;
+      normal.z /= normLen;
+    }
+
+    const tanLen = Math.sqrt(tangent.x * tangent.x + tangent.y * tangent.y + tangent.z * tangent.z);
+    if (tanLen > 0) {
+      tangent.x /= tanLen;
+      tangent.y /= tanLen;
+      tangent.z /= tanLen;
+    }
+  } else if (usdLight.direction) {
+    // Use explicit direction if no transform but direction is provided
+    normal.x = usdLight.direction[0];
+    normal.y = usdLight.direction[1];
+    normal.z = usdLight.direction[2];
+  }
+
+  return { position, normal, tangent };
+}
+
+/**
+ * Convert USD light data to projection light format
+ */
+function convertLightDataToProjectionLight(usdLight) {
+  const color = usdLight.color || [1, 1, 1];
+  const intensity = usdLight.intensity || 1;
+  const exposure = usdLight.exposure || 0;
+  const effectiveIntensity = intensity * Math.pow(2, exposure);
+
+  // Extract position and orientation from transform
+  const { position, normal, tangent } = extractLightTransform(usdLight);
+
+  switch (usdLight.type) {
+    case 'sphere':
+    case 'point':
+      return new SphereLight({
+        position: position,
+        radius: usdLight.radius || 0.1,
+        color: { r: color[0], g: color[1], b: color[2] },
+        intensity: effectiveIntensity
+      });
+
+    case 'rect':
+      return new AreaLight({
+        position: position,
+        normal: normal,
+        tangent: tangent,
+        width: usdLight.width || 1,
+        height: usdLight.height || 1,
+        color: { r: color[0], g: color[1], b: color[2] },
+        intensity: effectiveIntensity
+      });
+
+    case 'disk':
+      return new DiskLight({
+        position: position,
+        normal: normal,
+        radius: usdLight.radius || 0.5,
+        color: { r: color[0], g: color[1], b: color[2] },
+        intensity: effectiveIntensity
+      });
+
+    case 'spot':
+      // Treat spot as sphere with small radius
+      return new SphereLight({
+        position: position,
+        radius: 0.05,
+        color: { r: color[0], g: color[1], b: color[2] },
+        intensity: effectiveIntensity
+      });
+
+    default:
+      // For distant, dome, cylinder - use sphere as fallback
+      if (usdLight.type === 'dome') {
+        // Dome light doesn't project to HDRI (it IS an HDRI)
+        return null;
+      }
+      return new SphereLight({
+        position: position,
+        radius: usdLight.radius || 0.1,
+        color: { r: color[0], g: color[1], b: color[2] },
+        intensity: effectiveIntensity
+      });
+  }
+}
+
+/**
+ * Project all loaded lights to HDRI
+ */
+function projectLightsToHDRI(options = {}) {
+  const settings = { ...hdriSettings, ...options };
+
+  console.log('Projecting lights to HDRI...');
+  console.log(`  Resolution: ${settings.width}x${settings.height}`);
+  console.log(`  Lights: ${lightData.length}`);
+
+  // Create projection engine
+  hdriProjection = new LightHDRIProjection({
+    width: settings.width,
+    height: settings.height,
+    center: settings.center,
+    maxDistance: settings.maxDistance
+  });
+
+  // Add lights
+  let addedLights = 0;
+  for (const usdLight of lightData) {
+    const projLight = convertLightDataToProjectionLight(usdLight);
+    if (projLight) {
+      hdriProjection.addLight(projLight);
+      addedLights++;
+    }
+  }
+
+  console.log(`  Added ${addedLights} lights to projection`);
+
+  if (addedLights === 0) {
+    console.warn('No lights to project');
+    return null;
+  }
+
+  // Generate HDRI
+  const startTime = performance.now();
+  if (settings.supersampling > 1) {
+    projectedHDRI = hdriProjection.generateSupersampled(settings.supersampling);
+  } else {
+    projectedHDRI = hdriProjection.generate();
+  }
+  const elapsed = (performance.now() - startTime).toFixed(1);
+
+  console.log(`  Generated in ${elapsed}ms`);
+
+  // Analyze result
+  let minVal = Infinity, maxVal = 0, nonZero = 0;
+  for (let i = 0; i < projectedHDRI.data.length; i++) {
+    const v = projectedHDRI.data[i];
+    if (v > 0) {
+      nonZero++;
+      minVal = Math.min(minVal, v);
+      maxVal = Math.max(maxVal, v);
+    }
+  }
+  console.log(`  Non-zero: ${nonZero} / ${projectedHDRI.data.length}`);
+  console.log(`  Value range: ${minVal.toExponential(2)} - ${maxVal.toExponential(2)}`);
+
+  // Update UI
+  if (window.updateHDRIStatus) {
+    window.updateHDRIStatus({
+      generated: true,
+      width: settings.width,
+      height: settings.height,
+      lights: addedLights,
+      maxValue: maxVal
+    });
+  }
+
+  return projectedHDRI;
+}
+
+/**
+ * Create Three.js texture from projected HDRI
+ */
+function createHDRITexture() {
+  if (!projectedHDRI) {
+    console.warn('No HDRI data to create texture from');
+    return null;
+  }
+
+  // Expand RGB to RGBA
+  const rgbaData = new Float32Array(projectedHDRI.width * projectedHDRI.height * 4);
+  for (let i = 0; i < projectedHDRI.width * projectedHDRI.height; i++) {
+    rgbaData[i * 4] = projectedHDRI.data[i * 3];
+    rgbaData[i * 4 + 1] = projectedHDRI.data[i * 3 + 1];
+    rgbaData[i * 4 + 2] = projectedHDRI.data[i * 3 + 2];
+    rgbaData[i * 4 + 3] = 1.0;
+  }
+
+  // Create texture
+  if (hdriTexture) {
+    hdriTexture.dispose();
+  }
+
+  hdriTexture = new THREE.DataTexture(
+    rgbaData,
+    projectedHDRI.width,
+    projectedHDRI.height,
+    THREE.RGBAFormat,
+    THREE.FloatType
+  );
+
+  hdriTexture.mapping = THREE.EquirectangularReflectionMapping;
+  hdriTexture.wrapS = THREE.RepeatWrapping;
+  hdriTexture.wrapT = THREE.ClampToEdgeWrapping;
+  hdriTexture.magFilter = THREE.LinearFilter;
+  hdriTexture.minFilter = THREE.LinearMipmapLinearFilter;
+  hdriTexture.generateMipmaps = true;
+  hdriTexture.colorSpace = THREE.LinearSRGBColorSpace;
+  hdriTexture.needsUpdate = true;
+
+  return hdriTexture;
+}
+
+/**
+ * Apply projected HDRI to scene environment
+ */
+function applyHDRIToScene() {
+  if (!projectedHDRI) {
+    console.warn('Project lights first');
+    return;
+  }
+
+  const texture = createHDRITexture();
+  if (!texture) return;
+
+  scene.environment = texture;
+  // Optionally set as background too
+  // scene.background = texture;
+
+  hdriAppliedToScene = true;
+  console.log('HDRI applied to scene environment');
+
+  if (window.updateHDRIStatus) {
+    window.updateHDRIStatus({ applied: true });
+  }
+}
+
+/**
+ * Remove HDRI from scene
+ */
+function removeHDRIFromScene() {
+  scene.environment = null;
+  hdriAppliedToScene = false;
+  console.log('HDRI removed from scene');
+
+  if (window.updateHDRIStatus) {
+    window.updateHDRIStatus({ applied: false });
+  }
+}
+
+/**
+ * Toggle HDRI preview panel
+ */
+function toggleHDRIPreview() {
+  hdriPreviewVisible = !hdriPreviewVisible;
+
+  if (window.setHDRIPreviewVisible) {
+    window.setHDRIPreviewVisible(hdriPreviewVisible);
+  }
+
+  if (hdriPreviewVisible && projectedHDRI) {
+    updateHDRIPreviewCanvas();
+  }
+}
+
+/**
+ * Update HDRI preview canvas
+ */
+function updateHDRIPreviewCanvas() {
+  if (!projectedHDRI) return;
+
+  const canvas = document.getElementById('hdri-preview-canvas');
+  if (!canvas) return;
+
+  const ctx = canvas.getContext('2d');
+  const width = projectedHDRI.width;
+  const height = projectedHDRI.height;
+
+  // Set canvas size
+  canvas.width = width;
+  canvas.height = height;
+
+  // Check normalize option
+  const normalizeCheckbox = document.getElementById('hdri-normalize-checkbox');
+  const normalize = normalizeCheckbox ? normalizeCheckbox.checked : false;
+
+  // Find max value for normalization
+  let maxVal = 1;
+  if (normalize) {
+    for (let i = 0; i < projectedHDRI.data.length; i++) {
+      maxVal = Math.max(maxVal, projectedHDRI.data[i]);
+    }
+  }
+
+  // Create image data
+  const imageData = ctx.createImageData(width, height);
+  const data = imageData.data;
+
+  // Get exposure from settings
+  const exposure = Math.pow(2, window.currentExposure || 0);
+
+  // Tone map and convert to sRGB
+  for (let i = 0; i < width * height; i++) {
+    let r = projectedHDRI.data[i * 3] * exposure;
+    let g = projectedHDRI.data[i * 3 + 1] * exposure;
+    let b = projectedHDRI.data[i * 3 + 2] * exposure;
+
+    // Apply normalization if enabled
+    if (normalize && maxVal > 0) {
+      r = r / maxVal;
+      g = g / maxVal;
+      b = b / maxVal;
+    } else {
+      // Reinhard tone mapping (only when not normalizing)
+      r = r / (1 + r);
+      g = g / (1 + g);
+      b = b / (1 + b);
+    }
+
+    // Gamma correction
+    const gamma = 1 / 2.2;
+    r = Math.pow(Math.max(0, r), gamma);
+    g = Math.pow(Math.max(0, g), gamma);
+    b = Math.pow(Math.max(0, b), gamma);
+
+    data[i * 4] = Math.floor(Math.min(255, r * 255));
+    data[i * 4 + 1] = Math.floor(Math.min(255, g * 255));
+    data[i * 4 + 2] = Math.floor(Math.min(255, b * 255));
+    data[i * 4 + 3] = 255;
+  }
+
+  ctx.putImageData(imageData, 0, 0);
+
+  // Setup mouse event handlers for pixel value display
+  setupHDRICanvasMouseHandler(canvas);
+}
+
+// Track if mouse handler is already set up
+let hdriCanvasMouseHandlerSet = false;
+
+/**
+ * Setup mouse event handlers for HDRI canvas pixel display
+ */
+function setupHDRICanvasMouseHandler(canvas) {
+  if (hdriCanvasMouseHandlerSet) return;
+  hdriCanvasMouseHandlerSet = true;
+
+  const pixelInfo = document.getElementById('hdri-pixel-info');
+  if (!pixelInfo) return;
+
+  canvas.addEventListener('mousemove', (e) => {
+    if (!projectedHDRI) return;
+
+    const rect = canvas.getBoundingClientRect();
+    const scaleX = projectedHDRI.width / rect.width;
+    const scaleY = projectedHDRI.height / rect.height;
+
+    const x = Math.floor((e.clientX - rect.left) * scaleX);
+    const y = Math.floor((e.clientY - rect.top) * scaleY);
+
+    if (x >= 0 && x < projectedHDRI.width && y >= 0 && y < projectedHDRI.height) {
+      const idx = (y * projectedHDRI.width + x) * 3;
+      const r = projectedHDRI.data[idx];
+      const g = projectedHDRI.data[idx + 1];
+      const b = projectedHDRI.data[idx + 2];
+
+      // Format values - use scientific notation for very small/large values
+      const formatVal = (v) => {
+        if (v === 0) return '0';
+        if (Math.abs(v) < 0.001 || Math.abs(v) >= 1000) {
+          return v.toExponential(2);
+        }
+        return v.toFixed(3);
+      };
+
+      pixelInfo.innerHTML = `<span class="coord">[${x}, ${y}]</span> ` +
+        `<span class="value">R:</span>${formatVal(r)} ` +
+        `<span class="value">G:</span>${formatVal(g)} ` +
+        `<span class="value">B:</span>${formatVal(b)}`;
+    }
+  });
+
+  canvas.addEventListener('mouseleave', () => {
+    pixelInfo.innerHTML = '<span class="coord">Move mouse over image</span>';
+  });
+}
+
+// ============================================
+// Envmap Preview (DomeLight texture)
+// ============================================
+
+// Store current envmap image data
+let currentEnvmapImageData = null;
+let envmapCanvasMouseHandlerSet = false;
+
+/**
+ * Show envmap section with DomeLight data
+ * @param {Object} domeLight - USD DomeLight data
+ * @param {Object} imageData - Raw image data from getImage()
+ */
+function showEnvmapSection(domeLight, imageData) {
+  const section = document.getElementById('envmap-section');
+  if (!section) return;
+
+  section.style.display = 'block';
+
+  // Update color swatch
+  const colorSwatch = document.getElementById('envmap-color-swatch');
+  const colorValue = document.getElementById('envmap-color-value');
+  if (colorSwatch && domeLight.color) {
+    const r = Math.round((domeLight.color[0] || 1) * 255);
+    const g = Math.round((domeLight.color[1] || 1) * 255);
+    const b = Math.round((domeLight.color[2] || 1) * 255);
+    colorSwatch.style.background = `rgb(${r}, ${g}, ${b})`;
+    colorValue.textContent = `(${domeLight.color[0]?.toFixed(2) || 1}, ${domeLight.color[1]?.toFixed(2) || 1}, ${domeLight.color[2]?.toFixed(2) || 1})`;
+  }
+
+  // Update texture info
+  const textureInfo = document.getElementById('envmap-texture-info');
+  if (textureInfo) {
+    if (domeLight.textureFile) {
+      textureInfo.textContent = domeLight.textureFile;
+    } else {
+      textureInfo.textContent = 'None';
+    }
+  }
+
+  // Show preview if we have valid image data
+  const previewContainer = document.getElementById('envmap-preview-container');
+  if (previewContainer && imageData && imageData.width > 0 && imageData.height > 0) {
+    currentEnvmapImageData = imageData;
+    previewContainer.style.display = 'block';
+
+    // Update dimensions
+    const dimensions = document.getElementById('envmap-dimensions');
+    if (dimensions) {
+      dimensions.textContent = `${imageData.width} x ${imageData.height}`;
+    }
+
+    // Render to canvas
+    updateEnvmapPreviewCanvas();
+  } else {
+    if (previewContainer) {
+      previewContainer.style.display = 'none';
+    }
+  }
+}
+
+/**
+ * Hide envmap section
+ */
+function hideEnvmapSection() {
+  const section = document.getElementById('envmap-section');
+  if (section) {
+    section.style.display = 'none';
+  }
+  currentEnvmapImageData = null;
+}
+
+/**
+ * Update envmap preview canvas
+ */
+function updateEnvmapPreviewCanvas() {
+  if (!currentEnvmapImageData) return;
+
+  const canvas = document.getElementById('envmap-preview-canvas');
+  if (!canvas) return;
+
+  const ctx = canvas.getContext('2d');
+  const width = currentEnvmapImageData.width;
+  const height = currentEnvmapImageData.height;
+
+  // Set canvas size (limit to reasonable preview size)
+  const maxPreviewWidth = 512;
+  const scale = width > maxPreviewWidth ? maxPreviewWidth / width : 1;
+  canvas.width = Math.floor(width * scale);
+  canvas.height = Math.floor(height * scale);
+
+  // Create image data
+  const imageData = ctx.createImageData(canvas.width, canvas.height);
+  const data = imageData.data;
+
+  // Determine if this is HDR data
+  const srcData = currentEnvmapImageData.data;
+  const channels = currentEnvmapImageData.channels || 3;
+  const bytesPerPixel = srcData.length / (width * height);
+  const isFloat = bytesPerPixel >= channels * 4;
+
+  // Get source data as float
+  let floatSrc;
+  if (isFloat) {
+    floatSrc = new Float32Array(srcData.buffer, srcData.byteOffset, width * height * channels);
+  }
+
+  // Find max value for HDR normalization
+  let maxVal = 1;
+  if (isFloat) {
+    for (let i = 0; i < floatSrc.length; i++) {
+      if (isFinite(floatSrc[i])) {
+        maxVal = Math.max(maxVal, floatSrc[i]);
+      }
+    }
+  }
+
+  // Render with bilinear sampling for downscaled preview
+  for (let dy = 0; dy < canvas.height; dy++) {
+    for (let dx = 0; dx < canvas.width; dx++) {
+      // Map to source coordinates
+      const sx = dx / scale;
+      const sy = dy / scale;
+      const srcX = Math.min(width - 1, Math.floor(sx));
+      const srcY = Math.min(height - 1, Math.floor(sy));
+      const srcIdx = (srcY * width + srcX) * channels;
+
+      let r, g, b;
+      if (isFloat) {
+        r = floatSrc[srcIdx] || 0;
+        g = channels > 1 ? (floatSrc[srcIdx + 1] || 0) : r;
+        b = channels > 2 ? (floatSrc[srcIdx + 2] || 0) : r;
+
+        // Normalize and tone map
+        r = r / maxVal;
+        g = g / maxVal;
+        b = b / maxVal;
+
+        // Apply reinhard tone mapping
+        r = r / (1 + r);
+        g = g / (1 + g);
+        b = b / (1 + b);
+
+        // Gamma correction
+        r = Math.pow(Math.max(0, r), 1/2.2);
+        g = Math.pow(Math.max(0, g), 1/2.2);
+        b = Math.pow(Math.max(0, b), 1/2.2);
+      } else {
+        r = (srcData[srcIdx] || 0) / 255;
+        g = channels > 1 ? (srcData[srcIdx + 1] || 0) / 255 : r;
+        b = channels > 2 ? (srcData[srcIdx + 2] || 0) / 255 : r;
+      }
+
+      const dstIdx = (dy * canvas.width + dx) * 4;
+      data[dstIdx] = Math.floor(Math.min(255, r * 255));
+      data[dstIdx + 1] = Math.floor(Math.min(255, g * 255));
+      data[dstIdx + 2] = Math.floor(Math.min(255, b * 255));
+      data[dstIdx + 3] = 255;
+    }
+  }
+
+  ctx.putImageData(imageData, 0, 0);
+
+  // Setup mouse handler for pixel info
+  setupEnvmapCanvasMouseHandler(canvas);
+}
+
+/**
+ * Setup mouse handler for envmap canvas
+ */
+function setupEnvmapCanvasMouseHandler(canvas) {
+  if (envmapCanvasMouseHandlerSet) return;
+  envmapCanvasMouseHandlerSet = true;
+
+  const pixelInfo = document.getElementById('envmap-pixel-value');
+  if (!pixelInfo) return;
+
+  canvas.addEventListener('mousemove', (e) => {
+    if (!currentEnvmapImageData) return;
+
+    const rect = canvas.getBoundingClientRect();
+    const width = currentEnvmapImageData.width;
+    const height = currentEnvmapImageData.height;
+    const channels = currentEnvmapImageData.channels || 3;
+
+    const scaleX = width / rect.width;
+    const scaleY = height / rect.height;
+
+    const x = Math.floor((e.clientX - rect.left) * scaleX);
+    const y = Math.floor((e.clientY - rect.top) * scaleY);
+
+    if (x >= 0 && x < width && y >= 0 && y < height) {
+      const srcData = currentEnvmapImageData.data;
+      const bytesPerPixel = srcData.length / (width * height);
+      const isFloat = bytesPerPixel >= channels * 4;
+
+      let r, g, b;
+      const srcIdx = (y * width + x) * channels;
+
+      if (isFloat) {
+        const floatSrc = new Float32Array(srcData.buffer, srcData.byteOffset, width * height * channels);
+        r = floatSrc[srcIdx] || 0;
+        g = channels > 1 ? (floatSrc[srcIdx + 1] || 0) : r;
+        b = channels > 2 ? (floatSrc[srcIdx + 2] || 0) : r;
+      } else {
+        r = (srcData[srcIdx] || 0) / 255;
+        g = channels > 1 ? (srcData[srcIdx + 1] || 0) / 255 : r;
+        b = channels > 2 ? (srcData[srcIdx + 2] || 0) / 255 : r;
+      }
+
+      const formatVal = (v) => {
+        if (v === 0) return '0';
+        if (Math.abs(v) < 0.001 || Math.abs(v) >= 1000) {
+          return v.toExponential(2);
+        }
+        return v.toFixed(3);
+      };
+
+      pixelInfo.textContent = `[${x},${y}] R:${formatVal(r)} G:${formatVal(g)} B:${formatVal(b)}`;
+    }
+  });
+
+  canvas.addEventListener('mouseleave', () => {
+    pixelInfo.textContent = '';
+  });
+}
+
+/**
+ * Export projected HDRI to file
+ */
+async function exportHDRI(format = 'exr') {
+  if (!projectedHDRI) {
+    console.warn('Project lights first');
+    return;
+  }
+
+  console.log(`Exporting HDRI as ${format.toUpperCase()}...`);
+
+  let blob;
+  let filename;
+
+  switch (format.toLowerCase()) {
+    case 'exr': {
+      const exrData = await writeEXR(projectedHDRI, {
+        compression: 'zip',
+        pixelType: 'half'
+      });
+      blob = new Blob([exrData], { type: 'application/octet-stream' });
+      filename = 'light-projection.exr';
+      break;
+    }
+
+    case 'hdr': {
+      // Write Radiance HDR format
+      const width = projectedHDRI.width;
+      const height = projectedHDRI.height;
+      const rgbe = new Uint8Array(width * height * 4);
+
+      for (let i = 0; i < width * height; i++) {
+        const r = projectedHDRI.data[i * 3];
+        const g = projectedHDRI.data[i * 3 + 1];
+        const b = projectedHDRI.data[i * 3 + 2];
+
+        const v = Math.max(r, g, b);
+        if (v < 1e-32) {
+          rgbe[i * 4] = 0;
+          rgbe[i * 4 + 1] = 0;
+          rgbe[i * 4 + 2] = 0;
+          rgbe[i * 4 + 3] = 0;
+        } else {
+          const e = Math.ceil(Math.log2(v));
+          const scale = Math.pow(2, -e + 8);
+          rgbe[i * 4] = Math.min(255, Math.floor(r * scale));
+          rgbe[i * 4 + 1] = Math.min(255, Math.floor(g * scale));
+          rgbe[i * 4 + 2] = Math.min(255, Math.floor(b * scale));
+          rgbe[i * 4 + 3] = e + 128;
+        }
+      }
+
+      const header = `#?RADIANCE\nFORMAT=32-bit_rle_rgbe\n\n-Y ${height} +X ${width}\n`;
+      const headerBytes = new TextEncoder().encode(header);
+      const totalLength = headerBytes.length + rgbe.length;
+      const combined = new Uint8Array(totalLength);
+      combined.set(headerBytes, 0);
+      combined.set(rgbe, headerBytes.length);
+
+      blob = new Blob([combined], { type: 'application/octet-stream' });
+      filename = 'light-projection.hdr';
+      break;
+    }
+
+    default:
+      console.warn(`Unknown format: ${format}`);
+      return;
+  }
+
+  // Download file
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+
+  console.log(`Exported: ${filename} (${blob.size} bytes)`);
+}
+
+/**
+ * Set HDRI resolution
+ */
+function setHDRIResolution(width, height) {
+  hdriSettings.width = width;
+  hdriSettings.height = height || Math.floor(width / 2);
+  console.log(`HDRI resolution set to ${hdriSettings.width}x${hdriSettings.height}`);
+}
+
+/**
+ * Set HDRI projection center
+ */
+function setHDRICenter(x, y, z) {
+  hdriSettings.center = { x, y, z };
+  console.log(`HDRI center set to (${x}, ${y}, ${z})`);
+}
+
+/**
+ * Set HDRI max distance
+ */
+function setHDRIMaxDistance(distance) {
+  hdriSettings.maxDistance = distance;
+  console.log(`HDRI max distance set to ${distance}`);
+}
+
+/**
+ * Get current HDRI data (for external use)
+ */
+function getProjectedHDRI() {
+  return projectedHDRI;
 }
 
 // ============================================
@@ -1936,7 +3559,7 @@ async function loadUSDFromBuffer(buffer, filename) {
     console.log(`  Materials: ${usd.numMaterials()}`);
     console.log(`  Lights: ${usd.numLights()}`);
 
-    loadLightsFromUSD(usd);
+    await loadLightsFromUSD(usd);
 
     return usd;
   } catch (error) {
@@ -2020,6 +3643,69 @@ function focusOnLight(lightIndex) {
   animateCamera();
 }
 
+/**
+ * Toggle light on/off
+ * @param {number} lightIndex - Index of the light to toggle
+ * @param {boolean} [enabled] - Optional explicit state (true=on, false=off)
+ * @returns {boolean} New state of the light
+ */
+function toggleLight(lightIndex, enabled) {
+  if (lightIndex < 0 || lightIndex >= threeLights.length) {
+    console.warn(`Invalid light index: ${lightIndex}`);
+    return false;
+  }
+
+  const lightObj = threeLights[lightIndex];
+  const helper = lightHelpers[lightIndex];
+
+  // Determine new state
+  const newState = enabled !== undefined ? enabled : !lightObj.visible;
+
+  // Toggle the light object
+  lightObj.visible = newState;
+
+  // Toggle the helper if it exists
+  if (helper) {
+    helper.visible = newState;
+  }
+
+  // Update lightData state
+  if (lightData[lightIndex]) {
+    lightData[lightIndex].enabled = newState;
+  }
+
+  console.log(`Light ${lightIndex} (${lightData[lightIndex]?.name || 'unnamed'}): ${newState ? 'ON' : 'OFF'}`);
+
+  return newState;
+}
+
+/**
+ * Set all lights on or off
+ * @param {boolean} enabled - true to turn all on, false to turn all off
+ */
+function setAllLightsEnabled(enabled) {
+  for (let i = 0; i < threeLights.length; i++) {
+    toggleLight(i, enabled);
+  }
+
+  // Notify UI to update
+  if (window.updateLightListStates) {
+    window.updateLightListStates();
+  }
+}
+
+/**
+ * Get light enabled state
+ * @param {number} lightIndex - Index of the light
+ * @returns {boolean} Whether the light is enabled
+ */
+function isLightEnabled(lightIndex) {
+  if (lightIndex < 0 || lightIndex >= threeLights.length) {
+    return false;
+  }
+  return threeLights[lightIndex].visible;
+}
+
 // ============================================
 // Event Handlers
 // ============================================
@@ -2043,6 +3729,9 @@ window.addEventListener('loadUSDFile', async (event) => {
 window.loadEmbeddedScene = loadEmbeddedScene;
 window.clearLights = clearLights;
 window.focusOnLight = focusOnLight;
+window.toggleLight = toggleLight;
+window.setAllLightsEnabled = setAllLightsEnabled;
+window.isLightEnabled = isLightEnabled;
 window.setToneMapping = setToneMapping;
 window.setExposure = setExposure;
 window.setGamma = setGamma;
@@ -2056,6 +3745,35 @@ window.spectralToRGB = spectralToRGB;
 window.applyDemoSpectralData = applyDemoSpectralData;
 window.applyBlackbodyToSelected = applyBlackbodyToSelected;
 window.generateBlackbodySpectrum = generateBlackbodySpectrum;
+
+// HDRI Projection functions
+window.projectLightsToHDRI = projectLightsToHDRI;
+window.toggleHDRIPreview = toggleHDRIPreview;
+window.updateHDRIPreviewCanvas = updateHDRIPreviewCanvas;
+window.applyHDRIToScene = applyHDRIToScene;
+window.removeHDRIFromScene = removeHDRIFromScene;
+window.exportHDRI = exportHDRI;
+window.setHDRIResolution = setHDRIResolution;
+window.setHDRICenter = setHDRICenter;
+window.setHDRIMaxDistance = setHDRIMaxDistance;
+window.getProjectedHDRI = getProjectedHDRI;
+
+// HDRI Locator functions
+window.createHDRILocator = createHDRILocator;
+window.toggleHDRILocator = toggleHDRILocator;
+window.setHDRILocatorPosition = setHDRILocatorPosition;
+window.getHDRICenter = getHDRICenter;
+window.updateHDRIRangeIndicator = updateHDRIRangeIndicator;
+
+// Light Selection and Transform functions
+window.selectLight3D = selectLight3D;
+window.setLightTransformMode = setLightTransformMode;
+window.getSelectedLight3DIndex = () => selectedLight3DIndex;
+
+// Envmap preview functions
+window.showEnvmapSection = showEnvmapSection;
+window.hideEnvmapSection = hideEnvmapSection;
+window.updateEnvmapPreviewCanvas = updateEnvmapPreviewCanvas;
 
 // Window resize handler
 window.addEventListener('resize', () => {
