@@ -2133,13 +2133,9 @@ TEST(TypedArray_At) {
     EXPECT_EQ(arr.at(1), 2);
     EXPECT_EQ(arr.at(2), 3);
 
-    bool threw = false;
-    try {
-        arr.at(10);
-    } catch (const std::out_of_range&) {
-        threw = true;
-    }
-    EXPECT_TRUE(threw);
+    // Note: Out-of-bounds access now triggers assert() instead of throwing
+    // exception (exceptions are disabled in the build).
+    // We cannot test this without terminating the program.
 }
 
 TEST(TypedArray_Comparison) {
@@ -2173,7 +2169,9 @@ TEST(Buffer_Basic) {
 }
 
 TEST(Buffer_Chunked) {
-    Buffer<16> buf(1024 * 100, Buffer<16>::StorageMode::Chunked);  // 100KB
+    Buffer<16> buf;
+    buf.set_chunk_size(1024);  // Use 1KB chunks for testing
+    buf.resize(1024 * 100, Buffer<16>::StorageMode::Chunked);  // 100KB
 
     EXPECT_EQ(buf.size(), 1024u * 100);
     EXPECT_EQ(buf.mode(), Buffer<16>::StorageMode::Chunked);

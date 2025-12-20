@@ -9,6 +9,8 @@
 #include "lightusd/prim.hh"
 #include "lightusd/value.hh"
 #include "lightusd/relationship.hh"
+#include "lightusd/lightexr.hh"
+#include "lightusd/lighthdr.hh"
 
 #include <algorithm>
 #include <cmath>
@@ -526,51 +528,7 @@ std::string get_file_extension(const std::string& path) {
     return ext;
 }
 
-// Simple HDR (Radiance RGBE) loader
-bool load_hdr_radiance(const uint8_t* data, size_t size,
-                       std::vector<float>& pixels,
-                       uint32_t& width, uint32_t& height) {
-    // Very basic HDR loader - just enough for demo purposes
-    // Real implementation would use stb_image or TinyEXR
-
-    // Skip header
-    size_t pos = 0;
-    while (pos < size && !(data[pos] == '\n' && pos > 0 && data[pos-1] == '\n')) {
-        pos++;
-    }
-    if (pos >= size) return false;
-    pos++; // Skip the blank line
-
-    // Parse resolution line: -Y height +X width
-    int w = 0, h = 0;
-    char line[256];
-    size_t line_len = 0;
-    while (pos < size && data[pos] != '\n' && line_len < 255) {
-        line[line_len++] = static_cast<char>(data[pos++]);
-    }
-    line[line_len] = '\0';
-    pos++; // Skip newline
-
-    if (sscanf(line, "-Y %d +X %d", &h, &w) != 2 &&
-        sscanf(line, "+X %d +Y %d", &w, &h) != 2) {
-        return false;
-    }
-
-    width = static_cast<uint32_t>(w);
-    height = static_cast<uint32_t>(h);
-    pixels.resize(width * height * 4);
-
-    // For simplicity, just fill with gray if we can't decode the RLE
-    // A proper implementation would decode the RGBE data
-    for (size_t i = 0; i < width * height; i++) {
-        pixels[i * 4 + 0] = 0.5f;
-        pixels[i * 4 + 1] = 0.5f;
-        pixels[i * 4 + 2] = 0.5f;
-        pixels[i * 4 + 3] = 1.0f;
-    }
-
-    return true;
-}
+// HDR loading is now handled by lighthdr library
 
 }  // anonymous namespace
 
@@ -865,15 +823,43 @@ Result<RenderTexture> RenderConverter::Impl::load_texture(
             if (tex.is_hdr) {
                 // HDR decode
                 if (tex.mime_type == "image/vnd.radiance") {
-                    if (!load_hdr_radiance(file_data.data(), file_data.size(),
-                                           tex.data_f32, tex.width, tex.height)) {
-                        return Error("Failed to decode HDR texture");
+                    // Use LightHDR for Radiance HDR decoding
+                    lighthdr::HDRImage hdr_image;
+                    lighthdr::LoadOptions hdr_opts;
+                    hdr_opts.output_rgba = true;
+
+                    auto result = lighthdr::LoadHDRFromMemory(
+                        file_data.data(), file_data.size(), &hdr_image, hdr_opts);
+
+                    if (!result) {
+                        return Error("Failed to decode HDR: " + result.error);
                     }
-                    tex.channels = 4;
+
+                    tex.width = hdr_image.header.width;
+                    tex.height = hdr_image.header.height;
+                    tex.channels = hdr_image.channels;
+                    tex.data_f32 = std::move(hdr_image.pixels);
+                    tex.format = TextureFormat::RGBA32F;
+                } else if (tex.mime_type == "image/x-exr") {
+                    // Use LightEXR for EXR decoding
+                    lightexr::EXRImage exr_image;
+                    lightexr::LoadOptions exr_opts;
+                    exr_opts.convert_to_rgba = true;
+
+                    auto result = lightexr::LoadEXRFromMemory(
+                        file_data.data(), file_data.size(), &exr_image, exr_opts);
+
+                    if (!result) {
+                        return Error("Failed to decode EXR: " + result.error);
+                    }
+
+                    tex.width = static_cast<uint32_t>(exr_image.header.width());
+                    tex.height = static_cast<uint32_t>(exr_image.header.height());
+                    tex.channels = static_cast<uint32_t>(exr_image.num_channels());
+                    tex.data_f32 = std::move(exr_image.pixels);
                     tex.format = TextureFormat::RGBA32F;
                 } else {
-                    // EXR would need TinyEXR
-                    return Error("EXR decode not implemented (use TinyEXR)");
+                    return Error("Unknown HDR format");
                 }
             } else {
                 // LDR decode would need stb_image
@@ -1003,7 +989,7 @@ Mat4 RenderConverter::Impl::extract_transform(const Prim& prim, double time) {
     const Attribute* order_attr = prim.get_attribute("xformOpOrder");
     if (order_attr) {
         // xformOpOrder is a token[] - get the value and parse
-        auto order_result = order_attr->get_value(time);
+        auto order_result = order_attr->get(time);
         if (order_result && order_result.value().is_array()) {
             // Parse the array - check type
             std::string type_name = order_result.value().type_name();
@@ -1032,7 +1018,7 @@ Mat4 RenderConverter::Impl::extract_transform(const Prim& prim, double time) {
         const Attribute* attr = prim.get_attribute(op_name);
         if (!attr) continue;
 
-        auto val_result = attr->get_value(time);
+        auto val_result = attr->get(time);
         if (!val_result) continue;
 
         const Value& val = val_result.value();

@@ -8,7 +8,6 @@
 #include "lightusd/path.hh"
 #include <cstring>
 #include <algorithm>
-#include <vector>
 
 namespace lightusd {
 namespace v1 {
@@ -70,17 +69,17 @@ void Value::destroy() {
             switch (base) {
                 case TypeId::String:
                 case TypeId::AssetPath:
-                    delete static_cast<std::vector<std::string>*>(storage_.heap_);
+                    delete static_cast<TypedArray<std::string>*>(storage_.heap_);
                     break;
                 case TypeId::Token:
-                    delete static_cast<std::vector<Token>*>(storage_.heap_);
+                    delete static_cast<TypedArray<Token>*>(storage_.heap_);
                     break;
                 case TypeId::Path:
-                    delete static_cast<std::vector<Path>*>(storage_.heap_);
+                    delete static_cast<TypedArray<Path>*>(storage_.heap_);
                     break;
                 default:
-                    // POD arrays
-                    delete[] static_cast<uint8_t*>(storage_.heap_);
+                    // POD arrays - use Buffer for chunked storage
+                    delete static_cast<Buffer<32>*>(storage_.heap_);
                     break;
             }
         } else {
@@ -133,26 +132,21 @@ void Value::copy_from(const Value& other) {
             switch (base) {
                 case TypeId::String:
                 case TypeId::AssetPath:
-                    storage_.heap_ = new std::vector<std::string>(
-                        *static_cast<const std::vector<std::string>*>(other.storage_.heap_));
+                    storage_.heap_ = new TypedArray<std::string>(
+                        *static_cast<const TypedArray<std::string>*>(other.storage_.heap_));
                     break;
                 case TypeId::Token:
-                    storage_.heap_ = new std::vector<Token>(
-                        *static_cast<const std::vector<Token>*>(other.storage_.heap_));
+                    storage_.heap_ = new TypedArray<Token>(
+                        *static_cast<const TypedArray<Token>*>(other.storage_.heap_));
                     break;
                 case TypeId::Path:
-                    storage_.heap_ = new std::vector<Path>(
-                        *static_cast<const std::vector<Path>*>(other.storage_.heap_));
+                    storage_.heap_ = new TypedArray<Path>(
+                        *static_cast<const TypedArray<Path>*>(other.storage_.heap_));
                     break;
                 default: {
-                    // POD arrays - copy raw bytes
-                    const TypeDescriptor* desc = get_type_descriptor(base);
-                    size_t size = desc ? desc->size : 0;
-                    size *= (flags_ & kArraySizeMask);
-                    if (size > 0) {
-                        storage_.heap_ = new uint8_t[size];
-                        std::memcpy(storage_.heap_, other.storage_.heap_, size);
-                    }
+                    // POD arrays - use Buffer for chunked storage
+                    storage_.heap_ = new Buffer<32>(
+                        *static_cast<const Buffer<32>*>(other.storage_.heap_));
                     break;
                 }
             }
@@ -562,8 +556,9 @@ Value Value::from_int32_array(const int32_t* data, size_t count) {
     v.set_heap(true);
     v.flags_ |= (count & kArraySizeMask);
     size_t size = sizeof(int32_t) * count;
-    v.storage_.heap_ = new uint8_t[size];
-    std::memcpy(v.storage_.heap_, data, size);
+    auto* buf = new Buffer<32>(size, Buffer<32>::StorageMode::Chunked);
+    buf->copy_from(reinterpret_cast<const uint8_t*>(data), 0, size);
+    v.storage_.heap_ = buf;
     return v;
 }
 
@@ -573,8 +568,9 @@ Value Value::from_float_array(const float* data, size_t count) {
     v.set_heap(true);
     v.flags_ |= (count & kArraySizeMask);
     size_t size = sizeof(float) * count;
-    v.storage_.heap_ = new uint8_t[size];
-    std::memcpy(v.storage_.heap_, data, size);
+    auto* buf = new Buffer<32>(size, Buffer<32>::StorageMode::Chunked);
+    buf->copy_from(reinterpret_cast<const uint8_t*>(data), 0, size);
+    v.storage_.heap_ = buf;
     return v;
 }
 
@@ -584,8 +580,9 @@ Value Value::from_double_array(const double* data, size_t count) {
     v.set_heap(true);
     v.flags_ |= (count & kArraySizeMask);
     size_t size = sizeof(double) * count;
-    v.storage_.heap_ = new uint8_t[size];
-    std::memcpy(v.storage_.heap_, data, size);
+    auto* buf = new Buffer<32>(size, Buffer<32>::StorageMode::Chunked);
+    buf->copy_from(reinterpret_cast<const uint8_t*>(data), 0, size);
+    v.storage_.heap_ = buf;
     return v;
 }
 
@@ -595,8 +592,9 @@ Value Value::from_float2_array(const float* data, size_t count) {
     v.set_heap(true);
     v.flags_ |= (count & kArraySizeMask);
     size_t size = sizeof(float) * 2 * count;
-    v.storage_.heap_ = new uint8_t[size];
-    std::memcpy(v.storage_.heap_, data, size);
+    auto* buf = new Buffer<32>(size, Buffer<32>::StorageMode::Chunked);
+    buf->copy_from(reinterpret_cast<const uint8_t*>(data), 0, size);
+    v.storage_.heap_ = buf;
     return v;
 }
 
@@ -606,8 +604,9 @@ Value Value::from_float3_array(const float* data, size_t count) {
     v.set_heap(true);
     v.flags_ |= (count & kArraySizeMask);
     size_t size = sizeof(float) * 3 * count;
-    v.storage_.heap_ = new uint8_t[size];
-    std::memcpy(v.storage_.heap_, data, size);
+    auto* buf = new Buffer<32>(size, Buffer<32>::StorageMode::Chunked);
+    buf->copy_from(reinterpret_cast<const uint8_t*>(data), 0, size);
+    v.storage_.heap_ = buf;
     return v;
 }
 
@@ -617,8 +616,9 @@ Value Value::from_float4_array(const float* data, size_t count) {
     v.set_heap(true);
     v.flags_ |= (count & kArraySizeMask);
     size_t size = sizeof(float) * 4 * count;
-    v.storage_.heap_ = new uint8_t[size];
-    std::memcpy(v.storage_.heap_, data, size);
+    auto* buf = new Buffer<32>(size, Buffer<32>::StorageMode::Chunked);
+    buf->copy_from(reinterpret_cast<const uint8_t*>(data), 0, size);
+    v.storage_.heap_ = buf;
     return v;
 }
 
@@ -635,7 +635,12 @@ Value Value::from_string_array(const std::vector<std::string>& arr) {
     v.type_id_ = make_array_type(TypeId::String);
     v.set_heap(true);
     v.flags_ |= (arr.size() & kArraySizeMask);
-    v.storage_.heap_ = new std::vector<std::string>(arr);
+    auto* typed_arr = new TypedArray<std::string>();
+    typed_arr->reserve(arr.size());
+    for (const auto& s : arr) {
+        typed_arr->push_back(s);
+    }
+    v.storage_.heap_ = typed_arr;
     return v;
 }
 
@@ -845,34 +850,116 @@ const double* Value::as_timecode() const {
 
 Value::ArrayView Value::as_int32_array() const {
     if (type_id_ != make_array_type(TypeId::Int32)) return ArrayView();
-    return ArrayView(storage_.heap_, flags_ & kArraySizeMask);
+    const auto* buf = static_cast<const Buffer<32>*>(storage_.heap_);
+    // Returns nullptr if storage is chunked
+    return ArrayView(buf->data(), flags_ & kArraySizeMask);
 }
 
 Value::ArrayView Value::as_float_array() const {
     if (type_id_ != make_array_type(TypeId::Float)) return ArrayView();
-    return ArrayView(storage_.heap_, flags_ & kArraySizeMask);
+    const auto* buf = static_cast<const Buffer<32>*>(storage_.heap_);
+    return ArrayView(buf->data(), flags_ & kArraySizeMask);
 }
 
 Value::ArrayView Value::as_double_array() const {
     if (type_id_ != make_array_type(TypeId::Double)) return ArrayView();
-    return ArrayView(storage_.heap_, flags_ & kArraySizeMask);
+    const auto* buf = static_cast<const Buffer<32>*>(storage_.heap_);
+    return ArrayView(buf->data(), flags_ & kArraySizeMask);
 }
 
 Value::ArrayView Value::as_float2_array() const {
     if (type_id_ != make_array_type(TypeId::Float2)) return ArrayView();
-    return ArrayView(storage_.heap_, flags_ & kArraySizeMask);
+    const auto* buf = static_cast<const Buffer<32>*>(storage_.heap_);
+    return ArrayView(buf->data(), flags_ & kArraySizeMask);
 }
 
 Value::ArrayView Value::as_float3_array() const {
     TypeId expected = make_array_type(TypeId::Float3);
     TypeId point3f_arr = make_array_type(TypeId::Point3f);
     if (type_id_ != expected && type_id_ != point3f_arr) return ArrayView();
-    return ArrayView(storage_.heap_, flags_ & kArraySizeMask);
+    const auto* buf = static_cast<const Buffer<32>*>(storage_.heap_);
+    return ArrayView(buf->data(), flags_ & kArraySizeMask);
 }
 
 Value::ArrayView Value::as_float4_array() const {
     if (type_id_ != make_array_type(TypeId::Float4)) return ArrayView();
-    return ArrayView(storage_.heap_, flags_ & kArraySizeMask);
+    const auto* buf = static_cast<const Buffer<32>*>(storage_.heap_);
+    return ArrayView(buf->data(), flags_ & kArraySizeMask);
+}
+
+// ============================================================================
+// Chunked Array Access
+// ============================================================================
+
+bool Value::is_chunked() const {
+    if (!is_array_type(type_id_)) {
+        return false;
+    }
+    TypeId base = get_base_type(type_id_);
+    // Non-POD types use TypedArray which may be chunked
+    if (base == TypeId::String || base == TypeId::AssetPath ||
+        base == TypeId::Token || base == TypeId::Path) {
+        // TypedArray uses Buffer internally, check its contiguity
+        // For now, always check via data() == nullptr pattern
+        return false;  // TypedArray handles this internally
+    }
+    // POD arrays use Buffer directly
+    const auto* buf = static_cast<const Buffer<32>*>(storage_.heap_);
+    return !buf->is_contiguous();
+}
+
+bool Value::get_element_int32(size_t index, int32_t* out) const {
+    if (type_id_ != make_array_type(TypeId::Int32)) return false;
+    if (index >= (flags_ & kArraySizeMask)) return false;
+    const auto* buf = static_cast<const Buffer<32>*>(storage_.heap_);
+    size_t byte_offset = index * sizeof(int32_t);
+    // Read bytes and reconstruct int32_t
+    int32_t val;
+    uint8_t* dst = reinterpret_cast<uint8_t*>(&val);
+    for (size_t i = 0; i < sizeof(int32_t); ++i) {
+        dst[i] = (*buf)[byte_offset + i];
+    }
+    *out = val;
+    return true;
+}
+
+bool Value::get_element_float(size_t index, float* out) const {
+    if (type_id_ != make_array_type(TypeId::Float)) return false;
+    if (index >= (flags_ & kArraySizeMask)) return false;
+    const auto* buf = static_cast<const Buffer<32>*>(storage_.heap_);
+    size_t byte_offset = index * sizeof(float);
+    float val;
+    uint8_t* dst = reinterpret_cast<uint8_t*>(&val);
+    for (size_t i = 0; i < sizeof(float); ++i) {
+        dst[i] = (*buf)[byte_offset + i];
+    }
+    *out = val;
+    return true;
+}
+
+bool Value::get_element_double(size_t index, double* out) const {
+    if (type_id_ != make_array_type(TypeId::Double)) return false;
+    if (index >= (flags_ & kArraySizeMask)) return false;
+    const auto* buf = static_cast<const Buffer<32>*>(storage_.heap_);
+    size_t byte_offset = index * sizeof(double);
+    double val;
+    uint8_t* dst = reinterpret_cast<uint8_t*>(&val);
+    for (size_t i = 0; i < sizeof(double); ++i) {
+        dst[i] = (*buf)[byte_offset + i];
+    }
+    *out = val;
+    return true;
+}
+
+const Buffer<32>* Value::as_pod_buffer() const {
+    if (!is_array_type(type_id_)) return nullptr;
+    TypeId base = get_base_type(type_id_);
+    // Only POD arrays use Buffer directly
+    if (base == TypeId::String || base == TypeId::AssetPath ||
+        base == TypeId::Token || base == TypeId::Path) {
+        return nullptr;
+    }
+    return static_cast<const Buffer<32>*>(storage_.heap_);
 }
 
 // ============================================================================
@@ -918,6 +1005,49 @@ bool Value::operator==(const Value& other) const {
 
     // Handle heap-allocated non-array types
     TypeId base = get_base_type(type_id_);
+
+    // Handle array types
+    if (is_array_type(type_id_)) {
+        size_t count = flags_ & kArraySizeMask;
+        size_t other_count = other.flags_ & kArraySizeMask;
+        if (count != other_count) {
+            return false;
+        }
+
+        // Handle non-POD array types
+        switch (base) {
+            case TypeId::String:
+            case TypeId::AssetPath: {
+                const auto* a = static_cast<const TypedArray<std::string>*>(storage_.heap_);
+                const auto* b = static_cast<const TypedArray<std::string>*>(other.storage_.heap_);
+                return *a == *b;
+            }
+            case TypeId::Token: {
+                const auto* a = static_cast<const TypedArray<Token>*>(storage_.heap_);
+                const auto* b = static_cast<const TypedArray<Token>*>(other.storage_.heap_);
+                return *a == *b;
+            }
+            case TypeId::Path: {
+                const auto* a = static_cast<const TypedArray<Path>*>(storage_.heap_);
+                const auto* b = static_cast<const TypedArray<Path>*>(other.storage_.heap_);
+                return *a == *b;
+            }
+            default: {
+                // POD arrays - compare via Buffer
+                const auto* buf_a = static_cast<const Buffer<32>*>(storage_.heap_);
+                const auto* buf_b = static_cast<const Buffer<32>*>(other.storage_.heap_);
+                size_t byte_size = desc->size * count;
+                for (size_t i = 0; i < byte_size; ++i) {
+                    if ((*buf_a)[i] != (*buf_b)[i]) {
+                        return false;
+                    }
+                }
+                return true;
+            }
+        }
+    }
+
+    // Handle scalar types
     if (base == TypeId::String || base == TypeId::AssetPath) {
         return *static_cast<const std::string*>(storage_.heap_) ==
                *static_cast<const std::string*>(other.storage_.heap_);
@@ -931,17 +1061,8 @@ bool Value::operator==(const Value& other) const {
                *static_cast<const Path*>(other.storage_.heap_);
     }
 
-    // POD comparison
+    // POD scalar comparison
     size_t size = desc->size;
-    if (is_array_type(type_id_)) {
-        size_t count = flags_ & kArraySizeMask;
-        size_t other_count = other.flags_ & kArraySizeMask;
-        if (count != other_count) {
-            return false;
-        }
-        size *= count;
-    }
-
     const void* a = is_heap() ? storage_.heap_ : storage_.inline_;
     const void* b = other.is_heap() ? other.storage_.heap_ : other.storage_.inline_;
 

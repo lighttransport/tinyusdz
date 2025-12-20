@@ -25,6 +25,7 @@
 #include <vector>
 #include <map>
 #include <mutex>
+#include <cstdlib>
 
 namespace lightusd {
 namespace v1 {
@@ -335,6 +336,27 @@ enum class LogLevel {
 void log_message(LogLevel level, const char* file, const char* func,
                  int line, const std::string& message);
 
+// ============================================================================
+// DASSERT Helper Function
+// ============================================================================
+// Must be inside namespace for the macro to find it.
+
+#if !defined(LIGHTUSD_PRODUCTION_BUILD) && !defined(NDEBUG)
+/// Helper function to print assertion failure and abort
+inline void dassert_fail(const char* file, int line, const char* func,
+                         const char* cond, const char* msg = nullptr) {
+    std::cerr << "\n=== DASSERT FAILED ===\n"
+              << "  File: " << file << ":" << line << "\n"
+              << "  Function: " << func << "()\n"
+              << "  Condition: " << cond << "\n";
+    if (msg && msg[0] != '\0') {
+        std::cerr << "  Message: " << msg << "\n";
+    }
+    std::cerr << "======================\n" << std::flush;
+    std::abort();
+}
+#endif
+
 } // namespace v1
 } // namespace lightusd
 
@@ -450,17 +472,51 @@ void log_message(LogLevel level, const char* file, const char* func,
 #define DEBUG_ONLY(x)
 #endif
 
-// Assert with debug output
-#if defined(LIGHTUSD_LOCAL_DEBUG_PRINT)
-#define DASSERT(cond, msg)                                          \
+// ============================================================================
+// DASSERT - Debug Assertion with detailed output
+// ============================================================================
+// Prints file, line, function, condition, and optional message before aborting.
+// In release/production builds, compiles to nothing for zero overhead.
+//
+// Usage:
+//   DASSERT(ptr != nullptr);                    // Basic assertion
+//   DASSERT(index < size, "index out of range"); // With message
+//
+// Output on failure:
+//   DASSERT FAILED: src/value.cc:123 in Value::get()
+//     Condition: index < size
+//     Message: index out of range
+//
+
+#if !defined(LIGHTUSD_PRODUCTION_BUILD) && !defined(NDEBUG)
+
+// Two-argument version: DASSERT(cond, msg)
+#define DASSERT_2(cond, msg)                                        \
     do {                                                            \
         if (!(cond)) {                                              \
-            DCOUT("ASSERTION FAILED: " << #cond << " - " << msg);   \
+            lightusd::v1::dassert_fail(__FILE__, __LINE__,          \
+                                       __func__, #cond, msg);       \
         }                                                           \
     } while (false)
-#else
-#define DASSERT(cond, msg) do {} while (false)
-#endif
+
+// One-argument version: DASSERT(cond)
+#define DASSERT_1(cond)                                             \
+    do {                                                            \
+        if (!(cond)) {                                              \
+            lightusd::v1::dassert_fail(__FILE__, __LINE__,          \
+                                       __func__, #cond, nullptr);   \
+        }                                                           \
+    } while (false)
+
+// Macro overloading trick to support 1 or 2 arguments
+#define DASSERT_GET_MACRO(_1, _2, NAME, ...) NAME
+#define DASSERT(...) DASSERT_GET_MACRO(__VA_ARGS__, DASSERT_2, DASSERT_1)(__VA_ARGS__)
+
+#else  // Production/Release build
+
+#define DASSERT(...) do {} while (false)
+
+#endif  // !LIGHTUSD_PRODUCTION_BUILD && !NDEBUG
 
 // ============================================================================
 // Profiling Macros

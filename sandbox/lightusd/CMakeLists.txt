@@ -76,6 +76,10 @@ set(LIGHTUSD_SOURCES
     src/streaming_loader.cc
     # Async fetch (WASM/Asyncify)
     src/async_fetch.cc
+    # LightEXR - minimal EXR loader
+    src/lightexr.cc
+    # LightHDR - minimal HDR/RGBE loader
+    src/lighthdr.cc
 )
 
 # Header files (for IDE support)
@@ -132,6 +136,10 @@ set(LIGHTUSD_HEADERS
     include/lightusd/async_fetch.hh
     # C++20 Coroutine support
     include/lightusd/coro_fetch.hh
+    # LightEXR - minimal EXR loader
+    include/lightusd/lightexr.hh
+    # LightHDR - minimal HDR/RGBE loader
+    include/lightusd/lighthdr.hh
 )
 
 # Library target

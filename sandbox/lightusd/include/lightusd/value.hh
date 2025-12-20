@@ -9,9 +9,9 @@
 #include <cstdint>
 #include <cstddef>
 #include <string>
-#include <vector>
 
 #include "lightusd/types.hh"
+#include "lightusd/typed_array.hh"
 
 namespace lightusd {
 namespace v1 {
@@ -214,12 +214,28 @@ public:
     };
 
     /// Get array view for specific types
+    /// NOTE: ArrayView::data will be nullptr if storage is chunked
     ArrayView as_int32_array() const;
     ArrayView as_float_array() const;
     ArrayView as_double_array() const;
     ArrayView as_float2_array() const;
     ArrayView as_float3_array() const;
     ArrayView as_float4_array() const;
+
+    // ========== Chunked Array Access ==========
+
+    /// Check if array storage is chunked (data() returns nullptr)
+    bool is_chunked() const;
+
+    /// Get element at index for POD arrays (works with chunked storage)
+    /// Returns false if index out of bounds or not an array type
+    bool get_element_int32(size_t index, int32_t* out) const;
+    bool get_element_float(size_t index, float* out) const;
+    bool get_element_double(size_t index, double* out) const;
+
+    /// Get underlying Buffer for POD arrays (for advanced chunked access)
+    /// Returns nullptr if not a POD array
+    const Buffer<32>* as_pod_buffer() const;
 
     // ========== Raw Access ==========
 

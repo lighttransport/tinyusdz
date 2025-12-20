@@ -13,11 +13,12 @@
 #include <cstddef>
 #include <cstring>
 #include <vector>
-#include <stdexcept>
 #include <type_traits>
 #include <utility>
 #include <iterator>
 #include <new>
+
+#include "lightusd/debug.hh"
 
 namespace lightusd {
 namespace v1 {
@@ -38,10 +39,24 @@ class TypedArray;
 // - Contiguous: Single heap allocation (like std::vector)
 // - Chunked: Multiple smaller allocations to avoid large linear memory blocks
 //
-template<size_t SboSize = 16>
+// Default SBO size is 32 bytes. Chunk size varies by platform:
+// - WASM: 64KB chunks (to work within linear memory constraints)
+// - 64-bit native: 4MB chunks (for better cache locality)
+//
+
+// Platform-specific default chunk size
+#if defined(__EMSCRIPTEN__) || defined(__wasm__) || defined(__wasm32__) || defined(__wasm64__)
+    static constexpr size_t kPlatformDefaultChunkSize = 64 * 1024;        // 64KB for WASM
+#elif defined(__LP64__) || defined(_WIN64) || defined(__x86_64__) || defined(__aarch64__)
+    static constexpr size_t kPlatformDefaultChunkSize = 4 * 1024 * 1024;  // 4MB for 64-bit native
+#else
+    static constexpr size_t kPlatformDefaultChunkSize = 256 * 1024;       // 256KB for 32-bit native
+#endif
+
+template<size_t SboSize = 32>
 class Buffer {
 public:
-    static constexpr size_t kDefaultChunkSize = 64 * 1024;  // 64KB chunks
+    static constexpr size_t kDefaultChunkSize = kPlatformDefaultChunkSize;
     static constexpr size_t kSboSize = SboSize;
 
     enum class StorageMode {
@@ -54,14 +69,16 @@ public:
     // Constructors / Destructor
     // -------------------------------------------------------------------------
 
-    Buffer() noexcept : size_(0), capacity_(SboSize), chunk_size_(kDefaultChunkSize),
-                        mode_(StorageMode::Inline), contiguous_data_(nullptr) {
+    Buffer() noexcept : contiguous_data_(nullptr), chunks_(),
+                        size_(0), capacity_(SboSize),
+                        chunk_size_(kDefaultChunkSize), mode_(StorageMode::Inline) {
         std::memset(inline_, 0, SboSize);
     }
 
     explicit Buffer(size_t size, StorageMode preferred_mode = StorageMode::Chunked)
-        : size_(0), capacity_(0), chunk_size_(kDefaultChunkSize),
-          mode_(StorageMode::Inline), contiguous_data_(nullptr) {
+        : contiguous_data_(nullptr), chunks_(),
+          size_(0), capacity_(0),
+          chunk_size_(kDefaultChunkSize), mode_(StorageMode::Inline) {
         std::memset(inline_, 0, SboSize);
         if (size > 0) {
             resize_internal(size, preferred_mode);
@@ -69,8 +86,9 @@ public:
     }
 
     Buffer(const Buffer& other)
-        : size_(0), capacity_(0), chunk_size_(other.chunk_size_),
-          mode_(StorageMode::Inline), contiguous_data_(nullptr) {
+        : contiguous_data_(nullptr), chunks_(),
+          size_(0), capacity_(0),
+          chunk_size_(other.chunk_size_), mode_(StorageMode::Inline) {
         std::memset(inline_, 0, SboSize);
         if (other.size_ > 0) {
             resize_internal(other.size_, other.mode_);
@@ -79,10 +97,10 @@ public:
     }
 
     Buffer(Buffer&& other) noexcept
-        : size_(other.size_), capacity_(other.capacity_),
-          chunk_size_(other.chunk_size_), mode_(other.mode_),
-          contiguous_data_(other.contiguous_data_),
-          chunks_(std::move(other.chunks_)) {
+        : contiguous_data_(other.contiguous_data_),
+          chunks_(std::move(other.chunks_)),
+          size_(other.size_), capacity_(other.capacity_),
+          chunk_size_(other.chunk_size_), mode_(other.mode_) {
         if (other.mode_ == StorageMode::Inline) {
             std::memcpy(inline_, other.inline_, SboSize);
         }
@@ -223,16 +241,12 @@ public:
     }
 
     uint8_t& at(size_t index) {
-        if (index >= size_) {
-            throw std::out_of_range("Buffer::at: index out of range");
-        }
+        DASSERT(index < size_, "Buffer::at: index out of range");
         return (*this)[index];
     }
 
     const uint8_t& at(size_t index) const {
-        if (index >= size_) {
-            throw std::out_of_range("Buffer::at: index out of range");
-        }
+        DASSERT(index < size_, "Buffer::at: index out of range");
         return (*this)[index];
     }
 
@@ -312,9 +326,7 @@ public:
 
     // Copy a range of bytes to external buffer
     void copy_to(uint8_t* dest, size_t offset, size_t count) const {
-        if (offset + count > size_) {
-            throw std::out_of_range("Buffer::copy_to: range out of bounds");
-        }
+        DASSERT(offset + count <= size_, "Buffer::copy_to: range out of bounds");
 
         if (mode_ != StorageMode::Chunked) {
             std::memcpy(dest, data() + offset, count);
@@ -339,9 +351,7 @@ public:
 
     // Copy from external buffer
     void copy_from(const uint8_t* src, size_t offset, size_t count) {
-        if (offset + count > size_) {
-            throw std::out_of_range("Buffer::copy_from: range out of bounds");
-        }
+        DASSERT(offset + count <= size_, "Buffer::copy_from: range out of bounds");
 
         if (mode_ != StorageMode::Chunked) {
             std::memcpy(data() + offset, src, count);
@@ -500,7 +510,7 @@ private:
 // Provides std::vector-like interface but uses Buffer<N> for storage,
 // enabling chunked memory allocation to reduce peak memory in WASM.
 //
-template<typename T, size_t SboSize = 16>
+template<typename T, size_t SboSize = 32>
 class TypedArray {
 public:
     using value_type = T;
@@ -706,16 +716,12 @@ public:
     }
 
     reference at(size_t index) {
-        if (index >= size_) {
-            throw std::out_of_range("TypedArray::at: index out of range");
-        }
+        DASSERT(index < size_, "TypedArray::at: index out of range");
         return (*this)[index];
     }
 
     const_reference at(size_t index) const {
-        if (index >= size_) {
-            throw std::out_of_range("TypedArray::at: index out of range");
-        }
+        DASSERT(index < size_, "TypedArray::at: index out of range");
         return (*this)[index];
     }
 
