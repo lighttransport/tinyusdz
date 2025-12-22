@@ -20,7 +20,7 @@ This makes LightUSD ideal for:
 
 - **WebAssembly/Browser** - Minimal binary size, async-friendly architecture
 - **Embedded systems** - No exceptions, no RTTI, predictable resource usage
-- **Game engines** - Direct integration without impedance mismatch
+- **3D VLM/LLM, Robotics simulation** - Direct integration without impedance mismatch
 - **Tools** - Fast iteration with explicit control over caching
 - **Security-critical applications** - Auditable codebase, bounded resource consumption
 
