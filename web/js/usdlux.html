@@ -588,6 +588,133 @@
             background: rgba(0, 255, 255, 0.5);
             color: #000;
         }
+        /* Object visibility toggles */
+        .object-toggles {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 6px;
+        }
+        .object-toggle-item {
+            display: flex;
+            align-items: center;
+            gap: 4px;
+            padding: 4px 8px;
+            background: rgba(255, 255, 255, 0.08);
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 11px;
+            color: #aaa;
+            transition: all 0.2s;
+        }
+        .object-toggle-item:hover {
+            background: rgba(255, 255, 255, 0.12);
+        }
+        .object-toggle-item input[type="checkbox"] {
+            width: 14px;
+            height: 14px;
+            cursor: pointer;
+            accent-color: #667eea;
+        }
+        .object-toggle-item input[type="checkbox"]:checked + span {
+            color: #fff;
+        }
+        .object-toggle-item.toggle-all {
+            background: rgba(102, 126, 234, 0.2);
+            border: 1px solid rgba(102, 126, 234, 0.4);
+            width: 100%;
+            justify-content: center;
+            margin-bottom: 4px;
+        }
+        .object-toggle-item.toggle-all:hover {
+            background: rgba(102, 126, 234, 0.3);
+        }
+        .object-toggle-item.toggle-all span {
+            font-weight: bold;
+        }
+        /* Light Properties Editor */
+        #light-properties {
+            margin-top: 12px;
+            padding-top: 12px;
+            border-top: 1px solid rgba(255, 255, 255, 0.2);
+            display: none;
+        }
+        #light-properties.visible {
+            display: block;
+        }
+        #light-properties h4 {
+            margin: 0 0 10px 0;
+            color: #ff9966;
+            font-size: 13px;
+        }
+        #light-properties .prop-name {
+            font-size: 12px;
+            color: #fff;
+            margin-bottom: 8px;
+            padding: 4px 8px;
+            background: rgba(255, 153, 102, 0.2);
+            border-radius: 4px;
+        }
+        .color-picker-row {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin-bottom: 10px;
+        }
+        .color-picker-row label {
+            flex: 0 0 70px;
+            font-size: 11px;
+            color: #888;
+        }
+        .color-picker-row input[type="color"] {
+            width: 40px;
+            height: 28px;
+            padding: 0;
+            border: 1px solid rgba(255, 255, 255, 0.3);
+            border-radius: 4px;
+            cursor: pointer;
+            background: transparent;
+        }
+        .color-picker-row input[type="color"]::-webkit-color-swatch-wrapper {
+            padding: 2px;
+        }
+        .color-picker-row input[type="color"]::-webkit-color-swatch {
+            border-radius: 2px;
+            border: none;
+        }
+        .color-picker-row .color-value {
+            font-size: 10px;
+            color: #aaa;
+            font-family: monospace;
+        }
+        .intensity-row {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin-bottom: 8px;
+        }
+        .intensity-row label {
+            flex: 0 0 70px;
+            font-size: 11px;
+            color: #888;
+        }
+        .intensity-row input[type="range"] {
+            flex: 1;
+        }
+        .intensity-row input[type="number"] {
+            width: 60px;
+            padding: 4px 6px;
+            background: rgba(255, 255, 255, 0.1);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            border-radius: 4px;
+            color: #fff;
+            font-size: 11px;
+            text-align: center;
+        }
+        .intensity-row input[type="number"]:focus {
+            outline: none;
+            border-color: rgba(255, 153, 102, 0.5);
+            background: rgba(255, 153, 102, 0.1);
+        }
     </style>
 </head>
 <body>
@@ -632,6 +759,26 @@
             </div>
         </div>
 
+        <div id="light-properties">
+            <h4>Light Properties</h4>
+            <div class="prop-name" id="selected-light-name">No light selected</div>
+            <div class="color-picker-row">
+                <label>Color:</label>
+                <input type="color" id="light-color-picker" value="#ffffff">
+                <span class="color-value" id="light-color-value">#ffffff</span>
+            </div>
+            <div class="intensity-row">
+                <label>Intensity:</label>
+                <input type="range" id="light-intensity-slider" min="0" max="100" step="0.1" value="1">
+                <input type="number" id="light-intensity-input" min="0" max="10000" step="0.1" value="1">
+            </div>
+            <div class="intensity-row">
+                <label>Exposure:</label>
+                <input type="range" id="light-exposure-slider" min="-10" max="10" step="0.1" value="0">
+                <input type="number" id="light-exposure-input" min="-10" max="10" step="0.1" value="0">
+            </div>
+        </div>
+
         <div id="envmap-section" style="display: none;">
             <h4>Environment Map (DomeLight)</h4>
             <div class="envmap-info">
@@ -651,6 +798,40 @@
                     <span id="envmap-dimensions"></span>
                     <span id="envmap-pixel-value" style="margin-left: 10px;"></span>
                 </div>
+            </div>
+        </div>
+
+        <div class="settings-section">
+            <h4>Scene Objects</h4>
+            <div class="object-toggles">
+                <label class="object-toggle-item toggle-all">
+                    <input type="checkbox" id="toggle-all-meshes" checked>
+                    <span>All Meshes</span>
+                </label>
+                <label class="object-toggle-item">
+                    <input type="checkbox" id="toggle-ground" checked>
+                    <span>Ground</span>
+                </label>
+                <label class="object-toggle-item">
+                    <input type="checkbox" id="toggle-grid" checked>
+                    <span>Grid</span>
+                </label>
+                <label class="object-toggle-item">
+                    <input type="checkbox" id="toggle-sphere" checked>
+                    <span>Sphere</span>
+                </label>
+                <label class="object-toggle-item">
+                    <input type="checkbox" id="toggle-torus" checked>
+                    <span>Torus</span>
+                </label>
+                <label class="object-toggle-item">
+                    <input type="checkbox" id="toggle-box" checked>
+                    <span>Box</span>
+                </label>
+                <label class="object-toggle-item">
+                    <input type="checkbox" id="toggle-helpers" checked>
+                    <span>Light Helpers</span>
+                </label>
             </div>
         </div>
 
@@ -801,8 +982,12 @@
             <span class="coord">Move mouse over image</span>
         </div>
         <div class="hdri-button-row" style="margin-top: 8px;">
-            <button class="button" style="font-size: 10px; background: #555;" onclick="window.updateHDRIPreviewCanvas()">Refresh</button>
+            <button class="button" style="font-size: 10px; background: #555;" onclick="window.refreshHDRIProjection()">Refresh</button>
             <button class="button hdri-apply" id="hdri-preview-apply-btn" onclick="toggleHDRIApply()">Apply to Scene</button>
+        </div>
+        <div style="margin-top: 6px; display: flex; align-items: center; gap: 6px;">
+            <input type="checkbox" id="hdri-live-update" onchange="window.setHDRILiveUpdate(this.checked)">
+            <label for="hdri-live-update" style="font-size: 10px; color: #aaa;">Live Update</label>
         </div>
     </div>
 
@@ -1031,6 +1216,146 @@
         document.getElementById('embedded-select').addEventListener('change', (e) => {
             window.loadEmbeddedScene(e.target.value);
         });
+
+        // Object visibility toggles
+        const meshCheckboxes = ['toggle-ground', 'toggle-sphere', 'toggle-torus', 'toggle-box'];
+
+        // All Meshes toggle
+        document.getElementById('toggle-all-meshes').addEventListener('change', (e) => {
+            const visible = e.target.checked;
+            meshCheckboxes.forEach(id => {
+                const checkbox = document.getElementById(id);
+                checkbox.checked = visible;
+            });
+            if (window.setAllMeshesVisible) {
+                window.setAllMeshesVisible(visible);
+            }
+        });
+
+        // Update "All Meshes" checkbox when individual mesh toggles change
+        function updateAllMeshesCheckbox() {
+            const allChecked = meshCheckboxes.every(id => document.getElementById(id).checked);
+            const someChecked = meshCheckboxes.some(id => document.getElementById(id).checked);
+            const allMeshesCheckbox = document.getElementById('toggle-all-meshes');
+            allMeshesCheckbox.checked = allChecked;
+            allMeshesCheckbox.indeterminate = someChecked && !allChecked;
+        }
+
+        document.getElementById('toggle-ground').addEventListener('change', (e) => {
+            if (window.setObjectVisible) window.setObjectVisible('ground', e.target.checked);
+            updateAllMeshesCheckbox();
+        });
+        document.getElementById('toggle-grid').addEventListener('change', (e) => {
+            if (window.setObjectVisible) window.setObjectVisible('grid', e.target.checked);
+        });
+        document.getElementById('toggle-sphere').addEventListener('change', (e) => {
+            if (window.setObjectVisible) window.setObjectVisible('sphere', e.target.checked);
+            updateAllMeshesCheckbox();
+        });
+        document.getElementById('toggle-torus').addEventListener('change', (e) => {
+            if (window.setObjectVisible) window.setObjectVisible('torus', e.target.checked);
+            updateAllMeshesCheckbox();
+        });
+        document.getElementById('toggle-box').addEventListener('change', (e) => {
+            if (window.setObjectVisible) window.setObjectVisible('box', e.target.checked);
+            updateAllMeshesCheckbox();
+        });
+        document.getElementById('toggle-helpers').addEventListener('change', (e) => {
+            if (window.setObjectVisible) window.setObjectVisible('helpers', e.target.checked);
+        });
+
+        // ============================================
+        // Light Properties Editor
+        // ============================================
+
+        // Color picker
+        document.getElementById('light-color-picker').addEventListener('input', (e) => {
+            const hex = e.target.value;
+            document.getElementById('light-color-value').textContent = hex;
+            if (window.setSelectedLightColor) {
+                // Convert hex to RGB [0-1]
+                const r = parseInt(hex.substr(1, 2), 16) / 255;
+                const g = parseInt(hex.substr(3, 2), 16) / 255;
+                const b = parseInt(hex.substr(5, 2), 16) / 255;
+                window.setSelectedLightColor(r, g, b);
+            }
+        });
+
+        // Intensity slider
+        document.getElementById('light-intensity-slider').addEventListener('input', (e) => {
+            const value = parseFloat(e.target.value);
+            document.getElementById('light-intensity-input').value = value;
+            if (window.setSelectedLightIntensity) {
+                window.setSelectedLightIntensity(value);
+            }
+        });
+
+        // Intensity input
+        document.getElementById('light-intensity-input').addEventListener('input', (e) => {
+            const value = parseFloat(e.target.value) || 0;
+            // Clamp slider value to slider max
+            const sliderMax = parseFloat(document.getElementById('light-intensity-slider').max);
+            document.getElementById('light-intensity-slider').value = Math.min(value, sliderMax);
+            if (window.setSelectedLightIntensity) {
+                window.setSelectedLightIntensity(value);
+            }
+        });
+
+        // Exposure slider
+        document.getElementById('light-exposure-slider').addEventListener('input', (e) => {
+            const value = parseFloat(e.target.value);
+            document.getElementById('light-exposure-input').value = value;
+            if (window.setSelectedLightExposure) {
+                window.setSelectedLightExposure(value);
+            }
+        });
+
+        // Exposure input
+        document.getElementById('light-exposure-input').addEventListener('input', (e) => {
+            const value = parseFloat(e.target.value) || 0;
+            document.getElementById('light-exposure-slider').value = Math.max(-10, Math.min(10, value));
+            if (window.setSelectedLightExposure) {
+                window.setSelectedLightExposure(value);
+            }
+        });
+
+        // Callback to show/hide light properties panel and update values
+        window.showLightProperties = function(lightData) {
+            const panel = document.getElementById('light-properties');
+            if (!lightData) {
+                panel.classList.remove('visible');
+                return;
+            }
+            panel.classList.add('visible');
+
+            // Update light name
+            const nameEl = document.getElementById('selected-light-name');
+            nameEl.textContent = `${lightData.name || 'Unnamed'} (${lightData.type || 'unknown'})`;
+
+            // Update color picker
+            const color = lightData.color || [1, 1, 1];
+            const hex = '#' +
+                Math.round(color[0] * 255).toString(16).padStart(2, '0') +
+                Math.round(color[1] * 255).toString(16).padStart(2, '0') +
+                Math.round(color[2] * 255).toString(16).padStart(2, '0');
+            document.getElementById('light-color-picker').value = hex;
+            document.getElementById('light-color-value').textContent = hex;
+
+            // Update intensity
+            const intensity = lightData.intensity || 1;
+            document.getElementById('light-intensity-slider').value = Math.min(intensity, 100);
+            document.getElementById('light-intensity-input').value = intensity;
+
+            // Update exposure
+            const exposure = lightData.exposure || 0;
+            document.getElementById('light-exposure-slider').value = Math.max(-10, Math.min(10, exposure));
+            document.getElementById('light-exposure-input').value = exposure;
+        };
+
+        // Hide light properties when no light selected
+        window.hideLightProperties = function() {
+            document.getElementById('light-properties').classList.remove('visible');
+        };
 
         // Tone mapping descriptions
         const tonemapDescriptions = {

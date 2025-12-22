@@ -1174,8 +1174,8 @@ def Xform "World"
         color3f inputs:color = (1, 1, 1)
         float inputs:width = 2
         float inputs:height = 2
-        double3 xformOp:translate = (0, 6, 0)
-        double3 xformOp:rotateXYZ = (-90, 0, 0)
+        double3 xformOp:translate = (10, 10, 0)
+        double3 xformOp:rotateXYZ = (-45, 90, 0)
         uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:rotateXYZ"]
     }
 
@@ -1403,11 +1403,22 @@ function createHDRILocator() {
       if (window.updateHDRIPositionUI) {
         window.updateHDRIPositionUI(hdriSettings.center);
       }
+
+      // Schedule HDRI refresh if live update is enabled
+      scheduleHDRIRefresh();
     }
   });
 
-  // Add TransformControls to scene first (it renders the gizmo)
-  scene.add(hdriLocatorTransformControls);
+  // Add TransformControls to scene - handle both old and new API
+  if (hdriLocatorTransformControls.isObject3D) {
+    scene.add(hdriLocatorTransformControls);
+    configureTransformControlsForOverlay(hdriLocatorTransformControls);
+  } else if (typeof hdriLocatorTransformControls.getHelper === 'function') {
+    const helper = hdriLocatorTransformControls.getHelper();
+    scene.add(helper);
+    configureTransformControlsForOverlay(helper);
+  }
+  // If neither, new API handles its own rendering
 
   // Add locator to scene
   scene.add(hdriLocator);
@@ -1565,6 +1576,80 @@ const ambientLight = new THREE.AmbientLight(0x404050, 0.3);
 scene.add(ambientLight);
 
 // ============================================
+// Scene Object Visibility
+// ============================================
+
+/**
+ * Set visibility of a scene object
+ * @param {string} objectName - Name of the object ('ground', 'grid', 'sphere', 'torus', 'box', 'helpers')
+ * @param {boolean} visible - Visibility state
+ */
+function setObjectVisible(objectName, visible) {
+  switch (objectName) {
+    case 'ground':
+      ground.visible = visible;
+      break;
+    case 'grid':
+      gridHelper.visible = visible;
+      break;
+    case 'sphere':
+      centralSphere.visible = visible;
+      break;
+    case 'torus':
+      torus.visible = visible;
+      break;
+    case 'box':
+      box.visible = visible;
+      break;
+    case 'helpers':
+      // Toggle all light helpers
+      for (const helper of lightHelpers) {
+        helper.visible = visible;
+      }
+      break;
+    case 'ambient':
+      ambientLight.visible = visible;
+      break;
+    default:
+      console.warn(`Unknown object: ${objectName}`);
+  }
+}
+
+/**
+ * Get visibility state of a scene object
+ * @param {string} objectName - Name of the object
+ * @returns {boolean} Visibility state
+ */
+function getObjectVisible(objectName) {
+  switch (objectName) {
+    case 'ground': return ground.visible;
+    case 'grid': return gridHelper.visible;
+    case 'sphere': return centralSphere.visible;
+    case 'torus': return torus.visible;
+    case 'box': return box.visible;
+    case 'helpers': return lightHelpers.length > 0 ? lightHelpers[0].visible : true;
+    case 'ambient': return ambientLight.visible;
+    default: return true;
+  }
+}
+
+/**
+ * Set visibility of all mesh objects at once
+ * @param {boolean} visible - Visibility state
+ */
+function setAllMeshesVisible(visible) {
+  ground.visible = visible;
+  centralSphere.visible = visible;
+  torus.visible = visible;
+  box.visible = visible;
+}
+
+// Expose to window for UI
+window.setObjectVisible = setObjectVisible;
+window.getObjectVisible = getObjectVisible;
+window.setAllMeshesVisible = setAllMeshesVisible;
+
+// ============================================
 // Light Management
 // ============================================
 
@@ -1583,13 +1668,80 @@ const raycaster = new THREE.Raycaster();
 const mouse = new THREE.Vector2();
 
 /**
+ * Configure TransformControls to render on top of scene geometry
+ * This fixes clipping issues by disabling depth test and setting high render order
+ * @param {TransformControls} transformControls - The transform controls to configure
+ */
+function configureTransformControlsForOverlay(transformControls) {
+  if (!transformControls) return;
+
+  // Configure immediately and also after first render
+  const configure = () => {
+    // Check if traverse method exists (it should on Object3D)
+    if (typeof transformControls.traverse !== 'function') {
+      // Fallback: try to access gizmo children directly
+      const gizmo = transformControls.getHelper?.() || transformControls._gizmo || transformControls.gizmo;
+      if (gizmo && typeof gizmo.traverse === 'function') {
+        gizmo.traverse((child) => {
+          if (child.isMesh || child.isLine) {
+            child.renderOrder = 1000;
+            if (child.material) {
+              const materials = Array.isArray(child.material) ? child.material : [child.material];
+              materials.forEach((mat) => {
+                mat.depthTest = false;
+                mat.depthWrite = false;
+                mat.transparent = true;
+              });
+            }
+          }
+        });
+      }
+      return;
+    }
+
+    transformControls.traverse((child) => {
+      if (child.isMesh || child.isLine) {
+        child.renderOrder = 1000;
+        if (child.material) {
+          // Handle both single materials and material arrays
+          const materials = Array.isArray(child.material) ? child.material : [child.material];
+          materials.forEach((mat) => {
+            mat.depthTest = false;
+            mat.depthWrite = false;
+            mat.transparent = true;
+          });
+        }
+      }
+    });
+  };
+
+  // Configure immediately
+  configure();
+
+  // Also configure after next frame in case gizmo is created asynchronously
+  requestAnimationFrame(configure);
+}
+
+/**
  * Initialize light transform controls
  */
+// Store reference to the helper if using new API
+let lightTransformHelper = null;
+
 function initLightTransformControls() {
-  if (lightTransformControls) return;
+  if (lightTransformControls) {
+    // Already initialized
+    return;
+  }
+
+  console.log('Initializing light transform controls...');
 
   lightTransformControls = new TransformControls(camera, renderer.domElement);
-  lightTransformControls.setSize(0.8);
+  console.log('Created lightTransformControls:', lightTransformControls);
+  console.log('Is Object3D?', lightTransformControls.isObject3D);
+
+  lightTransformControls.setSize(1.0);
+  lightTransformControls.setSpace('world');
 
   // Disable orbit controls while dragging
   lightTransformControls.addEventListener('dragging-changed', (event) => {
@@ -1603,7 +1755,24 @@ function initLightTransformControls() {
     }
   });
 
-  scene.add(lightTransformControls);
+  // Add to scene - handle both old and new TransformControls API
+  if (lightTransformControls.isObject3D) {
+    // Old API: TransformControls is an Object3D
+    scene.add(lightTransformControls);
+    lightTransformHelper = lightTransformControls;
+    configureTransformControlsForOverlay(lightTransformControls);
+  } else if (typeof lightTransformControls.getHelper === 'function') {
+    // New API: use getHelper() to get the visual gizmo
+    lightTransformHelper = lightTransformControls.getHelper();
+    scene.add(lightTransformHelper);
+    configureTransformControlsForOverlay(lightTransformHelper);
+  } else {
+    // Very new API or unknown - TransformControls manages its own rendering
+    console.log('TransformControls does not need to be added to scene (new API)');
+    lightTransformHelper = null;
+  }
+
+  console.log('Light transform controls initialized');
 }
 
 /**
@@ -1640,14 +1809,32 @@ function updateLightDataFromTransform(lightIndex) {
   // Sync helper position
   const helper = lightHelpers[lightIndex];
   if (helper) {
-    helper.position.copy(position);
-    helper.quaternion.copy(quaternion);
+    // For SpotLights, the helper stays at origin but contains a sphere at world position
+    const actualLight = getActualLight(threeLight);
+    if (actualLight && actualLight.isSpotLight) {
+      // Update the sphere mesh position (it's at world coordinates)
+      helper.traverse((child) => {
+        if (child.isMesh && child.geometry.type === 'SphereGeometry') {
+          const lightWorldPos = new THREE.Vector3();
+          actualLight.getWorldPosition(lightWorldPos);
+          child.position.copy(lightWorldPos);
+        }
+      });
+      // Don't transform the helperGroup - SpotLightHelper manages its own position
+    } else {
+      // For other lights, transform the whole helper group
+      helper.position.copy(position);
+      helper.quaternion.copy(quaternion);
+    }
   }
 
   // Update UI if callback exists
   if (window.updateLightListItem) {
     window.updateLightListItem(lightIndex, usdLight);
   }
+
+  // Schedule HDRI refresh if live update is enabled
+  scheduleHDRIRefresh();
 }
 
 /**
@@ -1667,6 +1854,10 @@ function selectLight3D(lightIndex) {
       lightTransformControls.detach();
     }
     selectedLight3DIndex = -1;
+    // Hide light properties panel
+    if (window.hideLightProperties) {
+      window.hideLightProperties();
+    }
     return;
   }
 
@@ -1682,28 +1873,45 @@ function selectLight3D(lightIndex) {
     setHelperSelected(helper, true);
   }
 
+  // Ensure the light has updated world matrix
+  threeLight.updateMatrixWorld(true);
+
   // Attach transform controls to the light (or its group)
-  const target = threeLight.isGroup ? threeLight : threeLight;
-  lightTransformControls.attach(target);
+  lightTransformControls.attach(threeLight);
+  lightTransformControls.enabled = true;
+  lightTransformControls.visible = true;
 
   // Set transform mode based on light type
   const lightType = usdLight?.type || 'point';
   if (lightType === 'distant' || lightType === 'dome') {
     // Infinite lights - rotate only
     lightTransformControls.setMode('rotate');
-    lightTransformControls.showX = true;
-    lightTransformControls.showY = true;
-    lightTransformControls.showZ = true;
   } else {
     // Finite lights - translate by default
     lightTransformControls.setMode('translate');
-    lightTransformControls.showX = true;
-    lightTransformControls.showY = true;
-    lightTransformControls.showZ = true;
   }
+  lightTransformControls.showX = true;
+  lightTransformControls.showY = true;
+  lightTransformControls.showZ = true;
+
+  // Reconfigure overlay rendering after attach (gizmo elements may be created on first use)
+  configureTransformControlsForOverlay(lightTransformControls);
+
+  console.log(`Transform controls attached to light ${lightIndex}:`, {
+    mode: lightTransformControls.mode,
+    enabled: lightTransformControls.enabled,
+    visible: lightTransformControls.visible,
+    objectType: threeLight?.type || threeLight?.constructor?.name,
+    objectPosition: threeLight.position ? [threeLight.position.x, threeLight.position.y, threeLight.position.z] : null
+  });
 
   // Also select in spectral view
   selectLightForSpectral(lightIndex);
+
+  // Show light properties panel with current light data
+  if (window.showLightProperties) {
+    window.showLightProperties(usdLight);
+  }
 
   console.log(`Selected light ${lightIndex}: ${usdLight?.name || usdLight?.type || 'unnamed'}`);
 }
@@ -1712,9 +1920,26 @@ function selectLight3D(lightIndex) {
  * Set light transform mode
  */
 function setLightTransformMode(mode) {
-  if (lightTransformControls && selectedLight3DIndex >= 0) {
-    lightTransformControls.setMode(mode);
+  if (!lightTransformControls) {
+    console.warn('Light transform controls not initialized');
+    return;
   }
+  if (selectedLight3DIndex < 0) {
+    console.warn('No light selected');
+    return;
+  }
+
+  // Ensure controls are attached to the selected light
+  const threeLight = threeLights[selectedLight3DIndex];
+  if (threeLight && lightTransformControls.object !== threeLight) {
+    lightTransformControls.attach(threeLight);
+  }
+
+  lightTransformControls.setMode(mode);
+  lightTransformControls.enabled = true;
+  lightTransformControls.visible = true;
+
+  console.log(`Transform mode set to: ${mode}, attached to:`, lightTransformControls.object);
 }
 
 /**
@@ -1781,16 +2006,31 @@ renderer.domElement.addEventListener('click', onCanvasClick);
 
 // Add keyboard shortcuts for transform modes
 document.addEventListener('keydown', (event) => {
-  if (selectedLight3DIndex < 0) return;
+  // Don't handle if typing in an input field
+  if (event.target.tagName === 'INPUT' || event.target.tagName === 'TEXTAREA') return;
 
-  switch (event.key.toLowerCase()) {
-    case 'g': // Grab/translate
+  const key = event.key.toLowerCase();
+
+  // Handle transform mode shortcuts only when a light is selected
+  if (key === 'w' || key === 'e' || key === 'r' || key === 'escape') {
+    console.log(`Key pressed: '${key}', selectedLight3DIndex: ${selectedLight3DIndex}`);
+  }
+
+  if (selectedLight3DIndex < 0) {
+    if (key === 'w' || key === 'e' || key === 'r') {
+      console.log('No light selected - click on a light first');
+    }
+    return;
+  }
+
+  switch (key) {
+    case 'w': // Translate (move)
       setLightTransformMode('translate');
       break;
-    case 'r': // Rotate
+    case 'e': // Rotate
       setLightTransformMode('rotate');
       break;
-    case 's': // Scale (for area lights)
+    case 'r': // Scale (for area lights)
       setLightTransformMode('scale');
       break;
     case 'escape':
@@ -1831,6 +2071,11 @@ function clearLights() {
     window.updateLightList([]);
   }
 
+  // Hide light properties panel
+  if (window.hideLightProperties) {
+    window.hideLightProperties();
+  }
+
   // Hide envmap section
   hideEnvmapSection();
 }
@@ -1852,7 +2097,37 @@ function createLightHelper(light, usdLight, lightIndex) {
   helperGroup.userData.lightType = type;
   helperGroup.userData.isLightHelper = true;
 
-  if (type === 'point' || type === 'sphere') {
+  // Check actual Three.js light type first (SpotLight for SphereLights with shaping)
+  if (light.isSpotLight) {
+    // SpotLight helper for SphereLights with shaping properties
+    // SpotLightHelper positions itself using the light's world position internally
+    const spotHelper = new THREE.SpotLightHelper(light);
+    helperGroup.add(spotHelper);
+
+    // Add sphere at light's world position for clickability
+    const sphereGeom = new THREE.SphereGeometry(usdLight.radius || 0.15, 16, 16);
+    const sphereMat = new THREE.MeshBasicMaterial({
+      color: lightColor,
+      transparent: true,
+      opacity: 0.6,
+      wireframe: true
+    });
+    const sphereMesh = new THREE.Mesh(sphereGeom, sphereMat);
+
+    // Get the light's world position and place the sphere there
+    const worldPos = new THREE.Vector3();
+    light.getWorldPosition(worldPos);
+    sphereMesh.position.copy(worldPos);
+
+    helperGroup.add(sphereMesh);
+
+    // Don't transform helperGroup - SpotLightHelper manages its own world position
+    // The sphere is already positioned at the light's world position
+    return helperGroup;
+  }
+
+  // PointLight helper for SphereLights without shaping
+  if (light.isPointLight) {
     const helperGeom = new THREE.SphereGeometry(usdLight.radius || 0.1, 16, 16);
     const helperMat = new THREE.MeshBasicMaterial({
       color: lightColor,
@@ -1863,6 +2138,21 @@ function createLightHelper(light, usdLight, lightIndex) {
     const sphereMesh = new THREE.Mesh(helperGeom, helperMat);
     helperGroup.add(sphereMesh);
     helperGroup.position.copy(light.position);
+    return helperGroup;
+  }
+
+  if (type === 'point' || type === 'sphere') {
+    // Fallback sphere helper (shouldn't normally reach here)
+    const helperGeom = new THREE.SphereGeometry(usdLight.radius || 0.1, 16, 16);
+    const helperMat = new THREE.MeshBasicMaterial({
+      color: lightColor,
+      transparent: true,
+      opacity: 0.6,
+      wireframe: true
+    });
+    const sphereMesh = new THREE.Mesh(helperGeom, helperMat);
+    helperGroup.add(sphereMesh);
+    if (light.position) helperGroup.position.copy(light.position);
     return helperGroup;
   }
 
@@ -1976,28 +2266,7 @@ function createLightHelper(light, usdLight, lightIndex) {
     return helperGroup;
   }
 
-  // SpotLight helper
-  if (light.isSpotLight) {
-    const spotHelper = new THREE.SpotLightHelper(light);
-    helperGroup.add(spotHelper);
-    // Add sphere for clickability
-    const sphereGeom = new THREE.SphereGeometry(0.15, 16, 16);
-    const sphereMat = new THREE.MeshBasicMaterial({ color: lightColor, transparent: true, opacity: 0.6 });
-    const sphereMesh = new THREE.Mesh(sphereGeom, sphereMat);
-    helperGroup.add(sphereMesh);
-    if (light.parent) {
-      helperGroup.position.copy(light.parent.position);
-    }
-    return helperGroup;
-  }
-
-  // Point light helper
-  if (light.isPointLight) {
-    const pointHelper = new THREE.PointLightHelper(light, usdLight.radius || 0.2);
-    helperGroup.add(pointHelper);
-    return helperGroup;
-  }
-
+  // Fallback - return null for unhandled types
   return null;
 }
 
@@ -2189,8 +2458,10 @@ function convertUSDLightToThreeJS(usdLight) {
 
   if (!light) return null;
 
-  // Configure shadows
-  if (light.castShadow !== undefined && usdLight.shadowEnable !== false) {
+  // Configure shadows (only for light types that support them)
+  // RectAreaLight and HemisphereLight do NOT support shadows in Three.js
+  const supportsShadows = light.isDirectionalLight || light.isSpotLight || light.isPointLight;
+  if (supportsShadows && usdLight.shadowEnable !== false) {
     light.castShadow = true;
     if (light.shadow) {
       light.shadow.mapSize.width = 1024;
@@ -2763,6 +3034,74 @@ let hdriSettings = {
   center: { x: 0, y: 0, z: 0 }
 };
 
+// Live HDRI update state
+let hdriLiveUpdate = false;
+let hdriUpdateDebounceTimer = null;
+const HDRI_UPDATE_DEBOUNCE_MS = 100;
+
+/**
+ * Refresh HDRI projection - re-projects lights and updates preview
+ */
+function refreshHDRIProjection() {
+  // Only refresh if we have previously projected
+  if (!projectedHDRI && !hdriProjection) {
+    console.log('No HDRI projection to refresh - run Project first');
+    return;
+  }
+
+  console.log('Refreshing HDRI projection...');
+  projectLightsToHDRI();
+
+  // Update preview canvas if visible
+  if (hdriPreviewVisible) {
+    updateHDRIPreviewCanvas();
+  }
+
+  // Re-apply to scene if it was applied
+  if (hdriAppliedToScene) {
+    applyHDRIToScene();
+  }
+}
+
+/**
+ * Schedule a debounced HDRI refresh (for live updates during dragging)
+ */
+function scheduleHDRIRefresh() {
+  if (!hdriLiveUpdate) return;
+  if (!projectedHDRI && !hdriProjection) return;
+
+  // Clear existing timer
+  if (hdriUpdateDebounceTimer) {
+    clearTimeout(hdriUpdateDebounceTimer);
+  }
+
+  // Schedule new refresh
+  hdriUpdateDebounceTimer = setTimeout(() => {
+    refreshHDRIProjection();
+    hdriUpdateDebounceTimer = null;
+  }, HDRI_UPDATE_DEBOUNCE_MS);
+}
+
+/**
+ * Enable/disable live HDRI updates
+ */
+function setHDRILiveUpdate(enabled) {
+  hdriLiveUpdate = enabled;
+  console.log(`HDRI live update: ${enabled ? 'enabled' : 'disabled'}`);
+
+  // If enabling and we have a projection, refresh immediately
+  if (enabled && (projectedHDRI || hdriProjection)) {
+    refreshHDRIProjection();
+  }
+}
+
+/**
+ * Get current live update state
+ */
+function isHDRILiveUpdateEnabled() {
+  return hdriLiveUpdate;
+}
+
 /**
  * Extract position and orientation from USD light transform
  * @param {Object} usdLight - USD light data
@@ -2909,14 +3248,26 @@ function projectLightsToHDRI(options = {}) {
     maxDistance: settings.maxDistance
   });
 
-  // Add lights
+  // Add lights (only enabled/visible lights)
   let addedLights = 0;
-  for (const usdLight of lightData) {
+  let skippedLights = 0;
+  for (let i = 0; i < lightData.length; i++) {
+    // Skip lights that are turned off
+    if (threeLights[i] && !threeLights[i].visible) {
+      skippedLights++;
+      continue;
+    }
+
+    const usdLight = lightData[i];
     const projLight = convertLightDataToProjectionLight(usdLight);
     if (projLight) {
       hdriProjection.addLight(projLight);
       addedLights++;
     }
+  }
+
+  if (skippedLights > 0) {
+    console.log(`  Skipped ${skippedLights} disabled lights`);
   }
 
   console.log(`  Added ${addedLights} lights to projection`);
@@ -3505,6 +3856,9 @@ function setHDRIResolution(width, height) {
 function setHDRICenter(x, y, z) {
   hdriSettings.center = { x, y, z };
   console.log(`HDRI center set to (${x}, ${y}, ${z})`);
+
+  // Schedule HDRI refresh if live update is enabled
+  scheduleHDRIRefresh();
 }
 
 /**
@@ -3513,6 +3867,9 @@ function setHDRICenter(x, y, z) {
 function setHDRIMaxDistance(distance) {
   hdriSettings.maxDistance = distance;
   console.log(`HDRI max distance set to ${distance}`);
+
+  // Schedule HDRI refresh if live update is enabled
+  scheduleHDRIRefresh();
 }
 
 /**
@@ -3674,6 +4031,9 @@ function toggleLight(lightIndex, enabled) {
     lightData[lightIndex].enabled = newState;
   }
 
+  // Schedule HDRI refresh if live update is enabled
+  scheduleHDRIRefresh();
+
   console.log(`Light ${lightIndex} (${lightData[lightIndex]?.name || 'unnamed'}): ${newState ? 'ON' : 'OFF'}`);
 
   return newState;
@@ -3704,6 +4064,210 @@ function isLightEnabled(lightIndex) {
     return false;
   }
   return threeLights[lightIndex].visible;
+}
+
+// ============================================
+// Light Property Editing Functions
+// ============================================
+
+/**
+ * Get the actual Three.js light from a threeLights entry
+ * (handles Groups containing SpotLights/DirectionalLights)
+ * @param {THREE.Object3D} lightObj - Light object (may be Group or Light)
+ * @returns {THREE.Light|null} The actual light object
+ */
+function getActualLight(lightObj) {
+  if (!lightObj) return null;
+  if (lightObj.isLight) return lightObj;
+  if (lightObj.isGroup) {
+    return lightObj.children.find(c => c.isLight) || null;
+  }
+  return null;
+}
+
+/**
+ * Set color of the currently selected light
+ * @param {number} r - Red component (0-1)
+ * @param {number} g - Green component (0-1)
+ * @param {number} b - Blue component (0-1)
+ */
+function setSelectedLightColor(r, g, b) {
+  if (selectedLight3DIndex < 0 || selectedLight3DIndex >= threeLights.length) {
+    return;
+  }
+
+  const lightObj = threeLights[selectedLight3DIndex];
+  const threeLight = getActualLight(lightObj);
+  const usdLight = lightData[selectedLight3DIndex];
+
+  // Update Three.js light color
+  if (threeLight && threeLight.color) {
+    threeLight.color.setRGB(r, g, b);
+  }
+
+  // Update lightData
+  if (usdLight) {
+    usdLight.color = [r, g, b];
+  }
+
+  // Update the helper visualization
+  updateLightHelperColor(selectedLight3DIndex, r, g, b);
+
+  // Update the light list swatch
+  updateLightListSwatch(selectedLight3DIndex, r, g, b);
+
+  // Schedule HDRI refresh if live update is enabled
+  scheduleHDRIRefresh();
+
+  console.log(`Light ${selectedLight3DIndex} color set to RGB(${r.toFixed(2)}, ${g.toFixed(2)}, ${b.toFixed(2)})`);
+}
+
+/**
+ * Set intensity of the currently selected light
+ * @param {number} intensity - Light intensity value
+ */
+function setSelectedLightIntensity(intensity) {
+  if (selectedLight3DIndex < 0 || selectedLight3DIndex >= threeLights.length) {
+    return;
+  }
+
+  const lightObj = threeLights[selectedLight3DIndex];
+  const threeLight = getActualLight(lightObj);
+  const usdLight = lightData[selectedLight3DIndex];
+
+  // Calculate effective intensity with exposure
+  const exposure = usdLight?.exposure || 0;
+  const effectiveIntensity = intensity * Math.pow(2, exposure);
+
+  // Update Three.js light intensity
+  if (threeLight && threeLight.intensity !== undefined) {
+    threeLight.intensity = effectiveIntensity;
+  }
+
+  // Update lightData
+  if (usdLight) {
+    usdLight.intensity = intensity;
+  }
+
+  // Update light list details
+  updateLightListDetails(selectedLight3DIndex);
+
+  // Schedule HDRI refresh if live update is enabled
+  scheduleHDRIRefresh();
+
+  console.log(`Light ${selectedLight3DIndex} intensity set to ${intensity} (effective: ${effectiveIntensity.toFixed(2)})`);
+}
+
+/**
+ * Set exposure of the currently selected light
+ * @param {number} exposure - Exposure value in EV
+ */
+function setSelectedLightExposure(exposure) {
+  if (selectedLight3DIndex < 0 || selectedLight3DIndex >= threeLights.length) {
+    return;
+  }
+
+  const lightObj = threeLights[selectedLight3DIndex];
+  const threeLight = getActualLight(lightObj);
+  const usdLight = lightData[selectedLight3DIndex];
+
+  // Calculate effective intensity with new exposure
+  const baseIntensity = usdLight?.intensity || 1;
+  const effectiveIntensity = baseIntensity * Math.pow(2, exposure);
+
+  // Update Three.js light intensity
+  if (threeLight && threeLight.intensity !== undefined) {
+    threeLight.intensity = effectiveIntensity;
+  }
+
+  // Update lightData
+  if (usdLight) {
+    usdLight.exposure = exposure;
+  }
+
+  // Update light list details
+  updateLightListDetails(selectedLight3DIndex);
+
+  // Schedule HDRI refresh if live update is enabled
+  scheduleHDRIRefresh();
+
+  console.log(`Light ${selectedLight3DIndex} exposure set to ${exposure} EV (effective intensity: ${effectiveIntensity.toFixed(2)})`);
+}
+
+/**
+ * Update the light helper color visualization
+ */
+function updateLightHelperColor(lightIndex, r, g, b) {
+  const helper = lightHelpers[lightIndex];
+  if (!helper) return;
+
+  const color = new THREE.Color(r, g, b);
+
+  helper.traverse((child) => {
+    // Update SpotLightHelper (use type check since no isSpotLightHelper flag exists)
+    if (child.type === 'SpotLightHelper') {
+      child.update();
+    }
+
+    if (child.material && !child.material._isSelected) {
+      // Store original color for selection state restoration
+      child.material._baseColor = color.clone();
+      child.material.color.copy(color);
+    }
+  });
+}
+
+/**
+ * Update the light list item's color swatch
+ */
+function updateLightListSwatch(lightIndex, r, g, b) {
+  const lightList = document.getElementById('lightList');
+  if (!lightList) return;
+
+  const items = lightList.querySelectorAll('.light-item');
+  if (lightIndex >= 0 && lightIndex < items.length) {
+    const swatch = items[lightIndex].querySelector('.light-color-swatch');
+    if (swatch) {
+      const hex = '#' +
+        Math.round(r * 255).toString(16).padStart(2, '0') +
+        Math.round(g * 255).toString(16).padStart(2, '0') +
+        Math.round(b * 255).toString(16).padStart(2, '0');
+      swatch.style.backgroundColor = hex;
+    }
+  }
+}
+
+/**
+ * Update the light list item's details text
+ */
+function updateLightListDetails(lightIndex) {
+  const lightList = document.getElementById('lightList');
+  if (!lightList) return;
+
+  const items = lightList.querySelectorAll('.light-item');
+  if (lightIndex < 0 || lightIndex >= items.length) return;
+
+  const light = lightData[lightIndex];
+  if (!light) return;
+
+  let details = `Intensity: ${(light.intensity || 1).toFixed(2)}`;
+  if (light.exposure && light.exposure !== 0) {
+    details += ` | Exp: ${light.exposure.toFixed(1)} EV`;
+  }
+  if (light.radius && light.type !== 'distant' && light.type !== 'dome') {
+    details += ` | R: ${light.radius.toFixed(2)}`;
+  }
+  if (light.type === 'rect' && light.width && light.height) {
+    details += ` | ${light.width.toFixed(1)}x${light.height.toFixed(1)}`;
+  }
+  if (light.shapingConeAngle && light.shapingConeAngle < 90) {
+    details += ` | Cone: ${light.shapingConeAngle.toFixed(0)}`;
+  }
+
+  const detailsEl = items[lightIndex].querySelector('.light-details');
+  if (detailsEl) {
+    detailsEl.textContent = details;
+  }
 }
 
 // ============================================
@@ -3757,6 +4321,9 @@ window.setHDRIResolution = setHDRIResolution;
 window.setHDRICenter = setHDRICenter;
 window.setHDRIMaxDistance = setHDRIMaxDistance;
 window.getProjectedHDRI = getProjectedHDRI;
+window.refreshHDRIProjection = refreshHDRIProjection;
+window.setHDRILiveUpdate = setHDRILiveUpdate;
+window.isHDRILiveUpdateEnabled = isHDRILiveUpdateEnabled;
 
 // HDRI Locator functions
 window.createHDRILocator = createHDRILocator;
@@ -3769,6 +4336,40 @@ window.updateHDRIRangeIndicator = updateHDRIRangeIndicator;
 window.selectLight3D = selectLight3D;
 window.setLightTransformMode = setLightTransformMode;
 window.getSelectedLight3DIndex = () => selectedLight3DIndex;
+
+// Debug functions for transform controls
+window.getLightTransformControls = () => lightTransformControls;
+window.getThreeLights = () => threeLights;
+window.getLightHelpers = () => lightHelpers;
+window.debugTransformControls = () => {
+  console.log('=== Transform Controls Debug ===');
+  console.log('selectedLight3DIndex:', selectedLight3DIndex);
+  console.log('lightTransformControls:', lightTransformControls);
+  if (lightTransformControls) {
+    console.log('  - enabled:', lightTransformControls.enabled);
+    console.log('  - visible:', lightTransformControls.visible);
+    console.log('  - mode:', lightTransformControls.mode);
+    console.log('  - object:', lightTransformControls.object);
+    console.log('  - parent (in scene?):', lightTransformControls.parent);
+  }
+  if (selectedLight3DIndex >= 0) {
+    const light = threeLights[selectedLight3DIndex];
+    console.log('Selected light:', light);
+    if (light) {
+      console.log('  - position:', light.position?.clone());
+      console.log('  - visible:', light.visible);
+      console.log('  - parent:', light.parent);
+    }
+  }
+  console.log('threeLights count:', threeLights.length);
+  console.log('lightHelpers count:', lightHelpers.length);
+  return { lightTransformControls, selectedLight3DIndex, threeLights, lightHelpers };
+};
+
+// Light Property Editing functions
+window.setSelectedLightColor = setSelectedLightColor;
+window.setSelectedLightIntensity = setSelectedLightIntensity;
+window.setSelectedLightExposure = setSelectedLightExposure;
 
 // Envmap preview functions
 window.showEnvmapSection = showEnvmapSection;
@@ -3811,10 +4412,14 @@ function animate() {
   // Update controls
   controls.update();
 
-  // Update light helpers that need updating
+  // Update light helpers that need updating (including SpotLightHelper children)
   for (const helper of lightHelpers) {
-    if (helper.update) {
-      helper.update();
+    if (helper) {
+      helper.traverse((child) => {
+        if (child.type === 'SpotLightHelper' && child.update) {
+          child.update();
+        }
+      });
     }
   }
 
