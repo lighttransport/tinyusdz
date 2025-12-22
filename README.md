@@ -41,7 +41,12 @@ More on the status: https://github.com/lighttransport/tinyusdz/blob/release/doc/
 * Curves(hairs) https://github.com/lighttransport/tinyusdz/tree/curves-2025
 * PCP composition(experimental) https://github.com/lighttransport/tinyusdz/issues/262
   * Documentation(w.i.p) https://lighttransport.github.io/tinyusdz/pcp.html 
-  
+
+## Lab project
+
+* LightUSD: https://github.com/lighttransport/tinyusdz/tree/lightusd/sandbox/lightusd
+  * USD for 3D genAI/VLM/LLM
+    
 ## Branches
 
 * `release` Release branch
