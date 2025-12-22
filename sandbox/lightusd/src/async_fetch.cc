@@ -120,11 +120,83 @@ std::vector<FetchResult> async_fetch_all(
     std::vector<FetchResult> results;
     results.reserve(urls.size());
 
-    // For now, fetch sequentially
-    // TODO: Implement parallel fetching with Promise.all
-    for (const auto& url : urls) {
-        results.push_back(async_fetch(url, config));
+    if (urls.empty()) {
+        return results;
     }
+
+#ifdef __EMSCRIPTEN__
+    // Resolve all URLs first
+    std::vector<std::string> full_urls;
+    std::vector<const char*> url_ptrs;
+    full_urls.reserve(urls.size());
+    url_ptrs.reserve(urls.size());
+
+    for (const auto& url : urls) {
+        std::string full_url = url;
+        if (!config.base_url.empty() &&
+            url.find("://") == std::string::npos &&
+            url[0] != '/') {
+            full_url = config.base_url + url;
+        }
+        full_urls.push_back(full_url);
+    }
+
+    for (const auto& url : full_urls) {
+        url_ptrs.push_back(url.c_str());
+    }
+
+    // Allocate output arrays
+    size_t count = urls.size();
+    std::vector<uint8_t*> out_data(count, nullptr);
+    std::vector<size_t> out_sizes(count, 0);
+    std::vector<int> out_statuses(count, 0);
+
+    // Call parallel fetch - this suspends WASM via Asyncify/JSPI
+    int ret = js_fetch_assets_parallel(
+        url_ptrs.data(),
+        count,
+        out_data.data(),
+        out_sizes.data(),
+        out_statuses.data()
+    );
+
+    // Process results
+    for (size_t i = 0; i < count; ++i) {
+        FetchResult result;
+        result.resolved_url = full_urls[i];
+        result.status_code = out_statuses[i];
+
+        if (ret == 0 && out_data[i] != nullptr &&
+            out_statuses[i] >= 200 && out_statuses[i] < 300) {
+            result.ok = true;
+            result.data.assign(out_data[i], out_data[i] + out_sizes[i]);
+            js_free_buffer(out_data[i]);
+        } else {
+            result.ok = false;
+            if (out_statuses[i] == 0) {
+                result.error = "Network error";
+            } else if (out_statuses[i] == 404) {
+                result.error = "Not found: " + full_urls[i];
+            } else {
+                result.error = "HTTP error " + std::to_string(out_statuses[i]);
+            }
+            if (out_data[i]) {
+                js_free_buffer(out_data[i]);
+            }
+        }
+
+        results.push_back(std::move(result));
+    }
+#else
+    // Non-Emscripten: fall back to sequential (or error)
+    for (const auto& url : urls) {
+        FetchResult result;
+        result.ok = false;
+        result.error = "Async fetch not available outside Emscripten";
+        result.resolved_url = url;
+        results.push_back(std::move(result));
+    }
+#endif
 
     return results;
 }

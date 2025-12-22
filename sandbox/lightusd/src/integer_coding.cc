@@ -316,18 +316,28 @@ template <class Int>
 size_t
 _CompressIntegers(Int const *begin, size_t numInts, char *output, std::string *err)
 {
-    // Working space.
+    if (numInts == 0)
+        return 0;
+
+    // Working space for encoding.
     std::unique_ptr<char[]>
         encodeBuffer(new char[_GetEncodedBufferSize<Int>(numInts)]);
 
     // Encode first.
     size_t encodedSize = _EncodeIntegers(begin, numInts, encodeBuffer.get());
 
-    (void)encodedSize;
-    (void)output;
-    (void)err;
-    // Compression not implemented yet
-    return 0;
+    if (encodedSize == 0) {
+        if (err) {
+            *err = "Integer encoding failed";
+        }
+        return 0;
+    }
+
+    // Compress the encoded buffer using LZ4.
+    size_t compressedSize = LZ4Compression::CompressToBuffer(
+        encodeBuffer.get(), output, encodedSize, err);
+
+    return compressedSize;
 }
 
 template <class Int>

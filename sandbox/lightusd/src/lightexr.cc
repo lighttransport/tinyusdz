@@ -468,6 +468,49 @@ bool Inflate(const uint8_t* src, size_t src_size,
     return true;
 }
 
+// Simple DEFLATE compressor using stored blocks (type 0)
+// This doesn't actually compress but produces valid DEFLATE output
+// Good enough for EXR where the data is often incompressible anyway
+bool Deflate(const uint8_t* src, size_t src_size, std::vector<uint8_t>& out) {
+    out.clear();
+    if (src_size == 0) {
+        // Empty input: write a single empty final block
+        out.push_back(0x01);  // BFINAL=1, BTYPE=00 (stored)
+        out.push_back(0x00);  // LEN low
+        out.push_back(0x00);  // LEN high
+        out.push_back(0xFF);  // NLEN low
+        out.push_back(0xFF);  // NLEN high
+        return true;
+    }
+
+    out.reserve(src_size + (src_size / 65535 + 1) * 5 + 1);
+
+    size_t pos = 0;
+    while (pos < src_size) {
+        size_t block_size = std::min(src_size - pos, static_cast<size_t>(65535));
+        bool is_final = (pos + block_size >= src_size);
+
+        // Block header: BFINAL (1 bit) + BTYPE (2 bits) = stored block
+        out.push_back(is_final ? 0x01 : 0x00);
+
+        // LEN (2 bytes, little-endian)
+        uint16_t len = static_cast<uint16_t>(block_size);
+        out.push_back(len & 0xFF);
+        out.push_back((len >> 8) & 0xFF);
+
+        // NLEN (2 bytes, one's complement of LEN)
+        uint16_t nlen = ~len;
+        out.push_back(nlen & 0xFF);
+        out.push_back((nlen >> 8) & 0xFF);
+
+        // Data
+        out.insert(out.end(), src + pos, src + pos + block_size);
+        pos += block_size;
+    }
+
+    return true;
+}
+
 }  // namespace deflate
 
 // ============================================================================
@@ -503,6 +546,57 @@ static bool DecodeRLE(const uint8_t* src, size_t src_size,
     }
 
     return out.size() == expected_size;
+}
+
+// RLE Encoding for EXR
+static bool EncodeRLE(const uint8_t* src, size_t src_size,
+                      std::vector<uint8_t>& out) {
+    out.clear();
+    if (src_size == 0) return true;
+
+    out.reserve(src_size + src_size / 128 + 1);  // Worst case
+
+    size_t pos = 0;
+    while (pos < src_size) {
+        // Look for runs of same byte
+        uint8_t run_byte = src[pos];
+        size_t run_len = 1;
+
+        while (pos + run_len < src_size && run_len < 128 &&
+               src[pos + run_len] == run_byte) {
+            run_len++;
+        }
+
+        if (run_len >= 3) {
+            // Emit run: negative count (-run_len+1) followed by byte
+            out.push_back(static_cast<uint8_t>(-static_cast<int8_t>(run_len) + 1));
+            out.push_back(run_byte);
+            pos += run_len;
+        } else {
+            // Look for literal run (non-repeating bytes)
+            size_t lit_start = pos;
+            size_t lit_len = 0;
+
+            while (pos + lit_len < src_size && lit_len < 128) {
+                // Check if next bytes form a run
+                if (pos + lit_len + 2 < src_size &&
+                    src[pos + lit_len] == src[pos + lit_len + 1] &&
+                    src[pos + lit_len] == src[pos + lit_len + 2]) {
+                    break;  // Found a run of 3+, stop literal
+                }
+                lit_len++;
+            }
+
+            if (lit_len > 0) {
+                // Emit literal: positive count (lit_len-1) followed by bytes
+                out.push_back(static_cast<uint8_t>(lit_len - 1));
+                out.insert(out.end(), src + lit_start, src + lit_start + lit_len);
+                pos += lit_len;
+            }
+        }
+    }
+
+    return true;
 }
 
 // ============================================================================
@@ -1222,9 +1316,32 @@ Result SaveEXR(const std::string& filename, int width, int height,
         if (options.compression == Compression::None) {
             writer.write_u32(static_cast<uint32_t>(scanline_size));
             writer.write_bytes(scanline_buffer.data(), scanline_size);
+        } else if (options.compression == Compression::RLE) {
+            // RLE compression
+            std::vector<uint8_t> compressed;
+            if (!EncodeRLE(scanline_buffer.data(), scanline_size, compressed)) {
+                return Result::Error("RLE compression failed");
+            }
+            // Only use compressed if smaller
+            if (compressed.size() < scanline_size) {
+                writer.write_u32(static_cast<uint32_t>(compressed.size()));
+                writer.write_bytes(compressed.data(), compressed.size());
+            } else {
+                // Fallback to uncompressed (write as-is, decoder handles it)
+                writer.write_u32(static_cast<uint32_t>(scanline_size));
+                writer.write_bytes(scanline_buffer.data(), scanline_size);
+            }
+        } else if (options.compression == Compression::ZIPS ||
+                   options.compression == Compression::ZIP) {
+            // ZIP/ZIPS compression (using DEFLATE stored blocks)
+            std::vector<uint8_t> compressed;
+            if (!deflate::Deflate(scanline_buffer.data(), scanline_size, compressed)) {
+                return Result::Error("ZIP compression failed");
+            }
+            writer.write_u32(static_cast<uint32_t>(compressed.size()));
+            writer.write_bytes(compressed.data(), compressed.size());
         } else {
-            // For simplicity, just write uncompressed
-            // TODO: Implement RLE/ZIP compression
+            // Unsupported compression - write uncompressed
             writer.write_u32(static_cast<uint32_t>(scanline_size));
             writer.write_bytes(scanline_buffer.data(), scanline_size);
         }

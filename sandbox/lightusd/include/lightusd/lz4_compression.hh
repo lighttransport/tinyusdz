@@ -22,6 +22,15 @@ public:
     /// Return the largest possible compressed size for the given inputSize.
     static size_t GetCompressedBufferSize(size_t inputSize);
 
+    /// Compress data to buffer.
+    /// @param input Pointer to input data
+    /// @param output Pointer to output buffer (must be at least GetCompressedBufferSize bytes)
+    /// @param inputSize Size of input data
+    /// @param err Optional error string
+    /// @return Number of bytes written to output, or 0 on error
+    static size_t CompressToBuffer(const char* input, char* output,
+                                   size_t inputSize, std::string* err = nullptr);
+
     /// Decompress data from buffer.
     /// @param compressed Pointer to compressed data
     /// @param output Pointer to output buffer

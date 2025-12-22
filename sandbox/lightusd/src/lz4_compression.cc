@@ -38,6 +38,84 @@ size_t LZ4Compression::GetCompressedBufferSize(size_t inputSize) {
     return sz;
 }
 
+size_t LZ4Compression::CompressToBuffer(const char* inputPtr,
+                                         char* outputPtr,
+                                         size_t inputSize,
+                                         std::string* err) {
+    if (inputSize == 0) {
+        return 0;
+    }
+
+    if (inputSize > GetMaxInputSize()) {
+        if (err) {
+            *err = "Input size exceeds maximum";
+        }
+        return 0;
+    }
+
+    char* outputStart = outputPtr;
+
+    if (inputSize <= static_cast<size_t>(LZ4_MAX_INPUT_SIZE)) {
+        // Single chunk - write 0 as chunk count, then compressed data
+        *outputPtr++ = 0;
+
+        int compressedSize = LZ4_compress_default(
+            inputPtr, outputPtr,
+            static_cast<int>(inputSize),
+            LZ4_compressBound(static_cast<int>(inputSize)));
+
+        if (compressedSize <= 0) {
+            if (err) {
+                *err = "LZ4 compression failed";
+            }
+            return 0;
+        }
+
+        return 1 + static_cast<size_t>(compressedSize);
+    }
+
+    // Multi-chunk compression
+    size_t nWholeChunks = inputSize / LZ4_MAX_INPUT_SIZE;
+    size_t partChunkSz = inputSize % LZ4_MAX_INPUT_SIZE;
+    size_t nChunks = nWholeChunks + (partChunkSz ? 1 : 0);
+
+    if (nChunks > 127) {
+        if (err) {
+            *err = "Too many chunks required";
+        }
+        return 0;
+    }
+
+    // Write chunk count
+    *outputPtr++ = static_cast<char>(nChunks);
+
+    // Compress each chunk
+    for (size_t i = 0; i < nChunks; ++i) {
+        size_t thisChunkSize = (i < nWholeChunks) ? LZ4_MAX_INPUT_SIZE : partChunkSz;
+
+        int compressedSize = LZ4_compress_default(
+            inputPtr, outputPtr + sizeof(int32_t),
+            static_cast<int>(thisChunkSize),
+            LZ4_compressBound(static_cast<int>(thisChunkSize)));
+
+        if (compressedSize <= 0) {
+            if (err) {
+                *err = "LZ4 chunk compression failed";
+            }
+            return 0;
+        }
+
+        // Write chunk size prefix
+        int32_t chunkSz = static_cast<int32_t>(compressedSize);
+        std::memcpy(outputPtr, &chunkSz, sizeof(chunkSz));
+
+        outputPtr += sizeof(int32_t) + compressedSize;
+        inputPtr += thisChunkSize;
+    }
+
+    return static_cast<size_t>(outputPtr - outputStart);
+}
+
 size_t LZ4Compression::DecompressFromBuffer(const char* compressedPtr,
                                              char* outputPtr,
                                              size_t compressedSize,

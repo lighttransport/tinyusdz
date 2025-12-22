@@ -178,6 +178,95 @@ function js_fetch_asset(urlPtr, urlLen, requestId, outDataPtr, outSizePtr, outSt
 }
 
 /**
+ * JSPI-style parallel fetch - returns a Promise
+ * Uses Promise.all to fetch all URLs simultaneously
+ */
+function js_fetch_assets_parallel(urlsPtr, urlCount, outDataPtrs, outSizes, outStatuses) {
+    // Read all URLs from the array of pointers
+    var urls = [];
+    for (var i = 0; i < urlCount; i++) {
+        var urlPtr = getValue(urlsPtr + i * 4, '*');
+        urls.push(UTF8ToString(urlPtr));
+    }
+
+    // Create fetch promises for all URLs (use cache where available)
+    var fetchPromises = urls.map(function(url, index) {
+        // Check cache first
+        var cached = lightusdFetchCache.get(url);
+        if (cached) {
+            lightusdFetchCacheHits++;
+            return Promise.resolve({ url: url, index: index, data: cached.data, status: cached.status });
+        }
+
+        lightusdFetchCacheMisses++;
+
+        // Check pending fetches
+        var pending = lightusdPendingFetches.get(url);
+        if (pending) {
+            return pending.then(function(result) {
+                return { url: url, index: index, data: result.data, status: result.status };
+            });
+        }
+
+        // Start new fetch
+        var fetchPromise = fetch(url)
+            .then(function(response) {
+                return response.arrayBuffer().then(function(buffer) {
+                    var result = {
+                        data: new Uint8Array(buffer),
+                        status: response.status
+                    };
+                    lightusdCacheResult(url, result);
+                    return { url: url, index: index, data: result.data, status: result.status };
+                });
+            })
+            .catch(function(err) {
+                console.error('LightUSD parallel fetch error:', url, err);
+                return { url: url, index: index, data: null, status: 0 };
+            });
+
+        lightusdPendingFetches.set(url, fetchPromise.then(function(r) {
+            lightusdPendingFetches.delete(url);
+            return { data: r.data, status: r.status };
+        }));
+
+        return fetchPromise;
+    });
+
+    // Return Promise for JSPI - wait for all fetches to complete in parallel
+    return Promise.all(fetchPromises)
+        .then(function(results) {
+            // Write results to output arrays
+            for (var i = 0; i < results.length; i++) {
+                var result = results[i];
+                var idx = result.index;
+
+                if (result.data && result.status >= 200 && result.status < 300) {
+                    var dataPtr = _malloc(result.data.length);
+                    HEAPU8.set(result.data, dataPtr);
+                    setValue(outDataPtrs + idx * 4, dataPtr, '*');
+                    setValue(outSizes + idx * 4, result.data.length, 'i32');
+                } else {
+                    setValue(outDataPtrs + idx * 4, 0, '*');
+                    setValue(outSizes + idx * 4, 0, 'i32');
+                }
+                setValue(outStatuses + idx * 4, result.status, 'i32');
+            }
+            return 0;
+        })
+        .catch(function(err) {
+            console.error('LightUSD parallel fetch failed:', err);
+            // Set all results to error
+            for (var i = 0; i < urlCount; i++) {
+                setValue(outDataPtrs + i * 4, 0, '*');
+                setValue(outSizes + i * 4, 0, 'i32');
+                setValue(outStatuses + i * 4, 0, 'i32');
+            }
+            return -1;
+        });
+}
+
+/**
  * Free buffer allocated by JavaScript
  */
 function js_free_buffer(ptr) {

@@ -231,7 +231,7 @@ if(EMSCRIPTEN)
         # Chrome 109+, Firefox 121+, Safari (behind flag)
         set(LIGHTUSD_MAIN_FLAGS "${LIGHTUSD_MAIN_FLAGS} \
             -s JSPI=1 \
-            -s JSPI_IMPORTS=['js_fetch_asset_sync'] \
+            -s JSPI_IMPORTS=['js_fetch_asset_sync','js_fetch_assets_parallel'] \
             -s JSPI_EXPORTS=['lightusd_load_usd_async','lightusd_fetch_texture_async'] \
             --pre-js ${CMAKE_CURRENT_SOURCE_DIR}/web/jspi-imports.js \
         ")
@@ -243,7 +243,7 @@ if(EMSCRIPTEN)
         set(LIGHTUSD_MAIN_FLAGS "${LIGHTUSD_MAIN_FLAGS} \
             -s ASYNCIFY=1 \
             -s ASYNCIFY_STACK_SIZE=65536 \
-            -s ASYNCIFY_IMPORTS=['js_fetch_asset','js_fetch_asset_sync'] \
+            -s ASYNCIFY_IMPORTS=['js_fetch_asset','js_fetch_asset_sync','js_fetch_assets_parallel'] \
             --pre-js ${CMAKE_CURRENT_SOURCE_DIR}/web/asyncify-imports.js \
         ")
         target_compile_definitions(lightusd_wasm PRIVATE LIGHTUSD_ASYNCIFY=1)

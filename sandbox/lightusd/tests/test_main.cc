@@ -4,6 +4,8 @@
 // LightUSD - Basic tests
 
 #include "lightusd/lightusd.hh"
+#include "lightusd/integer_coding.hh"
+#include "lightusd/lightexr.hh"
 #include <cstdio>
 #include <cstring>
 #include <cstdlib>
@@ -2608,6 +2610,231 @@ TEST(Path_VariantSelection_Invalid) {
     Path base("/World/Model");
     EXPECT_FALSE(base.append_variant_selection("", "high").is_valid());
     EXPECT_FALSE(base.append_variant_selection("LOD", "").is_valid());
+}
+
+// ============================================================================
+// Integer Compression Tests
+// ============================================================================
+
+TEST(IntegerCompression_RoundTrip) {
+    // Test 32-bit integer compression round-trip
+    std::vector<int32_t> original = {0, 1, 2, 3, 4, 5, 100, 200, 300, -1, -5, -100};
+
+    // Allocate compression buffer
+    size_t compressedBufSize = IntegerCompression::GetCompressedBufferSize(original.size());
+    std::vector<char> compressed(compressedBufSize);
+
+    std::string err;
+    size_t compressedSize = IntegerCompression::CompressToBuffer(
+        original.data(), original.size(), compressed.data(), &err);
+
+    EXPECT_TRUE(compressedSize > 0);
+
+    // Decompress
+    std::vector<int32_t> decompressed(original.size());
+    size_t workSpaceSize = IntegerCompression::GetDecompressionWorkingSpaceSize(original.size());
+    std::vector<char> workSpace(workSpaceSize);
+
+    size_t numDecompressed = IntegerCompression::DecompressFromBuffer(
+        compressed.data(), compressedSize,
+        decompressed.data(), original.size(), &err, workSpace.data());
+
+    EXPECT_EQ(numDecompressed, original.size());
+
+    // Verify contents
+    bool allMatch = true;
+    for (size_t i = 0; i < original.size(); ++i) {
+        if (original[i] != decompressed[i]) {
+            allMatch = false;
+            break;
+        }
+    }
+    EXPECT_TRUE(allMatch);
+}
+
+TEST(IntegerCompression_Sequential) {
+    // Test with sequential integers (common in USD indices)
+    std::vector<uint32_t> original;
+    for (uint32_t i = 0; i < 1000; ++i) {
+        original.push_back(i);
+    }
+
+    size_t compressedBufSize = IntegerCompression::GetCompressedBufferSize(original.size());
+    std::vector<char> compressed(compressedBufSize);
+
+    std::string err;
+    size_t compressedSize = IntegerCompression::CompressToBuffer(
+        original.data(), original.size(), compressed.data(), &err);
+
+    EXPECT_TRUE(compressedSize > 0);
+    // Sequential data should compress well
+    EXPECT_TRUE(compressedSize < original.size() * sizeof(uint32_t));
+
+    // Decompress and verify
+    std::vector<uint32_t> decompressed(original.size());
+    size_t workSpaceSize = IntegerCompression::GetDecompressionWorkingSpaceSize(original.size());
+    std::vector<char> workSpace(workSpaceSize);
+
+    size_t numDecompressed = IntegerCompression::DecompressFromBuffer(
+        compressed.data(), compressedSize,
+        decompressed.data(), original.size(), &err, workSpace.data());
+
+    EXPECT_EQ(numDecompressed, original.size());
+
+    bool allMatch = true;
+    for (size_t i = 0; i < original.size(); ++i) {
+        if (original[i] != decompressed[i]) {
+            allMatch = false;
+            break;
+        }
+    }
+    EXPECT_TRUE(allMatch);
+}
+
+TEST(IntegerCompression64_RoundTrip) {
+    // Test 64-bit integer compression
+    std::vector<int64_t> original = {0, 1, 100, 10000, 1000000, -1, -100, INT64_MAX / 2};
+
+    size_t compressedBufSize = IntegerCompression64::GetCompressedBufferSize(original.size());
+    std::vector<char> compressed(compressedBufSize);
+
+    std::string err;
+    size_t compressedSize = IntegerCompression64::CompressToBuffer(
+        original.data(), original.size(), compressed.data(), &err);
+
+    EXPECT_TRUE(compressedSize > 0);
+
+    // Decompress
+    std::vector<int64_t> decompressed(original.size());
+    size_t workSpaceSize = IntegerCompression64::GetDecompressionWorkingSpaceSize(original.size());
+    std::vector<char> workSpace(workSpaceSize);
+
+    size_t numDecompressed = IntegerCompression64::DecompressFromBuffer(
+        compressed.data(), compressedSize,
+        decompressed.data(), original.size(), &err, workSpace.data());
+
+    EXPECT_EQ(numDecompressed, original.size());
+
+    bool allMatch = true;
+    for (size_t i = 0; i < original.size(); ++i) {
+        if (original[i] != decompressed[i]) {
+            allMatch = false;
+            break;
+        }
+    }
+    EXPECT_TRUE(allMatch);
+}
+
+// ============================================================================
+// EXR Compression Tests
+// ============================================================================
+
+TEST(LightEXR_SaveLoad_None) {
+    // Test EXR save/load with no compression
+    const int width = 8;
+    const int height = 8;
+    const int channels = 3;
+
+    // Create test image with gradient
+    std::vector<float> pixels(width * height * channels);
+    for (int y = 0; y < height; ++y) {
+        for (int x = 0; x < width; ++x) {
+            int idx = (y * width + x) * channels;
+            pixels[idx + 0] = static_cast<float>(x) / width;      // R
+            pixels[idx + 1] = static_cast<float>(y) / height;     // G
+            pixels[idx + 2] = 0.5f;                                // B
+        }
+    }
+
+    // Save to temp file
+    lightexr::SaveOptions save_opts;
+    save_opts.compression = lightexr::Compression::None;
+    save_opts.write_half = false;
+
+    auto result = lightexr::SaveEXR("/tmp/test_none.exr", width, height,
+                                     channels, pixels.data(), nullptr, save_opts);
+    EXPECT_TRUE(result.success);
+
+    // Load back
+    lightexr::EXRImage loaded;
+    lightexr::LoadOptions load_opts;
+    result = lightexr::LoadEXR("/tmp/test_none.exr", &loaded, load_opts);
+    EXPECT_TRUE(result.success);
+
+    EXPECT_EQ(loaded.header.width(), width);
+    EXPECT_EQ(loaded.header.height(), height);
+}
+
+TEST(LightEXR_SaveLoad_RLE) {
+    // Test EXR save/load with RLE compression
+    const int width = 16;
+    const int height = 16;
+    const int channels = 3;
+
+    // Create test image with runs (good for RLE)
+    std::vector<float> pixels(width * height * channels);
+    for (int y = 0; y < height; ++y) {
+        for (int x = 0; x < width; ++x) {
+            int idx = (y * width + x) * channels;
+            // Solid color rows (good for RLE)
+            pixels[idx + 0] = (y % 2 == 0) ? 1.0f : 0.0f;
+            pixels[idx + 1] = (y % 2 == 0) ? 0.0f : 1.0f;
+            pixels[idx + 2] = 0.5f;
+        }
+    }
+
+    // Save with RLE
+    lightexr::SaveOptions save_opts;
+    save_opts.compression = lightexr::Compression::RLE;
+    save_opts.write_half = true;  // Half float
+
+    auto result = lightexr::SaveEXR("/tmp/test_rle.exr", width, height,
+                                     channels, pixels.data(), nullptr, save_opts);
+    EXPECT_TRUE(result.success);
+
+    // Load back
+    lightexr::EXRImage loaded;
+    result = lightexr::LoadEXR("/tmp/test_rle.exr", &loaded);
+    EXPECT_TRUE(result.success);
+
+    EXPECT_EQ(loaded.header.width(), width);
+    EXPECT_EQ(loaded.header.height(), height);
+}
+
+TEST(LightEXR_SaveLoad_ZIP) {
+    // Test EXR save/load with ZIP compression
+    const int width = 8;
+    const int height = 8;
+    const int channels = 4;  // RGBA
+
+    // Create test image
+    std::vector<float> pixels(width * height * channels);
+    for (int y = 0; y < height; ++y) {
+        for (int x = 0; x < width; ++x) {
+            int idx = (y * width + x) * channels;
+            pixels[idx + 0] = static_cast<float>(x) / width;
+            pixels[idx + 1] = static_cast<float>(y) / height;
+            pixels[idx + 2] = 1.0f - static_cast<float>(x) / width;
+            pixels[idx + 3] = 1.0f;  // Alpha
+        }
+    }
+
+    // Save with ZIPS
+    lightexr::SaveOptions save_opts;
+    save_opts.compression = lightexr::Compression::ZIPS;
+    save_opts.write_half = true;
+
+    auto result = lightexr::SaveEXR("/tmp/test_zip.exr", width, height,
+                                     channels, pixels.data(), nullptr, save_opts);
+    EXPECT_TRUE(result.success);
+
+    // Load back
+    lightexr::EXRImage loaded;
+    result = lightexr::LoadEXR("/tmp/test_zip.exr", &loaded);
+    EXPECT_TRUE(result.success);
+
+    EXPECT_EQ(loaded.header.width(), width);
+    EXPECT_EQ(loaded.header.height(), height);
 }
 
 // ============================================================================

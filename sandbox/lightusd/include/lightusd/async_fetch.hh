@@ -176,6 +176,21 @@ extern int js_fetch_asset_sync(
     int* out_status
 ) __attribute__((import_name("js_fetch_asset_sync")));
 
+/// Parallel fetch multiple URLs using Promise.all (Asyncify/JSPI)
+/// @param urls Array of null-terminated URL strings
+/// @param url_count Number of URLs
+/// @param out_data Array of output buffer pointers (filled by JS)
+/// @param out_sizes Array of output sizes
+/// @param out_statuses Array of output status codes
+/// @return 0 on success (individual results may still have errors)
+extern int js_fetch_assets_parallel(
+    const char* const* urls,
+    size_t url_count,
+    uint8_t** out_data,
+    size_t* out_sizes,
+    int* out_statuses
+) __attribute__((import_name("js_fetch_assets_parallel")));
+
 /// Free memory allocated by JS
 extern void js_free_buffer(uint8_t* ptr) __attribute__((import_name("js_free_buffer")));
 
