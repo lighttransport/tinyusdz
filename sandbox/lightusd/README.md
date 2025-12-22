@@ -4,7 +4,7 @@
 
 While TinyUSDZ provides a high-level, batteries-included framework with extensive abstractions, LightUSD takes a different approach: it exposes the fundamental building blocks of USD with minimal overhead, giving you direct control over every aspect of scene description parsing, manipulation, and serialization.
 
-LightUSD is targetting 3D content creation/DCC framework for genAI, VLM/LLM application.
+LightUSD is targetting 3D content creation/DCC framework for 3D genAI, 3D VLM/LLM application.
 
 ## Philosophy
 
@@ -231,19 +231,19 @@ emmake make -j8
 | `LIGHTUSD_WASM_JSPI` | Enable JSPI (more efficient, Chrome 109+) |
 | `LIGHTUSD_COROUTINE` | Enable C++20 coroutine API |
 
-## Comparison with pxrUSD
+## Comparison with TinyUSDZ
 
-| Aspect | pxrUSD | LightUSD |
+| Aspect | TinyUSDZ | LightUSD |
 |--------|--------|----------|
 | Philosophy | High-level framework | Low-level toolkit |
-| Dependencies | Boost, TBB, Python, ... | None |
-| Binary size | ~100+ MB | < 1 MB |
-| Exceptions | Yes | No |
-| RTTI | Yes | No |
-| Threading | Built-in thread pool | User-controlled |
+| Dependencies | None, but some external libraries embedded | None |
+| Binary size | ~10+ MB | < 1 MB |
+| Exceptions | No | No |
+| RTTI | No | No |
+| Threading | Built-in(W.I.P | User-controlled |
 | Memory | Automatic management | Explicit control |
-| WebAssembly | Difficult | First-class support |
-| Composition | Integrated Pcp | Modular, optional |
+| WebAssembly | Supported, but no async | First-class support |
+| Composition | Integrated | Modular, optional |
 
 ## License
 
