@@ -6,9 +6,12 @@
 #include "lightusd/lightusd.hh"
 #include "lightusd/integer_coding.hh"
 #include "lightusd/lightexr.hh"
+#include "lightusd/streaming_loader.hh"
 #include <cstdio>
 #include <cstring>
 #include <cstdlib>
+#include <thread>
+#include <chrono>
 
 // Simple test framework
 static int g_test_count = 0;
@@ -2835,6 +2838,390 @@ TEST(LightEXR_SaveLoad_ZIP) {
 
     EXPECT_EQ(loaded.header.width(), width);
     EXPECT_EQ(loaded.header.height(), height);
+}
+
+// ============================================================================
+// StreamingLoader Tests
+// ============================================================================
+
+TEST(AssetCache_BasicOps) {
+    AssetCache cache;
+
+    // Initially empty
+    EXPECT_FALSE(cache.has("test.png"));
+    EXPECT_EQ(cache.get("test.png"), nullptr);
+    EXPECT_EQ(cache.total_size(), 0u);
+
+    // Add an asset
+    std::vector<uint8_t> data1 = {1, 2, 3, 4, 5};
+    cache.put("test.png", data1);
+
+    EXPECT_TRUE(cache.has("test.png"));
+    EXPECT_NE(cache.get("test.png"), nullptr);
+    EXPECT_EQ(cache.total_size(), 5u);
+
+    // Check data content
+    const auto* retrieved = cache.get("test.png");
+    EXPECT_TRUE(retrieved != nullptr);
+    if (retrieved) {
+        EXPECT_EQ(retrieved->size(), 5u);
+        EXPECT_EQ((*retrieved)[0], 1);
+        EXPECT_EQ((*retrieved)[4], 5);
+    }
+
+    // Add another asset
+    std::vector<uint8_t> data2 = {10, 20, 30};
+    cache.put("texture.jpg", data2);
+
+    EXPECT_TRUE(cache.has("texture.jpg"));
+    EXPECT_EQ(cache.total_size(), 8u);
+
+    // Remove an asset
+    EXPECT_TRUE(cache.remove("test.png"));
+    EXPECT_FALSE(cache.has("test.png"));
+    EXPECT_EQ(cache.total_size(), 3u);
+
+    // Remove non-existent
+    EXPECT_FALSE(cache.remove("nonexistent.png"));
+
+    // Clear all
+    cache.clear();
+    EXPECT_FALSE(cache.has("texture.jpg"));
+    EXPECT_EQ(cache.total_size(), 0u);
+}
+
+TEST(AssetCache_LRUEviction) {
+    AssetCache cache;
+
+    // Set small max size
+    cache.set_max_size(100);
+
+    // Add assets
+    std::vector<uint8_t> data1(40, 'A');
+    std::vector<uint8_t> data2(40, 'B');
+    std::vector<uint8_t> data3(40, 'C');
+
+    cache.put("asset1.bin", data1);
+    cache.put("asset2.bin", data2);
+
+    EXPECT_TRUE(cache.has("asset1.bin"));
+    EXPECT_TRUE(cache.has("asset2.bin"));
+    EXPECT_EQ(cache.total_size(), 80u);
+
+    // Access asset1 to make it recently used
+    cache.get("asset1.bin");
+
+    // Add asset3 - should evict asset2 (LRU)
+    cache.put("asset3.bin", data3);
+
+    EXPECT_TRUE(cache.has("asset1.bin"));  // Recently accessed, kept
+    EXPECT_FALSE(cache.has("asset2.bin")); // LRU, evicted
+    EXPECT_TRUE(cache.has("asset3.bin"));  // Just added
+}
+
+TEST(AssetCache_MaxSizeEnforcement) {
+    AssetCache cache;
+
+    // Add some data
+    std::vector<uint8_t> data(100, 'X');
+    cache.put("large.bin", data);
+    EXPECT_EQ(cache.total_size(), 100u);
+
+    // Reduce max size - should trigger eviction
+    cache.set_max_size(50);
+    EXPECT_EQ(cache.total_size(), 0u);  // Evicted because over limit
+}
+
+TEST(AssetCache_UpdateExisting) {
+    AssetCache cache;
+
+    // Add initial data
+    std::vector<uint8_t> data1 = {1, 2, 3};
+    cache.put("file.bin", data1);
+    EXPECT_EQ(cache.total_size(), 3u);
+
+    // Update with larger data
+    std::vector<uint8_t> data2 = {4, 5, 6, 7, 8};
+    cache.put("file.bin", data2);
+
+    EXPECT_EQ(cache.total_size(), 5u);  // Size updated
+    const auto* retrieved = cache.get("file.bin");
+    EXPECT_TRUE(retrieved != nullptr);
+    if (retrieved) {
+        EXPECT_EQ(retrieved->size(), 5u);
+        EXPECT_EQ((*retrieved)[0], 4);
+    }
+}
+
+TEST(StreamingLoader_InitialState) {
+    StreamingLoader loader;
+
+    EXPECT_EQ(loader.state(), LoaderState::Idle);
+    EXPECT_EQ(loader.pending_count(), 0u);
+    EXPECT_EQ(loader.waiting_asset_count(), 0u);
+    EXPECT_FALSE(loader.has_ready_prims());
+    EXPECT_EQ(loader.stage(), nullptr);
+    EXPECT_EQ(loader.prim_count(), 0u);
+}
+
+TEST(StreamingLoader_ParseUSDA) {
+    StreamingLoader loader;
+
+    // Simple USDA content
+    const char* usda = R"(#usda 1.0
+def Xform "World" {
+    def Mesh "Cube" {
+    }
+    def Mesh "Sphere" {
+    }
+}
+def Xform "Lights" {
+}
+)";
+
+    auto result = loader.parse_structure(
+        reinterpret_cast<const uint8_t*>(usda),
+        strlen(usda),
+        "test.usda"
+    );
+
+    EXPECT_TRUE(static_cast<bool>(result));
+    EXPECT_EQ(loader.state(), LoaderState::Ready);
+    EXPECT_NE(loader.stage(), nullptr);
+
+    if (result) {
+        const auto& skeletons = result.value();
+        // Should have 4 prims: World, Cube, Sphere, Lights
+        EXPECT_EQ(skeletons.size(), 4u);
+
+        // Check World prim
+        bool found_world = false;
+        bool found_cube = false;
+        for (const auto& skel : skeletons) {
+            if (skel.name == "World") {
+                found_world = true;
+                EXPECT_EQ(skel.type_name, "Xform");
+                EXPECT_TRUE(skel.parent_path.empty());
+            }
+            if (skel.name == "Cube") {
+                found_cube = true;
+                EXPECT_EQ(skel.type_name, "Mesh");
+                EXPECT_EQ(skel.parent_path, "/World");
+            }
+        }
+        EXPECT_TRUE(found_world);
+        EXPECT_TRUE(found_cube);
+    }
+}
+
+TEST(StreamingLoader_ParseError) {
+    StreamingLoader loader;
+
+    // Invalid USDA content
+    const char* bad_usda = "this is not valid usda content {{{";
+
+    auto result = loader.parse_structure(
+        reinterpret_cast<const uint8_t*>(bad_usda),
+        strlen(bad_usda),
+        "bad.usda"
+    );
+
+    EXPECT_FALSE(static_cast<bool>(result));
+    EXPECT_EQ(loader.state(), LoaderState::Error);
+    EXPECT_FALSE(loader.error().empty());
+}
+
+TEST(StreamingLoader_UnknownFormat) {
+    StreamingLoader loader;
+
+    const char* data = "some data";
+    auto result = loader.parse_structure(
+        reinterpret_cast<const uint8_t*>(data),
+        strlen(data),
+        "file.xyz"  // Unknown extension
+    );
+
+    EXPECT_FALSE(static_cast<bool>(result));
+    EXPECT_EQ(loader.state(), LoaderState::Error);
+}
+
+TEST(StreamingLoader_RequestLoad) {
+    StreamingLoader loader;
+
+    // Parse a simple scene
+    const char* usda = R"(#usda 1.0
+def Mesh "Cube" {
+    point3f[] points = [(0,0,0), (1,0,0), (1,1,0), (0,1,0)]
+    int[] faceVertexCounts = [4]
+    int[] faceVertexIndices = [0, 1, 2, 3]
+}
+)";
+
+    auto parse_result = loader.parse_structure(
+        reinterpret_cast<const uint8_t*>(usda),
+        strlen(usda),
+        "test.usda"
+    );
+    EXPECT_TRUE(static_cast<bool>(parse_result));
+
+    // Request load
+    LoadRequest req;
+    req.prim_path = "/Cube";
+    req.priority = LoadPriority::High;
+    req.time = 0.0;
+
+    loader.request_load(req);
+    EXPECT_EQ(loader.pending_count(), 1u);
+
+    // Process queue
+    uint32_t processed = loader.process_queue(10);
+    EXPECT_TRUE(processed > 0);
+}
+
+TEST(StreamingLoader_BatchLoad) {
+    StreamingLoader loader;
+
+    const char* usda = R"(#usda 1.0
+def Mesh "A" {}
+def Mesh "B" {}
+def Mesh "C" {}
+)";
+
+    auto parse_result = loader.parse_structure(
+        reinterpret_cast<const uint8_t*>(usda),
+        strlen(usda),
+        "test.usda"
+    );
+    EXPECT_TRUE(static_cast<bool>(parse_result));
+
+    // Batch request
+    std::vector<LoadRequest> requests = {
+        {"/A", LoadPriority::Normal, 0.0, true},
+        {"/B", LoadPriority::High, 0.0, true},
+        {"/C", LoadPriority::Low, 0.0, true},
+    };
+
+    loader.request_load_batch(requests);
+    EXPECT_EQ(loader.pending_count(), 3u);
+
+    // Cancel one
+    loader.cancel_load("/A");
+    EXPECT_EQ(loader.pending_count(), 2u);
+
+    // Cancel all
+    loader.cancel_all();
+    EXPECT_EQ(loader.pending_count(), 0u);
+}
+
+TEST(StreamingLoader_WithCache) {
+    auto cache = std::make_shared<AssetCache>();
+    cache->set_max_size(1024 * 1024);
+
+    StreamingLoader loader;
+    loader.set_asset_cache(cache);
+    loader.set_base_url("https://example.com/assets/");
+    loader.set_time_budget_ms(32);
+
+    // Parse a simple scene
+    const char* usda = R"(#usda 1.0
+def Mesh "Model" {}
+)";
+
+    auto result = loader.parse_structure(
+        reinterpret_cast<const uint8_t*>(usda),
+        strlen(usda),
+        "scene.usda"
+    );
+    EXPECT_TRUE(static_cast<bool>(result));
+}
+
+TEST(StreamingLoader_PrimState) {
+    StreamingLoader loader;
+
+    const char* usda = R"(#usda 1.0
+def Mesh "TestMesh" {}
+)";
+
+    auto parse_result = loader.parse_structure(
+        reinterpret_cast<const uint8_t*>(usda),
+        strlen(usda),
+        "test.usda"
+    );
+    EXPECT_TRUE(static_cast<bool>(parse_result));
+
+    // Initially skeleton state
+    EXPECT_EQ(loader.prim_state("/TestMesh"), PrimLoadState::Skeleton);
+
+    // Request load
+    LoadRequest req;
+    req.prim_path = "/TestMesh";
+    loader.request_load(req);
+
+    // Should be queued
+    EXPECT_EQ(loader.prim_state("/TestMesh"), PrimLoadState::Queued);
+}
+
+TEST(LoadRequest_PriorityOrdering) {
+    // Test that priority queue orders correctly
+    std::priority_queue<LoadRequest> queue;
+
+    LoadRequest low;
+    low.prim_path = "/Low";
+    low.priority = LoadPriority::Low;
+
+    LoadRequest high;
+    high.prim_path = "/High";
+    high.priority = LoadPriority::High;
+
+    LoadRequest immediate;
+    immediate.prim_path = "/Immediate";
+    immediate.priority = LoadPriority::Immediate;
+
+    LoadRequest normal;
+    normal.prim_path = "/Normal";
+    normal.priority = LoadPriority::Normal;
+
+    // Add in random order
+    queue.push(low);
+    queue.push(normal);
+    queue.push(immediate);
+    queue.push(high);
+
+    // Should come out in priority order (highest first)
+    EXPECT_EQ(queue.top().prim_path, "/Immediate");
+    queue.pop();
+    EXPECT_EQ(queue.top().prim_path, "/High");
+    queue.pop();
+    EXPECT_EQ(queue.top().prim_path, "/Normal");
+    queue.pop();
+    EXPECT_EQ(queue.top().prim_path, "/Low");
+}
+
+TEST(PrimSkeleton_Structure) {
+    PrimSkeleton skel;
+    skel.path = "/World/Model";
+    skel.name = "Model";
+    skel.type_name = "Mesh";
+    skel.parent_path = "/World";
+    skel.child_paths = {"/World/Model/Child1", "/World/Model/Child2"};
+    skel.has_geometry = true;
+    skel.has_material = true;
+    skel.has_transform = true;
+    skel.has_timesamples = false;
+    skel.estimated_vertices = 1000;
+    skel.estimated_faces = 500;
+
+    EXPECT_EQ(skel.path, "/World/Model");
+    EXPECT_EQ(skel.name, "Model");
+    EXPECT_EQ(skel.type_name, "Mesh");
+    EXPECT_EQ(skel.parent_path, "/World");
+    EXPECT_EQ(skel.child_paths.size(), 2u);
+    EXPECT_TRUE(skel.has_geometry);
+    EXPECT_TRUE(skel.has_material);
+    EXPECT_TRUE(skel.has_transform);
+    EXPECT_FALSE(skel.has_timesamples);
+    EXPECT_EQ(skel.estimated_vertices, 1000u);
+    EXPECT_EQ(skel.estimated_faces, 500u);
 }
 
 // ============================================================================

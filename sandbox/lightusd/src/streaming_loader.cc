@@ -314,6 +314,15 @@ public:
 
     // Process one item from the queue
     bool process_one() {
+        // Skip cancelled items (they remain in queue but not in queued_paths_)
+        while (!load_queue_.empty()) {
+            const LoadRequest& top = load_queue_.top();
+            if (queued_paths_.count(top.prim_path) > 0) {
+                break;  // Found a valid item
+            }
+            load_queue_.pop();  // Skip cancelled item
+        }
+
         if (load_queue_.empty()) return false;
 
         LoadRequest req = load_queue_.top();
@@ -625,7 +634,10 @@ const std::string& StreamingLoader::error() const {
 }
 
 size_t StreamingLoader::pending_count() const {
-    return impl_->load_queue_.size();
+    // Use queued_paths_ instead of load_queue_.size() because
+    // cancel_load() removes from queued_paths_ but can't efficiently
+    // remove from the priority_queue
+    return impl_->queued_paths_.size();
 }
 
 size_t StreamingLoader::waiting_asset_count() const {
