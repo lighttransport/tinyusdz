@@ -266,8 +266,16 @@ class SphereLight {
    * @returns {Color3} Radiance contribution
    */
   getRadiance(viewPoint, direction, maxDistance) {
-    // Calculate distance to light center
-    const toLight = this.position.clone().sub(viewPoint);
+    // Flip Y for HDRI equirectangular coordinate system:
+    // Three.js world: Y-up, but HDRI equirectangular phi convention expects
+    // phi=0 (top) to correspond to looking UP, which maps Y -> -Y in intersection math.
+    // We flip Y of BOTH position and direction to maintain consistent coordinate system.
+    const flippedPos = new Vec3(this.position.x, -this.position.y, this.position.z);
+    const flippedViewPoint = new Vec3(viewPoint.x, -viewPoint.y, viewPoint.z);
+    const flippedDir = new Vec3(direction.x, -direction.y, direction.z);
+
+    // Calculate distance to light center (in flipped coordinate system)
+    const toLight = flippedPos.clone().sub(flippedViewPoint);
     const distToCenter = toLight.length();
 
     // Beyond max distance, no contribution
@@ -275,13 +283,21 @@ class SphereLight {
       return new Color3(0, 0, 0);
     }
 
+    // Early check: if ray is pointing away from the light, no contribution
+    // This prevents false positives where discriminant > 0 but t < 0
+    // (which was incorrectly interpreted as "inside sphere")
+    const dirDotToLight = flippedDir.dot(toLight);
+    if (dirDotToLight <= 0) {
+      return new Color3(0, 0, 0);
+    }
+
     // Normalize direction to light
     const lightDir = toLight.clone().normalize();
 
     // Check if viewing direction intersects the sphere
-    // Ray-sphere intersection
+    // Ray-sphere intersection (using flipped direction for consistent coordinates)
     const a = 1; // direction is normalized
-    const b = -2 * direction.dot(toLight);
+    const b = -2 * flippedDir.dot(toLight);
     const c = toLight.lengthSq() - this.radius * this.radius;
     const discriminant = b * b - 4 * a * c;
 
@@ -617,6 +633,214 @@ class DiskLight {
   }
 }
 
+/**
+ * Point Light (infinitesimal light source with pseudo-radius for HDRI projection)
+ * In USD, PointLights are infinitely small but for HDRI visualization we give them
+ * a configurable pseudo-radius and intensity multiplier.
+ */
+class PointLight {
+  /**
+   * @param {Object} options
+   * @param {Vec3|Object} options.position - Light position {x, y, z}
+   * @param {Color3|Object|number} options.color - Light color
+   * @param {number} options.intensity - Light intensity
+   * @param {number} [options.pseudoRadius] - Pseudo radius for HDRI visualization (default: auto-calculated)
+   * @param {number} [options.intensityMultiplier] - Intensity multiplier for HDRI (default: 1.0)
+   * @param {number} [options.hdriWidth] - HDRI width for auto-calculating pseudo radius
+   */
+  constructor(options = {}) {
+    this.type = 'point';
+    this.position = options.position instanceof Vec3
+      ? options.position
+      : new Vec3(options.position?.x || 0, options.position?.y || 0, options.position?.z || 0);
+    this.intensity = options.intensity || 1;
+    this.intensityMultiplier = options.intensityMultiplier !== undefined ? options.intensityMultiplier : 1.0;
+
+    // Handle color
+    if (typeof options.color === 'number') {
+      this.color = new Color3().setFromHex(options.color);
+    } else if (options.color instanceof Color3) {
+      this.color = options.color.clone();
+    } else if (options.color) {
+      this.color = new Color3(options.color.r || 1, options.color.g || 1, options.color.b || 1);
+    } else {
+      this.color = new Color3(1, 1, 1);
+    }
+
+    // Pseudo radius for HDRI visualization
+    // Default: ~2 pixels worth of angular size for a 1024-wide HDRI
+    // 2 pixels at 1024 width = 2 * (2π/1024) ≈ 0.012 radians ≈ 0.7°
+    // We use a world-space radius that will appear as ~2-3 pixels
+    if (options.pseudoRadius !== undefined) {
+      this.pseudoRadius = options.pseudoRadius;
+    } else {
+      // Auto-calculate based on HDRI width (default 1024)
+      // Aim for ~2 pixels angular size
+      const hdriWidth = options.hdriWidth || DEFAULT_WIDTH;
+      const pixelAngularSize = TWO_PI / hdriWidth;
+      const targetPixels = 2;
+      // For a light at distance d, angular size = 2 * atan(r/d) ≈ 2r/d for small r
+      // We want angular size = targetPixels * pixelAngularSize
+      // Assume typical viewing distance of 10 units
+      const typicalDistance = 10;
+      this.pseudoRadius = (targetPixels * pixelAngularSize * typicalDistance) / 2;
+    }
+  }
+
+  /**
+   * Calculate the radiance seen from a point looking at this light
+   * @param {Vec3} viewPoint - The point from which we're viewing
+   * @param {Vec3} direction - The viewing direction (normalized)
+   * @param {number} maxDistance - Maximum distance to consider
+   * @returns {Color3} Radiance contribution
+   */
+  getRadiance(viewPoint, direction, maxDistance) {
+    // Flip Y for HDRI equirectangular coordinate system:
+    // Three.js world: Y-up, but HDRI equirectangular phi convention expects
+    // phi=0 (top) to correspond to looking UP, which maps Y -> -Y in intersection math.
+    // We flip Y of BOTH position and direction to maintain consistent coordinate system.
+    const flippedPos = new Vec3(this.position.x, -this.position.y, this.position.z);
+    const flippedViewPoint = new Vec3(viewPoint.x, -viewPoint.y, viewPoint.z);
+    const flippedDir = new Vec3(direction.x, -direction.y, direction.z);
+
+    const toLight = flippedPos.clone().sub(flippedViewPoint);
+    const distToCenter = toLight.length();
+
+    // Beyond max distance, no contribution
+    if (distToCenter > maxDistance + this.pseudoRadius) {
+      return new Color3(0, 0, 0);
+    }
+
+    // Early check: if ray is pointing away from the light, no contribution
+    // This prevents false positives where discriminant > 0 but t < 0
+    const dirDotToLight = flippedDir.dot(toLight);
+    if (dirDotToLight <= 0) {
+      return new Color3(0, 0, 0);
+    }
+
+    // Ray-sphere intersection with pseudo-radius (using flipped direction)
+    const a = 1;
+    const b = -2 * flippedDir.dot(toLight);
+    const c = toLight.lengthSq() - this.pseudoRadius * this.pseudoRadius;
+    const discriminant = b * b - 4 * a * c;
+
+    if (discriminant < 0) {
+      return new Color3(0, 0, 0);
+    }
+
+    const t = (-b - Math.sqrt(discriminant)) / (2 * a);
+    if (t < 0) {
+      // Inside the pseudo-sphere
+      return this.color.clone().multiplyScalar(this.intensity * this.intensityMultiplier);
+    }
+
+    // Calculate solid angle subtended by the pseudo-sphere
+    const sinTheta = Math.min(1, this.pseudoRadius / distToCenter);
+    const cosTheta = Math.sqrt(1 - sinTheta * sinTheta);
+    const solidAngle = TWO_PI * (1 - cosTheta);
+
+    // Point light intensity falls off with distance squared
+    // But for HDRI visualization, we want consistent brightness
+    const radiance = this.color.clone().multiplyScalar(
+      this.intensity * this.intensityMultiplier * solidAngle * INV_PI
+    );
+
+    return radiance;
+  }
+}
+
+/**
+ * Distant Light (directional light with pseudo-angular-radius for HDRI projection)
+ * In USD, DistantLights emit parallel rays from infinitely far away.
+ * For HDRI visualization, we render them as a disk in the sky with configurable angular radius.
+ */
+class DistantLight {
+  /**
+   * @param {Object} options
+   * @param {Vec3|Object} options.direction - Light direction (direction light is pointing, will be negated for HDRI)
+   * @param {Color3|Object|number} options.color - Light color
+   * @param {number} options.intensity - Light intensity
+   * @param {number} [options.angle] - Angular radius in radians (default: ~0.5° like the sun)
+   * @param {number} [options.intensityMultiplier] - Intensity multiplier for HDRI (default: 10.0 for visibility)
+   * @param {number} [options.hdriWidth] - HDRI width for auto-calculating angular radius
+   */
+  constructor(options = {}) {
+    this.type = 'distant';
+
+    // Direction the light is pointing (we negate this to get where light comes FROM)
+    const inputDir = options.direction instanceof Vec3
+      ? options.direction
+      : new Vec3(options.direction?.x || 0, options.direction?.y || -1, options.direction?.z || 0);
+    this.direction = inputDir.clone().normalize();
+
+    // Light comes FROM the opposite direction
+    // No Y-flip needed for DistantLight since it's a pure direction comparison
+    this.lightFromDirection = this.direction.clone().negate();
+
+    this.intensity = options.intensity || 1;
+    // Higher default multiplier for distant lights since they're often dim in HDRI
+    this.intensityMultiplier = options.intensityMultiplier !== undefined ? options.intensityMultiplier : 10.0;
+
+    // Handle color
+    if (typeof options.color === 'number') {
+      this.color = new Color3().setFromHex(options.color);
+    } else if (options.color instanceof Color3) {
+      this.color = options.color.clone();
+    } else if (options.color) {
+      this.color = new Color3(options.color.r || 1, options.color.g || 1, options.color.b || 1);
+    } else {
+      this.color = new Color3(1, 1, 1);
+    }
+
+    // Angular radius for HDRI visualization
+    // Default: ~0.5° (sun's angular radius is about 0.27°, full diameter ~0.5°)
+    if (options.angle !== undefined) {
+      this.angle = options.angle;
+    } else {
+      // Auto-calculate based on HDRI width
+      // Aim for ~3 pixels diameter for visibility
+      const hdriWidth = options.hdriWidth || DEFAULT_WIDTH;
+      const pixelAngularSize = TWO_PI / hdriWidth;
+      const targetPixels = 3;
+      this.angle = (targetPixels * pixelAngularSize) / 2;
+    }
+
+    // Precompute cos(angle) for fast comparison
+    this.cosAngle = Math.cos(this.angle);
+  }
+
+  /**
+   * Calculate the radiance seen from a point looking at this light
+   * @param {Vec3} viewPoint - The point from which we're viewing (ignored for distant light)
+   * @param {Vec3} direction - The viewing direction (normalized)
+   * @param {number} maxDistance - Maximum distance to consider (ignored for distant light)
+   * @returns {Color3} Radiance contribution
+   */
+  getRadiance(viewPoint, direction, maxDistance) {
+    // Check if viewing direction is within the angular radius of the light source
+    // Light comes FROM lightFromDirection (already Y-flipped in constructor for HDRI projection)
+    const dotProduct = direction.dot(this.lightFromDirection);
+
+    // If dot product > cos(angle), we're looking at the light disk
+    if (dotProduct < this.cosAngle) {
+      return new Color3(0, 0, 0);
+    }
+
+    // Smooth falloff from center to edge (optional, for softer appearance)
+    // Linear interpolation from full intensity at center to 0 at edge
+    const normalizedAngle = Math.acos(Math.min(1, dotProduct));
+    const falloff = 1.0 - (normalizedAngle / this.angle);
+    const smoothFalloff = falloff * falloff * (3 - 2 * falloff); // Smoothstep
+
+    // Distant light radiance
+    const radiance = this.color.clone().multiplyScalar(
+      this.intensity * this.intensityMultiplier * smoothFalloff
+    );
+
+    return radiance;
+  }
+}
+
 // ============================================
 // HDRI Projection Engine
 // ============================================
@@ -653,12 +877,19 @@ class LightHDRIProjection {
    * @returns {this}
    */
   addLight(light) {
+    // Pass HDRI width to light constructors for auto-calculating pseudo radius/angle
+    const lightOptions = { ...light, hdriWidth: this.width };
+
     if (light.type === 'sphere' && !(light instanceof SphereLight)) {
-      light = new SphereLight(light);
+      light = new SphereLight(lightOptions);
     } else if (light.type === 'area' && !(light instanceof AreaLight)) {
-      light = new AreaLight(light);
+      light = new AreaLight(lightOptions);
     } else if (light.type === 'disk' && !(light instanceof DiskLight)) {
-      light = new DiskLight(light);
+      light = new DiskLight(lightOptions);
+    } else if (light.type === 'point' && !(light instanceof PointLight)) {
+      light = new PointLight(lightOptions);
+    } else if (light.type === 'distant' && !(light instanceof DistantLight)) {
+      light = new DistantLight(lightOptions);
     }
 
     this.lights.push(light);
@@ -1618,6 +1849,8 @@ const exports = {
   SphereLight,
   AreaLight,
   DiskLight,
+  PointLight,
+  DistantLight,
   Vec3,
   Color3,
   EXRWriter,
@@ -1643,6 +1876,8 @@ if (typeof window !== 'undefined') {
   window.SphereLight = SphereLight;
   window.AreaLight = AreaLight;
   window.DiskLight = DiskLight;
+  window.PointLight = PointLight;
+  window.DistantLight = DistantLight;
   window.EXRWriter = EXRWriter;
   window.projectSphereLight = projectSphereLight;
   window.projectAreaLight = projectAreaLight;
@@ -1655,6 +1890,8 @@ export {
   SphereLight,
   AreaLight,
   DiskLight,
+  PointLight,
+  DistantLight,
   Vec3,
   Color3,
   EXRWriter,
