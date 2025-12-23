@@ -8860,6 +8860,37 @@ bool RenderSceneConverter::BuildNodeHierarchyImpl(
       }
 
       if (light_converted) {
+        // Copy world transform to the light
+        // rnode.global_matrix is a matrix4d, rlight.transform is mat4 (float)
+        const auto &m = rnode.global_matrix;
+        rlight.transform.m[0][0] = float(m.m[0][0]);
+        rlight.transform.m[0][1] = float(m.m[0][1]);
+        rlight.transform.m[0][2] = float(m.m[0][2]);
+        rlight.transform.m[0][3] = float(m.m[0][3]);
+        rlight.transform.m[1][0] = float(m.m[1][0]);
+        rlight.transform.m[1][1] = float(m.m[1][1]);
+        rlight.transform.m[1][2] = float(m.m[1][2]);
+        rlight.transform.m[1][3] = float(m.m[1][3]);
+        rlight.transform.m[2][0] = float(m.m[2][0]);
+        rlight.transform.m[2][1] = float(m.m[2][1]);
+        rlight.transform.m[2][2] = float(m.m[2][2]);
+        rlight.transform.m[2][3] = float(m.m[2][3]);
+        rlight.transform.m[3][0] = float(m.m[3][0]);
+        rlight.transform.m[3][1] = float(m.m[3][1]);
+        rlight.transform.m[3][2] = float(m.m[3][2]);
+        rlight.transform.m[3][3] = float(m.m[3][3]);
+
+        // Extract position from transform (translation column)
+        rlight.position[0] = float(m.m[3][0]);
+        rlight.position[1] = float(m.m[3][1]);
+        rlight.position[2] = float(m.m[3][2]);
+
+        // Extract direction from transform (light faces -Z in local space)
+        // Direction is the negative of the Z column (third column) of the rotation part
+        rlight.direction[0] = -float(m.m[2][0]);
+        rlight.direction[1] = -float(m.m[2][1]);
+        rlight.direction[2] = -float(m.m[2][2]);
+
         // Add light to the lights array
         size_t light_id = lights.size();
         lightMap.add(light_abs_path, light_id);

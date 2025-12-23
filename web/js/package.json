@@ -8,6 +8,7 @@
     "dev:anim": "vite --open /animation.html",
     "dev:skel": "vite --open /skining-anim.html",
     "dev:mtlx": "vite --open /materialx.html",
+    "dev:lux": "vite --open /usdlux.html",
     "dev:webgpu": "vite --open /materialx-webgpu.html",
     "dev:webgpu-raw": "vite --open /mtlx-webgpu.html",
     "build": "vite build",

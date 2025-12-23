@@ -715,6 +715,170 @@
             border-color: rgba(255, 153, 102, 0.5);
             background: rgba(255, 153, 102, 0.1);
         }
+        /* Position/Rotation row with 3 inputs */
+        .vector3-row {
+            display: flex;
+            align-items: center;
+            gap: 4px;
+            margin-bottom: 8px;
+        }
+        .vector3-row label {
+            flex: 0 0 70px;
+            font-size: 11px;
+            color: #888;
+        }
+        .vector3-row .vector-inputs {
+            display: flex;
+            gap: 4px;
+            flex: 1;
+        }
+        .vector3-row .vector-input-group {
+            display: flex;
+            align-items: center;
+            gap: 2px;
+        }
+        .vector3-row .vector-input-group span {
+            font-size: 10px;
+            color: #666;
+            width: 12px;
+        }
+        .vector3-row .vector-input-group span.x-label { color: #ff6666; }
+        .vector3-row .vector-input-group span.y-label { color: #66ff66; }
+        .vector3-row .vector-input-group span.z-label { color: #6666ff; }
+        .vector3-row input[type="number"] {
+            width: 50px;
+            padding: 3px 4px;
+            background: rgba(255, 255, 255, 0.1);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            border-radius: 3px;
+            color: #fff;
+            font-size: 10px;
+            text-align: center;
+        }
+        .vector3-row input[type="number"]:focus {
+            outline: none;
+            border-color: rgba(255, 153, 102, 0.5);
+            background: rgba(255, 153, 102, 0.1);
+        }
+        /* Cone/Shaping section */
+        .shaping-section {
+            margin-top: 8px;
+            padding-top: 8px;
+            border-top: 1px solid rgba(255, 255, 255, 0.1);
+            display: none;
+        }
+        .shaping-section.visible {
+            display: block;
+        }
+        .shaping-section .section-title {
+            font-size: 10px;
+            color: #ff9966;
+            margin-bottom: 6px;
+            text-transform: uppercase;
+        }
+        /* Selection Mode Toggle */
+        #selection-mode {
+            margin-top: 12px;
+            padding-top: 12px;
+            border-top: 1px solid rgba(255, 255, 255, 0.2);
+        }
+        #selection-mode h4 {
+            margin: 0 0 8px 0;
+            color: #6bb6ff;
+            font-size: 14px;
+        }
+        .mode-toggle-group {
+            display: flex;
+            gap: 4px;
+        }
+        .mode-toggle-btn {
+            flex: 1;
+            padding: 6px 8px;
+            background: rgba(255, 255, 255, 0.1);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            border-radius: 4px;
+            color: #888;
+            font-size: 11px;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        .mode-toggle-btn:hover {
+            background: rgba(255, 255, 255, 0.15);
+            color: #ccc;
+        }
+        .mode-toggle-btn.active {
+            background: rgba(102, 126, 234, 0.3);
+            border-color: #667eea;
+            color: #fff;
+        }
+        .mode-toggle-btn .shortcut {
+            display: inline-block;
+            margin-left: 4px;
+            padding: 1px 4px;
+            background: rgba(0, 0, 0, 0.3);
+            border-radius: 2px;
+            font-size: 9px;
+            color: #666;
+        }
+        .mode-toggle-btn.active .shortcut {
+            background: rgba(0, 0, 0, 0.4);
+            color: #aaa;
+        }
+        /* Lighting Mode Toggle */
+        #lighting-mode {
+            margin-top: 12px;
+            padding-top: 12px;
+            border-top: 1px solid rgba(255, 255, 255, 0.2);
+        }
+        #lighting-mode h4 {
+            margin: 0 0 8px 0;
+            color: #6bb6ff;
+            font-size: 14px;
+        }
+        .lighting-mode-toggle {
+            display: flex;
+            gap: 4px;
+        }
+        .lighting-mode-btn {
+            flex: 1;
+            padding: 8px 12px;
+            background: rgba(255, 255, 255, 0.1);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            border-radius: 4px;
+            color: #888;
+            font-size: 11px;
+            cursor: pointer;
+            transition: all 0.2s;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 2px;
+        }
+        .lighting-mode-btn:hover {
+            background: rgba(255, 255, 255, 0.15);
+            color: #ccc;
+        }
+        .lighting-mode-btn.active {
+            background: rgba(102, 126, 234, 0.3);
+            border-color: #667eea;
+            color: #fff;
+        }
+        .lighting-mode-btn.active.envmap {
+            background: rgba(17, 153, 142, 0.3);
+            border-color: #11998e;
+        }
+        .lighting-mode-btn .mode-icon {
+            font-size: 16px;
+        }
+        .lighting-mode-btn .mode-label {
+            font-size: 10px;
+        }
+        .lighting-mode-info {
+            margin-top: 6px;
+            font-size: 10px;
+            color: #666;
+            font-style: italic;
+        }
     </style>
 </head>
 <body>
@@ -759,6 +923,21 @@
             </div>
         </div>
 
+        <div id="selection-mode">
+            <h4>Selection Mode</h4>
+            <div class="mode-toggle-group">
+                <button class="mode-toggle-btn active" id="mode-all" onclick="setSelectionModeUI('all')">
+                    All
+                </button>
+                <button class="mode-toggle-btn" id="mode-meshes" onclick="setSelectionModeUI('meshes')">
+                    Meshes<span class="shortcut">M</span>
+                </button>
+                <button class="mode-toggle-btn" id="mode-lights" onclick="setSelectionModeUI('lights')">
+                    Lights<span class="shortcut">L</span>
+                </button>
+            </div>
+        </div>
+
         <div id="light-properties">
             <h4>Light Properties</h4>
             <div class="prop-name" id="selected-light-name">No light selected</div>
@@ -776,6 +955,56 @@
                 <label>Exposure:</label>
                 <input type="range" id="light-exposure-slider" min="-10" max="10" step="0.1" value="0">
                 <input type="number" id="light-exposure-input" min="-10" max="10" step="0.1" value="0">
+            </div>
+            <!-- Position controls (hidden for infinite lights) -->
+            <div class="vector3-row" id="light-position-row">
+                <label>Position:</label>
+                <div class="vector-inputs">
+                    <div class="vector-input-group">
+                        <span class="x-label">X</span>
+                        <input type="number" id="light-pos-x" step="0.1" value="0">
+                    </div>
+                    <div class="vector-input-group">
+                        <span class="y-label">Y</span>
+                        <input type="number" id="light-pos-y" step="0.1" value="0">
+                    </div>
+                    <div class="vector-input-group">
+                        <span class="z-label">Z</span>
+                        <input type="number" id="light-pos-z" step="0.1" value="0">
+                    </div>
+                </div>
+            </div>
+            <!-- Rotation controls -->
+            <div class="vector3-row" id="light-rotation-row">
+                <label>Rotation:</label>
+                <div class="vector-inputs">
+                    <div class="vector-input-group">
+                        <span class="x-label">X</span>
+                        <input type="number" id="light-rot-x" step="1" value="0">
+                    </div>
+                    <div class="vector-input-group">
+                        <span class="y-label">Y</span>
+                        <input type="number" id="light-rot-y" step="1" value="0">
+                    </div>
+                    <div class="vector-input-group">
+                        <span class="z-label">Z</span>
+                        <input type="number" id="light-rot-z" step="1" value="0">
+                    </div>
+                </div>
+            </div>
+            <!-- Shaping/Cone controls (only for SpotLight) -->
+            <div class="shaping-section" id="light-shaping-section">
+                <div class="section-title">Cone Shaping</div>
+                <div class="intensity-row">
+                    <label>Cone Angle:</label>
+                    <input type="range" id="light-cone-angle-slider" min="1" max="180" step="1" value="90">
+                    <input type="number" id="light-cone-angle-input" min="1" max="180" step="1" value="90">
+                </div>
+                <div class="intensity-row">
+                    <label>Softness:</label>
+                    <input type="range" id="light-cone-softness-slider" min="0" max="1" step="0.01" value="0">
+                    <input type="number" id="light-cone-softness-input" min="0" max="1" step="0.01" value="0">
+                </div>
             </div>
         </div>
 
@@ -858,6 +1087,27 @@
                 <label>Gamma:</label>
                 <input type="range" id="gamma-slider" min="1.0" max="3.0" step="0.1" value="2.2">
                 <span class="setting-value" id="gamma-value">2.2</span>
+            </div>
+        </div>
+
+        <div id="lighting-mode">
+            <h4>Lighting Mode</h4>
+            <div class="lighting-mode-toggle">
+                <button class="lighting-mode-btn active" id="lighting-mode-lights" onclick="setLightingModeUI('lights')">
+                    <span class="mode-icon">💡</span>
+                    <span class="mode-label">Use Lights</span>
+                </button>
+                <button class="lighting-mode-btn envmap" id="lighting-mode-envmap" onclick="setLightingModeUI('envmap')">
+                    <span class="mode-icon">🌐</span>
+                    <span class="mode-label">Use Envmap</span>
+                </button>
+            </div>
+            <div class="lighting-mode-info" id="lighting-mode-info">
+                Direct lighting from scene lights
+            </div>
+            <div style="margin-top: 8px; display: flex; align-items: center; gap: 6px;">
+                <input type="checkbox" id="envmap-background-checkbox" onchange="window.setShowEnvmapBackground(this.checked)">
+                <label for="envmap-background-checkbox" style="font-size: 11px; color: #aaa; cursor: pointer;">Show as Background</label>
             </div>
         </div>
 
@@ -1072,6 +1322,66 @@
         // Global functions
         window.hideLoadingIndicator = function() {
             document.getElementById('loadingIndicator').classList.remove('active');
+        };
+
+        // Selection mode UI functions
+        window.setSelectionModeUI = function(mode) {
+            // Update buttons
+            document.getElementById('mode-all').classList.toggle('active', mode === 'all');
+            document.getElementById('mode-meshes').classList.toggle('active', mode === 'meshes');
+            document.getElementById('mode-lights').classList.toggle('active', mode === 'lights');
+            // Update the actual selection mode in the 3D scene
+            if (window.setSelectionMode) {
+                window.setSelectionMode(mode);
+            }
+        };
+
+        window.updateSelectionModeUI = function(mode) {
+            // Just update buttons (called from keyboard shortcuts)
+            document.getElementById('mode-all').classList.toggle('active', mode === 'all');
+            document.getElementById('mode-meshes').classList.toggle('active', mode === 'meshes');
+            document.getElementById('mode-lights').classList.toggle('active', mode === 'lights');
+        };
+
+        // Lighting mode UI functions
+        window.setLightingModeUI = function(mode) {
+            // Update buttons
+            const lightsBtn = document.getElementById('lighting-mode-lights');
+            const envmapBtn = document.getElementById('lighting-mode-envmap');
+            const infoEl = document.getElementById('lighting-mode-info');
+
+            lightsBtn.classList.toggle('active', mode === 'lights');
+            envmapBtn.classList.toggle('active', mode === 'envmap');
+
+            // Update info text
+            if (mode === 'lights') {
+                infoEl.textContent = 'Direct lighting from scene lights';
+            } else {
+                infoEl.textContent = 'Using projected HDRI environment';
+            }
+
+            // Call the actual mode setter
+            if (window.setLightingMode) {
+                window.setLightingMode(mode);
+            }
+        };
+
+        window.updateLightingModeUI = function(mode) {
+            // Just update UI (called from JS when mode changes)
+            const lightsBtn = document.getElementById('lighting-mode-lights');
+            const envmapBtn = document.getElementById('lighting-mode-envmap');
+            const infoEl = document.getElementById('lighting-mode-info');
+
+            if (lightsBtn) lightsBtn.classList.toggle('active', mode === 'lights');
+            if (envmapBtn) envmapBtn.classList.toggle('active', mode === 'envmap');
+
+            if (infoEl) {
+                if (mode === 'lights') {
+                    infoEl.textContent = 'Direct lighting from scene lights';
+                } else {
+                    infoEl.textContent = 'Using projected HDRI environment';
+                }
+            }
         };
 
         window.updateLightList = function(lights) {
@@ -1319,6 +1629,68 @@
             }
         });
 
+        // Position inputs
+        ['x', 'y', 'z'].forEach(axis => {
+            document.getElementById(`light-pos-${axis}`).addEventListener('input', (e) => {
+                const value = parseFloat(e.target.value) || 0;
+                if (window.setSelectedLightPosition) {
+                    const x = parseFloat(document.getElementById('light-pos-x').value) || 0;
+                    const y = parseFloat(document.getElementById('light-pos-y').value) || 0;
+                    const z = parseFloat(document.getElementById('light-pos-z').value) || 0;
+                    window.setSelectedLightPosition(x, y, z);
+                }
+            });
+        });
+
+        // Rotation inputs (in degrees)
+        ['x', 'y', 'z'].forEach(axis => {
+            document.getElementById(`light-rot-${axis}`).addEventListener('input', (e) => {
+                const value = parseFloat(e.target.value) || 0;
+                if (window.setSelectedLightRotation) {
+                    const x = parseFloat(document.getElementById('light-rot-x').value) || 0;
+                    const y = parseFloat(document.getElementById('light-rot-y').value) || 0;
+                    const z = parseFloat(document.getElementById('light-rot-z').value) || 0;
+                    window.setSelectedLightRotation(x, y, z);
+                }
+            });
+        });
+
+        // Cone angle slider
+        document.getElementById('light-cone-angle-slider').addEventListener('input', (e) => {
+            const value = parseFloat(e.target.value);
+            document.getElementById('light-cone-angle-input').value = value;
+            if (window.setSelectedLightConeAngle) {
+                window.setSelectedLightConeAngle(value);
+            }
+        });
+
+        // Cone angle input
+        document.getElementById('light-cone-angle-input').addEventListener('input', (e) => {
+            const value = parseFloat(e.target.value) || 90;
+            document.getElementById('light-cone-angle-slider').value = Math.max(1, Math.min(180, value));
+            if (window.setSelectedLightConeAngle) {
+                window.setSelectedLightConeAngle(value);
+            }
+        });
+
+        // Cone softness slider
+        document.getElementById('light-cone-softness-slider').addEventListener('input', (e) => {
+            const value = parseFloat(e.target.value);
+            document.getElementById('light-cone-softness-input').value = value;
+            if (window.setSelectedLightConeSoftness) {
+                window.setSelectedLightConeSoftness(value);
+            }
+        });
+
+        // Cone softness input
+        document.getElementById('light-cone-softness-input').addEventListener('input', (e) => {
+            const value = parseFloat(e.target.value) || 0;
+            document.getElementById('light-cone-softness-slider').value = Math.max(0, Math.min(1, value));
+            if (window.setSelectedLightConeSoftness) {
+                window.setSelectedLightConeSoftness(value);
+            }
+        });
+
         // Callback to show/hide light properties panel and update values
         window.showLightProperties = function(lightData) {
             const panel = document.getElementById('light-properties');
@@ -1350,6 +1722,49 @@
             const exposure = lightData.exposure || 0;
             document.getElementById('light-exposure-slider').value = Math.max(-10, Math.min(10, exposure));
             document.getElementById('light-exposure-input').value = exposure;
+
+            // Determine light type for showing/hiding controls
+            const lightType = lightData.type || 'point';
+            const isInfiniteLight = (lightType === 'distant' || lightType === 'dome');
+            // Check both coneAngle and shapingConeAngle (USD uses shapingConeAngle as half-angle)
+            const coneAngle = lightData.coneAngle !== undefined ? lightData.coneAngle :
+                              (lightData.shapingConeAngle !== undefined ? lightData.shapingConeAngle * 2 : undefined);
+            const hasShaping = coneAngle !== undefined && coneAngle < 180;
+
+            // Show/hide position controls (hidden for infinite lights)
+            const posRow = document.getElementById('light-position-row');
+            posRow.style.display = isInfiniteLight ? 'none' : 'flex';
+
+            // Update position values
+            const pos = lightData.position || [0, 0, 0];
+            document.getElementById('light-pos-x').value = pos[0]?.toFixed(2) || 0;
+            document.getElementById('light-pos-y').value = pos[1]?.toFixed(2) || 0;
+            document.getElementById('light-pos-z').value = pos[2]?.toFixed(2) || 0;
+
+            // Update rotation values (convert from radians to degrees if needed)
+            const rot = lightData.rotation || [0, 0, 0];
+            // Assume rotation is stored in degrees
+            document.getElementById('light-rot-x').value = Math.round(rot[0] || 0);
+            document.getElementById('light-rot-y').value = Math.round(rot[1] || 0);
+            document.getElementById('light-rot-z').value = Math.round(rot[2] || 0);
+
+            // Show/hide shaping controls (only for SpotLight with cone shaping)
+            const shapingSection = document.getElementById('light-shaping-section');
+            if (hasShaping) {
+                shapingSection.classList.add('visible');
+                // Update cone angle (use coneAngle computed above, or fall back to 90)
+                const displayConeAngle = coneAngle || 90;
+                document.getElementById('light-cone-angle-slider').value = Math.max(1, Math.min(180, displayConeAngle));
+                document.getElementById('light-cone-angle-input').value = displayConeAngle.toFixed(0);
+
+                // Update cone softness (check both property names)
+                const coneSoftness = lightData.coneSoftness !== undefined ? lightData.coneSoftness :
+                                     (lightData.shapingConeSoftness || 0);
+                document.getElementById('light-cone-softness-slider').value = Math.max(0, Math.min(1, coneSoftness));
+                document.getElementById('light-cone-softness-input').value = coneSoftness.toFixed(2);
+            } else {
+                shapingSection.classList.remove('visible');
+            }
         };
 
         // Hide light properties when no light selected
