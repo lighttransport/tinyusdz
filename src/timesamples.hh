@@ -2452,8 +2452,10 @@ struct TimeSamples {
 
   /// Add POD scalar sample using unified storage (Phase 3 path)
   /// This is for single POD values (not arrays)
+  /// Small types (sizeof(T) <= 8) - stored directly in _small_values
   template<typename T>
-  bool add_pod_sample(double t, const T& value, std::string* err = nullptr) {
+  typename std::enable_if<(sizeof(T) <= 8), bool>::type
+  add_pod_sample(double t, const T& value, std::string* err = nullptr) {
     static_assert(std::is_trivial<T>::value && std::is_standard_layout<T>::value,
                   "add_pod_sample requires POD types");
 
@@ -2474,23 +2476,53 @@ struct TimeSamples {
     _times.push_back(t);
     _blocked.push_back(0);  // Not blocked
 
-    // Storage optimization: small scalars (sizeof(T) <= 8) stored directly in _small_values
-    // Large scalars (sizeof(T) > 8) stored in _values with offset table
-    if (sizeof(T) <= 8) {
-      // Direct storage for small scalars - no offset entry needed
-      uint64_t small_value = 0;
-      std::memcpy(&small_value, &value, sizeof(T));
-      _small_values.push_back(small_value);
-    } else {
-      // Offset-based storage for large scalars
-      size_t byte_offset = _values.size();
-      _values.resize(byte_offset + sizeof(T));
-      std::memcpy(_values.data() + byte_offset, &value, sizeof(T));
+    // Direct storage for small scalars - no offset entry needed
+    uint64_t small_value = 0;
+    std::memcpy(&small_value, &value, sizeof(T));
+    _small_values.push_back(small_value);
 
-      // Create encoded offset (not array)
-      uint64_t encoded_offset = PODTimeSamples::make_offset(byte_offset, false);
-      _offsets.push_back(encoded_offset);
+    // Update metadata (scalar, not array)
+    _is_array = false;
+    _array_size = 1;
+    _element_size = sizeof(T);
+
+    _dirty = true;
+    return true;
+  }
+
+  /// Add POD scalar sample using unified storage (Phase 3 path)
+  /// Large types (sizeof(T) > 8) - stored in _values with offset table
+  template<typename T>
+  typename std::enable_if<(sizeof(T) > 8), bool>::type
+  add_pod_sample(double t, const T& value, std::string* err = nullptr) {
+    static_assert(std::is_trivial<T>::value && std::is_standard_layout<T>::value,
+                  "add_pod_sample requires POD types");
+
+    // Auto-initialize on first sample
+    if (empty()) {
+      if (!init(value::TypeTraits<T>::type_id())) {
+        if (err) *err = "Failed to initialize TimeSamples";
+        return false;
+      }
     }
+
+    // If already using _pod_samples (backward compat), delegate to it
+    if (!_pod_samples.empty()) {
+      return _pod_samples.add_sample<T>(t, value, err);
+    }
+
+    // Use unified storage for scalar POD
+    _times.push_back(t);
+    _blocked.push_back(0);  // Not blocked
+
+    // Offset-based storage for large scalars
+    size_t byte_offset = _values.size();
+    _values.resize(byte_offset + sizeof(T));
+    std::memcpy(_values.data() + byte_offset, &value, sizeof(T));
+
+    // Create encoded offset (not array)
+    uint64_t encoded_offset = PODTimeSamples::make_offset(byte_offset, false);
+    _offsets.push_back(encoded_offset);
 
     // Update metadata (scalar, not array)
     _is_array = false;
