@@ -2672,12 +2672,7 @@ namespace {
 bool ListUVNames(const RenderMaterial &material,
                  const std::vector<UVTexture> &textures,
                  StringAndIdMap &si_map) {
-  // Check if material has surface shader
-  if (!material.surfaceShader.has_value()) {
-    return true;  // No surface shader, return success but empty map
-  }
-  
-  // TODO: Use auto
+  // Helper lambdas to extract UV names from shader parameters
   auto fun_vec3 = [&](const ShaderParam<vec3> &param) {
     int32_t texId = param.texture_id;
     if ((texId >= 0) && (size_t(texId) < textures.size())) {
@@ -2706,17 +2701,88 @@ bool ListUVNames(const RenderMaterial &material,
     }
   };
 
-  fun_vec3(material.surfaceShader->diffuseColor);
-  fun_vec3(material.surfaceShader->normal);
-  fun_float(material.surfaceShader->metallic);
-  fun_float(material.surfaceShader->roughness);
-  fun_float(material.surfaceShader->clearcoat);
-  fun_float(material.surfaceShader->clearcoatRoughness);
-  fun_float(material.surfaceShader->opacity);
-  fun_float(material.surfaceShader->opacityThreshold);
-  fun_float(material.surfaceShader->ior);
-  fun_float(material.surfaceShader->displacement);
-  fun_float(material.surfaceShader->occlusion);
+  // Check UsdPreviewSurface shader
+  if (material.surfaceShader.has_value()) {
+    fun_vec3(material.surfaceShader->diffuseColor);
+    fun_vec3(material.surfaceShader->normal);
+    fun_float(material.surfaceShader->metallic);
+    fun_float(material.surfaceShader->roughness);
+    fun_float(material.surfaceShader->clearcoat);
+    fun_float(material.surfaceShader->clearcoatRoughness);
+    fun_float(material.surfaceShader->opacity);
+    fun_float(material.surfaceShader->opacityThreshold);
+    fun_float(material.surfaceShader->ior);
+    fun_float(material.surfaceShader->displacement);
+    fun_float(material.surfaceShader->occlusion);
+  }
+
+  // Check MaterialX OpenPBR shader
+  if (material.openPBRShader.has_value()) {
+    // Base layer
+    fun_float(material.openPBRShader->base_weight);
+    fun_vec3(material.openPBRShader->base_color);
+    fun_float(material.openPBRShader->base_roughness);
+    fun_float(material.openPBRShader->base_metalness);
+    fun_float(material.openPBRShader->base_diffuse_roughness);
+
+    // Specular layer
+    fun_float(material.openPBRShader->specular_weight);
+    fun_vec3(material.openPBRShader->specular_color);
+    fun_float(material.openPBRShader->specular_roughness);
+    fun_float(material.openPBRShader->specular_ior);
+    fun_float(material.openPBRShader->specular_ior_level);
+    fun_float(material.openPBRShader->specular_anisotropy);
+    fun_float(material.openPBRShader->specular_rotation);
+
+    // Transmission
+    fun_float(material.openPBRShader->transmission_weight);
+    fun_vec3(material.openPBRShader->transmission_color);
+    fun_float(material.openPBRShader->transmission_depth);
+    fun_vec3(material.openPBRShader->transmission_scatter);
+    fun_float(material.openPBRShader->transmission_scatter_anisotropy);
+    fun_float(material.openPBRShader->transmission_dispersion);
+
+    // Subsurface
+    fun_float(material.openPBRShader->subsurface_weight);
+    fun_vec3(material.openPBRShader->subsurface_color);
+    fun_vec3(material.openPBRShader->subsurface_radius);
+    fun_float(material.openPBRShader->subsurface_scale);
+    fun_float(material.openPBRShader->subsurface_anisotropy);
+
+    // Sheen
+    fun_float(material.openPBRShader->sheen_weight);
+    fun_vec3(material.openPBRShader->sheen_color);
+    fun_float(material.openPBRShader->sheen_roughness);
+
+    // Fuzz
+    fun_float(material.openPBRShader->fuzz_weight);
+    fun_vec3(material.openPBRShader->fuzz_color);
+    fun_float(material.openPBRShader->fuzz_roughness);
+
+    // Thin film
+    fun_float(material.openPBRShader->thin_film_weight);
+    fun_float(material.openPBRShader->thin_film_thickness);
+    fun_float(material.openPBRShader->thin_film_ior);
+
+    // Coat
+    fun_float(material.openPBRShader->coat_weight);
+    fun_vec3(material.openPBRShader->coat_color);
+    fun_float(material.openPBRShader->coat_roughness);
+    fun_float(material.openPBRShader->coat_anisotropy);
+    fun_float(material.openPBRShader->coat_rotation);
+    fun_float(material.openPBRShader->coat_ior);
+    fun_vec3(material.openPBRShader->coat_affect_color);
+    fun_float(material.openPBRShader->coat_affect_roughness);
+
+    // Emission
+    fun_float(material.openPBRShader->emission_luminance);
+    fun_vec3(material.openPBRShader->emission_color);
+
+    // Geometry
+    fun_float(material.openPBRShader->opacity);
+    fun_vec3(material.openPBRShader->normal);
+    fun_vec3(material.openPBRShader->tangent);
+  }
 
   return true;
 }
@@ -5685,9 +5751,12 @@ nonstd::expected<bool, std::string> GetConnectedMtlxTexture(
     // Log this node
     traversal_log += current_shader->info_id + " -> ";
 
-    // Check if this is an ND_image_color4 node
+    // Check if this is an ND_image node (color or vector variants)
     if (current_shader->info_id == "ND_image_color4" ||
-        current_shader->info_id == "ND_image_color3") {
+        current_shader->info_id == "ND_image_color3" ||
+        current_shader->info_id == "ND_image_vector4" ||
+        current_shader->info_id == "ND_image_vector3" ||
+        current_shader->info_id == "ND_image_float") {
       image_shader = current_shader;
       if (tex_abs_path) {
         *tex_abs_path = current_path;
@@ -5783,7 +5852,7 @@ nonstd::expected<bool, std::string> GetConnectedMtlxTexture(
   }
 
   return nonstd::make_unexpected(
-      fmt::format("No ND_image_color4 texture node found. {}\n", traversal_log));
+      fmt::format("No ND_image texture node found (supported: ND_image_color4/color3/vector4/vector3/float). {}\n", traversal_log));
 }
 
 static bool RawAssetRead(
