@@ -1,0 +1,20 @@
+#usda 1.0
+(
+    doc = "Test: Spectral IOR with Sellmeier coefficients (BK7 glass)"
+)
+
+def Shader "TestShader"
+{
+    uniform token info:id = "UsdPreviewSurface"
+    float inputs:ior = 1.5168
+    float2[] wavelength:ior = [
+        (1.03961212, 0.00600069867),
+        (0.231792344, 0.0200179144),
+        (1.01046945, 103.560653)
+    ] (
+        customData = {
+            string interpolation = "sellmeier"
+            string unitForWavelength = "micrometers"
+        }
+    )
+}

@@ -3,14 +3,19 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>TinyUSDZ MaterialX/OpenPBR Demo</title>
+    <title>TinyUSDZ MaterialX Demo</title>
     <style>
+        * {
+            box-sizing: border-box;
+        }
+
         body {
             margin: 0;
             padding: 0;
             overflow: hidden;
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
             background: #1a1a1a;
+            color: #fff;
         }
 
         #canvas-container {
@@ -19,63 +24,96 @@
             height: 100vh;
         }
 
-        #info {
+        #canvas-container.drag-over {
+            box-shadow: inset 0 0 50px rgba(33, 150, 243, 0.5);
+        }
+
+        #canvas-container.drag-over::after {
+            content: 'Drop USD file here';
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            font-size: 24px;
+            color: #2196F3;
+            pointer-events: none;
+            text-shadow: 0 2px 10px rgba(0,0,0,0.5);
+        }
+
+        #info-panel {
             position: absolute;
             top: 10px;
             left: 10px;
-            color: white;
-            background: rgba(0, 0, 0, 0.7);
-            padding: 10px;
-            border-radius: 5px;
-            font-size: 14px;
-            max-width: 400px;
-            z-index: 100;
+            background: rgba(0, 0, 0, 0.8);
+            padding: 15px;
+            border-radius: 8px;
+            min-width: 250px;
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
         }
 
-        #info h2 {
+        #info-panel h2 {
             margin: 0 0 10px 0;
-            font-size: 18px;
-            border-bottom: 1px solid #666;
-            padding-bottom: 5px;
+            font-size: 16px;
+            font-weight: 500;
+            color: #2196F3;
         }
 
-        #info .status {
-            margin: 5px 0;
+        #status {
+            font-size: 13px;
+            color: #999;
+            margin-bottom: 10px;
+            padding-bottom: 10px;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.1);
         }
 
-        #info .status.success {
+        #model-info {
+            display: none;
+            font-size: 12px;
+            line-height: 1.8;
+        }
+
+        #model-info span {
             color: #4CAF50;
+            font-weight: 500;
         }
 
-        #info .status.error {
-            color: #f44336;
-        }
-
-        #file-input-container {
+        #toolbar {
             position: absolute;
             top: 10px;
-            right: 10px;
-            z-index: 100;
-        }
-
-        #file-input {
-            display: none;
+            left: 50%;
+            transform: translateX(-50%);
+            display: flex;
+            gap: 10px;
+            background: rgba(0, 0, 0, 0.8);
+            padding: 10px 15px;
+            border-radius: 8px;
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
         }
 
         .btn {
             background: #2196F3;
             color: white;
             border: none;
-            padding: 10px 20px;
+            padding: 8px 16px;
             border-radius: 5px;
             cursor: pointer;
-            font-size: 14px;
-            transition: background 0.3s;
-            margin: 0 5px;
+            font-size: 13px;
+            font-weight: 500;
+            transition: all 0.2s;
+            display: flex;
+            align-items: center;
+            gap: 6px;
         }
 
         .btn:hover {
             background: #1976D2;
+            transform: translateY(-1px);
+        }
+
+        .btn:active {
+            transform: translateY(0);
         }
 
         .btn.secondary {
@@ -86,6 +124,60 @@
             background: #388E3C;
         }
 
+        .btn.warning {
+            background: #FF9800;
+        }
+
+        .btn.warning:hover {
+            background: #F57C00;
+        }
+
+        #file-input {
+            display: none;
+        }
+
+        /* Help overlay */
+        #help-overlay {
+            position: absolute;
+            bottom: 10px;
+            left: 10px;
+            background: rgba(0, 0, 0, 0.7);
+            padding: 10px 15px;
+            border-radius: 5px;
+            font-size: 11px;
+            color: #888;
+            line-height: 1.6;
+        }
+
+        #help-overlay kbd {
+            background: rgba(255, 255, 255, 0.1);
+            padding: 2px 6px;
+            border-radius: 3px;
+            font-family: monospace;
+        }
+
+        /* Toast notifications */
+        #toast {
+            position: fixed;
+            bottom: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: rgba(0, 0, 0, 0.9);
+            color: white;
+            padding: 12px 24px;
+            border-radius: 8px;
+            font-size: 14px;
+            opacity: 0;
+            transition: opacity 0.3s;
+            pointer-events: none;
+            z-index: 1000;
+        }
+
+        #toast.visible {
+            opacity: 1;
+        }
+
+        /* Loading overlay */
         #loading-overlay {
             position: fixed;
             top: 0;
@@ -96,362 +188,106 @@
             display: none;
             justify-content: center;
             align-items: center;
-            z-index: 1000;
+            z-index: 9999;
         }
 
-        .loading-spinner {
-            border: 4px solid #f3f3f3;
-            border-top: 4px solid #2196F3;
+        #loading-overlay.visible {
+            display: flex;
+        }
+
+        .spinner {
+            width: 50px;
+            height: 50px;
+            border: 3px solid rgba(255, 255, 255, 0.1);
+            border-top-color: #2196F3;
             border-radius: 50%;
-            width: 40px;
-            height: 40px;
             animation: spin 1s linear infinite;
         }
 
         @keyframes spin {
-            0% { transform: rotate(0deg); }
-            100% { transform: rotate(360deg); }
+            to { transform: rotate(360deg); }
         }
 
-        #material-panel {
-            position: absolute;
-            bottom: 10px;
-            left: 10px;
-            background: rgba(0, 0, 0, 0.8);
-            color: white;
-            padding: 10px;
-            border-radius: 5px;
-            font-size: 12px;
-            max-height: 300px;
-            overflow-y: auto;
-            z-index: 100;
-            min-width: 250px;
-        }
-
-        #material-panel h3 {
-            margin: 0 0 10px 0;
-            font-size: 14px;
-            border-bottom: 1px solid #666;
-            padding-bottom: 5px;
-        }
-
-        .material-item {
-            padding: 5px;
-            cursor: pointer;
-            border: 1px solid transparent;
-            margin: 2px 0;
-            transition: background 0.3s;
-        }
-
-        .material-item:hover {
-            background: rgba(255, 255, 255, 0.1);
-        }
-
-        .material-item.selected {
-            background: rgba(33, 150, 243, 0.3);
-            border-color: #2196F3;
-        }
-
-        /* Override dat.GUI styling for better integration */
-        .dg.ac {
-            z-index: 200 !important;
-        }
-
-        .dg .property-name {
-            width: 45% !important;
-        }
-
-        .dg .c {
-            width: 55% !important;
-        }
-
-        /* Floatable Controls Panel */
-        #controls-wrapper {
-            position: absolute;
-            top: 150px;
-            right: 10px;
-            z-index: 200;
-            background: rgba(0, 0, 0, 0.85);
-            border-radius: 5px;
-            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
-            overflow: visible;
-            min-width: 350px;
-            max-width: 600px;
-        }
-
-        #controls-wrapper.minimized .lil-gui {
-            display: none;
-        }
-
-        #controls-header {
-            background: linear-gradient(135deg, #2196F3 0%, #1976D2 100%);
-            color: white;
-            padding: 8px 12px;
-            cursor: move;
-            user-select: none;
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            font-size: 13px;
-            font-weight: 500;
-            border-bottom: 1px solid rgba(255, 255, 255, 0.1);
-            position: relative;
-            z-index: 1;
-        }
-
-        #controls-header:active {
-            cursor: grabbing;
-        }
-
-        #controls-title {
-            display: flex;
-            align-items: center;
-            gap: 8px;
-        }
-
-        #controls-buttons {
-            display: flex;
-            gap: 5px;
-        }
-
-        .control-btn {
-            background: rgba(255, 255, 255, 0.2);
-            border: none;
-            color: white;
-            width: 24px;
-            height: 24px;
-            border-radius: 3px;
-            cursor: pointer;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-size: 14px;
-            transition: background 0.2s;
-        }
-
-        .control-btn:hover {
-            background: rgba(255, 255, 255, 0.3);
-        }
-
-        .control-btn:active {
-            background: rgba(255, 255, 255, 0.4);
-        }
-
-        #controls-wrapper .lil-gui {
-            position: relative !important;
-            top: 0 !important;
-            right: 0 !important;
-            max-height: calc(100vh - 200px);
-            overflow-y: auto;
-            border-radius: 0 0 5px 5px;
-            z-index: 2;
-            pointer-events: auto;
-        }
-
-        #controls-wrapper .lil-gui * {
-            pointer-events: auto;
-        }
-
-        /* Override resize cursor when dragging */
-        #controls-wrapper.dragging,
-        #texture-panel-wrapper.dragging {
-            cursor: grabbing !important;
-        }
-
-        #controls-wrapper.dragging .lil-gui,
-        #controls-wrapper.dragging .lil-gui * {
-            cursor: default !important;
-        }
-
-        #texture-panel-wrapper.dragging * {
-            cursor: grabbing !important;
-        }
-
-        /* Floatable Texture Panel */
-        #texture-panel-wrapper {
-            resize: both;
-            min-width: 300px;
-            max-width: 600px;
-            z-index: 150;
-        }
-
-        #texture-panel-wrapper.minimized #texture-panel {
-            display: none;
-        }
-
-        #texture-panel-header:active {
-            cursor: grabbing;
-        }
-
-        /* Texture panel styling */
-        #texture-panel .texture-item {
-            margin: 10px 0;
-            padding: 10px;
-            background: rgba(255, 255, 255, 0.05);
-            border-radius: 3px;
-            border: 1px solid rgba(255, 255, 255, 0.1);
-        }
-
-        #texture-panel .texture-item.disabled {
-            opacity: 0.5;
-        }
-
-        #texture-panel .texture-header {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            margin-bottom: 8px;
-        }
-
-        #texture-panel .texture-name {
-            font-weight: bold;
-            color: #4CAF50;
-        }
-
-        #texture-panel .texture-toggle {
-            background: #2196F3;
-            color: white;
-            border: none;
-            padding: 3px 8px;
-            border-radius: 3px;
-            cursor: pointer;
+        /* Material type badge */
+        .material-type-badge {
+            display: inline-block;
+            padding: 2px 8px;
+            border-radius: 4px;
             font-size: 10px;
+            font-weight: 600;
+            text-transform: uppercase;
+            margin-left: 8px;
         }
 
-        #texture-panel .texture-toggle:hover {
-            background: #1976D2;
-        }
-
-        #texture-panel .texture-toggle.disabled {
-            background: #666;
-        }
-
-        #texture-panel .texture-preview {
-            width: 100%;
-            max-width: 200px;
-            height: auto;
-            border-radius: 3px;
-            margin-top: 5px;
-            cursor: pointer;
-            border: 2px solid transparent;
-            transition: border-color 0.3s;
-        }
-
-        #texture-panel .texture-preview:hover {
-            border-color: #2196F3;
-        }
-
-        #texture-panel .texture-info {
-            margin-top: 5px;
-            font-size: 10px;
-            color: #999;
-        }
-
-        #texture-panel .texture-colorspace {
-            margin-top: 8px;
-            padding-top: 8px;
-            border-top: 1px solid rgba(255, 255, 255, 0.1);
-        }
-
-        #texture-panel .texture-colorspace select {
-            font-size: 10px;
-            padding: 3px 6px;
-            background: #333;
+        .material-type-badge.openpbr {
+            background: #9C27B0;
             color: white;
-            border: 1px solid #555;
-            border-radius: 3px;
-            cursor: pointer;
-            transition: border-color 0.3s;
         }
 
-        #texture-panel .texture-colorspace select:hover {
-            border-color: #2196F3;
+        .material-type-badge.usdpreview {
+            background: #FF9800;
+            color: white;
         }
 
-        #texture-panel .texture-colorspace select:focus {
-            outline: none;
-            border-color: #2196F3;
-            box-shadow: 0 0 5px rgba(33, 150, 243, 0.5);
+        .material-type-badge.both {
+            background: linear-gradient(90deg, #9C27B0, #FF9800);
+            color: white;
+        }
+
+        /* Responsive adjustments */
+        @media (max-width: 768px) {
+            #toolbar {
+                flex-wrap: wrap;
+                max-width: 90%;
+            }
+
+            #info-panel {
+                max-width: calc(100% - 20px);
+            }
         }
     </style>
 </head>
 <body>
     <div id="canvas-container"></div>
 
-    <div id="info">
-        <h2>TinyUSDZ MaterialX/OpenPBR Demo</h2>
-        <div id="status" class="status">Loading WASM module...</div>
-        <div id="model-info" style="display: none;">
-            <div>Objects: <span id="object-count">0</span></div>
+    <!-- Info Panel -->
+    <div id="info-panel">
+        <h2>TinyUSDZ MaterialX Demo</h2>
+        <div id="status">Initializing...</div>
+        <div id="model-info">
+            <div>Meshes: <span id="mesh-count">0</span></div>
             <div>Materials: <span id="material-count">0</span></div>
-            <div>Selected: <span id="selected-object">None</span></div>
-        </div>
-        <div id="scene-metadata" style="display: none; margin-top: 10px; padding-top: 10px; border-top: 1px solid #666;">
-            <h3 style="margin: 0 0 5px 0; font-size: 13px;">Scene Metadata</h3>
-            <div id="metadata-content" style="font-size: 11px; line-height: 1.6;"></div>
         </div>
     </div>
 
-    <div id="file-input-container">
-        <button class="btn" onclick="document.getElementById('file-input').click()">
-            Load USD File(TODO)
-        </button>
-        <button class="btn secondary" onclick="loadSampleModel()">
-            Load Sample(TODO)
-        </button>
-        <button class="btn" onclick="toggleEnvironment()">
-            Toggle HDR
-        </button>
-        <button class="btn" onclick="toggleBackgroundEnvmap()">
-            Toggle Envmap BG
-        </button>
-        <button class="btn" onclick="toggleFalseColor()">
-            False Color
-        </button>
-        <button class="btn" id="color-space-btn" onclick="toggleColorSpace()" style="display: none;">
-            Toggle P3(TODO)
-        </button>
-        <button class="btn" onclick="importMaterialXFile()" title="Import MaterialX XML file">
-            📥 Import MTLX(TODO)
-        </button>
-        <button class="btn" onclick="loadHDRTextureForMaterial()" title="Load HDR/EXR texture">
-            🖼️ Load Texture(TODO)
+    <!-- Toolbar -->
+    <div id="toolbar">
+        <button class="btn" onclick="loadFile()">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                <polyline points="17 8 12 3 7 8"/>
+                <line x1="12" y1="3" x2="12" y2="15"/>
+            </svg>
+            Load USD
         </button>
         <input type="file" id="file-input" accept=".usd,.usda,.usdc,.usdz">
     </div>
 
-    <div id="material-panel" style="display: none;">
-        <h3>Materials</h3>
-        <div id="material-list"></div>
-        <div id="material-export" style="display: none; margin-top: 15px; padding-top: 15px; border-top: 1px solid #666;">
-            <div style="font-size: 11px; color: #999; margin-bottom: 8px;">Export Selected Material:</div>
-            <button class="btn" style="width: 100%; margin-bottom: 5px; padding: 8px; font-size: 11px;" onclick="exportSelectedMaterialJSON()">
-                📄 Export JSON
-            </button>
-            <button class="btn" style="width: 100%; padding: 8px; font-size: 11px;" onclick="exportSelectedMaterialMTLX()">
-                📄 Export MaterialX (.mtlx)
-            </button>
-        </div>
+    <!-- Help Overlay -->
+    <div id="help-overlay">
+        <kbd>Drag & Drop</kbd> USD files to load |
+        <kbd>Scroll</kbd> to zoom |
+        <kbd>Drag</kbd> to orbit |
+        <kbd>Right-drag</kbd> to pan
     </div>
 
-    <div id="texture-panel-wrapper" style="display: none; position: absolute; bottom: 10px; right: 10px;">
-        <div id="texture-panel-header" style="background: linear-gradient(135deg, #4CAF50 0%, #388E3C 100%); color: white; padding: 8px 12px; cursor: move; user-select: none; display: flex; justify-content: space-between; align-items: center; font-size: 13px; font-weight: 500; border-radius: 5px 5px 0 0; border-bottom: 1px solid rgba(255, 255, 255, 0.1);">
-            <div style="display: flex; align-items: center; gap: 8px;">
-                <span>🖼️</span>
-                <span>Textures</span>
-            </div>
-            <div style="display: flex; gap: 5px;">
-                <button class="control-btn" id="texture-minimize-btn" style="background: rgba(255, 255, 255, 0.2); border: none; color: white; width: 24px; height: 24px; border-radius: 3px; cursor: pointer; display: flex; align-items: center; justify-content: center; font-size: 14px; transition: background 0.2s;">−</button>
-            </div>
-        </div>
-        <div id="texture-panel" style="background: rgba(0, 0, 0, 0.85); color: white; padding: 15px; border-radius: 0 0 5px 5px; font-size: 12px; max-width: 400px; max-height: 500px; overflow-y: auto; box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);">
-            <div id="texture-list"></div>
-        </div>
-    </div>
-
+    <!-- Loading Overlay -->
     <div id="loading-overlay">
-        <div class="loading-spinner"></div>
+        <div class="spinner"></div>
     </div>
+
+    <!-- Toast -->
+    <div id="toast"></div>
 
     <!-- Import maps for Three.js ES modules -->
     <script type="importmap">
@@ -464,7 +300,7 @@
         }
     </script>
 
-    <!-- Main application script as module -->
+    <!-- Main application script -->
     <script type="module" src="materialx.js"></script>
 </body>
 </html>

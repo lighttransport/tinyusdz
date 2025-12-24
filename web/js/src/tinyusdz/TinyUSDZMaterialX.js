@@ -1,506 +1,617 @@
 import * as THREE from 'three';
-import * as MaterialXModule from 'three/examples/jsm/loaders/MaterialXLoader.js';
 
-/*
- TODO / Tasks for TinyUSDZMaterialX.js (status)
+/**
+ * TinyUSDZ MaterialX / OpenPBR Material Utilities
+ *
+ * This module provides utilities for converting MaterialX OpenPBR materials
+ * from USD files to Three.js MeshPhysicalMaterial.
+ *
+ * Key features:
+ * - OpenPBR parameter extraction from JSON format (flat and grouped)
+ * - Texture loading from USD scene with caching
+ * - Full OpenPBR to MeshPhysicalMaterial conversion
+ * - Support for all OpenPBR layers: base, specular, transmission, subsurface,
+ *   coat, sheen, fuzz, thin_film, emission, geometry
+ */
 
- 1) Add example JSON fixture (done)
-        - Created `materialx_example.json` demonstrating image nodes, input-level
-            `connect` entries and a top-level `connections` array.
+// ============================================================================
+// OpenPBR Parameter Mapping to Three.js MeshPhysicalMaterial
+// ============================================================================
 
- 2) Unit tests / smoke tests (not-started)
-        - Add JS tests that exercise extendMaterialXWithJSONSupport, parseJSON and
-            convertOpenPBRToMaterialXShader with the fixture. (Next recommended step)
+/**
+ * Mapping from OpenPBR parameter names to Three.js material properties
+ */
+const OPENPBR_TO_THREEJS_MAP = {
+    // Base layer
+    'base_color': { property: 'color', type: 'color' },
+    'base_weight': { property: null, type: 'scalar' }, // Not directly mapped
+    'base_metalness': { property: 'metalness', type: 'scalar' },
+    'base_roughness': { property: null, type: 'scalar' }, // Use specular_roughness instead
+    'base_diffuse_roughness': { property: null, type: 'scalar' }, // Oren-Nayar, not in Three.js
 
- 3) Improve JSON -> MaterialX fidelity (in-progress)
-        - Parser now supports node creation and connection resolution (input-level
-            connects and top-level connections array). It attempts to call real
-            MaterialXNode wiring APIs when available; otherwise it attaches connection
-            metadata to node inputs.
-        - Remaining: full nodegraph nesting, interface sockets, typed sockets.
+    // Specular layer
+    'specular_weight': { property: null, type: 'scalar' },
+    'specular_color': { property: 'specularColor', type: 'color' },
+    'specular_roughness': { property: 'roughness', type: 'scalar' },
+    'specular_ior': { property: 'ior', type: 'scalar' },
+    'specular_ior_level': { property: null, type: 'scalar' },
+    'specular_anisotropy': { property: 'anisotropy', type: 'scalar' },
+    'specular_rotation': { property: 'anisotropyRotation', type: 'scalar' },
 
- 4) Texture / channel mapping (in-progress)
-        - materialXToOpenPBR extracts image node `file` paths and places them in
-            the OpenPBR object as placeholders. Next: implement channel swizzling and
-            automatic texture loading/encoding handling.
+    // Transmission
+    'transmission_weight': { property: 'transmission', type: 'scalar' },
+    'transmission_color': { property: 'attenuationColor', type: 'color' },
+    'transmission_depth': { property: 'attenuationDistance', type: 'scalar' },
 
- 5) Demo page (not-started)
-        - Create a small web demo that loads a JSON material, parses to MaterialX,
-            converts to ShaderMaterial and renders with Three.js.
+    // Subsurface
+    'subsurface_weight': { property: null, type: 'scalar' }, // Complex SSS not in Three.js
+    'subsurface_color': { property: null, type: 'color' },
+    'subsurface_radius': { property: null, type: 'color' },
+    'subsurface_scale': { property: null, type: 'scalar' },
 
- Limitations & Notes
- - The parser is conservative and aims for compatibility across different
-     runtime implementations. It provides fallbacks when `MaterialX`/`MaterialXNode`
-     classes or specific wiring APIs are not present.
- - Connection wiring: when possible the code calls node APIs like
-     `connectInput`, `setInputConnection`, `setConnection`, `connect`. If those
-     aren't available the connection is stored as metadata at
-     `node.inputs[name].connection = { node, output }`.
- - Texture handling: the converter will return file path strings for textures
-     if actual `THREE.Texture` instances are not provided. To get a working
-     ShaderMaterial you must load those files (e.g., with `THREE.TextureLoader`)
-     and assign textures to the `TinyUSDZOpenPBR` instance before conversion, or
-     use an async helper that loads textures for you.
- - MaterialX node/type names vary between tools. The surface node detection
-     currently looks for type names containing `standard`, `surface`, or `pbr`.
-     If your shading network uses different names, update `materialXToOpenPBR`
-     accordingly.
+    // Coat (clearcoat)
+    'coat_weight': { property: 'clearcoat', type: 'scalar' },
+    'coat_color': { property: null, type: 'color' }, // Not directly supported
+    'coat_roughness': { property: 'clearcoatRoughness', type: 'scalar' },
+    'coat_ior': { property: null, type: 'scalar' },
 
- Recommended next steps
- - Add a small unit test that parses `materialx_example.json` and asserts that
-     the pbrShader inputs were resolved and that texture file paths are present.
- - Add an async conversion helper that loads textures automatically and returns
-     a ShaderMaterial Promise.
-*/
+    // Sheen
+    'sheen_weight': { property: 'sheen', type: 'scalar' },
+    'sheen_color': { property: 'sheenColor', type: 'color' },
+    'sheen_roughness': { property: 'sheenRoughness', type: 'scalar' },
 
+    // Fuzz (similar to sheen in Three.js)
+    'fuzz_weight': { property: 'sheen', type: 'scalar' },
+    'fuzz_color': { property: 'sheenColor', type: 'color' },
+    'fuzz_roughness': { property: 'sheenRoughness', type: 'scalar' },
 
-// A small mock representation of an OpenPBR (Open Materials / MaterialX-like)
-// material. This is intentionally minimal - it captures the common metallic-roughness
-// PBR parameters and a few texture slots.
-class TinyUSDZOpenPBR {
+    // Thin film (iridescence)
+    'thin_film_weight': { property: 'iridescence', type: 'scalar' },
+    'thin_film_thickness': { property: 'iridescenceThicknessRange', type: 'scalar' },
+    'thin_film_ior': { property: 'iridescenceIOR', type: 'scalar' },
 
-    constructor(opts = {}) {
-        // base color (albedo)
-        this.baseColor = opts.baseColor !== undefined ? new THREE.Color(opts.baseColor) : new THREE.Color(1, 1, 1);
-        // opacity (alpha)
-        this.opacity = opts.opacity !== undefined ? opts.opacity : 1.0;
-        // metallic [0..1]
-        this.metallic = opts.metallic !== undefined ? opts.metallic : 0.0;
-        // roughness [0..1]
-        this.roughness = opts.roughness !== undefined ? opts.roughness : 0.5;
-        // emissive color
-        this.emissive = opts.emissive !== undefined ? new THREE.Color(opts.emissive) : new THREE.Color(0, 0, 0);
+    // Emission
+    'emission_color': { property: 'emissive', type: 'color' },
+    'emission_luminance': { property: 'emissiveIntensity', type: 'scalar' },
 
-        // Texture map placeholders. Expect THREE.Texture or null.
-        this.baseColorMap = opts.baseColorMap || null; // map -> base color / albedo
-        this.metallicRoughnessMap = opts.metallicRoughnessMap || null; // combined metalness (B) / roughness (G) or user-defined layout
-        this.normalMap = opts.normalMap || null;
-        this.aoMap = opts.aoMap || null;
-        this.emissiveMap = opts.emissiveMap || null;
+    // Geometry
+    'opacity': { property: 'opacity', type: 'scalar' },
+    'geometry_opacity': { property: 'opacity', type: 'scalar' },
+    'normal': { property: null, type: 'normal' },
+    'geometry_normal': { property: null, type: 'normal' },
+};
 
-        // UV scale/offset if needed (Vector2 or array)
-        this.uvScale = opts.uvScale || new THREE.Vector2(1, 1);
-        this.uvOffset = opts.uvOffset || new THREE.Vector2(0, 0);
+/**
+ * Mapping from OpenPBR parameters to Three.js texture map names
+ */
+const OPENPBR_TEXTURE_MAP = {
+    'base_color': 'map',
+    'base_metalness': 'metalnessMap',
+    'specular_roughness': 'roughnessMap',
+    'specular_color': 'specularColorMap',
+    'normal': 'normalMap',
+    'geometry_normal': 'normalMap',
+    'emission_color': 'emissiveMap',
+    'opacity': 'alphaMap',
+    'geometry_opacity': 'alphaMap',
+    'coat_roughness': 'clearcoatRoughnessMap',
+    'coat_normal': 'clearcoatNormalMap',
+    'sheen_color': 'sheenColorMap',
+    'sheen_roughness': 'sheenRoughnessMap',
+    'thin_film_thickness': 'iridescenceThicknessMap',
+};
 
-        // metadata / name
-        this.name = opts.name || '';
+// ============================================================================
+// Helper Functions
+// ============================================================================
+
+/**
+ * Extract scalar or color value from OpenPBR parameter
+ * Handles both direct values and {type, value} wrapper format
+ */
+function extractValue(param) {
+    if (param === undefined || param === null) return undefined;
+    if (typeof param === 'number') return param;
+    if (Array.isArray(param)) return param;
+    if (typeof param === 'object') {
+        if (param.value !== undefined) return param.value;
+        if (param.type === 'value') return param.value;
     }
-
+    return param;
 }
 
-// Convert the TinyUSDZOpenPBR mock to a Three.js ShaderMaterial that re-uses
-// the built-in standard PBR shader from THREE.ShaderLib. This approach gives a
-// MaterialX-like mapping (uniform names are preserved in userData.materialX)
-// while relying on Three.js' proven PBR implementation.
-//
-// Basic contract:
-// - input: TinyUSDZOpenPBR instance
-// - output: THREE.ShaderMaterial instance (lights: true) configured with
-//   the appropriate uniforms and maps. The material will have userData.materialX
-//   containing a simple mapping describing the MaterialX-equivalent parameters.
-//
-// Notes / limitations:
-// - This is a foundation implementation. It intentionally avoids reimplementing
-//   a full MaterialX shader. Instead it clones Three.js' standard shader and
-//   injects the OpenPBR values. Texture packing (e.g., metallic/roughness channels)
-//   must match what the user provides in `metallicRoughnessMap`.
-// - If you need a pure GLSL MaterialX implementation, extend/replace the shader
-//   strings below.
-function convertOpenPBRToMaterialXShader(openPBR, opts = {}) {
-    if (!(openPBR instanceof TinyUSDZOpenPBR)) {
-        // If a MaterialX graph/result was passed, try to convert it to an OpenPBR
-        // instance first. Otherwise warn.
-        if (openPBR && (openPBR.nodes || openPBR.nodes instanceof Array)) {
-            openPBR = materialXToOpenPBR(openPBR);
-        } else {
-            console.warn('convertOpenPBRToMaterialXShader: expected TinyUSDZOpenPBR, got', openPBR);
+/**
+ * Check if parameter has a texture
+ */
+function hasTexture(param) {
+    if (!param || typeof param !== 'object') return false;
+    return param.textureId !== undefined && param.textureId >= 0;
+}
+
+/**
+ * Get texture ID from parameter
+ */
+function getTextureId(param) {
+    if (!hasTexture(param)) return -1;
+    return param.textureId;
+}
+
+/**
+ * Create THREE.Color from RGB array with optional color space handling
+ */
+function createColor(rgb, colorSpace = 'srgb') {
+    if (!rgb || !Array.isArray(rgb)) return new THREE.Color(1, 1, 1);
+    const color = new THREE.Color(rgb[0], rgb[1], rgb[2]);
+    return color;
+}
+
+/**
+ * Detect MIME type from image data
+ */
+function getMimeType(imgData) {
+    if (imgData.uri) {
+        const ext = imgData.uri.split('.').pop().toLowerCase().split('?')[0];
+        const mimeTypes = {
+            'png': 'image/png',
+            'jpg': 'image/jpeg',
+            'jpeg': 'image/jpeg',
+            'webp': 'image/webp',
+            'gif': 'image/gif',
+            'exr': 'image/x-exr',
+            'hdr': 'image/vnd.radiance'
+        };
+        if (mimeTypes[ext]) return mimeTypes[ext];
+    }
+
+    // Check magic bytes
+    if (imgData.data && imgData.data.length >= 4) {
+        const data = new Uint8Array(imgData.data);
+        if (data[0] === 0x89 && data[1] === 0x50 && data[2] === 0x4E && data[3] === 0x47) return 'image/png';
+        if (data[0] === 0xFF && data[1] === 0xD8 && data[2] === 0xFF) return 'image/jpeg';
+        if (data[0] === 0x52 && data[1] === 0x49 && data[2] === 0x46 && data[3] === 0x46) return 'image/webp';
+    }
+
+    return 'image/png';
+}
+
+// ============================================================================
+// Texture Loading
+// ============================================================================
+
+/**
+ * Load texture from USD scene
+ * @param {Object} usdScene - USD scene object with getTexture/getImage methods
+ * @param {number} textureId - Texture ID
+ * @param {Map} cache - Optional texture cache
+ * @returns {Promise<THREE.Texture|null>}
+ */
+async function loadTextureFromUSD(usdScene, textureId, cache = null) {
+    if (textureId === undefined || textureId < 0) return null;
+
+    // Check cache
+    if (cache && cache.has(textureId)) {
+        return cache.get(textureId);
+    }
+
+    try {
+        const texData = usdScene.getTexture(textureId);
+        if (!texData || texData.textureImageId === undefined || texData.textureImageId < 0) {
+            console.warn(`Texture ${textureId} has no valid image data`);
+            return null;
+        }
+
+        const imgData = usdScene.getImage(texData.textureImageId);
+        if (!imgData) {
+            console.warn(`Image ${texData.textureImageId} not found`);
+            return null;
+        }
+
+        let texture = null;
+
+        // Case 1: URI only - load from external file
+        if (imgData.uri && (imgData.bufferId === -1 || imgData.bufferId === undefined)) {
+            const loader = new THREE.TextureLoader();
+            texture = await loader.loadAsync(imgData.uri);
+        }
+        // Case 2 & 3: Embedded texture
+        else if (imgData.bufferId >= 0 && imgData.data) {
+            if (imgData.decoded) {
+                // Already decoded - create DataTexture
+                const image8Array = new Uint8ClampedArray(imgData.data);
+                texture = new THREE.DataTexture(image8Array, imgData.width, imgData.height);
+
+                if (imgData.channels === 1) texture.format = THREE.RedFormat;
+                else if (imgData.channels === 2) texture.format = THREE.RGFormat;
+                else if (imgData.channels === 4) texture.format = THREE.RGBAFormat;
+                else {
+                    console.error(`Unsupported channel count: ${imgData.channels}`);
+                    return null;
+                }
+
+                texture.flipY = true;
+                texture.needsUpdate = true;
+            } else {
+                // Needs decoding - create Blob and load
+                const mimeType = getMimeType(imgData);
+                const blob = new Blob([imgData.data], { type: mimeType });
+                const blobUrl = URL.createObjectURL(blob);
+
+                const loader = new THREE.TextureLoader();
+                texture = await loader.loadAsync(blobUrl);
+                URL.revokeObjectURL(blobUrl);
+            }
+        }
+
+        if (texture && cache) {
+            cache.set(textureId, texture);
+        }
+
+        return texture;
+
+    } catch (error) {
+        console.error(`Failed to load texture ${textureId}:`, error);
+        return null;
+    }
+}
+
+// ============================================================================
+// OpenPBR to MeshPhysicalMaterial Conversion
+// ============================================================================
+
+/**
+ * Convert OpenPBR material data to Three.js MeshPhysicalMaterial
+ *
+ * @param {Object} materialData - OpenPBR material data from USD
+ * @param {Object} usdScene - USD scene for texture loading
+ * @param {Object} options - Conversion options
+ * @returns {Promise<THREE.MeshPhysicalMaterial>}
+ */
+async function convertOpenPBRToMeshPhysicalMaterial(materialData, usdScene = null, options = {}) {
+    const material = new THREE.MeshPhysicalMaterial();
+
+    // Store texture references for later management
+    material.userData.textures = {};
+    material.userData.materialType = 'OpenPBR';
+    material.userData.openPBRData = materialData;
+
+    // Get OpenPBR data - support multiple formats
+    let pbr = null;
+
+    // Check for grouped format first
+    if (materialData.openPBR) {
+        pbr = materialData.openPBR;
+        material.userData.format = 'grouped';
+    }
+    // Check for flat format
+    else if (materialData.base_color !== undefined ||
+             materialData.base_metalness !== undefined ||
+             materialData.specular_roughness !== undefined) {
+        pbr = { flat: materialData };
+        material.userData.format = 'flat';
+    }
+    // Check for openPBRShader format
+    else if (materialData.openPBRShader) {
+        pbr = { flat: materialData.openPBRShader };
+        material.userData.format = 'flat';
+    }
+
+    if (!pbr) {
+        console.warn('No OpenPBR data found in material');
+        return material;
+    }
+
+    // Texture cache
+    const textureCache = options.textureCache || new Map();
+
+    // Helper to apply parameter with optional texture
+    const applyParam = async (paramName, paramValue, group = null) => {
+        const mapping = OPENPBR_TO_THREEJS_MAP[paramName];
+        if (!mapping || !mapping.property) return;
+
+        const value = extractValue(paramValue);
+
+        // Apply scalar or color value
+        if (mapping.type === 'color' && Array.isArray(value)) {
+            material[mapping.property] = createColor(value);
+        } else if (mapping.type === 'scalar' && typeof value === 'number') {
+            material[mapping.property] = value;
+        }
+
+        // Load and apply texture if present
+        if (usdScene && hasTexture(paramValue)) {
+            const texMapName = OPENPBR_TEXTURE_MAP[paramName];
+            if (texMapName) {
+                const texture = await loadTextureFromUSD(usdScene, getTextureId(paramValue), textureCache);
+                if (texture) {
+                    material[texMapName] = texture;
+                    material.userData.textures[texMapName] = {
+                        textureId: getTextureId(paramValue),
+                        texture: texture
+                    };
+                    material.needsUpdate = true;
+                }
+            }
+        }
+    };
+
+    // Process flat format
+    if (pbr.flat) {
+        const flat = pbr.flat;
+
+        // Base layer
+        await applyParam('base_color', flat.base_color);
+        await applyParam('base_metalness', flat.base_metalness);
+
+        // Specular layer
+        await applyParam('specular_roughness', flat.specular_roughness);
+        await applyParam('specular_ior', flat.specular_ior);
+        await applyParam('specular_color', flat.specular_color);
+        await applyParam('specular_anisotropy', flat.specular_anisotropy);
+
+        // Transmission
+        await applyParam('transmission_weight', flat.transmission_weight);
+        await applyParam('transmission_color', flat.transmission_color);
+
+        // Coat
+        await applyParam('coat_weight', flat.coat_weight);
+        await applyParam('coat_roughness', flat.coat_roughness);
+
+        // Sheen/Fuzz
+        if (flat.sheen_weight !== undefined) {
+            await applyParam('sheen_weight', flat.sheen_weight);
+            await applyParam('sheen_color', flat.sheen_color);
+            await applyParam('sheen_roughness', flat.sheen_roughness);
+        } else if (flat.fuzz_weight !== undefined) {
+            await applyParam('fuzz_weight', flat.fuzz_weight);
+            await applyParam('fuzz_color', flat.fuzz_color);
+            await applyParam('fuzz_roughness', flat.fuzz_roughness);
+        }
+
+        // Thin film (iridescence)
+        if (flat.thin_film_weight !== undefined) {
+            const weight = extractValue(flat.thin_film_weight);
+            if (weight > 0) {
+                material.iridescence = weight;
+                const thickness = extractValue(flat.thin_film_thickness) || 500;
+                material.iridescenceThicknessRange = [100, thickness];
+                material.iridescenceIOR = extractValue(flat.thin_film_ior) || 1.5;
+            }
+        }
+
+        // Emission
+        if (flat.emission_color !== undefined) {
+            const emissionColor = extractValue(flat.emission_color);
+            if (emissionColor && Array.isArray(emissionColor)) {
+                material.emissive = createColor(emissionColor);
+            }
+            // Load emission texture
+            if (usdScene && hasTexture(flat.emission_color)) {
+                const texture = await loadTextureFromUSD(usdScene, getTextureId(flat.emission_color), textureCache);
+                if (texture) {
+                    material.emissiveMap = texture;
+                    material.userData.textures.emissiveMap = { textureId: getTextureId(flat.emission_color), texture };
+                }
+            }
+        }
+        if (flat.emission_luminance !== undefined) {
+            material.emissiveIntensity = extractValue(flat.emission_luminance) || 0;
+        }
+
+        // Geometry - opacity/alpha
+        const opacityParam = flat.opacity !== undefined ? flat.opacity : flat.geometry_opacity;
+        if (opacityParam !== undefined) {
+            const opacityValue = extractValue(opacityParam);
+            if (typeof opacityValue === 'number') {
+                material.opacity = opacityValue;
+                material.transparent = opacityValue < 1.0;
+            }
+            if (usdScene && hasTexture(opacityParam)) {
+                const texture = await loadTextureFromUSD(usdScene, getTextureId(opacityParam), textureCache);
+                if (texture) {
+                    material.alphaMap = texture;
+                    material.transparent = true;
+                    material.userData.textures.alphaMap = { textureId: getTextureId(opacityParam), texture };
+                }
+            }
+        }
+
+        // Normal map
+        const normalParam = flat.normal !== undefined ? flat.normal : flat.geometry_normal;
+        if (normalParam !== undefined && usdScene && hasTexture(normalParam)) {
+            const texture = await loadTextureFromUSD(usdScene, getTextureId(normalParam), textureCache);
+            if (texture) {
+                material.normalMap = texture;
+                material.normalScale = new THREE.Vector2(1, 1);
+                material.userData.textures.normalMap = { textureId: getTextureId(normalParam), texture };
+            }
         }
     }
 
-    // Use the built-in standard shader as a foundation
-    const standard = THREE.ShaderLib['standard'];
-    const uniforms = THREE.UniformsUtils.clone(standard.uniforms);
+    // Process grouped format
+    else {
+        // Base layer
+        if (pbr.base) {
+            await applyParam('base_color', pbr.base.base_color);
+            await applyParam('base_metalness', pbr.base.base_metalness);
+        }
 
-    // Map simple scalar/color properties
-    if (uniforms.diffuse !== undefined) {
-        // three.js standard shader uses 'diffuse' uniform for the base color
-        uniforms.diffuse.value = (openPBR && openPBR.baseColor) ? openPBR.baseColor.clone() : new THREE.Color(1, 1, 1);
-    }
-    if (uniforms.opacity !== undefined) {
-        uniforms.opacity.value = (openPBR && openPBR.opacity !== undefined) ? openPBR.opacity : 1.0;
-    }
-    if (uniforms.emissive !== undefined) {
-        uniforms.emissive.value = (openPBR && openPBR.emissive) ? openPBR.emissive.clone() : new THREE.Color(0, 0, 0);
-    }
-    if (uniforms.roughness !== undefined) {
-        uniforms.roughness.value = (openPBR && openPBR.roughness !== undefined) ? openPBR.roughness : 0.5;
-    }
-    if (uniforms.metalness !== undefined) {
-        uniforms.metalness.value = (openPBR && openPBR.metallic !== undefined) ? openPBR.metallic : 0.0;
+        // Specular layer
+        if (pbr.specular) {
+            await applyParam('specular_roughness', pbr.specular.specular_roughness);
+            await applyParam('specular_ior', pbr.specular.specular_ior);
+            await applyParam('specular_color', pbr.specular.specular_color);
+            await applyParam('specular_anisotropy', pbr.specular.specular_anisotropy);
+        }
+
+        // Transmission
+        if (pbr.transmission) {
+            await applyParam('transmission_weight', pbr.transmission.transmission_weight);
+            await applyParam('transmission_color', pbr.transmission.transmission_color);
+        }
+
+        // Coat
+        if (pbr.coat) {
+            await applyParam('coat_weight', pbr.coat.coat_weight);
+            await applyParam('coat_roughness', pbr.coat.coat_roughness);
+        }
+
+        // Sheen
+        if (pbr.sheen) {
+            await applyParam('sheen_weight', pbr.sheen.sheen_weight);
+            await applyParam('sheen_color', pbr.sheen.sheen_color);
+            await applyParam('sheen_roughness', pbr.sheen.sheen_roughness);
+        }
+
+        // Fuzz
+        if (pbr.fuzz) {
+            await applyParam('fuzz_weight', pbr.fuzz.fuzz_weight);
+            await applyParam('fuzz_color', pbr.fuzz.fuzz_color);
+            await applyParam('fuzz_roughness', pbr.fuzz.fuzz_roughness);
+        }
+
+        // Thin film
+        if (pbr.thin_film) {
+            const weight = extractValue(pbr.thin_film.thin_film_weight);
+            if (weight > 0) {
+                material.iridescence = weight;
+                const thickness = extractValue(pbr.thin_film.thin_film_thickness) || 500;
+                material.iridescenceThicknessRange = [100, thickness];
+                material.iridescenceIOR = extractValue(pbr.thin_film.thin_film_ior) || 1.5;
+            }
+        }
+
+        // Emission
+        if (pbr.emission) {
+            const emissionColor = extractValue(pbr.emission.emission_color);
+            if (emissionColor && Array.isArray(emissionColor)) {
+                material.emissive = createColor(emissionColor);
+            }
+            if (usdScene && hasTexture(pbr.emission.emission_color)) {
+                const texture = await loadTextureFromUSD(usdScene, getTextureId(pbr.emission.emission_color), textureCache);
+                if (texture) {
+                    material.emissiveMap = texture;
+                    material.userData.textures.emissiveMap = { textureId: getTextureId(pbr.emission.emission_color), texture };
+                }
+            }
+            if (pbr.emission.emission_luminance !== undefined) {
+                material.emissiveIntensity = extractValue(pbr.emission.emission_luminance) || 0;
+            }
+        }
+
+        // Geometry
+        if (pbr.geometry) {
+            const opacityParam = pbr.geometry.opacity !== undefined ? pbr.geometry.opacity : pbr.geometry.geometry_opacity;
+            if (opacityParam !== undefined) {
+                const opacityValue = extractValue(opacityParam);
+                if (typeof opacityValue === 'number') {
+                    material.opacity = opacityValue;
+                    material.transparent = opacityValue < 1.0;
+                }
+                if (usdScene && hasTexture(opacityParam)) {
+                    const texture = await loadTextureFromUSD(usdScene, getTextureId(opacityParam), textureCache);
+                    if (texture) {
+                        material.alphaMap = texture;
+                        material.transparent = true;
+                        material.userData.textures.alphaMap = { textureId: getTextureId(opacityParam), texture };
+                    }
+                }
+            }
+
+            const normalParam = pbr.geometry.normal !== undefined ? pbr.geometry.normal : pbr.geometry.geometry_normal;
+            if (normalParam !== undefined && usdScene && hasTexture(normalParam)) {
+                const texture = await loadTextureFromUSD(usdScene, getTextureId(normalParam), textureCache);
+                if (texture) {
+                    material.normalMap = texture;
+                    material.normalScale = new THREE.Vector2(1, 1);
+                    material.userData.textures.normalMap = { textureId: getTextureId(normalParam), texture };
+                }
+            }
+        }
     }
 
-    // Textures
-    if (openPBR && openPBR.baseColorMap) {
-        if (uniforms.map !== undefined) uniforms.map.value = openPBR.baseColorMap;
-    }
-    // Three.js supports separate metalnessMap and roughnessMap, or a single
-    // combined map depending on the user. We'll set metalnessMap/roughnessMap
-    // if present; otherwise, if a combined map was provided, attempt to set
-    // it to both (user should ensure packing).
-    if (openPBR && openPBR.metallicRoughnessMap) {
-        if (uniforms.metalnessMap !== undefined) uniforms.metalnessMap.value = openPBR.metallicRoughnessMap;
-        if (uniforms.roughnessMap !== undefined) uniforms.roughnessMap.value = openPBR.metallicRoughnessMap;
-        // also set map channels metadata in userData below
-    }
-    if (openPBR && openPBR.normalMap) {
-        if (uniforms.normalMap !== undefined) uniforms.normalMap.value = openPBR.normalMap;
-    }
-    if (openPBR && openPBR.aoMap) {
-        if (uniforms.aoMap !== undefined) uniforms.aoMap.value = openPBR.aoMap;
-    }
-    if (openPBR && openPBR.emissiveMap) {
-        if (uniforms.emissiveMap !== undefined) uniforms.emissiveMap.value = openPBR.emissiveMap;
+    // Apply environment map if provided
+    if (options.envMap) {
+        material.envMap = options.envMap;
+        material.envMapIntensity = options.envMapIntensity || 1.0;
     }
 
-    // UV transform support (Three.js doesn't have a built-in uniform for generic UV transform
-    // in the standard shader; users should pre-transform textures or use custom shader chunks.
-    // We still store the values in userData to make them visible to consumers.
-
-    // Build the ShaderMaterial using the standard shader code. This preserves
-    // Three.js lighting and BRDF implementation but gives us a ShaderMaterial
-    // that can be labelled as MaterialX-backed.
-    const material = new THREE.ShaderMaterial({
-        defines: Object.assign({}, standard.defines),
-        uniforms: uniforms,
-        vertexShader: standard.vertexShader,
-        fragmentShader: standard.fragmentShader,
-        lights: true,
-        fog: true,
-        transparent: (openPBR && openPBR.opacity < 1.0) || false,
-        extensions: { derivatives: true }
-    });
-
-    // Copy common material flags so the returned ShaderMaterial behaves like
-    // a MeshStandardMaterial in common code paths
-    material.side = THREE.DoubleSide;
-
-    // Provide materialX metadata describing the mapping from OpenPBR -> MaterialX
-    material.userData = material.userData || {};
-    material.userData.materialX = {
-        name: openPBR && openPBR.name ? openPBR.name : 'tinyusdz_openpbr_mx_standard_surface',
-        mapping: {
-            baseColor: 'diffuse',
-            opacity: 'opacity',
-            emissive: 'emissive',
-            roughness: 'roughness',
-            metallic: 'metalness',
-            baseColorMap: 'map',
-            metallicRoughnessMap: 'metalnessMap/roughnessMap',
-            normalMap: 'normalMap',
-            aoMap: 'aoMap',
-            emissiveMap: 'emissiveMap'
-        },
-        // include original openPBR values for debugging/round-tripping
-        openPBR: openPBR
-    };
+    // Set material name
+    if (materialData.name) {
+        material.name = materialData.name;
+    }
 
     return material;
 }
 
-// Convert a parsed MaterialX-like object (as produced by MaterialX.fromJSON or
-// MaterialXLoader.parseJSON) into a TinyUSDZOpenPBR instance. This function
-// does best-effort extraction of common PBR inputs (baseColor, metallic,
-// roughness, normal) and resolves image nodes into file path placeholders.
-function materialXToOpenPBR(mx) {
-    if (!mx) return new TinyUSDZOpenPBR();
+// ============================================================================
+// TinyUSDZOpenPBR Class (Legacy compatibility)
+// ============================================================================
 
-    const nodes = mx.nodes || [];
-    const nodeMap = Object.create(null);
-    nodes.forEach((n) => { if (n && n.name) nodeMap[n.name] = n; });
+/**
+ * A minimal OpenPBR material representation for compatibility
+ */
+class TinyUSDZOpenPBR {
+    constructor(opts = {}) {
+        this.baseColor = opts.baseColor !== undefined ? new THREE.Color(opts.baseColor) : new THREE.Color(1, 1, 1);
+        this.opacity = opts.opacity !== undefined ? opts.opacity : 1.0;
+        this.metallic = opts.metallic !== undefined ? opts.metallic : 0.0;
+        this.roughness = opts.roughness !== undefined ? opts.roughness : 0.5;
+        this.emissive = opts.emissive !== undefined ? new THREE.Color(opts.emissive) : new THREE.Color(0, 0, 0);
+        this.emissiveIntensity = opts.emissiveIntensity !== undefined ? opts.emissiveIntensity : 0.0;
 
-    // Helpers
-    const resolveInput = (node, inputName) => {
-        if (!node) return undefined;
-        const inputs = node.inputs || {};
-        const v = inputs[inputName];
-        if (v === undefined) return undefined;
+        // Texture map placeholders
+        this.baseColorMap = opts.baseColorMap || null;
+        this.metallicRoughnessMap = opts.metallicRoughnessMap || null;
+        this.normalMap = opts.normalMap || null;
+        this.aoMap = opts.aoMap || null;
+        this.emissiveMap = opts.emissiveMap || null;
 
-        // If value is an object with 'connection' metadata as added by parser
-        if (v && typeof v === 'object' && v.connection) {
-            const srcName = v.connection.node;
-            const srcOutput = v.connection.output; // may be 'out' or channel
-            const src = nodeMap[srcName];
-            if (src && src.type === 'image') {
-                // image nodes typically have inputs.file
-                return { type: 'texture', path: (src.inputs && src.inputs.file) ? src.inputs.file : null, channel: srcOutput };
-            }
-            // if src has a direct value
-            if (src && src.inputs && src.inputs[srcOutput]) return src.inputs[srcOutput];
-            return v.connection;
-        }
+        // UV transform
+        this.uvScale = opts.uvScale || new THREE.Vector2(1, 1);
+        this.uvOffset = opts.uvOffset || new THREE.Vector2(0, 0);
 
-        // If input is a direct connect string like 'Other.out'
-        if (typeof v === 'string') {
-            const dot = v.indexOf('.');
-            if (dot >= 0) {
-                const srcName = v.substring(0, dot);
-                const srcOutput = v.substring(dot + 1);
-                const src = nodeMap[srcName];
-                if (src && src.type === 'image') return { type: 'texture', path: (src.inputs && src.inputs.file) ? src.inputs.file : null, channel: srcOutput };
-            }
-            return v;
-        }
-
-        // Otherwise, return the value as-is (number, array, color etc.)
-        return v;
-    };
-
-    // Find a surface node: common type names: 'standard_surface', 'pbr', 'surface', etc.
-    let surf = null;
-    for (const n of nodes) {
-        if (!n) continue;
-        const t = (n.type || '').toLowerCase();
-        if (t.indexOf('standard') >= 0 || t.indexOf('surface') >= 0 || t.indexOf('pbr') >= 0) {
-            surf = n; break;
-        }
+        this.name = opts.name || '';
     }
 
-    // If none, try to find by name 'pbrShader' as in fixture
-    if (!surf) surf = nodeMap['pbrShader'] || null;
+    /**
+     * Convert to MeshPhysicalMaterial
+     */
+    toMeshPhysicalMaterial() {
+        const material = new THREE.MeshPhysicalMaterial({
+            color: this.baseColor,
+            metalness: this.metallic,
+            roughness: this.roughness,
+            emissive: this.emissive,
+            emissiveIntensity: this.emissiveIntensity,
+            opacity: this.opacity,
+            transparent: this.opacity < 1.0,
+            map: this.baseColorMap,
+            metalnessMap: this.metallicRoughnessMap,
+            roughnessMap: this.metallicRoughnessMap,
+            normalMap: this.normalMap,
+            aoMap: this.aoMap,
+            emissiveMap: this.emissiveMap
+        });
 
-    const out = new TinyUSDZOpenPBR();
-    if (!surf) return out;
+        material.name = this.name;
+        material.userData.openPBR = this;
 
-    // baseColor may be color array or connected to an image
-    const baseColorVal = resolveInput(surf, 'baseColor');
-    if (baseColorVal) {
-        if (baseColorVal.type === 'texture') out.baseColorMap = baseColorVal.path;
-        else if (Array.isArray(baseColorVal)) out.baseColor = new THREE.Color(baseColorVal[0], baseColorVal[1], baseColorVal[2]);
-        else if (typeof baseColorVal === 'number' || typeof baseColorVal === 'string') out.baseColor = new THREE.Color(baseColorVal);
+        return material;
     }
-
-    const metallicVal = resolveInput(surf, 'metallic');
-    if (metallicVal) {
-        if (metallicVal.type === 'texture') out.metallicRoughnessMap = metallicVal.path;
-        else out.metallic = Number(metallicVal);
-    }
-
-    const roughnessVal = resolveInput(surf, 'roughness');
-    if (roughnessVal) {
-        if (roughnessVal.type === 'texture') out.metallicRoughnessMap = roughnessVal.path;
-        else out.roughness = Number(roughnessVal);
-    }
-
-    const normalVal = resolveInput(surf, 'normal');
-    if (normalVal && normalVal.type === 'texture') out.normalMap = normalVal.path;
-
-    // emissive
-    const emissiveVal = resolveInput(surf, 'emissive');
-    if (emissiveVal) {
-        if (Array.isArray(emissiveVal)) out.emissive = new THREE.Color(emissiveVal[0], emissiveVal[1], emissiveVal[2]);
-        else if (typeof emissiveVal === 'number' || typeof emissiveVal === 'string') out.emissive = new THREE.Color(emissiveVal);
-    }
-
-    // name
-    out.name = surf.name || mx.name || out.name;
-
-    return out;
 }
 
-// Export both the data model and the conversion function
-// Extend MaterialXLoader / MaterialX classes (when available) so they can
-// construct instances from a simple JSON description. This helper will
-// prefer using the real MaterialX/MaterialXNode constructors exported by the
-// module, but will gracefully fall back to a lightweight plain-object
-// representation when those classes aren't available (useful for testing or
-// environments that don't export them separately).
-function extendMaterialXWithJSONSupport(module = MaterialXModule) {
-    if (!module) return null;
+// ============================================================================
+// Exports
+// ============================================================================
 
-    // Ensure MaterialX.fromJSON exists
-    if (module.MaterialX) {
-        if (!module.MaterialX.fromJSON) {
-            module.MaterialX.fromJSON = function (json) {
-                const mx = new module.MaterialX();
-
-                // some implementations may expose an API like addNode or nodes[]
-                const addNode = (node) => {
-                    if (typeof mx.addNode === 'function') mx.addNode(node);
-                    else {
-                        mx.nodes = mx.nodes || [];
-                        mx.nodes.push(node);
-                    }
-                };
-
-                // First pass: create nodes and build a lookup map by name
-                const nodeMap = Object.create(null);
-                (json.nodes || []).forEach((nj) => {
-                    let node;
-                    if (module.MaterialXNode) {
-                        try {
-                            node = new module.MaterialXNode(nj.name || nj.type || 'node', nj.type || 'nodedef');
-                        } catch (e) {
-                            node = { name: nj.name || nj.type, type: nj.type, inputs: {}, outputs: {} };
-                        }
-                    } else {
-                        node = { name: nj.name || nj.type, type: nj.type, inputs: {}, outputs: {} };
-                    }
-
-                    // Populate inputs/parameters (values only) in first pass
-                    if (nj.inputs) {
-                        Object.keys(nj.inputs).forEach((k) => {
-                            const v = nj.inputs[k];
-                            if (node.setInput) node.setInput(k, v);
-                            else if (node.setParameter) node.setParameter(k, v);
-                            else node.inputs[k] = v;
-                        });
-                    }
-
-                    addNode(node);
-                    nodeMap[node.name] = node;
-                });
-
-                // Second pass: resolve connections. Support two styles:
-                // 1) input-level connect specification: node.inputs.someInput = { connect: { node: 'Other', output: 'out' } }
-                // 2) top-level connections array: { connections: [ { from: 'NodeA.out', to: 'NodeB.in' }, ... ] }
-                const resolveConnection = (fromRef, toRef) => {
-                    // parse refs like 'NodeName.outputName' or plain node names
-                    const parseRef = (ref) => {
-                        if (!ref) return null;
-                        if (typeof ref === 'string') {
-                            const dot = ref.indexOf('.');
-                            if (dot >= 0) return { node: ref.substring(0, dot), name: ref.substring(dot + 1) };
-                            return { node: ref, name: null };
-                        }
-                        return null;
-                    };
-
-                    const from = parseRef(fromRef);
-                    const to = parseRef(toRef);
-                    if (!from || !to) return;
-
-                    const fromNode = nodeMap[from.node];
-                    const toNode = nodeMap[to.node];
-                    if (!fromNode || !toNode) return;
-
-                    const inputName = to.name || 'output';
-
-                    // Prefer wiring using native APIs if available on the node objects.
-                    // Common API names observed across implementations: connectInput, setInputConnection, connect
-                    const connectionPayload = { node: from.node, output: from.name || 'output' };
-
-                    // If destination node exposes connectInput(name, sourceNode, sourceOutput) use it
-                    if (typeof toNode.connectInput === 'function') {
-                        try { toNode.connectInput(inputName, fromNode, connectionPayload.output); return; } catch (e) { /* fallback */ }
-                    }
-
-                    // If destination node exposes setInputConnection(name, srcRef) or setConnection
-                    if (typeof toNode.setInputConnection === 'function') {
-                        try { toNode.setInputConnection(inputName, connectionPayload); return; } catch (e) { /* fallback */ }
-                    }
-
-                    if (typeof toNode.setConnection === 'function') {
-                        try { toNode.setConnection(inputName, fromNode, connectionPayload.output); return; } catch (e) { /* fallback */ }
-                    }
-
-                    // Some nodes accept a connect method where you pass a source reference
-                    if (typeof toNode.connect === 'function') {
-                        try { toNode.connect(inputName, fromNode, connectionPayload.output); return; } catch (e) { /* fallback */ }
-                    }
-
-                    // Fallback: attach a simple connections list on destination input
-                    toNode.inputs = toNode.inputs || {};
-                    toNode.inputs[inputName] = toNode.inputs[inputName] || {};
-                    toNode.inputs[inputName].connection = connectionPayload;
-                };
-
-                // Resolve input-level connects
-                (json.nodes || []).forEach((nj) => {
-                    const dstName = nj.name || nj.type;
-                    const dstNode = nodeMap[dstName];
-                    if (!dstNode) return;
-                    if (nj.inputs) {
-                        Object.keys(nj.inputs).forEach((k) => {
-                            const v = nj.inputs[k];
-                            if (v && typeof v === 'object' && v.connect) {
-                                const conn = v.connect;
-                                // conn may be { node: 'Other', output: 'out' } or 'Other.out'
-                                if (typeof conn === 'string') resolveConnection(conn, dstName + '.' + k);
-                                else resolveConnection(conn.node + (conn.output ? '.' + conn.output : ''), dstName + '.' + k);
-                            }
-                        });
-                    }
-                });
-
-                // Resolve top-level connections array
-                (json.connections || []).forEach((c) => {
-                    // connections: { from: 'NodeA.out', to: 'NodeB.in' }
-                    if (c.from && c.to) resolveConnection(c.from, c.to);
-                });
-
-                // Copy other top-level properties
-                if (json.name) mx.name = json.name;
-                if (json.doc) mx.doc = json.doc;
-
-                return mx;
-            };
-        }
-    }
-
-    // Add parser to MaterialXLoader prototype if available
-    if (module.MaterialXLoader && module.MaterialXLoader.prototype) {
-        const proto = module.MaterialXLoader.prototype;
-        if (!proto.parseJSON) {
-            proto.parseJSON = function (json) {
-                // Prefer module-level MaterialX.fromJSON
-                if (module.MaterialX && typeof module.MaterialX.fromJSON === 'function') {
-                    return module.MaterialX.fromJSON(json);
-                }
-
-                // Fallback: construct a minimal representation
-                const mx = { nodes: [] };
-                (json.nodes || []).forEach((nj) => {
-                    const node = { name: nj.name || nj.type, type: nj.type, inputs: nj.inputs || {} };
-                    mx.nodes.push(node);
-                });
-                if (json.name) mx.name = json.name;
-                return mx;
-            };
-        }
-    }
-
-    return module;
-}
-
-export { TinyUSDZOpenPBR, convertOpenPBRToMaterialXShader, extendMaterialXWithJSONSupport };
-
-/*
-Usage example (quick smoke test):
-
-import { TinyUSDZOpenPBR, convertOpenPBRToMaterialXShader } from './TinyUSDZMaterialX';
-
-const pbr = new TinyUSDZOpenPBR({ baseColor: 0xffaa88, metallic: 0.2, roughness: 0.6, name: 'example' });
-const mat = convertOpenPBRToMaterialXShader(pbr);
-const geo = new THREE.SphereGeometry(1, 32, 16);
-const mesh = new THREE.Mesh(geo, mat);
-scene.add(mesh);
-
-*/
-
-/*
-Example: parse `materialx_example.json` fixture and inspect resolved connections.
-
-import * as MaterialXModule from 'three/examples/jsm/loaders/MaterialXLoader.js';
-import { extendMaterialXWithJSONSupport } from './TinyUSDZMaterialX.js';
-
-// Extend the MaterialX module with JSON parsing helpers (no-op if already present)
-extendMaterialXWithJSONSupport(MaterialXModule);
-
-// In-browser you would fetch the JSON; here we show the API usage
-// fetch('/js/src/tinyusdz/materialx_example.json').then(r => r.json()).then(json => {
-//   const loader = new MaterialXModule.MaterialXLoader();
-//   const mx = loader.parseJSON(json);
-//   console.log('Parsed MaterialX', mx);
-// });
-
-*/
+export {
+    TinyUSDZOpenPBR,
+    convertOpenPBRToMeshPhysicalMaterial,
+    loadTextureFromUSD,
+    extractValue,
+    hasTexture,
+    getTextureId,
+    createColor,
+    OPENPBR_TO_THREEJS_MAP,
+    OPENPBR_TEXTURE_MAP
+};

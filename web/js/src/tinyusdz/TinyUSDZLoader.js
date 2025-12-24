@@ -295,6 +295,23 @@ class TinyUSDZLoader extends Loader {
     }
 
     /**
+     * Set progress callback for load operations
+     * Note: Due to WASM synchronous execution, progress updates are limited.
+     * For true async progress, use loadWithProgressAsync() or Web Workers.
+     * @param {Function} callback - Progress callback (progress: 0-1, stage: string) => void
+     */
+    setProgressCallback(callback) {
+        this.progressCallback_ = callback;
+    }
+
+    /**
+     * Clear the progress callback
+     */
+    clearProgressCallback() {
+        this.progressCallback_ = null;
+    }
+
+    /**
      * Get current maximum memory limit in MB
      * @returns {number|undefined} Memory limit in megabytes, or undefined if using native default
      */
@@ -451,10 +468,726 @@ class TinyUSDZLoader extends Loader {
 
         const ok = usd.loadFromBinary(binary, filePath);
         if (!ok) {
-            _onError(new Error('TinyUSDZLoader: Failed to load USD from binary data.', {cause: usd.error()}));
+            const fileInfo = filePath ? ` (file: ${filePath})` : '';
+            _onError(new Error(`TinyUSDZLoader: Failed to load USD from binary data${fileInfo}.`, {cause: usd.error()}));
         } else {
             onLoad(usd);
         }
+    }
+
+    /**
+     * Parse USD binary data with progress reporting
+     * Uses the native progress callback mechanism for cancellation support.
+     *
+     * Note: Due to WASM being synchronous, progress updates only occur at
+     * checkpoint boundaries in the parser. The onProgress callback is called
+     * after parsing completes with final status information.
+     *
+     * For true async progress reporting in the UI, use Web Workers.
+     *
+     * @param {ArrayBuffer} binary - Binary USD data
+     * @param {string} filePath - Optional file path
+     * @param {Object} options - Parsing options
+     * @param {number} options.maxMemoryLimitMB - Override memory limit
+     * @param {Function} options.onProgress - Progress callback (progressInfo) => void
+     * @param {AbortSignal} options.signal - AbortController signal for cancellation
+     * @returns {Promise<Object>} Parsed USD object
+     */
+    async parseWithProgress(binary /* ArrayBuffer */, filePath /* optional */, options = {}) {
+        if (!this.native_) {
+            await this.init();
+        }
+
+        return new Promise((resolve, reject) => {
+            const usd = new this.native_.TinyUSDZLoaderNative();
+
+            // Set memory limit before loading if specified
+            const memoryLimit = options.maxMemoryLimitMB || this.maxMemoryLimitMB_;
+            if (memoryLimit !== undefined) {
+                usd.setMaxMemoryLimitMB(memoryLimit);
+            }
+
+            // Set bone reduction configuration
+            if (this.enableBoneReduction_) {
+                usd.setEnableBoneReduction(true);
+                usd.setTargetBoneCount(this.targetBoneCount_ || 4);
+            }
+
+            // Handle AbortController cancellation
+            if (options.signal) {
+                if (options.signal.aborted) {
+                    reject(new DOMException('Parsing aborted', 'AbortError'));
+                    return;
+                }
+                options.signal.addEventListener('abort', () => {
+                    usd.cancelParsing();
+                });
+            }
+
+            // Reset progress state
+            usd.resetProgress();
+
+            // Report initial progress
+            if (options.onProgress) {
+                options.onProgress({
+                    progress: 0,
+                    stage: 'parsing',
+                    percentage: 0,
+                    message: 'Starting parse...'
+                });
+            }
+
+            // Use setTimeout to allow UI to update before blocking parse
+            setTimeout(() => {
+                try {
+                    const ok = usd.loadFromBinaryWithProgress(binary, filePath);
+
+                    // Get final progress state
+                    const progressInfo = usd.getProgress();
+
+                    // Report final progress
+                    if (options.onProgress) {
+                        options.onProgress(progressInfo);
+                    }
+
+                    if (!ok) {
+                        if (usd.wasCancelled()) {
+                            reject(new DOMException('Parsing cancelled', 'AbortError'));
+                        } else {
+                            const fileInfo = filePath ? ` (file: ${filePath})` : '';
+                            reject(new Error(`TinyUSDZLoader: Failed to load USD from binary data${fileInfo}.`, {cause: usd.error()}));
+                        }
+                    } else {
+                        resolve(usd);
+                    }
+                } catch (e) {
+                    reject(e);
+                }
+            }, 0);
+        });
+    }
+
+    /**
+     * Load USD file from URL with progress reporting
+     *
+     * @param {string} url - URL to load from
+     * @param {Object} options - Loading options
+     * @param {number} options.maxMemoryLimitMB - Override memory limit
+     * @param {Function} options.onProgress - Progress callback (progressInfo) => void
+     * @param {Function} options.onFetchProgress - Fetch progress callback (loaded, total) => void
+     * @param {AbortSignal} options.signal - AbortController signal for cancellation
+     * @returns {Promise<Object>} Parsed USD object
+     */
+    async loadWithProgress(url, options = {}) {
+        if (!this.native_) {
+            await this.init();
+        }
+
+        // Check for cancellation before starting
+        if (options.signal?.aborted) {
+            throw new DOMException('Loading aborted', 'AbortError');
+        }
+
+        // Fetch the file with progress
+        const response = await fetch(url, { signal: options.signal });
+        if (!response.ok) {
+            throw new Error(`Failed to fetch: ${response.statusText}`);
+        }
+
+        // Get content length for progress calculation
+        const contentLength = response.headers.get('content-length');
+        const total = contentLength ? parseInt(contentLength, 10) : 0;
+
+        // Read response with progress
+        const reader = response.body.getReader();
+        const chunks = [];
+        let loaded = 0;
+
+        while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+
+            chunks.push(value);
+            loaded += value.length;
+
+            if (options.onFetchProgress) {
+                options.onFetchProgress(loaded, total);
+            }
+            if (options.onProgress) {
+                options.onProgress({
+                    progress: total > 0 ? (loaded / total) * 0.3 : 0, // Fetch is ~30% of total
+                    stage: 'fetching',
+                    percentage: total > 0 ? (loaded / total) * 30 : 0,
+                    message: `Downloading... ${Math.round(loaded / 1024)}KB`
+                });
+            }
+        }
+
+        // Combine chunks
+        const totalLength = chunks.reduce((acc, chunk) => acc + chunk.length, 0);
+        const binary = new Uint8Array(totalLength);
+        let offset = 0;
+        for (const chunk of chunks) {
+            binary.set(chunk, offset);
+            offset += chunk.length;
+        }
+
+        // Parse with progress
+        const parseOptions = {
+            ...options,
+            onProgress: options.onProgress ? (info) => {
+                // Adjust progress to account for fetch phase
+                const adjustedProgress = 0.3 + (info.progress * 0.7);
+                options.onProgress({
+                    ...info,
+                    progress: adjustedProgress,
+                    percentage: adjustedProgress * 100,
+                    message: info.stage === 'complete' ? 'Complete' : `${info.currentOperation || info.stage}`
+                });
+            } : undefined
+        };
+
+        return this.parseWithProgress(binary, url, parseOptions);
+    }
+
+    /**
+     * Get the current progress state from a USD loader instance
+     * @param {Object} usd - TinyUSDZLoaderNative instance
+     * @returns {Object} Progress information
+     */
+    static getProgress(usd) {
+        if (usd && typeof usd.getProgress === 'function') {
+            return usd.getProgress();
+        }
+        return null;
+    }
+
+    /**
+     * Request cancellation of parsing on a USD loader instance
+     * @param {Object} usd - TinyUSDZLoaderNative instance
+     */
+    static cancelParsing(usd) {
+        if (usd && typeof usd.cancelParsing === 'function') {
+            usd.cancelParsing();
+        }
+    }
+
+    // ============================================================
+    // Streaming Transfer Methods for Memory-Efficient Loading
+    // ============================================================
+
+    /**
+     * Check if ReadableStreamBYOBReader is available in this environment
+     * @returns {boolean} True if BYOB reader is supported
+     */
+    static supportsBYOBReader() {
+        try {
+            return typeof ReadableStreamBYOBReader !== 'undefined';
+        } catch {
+            return false;
+        }
+    }
+
+    /**
+     * Stream fetch data directly to WASM memory with minimal JS memory footprint.
+     * Uses zero-copy transfer where chunks are written directly to pre-allocated WASM buffer.
+     * Each JS chunk is freed immediately after transfer to minimize memory usage.
+     *
+     * @param {string} url - URL to fetch
+     * @param {string} assetPath - Asset path/identifier for the cache
+     * @param {Object} options - Options
+     * @param {AbortSignal} options.signal - AbortController signal for cancellation
+     * @param {Function} options.onProgress - Progress callback (bytesLoaded, totalBytes) => void
+     * @param {number} options.chunkSize - Preferred chunk size in bytes (default: 64KB)
+     * @param {Object} options.usdInstance - Optional existing TinyUSDZLoaderNative instance to use
+     * @returns {Promise<{success: boolean, bytesTransferred: number, assetPath: string, usdInstance: Object}>}
+     */
+    async streamFetchToWasm(url, assetPath, options = {}) {
+        if (!this.native_) {
+            await this.init();
+        }
+
+        const usd = options.usdInstance || new this.native_.TinyUSDZLoaderNative();
+        const chunkSize = options.chunkSize || 64 * 1024; // 64KB default
+
+        // Check for cancellation before starting
+        if (options.signal?.aborted) {
+            throw new DOMException('Stream transfer aborted', 'AbortError');
+        }
+
+        // Start the fetch
+        const response = await fetch(url, { signal: options.signal });
+        if (!response.ok) {
+            throw new Error(`Failed to fetch: ${response.statusText}`);
+        }
+
+        // Get total size if available
+        const contentLength = response.headers.get('content-length');
+        const totalSize = contentLength ? parseInt(contentLength, 10) : 0;
+
+        if (totalSize === 0) {
+            // If content-length is not available, fall back to buffered approach
+            return this._streamFetchBuffered(response, assetPath, usd, options);
+        }
+
+        // Allocate WASM buffer upfront
+        // Returns UUID for buffer operations, asset_name stored inside for cache key
+        const allocResult = usd.allocateZeroCopyBuffer(assetPath, totalSize);
+        if (!allocResult.success) {
+            throw new Error('Failed to allocate WASM buffer for streaming: ' + (allocResult.error || 'unknown error'));
+        }
+        const uuid = allocResult.uuid;
+
+        try {
+            // Get base pointer to WASM buffer
+            const basePtr = allocResult.bufferPtr;
+            if (basePtr === 0) {
+                throw new Error('Failed to get WASM buffer pointer');
+            }
+
+            // Get WASM heap reference
+            const HEAPU8 = this.native_.HEAPU8;
+
+            // Use BYOB reader if available for better performance
+            if (TinyUSDZLoader.supportsBYOBReader() && response.body.getReader) {
+                await this._streamWithBYOBReader(
+                    response.body, basePtr, totalSize, HEAPU8, usd, uuid, options
+                );
+            } else {
+                // Fall back to default reader
+                await this._streamWithDefaultReader(
+                    response.body, basePtr, totalSize, HEAPU8, usd, uuid, options
+                );
+            }
+
+            // Finalize the buffer (moves to asset cache using stored assetPath)
+            const success = usd.finalizeZeroCopyBuffer(uuid);
+            if (!success) {
+                throw new Error('Failed to finalize streaming buffer');
+            }
+
+            return {
+                success: true,
+                bytesTransferred: totalSize,
+                assetPath: assetPath,
+                usdInstance: usd
+            };
+
+        } catch (error) {
+            // Cancel/cleanup the buffer on error
+            usd.cancelZeroCopyBuffer(uuid);
+            throw error;
+        }
+    }
+
+    /**
+     * Stream with BYOB (Bring Your Own Buffer) reader for efficient reads.
+     * @private
+     */
+    async _streamWithBYOBReader(body, basePtr, totalSize, HEAPU8, usd, uuid, options) {
+        const reader = body.getReader({ mode: 'byob' });
+        let offset = 0;
+        const chunkSize = options.chunkSize || 64 * 1024;
+
+        try {
+            while (offset < totalSize) {
+                // Check for cancellation
+                if (options.signal?.aborted) {
+                    throw new DOMException('Stream transfer aborted', 'AbortError');
+                }
+
+                // Allocate buffer for this chunk
+                const remainingBytes = totalSize - offset;
+                const readSize = Math.min(chunkSize, remainingBytes);
+                let buffer = new ArrayBuffer(readSize);
+                let view = new Uint8Array(buffer);
+
+                // Read into the buffer
+                const { done, value } = await reader.read(view);
+                if (done) break;
+
+                // Write directly to WASM heap
+                const bytesRead = value.byteLength;
+                HEAPU8.set(value, basePtr + offset);
+
+                // Mark bytes as written
+                usd.markZeroCopyBytesWritten(uuid, bytesRead);
+                offset += bytesRead;
+
+                // Report progress
+                if (options.onProgress) {
+                    options.onProgress(offset, totalSize);
+                }
+
+                // Release the buffer (let GC reclaim it)
+                buffer = null;
+                view = null;
+            }
+        } finally {
+            reader.releaseLock();
+        }
+    }
+
+    /**
+     * Stream with default reader (fallback when BYOB is not available).
+     * @private
+     */
+    async _streamWithDefaultReader(body, basePtr, totalSize, HEAPU8, usd, uuid, options) {
+        const reader = body.getReader();
+        let offset = 0;
+
+        try {
+            while (true) {
+                // Check for cancellation
+                if (options.signal?.aborted) {
+                    throw new DOMException('Stream transfer aborted', 'AbortError');
+                }
+
+                const { done, value } = await reader.read();
+                if (done) break;
+
+                // Write chunk directly to WASM heap
+                const bytesRead = value.byteLength;
+                HEAPU8.set(value, basePtr + offset);
+
+                // Mark bytes as written
+                usd.markZeroCopyBytesWritten(uuid, bytesRead);
+                offset += bytesRead;
+
+                // Report progress
+                if (options.onProgress) {
+                    options.onProgress(offset, totalSize);
+                }
+
+                // The chunk 'value' will be GC'd after this iteration
+            }
+        } finally {
+            reader.releaseLock();
+        }
+    }
+
+    /**
+     * Fallback for when content-length is unknown - buffers in JS then transfers.
+     * @private
+     */
+    async _streamFetchBuffered(response, assetPath, usd, options) {
+        const reader = response.body.getReader();
+        const chunks = [];
+        let totalBytes = 0;
+
+        // Read all chunks (we don't know the size upfront)
+        while (true) {
+            if (options.signal?.aborted) {
+                throw new DOMException('Stream transfer aborted', 'AbortError');
+            }
+
+            const { done, value } = await reader.read();
+            if (done) break;
+
+            chunks.push(value);
+            totalBytes += value.byteLength;
+
+            if (options.onProgress) {
+                options.onProgress(totalBytes, 0); // 0 = unknown total
+            }
+        }
+
+        // Now allocate WASM buffer with known size
+        const allocResult = usd.allocateZeroCopyBuffer(assetPath, totalBytes);
+        if (!allocResult.success) {
+            throw new Error('Failed to allocate WASM buffer: ' + (allocResult.error || 'unknown error'));
+        }
+        const uuid = allocResult.uuid;
+
+        try {
+            const basePtr = allocResult.bufferPtr;
+            const HEAPU8 = this.native_.HEAPU8;
+
+            // Transfer chunks to WASM and free them
+            let offset = 0;
+            for (let i = 0; i < chunks.length; i++) {
+                const chunk = chunks[i];
+                HEAPU8.set(chunk, basePtr + offset);
+                usd.markZeroCopyBytesWritten(uuid, chunk.byteLength);
+                offset += chunk.byteLength;
+
+                // Clear reference to allow GC
+                chunks[i] = null;
+            }
+
+            // Finalize
+            const success = usd.finalizeZeroCopyBuffer(uuid);
+            if (!success) {
+                throw new Error('Failed to finalize streaming buffer');
+            }
+
+            return {
+                success: true,
+                bytesTransferred: totalBytes,
+                assetPath: assetPath,
+                usdInstance: usd
+            };
+
+        } catch (error) {
+            usd.cancelZeroCopyBuffer(uuid);
+            throw error;
+        }
+    }
+
+    /**
+     * Stream multiple assets to WASM in parallel with memory-efficient transfer.
+     * Useful for loading USD files with multiple external references.
+     *
+     * @param {Array<{url: string, assetPath: string}>} assets - Array of assets to load
+     * @param {Object} options - Options
+     * @param {AbortSignal} options.signal - AbortController signal for cancellation
+     * @param {Function} options.onProgress - Progress callback (completed, total, currentAsset) => void
+     * @param {number} options.concurrency - Max concurrent downloads (default: 4)
+     * @returns {Promise<Array<{success: boolean, assetPath: string, bytesTransferred: number}>>}
+     */
+    async streamFetchMultipleToWasm(assets, options = {}) {
+        if (!this.native_) {
+            await this.init();
+        }
+
+        const concurrency = options.concurrency || 4;
+        const results = [];
+        let completed = 0;
+
+        // Process assets in batches
+        for (let i = 0; i < assets.length; i += concurrency) {
+            if (options.signal?.aborted) {
+                throw new DOMException('Stream transfer aborted', 'AbortError');
+            }
+
+            const batch = assets.slice(i, i + concurrency);
+            const batchPromises = batch.map(async (asset) => {
+                try {
+                    const result = await this.streamFetchToWasm(asset.url, asset.assetPath, {
+                        signal: options.signal,
+                        onProgress: (loaded, total) => {
+                            if (options.onAssetProgress) {
+                                options.onAssetProgress(asset.assetPath, loaded, total);
+                            }
+                        }
+                    });
+                    completed++;
+                    if (options.onProgress) {
+                        options.onProgress(completed, assets.length, asset.assetPath);
+                    }
+                    return result;
+                } catch (error) {
+                    completed++;
+                    if (options.onProgress) {
+                        options.onProgress(completed, assets.length, asset.assetPath);
+                    }
+                    return {
+                        success: false,
+                        assetPath: asset.assetPath,
+                        error: error.message
+                    };
+                }
+            });
+
+            const batchResults = await Promise.all(batchPromises);
+            results.push(...batchResults);
+        }
+
+        return results;
+    }
+
+    /**
+     * Load USD file with streaming transfer to minimize memory usage.
+     * Combines streaming fetch with parsing.
+     *
+     * @param {string} url - URL to load
+     * @param {Object} options - Options
+     * @param {AbortSignal} options.signal - AbortController signal
+     * @param {Function} options.onProgress - Progress callback
+     * @param {number} options.maxMemoryLimitMB - Memory limit for parsing
+     * @returns {Promise<Object>} Parsed USD object
+     */
+    async loadWithStreaming(url, options = {}) {
+        if (!this.native_) {
+            await this.init();
+        }
+
+        // Extract filename for asset path
+        const assetPath = url.split('/').pop() || 'main.usd';
+
+        // Report streaming phase
+        if (options.onProgress) {
+            options.onProgress({
+                progress: 0,
+                stage: 'streaming',
+                percentage: 0,
+                message: 'Starting streaming transfer...'
+            });
+        }
+
+        // Create USD instance for streaming and loading (same instance to share cache)
+        const usd = new this.native_.TinyUSDZLoaderNative();
+
+        // Set memory limit before streaming
+        const memoryLimit = options.maxMemoryLimitMB || this.maxMemoryLimitMB_;
+        if (memoryLimit !== undefined) {
+            usd.setMaxMemoryLimitMB(memoryLimit);
+        }
+
+        // Set bone reduction configuration
+        if (this.enableBoneReduction_) {
+            usd.setEnableBoneReduction(true);
+            usd.setTargetBoneCount(this.targetBoneCount_ || 4);
+        }
+
+        // Stream fetch to WASM using the same instance
+        const streamResult = await this.streamFetchToWasm(url, assetPath, {
+            signal: options.signal,
+            usdInstance: usd,
+            onProgress: (loaded, total) => {
+                if (options.onProgress) {
+                    const progress = total > 0 ? (loaded / total) * 0.3 : 0;
+                    options.onProgress({
+                        progress,
+                        stage: 'streaming',
+                        percentage: progress * 100,
+                        message: `Streaming... ${Math.round(loaded / 1024)}KB`
+                    });
+                }
+            }
+        });
+
+        if (!streamResult.success) {
+            throw new Error('Streaming transfer failed');
+        }
+
+        // Report parsing phase
+        if (options.onProgress) {
+            options.onProgress({
+                progress: 0.3,
+                stage: 'parsing',
+                percentage: 30,
+                message: 'Parsing USD...'
+            });
+        }
+
+        // Load from the cached asset (same instance, so cache is available)
+        const ok = usd.loadFromCachedAsset(assetPath);
+        if (!ok) {
+            throw new Error('Failed to parse USD from cached asset', { cause: usd.error() });
+        }
+
+        if (options.onProgress) {
+            options.onProgress({
+                progress: 1.0,
+                stage: 'complete',
+                percentage: 100,
+                message: 'Complete'
+            });
+        }
+
+        return usd;
+    }
+
+    /**
+     * Stream a Node.js file to WASM memory with chunk-based transfer.
+     * Uses fs.createReadStream for memory-efficient reading of large files.
+     *
+     * @param {string} filePath - Path to the file
+     * @param {string} assetPath - Asset path/identifier for the cache
+     * @param {Object} options - Options
+     * @param {Function} options.onProgress - Progress callback (bytesLoaded, totalBytes) => void
+     * @param {number} options.chunkSize - Read chunk size in bytes (default: 64KB)
+     * @param {Object} options.usdInstance - Optional existing TinyUSDZLoaderNative instance to use
+     * @returns {Promise<{success: boolean, bytesTransferred: number, assetPath: string, usdInstance: Object}>}
+     */
+    async streamFileToWasm(filePath, assetPath, options = {}) {
+        if (!this.native_) {
+            await this.init();
+        }
+
+        // Check if we're in Node.js
+        const isNode = typeof process !== 'undefined' && process.versions?.node;
+        if (!isNode) {
+            throw new Error('streamFileToWasm is only available in Node.js environment');
+        }
+
+        const { createRequire } = await import('module');
+        const require = createRequire(import.meta.url);
+        const fs = require('fs');
+        const { promisify } = require('util');
+        const stat = promisify(fs.stat);
+
+        // Get file size
+        const stats = await stat(filePath);
+        const totalSize = stats.size;
+
+        const usd = options.usdInstance || new this.native_.TinyUSDZLoaderNative();
+
+        // Allocate WASM buffer
+        const allocResult = usd.allocateZeroCopyBuffer(assetPath, totalSize);
+        if (!allocResult.success) {
+            throw new Error('Failed to allocate WASM buffer: ' + (allocResult.error || 'unknown error'));
+        }
+        const uuid = allocResult.uuid;
+
+        try {
+            const basePtr = allocResult.bufferPtr;
+            const HEAPU8 = this.native_.HEAPU8;
+            const chunkSize = options.chunkSize || 64 * 1024;
+
+            // Create read stream
+            const stream = fs.createReadStream(filePath, { highWaterMark: chunkSize });
+
+            let offset = 0;
+
+            await new Promise((resolve, reject) => {
+                stream.on('data', (chunk) => {
+                    // Convert Buffer to Uint8Array and write to WASM
+                    const uint8Chunk = new Uint8Array(chunk.buffer, chunk.byteOffset, chunk.byteLength);
+                    HEAPU8.set(uint8Chunk, basePtr + offset);
+                    usd.markZeroCopyBytesWritten(uuid, chunk.byteLength);
+                    offset += chunk.byteLength;
+
+                    if (options.onProgress) {
+                        options.onProgress(offset, totalSize);
+                    }
+                });
+
+                stream.on('end', resolve);
+                stream.on('error', reject);
+            });
+
+            // Finalize
+            const success = usd.finalizeZeroCopyBuffer(uuid);
+            if (!success) {
+                throw new Error('Failed to finalize streaming buffer');
+            }
+
+            return {
+                success: true,
+                bytesTransferred: totalSize,
+                assetPath: assetPath,
+                usdInstance: usd
+            };
+
+        } catch (error) {
+            usd.cancelZeroCopyBuffer(uuid);
+            throw error;
+        }
+    }
+
+    /**
+     * Get information about active streaming buffers (for debugging/monitoring)
+     * @returns {Promise<Array>} Array of active buffer info
+     */
+    async getActiveStreamingBuffers() {
+        if (!this.native_) {
+            await this.init();
+        }
+
+        const usd = new this.native_.TinyUSDZLoaderNative();
+        return usd.getActiveZeroCopyBuffers();
     }
 
     /**

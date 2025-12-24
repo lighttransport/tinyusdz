@@ -1,5 +1,7 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
+import { HDRLoader } from 'three/examples/jsm/loaders/HDRLoader.js';
+import { EXRLoader } from 'three/examples/jsm/loaders/EXRLoader.js';
 import GUI from 'three/examples/jsm/libs/lil-gui.module.min.js';
 import { TinyUSDZLoader } from 'tinyusdz/TinyUSDZLoader.js';
 import { TinyUSDZLoaderUtils } from 'tinyusdz/TinyUSDZLoaderUtils.js';
@@ -100,6 +102,45 @@ let currentSceneMetadata = {
 // Store currently selected object for transform display
 let selectedObject = null;
 
+// ===========================================
+// Environment Map and Material Settings
+// ===========================================
+
+// PMREM generator for environment maps
+let pmremGenerator = null;
+
+// Current environment map
+let envMap = null;
+
+// Texture cache for material conversion
+let textureCache = new Map();
+
+// TinyUSDZ loader and scene references for cleanup
+let currentLoader = null;
+let currentUSDScene = null;
+let usdDomeLightData = null; // Store DomeLight data from USD file
+
+// Environment map presets
+const ENV_PRESETS = {
+	'usd_dome': 'usd', // Special marker for USD DomeLight (if available)
+	'goegap_1k': 'assets/textures/goegap_1k.hdr',
+	'env_sunsky_sunset': 'assets/textures/env_sunsky_sunset.hdr',
+	'studio': null, // Will use synthetic studio lighting
+	'constant_color': 'constant' // Special marker for constant color environment
+};
+
+// Material and environment settings
+const materialSettings = {
+	materialType: 'auto', // 'auto', 'openpbr', 'usdpreviewsurface'
+	envMapPreset: 'goegap_1k',
+	envMapIntensity: 1.0,
+	envConstantColor: '#ffffff', // Color for constant color environment
+	envColorspace: 'sRGB', // 'sRGB' (convert to linear) or 'linear' (no conversion)
+	showEnvBackground: false,
+	exposure: 1.0,
+	toneMapping: 'aces'
+};
+
 // Store bounding box helpers for each object
 const objectBBoxHelpers = new Map(); // uuid -> BoxHelper
 
@@ -109,6 +150,224 @@ const mouse = new THREE.Vector2();
 
 // Highlight selected object
 let selectionHelper = null;
+
+// ===========================================
+// Cached objects for animation loop optimization
+// Avoid per-frame allocations for better GC performance
+// ===========================================
+
+// Cached bounding boxes for selection (reused each frame)
+let selectionLocalBBox = new THREE.Box3();  // Local-space bbox of selected object
+let selectionWorldBBox = new THREE.Box3();  // Reusable world-space bbox
+
+// Cache local bounding boxes for objects with bbox helpers
+// uuid -> { localBBox: Box3, worldBBox: Box3 (reusable) }
+const objectLocalBBoxCache = new Map();
+
+// Pre-allocated Set for collecting unique animation actions (reused each loop)
+const uniqueActionsSet = new Set();
+
+// ===========================================
+// GC-Free Direct Animation System
+// Bypasses Three.js AnimationMixer for zero-allocation updates
+// ===========================================
+
+// Animation data storage: Map<object.uuid, AnimationData>
+const directAnimationData = new Map();
+
+// Pre-allocated interpolation temporaries (reused every frame)
+const _quatA = new THREE.Quaternion();
+const _quatB = new THREE.Quaternion();
+
+// Toggle for GC-free mode
+let useDirectAnimation = true;
+
+/**
+ * Binary search to find the keyframe index for a given time
+ */
+function findKeyframeIndex(times, t) {
+	const len = times.length;
+	if (len === 0) return -1;
+	if (t <= times[0]) return 0;
+	if (t >= times[len - 1]) return len - 1;
+
+	let lo = 0, hi = len - 1;
+	while (lo < hi - 1) {
+		const mid = (lo + hi) >>> 1;
+		if (times[mid] <= t) {
+			lo = mid;
+		} else {
+			hi = mid;
+		}
+	}
+	return lo;
+}
+
+/**
+ * Interpolate Vector3 from keyframes (GC-free)
+ */
+function interpolateVec3(times, values, t, target) {
+	const idx = findKeyframeIndex(times, t);
+	if (idx < 0) return;
+
+	const i0 = idx * 3;
+	if (idx >= times.length - 1 || t <= times[idx]) {
+		target.set(values[i0], values[i0 + 1], values[i0 + 2]);
+	} else {
+		const t0 = times[idx];
+		const t1 = times[idx + 1];
+		const alpha = (t - t0) / (t1 - t0);
+		const i1 = (idx + 1) * 3;
+		target.set(
+			values[i0] + (values[i1] - values[i0]) * alpha,
+			values[i0 + 1] + (values[i1 + 1] - values[i0 + 1]) * alpha,
+			values[i0 + 2] + (values[i1 + 2] - values[i0 + 2]) * alpha
+		);
+	}
+}
+
+/**
+ * Interpolate Quaternion from keyframes (GC-free, uses slerp)
+ */
+function interpolateQuat(times, values, t, target) {
+	const idx = findKeyframeIndex(times, t);
+	if (idx < 0) return;
+
+	const i0 = idx * 4;
+	if (idx >= times.length - 1 || t <= times[idx]) {
+		target.set(values[i0], values[i0 + 1], values[i0 + 2], values[i0 + 3]);
+	} else {
+		const t0 = times[idx];
+		const t1 = times[idx + 1];
+		const alpha = (t - t0) / (t1 - t0);
+		const i1 = (idx + 1) * 4;
+		_quatA.set(values[i0], values[i0 + 1], values[i0 + 2], values[i0 + 3]);
+		_quatB.set(values[i1], values[i1 + 1], values[i1 + 2], values[i1 + 3]);
+		target.slerpQuaternions(_quatA, _quatB, alpha);
+	}
+}
+
+/**
+ * Update all animations using direct property assignment (GC-free)
+ */
+function updateDirectAnimations(time) {
+	for (const [uuid, animData] of directAnimationData) {
+		const obj = animData.object;
+		if (!obj) continue;
+
+		if (animData.position) {
+			interpolateVec3(animData.position.times, animData.position.values, time, obj.position);
+		}
+		if (animData.rotation) {
+			interpolateQuat(animData.rotation.times, animData.rotation.values, time, obj.quaternion);
+		}
+		if (animData.scale) {
+			interpolateVec3(animData.scale.times, animData.scale.values, time, obj.scale);
+		}
+	}
+}
+
+/**
+ * Build direct animation data from USD loader (call at load time)
+ */
+function buildDirectAnimationData(usdLoader, sceneRoot) {
+	directAnimationData.clear();
+
+	const numAnimations = usdLoader.numAnimations();
+	console.log(`[DirectAnim] Building GC-free animation data from ${numAnimations} animations`);
+
+	// Build node index map
+	const nodeIndexMap = new Map();
+	let nodeIndex = 0;
+	sceneRoot.traverse((obj) => {
+		nodeIndexMap.set(nodeIndex, obj);
+		nodeIndex++;
+	});
+
+	for (let i = 0; i < numAnimations; i++) {
+		const usdAnimation = usdLoader.getAnimation(i);
+
+		// Handle channel-based animation
+		if (usdAnimation.channels && usdAnimation.samplers) {
+			for (const channel of usdAnimation.channels) {
+				const targetType = channel.target_type || 'SceneNode';
+				if (targetType !== 'SceneNode') continue;
+
+				const sampler = usdAnimation.samplers[channel.sampler];
+				if (!sampler || !sampler.times || !sampler.values) continue;
+
+				const targetObject = nodeIndexMap.get(channel.target_node);
+				if (!targetObject) continue;
+
+				const times = sampler.times instanceof Float32Array
+					? sampler.times : new Float32Array(sampler.times);
+				const values = sampler.values instanceof Float32Array
+					? sampler.values : new Float32Array(sampler.values);
+
+				let animData = directAnimationData.get(targetObject.uuid);
+				if (!animData) {
+					animData = { object: targetObject };
+					directAnimationData.set(targetObject.uuid, animData);
+				}
+
+				switch (channel.path) {
+					case 'Translation':
+						animData.position = { times, values };
+						break;
+					case 'Rotation':
+						animData.rotation = { times, values };
+						break;
+					case 'Scale':
+						animData.scale = { times, values };
+						break;
+				}
+			}
+		}
+
+		// Handle track-based animation (legacy format)
+		if (usdAnimation.tracks && usdAnimation.tracks.length > 0) {
+			let targetObject = null;
+			if (usdAnimation.name) {
+				let searchName = usdAnimation.name.replace(/_xform$/, '').replace(/_anim$/, '');
+				sceneRoot.traverse((obj) => {
+					if (obj.name === searchName || (obj.name && obj.name.startsWith(searchName))) {
+						targetObject = obj;
+					}
+				});
+			}
+			if (!targetObject) continue;
+
+			let animData = directAnimationData.get(targetObject.uuid);
+			if (!animData) {
+				animData = { object: targetObject };
+				directAnimationData.set(targetObject.uuid, animData);
+			}
+
+			for (const track of usdAnimation.tracks) {
+				if (!track.times || !track.values) continue;
+
+				const times = track.times instanceof Float32Array
+					? track.times : new Float32Array(track.times);
+				const values = track.values instanceof Float32Array
+					? track.values : new Float32Array(track.values);
+
+				switch (track.path) {
+					case 'Translation':
+						animData.position = { times, values };
+						break;
+					case 'Rotation':
+						animData.rotation = { times, values };
+						break;
+					case 'Scale':
+						animData.scale = { times, values };
+						break;
+				}
+			}
+		}
+	}
+
+	console.log(`[DirectAnim] Built animation data for ${directAnimationData.size} objects`);
+}
 
 // ===========================================
 // USD Animation Extraction Functions
@@ -459,23 +718,402 @@ function getUSDInterpolationMode(interpolation) {
 	}
 }
 
+// ===========================================
+// Environment Map Functions
+// ===========================================
+
+/**
+ * Initialize PMREM generator and renderer settings for PBR
+ */
+function initializePBRRenderer() {
+	// Create PMREM generator for environment maps
+	pmremGenerator = new THREE.PMREMGenerator(renderer);
+	pmremGenerator.compileEquirectangularShader();
+
+	// Set up tone mapping
+	renderer.toneMapping = THREE.ACESFilmicToneMapping;
+	renderer.toneMappingExposure = materialSettings.exposure;
+	renderer.outputColorSpace = THREE.SRGBColorSpace;
+
+	console.log('PBR renderer initialized with ACES tone mapping');
+}
+
+// ===========================================
+// Colorspace Conversion Utilities
+// ===========================================
+
+/**
+ * Convert sRGB component to linear
+ * @param {number} c - sRGB component value [0, 1]
+ * @returns {number} Linear component value [0, 1]
+ */
+function sRGBComponentToLinear(c) {
+	if (c <= 0.04045) {
+		return c / 12.92;
+	} else {
+		return Math.pow((c + 0.055) / 1.055, 2.4);
+	}
+}
+
+/**
+ * Parse hex color and convert to RGB [0, 1] with optional linear conversion
+ * @param {string} hexColor - Hex color string (e.g., '#ff8800')
+ * @param {boolean} toLinear - If true, convert from sRGB to linear
+ * @returns {object} {r, g, b} values in [0, 1]
+ */
+function parseHexColor(hexColor, toLinear = false) {
+	// Remove # if present
+	const hex = hexColor.replace('#', '');
+
+	// Parse RGB components
+	const r = parseInt(hex.substring(0, 2), 16) / 255;
+	const g = parseInt(hex.substring(2, 4), 16) / 255;
+	const b = parseInt(hex.substring(4, 6), 16) / 255;
+
+	if (toLinear) {
+		return {
+			r: sRGBComponentToLinear(r),
+			g: sRGBComponentToLinear(g),
+			b: sRGBComponentToLinear(b)
+		};
+	}
+
+	return { r, g, b };
+}
+
+/**
+ * Convert RGB [0, 1] to hex color string for canvas
+ * @param {number} r - Red [0, 1]
+ * @param {number} g - Green [0, 1]
+ * @param {number} b - Blue [0, 1]
+ * @returns {string} Hex color string
+ */
+function rgbToHex(r, g, b) {
+	const toHex = (c) => {
+		const clamped = Math.max(0, Math.min(1, c));
+		const val = Math.round(clamped * 255);
+		return val.toString(16).padStart(2, '0');
+	};
+	return `#${toHex(r)}${toHex(g)}${toHex(b)}`;
+}
+
+// ===========================================
+// Environment Loading
+// ===========================================
+
+/**
+ * Load environment map from preset
+ * @param {string} preset - Environment preset name
+ */
+async function loadEnvironment(preset) {
+	materialSettings.envMapPreset = preset;
+	const path = ENV_PRESETS[preset];
+
+	if (!path) {
+		// Studio lighting - create synthetic environment
+		envMap = createStudioEnvironment();
+		applyEnvironment();
+		console.log('Using synthetic studio environment');
+		return;
+	}
+
+	if (path === 'usd') {
+		// USD DomeLight - use stored DomeLight data
+		if (usdDomeLightData) {
+			console.log('Using USD DomeLight environment');
+			// Environment map already loaded by loadDomeLightFromUSD
+		} else {
+			console.warn('USD DomeLight selected but no DomeLight data available');
+			envMap = createStudioEnvironment();
+			applyEnvironment();
+		}
+		return;
+	}
+
+	if (path === 'constant') {
+		// Constant color environment
+		envMap = createConstantColorEnvironment(materialSettings.envConstantColor, materialSettings.envColorspace);
+		applyEnvironment();
+		console.log('Using constant color environment');
+		return;
+	}
+
+	console.log(`Loading environment: ${preset}...`);
+	try {
+		const hdrLoader = new HDRLoader();
+		const texture = await hdrLoader.loadAsync(path);
+		envMap = pmremGenerator.fromEquirectangular(texture).texture;
+		texture.dispose();
+		applyEnvironment();
+		console.log(`Environment loaded: ${preset}`);
+	} catch (error) {
+		console.error('Failed to load environment:', error);
+		// Fall back to synthetic
+		envMap = createStudioEnvironment();
+		applyEnvironment();
+	}
+}
+
+/**
+ * Create a synthetic studio environment
+ * @returns {THREE.Texture} Environment texture
+ */
+function createStudioEnvironment() {
+	const canvas = document.createElement('canvas');
+	canvas.width = 256;
+	canvas.height = 256;
+	const ctx = canvas.getContext('2d');
+
+	// Create gradient (light from top)
+	const gradient = ctx.createLinearGradient(0, 0, 0, 256);
+	gradient.addColorStop(0, '#ffffff');
+	gradient.addColorStop(0.5, '#cccccc');
+	gradient.addColorStop(1, '#666666');
+	ctx.fillStyle = gradient;
+	ctx.fillRect(0, 0, 256, 256);
+
+	const texture = new THREE.CanvasTexture(canvas);
+	texture.mapping = THREE.EquirectangularReflectionMapping;
+	return pmremGenerator.fromEquirectangular(texture).texture;
+}
+
+/**
+ * Create a constant color environment
+ * @param {string} color - Hex color string
+ * @param {string} colorspace - 'sRGB' or 'linear'
+ * @returns {THREE.Texture} Environment texture
+ */
+function createConstantColorEnvironment(color, colorspace = 'sRGB') {
+	const canvas = document.createElement('canvas');
+	canvas.width = 256;
+	canvas.height = 256;
+	const ctx = canvas.getContext('2d');
+
+	// Parse and potentially convert color based on colorspace
+	let fillColor = color;
+	if (colorspace === 'sRGB') {
+		// Convert sRGB to linear for proper PBR workflow
+		const rgb = parseHexColor(color, true); // true = convert to linear
+		fillColor = rgbToHex(rgb.r, rgb.g, rgb.b);
+	}
+	// else: linear colorspace - use color as-is (no conversion)
+
+	// Fill with solid color
+	ctx.fillStyle = fillColor;
+	ctx.fillRect(0, 0, 256, 256);
+
+	const texture = new THREE.CanvasTexture(canvas);
+	texture.mapping = THREE.EquirectangularReflectionMapping;
+
+	// Set colorspace based on setting
+	if (colorspace === 'sRGB') {
+		texture.colorSpace = THREE.LinearSRGBColorSpace;
+	} else {
+		texture.colorSpace = THREE.LinearSRGBColorSpace; // Already linear
+	}
+
+	return pmremGenerator.fromEquirectangular(texture).texture;
+}
+
+/**
+ * Apply the current environment map to the scene
+ */
+function applyEnvironment() {
+	scene.environment = envMap;
+	updateEnvBackground();
+	updateEnvIntensity();
+
+	// Update envMap reference on all existing materials
+	usdSceneRoot.traverse((child) => {
+		if (child.isMesh && child.material) {
+			const materials = Array.isArray(child.material) ? child.material : [child.material];
+			materials.forEach(mat => {
+				mat.envMap = envMap;
+				mat.needsUpdate = true;  // Flag material for shader recompilation
+			});
+		}
+	});
+}
+
+/**
+ * Update environment background visibility
+ */
+function updateEnvBackground() {
+	if (materialSettings.showEnvBackground && envMap) {
+		scene.background = envMap;
+	} else {
+		scene.background = new THREE.Color(0x1a1a1a);
+	}
+}
+
+/**
+ * Update constant color environment when color changes
+ */
+function updateConstantColorEnvironment() {
+	// Only update if constant color environment is selected
+	if (materialSettings.envMapPreset === 'constant_color') {
+		envMap = createConstantColorEnvironment(materialSettings.envConstantColor, materialSettings.envColorspace);
+		applyEnvironment();
+	}
+}
+
+/**
+ * Update environment map intensity on all materials
+ */
+function updateEnvIntensity() {
+	usdSceneRoot.traverse((child) => {
+		if (child.isMesh && child.material) {
+			const materials = Array.isArray(child.material) ? child.material : [child.material];
+			materials.forEach(mat => {
+				if (mat.envMapIntensity !== undefined) {
+					mat.envMapIntensity = materialSettings.envMapIntensity;
+				}
+			});
+		}
+	});
+}
+
+/**
+ * Update tone mapping type
+ * @param {string} value - Tone mapping type
+ */
+function updateToneMapping(value) {
+	const mappings = {
+		'none': THREE.NoToneMapping,
+		'linear': THREE.LinearToneMapping,
+		'reinhard': THREE.ReinhardToneMapping,
+		'cineon': THREE.CineonToneMapping,
+		'aces': THREE.ACESFilmicToneMapping,
+		'agx': THREE.AgXToneMapping,
+		'neutral': THREE.NeutralToneMapping
+	};
+	renderer.toneMapping = mappings[value] || THREE.ACESFilmicToneMapping;
+}
+
+// ===========================================
+// DomeLight Environment Map Loading
+// ===========================================
+
+/**
+ * Load DomeLight from USD and apply to scene
+ * Uses TinyUSDZLoaderUtils.loadDomeLightFromUSD for the heavy lifting
+ * @param {Object} usdScene - USD scene object from TinyUSDZLoader
+ * @returns {Promise<Object|null>} DomeLight data or null if not found
+ */
+async function loadDomeLightFromUSD(usdScene) {
+	const result = await TinyUSDZLoaderUtils.loadDomeLightFromUSD(usdScene, pmremGenerator);
+
+	if (result) {
+		// Apply result to app state
+		envMap = result.texture;
+		materialSettings.envMapIntensity = result.intensity;
+		materialSettings.envMapPreset = 'usd_dome';
+
+		if (result.colorHex) {
+			materialSettings.envConstantColor = result.colorHex;
+		}
+
+		applyEnvironment();
+
+		// Update UI to reflect loaded DomeLight settings
+		if (typeof envIntensityController !== 'undefined') {
+			envIntensityController.updateDisplay();
+		}
+		if (typeof envPresetController !== 'undefined') {
+			envPresetController.updateDisplay();
+		}
+
+		// Store DomeLight data for reference
+		usdDomeLightData = {
+			name: result.name,
+			textureFile: result.textureFile,
+			envmapTextureId: result.envmapTextureId,
+			intensity: result.intensity,
+			color: result.color,
+			exposure: result.exposure,
+			envMap: envMap
+		};
+
+		return usdDomeLightData;
+	}
+
+	return null;
+}
+
+/**
+ * Reload all materials with current settings
+ */
+async function reloadMaterials() {
+	if (!usdContentNode) return;
+
+	console.log(`Reloading materials with type: ${materialSettings.materialType}`);
+
+	// Get the current USD scene loader
+	const loader = new TinyUSDZLoader();
+	await loader.init({ useZstdCompressedWasm: false, useMemory64: false });
+
+	// Clear texture cache for fresh reload
+	textureCache.clear();
+
+	// Traverse and update materials on all meshes
+	usdContentNode.traverse(async (child) => {
+		if (child.isMesh && child.userData.materialData) {
+			try {
+				const newMaterial = await TinyUSDZLoaderUtils.convertMaterial(
+					child.userData.materialData,
+					child.userData.usdScene,
+					{
+						preferredMaterialType: materialSettings.materialType,
+						envMap: envMap,
+						envMapIntensity: materialSettings.envMapIntensity,
+						textureCache: textureCache
+					}
+				);
+
+				// Preserve shadow settings
+				if (child.material) {
+					child.material.dispose();
+				}
+				child.material = newMaterial;
+				child.material.needsUpdate = true;
+
+				// Apply double-sided if enabled
+				if (animationParams.doubleSided) {
+					child.material.side = THREE.DoubleSide;
+				}
+			} catch (e) {
+				console.warn(`Failed to reload material for ${child.name}:`, e);
+			}
+		}
+	});
+
+	console.log('Materials reloaded');
+}
+
 // Load USD model asynchronously
 async function loadUSDModel() {
+	// Initialize PBR renderer if not already done
+	if (!pmremGenerator) {
+		initializePBRRenderer();
+		// Load default environment
+		await loadEnvironment(materialSettings.envMapPreset);
+	}
+
 	const loader = new TinyUSDZLoader();
 
 	// Initialize the loader (wait for WASM module to load)
 	// Use memory64: false for browser compatibility
 	// Use useZstdCompressedWasm: false since compressed WASM is not available
-	await loader.init({ useZstdCompressedWasm: false, useMemory64: false });
+	await loader.init({ useZstdCompressedWasm: false, useMemory64: true });
+	currentLoader = loader; // Store reference for cleanup
 
 	// USD FILES
-	//const usd_filename = "./assets/cube-animation.usda";
-	//const usd_filename = "./assets/hierarchical-node-animation.usdc";
-	//const usd_filename = "./assets/test-001.usdc";
-	const usd_filename = "./assets/suzanne-xform.usdc";
+	//const usd_filename = "./assets/suzanne-xform.usdc";
+	const usd_filename = "./assets/TrenchRun5_v5_1X-mtlx.usdz";
 
 	// Load USD scene
 	const usd_scene = await loader.loadAsync(usd_filename);
+	currentUSDScene = usd_scene; // Store reference for cleanup
 
 	// Get the default root node from USD
 	const usdRootNode = usd_scene.getDefaultRootNode();
@@ -521,17 +1159,49 @@ async function loadUSDModel() {
 	// Update metadata UI
 	updateMetadataUI();
 
-	// Create default material
-	const defaultMtl = TinyUSDZLoaderUtils.createDefaultMaterial();
+	// Try to load DomeLight environment from USD
+	try {
+		const domeLightData = await loadDomeLightFromUSD(usd_scene);
+		if (domeLightData) {
+			console.log('Loaded DomeLight from USD:', domeLightData);
+			if (envPresetController) {
+				envPresetController.updateDisplay();
+			}
+		}
+	} catch (error) {
+		console.warn('Error checking for DomeLight:', error);
+	}
+
+	// Create default material with environment map
+	const defaultMtl = new THREE.MeshPhysicalMaterial({
+		color: 0x888888,
+		roughness: 0.5,
+		metalness: 0.0,
+		envMap: envMap,
+		envMapIntensity: materialSettings.envMapIntensity
+	});
+
+	// Clear texture cache for fresh load
+	textureCache.clear();
 
 	const options = {
 		overrideMaterial: false,
-		envMap: null,
-		envMapIntensity: 1.0,
+		envMap: envMap,
+		envMapIntensity: materialSettings.envMapIntensity,
+		preferredMaterialType: materialSettings.materialType,
+		textureCache: textureCache,
+		storeMaterialData: true
 	};
 
-	// Build Three.js node from USD
-	const threeNode = TinyUSDZLoaderUtils.buildThreeNode(usdRootNode, defaultMtl, usd_scene, options);
+	// Build Three.js node from USD with MaterialX/OpenPBR support
+	const threeNode = await TinyUSDZLoaderUtils.buildThreeNode(usdRootNode, defaultMtl, usd_scene, options);
+
+	// Store USD scene reference for material reloading
+	threeNode.traverse((child) => {
+		if (child.isMesh) {
+			child.userData.usdScene = usd_scene;
+		}
+	});
 
 	// Store reference to USD content node for mixer creation
 	usdContentNode = threeNode;
@@ -587,6 +1257,9 @@ async function loadUSDModel() {
 		// IMPORTANT: Pass threeNode (the USD root) for correct node index mapping
 		// The node indices in USD animations reference nodes within the USD scene hierarchy
 		usdAnimations = convertUSDAnimationsToThreeJS(usd_scene, threeNode);
+
+		// Build GC-free direct animation data
+		buildDirectAnimationData(usd_scene, threeNode);
 
 		if (usdAnimations.length > 0) {
 			console.log(`Extracted ${usdAnimations.length} animations from USD file`);
@@ -675,25 +1348,35 @@ function toggleBoundingBox(obj, show) {
 	if (show) {
 		// Create bbox helper if it doesn't exist
 		if (!objectBBoxHelpers.has(obj.uuid)) {
-			const bbox = new THREE.Box3();
+			// Compute and cache local bounding box (only done once)
+			const localBBox = new THREE.Box3();
+			const worldBBox = new THREE.Box3();
+			computeLocalBoundingBox(obj, localBBox);
 
-			// Compute bounding box from the object and its children
-			bbox.setFromObject(obj);
+			// Compute initial world bbox
+			applyRigidTransformToBBox(localBBox, obj, worldBBox);
 
 			// Create a BoxHelper or Box3Helper
-			const helper = new THREE.Box3Helper(bbox, 0x00ff00); // Green color
+			const helper = new THREE.Box3Helper(worldBBox, 0x00ff00); // Green color
 			helper.name = `bbox_${obj.name || obj.uuid}`;
 
 			// Store the helper
 			objectBBoxHelpers.set(obj.uuid, helper);
 
+			// Cache the local bbox and a reusable world bbox for this object
+			objectLocalBBoxCache.set(obj.uuid, {
+				localBBox: localBBox,
+				worldBBox: worldBBox,
+				object: obj  // Store reference to avoid scene traversal
+			});
+
 			// Add to scene
 			scene.add(helper);
 
 			console.log(`BBox created for "${obj.name}":`, {
-				min: bbox.min,
-				max: bbox.max,
-				size: bbox.getSize(new THREE.Vector3())
+				min: worldBBox.min,
+				max: worldBBox.max,
+				size: worldBBox.getSize(new THREE.Vector3())
 			});
 		} else {
 			// Make it visible
@@ -710,16 +1393,15 @@ function toggleBoundingBox(obj, show) {
 }
 
 // Update bounding box helper for an object (call this during animation)
+// Uses cached local bbox + rigid transform for O(1) update instead of O(n) vertex traversal
 function updateBoundingBox(obj) {
-	if (objectBBoxHelpers.has(obj.uuid)) {
+	const cache = objectLocalBBoxCache.get(obj.uuid);
+	if (cache) {
 		const helper = objectBBoxHelpers.get(obj.uuid);
-		if (helper.visible) {
-			// Recompute the bounding box
-			const bbox = new THREE.Box3();
-			bbox.setFromObject(obj);
-
-			// Update the helper
-			helper.box = bbox;
+		if (helper && helper.visible) {
+			// Apply current rigid transform to cached local bbox
+			applyRigidTransformToBBox(cache.localBBox, obj, cache.worldBBox);
+			helper.box.copy(cache.worldBBox);
 		}
 	}
 }
@@ -858,8 +1540,15 @@ function selectObject(obj) {
 
 	// Create selection helper (wireframe box)
 	if (obj.isMesh || obj.isGroup) {
-		const bbox = new THREE.Box3().setFromObject(obj);
-		selectionHelper = new THREE.Box3Helper(bbox, 0xffff00); // Yellow color
+		// Compute and cache the local bounding box for rigid transform optimization
+		// For meshes, compute bbox from geometry in local space
+		// For groups, compute from children but store relative to this object
+		computeLocalBoundingBox(obj, selectionLocalBBox);
+
+		// Compute initial world bbox by applying current transform
+		applyRigidTransformToBBox(selectionLocalBBox, obj, selectionWorldBBox);
+
+		selectionHelper = new THREE.Box3Helper(selectionWorldBBox, 0xffff00); // Yellow color
 		selectionHelper.name = 'SelectionHelper';
 		scene.add(selectionHelper);
 	}
@@ -868,6 +1557,62 @@ function selectObject(obj) {
 	updateTransformInfoUI(obj);
 
 	console.log('Selected object:', obj.name, obj);
+}
+
+/**
+ * Compute local bounding box for an object (in object's local coordinate space)
+ * This only needs to be called once when the object is selected, not every frame.
+ * @param {THREE.Object3D} obj - The object to compute bbox for
+ * @param {THREE.Box3} targetBBox - Box3 to store the result (reused to avoid allocation)
+ */
+function computeLocalBoundingBox(obj, targetBBox) {
+	targetBBox.makeEmpty();
+
+	if (obj.isMesh && obj.geometry) {
+		// For meshes, use geometry's bounding box (already in local space)
+		if (!obj.geometry.boundingBox) {
+			obj.geometry.computeBoundingBox();
+		}
+		targetBBox.copy(obj.geometry.boundingBox);
+	} else {
+		// For groups/other objects, compute from children in local space
+		// We need to temporarily reset the object's world matrix to identity
+		// to get the local-space bounding box
+		const tempMatrix = new THREE.Matrix4();
+		const invWorldMatrix = new THREE.Matrix4();
+
+		obj.updateWorldMatrix(true, true);
+		invWorldMatrix.copy(obj.matrixWorld).invert();
+
+		obj.traverse((child) => {
+			if (child.isMesh && child.geometry) {
+				if (!child.geometry.boundingBox) {
+					child.geometry.computeBoundingBox();
+				}
+				// Transform child's local bbox to the selected object's local space
+				const childBBox = child.geometry.boundingBox.clone();
+				tempMatrix.copy(child.matrixWorld).premultiply(invWorldMatrix);
+				childBBox.applyMatrix4(tempMatrix);
+				targetBBox.union(childBBox);
+			}
+		});
+	}
+}
+
+/**
+ * Apply rigid transform (translation, rotation, scale) to a local bounding box
+ * to compute the world-space bounding box.
+ * This is much faster than setFromObject() which traverses all vertices.
+ * @param {THREE.Box3} localBBox - Local-space bounding box
+ * @param {THREE.Object3D} obj - Object whose world matrix to apply
+ * @param {THREE.Box3} targetBBox - Box3 to store the world-space result (reused)
+ */
+function applyRigidTransformToBBox(localBBox, obj, targetBBox) {
+	// Ensure world matrix is up to date
+	obj.updateWorldMatrix(true, false);
+
+	// Copy local bbox and apply world transform
+	targetBBox.copy(localBBox).applyMatrix4(obj.matrixWorld);
 }
 
 // Update transform info UI
@@ -905,28 +1650,28 @@ function updateTransformInfoUI(obj) {
 		transformInfo.displayName = obj.userData['primMeta.displayName'];
 	}
 
-	// Add read-only controllers
-	window.transformInfoFolder.add(transformInfo, 'name').name('Name').disable().listen();
-	window.transformInfoFolder.add(transformInfo, 'type').name('Type').disable().listen();
+	// Add read-only controllers (no .listen() needed - values are set once on selection)
+	window.transformInfoFolder.add(transformInfo, 'name').name('Name').disable();
+	window.transformInfoFolder.add(transformInfo, 'type').name('Type').disable();
 
 	if (transformInfo.usdPath) {
-		window.transformInfoFolder.add(transformInfo, 'usdPath').name('USD Path').disable().listen();
+		window.transformInfoFolder.add(transformInfo, 'usdPath').name('USD Path').disable();
 	}
 	if (transformInfo.displayName) {
-		window.transformInfoFolder.add(transformInfo, 'displayName').name('Display Name').disable().listen();
+		window.transformInfoFolder.add(transformInfo, 'displayName').name('Display Name').disable();
 	}
 
-	window.transformInfoFolder.add(transformInfo, 'posX').name('Position X').disable().listen();
-	window.transformInfoFolder.add(transformInfo, 'posY').name('Position Y').disable().listen();
-	window.transformInfoFolder.add(transformInfo, 'posZ').name('Position Z').disable().listen();
+	window.transformInfoFolder.add(transformInfo, 'posX').name('Position X').disable();
+	window.transformInfoFolder.add(transformInfo, 'posY').name('Position Y').disable();
+	window.transformInfoFolder.add(transformInfo, 'posZ').name('Position Z').disable();
 
-	window.transformInfoFolder.add(transformInfo, 'rotX').name('Rotation X').disable().listen();
-	window.transformInfoFolder.add(transformInfo, 'rotY').name('Rotation Y').disable().listen();
-	window.transformInfoFolder.add(transformInfo, 'rotZ').name('Rotation Z').disable().listen();
+	window.transformInfoFolder.add(transformInfo, 'rotX').name('Rotation X').disable();
+	window.transformInfoFolder.add(transformInfo, 'rotY').name('Rotation Y').disable();
+	window.transformInfoFolder.add(transformInfo, 'rotZ').name('Rotation Z').disable();
 
-	window.transformInfoFolder.add(transformInfo, 'scaleX').name('Scale X').disable().listen();
-	window.transformInfoFolder.add(transformInfo, 'scaleY').name('Scale Y').disable().listen();
-	window.transformInfoFolder.add(transformInfo, 'scaleZ').name('Scale Z').disable().listen();
+	window.transformInfoFolder.add(transformInfo, 'scaleX').name('Scale X').disable();
+	window.transformInfoFolder.add(transformInfo, 'scaleY').name('Scale Y').disable();
+	window.transformInfoFolder.add(transformInfo, 'scaleZ').name('Scale Z').disable();
 
 	window.transformInfoFolder.show();
 	console.log('Transform info updated for:', obj.name);
@@ -934,6 +1679,29 @@ function updateTransformInfoUI(obj) {
 
 // Store per-object animation actions for individual control
 const objectAnimationActions = new Map(); // uuid -> { action, enabled }
+
+// Cache for AnimationClip actions to prevent duplicate Interpolant allocations
+// Key: clip name, Value: cached action from mixer.clipAction()
+const clipActionCache = new Map();
+
+/**
+ * Get or create a cached AnimationAction for a clip.
+ * This prevents duplicate Interpolant/ArrayBuffer allocations when the same clip is used multiple times.
+ * @param {THREE.AnimationMixer} mixer - The animation mixer
+ * @param {THREE.AnimationClip} clip - The animation clip
+ * @returns {THREE.AnimationAction} The cached or newly created action
+ */
+function getCachedClipAction(mixer, clip) {
+	const cacheKey = clip.name || clip.uuid;
+
+	if (clipActionCache.has(cacheKey)) {
+		return clipActionCache.get(cacheKey);
+	}
+
+	const action = mixer.clipAction(clip);
+	clipActionCache.set(cacheKey, action);
+	return action;
+}
 
 // Play all USD animations (all channels applied together)
 function playAllUSDAnimations() {
@@ -968,6 +1736,8 @@ function playAllUSDAnimations() {
 	// Stop all current animations
 	objectAnimationActions.forEach(({action}) => action.stop());
 	objectAnimationActions.clear();
+	clipActionCache.clear(); // Clear cached actions to prevent stale references
+	directAnimationData.clear(); // Clear GC-free animation data
 
 	// All USD animation clips contain channels for different objects
 	// We need to play all clips together
@@ -1009,7 +1779,8 @@ function playAllUSDAnimations() {
 				return; // Skip this clip
 			}
 
-			const action = mixer.clipAction(clip);
+			// Use cached action to prevent duplicate Interpolant allocations
+			const action = getCachedClipAction(mixer, clip);
 			action.loop = THREE.LoopRepeat;
 			action.play();
 			console.log(`  Clip ${clipIndex}: ${clip.name}, ${clip.tracks.length} tracks`);
@@ -1052,8 +1823,24 @@ function playAllUSDAnimations() {
 	});
 
 	// Store the first action as the main animation action for time control
+	// Use cached action to prevent duplicate Interpolant allocations
 	if (usdAnimations.length > 0 && mixer) {
-		animationAction = mixer.clipAction(usdAnimations[0]);
+		animationAction = getCachedClipAction(mixer, usdAnimations[0]);
+	}
+
+	// Pre-warm the animation system to force early allocation of internal buffers
+	// This ensures PropertyBindings and Interpolants are fully initialized before the main loop
+	if (mixer) {
+		// Run a few update cycles to warm up all internal structures
+		for (let i = 0; i < 3; i++) {
+			mixer.update(0.016); // ~60fps frame time
+		}
+		// Reset time to beginning
+		for (const action of clipActionCache.values()) {
+			action.time = animationParams.beginTime;
+		}
+		mixer.update(0); // Reset mixer state
+		console.log('Animation system pre-warmed');
 	}
 
 	// Build scene graph UI with per-object animation controls
@@ -1063,6 +1850,10 @@ function playAllUSDAnimations() {
 // Animation mixer and actions
 let mixer = null;
 let animationAction = null;
+
+// Animation mixer update throttling (reduces GC pressure with many clips)
+let mixerFrameCounter = 0;
+let accumulatedMixerTime = 0;
 
 // Debug: Track object transforms during animation
 let debugAnimationTracking = false;
@@ -1101,20 +1892,24 @@ const animationParams = {
 	playPause: function() {
 		this.isPlaying = !this.isPlaying;
 
+		// Reset mixer throttle state when toggling
+		mixerFrameCounter = 0;
+		accumulatedMixerTime = 0;
+
 		// Pause/unpause all animation actions
 		if (mixer) {
-			// Collect unique actions
-			const uniqueActions = new Set();
-			objectAnimationActions.forEach(({action, enabled}) => {
+			// Reuse pre-allocated Set and for...of to avoid allocations
+			uniqueActionsSet.clear();
+			for (const [, {action, enabled}] of objectAnimationActions) {
 				if (action && enabled) {
-					uniqueActions.add(action);
+					uniqueActionsSet.add(action);
 				}
-			});
+			}
 
 			// Set paused state on all unique actions
-			uniqueActions.forEach(action => {
+			for (const action of uniqueActionsSet) {
 				action.paused = !this.isPlaying;
-			});
+			}
 		}
 
 		// Also update the main action if it exists (fallback)
@@ -1126,20 +1921,24 @@ const animationParams = {
 		animationParams.time = animationParams.beginTime;
 		animationParams.speed = 24.0;
 
+		// Reset mixer throttle state
+		mixerFrameCounter = 0;
+		accumulatedMixerTime = 0;
+
 		// Reset all animation actions
 		if (mixer) {
-			// Collect unique actions
-			const uniqueActions = new Set();
-			objectAnimationActions.forEach(({action, enabled}) => {
+			// Reuse pre-allocated Set and for...of to avoid allocations
+			uniqueActionsSet.clear();
+			for (const [, {action, enabled}] of objectAnimationActions) {
 				if (action && enabled) {
-					uniqueActions.add(action);
+					uniqueActionsSet.add(action);
 				}
-			});
+			}
 
 			// Set time on all unique actions
-			uniqueActions.forEach(action => {
+			for (const action of uniqueActionsSet) {
 				action.time = animationParams.beginTime;
-			});
+			}
 		}
 
 		// Also reset the main action if it exists (fallback)
@@ -1327,14 +2126,28 @@ const animationParams = {
 	setScalePreset_0_1: function() {
 		this.sceneScale = 0.1;
 		this.applySceneScale();
+		if (typeof sceneScaleController !== 'undefined') sceneScaleController.updateDisplay();
 	},
 	setScalePreset_1_0: function() {
 		this.sceneScale = 1.0;
 		this.applySceneScale();
+		if (typeof sceneScaleController !== 'undefined') sceneScaleController.updateDisplay();
 	},
 	setScalePreset_10_0: function() {
 		this.sceneScale = 10.0;
 		this.applySceneScale();
+		if (typeof sceneScaleController !== 'undefined') sceneScaleController.updateDisplay();
+	},
+
+	// Mixer update interval (reduces GC with many animation clips)
+	// 1 = every frame, 2 = every 2nd frame, etc.
+	mixerUpdateInterval: 2,
+
+	// GC-free direct animation mode (bypasses Three.js AnimationMixer)
+	useDirectAnimation: true,
+	toggleDirectAnimation: function() {
+		useDirectAnimation = this.useDirectAnimation;
+		console.log(`Direct animation mode: ${useDirectAnimation ? 'ON (GC-free)' : 'OFF (using AnimationMixer)'}`);
 	},
 
 	// Debug animation tracking
@@ -1408,6 +2221,7 @@ const animationParams = {
 		// Set ground plane to the minimum Y of the bounding box
 		this.groundPlaneY = bbox.min.y;
 		this.applyGroundPlaneY();
+		if (typeof groundPlaneYController !== 'undefined') groundPlaneYController.updateDisplay();
 		console.log(`Ground plane fitted to scene bottom: Y = ${this.groundPlaneY.toFixed(4)}`);
 	},
 
@@ -1419,6 +2233,7 @@ const animationParams = {
 	// Update functions
 	updateDuration: function() {
 		this.duration = this.endTime - this.beginTime;
+		if (typeof durationController !== 'undefined') durationController.updateDisplay();
 	}
 };
 
@@ -1430,48 +2245,25 @@ gui.title('Animation Controls');
 let timelineController = null;
 let beginTimeController = null;
 let endTimeController = null;
+let envPresetController = null;
 
 // Playback controls
 const playbackFolder = gui.addFolder('Playback');
 playbackFolder.add(animationParams, 'playPause').name('Play / Pause');
 playbackFolder.add(animationParams, 'reset').name('Reset');
-playbackFolder.add(animationParams, 'speed', 0.1, 100, 0.1).name('Speed (FPS)').listen();
+playbackFolder.add(animationParams, 'speed', 0.1, 100, 0.1).name('Speed (FPS)');
 timelineController = playbackFolder.add(animationParams, 'time', 0, 30, 0.01)
 	.name('Timeline')
-	.listen()
 	.onChange((value) => {
 		// When user manually scrubs the timeline, update all animation actions
 		if (mixer) {
-			// Collect unique actions (multiple objects might share the same action)
-			const uniqueActions = new Set();
-			objectAnimationActions.forEach(({action, enabled}) => {
+			// OPTIMIZED: Reuse pre-allocated Set and for...of to avoid allocations
+			uniqueActionsSet.clear();
+			for (const [, {action, enabled}] of objectAnimationActions) {
 				if (action && enabled) {
-					uniqueActions.add(action);
+					uniqueActionsSet.add(action);
 				}
-			});
-
-			console.log(`Timeline scrub to ${value.toFixed(3)}s - Updating ${uniqueActions.size} unique action(s) for ${objectAnimationActions.size} object(s)`);
-
-			// Debug: Show which objects and actions are being updated
-			const actionToObjects = new Map();
-			objectAnimationActions.forEach(({action, enabled, objectName}) => {
-				if (action && enabled) {
-					if (!actionToObjects.has(action)) {
-						actionToObjects.set(action, []);
-					}
-					actionToObjects.get(action).push(objectName);
-				}
-			});
-			actionToObjects.forEach((objects, action) => {
-				console.log(`  Action for [${objects.join(', ')}]: clip="${action.getClip().name}"`);
-			});
-
-			// To properly scrub all actions to a specific time:
-			// AnimationMixer.update(0) may not evaluate, so we use a different approach:
-			// 1. Set mixer's internal time to 0
-			// 2. Set each action's time to target
-			// 3. Force evaluation with a tiny non-zero delta
-			// 4. Restore paused state
+			}
 
 			const wasPaused = !animationParams.isPlaying;
 
@@ -1480,18 +2272,15 @@ timelineController = playbackFolder.add(animationParams, 'time', 0, 30, 0.01)
 			mixer.time = 0;
 
 			// Configure all actions for the target time
-			uniqueActions.forEach(action => {
-				// Don't reset - just set time directly and ensure it's playing
+			for (const action of uniqueActionsSet) {
 				action.paused = false;
 				action.enabled = true;
 				action.time = value;
 				action.weight = 1.0;
-
-				console.log(`  Set action time to ${value.toFixed(3)}s, clip="${action.getClip().name}"`);
-			});
+			}
 
 			// Also update the main action if it exists
-			if (animationAction && !uniqueActions.has(animationAction)) {
+			if (animationAction && !uniqueActionsSet.has(animationAction)) {
 				animationAction.paused = false;
 				animationAction.enabled = true;
 				animationAction.time = value;
@@ -1499,29 +2288,25 @@ timelineController = playbackFolder.add(animationParams, 'time', 0, 30, 0.01)
 			}
 
 			// Force mixer to evaluate by calling update
-			// Using a small non-zero value to trigger evaluation
-			const deltaForEval = 0.0001;
-			mixer.update(deltaForEval);
+			mixer.update(0.0001);
 
 			// Compensate for the small delta we added
-			uniqueActions.forEach(action => {
-				action.time = value; // Reset to exact target time
-			});
+			for (const action of uniqueActionsSet) {
+				action.time = value;
+			}
 			if (animationAction) {
 				animationAction.time = value;
 			}
 
 			// Restore paused state if needed
 			if (wasPaused) {
-				uniqueActions.forEach(action => {
+				for (const action of uniqueActionsSet) {
 					action.paused = true;
-				});
+				}
 				if (animationAction) {
 					animationAction.paused = true;
 				}
 			}
-
-			console.log(`Timeline scrub completed. Mixer time: ${mixer.time.toFixed(3)}s`);
 		}
 	});
 
@@ -1542,9 +2327,9 @@ endTimeController = playbackFolder.add(animationParams, 'endTime', 0.1, 30, 0.1)
 		}
 		animationParams.updateDuration();
 	});
-playbackFolder.add(animationParams, 'duration', 0.1, 30, 0.1)
+// Store reference for manual update when duration changes
+const durationController = playbackFolder.add(animationParams, 'duration', 0.1, 30, 0.1)
 	.name('Duration')
-	.listen()
 	.disable();
 
 playbackFolder.open();
@@ -1588,10 +2373,10 @@ groundFolder.add(animationParams, 'showGroundPlane')
 groundFolder.add(animationParams, 'showGrid')
 	.name('Show Grid')
 	.onChange(() => animationParams.toggleGrid());
-groundFolder.add(animationParams, 'groundPlaneY', -1000, 1000, 0.01)
+// Store reference for manual update when fitGroundToScene is called
+const groundPlaneYController = groundFolder.add(animationParams, 'groundPlaneY', -1000, 1000, 0.01)
 	.name('Y Position')
-	.onChange(() => animationParams.applyGroundPlaneY())
-	.listen();
+	.onChange(() => animationParams.applyGroundPlaneY());
 groundFolder.add(animationParams, 'fitGroundToScene')
 	.name('Fit to Scene Bottom');
 groundFolder.open();
@@ -1601,10 +2386,10 @@ renderingFolder.add(animationParams, 'fitToScene')
 
 // Scene scaling controls
 const scaleFolder = renderingFolder.addFolder('Scene Scale');
-scaleFolder.add(animationParams, 'sceneScale', 0.01, 100, 0.01)
+// Store reference for manual update when scale presets are used
+const sceneScaleController = scaleFolder.add(animationParams, 'sceneScale', 0.01, 100, 0.01)
 	.name('Scale')
-	.onChange(() => animationParams.applySceneScale())
-	.listen();
+	.onChange(() => animationParams.applySceneScale());
 scaleFolder.add(animationParams, 'applyMetersPerUnit')
 	.name('Apply metersPerUnit')
 	.onChange(() => animationParams.applySceneScale());
@@ -1614,6 +2399,59 @@ scaleFolder.add(animationParams, 'setScalePreset_10_0').name('Scale: 10/1 (10x)'
 scaleFolder.open();
 
 renderingFolder.open();
+
+// ===========================================
+// Material & Environment GUI
+// ===========================================
+const materialFolder = gui.addFolder('Material & Environment');
+
+// Material type selector
+materialFolder.add(materialSettings, 'materialType', ['auto', 'openpbr', 'usdpreviewsurface'])
+	.name('Material Type')
+	.onChange(() => reloadMaterials());
+
+// Environment preset selector
+envPresetController = materialFolder.add(materialSettings, 'envMapPreset', Object.keys(ENV_PRESETS))
+	.name('Environment')
+	.onChange((value) => loadEnvironment(value));
+
+// Constant color environment color picker
+materialFolder.addColor(materialSettings, 'envConstantColor')
+	.name('Env Color')
+	.onChange(() => updateConstantColorEnvironment());
+
+// Environment colorspace workflow
+materialFolder.add(materialSettings, 'envColorspace', ['sRGB', 'linear'])
+	.name('Env Colorspace')
+	.onChange(() => updateConstantColorEnvironment());
+
+// Environment intensity - store reference to update when loading USD DomeLight
+const envIntensityController = materialFolder.add(materialSettings, 'envMapIntensity', 0, 3, 0.1)
+	.name('Env Intensity')
+	.onChange(() => updateEnvIntensity());
+
+// Show environment as background
+materialFolder.add(materialSettings, 'showEnvBackground')
+	.name('Show Env Background')
+	.onChange(() => updateEnvBackground());
+
+// Exposure control
+materialFolder.add(materialSettings, 'exposure', 0, 3, 0.1)
+	.name('Exposure')
+	.onChange((value) => {
+		renderer.toneMappingExposure = value;
+	});
+
+// Tone mapping selector
+materialFolder.add(materialSettings, 'toneMapping', ['none', 'linear', 'reinhard', 'cineon', 'aces', 'agx', 'neutral'])
+	.name('Tone Mapping')
+	.onChange((value) => updateToneMapping(value));
+
+// Reload materials button
+materialFolder.add({ reload: () => reloadMaterials() }, 'reload')
+	.name('Reload Materials');
+
+materialFolder.open();
 
 // Scene Metadata - will be populated dynamically
 const metadataFolder = gui.addFolder('Scene Metadata');
@@ -1675,20 +2513,20 @@ function updateMetadataUI() {
 		copyright: currentSceneMetadata.copyright || "N/A"
 	};
 
-	// Add read-only controllers
-	window.metadataFolder.add(metadataDisplay, 'upAxis').name('Up Axis').disable().listen();
-	window.metadataFolder.add(metadataDisplay, 'metersPerUnit').name('Meters Per Unit').disable().listen();
-	window.metadataFolder.add(metadataDisplay, 'framesPerSecond').name('FPS').disable().listen();
-	window.metadataFolder.add(metadataDisplay, 'timeCodesPerSecond').name('Timecodes/sec').disable().listen();
-	window.metadataFolder.add(metadataDisplay, 'startTimeCode').name('Start TimeCode').disable().listen();
-	window.metadataFolder.add(metadataDisplay, 'endTimeCode').name('End TimeCode').disable().listen();
-	window.metadataFolder.add(metadataDisplay, 'autoPlay').name('Auto Play').disable().listen();
+	// Add read-only controllers (no .listen() needed - values are static)
+	window.metadataFolder.add(metadataDisplay, 'upAxis').name('Up Axis').disable();
+	window.metadataFolder.add(metadataDisplay, 'metersPerUnit').name('Meters Per Unit').disable();
+	window.metadataFolder.add(metadataDisplay, 'framesPerSecond').name('FPS').disable();
+	window.metadataFolder.add(metadataDisplay, 'timeCodesPerSecond').name('Timecodes/sec').disable();
+	window.metadataFolder.add(metadataDisplay, 'startTimeCode').name('Start TimeCode').disable();
+	window.metadataFolder.add(metadataDisplay, 'endTimeCode').name('End TimeCode').disable();
+	window.metadataFolder.add(metadataDisplay, 'autoPlay').name('Auto Play').disable();
 
 	if (currentSceneMetadata.comment) {
-		window.metadataFolder.add(metadataDisplay, 'comment').name('Comment').disable().listen();
+		window.metadataFolder.add(metadataDisplay, 'comment').name('Comment').disable();
 	}
 	if (currentSceneMetadata.copyright) {
-		window.metadataFolder.add(metadataDisplay, 'copyright').name('Copyright').disable().listen();
+		window.metadataFolder.add(metadataDisplay, 'copyright').name('Copyright').disable();
 	}
 
 	window.metadataFolder.show();
@@ -1813,8 +2651,14 @@ const info = {
 	fps: 0,
 	objects: scene.children.length
 };
-infoFolder.add(info, 'fps').name('FPS').listen().disable();
-infoFolder.add(info, 'objects').name('Objects').listen().disable();
+// Store controller reference for manual update (avoiding .listen() overhead)
+const fpsController = infoFolder.add(info, 'fps').name('FPS').disable();
+infoFolder.add(info, 'objects').name('Objects').disable();
+infoFolder.add(animationParams, 'useDirectAnimation')
+	.name('Direct Anim (GC-free)')
+	.onChange(() => animationParams.toggleDirectAnimation());
+infoFolder.add(animationParams, 'mixerUpdateInterval', 1, 4, 1)
+	.name('Mixer Skip Frames');
 infoFolder.add(animationParams, 'debugAnimationLog')
 	.name('Debug Animation Log')
 	.onChange(() => animationParams.toggleDebugAnimationLog());
@@ -1882,9 +2726,30 @@ function onMouseClick(event) {
 
 // Function to load a USD file from ArrayBuffer
 async function loadUSDFromArrayBuffer(arrayBuffer, filename) {
+	// Initialize PBR renderer if not already done
+	if (!pmremGenerator) {
+		initializePBRRenderer();
+		// Load default environment
+		await loadEnvironment(materialSettings.envMapPreset);
+	}
+
 	// Clear existing USD scene
 	while (usdSceneRoot.children.length > 0) {
-		usdSceneRoot.remove(usdSceneRoot.children[0]);
+		const child = usdSceneRoot.children[0];
+		// Dispose geometries and materials
+		child.traverse((obj) => {
+			if (obj.isMesh) {
+				obj.geometry?.dispose();
+				if (obj.material) {
+					if (Array.isArray(obj.material)) {
+						obj.material.forEach(m => m.dispose());
+					} else {
+						obj.material.dispose();
+					}
+				}
+			}
+		});
+		usdSceneRoot.remove(child);
 	}
 
 	// Clear selection
@@ -1907,11 +2772,69 @@ async function loadUSDFromArrayBuffer(arrayBuffer, filename) {
 	});
 	objectBBoxHelpers.clear();
 
+	// Clear cached local bounding boxes
+	objectLocalBBoxCache.clear();
+
+	// Stop animation playback
+	animationParams.isPlaying = false;
+
+	// Stop and clear animation mixer
+	if (mixer) {
+		mixer.stopAllAction();
+		mixer = null;
+	}
+	animationAction = null;
+	clipActionCache.clear(); // Clear cached actions
+	directAnimationData.clear(); // Clear GC-free animation data
+
 	// Reset animations
 	usdAnimations = [];
 
+	// Dispose textures in cache
+	textureCache.forEach((texture) => {
+		if (texture && texture.dispose) {
+			texture.dispose();
+		}
+	});
+	textureCache.clear();
+
+	// Clean up WASM memory from previous load
+	if (currentUSDScene) {
+		try {
+			// Try to delete the USD scene if it has a delete method
+			if (typeof currentUSDScene.delete === 'function') {
+				currentUSDScene.delete();
+				console.log('USD scene deleted');
+			}
+		} catch (e) {
+			console.warn('Could not delete USD scene:', e);
+		}
+		currentUSDScene = null;
+	}
+
+	// Clean up previous loader
+	if (currentLoader) {
+		try {
+			// Try to access native loader for memory cleanup
+			if (currentLoader.native_ && typeof currentLoader.native_.reset === 'function') {
+				currentLoader.native_.reset();
+				console.log('WASM memory reset via native loader');
+			} else if (currentLoader.native_ && typeof currentLoader.native_.clearAssets === 'function') {
+				currentLoader.native_.clearAssets();
+				console.log('WASM assets cleared via native loader');
+			}
+		} catch (e) {
+			console.warn('Could not reset WASM memory:', e);
+		}
+		currentLoader = null;
+	}
+
+	// Clear USD DomeLight data
+	usdDomeLightData = null;
+
 	const loader = new TinyUSDZLoader();
 	await loader.init({ useZstdCompressedWasm: false, useMemory64: false });
+	currentLoader = loader; // Store reference for cleanup
 
 	// Create a Blob URL from the ArrayBuffer
 	// This allows the loader to load the file as if it were a normal URL
@@ -1922,6 +2845,7 @@ async function loadUSDFromArrayBuffer(arrayBuffer, filename) {
 
 	// Load USD scene from Blob URL
 	const usd_scene = await loader.loadAsync(blobUrl);
+	currentUSDScene = usd_scene; // Store reference for cleanup
 
 	// Clean up the Blob URL after loading
 	URL.revokeObjectURL(blobUrl);
@@ -1970,17 +2894,49 @@ async function loadUSDFromArrayBuffer(arrayBuffer, filename) {
 	// Update metadata UI
 	updateMetadataUI();
 
-	// Create default material
-	const defaultMtl = TinyUSDZLoaderUtils.createDefaultMaterial();
+	// Try to load DomeLight environment from USD
+	try {
+		const domeLightData = await loadDomeLightFromUSD(usd_scene);
+		if (domeLightData) {
+			console.log('Loaded DomeLight from USD:', domeLightData);
+			if (envPresetController) {
+				envPresetController.updateDisplay();
+			}
+		}
+	} catch (error) {
+		console.warn('Error checking for DomeLight:', error);
+	}
+
+	// Create default material with environment map
+	const defaultMtl = new THREE.MeshPhysicalMaterial({
+		color: 0x888888,
+		roughness: 0.5,
+		metalness: 0.0,
+		envMap: envMap,
+		envMapIntensity: materialSettings.envMapIntensity
+	});
+
+	// Clear texture cache for fresh load
+	textureCache.clear();
 
 	const options = {
 		overrideMaterial: false,
-		envMap: null,
-		envMapIntensity: 1.0,
+		envMap: envMap,
+		envMapIntensity: materialSettings.envMapIntensity,
+		preferredMaterialType: materialSettings.materialType,
+		textureCache: textureCache,
+		storeMaterialData: true
 	};
 
-	// Build Three.js node from USD
-	const threeNode = TinyUSDZLoaderUtils.buildThreeNode(usdRootNode, defaultMtl, usd_scene, options);
+	// Build Three.js node from USD with MaterialX/OpenPBR support
+	const threeNode = await TinyUSDZLoaderUtils.buildThreeNode(usdRootNode, defaultMtl, usd_scene, options);
+
+	// Store USD scene reference for material reloading
+	threeNode.traverse((child) => {
+		if (child.isMesh) {
+			child.userData.usdScene = usd_scene;
+		}
+	});
 
 	// Store reference to USD content node for mixer creation
 	usdContentNode = threeNode;
@@ -2024,6 +2980,9 @@ async function loadUSDFromArrayBuffer(arrayBuffer, filename) {
 		// IMPORTANT: Pass threeNode (the USD root) for correct node index mapping
 		// The node indices in USD animations reference nodes within the USD scene hierarchy
 		usdAnimations = convertUSDAnimationsToThreeJS(usd_scene, threeNode);
+
+		// Build GC-free direct animation data
+		buildDirectAnimationData(usd_scene, threeNode);
 
 		if (usdAnimations.length > 0) {
 			console.log(`Extracted ${usdAnimations.length} animations from USD file`);
@@ -2143,6 +3102,7 @@ let frames = 0;
 let fpsUpdateTime = 0;
 
 // Animation loop
+// OPTIMIZED: Uses cached objects to avoid per-frame allocations and scene traversals
 function animate() {
 	requestAnimationFrame(animate);
 
@@ -2155,6 +3115,7 @@ function animate() {
 	fpsUpdateTime += deltaTime;
 	if (fpsUpdateTime >= 0.5) {
 		info.fps = Math.round(frames / fpsUpdateTime);
+		fpsController.updateDisplay(); // Manual update instead of .listen()
 		frames = 0;
 		fpsUpdateTime = 0;
 	}
@@ -2169,18 +3130,18 @@ function animate() {
 
 			// Sync all animation actions to the new time
 			if (mixer) {
-				// Collect unique actions
-				const uniqueActions = new Set();
-				objectAnimationActions.forEach(({action, enabled}) => {
+				// OPTIMIZED: Reuse pre-allocated Set and for...of to avoid closure allocation
+				uniqueActionsSet.clear();
+				for (const [, {action, enabled}] of objectAnimationActions) {
 					if (action && enabled) {
-						uniqueActions.add(action);
+						uniqueActionsSet.add(action);
 					}
-				});
+				}
 
 				// Set time on all unique actions
-				uniqueActions.forEach(action => {
+				for (const action of uniqueActionsSet) {
 					action.time = animationParams.beginTime;
-				});
+				}
 			}
 
 			// Also update the main action if it exists (fallback)
@@ -2191,32 +3152,51 @@ function animate() {
 		if (animationParams.time < animationParams.beginTime) {
 			animationParams.time = animationParams.beginTime;
 		}
+
+		// Manual timeline update instead of .listen()
+		// Throttle to every 3 frames to reduce allocations from lil-gui
+		if (timelineController && (frames % 3 === 0)) {
+			timelineController.updateDisplay();
+		}
 	}
 
-	// Update the mixer for KeyframeTrack animations
-	if (mixer && animationAction && animationParams.isPlaying) {
-		mixer.update(deltaTime * animationParams.speed);
+	// Update animations
+	if (animationParams.isPlaying) {
+		if (useDirectAnimation && directAnimationData.size > 0) {
+			// GC-free direct animation: directly set object transforms
+			updateDirectAnimations(animationParams.time);
+		} else if (mixer && animationAction) {
+			// Fallback to Three.js AnimationMixer (has GC overhead)
+			accumulatedMixerTime += deltaTime * animationParams.speed;
+			mixerFrameCounter++;
+
+			if (mixerFrameCounter >= animationParams.mixerUpdateInterval) {
+				mixer.update(accumulatedMixerTime);
+				accumulatedMixerTime = 0;
+				mixerFrameCounter = 0;
+			}
+		}
 	}
 
 	// Debug: Log object transforms periodically
 	debugLogObjectTransforms();
 
 	// Update bounding boxes for objects that are being displayed
-	objectBBoxHelpers.forEach((helper, uuid) => {
-		if (helper.visible) {
-			// Find the object and update its bbox
-			usdSceneRoot.traverse(obj => {
-				if (obj.uuid === uuid) {
-					updateBoundingBox(obj);
-				}
-			});
+	// OPTIMIZED: Use for...of to avoid closure allocation
+	for (const [uuid, cache] of objectLocalBBoxCache) {
+		const helper = objectBBoxHelpers.get(uuid);
+		if (helper && helper.visible) {
+			// Apply current rigid transform to cached local bbox (O(1) operation)
+			applyRigidTransformToBBox(cache.localBBox, cache.object, cache.worldBBox);
+			helper.box.copy(cache.worldBBox);
 		}
-	});
+	}
 
 	// Update selection helper to follow selected object
+	// OPTIMIZED: Use cached local bbox + rigid transform instead of setFromObject()
 	if (selectionHelper && selectedObject) {
-		const bbox = new THREE.Box3().setFromObject(selectedObject);
-		selectionHelper.box = bbox;
+		applyRigidTransformToBBox(selectionLocalBBox, selectedObject, selectionWorldBBox);
+		selectionHelper.box.copy(selectionWorldBBox);
 	}
 
 	// Update controls

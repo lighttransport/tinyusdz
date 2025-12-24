@@ -16,14 +16,14 @@ TinyUSDZ provides comprehensive MaterialX/OpenPBR support through:
 ### ✅ Implemented (Import & Export)
 
 #### Export:
-- **MaterialX 1.38 Export** - `ExportMaterialX()` in `threejs-exporter.cc`
+- **MaterialX 1.39 Export** - `ExportMaterialX()` in `threejs-exporter.cc` (Blender 4.5+ compatible)
 - **OpenPBR Surface Shader** - All parameter groups supported
 - **Texture Nodes** - Image nodes with color space and channel extraction
-- **XML Generation** - Compliant MaterialX 1.38 document structure
+- **XML Generation** - Compliant MaterialX 1.39 document structure
 - **Color Space Support** - sRGB, Linear, Rec.709, ACES variants
 
 #### Import (NEW - January 2025):
-- **MaterialX 1.38 Import** - `ReadMaterialXFromString()`, `ReadMaterialXFromFile()`
+- **MaterialX 1.39 Import** - `ReadMaterialXFromString()`, `ReadMaterialXFromFile()`
 - **Built-in XML Parser** - Secure, dependency-free parser (no pugixml required)
 - **OpenPBR Surface Shader** - Complete parameter support in `MtlxOpenPBRSurface`
 - **Autodesk Standard Surface** - Full support in `MtlxAutodeskStandardSurface`
@@ -468,5 +468,5 @@ python -m http.server 8000
 ---
 
 **Last Updated**: January 2025
-**TinyUSDZ Version**: 0.8.x
-**MaterialX Version**: 1.38
+**TinyUSDZ Version**: 0.9.x
+**MaterialX Version**: 1.39 (Blender 4.5+ compatible)

@@ -7,10 +7,15 @@
 #include <sstream>
 #include <iomanip>
 
+// Suppress warnings for external yyjson header
 #ifdef __clang__
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wreserved-macro-identifier"
+#pragma clang diagnostic ignored "-Wreserved-identifier"
 #pragma clang diagnostic ignored "-Wold-style-cast"
+#pragma clang diagnostic ignored "-Wcast-qual"
+#pragma clang diagnostic ignored "-Wdocumentation"
+#pragma clang diagnostic ignored "-Wdocumentation-unknown-command"
 #pragma clang diagnostic ignored "-Wzero-as-null-pointer-constant"
 #endif
 
@@ -26,8 +31,7 @@ namespace tydra {
 namespace {
 
 // Helper to convert vec3/array<float,3> to JSON array
-template<typename T>
-std::string vec3ToJson(const T& vec) {
+std::string vec3ToJson(const std::array<float, 3>& vec) {
   std::stringstream ss;
   ss << "[" << vec[0] << ", " << vec[1] << ", " << vec[2] << "]";
   return ss.str();
@@ -150,7 +154,8 @@ std::string serializeOpenPBRToJson(const OpenPBRSurfaceShader& shader, const Ren
   serializeFloatParam("base_weight", shader.base_weight); json << ",";
   serializeVec3Param("base_color", shader.base_color); json << ",";
   serializeFloatParam("base_roughness", shader.base_roughness); json << ",";
-  serializeFloatParam("base_metalness", shader.base_metalness);
+  serializeFloatParam("base_metalness", shader.base_metalness); json << ",";
+  serializeFloatParam("base_diffuse_roughness", shader.base_diffuse_roughness);
   json << "},";
 
   // Specular layer
@@ -181,6 +186,27 @@ std::string serializeOpenPBRToJson(const OpenPBRSurfaceShader& shader, const Ren
   serializeFloatParam("subsurface_anisotropy", shader.subsurface_anisotropy);
   json << "},";
 
+  // Sheen layer - fabric-like reflection
+  json << "\"sheen\": {";
+  serializeFloatParam("sheen_weight", shader.sheen_weight); json << ",";
+  serializeVec3Param("sheen_color", shader.sheen_color); json << ",";
+  serializeFloatParam("sheen_roughness", shader.sheen_roughness);
+  json << "},";
+
+  // Fuzz layer - velvet/fabric-like appearance
+  json << "\"fuzz\": {";
+  serializeFloatParam("fuzz_weight", shader.fuzz_weight); json << ",";
+  serializeVec3Param("fuzz_color", shader.fuzz_color); json << ",";
+  serializeFloatParam("fuzz_roughness", shader.fuzz_roughness);
+  json << "},";
+
+  // Thin film layer - iridescence from thin film interference
+  json << "\"thin_film\": {";
+  serializeFloatParam("thin_film_weight", shader.thin_film_weight); json << ",";
+  serializeFloatParam("thin_film_thickness", shader.thin_film_thickness); json << ",";
+  serializeFloatParam("thin_film_ior", shader.thin_film_ior);
+  json << "},";
+
   // Coat layer
   json << "\"coat\": {";
   serializeFloatParam("coat_weight", shader.coat_weight); json << ",";
@@ -202,6 +228,7 @@ std::string serializeOpenPBRToJson(const OpenPBRSurfaceShader& shader, const Ren
   // Geometry
   json << "\"geometry\": {";
   serializeFloatParam("opacity", shader.opacity); json << ",";
+  serializeFloatParam("geometry_opacity", shader.opacity); json << ",";  // alias for Three.js alpha mapping
   serializeVec3Param("normal", shader.normal); json << ",";
   serializeVec3Param("tangent", shader.tangent);
   json << "}";
@@ -272,6 +299,23 @@ std::string serializeOpenPBRToXml(const OpenPBRSurfaceShader& shader) {
 
   if (shader.transmission_weight.value > 0.0f) {
     xml << "    <input name=\"transmission_weight\" type=\"float\" value=\"" << shader.transmission_weight.value << "\" />\n";
+  }
+
+  // Fuzz layer - velvet/fabric-like appearance
+  if (shader.fuzz_weight.value > 0.0f) {
+    xml << "    <input name=\"fuzz_weight\" type=\"float\" value=\"" << shader.fuzz_weight.value << "\" />\n";
+    xml << "    <input name=\"fuzz_color\" type=\"color3\" value=\""
+        << shader.fuzz_color.value[0] << ", "
+        << shader.fuzz_color.value[1] << ", "
+        << shader.fuzz_color.value[2] << "\" />\n";
+    xml << "    <input name=\"fuzz_roughness\" type=\"float\" value=\"" << shader.fuzz_roughness.value << "\" />\n";
+  }
+
+  // Thin film layer - iridescence from thin film interference
+  if (shader.thin_film_weight.value > 0.0f) {
+    xml << "    <input name=\"thin_film_weight\" type=\"float\" value=\"" << shader.thin_film_weight.value << "\" />\n";
+    xml << "    <input name=\"thin_film_thickness\" type=\"float\" value=\"" << shader.thin_film_thickness.value << "\" />\n";
+    xml << "    <input name=\"thin_film_ior\" type=\"float\" value=\"" << shader.thin_film_ior.value << "\" />\n";
   }
 
   if (shader.emission_luminance.value > 0.0f) {
@@ -347,6 +391,163 @@ nonstd::expected<std::string, std::string> serializeMaterial(
     } else {
       return nonstd::make_unexpected("Material has no surface shader");
     }
+  }
+
+  return nonstd::make_unexpected("Unsupported serialization format");
+}
+
+nonstd::expected<std::string, std::string> serializeLight(
+    const RenderLight& light,
+    SerializationFormat format,
+    const RenderScene* renderScene) {
+
+  if (format == SerializationFormat::JSON) {
+    std::stringstream json;
+    json << "{";
+    json << "\"name\": \"" << light.name << "\",";
+    json << "\"abs_path\": \"" << light.abs_path << "\",";
+
+    // Light type
+    json << "\"type\": \"";
+    switch (light.type) {
+      case RenderLight::Type::Point:
+        json << "Point";
+        break;
+      case RenderLight::Type::Sphere:
+        json << "Sphere";
+        break;
+      case RenderLight::Type::Distant:
+        json << "Distant";
+        break;
+      case RenderLight::Type::Rect:
+        json << "Rect";
+        break;
+      case RenderLight::Type::Disk:
+        json << "Disk";
+        break;
+      case RenderLight::Type::Cylinder:
+        json << "Cylinder";
+        break;
+      case RenderLight::Type::Dome:
+        json << "Dome";
+        break;
+      case RenderLight::Type::Geometry:
+        json << "Geometry";
+        break;
+      case RenderLight::Type::Portal:
+        json << "Portal";
+        break;
+    }
+    json << "\",";
+
+    // Common properties
+    json << "\"color\": [" << light.color[0] << ", " << light.color[1] << ", " << light.color[2] << "],";
+    json << "\"intensity\": " << light.intensity << ",";
+    json << "\"exposure\": " << light.exposure << ",";
+    json << "\"diffuse\": " << light.diffuse << ",";
+    json << "\"specular\": " << light.specular << ",";
+    json << "\"normalize\": " << (light.normalize ? "true" : "false") << ",";
+
+    // Color temperature
+    json << "\"enableColorTemperature\": " << (light.enableColorTemperature ? "true" : "false") << ",";
+    json << "\"colorTemperature\": " << light.colorTemperature << ",";
+
+    // Shadow properties
+    json << "\"shadow\": {";
+    json << "\"enable\": " << (light.shadowEnable ? "true" : "false") << ",";
+    json << "\"color\": [" << light.shadowColor[0] << ", " << light.shadowColor[1] << ", " << light.shadowColor[2] << "],";
+    json << "\"distance\": " << light.shadowDistance << ",";
+    json << "\"falloff\": " << light.shadowFalloff << ",";
+    json << "\"falloffGamma\": " << light.shadowFalloffGamma;
+    json << "},";
+
+    // Shaping properties (for Point/Rect lights with shaping)
+    json << "\"shaping\": {";
+    json << "\"focus\": " << light.shapingFocus << ",";
+    json << "\"focusTint\": [" << light.shapingFocusTint[0] << ", " << light.shapingFocusTint[1] << ", " << light.shapingFocusTint[2] << "],";
+    json << "\"coneAngle\": " << light.shapingConeAngle << ",";
+    json << "\"coneSoftness\": " << light.shapingConeSoftness << ",";
+    json << "\"iesFile\": \"" << light.shapingIesFile << "\",";
+    json << "\"iesAngleScale\": " << light.shapingIesAngleScale << ",";
+    json << "\"iesNormalize\": " << (light.shapingIesNormalize ? "true" : "false");
+    json << "},";
+
+    // Type-specific properties
+    json << "\"properties\": {";
+
+    switch (light.type) {
+      case RenderLight::Type::Point:
+      case RenderLight::Type::Sphere:
+      case RenderLight::Type::Disk:
+        json << "\"radius\": " << light.radius;
+        break;
+
+      case RenderLight::Type::Cylinder:
+        json << "\"radius\": " << light.radius << ",";
+        json << "\"length\": " << light.length;
+        break;
+
+      case RenderLight::Type::Rect:
+        json << "\"width\": " << light.width << ",";
+        json << "\"height\": " << light.height;
+        if (!light.textureFile.empty()) {
+          json << ",\"textureFile\": \"" << light.textureFile << "\"";
+        }
+        break;
+
+      case RenderLight::Type::Distant:
+        json << "\"angle\": " << light.angle;
+        break;
+
+      case RenderLight::Type::Dome:
+        json << "\"textureFormat\": \"";
+        switch (light.domeTextureFormat) {
+          case RenderLight::DomeTextureFormat::Automatic:
+            json << "automatic";
+            break;
+          case RenderLight::DomeTextureFormat::Latlong:
+            json << "latlong";
+            break;
+          case RenderLight::DomeTextureFormat::MirroredBall:
+            json << "mirroredBall";
+            break;
+          case RenderLight::DomeTextureFormat::Angular:
+            json << "angular";
+            break;
+        }
+        json << "\",";
+        json << "\"guideRadius\": " << light.guideRadius;
+        if (!light.textureFile.empty()) {
+          json << ",\"textureFile\": \"" << light.textureFile << "\"";
+        }
+        break;
+
+      case RenderLight::Type::Geometry:
+        json << "\"geometryMeshId\": " << light.geometry_mesh_id << ",";
+        json << "\"materialSyncMode\": \"" << light.material_sync_mode << "\"";
+
+        // Include mesh info if renderScene is provided
+        if (renderScene && light.geometry_mesh_id >= 0 &&
+            static_cast<size_t>(light.geometry_mesh_id) < renderScene->meshes.size()) {
+          const auto& mesh = renderScene->meshes[static_cast<size_t>(light.geometry_mesh_id)];
+          json << ",\"meshName\": \"" << mesh.prim_name << "\"";
+          json << ",\"meshPath\": \"" << mesh.abs_path << "\"";
+        }
+        break;
+
+      case RenderLight::Type::Portal:
+        // Portal lights don't have special properties
+        break;
+    }
+
+    json << "}";  // Close properties
+    json << "}";  // Close root
+
+    return json.str();
+
+  } else if (format == SerializationFormat::XML) {
+    // XML serialization for lights not implemented yet
+    return nonstd::make_unexpected("XML serialization for lights not yet implemented");
   }
 
   return nonstd::make_unexpected("Unsupported serialization format");

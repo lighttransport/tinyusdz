@@ -1401,9 +1401,12 @@ std::string print_prop(const Property &prop, const std::string &prop_name,
     // timeSamples and connect cannot have attrMeta
     // 
 
-    // Print attribute if it has metadata, has a value, OR is just typed
+    // Print attribute if it has metadata, has a value, OR is just typed (but not connection-only)
     // NOTE: Some attributes (like outputs:out) may be typed but not have a value
-    if (attr.metas().authored() || attr.has_value() || !attr.type_name().empty()) {
+    // Skip printing declaration if this is a connection-only attribute (will be printed in the connection section below)
+    bool is_connection_only = attr.has_connections() && !attr.has_value() && !attr.has_timesamples() && !attr.metas().authored();
+
+    if ((attr.metas().authored() || attr.has_value() || !attr.type_name().empty()) && !is_connection_only) {
 
       ss << pprint::Indent(indent);
 
@@ -4201,6 +4204,38 @@ std::string to_string(const Shader &shader, const uint32_t indent,
     ss << pprint::Indent(indent + 1)
        << "[???] Invalid ShaderNode in Shader Prim\n";
   }
+
+  if (closing_brace) {
+    ss << pprint::Indent(indent) << "}\n";
+  }
+
+  return ss.str();
+}
+
+std::string to_string(const NodeGraph &nodegraph, const uint32_t indent,
+                      bool closing_brace) {
+  std::stringstream ss;
+
+  ss << pprint::Indent(indent) << to_string(nodegraph.spec) << " NodeGraph \""
+     << nodegraph.name << "\"\n";
+  if (nodegraph.meta.authored()) {
+    ss << pprint::Indent(indent) << "(\n";
+    ss << print_prim_metas(nodegraph.metas(), indent + 1);
+    ss << pprint::Indent(indent) << ")\n";
+  }
+  ss << pprint::Indent(indent) << "{\n";
+
+  // NodeGraph-specific attributes
+  if (nodegraph.nodedef.authored()) {
+    ss << print_typed_attr(nodegraph.nodedef, "nodedef", indent + 1);
+  }
+
+  if (nodegraph.nodegraph_type.authored()) {
+    ss << print_typed_attr(nodegraph.nodegraph_type, "nodegraph_type", indent + 1);
+  }
+
+  // Print properties (inputs, outputs, etc.)
+  ss << print_props(nodegraph.props, indent + 1);
 
   if (closing_brace) {
     ss << pprint::Indent(indent) << "}\n";

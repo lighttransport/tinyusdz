@@ -97,7 +97,8 @@ A comprehensive web application for loading, editing, importing, and exporting M
    ```
 
 3. **Open in Browser**:
-   Navigate to `http://localhost:8000/js/materialx.html`
+   - Simple demo: `http://localhost:8000/js/materialx.html`
+   - Advanced debug demo: `http://localhost:8000/js/mtlx-debug.html`
 
 ## Usage
 

@@ -4720,17 +4720,17 @@ bool AsciiParser::ParsePrimProps(std::map<std::string, Property> *props,
         PUSH_ERROR_AND_RETURN(fmt::format("Variability mismatch. Attribute `{}` already has variability `{}`, but timeSampled value has variability `{}`.", attr_name, to_string(pattr->variability()), to_string(variability)));
       }
 
-      pattr->get_var().set_timesamples(ts);
+      pattr->get_var().set_timesamples(std::move(ts));
 
       // Set PropType to Attrib(since previously created Property may have EmptyAttrib).
       props->at(attr_name).set_property_type(Property::Type::Attrib);
 
     } else {
       // new Attribute
-      pattr = &attr;  
+      pattr = &attr;
 
       primvar::PrimVar var;
-      var.set_timesamples(ts);
+      var.set_timesamples(std::move(ts));
       if (array_qual) {
         pattr->set_type_name(type_name + "[]");
       } else {

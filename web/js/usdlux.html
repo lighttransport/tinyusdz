@@ -1,0 +1,2011 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <title>TinyUSDZ UsdLux Light Demo</title>
+    <style>
+        * {
+            box-sizing: border-box;
+        }
+        body {
+            margin: 0;
+            overflow: hidden;
+            font-family: 'Segoe UI', Arial, sans-serif;
+            background: #1a1a2e;
+        }
+        canvas {
+            display: block;
+        }
+        #info {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            color: white;
+            background: rgba(0, 0, 0, 0.85);
+            padding: 15px;
+            border-radius: 8px;
+            font-size: 13px;
+            max-width: 380px;
+            max-height: calc(100vh - 40px);
+            overflow-y: auto;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+        #info h3 {
+            margin-top: 0;
+            margin-bottom: 12px;
+            color: #ffd700;
+            font-size: 16px;
+        }
+        #info p {
+            margin: 5px 0;
+            font-size: 12px;
+            color: #ccc;
+        }
+        #file-controls {
+            margin-top: 12px;
+            padding-top: 12px;
+            border-top: 1px solid rgba(255, 255, 255, 0.2);
+        }
+        #fileInput {
+            display: none;
+        }
+        .button {
+            display: inline-block;
+            padding: 8px 14px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 12px;
+            margin-right: 6px;
+            margin-bottom: 6px;
+            transition: all 0.2s;
+        }
+        .button:hover {
+            transform: translateY(-1px);
+            box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
+        }
+        .button.secondary {
+            background: linear-gradient(135deg, #11998e 0%, #38ef7d 100%);
+        }
+        .button.danger {
+            background: linear-gradient(135deg, #eb3349 0%, #f45c43 100%);
+        }
+        #light-info {
+            margin-top: 12px;
+            padding-top: 12px;
+            border-top: 1px solid rgba(255, 255, 255, 0.2);
+        }
+        #light-info h4 {
+            margin: 0 0 10px 0;
+            color: #6bb6ff;
+            font-size: 14px;
+        }
+        .light-list {
+            max-height: 300px;
+            overflow-y: auto;
+        }
+        .light-item {
+            padding: 10px;
+            margin: 6px 0;
+            background: rgba(255, 255, 255, 0.08);
+            border-radius: 6px;
+            border-left: 3px solid #ffd700;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        .light-item:hover {
+            background: rgba(255, 255, 255, 0.12);
+        }
+        .light-item.selected {
+            background: rgba(102, 126, 234, 0.3);
+            border-left-color: #667eea;
+        }
+        .light-item .light-name {
+            font-weight: bold;
+            color: #fff;
+            margin-bottom: 4px;
+        }
+        .light-item .light-type {
+            display: inline-block;
+            padding: 2px 8px;
+            background: rgba(255, 215, 0, 0.2);
+            color: #ffd700;
+            border-radius: 10px;
+            font-size: 10px;
+            text-transform: uppercase;
+            margin-left: 8px;
+        }
+        .light-item .light-details {
+            font-size: 11px;
+            color: #aaa;
+            margin-top: 4px;
+        }
+        .light-item.disabled {
+            opacity: 0.5;
+            border-left-color: #666;
+        }
+        .light-item.disabled .light-name {
+            color: #888;
+        }
+        .light-toggle {
+            float: right;
+            width: 36px;
+            height: 20px;
+            background: #444;
+            border: none;
+            border-radius: 10px;
+            cursor: pointer;
+            position: relative;
+            transition: background 0.2s;
+        }
+        .light-toggle::after {
+            content: '';
+            position: absolute;
+            top: 2px;
+            left: 2px;
+            width: 16px;
+            height: 16px;
+            background: #888;
+            border-radius: 50%;
+            transition: all 0.2s;
+        }
+        .light-toggle.on {
+            background: #4CAF50;
+        }
+        .light-toggle.on::after {
+            left: 18px;
+            background: #fff;
+        }
+        .light-color-swatch {
+            display: inline-block;
+            width: 14px;
+            height: 14px;
+            border-radius: 3px;
+            vertical-align: middle;
+            margin-right: 6px;
+            border: 1px solid rgba(255, 255, 255, 0.3);
+        }
+        /* Envmap preview styles */
+        #envmap-section {
+            margin-top: 15px;
+            padding-top: 10px;
+            border-top: 1px solid #444;
+        }
+        #envmap-section h4 {
+            margin-bottom: 8px;
+            color: #9c7;
+        }
+        .envmap-color-swatch {
+            display: inline-block;
+            width: 20px;
+            height: 20px;
+            border-radius: 3px;
+            vertical-align: middle;
+            margin-right: 8px;
+            border: 1px solid rgba(255, 255, 255, 0.3);
+        }
+        .envmap-preview-container {
+            margin-top: 10px;
+            background: #1a1a2e;
+            border-radius: 4px;
+            padding: 8px;
+        }
+        #envmap-preview-canvas {
+            width: 100%;
+            height: auto;
+            border-radius: 3px;
+            image-rendering: auto;
+            cursor: crosshair;
+        }
+        .envmap-preview-info {
+            margin-top: 5px;
+            font-size: 10px;
+            color: #888;
+            display: flex;
+            justify-content: space-between;
+        }
+        #loadingIndicator {
+            display: none;
+            color: #ffd700;
+            font-weight: bold;
+            margin-top: 8px;
+        }
+        #loadingIndicator.active {
+            display: block;
+        }
+        #drop-zone {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(102, 126, 234, 0.9);
+            display: none;
+            justify-content: center;
+            align-items: center;
+            z-index: 1000;
+        }
+        #drop-zone.active {
+            display: flex;
+        }
+        #drop-zone-content {
+            text-align: center;
+            color: white;
+        }
+        #drop-zone-content h2 {
+            font-size: 32px;
+            margin-bottom: 10px;
+        }
+        #drop-zone-content p {
+            font-size: 16px;
+            opacity: 0.8;
+        }
+        #scene-stats {
+            position: absolute;
+            bottom: 10px;
+            left: 10px;
+            color: white;
+            background: rgba(0, 0, 0, 0.7);
+            padding: 10px 15px;
+            border-radius: 6px;
+            font-size: 11px;
+        }
+        #scene-stats span {
+            margin-right: 15px;
+        }
+        .stat-label {
+            color: #888;
+        }
+        .stat-value {
+            color: #6bb6ff;
+            font-weight: bold;
+        }
+        #controls-info {
+            position: absolute;
+            bottom: 10px;
+            right: 10px;
+            color: white;
+            background: rgba(0, 0, 0, 0.7);
+            padding: 10px 15px;
+            border-radius: 6px;
+            font-size: 11px;
+            text-align: right;
+        }
+        #embedded-select, #tonemap-select {
+            width: 100%;
+            padding: 6px;
+            margin-bottom: 8px;
+            border-radius: 4px;
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            background: rgba(255, 255, 255, 0.1);
+            color: white;
+            font-size: 12px;
+        }
+        #embedded-select option, #tonemap-select option {
+            background: #1a1a2e;
+            color: white;
+        }
+        .settings-section {
+            margin-top: 12px;
+            padding-top: 12px;
+            border-top: 1px solid rgba(255, 255, 255, 0.2);
+        }
+        .settings-section h4 {
+            margin: 0 0 10px 0;
+            color: #95e06c;
+            font-size: 13px;
+        }
+        .setting-row {
+            display: flex;
+            align-items: center;
+            margin-bottom: 8px;
+        }
+        .setting-row label {
+            flex: 0 0 80px;
+            font-size: 11px;
+            color: #888;
+        }
+        .setting-row select, .setting-row input[type="range"] {
+            flex: 1;
+        }
+        .setting-value {
+            width: 45px;
+            text-align: right;
+            font-size: 11px;
+            color: #6bb6ff;
+            margin-left: 8px;
+        }
+        input[type="range"] {
+            -webkit-appearance: none;
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 4px;
+            height: 6px;
+        }
+        input[type="range"]::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            width: 14px;
+            height: 14px;
+            background: #667eea;
+            border-radius: 50%;
+            cursor: pointer;
+        }
+        .tonemap-info {
+            font-size: 10px;
+            color: #666;
+            margin-top: 4px;
+            font-style: italic;
+        }
+        #spectral-section {
+            margin-top: 12px;
+            padding-top: 12px;
+            border-top: 1px solid rgba(255, 255, 255, 0.2);
+        }
+        #spectral-section h4 {
+            margin: 0 0 10px 0;
+            color: #e066ff;
+            font-size: 13px;
+        }
+        #spectral-canvas {
+            width: 100%;
+            height: 120px;
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            border-radius: 4px;
+            margin-bottom: 8px;
+        }
+        #spectral-info {
+            font-size: 10px;
+            color: #aaa;
+            margin-top: 6px;
+            padding: 6px;
+            background: rgba(255, 255, 255, 0.05);
+            border-radius: 4px;
+        }
+        #spectral-info div {
+            margin-bottom: 2px;
+        }
+        #spectral-info strong {
+            color: #e066ff;
+        }
+        .wavelength-preview {
+            display: inline-block;
+            width: 20px;
+            height: 14px;
+            vertical-align: middle;
+            border-radius: 3px;
+            border: 1px solid rgba(255, 255, 255, 0.3);
+            margin-left: 8px;
+        }
+        #monochrome-controls {
+            display: none;
+        }
+        #monochrome-controls.visible {
+            display: block;
+        }
+        /* HDRI Projection Styles */
+        #hdri-section {
+            margin-top: 12px;
+            padding-top: 12px;
+            border-top: 1px solid rgba(255, 255, 255, 0.2);
+        }
+        #hdri-section h4 {
+            margin: 0 0 10px 0;
+            color: #ffb366;
+            font-size: 13px;
+        }
+        #hdri-status {
+            font-size: 10px;
+            color: #aaa;
+            margin-top: 6px;
+            padding: 6px;
+            background: rgba(255, 255, 255, 0.05);
+            border-radius: 4px;
+        }
+        #hdri-status.has-hdri {
+            background: rgba(255, 179, 102, 0.15);
+            border: 1px solid rgba(255, 179, 102, 0.3);
+        }
+        #hdri-status strong {
+            color: #ffb366;
+        }
+        .hdri-button-row {
+            display: flex;
+            gap: 4px;
+            flex-wrap: wrap;
+            margin-bottom: 6px;
+        }
+        .hdri-button-row .button {
+            flex: 1;
+            min-width: 70px;
+            font-size: 10px;
+            padding: 6px 8px;
+        }
+        /* HDRI Preview Panel */
+        #hdri-preview-panel {
+            position: fixed;
+            bottom: 50px;
+            right: 10px;
+            width: 420px;
+            background: rgba(0, 0, 0, 0.9);
+            border: 1px solid rgba(255, 179, 102, 0.3);
+            border-radius: 8px;
+            padding: 12px;
+            display: none;
+            z-index: 100;
+        }
+        #hdri-preview-panel.visible {
+            display: block;
+        }
+        #hdri-preview-panel h4 {
+            margin: 0 0 8px 0;
+            color: #ffb366;
+            font-size: 13px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        #hdri-preview-panel .close-btn {
+            background: none;
+            border: none;
+            color: #888;
+            font-size: 18px;
+            cursor: pointer;
+            padding: 0;
+            line-height: 1;
+        }
+        #hdri-preview-panel .close-btn:hover {
+            color: #fff;
+        }
+        #hdri-preview-canvas {
+            width: 100%;
+            max-height: 200px;
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            border-radius: 4px;
+            background: #111;
+            image-rendering: pixelated;
+        }
+        #hdri-preview-info {
+            font-size: 10px;
+            color: #888;
+            margin-top: 8px;
+            display: flex;
+            justify-content: space-between;
+        }
+        #hdri-preview-options {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            margin-top: 6px;
+            font-size: 10px;
+        }
+        #hdri-preview-options label {
+            display: flex;
+            align-items: center;
+            gap: 4px;
+            color: #aaa;
+            cursor: pointer;
+        }
+        #hdri-preview-options input[type="checkbox"] {
+            width: 14px;
+            height: 14px;
+            cursor: pointer;
+        }
+        #hdri-pixel-info {
+            font-size: 10px;
+            color: #0ff;
+            font-family: monospace;
+            background: rgba(0, 0, 0, 0.5);
+            padding: 4px 8px;
+            border-radius: 3px;
+            margin-top: 6px;
+            min-height: 18px;
+        }
+        #hdri-pixel-info .coord {
+            color: #888;
+        }
+        #hdri-pixel-info .value {
+            color: #fff;
+        }
+        .button.hdri {
+            background: linear-gradient(135deg, #ff9a56 0%, #ff6b6b 100%);
+        }
+        .button.hdri:hover {
+            box-shadow: 0 4px 12px rgba(255, 154, 86, 0.4);
+        }
+        .button.hdri-apply {
+            background: linear-gradient(135deg, #56ab2f 0%, #a8e063 100%);
+        }
+        .button.hdri-apply.active {
+            background: linear-gradient(135deg, #2f56ab 0%, #63a8e0 100%);
+        }
+        /* HDRI Position Controls */
+        .position-row {
+            display: flex;
+            align-items: center;
+            gap: 4px;
+            margin: 6px 0;
+        }
+        .position-row label {
+            font-size: 10px;
+            color: #aaa;
+            min-width: 45px;
+        }
+        .position-input-group {
+            display: flex;
+            gap: 4px;
+            flex: 1;
+        }
+        .position-input-wrapper {
+            display: flex;
+            align-items: center;
+            gap: 2px;
+        }
+        .position-input-wrapper span {
+            font-size: 10px;
+            color: #888;
+            min-width: 10px;
+        }
+        .position-input {
+            width: 50px;
+            padding: 3px 4px;
+            background: rgba(255, 255, 255, 0.1);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            border-radius: 3px;
+            color: #fff;
+            font-size: 10px;
+            text-align: center;
+        }
+        .position-input:focus {
+            outline: none;
+            border-color: rgba(0, 255, 255, 0.5);
+            background: rgba(0, 255, 255, 0.1);
+        }
+        .locator-toggle {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            margin: 6px 0;
+        }
+        .locator-toggle label {
+            font-size: 10px;
+            color: #aaa;
+        }
+        .locator-btn {
+            padding: 4px 10px;
+            font-size: 10px;
+            background: rgba(0, 255, 255, 0.2);
+            border: 1px solid rgba(0, 255, 255, 0.4);
+            border-radius: 4px;
+            color: #0ff;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        .locator-btn:hover {
+            background: rgba(0, 255, 255, 0.3);
+        }
+        .locator-btn.active {
+            background: rgba(0, 255, 255, 0.5);
+            color: #000;
+        }
+        /* Object visibility toggles */
+        .object-toggles {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 6px;
+        }
+        .object-toggle-item {
+            display: flex;
+            align-items: center;
+            gap: 4px;
+            padding: 4px 8px;
+            background: rgba(255, 255, 255, 0.08);
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 11px;
+            color: #aaa;
+            transition: all 0.2s;
+        }
+        .object-toggle-item:hover {
+            background: rgba(255, 255, 255, 0.12);
+        }
+        .object-toggle-item input[type="checkbox"] {
+            width: 14px;
+            height: 14px;
+            cursor: pointer;
+            accent-color: #667eea;
+        }
+        .object-toggle-item input[type="checkbox"]:checked + span {
+            color: #fff;
+        }
+        .object-toggle-item.toggle-all {
+            background: rgba(102, 126, 234, 0.2);
+            border: 1px solid rgba(102, 126, 234, 0.4);
+            width: 100%;
+            justify-content: center;
+            margin-bottom: 4px;
+        }
+        .object-toggle-item.toggle-all:hover {
+            background: rgba(102, 126, 234, 0.3);
+        }
+        .object-toggle-item.toggle-all span {
+            font-weight: bold;
+        }
+        /* Light Properties Editor */
+        #light-properties {
+            margin-top: 12px;
+            padding-top: 12px;
+            border-top: 1px solid rgba(255, 255, 255, 0.2);
+            display: none;
+        }
+        #light-properties.visible {
+            display: block;
+        }
+        #light-properties h4 {
+            margin: 0 0 10px 0;
+            color: #ff9966;
+            font-size: 13px;
+        }
+        #light-properties .prop-name {
+            font-size: 12px;
+            color: #fff;
+            margin-bottom: 8px;
+            padding: 4px 8px;
+            background: rgba(255, 153, 102, 0.2);
+            border-radius: 4px;
+        }
+        .color-picker-row {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin-bottom: 10px;
+        }
+        .color-picker-row label {
+            flex: 0 0 70px;
+            font-size: 11px;
+            color: #888;
+        }
+        .color-picker-row input[type="color"] {
+            width: 40px;
+            height: 28px;
+            padding: 0;
+            border: 1px solid rgba(255, 255, 255, 0.3);
+            border-radius: 4px;
+            cursor: pointer;
+            background: transparent;
+        }
+        .color-picker-row input[type="color"]::-webkit-color-swatch-wrapper {
+            padding: 2px;
+        }
+        .color-picker-row input[type="color"]::-webkit-color-swatch {
+            border-radius: 2px;
+            border: none;
+        }
+        .color-picker-row .color-value {
+            font-size: 10px;
+            color: #aaa;
+            font-family: monospace;
+        }
+        .intensity-row {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin-bottom: 8px;
+        }
+        .intensity-row label {
+            flex: 0 0 70px;
+            font-size: 11px;
+            color: #888;
+        }
+        .intensity-row input[type="range"] {
+            flex: 1;
+        }
+        .intensity-row input[type="number"] {
+            width: 60px;
+            padding: 4px 6px;
+            background: rgba(255, 255, 255, 0.1);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            border-radius: 4px;
+            color: #fff;
+            font-size: 11px;
+            text-align: center;
+        }
+        .intensity-row input[type="number"]:focus {
+            outline: none;
+            border-color: rgba(255, 153, 102, 0.5);
+            background: rgba(255, 153, 102, 0.1);
+        }
+        /* Position/Rotation row with 3 inputs */
+        .vector3-row {
+            display: flex;
+            align-items: center;
+            gap: 4px;
+            margin-bottom: 8px;
+        }
+        .vector3-row label {
+            flex: 0 0 70px;
+            font-size: 11px;
+            color: #888;
+        }
+        .vector3-row .vector-inputs {
+            display: flex;
+            gap: 4px;
+            flex: 1;
+        }
+        .vector3-row .vector-input-group {
+            display: flex;
+            align-items: center;
+            gap: 2px;
+        }
+        .vector3-row .vector-input-group span {
+            font-size: 10px;
+            color: #666;
+            width: 12px;
+        }
+        .vector3-row .vector-input-group span.x-label { color: #ff6666; }
+        .vector3-row .vector-input-group span.y-label { color: #66ff66; }
+        .vector3-row .vector-input-group span.z-label { color: #6666ff; }
+        .vector3-row input[type="number"] {
+            width: 50px;
+            padding: 3px 4px;
+            background: rgba(255, 255, 255, 0.1);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            border-radius: 3px;
+            color: #fff;
+            font-size: 10px;
+            text-align: center;
+        }
+        .vector3-row input[type="number"]:focus {
+            outline: none;
+            border-color: rgba(255, 153, 102, 0.5);
+            background: rgba(255, 153, 102, 0.1);
+        }
+        /* Cone/Shaping section */
+        .shaping-section {
+            margin-top: 8px;
+            padding-top: 8px;
+            border-top: 1px solid rgba(255, 255, 255, 0.1);
+            display: none;
+        }
+        .shaping-section.visible {
+            display: block;
+        }
+        .shaping-section .section-title {
+            font-size: 10px;
+            color: #ff9966;
+            margin-bottom: 6px;
+            text-transform: uppercase;
+        }
+        /* Selection Mode Toggle */
+        #selection-mode {
+            margin-top: 12px;
+            padding-top: 12px;
+            border-top: 1px solid rgba(255, 255, 255, 0.2);
+        }
+        #selection-mode h4 {
+            margin: 0 0 8px 0;
+            color: #6bb6ff;
+            font-size: 14px;
+        }
+        .mode-toggle-group {
+            display: flex;
+            gap: 4px;
+        }
+        .mode-toggle-btn {
+            flex: 1;
+            padding: 6px 8px;
+            background: rgba(255, 255, 255, 0.1);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            border-radius: 4px;
+            color: #888;
+            font-size: 11px;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        .mode-toggle-btn:hover {
+            background: rgba(255, 255, 255, 0.15);
+            color: #ccc;
+        }
+        .mode-toggle-btn.active {
+            background: rgba(102, 126, 234, 0.3);
+            border-color: #667eea;
+            color: #fff;
+        }
+        .mode-toggle-btn .shortcut {
+            display: inline-block;
+            margin-left: 4px;
+            padding: 1px 4px;
+            background: rgba(0, 0, 0, 0.3);
+            border-radius: 2px;
+            font-size: 9px;
+            color: #666;
+        }
+        .mode-toggle-btn.active .shortcut {
+            background: rgba(0, 0, 0, 0.4);
+            color: #aaa;
+        }
+        /* Lighting Mode Toggle */
+        #lighting-mode {
+            margin-top: 12px;
+            padding-top: 12px;
+            border-top: 1px solid rgba(255, 255, 255, 0.2);
+        }
+        #lighting-mode h4 {
+            margin: 0 0 8px 0;
+            color: #6bb6ff;
+            font-size: 14px;
+        }
+        .lighting-mode-toggle {
+            display: flex;
+            gap: 4px;
+        }
+        .lighting-mode-btn {
+            flex: 1;
+            padding: 8px 12px;
+            background: rgba(255, 255, 255, 0.1);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            border-radius: 4px;
+            color: #888;
+            font-size: 11px;
+            cursor: pointer;
+            transition: all 0.2s;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 2px;
+        }
+        .lighting-mode-btn:hover {
+            background: rgba(255, 255, 255, 0.15);
+            color: #ccc;
+        }
+        .lighting-mode-btn.active {
+            background: rgba(102, 126, 234, 0.3);
+            border-color: #667eea;
+            color: #fff;
+        }
+        .lighting-mode-btn.active.envmap {
+            background: rgba(17, 153, 142, 0.3);
+            border-color: #11998e;
+        }
+        .lighting-mode-btn .mode-icon {
+            font-size: 16px;
+        }
+        .lighting-mode-btn .mode-label {
+            font-size: 10px;
+        }
+        .lighting-mode-info {
+            margin-top: 6px;
+            font-size: 10px;
+            color: #666;
+            font-style: italic;
+        }
+    </style>
+</head>
+<body>
+    <div id="drop-zone">
+        <div id="drop-zone-content">
+            <h2>Drop USD File Here</h2>
+            <p>Supports .usd, .usda, .usdc, .usdz</p>
+        </div>
+    </div>
+
+    <div id="info">
+        <h3>UsdLux Light Demo</h3>
+        <p>
+            Visualize USD lights in Three.js.<br>
+            Drag & drop or use the button to load USD files.
+        </p>
+
+        <div id="file-controls">
+            <label for="embedded-select" style="font-size: 11px; color: #888;">Embedded Scenes:</label>
+            <select id="embedded-select">
+                <option value="basic">Basic Lights</option>
+                <option value="spotlight">Spotlight with IES</option>
+                <option value="area">Area Lights</option>
+                <option value="dome">Dome Light (IBL)</option>
+                <option value="complete" selected>Complete Scene</option>
+            </select>
+            <input type="file" id="fileInput" accept=".usd,.usda,.usdc,.usdz">
+            <button class="button" onclick="document.getElementById('fileInput').click()">Load USD File</button>
+            <button class="button secondary" onclick="window.loadEmbeddedScene()">Load Embedded</button>
+            <button class="button danger" onclick="window.clearLights()">Clear Lights</button>
+        </div>
+
+        <p>
+            <strong>Current:</strong> <span id="currentFile">Embedded Scene</span>
+            <span id="loadingIndicator">Loading...</span>
+        </p>
+
+        <div id="light-info">
+            <h4>Lights (<span id="lightCount">0</span>)</h4>
+            <div class="light-list" id="lightList">
+                <p style="color: #666; font-style: italic;">No lights loaded</p>
+            </div>
+        </div>
+
+        <div id="selection-mode">
+            <h4>Selection Mode</h4>
+            <div class="mode-toggle-group">
+                <button class="mode-toggle-btn active" id="mode-all" onclick="setSelectionModeUI('all')">
+                    All
+                </button>
+                <button class="mode-toggle-btn" id="mode-meshes" onclick="setSelectionModeUI('meshes')">
+                    Meshes<span class="shortcut">M</span>
+                </button>
+                <button class="mode-toggle-btn" id="mode-lights" onclick="setSelectionModeUI('lights')">
+                    Lights<span class="shortcut">L</span>
+                </button>
+            </div>
+        </div>
+
+        <div id="light-properties">
+            <h4>Light Properties</h4>
+            <div class="prop-name" id="selected-light-name">No light selected</div>
+            <div class="color-picker-row">
+                <label>Color:</label>
+                <input type="color" id="light-color-picker" value="#ffffff">
+                <span class="color-value" id="light-color-value">#ffffff</span>
+            </div>
+            <div class="intensity-row">
+                <label>Intensity:</label>
+                <input type="range" id="light-intensity-slider" min="0" max="100" step="0.1" value="1">
+                <input type="number" id="light-intensity-input" min="0" max="10000" step="0.1" value="1">
+            </div>
+            <div class="intensity-row">
+                <label>Exposure:</label>
+                <input type="range" id="light-exposure-slider" min="-10" max="10" step="0.1" value="0">
+                <input type="number" id="light-exposure-input" min="-10" max="10" step="0.1" value="0">
+            </div>
+            <!-- Position controls (hidden for infinite lights) -->
+            <div class="vector3-row" id="light-position-row">
+                <label>Position:</label>
+                <div class="vector-inputs">
+                    <div class="vector-input-group">
+                        <span class="x-label">X</span>
+                        <input type="number" id="light-pos-x" step="0.1" value="0">
+                    </div>
+                    <div class="vector-input-group">
+                        <span class="y-label">Y</span>
+                        <input type="number" id="light-pos-y" step="0.1" value="0">
+                    </div>
+                    <div class="vector-input-group">
+                        <span class="z-label">Z</span>
+                        <input type="number" id="light-pos-z" step="0.1" value="0">
+                    </div>
+                </div>
+            </div>
+            <!-- Rotation controls -->
+            <div class="vector3-row" id="light-rotation-row">
+                <label>Rotation:</label>
+                <div class="vector-inputs">
+                    <div class="vector-input-group">
+                        <span class="x-label">X</span>
+                        <input type="number" id="light-rot-x" step="1" value="0">
+                    </div>
+                    <div class="vector-input-group">
+                        <span class="y-label">Y</span>
+                        <input type="number" id="light-rot-y" step="1" value="0">
+                    </div>
+                    <div class="vector-input-group">
+                        <span class="z-label">Z</span>
+                        <input type="number" id="light-rot-z" step="1" value="0">
+                    </div>
+                </div>
+            </div>
+            <!-- Shaping/Cone controls (only for SpotLight) -->
+            <div class="shaping-section" id="light-shaping-section">
+                <div class="section-title">Cone Shaping</div>
+                <div class="intensity-row">
+                    <label>Cone Angle:</label>
+                    <input type="range" id="light-cone-angle-slider" min="1" max="180" step="1" value="90">
+                    <input type="number" id="light-cone-angle-input" min="1" max="180" step="1" value="90">
+                </div>
+                <div class="intensity-row">
+                    <label>Softness:</label>
+                    <input type="range" id="light-cone-softness-slider" min="0" max="1" step="0.01" value="0">
+                    <input type="number" id="light-cone-softness-input" min="0" max="1" step="0.01" value="0">
+                </div>
+            </div>
+        </div>
+
+        <div id="envmap-section" style="display: none;">
+            <h4>Environment Map (DomeLight)</h4>
+            <div class="envmap-info">
+                <div class="setting-row">
+                    <label>Color:</label>
+                    <span class="envmap-color-swatch" id="envmap-color-swatch"></span>
+                    <span id="envmap-color-value" style="font-size: 11px; color: #aaa;"></span>
+                </div>
+                <div class="setting-row">
+                    <label>Texture:</label>
+                    <span id="envmap-texture-info" style="font-size: 11px; color: #aaa;">None</span>
+                </div>
+            </div>
+            <div class="envmap-preview-container" id="envmap-preview-container" style="display: none;">
+                <canvas id="envmap-preview-canvas" width="256" height="128"></canvas>
+                <div class="envmap-preview-info">
+                    <span id="envmap-dimensions"></span>
+                    <span id="envmap-pixel-value" style="margin-left: 10px;"></span>
+                </div>
+            </div>
+        </div>
+
+        <div class="settings-section">
+            <h4>Scene Objects</h4>
+            <div class="object-toggles">
+                <label class="object-toggle-item toggle-all">
+                    <input type="checkbox" id="toggle-all-meshes" checked>
+                    <span>All Meshes</span>
+                </label>
+                <label class="object-toggle-item">
+                    <input type="checkbox" id="toggle-ground" checked>
+                    <span>Ground</span>
+                </label>
+                <label class="object-toggle-item">
+                    <input type="checkbox" id="toggle-grid" checked>
+                    <span>Grid</span>
+                </label>
+                <label class="object-toggle-item">
+                    <input type="checkbox" id="toggle-sphere" checked>
+                    <span>Sphere</span>
+                </label>
+                <label class="object-toggle-item">
+                    <input type="checkbox" id="toggle-torus" checked>
+                    <span>Torus</span>
+                </label>
+                <label class="object-toggle-item">
+                    <input type="checkbox" id="toggle-box" checked>
+                    <span>Box</span>
+                </label>
+                <label class="object-toggle-item">
+                    <input type="checkbox" id="toggle-helpers" checked>
+                    <span>Light Helpers</span>
+                </label>
+            </div>
+        </div>
+
+        <div class="settings-section">
+            <h4>Display Settings</h4>
+            <div class="setting-row">
+                <label>Tone Map:</label>
+                <select id="tonemap-select">
+                    <option value="raw">Raw (Linear)</option>
+                    <option value="reinhard">Reinhard</option>
+                    <option value="aces1" selected>ACES 1.3</option>
+                    <option value="aces2">ACES 2.0</option>
+                    <option value="agx">AgX</option>
+                    <option value="neutral">Neutral</option>
+                </select>
+            </div>
+            <div class="tonemap-info" id="tonemap-info">Film-like response with highlight roll-off</div>
+            <div class="setting-row">
+                <label>Exposure:</label>
+                <input type="range" id="exposure-slider" min="-3" max="3" step="0.1" value="0">
+                <span class="setting-value" id="exposure-value">0.0 EV</span>
+            </div>
+            <div class="setting-row">
+                <label>Gamma:</label>
+                <input type="range" id="gamma-slider" min="1.0" max="3.0" step="0.1" value="2.2">
+                <span class="setting-value" id="gamma-value">2.2</span>
+            </div>
+        </div>
+
+        <div id="lighting-mode">
+            <h4>Lighting Mode</h4>
+            <div class="lighting-mode-toggle">
+                <button class="lighting-mode-btn active" id="lighting-mode-lights" onclick="setLightingModeUI('lights')">
+                    <span class="mode-icon">💡</span>
+                    <span class="mode-label">Use Lights</span>
+                </button>
+                <button class="lighting-mode-btn envmap" id="lighting-mode-envmap" onclick="setLightingModeUI('envmap')">
+                    <span class="mode-icon">🌐</span>
+                    <span class="mode-label">Use Envmap</span>
+                </button>
+            </div>
+            <div class="lighting-mode-info" id="lighting-mode-info">
+                Direct lighting from scene lights
+            </div>
+            <div style="margin-top: 8px; display: flex; align-items: center; gap: 6px;">
+                <input type="checkbox" id="envmap-background-checkbox" onchange="window.setShowEnvmapBackground(this.checked)">
+                <label for="envmap-background-checkbox" style="font-size: 11px; color: #aaa; cursor: pointer;">Show as Background</label>
+            </div>
+        </div>
+
+        <div id="hdri-section">
+            <h4>HDRI Projection</h4>
+            <p style="font-size: 10px; color: #888; margin: 0 0 8px 0;">
+                Project scene lights to an environment map (no TinyUSDZ required)
+            </p>
+            <div class="setting-row">
+                <label>Resolution:</label>
+                <select id="hdri-resolution-select">
+                    <option value="512">512 x 256</option>
+                    <option value="1024" selected>1024 x 512</option>
+                    <option value="2048">2048 x 1024</option>
+                    <option value="4096">4096 x 2048</option>
+                </select>
+            </div>
+            <div class="setting-row">
+                <label>Max Dist:</label>
+                <input type="range" id="hdri-maxdist-slider" min="10" max="500" step="10" value="100">
+                <span class="setting-value" id="hdri-maxdist-value">100</span>
+            </div>
+            <div class="position-row">
+                <label>Position:</label>
+                <div class="position-input-group">
+                    <div class="position-input-wrapper">
+                        <span>X</span>
+                        <input type="number" class="position-input" id="hdri-pos-x" value="0" step="0.1">
+                    </div>
+                    <div class="position-input-wrapper">
+                        <span>Y</span>
+                        <input type="number" class="position-input" id="hdri-pos-y" value="0" step="0.1">
+                    </div>
+                    <div class="position-input-wrapper">
+                        <span>Z</span>
+                        <input type="number" class="position-input" id="hdri-pos-z" value="0" step="0.1">
+                    </div>
+                </div>
+            </div>
+            <div class="locator-toggle">
+                <label>3D Locator:</label>
+                <button class="locator-btn" id="hdri-locator-btn" onclick="toggleLocatorBtn()">Show Gizmo</button>
+            </div>
+            <div class="hdri-button-row">
+                <button class="button hdri" onclick="window.projectLightsToHDRI()">Project</button>
+                <button class="button secondary" onclick="window.toggleHDRIPreview()">Show HDRI</button>
+            </div>
+            <div class="hdri-button-row">
+                <button class="button hdri-apply" id="hdri-apply-btn" onclick="toggleHDRIApply()">Apply to Scene</button>
+                <button class="button" style="background: #555;" onclick="window.exportHDRI('exr')">Export EXR</button>
+                <button class="button" style="background: #555;" onclick="window.exportHDRI('hdr')">Export HDR</button>
+            </div>
+            <div id="hdri-status">
+                <span style="color: #666;">No HDRI generated yet</span>
+            </div>
+        </div>
+
+        <div id="spectral-section">
+            <h4>Spectral Settings</h4>
+            <canvas id="spectral-canvas" width="340" height="120"></canvas>
+            <div class="setting-row">
+                <label>Color Mode:</label>
+                <select id="spectral-mode-select">
+                    <option value="rgb" selected>RGB (USD color)</option>
+                    <option value="spectral">Spectral (SPD to RGB)</option>
+                    <option value="monochrome">Monochrome</option>
+                </select>
+            </div>
+            <div id="monochrome-controls">
+                <div class="setting-row">
+                    <label>Wavelength:</label>
+                    <input type="range" id="wavelength-slider" min="380" max="780" step="1" value="550">
+                    <span class="setting-value" id="wavelength-value">550nm</span>
+                    <span class="wavelength-preview" id="wavelength-preview"></span>
+                </div>
+            </div>
+            <div style="margin-top: 8px;">
+                <button class="button" style="font-size: 10px; padding: 5px 10px;" onclick="window.applyDemoSpectralData()">Apply Demo SPD</button>
+            </div>
+            <div class="setting-row" style="margin-top: 8px;">
+                <label>Blackbody:</label>
+                <input type="range" id="blackbody-slider" min="1000" max="10000" step="100" value="5500">
+                <span class="setting-value" id="blackbody-value">5500K</span>
+            </div>
+            <div id="spectral-info">
+                <span style="color: #666;">Select a light to view spectral data</span>
+            </div>
+        </div>
+    </div>
+
+    <div id="scene-stats">
+        <span><span class="stat-label">Lights:</span> <span class="stat-value" id="statLights">0</span></span>
+        <span><span class="stat-label">Meshes:</span> <span class="stat-value" id="statMeshes">1</span></span>
+        <span><span class="stat-label">FPS:</span> <span class="stat-value" id="statFPS">60</span></span>
+    </div>
+
+    <div id="controls-info">
+        <strong>Controls:</strong><br>
+        Left-click + drag: Rotate<br>
+        Right-click + drag: Pan<br>
+        Scroll: Zoom
+    </div>
+
+    <!-- HDRI Preview Panel -->
+    <div id="hdri-preview-panel">
+        <h4>
+            <span>HDRI Preview</span>
+            <button class="close-btn" onclick="window.toggleHDRIPreview()">&times;</button>
+        </h4>
+        <canvas id="hdri-preview-canvas"></canvas>
+        <div id="hdri-preview-info">
+            <span id="hdri-preview-size">-</span>
+            <span id="hdri-preview-range">-</span>
+        </div>
+        <div id="hdri-preview-options">
+            <label>
+                <input type="checkbox" id="hdri-normalize-checkbox" onchange="window.updateHDRIPreviewCanvas()">
+                Normalize
+            </label>
+        </div>
+        <div id="hdri-pixel-info">
+            <span class="coord">Move mouse over image</span>
+        </div>
+        <div class="hdri-button-row" style="margin-top: 8px;">
+            <button class="button" style="font-size: 10px; background: #555;" onclick="window.refreshHDRIProjection()">Refresh</button>
+            <button class="button hdri-apply" id="hdri-preview-apply-btn" onclick="toggleHDRIApply()">Apply to Scene</button>
+        </div>
+        <div style="margin-top: 6px; display: flex; align-items: center; gap: 6px;">
+            <input type="checkbox" id="hdri-live-update" onchange="window.setHDRILiveUpdate(this.checked)">
+            <label for="hdri-live-update" style="font-size: 10px; color: #aaa;">Live Update</label>
+        </div>
+    </div>
+
+    <script type="module">
+        // Handle file upload
+        document.getElementById('fileInput').addEventListener('change', async (event) => {
+            const file = event.target.files[0];
+            if (!file) return;
+
+            document.getElementById('loadingIndicator').classList.add('active');
+            document.getElementById('currentFile').textContent = file.name;
+
+            const customEvent = new CustomEvent('loadUSDFile', { detail: { file } });
+            window.dispatchEvent(customEvent);
+
+            event.target.value = '';
+        });
+
+        // Drag and drop handling
+        const dropZone = document.getElementById('drop-zone');
+
+        // Only handle drag events that contain files (external drag)
+        function hasFiles(e) {
+            return e.dataTransfer && e.dataTransfer.types && e.dataTransfer.types.includes('Files');
+        }
+
+        document.body.addEventListener('dragenter', (e) => {
+            if (hasFiles(e)) {
+                e.preventDefault();
+                e.stopPropagation();
+                dropZone.classList.add('active');
+            }
+        });
+
+        document.body.addEventListener('dragover', (e) => {
+            if (hasFiles(e)) {
+                e.preventDefault();
+                e.stopPropagation();
+            }
+        });
+
+        document.body.addEventListener('dragleave', (e) => {
+            // Only handle if it's a file drag leaving the window
+            if (hasFiles(e) && e.relatedTarget === null) {
+                dropZone.classList.remove('active');
+            }
+        });
+
+        dropZone.addEventListener('dragleave', (e) => {
+            if (e.target === dropZone) {
+                dropZone.classList.remove('active');
+            }
+        });
+
+        dropZone.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+        });
+
+        dropZone.addEventListener('drop', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            dropZone.classList.remove('active');
+
+            const files = e.dataTransfer.files;
+            if (files.length > 0) {
+                const file = files[0];
+                const ext = file.name.toLowerCase().split('.').pop();
+
+                if (['usd', 'usda', 'usdc', 'usdz'].includes(ext)) {
+                    document.getElementById('loadingIndicator').classList.add('active');
+                    document.getElementById('currentFile').textContent = file.name;
+
+                    const customEvent = new CustomEvent('loadUSDFile', { detail: { file } });
+                    window.dispatchEvent(customEvent);
+                } else {
+                    alert('Please drop a USD file (.usd, .usda, .usdc, .usdz)');
+                }
+            }
+        });
+
+        // Global functions
+        window.hideLoadingIndicator = function() {
+            document.getElementById('loadingIndicator').classList.remove('active');
+        };
+
+        // Selection mode UI functions
+        window.setSelectionModeUI = function(mode) {
+            // Update buttons
+            document.getElementById('mode-all').classList.toggle('active', mode === 'all');
+            document.getElementById('mode-meshes').classList.toggle('active', mode === 'meshes');
+            document.getElementById('mode-lights').classList.toggle('active', mode === 'lights');
+            // Update the actual selection mode in the 3D scene
+            if (window.setSelectionMode) {
+                window.setSelectionMode(mode);
+            }
+        };
+
+        window.updateSelectionModeUI = function(mode) {
+            // Just update buttons (called from keyboard shortcuts)
+            document.getElementById('mode-all').classList.toggle('active', mode === 'all');
+            document.getElementById('mode-meshes').classList.toggle('active', mode === 'meshes');
+            document.getElementById('mode-lights').classList.toggle('active', mode === 'lights');
+        };
+
+        // Lighting mode UI functions
+        window.setLightingModeUI = function(mode) {
+            // Update buttons
+            const lightsBtn = document.getElementById('lighting-mode-lights');
+            const envmapBtn = document.getElementById('lighting-mode-envmap');
+            const infoEl = document.getElementById('lighting-mode-info');
+
+            lightsBtn.classList.toggle('active', mode === 'lights');
+            envmapBtn.classList.toggle('active', mode === 'envmap');
+
+            // Update info text
+            if (mode === 'lights') {
+                infoEl.textContent = 'Direct lighting from scene lights';
+            } else {
+                infoEl.textContent = 'Using projected HDRI environment';
+            }
+
+            // Call the actual mode setter
+            if (window.setLightingMode) {
+                window.setLightingMode(mode);
+            }
+        };
+
+        window.updateLightingModeUI = function(mode) {
+            // Just update UI (called from JS when mode changes)
+            const lightsBtn = document.getElementById('lighting-mode-lights');
+            const envmapBtn = document.getElementById('lighting-mode-envmap');
+            const infoEl = document.getElementById('lighting-mode-info');
+
+            if (lightsBtn) lightsBtn.classList.toggle('active', mode === 'lights');
+            if (envmapBtn) envmapBtn.classList.toggle('active', mode === 'envmap');
+
+            if (infoEl) {
+                if (mode === 'lights') {
+                    infoEl.textContent = 'Direct lighting from scene lights';
+                } else {
+                    infoEl.textContent = 'Using projected HDRI environment';
+                }
+            }
+        };
+
+        window.updateLightList = function(lights) {
+            const lightList = document.getElementById('lightList');
+            const lightCount = document.getElementById('lightCount');
+            const statLights = document.getElementById('statLights');
+
+            lightCount.textContent = lights.length;
+            statLights.textContent = lights.length;
+
+            if (lights.length === 0) {
+                lightList.innerHTML = '<p style="color: #666; font-style: italic;">No lights loaded</p>';
+                return;
+            }
+
+            lightList.innerHTML = '';
+
+            lights.forEach((light, index) => {
+                const item = document.createElement('div');
+                item.className = 'light-item';
+                item.dataset.index = index;
+
+                const colorHex = light.color ?
+                    `#${Math.round(light.color[0] * 255).toString(16).padStart(2, '0')}${Math.round(light.color[1] * 255).toString(16).padStart(2, '0')}${Math.round(light.color[2] * 255).toString(16).padStart(2, '0')}`
+                    : '#ffffff';
+
+                let details = `Intensity: ${(light.intensity || 1).toFixed(2)}`;
+                if (light.exposure && light.exposure !== 0) {
+                    details += ` | Exp: ${light.exposure.toFixed(1)} EV`;
+                }
+                if (light.radius && light.type !== 'distant' && light.type !== 'dome') {
+                    details += ` | R: ${light.radius.toFixed(2)}`;
+                }
+                if (light.type === 'rect' && light.width && light.height) {
+                    details += ` | ${light.width.toFixed(1)}x${light.height.toFixed(1)}`;
+                }
+                if (light.shapingConeAngle && light.shapingConeAngle < 90) {
+                    details += ` | Cone: ${light.shapingConeAngle.toFixed(0)}`;
+                }
+
+                // Spectral indicator
+                const hasSpectral = light.spectralEmission &&
+                    ((light.spectralEmission.samples && light.spectralEmission.samples.length > 0) ||
+                     (light.spectralEmission.preset && light.spectralEmission.preset !== 'none'));
+                const spectralBadge = hasSpectral ?
+                    '<span style="background: linear-gradient(90deg, #ff0000, #ff7f00, #ffff00, #00ff00, #0000ff, #8b00ff); -webkit-background-clip: text; -webkit-text-fill-color: transparent; font-size: 9px; margin-left: 5px;">SPD</span>' : '';
+
+                // Check if light is enabled (default to true)
+                const isEnabled = light.enabled !== false;
+
+                item.innerHTML = `
+                    <button class="light-toggle ${isEnabled ? 'on' : ''}" data-index="${index}" title="Toggle light on/off"></button>
+                    <div class="light-name">
+                        <span class="light-color-swatch" style="background: ${colorHex}"></span>
+                        ${light.name || 'Light ' + index}
+                        <span class="light-type">${light.type || 'unknown'}</span>
+                        ${spectralBadge}
+                    </div>
+                    <div class="light-details">${details}</div>
+                `;
+
+                if (!isEnabled) {
+                    item.classList.add('disabled');
+                }
+
+                // Toggle button click handler
+                const toggleBtn = item.querySelector('.light-toggle');
+                toggleBtn.addEventListener('click', (e) => {
+                    e.stopPropagation(); // Prevent item selection
+                    const newState = window.toggleLight(index);
+                    if (newState) {
+                        toggleBtn.classList.add('on');
+                        item.classList.remove('disabled');
+                    } else {
+                        toggleBtn.classList.remove('on');
+                        item.classList.add('disabled');
+                    }
+                });
+
+                // Item click handler (for selection)
+                item.addEventListener('click', (e) => {
+                    // Ignore if clicking the toggle button
+                    if (e.target.classList.contains('light-toggle')) return;
+
+                    // Remove selected from all items
+                    lightList.querySelectorAll('.light-item').forEach(i => i.classList.remove('selected'));
+                    item.classList.add('selected');
+
+                    // Focus camera on this light
+                    window.focusOnLight(index);
+
+                    // Select light in 3D scene with transform controls
+                    if (window.selectLight3D) {
+                        window.selectLight3D(index);
+                    }
+
+                    // Select light for spectral display
+                    if (window.selectLightForSpectral) {
+                        window.selectLightForSpectral(index);
+                    }
+                });
+
+                lightList.appendChild(item);
+            });
+
+            // Function to update toggle states (called when setAllLightsEnabled is used)
+            window.updateLightListStates = function() {
+                lightList.querySelectorAll('.light-item').forEach((item, index) => {
+                    const toggleBtn = item.querySelector('.light-toggle');
+                    const isEnabled = window.isLightEnabled ? window.isLightEnabled(index) : true;
+                    if (isEnabled) {
+                        toggleBtn.classList.add('on');
+                        item.classList.remove('disabled');
+                    } else {
+                        toggleBtn.classList.remove('on');
+                        item.classList.add('disabled');
+                    }
+                });
+            };
+        };
+
+        // Highlight a light in the list (called from 3D scene selection)
+        window.highlightLightInList = function(index) {
+            const lightList = document.getElementById('lightList');
+            if (!lightList) return;
+
+            // Remove selected from all items
+            lightList.querySelectorAll('.light-item').forEach(item => {
+                item.classList.remove('selected');
+            });
+
+            // Add selected to the target item
+            const items = lightList.querySelectorAll('.light-item');
+            if (index >= 0 && index < items.length) {
+                items[index].classList.add('selected');
+                // Scroll the item into view
+                items[index].scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+            }
+        };
+
+        // Embedded scene selector
+        document.getElementById('embedded-select').addEventListener('change', (e) => {
+            window.loadEmbeddedScene(e.target.value);
+        });
+
+        // Object visibility toggles
+        const meshCheckboxes = ['toggle-ground', 'toggle-sphere', 'toggle-torus', 'toggle-box'];
+
+        // All Meshes toggle
+        document.getElementById('toggle-all-meshes').addEventListener('change', (e) => {
+            const visible = e.target.checked;
+            meshCheckboxes.forEach(id => {
+                const checkbox = document.getElementById(id);
+                checkbox.checked = visible;
+            });
+            if (window.setAllMeshesVisible) {
+                window.setAllMeshesVisible(visible);
+            }
+        });
+
+        // Update "All Meshes" checkbox when individual mesh toggles change
+        function updateAllMeshesCheckbox() {
+            const allChecked = meshCheckboxes.every(id => document.getElementById(id).checked);
+            const someChecked = meshCheckboxes.some(id => document.getElementById(id).checked);
+            const allMeshesCheckbox = document.getElementById('toggle-all-meshes');
+            allMeshesCheckbox.checked = allChecked;
+            allMeshesCheckbox.indeterminate = someChecked && !allChecked;
+        }
+
+        document.getElementById('toggle-ground').addEventListener('change', (e) => {
+            if (window.setObjectVisible) window.setObjectVisible('ground', e.target.checked);
+            updateAllMeshesCheckbox();
+        });
+        document.getElementById('toggle-grid').addEventListener('change', (e) => {
+            if (window.setObjectVisible) window.setObjectVisible('grid', e.target.checked);
+        });
+        document.getElementById('toggle-sphere').addEventListener('change', (e) => {
+            if (window.setObjectVisible) window.setObjectVisible('sphere', e.target.checked);
+            updateAllMeshesCheckbox();
+        });
+        document.getElementById('toggle-torus').addEventListener('change', (e) => {
+            if (window.setObjectVisible) window.setObjectVisible('torus', e.target.checked);
+            updateAllMeshesCheckbox();
+        });
+        document.getElementById('toggle-box').addEventListener('change', (e) => {
+            if (window.setObjectVisible) window.setObjectVisible('box', e.target.checked);
+            updateAllMeshesCheckbox();
+        });
+        document.getElementById('toggle-helpers').addEventListener('change', (e) => {
+            if (window.setObjectVisible) window.setObjectVisible('helpers', e.target.checked);
+        });
+
+        // ============================================
+        // Light Properties Editor
+        // ============================================
+
+        // Color picker
+        document.getElementById('light-color-picker').addEventListener('input', (e) => {
+            const hex = e.target.value;
+            document.getElementById('light-color-value').textContent = hex;
+            if (window.setSelectedLightColor) {
+                // Convert hex to RGB [0-1]
+                const r = parseInt(hex.substr(1, 2), 16) / 255;
+                const g = parseInt(hex.substr(3, 2), 16) / 255;
+                const b = parseInt(hex.substr(5, 2), 16) / 255;
+                window.setSelectedLightColor(r, g, b);
+            }
+        });
+
+        // Intensity slider
+        document.getElementById('light-intensity-slider').addEventListener('input', (e) => {
+            const value = parseFloat(e.target.value);
+            document.getElementById('light-intensity-input').value = value;
+            if (window.setSelectedLightIntensity) {
+                window.setSelectedLightIntensity(value);
+            }
+        });
+
+        // Intensity input
+        document.getElementById('light-intensity-input').addEventListener('input', (e) => {
+            const value = parseFloat(e.target.value) || 0;
+            // Clamp slider value to slider max
+            const sliderMax = parseFloat(document.getElementById('light-intensity-slider').max);
+            document.getElementById('light-intensity-slider').value = Math.min(value, sliderMax);
+            if (window.setSelectedLightIntensity) {
+                window.setSelectedLightIntensity(value);
+            }
+        });
+
+        // Exposure slider
+        document.getElementById('light-exposure-slider').addEventListener('input', (e) => {
+            const value = parseFloat(e.target.value);
+            document.getElementById('light-exposure-input').value = value;
+            if (window.setSelectedLightExposure) {
+                window.setSelectedLightExposure(value);
+            }
+        });
+
+        // Exposure input
+        document.getElementById('light-exposure-input').addEventListener('input', (e) => {
+            const value = parseFloat(e.target.value) || 0;
+            document.getElementById('light-exposure-slider').value = Math.max(-10, Math.min(10, value));
+            if (window.setSelectedLightExposure) {
+                window.setSelectedLightExposure(value);
+            }
+        });
+
+        // Position inputs
+        ['x', 'y', 'z'].forEach(axis => {
+            document.getElementById(`light-pos-${axis}`).addEventListener('input', (e) => {
+                const value = parseFloat(e.target.value) || 0;
+                if (window.setSelectedLightPosition) {
+                    const x = parseFloat(document.getElementById('light-pos-x').value) || 0;
+                    const y = parseFloat(document.getElementById('light-pos-y').value) || 0;
+                    const z = parseFloat(document.getElementById('light-pos-z').value) || 0;
+                    window.setSelectedLightPosition(x, y, z);
+                }
+            });
+        });
+
+        // Rotation inputs (in degrees)
+        ['x', 'y', 'z'].forEach(axis => {
+            document.getElementById(`light-rot-${axis}`).addEventListener('input', (e) => {
+                const value = parseFloat(e.target.value) || 0;
+                if (window.setSelectedLightRotation) {
+                    const x = parseFloat(document.getElementById('light-rot-x').value) || 0;
+                    const y = parseFloat(document.getElementById('light-rot-y').value) || 0;
+                    const z = parseFloat(document.getElementById('light-rot-z').value) || 0;
+                    window.setSelectedLightRotation(x, y, z);
+                }
+            });
+        });
+
+        // Cone angle slider
+        document.getElementById('light-cone-angle-slider').addEventListener('input', (e) => {
+            const value = parseFloat(e.target.value);
+            document.getElementById('light-cone-angle-input').value = value;
+            if (window.setSelectedLightConeAngle) {
+                window.setSelectedLightConeAngle(value);
+            }
+        });
+
+        // Cone angle input
+        document.getElementById('light-cone-angle-input').addEventListener('input', (e) => {
+            const value = parseFloat(e.target.value) || 90;
+            document.getElementById('light-cone-angle-slider').value = Math.max(1, Math.min(180, value));
+            if (window.setSelectedLightConeAngle) {
+                window.setSelectedLightConeAngle(value);
+            }
+        });
+
+        // Cone softness slider
+        document.getElementById('light-cone-softness-slider').addEventListener('input', (e) => {
+            const value = parseFloat(e.target.value);
+            document.getElementById('light-cone-softness-input').value = value;
+            if (window.setSelectedLightConeSoftness) {
+                window.setSelectedLightConeSoftness(value);
+            }
+        });
+
+        // Cone softness input
+        document.getElementById('light-cone-softness-input').addEventListener('input', (e) => {
+            const value = parseFloat(e.target.value) || 0;
+            document.getElementById('light-cone-softness-slider').value = Math.max(0, Math.min(1, value));
+            if (window.setSelectedLightConeSoftness) {
+                window.setSelectedLightConeSoftness(value);
+            }
+        });
+
+        // Callback to show/hide light properties panel and update values
+        window.showLightProperties = function(lightData) {
+            const panel = document.getElementById('light-properties');
+            if (!lightData) {
+                panel.classList.remove('visible');
+                return;
+            }
+            panel.classList.add('visible');
+
+            // Update light name
+            const nameEl = document.getElementById('selected-light-name');
+            nameEl.textContent = `${lightData.name || 'Unnamed'} (${lightData.type || 'unknown'})`;
+
+            // Update color picker
+            const color = lightData.color || [1, 1, 1];
+            const hex = '#' +
+                Math.round(color[0] * 255).toString(16).padStart(2, '0') +
+                Math.round(color[1] * 255).toString(16).padStart(2, '0') +
+                Math.round(color[2] * 255).toString(16).padStart(2, '0');
+            document.getElementById('light-color-picker').value = hex;
+            document.getElementById('light-color-value').textContent = hex;
+
+            // Update intensity
+            const intensity = lightData.intensity || 1;
+            document.getElementById('light-intensity-slider').value = Math.min(intensity, 100);
+            document.getElementById('light-intensity-input').value = intensity;
+
+            // Update exposure
+            const exposure = lightData.exposure || 0;
+            document.getElementById('light-exposure-slider').value = Math.max(-10, Math.min(10, exposure));
+            document.getElementById('light-exposure-input').value = exposure;
+
+            // Determine light type for showing/hiding controls
+            const lightType = lightData.type || 'point';
+            const isInfiniteLight = (lightType === 'distant' || lightType === 'dome');
+            // Check both coneAngle and shapingConeAngle (USD uses shapingConeAngle as half-angle)
+            const coneAngle = lightData.coneAngle !== undefined ? lightData.coneAngle :
+                              (lightData.shapingConeAngle !== undefined ? lightData.shapingConeAngle * 2 : undefined);
+            const hasShaping = coneAngle !== undefined && coneAngle < 180;
+
+            // Show/hide position controls (hidden for infinite lights)
+            const posRow = document.getElementById('light-position-row');
+            posRow.style.display = isInfiniteLight ? 'none' : 'flex';
+
+            // Update position values
+            const pos = lightData.position || [0, 0, 0];
+            document.getElementById('light-pos-x').value = pos[0]?.toFixed(2) || 0;
+            document.getElementById('light-pos-y').value = pos[1]?.toFixed(2) || 0;
+            document.getElementById('light-pos-z').value = pos[2]?.toFixed(2) || 0;
+
+            // Update rotation values (convert from radians to degrees if needed)
+            const rot = lightData.rotation || [0, 0, 0];
+            // Assume rotation is stored in degrees
+            document.getElementById('light-rot-x').value = Math.round(rot[0] || 0);
+            document.getElementById('light-rot-y').value = Math.round(rot[1] || 0);
+            document.getElementById('light-rot-z').value = Math.round(rot[2] || 0);
+
+            // Show/hide shaping controls (only for SpotLight with cone shaping)
+            const shapingSection = document.getElementById('light-shaping-section');
+            if (hasShaping) {
+                shapingSection.classList.add('visible');
+                // Update cone angle (use coneAngle computed above, or fall back to 90)
+                const displayConeAngle = coneAngle || 90;
+                document.getElementById('light-cone-angle-slider').value = Math.max(1, Math.min(180, displayConeAngle));
+                document.getElementById('light-cone-angle-input').value = displayConeAngle.toFixed(0);
+
+                // Update cone softness (check both property names)
+                const coneSoftness = lightData.coneSoftness !== undefined ? lightData.coneSoftness :
+                                     (lightData.shapingConeSoftness || 0);
+                document.getElementById('light-cone-softness-slider').value = Math.max(0, Math.min(1, coneSoftness));
+                document.getElementById('light-cone-softness-input').value = coneSoftness.toFixed(2);
+            } else {
+                shapingSection.classList.remove('visible');
+            }
+        };
+
+        // Hide light properties when no light selected
+        window.hideLightProperties = function() {
+            document.getElementById('light-properties').classList.remove('visible');
+        };
+
+        // Tone mapping descriptions
+        const tonemapDescriptions = {
+            'raw': 'No tone mapping - linear HDR values clamped',
+            'reinhard': 'Simple curve, preserves detail in highlights',
+            'aces1': 'ACES 1.3 - Film-like response with highlight roll-off',
+            'aces2': 'ACES 2.0 - Improved gamut mapping and desaturation',
+            'agx': 'AgX - Modern filmic look, similar to Blender',
+            'neutral': 'Neutral - Balanced tone curve for general use'
+        };
+
+        // Tone mapping selector
+        document.getElementById('tonemap-select').addEventListener('change', (e) => {
+            const value = e.target.value;
+            window.setToneMapping(value);
+            document.getElementById('tonemap-info').textContent = tonemapDescriptions[value] || '';
+        });
+
+        // Exposure slider
+        document.getElementById('exposure-slider').addEventListener('input', (e) => {
+            const value = parseFloat(e.target.value);
+            document.getElementById('exposure-value').textContent = value.toFixed(1) + ' EV';
+            window.setExposure(value);
+        });
+
+        // Gamma slider
+        document.getElementById('gamma-slider').addEventListener('input', (e) => {
+            const value = parseFloat(e.target.value);
+            document.getElementById('gamma-value').textContent = value.toFixed(1);
+            window.setGamma(value);
+        });
+
+        // Spectral mode selector
+        document.getElementById('spectral-mode-select').addEventListener('change', (e) => {
+            const mode = e.target.value;
+            window.setSpectralMode(mode);
+
+            // Show/hide monochrome controls
+            const monoControls = document.getElementById('monochrome-controls');
+            if (mode === 'monochrome') {
+                monoControls.classList.add('visible');
+                updateWavelengthPreview(parseInt(document.getElementById('wavelength-slider').value));
+            } else {
+                monoControls.classList.remove('visible');
+            }
+        });
+
+        // Wavelength slider for monochrome mode
+        document.getElementById('wavelength-slider').addEventListener('input', (e) => {
+            const wavelength = parseInt(e.target.value);
+            document.getElementById('wavelength-value').textContent = wavelength + 'nm';
+            updateWavelengthPreview(wavelength);
+            window.setMonochromeWavelength(wavelength);
+        });
+
+        // Update wavelength preview color
+        function updateWavelengthPreview(wavelength) {
+            const rgb = window.wavelengthToRGB ? window.wavelengthToRGB(wavelength) : { r: 0.5, g: 0.5, b: 0.5 };
+            const preview = document.getElementById('wavelength-preview');
+            if (preview) {
+                preview.style.backgroundColor = `rgb(${Math.round(rgb.r * 255)}, ${Math.round(rgb.g * 255)}, ${Math.round(rgb.b * 255)})`;
+            }
+        }
+
+        // Initialize wavelength preview
+        setTimeout(() => {
+            updateWavelengthPreview(550);
+        }, 500);
+
+        // Blackbody temperature slider
+        document.getElementById('blackbody-slider').addEventListener('input', (e) => {
+            const temp = parseInt(e.target.value);
+            document.getElementById('blackbody-value').textContent = temp + 'K';
+        });
+
+        // Apply blackbody on slider change end
+        document.getElementById('blackbody-slider').addEventListener('change', (e) => {
+            const temp = parseInt(e.target.value);
+            if (window.applyBlackbodyToSelected) {
+                window.applyBlackbodyToSelected(temp);
+            }
+        });
+
+        // ============================================
+        // HDRI Projection UI Handlers
+        // ============================================
+
+        // Track HDRI state
+        let hdriApplied = false;
+
+        // HDRI Resolution selector
+        document.getElementById('hdri-resolution-select').addEventListener('change', (e) => {
+            const width = parseInt(e.target.value);
+            if (window.setHDRIResolution) {
+                window.setHDRIResolution(width);
+            }
+        });
+
+        // HDRI Max Distance slider
+        document.getElementById('hdri-maxdist-slider').addEventListener('input', (e) => {
+            const value = parseInt(e.target.value);
+            document.getElementById('hdri-maxdist-value').textContent = value;
+        });
+
+        document.getElementById('hdri-maxdist-slider').addEventListener('change', (e) => {
+            const value = parseInt(e.target.value);
+            if (window.setHDRIMaxDistance) {
+                window.setHDRIMaxDistance(value);
+            }
+            // Update range indicator size
+            if (window.updateHDRIRangeIndicator) {
+                window.updateHDRIRangeIndicator(value);
+            }
+        });
+
+        // HDRI Position inputs
+        const posXInput = document.getElementById('hdri-pos-x');
+        const posYInput = document.getElementById('hdri-pos-y');
+        const posZInput = document.getElementById('hdri-pos-z');
+
+        function updatePositionFromInputs() {
+            const x = parseFloat(posXInput.value) || 0;
+            const y = parseFloat(posYInput.value) || 0;
+            const z = parseFloat(posZInput.value) || 0;
+            if (window.setHDRILocatorPosition) {
+                window.setHDRILocatorPosition(x, y, z);
+            }
+        }
+
+        posXInput.addEventListener('change', updatePositionFromInputs);
+        posYInput.addEventListener('change', updatePositionFromInputs);
+        posZInput.addEventListener('change', updatePositionFromInputs);
+
+        // Callback to update position UI from locator gizmo changes
+        window.updateHDRIPositionUI = function(pos) {
+            posXInput.value = pos.x.toFixed(2);
+            posYInput.value = pos.y.toFixed(2);
+            posZInput.value = pos.z.toFixed(2);
+        };
+
+        // HDRI Locator toggle
+        let locatorVisible = false;
+        window.toggleLocatorBtn = function() {
+            const btn = document.getElementById('hdri-locator-btn');
+            if (window.toggleHDRILocator) {
+                locatorVisible = window.toggleHDRILocator();
+                if (locatorVisible) {
+                    btn.classList.add('active');
+                    btn.textContent = 'Hide Gizmo';
+                } else {
+                    btn.classList.remove('active');
+                    btn.textContent = 'Show Gizmo';
+                }
+            }
+        };
+
+        // Toggle HDRI apply to scene
+        window.toggleHDRIApply = function() {
+            if (hdriApplied) {
+                if (window.removeHDRIFromScene) {
+                    window.removeHDRIFromScene();
+                }
+                hdriApplied = false;
+            } else {
+                if (window.applyHDRIToScene) {
+                    window.applyHDRIToScene();
+                }
+                hdriApplied = true;
+            }
+            updateHDRIApplyButtons();
+        };
+
+        function updateHDRIApplyButtons() {
+            const btns = document.querySelectorAll('.hdri-apply');
+            btns.forEach(btn => {
+                if (hdriApplied) {
+                    btn.classList.add('active');
+                    btn.textContent = 'Remove from Scene';
+                } else {
+                    btn.classList.remove('active');
+                    btn.textContent = 'Apply to Scene';
+                }
+            });
+        }
+
+        // HDRI Status update callback
+        window.updateHDRIStatus = function(status) {
+            const statusEl = document.getElementById('hdri-status');
+            const previewSize = document.getElementById('hdri-preview-size');
+            const previewRange = document.getElementById('hdri-preview-range');
+
+            if (status.generated) {
+                statusEl.classList.add('has-hdri');
+                statusEl.innerHTML = `
+                    <div><strong>Generated:</strong> ${status.width} x ${status.height}</div>
+                    <div><strong>Lights:</strong> ${status.lights}</div>
+                    <div><strong>Max value:</strong> ${status.maxValue.toFixed(2)}</div>
+                `;
+                previewSize.textContent = `${status.width} x ${status.height}`;
+                previewRange.textContent = `Max: ${status.maxValue.toFixed(2)}`;
+            }
+
+            if (status.applied !== undefined) {
+                hdriApplied = status.applied;
+                updateHDRIApplyButtons();
+            }
+        };
+
+        // HDRI Preview visibility callback
+        window.setHDRIPreviewVisible = function(visible) {
+            const panel = document.getElementById('hdri-preview-panel');
+            if (visible) {
+                panel.classList.add('visible');
+            } else {
+                panel.classList.remove('visible');
+            }
+        };
+
+        // Store current exposure for HDRI preview
+        window.currentExposure = 0;
+        const originalSetExposure = window.setExposure;
+        if (typeof originalSetExposure === 'function') {
+            window.setExposure = function(value) {
+                window.currentExposure = value;
+                originalSetExposure(value);
+                // Update HDRI preview if visible
+                if (document.getElementById('hdri-preview-panel').classList.contains('visible')) {
+                    if (window.updateHDRIPreviewCanvas) {
+                        window.updateHDRIPreviewCanvas();
+                    }
+                }
+            };
+        }
+    </script>
+
+    <script type="module" src="./usdlux.js"></script>
+</body>
+</html>

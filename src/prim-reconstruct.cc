@@ -437,7 +437,7 @@ static ParseResult ParseTypedAttribute(std::set<std::string> &table, /* inout */
           }
 
           if (auto pv = attr.get_value<T>()) {
-            target.set_value(pv.value());
+            target.set_value(std::move(pv.value()));  // Use move to avoid copy
           } else {
             ret.code = ParseResult::ResultCode::TypeMismatch;
             ret.err = fmt::format("Fallback. Failed to retrieve value with requested type `{}`.", value::TypeTraits<T>::type_name());
@@ -445,14 +445,14 @@ static ParseResult ParseTypedAttribute(std::set<std::string> &table, /* inout */
           }
 
         }
-      
+
         Animatable<T> animatable_value;
 
         if (attr.get_var().has_timesamples()) {
           // e.g. "float radius.timeSamples = {0: 1.2, 1: 2.3}"
 
           if (auto av = ConvertToAnimatable<T>(attr.get_var())) {
-            animatable_value = av.value();
+            animatable_value = std::move(av.value());  // Use move to avoid copy
             //target.set_value(anim);
           } else {
             // Conversion failed.
@@ -464,11 +464,11 @@ static ParseResult ParseTypedAttribute(std::set<std::string> &table, /* inout */
 
           has_timesamples = true;
         }
-        
+
         if (attr.get_var().has_value()) {
           if (auto pv = attr.get_var().get_value<T>()) {
             //target.set_value(pv.value());
-            animatable_value.set(pv.value());
+            animatable_value.set(std::move(pv.value()));  // Use move to avoid copy
           } else {
             ret.code = ParseResult::ResultCode::InternalError;
             ret.err = fmt::format("Internal error. Invalid attribute value? get_value<{}> failed. Attribute has type {}", value::TypeTraits<T>::type_name(), attr.get_var().type_name());
@@ -479,7 +479,7 @@ static ParseResult ParseTypedAttribute(std::set<std::string> &table, /* inout */
         }
 
         if (has_timesamples || has_default) {
-          target.set_value(animatable_value);
+          target.set_value(std::move(animatable_value));  // Use move to avoid copy
         }
       }
 
@@ -610,7 +610,7 @@ static ParseResult ParseTypedAttribute(std::set<std::string> &table, /* inout */
           target.set_blocked(true);
         } else if (attr.get_var().has_default()) {
           if (auto pv = attr.get_value<T>()) {
-            target.set_value(pv.value());
+            target.set_value(std::move(pv.value()));  // Use move to avoid copy
           } else {
             ret.code = ParseResult::ResultCode::InternalError;
             ret.err = "Internal data corrupsed.";
@@ -735,7 +735,7 @@ static ParseResult ParseTypedAttribute(std::set<std::string> &table, /* inout */
 
         if (var.has_default() || var.has_timesamples()) {
           if (auto av = ConvertToAnimatable<T>(var)) {
-            target.set_value(av.value());
+            target.set_value(std::move(av.value()));  // Use move to avoid copy
           } else {
             DCOUT("ConvertToAnimatable failed.");
             ret.code = ParseResult::ResultCode::InternalError;
@@ -779,7 +779,7 @@ static ParseResult ParseTypedAttribute(std::set<std::string> &table, /* inout */
       DCOUT("Attribute has no value, using default-constructed value.");
 
       // Set an empty/default value so the attribute is valid but empty
-      target.set_value(Animatable<T>());
+      target.set_value(Animatable<T>());  // Default-constructed, no need for move
       target.metas() = attr.metas();
       table.insert(prop_name);
       ret.code = ParseResult::ResultCode::Success;
@@ -882,7 +882,7 @@ static ParseResult ParseTypedAttribute(std::set<std::string> &table, /* inout */
           has_default = true;
         } else if (attr.get_var().has_default()) {
           if (auto pv = attr.get_value<T>()) {
-            target.set_value(pv.value());
+            target.set_value(std::move(pv.value()));  // Use move to avoid copy
             has_default = true;
           } else {
             ret.code = ParseResult::ResultCode::VariabilityMismatch;
@@ -1061,7 +1061,7 @@ static ParseResult ParseExtentAttribute(std::set<std::string> &table, /* inout *
 
       if (var.has_default() || var.has_timesamples()) {
         if (auto av = ConvertToAnimatable<Extent>(var)) {
-          target.set_value(av.value());
+          target.set_value(std::move(av.value()));  // Use move to avoid copy
         } else {
           DCOUT("ConvertToAnimatable failed.");
           ret.code = ParseResult::ResultCode::InternalError;
@@ -2047,7 +2047,7 @@ static bool ReconstructXformOpFromToken(
           }
 
           op.op_type = XformOp::OpType::ResetXformStack;
-          xformOps->emplace_back(op);
+          xformOps->emplace_back(std::move(op));
 
           // skip looking up property
           return true;
@@ -2545,7 +2545,7 @@ static bool ReconstructXformOpFromToken(
               "token for xformOpOrder must have namespace `xformOp:***`, or .");
         }
 
-        xformOps->emplace_back(op);
+        xformOps->emplace_back(std::move(op));
         table.insert(tok);
 
     return true;
@@ -4080,6 +4080,50 @@ bool ReconstructPrim<DistantLight>(
     PARSE_TIMESAMPLED_ENUM_PROPERTY(table, prop, kVisibility, Visibility, VisibilityEnumHandler, DistantLight,
                    light->visibility, options.strict_allowedToken_check)
     ADD_PROPERTY(table, prop, SphereLight, light->props)
+    PARSE_PROPERTY_END_MAKE_WARN(table, prop)
+  }
+
+  return true;
+}
+
+template <>
+bool ReconstructPrim<GeometryLight>(
+    const Specifier &spec,
+    PropertyMap &properties,
+    const ReferenceList &references,
+    GeometryLight *light,
+    std::string *warn,
+    std::string *err,
+    const PrimReconstructOptions &options) {
+
+  (void)references;
+  (void)options;
+
+  std::set<std::string> table;
+
+  if (!prim::ReconstructXformOpsFromProperties(spec, table, properties, &light->xformOps, err)) {
+    return false;
+  }
+
+  for (const auto &prop : properties) {
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:color", GeometryLight, light->color)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:intensity", GeometryLight, light->intensity)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:exposure", GeometryLight, light->exposure)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:diffuse", GeometryLight, light->diffuse)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:specular", GeometryLight, light->specular)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:normalize", GeometryLight, light->normalize)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:enableColorTemperature", GeometryLight, light->enableColorTemperature)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:colorTemperature", GeometryLight, light->colorTemperature)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:shadow:enable", GeometryLight, light->shadowEnable)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:shadow:color", GeometryLight, light->shadowColor)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:shadow:distance", GeometryLight, light->shadowDistance)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:shadow:falloff", GeometryLight, light->shadowFalloff)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:shadow:falloffGamma", GeometryLight, light->shadowFalloffGamma)
+    PARSE_TIMESAMPLED_ENUM_PROPERTY(table, prop, kVisibility, Visibility, VisibilityEnumHandler, GeometryLight,
+                   light->visibility, options.strict_allowedToken_check)
+    PARSE_UNIFORM_ENUM_PROPERTY(table, prop, kPurpose, Purpose, PurposeEnumHandler, GeometryLight,
+                       light->purpose, options.strict_allowedToken_check)
+    ADD_PROPERTY(table, prop, GeometryLight, light->props)
     PARSE_PROPERTY_END_MAKE_WARN(table, prop)
   }
 
@@ -5703,6 +5747,8 @@ bool ReconstructShader<OpenPBRSurface>(
                          surface->base_roughness)
     PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:base_metalness", OpenPBRSurface,
                          surface->base_metalness)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:base_diffuse_roughness", OpenPBRSurface,
+                         surface->base_diffuse_roughness)
 
     // Specular layer properties
     PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:specular_weight", OpenPBRSurface,
@@ -5746,6 +5792,30 @@ bool ReconstructShader<OpenPBRSurface>(
     PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:subsurface_anisotropy", OpenPBRSurface,
                          surface->subsurface_anisotropy)
 
+    // Sheen properties
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:sheen_weight", OpenPBRSurface,
+                         surface->sheen_weight)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:sheen_color", OpenPBRSurface,
+                         surface->sheen_color)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:sheen_roughness", OpenPBRSurface,
+                         surface->sheen_roughness)
+
+    // Fuzz properties (velvet/fabric-like appearance)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:fuzz_weight", OpenPBRSurface,
+                         surface->fuzz_weight)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:fuzz_color", OpenPBRSurface,
+                         surface->fuzz_color)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:fuzz_roughness", OpenPBRSurface,
+                         surface->fuzz_roughness)
+
+    // Thin film properties (iridescence from thin film interference)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:thin_film_weight", OpenPBRSurface,
+                         surface->thin_film_weight)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:thin_film_thickness", OpenPBRSurface,
+                         surface->thin_film_thickness)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:thin_film_ior", OpenPBRSurface,
+                         surface->thin_film_ior)
+
     // Coat properties
     PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:coat_weight", OpenPBRSurface,
                          surface->coat_weight)
@@ -5773,6 +5843,8 @@ bool ReconstructShader<OpenPBRSurface>(
     // Geometry properties
     PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:opacity", OpenPBRSurface,
                          surface->opacity)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:geometry_opacity", OpenPBRSurface,
+                         surface->opacity)  // OpenPBR standard name, maps to same opacity field
     PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:normal", OpenPBRSurface,
                          surface->normal)
     PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:tangent", OpenPBRSurface,
@@ -6147,6 +6219,7 @@ RECONSTRUCT_PRIM_PRIMSPEC_IMPL(CylinderLight)
 RECONSTRUCT_PRIM_PRIMSPEC_IMPL(DiskLight)
 RECONSTRUCT_PRIM_PRIMSPEC_IMPL(DistantLight)
 RECONSTRUCT_PRIM_PRIMSPEC_IMPL(RectLight)
+RECONSTRUCT_PRIM_PRIMSPEC_IMPL(GeometryLight)
 RECONSTRUCT_PRIM_PRIMSPEC_IMPL(SkelRoot)
 RECONSTRUCT_PRIM_PRIMSPEC_IMPL(Skeleton)
 RECONSTRUCT_PRIM_PRIMSPEC_IMPL(SkelAnimation)

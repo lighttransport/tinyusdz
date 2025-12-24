@@ -1272,15 +1272,13 @@ static bool ConvertNoise(const tinyusdz::mtlx::pugi::xml_node &node, PrimSpec &p
   return true;
 }
 
-static bool ConvertNodeGraphRec(const uint32_t depth,
-                                const tinyusdz::mtlx::pugi::xml_node &node, PrimSpec &ps_out,
-                                std::string *warn, std::string *err) {
-  if (depth > (1024 * 1024)) {
-    PUSH_ERROR_AND_RETURN("Network too deep.\n");
-  }
-
-  PrimSpec ps;
-
+// Helper to convert a single MaterialX node to PrimSpec
+// Returns true if successful (including skip case), false on error
+// Sets is_skip to true if the node should be skipped (input/output/unknown)
+static bool ConvertSingleNode(const tinyusdz::mtlx::pugi::xml_node &node,
+                              PrimSpec &ps, bool &is_skip,
+                              std::string *warn, std::string *err) {
+  is_skip = false;
   std::string node_name = node.name();
 
   // Convert MaterialX nodes to USD shader nodes
@@ -1330,27 +1328,102 @@ static bool ConvertNodeGraphRec(const uint32_t depth,
     }
   } else if (node_name == "input" || node_name == "output") {
     // Skip input/output nodes - they are handled separately
+    is_skip = true;
     return true;
   } else {
     PUSH_WARN(fmt::format("Unknown/unsupported Shader Node: {}. Skipping.\n", node.name()));
+    is_skip = true;
     return true; // Don't fail, just skip unknown nodes
   }
 
-  // Recursively process child nodes
-  for (const auto &child : node) {
-    PrimSpec child_ps;
-    if (!ConvertNodeGraphRec(depth + 1, child, child_ps, warn, err)) {
-      return false;
+  return true;
+}
+
+// Iterative version of ConvertNodeGraph using explicit stack
+static bool ConvertNodeGraphIterative(const tinyusdz::mtlx::pugi::xml_node &root_node,
+                                      PrimSpec &ps_out,
+                                      std::string *warn, std::string *err) {
+  constexpr size_t kMaxDepth = 1024 * 1024;
+
+  // Stack entry for iterative processing
+  // We need to collect children into a vector since the iterator is temporary
+  struct StackEntry {
+    tinyusdz::mtlx::pugi::xml_node xml_node;
+    std::vector<tinyusdz::mtlx::pugi::xml_node> children;
+    size_t child_idx;
+    PrimSpec ps;
+    bool is_skip;
+
+    explicit StackEntry(const tinyusdz::mtlx::pugi::xml_node &n)
+        : xml_node(n), child_idx(0), is_skip(false) {
+      // Collect children into vector
+      for (auto it = n.begin(); it != n.end(); ++it) {
+        children.push_back(*it);
+      }
+    }
+  };
+
+  std::vector<StackEntry> stack;
+  stack.reserve(64);
+
+  // Initialize with root node
+  stack.emplace_back(root_node);
+
+  // Convert root node
+  if (!ConvertSingleNode(root_node, stack.back().ps, stack.back().is_skip, warn, err)) {
+    return false;
+  }
+
+  while (!stack.empty()) {
+    if (stack.size() > kMaxDepth) {
+      PUSH_ERROR_AND_RETURN("Network too deep.\n");
     }
 
-    if (!child_ps.name().empty()) {
-      ps.children().emplace_back(std::move(child_ps));
+    StackEntry &curr = stack.back();
+
+    // Check if there are more children to process
+    if (curr.child_idx < curr.children.size()) {
+      // Get current child and advance index
+      tinyusdz::mtlx::pugi::xml_node child = curr.children[curr.child_idx];
+      curr.child_idx++;
+
+      // Push child onto stack
+      stack.emplace_back(child);
+
+      // Convert the child node
+      if (!ConvertSingleNode(child, stack.back().ps, stack.back().is_skip, warn, err)) {
+        return false;
+      }
+    } else {
+      // All children processed
+      if (stack.size() > 1) {
+        // Move completed node to parent's children if not skipped and has name
+        PrimSpec completed = std::move(curr.ps);
+        bool was_skip = curr.is_skip;
+        stack.pop_back();
+
+        if (!was_skip && !completed.name().empty()) {
+          stack.back().ps.children().emplace_back(std::move(completed));
+        }
+      } else {
+        // Root node - copy to output
+        if (!curr.is_skip) {
+          ps_out = std::move(curr.ps);
+        }
+        stack.pop_back();
+      }
     }
   }
 
-  ps_out = std::move(ps);
-
   return true;
+}
+
+// Wrapper to maintain backward compatibility with ConvertNodeGraphRec signature
+static bool ConvertNodeGraphRec(const uint32_t depth,
+                                const tinyusdz::mtlx::pugi::xml_node &node, PrimSpec &ps_out,
+                                std::string *warn, std::string *err) {
+  (void)depth;  // Iterative version handles depth internally
+  return ConvertNodeGraphIterative(node, ps_out, warn, err);
 }
 
 #if 0  // TODO
@@ -1702,6 +1775,173 @@ bool ReadMaterialXFromString(const std::string &str,
       mtlx->shader_name = kMtlxAutodeskStandardSurface;
       mtlx->shader = surface;  // Set the primary shader value
     }
+  }
+
+  // uniform_edf
+  for (auto uniform_edf : root.children("uniform_edf")) {
+    std::string node_name;
+    {
+      std::string typeName;
+      GET_ATTR_VALUE(uniform_edf, "name", std::string, node_name);
+      GET_ATTR_VALUE(uniform_edf, "type", std::string, typeName);
+
+      if (typeName != "EDF") {
+        PUSH_ERROR_AND_RETURN(
+            fmt::format("`EDF` expected for type of uniform_edf, but got `{}`",
+                        typeName));
+      }
+    }
+
+    MtlxUniformEdf edf;
+    for (auto inp : uniform_edf.children("input")) {
+      std::string name;
+      std::string typeName;
+      std::string valueStr;
+      GET_ATTR_VALUE(inp, "name", std::string, name);
+      GET_ATTR_VALUE(inp, "type", std::string, typeName);
+      GET_ATTR_VALUE(inp, "value", std::string, valueStr);
+
+      GET_SHADER_PARAM(name, typeName, "color", "color3", value::color3f,
+                       valueStr, edf.color) {
+        PUSH_WARN("Unknown/unsupported input " << name);
+      }
+    }
+
+    mtlx->light_shaders[node_name] = edf;
+  }
+
+  // conical_edf
+  for (auto conical_edf : root.children("conical_edf")) {
+    std::string node_name;
+    {
+      std::string typeName;
+      GET_ATTR_VALUE(conical_edf, "name", std::string, node_name);
+      GET_ATTR_VALUE(conical_edf, "type", std::string, typeName);
+
+      if (typeName != "EDF") {
+        PUSH_ERROR_AND_RETURN(
+            fmt::format("`EDF` expected for type of conical_edf, but got `{}`",
+                        typeName));
+      }
+    }
+
+    MtlxConicalEdf edf;
+    for (auto inp : conical_edf.children("input")) {
+      std::string name;
+      std::string typeName;
+      std::string valueStr;
+      GET_ATTR_VALUE(inp, "name", std::string, name);
+      GET_ATTR_VALUE(inp, "type", std::string, typeName);
+      GET_ATTR_VALUE(inp, "value", std::string, valueStr);
+
+      GET_SHADER_PARAM(name, typeName, "color", "color3", value::color3f,
+                       valueStr, edf.color)
+      GET_SHADER_PARAM(name, typeName, "normal", "vector3", value::normal3f,
+                       valueStr, edf.normal)
+      GET_SHADER_PARAM(name, typeName, "inner_angle", "float", float, valueStr,
+                       edf.inner_angle)
+      GET_SHADER_PARAM(name, typeName, "outer_angle", "float", float, valueStr,
+                       edf.outer_angle) {
+        PUSH_WARN("Unknown/unsupported input " << name);
+      }
+    }
+
+    mtlx->light_shaders[node_name] = edf;
+  }
+
+  // measured_edf
+  for (auto measured_edf : root.children("measured_edf")) {
+    std::string node_name;
+    {
+      std::string typeName;
+      GET_ATTR_VALUE(measured_edf, "name", std::string, node_name);
+      GET_ATTR_VALUE(measured_edf, "type", std::string, typeName);
+
+      if (typeName != "EDF") {
+        PUSH_ERROR_AND_RETURN(
+            fmt::format("`EDF` expected for type of measured_edf, but got `{}`",
+                        typeName));
+      }
+    }
+
+    MtlxMeasuredEdf edf;
+    for (auto inp : measured_edf.children("input")) {
+      std::string name;
+      std::string typeName;
+      std::string valueStr;
+      GET_ATTR_VALUE(inp, "name", std::string, name);
+      GET_ATTR_VALUE(inp, "type", std::string, typeName);
+      GET_ATTR_VALUE(inp, "value", std::string, valueStr);
+
+      GET_SHADER_PARAM(name, typeName, "color", "color3", value::color3f,
+                       valueStr, edf.color)
+      // file is a filename type
+      if (name == "file") {
+        if (typeName != "filename") {
+          PUSH_ERROR_AND_RETURN(
+              fmt::format("type `{}` expected for input `{}`, but got `{}`",
+                          "filename", "file", typeName));
+        }
+        std::string filepath;
+        if (!detail::ParseMaterialXValue(valueStr, &filepath, err)) {
+          return false;
+        }
+        edf.file.set_value(value::AssetPath(filepath));
+      } else {
+        PUSH_WARN("Unknown/unsupported input " << name);
+      }
+    }
+
+    mtlx->light_shaders[node_name] = edf;
+  }
+
+  // light
+  for (auto light : root.children("light")) {
+    std::string node_name;
+    {
+      std::string typeName;
+      GET_ATTR_VALUE(light, "name", std::string, node_name);
+      GET_ATTR_VALUE(light, "type", std::string, typeName);
+
+      if (typeName != "lightshader") {
+        PUSH_ERROR_AND_RETURN(
+            fmt::format("`lightshader` expected for type of light, but got `{}`",
+                        typeName));
+      }
+    }
+
+    MtlxLight light_shader;
+    for (auto inp : light.children("input")) {
+      std::string name;
+      std::string typeName;
+      std::string valueStr;
+      mtlx::pugi::xml_attribute nodename_attr = inp.attribute("nodename");
+
+      GET_ATTR_VALUE(inp, "name", std::string, name);
+      GET_ATTR_VALUE(inp, "type", std::string, typeName);
+
+      // Handle connections via nodename
+      if (nodename_attr) {
+        std::string nodename = nodename_attr.as_string();
+        if (name == "edf") {
+          light_shader.edf.set_value(value::token(nodename));
+        } else {
+          PUSH_WARN("Unknown/unsupported connection input " << name);
+        }
+      } else {
+        // Handle direct values
+        GET_ATTR_VALUE(inp, "value", std::string, valueStr);
+
+        GET_SHADER_PARAM(name, typeName, "intensity", "color3", value::color3f,
+                         valueStr, light_shader.intensity)
+        GET_SHADER_PARAM(name, typeName, "exposure", "float", float, valueStr,
+                         light_shader.exposure) {
+          PUSH_WARN("Unknown/unsupported input " << name);
+        }
+      }
+    }
+
+    mtlx->light_shaders[node_name] = light_shader;
   }
 
   // standard_surface
@@ -2146,6 +2386,149 @@ bool LoadMaterialXFromAsset(const Asset &asset, const std::string &asset_path,
   }
 
   return true;
+}
+
+///
+/// Convert MaterialX Light shader to UsdLux light
+///
+bool ConvertMtlxLightToUsdLux(const MtlxLight &mtlx_light,
+                               const std::map<std::string, value::Value> &light_shaders,
+                               value::Value *usd_light,
+                               std::string *warn, std::string *err) {
+  (void)warn;
+
+  if (!usd_light) {
+    PUSH_ERROR_AND_RETURN("usd_light is nullptr");
+  }
+
+  // Get the EDF node name from the light shader
+  value::token edf_name;
+  if (!mtlx_light.edf.get_value(&edf_name)) {
+    PUSH_ERROR_AND_RETURN("Light shader has no EDF connection");
+  }
+
+  // Find the EDF node in light_shaders
+  auto edf_it = light_shaders.find(edf_name.str());
+  if (edf_it == light_shaders.end()) {
+    PUSH_ERROR_AND_RETURN(fmt::format("EDF node '{}' not found", edf_name.str()));
+  }
+
+  const value::Value &edf_value = edf_it->second;
+
+  // Get intensity and exposure from the light shader
+  value::color3f intensity{1.0f, 1.0f, 1.0f};
+  mtlx_light.intensity.get_value().get_scalar(&intensity);
+
+  float exposure = 0.0f;
+  if (mtlx_light.exposure.authored()) {
+    if (auto exp_val = mtlx_light.exposure.get_value()) {
+      exp_val.value().get_scalar(&exposure);
+    }
+  }
+
+  // Convert based on EDF type
+  if (auto uniform_edf = edf_value.as<MtlxUniformEdf>()) {
+    // uniform_edf -> SphereLight (omnidirectional point light)
+    SphereLight light;
+
+    value::color3f edf_color{1.0f, 1.0f, 1.0f};
+    uniform_edf->color.get_value().get_scalar(&edf_color);
+
+    // Combine EDF color with light intensity
+    value::color3f final_color{
+      edf_color[0] * intensity[0],
+      edf_color[1] * intensity[1],
+      edf_color[2] * intensity[2]
+    };
+
+    light.color.set_value(final_color);
+    light.exposure.set_value(exposure);
+    light.intensity.set_value(1.0f); // Already baked into color
+
+    (*usd_light) = light;
+    return true;
+
+  } else if (auto conical_edf = edf_value.as<MtlxConicalEdf>()) {
+    // conical_edf -> RectLight with ShapingAPI (spot light effect)
+    RectLight light;
+
+    value::color3f edf_color{1.0f, 1.0f, 1.0f};
+    conical_edf->color.get_value().get_scalar(&edf_color);
+
+    // Combine EDF color with light intensity
+    value::color3f final_color{
+      edf_color[0] * intensity[0],
+      edf_color[1] * intensity[1],
+      edf_color[2] * intensity[2]
+    };
+
+    light.color.set_value(final_color);
+    light.exposure.set_value(exposure);
+    light.intensity.set_value(1.0f);
+
+    // Add ShapingAPI for cone control
+    ShapingAPI shaping;
+
+    float inner_angle = 60.0f;
+    conical_edf->inner_angle.get_value().get_scalar(&inner_angle);
+    shaping.shapingConeAngle.set_value(inner_angle);
+
+    if (conical_edf->outer_angle.authored()) {
+      float outer_angle = 60.0f;
+      if (auto oa_val = conical_edf->outer_angle.get_value()) {
+        oa_val.value().get_scalar(&outer_angle);
+        // Use softness to represent the difference between inner and outer angles
+        float softness = (outer_angle - inner_angle) / inner_angle;
+        shaping.shapingConeSoftness.set_value(std::max(0.0f, softness));
+      }
+    }
+
+    light.shaping = shaping;
+
+    (*usd_light) = light;
+    return true;
+
+  } else if (auto measured_edf = edf_value.as<MtlxMeasuredEdf>()) {
+    // measured_edf -> RectLight or SphereLight with IES profile via ShapingAPI
+    SphereLight light;
+
+    value::color3f edf_color{1.0f, 1.0f, 1.0f};
+    measured_edf->color.get_value().get_scalar(&edf_color);
+
+    // Combine EDF color with light intensity
+    value::color3f final_color{
+      edf_color[0] * intensity[0],
+      edf_color[1] * intensity[1],
+      edf_color[2] * intensity[2]
+    };
+
+    light.color.set_value(final_color);
+    light.exposure.set_value(exposure);
+    light.intensity.set_value(1.0f);
+
+    // Add ShapingAPI with IES profile
+    if (measured_edf->file.authored()) {
+      ShapingAPI shaping;
+
+      if (auto file_val = measured_edf->file.get_value()) {
+        value::AssetPath ies_file;
+        if (file_val.value().get_scalar(&ies_file)) {
+          shaping.shapingIesFile.set_value(ies_file);
+          shaping.shapingIesNormalize.set_value(true);
+        }
+      }
+
+      light.shaping = shaping;
+    }
+
+    (*usd_light) = light;
+    return true;
+
+  } else {
+    PUSH_ERROR_AND_RETURN(fmt::format("Unknown EDF type for node '{}'", edf_name.str()));
+  }
+
+  return false;
 }
 
 //} // namespace usdMtlx

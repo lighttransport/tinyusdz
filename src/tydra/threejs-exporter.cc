@@ -973,6 +973,18 @@ json ThreeJSSceneExporter::ConvertNode(const Node& node, const RenderScene& scen
     case NodeType::EnvmapLight:
       obj["type"] = "EnvironmentLight";
       break;
+    case NodeType::RectLight:
+      obj["type"] = "RectAreaLight";
+      break;
+    case NodeType::DiskLight:
+      obj["type"] = "DiskLight";
+      break;
+    case NodeType::CylinderLight:
+      obj["type"] = "CylinderLight";
+      break;
+    case NodeType::GeometryLight:
+      obj["type"] = "GeometryLight";
+      break;
   }
 
   // Transform matrix
@@ -1011,11 +1023,205 @@ json ThreeJSSceneExporter::ConvertCamera(const RenderCamera& camera) {
 }
 
 json ThreeJSSceneExporter::ConvertLight(const RenderLight& light) {
-  // This would need to be implemented based on RenderLight structure
-  json light_json = {
-    {"type", "Light"},
-    {"name", light.name}
-  };
+  json light_json = json::object();
+
+  light_json["name"] = light.name;
+  light_json["uuid"] = light.abs_path;
+
+  // Common light properties
+  light_json["color"] = vec3ToJson(vec3{light.color[0], light.color[1], light.color[2]});
+
+  // Calculate effective intensity from intensity and exposure
+  // exposure is in stops: intensity_final = intensity * 2^exposure
+  float effective_intensity = light.intensity * std::pow(2.0f, light.exposure);
+  light_json["intensity"] = effective_intensity;
+
+  // Map RenderLight types to Three.js light types
+  switch (light.type) {
+    case RenderLight::Type::Point:
+    case RenderLight::Type::Sphere:
+      light_json["type"] = "PointLight";
+      // Three.js PointLight doesn't have a physical radius, but we can store it in userData
+      if (light.radius > 0.0f) {
+        light_json["userData"] = {{"radius", light.radius}};
+      }
+      // Distance for attenuation (0 means no limit)
+      light_json["distance"] = 0.0f;
+      // Power=1 for inverse square falloff (physically correct)
+      light_json["decay"] = 2.0f;
+      break;
+
+    case RenderLight::Type::Distant:
+      light_json["type"] = "DirectionalLight";
+      // Directional lights have uniform intensity, no attenuation
+      // Store angle for disk shape if specified
+      if (light.angle > 0.0f) {
+        if (!light_json.contains("userData")) {
+          light_json["userData"] = json::object();
+        }
+        light_json["userData"]["angle"] = light.angle;
+      }
+      break;
+
+    case RenderLight::Type::Rect:
+      // Three.js has RectAreaLight (requires RectAreaLightUniformsLib)
+      light_json["type"] = "RectAreaLight";
+      light_json["width"] = light.width;
+      light_json["height"] = light.height;
+      // RectAreaLight doesn't support distance/decay in Three.js r140+
+      // Store texture file if present
+      if (!light.textureFile.empty()) {
+        if (!light_json.contains("userData")) {
+          light_json["userData"] = json::object();
+        }
+        light_json["userData"]["textureFile"] = light.textureFile;
+      }
+      break;
+
+    case RenderLight::Type::Disk:
+      // Three.js doesn't have a disk light, use PointLight as approximation
+      light_json["type"] = "PointLight";
+      light_json["distance"] = 0.0f;
+      light_json["decay"] = 2.0f;
+      // Store disk shape parameters in userData
+      light_json["userData"] = {
+        {"shape", "disk"},
+        {"radius", light.radius}
+      };
+      break;
+
+    case RenderLight::Type::Cylinder:
+      // Cylinder lights with shaping are like spotlights
+      if (light.shapingConeAngle > 0.0f) {
+        light_json["type"] = "SpotLight";
+        // Convert cone angle (full angle) to Three.js angle (half angle in radians)
+        light_json["angle"] = light.shapingConeAngle * 0.5f * (3.14159265359f / 180.0f);
+        // Penumbra (0-1) represents the percent of the spotlight cone attenuated due to penumbra
+        light_json["penumbra"] = light.shapingConeSoftness;
+        light_json["distance"] = 0.0f;
+        light_json["decay"] = 2.0f;
+
+        // Store cylinder dimensions in userData
+        light_json["userData"] = {
+          {"shape", "cylinder"},
+          {"radius", light.radius},
+          {"length", light.length}
+        };
+
+        // Store IES profile if present
+        if (!light.shapingIesFile.empty()) {
+          light_json["userData"]["iesFile"] = light.shapingIesFile;
+        }
+      } else {
+        // Without shaping, treat as point light with cylindrical metadata
+        light_json["type"] = "PointLight";
+        light_json["distance"] = 0.0f;
+        light_json["decay"] = 2.0f;
+        light_json["userData"] = {
+          {"shape", "cylinder"},
+          {"radius", light.radius},
+          {"length", light.length}
+        };
+      }
+      break;
+
+    case RenderLight::Type::Dome:
+      // Dome lights are environment maps, closest is HemisphereLight or PMREMGenerator
+      light_json["type"] = "HemisphereLight";
+      // HemisphereLight has groundColor (opposite hemisphere)
+      // For dome lights, we just use black for ground
+      light_json["groundColor"] = json::array({0.0f, 0.0f, 0.0f});
+
+      // Store dome-specific parameters in userData
+      if (!light.textureFile.empty()) {
+        if (!light_json.contains("userData")) {
+          light_json["userData"] = json::object();
+        }
+        light_json["userData"]["textureFile"] = light.textureFile;
+
+        // Store texture format (latlong, mirroredBall, angular)
+        std::string format_str;
+        switch (light.domeTextureFormat) {
+          case RenderLight::DomeTextureFormat::Automatic:
+            format_str = "automatic";
+            break;
+          case RenderLight::DomeTextureFormat::Latlong:
+            format_str = "latlong";
+            break;
+          case RenderLight::DomeTextureFormat::MirroredBall:
+            format_str = "mirroredBall";
+            break;
+          case RenderLight::DomeTextureFormat::Angular:
+            format_str = "angular";
+            break;
+        }
+        light_json["userData"]["textureFormat"] = format_str;
+      }
+      break;
+
+    case RenderLight::Type::Geometry:
+      // Geometry lights are meshes with emissive materials
+      light_json["type"] = "MeshEmissive";
+      light_json["geometry_mesh_id"] = light.geometry_mesh_id;
+
+      if (!light.material_sync_mode.empty()) {
+        if (!light_json.contains("userData")) {
+          light_json["userData"] = json::object();
+        }
+        light_json["userData"]["material_sync_mode"] = light.material_sync_mode;
+      }
+      break;
+
+    case RenderLight::Type::Portal:
+      // Portal lights are special lights for portals
+      light_json["type"] = "PortalLight";
+      break;
+  }
+
+  // Shadow properties (if shadow is enabled)
+  if (light.shadowEnable) {
+    json shadow = json::object();
+    shadow["enabled"] = true;
+    shadow["color"] = vec3ToJson(vec3{light.shadowColor[0], light.shadowColor[1], light.shadowColor[2]});
+
+    // Shadow distance and falloff parameters
+    if (light.shadowDistance > 0.0f) {
+      shadow["distance"] = light.shadowDistance;
+      shadow["falloff"] = light.shadowFalloff;
+      shadow["falloffGamma"] = light.shadowFalloffGamma;
+    }
+
+    light_json["shadow"] = shadow;
+  }
+
+  // Store additional UsdLux properties that don't map directly to Three.js
+  if (!light_json.contains("userData")) {
+    light_json["userData"] = json::object();
+  }
+
+  // Diffuse and specular contribution multipliers
+  light_json["userData"]["diffuse"] = light.diffuse;
+  light_json["userData"]["specular"] = light.specular;
+  light_json["userData"]["normalize"] = light.normalize;
+
+  // Color temperature
+  if (light.enableColorTemperature) {
+    light_json["userData"]["colorTemperature"] = light.colorTemperature;
+  }
+
+  // Shaping properties for lights that support them (but aren't spotlights)
+  if (light.type != RenderLight::Type::Cylinder &&
+      (light.shapingConeAngle > 0.0f || light.shapingFocus != 0.0f || !light.shapingIesFile.empty())) {
+    light_json["userData"]["shaping"] = {
+      {"focus", light.shapingFocus},
+      {"coneAngle", light.shapingConeAngle},
+      {"coneSoftness", light.shapingConeSoftness}
+    };
+    if (!light.shapingIesFile.empty()) {
+      light_json["userData"]["shaping"]["iesFile"] = light.shapingIesFile;
+    }
+  }
+
   return light_json;
 }
 

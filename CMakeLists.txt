@@ -436,8 +436,11 @@ set(TINYUSDZ_SOURCES
     ${PROJECT_SOURCE_DIR}/src/layer.cc
     ${PROJECT_SOURCE_DIR}/src/primvar.cc
     ${PROJECT_SOURCE_DIR}/src/str-util.cc
+    ${PROJECT_SOURCE_DIR}/src/usd-dump.cc
     ${PROJECT_SOURCE_DIR}/src/value-pprint.cc
     ${PROJECT_SOURCE_DIR}/src/value-types.cc
+    ${PROJECT_SOURCE_DIR}/src/color-space.cc
+    ${PROJECT_SOURCE_DIR}/src/color-space.hh
     ${PROJECT_SOURCE_DIR}/src/tiny-format.cc
     ${PROJECT_SOURCE_DIR}/src/tiny-string.cc
     ${PROJECT_SOURCE_DIR}/src/io-util.cc
@@ -499,8 +502,14 @@ if (TINYUSDZ_WITH_TYDRA)
         ${PROJECT_SOURCE_DIR}/src/tydra/render-data.hh
         ${PROJECT_SOURCE_DIR}/src/tydra/render-data-pprint.cc
         ${PROJECT_SOURCE_DIR}/src/tydra/render-data-pprint.hh
+        ${PROJECT_SOURCE_DIR}/src/tydra/raytracing-data.cc
+        ${PROJECT_SOURCE_DIR}/src/tydra/raytracing-data.hh
+        ${PROJECT_SOURCE_DIR}/src/tydra/raytracing-scene-converter.cc
+        ${PROJECT_SOURCE_DIR}/src/tydra/raytracing-scene-converter.hh
         ${PROJECT_SOURCE_DIR}/src/tydra/material-serializer.cc
         ${PROJECT_SOURCE_DIR}/src/tydra/material-serializer.hh
+        ${PROJECT_SOURCE_DIR}/src/tydra/materialx-to-json.cc
+        ${PROJECT_SOURCE_DIR}/src/tydra/materialx-to-json.hh
         ${PROJECT_SOURCE_DIR}/src/tydra/render-scene-dump.cc
         ${PROJECT_SOURCE_DIR}/src/tydra/render-scene-dump.hh
         ${PROJECT_SOURCE_DIR}/src/tydra/bone-util.cc

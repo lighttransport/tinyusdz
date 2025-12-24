@@ -503,6 +503,10 @@ enum TypeId {
   TYPE_ID_IMAGING_MTLX_PREVIEWSURFACE,
   TYPE_ID_IMAGING_MTLX_STANDARDSURFACE,
   TYPE_ID_IMAGING_MTLX_OPENPBRSURFACE,
+  TYPE_ID_IMAGING_MTLX_UNIFORMEDF,
+  TYPE_ID_IMAGING_MTLX_CONICALEDF,
+  TYPE_ID_IMAGING_MTLX_MEASUREDEDF,
+  TYPE_ID_IMAGING_MTLX_LIGHT,
   TYPE_ID_IMAGING_OPENPBR_SURFACE,
 
   TYPE_ID_IMAGING_END,
@@ -528,6 +532,7 @@ enum TypeId {
   TYPE_ID_COLLECTION_INSTANCE,
   TYPE_ID_MATERIAL_BINDING,
   TYPE_ID_MATERIALX_CONFIG_API,
+  TYPE_ID_COLOR_SPACE_API,
   TYPE_ID_API_END,
 
   // Base ID for user data type(less than `TYPE_ID_1D_ARRAY_BIT-1`)
@@ -2070,7 +2075,7 @@ class Value {
   // Helper to log vector size
   template <typename T>
   static void log_vector_size(const std::vector<T>& vec) {
-    TUSDZ_LOG_I("  vector size: " << vec.size());
+    //TUSDZ_LOG_I("  vector size: " << vec.size());
   }
 
   template <typename T>
@@ -2169,6 +2174,7 @@ class Value {
 #endif
 
   const linb::any &get_raw() const { return v_; }
+  linb::any &get_raw_mutable() { return v_; }
 
   bool is_array() const { return (v_.type_id() & value::TYPE_ID_1D_ARRAY_BIT); }
 
