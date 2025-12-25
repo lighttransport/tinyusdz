@@ -5553,7 +5553,8 @@ template <typename T>
 nonstd::expected<bool, std::string> GetConnectedMtlxTexture(
     const Stage &stage, const TypedAnimatableAttributeWithFallback<T> &src,
     Path *tex_abs_path, const Shader **image_shader_out,
-    std::string *st_varname_out, const AssetInfo **assetInfo_out) {
+    std::string *st_varname_out, const AssetInfo **assetInfo_out,
+    const std::string &default_texcoords_primvar_name = "st") {
 
   if (!src.is_connection()) {
     return nonstd::make_unexpected("Attribute must be connection.\n");
@@ -5773,10 +5774,10 @@ nonstd::expected<bool, std::string> GetConnectedMtlxTexture(
         }
       }
 
-      // For MaterialX, we don't have an explicit st varname,
-      // so we'll use "st" as default (same as UsdPreviewSurface)
+      // For MaterialX ND_texcoord_vector2 node, use configured default primvar name
+      // (similar to OpenUSD's USDMTLX_PRIMARY_UV_NAME environment setting)
       if (st_varname_out) {
-        *st_varname_out = "st";
+        *st_varname_out = default_texcoords_primvar_name.empty() ? "st" : default_texcoords_primvar_name;
       }
 
       return true;
@@ -6541,7 +6542,8 @@ bool RenderSceneConverter::ConvertPreviewSurfaceShaderParam(
         const AssetInfo *assetInfo{nullptr};
 
         auto mtlx_result = GetConnectedMtlxTexture(
-            env.stage, param, &texPath, &image_shader, &st_varname, &assetInfo);
+            env.stage, param, &texPath, &image_shader, &st_varname, &assetInfo,
+            env.mesh_config.default_texcoords_primvar_name);
 
         if (mtlx_result) {
           // Found a MaterialX texture node

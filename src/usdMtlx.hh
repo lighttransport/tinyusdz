@@ -47,6 +47,22 @@ enum class ColorSpace {
 
 } // namespace mtlx
 
+///
+/// Configuration for MaterialX parsing.
+/// Similar to OpenUSD's USDMTLX_PRIMARY_UV_NAME environment variable.
+///
+struct MtlxConfig {
+  /// Primary UV set name for ND_texcoord_vector2 nodes.
+  /// Empty string means use default "st".
+  /// Similar to OpenUSD's USDMTLX_PRIMARY_UV_NAME environment variable.
+  std::string primary_uv_name{"st"};
+
+  /// Secondary UV set name pattern for ND_texcoord_vector2 with index > 0.
+  /// The index will be appended (e.g., "st1", "st2").
+  /// Empty string means use default "st".
+  std::string secondary_uv_name_prefix{"st"};
+};
+
 // MaterialX shader input connection information
 struct MtlxShaderConnection {
   std::string input_name;      // e.g., "base_color"
@@ -318,18 +334,22 @@ struct MtlxLight : ShaderNode {
 /// @param[out] mtlx Output
 /// @param[out] warn Warning message
 /// @param[out] err Error message
+/// @param[in] config MaterialX configuration (primary_uv_name, etc.)
 ///
 /// @return true upon success.
 bool ReadMaterialXFromString(const std::string &str, const std::string &asset_name, MtlxModel *mtlx,
-                             std::string *warn, std::string *err);
+                             std::string *warn, std::string *err,
+                             const MtlxConfig &config = MtlxConfig{});
 
 ///
 /// Load MaterialX XML from a file.
 ///
-/// @param[in] str String representation of XML data.
-/// @param[in] asset_name Corresponding asset name. Can be empty.
+/// @param[in] resolver Asset resolution resolver.
+/// @param[in] asset_path Asset path.
 /// @param[out] mtlx Output
+/// @param[out] warn Warning message
 /// @param[out] err Error message
+/// @param[in] config MaterialX configuration (primary_uv_name, etc.)
 ///
 /// @return true upon success.
 ///
@@ -337,7 +357,8 @@ bool ReadMaterialXFromString(const std::string &str, const std::string &asset_na
 
 bool ReadMaterialXFromFile(const AssetResolutionResolver &resolver,
                             const std::string &asset_path, MtlxModel *mtlx,
-                            std::string *warn, std::string *err);
+                            std::string *warn, std::string *err,
+                            const MtlxConfig &config = MtlxConfig{});
 
 bool WriteMaterialXToString(const MtlxModel &mtlx, std::string &xml_str,
                              std::string *warn, std::string *err);
