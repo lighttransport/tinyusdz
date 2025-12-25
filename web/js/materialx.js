@@ -1035,8 +1035,8 @@ async function loadDefaultScene() {
 }
 
 async function loadDefaultUSDFile() {
-    //const defaultFile = './assets/fancy-teapot-mtlx.usdz';
-    const defaultFile = './assets/sphere-mtlx.usdc';
+    const defaultFile = './assets/fancy-teapot-mtlx.usdz';
+    //const defaultFile = './assets/sphere-mtlx.usdc';
     updateStatus(`Loading ${defaultFile}...`);
     try {
         const response = await fetch(defaultFile);
