@@ -274,7 +274,6 @@ function buildDirectAnimationData(usdLoader, sceneRoot) {
 	directAnimationData.clear();
 
 	const numAnimations = usdLoader.numAnimations();
-	console.log(`[DirectAnim] Building GC-free animation data from ${numAnimations} animations`);
 
 	// Build node index map
 	const nodeIndexMap = new Map();
@@ -366,7 +365,6 @@ function buildDirectAnimationData(usdLoader, sceneRoot) {
 		}
 	}
 
-	console.log(`[DirectAnim] Built animation data for ${directAnimationData.size} objects`);
 }
 
 // ===========================================
@@ -385,30 +383,24 @@ function convertUSDAnimationsToThreeJS(usdLoader, sceneRoot) {
 
 	// Get number of animations
 	const numAnimations = usdLoader.numAnimations();
-	console.log(`Found ${numAnimations} animations in USD file`);
 
 	// Get summary of all animations
 	const animationInfos = usdLoader.getAllAnimationInfos();
-	console.log('Animation summaries:', animationInfos);
 
 	// Build node index map for faster lookup
 	const nodeIndexMap = new Map();
 	let nodeIndex = 0;
 	sceneRoot.traverse((obj) => {
 		nodeIndexMap.set(nodeIndex, obj);
-		//console.log(`Node index ${nodeIndex}: name="${obj.name}", type=${obj.type}, uuid=${obj.uuid}`);
 		nodeIndex++;
 	});
-	console.log(`Built node index map with ${nodeIndexMap.size} nodes`);
 
 	// Convert each animation to Three.js format
 	for (let i = 0; i < numAnimations; i++) {
 		const usdAnimation = usdLoader.getAnimation(i);
-		console.log(`Processing animation ${i}: ${usdAnimation.name}`);
 
 		// Check if this is a track-based animation (legacy format)
 		if (usdAnimation.tracks && usdAnimation.tracks.length > 0) {
-			console.log(`Animation ${i} uses track-based format with ${usdAnimation.tracks.length} tracks`);
 
 			// Process track-based animation
 			const keyframeTracks = [];
@@ -424,15 +416,12 @@ function convertUSDAnimationsToThreeJS(usdLoader, sceneRoot) {
 				searchName = searchName.replace(/_xform$/, '');
 				searchName = searchName.replace(/_anim$/, '');
 
-				console.log(`Searching for target object with name: "${searchName}" (from animation "${usdAnimation.name}")`);
-
 				// First try exact match
 				let found = false;
 				sceneRoot.traverse((obj) => {
 					if (obj.name === searchName) {
 						targetObject = obj;
 						found = true;
-						console.log(`  Found exact match: "${obj.name}"`);
 					}
 				});
 
@@ -442,7 +431,6 @@ function convertUSDAnimationsToThreeJS(usdLoader, sceneRoot) {
 						if (obj.name && obj.name.startsWith(searchName)) {
 							targetObject = obj;
 							found = true;
-							console.log(`  Found prefix match: "${obj.name}"`);
 						}
 					});
 				}
@@ -461,7 +449,6 @@ function convertUSDAnimationsToThreeJS(usdLoader, sceneRoot) {
 
 			const targetName = targetObject.name || 'AnimatedObject';
 			const targetUUID = targetObject.uuid;
-			console.log(`Target object for track-based animation: "${targetName}" (UUID: ${targetUUID})`);
 
 			// Process each track
 			for (const track of usdAnimation.tracks) {
@@ -474,8 +461,6 @@ function convertUSDAnimationsToThreeJS(usdLoader, sceneRoot) {
 				const times = Array.isArray(track.times) ? track.times : Array.from(track.times);
 				const values = Array.isArray(track.values) ? track.values : Array.from(track.values);
 				const interpolation = getUSDInterpolationMode(track.interpolation);
-
-				console.log(`Processing track: ${track.path}, ${times.length} keyframes`);
 
 				// Create appropriate Three.js KeyframeTrack based on path
 				let keyframeTrack;
@@ -491,7 +476,6 @@ function convertUSDAnimationsToThreeJS(usdLoader, sceneRoot) {
 							values,
 							interpolation
 						);
-						console.log(`  Created translation track: ${targetUUID}.position (${targetName})`);
 						break;
 
 					case 'rotation':
@@ -503,7 +487,6 @@ function convertUSDAnimationsToThreeJS(usdLoader, sceneRoot) {
 							values,
 							interpolation
 						);
-						console.log(`  Created rotation track: ${targetUUID}.quaternion (${targetName})`);
 						break;
 
 					case 'scale':
@@ -514,7 +497,6 @@ function convertUSDAnimationsToThreeJS(usdLoader, sceneRoot) {
 							values,
 							interpolation
 						);
-						console.log(`  Created scale track: ${targetUUID}.scale (${targetName})`);
 						break;
 
 					default:
@@ -536,7 +518,6 @@ function convertUSDAnimationsToThreeJS(usdLoader, sceneRoot) {
 				);
 
 				animationClips.push(clip);
-				console.log(`Created clip: ${clip.name}, duration: ${clip.duration}s, tracks: ${clip.tracks.length}`);
 			}
 
 			continue; // Skip to next animation
@@ -555,11 +536,8 @@ function convertUSDAnimationsToThreeJS(usdLoader, sceneRoot) {
 		});
 
 		if (nodeChannels.length === 0) {
-			console.log(`Animation ${i} has no SceneNode channels (skipping skeletal-only animation)`);
-			continue;
+			continue; // Skip skeletal-only animations
 		}
-
-		console.log(`Animation ${i}: ${nodeChannels.length} node channels (${usdAnimation.channels.length - nodeChannels.length} skeletal channels skipped)`);
 
 		// Create Three.js KeyframeTracks from USD animation channels
 		const keyframeTracks = [];
@@ -575,8 +553,6 @@ function convertUSDAnimationsToThreeJS(usdLoader, sceneRoot) {
 			// Find the Three.js object for this channel
 			const targetObject = nodeIndexMap.get(channel.target_node);
 			if (!targetObject) {
-				console.warn(`Could not find object at node index: ${channel.target_node}`);
-				console.warn(`Available node indices: ${Array.from(nodeIndexMap.keys()).join(', ')}`);
 				continue;
 			}
 
@@ -589,10 +565,7 @@ function convertUSDAnimationsToThreeJS(usdLoader, sceneRoot) {
 			// Use UUID for reliable hierarchical animation targeting
 			// Three.js AnimationMixer supports both name-based and UUID-based targeting
 			const targetUUID = targetObject.uuid;
-			const targetName = targetObject.name || `node_${channel.target_node}`;
 			const interpolation = getUSDInterpolationMode(sampler.interpolation);
-
-			console.log(`Channel: target_node=${channel.target_node}, path=${channel.path}, target_name="${targetName}", uuid=${targetUUID}, keyframes=${times.length}`);
 
 			// Three.js AnimationMixer can target objects by UUID or by name
 			// Using UUID is more reliable for hierarchical animations
@@ -643,41 +616,6 @@ function convertUSDAnimationsToThreeJS(usdLoader, sceneRoot) {
 
 			if (keyframeTrack) {
 				keyframeTracks.push(keyframeTrack);
-				// Debug: Log first few keyframe values
-				console.log(`  Track "${keyframeTrack.name}": ${keyframeTrack.times.length} keyframes`);
-				if (keyframeTrack.times.length > 0 && channel.path === 'Scale') {
-					// Log scale values in detail for debugging
-					const numSamples = Math.min(3, keyframeTrack.times.length);
-					const currentScale = [targetObject.scale.x, targetObject.scale.y, targetObject.scale.z];
-					console.log(`  Scale animation for "${targetName}" (current scale=[${currentScale[0].toFixed(4)}, ${currentScale[1].toFixed(4)}, ${currentScale[2].toFixed(4)}]):`);
-					for (let s = 0; s < numSamples; s++) {
-						const t = keyframeTrack.times[s];
-						const vIdx = s * 3;
-						const scale = [
-							keyframeTrack.values[vIdx],
-							keyframeTrack.values[vIdx + 1],
-							keyframeTrack.values[vIdx + 2]
-						];
-						console.log(`    t=${t.toFixed(3)}s: scale=[${scale[0].toFixed(4)}, ${scale[1].toFixed(4)}, ${scale[2].toFixed(4)}]`);
-					}
-
-					// Check if animation scale differs significantly from current scale
-					const firstScale = [keyframeTrack.values[0], keyframeTrack.values[1], keyframeTrack.values[2]];
-					const scaleDiff = Math.abs(firstScale[0] - currentScale[0]) + Math.abs(firstScale[1] - currentScale[1]) + Math.abs(firstScale[2] - currentScale[2]);
-					if (scaleDiff > 0.01) {
-						console.warn(`  ⚠️  Animation scale mismatch! Object's current scale differs from animation's first keyframe by ${scaleDiff.toFixed(4)}`);
-						console.warn(`  This may indicate the animation doesn't include the base transform from USD.`);
-					}
-				}
-				if (keyframeTrack.times.length > 0) {
-					console.log(`    First keyframe: time=${keyframeTrack.times[0]}, values=[${keyframeTrack.values.slice(0, 4).join(', ')}...]`);
-					if (keyframeTrack.times.length > 1) {
-						const lastIdx = keyframeTrack.times.length - 1;
-						const valuesPerKey = keyframeTrack.values.length / keyframeTrack.times.length;
-						const lastValueStart = lastIdx * valuesPerKey;
-						console.log(`    Last keyframe: time=${keyframeTrack.times[lastIdx]}, values=[${keyframeTrack.values.slice(lastValueStart, lastValueStart + 4).join(', ')}...]`);
-					}
-				}
 			}
 		}
 
@@ -690,8 +628,6 @@ function convertUSDAnimationsToThreeJS(usdLoader, sceneRoot) {
 			);
 
 			animationClips.push(clip);
-			console.log(`Created clip: ${clip.name}, duration: ${clip.duration}s, tracks: ${clip.tracks.length}`);
-			console.log(`Track names in clip:`, clip.tracks.map(t => t.name));
 		}
 	}
 
@@ -1108,8 +1044,7 @@ async function loadUSDModel() {
 	currentLoader = loader; // Store reference for cleanup
 
 	// USD FILES
-	//const usd_filename = "./assets/suzanne-xform.usdc";
-	const usd_filename = "./assets/TrenchRun5_v5_1X-mtlx.usdz";
+	const usd_filename = "./assets/suzanne-xform.usdc";
 
 	// Load USD scene
 	const usd_scene = await loader.loadAsync(usd_filename);
@@ -1136,26 +1071,6 @@ async function loadUSDModel() {
 		copyright: sceneMetadata.copyright || ""
 	};
 
-	console.log('=== USD Scene Metadata ===');
-	console.log(`upAxis: "${currentSceneMetadata.upAxis}"`);
-	console.log(`metersPerUnit: ${currentSceneMetadata.metersPerUnit}`);
-	console.log(`framesPerSecond: ${currentSceneMetadata.framesPerSecond}`);
-	console.log(`timeCodesPerSecond: ${currentSceneMetadata.timeCodesPerSecond}`);
-	if (currentSceneMetadata.startTimeCode !== null && currentSceneMetadata.startTimeCode !== undefined) {
-		console.log(`startTimeCode: ${currentSceneMetadata.startTimeCode}`);
-	}
-	if (currentSceneMetadata.endTimeCode !== null && currentSceneMetadata.endTimeCode !== undefined) {
-		console.log(`endTimeCode: ${currentSceneMetadata.endTimeCode}`);
-	}
-	console.log(`autoPlay: ${currentSceneMetadata.autoPlay}`);
-	if (currentSceneMetadata.comment) {
-		console.log(`comment: "${currentSceneMetadata.comment}"`);
-	}
-	if (currentSceneMetadata.copyright) {
-		console.log(`copyright: "${currentSceneMetadata.copyright}"`);
-	}
-	console.log('========================');
-
 	// Update metadata UI
 	updateMetadataUI();
 
@@ -1163,7 +1078,6 @@ async function loadUSDModel() {
 	try {
 		const domeLightData = await loadDomeLightFromUSD(usd_scene);
 		if (domeLightData) {
-			console.log('Loaded DomeLight from USD:', domeLightData);
 			if (envPresetController) {
 				envPresetController.updateDisplay();
 			}
@@ -1217,28 +1131,7 @@ async function loadUSDModel() {
 	// Apply Z-up to Y-up conversion if enabled AND the file is actually Z-up
 	if (animationParams.applyUpAxisConversion && fileUpAxis === "Z") {
 		usdSceneRoot.rotation.x = -Math.PI / 2;
-		console.log(`[loadUSDModel] Applied Z-up to Y-up conversion (file upAxis="${fileUpAxis}"): rotation.x =`, usdSceneRoot.rotation.x);
-	} else if (animationParams.applyUpAxisConversion && fileUpAxis !== "Y") {
-		console.warn(`[loadUSDModel] File upAxis is "${fileUpAxis}" (not Y or Z), no rotation applied`);
-	} else {
-		console.log(`[loadUSDModel] No upAxis conversion needed (file upAxis="${fileUpAxis}", conversion ${animationParams.applyUpAxisConversion ? 'enabled' : 'disabled'})`);
 	}
-
-	// Debug: Log scene hierarchy transforms
-	console.log('=== Scene Hierarchy After UpAxis Conversion ===');
-	console.log('usdSceneRoot:', {
-		rotation: { x: usdSceneRoot.rotation.x, y: usdSceneRoot.rotation.y, z: usdSceneRoot.rotation.z },
-		position: { x: usdSceneRoot.position.x, y: usdSceneRoot.position.y, z: usdSceneRoot.position.z },
-		scale: { x: usdSceneRoot.scale.x, y: usdSceneRoot.scale.y, z: usdSceneRoot.scale.z }
-	});
-	if (threeNode) {
-		console.log('threeNode (usdContentNode):', {
-			rotation: { x: threeNode.rotation.x, y: threeNode.rotation.y, z: threeNode.rotation.z },
-			position: { x: threeNode.position.x, y: threeNode.position.y, z: threeNode.position.z },
-			scale: { x: threeNode.scale.x, y: threeNode.scale.y, z: threeNode.scale.z }
-		});
-	}
-	console.log('==============================================');
 
 	// Apply scene scale and update shadow frustum based on model bounds
 	animationParams.applySceneScale();
@@ -1276,7 +1169,7 @@ async function loadUSDModel() {
 					if (info.has_node_animation) types.push('node');
 					if (types.length > 0) typeStr = ` [${types.join('+')}]`;
 				}
-				console.log(`Animation ${index}: ${clip.name}, duration: ${clip.duration}s, tracks: ${clip.tracks.length}${typeStr}`);
+				// console.log(`Animation ${index}: ${clip.name}, duration: ${clip.duration}s, tracks: ${clip.tracks.length}${typeStr}`);
 			});
 
 			// Set time range from metadata or first USD animation
@@ -1304,7 +1197,7 @@ async function loadUSDModel() {
 				animationParams.endTime = endTime;
 				animationParams.duration = endTime - beginTime;
 				animationParams.time = beginTime; // Reset time to beginning
-				console.log(`Set time range from ${timeRangeSource}: ${beginTime}s - ${endTime}s`);
+				// console.log(`Set time range from ${timeRangeSource}: ${beginTime}s - ${endTime}s`);
 
 				// Update GUI controllers if they exist
 				updateTimeRangeGUIControllers(endTime);
@@ -1314,12 +1207,14 @@ async function loadUSDModel() {
 		// Set playback speed (FPS) from framesPerSecond metadata
 		const fps = currentSceneMetadata.framesPerSecond || 24.0;
 		animationParams.speed = fps;
-		console.log(`Set animation speed (FPS) from metadata: ${fps}`);
-			// Play all USD animations automatically
+		// console.log(`Set animation speed (FPS) from metadata: ${fps}`);
+			// Setup all USD animations (paused by default)
 			playAllUSDAnimations();
+			console.log(`✅ Scene ready! ${usdAnimations.length} animation(s) loaded and paused. Click Play to start.`);
 		} else {
 			// No USD animations found
 			console.log('No USD animations found in this USD file');
+			console.log('✅ Scene ready! (no animations)');
 
 			// Still build scene graph UI for static scenes
 			buildSceneGraphUI();
@@ -1332,7 +1227,7 @@ async function loadUSDModel() {
 // Debug: Dump scene hierarchy
 function dumpSceneHierarchy(root, prefix = '', level = 0) {
 	const indent = '  '.repeat(level);
-	console.log(`${prefix}${indent}"${root.name || 'unnamed'}" [${root.type}] uuid=${root.uuid}`);
+	// console.log(`${prefix}${indent}"${root.name || 'unnamed'}" [${root.type}] uuid=${root.uuid}`);
 
 	if (root.children && root.children.length > 0) {
 		root.children.forEach((child, index) => {
@@ -1373,11 +1268,11 @@ function toggleBoundingBox(obj, show) {
 			// Add to scene
 			scene.add(helper);
 
-			console.log(`BBox created for "${obj.name}":`, {
-				min: worldBBox.min,
-				max: worldBBox.max,
-				size: worldBBox.getSize(new THREE.Vector3())
-			});
+			// console.log(`BBox created for "${obj.name}":`, {
+			// 	min: worldBBox.min,
+			// 	max: worldBBox.max,
+			// 	size: worldBBox.getSize(new THREE.Vector3())
+			// });
 		} else {
 			// Make it visible
 			const helper = objectBBoxHelpers.get(obj.uuid);
@@ -1407,12 +1302,46 @@ function updateBoundingBox(obj) {
 }
 
 // Build scene graph tree UI with animation controls
+// Performance limit: Skip building UI for scenes with too many objects
+const SCENE_GRAPH_UI_MAX_OBJECTS = 100;
+
 function buildSceneGraphUI() {
 	if (!window.sceneGraphFolder) return;
 
 	// Clear existing controls
 	window.sceneGraphFolder.controllers.forEach(c => c.destroy());
 	window.sceneGraphFolder.folders.forEach(f => f.destroy());
+
+	// Count total objects in the USD scene to avoid creating too many GUI elements
+	let objectCount = 0;
+	if (usdSceneRoot) {
+		usdSceneRoot.traverse(() => objectCount++);
+	}
+
+	// Skip building detailed scene graph UI for large scenes (performance optimization)
+	// Instead, show a simplified UI with click-to-select functionality
+	if (objectCount > SCENE_GRAPH_UI_MAX_OBJECTS) {
+		console.warn(`[Performance] Scene has ${objectCount} objects, using simplified selection UI (limit: ${SCENE_GRAPH_UI_MAX_OBJECTS})`);
+
+		// Show scene info
+		const sceneInfo = {
+			objectCount: objectCount,
+			meshCount: 0,
+			animatedCount: objectAnimationActions.size
+		};
+		usdSceneRoot.traverse(obj => { if (obj.isMesh) sceneInfo.meshCount++; });
+
+		window.sceneGraphFolder.add(sceneInfo, 'objectCount').name('Total Objects').disable();
+		window.sceneGraphFolder.add(sceneInfo, 'meshCount').name('Meshes').disable();
+		window.sceneGraphFolder.add(sceneInfo, 'animatedCount').name('Animated').disable();
+
+		// Add instruction
+		const instruction = { text: 'Click on 3D objects to select them' };
+		window.sceneGraphFolder.add(instruction, 'text').name('💡 Tip').disable();
+
+		window.sceneGraphFolder.show();
+		return;
+	}
 
 	// Recursively add objects to the tree
 	function addObjectToUI(obj, parentFolder) {
@@ -1447,7 +1376,7 @@ function buildSceneGraphUI() {
 								// Disable by setting weight to 0
 								animData.action.setEffectiveWeight(0.0);
 							}
-							console.log(`${objectName} animation: ${this.enabled ? 'enabled' : 'disabled'}`);
+							// console.log(`${objectName} animation: ${this.enabled ? 'enabled' : 'disabled'}`);
 						}
 					}
 				};
@@ -1494,7 +1423,7 @@ function buildSceneGraphUI() {
 							} else {
 								animData.action.setEffectiveWeight(0.0);
 							}
-							console.log(`${objectName} animation: ${this.enabled ? 'enabled' : 'disabled'}`);
+							// console.log(`${objectName} animation: ${this.enabled ? 'enabled' : 'disabled'}`);
 						}
 					}
 				};
@@ -1522,7 +1451,7 @@ function buildSceneGraphUI() {
 		// Add the USD scene root and its children
 		addObjectToUI(usdSceneRoot, window.sceneGraphFolder);
 		window.sceneGraphFolder.show();
-		console.log('Scene graph UI built');
+		// console.log('Scene graph UI built');
 	}
 }
 
@@ -1556,7 +1485,7 @@ function selectObject(obj) {
 	// Update transform info UI
 	updateTransformInfoUI(obj);
 
-	console.log('Selected object:', obj.name, obj);
+	// console.log('Selected object:', obj.name, obj);
 }
 
 /**
@@ -1673,8 +1602,69 @@ function updateTransformInfoUI(obj) {
 	window.transformInfoFolder.add(transformInfo, 'scaleY').name('Scale Y').disable();
 	window.transformInfoFolder.add(transformInfo, 'scaleZ').name('Scale Z').disable();
 
+	// Add material info for meshes
+	if (obj.isMesh && obj.material) {
+		const mats = Array.isArray(obj.material) ? obj.material : [obj.material];
+		const matInfo = {
+			materialCount: mats.length,
+			materialType: mats[0].type,
+			materialName: mats[0].name || 'unnamed'
+		};
+
+		// Material properties
+		if (mats[0].color) {
+			matInfo.color = '#' + mats[0].color.getHexString();
+		}
+		if (mats[0].roughness !== undefined) {
+			matInfo.roughness = mats[0].roughness.toFixed(2);
+		}
+		if (mats[0].metalness !== undefined) {
+			matInfo.metalness = mats[0].metalness.toFixed(2);
+		}
+		if (mats[0].opacity !== undefined && mats[0].opacity < 1) {
+			matInfo.opacity = mats[0].opacity.toFixed(2);
+		}
+		if (mats[0].map) {
+			matInfo.hasTexture = 'Yes';
+		}
+		if (mats[0].emissiveMap || (mats[0].emissive && mats[0].emissive.getHex() !== 0)) {
+			matInfo.hasEmissive = 'Yes';
+		}
+
+		window.transformInfoFolder.add(matInfo, 'materialType').name('Material Type').disable();
+		window.transformInfoFolder.add(matInfo, 'materialName').name('Material Name').disable();
+		if (matInfo.color) window.transformInfoFolder.addColor(matInfo, 'color').name('Color').disable();
+		if (matInfo.roughness) window.transformInfoFolder.add(matInfo, 'roughness').name('Roughness').disable();
+		if (matInfo.metalness) window.transformInfoFolder.add(matInfo, 'metalness').name('Metalness').disable();
+		if (matInfo.opacity) window.transformInfoFolder.add(matInfo, 'opacity').name('Opacity').disable();
+		if (matInfo.hasTexture) window.transformInfoFolder.add(matInfo, 'hasTexture').name('Texture').disable();
+		if (matInfo.hasEmissive) window.transformInfoFolder.add(matInfo, 'hasEmissive').name('Emissive').disable();
+	}
+
+	// Add animation control for animated objects
+	const isAnimated = objectAnimationActions.has(obj.uuid);
+	if (isAnimated) {
+		const animData = objectAnimationActions.get(obj.uuid);
+		const animControl = {
+			animated: true,
+			enabled: animData.enabled,
+			toggleAnimation: function() {
+				animData.enabled = this.enabled;
+				if (this.enabled) {
+					animData.action.setEffectiveWeight(1.0);
+				} else {
+					animData.action.setEffectiveWeight(0.0);
+				}
+				// console.log(`Animation for "${obj.name}": ${this.enabled ? 'enabled' : 'disabled'}`);
+			}
+		};
+		window.transformInfoFolder.add(animControl, 'enabled')
+			.name('🎬 Animation')
+			.onChange(() => animControl.toggleAnimation());
+	}
+
 	window.transformInfoFolder.show();
-	console.log('Transform info updated for:', obj.name);
+	// console.log('Transform info updated for:', obj.name);
 }
 
 // Store per-object animation actions for individual control
@@ -1711,26 +1701,6 @@ function playAllUSDAnimations() {
 	// The mixer MUST be created on the same root that was used for animation extraction
 	if (!mixer && usdContentNode) {
 		mixer = new THREE.AnimationMixer(usdContentNode);
-		console.log('Created AnimationMixer on usdContentNode for hierarchical animation support');
-		if (mixer.root) {
-			console.log('Mixer root object:', mixer.root.name, 'UUID:', mixer.root.uuid);
-		}
-
-		// Debug: Dump scene hierarchy
-		console.log('=== Scene Hierarchy ===');
-		dumpSceneHierarchy(usdContentNode);
-		console.log('=======================');
-
-		// Debug: List all objects that the mixer can potentially target by name
-		if (mixer.root) {
-			console.log('=== Objects visible to mixer (by name) ===');
-			mixer.root.traverse((obj) => {
-				if (obj.name) {
-					console.log(`  "${obj.name}" (${obj.type}, uuid: ${obj.uuid.slice(0, 8)})`);
-				}
-			});
-			console.log('==========================================');
-		}
 	}
 
 	// Stop all current animations
@@ -1741,7 +1711,6 @@ function playAllUSDAnimations() {
 
 	// All USD animation clips contain channels for different objects
 	// We need to play all clips together
-	console.log(`Playing ${usdAnimations.length} USD animation clip(s) with all channels`);
 
 	usdAnimations.forEach((clip, clipIndex) => {
 		if (mixer && clip) {
@@ -1783,10 +1752,7 @@ function playAllUSDAnimations() {
 			const action = getCachedClipAction(mixer, clip);
 			action.loop = THREE.LoopRepeat;
 			action.play();
-			console.log(`  Clip ${clipIndex}: ${clip.name}, ${clip.tracks.length} tracks`);
-
-			// Debug: Log track targets to verify hierarchy
-			console.log('  Animation tracks:', clip.tracks.map(t => t.name));
+			action.paused = true; // Start paused - will be unpaused when user clicks Play
 
 			// Group tracks by target object for per-object control
 			clip.tracks.forEach(track => {
@@ -1799,9 +1765,7 @@ function playAllUSDAnimations() {
 					if (usdContentNode) {
 						usdContentNode.traverse(obj => {
 							if (obj.uuid === uuid) {
-								console.log(`    ✓ Found target for track "${track.name}": "${obj.name}" (${obj.type})`);
 								found = true;
-
 								// Store action reference for this object
 								if (!objectAnimationActions.has(uuid)) {
 									objectAnimationActions.set(uuid, {
@@ -1840,7 +1804,7 @@ function playAllUSDAnimations() {
 			action.time = animationParams.beginTime;
 		}
 		mixer.update(0); // Reset mixer state
-		console.log('Animation system pre-warmed');
+		// console.log('Animation system pre-warmed');
 	}
 
 	// Build scene graph UI with per-object animation controls
@@ -1888,7 +1852,7 @@ function debugLogObjectTransforms() {
 
 // Animation parameters
 const animationParams = {
-	isPlaying: true,
+	isPlaying: false, // Start paused - animation starts after scene is fully loaded
 	playPause: function() {
 		this.isPlaying = !this.isPlaying;
 
@@ -1974,14 +1938,14 @@ const animationParams = {
 		if (this.applyUpAxisConversion && currentFileUpAxis === "Z") {
 			// Apply Z-up to Y-up conversion (-90 degrees around X axis)
 			usdSceneRoot.rotation.x = -Math.PI / 2;
-			console.log(`[toggleUpAxisConversion] Applied Z-up to Y-up rotation (file upAxis="${currentFileUpAxis}"): usdSceneRoot.rotation.x =`, usdSceneRoot.rotation.x);
+			// console.log(`[toggleUpAxisConversion] Applied Z-up to Y-up rotation (file upAxis="${currentFileUpAxis}"): usdSceneRoot.rotation.x =`, usdSceneRoot.rotation.x);
 		} else {
 			// Reset rotation (either disabled or file is already Y-up)
 			usdSceneRoot.rotation.x = 0;
 			if (this.applyUpAxisConversion && currentFileUpAxis !== "Z") {
-				console.log(`[toggleUpAxisConversion] No rotation needed (file upAxis="${currentFileUpAxis}"): usdSceneRoot.rotation.x =`, usdSceneRoot.rotation.x);
+				// console.log(`[toggleUpAxisConversion] No rotation needed (file upAxis="${currentFileUpAxis}"): usdSceneRoot.rotation.x =`, usdSceneRoot.rotation.x);
 			} else {
-				console.log(`[toggleUpAxisConversion] Reset rotation (conversion disabled): usdSceneRoot.rotation.x =`, usdSceneRoot.rotation.x);
+				// console.log(`[toggleUpAxisConversion] Reset rotation (conversion disabled): usdSceneRoot.rotation.x =`, usdSceneRoot.rotation.x);
 			}
 		}
 	},
@@ -2070,7 +2034,7 @@ const animationParams = {
 		let effectiveScale = this.sceneScale;
 		if (this.applyMetersPerUnit && currentSceneMetadata.metersPerUnit) {
 			effectiveScale *= currentSceneMetadata.metersPerUnit;
-			console.log(`Applying metersPerUnit: ${currentSceneMetadata.metersPerUnit} (effective scale: ${effectiveScale})`);
+			// console.log(`Applying metersPerUnit: ${currentSceneMetadata.metersPerUnit} (effective scale: ${effectiveScale})`);
 		}
 
 		usdSceneRoot.scale.set(effectiveScale, effectiveScale, effectiveScale);
@@ -2101,11 +2065,11 @@ const animationParams = {
 			// Update the shadow camera projection matrix
 			directionalLight.shadow.camera.updateProjectionMatrix();
 
-			console.log(`Shadow camera frustum updated for scale ${effectiveScale}:`, {
-				bbox: { min: scaledMin, max: scaledMax },
-				frustumSize: maxSize,
-				far: maxSize * 4
-			});
+			// console.log(`Shadow camera frustum updated for scale ${effectiveScale}:`, {
+			// 	bbox: { min: scaledMin, max: scaledMax },
+			// 	frustumSize: maxSize,
+			// 	far: maxSize * 4
+			// });
 		} else {
 			// Fallback if usdContentNode not yet loaded
 			const baseFrustumSize = 100;
@@ -2120,7 +2084,7 @@ const animationParams = {
 
 			directionalLight.shadow.camera.updateProjectionMatrix();
 
-			console.log(`Shadow camera frustum updated (fallback) for scale ${effectiveScale}: [-${frustumSize}, ${frustumSize}]`);
+			// console.log(`Shadow camera frustum updated (fallback) for scale ${effectiveScale}: [-${frustumSize}, ${frustumSize}]`);
 		}
 	},
 	setScalePreset_0_1: function() {
@@ -2175,7 +2139,7 @@ const animationParams = {
 		ground.visible = this.showGroundPlane;
 		gridHelper.visible = this.showGrid;
 
-		console.log(`All helpers ${this.showHelpers ? 'shown' : 'hidden'}`);
+		// console.log(`All helpers ${this.showHelpers ? 'shown' : 'hidden'}`);
 	},
 
 	// Ground plane Y position
@@ -2185,7 +2149,7 @@ const animationParams = {
 	applyGroundPlaneY: function() {
 		ground.position.y = this.groundPlaneY;
 		gridHelper.position.y = this.groundPlaneY;
-		console.log(`Ground plane Y position set to: ${this.groundPlaneY}`);
+		// console.log(`Ground plane Y position set to: ${this.groundPlaneY}`);
 	},
 	toggleGroundPlane: function() {
 		ground.visible = this.showGroundPlane;
@@ -2222,7 +2186,7 @@ const animationParams = {
 		this.groundPlaneY = bbox.min.y;
 		this.applyGroundPlaneY();
 		if (typeof groundPlaneYController !== 'undefined') groundPlaneYController.updateDisplay();
-		console.log(`Ground plane fitted to scene bottom: Y = ${this.groundPlaneY.toFixed(4)}`);
+		// console.log(`Ground plane fitted to scene bottom: Y = ${this.groundPlaneY.toFixed(4)}`);
 	},
 
 	// Fit to scene
@@ -2490,7 +2454,7 @@ function updateTimeRangeGUIControllers(maxDuration) {
 		endTimeController.updateDisplay();
 	}
 
-	console.log(`Updated GUI time range to 0-${newMax}s`);
+	// console.log(`Updated GUI time range to 0-${newMax}s`);
 }
 
 // Function to update scene metadata UI
@@ -2530,7 +2494,7 @@ function updateMetadataUI() {
 	}
 
 	window.metadataFolder.show();
-	console.log('Scene metadata UI updated');
+	// console.log('Scene metadata UI updated');
 }
 
 // Fit camera, grid, and shadows to scene bounds
@@ -2559,12 +2523,12 @@ function fitToScene() {
 	bbox.getSize(size);
 	bbox.getCenter(center);
 
-	console.log('Scene bounds:', {
-		min: bbox.min,
-		max: bbox.max,
-		size: size,
-		center: center
-	});
+	// console.log('Scene bounds:', {
+	// 	min: bbox.min,
+	// 	max: bbox.max,
+	// 	size: size,
+	// 	center: center
+	// });
 
 	// Calculate the maximum dimension
 	const maxDim = Math.max(size.x, size.y, size.z);
@@ -2585,11 +2549,11 @@ function fitToScene() {
 	controls.target.copy(center);
 	controls.update();
 
-	console.log('Camera fitted:', {
-		position: newCameraPos,
-		target: center,
-		distance: cameraDistance
-	});
+	// console.log('Camera fitted:', {
+	// 	position: newCameraPos,
+	// 	target: center,
+	// 	distance: cameraDistance
+	// });
 
 	// Update grid size to match scene bounds (with some padding)
 	const gridSize = Math.ceil(maxDim * 2.5); // 2.5x padding for context
@@ -2603,12 +2567,12 @@ function fitToScene() {
 	gridHelper.position.y = bbox.min.y;
 	scene.add(gridHelper);
 
-	console.log('Grid updated:', {
-		size: gridSize,
-		divisions: gridDivisions,
-		divisionSize: gridSize / gridDivisions,
-		groundY: bbox.min.y
-	});
+	// console.log('Grid updated:', {
+	// 	size: gridSize,
+	// 	divisions: gridDivisions,
+	// 	divisionSize: gridSize / gridDivisions,
+	// 	groundY: bbox.min.y
+	// });
 
 	// Update ground plane to match grid
 	ground.geometry.dispose();
@@ -2636,13 +2600,13 @@ function fitToScene() {
 		center.z + lightDistance * 0.5
 	);
 
-	console.log('Shadows updated:', {
-		frustumSize: shadowSize,
-		lightPosition: directionalLight.position,
-		far: cameraDistance * 3
-	});
+	// console.log('Shadows updated:', {
+	// 	frustumSize: shadowSize,
+	// 	lightPosition: directionalLight.position,
+	// 	far: cameraDistance * 3
+	// });
 
-	console.log('✓ Fit to scene complete');
+	// console.log('✓ Fit to scene complete');
 }
 
 // Info folder
@@ -2707,7 +2671,7 @@ function onMouseClick(event) {
 		// Select the first intersected object
 		const selectedObj = intersects[0].object;
 		selectObject(selectedObj);
-		console.log('Clicked object:', selectedObj.name);
+		// console.log('Clicked object:', selectedObj.name);
 	} else {
 		// Deselect if clicking on empty space
 		if (selectedObject) {
@@ -2719,7 +2683,7 @@ function onMouseClick(event) {
 				selectionHelper = null;
 			}
 			updateTransformInfoUI(null);
-			console.log('Deselected object');
+			// console.log('Deselected object');
 		}
 	}
 }
@@ -2804,7 +2768,7 @@ async function loadUSDFromArrayBuffer(arrayBuffer, filename) {
 			// Try to delete the USD scene if it has a delete method
 			if (typeof currentUSDScene.delete === 'function') {
 				currentUSDScene.delete();
-				console.log('USD scene deleted');
+				// console.log('USD scene deleted');
 			}
 		} catch (e) {
 			console.warn('Could not delete USD scene:', e);
@@ -2818,10 +2782,10 @@ async function loadUSDFromArrayBuffer(arrayBuffer, filename) {
 			// Try to access native loader for memory cleanup
 			if (currentLoader.native_ && typeof currentLoader.native_.reset === 'function') {
 				currentLoader.native_.reset();
-				console.log('WASM memory reset via native loader');
+				// console.log('WASM memory reset via native loader');
 			} else if (currentLoader.native_ && typeof currentLoader.native_.clearAssets === 'function') {
 				currentLoader.native_.clearAssets();
-				console.log('WASM assets cleared via native loader');
+				// console.log('WASM assets cleared via native loader');
 			}
 		} catch (e) {
 			console.warn('Could not reset WASM memory:', e);
@@ -2871,26 +2835,6 @@ async function loadUSDFromArrayBuffer(arrayBuffer, filename) {
 		copyright: sceneMetadata.copyright || ""
 	};
 
-	console.log('=== USD Scene Metadata ===');
-	console.log(`upAxis: "${currentSceneMetadata.upAxis}"`);
-	console.log(`metersPerUnit: ${currentSceneMetadata.metersPerUnit}`);
-	console.log(`framesPerSecond: ${currentSceneMetadata.framesPerSecond}`);
-	console.log(`timeCodesPerSecond: ${currentSceneMetadata.timeCodesPerSecond}`);
-	if (currentSceneMetadata.startTimeCode !== null && currentSceneMetadata.startTimeCode !== undefined) {
-		console.log(`startTimeCode: ${currentSceneMetadata.startTimeCode}`);
-	}
-	if (currentSceneMetadata.endTimeCode !== null && currentSceneMetadata.endTimeCode !== undefined) {
-		console.log(`endTimeCode: ${currentSceneMetadata.endTimeCode}`);
-	}
-	console.log(`autoPlay: ${currentSceneMetadata.autoPlay}`);
-	if (currentSceneMetadata.comment) {
-		console.log(`comment: "${currentSceneMetadata.comment}"`);
-	}
-	if (currentSceneMetadata.copyright) {
-		console.log(`copyright: "${currentSceneMetadata.copyright}"`);
-	}
-	console.log('========================');
-
 	// Update metadata UI
 	updateMetadataUI();
 
@@ -2898,7 +2842,6 @@ async function loadUSDFromArrayBuffer(arrayBuffer, filename) {
 	try {
 		const domeLightData = await loadDomeLightFromUSD(usd_scene);
 		if (domeLightData) {
-			console.log('Loaded DomeLight from USD:', domeLightData);
 			if (envPresetController) {
 				envPresetController.updateDisplay();
 			}
@@ -2945,22 +2888,22 @@ async function loadUSDFromArrayBuffer(arrayBuffer, filename) {
 	usdSceneRoot.add(threeNode);
 
 	// Debug: Log initial transforms of all objects
-	console.log('=== Initial Object Transforms ===');
-	threeNode.traverse((obj) => {
-		if (obj.name && obj.name !== '') {
-			console.log(`Object "${obj.name}": position=[${obj.position.x.toFixed(3)}, ${obj.position.y.toFixed(3)}, ${obj.position.z.toFixed(3)}], scale=[${obj.scale.x.toFixed(3)}, ${obj.scale.y.toFixed(3)}, ${obj.scale.z.toFixed(3)}]`);
-		}
-	});
-	console.log('=================================');
+	// console.log('=== Initial Object Transforms ===');
+	// threeNode.traverse((obj) => {
+	// 	if (obj.name && obj.name !== '') {
+	// 		console.log(`Object "${obj.name}": position=[${obj.position.x.toFixed(3)}, ${obj.position.y.toFixed(3)}, ${obj.position.z.toFixed(3)}], scale=[${obj.scale.x.toFixed(3)}, ${obj.scale.y.toFixed(3)}, ${obj.scale.z.toFixed(3)}]`);
+	// 	}
+	// });
+	// console.log('=================================');
 
 	// Apply Z-up to Y-up conversion if enabled AND the file is actually Z-up
 	if (animationParams.applyUpAxisConversion && fileUpAxis === "Z") {
 		usdSceneRoot.rotation.x = -Math.PI / 2;
-		console.log(`[loadUSDFromArrayBuffer] Applied Z-up to Y-up conversion (file upAxis="${fileUpAxis}"): rotation.x =`, usdSceneRoot.rotation.x);
+		// console.log(`[loadUSDFromArrayBuffer] Applied Z-up to Y-up conversion (file upAxis="${fileUpAxis}"): rotation.x =`, usdSceneRoot.rotation.x);
 	} else if (animationParams.applyUpAxisConversion && fileUpAxis !== "Y") {
 		console.warn(`[loadUSDFromArrayBuffer] File upAxis is "${fileUpAxis}" (not Y or Z), no rotation applied`);
 	} else {
-		console.log(`[loadUSDFromArrayBuffer] No upAxis conversion needed (file upAxis="${fileUpAxis}", conversion ${animationParams.applyUpAxisConversion ? 'enabled' : 'disabled'})`);
+		// console.log(`[loadUSDFromArrayBuffer] No upAxis conversion needed (file upAxis="${fileUpAxis}", conversion ${animationParams.applyUpAxisConversion ? 'enabled' : 'disabled'})`);
 	}
 
 	// Apply scene scale and update shadow frustum based on model bounds
@@ -2999,7 +2942,7 @@ async function loadUSDFromArrayBuffer(arrayBuffer, filename) {
 					if (info.has_node_animation) types.push('node');
 					if (types.length > 0) typeStr = ` [${types.join('+')}]`;
 				}
-				console.log(`Animation ${index}: ${clip.name}, duration: ${clip.duration}s, tracks: ${clip.tracks.length}${typeStr}`);
+				// console.log(`Animation ${index}: ${clip.name}, duration: ${clip.duration}s, tracks: ${clip.tracks.length}${typeStr}`);
 			});
 
 			// Set time range from metadata or first USD animation
@@ -3027,7 +2970,7 @@ async function loadUSDFromArrayBuffer(arrayBuffer, filename) {
 				animationParams.endTime = endTime;
 				animationParams.duration = endTime - beginTime;
 				animationParams.time = beginTime; // Reset time to beginning
-				console.log(`Set time range from ${timeRangeSource}: ${beginTime}s - ${endTime}s`);
+				// console.log(`Set time range from ${timeRangeSource}: ${beginTime}s - ${endTime}s`);
 
 				// Update GUI controllers if they exist
 				updateTimeRangeGUIControllers(endTime);
@@ -3037,12 +2980,14 @@ async function loadUSDFromArrayBuffer(arrayBuffer, filename) {
 		// Set playback speed (FPS) from framesPerSecond metadata
 		const fps = currentSceneMetadata.framesPerSecond || 24.0;
 		animationParams.speed = fps;
-		console.log(`Set animation speed (FPS) from metadata: ${fps}`);
-			// Play all USD animations automatically
+		// console.log(`Set animation speed (FPS) from metadata: ${fps}`);
+			// Setup all USD animations (paused by default)
 			playAllUSDAnimations();
+			console.log(`✅ Scene ready! ${usdAnimations.length} animation(s) loaded and paused. Click Play to start.`);
 		} else {
 			// No USD animations found
 			console.log('No USD animations found in USD file');
+			console.log('✅ Scene ready! (no animations)');
 
 			// Still build scene graph UI for static scenes
 			buildSceneGraphUI();
@@ -3208,3 +3153,16 @@ function animate() {
 
 // Start animation
 animate();
+
+// ===========================================
+// Debug: Expose key objects globally for performance profiling
+// ===========================================
+window.renderer = renderer;
+window.scene = scene;
+window.camera = camera;
+window.directionalLight = directionalLight;
+// Expose key objects for external access (e.g., parent frame integration)
+window.usdSceneRoot = usdSceneRoot;
+window.mixer = () => mixer;
+window.animationParams = animationParams;
+window.THREE = THREE;
