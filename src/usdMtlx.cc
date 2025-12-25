@@ -1040,6 +1040,7 @@ static bool ConvertImage(const tinyusdz::mtlx::pugi::xml_node &node, PrimSpec &p
 
 // Convert MaterialX texcoord node to USD UsdPrimvarReader_float2
 static bool ConvertTexCoord(const tinyusdz::mtlx::pugi::xml_node &node, PrimSpec &ps,
+                            const MtlxConfig &config,
                             std::string *warn, std::string *err) {
   (void)warn;
 
@@ -1059,8 +1060,17 @@ static bool ConvertTexCoord(const tinyusdz::mtlx::pugi::xml_node &node, PrimSpec
     }
   }
 
-  // Map to USD primvar name convention
-  std::string varname = (uv_index == 0) ? "st" : "st" + std::to_string(uv_index);
+  // Map to USD primvar name convention using MtlxConfig
+  // Similar to OpenUSD's USDMTLX_PRIMARY_UV_NAME environment variable
+  std::string varname;
+  if (uv_index == 0) {
+    // Primary UV: use config.primary_uv_name, fallback to "st" if empty
+    varname = config.primary_uv_name.empty() ? "st" : config.primary_uv_name;
+  } else {
+    // Secondary UV: use config.secondary_uv_name_prefix + index, fallback to "st" + index
+    std::string prefix = config.secondary_uv_name_prefix.empty() ? "st" : config.secondary_uv_name_prefix;
+    varname = prefix + std::to_string(uv_index);
+  }
   ps.props()["inputs:varname"] = Property(Attribute::Uniform(varname));
 
   // Set fallback to (0, 0)
@@ -1277,6 +1287,7 @@ static bool ConvertNoise(const tinyusdz::mtlx::pugi::xml_node &node, PrimSpec &p
 // Sets is_skip to true if the node should be skipped (input/output/unknown)
 static bool ConvertSingleNode(const tinyusdz::mtlx::pugi::xml_node &node,
                               PrimSpec &ps, bool &is_skip,
+                              const MtlxConfig &config,
                               std::string *warn, std::string *err) {
   is_skip = false;
   std::string node_name = node.name();
@@ -1295,7 +1306,7 @@ static bool ConvertSingleNode(const tinyusdz::mtlx::pugi::xml_node &node,
       return false;
     }
   } else if (node_name == "texcoord") {
-    if (!ConvertTexCoord(node, ps, warn, err)) {
+    if (!ConvertTexCoord(node, ps, config, warn, err)) {
       return false;
     }
   } else if (node_name == "constant") {
@@ -1342,6 +1353,7 @@ static bool ConvertSingleNode(const tinyusdz::mtlx::pugi::xml_node &node,
 // Iterative version of ConvertNodeGraph using explicit stack
 static bool ConvertNodeGraphIterative(const tinyusdz::mtlx::pugi::xml_node &root_node,
                                       PrimSpec &ps_out,
+                                      const MtlxConfig &config,
                                       std::string *warn, std::string *err) {
   constexpr size_t kMaxDepth = 1024 * 1024;
 
@@ -1370,7 +1382,7 @@ static bool ConvertNodeGraphIterative(const tinyusdz::mtlx::pugi::xml_node &root
   stack.emplace_back(root_node);
 
   // Convert root node
-  if (!ConvertSingleNode(root_node, stack.back().ps, stack.back().is_skip, warn, err)) {
+  if (!ConvertSingleNode(root_node, stack.back().ps, stack.back().is_skip, config, warn, err)) {
     return false;
   }
 
@@ -1391,7 +1403,7 @@ static bool ConvertNodeGraphIterative(const tinyusdz::mtlx::pugi::xml_node &root
       stack.emplace_back(child);
 
       // Convert the child node
-      if (!ConvertSingleNode(child, stack.back().ps, stack.back().is_skip, warn, err)) {
+      if (!ConvertSingleNode(child, stack.back().ps, stack.back().is_skip, config, warn, err)) {
         return false;
       }
     } else {
@@ -1421,9 +1433,10 @@ static bool ConvertNodeGraphIterative(const tinyusdz::mtlx::pugi::xml_node &root
 // Wrapper to maintain backward compatibility with ConvertNodeGraphRec signature
 static bool ConvertNodeGraphRec(const uint32_t depth,
                                 const tinyusdz::mtlx::pugi::xml_node &node, PrimSpec &ps_out,
+                                const MtlxConfig &config,
                                 std::string *warn, std::string *err) {
   (void)depth;  // Iterative version handles depth internally
-  return ConvertNodeGraphIterative(node, ps_out, warn, err);
+  return ConvertNodeGraphIterative(node, ps_out, config, warn, err);
 }
 
 #if 0  // TODO
@@ -1495,7 +1508,8 @@ static bool ConvertTiledImage(const tinyusdz::mtlx::pugi::xml_node &node, UsdUVT
 
 bool ReadMaterialXFromString(const std::string &str,
                              const std::string &asset_path, MtlxModel *mtlx,
-                             std::string *warn, std::string *err) {
+                             std::string *warn, std::string *err,
+                             const MtlxConfig &config) {
 #define GET_ATTR_VALUE(__xml, __name, __ty, __var)                        \
   do {                                                                    \
     tinyusdz::mtlx::pugi::xml_attribute attr = __xml.attribute(__name);                   \
@@ -1645,7 +1659,7 @@ bool ReadMaterialXFromString(const std::string &str,
       } else {
         // Process shader nodes
         PrimSpec child_ps;
-        if (detail::ConvertNodeGraphRec(0, child, child_ps, warn, err)) {
+        if (detail::ConvertNodeGraphRec(0, child, child_ps, config, warn, err)) {
           if (!child_ps.name().empty()) {
             ng_ps.children().emplace_back(std::move(child_ps));
           }
@@ -2231,7 +2245,8 @@ bool ReadMaterialXFromString(const std::string &str,
 
 bool ReadMaterialXFromFile(const AssetResolutionResolver &resolver,
                            const std::string &asset_path, MtlxModel *mtlx,
-                           std::string *warn, std::string *err) {
+                           std::string *warn, std::string *err,
+                           const MtlxConfig &config) {
   std::string filepath = resolver.resolve(asset_path);
   if (filepath.empty()) {
     PUSH_ERROR_AND_RETURN("Asset not found: " + asset_path);
@@ -2247,7 +2262,7 @@ bool ReadMaterialXFromFile(const AssetResolutionResolver &resolver,
   }
 
   std::string str(reinterpret_cast<const char *>(&data[0]), data.size());
-  return ReadMaterialXFromString(str, asset_path, mtlx, warn, err);
+  return ReadMaterialXFromString(str, asset_path, mtlx, warn, err, config);
 }
 
 bool WriteMaterialXToString(const MtlxModel &mtlx, std::string &xml_str,
@@ -2540,11 +2555,13 @@ namespace tinyusdz {
 
 bool ReadMaterialXFromFile(const AssetResolutionResolver &resolver,
                            const std::string &asset_path, MtlxModel *mtlx,
-                           std::string *warn, std::string *err) {
+                           std::string *warn, std::string *err,
+                           const MtlxConfig &config) {
   (void)resolver;
   (void)asset_path;
   (void)mtlx;
   (void)warn;
+  (void)config;
 
   if (err) {
     (*err) += "MaterialX support is disabled in this build.\n";
