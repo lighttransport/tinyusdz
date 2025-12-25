@@ -1108,8 +1108,7 @@ async function loadUSDModel() {
 	currentLoader = loader; // Store reference for cleanup
 
 	// USD FILES
-	//const usd_filename = "./assets/suzanne-xform.usdc";
-	const usd_filename = "./assets/TrenchRun5_v5_1X-mtlx.usdz";
+	const usd_filename = "./assets/suzanne-xform.usdc";
 
 	// Load USD scene
 	const usd_scene = await loader.loadAsync(usd_filename);
