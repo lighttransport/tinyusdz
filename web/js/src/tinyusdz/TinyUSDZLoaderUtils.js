@@ -1195,7 +1195,10 @@ class TinyUSDZLoaderUtils extends LoaderUtils {
     static async loadDomeLightFromTextureId(light, usdLoader, envmapTextureId, textureFile, pmremGenerator) {
         try {
             const imageData = usdLoader.getImage(envmapTextureId);
-            if (!imageData || !imageData.data || imageData.data.length === 0) return null;
+            if (!imageData || !imageData.data || imageData.data.length === 0) {
+                console.warn(`DomeLight: No image data found for texture ID ${envmapTextureId}`);
+                return null;
+            }
 
             let texture = imageData.decoded
                 ? await this.createTextureFromDecodedData(imageData.data, imageData.width, imageData.height, imageData.channels, imageData.colorSpace)
@@ -1203,6 +1206,12 @@ class TinyUSDZLoaderUtils extends LoaderUtils {
 
             if (!texture) {
                 texture = this.createFallbackEnvTexture();
+            }
+
+            // Verify texture has valid image data before PMREM processing
+            if (!texture || !texture.image) {
+                console.warn(`DomeLight: Failed to create valid texture from image ID ${envmapTextureId}`);
+                return null;
             }
 
             texture = this.ensureMinimumTextureSize(texture);
@@ -1223,7 +1232,7 @@ class TinyUSDZLoaderUtils extends LoaderUtils {
                 exposure: light.exposure
             };
         } catch (error) {
-            console.warn(`Failed to load envmap from image index ${envmapTextureId}:`, error);
+            console.warn(`DomeLight: Failed to load envmap from image index ${envmapTextureId}:`, error.message);
             return null;
         }
     }
@@ -1240,13 +1249,48 @@ class TinyUSDZLoaderUtils extends LoaderUtils {
             let texture = null;
             const lowerFile = textureFile.toLowerCase();
 
-            if (lowerFile.endsWith('.exr')) {
-                texture = await new EXRLoader().loadAsync(textureFile);
-            } else if (lowerFile.endsWith('.hdr')) {
-                texture = await new HDRLoader().loadAsync(textureFile);
+            // Pre-check if file exists and has valid content type
+            try {
+                const response = await fetch(textureFile, { method: 'HEAD' });
+                if (!response.ok) {
+                    console.warn(`DomeLight: Texture file not accessible '${textureFile}' (HTTP ${response.status})`);
+                    return null;
+                }
+                // Check content type - reject HTML responses (likely 404 pages that return 200)
+                const contentType = response.headers.get('content-type') || '';
+                if (contentType.includes('text/html')) {
+                    console.warn(`DomeLight: Invalid content type for '${textureFile}' (got HTML, expected image)`);
+                    return null;
+                }
+            } catch (fetchError) {
+                console.warn(`DomeLight: Cannot access texture file '${textureFile}' - ${fetchError.message}`);
+                return null;
             }
 
-            if (!texture) return null;
+            if (lowerFile.endsWith('.exr')) {
+                try {
+                    texture = await new EXRLoader().loadAsync(textureFile);
+                } catch (exrError) {
+                    console.warn(`DomeLight: EXR load failed for '${textureFile}' - ${exrError.message}`);
+                    return null;
+                }
+            } else if (lowerFile.endsWith('.hdr')) {
+                try {
+                    texture = await new HDRLoader().loadAsync(textureFile);
+                } catch (hdrError) {
+                    console.warn(`DomeLight: HDR load failed for '${textureFile}' - ${hdrError.message}`);
+                    return null;
+                }
+            } else {
+                console.warn(`DomeLight: Unsupported texture format for '${textureFile}'`);
+                return null;
+            }
+
+            // Check if texture was loaded and has valid image data
+            if (!texture || !texture.image) {
+                console.warn(`DomeLight: Texture loaded but has no image data for '${textureFile}'`);
+                return null;
+            }
 
             texture.mapping = THREE.EquirectangularReflectionMapping;
             const envMap = pmremGenerator.fromEquirectangular(texture).texture;
@@ -1263,7 +1307,7 @@ class TinyUSDZLoaderUtils extends LoaderUtils {
                 exposure: light.exposure
             };
         } catch (error) {
-            console.warn(`Failed to load DomeLight texture directly: ${error.message}`);
+            console.warn(`DomeLight: Unexpected error loading '${textureFile}' - ${error.message}`);
             return null;
         }
     }
