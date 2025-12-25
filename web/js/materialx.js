@@ -8,6 +8,8 @@ import { EXRLoader } from 'three/examples/jsm/loaders/EXRLoader.js';
 import GUI from 'three/examples/jsm/libs/lil-gui.module.min.js';
 import { TinyUSDZLoader } from 'tinyusdz/TinyUSDZLoader.js';
 import { TinyUSDZLoaderUtils } from 'tinyusdz/TinyUSDZLoaderUtils.js';
+import { OpenPBRMaterial } from './OpenPBRMaterial.js';
+import { OpenPBRValidator, OpenPBRGroundTruth } from './OpenPBRValidation.js';
 
 // ============================================================================
 // Constants
@@ -160,6 +162,7 @@ const guiState = {
 // User settings
 const settings = {
     materialType: 'auto',
+    materialImplementation: 'physical', // 'physical' | 'openpbr' | 'auto'
     envMapPreset: 'goegap_1k',
     envMapIntensity: 1.0,
     envConstantColor: '#ffffff',
@@ -174,6 +177,9 @@ const settings = {
     gridSize: 10,
     gridDivisions: 10
 };
+
+// Validator instance (created after renderer init)
+let validator = null;
 
 // ============================================================================
 // Colorspace Utilities
@@ -327,6 +333,9 @@ function setupGUI() {
 
     // Animation disabled for now - may revisit later
     // setupAnimationFolder();
+
+    // OpenPBR validation folder
+    setupValidationFolder(guiState.gui);
 }
 
 function setupSceneFolder() {
@@ -449,7 +458,47 @@ function setupMaterialTypeFolder() {
     materialTypeFolder.add(settings, 'materialType', ['auto', 'openpbr', 'usdpreviewsurface'])
         .name('Preferred Type')
         .onChange(reloadMaterials);
+
+    materialTypeFolder.add(settings, 'materialImplementation', ['physical', 'openpbr', 'auto'])
+        .name('Implementation')
+        .onChange(reloadMaterials);
+
+    // Show discrepancy report
+    materialTypeFolder.add({
+        showDiscrepancies: showMaterialDiscrepancyReport
+    }, 'showDiscrepancies').name('Show Limitations');
+
     materialTypeFolder.open();
+}
+
+/**
+ * Show MeshPhysicalMaterial vs OpenPBRMaterial discrepancy report
+ */
+function showMaterialDiscrepancyReport() {
+    const report = `
+=== MeshPhysicalMaterial vs OpenPBRMaterial ===
+
+Features MISSING in MeshPhysicalMaterial:
+- base_diffuse_roughness (Oren-Nayar diffuse)
+- coat_color (always white)
+- coat_ior (fixed at 1.5)
+- specular_weight (different from specularIntensity)
+- base_weight
+
+Features with DIFFERENT models:
+- Sheen: Three.js uses Charlie, OpenPBR uses different formulation
+- Thin Film: Different parameterization
+
+OUT OF SCOPE (require raytracing):
+- Subsurface scattering (SSS)
+- Transmission scatter
+- Dispersion
+
+Use 'openpbr' implementation to get accurate OpenPBR rendering.
+`.trim();
+
+    console.log(report);
+    alert(report);
 }
 
 function setupEventListeners() {
@@ -986,7 +1035,8 @@ async function loadDefaultScene() {
 }
 
 async function loadDefaultUSDFile() {
-    const defaultFile = './assets/fancy-teapot-mtlx.usdz';
+    //const defaultFile = './assets/fancy-teapot-mtlx.usdz';
+    const defaultFile = './assets/sphere-mtlx.usdc';
     updateStatus(`Loading ${defaultFile}...`);
     try {
         const response = await fetch(defaultFile);
@@ -1390,18 +1440,32 @@ async function convertMaterial(matData, index) {
     const typeString = TinyUSDZLoaderUtils.getMaterialTypeString(matData);
 
     try {
-        const material = await TinyUSDZLoaderUtils.convertMaterial(
-            matData,
-            loaderState.nativeLoader,
-            {
-                preferredMaterialType: settings.materialType,
-                envMap: threeState.envMap,
-                envMapIntensity: settings.envMapIntensity,
-                textureCache: sceneState.textureCache
-            }
-        );
+        // Check if we should use OpenPBRMaterial
+        const useOpenPBRMaterial = shouldUseOpenPBRMaterial(typeInfo, settings.materialImplementation);
+
+        let material;
+
+        if (useOpenPBRMaterial) {
+            // Create OpenPBRMaterial directly
+            material = convertToOpenPBRMaterial(matData);
+            material.envMap = threeState.envMap;
+            material.envMapIntensity = settings.envMapIntensity;
+        } else {
+            // Use TinyUSDZLoaderUtils for MeshPhysicalMaterial
+            material = await TinyUSDZLoaderUtils.convertMaterial(
+                matData,
+                loaderState.nativeLoader,
+                {
+                    preferredMaterialType: settings.materialType,
+                    envMap: threeState.envMap,
+                    envMapIntensity: settings.envMapIntensity,
+                    textureCache: sceneState.textureCache
+                }
+            );
+        }
+
         material.userData.typeInfo = typeInfo;
-        material.userData.typeString = typeString;
+        material.userData.typeString = typeString + (useOpenPBRMaterial ? ' [OpenPBRMaterial]' : ' [MeshPhysicalMaterial]');
         material.userData.rawData = matData;
         return material;
     } catch (e) {
@@ -1412,6 +1476,89 @@ async function convertMaterial(matData, index) {
             metalness: 0.0
         });
     }
+}
+
+/**
+ * Determine if we should use OpenPBRMaterial based on settings and material type
+ */
+function shouldUseOpenPBRMaterial(typeInfo, implementation) {
+    if (implementation === 'physical') {
+        return false;
+    }
+    if (implementation === 'openpbr') {
+        return typeInfo.hasOpenPBR;
+    }
+    // 'auto' - use OpenPBRMaterial for OpenPBR materials
+    return typeInfo.hasOpenPBR;
+}
+
+/**
+ * Convert material data to OpenPBRMaterial
+ */
+function convertToOpenPBRMaterial(matData) {
+    const openPBR = matData.openPBR || matData.openPBRShader || matData;
+
+    // Extract values with fallbacks
+    const extractValue = (param, defaultVal) => {
+        if (param === undefined || param === null) return defaultVal;
+        if (typeof param === 'object' && param.value !== undefined) return param.value;
+        if (typeof param === 'number') return param;
+        return defaultVal;
+    };
+
+    const extractColor = (param, defaultVal) => {
+        if (!param) return new THREE.Color(...defaultVal);
+        if (param.r !== undefined) return new THREE.Color(param.r, param.g, param.b);
+        if (Array.isArray(param)) return new THREE.Color(...param);
+        if (typeof param === 'object' && param.value) {
+            if (Array.isArray(param.value)) return new THREE.Color(...param.value);
+            if (param.value.r !== undefined) return new THREE.Color(param.value.r, param.value.g, param.value.b);
+        }
+        return new THREE.Color(...defaultVal);
+    };
+
+    const material = new OpenPBRMaterial({
+        // Base layer
+        base_weight: extractValue(openPBR.base_weight, 1.0),
+        base_color: extractColor(openPBR.base_color, [0.8, 0.8, 0.8]),
+        base_metalness: extractValue(openPBR.base_metalness, 0.0),
+        base_diffuse_roughness: extractValue(openPBR.base_diffuse_roughness, 0.0),
+
+        // Specular layer
+        specular_weight: extractValue(openPBR.specular_weight, 1.0),
+        specular_color: extractColor(openPBR.specular_color, [1.0, 1.0, 1.0]),
+        specular_roughness: extractValue(openPBR.specular_roughness, 0.3),
+        specular_ior: extractValue(openPBR.specular_ior, 1.5),
+        specular_anisotropy: extractValue(openPBR.specular_anisotropy, 0.0),
+
+        // Coat layer
+        coat_weight: extractValue(openPBR.coat_weight, 0.0),
+        coat_color: extractColor(openPBR.coat_color, [1.0, 1.0, 1.0]),
+        coat_roughness: extractValue(openPBR.coat_roughness, 0.0),
+        coat_ior: extractValue(openPBR.coat_ior, 1.5),
+
+        // Fuzz layer
+        fuzz_weight: extractValue(openPBR.fuzz_weight || openPBR.sheen_weight, 0.0),
+        fuzz_color: extractColor(openPBR.fuzz_color || openPBR.sheen_color, [1.0, 1.0, 1.0]),
+        fuzz_roughness: extractValue(openPBR.fuzz_roughness || openPBR.sheen_roughness, 0.5),
+
+        // Thin film
+        thin_film_weight: extractValue(openPBR.thin_film_weight, 0.0),
+        thin_film_thickness: extractValue(openPBR.thin_film_thickness, 500.0),
+        thin_film_ior: extractValue(openPBR.thin_film_ior, 1.5),
+
+        // Emission
+        emission_luminance: extractValue(openPBR.emission_luminance, 0.0),
+        emission_color: extractColor(openPBR.emission_color, [1.0, 1.0, 1.0]),
+
+        // Geometry
+        geometry_opacity: extractValue(openPBR.geometry_opacity || openPBR.opacity, 1.0)
+    });
+
+    // Set color alias for compatibility
+    material.uniforms.base_color.value.copy(material.uniforms.base_color.value);
+
+    return material;
 }
 
 async function reloadMaterials() {
@@ -1672,35 +1819,52 @@ function addMaterialControls(folder, mat) {
         });
     }
 
+    // --- Base Layer ---
     if (mat.metalness !== undefined) {
         folder.add(mat, 'metalness', 0, 1, 0.01).name('Metalness');
     }
 
+    addDiffuseRoughnessControl(folder, mat);
+
+    // --- Specular Layer ---
     if (mat.roughness !== undefined) {
-        folder.add(mat, 'roughness', 0, 1, 0.01).name('Roughness');
+        folder.add(mat, 'roughness', 0, 1, 0.01).name('Specular Roughness');
     }
 
     if (mat.ior !== undefined) {
-        folder.add(mat, 'ior', 1, 3, 0.01).name('IOR');
+        folder.add(mat, 'ior', 1, 3, 0.01).name('Specular IOR');
     }
 
+    addSpecularWeightControl(folder, mat);
+    addSpecularColorControl(folder, mat);
+
+    // --- Coat Layer ---
     if (mat.clearcoat !== undefined) {
-        folder.add(mat, 'clearcoat', 0, 1, 0.01).name('Clearcoat');
+        folder.add(mat, 'clearcoat', 0, 1, 0.01).name('Coat Weight');
     }
 
     if (mat.clearcoatRoughness !== undefined) {
-        folder.add(mat, 'clearcoatRoughness', 0, 1, 0.01).name('Clearcoat Roughness');
+        folder.add(mat, 'clearcoatRoughness', 0, 1, 0.01).name('Coat Roughness');
     }
 
+    addCoatIORControl(folder, mat);
+    addCoatColorControl(folder, mat);
+
+    // --- Fuzz/Sheen Layer ---
+    if (mat.sheen !== undefined) {
+        folder.add(mat, 'sheen', 0, 1, 0.01).name('Fuzz Weight');
+    }
+
+    if (mat.sheenRoughness !== undefined) {
+        folder.add(mat, 'sheenRoughness', 0, 1, 0.01).name('Fuzz Roughness');
+    }
+
+    addFuzzColorControl(folder, mat);
+
+    // --- Other Layers ---
     if (mat.transmission !== undefined) {
         folder.add(mat, 'transmission', 0, 1, 0.01).name('Transmission');
     }
-
-    if (mat.sheen !== undefined) {
-        folder.add(mat, 'sheen', 0, 1, 0.01).name('Fuzz');
-    }
-
-    addDiffuseRoughnessControl(folder, mat);
 
     if (mat.emissive) {
         const displayEmissive = linearToSRGB(mat.emissive.clone());
@@ -1745,6 +1909,264 @@ function addDiffuseRoughnessControl(folder, mat) {
             }
             if (rawData?.openPBRShader?.base_diffuse_roughness !== undefined) {
                 rawData.openPBRShader.base_diffuse_roughness = v;
+            }
+            mat.needsUpdate = true;
+        });
+}
+
+function addSpecularWeightControl(folder, mat) {
+    let specularWeightValue;
+    const rawData = mat.userData?.rawData;
+
+    if (rawData?.specular_weight !== undefined) {
+        specularWeightValue = rawData.specular_weight;
+    } else if (rawData?.openPBR?.specular_weight !== undefined) {
+        specularWeightValue = rawData.openPBR.specular_weight;
+    } else if (rawData?.openPBRShader?.specular_weight !== undefined) {
+        specularWeightValue = rawData.openPBRShader.specular_weight;
+    }
+
+    // Default to 1.0 if OpenPBR material but no specular_weight specified
+    if (specularWeightValue === undefined) {
+        if (rawData?.openPBR || rawData?.openPBRShader) {
+            specularWeightValue = 1.0;
+        } else {
+            return; // Not an OpenPBR material
+        }
+    }
+
+    if (!mat.userData.customParams) {
+        mat.userData.customParams = {};
+    }
+    mat.userData.customParams.specularWeight = specularWeightValue;
+
+    folder.add(mat.userData.customParams, 'specularWeight', 0, 1, 0.01)
+        .name('Specular Weight')
+        .onChange(v => {
+            if (rawData?.specular_weight !== undefined) {
+                rawData.specular_weight = v;
+            }
+            if (rawData?.openPBR) {
+                rawData.openPBR.specular_weight = v;
+            }
+            if (rawData?.openPBRShader) {
+                rawData.openPBRShader.specular_weight = v;
+            }
+            // Update Three.js specularIntensity if available
+            if (mat.specularIntensity !== undefined) {
+                mat.specularIntensity = v;
+            }
+            mat.needsUpdate = true;
+        });
+}
+
+function addSpecularColorControl(folder, mat) {
+    let specularColorValue;
+    const rawData = mat.userData?.rawData;
+
+    if (rawData?.specular_color !== undefined) {
+        specularColorValue = rawData.specular_color;
+    } else if (rawData?.openPBR?.specular_color !== undefined) {
+        specularColorValue = rawData.openPBR.specular_color;
+    } else if (rawData?.openPBRShader?.specular_color !== undefined) {
+        specularColorValue = rawData.openPBRShader.specular_color;
+    }
+
+    // Default to white if OpenPBR material but no specular_color specified
+    if (specularColorValue === undefined) {
+        if (rawData?.openPBR || rawData?.openPBRShader) {
+            specularColorValue = [1.0, 1.0, 1.0];
+        } else {
+            return; // Not an OpenPBR material
+        }
+    }
+
+    if (!mat.userData.customParams) {
+        mat.userData.customParams = {};
+    }
+
+    // Convert to THREE.Color for display
+    const color = Array.isArray(specularColorValue)
+        ? new THREE.Color(specularColorValue[0], specularColorValue[1], specularColorValue[2])
+        : new THREE.Color(specularColorValue);
+
+    const displayColor = linearToSRGB(color.clone());
+    mat.userData.customParams.specularColorHex = '#' + displayColor.getHexString();
+
+    folder.addColor(mat.userData.customParams, 'specularColorHex')
+        .name('Specular Color')
+        .onChange(v => {
+            const newColor = sRGBToLinear(new THREE.Color(v));
+            const colorArray = [newColor.r, newColor.g, newColor.b];
+
+            if (rawData?.specular_color !== undefined) {
+                rawData.specular_color = colorArray;
+            }
+            if (rawData?.openPBR) {
+                rawData.openPBR.specular_color = colorArray;
+            }
+            if (rawData?.openPBRShader) {
+                rawData.openPBRShader.specular_color = colorArray;
+            }
+            // Update Three.js specularColor if available
+            if (mat.specularColor) {
+                mat.specularColor.copy(newColor);
+            }
+            mat.needsUpdate = true;
+        });
+}
+
+function addCoatIORControl(folder, mat) {
+    let coatIORValue;
+    const rawData = mat.userData?.rawData;
+
+    if (rawData?.coat_ior !== undefined) {
+        coatIORValue = rawData.coat_ior;
+    } else if (rawData?.openPBR?.coat_ior !== undefined) {
+        coatIORValue = rawData.openPBR.coat_ior;
+    } else if (rawData?.openPBRShader?.coat_ior !== undefined) {
+        coatIORValue = rawData.openPBRShader.coat_ior;
+    }
+
+    // Default to 1.5 if OpenPBR material (show regardless of coat weight)
+    if (coatIORValue === undefined) {
+        if (rawData?.openPBR || rawData?.openPBRShader) {
+            coatIORValue = 1.5;
+        } else {
+            return; // Not an OpenPBR material
+        }
+    }
+
+    if (!mat.userData.customParams) {
+        mat.userData.customParams = {};
+    }
+    mat.userData.customParams.coatIOR = coatIORValue;
+
+    folder.add(mat.userData.customParams, 'coatIOR', 1, 3, 0.01)
+        .name('Coat IOR')
+        .onChange(v => {
+            if (rawData?.coat_ior !== undefined) {
+                rawData.coat_ior = v;
+            }
+            if (rawData?.openPBR) {
+                rawData.openPBR.coat_ior = v;
+            }
+            if (rawData?.openPBRShader) {
+                rawData.openPBRShader.coat_ior = v;
+            }
+            // Note: Three.js MeshPhysicalMaterial doesn't support coat IOR (fixed at 1.5)
+            mat.needsUpdate = true;
+        });
+}
+
+function addCoatColorControl(folder, mat) {
+    let coatColorValue;
+    const rawData = mat.userData?.rawData;
+
+    if (rawData?.coat_color !== undefined) {
+        coatColorValue = rawData.coat_color;
+    } else if (rawData?.openPBR?.coat_color !== undefined) {
+        coatColorValue = rawData.openPBR.coat_color;
+    } else if (rawData?.openPBRShader?.coat_color !== undefined) {
+        coatColorValue = rawData.openPBRShader.coat_color;
+    }
+
+    // Default to white if OpenPBR material (show regardless of coat weight)
+    if (coatColorValue === undefined) {
+        if (rawData?.openPBR || rawData?.openPBRShader) {
+            coatColorValue = [1.0, 1.0, 1.0];
+        } else {
+            return; // Not an OpenPBR material
+        }
+    }
+
+    if (!mat.userData.customParams) {
+        mat.userData.customParams = {};
+    }
+
+    const color = Array.isArray(coatColorValue)
+        ? new THREE.Color(coatColorValue[0], coatColorValue[1], coatColorValue[2])
+        : new THREE.Color(coatColorValue);
+
+    const displayColor = linearToSRGB(color.clone());
+    mat.userData.customParams.coatColorHex = '#' + displayColor.getHexString();
+
+    folder.addColor(mat.userData.customParams, 'coatColorHex')
+        .name('Coat Color')
+        .onChange(v => {
+            const newColor = sRGBToLinear(new THREE.Color(v));
+            const colorArray = [newColor.r, newColor.g, newColor.b];
+
+            if (rawData?.coat_color !== undefined) {
+                rawData.coat_color = colorArray;
+            }
+            if (rawData?.openPBR) {
+                rawData.openPBR.coat_color = colorArray;
+            }
+            if (rawData?.openPBRShader) {
+                rawData.openPBRShader.coat_color = colorArray;
+            }
+            // Note: Three.js MeshPhysicalMaterial doesn't support coat color (always white)
+            mat.needsUpdate = true;
+        });
+}
+
+function addFuzzColorControl(folder, mat) {
+    let fuzzColorValue;
+    const rawData = mat.userData?.rawData;
+
+    if (rawData?.fuzz_color !== undefined) {
+        fuzzColorValue = rawData.fuzz_color;
+    } else if (rawData?.openPBR?.fuzz_color !== undefined) {
+        fuzzColorValue = rawData.openPBR.fuzz_color;
+    } else if (rawData?.openPBRShader?.fuzz_color !== undefined) {
+        fuzzColorValue = rawData.openPBRShader.fuzz_color;
+    }
+
+    // Use Three.js sheenColor if available and no OpenPBR value
+    if (fuzzColorValue === undefined && mat.sheenColor) {
+        fuzzColorValue = [mat.sheenColor.r, mat.sheenColor.g, mat.sheenColor.b];
+    }
+
+    // Default to white if has sheen/fuzz but no color specified
+    if (fuzzColorValue === undefined) {
+        const hasFuzz = mat.sheen !== undefined && mat.sheen > 0;
+        if (hasFuzz || rawData?.openPBR || rawData?.openPBRShader) {
+            fuzzColorValue = [1.0, 1.0, 1.0];
+        } else {
+            return; // Not applicable
+        }
+    }
+
+    if (!mat.userData.customParams) {
+        mat.userData.customParams = {};
+    }
+
+    const color = Array.isArray(fuzzColorValue)
+        ? new THREE.Color(fuzzColorValue[0], fuzzColorValue[1], fuzzColorValue[2])
+        : new THREE.Color(fuzzColorValue);
+
+    const displayColor = linearToSRGB(color.clone());
+    mat.userData.customParams.fuzzColorHex = '#' + displayColor.getHexString();
+
+    folder.addColor(mat.userData.customParams, 'fuzzColorHex')
+        .name('Fuzz Color')
+        .onChange(v => {
+            const newColor = sRGBToLinear(new THREE.Color(v));
+            const colorArray = [newColor.r, newColor.g, newColor.b];
+
+            if (rawData?.fuzz_color !== undefined) {
+                rawData.fuzz_color = colorArray;
+            }
+            if (rawData?.openPBR) {
+                rawData.openPBR.fuzz_color = colorArray;
+            }
+            if (rawData?.openPBRShader) {
+                rawData.openPBRShader.fuzz_color = colorArray;
+            }
+            // Update Three.js sheenColor if available
+            if (mat.sheenColor) {
+                mat.sheenColor.copy(newColor);
             }
             mat.needsUpdate = true;
         });
@@ -2022,6 +2444,720 @@ function animate() {
 
     threeState.renderer.render(threeState.scene, threeState.camera);
 }
+
+// ============================================================================
+// OpenPBR Validation Framework
+// ============================================================================
+
+/**
+ * OpenPBR Ground Truth BRDF Implementation
+ * Based on https://academysoftwarefoundation.github.io/OpenPBR/
+ */
+const OpenPBRValidation = {
+    // Current material parameters for validation
+    params: {
+        base_color: [0.9, 0.7, 0.3],
+        base_metalness: 0.8,
+        base_weight: 1.0,
+        specular_roughness: 0.3,
+        specular_ior: 1.5,
+        specular_weight: 1.0
+    },
+
+    // Validation results
+    results: {
+        sphereCenter: null,
+        sphereEdge: null,
+        sphereMidpoint: null,
+        groundTruth: null,
+        differences: null
+    },
+
+    /**
+     * Fresnel Schlick approximation
+     * F(μ) = F₀ + (1 - F₀)(1 - μ)⁵
+     * @param {number} cosTheta - cos of angle between view and half-vector
+     * @param {number[]} f0 - Fresnel reflectance at normal incidence
+     * @returns {number[]} Fresnel term RGB
+     */
+    fresnelSchlick(cosTheta, f0) {
+        const t = Math.pow(1.0 - Math.max(0, cosTheta), 5);
+        return f0.map(f => f + (1.0 - f) * t);
+    },
+
+    /**
+     * Calculate F0 from IOR using Schlick's approximation
+     * F₀ = ((n₁ - n₂) / (n₁ + n₂))²
+     * For air (n=1) to material (n=ior)
+     * @param {number} ior - Index of refraction
+     * @returns {number} F0 value
+     */
+    iorToF0(ior) {
+        const r = (ior - 1.0) / (ior + 1.0);
+        return r * r;
+    },
+
+    /**
+     * GGX Normal Distribution Function
+     * D(m) = α² / (π * (cos²θ * (α² - 1) + 1)²)
+     * @param {number} NdotH - cos of angle between normal and half-vector
+     * @param {number} roughness - Surface roughness [0, 1]
+     * @returns {number} NDF value
+     */
+    ggxNDF(NdotH, roughness) {
+        const a = roughness * roughness;
+        const a2 = a * a;
+        const NdotH2 = NdotH * NdotH;
+        const denom = NdotH2 * (a2 - 1.0) + 1.0;
+        return a2 / (Math.PI * denom * denom);
+    },
+
+    /**
+     * GGX Smith Geometry Function (single direction)
+     * G₁(v) = 2 * NdotV / (NdotV + sqrt(α² + (1 - α²) * NdotV²))
+     * @param {number} NdotV - cos of angle between normal and direction
+     * @param {number} roughness - Surface roughness
+     * @returns {number} Geometry term
+     */
+    ggxGeometry1(NdotV, roughness) {
+        const a = roughness * roughness;
+        const a2 = a * a;
+        const NdotV2 = NdotV * NdotV;
+        return 2.0 * NdotV / (NdotV + Math.sqrt(a2 + (1.0 - a2) * NdotV2));
+    },
+
+    /**
+     * GGX Smith Geometry Function (full)
+     * G(l, v) = G₁(l) * G₁(v)
+     * @param {number} NdotV - cos of angle between normal and view
+     * @param {number} NdotL - cos of angle between normal and light
+     * @param {number} roughness - Surface roughness
+     * @returns {number} Geometry term
+     */
+    ggxGeometry(NdotV, NdotL, roughness) {
+        return this.ggxGeometry1(NdotV, roughness) * this.ggxGeometry1(NdotL, roughness);
+    },
+
+    /**
+     * Cook-Torrance specular BRDF
+     * f_spec = D * F * G / (4 * NdotL * NdotV)
+     * @param {number} NdotL - cos of angle between normal and light
+     * @param {number} NdotV - cos of angle between normal and view
+     * @param {number} NdotH - cos of angle between normal and half-vector
+     * @param {number} VdotH - cos of angle between view and half-vector
+     * @param {number[]} f0 - Fresnel F0
+     * @param {number} roughness - Surface roughness
+     * @returns {number[]} Specular BRDF RGB
+     */
+    specularBRDF(NdotL, NdotV, NdotH, VdotH, f0, roughness) {
+        if (NdotL <= 0 || NdotV <= 0) return [0, 0, 0];
+
+        const D = this.ggxNDF(NdotH, roughness);
+        const F = this.fresnelSchlick(VdotH, f0);
+        const G = this.ggxGeometry(NdotV, NdotL, roughness);
+
+        const denom = 4.0 * NdotL * NdotV;
+        return F.map(f => (D * f * G) / Math.max(denom, 0.001));
+    },
+
+    /**
+     * Lambertian diffuse BRDF
+     * f_diff = base_color / π
+     * @param {number[]} baseColor - Base color RGB
+     * @returns {number[]} Diffuse BRDF RGB
+     */
+    diffuseBRDF(baseColor) {
+        return baseColor.map(c => c / Math.PI);
+    },
+
+    /**
+     * Full OpenPBR BRDF evaluation
+     * Combines metal and dielectric responses based on metalness
+     * @param {Object} params - Material parameters
+     * @param {number} NdotL - cos of angle between normal and light
+     * @param {number} NdotV - cos of angle between normal and view
+     * @param {number} NdotH - cos of angle between normal and half-vector
+     * @param {number} VdotH - cos of angle between view and half-vector
+     * @returns {number[]} BRDF RGB
+     */
+    evaluateBRDF(params, NdotL, NdotV, NdotH, VdotH) {
+        const metalness = params.base_metalness;
+        const roughness = params.specular_roughness;
+        const baseColor = params.base_color;
+        const ior = params.specular_ior;
+
+        // Dielectric F0 from IOR
+        const dielectricF0 = this.iorToF0(ior);
+
+        // Metal F0 is the base color (conductor Fresnel)
+        const metalF0 = baseColor;
+
+        // Blend F0 between dielectric and metal
+        const f0 = baseColor.map((c, i) => {
+            const dielectric = dielectricF0;
+            const metal = metalF0[i];
+            return dielectric * (1.0 - metalness) + metal * metalness;
+        });
+
+        // Specular contribution
+        const specular = this.specularBRDF(NdotL, NdotV, NdotH, VdotH, f0, roughness);
+
+        // Diffuse contribution (only for dielectrics)
+        const fresnel = this.fresnelSchlick(VdotH, f0);
+        const diffuse = this.diffuseBRDF(baseColor);
+
+        // Metals have no diffuse, dielectrics have diffuse weighted by (1 - F)
+        const result = specular.map((s, i) => {
+            const diffuseContrib = diffuse[i] * (1.0 - fresnel[i]) * (1.0 - metalness);
+            return s + diffuseContrib;
+        });
+
+        return result;
+    },
+
+    /**
+     * Calculate expected radiance for a sphere under furnace test
+     * Furnace test uses constant environment illumination
+     * @param {Object} params - Material parameters
+     * @param {number[]} envColor - Environment color (linear RGB)
+     * @param {number} theta - Angle from sphere center (0 = center, PI/2 = edge)
+     * @returns {number[]} Expected radiance RGB
+     */
+    furnaceTestRadiance(params, envColor, theta) {
+        // View direction is always towards camera (0, 0, 1) in view space
+        // Normal at theta from center: N = (sin(theta), 0, cos(theta))
+        const sinTheta = Math.sin(theta);
+        const cosTheta = Math.cos(theta);
+
+        const N = [sinTheta, 0, cosTheta];
+        const V = [0, 0, 1]; // View direction
+
+        // NdotV
+        const NdotV = Math.max(0, N[2]); // N.z since V = (0,0,1)
+
+        // For furnace test, we integrate over hemisphere
+        // With constant illumination, this simplifies to:
+        // L_out = f_r * L_in * cos_weighted_hemisphere_integral
+
+        // For a perfect mirror: reflect all light back
+        // For diffuse: L_out = albedo * L_in (due to 1/π in BRDF and π from hemisphere integral)
+
+        // Simplified furnace test: at each point, compute BRDF * cosine * 2π
+        // (hemisphere integral of constant lighting)
+
+        // Use multiple sample directions for more accurate integration
+        const numSamples = 64;
+        let accum = [0, 0, 0];
+
+        for (let i = 0; i < numSamples; i++) {
+            for (let j = 0; j < numSamples; j++) {
+                // Uniform hemisphere sampling
+                const u1 = (i + 0.5) / numSamples;
+                const u2 = (j + 0.5) / numSamples;
+
+                // Cosine-weighted hemisphere sampling
+                const phi = 2 * Math.PI * u1;
+                const r = Math.sqrt(u2);
+                const x = r * Math.cos(phi);
+                const y = r * Math.sin(phi);
+                const z = Math.sqrt(1 - u2);
+
+                // Transform to world space aligned with N
+                // Create tangent frame
+                const up = Math.abs(N[1]) < 0.999 ? [0, 1, 0] : [1, 0, 0];
+                const T = this.normalize(this.cross(up, N));
+                const B = this.cross(N, T);
+
+                // Light direction in world space
+                const L = [
+                    T[0] * x + B[0] * y + N[0] * z,
+                    T[1] * x + B[1] * y + N[1] * z,
+                    T[2] * x + B[2] * y + N[2] * z
+                ];
+
+                // Half vector
+                const H = this.normalize([V[0] + L[0], V[1] + L[1], V[2] + L[2]]);
+
+                // Dot products
+                const NdotL = Math.max(0, N[0] * L[0] + N[1] * L[1] + N[2] * L[2]);
+                const NdotH = Math.max(0, N[0] * H[0] + N[1] * H[1] + N[2] * H[2]);
+                const VdotH = Math.max(0, V[0] * H[0] + V[1] * H[1] + V[2] * H[2]);
+
+                if (NdotL > 0) {
+                    const brdf = this.evaluateBRDF(params, NdotL, NdotV, NdotH, VdotH);
+
+                    // For cosine-weighted sampling, PDF = cos(theta) / π
+                    // Contribution = BRDF * L_in * NdotL / PDF = BRDF * L_in * π
+                    // But we already have cosine in sampling, so just BRDF * L_in
+                    accum[0] += brdf[0] * envColor[0] * Math.PI;
+                    accum[1] += brdf[1] * envColor[1] * Math.PI;
+                    accum[2] += brdf[2] * envColor[2] * Math.PI;
+                }
+            }
+        }
+
+        const numTotalSamples = numSamples * numSamples;
+        return accum.map(v => v / numTotalSamples);
+    },
+
+    // Vector math helpers
+    normalize(v) {
+        const len = Math.sqrt(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]);
+        return len > 0 ? [v[0] / len, v[1] / len, v[2] / len] : [0, 0, 0];
+    },
+
+    cross(a, b) {
+        return [
+            a[1] * b[2] - a[2] * b[1],
+            a[2] * b[0] - a[0] * b[2],
+            a[0] * b[1] - a[1] * b[0]
+        ];
+    },
+
+    dot(a, b) {
+        return a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+    },
+
+    /**
+     * Capture pixel from renderer at screen coordinates
+     * @param {THREE.WebGLRenderer} renderer
+     * @param {number} x - Screen X coordinate
+     * @param {number} y - Screen Y coordinate
+     * @returns {number[]} RGB values [0, 1]
+     */
+    capturePixel(renderer, x, y) {
+        const renderTarget = renderer.getRenderTarget();
+        const pixelBuffer = new Float32Array(4);
+
+        // Create a small render target to read from
+        const readTarget = new THREE.WebGLRenderTarget(1, 1, {
+            format: THREE.RGBAFormat,
+            type: THREE.FloatType
+        });
+
+        // We need to read from the main framebuffer
+        // Three.js doesn't directly support reading pixels, so we use WebGL
+        const gl = renderer.getContext();
+        const pixels = new Uint8Array(4);
+        gl.readPixels(Math.floor(x), Math.floor(renderer.domElement.height - y), 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, pixels);
+
+        readTarget.dispose();
+
+        // Convert from 0-255 sRGB to 0-1 linear
+        return [
+            sRGBComponentToLinear(pixels[0] / 255),
+            sRGBComponentToLinear(pixels[1] / 255),
+            sRGBComponentToLinear(pixels[2] / 255)
+        ];
+    },
+
+    /**
+     * Get sphere screen positions for validation points
+     * @param {THREE.Camera} camera
+     * @param {THREE.Mesh} sphereMesh
+     * @param {THREE.WebGLRenderer} renderer
+     * @returns {Object} Positions for center, edge, and midpoint
+     */
+    getSphereScreenPositions(camera, sphereMesh, renderer) {
+        const sphere = new THREE.Sphere();
+        sphereMesh.geometry.computeBoundingSphere();
+        sphere.copy(sphereMesh.geometry.boundingSphere);
+        sphere.applyMatrix4(sphereMesh.matrixWorld);
+
+        const center = sphere.center.clone();
+        const radius = sphere.radius;
+
+        // Get camera right vector
+        const camRight = new THREE.Vector3();
+        camera.getWorldDirection(camRight);
+        const camUp = new THREE.Vector3(0, 1, 0);
+        camRight.crossVectors(camUp, camRight).normalize();
+
+        // Center position
+        const centerScreen = this.worldToScreen(center, camera, renderer);
+
+        // Edge position (right edge of sphere)
+        const edgeWorld = center.clone().add(camRight.clone().multiplyScalar(radius * 0.95));
+        const edgeScreen = this.worldToScreen(edgeWorld, camera, renderer);
+
+        // Midpoint position (halfway between center and edge)
+        const midWorld = center.clone().add(camRight.clone().multiplyScalar(radius * 0.5));
+        const midScreen = this.worldToScreen(midWorld, camera, renderer);
+
+        return {
+            center: centerScreen,
+            edge: edgeScreen,
+            midpoint: midScreen,
+            // Angular positions for ground truth calculation
+            centerTheta: 0,
+            edgeTheta: Math.asin(0.95), // ~72 degrees
+            midpointTheta: Math.asin(0.5) // 30 degrees
+        };
+    },
+
+    /**
+     * Convert world position to screen coordinates
+     */
+    worldToScreen(worldPos, camera, renderer) {
+        const pos = worldPos.clone().project(camera);
+        return {
+            x: (pos.x + 1) / 2 * renderer.domElement.width,
+            y: (1 - pos.y) / 2 * renderer.domElement.height
+        };
+    },
+
+    /**
+     * Run furnace test validation
+     * @param {THREE.WebGLRenderer} renderer
+     * @param {THREE.Scene} scene
+     * @param {THREE.Camera} camera
+     * @param {THREE.Mesh} sphereMesh
+     * @param {Object} materialParams - OpenPBR material parameters
+     * @param {number[]} envColor - Environment color (linear RGB)
+     */
+    runFurnaceTest(renderer, scene, camera, sphereMesh, materialParams, envColor) {
+        console.log('=== OpenPBR Furnace Test Validation ===');
+        console.log('Material parameters:', materialParams);
+        console.log('Environment color (linear):', envColor);
+
+        // Update internal params
+        this.params = { ...this.params, ...materialParams };
+
+        // Get screen positions
+        const positions = this.getSphereScreenPositions(camera, sphereMesh, renderer);
+        console.log('Screen positions:', positions);
+
+        // Render the scene
+        renderer.render(scene, camera);
+
+        // Capture pixels
+        this.results.sphereCenter = this.capturePixel(renderer, positions.center.x, positions.center.y);
+        this.results.sphereEdge = this.capturePixel(renderer, positions.edge.x, positions.edge.y);
+        this.results.sphereMidpoint = this.capturePixel(renderer, positions.midpoint.x, positions.midpoint.y);
+
+        console.log('Captured pixels (linear RGB):');
+        console.log('  Center:', this.results.sphereCenter);
+        console.log('  Edge:', this.results.sphereEdge);
+        console.log('  Midpoint:', this.results.sphereMidpoint);
+
+        // Calculate ground truth
+        this.results.groundTruth = {
+            center: this.furnaceTestRadiance(this.params, envColor, positions.centerTheta),
+            edge: this.furnaceTestRadiance(this.params, envColor, positions.edgeTheta),
+            midpoint: this.furnaceTestRadiance(this.params, envColor, positions.midpointTheta)
+        };
+
+        console.log('Ground truth (linear RGB):');
+        console.log('  Center:', this.results.groundTruth.center);
+        console.log('  Edge:', this.results.groundTruth.edge);
+        console.log('  Midpoint:', this.results.groundTruth.midpoint);
+
+        // Calculate differences
+        this.results.differences = {
+            center: this.calculateDifference(this.results.sphereCenter, this.results.groundTruth.center),
+            edge: this.calculateDifference(this.results.sphereEdge, this.results.groundTruth.edge),
+            midpoint: this.calculateDifference(this.results.sphereMidpoint, this.results.groundTruth.midpoint)
+        };
+
+        console.log('Differences (absolute):');
+        console.log('  Center:', this.results.differences.center);
+        console.log('  Edge:', this.results.differences.edge);
+        console.log('  Midpoint:', this.results.differences.midpoint);
+
+        // Summary
+        const avgDiff = (
+            this.results.differences.center.magnitude +
+            this.results.differences.edge.magnitude +
+            this.results.differences.midpoint.magnitude
+        ) / 3;
+
+        console.log(`Average difference magnitude: ${avgDiff.toFixed(4)}`);
+        console.log('=== End Furnace Test ===');
+
+        return this.results;
+    },
+
+    /**
+     * Calculate difference between captured and expected values
+     */
+    calculateDifference(captured, expected) {
+        const diff = captured.map((c, i) => c - expected[i]);
+        const magnitude = Math.sqrt(diff[0] * diff[0] + diff[1] * diff[1] + diff[2] * diff[2]);
+        return { rgb: diff, magnitude };
+    },
+
+    /**
+     * Create a simple validation report
+     */
+    generateReport() {
+        if (!this.results.differences) {
+            return 'No validation results available. Run furnace test first.';
+        }
+
+        const lines = [
+            '=== OpenPBR Validation Report ===',
+            '',
+            'Material Parameters:',
+            `  Base Color: [${this.params.base_color.map(v => v.toFixed(3)).join(', ')}]`,
+            `  Metalness: ${this.params.base_metalness.toFixed(3)}`,
+            `  Roughness: ${this.params.specular_roughness.toFixed(3)}`,
+            `  IOR: ${this.params.specular_ior.toFixed(3)}`,
+            '',
+            'Results:',
+            '',
+            'Sphere Center:',
+            `  Captured: [${this.results.sphereCenter.map(v => v.toFixed(4)).join(', ')}]`,
+            `  Expected: [${this.results.groundTruth.center.map(v => v.toFixed(4)).join(', ')}]`,
+            `  Diff Mag: ${this.results.differences.center.magnitude.toFixed(4)}`,
+            '',
+            'Sphere Edge:',
+            `  Captured: [${this.results.sphereEdge.map(v => v.toFixed(4)).join(', ')}]`,
+            `  Expected: [${this.results.groundTruth.edge.map(v => v.toFixed(4)).join(', ')}]`,
+            `  Diff Mag: ${this.results.differences.edge.magnitude.toFixed(4)}`,
+            '',
+            'Sphere Midpoint:',
+            `  Captured: [${this.results.sphereMidpoint.map(v => v.toFixed(4)).join(', ')}]`,
+            `  Expected: [${this.results.groundTruth.midpoint.map(v => v.toFixed(4)).join(', ')}]`,
+            `  Diff Mag: ${this.results.differences.midpoint.magnitude.toFixed(4)}`,
+            '',
+            '=== End Report ==='
+        ];
+
+        return lines.join('\n');
+    }
+};
+
+/**
+ * Validation state and UI
+ */
+const validationState = {
+    enabled: false,
+    useConstantEnv: true,
+    envColor: '#ffffff'
+};
+
+/**
+ * Setup validation UI in the GUI
+ */
+function setupValidationFolder(gui) {
+    const validationFolder = gui.addFolder('OpenPBR Validation');
+
+    validationFolder.add(validationState, 'enabled')
+        .name('Enable Validation')
+        .onChange(toggleValidationMode);
+
+    validationFolder.add({
+        runTest: () => runValidationTest()
+    }, 'runTest').name('Run Furnace Test');
+
+    validationFolder.add({
+        runBRDFTests: () => runBRDFValidationTests()
+    }, 'runBRDFTests').name('Run BRDF Tests');
+
+    validationFolder.add({
+        runMultiRes: () => runMultiResolutionBRDFTests()
+    }, 'runMultiRes').name('Multi-Res Tests (256-1024)');
+
+    validationFolder.add({
+        runLayerTests: () => runLayerValidationTests()
+    }, 'runLayerTests').name('Run Layer Tests');
+
+    validationFolder.add({
+        showReport: () => {
+            const report = OpenPBRValidation.generateReport();
+            console.log(report);
+            alert(report);
+        }
+    }, 'showReport').name('Show Report');
+
+    validationFolder.close();
+}
+
+/**
+ * Run BRDF validation tests using OpenPBRValidator
+ */
+function runBRDFValidationTests(resolution = 256) {
+    // Create validator with specified resolution
+    const testValidator = new OpenPBRValidator(threeState.renderer, resolution);
+
+    // Get material params from current sphere if available
+    let testOptions = {};
+    if (sceneState.root) {
+        let sphereMesh = null;
+        sceneState.root.traverse(obj => {
+            if (obj.isMesh && !sphereMesh) {
+                sphereMesh = obj;
+            }
+        });
+
+        if (sphereMesh && sphereMesh.material) {
+            const mat = sphereMesh.material;
+            testOptions = {
+                baseColor: mat.color ? [mat.color.r, mat.color.g, mat.color.b] : [0.8, 0.8, 0.8],
+                metalness: mat.metalness !== undefined ? mat.metalness : 0.0,
+                ior: mat.ior || 1.5
+            };
+        }
+    }
+
+    console.log(`\n>>> Running BRDF tests at ${resolution}x${resolution} resolution <<<\n`);
+    const results = testValidator.runAllTests(testOptions);
+
+    // Cleanup
+    testValidator.dispose();
+
+    // Show summary using the allPassed field from results
+    updateStatus(`BRDF Validation (${resolution}x${resolution}): ${results.allPassed ? 'ALL PASSED' : 'SOME FAILED'}`);
+
+    return results;
+}
+
+/**
+ * Run BRDF validation at multiple resolutions to compare accuracy
+ */
+function runMultiResolutionBRDFTests() {
+    const resolutions = [256, 512, 1024];
+    const allResults = {};
+
+    console.log('========================================');
+    console.log('Multi-Resolution BRDF Validation');
+    console.log('========================================');
+
+    for (const res of resolutions) {
+        allResults[res] = runBRDFValidationTests(res);
+    }
+
+    // Print comparison table
+    console.log('\n========================================');
+    console.log('Resolution Comparison Summary');
+    console.log('========================================');
+    console.log('Resolution | Fresnel Avg | GGX Avg    | Smith G Avg | Full BRDF Avg');
+    console.log('-----------|-------------|------------|-------------|---------------');
+
+    for (const res of resolutions) {
+        const r = allResults[res];
+        console.log(`${res.toString().padStart(10)} | ${r.fresnel.avgError.toFixed(6).padStart(11)} | ${r.ggxNDF.avgError.toFixed(6).padStart(10)} | ${r.smithG.avgError.toFixed(6).padStart(11)} | ${r.brdfFull.avgError.toFixed(6)}`);
+    }
+    console.log('========================================');
+
+    updateStatus('Multi-resolution validation complete - see console');
+}
+
+/**
+ * Run layer mixing and energy conservation validation tests
+ */
+function runLayerValidationTests(resolution = 256) {
+    // Create validator with specified resolution
+    const testValidator = new OpenPBRValidator(threeState.renderer, resolution);
+
+    console.log('\n========================================');
+    console.log(`Layer Validation Tests (${resolution}x${resolution})`);
+    console.log('========================================\n');
+
+    // Run layer tests
+    const results = testValidator.runLayerTests();
+
+    // Cleanup
+    testValidator.dispose();
+
+    // Show summary - results has { allPassed, configResults, energyConservation }
+    updateStatus(`Layer Validation: ${results.allPassed ? 'ALL PASSED' : 'SOME FAILED'}`);
+
+    return results;
+}
+
+/**
+ * Toggle validation mode
+ */
+function toggleValidationMode(enabled) {
+    if (enabled) {
+        // Switch to constant color environment for furnace test
+        settings.envMapPreset = 'constant_color';
+        settings.envConstantColor = '#ffffff';
+        loadEnvironment('constant_color');
+        updateStatus('Validation mode: Furnace test environment enabled');
+    }
+}
+
+/**
+ * Run the validation test
+ */
+function runValidationTest() {
+    if (!sceneState.root) {
+        updateStatus('No scene loaded for validation');
+        return;
+    }
+
+    // Find the sphere mesh
+    let sphereMesh = null;
+    sceneState.root.traverse(obj => {
+        if (obj.isMesh && !sphereMesh) {
+            sphereMesh = obj;
+        }
+    });
+
+    if (!sphereMesh) {
+        updateStatus('No mesh found for validation');
+        return;
+    }
+
+    // Get material parameters from the sphere
+    const mat = sphereMesh.material;
+    const rawData = mat.userData?.rawData;
+
+    let materialParams = { ...OpenPBRValidation.params };
+
+    if (rawData?.openPBR || rawData?.openPBRShader) {
+        const openPBR = rawData.openPBR || rawData.openPBRShader;
+        if (openPBR.base_color) {
+            materialParams.base_color = Array.isArray(openPBR.base_color)
+                ? openPBR.base_color
+                : [openPBR.base_color.r || 0.8, openPBR.base_color.g || 0.8, openPBR.base_color.b || 0.8];
+        }
+        if (openPBR.base_metalness !== undefined) {
+            materialParams.base_metalness = openPBR.base_metalness;
+        }
+        if (openPBR.specular_roughness !== undefined) {
+            materialParams.specular_roughness = openPBR.specular_roughness;
+        }
+        if (openPBR.specular_ior !== undefined) {
+            materialParams.specular_ior = openPBR.specular_ior;
+        }
+    } else if (mat.color && mat.metalness !== undefined && mat.roughness !== undefined) {
+        // Use Three.js material properties
+        materialParams.base_color = [mat.color.r, mat.color.g, mat.color.b];
+        materialParams.base_metalness = mat.metalness;
+        materialParams.specular_roughness = mat.roughness;
+        materialParams.specular_ior = mat.ior || 1.5;
+    }
+
+    // Get environment color (convert from hex to linear RGB)
+    const envColor = parseHexColor(settings.envConstantColor, true);
+    const envColorArray = [envColor.r, envColor.g, envColor.b];
+
+    // Run the furnace test
+    const results = OpenPBRValidation.runFurnaceTest(
+        threeState.renderer,
+        threeState.scene,
+        threeState.camera,
+        sphereMesh,
+        materialParams,
+        envColorArray
+    );
+
+    // Update status with summary
+    const avgDiff = (
+        results.differences.center.magnitude +
+        results.differences.edge.magnitude +
+        results.differences.midpoint.magnitude
+    ) / 3;
+
+    updateStatus(`Validation complete. Avg difference: ${avgDiff.toFixed(4)}`);
+}
+
+// Export for external access
+window.OpenPBRValidation = OpenPBRValidation;
+window.runValidationTest = runValidationTest;
 
 // ============================================================================
 // Start
