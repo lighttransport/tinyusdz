@@ -54,6 +54,124 @@ console.log(`Native default memory limit: ${defaultLimit} MB`);
 - Lower limits are recommended for untrusted USD files
 - Memory limit applies to both Stage and Layer loading operations
 
+## Progress Callback (Three.js GLTFLoader Compatible)
+
+TinyUSDZLoader supports progress callbacks compatible with Three.js GLTFLoader pattern. Progress is reported during download, parsing, and scene building phases.
+
+### Basic Usage (GLTFLoader style)
+
+```javascript
+import { TinyUSDZLoader } from 'tinyusdz/TinyUSDZLoader.js';
+
+const loader = new TinyUSDZLoader();
+await loader.init();
+
+// Standard Three.js loader pattern
+loader.load(
+    'model.usdz',
+    // onLoad
+    (usd) => {
+        console.log('USD loaded:', usd);
+    },
+    // onProgress - receives GLTFLoader-compatible event
+    (event) => {
+        console.log(`${event.stage}: ${event.percentage.toFixed(1)}% - ${event.message}`);
+        // event.loaded - bytes loaded (during download) or normalized progress
+        // event.total - total bytes or 1
+        // event.stage - 'downloading' | 'parsing' | 'complete'
+        // event.percentage - 0-100
+        // event.message - human-readable status
+    },
+    // onError
+    (error) => {
+        console.error('Load failed:', error);
+    }
+);
+```
+
+### Full Progress with Scene Building
+
+For complete progress reporting including Three.js scene building:
+
+```javascript
+import { TinyUSDZLoader } from 'tinyusdz/TinyUSDZLoader.js';
+import { TinyUSDZLoaderUtils } from 'tinyusdz/TinyUSDZLoaderUtils.js';
+
+const loader = new TinyUSDZLoader();
+await loader.init();
+
+loader.loadWithFullProgress(
+    'model.usdz',
+    // onLoad
+    (result) => {
+        console.log('USD object:', result.usd);
+        if (result.scene) {
+            scene.add(result.scene);
+        }
+    },
+    // onProgress - unified progress across all phases
+    (event) => {
+        progressBar.style.width = `${event.percentage}%`;
+        statusText.textContent = event.message;
+        // Stages: 'downloading' (0-50%) | 'parsing' (50-80%) | 'building' (80-100%) | 'complete'
+    },
+    // onError
+    (error) => {
+        console.error('Load failed:', error);
+    },
+    // options
+    {
+        buildScene: true,
+        sceneBuilder: TinyUSDZLoaderUtils.buildThreeNode.bind(TinyUSDZLoaderUtils),
+        sceneBuilderOptions: {
+            envMap: myEnvironmentMap,
+            envMapIntensity: 1.0
+        }
+    }
+);
+```
+
+### Scene Building Progress
+
+When building Three.js scene graphs separately:
+
+```javascript
+import { TinyUSDZLoaderUtils } from 'tinyusdz/TinyUSDZLoaderUtils.js';
+
+// Build with progress callback
+const scene = await TinyUSDZLoaderUtils.buildThreeNode(
+    usd.getNode(0),  // root node
+    null,            // default material
+    usd,             // USD scene
+    {
+        onProgress: (info) => {
+            console.log(`${info.percentage.toFixed(1)}% - ${info.message}`);
+            // info.stage - 'building'
+            // info.percentage - 0-100
+            // info.message - e.g., "Building: MeshName (5/20)"
+        },
+        envMap: myEnvMap
+    }
+);
+```
+
+### Progress Event Object
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `loaded` | number | Bytes loaded (download) or normalized progress (0-1) |
+| `total` | number | Total bytes or 1 |
+| `stage` | string | Current stage: `'downloading'`, `'parsing'`, `'building'`, `'complete'` |
+| `percentage` | number | Progress as percentage (0-100) |
+| `message` | string | Human-readable status message |
+
+### Async API
+
+```javascript
+// Promise-based loading with progress
+const result = await loader.loadWithFullProgressAsync(url, onProgress, options);
+```
+
 ## Material Conversion
 
 TinyUSDZ supports both UsdPreviewSurface and OpenPBR (MaterialX) materials. The library provides utilities to convert these materials to Three.js `MeshPhysicalMaterial`.
