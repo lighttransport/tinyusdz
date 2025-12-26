@@ -376,47 +376,126 @@ class TinyUSDZLoader extends Loader {
     //}
 
     /**
+     * Create a progress event object (GLTFLoader compatible + extended)
+     * @private
+     */
+    _createProgressEvent(loaded, total, stage, message) {
+        return {
+            // GLTFLoader compatible fields
+            loaded: loaded,
+            total: total,
+            // Extended fields
+            stage: stage,
+            percentage: total > 0 ? (loaded / total) * 100 : 0,
+            message: message
+        };
+    }
+
+    /**
      * Load a USDZ/USDA/USDC file from a URL as USD Stage(Freezed scene graph)
      * NOTE: for loadAsync(), Use base Loader class's loadAsync() method
      * @param {string} url - URL to load from
      * @param {Function} onLoad - Success callback
-     * @param {Function} onProgress - Progress callback
+     * @param {Function} onProgress - Progress callback with GLTFLoader-compatible event {loaded, total, stage, percentage, message}
      * @param {Function} onError - Error callback
      * @param {Object} options - Loading options
      * @param {number} options.maxMemoryLimitMB - Override memory limit for this load
      */
     load(url, onLoad, onProgress, onError, options = {}) {
-        //console.log('url', url);
-
         const scope = this;
 
         // Create a promise chain to handle initialization and loading
         const initPromise = this.native_ ? Promise.resolve() : this.init();
 
         initPromise
-            .then(() => {
-                return this.fetcher.fetch(url);
-            })
-            .then(async (response) => {
-                // Convert File to ArrayBuffer
-                return await response.arrayBuffer();
+            .then(async () => {
+                // Use fetch with progress tracking if onProgress is provided
+                if (onProgress) {
+                    return scope._fetchWithProgress(url, onProgress);
+                } else {
+                    // Fallback to simple fetch without progress
+                    const response = await scope.fetcher.fetch(url);
+                    return await response.arrayBuffer();
+                }
             })
             .then((usd_data) => {
                 const usd_binary = new Uint8Array(usd_data);
 
-                //console.log('Loaded USD binary data:', usd_binary.length, 'bytes');
+                // Report parsing stage
+                if (onProgress) {
+                    onProgress(scope._createProgressEvent(0, 1, 'parsing', 'Parsing USD...'));
+                }
 
                 scope.parse(usd_binary, url, function (usd) {
+                    // Report complete
+                    if (onProgress) {
+                        onProgress(scope._createProgressEvent(1, 1, 'complete', 'Complete'));
+                    }
                     onLoad(usd);
                 }, onError, options);
 
             })
             .catch((error) => {
-                console.error('TinyUSDZLoader: Error initializing native module:', error);
+                console.error('TinyUSDZLoader: Error loading USD:', error);
                 if (onError) {
                     onError(error);
                 }
             });
+    }
+
+    /**
+     * Fetch URL with progress reporting via ReadableStream
+     * @private
+     */
+    async _fetchWithProgress(url, onProgress) {
+        const response = await fetch(url);
+        if (!response.ok) {
+            throw new Error(`Failed to fetch: ${response.statusText}`);
+        }
+
+        // Get content length for progress calculation
+        const contentLength = response.headers.get('content-length');
+        const total = contentLength ? parseInt(contentLength, 10) : 0;
+
+        // If no content-length, fall back to simple fetch
+        if (total === 0) {
+            onProgress(this._createProgressEvent(0, 0, 'downloading', 'Downloading...'));
+            const data = await response.arrayBuffer();
+            onProgress(this._createProgressEvent(data.byteLength, data.byteLength, 'downloading', 'Download complete'));
+            return data;
+        }
+
+        // Read response with progress via ReadableStream
+        const reader = response.body.getReader();
+        const chunks = [];
+        let loaded = 0;
+
+        while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+
+            chunks.push(value);
+            loaded += value.length;
+
+            // Report download progress
+            const percentage = Math.round((loaded / total) * 100);
+            onProgress(this._createProgressEvent(
+                loaded,
+                total,
+                'downloading',
+                `Downloading... ${percentage}%`
+            ));
+        }
+
+        // Combine chunks into single ArrayBuffer
+        const result = new Uint8Array(loaded);
+        let offset = 0;
+        for (const chunk of chunks) {
+            result.set(chunk, offset);
+            offset += chunk.length;
+        }
+
+        return result.buffer;
     }
 
     /**
@@ -1357,6 +1436,183 @@ class TinyUSDZLoader extends Loader {
 		} );
     }
 
+    /**
+     * Load USD with full progress reporting (Three.js GLTFLoader compatible)
+     * Combines downloading, parsing, and optional scene building with unified progress.
+     *
+     * @param {string} url - URL to load from
+     * @param {Function} onLoad - Success callback (result) => void
+     *   - result.usd: The parsed USD object (TinyUSDZLoaderNative)
+     *   - result.scene: Three.js scene (if options.buildScene is true and sceneBuilder provided)
+     * @param {Function} onProgress - Progress callback ({loaded, total, stage, percentage, message}) => void
+     * @param {Function} onError - Error callback (error) => void
+     * @param {Object} options - Loading options
+     * @param {number} options.maxMemoryLimitMB - Override memory limit for this load
+     * @param {boolean} options.buildScene - If true, build Three.js scene (requires sceneBuilder)
+     * @param {Function} options.sceneBuilder - Async function (usd, options) => THREE.Object3D
+     *   Typically: TinyUSDZLoaderUtils.buildThreeNode(usd.getNode(0), null, usd, options)
+     * @param {Object} options.sceneBuilderOptions - Options to pass to sceneBuilder
+     */
+    loadWithFullProgress(url, onLoad, onProgress, onError, options = {}) {
+        const scope = this;
+
+        // Progress phase weights
+        const DOWNLOAD_WEIGHT = 0.5;  // 0-50%
+        const PARSE_WEIGHT = 0.3;     // 50-80%
+        const BUILD_WEIGHT = 0.2;     // 80-100%
+
+        const reportProgress = (phase, phaseProgress, message) => {
+            if (!onProgress) return;
+
+            let overallProgress = 0;
+            let stage = phase;
+
+            switch (phase) {
+                case 'downloading':
+                    overallProgress = phaseProgress * DOWNLOAD_WEIGHT;
+                    break;
+                case 'parsing':
+                    overallProgress = DOWNLOAD_WEIGHT + (phaseProgress * PARSE_WEIGHT);
+                    break;
+                case 'building':
+                    overallProgress = DOWNLOAD_WEIGHT + PARSE_WEIGHT + (phaseProgress * BUILD_WEIGHT);
+                    break;
+                case 'complete':
+                    overallProgress = 1.0;
+                    break;
+            }
+
+            onProgress(scope._createProgressEvent(
+                overallProgress,
+                1,
+                stage,
+                message || `${stage}... ${Math.round(overallProgress * 100)}%`
+            ));
+        };
+
+        // Start loading
+        const initPromise = this.native_ ? Promise.resolve() : this.init();
+
+        initPromise
+            .then(async () => {
+                // Phase 1: Download (0-50%)
+                reportProgress('downloading', 0, 'Starting download...');
+
+                const response = await fetch(url);
+                if (!response.ok) {
+                    throw new Error(`Failed to fetch: ${response.statusText}`);
+                }
+
+                const contentLength = response.headers.get('content-length');
+                const total = contentLength ? parseInt(contentLength, 10) : 0;
+
+                let usd_data;
+                if (total > 0 && response.body) {
+                    // Stream with progress
+                    const reader = response.body.getReader();
+                    const chunks = [];
+                    let loaded = 0;
+
+                    while (true) {
+                        const { done, value } = await reader.read();
+                        if (done) break;
+                        chunks.push(value);
+                        loaded += value.length;
+                        reportProgress('downloading', loaded / total, `Downloading... ${Math.round((loaded / total) * 100)}%`);
+                    }
+
+                    const result = new Uint8Array(loaded);
+                    let offset = 0;
+                    for (const chunk of chunks) {
+                        result.set(chunk, offset);
+                        offset += chunk.length;
+                    }
+                    usd_data = result;
+                } else {
+                    // No content-length, simple fetch
+                    const buffer = await response.arrayBuffer();
+                    usd_data = new Uint8Array(buffer);
+                    reportProgress('downloading', 1, 'Download complete');
+                }
+
+                return usd_data;
+            })
+            .then((usd_binary) => {
+                // Phase 2: Parse (50-80%)
+                reportProgress('parsing', 0, 'Parsing USD...');
+
+                const usd = new scope.native_.TinyUSDZLoaderNative();
+
+                // Set memory limit
+                const memoryLimit = options.maxMemoryLimitMB || scope.maxMemoryLimitMB_;
+                if (memoryLimit !== undefined) {
+                    usd.setMaxMemoryLimitMB(memoryLimit);
+                }
+
+                // Set bone reduction configuration
+                if (scope.enableBoneReduction_) {
+                    usd.setEnableBoneReduction(true);
+                    usd.setTargetBoneCount(scope.targetBoneCount_ || 4);
+                }
+
+                const ok = usd.loadFromBinary(usd_binary, url);
+                if (!ok) {
+                    throw new Error(`Failed to parse USD: ${usd.error()}`);
+                }
+
+                reportProgress('parsing', 1, 'Parse complete');
+                return usd;
+            })
+            .then(async (usd) => {
+                // Phase 3: Build scene (80-100%) - optional
+                const result = { usd: usd, scene: null };
+
+                if (options.buildScene && options.sceneBuilder) {
+                    reportProgress('building', 0, 'Building scene...');
+
+                    try {
+                        // Get root node
+                        const rootNode = usd.getNode(0);
+
+                        // Build scene with progress callback
+                        const builderOptions = {
+                            ...(options.sceneBuilderOptions || {}),
+                            onProgress: (info) => {
+                                // Forward scene building progress (scale to 80-100%)
+                                const buildProgress = info.percentage ? info.percentage / 100 : 0.5;
+                                reportProgress('building', buildProgress, info.message || 'Building scene...');
+                            }
+                        };
+
+                        result.scene = await options.sceneBuilder(rootNode, null, usd, builderOptions);
+                        reportProgress('building', 1, 'Scene complete');
+                    } catch (buildError) {
+                        console.warn('Scene building failed:', buildError);
+                        // Continue without scene - USD is still valid
+                    }
+                }
+
+                reportProgress('complete', 1, 'Complete');
+                onLoad(result);
+            })
+            .catch((error) => {
+                console.error('TinyUSDZLoader: Error in loadWithFullProgress:', error);
+                if (onError) {
+                    onError(error);
+                }
+            });
+    }
+
+    /**
+     * Async version of loadWithFullProgress
+     * @returns {Promise<{usd: Object, scene?: THREE.Object3D}>}
+     */
+    async loadWithFullProgressAsync(url, onProgress, options = {}) {
+        const scope = this;
+        return new Promise((resolve, reject) => {
+            scope.loadWithFullProgress(url, resolve, onProgress, reject, options);
+        });
+    }
 
     ///**
     // * Set texture callback
@@ -1365,7 +1621,7 @@ class TinyUSDZLoader extends Loader {
     //    this.texLoader = texLoader;
     //}
 
-    
+
 
 }
 

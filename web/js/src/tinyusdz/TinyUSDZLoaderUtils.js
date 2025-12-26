@@ -817,11 +817,54 @@ class TinyUSDZLoaderUtils extends LoaderUtils {
         return m;
     }
 
-    // Supported options
-    // 'overrideMaterial' : Override usd material with defaultMtl.
+    /**
+     * Count total nodes in USD hierarchy (for progress estimation)
+     * @private
+     */
+    static _countNodes(usdNode) {
+        let count = 1;
+        if (usdNode.children) {
+            for (const child of usdNode.children) {
+                count += this._countNodes(child);
+            }
+        }
+        return count;
+    }
 
+    // Supported options:
+    // - 'overrideMaterial' : Override usd material with defaultMtl.
+    // - 'onProgress' : Progress callback (info) => void
+    //     info: { stage: 'building', percentage: number, message: string }
+    // - '_progressState' : Internal state for progress tracking (auto-created)
+
+    /**
+     * Build a Three.js scene graph from a USD node hierarchy
+     * @param {Object} usdNode - USD node from TinyUSDZLoader
+     * @param {THREE.Material} defaultMtl - Default material to use
+     * @param {Object} usdScene - USD scene object (TinyUSDZLoaderNative)
+     * @param {Object} options - Build options
+     * @param {Function} options.onProgress - Progress callback ({stage, percentage, message}) => void
+     * @returns {Promise<THREE.Object3D>} Three.js node
+     */
     static async buildThreeNode(usdNode /* TinyUSDZLoader.Node */, defaultMtl = null, usdScene /* TinyUSDZLoader.Scene */ = null, options = {})
    /* => THREE.Object3D */ {
+
+        // Initialize progress tracking on first call (root node)
+        if (!options._progressState) {
+            const totalNodes = this._countNodes(usdNode);
+            options._progressState = {
+                processedNodes: 0,
+                totalNodes: totalNodes
+            };
+            // Report initial progress
+            if (options.onProgress) {
+                options.onProgress({
+                    stage: 'building',
+                    percentage: 0,
+                    message: `Building scene (0/${totalNodes} nodes)...`
+                });
+            }
+        }
 
         var node = new THREE.Group();
 
@@ -877,6 +920,21 @@ class TinyUSDZLoaderUtils extends LoaderUtils {
         node.name = usdNode.primName;
         node.userData['primMeta.displayName'] = usdNode.displayName;
         node.userData['primMeta.absPath'] = usdNode.absPath;
+
+        // Update progress after processing this node
+        if (options._progressState) {
+            options._progressState.processedNodes++;
+            const { processedNodes, totalNodes } = options._progressState;
+            const percentage = (processedNodes / totalNodes) * 100;
+
+            if (options.onProgress) {
+                options.onProgress({
+                    stage: 'building',
+                    percentage: percentage,
+                    message: `Building: ${usdNode.primName} (${processedNodes}/${totalNodes})`
+                });
+            }
+        }
 
         if (Object.prototype.hasOwnProperty.call(usdNode, 'children')) {
 
