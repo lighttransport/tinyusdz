@@ -31,10 +31,277 @@ const TONE_MAPPINGS = {
     'linear': THREE.LinearToneMapping,
     'reinhard': THREE.ReinhardToneMapping,
     'cineon': THREE.CineonToneMapping,
-    'aces': THREE.ACESFilmicToneMapping,
+    'aces_1.3': THREE.ACESFilmicToneMapping,
+    'aces_2.0': 'custom_aces2',  // Custom implementation
     'agx': THREE.AgXToneMapping,
     'neutral': THREE.NeutralToneMapping
 };
+
+// ACES 2.0 Tonemapping Shader (Hellwig 2022 CAM-based)
+// Based on ACES 2.0 Output Transform specification
+// Store original shader chunk for restoration
+let originalTonemappingParsFragment = null;
+
+const ACES2_TONEMAP_SHADER = `
+// ACES 2.0 Constants
+const float ACES2_L_A = 100.0;  // Luminance level
+const float ACES2_Y_b = 20.0;   // Background luminance
+
+// D65 white point
+const vec3 ACES2_D65 = vec3(0.95047, 1.0, 1.08883);
+
+// Matrix: sRGB to XYZ (D65)
+const mat3 sRGB_to_XYZ = mat3(
+    0.4124564, 0.3575761, 0.1804375,
+    0.2126729, 0.7151522, 0.0721750,
+    0.0193339, 0.1191920, 0.9503041
+);
+
+// Matrix: XYZ to sRGB (D65)
+const mat3 XYZ_to_sRGB = mat3(
+    3.2404542, -1.5371385, -0.4985314,
+   -0.9692660,  1.8760108,  0.0415560,
+    0.0556434, -0.2040259,  1.0572252
+);
+
+// Sharpening matrix (CAT16-style)
+const mat3 M16 = mat3(
+    0.401288, 0.650173, -0.051461,
+   -0.250268, 1.204414,  0.045854,
+   -0.002079, 0.048952,  0.953127
+);
+
+const mat3 M16_inv = mat3(
+    1.862068, -1.011255,  0.149187,
+    0.387527,  0.621447, -0.008974,
+   -0.015841, -0.034123,  1.049964
+);
+
+// Simplified Hellwig 2022 functions
+float aces2_spow(float x, float p) {
+    return x < 0.0 ? -pow(-x, p) : pow(x, p);
+}
+
+vec3 aces2_spow3(vec3 v, float p) {
+    return vec3(aces2_spow(v.x, p), aces2_spow(v.y, p), aces2_spow(v.z, p));
+}
+
+// Post-adaptation non-linear response compression
+vec3 aces2_post_adaptation_nrc(vec3 RGB, float F_L) {
+    float F_L_4 = pow(F_L, 0.25);
+    vec3 RGB_c = aces2_spow3(F_L * abs(RGB) / 100.0, 0.42);
+    return sign(RGB) * 400.0 * RGB_c / (RGB_c + 27.13) + 0.1;
+}
+
+vec3 aces2_post_adaptation_nrc_inverse(vec3 RGB_a, float F_L) {
+    vec3 RGB_p = (sign(RGB_a - 0.1) * 100.0 / F_L) *
+                  aces2_spow3(27.13 * abs(RGB_a - 0.1) / (400.0 - abs(RGB_a - 0.1)), 1.0 / 0.42);
+    return RGB_p;
+}
+
+// RGB to JMh conversion (Simplified Hellwig 2022)
+vec3 aces2_RGB_to_JMh(vec3 RGB) {
+    // Viewing condition parameters
+    float k = 1.0 / (5.0 * ACES2_L_A + 1.0);
+    float k4 = k * k * k * k;
+    float F_L = 0.2 * k4 * 5.0 * ACES2_L_A + 0.1 * pow(1.0 - k4, 2.0) * pow(5.0 * ACES2_L_A, 1.0/3.0);
+    float n = ACES2_Y_b / 100.0;
+    float z = 1.48 + sqrt(n);
+
+    // Sharpened RGB
+    vec3 RGB_s = M16 * RGB;
+
+    // Apply post-adaptation compression
+    vec3 RGB_a = aces2_post_adaptation_nrc(RGB_s, F_L);
+
+    // Opponent color dimensions
+    float a = RGB_a.x - 12.0 * RGB_a.y / 11.0 + RGB_a.z / 11.0;
+    float b = (RGB_a.x + RGB_a.y - 2.0 * RGB_a.z) / 9.0;
+
+    // Hue angle
+    float h = atan(b, a);
+    if (h < 0.0) h += 6.283185307;
+
+    // Achromatic response
+    float A = (2.0 * RGB_a.x + RGB_a.y + RGB_a.z / 20.0 - 0.305) * 1.0;
+
+    // Lightness
+    float J = 100.0 * pow(A / 100.0, 0.69 * z);
+
+    // Colorfulness
+    float M = 43.0 * sqrt(a * a + b * b) * pow(F_L, 0.25);
+
+    return vec3(J, M, h);
+}
+
+// JMh to RGB conversion
+vec3 aces2_JMh_to_RGB(vec3 JMh) {
+    float J = JMh.x;
+    float M = JMh.y;
+    float h = JMh.z;
+
+    // Viewing condition parameters
+    float k = 1.0 / (5.0 * ACES2_L_A + 1.0);
+    float k4 = k * k * k * k;
+    float F_L = 0.2 * k4 * 5.0 * ACES2_L_A + 0.1 * pow(1.0 - k4, 2.0) * pow(5.0 * ACES2_L_A, 1.0/3.0);
+    float n = ACES2_Y_b / 100.0;
+    float z = 1.48 + sqrt(n);
+
+    // Inverse lightness
+    float A = 100.0 * pow(J / 100.0, 1.0 / (0.69 * z));
+
+    // Opponent color dimensions from M and h
+    float t = M / (43.0 * pow(F_L, 0.25));
+    float a = t * cos(h);
+    float b = t * sin(h);
+
+    // Solve for RGB_a from opponent colors and A
+    // This is a simplified approximation
+    float p1 = (A / 1.0 + 0.305);
+    float p2 = a - b;
+    float p3 = a + b;
+
+    // Approximate RGB_a values
+    float gamma = 23.0 * (p1 + 0.305) / (23.0 * p1 + 23.0 * a + b);
+    vec3 RGB_a = vec3(
+        p1 / 2.0 + a / 11.0 + b / 22.0 + 0.1,
+        p1 / 2.0 - 12.0 * a / 110.0 + b / 22.0 + 0.1,
+        p1 / 2.0 - b * 2.0 / 22.0 + 0.1
+    );
+
+    // Inverse post-adaptation compression
+    vec3 RGB_s = aces2_post_adaptation_nrc_inverse(RGB_a, F_L);
+
+    // Un-sharpen
+    vec3 RGB = M16_inv * RGB_s;
+
+    return RGB;
+}
+
+// Daniele Evo tone curve (applied to J only)
+float aces2_daniele_evo_fwd(float Y, float peakLuminance) {
+    // Simplified Daniele Evo curve parameters for SDR (100 nits)
+    float m_0 = 0.0;
+    float m_1 = peakLuminance;
+    float s_0 = 0.0;
+    float s_1 = 1.0;
+    float c = 1.1;   // Contrast
+    float g = 1.15;  // Mid-gray slope
+
+    // Michaelis-Menten based curve
+    float t = pow(max(Y, 0.0) / 100.0, 1.0 / g);
+    float result = m_1 * pow(t, c) / (pow(t, c) + 1.0);
+
+    return result;
+}
+
+// ACES 2.0 Output Transform (Simplified for realtime)
+vec3 ACES2ToneMapping(vec3 color) {
+    // Clamp negative values
+    color = max(color, vec3(0.0));
+
+    // Scale for ACES (exposure adjustment for scene-referred)
+    color *= 0.6;
+
+    // Convert to XYZ
+    vec3 XYZ = sRGB_to_XYZ * color;
+
+    // Convert to JMh
+    vec3 JMh = aces2_RGB_to_JMh(XYZ);
+
+    // Apply tone curve to J (lightness) only - preserves hue!
+    float J_in = JMh.x;
+    float J_out = aces2_daniele_evo_fwd(J_in, 100.0);
+
+    // Chroma compression (reduce colorfulness in highlights)
+    float chromaCompress = 1.0 / (1.0 + J_out * 0.01);
+    float M_out = JMh.y * chromaCompress * 0.7;
+
+    // Reconstruct JMh with tonemapped values
+    vec3 JMh_out = vec3(J_out, M_out, JMh.z);
+
+    // Convert back to RGB
+    vec3 RGB_out = aces2_JMh_to_RGB(JMh_out);
+
+    // Convert to display RGB
+    RGB_out = XYZ_to_sRGB * RGB_out;
+
+    // Soft clamp to [0, 1]
+    RGB_out = RGB_out / (1.0 + RGB_out);
+
+    return clamp(RGB_out, 0.0, 1.0);
+}
+`;
+
+// Helper function to apply ACES 2.0 custom tonemapping
+function applyACES2Tonemapping() {
+    // Save original shader chunk if not already saved
+    if (originalTonemappingParsFragment === null) {
+        originalTonemappingParsFragment = THREE.ShaderChunk.tonemapping_pars_fragment;
+    }
+
+    // Create custom tonemapping shader with ACES2ToneMapping as CustomToneMapping
+    const customTonemappingShader = `
+${ACES2_TONEMAP_SHADER}
+
+// Map CustomToneMapping to our ACES 2.0 implementation
+vec3 CustomToneMapping( vec3 color ) {
+    return ACES2ToneMapping( color );
+}
+${originalTonemappingParsFragment}
+`;
+
+    // Patch Three.js shader chunk
+    THREE.ShaderChunk.tonemapping_pars_fragment = customTonemappingShader;
+
+    // Set renderer to use custom tonemapping
+    if (threeState.renderer) {
+        threeState.renderer.toneMapping = THREE.CustomToneMapping;
+
+        // Force all materials to recompile
+        if (sceneState.root) {
+            sceneState.root.traverse((object) => {
+                if (object.isMesh && object.material) {
+                    object.material.needsUpdate = true;
+                }
+            });
+        }
+    }
+}
+
+// Helper function to restore standard tonemapping
+function restoreStandardTonemapping(tonemappingType) {
+    // Restore original shader chunk if we modified it
+    if (originalTonemappingParsFragment !== null) {
+        THREE.ShaderChunk.tonemapping_pars_fragment = originalTonemappingParsFragment;
+    }
+
+    // Set the requested tonemapping
+    if (threeState.renderer) {
+        threeState.renderer.toneMapping = tonemappingType;
+
+        // Force all materials to recompile
+        if (sceneState.root) {
+            sceneState.root.traverse((object) => {
+                if (object.isMesh && object.material) {
+                    object.material.needsUpdate = true;
+                }
+            });
+        }
+    }
+}
+
+// Set tonemapping mode (handles both standard and custom modes)
+function setTonemapping(mode) {
+    const mapping = TONE_MAPPINGS[mode];
+
+    if (mapping === 'custom_aces2') {
+        applyACES2Tonemapping();
+        console.log('Applied ACES 2.0 tonemapping (Hellwig 2022 CAM-based)');
+    } else {
+        restoreStandardTonemapping(mapping || THREE.ACESFilmicToneMapping);
+    }
+}
 
 const TEXTURE_MAPS = [
     { prop: 'map', name: 'Base Color' },
@@ -169,7 +436,7 @@ const settings = {
     envColorspace: 'sRGB',
     showBackground: true,
     exposure: 1.0,
-    toneMapping: 'aces',
+    toneMapping: 'aces_1.3',
     applyUpAxisConversion: false,
     showNormals: false,
     showGrid: false,
@@ -276,7 +543,8 @@ function initThreeJS() {
     threeState.renderer = new THREE.WebGLRenderer({ antialias: true });
     threeState.renderer.setSize(window.innerWidth, window.innerHeight);
     threeState.renderer.setPixelRatio(window.devicePixelRatio);
-    threeState.renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    // Initialize tonemapping from settings (default: aces_1.3)
+    setTonemapping(settings.toneMapping);
     threeState.renderer.toneMappingExposure = settings.exposure;
     threeState.renderer.outputColorSpace = THREE.SRGBColorSpace;
     document.getElementById('canvas-container').appendChild(threeState.renderer.domElement);
@@ -375,7 +643,7 @@ function setupSceneFolder() {
 
     sceneFolder.add(settings, 'toneMapping', Object.keys(TONE_MAPPINGS))
         .name('Tone Mapping')
-        .onChange(v => { threeState.renderer.toneMapping = TONE_MAPPINGS[v] || THREE.ACESFilmicToneMapping; });
+        .onChange(v => { setTonemapping(v); });
 
     sceneFolder.add(settings, 'applyUpAxisConversion')
         .name('Z-up to Y-up Fix')
