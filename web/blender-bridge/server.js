@@ -4,6 +4,12 @@
 import { WebSocketServer } from 'ws';
 import express from 'express';
 import { createServer } from 'http';
+import fs from 'fs';
+import path from 'path';
+import { fileURLToPath } from 'url';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 import { ConnectionManager, ClientType } from './lib/connection-manager.js';
 import { SceneState } from './lib/scene-state.js';
 import {
@@ -60,6 +66,59 @@ app.get('/sessions', (req, res) => {
     };
   });
   res.json({ sessions });
+});
+
+// HTTP endpoint: Serve Blender bridge Python script
+app.get('/blender/bridge.py', (req, res) => {
+  const scriptPath = path.join(__dirname, 'blender', 'bridge_simple.py');
+  res.setHeader('Content-Type', 'text/x-python');
+  res.setHeader('Content-Disposition', 'inline; filename="bridge_simple.py"');
+
+  if (fs.existsSync(scriptPath)) {
+    res.send(fs.readFileSync(scriptPath, 'utf-8'));
+  } else {
+    res.status(404).send('# Script not found');
+  }
+});
+
+// HTTP endpoint: Bootstrap script (one-liner for remote Blender)
+app.get('/blender/bootstrap', (req, res) => {
+  const serverUrl = req.query.server || req.headers.host || 'localhost:8090';
+  const [serverHost, serverPort] = serverUrl.includes(':')
+    ? serverUrl.split(':')
+    : [serverUrl, '8090'];
+
+  res.setHeader('Content-Type', 'text/x-python');
+
+  // Generate minimal bootstrap script that fetches and runs the full script
+  const bootstrap = `# TinyUSDZ Bridge Bootstrap - Run this in Blender
+# Fetches and executes the bridge script from the server
+
+import urllib.request
+import ssl
+
+SERVER = "${serverHost}"
+PORT = ${serverPort}
+
+# Fetch the bridge script
+ctx = ssl.create_default_context()
+ctx.check_hostname = False
+ctx.verify_mode = ssl.CERT_NONE
+
+url = f"http://{SERVER}:{PORT}/blender/bridge.py"
+print(f"Fetching bridge script from {url}...")
+
+try:
+    with urllib.request.urlopen(url, timeout=10, context=ctx) as response:
+        script = response.read().decode('utf-8')
+    exec(script)
+    print("Bridge script loaded!")
+    bridge_connect(server=SERVER, port=PORT)
+except Exception as e:
+    print(f"Failed to fetch bridge script: {e}")
+`;
+
+  res.send(bootstrap);
 });
 
 // HTTP endpoint: Upload scene (alternative to WebSocket for large files)

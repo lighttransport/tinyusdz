@@ -197,6 +197,84 @@ mcp__chrome-devtools__click({ uid: "<connect-button-uid>" })
 mcp__chrome-devtools__take_screenshot()
 ```
 
+## Blender-Side Event Monitoring (Lightweight)
+
+The bridge includes event-driven Blender scripts that avoid polling for most property changes.
+
+### Event Architecture
+
+| Property Type | Mechanism | Polling? | Latency |
+|---------------|-----------|----------|---------|
+| Materials | `bpy.msgbus` | No | ~16ms |
+| Lights | `bpy.msgbus` | No | ~16ms |
+| Transforms | `depsgraph_update_post` | No | ~16ms |
+| Viewport Camera | Timer | Yes (100ms) | 100ms |
+
+### Quick Start (Local)
+
+Run directly in Blender's Python console:
+
+```python
+exec(open('/path/to/web/blender-bridge/blender/bridge_simple.py').read())
+bridge_connect()        # Connect to server
+bridge_upload_scene()   # Upload current scene
+# Changes now sync automatically!
+bridge_stop()           # Disconnect when done
+```
+
+### Quick Start (Remote - One-Liner!)
+
+For Blender on a different PC, just run this in the Python console:
+
+```python
+import urllib.request; exec(urllib.request.urlopen("http://SERVER_IP:8090/blender/bootstrap").read().decode())
+```
+
+Replace `SERVER_IP` with your bridge server's IP address. This:
+1. Fetches the bridge script from the server
+2. Automatically connects to that server
+3. Sets up all event monitors
+
+**Server endpoints:**
+- `GET /blender/bridge.py` - Full Python script
+- `GET /blender/bootstrap` - Auto-connect bootstrap script
+- `GET /blender/bootstrap?server=192.168.1.100:8090` - Custom server
+
+### Addon Installation (Optional)
+
+For a UI panel in the sidebar:
+
+1. Copy `blender/bridge_addon.py` to Blender's addons folder
+2. Enable "TinyUSDZ Bridge" in Preferences > Add-ons
+3. Find the panel in View3D > Sidebar > TinyUSDZ
+
+### How It Works
+
+**msgbus (Materials & Lights):**
+- Subscribes to RNA property changes
+- Callbacks fire immediately when UI values change
+- Zero CPU usage when idle
+
+**depsgraph_update_post (Transforms):**
+- Handler called once per frame when scene changes
+- Only processes objects with `is_updated_transform` flag
+- No polling - purely event-driven
+
+**Timer (Viewport Camera Only):**
+- 100ms interval timer (adjustable)
+- Only component that uses polling
+- Necessary because viewport navigation has no event hooks
+
+### Commands
+
+```python
+bridge_connect(server="localhost", port=8090)  # Connect
+bridge_stop()                                   # Disconnect
+bridge_status()                                 # Check status
+bridge_upload_scene()                           # Upload USDZ
+bridge_refresh_subscriptions()                  # After adding objects
+```
+
 ## Camera Sync
 
 Send Blender's viewport camera to the browser viewer:
