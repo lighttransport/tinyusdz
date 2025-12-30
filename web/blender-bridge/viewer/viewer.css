@@ -1,0 +1,275 @@
+/* Blender Bridge Viewer Styles */
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+  background: #1a1a1a;
+  color: #e0e0e0;
+  overflow: hidden;
+}
+
+#app {
+  width: 100vw;
+  height: 100vh;
+  position: relative;
+}
+
+#canvas-container {
+  width: 100%;
+  height: 100%;
+  position: absolute;
+  top: 0;
+  left: 0;
+  z-index: 1;
+}
+
+#canvas-container canvas {
+  display: block;
+}
+
+/* Panels */
+.panel {
+  position: absolute;
+  z-index: 100;
+  background: rgba(30, 30, 30, 0.95);
+  border: 1px solid #404040;
+  border-radius: 8px;
+  padding: 16px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+}
+
+.panel h2 {
+  font-size: 16px;
+  font-weight: 600;
+  margin-bottom: 12px;
+  color: #fff;
+}
+
+.panel h3 {
+  font-size: 14px;
+  font-weight: 500;
+  margin-bottom: 8px;
+  color: #aaa;
+}
+
+/* Connection panel */
+#connection-panel {
+  top: 20px;
+  left: 20px;
+  width: 280px;
+}
+
+.form-group {
+  margin-bottom: 12px;
+}
+
+.form-group label {
+  display: block;
+  font-size: 12px;
+  color: #888;
+  margin-bottom: 4px;
+}
+
+.form-group input {
+  width: 100%;
+  padding: 8px 10px;
+  font-size: 13px;
+  background: #2a2a2a;
+  border: 1px solid #404040;
+  border-radius: 4px;
+  color: #e0e0e0;
+  outline: none;
+  transition: border-color 0.2s;
+}
+
+.form-group input:focus {
+  border-color: #5c9aff;
+}
+
+.form-group input::placeholder {
+  color: #666;
+}
+
+/* Buttons */
+.btn {
+  padding: 8px 16px;
+  font-size: 13px;
+  font-weight: 500;
+  border: 1px solid #404040;
+  border-radius: 4px;
+  background: #2a2a2a;
+  color: #e0e0e0;
+  cursor: pointer;
+  transition: all 0.2s;
+  margin-right: 8px;
+}
+
+.btn:hover:not(:disabled) {
+  background: #3a3a3a;
+}
+
+.btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.btn.primary {
+  background: #2d5a8a;
+  border-color: #3d7ab0;
+  color: #fff;
+}
+
+.btn.primary:hover:not(:disabled) {
+  background: #3d7ab0;
+}
+
+/* Status indicator */
+.status {
+  margin-top: 12px;
+  padding: 6px 10px;
+  font-size: 12px;
+  border-radius: 4px;
+  text-align: center;
+}
+
+.status.connected {
+  background: rgba(46, 160, 67, 0.2);
+  color: #4ade80;
+  border: 1px solid rgba(46, 160, 67, 0.4);
+}
+
+.status.disconnected {
+  background: rgba(248, 81, 73, 0.2);
+  color: #f87171;
+  border: 1px solid rgba(248, 81, 73, 0.4);
+}
+
+.status.connecting {
+  background: rgba(251, 191, 36, 0.2);
+  color: #fbbf24;
+  border: 1px solid rgba(251, 191, 36, 0.4);
+}
+
+/* Stats panel */
+#stats-panel {
+  top: 20px;
+  right: 20px;
+  width: 200px;
+}
+
+.stat-row {
+  display: flex;
+  justify-content: space-between;
+  padding: 4px 0;
+  font-size: 13px;
+}
+
+.stat-label {
+  color: #888;
+}
+
+.stat-value {
+  color: #e0e0e0;
+  font-weight: 500;
+}
+
+.button-row {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid #404040;
+}
+
+.button-row .btn {
+  width: 100%;
+  margin-right: 0;
+}
+
+/* Loading overlay */
+#loading-overlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background: rgba(26, 26, 26, 0.9);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  z-index: 200;
+}
+
+.loading-spinner {
+  width: 48px;
+  height: 48px;
+  border: 3px solid #404040;
+  border-top-color: #5c9aff;
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+#loading-message {
+  margin-top: 16px;
+  font-size: 14px;
+  color: #888;
+}
+
+/* Message log */
+#message-log {
+  bottom: 20px;
+  left: 20px;
+  width: 400px;
+  max-height: 200px;
+}
+
+#log-content {
+  max-height: 150px;
+  overflow-y: auto;
+  font-family: monospace;
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+#log-content .log-entry {
+  padding: 2px 0;
+  border-bottom: 1px solid #333;
+}
+
+#log-content .log-entry.info { color: #8b8b8b; }
+#log-content .log-entry.success { color: #4ade80; }
+#log-content .log-entry.warning { color: #fbbf24; }
+#log-content .log-entry.error { color: #f87171; }
+
+/* Utility classes */
+.hidden {
+  display: none !important;
+}
+
+/* Responsive adjustments */
+@media (max-width: 768px) {
+  #connection-panel {
+    width: calc(100% - 40px);
+    left: 20px;
+    right: 20px;
+  }
+
+  #stats-panel {
+    top: auto;
+    bottom: 20px;
+    right: 20px;
+    width: 180px;
+  }
+
+  #message-log {
+    display: none;
+  }
+}
