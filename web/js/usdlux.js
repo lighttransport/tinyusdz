@@ -3,10 +3,19 @@
  * Visualizes USD lights using Three.js
  */
 
+// Debug flag - set to true to enable console.log debug output
+const DEBUG = false;
+
+// Debug logging wrapper
+function debugLog(...args) {
+  if (DEBUG) {
+    console.log(...args);
+  }
+}
+
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { TransformControls } from 'three/examples/jsm/controls/TransformControls.js';
-import { RectAreaLightHelper } from 'three/examples/jsm/helpers/RectAreaLightHelper.js';
 import { RectAreaLightUniformsLib } from 'three/examples/jsm/lights/RectAreaLightUniformsLib.js';
 import { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js';
@@ -594,7 +603,7 @@ function drawSpectrumGradient(ctx, x, y, width, height) {
  */
 function setSpectralMode(mode) {
   spectralMode = mode;
-  console.log(`Spectral mode set to: ${mode}`);
+  debugLog(`Spectral mode set to: ${mode}`);
 
   // Update all lights based on new mode
   updateLightColors();
@@ -611,7 +620,7 @@ function setSpectralMode(mode) {
  */
 function setMonochromeWavelength(wavelength) {
   monochromeWavelength = Math.max(380, Math.min(780, wavelength));
-  console.log(`Monochrome wavelength set to: ${monochromeWavelength}nm`);
+  debugLog(`Monochrome wavelength set to: ${monochromeWavelength}nm`);
 
   // Update light colors if in monochrome mode
   if (spectralMode === 'monochrome') {
@@ -812,7 +821,7 @@ function applyDemoSpectralData() {
     updateLightColors();
   }
 
-  console.log(`Demo spectral data applied to ${lightData.length} lights`);
+  debugLog(`Demo spectral data applied to ${lightData.length} lights`);
 }
 
 /**
@@ -851,7 +860,7 @@ function applyBlackbodyToSelected(temperature) {
     updateLightColors();
   }
 
-  console.log(`Applied ${temperature}K blackbody spectrum to light ${selectedLightIndex}`);
+  debugLog(`Applied ${temperature}K blackbody spectrum to light ${selectedLightIndex}`);
 }
 
 // ============================================
@@ -1292,7 +1301,7 @@ function setToneMapping(mode) {
       renderer.toneMapping = THREE.ACESFilmicToneMapping;
   }
 
-  console.log(`Tone mapping set to: ${mode}, usePostProcessing: ${usePostProcessing}`);
+  debugLog(`Tone mapping set to: ${mode}, usePostProcessing: ${usePostProcessing}`);
 }
 
 /**
@@ -1303,7 +1312,7 @@ function setExposure(ev) {
   const exposureMultiplier = Math.pow(2, ev);
   renderer.toneMappingExposure = exposureMultiplier;
   aces2Pass.uniforms.exposure.value = exposureMultiplier;
-  console.log(`Exposure set to: ${ev} EV (multiplier: ${exposureMultiplier.toFixed(3)})`);
+  debugLog(`Exposure set to: ${ev} EV (multiplier: ${exposureMultiplier.toFixed(3)})`);
 }
 
 /**
@@ -1313,7 +1322,7 @@ function setExposure(ev) {
 function setGamma(gamma) {
   currentGamma = gamma;
   aces2Pass.uniforms.gamma.value = gamma;
-  console.log(`Gamma set to: ${gamma}`);
+  debugLog(`Gamma set to: ${gamma}`);
 }
 
 // Initialize RectAreaLight support
@@ -1752,11 +1761,11 @@ function initLightTransformControls() {
     return;
   }
 
-  console.log('Initializing light transform controls...');
+  debugLog('Initializing light transform controls...');
 
   lightTransformControls = new TransformControls(camera, renderer.domElement);
-  console.log('Created lightTransformControls:', lightTransformControls);
-  console.log('Is Object3D?', lightTransformControls.isObject3D);
+  debugLog('Created lightTransformControls:', lightTransformControls);
+  debugLog('Is Object3D?', lightTransformControls.isObject3D);
 
   lightTransformControls.setSize(1.0);
   lightTransformControls.setSpace('world');
@@ -1786,11 +1795,11 @@ function initLightTransformControls() {
     configureTransformControlsForOverlay(lightTransformHelper);
   } else {
     // Very new API or unknown - TransformControls manages its own rendering
-    console.log('TransformControls does not need to be added to scene (new API)');
+    debugLog('TransformControls does not need to be added to scene (new API)');
     lightTransformHelper = null;
   }
 
-  console.log('Light transform controls initialized');
+  debugLog('Light transform controls initialized');
 }
 
 // ============================================
@@ -1807,7 +1816,7 @@ function initMeshTransformControls() {
     return;
   }
 
-  console.log('Initializing mesh transform controls...');
+  debugLog('Initializing mesh transform controls...');
 
   meshTransformControls = new TransformControls(camera, renderer.domElement);
   meshTransformControls.setSize(1.0);
@@ -1828,11 +1837,11 @@ function initMeshTransformControls() {
     scene.add(meshTransformHelper);
     configureTransformControlsForOverlay(meshTransformHelper);
   } else {
-    console.log('Mesh TransformControls does not need to be added to scene (new API)');
+    debugLog('Mesh TransformControls does not need to be added to scene (new API)');
     meshTransformHelper = null;
   }
 
-  console.log('Mesh transform controls initialized');
+  debugLog('Mesh transform controls initialized');
 }
 
 /**
@@ -1879,7 +1888,7 @@ function selectMesh(mesh) {
     window.showMeshProperties(mesh);
   }
 
-  console.log(`Selected mesh: ${mesh.name || 'unnamed'}`);
+  debugLog(`Selected mesh: ${mesh.name || 'unnamed'}`);
 }
 
 /**
@@ -1908,7 +1917,7 @@ function deselectMesh() {
     window.hideMeshProperties();
   }
 
-  console.log('Mesh deselected');
+  debugLog('Mesh deselected');
 }
 
 /**
@@ -1923,7 +1932,7 @@ function setMeshTransformMode(mode) {
   meshTransformControls.enabled = true;
   meshTransformControls.visible = true;
 
-  console.log(`Mesh transform mode set to: ${mode}`);
+  debugLog(`Mesh transform mode set to: ${mode}`);
 }
 
 /**
@@ -1949,7 +1958,7 @@ function setSelectionMode(mode) {
     window.updateSelectionModeUI(mode);
   }
 
-  console.log(`Selection mode set to: ${mode}`);
+  debugLog(`Selection mode set to: ${mode}`);
 }
 
 /**
@@ -2084,7 +2093,7 @@ function selectLight3D(lightIndex) {
   // Reconfigure overlay rendering after attach (gizmo elements may be created on first use)
   configureTransformControlsForOverlay(lightTransformControls);
 
-  console.log(`Transform controls attached to light ${lightIndex}:`, {
+  debugLog(`Transform controls attached to light ${lightIndex}:`, {
     mode: lightTransformControls.mode,
     enabled: lightTransformControls.enabled,
     visible: lightTransformControls.visible,
@@ -2100,7 +2109,7 @@ function selectLight3D(lightIndex) {
     window.showLightProperties(usdLight);
   }
 
-  console.log(`Selected light ${lightIndex}: ${usdLight?.name || usdLight?.type || 'unnamed'}`);
+  debugLog(`Selected light ${lightIndex}: ${usdLight?.name || usdLight?.type || 'unnamed'}`);
 }
 
 /**
@@ -2126,7 +2135,7 @@ function setLightTransformMode(mode) {
   lightTransformControls.enabled = true;
   lightTransformControls.visible = true;
 
-  console.log(`Transform mode set to: ${mode}, attached to:`, lightTransformControls.object);
+  debugLog(`Transform mode set to: ${mode}, attached to:`, lightTransformControls.object);
 }
 
 /**
@@ -2221,21 +2230,21 @@ document.addEventListener('keydown', (event) => {
   if (key === 'm') {
     const newMode = selectionMode === 'meshes' ? 'all' : 'meshes';
     setSelectionMode(newMode);
-    console.log(`Selection mode: ${newMode}`);
+    debugLog(`Selection mode: ${newMode}`);
     if (window.updateSelectionModeUI) window.updateSelectionModeUI(newMode);
     return;
   }
   if (key === 'l') {
     const newMode = selectionMode === 'lights' ? 'all' : 'lights';
     setSelectionMode(newMode);
-    console.log(`Selection mode: ${newMode}`);
+    debugLog(`Selection mode: ${newMode}`);
     if (window.updateSelectionModeUI) window.updateSelectionModeUI(newMode);
     return;
   }
 
   // Handle transform mode shortcuts for lights
   if (key === 'w' || key === 'e' || key === 'r' || key === 'escape') {
-    console.log(`Key pressed: '${key}', selectedLight3DIndex: ${selectedLight3DIndex}, selectedMesh: ${selectedMesh?.name}`);
+    debugLog(`Key pressed: '${key}', selectedLight3DIndex: ${selectedLight3DIndex}, selectedMesh: ${selectedMesh?.name}`);
   }
 
   // Handle mesh transform shortcuts
@@ -2259,7 +2268,7 @@ document.addEventListener('keydown', (event) => {
   // Handle light transform shortcuts
   if (selectedLight3DIndex < 0) {
     if (key === 'w' || key === 'e' || key === 'r') {
-      console.log('No light or mesh selected - click on an object first');
+      debugLog('No light or mesh selected - click on an object first');
     }
     return;
   }
@@ -2669,7 +2678,7 @@ function convertUSDLightToThreeJS(usdLight) {
 
           pmremGenerator.dispose();
 
-          console.log(`Applied envmap from DomeLight: ${usdLight.name}, textureFile: ${usdLight.textureFile}`);
+          debugLog(`Applied envmap from DomeLight: ${usdLight.name}, textureFile: ${usdLight.textureFile}`);
 
           // Still create a hemisphere light as fallback visualization
           light = new THREE.HemisphereLight(color, new THREE.Color(0x444444), intensity * 0.1);
@@ -2680,8 +2689,8 @@ function convertUSDLightToThreeJS(usdLight) {
         }
       } else if (usdLight.textureFile) {
         // Texture file specified but not loaded - create placeholder and log
-        console.log(`DomeLight ${usdLight.name} has textureFile: ${usdLight.textureFile} (not loaded)`);
-        console.log(`Use envmapTextureId: ${usdLight.envmapTextureId} for preloaded textures`);
+        debugLog(`DomeLight ${usdLight.name} has textureFile: ${usdLight.textureFile} (not loaded)`);
+        debugLog(`Use envmapTextureId: ${usdLight.envmapTextureId} for preloaded textures`);
 
         // Use hemisphere light as fallback
         light = new THREE.HemisphereLight(color, new THREE.Color(0x444444), intensity);
@@ -2813,7 +2822,7 @@ async function decodeImageData(data, format) {
 
   if (format === 'exr') {
     // For EXR, we'll need external decoder or return raw for now
-    console.log('EXR format detected - attempting to parse');
+    debugLog('EXR format detected - attempting to parse');
     return parseSimpleEXR(data);
   }
 
@@ -2909,7 +2918,7 @@ function parseSimpleEXR(data) {
 
     // Version (byte 4)
     const version = view.getUint8(4);
-    console.log(`EXR version: ${version}`);
+    debugLog(`EXR version: ${version}`);
 
     // Parse header attributes
     let offset = 8;
@@ -2969,7 +2978,7 @@ function parseSimpleEXR(data) {
       offset += attrSize;
     }
 
-    console.log(`EXR: ${width}x${height}, compression: ${compression}, channels: ${channels.length}`);
+    debugLog(`EXR: ${width}x${height}, compression: ${compression}, channels: ${channels.length}`);
 
     if (width <= 0 || height <= 0) {
       console.warn('Could not parse EXR dimensions');
@@ -2978,7 +2987,7 @@ function parseSimpleEXR(data) {
 
     // For now, return basic info even if we can't decode the pixel data
     // Full EXR decoding requires handling compression (PIZ, ZIP, etc.)
-    console.log('EXR parsing: dimensions found, pixel decoding not fully implemented');
+    debugLog('EXR parsing: dimensions found, pixel decoding not fully implemented');
 
     // Try to find and decode uncompressed data
     // Skip to end of header (null byte)
@@ -3071,7 +3080,7 @@ function createTextureFromImageData(imageData) {
   const channels = imageData.channels;
   const decoded = imageData.decoded;
 
-  console.log(`Creating texture from image: ${width}x${height}, ${channels} channels, decoded: ${decoded}`);
+  debugLog(`Creating texture from image: ${width}x${height}, ${channels} channels, decoded: ${decoded}`);
 
   // Validate dimensions
   if (width <= 0 || height <= 0) {
@@ -3090,7 +3099,7 @@ function createTextureFromImageData(imageData) {
   const bytesPerPixel = imageData.data.length / (width * height);
   const isHDR = bytesPerPixel >= channels * 4; // 4 bytes per float per channel
 
-  console.log(`Image bytes per pixel: ${bytesPerPixel}, isHDR: ${isHDR}`);
+  debugLog(`Image bytes per pixel: ${bytesPerPixel}, isHDR: ${isHDR}`);
 
   let texture;
 
@@ -3157,7 +3166,7 @@ function createTextureFromImageData(imageData) {
   texture.generateMipmaps = true;
   texture.needsUpdate = true;
 
-  console.log(`Created envmap texture: ${width}x${height}`);
+  debugLog(`Created envmap texture: ${width}x${height}`);
   return texture;
 }
 
@@ -3169,7 +3178,7 @@ async function loadLightsFromUSD(usdLoader) {
   clearLights();
 
   const numLights = usdLoader.numLights();
-  console.log(`Found ${numLights} lights in USD file`);
+  debugLog(`Found ${numLights} lights in USD file`);
 
   for (let i = 0; i < numLights; i++) {
     const usdLight = usdLoader.getLight(i);
@@ -3179,7 +3188,7 @@ async function loadLightsFromUSD(usdLoader) {
       continue;
     }
 
-    console.log(`Light ${i}:`, usdLight);
+    debugLog(`Light ${i}:`, usdLight);
 
     // For dome lights with envmap texture, try to load the texture
     if (usdLight.type === 'dome') {
@@ -3187,27 +3196,27 @@ async function loadLightsFromUSD(usdLoader) {
       let decodedImageData = null;
 
       if (usdLight.envmapTextureId >= 0) {
-        console.log(`DomeLight has envmap texture ID: ${usdLight.envmapTextureId}`);
+        debugLog(`DomeLight has envmap texture ID: ${usdLight.envmapTextureId}`);
         imageData = usdLoader.getImage(usdLight.envmapTextureId);
 
         if (imageData && !imageData.error) {
-          console.log(`Envmap image: ${imageData.width}x${imageData.height}, decoded: ${imageData.decoded}`);
+          debugLog(`Envmap image: ${imageData.width}x${imageData.height}, decoded: ${imageData.decoded}`);
 
           // If image is not decoded (has invalid dimensions), try to decode it
           if (!imageData.decoded || imageData.width <= 0 || imageData.height <= 0) {
             if (imageData.data && imageData.data.length > 0) {
               const format = detectImageFormat(imageData.data);
-              console.log(`Detected image format: ${format}`);
+              debugLog(`Detected image format: ${format}`);
 
               if (format !== 'unknown') {
                 try {
                   decodedImageData = await decodeImageData(imageData.data, format);
                   if (decodedImageData) {
-                    console.log(`Decoded image: ${decodedImageData.width}x${decodedImageData.height}`);
+                    debugLog(`Decoded image: ${decodedImageData.width}x${decodedImageData.height}`);
                     imageData = decodedImageData;
                   }
                 } catch (e) {
-                  console.warn('Failed to decode image:', e);
+                  debugLog('Failed to decode image:', e);
                 }
               }
             }
@@ -3286,11 +3295,11 @@ const HDRI_UPDATE_DEBOUNCE_MS = 100;
 function refreshHDRIProjection() {
   // Only refresh if we have previously projected
   if (!projectedHDRI && !hdriProjection) {
-    console.log('No HDRI projection to refresh - run Project first');
+    debugLog('No HDRI projection to refresh - run Project first');
     return;
   }
 
-  console.log('Refreshing HDRI projection...');
+  debugLog('Refreshing HDRI projection...');
   projectLightsToHDRI();
 
   // Update preview canvas if visible
@@ -3328,7 +3337,7 @@ function scheduleHDRIRefresh() {
  */
 function setHDRILiveUpdate(enabled) {
   hdriLiveUpdate = enabled;
-  console.log(`HDRI live update: ${enabled ? 'enabled' : 'disabled'}`);
+  debugLog(`HDRI live update: ${enabled ? 'enabled' : 'disabled'}`);
 
   // If enabling and we have a projection, refresh immediately
   if (enabled && (projectedHDRI || hdriProjection)) {
@@ -3499,9 +3508,9 @@ function convertLightDataToProjectionLight(usdLight) {
 function projectLightsToHDRI(options = {}) {
   const settings = { ...hdriSettings, ...options };
 
-  console.log('Projecting lights to HDRI...');
-  console.log(`  Resolution: ${settings.width}x${settings.height}`);
-  console.log(`  Lights: ${lightData.length}`);
+  debugLog('Projecting lights to HDRI...');
+  debugLog(`  Resolution: ${settings.width}x${settings.height}`);
+  debugLog(`  Lights: ${lightData.length}`);
 
   // Create projection engine
   hdriProjection = new LightHDRIProjection({
@@ -3530,10 +3539,10 @@ function projectLightsToHDRI(options = {}) {
   }
 
   if (skippedLights > 0) {
-    console.log(`  Skipped ${skippedLights} disabled lights`);
+    debugLog(`  Skipped ${skippedLights} disabled lights`);
   }
 
-  console.log(`  Added ${addedLights} lights to projection`);
+  debugLog(`  Added ${addedLights} lights to projection`);
 
   if (addedLights === 0) {
     console.warn('No lights to project');
@@ -3549,7 +3558,7 @@ function projectLightsToHDRI(options = {}) {
   }
   const elapsed = (performance.now() - startTime).toFixed(1);
 
-  console.log(`  Generated in ${elapsed}ms`);
+  debugLog(`  Generated in ${elapsed}ms`);
 
   // Analyze result
   let minVal = Infinity, maxVal = 0, nonZero = 0;
@@ -3561,8 +3570,8 @@ function projectLightsToHDRI(options = {}) {
       maxVal = Math.max(maxVal, v);
     }
   }
-  console.log(`  Non-zero: ${nonZero} / ${projectedHDRI.data.length}`);
-  console.log(`  Value range: ${minVal.toExponential(2)} - ${maxVal.toExponential(2)}`);
+  debugLog(`  Non-zero: ${nonZero} / ${projectedHDRI.data.length}`);
+  debugLog(`  Value range: ${minVal.toExponential(2)} - ${maxVal.toExponential(2)}`);
 
   // Update UI
   if (window.updateHDRIStatus) {
@@ -3656,7 +3665,7 @@ function applyHDRIToScene() {
   }
 
   hdriAppliedToScene = true;
-  console.log('HDRI applied to scene environment');
+  debugLog('HDRI applied to scene environment');
 
   if (window.updateHDRIStatus) {
     window.updateHDRIStatus({ applied: true });
@@ -3670,7 +3679,7 @@ function removeHDRIFromScene() {
   scene.environment = null;
   scene.background = defaultBackgroundColor;
   hdriAppliedToScene = false;
-  console.log('HDRI removed from scene');
+  debugLog('HDRI removed from scene');
 
   if (window.updateHDRIStatus) {
     window.updateHDRIStatus({ applied: false });
@@ -3692,7 +3701,7 @@ function setShowEnvmapBackground(show) {
     }
   }
 
-  console.log(`Envmap background: ${show ? 'enabled' : 'disabled'}`);
+  debugLog(`Envmap background: ${show ? 'enabled' : 'disabled'}`);
 }
 
 /**
@@ -3723,13 +3732,13 @@ function setLightingMode(mode) {
   if (mode === lightingMode) return;
 
   lightingMode = mode;
-  console.log(`Lighting mode: ${mode}`);
+  debugLog(`Lighting mode: ${mode}`);
 
   if (mode === 'envmap') {
     // Switch to environment map mode
     // First, project HDRI if not already done
     if (!projectedHDRI) {
-      console.log('Auto-projecting HDRI for envmap mode...');
+      debugLog('Auto-projecting HDRI for envmap mode...');
       projectLightsToHDRI();
     }
 
@@ -3750,7 +3759,7 @@ function setLightingMode(mode) {
         lightObj.visible = false;
       }
     }
-    console.log('Lights disabled, using HDRI environment');
+    debugLog('Lights disabled, using HDRI environment');
   } else {
     // Switch back to lights mode
     // Remove HDRI from scene
@@ -3769,7 +3778,7 @@ function setLightingMode(mode) {
         lightObj.visible = true;
       }
     }
-    console.log('Lights enabled, using direct lighting');
+    debugLog('Lights enabled, using direct lighting');
   }
 
   // Update UI
@@ -4166,7 +4175,7 @@ async function exportHDRI(format = 'exr') {
     return;
   }
 
-  console.log(`Exporting HDRI as ${format.toUpperCase()}...`);
+  debugLog(`Exporting HDRI as ${format.toUpperCase()}...`);
 
   let blob;
   let filename;
@@ -4236,7 +4245,7 @@ async function exportHDRI(format = 'exr') {
   document.body.removeChild(a);
   URL.revokeObjectURL(url);
 
-  console.log(`Exported: ${filename} (${blob.size} bytes)`);
+  debugLog(`Exported: ${filename} (${blob.size} bytes)`);
 }
 
 /**
@@ -4245,7 +4254,7 @@ async function exportHDRI(format = 'exr') {
 function setHDRIResolution(width, height) {
   hdriSettings.width = width;
   hdriSettings.height = height || Math.floor(width / 2);
-  console.log(`HDRI resolution set to ${hdriSettings.width}x${hdriSettings.height}`);
+  debugLog(`HDRI resolution set to ${hdriSettings.width}x${hdriSettings.height}`);
 }
 
 /**
@@ -4253,7 +4262,7 @@ function setHDRIResolution(width, height) {
  */
 function setHDRICenter(x, y, z) {
   hdriSettings.center = { x, y, z };
-  console.log(`HDRI center set to (${x}, ${y}, ${z})`);
+  debugLog(`HDRI center set to (${x}, ${y}, ${z})`);
 
   // Schedule HDRI refresh if live update is enabled
   scheduleHDRIRefresh();
@@ -4264,7 +4273,7 @@ function setHDRICenter(x, y, z) {
  */
 function setHDRIMaxDistance(distance) {
   hdriSettings.maxDistance = distance;
-  console.log(`HDRI max distance set to ${distance}`);
+  debugLog(`HDRI max distance set to ${distance}`);
 
   // Schedule HDRI refresh if live update is enabled
   scheduleHDRIRefresh();
@@ -4290,7 +4299,7 @@ async function initLoader() {
   await loader.init({ useMemory64: false });
   loader.setMaxMemoryLimitMB(500);
 
-  console.log('TinyUSDZ loader initialized');
+  debugLog('TinyUSDZ loader initialized');
   return loader;
 }
 
@@ -4309,10 +4318,10 @@ async function loadUSDFromBuffer(buffer, filename) {
       throw new Error('Failed to parse USD file');
     }
 
-    console.log('USD file loaded successfully');
-    console.log(`  Meshes: ${usd.numMeshes()}`);
-    console.log(`  Materials: ${usd.numMaterials()}`);
-    console.log(`  Lights: ${usd.numLights()}`);
+    debugLog('USD file loaded successfully');
+    debugLog(`  Meshes: ${usd.numMeshes()}`);
+    debugLog(`  Materials: ${usd.numMaterials()}`);
+    debugLog(`  Lights: ${usd.numLights()}`);
 
     await loadLightsFromUSD(usd);
 
@@ -4432,7 +4441,7 @@ function toggleLight(lightIndex, enabled) {
   // Schedule HDRI refresh if live update is enabled
   scheduleHDRIRefresh();
 
-  console.log(`Light ${lightIndex} (${lightData[lightIndex]?.name || 'unnamed'}): ${newState ? 'ON' : 'OFF'}`);
+  debugLog(`Light ${lightIndex} (${lightData[lightIndex]?.name || 'unnamed'}): ${newState ? 'ON' : 'OFF'}`);
 
   return newState;
 }
@@ -4517,7 +4526,7 @@ function setSelectedLightColor(r, g, b) {
   // Schedule HDRI refresh if live update is enabled
   scheduleHDRIRefresh();
 
-  console.log(`Light ${selectedLight3DIndex} color set to RGB(${r.toFixed(2)}, ${g.toFixed(2)}, ${b.toFixed(2)})`);
+  debugLog(`Light ${selectedLight3DIndex} color set to RGB(${r.toFixed(2)}, ${g.toFixed(2)}, ${b.toFixed(2)})`);
 }
 
 /**
@@ -4553,7 +4562,7 @@ function setSelectedLightIntensity(intensity) {
   // Schedule HDRI refresh if live update is enabled
   scheduleHDRIRefresh();
 
-  console.log(`Light ${selectedLight3DIndex} intensity set to ${intensity} (effective: ${effectiveIntensity.toFixed(2)})`);
+  debugLog(`Light ${selectedLight3DIndex} intensity set to ${intensity} (effective: ${effectiveIntensity.toFixed(2)})`);
 }
 
 /**
@@ -4589,7 +4598,7 @@ function setSelectedLightExposure(exposure) {
   // Schedule HDRI refresh if live update is enabled
   scheduleHDRIRefresh();
 
-  console.log(`Light ${selectedLight3DIndex} exposure set to ${exposure} EV (effective intensity: ${effectiveIntensity.toFixed(2)})`);
+  debugLog(`Light ${selectedLight3DIndex} exposure set to ${exposure} EV (effective intensity: ${effectiveIntensity.toFixed(2)})`);
 }
 
 /**
@@ -4636,7 +4645,7 @@ function setSelectedLightPosition(x, y, z) {
   // Schedule HDRI refresh if live update is enabled
   scheduleHDRIRefresh();
 
-  console.log(`Light ${selectedLight3DIndex} position set to (${x.toFixed(2)}, ${y.toFixed(2)}, ${z.toFixed(2)})`);
+  debugLog(`Light ${selectedLight3DIndex} position set to (${x.toFixed(2)}, ${y.toFixed(2)}, ${z.toFixed(2)})`);
 }
 
 /**
@@ -4685,7 +4694,7 @@ function setSelectedLightRotation(x, y, z) {
   // Schedule HDRI refresh if live update is enabled
   scheduleHDRIRefresh();
 
-  console.log(`Light ${selectedLight3DIndex} rotation set to (${x.toFixed(1)}°, ${y.toFixed(1)}°, ${z.toFixed(1)}°)`);
+  debugLog(`Light ${selectedLight3DIndex} rotation set to (${x.toFixed(1)}°, ${y.toFixed(1)}°, ${z.toFixed(1)}°)`);
 }
 
 /**
@@ -4731,7 +4740,7 @@ function setSelectedLightConeAngle(angle) {
   // Schedule HDRI refresh if live update is enabled
   scheduleHDRIRefresh();
 
-  console.log(`Light ${selectedLight3DIndex} cone angle set to ${angle}°`);
+  debugLog(`Light ${selectedLight3DIndex} cone angle set to ${angle}°`);
 }
 
 /**
@@ -4774,7 +4783,7 @@ function setSelectedLightConeSoftness(softness) {
   // Schedule HDRI refresh if live update is enabled
   scheduleHDRIRefresh();
 
-  console.log(`Light ${selectedLight3DIndex} cone softness set to ${softness.toFixed(2)}`);
+  debugLog(`Light ${selectedLight3DIndex} cone softness set to ${softness.toFixed(2)}`);
 }
 
 /**
@@ -4930,6 +4939,7 @@ window.getLightTransformControls = () => lightTransformControls;
 window.getThreeLights = () => threeLights;
 window.getLightHelpers = () => lightHelpers;
 window.debugTransformControls = () => {
+  // Debug function - always log regardless of DEBUG flag
   console.log('=== Transform Controls Debug ===');
   console.log('selectedLight3DIndex:', selectedLight3DIndex);
   console.log('lightTransformControls:', lightTransformControls);
@@ -5045,7 +5055,7 @@ function animate() {
 // ============================================
 
 async function init() {
-  console.log('Initializing UsdLux demo...');
+  debugLog('Initializing UsdLux demo...');
 
   // Initialize spectral canvas
   initSpectralCanvas();
@@ -5056,7 +5066,7 @@ async function init() {
   // Load default embedded scene
   await loadEmbeddedScene('complete');
 
-  console.log('UsdLux demo initialized');
+  debugLog('UsdLux demo initialized');
 }
 
 init();
