@@ -37,6 +37,7 @@
     "pixelmatch": "^6.0.0",
     "pngjs": "^7.0.0",
     "puppeteer": "^24.25.0",
+    "socket.io": "^4.8.3",
     "three": ">=0.177.0",
     "vite-node": "^3.2.4",
     "yaml": "^2.6.1"
