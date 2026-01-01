@@ -138,6 +138,259 @@ namespace {
 
 #define PushError(msg) TYDRA_PUSH_ERROR(err, msg)
 
+// Structure to hold MaterialX NodeGraph info extracted from geometry_normal/geometry_tangent connections
+// Used to capture tangent rotation and normal map scale for anisotropic materials
+struct MtlxNodeGraphInfo {
+  float tangent_rotation{0.0f};      // From ND_rotate3d_vector3 node's "amount" input (degrees)
+  float normal_map_scale{1.0f};      // From ND_normalmap_float node's "scale" input
+  bool has_normal_map{false};        // True if ND_normalmap node was found in the chain
+  bool has_tangent_rotation{false};  // True if ND_rotate3d_vector3 node was found
+  std::string normal_map_texture;    // Path to normal map texture asset
+};
+
+// Extract MaterialX NodeGraph info by traversing connections
+// Returns the extracted info or an error message
+static nonstd::expected<MtlxNodeGraphInfo, std::string> ExtractMtlxNodeGraphInfo(
+    const Stage &stage,
+    const Prim *material_prim,
+    const std::vector<Path> &connections,
+    std::string *err) {
+
+  MtlxNodeGraphInfo info;
+
+  if (connections.empty()) {
+    return info;  // No connections, return default
+  }
+
+  // Follow the first connection (we only support single connection)
+  Path current_path = connections[0];
+
+  // Maximum depth to prevent infinite loops
+  int max_depth = 15;
+
+  while (max_depth-- > 0) {
+    std::string current_prim_part = current_path.prim_part();
+    std::string current_prop_part = current_path.prop_part();
+    if (err) {
+      *err += "DEBUG: current_prim_part=" + current_prim_part + ", prop_part=" + current_prop_part + "\n";
+    }
+
+    const Prim *current_prim{nullptr};
+
+    // Try to find the prim in the stage
+    std::string lookup_err;
+    bool found = stage.find_prim_at_path(Path(current_prim_part, ""), current_prim, &lookup_err);
+
+    // If not found in stage, try looking in material's children (NodeGraph case)
+    if (!found || !current_prim) {
+      if (err) {
+        *err += "DEBUG: Not found in stage, looking in material children. material_prim=" + std::string(material_prim ? "valid" : "null") + "\n";
+      }
+      if (material_prim) {
+        if (err) {
+          *err += "DEBUG: material_prim has " + std::to_string(material_prim->children().size()) + " children\n";
+        }
+        // Look for NodeGraph child
+        for (const auto& child : material_prim->children()) {
+          if (err) {
+            *err += "DEBUG: Checking child: '" + child.element_name() + "' type='" + child.type_name() + "' is_nodegraph=" + (child.as<NodeGraph>() ? "true" : "false") + "\n";
+          }
+          // Try to match by type if the path contains "NodeGraph" and this child is a NodeGraph
+          if (current_prim_part.find("NodeGraph") != std::string::npos && child.as<NodeGraph>()) {
+            if (err) {
+              *err += "DEBUG: Found NodeGraph by type matching\n";
+            }
+            const NodeGraph* ng = child.as<NodeGraph>();
+
+            // Extract target name from path
+            size_t last_slash = current_prim_part.rfind('/');
+            std::string target_name = (last_slash != std::string::npos)
+                ? current_prim_part.substr(last_slash + 1)
+                : current_prim_part;
+
+            // If target_name matches the NodeGraph name OR is "NodeGraph" itself
+            if (target_name == child.element_name() || target_name == "NodeGraph") {
+              // The path points to the NodeGraph itself
+              // Set current_prim to the NodeGraph's prim so we can handle it below
+              if (err) {
+                *err += "DEBUG: Path points to NodeGraph itself, setting current_prim\n";
+              }
+              current_prim = &child;
+              break;
+            }
+
+            // Found NodeGraph, look for the target node in NodeGraph children
+            if (err) {
+              *err += "DEBUG: Looking for '" + target_name + "' in NodeGraph with " + std::to_string(child.children().size()) + " children\n";
+            }
+            for (const auto& ng_child : child.children()) {
+              if (err) {
+                *err += "DEBUG: NodeGraph child: '" + ng_child.element_name() + "'\n";
+              }
+              if (ng_child.element_name() == target_name) {
+                if (err) {
+                  *err += "DEBUG: Found target in NodeGraph children\n";
+                }
+                current_prim = &ng_child;
+                break;
+              }
+            }
+            (void)ng;  // suppress unused variable warning
+            if (current_prim) break;
+          }
+        }
+      }
+    }
+
+    if (!current_prim) {
+      // Can't find the prim, stop traversal
+      break;
+    }
+
+    // Check if it's a Shader
+    const Shader *shader = current_prim->as<Shader>();
+    if (err) {
+      *err += "DEBUG: Checking prim type: type_name='" + current_prim->type_name() + "' is_shader=" + (shader ? "true" : "false") + "\n";
+    }
+    if (!shader) {
+      // Not a shader, might be a NodeGraph - try to follow its output
+      if (const NodeGraph *ng = current_prim->as<NodeGraph>()) {
+        // Get the output property specified in the connection
+        std::string prop_part = current_path.prop_part();
+        if (err) {
+          std::string props_list;
+          for (const auto& kv : ng->props) {
+            props_list += " '" + kv.first + "'";
+          }
+          *err += "DEBUG NodeGraph props:" + props_list + ", looking for: '" + prop_part + "'\n";
+        }
+        auto it = ng->props.find(prop_part);
+        if (it != ng->props.end() && it->second.is_attribute()) {
+          const Attribute &attr = it->second.get_attribute();
+          if (attr.has_connections()) {
+            const auto &conns = attr.connections();
+            if (!conns.empty()) {
+              if (err) {
+                *err += "DEBUG: Found property, following connection to: " + conns[0].full_path_name() + "\n";
+              }
+              current_path = conns[0];
+              continue;
+            }
+          }
+        } else {
+          if (err) {
+            *err += "DEBUG: Property '" + prop_part + "' not found in ng->props\n";
+          }
+        }
+      }
+      break;
+    }
+
+    // Check for specific MaterialX node types
+    const std::string &node_type = shader->info_id;
+    if (err) {
+      *err += "DEBUG: Shader info_id='" + node_type + "'\n";
+    }
+
+    // For generic shaders (MaterialX nodes), properties are stored in ShaderNode inside shader->value
+    // We need to get the correct props map
+    const std::map<std::string, Property> *shader_props = &shader->props;
+    if (const ShaderNode *shader_node = shader->value.as<ShaderNode>()) {
+      shader_props = &shader_node->props;
+      DCOUT("Using ShaderNode props (size=" << shader_props->size() << ")");
+    }
+
+    if (node_type == "ND_normalmap_float" || node_type == "ND_normalmap") {
+      info.has_normal_map = true;
+      DCOUT("Found ND_normalmap shader, props=" << shader_props->size());
+
+      // Extract scale input
+      auto scale_it = shader_props->find("inputs:scale");
+      if (scale_it != shader_props->end() && scale_it->second.is_attribute()) {
+        const Attribute &scale_attr = scale_it->second.get_attribute();
+        if (auto scale_val = scale_attr.get_value<float>()) {
+          info.normal_map_scale = scale_val.value();
+        }
+      }
+
+      // Follow inputs:in to find the texture
+      auto in_it = shader_props->find("inputs:in");
+      if (in_it != shader_props->end() && in_it->second.is_attribute()) {
+        const Attribute &in_attr = in_it->second.get_attribute();
+        if (in_attr.has_connections()) {
+          current_path = in_attr.connections()[0];
+          DCOUT("Following inputs:in connection to: " << current_path.full_path_name());
+          continue;
+        }
+      }
+      DCOUT("No inputs:in connection, breaking");
+      break;  // No more connections to follow
+    } else if (node_type == "ND_rotate3d_vector3") {
+      info.has_tangent_rotation = true;
+
+      // Extract amount input (rotation angle in degrees)
+      auto amount_it = shader_props->find("inputs:amount");
+      if (amount_it != shader_props->end() && amount_it->second.is_attribute()) {
+        const Attribute &amount_attr = amount_it->second.get_attribute();
+        if (auto amount_val = amount_attr.get_value<float>()) {
+          info.tangent_rotation = amount_val.value();
+        }
+      }
+
+      // Follow inputs:in to continue traversal
+      auto in_it = shader_props->find("inputs:in");
+      if (in_it != shader_props->end() && in_it->second.is_attribute()) {
+        const Attribute &in_attr = in_it->second.get_attribute();
+        if (in_attr.has_connections()) {
+          current_path = in_attr.connections()[0];
+          continue;
+        }
+      }
+    } else if (node_type == "ND_image_vector3" || node_type == "ND_image_vector4" ||
+               node_type == "ND_image_color3" || node_type == "ND_image_color4") {
+      // Found the texture node - extract file path
+      DCOUT("Found ND_image node, props=" << shader_props->size());
+      auto file_it = shader_props->find("inputs:file");
+      if (file_it != shader_props->end() && file_it->second.is_attribute()) {
+        const Attribute &file_attr = file_it->second.get_attribute();
+        if (auto asset_val = file_attr.get_value<value::AssetPath>()) {
+          info.normal_map_texture = asset_val.value().GetAssetPath();
+          DCOUT("Found normal_map_texture: " << info.normal_map_texture);
+        }
+      }
+      break;  // End of chain
+    } else if (node_type == "ND_normalize_vector3" ||
+               node_type == "ND_convert_vector4_vector3" ||
+               node_type == "ND_convert_color4_vector3") {
+      // Conversion/normalization nodes - follow inputs:in
+      auto in_it = shader_props->find("inputs:in");
+      if (in_it != shader_props->end() && in_it->second.is_attribute()) {
+        const Attribute &in_attr = in_it->second.get_attribute();
+        if (in_attr.has_connections()) {
+          current_path = in_attr.connections()[0];
+          continue;
+        }
+      }
+      break;
+    } else if (node_type == "ND_tangent_vector3" || node_type == "ND_normal_vector3") {
+      // Geometry nodes - end of chain
+      break;
+    } else {
+      // Unknown node type, try to follow inputs:in if it exists
+      auto in_it = shader_props->find("inputs:in");
+      if (in_it != shader_props->end() && in_it->second.is_attribute()) {
+        const Attribute &in_attr = in_it->second.get_attribute();
+        if (in_attr.has_connections()) {
+          current_path = in_attr.connections()[0];
+          continue;
+        }
+      }
+      break;
+    }
+  }
+
+  return info;
+}
 
 //
 // Convert vertex attribute with Uniform variability(interpolation) to
@@ -7354,6 +7607,89 @@ bool RenderSceneConverter::ConvertMaterial(const RenderSceneConverterEnv &env,
         PUSH_ERROR_AND_RETURN(fmt::format(
             "Failed to convert MtlxOpenPBRSurface : {}", surfacePath.prim_part()));
       }
+
+      // Extract tangent rotation, normal map scale, and normal map texture from NodeGraph connections
+      // First, get the material prim from the stage
+      PUSH_WARN("DEBUG: Attempting to extract normal map texture from MtlxOpenPBRSurface");
+      const Prim *material_prim{nullptr};
+      bool found_prim = env.stage.find_prim_at_path(
+              Path(mat_abs_path.prim_part(), /* prop part */ ""), material_prim,
+              &err);
+      PUSH_WARN(fmt::format("DEBUG: find_prim_at_path({}) returned {}, material_prim={}",
+                            mat_abs_path.prim_part(), found_prim, (material_prim ? "valid" : "null")));
+      if (found_prim && material_prim) {
+        // Check if geometry_normal has connections (links to NodeGraph with ND_normalmap node)
+        const auto &normal_conns = mtlx_openpbr->geometry_normal.get_connections();
+        PUSH_WARN(fmt::format("DEBUG: geometry_normal has {} connections, has_value={}",
+                              normal_conns.size(), mtlx_openpbr->geometry_normal.has_value()));
+        if (!normal_conns.empty()) {
+          auto normal_info_result = ExtractMtlxNodeGraphInfo(
+              env.stage, material_prim, normal_conns, &err);
+          if (normal_info_result) {
+            const auto &normal_info = normal_info_result.value();
+            if (normal_info.has_normal_map) {
+              openpbr_shader.normal_map_scale = normal_info.normal_map_scale;
+              DCOUT("Extracted normal_map_scale: " << normal_info.normal_map_scale);
+
+              // If a normal map texture was found, create a UVTexture entry
+              if (!normal_info.normal_map_texture.empty()) {
+                // Create a texture image entry
+                TextureImage tex_image;
+                tex_image.asset_identifier = normal_info.normal_map_texture;
+                tex_image.colorSpace = ColorSpace::Raw;  // Normal maps are always raw/linear
+                tex_image.usdColorSpace = ColorSpace::Raw;
+
+                // Check if this image already exists in the images list
+                int64_t image_id = -1;
+                for (size_t i = 0; i < images.size(); ++i) {
+                  if (images[i].asset_identifier == normal_info.normal_map_texture) {
+                    image_id = static_cast<int64_t>(i);
+                    break;
+                  }
+                }
+
+                // If not found, add the image
+                if (image_id < 0) {
+                  image_id = static_cast<int64_t>(images.size());
+                  images.push_back(tex_image);
+                  DCOUT("Added normal map image: " << normal_info.normal_map_texture << " as image_id " << image_id);
+                }
+
+                // Create UVTexture entry
+                UVTexture uvtex;
+                uvtex.texture_image_id = static_cast<int32_t>(image_id);
+                uvtex.varname_uv = env.mesh_config.default_texcoords_primvar_name;
+                uvtex.connectedOutputChannel = UVTexture::Channel::RGB;
+                uvtex.wrapS = UVTexture::WrapMode::REPEAT;
+                uvtex.wrapT = UVTexture::WrapMode::REPEAT;
+
+                int32_t tex_id = static_cast<int32_t>(textures.size());
+                textures.push_back(uvtex);
+
+                // Set the texture_id on the normal parameter
+                openpbr_shader.normal.texture_id = tex_id;
+
+                DCOUT("Created normal map UVTexture with tex_id: " << tex_id);
+              }
+            }
+          }
+        }
+
+        // Check if geometry_tangent has connections (links to NodeGraph with ND_rotate3d_vector3 node)
+        const auto &tangent_conns = mtlx_openpbr->geometry_tangent.get_connections();
+        if (!tangent_conns.empty()) {
+          auto tangent_info_result = ExtractMtlxNodeGraphInfo(
+              env.stage, material_prim, tangent_conns, &err);
+          if (tangent_info_result) {
+            const auto &tangent_info = tangent_info_result.value();
+            if (tangent_info.has_tangent_rotation) {
+              openpbr_shader.tangent_rotation = tangent_info.tangent_rotation;
+              DCOUT("Extracted tangent_rotation: " << tangent_info.tangent_rotation);
+            }
+          }
+        }
+      }
+
       rmat.openPBRShader = openpbr_shader;
     }
 
@@ -7547,6 +7883,95 @@ bool RenderSceneConverter::ConvertMaterial(const RenderSceneConverterEnv &env,
                 PUSH_WARN(fmt::format(
                     "Failed to convert MtlxOpenPBRSurface : {}", mtlxSurfacePath.prim_part()));
               } else {
+                // Extract normal map texture from NodeGraph connections
+                PUSH_WARN("DEBUG: MaterialXConfigAPI path - extracting normal map texture");
+
+                // Get the material prim to access NodeGraph children
+                const Prim* material_prim_for_ng = nullptr;
+                if (!env.stage.find_prim_at_path(mat_abs_path, material_prim_for_ng, &err)) {
+                  PUSH_WARN(fmt::format("DEBUG: Could not find material prim at {}", mat_abs_path.full_path_name()));
+                  material_prim_for_ng = nullptr;
+                }
+
+                const auto &normal_conns = mtlx_openpbr->geometry_normal.get_connections();
+                PUSH_WARN(fmt::format("DEBUG: geometry_normal has {} connections", normal_conns.size()));
+                if (!normal_conns.empty() && material_prim_for_ng) {
+                  PUSH_WARN(fmt::format("DEBUG: First connection path: {}", normal_conns[0].full_path_name()));
+                  std::string extract_debug;
+                  auto normal_info_result = ExtractMtlxNodeGraphInfo(
+                      env.stage, material_prim_for_ng, normal_conns, &extract_debug);
+                  if (!extract_debug.empty()) {
+                    PUSH_WARN(fmt::format("ExtractMtlxNodeGraphInfo debug:\n{}", extract_debug));
+                  }
+                  if (normal_info_result) {
+                    const auto &normal_info = normal_info_result.value();
+                    PUSH_WARN(fmt::format("DEBUG: ExtractMtlxNodeGraphInfo returned: has_normal_map={}, normal_map_scale={}, normal_map_texture='{}'",
+                                          normal_info.has_normal_map, normal_info.normal_map_scale, normal_info.normal_map_texture));
+                    if (normal_info.has_normal_map) {
+                      openpbr_shader.normal_map_scale = normal_info.normal_map_scale;
+                      PUSH_WARN(fmt::format("DEBUG: Extracted normal_map_scale: {}", normal_info.normal_map_scale));
+
+                      // If a normal map texture was found, create a UVTexture entry
+                      if (!normal_info.normal_map_texture.empty()) {
+                        PUSH_WARN(fmt::format("DEBUG: Found normal_map_texture: {}", normal_info.normal_map_texture));
+                        // Create a texture image entry
+                        TextureImage tex_image;
+                        tex_image.asset_identifier = normal_info.normal_map_texture;
+                        tex_image.colorSpace = ColorSpace::Raw;  // Normal maps are always raw/linear
+                        tex_image.usdColorSpace = ColorSpace::Raw;
+
+                        // Check if this image already exists in the images list
+                        int64_t image_id = -1;
+                        for (size_t i = 0; i < images.size(); ++i) {
+                          if (images[i].asset_identifier == normal_info.normal_map_texture) {
+                            image_id = static_cast<int64_t>(i);
+                            break;
+                          }
+                        }
+
+                        // If not found, add the image
+                        if (image_id < 0) {
+                          image_id = static_cast<int64_t>(images.size());
+                          images.push_back(tex_image);
+                          PUSH_WARN(fmt::format("DEBUG: Added normal map image: {} as image_id {}", normal_info.normal_map_texture, image_id));
+                        }
+
+                        // Create UVTexture entry
+                        UVTexture uvtex;
+                        uvtex.texture_image_id = static_cast<int32_t>(image_id);
+                        uvtex.varname_uv = env.mesh_config.default_texcoords_primvar_name;
+                        uvtex.connectedOutputChannel = UVTexture::Channel::RGB;
+                        uvtex.wrapS = UVTexture::WrapMode::REPEAT;
+                        uvtex.wrapT = UVTexture::WrapMode::REPEAT;
+
+                        int32_t tex_id = static_cast<int32_t>(textures.size());
+                        textures.push_back(uvtex);
+
+                        // Set the texture_id on the normal parameter
+                        openpbr_shader.normal.texture_id = tex_id;
+
+                        PUSH_WARN(fmt::format("DEBUG: Created normal map UVTexture with tex_id: {}", tex_id));
+                      }
+                    }
+                  } else {
+                    PUSH_WARN(fmt::format("DEBUG: ExtractMtlxNodeGraphInfo failed: {}", err));
+                  }
+                }
+
+                // Extract tangent rotation from NodeGraph connections
+                const auto &tangent_conns = mtlx_openpbr->geometry_tangent.get_connections();
+                if (!tangent_conns.empty() && material_prim_for_ng) {
+                  auto tangent_info_result = ExtractMtlxNodeGraphInfo(
+                      env.stage, material_prim_for_ng, tangent_conns, &err);
+                  if (tangent_info_result) {
+                    const auto &tangent_info = tangent_info_result.value();
+                    if (tangent_info.has_tangent_rotation) {
+                      openpbr_shader.tangent_rotation = tangent_info.tangent_rotation;
+                      PUSH_WARN(fmt::format("DEBUG: Extracted tangent_rotation: {}", tangent_info.tangent_rotation));
+                    }
+                  }
+                }
+
                 rmat.openPBRShader = openpbr_shader;
                 DCOUT("Successfully attached MaterialX OpenPBR shader to RenderMaterial");
                 PUSH_WARN(fmt::format("Successfully attached MaterialX OpenPBR shader to RenderMaterial: {}",
