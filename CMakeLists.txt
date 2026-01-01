@@ -247,6 +247,7 @@ option(TINYUSDZ_WITH_TIFF
 
 # -- EXR --
 option(TINYUSDZ_WITH_EXR "Build with EXR HDR texture support" ON)
+option(TINYUSDZ_USE_TINYEXR_V3 "Use TinyEXR v3 API (modern C17/C++17 API). Set OFF for legacy v1 API" ON)
 # ---------
 
 # -- ColorIO --
@@ -607,23 +608,55 @@ if(TINYUSDZ_WITH_TIFF)
       PROPERTIES INCLUDE_DIRECTORIES ${PROJECT_SOURCE_DIR}/src/external)
   endif()
 
-  list(APPEND TINYUSDZ_DEP_SOURCES
-       ${PROJECT_SOURCE_DIR}/src/external/tinyexr.cc)
+  # NOTE: tiny_dng_loader doesn't depend on tinyexr,
+  # tinyexr is now added separately in the TINYUSDZ_WITH_EXR section
 endif(TINYUSDZ_WITH_TIFF)
 
 if(TINYUSDZ_WITH_EXR)
-  if(TINYUSDZ_USE_SYSTEM_ZLIB)
-    set_source_files_properties(
-      ${PROJECT_SOURCE_DIR}/src/external/tinyexr.cc
-      PROPERTIES COMPILE_DEFINITIONS "TINYEXR_USE_MINIZ=0")
-  else()
-    set_source_files_properties(
-      ${PROJECT_SOURCE_DIR}/src/external/tinyexr.cc
-      PROPERTIES INCLUDE_DIRECTORIES ${PROJECT_SOURCE_DIR}/src/external)
-  endif()
+  if(TINYUSDZ_USE_TINYEXR_V3)
+    # TinyEXR v3 API (modern C17/C++17 API)
+    # NOTE: We also compile tinyexr.cc (v1 implementation) for backward compatibility
+    # since image-loader.cc uses the v1 API (LoadEXRFromMemory, etc.)
+    message(STATUS "TinyUSDZ: Using TinyEXR v3 API")
 
-  list(APPEND TINYUSDZ_DEP_SOURCES
-       ${PROJECT_SOURCE_DIR}/src/external/tinyexr.cc)
+    if(TINYUSDZ_USE_SYSTEM_ZLIB)
+      set_source_files_properties(
+        ${PROJECT_SOURCE_DIR}/src/external/tinyexr_c_impl.c
+        PROPERTIES COMPILE_DEFINITIONS "TINYEXR_V3_HAS_DEFLATE=1;TINYEXR_V3_NO_MINIZ=1")
+      set_source_files_properties(
+        ${PROJECT_SOURCE_DIR}/src/external/tinyexr.cc
+        PROPERTIES COMPILE_DEFINITIONS "TINYEXR_USE_MINIZ=0")
+    else()
+      # Use bundled miniz (default)
+      set_source_files_properties(
+        ${PROJECT_SOURCE_DIR}/src/external/tinyexr_c_impl.c
+        PROPERTIES INCLUDE_DIRECTORIES ${PROJECT_SOURCE_DIR}/src/external)
+      set_source_files_properties(
+        ${PROJECT_SOURCE_DIR}/src/external/tinyexr.cc
+        PROPERTIES INCLUDE_DIRECTORIES ${PROJECT_SOURCE_DIR}/src/external)
+    endif()
+
+    list(APPEND TINYUSDZ_DEP_SOURCES
+         ${PROJECT_SOURCE_DIR}/src/external/tinyexr_c_impl.c
+         ${PROJECT_SOURCE_DIR}/src/external/tinyexr.cc)
+
+  else()
+    # TinyEXR v1 API (legacy API)
+    message(STATUS "TinyUSDZ: Using TinyEXR v1 API (legacy)")
+
+    if(TINYUSDZ_USE_SYSTEM_ZLIB)
+      set_source_files_properties(
+        ${PROJECT_SOURCE_DIR}/src/external/tinyexr.cc
+        PROPERTIES COMPILE_DEFINITIONS "TINYEXR_USE_MINIZ=0")
+    else()
+      set_source_files_properties(
+        ${PROJECT_SOURCE_DIR}/src/external/tinyexr.cc
+        PROPERTIES INCLUDE_DIRECTORIES ${PROJECT_SOURCE_DIR}/src/external)
+    endif()
+
+    list(APPEND TINYUSDZ_DEP_SOURCES
+         ${PROJECT_SOURCE_DIR}/src/external/tinyexr.cc)
+  endif()
 endif(TINYUSDZ_WITH_EXR)
 
 if(TINYUSDZ_WITH_TIFF OR TINYUSDZ_WITH_EXR)
