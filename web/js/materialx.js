@@ -409,14 +409,63 @@ function linearToSRGB(color) {
 // ============================================================================
 
 async function init() {
-    initThreeJS();
+    // URL parameter support for batch rendering (check early for autoRender mode)
+    const urlParams = new URLSearchParams(window.location.search);
+    const usdPath = urlParams.get('usd');
+    const autoRender = urlParams.get('autoRender') === 'true';
+    const renderTimeout = parseInt(urlParams.get('renderTimeout') || '60000', 10);
+
+    try {
+        initThreeJS();
+    } catch (error) {
+        console.error('Initialization failed:', error);
+        if (autoRender) {
+            window.renderInitFailed = true;
+            window.renderError = error.message;
+            window.renderComplete = true; // Signal completion to stop waiting
+        }
+        return;
+    }
+
     initControls();
     await initLoader();
     setupGUI();
     setupEventListeners();
     await loadEnvironment(settings.envMapPreset);
-    await loadDefaultUSDFile();
+
+    if (usdPath) {
+        // Load USD file from URL parameter
+        updateStatus(`Loading ${usdPath}...`);
+        try {
+            const response = await fetch(usdPath);
+            if (!response.ok) {
+                throw new Error(`Failed to fetch ${usdPath}: ${response.statusText}`);
+            }
+            const arrayBuffer = await response.arrayBuffer();
+            const data = new Uint8Array(arrayBuffer);
+            await loadUSDFromData(data, usdPath);
+        } catch (error) {
+            console.error(`Failed to load USD file (${usdPath}):`, error);
+            updateStatus(`Error: ${error.message}`);
+            if (autoRender) {
+                // Signal error state for batch runner
+                window.renderComplete = true;
+                window.renderError = error.message;
+            }
+        }
+    } else {
+        await loadDefaultUSDFile();
+    }
+
     animate();
+
+    if (autoRender) {
+        // Signal completion after render stabilization (default 15 seconds)
+        setTimeout(() => {
+            window.renderComplete = true;
+            console.log(`Render complete signaled after ${renderTimeout}ms`);
+        }, renderTimeout);
+    }
 }
 
 function initThreeJS() {
@@ -426,7 +475,19 @@ function initThreeJS() {
     threeState.camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 1000);
     threeState.camera.position.set(3, 2, 5);
 
-    threeState.renderer = new THREE.WebGLRenderer({ antialias: true });
+    try {
+        threeState.renderer = new THREE.WebGLRenderer({ antialias: true });
+        // Check if WebGL context was created successfully
+        if (!threeState.renderer.getContext()) {
+            throw new Error('WebGL context is null');
+        }
+    } catch (error) {
+        console.error('Failed to create WebGL renderer:', error);
+        window.renderInitFailed = true;
+        window.renderError = `WebGL initialization failed: ${error.message}`;
+        throw error;
+    }
+
     threeState.renderer.setSize(window.innerWidth, window.innerHeight);
     threeState.renderer.setPixelRatio(window.devicePixelRatio);
     // Initialize tonemapping from settings (default: aces_1.3)
