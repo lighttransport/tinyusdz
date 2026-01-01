@@ -1,13 +1,17 @@
-# Headless Chrome + WebGPU + GPU Acceleration Setup
+# Headless Chrome + WebGPU/WebGL2 + GPU Acceleration Setup
 
-This document describes how to enable WebGPU in headless Chrome/Puppeteer environments on Linux, with both hardware GPU acceleration and software (SwiftShader) fallback options.
+This document describes how to enable WebGPU and WebGL2 in headless Chrome/Puppeteer environments on Linux, with both hardware GPU acceleration and software (SwiftShader) fallback options.
 
 ## Quick Start
 
-| Mode | GPU Required | xvfb Required | Performance |
-|------|--------------|---------------|-------------|
-| Hardware GPU | Yes | Yes | Fast |
-| SwiftShader (Software) | No | Yes | Slow but portable |
+| API | Mode | GPU Required | xvfb Required | Secure Origin | Performance |
+|-----|------|--------------|---------------|---------------|-------------|
+| WebGPU | Hardware GPU | Yes | Yes | HTTPS only | Fast |
+| WebGPU | SwiftShader | No | Yes | HTTPS only | Slow |
+| WebGL2 | Hardware GPU | Yes | Yes | Any | Fast |
+| WebGL2 | SwiftShader | No | Yes | Any | Slow |
+
+**Key Difference**: WebGPU requires HTTPS origins, WebGL2 works on any origin (including `data:` URLs).
 
 ## Requirements
 
@@ -232,6 +236,149 @@ if (adapter.info?.architecture === 'swiftshader') {
 }
 ```
 
+---
+
+## WebGL2 Setup
+
+WebGL2 is more widely supported than WebGPU and works on any origin (no HTTPS requirement). It still requires xvfb for headless environments.
+
+### WebGL2 with Hardware GPU
+
+```javascript
+import puppeteer from 'puppeteer';
+
+const browser = await puppeteer.launch({
+  headless: false,  // Use xvfb
+  executablePath: '/usr/bin/google-chrome',
+  ignoreDefaultArgs: true,
+  env: {
+    ...process.env,
+    __NV_PRIME_RENDER_OFFLOAD: '1',
+    __GLX_VENDOR_LIBRARY_NAME: 'nvidia',
+    __EGL_VENDOR_LIBRARY_FILENAMES: '/usr/share/glvnd/egl_vendor.d/10_nvidia.json',
+  },
+  args: [
+    '--remote-debugging-port=0',
+    '--user-data-dir=/tmp/puppeteer-webgl2',
+    '--no-sandbox',
+    '--no-first-run',
+    '--use-gl=angle',
+    '--use-angle=vulkan',
+    '--enable-features=Vulkan',
+    '--disable-gpu-blocklist',
+    'about:blank',
+  ]
+});
+
+const page = await browser.newPage();
+await page.goto('data:text/html,<canvas id="c"></canvas>');  // data: URLs work!
+
+const status = await page.evaluate(() => {
+  const canvas = document.getElementById('c');
+  const gl = canvas.getContext('webgl2');
+  if (!gl) return { error: 'No WebGL2' };
+
+  const ext = gl.getExtension('WEBGL_debug_renderer_info');
+  return {
+    renderer: ext ? gl.getParameter(ext.UNMASKED_RENDERER_WEBGL) : 'N/A',
+    vendor: ext ? gl.getParameter(ext.UNMASKED_VENDOR_WEBGL) : 'N/A',
+    version: gl.getParameter(gl.VERSION),
+  };
+});
+
+console.log(status);
+// Output: {
+//   renderer: "ANGLE (NVIDIA, Vulkan 1.4.x (NVIDIA GeForce RTX ...), NVIDIA)",
+//   vendor: "Google Inc. (NVIDIA)",
+//   version: "WebGL 2.0 (OpenGL ES 3.0 Chromium)"
+// }
+
+await browser.close();
+```
+
+Run with:
+```bash
+xvfb-run -a node script.js
+```
+
+### WebGL2 with SwiftShader (No GPU)
+
+```javascript
+import puppeteer from 'puppeteer';
+
+const browser = await puppeteer.launch({
+  headless: false,  // Use xvfb
+  executablePath: '/usr/bin/google-chrome',
+  ignoreDefaultArgs: true,
+  args: [
+    '--remote-debugging-port=0',
+    '--user-data-dir=/tmp/puppeteer-webgl2-sw',
+    '--no-sandbox',
+    '--no-first-run',
+    '--use-gl=angle',
+    '--use-angle=swiftshader',  // Force SwiftShader
+    '--disable-gpu-blocklist',
+    'about:blank',
+  ]
+});
+
+const page = await browser.newPage();
+await page.goto('data:text/html,<canvas id="c"></canvas>');
+
+const status = await page.evaluate(() => {
+  const canvas = document.getElementById('c');
+  const gl = canvas.getContext('webgl2');
+  if (!gl) return { error: 'No WebGL2' };
+
+  const ext = gl.getExtension('WEBGL_debug_renderer_info');
+  return {
+    renderer: ext ? gl.getParameter(ext.UNMASKED_RENDERER_WEBGL) : 'N/A',
+    vendor: ext ? gl.getParameter(ext.UNMASKED_VENDOR_WEBGL) : 'N/A',
+  };
+});
+
+console.log(status);
+// Output: {
+//   renderer: "ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) ...), SwiftShader driver)",
+//   vendor: "Google Inc. (Google)"
+// }
+
+await browser.close();
+```
+
+### WebGL2 vs WebGPU Comparison
+
+| Feature | WebGL2 | WebGPU |
+|---------|--------|--------|
+| Origin requirement | Any | HTTPS only |
+| Browser support | All modern browsers | Chrome 113+, Firefox 121+, Safari 18+ |
+| API style | OpenGL ES 3.0 | Modern GPU API |
+| Compute shaders | No | Yes |
+| Performance | Good | Better |
+| Maturity | Stable | Newer |
+
+### Detecting WebGL2 Renderer
+
+```javascript
+function getWebGL2Info() {
+  const canvas = document.createElement('canvas');
+  const gl = canvas.getContext('webgl2');
+  if (!gl) return { available: false };
+
+  const ext = gl.getExtension('WEBGL_debug_renderer_info');
+  const renderer = ext ? gl.getParameter(ext.UNMASKED_RENDERER_WEBGL) : '';
+
+  return {
+    available: true,
+    renderer,
+    isSwiftShader: renderer.includes('SwiftShader'),
+    isNvidia: renderer.includes('NVIDIA'),
+    isAMD: renderer.includes('AMD') || renderer.includes('Radeon'),
+    isIntel: renderer.includes('Intel'),
+  };
+}
+```
+
 ## Chrome Launch Arguments Reference
 
 | Flag | Purpose |
@@ -243,7 +390,8 @@ if (adapter.info?.architecture === 'swiftshader') {
 | `--disable-gpu-blocklist` | Ignore GPU blocklist |
 | `--no-sandbox` | Disable sandbox (required for some environments) |
 | `--disable-vulkan-surface` | For compute-only WebGPU (no canvas rendering) |
-| `--use-webgpu-adapter=swiftshader` | Force SwiftShader software adapter |
+| `--use-webgpu-adapter=swiftshader` | Force SwiftShader for WebGPU |
+| `--use-angle=swiftshader` | Force SwiftShader for WebGL |
 
 ## Troubleshooting
 
