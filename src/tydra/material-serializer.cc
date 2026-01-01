@@ -230,7 +230,16 @@ std::string serializeOpenPBRToJson(const OpenPBRSurfaceShader& shader, const Ren
   serializeFloatParam("opacity", shader.opacity); json << ",";
   serializeFloatParam("geometry_opacity", shader.opacity); json << ",";  // alias for Three.js alpha mapping
   serializeVec3Param("normal", shader.normal); json << ",";
-  serializeVec3Param("tangent", shader.tangent);
+  serializeVec3Param("tangent", shader.tangent); json << ",";
+  // Tangent rotation for anisotropic materials (from ND_rotate3d_vector3 node)
+  json << "\"tangent_rotation\": " << shader.tangent_rotation << ",";
+  // Normal map scale factor (from ND_normalmap_float node)
+  json << "\"normal_map_scale\": " << shader.normal_map_scale << ",";
+  // Coat layer normal and tangent
+  serializeVec3Param("coat_normal", shader.coat_normal); json << ",";
+  serializeVec3Param("coat_tangent", shader.coat_tangent); json << ",";
+  json << "\"coat_tangent_rotation\": " << shader.coat_tangent_rotation << ",";
+  json << "\"coat_normal_map_scale\": " << shader.coat_normal_map_scale;
   json << "}";
 
   json << "}";

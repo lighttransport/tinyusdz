@@ -1067,6 +1067,12 @@ static void DumpOpenPBRSurfaceYAML(std::stringstream &ss, const OpenPBRSurfaceSh
   dump_param("transmission_weight", shader.transmission_weight);
   dump_param("subsurface_weight", shader.subsurface_weight);
   dump_param("subsurface_color", shader.subsurface_color);
+  // Geometry properties
+  dump_param("normal", shader.normal);
+  dump_param("tangent", shader.tangent);
+  // Normal/tangent map related scalars
+  ss << yaml_indent(indent) << "normal_map_scale: " << shader.normal_map_scale << "\n";
+  ss << yaml_indent(indent) << "tangent_rotation: " << shader.tangent_rotation << "\n";
 }
 
 static void DumpMaterialYAML(std::stringstream &ss, const RenderMaterial &material, uint32_t indent) {

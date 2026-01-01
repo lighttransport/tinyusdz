@@ -11,21 +11,16 @@ import * as THREE from 'three';
 const openpbrVertexShader = `
 #define STANDARD
 
+// Custom varyings not provided by Three.js chunks
 varying vec3 vViewPosition;
 varying vec3 vWorldPosition;
-varying vec3 vNormal;
-varying vec2 vUv;
-
-#ifdef USE_TANGENT
-    varying vec3 vTangent;
-    varying vec3 vBitangent;
-#endif
 
 #include <common>
 #include <uv_pars_vertex>
 #include <envmap_pars_vertex>
 #include <color_pars_vertex>
 #include <fog_pars_vertex>
+#include <normal_pars_vertex>
 #include <morphtarget_pars_vertex>
 #include <skinning_pars_vertex>
 #include <shadowmap_pars_vertex>
@@ -41,13 +36,7 @@ void main() {
     #include <skinbase_vertex>
     #include <skinnormal_vertex>
     #include <defaultnormal_vertex>
-
-    vNormal = normalize(transformedNormal);
-
-    #ifdef USE_TANGENT
-        vTangent = normalize(transformedTangent);
-        vBitangent = normalize(cross(vNormal, vTangent) * tangent.w);
-    #endif
+    #include <normal_vertex>
 
     #include <begin_vertex>
     #include <morphtarget_vertex>
@@ -58,7 +47,6 @@ void main() {
 
     vViewPosition = -mvPosition.xyz;
     vWorldPosition = (modelMatrix * vec4(transformed, 1.0)).xyz;
-    vUv = uv;
 
     #include <worldpos_vertex>
     #include <envmap_vertex>
@@ -74,6 +62,33 @@ void main() {
 const openpbrFragmentShader = `
 #define STANDARD
 
+// Custom varyings not provided by Three.js chunks
+varying vec3 vViewPosition;
+varying vec3 vWorldPosition;
+
+// Include Three.js chunks first - they define uniforms like map, normalMap, normalScale, envMapIntensity, etc.
+#include <common>
+#include <packing>
+#include <dithering_pars_fragment>
+#include <color_pars_fragment>
+#include <uv_pars_fragment>
+#include <map_pars_fragment>
+#include <alphamap_pars_fragment>
+#include <alphatest_pars_fragment>
+#include <aomap_pars_fragment>
+#include <lightmap_pars_fragment>
+#include <envmap_common_pars_fragment>
+#include <envmap_pars_fragment>
+#include <fog_pars_fragment>
+#include <lights_pars_begin>
+#include <normal_pars_fragment>
+#include <shadowmap_pars_fragment>
+#include <bumpmap_pars_fragment>
+#include <normalmap_pars_fragment>
+#include <logdepthbuf_pars_fragment>
+#include <clipping_planes_pars_fragment>
+
+// OpenPBR uniforms (custom, not in Three.js chunks)
 uniform vec3 diffuse; // Alias for base_color for Three.js compatibility
 uniform float opacity;
 
@@ -118,49 +133,10 @@ uniform vec3 emission_color;
 // OpenPBR Geometry
 uniform float geometry_opacity;
 
-// Texture maps
-uniform sampler2D map;
-uniform sampler2D normalMap;
+// Texture maps not provided by Three.js chunks
 uniform sampler2D roughnessMap;
 uniform sampler2D metalnessMap;
 uniform sampler2D emissiveMap;
-uniform sampler2D aoMap;
-uniform float aoMapIntensity;
-uniform float normalScale;
-
-// Environment
-uniform float envMapIntensity;
-
-varying vec3 vViewPosition;
-varying vec3 vWorldPosition;
-varying vec3 vNormal;
-varying vec2 vUv;
-
-#ifdef USE_TANGENT
-    varying vec3 vTangent;
-    varying vec3 vBitangent;
-#endif
-
-#include <common>
-#include <packing>
-#include <dithering_pars_fragment>
-#include <color_pars_fragment>
-#include <uv_pars_fragment>
-#include <map_pars_fragment>
-#include <alphamap_pars_fragment>
-#include <alphatest_pars_fragment>
-#include <aomap_pars_fragment>
-#include <lightmap_pars_fragment>
-#include <envmap_common_pars_fragment>
-#include <envmap_pars_fragment>
-#include <fog_pars_fragment>
-#include <lights_pars_begin>
-#include <normal_pars_fragment>
-#include <shadowmap_pars_fragment>
-#include <bumpmap_pars_fragment>
-#include <normalmap_pars_fragment>
-#include <logdepthbuf_pars_fragment>
-#include <clipping_planes_pars_fragment>
 
 // ============================================================================
 // OpenPBR BRDF Functions
@@ -259,6 +235,9 @@ vec3 fuzzBRDF(vec3 fuzzColor, float fuzzRoughness, float NdotV, float NdotL) {
 void main() {
     #include <clipping_planes_fragment>
 
+    // Face direction for double-sided rendering and normal mapping
+    float faceDirection = gl_FrontFacing ? 1.0 : -1.0;
+
     // Initialize output
     vec4 diffuseColor = vec4(base_color, geometry_opacity);
 
@@ -284,8 +263,9 @@ void main() {
     #endif
     roughness = max(roughness, 0.04); // Minimum roughness
 
-    // Normal
-    vec3 N = normalize(vNormal);
+    // Normal - use geometric normal from vertex shader (via normal_pars_fragment)
+    vec3 normal = normalize(vNormal);
+    vec3 N = normal * faceDirection;
 
     #ifdef USE_NORMALMAP
         vec3 mapN = texture2D(normalMap, vUv).xyz * 2.0 - 1.0;
