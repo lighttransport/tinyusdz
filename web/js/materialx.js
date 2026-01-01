@@ -316,10 +316,19 @@ const settings = {
     toneMapping: 'aces_1.3',
     applyUpAxisConversion: false,
     showNormals: false,
+    normalAbsMode: false, // true: map [-1,1] to [0,1], false: standard MeshNormalMaterial
     showGrid: false,
     showAxes: false,
     gridSize: 10,
     gridDivisions: 10
+};
+
+// Normal vector visualization state (per-selected object)
+const normalVectorState = {
+    enabled: false,
+    type: 'vertex', // 'vertex' | 'face'
+    length: 0.1,
+    helper: null
 };
 
 // Validator instance (created after renderer init)
@@ -529,6 +538,14 @@ function setupSceneFolder() {
     sceneFolder.add(settings, 'showNormals')
         .name('Show Normals')
         .onChange(toggleNormalDisplay);
+
+    sceneFolder.add(settings, 'normalAbsMode')
+        .name('Normal Abs Color')
+        .onChange(() => {
+            if (settings.showNormals) {
+                toggleNormalDisplay(); // Re-apply with new mode
+            }
+        });
 
     sceneFolder.add(settings, 'showGrid')
         .name('Show Grid')
@@ -1067,6 +1084,91 @@ function applyUpAxisConversion() {
 // Normal Display Mode
 // ============================================================================
 
+/**
+ * Create a shader material that displays normals as absolute colors
+ * Maps normal components from [-1, 1] to [0, 1]
+ * This shows world-space normal direction regardless of view angle
+ * If normalMap is provided, it will show perturbed normals
+ */
+function createAbsNormalMaterial(normalMap = null, normalScale = new THREE.Vector2(1, 1)) {
+    const material = new THREE.ShaderMaterial({
+        uniforms: {
+            normalMap: { value: normalMap },
+            normalScale: { value: normalScale },
+            useNormalMap: { value: normalMap !== null }
+        },
+        vertexShader: `
+            varying vec3 vNormal;
+            varying vec3 vWorldNormal;
+            varying vec2 vUv;
+            varying vec3 vTangent;
+            varying vec3 vBitangent;
+
+            #ifdef USE_TANGENT
+                attribute vec4 tangent;
+            #endif
+
+            void main() {
+                // Transform normal to world space using inverse transpose of model matrix
+                // For uniform scale, mat3(modelMatrix) works; for non-uniform, need proper normal matrix
+                mat3 worldNormalMatrix = mat3(modelMatrix);
+                vWorldNormal = normalize(worldNormalMatrix * normal);
+                vNormal = normalize(normalMatrix * normal);
+                vUv = uv;
+
+                #ifdef USE_TANGENT
+                    vTangent = normalize(worldNormalMatrix * tangent.xyz);
+                    vBitangent = normalize(cross(vWorldNormal, vTangent) * tangent.w);
+                #else
+                    // Compute tangent - align with world X axis for horizontal planes
+                    vTangent = normalize(worldNormalMatrix * vec3(1.0, 0.0, 0.0));
+                    vBitangent = normalize(cross(vWorldNormal, vTangent));
+                #endif
+
+                gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+            }
+        `,
+        fragmentShader: `
+            uniform sampler2D normalMap;
+            uniform vec2 normalScale;
+            uniform bool useNormalMap;
+
+            varying vec3 vNormal;
+            varying vec3 vWorldNormal;
+            varying vec2 vUv;
+            varying vec3 vTangent;
+            varying vec3 vBitangent;
+
+            void main() {
+                // Use world-space normal directly - don't flip based on facing
+                // We want to show the actual geometric normal direction
+                vec3 n = normalize(vWorldNormal);
+
+                if (useNormalMap) {
+                    // Sample normal map and transform to world space
+                    vec3 mapN = texture2D(normalMap, vUv).xyz * 2.0 - 1.0;
+                    mapN.xy *= normalScale;
+                    mapN = normalize(mapN);
+
+                    // Build TBN matrix - use geometric normal for the N component
+                    vec3 T = normalize(vTangent);
+                    vec3 B = normalize(vBitangent);
+                    vec3 N = n;
+                    mat3 TBN = mat3(T, B, N);
+                    n = normalize(TBN * mapN);
+                }
+
+                // Map from [-1, 1] to [0, 1]
+                vec3 color = n * 0.5 + 0.5;
+                gl_FragColor = vec4(color, 1.0);
+            }
+        `,
+        side: THREE.DoubleSide
+    });
+
+    return material;
+}
+
 function toggleNormalDisplay() {
     if (!sceneState.root) return;
 
@@ -1074,8 +1176,27 @@ function toggleNormalDisplay() {
         sceneState.showingNormals = true;
         sceneState.root.traverse(obj => {
             if (obj.isMesh && obj.material) {
-                sceneState.originalMaterialsMap.set(obj, obj.material);
-                obj.material = new THREE.MeshNormalMaterial({ flatShading: false });
+                // Store original material if not already stored
+                if (!sceneState.originalMaterialsMap.has(obj)) {
+                    sceneState.originalMaterialsMap.set(obj, obj.material);
+                }
+
+                const origMat = sceneState.originalMaterialsMap.get(obj);
+                const normalMap = origMat?.normalMap || null;
+                const normalScale = origMat?.normalScale || new THREE.Vector2(1, 1);
+
+                if (settings.normalAbsMode) {
+                    // Absolute color mode: [-1,1] -> [0,1]
+                    // Pass normal map to show perturbed normals
+                    obj.material = createAbsNormalMaterial(normalMap, normalScale);
+                } else {
+                    // Standard MeshNormalMaterial (view-dependent coloring)
+                    // Note: MeshNormalMaterial doesn't support normal maps
+                    obj.material = new THREE.MeshNormalMaterial({
+                        flatShading: false,
+                        side: THREE.DoubleSide
+                    });
+                }
             }
         });
     } else {
@@ -1180,8 +1301,8 @@ async function loadDefaultScene() {
 }
 
 async function loadDefaultUSDFile() {
-    const defaultFile = './assets/fancy-teapot-mtlx.usdz';
-    //const defaultFile = './assets/sphere-mtlx.usdc';
+    //const defaultFile = './assets/fancy-teapot-mtlx.usdz';
+    const defaultFile = './assets/mtlx-normalmap-plane.usdz';
     updateStatus(`Loading ${defaultFile}...`);
     try {
         const response = await fetch(defaultFile);
@@ -1591,8 +1712,8 @@ async function convertMaterial(matData, index) {
         let material;
 
         if (useOpenPBRMaterial) {
-            // Create OpenPBRMaterial directly
-            material = convertToOpenPBRMaterial(matData);
+            // Create OpenPBRMaterial directly (async for texture loading)
+            material = await convertToOpenPBRMaterial(matData, loaderState.nativeLoader);
             material.envMap = threeState.envMap;
             material.envMapIntensity = settings.envMapIntensity;
         } else {
@@ -1607,6 +1728,56 @@ async function convertMaterial(matData, index) {
                     textureCache: sceneState.textureCache
                 }
             );
+
+            // Load normal map from OpenPBR geometry.normal if not already loaded
+            // TinyUSDZLoaderUtils expects normalTextureId at top level, but MaterialX has it nested
+            if (!material.normalMap) {
+                const openPBR = matData.openPBR || matData.openPBRShader || {};
+                const geometrySection = openPBR.geometry || {};
+                const normalParam = geometrySection.normal || openPBR.normal || openPBR.geometry_normal;
+                const normalTextureId = extractTextureId(normalParam);
+
+                if (normalTextureId >= 0 && loaderState.nativeLoader) {
+                    try {
+                        // Find embedded texture (bufferId >= 0) for the same filename
+                        let actualTextureId = normalTextureId;
+                        const tex = loaderState.nativeLoader.getTexture(normalTextureId);
+                        const texImage = loaderState.nativeLoader.getImage(tex.textureImageId);
+
+                        if (texImage.bufferId === -1 && texImage.uri) {
+                            const filename = texImage.uri.replace(/^\.\//, '');
+                            const numImages = loaderState.nativeLoader.numImages();
+                            for (let i = 0; i < numImages; i++) {
+                                const altImage = loaderState.nativeLoader.getImage(i);
+                                if (altImage.bufferId >= 0 && altImage.uri === filename) {
+                                    const numTextures = loaderState.nativeLoader.numTextures();
+                                    for (let t = 0; t < numTextures; t++) {
+                                        const altTex = loaderState.nativeLoader.getTexture(t);
+                                        if (altTex.textureImageId === i) {
+                                            actualTextureId = t;
+                                            break;
+                                        }
+                                    }
+                                    break;
+                                }
+                            }
+                        }
+
+                        const texture = await TinyUSDZLoaderUtils.getTextureFromUSD(loaderState.nativeLoader, actualTextureId);
+                        if (texture) {
+                            material.normalMap = texture;
+                            // Extract normal map scale from OpenPBR
+                            const normalMapScale = geometrySection.normal_map_scale !== undefined
+                                ? (typeof geometrySection.normal_map_scale === 'object' ? geometrySection.normal_map_scale.value : geometrySection.normal_map_scale)
+                                : 1.0;
+                            material.normalScale = new THREE.Vector2(normalMapScale, normalMapScale);
+                            material.needsUpdate = true;
+                        }
+                    } catch (err) {
+                        console.warn('Failed to load normal map texture for MeshPhysicalMaterial:', err);
+                    }
+                }
+            }
         }
 
         material.userData.typeInfo = typeInfo;
@@ -1638,9 +1809,34 @@ function shouldUseOpenPBRMaterial(typeInfo, implementation) {
 }
 
 /**
- * Convert material data to OpenPBRMaterial
+ * Extract texture ID from a property value
+ * Handles formats like "texture_id[N]" or objects with texture_id
  */
-function convertToOpenPBRMaterial(matData) {
+function extractTextureId(param) {
+    if (param === undefined || param === null) return -1;
+
+    // Handle string format "texture_id[N]"
+    if (typeof param === 'string') {
+        const match = param.match(/texture_id\[(\d+)\]/);
+        if (match) return parseInt(match[1], 10);
+    }
+
+    // Handle object with texture_id property
+    if (typeof param === 'object') {
+        if (param.texture_id !== undefined) return param.texture_id;
+        if (param.textureId !== undefined) return param.textureId;
+    }
+
+    return -1;
+}
+
+/**
+ * Convert material data to OpenPBRMaterial
+ * @param {Object} matData - Material data from USD
+ * @param {Object} nativeLoader - TinyUSDZ native loader for texture access
+ * @returns {Promise<OpenPBRMaterial>} The created material
+ */
+async function convertToOpenPBRMaterial(matData, nativeLoader = null) {
     const openPBR = matData.openPBR || matData.openPBRShader || matData;
 
     // Extract values with fallbacks
@@ -1702,6 +1898,65 @@ function convertToOpenPBRMaterial(matData) {
 
     // Set color alias for compatibility
     material.uniforms.base_color.value.copy(material.uniforms.base_color.value);
+
+    // Load normal map texture if available
+    // The normal map is in openPBR.geometry.normal (not openPBR.normal)
+    const geometrySection = openPBR.geometry || {};
+    const normalParam = geometrySection.normal || openPBR.normal || openPBR.geometry_normal;
+    const normalTextureId = extractTextureId(normalParam);
+    if (normalTextureId >= 0 && nativeLoader) {
+        try {
+            // nativeLoader itself has getTexture, getImage methods - use it directly as usdScene
+            // First, try to find an image with valid bufferId for the same filename
+            // This works around the issue where TinyUSDZ creates duplicate images with different paths
+            let actualTextureId = normalTextureId;
+            const tex = nativeLoader.getTexture(normalTextureId);
+            const texImage = nativeLoader.getImage(tex.textureImageId);
+
+            if (texImage.bufferId === -1 && texImage.uri) {
+                // Try to find an alternative image with the same filename but valid bufferId
+                const filename = texImage.uri.replace(/^\.\//, ''); // Remove leading ./
+                const numImages = nativeLoader.numImages();
+                for (let i = 0; i < numImages; i++) {
+                    const altImage = nativeLoader.getImage(i);
+                    if (altImage.bufferId >= 0 && altImage.uri === filename) {
+                        // Find a texture that uses this image
+                        const numTextures = nativeLoader.numTextures();
+                        for (let t = 0; t < numTextures; t++) {
+                            const altTex = nativeLoader.getTexture(t);
+                            if (altTex.textureImageId === i) {
+                                actualTextureId = t;
+                                break;
+                            }
+                        }
+                        break;
+                    }
+                }
+            }
+
+            const texture = await TinyUSDZLoaderUtils.getTextureFromUSD(nativeLoader, actualTextureId);
+            if (texture) {
+                material.normalMap = texture;
+
+                // Apply normal map scale if available
+                const normalMapScale = extractValue(openPBR.normal_map_scale, 1.0);
+                if (material.uniforms.normalScale) {
+                    material.uniforms.normalScale.value.set(normalMapScale, normalMapScale);
+                }
+
+                // Normal map loaded successfully
+            }
+        } catch (err) {
+            console.warn('Failed to load normal map texture:', err);
+        }
+    }
+
+    // Store geometry_normal info in userData for UI display
+    material.userData.geometry_normal = {
+        hasTexture: normalTextureId >= 0,
+        textureId: normalTextureId,
+        scale: extractValue(openPBR.normal_map_scale, 1.0)
+    };
 
     return material;
 }
@@ -1945,6 +2200,25 @@ function updateMaterialUI() {
     if (materialsToShow.length === 0) {
         guiState.materialFolder.add({ info: 'No materials' }, 'info').name('Status').disable();
     }
+
+    // Add normal vector visualization controls (only when an object is selected)
+    if (pickState.selectedObject && pickState.selectedObject.isMesh) {
+        const normalVectorFolder = guiState.materialFolder.addFolder('Normal Vectors');
+
+        normalVectorFolder.add(normalVectorState, 'enabled')
+            .name('Show Vectors')
+            .onChange(updateNormalVectorVisualization);
+
+        normalVectorFolder.add(normalVectorState, 'type', ['vertex', 'face'])
+            .name('Type')
+            .onChange(updateNormalVectorVisualization);
+
+        normalVectorFolder.add(normalVectorState, 'length', 0.01, 1.0, 0.01)
+            .name('Length')
+            .onChange(updateNormalVectorVisualization);
+
+        normalVectorFolder.open();
+    }
 }
 
 function addMaterialControls(folder, mat) {
@@ -1955,6 +2229,15 @@ function addMaterialControls(folder, mat) {
 
     const typeString = mat.userData.typeString || 'Unknown';
     folder.add({ type: typeString }, 'type').name('Type').disable();
+
+    // Double-sided toggle
+    if (mat.side !== undefined) {
+        const sideControl = { doubleSided: mat.side === THREE.DoubleSide };
+        folder.add(sideControl, 'doubleSided').name('Double Sided').onChange(v => {
+            mat.side = v ? THREE.DoubleSide : THREE.FrontSide;
+            mat.needsUpdate = true;
+        });
+    }
 
     if (mat.color) {
         const displayColor = linearToSRGB(mat.color.clone());
@@ -2022,6 +2305,9 @@ function addMaterialControls(folder, mat) {
     if (mat.emissiveIntensity !== undefined) {
         folder.add(mat, 'emissiveIntensity', 0, 10, 0.1).name('Emissive Intensity');
     }
+
+    // --- Geometry Layer (Normal Map) ---
+    addGeometryNormalControl(folder, mat);
 }
 
 function addDiffuseRoughnessControl(folder, mat) {
@@ -2317,6 +2603,90 @@ function addFuzzColorControl(folder, mat) {
         });
 }
 
+/**
+ * Add geometry_normal (normal map) control to the material UI
+ * Shows normal map status, texture info, and scale control
+ */
+function addGeometryNormalControl(folder, mat) {
+    const rawData = mat.userData?.rawData;
+    const openPBR = rawData?.openPBR || rawData?.openPBRShader;
+    const geometryNormal = mat.userData?.geometry_normal;
+
+    // Check if normal map is available
+    const hasNormalMap = mat.normalMap !== null && mat.normalMap !== undefined;
+
+    // Get normal map scale
+    let normalScale = 1.0;
+    if (openPBR?.normal_map_scale !== undefined) {
+        normalScale = openPBR.normal_map_scale;
+    } else if (mat.uniforms?.normalScale?.value) {
+        normalScale = mat.uniforms.normalScale.value.x;
+    } else if (mat.normalScale) {
+        normalScale = mat.normalScale.x;
+    }
+
+    // Only show control if this is an OpenPBR material or has normal map
+    if (!openPBR && !hasNormalMap) return;
+
+    if (!mat.userData.customParams) {
+        mat.userData.customParams = {};
+    }
+
+    // Create a subfolder for geometry/normal map settings
+    const geoFolder = folder.addFolder('Geometry Normal');
+
+    // Show normal map status
+    const normalStatus = hasNormalMap ? 'Enabled' : 'None';
+    geoFolder.add({ status: normalStatus }, 'status').name('Normal Map').disable();
+
+    // Show texture ID if available
+    if (geometryNormal?.textureId >= 0) {
+        geoFolder.add({ textureId: `texture_id[${geometryNormal.textureId}]` }, 'textureId')
+            .name('Texture ID').disable();
+    }
+
+    // Normal map scale control (only if normal map exists)
+    if (hasNormalMap) {
+        mat.userData.customParams.normalScale = normalScale;
+
+        geoFolder.add(mat.userData.customParams, 'normalScale', 0, 3, 0.01)
+            .name('Normal Scale')
+            .onChange(v => {
+                // Update material's normalScale uniform
+                if (mat.uniforms?.normalScale?.value) {
+                    mat.uniforms.normalScale.value.set(v, v);
+                } else if (mat.normalScale) {
+                    mat.normalScale.set(v, v);
+                }
+
+                // Update raw data
+                if (openPBR) {
+                    openPBR.normal_map_scale = v;
+                }
+
+                mat.needsUpdate = true;
+            });
+
+        // Toggle normal map
+        mat.userData.customParams.normalMapEnabled = true;
+        const cachedNormalMap = mat.normalMap;
+
+        geoFolder.add(mat.userData.customParams, 'normalMapEnabled')
+            .name('Enabled')
+            .onChange(v => {
+                mat.normalMap = v ? cachedNormalMap : null;
+                mat.needsUpdate = true;
+            });
+
+        // Preview button
+        geoFolder.add({
+            preview: () => previewTexture(mat.normalMap, 'Normal Map')
+        }, 'preview').name('Preview');
+    }
+
+    geoFolder.close();
+}
+
 function addTextureUI(material, index) {
     const texFolder = guiState.textureFolder.addFolder(`Material ${index} Textures`);
     let hasTextures = false;
@@ -2455,6 +2825,197 @@ function selectObject(object) {
 }
 
 /**
+ * Clear normal vector helper
+ */
+function clearNormalVectorHelper() {
+    if (normalVectorState.helper) {
+        threeState.scene.remove(normalVectorState.helper);
+        if (normalVectorState.helper.geometry) {
+            normalVectorState.helper.geometry.dispose();
+        }
+        if (normalVectorState.helper.material) {
+            normalVectorState.helper.material.dispose();
+        }
+        normalVectorState.helper = null;
+    }
+}
+
+/**
+ * Create vertex normal vectors for a mesh
+ */
+function createVertexNormalHelper(mesh, length) {
+    const geometry = mesh.geometry;
+    if (!geometry) return null;
+
+    const posAttr = geometry.attributes.position;
+    const normalAttr = geometry.attributes.normal;
+    if (!posAttr || !normalAttr) return null;
+
+    const positions = [];
+    const colors = [];
+    const tempPos = new THREE.Vector3();
+    const tempNormal = new THREE.Vector3();
+
+    // Get world matrix
+    mesh.updateMatrixWorld(true);
+    const normalMatrix = new THREE.Matrix3().getNormalMatrix(mesh.matrixWorld);
+
+    for (let i = 0; i < posAttr.count; i++) {
+        tempPos.fromBufferAttribute(posAttr, i);
+        tempNormal.fromBufferAttribute(normalAttr, i);
+
+        // Transform to world space
+        tempPos.applyMatrix4(mesh.matrixWorld);
+        tempNormal.applyMatrix3(normalMatrix).normalize();
+
+        // Start point
+        positions.push(tempPos.x, tempPos.y, tempPos.z);
+        // End point
+        positions.push(
+            tempPos.x + tempNormal.x * length,
+            tempPos.y + tempNormal.y * length,
+            tempPos.z + tempNormal.z * length
+        );
+
+        // Color based on normal direction (start: cyan, end: yellow)
+        colors.push(0, 1, 1); // Cyan at base
+        colors.push(1, 1, 0); // Yellow at tip
+    }
+
+    const lineGeom = new THREE.BufferGeometry();
+    lineGeom.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+    lineGeom.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
+
+    const lineMat = new THREE.LineBasicMaterial({
+        vertexColors: true,
+        depthTest: true,
+        depthWrite: false,
+        transparent: true,
+        opacity: 0.8
+    });
+
+    return new THREE.LineSegments(lineGeom, lineMat);
+}
+
+/**
+ * Create face normal vectors for a mesh
+ */
+function createFaceNormalHelper(mesh, length) {
+    const geometry = mesh.geometry;
+    if (!geometry) return null;
+
+    const posAttr = geometry.attributes.position;
+    const normalAttr = geometry.attributes.normal;
+    const indexAttr = geometry.index;
+    if (!posAttr || !normalAttr) return null;
+
+    const positions = [];
+    const colors = [];
+    const tempPos = new THREE.Vector3();
+    const tempNormal = new THREE.Vector3();
+    const v0 = new THREE.Vector3();
+    const v1 = new THREE.Vector3();
+    const v2 = new THREE.Vector3();
+    const n0 = new THREE.Vector3();
+    const n1 = new THREE.Vector3();
+    const n2 = new THREE.Vector3();
+    const center = new THREE.Vector3();
+    const avgNormal = new THREE.Vector3();
+
+    // Get world matrix
+    mesh.updateMatrixWorld(true);
+    const normalMatrix = new THREE.Matrix3().getNormalMatrix(mesh.matrixWorld);
+
+    const processedFaces = new Set();
+
+    const addFace = (i0, i1, i2) => {
+        const faceKey = [i0, i1, i2].sort().join(',');
+        if (processedFaces.has(faceKey)) return;
+        processedFaces.add(faceKey);
+
+        v0.fromBufferAttribute(posAttr, i0);
+        v1.fromBufferAttribute(posAttr, i1);
+        v2.fromBufferAttribute(posAttr, i2);
+
+        n0.fromBufferAttribute(normalAttr, i0);
+        n1.fromBufferAttribute(normalAttr, i1);
+        n2.fromBufferAttribute(normalAttr, i2);
+
+        // Calculate face center
+        center.copy(v0).add(v1).add(v2).divideScalar(3);
+
+        // Average face normal
+        avgNormal.copy(n0).add(n1).add(n2).normalize();
+
+        // Transform to world space
+        center.applyMatrix4(mesh.matrixWorld);
+        avgNormal.applyMatrix3(normalMatrix).normalize();
+
+        // Start point (center of face)
+        positions.push(center.x, center.y, center.z);
+        // End point
+        positions.push(
+            center.x + avgNormal.x * length,
+            center.y + avgNormal.y * length,
+            center.z + avgNormal.z * length
+        );
+
+        // Color: magenta at base, green at tip
+        colors.push(1, 0, 1); // Magenta at base
+        colors.push(0, 1, 0); // Green at tip
+    };
+
+    if (indexAttr) {
+        for (let i = 0; i < indexAttr.count; i += 3) {
+            addFace(indexAttr.getX(i), indexAttr.getX(i + 1), indexAttr.getX(i + 2));
+        }
+    } else {
+        for (let i = 0; i < posAttr.count; i += 3) {
+            addFace(i, i + 1, i + 2);
+        }
+    }
+
+    const lineGeom = new THREE.BufferGeometry();
+    lineGeom.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+    lineGeom.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
+
+    const lineMat = new THREE.LineBasicMaterial({
+        vertexColors: true,
+        depthTest: true,
+        depthWrite: false,
+        transparent: true,
+        opacity: 0.8
+    });
+
+    return new THREE.LineSegments(lineGeom, lineMat);
+}
+
+/**
+ * Update normal vector visualization for selected object
+ */
+function updateNormalVectorVisualization() {
+    clearNormalVectorHelper();
+
+    if (!normalVectorState.enabled || !pickState.selectedObject) {
+        return;
+    }
+
+    const mesh = pickState.selectedObject;
+    if (!mesh.isMesh) return;
+
+    if (normalVectorState.type === 'vertex') {
+        normalVectorState.helper = createVertexNormalHelper(mesh, normalVectorState.length);
+    } else {
+        normalVectorState.helper = createFaceNormalHelper(mesh, normalVectorState.length);
+    }
+
+    if (normalVectorState.helper) {
+        normalVectorState.helper.name = '__normalVectorHelper__';
+        threeState.scene.add(normalVectorState.helper);
+    }
+}
+
+/**
  * Clear selection highlight
  */
 function clearSelectionHighlight() {
@@ -2463,6 +3024,9 @@ function clearSelectionHighlight() {
         pickState.selectionHelper.dispose();
         pickState.selectionHelper = null;
     }
+    // Also clear normal vector helper when selection is cleared
+    clearNormalVectorHelper();
+    normalVectorState.enabled = false;
 }
 
 /**
@@ -3303,6 +3867,37 @@ function runValidationTest() {
 // Export for external access
 window.OpenPBRValidation = OpenPBRValidation;
 window.runValidationTest = runValidationTest;
+// Debug exports
+window._debugMaterialX = {
+    get sceneState() { return sceneState; },
+    get threeState() { return threeState; },
+    get loaderState() { return loaderState; },
+    get settings() { return settings; },
+    selectMesh(index) {
+        const meshes = [];
+        if (sceneState.root) {
+            sceneState.root.traverse(obj => {
+                if (obj.isMesh) meshes.push(obj);
+            });
+        }
+        if (index >= 0 && index < meshes.length) {
+            selectObject(meshes[index]);
+            return `Selected mesh ${index}: ${meshes[index].name || 'Unnamed'}`;
+        }
+        return `Invalid index. Available: 0-${meshes.length - 1}`;
+    },
+    listMeshes() {
+        const meshes = [];
+        if (sceneState.root) {
+            sceneState.root.traverse(obj => {
+                if (obj.isMesh) meshes.push(obj.name || 'Unnamed');
+            });
+        }
+        return meshes;
+    },
+    get normalVectorState() { return normalVectorState; },
+    updateNormalVectors() { updateNormalVectorVisualization(); }
+};
 
 // ============================================================================
 // Start
