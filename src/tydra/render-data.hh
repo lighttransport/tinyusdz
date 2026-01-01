@@ -1624,6 +1624,22 @@ class OpenPBRSurfaceShader {
   ShaderParam<vec3> normal{{0.0f, 0.0f, 1.0f}};
   ShaderParam<vec3> tangent{{1.0f, 0.0f, 0.0f}};
 
+  // Tangent rotation for anisotropic materials (in degrees)
+  // Blender exports tangent rotation via ND_rotate3d_vector3 node with -90 degrees
+  // This value is extracted from the MaterialX NodeGraph during conversion
+  // 0.0 = no rotation, -90.0 = typical Blender anisotropic rotation
+  float tangent_rotation{0.0f};
+
+  // Normal map scale factor (from ND_normalmap_float node's scale input)
+  // 1.0 = default, used for bump strength adjustment
+  float normal_map_scale{1.0f};
+
+  // Coat normal and tangent for separate coat layer normal mapping
+  ShaderParam<vec3> coat_normal{{0.0f, 0.0f, 1.0f}};
+  ShaderParam<vec3> coat_tangent{{1.0f, 0.0f, 0.0f}};
+  float coat_tangent_rotation{0.0f};
+  float coat_normal_map_scale{1.0f};
+
   // LTE SpectralAPI: Optional spectral properties
   // Only exported to JSON if has_data() returns true
   // MaterialX property names use "spd_" prefix (e.g., "spd_reflectance", "spd_ior")
