@@ -208,10 +208,49 @@ async function loadTextureFromUSD(usdScene, textureId, cache = null) {
 
         let texture = null;
 
-        // Case 1: URI only - load from external file
+        // Case 1: URI only - try to find embedded alternative first
         if (imgData.uri && (imgData.bufferId === -1 || imgData.bufferId === undefined)) {
-            const loader = new THREE.TextureLoader();
-            texture = await loader.loadAsync(imgData.uri);
+            // TinyUSDZ may create duplicate image entries: one with URI reference (bufferId=-1)
+            // and one with embedded data (bufferId>=0). Try to find the embedded version.
+            const filename = imgData.uri.replace(/^\.\//, ''); // Remove leading ./
+            let foundEmbedded = false;
+
+            if (typeof usdScene.numImages === 'function') {
+                const numImages = usdScene.numImages();
+                for (let i = 0; i < numImages; i++) {
+                    const altImg = usdScene.getImage(i);
+                    if (altImg.bufferId >= 0 && altImg.uri === filename) {
+                        // Found embedded version - use it instead
+                        const altImgData = altImg;
+                        if (altImgData.data) {
+                            if (altImgData.decoded) {
+                                const image8Array = new Uint8ClampedArray(altImgData.data);
+                                texture = new THREE.DataTexture(image8Array, altImgData.width, altImgData.height);
+                                if (altImgData.channels === 1) texture.format = THREE.RedFormat;
+                                else if (altImgData.channels === 2) texture.format = THREE.RGFormat;
+                                else if (altImgData.channels === 4) texture.format = THREE.RGBAFormat;
+                                texture.flipY = true;
+                                texture.needsUpdate = true;
+                            } else {
+                                const mimeType = getMimeType(altImgData);
+                                const blob = new Blob([altImgData.data], { type: mimeType });
+                                const blobUrl = URL.createObjectURL(blob);
+                                const loader = new THREE.TextureLoader();
+                                texture = await loader.loadAsync(blobUrl);
+                                URL.revokeObjectURL(blobUrl);
+                            }
+                            foundEmbedded = true;
+                            break;
+                        }
+                    }
+                }
+            }
+
+            // Fall back to loading from URI if no embedded version found
+            if (!foundEmbedded) {
+                const loader = new THREE.TextureLoader();
+                texture = await loader.loadAsync(imgData.uri);
+            }
         }
         // Case 2 & 3: Embedded texture
         else if (imgData.bufferId >= 0 && imgData.data) {
