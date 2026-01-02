@@ -24,7 +24,8 @@
     "verify-materialx": "vite-node verify-materialx.js",
     "test:colorspace": "vite-node tests/colorspace-test.js",
     "benchmark:exr": "vite-node benchmark-exr.js",
-    "generate:exr": "vite-node generate-test-exr.js"
+    "generate:exr": "vite-node generate-test-exr.js",
+    "test:exr-decoder": "vite-node test-exr-decoder.js"
   },
   "devDependencies": {
     "@types/bun": "latest",
