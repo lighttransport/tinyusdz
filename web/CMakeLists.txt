@@ -9,6 +9,8 @@ list(APPEND CMAKE_MODULE_PATH ${PROJECT_SOURCE_DIR}/../cmake)
 
 option(TINYUSDZ_WASM64 "Use wasm64(memory64). Available only for Chrome and Firefox as of 2025 Jul" OFF)
 option(TINYUSDZ_WASM_DEBUG "Enable WASM debug mode with source maps and assertions" OFF)
+option(TINYUSDZ_WASM_SIMD "Enable WebAssembly SIMD (128-bit, widely supported since 2021)" ON)
+option(TINYUSDZ_WASM_RELAXED_SIMD "Enable WebAssembly Relaxed SIMD (requires recent browsers)" OFF)
 
 if (TINYUSDZ_WASM64)
   set(BUILD_TARGET "tinyusdz_64")
@@ -24,25 +26,38 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
+# SIMD configuration
+# WebAssembly SIMD is widely supported (Chrome 91+, Firefox 89+, Safari 16.4+, Edge 91+)
+# See: https://caniuse.com/wasm-simd
+set(TINYUSDZ_SIMD_FLAGS "")
+if (TINYUSDZ_WASM_SIMD)
+  message(STATUS "TinyUSDZ WASM: SIMD enabled (-msimd128)")
+  set(TINYUSDZ_SIMD_FLAGS "-msimd128")
+  if (TINYUSDZ_WASM_RELAXED_SIMD)
+    message(STATUS "TinyUSDZ WASM: Relaxed SIMD enabled (-mrelaxed-simd)")
+    set(TINYUSDZ_SIMD_FLAGS "${TINYUSDZ_SIMD_FLAGS} -mrelaxed-simd")
+  endif()
+endif()
+
 if (CMAKE_BUILD_TYPE STREQUAL "Debug")
 
   if (TINYUSDZ_WASM_DEBUG)
     # Enhanced debug mode with source maps
     if (TINYUSDZ_WASM64)
-      set(CMAKE_CXX_FLAGS_DEBUG "-g -gsource-map -sMEMORY64")
-      set(CMAKE_C_FLAGS_DEBUG "-g -gsource-map -sMEMORY64")
+      set(CMAKE_CXX_FLAGS_DEBUG "-g -gsource-map -sMEMORY64 ${TINYUSDZ_SIMD_FLAGS}")
+      set(CMAKE_C_FLAGS_DEBUG "-g -gsource-map -sMEMORY64 ${TINYUSDZ_SIMD_FLAGS}")
     else()
-      set(CMAKE_CXX_FLAGS_DEBUG "-g -gsource-map")
-      set(CMAKE_C_FLAGS_DEBUG "-g -gsource-map")
+      set(CMAKE_CXX_FLAGS_DEBUG "-g -gsource-map ${TINYUSDZ_SIMD_FLAGS}")
+      set(CMAKE_C_FLAGS_DEBUG "-g -gsource-map ${TINYUSDZ_SIMD_FLAGS}")
     endif()
   else()
     # Standard debug mode
     if (TINYUSDZ_WASM64)
-      set(CMAKE_CXX_FLAGS_DEBUG "-g4 -sMEMORY64")
-      set(CMAKE_C_FLAGS_DEBUG "-g4 -sMEMORY64")
+      set(CMAKE_CXX_FLAGS_DEBUG "-g4 -sMEMORY64 ${TINYUSDZ_SIMD_FLAGS}")
+      set(CMAKE_C_FLAGS_DEBUG "-g4 -sMEMORY64 ${TINYUSDZ_SIMD_FLAGS}")
     else()
-      set(CMAKE_CXX_FLAGS_DEBUG "-g4")
-      set(CMAKE_C_FLAGS_DEBUG "-g4")
+      set(CMAKE_CXX_FLAGS_DEBUG "-g4 ${TINYUSDZ_SIMD_FLAGS}")
+      set(CMAKE_C_FLAGS_DEBUG "-g4 ${TINYUSDZ_SIMD_FLAGS}")
     endif()
   endif()
 
@@ -50,13 +65,22 @@ elseif (CMAKE_BUILD_TYPE STREQUAL "MinSizeRel")
 
   # Use Oz to reduce size further than Os
   if (TINYUSDZ_WASM64)
-    set(CMAKE_CXX_FLAGS_MINSIZEREL "-O3 -Oz -DNDEBUG -sMEMORY64")
-    set(CMAKE_C_FLAGS_MINSIZEREL "-O3 -Oz -DNDEBUG -sMEMORY64")
+    set(CMAKE_CXX_FLAGS_MINSIZEREL "-O3 -Oz -DNDEBUG -sMEMORY64 ${TINYUSDZ_SIMD_FLAGS}")
+    set(CMAKE_C_FLAGS_MINSIZEREL "-O3 -Oz -DNDEBUG -sMEMORY64 ${TINYUSDZ_SIMD_FLAGS}")
   else()
-    set(CMAKE_CXX_FLAGS_MINSIZEREL "-O3 -Oz -DNDEBUG") # -sMEMORY64"
-    set(CMAKE_C_FLAGS_MINSIZEREL "-O3 -Oz -DNDEBUG") # -sMEMORY64"
+    set(CMAKE_CXX_FLAGS_MINSIZEREL "-O3 -Oz -DNDEBUG ${TINYUSDZ_SIMD_FLAGS}")
+    set(CMAKE_C_FLAGS_MINSIZEREL "-O3 -Oz -DNDEBUG ${TINYUSDZ_SIMD_FLAGS}")
   endif()
 
+else()
+  # Release mode (default)
+  if (TINYUSDZ_WASM64)
+    set(CMAKE_CXX_FLAGS_RELEASE "-O3 -DNDEBUG -sMEMORY64 ${TINYUSDZ_SIMD_FLAGS}")
+    set(CMAKE_C_FLAGS_RELEASE "-O3 -DNDEBUG -sMEMORY64 ${TINYUSDZ_SIMD_FLAGS}")
+  else()
+    set(CMAKE_CXX_FLAGS_RELEASE "-O3 -DNDEBUG ${TINYUSDZ_SIMD_FLAGS}")
+    set(CMAKE_C_FLAGS_RELEASE "-O3 -DNDEBUG ${TINYUSDZ_SIMD_FLAGS}")
+  endif()
 endif()
 
 if (NOT EMSCRIPTEN)
