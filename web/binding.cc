@@ -32,6 +32,12 @@
 #include "json-to-usd.hh"
 #include "sha256.hh"
 #include "logger.hh"
+#include "image-loader.hh"
+
+// TinyEXR for HDR/EXR decoding
+#if defined(TINYUSDZ_WITH_EXR)
+#include "external/tinyexr.h"
+#endif
 
 #ifdef __clang__
 #pragma clang diagnostic push
@@ -3629,6 +3635,472 @@ namespace emscripten {
 
 // TODO: quaternion type.
 
+// =============================================================================
+// HDR/EXR Image Decoding Functions with FP16 Support
+// =============================================================================
+
+namespace {
+
+// IEEE 754 half-precision float conversion utilities
+// Based on public domain code from OpenEXR/TinyEXR
+
+union FP32 {
+  uint32_t u;
+  float f;
+  struct {
+    unsigned int Mantissa : 23;
+    unsigned int Exponent : 8;
+    unsigned int Sign : 1;
+  } s;
+};
+
+union FP16 {
+  uint16_t u;
+  struct {
+    unsigned int Mantissa : 10;
+    unsigned int Exponent : 5;
+    unsigned int Sign : 1;
+  } s;
+};
+
+/// Convert float32 to float16 (IEEE 754 half-precision)
+inline uint16_t float32ToFloat16(float value) {
+  FP32 f;
+  f.f = value;
+  FP16 o = {0};
+
+  if (f.s.Exponent == 0) {
+    // Signed zero/denormal (will underflow)
+    o.s.Exponent = 0;
+  } else if (f.s.Exponent == 255) {
+    // Inf or NaN
+    o.s.Exponent = 31;
+    o.s.Mantissa = f.s.Mantissa ? 0x200 : 0;  // NaN->qNaN, Inf->Inf
+  } else {
+    // Normalized number
+    int newexp = f.s.Exponent - 127 + 15;
+    if (newexp >= 31) {
+      // Overflow -> infinity
+      o.s.Exponent = 31;
+    } else if (newexp <= 0) {
+      // Underflow
+      if ((14 - newexp) <= 24) {
+        unsigned int mant = f.s.Mantissa | 0x800000;  // Hidden 1 bit
+        o.s.Mantissa = mant >> (14 - newexp);
+        if ((mant >> (13 - newexp)) & 1)
+          o.u++;  // Round
+      }
+    } else {
+      o.s.Exponent = static_cast<unsigned int>(newexp);
+      o.s.Mantissa = f.s.Mantissa >> 13;
+      if (f.s.Mantissa & 0x1000)
+        o.u++;  // Round
+    }
+  }
+  o.s.Sign = f.s.Sign;
+  return o.u;
+}
+
+/// Convert float16 to float32
+inline float float16ToFloat32(uint16_t h) {
+  static const FP32 magic = {113 << 23};
+  static const unsigned int shifted_exp = 0x7c00 << 13;
+  FP32 o;
+  FP16 hp;
+  hp.u = h;
+
+  o.u = (hp.u & 0x7fffU) << 13U;
+  unsigned int exp_ = shifted_exp & o.u;
+  o.u += (127 - 15) << 23;
+
+  if (exp_ == shifted_exp)
+    o.u += (128 - 16) << 23;
+  else if (exp_ == 0) {
+    o.u += 1 << 23;
+    o.f -= magic.f;
+  }
+
+  o.u |= (hp.u & 0x8000U) << 16U;
+  return o.f;
+}
+
+/// Convert int32 to float16 (with normalization)
+inline uint16_t int32ToFloat16(int32_t value, float scale = 1.0f / 2147483647.0f) {
+  float normalized = static_cast<float>(value) * scale;
+  return float32ToFloat16(normalized);
+}
+
+/// Convert uint32 to float16 (with normalization)
+inline uint16_t uint32ToFloat16(uint32_t value, float scale = 1.0f / 4294967295.0f) {
+  float normalized = static_cast<float>(value) * scale;
+  return float32ToFloat16(normalized);
+}
+
+/// Convert float32 array to float16 array
+void convertFloat32ToFloat16(const float* src, uint16_t* dst, size_t count) {
+  for (size_t i = 0; i < count; ++i) {
+    dst[i] = float32ToFloat16(src[i]);
+  }
+}
+
+/// Copy buffer from JS Uint8Array
+void copyFromJSBuffer(const emscripten::val& data, std::vector<uint8_t>& buffer) {
+  size_t size = data["byteLength"].as<size_t>();
+  buffer.resize(size);
+  emscripten::val view = emscripten::val::global("Uint8Array").new_(
+      data["buffer"], data["byteOffset"], size);
+  emscripten::val heapView = emscripten::val(
+      emscripten::typed_memory_view(size, buffer.data()));
+  heapView.call<void>("set", view);
+}
+
+}  // namespace
+
+#if defined(TINYUSDZ_WITH_EXR)
+///
+/// Decode EXR image with output format options
+///
+/// @param data Uint8Array containing EXR file data
+/// @param outputFormat Output format: "float32", "float16", or "auto" (default)
+///   - "float32": Always output as Float32Array (default, preserves precision)
+///   - "float16": Convert to Uint16Array (IEEE 754 half-float, saves 50% memory)
+///   - "auto": Use native format if fp16, otherwise float32
+///
+emscripten::val decodeEXR(const emscripten::val& data,
+                          const std::string& outputFormat = "float32") {
+  emscripten::val result = emscripten::val::object();
+
+  std::vector<uint8_t> buffer;
+  copyFromJSBuffer(data, buffer);
+
+  if (IsEXRFromMemory(buffer.data(), buffer.size()) != TINYEXR_SUCCESS) {
+    result.set("success", false);
+    result.set("error", std::string("Not a valid EXR file"));
+    return result;
+  }
+
+  float* rgba = nullptr;
+  int width = 0;
+  int height = 0;
+  const char* err = nullptr;
+
+  // LoadEXRFromMemory always returns float32 RGBA
+  int ret = LoadEXRFromMemory(&rgba, &width, &height,
+                               buffer.data(), buffer.size(), &err);
+
+  if (ret != TINYEXR_SUCCESS) {
+    result.set("success", false);
+    if (err) {
+      result.set("error", std::string(err));
+      FreeEXRErrorMessage(err);
+    } else {
+      result.set("error", std::string("Failed to decode EXR"));
+    }
+    return result;
+  }
+
+  size_t pixelCount = size_t(width) * size_t(height) * 4;
+
+  if (outputFormat == "float16") {
+    // Convert to float16 and return as Uint16Array
+    std::vector<uint16_t> fp16Data(pixelCount);
+    convertFloat32ToFloat16(rgba, fp16Data.data(), pixelCount);
+    free(rgba);
+
+    emscripten::val Uint16Array = emscripten::val::global("Uint16Array");
+    emscripten::val pixelData = Uint16Array.new_(pixelCount);
+    emscripten::val jsHeap = emscripten::val(
+        emscripten::typed_memory_view(pixelCount, fp16Data.data()));
+    pixelData.call<void>("set", jsHeap);
+
+    result.set("data", pixelData);
+    result.set("pixelFormat", std::string("float16"));
+    result.set("bitsPerChannel", 16);
+  } else {
+    // Return as Float32Array (default)
+    emscripten::val Float32Array = emscripten::val::global("Float32Array");
+    emscripten::val pixelData = Float32Array.new_(pixelCount);
+    emscripten::val jsHeap = emscripten::val(
+        emscripten::typed_memory_view(pixelCount, rgba));
+    pixelData.call<void>("set", jsHeap);
+    free(rgba);
+
+    result.set("data", pixelData);
+    result.set("pixelFormat", std::string("float32"));
+    result.set("bitsPerChannel", 32);
+  }
+
+  result.set("success", true);
+  result.set("width", width);
+  result.set("height", height);
+  result.set("channels", 4);
+
+  return result;
+}
+
+/// Check if data is a valid EXR file
+bool isEXR(const emscripten::val& data) {
+  size_t size = data["byteLength"].as<size_t>();
+  if (size < 8) return false;
+
+  std::vector<uint8_t> buffer;
+  copyFromJSBuffer(data, buffer);
+  return IsEXRFromMemory(buffer.data(), buffer.size()) == TINYEXR_SUCCESS;
+}
+#endif
+
+///
+/// Decode HDR (Radiance RGBE) image with output format options
+///
+/// @param data Uint8Array containing HDR file data
+/// @param outputFormat Output format: "float32" or "float16"
+///
+emscripten::val decodeHDR(const emscripten::val& data,
+                          const std::string& outputFormat = "float32") {
+  emscripten::val result = emscripten::val::object();
+
+  std::vector<uint8_t> buffer;
+  copyFromJSBuffer(data, buffer);
+
+  auto loadResult = tinyusdz::image::LoadImageFromMemory(
+      buffer.data(), buffer.size(), "input.hdr");
+
+  if (!loadResult) {
+    result.set("success", false);
+    result.set("error", loadResult.error());
+    return result;
+  }
+
+  const auto& img = loadResult.value().image;
+  size_t pixelCount = size_t(img.width) * size_t(img.height) * size_t(img.channels);
+
+  if (img.format == tinyusdz::Image::PixelFormat::Float) {
+    const float* srcData = reinterpret_cast<const float*>(img.data.data());
+
+    if (outputFormat == "float16") {
+      // Convert float32 to float16
+      std::vector<uint16_t> fp16Data(pixelCount);
+      convertFloat32ToFloat16(srcData, fp16Data.data(), pixelCount);
+
+      emscripten::val Uint16Array = emscripten::val::global("Uint16Array");
+      emscripten::val pixelData = Uint16Array.new_(pixelCount);
+      emscripten::val jsHeap = emscripten::val(
+          emscripten::typed_memory_view(pixelCount, fp16Data.data()));
+      pixelData.call<void>("set", jsHeap);
+
+      result.set("data", pixelData);
+      result.set("pixelFormat", std::string("float16"));
+      result.set("bitsPerChannel", 16);
+    } else {
+      // Keep as float32
+      emscripten::val Float32Array = emscripten::val::global("Float32Array");
+      emscripten::val pixelData = Float32Array.new_(pixelCount);
+      emscripten::val jsHeap = emscripten::val(
+          emscripten::typed_memory_view(pixelCount, srcData));
+      pixelData.call<void>("set", jsHeap);
+
+      result.set("data", pixelData);
+      result.set("pixelFormat", std::string("float32"));
+      result.set("bitsPerChannel", 32);
+    }
+  } else {
+    // Uint8 data (fallback)
+    emscripten::val Uint8Array = emscripten::val::global("Uint8Array");
+    emscripten::val pixelData = Uint8Array.new_(pixelCount);
+    emscripten::val jsHeap = emscripten::val(
+        emscripten::typed_memory_view(pixelCount, img.data.data()));
+    pixelData.call<void>("set", jsHeap);
+
+    result.set("data", pixelData);
+    result.set("pixelFormat", std::string("uint8"));
+    result.set("bitsPerChannel", 8);
+  }
+
+  result.set("success", true);
+  result.set("width", img.width);
+  result.set("height", img.height);
+  result.set("channels", img.channels);
+
+  return result;
+}
+
+///
+/// Generic image decoder with output format options
+///
+/// @param data Uint8Array containing image file data
+/// @param hint Filename hint for format detection (e.g., "image.exr")
+/// @param outputFormat Output format: "auto", "float32", "float16", "uint16", "uint8"
+///   - "auto": Use native format (default)
+///   - "float32": Convert HDR/EXR to float32
+///   - "float16": Convert HDR/EXR to float16 (Uint16Array with IEEE 754 half-float)
+///   - "uint16": Keep 16-bit data as Uint16Array
+///   - "uint8": Keep 8-bit data as Uint8Array
+///
+emscripten::val decodeImage(const emscripten::val& data,
+                            const std::string& hint = "",
+                            const std::string& outputFormat = "auto") {
+  emscripten::val result = emscripten::val::object();
+
+  std::vector<uint8_t> buffer;
+  copyFromJSBuffer(data, buffer);
+
+#if defined(TINYUSDZ_WITH_EXR)
+  // Check for EXR first
+  if (IsEXRFromMemory(buffer.data(), buffer.size()) == TINYEXR_SUCCESS) {
+    std::string exrFormat = (outputFormat == "auto") ? "float32" : outputFormat;
+    return decodeEXR(data, exrFormat);
+  }
+#endif
+
+  // Use generic image loader for other formats (HDR, PNG, JPEG, etc.)
+  auto loadResult = tinyusdz::image::LoadImageFromMemory(
+      buffer.data(), buffer.size(), hint);
+
+  if (!loadResult) {
+    result.set("success", false);
+    result.set("error", loadResult.error());
+    return result;
+  }
+
+  const auto& img = loadResult.value().image;
+  size_t pixelCount = size_t(img.width) * size_t(img.height) * size_t(img.channels);
+  size_t dataSize = img.data.size();
+
+  // Determine actual output format
+  std::string actualFormat = outputFormat;
+  if (actualFormat == "auto") {
+    if (img.format == tinyusdz::Image::PixelFormat::Float) {
+      actualFormat = "float32";
+    } else if (img.bpp == 16) {
+      actualFormat = "uint16";
+    } else {
+      actualFormat = "uint8";
+    }
+  }
+
+  // Handle float data
+  if (img.format == tinyusdz::Image::PixelFormat::Float) {
+    const float* srcData = reinterpret_cast<const float*>(img.data.data());
+
+    if (actualFormat == "float16") {
+      // Downcast float32 to float16
+      std::vector<uint16_t> fp16Data(pixelCount);
+      convertFloat32ToFloat16(srcData, fp16Data.data(), pixelCount);
+
+      emscripten::val Uint16Array = emscripten::val::global("Uint16Array");
+      emscripten::val pixelData = Uint16Array.new_(pixelCount);
+      emscripten::val jsHeap = emscripten::val(
+          emscripten::typed_memory_view(pixelCount, fp16Data.data()));
+      pixelData.call<void>("set", jsHeap);
+
+      result.set("data", pixelData);
+      result.set("pixelFormat", std::string("float16"));
+      result.set("bitsPerChannel", 16);
+    } else {
+      // Keep as float32
+      emscripten::val Float32Array = emscripten::val::global("Float32Array");
+      emscripten::val pixelData = Float32Array.new_(pixelCount);
+      emscripten::val jsHeap = emscripten::val(
+          emscripten::typed_memory_view(pixelCount, srcData));
+      pixelData.call<void>("set", jsHeap);
+
+      result.set("data", pixelData);
+      result.set("pixelFormat", std::string("float32"));
+      result.set("bitsPerChannel", 32);
+    }
+  }
+  // Handle 16-bit integer data (e.g., 16-bit PNG)
+  else if (img.bpp == 16) {
+    const uint16_t* srcData = reinterpret_cast<const uint16_t*>(img.data.data());
+
+    // Return as Uint16Array (native format)
+    emscripten::val Uint16Array = emscripten::val::global("Uint16Array");
+    emscripten::val pixelData = Uint16Array.new_(pixelCount);
+    emscripten::val jsHeap = emscripten::val(
+        emscripten::typed_memory_view(pixelCount, srcData));
+    pixelData.call<void>("set", jsHeap);
+
+    result.set("data", pixelData);
+    result.set("pixelFormat", std::string("uint16"));
+    result.set("bitsPerChannel", 16);
+  }
+  // Handle 8-bit data
+  else {
+    emscripten::val Uint8Array = emscripten::val::global("Uint8Array");
+    emscripten::val pixelData = Uint8Array.new_(dataSize);
+    emscripten::val jsHeap = emscripten::val(
+        emscripten::typed_memory_view(dataSize, img.data.data()));
+    pixelData.call<void>("set", jsHeap);
+
+    result.set("data", pixelData);
+    result.set("pixelFormat", std::string("uint8"));
+    result.set("bitsPerChannel", 8);
+  }
+
+  result.set("success", true);
+  result.set("width", img.width);
+  result.set("height", img.height);
+  result.set("channels", img.channels);
+
+  return result;
+}
+
+///
+/// Convert Float32Array to Float16 Uint16Array
+/// Utility function for post-processing or manual conversion
+///
+emscripten::val convertFloat32ToFloat16Array(const emscripten::val& float32Data) {
+  size_t count = float32Data["length"].as<size_t>();
+
+  // Copy float32 data from JS
+  std::vector<float> srcData(count);
+  emscripten::val srcView = emscripten::val(
+      emscripten::typed_memory_view(count, srcData.data()));
+  srcView.call<void>("set", float32Data);
+
+  // Convert to float16
+  std::vector<uint16_t> fp16Data(count);
+  convertFloat32ToFloat16(srcData.data(), fp16Data.data(), count);
+
+  // Return as Uint16Array
+  emscripten::val Uint16Array = emscripten::val::global("Uint16Array");
+  emscripten::val result = Uint16Array.new_(count);
+  emscripten::val jsHeap = emscripten::val(
+      emscripten::typed_memory_view(count, fp16Data.data()));
+  result.call<void>("set", jsHeap);
+
+  return result;
+}
+
+///
+/// Convert Float16 Uint16Array to Float32Array
+/// Utility function for reading back float16 data
+///
+emscripten::val convertFloat16ToFloat32Array(const emscripten::val& uint16Data) {
+  size_t count = uint16Data["length"].as<size_t>();
+
+  // Copy uint16 data from JS
+  std::vector<uint16_t> srcData(count);
+  emscripten::val srcView = emscripten::val(
+      emscripten::typed_memory_view(count, srcData.data()));
+  srcView.call<void>("set", uint16Data);
+
+  // Convert to float32
+  std::vector<float> fp32Data(count);
+  for (size_t i = 0; i < count; ++i) {
+    fp32Data[i] = float16ToFloat32(srcData[i]);
+  }
+
+  // Return as Float32Array
+  emscripten::val Float32Array = emscripten::val::global("Float32Array");
+  emscripten::val result = Float32Array.new_(count);
+  emscripten::val jsHeap = emscripten::val(
+      emscripten::typed_memory_view(count, fp32Data.data()));
+  result.call<void>("set", jsHeap);
+
+  return result;
+}
+
 // Register STL
 EMSCRIPTEN_BINDINGS(stl_wrappters) {
   register_vector<float>("VectorFloat");
@@ -3988,5 +4460,57 @@ EMSCRIPTEN_BINDINGS(tinyusdz_module) {
       .constructor<>()  // Default constructor for async loading
       .function("ok", &TinyUSDZComposerNative::loaded)
       .function("error", &TinyUSDZComposerNative::error);
+}
+
+// =============================================================================
+// Image Decoding Bindings (EXR, HDR, PNG, JPEG, etc.)
+// =============================================================================
+
+// Wrapper functions for default parameters
+#if defined(TINYUSDZ_WITH_EXR)
+static emscripten::val decodeEXR_default(const emscripten::val& data) {
+  return decodeEXR(data, "float32");
+}
+#endif
+
+static emscripten::val decodeHDR_default(const emscripten::val& data) {
+  return decodeHDR(data, "float32");
+}
+
+static emscripten::val decodeImage_default(const emscripten::val& data) {
+  return decodeImage(data, "", "auto");
+}
+
+static emscripten::val decodeImage_hint(const emscripten::val& data, const std::string& hint) {
+  return decodeImage(data, hint, "auto");
+}
+
+EMSCRIPTEN_BINDINGS(image_module) {
+#if defined(TINYUSDZ_WITH_EXR)
+  // EXR decoding
+  // decodeEXR(data) - returns float32 by default
+  // decodeEXR(data, "float16") - returns Uint16Array with IEEE 754 half-float
+  function("decodeEXR", &decodeEXR);
+  function("decodeEXRDefault", &decodeEXR_default);
+  function("isEXR", &isEXR);
+#endif
+
+  // HDR (Radiance RGBE) decoding
+  // decodeHDR(data) - returns float32 by default
+  // decodeHDR(data, "float16") - returns Uint16Array with IEEE 754 half-float
+  function("decodeHDR", &decodeHDR);
+  function("decodeHDRDefault", &decodeHDR_default);
+
+  // Generic image decoder (auto-detects EXR, HDR, PNG, JPEG, etc.)
+  // decodeImage(data) - auto format
+  // decodeImage(data, hint) - with filename hint
+  // decodeImage(data, hint, "float16") - with format specification
+  function("decodeImage", &decodeImage);
+  function("decodeImageDefault", &decodeImage_default);
+  function("decodeImageHint", &decodeImage_hint);
+
+  // Float16 <-> Float32 conversion utilities
+  function("convertFloat32ToFloat16Array", &convertFloat32ToFloat16Array);
+  function("convertFloat16ToFloat32Array", &convertFloat16ToFloat32Array);
 }
 
