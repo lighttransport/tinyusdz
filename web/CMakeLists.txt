@@ -112,6 +112,11 @@ if (TINYUSDZ_WASM64)
   target_compile_definitions(${BUILD_TARGET} PRIVATE TINYUSDZ_WASM_MEMORY64=1)
 endif()
 
+# Pass through compile definitions for feature flags
+if (TINYUSDZ_WITH_EXR)
+  target_compile_definitions(${BUILD_TARGET} PRIVATE TINYUSDZ_WITH_EXR=1)
+endif()
+
 # tinyusdz dir
 target_include_directories(${BUILD_TARGET}
                            PRIVATE "${PROJECT_SOURCE_DIR}/../src/")
