@@ -799,6 +799,14 @@ struct ParsingProgress {
   uint64_t bytes_processed{0};
   uint64_t total_bytes{0};
 
+  // Detailed mesh/material progress (from Tydra converter)
+  size_t meshes_processed{0};
+  size_t meshes_total{0};
+  std::string current_mesh_name{""};
+  size_t materials_processed{0};
+  size_t materials_total{0};
+  std::string tydra_stage{""};  // Stage name from DetailedProgressInfo
+
   void reset() {
     progress = 0.0f;
     stage = Stage::Idle;
@@ -808,6 +816,12 @@ struct ParsingProgress {
     error_message = "";
     bytes_processed = 0;
     total_bytes = 0;
+    meshes_processed = 0;
+    meshes_total = 0;
+    current_mesh_name = "";
+    materials_processed = 0;
+    materials_total = 0;
+    tydra_stage = "";
   }
 
   void setStage(Stage s) {
@@ -836,6 +850,15 @@ struct ParsingProgress {
     result.set("bytesProcessed", double(bytes_processed));
     result.set("totalBytes", double(total_bytes));
     result.set("percentage", progress * 100.0f);
+
+    // Detailed mesh/material progress
+    result.set("meshesProcessed", double(meshes_processed));
+    result.set("meshesTotal", double(meshes_total));
+    result.set("currentMeshName", current_mesh_name);
+    result.set("materialsProcessed", double(materials_processed));
+    result.set("materialsTotal", double(materials_total));
+    result.set("tydraStage", tydra_stage);
+
     return result;
   }
 };
@@ -948,6 +971,25 @@ class TinyUSDZLoaderNative {
 
     // RenderScene: Scene graph object which is suited for GL/Vulkan renderer
     tinyusdz::tydra::RenderSceneConverter converter;
+
+    // Set up detailed progress callback to update parsing_progress_
+    converter.SetDetailedProgressCallback(
+        [](const tinyusdz::tydra::DetailedProgressInfo &info, void *userptr) -> bool {
+          ParsingProgress *pp = static_cast<ParsingProgress *>(userptr);
+          if (pp) {
+            pp->meshes_processed = info.meshes_processed;
+            pp->meshes_total = info.meshes_total;
+            pp->current_mesh_name = info.current_mesh_name;
+            pp->materials_processed = info.materials_processed;
+            pp->materials_total = info.materials_total;
+            pp->tydra_stage = info.GetStageName();
+            pp->current_operation = info.message;
+            // Update progress: parsing is 0-80%, conversion is 80-100%
+            pp->progress = 0.8f + (info.progress * 0.2f);
+          }
+          return true;  // Continue conversion
+        },
+        &parsing_progress_);
 
     // Set timecode to startTimeCode if authored, so xformOps with TimeSamples
     // are evaluated at the start time (initial pose) for static viewers
@@ -1071,6 +1113,25 @@ class TinyUSDZLoaderNative {
 
     // RenderScene: Scene graph object which is suited for GL/Vulkan renderer
     tinyusdz::tydra::RenderSceneConverter converter;
+
+    // Set up detailed progress callback to update parsing_progress_
+    converter.SetDetailedProgressCallback(
+        [](const tinyusdz::tydra::DetailedProgressInfo &info, void *userptr) -> bool {
+          ParsingProgress *pp = static_cast<ParsingProgress *>(userptr);
+          if (pp) {
+            pp->meshes_processed = info.meshes_processed;
+            pp->meshes_total = info.meshes_total;
+            pp->current_mesh_name = info.current_mesh_name;
+            pp->materials_processed = info.materials_processed;
+            pp->materials_total = info.materials_total;
+            pp->tydra_stage = info.GetStageName();
+            pp->current_operation = info.message;
+            // Update progress: parsing is 0-80%, conversion is 80-100%
+            pp->progress = 0.8f + (info.progress * 0.2f);
+          }
+          return true;  // Continue conversion
+        },
+        &parsing_progress_);
 
     // Set timecode to startTimeCode if authored, so xformOps with TimeSamples
     // are evaluated at the start time (initial pose) for static viewers
