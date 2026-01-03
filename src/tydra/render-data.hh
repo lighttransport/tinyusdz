@@ -108,6 +108,71 @@ namespace tydra {
 ///
 using ProgressCallback = std::function<bool(float progress, void *userptr)>;
 
+///
+/// Detailed progress information for fine-grained progress reporting.
+/// Contains counts for meshes, materials, textures and the current processing stage.
+///
+struct DetailedProgressInfo {
+  enum class Stage {
+    Idle,
+    CountingPrims,      // Counting prims before conversion
+    ConvertingXforms,   // Converting xform nodes
+    ConvertingMeshes,   // Converting meshes
+    ConvertingMaterials,// Converting materials
+    ConvertingTextures, // Loading textures
+    BuildingHierarchy,  // Building node hierarchy
+    ExtractingAnimations,// Extracting animations
+    MergingMeshes,      // Merging meshes (optional)
+    Complete
+  };
+
+  Stage stage{Stage::Idle};
+  float progress{0.0f};           // 0.0 to 1.0 overall progress
+
+  // Mesh progress
+  size_t meshes_processed{0};
+  size_t meshes_total{0};
+  std::string current_mesh_name;
+
+  // Material progress
+  size_t materials_processed{0};
+  size_t materials_total{0};
+  std::string current_material_name;
+
+  // Texture progress
+  size_t textures_processed{0};
+  size_t textures_total{0};
+  std::string current_texture_name;
+
+  // Generic progress message
+  std::string message;
+
+  const char* GetStageName() const {
+    switch (stage) {
+      case Stage::Idle: return "idle";
+      case Stage::CountingPrims: return "counting";
+      case Stage::ConvertingXforms: return "xforms";
+      case Stage::ConvertingMeshes: return "meshes";
+      case Stage::ConvertingMaterials: return "materials";
+      case Stage::ConvertingTextures: return "textures";
+      case Stage::BuildingHierarchy: return "hierarchy";
+      case Stage::ExtractingAnimations: return "animations";
+      case Stage::MergingMeshes: return "merging";
+      case Stage::Complete: return "complete";
+    }
+    return "unknown";
+  }
+};
+
+///
+/// Detailed progress callback function type for RenderSceneConverter.
+/// Provides more granular progress information including mesh/material counts.
+/// @param[in] info Detailed progress information
+/// @param[in] userptr User-provided pointer for custom data
+/// @return true to continue conversion, false to cancel
+///
+using DetailedProgressCallback = std::function<bool(const DetailedProgressInfo &info, void *userptr)>;
+
 // Conditional typedef for ChunkedVectorArray based on TYDRA_USE_CHUNKED_ARRAY
 #ifdef TYDRA_USE_CHUNKED_ARRAY
 template<typename T>
@@ -2853,6 +2918,28 @@ class RenderSceneConverter {
   void SetProgressCallback(ProgressCallback callback, void *userptr = nullptr);
 
   ///
+  /// Set detailed progress callback for fine-grained progress monitoring.
+  /// This callback provides mesh/material/texture counts during conversion.
+  ///
+  /// @param[in] callback Function to call during conversion with detailed info
+  /// @param[in] userptr User-provided pointer for custom data
+  ///
+  void SetDetailedProgressCallback(DetailedProgressCallback callback, void *userptr = nullptr);
+
+  ///
+  /// Report mesh conversion progress (for use by MeshVisitor).
+  /// Updates internal progress info and calls the detailed callback if set.
+  ///
+  /// @param[in] meshes_processed Number of meshes processed so far
+  /// @param[in] meshes_total Total number of meshes to process
+  /// @param[in] mesh_name Name of the current mesh being processed
+  /// @param[in] message Progress message
+  /// @return true to continue, false to cancel
+  ///
+  bool ReportMeshProgress(size_t meshes_processed, size_t meshes_total,
+                          const std::string& mesh_name, const std::string& message);
+
+  ///
   /// All-in-one Stage to RenderScene conversion.
   ///
   /// Convert Stage to RenderScene.
@@ -3261,6 +3348,13 @@ class RenderSceneConverter {
   ///
   bool CallProgressCallback(float progress);
 
+  ///
+  /// Call detailed progress callback if set.
+  /// @param[in] info Detailed progress information
+  /// @return true to continue, false to cancel
+  ///
+  bool CallDetailedProgressCallback(const DetailedProgressInfo &info);
+
   std::string _info;
   std::string _err;
   std::string _warn;
@@ -3268,6 +3362,13 @@ class RenderSceneConverter {
   // Progress callback
   ProgressCallback _progress_callback{nullptr};
   void *_progress_userptr{nullptr};
+
+  // Detailed progress callback
+  DetailedProgressCallback _detailed_progress_callback{nullptr};
+  void *_detailed_progress_userptr{nullptr};
+
+  // Progress state for detailed tracking
+  mutable DetailedProgressInfo _progress_info;
 
   // Reusable buffers for mesh conversion to avoid repeated allocation
   mutable std::vector<value::float3> _tmp_points_buffer;
