@@ -649,7 +649,7 @@ class TinyUSDZLoaderUtils extends LoaderUtils {
 
         // Log material type selection for debugging
         if (typeInfo.hasBoth) {
-            console.log(`Material has both OpenPBR and UsdPreviewSurface. Using: ${useOpenPBR ? 'OpenPBR' : 'UsdPreviewSurface'} (preferred: ${preferredType})`);
+            //console.log(`Material has both OpenPBR and UsdPreviewSurface. Using: ${useOpenPBR ? 'OpenPBR' : 'UsdPreviewSurface'} (preferred: ${preferredType})`);
         }
 
         // Convert using selected material type
@@ -709,15 +709,15 @@ class TinyUSDZLoaderUtils extends LoaderUtils {
         // Store doubleSided param to customData
         if (Object.prototype.hasOwnProperty.call(mesh, 'doubleSided')) {
           geometry.userData['doubleSided'] = mesh.doubleSided;
-          console.log(`USD Mesh doubleSided attribute: ${mesh.doubleSided}`);
+          //console.log(`USD Mesh doubleSided attribute: ${mesh.doubleSided}`);
         } else {
-          console.log('USD Mesh has no doubleSided attribute (will default to FrontSide)');
+          //console.log('USD Mesh has no doubleSided attribute (will default to FrontSide)');
         }
 
         // Store submesh data for multi-material support (pre-computed in C++)
         if (Object.prototype.hasOwnProperty.call(mesh, 'submeshes') && mesh.submeshes.length > 0) {
           geometry.userData['submeshes'] = mesh.submeshes;
-          console.log(`USD Mesh has ${mesh.submeshes.length} pre-computed submesh group(s)`);
+          //console.log(`USD Mesh has ${mesh.submeshes.length} pre-computed submesh group(s)`);
         }
 
         return geometry;
@@ -757,7 +757,7 @@ class TinyUSDZLoaderUtils extends LoaderUtils {
                 }
             }
 
-            console.log(`Mesh materialId: ${mesh.materialId}, hasMaterial: ${hasMaterial}, usdMaterial: ${usdMaterialData ? 'valid' : 'null'}`);
+            //console.log(`Mesh materialId: ${mesh.materialId}, hasMaterial: ${hasMaterial}, usdMaterial: ${usdMaterialData ? 'valid' : 'null'}`);
 
             let pbrMaterial;
             if (usdMaterialData) {
@@ -792,15 +792,15 @@ class TinyUSDZLoaderUtils extends LoaderUtils {
             // Sideness is determined by the mesh's USD doubleSided attribute
             if (Object.prototype.hasOwnProperty.call(geometry.userData, 'doubleSided')) {
               if (geometry.userData.doubleSided) {
-                console.log(`  Setting material to DoubleSide (from USD doubleSided=true)`);
+                //console.log(`  Setting material to DoubleSide (from USD doubleSided=true)`);
                 pbrMaterial.side = THREE.DoubleSide;
               } else {
-                console.log(`  Setting material to FrontSide (from USD doubleSided=false)`);
+                //console.log(`  Setting material to FrontSide (from USD doubleSided=false)`);
                 pbrMaterial.side = THREE.FrontSide;
               }
             } else {
               // No doubleSided attribute in USD - default to FrontSide
-              console.log(`  Setting material to FrontSide (no USD doubleSided attribute)`);
+              //console.log(`  Setting material to FrontSide (no USD doubleSided attribute)`);
               pbrMaterial.side = THREE.FrontSide;
             }
 
@@ -810,7 +810,7 @@ class TinyUSDZLoaderUtils extends LoaderUtils {
         // Handle GeomSubsets (per-face materials)
         if (geometry.userData['submeshes'] && geometry.userData['submeshes'].length > 0) {
             const submeshes = geometry.userData['submeshes'];
-            console.log(`Setting up multi-material mesh with ${submeshes.length} pre-computed submesh groups`);
+            //console.log(`Setting up multi-material mesh with ${submeshes.length} pre-computed submesh groups`);
 
             // Build materials array indexed by materialId
             const materials = [];
@@ -850,7 +850,7 @@ class TinyUSDZLoaderUtils extends LoaderUtils {
                     material.userData.typeString = this.getMaterialTypeString(materialData);
 
                     materials[matIndex] = material;
-                    console.log(`  Loaded material ${matId} -> index ${matIndex}`);
+                    //console.log(`  Loaded material ${matId} -> index ${matIndex}`);
                 } else {
                     materials[matIndex] = mtl; // Use default material
                 }
@@ -862,7 +862,7 @@ class TinyUSDZLoaderUtils extends LoaderUtils {
                 geometry.addGroup(submesh.start, submesh.count, matIndex);
             }
 
-            console.log(`  Created ${submeshes.length} geometry groups for ${materials.length} unique materials (pre-computed in WASM)`);
+            //console.log(`  Created ${submeshes.length} geometry groups for ${materials.length} unique materials (pre-computed in WASM)`);
 
             // Create mesh with multi-material array
             const threeMesh = new THREE.Mesh(geometry, materials);
@@ -942,25 +942,25 @@ class TinyUSDZLoaderUtils extends LoaderUtils {
 
         var node = new THREE.Group();
 
-        console.log("usdNode.nodeType:", usdNode.nodeType, "primName:", usdNode.primName, "absPath:", usdNode.absPath);
+        //console.log("usdNode.nodeType:", usdNode.nodeType, "primName:", usdNode.primName, "absPath:", usdNode.absPath);
         if (usdNode.nodeType == 'xform') {
 
             // intermediate xform node
             // Apply the USD local transform matrix to the Three.js node
             const matrix = this.toMatrix4(usdNode.localMatrix);
-            console.log("  Applied localMatrix:", {
-                matrix: matrix});
+            //console.log("  Applied localMatrix:", {
+            //    matrix: matrix});
 
             // Decompose the matrix into position, rotation, and scale
             // This is necessary for Three.js to properly handle the transform
             node.applyMatrix4(matrix);
 
             // Log transform for debugging
-            console.log("  Applied xform matrix:", {
-                position: [node.position.x, node.position.y, node.position.z],
-                rotation: [node.rotation.x, node.rotation.y, node.rotation.z],
-                scale: [node.scale.x, node.scale.y, node.scale.z]
-            });
+            //console.log("  Applied xform matrix:", {
+            //    position: [node.position.x, node.position.y, node.position.z],
+            //    rotation: [node.rotation.x, node.rotation.y, node.rotation.z],
+            //    scale: [node.scale.x, node.scale.y, node.scale.z]
+            //});
 
         } else if (usdNode.nodeType == 'mesh') {
 
@@ -976,11 +976,11 @@ class TinyUSDZLoaderUtils extends LoaderUtils {
                 const matrix = this.toMatrix4(usdNode.localMatrix);
                 node.applyMatrix4(matrix);
 
-                console.log("  Applied mesh matrix:", {
-                    position: [node.position.x, node.position.y, node.position.z],
-                    rotation: [node.rotation.x, node.rotation.y, node.rotation.z],
-                    scale: [node.scale.x, node.scale.y, node.scale.z]
-                });
+                //console.log("  Applied mesh matrix:", {
+                //    position: [node.position.x, node.position.y, node.position.z],
+                //    rotation: [node.rotation.x, node.rotation.y, node.rotation.z],
+                //    scale: [node.scale.x, node.scale.y, node.scale.z]
+                //});
             }
 
         } else {
