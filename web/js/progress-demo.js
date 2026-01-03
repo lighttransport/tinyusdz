@@ -17,9 +17,8 @@ const CAMERA_PADDING = 1.2;
 
 // Sample models for testing
 const SAMPLE_MODELS = [
-    'assets/WesternDesertTown2-mtlx.usdz',
-    //'assets/mtlx-normalmap-multi.usdz',
-    //'assets/multi-mesh-test.usda'
+    'assets/mtlx-normalmap-multi.usdz',
+    'assets/multi-mesh-test.usda'
 ];
 
 // ============================================================================
