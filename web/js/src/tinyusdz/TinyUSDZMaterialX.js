@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { decodeEXR as decodeEXRWithFallback } from './EXRDecoder.js';
 
 /**
  * TinyUSDZ MaterialX / OpenPBR Material Utilities
@@ -8,11 +9,22 @@ import * as THREE from 'three';
  *
  * Key features:
  * - OpenPBR parameter extraction from JSON format (flat and grouped)
- * - Texture loading from USD scene with caching
+ * - Texture loading from USD scene with caching (including EXR/HDR)
  * - Full OpenPBR to MeshPhysicalMaterial conversion
  * - Support for all OpenPBR layers: base, specular, transmission, subsurface,
  *   coat, sheen, fuzz, thin_film, emission, geometry
  */
+
+// Reference to TinyUSDZ WASM module for HDR/EXR decoding
+let _tinyusdz = null;
+
+/**
+ * Set TinyUSDZ WASM module for texture decoding
+ * @param {Object} tinyusdz - TinyUSDZ WASM module
+ */
+export function setTinyUSDZ(tinyusdz) {
+    _tinyusdz = tinyusdz;
+}
 
 // ============================================================================
 // OpenPBR Parameter Mapping to Three.js MeshPhysicalMaterial
@@ -166,12 +178,84 @@ function getMimeType(imgData) {
     // Check magic bytes
     if (imgData.data && imgData.data.length >= 4) {
         const data = new Uint8Array(imgData.data);
+        // PNG magic: 0x89 0x50 0x4E 0x47
         if (data[0] === 0x89 && data[1] === 0x50 && data[2] === 0x4E && data[3] === 0x47) return 'image/png';
+        // JPEG magic: 0xFF 0xD8 0xFF
         if (data[0] === 0xFF && data[1] === 0xD8 && data[2] === 0xFF) return 'image/jpeg';
+        // WEBP magic: RIFF....WEBP
         if (data[0] === 0x52 && data[1] === 0x49 && data[2] === 0x46 && data[3] === 0x46) return 'image/webp';
+        // EXR magic: 0x76 0x2F 0x31 0x01
+        if (data[0] === 0x76 && data[1] === 0x2F && data[2] === 0x31 && data[3] === 0x01) return 'image/x-exr';
+        // HDR magic: "#?" (Radiance format)
+        if (data[0] === 0x23 && data[1] === 0x3F) return 'image/vnd.radiance';
     }
 
     return 'image/png';
+}
+
+/**
+ * Check if MIME type is HDR format (EXR or HDR)
+ */
+function isHDRFormat(mimeType) {
+    return mimeType === 'image/x-exr' || mimeType === 'image/vnd.radiance';
+}
+
+/**
+ * Decode HDR/EXR texture data and create Three.js DataTexture
+ * @param {Uint8Array|ArrayBuffer} data - Image data
+ * @param {string} mimeType - MIME type
+ * @returns {THREE.DataTexture|null}
+ */
+function decodeHDRTexture(data, mimeType) {
+    const buffer = data instanceof ArrayBuffer ? data : data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength);
+
+    if (mimeType === 'image/x-exr') {
+        // Use EXR decoder with TinyUSDZ fallback
+        const result = decodeEXRWithFallback(buffer, _tinyusdz, {
+            outputFormat: 'float16',
+            preferThreeJS: true,
+        });
+
+        if (result.success) {
+            const texture = new THREE.DataTexture(
+                result.data,
+                result.width,
+                result.height,
+                THREE.RGBAFormat,
+                result.format === 'float16' ? THREE.HalfFloatType : THREE.FloatType
+            );
+            texture.minFilter = THREE.LinearFilter;
+            texture.magFilter = THREE.LinearFilter;
+            texture.generateMipmaps = false;
+            texture.flipY = true;
+            texture.needsUpdate = true;
+            return texture;
+        }
+    } else if (mimeType === 'image/vnd.radiance') {
+        // Use TinyUSDZ HDR decoder (faster)
+        if (_tinyusdz && typeof _tinyusdz.decodeHDR === 'function') {
+            const uint8Array = data instanceof Uint8Array ? data : new Uint8Array(buffer);
+            const result = _tinyusdz.decodeHDR(uint8Array, 'float16');
+
+            if (result.success) {
+                const texture = new THREE.DataTexture(
+                    result.data,
+                    result.width,
+                    result.height,
+                    THREE.RGBAFormat,
+                    THREE.HalfFloatType
+                );
+                texture.minFilter = THREE.LinearFilter;
+                texture.magFilter = THREE.LinearFilter;
+                texture.generateMipmaps = false;
+                texture.flipY = true;
+                texture.needsUpdate = true;
+                return texture;
+            }
+        }
+    }
+
+    return null;
 }
 
 // ============================================================================
@@ -233,11 +317,16 @@ async function loadTextureFromUSD(usdScene, textureId, cache = null) {
                                 texture.needsUpdate = true;
                             } else {
                                 const mimeType = getMimeType(altImgData);
-                                const blob = new Blob([altImgData.data], { type: mimeType });
-                                const blobUrl = URL.createObjectURL(blob);
-                                const loader = new THREE.TextureLoader();
-                                texture = await loader.loadAsync(blobUrl);
-                                URL.revokeObjectURL(blobUrl);
+                                // Check if HDR format - use specialized decoder
+                                if (isHDRFormat(mimeType)) {
+                                    texture = decodeHDRTexture(altImgData.data, mimeType);
+                                } else {
+                                    const blob = new Blob([altImgData.data], { type: mimeType });
+                                    const blobUrl = URL.createObjectURL(blob);
+                                    const loader = new THREE.TextureLoader();
+                                    texture = await loader.loadAsync(blobUrl);
+                                    URL.revokeObjectURL(blobUrl);
+                                }
                             }
                             foundEmbedded = true;
                             break;
@@ -270,14 +359,20 @@ async function loadTextureFromUSD(usdScene, textureId, cache = null) {
                 texture.flipY = true;
                 texture.needsUpdate = true;
             } else {
-                // Needs decoding - create Blob and load
+                // Needs decoding - check format and decode
                 const mimeType = getMimeType(imgData);
-                const blob = new Blob([imgData.data], { type: mimeType });
-                const blobUrl = URL.createObjectURL(blob);
 
-                const loader = new THREE.TextureLoader();
-                texture = await loader.loadAsync(blobUrl);
-                URL.revokeObjectURL(blobUrl);
+                // Check if HDR format - use specialized decoder
+                if (isHDRFormat(mimeType)) {
+                    texture = decodeHDRTexture(imgData.data, mimeType);
+                } else {
+                    // Standard image - use Blob and TextureLoader
+                    const blob = new Blob([imgData.data], { type: mimeType });
+                    const blobUrl = URL.createObjectURL(blob);
+                    const loader = new THREE.TextureLoader();
+                    texture = await loader.loadAsync(blobUrl);
+                    URL.revokeObjectURL(blobUrl);
+                }
             }
         }
 
@@ -299,13 +394,14 @@ async function loadTextureFromUSD(usdScene, textureId, cache = null) {
 
 /**
  * Convert OpenPBR material data to Three.js MeshPhysicalMaterial
+ * Waits for all textures to load before returning the material.
  *
  * @param {Object} materialData - OpenPBR material data from USD
  * @param {Object} usdScene - USD scene for texture loading
  * @param {Object} options - Conversion options
  * @returns {Promise<THREE.MeshPhysicalMaterial>}
  */
-async function convertOpenPBRToMeshPhysicalMaterial(materialData, usdScene = null, options = {}) {
+async function convertOpenPBRToMeshPhysicalMaterialLoaded(materialData, usdScene = null, options = {}) {
     const material = new THREE.MeshPhysicalMaterial();
 
     // Store texture references for later management
@@ -582,6 +678,320 @@ async function convertOpenPBRToMeshPhysicalMaterial(materialData, usdScene = nul
     return material;
 }
 
+/**
+ * Convert OpenPBR material data to Three.js MeshPhysicalMaterial (legacy pattern)
+ * Returns material immediately, textures load asynchronously in the background.
+ * This matches the behavior of convertUsdMaterialToMeshPhysicalMaterial.
+ *
+ * @param {Object} materialData - OpenPBR material data from USD
+ * @param {Object} usdScene - USD scene for texture loading
+ * @param {Object} options - Conversion options
+ * @returns {THREE.MeshPhysicalMaterial} Material (textures load asynchronously)
+ */
+function convertOpenPBRToMeshPhysicalMaterial(materialData, usdScene = null, options = {}) {
+    const material = new THREE.MeshPhysicalMaterial();
+
+    // Store texture references for later management
+    material.userData.textures = {};
+    material.userData.materialType = 'OpenPBR';
+    material.userData.openPBRData = materialData;
+
+    // Get OpenPBR data - support multiple formats
+    let pbr = null;
+
+    // Check for grouped format first
+    if (materialData.openPBR) {
+        pbr = materialData.openPBR;
+        material.userData.format = 'grouped';
+    }
+    // Check for flat format
+    else if (materialData.base_color !== undefined ||
+             materialData.base_metalness !== undefined ||
+             materialData.specular_roughness !== undefined) {
+        pbr = { flat: materialData };
+        material.userData.format = 'flat';
+    }
+    // Check for openPBRShader format
+    else if (materialData.openPBRShader) {
+        pbr = { flat: materialData.openPBRShader };
+        material.userData.format = 'flat';
+    }
+
+    if (!pbr) {
+        console.warn('No OpenPBR data found in material');
+        return material;
+    }
+
+    // Texture cache
+    const textureCache = options.textureCache || new Map();
+
+    // Helper to apply parameter value (sync) and queue texture loading (async)
+    const applyParam = (paramName, paramValue) => {
+        const mapping = OPENPBR_TO_THREEJS_MAP[paramName];
+        if (!mapping || !mapping.property) return;
+
+        const value = extractValue(paramValue);
+
+        // Apply scalar or color value immediately
+        if (mapping.type === 'color' && Array.isArray(value)) {
+            material[mapping.property] = createColor(value);
+        } else if (mapping.type === 'scalar' && typeof value === 'number') {
+            material[mapping.property] = value;
+        }
+
+        // Queue texture loading (fire-and-forget)
+        if (usdScene && hasTexture(paramValue)) {
+            const texMapName = OPENPBR_TEXTURE_MAP[paramName];
+            if (texMapName) {
+                loadTextureFromUSD(usdScene, getTextureId(paramValue), textureCache).then((texture) => {
+                    if (texture) {
+                        material[texMapName] = texture;
+                        material.userData.textures[texMapName] = {
+                            textureId: getTextureId(paramValue),
+                            texture: texture
+                        };
+                        material.needsUpdate = true;
+                    }
+                }).catch((err) => {
+                    console.error(`Failed to load texture for ${paramName}:`, err);
+                });
+            }
+        }
+    };
+
+    // Process flat format
+    if (pbr.flat) {
+        const flat = pbr.flat;
+
+        // Base layer
+        applyParam('base_color', flat.base_color);
+        applyParam('base_metalness', flat.base_metalness);
+
+        // Specular layer
+        applyParam('specular_roughness', flat.specular_roughness);
+        applyParam('specular_ior', flat.specular_ior);
+        applyParam('specular_color', flat.specular_color);
+        applyParam('specular_anisotropy', flat.specular_anisotropy);
+
+        // Transmission
+        applyParam('transmission_weight', flat.transmission_weight);
+        applyParam('transmission_color', flat.transmission_color);
+
+        // Coat
+        applyParam('coat_weight', flat.coat_weight);
+        applyParam('coat_roughness', flat.coat_roughness);
+
+        // Sheen/Fuzz
+        if (flat.sheen_weight !== undefined) {
+            applyParam('sheen_weight', flat.sheen_weight);
+            applyParam('sheen_color', flat.sheen_color);
+            applyParam('sheen_roughness', flat.sheen_roughness);
+        } else if (flat.fuzz_weight !== undefined) {
+            applyParam('fuzz_weight', flat.fuzz_weight);
+            applyParam('fuzz_color', flat.fuzz_color);
+            applyParam('fuzz_roughness', flat.fuzz_roughness);
+        }
+
+        // Thin film (iridescence)
+        if (flat.thin_film_weight !== undefined) {
+            const weight = extractValue(flat.thin_film_weight);
+            if (weight > 0) {
+                material.iridescence = weight;
+                const thickness = extractValue(flat.thin_film_thickness) || 500;
+                material.iridescenceThicknessRange = [100, thickness];
+                material.iridescenceIOR = extractValue(flat.thin_film_ior) || 1.5;
+            }
+        }
+
+        // Emission
+        if (flat.emission_color !== undefined) {
+            const emissionColor = extractValue(flat.emission_color);
+            if (emissionColor && Array.isArray(emissionColor)) {
+                material.emissive = createColor(emissionColor);
+            }
+            // Load emission texture (fire-and-forget)
+            if (usdScene && hasTexture(flat.emission_color)) {
+                loadTextureFromUSD(usdScene, getTextureId(flat.emission_color), textureCache).then((texture) => {
+                    if (texture) {
+                        material.emissiveMap = texture;
+                        material.userData.textures.emissiveMap = { textureId: getTextureId(flat.emission_color), texture };
+                        material.needsUpdate = true;
+                    }
+                }).catch((err) => {
+                    console.error('Failed to load emission texture:', err);
+                });
+            }
+        }
+        if (flat.emission_luminance !== undefined) {
+            material.emissiveIntensity = extractValue(flat.emission_luminance) || 0;
+        }
+
+        // Geometry - opacity/alpha
+        const opacityParam = flat.opacity !== undefined ? flat.opacity : flat.geometry_opacity;
+        if (opacityParam !== undefined) {
+            const opacityValue = extractValue(opacityParam);
+            if (typeof opacityValue === 'number') {
+                material.opacity = opacityValue;
+                material.transparent = opacityValue < 1.0;
+            }
+            if (usdScene && hasTexture(opacityParam)) {
+                loadTextureFromUSD(usdScene, getTextureId(opacityParam), textureCache).then((texture) => {
+                    if (texture) {
+                        material.alphaMap = texture;
+                        material.transparent = true;
+                        material.userData.textures.alphaMap = { textureId: getTextureId(opacityParam), texture };
+                        material.needsUpdate = true;
+                    }
+                }).catch((err) => {
+                    console.error('Failed to load opacity texture:', err);
+                });
+            }
+        }
+
+        // Normal map
+        const normalParam = flat.normal !== undefined ? flat.normal : flat.geometry_normal;
+        if (normalParam !== undefined && usdScene && hasTexture(normalParam)) {
+            loadTextureFromUSD(usdScene, getTextureId(normalParam), textureCache).then((texture) => {
+                if (texture) {
+                    material.normalMap = texture;
+                    material.normalScale = new THREE.Vector2(1, 1);
+                    material.userData.textures.normalMap = { textureId: getTextureId(normalParam), texture };
+                    material.needsUpdate = true;
+                }
+            }).catch((err) => {
+                console.error('Failed to load normal texture:', err);
+            });
+        }
+    }
+
+    // Process grouped format
+    else {
+        // Base layer
+        if (pbr.base) {
+            applyParam('base_color', pbr.base.base_color);
+            applyParam('base_metalness', pbr.base.base_metalness);
+        }
+
+        // Specular layer
+        if (pbr.specular) {
+            applyParam('specular_roughness', pbr.specular.specular_roughness);
+            applyParam('specular_ior', pbr.specular.specular_ior);
+            applyParam('specular_color', pbr.specular.specular_color);
+            applyParam('specular_anisotropy', pbr.specular.specular_anisotropy);
+        }
+
+        // Transmission
+        if (pbr.transmission) {
+            applyParam('transmission_weight', pbr.transmission.transmission_weight);
+            applyParam('transmission_color', pbr.transmission.transmission_color);
+        }
+
+        // Coat
+        if (pbr.coat) {
+            applyParam('coat_weight', pbr.coat.coat_weight);
+            applyParam('coat_roughness', pbr.coat.coat_roughness);
+        }
+
+        // Sheen
+        if (pbr.sheen) {
+            applyParam('sheen_weight', pbr.sheen.sheen_weight);
+            applyParam('sheen_color', pbr.sheen.sheen_color);
+            applyParam('sheen_roughness', pbr.sheen.sheen_roughness);
+        }
+
+        // Fuzz
+        if (pbr.fuzz) {
+            applyParam('fuzz_weight', pbr.fuzz.fuzz_weight);
+            applyParam('fuzz_color', pbr.fuzz.fuzz_color);
+            applyParam('fuzz_roughness', pbr.fuzz.fuzz_roughness);
+        }
+
+        // Thin film
+        if (pbr.thin_film) {
+            const weight = extractValue(pbr.thin_film.thin_film_weight);
+            if (weight > 0) {
+                material.iridescence = weight;
+                const thickness = extractValue(pbr.thin_film.thin_film_thickness) || 500;
+                material.iridescenceThicknessRange = [100, thickness];
+                material.iridescenceIOR = extractValue(pbr.thin_film.thin_film_ior) || 1.5;
+            }
+        }
+
+        // Emission
+        if (pbr.emission) {
+            const emissionColor = extractValue(pbr.emission.emission_color);
+            if (emissionColor && Array.isArray(emissionColor)) {
+                material.emissive = createColor(emissionColor);
+            }
+            if (usdScene && hasTexture(pbr.emission.emission_color)) {
+                loadTextureFromUSD(usdScene, getTextureId(pbr.emission.emission_color), textureCache).then((texture) => {
+                    if (texture) {
+                        material.emissiveMap = texture;
+                        material.userData.textures.emissiveMap = { textureId: getTextureId(pbr.emission.emission_color), texture };
+                        material.needsUpdate = true;
+                    }
+                }).catch((err) => {
+                    console.error('Failed to load emission texture:', err);
+                });
+            }
+            if (pbr.emission.emission_luminance !== undefined) {
+                material.emissiveIntensity = extractValue(pbr.emission.emission_luminance) || 0;
+            }
+        }
+
+        // Geometry
+        if (pbr.geometry) {
+            const opacityParam = pbr.geometry.opacity !== undefined ? pbr.geometry.opacity : pbr.geometry.geometry_opacity;
+            if (opacityParam !== undefined) {
+                const opacityValue = extractValue(opacityParam);
+                if (typeof opacityValue === 'number') {
+                    material.opacity = opacityValue;
+                    material.transparent = opacityValue < 1.0;
+                }
+                if (usdScene && hasTexture(opacityParam)) {
+                    loadTextureFromUSD(usdScene, getTextureId(opacityParam), textureCache).then((texture) => {
+                        if (texture) {
+                            material.alphaMap = texture;
+                            material.transparent = true;
+                            material.userData.textures.alphaMap = { textureId: getTextureId(opacityParam), texture };
+                            material.needsUpdate = true;
+                        }
+                    }).catch((err) => {
+                        console.error('Failed to load opacity texture:', err);
+                    });
+                }
+            }
+
+            const normalParam = pbr.geometry.normal !== undefined ? pbr.geometry.normal : pbr.geometry.geometry_normal;
+            if (normalParam !== undefined && usdScene && hasTexture(normalParam)) {
+                loadTextureFromUSD(usdScene, getTextureId(normalParam), textureCache).then((texture) => {
+                    if (texture) {
+                        material.normalMap = texture;
+                        material.normalScale = new THREE.Vector2(1, 1);
+                        material.userData.textures.normalMap = { textureId: getTextureId(normalParam), texture };
+                        material.needsUpdate = true;
+                    }
+                }).catch((err) => {
+                    console.error('Failed to load normal texture:', err);
+                });
+            }
+        }
+    }
+
+    // Apply environment map if provided
+    if (options.envMap) {
+        material.envMap = options.envMap;
+        material.envMapIntensity = options.envMapIntensity || 1.0;
+    }
+
+    // Set material name
+    if (materialData.name) {
+        material.name = materialData.name;
+    }
+
+    return material;
+}
+
 // ============================================================================
 // TinyUSDZOpenPBR Class (Legacy compatibility)
 // ============================================================================
@@ -646,6 +1056,7 @@ class TinyUSDZOpenPBR {
 export {
     TinyUSDZOpenPBR,
     convertOpenPBRToMeshPhysicalMaterial,
+    convertOpenPBRToMeshPhysicalMaterialLoaded,
     loadTextureFromUSD,
     extractValue,
     hasTexture,
