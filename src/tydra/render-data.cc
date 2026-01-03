@@ -8001,6 +8001,12 @@ namespace {
 struct MeshVisitorEnv {
   RenderSceneConverter *converter{nullptr};
   const RenderSceneConverterEnv *env{nullptr};
+
+  // Progress tracking for detailed progress reporting
+  size_t meshes_processed{0};
+  size_t meshes_total{0};
+  size_t materials_processed{0};
+  size_t materials_total{0};
 };
 
 bool MeshVisitor(const tinyusdz::Path &abs_path, const tinyusdz::Prim &prim,
@@ -8293,6 +8299,19 @@ bool MeshVisitor(const tinyusdz::Path &abs_path, const tinyusdz::Prim &prim,
       visitorEnv->converter->meshMap.add(abs_path.full_path_name(), mesh_id);
 
       visitorEnv->converter->meshes.emplace_back(std::move(rmesh));
+
+      // Report mesh progress
+      visitorEnv->meshes_processed++;
+      std::string msg = "Converting mesh " +
+          std::to_string(visitorEnv->meshes_processed) + "/" +
+          std::to_string(visitorEnv->meshes_total);
+      visitorEnv->converter->ReportMeshProgress(
+          visitorEnv->meshes_processed, visitorEnv->meshes_total,
+          abs_path.full_path_name(), msg);
+      // Log progress to console (visible in browser)
+      printf("[Tydra] Mesh %zu/%zu: %s\n",
+             visitorEnv->meshes_processed, visitorEnv->meshes_total,
+             abs_path.full_path_name().c_str());
     }
   }
 
@@ -8355,6 +8374,18 @@ bool MeshVisitor(const tinyusdz::Path &abs_path, const tinyusdz::Prim &prim,
     }
     visitorEnv->converter->meshMap.add(abs_path.full_path_name(), mesh_id);
     visitorEnv->converter->meshes.emplace_back(std::move(rmesh));
+
+    // Report mesh progress (cube)
+    visitorEnv->meshes_processed++;
+    std::string msg = "Converting cube " +
+        std::to_string(visitorEnv->meshes_processed) + "/" +
+        std::to_string(visitorEnv->meshes_total);
+    visitorEnv->converter->ReportMeshProgress(
+        visitorEnv->meshes_processed, visitorEnv->meshes_total,
+        abs_path.full_path_name(), msg);
+    printf("[Tydra] Mesh %zu/%zu (cube): %s\n",
+           visitorEnv->meshes_processed, visitorEnv->meshes_total,
+           abs_path.full_path_name().c_str());
   }
 
   // Handle GeomSphere primitives by converting to mesh
@@ -8416,6 +8447,18 @@ bool MeshVisitor(const tinyusdz::Path &abs_path, const tinyusdz::Prim &prim,
     }
     visitorEnv->converter->meshMap.add(abs_path.full_path_name(), mesh_id);
     visitorEnv->converter->meshes.emplace_back(std::move(rmesh));
+
+    // Report mesh progress (sphere)
+    visitorEnv->meshes_processed++;
+    std::string msg = "Converting sphere " +
+        std::to_string(visitorEnv->meshes_processed) + "/" +
+        std::to_string(visitorEnv->meshes_total);
+    visitorEnv->converter->ReportMeshProgress(
+        visitorEnv->meshes_processed, visitorEnv->meshes_total,
+        abs_path.full_path_name(), msg);
+    printf("[Tydra] Mesh %zu/%zu (sphere): %s\n",
+           visitorEnv->meshes_processed, visitorEnv->meshes_total,
+           abs_path.full_path_name().c_str());
   }
 
   return true;  // continue traversal
@@ -10039,11 +10082,39 @@ bool RenderSceneConverter::ConvertToRenderScene(
     PUSH_ERROR_AND_RETURN("nullptr for RenderScene argument.");
   }
 
+  // Reset progress state
+  _progress_info = DetailedProgressInfo{};
+
   // Report initial progress
   if (!CallProgressCallback(0.0f)) {
     PushError("Conversion cancelled by user.\n");
     return false;
   }
+
+  // Count meshes and materials before conversion for accurate progress reporting
+  printf("[Tydra] Counting primitives...\n");
+  PathPrimMap<GeomMesh> meshPrimMap;
+  PathPrimMap<GeomCube> cubePrimMap;
+  PathPrimMap<GeomSphere> spherePrimMap;
+  PathPrimMap<Material> materialPrimMap;
+  ListPrims(env.stage, meshPrimMap);
+  ListPrims(env.stage, cubePrimMap);
+  ListPrims(env.stage, spherePrimMap);
+  ListPrims(env.stage, materialPrimMap);
+
+  // Total meshes includes GeomMesh, GeomCube, and GeomSphere (all converted to meshes)
+  const size_t total_meshes = meshPrimMap.size() + cubePrimMap.size() + spherePrimMap.size();
+  const size_t total_materials = materialPrimMap.size();
+  printf("[Tydra] Found %zu meshes (%zu mesh, %zu cube, %zu sphere), %zu materials\n",
+         total_meshes, meshPrimMap.size(), cubePrimMap.size(), spherePrimMap.size(), total_materials);
+
+  // Report counting complete via detailed progress
+  _progress_info.stage = DetailedProgressInfo::Stage::CountingPrims;
+  _progress_info.meshes_total = total_meshes;
+  _progress_info.materials_total = total_materials;
+  _progress_info.message = "Counted " + std::to_string(total_meshes) + " meshes, " +
+                           std::to_string(total_materials) + " materials";
+  CallDetailedProgressCallback(_progress_info);
 
   // 1. Convert Xform
   // 2. Convert Material/Texture
@@ -10055,6 +10126,11 @@ bool RenderSceneConverter::ConvertToRenderScene(
   // 1. Build Xform at specified time.
   //    Each Prim in Stage is converted to XformNode.
   //
+  _progress_info.stage = DetailedProgressInfo::Stage::ConvertingXforms;
+  _progress_info.progress = 0.1f;
+  _progress_info.message = "Building xform hierarchy";
+  CallDetailedProgressCallback(_progress_info);
+
   XformNode xform_node;
   if (!BuildXformNodeFromStage(env.stage, &xform_node, env.timecode)) {
     PUSH_ERROR_AND_RETURN("Failed to build Xform node hierarchy.\n");
@@ -10075,9 +10151,16 @@ bool RenderSceneConverter::ConvertToRenderScene(
   //
   // Material conversion will be done in MeshVisitor.
   //
+  _progress_info.stage = DetailedProgressInfo::Stage::ConvertingMeshes;
+  _progress_info.progress = 0.2f;
+  _progress_info.message = "Converting meshes and materials";
+  CallDetailedProgressCallback(_progress_info);
+
   MeshVisitorEnv menv;
   menv.env = &env;
   menv.converter = this;
+  menv.meshes_total = total_meshes;
+  menv.materials_total = total_materials;
 
   bool ret = tydra::VisitPrims(env.stage, MeshVisitor, &menv, &err);
 
@@ -10086,6 +10169,13 @@ bool RenderSceneConverter::ConvertToRenderScene(
   }
 
   // Report progress after mesh/material conversion (70%)
+  _progress_info.stage = DetailedProgressInfo::Stage::BuildingHierarchy;
+  _progress_info.progress = 0.7f;
+  _progress_info.meshes_processed = menv.meshes_processed;
+  _progress_info.message = "Mesh conversion complete (" +
+      std::to_string(menv.meshes_processed) + " meshes)";
+  CallDetailedProgressCallback(_progress_info);
+
   if (!CallProgressCallback(0.7f)) {
     PushError("Conversion cancelled by user.\n");
     return false;
@@ -10095,11 +10185,19 @@ bool RenderSceneConverter::ConvertToRenderScene(
   // 5. Build node hierarchy from XformNode and meshes, materials, skeletons,
   // etc.
   //
+  _progress_info.message = "Building node hierarchy";
+  CallDetailedProgressCallback(_progress_info);
+
   if (!BuildNodeHierarchy(env, xform_node)) {
     return false;
   }
 
   // Report progress after node hierarchy building (85%)
+  _progress_info.stage = DetailedProgressInfo::Stage::ExtractingAnimations;
+  _progress_info.progress = 0.85f;
+  _progress_info.message = "Hierarchy complete, extracting animations";
+  CallDetailedProgressCallback(_progress_info);
+
   if (!CallProgressCallback(0.85f)) {
     PushError("Conversion cancelled by user.\n");
     return false;
@@ -10278,7 +10376,14 @@ bool RenderSceneConverter::ConvertToRenderScene(
   (*scene) = std::move(render_scene);
 
   // Report completion (100%)
+  _progress_info.stage = DetailedProgressInfo::Stage::Complete;
+  _progress_info.progress = 1.0f;
+  _progress_info.message = "Conversion complete";
+  CallDetailedProgressCallback(_progress_info);
   CallProgressCallback(1.0f);
+
+  printf("[Tydra] Conversion complete: %zu meshes, %zu materials, %zu textures\n",
+         scene->meshes.size(), scene->materials.size(), scene->textures.size());
 
   return true;
 }
@@ -11389,11 +11494,38 @@ void RenderSceneConverter::SetProgressCallback(ProgressCallback callback, void *
   _progress_userptr = userptr;
 }
 
+void RenderSceneConverter::SetDetailedProgressCallback(DetailedProgressCallback callback, void *userptr) {
+  _detailed_progress_callback = callback;
+  _detailed_progress_userptr = userptr;
+}
+
 bool RenderSceneConverter::CallProgressCallback(float progress) {
   if (_progress_callback) {
     return _progress_callback(progress, _progress_userptr);
   }
   return true; // Continue if no callback set
+}
+
+bool RenderSceneConverter::CallDetailedProgressCallback(const DetailedProgressInfo &info) {
+  if (_detailed_progress_callback) {
+    return _detailed_progress_callback(info, _detailed_progress_userptr);
+  }
+  return true; // Continue if no callback set
+}
+
+bool RenderSceneConverter::ReportMeshProgress(size_t meshes_processed, size_t meshes_total,
+                                               const std::string& mesh_name, const std::string& message) {
+  _progress_info.stage = DetailedProgressInfo::Stage::ConvertingMeshes;
+  _progress_info.meshes_processed = meshes_processed;
+  _progress_info.meshes_total = meshes_total;
+  _progress_info.current_mesh_name = mesh_name;
+  _progress_info.message = message;
+
+  // Calculate progress: meshes are 20%-70% of total progress (50% range)
+  float mesh_progress = 0.2f + (0.5f * float(meshes_processed) / float(std::max(size_t(1), meshes_total)));
+  _progress_info.progress = mesh_progress;
+
+  return CallDetailedProgressCallback(_progress_info);
 }
 
 bool RenderSceneConverter::IsMeshMergeable(const RenderMesh &mesh) const {
