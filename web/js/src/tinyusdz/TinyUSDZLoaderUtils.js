@@ -3,12 +3,32 @@ import { HDRLoader } from 'three/examples/jsm/loaders/HDRLoader.js';
 import { EXRLoader } from 'three/examples/jsm/loaders/EXRLoader.js';
 
 import { LoaderUtils } from "three"
-import { convertOpenPBRToMeshPhysicalMaterial } from './TinyUSDZMaterialX.js';
+import { convertOpenPBRToMeshPhysicalMaterialLoaded } from './TinyUSDZMaterialX.js';
+import { decodeEXR as decodeEXRWithFallback } from './EXRDecoder.js';
 
 class TinyUSDZLoaderUtils extends LoaderUtils {
 
+    // Static reference to TinyUSDZ WASM module for EXR fallback
+    static _tinyusdz = null;
+
     constructor() {
         super();
+    }
+
+    /**
+     * Set TinyUSDZ WASM module for EXR decoding fallback
+     * @param {Object} tinyusdz - TinyUSDZ WASM module instance
+     */
+    static setTinyUSDZ(tinyusdz) {
+        TinyUSDZLoaderUtils._tinyusdz = tinyusdz;
+    }
+
+    /**
+     * Get TinyUSDZ WASM module
+     * @returns {Object|null}
+     */
+    static getTinyUSDZ() {
+        return TinyUSDZLoaderUtils._tinyusdz;
     }
 
     static async getDataFromURI(uri) {
@@ -105,6 +125,14 @@ class TinyUSDZLoaderUtils extends LoaderUtils {
             if (data[0] === 0x52 && data[1] === 0x49 && data[2] === 0x46 && data[3] === 0x46) {
                 return 'image/webp';
             }
+            // EXR magic bytes: 76 2F 31 01
+            if (data[0] === 0x76 && data[1] === 0x2F && data[2] === 0x31 && data[3] === 0x01) {
+                return 'image/x-exr';
+            }
+            // HDR magic bytes: "#?" (Radiance format)
+            if (data[0] === 0x23 && data[1] === 0x3F) {
+                return 'image/vnd.radiance';
+            }
         }
 
         // Default fallback
@@ -127,12 +155,18 @@ class TinyUSDZLoaderUtils extends LoaderUtils {
 
         if (texImage.uri && (texImage.bufferId == -1)) {
             // Case 1: URI only
+            const lowerUri = texImage.uri.toLowerCase();
 
-            const loader = new THREE.TextureLoader();
-
-            //console.log("Loading texture from URI:", texImage.uri);
-            // TODO: Use HDR/EXR loader if a uri is HDR/EXR file.
-            return loader.loadAsync(texImage.uri);
+            if (lowerUri.endsWith('.exr')) {
+                // EXR: Use EXRLoader
+                return new EXRLoader().loadAsync(texImage.uri);
+            } else if (lowerUri.endsWith('.hdr')) {
+                // HDR: Use HDRLoader
+                return new HDRLoader().loadAsync(texImage.uri);
+            } else {
+                // Standard image
+                return new THREE.TextureLoader().loadAsync(texImage.uri);
+            }
 
         } else if (texImage.bufferId >= 0 && texImage.data) {
             //console.log("case 2 or 3");
@@ -160,19 +194,59 @@ class TinyUSDZLoaderUtils extends LoaderUtils {
                 return Promise.resolve(texture);
 
             } else {
-                //console.log("case 3");
+                // Case 2: Embedded but not decoded - check format
                 try {
-                    const blob = new Blob([texImage.data], { type: this.getMimeType(texImage) });
-                    const blobUrl = URL.createObjectURL(blob);
+                    const mimeType = this.getMimeType(texImage);
 
-                    const loader = new THREE.TextureLoader();
-
-                    //console.log("blobUrl", blobUrl);
-                    // TODO: Use HDR/EXR loader if a uri is HDR/EXR file.
-                    return loader.loadAsync(blobUrl);
+                    // Check if HDR/EXR format - use specialized decoders
+                    if (mimeType === 'image/x-exr') {
+                        // EXR: Use TinyUSDZ fallback decoder
+                        const texture = this.decodeEXRFromBuffer(texImage.data, 'float16');
+                        if (texture) {
+                            texture.flipY = true;
+                            return Promise.resolve(texture);
+                        }
+                        // Fallback to Three.js EXRLoader with blob URL
+                        const blob = new Blob([texImage.data], { type: mimeType });
+                        const blobUrl = URL.createObjectURL(blob);
+                        return new EXRLoader().loadAsync(blobUrl).finally(() => URL.revokeObjectURL(blobUrl));
+                    } else if (mimeType === 'image/vnd.radiance') {
+                        // HDR: Use TinyUSDZ decoder (faster)
+                        const tinyusdz = TinyUSDZLoaderUtils._tinyusdz;
+                        if (tinyusdz && typeof tinyusdz.decodeHDR === 'function') {
+                            const uint8Array = texImage.data instanceof Uint8Array
+                                ? texImage.data
+                                : new Uint8Array(texImage.data);
+                            const result = tinyusdz.decodeHDR(uint8Array, 'float16');
+                            if (result.success) {
+                                const texture = new THREE.DataTexture(
+                                    result.data,
+                                    result.width,
+                                    result.height,
+                                    THREE.RGBAFormat,
+                                    THREE.HalfFloatType
+                                );
+                                texture.minFilter = THREE.LinearFilter;
+                                texture.magFilter = THREE.LinearFilter;
+                                texture.flipY = true;
+                                texture.needsUpdate = true;
+                                return Promise.resolve(texture);
+                            }
+                        }
+                        // Fallback to Three.js HDRLoader
+                        const blob = new Blob([texImage.data], { type: mimeType });
+                        const blobUrl = URL.createObjectURL(blob);
+                        return new HDRLoader().loadAsync(blobUrl).finally(() => URL.revokeObjectURL(blobUrl));
+                    } else {
+                        // Standard image format
+                        const blob = new Blob([texImage.data], { type: mimeType });
+                        const blobUrl = URL.createObjectURL(blob);
+                        const loader = new THREE.TextureLoader();
+                        return loader.loadAsync(blobUrl).finally(() => URL.revokeObjectURL(blobUrl));
+                    }
                 } catch (error) {
-                    console.error("Failed to create Blob from texture data:", error);
-                    return Promise.reject(new Error("Failed to create Blob from texture data"));
+                    console.error("Failed to decode texture data:", error);
+                    return Promise.reject(new Error("Failed to decode texture data"));
                 }
             }
 
@@ -476,8 +550,8 @@ class TinyUSDZLoaderUtils extends LoaderUtils {
         }
 
         try {
-            // Use the TinyUSDZMaterialX converter
-            const material = await convertOpenPBRToMeshPhysicalMaterial(parsedMaterial, usdScene, {
+            // Use the TinyUSDZMaterialX converter (Loaded version waits for textures)
+            const material = await convertOpenPBRToMeshPhysicalMaterialLoaded(parsedMaterial, usdScene, {
                 envMap: options.envMap || null,
                 envMapIntensity: options.envMapIntensity || 1.0,
                 textureCache: options.textureCache || new Map()
@@ -1206,32 +1280,108 @@ class TinyUSDZLoaderUtils extends LoaderUtils {
     }
 
     /**
+     * Decode EXR from buffer with Three.js primary + TinyUSDZ fallback
+     * @param {ArrayBuffer|Uint8Array} buffer - EXR data
+     * @param {string} [outputFormat='float16'] - Output format
+     * @returns {THREE.DataTexture|null}
+     */
+    static decodeEXRFromBuffer(buffer, outputFormat = 'float16') {
+        const result = decodeEXRWithFallback(buffer, TinyUSDZLoaderUtils._tinyusdz, {
+            outputFormat,
+            preferThreeJS: true,
+            verbose: false,
+        });
+
+        if (!result.success) {
+            console.warn('EXR decode failed:', result.error);
+            return null;
+        }
+
+        // Create Three.js DataTexture from decoded data
+        const texture = new THREE.DataTexture(
+            result.data,
+            result.width,
+            result.height,
+            THREE.RGBAFormat,
+            result.format === 'float16' ? THREE.HalfFloatType : THREE.FloatType
+        );
+        texture.minFilter = THREE.LinearFilter;
+        texture.magFilter = THREE.LinearFilter;
+        texture.generateMipmaps = false;
+        texture.needsUpdate = true;
+
+        return texture;
+    }
+
+    /**
      * Decode environment map from buffer (supports EXR, HDR, and standard image formats)
+     * Uses Three.js EXRLoader with TinyUSDZ fallback for EXR files
      */
     static async decodeEnvmapFromBuffer(buffer, uri) {
         try {
             const lowerUri = uri.toLowerCase();
-            const mimeType = this.getMimeTypeFromExtension(this.getFileExtension(uri)) || 'application/octet-stream';
-
-            const blob = new Blob([buffer], { type: mimeType });
-            const objectUrl = URL.createObjectURL(blob);
 
             let texture = null;
 
-            try {
-                if (lowerUri.endsWith('.exr')) {
-                    texture = await new EXRLoader().loadAsync(objectUrl);
-                } else if (lowerUri.endsWith('.hdr')) {
-                    texture = await new HDRLoader().loadAsync(objectUrl);
-                } else {
-                    texture = await new THREE.TextureLoader().loadAsync(objectUrl);
+            if (lowerUri.endsWith('.exr')) {
+                // Use EXR decoder with TinyUSDZ fallback
+                texture = this.decodeEXRFromBuffer(buffer, 'float16');
+
+                if (!texture) {
+                    // Last resort: try Three.js EXRLoader with blob URL
+                    const blob = new Blob([buffer], { type: 'image/x-exr' });
+                    const objectUrl = URL.createObjectURL(blob);
+                    try {
+                        texture = await new EXRLoader().loadAsync(objectUrl);
+                    } finally {
+                        URL.revokeObjectURL(objectUrl);
+                    }
+                }
+            } else if (lowerUri.endsWith('.hdr')) {
+                // HDR uses TinyUSDZ decoder (faster than Three.js)
+                const tinyusdz = TinyUSDZLoaderUtils._tinyusdz;
+                if (tinyusdz && typeof tinyusdz.decodeHDR === 'function') {
+                    const uint8Array = buffer instanceof Uint8Array ? buffer : new Uint8Array(buffer);
+                    const result = tinyusdz.decodeHDR(uint8Array, 'float16');
+                    if (result.success) {
+                        texture = new THREE.DataTexture(
+                            result.data,
+                            result.width,
+                            result.height,
+                            THREE.RGBAFormat,
+                            THREE.HalfFloatType
+                        );
+                        texture.minFilter = THREE.LinearFilter;
+                        texture.magFilter = THREE.LinearFilter;
+                        texture.generateMipmaps = false;
+                        texture.needsUpdate = true;
+                    }
                 }
 
-                if (texture) {
-                    texture.mapping = THREE.EquirectangularReflectionMapping;
+                if (!texture) {
+                    // Fallback to Three.js HDRLoader
+                    const blob = new Blob([buffer], { type: 'image/vnd.radiance' });
+                    const objectUrl = URL.createObjectURL(blob);
+                    try {
+                        texture = await new HDRLoader().loadAsync(objectUrl);
+                    } finally {
+                        URL.revokeObjectURL(objectUrl);
+                    }
                 }
-            } finally {
-                URL.revokeObjectURL(objectUrl);
+            } else {
+                // Standard image formats
+                const mimeType = this.getMimeTypeFromExtension(this.getFileExtension(uri)) || 'application/octet-stream';
+                const blob = new Blob([buffer], { type: mimeType });
+                const objectUrl = URL.createObjectURL(blob);
+                try {
+                    texture = await new THREE.TextureLoader().loadAsync(objectUrl);
+                } finally {
+                    URL.revokeObjectURL(objectUrl);
+                }
+            }
+
+            if (texture) {
+                texture.mapping = THREE.EquirectangularReflectionMapping;
             }
 
             return texture;
@@ -1297,6 +1447,7 @@ class TinyUSDZLoaderUtils extends LoaderUtils {
 
     /**
      * Load DomeLight environment map directly from file
+     * Uses TinyUSDZ for HDR (faster) and Three.js + TinyUSDZ fallback for EXR
      * @param {Object} light - USD light data
      * @param {string} textureFile - Texture file path
      * @param {THREE.PMREMGenerator} pmremGenerator - PMREM generator
@@ -1307,9 +1458,10 @@ class TinyUSDZLoaderUtils extends LoaderUtils {
             let texture = null;
             const lowerFile = textureFile.toLowerCase();
 
-            // Pre-check if file exists and has valid content type
+            // Fetch the file data
+            let response;
             try {
-                const response = await fetch(textureFile, { method: 'HEAD' });
+                response = await fetch(textureFile);
                 if (!response.ok) {
                     console.warn(`DomeLight: Texture file not accessible '${textureFile}' (HTTP ${response.status})`);
                     return null;
@@ -1325,28 +1477,71 @@ class TinyUSDZLoaderUtils extends LoaderUtils {
                 return null;
             }
 
+            const buffer = await response.arrayBuffer();
+
             if (lowerFile.endsWith('.exr')) {
-                try {
-                    texture = await new EXRLoader().loadAsync(textureFile);
-                } catch (exrError) {
-                    console.warn(`DomeLight: EXR load failed for '${textureFile}' - ${exrError.message}`);
-                    return null;
+                // Use EXR decoder with TinyUSDZ fallback
+                texture = this.decodeEXRFromBuffer(buffer, 'float16');
+
+                if (!texture) {
+                    // Fallback: try Three.js EXRLoader with blob URL
+                    try {
+                        const blob = new Blob([buffer], { type: 'image/x-exr' });
+                        const objectUrl = URL.createObjectURL(blob);
+                        try {
+                            texture = await new EXRLoader().loadAsync(objectUrl);
+                        } finally {
+                            URL.revokeObjectURL(objectUrl);
+                        }
+                    } catch (exrError) {
+                        console.warn(`DomeLight: EXR load failed for '${textureFile}' - ${exrError.message}`);
+                        return null;
+                    }
                 }
             } else if (lowerFile.endsWith('.hdr')) {
-                try {
-                    texture = await new HDRLoader().loadAsync(textureFile);
-                } catch (hdrError) {
-                    console.warn(`DomeLight: HDR load failed for '${textureFile}' - ${hdrError.message}`);
-                    return null;
+                // Use TinyUSDZ HDR decoder (faster than Three.js)
+                const tinyusdz = TinyUSDZLoaderUtils._tinyusdz;
+                if (tinyusdz && typeof tinyusdz.decodeHDR === 'function') {
+                    const uint8Array = new Uint8Array(buffer);
+                    const result = tinyusdz.decodeHDR(uint8Array, 'float16');
+                    if (result.success) {
+                        texture = new THREE.DataTexture(
+                            result.data,
+                            result.width,
+                            result.height,
+                            THREE.RGBAFormat,
+                            THREE.HalfFloatType
+                        );
+                        texture.minFilter = THREE.LinearFilter;
+                        texture.magFilter = THREE.LinearFilter;
+                        texture.generateMipmaps = false;
+                        texture.needsUpdate = true;
+                    }
+                }
+
+                if (!texture) {
+                    // Fallback to Three.js HDRLoader
+                    try {
+                        const blob = new Blob([buffer], { type: 'image/vnd.radiance' });
+                        const objectUrl = URL.createObjectURL(blob);
+                        try {
+                            texture = await new HDRLoader().loadAsync(objectUrl);
+                        } finally {
+                            URL.revokeObjectURL(objectUrl);
+                        }
+                    } catch (hdrError) {
+                        console.warn(`DomeLight: HDR load failed for '${textureFile}' - ${hdrError.message}`);
+                        return null;
+                    }
                 }
             } else {
                 console.warn(`DomeLight: Unsupported texture format for '${textureFile}'`);
                 return null;
             }
 
-            // Check if texture was loaded and has valid image data
-            if (!texture || !texture.image) {
-                console.warn(`DomeLight: Texture loaded but has no image data for '${textureFile}'`);
+            // Check if texture was loaded and has valid data
+            if (!texture) {
+                console.warn(`DomeLight: Failed to decode texture for '${textureFile}'`);
                 return null;
             }
 
