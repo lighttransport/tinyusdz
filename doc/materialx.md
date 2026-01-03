@@ -326,6 +326,440 @@ Based on Blender 4.5 development:
 - MaterialX 1.39.0+ includes OpenPBR Surface
 - MaterialX 1.39.1 added Standard Surface ↔ OpenPBR translation graphs
 
+## Three.js / WebGL MaterialX Integration
+
+TinyUSDZ provides JavaScript APIs for converting OpenPBR/MaterialX materials to Three.js materials. Two material implementations are available:
+
+### Material Implementations
+
+| Implementation | Class | Use Case |
+|---------------|-------|----------|
+| **MeshPhysicalMaterial** | `THREE.MeshPhysicalMaterial` | Standard Three.js PBR material, broad compatibility |
+| **OpenPBRMaterial** | Custom `ShaderMaterial` | Full OpenPBR BRDF with Oren-Nayar diffuse, coat IOR, fuzz layer |
+
+### MeshPhysicalMaterial Conversion
+
+Converts OpenPBR parameters to Three.js MeshPhysicalMaterial properties.
+
+#### Supported Parameters
+
+| OpenPBR Parameter | MeshPhysicalMaterial Property | Notes |
+|------------------|------------------------------|-------|
+| `base_color` | `color` | Diffuse/albedo color |
+| `base_metalness` | `metalness` | Metallic factor (0-1) |
+| `specular_roughness` | `roughness` | Surface roughness (0-1) |
+| `specular_ior` | `ior` | Index of refraction |
+| `specular_color` | `specularColor` | Specular tint |
+| `specular_anisotropy` | `anisotropy` | Anisotropic stretching |
+| `transmission_weight` | `transmission` | Transmission factor |
+| `transmission_color` | `attenuationColor` | Transmission color |
+| `coat_weight` | `clearcoat` | Clearcoat intensity |
+| `coat_roughness` | `clearcoatRoughness` | Clearcoat roughness |
+| `sheen_weight` / `fuzz_weight` | `sheen` | Sheen intensity |
+| `sheen_color` / `fuzz_color` | `sheenColor` | Sheen tint |
+| `sheen_roughness` / `fuzz_roughness` | `sheenRoughness` | Sheen roughness |
+| `thin_film_weight` | `iridescence` | Iridescence intensity |
+| `thin_film_thickness` | `iridescenceThicknessRange` | Film thickness |
+| `thin_film_ior` | `iridescenceIOR` | Film IOR |
+| `emission_color` | `emissive` | Emission color |
+| `emission_luminance` | `emissiveIntensity` | Emission strength |
+| `geometry_opacity` / `opacity` | `opacity` | Alpha value |
+| `geometry_normal` / `normal` | `normalMap` | Normal map texture |
+
+#### Supported Texture Maps
+
+| OpenPBR Texture | MeshPhysicalMaterial Map | Channel |
+|-----------------|-------------------------|---------|
+| `base_color` | `map` | RGB |
+| `specular_roughness` | `roughnessMap` | G channel |
+| `base_metalness` | `metalnessMap` | B channel |
+| `emission_color` | `emissiveMap` | RGB |
+| `geometry_normal` | `normalMap` | RGB (tangent space) |
+| `geometry_opacity` | `alphaMap` | Single channel |
+
+#### API Functions
+
+```javascript
+import {
+    convertOpenPBRToMeshPhysicalMaterial,
+    convertOpenPBRToMeshPhysicalMaterialLoaded
+} from 'tinyusdz/TinyUSDZMaterialX.js';
+
+// Returns immediately, textures load in background (fire-and-forget)
+const material = convertOpenPBRToMeshPhysicalMaterial(materialData, usdScene, options);
+
+// Waits for all textures to load before returning
+const material = await convertOpenPBRToMeshPhysicalMaterialLoaded(materialData, usdScene, options);
+```
+
+### OpenPBRMaterial (Custom Shader)
+
+Full OpenPBR BRDF implementation as a Three.js ShaderMaterial, supporting features not available in MeshPhysicalMaterial.
+
+#### Additional Features vs MeshPhysicalMaterial
+
+| Feature | OpenPBRMaterial | MeshPhysicalMaterial |
+|---------|----------------|---------------------|
+| Oren-Nayar Diffuse | ✅ `base_diffuse_roughness` | ❌ Lambertian only |
+| Coat Color | ✅ `coat_color` | ❌ White only |
+| Coat IOR | ✅ `coat_ior` | ❌ Fixed 1.5 |
+| Fuzz Layer | ✅ OpenPBR formulation | ⚠️ Approximated as sheen |
+| Thin Film Physics | ✅ Interference simulation | ⚠️ Simplified |
+
+#### Supported Parameters
+
+| OpenPBR Parameter | Uniform Name | Default |
+|------------------|--------------|---------|
+| **Base Layer** | | |
+| `base_weight` | `base_weight` | 1.0 |
+| `base_color` | `base_color` | (0.8, 0.8, 0.8) |
+| `base_metalness` | `base_metalness` | 0.0 |
+| `base_diffuse_roughness` | `base_diffuse_roughness` | 0.0 |
+| **Specular Layer** | | |
+| `specular_weight` | `specular_weight` | 1.0 |
+| `specular_color` | `specular_color` | (1.0, 1.0, 1.0) |
+| `specular_roughness` | `specular_roughness` | 0.3 |
+| `specular_ior` | `specular_ior` | 1.5 |
+| `specular_anisotropy` | `specular_anisotropy` | 0.0 |
+| `specular_rotation` | `specular_rotation` | 0.0 |
+| **Coat Layer** | | |
+| `coat_weight` | `coat_weight` | 0.0 |
+| `coat_color` | `coat_color` | (1.0, 1.0, 1.0) |
+| `coat_roughness` | `coat_roughness` | 0.0 |
+| `coat_ior` | `coat_ior` | 1.5 |
+| **Fuzz Layer** | | |
+| `fuzz_weight` | `fuzz_weight` | 0.0 |
+| `fuzz_color` | `fuzz_color` | (1.0, 1.0, 1.0) |
+| `fuzz_roughness` | `fuzz_roughness` | 0.5 |
+| **Thin Film** | | |
+| `thin_film_weight` | `thin_film_weight` | 0.0 |
+| `thin_film_thickness` | `thin_film_thickness` | 500.0 nm |
+| `thin_film_ior` | `thin_film_ior` | 1.5 |
+| **Transmission** | | |
+| `transmission_weight` | `transmission_weight` | 0.0 |
+| `transmission_color` | `transmission_color` | (1.0, 1.0, 1.0) |
+| **Emission** | | |
+| `emission_luminance` | `emission_luminance` | 0.0 |
+| `emission_color` | `emission_color` | (1.0, 1.0, 1.0) |
+| **Geometry** | | |
+| `geometry_opacity` | `geometry_opacity` | 1.0 |
+
+#### Supported Texture Maps
+
+| OpenPBR Texture | Property | Shader Define |
+|-----------------|----------|---------------|
+| `base_color` | `map` | `USE_MAP` |
+| `specular_roughness` | `roughnessMap` | `USE_ROUGHNESSMAP` |
+| `base_metalness` | `metalnessMap` | `USE_METALNESSMAP` |
+| `emission_color` | `emissiveMap` | `USE_EMISSIVEMAP` |
+| `geometry_normal` | `normalMap` | `USE_NORMALMAP` |
+| `ambient_occlusion` | `aoMap` | `USE_AOMAP` |
+
+#### API Functions
+
+```javascript
+// In materialx.js demo
+
+// Returns immediately, textures load in background
+const material = convertToOpenPBRMaterial(matData, nativeLoader);
+
+// Waits for all textures to load before returning
+const material = await convertToOpenPBRMaterialLoaded(matData, nativeLoader);
+```
+
+### Texture Loading Patterns
+
+Two loading patterns are available for both material types:
+
+| Pattern | Function Suffix | Behavior | Use Case |
+|---------|----------------|----------|----------|
+| **Immediate** | (none) | Returns material immediately, textures load asynchronously | Interactive loading, progressive display |
+| **Loaded** | `Loaded` | Awaits all textures before returning | Batch rendering, screenshots |
+
+#### Example: Immediate Pattern
+```javascript
+// Material appears immediately with base colors
+// Textures pop in as they load
+const material = convertOpenPBRToMeshPhysicalMaterial(data, scene);
+mesh.material = material;
+// Render loop continues, textures appear when ready
+```
+
+#### Example: Loaded Pattern
+```javascript
+// Wait for complete material with all textures
+const material = await convertOpenPBRToMeshPhysicalMaterialLoaded(data, scene);
+mesh.material = material;
+// All textures are ready before first render
+```
+
+### HDR/EXR Texture Support
+
+Both material converters support HDR and EXR texture formats:
+
+| Format | Decoder | Fallback |
+|--------|---------|----------|
+| HDR (Radiance) | TinyUSDZ WASM (faster) | Three.js HDRLoader |
+| EXR (OpenEXR) | Three.js EXRLoader | TinyUSDZ (for unsupported compression) |
+
+```javascript
+// Initialize TinyUSDZ module reference for HDR/EXR fallback
+import { TinyUSDZLoaderUtils } from 'tinyusdz/TinyUSDZLoaderUtils.js';
+import { setTinyUSDZ } from 'tinyusdz/TinyUSDZMaterialX.js';
+
+// After TinyUSDZ WASM initialization
+TinyUSDZLoaderUtils.setTinyUSDZ(tinyusdzModule);
+setTinyUSDZ(tinyusdzModule);
+```
+
+### Usage Example
+
+```javascript
+import { TinyUSDZLoader } from 'tinyusdz/TinyUSDZLoader.js';
+import { TinyUSDZLoaderUtils } from 'tinyusdz/TinyUSDZLoaderUtils.js';
+import { OpenPBRMaterial } from './OpenPBRMaterial.js';
+
+// Initialize loader
+const loader = new TinyUSDZLoader();
+await loader.init();
+
+// Set TinyUSDZ reference for HDR/EXR support
+TinyUSDZLoaderUtils.setTinyUSDZ(loader.native_);
+
+// Load USD file
+const usd = await loader.loadAsync('model.usdz');
+
+// Convert materials using TinyUSDZLoaderUtils
+const material = await TinyUSDZLoaderUtils.convertMaterial(
+    materialData,
+    usd,
+    {
+        preferredMaterialType: 'physical', // or 'openpbr'
+        envMap: envTexture,
+        envMapIntensity: 1.0
+    }
+);
+```
+
+## MaterialX NodeGraph and Node Shaders
+
+TinyUSDZ supports MaterialX node graphs as used in USD shader networks. This section documents the supported node types and how they map to USD primitives.
+
+### MaterialX Node Definition IDs
+
+When MaterialX is exported from applications like Blender, shader nodes use specific `info:id` values:
+
+| Node Definition ID | Description | Used By |
+|-------------------|-------------|---------|
+| `ND_open_pbr_surface_surfaceshader` | OpenPBR Surface shader | Blender 4.5+ |
+| `ND_standard_surface_surfaceshader` | Autodesk Standard Surface | Maya, older Blender |
+| `ND_UsdPreviewSurface_surfaceshader` | USD Preview Surface | Universal fallback |
+| `ND_image_color3` | Color image texture | Texture nodes |
+| `ND_image_float` | Grayscale image texture | Roughness, metalness |
+| `ND_texcoord_vector2` | UV coordinate generator | Texture coordinates |
+| `ND_normalmap` | Normal map processor | Normal mapping |
+
+### USD NodeGraph Structure
+
+MaterialX node graphs in USD appear as `NodeGraph` prims containing shader nodes:
+
+```usda
+def NodeGraph "NG_materialx" {
+    # Texture coordinate node
+    def Shader "texcoord" {
+        uniform token info:id = "ND_texcoord_vector2"
+        int inputs:index = 0
+        float2 outputs:out
+    }
+
+    # Image texture node
+    def Shader "base_color_image" {
+        uniform token info:id = "ND_image_color3"
+        asset inputs:file = @textures/diffuse.png@
+        string inputs:filtertype = "linear"
+        float2 inputs:texcoord.connect = </Material/NG_materialx/texcoord.outputs:out>
+        color3f outputs:out
+    }
+
+    # Output interface
+    color3f outputs:base_color.connect = </Material/NG_materialx/base_color_image.outputs:out>
+}
+```
+
+### Supported MaterialX Nodes (Three.js TSL) [W.I.P.]
+
+> ⚠️ **Work in Progress**: Three.js TSL node graph processing is experimental and under active development. Not all nodes are fully tested.
+
+The following MaterialX nodes are supported in the Three.js TSL (Three Shading Language) implementation:
+
+#### Math Operations
+
+| Node Type | MaterialX Name | Description | Inputs |
+|-----------|---------------|-------------|--------|
+| `add` | `ND_add_*` | Add two values | `in1`, `in2` |
+| `subtract` | `ND_subtract_*` | Subtract values | `in1`, `in2` |
+| `multiply` | `ND_multiply_*` | Multiply values | `in1`, `in2` |
+| `divide` | `ND_divide_*` | Divide values | `in1`, `in2` |
+| `power` | `ND_power_*` | Power function | `in1`, `in2` |
+| `clamp` | `ND_clamp_*` | Clamp to range | `in`, `low`, `high` |
+| `mix` | `ND_mix_*` | Linear interpolation | `bg`, `fg`, `mix` |
+| `remap` | `ND_remap_*` | Remap value range | `in`, `inlow`, `inhigh`, `outlow`, `outhigh` |
+| `smoothstep` | `ND_smoothstep_*` | Smooth interpolation | `low`, `high`, `in` |
+
+#### Vector Operations
+
+| Node Type | MaterialX Name | Description | Inputs |
+|-----------|---------------|-------------|--------|
+| `normalize` | `ND_normalize_*` | Normalize vector | `in` |
+| `dotproduct` | `ND_dotproduct_*` | Dot product | `in1`, `in2` |
+| `extract` | `ND_extract_*` | Extract component | `in`, `index` |
+| `combine2` | `ND_combine2_*` | Combine to vec2 | `in1`, `in2` |
+| `combine3` | `ND_combine3_*` | Combine to vec3 | `in1`, `in2`, `in3` |
+| `combine4` | `ND_combine4_*` | Combine to vec4 | `in1`, `in2`, `in3`, `in4` |
+
+#### Texture & Geometry
+
+| Node Type | MaterialX Name | Description | Inputs |
+|-----------|---------------|-------------|--------|
+| `image` | `ND_image_*` | Sample texture | `file`, `texcoord` |
+| `tiledimage` | `ND_tiledimage_*` | Tiled texture sample | `file`, `texcoord`, `uvtiling` |
+| `texcoord` | `ND_texcoord_vector2` | UV coordinates | `index` |
+| `position` | `ND_position_*` | World position | - |
+| `normal` | `ND_normal_*` | World normal | - |
+| `tangent` | `ND_tangent_*` | World tangent | - |
+
+#### Color Operations
+
+| Node Type | MaterialX Name | Description | Inputs |
+|-----------|---------------|-------------|--------|
+| `luminance` | `ND_luminance_*` | RGB to luminance | `in` |
+| `constant` | `ND_constant_*` | Constant value | `value` |
+
+#### Conditional
+
+| Node Type | MaterialX Name | Description | Inputs |
+|-----------|---------------|-------------|--------|
+| `ifgreater` | `ND_ifgreater_*` | Conditional select | `value1`, `value2`, `in1`, `in2` |
+
+### Node Connection Syntax
+
+In USD, MaterialX node connections use the standard connection syntax:
+
+```usda
+# Connect texture coordinate to image node
+float2 inputs:texcoord.connect = </Material/NodeGraph/texcoord.outputs:out>
+
+# Connect image output to shader input
+color3f inputs:base_color.connect = </Material/NodeGraph/diffuse_image.outputs:out>
+```
+
+### Primary UV Set Configuration
+
+TinyUSDZ supports configuring the primary UV set name (similar to OpenUSD's `USDMTLX_PRIMARY_UV_NAME`):
+
+```cpp
+// C++ configuration
+tinyusdz::MtlxConfig config;
+config.primary_uv_name = "st";           // Default UV set name
+config.secondary_uv_name_prefix = "st";  // Pattern for st1, st2, etc.
+```
+
+### Example: Complete MaterialX Material in USD
+
+```usda
+def Material "OpenPBRMaterial" {
+    token outputs:surface.connect = </OpenPBRMaterial/OpenPBRShader.outputs:surface>
+
+    def Shader "OpenPBRShader" {
+        uniform token info:id = "ND_open_pbr_surface_surfaceshader"
+
+        # Base layer with texture
+        color3f inputs:base_color.connect = </OpenPBRMaterial/NodeGraph.outputs:base_color>
+        float inputs:base_metalness = 0.0
+
+        # Specular layer
+        float inputs:specular_roughness.connect = </OpenPBRMaterial/NodeGraph.outputs:roughness>
+        float inputs:specular_ior = 1.5
+
+        # Normal map
+        normal3f inputs:geometry_normal.connect = </OpenPBRMaterial/NodeGraph.outputs:normal>
+
+        token outputs:surface
+    }
+
+    def NodeGraph "NodeGraph" {
+        # UV coordinates
+        def Shader "texcoord" {
+            uniform token info:id = "ND_texcoord_vector2"
+            int inputs:index = 0
+            float2 outputs:out
+        }
+
+        # Base color texture
+        def Shader "diffuse_tex" {
+            uniform token info:id = "ND_image_color3"
+            asset inputs:file = @textures/diffuse.png@
+            string inputs:filtertype = "linear"
+            float2 inputs:texcoord.connect = </OpenPBRMaterial/NodeGraph/texcoord.outputs:out>
+            color3f outputs:out
+        }
+
+        # Roughness texture
+        def Shader "roughness_tex" {
+            uniform token info:id = "ND_image_float"
+            asset inputs:file = @textures/roughness.png@
+            float2 inputs:texcoord.connect = </OpenPBRMaterial/NodeGraph/texcoord.outputs:out>
+            float outputs:out
+        }
+
+        # Normal map
+        def Shader "normal_tex" {
+            uniform token info:id = "ND_normalmap"
+            asset inputs:file = @textures/normal.png@
+            float2 inputs:texcoord.connect = </OpenPBRMaterial/NodeGraph/texcoord.outputs:out>
+            normal3f outputs:out
+        }
+
+        # NodeGraph outputs
+        color3f outputs:base_color.connect = </OpenPBRMaterial/NodeGraph/diffuse_tex.outputs:out>
+        float outputs:roughness.connect = </OpenPBRMaterial/NodeGraph/roughness_tex.outputs:out>
+        normal3f outputs:normal.connect = </OpenPBRMaterial/NodeGraph/normal_tex.outputs:out>
+    }
+}
+```
+
+### Supported Surface Shaders
+
+TinyUSDZ supports the following MaterialX surface shader types:
+
+| Shader Type | C++ Struct | info:id Value |
+|-------------|-----------|---------------|
+| OpenPBR Surface | `MtlxOpenPBRSurface` | `ND_open_pbr_surface_surfaceshader` |
+| Standard Surface | `MtlxAutodeskStandardSurface` | `ND_standard_surface_surfaceshader` |
+| USD Preview Surface | `MtlxUsdPreviewSurface` | `ND_UsdPreviewSurface_surfaceshader` |
+
+### Light Shader Nodes (EDF)
+
+MaterialX light shaders (Emission Distribution Functions) are also supported:
+
+| Node Type | Description | Key Inputs |
+|-----------|-------------|------------|
+| `uniform_edf` | Uniform light emission | `color` |
+| `conical_edf` | Conical/spot light emission | `color`, `inner_angle`, `outer_angle` |
+| `measured_edf` | IES profile emission | `color`, `file` |
+| `light` | Light shader wrapper | `edf`, `intensity` |
+
+### Implementation Status
+
+| Feature | C++ Core | JavaScript/Three.js |
+|---------|----------|---------------------|
+| NodeGraph parsing | ✅ Full | ✅ Basic |
+| Surface shader conversion | ✅ OpenPBR, Standard, Preview | ✅ OpenPBR |
+| Math nodes | ⚠️ Partial | ✅ Full |
+| Texture nodes | ✅ image, tiledimage | ✅ image, tiledimage |
+| Geometry nodes | ✅ texcoord, normal | ✅ texcoord, position, normal |
+| Light nodes (EDF) | ✅ Full | ❌ Not implemented |
+
 ## Implementation Details
 
 ### Color Space Matrices

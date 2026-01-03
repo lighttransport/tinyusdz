@@ -8,6 +8,7 @@ import { EXRLoader } from 'three/examples/jsm/loaders/EXRLoader.js';
 import GUI from 'three/examples/jsm/libs/lil-gui.module.min.js';
 import { TinyUSDZLoader } from 'tinyusdz/TinyUSDZLoader.js';
 import { TinyUSDZLoaderUtils } from 'tinyusdz/TinyUSDZLoaderUtils.js';
+import { setTinyUSDZ as setMaterialXTinyUSDZ } from 'tinyusdz/TinyUSDZMaterialX.js';
 import { OpenPBRMaterial } from './OpenPBRMaterial.js';
 import { OpenPBRValidator, OpenPBRGroundTruth } from './OpenPBRValidation.js';
 
@@ -526,6 +527,12 @@ async function initLoader() {
     updateStatus('Initializing TinyUSDZ WASM...');
     loaderState.loader = new TinyUSDZLoader(null, { maxMemoryLimitMB: 512 });
     await loaderState.loader.init({ useMemory64: false });
+
+    // Set TinyUSDZ WASM module reference for HDR/EXR texture decoding fallback
+    const tinyusdzModule = loaderState.loader.native_;
+    TinyUSDZLoaderUtils.setTinyUSDZ(tinyusdzModule);
+    setMaterialXTinyUSDZ(tinyusdzModule);
+
     updateStatus('TinyUSDZ initialized');
 }
 
@@ -1773,8 +1780,8 @@ async function convertMaterial(matData, index) {
         let material;
 
         if (useOpenPBRMaterial) {
-            // Create OpenPBRMaterial directly (async for texture loading)
-            material = await convertToOpenPBRMaterial(matData, loaderState.nativeLoader);
+            // Create OpenPBRMaterial directly (Loaded version waits for textures)
+            material = await convertToOpenPBRMaterialLoaded(matData, loaderState.nativeLoader);
             material.envMap = threeState.envMap;
             material.envMapIntensity = settings.envMapIntensity;
         } else {
@@ -1891,132 +1898,298 @@ function extractTextureId(param) {
     return -1;
 }
 
+// ============================================================================
+// OpenPBRMaterial Conversion Helpers
+// ============================================================================
+
+/**
+ * Extract value from OpenPBR parameter
+ */
+function extractOpenPBRValue(param, defaultVal) {
+    if (param === undefined || param === null) return defaultVal;
+    if (typeof param === 'object' && param.value !== undefined) return param.value;
+    if (typeof param === 'number') return param;
+    return defaultVal;
+}
+
+/**
+ * Extract color from OpenPBR parameter
+ */
+function extractOpenPBRColor(param, defaultVal) {
+    if (!param) return new THREE.Color(...defaultVal);
+    if (param.r !== undefined) return new THREE.Color(param.r, param.g, param.b);
+    if (Array.isArray(param)) return new THREE.Color(...param);
+    if (typeof param === 'object' && param.value) {
+        if (Array.isArray(param.value)) return new THREE.Color(...param.value);
+        if (param.value.r !== undefined) return new THREE.Color(param.value.r, param.value.g, param.value.b);
+    }
+    return new THREE.Color(...defaultVal);
+}
+
+/**
+ * Check if OpenPBR parameter has a texture
+ */
+function hasOpenPBRTexture(param) {
+    return param && typeof param === 'object' && param.textureId !== undefined && param.textureId >= 0;
+}
+
+/**
+ * Get texture ID from OpenPBR parameter
+ */
+function getOpenPBRTextureId(param) {
+    if (!param || typeof param !== 'object') return -1;
+    return param.textureId !== undefined ? param.textureId : -1;
+}
+
+/**
+ * Resolve actual texture ID (handles duplicate images in USDZ)
+ */
+function resolveTextureId(nativeLoader, textureId) {
+    if (textureId < 0) return textureId;
+    try {
+        const tex = nativeLoader.getTexture(textureId);
+        const texImage = nativeLoader.getImage(tex.textureImageId);
+
+        if (texImage.bufferId === -1 && texImage.uri) {
+            const filename = texImage.uri.replace(/^\.\//, '');
+            const numImages = nativeLoader.numImages();
+            for (let i = 0; i < numImages; i++) {
+                const altImage = nativeLoader.getImage(i);
+                if (altImage.bufferId >= 0 && altImage.uri === filename) {
+                    const numTextures = nativeLoader.numTextures();
+                    for (let t = 0; t < numTextures; t++) {
+                        const altTex = nativeLoader.getTexture(t);
+                        if (altTex.textureImageId === i) {
+                            return t;
+                        }
+                    }
+                    break;
+                }
+            }
+        }
+    } catch (e) {
+        // Ignore errors, return original ID
+    }
+    return textureId;
+}
+
+/**
+ * Create base OpenPBRMaterial with scalar/color values (no textures)
+ */
+function createBaseOpenPBRMaterial(openPBR) {
+    const material = new OpenPBRMaterial({
+        // Base layer
+        base_weight: extractOpenPBRValue(openPBR.base_weight, 1.0),
+        base_color: extractOpenPBRColor(openPBR.base_color, [0.8, 0.8, 0.8]),
+        base_metalness: extractOpenPBRValue(openPBR.base_metalness, 0.0),
+        base_diffuse_roughness: extractOpenPBRValue(openPBR.base_diffuse_roughness, 0.0),
+
+        // Specular layer
+        specular_weight: extractOpenPBRValue(openPBR.specular_weight, 1.0),
+        specular_color: extractOpenPBRColor(openPBR.specular_color, [1.0, 1.0, 1.0]),
+        specular_roughness: extractOpenPBRValue(openPBR.specular_roughness, 0.3),
+        specular_ior: extractOpenPBRValue(openPBR.specular_ior, 1.5),
+        specular_anisotropy: extractOpenPBRValue(openPBR.specular_anisotropy, 0.0),
+
+        // Coat layer
+        coat_weight: extractOpenPBRValue(openPBR.coat_weight, 0.0),
+        coat_color: extractOpenPBRColor(openPBR.coat_color, [1.0, 1.0, 1.0]),
+        coat_roughness: extractOpenPBRValue(openPBR.coat_roughness, 0.0),
+        coat_ior: extractOpenPBRValue(openPBR.coat_ior, 1.5),
+
+        // Fuzz layer
+        fuzz_weight: extractOpenPBRValue(openPBR.fuzz_weight || openPBR.sheen_weight, 0.0),
+        fuzz_color: extractOpenPBRColor(openPBR.fuzz_color || openPBR.sheen_color, [1.0, 1.0, 1.0]),
+        fuzz_roughness: extractOpenPBRValue(openPBR.fuzz_roughness || openPBR.sheen_roughness, 0.5),
+
+        // Thin film
+        thin_film_weight: extractOpenPBRValue(openPBR.thin_film_weight, 0.0),
+        thin_film_thickness: extractOpenPBRValue(openPBR.thin_film_thickness, 500.0),
+        thin_film_ior: extractOpenPBRValue(openPBR.thin_film_ior, 1.5),
+
+        // Emission
+        emission_luminance: extractOpenPBRValue(openPBR.emission_luminance, 0.0),
+        emission_color: extractOpenPBRColor(openPBR.emission_color, [1.0, 1.0, 1.0]),
+
+        // Geometry
+        geometry_opacity: extractOpenPBRValue(openPBR.geometry_opacity || openPBR.opacity, 1.0)
+    });
+
+    // Store texture references for later management
+    material.userData.textures = {};
+    material.userData.materialType = 'OpenPBRMaterial';
+
+    return material;
+}
+
 /**
  * Convert material data to OpenPBRMaterial
+ * Waits for all textures to load before returning.
  * @param {Object} matData - Material data from USD
  * @param {Object} nativeLoader - TinyUSDZ native loader for texture access
  * @returns {Promise<OpenPBRMaterial>} The created material
  */
-async function convertToOpenPBRMaterial(matData, nativeLoader = null) {
+async function convertToOpenPBRMaterialLoaded(matData, nativeLoader = null) {
     const openPBR = matData.openPBR || matData.openPBRShader || matData;
-
-    // Extract values with fallbacks
-    const extractValue = (param, defaultVal) => {
-        if (param === undefined || param === null) return defaultVal;
-        if (typeof param === 'object' && param.value !== undefined) return param.value;
-        if (typeof param === 'number') return param;
-        return defaultVal;
-    };
-
-    const extractColor = (param, defaultVal) => {
-        if (!param) return new THREE.Color(...defaultVal);
-        if (param.r !== undefined) return new THREE.Color(param.r, param.g, param.b);
-        if (Array.isArray(param)) return new THREE.Color(...param);
-        if (typeof param === 'object' && param.value) {
-            if (Array.isArray(param.value)) return new THREE.Color(...param.value);
-            if (param.value.r !== undefined) return new THREE.Color(param.value.r, param.value.g, param.value.b);
-        }
-        return new THREE.Color(...defaultVal);
-    };
-
-    const material = new OpenPBRMaterial({
-        // Base layer
-        base_weight: extractValue(openPBR.base_weight, 1.0),
-        base_color: extractColor(openPBR.base_color, [0.8, 0.8, 0.8]),
-        base_metalness: extractValue(openPBR.base_metalness, 0.0),
-        base_diffuse_roughness: extractValue(openPBR.base_diffuse_roughness, 0.0),
-
-        // Specular layer
-        specular_weight: extractValue(openPBR.specular_weight, 1.0),
-        specular_color: extractColor(openPBR.specular_color, [1.0, 1.0, 1.0]),
-        specular_roughness: extractValue(openPBR.specular_roughness, 0.3),
-        specular_ior: extractValue(openPBR.specular_ior, 1.5),
-        specular_anisotropy: extractValue(openPBR.specular_anisotropy, 0.0),
-
-        // Coat layer
-        coat_weight: extractValue(openPBR.coat_weight, 0.0),
-        coat_color: extractColor(openPBR.coat_color, [1.0, 1.0, 1.0]),
-        coat_roughness: extractValue(openPBR.coat_roughness, 0.0),
-        coat_ior: extractValue(openPBR.coat_ior, 1.5),
-
-        // Fuzz layer
-        fuzz_weight: extractValue(openPBR.fuzz_weight || openPBR.sheen_weight, 0.0),
-        fuzz_color: extractColor(openPBR.fuzz_color || openPBR.sheen_color, [1.0, 1.0, 1.0]),
-        fuzz_roughness: extractValue(openPBR.fuzz_roughness || openPBR.sheen_roughness, 0.5),
-
-        // Thin film
-        thin_film_weight: extractValue(openPBR.thin_film_weight, 0.0),
-        thin_film_thickness: extractValue(openPBR.thin_film_thickness, 500.0),
-        thin_film_ior: extractValue(openPBR.thin_film_ior, 1.5),
-
-        // Emission
-        emission_luminance: extractValue(openPBR.emission_luminance, 0.0),
-        emission_color: extractColor(openPBR.emission_color, [1.0, 1.0, 1.0]),
-
-        // Geometry
-        geometry_opacity: extractValue(openPBR.geometry_opacity || openPBR.opacity, 1.0)
-    });
-
-    // Set color alias for compatibility
-    material.uniforms.base_color.value.copy(material.uniforms.base_color.value);
-
-    // Load normal map texture if available
-    // The normal map is in openPBR.geometry.normal (not openPBR.normal)
+    const material = createBaseOpenPBRMaterial(openPBR);
     const geometrySection = openPBR.geometry || {};
-    const normalParam = geometrySection.normal || openPBR.normal || openPBR.geometry_normal;
-    const normalTextureId = extractTextureId(normalParam);
-    if (normalTextureId >= 0 && nativeLoader) {
+
+    if (!nativeLoader) return material;
+
+    // Load base color texture (map)
+    if (hasOpenPBRTexture(openPBR.base_color)) {
         try {
-            // nativeLoader itself has getTexture, getImage methods - use it directly as usdScene
-            // First, try to find an image with valid bufferId for the same filename
-            // This works around the issue where TinyUSDZ creates duplicate images with different paths
-            let actualTextureId = normalTextureId;
-            const tex = nativeLoader.getTexture(normalTextureId);
-            const texImage = nativeLoader.getImage(tex.textureImageId);
-
-            if (texImage.bufferId === -1 && texImage.uri) {
-                // Try to find an alternative image with the same filename but valid bufferId
-                const filename = texImage.uri.replace(/^\.\//, ''); // Remove leading ./
-                const numImages = nativeLoader.numImages();
-                for (let i = 0; i < numImages; i++) {
-                    const altImage = nativeLoader.getImage(i);
-                    if (altImage.bufferId >= 0 && altImage.uri === filename) {
-                        // Find a texture that uses this image
-                        const numTextures = nativeLoader.numTextures();
-                        for (let t = 0; t < numTextures; t++) {
-                            const altTex = nativeLoader.getTexture(t);
-                            if (altTex.textureImageId === i) {
-                                actualTextureId = t;
-                                break;
-                            }
-                        }
-                        break;
-                    }
-                }
+            const texId = resolveTextureId(nativeLoader, getOpenPBRTextureId(openPBR.base_color));
+            const texture = await TinyUSDZLoaderUtils.getTextureFromUSD(nativeLoader, texId);
+            if (texture) {
+                material.map = texture;
+                material.userData.textures.map = { textureId: texId, texture };
             }
+        } catch (err) {
+            console.warn('Failed to load base color texture:', err);
+        }
+    }
 
-            const texture = await TinyUSDZLoaderUtils.getTextureFromUSD(nativeLoader, actualTextureId);
+    // Load roughness texture
+    if (hasOpenPBRTexture(openPBR.specular_roughness)) {
+        try {
+            const texId = resolveTextureId(nativeLoader, getOpenPBRTextureId(openPBR.specular_roughness));
+            const texture = await TinyUSDZLoaderUtils.getTextureFromUSD(nativeLoader, texId);
+            if (texture) {
+                material.roughnessMap = texture;
+                material.userData.textures.roughnessMap = { textureId: texId, texture };
+            }
+        } catch (err) {
+            console.warn('Failed to load roughness texture:', err);
+        }
+    }
+
+    // Load metalness texture
+    if (hasOpenPBRTexture(openPBR.base_metalness)) {
+        try {
+            const texId = resolveTextureId(nativeLoader, getOpenPBRTextureId(openPBR.base_metalness));
+            const texture = await TinyUSDZLoaderUtils.getTextureFromUSD(nativeLoader, texId);
+            if (texture) {
+                material.metalnessMap = texture;
+                material.userData.textures.metalnessMap = { textureId: texId, texture };
+            }
+        } catch (err) {
+            console.warn('Failed to load metalness texture:', err);
+        }
+    }
+
+    // Load emissive texture
+    if (hasOpenPBRTexture(openPBR.emission_color)) {
+        try {
+            const texId = resolveTextureId(nativeLoader, getOpenPBRTextureId(openPBR.emission_color));
+            const texture = await TinyUSDZLoaderUtils.getTextureFromUSD(nativeLoader, texId);
+            if (texture) {
+                material.emissiveMap = texture;
+                material.userData.textures.emissiveMap = { textureId: texId, texture };
+            }
+        } catch (err) {
+            console.warn('Failed to load emissive texture:', err);
+        }
+    }
+
+    // Load normal map
+    const normalParam = geometrySection.normal || openPBR.normal || openPBR.geometry_normal;
+    if (hasOpenPBRTexture(normalParam)) {
+        try {
+            const texId = resolveTextureId(nativeLoader, getOpenPBRTextureId(normalParam));
+            const texture = await TinyUSDZLoaderUtils.getTextureFromUSD(nativeLoader, texId);
             if (texture) {
                 material.normalMap = texture;
-
-                // Apply normal map scale if available
-                const normalMapScale = extractValue(openPBR.normal_map_scale, 1.0);
+                material.userData.textures.normalMap = { textureId: texId, texture };
+                const normalMapScale = extractOpenPBRValue(geometrySection.normal_map_scale || openPBR.normal_map_scale, 1.0);
                 if (material.uniforms.normalScale) {
                     material.uniforms.normalScale.value.set(normalMapScale, normalMapScale);
                 }
-
-                // Normal map loaded successfully
             }
         } catch (err) {
             console.warn('Failed to load normal map texture:', err);
         }
     }
 
-    // Store geometry_normal info in userData for UI display
+    // Load AO map (if available in geometry section)
+    const aoParam = geometrySection.ambient_occlusion || openPBR.ambient_occlusion;
+    if (hasOpenPBRTexture(aoParam)) {
+        try {
+            const texId = resolveTextureId(nativeLoader, getOpenPBRTextureId(aoParam));
+            const texture = await TinyUSDZLoaderUtils.getTextureFromUSD(nativeLoader, texId);
+            if (texture) {
+                material.aoMap = texture;
+                material.userData.textures.aoMap = { textureId: texId, texture };
+            }
+        } catch (err) {
+            console.warn('Failed to load AO texture:', err);
+        }
+    }
+
+    // Store geometry info in userData
     material.userData.geometry_normal = {
-        hasTexture: normalTextureId >= 0,
-        textureId: normalTextureId,
-        scale: extractValue(openPBR.normal_map_scale, 1.0)
+        hasTexture: hasOpenPBRTexture(normalParam),
+        textureId: getOpenPBRTextureId(normalParam),
+        scale: extractOpenPBRValue(geometrySection.normal_map_scale || openPBR.normal_map_scale, 1.0)
+    };
+
+    return material;
+}
+
+/**
+ * Convert material data to OpenPBRMaterial (legacy pattern)
+ * Returns material immediately, textures load asynchronously in background.
+ * @param {Object} matData - Material data from USD
+ * @param {Object} nativeLoader - TinyUSDZ native loader for texture access
+ * @returns {OpenPBRMaterial} The created material (textures load asynchronously)
+ */
+function convertToOpenPBRMaterial(matData, nativeLoader = null) {
+    const openPBR = matData.openPBR || matData.openPBRShader || matData;
+    const material = createBaseOpenPBRMaterial(openPBR);
+    const geometrySection = openPBR.geometry || {};
+
+    if (!nativeLoader) return material;
+
+    // Helper for fire-and-forget texture loading
+    const loadTextureAsync = (param, mapName, onLoad = null) => {
+        if (!hasOpenPBRTexture(param)) return;
+        const texId = resolveTextureId(nativeLoader, getOpenPBRTextureId(param));
+        TinyUSDZLoaderUtils.getTextureFromUSD(nativeLoader, texId).then((texture) => {
+            if (texture) {
+                material[mapName] = texture;
+                material.userData.textures[mapName] = { textureId: texId, texture };
+                material.needsUpdate = true;
+                if (onLoad) onLoad(texture);
+            }
+        }).catch((err) => {
+            console.warn(`Failed to load ${mapName} texture:`, err);
+        });
+    };
+
+    // Queue texture loading (fire-and-forget)
+    loadTextureAsync(openPBR.base_color, 'map');
+    loadTextureAsync(openPBR.specular_roughness, 'roughnessMap');
+    loadTextureAsync(openPBR.base_metalness, 'metalnessMap');
+    loadTextureAsync(openPBR.emission_color, 'emissiveMap');
+
+    // Normal map with scale
+    const normalParam = geometrySection.normal || openPBR.normal || openPBR.geometry_normal;
+    loadTextureAsync(normalParam, 'normalMap', () => {
+        const normalMapScale = extractOpenPBRValue(geometrySection.normal_map_scale || openPBR.normal_map_scale, 1.0);
+        if (material.uniforms.normalScale) {
+            material.uniforms.normalScale.value.set(normalMapScale, normalMapScale);
+        }
+    });
+
+    // AO map
+    const aoParam = geometrySection.ambient_occlusion || openPBR.ambient_occlusion;
+    loadTextureAsync(aoParam, 'aoMap');
+
+    // Store geometry info in userData
+    material.userData.geometry_normal = {
+        hasTexture: hasOpenPBRTexture(normalParam),
+        textureId: getOpenPBRTextureId(normalParam),
+        scale: extractOpenPBRValue(geometrySection.normal_map_scale || openPBR.normal_map_scale, 1.0)
     };
 
     return material;
