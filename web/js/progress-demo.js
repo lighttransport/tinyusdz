@@ -879,7 +879,33 @@ async function loadUSDWithProgress(source, isFile = false) {
     try {
         // Initialize loader if needed
         if (!loaderState.loader) {
-            loaderState.loader = new TinyUSDZLoader();
+            loaderState.loader = new TinyUSDZLoader(undefined, {
+                // EM_JS synchronous progress callback - called directly from C++ during conversion
+                onTydraProgress: (info) => {
+                    // info: {meshCurrent, meshTotal, stage, meshName, progress}
+                    const meshProgress = info.meshTotal > 0
+                        ? `${info.meshCurrent}/${info.meshTotal}`
+                        : '';
+                    const meshName = info.meshName ? info.meshName.split('/').pop() : '';
+
+                    updateProgressUI({
+                        stage: 'parsing',
+                        percentage: 30 + (info.progress * 50), // parsing takes 30-80%
+                        message: meshProgress
+                            ? `Converting: ${meshProgress} ${meshName}`
+                            : `Converting: ${info.stage}`
+                    });
+                },
+                onTydraComplete: (info) => {
+                    // info: {meshCount, materialCount, textureCount}
+                    console.log(`[Tydra] Complete: ${info.meshCount} meshes, ${info.materialCount} materials, ${info.textureCount} textures`);
+                    updateProgressUI({
+                        stage: 'building',
+                        percentage: 80,
+                        message: `Building ${info.meshCount} meshes...`
+                    });
+                }
+            });
             await loaderState.loader.init();
 
             // Setup TinyUSDZ for MaterialX texture decoding
