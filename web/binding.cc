@@ -70,6 +70,47 @@
 
 using namespace emscripten;
 
+// ============================================================================
+// EM_JS: Synchronous JavaScript callbacks for progress reporting
+// These functions are called from C++ during Tydra conversion to report
+// progress to JavaScript in real-time without ASYNCIFY.
+// ============================================================================
+
+// Report mesh conversion progress
+// Called for each mesh during Tydra conversion
+EM_JS(void, reportTydraProgress, (int current, int total, const char* stage, const char* meshName, float progress), {
+  if (typeof Module.onTydraProgress === 'function') {
+    Module.onTydraProgress({
+      meshCurrent: current,
+      meshTotal: total,
+      stage: UTF8ToString(stage),
+      meshName: UTF8ToString(meshName),
+      progress: progress
+    });
+  }
+});
+
+// Report conversion stage change
+EM_JS(void, reportTydraStage, (const char* stage, const char* message), {
+  if (typeof Module.onTydraStage === 'function') {
+    Module.onTydraStage({
+      stage: UTF8ToString(stage),
+      message: UTF8ToString(message)
+    });
+  }
+});
+
+// Report conversion completion
+EM_JS(void, reportTydraComplete, (int meshCount, int materialCount, int textureCount), {
+  if (typeof Module.onTydraComplete === 'function') {
+    Module.onTydraComplete({
+      meshCount: meshCount,
+      materialCount: materialCount,
+      textureCount: textureCount
+    });
+  }
+});
+
 namespace detail {
 
 std::array<double, 9> toArray(const tinyusdz::value::matrix3d &m) {
@@ -972,7 +1013,7 @@ class TinyUSDZLoaderNative {
     // RenderScene: Scene graph object which is suited for GL/Vulkan renderer
     tinyusdz::tydra::RenderSceneConverter converter;
 
-    // Set up detailed progress callback to update parsing_progress_
+    // Set up detailed progress callback to update parsing_progress_ and call JS
     converter.SetDetailedProgressCallback(
         [](const tinyusdz::tydra::DetailedProgressInfo &info, void *userptr) -> bool {
           ParsingProgress *pp = static_cast<ParsingProgress *>(userptr);
@@ -987,6 +1028,16 @@ class TinyUSDZLoaderNative {
             // Update progress: parsing is 0-80%, conversion is 80-100%
             pp->progress = 0.8f + (info.progress * 0.2f);
           }
+
+          // Call JavaScript synchronously via EM_JS
+          reportTydraProgress(
+            static_cast<int>(info.meshes_processed),
+            static_cast<int>(info.meshes_total),
+            info.GetStageName(),  // Already returns const char*
+            info.current_mesh_name.c_str(),
+            info.progress
+          );
+
           return true;  // Continue conversion
         },
         &parsing_progress_);
@@ -1114,7 +1165,7 @@ class TinyUSDZLoaderNative {
     // RenderScene: Scene graph object which is suited for GL/Vulkan renderer
     tinyusdz::tydra::RenderSceneConverter converter;
 
-    // Set up detailed progress callback to update parsing_progress_
+    // Set up detailed progress callback to update parsing_progress_ and call JS
     converter.SetDetailedProgressCallback(
         [](const tinyusdz::tydra::DetailedProgressInfo &info, void *userptr) -> bool {
           ParsingProgress *pp = static_cast<ParsingProgress *>(userptr);
@@ -1129,6 +1180,16 @@ class TinyUSDZLoaderNative {
             // Update progress: parsing is 0-80%, conversion is 80-100%
             pp->progress = 0.8f + (info.progress * 0.2f);
           }
+
+          // Call JavaScript synchronously via EM_JS
+          reportTydraProgress(
+            static_cast<int>(info.meshes_processed),
+            static_cast<int>(info.meshes_total),
+            info.GetStageName(),  // Already returns const char*
+            info.current_mesh_name.c_str(),
+            info.progress
+          );
+
           return true;  // Continue conversion
         },
         &parsing_progress_);
