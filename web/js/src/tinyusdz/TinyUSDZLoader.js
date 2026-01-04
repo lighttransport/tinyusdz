@@ -134,6 +134,9 @@ class TinyUSDZLoader extends Loader {
      * @param {Object} options - Configuration options
      * @param {number} options.maxMemoryLimitMB - Maximum memory limit in MB (default: 2048 for WASM32, 8192 for WASM64)
      * @param {boolean} options.useZstdCompressedWasm - Use compressed WASM (default: false)
+     * @param {Function} options.onTydraProgress - Callback for Tydra conversion progress ({meshCurrent, meshTotal, stage, meshName, progress}) => void
+     * @param {Function} options.onTydraStage - Callback for Tydra stage changes ({stage, message}) => void
+     * @param {Function} options.onTydraComplete - Callback for Tydra conversion completion ({meshCount, materialCount, textureCount}) => void
      */
     constructor(manager, options = {}) {
         super(manager);
@@ -163,6 +166,12 @@ class TinyUSDZLoader extends Loader {
         // Memory limit in MB - defaults are set by the native module based on WASM architecture
         // (2GB for WASM32, 8GB for WASM64). If not specified, the native default will be used.
         this.maxMemoryLimitMB_ = options.maxMemoryLimitMB;
+
+        // EM_JS synchronous progress callbacks for Tydra conversion
+        // These are called directly from C++ during conversion without ASYNCIFY
+        this.onTydraProgress_ = options.onTydraProgress || null;
+        this.onTydraStage_ = options.onTydraStage || null;
+        this.onTydraComplete_ = options.onTydraComplete || null;
     }
 
     // Decompress zstd compressed WASM
@@ -274,6 +283,18 @@ class TinyUSDZLoader extends Loader {
             //  return scriptDirectory + path;
             //}
 
+            // Set up EM_JS synchronous progress callbacks
+            // These are called from C++ during Tydra conversion without ASYNCIFY
+            if (this.onTydraProgress_) {
+              initOptions.onTydraProgress = this.onTydraProgress_;
+            }
+            if (this.onTydraStage_) {
+              initOptions.onTydraStage = this.onTydraStage_;
+            }
+            if (this.onTydraComplete_) {
+              initOptions.onTydraComplete = this.onTydraComplete_;
+            }
+
             this.native_ = await initTinyUSDZNative(initOptions);
             if (!this.native_) {
                 throw new Error('TinyUSDZLoader: Failed to initialize native module.');
@@ -309,6 +330,41 @@ class TinyUSDZLoader extends Loader {
      */
     clearProgressCallback() {
         this.progressCallback_ = null;
+    }
+
+    /**
+     * Set Tydra progress callback for mesh conversion updates
+     * This is called synchronously from C++ via EM_JS during scene conversion
+     * @param {Function} callback - ({meshCurrent, meshTotal, stage, meshName, progress}) => void
+     */
+    setTydraProgressCallback(callback) {
+        this.onTydraProgress_ = callback;
+        // Update native module if already initialized
+        if (this.native_) {
+            this.native_.onTydraProgress = callback;
+        }
+    }
+
+    /**
+     * Set Tydra stage callback for conversion stage changes
+     * @param {Function} callback - ({stage, message}) => void
+     */
+    setTydraStageCallback(callback) {
+        this.onTydraStage_ = callback;
+        if (this.native_) {
+            this.native_.onTydraStage = callback;
+        }
+    }
+
+    /**
+     * Set Tydra completion callback
+     * @param {Function} callback - ({meshCount, materialCount, textureCount}) => void
+     */
+    setTydraCompleteCallback(callback) {
+        this.onTydraComplete_ = callback;
+        if (this.native_) {
+            this.native_.onTydraComplete = callback;
+        }
     }
 
     /**
