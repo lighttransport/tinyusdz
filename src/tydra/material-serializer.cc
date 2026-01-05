@@ -247,7 +247,7 @@ std::string serializeOpenPBRToJson(const OpenPBRSurfaceShader& shader, const Ren
 }
 
 // Serialize PreviewSurfaceShader to JSON
-std::string serializePreviewSurfaceToJson(const PreviewSurfaceShader& shader) {
+std::string serializePreviewSurfaceToJson(const PreviewSurfaceShader& shader, const RenderScene* renderScene = nullptr) {
   std::stringstream json;
   json << "{";
   json << "\"type\": \"PreviewSurfaceShader\",";
@@ -266,6 +266,37 @@ std::string serializePreviewSurfaceToJson(const PreviewSurfaceShader& shader) {
   json << "\"normal\": " << vec3ToJson(shader.normal.value) << ",";
   json << "\"displacement\": " << shader.displacement.value << ",";
   json << "\"occlusion\": " << shader.occlusion.value;
+
+  // Export texture IDs for diffuseColor, emissiveColor, specularColor, metallic, roughness, opacity
+  if (shader.diffuseColor.is_texture()) {
+    json << ",\"diffuseColorTextureId\": " << shader.diffuseColor.texture_id;
+  }
+  if (shader.emissiveColor.is_texture()) {
+    json << ",\"emissiveColorTextureId\": " << shader.emissiveColor.texture_id;
+  }
+  if (shader.specularColor.is_texture()) {
+    json << ",\"specularColorTextureId\": " << shader.specularColor.texture_id;
+  }
+  if (shader.metallic.is_texture()) {
+    json << ",\"metallicTextureId\": " << shader.metallic.texture_id;
+  }
+  if (shader.roughness.is_texture()) {
+    json << ",\"roughnessTextureId\": " << shader.roughness.texture_id;
+  }
+  if (shader.opacity.is_texture()) {
+    json << ",\"opacityTextureId\": " << shader.opacity.texture_id;
+  }
+
+  // Export texture IDs for normal, occlusion, and displacement maps
+  if (shader.normal.is_texture()) {
+    json << ",\"normalTextureId\": " << shader.normal.texture_id;
+  }
+  if (shader.occlusion.is_texture()) {
+    json << ",\"occlusionTextureId\": " << shader.occlusion.texture_id;
+  }
+  if (shader.displacement.is_texture()) {
+    json << ",\"displacementTextureId\": " << shader.displacement.texture_id;
+  }
 
   json << "}";
   return json.str();
@@ -361,7 +392,7 @@ nonstd::expected<std::string, std::string> serializeMaterial(
 
     // Add shader data
     if (material.surfaceShader.has_value()) {
-      json << ",\"surfaceShader\": " << serializePreviewSurfaceToJson(*material.surfaceShader);
+      json << ",\"surfaceShader\": " << serializePreviewSurfaceToJson(*material.surfaceShader, renderScene);
     }
 
     if (material.openPBRShader.has_value()) {

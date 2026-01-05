@@ -301,7 +301,9 @@ const guiState = {
     textureFolder: null,
     animationFolder: null,
     timeController: null,
-    envPresetController: null
+    envPresetController: null,
+    envColorController: null,
+    envColorspaceController: null
 };
 
 // User settings
@@ -317,6 +319,7 @@ const settings = {
     toneMapping: 'aces_1.3',
     applyUpAxisConversion: false,
     showNormals: false,
+    normalDisplayMode: 'mapped', // 'geometry': mesh normals only, 'mapped': with normal maps applied
     normalAbsMode: false, // true: map [-1,1] to [0,1], false: standard MeshNormalMaterial
     showGrid: false,
     showAxes: false,
@@ -573,15 +576,21 @@ function setupSceneFolder() {
 
     guiState.envPresetController = sceneFolder.add(settings, 'envMapPreset', Object.keys(ENV_PRESETS))
         .name('Environment')
-        .onChange(loadEnvironment);
+        .onChange((value) => {
+            loadEnvironment(value);
+            updateEnvColorControlsState();
+        });
 
-    sceneFolder.addColor(settings, 'envConstantColor')
+    guiState.envColorController = sceneFolder.addColor(settings, 'envConstantColor')
         .name('Env Color')
         .onChange(updateConstantColorEnvironment);
 
-    sceneFolder.add(settings, 'envColorspace', ['sRGB', 'linear'])
+    guiState.envColorspaceController = sceneFolder.add(settings, 'envColorspace', ['sRGB', 'linear'])
         .name('Env Colorspace')
         .onChange(updateConstantColorEnvironment);
+
+    // Initialize the enabled state of env color controls
+    updateEnvColorControlsState();
 
     sceneFolder.add(settings, 'envMapIntensity', 0, 100, 0.1)
         .name('Env Intensity')
@@ -606,6 +615,14 @@ function setupSceneFolder() {
     sceneFolder.add(settings, 'showNormals')
         .name('Show Normals')
         .onChange(toggleNormalDisplay);
+
+    sceneFolder.add(settings, 'normalDisplayMode', ['geometry', 'mapped'])
+        .name('Normal Mode')
+        .onChange(() => {
+            if (settings.showNormals) {
+                toggleNormalDisplay(); // Re-apply with new mode
+            }
+        });
 
     sceneFolder.add(settings, 'normalAbsMode')
         .name('Normal Abs Color')
@@ -1064,6 +1081,30 @@ function updateConstantColorEnvironment() {
     }
 }
 
+/**
+ * Update the enabled state of Env Color and Env Colorspace controls
+ * These should only be editable when Environment is set to 'constant_color'
+ */
+function updateEnvColorControlsState() {
+    const isConstantColor = settings.envMapPreset === 'constant_color';
+
+    if (guiState.envColorController) {
+        if (isConstantColor) {
+            guiState.envColorController.enable();
+        } else {
+            guiState.envColorController.disable();
+        }
+    }
+
+    if (guiState.envColorspaceController) {
+        if (isConstantColor) {
+            guiState.envColorspaceController.enable();
+        } else {
+            guiState.envColorspaceController.disable();
+        }
+    }
+}
+
 function updateEnvIntensity() {
     sceneState.materials.forEach(mat => {
         if (mat.envMapIntensity !== undefined) {
@@ -1237,6 +1278,138 @@ function createAbsNormalMaterial(normalMap = null, normalScale = new THREE.Vecto
     return material;
 }
 
+/**
+ * Create a shader material that displays normals like MeshNormalMaterial but with normal map support
+ * This shows view-space normals with normal map perturbation applied
+ */
+function createViewNormalMaterial(normalMap = null, normalScale = new THREE.Vector2(1, 1)) {
+    const material = new THREE.ShaderMaterial({
+        uniforms: {
+            normalMap: { value: normalMap },
+            normalScale: { value: normalScale },
+            useNormalMap: { value: normalMap !== null }
+        },
+        vertexShader: `
+            varying vec3 vNormal;
+            varying vec3 vViewNormal;
+            varying vec2 vUv;
+            varying vec3 vTangent;
+            varying vec3 vBitangent;
+
+            #ifdef USE_TANGENT
+                attribute vec4 tangent;
+            #endif
+
+            void main() {
+                vNormal = normalize(normalMatrix * normal);
+                vViewNormal = vNormal;
+                vUv = uv;
+
+                // Compute tangent and bitangent in view space
+                #ifdef USE_TANGENT
+                    vTangent = normalize(normalMatrix * tangent.xyz);
+                    vBitangent = normalize(cross(vNormal, vTangent) * tangent.w);
+                #else
+                    // Compute tangent from normal - works for most cases
+                    vec3 up = abs(normal.y) < 0.999 ? vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 0.0);
+                    vTangent = normalize(normalMatrix * normalize(cross(up, normal)));
+                    vBitangent = normalize(cross(vNormal, vTangent));
+                #endif
+
+                gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+            }
+        `,
+        fragmentShader: `
+            uniform sampler2D normalMap;
+            uniform vec2 normalScale;
+            uniform bool useNormalMap;
+
+            varying vec3 vNormal;
+            varying vec3 vViewNormal;
+            varying vec2 vUv;
+            varying vec3 vTangent;
+            varying vec3 vBitangent;
+
+            void main() {
+                vec3 normal = normalize(vViewNormal);
+
+                if (useNormalMap) {
+                    // Sample normal map and transform to view space
+                    vec3 mapN = texture2D(normalMap, vUv).xyz * 2.0 - 1.0;
+                    mapN.xy *= normalScale;
+                    mapN = normalize(mapN);
+
+                    // Build TBN matrix in view space
+                    vec3 T = normalize(vTangent);
+                    vec3 B = normalize(vBitangent);
+                    vec3 N = normalize(vNormal);
+                    mat3 TBN = mat3(T, B, N);
+                    normal = normalize(TBN * mapN);
+                }
+
+                // MeshNormalMaterial-style coloring: map view-space normal to RGB
+                // normal.xyz is in [-1, 1], map to [0, 1]
+                gl_FragColor = vec4(normal * 0.5 + 0.5, 1.0);
+            }
+        `,
+        side: THREE.DoubleSide
+    });
+
+    return material;
+}
+
+/**
+ * Extract normal map from material, checking various sources
+ * Works with both OpenPBR/MaterialX and UsdPreviewSurface materials
+ */
+function extractNormalMapFromMaterial(material) {
+    if (!material) return { normalMap: null, normalScale: new THREE.Vector2(1, 1) };
+
+    let normalMap = null;
+    let normalScale = new THREE.Vector2(1, 1);
+
+    // 1. Check direct normalMap property (MeshPhysicalMaterial, MeshStandardMaterial)
+    if (material.normalMap) {
+        normalMap = material.normalMap;
+        if (material.normalScale) {
+            normalScale = material.normalScale.clone();
+        }
+    }
+
+    // 2. Check userData for materials where normalMap was loaded asynchronously
+    if (!normalMap && material.userData) {
+        // Check for textures stored in userData (common pattern for async-loaded textures)
+        if (material.userData.textures && material.userData.textures.normalMap) {
+            normalMap = material.userData.textures.normalMap;
+        }
+        // Check for raw material data (UsdPreviewSurface)
+        if (!normalMap && material.userData.rawData) {
+            const rawData = material.userData.rawData;
+            // UsdPreviewSurface stores normalTextureId in surfaceShader
+            if (rawData.surfaceShader && rawData.surfaceShader.normalTextureId !== undefined) {
+                // Normal map should have been loaded - check material.normalMap again
+                // This handles the case where texture was loaded after material creation
+                if (material.normalMap) {
+                    normalMap = material.normalMap;
+                }
+            }
+        }
+    }
+
+    // 3. Handle array of materials
+    if (Array.isArray(material)) {
+        // Try to find a material with normalMap in the array
+        for (const mat of material) {
+            const result = extractNormalMapFromMaterial(mat);
+            if (result.normalMap) {
+                return result;
+            }
+        }
+    }
+
+    return { normalMap, normalScale };
+}
+
 function toggleNormalDisplay() {
     if (!sceneState.root) return;
 
@@ -1250,20 +1423,36 @@ function toggleNormalDisplay() {
                 }
 
                 const origMat = sceneState.originalMaterialsMap.get(obj);
-                const normalMap = origMat?.normalMap || null;
-                const normalScale = origMat?.normalScale || new THREE.Vector2(1, 1);
+
+                // Extract normal map based on display mode
+                let normalMap = null;
+                let normalScale = new THREE.Vector2(1, 1);
+
+                if (settings.normalDisplayMode === 'mapped') {
+                    // Show normal-mapped normals - extract from material
+                    const extracted = extractNormalMapFromMaterial(origMat);
+                    normalMap = extracted.normalMap;
+                    normalScale = extracted.normalScale;
+                }
+                // If mode is 'geometry', normalMap stays null to show mesh normals only
 
                 if (settings.normalAbsMode) {
                     // Absolute color mode: [-1,1] -> [0,1]
-                    // Pass normal map to show perturbed normals
+                    // Pass normal map based on display mode
                     obj.material = createAbsNormalMaterial(normalMap, normalScale);
                 } else {
                     // Standard MeshNormalMaterial (view-dependent coloring)
-                    // Note: MeshNormalMaterial doesn't support normal maps
-                    obj.material = new THREE.MeshNormalMaterial({
-                        flatShading: false,
-                        side: THREE.DoubleSide
-                    });
+                    // Note: MeshNormalMaterial doesn't support normal maps, so we use
+                    // our custom shader if we need to show normal-mapped normals
+                    if (normalMap && settings.normalDisplayMode === 'mapped') {
+                        // Use custom shader to show normal-mapped normals in standard view mode
+                        obj.material = createViewNormalMaterial(normalMap, normalScale);
+                    } else {
+                        obj.material = new THREE.MeshNormalMaterial({
+                            flatShading: false,
+                            side: THREE.DoubleSide
+                        });
+                    }
                 }
             }
         });
@@ -1370,7 +1559,7 @@ async function loadDefaultScene() {
 
 async function loadDefaultUSDFile() {
     //const defaultFile = './assets/fancy-teapot-mtlx.usdz';
-    const defaultFile = './assets/mtlx-normalmap-plane.usdz';
+    const defaultFile = './assets/NormalsTextureBiasAndScale.usdz';
     updateStatus(`Loading ${defaultFile}...`);
     try {
         const response = await fetch(defaultFile);
