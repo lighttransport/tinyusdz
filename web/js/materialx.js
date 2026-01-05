@@ -303,7 +303,8 @@ const guiState = {
     timeController: null,
     envPresetController: null,
     envColorController: null,
-    envColorspaceController: null
+    envColorspaceController: null,
+    envIntensityController: null
 };
 
 // User settings
@@ -592,7 +593,7 @@ function setupSceneFolder() {
     // Initialize the enabled state of env color controls
     updateEnvColorControlsState();
 
-    sceneFolder.add(settings, 'envMapIntensity', 0, 100, 0.1)
+    guiState.envIntensityController = sceneFolder.add(settings, 'envMapIntensity', 0, 100, 0.1)
         .name('Env Intensity')
         .onChange(updateEnvIntensity);
 
@@ -1009,6 +1010,10 @@ function loadUSDDomeEnvironment() {
         threeState.envMap = sceneState.domeLightData.envMap;
         settings.envMapIntensity = sceneState.domeLightData.intensity || 1.0;
         applyEnvironment();
+        // Update GUI controller to reflect DomeLight intensity
+        if (guiState.envIntensityController) {
+            guiState.envIntensityController.updateDisplay();
+        }
         updateStatus('Using USD DomeLight environment');
     } else {
         updateStatus('No USD DomeLight available - using studio lighting');
@@ -1135,6 +1140,11 @@ async function loadDomeLightFromUSD(usdLoader) {
         }
 
         applyEnvironment();
+
+        // Update GUI controllers to reflect DomeLight settings
+        if (guiState.envIntensityController) {
+            guiState.envIntensityController.updateDisplay();
+        }
 
         // Store DomeLight data for reference
         sceneState.domeLightData = {
