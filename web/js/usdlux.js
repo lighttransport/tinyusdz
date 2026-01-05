@@ -1686,10 +1686,12 @@ let selectionMode = 'all';
 // Light selection
 let selectedLight3DIndex = -1;
 let lightTransformControls = null;
+let lightDragJustEnded = false; // Flag to prevent picking after drag ends
 
 // Mesh selection
 let selectedMesh = null;
 let meshTransformControls = null;
+let meshDragJustEnded = false; // Flag to prevent picking after drag ends
 
 const raycaster = new THREE.Raycaster();
 const mouse = new THREE.Vector2();
@@ -1773,6 +1775,15 @@ function initLightTransformControls() {
   // Disable orbit controls while dragging
   lightTransformControls.addEventListener('dragging-changed', (event) => {
     controls.enabled = !event.value;
+
+    // When dragging ends, set flag to prevent click from picking a different light
+    if (!event.value) {
+      lightDragJustEnded = true;
+      // Clear the flag after a short delay (after click event would have fired)
+      requestAnimationFrame(() => {
+        lightDragJustEnded = false;
+      });
+    }
   });
 
   // Update light data when transformed
@@ -1825,6 +1836,15 @@ function initMeshTransformControls() {
   // Disable orbit controls while dragging
   meshTransformControls.addEventListener('dragging-changed', (event) => {
     controls.enabled = !event.value;
+
+    // When dragging ends, set flag to prevent click from picking a different mesh
+    if (!event.value) {
+      meshDragJustEnded = true;
+      // Clear the flag after a short delay (after click event would have fired)
+      requestAnimationFrame(() => {
+        meshDragJustEnded = false;
+      });
+    }
   });
 
   // Add to scene - handle both old and new TransformControls API
@@ -1996,6 +2016,13 @@ function updateLightDataFromTransform(lightIndex) {
   matrix.compose(position, quaternion, scale);
   usdLight.transform = matrix.toArray();
 
+  // Handle SpotLight/DirectionalLight target position
+  if (actualLight && (actualLight.isSpotLight || actualLight.isDirectionalLight)) {
+    const targetPos = new THREE.Vector3();
+    actualLight.target.getWorldPosition(targetPos);
+    usdLight.targetPosition = [targetPos.x, targetPos.y, targetPos.z];
+  }
+
   // Sync helper position
   const helper = lightHelpers[lightIndex];
   if (helper) {
@@ -2005,8 +2032,11 @@ function updateLightDataFromTransform(lightIndex) {
         if (child.isMesh && child.geometry.type === 'SphereGeometry') {
           child.position.copy(position);
         }
+        // Force SpotLightHelper to update its cone
+        if (child.type === 'SpotLightHelper' && child.update) {
+          child.update();
+        }
       });
-      // SpotLightHelper updates itself automatically
     } else {
       // For other lights, transform the whole helper group
       helper.position.copy(position);
@@ -2062,29 +2092,14 @@ function selectLight3D(lightIndex) {
   // Ensure the light has updated world matrix
   threeLight.updateMatrixWorld(true);
 
-  // Find the actual light object to attach gizmo to
-  // For groups containing lights, attach to the actual light so gizmo appears at light position
-  let attachTarget = threeLight;
-  if (threeLight.isGroup) {
-    const actualLight = threeLight.children.find(c => c.isLight);
-    if (actualLight) {
-      attachTarget = actualLight;
-    }
-  }
-
-  // Attach transform controls to the actual light (not the group)
-  lightTransformControls.attach(attachTarget);
-  lightTransformControls.enabled = true;
-  lightTransformControls.visible = true;
-
-  // Set transform mode based on light type
+  // Set transform mode based on light type (this also handles attach target)
   const lightType = usdLight?.type || 'point';
   if (lightType === 'distant' || lightType === 'dome') {
     // Infinite lights - rotate only
-    lightTransformControls.setMode('rotate');
+    setLightTransformMode('rotate');
   } else {
     // Finite lights - translate by default
-    lightTransformControls.setMode('translate');
+    setLightTransformMode('translate');
   }
   lightTransformControls.showX = true;
   lightTransformControls.showY = true;
@@ -2113,7 +2128,51 @@ function selectLight3D(lightIndex) {
 }
 
 /**
+ * Get the actual light object to attach transform controls to.
+ * For groups containing lights (SpotLights, DirectionalLights), we attach to the group
+ * for translate/rotate/scale so all transforms happen around the correct pivot point.
+ * @param {THREE.Object3D} threeLight - The light or light group
+ * @param {string} mode - Transform mode: 'translate', 'rotate', 'scale', or 'target'
+ */
+function getAttachTargetForLight(threeLight, mode = 'translate') {
+  if (!threeLight) return null;
+
+  if (threeLight.isGroup) {
+    const actualLight = threeLight.children.find(c => c.isLight);
+
+    // For SpotLights with target, handle different modes
+    if (actualLight && actualLight.isSpotLight) {
+      if (mode === 'target') {
+        // Attach to target for target manipulation
+        return actualLight.target;
+      }
+      // For translate/rotate/scale, attach to the group
+      // This ensures the pivot is always at the light position
+      return threeLight;
+    }
+
+    // For DirectionalLights, similar logic
+    if (actualLight && actualLight.isDirectionalLight) {
+      if (mode === 'target') {
+        return actualLight.target;
+      }
+      // Attach to group for all other modes
+      return threeLight;
+    }
+
+    if (actualLight) {
+      return actualLight;
+    }
+  }
+  return threeLight;
+}
+
+// Track current light transform mode for proper attach target handling
+let currentLightTransformMode = 'translate';
+
+/**
  * Set light transform mode
+ * @param {string} mode - 'translate', 'rotate', 'scale', or 'target' (for SpotLight/DirectionalLight)
  */
 function setLightTransformMode(mode) {
   if (!lightTransformControls) {
@@ -2125,17 +2184,25 @@ function setLightTransformMode(mode) {
     return;
   }
 
-  // Ensure controls are attached to the selected light
+  currentLightTransformMode = mode;
+
+  // Get the appropriate attach target based on mode
+  // For SpotLights: translate->light, rotate/scale->group, target->target object
   const threeLight = threeLights[selectedLight3DIndex];
-  if (threeLight && lightTransformControls.object !== threeLight) {
-    lightTransformControls.attach(threeLight);
+  const attachTarget = getAttachTargetForLight(threeLight, mode);
+
+  // Always re-attach when mode changes (target object may be different)
+  if (attachTarget) {
+    lightTransformControls.attach(attachTarget);
   }
 
-  lightTransformControls.setMode(mode);
+  // For 'target' mode, use translate gizmo to move the target position
+  const gizmoMode = (mode === 'target') ? 'translate' : mode;
+  lightTransformControls.setMode(gizmoMode);
   lightTransformControls.enabled = true;
   lightTransformControls.visible = true;
 
-  debugLog(`Transform mode set to: ${mode}, attached to:`, lightTransformControls.object);
+  debugLog(`Transform mode set to: ${mode} (gizmo: ${gizmoMode}), attached to:`, lightTransformControls.object);
 }
 
 /**
@@ -2165,6 +2232,9 @@ function onCanvasClick(event) {
   if (lightTransformControls && lightTransformControls.dragging) return;
   if (meshTransformControls && meshTransformControls.dragging) return;
 
+  // Ignore if a drag just ended (prevents selecting different object after drag)
+  if (lightDragJustEnded || meshDragJustEnded) return;
+
   // Calculate mouse position in normalized device coordinates
   const rect = renderer.domElement.getBoundingClientRect();
   mouse.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
@@ -2177,11 +2247,17 @@ function onCanvasClick(event) {
   if (selectionMode !== 'meshes') {
     const lightIntersects = raycaster.intersectObjects(lightHelpers, true);
 
-    if (lightIntersects.length > 0) {
+    // Iterate through all intersections to find a visible helper
+    for (const intersection of lightIntersects) {
       // Find the light helper group
-      let helperGroup = lightIntersects[0].object;
+      let helperGroup = intersection.object;
       while (helperGroup && !helperGroup.userData.isLightHelper) {
         helperGroup = helperGroup.parent;
+      }
+
+      // Skip if helper is not visible (disabled light)
+      if (helperGroup && !helperGroup.visible) {
+        continue;
       }
 
       if (helperGroup && helperGroup.userData.lightIndex !== undefined) {
@@ -2276,12 +2352,19 @@ document.addEventListener('keydown', (event) => {
   switch (key) {
     case 'w': // Translate (move)
       setLightTransformMode('translate');
+      if (window.updateLightTransformModeUI) window.updateLightTransformModeUI('translate');
       break;
     case 'e': // Rotate
       setLightTransformMode('rotate');
+      if (window.updateLightTransformModeUI) window.updateLightTransformModeUI('rotate');
       break;
     case 'r': // Scale (for area lights)
       setLightTransformMode('scale');
+      if (window.updateLightTransformModeUI) window.updateLightTransformModeUI('scale');
+      break;
+    case 't': // Target (for SpotLights/DirectionalLights)
+      setLightTransformMode('target');
+      if (window.updateLightTransformModeUI) window.updateLightTransformModeUI('target');
       break;
     case 'escape':
       selectLight3D(-1);
@@ -2352,6 +2435,14 @@ function createLightHelper(light, usdLight, lightIndex) {
     // SpotLight helper for SphereLights with shaping properties
     // SpotLightHelper positions itself using the light's world position internally
     const spotHelper = new THREE.SpotLightHelper(light);
+
+    // Disable raycasting on the SpotLightHelper and its children (cone lines)
+    // so only the sphere mesh below is clickable
+    spotHelper.raycast = () => {};
+    spotHelper.traverse((child) => {
+      child.raycast = () => {};
+    });
+
     helperGroup.add(spotHelper);
 
     // Add sphere at light's world position for clickability
@@ -2571,6 +2662,8 @@ function convertUSDLightToThreeJS(usdLight) {
       // Check if it has shaping (spotlight-like behavior)
       if (usdLight.shapingConeAngle && usdLight.shapingConeAngle < 90) {
         light = new THREE.SpotLight(color, intensity);
+        // Reset position to origin (Three.js SpotLight defaults to (0,1,0) since r146)
+        light.position.set(0, 0, 0);
         light.angle = THREE.MathUtils.degToRad(usdLight.shapingConeAngle);
         light.penumbra = usdLight.shapingConeSoftness || 0;
         light.decay = 2;
@@ -3426,11 +3519,17 @@ function convertLightDataToProjectionLight(usdLight) {
   // Extract position and orientation from transform
   const { position, normal, tangent } = extractLightTransform(usdLight);
 
+  // Minimum HDRI radius to ensure lights are visible
+  // This ensures lights appear as at least ~3-4 pixels in a 1024-wide HDRI
+  const minHdriRadius = 0.3;
+
   switch (usdLight.type) {
     case 'sphere':
+      // Use actual radius but ensure minimum visibility in HDRI
+      // For sphere lights with shaping (SpotLights), they still have a physical radius
       return new SphereLight({
         position: position,
-        radius: usdLight.radius || 0.1,
+        radius: Math.max(usdLight.radius || 0.1, minHdriRadius),
         color: { r: color[0], g: color[1], b: color[2] },
         intensity: effectiveIntensity
       });
@@ -3442,7 +3541,8 @@ function convertLightDataToProjectionLight(usdLight) {
         color: { r: color[0], g: color[1], b: color[2] },
         intensity: effectiveIntensity,
         // Allow user-configurable pseudo-radius and intensity multiplier
-        pseudoRadius: usdLight.pseudoRadius,
+        // Use minimum radius if not specified
+        pseudoRadius: usdLight.pseudoRadius || minHdriRadius,
         intensityMultiplier: usdLight.intensityMultiplier
       });
 
@@ -3478,13 +3578,13 @@ function convertLightDataToProjectionLight(usdLight) {
       });
 
     case 'spot':
-      // Treat spot as point light with pseudo-radius
-      return new PointLight({
+      // Treat spot as sphere light with actual radius for proper HDRI visualization
+      // SpotLights have a physical emitter size (radius) that should be visible
+      return new SphereLight({
         position: position,
+        radius: Math.max(usdLight.radius || 0.1, minHdriRadius),
         color: { r: color[0], g: color[1], b: color[2] },
-        intensity: effectiveIntensity,
-        pseudoRadius: 0.05,
-        intensityMultiplier: usdLight.intensityMultiplier || 1.0
+        intensity: effectiveIntensity
       });
 
     case 'dome':
@@ -3495,7 +3595,7 @@ function convertLightDataToProjectionLight(usdLight) {
       // For cylinder or unknown types - use sphere as fallback
       return new SphereLight({
         position: position,
-        radius: usdLight.radius || 0.1,
+        radius: Math.max(usdLight.radius || 0.1, minHdriRadius),
         color: { r: color[0], g: color[1], b: color[2] },
         intensity: effectiveIntensity
       });
@@ -3520,12 +3620,16 @@ function projectLightsToHDRI(options = {}) {
     maxDistance: settings.maxDistance
   });
 
-  // Add lights (only enabled/visible lights)
+  // Add lights (only enabled lights)
   let addedLights = 0;
   let skippedLights = 0;
   for (let i = 0; i < lightData.length; i++) {
-    // Skip lights that are turned off
-    if (threeLights[i] && !threeLights[i].visible) {
+    // Skip lights that are turned off by user
+    // Use lightData.enabled state, not threeLights.visible state
+    // (threeLights.visible may be false in envmap mode for rendering purposes,
+    // but lightData.enabled represents user's intention for the light to be on/off)
+    const lightEnabled = lightData[i].enabled !== undefined ? lightData[i].enabled : true;
+    if (!lightEnabled) {
       skippedLights++;
       continue;
     }
@@ -3765,20 +3869,28 @@ function setLightingMode(mode) {
     // Remove HDRI from scene
     removeHDRIFromScene();
 
-    // Re-enable all lights
+    // Re-enable lights based on their enabled state (user's intention)
     for (let i = 0; i < threeLights.length; i++) {
       const lightObj = threeLights[i];
+      // Restore light visibility based on lightData.enabled (user's intention)
+      const lightEnabled = lightData[i]?.enabled !== undefined ? lightData[i].enabled : true;
+
       if (lightObj.isGroup) {
         lightObj.traverse((child) => {
           if (child.isLight) {
-            child.visible = true;
+            child.visible = lightEnabled;
           }
         });
       } else if (lightObj.isLight) {
-        lightObj.visible = true;
+        lightObj.visible = lightEnabled;
+      }
+
+      // Also restore helper visibility
+      if (lightHelpers[i]) {
+        lightHelpers[i].visible = lightEnabled;
       }
     }
-    debugLog('Lights enabled, using direct lighting');
+    debugLog('Lights restored to user-defined states, using direct lighting');
   }
 
   // Update UI
@@ -4422,20 +4534,32 @@ function toggleLight(lightIndex, enabled) {
   const lightObj = threeLights[lightIndex];
   const helper = lightHelpers[lightIndex];
 
-  // Determine new state
-  const newState = enabled !== undefined ? enabled : !lightObj.visible;
+  // Determine new state based on lightData.enabled (user's intention), not visible state
+  const currentEnabled = lightData[lightIndex]?.enabled !== undefined ? lightData[lightIndex].enabled : true;
+  const newState = enabled !== undefined ? enabled : !currentEnabled;
 
-  // Toggle the light object
-  lightObj.visible = newState;
-
-  // Toggle the helper if it exists
-  if (helper) {
-    helper.visible = newState;
-  }
-
-  // Update lightData state
+  // Update lightData state (user's intention)
   if (lightData[lightIndex]) {
     lightData[lightIndex].enabled = newState;
+  }
+
+  // Toggle visibility based on state and current lighting mode
+  // In envmap mode, direct lights should stay hidden (HDRI provides lighting)
+  // Only update Three.js visibility when NOT in envmap mode
+  if (lightingMode !== 'envmap') {
+    // Toggle the light object
+    lightObj.visible = newState;
+
+    // Toggle the helper if it exists
+    if (helper) {
+      helper.visible = newState;
+    }
+  } else {
+    // In envmap mode, only toggle the helper for visual feedback
+    // Keep light hidden (HDRI provides lighting)
+    if (helper) {
+      helper.visible = newState;
+    }
   }
 
   // Schedule HDRI refresh if live update is enabled
@@ -4464,13 +4588,15 @@ function setAllLightsEnabled(enabled) {
 /**
  * Get light enabled state
  * @param {number} lightIndex - Index of the light
- * @returns {boolean} Whether the light is enabled
+ * @returns {boolean} Whether the light is enabled (user's intention)
  */
 function isLightEnabled(lightIndex) {
-  if (lightIndex < 0 || lightIndex >= threeLights.length) {
+  if (lightIndex < 0 || lightIndex >= lightData.length) {
     return false;
   }
-  return threeLights[lightIndex].visible;
+  // Use lightData.enabled state (user's intention), not threeLights.visible
+  // (threeLights.visible may differ in envmap mode)
+  return lightData[lightIndex].enabled !== undefined ? lightData[lightIndex].enabled : true;
 }
 
 // ============================================
@@ -4938,6 +5064,34 @@ window.getSelectedLight3DIndex = () => selectedLight3DIndex;
 window.getLightTransformControls = () => lightTransformControls;
 window.getThreeLights = () => threeLights;
 window.getLightHelpers = () => lightHelpers;
+
+// Debug function to test picking at a specific screen position
+window.testPickingAt = (clientX, clientY) => {
+  const rect = renderer.domElement.getBoundingClientRect();
+  const mouse = new THREE.Vector2();
+  mouse.x = ((clientX - rect.left) / rect.width) * 2 - 1;
+  mouse.y = -((clientY - rect.top) / rect.height) * 2 + 1;
+
+  raycaster.setFromCamera(mouse, camera);
+  const lightIntersects = raycaster.intersectObjects(lightHelpers, true);
+
+  const results = lightIntersects.map(i => {
+    let g = i.object;
+    while (g && !g.userData?.isLightHelper) g = g.parent;
+    return {
+      distance: i.distance.toFixed(2),
+      objectType: i.object.type || i.object.constructor.name,
+      lightIndex: g?.userData?.lightIndex,
+      visible: g?.visible
+    };
+  });
+
+  return {
+    normalizedMouse: { x: mouse.x.toFixed(3), y: mouse.y.toFixed(3) },
+    intersectionCount: lightIntersects.length,
+    intersections: results
+  };
+};
 window.debugTransformControls = () => {
   // Debug function - always log regardless of DEBUG flag
   console.log('=== Transform Controls Debug ===');
