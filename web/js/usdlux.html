@@ -941,6 +941,23 @@
         <div id="light-properties">
             <h4>Light Properties</h4>
             <div class="prop-name" id="selected-light-name">No light selected</div>
+            <!-- Transform Mode Buttons -->
+            <div class="transform-mode-row" style="margin-bottom: 10px;">
+                <div class="mode-toggle-group">
+                    <button class="mode-toggle-btn active" id="light-mode-pos" onclick="setLightTransformModeUI('translate')">
+                        Pos<span class="shortcut">W</span>
+                    </button>
+                    <button class="mode-toggle-btn" id="light-mode-rot" onclick="setLightTransformModeUI('rotate')">
+                        Rot<span class="shortcut">E</span>
+                    </button>
+                    <button class="mode-toggle-btn" id="light-mode-scale" onclick="setLightTransformModeUI('scale')">
+                        Scale<span class="shortcut">R</span>
+                    </button>
+                    <button class="mode-toggle-btn" id="light-mode-target" style="display: none;" onclick="setLightTransformModeUI('target')">
+                        Target<span class="shortcut">T</span>
+                    </button>
+                </div>
+            </div>
             <div class="color-picker-row">
                 <label>Color:</label>
                 <input type="color" id="light-color-picker" value="#ffffff">
@@ -1208,7 +1225,8 @@
         <strong>Controls:</strong><br>
         Left-click + drag: Rotate<br>
         Right-click + drag: Pan<br>
-        Scroll: Zoom
+        Scroll: Zoom<br>
+        <strong>Transform:</strong> W/E/R/T
     </div>
 
     <!-- HDRI Preview Panel -->
@@ -1691,6 +1709,27 @@
             }
         });
 
+        // Transform mode UI handler
+        window.setLightTransformModeUI = function(mode) {
+            // Update button states
+            document.getElementById('light-mode-pos').classList.toggle('active', mode === 'translate');
+            document.getElementById('light-mode-rot').classList.toggle('active', mode === 'rotate');
+            document.getElementById('light-mode-scale').classList.toggle('active', mode === 'scale');
+            document.getElementById('light-mode-target').classList.toggle('active', mode === 'target');
+            // Call the actual mode setter
+            if (window.setLightTransformMode) {
+                window.setLightTransformMode(mode);
+            }
+        };
+
+        // Update transform mode UI from keyboard shortcuts
+        window.updateLightTransformModeUI = function(mode) {
+            document.getElementById('light-mode-pos').classList.toggle('active', mode === 'translate');
+            document.getElementById('light-mode-rot').classList.toggle('active', mode === 'rotate');
+            document.getElementById('light-mode-scale').classList.toggle('active', mode === 'scale');
+            document.getElementById('light-mode-target').classList.toggle('active', mode === 'target');
+        };
+
         // Callback to show/hide light properties panel and update values
         window.showLightProperties = function(lightData) {
             const panel = document.getElementById('light-properties');
@@ -1765,6 +1804,17 @@
             } else {
                 shapingSection.classList.remove('visible');
             }
+
+            // Show/hide Target button (only for SpotLights and DirectionalLights)
+            const targetBtn = document.getElementById('light-mode-target');
+            const hasTarget = hasShaping || lightType === 'distant';
+            targetBtn.style.display = hasTarget ? 'inline-block' : 'none';
+
+            // Reset transform mode UI to translate (default)
+            document.getElementById('light-mode-pos').classList.add('active');
+            document.getElementById('light-mode-rot').classList.remove('active');
+            document.getElementById('light-mode-scale').classList.remove('active');
+            document.getElementById('light-mode-target').classList.remove('active');
         };
 
         // Hide light properties when no light selected

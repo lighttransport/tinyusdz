@@ -1568,8 +1568,7 @@ async function loadDefaultScene() {
 }
 
 async function loadDefaultUSDFile() {
-    //const defaultFile = './assets/fancy-teapot-mtlx.usdz';
-    const defaultFile = './assets/NormalsTextureBiasAndScale.usdz';
+    const defaultFile = './assets/fancy-teapot-mtlx.usdz';
     updateStatus(`Loading ${defaultFile}...`);
     try {
         const response = await fetch(defaultFile);
@@ -1979,6 +1978,7 @@ async function convertMaterial(matData, index) {
         let material;
 
         if (useOpenPBRMaterial) {
+            console.log("use OpenPBRMaterial");
             // Create OpenPBRMaterial directly (Loaded version waits for textures)
             material = await convertToOpenPBRMaterialLoaded(matData, loaderState.nativeLoader);
             material.envMap = threeState.envMap;
@@ -2331,6 +2331,7 @@ async function convertToOpenPBRMaterialLoaded(matData, nativeLoader = null) {
         textureId: getOpenPBRTextureId(normalParam),
         scale: extractOpenPBRValue(geometrySection.normal_map_scale || openPBR.normal_map_scale, 1.0)
     };
+
 
     return material;
 }
