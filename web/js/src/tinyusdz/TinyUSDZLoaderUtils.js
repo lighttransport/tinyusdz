@@ -544,7 +544,9 @@ class TinyUSDZLoaderUtils extends LoaderUtils {
             console.warn('Material does not have OpenPBR data, falling back to UsdPreviewSurface');
             // Fall back to UsdPreviewSurface if available
             if (parsedMaterial && parsedMaterial.hasUsdPreviewSurface) {
-                return this.convertUsdMaterialToMeshPhysicalMaterial(parsedMaterial, usdScene);
+                // Extract surfaceShader data from the JSON structure
+                const shaderData = parsedMaterial.surfaceShader || parsedMaterial;
+                return this.convertUsdMaterialToMeshPhysicalMaterial(shaderData, usdScene);
             }
             return this.createDefaultMaterial();
         }
@@ -656,7 +658,10 @@ class TinyUSDZLoaderUtils extends LoaderUtils {
         if (useOpenPBR) {
             return this.convertOpenPBRMaterialToMeshPhysicalMaterial(parsedMaterial, usdScene, options);
         } else if (useUsdPreviewSurface) {
-            return this.convertUsdMaterialToMeshPhysicalMaterial(parsedMaterial, usdScene);
+            // Extract surfaceShader data from the JSON structure
+            // The JSON format nests shader properties under surfaceShader
+            const shaderData = parsedMaterial.surfaceShader || parsedMaterial;
+            return this.convertUsdMaterialToMeshPhysicalMaterial(shaderData, usdScene);
         }
 
         return this.createDefaultMaterial();
