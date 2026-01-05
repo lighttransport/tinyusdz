@@ -435,8 +435,9 @@ async function convertOpenPBRToMeshPhysicalMaterialLoaded(materialData, usdScene
         return material;
     }
 
-    // Texture cache
+    // Texture cache and delayed loading manager
     const textureCache = options.textureCache || new Map();
+    const textureManager = options.textureLoadingManager || null;
 
     // Helper to apply parameter with optional texture
     const applyParam = async (paramName, paramValue, group = null) => {
@@ -456,14 +457,22 @@ async function convertOpenPBRToMeshPhysicalMaterialLoaded(materialData, usdScene
         if (usdScene && hasTexture(paramValue)) {
             const texMapName = OPENPBR_TEXTURE_MAP[paramName];
             if (texMapName) {
-                const texture = await loadTextureFromUSD(usdScene, getTextureId(paramValue), textureCache);
-                if (texture) {
-                    material[texMapName] = texture;
-                    material.userData.textures[texMapName] = {
-                        textureId: getTextureId(paramValue),
-                        texture: texture
-                    };
-                    material.needsUpdate = true;
+                const textureId = getTextureId(paramValue);
+
+                // If textureLoadingManager is provided, queue texture for later loading
+                if (textureManager) {
+                    textureManager.queueTexture(material, texMapName, textureId, usdScene);
+                } else {
+                    // Load immediately (original behavior)
+                    const texture = await loadTextureFromUSD(usdScene, textureId, textureCache);
+                    if (texture) {
+                        material[texMapName] = texture;
+                        material.userData.textures[texMapName] = {
+                            textureId: textureId,
+                            texture: texture
+                        };
+                        material.needsUpdate = true;
+                    }
                 }
             }
         }
@@ -521,10 +530,15 @@ async function convertOpenPBRToMeshPhysicalMaterialLoaded(materialData, usdScene
             }
             // Load emission texture
             if (usdScene && hasTexture(flat.emission_color)) {
-                const texture = await loadTextureFromUSD(usdScene, getTextureId(flat.emission_color), textureCache);
-                if (texture) {
-                    material.emissiveMap = texture;
-                    material.userData.textures.emissiveMap = { textureId: getTextureId(flat.emission_color), texture };
+                const textureId = getTextureId(flat.emission_color);
+                if (textureManager) {
+                    textureManager.queueTexture(material, 'emissiveMap', textureId, usdScene);
+                } else {
+                    const texture = await loadTextureFromUSD(usdScene, textureId, textureCache);
+                    if (texture) {
+                        material.emissiveMap = texture;
+                        material.userData.textures.emissiveMap = { textureId, texture };
+                    }
                 }
             }
         }
@@ -541,11 +555,17 @@ async function convertOpenPBRToMeshPhysicalMaterialLoaded(materialData, usdScene
                 material.transparent = opacityValue < 1.0;
             }
             if (usdScene && hasTexture(opacityParam)) {
-                const texture = await loadTextureFromUSD(usdScene, getTextureId(opacityParam), textureCache);
-                if (texture) {
-                    material.alphaMap = texture;
-                    material.transparent = true;
-                    material.userData.textures.alphaMap = { textureId: getTextureId(opacityParam), texture };
+                const textureId = getTextureId(opacityParam);
+                // For alpha maps, we need to set transparent=true even in delayed mode
+                material.transparent = true;
+                if (textureManager) {
+                    textureManager.queueTexture(material, 'alphaMap', textureId, usdScene);
+                } else {
+                    const texture = await loadTextureFromUSD(usdScene, textureId, textureCache);
+                    if (texture) {
+                        material.alphaMap = texture;
+                        material.userData.textures.alphaMap = { textureId, texture };
+                    }
                 }
             }
         }
@@ -553,11 +573,17 @@ async function convertOpenPBRToMeshPhysicalMaterialLoaded(materialData, usdScene
         // Normal map
         const normalParam = flat.normal !== undefined ? flat.normal : flat.geometry_normal;
         if (normalParam !== undefined && usdScene && hasTexture(normalParam)) {
-            const texture = await loadTextureFromUSD(usdScene, getTextureId(normalParam), textureCache);
-            if (texture) {
-                material.normalMap = texture;
-                material.normalScale = new THREE.Vector2(1, 1);
-                material.userData.textures.normalMap = { textureId: getTextureId(normalParam), texture };
+            const textureId = getTextureId(normalParam);
+            // Initialize normalScale even in delayed mode
+            material.normalScale = new THREE.Vector2(1, 1);
+            if (textureManager) {
+                textureManager.queueTexture(material, 'normalMap', textureId, usdScene);
+            } else {
+                const texture = await loadTextureFromUSD(usdScene, textureId, textureCache);
+                if (texture) {
+                    material.normalMap = texture;
+                    material.userData.textures.normalMap = { textureId, texture };
+                }
             }
         }
     }
@@ -622,10 +648,15 @@ async function convertOpenPBRToMeshPhysicalMaterialLoaded(materialData, usdScene
                 material.emissive = createColor(emissionColor);
             }
             if (usdScene && hasTexture(pbr.emission.emission_color)) {
-                const texture = await loadTextureFromUSD(usdScene, getTextureId(pbr.emission.emission_color), textureCache);
-                if (texture) {
-                    material.emissiveMap = texture;
-                    material.userData.textures.emissiveMap = { textureId: getTextureId(pbr.emission.emission_color), texture };
+                const textureId = getTextureId(pbr.emission.emission_color);
+                if (textureManager) {
+                    textureManager.queueTexture(material, 'emissiveMap', textureId, usdScene);
+                } else {
+                    const texture = await loadTextureFromUSD(usdScene, textureId, textureCache);
+                    if (texture) {
+                        material.emissiveMap = texture;
+                        material.userData.textures.emissiveMap = { textureId, texture };
+                    }
                 }
             }
             if (pbr.emission.emission_luminance !== undefined) {
@@ -643,22 +674,32 @@ async function convertOpenPBRToMeshPhysicalMaterialLoaded(materialData, usdScene
                     material.transparent = opacityValue < 1.0;
                 }
                 if (usdScene && hasTexture(opacityParam)) {
-                    const texture = await loadTextureFromUSD(usdScene, getTextureId(opacityParam), textureCache);
-                    if (texture) {
-                        material.alphaMap = texture;
-                        material.transparent = true;
-                        material.userData.textures.alphaMap = { textureId: getTextureId(opacityParam), texture };
+                    const textureId = getTextureId(opacityParam);
+                    material.transparent = true;
+                    if (textureManager) {
+                        textureManager.queueTexture(material, 'alphaMap', textureId, usdScene);
+                    } else {
+                        const texture = await loadTextureFromUSD(usdScene, textureId, textureCache);
+                        if (texture) {
+                            material.alphaMap = texture;
+                            material.userData.textures.alphaMap = { textureId, texture };
+                        }
                     }
                 }
             }
 
             const normalParam = pbr.geometry.normal !== undefined ? pbr.geometry.normal : pbr.geometry.geometry_normal;
             if (normalParam !== undefined && usdScene && hasTexture(normalParam)) {
-                const texture = await loadTextureFromUSD(usdScene, getTextureId(normalParam), textureCache);
-                if (texture) {
-                    material.normalMap = texture;
-                    material.normalScale = new THREE.Vector2(1, 1);
-                    material.userData.textures.normalMap = { textureId: getTextureId(normalParam), texture };
+                const textureId = getTextureId(normalParam);
+                material.normalScale = new THREE.Vector2(1, 1);
+                if (textureManager) {
+                    textureManager.queueTexture(material, 'normalMap', textureId, usdScene);
+                } else {
+                    const texture = await loadTextureFromUSD(usdScene, textureId, textureCache);
+                    if (texture) {
+                        material.normalMap = texture;
+                        material.userData.textures.normalMap = { textureId, texture };
+                    }
                 }
             }
         }
