@@ -771,7 +771,7 @@ class TinyUSDZLoaderUtils extends LoaderUtils {
         }
 
         try {
-            // Use the TinyUSDZMaterialX converter (Loaded version waits for textures)
+            // Use the TinyUSDZMaterialX converter (Loaded version waits for textures(if textureLoadingManager is null))
             const material = await convertOpenPBRToMeshPhysicalMaterialLoaded(parsedMaterial, usdScene, {
                 envMap: options.envMap || null,
                 envMapIntensity: options.envMapIntensity || 1.0,
