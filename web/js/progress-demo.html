@@ -183,10 +183,42 @@
 
         #progress-bar {
             height: 100%;
-            width: 0%;
+            width: 100%;
             background: linear-gradient(90deg, #2196F3, #4CAF50);
             border-radius: 8px;
-            transition: width 0.3s ease-out;
+            transform-origin: left center;
+            transform: scaleX(0);
+            /* Use will-change to hint compositor for independent animation */
+            will-change: transform;
+            position: relative;
+        }
+
+        /* Animated stripe overlay to show activity during sync WASM execution */
+        #progress-bar::after {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: linear-gradient(
+                90deg,
+                transparent 0%,
+                rgba(255,255,255,0.3) 50%,
+                transparent 100%
+            );
+            animation: progress-shimmer 1.5s ease-in-out infinite;
+            background-size: 200% 100%;
+        }
+
+        @keyframes progress-shimmer {
+            0% { background-position: 200% 0; }
+            100% { background-position: -200% 0; }
+        }
+
+        /* Hide shimmer when progress is complete */
+        #progress-bar.complete::after {
+            display: none;
         }
 
         #progress-percentage {
@@ -265,6 +297,75 @@
         @keyframes pulse {
             0%, 100% { opacity: 1; }
             50% { opacity: 0.5; }
+        }
+
+        /* Texture Loading Progress Bar (bottom overlay) */
+        #texture-progress-container {
+            position: fixed;
+            bottom: 60px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: rgba(0, 0, 0, 0.9);
+            padding: 12px 20px;
+            border-radius: 8px;
+            min-width: 300px;
+            max-width: 400px;
+            display: none;
+            z-index: 9999;
+            border: 1px solid rgba(76, 175, 80, 0.3);
+            backdrop-filter: blur(10px);
+        }
+
+        #texture-progress-container.visible {
+            display: block;
+        }
+
+        #texture-progress-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 8px;
+        }
+
+        #texture-progress-title {
+            font-size: 13px;
+            font-weight: 500;
+            color: #4CAF50;
+        }
+
+        #texture-progress-count {
+            font-size: 12px;
+            color: #888;
+            font-family: monospace;
+        }
+
+        #texture-progress-bar-wrapper {
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 4px;
+            height: 6px;
+            overflow: hidden;
+            margin-bottom: 6px;
+        }
+
+        #texture-progress-bar {
+            height: 100%;
+            width: 100%;
+            background: linear-gradient(90deg, #4CAF50, #8BC34A);
+            border-radius: 4px;
+            transform-origin: left center;
+            transform: scaleX(0);
+            will-change: transform;
+            transition: transform 0.1s ease-out;
+        }
+
+        #texture-progress-details {
+            font-size: 11px;
+            color: #666;
+            text-align: center;
+            min-height: 14px;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
         }
 
         /* Help overlay */
@@ -554,6 +655,18 @@
                 <span>Complete</span>
             </div>
         </div>
+    </div>
+
+    <!-- Texture Loading Progress (appears after initial scene render) -->
+    <div id="texture-progress-container">
+        <div id="texture-progress-header">
+            <span id="texture-progress-title">Loading Textures</span>
+            <span id="texture-progress-count">0/0</span>
+        </div>
+        <div id="texture-progress-bar-wrapper">
+            <div id="texture-progress-bar"></div>
+        </div>
+        <div id="texture-progress-details"></div>
     </div>
 
     <!-- Help Overlay -->

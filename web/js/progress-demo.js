@@ -4,7 +4,7 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { TinyUSDZLoader } from 'tinyusdz/TinyUSDZLoader.js';
-import { TinyUSDZLoaderUtils } from 'tinyusdz/TinyUSDZLoaderUtils.js';
+import { TinyUSDZLoaderUtils, TextureLoadingManager } from 'tinyusdz/TinyUSDZLoaderUtils.js';
 import { setTinyUSDZ as setMaterialXTinyUSDZ } from 'tinyusdz/TinyUSDZMaterialX.js';
 import { OpenPBRMaterial } from './OpenPBRMaterial.js';
 
@@ -17,8 +17,9 @@ const CAMERA_PADDING = 1.2;
 
 // Sample models for testing
 const SAMPLE_MODELS = [
-    'assets/mtlx-normalmap-multi.usdz',
-    'assets/multi-mesh-test.usda'
+    //'assets/mtlx-normalmap-multi.usdz',
+    //'assets/multi-mesh-test.usda'
+    'assets/WesternDesertTown2-mtlx.usdz'
 ];
 
 // ============================================================================
@@ -43,7 +44,8 @@ const sceneState = {
     materials: [],
     textureCount: 0,
     meshCount: 0,
-    upAxis: 'Y'
+    upAxis: 'Y',
+    textureLoadingManager: null  // For delayed texture loading
 };
 
 // Settings
@@ -350,6 +352,92 @@ function resetProgressStages() {
     });
     progressState.currentStage = null;
     progressState.stageProgress = {};
+
+    // Reset progress bar to 0
+    const progressBar = document.getElementById('progress-bar');
+    progressBar.style.transform = 'scaleX(0)';
+    progressBar.classList.remove('complete');
+    document.getElementById('progress-percentage').textContent = '0%';
+
+    // Reset throttle timer
+    lastProgressUpdate = 0;
+}
+
+// Track last update time for throttling
+let lastProgressUpdate = 0;
+const PROGRESS_UPDATE_INTERVAL = 50; // ms - throttle updates to allow browser to paint
+
+/**
+ * Force browser to schedule a repaint.
+ * This uses a technique of reading layout properties which forces a reflow,
+ * combined with requestAnimationFrame queueing.
+ */
+function forceRepaint() {
+    // Force layout reflow by reading offsetHeight
+    void document.body.offsetHeight;
+
+    // Queue a microtask to potentially allow compositor to paint
+    queueMicrotask(() => {
+        void document.body.offsetHeight;
+    });
+}
+
+// ============================================================================
+// Texture Progress UI Functions
+// ============================================================================
+
+function showTextureProgress() {
+    const container = document.getElementById('texture-progress-container');
+    if (container) {
+        container.classList.add('visible');
+        // Reset progress bar
+        const bar = document.getElementById('texture-progress-bar');
+        if (bar) bar.style.transform = 'scaleX(0)';
+        updateTextureProgressUI({ loaded: 0, total: 0, percentage: 0, currentTexture: null });
+    }
+}
+
+function hideTextureProgress() {
+    const container = document.getElementById('texture-progress-container');
+    if (container) container.classList.remove('visible');
+}
+
+function updateTextureProgressUI(info) {
+    const { loaded, total, failed, percentage, currentTexture, isComplete } = info;
+
+    // Update count
+    const countEl = document.getElementById('texture-progress-count');
+    if (countEl) {
+        const failedText = failed > 0 ? ` (${failed} failed)` : '';
+        countEl.textContent = `${loaded}/${total}${failedText}`;
+    }
+
+    // Update progress bar
+    const bar = document.getElementById('texture-progress-bar');
+    if (bar) {
+        bar.style.transform = `scaleX(${percentage / 100})`;
+    }
+
+    // Update details
+    const detailsEl = document.getElementById('texture-progress-details');
+    if (detailsEl) {
+        if (isComplete) {
+            detailsEl.textContent = failed > 0
+                ? `Complete with ${failed} failures`
+                : 'All textures loaded';
+        } else if (currentTexture) {
+            detailsEl.textContent = `Loading: ${currentTexture}`;
+        } else {
+            detailsEl.textContent = 'Starting texture loading...';
+        }
+    }
+
+    // Auto-hide when complete after a delay
+    if (isComplete) {
+        setTimeout(() => {
+            hideTextureProgress();
+        }, 2000);
+    }
 }
 
 function updateProgressUI(progress) {
@@ -357,16 +445,33 @@ function updateProgressUI(progress) {
     const stage = progress.stage;
     const message = progress.message || '';
 
-    // Update progress bar
-    document.getElementById('progress-bar').style.width = `${percentage}%`;
+    // Throttle updates to give browser time to repaint
+    const now = performance.now();
+    if (now - lastProgressUpdate < PROGRESS_UPDATE_INTERVAL && percentage < 100) {
+        // Skip this update, but still record memory
+        recordMemoryPoint(stage, percentage);
+        return;
+    }
+    lastProgressUpdate = now;
+
+    // Update progress bar using transform (can be animated by compositor)
+    const progressBar = document.getElementById('progress-bar');
+    progressBar.style.transform = `scaleX(${percentage / 100})`;
+
+    // Add 'complete' class when done to stop shimmer animation
+    if (percentage >= 100 || stage === 'complete') {
+        progressBar.classList.add('complete');
+    }
+
+    // Update percentage text
     document.getElementById('progress-percentage').textContent = `${percentage}%`;
 
     // Update stage text
     const stageLabels = {
         'downloading': 'Downloading file...',
-        'parsing': 'Parsing USD...',
-        'building': 'Building meshes...',
-        'textures': 'Decoding textures...',
+        'parsing': 'Parsing USD (WASM)...',
+        'building': 'Building Three.js scene...',
+        'textures': 'Processing textures...',
         'materials': 'Converting materials...',
         'complete': 'Complete!'
     };
@@ -378,6 +483,12 @@ function updateProgressUI(progress) {
 
     // Record memory at each progress callback
     recordMemoryPoint(stage, percentage);
+
+    // Force browser repaint attempt
+    forceRepaint();
+
+    // Log progress for debugging (helps verify callbacks are being called)
+    console.log(`[Progress] ${stage}: ${percentage}% - ${message}`);
 }
 
 function updateStageIcons(currentStage) {
@@ -635,6 +746,14 @@ function cleanupScene() {
     sceneState.meshCount = 0;
     sceneState.textureCount = 0;
 
+    // Abort and reset texture loading manager
+    if (sceneState.textureLoadingManager) {
+        sceneState.textureLoadingManager.abort();
+        sceneState.textureLoadingManager.reset();
+        sceneState.textureLoadingManager = null;
+    }
+    hideTextureProgress();
+
     // Clear WASM memory
     if (loaderState.nativeLoader) {
         try {
@@ -697,7 +816,12 @@ function disposeMaterial(material) {
 // ============================================================================
 
 /**
- * Build Three.js scene from USD with detailed progress reporting
+ * Build Three.js scene from USD with detailed progress reporting.
+ * This function handles the JS layer processing (Three.js mesh/material/texture creation)
+ * which CAN show real-time progress since it's async JavaScript (not blocked by WASM).
+ *
+ * Uses delayed texture loading mode: scene renders first without textures,
+ * then textures load in background with separate progress bar.
  */
 async function buildSceneWithProgress(usd, onProgress) {
     const rootNode = usd.getDefaultRootNode();
@@ -709,32 +833,43 @@ async function buildSceneWithProgress(usd, onProgress) {
     sceneState.textureCount = 0;
     sceneState.materials = [];
 
+    // Create texture loading manager for delayed texture loading
+    sceneState.textureLoadingManager = new TextureLoadingManager();
+
     // Get mesh/material counts from native loader for accurate progress
     const totalMeshes = usd.numMeshes ? usd.numMeshes() : 0;
     const totalMaterials = usd.numMaterials ? usd.numMaterials() : 0;
     const totalTextures = usd.numTextures ? usd.numTextures() : 0;
-    let meshesBuilt = 0;
 
-    // Phase 1: Building meshes with per-mesh progress
+    // Phase 1: Building Three.js meshes with per-mesh progress
+    // This is JS layer processing - progress WILL update in real-time!
+    // Using delayed texture mode - textures are queued, not loaded immediately
     onProgress({
         stage: 'building',
         percentage: 50,
-        message: `Building meshes (0/${totalMeshes})...`
+        message: `Building Three.js meshes (0/${totalMeshes})...`
     });
+
+    // Allow initial progress to render
+    await new Promise(r => requestAnimationFrame(r));
 
     const threeRoot = await TinyUSDZLoaderUtils.buildThreeNode(
         rootNode,
         null,
         usd,
         {
-            // Callback for per-mesh progress (if supported)
-            onMeshBuilt: (meshName, meshIndex) => {
-                meshesBuilt++;
-                const progress = 50 + (meshesBuilt / Math.max(1, totalMeshes)) * 20;
+            // Enable delayed texture loading - textures will be queued
+            textureLoadingManager: sceneState.textureLoadingManager,
+
+            // Progress callback - called during JS layer mesh building
+            // This WILL show real-time updates because buildThreeNode yields to browser
+            onProgress: (info) => {
+                // Map buildThreeNode progress (0-100%) to our range (50-80%)
+                const mappedPercentage = 50 + (info.percentage * 0.3);
                 onProgress({
                     stage: 'building',
-                    percentage: Math.min(70, progress),
-                    message: `Building mesh ${meshesBuilt}/${totalMeshes}: ${meshName || 'mesh'}`
+                    percentage: Math.min(80, mappedPercentage),
+                    message: info.message
                 });
             }
         }
@@ -743,14 +878,20 @@ async function buildSceneWithProgress(usd, onProgress) {
     // Phase 2: Count meshes and materials from built scene
     onProgress({
         stage: 'materials',
-        percentage: 70,
-        message: `Processing materials (0/${totalMaterials})...`
+        percentage: 80,
+        message: `Counting materials...`
     });
 
+    // Yield to show materials stage
+    await new Promise(r => requestAnimationFrame(r));
+
     const materialSet = new Set();
+    let meshIndex = 0;
     threeRoot.traverse((obj) => {
         if (obj.isMesh) {
             sceneState.meshCount++;
+            meshIndex++;
+
             if (obj.material) {
                 if (Array.isArray(obj.material)) {
                     obj.material.forEach(m => materialSet.add(m));
@@ -763,13 +904,39 @@ async function buildSceneWithProgress(usd, onProgress) {
 
     sceneState.materials = Array.from(materialSet);
 
-    // Count textures from materials
-    sceneState.materials.forEach(mat => {
-        const textureProps = ['map', 'normalMap', 'roughnessMap', 'metalnessMap', 'emissiveMap', 'aoMap', 'alphaMap'];
+    // Phase 3: Count textures from materials with progress
+    onProgress({
+        stage: 'textures',
+        percentage: 85,
+        message: `Counting textures (0/${sceneState.materials.length} materials)...`
+    });
+
+    // Yield to show textures stage
+    await new Promise(r => requestAnimationFrame(r));
+
+    const textureProps = ['map', 'normalMap', 'roughnessMap', 'metalnessMap', 'emissiveMap', 'aoMap', 'alphaMap'];
+    let materialIndex = 0;
+
+    for (const mat of sceneState.materials) {
+        materialIndex++;
+
         textureProps.forEach(prop => {
             if (mat[prop]) sceneState.textureCount++;
         });
-    });
+
+        // Update progress every few materials
+        if (materialIndex % 5 === 0 || materialIndex === sceneState.materials.length) {
+            const texProgress = 85 + (materialIndex / sceneState.materials.length) * 10;
+            onProgress({
+                stage: 'textures',
+                percentage: Math.min(95, texProgress),
+                message: `Processing materials (${materialIndex}/${sceneState.materials.length}), ${sceneState.textureCount} textures found`
+            });
+
+            // Yield periodically to allow UI updates
+            await new Promise(r => requestAnimationFrame(r));
+        }
+    }
 
     // Report final counts
     onProgress({
@@ -988,6 +1155,42 @@ async function loadUSDWithProgress(source, isFile = false) {
         updateStatus(`Model loaded (upAxis: ${sceneState.upAxis})`);
 
         hideProgress();
+
+        // Force a render frame BEFORE starting texture loading
+        // This ensures the scene without textures is displayed first
+        await new Promise(r => requestAnimationFrame(r));
+        threeState.renderer.render(threeState.scene, threeState.camera);
+
+        // Start delayed texture loading if there are queued textures
+        if (sceneState.textureLoadingManager && sceneState.textureLoadingManager.total > 0) {
+            const texManager = sceneState.textureLoadingManager;
+            const totalTextures = texManager.total;
+
+            console.log(`[Progress Demo] Starting delayed texture loading: ${totalTextures} textures queued`);
+            showTextureProgress();
+
+            // Start texture loading with progress callbacks
+            // This runs asynchronously - scene is already visible and interactive
+            texManager.startLoading({
+                onProgress: updateTextureProgressUI,
+                onTextureLoaded: (material, mapProperty, texture) => {
+                    // Material is automatically updated by the manager
+                    // Force re-render to show the new texture
+                    material.needsUpdate = true;
+                },
+                concurrency: 2,      // Load 2 textures at a time
+                yieldInterval: 16    // Yield to browser every frame (~60fps)
+            }).then(status => {
+                console.log(`[Progress Demo] Texture loading complete: ${status.loaded}/${status.total} loaded, ${status.failed} failed`);
+
+                // Update texture count in model info
+                sceneState.textureCount = status.loaded;
+                document.getElementById('texture-count').textContent = sceneState.textureCount;
+            }).catch(err => {
+                console.error('[Progress Demo] Texture loading error:', err);
+                hideTextureProgress();
+            });
+        }
 
     } catch (error) {
         console.error('Failed to load USD:', error);
