@@ -6,13 +6,262 @@ import { LoaderUtils } from "three"
 import { convertOpenPBRToMeshPhysicalMaterialLoaded } from './TinyUSDZMaterialX.js';
 import { decodeEXR as decodeEXRWithFallback } from './EXRDecoder.js';
 
+/**
+ * TextureLoadingManager - Manages delayed/progressive texture loading.
+ *
+ * This allows the scene to render immediately with basic materials,
+ * while textures load in the background with progress reporting.
+ *
+ * Usage:
+ *   const manager = new TextureLoadingManager();
+ *
+ *   // Queue texture tasks during material setup
+ *   manager.queueTexture(material, 'map', textureId, usdScene);
+ *
+ *   // Start loading after scene is rendered
+ *   await manager.startLoading({
+ *     onProgress: (info) => console.log(`${info.loaded}/${info.total} textures`),
+ *     concurrency: 2,  // Load 2 textures at a time
+ *     yieldInterval: 16  // Yield to browser every 16ms
+ *   });
+ */
+class TextureLoadingManager {
+    constructor() {
+        this.queue = [];           // Pending texture tasks
+        this.loaded = 0;           // Number of loaded textures
+        this.failed = 0;           // Number of failed textures
+        this.total = 0;            // Total textures to load
+        this.isLoading = false;    // Loading in progress
+        this.aborted = false;      // Loading was aborted
+    }
+
+    /**
+     * Queue a texture to be loaded later
+     * @param {THREE.Material} material - Target material
+     * @param {string} mapProperty - Property name (e.g., 'map', 'normalMap')
+     * @param {number} textureId - USD texture ID
+     * @param {Object} usdScene - USD scene/loader instance
+     * @param {Object} options - Additional options (e.g., normalScale)
+     */
+    queueTexture(material, mapProperty, textureId, usdScene, options = {}) {
+        this.queue.push({
+            material,
+            mapProperty,
+            textureId,
+            usdScene,
+            options,
+            status: 'pending'
+        });
+        this.total = this.queue.length;
+    }
+
+    /**
+     * Get current loading status
+     */
+    getStatus() {
+        return {
+            total: this.total,
+            loaded: this.loaded,
+            failed: this.failed,
+            pending: this.total - this.loaded - this.failed,
+            percentage: this.total > 0 ? (this.loaded / this.total) * 100 : 0,
+            isLoading: this.isLoading,
+            isComplete: this.loaded + this.failed >= this.total && !this.isLoading
+        };
+    }
+
+    /**
+     * Abort loading
+     */
+    abort() {
+        this.aborted = true;
+    }
+
+    /**
+     * Reset manager for new loading session
+     */
+    reset() {
+        this.queue = [];
+        this.loaded = 0;
+        this.failed = 0;
+        this.total = 0;
+        this.isLoading = false;
+        this.aborted = false;
+    }
+
+    /**
+     * Start loading queued textures with progress reporting
+     * @param {Object} options - Loading options
+     * @param {Function} options.onProgress - Progress callback ({loaded, total, percentage, currentTexture})
+     * @param {Function} options.onTextureLoaded - Called when each texture loads (material, mapProperty, texture)
+     * @param {number} options.concurrency - Number of concurrent loads (default: 1)
+     * @param {number} options.yieldInterval - ms between browser yields (default: 16)
+     * @returns {Promise<Object>} - Final status {loaded, failed, total}
+     */
+    async startLoading(options = {}) {
+        const {
+            onProgress = null,
+            onTextureLoaded = null,
+            concurrency = 1,
+            yieldInterval = 16
+        } = options;
+
+        if (this.isLoading) {
+            console.warn('TextureLoadingManager: Already loading');
+            return this.getStatus();
+        }
+
+        this.isLoading = true;
+        this.aborted = false;
+        let lastYieldTime = performance.now();
+
+        // Report initial progress
+        if (onProgress) {
+            onProgress({
+                loaded: 0,
+                total: this.total,
+                percentage: 0,
+                currentTexture: null
+            });
+        }
+
+        // Yield to allow initial render without textures
+        await new Promise(r => requestAnimationFrame(r));
+
+        // Process queue with concurrency control
+        const pendingTasks = [...this.queue];
+        const activeTasks = new Set();
+
+        const loadTexture = async (task) => {
+            if (this.aborted) return;
+
+            task.status = 'loading';
+            const { material, mapProperty, textureId, usdScene, options: taskOptions } = task;
+
+            try {
+                const texture = await TinyUSDZLoaderUtils.getTextureFromUSD(usdScene, textureId);
+
+                if (texture && !this.aborted) {
+                    material[mapProperty] = texture;
+
+                    // Apply special options (e.g., normal map scale)
+                    if (taskOptions.normalScale && mapProperty === 'normalMap' && material.normalScale) {
+                        material.normalScale.set(taskOptions.normalScale, taskOptions.normalScale);
+                    }
+
+                    material.needsUpdate = true;
+                    task.status = 'loaded';
+                    this.loaded++;
+
+                    if (onTextureLoaded) {
+                        onTextureLoaded(material, mapProperty, texture);
+                    }
+                }
+            } catch (err) {
+                console.warn(`Failed to load texture ${textureId} for ${mapProperty}:`, err.message);
+                task.status = 'failed';
+                this.failed++;
+            }
+
+            // Report progress
+            if (onProgress && !this.aborted) {
+                onProgress({
+                    loaded: this.loaded,
+                    failed: this.failed,
+                    total: this.total,
+                    percentage: (this.loaded / this.total) * 100,
+                    currentTexture: `${mapProperty} (${textureId})`
+                });
+            }
+
+            // Yield to browser periodically
+            const now = performance.now();
+            if (now - lastYieldTime >= yieldInterval) {
+                lastYieldTime = now;
+                await new Promise(r => requestAnimationFrame(r));
+            }
+        };
+
+        // Process with concurrency limit
+        while (pendingTasks.length > 0 || activeTasks.size > 0) {
+            if (this.aborted) break;
+
+            // Start new tasks up to concurrency limit
+            while (pendingTasks.length > 0 && activeTasks.size < concurrency) {
+                const task = pendingTasks.shift();
+                const promise = loadTexture(task).then(() => {
+                    activeTasks.delete(promise);
+                });
+                activeTasks.add(promise);
+            }
+
+            // Wait for at least one task to complete
+            if (activeTasks.size > 0) {
+                await Promise.race(activeTasks);
+            }
+        }
+
+        this.isLoading = false;
+
+        // Final progress report
+        if (onProgress) {
+            onProgress({
+                loaded: this.loaded,
+                failed: this.failed,
+                total: this.total,
+                percentage: 100,
+                currentTexture: null,
+                isComplete: true
+            });
+        }
+
+        return this.getStatus();
+    }
+}
+
+// Export the manager class
+export { TextureLoadingManager };
+
 class TinyUSDZLoaderUtils extends LoaderUtils {
 
     // Static reference to TinyUSDZ WASM module for EXR fallback
     static _tinyusdz = null;
 
+    // Yield interval for UI updates (ms)
+    static YIELD_INTERVAL_MS = 16; // ~60fps
+
     constructor() {
         super();
+    }
+
+    /**
+     * Yield to browser to allow UI repaint during long-running async operations.
+     * Uses requestAnimationFrame for optimal frame timing.
+     * @returns {Promise<void>}
+     */
+    static yieldToUI() {
+        return new Promise(resolve => {
+            // Use requestAnimationFrame for smoother updates
+            // Falls back to setTimeout if RAF is not available
+            if (typeof requestAnimationFrame === 'function') {
+                requestAnimationFrame(() => resolve());
+            } else {
+                setTimeout(resolve, 0);
+            }
+        });
+    }
+
+    /**
+     * Conditional yield - only yields if enough time has passed since last yield
+     * @param {Object} state - State object with lastYieldTime property
+     * @returns {Promise<void>}
+     */
+    static async maybeYieldToUI(state) {
+        const now = performance.now();
+        if (!state.lastYieldTime || (now - state.lastYieldTime) >= this.YIELD_INTERVAL_MS) {
+            state.lastYieldTime = now;
+            await this.yieldToUI();
+        }
     }
 
     /**
@@ -275,33 +524,47 @@ class TinyUSDZLoaderUtils extends LoaderUtils {
     // - [x] clearcoat -> clearcoat
     // - [x] clearcoatRoughness -> clearcoatRoughness
     // - [x] specularColor -> specular
-    // - [x] roughness -> roughness 
+    // - [x] roughness -> roughness
     // - [x] metallic -> metalness
     // - [x] emissiveColor -> emissive
     // - [x] opacity -> opacity (TODO: map to .transmission?)
     // - [x] occlusion -> aoMap
     // - [x] normal -> normalMap
     // - [x] displacement -> displacementMap
-    static convertUsdMaterialToMeshPhysicalMaterial(usdMaterial, usdScene) {
+    //
+    // Options:
+    // - textureLoadingManager: TextureLoadingManager instance for delayed texture loading
+    //   If provided, textures are queued instead of loaded immediately
+    //
+    static convertUsdMaterialToMeshPhysicalMaterial(usdMaterial, usdScene, options = {}) {
         const material = new THREE.MeshPhysicalMaterial();
-        const loader = new THREE.TextureLoader();
+        const textureManager = options.textureLoadingManager || null;
+
+        // Helper to load texture immediately or queue for later
+        const loadOrQueueTexture = (mapProperty, textureId, textureOptions = {}) => {
+            if (textureManager) {
+                // Delayed mode: queue texture for later loading
+                textureManager.queueTexture(material, mapProperty, textureId, usdScene, textureOptions);
+            } else {
+                // Immediate mode: load texture now (original behavior)
+                this.getTextureFromUSD(usdScene, textureId).then((texture) => {
+                    material[mapProperty] = texture;
+                    material.needsUpdate = true;
+                }).catch((err) => {
+                    console.error(`failed to load ${mapProperty} texture:`, err);
+                });
+            }
+        };
 
         // Diffuse color and texture
         material.color = new THREE.Color(0.18, 0.18, 0.18);
         if (Object.prototype.hasOwnProperty.call(usdMaterial, 'diffuseColor')) {
             const color = usdMaterial.diffuseColor;
             material.color = new THREE.Color(color[0], color[1], color[2]);
-            //console.log("diffuseColor:", material.color);
         }
 
         if (Object.prototype.hasOwnProperty.call(usdMaterial, 'diffuseColorTextureId')) {
-            this.getTextureFromUSD(usdScene, usdMaterial.diffuseColorTextureId).then((texture) => {
-                //console.log("gettex");
-                material.map = texture;
-                material.needsUpdate = true;
-            }).catch((err) => {
-                console.error("failed to load texture. uri not exists or Cross-Site origin header is not set in the web server?", err);
-            });
+            loadOrQueueTexture('map', usdMaterial.diffuseColorTextureId);
         }
 
         // IOR
@@ -334,12 +597,7 @@ class TinyUSDZLoaderUtils extends LoaderUtils {
                 material.specularColor = new THREE.Color(color[0], color[1], color[2]);
             }
             if (Object.prototype.hasOwnProperty.call(usdMaterial, 'specularColorTextureId')) {
-                this.getTextureFromUSD(usdScene, usdMaterial.specularColorTextureId).then((texture) => {
-                    material.specularColorMap = texture;
-                    material.needsUpdate = true;
-                }).catch((err) => {
-                    console.error("failed to load specular color texture", err);
-                });
+                loadOrQueueTexture('specularColorMap', usdMaterial.specularColorTextureId);
             }
         } else {
             material.metalness = 0.0;
@@ -347,12 +605,7 @@ class TinyUSDZLoaderUtils extends LoaderUtils {
                 material.metalness = usdMaterial.metallic;
             }
             if (Object.prototype.hasOwnProperty.call(usdMaterial, 'metallicTextureId')) {
-                this.getTextureFromUSD(usdScene, usdMaterial.metallicTextureId).then((texture) => {
-                    material.metalnessMap = texture;
-                    material.needsUpdate = true;
-                }).catch((err) => {
-                    console.error("failed to load metallic texture", err);
-                });
+                loadOrQueueTexture('metalnessMap', usdMaterial.metallicTextureId);
             }
         }
 
@@ -362,12 +615,7 @@ class TinyUSDZLoaderUtils extends LoaderUtils {
             material.roughness = usdMaterial.roughness;
         }
         if (Object.prototype.hasOwnProperty.call(usdMaterial, 'roughnessTextureId')) {
-            this.getTextureFromUSD(usdScene, usdMaterial.roughnessTextureId).then((texture) => {
-                material.roughnessMap = texture;
-                material.needsUpdate = true;
-            }).catch((err) => {
-                console.error("failed to load roughness texture", err);
-            });
+            loadOrQueueTexture('roughnessMap', usdMaterial.roughnessTextureId);
         }
 
         // Emissive
@@ -376,12 +624,7 @@ class TinyUSDZLoaderUtils extends LoaderUtils {
             material.emissive = new THREE.Color(color[0], color[1], color[2]);
         }
         if (Object.prototype.hasOwnProperty.call(usdMaterial, 'emissiveColorTextureId')) {
-            this.getTextureFromUSD(usdScene, usdMaterial.emissiveColorTextureId).then((texture) => {
-                material.emissiveMap = texture;
-                material.needsUpdate = true;
-            }).catch((err) => {
-                console.error("failed to load emissive texture", err);
-            });
+            loadOrQueueTexture('emissiveMap', usdMaterial.emissiveColorTextureId);
         }
 
         // Opacity
@@ -393,46 +636,22 @@ class TinyUSDZLoaderUtils extends LoaderUtils {
             }
         }
         if (Object.prototype.hasOwnProperty.call(usdMaterial, 'opacityTextureId')) {
-            this.getTextureFromUSD(usdScene, usdMaterial.opacityTextureId).then((texture) => {
-                material.alphaMap = texture;
-                // FIXME. disable opacity texture for a while.
-                // transparent = true will create completely transparent material for some reason.
-                //material.transparent = true; 
-                material.needsUpdate = true;
-            }).catch((err) => {
-                console.error("failed to load opacity texture", err);
-            });
+            loadOrQueueTexture('alphaMap', usdMaterial.opacityTextureId);
         }
 
         // Ambient Occlusion
         if (Object.prototype.hasOwnProperty.call(usdMaterial, 'occlusionTextureId')) {
-            this.getTextureFromUSD(usdScene, usdMaterial.occlusionTextureId).then((texture) => {
-                material.aoMap = texture;
-                material.needsUpdate = true;
-            }).catch((err) => {
-                console.error("failed to load occlusion texture", err);
-            });
+            loadOrQueueTexture('aoMap', usdMaterial.occlusionTextureId);
         }
 
         // Normal Map
         if (Object.prototype.hasOwnProperty.call(usdMaterial, 'normalTextureId')) {
-            this.getTextureFromUSD(usdScene, usdMaterial.normalTextureId).then((texture) => {
-                material.normalMap = texture;
-                material.needsUpdate = true;
-            }).catch((err) => {
-                console.error("failed to load normal texture", err);
-            });
+            loadOrQueueTexture('normalMap', usdMaterial.normalTextureId);
         }
 
         // Displacement Map
         if (Object.prototype.hasOwnProperty.call(usdMaterial, 'displacementTextureId')) {
-            this.getTextureFromUSD(usdScene, usdMaterial.displacementTextureId).then((texture) => {
-                material.displacementMap = texture;
-                material.displacementScale = 1.0;
-                material.needsUpdate = true;
-            }).catch((err) => {
-                console.error("failed to load displacement texture", err);
-            });
+            loadOrQueueTexture('displacementMap', usdMaterial.displacementTextureId, { displacementScale: 1.0 });
         }
 
         return material;
@@ -546,7 +765,7 @@ class TinyUSDZLoaderUtils extends LoaderUtils {
             if (parsedMaterial && parsedMaterial.hasUsdPreviewSurface) {
                 // Extract surfaceShader data from the JSON structure
                 const shaderData = parsedMaterial.surfaceShader || parsedMaterial;
-                return this.convertUsdMaterialToMeshPhysicalMaterial(shaderData, usdScene);
+                return this.convertUsdMaterialToMeshPhysicalMaterial(shaderData, usdScene, options);
             }
             return this.createDefaultMaterial();
         }
@@ -556,7 +775,8 @@ class TinyUSDZLoaderUtils extends LoaderUtils {
             const material = await convertOpenPBRToMeshPhysicalMaterialLoaded(parsedMaterial, usdScene, {
                 envMap: options.envMap || null,
                 envMapIntensity: options.envMapIntensity || 1.0,
-                textureCache: options.textureCache || new Map()
+                textureCache: options.textureCache || new Map(),
+                textureLoadingManager: options.textureLoadingManager || null
             });
 
             // Apply sideness based on USD doubleSided attribute
@@ -661,7 +881,8 @@ class TinyUSDZLoaderUtils extends LoaderUtils {
             // Extract surfaceShader data from the JSON structure
             // The JSON format nests shader properties under surfaceShader
             const shaderData = parsedMaterial.surfaceShader || parsedMaterial;
-            return this.convertUsdMaterialToMeshPhysicalMaterial(shaderData, usdScene);
+            // Pass options through to support textureLoadingManager
+            return this.convertUsdMaterialToMeshPhysicalMaterial(shaderData, usdScene, options);
         }
 
         return this.createDefaultMaterial();
@@ -772,7 +993,8 @@ class TinyUSDZLoaderUtils extends LoaderUtils {
                     envMap: options.envMap || null,
                     envMapIntensity: options.envMapIntensity || 1.0,
                     textureCache: options.textureCache || new Map(),
-                    doubleSided: geometry.userData['doubleSided']
+                    doubleSided: geometry.userData['doubleSided'],
+                    textureLoadingManager: options.textureLoadingManager || null
                 });
 
                 // Store material metadata for UI and reloading
@@ -842,7 +1064,8 @@ class TinyUSDZLoaderUtils extends LoaderUtils {
                         envMap: options.envMap || null,
                         envMapIntensity: options.envMapIntensity || 1.0,
                         textureCache: options.textureCache || new Map(),
-                        doubleSided: geometry.userData['doubleSided']
+                        doubleSided: geometry.userData['doubleSided'],
+                        textureLoadingManager: options.textureLoadingManager || null
                     });
 
                     material.envMap = options.envMap || null;
@@ -910,14 +1133,30 @@ class TinyUSDZLoaderUtils extends LoaderUtils {
         return count;
     }
 
+    /**
+     * Count total meshes in USD hierarchy
+     * @private
+     */
+    static _countMeshes(usdNode) {
+        let count = usdNode.nodeType === 'mesh' ? 1 : 0;
+        if (usdNode.children) {
+            for (const child of usdNode.children) {
+                count += this._countMeshes(child);
+            }
+        }
+        return count;
+    }
+
     // Supported options:
     // - 'overrideMaterial' : Override usd material with defaultMtl.
     // - 'onProgress' : Progress callback (info) => void
-    //     info: { stage: 'building', percentage: number, message: string }
+    //     info: { stage: 'building'|'textures', percentage: number, message: string }
     // - '_progressState' : Internal state for progress tracking (auto-created)
 
     /**
      * Build a Three.js scene graph from a USD node hierarchy
+     * Includes browser yields to allow UI updates during scene building.
+     *
      * @param {Object} usdNode - USD node from TinyUSDZLoader
      * @param {THREE.Material} defaultMtl - Default material to use
      * @param {Object} usdScene - USD scene object (TinyUSDZLoaderNative)
@@ -931,18 +1170,24 @@ class TinyUSDZLoaderUtils extends LoaderUtils {
         // Initialize progress tracking on first call (root node)
         if (!options._progressState) {
             const totalNodes = this._countNodes(usdNode);
+            const totalMeshes = this._countMeshes(usdNode);
             options._progressState = {
                 processedNodes: 0,
-                totalNodes: totalNodes
+                processedMeshes: 0,
+                totalNodes: totalNodes,
+                totalMeshes: totalMeshes,
+                lastYieldTime: 0
             };
             // Report initial progress
             if (options.onProgress) {
                 options.onProgress({
                     stage: 'building',
                     percentage: 0,
-                    message: `Building scene (0/${totalNodes} nodes)...`
+                    message: `Building scene (0/${totalMeshes} meshes)...`
                 });
             }
+            // Initial yield to show progress UI
+            await this.yieldToUI();
         }
 
         var node = new THREE.Group();
@@ -953,39 +1198,43 @@ class TinyUSDZLoaderUtils extends LoaderUtils {
             // intermediate xform node
             // Apply the USD local transform matrix to the Three.js node
             const matrix = this.toMatrix4(usdNode.localMatrix);
-            //console.log("  Applied localMatrix:", {
-            //    matrix: matrix});
 
             // Decompose the matrix into position, rotation, and scale
             // This is necessary for Three.js to properly handle the transform
             node.applyMatrix4(matrix);
-
-            // Log transform for debugging
-            //console.log("  Applied xform matrix:", {
-            //    position: [node.position.x, node.position.y, node.position.z],
-            //    rotation: [node.rotation.x, node.rotation.y, node.rotation.z],
-            //    scale: [node.scale.x, node.scale.y, node.scale.z]
-            //});
 
         } else if (usdNode.nodeType == 'mesh') {
 
             // contentId is the mesh ID in the USD scene.
             const mesh = usdScene.getMesh(usdNode.contentId);
 
+            // Update progress before building mesh
+            if (options._progressState && options.onProgress) {
+                const { processedMeshes, totalMeshes } = options._progressState;
+                const percentage = (processedMeshes / Math.max(1, totalMeshes)) * 100;
+                options.onProgress({
+                    stage: 'building',
+                    percentage: percentage,
+                    message: `Building mesh ${processedMeshes + 1}/${totalMeshes}: ${usdNode.primName}`
+                });
+            }
+
+            // Yield to browser before heavy mesh setup
+            await this.maybeYieldToUI(options._progressState);
+
             const threeMesh = await this.setupMesh(mesh, defaultMtl, usdScene, options);
             node = threeMesh;
+
+            // Increment mesh counter after building
+            if (options._progressState) {
+                options._progressState.processedMeshes++;
+            }
 
             // Apply transform to mesh nodes as well
             // Mesh nodes can also have transforms in USD
             if (usdNode.localMatrix) {
                 const matrix = this.toMatrix4(usdNode.localMatrix);
                 node.applyMatrix4(matrix);
-
-                //console.log("  Applied mesh matrix:", {
-                //    position: [node.position.x, node.position.y, node.position.z],
-                //    rotation: [node.rotation.x, node.rotation.y, node.rotation.z],
-                //    scale: [node.scale.x, node.scale.y, node.scale.z]
-                //});
             }
 
         } else {
@@ -1003,16 +1252,9 @@ class TinyUSDZLoaderUtils extends LoaderUtils {
         // Update progress after processing this node
         if (options._progressState) {
             options._progressState.processedNodes++;
-            const { processedNodes, totalNodes } = options._progressState;
-            const percentage = (processedNodes / totalNodes) * 100;
 
-            if (options.onProgress) {
-                options.onProgress({
-                    stage: 'building',
-                    percentage: percentage,
-                    message: `Building: ${usdNode.primName} (${processedNodes}/${totalNodes})`
-                });
-            }
+            // Yield periodically to allow UI updates
+            await this.maybeYieldToUI(options._progressState);
         }
 
         if (Object.prototype.hasOwnProperty.call(usdNode, 'children')) {
