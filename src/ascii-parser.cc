@@ -31,6 +31,7 @@
 #include <vector>
 
 #include "ascii-parser.hh"
+#include "parser-timing.hh"
 #include "path-util.hh"
 #include "str-util.hh"
 #include "tiny-format.hh"
@@ -92,6 +93,67 @@ constexpr auto kTimeSamplesSuffix = ".timeSamples";
 constexpr auto kConnectSuffix = ".connect";
 
 constexpr auto kAscii = "[ASCII]";
+
+// Keyword database for fix suggestions (Priority 5)
+// Contains common USD specifiers, types, and keywords
+// Using C-style array to avoid static initialization requirements
+static constexpr const char* g_usd_keywords[] = {
+  // Specifiers
+  "def", "over", "class",
+  // Variability
+  "uniform", "varying", "token",
+  // Metadata indicators
+  "custom", "documentation", "doc", "comment",
+  // List edit qualifiers
+  "add", "delete", "reorder", "append", "prepend",
+  // Relationship indicators
+  "rel", "relationship",
+  // Attribute modifiers
+  "timeVarying",
+  // Common scalar types
+  "bool", "byte", "ubyte", "int", "uint", "long", "ulong",
+  "half", "float", "double", "string", "asset",
+  // Vector types
+  "int2", "int3", "int4",
+  "uint2", "uint3", "uint4",
+  "float2", "float3", "float4",
+  "double2", "double3", "double4",
+  "half2", "half3", "half4",
+  // Color types
+  "color3h", "color3f", "color3d",
+  "color4h", "color4f", "color4d",
+  // Matrix types
+  "matrix2f", "matrix3f", "matrix4f",
+  "matrix2d", "matrix3d", "matrix4d",
+  // Geometric types
+  "point3h", "point3f", "point3d",
+  "vector3h", "vector3f", "vector3d",
+  "normal3h", "normal3f", "normal3d",
+  "texcoord2h", "texcoord2f", "texcoord2d",
+  "texcoord3h", "texcoord3f", "texcoord3d",
+  "quath", "quatf", "quatd",
+  // Special types
+  "path", "reference", "payload",
+  // Prim types (common)
+  "Mesh", "Sphere", "Cube", "Cylinder", "Cone",
+  "Xform", "Scope", "Group", "Assembly",
+  "Light", "SphereLight", "RectLight", "DomeLight",
+  "Material", "Shader", "Texture",
+  "BasisCurves", "PointInstancer", "Points",
+  // Attributes (common)
+  "points", "normals", "primvars", "indices",
+  "extent", "visibility", "purpose", "kind",
+  "interpolation", "faceVertexCounts", "faceVertexIndices",
+  // Metadata field names
+  "timeSamples", "connect", "customData",
+  "subLayers", "defaultPrim", "upAxis",
+  // Time/frame related
+  "timeCodesPerSecond", "startTimeCode", "endTimeCode",
+  "framesPerSecond", "metersPerUnit", "kilogramsPerUnit"
+};
+
+static constexpr size_t g_usd_keywords_count =
+    sizeof(g_usd_keywords) / sizeof(g_usd_keywords[0]);
 
 extern template bool AsciiParser::ParseBasicTypeArray(
     std::vector<nonstd::optional<bool>> *result);
@@ -691,16 +753,23 @@ std::string AsciiParser::GetError() {
     }
     seen_errors.insert(error_key.str());
     
-    // Format error with precise location
-    ss << "USDA error at line " << (diag.cursor.row + 1) 
+    // Format error with error type and precise location
+    ss << diag.TypeName() << " at line " << (diag.cursor.row + 1)
        << ", column " << (diag.cursor.col + 1) << ": ";
-    
+
     // Remove redundant newlines from error message
     std::string clean_err = diag.err;
     if (!clean_err.empty() && clean_err.back() == '\n') {
       clean_err.pop_back();
     }
-    ss << clean_err << "\n";
+    ss << clean_err;
+
+    // Add suggestion if available (Priority 5)
+    if (!diag.suggestion.empty()) {
+      ss << "\n  Suggestion: " << diag.suggestion;
+    }
+
+    ss << "\n";
   }
 
   return ss.str();
@@ -737,16 +806,407 @@ std::string AsciiParser::GetWarning() {
     }
     seen_warnings.insert(warning_key.str());
     
-    // Format warning with precise location
-    ss << "USDA warning at line " << (diag.cursor.row + 1) 
+    // Format warning with error type and precise location
+    ss << diag.TypeName() << " at line " << (diag.cursor.row + 1)
        << ", column " << (diag.cursor.col + 1) << ": ";
-    
+
     // Remove redundant newlines from warning message
     std::string clean_warn = diag.err;
     if (!clean_warn.empty() && clean_warn.back() == '\n') {
       clean_warn.pop_back();
     }
-    ss << clean_warn << "\n";
+    ss << clean_warn;
+
+    // Add suggestion if available (Priority 5)
+    if (!diag.suggestion.empty()) {
+      ss << "\n  Suggestion: " << diag.suggestion;
+    }
+
+    ss << "\n";
+  }
+
+  return ss.str();
+}
+
+std::string AsciiParser::GetErrorWithContext(int context_lines) {
+  (void)context_lines;  // Not yet implemented - parameter reserved for future use
+  if (err_stack.empty()) {
+    return std::string();
+  }
+
+  std::stringstream ss;
+
+  // Track unique error messages to avoid duplicates
+  std::set<std::string> seen_errors;
+  std::vector<ErrorDiagnostic> errors;
+
+  // Collect all errors
+  while (!err_stack.empty()) {
+    errors.push_back(err_stack.top());
+    err_stack.pop();
+  }
+
+  // Process errors in reverse order (oldest first)
+  for (auto it = errors.rbegin(); it != errors.rend(); ++it) {
+    const ErrorDiagnostic& diag = *it;
+
+    // Create a unique key for this error location and message
+    std::stringstream error_key;
+    error_key << diag.cursor.row << ":" << diag.cursor.col << ":" << diag.err;
+
+    // Skip duplicate errors
+    if (seen_errors.count(error_key.str()) > 0) {
+      continue;
+    }
+    seen_errors.insert(error_key.str());
+
+    // Format error with error type and precise location
+    ss << diag.TypeName() << " at line " << (diag.cursor.row + 1)
+       << ", column " << (diag.cursor.col + 1) << ":\n";
+
+    // Remove redundant newlines from error message
+    std::string clean_err = diag.err;
+    if (!clean_err.empty() && clean_err.back() == '\n') {
+      clean_err.pop_back();
+    }
+    ss << "  " << clean_err << "\n";
+
+    // Add visual caret indicator for error location
+    if (diag.cursor.col > 0) {
+      ss << "  ";
+      for (int i = 0; i < diag.cursor.col; i++) {
+        ss << " ";
+      }
+      ss << "^\n";
+    }
+  }
+
+  return ss.str();
+}
+
+std::string AsciiParser::GetWarningWithContext(int context_lines) {
+  (void)context_lines;  // Not yet implemented - parameter reserved for future use
+  if (warn_stack.empty()) {
+    return std::string();
+  }
+
+  std::stringstream ss;
+
+  // Track unique warning messages to avoid duplicates
+  std::set<std::string> seen_warnings;
+  std::vector<ErrorDiagnostic> warnings;
+
+  // Collect all warnings
+  while (!warn_stack.empty()) {
+    warnings.push_back(warn_stack.top());
+    warn_stack.pop();
+  }
+
+  // Process warnings in reverse order (oldest first)
+  for (auto it = warnings.rbegin(); it != warnings.rend(); ++it) {
+    const ErrorDiagnostic& diag = *it;
+
+    // Create a unique key for this warning location and message
+    std::stringstream warning_key;
+    warning_key << diag.cursor.row << ":" << diag.cursor.col << ":" << diag.err;
+
+    // Skip duplicate warnings
+    if (seen_warnings.count(warning_key.str()) > 0) {
+      continue;
+    }
+    seen_warnings.insert(warning_key.str());
+
+    // Format warning with error type and precise location
+    ss << diag.TypeName() << " at line " << (diag.cursor.row + 1)
+       << ", column " << (diag.cursor.col + 1) << ":\n";
+
+    // Remove redundant newlines from warning message
+    std::string clean_warn = diag.err;
+    if (!clean_warn.empty() && clean_warn.back() == '\n') {
+      clean_warn.pop_back();
+    }
+    ss << "  " << clean_warn << "\n";
+
+    // Add visual caret indicator for warning location
+    if (diag.cursor.col > 0) {
+      ss << "  ";
+      for (int i = 0; i < diag.cursor.col; i++) {
+        ss << " ";
+      }
+      ss << "^\n";
+    }
+  }
+
+  return ss.str();
+}
+
+std::string AsciiParser::GetErrorWithHints(bool show_hints) {
+  (void)show_hints;  // Not yet implemented - parameter reserved for future use
+  if (err_stack.empty()) {
+    return std::string();
+  }
+
+  std::stringstream ss;
+  std::set<std::string> seen_errors;
+  std::vector<ErrorDiagnostic> errors;
+
+  // Collect all errors
+  while (!err_stack.empty()) {
+    errors.push_back(err_stack.top());
+    err_stack.pop();
+  }
+
+  // Process errors in reverse order (oldest first) with aggressive deduplication
+  std::map<std::string, int> error_counts;  // Group similar errors by message
+  for (auto it = errors.rbegin(); it != errors.rend(); ++it) {
+    const ErrorDiagnostic& diag = *it;
+    error_counts[diag.err]++;
+  }
+
+  // Now output with counts for grouped errors
+  std::set<std::string> seen_messages;
+  for (auto it = errors.rbegin(); it != errors.rend(); ++it) {
+    const ErrorDiagnostic& diag = *it;
+
+    if (seen_messages.count(diag.err) > 0) {
+      continue;
+    }
+    seen_messages.insert(diag.err);
+
+    ss << diag.TypeName() << " at line " << (diag.cursor.row + 1)
+       << ", column " << (diag.cursor.col + 1) << ": ";
+
+    std::string clean_err = diag.err;
+    if (!clean_err.empty() && clean_err.back() == '\n') {
+      clean_err.pop_back();
+    }
+    ss << clean_err;
+
+    // Add occurrence count if this error appears multiple times
+    int count = error_counts[diag.err];
+    if (count > 1) {
+      ss << " [" << count << " occurrence" << (count > 1 ? "s" : "") << "]";
+    }
+
+    ss << "\n";
+
+    // Add recovery hint if requested
+    if (show_hints && diag.hint != ErrorRecoveryHint::NoHint) {
+      const char* hint = diag.GetHint();
+      if (hint && std::strlen(hint) > 0) {
+        ss << "  Hint: " << hint << "\n";
+      }
+    }
+  }
+
+  return ss.str();
+}
+
+std::string AsciiParser::GetWarningWithHints(bool show_hints) {
+  (void)show_hints;  // Not yet implemented - parameter reserved for future use
+  if (warn_stack.empty()) {
+    return std::string();
+  }
+
+  std::stringstream ss;
+  std::set<std::string> seen_warnings;
+  std::vector<ErrorDiagnostic> warnings;
+
+  // Collect all warnings
+  while (!warn_stack.empty()) {
+    warnings.push_back(warn_stack.top());
+    warn_stack.pop();
+  }
+
+  // Process warnings in reverse order (oldest first) with aggressive deduplication
+  std::map<std::string, int> warning_counts;  // Group similar warnings by message
+  for (auto it = warnings.rbegin(); it != warnings.rend(); ++it) {
+    const ErrorDiagnostic& diag = *it;
+    warning_counts[diag.err]++;
+  }
+
+  // Now output with counts for grouped warnings
+  std::set<std::string> seen_messages;
+  for (auto it = warnings.rbegin(); it != warnings.rend(); ++it) {
+    const ErrorDiagnostic& diag = *it;
+
+    if (seen_messages.count(diag.err) > 0) {
+      continue;
+    }
+    seen_messages.insert(diag.err);
+
+    ss << diag.TypeName() << " at line " << (diag.cursor.row + 1)
+       << ", column " << (diag.cursor.col + 1) << ": ";
+
+    std::string clean_warn = diag.err;
+    if (!clean_warn.empty() && clean_warn.back() == '\n') {
+      clean_warn.pop_back();
+    }
+    ss << clean_warn;
+
+    // Add occurrence count if this warning appears multiple times
+    int count = warning_counts[diag.err];
+    if (count > 1) {
+      ss << " [" << count << " occurrence" << (count > 1 ? "s" : "") << "]";
+    }
+
+    ss << "\n";
+
+    // Add recovery hint if requested
+    if (show_hints && diag.hint != ErrorRecoveryHint::NoHint) {
+      const char* hint = diag.GetHint();
+      if (hint && std::strlen(hint) > 0) {
+        ss << "  Hint: " << hint << "\n";
+      }
+    }
+  }
+
+  return ss.str();
+}
+
+std::string AsciiParser::GetErrorWithSourceContext(const std::string& filename, int context_lines, int column_width) {
+  (void)filename;  // Filename no longer needed as we use StreamReader
+  (void)context_lines;  // Parameter reserved for future use
+  if (err_stack.empty()) {
+    return std::string();
+  }
+
+  std::stringstream ss;
+
+  // Use StreamReader instead of re-reading file
+  if (!_sr || !_sr->data() || _sr->size() == 0) {
+    // Fallback to basic error display if StreamReader not available
+    return GetError();
+  }
+
+  // Parse lines from StreamReader data
+  std::vector<std::string> file_lines;
+  const uint8_t* data = _sr->data();
+  uint64_t size = _sr->size();
+  std::string line;
+
+  for (uint64_t i = 0; i < size; ++i) {
+    if (data[i] == '\n') {
+      file_lines.push_back(line);
+      line.clear();
+    } else if (data[i] != '\r') {  // Skip CR in CRLF
+      line += static_cast<char>(data[i]);
+    }
+  }
+  // Add last line if file doesn't end with newline
+  if (!line.empty()) {
+    file_lines.push_back(line);
+  }
+
+  std::set<std::string> seen_errors;
+  std::set<std::string> seen_locations;  // Track locations where context was shown
+  std::vector<ErrorDiagnostic> errors;
+
+  // Collect all errors
+  while (!err_stack.empty()) {
+    errors.push_back(err_stack.top());
+    err_stack.pop();
+  }
+
+  // Process errors in reverse order (oldest first)
+  for (auto it = errors.rbegin(); it != errors.rend(); ++it) {
+    const ErrorDiagnostic& diag = *it;
+
+    // Create unique key and skip duplicate error messages
+    std::stringstream error_key;
+    error_key << diag.cursor.row << ":" << diag.cursor.col << ":" << diag.err;
+
+    if (seen_errors.count(error_key.str()) > 0) {
+      continue;
+    }
+    seen_errors.insert(error_key.str());
+
+    // Check if we've already shown context for this location
+    std::stringstream location_key;
+    location_key << diag.cursor.row << ":" << diag.cursor.col;
+    bool context_already_shown = (seen_locations.count(location_key.str()) > 0);
+
+    // Display error type and location (without header decoration)
+    // Use "at" for exact position, "near" for approximate position
+    const char* position_word = (diag.position_mode == ErrorPositionMode::Exact) ? "at" : "near";
+    ss << diag.TypeName() << " " << position_word << " line " << (diag.cursor.row + 1)
+       << ", column " << (diag.cursor.col + 1) << ": ";
+
+    // Clean and display error message on same line
+    std::string clean_err = diag.err;
+    if (!clean_err.empty() && clean_err.back() == '\n') {
+      clean_err.pop_back();
+    }
+    ss << clean_err << "\n";
+
+    // Display suggestion and context only if not already shown for this location
+    if (!context_already_shown) {
+      // Display suggestion if available
+      if (!diag.suggestion.empty()) {
+        ss << "  Suggestion: " << diag.suggestion << "\n";
+      }
+
+      // Display source context if file lines are available
+      if (static_cast<size_t>(diag.cursor.row) < file_lines.size()) {
+      int start_line = std::max(0, diag.cursor.row - 1);
+      int end_line = std::min(static_cast<int>(file_lines.size()) - 1, diag.cursor.row + 1);
+
+      // Show context lines with proper indentation
+      for (int i = start_line; i <= end_line; ++i) {
+        bool is_error_line = (i == diag.cursor.row);
+        const std::string& source_line = file_lines[static_cast<size_t>(i)];
+
+        // Column snipping for long lines (centered around error column)
+        std::string display_line = source_line;
+        int caret_offset = diag.cursor.col;
+
+        if (is_error_line && static_cast<int>(source_line.length()) > column_width) {
+          int half_width = column_width / 2;
+          int start_col = std::max(0, diag.cursor.col - half_width);
+          int end_col = std::min(static_cast<int>(source_line.length()), start_col + column_width);
+
+          // Adjust start if we're near the end
+          if (end_col - start_col < column_width) {
+            start_col = std::max(0, end_col - column_width);
+          }
+
+          std::string snippet = source_line.substr(static_cast<size_t>(start_col), static_cast<size_t>(end_col - start_col));
+
+          // Add ellipsis indicators
+          if (start_col > 0) {
+            display_line = "..." + snippet;
+            caret_offset = diag.cursor.col - start_col + 3;  // Account for "..."
+          } else {
+            display_line = snippet;
+            caret_offset = diag.cursor.col;
+          }
+
+          if (end_col < static_cast<int>(source_line.length())) {
+            display_line += "...";
+          }
+        }
+
+        // Show source line with indicator
+        ss << "  " << (is_error_line ? ">" : " ") << " " << display_line << "\n";
+
+        // Show caret indicator on error line
+        if (is_error_line) {
+          ss << "    ";
+          // Add spaces up to the error column (adjusted for snipping)
+          for (int col = 0; col < caret_offset; col++) {
+            ss << " ";
+          }
+          // Add visual indicator (caret)
+          ss << "^\n";
+        }
+      }
+      }  // End: Display source context if file lines are available
+
+      // Mark this location as having had context shown
+      seen_locations.insert(location_key.str());
+    }  // End: Display suggestion and context only if not already shown
+
+    ss << "\n";
   }
 
   return ss.str();
@@ -1592,6 +2052,34 @@ bool AsciiParser::ReadPrimAttrIdentifier(std::string *token) {
   // - primvars:uvmap1
 
   std::stringstream ss;
+  Cursor start_cursor;  // Will be set at the first character
+  bool first_char = true;
+
+  // Save stream position and row before reading any characters
+  uint64_t start_stream_pos = _sr->tell();
+  int start_row = _curr_cursor.row;
+
+  // Helper lambda to calculate correct column from stream position
+  auto calculate_cursor_from_stream_pos = [&]() {
+    uint64_t line_start_pos = start_stream_pos;
+    uint64_t saved_pos = _sr->tell();
+    _sr->seek_set(start_stream_pos);
+
+    int col_offset = 0;
+    while (line_start_pos > 0) {
+      _sr->seek_set(line_start_pos - 1);
+      char c_tmp;
+      if (_sr->read1(&c_tmp) && (c_tmp == '\n' || c_tmp == '\r')) {
+        break;
+      }
+      line_start_pos--;
+      col_offset++;
+    }
+
+    _sr->seek_set(saved_pos);
+    _curr_cursor.row = start_row;
+    _curr_cursor.col = col_offset;
+  };
 
   while (!Eof()) {
     char c;
@@ -1605,17 +2093,20 @@ bool AsciiParser::ReadPrimAttrIdentifier(std::string *token) {
     } else if (c == ':') {  // namespace
       // ':' must lie in the middle of string literal
       if (ss.str().size() == 0) {
+        calculate_cursor_from_stream_pos();
         PUSH_ERROR_AND_RETURN("PrimAttr name must not starts with `:`");
       }
     } else if (c == '.') {  // delimiter for `connect`
       // '.' must lie in the middle of string literal
       if (ss.str().size() == 0) {
+        calculate_cursor_from_stream_pos();
         PUSH_ERROR_AND_RETURN("PrimAttr name must not starts with `.`");
       }
     } else if (std::isalnum(int(c))) {
       // number must not be allowed for the first char.
       if (ss.str().size() == 0) {
         if (!std::isalpha(int(c))) {
+          calculate_cursor_from_stream_pos();
           PUSH_ERROR_AND_RETURN("PrimAttr name must not starts with number.");
         }
       }
@@ -1626,12 +2117,19 @@ bool AsciiParser::ReadPrimAttrIdentifier(std::string *token) {
 
     _curr_cursor.col++;
 
+    // Save cursor position after reading the first character
+    if (first_char) {
+      start_cursor = _curr_cursor;
+      first_char = false;
+    }
+
     ss << c;
   }
 
   {
     std::string name_err;
     if (!pathutil::ValidatePropPath(Path("", ss.str()), &name_err)) {
+      calculate_cursor_from_stream_pos();
       PUSH_ERROR_AND_RETURN_TAG(
           kAscii,
           fmt::format("Invalid Property name `{}`: {}", ss.str(), name_err));
@@ -1640,8 +2138,8 @@ bool AsciiParser::ReadPrimAttrIdentifier(std::string *token) {
 
   // '.' must lie in the middle of string literal
   if (ss.str().back() == '.') {
+    calculate_cursor_from_stream_pos();
     PUSH_ERROR_AND_RETURN("PrimAttr name must not ends with `.`\n");
-    return false;
   }
 
   std::string tok = ss.str();
@@ -1650,6 +2148,8 @@ bool AsciiParser::ReadPrimAttrIdentifier(std::string *token) {
     if (endsWith(tok, ".connect") || endsWith(tok, ".timeSamples")) {
       // OK
     } else {
+      // Restore cursor to start position for accurate error reporting
+      _curr_cursor = start_cursor;
       PUSH_ERROR_AND_RETURN_TAG(
           kAscii, fmt::format("Must ends with `.connect` or `.timeSamples` for "
                               "attrbute name: `{}`",
@@ -1658,6 +2158,8 @@ bool AsciiParser::ReadPrimAttrIdentifier(std::string *token) {
 
     // Multiple `.` is not allowed(e.g. attr.connect.timeSamples)
     if (counts(tok, '.') > 1) {
+      // Restore cursor to start position for accurate error reporting
+      _curr_cursor = start_cursor;
       PUSH_ERROR_AND_RETURN_TAG(
           kAscii, fmt::format("Attribute identifier `{}` containing multiple "
                               "`.` is not allowed.",
@@ -2160,6 +2662,10 @@ bool AsciiParser::CharN(size_t n, std::vector<char> *nc) {
   }
 
   return ok;
+}
+
+bool AsciiParser::CharN(size_t n, char *dst) {
+  return _sr->read(n, n, reinterpret_cast<uint8_t*>(dst));
 }
 
 bool AsciiParser::Rewind(size_t offset) {
@@ -3730,7 +4236,7 @@ bool AsciiParser::ParseBasicPrimAttr(bool array_qual,
   if (blocked) {
     // There is still have a type for ValueBlock.
     value::ValueBlock noneval;
-    attr.set_value(noneval);
+    attr.set_value(std::move(noneval));
     attr.set_blocked(true);
     if (array_qual) {
       attr.set_type_name(value::TypeTraits<T>::type_name() + "[]");
@@ -3998,8 +4504,13 @@ bool AsciiParser::ParsePrimProps(std::map<std::string, Property> *props,
     return false;
   }
 
+  // Save cursor position before reading attribute name for accurate error reporting
+  Cursor attr_name_cursor = _curr_cursor;
+
   std::string primattr_name;
   if (!ReadPrimAttrIdentifier(&primattr_name)) {
+    // Restore cursor to start of attribute name for error reporting
+    _curr_cursor = attr_name_cursor;
     PUSH_ERROR_AND_RETURN("Failed to parse primAttr identifier.");
   }
 
@@ -4209,17 +4720,17 @@ bool AsciiParser::ParsePrimProps(std::map<std::string, Property> *props,
         PUSH_ERROR_AND_RETURN(fmt::format("Variability mismatch. Attribute `{}` already has variability `{}`, but timeSampled value has variability `{}`.", attr_name, to_string(pattr->variability()), to_string(variability)));
       }
 
-      pattr->get_var().set_timesamples(ts);
+      pattr->get_var().set_timesamples(std::move(ts));
 
       // Set PropType to Attrib(since previously created Property may have EmptyAttrib).
       props->at(attr_name).set_property_type(Property::Type::Attrib);
 
     } else {
       // new Attribute
-      pattr = &attr;  
+      pattr = &attr;
 
       primvar::PrimVar var;
-      var.set_timesamples(ts);
+      var.set_timesamples(std::move(ts));
       if (array_qual) {
         pattr->set_type_name(type_name + "[]");
       } else {
@@ -4627,6 +5138,11 @@ bool AsciiParser::ParseProperties(std::map<std::string, Property> *props,
   //          | 'rel' name '=' path
   //          ;
 
+  // Report progress and check for cancellation
+  if (!ReportProgress()) {
+    PUSH_ERROR_AND_RETURN("Parsing cancelled by progress callback.");
+  }
+
   if (!SkipWhitespace()) {
     return false;
   }
@@ -4667,6 +5183,27 @@ AsciiParser::AsciiParser() { Setup(); }
 
 AsciiParser::AsciiParser(StreamReader *sr) : _sr(sr) { Setup(); }
 
+std::string AsciiParser::GenerateSuggestion(const std::string& invalid_token) {
+  // Only generate suggestions if feature is enabled and token is not empty
+  if (!TINYUSDZ_ENABLE_SUGGEST_FIX || invalid_token.empty()) {
+    return "";
+  }
+
+  // Convert C-style keyword array to vector for string similarity matching
+  std::vector<std::string> keywords(g_usd_keywords,
+                                     g_usd_keywords + g_usd_keywords_count);
+
+  // Find closest matching keyword
+  std::string best_match = string_similarity::FindClosestMatch(
+      invalid_token, keywords, 0.6);  // 0.6 = 60% similarity threshold
+
+  if (!best_match.empty()) {
+    return fmt::format("Did you mean '{}'?", best_match);
+  }
+
+  return "";
+}
+
 void AsciiParser::Setup() {
   RegisterStageMetas(_supported_stage_metas);
   RegisterPrimMetas(_supported_prim_metas);
@@ -4674,6 +5211,32 @@ void AsciiParser::Setup() {
   RegisterPrimAttrTypes(_supported_prim_attr_types);
   RegisterPrimTypes(_supported_prim_types);
   RegisterAPISchemas(_supported_api_schemas);
+}
+
+bool AsciiParser::ReportProgress() {
+  // Check if callback exists and is callable
+  if (!_progress_callback) {
+    return true;  // No callback, continue parsing
+  }
+  
+  if (!_sr) {
+    return true;  // No stream reader, can't compute progress
+  }
+  
+  // Calculate progress based on current position in stream
+  uint64_t current_pos = _sr->tell();
+  uint64_t total_size = _sr->size();
+  
+  float progress = 0.0f;
+  if (total_size > 0) {
+    progress = static_cast<float>(current_pos) / static_cast<float>(total_size);
+    // Clamp to [0, 1] range
+    if (progress > 1.0f) progress = 1.0f;
+    if (progress < 0.0f) progress = 0.0f;
+  }
+  
+  // Call the callback and return its result
+  return _progress_callback(progress, _progress_userptr);
 }
 
 AsciiParser::~AsciiParser() {}
@@ -4876,6 +5439,11 @@ bool AsciiParser::ParseBlock(const Specifier spec, const int64_t primIdx,
   (void)in_variantStaement;
 
   DCOUT("ParseBlock");
+
+  // Report progress and check for cancellation
+  if (!ReportProgress()) {
+    PUSH_ERROR_AND_RETURN("Parsing cancelled by progress callback.");
+  }
 
   if (!SkipCommentAndWhitespaceAndNewline()) {
     DCOUT("SkipCommentAndWhitespaceAndNewline failed");
@@ -5199,13 +5767,19 @@ bool AsciiParser::ParseBlock(const Specifier spec, const int64_t primIdx,
 ///
 bool AsciiParser::Parse(const uint32_t load_states,
                         const AsciiParserOption &parser_option) {
+  TINYUSDZ_PROFILE_FUNCTION("ascii-parser");
+  
   _toplevel = (load_states & static_cast<uint32_t>(LoadState::Toplevel));
   _sub_layered = (load_states & static_cast<uint32_t>(LoadState::Sublayer));
   _referenced = (load_states & static_cast<uint32_t>(LoadState::Reference));
   _payloaded = (load_states & static_cast<uint32_t>(LoadState::Payload));
   _option = parser_option;
 
-  bool header_ok = ParseMagicHeader();
+  bool header_ok;
+  {
+    TINYUSDZ_PROFILE_SCOPE("ascii-parser", "ParseMagicHeader");
+    header_ok = ParseMagicHeader();
+  }
   if (!header_ok) {
     PUSH_ERROR_AND_RETURN("Failed to parse USDA magic header.\n");
   }
@@ -5225,6 +5799,7 @@ bool AsciiParser::Parse(const uint32_t load_states,
 
     if (c == '(') {
       // stage meta.
+      TINYUSDZ_PROFILE_SCOPE("ascii-parser", "ParseStageMetas");
       if (!ParseStageMetas()) {
         PUSH_ERROR_AND_RETURN("Failed to parse Stage metas.");
       }
@@ -5245,47 +5820,58 @@ bool AsciiParser::Parse(const uint32_t load_states,
   PushPrimPath("/");
 
   // parse blocks
-  while (!Eof()) {
-    if (!SkipCommentAndWhitespaceAndNewline()) {
-      return false;
-    }
+  {
+    TINYUSDZ_PROFILE_SCOPE("ascii-parser", "ParseBlocks");
+    while (!Eof()) {
+      if (!SkipCommentAndWhitespaceAndNewline()) {
+        return false;
+      }
 
-    if (Eof()) {
-      // Whitespaces in the end of line.
-      break;
-    }
+      if (Eof()) {
+        // Whitespaces in the end of line.
+        break;
+      }
 
-    // Look ahead token
-    auto curr_loc = _sr->tell();
+      // Look ahead token
+      auto curr_loc = _sr->tell();
 
-    Identifier tok;
-    if (!ReadBasicType(&tok)) {
-      PUSH_ERROR_AND_RETURN("Identifier expected.\n");
-    }
+      Identifier tok;
+      if (!ReadBasicType(&tok)) {
+        PUSH_ERROR_AND_RETURN("Identifier expected.\n");
+      }
 
-    // Rewind
-    if (!SeekTo(curr_loc)) {
-      return false;
-    }
+      // Rewind
+      if (!SeekTo(curr_loc)) {
+        return false;
+      }
 
-    Specifier spec{Specifier::Invalid};
-    if (tok == "def") {
-      spec = Specifier::Def;
-    } else if (tok == "over") {
-      spec = Specifier::Over;
-    } else if (tok == "class") {
-      spec = Specifier::Class;
-    } else {
-      PUSH_ERROR_AND_RETURN("Invalid specifier token '" + tok + "'");
-    }
+      Specifier spec{Specifier::Invalid};
+      if (tok == "def") {
+        spec = Specifier::Def;
+      } else if (tok == "over") {
+        spec = Specifier::Over;
+      } else if (tok == "class") {
+        spec = Specifier::Class;
+      } else {
+        // Generate suggestion for invalid specifier using string similarity (Priority 5)
+        std::string suggestion = GenerateSuggestion(tok);
+        std::string error_msg = "Invalid specifier token '" + tok + "'";
+        PushError(error_msg, ErrorType::SyntaxError, ErrorRecoveryHint::NoHint, suggestion);
+        return false;
+      }
 
-    int64_t primIdx = _prim_idx_assign_fun(-1);
-    DCOUT("Enter parseDef. primIdx = " << primIdx
-                                       << ", parentPrimIdx = root(-1)");
-    bool block_ok = ParseBlock(spec, primIdx, /* parent */ -1, /* depth */ 0,
-                               /* in_variantStmt */ false);
-    if (!block_ok) {
-      PUSH_ERROR_AND_RETURN("Failed to parse `def` block.");
+      int64_t primIdx = _prim_idx_assign_fun(-1);
+      DCOUT("Enter parseDef. primIdx = " << primIdx
+                                         << ", parentPrimIdx = root(-1)");
+      bool block_ok;
+      {
+        TINYUSDZ_PROFILE_SCOPE("ascii-parser", "ParseBlock");
+        block_ok = ParseBlock(spec, primIdx, /* parent */ -1, /* depth */ 0,
+                             /* in_variantStmt */ false);
+      }
+      if (!block_ok) {
+        PUSH_ERROR_AND_RETURN("Failed to parse `def` block.");
+      }
     }
   }
 

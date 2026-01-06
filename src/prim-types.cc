@@ -7,6 +7,7 @@
 //
 #include "prim-types.hh"
 #include "str-util.hh"
+#include "tiny-container.hh"
 #include "tiny-format.hh"
 //
 #include "usdGeom.hh"
@@ -29,12 +30,7 @@
 #pragma clang diagnostic pop
 #endif
 
-#define PushError(msg) \
-  do {                 \
-    if (err) {         \
-      (*err) += msg;   \
-    }                  \
-  } while (0)
+// PushError macro removed - Layer implementation moved to layer.cc
 
 namespace tinyusdz {
 
@@ -49,7 +45,7 @@ bool lexicographical_compare(InputIt1 first1, InputIt1 last1,
         if (*first2 < *first1)
             return false;
     }
- 
+
     return (first1 == last1) && (first2 != last2);
 }
 
@@ -94,9 +90,9 @@ bool operator==(const Path &lhs, const Path &rhs) {
 bool ConvertTokenAttributeToStringAttribute(
     const TypedAttribute<Animatable<value::token>> &inp,
     TypedAttribute<Animatable<std::string>> &out) {
-  
+
     out.metas() = inp.metas();
-  
+
     if (inp.is_blocked()) {
       out.set_blocked(true);
     } else if (inp.is_value_empty()) {
@@ -113,10 +109,18 @@ bool ConvertTokenAttributeToStringAttribute(
           strs.set(tok.str());
         } else if (toks.is_timesamples()) {
           auto tok_ts = toks.get_timesamples();
-  
+
+#ifndef TINYUSDZ_USE_TIMESAMPLES_SOA
           for (auto &item : tok_ts.get_samples()) {
             strs.add_sample(item.t, item.value.str());
           }
+#else
+          const auto &times = tok_ts.get_times();
+          const auto &values = tok_ts.get_values();
+          for (size_t i = 0; i < times.size(); i++) {
+            strs.add_sample(times[i], values[i].str());
+          }
+#endif
         } else if (toks.is_blocked()) {
           // TODO
           return false;
@@ -124,10 +128,10 @@ bool ConvertTokenAttributeToStringAttribute(
       }
       out.set_value(strs);
     }
-  
+
     return true;
   }
-  
+
 
 
 //
@@ -309,7 +313,7 @@ void Path::_update(const std::string &p, const std::string &prop) {
 }
 
 Path::Path(const std::string &p, const std::string &prop) {
-  _update(p, prop); 
+  _update(p, prop);
 }
 
 Path Path::append_property(const std::string &elem) {
@@ -1082,11 +1086,6 @@ Prim::Prim(const std::string &elementPath, value::Value &&rhs) {
 
 bool Prim::add_child(Prim &&rhs, const bool rename_prim_name,
                      std::string *err) {
-#if defined(TINYUSDZ_ENABLE_THREAD)
-  // TODO: Only take a lock when dirty.
-  std::lock_guard<std::mutex> lock(_mutex);
-#endif
-
   std::string elementName = rhs.element_name();
 
   if (elementName.empty()) {
@@ -1193,11 +1192,6 @@ bool Prim::add_child(Prim &&rhs, const bool rename_prim_name,
 
 bool Prim::replace_child(const std::string &child_prim_name, Prim &&rhs,
                          std::string *err) {
-#if defined(TINYUSDZ_ENABLE_THREAD)
-  // TODO: Only take a lock when dirty.
-  std::lock_guard<std::mutex> lock(_mutex);
-#endif
-
   if (child_prim_name.empty()) {
     if (err) {
       (*err) += "child_prim_name is empty.\n";
@@ -1277,11 +1271,6 @@ bool Prim::replace_child(const std::string &child_prim_name, Prim &&rhs,
 
 const std::vector<int64_t> &Prim::get_child_indices_from_primChildren(
     bool force_update, bool *indices_is_valid) const {
-#if defined(TINYUSDZ_ENABLE_THREAD)
-  // TODO: Only take a lock when dirty.
-  std::lock_guard<std::mutex> lock(_mutex);
-#endif
-
   if (!force_update && (_primChildrenIndices.size() == _children.size()) &&
       !_child_dirty) {
     // got cache.
@@ -1559,48 +1548,52 @@ bool GetCustomDataByKey(const CustomDataType &custom, const std::string &key,
 
 namespace {
 
-bool OverrideCustomDataRec(uint32_t depth, CustomDataType &dst,
-                           const CustomDataType &src, const bool override_existing) {
-  if (depth > (1024 * 1024 * 128)) {
-    // too deep
-    return false;
-  }
+// Iterative version of dictionary override using explicit stack
+// Avoids recursion for deeply nested dictionary structures
+void OverrideCustomDataIterative(CustomDataType &dst, const CustomDataType &src,
+                                 const bool override_existing) {
+  // Stack of pairs: (dst_dict pointer, src_dict pointer)
+  StackVector<std::pair<CustomDataType *, const CustomDataType *>, 4> stack;
+  stack.reserve(16);
 
-  for (const auto &item : src) {
-    if (dst.count(item.first)) {
-      if (override_existing) {
-        CustomDataType *dst_dict =
-            dst.at(item.first).get_raw_value().as<CustomDataType>();
+  // Start with the root dictionaries
+  stack.emplace_back(&dst, &src);
 
-        const value::Value &src_data = item.second.get_raw_value();
-        const CustomDataType *src_dict = src_data.as<CustomDataType>();
+  while (!stack.empty()) {
+    auto current = stack.back();
+    stack.pop_back();
 
-        //
-        // Recursively apply override op both types are dict.
-        //
-        if (src_dict && dst_dict) {
-          // recursively override dict
-          if (!OverrideCustomDataRec(depth + 1, (*dst_dict), (*src_dict), override_existing)) {
-            return false;
+    CustomDataType *current_dst = current.first;
+    const CustomDataType *current_src = current.second;
+
+    for (const auto &item : *current_src) {
+      if (current_dst->count(item.first)) {
+        if (override_existing) {
+          CustomDataType *dst_dict =
+              current_dst->at(item.first).get_raw_value().as<CustomDataType>();
+
+          const value::Value &src_data = item.second.get_raw_value();
+          const CustomDataType *src_dict = src_data.as<CustomDataType>();
+
+          // If both are dicts, push to stack for later processing
+          if (src_dict && dst_dict) {
+            stack.emplace_back(dst_dict, src_dict);
+          } else {
+            (*current_dst)[item.first] = item.second;
           }
-
-        } else {
-          dst[item.first] = item.second;
         }
+      } else {
+        // add dict value
+        current_dst->emplace(item.first, item.second);
       }
-    } else {
-      // add dict value
-      dst.emplace(item.first, item.second);
     }
   }
-
-  return true;
 }
 
 }  // namespace
 
 void OverrideDictionary(CustomDataType &dst, const CustomDataType &src, const bool override_existing) {
-  OverrideCustomDataRec(0, dst, src, override_existing);
+  OverrideCustomDataIterative(dst, src, override_existing);
 }
 
 AssetInfo PrimMeta::get_assetInfo(bool *is_authored) const {
@@ -1820,7 +1813,6 @@ value::matrix4d GetLocalTransform(const Prim &prim, bool *resetXformStack,
       return value::matrix4d::identity();
     }
 
-    value::matrix4d m;
     bool rxs{false};
     nonstd::expected<value::matrix4d, std::string> ret =
         xformable->GetLocalMatrix(t, tinterp, &rxs);
@@ -1958,7 +1950,7 @@ void PrimMetas::update_from(const PrimMetas &rhs, const bool override_authored) 
       if (unregisteredMetas.count(item.first)) {
         if (override_authored) {
           unregisteredMetas[item.first] = item.second;
-        } 
+        }
       } else {
         unregisteredMetas[item.first] = item.second;
       }
@@ -1973,17 +1965,16 @@ bool AttrMetas::has_colorSpace() const {
 }
 
 value::token AttrMetas::get_colorSpace() const {
-  if (!has_colorSpace()) {
-    return value::token();
-  }
-
-  const MetaVariable &mv = meta.at("colorSpace");
   value::token tok;
-  if (mv.get_value<value::token>(&tok)) {
-    return tok;
+
+  if (has_colorSpace()) {
+    const MetaVariable &mv = meta.at("colorSpace");
+    if (!mv.get_value<value::token>(&tok)) {
+      tok = value::token();
+    }
   }
 
-  return value::token();
+  return tok;
 }
 
 bool AttrMetas::has_unauthoredValuesIndex() const {
@@ -2006,301 +1997,65 @@ int AttrMetas::get_unauthoredValuesIndex() const {
 
 namespace {
 
-nonstd::optional<const PrimSpec *> GetPrimSpecAtPathRec(
-    const PrimSpec *parent, const std::string &parent_path, const Path &path,
-    uint32_t depth) {
-  if (depth > (1024 * 1024 * 128)) {
-    // Too deep.
-    return nonstd::nullopt;
-  }
+// GetPrimSpecAtPathRec function moved to layer.cc
 
-  if (!parent) {
-    return nonstd::nullopt;
-  }
-
-  std::string abs_path;
-  {
-    std::string elementName = parent->name();
-
-    abs_path = parent_path + "/" + elementName;
-
-    if (abs_path == path.full_path_name()) {
-      return parent;
-    }
-  }
-
-  for (const auto &child : parent->children()) {
-    if (auto pv = GetPrimSpecAtPathRec(&child, abs_path, path, depth + 1)) {
-      return pv.value();
-    }
-  }
-
-  // not found
-  return nonstd::nullopt;
-}
-
-bool HasReferencesRec(uint32_t depth, const PrimSpec &primspec,
-                      const uint32_t max_depth = 1024 * 128) {
-  if (depth > max_depth) {
-    // too deep
-    return false;
-  }
-
-  if (primspec.metas().references) {
-    return true;
-  }
-
-  for (auto &child : primspec.children()) {
-    if (HasReferencesRec(depth + 1, child, max_depth)) {
-      return true;
-    }
-  }
-
-  return false;
-}
-
-bool HasPayloadRec(uint32_t depth, const PrimSpec &primspec,
-                   const uint32_t max_depth = 1024 * 128) {
-  if (depth > max_depth) {
-    // too deep
-    return false;
-  }
-
-  if (primspec.metas().payload) {
-    return true;
-  }
-
-  for (auto &child : primspec.children()) {
-    if (HasPayloadRec(depth + 1, child, max_depth)) {
-      return true;
-    }
-  }
-
-  return false;
-}
-
-bool HasVariantRec(uint32_t depth, const PrimSpec &primspec,
-                   const uint32_t max_depth = 1024 * 128) {
-  if (depth > max_depth) {
-    // too deep
-    return false;
-  }
-
-  // TODO: Also check if PrimSpec::variantSets is empty?
-  if (primspec.metas().variants && primspec.metas().variantSets) {
-    return true;
-  }
-
-  for (auto &child : primspec.children()) {
-    if (HasVariantRec(depth + 1, child, max_depth)) {
-      return true;
-    }
-  }
-
-  return false;
-}
-
-bool HasInheritsRec(uint32_t depth, const PrimSpec &primspec,
-                    const uint32_t max_depth = 1024 * 128) {
-  if (depth > max_depth) {
-    // too deep
-    return false;
-  }
-
-  if (primspec.metas().inherits) {
-    return true;
-  }
-
-  for (auto &child : primspec.children()) {
-    if (HasInheritsRec(depth + 1, child, max_depth)) {
-      return true;
-    }
-  }
-
-  return false;
-}
-
-bool HasSpecializesRec(uint32_t depth, const PrimSpec &primspec,
-                    const uint32_t max_depth = 1024 * 128) {
-  if (depth > max_depth) {
-    // too deep
-    return false;
-  }
-
-  if (primspec.metas().specializes) {
-    return true;
-  }
-
-  for (auto &child : primspec.children()) {
-    if (HasSpecializesRec(depth + 1, child, max_depth)) {
-      return true;
-    }
-  }
-
-  return false;
-}
-
-bool HasOverRec(uint32_t depth, const PrimSpec &primspec,
-                       const uint32_t max_depth = 1024 * 128) {
-  if (depth > max_depth) {
-    // too deep
-    return false;
-  }
-
-  if (primspec.specifier() == Specifier::Over) {
-    return true;
-  }
-
-  for (auto &child : primspec.children()) {
-    if (HasOverRec(depth + 1, child, max_depth)) {
-      return true;
-    }
-  }
-
-  return false;
-}
+// Helper functions moved to layer.cc
 
 }  // namespace
 
-bool Layer::find_primspec_at(const Path &path, const PrimSpec **ps,
-                             std::string *err) const {
-  if (!ps) {
-    PUSH_ERROR_AND_RETURN("Invalid PrimSpec dst argument");
-  }
+// All Layer methods moved to layer.cc
 
-  if (!path.is_valid()) {
-    DCOUT("Invalid path.");
-    PUSH_ERROR_AND_RETURN("Invalid path");
-  }
+size_t Property::estimate_memory_usage() const {
+  size_t total = sizeof(Property);
 
-  if (path.is_relative_path()) {
-    // TODO
-    PUSH_ERROR_AND_RETURN(fmt::format("TODO: Relative path: {}", path.full_path_name()));
-  }
+  // String storage
+  total += _prop_value_type_name.capacity();
 
-  if (!path.is_absolute_path()) {
-    PUSH_ERROR_AND_RETURN(fmt::format("Path is not absolute path: {}", path.full_path_name()));
-  }
+  total += _attrib.estimate_memory_usage();
+  total += _rel.estimate_memory_usage();
 
-#if defined(TINYUSDZ_ENABLE_THREAD)
-  // TODO: Only take a lock when dirty.
-  std::lock_guard<std::mutex> lock(_mutex);
-#endif
+  return total;
 
-  if (_dirty) {
-    DCOUT("clear cache.");
-    // Clear cache.
-    _primspec_path_cache.clear();
-
-    _dirty = false;
-  } else {
-    // First find from a cache.
-    auto ret = _primspec_path_cache.find(path.prim_part());
-    if (ret != _primspec_path_cache.end()) {
-      DCOUT("Found cache.");
-      (*ps) = ret->second;
-      return true;
-    }
-  }
-
-  // Brute-force search.
-  for (const auto &parent : _prim_specs) {
-    if (auto pv = GetPrimSpecAtPathRec(&parent.second, /* parent_path */ "",
-                                       path, /* depth */ 0)) {
-      (*ps) = pv.value();
-
-      // Add to cache.
-      // Assume pointer address does not change unless dirty state changes.
-      _primspec_path_cache[path.prim_part()] = pv.value();
-      return true;
-    }
-  }
-
-  return false;
 }
 
-bool Layer::check_unresolved_references(const uint32_t max_depth) const {
-  bool ret = false;
+size_t Relationship::estimate_memory_usage() const {
+  size_t total = sizeof(Relationship);
 
-  for (const auto &item : _prim_specs) {
-    if (HasReferencesRec(/* depth */ 0, item.second, max_depth)) {
-      ret = true;
-      break;
-    }
+  total += targetPath.full_path_name().size();
+  for (const auto& path : targetPathVector) {
+    // Path internally contains strings, estimate their capacity
+    total += path.full_path_name().size();
   }
 
-  _has_unresolved_references = ret;
-  return _has_unresolved_references;
+  return total;
 }
 
-bool Layer::check_unresolved_payload(const uint32_t max_depth) const {
-  bool ret = false;
+// Memory usage estimation implementation for Attribute
+size_t Attribute::estimate_memory_usage() const {
+  size_t total = sizeof(Attribute);
 
-  for (const auto &item : _prim_specs) {
-    if (HasPayloadRec(/* depth */ 0, item.second, max_depth)) {
-      ret = true;
-      break;
-    }
+  // String storage
+  total += _name.capacity();
+  total += _type_name.capacity();
+
+  // PrimVar memory - basic estimate
+  // TODO: For more accurate estimation, PrimVar should have its own estimate_memory_usage method
+  total += sizeof(primvar::PrimVar);
+  // The PrimVar contains value::Value and value::TimeSamples which can be large
+  // This is a basic estimate - actual size depends on the stored data type and time samples
+
+  // Connection paths
+  total += _paths.capacity() * sizeof(Path);
+  for (const auto& path : _paths) {
+    // Path internally contains strings, estimate their capacity
+    total += path.full_path_name().capacity();
   }
 
-  _has_unresolved_payload = ret;
-  return _has_unresolved_payload;
-}
+  // Attribute metadata
+  total += sizeof(AttrMeta); // Basic size of metadata structure
+  // TODO: Add detailed AttrMeta internal memory estimation if needed
 
-bool Layer::check_unresolved_variant(const uint32_t max_depth) const {
-  bool ret = false;
-
-  for (const auto &item : _prim_specs) {
-    if (HasVariantRec(/* depth */ 0, item.second, max_depth)) {
-      ret = true;
-      break;
-    }
-  }
-
-  _has_unresolved_variant = ret;
-  return _has_unresolved_variant;
-}
-
-bool Layer::check_unresolved_inherits(const uint32_t max_depth) const {
-  bool ret = false;
-
-  for (const auto &item : _prim_specs) {
-    if (HasInheritsRec(/* depth */ 0, item.second, max_depth)) {
-      ret = true;
-      break;
-    }
-  }
-
-  _has_unresolved_inherits = ret;
-  return _has_unresolved_inherits;
-}
-
-bool Layer::check_unresolved_specializes(const uint32_t max_depth) const {
-  bool ret = false;
-
-  for (const auto &item : _prim_specs) {
-    if (HasSpecializesRec(/* depth */ 0, item.second, max_depth)) {
-      ret = true;
-      break;
-    }
-  }
-
-  _has_unresolved_specializes = ret;
-  return _has_unresolved_specializes;
-}
-
-bool Layer::check_over_primspec(const uint32_t max_depth) const {
-  bool ret = false;
-
-  for (const auto &item : _prim_specs) {
-    if (HasOverRec(/* depth */ 0, item.second, max_depth)) {
-      ret = true;
-      break;
-    }
-  }
-
-  _has_over_primspec = ret;
-  return _has_over_primspec;
+  return total;
 }
 
 }  // namespace tinyusdz

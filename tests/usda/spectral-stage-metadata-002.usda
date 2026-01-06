@@ -1,0 +1,15 @@
+#usda 1.0
+(
+    doc = "Test: Stage-level wavelength unit in micrometers"
+    customLayerData = {
+        string unitForWavelength = "micrometers"
+    }
+)
+
+def Shader "TestShader"
+{
+    uniform token info:id = "UsdPreviewSurface"
+    float2[] wavelength:reflectance = [
+        (0.38, 0.10), (0.55, 0.50), (0.78, 0.90)
+    ]
+}

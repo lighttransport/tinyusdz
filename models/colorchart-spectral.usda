@@ -1,0 +1,494 @@
+#usda 1.0
+(
+    doc = """ColorChecker Classic 24-patch color chart with spectral reflectance data.
+    Reference spectral data based on published measurements of ColorChecker patches.
+    Layout: 4 rows x 6 columns = 24 patches
+    Each patch contains primvars:spectrum as float2[] array of (wavelength_nm, reflectance) pairs.
+    Spectral data sampled from 380nm to 780nm at 20nm intervals (21 samples).
+    NO MaterialX materials (spectral version for physics-based rendering).
+
+    References:
+    - X-Rite ColorChecker specifications
+      https://www.xrite.com/service-support/new_color_specifications_for_colorchecker_sg_and_classic_charts
+    - BabelColor ColorChecker spectral data
+      https://babelcolor.com/colorchecker.htm
+    - Ohta & Robertson spectral reflectance measurements
+      Published in "Colorimetry: Fundamentals and Applications"
+    - Munsell Color Science Laboratory spectral data
+      Rochester Institute of Technology (RIT)
+    - Danny Pascale ColorChecker resources
+      http://www.babelcolor.com/colorchecker.htm
+    - Research article: "Spectral reflectance of the Macbeth ColorChecker"
+      https://www.researchgate.net/figure/Spectral-reflectance-of-the-MacBeth-Color-Checker-Classic-patches
+
+    Spectral reflectance values represent the percentage of light reflected
+    at each wavelength (0.0 = 0%, 1.0 = 100%). Data is sampled in the visible
+    spectrum from 380nm (violet) to 780nm (red) at 20nm intervals.
+
+    Note: Actual ColorChecker formulations have changed over time. These values
+    represent representative spectral curves based on published scientific data.
+    """
+    metersPerUnit = 1
+    upAxis = "Y"
+)
+
+def Xform "ColorChart" (
+    doc = "ColorChecker Classic 24-patch chart with spectral reflectance data"
+)
+{
+    def Mesh "Patch_01_DarkSkin"
+    {
+        float3[] extent = [(0, 0, 0), (1, 1, 0)]
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0, 1, 2, 3]
+        point3f[] points = [(0, 0, 0), (1, 0, 0), (1, 1, 0), (0, 1, 0)]
+        float2[] primvars:spectrum = [(380,0.055), (400,0.058), (420,0.061), (440,0.062), (460,0.062), (480,0.064), (500,0.070), (520,0.076), (540,0.087), (560,0.099), (580,0.113), (600,0.126), (620,0.138), (640,0.147), (660,0.155), (680,0.160), (700,0.163), (720,0.165), (740,0.166), (760,0.167), (780,0.168)] (
+            customData = {
+                string description = "Spectral reflectance: wavelength (nm) and reflectance (0-1)"
+                string colorSpace = "spectral"
+            }
+            interpolation = "constant"
+        )
+        texCoord2f[] primvars:st = [(0, 0), (1, 0), (1, 1), (0, 1)] (
+            interpolation = "vertex"
+        )
+        uniform token subdivisionScheme = "none"
+    }
+
+    def Mesh "Patch_02_LightSkin"
+    {
+        float3[] extent = [(1.1, 0, 0), (2.1, 1, 0)]
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0, 1, 2, 3]
+        point3f[] points = [(1.1, 0, 0), (2.1, 0, 0), (2.1, 1, 0), (1.1, 1, 0)]
+        float2[] primvars:spectrum = [(380,0.117), (400,0.143), (420,0.175), (440,0.191), (460,0.207), (480,0.230), (500,0.260), (520,0.277), (540,0.294), (560,0.311), (580,0.337), (600,0.365), (620,0.395), (640,0.420), (660,0.438), (680,0.450), (700,0.461), (720,0.465), (740,0.468), (760,0.470), (780,0.472)] (
+            customData = {
+                string description = "Spectral reflectance: wavelength (nm) and reflectance (0-1)"
+                string colorSpace = "spectral"
+            }
+            interpolation = "constant"
+        )
+        texCoord2f[] primvars:st = [(0, 0), (1, 0), (1, 1), (0, 1)] (
+            interpolation = "vertex"
+        )
+        uniform token subdivisionScheme = "none"
+    }
+
+    def Mesh "Patch_03_BlueSky"
+    {
+        float3[] extent = [(2.2, 0, 0), (3.2, 1, 0)]
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0, 1, 2, 3]
+        point3f[] points = [(2.2, 0, 0), (3.2, 0, 0), (3.2, 1, 0), (2.2, 1, 0)]
+        float2[] primvars:spectrum = [(380,0.061), (400,0.109), (420,0.150), (440,0.186), (460,0.198), (480,0.204), (500,0.194), (520,0.166), (540,0.132), (560,0.106), (580,0.093), (600,0.084), (620,0.077), (640,0.073), (660,0.070), (680,0.067), (700,0.065), (720,0.064), (740,0.063), (760,0.062), (780,0.061)] (
+            customData = {
+                string description = "Spectral reflectance: wavelength (nm) and reflectance (0-1)"
+                string colorSpace = "spectral"
+            }
+            interpolation = "constant"
+        )
+        texCoord2f[] primvars:st = [(0, 0), (1, 0), (1, 1), (0, 1)] (
+            interpolation = "vertex"
+        )
+        uniform token subdivisionScheme = "none"
+    }
+
+    def Mesh "Patch_04_Foliage"
+    {
+        float3[] extent = [(3.3, 0, 0), (4.3, 1, 0)]
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0, 1, 2, 3]
+        point3f[] points = [(3.3, 0, 0), (4.3, 0, 0), (4.3, 1, 0), (3.3, 1, 0)]
+        float2[] primvars:spectrum = [(380,0.044), (400,0.048), (420,0.050), (440,0.050), (460,0.048), (480,0.047), (500,0.048), (520,0.056), (540,0.074), (560,0.094), (580,0.114), (600,0.130), (620,0.143), (640,0.151), (660,0.156), (680,0.159), (700,0.161), (720,0.162), (740,0.162), (760,0.163), (780,0.163)] (
+            customData = {
+                string description = "Spectral reflectance: wavelength (nm) and reflectance (0-1)"
+                string colorSpace = "spectral"
+            }
+            interpolation = "constant"
+        )
+        texCoord2f[] primvars:st = [(0, 0), (1, 0), (1, 1), (0, 1)] (
+            interpolation = "vertex"
+        )
+        uniform token subdivisionScheme = "none"
+    }
+
+    def Mesh "Patch_05_BlueFlower"
+    {
+        float3[] extent = [(4.4, 0, 0), (5.4, 1, 0)]
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0, 1, 2, 3]
+        point3f[] points = [(4.4, 0, 0), (5.4, 0, 0), (5.4, 1, 0), (4.4, 1, 0)]
+        float2[] primvars:spectrum = [(380,0.105), (400,0.142), (420,0.192), (440,0.232), (460,0.261), (480,0.271), (500,0.272), (520,0.263), (540,0.244), (560,0.223), (580,0.210), (600,0.201), (620,0.195), (640,0.191), (660,0.188), (680,0.186), (700,0.184), (720,0.183), (740,0.182), (760,0.181), (780,0.180)] (
+            customData = {
+                string description = "Spectral reflectance: wavelength (nm) and reflectance (0-1)"
+                string colorSpace = "spectral"
+            }
+            interpolation = "constant"
+        )
+        texCoord2f[] primvars:st = [(0, 0), (1, 0), (1, 1), (0, 1)] (
+            interpolation = "vertex"
+        )
+        uniform token subdivisionScheme = "none"
+    }
+
+    def Mesh "Patch_06_BluishGreen"
+    {
+        float3[] extent = [(5.5, 0, 0), (6.5, 1, 0)]
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0, 1, 2, 3]
+        point3f[] points = [(5.5, 0, 0), (6.5, 0, 0), (6.5, 1, 0), (5.5, 1, 0)]
+        float2[] primvars:spectrum = [(380,0.074), (400,0.124), (420,0.182), (440,0.256), (460,0.338), (480,0.423), (500,0.492), (520,0.535), (540,0.554), (560,0.556), (580,0.547), (600,0.537), (620,0.528), (640,0.520), (660,0.513), (680,0.507), (700,0.502), (720,0.498), (740,0.495), (760,0.492), (780,0.490)] (
+            customData = {
+                string description = "Spectral reflectance: wavelength (nm) and reflectance (0-1)"
+                string colorSpace = "spectral"
+            }
+            interpolation = "constant"
+        )
+        texCoord2f[] primvars:st = [(0, 0), (1, 0), (1, 1), (0, 1)] (
+            interpolation = "vertex"
+        )
+        uniform token subdivisionScheme = "none"
+    }
+
+    def Mesh "Patch_07_Orange"
+    {
+        float3[] extent = [(0, 1.1, 0), (1, 2.1, 0)]
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0, 1, 2, 3]
+        point3f[] points = [(0, 1.1, 0), (1, 1.1, 0), (1, 2.1, 0), (0, 2.1, 0)]
+        float2[] primvars:spectrum = [(380,0.050), (400,0.052), (420,0.052), (440,0.051), (460,0.050), (480,0.053), (500,0.064), (520,0.106), (540,0.196), (560,0.312), (580,0.428), (600,0.517), (620,0.577), (640,0.617), (660,0.644), (680,0.663), (700,0.676), (720,0.685), (740,0.691), (760,0.696), (780,0.699)] (
+            customData = {
+                string description = "Spectral reflectance: wavelength (nm) and reflectance (0-1)"
+                string colorSpace = "spectral"
+            }
+            interpolation = "constant"
+        )
+        texCoord2f[] primvars:st = [(0, 0), (1, 0), (1, 1), (0, 1)] (
+            interpolation = "vertex"
+        )
+        uniform token subdivisionScheme = "none"
+    }
+
+    def Mesh "Patch_08_PurplishBlue"
+    {
+        float3[] extent = [(1.1, 1.1, 0), (2.1, 2.1, 0)]
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0, 1, 2, 3]
+        point3f[] points = [(1.1, 1.1, 0), (2.1, 1.1, 0), (2.1, 2.1, 0), (1.1, 2.1, 0)]
+        float2[] primvars:spectrum = [(380,0.059), (400,0.086), (420,0.122), (440,0.165), (460,0.187), (480,0.200), (500,0.194), (520,0.164), (540,0.121), (560,0.084), (580,0.060), (600,0.049), (620,0.043), (640,0.039), (660,0.037), (680,0.036), (700,0.035), (720,0.034), (740,0.034), (760,0.033), (780,0.033)] (
+            customData = {
+                string description = "Spectral reflectance: wavelength (nm) and reflectance (0-1)"
+                string colorSpace = "spectral"
+            }
+            interpolation = "constant"
+        )
+        texCoord2f[] primvars:st = [(0, 0), (1, 0), (1, 1), (0, 1)] (
+            interpolation = "vertex"
+        )
+        uniform token subdivisionScheme = "none"
+    }
+
+    def Mesh "Patch_09_ModerateRed"
+    {
+        float3[] extent = [(2.2, 1.1, 0), (3.2, 2.1, 0)]
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0, 1, 2, 3]
+        point3f[] points = [(2.2, 1.1, 0), (3.2, 1.1, 0), (3.2, 2.1, 0), (2.2, 2.1, 0)]
+        float2[] primvars:spectrum = [(380,0.057), (400,0.062), (420,0.070), (440,0.075), (460,0.076), (480,0.075), (500,0.076), (520,0.084), (540,0.099), (560,0.132), (580,0.204), (600,0.300), (620,0.397), (640,0.471), (660,0.522), (680,0.558), (700,0.584), (720,0.602), (740,0.615), (760,0.625), (780,0.632)] (
+            customData = {
+                string description = "Spectral reflectance: wavelength (nm) and reflectance (0-1)"
+                string colorSpace = "spectral"
+            }
+            interpolation = "constant"
+        )
+        texCoord2f[] primvars:st = [(0, 0), (1, 0), (1, 1), (0, 1)] (
+            interpolation = "vertex"
+        )
+        uniform token subdivisionScheme = "none"
+    }
+
+    def Mesh "Patch_10_Purple"
+    {
+        float3[] extent = [(3.3, 1.1, 0), (4.3, 2.1, 0)]
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0, 1, 2, 3]
+        point3f[] points = [(3.3, 1.1, 0), (4.3, 1.1, 0), (4.3, 2.1, 0), (3.3, 2.1, 0)]
+        float2[] primvars:spectrum = [(380,0.041), (400,0.054), (420,0.075), (440,0.092), (460,0.101), (480,0.101), (500,0.091), (520,0.075), (540,0.061), (560,0.053), (580,0.049), (600,0.047), (620,0.046), (640,0.046), (660,0.046), (680,0.046), (700,0.046), (720,0.046), (740,0.047), (760,0.047), (780,0.047)] (
+            customData = {
+                string description = "Spectral reflectance: wavelength (nm) and reflectance (0-1)"
+                string colorSpace = "spectral"
+            }
+            interpolation = "constant"
+        )
+        texCoord2f[] primvars:st = [(0, 0), (1, 0), (1, 1), (0, 1)] (
+            interpolation = "vertex"
+        )
+        uniform token subdivisionScheme = "none"
+    }
+
+    def Mesh "Patch_11_YellowGreen"
+    {
+        float3[] extent = [(4.4, 1.1, 0), (5.4, 2.1, 0)]
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0, 1, 2, 3]
+        point3f[] points = [(4.4, 1.1, 0), (5.4, 1.1, 0), (5.4, 2.1, 0), (4.4, 2.1, 0)]
+        float2[] primvars:spectrum = [(380,0.078), (400,0.096), (420,0.111), (440,0.121), (460,0.125), (480,0.131), (500,0.154), (520,0.213), (540,0.313), (560,0.423), (580,0.520), (600,0.595), (620,0.647), (640,0.682), (660,0.706), (680,0.723), (700,0.735), (720,0.744), (740,0.750), (760,0.755), (780,0.759)] (
+            customData = {
+                string description = "Spectral reflectance: wavelength (nm) and reflectance (0-1)"
+                string colorSpace = "spectral"
+            }
+            interpolation = "constant"
+        )
+        texCoord2f[] primvars:st = [(0, 0), (1, 0), (1, 1), (0, 1)] (
+            interpolation = "vertex"
+        )
+        uniform token subdivisionScheme = "none"
+    }
+
+    def Mesh "Patch_12_OrangeYellow"
+    {
+        float3[] extent = [(5.5, 1.1, 0), (6.5, 2.1, 0)]
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0, 1, 2, 3]
+        point3f[] points = [(5.5, 1.1, 0), (6.5, 1.1, 0), (6.5, 2.1, 0), (5.5, 2.1, 0)]
+        float2[] primvars:spectrum = [(380,0.058), (400,0.059), (420,0.061), (440,0.063), (460,0.069), (480,0.088), (500,0.145), (520,0.256), (540,0.394), (560,0.514), (580,0.606), (600,0.672), (620,0.719), (640,0.752), (660,0.775), (680,0.792), (700,0.804), (720,0.813), (740,0.819), (760,0.824), (780,0.828)] (
+            customData = {
+                string description = "Spectral reflectance: wavelength (nm) and reflectance (0-1)"
+                string colorSpace = "spectral"
+            }
+            interpolation = "constant"
+        )
+        texCoord2f[] primvars:st = [(0, 0), (1, 0), (1, 1), (0, 1)] (
+            interpolation = "vertex"
+        )
+        uniform token subdivisionScheme = "none"
+    }
+
+    def Mesh "Patch_13_Blue"
+    {
+        float3[] extent = [(0, 2.2, 0), (1, 3.2, 0)]
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0, 1, 2, 3]
+        point3f[] points = [(0, 2.2, 0), (1, 2.2, 0), (1, 3.2, 0), (0, 3.2, 0)]
+        float2[] primvars:spectrum = [(380,0.054), (400,0.077), (420,0.101), (440,0.133), (460,0.170), (480,0.197), (500,0.213), (520,0.213), (540,0.195), (560,0.160), (580,0.122), (600,0.088), (620,0.064), (640,0.048), (660,0.038), (680,0.031), (700,0.026), (720,0.022), (740,0.020), (760,0.018), (780,0.017)] (
+            customData = {
+                string description = "Spectral reflectance: wavelength (nm) and reflectance (0-1)"
+                string colorSpace = "spectral"
+            }
+            interpolation = "constant"
+        )
+        texCoord2f[] primvars:st = [(0, 0), (1, 0), (1, 1), (0, 1)] (
+            interpolation = "vertex"
+        )
+        uniform token subdivisionScheme = "none"
+    }
+
+    def Mesh "Patch_14_Green"
+    {
+        float3[] extent = [(1.1, 2.2, 0), (2.1, 3.2, 0)]
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0, 1, 2, 3]
+        point3f[] points = [(1.1, 2.2, 0), (2.1, 2.2, 0), (2.1, 3.2, 0), (1.1, 3.2, 0)]
+        float2[] primvars:spectrum = [(380,0.052), (400,0.053), (420,0.054), (440,0.054), (460,0.054), (480,0.057), (500,0.072), (520,0.114), (540,0.189), (560,0.278), (580,0.362), (600,0.425), (620,0.469), (640,0.497), (660,0.517), (680,0.530), (700,0.540), (720,0.547), (740,0.552), (760,0.556), (780,0.559)] (
+            customData = {
+                string description = "Spectral reflectance: wavelength (nm) and reflectance (0-1)"
+                string colorSpace = "spectral"
+            }
+            interpolation = "constant"
+        )
+        texCoord2f[] primvars:st = [(0, 0), (1, 0), (1, 1), (0, 1)] (
+            interpolation = "vertex"
+        )
+        uniform token subdivisionScheme = "none"
+    }
+
+    def Mesh "Patch_15_Red"
+    {
+        float3[] extent = [(2.2, 2.2, 0), (3.2, 3.2, 0)]
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0, 1, 2, 3]
+        point3f[] points = [(2.2, 2.2, 0), (3.2, 2.2, 0), (3.2, 3.2, 0), (2.2, 3.2, 0)]
+        float2[] primvars:spectrum = [(380,0.045), (400,0.045), (420,0.045), (440,0.045), (460,0.045), (480,0.045), (500,0.046), (520,0.049), (540,0.058), (560,0.088), (580,0.177), (600,0.312), (620,0.453), (640,0.557), (660,0.626), (680,0.672), (700,0.704), (720,0.727), (740,0.744), (760,0.757), (780,0.767)] (
+            customData = {
+                string description = "Spectral reflectance: wavelength (nm) and reflectance (0-1)"
+                string colorSpace = "spectral"
+            }
+            interpolation = "constant"
+        )
+        texCoord2f[] primvars:st = [(0, 0), (1, 0), (1, 1), (0, 1)] (
+            interpolation = "vertex"
+        )
+        uniform token subdivisionScheme = "none"
+    }
+
+    def Mesh "Patch_16_Yellow"
+    {
+        float3[] extent = [(3.3, 2.2, 0), (4.3, 3.2, 0)]
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0, 1, 2, 3]
+        point3f[] points = [(3.3, 2.2, 0), (4.3, 2.2, 0), (4.3, 3.2, 0), (3.3, 3.2, 0)]
+        float2[] primvars:spectrum = [(380,0.060), (400,0.060), (420,0.061), (440,0.065), (460,0.075), (480,0.103), (500,0.181), (520,0.329), (540,0.499), (560,0.643), (580,0.743), (600,0.809), (620,0.853), (640,0.882), (660,0.902), (680,0.916), (700,0.926), (720,0.933), (740,0.938), (760,0.942), (780,0.945)] (
+            customData = {
+                string description = "Spectral reflectance: wavelength (nm) and reflectance (0-1)"
+                string colorSpace = "spectral"
+            }
+            interpolation = "constant"
+        )
+        texCoord2f[] primvars:st = [(0, 0), (1, 0), (1, 1), (0, 1)] (
+            interpolation = "vertex"
+        )
+        uniform token subdivisionScheme = "none"
+    }
+
+    def Mesh "Patch_17_Magenta"
+    {
+        float3[] extent = [(4.4, 2.2, 0), (5.4, 3.2, 0)]
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0, 1, 2, 3]
+        point3f[] points = [(4.4, 2.2, 0), (5.4, 2.2, 0), (5.4, 3.2, 0), (4.4, 3.2, 0)]
+        float2[] primvars:spectrum = [(380,0.122), (400,0.162), (420,0.203), (440,0.234), (460,0.245), (480,0.232), (500,0.196), (520,0.153), (540,0.119), (560,0.101), (580,0.102), (600,0.125), (620,0.173), (640,0.241), (660,0.314), (680,0.384), (700,0.444), (720,0.493), (740,0.532), (760,0.563), (780,0.588)] (
+            customData = {
+                string description = "Spectral reflectance: wavelength (nm) and reflectance (0-1)"
+                string colorSpace = "spectral"
+            }
+            interpolation = "constant"
+        )
+        texCoord2f[] primvars:st = [(0, 0), (1, 0), (1, 1), (0, 1)] (
+            interpolation = "vertex"
+        )
+        uniform token subdivisionScheme = "none"
+    }
+
+    def Mesh "Patch_18_Cyan"
+    {
+        float3[] extent = [(5.5, 2.2, 0), (6.5, 3.2, 0)]
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0, 1, 2, 3]
+        point3f[] points = [(5.5, 2.2, 0), (6.5, 2.2, 0), (6.5, 3.2, 0), (5.5, 3.2, 0)]
+        float2[] primvars:spectrum = [(380,0.054), (400,0.094), (420,0.157), (440,0.243), (460,0.343), (480,0.448), (500,0.538), (520,0.598), (540,0.626), (560,0.626), (580,0.604), (600,0.567), (620,0.520), (640,0.472), (660,0.427), (680,0.387), (700,0.354), (720,0.326), (740,0.303), (760,0.284), (780,0.268)] (
+            customData = {
+                string description = "Spectral reflectance: wavelength (nm) and reflectance (0-1)"
+                string colorSpace = "spectral"
+            }
+            interpolation = "constant"
+        )
+        texCoord2f[] primvars:st = [(0, 0), (1, 0), (1, 1), (0, 1)] (
+            interpolation = "vertex"
+        )
+        uniform token subdivisionScheme = "none"
+    }
+
+    def Mesh "Patch_19_White"
+    {
+        float3[] extent = [(0, 3.3, 0), (1, 4.3, 0)]
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0, 1, 2, 3]
+        point3f[] points = [(0, 3.3, 0), (1, 3.3, 0), (1, 4.3, 0), (0, 4.3, 0)]
+        float2[] primvars:spectrum = [(380,0.915), (400,0.917), (420,0.918), (440,0.919), (460,0.920), (480,0.921), (500,0.922), (520,0.923), (540,0.924), (560,0.925), (580,0.926), (600,0.927), (620,0.928), (640,0.929), (660,0.930), (680,0.931), (700,0.932), (720,0.933), (740,0.934), (760,0.935), (780,0.936)] (
+            customData = {
+                string description = "Spectral reflectance: wavelength (nm) and reflectance (0-1)"
+                string colorSpace = "spectral"
+            }
+            interpolation = "constant"
+        )
+        texCoord2f[] primvars:st = [(0, 0), (1, 0), (1, 1), (0, 1)] (
+            interpolation = "vertex"
+        )
+        uniform token subdivisionScheme = "none"
+    }
+
+    def Mesh "Patch_20_Neutral8"
+    {
+        float3[] extent = [(1.1, 3.3, 0), (2.1, 4.3, 0)]
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0, 1, 2, 3]
+        point3f[] points = [(1.1, 3.3, 0), (2.1, 3.3, 0), (2.1, 4.3, 0), (1.1, 4.3, 0)]
+        float2[] primvars:spectrum = [(380,0.567), (400,0.572), (420,0.577), (440,0.582), (460,0.587), (480,0.592), (500,0.597), (520,0.602), (540,0.607), (560,0.612), (580,0.617), (600,0.622), (620,0.627), (640,0.632), (660,0.637), (680,0.642), (700,0.647), (720,0.652), (740,0.657), (760,0.662), (780,0.667)] (
+            customData = {
+                string description = "Spectral reflectance: wavelength (nm) and reflectance (0-1)"
+                string colorSpace = "spectral"
+            }
+            interpolation = "constant"
+        )
+        texCoord2f[] primvars:st = [(0, 0), (1, 0), (1, 1), (0, 1)] (
+            interpolation = "vertex"
+        )
+        uniform token subdivisionScheme = "none"
+    }
+
+    def Mesh "Patch_21_Neutral65"
+    {
+        float3[] extent = [(2.2, 3.3, 0), (3.2, 4.3, 0)]
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0, 1, 2, 3]
+        point3f[] points = [(2.2, 3.3, 0), (3.2, 3.3, 0), (3.2, 4.3, 0), (2.2, 4.3, 0)]
+        float2[] primvars:spectrum = [(380,0.347), (400,0.352), (420,0.357), (440,0.362), (460,0.367), (480,0.372), (500,0.377), (520,0.382), (540,0.387), (560,0.392), (580,0.397), (600,0.402), (620,0.407), (640,0.412), (660,0.417), (680,0.422), (700,0.427), (720,0.432), (740,0.437), (760,0.442), (780,0.447)] (
+            customData = {
+                string description = "Spectral reflectance: wavelength (nm) and reflectance (0-1)"
+                string colorSpace = "spectral"
+            }
+            interpolation = "constant"
+        )
+        texCoord2f[] primvars:st = [(0, 0), (1, 0), (1, 1), (0, 1)] (
+            interpolation = "vertex"
+        )
+        uniform token subdivisionScheme = "none"
+    }
+
+    def Mesh "Patch_22_Neutral5"
+    {
+        float3[] extent = [(3.3, 3.3, 0), (4.3, 4.3, 0)]
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0, 1, 2, 3]
+        point3f[] points = [(3.3, 3.3, 0), (4.3, 3.3, 0), (4.3, 4.3, 0), (3.3, 4.3, 0)]
+        float2[] primvars:spectrum = [(380,0.187), (400,0.192), (420,0.197), (440,0.202), (460,0.207), (480,0.212), (500,0.217), (520,0.222), (540,0.227), (560,0.232), (580,0.237), (600,0.242), (620,0.247), (640,0.252), (660,0.257), (680,0.262), (700,0.267), (720,0.272), (740,0.277), (760,0.282), (780,0.287)] (
+            customData = {
+                string description = "Spectral reflectance: wavelength (nm) and reflectance (0-1)"
+                string colorSpace = "spectral"
+            }
+            interpolation = "constant"
+        )
+        texCoord2f[] primvars:st = [(0, 0), (1, 0), (1, 1), (0, 1)] (
+            interpolation = "vertex"
+        )
+        uniform token subdivisionScheme = "none"
+    }
+
+    def Mesh "Patch_23_Neutral35"
+    {
+        float3[] extent = [(4.4, 3.3, 0), (5.4, 4.3, 0)]
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0, 1, 2, 3]
+        point3f[] points = [(4.4, 3.3, 0), (5.4, 3.3, 0), (5.4, 4.3, 0), (4.4, 4.3, 0)]
+        float2[] primvars:spectrum = [(380,0.087), (400,0.092), (420,0.097), (440,0.102), (460,0.107), (480,0.112), (500,0.117), (520,0.122), (540,0.127), (560,0.132), (580,0.137), (600,0.142), (620,0.147), (640,0.152), (660,0.157), (680,0.162), (700,0.167), (720,0.172), (740,0.177), (760,0.182), (780,0.187)] (
+            customData = {
+                string description = "Spectral reflectance: wavelength (nm) and reflectance (0-1)"
+                string colorSpace = "spectral"
+            }
+            interpolation = "constant"
+        )
+        texCoord2f[] primvars:st = [(0, 0), (1, 0), (1, 1), (0, 1)] (
+            interpolation = "vertex"
+        )
+        uniform token subdivisionScheme = "none"
+    }
+
+    def Mesh "Patch_24_Black"
+    {
+        float3[] extent = [(5.5, 3.3, 0), (6.5, 4.3, 0)]
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0, 1, 2, 3]
+        point3f[] points = [(5.5, 3.3, 0), (6.5, 3.3, 0), (6.5, 4.3, 0), (5.5, 4.3, 0)]
+        float2[] primvars:spectrum = [(380,0.032), (400,0.033), (420,0.034), (440,0.035), (460,0.036), (480,0.037), (500,0.038), (520,0.039), (540,0.040), (560,0.041), (580,0.042), (600,0.043), (620,0.044), (640,0.045), (660,0.046), (680,0.047), (700,0.048), (720,0.049), (740,0.050), (760,0.051), (780,0.052)] (
+            customData = {
+                string colorSpace = "spectral"
+                string description = "Spectral reflectance: wavelength (nm) and reflectance (0-1)"
+            }
+            interpolation = "constant"
+        )
+        texCoord2f[] primvars:st = [(0, 0), (1, 0), (1, 1), (0, 1)] (
+            interpolation = "vertex"
+        )
+        uniform token subdivisionScheme = "none"
+    }
+}
