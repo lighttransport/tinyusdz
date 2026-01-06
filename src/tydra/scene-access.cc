@@ -2351,7 +2351,7 @@ std::vector<const GeomSubset *> GetGeomSubsets(
       if (familyName.valid()) {
         if (pv->familyName.authored()) {
           if (pv->familyName.get_value().has_value()) {
-            const value::token &tok = pv->familyName.get_value().value();
+            const value::token tok = pv->familyName.get_value().value();
             if (familyName.str() == tok.str()) {
               result.push_back(pv);
             }
@@ -2386,7 +2386,7 @@ std::vector<const GeomSubset *> GetGeomSubsetChildren(
       if (familyName.valid()) {
         if (pv->familyName.authored()) {
           if (pv->familyName.get_value().has_value()) {
-            const value::token &tok = pv->familyName.get_value().value();
+            const value::token tok = pv->familyName.get_value().value();
             if (familyName.str() == tok.str()) {
               result.push_back(pv);
             }
