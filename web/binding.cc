@@ -125,19 +125,12 @@ EM_JS(void, reportTydraComplete, (int meshCount, int materialCount, int textureC
 EM_JS(emscripten::EM_VAL, yieldToEventLoop_impl, (), {
   // Return a Promise that resolves on next animation frame
   // This gives the browser a chance to repaint
-  console.log('[Coroutine] Yielding to event loop...');
   return Emval.toHandle(new Promise(resolve => {
     if (typeof requestAnimationFrame === 'function') {
-      requestAnimationFrame(() => {
-        console.log('[Coroutine] Resumed from yield (rAF)');
-        resolve();
-      });
+      requestAnimationFrame(() => resolve());
     } else {
       // Fallback for non-browser environments (Node.js)
-      setTimeout(() => {
-        console.log('[Coroutine] Resumed from yield (setTimeout)');
-        resolve();
-      }, 0);
+      setTimeout(resolve, 0);
     }
   }));
 });
@@ -160,12 +153,9 @@ inline emscripten::val yieldWithDelay(int delayMs) {
 
 // Report that async operation is starting (for JS progress UI)
 EM_JS(void, reportAsyncPhaseStart, (const char* phase, float progress), {
-  const phaseStr = UTF8ToString(phase);
-  const progressPct = (progress * 100).toFixed(0);
-  console.log(`[Coroutine] Phase: ${phaseStr} (${progressPct}%)`);
   if (typeof Module.onAsyncPhaseStart === 'function') {
     Module.onAsyncPhaseStart({
-      phase: phaseStr,
+      phase: UTF8ToString(phase),
       progress: progress
     });
   }
@@ -1332,22 +1322,100 @@ class TinyUSDZLoaderNative {
     // Yield after parsing to allow UI update
     co_await yieldToEventLoop();
 
-    // Phase 3: Converting to RenderScene (Tydra)
-    reportAsyncPhaseStart("converting", 0.3f);
+    // Phase 3: Setup conversion environment
+    reportAsyncPhaseStart("setup", 0.3f);
 
-    // Yield again before heavy conversion
+    tinyusdz::tydra::RenderSceneConverterEnv env(stage);
+    env.scene_config.load_texture_assets = loadTextureInNative_;
+    env.material_config.preserve_texel_bitdepth = true;
+    env.mesh_config.lowmem = true;
+    env.mesh_config.enable_bone_reduction = enable_bone_reduction_;
+    env.mesh_config.target_bone_count = target_bone_count_;
+
+    // Yield after setup
     co_await yieldToEventLoop();
 
-    bool convert_ok = stageToRenderScene(stage, is_usdz, binary);
+    // Phase 4: Setup asset resolution
+    reportAsyncPhaseStart("assets", 0.4f);
 
-    if (!convert_ok) {
+    if (is_usdz) {
+      bool asset_on_memory = false;
+      if (!tinyusdz::ReadUSDZAssetInfoFromMemory(
+              reinterpret_cast<const uint8_t *>(binary.c_str()), binary.size(),
+              asset_on_memory, &usdz_asset_, &warn_, &error_)) {
+        emscripten::val result = emscripten::val::object();
+        result.set("success", false);
+        result.set("error", "Failed to read USDZ assetInfo");
+        co_return result;
+      }
+
+      tinyusdz::AssetResolutionResolver arr;
+      if (!tinyusdz::SetupUSDZAssetResolution(arr, &usdz_asset_)) {
+        emscripten::val result = emscripten::val::object();
+        result.set("success", false);
+        result.set("error", "Failed to setup AssetResolution for USDZ");
+        co_return result;
+      }
+      env.asset_resolver = arr;
+    } else {
+      tinyusdz::AssetResolutionResolver arr;
+      if (!SetupEMAssetResolution(arr, &em_resolver_)) {
+        emscripten::val result = emscripten::val::object();
+        result.set("success", false);
+        result.set("error", "Failed to setup asset resolution");
+        co_return result;
+      }
+      env.asset_resolver = arr;
+    }
+
+    // Yield after asset resolution setup
+    co_await yieldToEventLoop();
+
+    // Phase 5: Converting meshes (Tydra)
+    reportAsyncPhaseStart("meshes", 0.5f);
+
+    tinyusdz::tydra::RenderSceneConverter converter;
+
+    // Set up progress callback that reports to JS
+    converter.SetDetailedProgressCallback(
+        [](const tinyusdz::tydra::DetailedProgressInfo &info, void *userptr) -> bool {
+          // Report progress to JS synchronously
+          reportTydraProgress(
+            static_cast<int>(info.meshes_processed),
+            static_cast<int>(info.meshes_total),
+            info.GetStageName(),
+            info.current_mesh_name.c_str(),
+            info.progress
+          );
+          return true;
+        },
+        nullptr);
+
+    if (stage.metas().startTimeCode.authored()) {
+      env.timecode = stage.metas().startTimeCode.get_value();
+    }
+
+    // Yield before heavy conversion
+    co_await yieldToEventLoop();
+
+    loaded_ = converter.ConvertToRenderScene(env, &render_scene_);
+
+    // Yield after conversion
+    co_await yieldToEventLoop();
+
+    if (!converter.GetWarning().empty()) {
+      if (!warn_.empty()) warn_ += "\n";
+      warn_ += converter.GetWarning();
+    }
+
+    if (!loaded_) {
       emscripten::val result = emscripten::val::object();
       result.set("success", false);
-      result.set("error", error_);
+      result.set("error", converter.GetError());
       co_return result;
     }
 
-    // Phase 4: Complete
+    // Phase 6: Complete
     reportAsyncPhaseStart("complete", 1.0f);
 
     // Final yield to ensure UI updates
