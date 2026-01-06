@@ -1102,19 +1102,20 @@ async function loadUSDWithProgress(source, isFile = false) {
                     source.name,
                     {
                         onPhaseStart: (info) => {
-                            console.log(`[Progress Demo] Coroutine phase: ${info.phase} (${(info.progress * 100).toFixed(0)}%)`);
                             // Map coroutine phases to our progress stages
                             const phaseMap = {
-                                'detecting': { stage: 'parsing', pct: 30 },
-                                'parsing': { stage: 'parsing', pct: 35 },
-                                'converting': { stage: 'parsing', pct: 50 },
-                                'complete': { stage: 'building', pct: 80 }
+                                'detecting': { stage: 'parsing', pct: 30, msg: 'Detecting format...' },
+                                'parsing': { stage: 'parsing', pct: 35, msg: 'Parsing USD...' },
+                                'setup': { stage: 'parsing', pct: 45, msg: 'Setting up converter...' },
+                                'assets': { stage: 'parsing', pct: 50, msg: 'Resolving assets...' },
+                                'meshes': { stage: 'parsing', pct: 55, msg: 'Converting meshes...' },
+                                'complete': { stage: 'building', pct: 80, msg: 'Building scene...' }
                             };
-                            const mapped = phaseMap[info.phase] || { stage: 'parsing', pct: 30 + info.progress * 50 };
+                            const mapped = phaseMap[info.phase] || { stage: 'parsing', pct: 30 + info.progress * 50, msg: info.phase };
                             updateProgressUI({
                                 stage: mapped.stage,
                                 percentage: mapped.pct,
-                                message: `${info.phase}...`
+                                message: mapped.msg
                             });
                         }
                     }
@@ -1181,18 +1182,20 @@ async function loadUSDWithProgress(source, isFile = false) {
                     source,
                     {
                         onPhaseStart: (info) => {
-                            console.log(`[Progress Demo] Coroutine phase: ${info.phase} (${(info.progress * 100).toFixed(0)}%)`);
+                            // Map coroutine phases to our progress stages
                             const phaseMap = {
-                                'detecting': { stage: 'parsing', pct: 30 },
-                                'parsing': { stage: 'parsing', pct: 35 },
-                                'converting': { stage: 'parsing', pct: 50 },
-                                'complete': { stage: 'building', pct: 80 }
+                                'detecting': { stage: 'parsing', pct: 30, msg: 'Detecting format...' },
+                                'parsing': { stage: 'parsing', pct: 35, msg: 'Parsing USD...' },
+                                'setup': { stage: 'parsing', pct: 45, msg: 'Setting up converter...' },
+                                'assets': { stage: 'parsing', pct: 50, msg: 'Resolving assets...' },
+                                'meshes': { stage: 'parsing', pct: 55, msg: 'Converting meshes...' },
+                                'complete': { stage: 'building', pct: 80, msg: 'Building scene...' }
                             };
-                            const mapped = phaseMap[info.phase] || { stage: 'parsing', pct: 30 + info.progress * 50 };
+                            const mapped = phaseMap[info.phase] || { stage: 'parsing', pct: 30 + info.progress * 50, msg: info.phase };
                             updateProgressUI({
                                 stage: mapped.stage,
                                 percentage: mapped.pct,
-                                message: `${info.phase}...`
+                                message: mapped.msg
                             });
                         }
                     }
