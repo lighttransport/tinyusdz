@@ -11,6 +11,7 @@ option(TINYUSDZ_WASM64 "Use wasm64(memory64). Available only for Chrome and Fire
 option(TINYUSDZ_WASM_DEBUG "Enable WASM debug mode with source maps and assertions" OFF)
 option(TINYUSDZ_WASM_SIMD "Enable WebAssembly SIMD (128-bit, widely supported since 2021)" ON)
 option(TINYUSDZ_WASM_RELAXED_SIMD "Enable WebAssembly Relaxed SIMD (requires recent browsers)" OFF)
+option(TINYUSDZ_WASM_COROUTINE "Enable C++20 coroutine-based async loading (allows browser repaint during loading)" OFF)
 
 if (TINYUSDZ_WASM64)
   set(BUILD_TARGET "tinyusdz_64")
@@ -117,6 +118,12 @@ if (TINYUSDZ_WITH_EXR)
   target_compile_definitions(${BUILD_TARGET} PRIVATE TINYUSDZ_WITH_EXR=1)
 endif()
 
+# C++20 coroutine support for async loading
+if (TINYUSDZ_WASM_COROUTINE)
+  message(STATUS "TinyUSDZ WASM: C++20 coroutine async loading enabled")
+  target_compile_definitions(${BUILD_TARGET} PRIVATE TINYUSDZ_USE_COROUTINE=1)
+endif()
+
 # tinyusdz dir
 target_include_directories(${BUILD_TARGET}
                            PRIVATE "${PROJECT_SOURCE_DIR}/../src/")
@@ -203,6 +210,7 @@ endif()
 
 # Export HEAPU8 for zero-copy streaming transfer from JS to WASM
 string(APPEND TINYUSDZ_EMCC_LINK_FLAGS " -sEXPORTED_RUNTIME_METHODS=['HEAPU8']")
+
 message(STATUS ${TINYUSDZ_EMCC_LINK_FLAGS})
 
 set_target_properties(${BUILD_TARGET} PROPERTIES LINK_FLAGS "${TINYUSDZ_EMCC_LINK_FLAGS}")

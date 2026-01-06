@@ -116,6 +116,11 @@ EM_JS(void, reportTydraComplete, (int meshCount, int materialCount, int textureC
 // ============================================================================
 // This allows the browser to repaint between processing phases.
 // Returns a Promise that resolves on the next animation frame.
+//
+// Enable with CMake option: -DTINYUSDZ_WASM_COROUTINE=ON (default)
+// Disable with: -DTINYUSDZ_WASM_COROUTINE=OFF
+
+#if defined(TINYUSDZ_USE_COROUTINE)
 
 EM_JS(emscripten::EM_VAL, yieldToEventLoop_impl, (), {
   // Return a Promise that resolves on next animation frame
@@ -155,6 +160,8 @@ EM_JS(void, reportAsyncPhaseStart, (const char* phase, float progress), {
     });
   }
 });
+
+#endif // TINYUSDZ_USE_COROUTINE
 
 namespace detail {
 
@@ -1271,8 +1278,12 @@ class TinyUSDZLoaderNative {
   // This method uses C++20 coroutines to yield to the JavaScript event loop
   // between processing phases, allowing the browser to repaint during loading.
   //
+  // Enable with CMake option: -DTINYUSDZ_WASM_COROUTINE=ON (default)
+  // Disable with: -DTINYUSDZ_WASM_COROUTINE=OFF
+  //
   // Returns a Promise that resolves to a JS object: { success: bool, error?: string }
   //
+#if defined(TINYUSDZ_USE_COROUTINE)
   emscripten::val loadFromBinaryAsync(std::string binary, std::string filename) {
     // IMPORTANT: Parameters are passed by VALUE (not by reference) to ensure
     // data remains valid across co_await suspension points. References would
@@ -1339,6 +1350,7 @@ class TinyUSDZLoaderNative {
     result.set("textureCount", static_cast<int>(render_scene_.textures.size()));
     co_return result;
   }
+#endif // TINYUSDZ_USE_COROUTINE
 
   // u8 : Uint8Array object.
   bool loadTest(const std::string &filename, const emscripten::val &u8) {
@@ -4493,7 +4505,9 @@ EMSCRIPTEN_BINDINGS(tinyusdz_module) {
 #endif
       .function("loadAsLayerFromBinary", &TinyUSDZLoaderNative::loadAsLayerFromBinary)
       .function("loadFromBinary", &TinyUSDZLoaderNative::loadFromBinary)
+#if defined(TINYUSDZ_USE_COROUTINE)
       .function("loadFromBinaryAsync", &TinyUSDZLoaderNative::loadFromBinaryAsync)  // C++20 coroutine async version
+#endif
       .function("loadTest", &TinyUSDZLoaderNative::loadTest)
       .function("loadFromCachedAsset", &TinyUSDZLoaderNative::loadFromCachedAsset)
       .function("loadAsLayerFromCachedAsset", &TinyUSDZLoaderNative::loadAsLayerFromCachedAsset)
