@@ -1,0 +1,143 @@
+#usda 1.0
+(
+    doc = """MaterialX File Reference Example
+
+    This example demonstrates how to reference MaterialX light definitions
+    from an external .mtlx file using USD's reference composition.
+
+    The MaterialX file contains light shader definitions that are loaded
+    and applied to USD light prims.
+    """
+    defaultPrim = "Scene"
+    metersPerUnit = 1
+    upAxis = "Y"
+)
+
+def Xform "Scene"
+{
+    def Sphere "TestGeometry" (
+        prepend apiSchemas = ["MaterialBindingAPI"]
+    )
+    {
+        rel material:binding = </Scene/Materials/TestMaterial>
+        double radius = 1.0
+        double3 xformOp:translate = (0, 1, 0)
+        uniform token[] xformOpOrder = ["xformOp:translate"]
+    }
+
+    def Scope "Materials"
+    {
+        def Material "TestMaterial"
+        {
+            token outputs:surface.connect = </Scene/Materials/TestMaterial/Surface.outputs:surface>
+
+            def Shader "Surface"
+            {
+                uniform token info:id = "UsdPreviewSurface"
+                color3f inputs:diffuseColor = (0.7, 0.7, 0.7)
+                float inputs:roughness = 0.5
+                float inputs:metallic = 0.3
+                token outputs:surface
+            }
+        }
+    }
+
+    def Scope "Lights"
+    {
+        # Reference MaterialX light shader from external file
+        # The .mtlx file contains the complete light shader definition
+        def Shader "MainLightFromMtlx" (
+            doc = "Light shader loaded from MaterialX file"
+            prepend references = @./example_light.mtlx@</main_light>
+        )
+        {
+            # The referenced MaterialX defines:
+            # - uniform_edf with color (1.0, 0.95, 0.8)
+            # - light shader with intensity (5.0, 5.0, 5.0)
+            # - exposure value 0.0
+
+            # We can override parameters here if needed
+            # color3f inputs:intensity = (6.0, 6.0, 6.0)  # Override intensity
+        }
+
+        # Corresponding USD SphereLight for rendering
+        def SphereLight "MainLight"
+        {
+            color3f inputs:color = (1.0, 0.95, 0.8)
+            float inputs:intensity = 5.0
+            float inputs:exposure = 0.0
+            float inputs:radius = 0.5
+            double3 xformOp:translate = (4, 5, 3)
+            uniform token[] xformOpOrder = ["xformOp:translate"]
+        }
+
+        # Reference spotlight from MaterialX
+        def Shader "SpotLightFromMtlx" (
+            doc = "Spotlight loaded from MaterialX file"
+            prepend references = @./example_light.mtlx@</spot_light>
+        )
+        {
+            # References conical_edf with 30-45 degree cone
+        }
+
+        # Corresponding USD RectLight with ShapingAPI
+        def RectLight "SpotLight" (
+            prepend apiSchemas = ["ShapingAPI"]
+        )
+        {
+            color3f inputs:color = (1.0, 1.0, 1.0)
+            float inputs:intensity = 10.0
+            float inputs:exposure = 1.0
+            float inputs:width = 0.2
+            float inputs:height = 0.2
+
+            # ShapingAPI for spotlight cone
+            float inputs:shaping:cone:angle = 30.0
+            float inputs:shaping:cone:softness = 0.5
+
+            float3 xformOp:rotateXYZ = (90, 0, 0)
+            double3 xformOp:translate = (-2, 4, 0)
+            uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:rotateXYZ"]
+        }
+
+        # Reference IES light from MaterialX
+        def Shader "FixtureLightFromMtlx" (
+            doc = "IES profile light loaded from MaterialX file"
+            prepend references = @./example_light.mtlx@</fixture_light>
+        )
+        {
+            # References measured_edf with IES profile
+        }
+
+        # Corresponding USD SphereLight with IES
+        def SphereLight "FixtureLight" (
+            prepend apiSchemas = ["ShapingAPI"]
+        )
+        {
+            color3f inputs:color = (1.0, 0.95, 0.85)
+            float inputs:intensity = 8.0
+            float inputs:exposure = 0.5
+            float inputs:radius = 0.3
+
+            # ShapingAPI with IES profile
+            asset inputs:shaping:ies:file = @fixtures/led_spotlight.ies@
+            bool inputs:shaping:ies:normalize = true
+
+            double3 xformOp:translate = (2, 3.5, -2)
+            uniform token[] xformOpOrder = ["xformOp:translate"]
+        }
+    }
+}
+
+over "Scene"
+{
+    over "Lights"
+    {
+        # You can also override MaterialX light properties here
+        over "MainLightFromMtlx"
+        {
+            # Override the intensity from the MaterialX definition
+            color3f inputs:intensity = (7.0, 7.0, 7.0)
+        }
+    }
+}

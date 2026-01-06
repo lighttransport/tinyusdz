@@ -2,7 +2,8 @@
 
 #include <cstdint>
 #include <string>
-
+#include <unordered_map>
+#include <vector>
 
 namespace tinyusdz {
 
@@ -11,9 +12,14 @@ class Stage;
 
 namespace json {
 
+class JsonContext {
+};
+
 class JsonWriter {
 
  public:
+
+  
   JsonWriter() = default;
   ~JsonWriter() = default;
   JsonWriter(const JsonWriter &) = delete;
@@ -28,6 +34,7 @@ class JsonWriter {
 
  private:
   uint32_t indent_ = 2;
+
 
 };
 

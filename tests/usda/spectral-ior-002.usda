@@ -1,0 +1,19 @@
+#usda 1.0
+(
+    doc = "Test: Spectral IOR with linear interpolation metadata"
+)
+
+def Shader "TestShader"
+{
+    uniform token info:id = "UsdPreviewSurface"
+    float inputs:ior = 1.52
+    float2[] wavelength:ior = [
+        (380, 1.5308), (400, 1.5253), (450, 1.5183),
+        (500, 1.5120), (550, 1.5080), (600, 1.5061),
+        (650, 1.5039), (700, 1.5028), (780, 1.5010)
+    ] (
+        customData = {
+            string interpolation = "linear"
+        }
+    )
+}

@@ -30,6 +30,8 @@
 #include <vector>
 
 #include "usda-reader.hh"
+#include "layer.hh"
+#include "parser-timing.hh"
 
 //
 #if !defined(TINYUSDZ_DISABLE_MODULE_USDA_READER)
@@ -81,7 +83,7 @@ namespace prim {
 
 // template specialization forward decls.
 // implimentations will be located in prim-reconstruct.cc
-#define RECONSTRUCT_PRIM_DECL(__ty) template<> bool ReconstructPrim<__ty>(const Specifier &spec, const PropertyMap &, const ReferenceList &, __ty *, std::string *, std::string *, const PrimReconstructOptions &)
+#define RECONSTRUCT_PRIM_DECL(__ty) template<> bool ReconstructPrim<__ty>(const Specifier &spec, PropertyMap &, const ReferenceList &, __ty *, std::string *, std::string *, const PrimReconstructOptions &)
 
 RECONSTRUCT_PRIM_DECL(Xform);
 RECONSTRUCT_PRIM_DECL(Model);
@@ -95,6 +97,8 @@ RECONSTRUCT_PRIM_DECL(SphereLight);
 RECONSTRUCT_PRIM_DECL(CylinderLight);
 RECONSTRUCT_PRIM_DECL(DiskLight);
 RECONSTRUCT_PRIM_DECL(DistantLight);
+RECONSTRUCT_PRIM_DECL(RectLight);
+RECONSTRUCT_PRIM_DECL(GeometryLight);
 RECONSTRUCT_PRIM_DECL(GPrim);
 RECONSTRUCT_PRIM_DECL(GeomMesh);
 RECONSTRUCT_PRIM_DECL(GeomSubset);
@@ -189,7 +193,9 @@ DEFINE_PRIM_TYPE(SphereLight, kSphereLight, value::TYPE_ID_LUX_SPHERE);
 DEFINE_PRIM_TYPE(DomeLight, kDomeLight, value::TYPE_ID_LUX_DOME);
 DEFINE_PRIM_TYPE(DiskLight, kDiskLight, value::TYPE_ID_LUX_DISK);
 DEFINE_PRIM_TYPE(DistantLight, kDistantLight, value::TYPE_ID_LUX_DISTANT);
-DEFINE_PRIM_TYPE(CylinderLight,  kCylinderLight, value::TYPE_ID_LUX_CYLINDER);
+DEFINE_PRIM_TYPE(CylinderLight, kCylinderLight, value::TYPE_ID_LUX_CYLINDER);
+DEFINE_PRIM_TYPE(RectLight, kRectLight, value::TYPE_ID_LUX_RECT);
+DEFINE_PRIM_TYPE(GeometryLight, kGeometryLight, value::TYPE_ID_LUX_GEOMETRY);
 DEFINE_PRIM_TYPE(Material, kMaterial, value::TYPE_ID_MATERIAL);
 DEFINE_PRIM_TYPE(Shader, kShader, value::TYPE_ID_SHADER);
 DEFINE_PRIM_TYPE(NodeGraph, kNodeGraph, value::TYPE_ID_NODEGRAPH);
@@ -309,6 +315,8 @@ class USDAReader::Impl {
 
   void SetBaseDir(const std::string &str) { _base_dir = str; }
 
+  void SetFilename(const std::string &str) { _filename = str; }
+
 #if 0
   ///
   /// True: create PrimSpec instead of typed Prim.
@@ -324,6 +332,10 @@ class USDAReader::Impl {
 
   const USDAReaderConfig get_reader_config() const {
     return _config;
+  }
+
+  void SetProgressCallback(std::function<bool(float progress, void *userptr)> callback, void *userptr) {
+    _parser.SetProgressCallback(callback, userptr);
   }
 
   std::string GetCurrentPath() {
@@ -355,7 +367,7 @@ class USDAReader::Impl {
   template <typename T>
   bool ReconstructPrim(
       const Specifier &spec,
-      const prim::PropertyMap &properties,
+      prim::PropertyMap &properties,
       const prim::ReferenceList &references,
       T *out);
 
@@ -366,7 +378,7 @@ class USDAReader::Impl {
         PrimTypeTraits<T>::prim_type_name,
         [&](const Path &full_path, const Specifier spec, const std::string &_primTypeName, const Path &prim_name, const int64_t primIdx,
             const int64_t parentPrimIdx,
-            const prim::PropertyMap &properties,
+            prim::PropertyMap &properties,
             const ascii::AsciiParser::PrimMetaMap &in_meta,
             const ascii::AsciiParser::VariantSetList &in_variants)
             -> nonstd::expected<bool, std::string> {
@@ -1193,7 +1205,6 @@ class USDAReader::Impl {
   ///
   const Stage &GetStage() const { return _stage; }
 
-
  private:
   //bool stage_reconstructed_{false};
 
@@ -1245,6 +1256,7 @@ class USDAReader::Impl {
   std::stack<ParseState> parse_stack;
 
   std::string _base_dir;  // Used for importing another USD file
+  std::string _filename;  // Used for displaying error context from source file
   //AssetResolutionResolver _arr;
 
 #if 0 // TODO: Remove since not used.
@@ -1558,7 +1570,7 @@ bool USDAReader::Impl::ReconstructStage() {
 template <>
 bool USDAReader::Impl::ReconstructPrim(
     const Specifier &spec,
-    const prim::PropertyMap &properties,
+    prim::PropertyMap &properties,
     const prim::ReferenceList &references,
     Xform *xform) {
 
@@ -1611,7 +1623,7 @@ bool USDAReader::Impl::ReconstructPrim<NodeGraph>(
 template <typename T>
 bool USDAReader::Impl::ReconstructPrim(
     const Specifier &spec,
-    const prim::PropertyMap &properties,
+    prim::PropertyMap &properties,
     const prim::ReferenceList &references,
     T *prim) {
 
@@ -1635,6 +1647,7 @@ bool USDAReader::Impl::ReconstructPrim(
 ///
 
 bool USDAReader::Impl::Read(const uint32_t state_flags, bool as_primspec) {
+  TINYUSDZ_PROFILE_FUNCTION("usda-reader");
 
   ///
   /// Convert parser option.
@@ -1674,6 +1687,7 @@ bool USDAReader::Impl::Read(const uint32_t state_flags, bool as_primspec) {
 
   RegisterReconstructCallback<Material>();
   RegisterReconstructCallback<Shader>();
+  RegisterReconstructCallback<NodeGraph>();
 
   RegisterReconstructCallback<Scope>();
 
@@ -1682,6 +1696,8 @@ bool USDAReader::Impl::Read(const uint32_t state_flags, bool as_primspec) {
   RegisterReconstructCallback<DiskLight>();
   RegisterReconstructCallback<DistantLight>();
   RegisterReconstructCallback<CylinderLight>();
+  RegisterReconstructCallback<RectLight>();
+  RegisterReconstructCallback<GeometryLight>();
 
   RegisterReconstructCallback<SkelRoot>();
   RegisterReconstructCallback<Skeleton>();
@@ -1698,7 +1714,14 @@ bool USDAReader::Impl::Read(const uint32_t state_flags, bool as_primspec) {
   }
 
   if (!ret) {
-    PUSH_ERROR_AND_RETURN("Parse failed:\n" + _parser.GetError());
+    std::string error_msg;
+    if (!_filename.empty()) {
+      error_msg = _parser.GetErrorWithSourceContext(_filename);
+    }
+    if (error_msg.empty()) {
+      error_msg = _parser.GetError();
+    }
+    PUSH_ERROR_AND_RETURN("Parse failed:\n" + error_msg);
   }
 
 
@@ -1739,6 +1762,10 @@ void USDAReader::set_base_dir(const std::string &dir) {
   return _impl->SetBaseDir(dir);
 }
 
+void USDAReader::set_filename(const std::string &filename) {
+  return _impl->SetFilename(filename);
+}
+
 // std::vector<GPrim> USDAReader::GetGPrims() { return _impl->GetGPrims(); }
 
 //std::string USDAReader::GetDefaultPrimName() const {
@@ -1760,6 +1787,10 @@ void USDAReader::set_reader_config(const USDAReaderConfig &config) {
 
 const USDAReaderConfig USDAReader::get_reader_config() const {
   return _impl->get_reader_config();
+}
+
+void USDAReader::SetProgressCallback(std::function<bool(float progress, void *userptr)> callback, void *userptr) {
+  _impl->SetProgressCallback(callback, userptr);
 }
 
 }  // namespace usda
@@ -1812,6 +1843,11 @@ void USDAReader::set_reader_config(const USDAReaderConfig &config) {
 
 USDAReaderConfig USDAReader::get_reader_config() const {
   return USDAReaderConfig();
+}
+
+void USDAReader::SetProgressCallback(std::function<bool(float progress, void *userptr)> callback, void *userptr) {
+  (void)callback;
+  (void)userptr;
 }
 
 }  // namespace usda
