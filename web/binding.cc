@@ -111,6 +111,51 @@ EM_JS(void, reportTydraComplete, (int meshCount, int materialCount, int textureC
   }
 });
 
+// ============================================================================
+// C++20 Coroutine Support: Yield to JavaScript event loop
+// ============================================================================
+// This allows the browser to repaint between processing phases.
+// Returns a Promise that resolves on the next animation frame.
+
+EM_JS(emscripten::EM_VAL, yieldToEventLoop_impl, (), {
+  // Return a Promise that resolves on next animation frame
+  // This gives the browser a chance to repaint
+  return Emval.toHandle(new Promise(resolve => {
+    if (typeof requestAnimationFrame === 'function') {
+      requestAnimationFrame(() => resolve());
+    } else {
+      // Fallback for non-browser environments (Node.js)
+      setTimeout(resolve, 0);
+    }
+  }));
+});
+
+// Wrapper for co_await usage
+inline emscripten::val yieldToEventLoop() {
+  return emscripten::val::take_ownership(yieldToEventLoop_impl());
+}
+
+// Helper to yield with a custom delay (milliseconds)
+EM_JS(emscripten::EM_VAL, yieldWithDelay_impl, (int delayMs), {
+  return Emval.toHandle(new Promise(resolve => {
+    setTimeout(resolve, delayMs);
+  }));
+});
+
+inline emscripten::val yieldWithDelay(int delayMs) {
+  return emscripten::val::take_ownership(yieldWithDelay_impl(delayMs));
+}
+
+// Report that async operation is starting (for JS progress UI)
+EM_JS(void, reportAsyncPhaseStart, (const char* phase, float progress), {
+  if (typeof Module.onAsyncPhaseStart === 'function') {
+    Module.onAsyncPhaseStart({
+      phase: UTF8ToString(phase),
+      progress: progress
+    });
+  }
+});
+
 namespace detail {
 
 std::array<double, 9> toArray(const tinyusdz::value::matrix3d &m) {
@@ -1218,6 +1263,81 @@ class TinyUSDZLoaderNative {
     return stageToRenderScene(stage, is_usdz, binary);
 #endif
 
+  }
+
+  // ============================================================================
+  // C++20 Coroutine-based Async Loading
+  // ============================================================================
+  // This method uses C++20 coroutines to yield to the JavaScript event loop
+  // between processing phases, allowing the browser to repaint during loading.
+  //
+  // Returns a Promise that resolves to a JS object: { success: bool, error?: string }
+  //
+  emscripten::val loadFromBinaryAsync(std::string binary, std::string filename) {
+    // IMPORTANT: Parameters are passed by VALUE (not by reference) to ensure
+    // data remains valid across co_await suspension points. References would
+    // become dangling after the coroutine yields to the event loop.
+
+    // Phase 1: Initial setup and format detection
+    reportAsyncPhaseStart("detecting", 0.0f);
+
+    bool is_usdz = tinyusdz::IsUSDZ(
+        reinterpret_cast<const uint8_t *>(binary.c_str()), binary.size());
+
+    // Yield to allow UI to show "detecting" phase
+    co_await yieldToEventLoop();
+
+    // Phase 2: Parsing USD
+    reportAsyncPhaseStart("parsing", 0.1f);
+
+    tinyusdz::USDLoadOptions options;
+    options.max_memory_limit_in_mb = max_memory_limit_mb_;
+
+    tinyusdz::Stage stage;
+    loaded_ = tinyusdz::LoadUSDFromMemory(
+        reinterpret_cast<const uint8_t *>(binary.c_str()), binary.size(),
+        filename, &stage, &warn_, &error_, options);
+
+    if (!loaded_) {
+      emscripten::val result = emscripten::val::object();
+      result.set("success", false);
+      result.set("error", error_);
+      co_return result;
+    }
+
+    loaded_as_layer_ = false;
+    filename_ = filename;
+
+    // Yield after parsing to allow UI update
+    co_await yieldToEventLoop();
+
+    // Phase 3: Converting to RenderScene (Tydra)
+    reportAsyncPhaseStart("converting", 0.3f);
+
+    // Yield again before heavy conversion
+    co_await yieldToEventLoop();
+
+    bool convert_ok = stageToRenderScene(stage, is_usdz, binary);
+
+    if (!convert_ok) {
+      emscripten::val result = emscripten::val::object();
+      result.set("success", false);
+      result.set("error", error_);
+      co_return result;
+    }
+
+    // Phase 4: Complete
+    reportAsyncPhaseStart("complete", 1.0f);
+
+    // Final yield to ensure UI updates
+    co_await yieldToEventLoop();
+
+    emscripten::val result = emscripten::val::object();
+    result.set("success", true);
+    result.set("meshCount", static_cast<int>(render_scene_.meshes.size()));
+    result.set("materialCount", static_cast<int>(render_scene_.materials.size()));
+    result.set("textureCount", static_cast<int>(render_scene_.textures.size()));
+    co_return result;
   }
 
   // u8 : Uint8Array object.
@@ -4373,6 +4493,7 @@ EMSCRIPTEN_BINDINGS(tinyusdz_module) {
 #endif
       .function("loadAsLayerFromBinary", &TinyUSDZLoaderNative::loadAsLayerFromBinary)
       .function("loadFromBinary", &TinyUSDZLoaderNative::loadFromBinary)
+      .function("loadFromBinaryAsync", &TinyUSDZLoaderNative::loadFromBinaryAsync)  // C++20 coroutine async version
       .function("loadTest", &TinyUSDZLoaderNative::loadTest)
       .function("loadFromCachedAsset", &TinyUSDZLoaderNative::loadFromCachedAsset)
       .function("loadAsLayerFromCachedAsset", &TinyUSDZLoaderNative::loadAsLayerFromCachedAsset)
