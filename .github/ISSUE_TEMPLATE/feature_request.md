@@ -7,6 +7,8 @@ assignees: ''
 
 ---
 
+*Users outside of Light Transport Entertainment, Inc need to state your strong commitment of a feature request: either you'll contribute with adequate effort, or sponsor the project with the sufficient amount of sponsorship fees* 
+
 **Is your feature request related to a problem? Please describe.**
 A clear and concise description of what the problem is. Ex. I'm always frustrated when [...]
 
