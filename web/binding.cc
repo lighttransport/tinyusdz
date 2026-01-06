@@ -125,12 +125,19 @@ EM_JS(void, reportTydraComplete, (int meshCount, int materialCount, int textureC
 EM_JS(emscripten::EM_VAL, yieldToEventLoop_impl, (), {
   // Return a Promise that resolves on next animation frame
   // This gives the browser a chance to repaint
+  console.log('[Coroutine] Yielding to event loop...');
   return Emval.toHandle(new Promise(resolve => {
     if (typeof requestAnimationFrame === 'function') {
-      requestAnimationFrame(() => resolve());
+      requestAnimationFrame(() => {
+        console.log('[Coroutine] Resumed from yield (rAF)');
+        resolve();
+      });
     } else {
       // Fallback for non-browser environments (Node.js)
-      setTimeout(resolve, 0);
+      setTimeout(() => {
+        console.log('[Coroutine] Resumed from yield (setTimeout)');
+        resolve();
+      }, 0);
     }
   }));
 });
@@ -153,9 +160,12 @@ inline emscripten::val yieldWithDelay(int delayMs) {
 
 // Report that async operation is starting (for JS progress UI)
 EM_JS(void, reportAsyncPhaseStart, (const char* phase, float progress), {
+  const phaseStr = UTF8ToString(phase);
+  const progressPct = (progress * 100).toFixed(0);
+  console.log(`[Coroutine] Phase: ${phaseStr} (${progressPct}%)`);
   if (typeof Module.onAsyncPhaseStart === 'function') {
     Module.onAsyncPhaseStart({
-      phase: UTF8ToString(phase),
+      phase: phaseStr,
       progress: progress
     });
   }
