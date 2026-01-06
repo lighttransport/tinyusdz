@@ -1,0 +1,9 @@
+#usda 1.0
+
+def Xform "muda" 
+{
+  string opOrder.timeSamples = {
+      0: "bora",
+      192.1: "dora",
+  }
+}

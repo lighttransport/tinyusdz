@@ -1,0 +1,48 @@
+{
+  "name": "example_mtlx",
+  "nodes": [
+    {
+      "name": "baseColorTex",
+      "type": "image",
+      "inputs": {
+        "file": "textures/diffuse.jpg",
+        "out": "out"
+      }
+    },
+    {
+      "name": "mrmTex",
+      "type": "image",
+      "inputs": {
+        "file": "textures/metalrough.png",
+        "out": "out",
+        "r": "r",
+        "g": "g",
+        "b": "b"
+      }
+    },
+    {
+      "name": "normalTex",
+      "type": "image",
+      "inputs": {
+        "file": "textures/normal.png",
+        "out": "out"
+      }
+    },
+    {
+      "name": "pbrShader",
+      "type": "standard_surface",
+      "inputs": {
+        "baseColor": { "connect": "baseColorTex.out" },
+        "metallic": { "connect": { "node": "mrmTex", "output": "b" } },
+        "roughness": { "connect": "mrmTex.g" },
+        "normal": { "connect": "normalTex.out" }
+      }
+    }
+  ],
+  "connections": [
+    { "from": "baseColorTex.out", "to": "pbrShader.baseColor" },
+    { "from": "mrmTex.b", "to": "pbrShader.metallic" },
+    { "from": "mrmTex.g", "to": "pbrShader.roughness" },
+    { "from": "normalTex.out", "to": "pbrShader.normal" }
+  ]
+}

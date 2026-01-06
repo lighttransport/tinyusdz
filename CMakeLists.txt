@@ -31,6 +31,8 @@ if (EMSCRIPTEN)
   # TODO: deprecate in next major version
   set(TINYUSDZ_DEFAULT_WITH_USDA_PARSER Off)
   set(TINYUSDZ_DEFAULT_WITH_USDC_PARSER Off)
+  set(TINYUSDZ_DEFAULT_WITH_COROUTINE On)
+  set(TINYUSDZ_DEFAULT_WITH_MESHOPT On)
 elseif(NOT PROJECT_IS_TOP_LEVEL)
   # assume tinyusdz is added from add_subdirectory()
   # disable tools, tests and examples build by default.
@@ -44,6 +46,8 @@ elseif(NOT PROJECT_IS_TOP_LEVEL)
   # TODO: deprecate in next major version
   set(TINYUSDZ_DEFAULT_WITH_USDA_PARSER Off)
   set(TINYUSDZ_DEFAULT_WITH_USDC_PARSER Off)
+  set(TINYUSDZ_DEFAULT_WITH_COROUTINE Off)
+  set(TINYUSDZ_DEFAULT_WITH_MESHOPT Off)
 else()
   set(TINYUSDZ_DEFAULT_NO_WERROR OFF)
   set(TINYUSDZ_DEFAULT_PRODUCTION_BUILD Off)
@@ -55,6 +59,8 @@ else()
   # TODO: deprecate in next major version
   set(TINYUSDZ_DEFAULT_WITH_USDA_PARSER Off)
   set(TINYUSDZ_DEFAULT_WITH_USDC_PARSER Off)
+  set(TINYUSDZ_DEFAULT_WITH_COROUTINE Off)
+  set(TINYUSDZ_DEFAULT_WITH_MESHOPT Off)
 
   # For Visual Studio
   set_property(GLOBAL PROPERTY USE_FOLDERS ON)
@@ -78,6 +84,24 @@ option(TINYUSDZ_WITH_BUILTIN_IMAGE_LOADER
 option(TINYUSDZ_WITH_TYDRA
        "Build with Tydra module(Handly USD scene converter for the renderer, DCC, etc)."
        ON)
+option(TINYUSDZ_WITH_MCP_SERVER
+       "Build with C++ MCP server(http server) support."
+       OFF)
+option(TINYUSDZ_WITH_QJS
+       "Build with QuickJS(JavaScript) support."
+       OFF)
+
+option(TINYUSDZ_WITH_GEOGRAM
+       "Build with Geogram library support for advanced geometry processing."
+       OFF)
+
+option(TINYUSDZ_WITH_WAMR
+       "Build with WAMR (WebAssembly Micro Runtime) support for executing WASM in Tydra."
+       OFF)
+
+option(TINYUSDZ_WITH_COROUTINE
+       "Build with C++20 coroutine support."
+       ${TINYUSDZ_DEFAULT_WITH_COROUTINE})
 
 
 if(MSVC)
@@ -112,7 +136,7 @@ option(TINYUSDZ_CXX_EXCEPTIONS
        ${TINYUSDZ_CXX_EXCEPTIONS_DEFAULT})
 
 option(TINYUSDZ_WITH_USDMTLX "Build with MaterialX support" ON)
-option(TINYUSDZ_WITH_JSON "Build with JSON serialization support" OFF)
+option(TINYUSDZ_WITH_JSON "Build with JSON support" ON)
 option(TINYUSDZ_WITH_USD_TO_GLTF "Build with USD to glTF example" ON)
 option(TINYUSDZ_WITH_USDOBJ "Build with usdObj support(import wavefront .obj)"
        ON)
@@ -223,11 +247,18 @@ option(TINYUSDZ_WITH_TIFF
 
 # -- EXR --
 option(TINYUSDZ_WITH_EXR "Build with EXR HDR texture support" ON)
+option(TINYUSDZ_USE_TINYEXR_V3 "Use TinyEXR v3 API (modern C17/C++17 API). Set OFF for legacy v1 API" ON)
 # ---------
 
 # -- ColorIO --
 option(TINYUSDZ_WITH_COLORIO
        "Build with Color IO Baked LUT support(through tinycolorio)" ON)
+
+option(TINYUSDZ_WITH_MESHOPT
+       "Build with meshoptimizer support for mesh optimization" ${TINYUSDZ_DEFAULT_WITH_MESHOPT})
+
+option(TINYUSDZ_WITH_REMOTERY
+       "Build with Remotery profiling support" OFF)
 # ---------
 
 # -- optional tool --
@@ -276,7 +307,11 @@ endif()
 
 if (PROJECT_IS_TOP_LEVEL)
   message(STATUS "TinyUSDZ is being built as toplevel project so set CXX standard here.")
-  if(TINYUSDZ_WITH_PYTHON)
+  if(TINYUSDZ_WITH_COROUTINE)
+    message(STATUS "Use C++20 for c++20 coroutine.")
+    # Coroutine support requires C++20
+    set(CMAKE_CXX_STANDARD 20)
+  elseif(TINYUSDZ_WITH_PYTHON)
     #set(CMAKE_CXX_STANDARD 17) # nanobind requires C++17
 
     # for pybind11
@@ -323,6 +358,10 @@ if(TINYUSDZ_USE_CCACHE)
 endif()
 
 
+if (TINYUSDZ_WITH_MCP_SERVER)
+  set(TINYUSDZ_WITH_JSON On)
+endif()
+
 if(TINYUSDZ_WITH_PYTHON)
 
   # For the time beging, we stick with pybind11, since PyPI manylinux2014(probably mostly used architectrue as of 2022/Aug) does not support C++17.
@@ -367,6 +406,7 @@ if(TINYUSDZ_WITH_PYTHON)
 endif()
 
 set(TINYUSDZ_SOURCES
+    ${PROJECT_SOURCE_DIR}/src/arg-parser.cc
     ${PROJECT_SOURCE_DIR}/src/asset-resolution.cc
     ${PROJECT_SOURCE_DIR}/src/tinyusdz.cc
     ${PROJECT_SOURCE_DIR}/src/xform.cc
@@ -382,7 +422,9 @@ set(TINYUSDZ_SOURCES
     ${PROJECT_SOURCE_DIR}/src/usda-writer.cc
     ${PROJECT_SOURCE_DIR}/src/usdc-writer.cc
     ${PROJECT_SOURCE_DIR}/src/composition.cc
+    ${PROJECT_SOURCE_DIR}/src/chunk-reader.cc
     ${PROJECT_SOURCE_DIR}/src/crate-reader.cc
+    ${PROJECT_SOURCE_DIR}/src/crate-reader-timesamples.cc
     ${PROJECT_SOURCE_DIR}/src/crate-format.cc
     ${PROJECT_SOURCE_DIR}/src/crate-writer.cc
     ${PROJECT_SOURCE_DIR}/src/crate-pprint.cc
@@ -390,10 +432,14 @@ set(TINYUSDZ_SOURCES
     ${PROJECT_SOURCE_DIR}/src/prim-reconstruct.cc
     ${PROJECT_SOURCE_DIR}/src/prim-composition.cc
     ${PROJECT_SOURCE_DIR}/src/prim-types.cc
+    ${PROJECT_SOURCE_DIR}/src/layer.cc
     ${PROJECT_SOURCE_DIR}/src/primvar.cc
     ${PROJECT_SOURCE_DIR}/src/str-util.cc
+    ${PROJECT_SOURCE_DIR}/src/usd-dump.cc
     ${PROJECT_SOURCE_DIR}/src/value-pprint.cc
     ${PROJECT_SOURCE_DIR}/src/value-types.cc
+    ${PROJECT_SOURCE_DIR}/src/color-space.cc
+    ${PROJECT_SOURCE_DIR}/src/color-space.hh
     ${PROJECT_SOURCE_DIR}/src/tiny-format.cc
     ${PROJECT_SOURCE_DIR}/src/tiny-string.cc
     ${PROJECT_SOURCE_DIR}/src/io-util.cc
@@ -406,12 +452,28 @@ set(TINYUSDZ_SOURCES
     ${PROJECT_SOURCE_DIR}/src/usdShade.cc
     ${PROJECT_SOURCE_DIR}/src/usdLux.cc
     # usdMtlX has less dependency(pugixml), so add it to core component
+    ${PROJECT_SOURCE_DIR}/src/mtlx-xml-tokenizer.cc
+    ${PROJECT_SOURCE_DIR}/src/mtlx-xml-parser.cc
+    ${PROJECT_SOURCE_DIR}/src/mtlx-dom.cc
+    ${PROJECT_SOURCE_DIR}/src/mtlx-simple-parser.cc
     ${PROJECT_SOURCE_DIR}/src/usdMtlx.cc
     ${PROJECT_SOURCE_DIR}/src/usdObj.cc
     ${PROJECT_SOURCE_DIR}/src/image-loader.cc
     ${PROJECT_SOURCE_DIR}/src/pprinter.cc
+    ${PROJECT_SOURCE_DIR}/src/timesamples-pprint.cc
+    ${PROJECT_SOURCE_DIR}/src/timesamples.cc
     ${PROJECT_SOURCE_DIR}/src/stage.cc
     ${PROJECT_SOURCE_DIR}/src/stage.hh
+    ${PROJECT_SOURCE_DIR}/src/uuid-gen.cc
+    ${PROJECT_SOURCE_DIR}/src/uuid-gen.hh
+    ${PROJECT_SOURCE_DIR}/src/parser-timing.cc
+    ${PROJECT_SOURCE_DIR}/src/sha256.cc
+    ${PROJECT_SOURCE_DIR}/src/typed-array.cc
+    ${PROJECT_SOURCE_DIR}/src/task-queue.cc
+    ${PROJECT_SOURCE_DIR}/src/task-queue.hh
+    ${PROJECT_SOURCE_DIR}/src/prim-pprint-parallel.cc
+    ${PROJECT_SOURCE_DIR}/src/prim-pprint-parallel.hh
+
     )
 
 if (TINYUSDZ_WITH_TYDRA)
@@ -422,21 +484,60 @@ if (TINYUSDZ_WITH_TYDRA)
         ${PROJECT_SOURCE_DIR}/src/tydra/prim-apply.hh
         ${PROJECT_SOURCE_DIR}/src/tydra/scene-access.cc
         ${PROJECT_SOURCE_DIR}/src/tydra/scene-access.hh
+        ${PROJECT_SOURCE_DIR}/src/tydra/scene-analysis.cc
+        ${PROJECT_SOURCE_DIR}/src/tydra/scene-analysis.hh
         ${PROJECT_SOURCE_DIR}/src/tydra/attribute-eval.hh
         ${PROJECT_SOURCE_DIR}/src/tydra/attribute-eval.cc
         ${PROJECT_SOURCE_DIR}/src/tydra/attribute-eval-typed.cc
         ${PROJECT_SOURCE_DIR}/src/tydra/attribute-eval-typed-animatable.cc
         ${PROJECT_SOURCE_DIR}/src/tydra/attribute-eval-typed-fallback.cc
         ${PROJECT_SOURCE_DIR}/src/tydra/attribute-eval-typed-animatable-fallback.cc
+        ${PROJECT_SOURCE_DIR}/src/tydra/command-and-history.cc
         ${PROJECT_SOURCE_DIR}/src/tydra/obj-export.cc
         ${PROJECT_SOURCE_DIR}/src/tydra/usd-export.cc
         ${PROJECT_SOURCE_DIR}/src/tydra/shader-network.cc
         ${PROJECT_SOURCE_DIR}/src/tydra/shader-network.hh
         ${PROJECT_SOURCE_DIR}/src/tydra/render-data.cc
         ${PROJECT_SOURCE_DIR}/src/tydra/render-data.hh
+        ${PROJECT_SOURCE_DIR}/src/tydra/render-data-pprint.cc
+        ${PROJECT_SOURCE_DIR}/src/tydra/render-data-pprint.hh
+        ${PROJECT_SOURCE_DIR}/src/tydra/raytracing-data.cc
+        ${PROJECT_SOURCE_DIR}/src/tydra/raytracing-data.hh
+        ${PROJECT_SOURCE_DIR}/src/tydra/raytracing-scene-converter.cc
+        ${PROJECT_SOURCE_DIR}/src/tydra/raytracing-scene-converter.hh
+        ${PROJECT_SOURCE_DIR}/src/tydra/material-serializer.cc
+        ${PROJECT_SOURCE_DIR}/src/tydra/material-serializer.hh
+        ${PROJECT_SOURCE_DIR}/src/tydra/materialx-to-json.cc
+        ${PROJECT_SOURCE_DIR}/src/tydra/materialx-to-json.hh
+        ${PROJECT_SOURCE_DIR}/src/tydra/render-scene-dump.cc
+        ${PROJECT_SOURCE_DIR}/src/tydra/render-scene-dump.hh
+        ${PROJECT_SOURCE_DIR}/src/tydra/bone-util.cc
+        ${PROJECT_SOURCE_DIR}/src/tydra/bone-util.hh
+        ${PROJECT_SOURCE_DIR}/src/tydra/layer-to-renderscene.cc
+        ${PROJECT_SOURCE_DIR}/src/tydra/layer-to-renderscene.hh
         ${PROJECT_SOURCE_DIR}/src/tydra/texture-util.cc
         ${PROJECT_SOURCE_DIR}/src/tydra/texture-util.hh
+        ${PROJECT_SOURCE_DIR}/src/tydra/mcp.cc
+        ${PROJECT_SOURCE_DIR}/src/tydra/mcp-tools.cc
+        ${PROJECT_SOURCE_DIR}/src/tydra/mcp-tools.hh
+        ${PROJECT_SOURCE_DIR}/src/tydra/mcp-resources.cc
+        ${PROJECT_SOURCE_DIR}/src/tydra/mcp-resources.hh
+        ${PROJECT_SOURCE_DIR}/src/tydra/mcp-server.cc
+        ${PROJECT_SOURCE_DIR}/src/tydra/mcp-server.hh
+        ${PROJECT_SOURCE_DIR}/src/tydra/diff-and-compare.cc
+        ${PROJECT_SOURCE_DIR}/src/tydra/diff-and-compare.hh
+        ${PROJECT_SOURCE_DIR}/src/tydra/js-script.hh
+        ${PROJECT_SOURCE_DIR}/src/tydra/js-script.cc
+        ${PROJECT_SOURCE_DIR}/src/tydra/threejs-exporter.hh
+        ${PROJECT_SOURCE_DIR}/src/tydra/threejs-exporter.cc
         )
+    
+    if(TINYUSDZ_WITH_WAMR)
+        list(APPEND TINYUSDZ_SOURCES
+            ${PROJECT_SOURCE_DIR}/src/tydra/wasm-runtime.cc
+            ${PROJECT_SOURCE_DIR}/src/tydra/wasm-runtime.hh
+        )
+    endif(TINYUSDZ_WITH_WAMR)
 endif (TINYUSDZ_WITH_TYDRA)
 
 if(TINYUSDZ_WITH_PXR_COMPAT_API)
@@ -464,10 +565,13 @@ if(TINYUSDZ_WITH_USDMTLX)
 endif()
 
 if(TINYUSDZ_WITH_JSON)
+  list(APPEND TINYUSDZ_SOURCES
+    ${PROJECT_SOURCE_DIR}/src/json-to-usd.cc
+    ${PROJECT_SOURCE_DIR}/src/usd-to-json.cc
+    ${PROJECT_SOURCE_DIR}/src/json-writer.cc
+    ${PROJECT_SOURCE_DIR}/src/json-util.cc)
+
   list(APPEND TINYUSDZ_DEP_SOURCES  ${PROJECT_SOURCE_DIR}/src/external/yyjson.c)
-  list(APPEND TINYUSDZ_DEP_SOURCES ${PROJECT_SOURCE_DIR}/src/json-to-usd.cc)
-  list(APPEND TINYUSDZ_DEP_SOURCES ${PROJECT_SOURCE_DIR}/src/usd-to-json.cc)
-  list(APPEND TINYUSDZ_DEP_SOURCES ${PROJECT_SOURCE_DIR}/src/json-writer.cc)
 endif()
 
 if(TINYUSDZ_WITH_USDFBX)
@@ -504,23 +608,55 @@ if(TINYUSDZ_WITH_TIFF)
       PROPERTIES INCLUDE_DIRECTORIES ${PROJECT_SOURCE_DIR}/src/external)
   endif()
 
-  list(APPEND TINYUSDZ_DEP_SOURCES
-       ${PROJECT_SOURCE_DIR}/src/external/tinyexr.cc)
+  # NOTE: tiny_dng_loader doesn't depend on tinyexr,
+  # tinyexr is now added separately in the TINYUSDZ_WITH_EXR section
 endif(TINYUSDZ_WITH_TIFF)
 
 if(TINYUSDZ_WITH_EXR)
-  if(TINYUSDZ_USE_SYSTEM_ZLIB)
-    set_source_files_properties(
-      ${PROJECT_SOURCE_DIR}/src/external/tinyexr.cc
-      PROPERTIES COMPILE_DEFINITIONS "TINYEXR_USE_MINIZ=0")
-  else()
-    set_source_files_properties(
-      ${PROJECT_SOURCE_DIR}/src/external/tinyexr.cc
-      PROPERTIES INCLUDE_DIRECTORIES ${PROJECT_SOURCE_DIR}/src/external)
-  endif()
+  if(TINYUSDZ_USE_TINYEXR_V3)
+    # TinyEXR v3 API (modern C17/C++17 API)
+    # NOTE: We also compile tinyexr.cc (v1 implementation) for backward compatibility
+    # since image-loader.cc uses the v1 API (LoadEXRFromMemory, etc.)
+    message(STATUS "TinyUSDZ: Using TinyEXR v3 API")
 
-  list(APPEND TINYUSDZ_DEP_SOURCES
-       ${PROJECT_SOURCE_DIR}/src/external/tinyexr.cc)
+    if(TINYUSDZ_USE_SYSTEM_ZLIB)
+      set_source_files_properties(
+        ${PROJECT_SOURCE_DIR}/src/external/tinyexr_c_impl.c
+        PROPERTIES COMPILE_DEFINITIONS "TINYEXR_V3_HAS_DEFLATE=1;TINYEXR_V3_NO_MINIZ=1")
+      set_source_files_properties(
+        ${PROJECT_SOURCE_DIR}/src/external/tinyexr.cc
+        PROPERTIES COMPILE_DEFINITIONS "TINYEXR_USE_MINIZ=0")
+    else()
+      # Use bundled miniz (default)
+      set_source_files_properties(
+        ${PROJECT_SOURCE_DIR}/src/external/tinyexr_c_impl.c
+        PROPERTIES INCLUDE_DIRECTORIES ${PROJECT_SOURCE_DIR}/src/external)
+      set_source_files_properties(
+        ${PROJECT_SOURCE_DIR}/src/external/tinyexr.cc
+        PROPERTIES INCLUDE_DIRECTORIES ${PROJECT_SOURCE_DIR}/src/external)
+    endif()
+
+    list(APPEND TINYUSDZ_DEP_SOURCES
+         ${PROJECT_SOURCE_DIR}/src/external/tinyexr_c_impl.c
+         ${PROJECT_SOURCE_DIR}/src/external/tinyexr.cc)
+
+  else()
+    # TinyEXR v1 API (legacy API)
+    message(STATUS "TinyUSDZ: Using TinyEXR v1 API (legacy)")
+
+    if(TINYUSDZ_USE_SYSTEM_ZLIB)
+      set_source_files_properties(
+        ${PROJECT_SOURCE_DIR}/src/external/tinyexr.cc
+        PROPERTIES COMPILE_DEFINITIONS "TINYEXR_USE_MINIZ=0")
+    else()
+      set_source_files_properties(
+        ${PROJECT_SOURCE_DIR}/src/external/tinyexr.cc
+        PROPERTIES INCLUDE_DIRECTORIES ${PROJECT_SOURCE_DIR}/src/external)
+    endif()
+
+    list(APPEND TINYUSDZ_DEP_SOURCES
+         ${PROJECT_SOURCE_DIR}/src/external/tinyexr.cc)
+  endif()
 endif(TINYUSDZ_WITH_EXR)
 
 if(TINYUSDZ_WITH_TIFF OR TINYUSDZ_WITH_EXR)
@@ -550,6 +686,24 @@ if(TINYUSDZ_WITH_ALAC_AUDIO)
        ${PROJECT_SOURCE_DIR}/src/external/alac/codec/matrix_enc.c
   )
 endif(TINYUSDZ_WITH_ALAC_AUDIO)
+
+if(TINYUSDZ_WITH_MCP_SERVER)
+
+  list(APPEND TINYUSDZ_DEP_SOURCES
+       ${PROJECT_SOURCE_DIR}/src/external/civetweb/civetweb.c
+  )
+endif(TINYUSDZ_WITH_MCP_SERVER)
+
+if(TINYUSDZ_WITH_QJS)
+
+  list(APPEND TINYUSDZ_DEP_SOURCES
+       ${PROJECT_SOURCE_DIR}/src/external/quickjs-ng/cutils.c
+       ${PROJECT_SOURCE_DIR}/src/external/quickjs-ng/libregexp.c
+       ${PROJECT_SOURCE_DIR}/src/external/quickjs-ng/libunicode.c
+       ${PROJECT_SOURCE_DIR}/src/external/quickjs-ng/quickjs.c
+       ${PROJECT_SOURCE_DIR}/src/external/quickjs-ng/xsum.c
+  )
+endif(TINYUSDZ_WITH_QJS)
 
 if(TINYUSDZ_WITH_OPENSUBDIV)
 
@@ -678,11 +832,169 @@ if(TINYUSDZ_WITH_OPENSUBDIV)
 
 endif(TINYUSDZ_WITH_OPENSUBDIV)
 
+if(TINYUSDZ_WITH_GEOGRAM)
+  # Geogram basic core files (header-only minimal set)
+  set(GEOGRAM_BASIC_SOURCES
+    # Start with empty list - headers are included via include directories
+  )
+
+  # For now, just provide headers for Geogram integration
+  # Advanced functionality can be added later as needed
+  set(GEOGRAM_POINTS_SOURCES
+    # Core geometry processing headers are available
+  )
+
+  set(GEOGRAM_DELAUNAY_SOURCES
+    # Core triangulation headers are available
+  )
+
+  # Minimal triangle library (C code, no exceptions)
+  set(GEOGRAM_THIRD_PARTY_SOURCES
+    ${PROJECT_SOURCE_DIR}/src/external/geogram/geogram/third_party/triangle/triangle.c
+  )
+
+  # Combine all Geogram sources
+  set(GEOGRAM_ALL_SOURCES
+    ${GEOGRAM_BASIC_SOURCES}
+    ${GEOGRAM_POINTS_SOURCES}
+    ${GEOGRAM_DELAUNAY_SOURCES}
+    ${GEOGRAM_THIRD_PARTY_SOURCES}
+  )
+
+  # Add Geogram sources to TinyUSDZ
+  list(APPEND TINYUSDZ_DEP_SOURCES ${GEOGRAM_ALL_SOURCES})
+
+  # Add Geogram include directory
+  set(GEOGRAM_INCLUDE_DIR ${PROJECT_SOURCE_DIR}/src/external/geogram)
+
+  # Set Geogram-specific compile properties
+  set_source_files_properties(${GEOGRAM_ALL_SOURCES}
+                              PROPERTIES COMPILE_DEFINITIONS "GEO_STATIC_LIBS;GEOGRAM_WITH_LEGACY_NUMERICS")
+
+endif(TINYUSDZ_WITH_GEOGRAM)
+
+if(TINYUSDZ_WITH_WAMR)
+  # WAMR core sources (minimal runtime for WebAssembly execution)
+  set(WAMR_CORE_SOURCES
+    ${PROJECT_SOURCE_DIR}/src/external/wamr/core/iwasm/common/wasm_runtime_common.c
+    ${PROJECT_SOURCE_DIR}/src/external/wamr/core/iwasm/common/wasm_native.c
+    ${PROJECT_SOURCE_DIR}/src/external/wamr/core/iwasm/common/wasm_exec_env.c
+    ${PROJECT_SOURCE_DIR}/src/external/wamr/core/iwasm/common/wasm_memory.c
+    ${PROJECT_SOURCE_DIR}/src/external/wamr/core/iwasm/common/wasm_c_api.c
+    ${PROJECT_SOURCE_DIR}/src/external/wamr/core/iwasm/interpreter/wasm_loader.c
+    ${PROJECT_SOURCE_DIR}/src/external/wamr/core/iwasm/interpreter/wasm_runtime.c
+    ${PROJECT_SOURCE_DIR}/src/external/wamr/core/iwasm/interpreter/wasm_interp_classic.c
+    ${PROJECT_SOURCE_DIR}/src/external/wamr/core/iwasm/libraries/libc-builtin/libc_builtin_wrapper.c
+    ${PROJECT_SOURCE_DIR}/src/external/wamr/core/shared/mem-alloc/mem_alloc.c
+    ${PROJECT_SOURCE_DIR}/src/external/wamr/core/shared/mem-alloc/ems/ems_alloc.c
+    ${PROJECT_SOURCE_DIR}/src/external/wamr/core/shared/mem-alloc/ems/ems_hmu.c
+    ${PROJECT_SOURCE_DIR}/src/external/wamr/core/shared/mem-alloc/ems/ems_kfc.c
+    ${PROJECT_SOURCE_DIR}/src/external/wamr/core/shared/utils/bh_assert.c
+    ${PROJECT_SOURCE_DIR}/src/external/wamr/core/shared/utils/bh_common.c
+    ${PROJECT_SOURCE_DIR}/src/external/wamr/core/shared/utils/bh_hashmap.c
+    ${PROJECT_SOURCE_DIR}/src/external/wamr/core/shared/utils/bh_list.c
+    ${PROJECT_SOURCE_DIR}/src/external/wamr/core/shared/utils/bh_log.c
+    ${PROJECT_SOURCE_DIR}/src/external/wamr/core/shared/utils/bh_queue.c
+    ${PROJECT_SOURCE_DIR}/src/external/wamr/core/shared/utils/bh_vector.c
+    ${PROJECT_SOURCE_DIR}/src/external/wamr/core/shared/utils/runtime_timer.c
+  )
+
+  # Add WAMR platform-specific sources
+  if(WIN32)
+    list(APPEND WAMR_CORE_SOURCES
+      ${PROJECT_SOURCE_DIR}/src/external/wamr/core/shared/platform/windows/platform_init.c
+    )
+  else()
+    list(APPEND WAMR_CORE_SOURCES
+      ${PROJECT_SOURCE_DIR}/src/external/wamr/core/shared/platform/linux/platform_init.c
+    )
+  endif()
+
+  # Add WAMR sources to TinyUSDZ
+  list(APPEND TINYUSDZ_DEP_SOURCES ${WAMR_CORE_SOURCES})
+
+  # Add WAMR include directories
+  set(WAMR_INCLUDE_DIRS
+    ${PROJECT_SOURCE_DIR}/src/external/wamr/core/iwasm/include
+    ${PROJECT_SOURCE_DIR}/src/external/wamr/core/iwasm/interpreter
+    ${PROJECT_SOURCE_DIR}/src/external/wamr/core/iwasm/common
+    ${PROJECT_SOURCE_DIR}/src/external/wamr/core/shared/utils
+    ${PROJECT_SOURCE_DIR}/src/external/wamr/core/shared/mem-alloc
+    ${PROJECT_SOURCE_DIR}/src/external/wamr/core/shared/platform/include
+  )
+  
+  # Add platform-specific include directory
+  if(WIN32)
+    list(APPEND WAMR_INCLUDE_DIRS ${PROJECT_SOURCE_DIR}/src/external/wamr/core/shared/platform/windows)
+  else()
+    list(APPEND WAMR_INCLUDE_DIRS ${PROJECT_SOURCE_DIR}/src/external/wamr/core/shared/platform/linux)
+  endif()
+
+  # Set WAMR-specific compile definitions
+  if(WIN32)
+    set_source_files_properties(${WAMR_CORE_SOURCES}
+                                PROPERTIES COMPILE_DEFINITIONS "BH_PLATFORM_WINDOWS=1")
+  else()
+    set_source_files_properties(${WAMR_CORE_SOURCES}
+                                PROPERTIES COMPILE_DEFINITIONS "BH_PLATFORM_LINUX=1")
+  endif()
+
+endif(TINYUSDZ_WITH_WAMR)
+
+if(TINYUSDZ_WITH_MESHOPT)
+  # meshoptimizer source files
+  set(MESHOPTIMIZER_SOURCES
+    ${PROJECT_SOURCE_DIR}/src/external/meshoptimizer/allocator.cpp
+    ${PROJECT_SOURCE_DIR}/src/external/meshoptimizer/clusterizer.cpp
+    ${PROJECT_SOURCE_DIR}/src/external/meshoptimizer/indexanalyzer.cpp
+    ${PROJECT_SOURCE_DIR}/src/external/meshoptimizer/indexcodec.cpp
+    ${PROJECT_SOURCE_DIR}/src/external/meshoptimizer/indexgenerator.cpp
+    ${PROJECT_SOURCE_DIR}/src/external/meshoptimizer/overdrawoptimizer.cpp
+    ${PROJECT_SOURCE_DIR}/src/external/meshoptimizer/partition.cpp
+    ${PROJECT_SOURCE_DIR}/src/external/meshoptimizer/quantization.cpp
+    ${PROJECT_SOURCE_DIR}/src/external/meshoptimizer/rasterizer.cpp
+    ${PROJECT_SOURCE_DIR}/src/external/meshoptimizer/simplifier.cpp
+    ${PROJECT_SOURCE_DIR}/src/external/meshoptimizer/spatialorder.cpp
+    ${PROJECT_SOURCE_DIR}/src/external/meshoptimizer/stripifier.cpp
+    ${PROJECT_SOURCE_DIR}/src/external/meshoptimizer/vcacheoptimizer.cpp
+    ${PROJECT_SOURCE_DIR}/src/external/meshoptimizer/vertexcodec.cpp
+    ${PROJECT_SOURCE_DIR}/src/external/meshoptimizer/vertexfilter.cpp
+    ${PROJECT_SOURCE_DIR}/src/external/meshoptimizer/vfetchoptimizer.cpp
+  )
+
+  list(APPEND TINYUSDZ_DEP_SOURCES ${MESHOPTIMIZER_SOURCES})
+endif(TINYUSDZ_WITH_MESHOPT)
+
+if(TINYUSDZ_WITH_REMOTERY)
+  # Remotery source files
+  set(REMOTERY_SOURCES
+    ${PROJECT_SOURCE_DIR}/src/external/Remotery/Remotery.c
+  )
+  
+  list(APPEND TINYUSDZ_DEP_SOURCES ${REMOTERY_SOURCES})
+  
+  # Add Remotery include directory
+  list(APPEND TINYUSDZ_DEP_INCLUDE_DIRS ${PROJECT_SOURCE_DIR}/src/external/Remotery)
+  
+  # Define RMT_ENABLED to enable Remotery
+  add_definitions(-DRMT_ENABLED=1)
+  
+  # Platform-specific definitions for Remotery
+  if(WIN32)
+    add_definitions(-DRMT_USE_D3D11=0)
+  elseif(APPLE)
+    add_definitions(-DRMT_USE_METAL=0)
+  elseif(UNIX)
+    add_definitions(-DRMT_USE_OPENGL=0)
+  endif()
+endif(TINYUSDZ_WITH_REMOTERY)
+
 if(TINYUSDZ_WITH_TIFF OR TINYUSDZ_WITH_EXR)
   if(TINYUSDZ_USE_SYSTEM_ZLIB)
     list(APPEND TINYUSDZ_EXT_LIBRARIES ZLIB::ZLIB)
   endif()
 endif()
+
 
 # Increase warning level for clang.
 if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
@@ -983,6 +1295,18 @@ foreach(TINYUSDZ_LIB_TARGET ${TINYUSDZ_LIBS})
     endif()
   endif()
 
+  # Set a 8MB default stack size on Windows.
+  # It defaults to 1MB on MSVC, which is the same as our current JS stack size,
+  # so it will overflow and crash otherwise.
+  # On MinGW it defaults to 2MB.
+  if (TINYUSDZ_WITH_QJS) 
+    if(WIN32)
+       if(MSVC)
+           target_compile_options(${TINYUSDZ_LIB_TARGET} PRIVATE /STACK:8388608)
+       endif()
+    endif()
+  endif()
+
   if(TINYUSDZ_DEBUG_PRINT)
     target_compile_definitions(${TINYUSDZ_LIB_TARGET}
                                PRIVATE "TINYUSDZ_DEBUG_PRINT")
@@ -1025,13 +1349,11 @@ foreach(TINYUSDZ_LIB_TARGET ${TINYUSDZ_LIBS})
   target_include_directories(${TINYUSDZ_LIB_TARGET}
                              PRIVATE ${PROJECT_SOURCE_DIR}/src)
 
-  #if(TINYUSDZ_WITH_JSON)
-  ##target_include_directories(
-  ##  ${TINYUSDZ_LIB_TARGET} PRIVATE ${PROJECT_SOURCE_DIR}/src/external/jsonhpp/)
-  #  target_include_directories(
-  #    ${TINYUSDZ_LIB_TARGET}
-  #    PRIVATE ${PROJECT_SOURCE_DIR}/src/external/jsonhpp/)
-  #endif()
+  if(TINYUSDZ_WITH_JSON)
+    #target_include_directories(
+    #  ${TINYUSDZ_LIB_TARGET} PRIVATE ${PROJECT_SOURCE_DIR}/src/external/jsonhpp/)
+    target_compile_definitions(${TINYUSDZ_LIB_TARGET} PRIVATE "TINYUSDZ_WITH_JSON")
+  endif()
 
   if(TINYUSDZ_WITH_USDMTLX)
     target_compile_definitions(${TINYUSDZ_LIB_TARGET}
@@ -1062,6 +1384,11 @@ foreach(TINYUSDZ_LIB_TARGET ${TINYUSDZ_LIBS})
     target_link_libraries(${TINYUSDZ_LIB_TARGET} Threads::Threads)
   endif()
 
+  # On 32-bit systems, 64-bit atomic operations require libatomic
+  # (Skip for emscripten as libatomic doesn't exist in wasm environment)
+  if (CMAKE_SIZEOF_VOID_P EQUAL 4 AND NOT EMSCRIPTEN)
+    target_link_libraries(${TINYUSDZ_LIB_TARGET} atomic)
+  endif()
 
   if(IOS)
     target_compile_definitions(${TINYUSDZ_LIB_TARGET}
@@ -1093,6 +1420,20 @@ foreach(TINYUSDZ_LIB_TARGET ${TINYUSDZ_LIBS})
                                PRIVATE "TINYUSDZ_WITH_ALAC_AUDIO")
   endif(TINYUSDZ_WITH_ALAC_AUDIO)
 
+  if(TINYUSDZ_WITH_MCP_SERVER)
+    target_compile_definitions(${TINYUSDZ_LIB_TARGET}
+                               PRIVATE "TINYUSDZ_WITH_MCP_SERVER")
+
+    # use dll for SSL + OPENSSL_API_3.0
+    target_compile_definitions(${TINYUSDZ_LIB_TARGET}
+                               PRIVATE "OPENSSL_API_3_0")
+  endif(TINYUSDZ_WITH_MCP_SERVER)
+
+  if(TINYUSDZ_WITH_QJS)
+    target_compile_definitions(${TINYUSDZ_LIB_TARGET}
+                               PRIVATE "TINYUSDZ_WITH_QJS")
+  endif(TINYUSDZ_WITH_QJS)
+
   if(TINYUSDZ_WITH_OPENSUBDIV)
     target_include_directories(${TINYUSDZ_LIB_TARGET} PRIVATE ${osd_DIR})
     target_compile_definitions(${TINYUSDZ_LIB_TARGET}
@@ -1103,6 +1444,41 @@ foreach(TINYUSDZ_LIB_TARGET ${TINYUSDZ_LIBS})
     target_compile_definitions(${TINYUSDZ_LIB_TARGET}
                                PRIVATE "TINYUSDZ_WITH_TYDRA")
   endif(TINYUSDZ_WITH_TYDRA)
+
+  if(TINYUSDZ_WITH_GEOGRAM)
+    target_include_directories(${TINYUSDZ_LIB_TARGET} PRIVATE ${GEOGRAM_INCLUDE_DIR})
+    target_compile_definitions(${TINYUSDZ_LIB_TARGET}
+                               PRIVATE "TINYUSDZ_WITH_GEOGRAM")
+    # Geogram-specific definitions
+    target_compile_definitions(${TINYUSDZ_LIB_TARGET}
+                               PRIVATE "GEO_STATIC_LIBS")
+    target_compile_definitions(${TINYUSDZ_LIB_TARGET}
+                               PRIVATE "GEOGRAM_WITH_LEGACY_NUMERICS")
+  endif(TINYUSDZ_WITH_GEOGRAM)
+
+  if(TINYUSDZ_WITH_WAMR)
+    target_include_directories(${TINYUSDZ_LIB_TARGET} PRIVATE ${WAMR_INCLUDE_DIRS})
+    target_compile_definitions(${TINYUSDZ_LIB_TARGET}
+                               PRIVATE "TINYUSDZ_WITH_WAMR")
+    # WAMR-specific definitions
+    if(WIN32)
+      target_compile_definitions(${TINYUSDZ_LIB_TARGET}
+                                 PRIVATE "BH_PLATFORM_WINDOWS=1")
+    else()
+      target_compile_definitions(${TINYUSDZ_LIB_TARGET}
+                                 PRIVATE "BH_PLATFORM_LINUX=1")
+    endif()
+  endif(TINYUSDZ_WITH_WAMR)
+
+  if(TINYUSDZ_WITH_COROUTINE)
+    target_compile_definitions(${TINYUSDZ_LIB_TARGET}
+                               PRIVATE "TINYUSDZ_WITH_COROUTINE")
+  endif(TINYUSDZ_WITH_COROUTINE)
+
+  if(TINYUSDZ_WITH_MESHOPT)
+    target_compile_definitions(${TINYUSDZ_LIB_TARGET}
+                               PRIVATE "TINYUSDZ_WITH_MESHOPT")
+  endif(TINYUSDZ_WITH_MESHOPT)
 
   if(NOT TINYUSDZ_CXX_EXCEPTIONS)
     if(MSVC)
@@ -1237,6 +1613,15 @@ if(TINYUSDZ_BUILD_EXAMPLES)
   if (TINYUSDZ_WITH_TYDRA)
     add_subdirectory(examples/tydra_api)
     add_subdirectory(examples/tydra_to_renderscene)
+    add_subdirectory(examples/usddiff)
+
+    if (TINYUSDZ_WITH_MCP_SERVER)
+      add_subdirectory(examples/mcp_server)
+    endif()
+
+    if (TINYUSDZ_WITH_QJS)
+      add_subdirectory(examples/js-script)
+    endif()
   endif ()
 
   add_subdirectory(examples/api_tutorial)

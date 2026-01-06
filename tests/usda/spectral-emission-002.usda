@@ -1,0 +1,17 @@
+#usda 1.0
+(
+    doc = "Test: Spectral emission with interpolation metadata"
+)
+
+def RectLight "TestLight"
+{
+    float inputs:intensity = 100.0
+    float2[] wavelength:emission = [
+        (380, 49.98), (400, 82.75), (450, 92.46), (500, 104.86),
+        (550, 100.00), (600, 90.01), (650, 87.70), (700, 82.28), (780, 75.09)
+    ] (
+        customData = {
+            string interpolation = "linear"
+        }
+    )
+}

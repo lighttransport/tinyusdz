@@ -1,5 +1,7 @@
 // All-in-one TinyUSDZ core
 #include "tinyusdz.hh"
+#include "layer.hh"
+#include "prim-types.hh"
 
 // Import to_string() and operator<< features
 #include <iostream>
@@ -156,7 +158,7 @@ static bool MyRead(const tinyusdz::Asset &asset,
   memcpy(&val, asset.data(), 4);
 
   tinyusdz::Attribute attr;
-  attr.set_value(val);
+  attr.set_value(std::move(val));
   attr.set_name("myval");
   attr.variability() = tinyusdz::Variability::Uniform;
 
