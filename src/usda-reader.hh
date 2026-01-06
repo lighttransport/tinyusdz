@@ -45,9 +45,17 @@ class USDAReader {
   /// Base filesystem directory to search asset files.
   /// TODO: Not used so remove it.
   ///
-  void set_base_dir(const std::string &base_dir); 
+  void set_base_dir(const std::string &base_dir);
   void SetBaseDir(const std::string &base_dir) { // Deprecared
     set_base_dir(base_dir);
+  }
+
+  ///
+  /// Set source filename for displaying surrounding context in error messages
+  ///
+  void set_filename(const std::string &filename);
+  void SetFilename(const std::string &filename) { // Deprecated
+    set_filename(filename);
   }
 
   ///
@@ -59,6 +67,14 @@ class USDAReader {
   /// Set reader option
   ///
   void set_reader_config(const USDAReaderConfig &config);
+
+  ///
+  /// Set progress callback for monitoring parsing progress.
+  ///
+  /// @param[in] callback Function to call during parsing to report progress
+  /// @param[in] userptr User-provided pointer for custom data
+  ///
+  void SetProgressCallback(std::function<bool(float progress, void *userptr)> callback, void *userptr = nullptr);
 
   ///
   /// Get reader option

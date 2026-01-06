@@ -143,418 +143,18 @@ static bool ExportBlendShape(const ShapeTarget &target, BlendShape *dst, std::st
   return true;
 }
 
-static bool ExportSkelAnimation(const Animation &anim, SkelAnimation *dst, std::string *err) {
-  (void)err;
-  dst->name = anim.prim_name;
-  if (anim.display_name.size()) {
-    dst->metas().displayName = anim.display_name;
+static bool ExportSkelAnimation(const AnimationClip &anim, SkelAnimation *dst, std::string *err) {
+  // TODO: This function needs to be updated to work with the new AnimationClip structure
+  // (glTF/Three.js compatible) which uses samplers[] and channels[] instead of the old
+  // channels_map and blendshape_weights_map. For now, just return false.
+  (void)anim;
+  (void)dst;
+  if (err) {
+    *err = "ExportSkelAnimation: Not yet implemented for new AnimationClip structure";
   }
-
-  auto float_to_uint = [](const float x) {
-    union Fp {
-      float f;
-      uint32_t u;
-    };
-    Fp fp;
-    fp.f = x;
- 
-    return fp.u;
-  };
-
-  auto uint_to_float = [](const uint32_t x) {
-    union Fp {
-      float f;
-      uint32_t u;
-    };
-    Fp fp;
-    fp.u = x;
- 
-    return fp.f;
-  };
-
-  // inf and nan(TimeCode::Default) aware upcast
-  auto float_to_double = [](const float x) {
-    if (std::isnan(x)) {
-      return value::TimeCode::Default();
-    }
-    if (std::isinf(x)) {
-      if (std::signbit(x)) {
-        return -std::numeric_limits<double>::infinity();
-      } else {
-        return std::numeric_limits<double>::infinity();
-      }
-    }
-    return double(x);
-  };
-
-  if (anim.channels_map.size()) {
-
-    StringAndIdMap joint_idMap;
-    for (const auto &channels : anim.channels_map)
-    {
-      uint64_t joint_id = uint64_t(joint_idMap.size());
-      joint_idMap.add(channels.first, uint64_t(joint_id));
-    }
-
-    std::vector<value::token> joints(joint_idMap.size());
-    for (const auto &channels : anim.channels_map) {
-      joints[size_t(joint_idMap.at(channels.first))] = value::token(channels.first);
-    }
-    dst->joints = joints;
-
-    bool no_tx_channel{true};
-    bool no_rot_channel{true};
-    bool no_scale_channel{true};
-
-    bool all_joints_has_tx_channel{true};
-    bool all_joints_has_rot_channel{true};
-    bool all_joints_has_scale_channel{true};
-
-    for (const auto &channels : anim.channels_map) {
-
-      bool has_tx_channel;
-      bool has_rot_channel;
-      bool has_scale_channel;
-
-      has_tx_channel = channels.second.count(AnimationChannel::ChannelType::Translation);
-      has_rot_channel = channels.second.count(AnimationChannel::ChannelType::Rotation);
-      has_scale_channel = channels.second.count(AnimationChannel::ChannelType::Scale);
-
-      if (has_tx_channel) {
-        no_tx_channel = false;
-      } else {
-        all_joints_has_tx_channel = false;
-      }
-
-      if (has_rot_channel) {
-        no_rot_channel = false;
-      } else {
-        all_joints_has_rot_channel = false;
-      }
-
-      if (has_scale_channel) {
-        no_scale_channel = false;
-      } else {
-        all_joints_has_scale_channel = false;
-      }
-    }
-
-    if (!no_tx_channel && !all_joints_has_tx_channel) {
-      PUSH_ERROR_AND_RETURN("translation channel partially exists among joints. No joints have animation channel or all joints have animation channels.");
-    }
-
-    if (!no_rot_channel && !all_joints_has_rot_channel) {
-      PUSH_ERROR_AND_RETURN("rotation channel partially exists among joints. No joints have animation channel or all joints have animation channels.");
-    }
-
-    if (!no_scale_channel && !all_joints_has_scale_channel) {
-      PUSH_ERROR_AND_RETURN("scale channel partially exists among joints. No joints have animation channel or all joints have animation channels.");
-    }
-
-    if (no_tx_channel) {
-      // Author static(default) value.
-      std::vector<value::float3> translations;
-      translations.assign(joints.size(), {1.0f, 1.0f, 1.0f});
-      
-      dst->translations.set_value(translations);
-    } else {
-
-      // All joints should have same timeCode.
-      // First collect timeCodes for the first joint.
-      //
-      // when timeCode is NaN(value::TimeCode::Default), the behavior(key compare in unordered_set) is undefined,
-      // so use byte representation.
-      std::unordered_set<uint32_t> timeCodes;
-
-      {
-        const auto &tx_it = anim.channels_map.cbegin()->second.find(AnimationChannel::ChannelType::Translation);
-        if (tx_it != anim.channels_map.cbegin()->second.end()) {
-          for (size_t t = 0; t < tx_it->second.translations.samples.size(); t++) {
-            timeCodes.insert(float_to_uint(tx_it->second.translations.samples[t].t));
-          }
-        }
-      }
-
-      // key: timeCode. value: values for each joints.
-      std::map<double, std::vector<value::float3>> ts_txs;
-      for (const auto &tc : timeCodes) {
-        ts_txs[float_to_double(uint_to_float(tc))].resize(joints.size()); 
-      }
-
-      std::vector<value::float3> static_txs;
-
-      // Pack channel values
-      for (const auto &channels : anim.channels_map) {
-
-        const auto &tx_it = channels.second.find(AnimationChannel::ChannelType::Translation);
-        if (tx_it != channels.second.end()) {
-
-          for (size_t t = 0; t < tx_it->second.translations.samples.size(); t++) {
-            float tc = tx_it->second.translations.samples[t].t;
-            if (!timeCodes.count(float_to_uint(tc))) {
-              PUSH_ERROR_AND_RETURN(fmt::format("All animation channels should have same timeCodes. timeCode {} is only seen in `translation` animation channel of joint {}", tc, channels.first));
-            }
-            uint64_t joint_id = joint_idMap.at(channels.first);
-
-            std::vector<value::float3> &txs = ts_txs.at(float_to_double(tc));
-            // just in case
-            if (joint_id > txs.size()) {
-              PUSH_ERROR_AND_RETURN(fmt::format("Internal error. joint_id {} exceeds # of joints {}", joint_id, txs.size()));
-            }
-            txs[size_t(joint_id)] = tx_it->second.translations.samples[t].value;
-          }
-
-          if (tx_it->second.translations.static_value) {
-            uint64_t joint_id = joint_idMap.at(channels.first);
-            if ((joint_id +1) > static_txs.size()) {
-              static_txs.resize(size_t(joint_id+1));
-            }
-            static_txs[size_t(joint_id)] = tx_it->second.translations.static_value.value(); 
-          }
-        }
-      }
-
-      Animatable<std::vector<value::float3>> aval;
-      if (static_txs.size() == joints.size()) {
-        // Author static(default) value.
-        aval.set_default(static_txs);
-      }
-
-      for (const auto &s : ts_txs) {
-        aval.add_sample(s.first, s.second);
-      } 
-
-      dst->translations.set_value(aval);
-    }
-
-    if (no_rot_channel) {
-      // Author static(default) value.
-      std::vector<value::quatf> rots;
-      value::quatf q;
-      q.imag = {0.0f, 0.0f, 0.0f};
-      q.real = 1.0f;
-      rots.assign(joints.size(), q);
-
-      dst->rotations.set_value(rots);
-      
-    } else {
-
-      std::unordered_set<uint32_t> timeCodes;
-
-      {
-        const auto &rot_it = anim.channels_map.cbegin()->second.find(AnimationChannel::ChannelType::Rotation);
-        if (rot_it != anim.channels_map.cbegin()->second.end()) {
-          for (size_t t = 0; t < rot_it->second.rotations.samples.size(); t++) {
-            timeCodes.insert(float_to_uint(rot_it->second.rotations.samples[t].t));
-          }
-        }
-
-      }
-
-      std::map<double, std::vector<value::quatf>> ts_rots;
-      for (const auto &tc : timeCodes) {
-        ts_rots[float_to_double(uint_to_float(tc))].resize(joints.size()); 
-      }
-
-      std::vector<value::quatf> static_rots;
-
-      for (const auto &channels : anim.channels_map) {
-
-        const auto &rot_it = channels.second.find(AnimationChannel::ChannelType::Rotation);
-        if (rot_it != channels.second.end()) {
-
-          for (size_t t = 0; t < rot_it->second.rotations.samples.size(); t++) {
-            float tc = rot_it->second.rotations.samples[t].t;
-            if (!timeCodes.count(float_to_uint(tc))) {
-              PUSH_ERROR_AND_RETURN(fmt::format("All animation channels should have same timeCodes. timeCode {} is only seen in `rotation` animation channel of joint {}", tc, channels.first));
-            }
-            uint64_t joint_id = joint_idMap.at(channels.first);
-
-            std::vector<value::quatf> &rots = ts_rots.at(float_to_double(tc));
-            value::quatf v;
-            v[0] = rot_it->second.rotations.samples[t].value[0];
-            v[1] = rot_it->second.rotations.samples[t].value[1];
-            v[2] = rot_it->second.rotations.samples[t].value[2];
-            v[3] = rot_it->second.rotations.samples[t].value[3];
-            rots[size_t(joint_id)] = v;
-          }
-
-          if (rot_it->second.rotations.static_value) {
-            uint64_t joint_id = joint_idMap.at(channels.first);
-            if ((joint_id +1) > static_rots.size()) {
-              static_rots.resize(size_t(joint_id+1));
-            }
-            value::quatf v;
-            v[0] = rot_it->second.rotations.static_value.value()[0];
-            v[1] = rot_it->second.rotations.static_value.value()[1];
-            v[2] = rot_it->second.rotations.static_value.value()[2];
-            v[3] = rot_it->second.rotations.static_value.value()[3];
-            static_rots[size_t(joint_id)] = v;
-          }
-        }
-      }
-
-      Animatable<std::vector<value::quatf>> aval;
-      if (static_rots.size() == joints.size()) {
-        // Author static(default) value.
-        aval.set_default(static_rots);
-      }
-
-      for (const auto &s : ts_rots) {
-        aval.add_sample(s.first, s.second);
-      } 
-
-      dst->rotations.set_value(aval);
-    }
-
-    if (no_scale_channel) {
-      // Author static(default) value.
-      std::vector<value::half3> scales;
-      scales.assign(joints.size(), {value::float_to_half_full(1.0f), value::float_to_half_full(1.0f), value::float_to_half_full(1.0f)});
-
-      dst->scales.set_value(scales);
-      
-    } else {
-      std::unordered_set<uint32_t> timeCodes;
-
-      {
-        const auto &scale_it = anim.channels_map.cbegin()->second.find(AnimationChannel::ChannelType::Scale);
-        if (scale_it != anim.channels_map.cbegin()->second.end()) {
-          for (size_t t = 0; t < scale_it->second.scales.samples.size(); t++) {
-            timeCodes.insert(float_to_uint(scale_it->second.scales.samples[t].t));
-          }
-        }
-
-      }
-
-      std::map<double, std::vector<value::half3>> ts_scales;
-      for (const auto &tc : timeCodes) {
-        ts_scales[float_to_double(uint_to_float(tc))].resize(joints.size()); 
-      }
-
-      std::vector<value::half3> static_scales;
-
-      for (const auto &channels : anim.channels_map) {
-
-        const auto &scale_it = channels.second.find(AnimationChannel::ChannelType::Scale);
-        if (scale_it != channels.second.end()) {
-
-          for (size_t t = 0; t < scale_it->second.scales.samples.size(); t++) {
-            float tc = scale_it->second.scales.samples[t].t;
-            if (!timeCodes.count(float_to_uint(tc))) {
-              PUSH_ERROR_AND_RETURN(fmt::format("All animation channels should have same timeCodes. timeCode {} is only seen in `scale` animation channel of joint {}", tc, channels.first));
-            }
-            uint64_t joint_id = joint_idMap.at(channels.first);
-
-            std::vector<value::half3> &scales = ts_scales.at(float_to_double(tc));
-            value::half3 v;
-            v[0] = value::float_to_half_full(scale_it->second.scales.samples[t].value[0]);
-            v[1] = value::float_to_half_full(scale_it->second.scales.samples[t].value[1]);
-            v[2] = value::float_to_half_full(scale_it->second.scales.samples[t].value[2]);
-            scales[size_t(joint_id)] = v;
-          }
-
-          if (scale_it->second.scales.static_value) {
-            uint64_t joint_id = joint_idMap.at(channels.first);
-            if ((joint_id +1) > static_scales.size()) {
-              static_scales.resize(size_t(joint_id+1));
-            }
-            value::half3 v;
-            v[0] = value::float_to_half_full(scale_it->second.scales.static_value.value()[0]);
-            v[1] = value::float_to_half_full(scale_it->second.scales.static_value.value()[1]);
-            v[2] = value::float_to_half_full(scale_it->second.scales.static_value.value()[2]);
-            static_scales[size_t(joint_id)] = v;
-          }
-        }
-      }
-
-      Animatable<std::vector<value::half3>> aval;
-      if (static_scales.size() == joints.size()) {
-        // Author static(default) value.
-        aval.set_default(static_scales);
-      }
-
-      for (const auto &s : ts_scales) {
-        aval.add_sample(s.first, s.second);
-      } 
-
-      dst->scales.set_value(aval);
-    }
-  }
-
-  if (anim.blendshape_weights_map.size()) {
-    StringAndIdMap target_idMap;
-    for (const auto &target : anim.blendshape_weights_map)
-    {
-      uint64_t target_id = uint64_t(target_idMap.size());
-      target_idMap.add(target.first, uint64_t(target_id));
-    }
-
-    std::vector<value::token> blendShapes(target_idMap.size());
-    for (const auto &target : anim.blendshape_weights_map) {
-      blendShapes[size_t(target_idMap.at(target.first))] = value::token(target.first);
-    }
-    dst->blendShapes = blendShapes;
-
-    std::unordered_set<uint32_t> timeCodes;
-    {
-      const auto &weights_it = anim.blendshape_weights_map.cbegin();
-      for (size_t t = 0; t < weights_it->second.samples.size(); t++) {
-        timeCodes.insert(float_to_uint(weights_it->second.samples[t].t));
-      }
-    }
-
-    std::map<double, std::vector<float>> ts_weights;
-    for (const auto &tc : timeCodes) {
-      ts_weights[float_to_double(uint_to_float(tc))].resize(blendShapes.size()); 
-    }
-    std::vector<float> static_weights;
-
-    for (const auto &target : anim.blendshape_weights_map) {
-
-      for (size_t t = 0; t < target.second.samples.size(); t++) {
-        float tc = target.second.samples[t].t;
-        if (!timeCodes.count(float_to_uint(tc))) {
-          PUSH_ERROR_AND_RETURN(fmt::format("All blendshape weights should have same timeCodes. timeCode {} is only seen in `blendShapeWeights` animation channel of blendShape {}", tc, target.first));
-        }
-        uint64_t target_id = target_idMap.at(target.first);
-
-        std::vector<float> &weights = ts_weights.at(float_to_double(tc));
-        //DCOUT("weights.size " << weights.size() << ", target_id " << target_id);
-        weights[size_t(target_id)] = target.second.samples[t].value;
-      }
-
-      if (target.second.static_value) {
-        uint64_t target_id = target_idMap.at(target.first);
-        if ((target_id +1) > static_weights.size()) {
-          static_weights.resize(size_t(target_id+1));
-        }
-        static_weights[size_t(target_id)] = target.second.static_value.value(); 
-      }
-    }
-
-    Animatable<std::vector<float>> aval;
-    if (static_weights.size() == blendShapes.size()) {
-      // Author static(default) value.
-      aval.set_default(static_weights);
-    }
-
-    for (const auto &s : ts_weights) {
-      aval.add_sample(s.first, s.second);
-    } 
-
-    dst->blendShapeWeights.set_value(aval);
-  } else {
-    // Just author 'blendShapeWeights' without value.
-    dst->blendShapeWeights.set_value_empty();
-  }
-
-  dst->name = anim.prim_name;
-  if (anim.display_name.size()) {
-    dst->metas().displayName = anim.display_name;
-  }
-  return true;
+  return false;
 }
+
 
 static bool ToGeomMesh(const RenderScene &scene, const RenderMesh &rmesh, GeomMesh *dst, std::vector<GeomSubset> *dst_subsets, std::string *err) {
 
@@ -795,6 +395,15 @@ static bool ToGeomMesh(const RenderScene &scene, const RenderMesh &rmesh, GeomMe
 static bool ToMaterialPrim(const RenderScene &scene, const std::string &abs_path, size_t material_id, Prim *dst, std::string *err) {
 
   const RenderMaterial &rmat = scene.materials[material_id];
+  
+  // Check if the material has a surface shader
+  if (!rmat.surfaceShader.has_value()) {
+    // Create a material with default/empty values if no surface shader
+    Material mat;
+    mat.name = rmat.name;
+    (*dst) = Prim(std::move(mat));
+    return true;
+  }
 
   // TODO: create two UsdUVTextures for RGBA imagge(rgb and alpha)
   auto ConstructUVTexture = [&](const UVTexture &tex, const std::string &param_name, const std::string &abs_mat_path, /* inout */std::vector<Shader> &shader_nodes) -> bool {
@@ -885,7 +494,7 @@ static bool ToMaterialPrim(const RenderScene &scene, const std::string &abs_path
 
       Shader uv_xformShader;
       uv_xformShader.name = "place2d_" + param_name;
-      uv_xformShader.info_id = tinyusdz::kUsdTransform2d;
+      uv_xformShader.info_id = kUsdTransform2d;
       uv_xformShader.value = uv_xform;
       shader_nodes.emplace_back(std::move(uv_xformShader));
     }
@@ -910,14 +519,14 @@ static bool ToMaterialPrim(const RenderScene &scene, const std::string &abs_path
 
     Shader preaderShader;
     preaderShader.name = "uvmap_" + param_name;
-    preaderShader.info_id = tinyusdz::kUsdPrimvarReader_float2;
+    preaderShader.info_id = kUsdPrimvarReader_float2;
     preaderShader.value = preader;
 
     shader_nodes.emplace_back(std::move(preaderShader));
 
     Shader imageTexShader;
     imageTexShader.name = "Image_Texture_" + param_name;
-    imageTexShader.info_id = tinyusdz::kUsdUVTexture;
+    imageTexShader.info_id = kUsdUVTexture;
     imageTexShader.value = image_tex;
 
     shader_nodes.emplace_back(std::move(imageTexShader));
@@ -954,7 +563,7 @@ static bool ToMaterialPrim(const RenderScene &scene, const std::string &abs_path
     // Asssign actual shader object to Shader::value.
     // Also do not forget set its shader node type name through Shader::info_id
     //
-    shader.info_id = tinyusdz::kUsdPreviewSurface;  // "UsdPreviewSurface" token
+    shader.info_id = kUsdPreviewSurface;  // "UsdPreviewSurface" token
 
     //
     // Currently no shader network/connection API.
@@ -963,15 +572,15 @@ static bool ToMaterialPrim(const RenderScene &scene, const std::string &abs_path
     surfaceShader.outputsSurface.set_authored(
         true);  // Author `token outputs:surface`
 
-    surfaceShader.useSpecularWorkflow = rmat.surfaceShader.useSpecularWorkflow ? 1 : 0;
+    surfaceShader.useSpecularWorkflow = rmat.surfaceShader->useSpecularWorkflow ? 1 : 0;
 
-    if (rmat.surfaceShader.diffuseColor.is_texture()) {
+    if (rmat.surfaceShader->diffuseColor.is_texture()) {
 
-      if (size_t(rmat.surfaceShader.diffuseColor.texture_id) > scene.textures.size()) {
+      if (size_t(rmat.surfaceShader->diffuseColor.texture_id) > scene.textures.size()) {
         PUSH_ERROR_AND_RETURN("Invalid texture_id for 'diffuseColor' texture.");
       }
     
-      if (!ConstructUVTexture(scene.textures[size_t(rmat.surfaceShader.diffuseColor.texture_id)], "diffuseColor", abs_mat_path, shader_nodes)) {
+      if (!ConstructUVTexture(scene.textures[size_t(rmat.surfaceShader->diffuseColor.texture_id)], "diffuseColor", abs_mat_path, shader_nodes)) {
         PUSH_ERROR_AND_RETURN("Failed to convert 'diffuseColor' texture.");
       }
 
@@ -980,20 +589,20 @@ static bool ToMaterialPrim(const RenderScene &scene, const std::string &abs_path
       surfaceShader.diffuseColor.set_value_empty();
     } else {
       value::color3f diffuseCol;
-      diffuseCol.r = rmat.surfaceShader.diffuseColor.value[0];
-      diffuseCol.g = rmat.surfaceShader.diffuseColor.value[1];
-      diffuseCol.b = rmat.surfaceShader.diffuseColor.value[2];
+      diffuseCol.r = rmat.surfaceShader->diffuseColor.value[0];
+      diffuseCol.g = rmat.surfaceShader->diffuseColor.value[1];
+      diffuseCol.b = rmat.surfaceShader->diffuseColor.value[2];
 
       surfaceShader.diffuseColor.set_value(diffuseCol);
     }
 
-    if (rmat.surfaceShader.specularColor.is_texture()) {
+    if (rmat.surfaceShader->specularColor.is_texture()) {
 
-      if (size_t(rmat.surfaceShader.specularColor.texture_id) > scene.textures.size()) {
+      if (size_t(rmat.surfaceShader->specularColor.texture_id) > scene.textures.size()) {
         PUSH_ERROR_AND_RETURN("Invalid texture_id for 'specularColor' texture.");
       }
     
-      if (!ConstructUVTexture(scene.textures[size_t(rmat.surfaceShader.specularColor.texture_id)], "specularColor", abs_mat_path, shader_nodes)) {
+      if (!ConstructUVTexture(scene.textures[size_t(rmat.surfaceShader->specularColor.texture_id)], "specularColor", abs_mat_path, shader_nodes)) {
         PUSH_ERROR_AND_RETURN("Failed to convert 'specularColor' texture.");
       }
 
@@ -1002,19 +611,19 @@ static bool ToMaterialPrim(const RenderScene &scene, const std::string &abs_path
       surfaceShader.specularColor.set_value_empty();
     } else {
       value::color3f col;
-      col.r = rmat.surfaceShader.specularColor.value[0];
-      col.g = rmat.surfaceShader.specularColor.value[1];
-      col.b = rmat.surfaceShader.specularColor.value[2];
+      col.r = rmat.surfaceShader->specularColor.value[0];
+      col.g = rmat.surfaceShader->specularColor.value[1];
+      col.b = rmat.surfaceShader->specularColor.value[2];
       surfaceShader.specularColor = col;
     }
 
-    if (rmat.surfaceShader.emissiveColor.is_texture()) {
+    if (rmat.surfaceShader->emissiveColor.is_texture()) {
 
-      if (size_t(rmat.surfaceShader.emissiveColor.texture_id) > scene.textures.size()) {
+      if (size_t(rmat.surfaceShader->emissiveColor.texture_id) > scene.textures.size()) {
         PUSH_ERROR_AND_RETURN("Invalid texture_id for 'emissiveColor' texture.");
       }
     
-      if (!ConstructUVTexture(scene.textures[size_t(rmat.surfaceShader.emissiveColor.texture_id)], "emissiveColor", abs_mat_path, shader_nodes)) {
+      if (!ConstructUVTexture(scene.textures[size_t(rmat.surfaceShader->emissiveColor.texture_id)], "emissiveColor", abs_mat_path, shader_nodes)) {
         PUSH_ERROR_AND_RETURN("Failed to convert 'emissiveColor' texture.");
       }
 
@@ -1023,19 +632,19 @@ static bool ToMaterialPrim(const RenderScene &scene, const std::string &abs_path
       surfaceShader.emissiveColor.set_value_empty();
     } else {
       value::color3f col;
-      col.r = rmat.surfaceShader.emissiveColor.value[0];
-      col.g = rmat.surfaceShader.emissiveColor.value[1];
-      col.b = rmat.surfaceShader.emissiveColor.value[2];
+      col.r = rmat.surfaceShader->emissiveColor.value[0];
+      col.g = rmat.surfaceShader->emissiveColor.value[1];
+      col.b = rmat.surfaceShader->emissiveColor.value[2];
       surfaceShader.emissiveColor = col;
     }
 
-    if (rmat.surfaceShader.metallic.is_texture()) {
+    if (rmat.surfaceShader->metallic.is_texture()) {
 
-      if (size_t(rmat.surfaceShader.metallic.texture_id) > scene.textures.size()) {
+      if (size_t(rmat.surfaceShader->metallic.texture_id) > scene.textures.size()) {
         PUSH_ERROR_AND_RETURN("Invalid texture_id for 'metallic' texture.");
       }
     
-      if (!ConstructUVTexture(scene.textures[size_t(rmat.surfaceShader.metallic.texture_id)], "metallic", abs_mat_path, shader_nodes)) {
+      if (!ConstructUVTexture(scene.textures[size_t(rmat.surfaceShader->metallic.texture_id)], "metallic", abs_mat_path, shader_nodes)) {
         PUSH_ERROR_AND_RETURN("Failed to convert 'metallic' texture.");
       }
 
@@ -1043,16 +652,16 @@ static bool ToMaterialPrim(const RenderScene &scene, const std::string &abs_path
       surfaceShader.metallic.set_connection(connPath);
       surfaceShader.metallic.set_value_empty();
     } else {
-      surfaceShader.metallic = rmat.surfaceShader.metallic.value;
+      surfaceShader.metallic = rmat.surfaceShader->metallic.value;
     }
 
-    if (rmat.surfaceShader.roughness.is_texture()) {
+    if (rmat.surfaceShader->roughness.is_texture()) {
 
-      if (size_t(rmat.surfaceShader.roughness.texture_id) > scene.textures.size()) {
+      if (size_t(rmat.surfaceShader->roughness.texture_id) > scene.textures.size()) {
         PUSH_ERROR_AND_RETURN("Invalid texture_id for 'roughness' texture.");
       }
     
-      if (!ConstructUVTexture(scene.textures[size_t(rmat.surfaceShader.roughness.texture_id)], "roughness", abs_mat_path, shader_nodes)) {
+      if (!ConstructUVTexture(scene.textures[size_t(rmat.surfaceShader->roughness.texture_id)], "roughness", abs_mat_path, shader_nodes)) {
         PUSH_ERROR_AND_RETURN("Failed to convert 'roughness' texture.");
       }
 
@@ -1060,16 +669,16 @@ static bool ToMaterialPrim(const RenderScene &scene, const std::string &abs_path
       surfaceShader.roughness.set_connection(connPath);
       surfaceShader.roughness.set_value_empty();
     } else {
-      surfaceShader.roughness = rmat.surfaceShader.roughness.value;
+      surfaceShader.roughness = rmat.surfaceShader->roughness.value;
     }
 
-    if (rmat.surfaceShader.clearcoat.is_texture()) {
+    if (rmat.surfaceShader->clearcoat.is_texture()) {
 
-      if (size_t(rmat.surfaceShader.clearcoat.texture_id) > scene.textures.size()) {
+      if (size_t(rmat.surfaceShader->clearcoat.texture_id) > scene.textures.size()) {
         PUSH_ERROR_AND_RETURN("Invalid texture_id for 'clearcoat' texture.");
       }
     
-      if (!ConstructUVTexture(scene.textures[size_t(rmat.surfaceShader.clearcoat.texture_id)], "clearcoat", abs_mat_path, shader_nodes)) {
+      if (!ConstructUVTexture(scene.textures[size_t(rmat.surfaceShader->clearcoat.texture_id)], "clearcoat", abs_mat_path, shader_nodes)) {
         PUSH_ERROR_AND_RETURN("Failed to convert 'clearcoat' texture.");
       }
 
@@ -1077,16 +686,16 @@ static bool ToMaterialPrim(const RenderScene &scene, const std::string &abs_path
       surfaceShader.clearcoat.set_connection(connPath);
       surfaceShader.clearcoat.set_value_empty();
     } else {
-      surfaceShader.clearcoat = rmat.surfaceShader.clearcoat.value;
+      surfaceShader.clearcoat = rmat.surfaceShader->clearcoat.value;
     }
 
-    if (rmat.surfaceShader.clearcoatRoughness.is_texture()) {
+    if (rmat.surfaceShader->clearcoatRoughness.is_texture()) {
 
-      if (size_t(rmat.surfaceShader.clearcoatRoughness.texture_id) > scene.textures.size()) {
+      if (size_t(rmat.surfaceShader->clearcoatRoughness.texture_id) > scene.textures.size()) {
         PUSH_ERROR_AND_RETURN("Invalid texture_id for 'clearcoatRoughness' texture.");
       }
     
-      if (!ConstructUVTexture(scene.textures[size_t(rmat.surfaceShader.clearcoatRoughness.texture_id)], "clearcoatRoughness", abs_mat_path, shader_nodes)) {
+      if (!ConstructUVTexture(scene.textures[size_t(rmat.surfaceShader->clearcoatRoughness.texture_id)], "clearcoatRoughness", abs_mat_path, shader_nodes)) {
         PUSH_ERROR_AND_RETURN("Failed to convert 'clearcoatRoughness' texture.");
       }
 
@@ -1094,16 +703,16 @@ static bool ToMaterialPrim(const RenderScene &scene, const std::string &abs_path
       surfaceShader.clearcoatRoughness.set_connection(connPath);
       surfaceShader.clearcoatRoughness.set_value_empty();
     } else {
-      surfaceShader.clearcoatRoughness = rmat.surfaceShader.clearcoatRoughness.value;
+      surfaceShader.clearcoatRoughness = rmat.surfaceShader->clearcoatRoughness.value;
     }
 
-    if (rmat.surfaceShader.opacity.is_texture()) {
+    if (rmat.surfaceShader->opacity.is_texture()) {
 
-      if (size_t(rmat.surfaceShader.opacity.texture_id) > scene.textures.size()) {
+      if (size_t(rmat.surfaceShader->opacity.texture_id) > scene.textures.size()) {
         PUSH_ERROR_AND_RETURN("Invalid texture_id for 'opacity' texture.");
       }
     
-      if (!ConstructUVTexture(scene.textures[size_t(rmat.surfaceShader.opacity.texture_id)], "opacity", abs_mat_path, shader_nodes)) {
+      if (!ConstructUVTexture(scene.textures[size_t(rmat.surfaceShader->opacity.texture_id)], "opacity", abs_mat_path, shader_nodes)) {
         PUSH_ERROR_AND_RETURN("Failed to convert 'opacity' texture.");
       }
 
@@ -1111,16 +720,16 @@ static bool ToMaterialPrim(const RenderScene &scene, const std::string &abs_path
       surfaceShader.opacity.set_connection(connPath);
       surfaceShader.opacity.set_value_empty();
     } else {
-      surfaceShader.opacity = rmat.surfaceShader.opacity.value;
+      surfaceShader.opacity = rmat.surfaceShader->opacity.value;
     }
 
-    if (rmat.surfaceShader.opacityThreshold.is_texture()) {
+    if (rmat.surfaceShader->opacityThreshold.is_texture()) {
 
-      if (size_t(rmat.surfaceShader.opacityThreshold.texture_id) > scene.textures.size()) {
+      if (size_t(rmat.surfaceShader->opacityThreshold.texture_id) > scene.textures.size()) {
         PUSH_ERROR_AND_RETURN("Invalid texture_id for 'opacityThreshold' texture.");
       }
     
-      if (!ConstructUVTexture(scene.textures[size_t(rmat.surfaceShader.opacityThreshold.texture_id)], "opacityThreshold", abs_mat_path, shader_nodes)) {
+      if (!ConstructUVTexture(scene.textures[size_t(rmat.surfaceShader->opacityThreshold.texture_id)], "opacityThreshold", abs_mat_path, shader_nodes)) {
         PUSH_ERROR_AND_RETURN("Failed to convert 'opacityThreshold' texture.");
       }
 
@@ -1128,16 +737,16 @@ static bool ToMaterialPrim(const RenderScene &scene, const std::string &abs_path
       surfaceShader.opacityThreshold.set_connection(connPath);
       surfaceShader.opacityThreshold.set_value_empty();
     } else {
-      surfaceShader.opacityThreshold = rmat.surfaceShader.opacityThreshold.value;
+      surfaceShader.opacityThreshold = rmat.surfaceShader->opacityThreshold.value;
     }
 
-    if (rmat.surfaceShader.ior.is_texture()) {
+    if (rmat.surfaceShader->ior.is_texture()) {
 
-      if (size_t(rmat.surfaceShader.ior.texture_id) > scene.textures.size()) {
+      if (size_t(rmat.surfaceShader->ior.texture_id) > scene.textures.size()) {
         PUSH_ERROR_AND_RETURN("Invalid texture_id for 'ior' texture.");
       }
     
-      if (!ConstructUVTexture(scene.textures[size_t(rmat.surfaceShader.ior.texture_id)], "ior", abs_mat_path, shader_nodes)) {
+      if (!ConstructUVTexture(scene.textures[size_t(rmat.surfaceShader->ior.texture_id)], "ior", abs_mat_path, shader_nodes)) {
         PUSH_ERROR_AND_RETURN("Failed to convert 'ior' texture.");
       }
 
@@ -1145,16 +754,16 @@ static bool ToMaterialPrim(const RenderScene &scene, const std::string &abs_path
       surfaceShader.ior.set_connection(connPath);
       surfaceShader.ior.set_value_empty();
     } else {
-      surfaceShader.ior = rmat.surfaceShader.ior.value;
+      surfaceShader.ior = rmat.surfaceShader->ior.value;
     }
 
-    if (rmat.surfaceShader.occlusion.is_texture()) {
+    if (rmat.surfaceShader->occlusion.is_texture()) {
 
-      if (size_t(rmat.surfaceShader.occlusion.texture_id) > scene.textures.size()) {
+      if (size_t(rmat.surfaceShader->occlusion.texture_id) > scene.textures.size()) {
         PUSH_ERROR_AND_RETURN("Invalid texture_id for 'occlusion' texture.");
       }
     
-      if (!ConstructUVTexture(scene.textures[size_t(rmat.surfaceShader.occlusion.texture_id)], "occlusion", abs_mat_path, shader_nodes)) {
+      if (!ConstructUVTexture(scene.textures[size_t(rmat.surfaceShader->occlusion.texture_id)], "occlusion", abs_mat_path, shader_nodes)) {
         PUSH_ERROR_AND_RETURN("Failed to convert 'occlusion' texture.");
       }
 
@@ -1162,16 +771,16 @@ static bool ToMaterialPrim(const RenderScene &scene, const std::string &abs_path
       surfaceShader.occlusion.set_connection(connPath);
       surfaceShader.occlusion.set_value_empty();
     } else {
-      surfaceShader.occlusion = rmat.surfaceShader.occlusion.value;
+      surfaceShader.occlusion = rmat.surfaceShader->occlusion.value;
     }
 
-    if (rmat.surfaceShader.normal.is_texture()) {
+    if (rmat.surfaceShader->normal.is_texture()) {
 
-      if (size_t(rmat.surfaceShader.normal.texture_id) > scene.textures.size()) {
+      if (size_t(rmat.surfaceShader->normal.texture_id) > scene.textures.size()) {
         PUSH_ERROR_AND_RETURN("Invalid texture_id for 'normal' texture.");
       }
     
-      if (!ConstructUVTexture(scene.textures[size_t(rmat.surfaceShader.normal.texture_id)], "normal", abs_mat_path, shader_nodes)) {
+      if (!ConstructUVTexture(scene.textures[size_t(rmat.surfaceShader->normal.texture_id)], "normal", abs_mat_path, shader_nodes)) {
         PUSH_ERROR_AND_RETURN("Failed to convert 'normal' texture.");
       }
 
@@ -1180,19 +789,19 @@ static bool ToMaterialPrim(const RenderScene &scene, const std::string &abs_path
       surfaceShader.normal.set_value_empty();
     } else {
       value::normal3f n;
-      n[0] = rmat.surfaceShader.normal.value[0];
-      n[1] = rmat.surfaceShader.normal.value[1];
-      n[2] = rmat.surfaceShader.normal.value[2];
+      n[0] = rmat.surfaceShader->normal.value[0];
+      n[1] = rmat.surfaceShader->normal.value[1];
+      n[2] = rmat.surfaceShader->normal.value[2];
       surfaceShader.normal = n;
     }
 
-    if (rmat.surfaceShader.displacement.is_texture()) {
+    if (rmat.surfaceShader->displacement.is_texture()) {
 
-      if (size_t(rmat.surfaceShader.displacement.texture_id) > scene.textures.size()) {
+      if (size_t(rmat.surfaceShader->displacement.texture_id) > scene.textures.size()) {
         PUSH_ERROR_AND_RETURN("Invalid texture_id for 'displacement' texture.");
       }
     
-      if (!ConstructUVTexture(scene.textures[size_t(rmat.surfaceShader.displacement.texture_id)], "displacement", abs_mat_path, shader_nodes)) {
+      if (!ConstructUVTexture(scene.textures[size_t(rmat.surfaceShader->displacement.texture_id)], "displacement", abs_mat_path, shader_nodes)) {
         PUSH_ERROR_AND_RETURN("Failed to convert 'displacement' texture.");
       }
 
@@ -1201,13 +810,13 @@ static bool ToMaterialPrim(const RenderScene &scene, const std::string &abs_path
       surfaceShader.displacement.set_value_empty();
     
     } else {
-      surfaceShader.displacement = rmat.surfaceShader.displacement.value;
+      surfaceShader.displacement = rmat.surfaceShader->displacement.value;
     }
 
     // Connect to UsdPreviewSurface's outputs:surface by setting targetPath.
     //
     // token outputs:surface = </path/to/mat/defaultPBR.outputs:surface>
-    mat.surface.set(tinyusdz::Path(/* prim path */ abs_shader_path,
+    mat.surface.set(Path(/* prim path */ abs_shader_path,
                                    /* prop path */ "outputs:surface"));
 
     //

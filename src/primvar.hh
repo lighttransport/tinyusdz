@@ -33,6 +33,8 @@
 #endif
 
 #include "value-types.hh"
+#include "timesamples.hh"
+#include "common-macros.inc"
 
 namespace tinyusdz {
 namespace primvar {
@@ -42,12 +44,62 @@ struct PrimVar {
   bool _blocked{false}; // ValueBlocked.
   value::TimeSamples _ts; // For TimeSamples value.
 
+  // Default constructor
+  PrimVar() {
+    //TUSDZ_LOG_I("PrimVar default ctor");
+  }
+
+  // Copy constructor
+  PrimVar(const PrimVar& rhs)
+    : _value(rhs._value), _blocked(rhs._blocked), _ts(rhs._ts) {
+    //TUSDZ_LOG_I("PrimVar copy ctor");
+  }
+
+  // Move constructor
+  PrimVar(PrimVar&& rhs) noexcept
+    : _value(std::move(rhs._value)),
+      _blocked(rhs._blocked),
+      _ts(std::move(rhs._ts)) {
+    //TUSDZ_LOG_I("PrimVar move ctor");
+    rhs._blocked = false;
+  }
+
+  // Copy assignment operator
+  PrimVar& operator=(const PrimVar& rhs) {
+    //TUSDZ_LOG_I("PrimVar copy assignment op");
+    if (this != &rhs) {
+      _value = rhs._value;
+      _blocked = rhs._blocked;
+      _ts = rhs._ts;
+    }
+    return *this;
+  }
+
+  // Move assignment operator
+  PrimVar& operator=(PrimVar&& rhs) noexcept {
+    //TUSDZ_LOG_I("PrimVar move assignment op");
+    if (this != &rhs) {
+      _value = std::move(rhs._value);
+      _blocked = rhs._blocked;
+      _ts = std::move(rhs._ts);
+      rhs._blocked = false;
+    }
+    return *this;
+  }
+
+  template<typename T>
+  PrimVar(T &&v) noexcept : _value(std::move(v)) {
+    //TUSDZ_LOG_I("PrimVar templated ctor");
+  }
+
   bool has_value() const {
     // ValueBlock is treated as having a value.
     if (_blocked) {
       return true;
     }
-    return (_value.type_id() != value::TypeId::TYPE_ID_INVALID) && (_value.type_id() != value::TypeId::TYPE_ID_NULL);
+    bool ret = (_value.type_id() != value::TypeId::TYPE_ID_INVALID) && (_value.type_id() != value::TypeId::TYPE_ID_NULL);
+    //TUSDZ_LOG_I("has_value " << ret);
+    return ret;
   }
 
   bool has_default() const {
@@ -98,8 +150,9 @@ struct PrimVar {
     if (has_default()) {
       return _value.type_name();
     }
-      
-    if (has_timesamples()) {
+
+    // Check if timeSamples were authored (even if empty)
+    if (has_timesamples() || _ts.type_id() != 0) {
       return _ts.type_name();
     }
 
@@ -115,7 +168,8 @@ struct PrimVar {
       return _value.type_id();
     }
 
-    if (has_timesamples()) {
+    // Check if timeSamples were authored (even if empty)
+    if (has_timesamples() || _ts.type_id() != 0) {
       return _ts.type_id();
     }
 
@@ -210,8 +264,32 @@ struct PrimVar {
     return _value.as<T>();
   }
 
+  // Const ref version for lvalue arguments
   template <class T>
   void set_value(const T &v) {
+    //TUSDZ_LOG_I("set_value const_ref");
+    _value = v;
+  }
+
+  // Move version for rvalue arguments - avoids copy when caller passes temporary
+  template <class T>
+  void set_value(T &&v, typename std::enable_if<!std::is_lvalue_reference<T>::value && !std::is_same<typename std::decay<T>::type, value::Value>::value>::type* = nullptr) {
+    //TUSDZ_LOG_I("set_value move");
+
+    // Value's underlying linb::any does not provide templated move constructor.
+    // so create Value object first, then call move ctor.
+    value::Value src(std::move(v));
+    _value = std::move(src);
+  }
+
+  // Special overload for value::Value to avoid double-wrapping
+  void set_value(value::Value &&v) {
+    //TUSDZ_LOG_I("set_value Value move");
+    _value = std::move(v);
+  }
+
+  void set_value(const value::Value &v) {
+    //TUSDZ_LOG_I("set_value Value copy");
     _value = v;
   }
 
@@ -225,6 +303,73 @@ struct PrimVar {
 
   void set_timesamples(value::TimeSamples &&v) {
     _ts = std::move(v);
+  }
+
+  /// Set TypedTimeSamples for frequently used types (int, float, double, etc.)
+  /// Converts to generic TimeSamples internally but allows move semantics
+  template <typename T>
+  void set_typed_timesamples(TypedTimeSamples<T> &&typed_ts) {
+    // Convert TypedTimeSamples to TimeSamples
+    value::TimeSamples ts;
+    
+    #ifndef TINYUSDZ_USE_TIMESAMPLES_SOA
+    // AoS layout
+    for (const auto& sample : typed_ts.get_samples()) {
+      if (sample.blocked) {
+        ts.add_blocked_sample(sample.t);
+      } else {
+        ts.add_sample(sample.t, value::Value(sample.value));
+      }
+    }
+    #else
+    // SoA layout
+    const auto& times = typed_ts.get_times();
+    const auto& values = typed_ts.get_values();
+    const auto& blocked = typed_ts.get_blocked();
+    
+    for (size_t i = 0; i < times.size(); ++i) {
+      if (blocked[i]) {
+        ts.add_blocked_sample(times[i]);
+      } else {
+        ts.add_sample(times[i], value::Value(values[i]));
+      }
+    }
+    #endif
+    
+    _ts = std::move(ts);
+  }
+
+  /// Set TypedTimeSamples for frequently used types (const ref version)
+  template <typename T>
+  void set_typed_timesamples(const TypedTimeSamples<T> &typed_ts) {
+    // Convert TypedTimeSamples to TimeSamples
+    value::TimeSamples ts;
+    
+    #ifndef TINYUSDZ_USE_TIMESAMPLES_SOA
+    // AoS layout
+    for (const auto& sample : typed_ts.get_samples()) {
+      if (sample.blocked) {
+        ts.add_blocked_sample(sample.t);
+      } else {
+        ts.add_sample(sample.t, value::Value(sample.value));
+      }
+    }
+    #else
+    // SoA layout
+    const auto& times = typed_ts.get_times();
+    const auto& values = typed_ts.get_values();
+    const auto& blocked = typed_ts.get_blocked();
+    
+    for (size_t i = 0; i < times.size(); ++i) {
+      if (blocked[i]) {
+        ts.add_blocked_sample(times[i]);
+      } else {
+        ts.add_sample(times[i], value::Value(values[i]));
+      }
+    }
+    #endif
+    
+    _ts = ts;
   }
 
   void clear_timesamples() {
@@ -338,6 +483,13 @@ struct PrimVar {
   
   value::TimeSamples &ts_raw() {
     return _ts;
+  }
+
+  size_t estimate_memory_usage() const {
+    size_t total = sizeof(PrimVar);
+    total += _value.estimate_memory_usage();
+    total += _ts.estimate_memory_usage();
+    return total;
   }
 };
 

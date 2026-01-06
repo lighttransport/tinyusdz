@@ -406,4 +406,35 @@ inline std::string join(const std::string& sep, It& v)
 }
 #endif
 
+// Simple atof replacement
+// Returns qNaN for invalid input.
+double atof(const char *s);
+double atof(const std::string &s);
+
+std::string base64_encode(unsigned char const *bytes_to_encode,
+                          unsigned int in_len);
+std::string base64_decode(std::string const &encoded_string);
+
+///
+/// Simple glob pattern matching.
+/// Supports * (match any characters) and ? (match single character).
+///
+/// @param[in] pattern Glob pattern
+/// @param[in] str String to match
+/// @return true if str matches pattern
+///
+bool GlobMatch(const std::string &pattern, const std::string &str);
+
+///
+/// Glob pattern matching for paths with ** support.
+/// ** matches zero or more path segments (including /)
+/// * matches any characters except /
+/// ? matches single character except /
+///
+/// @param[in] pattern Glob pattern (e.g., "/Suzanne/**", "/**/Mesh")
+/// @param[in] path Path string to match
+/// @return true if path matches pattern
+///
+bool GlobMatchPath(const std::string &pattern, const std::string &path);
+
 }  // namespace tinyusdz

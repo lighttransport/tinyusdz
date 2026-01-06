@@ -5,7 +5,9 @@
 // UsdGeom API implementations
 
 
+#include <cstring>
 #include <sstream>
+#include <type_traits>
 
 #include "pprinter.hh"
 #include "value-types.hh"
@@ -21,6 +23,7 @@
 #include "math-util.inc"
 #include "str-util.hh"
 #include "value-pprint.hh"
+#include "logger.hh"
 
 #define SET_ERROR_AND_RETURN(msg) \
   if (err) {                      \
@@ -35,6 +38,32 @@ namespace {
 constexpr auto kPrimvars = "primvars:";
 constexpr auto kIndices = ":indices";
 
+// Helper trait: can use data() pointer (excludes std::vector<bool>)
+template <typename T>
+struct can_use_data_ptr : std::integral_constant<bool,
+    !std::is_same<T, bool>::value> {};
+
+// Helper trait: can use memcpy for block copy
+template <typename T>
+struct can_use_memcpy : std::integral_constant<bool,
+    std::is_trivially_copyable<T>::value && !std::is_same<T, bool>::value> {};
+
+// Block copy with memcpy for trivially copyable types
+template <typename T>
+inline typename std::enable_if<can_use_memcpy<T>::value>::type
+CopyBlockElements(T* dest, const T* src, size_t count) {
+  memcpy(dest, src, count * sizeof(T));
+}
+
+// Block copy with loop for non-trivially copyable types
+template <typename T>
+inline typename std::enable_if<!can_use_memcpy<T>::value>::type
+CopyBlockElements(T* dest, const T* src, size_t count) {
+  for (size_t k = 0; k < count; k++) {
+    dest[k] = src[k];
+  }
+}
+
 ///
 /// Computes
 ///
@@ -44,8 +73,11 @@ constexpr auto kIndices = ":indices";
 ///
 /// `dest` is set to `values` when `indices` is empty
 ///
+/// Optimized version for types that support data() (not std::vector<bool>)
+///
 template <typename T>
-nonstd::expected<bool, std::string> ExpandWithIndices(
+typename std::enable_if<can_use_data_ptr<T>::value, nonstd::expected<bool, std::string>>::type
+ExpandWithIndices(
     const std::vector<T> &values, uint32_t elementSize, const std::vector<int32_t> &indices,
     std::vector<T> *dest) {
   if (!dest) {
@@ -68,17 +100,31 @@ nonstd::expected<bool, std::string> ExpandWithIndices(
   dest->resize(indices.size() * elementSize);
 
   std::vector<size_t> invalidIndices;
+  const size_t numValues = values.size();
+  const size_t numIndices = indices.size();
+  T* destData = dest->data();
+  const T* srcData = values.data();
 
-  bool valid = true;
-  for (size_t i = 0; i < indices.size(); i++) {
-    int32_t idx = indices[i];
-    if ((idx >= 0) && ((size_t(idx+1) * size_t(elementSize)) <= values.size())) {
-      for (size_t k = 0; k < elementSize; k++) {
-        (*dest)[i*elementSize + k] = values[size_t(idx)*elementSize + k];
+  // Fast path for elementSize == 1 (most common case)
+  if (elementSize == 1) {
+    for (size_t i = 0; i < numIndices; i++) {
+      int32_t idx = indices[i];
+      if ((idx >= 0) && (size_t(idx) < numValues)) {
+        destData[i] = srcData[idx];
+      } else {
+        invalidIndices.push_back(i);
       }
-    } else {
-      invalidIndices.push_back(i);
-      valid = false;
+    }
+  }
+  // Optimized path for elementSize > 1
+  else {
+    for (size_t i = 0; i < numIndices; i++) {
+      int32_t idx = indices[i];
+      if ((idx >= 0) && ((size_t(idx+1) * size_t(elementSize)) <= numValues)) {
+        CopyBlockElements(destData + i * elementSize, srcData + size_t(idx) * elementSize, elementSize);
+      } else {
+        invalidIndices.push_back(i);
+      }
     }
   }
 
@@ -89,7 +135,59 @@ nonstd::expected<bool, std::string> ExpandWithIndices(
                                    /* N to display */ 5));
   }
 
-  return valid;
+  return true;
+}
+
+///
+/// Fallback for std::vector<bool> (no data() method available)
+///
+template <typename T>
+typename std::enable_if<!can_use_data_ptr<T>::value, nonstd::expected<bool, std::string>>::type
+ExpandWithIndices(
+    const std::vector<T> &values, uint32_t elementSize, const std::vector<int32_t> &indices,
+    std::vector<T> *dest) {
+  if (!dest) {
+    return nonstd::make_unexpected("`dest` is nullptr.");
+  }
+
+  if (indices.empty()) {
+    (*dest) = values;
+    return true;
+  }
+
+  if (elementSize == 0) {
+    return false;
+  }
+
+  if ((values.size() % elementSize) != 0) {
+    return false;
+  }
+
+  dest->resize(indices.size() * elementSize);
+
+  std::vector<size_t> invalidIndices;
+  const size_t numValues = values.size();
+  const size_t numIndices = indices.size();
+
+  for (size_t i = 0; i < numIndices; i++) {
+    int32_t idx = indices[i];
+    if ((idx >= 0) && ((size_t(idx+1) * size_t(elementSize)) <= numValues)) {
+      for (size_t k = 0; k < elementSize; k++) {
+        (*dest)[i*elementSize + k] = values[size_t(idx)*elementSize + k];
+      }
+    } else {
+      invalidIndices.push_back(i);
+    }
+  }
+
+  if (invalidIndices.size()) {
+    return nonstd::make_unexpected(
+        "Invalid indices found: " +
+        value::print_array_snipped(invalidIndices,
+                                   /* N to display */ 5));
+  }
+
+  return true;
 }
 
 }  // namespace
@@ -237,6 +335,67 @@ bool GPrim::get_primvar(const std::string &varname, GeomPrimvar *out_primvar,
   return true;
 }
 
+// Helper function to try zero-copy path using TypedArrayView (enabled only for trivially copyable types)
+template <typename T>
+typename std::enable_if<std::is_trivially_copyable<T>::value && !std::is_same<T, bool>::value, bool>::type
+try_zero_copy_flatten(const Attribute &attr, const double t, const std::vector<int32_t> &default_indices,
+                      std::vector<T> *dest, std::string *err) {
+  if (!value::TimeCode(t).is_default() || attr.has_timesamples()) {
+    return false;  // Can't use zero-copy for timesampled values
+  }
+
+  //TUSDZ_LOG_I("Using TypedArrayView (zero-copy)");
+  TypedArrayView<const T> value_view = attr.get_value_view<T>();
+
+  if (value_view.empty()) {
+    //TUSDZ_LOG_I("TypedArrayView is empty, falling back to get_value");
+    return false;
+  }
+
+  uint32_t elementSize = attr.metas().elementSize.value_or(1);
+  //TUSDZ_LOG_I("elementSize " << elementSize << ", view size " << value_view.size());
+
+  // Sanity check: if view size is unreasonably large, data is corrupted
+  constexpr size_t MAX_REASONABLE_SIZE = 100000000;
+  if (value_view.size() > MAX_REASONABLE_SIZE) {
+    TUSDZ_LOG_E("ERROR: TypedArrayView size " << value_view.size() << " exceeds reasonable limit (" << MAX_REASONABLE_SIZE << "). Data is likely corrupted!");
+    if (err) {
+      (*err) += fmt::format("TypedArrayView size {} exceeds reasonable limit. Data is corrupted.", value_view.size());
+    }
+    return false;
+  }
+
+  //TUSDZ_LOG_I("indices.size " << default_indices.size());
+
+  // Convert view to vector for ExpandWithIndices
+  std::vector<T> value(value_view.begin(), value_view.end());
+  std::vector<T> expanded_val;
+  auto ret = ExpandWithIndices(value, elementSize, default_indices, &expanded_val);
+  //TUSDZ_LOG_I("ExpandWithIndices done");
+  if (ret) {
+    (*dest) = expanded_val;
+    return true;
+  } else {
+    const std::string &err_msg = ret.error();
+    if (err) {
+      (*err) += fmt::format(
+          "[Internal Error] Failed to expand for GeomPrimvar type = `{}`",
+          attr.type_name());
+      if (err_msg.size()) {
+        (*err) += "\n" + err_msg;
+      }
+    }
+    return false;
+  }
+}
+
+// Fallback for non-trivially-copyable types (always returns false to skip zero-copy path)
+template <typename T>
+typename std::enable_if<!(std::is_trivially_copyable<T>::value && !std::is_same<T, bool>::value), bool>::type
+try_zero_copy_flatten(const Attribute &, const double, const std::vector<int32_t> &,
+                      std::vector<T> *, std::string *) {
+  return false;  // Zero-copy not supported for this type
+}
 
 template <typename T>
 bool GeomPrimvar::flatten_with_indices(const double t, std::vector<T> *dest, const value::TimeSampleInterpolationType tinterp, std::string *err) const {
@@ -246,6 +405,7 @@ bool GeomPrimvar::flatten_with_indices(const double t, std::vector<T> *dest, con
     }
     return false;
   }
+  //TUSDZ_LOG_I("flatten_with_indices. has_timesamples " << _attr.has_timesamples() << ", has_value " << _attr.has_value());
 
   if (_attr.has_timesamples() || _attr.has_value()) {
 
@@ -257,10 +417,41 @@ bool GeomPrimvar::flatten_with_indices(const double t, std::vector<T> *dest, con
       return false;
     }
 
+    //TUSDZ_LOG_I("get_value");
+
+#if 0 // FIXME: seems not work in emscripten build
+    // Try to use TypedArrayView for zero-copy access when possible (default values only)
+    // Only for trivially copyable types (excluding bool due to std::vector<bool> specialization)
+    // Using SFINAE helper function for C++14 compatibility (avoids 'if constexpr' requirement)
+    {
+      std::vector<int32_t> indices;
+      if (has_default_indices()) {
+        indices = _indices;
+      }
+      if (try_zero_copy_flatten(_attr, t, indices, dest, err)) {
+        return true;  // Zero-copy path succeeded
+      }
+    }
+#endif
+
+    // Use std::vector instead of TypedArray to avoid potential corruption issues
     std::vector<T> value;
     if (_attr.get_value<std::vector<T>>(t, &value, tinterp)) {
 
+      //TUSDZ_LOG_I("vsize " << value.size());
+
+      // Sanity check for corrupted size
+      if (value.size() > 1000000000) {  // 1 billion elements is unreasonable
+        if (err) {
+          (*err) += fmt::format(
+              "[Internal Error] Array has invalid size: {} for attribute type `{}`",
+              value.size(), _attr.type_name());
+        }
+        return false;
+      }
+      
       uint32_t elementSize = _attr.metas().elementSize.value_or(1);
+      //TUSDZ_LOG_I("elementSize" << elementSize);
 
       // Get indices at specified time
       std::vector<int32_t> indices;
@@ -273,9 +464,11 @@ bool GeomPrimvar::flatten_with_indices(const double t, std::vector<T> *dest, con
       } else {
         _ts_indices.get(&indices, t, tinterp);
       }
+      //TUSDZ_LOG_I("indices.size " << indices.size());
 
       std::vector<T> expanded_val;
       auto ret = ExpandWithIndices(value, elementSize, indices, &expanded_val);
+      //TUSDZ_LOG_I("ExpandWithIndices done");
       if (ret) {
         (*dest) = expanded_val;
         // Currently we ignore ret.value()
@@ -302,6 +495,8 @@ bool GeomPrimvar::flatten_with_indices(const double t, std::vector<T> *dest, con
     // TODO: Report error?
   }
 
+  //TUSDZ_LOG_I("???");
+
   return false;
 }
 
@@ -311,7 +506,7 @@ std::vector<int32_t> GeomPrimvar::get_indices(const double t) const {
       return get_default_indices();
     }
   }
-  
+
   if (has_timesampled_indices()) {
     std::vector<int32_t> indices;
     if (get_timesampled_indices().get(&indices, t)) {
@@ -330,6 +525,16 @@ void GeomPrimvar::set_indices(const std::vector<int32_t> &indices, const double 
   if (value::TimeCode(t).is_default()) {
     _indices = indices;
   } else {
+#ifdef TINYUSDZ_USE_TIMESAMPLES_SOA
+    // In SoA mode, check if the sample exists and update/add
+    std::vector<int32_t> existing_value;
+    if (_ts_indices.get_value_at(t, &existing_value)) {
+      // Sample exists, overwrite it
+      _ts_indices.set_value_at(t, indices);
+    } else {
+      _ts_indices.add_sample(t, indices);
+    }
+#else
     TypedTimeSamples<std::vector<int32_t>>::Sample *psample{nullptr};
     if (_ts_indices.get_sample_at(t, &psample)) {
       // overwrite content
@@ -337,6 +542,7 @@ void GeomPrimvar::set_indices(const std::vector<int32_t> &indices, const double 
     } else {
       _ts_indices.add_sample(t, indices);
     }
+#endif
   }
 }
 
@@ -500,7 +706,8 @@ bool GeomPrimvar::get_value(T *dest, std::string *err) const {
       }
       return false;
     }
-    
+
+    // Note: value::TimeSamples (untyped) doesn't have SoA layout support
     if (auto pv =ts.get_samples().at(0).value.as<T>()) {
       (*dest) = (*pv);
       return true;
@@ -664,9 +871,18 @@ bool GPrim::set_primvar(const GeomPrimvar &primvar,
     }
 
     if (primvar.has_timesampled_indices()) {
+#ifdef TINYUSDZ_USE_TIMESAMPLES_SOA
+      const auto &ts_indices = primvar.get_timesampled_indices();
+      const auto &times = ts_indices.get_times();
+      const auto &values = ts_indices.get_values();
+      for (size_t i = 0; i < times.size(); i++) {
+        var.set_timesample(times[i], values[i]);
+      }
+#else
       for (const auto &sample : primvar.get_timesampled_indices().get_samples()) {
         var.set_timesample(sample.t, sample.value);
       }
+#endif
     }
 
     if (primvar.has_default_indices() || primvar.has_timesampled_indices()) {
@@ -886,6 +1102,8 @@ const std::vector<int32_t> GeomMesh::get_faceVertexIndices(double time) const {
 
 std::vector<value::token> GeomMesh::get_joints() const {
   constexpr auto kSkelJoints = "skel:joints";
+  std::vector<value::token> dst;
+  
 #if 0
   if (has_primvar(kSkelJoints)) {
     // 'primvars:skel:joints'
@@ -893,22 +1111,21 @@ std::vector<value::token> GeomMesh::get_joints() const {
     GeomPrimvar primvar;
     if (!get_primvar(kSkelJoints, &primvar, &err)) {
       DCOUT("Invalid `skel:joints` primvar. err = " << err);
-      return {};
+      return dst;
     }
 
     if (primvar.has_indices()) {
-      // indexed primvar for skel:joint is not supported 
+      // indexed primvar for skel:joint is not supported
       DCOUT("Indexed primvar is not supported for `skel:joints`");
-      return {};
+      return dst;
     }
 
     const Attribute &attr = primvar.get_attribute();
     if (!attr.is_uniform()) {
       DCOUT("`skel:joints` must be uniform attribute");
-      return {};
+      return dst;
     }
 
-    std::vector<value::token> dst;
     if (!primvar.get_value(&dst)) {
       DCOUT("`skel:joints` must be token[] type, but got " << primvar.type_name());
     }
@@ -917,23 +1134,22 @@ std::vector<value::token> GeomMesh::get_joints() const {
   {
     // lookup `skel:joints` prop
     if (!props.count(kSkelJoints)) {
-      return {};
+      return dst;
     }
 
     const auto &prop = props.at(kSkelJoints);
     if (prop.get_attribute().is_uniform() && prop.get_attribute().type_name() == "token[]") {
-      
-      std::vector<value::token> dst;
+
       if (!prop.get_attribute().get_value(&dst)) {
-        return {};
+        return dst;
       }
 
       return dst;
-      
-    } 
+
+    }
     DCOUT("`skel:joints` must be uniform token[] attribute, but got " << prop.value_type_name() << " (or Relationship))");
   }
-  return {};
+  return dst;
 }
 
 // static

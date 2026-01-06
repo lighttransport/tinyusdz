@@ -18,6 +18,7 @@
 #include "usdSkel.hh"
 #include "usdLux.hh"
 #include "usdShade.hh"
+#include "usdMtlx.hh"
 
 #include "common-macros.inc"
 #include "value-types.hh"
@@ -66,7 +67,7 @@ constexpr auto kInputsVarname = "inputs:varname";
 template <typename T>
 bool ReconstructShader(
     const Specifier &spec,
-    const PropertyMap &properties,
+    PropertyMap &properties,
     const ReferenceList &references,
     T *out,
     std::string *warn,
@@ -93,6 +94,7 @@ struct ParseResult
 
   ResultCode code;
   std::string err;
+  std::string warn;
 };
 
 #if 0
@@ -137,8 +139,10 @@ static nonstd::optional<Animatable<T>> ConvertToAnimatable(const primvar::PrimVa
   }
 
   if (var.has_timesamples()) {
-    for (size_t i = 0; i < var.ts_raw().size(); i++) {
-      const value::TimeSamples::Sample &s = var.ts_raw().get_samples()[i];
+    const auto &samples = var.ts_raw().get_samples();
+
+    for (size_t i = 0; i < samples.size(); i++) {
+      const value::TimeSamples::Sample &s = samples[i];
 
       // Attribute Block?
       if (s.blocked || s.value.is_none()) {
@@ -266,9 +270,17 @@ static bool ConvertTokenAttributeToStringAttribute(
       if (toks.has_timesamples()) {
         auto tok_ts = toks.get_timesamples();
 
+#ifndef TINYUSDZ_USE_TIMESAMPLES_SOA
         for (auto &item : tok_ts.get_samples()) {
           strs.add_sample(item.t, item.value.str());
         }
+#else
+        const auto &times = tok_ts.get_times();
+        const auto &values = tok_ts.get_values();
+        for (size_t i = 0; i < times.size(); i++) {
+          strs.add_sample(times[i], values[i].str());
+        }
+#endif
       }
     }
     out.set_value(strs);
@@ -313,9 +325,17 @@ static bool ConvertStringDataAttributeToStringAttribute(
       if (toks.has_timesamples()) {
         auto tok_ts = toks.get_timesamples();
 
+#ifndef TINYUSDZ_USE_TIMESAMPLES_SOA
         for (auto &item : tok_ts.get_samples()) {
           strs.add_sample(item.t, item.value.value);
         }
+#else
+        const auto &times = tok_ts.get_times();
+        const auto &values = tok_ts.get_values();
+        for (size_t i = 0; i < times.size(); i++) {
+          strs.add_sample(times[i], values[i].value);
+        }
+#endif
       }
     }
     out.set_value(strs);
@@ -417,7 +437,7 @@ static ParseResult ParseTypedAttribute(std::set<std::string> &table, /* inout */
           }
 
           if (auto pv = attr.get_value<T>()) {
-            target.set_value(pv.value());
+            target.set_value(std::move(pv.value()));  // Use move to avoid copy
           } else {
             ret.code = ParseResult::ResultCode::TypeMismatch;
             ret.err = fmt::format("Fallback. Failed to retrieve value with requested type `{}`.", value::TypeTraits<T>::type_name());
@@ -425,14 +445,14 @@ static ParseResult ParseTypedAttribute(std::set<std::string> &table, /* inout */
           }
 
         }
-      
+
         Animatable<T> animatable_value;
 
         if (attr.get_var().has_timesamples()) {
           // e.g. "float radius.timeSamples = {0: 1.2, 1: 2.3}"
 
           if (auto av = ConvertToAnimatable<T>(attr.get_var())) {
-            animatable_value = av.value();
+            animatable_value = std::move(av.value());  // Use move to avoid copy
             //target.set_value(anim);
           } else {
             // Conversion failed.
@@ -444,11 +464,11 @@ static ParseResult ParseTypedAttribute(std::set<std::string> &table, /* inout */
 
           has_timesamples = true;
         }
-        
+
         if (attr.get_var().has_value()) {
           if (auto pv = attr.get_var().get_value<T>()) {
             //target.set_value(pv.value());
-            animatable_value.set(pv.value());
+            animatable_value.set(std::move(pv.value()));  // Use move to avoid copy
           } else {
             ret.code = ParseResult::ResultCode::InternalError;
             ret.err = fmt::format("Internal error. Invalid attribute value? get_value<{}> failed. Attribute has type {}", value::TypeTraits<T>::type_name(), attr.get_var().type_name());
@@ -459,7 +479,7 @@ static ParseResult ParseTypedAttribute(std::set<std::string> &table, /* inout */
         }
 
         if (has_timesamples || has_default) {
-          target.set_value(animatable_value);
+          target.set_value(std::move(animatable_value));  // Use move to avoid copy
         }
       }
 
@@ -477,7 +497,7 @@ static ParseResult ParseTypedAttribute(std::set<std::string> &table, /* inout */
 
       } else {
         DCOUT("Invalid Property.type");
-        ret.err = "Invalid Property type(internal error)";
+        ret.err = "ParseTypedAttribute: Invalid Property type(internal error)";
         ret.code = ParseResult::ResultCode::InternalError;
         return ret;
       }
@@ -572,17 +592,25 @@ static ParseResult ParseTypedAttribute(std::set<std::string> &table, /* inout */
       } else if (prop.get_property_type() == Property::Type::Attrib) {
         DCOUT("Adding prop: " << name);
 
-        if (prop.get_attribute().variability() != Variability::Uniform) {
+        // Config attributes (config:*) are implicitly uniform even if not explicitly marked
+        bool is_config_attr = (name.find("config:") == 0);
+
+        if (!is_config_attr && prop.get_attribute().variability() != Variability::Uniform) {
           ret.code = ParseResult::ResultCode::VariabilityMismatch;
           ret.err = fmt::format("Attribute `{}` must be `uniform` variability.", name);
           return ret;
+        }
+
+        // Warn if config attribute is missing explicit uniform variability
+        if (is_config_attr && prop.get_attribute().variability() != Variability::Uniform) {
+          ret.warn = fmt::format("Config attribute `{}` should have explicit `uniform` variability.", name);
         }
 
         if (attr.is_blocked()) {
           target.set_blocked(true);
         } else if (attr.get_var().has_default()) {
           if (auto pv = attr.get_value<T>()) {
-            target.set_value(pv.value());
+            target.set_value(std::move(pv.value()));  // Use move to avoid copy
           } else {
             ret.code = ParseResult::ResultCode::InternalError;
             ret.err = "Internal data corrupsed.";
@@ -600,7 +628,7 @@ static ParseResult ParseTypedAttribute(std::set<std::string> &table, /* inout */
         return ret;
       } else {
         DCOUT("Invalid Property.type");
-        ret.err = "Invalid Property type(internal error)";
+        ret.err = "ParseTypedAttribute(Uniform): Invalid Property type(internal error)";
         ret.code = ParseResult::ResultCode::InternalError;
         return ret;
       }
@@ -707,7 +735,7 @@ static ParseResult ParseTypedAttribute(std::set<std::string> &table, /* inout */
 
         if (var.has_default() || var.has_timesamples()) {
           if (auto av = ConvertToAnimatable<T>(var)) {
-            target.set_value(av.value());
+            target.set_value(std::move(av.value()));  // Use move to avoid copy
           } else {
             DCOUT("ConvertToAnimatable failed.");
             ret.code = ParseResult::ResultCode::InternalError;
@@ -724,7 +752,7 @@ static ParseResult ParseTypedAttribute(std::set<std::string> &table, /* inout */
         }
       } else {
         DCOUT("Invalid Property.type");
-        ret.err = "Invalid Property type(internal error)";
+        ret.err = "ParseTypedAttribute(Animatable) Invalid Property type(internal error)";
         ret.code = ParseResult::ResultCode::InternalError;
         return ret;
       }
@@ -746,7 +774,16 @@ static ParseResult ParseTypedAttribute(std::set<std::string> &table, /* inout */
       ret.code = ParseResult::ResultCode::Success;
       return ret;
     } else {
-      DCOUT("???.");
+      // Handle attributes that have no value, default, timeSamples, or connections
+      // This can happen for empty attributes or attributes that are just placeholders
+      DCOUT("Attribute has no value, using default-constructed value.");
+
+      // Set an empty/default value so the attribute is valid but empty
+      target.set_value(Animatable<T>());  // Default-constructed, no need for move
+      target.metas() = attr.metas();
+      table.insert(prop_name);
+      ret.code = ParseResult::ResultCode::Success;
+      return ret;
     }
     return ret;
   }
@@ -845,7 +882,7 @@ static ParseResult ParseTypedAttribute(std::set<std::string> &table, /* inout */
           has_default = true;
         } else if (attr.get_var().has_default()) {
           if (auto pv = attr.get_value<T>()) {
-            target.set_value(pv.value());
+            target.set_value(std::move(pv.value()));  // Use move to avoid copy
             has_default = true;
           } else {
             ret.code = ParseResult::ResultCode::VariabilityMismatch;
@@ -1024,7 +1061,7 @@ static ParseResult ParseExtentAttribute(std::set<std::string> &table, /* inout *
 
       if (var.has_default() || var.has_timesamples()) {
         if (auto av = ConvertToAnimatable<Extent>(var)) {
-          target.set_value(av.value());
+          target.set_value(std::move(av.value()));  // Use move to avoid copy
         } else {
           DCOUT("ConvertToAnimatable failed.");
           ret.code = ParseResult::ResultCode::InternalError;
@@ -1052,7 +1089,7 @@ static ParseResult ParseExtentAttribute(std::set<std::string> &table, /* inout *
 
     } else {
       DCOUT("Invalid Property.type");
-      ret.err = "Invalid Property type(internal error)";
+      ret.err = "[extent] Invalid Property type(internal error)";
       ret.code = ParseResult::ResultCode::InternalError;
       return ret;
     }
@@ -1513,6 +1550,9 @@ nonstd::expected<T, std::string> EnumHandler(
 #define PARSE_TYPED_ATTRIBUTE(__table, __prop, __name, __klass, __target) { \
   ParseResult ret = ParseTypedAttribute(__table, __prop.first, __prop.second, __name, __target); \
   if (ret.code == ParseResult::ResultCode::Success || ret.code == ParseResult::ResultCode::AlreadyProcessed) { \
+    if (!ret.warn.empty()) { \
+      PUSH_WARN(ret.warn); \
+    } \
     continue; /* got it */\
   } else if (ret.code == ParseResult::ResultCode::Unmatched) { \
     /* go next */ \
@@ -1524,6 +1564,9 @@ nonstd::expected<T, std::string> EnumHandler(
 #define PARSE_TYPED_ATTRIBUTE_NOCONTINUE(__table, __prop, __name, __klass, __target) { \
   ParseResult ret = ParseTypedAttribute(__table, __prop.first, __prop.second, __name, __target); \
   if (ret.code == ParseResult::ResultCode::Success || ret.code == ParseResult::ResultCode::AlreadyProcessed) { \
+    if (!ret.warn.empty()) { \
+      PUSH_WARN(ret.warn); \
+    } \
     /* do nothing */ \
   } else if (ret.code == ParseResult::ResultCode::Unmatched) { \
     /* go next */ \
@@ -1908,7 +1951,7 @@ bool ParseTimeSampledEnumProperty(
   /* Check if the property name is a predefined property */  \
   if (!__table.count(__prop.first)) {                        \
     DCOUT("custom property added: name = " << __prop.first); \
-    __dst[__prop.first] = __prop.second;                     \
+    __dst[__prop.first] = std::move(__prop.second);          \
     __table.insert(__prop.first);                            \
   } \
  }
@@ -1928,19 +1971,15 @@ bool ParseTimeSampledEnumProperty(
    } \
  }
 
-bool ReconstructXformOpsFromProperties(
-  const Specifier &spec,
+static bool ReconstructXformOpFromToken(
+
+  const std::string &token, int i,
+  std::map<std::string, Property> &properties,
   std::set<std::string> &table, /* inout */
-  const std::map<std::string, Property> &properties,
-  std::vector<XformOp> *xformOps,
-  std::string *err)
-{
-
-  if (spec == Specifier::Class) {
-    // Do not materialize xformOps here.
-    return true;
+  std::vector<XformOp> *xformOps, std::string *err) {
+  if (!xformOps) {
+    PUSH_ERROR_AND_RETURN("Internal error: xformOps ptr is null");
   }
-
 
   constexpr auto kTranslate = "xformOp:translate";
   constexpr auto kTransform = "xformOp:transform";
@@ -1989,14 +2028,621 @@ bool ReconstructXformOpsFromProperties(
     return nonstd::nullopt;
   };
 
+  std::string tok = token;
+        XformOp op;
+
+        DCOUT("xformOp token = " << tok);
+
+        if (startsWith(tok, "!resetXformStack!")) {
+          if (tok.compare("!resetXformStack!") != 0) {
+            PUSH_ERROR_AND_RETURN(
+                "`!resetXformStack!` must be defined solely(not to be a prefix "
+                "to \"xformOp:*\")");
+          }
+
+          if (i != 0) {
+            PUSH_ERROR_AND_RETURN(
+                "`!resetXformStack!` must appear at the first element of "
+                "xformOpOrder list.");
+          }
+
+          op.op_type = XformOp::OpType::ResetXformStack;
+          xformOps->emplace_back(std::move(op));
+
+          // skip looking up property
+          return true;
+        }
+
+        if (startsWith(tok, "!invert!")) {
+          DCOUT("invert!");
+          op.inverted = true;
+          tok = removePrefix(tok, "!invert!");
+          DCOUT("tok = " << tok);
+        }
+
+        auto it = properties.find(tok);
+        if (it == properties.end()) {
+          PUSH_ERROR_AND_RETURN("Property `" + tok + "` not found.");
+        }
+        if (it->second.is_attribute_connection()) {
+          PUSH_ERROR_AND_RETURN(
+              "Connection(.connect) for xformOp attribute is not yet supported: "
+              "`" +
+              tok + "`");
+        }
+        const Attribute &attr = it->second.get_attribute();
+
+        // Check `xformOp` namespace
+        if (auto xfm = SplitXformOpToken(tok, kTransform)) {
+          op.op_type = XformOp::OpType::Transform;
+          op.suffix = xfm.value();  // may contain nested namespaces
+
+          // Check if timeSamples were authored (even if empty)
+          if (attr.get_var().has_timesamples() || attr.get_var().ts_raw().type_id() != 0) {
+            op.set_timesamples(attr.get_var().ts_raw());
+          }
+
+          if (attr.get_var().has_default()) {
+            if (attr.has_blocked()) {
+              // Set dummy value for `op.get_value_type_id/op.get_value_type_name'
+              if (attr.type_id() == value::TypeTraits<value::matrix4d>::type_id()) {
+                value::matrix4d dummy{value::matrix4d::identity()};
+                op.set_value(dummy);
+              } else {
+                PUSH_ERROR_AND_RETURN(
+                    "`xformOp:transform` must be type `matrix4d`, but got "
+                    "type `" +
+                    attr.type_name() + "`.");
+              }
+              op.set_blocked(true);
+            } else if (auto pvd = attr.get_value<value::matrix4d>()) {
+              op.set_value(pvd.value());
+            } else {
+              PUSH_ERROR_AND_RETURN(
+                  "`xformOp:transform` must be type `matrix4d`, but got type `" +
+                  attr.type_name() + "`.");
+            }
+          }
+
+        } else if (auto tx = SplitXformOpToken(tok, kTranslate)) {
+          op.op_type = XformOp::OpType::Translate;
+          op.suffix = tx.value();
+
+          // Check if timeSamples were authored (even if empty)
+          if (attr.get_var().has_timesamples() || attr.get_var().ts_raw().type_id() != 0) {
+            op.set_timesamples(attr.get_var().ts_raw());
+          }
+
+          if (attr.get_var().has_default()) {
+            if (attr.has_blocked()) {
+              // Set dummy value for `op.get_value_type_id/op.get_value_type_name'
+              if (attr.type_id() == value::TypeTraits<value::double3>::type_id()) {
+                value::double3 dummy{0.0, 0.0, 0.0};
+                op.set_value(dummy);
+              } else if (attr.type_id() == value::TypeTraits<value::float3>::type_id()) {
+                value::float3 dummy{0.0f, 0.0f, 0.0f};
+                op.set_value(dummy);
+              } else {
+                PUSH_ERROR_AND_RETURN(
+                    "`xformOp:translate` must be type `double3` or `float3`, but got "
+                    "type `" +
+                    attr.type_name() + "`.");
+              }
+              op.set_blocked(true);
+            } else if (auto pvd = attr.get_value<value::double3>()) {
+              op.set_value(pvd.value());
+            } else if (auto pvf = attr.get_value<value::float3>()) {
+              op.set_value(pvf.value());
+            } else {
+              PUSH_ERROR_AND_RETURN(
+                  "`xformOp:translate` must be type `double3` or `float3`, but "
+                  "got type `" +
+                  attr.type_name() + "`.");
+            }
+          }
+        } else if (auto scale = SplitXformOpToken(tok, kScale)) {
+          op.op_type = XformOp::OpType::Scale;
+          op.suffix = scale.value();
+
+          // Check if timeSamples were authored (even if empty)
+          if (attr.get_var().has_timesamples() || attr.get_var().ts_raw().type_id() != 0) {
+            op.set_timesamples(attr.get_var().ts_raw());
+          }
+
+          if (attr.get_var().has_default()) {
+            if (attr.has_blocked()) {
+              // Set dummy value for `op.get_value_type_id/op.get_value_type_name'
+              if (attr.type_id() == value::TypeTraits<value::double3>::type_id()) {
+                value::double3 dummy{0.0, 0.0, 0.0};
+                op.set_value(dummy);
+              } else if (attr.type_id() == value::TypeTraits<value::float3>::type_id()) {
+                value::float3 dummy{0.0f, 0.0f, 0.0f};
+                op.set_value(dummy);
+              } else {
+                PUSH_ERROR_AND_RETURN(
+                    "`xformOp:scale` must be type `double3` or `float3`, but got "
+                    "type `" +
+                    attr.type_name() + "`.");
+              }
+              op.set_blocked(true);
+            } else if (auto pvd = attr.get_value<value::double3>()) {
+              op.set_value(pvd.value());
+            } else if (auto pvf = attr.get_value<value::float3>()) {
+              op.set_value(pvf.value());
+            } else {
+              PUSH_ERROR_AND_RETURN(
+                  "`xformOp:scale` must be type `double3` or `float3`, but got "
+                  "type `" +
+                  attr.type_name() + "`.");
+            }
+          }
+        } else if (auto rotX = SplitXformOpToken(tok, kRotateX)) {
+          op.op_type = XformOp::OpType::RotateX;
+          op.suffix = rotX.value();
+
+          // Check if timeSamples were authored (even if empty)
+          if (attr.get_var().has_timesamples() || attr.get_var().ts_raw().type_id() != 0) {
+            op.set_timesamples(attr.get_var().ts_raw());
+          }
+
+          if (attr.get_var().has_default()) {
+            if (attr.has_blocked()) {
+              // Set dummy value for `op.get_value_type_id/op.get_value_type_name'
+              if (attr.type_id() == value::TypeTraits<double>::type_id()) {
+                double dummy(0.0);
+                op.set_value(dummy);
+              } else if (attr.type_id() == value::TypeTraits<float>::type_id()) {
+                float dummy(0.0f);
+                op.set_value(dummy);
+              } else {
+                PUSH_ERROR_AND_RETURN(
+                    "`xformOp:rotateX` must be type `double` or `float`, but got "
+                    "type `" +
+                    attr.type_name() + "`.");
+              }
+              op.set_blocked(true);
+            } else if (auto pvd = attr.get_value<double>()) {
+              op.set_value(pvd.value());
+            } else if (auto pvf = attr.get_value<float>()) {
+              op.set_value(pvf.value());
+            } else {
+              PUSH_ERROR_AND_RETURN(
+                  "`xformOp:rotateX` must be type `double` or `float`, but got "
+                  "type `" +
+                  attr.type_name() + "`.");
+            }
+          }
+        } else if (auto rotY = SplitXformOpToken(tok, kRotateY)) {
+          op.op_type = XformOp::OpType::RotateY;
+          op.suffix = rotY.value();
+
+          // Check if timeSamples were authored (even if empty)
+          if (attr.get_var().has_timesamples() || attr.get_var().ts_raw().type_id() != 0) {
+            op.set_timesamples(attr.get_var().ts_raw());
+          }
+
+          if (attr.get_var().has_default()) {
+            if (attr.has_blocked()) {
+              // Set dummy value for `op.get_value_type_id/op.get_value_type_name'
+              if (attr.type_id() == value::TypeTraits<double>::type_id()) {
+                double dummy(0.0);
+                op.set_value(dummy);
+              } else if (attr.type_id() == value::TypeTraits<float>::type_id()) {
+                float dummy(0.0f);
+                op.set_value(dummy);
+              } else {
+                PUSH_ERROR_AND_RETURN(
+                    "`xformOp:rotateY` must be type `double` or `float`, but got "
+                    "type `" +
+                    attr.type_name() + "`.");
+              }
+              op.set_blocked(true);
+            } else if (auto pvd = attr.get_value<double>()) {
+              op.set_value(pvd.value());
+            } else if (auto pvf = attr.get_value<float>()) {
+              op.set_value(pvf.value());
+            } else {
+              PUSH_ERROR_AND_RETURN(
+                  "`xformOp:rotateY` must be type `double` or `float`, but got "
+                  "type `" +
+                  attr.type_name() + "`.");
+            }
+          }
+        } else if (auto rotZ = SplitXformOpToken(tok, kRotateZ)) {
+          op.op_type = XformOp::OpType::RotateZ;
+          op.suffix = rotZ.value();
+
+          // Check if timeSamples were authored (even if empty)
+          if (attr.get_var().has_timesamples() || attr.get_var().ts_raw().type_id() != 0) {
+            op.set_timesamples(attr.get_var().ts_raw());
+          }
+
+          if (attr.get_var().has_default()) {
+            if (attr.has_blocked()) {
+              // Set dummy value for `op.get_value_type_id/op.get_value_type_name'
+              if (attr.type_id() == value::TypeTraits<double>::type_id()) {
+                double dummy(0.0);
+                op.set_value(dummy);
+              } else if (attr.type_id() == value::TypeTraits<float>::type_id()) {
+                float dummy(0.0f);
+                op.set_value(dummy);
+              } else {
+                PUSH_ERROR_AND_RETURN(
+                    "`xformOp:rotateZ` must be type `double` or `float`, but got "
+                    "type `" +
+                    attr.type_name() + "`.");
+              }
+              op.set_blocked(true);
+            } else if (auto pvd = attr.get_value<double>()) {
+              op.set_value(pvd.value());
+            } else if (auto pvf = attr.get_value<float>()) {
+              op.set_value(pvf.value());
+            } else {
+              PUSH_ERROR_AND_RETURN(
+                  "`xformOp:rotateZ` must be type `double` or `float`, but got "
+                  "type `" +
+                  attr.type_name() + "`.");
+            }
+          }
+        } else if (auto rotateXYZ = SplitXformOpToken(tok, kRotateXYZ)) {
+          op.op_type = XformOp::OpType::RotateXYZ;
+          op.suffix = rotateXYZ.value();
+
+          // Check if timeSamples were authored (even if empty)
+          if (attr.get_var().has_timesamples() || attr.get_var().ts_raw().type_id() != 0) {
+            op.set_timesamples(attr.get_var().ts_raw());
+          }
+
+          if (attr.get_var().has_default()) {
+            if (attr.has_blocked()) {
+              // Set dummy value for `op.get_value_type_id/op.get_value_type_name'
+              if (attr.type_id() == value::TypeTraits<value::double3>::type_id()) {
+                value::double3 dummy{0.0, 0.0, 0.0};
+                op.set_value(dummy);
+              } else if (attr.type_id() == value::TypeTraits<value::float3>::type_id()) {
+                value::float3 dummy{0.0f, 0.0f, 0.0f};
+                op.set_value(dummy);
+              } else {
+                PUSH_ERROR_AND_RETURN(
+                    "`xformOp:rotateXYZ` must be type `double3` or `float3`, but got "
+                    "type `" +
+                    attr.type_name() + "`.");
+              }
+              op.set_blocked(true);
+            } else if (auto pvd = attr.get_value<value::double3>()) {
+              op.set_value(pvd.value());
+            } else if (auto pvf = attr.get_value<value::float3>()) {
+              op.set_value(pvf.value());
+            } else {
+              PUSH_ERROR_AND_RETURN(
+                  "`xformOp:rotateXYZ` must be type `double3` or `float3`, but got "
+                  "type `" +
+                  attr.type_name() + "`.");
+            }
+          }
+        } else if (auto rotateXZY = SplitXformOpToken(tok, kRotateXZY)) {
+          op.op_type = XformOp::OpType::RotateXZY;
+          op.suffix = rotateXZY.value();
+
+          // Check if timeSamples were authored (even if empty)
+          if (attr.get_var().has_timesamples() || attr.get_var().ts_raw().type_id() != 0) {
+            op.set_timesamples(attr.get_var().ts_raw());
+          }
+
+          if (attr.get_var().has_default()) {
+            if (attr.has_blocked()) {
+              // Set dummy value for `op.get_value_type_id/op.get_value_type_name'
+              if (attr.type_id() == value::TypeTraits<value::double3>::type_id()) {
+                value::double3 dummy{0.0, 0.0, 0.0};
+                op.set_value(dummy);
+              } else if (attr.type_id() == value::TypeTraits<value::float3>::type_id()) {
+                value::float3 dummy{0.0f, 0.0f, 0.0f};
+                op.set_value(dummy);
+              } else {
+                PUSH_ERROR_AND_RETURN(
+                    "`xformOp:rotateXZY` must be type `double3` or `float3`, but got "
+                    "type `" +
+                    attr.type_name() + "`.");
+              }
+              op.set_blocked(true);
+            } else if (auto pvd = attr.get_value<value::double3>()) {
+              op.set_value(pvd.value());
+            } else if (auto pvf = attr.get_value<value::float3>()) {
+              op.set_value(pvf.value());
+            } else {
+              PUSH_ERROR_AND_RETURN(
+                  "`xformOp:rotateXZY` must be type `double3` or `float3`, but got "
+                  "type `" +
+                  attr.type_name() + "`.");
+            }
+          }
+        } else if (auto rotateYXZ = SplitXformOpToken(tok, kRotateYXZ)) {
+          op.op_type = XformOp::OpType::RotateYXZ;
+          op.suffix = rotateYXZ.value();
+
+          // Check if timeSamples were authored (even if empty)
+          if (attr.get_var().has_timesamples() || attr.get_var().ts_raw().type_id() != 0) {
+            op.set_timesamples(attr.get_var().ts_raw());
+          }
+
+          if (attr.get_var().has_default()) {
+            if (attr.has_blocked()) {
+              // Set dummy value for `op.get_value_type_id/op.get_value_type_name'
+              if (attr.type_id() == value::TypeTraits<value::double3>::type_id()) {
+                value::double3 dummy{0.0, 0.0, 0.0};
+                op.set_value(dummy);
+              } else if (attr.type_id() == value::TypeTraits<value::float3>::type_id()) {
+                value::float3 dummy{0.0f, 0.0f, 0.0f};
+                op.set_value(dummy);
+              } else {
+                PUSH_ERROR_AND_RETURN(
+                    "`xformOp:rotateYXZ` must be type `double3` or `float3`, but got "
+                    "type `" +
+                    attr.type_name() + "`.");
+              }
+              op.set_blocked(true);
+            } else if (auto pvd = attr.get_value<value::double3>()) {
+              op.set_value(pvd.value());
+            } else if (auto pvf = attr.get_value<value::float3>()) {
+              op.set_value(pvf.value());
+            } else {
+              PUSH_ERROR_AND_RETURN(
+                  "`xformOp:rotateYXZ` must be type `double3` or `float3`, but got "
+                  "type `" +
+                  attr.type_name() + "`.");
+            }
+          }
+        } else if (auto rotateYZX = SplitXformOpToken(tok, kRotateYZX)) {
+          op.op_type = XformOp::OpType::RotateYZX;
+          op.suffix = rotateYZX.value();
+
+          // Check if timeSamples were authored (even if empty)
+          if (attr.get_var().has_timesamples() || attr.get_var().ts_raw().type_id() != 0) {
+            op.set_timesamples(attr.get_var().ts_raw());
+          }
+
+          if (attr.get_var().has_default()) {
+            if (attr.has_blocked()) {
+              // Set dummy value for `op.get_value_type_id/op.get_value_type_name'
+              if (attr.type_id() == value::TypeTraits<value::double3>::type_id()) {
+                value::double3 dummy{0.0, 0.0, 0.0};
+                op.set_value(dummy);
+              } else if (attr.type_id() == value::TypeTraits<value::float3>::type_id()) {
+                value::float3 dummy{0.0f, 0.0f, 0.0f};
+                op.set_value(dummy);
+              } else {
+                PUSH_ERROR_AND_RETURN(
+                    "`xformOp:rotateYZX` must be type `double3` or `float3`, but got "
+                    "type `" +
+                    attr.type_name() + "`.");
+              }
+              op.set_blocked(true);
+            } else if (auto pvd = attr.get_value<value::double3>()) {
+              op.set_value(pvd.value());
+            } else if (auto pvf = attr.get_value<value::float3>()) {
+              op.set_value(pvf.value());
+            } else {
+              PUSH_ERROR_AND_RETURN(
+                  "`xformOp:rotateYZX` must be type `double3` or `float3`, but got "
+                  "type `" +
+                  attr.type_name() + "`.");
+            }
+          }
+        } else if (auto rotateZXY = SplitXformOpToken(tok, kRotateZXY)) {
+          op.op_type = XformOp::OpType::RotateZXY;
+          op.suffix = rotateZXY.value();
+
+          // Check if timeSamples were authored (even if empty)
+          if (attr.get_var().has_timesamples() || attr.get_var().ts_raw().type_id() != 0) {
+            op.set_timesamples(attr.get_var().ts_raw());
+          }
+
+          if (attr.get_var().has_default()) {
+            if (attr.has_blocked()) {
+              // Set dummy value for `op.get_value_type_id/op.get_value_type_name'
+              if (attr.type_id() == value::TypeTraits<value::double3>::type_id()) {
+                value::double3 dummy{0.0, 0.0, 0.0};
+                op.set_value(dummy);
+              } else if (attr.type_id() == value::TypeTraits<value::float3>::type_id()) {
+                value::float3 dummy{0.0f, 0.0f, 0.0f};
+                op.set_value(dummy);
+              } else {
+                PUSH_ERROR_AND_RETURN(
+                    "`xformOp:rotateZXY` must be type `double3` or `float3`, but got "
+                    "type `" +
+                    attr.type_name() + "`.");
+              }
+              op.set_blocked(true);
+            } else if (auto pvd = attr.get_value<value::double3>()) {
+              op.set_value(pvd.value());
+            } else if (auto pvf = attr.get_value<value::float3>()) {
+              op.set_value(pvf.value());
+            } else {
+              PUSH_ERROR_AND_RETURN(
+                  "`xformOp:rotateZXY` must be type `double3` or `float3`, but got "
+                  "type `" +
+                  attr.type_name() + "`.");
+            }
+          }
+        } else if (auto rotateZYX = SplitXformOpToken(tok, kRotateZYX)) {
+          op.op_type = XformOp::OpType::RotateZYX;
+          op.suffix = rotateZYX.value();
+
+          // Check if timeSamples were authored (even if empty)
+          if (attr.get_var().has_timesamples() || attr.get_var().ts_raw().type_id() != 0) {
+            op.set_timesamples(attr.get_var().ts_raw());
+          }
+
+          if (attr.get_var().has_default()) {
+            if (attr.has_blocked()) {
+              // Set dummy value for `op.get_value_type_id/op.get_value_type_name'
+              if (attr.type_id() == value::TypeTraits<value::double3>::type_id()) {
+                value::double3 dummy{0.0, 0.0, 0.0};
+                op.set_value(dummy);
+              } else if (attr.type_id() == value::TypeTraits<value::float3>::type_id()) {
+                value::float3 dummy{0.0f, 0.0f, 0.0f};
+                op.set_value(dummy);
+              } else {
+                PUSH_ERROR_AND_RETURN(
+                    "`xformOp:rotateZYX` must be type `double3` or `float3`, but got "
+                    "type `" +
+                    attr.type_name() + "`.");
+              }
+              op.set_blocked(true);
+            } else if (auto pvd = attr.get_value<value::double3>()) {
+              op.set_value(pvd.value());
+            } else if (auto pvf = attr.get_value<value::float3>()) {
+              op.set_value(pvf.value());
+            } else {
+              PUSH_ERROR_AND_RETURN(
+                  "`xformOp:rotateZYX` must be type `double3` or `float3`, but got "
+                  "type `" +
+                  attr.type_name() + "`.");
+            }
+          }
+        } else if (auto orient = SplitXformOpToken(tok, kOrient)) {
+          op.op_type = XformOp::OpType::Orient;
+          op.suffix = orient.value();
+
+          // Check if timeSamples were authored (even if empty)
+          if (attr.get_var().has_timesamples() || attr.get_var().ts_raw().type_id() != 0) {
+            op.set_timesamples(attr.get_var().ts_raw());
+          }
+
+          if (attr.get_var().has_default()) {
+            if (attr.has_blocked()) {
+              // Set dummy value for `op.get_value_type_id/op.get_value_type_name'
+              if (attr.type_id() == value::TypeTraits<value::quatf>::type_id()) {
+                value::quatf q;
+                q.real = 1.0f;
+                q.imag = {0.0f, 0.0f, 0.0f};
+                op.set_value(q);
+              } else if (attr.type_id() == value::TypeTraits<value::quatd>::type_id()) {
+                value::quatd q;
+                q.real = 1.0;
+                q.imag = {0.0, 0.0, 0.0};
+                op.set_value(q);
+              } else {
+                PUSH_ERROR_AND_RETURN(
+                    "`xformOp:orient` must be type `quatf` or `quatd`, but got "
+                    "type `" +
+                    attr.type_name() + "`.");
+              }
+              op.set_blocked(true);
+            } else if (auto pvd = attr.get_value<value::quatf>()) {
+              op.set_value(pvd.value());
+            } else if (auto pvf = attr.get_value<value::quatd>()) {
+              op.set_value(pvf.value());
+            } else {
+              PUSH_ERROR_AND_RETURN(
+                  "`xformOp:orient` must be type `quatf` or `quatd`, but got "
+                  "type `" +
+                  attr.type_name() + "`.");
+            }
+          }
+        } else {
+          PUSH_ERROR_AND_RETURN(
+              "token for xformOpOrder must have namespace `xformOp:***`, or .");
+        }
+
+        xformOps->emplace_back(std::move(op));
+        table.insert(tok);
+
+    return true;
+  }
+
+
+bool ReconstructXformOpsFromProperties(
+  const Specifier &spec,
+  std::set<std::string> &table, /* inout */
+  std::map<std::string, Property> &properties,
+  std::vector<XformOp> *xformOps,
+  std::string *err)
+{
+
+  if (spec == Specifier::Class) {
+    // Do not materialize xformOps here.
+    return true;
+  }
+
+#if 0
+
+  constexpr auto kTranslate = "xformOp:translate";
+  constexpr auto kTransform = "xformOp:transform";
+  constexpr auto kScale = "xformOp:scale";
+  constexpr auto kRotateX = "xformOp:rotateX";
+  constexpr auto kRotateY = "xformOp:rotateY";
+  constexpr auto kRotateZ = "xformOp:rotateZ";
+  constexpr auto kRotateXYZ = "xformOp:rotateXYZ";
+  constexpr auto kRotateXZY = "xformOp:rotateXZY";
+  constexpr auto kRotateYXZ = "xformOp:rotateYXZ";
+  constexpr auto kRotateYZX = "xformOp:rotateYZX";
+  constexpr auto kRotateZXY = "xformOp:rotateZXY";
+  constexpr auto kRotateZYX = "xformOp:rotateZYX";
+  constexpr auto kOrient = "xformOp:orient";
+
+  // false : no prefix found.
+  // true : return suffix(first namespace ':' is ommited.).
+  // - "" for prefix only "xformOp:translate"
+  // - "blender:pivot" for "xformOp:translate:blender:pivot"
+  auto SplitXformOpToken =
+      [](const std::string &s,
+         const std::string &prefix) -> nonstd::optional<std::string> {
+    if (startsWith(s, prefix)) {
+      if (s.compare(prefix) == 0) {
+        // prefix only.
+        return std::string();  // empty suffix
+      } else {
+        std::string suffix = removePrefix(s, prefix);
+        DCOUT("suffix = " << suffix);
+        if (suffix.length() == 1) {  // maybe namespace only.
+          return nonstd::nullopt;
+        }
+
+        // remove namespace ':'
+        if (suffix[0] == ':') {
+          // ok
+          suffix.erase(0, 1);
+        } else {
+          return nonstd::nullopt;
+        }
+
+        return std::move(suffix);
+      }
+    }
+
+    return nonstd::nullopt;
+  };
+#endif
+
   // Lookup xform values from `xformOpOrder`
   // TODO: TimeSamples, Connection
   if (properties.count("xformOpOrder")) {
     // array of string
     auto prop = properties.at("xformOpOrder");
 
+    // 'uniform' check
+    if (prop.get_attribute().variability() != Variability::Uniform) {
+      PUSH_ERROR_AND_RETURN("`xformOpOrder` must have `uniform` variability.");
+    }
+
+    //const Attribute &attr = prop.get_attribute();
+    //const auto &v = attr.get_var();
+    //TUSDZ_LOG_I("attr.value.type " << v.type_name());
+
     if (prop.is_relationship()) {
       PUSH_ERROR_AND_RETURN("Relationship for `xformOpOrder` is not supported.");
+    } else if (auto tpv =
+                   prop.get_attribute().get_value<TypedArray<value::token>>()) {
+
+
+      for (size_t i = 0; i < tpv.value().size(); i++) {
+        const auto &item = tpv.value()[i];
+
+        if (!ReconstructXformOpFromToken(item.str(), int(i), properties, table, xformOps, err)) {
+          return false;
+        }
+      }
     } else if (auto pv =
                    prop.get_attribute().get_value<std::vector<value::token>>()) {
 
@@ -2007,6 +2653,11 @@ bool ReconstructXformOpsFromProperties(
 
       for (size_t i = 0; i < pv.value().size(); i++) {
         const auto &item = pv.value()[i];
+
+        if (!ReconstructXformOpFromToken(item.str(), int(i), properties, table, xformOps, err)) {
+          return false;
+        }
+#if 0
 
         XformOp op;
 
@@ -2057,7 +2708,8 @@ bool ReconstructXformOpsFromProperties(
           op.op_type = XformOp::OpType::Transform;
           op.suffix = xfm.value();  // may contain nested namespaces
 
-          if (attr.get_var().has_timesamples()) {
+          // Check if timeSamples were authored (even if empty)
+          if (attr.get_var().has_timesamples() || attr.get_var().ts_raw().type_id() != 0) {
             op.set_timesamples(attr.get_var().ts_raw());
           }
 
@@ -2087,7 +2739,8 @@ bool ReconstructXformOpsFromProperties(
           op.op_type = XformOp::OpType::Translate;
           op.suffix = tx.value();
 
-          if (attr.get_var().has_timesamples()) {
+          // Check if timeSamples were authored (even if empty)
+          if (attr.get_var().has_timesamples() || attr.get_var().ts_raw().type_id() != 0) {
             op.set_timesamples(attr.get_var().ts_raw());
           }
 
@@ -2122,7 +2775,8 @@ bool ReconstructXformOpsFromProperties(
           op.op_type = XformOp::OpType::Scale;
           op.suffix = scale.value();
 
-          if (attr.get_var().has_timesamples()) {
+          // Check if timeSamples were authored (even if empty)
+          if (attr.get_var().has_timesamples() || attr.get_var().ts_raw().type_id() != 0) {
             op.set_timesamples(attr.get_var().ts_raw());
           }
 
@@ -2157,7 +2811,8 @@ bool ReconstructXformOpsFromProperties(
           op.op_type = XformOp::OpType::RotateX;
           op.suffix = rotX.value();
 
-          if (attr.get_var().has_timesamples()) {
+          // Check if timeSamples were authored (even if empty)
+          if (attr.get_var().has_timesamples() || attr.get_var().ts_raw().type_id() != 0) {
             op.set_timesamples(attr.get_var().ts_raw());
           }
 
@@ -2192,7 +2847,8 @@ bool ReconstructXformOpsFromProperties(
           op.op_type = XformOp::OpType::RotateY;
           op.suffix = rotY.value();
 
-          if (attr.get_var().has_timesamples()) {
+          // Check if timeSamples were authored (even if empty)
+          if (attr.get_var().has_timesamples() || attr.get_var().ts_raw().type_id() != 0) {
             op.set_timesamples(attr.get_var().ts_raw());
           }
 
@@ -2227,7 +2883,8 @@ bool ReconstructXformOpsFromProperties(
           op.op_type = XformOp::OpType::RotateZ;
           op.suffix = rotZ.value();
 
-          if (attr.get_var().has_timesamples()) {
+          // Check if timeSamples were authored (even if empty)
+          if (attr.get_var().has_timesamples() || attr.get_var().ts_raw().type_id() != 0) {
             op.set_timesamples(attr.get_var().ts_raw());
           }
 
@@ -2262,7 +2919,8 @@ bool ReconstructXformOpsFromProperties(
           op.op_type = XformOp::OpType::RotateXYZ;
           op.suffix = rotateXYZ.value();
 
-          if (attr.get_var().has_timesamples()) {
+          // Check if timeSamples were authored (even if empty)
+          if (attr.get_var().has_timesamples() || attr.get_var().ts_raw().type_id() != 0) {
             op.set_timesamples(attr.get_var().ts_raw());
           }
 
@@ -2297,7 +2955,8 @@ bool ReconstructXformOpsFromProperties(
           op.op_type = XformOp::OpType::RotateXZY;
           op.suffix = rotateXZY.value();
 
-          if (attr.get_var().has_timesamples()) {
+          // Check if timeSamples were authored (even if empty)
+          if (attr.get_var().has_timesamples() || attr.get_var().ts_raw().type_id() != 0) {
             op.set_timesamples(attr.get_var().ts_raw());
           }
 
@@ -2332,7 +2991,8 @@ bool ReconstructXformOpsFromProperties(
           op.op_type = XformOp::OpType::RotateYXZ;
           op.suffix = rotateYXZ.value();
 
-          if (attr.get_var().has_timesamples()) {
+          // Check if timeSamples were authored (even if empty)
+          if (attr.get_var().has_timesamples() || attr.get_var().ts_raw().type_id() != 0) {
             op.set_timesamples(attr.get_var().ts_raw());
           }
 
@@ -2367,7 +3027,8 @@ bool ReconstructXformOpsFromProperties(
           op.op_type = XformOp::OpType::RotateYZX;
           op.suffix = rotateYZX.value();
 
-          if (attr.get_var().has_timesamples()) {
+          // Check if timeSamples were authored (even if empty)
+          if (attr.get_var().has_timesamples() || attr.get_var().ts_raw().type_id() != 0) {
             op.set_timesamples(attr.get_var().ts_raw());
           }
 
@@ -2402,7 +3063,8 @@ bool ReconstructXformOpsFromProperties(
           op.op_type = XformOp::OpType::RotateZXY;
           op.suffix = rotateZXY.value();
 
-          if (attr.get_var().has_timesamples()) {
+          // Check if timeSamples were authored (even if empty)
+          if (attr.get_var().has_timesamples() || attr.get_var().ts_raw().type_id() != 0) {
             op.set_timesamples(attr.get_var().ts_raw());
           }
 
@@ -2437,7 +3099,8 @@ bool ReconstructXformOpsFromProperties(
           op.op_type = XformOp::OpType::RotateZYX;
           op.suffix = rotateZYX.value();
 
-          if (attr.get_var().has_timesamples()) {
+          // Check if timeSamples were authored (even if empty)
+          if (attr.get_var().has_timesamples() || attr.get_var().ts_raw().type_id() != 0) {
             op.set_timesamples(attr.get_var().ts_raw());
           }
 
@@ -2472,7 +3135,8 @@ bool ReconstructXformOpsFromProperties(
           op.op_type = XformOp::OpType::Orient;
           op.suffix = orient.value();
 
-          if (attr.get_var().has_timesamples()) {
+          // Check if timeSamples were authored (even if empty)
+          if (attr.get_var().has_timesamples() || attr.get_var().ts_raw().type_id() != 0) {
             op.set_timesamples(attr.get_var().ts_raw());
           }
 
@@ -2514,6 +3178,7 @@ bool ReconstructXformOpsFromProperties(
 
         xformOps->emplace_back(op);
         table.insert(tok);
+#endif
       }
 
     } else {
@@ -2531,7 +3196,7 @@ namespace {
 
 bool ReconstructMaterialBindingProperties(
   std::set<std::string> &table, /* inout */
-  const std::map<std::string, Property> &properties,
+  std::map<std::string, Property> &properties,
   MaterialBinding *mb, /* inout */
   std::string *err)
 {
@@ -2631,7 +3296,7 @@ bool ReconstructMaterialBindingProperties(
 
 bool ReconstructCollectionProperties(
   std::set<std::string> &table, /* inout */
-  const std::map<std::string, Property> &properties,
+  std::map<std::string, Property> &properties,
   Collection *coll, /* inout */
   std::string *warn,
   std::string *err,
@@ -2724,7 +3389,7 @@ bool ReconstructCollectionProperties(
 bool ReconstructGPrimProperties(
   const Specifier &spec,
   std::set<std::string> &table, /* inout */
-  const std::map<std::string, Property> &properties,
+  std::map<std::string, Property> &properties,
   GPrim *gprim, /* inout */
   std::string *warn,
   std::string *err,
@@ -2766,7 +3431,7 @@ bool ReconstructGPrimProperties(
 template <>
 bool ReconstructPrim<Xform>(
     const Specifier &spec,
-    const PropertyMap &properties,
+    PropertyMap &properties,
     const ReferenceList &references,
     Xform *xform,
     std::string *warn,
@@ -2792,7 +3457,7 @@ bool ReconstructPrim<Xform>(
 template <>
 bool ReconstructPrim<Model>(
     const Specifier &spec,
-    const PropertyMap &properties,
+    PropertyMap &properties,
     const ReferenceList &references,
     Model *model,
     std::string *warn,
@@ -2817,7 +3482,7 @@ bool ReconstructPrim<Model>(
 template <>
 bool ReconstructPrim<Scope>(
     const Specifier &spec,
-    const PropertyMap &properties,
+    PropertyMap &properties,
     const ReferenceList &references,
     Scope *scope,
     std::string *warn,
@@ -2846,7 +3511,7 @@ bool ReconstructPrim<Scope>(
 template <>
 bool ReconstructPrim<SkelRoot>(
     const Specifier &spec,
-    const PropertyMap &properties,
+    PropertyMap &properties,
     const ReferenceList &references,
     SkelRoot *root,
     std::string *warn,
@@ -2882,7 +3547,7 @@ bool ReconstructPrim<SkelRoot>(
 template <>
 bool ReconstructPrim<Skeleton>(
     const Specifier &spec,
-    const PropertyMap &properties,
+    PropertyMap &properties,
     const ReferenceList &references,
     Skeleton *skel,
     std::string *warn,
@@ -2975,7 +3640,7 @@ bool ReconstructPrim<Skeleton>(
 template <>
 bool ReconstructPrim<SkelAnimation>(
     const Specifier &spec,
-    const PropertyMap &properties,
+    PropertyMap &properties,
     const ReferenceList &references,
     SkelAnimation *skelanim,
     std::string *warn,
@@ -3004,7 +3669,7 @@ bool ReconstructPrim<SkelAnimation>(
 template <>
 bool ReconstructPrim<BlendShape>(
     const Specifier &spec,
-    const PropertyMap &properties,
+    PropertyMap &properties,
     const ReferenceList &references,
     BlendShape *bs,
     std::string *warn,
@@ -3046,7 +3711,7 @@ bool ReconstructPrim<BlendShape>(
 template <>
 bool ReconstructPrim(
     const Specifier &spec,
-    const PropertyMap &properties,
+    PropertyMap &properties,
     const ReferenceList &references,
     GPrim *gprim,
     std::string *warn,
@@ -3069,7 +3734,7 @@ bool ReconstructPrim(
 template <>
 bool ReconstructPrim(
     const Specifier &spec,
-    const PropertyMap &properties,
+    PropertyMap &properties,
     const ReferenceList &references,
     GeomBasisCurves *curves,
     std::string *warn,
@@ -3149,7 +3814,7 @@ bool ReconstructPrim(
 template <>
 bool ReconstructPrim(
     const Specifier &spec,
-    const PropertyMap &properties,
+    PropertyMap &properties,
     const ReferenceList &references,
     GeomNurbsCurves *curves,
     std::string *warn,
@@ -3192,7 +3857,7 @@ bool ReconstructPrim(
 template <>
 bool ReconstructPrim<SphereLight>(
     const Specifier &spec,
-    const PropertyMap &properties,
+    PropertyMap &properties,
     const ReferenceList &references,
     SphereLight *light,
     std::string *warn,
@@ -3239,7 +3904,7 @@ bool ReconstructPrim<SphereLight>(
 template <>
 bool ReconstructPrim<RectLight>(
     const Specifier &spec,
-    const PropertyMap &properties,
+    PropertyMap &properties,
     const ReferenceList &references,
     RectLight *light,
     std::string *warn,
@@ -3288,7 +3953,7 @@ bool ReconstructPrim<RectLight>(
 template <>
 bool ReconstructPrim<DiskLight>(
     const Specifier &spec,
-    const PropertyMap &properties,
+    PropertyMap &properties,
     const ReferenceList &references,
     DiskLight *light,
     std::string *warn,
@@ -3336,7 +4001,7 @@ bool ReconstructPrim<DiskLight>(
 template <>
 bool ReconstructPrim<CylinderLight>(
     const Specifier &spec,
-    const PropertyMap &properties,
+    PropertyMap &properties,
     const ReferenceList &references,
     CylinderLight *light,
     std::string *warn,
@@ -3380,7 +4045,7 @@ bool ReconstructPrim<CylinderLight>(
 template <>
 bool ReconstructPrim<DistantLight>(
     const Specifier &spec,
-    const PropertyMap &properties,
+    PropertyMap &properties,
     const ReferenceList &references,
     DistantLight *light,
     std::string *warn,
@@ -3422,9 +4087,53 @@ bool ReconstructPrim<DistantLight>(
 }
 
 template <>
+bool ReconstructPrim<GeometryLight>(
+    const Specifier &spec,
+    PropertyMap &properties,
+    const ReferenceList &references,
+    GeometryLight *light,
+    std::string *warn,
+    std::string *err,
+    const PrimReconstructOptions &options) {
+
+  (void)references;
+  (void)options;
+
+  std::set<std::string> table;
+
+  if (!prim::ReconstructXformOpsFromProperties(spec, table, properties, &light->xformOps, err)) {
+    return false;
+  }
+
+  for (const auto &prop : properties) {
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:color", GeometryLight, light->color)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:intensity", GeometryLight, light->intensity)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:exposure", GeometryLight, light->exposure)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:diffuse", GeometryLight, light->diffuse)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:specular", GeometryLight, light->specular)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:normalize", GeometryLight, light->normalize)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:enableColorTemperature", GeometryLight, light->enableColorTemperature)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:colorTemperature", GeometryLight, light->colorTemperature)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:shadow:enable", GeometryLight, light->shadowEnable)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:shadow:color", GeometryLight, light->shadowColor)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:shadow:distance", GeometryLight, light->shadowDistance)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:shadow:falloff", GeometryLight, light->shadowFalloff)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:shadow:falloffGamma", GeometryLight, light->shadowFalloffGamma)
+    PARSE_TIMESAMPLED_ENUM_PROPERTY(table, prop, kVisibility, Visibility, VisibilityEnumHandler, GeometryLight,
+                   light->visibility, options.strict_allowedToken_check)
+    PARSE_UNIFORM_ENUM_PROPERTY(table, prop, kPurpose, Purpose, PurposeEnumHandler, GeometryLight,
+                       light->purpose, options.strict_allowedToken_check)
+    ADD_PROPERTY(table, prop, GeometryLight, light->props)
+    PARSE_PROPERTY_END_MAKE_WARN(table, prop)
+  }
+
+  return true;
+}
+
+template <>
 bool ReconstructPrim<DomeLight>(
     const Specifier &spec,
-    const PropertyMap &properties,
+    PropertyMap &properties,
     const ReferenceList &references,
     DomeLight *light,
     std::string *warn,
@@ -3474,7 +4183,7 @@ bool ReconstructPrim<DomeLight>(
 template <>
 bool ReconstructPrim<GeomSphere>(
     const Specifier &spec,
-    const PropertyMap &properties,
+    PropertyMap &properties,
     const ReferenceList &references,
     GeomSphere *sphere,
     std::string *warn,
@@ -3504,7 +4213,7 @@ bool ReconstructPrim<GeomSphere>(
 template <>
 bool ReconstructPrim<GeomPoints>(
     const Specifier &spec,
-    const PropertyMap &properties,
+    PropertyMap &properties,
     const ReferenceList &references,
     GeomPoints *points,
     std::string *warn,
@@ -3540,7 +4249,7 @@ bool ReconstructPrim<GeomPoints>(
 template <>
 bool ReconstructPrim<GeomCone>(
     const Specifier &spec,
-    const PropertyMap &properties,
+    PropertyMap &properties,
     const ReferenceList &references,
     GeomCone *cone,
     std::string *warn,
@@ -3571,7 +4280,7 @@ bool ReconstructPrim<GeomCone>(
 template <>
 bool ReconstructPrim<GeomCylinder>(
     const Specifier &spec,
-    const PropertyMap &properties,
+    PropertyMap &properties,
     const ReferenceList &references,
     GeomCylinder *cylinder,
     std::string *warn,
@@ -3604,7 +4313,7 @@ bool ReconstructPrim<GeomCylinder>(
 template <>
 bool ReconstructPrim<GeomCapsule>(
     const Specifier &spec,
-    const PropertyMap &properties,
+    PropertyMap &properties,
     const ReferenceList &references,
     GeomCapsule *capsule,
     std::string *warn,
@@ -3634,7 +4343,7 @@ bool ReconstructPrim<GeomCapsule>(
 template <>
 bool ReconstructPrim<GeomCube>(
     const Specifier &spec,
-    const PropertyMap &properties,
+    PropertyMap &properties,
     const ReferenceList &references,
     GeomCube *cube,
     std::string *warn,
@@ -3666,7 +4375,7 @@ bool ReconstructPrim<GeomCube>(
 template <>
 bool ReconstructPrim<GeomMesh>(
     const Specifier &spec,
-    const PropertyMap &properties,
+    PropertyMap &properties,
     const ReferenceList &references,
     GeomMesh *mesh,
     std::string *warn,
@@ -3743,7 +4452,7 @@ bool ReconstructPrim<GeomMesh>(
     return false;
   }
 
-  for (const auto &prop : properties) {
+  for (auto &prop : properties) {
     DCOUT("GeomMesh prop: " << prop.first);
     PARSE_SINGLE_TARGET_PATH_RELATION(table, prop, kSkelSkeleton, mesh->skeleton)
     PARSE_TARGET_PATHS_RELATION(table, prop, kSkelBlendShapeTargets, mesh->blendShapeTargets)
@@ -3802,6 +4511,7 @@ bool ReconstructPrim<GeomMesh>(
       }
     }
 
+    //TUSDZ_LOG_I("add prop: " << prop.first);
     // generic
     ADD_PROPERTY(table, prop, GeomMesh, mesh->props)
     PARSE_PROPERTY_END_MAKE_WARN(table, prop)
@@ -3815,7 +4525,7 @@ bool ReconstructPrim<GeomMesh>(
 template <>
 bool ReconstructPrim<GeomCamera>(
     const Specifier &spec,
-    const PropertyMap &properties,
+    PropertyMap &properties,
     const ReferenceList &references,
     GeomCamera *camera,
     std::string *warn,
@@ -3916,7 +4626,7 @@ bool ReconstructPrim<GeomCamera>(
 template <>
 bool ReconstructPrim<GeomSubset>(
     const Specifier &spec,
-    const PropertyMap &properties,
+    PropertyMap &properties,
     const ReferenceList &references,
     GeomSubset *subset,
     std::string *warn,
@@ -3965,7 +4675,7 @@ bool ReconstructPrim<GeomSubset>(
 template <>
 bool ReconstructPrim<GeomPointInstancer>(
     const Specifier &spec,
-    const PropertyMap &properties,
+    PropertyMap &properties,
     const ReferenceList &references,
     GeomPointInstancer *instancer,
     std::string *warn,
@@ -4006,7 +4716,7 @@ bool ReconstructPrim<GeomPointInstancer>(
 template <>
 bool ReconstructShader<ShaderNode>(
     const Specifier &spec,
-    const PropertyMap &properties,
+    PropertyMap &properties,
     const ReferenceList &references,
     ShaderNode *node,
     std::string *warn,
@@ -4039,7 +4749,7 @@ bool ReconstructShader<ShaderNode>(
 template <>
 bool ReconstructShader<UsdPreviewSurface>(
     const Specifier &spec,
-    const PropertyMap &properties,
+    PropertyMap &properties,
     const ReferenceList &references,
     UsdPreviewSurface *surface,
     std::string *warn,
@@ -4111,7 +4821,7 @@ bool ReconstructShader<UsdPreviewSurface>(
 template <>
 bool ReconstructShader<UsdUVTexture>(
     const Specifier &spec,
-    const PropertyMap &properties,
+    PropertyMap &properties,
     const ReferenceList &references,
     UsdUVTexture *texture,
     std::string *warn,
@@ -4188,7 +4898,7 @@ bool ReconstructShader<UsdUVTexture>(
 template <>
 bool ReconstructShader<UsdPrimvarReader_int>(
     const Specifier &spec,
-    const PropertyMap &properties,
+    PropertyMap &properties,
     const ReferenceList &references,
     UsdPrimvarReader_int *preader,
     std::string *warn,
@@ -4233,7 +4943,7 @@ bool ReconstructShader<UsdPrimvarReader_int>(
 template <>
 bool ReconstructShader<UsdPrimvarReader_float>(
     const Specifier &spec,
-    const PropertyMap &properties,
+    PropertyMap &properties,
     const ReferenceList &references,
     UsdPrimvarReader_float *preader,
     std::string *warn,
@@ -4288,7 +4998,7 @@ bool ReconstructShader<UsdPrimvarReader_float>(
 template <>
 bool ReconstructShader<UsdPrimvarReader_float2>(
     const Specifier &spec,
-    const PropertyMap &properties,
+    PropertyMap &properties,
     const ReferenceList &references,
     UsdPrimvarReader_float2 *preader,
     std::string *warn,
@@ -4345,7 +5055,7 @@ bool ReconstructShader<UsdPrimvarReader_float2>(
 template <>
 bool ReconstructShader<UsdPrimvarReader_float3>(
     const Specifier &spec,
-    const PropertyMap &properties,
+    PropertyMap &properties,
     const ReferenceList &references,
     UsdPrimvarReader_float3 *preader,
     std::string *warn,
@@ -4401,7 +5111,7 @@ bool ReconstructShader<UsdPrimvarReader_float3>(
 template <>
 bool ReconstructShader<UsdPrimvarReader_float4>(
     const Specifier &spec,
-    const PropertyMap &properties,
+    PropertyMap &properties,
     const ReferenceList &references,
     UsdPrimvarReader_float4 *preader,
     std::string *warn,
@@ -4457,7 +5167,7 @@ bool ReconstructShader<UsdPrimvarReader_float4>(
 template <>
 bool ReconstructShader<UsdPrimvarReader_string>(
     const Specifier &spec,
-    const PropertyMap &properties,
+    PropertyMap &properties,
     const ReferenceList &references,
     UsdPrimvarReader_string *preader,
     std::string *warn,
@@ -4513,7 +5223,7 @@ bool ReconstructShader<UsdPrimvarReader_string>(
 template <>
 bool ReconstructShader<UsdPrimvarReader_vector>(
     const Specifier &spec,
-    const PropertyMap &properties,
+    PropertyMap &properties,
     const ReferenceList &references,
     UsdPrimvarReader_vector *preader,
     std::string *warn,
@@ -4569,7 +5279,7 @@ bool ReconstructShader<UsdPrimvarReader_vector>(
 template <>
 bool ReconstructShader<UsdPrimvarReader_normal>(
     const Specifier &spec,
-    const PropertyMap &properties,
+    PropertyMap &properties,
     const ReferenceList &references,
     UsdPrimvarReader_normal *preader,
     std::string *warn,
@@ -4625,7 +5335,7 @@ bool ReconstructShader<UsdPrimvarReader_normal>(
 template <>
 bool ReconstructShader<UsdPrimvarReader_point>(
     const Specifier &spec,
-    const PropertyMap &properties,
+    PropertyMap &properties,
     const ReferenceList &references,
     UsdPrimvarReader_point *preader,
     std::string *warn,
@@ -4681,7 +5391,7 @@ bool ReconstructShader<UsdPrimvarReader_point>(
 template <>
 bool ReconstructShader<UsdPrimvarReader_matrix>(
     const Specifier &spec,
-    const PropertyMap &properties,
+    PropertyMap &properties,
     const ReferenceList &references,
     UsdPrimvarReader_matrix *preader,
     std::string *warn,
@@ -4735,9 +5445,426 @@ bool ReconstructShader<UsdPrimvarReader_matrix>(
 }
 
 template <>
+bool ReconstructShader<MtlxAutodeskStandardSurface>(
+    const Specifier &spec,
+    PropertyMap &properties,
+    const ReferenceList &references,
+    MtlxAutodeskStandardSurface *surface,
+    std::string *warn,
+    std::string *err,
+    const PrimReconstructOptions &options) {
+  (void)spec;
+  (void)references;
+  (void)options;
+  (void)warn;
+
+  std::set<std::string> table;
+  table.insert("info:id"); // `info:id` is already parsed in ReconstructPrim<Shader>
+
+  for (auto &prop : properties) {
+    // Base properties
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:base", MtlxAutodeskStandardSurface,
+                         surface->base)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:base_color", MtlxAutodeskStandardSurface,
+                         surface->base_color)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:diffuse_roughness", MtlxAutodeskStandardSurface,
+                         surface->diffuse_roughness)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:metalness", MtlxAutodeskStandardSurface,
+                         surface->metalness)
+
+    // Specular properties
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:specular", MtlxAutodeskStandardSurface,
+                         surface->specular)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:specular_color", MtlxAutodeskStandardSurface,
+                         surface->specular_color)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:specular_roughness", MtlxAutodeskStandardSurface,
+                         surface->specular_roughness)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:specular_IOR", MtlxAutodeskStandardSurface,
+                         surface->specular_IOR)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:specular_anisotropy", MtlxAutodeskStandardSurface,
+                         surface->specular_anisotropy)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:specular_rotation", MtlxAutodeskStandardSurface,
+                         surface->specular_rotation)
+
+    // Transmission properties
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:transmission", MtlxAutodeskStandardSurface,
+                         surface->transmission)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:transmission_color", MtlxAutodeskStandardSurface,
+                         surface->transmission_color)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:transmission_depth", MtlxAutodeskStandardSurface,
+                         surface->transmission_depth)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:transmission_scatter", MtlxAutodeskStandardSurface,
+                         surface->transmission_scatter)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:transmission_scatter_anisotropy", MtlxAutodeskStandardSurface,
+                         surface->transmission_scatter_anisotropy)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:transmission_dispersion", MtlxAutodeskStandardSurface,
+                         surface->transmission_dispersion)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:transmission_extra_roughness", MtlxAutodeskStandardSurface,
+                         surface->transmission_extra_roughness)
+
+    // Subsurface properties
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:subsurface", MtlxAutodeskStandardSurface,
+                         surface->subsurface)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:subsurface_color", MtlxAutodeskStandardSurface,
+                         surface->subsurface_color)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:subsurface_radius", MtlxAutodeskStandardSurface,
+                         surface->subsurface_radius)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:subsurface_scale", MtlxAutodeskStandardSurface,
+                         surface->subsurface_scale)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:subsurface_anisotropy", MtlxAutodeskStandardSurface,
+                         surface->subsurface_anisotropy)
+
+    // Sheen properties
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:sheen", MtlxAutodeskStandardSurface,
+                         surface->sheen)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:sheen_color", MtlxAutodeskStandardSurface,
+                         surface->sheen_color)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:sheen_roughness", MtlxAutodeskStandardSurface,
+                         surface->sheen_roughness)
+
+    // Coat properties
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:coat", MtlxAutodeskStandardSurface,
+                         surface->coat)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:coat_color", MtlxAutodeskStandardSurface,
+                         surface->coat_color)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:coat_roughness", MtlxAutodeskStandardSurface,
+                         surface->coat_roughness)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:coat_anisotropy", MtlxAutodeskStandardSurface,
+                         surface->coat_anisotropy)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:coat_rotation", MtlxAutodeskStandardSurface,
+                         surface->coat_rotation)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:coat_IOR", MtlxAutodeskStandardSurface,
+                         surface->coat_IOR)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:coat_affect_color", MtlxAutodeskStandardSurface,
+                         surface->coat_affect_color)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:coat_affect_roughness", MtlxAutodeskStandardSurface,
+                         surface->coat_affect_roughness)
+
+    // Thin film properties
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:thin_film_thickness", MtlxAutodeskStandardSurface,
+                         surface->thin_film_thickness)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:thin_film_IOR", MtlxAutodeskStandardSurface,
+                         surface->thin_film_IOR)
+
+    // Emission properties
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:emission", MtlxAutodeskStandardSurface,
+                         surface->emission)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:emission_color", MtlxAutodeskStandardSurface,
+                         surface->emission_color)
+
+    // Other properties
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:opacity", MtlxAutodeskStandardSurface,
+                         surface->opacity)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:thin_walled", MtlxAutodeskStandardSurface,
+                         surface->thin_walled)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:normal", MtlxAutodeskStandardSurface,
+                         surface->normal)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:tangent", MtlxAutodeskStandardSurface,
+                         surface->tangent)
+
+    // Output
+    PARSE_SHADER_TERMINAL_ATTRIBUTE(table, prop, "outputs:out", MtlxAutodeskStandardSurface,
+                   surface->out)
+
+    ADD_PROPERTY(table, prop, MtlxAutodeskStandardSurface, surface->props)
+    PARSE_PROPERTY_END_MAKE_WARN(table, prop)
+  }
+
+  return true;
+}
+
+template <>
+bool ReconstructShader<MtlxOpenPBRSurface>(
+    const Specifier &spec,
+    PropertyMap &properties,
+    const ReferenceList &references,
+    MtlxOpenPBRSurface *surface,
+    std::string *warn,
+    std::string *err,
+    const PrimReconstructOptions &options) {
+  (void)spec;
+  (void)references;
+  (void)options;
+  (void)warn;
+
+  std::set<std::string> table;
+  table.insert("info:id"); // `info:id` is already parsed in ReconstructPrim<Shader>
+
+  for (auto &prop : properties) {
+    // Base properties
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:base_weight", MtlxOpenPBRSurface,
+                         surface->base_weight)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:base_color", MtlxOpenPBRSurface,
+                         surface->base_color)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:base_metalness", MtlxOpenPBRSurface,
+                         surface->base_metalness)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:base_diffuse_roughness", MtlxOpenPBRSurface,
+                         surface->base_diffuse_roughness)
+
+    // Specular properties
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:specular_weight", MtlxOpenPBRSurface,
+                         surface->specular_weight)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:specular_color", MtlxOpenPBRSurface,
+                         surface->specular_color)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:specular_roughness", MtlxOpenPBRSurface,
+                         surface->specular_roughness)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:specular_ior", MtlxOpenPBRSurface,
+                         surface->specular_ior)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:specular_anisotropy", MtlxOpenPBRSurface,
+                         surface->specular_anisotropy)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:specular_rotation", MtlxOpenPBRSurface,
+                         surface->specular_rotation)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:specular_roughness_anisotropy", MtlxOpenPBRSurface,
+                         surface->specular_roughness_anisotropy)
+
+    // Transmission properties
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:transmission_weight", MtlxOpenPBRSurface,
+                         surface->transmission_weight)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:transmission_color", MtlxOpenPBRSurface,
+                         surface->transmission_color)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:transmission_depth", MtlxOpenPBRSurface,
+                         surface->transmission_depth)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:transmission_scatter", MtlxOpenPBRSurface,
+                         surface->transmission_scatter)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:transmission_scatter_anisotropy", MtlxOpenPBRSurface,
+                         surface->transmission_scatter_anisotropy)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:transmission_dispersion", MtlxOpenPBRSurface,
+                         surface->transmission_dispersion)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:transmission_dispersion_abbe_number", MtlxOpenPBRSurface,
+                         surface->transmission_dispersion_abbe_number)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:transmission_dispersion_scale", MtlxOpenPBRSurface,
+                         surface->transmission_dispersion_scale)
+
+    // Subsurface properties
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:subsurface_weight", MtlxOpenPBRSurface,
+                         surface->subsurface_weight)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:subsurface_color", MtlxOpenPBRSurface,
+                         surface->subsurface_color)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:subsurface_radius", MtlxOpenPBRSurface,
+                         surface->subsurface_radius)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:subsurface_radius_scale", MtlxOpenPBRSurface,
+                         surface->subsurface_radius_scale)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:subsurface_scale", MtlxOpenPBRSurface,
+                         surface->subsurface_scale)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:subsurface_anisotropy", MtlxOpenPBRSurface,
+                         surface->subsurface_anisotropy)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:subsurface_scatter_anisotropy", MtlxOpenPBRSurface,
+                         surface->subsurface_scatter_anisotropy)
+
+    // Coat properties
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:coat_weight", MtlxOpenPBRSurface,
+                         surface->coat_weight)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:coat_color", MtlxOpenPBRSurface,
+                         surface->coat_color)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:coat_roughness", MtlxOpenPBRSurface,
+                         surface->coat_roughness)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:coat_anisotropy", MtlxOpenPBRSurface,
+                         surface->coat_anisotropy)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:coat_rotation", MtlxOpenPBRSurface,
+                         surface->coat_rotation)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:coat_roughness_anisotropy", MtlxOpenPBRSurface,
+                         surface->coat_roughness_anisotropy)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:coat_ior", MtlxOpenPBRSurface,
+                         surface->coat_ior)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:coat_darkening", MtlxOpenPBRSurface,
+                         surface->coat_darkening)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:coat_affect_color", MtlxOpenPBRSurface,
+                         surface->coat_affect_color)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:coat_affect_roughness", MtlxOpenPBRSurface,
+                         surface->coat_affect_roughness)
+
+    // Fuzz properties
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:fuzz_weight", MtlxOpenPBRSurface,
+                         surface->fuzz_weight)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:fuzz_color", MtlxOpenPBRSurface,
+                         surface->fuzz_color)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:fuzz_roughness", MtlxOpenPBRSurface,
+                         surface->fuzz_roughness)
+
+    // Thin film properties
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:thin_film_thickness", MtlxOpenPBRSurface,
+                         surface->thin_film_thickness)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:thin_film_ior", MtlxOpenPBRSurface,
+                         surface->thin_film_ior)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:thin_film_weight", MtlxOpenPBRSurface,
+                         surface->thin_film_weight)
+
+    // Emission properties
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:emission_luminance", MtlxOpenPBRSurface,
+                         surface->emission_luminance)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:emission_color", MtlxOpenPBRSurface,
+                         surface->emission_color)
+
+    // Geometry properties
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:geometry_opacity", MtlxOpenPBRSurface,
+                         surface->geometry_opacity)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:geometry_thin_walled", MtlxOpenPBRSurface,
+                         surface->geometry_thin_walled)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:geometry_normal", MtlxOpenPBRSurface,
+                         surface->geometry_normal)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:geometry_tangent", MtlxOpenPBRSurface,
+                         surface->geometry_tangent)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:geometry_coat_normal", MtlxOpenPBRSurface,
+                         surface->geometry_coat_normal)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:geometry_coat_tangent", MtlxOpenPBRSurface,
+                         surface->geometry_coat_tangent)
+
+    // Output
+    PARSE_SHADER_TERMINAL_ATTRIBUTE(table, prop, "outputs:surface", MtlxOpenPBRSurface,
+                   surface->surface)
+
+    ADD_PROPERTY(table, prop, MtlxOpenPBRSurface, surface->props)
+    PARSE_PROPERTY_END_MAKE_WARN(table, prop)
+  }
+
+  return true;
+}
+
+template <>
+bool ReconstructShader<OpenPBRSurface>(
+    const Specifier &spec,
+    PropertyMap &properties,
+    const ReferenceList &references,
+    OpenPBRSurface *surface,
+    std::string *warn,
+    std::string *err,
+    const PrimReconstructOptions &options) {
+  (void)spec;
+  (void)references;
+  (void)options;
+  (void)warn;
+
+  std::set<std::string> table;
+  table.insert("info:id"); // `info:id` is already parsed in ReconstructPrim<Shader>
+
+  for (auto &prop : properties) {
+    // Base layer properties
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:base_weight", OpenPBRSurface,
+                         surface->base_weight)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:base_color", OpenPBRSurface,
+                         surface->base_color)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:base_roughness", OpenPBRSurface,
+                         surface->base_roughness)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:base_metalness", OpenPBRSurface,
+                         surface->base_metalness)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:base_diffuse_roughness", OpenPBRSurface,
+                         surface->base_diffuse_roughness)
+
+    // Specular layer properties
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:specular_weight", OpenPBRSurface,
+                         surface->specular_weight)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:specular_color", OpenPBRSurface,
+                         surface->specular_color)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:specular_roughness", OpenPBRSurface,
+                         surface->specular_roughness)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:specular_ior", OpenPBRSurface,
+                         surface->specular_ior)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:specular_ior_level", OpenPBRSurface,
+                         surface->specular_ior_level)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:specular_anisotropy", OpenPBRSurface,
+                         surface->specular_anisotropy)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:specular_rotation", OpenPBRSurface,
+                         surface->specular_rotation)
+
+    // Transmission properties
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:transmission_weight", OpenPBRSurface,
+                         surface->transmission_weight)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:transmission_color", OpenPBRSurface,
+                         surface->transmission_color)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:transmission_depth", OpenPBRSurface,
+                         surface->transmission_depth)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:transmission_scatter", OpenPBRSurface,
+                         surface->transmission_scatter)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:transmission_scatter_anisotropy", OpenPBRSurface,
+                         surface->transmission_scatter_anisotropy)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:transmission_dispersion", OpenPBRSurface,
+                         surface->transmission_dispersion)
+
+    // Subsurface properties
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:subsurface_weight", OpenPBRSurface,
+                         surface->subsurface_weight)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:subsurface_color", OpenPBRSurface,
+                         surface->subsurface_color)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:subsurface_radius", OpenPBRSurface,
+                         surface->subsurface_radius)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:subsurface_scale", OpenPBRSurface,
+                         surface->subsurface_scale)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:subsurface_anisotropy", OpenPBRSurface,
+                         surface->subsurface_anisotropy)
+
+    // Sheen properties
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:sheen_weight", OpenPBRSurface,
+                         surface->sheen_weight)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:sheen_color", OpenPBRSurface,
+                         surface->sheen_color)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:sheen_roughness", OpenPBRSurface,
+                         surface->sheen_roughness)
+
+    // Fuzz properties (velvet/fabric-like appearance)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:fuzz_weight", OpenPBRSurface,
+                         surface->fuzz_weight)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:fuzz_color", OpenPBRSurface,
+                         surface->fuzz_color)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:fuzz_roughness", OpenPBRSurface,
+                         surface->fuzz_roughness)
+
+    // Thin film properties (iridescence from thin film interference)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:thin_film_weight", OpenPBRSurface,
+                         surface->thin_film_weight)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:thin_film_thickness", OpenPBRSurface,
+                         surface->thin_film_thickness)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:thin_film_ior", OpenPBRSurface,
+                         surface->thin_film_ior)
+
+    // Coat properties
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:coat_weight", OpenPBRSurface,
+                         surface->coat_weight)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:coat_color", OpenPBRSurface,
+                         surface->coat_color)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:coat_roughness", OpenPBRSurface,
+                         surface->coat_roughness)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:coat_anisotropy", OpenPBRSurface,
+                         surface->coat_anisotropy)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:coat_rotation", OpenPBRSurface,
+                         surface->coat_rotation)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:coat_ior", OpenPBRSurface,
+                         surface->coat_ior)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:coat_affect_color", OpenPBRSurface,
+                         surface->coat_affect_color)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:coat_affect_roughness", OpenPBRSurface,
+                         surface->coat_affect_roughness)
+
+    // Emission properties
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:emission_luminance", OpenPBRSurface,
+                         surface->emission_luminance)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:emission_color", OpenPBRSurface,
+                         surface->emission_color)
+
+    // Geometry properties
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:opacity", OpenPBRSurface,
+                         surface->opacity)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:geometry_opacity", OpenPBRSurface,
+                         surface->opacity)  // OpenPBR standard name, maps to same opacity field
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:normal", OpenPBRSurface,
+                         surface->normal)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:tangent", OpenPBRSurface,
+                         surface->tangent)
+
+    // Outputs
+    PARSE_SHADER_TERMINAL_ATTRIBUTE(table, prop, "outputs:surface", OpenPBRSurface,
+                   surface->surface)
+
+    ADD_PROPERTY(table, prop, OpenPBRSurface, surface->props)
+    PARSE_PROPERTY_END_MAKE_WARN(table, prop)
+  }
+
+  return true;
+}
+
+template <>
 bool ReconstructShader<UsdTransform2d>(
     const Specifier &spec,
-    const PropertyMap &properties,
+    PropertyMap &properties,
     const ReferenceList &references,
     UsdTransform2d *transform,
     std::string *warn,
@@ -4771,7 +5898,7 @@ bool ReconstructShader<UsdTransform2d>(
 template <>
 bool ReconstructPrim<Shader>(
     const Specifier &spec,
-    const PropertyMap &properties,
+    PropertyMap &properties,
     const ReferenceList &references,
     Shader *shader,
     std::string *warn,
@@ -4924,6 +6051,31 @@ bool ReconstructPrim<Shader>(
     }
     shader->info_id = kUsdTransform2d;
     shader->value = transform;
+  } else if (shader_type.compare(kOpenPBRSurface) == 0) {
+    OpenPBRSurface surface;
+    if (!ReconstructShader<OpenPBRSurface>(spec, properties, references,
+                                           &surface, warn, err, options)) {
+      PUSH_ERROR_AND_RETURN("Failed to Reconstruct " << kOpenPBRSurface);
+    }
+    shader->info_id = kOpenPBRSurface;
+    shader->value = surface;
+  } else if (shader_type.compare(kMtlxAutodeskStandardSurface) == 0) {
+    MtlxAutodeskStandardSurface surface;
+    if (!ReconstructShader<MtlxAutodeskStandardSurface>(spec, properties, references,
+                                                         &surface, warn, err, options)) {
+      PUSH_ERROR_AND_RETURN("Failed to Reconstruct " << kMtlxAutodeskStandardSurface);
+    }
+    shader->info_id = kMtlxAutodeskStandardSurface;
+    shader->value = surface;
+  } else if (shader_type.compare(kNdOpenPbrSurfaceSurfaceshader) == 0) {
+    // Blender v4.5 MaterialX OpenPBR Surface export
+    MtlxOpenPBRSurface surface;
+    if (!ReconstructShader<MtlxOpenPBRSurface>(spec, properties, references,
+                                                &surface, warn, err, options)) {
+      PUSH_ERROR_AND_RETURN("Failed to Reconstruct " << kNdOpenPbrSurfaceSurfaceshader);
+    }
+    shader->info_id = kNdOpenPbrSurfaceSurfaceshader;
+    shader->value = surface;
   } else {
     // Reconstruct as generic ShaderNode
     ShaderNode surface;
@@ -4945,7 +6097,7 @@ bool ReconstructPrim<Shader>(
 template <>
 bool ReconstructPrim<Material>(
     const Specifier &spec,
-    const PropertyMap &properties,
+    PropertyMap &properties,
     const ReferenceList &references,
     Material *material,
     std::string *warn,
@@ -4959,8 +6111,37 @@ bool ReconstructPrim<Material>(
 
   // TODO: special treatment for properties with 'inputs' and 'outputs' namespace.
 
+  // Check if MaterialXConfigAPI is applied
+  bool hasMaterialXConfig = false;
+  for (auto &prop : properties) {
+    if (prop.first == "config:mtlx:version" ||
+        prop.first == "config:mtlx:namespace" ||
+        prop.first == "config:mtlx:colorspace" ||
+        prop.first == "config:mtlx:sourceUri") {
+      hasMaterialXConfig = true;
+      break;
+    }
+  }
+
+  // Initialize MaterialXConfigAPI if needed
+  if (hasMaterialXConfig) {
+    material->materialXConfig = MaterialXConfigAPI();
+  }
+
   // For `Material`, `outputs` are terminal attribute and treated as input attribute with connection(Should be "token output:surface.connect = </path/to/shader>").
   for (auto &prop : properties) {
+    // Parse MaterialXConfigAPI properties
+    if (hasMaterialXConfig) {
+      PARSE_TYPED_ATTRIBUTE(table, prop, "config:mtlx:version", Material,
+                           material->materialXConfig->mtlx_version)
+      PARSE_TYPED_ATTRIBUTE(table, prop, "config:mtlx:namespace", Material,
+                           material->materialXConfig->mtlx_namespace)
+      PARSE_TYPED_ATTRIBUTE(table, prop, "config:mtlx:colorspace", Material,
+                           material->materialXConfig->mtlx_colorspace)
+      PARSE_TYPED_ATTRIBUTE(table, prop, "config:mtlx:sourceUri", Material,
+                           material->materialXConfig->mtlx_sourceUri)
+    }
+
     PARSE_SHADER_INPUT_CONNECTION_PROPERTY(table, prop, "outputs:surface",
                                   Material, material->surface)
     PARSE_SHADER_INPUT_CONNECTION_PROPERTY(table, prop, "outputs:displacement",
@@ -4975,6 +6156,32 @@ bool ReconstructPrim<Material>(
   return true;
 }
 
+template <>
+bool ReconstructPrim<NodeGraph>(
+    const Specifier &spec,
+    PropertyMap &properties,
+    const ReferenceList &references,
+    NodeGraph *nodegraph,
+    std::string *warn,
+    std::string *err,
+    const PrimReconstructOptions &options)
+{
+  (void)spec;
+  (void)references;
+  (void)warn;
+  std::set<std::string> table;
+
+  // NodeGraph can have arbitrary outputs (e.g., outputs:result, outputs:normal, etc.)
+  // They are stored in the props map, so we just add all properties
+  for (auto &prop : properties) {
+    PARSE_UNIFORM_ENUM_PROPERTY(table, prop, kPurpose, Purpose, PurposeEnumHandler, NodeGraph,
+                       nodegraph->purpose, options.strict_allowedToken_check)
+    ADD_PROPERTY(table, prop, NodeGraph, nodegraph->props)
+    PARSE_PROPERTY_END_MAKE_WARN(table, prop)
+  }
+  return true;
+}
+
 ///
 /// -- PrimSpec
 ///
@@ -4982,7 +6189,7 @@ bool ReconstructPrim<Material>(
 #define RECONSTRUCT_PRIM_PRIMSPEC_IMPL(__prim_ty) \
 template <> \
 bool ReconstructPrim<__prim_ty>( \
-    const PrimSpec &primspec, \
+    PrimSpec &primspec, \
     __prim_ty *prim, \
     std::string *warn, \
     std::string *err, \
@@ -5012,12 +6219,14 @@ RECONSTRUCT_PRIM_PRIMSPEC_IMPL(CylinderLight)
 RECONSTRUCT_PRIM_PRIMSPEC_IMPL(DiskLight)
 RECONSTRUCT_PRIM_PRIMSPEC_IMPL(DistantLight)
 RECONSTRUCT_PRIM_PRIMSPEC_IMPL(RectLight)
+RECONSTRUCT_PRIM_PRIMSPEC_IMPL(GeometryLight)
 RECONSTRUCT_PRIM_PRIMSPEC_IMPL(SkelRoot)
 RECONSTRUCT_PRIM_PRIMSPEC_IMPL(Skeleton)
 RECONSTRUCT_PRIM_PRIMSPEC_IMPL(SkelAnimation)
 RECONSTRUCT_PRIM_PRIMSPEC_IMPL(BlendShape)
 RECONSTRUCT_PRIM_PRIMSPEC_IMPL(Shader)
 RECONSTRUCT_PRIM_PRIMSPEC_IMPL(Material)
+RECONSTRUCT_PRIM_PRIMSPEC_IMPL(NodeGraph)
 
 
 } // namespace prim

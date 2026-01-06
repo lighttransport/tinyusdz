@@ -8,6 +8,7 @@
 #include <array>
 #include <cmath>
 #include <cstring>
+#include <functional>
 #include <limits>
 #include <map>
 #include <string>
@@ -119,6 +120,15 @@ struct USDLoadOptions {
   std::map<std::string, FileFormatHandler> fileformats;
 
   Axis upAxis{Axis::Y};
+
+  ///
+  /// Progress callback function type.
+  /// @param[in] progress Progress value between 0.0 and 1.0
+  /// @param[in] userptr User-provided pointer for custom data
+  /// @return true to continue parsing, false to cancel
+  ///
+  std::function<bool(float progress, void *userptr)> progress_callback{nullptr};
+  void *progress_userptr{nullptr};
 };
 
 
@@ -365,7 +375,7 @@ bool LoadUSDAFromMemory(const uint8_t *addr, const size_t length,
 ///
 /// @return true upon success
 ///
-bool LoadLayerFromFile(const std::string &filename, Layer *stage,
+bool LoadLayerFromFile(const std::string &filename, Layer *layer,
                      std::string *warn, std::string *err,
                      const USDLoadOptions &options = USDLoadOptions());
 

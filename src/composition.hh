@@ -1,8 +1,34 @@
 // SPDX-License-Identifier: Apache 2.0
 // Copyright 2022-Present Light Transport Entertainment Inc.
-//
-// Layer and Prim composition features.
-//
+
+///
+/// @file composition.hh
+/// @brief USD Layer and Prim composition system
+///
+/// Implements USD's composition arcs system for building complex scenes
+/// from multiple layers and referenced assets. Composition allows USD
+/// scenes to reference, inherit from, and specialize other USD files.
+///
+/// Supported composition arcs:
+/// - References: Include content from other USD files
+/// - Payloads: Deferred loading of heavy content  
+/// - Inherits: Class-like inheritance between prims
+/// - Specializes: Variant-like specialization (TODO)
+/// - SubLayers: Layer-level composition
+/// - VariantSets: Multiple versions of content (TODO)
+/// - Overs: Overrides of existing content
+///
+/// Key concepts:
+/// - Layer: Individual USD file or memory content
+/// - Stage: Composed result of multiple layers
+/// - Composition arcs: Rules for combining layers
+/// - Load states: Control what gets loaded when
+///
+/// TODO items:
+/// - [ ] Compose `specializes`
+/// - [ ] Compose `variantSets`
+/// - [ ] Consider `active` Prim metadatum
+///
 #pragma once
 
 #include "asset-resolution.hh"
@@ -45,6 +71,10 @@ struct SublayersCompositionOptions {
 
   // File formats
   std::map<std::string, FileFormatHandler> fileformats;
+  
+  // Memory optimization options
+  bool enable_inplace_composition{false};  // Enable in-place memory management
+  size_t max_memory_limit_mb{16384};      // Maximum memory limit in MB
 };
 
 struct ReferencesCompositionOptions {
@@ -59,6 +89,10 @@ struct ReferencesCompositionOptions {
 
   // File formats
   std::map<std::string, FileFormatHandler> fileformats;
+  
+  // Memory optimization options
+  bool enable_inplace_composition{false};  // Enable in-place memory management
+  size_t max_memory_limit_mb{16384};      // Maximum memory limit in MB
 };
 
 struct PayloadCompositionOptions {
@@ -73,6 +107,10 @@ struct PayloadCompositionOptions {
 
   // File formats
   std::map<std::string, FileFormatHandler> fileformats;
+  
+  // Memory optimization options
+  bool enable_inplace_composition{false};  // Enable in-place memory management
+  size_t max_memory_limit_mb{16384};      // Maximum memory limit in MB
 };
 
 
@@ -161,6 +199,14 @@ bool CompositeSublayers(
     const SublayersCompositionOptions options = SublayersCompositionOptions());
 
 ///
+/// In-place version of CompositeSublayers that frees memory progressively
+///
+bool CompositeSublayersInPlace(
+    AssetResolutionResolver &resolver /* inout */, std::unique_ptr<Layer> layer,
+    Layer *composited_layer, std::string *warn, std::string *err,
+    const SublayersCompositionOptions options = SublayersCompositionOptions());
+
+///
 /// Resolve `references` for each PrimSpe, and return composited(flattened)
 /// Layer to `composited_layer` in `layer`.
 ///
@@ -171,11 +217,28 @@ bool CompositeReferences(AssetResolutionResolver &resolver /* inout */,
                              ReferencesCompositionOptions());
 
 ///
+/// In-place version of CompositeReferences that frees memory progressively
+///
+bool CompositeReferencesInPlace(AssetResolutionResolver &resolver /* inout */,
+                                std::unique_ptr<Layer> layer, Layer *composited_layer,
+                                std::string *warn, std::string *err,
+                                const ReferencesCompositionOptions options =
+                                    ReferencesCompositionOptions());
+
+///
 /// Resolve `payload` for each PrimSpec, and return composited(flattened) Layer
 /// to `composited_layer` in `layer`.
 ///
 bool CompositePayload(
     AssetResolutionResolver &resolver /* inout */, const Layer &layer,
+    Layer *composited_layer, std::string *warn, std::string *err,
+    const PayloadCompositionOptions options = PayloadCompositionOptions());
+
+///
+/// In-place version of CompositePayload that frees memory progressively
+///
+bool CompositePayloadInPlace(
+    AssetResolutionResolver &resolver /* inout */, std::unique_ptr<Layer> layer,
     Layer *composited_layer, std::string *warn, std::string *err,
     const PayloadCompositionOptions options = PayloadCompositionOptions());
 
@@ -227,11 +290,13 @@ bool OverridePrimSpec(PrimSpec &dst, const PrimSpec &src, std::string *warn,
 bool InheritPrimSpec(PrimSpec &dst, const PrimSpec &src, std::string *warn,
                      std::string *err);
 
+#if 0
 ///
 /// Build USD Stage from Layer
 ///
-bool LayerToStage(const Layer &layer, Stage *stage, std::string *warn,
+bool LayerToStage(Layer &layer, Stage *stage, std::string *warn,
                   std::string *err);
+#endif
 
 ///
 /// Build USD Stage from Layer
@@ -240,6 +305,38 @@ bool LayerToStage(const Layer &layer, Stage *stage, std::string *warn,
 ///
 bool LayerToStage(Layer &&layer, Stage *stage, std::string *warn,
                   std::string *err);
+
+///
+/// Build USD Stage from Layer with in-place memory management
+///
+/// This version takes ownership of the Layer via unique_ptr and progressively
+/// frees memory as PrimSpecs are converted to Prims. This significantly reduces
+/// peak memory usage during conversion.
+///
+/// @param[in] layer Unique pointer to Layer. Will be reset after conversion.
+/// @param[out] stage Output Stage
+/// @param[out] warn Warning messages
+/// @param[out] err Error messages
+/// @return true upon success
+///
+bool LayerToStageInPlace(std::unique_ptr<Layer> layer, Stage *stage, 
+                         std::string *warn, std::string *err);
+
+///
+/// Convert PrimSpec to Prim with in-place memory management
+///
+/// Takes ownership of PrimSpec and frees its memory after conversion.
+/// This is useful for converting individual PrimSpecs without keeping
+/// the source data in memory.
+///
+/// @param[in] primspec Unique pointer to PrimSpec. Will be reset after conversion.
+/// @param[out] prim Output Prim
+/// @param[out] warn Warning messages
+/// @param[out] err Error messages
+/// @return true upon success
+///
+bool PrimSpecToPrimInPlace(std::unique_ptr<PrimSpec> primspec, Prim *prim,
+                           std::string *warn, std::string *err);
 
 struct VariantSelector {
   std::string selection;  // current selection
