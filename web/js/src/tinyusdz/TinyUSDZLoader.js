@@ -703,6 +703,30 @@ class TinyUSDZLoader extends Loader {
     }
 
     /**
+     * Check if C++20 coroutine-based async loading is available.
+     * Returns true if the WASM module was compiled with TINYUSDZ_WASM_COROUTINE=ON.
+     *
+     * @returns {boolean} True if async support is available
+     */
+    hasAsyncSupport() {
+        if (!this.native_) {
+            console.warn('[TinyUSDZLoader] hasAsyncSupport called before init()');
+            return false;
+        }
+
+        // Check if a temporary instance has loadFromBinaryAsync
+        try {
+            const usd = new this.native_.TinyUSDZLoaderNative();
+            const hasMethod = typeof usd.loadFromBinaryAsync === 'function';
+            console.log(`[TinyUSDZLoader] Coroutine async support: ${hasMethod ? 'available' : 'not available'}`);
+            return hasMethod;
+        } catch (e) {
+            console.warn('[TinyUSDZLoader] Error checking async support:', e);
+            return false;
+        }
+    }
+
+    /**
      * Parse USD binary data using C++20 coroutine-based async loading.
      * This method yields to the JavaScript event loop between processing phases,
      * allowing the browser to repaint during loading.
