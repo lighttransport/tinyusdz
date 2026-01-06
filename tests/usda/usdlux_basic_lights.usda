@@ -1,0 +1,126 @@
+#usda 1.0
+(
+    doc = "Basic UsdLux light types test - Point, Directional, Rect, Disk, Cylinder, Dome"
+    defaultPrim = "World"
+    metersPerUnit = 1
+    upAxis = "Y"
+)
+
+def Xform "World"
+{
+    def Scope "Lights"
+    {
+        # 1. Point Light (Sphere Light) - Omnidirectional
+        def SphereLight "KeyLight"
+        {
+            color3f inputs:color = (1.0, 0.95, 0.85)
+            float inputs:intensity = 100.0
+            float inputs:exposure = 1.0
+            float inputs:radius = 0.5
+            bool inputs:normalize = true
+
+            # Shadow properties
+            bool inputs:shadow:enable = true
+            color3f inputs:shadow:color = (0.0, 0.0, 0.0)
+
+            double3 xformOp:translate = (-3, 4, 3)
+            uniform token[] xformOpOrder = ["xformOp:translate"]
+        }
+
+        # 2. Directional Light (Distant Light) - Sun-like
+        def DistantLight "SunLight"
+        {
+            color3f inputs:color = (1.0, 1.0, 0.95)
+            float inputs:intensity = 50.0
+            float inputs:exposure = 0.5
+            float inputs:angle = 0.53  # Sun's angular diameter in degrees
+
+            # Enable color temperature
+            bool inputs:enableColorTemperature = true
+            float inputs:colorTemperature = 5800  # Sun temperature
+
+            double3 xformOp:rotateXYZ = (-45, 30, 0)
+            uniform token[] xformOpOrder = ["xformOp:rotateXYZ"]
+        }
+
+        # 3. Rect Light - Area light
+        def RectLight "SoftBox"
+        {
+            color3f inputs:color = (0.9, 0.95, 1.0)
+            float inputs:intensity = 200.0
+            float inputs:width = 2.0
+            float inputs:height = 1.5
+            bool inputs:normalize = false
+
+            double3 xformOp:translate = (0, 3, 5)
+            double3 xformOp:rotateXYZ = (-30, 0, 0)
+            uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:rotateXYZ"]
+        }
+
+        # 4. Disk Light - Circular area light
+        def DiskLight "RimLight"
+        {
+            color3f inputs:color = (1.0, 0.9, 0.8)
+            float inputs:intensity = 150.0
+            float inputs:radius = 0.75
+
+            double3 xformOp:translate = (4, 2, -2)
+            double3 xformOp:rotateXYZ = (0, -135, 0)
+            uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:rotateXYZ"]
+        }
+
+        # 5. Cylinder Light with shaping (Spotlight)
+        def CylinderLight "Spotlight"
+        {
+            color3f inputs:color = (1.0, 1.0, 1.0)
+            float inputs:intensity = 300.0
+            float inputs:radius = 0.2
+            float inputs:length = 0.5
+
+            # Shaping for spotlight cone
+            float inputs:shaping:cone:angle = 45.0
+            float inputs:shaping:cone:softness = 0.2
+
+            # Shadow properties
+            bool inputs:shadow:enable = true
+            float inputs:shadow:falloff = 1.0
+
+            double3 xformOp:translate = (0, 5, 0)
+            double3 xformOp:rotateXYZ = (-90, 0, 0)
+            uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:rotateXYZ"]
+        }
+
+        # 6. Dome Light - Environment lighting
+        def DomeLight "EnvironmentLight"
+        {
+            color3f inputs:color = (0.4, 0.5, 0.6)
+            float inputs:intensity = 0.5
+            float inputs:exposure = -1.0
+
+            # Optional: Reference to HDR environment map
+            # asset inputs:texture:file = @./environment.hdr@
+            token inputs:texture:format = "latlong"
+        }
+    }
+
+    # Reference geometry to show lighting
+    def Xform "Geometry"
+    {
+        def Sphere "TestSphere"
+        {
+            double radius = 1.0
+            double3 xformOp:translate = (0, 1, 0)
+            uniform token[] xformOpOrder = ["xformOp:translate"]
+        }
+
+        def Mesh "GroundPlane"
+        {
+            int[] faceVertexCounts = [4]
+            int[] faceVertexIndices = [0, 1, 2, 3]
+            point3f[] points = [(-10, 0, -10), (10, 0, -10), (10, 0, 10), (-10, 0, 10)]
+            normal3f[] normals = [(0, 1, 0), (0, 1, 0), (0, 1, 0), (0, 1, 0)] (
+                interpolation = "vertex"
+            )
+        }
+    }
+}

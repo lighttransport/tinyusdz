@@ -14,6 +14,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <array>
 //#include <cassert>
 #include <cstdlib>
 #include <fstream>
@@ -34,6 +35,7 @@
 #include "str-util.hh"
 #include "path-util.hh"
 #include "tiny-format.hh"
+#include "typed-array.hh"
 
 //
 #if !defined(TINYUSDZ_DISABLE_MODULE_USDA_READER)
@@ -812,6 +814,10 @@ bool AsciiParser::ReadBasicType(nonstd::optional<bool> *value) {
 bool AsciiParser::ReadBasicType(int *value) {
   std::stringstream ss;
 
+  // Maximum digits for int32_t is 10 (2147483647)
+  // Add small buffer for safety but prevent huge strings
+  constexpr size_t kMaxDigits = 12;
+
   // pxrUSD allow floating-point value to `int` type.
   // so first try fp parsing.
   auto loc = CurrLoc();
@@ -857,6 +863,7 @@ bool AsciiParser::ReadBasicType(int *value) {
     ss << sc;
   }
 
+  size_t digit_count = has_sign ? 0 : 1;  // Count digits excluding sign
   while (!Eof()) {
     char c;
     if (!Char1(&c)) {
@@ -864,6 +871,12 @@ bool AsciiParser::ReadBasicType(int *value) {
     }
 
     if ((c >= '0') && (c <= '9')) {
+      digit_count++;
+      if (digit_count > kMaxDigits) {
+        PushError("Integer literal exceeds maximum allowed digits (" +
+                  std::to_string(kMaxDigits) + ").\n");
+        return false;
+      }
       ss << c;
     } else {
       _sr->seek_from_current(-1);
@@ -1024,7 +1037,10 @@ bool AsciiParser::ReadBasicType(nonstd::optional<value::uint4> *value) {
 
 bool AsciiParser::ReadBasicType(uint32_t *value) {
   std::stringstream ss;
-  constexpr uint32_t kMaxDigits = 100;
+
+  // Maximum digits for uint32_t is 10 (4294967295)
+  // Add small buffer for safety but prevent huge strings
+  constexpr size_t kMaxDigits = 12;
 
   // head character
   bool has_sign = false;
@@ -1059,21 +1075,21 @@ bool AsciiParser::ReadBasicType(uint32_t *value) {
     return false;
   }
 
-  uint32_t digits=0;
+  size_t digit_count = has_sign ? 0 : 1;  // Count digits excluding sign
   while (!Eof()) {
-
-    if (digits > kMaxDigits) {
-      return false;
-    }
-
     char c;
     if (!Char1(&c)) {
       return false;
     }
 
     if ((c >= '0') && (c <= '9')) {
+      digit_count++;
+      if (digit_count > kMaxDigits) {
+        PushError("Integer literal exceeds maximum allowed digits (" +
+                  std::to_string(kMaxDigits) + ").\n");
+        return false;
+      }
       ss << c;
-      digits++;
     } else {
       _sr->seek_from_current(-1);
       break;
@@ -1110,14 +1126,17 @@ bool AsciiParser::ReadBasicType(uint32_t *value) {
   return true;
 #else
   // use jsteemann/atoi
-  int retcode = 0;
+  // IMPORTANT: Store the string first to avoid temporary object issues
   const char* start = str.c_str();
   const char* end = str.c_str() + str.size();
-  auto result = jsteemann::atoi<uint32_t>(
-      start, end, retcode);
+
+  int retcode = 0;
+  auto result = jsteemann::atoi<uint32_t>(start, end, retcode);
+
   DCOUT("sz = " << str.size());
   DCOUT("ss = " << str << ", retcode = " << retcode
                 << ", result = " << result);
+
   if (retcode == jsteemann::SUCCESS) {
     (*value) = result;
     return true;
@@ -1140,9 +1159,12 @@ bool AsciiParser::ReadBasicType(uint32_t *value) {
 bool AsciiParser::ReadBasicType(int64_t *value) {
   std::stringstream ss;
 
+  // Maximum digits for int64_t is 19 (9223372036854775807)
+  // Add small buffer for safety but prevent huge strings
+  constexpr size_t kMaxDigits = 21;
+
   // head character
   bool has_sign = false;
-  bool negative = false;
   {
     char sc;
     if (!Char1(&sc)) {
@@ -1152,10 +1174,8 @@ bool AsciiParser::ReadBasicType(int64_t *value) {
 
     // sign or [0-9]
     if (sc == '+') {
-      negative = false;
       has_sign = true;
     } else if (sc == '-') {
-      negative = true;
       has_sign = true;
     } else if ((sc >= '0') && (sc <= '9')) {
       // ok
@@ -1168,11 +1188,9 @@ bool AsciiParser::ReadBasicType(int64_t *value) {
     ss << sc;
   }
 
-  if (negative) {
-    PushError("Unsigned value expected but got '-' sign.");
-    return false;
-  }
+  // Allow negative values for signed int64 type
 
+  size_t digit_count = has_sign ? 0 : 1;  // Count digits excluding sign
   while (!Eof()) {
     char c;
     if (!Char1(&c)) {
@@ -1180,6 +1198,12 @@ bool AsciiParser::ReadBasicType(int64_t *value) {
     }
 
     if ((c >= '0') && (c <= '9')) {
+      digit_count++;
+      if (digit_count > kMaxDigits) {
+        PushError("Integer literal exceeds maximum allowed digits (" +
+                  std::to_string(kMaxDigits) + ").\n");
+        return false;
+      }
       ss << c;
     } else {
       _sr->seek_from_current(-1);
@@ -1205,25 +1229,25 @@ bool AsciiParser::ReadBasicType(int64_t *value) {
   // TODO(syoyo): Use ryu parse.
 #if defined(__cpp_exceptions) || defined(__EXCEPTIONS)
   try {
-    (*value) = std::stoull(str);
+    (*value) = std::stoll(ss.str());  // Use stoll for signed int64
   } catch (const std::invalid_argument &e) {
     (void)e;
-    PushError("Not an 64bit unsigned integer literal.\n");
+    PushError("Not an 64bit signed integer literal.\n");
     return false;
   } catch (const std::out_of_range &e) {
     (void)e;
-    PushError("64bit unsigned integer value out of range.\n");
+    PushError("64bit signed integer value out of range.\n");
     return false;
   }
 
   return true;
 #else
   // use jsteemann/atoi
-  int retcode;
   const char* start = str.c_str();
   const char* end = str.c_str() + str.size();
-  auto result = jsteemann::atoi<int64_t>(
-      start, end, retcode);
+
+  int retcode;
+  auto result = jsteemann::atoi<int64_t>(start, end, retcode);
   if (retcode == jsteemann::SUCCESS) {
     (*value) = result;
     return true;
@@ -1248,6 +1272,10 @@ bool AsciiParser::ReadBasicType(int64_t *value) {
 bool AsciiParser::ReadBasicType(uint64_t *value) {
   std::stringstream ss;
 
+  // Maximum digits for uint64_t is 20 (18446744073709551615)
+  // Add small buffer for safety but prevent huge strings
+  constexpr size_t kMaxDigits = 22;
+
   // head character
   bool has_sign = false;
   bool negative = false;
@@ -1281,6 +1309,7 @@ bool AsciiParser::ReadBasicType(uint64_t *value) {
     return false;
   }
 
+  size_t digit_count = has_sign ? 0 : 1;  // Count digits excluding sign
   while (!Eof()) {
     char c;
     if (!Char1(&c)) {
@@ -1288,6 +1317,12 @@ bool AsciiParser::ReadBasicType(uint64_t *value) {
     }
 
     if ((c >= '0') && (c <= '9')) {
+      digit_count++;
+      if (digit_count > kMaxDigits) {
+        PushError("Integer literal exceeds maximum allowed digits (" +
+                  std::to_string(kMaxDigits) + ").\n");
+        return false;
+      }
       ss << c;
     } else {
       _sr->seek_from_current(-1);
@@ -1327,11 +1362,11 @@ bool AsciiParser::ReadBasicType(uint64_t *value) {
   return true;
 #else
   // use jsteemann/atoi
-  int retcode;
   const char* start = str.c_str();
   const char* end = str.c_str() + str.size();
-  auto result = jsteemann::atoi<uint64_t>(
-      start, end, retcode);
+
+  int retcode;
+  auto result = jsteemann::atoi<uint64_t>(start, end, retcode);
   if (retcode == jsteemann::SUCCESS) {
     (*value) = result;
     return true;
@@ -1983,6 +2018,58 @@ bool AsciiParser::ParseBasicTypeArray(std::vector<T> *result) {
 }
 
 ///
+/// Parse '[', Sep1By(','), ']' using TypedArray<T> for memory optimization
+///
+template <typename T>
+bool AsciiParser::ParseBasicTypeArray(TypedArray<T> *result) {
+  if (!Expect('[')) {
+    return false;
+  }
+
+  if (!SkipCommentAndWhitespaceAndNewline()) {
+    return false;
+  }
+
+  // Empty array?
+  {
+    char c;
+    if (!Char1(&c)) {
+      return false;
+    }
+
+    if (c == ']') {
+      (*result)->clear();
+      return true;
+    }
+
+    Rewind(1);
+  }
+
+  // Parse elements into a temporary vector first
+  std::vector<T> temp_result;
+  if (!SepBy1BasicType<T>(',', ']', &temp_result)) {
+    return false;
+  }
+
+  if (!SkipCommentAndWhitespaceAndNewline()) {
+    return false;
+  }
+
+  if (!Expect(']')) {
+    return false;
+  }
+
+  // Transfer to TypedArray for memory optimization
+  (*result)->clear();
+  (*result)->reserve(temp_result.size());
+  for (const auto& item : temp_result) {
+    (*result)->push_back(item);
+  }
+  
+  return true;
+}
+
+///
 /// Parses 1 or more occurences of asset references, separated by
 /// `sep`
 /// TODO: Parse LayerOffset: e.g. `(offset = 10; scale = 2)`
@@ -2355,8 +2442,8 @@ bool AsciiParser::MaybeNonFinite(T *out) {
   auto loc = CurrLoc();
 
   // "-inf", "inf" or "nan"
-  std::vector<char> buf(4);
-  if (!CharN(3, &buf)) {
+  std::array<char, 4> buf;
+  if (!CharN(3, &buf[0])) {
     return false;
   }
   SeekTo(loc);
@@ -2371,7 +2458,7 @@ bool AsciiParser::MaybeNonFinite(T *out) {
     return true;
   }
 
-  bool ok = CharN(4, &buf);
+  bool ok = CharN(4, &buf[0]);
   SeekTo(loc);
 
   if (ok) {
@@ -2382,6 +2469,7 @@ bool AsciiParser::MaybeNonFinite(T *out) {
     }
 
     // NOTE: support "-nan"?
+    // FYI pxrusd does not support -nan
   }
 
   return false;
@@ -3479,6 +3567,67 @@ template bool AsciiParser::ParseBasicTypeArray(std::vector<std::string> *result)
 //template bool AsciiParser::ParseBasicTypeArray(std::vector<Reference> *result);
 //template bool AsciiParser::ParseBasicTypeArray(std::vector<Path> *result);
 template bool AsciiParser::ParseBasicTypeArray(std::vector<value::AssetPath> *result);
+
+// 
+// TypedArray template instantiations for memory optimization
+//
+template bool AsciiParser::ParseBasicTypeArray(TypedArray<bool> *result);
+template bool AsciiParser::ParseBasicTypeArray(TypedArray<int32_t> *result);
+template bool AsciiParser::ParseBasicTypeArray(TypedArray<value::int2> *result);
+template bool AsciiParser::ParseBasicTypeArray(TypedArray<value::int3> *result);
+template bool AsciiParser::ParseBasicTypeArray(TypedArray<value::int4> *result);
+template bool AsciiParser::ParseBasicTypeArray(TypedArray<uint32_t> *result);
+template bool AsciiParser::ParseBasicTypeArray(TypedArray<value::uint2> *result);
+template bool AsciiParser::ParseBasicTypeArray(TypedArray<value::uint3> *result);
+template bool AsciiParser::ParseBasicTypeArray(TypedArray<value::uint4> *result);
+template bool AsciiParser::ParseBasicTypeArray(TypedArray<int64_t> *result);
+template bool AsciiParser::ParseBasicTypeArray(TypedArray<uint64_t> *result);
+template bool AsciiParser::ParseBasicTypeArray(TypedArray<value::half> *result);
+template bool AsciiParser::ParseBasicTypeArray(TypedArray<value::half2> *result);
+template bool AsciiParser::ParseBasicTypeArray(TypedArray<value::half3> *result);
+template bool AsciiParser::ParseBasicTypeArray(TypedArray<value::half4> *result);
+template bool AsciiParser::ParseBasicTypeArray(TypedArray<float> *result);
+template bool AsciiParser::ParseBasicTypeArray(TypedArray<value::float2> *result);
+template bool AsciiParser::ParseBasicTypeArray(TypedArray<value::float3> *result);
+template bool AsciiParser::ParseBasicTypeArray(TypedArray<value::float4> *result);
+template bool AsciiParser::ParseBasicTypeArray(TypedArray<double> *result);
+template bool AsciiParser::ParseBasicTypeArray(TypedArray<value::double2> *result);
+template bool AsciiParser::ParseBasicTypeArray(TypedArray<value::double3> *result);
+template bool AsciiParser::ParseBasicTypeArray(TypedArray<value::double4> *result);
+template bool AsciiParser::ParseBasicTypeArray(TypedArray<value::texcoord2h> *result);
+template bool AsciiParser::ParseBasicTypeArray(TypedArray<value::texcoord2f> *result);
+template bool AsciiParser::ParseBasicTypeArray(TypedArray<value::texcoord2d> *result);
+template bool AsciiParser::ParseBasicTypeArray(TypedArray<value::texcoord3h> *result);
+template bool AsciiParser::ParseBasicTypeArray(TypedArray<value::texcoord3f> *result);
+template bool AsciiParser::ParseBasicTypeArray(TypedArray<value::texcoord3d> *result);
+template bool AsciiParser::ParseBasicTypeArray(TypedArray<value::point3h> *result);
+template bool AsciiParser::ParseBasicTypeArray(TypedArray<value::point3f> *result);
+template bool AsciiParser::ParseBasicTypeArray(TypedArray<value::point3d> *result);
+template bool AsciiParser::ParseBasicTypeArray(TypedArray<value::normal3h> *result);
+template bool AsciiParser::ParseBasicTypeArray(TypedArray<value::normal3f> *result);
+template bool AsciiParser::ParseBasicTypeArray(TypedArray<value::normal3d> *result);
+template bool AsciiParser::ParseBasicTypeArray(TypedArray<value::vector3h> *result);
+template bool AsciiParser::ParseBasicTypeArray(TypedArray<value::vector3f> *result);
+template bool AsciiParser::ParseBasicTypeArray(TypedArray<value::vector3d> *result);
+template bool AsciiParser::ParseBasicTypeArray(TypedArray<value::color3h> *result);
+template bool AsciiParser::ParseBasicTypeArray(TypedArray<value::color3f> *result);
+template bool AsciiParser::ParseBasicTypeArray(TypedArray<value::color3d> *result);
+template bool AsciiParser::ParseBasicTypeArray(TypedArray<value::color4h> *result);
+template bool AsciiParser::ParseBasicTypeArray(TypedArray<value::color4f> *result);
+template bool AsciiParser::ParseBasicTypeArray(TypedArray<value::color4d> *result);
+template bool AsciiParser::ParseBasicTypeArray(TypedArray<value::matrix2f> *result);
+template bool AsciiParser::ParseBasicTypeArray(TypedArray<value::matrix3f> *result);
+template bool AsciiParser::ParseBasicTypeArray(TypedArray<value::matrix4f> *result);
+template bool AsciiParser::ParseBasicTypeArray(TypedArray<value::matrix2d> *result);
+template bool AsciiParser::ParseBasicTypeArray(TypedArray<value::matrix3d> *result);
+template bool AsciiParser::ParseBasicTypeArray(TypedArray<value::matrix4d> *result);
+template bool AsciiParser::ParseBasicTypeArray(TypedArray<value::quath> *result);
+template bool AsciiParser::ParseBasicTypeArray(TypedArray<value::quatf> *result);
+template bool AsciiParser::ParseBasicTypeArray(TypedArray<value::quatd> *result);
+template bool AsciiParser::ParseBasicTypeArray(TypedArray<value::token> *result);
+template bool AsciiParser::ParseBasicTypeArray(TypedArray<value::StringData> *result);
+template bool AsciiParser::ParseBasicTypeArray(TypedArray<std::string> *result);
+template bool AsciiParser::ParseBasicTypeArray(TypedArray<value::AssetPath> *result);
 
 
 }  // namespace ascii

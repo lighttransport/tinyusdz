@@ -31,6 +31,7 @@
 #include "stream-reader.hh"
 #include "tiny-format.hh"
 #include "tinyusdz.hh"
+#include "layer.hh"
 #include "usda-reader.hh"
 #include "usdc-reader.hh"
 #include "value-pprint.hh"
@@ -66,6 +67,10 @@
 #include "common-macros.inc"
 
 namespace tinyusdz {
+
+// Global flag to control DCOUT output. Defaults to false to suppress flood of output.
+// Set to true via TINYUSDZ_ENABLE_DCOUT environment variable.
+bool g_enable_dcout_output = false;
 
 // constexpr auto kTagUSDA = "[USDA]";
 // constexpr auto kTagUSDC = "[USDC]";
@@ -152,6 +157,10 @@ bool LoadUSDCFromMemory(const uint8_t *addr, const size_t length,
   config.strict_allowedToken_check = options.strict_allowedToken_check;
   config.kMaxAllowedMemoryInMB = size_t(options.max_memory_limit_in_mb);
   usdc::USDCReader reader(&sr, config);
+
+  if (options.progress_callback) {
+    reader.SetProgressCallback(options.progress_callback, options.progress_userptr);
+  }
 
   if (!reader.ReadUSDC()) {
     if (warn) {
@@ -757,7 +766,12 @@ bool LoadUSDAFromMemory(const uint8_t *addr, const size_t length,
   config.max_memory_limit_in_mb = size_t(options.max_memory_limit_in_mb);
   reader.set_reader_config(config);
 
+  if (options.progress_callback) {
+    reader.SetProgressCallback(options.progress_callback, options.progress_userptr);
+  }
+
   reader.SetBaseDir(base_dir);
+  reader.set_filename(base_dir);  // Pass filename for error context display
 
   {
     bool ret = reader.Read();
@@ -843,7 +857,7 @@ bool LoadUSDAFromFile(const std::string &_filename, Stage *stage,
       }
     }
 
-    return LoadUSDAFromMemory(data.data(), data.size(), base_dir, stage, warn,
+    return LoadUSDAFromMemory(data.data(), data.size(), filepath, stage, warn,
                               err, options);
   }
 }
@@ -1759,6 +1773,9 @@ bool SetupUSDZAssetResolution(
   resolver.register_asset_resolution_handler("JPEG", handler);
   resolver.register_asset_resolution_handler("exr", handler);
   resolver.register_asset_resolution_handler("EXR", handler);
+  // HDR (Radiance HDR format) - commonly used for environment maps
+  resolver.register_asset_resolution_handler("hdr", handler);
+  resolver.register_asset_resolution_handler("HDR", handler);
 
   return true;
 }

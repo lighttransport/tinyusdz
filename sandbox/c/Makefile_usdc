@@ -1,0 +1,49 @@
+CC = gcc
+CFLAGS = -std=c99 -Wall -Wextra -g -O2 -I../../src/lz4
+LDFLAGS = 
+
+# Source files
+USDC_SOURCES = usdc_parser.c ../../src/lz4/lz4.c
+USDC_HEADERS = usdc_parser.h
+TEST_USDC_SOURCES = test_usdc_parser.c
+
+# Object files
+USDC_OBJECTS = $(USDC_SOURCES:.c=.o)
+TEST_USDC_OBJECTS = $(TEST_USDC_SOURCES:.c=.o)
+
+# Executables
+TEST_USDC = test_usdc_parser
+
+.PHONY: all clean test
+
+all: $(TEST_USDC)
+
+# Build the test executable
+$(TEST_USDC): $(USDC_OBJECTS) $(TEST_USDC_OBJECTS)
+	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+
+# Build object files
+%.o: %.c $(USDC_HEADERS)
+	$(CC) $(CFLAGS) -c -o $@ $<
+
+# Test with a sample USDC file (if available)
+test: $(TEST_USDC)
+	@echo "Built USDC parser test successfully"
+	@echo "Usage: ./$(TEST_USDC) <path_to_usdc_file>"
+	@if [ -f "../../models/cube.usdc" ]; then \
+		echo "Testing with cube.usdc..."; \
+		./$(TEST_USDC) ../../models/cube.usdc; \
+	else \
+		echo "No test USDC file found at ../../models/cube.usdc"; \
+		echo "You can test with any .usdc file by running:"; \
+		echo "./$(TEST_USDC) your_file.usdc"; \
+	fi
+
+# Clean build artifacts
+clean:
+	rm -f $(USDC_OBJECTS) $(TEST_USDC_OBJECTS) $(TEST_USDC)
+
+# Dependencies
+usdc_parser.o: usdc_parser.c usdc_parser.h
+../../src/lz4/lz4.o: ../../src/lz4/lz4.c ../../src/lz4/lz4.h
+test_usdc_parser.o: test_usdc_parser.c usdc_parser.h

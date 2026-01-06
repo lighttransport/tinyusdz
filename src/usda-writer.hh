@@ -1,3 +1,10 @@
+///
+/// @file usda-writer.hh  
+/// @brief USDA (USD ASCII) writer interface
+///
+/// Production-ready writer for exporting USD scenes to ASCII format.
+/// Supports full round-trip preservation of USD data structures.
+///
 #pragma once
 
 #include "tinyusdz.hh"

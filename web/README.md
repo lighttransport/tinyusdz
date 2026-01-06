@@ -16,16 +16,37 @@ See `js` folder for JS codes.
 ## Building WASM module
 
 Emscripten and emcmake required.
+TinyUSDZ is beging built with C++20 to use C++20 coruntine to support async over JS/WASM boundary, without requiring sASYNCIFY and JSPI(JavaScript Promise Integration)
 
-See <tinyusdz>/.github/workflows/wasmPublish.yml or
+### Standard WASM32 build (2GB memory limit)
 
-```
+```bash
 $ ./bootstrap-linux.sh
 $ cd build
 $ make
 ```
 
+### WASM64/MEMORY64 build (8GB memory limit)
+
+```bash
+$ rm -rf build
+$ emcmake cmake -DCMAKE_BUILD_TYPE=MinSizeRel -DTINYUSDZ_WASM64=ON -Bbuild
+$ cd build
+$ make
+```
+
+### Memory Limit Defaults
+
+- **WASM32 (standard)**: 2GB default memory limit
+- **WASM64 (MEMORY64)**: 8GB default memory limit
+
+The JavaScript wrapper automatically uses the appropriate native default based on the build architecture.
+
+**Note**: WASM64/MEMORY64 requires browsers with MEMORY64 support (Chrome 109+, Firefox 102+ with flags enabled).
+
 wasm module(tinyusdz.js and tinyusdz.wasm) will be output to `js/src/tinyusdz` folder.
+
+See also: `bootstrap-examples.sh` for build configuration examples.
 
 ## Note
 
