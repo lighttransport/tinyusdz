@@ -703,6 +703,144 @@ class TinyUSDZLoader extends Loader {
     }
 
     /**
+     * Check if C++20 coroutine-based async loading is available.
+     * Returns true if the WASM module was compiled with TINYUSDZ_WASM_COROUTINE=ON.
+     *
+     * @returns {boolean} True if async support is available
+     */
+    hasAsyncSupport() {
+        if (!this.native_) {
+            console.warn('[TinyUSDZLoader] hasAsyncSupport called before init()');
+            return false;
+        }
+
+        // Check if a temporary instance has loadFromBinaryAsync
+        try {
+            const usd = new this.native_.TinyUSDZLoaderNative();
+            const hasMethod = typeof usd.loadFromBinaryAsync === 'function';
+            console.log(`[TinyUSDZLoader] Coroutine async support: ${hasMethod ? 'available' : 'not available'}`);
+            return hasMethod;
+        } catch (e) {
+            console.warn('[TinyUSDZLoader] Error checking async support:', e);
+            return false;
+        }
+    }
+
+    /**
+     * Parse USD binary data using C++20 coroutine-based async loading.
+     * This method yields to the JavaScript event loop between processing phases,
+     * allowing the browser to repaint during loading.
+     *
+     * Unlike parseWithProgress which uses setTimeout for a single yield,
+     * this method uses true C++20 coroutines with co_await to yield multiple times
+     * during parsing (detecting -> parsing -> converting -> complete).
+     *
+     * @param {ArrayBuffer} binary - Binary USD data
+     * @param {string} filePath - Optional file path
+     * @param {Object} options - Parsing options
+     * @param {number} options.maxMemoryLimitMB - Override memory limit
+     * @param {Function} options.onPhaseStart - Callback when a phase starts ({phase, progress}) => void
+     * @returns {Promise<Object>} Parsed USD object
+     */
+    async parseAsync(binary /* ArrayBuffer */, filePath /* optional */, options = {}) {
+        if (!this.native_) {
+            await this.init();
+        }
+
+        const usd = new this.native_.TinyUSDZLoaderNative();
+
+        // Set memory limit before loading if specified
+        const memoryLimit = options.maxMemoryLimitMB || this.maxMemoryLimitMB_;
+        if (memoryLimit !== undefined) {
+            usd.setMaxMemoryLimitMB(memoryLimit);
+        }
+
+        // Set bone reduction configuration
+        if (this.enableBoneReduction_) {
+            usd.setEnableBoneReduction(true);
+            usd.setTargetBoneCount(this.targetBoneCount_ || 4);
+        }
+
+        // Set up async phase callback on Module if provided
+        if (options.onPhaseStart) {
+            this.native_.onAsyncPhaseStart = options.onPhaseStart;
+        }
+
+        try {
+            // Call the C++20 coroutine-based async loader
+            // This returns a Promise that resolves to { success, error?, meshCount?, materialCount?, textureCount? }
+            const result = await usd.loadFromBinaryAsync(binary, filePath || '');
+
+            if (!result.success) {
+                throw new Error(`TinyUSDZLoader: Failed to load USD: ${result.error || 'unknown error'}`);
+            }
+
+            return usd;
+        } finally {
+            // Clean up callback
+            if (options.onPhaseStart) {
+                this.native_.onAsyncPhaseStart = null;
+            }
+        }
+    }
+
+    /**
+     * Load USD file from URL using C++20 coroutine-based async loading.
+     * This method yields to the JavaScript event loop during processing,
+     * allowing the browser to repaint.
+     *
+     * @param {string} url - URL to load from
+     * @param {Object} options - Loading options
+     * @param {number} options.maxMemoryLimitMB - Override memory limit
+     * @param {Function} options.onPhaseStart - Callback when a phase starts ({phase, progress}) => void
+     * @param {Function} options.onFetchProgress - Fetch progress callback (loaded, total) => void
+     * @returns {Promise<Object>} Parsed USD object
+     */
+    async loadAsync(url, options = {}) {
+        if (!this.native_) {
+            await this.init();
+        }
+
+        // Fetch the file with progress
+        const response = await fetch(url);
+        if (!response.ok) {
+            throw new Error(`Failed to fetch: ${response.statusText}`);
+        }
+
+        // Get content length for progress calculation
+        const contentLength = response.headers.get('content-length');
+        const total = contentLength ? parseInt(contentLength, 10) : 0;
+
+        // Read response with progress
+        const reader = response.body.getReader();
+        const chunks = [];
+        let loaded = 0;
+
+        while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+
+            chunks.push(value);
+            loaded += value.length;
+
+            if (options.onFetchProgress) {
+                options.onFetchProgress(loaded, total);
+            }
+        }
+
+        // Combine chunks
+        const binary = new Uint8Array(loaded);
+        let offset = 0;
+        for (const chunk of chunks) {
+            binary.set(chunk, offset);
+            offset += chunk.length;
+        }
+
+        // Parse using coroutine-based async method
+        return this.parseAsync(binary, url, options);
+    }
+
+    /**
      * Load USD file from URL with progress reporting
      *
      * @param {string} url - URL to load from

@@ -1081,52 +1081,158 @@ async function loadUSDWithProgress(source, isFile = false) {
 
         let usd;
 
+        // Check if coroutine-based async loading is available
+        const hasCoroutineAsync = loaderState.loader.hasAsyncSupport && loaderState.loader.hasAsyncSupport();
+        if (hasCoroutineAsync) {
+            console.log('[Progress Demo] Using C++20 coroutine async loading');
+        } else {
+            console.log('[Progress Demo] Using standard Promise-based loading');
+        }
+
         if (isFile) {
             // Load from File object
             updateProgressUI({ stage: 'downloading', percentage: 0, message: 'Reading file...' });
             const arrayBuffer = await source.arrayBuffer();
 
-            updateProgressUI({ stage: 'parsing', percentage: 30, message: 'Parsing USD...' });
-            usd = await new Promise((resolve, reject) => {
-                loaderState.loader.parse(
+            if (hasCoroutineAsync) {
+                // Use coroutine-based async loading - yields to browser between phases
+                updateProgressUI({ stage: 'parsing', percentage: 30, message: 'Parsing USD (coroutine async)...' });
+                usd = await loaderState.loader.parseAsync(
                     new Uint8Array(arrayBuffer),
                     source.name,
-                    resolve,
-                    reject
-                );
-            });
-        } else {
-            // Load from URL with progress
-            usd = await new Promise((resolve, reject) => {
-                loaderState.loader.load(
-                    source,
-                    resolve,
-                    (event) => {
-                        if (event.stage === 'downloading') {
-                            const pct = event.total > 0 ? Math.round((event.loaded / event.total) * 100) : 0;
+                    {
+                        onPhaseStart: (info) => {
+                            // Map coroutine phases to our progress stages
+                            const phaseMap = {
+                                'detecting': { stage: 'parsing', pct: 30, msg: 'Detecting format...' },
+                                'parsing': { stage: 'parsing', pct: 35, msg: 'Parsing USD...' },
+                                'setup': { stage: 'parsing', pct: 45, msg: 'Setting up converter...' },
+                                'assets': { stage: 'parsing', pct: 50, msg: 'Resolving assets...' },
+                                'meshes': { stage: 'parsing', pct: 55, msg: 'Converting meshes...' },
+                                'complete': { stage: 'building', pct: 80, msg: 'Building scene...' }
+                            };
+                            const mapped = phaseMap[info.phase] || { stage: 'parsing', pct: 30 + info.progress * 50, msg: info.phase };
                             updateProgressUI({
-                                stage: 'downloading',
-                                percentage: pct * 0.3,
-                                message: event.message || `Downloading... ${pct}%`
-                            });
-                        } else if (event.stage === 'parsing') {
-                            // Show mesh progress if available from detailed callback
-                            let message = 'Parsing USD...';
-                            if (event.meshesTotal && event.meshesTotal > 0) {
-                                message = `Converting meshes (${event.meshesProcessed || 0}/${event.meshesTotal})...`;
-                            } else if (event.tydraStage) {
-                                message = `Converting: ${event.tydraStage}`;
-                            }
-                            updateProgressUI({
-                                stage: 'parsing',
-                                percentage: 30 + event.percentage * 0.2,
-                                message: message
+                                stage: mapped.stage,
+                                percentage: mapped.pct,
+                                message: mapped.msg
                             });
                         }
-                    },
-                    reject
+                    }
                 );
-            });
+            } else {
+                // Fallback to standard Promise-based loading
+                updateProgressUI({ stage: 'parsing', percentage: 30, message: 'Parsing USD...' });
+                usd = await new Promise((resolve, reject) => {
+                    loaderState.loader.parse(
+                        new Uint8Array(arrayBuffer),
+                        source.name,
+                        resolve,
+                        reject
+                    );
+                });
+            }
+        } else {
+            // Load from URL
+            if (hasCoroutineAsync) {
+                // Use coroutine-based async loading for URL
+                // First fetch the file manually for download progress, then use parseAsync
+                updateProgressUI({ stage: 'downloading', percentage: 0, message: 'Downloading...' });
+
+                const response = await fetch(source);
+                if (!response.ok) {
+                    throw new Error(`Failed to fetch ${source}: ${response.status}`);
+                }
+
+                const contentLength = response.headers.get('content-length');
+                const total = contentLength ? parseInt(contentLength, 10) : 0;
+
+                let loaded = 0;
+                const reader = response.body.getReader();
+                const chunks = [];
+
+                while (true) {
+                    const { done, value } = await reader.read();
+                    if (done) break;
+
+                    chunks.push(value);
+                    loaded += value.length;
+
+                    const pct = total > 0 ? Math.round((loaded / total) * 100) : 0;
+                    updateProgressUI({
+                        stage: 'downloading',
+                        percentage: pct * 0.3,
+                        message: `Downloading... ${pct}%`
+                    });
+                }
+
+                // Combine chunks into single Uint8Array
+                const totalLength = chunks.reduce((acc, chunk) => acc + chunk.length, 0);
+                const binary = new Uint8Array(totalLength);
+                let offset = 0;
+                for (const chunk of chunks) {
+                    binary.set(chunk, offset);
+                    offset += chunk.length;
+                }
+
+                // Use coroutine-based async parsing
+                updateProgressUI({ stage: 'parsing', percentage: 30, message: 'Parsing USD (coroutine async)...' });
+                usd = await loaderState.loader.parseAsync(
+                    binary,
+                    source,
+                    {
+                        onPhaseStart: (info) => {
+                            // Map coroutine phases to our progress stages
+                            const phaseMap = {
+                                'detecting': { stage: 'parsing', pct: 30, msg: 'Detecting format...' },
+                                'parsing': { stage: 'parsing', pct: 35, msg: 'Parsing USD...' },
+                                'setup': { stage: 'parsing', pct: 45, msg: 'Setting up converter...' },
+                                'assets': { stage: 'parsing', pct: 50, msg: 'Resolving assets...' },
+                                'meshes': { stage: 'parsing', pct: 55, msg: 'Converting meshes...' },
+                                'complete': { stage: 'building', pct: 80, msg: 'Building scene...' }
+                            };
+                            const mapped = phaseMap[info.phase] || { stage: 'parsing', pct: 30 + info.progress * 50, msg: info.phase };
+                            updateProgressUI({
+                                stage: mapped.stage,
+                                percentage: mapped.pct,
+                                message: mapped.msg
+                            });
+                        }
+                    }
+                );
+            } else {
+                // Fallback: Load from URL with standard progress
+                usd = await new Promise((resolve, reject) => {
+                    loaderState.loader.load(
+                        source,
+                        resolve,
+                        (event) => {
+                            if (event.stage === 'downloading') {
+                                const pct = event.total > 0 ? Math.round((event.loaded / event.total) * 100) : 0;
+                                updateProgressUI({
+                                    stage: 'downloading',
+                                    percentage: pct * 0.3,
+                                    message: event.message || `Downloading... ${pct}%`
+                                });
+                            } else if (event.stage === 'parsing') {
+                                // Show mesh progress if available from detailed callback
+                                let message = 'Parsing USD...';
+                                if (event.meshesTotal && event.meshesTotal > 0) {
+                                    message = `Converting meshes (${event.meshesProcessed || 0}/${event.meshesTotal})...`;
+                                } else if (event.tydraStage) {
+                                    message = `Converting: ${event.tydraStage}`;
+                                }
+                                updateProgressUI({
+                                    stage: 'parsing',
+                                    percentage: 30 + event.percentage * 0.2,
+                                    message: message
+                                });
+                            }
+                        },
+                        reject
+                    );
+                });
+            }
         }
 
         loaderState.nativeLoader = usd;
