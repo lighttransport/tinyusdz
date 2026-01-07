@@ -1600,8 +1600,11 @@ TimeSamples::TimeSamples(TimeSamples&& other) noexcept
       _small_values(std::move(other._small_values)),
       _values(std::move(other._values)),
       _offsets(std::move(other._offsets)),
+      _value_array_storage(std::move(other._value_array_storage)),
+      _value_array_refs(std::move(other._value_array_refs)),
       _type_id(other._type_id),
       _use_pod(other._use_pod),
+      _use_value_array(other._use_value_array),
       _is_array(other._is_array),
       _array_size(other._array_size),
       _element_size(other._element_size),
@@ -1613,6 +1616,7 @@ TimeSamples::TimeSamples(TimeSamples&& other) noexcept
   // Reset moved-from object to valid empty state
   other._type_id = 0;
   other._use_pod = false;
+  other._use_value_array = false;
   other._is_array = false;
   other._array_size = 0;
   other._element_size = 0;
@@ -1634,8 +1638,11 @@ TimeSamples& TimeSamples::operator=(TimeSamples&& other) noexcept {
     _offsets = std::move(other._offsets);
     _pod_samples = std::move(other._pod_samples);
     _small_values = std::move(other._small_values);
+    _value_array_storage = std::move(other._value_array_storage);
+    _value_array_refs = std::move(other._value_array_refs);
     _type_id = other._type_id;
     _use_pod = other._use_pod;
+    _use_value_array = other._use_value_array;
     _is_array = other._is_array;
     _array_size = other._array_size;
     _element_size = other._element_size;
@@ -1647,6 +1654,7 @@ TimeSamples& TimeSamples::operator=(TimeSamples&& other) noexcept {
     // Reset moved-from object to valid empty state
     other._type_id = 0;
     other._use_pod = false;
+    other._use_value_array = false;
     other._is_array = false;
     other._array_size = 0;
     other._element_size = 0;
@@ -1666,8 +1674,11 @@ TimeSamples::TimeSamples(const TimeSamples& other)
       _small_values(other._small_values),
       _values(other._values),
       _offsets(other._offsets),
+      // _value_array_storage is copied in body to avoid TypeTraits issues
+      _value_array_refs(other._value_array_refs),
       _type_id(other._type_id),
       _use_pod(other._use_pod),
+      _use_value_array(other._use_value_array),
       _is_array(other._is_array),
       _array_size(other._array_size),
       _element_size(other._element_size),
@@ -1676,6 +1687,11 @@ TimeSamples::TimeSamples(const TimeSamples& other)
       _dirty_start(other._dirty_start),
       _dirty_end(other._dirty_end),
       _pod_samples(other._pod_samples) {
+  // Copy value array storage in body to avoid TypeTraits instantiation issues
+  _value_array_storage.reserve(other._value_array_storage.size());
+  for (const auto& v : other._value_array_storage) {
+    _value_array_storage.push_back(v);
+  }
   // Deep copy _array_values (vector of unique_ptr)
   _array_values.clear();
   _array_values.reserve(other._array_values.size());
@@ -1700,6 +1716,7 @@ TimeSamples& TimeSamples::operator=(const TimeSamples& other) {
     _offsets = other._offsets;
     _type_id = other._type_id;
     _use_pod = other._use_pod;
+    _use_value_array = other._use_value_array;
     _is_array = other._is_array;
     _array_size = other._array_size;
     _element_size = other._element_size;
@@ -1709,6 +1726,13 @@ TimeSamples& TimeSamples::operator=(const TimeSamples& other) {
     _dirty_end = other._dirty_end;
     _pod_samples = other._pod_samples;
     _small_values = other._small_values;
+    _value_array_refs = other._value_array_refs;
+    // Copy value array storage element by element to avoid TypeTraits instantiation issues
+    _value_array_storage.clear();
+    _value_array_storage.reserve(other._value_array_storage.size());
+    for (const auto& v : other._value_array_storage) {
+      _value_array_storage.push_back(v);
+    }
 
     // Deep copy _array_values (vector of unique_ptr)
     _array_values.clear();

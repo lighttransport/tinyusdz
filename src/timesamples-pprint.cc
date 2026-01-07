@@ -311,6 +311,9 @@ void print_vector<uint8_t, 4>(OutputAdapter& out, const uint8_t* data) {
 void print_pod_value_dispatch(OutputAdapter& out, const uint8_t* data, uint32_t type_id) {
   using namespace value;
 
+  // Strip array bit - we're printing a single element
+  type_id = type_id & (~TYPE_ID_1D_ARRAY_BIT);
+
   switch (type_id) {
     DISPATCH_POD_TYPE(TYPE_ID_BOOL, bool, print_type)
     DISPATCH_POD_TYPE(TYPE_ID_CHAR, char, print_type)
@@ -1490,6 +1493,9 @@ void pprint_pod_value_by_type(StreamWriter& writer, const uint8_t* data, uint32_
 size_t get_pod_type_size(uint32_t type_id) {
     using namespace value;
 
+    // Strip array bit - we want the element size
+    type_id = type_id & (~TYPE_ID_1D_ARRAY_BIT);
+
     switch (type_id) {
         case TYPE_ID_BOOL:
             return sizeof(bool);
@@ -2326,10 +2332,6 @@ void pprint_timesamples(StreamWriter& writer, const value::TimeSamples& samples,
         const auto& offsets = samples.get_offsets();
         const auto& array_counts = samples.get_array_counts();
 
-        //TUSDZ_LOG_I("times.size " << times.size());
-        //TUSDZ_LOG_I("blocked.size " << blocked.size());
-        //TUSDZ_LOG_I("values.size " << values.size());
-
         // Write samples - handle offset table if present
         if (!offsets.empty()) {
 
@@ -2340,7 +2342,11 @@ void pprint_timesamples(StreamWriter& writer, const value::TimeSamples& samples,
                 writer.write(times[i]);
                 writer.write(": ");
 
-                if (blocked[i] || offsets[i] == SIZE_MAX) {
+                // Check blocked array bounds before accessing
+                bool is_blocked = (i < blocked.size()) ? blocked[i] : false;
+                // Check offsets bounds as well - treat out-of-bounds as None
+                bool offset_is_none = (i >= offsets.size()) || (offsets[i] == SIZE_MAX);
+                if (is_blocked || offset_is_none) {
                     writer.write("None");
                 } else {
                     // Resolve offset (may be encoded with dedup/array flags) and get resolved index
@@ -2374,6 +2380,18 @@ void pprint_timesamples(StreamWriter& writer, const value::TimeSamples& samples,
             }
         } else {
             // Legacy: blocked values still counted in offset calculation
+            // Handle case where values is empty but times is not
+            if (values.empty() && !times.empty()) {
+                for (size_t i = 0; i < times.size(); ++i) {
+                    writer.write(pprint::Indent(indent + 1));
+                    writer.write(times[i]);
+                    writer.write(": /* empty value data */");
+                    if (i < times.size() - 1) {
+                        writer.write(",");
+                    }
+                    writer.write("\n");
+                }
+            } else {
             size_t value_offset = 0;
             for (size_t i = 0; i < times.size(); ++i) {
                 //TUSDZ_LOG_I("times[" << i << "] = " << times[i]);
@@ -2381,7 +2399,9 @@ void pprint_timesamples(StreamWriter& writer, const value::TimeSamples& samples,
                 writer.write(times[i]);
                 writer.write(": ");
 
-                if (blocked[i]) {
+                // Check blocked array bounds before accessing
+                bool is_blocked = (i < blocked.size()) ? blocked[i] : false;
+                if (is_blocked) {
                     writer.write("None");
                 } else {
                     // Get pointer to value data
@@ -2407,6 +2427,7 @@ void pprint_timesamples(StreamWriter& writer, const value::TimeSamples& samples,
                 }
                 writer.write("\n");
             }
+            } // end else for values.empty() check
         }
     } else {
         // Non-POD path: use regular samples
