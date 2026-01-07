@@ -55,7 +55,7 @@ make clean
 ### Manual Compilation
 
 ```bash
-g++-13 -std=c++14 -I../../../src test-typed-array-factories.cc -o test-typed-array-factories
+g++-13 -std=c++17 -I../../../src test-typed-array-factories.cc -o test-typed-array-factories
 ./test-typed-array-factories
 ```
 
