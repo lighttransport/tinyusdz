@@ -5,8 +5,8 @@ project(tinyusdz_c VERSION 1.0.0 LANGUAGES C CXX)
 set(CMAKE_C_STANDARD 99)
 set(CMAKE_C_STANDARD_REQUIRED ON)
 
-# C++14 for the implementation
-set(CMAKE_CXX_STANDARD 14)
+# C++17 for the implementation
+set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 # Options

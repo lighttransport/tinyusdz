@@ -7,7 +7,7 @@ AR = ar
 
 # Flags
 CFLAGS = -std=c99 -Wall -Wextra -O2 -fPIC
-CXXFLAGS = -std=c++14 -Wall -Wextra -O2 -fPIC
+CXXFLAGS = -std=c++17 -Wall -Wextra -O2 -fPIC
 LDFLAGS = -shared
 
 # Paths
