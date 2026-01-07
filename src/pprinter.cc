@@ -13,6 +13,7 @@
 #include "layer.hh"
 #include "str-util.hh"
 #include "tiny-format.hh"
+#include "usdLux.hh"
 #include "usdShade.hh"
 #include "usdMtlx.hh"
 #include "value-pprint.hh"
@@ -4649,30 +4650,7 @@ std::string to_string(const XformOp::OpType &op) {
 
 //std::string to_string(const tinyusdz::value::token &v) { return v.str(); }
 
-std::string to_string(const DomeLight::TextureFormat &texformat) {
-  std::string s = "[InvalidTextureFormat]";
-
-  switch (texformat) {
-    case DomeLight::TextureFormat::Automatic: {
-      s = "automatic";
-      break;
-    }
-    case DomeLight::TextureFormat::Latlong: {
-      s = "latlong";
-      break;
-    }
-    case DomeLight::TextureFormat::MirroredBall: {
-      s = "mirroedBall";
-      break;
-    }
-    case DomeLight::TextureFormat::Angular: {
-      s = "angular";
-      break;
-    }
-  }
-
-  return s;
-}
+// to_string(DomeLight::TextureFormat) is defined in usdLux.cc
 
 std::string dump_path(const Path &path) {
   std::stringstream ss;
