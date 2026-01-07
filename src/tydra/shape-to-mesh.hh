@@ -17,6 +17,11 @@
 namespace tinyusdz {
 namespace tydra {
 
+namespace {
+constexpr double kPI = 3.14159265358979323846;
+constexpr double kPI_2 = 1.57079632679489661923;  // PI / 2
+}
+
 ///
 /// Sphere tessellation modes
 ///
@@ -145,8 +150,8 @@ inline void GenerateUVSphereMesh(
     for (int sector = 0; sector < sectors; sector++) {
       float const ringF = static_cast<float>(ring);
       float const sectorF = static_cast<float>(sector);
-      float const pi_f = static_cast<float>(M_PI);
-      float const pi_2_f = static_cast<float>(M_PI_2);
+      float const pi_f = static_cast<float>(kPI);
+      float const pi_2_f = static_cast<float>(kPI_2);
       float const y = std::sin(-pi_2_f + pi_f * ringF * R);
       float const x = std::cos(2.0f * pi_f * sectorF * S) * std::sin(pi_f * ringF * R);
       float const z = std::sin(2.0f * pi_f * sectorF * S) * std::sin(pi_f * ringF * R);
@@ -322,7 +327,7 @@ inline void GenerateIcosphereMesh(
     // UV coordinates (spherical projection)
     for (int i = 0; i < 3; i++) {
       const value::float3 &v = vertices[static_cast<size_t>(face[static_cast<size_t>(i)])];
-      float const pi_f = static_cast<float>(M_PI);
+      float const pi_f = static_cast<float>(kPI);
       float u = 0.5f + std::atan2(v[2], v[0]) / (2.0f * pi_f);
       float v_coord = 0.5f - std::asin(v[1]) / pi_f;
       uvs.push_back({u, v_coord});
