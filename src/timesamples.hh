@@ -1391,6 +1391,7 @@ struct TimeSamples {
       _type_id = v.type_id();
       _use_value_array = true;
       _is_array = true;
+      _use_pod = false;  // Value array storage is not POD storage
     }
 
     // Store in value array storage
@@ -1989,7 +1990,8 @@ struct TimeSamples {
     }
 
     // If _use_pod = false but unified storage has data, convert to generic samples
-    if (!_times.empty() && _samples.empty()) {
+    // Skip if using value array storage - that's handled below
+    if (!_use_value_array && !_times.empty() && _samples.empty()) {
       if (_dirty) {
         update();
       }
@@ -2106,6 +2108,39 @@ struct TimeSamples {
           } else {
             s.value = value::Value();  // Fallback
           }
+        }
+
+        _samples.push_back(s);
+      }
+      return _samples;
+    }
+
+    // Handle value array storage (from add_value_array_sample)
+    if (_use_value_array && !_times.empty() && _samples.empty()) {
+      if (_dirty) {
+        update();
+      }
+
+      _samples.clear();
+      _samples.reserve(_times.size());
+
+      for (size_t i = 0; i < _times.size(); ++i) {
+        Sample s;
+        s.t = _times[i];
+
+        // Check dedup flag from _value_array_refs
+        if (i < _value_array_refs.size()) {
+          size_t storage_idx = get_value_array_index(_value_array_refs[i]);
+          if (storage_idx < _value_array_storage.size()) {
+            s.value = _value_array_storage[storage_idx];
+            s.blocked = false;
+          } else {
+            s.value = value::Value();  // Invalid index
+            s.blocked = true;
+          }
+        } else {
+          s.value = value::Value();
+          s.blocked = true;
         }
 
         _samples.push_back(s);
