@@ -1092,7 +1092,8 @@ bool CrateReader::ReadDoubleArrayTyped(bool is_compressed, TypedArray<double> *d
           _err += "Failed to read compressed ints in ReadDoubleArrayTyped.\n";
           return false;
         }
-        std::copy(ints.begin(), ints.end(), (*d)->data());
+        std::transform(ints.begin(), ints.end(), (*d)->data(),
+                       [](int64_t v) { return static_cast<double>(v); });
       } else if (code == 't') {
         uint32_t lutSize;
         if (!_sr->read4(&lutSize)) {
