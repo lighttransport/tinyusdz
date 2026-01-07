@@ -116,7 +116,7 @@ jobs:
     - name: tests
       run: cd build && ctest --output-on-failure
 
-  build-arm64:
+  build-arm64-gcc:
 
     runs-on: ubuntu-22.04-arm
 
@@ -127,11 +127,33 @@ jobs:
       run: |
         lscpu
         cat /proc/cpuinfo
-    # ubuntu-latest(Ubuntu 22.04 as of 2024/01/03) has clang installed,
-    # so use clang
-    # TODO: Use libc++ for STL?
     - name: configure
-      run: CXX=clang++ CC=clang ./scripts/bootstrap-cmake-linux.sh
+      run: CXX=g++ CC=gcc ./scripts/bootstrap-cmake-linux.sh
+    - name: make
+      run: cd build && make
+    - name: tests
+      run: cd build && ctest --output-on-failure
+
+  build-arm64-clang:
+
+    runs-on: ubuntu-22.04-arm
+
+    steps:
+    - uses: actions/checkout@v2
+
+    - name: prep
+      run: |
+        lscpu
+        cat /proc/cpuinfo
+    # Install recent Clang from LLVM apt repository
+    - name: install clang-21
+      run: |
+        wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key | sudo tee /etc/apt/trusted.gpg.d/apt.llvm.org.asc
+        sudo add-apt-repository -y "deb http://apt.llvm.org/jammy/ llvm-toolchain-jammy-21 main"
+        sudo apt-get update
+        sudo apt-get install -y clang-21
+    - name: configure
+      run: CXX=clang++-21 CC=clang-21 ./scripts/bootstrap-cmake-linux.sh
     - name: make
       run: cd build && make
     - name: tests
