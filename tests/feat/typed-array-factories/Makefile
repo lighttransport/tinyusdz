@@ -2,7 +2,7 @@
 # Standalone test that can be built without CMake
 
 CXX = g++-13
-CXXFLAGS = -std=c++14 -Wall -Wextra -O2 -g
+CXXFLAGS = -std=c++17 -Wall -Wextra -O2 -g
 INCLUDES = -I../../../src
 
 # Source files

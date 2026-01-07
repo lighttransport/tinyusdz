@@ -30,15 +30,15 @@ class BuildExt(build_ext):
     """Custom build extension to set ABI3 flags"""
 
     def build_extensions(self):
-        # Set C++14 standard
+        # Set C++17 standard
         if self.compiler.compiler_type == 'unix':
             for ext in self.extensions:
-                ext.extra_compile_args.append('-std=c++14')
+                ext.extra_compile_args.append('-std=c++17')
                 # Enable ABI3 limited API
                 ext.define_macros.append(('Py_LIMITED_API', '0x030a0000'))
         elif self.compiler.compiler_type == 'msvc':
             for ext in self.extensions:
-                ext.extra_compile_args.append('/std:c++14')
+                ext.extra_compile_args.append('/std:c++17')
                 # Enable ABI3 limited API
                 ext.define_macros.append(('Py_LIMITED_API', '0x030a0000'))
 
