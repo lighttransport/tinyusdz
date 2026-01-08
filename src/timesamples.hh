@@ -180,7 +180,9 @@ struct TimeSamples {
   /// This determines whether to use POD optimization or regular storage
   bool init(uint32_t type_id);
 
-  /// Check if using unified POD storage (deprecated - always true now)
+  /// Check if unified storage has samples (i.e., _times is not empty)
+  /// Returns true if any samples have been added to unified storage path.
+  /// Note: After PODTimeSamples removal, this checks unified storage, not a separate POD type.
   bool is_using_pod() const { return !_times.empty(); }
 
   /// Check if storing std::vector-based array data
@@ -710,11 +712,8 @@ struct TimeSamples {
 
     // Use unified storage - find index by time
     if (!_times.empty()) {
-      auto it = std::find_if(_times.begin(), _times.end(), [&t](double sample_t) {
-        return std::fabs(t - sample_t) < std::numeric_limits<double>::epsilon();
-      });
-      if (it != _times.end()) {
-        size_t idx = static_cast<size_t>(std::distance(_times.begin(), it));
+      size_t idx = find_time_index_in_unified(t);
+      if (idx != kNotFound) {
         return get_typed_array_at<T>(idx, typed_array, blocked);
       }
     }
@@ -857,22 +856,15 @@ struct TimeSamples {
 
     // Check unified storage first
     if (!_times.empty()) {
-      auto it = std::find_if(_times.begin(), _times.end(), [&t](double sample_t) {
-        return std::fabs(t - sample_t) < std::numeric_limits<double>::epsilon();
-      });
-      if (it != _times.end()) {
-        size_t idx = static_cast<size_t>(std::distance(_times.begin(), it));
+      size_t idx = find_time_index_in_unified(t);
+      if (idx != kNotFound) {
         return get_typed_array_view_at<T>(idx);
       }
     }
 
     // For regular Value storage
-    const auto it = std::find_if(_samples.begin(), _samples.end(), [&t](const Sample& s) {
-      return std::fabs(t - s.t) < std::numeric_limits<double>::epsilon();
-    });
-
-    if (it != _samples.end()) {
-      size_t idx = static_cast<size_t>(std::distance(_samples.begin(), it));
+    size_t idx = find_time_index_in_samples(t);
+    if (idx != kNotFound) {
       return get_typed_array_view_at<T>(idx);
     }
 
@@ -1079,34 +1071,32 @@ struct TimeSamples {
     return _samples;
   }
 
-#if 1  // TODO: Write implementation in .cc
+  // Get value at specified time.
+  // For non-interpolatable types (includes enums and unknown types)
+  //
+  // Return `Held` value even when TimeSampleInterpolationType is
+  // Linear. Returns false when specified time is out-of-range.
+  template<typename T, std::enable_if_t<!value::LerpTraits<T>::supported(), std::nullptr_t> = nullptr>
+  bool get(T *dst, double t = value::TimeCode::Default(),
+           value::TimeSampleInterpolationType interp =
+               value::TimeSampleInterpolationType::Linear) const {
 
-    // Get value at specified time.
-    // For non-interpolatable types(includes enums and unknown types)
-    //
-    // Return `Held` value even when TimeSampleInterpolationType is
-    // Linear. Returns nullopt when specified time is out-of-range.
-    template<typename T, std::enable_if_t<!value::LerpTraits<T>::supported(), std::nullptr_t> = nullptr>
-    bool get(T *dst, double t = value::TimeCode::Default(),
-             value::TimeSampleInterpolationType interp =
-                 value::TimeSampleInterpolationType::Linear) const {
+    (void)interp;
 
-      (void)interp;
+    if (!dst) {
+      return false;
+    }
 
-      if (!dst) {
-        return false;
-      }
+    if (empty()) {
+      return false;
+    }
 
-      if (empty()) {
-        return false;
-      }
+    if (_dirty) {
+      update();
+    }
 
-      if (_dirty) {
-        update();
-      }
-
-      if (value::TimeCode(t).is_default()) {
-        // TODO: Handle bloked
+    if (value::TimeCode(t).is_default()) {
+      // TODO: Handle blocked
         if (const auto pv = _samples[0].value.as<T>()) {
           (*dst) = *pv;
           return true;
@@ -1159,7 +1149,7 @@ struct TimeSamples {
 
     if (value::TimeCode(t).is_default()) {
       // FIXME: Use the first item for now.
-      // TODO: Handle bloked
+      // TODO: Handle blocked
       if (!_samples.empty()) {
         if (const auto pv = _samples[0].value.as<T>()) {
           (*dst) = *pv;
@@ -1243,7 +1233,6 @@ struct TimeSamples {
 
     return false;
   }
-#endif
 
   size_t estimate_memory_usage() const {
     size_t total = sizeof(TimeSamples);
@@ -1578,25 +1567,16 @@ struct TimeSamples {
 
     // Check unified POD storage
     if (!_times.empty()) {
-      // Find index for time
-      auto it = std::find_if(_times.begin(), _times.end(), [&t](double sample_t) {
-        return std::fabs(t - sample_t) < std::numeric_limits<double>::epsilon();
-      });
-
-      if (it != _times.end()) {
-        size_t idx = static_cast<size_t>(std::distance(_times.begin(), it));
+      size_t idx = find_time_index_in_unified(t);
+      if (idx != kNotFound) {
         return get_vector_at<T>(idx, out_vec, out_blocked);
       }
       return false;  // Time not found
     }
 
     // Check generic Value storage
-    auto it = std::find_if(_samples.begin(), _samples.end(), [&t](const Sample& s) {
-      return std::fabs(t - s.t) < std::numeric_limits<double>::epsilon();
-    });
-
-    if (it != _samples.end()) {
-      size_t idx = static_cast<size_t>(std::distance(_samples.begin(), it));
+    size_t idx = find_time_index_in_samples(t);
+    if (idx != kNotFound) {
       return get_vector_at<T>(idx, out_vec, out_blocked);
     }
 
@@ -1683,6 +1663,34 @@ struct TimeSamples {
   mutable size_t _dirty_end{0};
 
   // _pod_samples removed - using unified storage directly
+
+  /// Find index for time value in _times vector using epsilon comparison
+  /// @param t Time value to search for
+  /// @return Index if found, or size_t(-1) if not found
+  size_t find_time_index_in_unified(double t) const {
+    auto it = std::find_if(_times.begin(), _times.end(), [&t](double sample_t) {
+      return std::fabs(t - sample_t) < std::numeric_limits<double>::epsilon();
+    });
+    if (it != _times.end()) {
+      return static_cast<size_t>(std::distance(_times.begin(), it));
+    }
+    return static_cast<size_t>(-1);  // Not found
+  }
+
+  /// Find index for time value in _samples vector using epsilon comparison
+  /// @param t Time value to search for
+  /// @return Index if found, or size_t(-1) if not found
+  size_t find_time_index_in_samples(double t) const {
+    auto it = std::find_if(_samples.begin(), _samples.end(), [&t](const Sample& s) {
+      return std::fabs(t - s.t) < std::numeric_limits<double>::epsilon();
+    });
+    if (it != _samples.end()) {
+      return static_cast<size_t>(std::distance(_samples.begin(), it));
+    }
+    return static_cast<size_t>(-1);  // Not found
+  }
+
+  static constexpr size_t kNotFound = static_cast<size_t>(-1);
 
  public:
   // Helper constants for value array dedup
