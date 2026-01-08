@@ -794,11 +794,18 @@ class TypedArray {
   TypedArrayImpl<T>* get() const noexcept {
     uint64_t ptr_bits = _packed_data & PTR_MASK;
 
-    // Sign-extend from 48 bits to 64 bits for canonical address
+#if defined(__x86_64__) || defined(_M_X64)
+    // x86-64: Sign-extend from 48 bits to 64 bits for canonical address
     // If bit 47 is set, we need to set bits 48-63 to maintain canonical form
+    // This is needed because x86-64 uses canonical addresses where bits 48-63
+    // must match bit 47
     if (ptr_bits & (1ULL << 47)) {
       ptr_bits |= 0xFFFF000000000000ULL;
     }
+#endif
+    // ARM64 and other architectures: No sign extension needed
+    // ARM64 user space addresses can have bit 47 set (0x0000... to 0x0000FFFF...)
+    // and should not be sign-extended to kernel space addresses
 
     return reinterpret_cast<TypedArrayImpl<T>*>(ptr_bits);
   }
