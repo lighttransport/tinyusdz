@@ -116,6 +116,35 @@ jobs:
     - name: tests
       run: cd build && ctest --output-on-failure
 
+  # ARM64 ASan build to debug segfaults
+  build-arm64-asan:
+
+    runs-on: ubuntu-24.04-arm
+
+    steps:
+    - uses: actions/checkout@v2
+
+    - name: prep
+      run: |
+        lscpu
+        cat /proc/cpuinfo
+    - name: configure
+      run: CXX=clang++ CC=clang ./scripts/bootstrap-cmake-linux-asan.sh
+    - name: make
+      run: cd build_asan && make -j4
+
+    # Dedicated USDC tests for files that have shown issues on ARM64
+    - name: test usdc timesamples files with ASan
+      run: |
+        echo "Testing USDC timesamples files with tusdcat (ASan enabled)..."
+        ./build_asan/tusdcat tests/usdc/timesamples-array-vec2f-001.usdc
+        ./build_asan/tusdcat tests/usdc/timesamples-array-float-001.usdc
+        ./build_asan/tusdcat tests/usdc/timesamples-array-int-001.usdc
+        ./build_asan/tusdcat tests/usdc/timesamples-array-dedup-002.usdc
+        ./build_asan/tusdcat tests/usdc/timesamples-array-dedup-001.usdc
+        ./build_asan/tusdcat tests/usdc/timesamples-array-double-001.usdc
+        echo "All USDC timesamples tests passed."
+
   build-arm64-gcc:
 
     runs-on: ubuntu-24.04-arm
