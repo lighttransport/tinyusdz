@@ -3,7 +3,7 @@
 
 ///
 /// @file timesamples-pprint.hh
-/// @brief Pretty printing functions for PODTimeSamples
+/// @brief Pretty printing functions for TimeSamples
 ///
 
 #pragma once
@@ -14,7 +14,6 @@
 namespace tinyusdz {
 
 // Forward declarations
-struct PODTimeSamples;
 class StreamWriter;
 
 namespace value {
@@ -22,27 +21,6 @@ namespace value {
 class Value;
 struct TimeSamples;
 } // namespace value
-
-///
-/// Pretty print PODTimeSamples with indentation support
-///
-/// @param samples PODTimeSamples to print
-/// @param indent Indentation level (number of spaces)
-/// @return String representation of the time samples
-///
-std::string pprint_pod_timesamples(const PODTimeSamples& samples,
-                                    uint32_t indent = 0);
-
-///
-/// Pretty print PODTimeSamples to a StreamWriter
-///
-/// @param writer StreamWriter to write to
-/// @param samples PODTimeSamples to print
-/// @param indent Indentation level (number of spaces)
-///
-void pprint_pod_timesamples(StreamWriter& writer,
-                            const PODTimeSamples& samples,
-                            uint32_t indent = 0);
 
 ///
 /// Pretty print a single POD value based on type_id
