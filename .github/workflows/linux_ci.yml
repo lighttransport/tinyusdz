@@ -131,6 +131,26 @@ jobs:
       run: CXX=g++ CC=gcc ./scripts/bootstrap-cmake-linux.sh
     - name: make
       run: cd build && make
+
+    - name: Upload ARM64 tusdcat binary
+      uses: actions/upload-artifact@v4
+      with:
+        name: tusdcat-linux-arm64-gcc
+        path: build/tusdcat
+        retention-days: 7
+
+    # Dedicated USDC tests for files that have shown issues on ARM64
+    - name: test usdc timesamples files
+      run: |
+        echo "Testing USDC timesamples files with tusdcat..."
+        ./build/tusdcat tests/usdc/timesamples-array-vec2f-001.usdc
+        ./build/tusdcat tests/usdc/timesamples-array-float-001.usdc
+        ./build/tusdcat tests/usdc/timesamples-array-int-001.usdc
+        ./build/tusdcat tests/usdc/timesamples-array-dedup-002.usdc
+        ./build/tusdcat tests/usdc/timesamples-array-dedup-001.usdc
+        ./build/tusdcat tests/usdc/timesamples-array-double-001.usdc
+        echo "All USDC timesamples tests passed."
+
     - name: tests
       run: cd build && ctest --output-on-failure
 
@@ -156,5 +176,25 @@ jobs:
       run: CXX=clang++-21 CC=clang-21 ./scripts/bootstrap-cmake-linux.sh
     - name: make
       run: cd build && make
+
+    - name: Upload ARM64 tusdcat binary
+      uses: actions/upload-artifact@v4
+      with:
+        name: tusdcat-linux-arm64-clang
+        path: build/tusdcat
+        retention-days: 7
+
+    # Dedicated USDC tests for files that have shown issues on ARM64
+    - name: test usdc timesamples files
+      run: |
+        echo "Testing USDC timesamples files with tusdcat..."
+        ./build/tusdcat tests/usdc/timesamples-array-vec2f-001.usdc
+        ./build/tusdcat tests/usdc/timesamples-array-float-001.usdc
+        ./build/tusdcat tests/usdc/timesamples-array-int-001.usdc
+        ./build/tusdcat tests/usdc/timesamples-array-dedup-002.usdc
+        ./build/tusdcat tests/usdc/timesamples-array-dedup-001.usdc
+        ./build/tusdcat tests/usdc/timesamples-array-double-001.usdc
+        echo "All USDC timesamples tests passed."
+
     - name: tests
       run: cd build && ctest --output-on-failure
