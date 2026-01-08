@@ -156,12 +156,8 @@ jobs:
       run: |
         lscpu
         cat /proc/cpuinfo
-    - name: install gdb
-      run: sudo apt-get update && sudo apt-get install -y gdb
-    - name: configure with debug
-      run: |
-        mkdir -p build
-        cd build && CXX=g++ CC=gcc cmake -DCMAKE_BUILD_TYPE=Debug -DCMAKE_VERBOSE_MAKEFILE=1 ..
+    - name: configure
+      run: CXX=g++ CC=gcc ./scripts/bootstrap-cmake-linux.sh
     - name: make
       run: cd build && make
 
@@ -172,20 +168,17 @@ jobs:
         path: build/tusdcat
         retention-days: 7
 
-    # Dedicated USDC tests for files that have shown issues on ARM64 - run under gdb to catch segfault
-    - name: test usdc timesamples files with gdb
+    # Dedicated USDC tests for files that have shown issues on ARM64
+    - name: test usdc timesamples files
       run: |
-        echo "Testing USDC timesamples files with tusdcat under gdb..."
-        for f in tests/usdc/timesamples-array-vec2f-001.usdc \
-                 tests/usdc/timesamples-array-float-001.usdc \
-                 tests/usdc/timesamples-array-int-001.usdc \
-                 tests/usdc/timesamples-array-dedup-002.usdc \
-                 tests/usdc/timesamples-array-dedup-001.usdc \
-                 tests/usdc/timesamples-array-double-001.usdc; do
-          echo "=== Testing $f ==="
-          gdb -batch -ex "run" -ex "bt full" -ex "quit" --args ./build/tusdcat "$f"
-        done
-        echo "All USDC timesamples tests completed."
+        echo "Testing USDC timesamples files with tusdcat..."
+        ./build/tusdcat tests/usdc/timesamples-array-vec2f-001.usdc
+        ./build/tusdcat tests/usdc/timesamples-array-float-001.usdc
+        ./build/tusdcat tests/usdc/timesamples-array-int-001.usdc
+        ./build/tusdcat tests/usdc/timesamples-array-dedup-002.usdc
+        ./build/tusdcat tests/usdc/timesamples-array-dedup-001.usdc
+        ./build/tusdcat tests/usdc/timesamples-array-double-001.usdc
+        echo "All USDC timesamples tests passed."
 
     - name: tests
       run: cd build && ctest --output-on-failure
@@ -202,16 +195,14 @@ jobs:
         lscpu
         cat /proc/cpuinfo
     # Install recent Clang from LLVM apt repository
-    - name: install clang-21 and lldb
+    - name: install clang-21
       run: |
         wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key | sudo tee /etc/apt/trusted.gpg.d/apt.llvm.org.asc
         sudo add-apt-repository -y "deb http://apt.llvm.org/noble/ llvm-toolchain-noble-21 main"
         sudo apt-get update
-        sudo apt-get install -y clang-21 lldb-21
-    - name: configure with debug
-      run: |
-        mkdir -p build
-        cd build && CXX=clang++-21 CC=clang-21 cmake -DCMAKE_BUILD_TYPE=Debug -DCMAKE_VERBOSE_MAKEFILE=1 ..
+        sudo apt-get install -y clang-21
+    - name: configure
+      run: CXX=clang++-21 CC=clang-21 ./scripts/bootstrap-cmake-linux.sh
     - name: make
       run: cd build && make
 
@@ -222,20 +213,17 @@ jobs:
         path: build/tusdcat
         retention-days: 7
 
-    # Dedicated USDC tests for files that have shown issues on ARM64 - run under lldb to catch segfault
-    - name: test usdc timesamples files with lldb
+    # Dedicated USDC tests for files that have shown issues on ARM64
+    - name: test usdc timesamples files
       run: |
-        echo "Testing USDC timesamples files with tusdcat under lldb..."
-        for f in tests/usdc/timesamples-array-vec2f-001.usdc \
-                 tests/usdc/timesamples-array-float-001.usdc \
-                 tests/usdc/timesamples-array-int-001.usdc \
-                 tests/usdc/timesamples-array-dedup-002.usdc \
-                 tests/usdc/timesamples-array-dedup-001.usdc \
-                 tests/usdc/timesamples-array-double-001.usdc; do
-          echo "=== Testing $f ==="
-          lldb-21 -b -o "run" -o "bt all" -o "quit" -- ./build/tusdcat "$f"
-        done
-        echo "All USDC timesamples tests completed."
+        echo "Testing USDC timesamples files with tusdcat..."
+        ./build/tusdcat tests/usdc/timesamples-array-vec2f-001.usdc
+        ./build/tusdcat tests/usdc/timesamples-array-float-001.usdc
+        ./build/tusdcat tests/usdc/timesamples-array-int-001.usdc
+        ./build/tusdcat tests/usdc/timesamples-array-dedup-002.usdc
+        ./build/tusdcat tests/usdc/timesamples-array-dedup-001.usdc
+        ./build/tusdcat tests/usdc/timesamples-array-double-001.usdc
+        echo "All USDC timesamples tests passed."
 
     - name: tests
       run: cd build && ctest --output-on-failure
