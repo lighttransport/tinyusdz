@@ -2266,78 +2266,8 @@ void swap(ChunkedTypedArray<T>& lhs, ChunkedTypedArray<T>& rhs) noexcept {
 }
 
 // ============================================================================
-// TypedArray Factory Functions
+// TypedArray Convenience Functions
 // ============================================================================
-// These factory functions provide clearer, more intuitive interfaces for
-// creating TypedArray instances for common use cases: ownership, deduplication,
-// memory-mapping, and views.
-//
-// Benefits:
-// - Self-documenting: Function names clearly indicate intent
-// - Type-safe: No confusing boolean flag parameters
-// - Zero overhead: All inline, same performance as direct constructors
-// - Backward compatible: Existing code continues to work
-// ============================================================================
-
-// ----------------------------------------------------------------------------
-// TypedArray Factory Functions (Smart Pointer Wrapper)
-// ----------------------------------------------------------------------------
-
-///
-/// Create TypedArray for owned array (will be deleted by TypedArray)
-/// Use this when TypedArray should manage the lifetime of the implementation.
-///
-/// Example:
-///   auto* impl = new TypedArray<float>(100);
-///   TypedArray<float> arr = MakeOwnedTypedArray(impl);
-///   // arr will delete impl when destroyed
-///
-template <typename T>
-inline TypedArray<T> MakeOwnedTypedArray(TypedArray<T>* ptr) {
-  return TypedArray<T>(ptr, false);  // dedup_flag = false: will delete
-}
-
-///
-/// Create TypedArray for deduplicated array (shared, won't be deleted)
-/// Use this when the array is shared/cached and managed elsewhere.
-///
-/// Example:
-///   // Array is stored in dedup cache
-///   auto it = _dedup_float_array.find(value_rep);
-///   TypedArray<float> arr = MakeDedupTypedArray(it->second.get());
-///   // arr won't delete the cached array
-///
-template <typename T>
-inline TypedArray<T> MakeDedupTypedArray(TypedArray<T>* ptr) {
-  return TypedArray<T>(ptr, true);  // dedup_flag = true: won't delete
-}
-
-///
-/// Create TypedArray for shared array (alias for MakeDedupTypedArray)
-/// Use this when the array is shared among multiple owners.
-///
-template <typename T>
-inline TypedArray<T> MakeSharedTypedArray(TypedArray<T>* ptr) {
-  return TypedArray<T>(ptr, true);  // dedup_flag = true: won't delete
-}
-
-///
-/// Create TypedArray for memory-mapped array (non-owning, won't be deleted)
-/// Use this for arrays backed by mmap'd files or external memory.
-///
-/// Example:
-///   float* mmap_data = static_cast<float*>(mmap_ptr);
-///   auto* impl = new TypedArray<float>(mmap_data, count, true);
-///   TypedArray<float> arr = MakeMmapTypedArray(impl);
-///
-template <typename T>
-inline TypedArray<T> MakeMmapTypedArray(TypedArray<T>* ptr) {
-  return TypedArray<T>(ptr, true);  // dedup_flag = true: won't delete
-}
-
-// ----------------------------------------------------------------------------
-// TypedArray Factory Functions (Array Implementation)
-// ----------------------------------------------------------------------------
 
 ///
 /// Create TypedArray with owned copy of data
@@ -2369,94 +2299,16 @@ inline TypedArray<T> MakeTypedArrayReserved(size_t capacity) {
   return arr;
 }
 
-// ----------------------------------------------------------------------------
-// Combined Convenience Functions
-// ----------------------------------------------------------------------------
-
-///
-/// Create owned TypedArray from data copy
-/// Combines allocation, copy, and wrapping in one call.
-///
-/// Example:
-///   float data[] = {1.0f, 2.0f, 3.0f};
-///   TypedArray<float> arr = CreateOwnedTypedArray(data, 3);
-///
-template <typename T>
-inline TypedArray<T> CreateOwnedTypedArray(const T* data, size_t count) {
-  auto* impl = new TypedArray<T>(data, count);
-  return MakeOwnedTypedArray(impl);
-}
-
-///
-/// Create owned TypedArray with specified size (uninitialized)
-/// Allocates array with given size, elements are uninitialized.
-///
-/// Example:
-///   TypedArray<int> arr = CreateOwnedTypedArray<int>(100);
-///   for (size_t i = 0; i < arr.size(); ++i) {
-///       arr[i] = static_cast<int>(i);
-///   }
-///
-template <typename T>
-inline TypedArray<T> CreateOwnedTypedArray(size_t count) {
-  auto* impl = new TypedArray<T>(count);
-  return MakeOwnedTypedArray(impl);
-}
-
-///
-/// Create owned TypedArray with specified size and default value
-/// Allocates and initializes all elements with the given value.
-///
-/// Example:
-///   TypedArray<float> arr = CreateOwnedTypedArray<float>(100, 1.0f);
-///
-template <typename T>
-inline TypedArray<T> CreateOwnedTypedArray(size_t count, const T& value) {
-  auto* impl = new TypedArray<T>(count, value);
-  return MakeOwnedTypedArray(impl);
-}
-
-///
-/// Create deduplicated TypedArray from existing implementation pointer
-/// Use this when storing in deduplication cache.
-///
-/// Example:
-///   TypedArray<int32_t>& cached = _dedup_int32_array[value_rep];
-///   TypedArray<int32_t> arr = CreateDedupTypedArray(&cached);
-///
-template <typename T>
-inline TypedArray<T> CreateDedupTypedArray(TypedArray<T>* ptr) {
-  return MakeDedupTypedArray(ptr);
-}
-
-///
-/// Create mmap TypedArray over external memory
-/// Combines view creation and wrapping for mmap use cases.
-///
-/// Example:
-///   float* mmap_data = static_cast<float*>(mmap_ptr);
-///   TypedArray<float> arr = CreateMmapTypedArray(mmap_data, count);
-///
-template <typename T>
-inline TypedArray<T> CreateMmapTypedArray(T* data, size_t count) {
-  auto* impl = new TypedArray<T>(data, count, true);  // View mode
-  return MakeMmapTypedArray(impl);
-}
-
 ///
 /// Deep copy an existing TypedArray
 /// Creates a new independent copy with its own storage.
-///
-/// Deep copy a TypedArray
-/// Creates a new implementation with copied data.
 ///
 /// Example:
 ///   TypedArray<float> original = ...;
 ///   TypedArray<float> copy = DuplicateTypedArray(original);
 ///
 template <typename T>
-inline TypedArray<T> DuplicateTypedArray(
-    const TypedArray<T>& source) {
+inline TypedArray<T> DuplicateTypedArray(const TypedArray<T>& source) {
   if (source.empty()) {
     return TypedArray<T>();
   }
