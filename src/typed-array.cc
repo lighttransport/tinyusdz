@@ -9,7 +9,7 @@
 
 #include "typed-array.hh"
 
-// Implementation file for TypedArrayImpl - since it's header-only template class,
+// Implementation file for TypedArray - since it's header-only template class,
 // most functionality is implemented in the header file.
 // This file can be used for explicit template instantiations if needed.
 
@@ -18,17 +18,7 @@ namespace tinyusdz {
 // Explicit template instantiations for commonly used types
 // This can help reduce compilation time by pre-instantiating frequently used types
 
-// TypedArrayImpl instantiations
-template class TypedArrayImpl<uint8_t>;
-template class TypedArrayImpl<uint16_t>;
-template class TypedArrayImpl<uint32_t>;
-template class TypedArrayImpl<int8_t>;
-template class TypedArrayImpl<int16_t>;
-template class TypedArrayImpl<int32_t>;
-template class TypedArrayImpl<float>;
-template class TypedArrayImpl<double>;
-
-// TypedArray (packed pointer) instantiations
+// TypedArray (storage class) instantiations
 template class TypedArray<uint8_t>;
 template class TypedArray<uint16_t>;
 template class TypedArray<uint32_t>;
@@ -37,6 +27,16 @@ template class TypedArray<int16_t>;
 template class TypedArray<int32_t>;
 template class TypedArray<float>;
 template class TypedArray<double>;
+
+// TypedArrayPtr (packed pointer wrapper) instantiations
+template class TypedArrayPtr<uint8_t>;
+template class TypedArrayPtr<uint16_t>;
+template class TypedArrayPtr<uint32_t>;
+template class TypedArrayPtr<int8_t>;
+template class TypedArrayPtr<int16_t>;
+template class TypedArrayPtr<int32_t>;
+template class TypedArrayPtr<float>;
+template class TypedArrayPtr<double>;
 
 // TypedArrayView instantiations
 template class TypedArrayView<uint8_t>;
