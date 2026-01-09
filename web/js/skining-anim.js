@@ -4,6 +4,45 @@ import { TransformControls } from 'three/examples/jsm/controls/TransformControls
 import GUI from 'three/examples/jsm/libs/lil-gui.module.min.js';
 import { TinyUSDZLoader } from 'tinyusdz/TinyUSDZLoader.js';
 import { TinyUSDZLoaderUtils } from 'tinyusdz/TinyUSDZLoaderUtils.js';
+// USD Skeletal Animation Helper - provides simplified Three.js integration
+import {
+	createThreeSkeletonFromUSD,
+	createThreeAnimationClip,
+	createSkinnedMeshFromUSD,
+	playAnimation as helperPlayAnimation
+} from 'tinyusdz/USDSkeletalHelper.js';
+
+// ===========================================
+// Configuration
+// ===========================================
+
+/**
+ * USD Skeletal Animation - Two Implementation Approaches
+ *
+ * This demo supports two ways to handle skeletal animation from USD files:
+ *
+ * 1. SIMPLIFIED HELPER APPROACH (USE_SKELETAL_HELPER = true):
+ *    - Uses USDSkeletalHelper.js functions for minimal code
+ *    - Best for: Basic skeletal animation playback
+ *    - Pros: Simple, clean, easy to understand
+ *    - Example usage:
+ *      ```javascript
+ *      const skeleton = createThreeSkeletonFromUSD(usdSkeleton);
+ *      const clip = createThreeAnimationClip(usdAnimation, skeleton);
+ *      // or even simpler:
+ *      const result = createSkinnedMeshFromUSD(usd, meshId, skelId, animId);
+ *      ```
+ *
+ * 2. CUSTOM ADVANCED APPROACH (USE_SKELETAL_HELPER = false, default):
+ *    - Manual skeleton building with custom functions
+ *    - Best for: Advanced features and debugging
+ *    - Pros: Full control, weight visualization, joint manipulation, transform controls
+ *    - Includes: Custom shader for weight visualization, joint sphere gizmos,
+ *                transform controls, joint hierarchy display, bone reduction
+ *
+ * Toggle between approaches by changing USE_SKELETAL_HELPER below.
+ */
+const USE_SKELETAL_HELPER = false;
 
 // Scene setup
 const scene = new THREE.Scene();
@@ -611,12 +650,20 @@ async function loadUSDModel() {
 	await loader.init({ useZstdCompressedWasm: false, useMemory64: false });
 
 	// Default USD file to load
-	const usd_filename = "./assets/skintest-blender-4.1.usda";
+	//const usd_filename = "./assets/skintest.usda";
+	const usd_filename = "./assets/CesiumMan.usdz";
 
 	console.log(`Loading USD file: ${usd_filename}`);
 
-	// Load USD scene
-	const usd_scene = await loader.loadAsync(usd_filename);
+	// Load USD scene using Promise-based API
+	const usd_scene = await new Promise((resolve, reject) => {
+		loader.load(
+			usd_filename,
+			resolve,  // onLoad
+			null,     // onProgress
+			reject    // onError
+		);
+	});
 
 	console.log('USD scene loaded:', usd_scene);
 
@@ -633,18 +680,17 @@ async function loadUSDFromArrayBuffer(arrayBuffer, filename) {
 	const loader = new TinyUSDZLoader();
 	await loader.init({ useZstdCompressedWasm: false, useMemory64: false });
 
-	// Create a Blob URL from the ArrayBuffer
-	// This allows the loader to load the file as if it were a normal URL
-	const blob = new Blob([arrayBuffer]);
-	const blobUrl = URL.createObjectURL(blob);
-
 	console.log(`Loading USD from file: ${filename} (${(arrayBuffer.byteLength / 1024).toFixed(2)} KB)`);
 
-	// Load USD scene from Blob URL
-	const usd_scene = await loader.loadAsync(blobUrl);
-
-	// Clean up the Blob URL after loading
-	URL.revokeObjectURL(blobUrl);
+	// Parse USD directly from array buffer
+	const usd_scene = await new Promise((resolve, reject) => {
+		loader.parse(
+			new Uint8Array(arrayBuffer),
+			filename,
+			resolve,  // onLoad
+			reject    // onError
+		);
+	});
 
 	console.log('USD scene loaded:', usd_scene);
 
@@ -715,13 +761,30 @@ async function processUSDScene(usd_scene, loader, filename) {
 		const usdSkeleton = usd_scene.getSkeleton(0);
 		console.log('USD Skeleton:', usdSkeleton);
 
-		// Build Three.js skeleton
-		const skeletonData = buildSkeletonFromUSD(usdSkeleton, 0);
-		bones = skeletonData.bones;
-		boneMap = skeletonData.boneMap;
-		rootBone = skeletonData.rootBone;
+		if (USE_SKELETAL_HELPER) {
+			// ===== SIMPLIFIED APPROACH: Use USDSkeletalHelper =====
+			// This creates the skeleton using the helper function
+			const threeSkeleton = createThreeSkeletonFromUSD(usdSkeleton);
+			bones = threeSkeleton.bones;
+			rootBone = bones[0];
 
-		console.log(`Built skeleton with ${bones.length} bones`);
+			// Build bone map from skeleton
+			boneMap = new Map();
+			threeSkeleton.bones.forEach(bone => {
+				if (bone.userData.joint_id !== undefined) {
+					boneMap.set(bone.userData.joint_id, bone);
+				}
+			});
+			console.log(`[Helper] Built skeleton with ${bones.length} bones`);
+		} else {
+			// ===== CUSTOM APPROACH: Manual skeleton building with advanced features =====
+			// Build Three.js skeleton using custom function
+			const skeletonData = buildSkeletonFromUSD(usdSkeleton, 0);
+			bones = skeletonData.bones;
+			boneMap = skeletonData.boneMap;
+			rootBone = skeletonData.rootBone;
+			console.log(`[Custom] Built skeleton with ${bones.length} bones`);
+		}
 
 		// Update skeleton info display
 		if (window.updateSkeletonInfo) {
@@ -734,6 +797,26 @@ async function processUSDScene(usd_scene, loader, filename) {
 			window.updateSkeletonInfo(0, 0);
 		}
 	}
+
+	// ===========================================
+	// ULTRA-SIMPLIFIED ALTERNATIVE (commented out):
+	// If you just want to load and display a skinned mesh with animation,
+	// you could replace most of the code below with this single helper call:
+	//
+	// const result = createSkinnedMeshFromUSD(
+	//     usd_scene,
+	//     0,  // meshId
+	//     0,  // skelId
+	//     0,  // animId (optional)
+	//     { material: new THREE.MeshStandardMaterial({ color: 0x3399ff, skinning: true }), fps: 24 }
+	// );
+	// characterGroup.add(result.mesh);
+	// if (result.animationClip) {
+	//     mixer = helperPlayAnimation(result.mesh, result.animationClip);
+	// }
+	//
+	// However, this demo uses the manual approach to showcase advanced features.
+	// ===========================================
 
 	// Get the default root node from USD
 	const usdRootNode = usd_scene.getDefaultRootNode();
@@ -748,7 +831,7 @@ async function processUSDScene(usd_scene, loader, filename) {
 	};
 
 	// Build Three.js node from USD
-	const threeNode = TinyUSDZLoaderUtils.buildThreeNode(usdRootNode, defaultMtl, usd_scene, options);
+	const threeNode = await TinyUSDZLoaderUtils.buildThreeNode(usdRootNode, defaultMtl, usd_scene, options);
 
 	// Find skinned meshes in the loaded geometry
 	let foundSkinnedMesh = false;
@@ -877,7 +960,24 @@ async function processUSDScene(usd_scene, loader, filename) {
 
 		// Only try to extract animations if we have bones
 		if (bones.length > 0 && boneMap.size > 0) {
-			usdAnimations = convertUSDSkeletalAnimationsToThreeJS(usd_scene, boneMap);
+			if (USE_SKELETAL_HELPER) {
+				// ===== SIMPLIFIED APPROACH: Use USDSkeletalHelper =====
+				const numAnimations = usd_scene.numAnimations();
+				usdAnimations = [];
+				for (let i = 0; i < numAnimations; i++) {
+					const usdAnimation = usd_scene.getAnimation(i);
+					// Use helper to create animation clip
+					const clip = createThreeAnimationClip(usdAnimation, skeleton, { fps: 24 });
+					if (clip.tracks.length > 0) {
+						usdAnimations.push(clip);
+					}
+				}
+				console.log(`[Helper] Converted ${usdAnimations.length} animations`);
+			} else {
+				// ===== CUSTOM APPROACH: Custom animation conversion with filtering =====
+				usdAnimations = convertUSDSkeletalAnimationsToThreeJS(loader, boneMap);
+				console.log(`[Custom] Converted ${usdAnimations.length} animations`);
+			}
 		} else {
 			console.log('No skeleton data available - skipping animation extraction');
 			usdAnimations = [];
@@ -974,7 +1074,6 @@ window.addEventListener('loadUSDFile', async (event) => {
 		console.log('USD file loaded successfully:', file.name);
 	} catch (error) {
 		console.error('Failed to load USD file:', error);
-		alert('Failed to load USD file: ' + error.message);
 	}
 });
 
@@ -990,8 +1089,8 @@ window.addEventListener('loadDefaultModel', async () => {
 
 // Load USD model on startup
 loadUSDModel().catch((error) => {
-	console.error('Failed to load USD model:', error);
-	alert('Failed to load default USD file: ' + error.message + '\n\nPlease upload a USD file (with or without skeletal animation).');
+	console.error('Failed to load default USD file:', error);
+	console.log('Please upload a USD file (with or without skeletal animation).');
 });
 
 // Listen for mouse clicks for joint selection

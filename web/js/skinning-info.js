@@ -31,11 +31,107 @@ function reportMemUsage() {
 
 // Print skeleton hierarchy information
 function printSkeletonInfo(usd, detailed = false) {
-  // Note: The current binding doesn't expose skeleton hierarchy directly
-  // We can infer skeleton information from meshes and animations
-
   console.log('\n=== Skeleton Information ===');
-  console.log('(Skeleton hierarchy is embedded in mesh skinning data and animations)\n');
+
+  // Collect skeleton IDs from meshes
+  const skeletonIds = new Set();
+  const numMeshes = usd.numMeshes();
+
+  for (let i = 0; i < numMeshes; i++) {
+    try {
+      const mesh = usd.getMesh(i);
+      if (mesh && mesh.skel_id !== undefined && mesh.skel_id >= 0) {
+        skeletonIds.add(mesh.skel_id);
+      }
+    } catch (e) {
+      // Ignore errors
+    }
+  }
+
+  if (skeletonIds.size === 0) {
+    console.log('No skeletons found in this USD file.\n');
+    return;
+  }
+
+  console.log(`Total skeletons: ${skeletonIds.size}\n`);
+
+  // For each skeleton, collect joint information from animations
+  for (const skelId of Array.from(skeletonIds).sort()) {
+    console.log(`--- Skeleton ${skelId} ---`);
+
+    // Collect joint information from animations
+    const jointInfo = new Map();
+    const numAnims = usd.numAnimations();
+
+    for (let animIdx = 0; animIdx < numAnims; animIdx++) {
+      try {
+        const anim = usd.getAnimation(animIdx);
+        if (!anim || !anim.channels) continue;
+
+        for (const channel of anim.channels) {
+          if (channel.skeleton_id === skelId && channel.joint_id !== undefined && channel.joint_id >= 0) {
+            const jointId = channel.joint_id;
+            if (!jointInfo.has(jointId)) {
+              jointInfo.set(jointId, {
+                id: jointId,
+                channels: new Set()
+              });
+            }
+            jointInfo.get(jointId).channels.add(channel.path);
+          }
+        }
+      } catch (e) {
+        // Ignore errors
+      }
+    }
+
+    if (jointInfo.size > 0) {
+      console.log(`  Joints: ${jointInfo.size}`);
+
+      if (detailed) {
+        const sortedJoints = Array.from(jointInfo.keys()).sort((a, b) => a - b);
+        console.log(`  Joint IDs: [${sortedJoints.join(', ')}]`);
+
+        console.log('\n  Joint Details:');
+        for (const jointId of sortedJoints.slice(0, 10)) {
+          const info = jointInfo.get(jointId);
+          const channels = Array.from(info.channels).sort().join(', ');
+          console.log(`    Joint ${jointId}: animated channels = [${channels}]`);
+        }
+
+        if (sortedJoints.length > 10) {
+          console.log(`    ... and ${sortedJoints.length - 10} more joints`);
+        }
+      }
+    } else {
+      console.log('  No animation data available for this skeleton');
+    }
+
+    // Find meshes using this skeleton
+    const meshesUsingSkeleton = [];
+    for (let i = 0; i < numMeshes; i++) {
+      try {
+        const mesh = usd.getMesh(i);
+        if (mesh && mesh.skel_id === skelId) {
+          meshesUsingSkeleton.push(mesh.primName || mesh.displayName || `Mesh_${i}`);
+        }
+      } catch (e) {
+        // Ignore
+      }
+    }
+
+    if (meshesUsingSkeleton.length > 0) {
+      console.log(`  Meshes using this skeleton: ${meshesUsingSkeleton.length}`);
+      if (detailed) {
+        console.log(`    ${meshesUsingSkeleton.join(', ')}`);
+      }
+    }
+
+    console.log();
+  }
+
+  console.log('Note: Full skeleton hierarchy (parent-child relationships) requires');
+  console.log('      direct USD prim access, which is not yet exposed in the WASM binding.\n');
 }
 
 // Print skinning information from meshes
@@ -457,20 +553,16 @@ async function main() {
     // Load USD file
     const startTime = Date.now();
 
-    // In Node.js, pass the file path directly to the loader
-    const url = usdFilePath;
+    // In Node.js, read the file directly and parse the buffer
+    const fileBuffer = fs.readFileSync(usdFilePath);
+    const usd_binary = new Uint8Array(fileBuffer);
 
-    // Load asynchronously
+    console.log(`File loaded: ${formatBytes(usd_binary.length)}`);
+    console.log('Parsing USD data...\n');
+
+    // Parse the binary data
     const usd = await new Promise((resolve, reject) => {
-      loader.load(url, resolve,
-        (progress) => {
-          if (progress && progress.loaded && progress.total) {
-            const percent = ((progress.loaded / progress.total) * 100).toFixed(1);
-            process.stdout.write(`\rLoading: ${percent}%`);
-          }
-        },
-        reject
-      );
+      loader.parse(usd_binary, usdFilePath, resolve, reject);
     });
 
     const loadTime = Date.now() - startTime;
