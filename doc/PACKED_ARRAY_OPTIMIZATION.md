@@ -203,7 +203,7 @@ All functionality is verified in `test_packed_array.cc`:
 
 Run tests:
 ```bash
-g++ -std=c++14 -I. test_packed_array.cc -o test_packed_array
+g++ -std=c++17 -I. test_packed_array.cc -o test_packed_array
 ./test_packed_array
 ```
 

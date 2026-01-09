@@ -15,7 +15,7 @@ BUILD_DIR = $(ROOT_DIR)/build
 
 # Compiler settings
 CXX ?= g++
-CXXFLAGS = -std=c++14 -Wall -O2
+CXXFLAGS = -std=c++17 -Wall -O2
 INCLUDES = -I$(SRC_DIR) \
            -I$(INCLUDE_DIR) \
            -I$(EXTERNAL_DIR)/jsonhpp

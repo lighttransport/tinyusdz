@@ -6,7 +6,7 @@
 
 # Compiler settings
 CXX ?= g++
-CXXFLAGS = -std=c++14 -Wall -Wextra -O2 -g
+CXXFLAGS = -std=c++17 -Wall -Wextra -O2 -g
 INCLUDES = -I../../../src -I../../../src/external
 
 # TinyUSDZ root directory (3 levels up from this Makefile)
