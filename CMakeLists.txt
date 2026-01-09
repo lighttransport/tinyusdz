@@ -315,15 +315,10 @@ if (PROJECT_IS_TOP_LEVEL)
     #set(CMAKE_CXX_STANDARD 17) # nanobind requires C++17
 
     # for pybind11
-    set(CMAKE_CXX_STANDARD 14)
+    set(CMAKE_CXX_STANDARD 17)
   else()
-    if (TINYUSDZ_MSAN)
-      # Require strict C++17 or later for MSAN build
-      set(CMAKE_CXX_STANDARD 17)
-    else()
-      # Require strict C++14 mode(e.g. `-std=c++14`)
-      set(CMAKE_CXX_STANDARD 14)
-    endif()
+    # Require strict C++17 mode(e.g. `-std=c++17`)
+    set(CMAKE_CXX_STANDARD 17)
   endif()
   set(CMAKE_CXX_STANDARD_REQUIRED ON)
   set(CMAKE_CXX_EXTENSIONS OFF)
@@ -1386,7 +1381,8 @@ foreach(TINYUSDZ_LIB_TARGET ${TINYUSDZ_LIBS})
 
   # On 32-bit systems, 64-bit atomic operations require libatomic
   # (Skip for emscripten as libatomic doesn't exist in wasm environment)
-  if (CMAKE_SIZEOF_VOID_P EQUAL 4 AND NOT EMSCRIPTEN)
+  # (Skip for MSVC as atomics are built into the runtime)
+  if (CMAKE_SIZEOF_VOID_P EQUAL 4 AND NOT EMSCRIPTEN AND NOT MSVC)
     target_link_libraries(${TINYUSDZ_LIB_TARGET} atomic)
   endif()
 

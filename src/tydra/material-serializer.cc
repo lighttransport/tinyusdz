@@ -248,7 +248,7 @@ std::string serializeOpenPBRToJson(const OpenPBRSurfaceShader& shader, const Ren
 
 // Serialize PreviewSurfaceShader to JSON
 std::string serializePreviewSurfaceToJson(const PreviewSurfaceShader& shader, const RenderScene* renderScene = nullptr) {
-  (void)renderScene;
+  (void)renderScene;  // Reserved for future use
   std::stringstream json;
   json << "{";
   json << "\"type\": \"PreviewSurfaceShader\",";

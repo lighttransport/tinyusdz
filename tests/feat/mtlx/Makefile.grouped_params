@@ -1,5 +1,5 @@
 CXX = g++
-CXXFLAGS = -std=c++14 -I../../../src -I../../../
+CXXFLAGS = -std=c++17 -I../../../src -I../../../
 LDFLAGS = -L../../../build -ltinyusdz_static -lpthread
 
 test_grouped_params: test_grouped_params.cc

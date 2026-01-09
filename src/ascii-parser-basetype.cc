@@ -2038,7 +2038,7 @@ bool AsciiParser::ParseBasicTypeArray(TypedArray<T> *result) {
     }
 
     if (c == ']') {
-      (*result)->clear();
+      result->clear();
       return true;
     }
 
@@ -2060,10 +2060,10 @@ bool AsciiParser::ParseBasicTypeArray(TypedArray<T> *result) {
   }
 
   // Transfer to TypedArray for memory optimization
-  (*result)->clear();
-  (*result)->reserve(temp_result.size());
+  result->clear();
+  result->reserve(temp_result.size());
   for (const auto& item : temp_result) {
-    (*result)->push_back(item);
+    result->push_back(item);
   }
   
   return true;
