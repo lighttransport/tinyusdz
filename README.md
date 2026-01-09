@@ -10,6 +10,8 @@
  </a>
 </p>
 
+[![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/lighttransport/tinyusdz)
+
 [![npm version](https://img.shields.io/npm/v/tinyusdz.svg)](https://www.npmjs.com/package/tinyusdz)
 
 ## Releases
@@ -27,15 +29,25 @@ More on the status: https://github.com/lighttransport/tinyusdz/blob/release/doc/
 ## Next release(Early 2026 planned)
 
 * We plan to use C++17 by default: https://github.com/lighttransport/tinyusdz/issues/220
-* JS/WASM binding
-* MCP(ModelContextProtocol) support
+* Better JS/WASM binding
+* MCP(ModelContextProtocol) support 
   * USDJ(JSON representation of USD)
   * Scripting USD with JavaScript(using embedded JS runtime(QuickJS-ng)) 
-* Various optimization
-* Better animation(TimeSamples) support
-* MaterialX support
-* USDC writer(experimental)
-  
+* Various optimization, memory usage reduction
+  * Timesamples dedup support 
+* Better animation(TimeSamples) support https://github.com/lighttransport/tinyusdz/tree/skinning
+* MaterialX support https://github.com/lighttransport/tinyusdz/tree/mtlx-2025
+* USDC writer(experimental) https://github.com/lighttransport/tinyusdz/issues/261
+* Subdivision surface https://github.com/lighttransport/tinyusdz/tree/subdiv-2025
+* Curves(hairs) https://github.com/lighttransport/tinyusdz/tree/curves-2025
+* PCP composition(experimental) https://github.com/lighttransport/tinyusdz/issues/262
+  * Documentation(w.i.p) https://lighttransport.github.io/tinyusdz/pcp.html 
+
+## Lab project
+
+* LightUSD: https://github.com/lighttransport/tinyusdz/tree/lightusd/sandbox/lightusd
+  * USD for 3D genAI/VLM/LLM
+    
 ## Branches
 
 * `release` Release branch

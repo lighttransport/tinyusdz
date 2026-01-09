@@ -40,13 +40,13 @@ The header file `task-queue.hh` contains:
 
 ### Test 1: Header Compilation
 ```bash
-g++ -std=c++14 -fno-exceptions -fno-rtti -c task-queue.hh
+g++ -std=c++17 -fno-exceptions -fno-rtti -c task-queue.hh
 ```
 **Result**: ✅ PASSED (compiles without errors)
 
 ### Test 2: Full Example Compilation
 ```bash
-g++ -std=c++14 -Wall -Wextra -O2 -pthread -fno-exceptions -fno-rtti example.cc -o task_queue_example_no_except
+g++ -std=c++17 -Wall -Wextra -O2 -pthread -fno-exceptions -fno-rtti example.cc -o task_queue_example_no_except
 ```
 **Result**: ✅ PASSED (compiles without errors or warnings)
 
@@ -115,19 +115,18 @@ The implementation successfully uses:
 - **Multi-threaded**: Lock-free CAS operations, no mutex contention
 - **Scalability**: Tested up to 8 concurrent threads (4P+4C)
 
-## C++14 Compatibility
+## C++17 Compatibility
 
-The implementation uses only C++14 standard features:
+The implementation uses only C++17 standard features:
 - ✅ `std::atomic` (C++11)
 - ✅ `std::function` (C++11)
 - ✅ `std::mutex` and `std::lock_guard` (C++11, fallback only)
 - ✅ `std::thread` (C++11, tests only)
 - ✅ Lambda expressions (C++11)
-- ✅ No C++17 or later features
 
 Verified with:
 ```bash
-g++ -std=c++14 -Werror=c++17-extensions ...
+g++ -std=c++17 ...
 ```
 
 ## Dependencies

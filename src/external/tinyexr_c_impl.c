@@ -1,6 +1,6 @@
 /* Feature test macros for POSIX functions (must be before any includes) */
 #if !defined(_WIN32)
-#define _POSIX_C_SOURCE 199309L
+#define _POSIX_C_SOURCE 200112L
 #endif
 
 /*
@@ -36,6 +36,14 @@
 #define ATOMIC_STORE(var, val) var.store(val)
 #define ATOMIC_FETCH_ADD(var, val) var.fetch_add(val)
 #define ATOMIC_FETCH_SUB(var, val) var.fetch_sub(val)
+#elif defined(_MSC_VER)
+/* MSVC C mode doesn't support C11 atomics, use Windows Interlocked functions */
+#define ATOMIC_INT volatile long
+#define ATOMIC_INIT(var, val) (var) = (val)
+#define ATOMIC_LOAD(var) InterlockedCompareExchange(&(var), 0, 0)
+#define ATOMIC_STORE(var, val) InterlockedExchange(&(var), (val))
+#define ATOMIC_FETCH_ADD(var, val) InterlockedExchangeAdd(&(var), (val))
+#define ATOMIC_FETCH_SUB(var, val) InterlockedExchangeAdd(&(var), -(val))
 #else
 #include <stdatomic.h>
 #define ATOMIC_INT atomic_int
