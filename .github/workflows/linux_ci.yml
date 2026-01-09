@@ -116,6 +116,56 @@ jobs:
     - name: tests
       run: cd build && ctest --output-on-failure
 
+    # Test with OpenUSD binary
+    - name: Download OpenUSD binary
+      run: |
+        gh release download v25.11-lte \
+          --repo lighttransport/openusd-bin \
+          --pattern 'openusd-*-minsizerel-linux-x86_64.tar.gz'
+      env:
+        GH_TOKEN: ${{ github.token }}
+
+    - name: Extract and setup OpenUSD
+      run: |
+        tar -xzf openusd-*-minsizerel-linux-x86_64.tar.gz
+        USD_DIR=$(find . -maxdepth 1 -type d -name "openusd-*" | head -n 1)
+        echo "USD_DIR=$USD_DIR" >> $GITHUB_ENV
+        echo "USD_INSTALL_ROOT=$(pwd)/$USD_DIR" >> $GITHUB_ENV
+        echo "$(pwd)/$USD_DIR/bin" >> $GITHUB_PATH
+        echo "LD_LIBRARY_PATH=$(pwd)/$USD_DIR/lib:$LD_LIBRARY_PATH" >> $GITHUB_ENV
+        if [ -f "setup-usd-env.sh" ]; then
+          source setup-usd-env.sh
+          echo "PYTHONPATH=$PYTHONPATH" >> $GITHUB_ENV
+        fi
+
+    - name: Verify OpenUSD installation
+      run: |
+        usdcat --version || usdcat --help
+        echo "OpenUSD binary: $(which usdcat)"
+
+    - name: Test TinyUSDZ and OpenUSD interoperability
+      run: |
+        echo "=== Testing TinyUSDZ <-> OpenUSD interoperability ==="
+
+        # Test 1: Read files with both tools
+        for usd_file in models/suzanne.usdc models/cube.usda; do
+          if [ -f "$usd_file" ]; then
+            echo "Testing $usd_file"
+            ./build/tusdcat "$usd_file" > /tmp/tusdcat.txt
+            usdcat "$usd_file" > /tmp/usdcat.txt
+            echo "✓ Both tools read $usd_file"
+          fi
+        done
+
+        # Test 2: Convert with TinyUSDZ, verify with OpenUSD
+        if [ -f "models/suzanne.usdc" ]; then
+          ./build/tusdcat models/suzanne.usdc > /tmp/tinyusdz.usda
+          usdcat /tmp/tinyusdz.usda > /dev/null
+          echo "✓ OpenUSD read TinyUSDZ-generated USDA"
+        fi
+
+        echo "All tests passed!"
+
   # ARM64 ASan build to debug segfaults
   build-arm64-asan:
 
@@ -227,3 +277,53 @@ jobs:
 
     - name: tests
       run: cd build && ctest --output-on-failure
+
+    # Test with OpenUSD binary (ARM64)
+    - name: Download OpenUSD binary (ARM64)
+      run: |
+        gh release download v25.11-lte \
+          --repo lighttransport/openusd-bin \
+          --pattern 'openusd-*-minsizerel-linux-aarch64.tar.gz'
+      env:
+        GH_TOKEN: ${{ github.token }}
+
+    - name: Extract and setup OpenUSD (ARM64)
+      run: |
+        tar -xzf openusd-*-minsizerel-linux-aarch64.tar.gz
+        USD_DIR=$(find . -maxdepth 1 -type d -name "openusd-*" | head -n 1)
+        echo "USD_DIR=$USD_DIR" >> $GITHUB_ENV
+        echo "USD_INSTALL_ROOT=$(pwd)/$USD_DIR" >> $GITHUB_ENV
+        echo "$(pwd)/$USD_DIR/bin" >> $GITHUB_PATH
+        echo "LD_LIBRARY_PATH=$(pwd)/$USD_DIR/lib:$LD_LIBRARY_PATH" >> $GITHUB_ENV
+        if [ -f "setup-usd-env.sh" ]; then
+          source setup-usd-env.sh
+          echo "PYTHONPATH=$PYTHONPATH" >> $GITHUB_ENV
+        fi
+
+    - name: Verify OpenUSD installation (ARM64)
+      run: |
+        usdcat --version || usdcat --help
+        echo "OpenUSD binary: $(which usdcat)"
+
+    - name: Test TinyUSDZ and OpenUSD interoperability (ARM64)
+      run: |
+        echo "=== Testing TinyUSDZ <-> OpenUSD interoperability on ARM64 ==="
+
+        # Test 1: Read files with both tools
+        for usd_file in models/suzanne.usdc models/cube.usda tests/usdc/timesamples-array-vec2f-001.usdc; do
+          if [ -f "$usd_file" ]; then
+            echo "Testing $usd_file"
+            ./build/tusdcat "$usd_file" > /tmp/tusdcat.txt
+            usdcat "$usd_file" > /tmp/usdcat.txt
+            echo "✓ Both tools read $usd_file"
+          fi
+        done
+
+        # Test 2: Convert with TinyUSDZ, verify with OpenUSD
+        if [ -f "models/suzanne.usdc" ]; then
+          ./build/tusdcat models/suzanne.usdc > /tmp/tinyusdz.usda
+          usdcat /tmp/tinyusdz.usda > /dev/null
+          echo "✓ OpenUSD read TinyUSDZ-generated USDA"
+        fi
+
+        echo "All ARM64 tests passed!"
