@@ -117,6 +117,11 @@ jobs:
       run: cd build && ctest --output-on-failure
 
     # Test with OpenUSD binary
+    - name: Install TBB dependency
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y libtbb12
+
     - name: Download OpenUSD binary
       run: |
         gh release download v25.11-lte \
@@ -283,13 +288,13 @@ jobs:
       run: |
         gh release download v25.11-lte \
           --repo lighttransport/openusd-bin \
-          --pattern 'openusd-*-minsizerel-linux-aarch64.tar.gz'
+          --pattern 'openusd-*-minsizerel-linux-arm64.tar.gz'
       env:
         GH_TOKEN: ${{ github.token }}
 
     - name: Extract and setup OpenUSD (ARM64)
       run: |
-        tar -xzf openusd-*-minsizerel-linux-aarch64.tar.gz
+        tar -xzf openusd-*-minsizerel-linux-arm64.tar.gz
         USD_DIR=$(find . -maxdepth 1 -type d -name "openusd-*" | head -n 1)
         echo "USD_DIR=$USD_DIR" >> $GITHUB_ENV
         echo "USD_INSTALL_ROOT=$(pwd)/$USD_DIR" >> $GITHUB_ENV
