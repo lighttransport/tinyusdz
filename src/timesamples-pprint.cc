@@ -6,8 +6,7 @@
 #include <sstream>
 #include <cstring>
 #include <map>
-#include <iomanip>
-#include <limits>
+#include "str-util.hh"
 
 #ifdef TINYUSDZ_ENABLE_THREAD
 #include <thread>
@@ -196,26 +195,26 @@ void print_type<char>(OutputAdapter& out, const uint8_t* data) {
   out.write(static_cast<int>(value));
 }
 
-// Specialization for double - print with full precision
+// Specialization for double - print with full precision using dtoa
 template<>
 void print_type<double>(OutputAdapter& out, const uint8_t* data) {
   double value;
   std::memcpy(&value, data, sizeof(double));
-  std::stringstream ss;
-  ss << std::setprecision(std::numeric_limits<double>::max_digits10);
-  ss << value;
-  out.write(ss.str());
+  char buf[384];
+  char *end = dtoa(value, buf);
+  *end = '\0';
+  out.write(std::string(buf));
 }
 
-// Specialization for float - print with full precision
+// Specialization for float - print with full precision using dtoa
 template<>
 void print_type<float>(OutputAdapter& out, const uint8_t* data) {
   float value;
   std::memcpy(&value, data, sizeof(float));
-  std::stringstream ss;
-  ss << std::setprecision(std::numeric_limits<float>::max_digits10);
-  ss << value;
-  out.write(ss.str());
+  char buf[384];
+  char *end = dtoa(value, buf);
+  *end = '\0';
+  out.write(std::string(buf));
 }
 
 // Unified print function for vector types

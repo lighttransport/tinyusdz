@@ -49,6 +49,7 @@ TEST_LIST = {
   { "strutil_test", strutil_test },
   { "tinystring_test", tinystring_test },
   { "parse_int_test", parse_int_test },
+  { "dtoa_test", dtoa_test },
   { "timesamples_test", timesamples_test },
   { "materialx_config_api_struct_test", materialx_config_api_struct_test },
   { "materialx_config_api_parsing_test", materialx_config_api_parsing_test },
