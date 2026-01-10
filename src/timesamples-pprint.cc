@@ -1422,8 +1422,16 @@ void pprint_timesamples(StreamWriter& writer, const value::TimeSamples& samples,
         return;
     }
 
-    // Check if using unified storage (_times non-empty) vs legacy Sample-based storage
-    if (!samples.get_times().empty()) {
+    // Check if using unified storage (_times non-empty AND has actual data in buffers)
+    // vs Sample-based storage (_samples vector)
+    // Note: Some operations like add_value_array_sample() populate _times but store data
+    // in _samples, so we need to check if unified storage buffers actually have data
+    bool has_unified_data = !samples.get_times().empty() &&
+                           (!samples.get_values().empty() ||
+                            !samples.get_small_values().empty() ||
+                            !samples.get_offsets().empty());
+
+    if (has_unified_data) {
 
         // Phase 3: Access unified storage directly from TimeSamples
         // Note: TypedArray is no longer supported in Phase 3, so we skip that path
