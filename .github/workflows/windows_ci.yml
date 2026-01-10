@@ -40,13 +40,13 @@ jobs:
         run: |
           gh release download v25.11-lte `
             --repo lighttransport/openusd-bin `
-            --pattern 'openusd-*-minsizerel-win64.zip'
+            --pattern 'openusd-*-minsizerel-windows-x86_64.zip'
         env:
           GH_TOKEN: ${{ github.token }}
 
       - name: Extract and setup OpenUSD (Windows x64)
         run: |
-          $archive = Get-ChildItem -Filter "openusd-*-minsizerel-win64.zip" | Select-Object -First 1
+          $archive = Get-ChildItem -Filter "openusd-*-minsizerel-windows-x86_64.zip" | Select-Object -First 1
           Expand-Archive -Path $archive.FullName -DestinationPath . -Force
           $usdDir = Get-ChildItem -Directory -Filter "openusd-*" | Select-Object -First 1
           echo "USD_INSTALL_ROOT=$($usdDir.FullName)" >> $env:GITHUB_ENV
