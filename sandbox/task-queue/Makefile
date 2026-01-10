@@ -1,7 +1,7 @@
 CXX ?= g++
-CXXFLAGS = -std=c++14 -Wall -Wextra -O2 -pthread
-CXXFLAGS_DEBUG = -std=c++14 -Wall -Wextra -g -O0 -pthread -fsanitize=thread
-CXXFLAGS_NO_EXCEPT = -std=c++14 -Wall -Wextra -O2 -pthread -fno-exceptions -fno-rtti
+CXXFLAGS = -std=c++17 -Wall -Wextra -O2 -pthread
+CXXFLAGS_DEBUG = -std=c++17 -Wall -Wextra -g -O0 -pthread -fsanitize=thread
+CXXFLAGS_NO_EXCEPT = -std=c++17 -Wall -Wextra -O2 -pthread -fno-exceptions -fno-rtti
 
 TARGET = task_queue_example
 TARGET_DEBUG = task_queue_example_debug

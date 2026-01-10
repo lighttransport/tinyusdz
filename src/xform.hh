@@ -32,6 +32,20 @@ value::matrix4d to_matrix(const value::quath &q);
 value::matrix4d to_matrix(const value::quatf &q);
 value::matrix4d to_matrix(const value::quatd &q);
 
+///
+/// Decompose a 4x4 transformation matrix into Translation, Rotation, and Scale (TRS)
+///
+/// @param[in] m 4x4 transformation matrix
+/// @param[out] translation Translation vector (from last column)
+/// @param[out] rotation Rotation quaternion (extracted from rotation matrix)
+/// @param[out] scale Scale vector (length of basis vectors)
+/// @return true if decomposition succeeded, false if matrix is not decomposable
+///
+bool decompose(const value::matrix4d &m,
+               value::double3 *translation,
+               value::quatd *rotation,
+               value::double3 *scale);
+
 value::matrix4d to_matrix(const value::matrix3d &m, const value::double3 &tx);
 
 //

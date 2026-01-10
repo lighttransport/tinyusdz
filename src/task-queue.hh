@@ -12,10 +12,9 @@
 #include <cstdint>
 #include <cstddef>
 
-// Detect compiler support for lock-free atomics
-#if defined(__GNUC__) || defined(__clang__)
-  #define TINYUSDZ_TASK_QUEUE_HAS_BUILTIN_ATOMICS 1
-#elif defined(_MSC_VER) && (_MSC_VER >= 1900)
+// Detect compiler support for GCC-style lock-free atomics
+// MSVC does not have __atomic_* builtins, so it uses the mutex fallback
+#if (defined(__GNUC__) || defined(__clang__)) && !defined(_MSC_VER)
   #define TINYUSDZ_TASK_QUEUE_HAS_BUILTIN_ATOMICS 1
 #else
   #define TINYUSDZ_TASK_QUEUE_HAS_BUILTIN_ATOMICS 0
@@ -179,7 +178,7 @@ class TaskQueue {
     uint64_t w = _write_pos.load(std::memory_order_acquire);
     uint64_t r = _read_pos.load(std::memory_order_acquire);
 #endif
-    return (w >= r) ? (w - r) : 0;
+    return (w >= r) ? static_cast<size_t>(w - r) : 0;
   }
 
   ///
@@ -358,7 +357,7 @@ class TaskQueueFunc {
     uint64_t w = _write_pos.load(std::memory_order_acquire);
     uint64_t r = _read_pos.load(std::memory_order_acquire);
 #endif
-    return (w >= r) ? (w - r) : 0;
+    return (w >= r) ? static_cast<size_t>(w - r) : 0;
   }
 
   ///

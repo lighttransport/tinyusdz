@@ -1,30 +1,34 @@
+CXX := g++
+CXXFLAGS := -O2 -g -std=c++17 -I ../../src/external/dragonbox/ -I../../src/external
+DRAGONBOX_SRC := ../../src/external/dragonbox/dragonbox_to_chars.cpp
+
 all: print_fp test_exhaustive example_usage test_decimal test_shortest_and_ranges test_fastpath_perf test_dtos_integration test_print_vectors
 
 print_fp:
-	g++ -O2 -g -std=c++14 print_fp.cc -I ../../src/external/dragonbox/ ../../src/external/dragonbox/dragonbox_to_chars.cpp -I../../src/external -o print_fp
+	$(CXX) $(CXXFLAGS) print_fp.cc $(DRAGONBOX_SRC) -o print_fp
 	#clang++ -O2 -g print_fp.cc -I ../../src/external/dragonbox/ ../../src/external/dragonbox/dragonbox_to_chars.cpp -I../../src/external
 	#clang++ -O2 -g print_fp.cc -I ../../src/external/
 
 test_exhaustive:
-	g++ -O3 -g -std=c++14 test_exhaustive.cc -I ../../src/external/dragonbox/ ../../src/external/dragonbox/dragonbox_to_chars.cpp -I../../src/external -o test_exhaustive
+	$(CXX) -O3 -g -std=c++17 test_exhaustive.cc $(DRAGONBOX_SRC) -I../../src/external -o test_exhaustive
 
 example_usage:
-	g++ -O2 -g -std=c++14 example_usage.cc -I ../../src/external/dragonbox/ ../../src/external/dragonbox/dragonbox_to_chars.cpp -I../../src/external -o example_usage
+	$(CXX) $(CXXFLAGS) example_usage.cc $(DRAGONBOX_SRC) -o example_usage
 
 test_decimal:
-	g++ -O2 -g -std=c++14 test_decimal.cc -I ../../src/external/dragonbox/ ../../src/external/dragonbox/dragonbox_to_chars.cpp -I../../src/external -o test_decimal
+	$(CXX) $(CXXFLAGS) test_decimal.cc $(DRAGONBOX_SRC) -o test_decimal
 
 test_shortest_and_ranges:
-	g++ -O2 -g -std=c++14 test_shortest_and_ranges.cc -I ../../src/external/dragonbox/ ../../src/external/dragonbox/dragonbox_to_chars.cpp -I../../src/external -o test_shortest_and_ranges
+	$(CXX) $(CXXFLAGS) test_shortest_and_ranges.cc $(DRAGONBOX_SRC) -o test_shortest_and_ranges
 
 test_fastpath_perf:
-	g++ -O2 -g -std=c++14 test_fastpath_perf.cc -I ../../src/external/dragonbox/ ../../src/external/dragonbox/dragonbox_to_chars.cpp -I../../src/external -o test_fastpath_perf
+	$(CXX) $(CXXFLAGS) test_fastpath_perf.cc $(DRAGONBOX_SRC) -o test_fastpath_perf
 
 test_dtos_integration:
-	g++ -O2 -g -std=c++14 ../../test_dtos_integration.cc ../../src/str-util.cc -I../../src -I ../../src/external/dragonbox/ ../../src/external/dragonbox/dragonbox_to_chars.cpp -I../../src/external -o test_dtos_integration
+	$(CXX) $(CXXFLAGS) ../../test_dtos_integration.cc ../../src/str-util.cc $(DRAGONBOX_SRC) -I../../src -o test_dtos_integration
 
 test_print_vectors:
-	g++ -O2 -g -std=c++14 ../../test_print_vectors.cc ../../src/str-util.cc -I../../src -I ../../src/external/dragonbox/ ../../src/external/dragonbox/dragonbox_to_chars.cpp -I../../src/external -o test_print_vectors
+	$(CXX) $(CXXFLAGS) ../../test_print_vectors.cc ../../src/str-util.cc $(DRAGONBOX_SRC) -I../../src -o test_print_vectors
 
 clean:
 	rm -f print_fp test_exhaustive example_usage test_decimal test_shortest_and_ranges test_fastpath_perf test_dtos_integration test_print_vectors

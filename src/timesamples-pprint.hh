@@ -3,7 +3,7 @@
 
 ///
 /// @file timesamples-pprint.hh
-/// @brief Pretty printing functions for PODTimeSamples
+/// @brief Pretty printing functions for TimeSamples
 ///
 
 #pragma once
@@ -14,48 +14,13 @@
 namespace tinyusdz {
 
 // Forward declarations
-struct PODTimeSamples;
 class StreamWriter;
-template <size_t ChunkSize, size_t Alignment> class ChunkedStreamWriter;
 
 namespace value {
 // Forward declarations
 class Value;
 struct TimeSamples;
 } // namespace value
-
-///
-/// Pretty print PODTimeSamples with indentation support
-///
-/// @param samples PODTimeSamples to print
-/// @param indent Indentation level (number of spaces)
-/// @return String representation of the time samples
-///
-std::string pprint_pod_timesamples(const PODTimeSamples& samples,
-                                    uint32_t indent = 0);
-
-///
-/// Pretty print PODTimeSamples to a StreamWriter
-///
-/// @param writer StreamWriter to write to
-/// @param samples PODTimeSamples to print
-/// @param indent Indentation level (number of spaces)
-///
-void pprint_pod_timesamples(StreamWriter& writer,
-                            const PODTimeSamples& samples,
-                            uint32_t indent = 0);
-
-///
-/// Pretty print PODTimeSamples to a ChunkedStreamWriter (more efficient for large outputs)
-///
-/// @param writer ChunkedStreamWriter to write to
-/// @param samples PODTimeSamples to print
-/// @param indent Indentation level (number of spaces)
-///
-template <size_t ChunkSize = 4096, size_t Alignment = 16>
-void pprint_pod_timesamples(ChunkedStreamWriter<ChunkSize, Alignment>& writer,
-                            const PODTimeSamples& samples,
-                            uint32_t indent = 0);
 
 ///
 /// Pretty print a single POD value based on type_id
@@ -74,18 +39,6 @@ std::string pprint_pod_value_by_type(const uint8_t* data, uint32_t type_id);
 /// @param type_id Type ID of the data
 ///
 void pprint_pod_value_by_type(StreamWriter& writer,
-                              const uint8_t* data,
-                              uint32_t type_id);
-
-///
-/// Pretty print a single POD value to a ChunkedStreamWriter
-///
-/// @param writer ChunkedStreamWriter to write to
-/// @param data Pointer to the raw data
-/// @param type_id Type ID of the data
-///
-template <size_t ChunkSize = 4096, size_t Alignment = 16>
-void pprint_pod_value_by_type(ChunkedStreamWriter<ChunkSize, Alignment>& writer,
                               const uint8_t* data,
                               uint32_t type_id);
 
@@ -123,18 +76,6 @@ std::string pprint_timesamples(const value::TimeSamples& samples,
 /// @param indent Indentation level (number of spaces)
 ///
 void pprint_timesamples(StreamWriter& writer,
-                       const value::TimeSamples& samples,
-                       uint32_t indent = 0);
-
-///
-/// Pretty print non-POD TimeSamples to a ChunkedStreamWriter (more efficient for large outputs)
-///
-/// @param writer ChunkedStreamWriter to write to
-/// @param samples value::TimeSamples to print
-/// @param indent Indentation level (number of spaces)
-///
-template <size_t ChunkSize = 4096, size_t Alignment = 16>
-void pprint_timesamples(ChunkedStreamWriter<ChunkSize, Alignment>& writer,
                        const value::TimeSamples& samples,
                        uint32_t indent = 0);
 
