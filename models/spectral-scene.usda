@@ -1,0 +1,234 @@
+#usda 1.0
+(
+    doc = """LTE SpectralAPI Complete Scene Example
+    Demonstrates a complete scene with spectral materials and lights.
+    Useful for testing spectral rendering pipelines.
+
+    Scene: Glass prism demonstrating dispersion under D65 daylight
+    """
+    metersPerUnit = 1
+    upAxis = "Y"
+    customLayerData = {
+        string unitForWavelength = "nanometers"
+    }
+)
+
+def Xform "Scene"
+{
+    def Scope "Materials"
+    {
+        # Diamond with high dispersion (Sellmeier coefficients)
+        def Material "DiamondMaterial"
+        {
+            token outputs:surface.connect = </Scene/Materials/DiamondMaterial/Shader.outputs:surface>
+
+            def Shader "Shader"
+            {
+                uniform token info:id = "UsdPreviewSurface"
+                color3f inputs:diffuseColor = (1.0, 1.0, 1.0)
+                float inputs:roughness = 0.0
+                float inputs:metallic = 0.0
+                float inputs:opacity = 0.02
+                float inputs:ior = 2.417
+                token outputs:surface
+
+                # LTE SpectralAPI: Diamond Sellmeier coefficients
+                # Very high dispersion (fire)
+                float2[] wavelength:ior = [
+                    (0.4083, 0.0),      # (B1, C1) C in um^2
+                    (0.0, 0.0),          # (B2, C2)
+                    (4.3356, 0.01064)    # (B3, C3)
+                ] (
+                    customData = {
+                        string interpolation = "sellmeier"
+                        string unitForWavelength = "micrometers"
+                    }
+                )
+            }
+        }
+
+        # White diffuse reference
+        def Material "WhiteDiffuse"
+        {
+            token outputs:surface.connect = </Scene/Materials/WhiteDiffuse/Shader.outputs:surface>
+
+            def Shader "Shader"
+            {
+                uniform token info:id = "UsdPreviewSurface"
+                color3f inputs:diffuseColor = (0.9, 0.9, 0.9)
+                float inputs:roughness = 1.0
+                float inputs:metallic = 0.0
+                token outputs:surface
+
+                # LTE SpectralAPI: Near-perfect white reflectance
+                float2[] wavelength:reflectance = [
+                    (380, 0.88), (400, 0.89), (420, 0.89), (440, 0.90),
+                    (460, 0.90), (480, 0.90), (500, 0.90), (520, 0.90),
+                    (540, 0.90), (560, 0.90), (580, 0.90), (600, 0.90),
+                    (620, 0.90), (640, 0.90), (660, 0.90), (680, 0.90),
+                    (700, 0.90), (720, 0.90), (740, 0.90), (760, 0.90), (780, 0.90)
+                ] (
+                    customData = {
+                        string interpolation = "linear"
+                    }
+                )
+            }
+        }
+
+        # Water material
+        def Material "WaterMaterial"
+        {
+            token outputs:surface.connect = </Scene/Materials/WaterMaterial/Shader.outputs:surface>
+
+            def Shader "Shader"
+            {
+                uniform token info:id = "UsdPreviewSurface"
+                color3f inputs:diffuseColor = (0.8, 0.9, 1.0)
+                float inputs:roughness = 0.0
+                float inputs:metallic = 0.0
+                float inputs:opacity = 0.1
+                float inputs:ior = 1.333
+                token outputs:surface
+
+                # LTE SpectralAPI: Water IOR (slight dispersion)
+                float2[] wavelength:ior = [
+                    (380, 1.3435), (400, 1.3420), (420, 1.3408),
+                    (440, 1.3397), (460, 1.3388), (480, 1.3380),
+                    (500, 1.3373), (520, 1.3367), (540, 1.3362),
+                    (560, 1.3357), (580, 1.3353), (600, 1.3349),
+                    (620, 1.3346), (640, 1.3343), (660, 1.3340),
+                    (680, 1.3337), (700, 1.3335), (720, 1.3333),
+                    (740, 1.3331), (760, 1.3329), (780, 1.3327)
+                ] (
+                    customData = {
+                        string interpolation = "linear"
+                    }
+                )
+            }
+        }
+
+        # Copper metal
+        def Material "CopperMaterial"
+        {
+            token outputs:surface.connect = </Scene/Materials/CopperMaterial/Shader.outputs:surface>
+
+            def Shader "Shader"
+            {
+                uniform token info:id = "UsdPreviewSurface"
+                color3f inputs:diffuseColor = (0.95, 0.64, 0.54)
+                float inputs:roughness = 0.3
+                float inputs:metallic = 1.0
+                token outputs:surface
+
+                # LTE SpectralAPI: Copper reflectance
+                float2[] wavelength:reflectance = [
+                    (380, 0.30), (400, 0.32), (420, 0.33), (440, 0.35),
+                    (460, 0.38), (480, 0.42), (500, 0.50), (520, 0.58),
+                    (540, 0.66), (560, 0.74), (580, 0.82), (600, 0.88),
+                    (620, 0.92), (640, 0.94), (660, 0.95), (680, 0.96),
+                    (700, 0.97), (720, 0.97), (740, 0.98), (760, 0.98), (780, 0.98)
+                ] (
+                    customData = {
+                        string interpolation = "linear"
+                    }
+                )
+            }
+        }
+    }
+
+    def Scope "Lights"
+    {
+        # Main D65 sunlight
+        def DistantLight "Sun"
+        {
+            float inputs:intensity = 1.5
+            color3f inputs:color = (1.0, 1.0, 1.0)
+            float3 xformOp:rotateXYZ = (-45, 30, 0)
+            uniform token[] xformOpOrder = ["xformOp:rotateXYZ"]
+
+            float2[] wavelength:emission = [] (
+                customData = {
+                    string illuminantPreset = "d65"
+                }
+            )
+        }
+
+        # Fill light (warmer)
+        def DistantLight "FillLight"
+        {
+            float inputs:intensity = 0.3
+            color3f inputs:color = (1.0, 0.95, 0.85)
+            float3 xformOp:rotateXYZ = (-20, -60, 0)
+            uniform token[] xformOpOrder = ["xformOp:rotateXYZ"]
+
+            float2[] wavelength:emission = [] (
+                customData = {
+                    string illuminantPreset = "d50"
+                }
+            )
+        }
+    }
+
+    def Xform "Objects"
+    {
+        # Diamond gem
+        def Mesh "Diamond"
+        {
+            # Simplified diamond shape (octahedron)
+            int[] faceVertexCounts = [3, 3, 3, 3, 3, 3, 3, 3]
+            int[] faceVertexIndices = [
+                0, 1, 2,  0, 2, 3,  0, 3, 4,  0, 4, 1,
+                5, 2, 1,  5, 3, 2,  5, 4, 3,  5, 1, 4
+            ]
+            point3f[] points = [
+                (0, 0.5, 0),
+                (0.35, 0, 0.35), (0.35, 0, -0.35),
+                (-0.35, 0, -0.35), (-0.35, 0, 0.35),
+                (0, -0.3, 0)
+            ]
+            double3 xformOp:translate = (0, 0.5, 0)
+            uniform token[] xformOpOrder = ["xformOp:translate"]
+            rel material:binding = </Scene/Materials/DiamondMaterial>
+        }
+
+        # Water droplet
+        def Sphere "WaterDrop"
+        {
+            double radius = 0.2
+            double3 xformOp:translate = (-1, 0.2, 0.5)
+            uniform token[] xformOpOrder = ["xformOp:translate"]
+            rel material:binding = </Scene/Materials/WaterMaterial>
+        }
+
+        # Copper sphere
+        def Sphere "CopperSphere"
+        {
+            double radius = 0.25
+            double3 xformOp:translate = (1, 0.25, 0)
+            uniform token[] xformOpOrder = ["xformOp:translate"]
+            rel material:binding = </Scene/Materials/CopperMaterial>
+        }
+
+        # Ground plane
+        def Mesh "Ground"
+        {
+            int[] faceVertexCounts = [4]
+            int[] faceVertexIndices = [0, 1, 2, 3]
+            point3f[] points = [(-3, 0, -3), (3, 0, -3), (3, 0, 3), (-3, 0, 3)]
+            normal3f[] primvars:normals = [(0, 1, 0), (0, 1, 0), (0, 1, 0), (0, 1, 0)] (
+                interpolation = "vertex"
+            )
+            rel material:binding = </Scene/Materials/WhiteDiffuse>
+        }
+    }
+
+    def Camera "MainCamera"
+    {
+        float focalLength = 35
+        float horizontalAperture = 36
+        float verticalAperture = 24
+        double3 xformOp:translate = (0, 1.5, 4)
+        float3 xformOp:rotateXYZ = (-15, 0, 0)
+        uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:rotateXYZ"]
+    }
+}

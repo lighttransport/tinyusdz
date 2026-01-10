@@ -1,0 +1,10 @@
+#usda 1.0
+
+def Xform "test_quatf"
+{
+  quatf rotation.timeSamples = {
+      0: (1.0, 0.0, 0.0, 0.0),
+      10: (0.707, 0.707, 0.0, 0.0),
+      20: (0.0, 1.0, 0.0, 0.0),
+  }
+}

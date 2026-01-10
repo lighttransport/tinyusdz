@@ -97,6 +97,8 @@ RECONSTRUCT_PRIM_DECL(SphereLight);
 RECONSTRUCT_PRIM_DECL(CylinderLight);
 RECONSTRUCT_PRIM_DECL(DiskLight);
 RECONSTRUCT_PRIM_DECL(DistantLight);
+RECONSTRUCT_PRIM_DECL(RectLight);
+RECONSTRUCT_PRIM_DECL(GeometryLight);
 RECONSTRUCT_PRIM_DECL(GPrim);
 RECONSTRUCT_PRIM_DECL(GeomMesh);
 RECONSTRUCT_PRIM_DECL(GeomSubset);
@@ -191,7 +193,9 @@ DEFINE_PRIM_TYPE(SphereLight, kSphereLight, value::TYPE_ID_LUX_SPHERE);
 DEFINE_PRIM_TYPE(DomeLight, kDomeLight, value::TYPE_ID_LUX_DOME);
 DEFINE_PRIM_TYPE(DiskLight, kDiskLight, value::TYPE_ID_LUX_DISK);
 DEFINE_PRIM_TYPE(DistantLight, kDistantLight, value::TYPE_ID_LUX_DISTANT);
-DEFINE_PRIM_TYPE(CylinderLight,  kCylinderLight, value::TYPE_ID_LUX_CYLINDER);
+DEFINE_PRIM_TYPE(CylinderLight, kCylinderLight, value::TYPE_ID_LUX_CYLINDER);
+DEFINE_PRIM_TYPE(RectLight, kRectLight, value::TYPE_ID_LUX_RECT);
+DEFINE_PRIM_TYPE(GeometryLight, kGeometryLight, value::TYPE_ID_LUX_GEOMETRY);
 DEFINE_PRIM_TYPE(Material, kMaterial, value::TYPE_ID_MATERIAL);
 DEFINE_PRIM_TYPE(Shader, kShader, value::TYPE_ID_SHADER);
 DEFINE_PRIM_TYPE(NodeGraph, kNodeGraph, value::TYPE_ID_NODEGRAPH);
@@ -328,6 +332,10 @@ class USDAReader::Impl {
 
   const USDAReaderConfig get_reader_config() const {
     return _config;
+  }
+
+  void SetProgressCallback(std::function<bool(float progress, void *userptr)> callback, void *userptr) {
+    _parser.SetProgressCallback(callback, userptr);
   }
 
   std::string GetCurrentPath() {
@@ -1679,6 +1687,7 @@ bool USDAReader::Impl::Read(const uint32_t state_flags, bool as_primspec) {
 
   RegisterReconstructCallback<Material>();
   RegisterReconstructCallback<Shader>();
+  RegisterReconstructCallback<NodeGraph>();
 
   RegisterReconstructCallback<Scope>();
 
@@ -1687,6 +1696,8 @@ bool USDAReader::Impl::Read(const uint32_t state_flags, bool as_primspec) {
   RegisterReconstructCallback<DiskLight>();
   RegisterReconstructCallback<DistantLight>();
   RegisterReconstructCallback<CylinderLight>();
+  RegisterReconstructCallback<RectLight>();
+  RegisterReconstructCallback<GeometryLight>();
 
   RegisterReconstructCallback<SkelRoot>();
   RegisterReconstructCallback<Skeleton>();
@@ -1778,6 +1789,10 @@ const USDAReaderConfig USDAReader::get_reader_config() const {
   return _impl->get_reader_config();
 }
 
+void USDAReader::SetProgressCallback(std::function<bool(float progress, void *userptr)> callback, void *userptr) {
+  _impl->SetProgressCallback(callback, userptr);
+}
+
 }  // namespace usda
 }  // namespace tinyusdz
 
@@ -1828,6 +1843,11 @@ void USDAReader::set_reader_config(const USDAReaderConfig &config) {
 
 USDAReaderConfig USDAReader::get_reader_config() const {
   return USDAReaderConfig();
+}
+
+void USDAReader::SetProgressCallback(std::function<bool(float progress, void *userptr)> callback, void *userptr) {
+  (void)callback;
+  (void)userptr;
 }
 
 }  // namespace usda

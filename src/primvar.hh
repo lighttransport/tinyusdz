@@ -50,15 +50,15 @@ struct PrimVar {
   }
 
   // Copy constructor
-  PrimVar(const PrimVar& rhs) 
+  PrimVar(const PrimVar& rhs)
     : _value(rhs._value), _blocked(rhs._blocked), _ts(rhs._ts) {
     //TUSDZ_LOG_I("PrimVar copy ctor");
   }
 
   // Move constructor
   PrimVar(PrimVar&& rhs) noexcept
-    : _value(std::move(rhs._value)), 
-      _blocked(rhs._blocked), 
+    : _value(std::move(rhs._value)),
+      _blocked(rhs._blocked),
       _ts(std::move(rhs._ts)) {
     //TUSDZ_LOG_I("PrimVar move ctor");
     rhs._blocked = false;
@@ -150,8 +150,9 @@ struct PrimVar {
     if (has_default()) {
       return _value.type_name();
     }
-      
-    if (has_timesamples()) {
+
+    // Check if timeSamples were authored (even if empty)
+    if (has_timesamples() || _ts.type_id() != 0) {
       return _ts.type_name();
     }
 
@@ -167,7 +168,8 @@ struct PrimVar {
       return _value.type_id();
     }
 
-    if (has_timesamples()) {
+    // Check if timeSamples were authored (even if empty)
+    if (has_timesamples() || _ts.type_id() != 0) {
       return _ts.type_id();
     }
 
@@ -262,25 +264,34 @@ struct PrimVar {
     return _value.as<T>();
   }
 
+  // Const ref version for lvalue arguments
   template <class T>
   void set_value(const T &v) {
-    //TUSDZ_LOG_I("set_value cosnt_ref");
+    //TUSDZ_LOG_I("set_value const_ref");
     _value = v;
   }
 
-#if 0 // TODO
+  // Move version for rvalue arguments - avoids copy when caller passes temporary
   template <class T>
-  void set_value(T &&v) {
+  void set_value(T &&v, typename std::enable_if<!std::is_lvalue_reference<T>::value && !std::is_same<typename std::decay<T>::type, value::Value>::value>::type* = nullptr) {
     //TUSDZ_LOG_I("set_value move");
 
-    // _value = std::move(v) is not possible since
     // Value's underlying linb::any does not provide templated move constructor.
     // so create Value object first, then call move ctor.
     value::Value src(std::move(v));
-
     _value = std::move(src);
   }
-#endif
+
+  // Special overload for value::Value to avoid double-wrapping
+  void set_value(value::Value &&v) {
+    //TUSDZ_LOG_I("set_value Value move");
+    _value = std::move(v);
+  }
+
+  void set_value(const value::Value &v) {
+    //TUSDZ_LOG_I("set_value Value copy");
+    _value = v;
+  }
 
   void clear_value() {
     _value = nullptr;
