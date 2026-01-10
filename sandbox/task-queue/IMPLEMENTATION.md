@@ -208,5 +208,5 @@ This makes it suitable for:
 
 Example compilation:
 ```bash
-g++ -std=c++14 -fno-exceptions -fno-rtti -pthread -O2 example.cc -o example
+g++ -std=c++17 -fno-exceptions -fno-rtti -pthread -O2 example.cc -o example
 ```

@@ -12,10 +12,9 @@
 #include <cstdint>
 #include <cstddef>
 
-// Detect compiler support for lock-free atomics
-#if defined(__GNUC__) || defined(__clang__)
-  #define TINYUSDZ_TASK_QUEUE_HAS_BUILTIN_ATOMICS 1
-#elif defined(_MSC_VER) && (_MSC_VER >= 1900)
+// Detect compiler support for GCC-style lock-free atomics
+// MSVC does not have __atomic_* builtins, so it uses the mutex fallback
+#if (defined(__GNUC__) || defined(__clang__)) && !defined(_MSC_VER)
   #define TINYUSDZ_TASK_QUEUE_HAS_BUILTIN_ATOMICS 1
 #else
   #define TINYUSDZ_TASK_QUEUE_HAS_BUILTIN_ATOMICS 0
