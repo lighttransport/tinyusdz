@@ -500,4 +500,25 @@ size_t print_matrix2d(const value::matrix2d& m, char* buffer);
 size_t print_matrix3d(const value::matrix3d& m, char* buffer);
 size_t print_matrix4d(const value::matrix4d& m, char* buffer);
 
+/// Simple glob pattern matching.
+/// Supports * (match any characters) and ? (match single character).
+///
+/// @param[in] pattern Glob pattern
+/// @param[in] str String to match
+/// @return true if str matches pattern
+///
+bool GlobMatch(const std::string &pattern, const std::string &str);
+
+///
+/// Glob pattern matching for paths with ** support.
+/// ** matches zero or more path segments (including /)
+/// * matches any characters except /
+/// ? matches single character except /
+///
+/// @param[in] pattern Glob pattern (e.g., "/Suzanne/**", "/**/Mesh")
+/// @param[in] path Path string to match
+/// @return true if path matches pattern
+///
+bool GlobMatchPath(const std::string &pattern, const std::string &path);
+
 }  // namespace tinyusdz

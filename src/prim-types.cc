@@ -7,6 +7,7 @@
 //
 #include "prim-types.hh"
 #include "str-util.hh"
+#include "tiny-container.hh"
 #include "tiny-format.hh"
 //
 #include "usdGeom.hh"
@@ -1547,48 +1548,52 @@ bool GetCustomDataByKey(const CustomDataType &custom, const std::string &key,
 
 namespace {
 
-bool OverrideCustomDataRec(uint32_t depth, CustomDataType &dst,
-                           const CustomDataType &src, const bool override_existing) {
-  if (depth > (1024 * 1024 * 128)) {
-    // too deep
-    return false;
-  }
+// Iterative version of dictionary override using explicit stack
+// Avoids recursion for deeply nested dictionary structures
+void OverrideCustomDataIterative(CustomDataType &dst, const CustomDataType &src,
+                                 const bool override_existing) {
+  // Stack of pairs: (dst_dict pointer, src_dict pointer)
+  StackVector<std::pair<CustomDataType *, const CustomDataType *>, 4> stack;
+  stack.reserve(16);
 
-  for (const auto &item : src) {
-    if (dst.count(item.first)) {
-      if (override_existing) {
-        CustomDataType *dst_dict =
-            dst.at(item.first).get_raw_value().as<CustomDataType>();
+  // Start with the root dictionaries
+  stack.emplace_back(&dst, &src);
 
-        const value::Value &src_data = item.second.get_raw_value();
-        const CustomDataType *src_dict = src_data.as<CustomDataType>();
+  while (!stack.empty()) {
+    auto current = stack.back();
+    stack.pop_back();
 
-        //
-        // Recursively apply override op both types are dict.
-        //
-        if (src_dict && dst_dict) {
-          // recursively override dict
-          if (!OverrideCustomDataRec(depth + 1, (*dst_dict), (*src_dict), override_existing)) {
-            return false;
+    CustomDataType *current_dst = current.first;
+    const CustomDataType *current_src = current.second;
+
+    for (const auto &item : *current_src) {
+      if (current_dst->count(item.first)) {
+        if (override_existing) {
+          CustomDataType *dst_dict =
+              current_dst->at(item.first).get_raw_value().as<CustomDataType>();
+
+          const value::Value &src_data = item.second.get_raw_value();
+          const CustomDataType *src_dict = src_data.as<CustomDataType>();
+
+          // If both are dicts, push to stack for later processing
+          if (src_dict && dst_dict) {
+            stack.emplace_back(dst_dict, src_dict);
+          } else {
+            (*current_dst)[item.first] = item.second;
           }
-
-        } else {
-          dst[item.first] = item.second;
         }
+      } else {
+        // add dict value
+        current_dst->emplace(item.first, item.second);
       }
-    } else {
-      // add dict value
-      dst.emplace(item.first, item.second);
     }
   }
-
-  return true;
 }
 
 }  // namespace
 
 void OverrideDictionary(CustomDataType &dst, const CustomDataType &src, const bool override_existing) {
-  OverrideCustomDataRec(0, dst, src, override_existing);
+  OverrideCustomDataIterative(dst, src, override_existing);
 }
 
 AssetInfo PrimMeta::get_assetInfo(bool *is_authored) const {
@@ -1808,7 +1813,6 @@ value::matrix4d GetLocalTransform(const Prim &prim, bool *resetXformStack,
       return value::matrix4d::identity();
     }
 
-    value::matrix4d m;
     bool rxs{false};
     nonstd::expected<value::matrix4d, std::string> ret =
         xformable->GetLocalMatrix(t, tinterp, &rxs);

@@ -1,0 +1,10 @@
+#usda 1.0
+
+def Xform "test_half"
+{
+  half value.timeSamples = {
+      0: 0.0,
+      10: 1.5,
+      20: -2.75,
+  }
+}

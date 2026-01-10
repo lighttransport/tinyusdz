@@ -1,0 +1,10 @@
+#usda 1.0
+
+def Xform "test_double"
+{
+  double value.timeSamples = {
+      0: 0.0,
+      10: 3.141592653589793,
+      20: -2.718281828459045,
+  }
+}

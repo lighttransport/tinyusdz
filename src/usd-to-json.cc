@@ -990,28 +990,67 @@ nonstd::expected<json, std::string> ToJSON(const tinyusdz::StageMetas& metas) {
   return j;
 }
 
-bool PrimToJSONRec(json &root, const tinyusdz::Prim& prim, int depth) {
-  json j = ToJSON(prim.data());
+// Iterative version of PrimToJSON using explicit stack
+bool PrimToJSONIterative(json &root, const tinyusdz::Prim& root_prim) {
+  // Stack entry for iterative processing
+  struct StackEntry {
+    const tinyusdz::Prim *prim;
+    size_t child_idx;
+    json j;
+    json jchildren;
 
-  json jchildren = json::object();
-
-  // TODO: Traverse Prim according to primChildren.
-  for (const auto &child : prim.children()) {
-    json cj;
-    if (!PrimToJSONRec(cj, child, depth+1)) {
-      return false;
+    explicit StackEntry(const tinyusdz::Prim *p)
+        : prim(p), child_idx(0), jchildren(json::object()) {
+      // Convert prim data to JSON immediately
+      j = ToJSON(p->data());
     }
-    std::string cname = child.element_name();
-    jchildren[cname] = cj;
-  }
+  };
 
-  if (jchildren.size()) {
-    j["primChildren"] = jchildren;
-  }
+  std::vector<StackEntry> stack;
+  stack.reserve(64);
 
-  root[prim.element_name()] = j;
+  // Initialize with root prim
+  stack.emplace_back(&root_prim);
+
+  while (!stack.empty()) {
+    StackEntry &curr = stack.back();
+    const auto &children = curr.prim->children();
+
+    if (curr.child_idx < children.size()) {
+      // Push next child
+      const tinyusdz::Prim &child = children[curr.child_idx];
+      curr.child_idx++;
+
+      stack.emplace_back(&child);
+    } else {
+      // All children processed
+      // Finalize this node's JSON
+      if (curr.jchildren.size()) {
+        curr.j["primChildren"] = curr.jchildren;
+      }
+
+      std::string prim_name = curr.prim->element_name();
+      json completed_j = std::move(curr.j);
+
+      if (stack.size() > 1) {
+        // Add to parent's children
+        stack.pop_back();
+        stack.back().jchildren[prim_name] = std::move(completed_j);
+      } else {
+        // Root node - add to output
+        root[prim_name] = std::move(completed_j);
+        stack.pop_back();
+      }
+    }
+  }
 
   return true;
+}
+
+// Wrapper to maintain backward compatibility with PrimToJSONRec signature
+bool PrimToJSONRec(json &root, const tinyusdz::Prim& prim, int depth) {
+  (void)depth;  // Iterative version doesn't need depth
+  return PrimToJSONIterative(root, prim);
 }
 
 // Helper function to serialize context to JSON

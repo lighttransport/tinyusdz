@@ -285,7 +285,7 @@ enum TypeId {
 
   // -- begin value type
   TYPE_ID_VALUE_BEGIN,
-  
+
   TYPE_ID_TOKEN,
   TYPE_ID_STRING,
   TYPE_ID_STRING_DATA,  // String for primvar and metadata. Includes multi-line
@@ -395,11 +395,11 @@ enum TypeId {
   TYPE_ID_DICT,        // Generic dict type. TODO: remove?
   TYPE_ID_CUSTOMDATA,  // similar to `dictionary`, but limited types are allowed
                        // to use. for metadatum(e.g. `customData` in Prim Meta)
-                       
+
   TYPE_ID_VALUE_END,
 
   // -- end value type
-  
+
   TYPE_ID_LAYER_OFFSET,
   TYPE_ID_PAYLOAD,
 
@@ -502,6 +502,12 @@ enum TypeId {
 
   TYPE_ID_IMAGING_MTLX_PREVIEWSURFACE,
   TYPE_ID_IMAGING_MTLX_STANDARDSURFACE,
+  TYPE_ID_IMAGING_MTLX_OPENPBRSURFACE,
+  TYPE_ID_IMAGING_MTLX_UNIFORMEDF,
+  TYPE_ID_IMAGING_MTLX_CONICALEDF,
+  TYPE_ID_IMAGING_MTLX_MEASUREDEDF,
+  TYPE_ID_IMAGING_MTLX_LIGHT,
+  TYPE_ID_IMAGING_OPENPBR_SURFACE,
 
   TYPE_ID_IMAGING_END,
 
@@ -519,12 +525,14 @@ enum TypeId {
 
   TYPE_ID_MODEL_END,
 
-  
+
   // Types for API
   TYPE_ID_API_BEGIN = 1 << 14,
   TYPE_ID_COLLECTION,
   TYPE_ID_COLLECTION_INSTANCE,
   TYPE_ID_MATERIAL_BINDING,
+  TYPE_ID_MATERIALX_CONFIG_API,
+  TYPE_ID_COLOR_SPACE_API,
   TYPE_ID_API_END,
 
   // Base ID for user data type(less than `TYPE_ID_1D_ARRAY_BIT-1`)
@@ -666,20 +674,14 @@ struct matrix3d;
 struct matrix4d;
 
 struct matrix2f {
-  matrix2f() {
-    m[0][0] = 1.0f;
-    m[0][1] = 0.0f;
+  // Default constructor - makes struct trivial
+  matrix2f() = default;
 
-    m[1][0] = 0.0f;
-    m[1][1] = 1.0f;
-  }
-
-  matrix2f(const std::array<float, 4> &arr) {
-    m[0][0] = arr[0];
-    m[0][1] = arr[1];
-    m[1][0] = arr[2];
-    m[1][1] = arr[3];
-  }
+  // Copy/move constructors and assignment operators
+  matrix2f(const matrix2f&) = default;
+  matrix2f(matrix2f&&) = default;
+  matrix2f& operator=(const matrix2f&) = default;
+  matrix2f& operator=(matrix2f&&) = default;
 
   inline void set_row(uint32_t row, float x, float y) {
     if (row < 2) {
@@ -697,49 +699,29 @@ struct matrix2f {
   }
 
   static matrix2f identity() {
-    matrix2f m;
-
-    m.m[0][0] = 1.0f;
-    m.m[0][1] = 0.0f;
-
-    m.m[1][0] = 0.0f;
-    m.m[1][1] = 1.0f;
-
-    return m;
+    matrix2f mat{};
+    mat.m[0][0] = 1.0f;
+    mat.m[0][1] = 0.0f;
+    mat.m[1][0] = 0.0f;
+    mat.m[1][1] = 1.0f;
+    return mat;
   }
 
   matrix2f(const matrix2d &rhs);
   matrix2f &operator=(const matrix2d &rhs);
-  
+
   float m[2][2];
 };
 
 struct matrix3f {
-  matrix3f() {
-    m[0][0] = 1.0f;
-    m[0][1] = 0.0f;
-    m[0][2] = 0.0f;
+  // Default constructor - makes struct trivial
+  matrix3f() = default;
 
-    m[1][0] = 0.0f;
-    m[1][1] = 1.0f;
-    m[1][2] = 0.0f;
-
-    m[2][0] = 0.0f;
-    m[2][1] = 0.0f;
-    m[2][2] = 1.0f;
-  }
-
-  matrix3f(const std::array<float, 9> &arr) {
-    m[0][0] = arr[0];
-    m[0][1] = arr[1];
-    m[0][2] = arr[2];
-    m[1][0] = arr[3];
-    m[1][1] = arr[4];
-    m[1][2] = arr[5];
-    m[2][0] = arr[6];
-    m[2][1] = arr[7];
-    m[2][2] = arr[8];
-  }
+  // Copy/move constructors and assignment operators
+  matrix3f(const matrix3f&) = default;
+  matrix3f(matrix3f&&) = default;
+  matrix3f& operator=(const matrix3f&) = default;
+  matrix3f& operator=(matrix3f&&) = default;
 
   inline void set_row(uint32_t row, float x, float y, float z) {
     if (row < 3) {
@@ -761,7 +743,6 @@ struct matrix3f {
     m[2][0] = 0.0f;
     m[2][1] = 0.0f;
     m[2][2] = sz;
-
   }
 
   inline void set_translation(float tx, float ty, float tz) {
@@ -771,21 +752,17 @@ struct matrix3f {
   }
 
   static matrix3f identity() {
-    matrix3f m;
-
-    m.m[0][0] = 1.0f;
-    m.m[0][1] = 0.0f;
-    m.m[0][2] = 0.0f;
-
-    m.m[1][0] = 0.0f;
-    m.m[1][1] = 1.0f;
-    m.m[1][2] = 0.0f;
-
-    m.m[2][0] = 0.0f;
-    m.m[2][1] = 0.0f;
-    m.m[2][2] = 1.0f;
-
-    return m;
+    matrix3f mat{};
+    mat.m[0][0] = 1.0f;
+    mat.m[0][1] = 0.0f;
+    mat.m[0][2] = 0.0f;
+    mat.m[1][0] = 0.0f;
+    mat.m[1][1] = 1.0f;
+    mat.m[1][2] = 0.0f;
+    mat.m[2][0] = 0.0f;
+    mat.m[2][1] = 0.0f;
+    mat.m[2][2] = 1.0f;
+    return mat;
   }
 
   matrix3f(const matrix3d &rhs);
@@ -795,46 +772,11 @@ struct matrix3f {
 };
 
 struct matrix4f {
-  matrix4f() {
-    m[0][0] = 1.0f;
-    m[0][1] = 0.0f;
-    m[0][2] = 0.0f;
-    m[0][3] = 0.0f;
-
-    m[1][0] = 0.0f;
-    m[1][1] = 1.0f;
-    m[1][2] = 0.0f;
-    m[1][3] = 0.0f;
-
-    m[2][0] = 0.0f;
-    m[2][1] = 0.0f;
-    m[2][2] = 1.0f;
-    m[2][3] = 0.0f;
-
-    m[3][0] = 0.0f;
-    m[3][1] = 0.0f;
-    m[3][2] = 0.0f;
-    m[3][3] = 1.0f;
-  }
-
-  matrix4f(const std::array<float, 16> &arr) {
-    m[0][0] = arr[0];
-    m[0][1] = arr[1];
-    m[0][2] = arr[2];
-    m[0][3] = arr[3];
-    m[1][0] = arr[4];
-    m[1][1] = arr[5];
-    m[1][2] = arr[6];
-    m[1][3] = arr[7];
-    m[2][0] = arr[8];
-    m[2][1] = arr[9];
-    m[2][2] = arr[10];
-    m[2][3] = arr[11];
-    m[3][0] = arr[12];
-    m[3][1] = arr[13];
-    m[3][2] = arr[14];
-    m[3][3] = arr[15];
-  }
+  matrix4f() = default;
+  matrix4f(const matrix4f&) = default;
+  matrix4f(matrix4f&&) = default;
+  matrix4f& operator=(const matrix4f&) = default;
+  matrix4f& operator=(matrix4f&&) = default;
 
   inline void set_row(uint32_t row, float x, float y, float z, float w) {
     if (row < 4) {
@@ -859,7 +801,7 @@ struct matrix4f {
     m[2][0] = 0.0f;
     m[2][1] = 0.0f;
     m[2][2] = sz;
-    m[2][3] = 0.0f; 
+    m[2][3] = 0.0f;
 
     m[3][0] = 0.0f;
     m[3][1] = 0.0f;
@@ -874,29 +816,12 @@ struct matrix4f {
   }
 
   static matrix4f identity() {
-    matrix4f m;
-
-    m.m[0][0] = 1.0f;
-    m.m[0][1] = 0.0f;
-    m.m[0][2] = 0.0f;
-    m.m[0][3] = 0.0f;
-
-    m.m[1][0] = 0.0f;
-    m.m[1][1] = 1.0f;
-    m.m[1][2] = 0.0f;
-    m.m[1][3] = 0.0f;
-
-    m.m[2][0] = 0.0f;
-    m.m[2][1] = 0.0f;
-    m.m[2][2] = 1.0f;
-    m.m[2][3] = 0.0f;
-
-    m.m[3][0] = 0.0f;
-    m.m[3][1] = 0.0f;
-    m.m[3][2] = 0.0f;
-    m.m[3][3] = 1.0f;
-
-    return m;
+    matrix4f mat{};
+    mat.m[0][0] = 1.0f;
+    mat.m[1][1] = 1.0f;
+    mat.m[2][2] = 1.0f;
+    mat.m[3][3] = 1.0f;
+    return mat;
   }
 
   matrix4f(const matrix4d &rhs);
@@ -907,20 +832,11 @@ struct matrix4f {
 };
 
 struct matrix2d {
-  matrix2d() {
-    m[0][0] = 1.0;
-    m[0][1] = 0.0;
-
-    m[1][0] = 0.0;
-    m[1][1] = 1.0;
-  }
-
-  matrix2d(const std::array<double, 4> &arr) {
-    m[0][0] = arr[0];
-    m[0][1] = arr[1];
-    m[1][0] = arr[2];
-    m[1][1] = arr[3];
-  }
+  matrix2d() = default;
+  matrix2d(const matrix2d&) = default;
+  matrix2d(matrix2d&&) = default;
+  matrix2d& operator=(const matrix2d&) = default;
+  matrix2d& operator=(matrix2d&&) = default;
 
   inline void set_row(uint32_t row, double x, double y) {
     if (row < 2) {
@@ -938,15 +854,10 @@ struct matrix2d {
   }
 
   static matrix2d identity() {
-    matrix2d m;
-
-    m.m[0][0] = 1.0;
-    m.m[0][1] = 0.0;
-
-    m.m[1][0] = 0.0;
-    m.m[1][1] = 1.0;
-
-    return m;
+    matrix2d mat{};
+    mat.m[0][0] = 1.0;
+    mat.m[1][1] = 1.0;
+    return mat;
   }
 
   matrix2d &operator=(const matrix2f &rhs);
@@ -955,31 +866,11 @@ struct matrix2d {
 };
 
 struct matrix3d {
-  matrix3d() {
-    m[0][0] = 1.0;
-    m[0][1] = 0.0;
-    m[0][2] = 0.0;
-
-    m[1][0] = 0.0;
-    m[1][1] = 1.0;
-    m[1][2] = 0.0;
-
-    m[2][0] = 0.0;
-    m[2][1] = 0.0;
-    m[2][2] = 1.0;
-  }
-
-  matrix3d(const std::array<double, 9> &arr) {
-    m[0][0] = arr[0];
-    m[0][1] = arr[1];
-    m[0][2] = arr[2];
-    m[1][0] = arr[3];
-    m[1][1] = arr[4];
-    m[1][2] = arr[5];
-    m[2][0] = arr[6];
-    m[2][1] = arr[7];
-    m[2][2] = arr[8];
-  }
+  matrix3d() = default;
+  matrix3d(const matrix3d&) = default;
+  matrix3d(matrix3d&&) = default;
+  matrix3d& operator=(const matrix3d&) = default;
+  matrix3d& operator=(matrix3d&&) = default;
 
   inline void set_row(uint32_t row, double x, double y, double z) {
     if (row < 3) {
@@ -1004,21 +895,11 @@ struct matrix3d {
   }
 
   static matrix3d identity() {
-    matrix3d m;
-
-    m.m[0][0] = 1.0;
-    m.m[0][1] = 0.0;
-    m.m[0][2] = 0.0;
-
-    m.m[1][0] = 0.0;
-    m.m[1][1] = 1.0;
-    m.m[1][2] = 0.0;
-
-    m.m[2][0] = 0.0;
-    m.m[2][1] = 0.0;
-    m.m[2][2] = 1.0;
-
-    return m;
+    matrix3d mat{};
+    mat.m[0][0] = 1.0;
+    mat.m[1][1] = 1.0;
+    mat.m[2][2] = 1.0;
+    return mat;
   }
 
   matrix3d &operator=(const matrix3f &rhs);
@@ -1027,46 +908,11 @@ struct matrix3d {
 };
 
 struct matrix4d {
-  matrix4d() {
-    m[0][0] = 1.0;
-    m[0][1] = 0.0;
-    m[0][2] = 0.0;
-    m[0][3] = 0.0;
-
-    m[1][0] = 0.0;
-    m[1][1] = 1.0;
-    m[1][2] = 0.0;
-    m[1][3] = 0.0;
-
-    m[2][0] = 0.0;
-    m[2][1] = 0.0;
-    m[2][2] = 1.0;
-    m[2][3] = 0.0;
-
-    m[3][0] = 0.0;
-    m[3][1] = 0.0;
-    m[3][2] = 0.0;
-    m[3][3] = 1.0;
-  }
-
-  matrix4d(const std::array<double, 16> &arr) {
-    m[0][0] = arr[0];
-    m[0][1] = arr[1];
-    m[0][2] = arr[2];
-    m[0][3] = arr[3];
-    m[1][0] = arr[4];
-    m[1][1] = arr[5];
-    m[1][2] = arr[6];
-    m[1][3] = arr[7];
-    m[2][0] = arr[8];
-    m[2][1] = arr[9];
-    m[2][2] = arr[10];
-    m[2][3] = arr[11];
-    m[3][0] = arr[12];
-    m[3][1] = arr[13];
-    m[3][2] = arr[14];
-    m[3][3] = arr[15];
-  }
+  matrix4d() = default;
+  matrix4d(const matrix4d&) = default;
+  matrix4d(matrix4d&&) = default;
+  matrix4d& operator=(const matrix4d&) = default;
+  matrix4d& operator=(matrix4d&&) = default;
 
   inline void set_row(uint32_t row, double x, double y, double z, double w) {
     if (row < 4) {
@@ -1091,7 +937,7 @@ struct matrix4d {
     m[2][0] = 0.0;
     m[2][1] = 0.0;
     m[2][2] = sz;
-    m[2][3] = 0.0; 
+    m[2][3] = 0.0;
 
     m[3][0] = 0.0;
     m[3][1] = 0.0;
@@ -1100,29 +946,12 @@ struct matrix4d {
   }
 
   static matrix4d identity() {
-    matrix4d m;
-
-    m.m[0][0] = 1.0;
-    m.m[0][1] = 0.0;
-    m.m[0][2] = 0.0;
-    m.m[0][3] = 0.0;
-
-    m.m[1][0] = 0.0;
-    m.m[1][1] = 1.0;
-    m.m[1][2] = 0.0;
-    m.m[1][3] = 0.0;
-
-    m.m[2][0] = 0.0;
-    m.m[2][1] = 0.0;
-    m.m[2][2] = 1.0;
-    m.m[2][3] = 0.0;
-
-    m.m[3][0] = 0.0;
-    m.m[3][1] = 0.0;
-    m.m[3][2] = 0.0;
-    m.m[3][3] = 1.0;
-
-    return m;
+    matrix4d mat{};
+    mat.m[0][0] = 1.0;
+    mat.m[1][1] = 1.0;
+    mat.m[2][2] = 1.0;
+    mat.m[3][3] = 1.0;
+    return mat;
   }
 
   matrix4d &operator=(const matrix4f &rhs);
@@ -1161,7 +990,7 @@ struct frame4d {
 //
 // p * S * R * T = p'
 // p' = Mult(Mult(S, R), T)
-// 
+//
 // you can express world matrix as
 //
 // node.world = parent.world * node.local
@@ -1169,7 +998,7 @@ struct frame4d {
 template <typename MTy, typename STy, size_t N>
 MTy Mult(const MTy &m, const MTy &n) {
   MTy ret;
-  //memset(ret.m, 0, sizeof(MTy)); 
+  //memset(ret.m, 0, sizeof(MTy));
 
   for (size_t j = 0; j < N; j++) {
     for (size_t i = 0; i < N; i++) {
@@ -1350,6 +1179,16 @@ inline matrix4d operator*(const matrix4d &a, const matrix4d &b) {
   matrix4d ret = Mult<matrix4d, double, 4>(a, b);
   return ret;
 }
+
+// Equality operators for matrix types
+// Use floating-point aware comparison (suitable for dedup)
+// Implementations in value-types.cc
+bool operator==(const matrix2f &a, const matrix2f &b);
+bool operator==(const matrix3f &a, const matrix3f &b);
+bool operator==(const matrix4f &a, const matrix4f &b);
+bool operator==(const matrix2d &a, const matrix2d &b);
+bool operator==(const matrix3d &a, const matrix3d &b);
+bool operator==(const matrix4d &a, const matrix4d &b);
 
 // Quaternion has memory layout of [x, y, z, w] in Crate(Binary)
 // and QfQuat class in pxrUSD.
@@ -2153,7 +1992,7 @@ class Value {
   //
   // Returns a view over array data if the value contains an array type that's compatible
   // with the requested element type T. For non-array types, returns an empty view.
-  // 
+  //
   // The view provides zero-copy access to the underlying data with type safety validation.
   //
   // Template parameter T: the desired element type for the view
@@ -2210,7 +2049,7 @@ class Value {
         return TypedArrayView<T>();
       }
     } else {
-      // Non-strict cast - allow compatible types (same underlying type)  
+      // Non-strict cast - allow compatible types (same underlying type)
       if (underlying_type_id != target_type_id) {
         return TypedArrayView<T>();
       }
@@ -2232,6 +2071,36 @@ class Value {
   }
 #endif
 
+#if 0
+  // Helper to log vector size
+  template <typename T>
+  static void log_vector_size(const std::vector<T>& vec) {
+    //TUSDZ_LOG_I("  vector size: " << vec.size());
+  }
+
+  template <typename T>
+  static void log_vector_size(const T&) {
+    // Non-vector type, do nothing
+  }
+#endif
+
+  // Helper to check vector size bounds
+  template <typename T>
+  static bool check_vector_size(const std::vector<T>& vec) {
+    constexpr size_t MAX_REASONABLE_SIZE = 100000000; // 100M
+    if (vec.size() > MAX_REASONABLE_SIZE) {
+      TUSDZ_LOG_E("ERROR: Vector size " << vec.size() << " exceeds reasonable limit (" << MAX_REASONABLE_SIZE << "). Data is likely corrupted!");
+      return false;
+    }
+    return true;
+  }
+
+  template <typename T>
+  static bool check_vector_size(const T&) {
+    // Non-vector type, always OK
+    return true;
+  }
+
   // Type-safe way to get concrete value.
   template <class T>
   nonstd::optional<T> get_value(bool strict_cast = false) const {
@@ -2242,12 +2111,23 @@ class Value {
         return nonstd::nullopt;
       }
 
+      //TUSDZ_LOG_I("get_value: about to move/copy value of type " << TypeTraits<T>::type_name());
+      //log_vector_size(*pv);
       return std::move(*pv);
     } else if (!strict_cast) {
 
       if (TypeTraits<T>::is_array() && (v_.type_id() & value::TYPE_ID_1D_ARRAY_BIT)) { // both are array type
         if ((TypeTraits<T>::underlying_type_id() & (~value::TYPE_ID_1D_ARRAY_BIT)) == (v_.underlying_type_id() & (~value::TYPE_ID_1D_ARRAY_BIT))) {
-          return std::move(*linb::cast<const T>(&v_));
+          //TUSDZ_LOG_I("get_value: strict_cast=false, both are array types, about to cast for type " << TypeTraits<T>::type_name());
+          const T* pv = linb::cast<const T>(&v_);
+          //TUSDZ_LOG_I("get_value: cast successful, pv=" << (pv ? "valid" : "null"));
+          if (pv) {
+            //log_vector_size(*pv);
+            if (!check_vector_size(*pv)) {
+              return nonstd::nullopt;
+            }
+          }
+          return std::move(*pv);
         }
       } else if (!TypeTraits<T>::is_array() && !(v_.type_id() & value::TYPE_ID_1D_ARRAY_BIT)) { // both are scalar type.
         if (TypeTraits<T>::underlying_type_id() == v_.underlying_type_id()) {
@@ -2294,6 +2174,7 @@ class Value {
 #endif
 
   const linb::any &get_raw() const { return v_; }
+  linb::any &get_raw_mutable() { return v_; }
 
   bool is_array() const { return (v_.type_id() & value::TYPE_ID_1D_ARRAY_BIT); }
 
@@ -2326,17 +2207,17 @@ class Value {
   template <class T>
   TypedArrayView<const T> create_array_view_helper(bool strict_cast) const {
     // Try common array types that could contain T elements
-    
+
     // Direct type match - try std::vector<T>
     if (auto* vec = as<std::vector<T>>(strict_cast)) {
       return TypedArrayView<const T>(*vec);
     }
-    
+
     // Try related types based on underlying type compatibility
     if (!strict_cast) {
       // Handle role type conversions (e.g., float3 <-> vector3f <-> normal3f)
       uint32_t target_underlying_id = TypeTraits<T>::underlying_type_id();
-      
+
       switch (target_underlying_id) {
         case TYPE_ID_FLOAT: {
           if (auto* vec = as<std::vector<float>>(false)) {
@@ -2405,7 +2286,7 @@ class Value {
           break;
       }
     }
-    
+
     // No compatible type found
     return TypedArrayView<const T>();
   }
@@ -2413,17 +2294,17 @@ class Value {
   template <class T>
   TypedArrayView<T> create_array_view_helper_mutable(bool strict_cast) {
     // Try common array types that could contain T elements
-    
+
     // Direct type match - try std::vector<T>
     if (auto* vec = as<std::vector<T>>(strict_cast)) {
       return TypedArrayView<T>(*vec);
     }
-    
+
     // Try related types based on underlying type compatibility
     if (!strict_cast) {
       // Handle role type conversions (e.g., float3 <-> vector3f <-> normal3f)
       uint32_t target_underlying_id = TypeTraits<T>::underlying_type_id();
-      
+
       switch (target_underlying_id) {
         case TYPE_ID_FLOAT: {
           if (auto* vec = as<std::vector<float>>(false)) {
@@ -2492,7 +2373,7 @@ class Value {
           break;
       }
     }
-    
+
     // No compatible type found
     return TypedArrayView<T>();
   }
@@ -2836,7 +2717,7 @@ struct LerpTraits<std::vector<ty>> { \
   static constexpr bool supported() { \
     return true; \
   } \
-}; 
+};
 
 DEFINE_LERP_TRAIT(value::half)
 DEFINE_LERP_TRAIT(value::half2)

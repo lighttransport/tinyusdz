@@ -13,7 +13,9 @@
 #include "layer.hh"
 #include "str-util.hh"
 #include "tiny-format.hh"
+#include "usdLux.hh"
 #include "usdShade.hh"
+#include "usdMtlx.hh"
 #include "value-pprint.hh"
 #include "timesamples-pprint.hh"
 #include "stream-writer.hh"
@@ -1386,7 +1388,12 @@ std::string print_prop(const Property &prop, const std::string &prop_name,
     // timeSamples and connect cannot have attrMeta
     // 
 
-    if (attr.metas().authored() || attr.has_value()) {
+    // Print attribute if it has metadata, has a value, OR is just typed (but not connection-only)
+    // NOTE: Some attributes (like outputs:out) may be typed but not have a value
+    // Skip printing declaration if this is a connection-only attribute (will be printed in the connection section below)
+    bool is_connection_only = attr.has_connections() && !attr.has_value() && !attr.has_timesamples() && !attr.metas().authored();
+
+    if ((attr.metas().authored() || attr.has_value() || !attr.type_name().empty()) && !is_connection_only) {
 
       ss << pprint::Indent(indent);
 
@@ -1430,7 +1437,11 @@ std::string print_prop(const Property &prop, const std::string &prop_name,
       ss << "\n";
     }
 
-    if (attr.has_timesamples() && (attr.variability() != Variability::Uniform)) {
+    // Check if timeSamples were authored (even if empty)
+    // An authored but empty timeSamples will have a valid type_id but size=0
+    bool has_timesamples_authored = (attr.has_timesamples() || attr.get_var().ts_raw().type_id() != 0);
+
+    if (has_timesamples_authored && (attr.variability() != Variability::Uniform)) {
 
       ss << pprint::Indent(indent);
 
@@ -1610,7 +1621,10 @@ std::string print_xformOps(const std::vector<XformOp> &xformOps,
         ss << "\n";
       }
 
-      if (xformOp.has_timesamples()) {
+      // Check if timeSamples were authored (even if empty)
+      bool has_timesamples_authored = (xformOp.has_timesamples() || xformOp.get_var().ts_raw().type_id() != 0);
+
+      if (has_timesamples_authored) {
 
         if (printed_vars.count(varname + ".timeSamples")) {
           continue;
@@ -1624,11 +1638,8 @@ std::string print_xformOps(const std::vector<XformOp> &xformOps,
         ss << ".timeSamples";
         ss << " = ";
 
-        if (auto pv = xformOp.get_timesamples()) {
-          ss << print_timesamples(pv.value(), indent);
-        } else {
-          ss << "[InternalError]";
-        }
+        // Always use ts_raw() to get timeSamples even if empty
+        ss << print_timesamples(xformOp.get_var().ts_raw(), indent);
         ss << "\n";
       }
 
@@ -4046,6 +4057,86 @@ static std::string print_shader_params(const UsdUVTexture &shader,
   return ss.str();
 }
 
+static std::string print_shader_params(const MtlxOpenPBRSurface &shader,
+                                       const uint32_t indent) {
+  std::stringstream ss;
+
+  // Base properties
+  ss << print_typed_attr(shader.base_weight, "inputs:base_weight", indent);
+  ss << print_typed_attr(shader.base_color, "inputs:base_color", indent);
+  ss << print_typed_attr(shader.base_metalness, "inputs:base_metalness", indent);
+  ss << print_typed_attr(shader.base_diffuse_roughness, "inputs:base_diffuse_roughness", indent);
+
+  // Specular properties
+  ss << print_typed_attr(shader.specular_weight, "inputs:specular_weight", indent);
+  ss << print_typed_attr(shader.specular_color, "inputs:specular_color", indent);
+  ss << print_typed_attr(shader.specular_roughness, "inputs:specular_roughness", indent);
+  ss << print_typed_attr(shader.specular_ior, "inputs:specular_ior", indent);
+  ss << print_typed_attr(shader.specular_anisotropy, "inputs:specular_anisotropy", indent);
+  ss << print_typed_attr(shader.specular_rotation, "inputs:specular_rotation", indent);
+  ss << print_typed_attr(shader.specular_roughness_anisotropy, "inputs:specular_roughness_anisotropy", indent);
+
+  // Transmission properties
+  ss << print_typed_attr(shader.transmission_weight, "inputs:transmission_weight", indent);
+  ss << print_typed_attr(shader.transmission_color, "inputs:transmission_color", indent);
+  ss << print_typed_attr(shader.transmission_depth, "inputs:transmission_depth", indent);
+  ss << print_typed_attr(shader.transmission_scatter, "inputs:transmission_scatter", indent);
+  ss << print_typed_attr(shader.transmission_scatter_anisotropy, "inputs:transmission_scatter_anisotropy", indent);
+  ss << print_typed_attr(shader.transmission_dispersion, "inputs:transmission_dispersion", indent);
+  ss << print_typed_attr(shader.transmission_dispersion_abbe_number, "inputs:transmission_dispersion_abbe_number", indent);
+  ss << print_typed_attr(shader.transmission_dispersion_scale, "inputs:transmission_dispersion_scale", indent);
+
+  // Subsurface properties
+  ss << print_typed_attr(shader.subsurface_weight, "inputs:subsurface_weight", indent);
+  ss << print_typed_attr(shader.subsurface_color, "inputs:subsurface_color", indent);
+  ss << print_typed_attr(shader.subsurface_radius, "inputs:subsurface_radius", indent);
+  ss << print_typed_attr(shader.subsurface_radius_scale, "inputs:subsurface_radius_scale", indent);
+  ss << print_typed_attr(shader.subsurface_scale, "inputs:subsurface_scale", indent);
+  ss << print_typed_attr(shader.subsurface_anisotropy, "inputs:subsurface_anisotropy", indent);
+  ss << print_typed_attr(shader.subsurface_scatter_anisotropy, "inputs:subsurface_scatter_anisotropy", indent);
+
+  // Coat properties
+  ss << print_typed_attr(shader.coat_weight, "inputs:coat_weight", indent);
+  ss << print_typed_attr(shader.coat_color, "inputs:coat_color", indent);
+  ss << print_typed_attr(shader.coat_roughness, "inputs:coat_roughness", indent);
+  ss << print_typed_attr(shader.coat_anisotropy, "inputs:coat_anisotropy", indent);
+  ss << print_typed_attr(shader.coat_rotation, "inputs:coat_rotation", indent);
+  ss << print_typed_attr(shader.coat_roughness_anisotropy, "inputs:coat_roughness_anisotropy", indent);
+  ss << print_typed_attr(shader.coat_ior, "inputs:coat_ior", indent);
+  ss << print_typed_attr(shader.coat_darkening, "inputs:coat_darkening", indent);
+  ss << print_typed_attr(shader.coat_affect_color, "inputs:coat_affect_color", indent);
+  ss << print_typed_attr(shader.coat_affect_roughness, "inputs:coat_affect_roughness", indent);
+
+  // Fuzz properties
+  ss << print_typed_attr(shader.fuzz_weight, "inputs:fuzz_weight", indent);
+  ss << print_typed_attr(shader.fuzz_color, "inputs:fuzz_color", indent);
+  ss << print_typed_attr(shader.fuzz_roughness, "inputs:fuzz_roughness", indent);
+
+  // Thin film properties
+  ss << print_typed_attr(shader.thin_film_thickness, "inputs:thin_film_thickness", indent);
+  ss << print_typed_attr(shader.thin_film_ior, "inputs:thin_film_ior", indent);
+  ss << print_typed_attr(shader.thin_film_weight, "inputs:thin_film_weight", indent);
+
+  // Emission properties
+  ss << print_typed_attr(shader.emission_luminance, "inputs:emission_luminance", indent);
+  ss << print_typed_attr(shader.emission_color, "inputs:emission_color", indent);
+
+  // Geometry properties
+  ss << print_typed_attr(shader.geometry_opacity, "inputs:geometry_opacity", indent);
+  ss << print_typed_attr(shader.geometry_thin_walled, "inputs:geometry_thin_walled", indent);
+  ss << print_typed_attr(shader.geometry_normal, "inputs:geometry_normal", indent);
+  ss << print_typed_attr(shader.geometry_tangent, "inputs:geometry_tangent", indent);
+  ss << print_typed_attr(shader.geometry_coat_normal, "inputs:geometry_coat_normal", indent);
+  ss << print_typed_attr(shader.geometry_coat_tangent, "inputs:geometry_coat_tangent", indent);
+
+  // Output
+  ss << print_typed_terminal_attr(shader.surface, "outputs:surface", indent);
+
+  ss << print_common_shader_params(shader, indent);
+
+  return ss.str();
+}
+
 std::string to_string(const Shader &shader, const uint32_t indent,
                       bool closing_brace) {
   // generic Shader class
@@ -4090,6 +4181,9 @@ std::string to_string(const Shader &shader, const uint32_t indent,
     ss << print_shader_params(pvtx2d.value(), indent + 1);
   } else if (auto pvs = shader.value.get_value<UsdPreviewSurface>()) {
     ss << print_shader_params(pvs.value(), indent + 1);
+  } else if (auto mtlx_opbr = shader.value.get_value<MtlxOpenPBRSurface>()) {
+    // Blender v4.5 MaterialX OpenPBR Surface
+    ss << print_shader_params(mtlx_opbr.value(), indent + 1);
   } else if (auto pvsn = shader.value.get_value<ShaderNode>()) {
     // Generic ShaderNode
     ss << print_common_shader_params(pvsn.value(), indent + 1);
@@ -4097,6 +4191,38 @@ std::string to_string(const Shader &shader, const uint32_t indent,
     ss << pprint::Indent(indent + 1)
        << "[???] Invalid ShaderNode in Shader Prim\n";
   }
+
+  if (closing_brace) {
+    ss << pprint::Indent(indent) << "}\n";
+  }
+
+  return ss.str();
+}
+
+std::string to_string(const NodeGraph &nodegraph, const uint32_t indent,
+                      bool closing_brace) {
+  std::stringstream ss;
+
+  ss << pprint::Indent(indent) << to_string(nodegraph.spec) << " NodeGraph \""
+     << nodegraph.name << "\"\n";
+  if (nodegraph.meta.authored()) {
+    ss << pprint::Indent(indent) << "(\n";
+    ss << print_prim_metas(nodegraph.metas(), indent + 1);
+    ss << pprint::Indent(indent) << ")\n";
+  }
+  ss << pprint::Indent(indent) << "{\n";
+
+  // NodeGraph-specific attributes
+  if (nodegraph.nodedef.authored()) {
+    ss << print_typed_attr(nodegraph.nodedef, "nodedef", indent + 1);
+  }
+
+  if (nodegraph.nodegraph_type.authored()) {
+    ss << print_typed_attr(nodegraph.nodegraph_type, "nodegraph_type", indent + 1);
+  }
+
+  // Print properties (inputs, outputs, etc.)
+  ss << print_props(nodegraph.props, indent + 1);
 
   if (closing_brace) {
     ss << pprint::Indent(indent) << "}\n";
@@ -4510,30 +4636,7 @@ std::string to_string(const XformOp::OpType &op) {
 
 //std::string to_string(const tinyusdz::value::token &v) { return v.str(); }
 
-std::string to_string(const DomeLight::TextureFormat &texformat) {
-  std::string s = "[InvalidTextureFormat]";
-
-  switch (texformat) {
-    case DomeLight::TextureFormat::Automatic: {
-      s = "automatic";
-      break;
-    }
-    case DomeLight::TextureFormat::Latlong: {
-      s = "latlong";
-      break;
-    }
-    case DomeLight::TextureFormat::MirroredBall: {
-      s = "mirroedBall";
-      break;
-    }
-    case DomeLight::TextureFormat::Angular: {
-      s = "angular";
-      break;
-    }
-  }
-
-  return s;
-}
+// to_string(DomeLight::TextureFormat) is defined in usdLux.cc
 
 std::string dump_path(const Path &path) {
   std::stringstream ss;

@@ -109,7 +109,8 @@ bool AsciiParser::ParseTypedTimeSamples(value::TimeSamples *ts_out) {
     return false;
   }
 
-  // Phase 3: Use TimeSamples methods directly (no more get_pod_storage())
+  // Phase 3: Use TimeSamples methods directly
+  // Note: Scalar dedup not yet implemented in TimeSamples - only arrays support dedup
 
   while (!Eof()) {
     char c;
@@ -304,12 +305,25 @@ bool AsciiParser::ParseTimeSamples(const std::string &type_name,
     PUSH_ERROR_AND_RETURN("Unknown type for timeSamples: " + type_name);
   }
 
+  // Clear ts_out to ensure clean state before parsing
+  // This prevents issues where init() fails if ts_out was partially initialized
+  if (ts_out) {
+    ts_out->clear();
+  }
+
   // Try optimized path for POD types first
+  // IMPORTANT: Save cursor position BEFORE attempting POD path
+  // The POD path will consume the '{' if it tries to parse,
+  // but we need to restore position for the generic fallback path
+  uint64_t saved_cursor = CurrLoc();
 #define TRY_POD_TYPE(__type)                                        \
   if (type_id.value() == value::TypeTraits<__type>::type_id()) {   \
     if (ParseTypedTimeSamples<__type>(ts_out)) {                    \
       return true;                                                  \
     }                                                                \
+    /* POD path failed - restore cursor to original position */ \
+    /* so the generic fallback can parse from the beginning */ \
+    SeekTo(saved_cursor);                                           \
   }
 
   // Try POD types with optimized parsing
@@ -346,13 +360,13 @@ bool AsciiParser::ParseTimeSamples(const std::string &type_name,
   TRY_POD_TYPE(value::point3f)
   TRY_POD_TYPE(value::texcoord2f)
   TRY_POD_TYPE(value::texcoord3f)
-  // Matrix types are not POD - they will fall back to generic path
-  // TRY_POD_TYPE(value::matrix2f)
-  // TRY_POD_TYPE(value::matrix3f)
-  // TRY_POD_TYPE(value::matrix4f)
-  // TRY_POD_TYPE(value::matrix2d)
-  // TRY_POD_TYPE(value::matrix3d)
-  // TRY_POD_TYPE(value::matrix4d)
+  // Matrix types - now trivial with default constructors
+  TRY_POD_TYPE(value::matrix2f)
+  TRY_POD_TYPE(value::matrix3f)
+  TRY_POD_TYPE(value::matrix4f)
+  TRY_POD_TYPE(value::matrix2d)
+  TRY_POD_TYPE(value::matrix3d)
+  TRY_POD_TYPE(value::matrix4d)
 
 #undef TRY_POD_TYPE
 
@@ -497,13 +511,13 @@ template bool AsciiParser::ParseTypedTimeSamples<value::normal3f>(value::TimeSam
 template bool AsciiParser::ParseTypedTimeSamples<value::point3f>(value::TimeSamples*);
 template bool AsciiParser::ParseTypedTimeSamples<value::texcoord2f>(value::TimeSamples*);
 template bool AsciiParser::ParseTypedTimeSamples<value::texcoord3f>(value::TimeSamples*);
-// Matrix types are not POD (not trivial) - they use the generic path
-// template bool AsciiParser::ParseTypedTimeSamples<value::matrix2f>(value::TimeSamples*);
-// template bool AsciiParser::ParseTypedTimeSamples<value::matrix3f>(value::TimeSamples*);
-// template bool AsciiParser::ParseTypedTimeSamples<value::matrix4f>(value::TimeSamples*);
-// template bool AsciiParser::ParseTypedTimeSamples<value::matrix2d>(value::TimeSamples*);
-// template bool AsciiParser::ParseTypedTimeSamples<value::matrix3d>(value::TimeSamples*);
-// template bool AsciiParser::ParseTypedTimeSamples<value::matrix4d>(value::TimeSamples*);
+// Matrix types - now trivial with default constructors
+template bool AsciiParser::ParseTypedTimeSamples<value::matrix2f>(value::TimeSamples*);
+template bool AsciiParser::ParseTypedTimeSamples<value::matrix3f>(value::TimeSamples*);
+template bool AsciiParser::ParseTypedTimeSamples<value::matrix4f>(value::TimeSamples*);
+template bool AsciiParser::ParseTypedTimeSamples<value::matrix2d>(value::TimeSamples*);
+template bool AsciiParser::ParseTypedTimeSamples<value::matrix3d>(value::TimeSamples*);
+template bool AsciiParser::ParseTypedTimeSamples<value::matrix4d>(value::TimeSamples*);
 
 }  // namespace ascii
 }  // namespace tinyusdz

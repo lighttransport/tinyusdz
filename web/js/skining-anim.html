@@ -1,0 +1,268 @@
+<!DOCTYPE html>
+<html lang="en">
+	<head>
+		<meta charset="utf-8">
+		<title>TinyUSDZ Three.js Skeletal Animation Demo</title>
+		<style>
+			body {
+				margin: 0;
+				overflow: hidden;
+				font-family: Arial, sans-serif;
+			}
+			canvas {
+				display: block;
+			}
+			#info {
+				position: absolute;
+				top: 10px;
+				left: 10px;
+				color: white;
+				background: rgba(0, 0, 0, 0.7);
+				padding: 10px;
+				border-radius: 5px;
+				font-size: 14px;
+				max-width: 400px;
+			}
+			#info h3 {
+				margin-top: 0;
+				margin-bottom: 10px;
+				color: #6bb6ff;
+			}
+			#info p {
+				margin: 5px 0;
+				font-size: 12px;
+			}
+			#file-controls {
+				margin-top: 10px;
+				padding-top: 10px;
+				border-top: 1px solid rgba(255, 255, 255, 0.2);
+			}
+			#fileInput {
+				display: none;
+			}
+			.button {
+				display: inline-block;
+				padding: 6px 12px;
+				background: #4CAF50;
+				color: white;
+				border: none;
+				border-radius: 4px;
+				cursor: pointer;
+				font-size: 12px;
+				margin-right: 5px;
+			}
+			.button:hover {
+				background: #45a049;
+			}
+			#animation-info {
+				margin-top: 10px;
+				padding-top: 10px;
+				border-top: 1px solid rgba(255, 255, 255, 0.2);
+				font-size: 11px;
+				color: #95e06c;
+			}
+			.animation-list {
+				margin-top: 5px;
+				max-height: 150px;
+				overflow-y: auto;
+			}
+			.animation-item {
+				padding: 3px 5px;
+				margin: 2px 0;
+				background: rgba(255, 255, 255, 0.1);
+				border-radius: 3px;
+			}
+			#skeleton-info {
+				margin-top: 10px;
+				padding-top: 10px;
+				border-top: 1px solid rgba(255, 255, 255, 0.2);
+				font-size: 11px;
+				color: #ff9966;
+			}
+			#joint-hierarchy {
+				position: absolute;
+				top: 10px;
+				right: 10px;
+				color: white;
+				background: rgba(0, 0, 0, 0.8);
+				padding: 15px;
+				border-radius: 5px;
+				font-size: 12px;
+				max-width: 300px;
+				max-height: 80vh;
+				overflow-y: auto;
+				display: none;
+			}
+			#joint-hierarchy h3 {
+				margin-top: 0;
+				margin-bottom: 5px;
+				color: #ff9966;
+				font-size: 14px;
+			}
+			#selected-joint-indicator {
+				margin-bottom: 10px;
+				padding: 5px 8px;
+				background: rgba(255, 255, 255, 0.1);
+				border-radius: 3px;
+				font-size: 11px;
+				color: #ffd700;
+				display: none;
+			}
+			#selected-joint-indicator strong {
+				color: #fff;
+			}
+			#joint-hierarchy::-webkit-scrollbar {
+				width: 8px;
+			}
+			#joint-hierarchy::-webkit-scrollbar-track {
+				background: rgba(255, 255, 255, 0.1);
+				border-radius: 4px;
+			}
+			#joint-hierarchy::-webkit-scrollbar-thumb {
+				background: rgba(255, 255, 255, 0.3);
+				border-radius: 4px;
+			}
+			#joint-hierarchy::-webkit-scrollbar-thumb:hover {
+				background: rgba(255, 255, 255, 0.5);
+			}
+		</style>
+	</head>
+	<body>
+		<div id="info">
+			<h3>TinyUSDZ Skeletal Animation Demo</h3>
+			<p>
+				This demo shows USD skeletal animation (SkelAnimation) extraction and playback using Three.js SkinnedMesh.<br>
+				Load a USD file with skeletal animations to see character rigs in action.
+			</p>
+			<p style="font-size: 11px; color: #999; margin-top: 5px;">
+				<strong>Shortcuts:</strong> G=Translate, R=Rotate, S=Scale, X=Toggle Space, ESC=Deselect
+			</p>
+			<p>
+				<strong>Current file:</strong> <span id="currentFile">No file loaded</span>
+			</p>
+			<div id="file-controls">
+				<input type="file" id="fileInput" accept=".usd,.usda,.usdc,.usdz">
+				<button class="button" onclick="document.getElementById('fileInput').click()">Load USD File</button>
+			</div>
+			<div id="skeleton-info" style="display:none;">
+				<strong>Skeleton Information:</strong>
+				<div id="skeletonDetails"></div>
+			</div>
+			<div id="animation-info" style="display:none;">
+				<strong>Skeletal Animations Found:</strong>
+				<div class="animation-list" id="animationList"></div>
+			</div>
+		</div>
+
+		<div id="joint-hierarchy">
+			<h3>Joint Hierarchy</h3>
+			<div id="selected-joint-indicator">
+				<strong>Selected:</strong> <span id="selected-joint-name">None</span>
+			</div>
+			<div id="joint-hierarchy-content">
+				<p style="color: #888;">No skeleton loaded</p>
+			</div>
+		</div>
+
+		<script type="module">
+			// Handle file upload
+			document.getElementById('fileInput').addEventListener('change', async (event) => {
+				const file = event.target.files[0];
+				if (!file) return;
+
+				document.getElementById('currentFile').textContent = file.name;
+
+				// Trigger custom event that skining-anim.js can listen to
+				const customEvent = new CustomEvent('loadUSDFile', {
+					detail: { file }
+				});
+				window.dispatchEvent(customEvent);
+			});
+
+			// Function to update skeleton information display
+			window.updateSkeletonInfo = function(skeletonCount, totalJoints) {
+				const skelInfo = document.getElementById('skeleton-info');
+				const skelDetails = document.getElementById('skeletonDetails');
+
+				if (skeletonCount > 0) {
+					skelInfo.style.display = 'block';
+					skelDetails.innerHTML = `Skeletons: ${skeletonCount}<br>Total Joints: ${totalJoints}`;
+				} else {
+					skelInfo.style.display = 'none';
+				}
+			};
+
+			// Function to update animation list display
+			window.updateAnimationList = function(animations, animationInfos) {
+				const animInfo = document.getElementById('animation-info');
+				const animList = document.getElementById('animationList');
+
+				if (animations && animations.length > 0) {
+					animInfo.style.display = 'block';
+					animList.innerHTML = '';
+
+					animations.forEach((anim, index) => {
+						const item = document.createElement('div');
+						item.className = 'animation-item';
+
+						// Get animation type information if available
+						let jointInfo = '';
+						if (animationInfos && animationInfos[index]) {
+							const info = animationInfos[index];
+							if (info.has_skeletal_animation) {
+								jointInfo = ` <span style="color: #ff9966;">[Skeletal]</span>`;
+							}
+						}
+
+						const trackCount = anim.tracks ? anim.tracks.length : 0;
+						item.innerHTML = `<strong>${index}:</strong> ${anim.name || 'Unnamed'} - ${anim.duration.toFixed(2)}s, ${trackCount} tracks${jointInfo}`;
+						animList.appendChild(item);
+					});
+				} else {
+					animInfo.style.display = 'none';
+				}
+			};
+
+			// Function to update joint hierarchy display
+			window.updateJointHierarchy = function(hierarchyHTML) {
+				const hierarchyPanel = document.getElementById('joint-hierarchy');
+				const hierarchyContent = document.getElementById('joint-hierarchy-content');
+
+				if (hierarchyHTML && hierarchyHTML.trim() !== '' && hierarchyHTML !== '<p>No skeleton loaded</p>') {
+					hierarchyPanel.style.display = 'block';
+					hierarchyContent.innerHTML = hierarchyHTML;
+
+					// Hook up click events for joint items
+					const jointItems = hierarchyContent.querySelectorAll('.joint-item');
+					jointItems.forEach(item => {
+						item.addEventListener('click', function() {
+							const boneName = this.getAttribute('data-bone-name');
+							if (window.selectJointByName) {
+								window.selectJointByName(boneName);
+							}
+						});
+					});
+				} else {
+					hierarchyPanel.style.display = 'none';
+					hierarchyContent.innerHTML = '<p style="color: #888;">No skeleton loaded</p>';
+				}
+			};
+
+			// Function to update selected joint indicator
+			window.updateSelectedJoint = function(jointName) {
+				const indicator = document.getElementById('selected-joint-indicator');
+				const nameSpan = document.getElementById('selected-joint-name');
+
+				if (jointName) {
+					indicator.style.display = 'block';
+					nameSpan.textContent = jointName;
+				} else {
+					indicator.style.display = 'none';
+					nameSpan.textContent = 'None';
+				}
+			};
+		</script>
+
+		<script type="module" src="./skining-anim.js"></script>
+	</body>
+</html>

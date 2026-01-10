@@ -108,6 +108,71 @@ namespace tydra {
 ///
 using ProgressCallback = std::function<bool(float progress, void *userptr)>;
 
+///
+/// Detailed progress information for fine-grained progress reporting.
+/// Contains counts for meshes, materials, textures and the current processing stage.
+///
+struct DetailedProgressInfo {
+  enum class Stage {
+    Idle,
+    CountingPrims,      // Counting prims before conversion
+    ConvertingXforms,   // Converting xform nodes
+    ConvertingMeshes,   // Converting meshes
+    ConvertingMaterials,// Converting materials
+    ConvertingTextures, // Loading textures
+    BuildingHierarchy,  // Building node hierarchy
+    ExtractingAnimations,// Extracting animations
+    MergingMeshes,      // Merging meshes (optional)
+    Complete
+  };
+
+  Stage stage{Stage::Idle};
+  float progress{0.0f};           // 0.0 to 1.0 overall progress
+
+  // Mesh progress
+  size_t meshes_processed{0};
+  size_t meshes_total{0};
+  std::string current_mesh_name;
+
+  // Material progress
+  size_t materials_processed{0};
+  size_t materials_total{0};
+  std::string current_material_name;
+
+  // Texture progress
+  size_t textures_processed{0};
+  size_t textures_total{0};
+  std::string current_texture_name;
+
+  // Generic progress message
+  std::string message;
+
+  const char* GetStageName() const {
+    switch (stage) {
+      case Stage::Idle: return "idle";
+      case Stage::CountingPrims: return "counting";
+      case Stage::ConvertingXforms: return "xforms";
+      case Stage::ConvertingMeshes: return "meshes";
+      case Stage::ConvertingMaterials: return "materials";
+      case Stage::ConvertingTextures: return "textures";
+      case Stage::BuildingHierarchy: return "hierarchy";
+      case Stage::ExtractingAnimations: return "animations";
+      case Stage::MergingMeshes: return "merging";
+      case Stage::Complete: return "complete";
+    }
+    return "unknown";
+  }
+};
+
+///
+/// Detailed progress callback function type for RenderSceneConverter.
+/// Provides more granular progress information including mesh/material counts.
+/// @param[in] info Detailed progress information
+/// @param[in] userptr User-provided pointer for custom data
+/// @return true to continue conversion, false to cancel
+///
+using DetailedProgressCallback = std::function<bool(const DetailedProgressInfo &info, void *userptr)>;
+
 // Conditional typedef for ChunkedVectorArray based on TYDRA_USE_CHUNKED_ARRAY
 #ifdef TYDRA_USE_CHUNKED_ARRAY
 template<typename T>
@@ -217,12 +282,24 @@ enum class NodeType {
   Mesh,  // Polygon mesh
   Camera,
   Skeleton, // SkelHierarchy
-  PointLight,
-  DirectionalLight,
-  EnvmapLight, // DomeLight in USD
-  // TODO(more lights)...
+  PointLight,       // SphereLight in USD
+  DirectionalLight, // DistantLight in USD
+  EnvmapLight,      // DomeLight in USD
+  RectLight,
+  DiskLight,
+  CylinderLight,
+  GeometryLight,
 };
 
+// High-level categorization of USD Prim types
+enum class NodeCategory {
+  Group,     // Organizational: Xform, Scope, Model
+  Geom,      // Geometry: Mesh, Points, Curves, etc.
+  Light,     // Lights: RectLight, DomeLight, SphereLight, etc.
+  Camera,    // Camera
+  Material,  // Material, Shader, NodeGraph
+  Skeleton,  // SkelRoot, Skeleton, SkelAnimation
+};
 
 enum class ComponentType {
   UInt8,
@@ -649,8 +726,14 @@ enum class ColorSpace {
   sRGB,
   Lin_sRGB,     // Linear sRGB(D65)
   Rec709,
-  Raw,        // Raw(physical quantity) value(e.g. normal maps, ao maps)
-  Lin_ACEScg, // ACES CG colorspace(AP1. D50)
+  Lin_Rec709,   // Linear Rec.709 - same primaries as sRGB but linear (MaterialX: lin_rec709)
+  g22_Rec709,   // Gamma 2.2 Rec.709 (MaterialX: g22_rec709)
+  g18_Rec709,   // Gamma 1.8 Rec.709 (MaterialX: g18_rec709)
+  sRGB_Texture, // sRGB for textures (MaterialX: srgb_texture)
+  Raw,          // Raw(physical quantity) value(e.g. normal maps, ao maps)
+  Lin_ACEScg,   // ACES CG colorspace(AP1. D50)
+  ACES2065_1,   // ACES 2065-1 (AP0. D60)
+  Lin_Rec2020,  // Linear Rec.2020/Rec.2100
   OCIO,
   Lin_DisplayP3,   // colorSpace 'lin_displayp3'
   sRGB_DisplayP3,  // colorSpace 'srgb_displayp3'
@@ -766,6 +849,20 @@ enum class AnimationInterpolation {
 };
 
 ///
+/// Animation channel target type - distinguishes what the channel animates
+///
+/// USD has two distinct animation systems:
+/// - Node animations: xformOp time samples animate scene node transforms
+/// - Skeletal animations: SkelAnimation arrays animate skeleton joint transforms
+///
+/// This enum enables type-safe handling of both animation types in a unified structure.
+///
+enum class ChannelTargetType {
+  SceneNode,      ///< Targets a scene node's transform (from USD xformOp animations)
+  SkeletonJoint   ///< Targets a skeleton joint (from USD SkelAnimation)
+};
+
+///
 /// Animation target property path (matches glTF animation paths)
 ///
 enum class AnimationPath {
@@ -800,18 +897,61 @@ struct KeyframeSampler {
 };
 
 ///
-/// Animation channel - binds sampler data to a specific node property
+/// Animation channel - binds sampler data to a specific target property
+///
+/// Supports both node transform animations (from USD xformOps) and
+/// skeletal joint animations (from USD SkelAnimation). The target_type field
+/// determines how to interpret the target identification fields.
 ///
 /// Matches glTF Animation Channel structure. Each channel targets one property
-/// of one node, and references a sampler that provides the keyframe data.
+/// of one target, and references a sampler that provides the keyframe data.
+///
+/// Example usage:
+/// ```
+/// // Node animation (xformOp)
+/// AnimationChannel node_channel;
+/// node_channel.target_type = ChannelTargetType::SceneNode;
+/// node_channel.path = AnimationPath::Translation;
+/// node_channel.target_node = 5;  // Index into RenderScene::nodes
+/// node_channel.sampler = 0;
+///
+/// // Skeletal animation (SkelAnimation)
+/// AnimationChannel joint_channel;
+/// joint_channel.target_type = ChannelTargetType::SkeletonJoint;
+/// joint_channel.path = AnimationPath::Rotation;
+/// joint_channel.skeleton_id = 0;  // Index into RenderScene::skeletons
+/// joint_channel.joint_id = 12;     // Joint index within skeleton
+/// joint_channel.sampler = 1;
+/// ```
 ///
 struct AnimationChannel {
   AnimationPath path;         ///< Which property to animate (translation/rotation/scale/weights)
-  int32_t target_node{-1};    ///< Index into RenderScene::nodes (-1 = invalid)
+  ChannelTargetType target_type{ChannelTargetType::SceneNode};  ///< Target type (node or joint)
+
+  // Target identification (interpretation depends on target_type)
+  int32_t target_node{-1};    ///< SceneNode: index into RenderScene::nodes (-1 = invalid)
+                               ///< SkeletonJoint: unused (use skeleton_id + joint_id instead)
+
+  // Skeletal animation fields (only used when target_type == SkeletonJoint)
+  int32_t skeleton_id{-1};    ///< Index into RenderScene::skeletons (-1 = invalid)
+  int32_t joint_id{-1};       ///< Index within skeleton's joint array (-1 = invalid)
+
   int32_t sampler{-1};        ///< Index into AnimationClip::samplers (-1 = invalid)
 
-  /// Check if channel is valid
-  bool is_valid() const { return target_node >= 0 && sampler >= 0; }
+  /// Check if channel is valid based on its target type
+  bool is_valid() const {
+    if (sampler < 0) return false;
+    if (target_type == ChannelTargetType::SceneNode) {
+      return target_node >= 0;
+    } else {  // SkeletonJoint
+      return skeleton_id >= 0 && joint_id >= 0;
+    }
+  }
+
+  /// Check if this is a skeletal animation channel
+  bool is_skeletal() const {
+    return target_type == ChannelTargetType::SkeletonJoint;
+  }
 };
 
 ///
@@ -861,6 +1001,22 @@ struct AnimationClip {
 
   /// Get number of channels
   size_t num_channels() const { return channels.size(); }
+
+  /// Check if animation contains skeletal animation channels
+  bool has_skeletal_animation() const {
+    for (const auto& ch : channels) {
+      if (ch.is_skeletal()) return true;
+    }
+    return false;
+  }
+
+  /// Check if animation contains scene node animation channels
+  bool has_node_animation() const {
+    for (const auto& ch : channels) {
+      if (!ch.is_skeletal()) return true;
+    }
+    return false;
+  }
 };
 
 struct Node {
@@ -868,7 +1024,8 @@ struct Node {
   std::string abs_path;      // Absolute prim path
   std::string display_name;  // `displayName` prim meta
 
-  NodeType nodeType{NodeType::Xform};
+  NodeCategory category{NodeCategory::Group};  // High-level category (Group, Geom, Light, Camera, etc.)
+  NodeType nodeType{NodeType::Xform};  // Specific type within the category
 
   int32_t id{-1};  // Index to node content(e.g. meshes[id] when nodeTypes ==
                    // Mesh). -1 = no corresponding content exists for this node.
@@ -1132,6 +1289,39 @@ struct RenderMesh {
   // If you want to access user-defined primvars or custom property,
   // Plese look into corresponding Prim( stage::find_prim_at_path(abs_path) )
 
+  //
+  // Area light properties (MeshLightAPI)
+  // When is_area_light = true, this mesh emits light.
+  //
+  // Renderer integration guide:
+  //   1. Calculate effective light color: light_color * light_intensity * pow(2, light_exposure)
+  //   2. Apply materialSyncMode:
+  //      - "materialGlowTintsLight" (default): material.emissiveColor tints the light color
+  //           finalEmission = effectiveLightColor * material.emissiveColor
+  //      - "independent": material emission and light are independent
+  //           finalEmission = effectiveLightColor + material.emissiveColor
+  //      - "noMaterialResponse": material doesn't respond to light (only emits)
+  //           finalEmission = effectiveLightColor
+  //   3. If light_normalize = true, divide by surface area for energy conservation
+  //
+  bool is_area_light{false};  // true if MeshLightAPI is applied
+  std::array<float, 3> light_color{{1.0f, 1.0f, 1.0f}};  // inputs:color (linear RGB)
+  float light_intensity{1.0f};  // inputs:intensity
+  float light_exposure{0.0f};  // inputs:exposure (optional, in EV)
+  bool light_normalize{false};  // inputs:normalize - divide by surface area if true
+  std::string light_material_sync_mode;  // inputs:materialSyncMode
+                                         // "materialGlowTintsLight" (default), "independent", or "noMaterialResponse"
+
+  // Helper: Calculate effective light color with intensity and exposure applied
+  inline std::array<float, 3> get_effective_light_color() const {
+    float multiplier = light_intensity * std::pow(2.0f, light_exposure);
+    return {{
+      light_color[0] * multiplier,
+      light_color[1] * multiplier,
+      light_color[2] * multiplier
+    }};
+  }
+
   uint64_t handle{0};  // Handle ID for Graphics API. 0 = invalid
   
   ///
@@ -1248,6 +1438,121 @@ struct UDIMTexture {
   std::unordered_map<uint32_t, int32_t> imageTileIds;
 };
 
+// ============================================================================
+// LTE SpectralAPI Support
+// Spectral data structures for wavelength-dependent material properties
+// See doc/lte_spectral_api.md for specification
+// ============================================================================
+
+///
+/// Interpolation method for spectral data
+///
+enum class SpectralInterpolation {
+  Linear,    ///< Piecewise linear interpolation (default)
+  Held,      ///< USD Held interpolation (step function)
+  Cubic,     ///< Piecewise cubic interpolation (smooth)
+  Sellmeier, ///< Sellmeier equation (for IOR data only)
+};
+
+///
+/// Standard illuminant presets for wavelength:emission
+///
+enum class IlluminantPreset {
+  None,  ///< No preset, use explicit SPD values
+  A,     ///< CIE Standard Illuminant A (incandescent/tungsten, 2856K)
+  D50,   ///< CIE Standard Illuminant D50 (horizon daylight, 5003K)
+  D65,   ///< CIE Standard Illuminant D65 (noon daylight, 6504K)
+  E,     ///< CIE Standard Illuminant E (equal energy)
+  F1,    ///< CIE Fluorescent Illuminant F1 (daylight fluorescent)
+  F2,    ///< CIE Fluorescent Illuminant F2 (cool white fluorescent)
+  F7,    ///< CIE Fluorescent Illuminant F7 (D65 simulator)
+  F11,   ///< CIE Fluorescent Illuminant F11 (narrow-band cool white)
+};
+
+///
+/// Wavelength unit for spectral data
+///
+enum class WavelengthUnit {
+  Nanometers,   ///< nanometers (nm), default, range [380, 780]
+  Micrometers,  ///< micrometers (um), range [0.38, 0.78]
+};
+
+///
+/// Spectral data container
+/// Stores (wavelength, value) pairs for wavelength-dependent properties
+///
+struct SpectralData {
+  std::vector<vec2> samples;  ///< (wavelength, value) pairs
+  SpectralInterpolation interpolation{SpectralInterpolation::Linear};
+  WavelengthUnit unit{WavelengthUnit::Nanometers};
+
+  /// Check if spectral data is present
+  bool has_data() const { return !samples.empty(); }
+
+  /// Get number of samples
+  size_t size() const { return samples.size(); }
+
+  /// Evaluate spectral value at given wavelength using interpolation
+  float evaluate(float wavelength) const;
+
+  /// Convert wavelength to nanometers (for internal processing)
+  float to_nanometers(float wavelength) const {
+    if (unit == WavelengthUnit::Micrometers) {
+      return wavelength * 1000.0f;
+    }
+    return wavelength;
+  }
+};
+
+///
+/// Spectral IOR data with Sellmeier coefficient support
+///
+struct SpectralIOR {
+  std::vector<vec2> samples;  ///< (wavelength, IOR) pairs or Sellmeier coefficients
+  SpectralInterpolation interpolation{SpectralInterpolation::Linear};
+  WavelengthUnit unit{WavelengthUnit::Nanometers};
+
+  /// Sellmeier coefficients (B1, B2, B3, C1, C2, C3)
+  /// Used when interpolation == Sellmeier
+  /// Note: C1, C2, C3 are in [um^2]
+  float sellmeier_B1{0.0f}, sellmeier_B2{0.0f}, sellmeier_B3{0.0f};
+  float sellmeier_C1{0.0f}, sellmeier_C2{0.0f}, sellmeier_C3{0.0f};
+
+  bool has_data() const {
+    return !samples.empty() || interpolation == SpectralInterpolation::Sellmeier;
+  }
+
+  /// Evaluate IOR at given wavelength
+  float evaluate(float wavelength_nm) const;
+};
+
+///
+/// Spectral emission data for light sources
+///
+struct SpectralEmission {
+  std::vector<vec2> samples;  ///< (wavelength, irradiance) pairs
+  SpectralInterpolation interpolation{SpectralInterpolation::Linear};
+  WavelengthUnit unit{WavelengthUnit::Nanometers};
+  IlluminantPreset preset{IlluminantPreset::None};
+
+  bool has_data() const {
+    return !samples.empty() || preset != IlluminantPreset::None;
+  }
+
+  /// Evaluate emission at given wavelength
+  /// Returns irradiance in W m^-2 nm^-1 (normalized to nanometers)
+  float evaluate(float wavelength_nm) const;
+};
+
+// String conversion functions for spectral types
+std::string to_string(SpectralInterpolation interp);
+std::string to_string(IlluminantPreset preset);
+std::string to_string(WavelengthUnit unit);
+
+// ============================================================================
+// End of LTE SpectralAPI Support
+// ============================================================================
+
 // workaround for GCC
 #if defined(__GNUC__) && !defined(__clang__)
 #pragma GCC diagnostic push
@@ -1298,7 +1603,142 @@ class PreviewSurfaceShader {
   ShaderParam<float> displacement{0.0f};
   ShaderParam<float> occlusion{0.0f};
 
+  // LTE SpectralAPI: Optional spectral properties
+  // Only exported if has_data() returns true
+  nonstd::optional<SpectralData> spd_reflectance;  ///< wavelength:reflectance
+  nonstd::optional<SpectralIOR> spd_ior;           ///< wavelength:ior
+
   uint64_t handle{0};  // Handle ID for Graphics API. 0 = invalid
+
+  /// Check if material has spectral reflectance data
+  bool hasSpectralReflectance() const {
+    return spd_reflectance.has_value() && spd_reflectance->has_data();
+  }
+
+  /// Check if material has spectral IOR data
+  bool hasSpectralIOR() const {
+    return spd_ior.has_value() && spd_ior->has_data();
+  }
+};
+
+// MaterialX OpenPBR Surface shader optimized for WebGL/Vulkan rendering
+class OpenPBRSurfaceShader {
+ public:
+  // Base layer - fundamental surface properties
+  ShaderParam<float> base_weight{1.0f};
+  ShaderParam<vec3> base_color{{0.8f, 0.8f, 0.8f}};
+  ShaderParam<float> base_roughness{0.0f};
+  ShaderParam<float> base_metalness{0.0f};
+  ShaderParam<float> base_diffuse_roughness{0.0f};  // Oren-Nayar diffuse roughness
+
+  // Specular layer - dielectric reflection
+  ShaderParam<float> specular_weight{1.0f};
+  ShaderParam<vec3> specular_color{{1.0f, 1.0f, 1.0f}};
+  ShaderParam<float> specular_roughness{0.3f};
+  ShaderParam<float> specular_ior{1.5f};
+  ShaderParam<float> specular_ior_level{0.5f};
+  ShaderParam<float> specular_anisotropy{0.0f};
+  ShaderParam<float> specular_rotation{0.0f};
+  
+  // Transmission - transparency and refraction
+  ShaderParam<float> transmission_weight{0.0f};
+  ShaderParam<vec3> transmission_color{{1.0f, 1.0f, 1.0f}};
+  ShaderParam<float> transmission_depth{0.0f};
+  ShaderParam<vec3> transmission_scatter{{0.0f, 0.0f, 0.0f}};
+  ShaderParam<float> transmission_scatter_anisotropy{0.0f};
+  ShaderParam<float> transmission_dispersion{0.0f};
+  
+  // Subsurface scattering
+  ShaderParam<float> subsurface_weight{0.0f};
+  ShaderParam<vec3> subsurface_color{{0.8f, 0.8f, 0.8f}};
+  ShaderParam<vec3> subsurface_radius{{1.0f, 1.0f, 1.0f}};
+  ShaderParam<float> subsurface_scale{1.0f};
+  ShaderParam<float> subsurface_anisotropy{0.0f};
+  
+  // Sheen - fabric-like reflection
+  ShaderParam<float> sheen_weight{0.0f};
+  ShaderParam<vec3> sheen_color{{1.0f, 1.0f, 1.0f}};
+  ShaderParam<float> sheen_roughness{0.3f};
+
+  // Fuzz - velvet/fabric-like appearance
+  ShaderParam<float> fuzz_weight{0.0f};
+  ShaderParam<vec3> fuzz_color{{1.0f, 1.0f, 1.0f}};
+  ShaderParam<float> fuzz_roughness{0.5f};
+
+  // Thin film - iridescence from thin film interference
+  ShaderParam<float> thin_film_weight{0.0f};
+  ShaderParam<float> thin_film_thickness{500.0f};  // in nanometers
+  ShaderParam<float> thin_film_ior{1.5f};
+
+  // Coat layer - clear coat over surface
+  ShaderParam<float> coat_weight{0.0f};
+  ShaderParam<vec3> coat_color{{1.0f, 1.0f, 1.0f}};
+  ShaderParam<float> coat_roughness{0.0f};
+  ShaderParam<float> coat_anisotropy{0.0f};
+  ShaderParam<float> coat_rotation{0.0f};
+  ShaderParam<float> coat_ior{1.5f};
+  ShaderParam<vec3> coat_affect_color{{1.0f, 1.0f, 1.0f}};
+  ShaderParam<float> coat_affect_roughness{0.0f};
+  
+  // Emission - light emission
+  ShaderParam<float> emission_luminance{0.0f};
+  ShaderParam<vec3> emission_color{{1.0f, 1.0f, 1.0f}};
+
+  // Geometry modifiers
+  ShaderParam<float> opacity{1.0f};  // "opacity" or "geometry_opacity" (maps to alpha in Three.js)
+  ShaderParam<vec3> normal{{0.0f, 0.0f, 1.0f}};
+  ShaderParam<vec3> tangent{{1.0f, 0.0f, 0.0f}};
+
+  // Tangent rotation for anisotropic materials (in degrees)
+  // Blender exports tangent rotation via ND_rotate3d_vector3 node with -90 degrees
+  // This value is extracted from the MaterialX NodeGraph during conversion
+  // 0.0 = no rotation, -90.0 = typical Blender anisotropic rotation
+  float tangent_rotation{0.0f};
+
+  // Normal map scale factor (from ND_normalmap_float node's scale input)
+  // 1.0 = default, used for bump strength adjustment
+  float normal_map_scale{1.0f};
+
+  // Coat normal and tangent for separate coat layer normal mapping
+  ShaderParam<vec3> coat_normal{{0.0f, 0.0f, 1.0f}};
+  ShaderParam<vec3> coat_tangent{{1.0f, 0.0f, 0.0f}};
+  float coat_tangent_rotation{0.0f};
+  float coat_normal_map_scale{1.0f};
+
+  // LTE SpectralAPI: Optional spectral properties
+  // Only exported to JSON if has_data() returns true
+  // MaterialX property names use "spd_" prefix (e.g., "spd_reflectance", "spd_ior")
+  nonstd::optional<SpectralData> spd_reflectance;  ///< wavelength:reflectance -> spd_reflectance
+  nonstd::optional<SpectralIOR> spd_ior;           ///< wavelength:ior -> spd_ior
+  nonstd::optional<SpectralEmission> spd_emission; ///< wavelength:emission -> spd_emission
+
+  uint64_t handle{0};  // Handle ID for Graphics API. 0 = invalid
+
+  // MaterialX Node Graph representation as JSON
+  // Stores the complete node-based shader graph for reconstruction in JS/WASM
+  // Schema follows MaterialX XML structure for compatibility
+  // Empty string if no node graph exists (direct parameter values only)
+  std::string nodeGraphJson;
+
+  /// Check if material has spectral reflectance data
+  bool hasSpectralReflectance() const {
+    return spd_reflectance.has_value() && spd_reflectance->has_data();
+  }
+
+  /// Check if material has spectral IOR data
+  bool hasSpectralIOR() const {
+    return spd_ior.has_value() && spd_ior->has_data();
+  }
+
+  /// Check if material has spectral emission data
+  bool hasSpectralEmission() const {
+    return spd_emission.has_value() && spd_emission->has_data();
+  }
+
+  /// Check if material has any spectral data
+  bool hasAnySpectralData() const {
+    return hasSpectralReflectance() || hasSpectralIOR() || hasSpectralEmission();
+  }
 };
 
 #if defined(__GNUC__) && !defined(__clang__)
@@ -1306,16 +1746,26 @@ class PreviewSurfaceShader {
 #endif
 
 // Material + Shader
+// Supports dual material representation: UsdPreviewSurface and/or MaterialX OpenPBR
 struct RenderMaterial {
   std::string name;  // elementName in USD (e.g. "pbrMat")
   std::string
       abs_path;  // abosolute Prim path in USD (e.g. "/_material/scope/pbrMat")
   std::string display_name;
 
-  PreviewSurfaceShader surfaceShader;
+  // Material can have UsdPreviewSurface, OpenPBR, or both
+  // Use nonstd::optional to allow either/both/none
+  nonstd::optional<PreviewSurfaceShader> surfaceShader;  // UsdPreviewSurface
+  nonstd::optional<OpenPBRSurfaceShader> openPBRShader;  // MaterialX OpenPBR
+  
   // TODO: displacement, volume.
 
   uint64_t handle{0};  // Handle ID for Graphics API. 0 = invalid
+  
+  // Helper methods to check which materials are available
+  bool hasUsdPreviewSurface() const { return surfaceShader.has_value(); }
+  bool hasOpenPBR() const { return openPBRShader.has_value(); }
+  bool hasBothMaterials() const { return hasUsdPreviewSurface() && hasOpenPBR(); }
 };
 
 // Simple Camera
@@ -1363,15 +1813,94 @@ struct RenderCamera {
 
 };
 
-// Simple light
+// Light source for rendering
 struct RenderLight
 {
-  std::string name;  // elementName in USD (e.g. "frontCamera")
-  std::string
-      abs_path;  // abosolute GeomCamera Prim path in USD (e.g. "/xform/camera")
+  std::string name;       // elementName in USD (e.g. "sunLight")
+  std::string abs_path;   // absolute Prim path in USD (e.g. "/scene/lights/sun")
+  std::string display_name;
 
+  enum class Type {
+    Point,        ///< SphereLight with small radius
+    Sphere,       ///< SphereLight
+    Disk,         ///< DiskLight
+    Rect,         ///< RectLight
+    Cylinder,     ///< CylinderLight
+    Distant,      ///< DistantLight (directional)
+    Dome,         ///< DomeLight (environment)
+    Geometry,     ///< GeometryLight
+    Portal,       ///< PortalLight
+  };
 
-  // TODO..
+  enum class DomeTextureFormat {
+    Automatic,
+    Latlong,
+    MirroredBall,
+    Angular
+  };
+
+  Type type{Type::Point};
+
+  // Common light properties (LightAPI)
+  vec3 color{1.0f, 1.0f, 1.0f};       ///< Light color (linear RGB)
+  float intensity{1.0f};              ///< Light intensity multiplier
+  float exposure{0.0f};               ///< Exposure value (EV)
+  float diffuse{1.0f};                ///< Diffuse contribution multiplier
+  float specular{1.0f};               ///< Specular contribution multiplier
+  bool normalize{false};              ///< Normalize by surface area
+
+  // Color temperature
+  bool enableColorTemperature{false}; ///< Use color temperature instead of color
+  float colorTemperature{6500.0f};    ///< Color temperature in Kelvin
+
+  // Transform (world space)
+  mat4 transform;                     ///< World transformation matrix
+  vec3 position{0.0f, 0.0f, 0.0f};    ///< World position
+  vec3 direction{0.0f, -1.0f, 0.0f};  ///< Light direction (for distant/spot)
+
+  // Type-specific parameters
+  float radius{0.5f};                 ///< Sphere/Disk radius
+  float width{1.0f};                  ///< RectLight width
+  float height{1.0f};                 ///< RectLight height
+  float length{1.0f};                 ///< CylinderLight length
+  float angle{0.53f};                 ///< DistantLight angle (degrees)
+  std::string textureFile;            ///< Texture for RectLight/DomeLight
+
+  // Shaping properties (ShapingAPI)
+  float shapingConeAngle{90.0f};      ///< Cone angle (degrees)
+  float shapingConeSoftness{0.0f};    ///< Cone edge softness
+  float shapingFocus{0.0f};           ///< Focus adjustment
+  vec3 shapingFocusTint{0.0f, 0.0f, 0.0f}; ///< Focus tint color
+  std::string shapingIesFile;         ///< IES profile file path
+  float shapingIesAngleScale{0.0f};   ///< IES angle scale
+  bool shapingIesNormalize{false};    ///< Normalize IES profile
+
+  // Shadow properties (ShadowAPI)
+  bool shadowEnable{true};            ///< Enable shadows
+  vec3 shadowColor{0.0f, 0.0f, 0.0f}; ///< Shadow color
+  float shadowDistance{-1.0f};        ///< Shadow distance (-1 = infinite)
+  float shadowFalloff{-1.0f};         ///< Shadow falloff (-1 = no falloff)
+  float shadowFalloffGamma{1.0f};     ///< Shadow falloff gamma
+
+  // DomeLight specific
+  DomeTextureFormat domeTextureFormat{DomeTextureFormat::Automatic};
+  float guideRadius{1.0e5f};          ///< Radius for visualization
+  int32_t envmap_texture_id{-1};      ///< Index to textures for environment map
+
+  // GeometryLight (mesh lights with MeshLightAPI)
+  int32_t geometry_mesh_id{-1};       ///< Index to meshes array for geometry lights
+  std::string material_sync_mode;     ///< MeshLightAPI materialSyncMode
+
+  // LTE SpectralAPI: Spectral emission support
+  // Only exported if has_data() returns true
+  nonstd::optional<SpectralEmission> spd_emission;  ///< wavelength:emission
+
+  uint64_t handle{0};  // Handle ID for Graphics API. 0 = invalid
+
+  /// Check if light has spectral emission data
+  bool hasSpectralEmission() const {
+    return spd_emission.has_value() && spd_emission->has_data();
+  }
 };
 
 struct SceneMetadata
@@ -1477,6 +2006,14 @@ bool DefaultTextureImageLoaderFunction(const value::AssetPath &assetPath,
 struct MeshConverterConfig {
   bool triangulate{true};
 
+  // Triangulation method for polygons with 5+ vertices
+  enum class TriangulationMethod {
+    Earcut,     // Use earcut algorithm (robust, handles complex polygons)
+    TriangleFan // Use simple triangle fan (faster, only for convex polygons)
+  };
+
+  TriangulationMethod triangulation_method{TriangulationMethod::Earcut};
+
   bool validate_geomsubset{true};  // Validate GeomSubset.
 
   // We may want texcoord data even if the Mesh does not have bound Material.
@@ -1501,6 +2038,19 @@ struct MeshConverterConfig {
   // Upperlimit of the number of skin weights per vertex.
   // For realtime app, usually up to 64
   uint32_t max_skin_elementSize = 1024ull * 256ull;
+
+  //
+  // Bone reduction: limit the number of bone influences per vertex for GPU skinning.
+  // When enabled, only the strongest N bone influences are kept and weights are renormalized.
+  //
+  bool enable_bone_reduction{false};
+
+  //
+  // Target number of bone influences per vertex after reduction.
+  // Default is 4, which is standard for real-time GPU skinning (e.g., Three.js, Unity, Unreal).
+  // Common values: 2, 4, 8
+  //
+  uint32_t target_bone_count{4};
 
   //
   // Build vertex indices when vertex attributes are converted to `faceverying`?
@@ -1614,6 +2164,41 @@ struct RenderSceneConverterConfig {
   // false: no actual texture file/asset access.
   // App/User must setup TextureImage manually after the conversion.
   bool load_texture_assets{true};
+
+  //
+  // Merge meshes with the same material for performant rendering.
+  //
+  // When enabled, meshes that share the same material and have compatible
+  // properties (static transforms, no per-face materials, no skeletal animation,
+  // no blend shapes) will be merged into a single mesh.
+  //
+  // This optimization reduces draw calls in renderers like Three.js, WebGL,
+  // and other GPU-based renderers where draw call overhead is significant.
+  //
+  // Merge criteria:
+  // - Same material_id (whole mesh material, not per-face)
+  // - No material_subsetMap (per-face materials prevent merging)
+  // - Static mesh (no skeletal animation: skel_id == -1)
+  // - No blend shapes (targets.empty())
+  // - Same global transform matrix (meshes must be in the same world space,
+  //   or transforms will be baked into vertex positions)
+  //
+  // When `bake_transform` is true:
+  // - Meshes with different transforms can be merged by baking their
+  //   global transforms into vertex positions/normals
+  // - This allows more aggressive merging at the cost of losing
+  //   individual mesh transforms
+  //
+  bool merge_meshes{false};
+
+  //
+  // When merging meshes, bake global transforms into vertex data.
+  // This allows merging meshes with different transforms by transforming
+  // their vertices into world space.
+  //
+  // Only effective when merge_meshes is true.
+  //
+  bool merge_meshes_bake_transform{true};
 };
 
 //
@@ -2333,6 +2918,28 @@ class RenderSceneConverter {
   void SetProgressCallback(ProgressCallback callback, void *userptr = nullptr);
 
   ///
+  /// Set detailed progress callback for fine-grained progress monitoring.
+  /// This callback provides mesh/material/texture counts during conversion.
+  ///
+  /// @param[in] callback Function to call during conversion with detailed info
+  /// @param[in] userptr User-provided pointer for custom data
+  ///
+  void SetDetailedProgressCallback(DetailedProgressCallback callback, void *userptr = nullptr);
+
+  ///
+  /// Report mesh conversion progress (for use by MeshVisitor).
+  /// Updates internal progress info and calls the detailed callback if set.
+  ///
+  /// @param[in] meshes_processed Number of meshes processed so far
+  /// @param[in] meshes_total Total number of meshes to process
+  /// @param[in] mesh_name Name of the current mesh being processed
+  /// @param[in] message Progress message
+  /// @return true to continue, false to cancel
+  ///
+  bool ReportMeshProgress(size_t meshes_processed, size_t meshes_total,
+                          const std::string& mesh_name, const std::string& message);
+
+  ///
   /// All-in-one Stage to RenderScene conversion.
   ///
   /// Convert Stage to RenderScene.
@@ -2441,6 +3048,57 @@ class RenderSceneConverter {
   /// @return true when success.
   ///
   ///
+
+  ///
+  /// Convert GeomCube to RenderMesh by generating tessellated geometry
+  ///
+  /// @param[in] env Converter environment
+  /// @param[in] cube_abs_path Absolute path to the cube primitive
+  /// @param[in] cube GeomCube primitive
+  /// @param[in] material_path Material path for the cube
+  /// @param[in] subset_material_path_map Material subset map
+  /// @param[in] rmaterial_map Material ID map
+  /// @param[in] material_subsets GeomSubset array
+  /// @param[in] blendshapes BlendShape array
+  /// @param[out] dst RenderMesh output
+  ///
+  /// @return true when success.
+  ///
+  bool ConvertCube(
+      const RenderSceneConverterEnv &env, const tinyusdz::Path &cube_abs_path,
+      const tinyusdz::GeomCube &cube, const MaterialPath &material_path,
+      const std::map<std::string, MaterialPath> &subset_material_path_map,
+      const StringAndIdMap &rmaterial_map,
+      const std::vector<const tinyusdz::GeomSubset *> &material_subsets,
+      const std::vector<std::pair<std::string, const tinyusdz::BlendShape *>>
+          &blendshapes,
+      RenderMesh *dst);
+
+  ///
+  /// Convert GeomSphere to RenderMesh by generating tessellated geometry
+  ///
+  /// @param[in] env Converter environment
+  /// @param[in] sphere_abs_path Absolute path to the sphere primitive
+  /// @param[in] sphere GeomSphere primitive
+  /// @param[in] material_path Material path for the sphere
+  /// @param[in] subset_material_path_map Material subset map
+  /// @param[in] rmaterial_map Material ID map
+  /// @param[in] material_subsets GeomSubset array
+  /// @param[in] blendshapes BlendShape array
+  /// @param[out] dst RenderMesh output
+  ///
+  /// @return true when success.
+  ///
+  bool ConvertSphere(
+      const RenderSceneConverterEnv &env, const tinyusdz::Path &sphere_abs_path,
+      const tinyusdz::GeomSphere &sphere, const MaterialPath &material_path,
+      const std::map<std::string, MaterialPath> &subset_material_path_map,
+      const StringAndIdMap &rmaterial_map,
+      const std::vector<const tinyusdz::GeomSubset *> &material_subsets,
+      const std::vector<std::pair<std::string, const tinyusdz::BlendShape *>>
+          &blendshapes,
+      RenderMesh *dst);
+
   bool ConvertMesh(
       const RenderSceneConverterEnv &env, const tinyusdz::Path &mesh_abs_path,
       const tinyusdz::GeomMesh &mesh, const MaterialPath &material_path,
@@ -2476,6 +3134,21 @@ class RenderSceneConverter {
                                    const tinyusdz::Path &shader_abs_path,
                                    const tinyusdz::UsdPreviewSurface &shader,
                                    PreviewSurfaceShader *pss_out);
+  
+  ///
+  /// Convert MaterialX OpenPBR Surface Shader to renderer-friendly OpenPBRSurfaceShader
+  ///
+  /// @param[in] env Conversion environment
+  /// @param[in] shader_abs_path USD Path to Shader Prim with OpenPBRSurface info:id
+  /// @param[in] shader OpenPBRSurface
+  /// @param[out] openpbr_out OpenPBRSurfaceShader
+  ///
+  /// @return true when success.
+  ///
+  bool ConvertOpenPBRSurfaceShader(const RenderSceneConverterEnv &env,
+                                    const tinyusdz::Path &shader_abs_path,
+                                    const tinyusdz::OpenPBRSurface &shader,
+                                    OpenPBRSurfaceShader *openpbr_out);
 
   ///
   /// Convert UsdUvTexture to renderer-friendly UVTexture
@@ -2502,6 +3175,25 @@ class RenderSceneConverter {
   ///
   bool ConvertSkelAnimation(const RenderSceneConverterEnv &env,
                         const Path &abs_path, const SkelAnimation &skelAnim,
+                        int32_t skeleton_id,
+                        AnimationClip *anim_out);
+
+  ///
+  /// Extract animation data from xformOps time samples and convert to AnimationClip
+  ///
+  /// @param[in] env Converter environment
+  /// @param[in] abs_path Absolute path to the prim
+  /// @param[in] prim_name Prim name
+  /// @param[in] xformable Xformable object containing xformOps
+  /// @param[in] target_node_index Index of the target node in RenderScene
+  /// @param[out] anim_out Output AnimationClip
+  /// @return true if animation was extracted, false otherwise
+  ///
+  bool ExtractXformOpAnimation(const RenderSceneConverterEnv &env,
+                        const Path &abs_path,
+                        const std::string &prim_name,
+                        const Xformable &xformable,
+                        int32_t target_node_index,
                         AnimationClip *anim_out);
 
   ///
@@ -2509,6 +3201,45 @@ class RenderSceneConverter {
   /// @param[in] root XformNode
   ///
   bool BuildNodeHierarchy(const RenderSceneConverterEnv &env, const XformNode &node);
+
+  ///
+  /// Convert UsdLux lights to renderer-friendly RenderLight
+  ///
+
+  bool ConvertSphereLight(const RenderSceneConverterEnv &env,
+                          const Path &light_abs_path,
+                          const SphereLight &light,
+                          RenderLight *rlight_out);
+
+  bool ConvertDistantLight(const RenderSceneConverterEnv &env,
+                           const Path &light_abs_path,
+                           const DistantLight &light,
+                           RenderLight *rlight_out);
+
+  bool ConvertDomeLight(const RenderSceneConverterEnv &env,
+                        const Path &light_abs_path,
+                        const DomeLight &light,
+                        RenderLight *rlight_out);
+
+  bool ConvertRectLight(const RenderSceneConverterEnv &env,
+                        const Path &light_abs_path,
+                        const RectLight &light,
+                        RenderLight *rlight_out);
+
+  bool ConvertDiskLight(const RenderSceneConverterEnv &env,
+                        const Path &light_abs_path,
+                        const DiskLight &light,
+                        RenderLight *rlight_out);
+
+  bool ConvertCylinderLight(const RenderSceneConverterEnv &env,
+                            const Path &light_abs_path,
+                            const CylinderLight &light,
+                            RenderLight *rlight_out);
+
+  bool ConvertGeometryLight(const RenderSceneConverterEnv &env,
+                            const Path &light_abs_path,
+                            const GeometryLight &light,
+                            RenderLight *rlight_out);
 
  private:
   ///
@@ -2531,7 +3262,8 @@ class RenderSceneConverter {
   bool ConvertPreviewSurfaceShaderParam(
       const RenderSceneConverterEnv &env, const Path &shader_abs_path,
       const TypedAttributeWithFallback<Animatable<T>> &param,
-      const std::string &param_name, ShaderParam<Dty> &dst_param);
+      const std::string &param_name, ShaderParam<Dty> &dst_param,
+      bool is_materialx = false);
 
   ///
   /// Build (single) vertex indices for RenderMesh.
@@ -2561,6 +3293,7 @@ class RenderSceneConverter {
   // Also get SkelAnimation attached to Skeleton(if exists)
   //
   bool ConvertSkeletonImpl(const RenderSceneConverterEnv &env, const tinyusdz::GeomMesh &mesh,
+                       int32_t skeleton_id,
                        SkelHierarchy *out_skel, nonstd::optional<AnimationClip> *out_anim);
 
   bool BuildNodeHierarchyImpl(
@@ -2569,9 +3302,44 @@ class RenderSceneConverter {
     const XformNode &node,
     Node &out_rnode);
 
-  void PushInfo(const std::string &msg) { _info += msg; }
-  void PushWarn(const std::string &msg) { _warn += msg; }
-  void PushError(const std::string &msg) { _err += msg; }
+  ///
+  /// Merge meshes with the same material for performant rendering.
+  ///
+  /// This function merges meshes that share the same material and have
+  /// compatible properties into a single mesh. It reduces draw calls
+  /// for GPU-based renderers.
+  ///
+  /// @param[in] env Converter environment containing configuration
+  /// @param[inout] nodes Node hierarchy (mesh node IDs will be updated)
+  /// @param[inout] meshes Mesh array (merged meshes will be added, originals marked)
+  ///
+  /// @return true upon success
+  ///
+  bool MergeMeshesImpl(const RenderSceneConverterEnv &env);
+
+  ///
+  /// Helper to check if a mesh can be merged with others.
+  /// Returns true if the mesh has no skeletal animation, no blend shapes,
+  /// and no per-face materials.
+  ///
+  bool IsMeshMergeable(const RenderMesh &mesh) const;
+
+  ///
+  /// Merge two RenderMesh instances into a single mesh.
+  /// The source mesh data is appended to the destination mesh.
+  ///
+  /// @param[in] src Source mesh to merge from
+  /// @param[in] src_transform Transform to apply to source vertices (identity if no transform baking)
+  /// @param[inout] dst Destination mesh to merge into
+  ///
+  /// @return true upon success
+  ///
+  bool MergeMeshData(const RenderMesh &src, const value::matrix4d &src_transform,
+                     RenderMesh &dst);
+
+  void PushInfo(const std::string &msg) { _info += msg + "\n"; }
+  void PushWarn(const std::string &msg) { _warn += msg + "\n"; }
+  void PushError(const std::string &msg) { _err += msg + "\n"; }
 
   ///
   /// Call progress callback if set.
@@ -2580,6 +3348,13 @@ class RenderSceneConverter {
   ///
   bool CallProgressCallback(float progress);
 
+  ///
+  /// Call detailed progress callback if set.
+  /// @param[in] info Detailed progress information
+  /// @return true to continue, false to cancel
+  ///
+  bool CallDetailedProgressCallback(const DetailedProgressInfo &info);
+
   std::string _info;
   std::string _err;
   std::string _warn;
@@ -2587,13 +3362,33 @@ class RenderSceneConverter {
   // Progress callback
   ProgressCallback _progress_callback{nullptr};
   void *_progress_userptr{nullptr};
+
+  // Detailed progress callback
+  DetailedProgressCallback _detailed_progress_callback{nullptr};
+  void *_detailed_progress_userptr{nullptr};
+
+  // Progress state for detailed tracking
+  mutable DetailedProgressInfo _progress_info;
+
+  // Reusable buffers for mesh conversion to avoid repeated allocation
+  mutable std::vector<value::float3> _tmp_points_buffer;
 };
 
-// For debug
-// Supported format: "kdl" (default. https://kdl.dev/), "json"
-//
+///
+/// Dump RenderScene to string (for debugging)
+///
+/// Supported formats:
+/// - "yaml" (default) - Human-readable YAML format with metadata header
+/// - "json" - Machine-readable JSON format with metadata header
+/// - "kdl"  - Original KDL format (https://kdl.dev/)
+///
+/// Both YAML and JSON formats include:
+/// - Metadata section (format_version, generator, source_file, scene settings)
+/// - Summary section (counts of nodes, meshes, materials, etc.)
+/// - Full scene data (nodes, meshes, skeletons, animations, cameras, materials, textures, images, buffers)
+///
 std::string DumpRenderScene(const RenderScene &scene,
-                            const std::string &format = "kdl");
+                            const std::string &format = "yaml");
 
 }  // namespace tydra
 }  // namespace tinyusdz
