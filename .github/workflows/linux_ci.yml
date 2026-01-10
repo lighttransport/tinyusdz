@@ -117,11 +117,6 @@ jobs:
       run: cd build && ctest --output-on-failure
 
     # Test with OpenUSD binary
-    - name: Install TBB dependency
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y libtbb12
-
     - name: Download OpenUSD binary
       run: |
         gh release download v25.11-lte \
