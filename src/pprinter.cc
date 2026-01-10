@@ -726,13 +726,13 @@ std::string print_attr_metas(const AttrMeta &meta, const uint32_t indent) {
 
   if (meta.bindMaterialAs) {
     ss << pprint::Indent(indent)
-       << "bindMaterialAs = " << quote(to_string(meta.bindMaterialAs.value()))
+       << "bindMaterialAs = " << to_string(meta.bindMaterialAs.value())
        << "\n";
   }
 
   if (meta.connectability) {
     ss << pprint::Indent(indent)
-       << "connectability = " << quote(to_string(meta.connectability.value()))
+       << "connectability = " << to_string(meta.connectability.value())
        << "\n";
   }
 
@@ -748,12 +748,12 @@ std::string print_attr_metas(const AttrMeta &meta, const uint32_t indent) {
 
   if (meta.outputName) {
     ss << pprint::Indent(indent)
-       << "outputName = " << quote(to_string(meta.outputName.value())) << "\n";
+       << "outputName = " << to_string(meta.outputName.value()) << "\n";
   }
 
   if (meta.renderType) {
     ss << pprint::Indent(indent)
-       << "renderType = " << quote(to_string(meta.renderType.value())) << "\n";
+       << "renderType = " << to_string(meta.renderType.value()) << "\n";
   }
 
   if (meta.sdrMetadata) {
