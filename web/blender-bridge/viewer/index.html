@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Blender Bridge Viewer</title>
+  <link rel="stylesheet" href="viewer.css">
+</head>
+<body>
+  <div id="app">
+    <!-- Connection panel -->
+    <div id="connection-panel" class="panel">
+      <h2>Blender Bridge</h2>
+      <div class="form-group">
+        <label for="server-url">Server URL</label>
+        <input type="text" id="server-url" value="ws://localhost:8090" />
+      </div>
+      <div class="form-group">
+        <label for="session-id">Session ID</label>
+        <input type="text" id="session-id" placeholder="Enter session ID from Blender" />
+      </div>
+      <button id="connect-btn" class="btn primary">Connect</button>
+      <button id="disconnect-btn" class="btn" disabled>Disconnect</button>
+      <div id="connection-status" class="status disconnected">Disconnected</div>
+    </div>
+
+    <!-- Stats panel -->
+    <div id="stats-panel" class="panel hidden">
+      <h3>Scene Info</h3>
+      <div id="scene-info">
+        <div class="stat-row">
+          <span class="stat-label">Status:</span>
+          <span id="scene-status" class="stat-value">No scene</span>
+        </div>
+        <div class="stat-row">
+          <span class="stat-label">Meshes:</span>
+          <span id="mesh-count" class="stat-value">0</span>
+        </div>
+        <div class="stat-row">
+          <span class="stat-label">Materials:</span>
+          <span id="material-count" class="stat-value">0</span>
+        </div>
+        <div class="stat-row">
+          <span class="stat-label">Lights:</span>
+          <span id="light-count" class="stat-value">0</span>
+        </div>
+        <div class="stat-row">
+          <span class="stat-label">FPS:</span>
+          <span id="fps-value" class="stat-value">0</span>
+        </div>
+      </div>
+      <div class="button-row">
+        <button id="fit-scene-btn" class="btn">Fit to Scene</button>
+      </div>
+    </div>
+
+    <!-- Loading indicator -->
+    <div id="loading-overlay" class="hidden">
+      <div class="loading-spinner"></div>
+      <div id="loading-message">Loading scene...</div>
+    </div>
+
+    <!-- Three.js canvas container -->
+    <div id="canvas-container"></div>
+
+    <!-- Message log -->
+    <div id="message-log" class="panel hidden">
+      <h3>Messages</h3>
+      <div id="log-content"></div>
+    </div>
+  </div>
+
+  <script type="module" src="viewer.js"></script>
+</body>
+</html>

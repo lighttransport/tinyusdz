@@ -1,0 +1,10 @@
+#usda 1.0
+
+def Xform "test_float"
+{
+  float value.timeSamples = {
+      0: 0.0,
+      10: 3.14159,
+      20: -2.71828,
+  }
+}

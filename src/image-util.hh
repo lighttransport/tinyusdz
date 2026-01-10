@@ -234,6 +234,186 @@ bool ACEScg_to_linear_sRGB(const std::vector<float> &in_img, size_t width,
                          std::vector<float> *out_img, std::string *err = nullptr);
 
 ///
+/// Convert 8bit image in Rec.2020(gamma-applied) to fp32 image in linear color space.
+///
+/// @param[in] in_img Input image in Rec.2020 color space. Image size =
+/// [width_byte_stride, height, channel_stride]
+/// @param[in] width Width pixels
+/// @param[in] width_byte_stride Width byte stride. 0 = Use `width` *
+/// channel_stride
+/// @param[in] height Height pixels
+/// @param[in] channels Pixel channels to apply conversion. must be less than or
+/// equal to `channel_stride`
+/// @param[in] channel_stride channel stride. For example, channels=3 and
+/// channel_stride=4 to apply inverse Rec.2020 gamma(transfer function) to RGB channel but
+/// apply linear conversion to alpha channel for RGBA image.
+/// @param[out] out_img Image in linear Rec.2020 color space. Image size is same with
+/// `in_image`
+///
+/// @return true upon success. false when any parameter is invalid.
+bool rec2020_8bit_to_linear_f32(const std::vector<uint8_t> &in_img, size_t width,
+                         size_t width_byte_stride, size_t height,
+                         size_t channels, size_t channel_stride,
+                         std::vector<float> *out_img, std::string *err = nullptr);
+
+///
+/// Convert fp32 image in linear to 8bit image in Rec.2020(gamma-applied) color space.
+///
+/// @param[in] in_img Input image in linear color space. Image size =
+/// [width_byte_stride/sizeof(float), height, channel_stride]
+/// @param[in] width Width pixels
+/// @param[in] height Height pixels
+/// @param[in] channels Pixel channels to apply conversion. must be less than or
+/// equal to `channel_stride`
+/// @param[in] channel_stride channel stride. For example, channels=3 and
+/// channel_stride=4 to convert RGB channel to Rec.2020 but leave alpha channel
+/// linear for RGBA image.
+/// @param[out] out_img Image in Rec.2020 colorspace. Image size is same with
+/// `in_image`
+/// @param[out] err Error message.
+///
+/// @return true upon success. false when any parameter is invalid.
+bool linear_f32_to_rec2020_8bit(const std::vector<float> &in_img, size_t width,
+                         size_t height, size_t channels, size_t channel_stride,
+                         std::vector<uint8_t> *out_img, std::string *err = nullptr);
+
+///
+/// Convert linear Rec.2020 color space to linear sRGB color space.
+///
+/// Input image must be RGB or RGBA.
+/// (TODO: Support Mono, Lumi/Alpha)
+///
+/// When alpha channel is supplied, no conversion applied to alpha value.
+///
+/// @param[in] in_img Input image in linear Rec.2020 color space. 
+/// @param[in] width Width pixels
+/// @param[in] height Height pixels
+/// @param[in] channels 3 = RGB, 4 = RGBA
+/// @param[out] out_img Image in linear sRGB color space. Image size is same with
+/// `in_image`
+bool linear_rec2020_to_linear_sRGB(const std::vector<float> &in_img, size_t width,
+                         size_t height, size_t channels,
+                         std::vector<float> *out_img, std::string *err = nullptr);
+
+///
+/// Convert linear sRGB color space to linear Rec.2020 color space.
+///
+/// Input image must be RGB or RGBA.
+/// (TODO: Support Mono, Lumi/Alpha)
+///
+/// When alpha channel is supplied, no conversion applied to alpha value.
+///
+/// @param[in] in_img Input image in linear sRGB color space. 
+/// @param[in] width Width pixels
+/// @param[in] height Height pixels
+/// @param[in] channels 3 = RGB, 4 = RGBA
+/// @param[out] out_img Image in linear Rec.2020 color space. Image size is same with
+/// `in_image`
+bool linear_sRGB_to_linear_rec2020(const std::vector<float> &in_img, size_t width,
+                         size_t height, size_t channels,
+                         std::vector<float> *out_img, std::string *err = nullptr);
+
+///
+/// Convert fp32 image with gamma 2.2 to linear color space.
+///
+/// @param[in] in_img Input image with gamma 2.2 encoding.
+/// @param[in] width Width pixels
+/// @param[in] height Height pixels
+/// @param[in] channels Pixel channels to apply conversion. must be less than or
+/// equal to `channel_stride`
+/// @param[in] channel_stride channel stride. For example, channels=3 and
+/// channel_stride=4 to apply gamma conversion to RGB channel but leave alpha 
+/// channel untouched for RGBA image.
+/// @param[out] out_img Image in linear color space. Image size is same with
+/// `in_image`
+/// @param[out] err Error message.
+///
+/// @return true upon success. false when any parameter is invalid.
+bool gamma22_f32_to_linear_f32(const std::vector<float> &in_img, size_t width,
+                         size_t height, size_t channels, size_t channel_stride,
+                         std::vector<float> *out_img, std::string *err = nullptr);
+
+///
+/// Convert fp32 linear image to gamma 2.2 encoded image.
+///
+/// @param[in] in_img Input image in linear color space.
+/// @param[in] width Width pixels
+/// @param[in] height Height pixels
+/// @param[in] channels Pixel channels to apply conversion. must be less than or
+/// equal to `channel_stride`
+/// @param[in] channel_stride channel stride.
+/// @param[out] out_img Image with gamma 2.2 encoding. Image size is same with
+/// `in_image`
+/// @param[out] err Error message.
+///
+/// @return true upon success. false when any parameter is invalid.
+bool linear_f32_to_gamma22_f32(const std::vector<float> &in_img, size_t width,
+                         size_t height, size_t channels, size_t channel_stride,
+                         std::vector<float> *out_img, std::string *err = nullptr);
+
+///
+/// Convert fp32 image with gamma 1.8 to linear color space.
+///
+/// @param[in] in_img Input image with gamma 1.8 encoding.
+/// @param[in] width Width pixels
+/// @param[in] height Height pixels
+/// @param[in] channels Pixel channels to apply conversion. must be less than or
+/// equal to `channel_stride`
+/// @param[in] channel_stride channel stride.
+/// @param[out] out_img Image in linear color space. Image size is same with
+/// `in_image`
+/// @param[out] err Error message.
+///
+/// @return true upon success. false when any parameter is invalid.
+bool gamma18_f32_to_linear_f32(const std::vector<float> &in_img, size_t width,
+                         size_t height, size_t channels, size_t channel_stride,
+                         std::vector<float> *out_img, std::string *err = nullptr);
+
+///
+/// Convert fp32 linear image to gamma 1.8 encoded image.
+///
+/// @param[in] in_img Input image in linear color space.
+/// @param[in] width Width pixels
+/// @param[in] height Height pixels
+/// @param[in] channels Pixel channels to apply conversion. must be less than or
+/// equal to `channel_stride`
+/// @param[in] channel_stride channel stride.
+/// @param[out] out_img Image with gamma 1.8 encoding. Image size is same with
+/// `in_image`
+/// @param[out] err Error message.
+///
+/// @return true upon success. false when any parameter is invalid.
+bool linear_f32_to_gamma18_f32(const std::vector<float> &in_img, size_t width,
+                         size_t height, size_t channels, size_t channel_stride,
+                         std::vector<float> *out_img, std::string *err = nullptr);
+
+///
+/// Convert linear sRGB/Rec.709 to ACES 2065-1 (AP0 primaries).
+///
+/// @param[in] in_img Input image in linear sRGB/Rec.709 color space.
+/// @param[in] width Width pixels
+/// @param[in] height Height pixels
+/// @param[in] channels 3 = RGB, 4 = RGBA
+/// @param[out] out_img Image in ACES 2065-1 color space. Image size is same with
+/// `in_image`
+bool linear_sRGB_to_ACES2065_1(const std::vector<float> &in_img, size_t width,
+                         size_t height, size_t channels,
+                         std::vector<float> *out_img, std::string *err = nullptr);
+
+///
+/// Convert ACES 2065-1 (AP0 primaries) to linear sRGB/Rec.709.
+///
+/// @param[in] in_img Input image in ACES 2065-1 color space.
+/// @param[in] width Width pixels
+/// @param[in] height Height pixels
+/// @param[in] channels 3 = RGB, 4 = RGBA
+/// @param[out] out_img Image in linear sRGB/Rec.709 color space. Image size is same with
+/// `in_image`
+bool ACES2065_1_to_linear_sRGB(const std::vector<float> &in_img, size_t width,
+                         size_t height, size_t channels,
+                         std::vector<float> *out_img, std::string *err = nullptr);
+
+///
 /// Resize fp32 image in linear color space.
 ///
 /// @param[in] in_image Input image in linear color space.

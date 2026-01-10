@@ -1,0 +1,994 @@
+#usda 1.0
+(
+    doc = """ColorChecker Classic 24-patch color chart in ACEScg colorspace.
+    Reference values from X-Rite ColorChecker Classic converted to ACEScg.
+    Layout: 4 rows x 6 columns = 24 patches
+    Each patch is a 1x1 quad with MaterialX standard_surface material.
+    ACEScg values (scene-referred, AP1 primaries, linear encoding).
+    Uses MaterialXConfigAPI for DCC interoperability.
+
+    References:
+    - X-Rite ColorChecker specifications
+      https://www.xrite.com/service-support/new_color_specifications_for_colorchecker_sg_and_classic_charts
+    - BabelColor ColorChecker reference data
+      https://babelcolor.com/colorchecker-2.htm
+    - ACES Color Encoding Specification
+      https://docs.acescentral.com/specifications/acescg/
+    - Academy Color Encoding System (ACES)
+      https://www.oscars.org/science-technology/sci-tech-projects/aces
+
+    Color values converted from linear sRGB to ACEScg using the standard
+    sRGB to AP1 (ACES Primaries 1) color space transformation matrix.
+    ACEScg uses AP1 primaries with linear encoding, D60 white point.
+    """
+    metersPerUnit = 1
+    upAxis = "Y"
+)
+
+def Scope "Materials"
+{
+    def Material "Mat_DarkSkin" (
+        prepend apiSchemas = ["MaterialXConfigAPI"]
+    )
+    {
+        token outputs:mtlx:surface.connect = </Materials/Mat_DarkSkin/Surface.outputs:out>
+
+        def Shader "Surface"
+        {
+            uniform token info:id = "ND_standard_surface_surfaceshader"
+            color3f inputs:base_color = (0.145, 0.093, 0.065) (
+                colorSpace = "acescg"
+            )
+            float inputs:base = 1.0
+            float inputs:specular = 0.5
+            float inputs:specular_roughness = 0.5
+            token outputs:out
+        }
+    }
+
+    def Material "Mat_LightSkin" (
+        prepend apiSchemas = ["MaterialXConfigAPI"]
+    )
+    {
+        token outputs:mtlx:surface.connect = </Materials/Mat_LightSkin/Surface.outputs:out>
+
+        def Shader "Surface"
+        {
+            uniform token info:id = "ND_standard_surface_surfaceshader"
+            color3f inputs:base_color = (0.448, 0.324, 0.250) (
+                colorSpace = "acescg"
+            )
+            float inputs:base = 1.0
+            float inputs:specular = 0.5
+            float inputs:specular_roughness = 0.5
+            token outputs:out
+        }
+    }
+
+    def Material "Mat_BlueSky" (
+        prepend apiSchemas = ["MaterialXConfigAPI"]
+    )
+    {
+        token outputs:mtlx:surface.connect = </Materials/Mat_BlueSky/Surface.outputs:out>
+
+        def Shader "Surface"
+        {
+            uniform token info:id = "ND_standard_surface_surfaceshader"
+            color3f inputs:base_color = (0.147, 0.199, 0.320) (
+                colorSpace = "acescg"
+            )
+            float inputs:base = 1.0
+            float inputs:specular = 0.5
+            float inputs:specular_roughness = 0.5
+            token outputs:out
+        }
+    }
+
+    def Material "Mat_Foliage" (
+        prepend apiSchemas = ["MaterialXConfigAPI"]
+    )
+    {
+        token outputs:mtlx:surface.connect = </Materials/Mat_Foliage/Surface.outputs:out>
+
+        def Shader "Surface"
+        {
+            uniform token info:id = "ND_standard_surface_surfaceshader"
+            color3f inputs:base_color = (0.107, 0.146, 0.069) (
+                colorSpace = "acescg"
+            )
+            float inputs:base = 1.0
+            float inputs:specular = 0.5
+            float inputs:specular_roughness = 0.5
+            token outputs:out
+        }
+    }
+
+    def Material "Mat_BlueFlower" (
+        prepend apiSchemas = ["MaterialXConfigAPI"]
+    )
+    {
+        token outputs:mtlx:surface.connect = </Materials/Mat_BlueFlower/Surface.outputs:out>
+
+        def Shader "Surface"
+        {
+            uniform token info:id = "ND_standard_surface_surfaceshader"
+            color3f inputs:base_color = (0.248, 0.232, 0.417) (
+                colorSpace = "acescg"
+            )
+            float inputs:base = 1.0
+            float inputs:specular = 0.5
+            float inputs:specular_roughness = 0.5
+            token outputs:out
+        }
+    }
+
+    def Material "Mat_BluishGreen" (
+        prepend apiSchemas = ["MaterialXConfigAPI"]
+    )
+    {
+        token outputs:mtlx:surface.connect = </Materials/Mat_BluishGreen/Surface.outputs:out>
+
+        def Shader "Surface"
+        {
+            uniform token info:id = "ND_standard_surface_surfaceshader"
+            color3f inputs:base_color = (0.221, 0.461, 0.408) (
+                colorSpace = "acescg"
+            )
+            float inputs:base = 1.0
+            float inputs:specular = 0.5
+            float inputs:specular_roughness = 0.5
+            token outputs:out
+        }
+    }
+
+    def Material "Mat_Orange" (
+        prepend apiSchemas = ["MaterialXConfigAPI"]
+    )
+    {
+        token outputs:mtlx:surface.connect = </Materials/Mat_Orange/Surface.outputs:out>
+
+        def Shader "Surface"
+        {
+            uniform token info:id = "ND_standard_surface_surfaceshader"
+            color3f inputs:base_color = (0.506, 0.232, 0.047) (
+                colorSpace = "acescg"
+            )
+            float inputs:base = 1.0
+            float inputs:specular = 0.5
+            float inputs:specular_roughness = 0.5
+            token outputs:out
+        }
+    }
+
+    def Material "Mat_PurplishBlue" (
+        prepend apiSchemas = ["MaterialXConfigAPI"]
+    )
+    {
+        token outputs:mtlx:surface.connect = </Materials/Mat_PurplishBlue/Surface.outputs:out>
+
+        def Shader "Surface"
+        {
+            uniform token info:id = "ND_standard_surface_surfaceshader"
+            color3f inputs:base_color = (0.108, 0.116, 0.360) (
+                colorSpace = "acescg"
+            )
+            float inputs:base = 1.0
+            float inputs:specular = 0.5
+            float inputs:specular_roughness = 0.5
+            token outputs:out
+        }
+    }
+
+    def Material "Mat_ModerateRed" (
+        prepend apiSchemas = ["MaterialXConfigAPI"]
+    )
+    {
+        token outputs:mtlx:surface.connect = </Materials/Mat_ModerateRed/Surface.outputs:out>
+
+        def Shader "Surface"
+        {
+            uniform token info:id = "ND_standard_surface_surfaceshader"
+            color3f inputs:base_color = (0.398, 0.121, 0.139) (
+                colorSpace = "acescg"
+            )
+            float inputs:base = 1.0
+            float inputs:specular = 0.5
+            float inputs:specular_roughness = 0.5
+            token outputs:out
+        }
+    }
+
+    def Material "Mat_Purple" (
+        prepend apiSchemas = ["MaterialXConfigAPI"]
+    )
+    {
+        token outputs:mtlx:surface.connect = </Materials/Mat_Purple/Surface.outputs:out>
+
+        def Shader "Surface"
+        {
+            uniform token info:id = "ND_standard_surface_surfaceshader"
+            color3f inputs:base_color = (0.089, 0.056, 0.143) (
+                colorSpace = "acescg"
+            )
+            float inputs:base = 1.0
+            float inputs:specular = 0.5
+            float inputs:specular_roughness = 0.5
+            token outputs:out
+        }
+    }
+
+    def Material "Mat_YellowGreen" (
+        prepend apiSchemas = ["MaterialXConfigAPI"]
+    )
+    {
+        token outputs:mtlx:surface.connect = </Materials/Mat_YellowGreen/Surface.outputs:out>
+
+        def Shader "Surface"
+        {
+            uniform token info:id = "ND_standard_surface_surfaceshader"
+            color3f inputs:base_color = (0.380, 0.473, 0.084) (
+                colorSpace = "acescg"
+            )
+            float inputs:base = 1.0
+            float inputs:specular = 0.5
+            float inputs:specular_roughness = 0.5
+            token outputs:out
+        }
+    }
+
+    def Material "Mat_OrangeYellow" (
+        prepend apiSchemas = ["MaterialXConfigAPI"]
+    )
+    {
+        token outputs:mtlx:surface.connect = </Materials/Mat_OrangeYellow/Surface.outputs:out>
+
+        def Shader "Surface"
+        {
+            uniform token info:id = "ND_standard_surface_surfaceshader"
+            color3f inputs:base_color = (0.584, 0.391, 0.056) (
+                colorSpace = "acescg"
+            )
+            float inputs:base = 1.0
+            float inputs:specular = 0.5
+            float inputs:specular_roughness = 0.5
+            token outputs:out
+        }
+    }
+
+    def Material "Mat_Blue" (
+        prepend apiSchemas = ["MaterialXConfigAPI"]
+    )
+    {
+        token outputs:mtlx:surface.connect = </Materials/Mat_Blue/Surface.outputs:out>
+
+        def Shader "Surface"
+        {
+            uniform token info:id = "ND_standard_surface_surfaceshader"
+            color3f inputs:base_color = (0.061, 0.057, 0.288) (
+                colorSpace = "acescg"
+            )
+            float inputs:base = 1.0
+            float inputs:specular = 0.5
+            float inputs:specular_roughness = 0.5
+            token outputs:out
+        }
+    }
+
+    def Material "Mat_Green" (
+        prepend apiSchemas = ["MaterialXConfigAPI"]
+    )
+    {
+        token outputs:mtlx:surface.connect = </Materials/Mat_Green/Surface.outputs:out>
+
+        def Shader "Surface"
+        {
+            uniform token info:id = "ND_standard_surface_surfaceshader"
+            color3f inputs:base_color = (0.104, 0.282, 0.088) (
+                colorSpace = "acescg"
+            )
+            float inputs:base = 1.0
+            float inputs:specular = 0.5
+            float inputs:specular_roughness = 0.5
+            token outputs:out
+        }
+    }
+
+    def Material "Mat_Red" (
+        prepend apiSchemas = ["MaterialXConfigAPI"]
+    )
+    {
+        token outputs:mtlx:surface.connect = </Materials/Mat_Red/Surface.outputs:out>
+
+        def Shader "Surface"
+        {
+            uniform token info:id = "ND_standard_surface_surfaceshader"
+            color3f inputs:base_color = (0.308, 0.051, 0.061) (
+                colorSpace = "acescg"
+            )
+            float inputs:base = 1.0
+            float inputs:specular = 0.5
+            float inputs:specular_roughness = 0.5
+            token outputs:out
+        }
+    }
+
+    def Material "Mat_Yellow" (
+        prepend apiSchemas = ["MaterialXConfigAPI"]
+    )
+    {
+        token outputs:mtlx:surface.connect = </Materials/Mat_Yellow/Surface.outputs:out>
+
+        def Shader "Surface"
+        {
+            uniform token info:id = "ND_standard_surface_surfaceshader"
+            color3f inputs:base_color = (0.669, 0.558, 0.031) (
+                colorSpace = "acescg"
+            )
+            float inputs:base = 1.0
+            float inputs:specular = 0.5
+            float inputs:specular_roughness = 0.5
+            token outputs:out
+        }
+    }
+
+    def Material "Mat_Magenta" (
+        prepend apiSchemas = ["MaterialXConfigAPI"]
+    )
+    {
+        token outputs:mtlx:surface.connect = </Materials/Mat_Magenta/Surface.outputs:out>
+
+        def Shader "Surface"
+        {
+            uniform token info:id = "ND_standard_surface_surfaceshader"
+            color3f inputs:base_color = (0.363, 0.113, 0.291) (
+                colorSpace = "acescg"
+            )
+            float inputs:base = 1.0
+            float inputs:specular = 0.5
+            float inputs:specular_roughness = 0.5
+            token outputs:out
+        }
+    }
+
+    def Material "Mat_Cyan" (
+        prepend apiSchemas = ["MaterialXConfigAPI"]
+    )
+    {
+        token outputs:mtlx:surface.connect = </Materials/Mat_Cyan/Surface.outputs:out>
+
+        def Shader "Surface"
+        {
+            uniform token info:id = "ND_standard_surface_surfaceshader"
+            color3f inputs:base_color = (0.067, 0.234, 0.334) (
+                colorSpace = "acescg"
+            )
+            float inputs:base = 1.0
+            float inputs:specular = 0.5
+            float inputs:specular_roughness = 0.5
+            token outputs:out
+        }
+    }
+
+    def Material "Mat_White" (
+        prepend apiSchemas = ["MaterialXConfigAPI"]
+    )
+    {
+        token outputs:mtlx:surface.connect = </Materials/Mat_White/Surface.outputs:out>
+
+        def Shader "Surface"
+        {
+            uniform token info:id = "ND_standard_surface_surfaceshader"
+            color3f inputs:base_color = (0.896, 0.896, 0.893) (
+                colorSpace = "acescg"
+            )
+            float inputs:base = 1.0
+            float inputs:specular = 0.5
+            float inputs:specular_roughness = 0.5
+            token outputs:out
+        }
+    }
+
+    def Material "Mat_Neutral8" (
+        prepend apiSchemas = ["MaterialXConfigAPI"]
+    )
+    {
+        token outputs:mtlx:surface.connect = </Materials/Mat_Neutral8/Surface.outputs:out>
+
+        def Shader "Surface"
+        {
+            uniform token info:id = "ND_standard_surface_surfaceshader"
+            color3f inputs:base_color = (0.586, 0.586, 0.586) (
+                colorSpace = "acescg"
+            )
+            float inputs:base = 1.0
+            float inputs:specular = 0.5
+            float inputs:specular_roughness = 0.5
+            token outputs:out
+        }
+    }
+
+    def Material "Mat_Neutral65" (
+        prepend apiSchemas = ["MaterialXConfigAPI"]
+    )
+    {
+        token outputs:mtlx:surface.connect = </Materials/Mat_Neutral65/Surface.outputs:out>
+
+        def Shader "Surface"
+        {
+            uniform token info:id = "ND_standard_surface_surfaceshader"
+            color3f inputs:base_color = (0.358, 0.358, 0.358) (
+                colorSpace = "acescg"
+            )
+            float inputs:base = 1.0
+            float inputs:specular = 0.5
+            float inputs:specular_roughness = 0.5
+            token outputs:out
+        }
+    }
+
+    def Material "Mat_Neutral5" (
+        prepend apiSchemas = ["MaterialXConfigAPI"]
+    )
+    {
+        token outputs:mtlx:surface.connect = </Materials/Mat_Neutral5/Surface.outputs:out>
+
+        def Shader "Surface"
+        {
+            uniform token info:id = "ND_standard_surface_surfaceshader"
+            color3f inputs:base_color = (0.198, 0.198, 0.197) (
+                colorSpace = "acescg"
+            )
+            float inputs:base = 1.0
+            float inputs:specular = 0.5
+            float inputs:specular_roughness = 0.5
+            token outputs:out
+        }
+    }
+
+    def Material "Mat_Neutral35" (
+        prepend apiSchemas = ["MaterialXConfigAPI"]
+    )
+    {
+        token outputs:mtlx:surface.connect = </Materials/Mat_Neutral35/Surface.outputs:out>
+
+        def Shader "Surface"
+        {
+            uniform token info:id = "ND_standard_surface_surfaceshader"
+            color3f inputs:base_color = (0.094, 0.094, 0.094) (
+                colorSpace = "acescg"
+            )
+            float inputs:base = 1.0
+            float inputs:specular = 0.5
+            float inputs:specular_roughness = 0.5
+            token outputs:out
+        }
+    }
+
+    def Material "Mat_Black" (
+        prepend apiSchemas = ["MaterialXConfigAPI"]
+    )
+    {
+        token outputs:mtlx:surface.connect = </Materials/Mat_Black/Surface.outputs:out>
+
+        def Shader "Surface"
+        {
+            uniform token info:id = "ND_standard_surface_surfaceshader"
+            color3f inputs:base_color = (0.035, 0.035, 0.035) (
+                colorSpace = "acescg"
+            )
+            float inputs:base = 1.0
+            float inputs:specular = 0.5
+            float inputs:specular_roughness = 0.5
+            token outputs:out
+        }
+    }
+}
+
+def Xform "ColorChart" (
+    doc = "ColorChecker Classic 24-patch chart in ACEScg colorspace"
+)
+{
+    def Mesh "Patch_01_DarkSkin" (
+        prepend apiSchemas = ["MaterialBindingAPI"]
+    )
+    {
+        rel material:binding = </Materials/Mat_DarkSkin>
+        float3[] extent = [(0, 0, 0), (1, 1, 0)]
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0, 1, 2, 3]
+        point3f[] points = [(0, 0, 0), (1, 0, 0), (1, 1, 0), (0, 1, 0)]
+        color3f[] primvars:color = [(0.145, 0.093, 0.065)] (
+            customData = {
+                string colorSpace = "acescg"
+            }
+            interpolation = "constant"
+        )
+        texCoord2f[] primvars:st = [(0, 0), (1, 0), (1, 1), (0, 1)] (
+            interpolation = "vertex"
+        )
+        uniform token subdivisionScheme = "none"
+    }
+
+    def Mesh "Patch_02_LightSkin" (
+        prepend apiSchemas = ["MaterialBindingAPI"]
+    )
+    {
+        rel material:binding = </Materials/Mat_LightSkin>
+        float3[] extent = [(1.1, 0, 0), (2.1, 1, 0)]
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0, 1, 2, 3]
+        point3f[] points = [(1.1, 0, 0), (2.1, 0, 0), (2.1, 1, 0), (1.1, 1, 0)]
+        color3f[] primvars:color = [(0.448, 0.324, 0.250)] (
+            customData = {
+                string colorSpace = "acescg"
+            }
+            interpolation = "constant"
+        )
+        texCoord2f[] primvars:st = [(0, 0), (1, 0), (1, 1), (0, 1)] (
+            interpolation = "vertex"
+        )
+        uniform token subdivisionScheme = "none"
+    }
+
+    def Mesh "Patch_03_BlueSky" (
+        prepend apiSchemas = ["MaterialBindingAPI"]
+    )
+    {
+        rel material:binding = </Materials/Mat_BlueSky>
+        float3[] extent = [(2.2, 0, 0), (3.2, 1, 0)]
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0, 1, 2, 3]
+        point3f[] points = [(2.2, 0, 0), (3.2, 0, 0), (3.2, 1, 0), (2.2, 1, 0)]
+        color3f[] primvars:color = [(0.147, 0.199, 0.320)] (
+            customData = {
+                string colorSpace = "acescg"
+            }
+            interpolation = "constant"
+        )
+        texCoord2f[] primvars:st = [(0, 0), (1, 0), (1, 1), (0, 1)] (
+            interpolation = "vertex"
+        )
+        uniform token subdivisionScheme = "none"
+    }
+
+    def Mesh "Patch_04_Foliage" (
+        prepend apiSchemas = ["MaterialBindingAPI"]
+    )
+    {
+        rel material:binding = </Materials/Mat_Foliage>
+        float3[] extent = [(3.3, 0, 0), (4.3, 1, 0)]
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0, 1, 2, 3]
+        point3f[] points = [(3.3, 0, 0), (4.3, 0, 0), (4.3, 1, 0), (3.3, 1, 0)]
+        color3f[] primvars:color = [(0.107, 0.146, 0.069)] (
+            customData = {
+                string colorSpace = "acescg"
+            }
+            interpolation = "constant"
+        )
+        texCoord2f[] primvars:st = [(0, 0), (1, 0), (1, 1), (0, 1)] (
+            interpolation = "vertex"
+        )
+        uniform token subdivisionScheme = "none"
+    }
+
+    def Mesh "Patch_05_BlueFlower" (
+        prepend apiSchemas = ["MaterialBindingAPI"]
+    )
+    {
+        rel material:binding = </Materials/Mat_BlueFlower>
+        float3[] extent = [(4.4, 0, 0), (5.4, 1, 0)]
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0, 1, 2, 3]
+        point3f[] points = [(4.4, 0, 0), (5.4, 0, 0), (5.4, 1, 0), (4.4, 1, 0)]
+        color3f[] primvars:color = [(0.248, 0.232, 0.417)] (
+            customData = {
+                string colorSpace = "acescg"
+            }
+            interpolation = "constant"
+        )
+        texCoord2f[] primvars:st = [(0, 0), (1, 0), (1, 1), (0, 1)] (
+            interpolation = "vertex"
+        )
+        uniform token subdivisionScheme = "none"
+    }
+
+    def Mesh "Patch_06_BluishGreen" (
+        prepend apiSchemas = ["MaterialBindingAPI"]
+    )
+    {
+        rel material:binding = </Materials/Mat_BluishGreen>
+        float3[] extent = [(5.5, 0, 0), (6.5, 1, 0)]
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0, 1, 2, 3]
+        point3f[] points = [(5.5, 0, 0), (6.5, 0, 0), (6.5, 1, 0), (5.5, 1, 0)]
+        color3f[] primvars:color = [(0.221, 0.461, 0.408)] (
+            customData = {
+                string colorSpace = "acescg"
+            }
+            interpolation = "constant"
+        )
+        texCoord2f[] primvars:st = [(0, 0), (1, 0), (1, 1), (0, 1)] (
+            interpolation = "vertex"
+        )
+        uniform token subdivisionScheme = "none"
+    }
+
+    def Mesh "Patch_07_Orange" (
+        prepend apiSchemas = ["MaterialBindingAPI"]
+    )
+    {
+        rel material:binding = </Materials/Mat_Orange>
+        float3[] extent = [(0, 1.1, 0), (1, 2.1, 0)]
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0, 1, 2, 3]
+        point3f[] points = [(0, 1.1, 0), (1, 1.1, 0), (1, 2.1, 0), (0, 2.1, 0)]
+        color3f[] primvars:color = [(0.506, 0.232, 0.047)] (
+            customData = {
+                string colorSpace = "acescg"
+            }
+            interpolation = "constant"
+        )
+        texCoord2f[] primvars:st = [(0, 0), (1, 0), (1, 1), (0, 1)] (
+            interpolation = "vertex"
+        )
+        uniform token subdivisionScheme = "none"
+    }
+
+    def Mesh "Patch_08_PurplishBlue" (
+        prepend apiSchemas = ["MaterialBindingAPI"]
+    )
+    {
+        rel material:binding = </Materials/Mat_PurplishBlue>
+        float3[] extent = [(1.1, 1.1, 0), (2.1, 2.1, 0)]
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0, 1, 2, 3]
+        point3f[] points = [(1.1, 1.1, 0), (2.1, 1.1, 0), (2.1, 2.1, 0), (1.1, 2.1, 0)]
+        color3f[] primvars:color = [(0.108, 0.116, 0.360)] (
+            customData = {
+                string colorSpace = "acescg"
+            }
+            interpolation = "constant"
+        )
+        texCoord2f[] primvars:st = [(0, 0), (1, 0), (1, 1), (0, 1)] (
+            interpolation = "vertex"
+        )
+        uniform token subdivisionScheme = "none"
+    }
+
+    def Mesh "Patch_09_ModerateRed" (
+        prepend apiSchemas = ["MaterialBindingAPI"]
+    )
+    {
+        rel material:binding = </Materials/Mat_ModerateRed>
+        float3[] extent = [(2.2, 1.1, 0), (3.2, 2.1, 0)]
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0, 1, 2, 3]
+        point3f[] points = [(2.2, 1.1, 0), (3.2, 1.1, 0), (3.2, 2.1, 0), (2.2, 2.1, 0)]
+        color3f[] primvars:color = [(0.398, 0.121, 0.139)] (
+            customData = {
+                string colorSpace = "acescg"
+            }
+            interpolation = "constant"
+        )
+        texCoord2f[] primvars:st = [(0, 0), (1, 0), (1, 1), (0, 1)] (
+            interpolation = "vertex"
+        )
+        uniform token subdivisionScheme = "none"
+    }
+
+    def Mesh "Patch_10_Purple" (
+        prepend apiSchemas = ["MaterialBindingAPI"]
+    )
+    {
+        rel material:binding = </Materials/Mat_Purple>
+        float3[] extent = [(3.3, 1.1, 0), (4.3, 2.1, 0)]
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0, 1, 2, 3]
+        point3f[] points = [(3.3, 1.1, 0), (4.3, 1.1, 0), (4.3, 2.1, 0), (3.3, 2.1, 0)]
+        color3f[] primvars:color = [(0.089, 0.056, 0.143)] (
+            customData = {
+                string colorSpace = "acescg"
+            }
+            interpolation = "constant"
+        )
+        texCoord2f[] primvars:st = [(0, 0), (1, 0), (1, 1), (0, 1)] (
+            interpolation = "vertex"
+        )
+        uniform token subdivisionScheme = "none"
+    }
+
+    def Mesh "Patch_11_YellowGreen" (
+        prepend apiSchemas = ["MaterialBindingAPI"]
+    )
+    {
+        rel material:binding = </Materials/Mat_YellowGreen>
+        float3[] extent = [(4.4, 1.1, 0), (5.4, 2.1, 0)]
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0, 1, 2, 3]
+        point3f[] points = [(4.4, 1.1, 0), (5.4, 1.1, 0), (5.4, 2.1, 0), (4.4, 2.1, 0)]
+        color3f[] primvars:color = [(0.380, 0.473, 0.084)] (
+            customData = {
+                string colorSpace = "acescg"
+            }
+            interpolation = "constant"
+        )
+        texCoord2f[] primvars:st = [(0, 0), (1, 0), (1, 1), (0, 1)] (
+            interpolation = "vertex"
+        )
+        uniform token subdivisionScheme = "none"
+    }
+
+    def Mesh "Patch_12_OrangeYellow" (
+        prepend apiSchemas = ["MaterialBindingAPI"]
+    )
+    {
+        rel material:binding = </Materials/Mat_OrangeYellow>
+        float3[] extent = [(5.5, 1.1, 0), (6.5, 2.1, 0)]
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0, 1, 2, 3]
+        point3f[] points = [(5.5, 1.1, 0), (6.5, 1.1, 0), (6.5, 2.1, 0), (5.5, 2.1, 0)]
+        color3f[] primvars:color = [(0.584, 0.391, 0.056)] (
+            customData = {
+                string colorSpace = "acescg"
+            }
+            interpolation = "constant"
+        )
+        texCoord2f[] primvars:st = [(0, 0), (1, 0), (1, 1), (0, 1)] (
+            interpolation = "vertex"
+        )
+        uniform token subdivisionScheme = "none"
+    }
+
+    def Mesh "Patch_13_Blue" (
+        prepend apiSchemas = ["MaterialBindingAPI"]
+    )
+    {
+        rel material:binding = </Materials/Mat_Blue>
+        float3[] extent = [(0, 2.2, 0), (1, 3.2, 0)]
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0, 1, 2, 3]
+        point3f[] points = [(0, 2.2, 0), (1, 2.2, 0), (1, 3.2, 0), (0, 3.2, 0)]
+        color3f[] primvars:color = [(0.061, 0.057, 0.288)] (
+            customData = {
+                string colorSpace = "acescg"
+            }
+            interpolation = "constant"
+        )
+        texCoord2f[] primvars:st = [(0, 0), (1, 0), (1, 1), (0, 1)] (
+            interpolation = "vertex"
+        )
+        uniform token subdivisionScheme = "none"
+    }
+
+    def Mesh "Patch_14_Green" (
+        prepend apiSchemas = ["MaterialBindingAPI"]
+    )
+    {
+        rel material:binding = </Materials/Mat_Green>
+        float3[] extent = [(1.1, 2.2, 0), (2.1, 3.2, 0)]
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0, 1, 2, 3]
+        point3f[] points = [(1.1, 2.2, 0), (2.1, 2.2, 0), (2.1, 3.2, 0), (1.1, 3.2, 0)]
+        color3f[] primvars:color = [(0.104, 0.282, 0.088)] (
+            customData = {
+                string colorSpace = "acescg"
+            }
+            interpolation = "constant"
+        )
+        texCoord2f[] primvars:st = [(0, 0), (1, 0), (1, 1), (0, 1)] (
+            interpolation = "vertex"
+        )
+        uniform token subdivisionScheme = "none"
+    }
+
+    def Mesh "Patch_15_Red" (
+        prepend apiSchemas = ["MaterialBindingAPI"]
+    )
+    {
+        rel material:binding = </Materials/Mat_Red>
+        float3[] extent = [(2.2, 2.2, 0), (3.2, 3.2, 0)]
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0, 1, 2, 3]
+        point3f[] points = [(2.2, 2.2, 0), (3.2, 2.2, 0), (3.2, 3.2, 0), (2.2, 3.2, 0)]
+        color3f[] primvars:color = [(0.308, 0.051, 0.061)] (
+            customData = {
+                string colorSpace = "acescg"
+            }
+            interpolation = "constant"
+        )
+        texCoord2f[] primvars:st = [(0, 0), (1, 0), (1, 1), (0, 1)] (
+            interpolation = "vertex"
+        )
+        uniform token subdivisionScheme = "none"
+    }
+
+    def Mesh "Patch_16_Yellow" (
+        prepend apiSchemas = ["MaterialBindingAPI"]
+    )
+    {
+        rel material:binding = </Materials/Mat_Yellow>
+        float3[] extent = [(3.3, 2.2, 0), (4.3, 3.2, 0)]
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0, 1, 2, 3]
+        point3f[] points = [(3.3, 2.2, 0), (4.3, 2.2, 0), (4.3, 3.2, 0), (3.3, 3.2, 0)]
+        color3f[] primvars:color = [(0.669, 0.558, 0.031)] (
+            customData = {
+                string colorSpace = "acescg"
+            }
+            interpolation = "constant"
+        )
+        texCoord2f[] primvars:st = [(0, 0), (1, 0), (1, 1), (0, 1)] (
+            interpolation = "vertex"
+        )
+        uniform token subdivisionScheme = "none"
+    }
+
+    def Mesh "Patch_17_Magenta" (
+        prepend apiSchemas = ["MaterialBindingAPI"]
+    )
+    {
+        rel material:binding = </Materials/Mat_Magenta>
+        float3[] extent = [(4.4, 2.2, 0), (5.4, 3.2, 0)]
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0, 1, 2, 3]
+        point3f[] points = [(4.4, 2.2, 0), (5.4, 2.2, 0), (5.4, 3.2, 0), (4.4, 3.2, 0)]
+        color3f[] primvars:color = [(0.363, 0.113, 0.291)] (
+            customData = {
+                string colorSpace = "acescg"
+            }
+            interpolation = "constant"
+        )
+        texCoord2f[] primvars:st = [(0, 0), (1, 0), (1, 1), (0, 1)] (
+            interpolation = "vertex"
+        )
+        uniform token subdivisionScheme = "none"
+    }
+
+    def Mesh "Patch_18_Cyan" (
+        prepend apiSchemas = ["MaterialBindingAPI"]
+    )
+    {
+        rel material:binding = </Materials/Mat_Cyan>
+        float3[] extent = [(5.5, 2.2, 0), (6.5, 3.2, 0)]
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0, 1, 2, 3]
+        point3f[] points = [(5.5, 2.2, 0), (6.5, 2.2, 0), (6.5, 3.2, 0), (5.5, 3.2, 0)]
+        color3f[] primvars:color = [(0.067, 0.234, 0.334)] (
+            customData = {
+                string colorSpace = "acescg"
+            }
+            interpolation = "constant"
+        )
+        texCoord2f[] primvars:st = [(0, 0), (1, 0), (1, 1), (0, 1)] (
+            interpolation = "vertex"
+        )
+        uniform token subdivisionScheme = "none"
+    }
+
+    def Mesh "Patch_19_White" (
+        prepend apiSchemas = ["MaterialBindingAPI"]
+    )
+    {
+        rel material:binding = </Materials/Mat_White>
+        float3[] extent = [(0, 3.3, 0), (1, 4.3, 0)]
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0, 1, 2, 3]
+        point3f[] points = [(0, 3.3, 0), (1, 3.3, 0), (1, 4.3, 0), (0, 4.3, 0)]
+        color3f[] primvars:color = [(0.896, 0.896, 0.893)] (
+            customData = {
+                string colorSpace = "acescg"
+            }
+            interpolation = "constant"
+        )
+        texCoord2f[] primvars:st = [(0, 0), (1, 0), (1, 1), (0, 1)] (
+            interpolation = "vertex"
+        )
+        uniform token subdivisionScheme = "none"
+    }
+
+    def Mesh "Patch_20_Neutral8" (
+        prepend apiSchemas = ["MaterialBindingAPI"]
+    )
+    {
+        rel material:binding = </Materials/Mat_Neutral8>
+        float3[] extent = [(1.1, 3.3, 0), (2.1, 4.3, 0)]
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0, 1, 2, 3]
+        point3f[] points = [(1.1, 3.3, 0), (2.1, 3.3, 0), (2.1, 4.3, 0), (1.1, 4.3, 0)]
+        color3f[] primvars:color = [(0.586, 0.586, 0.586)] (
+            customData = {
+                string colorSpace = "acescg"
+            }
+            interpolation = "constant"
+        )
+        texCoord2f[] primvars:st = [(0, 0), (1, 0), (1, 1), (0, 1)] (
+            interpolation = "vertex"
+        )
+        uniform token subdivisionScheme = "none"
+    }
+
+    def Mesh "Patch_21_Neutral65" (
+        prepend apiSchemas = ["MaterialBindingAPI"]
+    )
+    {
+        rel material:binding = </Materials/Mat_Neutral65>
+        float3[] extent = [(2.2, 3.3, 0), (3.2, 4.3, 0)]
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0, 1, 2, 3]
+        point3f[] points = [(2.2, 3.3, 0), (3.2, 3.3, 0), (3.2, 4.3, 0), (2.2, 4.3, 0)]
+        color3f[] primvars:color = [(0.358, 0.358, 0.358)] (
+            customData = {
+                string colorSpace = "acescg"
+            }
+            interpolation = "constant"
+        )
+        texCoord2f[] primvars:st = [(0, 0), (1, 0), (1, 1), (0, 1)] (
+            interpolation = "vertex"
+        )
+        uniform token subdivisionScheme = "none"
+    }
+
+    def Mesh "Patch_22_Neutral5" (
+        prepend apiSchemas = ["MaterialBindingAPI"]
+    )
+    {
+        rel material:binding = </Materials/Mat_Neutral5>
+        float3[] extent = [(3.3, 3.3, 0), (4.3, 4.3, 0)]
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0, 1, 2, 3]
+        point3f[] points = [(3.3, 3.3, 0), (4.3, 3.3, 0), (4.3, 4.3, 0), (3.3, 4.3, 0)]
+        color3f[] primvars:color = [(0.198, 0.198, 0.197)] (
+            customData = {
+                string colorSpace = "acescg"
+            }
+            interpolation = "constant"
+        )
+        texCoord2f[] primvars:st = [(0, 0), (1, 0), (1, 1), (0, 1)] (
+            interpolation = "vertex"
+        )
+        uniform token subdivisionScheme = "none"
+    }
+
+    def Mesh "Patch_23_Neutral35" (
+        prepend apiSchemas = ["MaterialBindingAPI"]
+    )
+    {
+        rel material:binding = </Materials/Mat_Neutral35>
+        float3[] extent = [(4.4, 3.3, 0), (5.4, 4.3, 0)]
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0, 1, 2, 3]
+        point3f[] points = [(4.4, 3.3, 0), (5.4, 3.3, 0), (5.4, 4.3, 0), (4.4, 4.3, 0)]
+        color3f[] primvars:color = [(0.094, 0.094, 0.094)] (
+            customData = {
+                string colorSpace = "acescg"
+            }
+            interpolation = "constant"
+        )
+        texCoord2f[] primvars:st = [(0, 0), (1, 0), (1, 1), (0, 1)] (
+            interpolation = "vertex"
+        )
+        uniform token subdivisionScheme = "none"
+    }
+
+    def Mesh "Patch_24_Black" (
+        prepend apiSchemas = ["MaterialBindingAPI"]
+    )
+    {
+        rel material:binding = </Materials/Mat_Black>
+        float3[] extent = [(5.5, 3.3, 0), (6.5, 4.3, 0)]
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0, 1, 2, 3]
+        point3f[] points = [(5.5, 3.3, 0), (6.5, 3.3, 0), (6.5, 4.3, 0), (5.5, 4.3, 0)]
+        color3f[] primvars:color = [(0.035, 0.035, 0.035)] (
+            customData = {
+                string colorSpace = "acescg"
+            }
+            interpolation = "constant"
+        )
+        texCoord2f[] primvars:st = [(0, 0), (1, 0), (1, 1), (0, 1)] (
+            interpolation = "vertex"
+        )
+        uniform token subdivisionScheme = "none"
+    }
+}

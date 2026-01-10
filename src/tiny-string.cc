@@ -370,7 +370,7 @@ bool parse_int(const tstring_view &sv, int32_t *ret) {
     }
   }
   
-  *ret = negative ? -static_cast<int32_t>(result) : static_cast<int32_t>(result);
+  *ret = static_cast<int32_t>(negative ? -result : result);
   return true;
 }
 
