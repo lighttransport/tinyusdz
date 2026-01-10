@@ -143,7 +143,7 @@ jobs:
 
     - name: Verify OpenUSD installation
       run: |
-        usdcat --version || usdcat --help
+        usdcat --help
         echo "OpenUSD binary: $(which usdcat)"
 
     - name: Test TinyUSDZ and OpenUSD interoperability
@@ -308,7 +308,7 @@ jobs:
 
     - name: Verify OpenUSD installation (ARM64)
       run: |
-        usdcat --version || usdcat --help
+        usdcat --help
         echo "OpenUSD binary: $(which usdcat)"
 
     - name: Test TinyUSDZ and OpenUSD interoperability (ARM64)

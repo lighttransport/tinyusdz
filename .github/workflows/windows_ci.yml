@@ -59,7 +59,7 @@ jobs:
 
       - name: Verify OpenUSD installation (Windows x64)
         run: |
-          usdcat --version
+          usdcat --help
           Write-Host "OpenUSD binary location: $(Get-Command usdcat | Select-Object -ExpandProperty Source)"
 
       - name: Test TinyUSDZ and OpenUSD interoperability (Windows x64)
