@@ -47,10 +47,15 @@ jobs:
       - name: Extract and setup OpenUSD (Windows x64)
         run: |
           $archive = Get-ChildItem -Filter "openusd-*-minsizerel-windows-x86_64.zip" | Select-Object -First 1
-          Expand-Archive -Path $archive.FullName -DestinationPath . -Force
-          $usdDir = Get-ChildItem -Directory -Filter "openusd-*" | Select-Object -First 1
-          echo "USD_INSTALL_ROOT=$($usdDir.FullName)" >> $env:GITHUB_ENV
-          echo "$($usdDir.FullName)\bin" >> $env:GITHUB_PATH
+          New-Item -ItemType Directory -Name openusd -Force | Out-Null
+          Expand-Archive -Path $archive.FullName -DestinationPath openusd -Force
+          $usdRoot = Resolve-Path openusd
+          echo "USD_INSTALL_ROOT=$usdRoot" >> $env:GITHUB_ENV
+          echo "$usdRoot\bin" >> $env:GITHUB_PATH
+          echo "$usdRoot\lib" >> $env:GITHUB_PATH
+          echo "$usdRoot\tbb\bin" >> $env:GITHUB_PATH
+          echo "PYTHONPATH=$usdRoot\lib\python;$env:PYTHONPATH" >> $env:GITHUB_ENV
+          echo "PXR_PLUGINPATH_NAME=$usdRoot\lib\usd" >> $env:GITHUB_ENV
 
       - name: Verify OpenUSD installation (Windows x64)
         run: |
