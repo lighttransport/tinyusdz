@@ -1427,6 +1427,7 @@ void pprint_timesamples(StreamWriter& writer, const value::TimeSamples& samples,
         const auto& blocked = samples.get_blocked();
         const auto& values = samples.get_values();
         const auto& offsets = samples.get_offsets();
+        const auto& small_values = samples.get_small_values();
         const auto& array_counts = samples.get_array_counts();
 
         // Write samples - handle offset table if present
@@ -1476,9 +1477,12 @@ void pprint_timesamples(StreamWriter& writer, const value::TimeSamples& samples,
                 writer.write("\n");
             }
         } else {
-            // Legacy: blocked values still counted in offset calculation
-            // Handle case where values is empty but times is not
-            if (values.empty() && !times.empty()) {
+            // No offset table - using direct storage (either _values or _small_values)
+            // Check if using small_values (for types sizeof <= 8) or values buffer (for types sizeof > 8)
+            bool using_small_values = !small_values.empty();
+
+            // Handle case where both storage types are empty but times is not (error case)
+            if (values.empty() && small_values.empty() && !times.empty()) {
                 for (size_t i = 0; i < times.size(); ++i) {
                     writer.write(pprint::Indent(indent + 1));
                     writer.write(times[i]);
@@ -1488,7 +1492,36 @@ void pprint_timesamples(StreamWriter& writer, const value::TimeSamples& samples,
                     }
                     writer.write("\n");
                 }
+            } else if (using_small_values) {
+                // Print small values (stored as uint64_t, need to extract typed value)
+                for (size_t i = 0; i < times.size(); ++i) {
+                    writer.write(pprint::Indent(indent + 1));
+                    writer.write(times[i]);
+                    writer.write(": ");
+
+                    // Check blocked array bounds before accessing
+                    bool is_blocked = (i < blocked.size()) ? blocked[i] : false;
+                    if (is_blocked) {
+                        writer.write("None");
+                    } else {
+                        // Get value from small_values and print it
+                        if (i < small_values.size()) {
+                            uint64_t stored_value = small_values[i];
+                            // Cast to typed pointer and print
+                            const uint8_t* value_ptr = reinterpret_cast<const uint8_t*>(&stored_value);
+                            pprint_pod_value_by_type(writer, value_ptr, type_id);
+                        } else {
+                            writer.write("/* ERROR: small_values index out of bounds */");
+                        }
+                    }
+
+                    if (i < times.size() - 1) {
+                        writer.write(",");
+                    }
+                    writer.write("\n");
+                }
             } else {
+            // Use values buffer (large types)
             size_t value_offset = 0;
             for (size_t i = 0; i < times.size(); ++i) {
                 //TUSDZ_LOG_I("times[" << i << "] = " << times[i]);
@@ -1524,8 +1557,8 @@ void pprint_timesamples(StreamWriter& writer, const value::TimeSamples& samples,
                 }
                 writer.write("\n");
             }
-            } // end else for values.empty() check
-        }
+            } // end else for using_small_values check
+        } // end else for offsets.empty() check
     } else {
         // Non-POD path: use regular samples
         const auto& samples_vec = samples.get_samples();

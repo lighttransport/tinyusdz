@@ -1616,6 +1616,13 @@ struct TimeSamples {
     return _offsets;
   }
 
+  const std::vector<uint64_t>& get_small_values() const {
+    if (_dirty) {
+      update();
+    }
+    return _small_values;
+  }
+
   bool is_array() const {
     return _is_array;
   }
