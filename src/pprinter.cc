@@ -3220,7 +3220,7 @@ std::string to_string(const GeomMesh &mesh, const uint32_t indent,
                          indent + 1);
   ss << print_typed_attr(mesh.holeIndices, "holeIndices", indent + 1);
 
-  ss << print_typed_token_attr(mesh.subdivisionScheme, "subdivisonScheme",
+  ss << print_typed_token_attr(mesh.subdivisionScheme, "subdivisionScheme",
                                indent + 1);
   ss << print_typed_token_attr(mesh.interpolateBoundary, "interpolateBoundary",
                                indent + 1);
