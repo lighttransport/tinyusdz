@@ -468,9 +468,9 @@ class UsdaParser {
     this.tokens = tokens;
     this.pos = 0;
     this.depth = 0;
-    this.maxDepth = 100;
+    this.maxDepth = 10000;  // Very deep nesting for complex USD files (skeletal animation, etc.)
     this.iterations = 0;
-    this.maxIterations = 10000;
+    this.maxIterations = 100000;
   }
 
   checkDepth() {
@@ -1783,7 +1783,9 @@ function main() {
     // Mode 2: Run tusdcat and usdcat on input file(s) - supports glob patterns
     else if (options.files.length >= 1 && options.tusdcat && options.usdcat) {
       // Expand glob patterns
-      const expandedFiles = expandFilePatterns(options.files, options.baseDir);
+      const expandedFiles = expandFilePatterns(options.files, options.baseDir)
+        // Filter out empty strings to prevent invalid file paths
+        .filter(f => f && f.trim().length > 0);
 
       if (expandedFiles.length === 0) {
         console.error('Error: No files found matching the pattern(s).');
