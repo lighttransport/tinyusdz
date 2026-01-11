@@ -309,8 +309,17 @@ class UsdaLexer {
     this.advance(); // consume opening @
     let value = '';
 
+    // Check if it's a triple-@ delimited path @@@...@@@
+    let isTripleDelim = false;
+    if (this.peek() === '@' && this.peek(1) === '@') {
+      // It's @@@...@@@
+      this.advance(); // consume second @
+      this.advance(); // consume third @
+      isTripleDelim = true;
+    }
+
     // Check if it's a quoted asset path @"..."@ or @'...'@
-    if (this.peek() === '"' || this.peek() === "'") {
+    if (!isTripleDelim && (this.peek() === '"' || this.peek() === "'")) {
       const quote = this.advance();
       while (this.pos < this.input.length) {
         const ch = this.peek();
@@ -326,19 +335,35 @@ class UsdaLexer {
         }
       }
     } else {
-      // Unquoted asset path @path@
+      // Unquoted asset path @path@ or @@@path@@@
       while (this.pos < this.input.length) {
         const ch = this.peek();
-        if (ch === '@') {
-          break;
+
+        // Handle escaped characters (including \@@@)
+        if (ch === '\\') {
+          this.advance();
+          value += this.advance();
+          continue;
         }
+
+        if (isTripleDelim) {
+          // For @@@...@@@, look for closing @@@
+          if (ch === '@' && this.peek(1) === '@' && this.peek(2) === '@') {
+            this.advance(); // consume first @
+            this.advance(); // consume second @
+            this.advance(); // consume third @
+            break;
+          }
+        } else {
+          // For @...@, look for closing @
+          if (ch === '@') {
+            this.advance();
+            break;
+          }
+        }
+
         value += this.advance();
       }
-    }
-
-    // Consume closing @
-    if (this.peek() === '@') {
-      this.advance();
     }
 
     return { type: TokenType.STRING, value, isAsset: true };
@@ -489,21 +514,41 @@ class UsdaParser {
   peek(offset = 0) {
     const idx = this.pos + offset;
     if (idx >= this.tokens.length) {
-      return { type: TokenType.EOF, value: '' };
+      return { type: TokenType.EOF, value: '', line: -1, col: -1 };
     }
-    return this.tokens[idx];
+    const token = this.tokens[idx];
+    // Ensure token always has required properties
+    if (!token) {
+      return { type: TokenType.EOF, value: '', line: -1, col: -1 };
+    }
+    return token;
   }
 
   advance() {
-    return this.tokens[this.pos++];
+    const token = this.tokens[this.pos++];
+    if (!token) {
+      return { type: TokenType.EOF, value: '', line: -1, col: -1 };
+    }
+    return token;
   }
 
   expect(type) {
     const token = this.advance();
     if (token.type !== type) {
-      throw new Error(`Expected ${type} but got ${token.type} (${token.value})`);
+      const tokenStr = token ? `${token.type}(${token.value})` : 'undefined';
+      throw new Error(`Expected ${type} but got ${tokenStr} at position ${this.pos}`);
     }
     return token;
+  }
+
+  getTokenContext(offset = 0) {
+    const startIdx = Math.max(0, this.pos - 2);
+    const endIdx = Math.min(this.tokens.length, this.pos + 3);
+    const tokens = this.tokens.slice(startIdx, endIdx);
+    return tokens.map((t, i) => {
+      const marker = startIdx + i === this.pos ? '>>> ' : '    ';
+      return `${marker}[${startIdx + i}] ${t ? t.type : 'UNDEFINED'}('${t ? t.value : ''}')`;
+    }).join('\n');
   }
 
   match(type, value = null) {
@@ -521,30 +566,48 @@ class UsdaParser {
       prims: []
     };
 
-    // Parse header (e.g., #usda 1.0)
-    if (this.peek().type === TokenType.IDENTIFIER && this.peek().value === 'usda') {
-      this.advance();
-      if (this.peek().type === TokenType.NUMBER) {
-        result.header = { version: this.advance().value };
+    try {
+      // Parse header (e.g., #usda 1.0)
+      const headerToken = this.peek();
+      if (headerToken && headerToken.type === TokenType.IDENTIFIER && headerToken.value === 'usda') {
+        this.advance();
+        const versionToken = this.peek();
+        if (versionToken && versionToken.type === TokenType.NUMBER) {
+          result.header = { version: this.advance().value };
+        }
       }
-    }
 
-    // Parse top-level metadata
-    if (this.peek().type === TokenType.LPAREN) {
-      result.metadata = this.parseMetadata();
-    }
-
-    // Parse prims
-    while (this.pos < this.tokens.length) {
-      const token = this.peek();
-      if (token.type === TokenType.EOF) break;
-
-      if (token.type === TokenType.IDENTIFIER &&
-          (token.value === 'def' || token.value === 'over' || token.value === 'class')) {
-        result.prims.push(this.parsePrim(''));
-      } else {
-        this.advance(); // Skip unexpected tokens
+      // Parse top-level metadata
+      const metaToken = this.peek();
+      if (metaToken && metaToken.type === TokenType.LPAREN) {
+        result.metadata = this.parseMetadata();
       }
+
+      // Parse prims
+      while (this.pos < this.tokens.length) {
+        const token = this.peek();
+        if (!token || token.type === TokenType.EOF) break;
+
+        if (token.type === TokenType.IDENTIFIER &&
+            (token.value === 'def' || token.value === 'over' || token.value === 'class')) {
+          try {
+            result.prims.push(this.parsePrim(''));
+          } catch (e) {
+            // If prim parsing fails, skip to next prim
+            console.error('Error parsing prim:', e.message);
+            while (this.pos < this.tokens.length &&
+                   !(this.peek() && this.peek().type === TokenType.IDENTIFIER &&
+                     (this.peek().value === 'def' || this.peek().value === 'over' || this.peek().value === 'class'))) {
+              this.advance();
+            }
+          }
+        } else {
+          this.advance(); // Skip unexpected tokens
+        }
+      }
+    } catch (e) {
+      console.error('Error in top-level parse:', e.message);
+      // Return partial result
     }
 
     return result;
@@ -583,9 +646,9 @@ class UsdaParser {
     let name = '';
 
     // Handle type prefix (e.g., "uniform", "custom")
-    while (this.peek().type === TokenType.IDENTIFIER) {
+    while (this.peek() && this.peek().type === TokenType.IDENTIFIER) {
       const token = this.peek();
-      if (['uniform', 'custom', 'varying', 'config', 'prepend', 'append', 'delete', 'add', 'reorder'].includes(token.value)) {
+      if (token && token.value && ['uniform', 'custom', 'varying', 'config', 'prepend', 'append', 'delete', 'add', 'reorder'].includes(token.value)) {
         name += this.advance().value + ' ';
       } else {
         break;
@@ -593,11 +656,13 @@ class UsdaParser {
     }
 
     // Handle type annotation (e.g., "float3", "token[]")
-    if (this.peek().type === TokenType.IDENTIFIER) {
+    const typeToken = this.peek();
+    if (typeToken && typeToken.type === TokenType.IDENTIFIER) {
       name += this.advance().value;
 
       // Handle array type
-      if (this.peek().type === TokenType.LBRACKET) {
+      const bracketToken = this.peek();
+      if (bracketToken && bracketToken.type === TokenType.LBRACKET) {
         this.advance();
         this.expect(TokenType.RBRACKET);
         name += '[]';
@@ -605,12 +670,18 @@ class UsdaParser {
     }
 
     // Handle attribute name with namespaces (e.g., "xformOp:translate")
-    if (this.peek().type === TokenType.IDENTIFIER) {
+    const nameToken = this.peek();
+    if (nameToken && nameToken.type === TokenType.IDENTIFIER) {
       name += ' ' + this.advance().value;
 
-      while (this.peek().type === TokenType.COLON) {
+      while (this.peek() && this.peek().type === TokenType.COLON) {
         this.advance();
-        name += ':' + this.advance().value;
+        const colonToken = this.peek();
+        if (colonToken && colonToken.type === TokenType.IDENTIFIER) {
+          name += ':' + this.advance().value;
+        } else {
+          break;
+        }
       }
     }
 
@@ -620,6 +691,10 @@ class UsdaParser {
   parseValue() {
     this.checkDepth();
     const token = this.peek();
+
+    if (!token) {
+      throw new Error(`Unexpected end of tokens while parsing value at position ${this.pos}`);
+    }
 
     // Dictionary (e.g., assetInfo = { string name = "baked_mesh" })
     if (token.type === TokenType.LBRACE) {
@@ -639,15 +714,16 @@ class UsdaParser {
     // String or Asset reference
     if (token.type === TokenType.STRING) {
       const tok = this.advance();
-      if (tok.isAsset) {
+      if (tok && tok.isAsset) {
         return { type: 'asset', value: tok.value };
       }
-      return { type: 'string', value: tok.value };
+      return { type: 'string', value: tok && tok.value ? tok.value : '' };
     }
 
     // Number
     if (token.type === TokenType.NUMBER) {
-      return { type: 'number', value: this.advance().value };
+      const numToken = this.advance();
+      return { type: 'number', value: numToken && numToken.value ? numToken.value : '0' };
     }
 
     // Identifier (token, enum, etc.)
@@ -663,11 +739,11 @@ class UsdaParser {
     }
 
     // Path reference
-    if (token.type === TokenType.STRING || token.value === '<') {
+    if (token.type === TokenType.STRING || (token.value && token.value === '<')) {
       return this.parsePath();
     }
 
-    return { type: 'unknown', value: token.value };
+    return { type: 'unknown', value: token && token.value ? token.value : '?' };
   }
 
   parseDictionary() {
@@ -692,23 +768,28 @@ class UsdaParser {
     let key = '';
 
     // Handle type prefix (e.g., "string", "int", "asset", "dictionary")
-    if (this.peek().type === TokenType.IDENTIFIER) {
-      const typeName = this.advance().value;
+    const typeToken = this.peek();
+    if (typeToken && typeToken.type === TokenType.IDENTIFIER) {
+      const typeName = typeToken.value;
       key = typeName;
 
+      this.advance();
+
       // Handle array type (e.g., "string[]")
-      if (this.peek().type === TokenType.LBRACKET) {
+      const bracketToken = this.peek();
+      if (bracketToken && bracketToken.type === TokenType.LBRACKET) {
         this.advance();
         this.expect(TokenType.RBRACKET);
         key += '[]';
       }
 
       // Handle key name - can be identifier or string (path)
-      if (this.peek().type === TokenType.IDENTIFIER) {
+      const nameToken = this.peek();
+      if (nameToken && nameToken.type === TokenType.IDENTIFIER) {
         key += ' ' + this.advance().value;
-      } else if (this.peek().type === TokenType.STRING) {
+      } else if (nameToken && nameToken.type === TokenType.STRING) {
         const str = this.advance();
-        key += ' ' + (str.isAsset ? '@' + str.value + '@' : '"' + str.value + '"');
+        key += ' ' + (str && str.isAsset ? '@' + str.value + '@' : '"' + (str && str.value ? str.value : '') + '"');
       }
     }
 
@@ -744,32 +825,41 @@ class UsdaParser {
   parsePath() {
     // Simple path parsing for now
     let path = '';
-    while (this.peek().type !== TokenType.EOF &&
-           this.peek().type !== TokenType.COMMA &&
-           this.peek().type !== TokenType.RBRACKET &&
-           this.peek().type !== TokenType.RPAREN &&
-           this.peek().type !== TokenType.RBRACE &&
-           this.peek().type !== TokenType.EQUALS) {
-      path += this.advance().value;
+    while (this.pos < this.tokens.length) {
+      const token = this.peek();
+      if (!token || token.type === TokenType.EOF ||
+          token.type === TokenType.COMMA ||
+          token.type === TokenType.RBRACKET ||
+          token.type === TokenType.RPAREN ||
+          token.type === TokenType.RBRACE ||
+          token.type === TokenType.EQUALS) {
+        break;
+      }
+      const val = token && token.value ? token.value : '';
+      path += val;
+      this.advance();
     }
     return { type: 'path', value: path };
   }
 
   parsePrim(parentPath) {
     const startToken = this.peek();
-    const startLine = startToken.line;
-    const specifier = this.advance().value; // def, over, class
+    const startLine = startToken && startToken.line ? startToken.line : -1;
+    const specToken = this.advance();
+    const specifier = specToken && specToken.value ? specToken.value : 'def'; // def, over, class
 
     let typeName = '';
-    if (this.peek().type === TokenType.IDENTIFIER && this.peek().value !== 'None') {
+    const typeToken = this.peek();
+    if (typeToken && typeToken.type === TokenType.IDENTIFIER && typeToken.value !== 'None') {
       // Check if it's a type name or the prim name
       const nextToken = this.peek(1);
-      if (nextToken.type === TokenType.STRING) {
+      if (nextToken && nextToken.type === TokenType.STRING) {
         typeName = this.advance().value;
       }
     }
 
-    const name = this.peek().type === TokenType.STRING ? this.advance().value : '';
+    const nameToken = this.peek();
+    const name = nameToken && nameToken.type === TokenType.STRING ? this.advance().value : '';
     const primPath = parentPath ? `${parentPath}/${name}` : `/${name}`;
 
     const prim = {
@@ -874,11 +964,17 @@ class UsdaParser {
 
   parseRelationshipName() {
     let name = '';
-    if (this.peek().type === TokenType.IDENTIFIER) {
+    const firstToken = this.peek();
+    if (firstToken && firstToken.type === TokenType.IDENTIFIER) {
       name = this.advance().value;
-      while (this.peek().type === TokenType.COLON) {
+      while (this.peek() && this.peek().type === TokenType.COLON) {
         this.advance();
-        name += ':' + this.advance().value;
+        const nextToken = this.peek();
+        if (nextToken && nextToken.type === TokenType.IDENTIFIER) {
+          name += ':' + this.advance().value;
+        } else {
+          break;
+        }
       }
     }
     return name;
@@ -1589,8 +1685,21 @@ function compareSingleFile(inputFile, options) {
     result.content2 = content2;
 
     // Parse both USDA contents
-    const usda1 = parseUsda(content1);
-    const usda2 = parseUsda(content2);
+    let usda1, usda2;
+    try {
+      usda1 = parseUsda(content1);
+    } catch (e) {
+      result.status = 'error';
+      result.error = `Failed to parse tusdcat output: ${e.message}`;
+      return result;
+    }
+    try {
+      usda2 = parseUsda(content2);
+    } catch (e) {
+      result.status = 'error';
+      result.error = `Failed to parse usdcat output: ${e.message}`;
+      return result;
+    }
 
     // Compare
     let differences = compareUsda(usda1, usda2, options);
