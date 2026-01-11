@@ -1066,10 +1066,17 @@ function normalizeValue(val) {
   }
 
   if (val.type === 'number') {
-    // Normalize number representation
+    // Normalize number representation - treat 1, 1.0, 1e0 as same
     const num = parseFloat(val.value);
     if (isNaN(num)) return val.value;
-    // Use fixed precision to handle floating point differences
+
+    // For integers, return as integer to match "1" with "1.0"
+    if (Number.isInteger(num)) {
+      return String(num);
+    }
+
+    // For decimals, use normalized fixed precision
+    // Round to 6 decimal places and remove trailing zeros
     return num.toFixed(6).replace(/\.?0+$/, '');
   }
 
@@ -1078,11 +1085,15 @@ function normalizeValue(val) {
   }
 
   if (val.type === 'array') {
-    return '[' + val.value.map(normalizeValue).join(', ') + ']';
+    // Normalize each element and sort for consistent comparison (for unordered arrays)
+    const normalized = val.value.map(normalizeValue);
+    return '[' + normalized.join(', ') + ']';
   }
 
   if (val.type === 'tuple') {
-    return '(' + val.value.map(normalizeValue).join(', ') + ')';
+    // Keep tuple order but normalize each element
+    const normalized = val.value.map(normalizeValue);
+    return '(' + normalized.join(', ') + ')';
   }
 
   if (val.type === 'dictionary') {
@@ -1299,6 +1310,8 @@ function extractAttributeName(fullKey) {
   // Split by spaces and take the last part(s) as the attribute name
   const parts = fullKey.trim().split(/\s+/);
 
+  if (parts.length === 0) return '';
+
   // Skip known prefixes: uniform, custom, varying, config, prepend, append, delete, add, reorder
   const prefixes = ['uniform', 'custom', 'varying', 'config', 'prepend', 'append', 'delete', 'add', 'reorder'];
   let i = 0;
@@ -1309,17 +1322,21 @@ function extractAttributeName(fullKey) {
 
   // Skip the type annotation (everything until we find the attribute name with namespace or dot)
   // Type annotations are typically: float, double, int, bool, token, string, asset, etc.
-  // They may have [] for arrays
+  // They may have [] for arrays or be complex types like texCoord2f, normal3f, etc.
   if (i < parts.length) {
-    // Check if next part looks like a type (contains only letters, numbers, [] or is a role type like texCoord2f)
+    // Check if next part looks like a type (contains only letters, numbers, [] or is a role type)
     const possibleType = parts[i];
+    // Type if it:
+    // 1. Contains only alphanumeric, brackets, but no colons or dots (not an attribute name)
+    // 2. Doesn't already contain a colon (which indicates namespace like "inputs:file")
     if (possibleType.match(/^[a-zA-Z0-9\[\]]+$/) && !possibleType.includes(':') && !possibleType.includes('.')) {
       i++;
     }
   }
 
   // Return the remaining parts joined as the attribute name
-  return parts.slice(i).join(' ').trim();
+  const result = parts.slice(i).join(' ').trim();
+  return result;
 }
 
 /**
@@ -1329,19 +1346,27 @@ function compareAttributes(attrs1, attrs2, primPath) {
   const differences = [];
 
   // Create a map of normalized attribute names to their original keys
+  // This makes comparison order-independent
   const attrMap1 = {};
   const attrMap2 = {};
 
   for (const key of Object.keys(attrs1)) {
     const normName = extractAttributeName(key);
-    attrMap1[normName] = key;
+    // Skip empty attribute names (parser edge cases)
+    if (normName && normName.length > 0) {
+      attrMap1[normName] = key;
+    }
   }
 
   for (const key of Object.keys(attrs2)) {
     const normName = extractAttributeName(key);
-    attrMap2[normName] = key;
+    // Skip empty attribute names (parser edge cases)
+    if (normName && normName.length > 0) {
+      attrMap2[normName] = key;
+    }
   }
 
+  // Compare all attributes (order-independent due to using Set of normalized names)
   const allNormNames = new Set([...Object.keys(attrMap1), ...Object.keys(attrMap2)]);
 
   for (const normName of allNormNames) {
