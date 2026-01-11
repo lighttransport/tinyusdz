@@ -117,3 +117,33 @@ def Xform "Test" {
     TEST_CHECK(ret == false);
   }
 }
+
+// Verify string[] values are parsed and exported with proper USD quoting
+void ascii_parse_string_array_test(void) {
+  std::string err;
+  std::string warn;
+  Stage stage;
+
+  std::string usd = R"(#usda 1.0
+def Xform "StrArray" {
+    string[] labels = ["alpha", "beta", "g\"amma"]
+}
+)";
+
+  bool ret = LoadUSDFromMemory(
+      reinterpret_cast<const uint8_t *>(usd.data()),
+      usd.size(),
+      "memory.usda",
+      &stage,
+      &warn,
+      &err);
+
+  TEST_CHECK(ret == true);
+  if (!ret) {
+    TEST_MSG("Failed to parse string array USD: %s", err.c_str());
+    return;
+  }
+
+  std::string exported = stage.ExportToString();
+  TEST_CHECK(exported.find("string[] labels = [\"alpha\", \"beta\", \"g\\\"amma\"]") != std::string::npos);
+}
