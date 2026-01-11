@@ -1196,15 +1196,64 @@ function buildPrimMap(prims, map = {}) {
 }
 
 /**
+ * Extract just the attribute name without type annotation
+ * E.g., "texCoord2f inputs:st.connect" -> "inputs:st.connect"
+ */
+function extractAttributeName(fullKey) {
+  // Split by spaces and take the last part(s) as the attribute name
+  const parts = fullKey.trim().split(/\s+/);
+
+  // Skip known prefixes: uniform, custom, varying, config, prepend, append, delete, add, reorder
+  const prefixes = ['uniform', 'custom', 'varying', 'config', 'prepend', 'append', 'delete', 'add', 'reorder'];
+  let i = 0;
+
+  while (i < parts.length && prefixes.includes(parts[i])) {
+    i++;
+  }
+
+  // Skip the type annotation (everything until we find the attribute name with namespace or dot)
+  // Type annotations are typically: float, double, int, bool, token, string, asset, etc.
+  // They may have [] for arrays
+  if (i < parts.length) {
+    // Check if next part looks like a type (contains only letters, numbers, [] or is a role type like texCoord2f)
+    const possibleType = parts[i];
+    if (possibleType.match(/^[a-zA-Z0-9\[\]]+$/) && !possibleType.includes(':') && !possibleType.includes('.')) {
+      i++;
+    }
+  }
+
+  // Return the remaining parts joined as the attribute name
+  return parts.slice(i).join(' ').trim();
+}
+
+/**
  * Compare attributes between two prims
  */
 function compareAttributes(attrs1, attrs2, primPath) {
   const differences = [];
-  const allKeys = new Set([...Object.keys(attrs1), ...Object.keys(attrs2)]);
 
-  for (const key of allKeys) {
-    const val1 = attrs1[key];
-    const val2 = attrs2[key];
+  // Create a map of normalized attribute names to their original keys
+  const attrMap1 = {};
+  const attrMap2 = {};
+
+  for (const key of Object.keys(attrs1)) {
+    const normName = extractAttributeName(key);
+    attrMap1[normName] = key;
+  }
+
+  for (const key of Object.keys(attrs2)) {
+    const normName = extractAttributeName(key);
+    attrMap2[normName] = key;
+  }
+
+  const allNormNames = new Set([...Object.keys(attrMap1), ...Object.keys(attrMap2)]);
+
+  for (const normName of allNormNames) {
+    const key1 = attrMap1[normName];
+    const key2 = attrMap2[normName];
+
+    const val1 = key1 ? attrs1[key1] : undefined;
+    const val2 = key2 ? attrs2[key2] : undefined;
 
     // Extract location info if present
     const line1 = val1 && typeof val1 === 'object' && val1.line ? val1.line : undefined;
@@ -1215,9 +1264,9 @@ function compareAttributes(attrs1, attrs2, primPath) {
         type: 'attribute_missing',
         location: 'file1',
         path: primPath,
-        attribute: key,
+        attribute: normName,
         line2: line2,
-        message: `Attribute "${key}" at "${primPath}" exists in file2 but not in file1`
+        message: `Attribute "${normName}" at "${primPath}" exists in file2 but not in file1`
       });
       continue;
     }
@@ -1227,9 +1276,9 @@ function compareAttributes(attrs1, attrs2, primPath) {
         type: 'attribute_missing',
         location: 'file2',
         path: primPath,
-        attribute: key,
+        attribute: normName,
         line1: line1,
-        message: `Attribute "${key}" at "${primPath}" exists in file1 but not in file2`
+        message: `Attribute "${normName}" at "${primPath}" exists in file1 but not in file2`
       });
       continue;
     }
@@ -1265,12 +1314,12 @@ function compareAttributes(attrs1, attrs2, primPath) {
       differences.push({
         type: 'attribute_value_mismatch',
         path: primPath,
-        attribute: key,
+        attribute: normName,
         line1: line1,
         line2: line2,
         file1: norm1,
         file2: norm2,
-        message: `Attribute "${key}" at "${primPath}" differs: "${truncate(norm1, 50)}" vs "${truncate(norm2, 50)}"`
+        message: `Attribute "${normName}" at "${primPath}" differs: "${truncate(norm1, 50)}" vs "${truncate(norm2, 50)}"`
       });
     }
   }
