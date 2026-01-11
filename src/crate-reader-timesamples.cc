@@ -1950,9 +1950,9 @@ bool CrateReader::UnpackTimeSampleValue_TOKEN(
       PUSH_ERROR_AND_RETURN_TAG(kTag,
                                 "Invalid inlined ValueRep in TimeSamples.");
     }
-    // Token is stored as StringIndex for inlined value
+    // Token is stored as TokenIndex for inlined value
     uint32_t data = (rep.GetPayload() & ((1ull << (sizeof(uint32_t) * 8)) - 1));
-    if (auto v = GetStringToken(crate::Index(data))) {
+    if (auto v = GetToken(crate::Index(data))) {
       value::token tok(v.value().str());
 
       if (!add_sample_to_timesamples<value::token>(
@@ -1978,16 +1978,33 @@ bool CrateReader::UnpackTimeSampleValue_TOKEN(
       return true;
     }
 
-    // Read token array (stored as string indices)
-    std::vector<std::string> str_v;
-    if (!ReadStringArray(&str_v)) {
-      PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read Token array.");
+    // Read token array (stored as token indices)
+    uint64_t n;
+    if (!_sr->read8(&n)) {
+      PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read the number of array elements.");
     }
 
-    // Convert strings to tokens
-    v.reserve(str_v.size());
-    for (const auto& s : str_v) {
-      v.emplace_back(s);
+    if (n > _config.maxArrayElements) {
+      PUSH_ERROR_AND_RETURN_TAG(kTag, "Token array too large.");
+    }
+
+    CHECK_MEMORY_USAGE(n * sizeof(crate::Index));
+
+    std::vector<crate::Index> indices(static_cast<size_t>(n));
+    if (!_sr->read(size_t(n) * sizeof(crate::Index),
+                   size_t(n) * sizeof(crate::Index),
+                   reinterpret_cast<uint8_t *>(indices.data()))) {
+      PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read TokenIndex array.");
+    }
+
+    // Convert token indices to tokens
+    v.reserve(n);
+    for (size_t i = 0; i < n; i++) {
+      if (auto tokv = GetToken(indices[i])) {
+        v.emplace_back(tokv.value().str());
+      } else {
+        PUSH_ERROR_AND_RETURN_TAG(kTag, "Invalid token index in array.");
+      }
     }
 
     if (!add_sample_to_timesamples<std::vector<value::token>>(
@@ -2003,7 +2020,7 @@ bool CrateReader::UnpackTimeSampleValue_TOKEN(
 
     // Scalar deduplication was removed - see FLOAT3 fix
       // Read and cache scalar value
-      // Token is stored as StringIndex in the stream
+      // Token is stored as token index in the stream
       uint32_t index_data;
       CHECK_MEMORY_USAGE(sizeof(uint32_t));
       if (!_sr->read(sizeof(uint32_t), sizeof(uint32_t),
@@ -2011,7 +2028,7 @@ bool CrateReader::UnpackTimeSampleValue_TOKEN(
         PUSH_ERROR_AND_RETURN("Failed to read token index");
       }
       value::token v;
-      if (auto tok_val = GetStringToken(crate::Index(index_data))) {
+      if (auto tok_val = GetToken(crate::Index(index_data))) {
         v = value::token(tok_val.value().str());
         DCOUT("token = " << v.str());
       } else {
