@@ -1651,7 +1651,8 @@ class OpenPBRSurfaceShader {
   // Subsurface scattering
   ShaderParam<float> subsurface_weight{0.0f};
   ShaderParam<vec3> subsurface_color{{0.8f, 0.8f, 0.8f}};
-  ShaderParam<vec3> subsurface_radius{{1.0f, 1.0f, 1.0f}};
+  ShaderParam<float> subsurface_radius{1.0f};
+  ShaderParam<vec3> subsurface_radius_scale{{1.0f, 1.0f, 1.0f}};
   ShaderParam<float> subsurface_scale{1.0f};
   ShaderParam<float> subsurface_anisotropy{0.0f};
   

@@ -653,7 +653,7 @@ static bool WriteMaterialXToString(const MtlxAutodeskStandardSurface &shader,
   // Subsurface properties
   EMIT_ATTRIBUTE("subsurface", "float", shader.subsurface)
   EMIT_ATTRIBUTE("subsurface_color", "color3", shader.subsurface_color)
-  EMIT_ATTRIBUTE("subsurface_radius", "color3", shader.subsurface_radius)
+  EMIT_ATTRIBUTE("subsurface_radius", "float", shader.subsurface_radius)
   EMIT_ATTRIBUTE("subsurface_scale", "float", shader.subsurface_scale)
   EMIT_ATTRIBUTE("subsurface_anisotropy", "float", shader.subsurface_anisotropy)
 
@@ -795,7 +795,8 @@ static bool WriteMaterialXToString(const MtlxOpenPBRSurface &shader,
   // Subsurface properties
   EMIT_ATTRIBUTE("subsurface_weight", "float", shader.subsurface_weight)
   EMIT_ATTRIBUTE("subsurface_color", "color3", shader.subsurface_color)
-  EMIT_ATTRIBUTE("subsurface_radius", "color3", shader.subsurface_radius)
+  EMIT_ATTRIBUTE("subsurface_radius", "float", shader.subsurface_radius)
+  EMIT_ATTRIBUTE("subsurface_radius_scale", "color3", shader.subsurface_radius_scale)
   EMIT_ATTRIBUTE("subsurface_scale", "float", shader.subsurface_scale)
   EMIT_ATTRIBUTE("subsurface_anisotropy", "float", shader.subsurface_anisotropy)
 
@@ -1757,7 +1758,7 @@ bool ReadMaterialXFromString(const std::string &str,
       GET_SHADER_PARAM(name, typeName, "transmission_extra_roughness", "float", float, valueStr, surface.transmission_extra_roughness)
       GET_SHADER_PARAM(name, typeName, "subsurface", "float", float, valueStr, surface.subsurface)
       GET_SHADER_PARAM(name, typeName, "subsurface_color", "color3", value::color3f, valueStr, surface.subsurface_color)
-      GET_SHADER_PARAM(name, typeName, "subsurface_radius", "color3", value::color3f, valueStr, surface.subsurface_radius)
+      GET_SHADER_PARAM(name, typeName, "subsurface_radius", "float", float, valueStr, surface.subsurface_radius)
       GET_SHADER_PARAM(name, typeName, "subsurface_scale", "float", float, valueStr, surface.subsurface_scale)
       GET_SHADER_PARAM(name, typeName, "subsurface_anisotropy", "float", float, valueStr, surface.subsurface_anisotropy)
       GET_SHADER_PARAM(name, typeName, "sheen", "float", float, valueStr, surface.sheen)
@@ -2155,7 +2156,8 @@ bool ReadMaterialXFromString(const std::string &str,
       GET_SHADER_PARAM(name, typeName, "transmission_dispersion", "float", float, valueStr, surface.transmission_dispersion)
       GET_SHADER_PARAM(name, typeName, "subsurface_weight", "float", float, valueStr, surface.subsurface_weight)
       GET_SHADER_PARAM(name, typeName, "subsurface_color", "color3", value::color3f, valueStr, surface.subsurface_color)
-      GET_SHADER_PARAM(name, typeName, "subsurface_radius", "color3", value::color3f, valueStr, surface.subsurface_radius)
+      GET_SHADER_PARAM(name, typeName, "subsurface_radius", "float", float, valueStr, surface.subsurface_radius)
+      GET_SHADER_PARAM(name, typeName, "subsurface_radius_scale", "color3", value::color3f, valueStr, surface.subsurface_radius_scale)
       GET_SHADER_PARAM(name, typeName, "subsurface_scale", "float", float, valueStr, surface.subsurface_scale)
       GET_SHADER_PARAM(name, typeName, "subsurface_anisotropy", "float", float, valueStr, surface.subsurface_anisotropy)
       GET_SHADER_PARAM(name, typeName, "sheen_weight", "float", float, valueStr, surface.sheen_weight)
