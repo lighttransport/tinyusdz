@@ -35,8 +35,6 @@
 #pragma clang diagnostic ignored "-Weverything"
 #endif
 
-#include "external/floaxie/floaxie/ftoa.h"
-
 #ifdef __clang__
 #pragma clang diagnostic pop
 #endif
@@ -44,29 +42,12 @@
 namespace {
 
 inline void append_float_to_stream(std::ostream &os, float v) {
-  char buf[tinyusdz::DTOS_MAX_CHARS_FLOAT + 2];
-  floaxie::ftoa(v, buf);
-  os << buf;
+  char buf[tinyusdz::DTOS_MAX_CHARS_FLOAT];
+  size_t len = tinyusdz::dtos(v, buf);
+  os.write(buf, static_cast<std::streamsize>(len));
 }
 
 }  // namespace
-
-namespace tinyusdz {
-
-namespace {
-
-#if defined(TINYUSDZ_LOCAL_USE_JEAIII_ITOA)
-void itoa(uint32_t n, char *b) { *jeaiii::to_text_from_integer(b, n) = '\0'; }
-void itoa(int32_t n, char *b) { *jeaiii::to_text_from_integer(b, n) = '\0'; }
-void itoa(uint64_t n, char *b) { *jeaiii::to_text_from_integer(b, n) = '\0'; }
-void itoa(int64_t n, char *b) { *jeaiii::to_text_from_integer(b, n) = '\0'; }
-#endif
-
-// NOTE: dtos() is now provided by str-util.hh using dragonbox algorithm
-
-}  // namespace
-
-}  // namespace tinyusdz
 
 namespace std {
 
