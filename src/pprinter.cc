@@ -680,13 +680,13 @@ std::string print_prim_metas(const PrimMeta &meta, const uint32_t indent) {
   }
 
   if (meta.doc) {
-    ss << pprint::Indent(indent) << "doc = " << to_string(meta.doc.value())
+    ss << pprint::Indent(indent) << "doc = " << quote(to_string(meta.doc.value()))
        << "\n";
   }
 
   if (meta.comment) {
     ss << pprint::Indent(indent)
-       << "comment = " << to_string(meta.comment.value()) << "\n";
+       << "comment = " << quote(to_string(meta.comment.value())) << "\n";
   }
 
   if (meta.customData) {
@@ -694,8 +694,16 @@ std::string print_prim_metas(const PrimMeta &meta, const uint32_t indent) {
   }
 
   for (const auto &item : meta.unregisteredMetas) {
-    // do not quote
-    ss << pprint::Indent(indent) << item.first << " = " << item.second << "\n";
+    // Quote string values, but keep non-string values as-is
+    std::string value_str = item.second;
+    // Check if the value looks like a string (unquoted) by checking if it needs quoting
+    // String values that are not already quoted should be quoted
+    if (!value_str.empty() && value_str.front() != '"' && value_str.front() != '\'' &&
+        value_str.front() != '[' && !std::isdigit(value_str.front()) &&
+        value_str != "None" && value_str.find("(") == std::string::npos) {
+      value_str = quote(value_str);
+    }
+    ss << pprint::Indent(indent) << item.first << " = " << value_str << "\n";
   }
 
   // TODO: deprecate meta.meta and remove it.
@@ -4674,7 +4682,7 @@ std::string print_layer_metas(const LayerMetas &metas, const uint32_t indent) {
     //    << "." << tinyusdz::version_minor << "." << tinyusdz::version_micro
     //    << tinyusdz::version_rev << "\"\n";
   } else {
-    meta_ss << pprint::Indent(indent) << "doc = " << to_string(metas.doc)
+    meta_ss << pprint::Indent(indent) << "doc = " << quote(to_string(metas.doc))
             << "\n";
   }
 
