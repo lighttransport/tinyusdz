@@ -535,8 +535,9 @@ class UsdaParser {
   expect(type) {
     const token = this.advance();
     if (token.type !== type) {
-      const tokenStr = token ? `${token.type}(${token.value})` : 'undefined';
-      throw new Error(`Expected ${type} but got ${tokenStr} at position ${this.pos}`);
+      const tokenStr = token ? `${token.type}(${token.value})` : 'EOF()';
+      const context = this.getTokenContext();
+      throw new Error(`Expected ${type} but got ${tokenStr} at position ${this.pos}\nContext:\n${context}`);
     }
     return token;
   }
@@ -595,6 +596,12 @@ class UsdaParser {
           } catch (e) {
             // If prim parsing fails, skip to next prim
             console.error('Error parsing prim:', e.message);
+            const lines = e.message.split('\n');
+            for (const line of lines) {
+              if (line.startsWith('Expected') || line.includes('>>>')) {
+                console.error('  ' + line);
+              }
+            }
             while (this.pos < this.tokens.length &&
                    !(this.peek() && this.peek().type === TokenType.IDENTIFIER &&
                      (this.peek().value === 'def' || this.peek().value === 'over' || this.peek().value === 'class'))) {
@@ -1716,6 +1723,22 @@ function compareSingleFile(inputFile, options) {
     } catch (e) {
       result.status = 'error';
       result.error = `Failed to parse tusdcat output: ${e.message}`;
+      // Show context in verbose mode
+      if (options.verbose) {
+        const lines = content1.split('\n');
+        const errorLine = parseInt(e.message.match(/position (\d+)/) ? RegExp.$1 : 0);
+        if (errorLine > 0) {
+          const charPos = errorLine;
+          let lineNum = 0;
+          let pos = 0;
+          for (let i = 0; i < lines.length; i++) {
+            pos += lines[i].length + 1;
+            lineNum = i;
+            if (pos >= charPos) break;
+          }
+          result.error += `\n    at line ${lineNum + 1}: ${lines[lineNum]}`;
+        }
+      }
       return result;
     }
     try {
@@ -1723,6 +1746,22 @@ function compareSingleFile(inputFile, options) {
     } catch (e) {
       result.status = 'error';
       result.error = `Failed to parse usdcat output: ${e.message}`;
+      // Show context in verbose mode
+      if (options.verbose) {
+        const lines = content2.split('\n');
+        const errorLine = parseInt(e.message.match(/position (\d+)/) ? RegExp.$1 : 0);
+        if (errorLine > 0) {
+          const charPos = errorLine;
+          let lineNum = 0;
+          let pos = 0;
+          for (let i = 0; i < lines.length; i++) {
+            pos += lines[i].length + 1;
+            lineNum = i;
+            if (pos >= charPos) break;
+          }
+          result.error += `\n    at line ${lineNum + 1}: ${lines[lineNum]}`;
+        }
+      }
       return result;
     }
 
@@ -1774,6 +1813,7 @@ function main() {
     continueOnError: false,
     json: false,
     timeout: 60000,
+    printCommands: false,
     files: []
   };
 
@@ -1821,6 +1861,9 @@ function main() {
         break;
       case '--timeout':
         options.timeout = parseInt(args[++i], 10);
+        break;
+      case '--print-commands':
+        options.printCommands = true;
         break;
       default:
         if (!arg.startsWith('-')) {
@@ -1940,6 +1983,10 @@ function main() {
 
         if (!options.quiet && !options.json) {
           console.log(`[${i + 1}/${expandedFiles.length}] Processing: ${inputFile}`);
+          if (options.printCommands) {
+            console.log(`  $ "${options.tusdcat}" "${inputFile}"`);
+            console.log(`  $ "${options.usdcat}" "${inputFile}"`);
+          }
         }
 
         const result = compareSingleFile(inputFile, options);
