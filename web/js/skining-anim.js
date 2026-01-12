@@ -732,14 +732,48 @@ async function processUSDScene(usd_scene, loader, filename) {
 	animationParams.hasUSDAnimations = false;
 	animationParams.usdAnimationCount = 0;
 
+	// Store loader globally for debugging
+	window.usd_scene = usd_scene;
+
 	// Get scene metadata from the USD file
 	const sceneMetadata = usd_scene.getSceneMetadata ? usd_scene.getSceneMetadata() : {};
-	const fileUpAxis = sceneMetadata.upAxis || "Y";
-	currentFileUpAxis = fileUpAxis; // Store globally for toggle function
+	let fileUpAxis = sceneMetadata.upAxis || "Y";
 
 	console.log('=== USD Scene Metadata ===');
-	console.log(`upAxis: "${fileUpAxis}"`);
+	console.log(`upAxis (from metadata): "${fileUpAxis}"`);
 	console.log(`metersPerUnit: ${sceneMetadata.metersPerUnit || 1.0}`);
+
+	// Debug: Log mesh skinning data
+	const numMeshes = usd_scene.numMeshes ? usd_scene.numMeshes() : 0;
+	console.log(`=== Mesh Skinning Data (${numMeshes} meshes) ===`);
+	let hasSkinnedMeshData = false;
+	let detectedZUpFromPath = false;
+	for (let i = 0; i < numMeshes; i++) {
+		const mesh = usd_scene.getMesh(i);
+		const hasJointIndices = mesh.jointIndices && mesh.jointIndices.length > 0;
+		const hasJointWeights = mesh.jointWeights && mesh.jointWeights.length > 0;
+		if (hasJointIndices || hasJointWeights) {
+			hasSkinnedMeshData = true;
+			console.log(`Mesh ${i}: ${mesh.absPath}`);
+			console.log(`  - skel_id: ${mesh.skel_id}`);
+			console.log(`  - jointIndices: ${mesh.jointIndices ? mesh.jointIndices.length : 0} elements`);
+			console.log(`  - jointWeights: ${mesh.jointWeights ? mesh.jointWeights.length : 0} elements`);
+			console.log(`  - elementSize (influences per vertex): ${mesh.elementSize}`);
+		}
+		// Check path for Z_UP hint (some models have this in their hierarchy)
+		if (mesh.absPath && (mesh.absPath.includes('Z_UP') || mesh.absPath.includes('z_up') || mesh.absPath.includes('Z_up'))) {
+			detectedZUpFromPath = true;
+		}
+	}
+
+	// Override upAxis if detected from path but metadata says Y
+	if (detectedZUpFromPath && fileUpAxis === "Y") {
+		console.log(`WARNING: Path contains 'Z_UP' but metadata says upAxis="Y". Overriding to "Z".`);
+		fileUpAxis = "Z";
+	}
+
+	currentFileUpAxis = fileUpAxis; // Store globally for toggle function
+	console.log(`upAxis (final): "${fileUpAxis}"`);
 	console.log('========================');
 
 	// Configure bone reduction (if enabled in UI)
@@ -791,10 +825,60 @@ async function processUSDScene(usd_scene, loader, filename) {
 			window.updateSkeletonInfo(numSkeletons, bones.length);
 		}
 	} else {
-		console.warn('No skeletons found in USD file - loading as static mesh');
+		console.warn('No skeletons found in USD file');
+
+		// WORKAROUND: If mesh has skinning data but no skeleton, try to build from animation
+		if (hasSkinnedMeshData) {
+			console.log('Mesh has skinning data but no skeleton hierarchy - attempting fallback skeleton creation');
+
+			// Try to build skeleton from animation channels
+			const numAnimations = usd_scene.numAnimations ? usd_scene.numAnimations() : 0;
+			if (numAnimations > 0) {
+				const anim = usd_scene.getAnimation(0);
+				if (anim && anim.channels) {
+					// Find max joint_id from skeleton joint channels
+					let maxJointId = -1;
+					const jointIds = new Set();
+					for (const channel of anim.channels) {
+						if (channel.target_type === 'SkeletonJoint' && channel.joint_id !== undefined) {
+							jointIds.add(channel.joint_id);
+							maxJointId = Math.max(maxJointId, channel.joint_id);
+						}
+					}
+
+					if (maxJointId >= 0) {
+						console.log(`Building fallback skeleton from animation: ${jointIds.size} joints (max id: ${maxJointId})`);
+
+						// Create flat bone hierarchy (all bones at root level)
+						// This won't have correct rest poses but allows animation to play
+						const rootBoneContainer = new THREE.Bone();
+						rootBoneContainer.name = 'skeleton_root';
+						boneMap.set(-1, rootBoneContainer);
+
+						for (let i = 0; i <= maxJointId; i++) {
+							const bone = new THREE.Bone();
+							bone.name = `joint_${i}`;
+							bone.userData.joint_id = i;
+							boneMap.set(i, bone);
+							bones.push(bone);
+
+							// Add all bones to root for now (flat hierarchy)
+							rootBoneContainer.add(bone);
+						}
+
+						// Add root container as first bone
+						bones.unshift(rootBoneContainer);
+						rootBone = rootBoneContainer;
+
+						console.log(`[Fallback] Built skeleton with ${bones.length} bones (flat hierarchy)`);
+					}
+				}
+			}
+		}
+
 		// Update skeleton info display
 		if (window.updateSkeletonInfo) {
-			window.updateSkeletonInfo(0, 0);
+			window.updateSkeletonInfo(0, bones.length);
 		}
 	}
 
@@ -975,7 +1059,7 @@ async function processUSDScene(usd_scene, loader, filename) {
 				console.log(`[Helper] Converted ${usdAnimations.length} animations`);
 			} else {
 				// ===== CUSTOM APPROACH: Custom animation conversion with filtering =====
-				usdAnimations = convertUSDSkeletalAnimationsToThreeJS(loader, boneMap);
+				usdAnimations = convertUSDSkeletalAnimationsToThreeJS(usd_scene, boneMap);
 				console.log(`[Custom] Converted ${usdAnimations.length} animations`);
 			}
 		} else {
@@ -1386,7 +1470,7 @@ function animate() {
 	}
 
 	// Update skeleton helper
-	if (skeletonHelper) {
+	if (skeletonHelper && typeof skeletonHelper.update === 'function') {
 		skeletonHelper.update();
 	}
 
