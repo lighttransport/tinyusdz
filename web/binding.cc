@@ -2960,12 +2960,19 @@ class TinyUSDZLoaderNative {
     obj.set("joint_name", node.joint_name);
     obj.set("joint_id", node.joint_id);
 
-    // Export bind and rest transforms
+    // Export bind and rest transforms - must copy data, not use typed_memory_view
+    // (typed_memory_view would point to stack memory that becomes invalid)
     std::array<double, 16> bind_mat = detail::toArray(node.bind_transform);
     std::array<double, 16> rest_mat = detail::toArray(node.rest_transform);
 
-    obj.set("bind_transform", emscripten::val(emscripten::typed_memory_view(16, bind_mat.data())));
-    obj.set("rest_transform", emscripten::val(emscripten::typed_memory_view(16, rest_mat.data())));
+    emscripten::val bind_arr = emscripten::val::array();
+    emscripten::val rest_arr = emscripten::val::array();
+    for (int i = 0; i < 16; i++) {
+      bind_arr.call<void>("push", bind_mat[i]);
+      rest_arr.call<void>("push", rest_mat[i]);
+    }
+    obj.set("bind_transform", bind_arr);
+    obj.set("rest_transform", rest_arr);
 
     // Recursively convert children
     emscripten::val children = emscripten::val::array();
