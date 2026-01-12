@@ -89,7 +89,8 @@ Subsurface scattering simulates light penetrating and scattering beneath the sur
 |-------------------|------------------------|------|---------|------------------|------------------|-------|
 | `subsurface_weight` | `inputs:subsurface_weight` | float | 0.0 | ❌ | — | **NOT SUPPORTED** |
 | `subsurface_color` | `inputs:subsurface_color` | color3f | (0.8, 0.8, 0.8) | ❌ | — | **NOT SUPPORTED** |
-| `subsurface_radius` | `inputs:subsurface_radius` | color3f | (1.0, 1.0, 1.0) | ❌ | — | **NOT SUPPORTED** |
+| `subsurface_radius` | `inputs:subsurface_radius` | float | 1.0 | ❌ | — | **NOT SUPPORTED** |
+| `subsurface_radius_scale` | `inputs:subsurface_radius_scale` | color3f | (1.0, 1.0, 1.0) | ❌ | — | **NOT SUPPORTED** |
 | `subsurface_scale` | `inputs:subsurface_scale` | float | 1.0 | ❌ | — | **NOT SUPPORTED** |
 | `subsurface_anisotropy` | `inputs:subsurface_anisotropy` | float | 0.0 | ❌ | — | **NOT SUPPORTED** |
 
@@ -188,17 +189,17 @@ Geometry properties affect surface normals and tangent space, used for bump mapp
 | Base Layer | 4 | 3 | 1 | 0 |
 | Specular | 7 | 2 | 3 | 2 |
 | Transmission | 6 | 1 | 1 | 4 |
-| Subsurface | 5 | 0 | 0 | 5 |
+| Subsurface | 6 | 0 | 0 | 6 |
 | Sheen | 3 | 3 | 0 | 0 |
 | Coat | 8 | 2 | 1 | 5 |
 | Emission | 2 | 2 | 0 | 0 |
 | Geometry | 3 | 2 | 1 | 0 |
-| **Total** | **38** | **15 (39%)** | **7 (18%)** | **16 (42%)** |
+| **Total** | **39** | **15 (38%)** | **7 (18%)** | **17 (44%)** |
 
 ### Critical Limitations for Three.js
 
 **❌ NOT SUPPORTED (requires custom shaders):**
-1. **Subsurface Scattering** - All 5 parameters (weight, color, radius, scale, anisotropy)
+1. **Subsurface Scattering** - All 6 parameters (weight, color, radius, radius_scale, scale, anisotropy)
 2. **Transmission Effects** - Color, scatter, dispersion (4 parameters)
 3. **Coat Advanced** - Color, anisotropy, affect properties (5 parameters)
 4. **Specular Advanced** - IOR level (1 parameter)
