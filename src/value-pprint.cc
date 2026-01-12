@@ -542,18 +542,12 @@ std::ostream &operator<<(std::ostream &ofs, const std::vector<double> &v) {
 
 template <>
 std::ostream &operator<<(std::ostream &ofs, const std::vector<float> &v) {
-  // Use floaxie
-  char buf[128];
-
-  // TODO: multi-threading for further performance gain?
-
   ofs << "[";
   for (size_t i = 0; i < v.size(); i++) {
     if (i > 0) {
       ofs << ", ";
     }
-    floaxie::ftoa(v[i], buf);
-    ofs << std::string(buf);
+    ofs << tinyusdz::dtos(v[i]);  // use float-precision dragonbox path
   }
   ofs << "]";
 
