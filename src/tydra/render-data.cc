@@ -3044,6 +3044,68 @@ bool ListUVNames(const RenderMaterial &material,
 
 }  // namespace
 
+// Find skeleton for mesh by walking up ancestor hierarchy
+// Returns true if skeleton found, with path and skeleton pointer stored in output params
+static bool FindSkeletonByAncestor(
+    const Path &meshPath,
+    const PathPrimMap<Skeleton> &allSkeletons,
+    const PathPrimMap<SkelRoot> &allSkelRoots,
+    Path *outSkelPath,
+    const Skeleton **outSkelPtr)
+{
+  if (allSkeletons.empty()) {
+    return false;
+  }
+
+  // Walk up ancestor chain
+  Path currentPath = meshPath;
+  while (currentPath.is_valid() && !currentPath.is_root_path()) {
+    Path parentPath = currentPath.get_parent_prim_path();
+    std::string parentPathStr = parentPath.prim_part();
+
+    DCOUT("FindSkeletonByAncestor: checking parent " << parentPathStr);
+
+    // Check if parent is a SkelRoot
+    auto skelRootIt = allSkelRoots.find(parentPathStr);
+    if (skelRootIt != allSkelRoots.end()) {
+      DCOUT("Found SkelRoot ancestor: " << parentPathStr);
+      // Found SkelRoot ancestor - search its children for Skeleton
+      for (const auto &kv : allSkeletons) {
+        const std::string &skelPath = kv.first;
+        const Skeleton *skelPtr = kv.second;
+        // Check if skeleton is under this SkelRoot (path starts with parent)
+        if (skelPath.find(parentPathStr) == 0) {
+          *outSkelPath = Path(skelPath, "");
+          if (outSkelPtr) *outSkelPtr = skelPtr;
+          DCOUT("Found skeleton under SkelRoot: " << skelPath);
+          return true;
+        }
+      }
+    }
+
+    // Also check if parent itself is a Skeleton
+    auto skelIt = allSkeletons.find(parentPathStr);
+    if (skelIt != allSkeletons.end()) {
+      *outSkelPath = Path(parentPathStr, "");
+      if (outSkelPtr) *outSkelPtr = skelIt->second;
+      DCOUT("Found skeleton as ancestor: " << parentPathStr);
+      return true;
+    }
+
+    currentPath = parentPath;
+  }
+
+  // Fallback: if only one skeleton in scene, use it
+  if (allSkeletons.size() == 1) {
+    *outSkelPath = Path(allSkeletons.begin()->first, "");
+    if (outSkelPtr) *outSkelPtr = allSkeletons.begin()->second;
+    DCOUT("Fallback: using only skeleton in scene: " << allSkeletons.begin()->first);
+    return true;
+  }
+
+  return false;
+}
+
 ///
 /// Convert vertex variability either 'vertex' or 'facevarying'
 ///
@@ -4911,28 +4973,52 @@ bool RenderSceneConverter::ConvertMesh(
       }
     }
 
-    if (mesh.skeleton.has_value()) {
-      DCOUT("Convert Skeleton");
+    // Skeleton binding: first try explicit relationship, then fallback to ancestor discovery
+    {
       Path skelPath;
+      bool hasSkelPath = false;
 
-      if (mesh.skeleton.value().is_path()) {
-        skelPath = mesh.skeleton.value().targetPath;
-      } else if (mesh.skeleton.value().is_pathvector()) {
-        // Use the first tone
-        if (mesh.skeleton.value().targetPathVector.size()) {
-          skelPath = mesh.skeleton.value().targetPathVector[0];
+      // First try explicit skel:skeleton relationship
+      if (mesh.skeleton.has_value()) {
+        DCOUT("Convert Skeleton (explicit relationship)");
+
+        if (mesh.skeleton.value().is_path()) {
+          skelPath = mesh.skeleton.value().targetPath;
+          hasSkelPath = true;
+        } else if (mesh.skeleton.value().is_pathvector()) {
+          // Use the first one
+          if (mesh.skeleton.value().targetPathVector.size()) {
+            skelPath = mesh.skeleton.value().targetPathVector[0];
+            hasSkelPath = true;
+          } else {
+            PUSH_WARN("`skel:skeleton` has invalid definition.");
+          }
         } else {
           PUSH_WARN("`skel:skeleton` has invalid definition.");
         }
-      } else {
-        PUSH_WARN("`skel:skeleton` has invalid definition.");
       }
 
-      if (skelPath.is_valid()) {
+      // Fallback: find skeleton by ancestor if mesh has skinning data but no explicit binding
+      const Skeleton *discoveredSkelPtr{nullptr};
+      if (!hasSkelPath && !dst.joint_and_weights.jointIndices.empty()) {
+        DCOUT("Mesh has skinning data but no skel:skeleton - trying ancestor discovery");
+        if (_allSkeletons && _allSkelRoots) {
+          Path meshPath(abs_prim_path.full_path_name(), "");
+          if (FindSkeletonByAncestor(meshPath, *_allSkeletons, *_allSkelRoots, &skelPath, &discoveredSkelPtr)) {
+            hasSkelPath = true;
+            DCOUT("Found skeleton by ancestor: " << skelPath.prim_part());
+          } else {
+            PUSH_WARN("Mesh has skinning data but no skeleton found: " + abs_prim_path.full_path_name());
+          }
+        }
+      }
+
+      if (hasSkelPath && skelPath.is_valid()) {
         // Check if skeleton already exists
-        auto skel_it = std::find_if(skeletons.begin(), skeletons.end(), [&skelPath](const SkelHierarchy &sk) {
-          DCOUT("sk.abs_path " << sk.abs_path << ", skel_path " << skelPath.full_path_name());
-          return sk.abs_path == skelPath.full_path_name();
+        std::string skelPathStr = skelPath.prim_part();
+        auto skel_it = std::find_if(skeletons.begin(), skeletons.end(), [&skelPathStr](const SkelHierarchy &sk) {
+          DCOUT("sk.abs_path " << sk.abs_path << ", skel_path " << skelPathStr);
+          return sk.abs_path == skelPathStr;
         });
 
         // Determine skeleton_id before conversion
@@ -4945,9 +5031,23 @@ bool RenderSceneConverter::ConvertMesh(
 
         SkelHierarchy skel;
         nonstd::optional<AnimationClip> anim;
-        // TODO: cache skeleton conversion
-        if (!ConvertSkeletonImpl(env, mesh, skel_id, &skel, &anim)) {
-          return false;
+
+        // Use ConvertSkeletonFromPtr if we have the skeleton pointer from discovery,
+        // otherwise use ConvertSkeletonImplWithPath for explicit relationship case
+        if (discoveredSkelPtr) {
+          // Extract prim name from path (last component)
+          std::string primName = skelPath.prim_part();
+          size_t lastSlash = primName.rfind('/');
+          if (lastSlash != std::string::npos) {
+            primName = primName.substr(lastSlash + 1);
+          }
+          if (!ConvertSkeletonFromPtr(env, skelPath, *discoveredSkelPtr, primName, skel_id, &skel, &anim)) {
+            return false;
+          }
+        } else {
+          if (!ConvertSkeletonImplWithPath(env, skelPath, skel_id, &skel, &anim)) {
+            return false;
+          }
         }
         DCOUT("Converted skeleton attached to : " << abs_prim_path);
 
@@ -8007,6 +8107,11 @@ struct MeshVisitorEnv {
   size_t meshes_total{0};
   size_t materials_processed{0};
   size_t materials_total{0};
+
+  // Pre-discovered skeleton/animation prims for ancestor-based discovery
+  const PathPrimMap<Skeleton> *allSkeletons{nullptr};
+  const PathPrimMap<SkelRoot> *allSkelRoots{nullptr};
+  const PathPrimMap<SkelAnimation> *allAnimations{nullptr};
 };
 
 bool MeshVisitor(const tinyusdz::Path &abs_path, const tinyusdz::Prim &prim,
@@ -10102,6 +10207,16 @@ bool RenderSceneConverter::ConvertToRenderScene(
   ListPrims(env.stage, spherePrimMap);
   ListPrims(env.stage, materialPrimMap);
 
+  // Pre-discover all Skeleton, SkelRoot, and SkelAnimation prims for ancestor-based discovery
+  PathPrimMap<Skeleton> allSkeletons;
+  PathPrimMap<SkelRoot> allSkelRoots;
+  PathPrimMap<SkelAnimation> allAnimations;
+  ListPrims(env.stage, allSkeletons);
+  ListPrims(env.stage, allSkelRoots);
+  ListPrims(env.stage, allAnimations);
+  printf("[Tydra] Pre-discovered %zu skeletons, %zu skelroots, %zu animations\n",
+         allSkeletons.size(), allSkelRoots.size(), allAnimations.size());
+
   // Total meshes includes GeomMesh, GeomCube, and GeomSphere (all converted to meshes)
   const size_t total_meshes = meshPrimMap.size() + cubePrimMap.size() + spherePrimMap.size();
   const size_t total_materials = materialPrimMap.size();
@@ -10161,8 +10276,21 @@ bool RenderSceneConverter::ConvertToRenderScene(
   menv.converter = this;
   menv.meshes_total = total_meshes;
   menv.materials_total = total_materials;
+  menv.allSkeletons = &allSkeletons;
+  menv.allSkelRoots = &allSkelRoots;
+  menv.allAnimations = &allAnimations;
+
+  // Store pre-discovered maps in converter for use by ConvertMesh
+  _allSkeletons = &allSkeletons;
+  _allSkelRoots = &allSkelRoots;
+  _allAnimations = &allAnimations;
 
   bool ret = tydra::VisitPrims(env.stage, MeshVisitor, &menv, &err);
+
+  // Clear temporary pointers
+  _allSkeletons = nullptr;
+  _allSkelRoots = nullptr;
+  _allAnimations = nullptr;
 
   if (!ret) {
     PUSH_ERROR_AND_RETURN(err);
@@ -10396,23 +10524,104 @@ bool RenderSceneConverter::ConvertSkeletonImpl(const RenderSceneConverterEnv &en
     return false;
   }
 
-  if (!mesh.skeleton.has_value()) {
-    return false;
-  }
-
   Path skelPath;
 
-  if (mesh.skeleton.value().is_path()) {
-    skelPath = mesh.skeleton.value().targetPath;
-  } else if (mesh.skeleton.value().is_pathvector()) {
-    // Use the first one
-    if (mesh.skeleton.value().targetPathVector.size()) {
-      skelPath = mesh.skeleton.value().targetPathVector[0];
+  // Get skeleton path from mesh.skeleton relationship if available
+  if (mesh.skeleton.has_value()) {
+    if (mesh.skeleton.value().is_path()) {
+      skelPath = mesh.skeleton.value().targetPath;
+    } else if (mesh.skeleton.value().is_pathvector()) {
+      // Use the first one
+      if (mesh.skeleton.value().targetPathVector.size()) {
+        skelPath = mesh.skeleton.value().targetPathVector[0];
+      } else {
+        PUSH_WARN("`skel:skeleton` has invalid definition.");
+      }
     } else {
       PUSH_WARN("`skel:skeleton` has invalid definition.");
     }
-  } else {
-    PUSH_WARN("`skel:skeleton` has invalid definition.");
+  }
+
+  // If no skeleton path from relationship, return false (caller should use overload with explicit path)
+  if (!skelPath.is_valid()) {
+    PUSH_ERROR_AND_RETURN("No valid skeleton path found. Use ConvertSkeletonImplWithPath for ancestor-discovered skeletons.");
+  }
+
+  return ConvertSkeletonImplWithPath(env, skelPath, skeleton_id, out_skel, out_anim);
+}
+
+// Helper function that takes skeleton pointer directly (used for ancestor-discovered skeletons)
+bool RenderSceneConverter::ConvertSkeletonFromPtr(const RenderSceneConverterEnv &env,
+                       const Path &skelPath,
+                       const Skeleton &skel,
+                       const std::string &primName,
+                       int32_t skeleton_id,
+                       SkelHierarchy *out_skel, nonstd::optional<AnimationClip> *out_anim) {
+
+  if (!out_skel) {
+    return false;
+  }
+
+  SkelHierarchy dst;
+  SkelNode root;
+  if (!BuildSkelHierarchy(skel, root, &_err)) {
+    return false;
+  }
+  dst.abs_path = skelPath.prim_part();
+  dst.prim_name = primName;
+  dst.display_name = skel.metas().displayName.value_or("");
+  dst.root_node = root;
+
+  // Handle animation source
+  if (skel.animationSource.has_value()) {
+    DCOUT("skel:animationSource (from ptr)");
+
+    const Relationship &animSourceRel = skel.animationSource.value();
+
+    Path animSourcePath;
+
+    if (animSourceRel.is_path()) {
+      animSourcePath = animSourceRel.targetPath;
+    } else if (animSourceRel.is_pathvector()) {
+      if (animSourceRel.targetPathVector.size()) {
+        animSourcePath = animSourceRel.targetPathVector[0];
+      } else {
+        PUSH_ERROR_AND_RETURN("`skel:animationSource` has invalid definition.");
+      }
+    } else {
+      PUSH_ERROR_AND_RETURN("`skel:animationSource` has invalid definition.");
+    }
+
+    const Prim *animSourcePrim{nullptr};
+    if (!env.stage.find_prim_at_path(animSourcePath, animSourcePrim, &_err)) {
+      return false;
+    }
+
+    if (const auto panim = animSourcePrim->as<SkelAnimation>()) {
+      DCOUT("Convert SkelAnimation (from ptr)");
+      AnimationClip anim;
+      if (!ConvertSkelAnimation(env, animSourcePath, *panim, skeleton_id, &anim)) {
+        return false;
+      }
+
+      DCOUT("Converted SkelAnimation (from ptr)");
+      (*out_anim) = anim;
+
+    } else {
+      PUSH_ERROR_AND_RETURN(fmt::format("Target Prim of `skel:animationSource` must be `SkelAnimation` Prim, but got `{}`.", animSourcePrim->prim_type_name()));
+    }
+  }
+
+  (*out_skel) = dst;
+  return true;
+}
+
+bool RenderSceneConverter::ConvertSkeletonImplWithPath(const RenderSceneConverterEnv &env, const Path &skelPath,
+                       int32_t skeleton_id,
+                       SkelHierarchy *out_skel, nonstd::optional<AnimationClip> *out_anim) {
+
+  if (!out_skel) {
+    return false;
   }
 
   if (skelPath.is_valid()) {

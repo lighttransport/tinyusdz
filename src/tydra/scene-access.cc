@@ -3182,7 +3182,7 @@ static bool BuildSkelHierarchyImpl(
     const std::vector<int> &parentJointIds,
     const std::vector<value::token> &joints,
     const std::vector<value::token> &jointNames,
-    const std::vector<value::matrix4d> bindTransforms,
+    const std::vector<value::matrix4d> &bindTransforms,
     const std::vector<value::matrix4d> &restTransforms,
     std::string *err = nullptr) {
   // Simple linear search
@@ -3261,11 +3261,17 @@ bool BuildSkelHierarchy(const Skeleton &skel, SkelNode &dst, std::string *err) {
 
   std::vector<value::matrix4d> restTransforms;
   if (skel.restTransforms.authored()) {
+    DCOUT("restTransforms is authored");
     if (!skel.restTransforms.get_value(&restTransforms)) {
       PUSH_ERROR_AND_RETURN(fmt::format(
           "Failed to get Skeleton.restTransforms attrbitue: {}", skel.name));
     }
+    DCOUT("restTransforms.size() = " << restTransforms.size());
+    if (restTransforms.size() > 0) {
+      DCOUT("restTransforms[0] = " << restTransforms[0]);
+    }
   } else {
+    DCOUT("restTransforms is NOT authored - using identity");
     // TODO: Report error when `restTransforms` attribute is omitted?
     restTransforms.assign(joints.size(), value::matrix4d::identity());
   }
@@ -3279,13 +3285,19 @@ bool BuildSkelHierarchy(const Skeleton &skel, SkelNode &dst, std::string *err) {
 
   std::vector<value::matrix4d> bindTransforms;
   if (skel.bindTransforms.authored()) {
+    DCOUT("bindTransforms is authored");
     if (!skel.bindTransforms.get_value(&bindTransforms)) {
       PUSH_ERROR_AND_RETURN(fmt::format(
           "Failed to get Skeleton.bindTransforms attrbitue: {}", skel.name));
     }
+    DCOUT("bindTransforms.size() = " << bindTransforms.size());
+    if (bindTransforms.size() > 0) {
+      DCOUT("bindTransforms[0] = " << bindTransforms[0]);
+    }
   } else {
-    // TODO: Report error when `restTransforms` attribute is omitted?
-    restTransforms.assign(joints.size(), value::matrix4d::identity());
+    DCOUT("bindTransforms is NOT authored - using identity");
+    // Use identity when bindTransforms is not authored
+    bindTransforms.assign(joints.size(), value::matrix4d::identity());
   }
 
   if (joints.size() != bindTransforms.size()) {
