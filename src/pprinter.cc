@@ -680,13 +680,13 @@ std::string print_prim_metas(const PrimMeta &meta, const uint32_t indent) {
   }
 
   if (meta.doc) {
-    ss << pprint::Indent(indent) << "doc = " << quote(to_string(meta.doc.value()))
+    ss << pprint::Indent(indent) << "doc = " << to_string(meta.doc.value())
        << "\n";
   }
 
   if (meta.comment) {
     ss << pprint::Indent(indent)
-       << "comment = " << quote(to_string(meta.comment.value())) << "\n";
+       << "comment = " << to_string(meta.comment.value()) << "\n";
   }
 
   if (meta.customData) {
@@ -4682,7 +4682,7 @@ std::string print_layer_metas(const LayerMetas &metas, const uint32_t indent) {
     //    << "." << tinyusdz::version_minor << "." << tinyusdz::version_micro
     //    << tinyusdz::version_rev << "\"\n";
   } else {
-    meta_ss << pprint::Indent(indent) << "doc = " << quote(to_string(metas.doc))
+    meta_ss << pprint::Indent(indent) << "doc = " << to_string(metas.doc)
             << "\n";
   }
 
