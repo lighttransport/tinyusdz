@@ -7,7 +7,7 @@ set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 COMPARE_SCRIPT="$SCRIPT_DIR/compare-usda.js"
-TUSDCAT_PATH="${TUSDCAT_PATH:-./build_gcc/tusdcat}"
+TUSDCAT_PATH="${TUSDCAT_PATH:-./build/tusdcat}"
 USDCAT_PATH="${USDCAT_PATH:-~/local/USD/dist/bin/usdcat}"
 TIMEOUT_MS="${TIMEOUT_MS:-60000}"
 SHOW_DETAILED_DIFF="${SHOW_DETAILED_DIFF:-true}"
