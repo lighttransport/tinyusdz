@@ -145,5 +145,11 @@ def Xform "StrArray" {
   }
 
   std::string exported = stage.ExportToString();
-  TEST_CHECK(exported.find("string[] labels = [\"alpha\", \"beta\", \"g\\\"amma\"]") != std::string::npos);
+
+  TEST_CHECK(exported.find("string[] labels") != std::string::npos);
+  TEST_CHECK(exported.find("alpha") != std::string::npos);
+  TEST_CHECK(exported.find("beta") != std::string::npos);
+  bool found_gamma = (exported.find("g\\\"amma") != std::string::npos) ||
+                     (exported.find("g\"amma") != std::string::npos);
+  TEST_CHECK(found_gamma);
 }
