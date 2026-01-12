@@ -341,20 +341,29 @@ class UsdaLexer {
 
         // Handle escaped characters (including \@@@)
         if (ch === '\\') {
-          // Special handling for \@@@ in triple-delimited paths
-          // \@@@ should be treated as three literal @ characters
-          if (isTripleDelim && this.peek(1) === '@' && this.peek(2) === '@' && this.peek(3) === '@') {
+          // Check what's being escaped
+          const nextCh = this.peek(1);
+
+          if (nextCh === '\\') {
+            // \\ = one escaped backslash
+            this.advance(); // consume first backslash
+            this.advance(); // consume second backslash
+            value += '\\';
+            continue;
+          } else if (isTripleDelim && nextCh === '@' && this.peek(2) === '@' && this.peek(3) === '@') {
+            // \@@@ = escape the @@@ sequence, include three literal @ characters
+            // This allows @@@...0/teapot_\@@@n.png@@@@ to have the @@@n part
             this.advance(); // consume backslash
             value += this.advance(); // add first @
             value += this.advance(); // add second @
             value += this.advance(); // add third @
             continue;
+          } else {
+            // Regular escape handling for other characters
+            this.advance();
+            value += this.advance();
+            continue;
           }
-
-          // Regular escape handling
-          this.advance();
-          value += this.advance();
-          continue;
         }
 
         if (isTripleDelim) {
