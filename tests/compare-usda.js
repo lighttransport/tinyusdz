@@ -341,6 +341,17 @@ class UsdaLexer {
 
         // Handle escaped characters (including \@@@)
         if (ch === '\\') {
+          // Special handling for \@@@ in triple-delimited paths
+          // \@@@ should be treated as three literal @ characters
+          if (isTripleDelim && this.peek(1) === '@' && this.peek(2) === '@' && this.peek(3) === '@') {
+            this.advance(); // consume backslash
+            value += this.advance(); // add first @
+            value += this.advance(); // add second @
+            value += this.advance(); // add third @
+            continue;
+          }
+
+          // Regular escape handling
           this.advance();
           value += this.advance();
           continue;
