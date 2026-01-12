@@ -41,6 +41,16 @@
 #pragma clang diagnostic pop
 #endif
 
+namespace {
+
+inline void append_float_to_stream(std::ostream &os, float v) {
+  char buf[tinyusdz::DTOS_MAX_CHARS_FLOAT + 2];
+  floaxie::ftoa(v, buf);
+  os << buf;
+}
+
+}  // namespace
+
 namespace tinyusdz {
 
 namespace {
@@ -221,8 +231,13 @@ std::ostream &operator<<(std::ostream &os, const tinyusdz::value::vector3h &v) {
 }
 
 std::ostream &operator<<(std::ostream &os, const tinyusdz::value::vector3f &v) {
-  os << "(" << tinyusdz::dtos(v.x) << ", " << tinyusdz::dtos(v.y) << ", "
-     << tinyusdz::dtos(v.z) << ")";
+  os << "(";
+  append_float_to_stream(os, v.x);
+  os << ", ";
+  append_float_to_stream(os, v.y);
+  os << ", ";
+  append_float_to_stream(os, v.z);
+  os << ")";
   return os;
 }
 
@@ -238,8 +253,13 @@ std::ostream &operator<<(std::ostream &os, const tinyusdz::value::normal3h &v) {
 }
 
 std::ostream &operator<<(std::ostream &os, const tinyusdz::value::normal3f &v) {
-  os << "(" << tinyusdz::dtos(v.x) << ", " << tinyusdz::dtos(v.y) << ", "
-     << tinyusdz::dtos(v.z) << ")";
+  os << "(";
+  append_float_to_stream(os, v.x);
+  os << ", ";
+  append_float_to_stream(os, v.y);
+  os << ", ";
+  append_float_to_stream(os, v.z);
+  os << ")";
   return os;
 }
 
@@ -255,8 +275,13 @@ std::ostream &operator<<(std::ostream &os, const tinyusdz::value::point3h &v) {
 }
 
 std::ostream &operator<<(std::ostream &os, const tinyusdz::value::point3f &v) {
-  os << "(" << tinyusdz::dtos(v.x) << ", " << tinyusdz::dtos(v.y) << ", "
-     << tinyusdz::dtos(v.z) << ")";
+  os << "(";
+  append_float_to_stream(os, v.x);
+  os << ", ";
+  append_float_to_stream(os, v.y);
+  os << ", ";
+  append_float_to_stream(os, v.z);
+  os << ")";
   return os;
 }
 
@@ -274,8 +299,13 @@ std::ostream &operator<<(std::ostream &os, const tinyusdz::value::color3h &v) {
 }
 
 std::ostream &operator<<(std::ostream &os, const tinyusdz::value::color3f &v) {
-  os << "(" << tinyusdz::dtos(v.r) << ", " << tinyusdz::dtos(v.g) << ", "
-     << tinyusdz::dtos(v.b) << ")";
+  os << "(";
+  append_float_to_stream(os, v.r);
+  os << ", ";
+  append_float_to_stream(os, v.g);
+  os << ", ";
+  append_float_to_stream(os, v.b);
+  os << ")";
   return os;
 }
 
@@ -294,8 +324,15 @@ std::ostream &operator<<(std::ostream &os, const tinyusdz::value::color4h &v) {
 }
 
 std::ostream &operator<<(std::ostream &os, const tinyusdz::value::color4f &v) {
-  os << "(" << tinyusdz::dtos(v.r) << ", " << tinyusdz::dtos(v.g) << ", "
-     << tinyusdz::dtos(v.b) << ", " << tinyusdz::dtos(v.a) << ")";
+  os << "(";
+  append_float_to_stream(os, v.r);
+  os << ", ";
+  append_float_to_stream(os, v.g);
+  os << ", ";
+  append_float_to_stream(os, v.b);
+  os << ", ";
+  append_float_to_stream(os, v.a);
+  os << ")";
   return os;
 }
 
@@ -335,7 +372,11 @@ std::ostream &operator<<(std::ostream &os,
 
 std::ostream &operator<<(std::ostream &os,
                          const tinyusdz::value::texcoord2f &v) {
-  os << "(" << tinyusdz::dtos(v.s) << ", " << tinyusdz::dtos(v.t) << ")";
+  os << "(";
+  append_float_to_stream(os, v.s);
+  os << ", ";
+  append_float_to_stream(os, v.t);
+  os << ")";
   return os;
 }
 
@@ -353,8 +394,13 @@ std::ostream &operator<<(std::ostream &os,
 
 std::ostream &operator<<(std::ostream &os,
                          const tinyusdz::value::texcoord3f &v) {
-  os << "(" << tinyusdz::dtos(v.s) << ", " << tinyusdz::dtos(v.t) << ", "
-     << tinyusdz::dtos(v.r) << ")";
+  os << "(";
+  append_float_to_stream(os, v.s);
+  os << ", ";
+  append_float_to_stream(os, v.t);
+  os << ", ";
+  append_float_to_stream(os, v.r);
+  os << ")";
   return os;
 }
 
