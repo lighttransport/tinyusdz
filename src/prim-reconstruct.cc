@@ -4496,18 +4496,25 @@ bool ReconstructPrim<GeomMesh>(
           (names[0] == "subsetFamily") &&
           (names[2] == "familyType")) {
 
-        DCOUT("subsetFamily" << prop.first);
-        TypedAttributeWithFallback<GeomSubset::FamilyType> familyType{GeomSubset::FamilyType::Unrestricted};
+        if (table.count(prop.first)) {
+          // Already processed
+        } else if ((prop.second.value_type_name() == value::TypeTraits<value::token>::type_name()) &&
+                   prop.second.is_attribute() &&
+                   !prop.second.is_empty()) {
+          // Parse the token enum value
+          const Attribute &attr = prop.second.get_attribute();
+          TypedAttributeWithFallback<GeomSubset::FamilyType> familyType{GeomSubset::FamilyType::Unrestricted};
+          std::function<nonstd::expected<GeomSubset::FamilyType, std::string>(const std::string &)> fun = FamilyTypeHandler;
 
-        PARSE_UNIFORM_ENUM_PROPERTY(table, prop, prop.first,
-                           GeomSubset::FamilyType, FamilyTypeHandler, GeomMesh,
-                           familyType, options.strict_allowedToken_check)
+          if (!ParseUniformEnumProperty(prop.first, options.strict_allowedToken_check, fun, attr, &familyType, warn, err)) {
+            return false;
+          }
 
-        // NOTE: Ignore metadataum of familyType.
-        
-        // TODO: Validate familyName
-        mesh->subsetFamilyTypeMap[value::token(names[1])] = familyType.get_value();
-
+          // NOTE: Ignore metadata of familyType.
+          // TODO: Validate familyName
+          mesh->subsetFamilyTypeMap[value::token(names[1])] = familyType.get_value();
+          table.insert(prop.first);
+        }
       }
     }
 
