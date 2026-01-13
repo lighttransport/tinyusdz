@@ -11,6 +11,7 @@ TUSDCAT_PATH="${TUSDCAT_PATH:-./build/tusdcat}"
 USDCAT_PATH="${USDCAT_PATH:-~/local/USD/dist/bin/usdcat}"
 TIMEOUT_MS="${TIMEOUT_MS:-60000}"
 SHOW_DETAILED_DIFF="${SHOW_DETAILED_DIFF:-true}"
+SHOW_FAILURE_SUMMARY="${SHOW_FAILURE_SUMMARY:-true}"
 
 # Colors for output
 RED='\033[0;31m'
@@ -77,6 +78,61 @@ run_folder_comparison() {
     "$folder/$file_pattern"
 }
 
+# Function to print failure and warning summary from results file
+print_failure_summary() {
+  local results_file="$1"
+
+  if [ ! -f "$results_file" ]; then
+    return
+  fi
+
+  # Strip ANSI codes for processing
+  local clean_results
+  clean_results=$(sed 's/\x1b\[[0-9;]*m//g' "$results_file")
+
+  # Extract failed files (lines with "✗" followed by "difference(s)")
+  local failed_files
+  failed_files=$(echo "$clean_results" | grep -B1 "✗.*difference(s)" | grep "Processing:" | sed 's/.*Processing: //' | sort -u)
+
+  # Extract warning/error files (lines with "⚠" or "Error:")
+  local warning_files
+  warning_files=$(echo "$clean_results" | grep -B1 -E "(⚠|Error:)" | grep "Processing:" | sed 's/.*Processing: //' | sort -u)
+
+  local has_output=false
+
+  if [ -n "$failed_files" ] || [ -n "$warning_files" ]; then
+    echo ""
+    print_header "Failure and Warning Summary"
+  fi
+
+  if [ -n "$failed_files" ]; then
+    has_output=true
+    local fail_count
+    fail_count=$(echo "$failed_files" | wc -l)
+    echo -e "${RED}✗ Failed Files ($fail_count):${NC}"
+    echo "$failed_files" | while read -r file; do
+      echo -e "  ${RED}•${NC} $file"
+    done
+    echo ""
+  fi
+
+  if [ -n "$warning_files" ]; then
+    has_output=true
+    local warn_count
+    warn_count=$(echo "$warning_files" | wc -l)
+    echo -e "${YELLOW}⚠ Warning/Error Files ($warn_count):${NC}"
+    echo "$warning_files" | while read -r file; do
+      echo -e "  ${YELLOW}•${NC} $file"
+    done
+    echo ""
+  fi
+
+  if [ "$has_output" = true ]; then
+    echo -e "${BLUE}────────────────────────────────────────────────────────${NC}"
+    echo ""
+  fi
+}
+
 # Main execution
 main() {
   # Expand tilde in paths
@@ -90,6 +146,7 @@ main() {
   echo "  usdcat Path: $USDCAT_PATH"
   echo "  Timeout: ${TIMEOUT_MS}ms"
   echo "  Detailed Diff: $SHOW_DETAILED_DIFF"
+  echo "  Failure Summary: $SHOW_FAILURE_SUMMARY"
   echo ""
 
   # Check prerequisites
@@ -139,6 +196,11 @@ main() {
     print_header "Comparison Complete"
   } | tee "$RESULTS_FILE"
 
+  # Print failure summary if enabled
+  if [ "$SHOW_FAILURE_SUMMARY" = "true" ]; then
+    print_failure_summary "$RESULTS_FILE"
+  fi
+
   echo ""
   echo -e "${GREEN}✓ Comparison complete!${NC}"
   echo "Full results saved to: $RESULTS_FILE"
@@ -167,12 +229,14 @@ OPTIONS:
   --usdcat PATH           Path to usdcat executable (default: ~/local/USD/dist/bin/usdcat)
   --timeout MS            Timeout per file in milliseconds (default: 60000)
   --no-detailed-diff      Disable detailed diff output (shows summary only)
+  --no-failure-summary    Disable failure/warning summary at the end
 
 ENVIRONMENT VARIABLES:
   TUSDCAT_PATH            Override tusdcat path
   USDCAT_PATH             Override usdcat path
   TIMEOUT_MS              Override timeout
   SHOW_DETAILED_DIFF      Set to 'false' to disable detailed diffs (default: true)
+  SHOW_FAILURE_SUMMARY    Set to 'false' to disable failure summary (default: true)
 
 EXAMPLES:
   # Run with default settings
@@ -211,6 +275,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --no-detailed-diff)
       SHOW_DETAILED_DIFF="false"
+      shift
+      ;;
+    --no-failure-summary)
+      SHOW_FAILURE_SUMMARY="false"
       shift
       ;;
     *)
