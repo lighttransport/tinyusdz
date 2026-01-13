@@ -30,28 +30,13 @@
 #include "external/jeaiii_to_text.h"
 #endif
 
-// dtoa_milo does not work well for float types
-// (e.g. it prints float 0.01 as 0.009999999997),
-// so use floaxie for float types
-// TODO: Use floaxie also for double?
-#include "external/dtoa_milo.h"
+// NOTE: Using dragonbox-based dtos() from str-util.hh for float-to-string
+// conversion - it produces shortest representation for 100% of values
 
-#ifdef __clang__
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Weverything"
-#endif
-
-// #include "external/floaxie/floaxie/ftoa.h"
-
-#ifdef __clang__
-#pragma clang diagnostic pop
-#endif
 
 // TODO:
 // - [ ] Print properties based on lexcographically(USDA)
 // - [ ] Refactor variantSet stmt print.
-// - [ ] Implement our own dtos
-// stringify.
 
 namespace tinyusdz {
 
@@ -63,8 +48,6 @@ void itoa(int32_t n, char *b) { *jeaiii::to_text_from_integer(b, n) = '\0'; }
 void itoa(uint64_t n, char *b) { *jeaiii::to_text_from_integer(b, n) = '\0'; }
 void itoa(int64_t n, char *b) { *jeaiii::to_text_from_integer(b, n) = '\0'; }
 #endif
-
-// NOTE: dtos() is now provided by str-util.hh using dragonbox algorithm
 
 // Path quote
 std::string pquote(const Path &p) {
