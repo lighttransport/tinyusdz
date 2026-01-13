@@ -317,6 +317,7 @@ function getUSDInterpolationMode(interpolation) {
 
 /**
  * Build Three.js Skeleton from USD skeleton hierarchy
+ * Uses bind_transform for world-space positioning (accounts for SkelRoot transform)
  * @param {Object} usdSkeleton - USD skeleton data
  * @param {number} skeletonId - Index of the skeleton
  * @returns {Object} { bones: Array<THREE.Bone>, boneMap: Map }
@@ -328,12 +329,32 @@ function buildSkeletonFromUSD(usdSkeleton, skeletonId) {
 	const boneMap = new Map();
 	let jointId = 0;
 
+	// Helper to parse matrix from USD format
+	function parseMatrix(m) {
+		const matrix = new THREE.Matrix4();
+		if (Array.isArray(m) && m.length === 16) {
+			matrix.fromArray(m);
+		} else if (m && m[0] !== undefined && Array.isArray(m[0])) {
+			// Legacy 2D array format (4x4) - flatten to column-major
+			const flat = [
+				m[0][0], m[1][0], m[2][0], m[3][0],
+				m[0][1], m[1][1], m[2][1], m[3][1],
+				m[0][2], m[1][2], m[2][2], m[3][2],
+				m[0][3], m[1][3], m[2][3], m[3][3]
+			];
+			matrix.fromArray(flat);
+		}
+		return matrix;
+	}
+
 	/**
-	 * Recursively build bone hierarchy
+	 * Recursively build bone hierarchy using bind_transform for world-space positioning
+	 * bind_transform includes SkelRoot transform, giving correct world position
 	 * @param {Object} skelNode - USD SkelNode
 	 * @param {THREE.Bone} parentBone - Parent bone (null for root)
+	 * @param {THREE.Matrix4} parentBindMatrix - Parent's bind transform (world space)
 	 */
-	function buildBoneHierarchy(skelNode, parentBone) {
+	function buildBoneHierarchy(skelNode, parentBone, parentBindMatrix) {
 		const bone = new THREE.Bone();
 		// Extract leaf name from path (e.g., "a/b/c" -> "c") for Three.js compatibility
 		// Three.js uses "/" as hierarchy separator, so we need just the leaf name
@@ -349,25 +370,21 @@ function buildSkeletonFromUSD(usdSkeleton, skeletonId) {
 		boneMap.set(currentJointId, bone);
 		jointId++;
 
-		// Apply rest transform if available
-		if (skelNode.rest_transform) {
-			const matrix = new THREE.Matrix4();
-			const m = skelNode.rest_transform;
-			// rest_transform is a flat array of 16 elements
-			// Use fromArray() which expects column-major order (same as USD convention)
-			if (Array.isArray(m) && m.length === 16) {
-				matrix.fromArray(m);
-			} else if (m[0] !== undefined && Array.isArray(m[0])) {
-				// Legacy 2D array format (4x4) - flatten to column-major
-				const flat = [
-					m[0][0], m[1][0], m[2][0], m[3][0],
-					m[0][1], m[1][1], m[2][1], m[3][1],
-					m[0][2], m[1][2], m[2][2], m[3][2],
-					m[0][3], m[1][3], m[2][3], m[3][3]
-				];
-				matrix.fromArray(flat);
-			}
-			matrix.decompose(bone.position, bone.quaternion, bone.scale);
+		// Use bind_transform for world-space positioning
+		// bind_transform includes SkelRoot transform, giving correct world position
+		// Fall back to rest_transform if bind_transform is not available
+		const bindMatrix = skelNode.bind_transform
+			? parseMatrix(skelNode.bind_transform)
+			: parseMatrix(skelNode.rest_transform);
+
+		if (parentBone && parentBindMatrix) {
+			// Compute local transform: inverse(parent_bind) * child_bind
+			const parentInverse = parentBindMatrix.clone().invert();
+			const localMatrix = parentInverse.multiply(bindMatrix);
+			localMatrix.decompose(bone.position, bone.quaternion, bone.scale);
+		} else {
+			// Root bone: use bind_transform directly (world space)
+			bindMatrix.decompose(bone.position, bone.quaternion, bone.scale);
 		}
 
 		if (parentBone) {
@@ -376,10 +393,10 @@ function buildSkeletonFromUSD(usdSkeleton, skeletonId) {
 			bones.push(bone); // Root bone
 		}
 
-		// Process children
+		// Process children with current bone's bind matrix as parent reference
 		if (skelNode.children && skelNode.children.length > 0) {
 			for (const childNode of skelNode.children) {
-				buildBoneHierarchy(childNode, bone);
+				buildBoneHierarchy(childNode, bone, bindMatrix);
 			}
 		}
 
@@ -388,7 +405,7 @@ function buildSkeletonFromUSD(usdSkeleton, skeletonId) {
 
 	// Build from root node
 	if (usdSkeleton.root_node) {
-		const rootBone = buildBoneHierarchy(usdSkeleton.root_node, null);
+		const rootBone = buildBoneHierarchy(usdSkeleton.root_node, null, null);
 
 		// Collect all bones in depth-first order
 		const allBones = [];
