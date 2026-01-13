@@ -135,6 +135,9 @@ let boneMap = new Map(); // Map from joint_id to THREE.Bone
 // Store the current file's upAxis (Y or Z)
 let currentFileUpAxis = "Y";
 
+// Store the current file's timeCodesPerSecond (default 24)
+let currentTimeCodesPerSecond = 24;
+
 // Debug visualization
 let jointSpheres = [];
 let weightVisualizationMaterial = null;
@@ -153,9 +156,10 @@ let selectedSphere = null;
  * Extracts only SkeletonJoint animations from USD SkelAnimation
  * @param {Object} usdLoader - TinyUSDZ loader instance
  * @param {Map} boneMap - Map from joint_id to THREE.Bone
+ * @param {number} [timeCodesPerSecond=24] - USD timeCodesPerSecond for time conversion
  * @returns {Array<THREE.AnimationClip>} Array of Three.js AnimationClips
  */
-function convertUSDSkeletalAnimationsToThreeJS(usdLoader, boneMap) {
+function convertUSDSkeletalAnimationsToThreeJS(usdLoader, boneMap, timeCodesPerSecond = 24) {
 	const animationClips = [];
 
 	// Get number of animations
@@ -324,7 +328,14 @@ function buildSkeletonFromUSD(usdSkeleton, skeletonId) {
 	 */
 	function buildBoneHierarchy(skelNode, parentBone) {
 		const bone = new THREE.Bone();
-		bone.name = skelNode.joint_name || skelNode.joint_path || `joint_${jointId}`;
+		// Extract leaf name from path (e.g., "a/b/c" -> "c") for Three.js compatibility
+		// Three.js uses "/" as hierarchy separator, so we need just the leaf name
+		let jointName = skelNode.joint_name || skelNode.joint_path || `joint_${jointId}`;
+		const lastSlash = jointName.lastIndexOf('/');
+		if (lastSlash !== -1) {
+			jointName = jointName.substring(lastSlash + 1);
+		}
+		bone.name = jointName;
 
 		// Store mapping from joint_id to bone
 		const currentJointId = skelNode.joint_id !== undefined ? skelNode.joint_id : jointId;
@@ -335,13 +346,20 @@ function buildSkeletonFromUSD(usdSkeleton, skeletonId) {
 		if (skelNode.rest_transform) {
 			const matrix = new THREE.Matrix4();
 			const m = skelNode.rest_transform;
-			// USD uses row-major, Three.js uses column-major
-			matrix.set(
-				m[0][0], m[1][0], m[2][0], m[3][0],
-				m[0][1], m[1][1], m[2][1], m[3][1],
-				m[0][2], m[1][2], m[2][2], m[3][2],
-				m[0][3], m[1][3], m[2][3], m[3][3]
-			);
+			// rest_transform is a flat array of 16 elements
+			// Use fromArray() which expects column-major order (same as USD convention)
+			if (Array.isArray(m) && m.length === 16) {
+				matrix.fromArray(m);
+			} else if (m[0] !== undefined && Array.isArray(m[0])) {
+				// Legacy 2D array format (4x4) - flatten to column-major
+				const flat = [
+					m[0][0], m[1][0], m[2][0], m[3][0],
+					m[0][1], m[1][1], m[2][1], m[3][1],
+					m[0][2], m[1][2], m[2][2], m[3][2],
+					m[0][3], m[1][3], m[2][3], m[3][3]
+				];
+				matrix.fromArray(flat);
+			}
 			matrix.decompose(bone.position, bone.quaternion, bone.scale);
 		}
 
@@ -738,15 +756,22 @@ async function processUSDScene(usd_scene, loader, filename) {
 	// Get scene metadata from the USD file
 	const sceneMetadata = usd_scene.getSceneMetadata ? usd_scene.getSceneMetadata() : {};
 	let fileUpAxis = sceneMetadata.upAxis || "Y";
+	const timeCodesPerSecond = sceneMetadata.timeCodesPerSecond || 24;
+
+	// Update global timeCodesPerSecond and speed parameter
+	currentTimeCodesPerSecond = timeCodesPerSecond;
+	animationParams.speed = timeCodesPerSecond;
 
 	console.log('=== USD Scene Metadata ===');
 	console.log(`upAxis (from metadata): "${fileUpAxis}"`);
 	console.log(`metersPerUnit: ${sceneMetadata.metersPerUnit || 1.0}`);
+	console.log(`timeCodesPerSecond: ${timeCodesPerSecond}`);
 
 	// Debug: Log mesh skinning data
 	const numMeshes = usd_scene.numMeshes ? usd_scene.numMeshes() : 0;
 	console.log(`=== Mesh Skinning Data (${numMeshes} meshes) ===`);
 	let hasSkinnedMeshData = false;
+	let skinnedMeshUSDData = null; // Store USD mesh data for adding skinning attributes later
 	let detectedZUpFromPath = false;
 	for (let i = 0; i < numMeshes; i++) {
 		const mesh = usd_scene.getMesh(i);
@@ -754,6 +779,15 @@ async function processUSDScene(usd_scene, loader, filename) {
 		const hasJointWeights = mesh.jointWeights && mesh.jointWeights.length > 0;
 		if (hasJointIndices || hasJointWeights) {
 			hasSkinnedMeshData = true;
+			// Store the first mesh with skinning data for later use
+			if (!skinnedMeshUSDData) {
+				skinnedMeshUSDData = {
+					jointIndices: mesh.jointIndices,
+					jointWeights: mesh.jointWeights,
+					elementSize: mesh.elementSize || 4,
+					absPath: mesh.absPath
+				};
+			}
 			console.log(`Mesh ${i}: ${mesh.absPath}`);
 			console.log(`  - skel_id: ${mesh.skel_id}`);
 			console.log(`  - jointIndices: ${mesh.jointIndices ? mesh.jointIndices.length : 0} elements`);
@@ -994,8 +1028,84 @@ async function processUSDScene(usd_scene, loader, filename) {
 			// Have skeleton but mesh wasn't detected as skinned - create SkinnedMesh
 			console.log('Creating SkinnedMesh from regular mesh with skeleton');
 			skeleton = new THREE.Skeleton(bones);
+
+			// Add skinning attributes to geometry from USD data if available
+			const geometry = firstMesh.geometry;
+			if (skinnedMeshUSDData && geometry.attributes.position) {
+				const vertexCount = geometry.attributes.position.count;
+				const influencesPerVertex = skinnedMeshUSDData.elementSize || 4;
+				const usdVertexCount = Math.floor(skinnedMeshUSDData.jointIndices.length / influencesPerVertex);
+
+				console.log(`Adding skinning attributes: ${vertexCount} Three.js vertices`);
+				console.log(`  USD jointIndices: ${skinnedMeshUSDData.jointIndices.length} elements`);
+				console.log(`  USD jointWeights: ${skinnedMeshUSDData.jointWeights.length} elements`);
+				console.log(`  USD vertex count (inferred): ${usdVertexCount} (${influencesPerVertex} influences per vertex)`);
+
+				// Check if vertex counts match
+				if (vertexCount !== usdVertexCount) {
+					console.warn(`Vertex count mismatch: Three.js has ${vertexCount}, USD has ${usdVertexCount}`);
+					console.warn('Skinning may not work correctly - using min of both counts');
+				}
+
+				const effectiveVertexCount = Math.min(vertexCount, usdVertexCount);
+
+				// Three.js always uses 4 influences per vertex
+				const skinIndices = new Uint16Array(vertexCount * 4);
+				const skinWeights = new Float32Array(vertexCount * 4);
+
+				const usdJointIndices = skinnedMeshUSDData.jointIndices;
+				const usdJointWeights = skinnedMeshUSDData.jointWeights;
+
+				// Copy from USD format (influencesPerVertex) to Three.js format (4)
+				for (let i = 0; i < effectiveVertexCount; i++) {
+					for (let j = 0; j < 4; j++) {
+						const srcIdx = i * influencesPerVertex + j;
+						const dstIdx = i * 4 + j;
+
+						if (j < influencesPerVertex && srcIdx < usdJointIndices.length) {
+							skinIndices[dstIdx] = usdJointIndices[srcIdx];
+							skinWeights[dstIdx] = usdJointWeights[srcIdx];
+						} else {
+							skinIndices[dstIdx] = 0;
+							skinWeights[dstIdx] = 0;
+						}
+					}
+				}
+
+				// For any remaining vertices (if Three.js has more), set default values
+				for (let i = effectiveVertexCount; i < vertexCount; i++) {
+					for (let j = 0; j < 4; j++) {
+						const dstIdx = i * 4 + j;
+						skinIndices[dstIdx] = 0;
+						skinWeights[dstIdx] = j === 0 ? 1 : 0; // First bone gets full weight
+					}
+				}
+
+				// Add attributes to geometry
+				geometry.setAttribute('skinIndex', new THREE.Uint16BufferAttribute(skinIndices, 4));
+				geometry.setAttribute('skinWeight', new THREE.Float32BufferAttribute(skinWeights, 4));
+				console.log('Added skinIndex and skinWeight attributes to geometry');
+			} else {
+				console.warn('No USD skinning data available to add to geometry');
+			}
+
+			// Validate rootBone before creating SkinnedMesh
+			if (!rootBone || !(rootBone instanceof THREE.Bone)) {
+				console.error('Invalid rootBone:', rootBone);
+				throw new Error('rootBone is not a valid THREE.Bone');
+			}
+
+			console.log(`Creating SkinnedMesh with ${bones.length} bones, rootBone: ${rootBone.name}`);
+
 			const newSkinnedMesh = new THREE.SkinnedMesh(firstMesh.geometry, firstMesh.material);
+
+			// Add root bone to mesh first
 			newSkinnedMesh.add(rootBone);
+
+			// Update bone world matrices after adding to scene graph
+			newSkinnedMesh.updateMatrixWorld(true);
+
+			// Now bind skeleton - this computes inverse bind matrices
 			newSkinnedMesh.bind(skeleton);
 			newSkinnedMesh.castShadow = true;
 			newSkinnedMesh.receiveShadow = true;
@@ -1050,17 +1160,17 @@ async function processUSDScene(usd_scene, loader, filename) {
 				usdAnimations = [];
 				for (let i = 0; i < numAnimations; i++) {
 					const usdAnimation = usd_scene.getAnimation(i);
-					// Use helper to create animation clip
-					const clip = createThreeAnimationClip(usdAnimation, skeleton, { fps: 24 });
+					// Use helper to create animation clip with timeCodesPerSecond from metadata
+					const clip = createThreeAnimationClip(usdAnimation, skeleton, { fps: timeCodesPerSecond });
 					if (clip.tracks.length > 0) {
 						usdAnimations.push(clip);
 					}
 				}
-				console.log(`[Helper] Converted ${usdAnimations.length} animations`);
+				console.log(`[Helper] Converted ${usdAnimations.length} animations (fps: ${timeCodesPerSecond})`);
 			} else {
 				// ===== CUSTOM APPROACH: Custom animation conversion with filtering =====
-				usdAnimations = convertUSDSkeletalAnimationsToThreeJS(usd_scene, boneMap);
-				console.log(`[Custom] Converted ${usdAnimations.length} animations`);
+				usdAnimations = convertUSDSkeletalAnimationsToThreeJS(usd_scene, boneMap, timeCodesPerSecond);
+				console.log(`[Custom] Converted ${usdAnimations.length} animations (fps: ${timeCodesPerSecond})`);
 			}
 		} else {
 			console.log('No skeleton data available - skipping animation extraction');
@@ -1094,6 +1204,12 @@ async function processUSDScene(usd_scene, loader, filename) {
 			if (skinnedMesh && usdAnimations.length > 0 && skeleton) {
 				mixer = new THREE.AnimationMixer(skinnedMesh);
 				playAnimation(0);
+
+				// Update timeline range to match animation duration
+				const firstClipDuration = usdAnimations[0].duration;
+				if (window.updateTimelineRange) {
+					window.updateTimelineRange(firstClipDuration);
+				}
 			}
 		} else {
 			if (window.updateAnimationList) {
@@ -1235,7 +1351,7 @@ const animationParams = {
 			animationAction.play();
 		}
 	},
-	speed: 1.0,
+	speed: 24,  // Default to timeCodesPerSecond (updated on file load)
 	time: 0,
 
 	// Skeletal animation properties
@@ -1332,18 +1448,32 @@ gui.title('Skeletal Animation Controls');
 const playbackFolder = gui.addFolder('Playback');
 playbackFolder.add(animationParams, 'playPause').name('Play / Pause');
 playbackFolder.add(animationParams, 'reset').name('Reset');
-playbackFolder.add(animationParams, 'speed', 0, 3, 0.1).name('Speed').onChange(() => {
+playbackFolder.add(animationParams, 'speed', 1, 120, 1).name('Speed').onChange(() => {
 	if (animationAction) {
+		// Speed represents playback FPS (timeCodes per second)
 		animationAction.setEffectiveTimeScale(animationParams.speed);
 	}
 });
-playbackFolder.add(animationParams, 'time', 0, 30, 0.01)
+const timelineController = playbackFolder.add(animationParams, 'time', 0, 30, 0.01)
 	.name('Timeline').listen().onChange(() => {
 		if (animationAction) {
 			animationAction.time = animationParams.time;
 		}
 	});
 playbackFolder.open();
+
+// Function to update timeline range when animation loads
+window.updateTimelineRange = function(duration) {
+	console.log('updateTimelineRange called with duration:', duration);
+	if (timelineController && duration > 0) {
+		// lil-gui: need to destroy and recreate the controller to change range
+		// Or use the _max property directly
+		timelineController._max = duration;
+		timelineController.$slider.max = duration;
+		timelineController.updateDisplay();
+		console.log('Timeline range updated to:', duration);
+	}
+};
 
 // Animation controls
 const animationFolder = gui.addFolder('Skeletal Animations');
@@ -1460,6 +1590,8 @@ function animate() {
 	}
 
 	// Update animation mixer
+	// Speed represents playback FPS (timeCodes per second)
+	// Animation times are in timeCodes, so speed directly controls how many timeCodes advance per second
 	if (mixer && animationParams.isPlaying) {
 		mixer.update(deltaTime * animationParams.speed);
 
