@@ -442,6 +442,29 @@ class UsdaLexer {
     return { type: TokenType.IDENTIFIER, value };
   }
 
+  readConnection() {
+    this.advance(); // consume opening <
+    let value = '';
+
+    while (this.pos < this.input.length) {
+      const ch = this.peek();
+
+      if (ch === '>') {
+        this.advance();
+        break;
+      }
+
+      if (ch === '\\') {
+        this.advance();
+        value += this.advance();
+      } else {
+        value += this.advance();
+      }
+    }
+
+    return { type: TokenType.STRING, value };
+  }
+
   nextToken() {
     this.skipWhitespace();
 
@@ -468,6 +491,10 @@ class UsdaLexer {
       case ';': this.advance(); return { type: TokenType.SEMICOLON, value: ';', line: startLine, col: startCol };
       case '@': {
         const token = this.readAssetPath();
+        return { ...token, line: startLine, col: startCol };
+      }
+      case '<': {
+        const token = this.readConnection();
         return { ...token, line: startLine, col: startCol };
       }
     }
