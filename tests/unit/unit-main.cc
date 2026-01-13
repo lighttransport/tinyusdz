@@ -16,6 +16,7 @@
 #include "unit-ioutil.h"
 #include "unit-strutil.h"
 #include "unit-timesamples.h"
+#include "unit-fp-parse-print.h"
 #include "unit-pprint.h"
 #include "unit-materialx.h"
 #include "unit-task-queue.h"
@@ -52,6 +53,12 @@ TEST_LIST = {
   { "parse_int_test", parse_int_test },
   { "fp_string_conversion_test", fp_string_conversion_test },
   { "timesamples_test", timesamples_test },
+  { "fp_roundtrip_basic_test", fp_roundtrip_basic_test },
+  { "fp_roundtrip_edge_cases_test", fp_roundtrip_edge_cases_test },
+  { "fp_roundtrip_special_values_test", fp_roundtrip_special_values_test },
+  { "fp_roundtrip_precision_test", fp_roundtrip_precision_test },
+  { "fp_roundtrip_buffer_test", fp_roundtrip_buffer_test },
+  { "fp_shortest_representation_test", fp_shortest_representation_test },
   { "materialx_config_api_struct_test", materialx_config_api_struct_test },
   { "materialx_config_api_parsing_test", materialx_config_api_parsing_test },
   { "openpbr_surface_reconstruction_test", openpbr_surface_reconstruction_test },
