@@ -83,17 +83,24 @@ scene.add(transformControls);
 const raycaster = new THREE.Raycaster();
 const mouse = new THREE.Vector2();
 
-// Lighting
-const ambientLight = new THREE.AmbientLight(0x404040, 1);
+// Lighting - brighter ambient for better visibility
+const ambientLight = new THREE.AmbientLight(0x808080, 1.5);
 scene.add(ambientLight);
 
-const directionalLight = new THREE.DirectionalLight(0xffffff, 1);
+const directionalLight = new THREE.DirectionalLight(0xffffff, 2.5);
 directionalLight.position.set(5, 10, 5);
 directionalLight.castShadow = true;
+// Higher resolution shadow map
+directionalLight.shadow.mapSize.width = 2048;
+directionalLight.shadow.mapSize.height = 2048;
+// Initial shadow camera frustum (will be updated based on scene)
 directionalLight.shadow.camera.left = -10;
 directionalLight.shadow.camera.right = 10;
 directionalLight.shadow.camera.top = 10;
 directionalLight.shadow.camera.bottom = -10;
+directionalLight.shadow.camera.near = 0.1;
+directionalLight.shadow.camera.far = 50;
+directionalLight.shadow.bias = -0.001;
 scene.add(directionalLight);
 
 // Ground plane
@@ -400,12 +407,14 @@ function buildSkeletonFromUSD(usdSkeleton, skeletonId) {
 
 /**
  * Create weight visualization material with pseudo-color shader
+ * Includes proper Three.js skinning support for SkinnedMesh
  * @returns {THREE.ShaderMaterial} Weight visualization shader material
  */
 function createWeightVisualizationMaterial() {
+	// Use Three.js shader chunks for skinning support
 	const vertexShader = `
-		attribute vec4 skinIndex;
-		attribute vec4 skinWeight;
+		#include <common>
+		#include <skinning_pars_vertex>
 
 		varying vec3 vColor;
 		varying vec4 vSkinWeight;
@@ -436,6 +445,8 @@ function createWeightVisualizationMaterial() {
 		}
 
 		void main() {
+			#include <skinbase_vertex>
+
 			vSkinWeight = skinWeight;
 			vSkinIndex = skinIndex;
 
@@ -446,7 +457,11 @@ function createWeightVisualizationMaterial() {
 			vColor += getWeightColor(skinWeight.z, skinIndex.z) * skinWeight.z;
 			vColor += getWeightColor(skinWeight.w, skinIndex.w) * skinWeight.w;
 
-			vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
+			// Apply skinning transformation
+			vec3 transformed = vec3(position);
+			#include <skinning_vertex>
+
+			vec4 mvPosition = modelViewMatrix * vec4(transformed, 1.0);
 			gl_Position = projectionMatrix * mvPosition;
 		}
 	`;
@@ -482,12 +497,19 @@ function createWeightVisualizationMaterial() {
 		}
 	`;
 
+	// Merge Three.js skinning uniforms with our custom uniforms
+	const uniforms = THREE.UniformsUtils.merge([
+		THREE.UniformsLib.skinning,
+		{
+			visualizationMode: { value: 0 }
+		}
+	]);
+
 	return new THREE.ShaderMaterial({
 		vertexShader: vertexShader,
 		fragmentShader: fragmentShader,
-		uniforms: {
-			visualizationMode: { value: 0 }
-		},
+		uniforms: uniforms,
+		skinning: true,  // Enable skinning for this material
 		side: THREE.DoubleSide
 	});
 }
@@ -530,6 +552,72 @@ function updateJointSpheres() {
 		bone.getWorldPosition(worldPos);
 		sphere.position.copy(worldPos);
 	});
+}
+
+/**
+ * Compute scene bounding box from meshes (static state, ignores skinning deformation)
+ * @param {THREE.Object3D} root - Root object to traverse
+ * @returns {THREE.Box3} Bounding box
+ */
+function computeSceneBoundingBox(root) {
+	const box = new THREE.Box3();
+
+	root.traverse((child) => {
+		if (child.isMesh && child.geometry) {
+			child.geometry.computeBoundingBox();
+			if (child.geometry.boundingBox) {
+				const meshBox = child.geometry.boundingBox.clone();
+				meshBox.applyMatrix4(child.matrixWorld);
+				box.union(meshBox);
+			}
+		}
+	});
+
+	// If no valid box found, return default
+	if (box.isEmpty()) {
+		box.set(new THREE.Vector3(-5, -5, -5), new THREE.Vector3(5, 5, 5));
+	}
+
+	return box;
+}
+
+/**
+ * Update shadow camera frustum based on scene bounding box
+ * @param {THREE.DirectionalLight} light - Directional light with shadow
+ * @param {THREE.Box3} sceneBounds - Scene bounding box
+ */
+function updateShadowCameraFromBounds(light, sceneBounds) {
+	const center = new THREE.Vector3();
+	const size = new THREE.Vector3();
+	sceneBounds.getCenter(center);
+	sceneBounds.getSize(size);
+
+	// Calculate the maximum extent with some padding
+	const maxDim = Math.max(size.x, size.y, size.z);
+	const padding = maxDim * 0.5;
+	const frustumSize = maxDim + padding;
+
+	// Update shadow camera frustum
+	light.shadow.camera.left = -frustumSize;
+	light.shadow.camera.right = frustumSize;
+	light.shadow.camera.top = frustumSize;
+	light.shadow.camera.bottom = -frustumSize;
+
+	// Update near/far based on light position and scene bounds
+	const lightPos = light.position.clone();
+	const lightToCenter = center.clone().sub(lightPos);
+	const dist = lightToCenter.length();
+	light.shadow.camera.near = Math.max(0.1, dist - maxDim);
+	light.shadow.camera.far = dist + maxDim * 2;
+
+	// Move light target to scene center
+	light.target.position.copy(center);
+	light.target.updateMatrixWorld();
+
+	// Update shadow camera
+	light.shadow.camera.updateProjectionMatrix();
+
+	console.log(`Shadow camera updated: frustum=${frustumSize.toFixed(2)}, near=${light.shadow.camera.near.toFixed(2)}, far=${light.shadow.camera.far.toFixed(2)}`);
 }
 
 /**
@@ -1236,6 +1324,11 @@ async function processUSDScene(usd_scene, loader, filename) {
 		usdSceneRoot.rotation.x = 0;
 		console.log(`[processUSDScene] No upAxis conversion needed (file upAxis="${fileUpAxis}", conversion ${animationParams.applyUpAxisConversion ? 'enabled' : 'disabled'})`);
 	}
+
+	// Update shadow camera frustum based on scene bounds
+	usdSceneRoot.updateMatrixWorld(true);
+	const sceneBounds = computeSceneBoundingBox(usdSceneRoot);
+	updateShadowCameraFromBounds(directionalLight, sceneBounds);
 }
 
 /**
@@ -1421,6 +1514,20 @@ const animationParams = {
 	enableBoneReduction: false,
 	targetBoneCount: 4,
 
+	// Shadows
+	enableShadows: true,
+	toggleShadows: function() {
+		renderer.shadowMap.enabled = this.enableShadows;
+		directionalLight.castShadow = this.enableShadows;
+		// Need to update materials and re-render
+		scene.traverse((child) => {
+			if (child.isMesh) {
+				child.material.needsUpdate = true;
+			}
+		});
+		console.log(`Shadows ${this.enableShadows ? 'enabled' : 'disabled'}`);
+	},
+
 	// Up axis conversion (Z-up to Y-up)
 	applyUpAxisConversion: true,
 	toggleUpAxisConversion: function() {
@@ -1490,6 +1597,9 @@ const visualFolder = gui.addFolder('Visualization');
 visualFolder.add(animationParams, 'showSkeleton')
 	.name('Show Skeleton')
 	.onChange(() => animationParams.toggleSkeleton());
+visualFolder.add(animationParams, 'enableShadows')
+	.name('Enable Shadows')
+	.onChange(() => animationParams.toggleShadows());
 visualFolder.add(animationParams, 'applyUpAxisConversion')
 	.name('Z-up to Y-up')
 	.onChange(() => animationParams.toggleUpAxisConversion());
