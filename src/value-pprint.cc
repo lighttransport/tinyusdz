@@ -24,11 +24,8 @@
 #include "external/jeaiii_to_text.h"
 #endif
 
-// dtoa_milo does not work well for float types
-// (e.g. it prints float 0.01 as 0.009999999997),
-// so use floaxie for float types
-// TODO: Use floaxie also for double?
-#include "external/dtoa_milo.h"
+// NOTE: Using dragonbox-based dtos() from str-util.hh for all float/double
+// conversions - it produces shortest representation for 100% of values.
 
 #ifdef __clang__
 #pragma clang diagnostic push
@@ -52,7 +49,8 @@ inline void append_float_to_stream(std::ostream &os, float v) {
 namespace std {
 
 std::ostream &operator<<(std::ostream &os, const tinyusdz::value::half &v) {
-  os << tinyusdz::value::half_to_float(v);
+  // Use dtos for consistent shortest representation
+  os << tinyusdz::dtos(tinyusdz::value::half_to_float(v));
   return os;
 }
 
@@ -546,21 +544,12 @@ std::ostream &operator<<(std::ostream &ofs,
 
 template <>
 std::ostream &operator<<(std::ostream &ofs, const std::vector<double> &v) {
-  // Not sure what is the HARD-LIMT buffer length for dtoa_milo,
-  // but according to std::numeric_limits<double>::digits10(=15),
-  // 32 should be sufficient, but allocate 384 just in case
-  char buf[384];
-
-  // TODO: multi-threading for further performance gain?
-
   ofs << "[";
   for (size_t i = 0; i < v.size(); i++) {
     if (i > 0) {
       ofs << ", ";
     }
-    char *e = dtoa_milo(v[i], buf);
-    (*e) = '\0';
-    ofs << std::string(buf);
+    ofs << tinyusdz::dtos(v[i]);  // use dragonbox for shortest representation
   }
   ofs << "]";
 
