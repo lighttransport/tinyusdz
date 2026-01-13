@@ -368,11 +368,25 @@ class UsdaLexer {
 
         if (isTripleDelim) {
           // For @@@...@@@, look for closing @@@
+          // But only if followed by whitespace, delimiter, or EOF (not alphanumeric content)
           if (ch === '@' && this.peek(1) === '@' && this.peek(2) === '@') {
-            this.advance(); // consume first @
-            this.advance(); // consume second @
-            this.advance(); // consume third @
-            break;
+            const afterTriple = this.peek(3);
+            // Check if this is truly the closing @@@ or part of the content
+            // Closing @@@ should be followed by whitespace, newline, delimiter, or EOF
+            if (afterTriple === undefined || afterTriple === ' ' || afterTriple === '\t' ||
+                afterTriple === '\n' || afterTriple === '\r' || afterTriple === ')' ||
+                afterTriple === '}' || afterTriple === ']' || afterTriple === ',' ||
+                afterTriple === ';' || afterTriple === '#') {
+              this.advance(); // consume first @
+              this.advance(); // consume second @
+              this.advance(); // consume third @
+              break;
+            }
+            // Otherwise, @@@ is part of the content - include it in value
+            value += this.advance();
+            value += this.advance();
+            value += this.advance();
+            continue;
           }
         } else {
           // For @...@, look for closing @
