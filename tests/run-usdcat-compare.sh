@@ -79,6 +79,7 @@ run_folder_comparison() {
 }
 
 # Function to print failure and warning summary from results file
+# Note: Uses plain text (no ANSI colors) so output is clean when redirected
 print_failure_summary() {
   local results_file="$1"
 
@@ -102,16 +103,19 @@ print_failure_summary() {
 
   if [ -n "$failed_files" ] || [ -n "$warning_files" ]; then
     echo ""
-    print_header "Failure and Warning Summary"
+    echo "========================================================"
+    echo "Failure and Warning Summary"
+    echo "========================================================"
+    echo ""
   fi
 
   if [ -n "$failed_files" ]; then
     has_output=true
     local fail_count
     fail_count=$(echo "$failed_files" | wc -l)
-    echo -e "${RED}✗ Failed Files ($fail_count):${NC}"
+    echo "[X] Failed Files ($fail_count):"
     echo "$failed_files" | while read -r file; do
-      echo -e "  ${RED}•${NC} $file"
+      echo "  - $file"
     done
     echo ""
   fi
@@ -120,15 +124,15 @@ print_failure_summary() {
     has_output=true
     local warn_count
     warn_count=$(echo "$warning_files" | wc -l)
-    echo -e "${YELLOW}⚠ Warning/Error Files ($warn_count):${NC}"
+    echo "[!] Warning/Error Files ($warn_count):"
     echo "$warning_files" | while read -r file; do
-      echo -e "  ${YELLOW}•${NC} $file"
+      echo "  - $file"
     done
     echo ""
   fi
 
   if [ "$has_output" = true ]; then
-    echo -e "${BLUE}────────────────────────────────────────────────────────${NC}"
+    echo "--------------------------------------------------------"
     echo ""
   fi
 }
