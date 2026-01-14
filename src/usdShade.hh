@@ -370,7 +370,8 @@ struct OpenPBRSurface : ShaderNode {
   // Subsurface properties
   TypedAttributeWithFallback<Animatable<float>> subsurface_weight{0.0f}; // "inputs:subsurface_weight"
   TypedAttributeWithFallback<Animatable<value::color3f>> subsurface_color{value::color3f{0.8f, 0.8f, 0.8f}}; // "inputs:subsurface_color"
-  TypedAttributeWithFallback<Animatable<value::color3f>> subsurface_radius{value::color3f{1.0f, 1.0f, 1.0f}}; // "inputs:subsurface_radius"
+  TypedAttributeWithFallback<Animatable<float>> subsurface_radius{1.0f}; // "inputs:subsurface_radius"
+  TypedAttributeWithFallback<Animatable<value::color3f>> subsurface_radius_scale{value::color3f{1.0f, 1.0f, 1.0f}}; // "inputs:subsurface_radius_scale"
   TypedAttributeWithFallback<Animatable<float>> subsurface_scale{1.0f}; // "inputs:subsurface_scale"
   TypedAttributeWithFallback<Animatable<float>> subsurface_anisotropy{0.0f}; // "inputs:subsurface_anisotropy"
 
