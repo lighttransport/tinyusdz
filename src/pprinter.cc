@@ -694,8 +694,16 @@ std::string print_prim_metas(const PrimMeta &meta, const uint32_t indent) {
   }
 
   for (const auto &item : meta.unregisteredMetas) {
-    // do not quote
-    ss << pprint::Indent(indent) << item.first << " = " << item.second << "\n";
+    // Quote string values, but keep non-string values as-is
+    std::string value_str = item.second;
+    // Check if the value looks like a string (unquoted) by checking if it needs quoting
+    // String values that are not already quoted should be quoted
+    if (!value_str.empty() && value_str.front() != '"' && value_str.front() != '\'' &&
+        value_str.front() != '[' && !std::isdigit(value_str.front()) &&
+        value_str != "None" && value_str.find("(") == std::string::npos) {
+      value_str = quote(value_str);
+    }
+    ss << pprint::Indent(indent) << item.first << " = " << value_str << "\n";
   }
 
   // TODO: deprecate meta.meta and remove it.
@@ -726,13 +734,13 @@ std::string print_attr_metas(const AttrMeta &meta, const uint32_t indent) {
 
   if (meta.bindMaterialAs) {
     ss << pprint::Indent(indent)
-       << "bindMaterialAs = " << quote(to_string(meta.bindMaterialAs.value()))
+       << "bindMaterialAs = " << to_string(meta.bindMaterialAs.value())
        << "\n";
   }
 
   if (meta.connectability) {
     ss << pprint::Indent(indent)
-       << "connectability = " << quote(to_string(meta.connectability.value()))
+       << "connectability = " << to_string(meta.connectability.value())
        << "\n";
   }
 
@@ -748,12 +756,12 @@ std::string print_attr_metas(const AttrMeta &meta, const uint32_t indent) {
 
   if (meta.outputName) {
     ss << pprint::Indent(indent)
-       << "outputName = " << quote(to_string(meta.outputName.value())) << "\n";
+       << "outputName = " << to_string(meta.outputName.value()) << "\n";
   }
 
   if (meta.renderType) {
     ss << pprint::Indent(indent)
-       << "renderType = " << quote(to_string(meta.renderType.value())) << "\n";
+       << "renderType = " << to_string(meta.renderType.value()) << "\n";
   }
 
   if (meta.sdrMetadata) {
@@ -3220,7 +3228,7 @@ std::string to_string(const GeomMesh &mesh, const uint32_t indent,
                          indent + 1);
   ss << print_typed_attr(mesh.holeIndices, "holeIndices", indent + 1);
 
-  ss << print_typed_token_attr(mesh.subdivisionScheme, "subdivisonScheme",
+  ss << print_typed_token_attr(mesh.subdivisionScheme, "subdivisionScheme",
                                indent + 1);
   ss << print_typed_token_attr(mesh.interpolateBoundary, "interpolateBoundary",
                                indent + 1);
