@@ -363,7 +363,8 @@ json ThreeJSMaterialExporter::ConvertOpenPBRToNodeMaterial(const OpenPBRSurfaceS
   // Subsurface
   add_param("subsurface_weight", shader.subsurface_weight);
   setJsonParameter(surface_node["inputs"], "subsurface_color", vec3ToJson(shader.subsurface_color.value), use_grouped);
-  setJsonParameter(surface_node["inputs"], "subsurface_radius", vec3ToJson(shader.subsurface_radius.value), use_grouped);
+  add_param("subsurface_radius", shader.subsurface_radius);
+  setJsonParameter(surface_node["inputs"], "subsurface_radius_scale", vec3ToJson(shader.subsurface_radius_scale.value), use_grouped);
   add_param("subsurface_scale", shader.subsurface_scale);
   add_param("subsurface_anisotropy", shader.subsurface_anisotropy);
 
@@ -468,7 +469,8 @@ json ThreeJSMaterialExporter::ConvertOpenPBRToPhysicalMaterial(const OpenPBRSurf
     params["userData"]["subsurface"] = {
       {"weight", shader.subsurface_weight.value},
       {"color", vec3ToJson(shader.subsurface_color.value)},
-      {"radius", vec3ToJson(shader.subsurface_radius.value)},
+      {"radius", shader.subsurface_radius.value},
+      {"radius_scale", vec3ToJson(shader.subsurface_radius_scale.value)},
       {"scale", shader.subsurface_scale.value},
       {"anisotropy", shader.subsurface_anisotropy.value}
     };
@@ -693,7 +695,8 @@ bool ThreeJSMaterialExporter::ExportMaterialX(const RenderMaterial& material,
     // Subsurface parameters
     export_float("subsurface_weight", shader.subsurface_weight);
     export_color3("subsurface_color", shader.subsurface_color);
-    export_color3("subsurface_radius", shader.subsurface_radius);
+    export_float("subsurface_radius", shader.subsurface_radius);
+    export_color3("subsurface_radius_scale", shader.subsurface_radius_scale);
     export_float("subsurface_scale", shader.subsurface_scale);
     export_float("subsurface_anisotropy", shader.subsurface_anisotropy);
 
@@ -765,7 +768,8 @@ bool ThreeJSMaterialExporter::ExportMaterialX(const RenderMaterial& material,
 
     export_texture_node("subsurface_weight", shader.subsurface_weight, "float");
     export_texture_node_vec3("subsurface_color", shader.subsurface_color, "color3");
-    export_texture_node_vec3("subsurface_radius", shader.subsurface_radius, "color3");
+    export_texture_node("subsurface_radius", shader.subsurface_radius, "float");
+    export_texture_node_vec3("subsurface_radius_scale", shader.subsurface_radius_scale, "color3");
     export_texture_node("subsurface_scale", shader.subsurface_scale, "float");
     export_texture_node("subsurface_anisotropy", shader.subsurface_anisotropy, "float");
 

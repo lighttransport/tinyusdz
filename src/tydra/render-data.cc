@@ -2998,7 +2998,8 @@ bool ListUVNames(const RenderMaterial &material,
     // Subsurface
     fun_float(material.openPBRShader->subsurface_weight);
     fun_vec3(material.openPBRShader->subsurface_color);
-    fun_vec3(material.openPBRShader->subsurface_radius);
+    fun_float(material.openPBRShader->subsurface_radius);
+    fun_vec3(material.openPBRShader->subsurface_radius_scale);
     fun_float(material.openPBRShader->subsurface_scale);
     fun_float(material.openPBRShader->subsurface_anisotropy);
 
@@ -7336,6 +7337,12 @@ bool RenderSceneConverter::ConvertOpenPBRSurfaceShader(
           env, shader_abs_path, shader.subsurface_radius, "subsurface_radius",
           rshader.subsurface_radius, true)) {
     PushWarn(fmt::format("Failed to convert subsurface_radius parameter for shader: {}", shader_abs_path.prim_part()));
+    return false;
+  }
+  if (!ConvertPreviewSurfaceShaderParam(
+          env, shader_abs_path, shader.subsurface_radius_scale, "subsurface_radius_scale",
+          rshader.subsurface_radius_scale, true)) {
+    PushWarn(fmt::format("Failed to convert subsurface_radius_scale parameter for shader: {}", shader_abs_path.prim_part()));
     return false;
   }
   if (!ConvertPreviewSurfaceShaderParam(
