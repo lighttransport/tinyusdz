@@ -1015,6 +1015,91 @@ function normalizeValue(val) {
 }
 
 /**
+ * Check if a normalized value is numeric
+ */
+function isNumericValue(normalizedValue) {
+  if (typeof normalizedValue !== 'string') return false;
+  const num = parseFloat(normalizedValue);
+  return !isNaN(num) && isFinite(num);
+}
+
+/**
+ * Compare two numeric values with epsilon tolerance
+ */
+function areNumbersEqual(val1, val2, epsilon = 1e-6) {
+  const num1 = parseFloat(val1);
+  const num2 = parseFloat(val2);
+
+  // Handle special cases
+  if (isNaN(num1) || isNaN(num2)) return false;
+  if (!isFinite(num1) || !isFinite(num2)) return num1 === num2;
+
+  // Use relative epsilon for large numbers, absolute for small numbers
+  const absNum1 = Math.abs(num1);
+  const absNum2 = Math.abs(num2);
+  const maxAbs = Math.max(absNum1, absNum2);
+
+  if (maxAbs < 1.0) {
+    // For small numbers, use absolute epsilon
+    return Math.abs(num1 - num2) <= epsilon;
+  } else {
+    // For larger numbers, use relative epsilon
+    return Math.abs(num1 - num2) <= epsilon * maxAbs;
+  }
+}
+
+/**
+ * Compare two timeSamples values with epsilon tolerance for numeric values
+ */
+function areTimeSamplesEqual(val1, val2, epsilon = 1e-6) {
+  // Check if both are timeSamples objects
+  if (!val1 || !val2 || val1.type !== 'timeSamples' || val2.type !== 'timeSamples') {
+    return false;
+  }
+
+  const times1 = Object.keys(val1.value);
+  const times2 = Object.keys(val2.value);
+
+  // Check if they have the same number of time samples
+  if (times1.length !== times2.length) {
+    return false;
+  }
+
+  // Sort time codes for consistent comparison
+  times1.sort((a, b) => parseFloat(a) - parseFloat(b));
+  times2.sort((a, b) => parseFloat(a) - parseFloat(b));
+
+  // Compare each time code and its value
+  for (let i = 0; i < times1.length; i++) {
+    const t1 = times1[i];
+    const t2 = times2[i];
+
+    // Compare time codes
+    if (!areNumbersEqual(t1, t2, epsilon)) {
+      return false;
+    }
+
+    // Compare values at this time
+    const v1 = normalizeValue(val1.value[t1]);
+    const v2 = normalizeValue(val2.value[t2]);
+
+    // Use epsilon comparison for numeric values
+    if (isNumericValue(v1) && isNumericValue(v2)) {
+      if (!areNumbersEqual(v1, v2, epsilon)) {
+        return false;
+      }
+    } else {
+      // Non-numeric values must match exactly
+      if (v1 !== v2) {
+        return false;
+      }
+    }
+  }
+
+  return true;
+}
+
+/**
  * Compare two USDA structures
  */
 function compareUsda(usda1, usda2, options = {}) {
@@ -1149,10 +1234,34 @@ function compareAttributes(attrs1, attrs2, primPath) {
       continue;
     }
 
-    const norm1 = normalizeValue(val1);
-    const norm2 = normalizeValue(val2);
+    // Extract actual values if wrapped with location info
+    let actualVal1 = val1 && typeof val1 === 'object' && val1.value !== undefined && val1.line !== undefined ? val1.value : val1;
+    let actualVal2 = val2 && typeof val2 === 'object' && val2.value !== undefined && val2.line !== undefined ? val2.value : val2;
 
-    if (norm1 !== norm2) {
+    // Check for timeSamples before normalization
+    let valuesEqual = false;
+
+    // Special handling for timeSamples (compare before normalization)
+    if (actualVal1 && typeof actualVal1 === 'object' && actualVal1.type === 'timeSamples' &&
+        actualVal2 && typeof actualVal2 === 'object' && actualVal2.type === 'timeSamples') {
+      valuesEqual = areTimeSamplesEqual(actualVal1, actualVal2);
+    } else {
+      // Normal comparison path
+      const norm1 = normalizeValue(val1);
+      const norm2 = normalizeValue(val2);
+
+      // Use epsilon comparison for numeric values
+      if (isNumericValue(norm1) && isNumericValue(norm2)) {
+        valuesEqual = areNumbersEqual(norm1, norm2);
+      } else {
+        valuesEqual = (norm1 === norm2);
+      }
+    }
+
+    if (!valuesEqual) {
+      // Normalize for error message display
+      const norm1 = normalizeValue(val1);
+      const norm2 = normalizeValue(val2);
       differences.push({
         type: 'attribute_value_mismatch',
         path: primPath,
@@ -1202,10 +1311,34 @@ function compareObjects(obj1, obj2, context) {
       continue;
     }
 
-    const norm1 = normalizeValue(val1);
-    const norm2 = normalizeValue(val2);
+    // Extract actual values if wrapped with location info
+    let actualVal1 = val1 && typeof val1 === 'object' && val1.value !== undefined && val1.line !== undefined ? val1.value : val1;
+    let actualVal2 = val2 && typeof val2 === 'object' && val2.value !== undefined && val2.line !== undefined ? val2.value : val2;
 
-    if (norm1 !== norm2) {
+    // Check for timeSamples before normalization
+    let valuesEqual = false;
+
+    // Special handling for timeSamples (compare before normalization)
+    if (actualVal1 && typeof actualVal1 === 'object' && actualVal1.type === 'timeSamples' &&
+        actualVal2 && typeof actualVal2 === 'object' && actualVal2.type === 'timeSamples') {
+      valuesEqual = areTimeSamplesEqual(actualVal1, actualVal2);
+    } else {
+      // Normal comparison path
+      const norm1 = normalizeValue(val1);
+      const norm2 = normalizeValue(val2);
+
+      // Use epsilon comparison for numeric values
+      if (isNumericValue(norm1) && isNumericValue(norm2)) {
+        valuesEqual = areNumbersEqual(norm1, norm2);
+      } else {
+        valuesEqual = (norm1 === norm2);
+      }
+    }
+
+    if (!valuesEqual) {
+      // Normalize for error message display
+      const norm1 = normalizeValue(val1);
+      const norm2 = normalizeValue(val2);
       differences.push({
         type: 'value_mismatch',
         context,
