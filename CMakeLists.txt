@@ -186,6 +186,11 @@ endif ()
 option(TINYUSDZ_USE_SYSTEM_ZLIB
        "Use system's zlib instead of miniz for TinyEXR/TIFF" OFF)
 
+# -- Zstd compression --
+option(TINYUSDZ_WITH_ZSTD_COMPRESSION
+       "Enable zstd compression for USD files" ON)
+option(TINYUSDZ_USE_SYSTEM_ZSTD
+       "Use system's zstd instead of bundled version" OFF)
 
 option(
   TINYUSDZ_PRODUCTION_BUILD
@@ -665,6 +670,21 @@ if(TINYUSDZ_WITH_TIFF OR TINYUSDZ_WITH_EXR)
       PROPERTIES COMPILE_DEFINITIONS "_LARGEFILE64_SOURCE=1")
   endif()
 
+endif()
+
+# -- Zstd compression --
+if(TINYUSDZ_WITH_ZSTD_COMPRESSION)
+  if(NOT TINYUSDZ_USE_SYSTEM_ZSTD)
+    list(APPEND TINYUSDZ_DEP_SOURCES ${PROJECT_SOURCE_DIR}/src/external/zstd.c)
+    # Disable ASM to avoid linker issues, suppress warnings for third-party code
+    set_source_files_properties(
+      ${PROJECT_SOURCE_DIR}/src/external/zstd.c
+      PROPERTIES COMPILE_DEFINITIONS "ZSTD_DISABLE_ASM=1"
+                 COMPILE_FLAGS "-w")
+  else()
+    find_package(zstd REQUIRED)
+  endif()
+  list(APPEND TINYUSDZ_DEP_SOURCES ${PROJECT_SOURCE_DIR}/src/zstd-compression.cc)
 endif()
 
 if(TINYUSDZ_WITH_ALAC_AUDIO)
@@ -1339,6 +1359,13 @@ foreach(TINYUSDZ_LIB_TARGET ${TINYUSDZ_LIBS})
 
   if(TINYUSDZ_NO_STB_IMAGE_WRITE_IMPLEMENTATION)
     target_compile_definitions(${TINYUSDZ_LIB_TARGET} PRIVATE "TINYUSDZ_NO_STB_IMAGE_WRITE_IMPLEMENTATION")
+  endif()
+
+  if(TINYUSDZ_WITH_ZSTD_COMPRESSION)
+    target_compile_definitions(${TINYUSDZ_LIB_TARGET} PRIVATE "TINYUSDZ_WITH_ZSTD_COMPRESSION")
+    if(TINYUSDZ_USE_SYSTEM_ZSTD)
+      target_link_libraries(${TINYUSDZ_LIB_TARGET} PUBLIC zstd::zstd)
+    endif()
   endif()
 
   target_include_directories(${TINYUSDZ_LIB_TARGET}

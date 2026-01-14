@@ -41,6 +41,7 @@
 #include "crate-format.hh"
 #include "io-util.hh"
 #include "lz4-compression.hh"
+#include "zstd-compression.hh"
 #include "token-type.hh"
 
 #include "common-macros.inc"
@@ -49,6 +50,13 @@ namespace tinyusdz {
 namespace usdc {
 
 namespace {
+
+// Check if filename ends with ".zst" extension (case-insensitive)
+bool HasZstdExtension(const std::string &filename) {
+  if (filename.size() < 4) return false;
+  std::string ext = filename.substr(filename.size() - 4);
+  return (ext == ".zst" || ext == ".ZST");
+}
 
 constexpr size_t kSectionNameMaxLength = 15;
 
@@ -480,11 +488,13 @@ class Writer {
 }  // namespace
 
 bool SaveAsUSDCToFile(const std::string &filename, const Stage &stage,
-                      std::string *warn, std::string *err) {
+                      std::string *warn, std::string *err,
+                      const USDWriteOptions &options) {
 #ifdef __ANDROID__
   (void)filename;
   (void)stage;
   (void)warn;
+  (void)options;
 
   if (err) {
     (*err) += "Saving USDC to a file is not supported for Android platform(at the moment).\n";
@@ -496,6 +506,30 @@ bool SaveAsUSDCToFile(const std::string &filename, const Stage &stage,
 
   if (!SaveAsUSDCToMemory(stage, &output, warn, err)) {
     return false;
+  }
+
+  // Check if we should use zstd compression
+  bool use_compression = options.use_zstd_compression || HasZstdExtension(filename);
+
+  const uint8_t *write_data = output.data();
+  size_t write_size = output.size();
+  std::vector<uint8_t> compressed;
+
+  if (use_compression) {
+#ifdef TINYUSDZ_WITH_ZSTD_COMPRESSION
+    if (!ZstdCompression::Compress(output.data(), output.size(),
+                                   &compressed, options.zstd_compression_level, err)) {
+      return false;
+    }
+    write_data = compressed.data();
+    write_size = compressed.size();
+    std::cout << "Compressing USDC with zstd (" << output.size() << " -> " << compressed.size() << " bytes)\n";
+#else
+    if (err) {
+      (*err) = "zstd compression requested but TINYUSDZ_WITH_ZSTD_COMPRESSION is not enabled.\n";
+    }
+    return false;
+#endif
   }
 
 #ifdef _WIN32
@@ -530,9 +564,11 @@ bool SaveAsUSDCToFile(const std::string &filename, const Stage &stage,
   }
 #endif
 
-  size_t n = fwrite(output.data(), /* size */ 1, /* count */ output.size(), fp);
-  if (n < output.size()) {
-    // TODO: Retry writing data when n < output.size()
+  size_t n = fwrite(write_data, /* size */ 1, /* count */ write_size, fp);
+  fclose(fp);
+
+  if (n < write_size) {
+    // TODO: Retry writing data when n < write_size
 
     if (err) {
       (*err) += "Failed to write data to a file.\n";
@@ -568,10 +604,12 @@ namespace tinyusdz {
 namespace usdc {
 
 bool SaveAsUSDCToFile(const std::string &filename, const Stage &stage,
-                      std::string *warn, std::string *err) {
+                      std::string *warn, std::string *err,
+                      const USDWriteOptions &options) {
   (void)filename;
   (void)stage;
   (void)warn;
+  (void)options;
 
   if (err) {
     (*err) = "USDC writer feature is disabled in this build.\n";
