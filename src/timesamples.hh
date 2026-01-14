@@ -1451,8 +1451,12 @@ struct TimeSamples {
     _times.push_back(t);
     _blocked.push_back(1);  // Blocked
 
-    // No data needed for blocked sample, just add a dummy offset
-    _offsets.push_back(SIZE_MAX);  // Special marker for blocked
+    // For small types (sizeof <= 8), don't use offsets - just rely on _blocked flag
+    // For large types (sizeof > 8), need offset table entry
+    if (sizeof(T) > 8) {
+      _offsets.push_back(SIZE_MAX);  // Special marker for blocked
+    }
+    // Note: No entry in _small_values for blocked samples (for small types)
 
     _dirty = true;
     return true;
@@ -1614,6 +1618,13 @@ struct TimeSamples {
       update();
     }
     return _offsets;
+  }
+
+  const std::vector<uint64_t>& get_small_values() const {
+    if (_dirty) {
+      update();
+    }
+    return _small_values;
   }
 
   bool is_array() const {

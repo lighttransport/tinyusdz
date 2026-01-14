@@ -195,5 +195,135 @@ void parse_int_test(void) {
     tstring_view sv("+-123");
     TEST_CHECK(!parse_int(sv, &result));
   }
-  
+
+}
+
+void dtoa_test(void) {
+  // Test double to ASCII conversion with full precision
+
+  {
+    // Test pi with full double precision
+    double pi = 3.141592653589793;
+    char buf[384];
+    char *end = dtoa(pi, buf);
+    *end = '\0';
+    std::string result(buf);
+
+    // Should preserve full precision (at least 15 significant digits)
+    TEST_CHECK(result.find("3.14159265358979") != std::string::npos);
+    TEST_MSG("pi result: %s", result.c_str());
+  }
+
+  {
+    // Test e with full double precision
+    double e = 2.718281828459045;
+    char buf[384];
+    char *end = dtoa(e, buf);
+    *end = '\0';
+    std::string result(buf);
+
+    // Should preserve full precision
+    TEST_CHECK(result.find("2.71828182845904") != std::string::npos);
+    TEST_MSG("e result: %s", result.c_str());
+  }
+
+  {
+    // Test negative value
+    double neg = -2.718281828459045;
+    char buf[384];
+    char *end = dtoa(neg, buf);
+    *end = '\0';
+    std::string result(buf);
+
+    TEST_CHECK(result[0] == '-');
+    TEST_CHECK(result.find("2.71828182845904") != std::string::npos);
+    TEST_MSG("negative e result: %s", result.c_str());
+  }
+
+  {
+    // Test zero
+    double zero = 0.0;
+    char buf[384];
+    char *end = dtoa(zero, buf);
+    *end = '\0';
+    std::string result(buf);
+
+    TEST_CHECK(result == "0.0");
+    TEST_MSG("zero result: %s", result.c_str());
+  }
+
+  {
+    // Test negative zero
+    double neg_zero = -0.0;
+    char buf[384];
+    char *end = dtoa(neg_zero, buf);
+    *end = '\0';
+    std::string result(buf);
+
+    // dtoa_milo should output "-0.0" for negative zero
+    TEST_CHECK(result == "-0.0");
+    TEST_MSG("negative zero result: %s", result.c_str());
+  }
+
+  {
+    // Test small number
+    double small = 0.000001234567890123456;
+    char buf[384];
+    char *end = dtoa(small, buf);
+    *end = '\0';
+    std::string result(buf);
+
+    // Should use scientific notation for very small numbers
+    TEST_MSG("small number result: %s", result.c_str());
+    TEST_CHECK(result.length() > 0);
+  }
+
+  {
+    // Test large number
+    double large = 1234567890123456.0;
+    char buf[384];
+    char *end = dtoa(large, buf);
+    *end = '\0';
+    std::string result(buf);
+
+    TEST_MSG("large number result: %s", result.c_str());
+    TEST_CHECK(result.length() > 0);
+  }
+
+  {
+    // Test float conversion
+    float f = 3.14159f;
+    char buf[384];
+    char *end = dtoa(f, buf);
+    *end = '\0';
+    std::string result(buf);
+
+    // Should output float with appropriate precision
+    TEST_CHECK(result.find("3.14159") != std::string::npos);
+    TEST_MSG("float result: %s", result.c_str());
+  }
+
+  {
+    // Test one
+    double one = 1.0;
+    char buf[384];
+    char *end = dtoa(one, buf);
+    *end = '\0';
+    std::string result(buf);
+
+    TEST_CHECK(result == "1.0");
+    TEST_MSG("one result: %s", result.c_str());
+  }
+
+  {
+    // Test integer-like double
+    double int_like = 42.0;
+    char buf[384];
+    char *end = dtoa(int_like, buf);
+    *end = '\0';
+    std::string result(buf);
+
+    TEST_CHECK(result == "42.0");
+    TEST_MSG("integer-like result: %s", result.c_str());
+  }
 }
