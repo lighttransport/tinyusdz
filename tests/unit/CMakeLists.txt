@@ -20,6 +20,7 @@ set(TEST_SOURCES
 	unit-task-queue.cc
 	unit-stage.cc
 	unit-tiny-container.cc
+	unit-usda-roundtrip.cc
    )
 
 if (TINYUSDZ_WITH_PXR_COMPAT_API)

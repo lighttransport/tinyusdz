@@ -199,6 +199,10 @@ struct StringData {
   bool is_triple_quoted{false};
   bool single_quote{false};  // true for ', false for "
 
+  // For prim metadata comment: track whether parsed with "comment =" prefix
+  // When true, pprint outputs "comment = ...", otherwise just the string
+  bool has_comment_prefix{false};
+
   // optional(for USDA)
   int line_row{0};
   int line_col{0};

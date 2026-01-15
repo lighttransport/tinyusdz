@@ -1156,9 +1156,12 @@ class USDAReader::Impl {
         }
       } else if (meta.first == "comment") {
         if (auto pv = var.get_value<value::StringData>()) {
-          out->comment = pv.value().value;
+          // Preserve full StringData including has_comment_prefix flag
+          out->comment = pv.value();
         } else if (auto spv = var.get_value<std::string>()) {
-          out->comment = spv.value();
+          value::StringData sdata;
+          sdata.value = spv.value();
+          out->comment = sdata;
         }
       } else {
         // Must be string value for unregisteredMeta for now.
