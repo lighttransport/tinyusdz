@@ -2006,7 +2006,8 @@ bool AsciiParser::MaybeTripleQuotedString(value::StringData *str) {
     }
     if (single_quote_count == 3) {
       // got '''
-      if (double_quote_count) {
+      if (!single_quote) {
+        // inside """ string, ''' doesn't close it
         // continue
       } else {
         got_closing_triple_quote = true;
@@ -3707,6 +3708,26 @@ AsciiParser::ParsePrimMeta() {
   SkipWhitespace();
 
   if (!registered_meta) {
+    // Special handling for "comment =" syntax (extension to USD spec)
+    // Parse comment value as a proper string (including triple-quoted)
+    if (varname == "comment") {
+      value::StringData sdata;
+      if (MaybeTripleQuotedString(&sdata)) {
+        sdata.has_comment_prefix = true;  // Mark as having "comment =" prefix
+        MetaVariable var;
+        var.set_value("comment", sdata);
+        return std::make_pair(qual, var);
+      } else if (MaybeString(&sdata)) {
+        sdata.has_comment_prefix = true;  // Mark as having "comment =" prefix
+        MetaVariable var;
+        var.set_value("comment", sdata);
+        return std::make_pair(qual, var);
+      } else {
+        PUSH_ERROR("Failed to parse string value for 'comment' metadata.");
+        return nonstd::nullopt;
+      }
+    }
+
     // parse as string until newline
 
     std::string content;

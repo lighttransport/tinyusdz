@@ -21,6 +21,7 @@
 #include "unit-task-queue.h"
 #include "unit-stage.h"
 #include "unit-tiny-container.h"
+#include "unit-usda-roundtrip.h"
 
 #if defined(TINYUSDZ_WITH_PXR_COMPAT_API)
 #include "unit-pxr-compat-api.h"
@@ -71,6 +72,11 @@ TEST_LIST = {
   { "stack_vector_move_test", stack_vector_move_test },
   { "stack_vector_iterator_test", stack_vector_iterator_test },
   { "stack_vector_complex_type_test", stack_vector_complex_type_test },
+  { "usda_roundtrip_basic_test", usda_roundtrip_basic_test },
+  { "usda_roundtrip_xform_test", usda_roundtrip_xform_test },
+  { "usda_roundtrip_mesh_test", usda_roundtrip_mesh_test },
+  { "usda_roundtrip_material_test", usda_roundtrip_material_test },
+  { "usda_roundtrip_timesamples_test", usda_roundtrip_timesamples_test },
 #if defined(TINYUSDZ_WITH_PXR_COMPAT_API)
   { "pxr_compat_api_test", pxr_compat_api_test },
 #endif
