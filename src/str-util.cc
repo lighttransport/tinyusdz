@@ -146,6 +146,31 @@ std::string unescapeControlSequence(const std::string &str) {
             i++;
           } else if (str[i + 1] == '\\') {
             s += "\\";
+            i++;
+          } else if (str[i + 1] == 'x') {
+            // Hex escape: \xNN
+            if (i + 3 < str.size()) {
+              char h1 = str[i + 2];
+              char h2 = str[i + 3];
+              auto hex_digit = [](char c) -> int {
+                if (c >= '0' && c <= '9') return c - '0';
+                if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+                if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+                return -1;
+              };
+              int d1 = hex_digit(h1);
+              int d2 = hex_digit(h2);
+              if (d1 >= 0 && d2 >= 0) {
+                s += static_cast<char>((d1 << 4) | d2);
+                i += 3;
+              } else {
+                // Invalid hex, keep backslash
+                s += str[i];
+              }
+            } else {
+              // Not enough characters for \xNN
+              s += str[i];
+            }
           } else {
             // ignore backslash
           }

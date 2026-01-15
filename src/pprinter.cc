@@ -685,8 +685,12 @@ std::string print_prim_metas(const PrimMeta &meta, const uint32_t indent) {
   }
 
   if (meta.comment) {
-    ss << pprint::Indent(indent)
-       << "comment = " << to_string(meta.comment.value()) << "\n";
+    // Output with or without "comment =" prefix based on how it was parsed
+    ss << pprint::Indent(indent);
+    if (meta.comment.value().has_comment_prefix) {
+      ss << "comment = ";
+    }
+    ss << to_string(meta.comment.value()) << "\n";
   }
 
   if (meta.customData) {
