@@ -11,11 +11,7 @@ import subprocess
 # Known failing files - these have known issues with roundtrip
 # that should be fixed in the future
 KNOWN_FAILURES = [
-    # Spectral emission (wavelength:emission) not fully supported
-    "spectral-emission-002.usda",
-    "spectral-emission-preset-f2.usda",
-    # Relationship with append/custom/varying qualifiers not properly exported
-    "rel-002.usda",
+    # (All previous known failures have been fixed)
 ]
 
 def main():

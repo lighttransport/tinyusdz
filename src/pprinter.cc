@@ -488,13 +488,14 @@ std::string print_relationship(const Relationship &rel,
 
   ss << pprint::Indent(indent);
 
-  if (custom) {
-    ss << "custom ";
-  }
-
-  // List editing
+  // USD spec order: [listop] [custom] [variability] rel name
+  // List editing qualifier comes first
   if (qual != ListEditQual::ResetToExplicit) {
     ss << to_string(qual) << " ";
+  }
+
+  if (custom) {
+    ss << "custom ";
   }
 
   if (rel.is_varying_authored()) {
@@ -1374,13 +1375,14 @@ std::string print_rel_prop(const Property &prop, const std::string &name,
 
   ss << pprint::Indent(indent);
 
-  if (prop.has_custom()) {
-    ss << "custom ";
-  }
-
-  // List editing
+  // USD spec order: [listop] [custom] [variability] rel name
+  // List editing qualifier comes first
   if (prop.get_listedit_qual() != ListEditQual::ResetToExplicit) {
     ss << to_string(prop.get_listedit_qual()) << " ";
+  }
+
+  if (prop.has_custom()) {
+    ss << "custom ";
   }
 
   const Relationship &rel = prop.get_relationship();
