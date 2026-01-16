@@ -540,43 +540,43 @@ std::string print_payload(const prim::PayloadList &payload,
 std::string print_prim_metas(const PrimMeta &meta, const uint32_t indent) {
   std::stringstream ss;
 
-  if (meta.active) {
+  if (meta.has_active()) {
     ss << pprint::Indent(indent)
-       << "active = " << to_string(meta.active.value()) << "\n";
+       << "active = " << to_string(meta.get_active()) << "\n";
   }
 
-  if (meta.clips) {
-    ss << print_customData(meta.clips.value(), "clips", indent);
+  if (meta.has_clips()) {
+    ss << print_customData(meta.get_clips(), "clips", indent);
   }
 
-  if (meta.instanceable) {
+  if (meta.has_instanceable()) {
     ss << pprint::Indent(indent)
-       << "instanceable = " << to_string(meta.instanceable.value()) << "\n";
+       << "instanceable = " << to_string(meta.get_instanceable()) << "\n";
   }
 
-  if (meta.hidden) {
+  if (meta.has_hidden()) {
     ss << pprint::Indent(indent)
-       << "hidden = " << to_string(meta.hidden.value()) << "\n";
+       << "hidden = " << to_string(meta.get_hidden()) << "\n";
   }
 
-  if (meta.kind) {
+  if (meta.has_kind()) {
     ss << pprint::Indent(indent) << "kind = " << quote(meta.get_kind()) << "\n";
   }
 
   // TODO: UTF-8 ready pprint
-  if (meta.sceneName) {
+  if (meta.has_sceneName()) {
     ss << pprint::Indent(indent)
-       << "sceneName = " << quote(meta.sceneName.value()) << "\n";
+       << "sceneName = " << quote(meta.get_sceneName()) << "\n";
   }
 
   // TODO: UTF-8 ready pprint
-  if (meta.displayName) {
+  if (meta.has_displayName()) {
     ss << pprint::Indent(indent)
-       << "displayName = " << quote(meta.displayName.value()) << "\n";
+       << "displayName = " << quote(meta.get_displayName()) << "\n";
   }
 
-  if (meta.assetInfo) {
-    ss << print_customData(meta.assetInfo.value(), "assetInfo", indent);
+  if (meta.has_assetInfo()) {
+    ss << print_customData(meta.get_assetInfo(), "assetInfo", indent);
   }
 
   if (meta.inherits) {
@@ -624,8 +624,8 @@ std::string print_prim_metas(const PrimMeta &meta, const uint32_t indent) {
   }
 
   // TODO: only print in usdShade Prims.
-  if (meta.sdrMetadata) {
-    ss << print_customData(meta.sdrMetadata.value(), "sdrMetadata", indent);
+  if (meta.has_sdrMetadata()) {
+    ss << print_customData(meta.get_sdrMetadata(), "sdrMetadata", indent);
   }
 
   if (meta.variants) {
@@ -653,8 +653,8 @@ std::string print_prim_metas(const PrimMeta &meta, const uint32_t indent) {
     ss << "\n";
   }
 
-  if (meta.apiSchemas) {
-    auto schemas = meta.apiSchemas.value();
+  if (meta.has_apiSchemas()) {
+    auto schemas = meta.get_apiSchemas();
 
     if (schemas.names.size()) {
       ss << pprint::Indent(indent) << to_string(schemas.listOpQual)
@@ -680,22 +680,22 @@ std::string print_prim_metas(const PrimMeta &meta, const uint32_t indent) {
     }
   }
 
-  if (meta.doc) {
-    ss << pprint::Indent(indent) << "doc = " << to_string(meta.doc.value())
+  if (meta.has_doc()) {
+    ss << pprint::Indent(indent) << "doc = " << to_string(meta.get_doc())
        << "\n";
   }
 
-  if (meta.comment) {
+  if (meta.has_comment()) {
     // Output with or without "comment =" prefix based on how it was parsed
     ss << pprint::Indent(indent);
-    if (meta.comment.value().has_comment_prefix) {
+    if (meta.get_comment().has_comment_prefix) {
       ss << "comment = ";
     }
-    ss << to_string(meta.comment.value()) << "\n";
+    ss << to_string(meta.get_comment()) << "\n";
   }
 
-  if (meta.customData) {
-    ss << print_customData(meta.customData.value(), "customData", indent);
+  if (meta.has_customData()) {
+    ss << print_customData(meta.get_customData(), "customData", indent);
   }
 
   for (const auto &item : meta.unregisteredMetas) {
@@ -726,75 +726,88 @@ std::string print_prim_metas(const PrimMeta &meta, const uint32_t indent) {
 std::string print_attr_metas(const AttrMeta &meta, const uint32_t indent) {
   std::stringstream ss;
 
-  if (meta.interpolation) {
+  if (meta.has_interpolation()) {
     ss << pprint::Indent(indent)
-       << "interpolation = " << quote(to_string(meta.interpolation.value()))
+       << "interpolation = " << to_string(meta.get_interpolation())
        << "\n";
   }
 
-  if (meta.elementSize) {
+  if (meta.has_elementSize()) {
     ss << pprint::Indent(indent)
-       << "elementSize = " << to_string(meta.elementSize.value()) << "\n";
+       << "elementSize = " << to_string(meta.get_elementSize()) << "\n";
   }
 
-  if (meta.bindMaterialAs) {
+  if (meta.has_bindMaterialAs()) {
     ss << pprint::Indent(indent)
-       << "bindMaterialAs = " << to_string(meta.bindMaterialAs.value())
+       << "bindMaterialAs = " << to_string(meta.get_bindMaterialAs())
        << "\n";
   }
 
-  if (meta.connectability) {
+  if (meta.has_connectability()) {
     ss << pprint::Indent(indent)
-       << "connectability = " << to_string(meta.connectability.value())
+       << "connectability = " << to_string(meta.get_connectability())
        << "\n";
   }
 
-  if (meta.displayName) {
+  if (meta.has_displayName()) {
     ss << pprint::Indent(indent)
-       << "displayName = " << quote(meta.displayName.value()) << "\n";
+       << "displayName = " << quote(meta.get_displayName()) << "\n";
   }
 
-  if (meta.displayGroup) {
+  if (meta.has_displayGroup()) {
     ss << pprint::Indent(indent)
-       << "displayGroup = " << quote(meta.displayGroup.value()) << "\n";
+       << "displayGroup = " << quote(meta.get_displayGroup()) << "\n";
   }
 
-  if (meta.outputName) {
+  if (meta.has_outputName()) {
     ss << pprint::Indent(indent)
-       << "outputName = " << to_string(meta.outputName.value()) << "\n";
+       << "outputName = " << to_string(meta.get_outputName()) << "\n";
   }
 
-  if (meta.renderType) {
+  if (meta.has_renderType()) {
     ss << pprint::Indent(indent)
-       << "renderType = " << to_string(meta.renderType.value()) << "\n";
+       << "renderType = " << to_string(meta.get_renderType()) << "\n";
   }
 
-  if (meta.sdrMetadata) {
+  if (meta.has_sdrMetadata()) {
     ss << pprint::Indent(indent)
-       << print_customData(meta.sdrMetadata.value(), "sdrMetadata", indent);
+       << print_customData(meta.get_sdrMetadata(), "sdrMetadata", indent);
   }
 
-  if (meta.hidden) {
+  if (meta.has_hidden()) {
     ss << pprint::Indent(indent)
-       << "hidden = " << to_string(meta.hidden.value()) << "\n";
+       << "hidden = " << to_string(meta.get_hidden()) << "\n";
   }
 
-  if (meta.comment) {
+  if (meta.has_comment()) {
     ss << pprint::Indent(indent)
-       << "comment = " << to_string(meta.comment.value()) << "\n";
+       << "comment = " << to_string(meta.get_comment()) << "\n";
   }
 
-  if (meta.weight) {
-    ss << pprint::Indent(indent) << "weight = " << dtos(meta.weight.value())
+  if (meta.has_weight()) {
+    ss << pprint::Indent(indent) << "weight = " << dtos(meta.get_weight())
        << "\n";
   }
 
-  if (meta.customData) {
-    ss << print_customData(meta.customData.value(), "customData", indent);
+  if (meta.has_customData()) {
+    ss << print_customData(meta.get_customData(), "customData", indent);
   }
 
   // other user defined metadataum.
-  for (const auto &item : meta.meta) {
+  auto is_known_key = [](const std::string &key) {
+    // Keys already printed above
+    constexpr const char* known[] = {
+      "interpolation", "elementSize", "bindMaterialAs", "connectability",
+      "displayName", "displayGroup", "outputName", "renderType",
+      "sdrMetadata", "hidden", "comment", "weight", "customData"
+    };
+    for (const char* k : known) {
+      if (key == k) return true;
+    }
+    return false;
+  };
+  for (const auto &item : meta.data()) {
+    if (is_known_key(item.first)) continue;
     // attribute meta does not emit type_name
     ss << print_meta(item.second, indent, /* emit_type_name */false, item.first);
   }
@@ -823,6 +836,7 @@ std::string print_typed_attr(const TypedAttribute<Animatable<T>> &attr,
     has_default = (pv && pv.value().has_default());
     has_timesamples = (pv && pv.value().has_timesamples());
     is_timesamples = (pv && pv.value().is_timesamples());
+    (void)is_timesamples;  // Used only in debug logging
 
     DCOUT("name " << name);
     DCOUT("is_value_empty " << is_value_empty);
@@ -832,15 +846,24 @@ std::string print_typed_attr(const TypedAttribute<Animatable<T>> &attr,
     DCOUT("has_default " << has_default);
 
     //
-    // Emit default value(includes ValueBlock and empty definition) and metada
+    // Emit default value(includes ValueBlock and empty definition) and metadata
     //
     // float a METADATA
     // float a = None METADATA
     // float a = 1.5 METADATA
-    // 
+    //
     // Also emit this line if the attribute contains metadata
     // Do not emit when Attribute is connection only or timesamples only.
-    if (attr.metas().authored() || attr.is_blocked() || has_default || is_value_empty || ((!is_connection) && (!is_timesamples))) {
+    // Note: has_default can be true even when has_timesamples is true if _has_value
+    // was set (even without an actual default). Use has_timesamples to check if
+    // timeSamples exist, not is_timesamples (which returns false when has_default is true).
+    bool should_emit_declaration =
+        attr.metas().authored() ||
+        attr.is_blocked() ||
+        (has_default && !has_timesamples) ||  // Only emit default if no timeSamples
+        is_value_empty ||
+        ((!is_connection) && (!has_timesamples));
+    if (should_emit_declaration) {
 
       ss << pprint::Indent(indent);
       ss << value::TypeTraits<T>::type_name() << " " << name;
@@ -850,10 +873,15 @@ std::string print_typed_attr(const TypedAttribute<Animatable<T>> &attr,
       } else if (has_default) {
         T a;
         if (pv.value().get_scalar(&a)) {
-          ss << " = " << a;
-        } else {
-          ss << " = [InternalError]";
+          std::stringstream val_ss;
+          val_ss << a;
+          std::string val_str = val_ss.str();
+          // Only print " = value" if value prints something
+          if (!val_str.empty()) {
+            ss << " = " << val_str;
+          }
         }
+        // Else: no value to print (skip " = [InternalError]" for graceful handling)
       } else { // is_value_empty
       }
 
@@ -1107,18 +1135,30 @@ std::string print_typed_attr(
 
     bool is_connection = attr.is_connection();
     bool is_timesamples = v.is_timesamples();
-    bool has_value = attr.has_value();
+    bool has_timesamples = v.has_timesamples();
+    // Note: attr.has_value() always returns true for TypedAttributeWithFallback (due to fallback)
+    // Use v.has_value() to check if Animatable has an explicit default value
+    bool has_default = v.has_value();
     bool is_value_empty = attr.is_value_empty();
+    (void)is_timesamples;  // Used only in debug logging
 
     DCOUT("name " << name);
     DCOUT("is_value_empty " << attr.is_value_empty());
     DCOUT("is_connection " << is_connection);
     DCOUT("is_timesamples " << is_timesamples);
+    DCOUT("has_timesamples " << has_timesamples);
     DCOUT("is_value_empty " << is_value_empty);
-    DCOUT("has_value " << has_value);
+    DCOUT("has_default " << has_default);
 
-    if (attr.metas().authored() || has_value || is_value_empty || ((!is_connection) && (!is_timesamples))) {
-      if (has_value) {
+    // Emit declaration line if:
+    // - Has metadata to emit
+    // - Has explicit default value (in the Animatable, not just fallback)
+    // - Is empty declaration (e.g., "float myval;")
+    // - Not a connection-only and not timeSamples-only attribute
+    // Note: Use has_timesamples instead of is_timesamples because is_timesamples
+    // returns false when there's a default/fallback value (even if timeSamples exist)
+    if (attr.metas().authored() || has_default || is_value_empty || ((!is_connection) && (!has_timesamples))) {
+      if (has_default) {
         ss << pprint::Indent(indent);
         ss << value::TypeTraits<T>::type_name() << " " << name;
         ss << " = " << print_animatable_default(v, indent);
@@ -1446,13 +1486,16 @@ std::string print_prop(const Property &prop, const std::string &prop_name,
       } else {
         // has value content
 
-        ss << " = ";
-
         if (attr.is_blocked()) {
-          ss << "None";
+          ss << " = None";
         } else {
           // default value
-          ss << value::pprint_value(attr.get_var().value_raw());
+          std::string value_str = value::pprint_value(attr.get_var().value_raw());
+          // Only print " = value" if value_str is not empty
+          // (value could be typed but empty when only timeSamples are set)
+          if (!value_str.empty()) {
+            ss << " = " << value_str;
+          }
         }
       }
 
