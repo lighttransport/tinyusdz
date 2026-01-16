@@ -222,7 +222,7 @@ void CreateScene(tinyusdz::Stage *stage) {
         // Currently `interpolation` is described in Attribute metadataum.
         // You can set builtin(predefined) Attribute Metadatum(e.g.
         // `interpolation`, `hidden`) through `metas()`.
-        uvAttr.metas().interpolation = tinyusdz::Interpolation::Vertex;
+        uvAttr.metas().set_interpolation_enum(tinyusdz::Interpolation::Vertex);
 
         tinyusdz::Property uvProp(uvAttr);
 
@@ -259,7 +259,7 @@ void CreateScene(tinyusdz::Stage *stage) {
         attrib.set_var(std::move(var));
         attrib.variability() = tinyusdz::Variability::Uniform;
 
-        attrib.metas().hidden = false;
+        attrib.metas().set_hidden(false);
 
         // NOTE: `custom` keyword would be deprecated in the future USD syntax,
         // so you can set it false.
@@ -404,7 +404,7 @@ void CreateScene(tinyusdz::Stage *stage) {
     tinyusdz::VariantSet variantSet;
 
     tinyusdz::Variant redVariant;
-    redVariant.metas().comment = "red color";
+    redVariant.metas().set_comment("red color");
     tinyusdz::value::color3f redColor({1.0f, 0.0f, 0.0f});
     tinyusdz::Attribute redColorAttr;
     redColorAttr.set_value(std::move(redColor));
@@ -413,7 +413,7 @@ void CreateScene(tinyusdz::Stage *stage) {
     // redVariant.primChildren().emplace(...)
 
     tinyusdz::Variant greenVariant;
-    greenVariant.metas().comment = "green color";
+    greenVariant.metas().set_comment("green color");
     tinyusdz::value::color3f greenColor({0.0f, 1.0f, 0.0f});
     tinyusdz::Attribute greenColorAttr;
     greenColorAttr.set_value(std::move(greenColor));

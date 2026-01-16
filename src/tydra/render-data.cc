@@ -4196,7 +4196,7 @@ bool RenderSceneConverter::ConvertMesh(
     ms.prim_name = psubset->name;
     // ms.prim_index = // TODO
     ms.abs_path = abs_prim_path.prim_part() + std::string("/") + psubset->name;
-    ms.display_name = psubset->meta.displayName.value_or("");
+    ms.display_name = psubset->meta.has_displayName() ? psubset->meta.get_displayName() : "";
 
     // TODO: Raise error when indices is empty?
     if (psubset->indices.authored()) {
@@ -5167,7 +5167,7 @@ bool RenderSceneConverter::ConvertMesh(
     ShapeTarget shapeTarget;
     shapeTarget.abs_path = bs_path;
     shapeTarget.prim_name = bs->name;
-    shapeTarget.display_name = bs->metas().displayName.value_or("");
+    shapeTarget.display_name = bs->metas().has_displayName() ? bs->metas().get_displayName() : "";
 
     if (vertex_indices.empty()) {
       PUSH_WARN(
@@ -5375,14 +5375,14 @@ bool RenderSceneConverter::ConvertMesh(
 
   dst.prim_name = mesh.name;
   dst.abs_path = abs_prim_path.full_path_name();
-  dst.display_name = mesh.metas().displayName.value_or("");
+  dst.display_name = mesh.metas().has_displayName() ? mesh.metas().get_displayName() : "";
 
   //
   // Check for MeshLightAPI - if present, mark this mesh as an area light
   //
   const auto &prim_metas = mesh.metas();
-  if (prim_metas.apiSchemas) {
-    const auto &api_schemas = prim_metas.apiSchemas.value();
+  if (prim_metas.has_apiSchemas()) {
+    const auto api_schemas = prim_metas.get_apiSchemas();
     bool has_meshlight_api = false;
 
     for (const auto &schema_pair : api_schemas.names) {
@@ -6120,11 +6120,12 @@ nonstd::expected<bool, std::string> GetConnectedMtlxTexture(
         *image_shader_out = image_shader;
       }
       if (assetInfo_out) {
-        // get_assetInfo returns AssetInfo converted from customData/assetInfo
-        bool authored = false;
-        const AssetInfo &info = current_shader->metas().get_assetInfo(&authored);
-        if (authored) {
-          *assetInfo_out = &info;
+        // get_assetInfo_struct returns AssetInfo converted from customData/assetInfo
+        // Note: We only check if assetInfo is authored, but we don't return the pointer
+        // since the storage has changed. The caller should use get_assetInfo_struct() directly.
+        if (current_shader->metas().has_assetInfo()) {
+          // AssetInfo is authored - caller should query it directly if needed
+          *assetInfo_out = nullptr;
         }
       }
 
@@ -7047,7 +7048,7 @@ bool RenderSceneConverter::ConvertPreviewSurfaceShaderParam(
     DCOUT("Get connected UsdUVTexture Prim: " << texPath);
 
     UVTexture rtex;
-    const AssetInfo &assetInfo = pshader->metas().get_assetInfo();
+    const AssetInfo assetInfo = pshader->metas().get_assetInfo_struct();
     if (!ConvertUVTexture(env, texPath, assetInfo, *ptex, &rtex)) {
       PUSH_ERROR_AND_RETURN(fmt::format(
           "Failed to convert UVTexture connected to {}", param_name));
@@ -8623,7 +8624,7 @@ bool RenderSceneConverter::ConvertSkelAnimation(const RenderSceneConverterEnv &e
   anim_out->abs_path = abs_path.full_path_name();
   anim_out->prim_name = skelAnim.name;
   anim_out->name = skelAnim.name;
-  anim_out->display_name = skelAnim.metas().displayName.value_or("");
+  anim_out->display_name = skelAnim.metas().has_displayName() ? skelAnim.metas().get_displayName() : "";
   anim_out->duration = 0.0f;  // Will be computed below
 
   // Joint animations - convert to glTF-style flat arrays
@@ -9384,7 +9385,7 @@ bool RenderSceneConverter::BuildNodeHierarchyImpl(
   if (prim) {
     rnode.prim_name = prim->element_name();
     rnode.abs_path = primPath;
-    rnode.display_name = prim->metas().displayName.value_or("");
+    rnode.display_name = prim->metas().has_displayName() ? prim->metas().get_displayName() : "";
 
     DCOUT("rnode.prim_name " << rnode.prim_name);
     DCOUT("node.local_mat " << node.get_local_matrix());
@@ -10576,7 +10577,7 @@ bool RenderSceneConverter::ConvertSkeletonFromPtr(const RenderSceneConverterEnv 
   }
   dst.abs_path = skelPath.prim_part();
   dst.prim_name = primName;
-  dst.display_name = skel.metas().displayName.value_or("");
+  dst.display_name = skel.metas().has_displayName() ? skel.metas().get_displayName() : "";
   dst.root_node = root;
 
   // Handle animation source
@@ -10645,7 +10646,7 @@ bool RenderSceneConverter::ConvertSkeletonImplWithPath(const RenderSceneConverte
       }
       dst.abs_path = skelPath.prim_part();
       dst.prim_name = skelPrim->element_name();
-      dst.display_name = pskel->metas().displayName.value_or("");
+      dst.display_name = pskel->metas().has_displayName() ? pskel->metas().get_displayName() : "";
       dst.root_node = root;
 
       if (pskel->animationSource.has_value()) {

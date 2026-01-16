@@ -265,11 +265,11 @@ bool GPrim::get_primvar(const std::string &varname, GeomPrimvar *out_primvar,
 
     primvar.set_value(attr);
     primvar.set_name(varname);
-    if (attr.metas().interpolation.has_value()) {
-      primvar.set_interpolation(attr.metas().interpolation.value());
+    if (attr.metas().has_interpolation()) {
+      primvar.set_interpolation(attr.metas().get_interpolation_enum());
     }
-    if (attr.metas().elementSize.has_value()) {
-      primvar.set_elementSize(attr.metas().elementSize.value());
+    if (attr.metas().has_elementSize()) {
+      primvar.set_elementSize(attr.metas().get_elementSize());
     }
     if (attr.metas().has_unauthoredValuesIndex()) {
       primvar.set_unauthoredValuesIndex(attr.metas().get_unauthoredValuesIndex());
@@ -352,7 +352,7 @@ try_zero_copy_flatten(const Attribute &attr, const double t, const std::vector<i
     return false;
   }
 
-  uint32_t elementSize = attr.metas().elementSize.value_or(1);
+  uint32_t elementSize = attr.metas().has_elementSize() ? attr.metas().get_elementSize() : 1;
   //TUSDZ_LOG_I("elementSize " << elementSize << ", view size " << value_view.size());
 
   // Sanity check: if view size is unreasonably large, data is corrupted
@@ -450,7 +450,7 @@ bool GeomPrimvar::flatten_with_indices(const double t, std::vector<T> *dest, con
         return false;
       }
       
-      uint32_t elementSize = _attr.metas().elementSize.value_or(1);
+      uint32_t elementSize = _attr.metas().has_elementSize() ? _attr.metas().get_elementSize() : 1;
       //TUSDZ_LOG_I("elementSize" << elementSize);
 
       // Get indices at specified time
@@ -596,7 +596,7 @@ bool GeomPrimvar::flatten_with_indices(const double t, value::Value *dest, const
     } else {
       std::string err_msg;
 
-      uint32_t elementSize = _attr.metas().elementSize.value_or(1);
+      uint32_t elementSize = _attr.metas().has_elementSize() ? _attr.metas().get_elementSize() : 1;
 
       std::vector<int32_t> indices;
       // Get indices at specified time
@@ -854,11 +854,11 @@ bool GPrim::set_primvar(const GeomPrimvar &primvar,
   Attribute attr = primvar.get_attribute();
 
   if (primvar.has_interpolation()) {
-    attr.metas().interpolation = primvar.get_interpolation();
+    attr.metas().set_interpolation_enum(primvar.get_interpolation());
   }
 
   if (primvar.has_elementSize()) {
-    attr.metas().elementSize = primvar.get_elementSize();
+    attr.metas().set_elementSize(primvar.get_elementSize());
   }
 
   props[primvar_name] = attr;
@@ -995,7 +995,7 @@ const std::vector<value::normal3f> GeomMesh::get_normals(
     }
 
     if (indices.size()) {
-      uint32_t elementSize = normals.metas().elementSize.value_or(1);
+      uint32_t elementSize = normals.metas().has_elementSize() ? normals.metas().get_elementSize() : 1;
 
       std::vector<value::normal3f> expanded_normals;
       auto ret = ExpandWithIndices(value, elementSize, indices, &expanded_normals);
@@ -1034,12 +1034,12 @@ Interpolation GeomMesh::get_normalsInterpolation() const {
   if (props.count("primvars:normals")) {
     const auto &prop = props.at("primvars:normals");
     if (prop.get_attribute().type_name() == "normal3f[]") {
-      if (prop.get_attribute().metas().interpolation) {
-        return prop.get_attribute().metas().interpolation.value();
+      if (prop.get_attribute().metas().has_interpolation()) {
+        return prop.get_attribute().metas().get_interpolation_enum();
       }
     }
-  } else if (normals.metas().interpolation) {
-    return normals.metas().interpolation.value();
+  } else if (normals.metas().has_interpolation()) {
+    return normals.metas().get_interpolation_enum();
   }
 
   return Interpolation::Vertex;  // default 'vertex'
@@ -1049,8 +1049,8 @@ Interpolation GPrim::get_displayColorsInterpolation() const {
   if (props.count("primvars:displayColor")) {
     const auto &prop = props.at("primvars:displayColor");
     if (prop.get_attribute().type_name() == "color3f[]") {
-      if (prop.get_attribute().metas().interpolation) {
-        return prop.get_attribute().metas().interpolation.value();
+      if (prop.get_attribute().metas().has_interpolation()) {
+        return prop.get_attribute().metas().get_interpolation_enum();
       }
     }
   }
