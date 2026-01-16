@@ -13,6 +13,8 @@
 #include "str-util.hh"
 #include "io-util.hh"
 #include "tiny-format.hh"
+#include "enum-handlers.hh"
+#include "prim-property-tables.hh"
 
 #include "usdGeom.hh"
 #include "usdSkel.hh"
@@ -1101,31 +1103,7 @@ static ParseResult ParseExtentAttribute(std::set<std::string> &table, /* inout *
 }
 
 
-// Empty allowedTokens = allow all
-template <class E, size_t N>
-static nonstd::expected<bool, std::string> CheckAllowedTokens(
-    const std::array<std::pair<E, const char *>, N> &allowedTokens,
-    const std::string &tok) {
-  if (allowedTokens.empty()) {
-    return true;
-  }
-
-  for (size_t i = 0; i < N; i++) {
-    if (tok.compare(std::get<1>(allowedTokens[i])) == 0) {
-      return true;
-    }
-  }
-
-  std::vector<std::string> toks;
-  for (size_t i = 0; i < N; i++) {
-    toks.push_back(std::get<1>(allowedTokens[i]));
-  }
-
-  std::string s = join(", ", tinyusdz::quote(toks));
-
-  return nonstd::make_unexpected("Allowed tokens are [" + s + "] but got " +
-                                 quote(tok) + ".");
-};
+// CheckAllowedTokens template removed - now in enum-handlers.cc
 
 // Allowed syntax:
 //   "T varname"
@@ -1500,50 +1478,8 @@ static ParseResult ParseShaderInputConnectionProperty(std::set<std::string> &tab
   } \
 }
 
-template <class E>
-static nonstd::expected<bool, std::string> CheckAllowedTokens(
-    const std::vector<std::pair<E, const char *>> &allowedTokens,
-    const std::string &tok) {
-  if (allowedTokens.empty()) {
-    return true;
-  }
-
-  for (size_t i = 0; i < allowedTokens.size(); i++) {
-    if (tok.compare(std::get<1>(allowedTokens[i])) == 0) {
-      return true;
-    }
-  }
-
-  std::vector<std::string> toks;
-  for (size_t i = 0; i < allowedTokens.size(); i++) {
-    toks.push_back(std::get<1>(allowedTokens[i]));
-  }
-
-  std::string s = join(", ", tinyusdz::quote(toks));
-
-  return nonstd::make_unexpected("Allowed tokens are [" + s + "] but got " +
-                                 quote(tok) + ".");
-};
-
-template <typename T>
-nonstd::expected<T, std::string> EnumHandler(
-    const std::string &prop_name, const std::string &tok,
-    const std::vector<std::pair<T, const char *>> &enums) {
-  auto ret = CheckAllowedTokens<T>(enums, tok);
-  if (!ret) {
-    return nonstd::make_unexpected(ret.error());
-  }
-
-  for (auto &item : enums) {
-    if (tok == item.second) {
-      return item.first;
-    }
-  }
-  // Should never reach here, though.
-  return nonstd::make_unexpected(
-      quote(tok) + " is an invalid token for attribute `" + prop_name + "`");
-}
-
+// EnumHandler and CheckAllowedTokens templates removed.
+// Enum handling is now done via centralized handlers in enum-handlers.cc
 
 } // namespace
 
@@ -1586,49 +1522,23 @@ nonstd::expected<T, std::string> EnumHandler(
   } \
 }
 
-template <typename EnumTy>
-using EnumHandlerFun = std::function<nonstd::expected<EnumTy, std::string>(
-    const std::string &)>;
-
+// Use centralized enum handlers from enum-handlers.hh
+// These wrapper functions maintain backwards compatibility with existing macro usage
 static nonstd::expected<Axis, std::string> AxisEnumHandler(const std::string &tok) {
-  using EnumTy = std::pair<Axis, const char *>;
-  const std::vector<EnumTy> enums = {
-      std::make_pair(Axis::X, "X"),
-      std::make_pair(Axis::Y,
-                     "Y"),
-      std::make_pair(Axis::Z, "Z"),
-  };
-  return EnumHandler<Axis>("axis", tok, enums);
-};
+  return enum_handler::Axis(tok);
+}
 
 static nonstd::expected<Visibility, std::string> VisibilityEnumHandler(const std::string &tok) {
-  using EnumTy = std::pair<Visibility, const char *>;
-  const std::vector<EnumTy> enums = {
-      std::make_pair(Visibility::Inherited, "inherited"),
-      std::make_pair(Visibility::Invisible, "invisible"),
-  };
-  return EnumHandler<Visibility>(kVisibility, tok, enums);
-};
+  return enum_handler::Visibility(tok);
+}
 
 static nonstd::expected<Purpose, std::string> PurposeEnumHandler(const std::string &tok) {
-  using EnumTy = std::pair<Purpose, const char *>;
-  const std::vector<EnumTy> enums = {
-      std::make_pair(Purpose::Default, "default"),
-      std::make_pair(Purpose::Proxy, "proxy"),
-      std::make_pair(Purpose::Render, "render"),
-      std::make_pair(Purpose::Guide, "guide"),
-  };
-  return EnumHandler<Purpose>("purpose", tok, enums);
-};
+  return enum_handler::Purpose(tok);
+}
 
 static nonstd::expected<Orientation, std::string> OrientationEnumHandler(const std::string &tok) {
-  using EnumTy = std::pair<Orientation, const char *>;
-  const std::vector<EnumTy> enums = {
-      std::make_pair(Orientation::RightHanded, "rightHanded"),
-      std::make_pair(Orientation::LeftHanded, "leftHanded"),
-  };
-  return EnumHandler<Orientation>("orientation", tok, enums);
-};
+  return enum_handler::Orientation(tok);
+}
 
 #if 1
 
@@ -3304,16 +3214,8 @@ bool ReconstructCollectionProperties(
 {
   constexpr auto kCollectionPrefix = "collection:";
 
-  std::function<nonstd::expected<CollectionInstance::ExpansionRule, std::string>(const std::string &)> ExpansionRuleEnumHandler = [](const std::string &tok) {
-  //auto ExpansionRuleEnumHandler = [](const std::string &tok) {
-    using EnumTy = std::pair<CollectionInstance::ExpansionRule, const char *>;
-    const std::vector<EnumTy> enums = {
-        std::make_pair(CollectionInstance::ExpansionRule::ExplicitOnly, kExplicitOnly),
-        std::make_pair(CollectionInstance::ExpansionRule::ExpandPrims, kExpandPrims),
-        std::make_pair(CollectionInstance::ExpansionRule::ExpandPrimsAndProperties, kExpandPrimsAndProperties),
-    };
-    return EnumHandler<CollectionInstance::ExpansionRule>("expansionRule", tok, enums);
-  };
+  // Use centralized enum handler
+  std::function<nonstd::expected<CollectionInstance::ExpansionRule, std::string>(const std::string &)> ExpansionRuleEnumHandler = enum_handler::ExpansionRule;
 
   if (!coll) {
     return false;
@@ -3556,28 +3458,34 @@ bool ReconstructPrim<Skeleton>(
 
   (void)warn;
   (void)references;
-  (void)options;
 
   std::set<std::string> table;
   if (!prim::ReconstructXformOpsFromProperties(spec, table, properties, &skel->xformOps, err)) {
     return false;
   }
 
+#if defined(__clang__)
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wunused-macros"
+#endif
+#define PRIM_CLASS_ Skeleton
+#define PRIM_PTR_ skel
+#if defined(__clang__)
+#pragma clang diagnostic pop
+#endif
+
   for (auto &prop : properties) {
 
-    // SkelBindingAPI
+    // SkelBindingAPI: animationSource relationship
     if (prop.first == kSkelAnimationSource) {
-
       // Must be relation of type Path.
       if (prop.second.is_relationship() && prop.second.get_relationship().is_path()) {
-        {
-          const Relationship &rel = prop.second.get_relationship();
-          if (rel.is_path()) {
-            skel->animationSource = rel;
-            table.insert(kSkelAnimationSource);
-          } else {
-            PUSH_ERROR_AND_RETURN("`" << kSkelAnimationSource << "` target must be Path.");
-          }
+        const Relationship &rel = prop.second.get_relationship();
+        if (rel.is_path()) {
+          skel->animationSource = rel;
+          table.insert(kSkelAnimationSource);
+        } else {
+          PUSH_ERROR_AND_RETURN("`" << kSkelAnimationSource << "` target must be Path.");
         }
       } else {
         PUSH_ERROR_AND_RETURN(
@@ -3585,12 +3493,7 @@ bool ReconstructPrim<Skeleton>(
       }
     }
 
-    //
-
-    PARSE_TYPED_ATTRIBUTE(table, prop, "bindTransforms", Skeleton, skel->bindTransforms)
-    PARSE_TYPED_ATTRIBUTE(table, prop, "joints", Skeleton, skel->joints)
-    PARSE_TYPED_ATTRIBUTE(table, prop, "jointNames", Skeleton, skel->jointNames)
-    PARSE_TYPED_ATTRIBUTE(table, prop, "restTransforms", Skeleton, skel->restTransforms)
+    SKELETON_TYPED_ATTRS(EXPAND_TYPED_ATTR)
     PARSE_TIMESAMPLED_ENUM_PROPERTY(table, prop, kVisibility, Visibility, VisibilityEnumHandler, Skeleton,
                    skel->visibility, options.strict_allowedToken_check)
     PARSE_UNIFORM_ENUM_PROPERTY(table, prop, "purpose", Purpose, PurposeEnumHandler, Skeleton,
@@ -3599,6 +3502,9 @@ bool ReconstructPrim<Skeleton>(
     ADD_PROPERTY(table, prop, Skeleton, skel->props)
     PARSE_PROPERTY_END_MAKE_ERROR(table, prop)
   }
+
+#undef PRIM_CLASS_
+#undef PRIM_PTR_
 
 #if 0 // TODO: bindTransforms & restTransforms check somewhere.
   // usdview and Houdini USD importer expects both `bindTransforms` and `restTransforms` are authored in USD
@@ -3651,17 +3557,27 @@ bool ReconstructPrim<SkelAnimation>(
   (void)warn;
   (void)references;
   (void)options;
+
   std::set<std::string> table;
+
+#if defined(__clang__)
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wunused-macros"
+#endif
+#define PRIM_CLASS_ SkelAnimation
+#define PRIM_PTR_ skelanim
+#if defined(__clang__)
+#pragma clang diagnostic pop
+#endif
+
   for (auto &prop : properties) {
-    PARSE_TYPED_ATTRIBUTE(table, prop, "joints", SkelAnimation, skelanim->joints)
-    PARSE_TYPED_ATTRIBUTE(table, prop, "translations", SkelAnimation, skelanim->translations)
-    PARSE_TYPED_ATTRIBUTE(table, prop, "rotations", SkelAnimation, skelanim->rotations)
-    PARSE_TYPED_ATTRIBUTE(table, prop, "scales", SkelAnimation, skelanim->scales)
-    PARSE_TYPED_ATTRIBUTE(table, prop, "blendShapes", SkelAnimation, skelanim->blendShapes)
-    PARSE_TYPED_ATTRIBUTE(table, prop, "blendShapeWeights", SkelAnimation, skelanim->blendShapeWeights)
-    ADD_PROPERTY(table, prop, Skeleton, skelanim->props)
+    SKEL_ANIMATION_TYPED_ATTRS(EXPAND_TYPED_ATTR)
+    ADD_PROPERTY(table, prop, SkelAnimation, skelanim->props)
     PARSE_PROPERTY_END_MAKE_ERROR(table, prop)
   }
+
+#undef PRIM_CLASS_
+#undef PRIM_PTR_
 
   return true;
 }
@@ -3682,25 +3598,33 @@ bool ReconstructPrim<BlendShape>(
 
   DCOUT("Reconstruct BlendShape");
 
-  constexpr auto kOffsets = "offsets";
-  constexpr auto kNormalOffsets = "normalOffsets";
-  constexpr auto kPointIndices = "pointIndices";
-
   std::set<std::string> table;
+
+#if defined(__clang__)
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wunused-macros"
+#endif
+#define PRIM_CLASS_ BlendShape
+#define PRIM_PTR_ bs
+#if defined(__clang__)
+#pragma clang diagnostic pop
+#endif
+
   for (auto &prop : properties) {
-    PARSE_TYPED_ATTRIBUTE(table, prop, kOffsets, BlendShape, bs->offsets)
-    PARSE_TYPED_ATTRIBUTE(table, prop, kNormalOffsets, BlendShape, bs->normalOffsets)
-    PARSE_TYPED_ATTRIBUTE(table, prop, kPointIndices, BlendShape, bs->pointIndices)
-    ADD_PROPERTY(table, prop, Skeleton, bs->props)
+    BLEND_SHAPE_TYPED_ATTRS(EXPAND_TYPED_ATTR)
+    ADD_PROPERTY(table, prop, BlendShape, bs->props)
     PARSE_PROPERTY_END_MAKE_ERROR(table, prop)
   }
 
+#undef PRIM_CLASS_
+#undef PRIM_PTR_
+
 #if 0 // TODO: Check required properties exist in strict mode.
   // `offsets` and `normalOffsets` are required property
-  if (!table.count(kOffsets)) {
+  if (!table.count("offsets")) {
     PUSH_ERROR_AND_RETURN("`offsets` property is missing. `uniform vector3f[] offsets` is a required property.");
   }
-  if (!table.count(kNormalOffsets)) {
+  if (!table.count("normalOffsets")) {
     PUSH_ERROR_AND_RETURN("`normalOffsets` property is missing. `uniform vector3f[] normalOffsets` is a required property.");
   }
 #endif
@@ -3741,72 +3665,38 @@ bool ReconstructPrim(
     std::string *err,
     const PrimReconstructOptions &options) {
   (void)references;
-  (void)options;
 
   DCOUT("GeomBasisCurves");
 
-  auto BasisHandler = [](const std::string &tok)
-      -> nonstd::expected<GeomBasisCurves::Basis, std::string> {
-    using EnumTy = std::pair<GeomBasisCurves::Basis, const char *>;
-    const std::vector<EnumTy> enums = {
-        std::make_pair(GeomBasisCurves::Basis::Bezier, "bezier"),
-        std::make_pair(GeomBasisCurves::Basis::Bspline, "bspline"),
-        std::make_pair(GeomBasisCurves::Basis::CatmullRom, "catmullRom"),
-    };
-
-    return EnumHandler<GeomBasisCurves::Basis>("basis", tok, enums);
-  };
-
-  auto TypeHandler = [](const std::string &tok)
-      -> nonstd::expected<GeomBasisCurves::Type, std::string> {
-    using EnumTy = std::pair<GeomBasisCurves::Type, const char *>;
-    const std::vector<EnumTy> enums = {
-        std::make_pair(GeomBasisCurves::Type::Cubic, "cubic"),
-        std::make_pair(GeomBasisCurves::Type::Linear, "linear"),
-    };
-
-    return EnumHandler<GeomBasisCurves::Type>("type", tok, enums);
-  };
-
-  auto WrapHandler = [](const std::string &tok)
-      -> nonstd::expected<GeomBasisCurves::Wrap, std::string> {
-    using EnumTy = std::pair<GeomBasisCurves::Wrap, const char *>;
-    const std::vector<EnumTy> enums = {
-        std::make_pair(GeomBasisCurves::Wrap::Nonperiodic, "nonperiodic"),
-        std::make_pair(GeomBasisCurves::Wrap::Periodic, "periodic"),
-        std::make_pair(GeomBasisCurves::Wrap::Pinned, "periodic"),
-    };
-
-    return EnumHandler<GeomBasisCurves::Wrap>("wrap", tok, enums);
-  };
+  // Use centralized enum handlers
+  auto BasisHandler = enum_handler::BasisCurvesBasis;
+  auto TypeHandler = enum_handler::BasisCurvesType;
+  auto WrapHandler = enum_handler::BasisCurvesWrap;
 
   std::set<std::string> table;
   if (!ReconstructGPrimProperties(spec, table, properties, curves, warn, err, options.strict_allowedToken_check)) {
     return false;
   }
 
+#if defined(__clang__)
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wunused-macros"
+#endif
+#define PRIM_CLASS_ GeomBasisCurves
+#define PRIM_PTR_ curves
+#if defined(__clang__)
+#pragma clang diagnostic pop
+#endif
+
   for (const auto &prop : properties) {
-    PARSE_TYPED_ATTRIBUTE(table, prop, "curveVertexCounts", GeomBasisCurves,
-                         curves->curveVertexCounts)
-    PARSE_TYPED_ATTRIBUTE(table, prop, "points", GeomBasisCurves, curves->points)
-    PARSE_TYPED_ATTRIBUTE(table, prop, "velocities", GeomBasisCurves,
-                          curves->velocities)
-    PARSE_TYPED_ATTRIBUTE(table, prop, "normals", GeomBasisCurves,
-                  curves->normals)
-    PARSE_TYPED_ATTRIBUTE(table, prop, "accelerations", GeomBasisCurves,
-                 curves->accelerations)
-    PARSE_TYPED_ATTRIBUTE(table, prop, "widths", GeomBasisCurves, curves->widths)
-    PARSE_UNIFORM_ENUM_PROPERTY(table, prop, "type", GeomBasisCurves::Type, TypeHandler, GeomBasisCurves,
-                       curves->type, options.strict_allowedToken_check)
-    PARSE_UNIFORM_ENUM_PROPERTY(table, prop, "basis", GeomBasisCurves::Basis, BasisHandler, GeomBasisCurves,
-                       curves->basis, options.strict_allowedToken_check)
-    PARSE_UNIFORM_ENUM_PROPERTY(table, prop, "wrap", GeomBasisCurves::Wrap, WrapHandler, GeomBasisCurves,
-                       curves->wrap, options.strict_allowedToken_check)
-
+    GEOM_BASIS_CURVES_TYPED_ATTRS(EXPAND_TYPED_ATTR)
+    GEOM_BASIS_CURVES_UNIFORM_ENUMS(EXPAND_UNIFORM_ENUM)
     ADD_PROPERTY(table, prop, GeomBasisCurves, curves->props)
-
     PARSE_PROPERTY_END_MAKE_WARN(table, prop)
   }
+
+#undef PRIM_CLASS_
+#undef PRIM_PTR_
 
   return true;
 }
@@ -3866,29 +3756,26 @@ bool ReconstructPrim<SphereLight>(
 
   (void)references;
 
-  (void)options;
   std::set<std::string> table;
 
   if (!prim::ReconstructXformOpsFromProperties(spec, table, properties, &light->xformOps, err)) {
     return false;
   }
 
-  for (const auto &prop : properties) {
-    // PARSE_PROPERTY(prop, "inputs:colorTemperature", light->colorTemperature)
-    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:color", SphereLight, light->color)
-    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:radius", SphereLight, light->radius)
-    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:intensity", SphereLight,
-                   light->intensity)
-    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:shadow:enable", SphereLight, light->shadowEnable)
-    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:shadow:color", SphereLight, light->shadowColor)
-    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:shadow:distance", SphereLight, light->shadowDistance)
-    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:shadow:falloff", SphereLight, light->shadowFalloff)
-    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:shadow:falloffGamma", SphereLight, light->shadowFalloffGamma)
-    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:shaping:focus", SphereLight, light->shapingFocus)
-    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:shaping:focusTint", SphereLight, light->shapingFocusTint)
-    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:shaping:cone:angle", SphereLight, light->shapingConeAngle)
-    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:shaping:cone:softness", SphereLight, light->shapingConeSoftness)
+#if defined(__clang__)
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wunused-macros"
+#endif
+#define PRIM_CLASS_ SphereLight
+#define PRIM_PTR_ light
+#if defined(__clang__)
+#pragma clang diagnostic pop
+#endif
 
+  for (const auto &prop : properties) {
+    SPHERE_LIGHT_TYPED_ATTRS(EXPAND_TYPED_ATTR)
+    LIGHT_SHADOW_ATTRS(EXPAND_TYPED_ATTR)
+    LIGHT_SHAPING_ATTRS(EXPAND_TYPED_ATTR)
     PARSE_TIMESAMPLED_ENUM_PROPERTY(table, prop, kVisibility, Visibility, VisibilityEnumHandler, SphereLight,
                    light->visibility, options.strict_allowedToken_check)
     PARSE_UNIFORM_ENUM_PROPERTY(table, prop, kPurpose, Purpose, PurposeEnumHandler, SphereLight,
@@ -3897,6 +3784,9 @@ bool ReconstructPrim<SphereLight>(
     ADD_PROPERTY(table, prop, SphereLight, light->props)
     PARSE_PROPERTY_END_MAKE_WARN(table, prop)
   }
+
+#undef PRIM_CLASS_
+#undef PRIM_PTR_
 
   return true;
 }
@@ -3912,7 +3802,6 @@ bool ReconstructPrim<RectLight>(
     const PrimReconstructOptions &options) {
 
   (void)references;
-  (void)options;
 
   std::set<std::string> table;
 
@@ -3920,32 +3809,33 @@ bool ReconstructPrim<RectLight>(
     return false;
   }
 
+#if defined(__clang__)
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wunused-macros"
+#endif
+#define PRIM_CLASS_ RectLight
+#define PRIM_PTR_ light
+#if defined(__clang__)
+#pragma clang diagnostic pop
+#endif
+
   for (const auto &prop : properties) {
-    // PARSE_PROPERTY(prop, "inputs:colorTemperature", light->colorTemperature)
+    // Special case: texture:file uses UsdUVTexture type
     PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:texture:file", UsdUVTexture, light->file)
-    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:color", RectLight, light->color)
-    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:height", RectLight, light->height)
-    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:width", RectLight, light->width)
-    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:intensity", RectLight,
-                   light->intensity)
-    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:shadow:enable", RectLight, light->shadowEnable)
-    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:shadow:color", RectLight, light->shadowColor)
-    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:shadow:distance", RectLight, light->shadowDistance)
-    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:shadow:falloff", RectLight, light->shadowFalloff)
-    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:shadow:falloffGamma", RectLight, light->shadowFalloffGamma)
-    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:shaping:focus", RectLight, light->shapingFocus)
-    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:shaping:focusTint", RectLight, light->shapingFocusTint)
-    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:shaping:cone:angle", RectLight, light->shapingConeAngle)
-    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:shaping:cone:softness", RectLight, light->shapingConeSoftness)
-    
+    RECT_LIGHT_TYPED_ATTRS(EXPAND_TYPED_ATTR)
+    LIGHT_SHADOW_ATTRS(EXPAND_TYPED_ATTR)
+    LIGHT_SHAPING_ATTRS(EXPAND_TYPED_ATTR)
     PARSE_EXTENT_ATTRIBUTE(table, prop, kExtent, RectLight, light->extent)
     PARSE_TIMESAMPLED_ENUM_PROPERTY(table, prop, kVisibility, Visibility, VisibilityEnumHandler, RectLight,
                    light->visibility, options.strict_allowedToken_check)
     PARSE_UNIFORM_ENUM_PROPERTY(table, prop, kPurpose, Purpose, PurposeEnumHandler, RectLight,
                        light->purpose, options.strict_allowedToken_check)
-    ADD_PROPERTY(table, prop, SphereLight, light->props)
+    ADD_PROPERTY(table, prop, RectLight, light->props)
     PARSE_PROPERTY_END_MAKE_WARN(table, prop)
   }
+
+#undef PRIM_CLASS_
+#undef PRIM_PTR_
 
   return true;
 }
@@ -3961,7 +3851,6 @@ bool ReconstructPrim<DiskLight>(
     const PrimReconstructOptions &options) {
 
   (void)references;
-  (void)options;
 
   std::set<std::string> table;
 
@@ -3969,23 +3858,20 @@ bool ReconstructPrim<DiskLight>(
     return false;
   }
 
+#if defined(__clang__)
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wunused-macros"
+#endif
+#define PRIM_CLASS_ DiskLight
+#define PRIM_PTR_ light
+#if defined(__clang__)
+#pragma clang diagnostic pop
+#endif
+
   for (const auto &prop : properties) {
-    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:color", DiskLight, light->color)
-    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:intensity", DiskLight, light->intensity)
-    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:exposure", DiskLight, light->exposure)
-    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:normalize", DiskLight, light->normalize)
-    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:enableColorTemperature", DiskLight, light->enableColorTemperature)
-    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:colorTemperature", DiskLight, light->colorTemperature)
-    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:radius", DiskLight, light->radius)
-    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:shadow:enable", DiskLight, light->shadowEnable)
-    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:shadow:color", DiskLight, light->shadowColor)
-    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:shadow:distance", DiskLight, light->shadowDistance)
-    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:shadow:falloff", DiskLight, light->shadowFalloff)
-    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:shadow:falloffGamma", DiskLight, light->shadowFalloffGamma)
-    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:shaping:focus", DiskLight, light->shapingFocus)
-    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:shaping:focusTint", DiskLight, light->shapingFocusTint)
-    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:shaping:cone:angle", DiskLight, light->shapingConeAngle)
-    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:shaping:cone:softness", DiskLight, light->shapingConeSoftness)
+    DISK_LIGHT_TYPED_ATTRS(EXPAND_TYPED_ATTR)
+    LIGHT_SHADOW_ATTRS(EXPAND_TYPED_ATTR)
+    LIGHT_SHAPING_ATTRS(EXPAND_TYPED_ATTR)
     PARSE_EXTENT_ATTRIBUTE(table, prop, kExtent, DiskLight, light->extent)
     PARSE_TIMESAMPLED_ENUM_PROPERTY(table, prop, kVisibility, Visibility, VisibilityEnumHandler, DiskLight,
                        light->visibility, options.strict_allowedToken_check)
@@ -3994,6 +3880,9 @@ bool ReconstructPrim<DiskLight>(
     ADD_PROPERTY(table, prop, DiskLight, light->props)
     PARSE_PROPERTY_END_MAKE_WARN(table, prop)
   }
+
+#undef PRIM_CLASS_
+#undef PRIM_PTR_
 
   return true;
 }
@@ -4009,7 +3898,6 @@ bool ReconstructPrim<CylinderLight>(
     const PrimReconstructOptions &options) {
 
   (void)references;
-  (void)options;
 
   std::set<std::string> table;
 
@@ -4017,27 +3905,31 @@ bool ReconstructPrim<CylinderLight>(
     return false;
   }
 
+#if defined(__clang__)
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wunused-macros"
+#endif
+#define PRIM_CLASS_ CylinderLight
+#define PRIM_PTR_ light
+#if defined(__clang__)
+#pragma clang diagnostic pop
+#endif
+
   for (const auto &prop : properties) {
-    // PARSE_PROPERTY(prop, "inputs:colorTemperature", light->colorTemperature)
-    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:length", CylinderLight, light->length)
-    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:radius", CylinderLight, light->radius)
-    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:shadow:enable", CylinderLight, light->shadowEnable)
-    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:shadow:color", CylinderLight, light->shadowColor)
-    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:shadow:distance", CylinderLight, light->shadowDistance)
-    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:shadow:falloff", CylinderLight, light->shadowFalloff)
-    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:shadow:falloffGamma", CylinderLight, light->shadowFalloffGamma)
-    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:shaping:focus", CylinderLight, light->shapingFocus)
-    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:shaping:focusTint", CylinderLight, light->shapingFocusTint)
-    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:shaping:cone:angle", CylinderLight, light->shapingConeAngle)
-    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:shaping:cone:softness", CylinderLight, light->shapingConeSoftness)
+    CYLINDER_LIGHT_TYPED_ATTRS(EXPAND_TYPED_ATTR)
+    LIGHT_SHADOW_ATTRS(EXPAND_TYPED_ATTR)
+    LIGHT_SHAPING_ATTRS(EXPAND_TYPED_ATTR)
     PARSE_EXTENT_ATTRIBUTE(table, prop, kExtent, CylinderLight, light->extent)
     PARSE_TIMESAMPLED_ENUM_PROPERTY(table, prop, kVisibility, Visibility, VisibilityEnumHandler, CylinderLight,
                    light->visibility, options.strict_allowedToken_check)
     PARSE_UNIFORM_ENUM_PROPERTY(table, prop, kPurpose, Purpose, PurposeEnumHandler, CylinderLight,
                        light->purpose, options.strict_allowedToken_check)
-    ADD_PROPERTY(table, prop, SphereLight, light->props)
+    ADD_PROPERTY(table, prop, CylinderLight, light->props)
     PARSE_PROPERTY_END_MAKE_WARN(table, prop)
   }
+
+#undef PRIM_CLASS_
+#undef PRIM_PTR_
 
   return true;
 }
@@ -4053,7 +3945,6 @@ bool ReconstructPrim<DistantLight>(
     const PrimReconstructOptions &options) {
 
   (void)references;
-  (void)options;
 
   std::set<std::string> table;
 
@@ -4061,27 +3952,30 @@ bool ReconstructPrim<DistantLight>(
     return false;
   }
 
-  for (const auto &prop : properties) {
+#if defined(__clang__)
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wunused-macros"
+#endif
+#define PRIM_CLASS_ DistantLight
+#define PRIM_PTR_ light
+#if defined(__clang__)
+#pragma clang diagnostic pop
+#endif
 
-    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:color", DistantLight, light->color)
-    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:intensity", DistantLight, light->intensity)
-    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:exposure", DistantLight, light->exposure)
-    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:normalize", DistantLight, light->normalize)
-    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:enableColorTemperature", DistantLight, light->enableColorTemperature)
-    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:colorTemperature", DistantLight, light->colorTemperature)
-    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:angle", DistantLight, light->angle)
-    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:shadow:enable", DistantLight, light->shadowEnable)
-    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:shadow:color", DistantLight, light->shadowColor)
-    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:shadow:distance", DistantLight, light->shadowDistance)
-    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:shadow:falloff", DistantLight, light->shadowFalloff)
-    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:shadow:falloffGamma", DistantLight, light->shadowFalloffGamma)
+  for (const auto &prop : properties) {
+    DISTANT_LIGHT_TYPED_ATTRS(EXPAND_TYPED_ATTR)
+    LIGHT_SHADOW_ATTRS(EXPAND_TYPED_ATTR)
+    // DistantLight has no shaping attrs or extent
     PARSE_UNIFORM_ENUM_PROPERTY(table, prop, kPurpose, Purpose, PurposeEnumHandler, DistantLight,
                        light->purpose, options.strict_allowedToken_check)
     PARSE_TIMESAMPLED_ENUM_PROPERTY(table, prop, kVisibility, Visibility, VisibilityEnumHandler, DistantLight,
                    light->visibility, options.strict_allowedToken_check)
-    ADD_PROPERTY(table, prop, SphereLight, light->props)
+    ADD_PROPERTY(table, prop, DistantLight, light->props)
     PARSE_PROPERTY_END_MAKE_WARN(table, prop)
   }
+
+#undef PRIM_CLASS_
+#undef PRIM_PTR_
 
   return true;
 }
@@ -4097,7 +3991,6 @@ bool ReconstructPrim<GeometryLight>(
     const PrimReconstructOptions &options) {
 
   (void)references;
-  (void)options;
 
   std::set<std::string> table;
 
@@ -4105,20 +3998,20 @@ bool ReconstructPrim<GeometryLight>(
     return false;
   }
 
+#if defined(__clang__)
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wunused-macros"
+#endif
+#define PRIM_CLASS_ GeometryLight
+#define PRIM_PTR_ light
+#if defined(__clang__)
+#pragma clang diagnostic pop
+#endif
+
   for (const auto &prop : properties) {
-    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:color", GeometryLight, light->color)
-    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:intensity", GeometryLight, light->intensity)
-    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:exposure", GeometryLight, light->exposure)
-    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:diffuse", GeometryLight, light->diffuse)
-    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:specular", GeometryLight, light->specular)
-    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:normalize", GeometryLight, light->normalize)
-    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:enableColorTemperature", GeometryLight, light->enableColorTemperature)
-    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:colorTemperature", GeometryLight, light->colorTemperature)
-    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:shadow:enable", GeometryLight, light->shadowEnable)
-    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:shadow:color", GeometryLight, light->shadowColor)
-    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:shadow:distance", GeometryLight, light->shadowDistance)
-    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:shadow:falloff", GeometryLight, light->shadowFalloff)
-    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:shadow:falloffGamma", GeometryLight, light->shadowFalloffGamma)
+    GEOMETRY_LIGHT_TYPED_ATTRS(EXPAND_TYPED_ATTR)
+    LIGHT_SHADOW_ATTRS(EXPAND_TYPED_ATTR)
+    // GeometryLight has no shaping attrs or extent
     PARSE_TIMESAMPLED_ENUM_PROPERTY(table, prop, kVisibility, Visibility, VisibilityEnumHandler, GeometryLight,
                    light->visibility, options.strict_allowedToken_check)
     PARSE_UNIFORM_ENUM_PROPERTY(table, prop, kPurpose, Purpose, PurposeEnumHandler, GeometryLight,
@@ -4126,6 +4019,9 @@ bool ReconstructPrim<GeometryLight>(
     ADD_PROPERTY(table, prop, GeometryLight, light->props)
     PARSE_PROPERTY_END_MAKE_WARN(table, prop)
   }
+
+#undef PRIM_CLASS_
+#undef PRIM_PTR_
 
   return true;
 }
@@ -4141,7 +4037,6 @@ bool ReconstructPrim<DomeLight>(
     const PrimReconstructOptions &options) {
 
   (void)references;
-  (void)options;
 
   std::set<std::string> table;
 
@@ -4149,25 +4044,20 @@ bool ReconstructPrim<DomeLight>(
     return false;
   }
 
+#if defined(__clang__)
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wunused-macros"
+#endif
+#define PRIM_CLASS_ DomeLight
+#define PRIM_PTR_ light
+#if defined(__clang__)
+#pragma clang diagnostic pop
+#endif
+
   for (const auto &prop : properties) {
-    PARSE_TYPED_ATTRIBUTE(table, prop, "guideRadius", DomeLight, light->guideRadius)
-    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:diffuse", DomeLight, light->diffuse)
-    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:specular", DomeLight,
-                   light->specular)
-    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:colorTemperature", DomeLight,
-                   light->colorTemperature)
-    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:color", DomeLight, light->color)
-    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:intensity", DomeLight,
-                   light->intensity)
-    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:texture:file", DomeLight, light->file)
-
-    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:shadow:enable", DomeLight, light->shadowEnable)
-    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:shadow:color", DomeLight, light->shadowColor)
-    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:shadow:distance", DomeLight, light->shadowDistance)
-    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:shadow:falloff", DomeLight, light->shadowFalloff)
-    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:shadow:falloffGamma", DomeLight, light->shadowFalloffGamma)
-
-
+    DOME_LIGHT_TYPED_ATTRS(EXPAND_TYPED_ATTR)
+    LIGHT_SHADOW_ATTRS(EXPAND_TYPED_ATTR)
+    // DomeLight has no shaping attrs or extent
     PARSE_TIMESAMPLED_ENUM_PROPERTY(table, prop, kVisibility, Visibility, VisibilityEnumHandler, DomeLight,
                    light->visibility, options.strict_allowedToken_check)
     PARSE_UNIFORM_ENUM_PROPERTY(table, prop, kPurpose, Purpose, PurposeEnumHandler, DomeLight,
@@ -4175,6 +4065,9 @@ bool ReconstructPrim<DomeLight>(
     ADD_PROPERTY(table, prop, DomeLight, light->props)
     PARSE_PROPERTY_END_MAKE_WARN(table, prop)
   }
+
+#undef PRIM_CLASS_
+#undef PRIM_PTR_
 
   DCOUT("Implement DomeLight");
   return true;
@@ -4190,9 +4083,7 @@ bool ReconstructPrim<GeomSphere>(
     std::string *err,
     const PrimReconstructOptions &options) {
 
-  (void)warn;
   (void)references;
-  (void)options;
 
   DCOUT("Reconstruct Sphere.");
 
@@ -4201,11 +4092,24 @@ bool ReconstructPrim<GeomSphere>(
     return false;
   }
 
+#if defined(__clang__)
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wunused-macros"
+#endif
+#define PRIM_CLASS_ GeomSphere
+#define PRIM_PTR_ sphere
+#if defined(__clang__)
+#pragma clang diagnostic pop
+#endif
+
   for (const auto &prop : properties) {
-    PARSE_TYPED_ATTRIBUTE(table, prop, "radius", GeomSphere, sphere->radius)
+    GEOM_SPHERE_TYPED_ATTRS(EXPAND_TYPED_ATTR)
     ADD_PROPERTY(table, prop, GeomSphere, sphere->props)
     PARSE_PROPERTY_END_MAKE_ERROR(table, prop)
   }
+
+#undef PRIM_CLASS_
+#undef PRIM_PTR_
 
   return true;
 }
@@ -4220,9 +4124,7 @@ bool ReconstructPrim<GeomPoints>(
     std::string *err,
     const PrimReconstructOptions &options) {
 
-  (void)warn;
   (void)references;
-  (void)options;
 
   DCOUT("Reconstruct Points.");
 
@@ -4231,17 +4133,25 @@ bool ReconstructPrim<GeomPoints>(
     return false;
   }
 
+#if defined(__clang__)
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wunused-macros"
+#endif
+#define PRIM_CLASS_ GeomPoints
+#define PRIM_PTR_ points
+#if defined(__clang__)
+#pragma clang diagnostic pop
+#endif
+
   for (const auto &prop : properties) {
     DCOUT("prop: " << prop.first);
-    PARSE_TYPED_ATTRIBUTE(table, prop, "points", GeomPoints, points->points)
-    PARSE_TYPED_ATTRIBUTE(table, prop, "normals", GeomPoints, points->normals)
-    PARSE_TYPED_ATTRIBUTE(table, prop, "widths", GeomPoints, points->widths)
-    PARSE_TYPED_ATTRIBUTE(table, prop, "ids", GeomPoints, points->ids)
-    PARSE_TYPED_ATTRIBUTE(table, prop, "velocities", GeomPoints, points->velocities)
-    PARSE_TYPED_ATTRIBUTE(table, prop, "accelerations", GeomPoints, points->accelerations)
-    ADD_PROPERTY(table, prop, GeomSphere, points->props)
+    GEOM_POINTS_TYPED_ATTRS(EXPAND_TYPED_ATTR)
+    ADD_PROPERTY(table, prop, GeomPoints, points->props)
     PARSE_PROPERTY_END_MAKE_ERROR(table, prop)
   }
+
+#undef PRIM_CLASS_
+#undef PRIM_PTR_
 
   return true;
 }
@@ -4256,23 +4166,33 @@ bool ReconstructPrim<GeomCone>(
     std::string *err,
     const PrimReconstructOptions &options) {
 
-  (void)warn;
   (void)references;
-  (void)options;
 
   std::set<std::string> table;
   if (!ReconstructGPrimProperties(spec, table, properties, cone, warn, err, options.strict_allowedToken_check)) {
     return false;
   }
 
+#if defined(__clang__)
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wunused-macros"
+#endif
+#define PRIM_CLASS_ GeomCone
+#define PRIM_PTR_ cone
+#if defined(__clang__)
+#pragma clang diagnostic pop
+#endif
+
   for (const auto &prop : properties) {
     DCOUT("prop: " << prop.first);
-    PARSE_TYPED_ATTRIBUTE(table, prop, "radius", GeomCone, cone->radius)
-    PARSE_TYPED_ATTRIBUTE(table, prop, "height", GeomCone, cone->height)
-    PARSE_UNIFORM_ENUM_PROPERTY(table, prop, "axis", Axis, AxisEnumHandler, GeomCone, cone->axis, options.strict_allowedToken_check)
+    GEOM_CONE_TYPED_ATTRS(EXPAND_TYPED_ATTR)
+    GEOM_CONE_UNIFORM_ENUMS(EXPAND_UNIFORM_ENUM)
     ADD_PROPERTY(table, prop, GeomCone, cone->props)
     PARSE_PROPERTY_END_MAKE_ERROR(table, prop)
   }
+
+#undef PRIM_CLASS_
+#undef PRIM_PTR_
 
   return true;
 }
@@ -4287,25 +4207,33 @@ bool ReconstructPrim<GeomCylinder>(
     std::string *err,
     const PrimReconstructOptions &options) {
 
-  (void)warn;
   (void)references;
-  (void)options;
 
   std::set<std::string> table;
   if (!ReconstructGPrimProperties(spec, table, properties, cylinder, warn, err, options.strict_allowedToken_check)) {
     return false;
   }
 
+#if defined(__clang__)
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wunused-macros"
+#endif
+#define PRIM_CLASS_ GeomCylinder
+#define PRIM_PTR_ cylinder
+#if defined(__clang__)
+#pragma clang diagnostic pop
+#endif
+
   for (const auto &prop : properties) {
     DCOUT("prop: " << prop.first);
-    PARSE_TYPED_ATTRIBUTE(table, prop, "radius", GeomCylinder,
-                         cylinder->radius)
-    PARSE_TYPED_ATTRIBUTE(table, prop, "height", GeomCylinder,
-                         cylinder->height)
-    PARSE_UNIFORM_ENUM_PROPERTY(table, prop, "axis", Axis, AxisEnumHandler, GeomCylinder, cylinder->axis, options.strict_allowedToken_check)
+    GEOM_CYLINDER_TYPED_ATTRS(EXPAND_TYPED_ATTR)
+    GEOM_CYLINDER_UNIFORM_ENUMS(EXPAND_UNIFORM_ENUM)
     ADD_PROPERTY(table, prop, GeomCylinder, cylinder->props)
     PARSE_PROPERTY_END_MAKE_ERROR(table, prop)
   }
+
+#undef PRIM_CLASS_
+#undef PRIM_PTR_
 
   return true;
 }
@@ -4320,22 +4248,32 @@ bool ReconstructPrim<GeomCapsule>(
     std::string *err,
     const PrimReconstructOptions &options) {
 
-  (void)warn;
   (void)references;
-  (void)options;
 
   std::set<std::string> table;
   if (!ReconstructGPrimProperties(spec, table, properties, capsule, warn, err, options.strict_allowedToken_check)) {
     return false;
   }
 
+#if defined(__clang__)
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wunused-macros"
+#endif
+#define PRIM_CLASS_ GeomCapsule
+#define PRIM_PTR_ capsule
+#if defined(__clang__)
+#pragma clang diagnostic pop
+#endif
+
   for (const auto &prop : properties) {
-    PARSE_TYPED_ATTRIBUTE(table, prop, "radius", GeomCapsule, capsule->radius)
-    PARSE_TYPED_ATTRIBUTE(table, prop, "height", GeomCapsule, capsule->height)
-    PARSE_UNIFORM_ENUM_PROPERTY(table, prop, "axis", Axis, AxisEnumHandler, GeomCapsule, capsule->axis, options.strict_allowedToken_check)
+    GEOM_CAPSULE_TYPED_ATTRS(EXPAND_TYPED_ATTR)
+    GEOM_CAPSULE_UNIFORM_ENUMS(EXPAND_UNIFORM_ENUM)
     ADD_PROPERTY(table, prop, GeomCapsule, capsule->props)
     PARSE_PROPERTY_END_MAKE_ERROR(table, prop)
   }
+
+#undef PRIM_CLASS_
+#undef PRIM_PTR_
 
   return true;
 }
@@ -4350,9 +4288,7 @@ bool ReconstructPrim<GeomCube>(
     std::string *err,
     const PrimReconstructOptions &options) {
 
-  (void)warn;
   (void)references;
-  (void)options;
 
   //
   // pxrUSD says... "If you author size you must also author extent."
@@ -4362,12 +4298,25 @@ bool ReconstructPrim<GeomCube>(
     return false;
   }
 
+#if defined(__clang__)
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wunused-macros"
+#endif
+#define PRIM_CLASS_ GeomCube
+#define PRIM_PTR_ cube
+#if defined(__clang__)
+#pragma clang diagnostic pop
+#endif
+
   for (const auto &prop : properties) {
     DCOUT("prop: " << prop.first);
-    PARSE_TYPED_ATTRIBUTE(table, prop, "size", GeomCube, cube->size)
+    GEOM_CUBE_TYPED_ATTRS(EXPAND_TYPED_ATTR)
     ADD_PROPERTY(table, prop, GeomCube, cube->props)
     PARSE_PROPERTY_END_MAKE_ERROR(table, prop)
   }
+
+#undef PRIM_CLASS_
+#undef PRIM_PTR_
 
   return true;
 }
@@ -4383,111 +4332,49 @@ bool ReconstructPrim<GeomMesh>(
     const PrimReconstructOptions &options) {
 
   (void)references;
-  (void)options;
 
   DCOUT("GeomMesh");
 
-  auto SubdivisionSchemeHandler = [](const std::string &tok)
-      -> nonstd::expected<GeomMesh::SubdivisionScheme, std::string> {
-    using EnumTy = std::pair<GeomMesh::SubdivisionScheme, const char *>;
-    const std::vector<EnumTy> enums = {
-        std::make_pair(GeomMesh::SubdivisionScheme::SubdivisionSchemeNone, "none"),
-        std::make_pair(GeomMesh::SubdivisionScheme::CatmullClark,
-                       "catmullClark"),
-        std::make_pair(GeomMesh::SubdivisionScheme::Loop, "loop"),
-        std::make_pair(GeomMesh::SubdivisionScheme::Bilinear, "bilinear"),
-    };
-    return EnumHandler<GeomMesh::SubdivisionScheme>("subdivisionScheme", tok,
-                                                    enums);
-  };
-
-  auto InterpolateBoundaryHandler = [](const std::string &tok)
-      -> nonstd::expected<GeomMesh::InterpolateBoundary, std::string> {
-    using EnumTy = std::pair<GeomMesh::InterpolateBoundary, const char *>;
-    const std::vector<EnumTy> enums = {
-        std::make_pair(GeomMesh::InterpolateBoundary::InterpolateBoundaryNone, "none"),
-        std::make_pair(GeomMesh::InterpolateBoundary::EdgeAndCorner,
-                       "edgeAndCorner"),
-        std::make_pair(GeomMesh::InterpolateBoundary::EdgeOnly, "edgeOnly"),
-    };
-    return EnumHandler<GeomMesh::InterpolateBoundary>("interpolateBoundary",
-                                                      tok, enums);
-  };
-
-  auto FaceVaryingLinearInterpolationHandler = [](const std::string &tok)
-      -> nonstd::expected<GeomMesh::FaceVaryingLinearInterpolation,
-                          std::string> {
-    using EnumTy =
-        std::pair<GeomMesh::FaceVaryingLinearInterpolation, const char *>;
-    const std::vector<EnumTy> enums = {
-        std::make_pair(GeomMesh::FaceVaryingLinearInterpolation::CornersPlus1,
-                       "cornersPlus1"),
-        std::make_pair(GeomMesh::FaceVaryingLinearInterpolation::CornersPlus2,
-                       "cornersPlus2"),
-        std::make_pair(GeomMesh::FaceVaryingLinearInterpolation::CornersOnly,
-                       "cornersOnly"),
-        std::make_pair(GeomMesh::FaceVaryingLinearInterpolation::Boundaries,
-                       "boundaries"),
-        std::make_pair(GeomMesh::FaceVaryingLinearInterpolation::FaceVaryingLinearInterpolationNone, "none"),
-        std::make_pair(GeomMesh::FaceVaryingLinearInterpolation::All, "all"),
-    };
-    return EnumHandler<GeomMesh::FaceVaryingLinearInterpolation>(
-        "facevaryingLinearInterpolation", tok, enums);
-  };
-
-  auto FamilyTypeHandler = [](const std::string &tok)
-      -> nonstd::expected<GeomSubset::FamilyType, std::string> {
-    using EnumTy = std::pair<GeomSubset::FamilyType, const char *>;
-    const std::vector<EnumTy> enums = {
-        std::make_pair(GeomSubset::FamilyType::Partition, "partition"),
-        std::make_pair(GeomSubset::FamilyType::NonOverlapping, "nonOverlapping"),
-        std::make_pair(GeomSubset::FamilyType::Unrestricted, "unrestricted"),
-    };
-    return EnumHandler<GeomSubset::FamilyType>("familyType", tok,
-                                                    enums);
-  };
+  // Use centralized enum handlers (aliased for macro expansion)
+  auto SubdivisionSchemeHandler = enum_handler::SubdivisionScheme;
+  auto InterpolateBoundaryHandler = enum_handler::InterpolateBoundary;
+  auto FaceVaryingLinearInterpolationHandler = enum_handler::FaceVaryingLinearInterpolation;
+  auto FamilyTypeHandler = enum_handler::FamilyType;
 
   std::set<std::string> table;
   if (!ReconstructGPrimProperties(spec, table, properties, mesh, warn, err, options.strict_allowedToken_check)) {
     return false;
   }
 
+  // Define context for property table expansion macros
+  // (suppress unused-macros warning since these are used inside X-macro expansion)
+#if defined(__clang__)
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wunused-macros"
+#endif
+#define PRIM_CLASS_ GeomMesh
+#define PRIM_PTR_ mesh
+#if defined(__clang__)
+#pragma clang diagnostic pop
+#endif
+
   for (auto &prop : properties) {
     DCOUT("GeomMesh prop: " << prop.first);
-    PARSE_SINGLE_TARGET_PATH_RELATION(table, prop, kSkelSkeleton, mesh->skeleton)
-    PARSE_TARGET_PATHS_RELATION(table, prop, kSkelBlendShapeTargets, mesh->blendShapeTargets)
-    PARSE_TYPED_ATTRIBUTE(table, prop, "points", GeomMesh, mesh->points)
-    PARSE_TYPED_ATTRIBUTE(table, prop, "normals", GeomMesh, mesh->normals)
-    PARSE_TYPED_ATTRIBUTE(table, prop, "faceVertexCounts", GeomMesh,
-                         mesh->faceVertexCounts)
-    PARSE_TYPED_ATTRIBUTE(table, prop, "faceVertexIndices", GeomMesh,
-                         mesh->faceVertexIndices)
-    // Subd
-    PARSE_TYPED_ATTRIBUTE(table, prop, "cornerIndices", GeomMesh,
-                         mesh->cornerIndices)
-    PARSE_TYPED_ATTRIBUTE(table, prop, "cornerSharpnesses", GeomMesh,
-                         mesh->cornerSharpnesses)
-    PARSE_TYPED_ATTRIBUTE(table, prop, "creaseIndices", GeomMesh,
-                         mesh->creaseIndices)
-    PARSE_TYPED_ATTRIBUTE(table, prop, "creaseLengths", GeomMesh,
-                         mesh->creaseLengths)
-    PARSE_TYPED_ATTRIBUTE(table, prop, "creaseSharpnesses", GeomMesh,
-                         mesh->creaseSharpnesses)
-    PARSE_TYPED_ATTRIBUTE(table, prop, "holeIndices", GeomMesh,
-                         mesh->holeIndices)
-    PARSE_UNIFORM_ENUM_PROPERTY(table, prop, "subdivisionScheme", GeomMesh::SubdivisionScheme,
-                       SubdivisionSchemeHandler, GeomMesh,
-                       mesh->subdivisionScheme, options.strict_allowedToken_check)
-    PARSE_TIMESAMPLED_ENUM_PROPERTY(table, prop, "interpolateBoundary",
-                       GeomMesh::InterpolateBoundary, InterpolateBoundaryHandler, GeomMesh,
-                       mesh->interpolateBoundary, options.strict_allowedToken_check)
-    PARSE_TIMESAMPLED_ENUM_PROPERTY(table, prop, "facevaryingLinearInterpolation",
-                       GeomMesh::FaceVaryingLinearInterpolation, FaceVaryingLinearInterpolationHandler, GeomMesh,
-                       mesh->faceVaryingLinearInterpolation, options.strict_allowedToken_check)
-    // blendShape names
-    PARSE_TYPED_ATTRIBUTE(table, prop, kSkelBlendShapes, GeomMesh, mesh->blendShapes)
 
-    // subsetFamily for GeomSubset
+    // Relations (using property table)
+    GEOM_MESH_RELATIONS(EXPAND_SINGLE_REL, EXPAND_MULTI_REL)
+
+    // Typed attributes (using property table)
+    GEOM_MESH_TYPED_ATTRS(EXPAND_TYPED_ATTR)
+
+    // Skel-related typed attributes
+    GEOM_MESH_SKEL_ATTRS(EXPAND_TYPED_ATTR)
+
+    // Enum properties (using property table)
+    GEOM_MESH_UNIFORM_ENUMS(EXPAND_UNIFORM_ENUM)
+    GEOM_MESH_TIMESAMPLED_ENUMS(EXPAND_TIMESAMPLED_ENUM)
+
+    // Special handling: subsetFamily for GeomSubset (cannot be table-driven)
     if (startsWith(prop.first, "subsetFamily")) {
       // uniform subsetFamily::<FAMILYNAME>:familyType = ...
       std::vector<std::string> names = split(prop.first, ":");
@@ -4518,12 +4405,13 @@ bool ReconstructPrim<GeomMesh>(
       }
     }
 
-    //TUSDZ_LOG_I("add prop: " << prop.first);
-    // generic
+    // generic property handling
     ADD_PROPERTY(table, prop, GeomMesh, mesh->props)
     PARSE_PROPERTY_END_MAKE_WARN(table, prop)
   }
 
+#undef PRIM_CLASS_
+#undef PRIM_PTR_
 
   return true;
 }
@@ -4540,92 +4428,36 @@ bool ReconstructPrim<GeomCamera>(
     const PrimReconstructOptions &options) {
   (void)references;
   (void)warn;
-  (void)options;
 
-  auto ProjectionHandler = [](const std::string &tok)
-      -> nonstd::expected<GeomCamera::Projection, std::string> {
-    using EnumTy = std::pair<GeomCamera::Projection, const char *>;
-    constexpr std::array<EnumTy, 2> enums = {
-        std::make_pair(GeomCamera::Projection::Perspective, "perspective"),
-        std::make_pair(GeomCamera::Projection::Orthographic, "orthographic"),
-    };
-
-    auto ret =
-        CheckAllowedTokens<GeomCamera::Projection, enums.size()>(enums, tok);
-    if (!ret) {
-      return nonstd::make_unexpected(ret.error());
-    }
-
-    for (auto &item : enums) {
-      if (tok == item.second) {
-        return item.first;
-      }
-    }
-
-    // Should never reach here, though.
-    return nonstd::make_unexpected(
-        quote(tok) + " is invalid token for `projection` propety");
-  };
-
-  auto StereoRoleHandler = [](const std::string &tok)
-      -> nonstd::expected<GeomCamera::StereoRole, std::string> {
-    using EnumTy = std::pair<GeomCamera::StereoRole, const char *>;
-    constexpr std::array<EnumTy, 3> enums = {
-        std::make_pair(GeomCamera::StereoRole::Mono, "mono"),
-        std::make_pair(GeomCamera::StereoRole::Left, "left"),
-        std::make_pair(GeomCamera::StereoRole::Right, "right"),
-    };
-
-    auto ret =
-        CheckAllowedTokens<GeomCamera::StereoRole, enums.size()>(enums, tok);
-    if (!ret) {
-      return nonstd::make_unexpected(ret.error());
-    }
-
-    for (auto &item : enums) {
-      if (tok == item.second) {
-        return item.first;
-      }
-    }
-
-    // Should never reach here, though.
-    return nonstd::make_unexpected(
-        quote(tok) + " is invalid token for `stereoRole` propety");
-  };
+  // Use centralized enum handlers
+  auto ProjectionHandler = enum_handler::CameraProjection;
+  auto StereoRoleHandler = enum_handler::CameraStereoRole;
 
   std::set<std::string> table;
   if (!ReconstructGPrimProperties(spec, table, properties, camera, warn, err, options.strict_allowedToken_check)) {
     return false;
   }
 
+#if defined(__clang__)
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wunused-macros"
+#endif
+#define PRIM_CLASS_ GeomCamera
+#define PRIM_PTR_ camera
+#if defined(__clang__)
+#pragma clang diagnostic pop
+#endif
+
   for (const auto &prop : properties) {
-    PARSE_TYPED_ATTRIBUTE(table, prop, "focalLength", GeomCamera, camera->focalLength)
-    PARSE_TYPED_ATTRIBUTE(table, prop, "focusDistance", GeomCamera,
-                   camera->focusDistance)
-    PARSE_TYPED_ATTRIBUTE(table, prop, "exposure", GeomCamera, camera->exposure)
-    PARSE_TYPED_ATTRIBUTE(table, prop, "fStop", GeomCamera, camera->fStop)
-    PARSE_TYPED_ATTRIBUTE(table, prop, "horizontalAperture", GeomCamera,
-                   camera->horizontalAperture)
-    PARSE_TYPED_ATTRIBUTE(table, prop, "horizontalApertureOffset", GeomCamera,
-                   camera->horizontalApertureOffset)
-    PARSE_TYPED_ATTRIBUTE(table, prop, "verticalAperture", GeomCamera,
-                   camera->verticalAperture)
-    PARSE_TYPED_ATTRIBUTE(table, prop, "verticalApertureOffset", GeomCamera,
-                   camera->verticalApertureOffset)
-    PARSE_TYPED_ATTRIBUTE(table, prop, "clippingRange", GeomCamera,
-                   camera->clippingRange)
-    PARSE_TYPED_ATTRIBUTE(table, prop, "clippingPlanes", GeomCamera,
-                   camera->clippingPlanes)
-    PARSE_TYPED_ATTRIBUTE(table, prop, "shutter:open", GeomCamera, camera->shutterOpen)
-    PARSE_TYPED_ATTRIBUTE(table, prop, "shutter:close", GeomCamera,
-                   camera->shutterClose)
-    PARSE_TIMESAMPLED_ENUM_PROPERTY(table, prop, "projection", GeomCamera::Projection, ProjectionHandler, GeomCamera,
-                       camera->projection, options.strict_allowedToken_check)
-    PARSE_UNIFORM_ENUM_PROPERTY(table, prop, "stereoRole", GeomCamera::StereoRole, StereoRoleHandler, GeomCamera,
-                       camera->stereoRole, options.strict_allowedToken_check)
+    GEOM_CAMERA_TYPED_ATTRS(EXPAND_TYPED_ATTR)
+    GEOM_CAMERA_TIMESAMPLED_ENUMS(EXPAND_TIMESAMPLED_ENUM)
+    GEOM_CAMERA_UNIFORM_ENUMS(EXPAND_UNIFORM_ENUM)
     ADD_PROPERTY(table, prop, GeomCamera, camera->props)
     PARSE_PROPERTY_END_MAKE_ERROR(table, prop)
   }
+
+#undef PRIM_CLASS_
+#undef PRIM_PTR_
 
   return true;
 }
@@ -4645,17 +4477,8 @@ bool ReconstructPrim<GeomSubset>(
 
   DCOUT("GeomSubset");
 
-  // Currently schema only allows 'face'
-  auto ElementTypeHandler = [](const std::string &tok)
-      -> nonstd::expected<GeomSubset::ElementType, std::string> {
-    using EnumTy = std::pair<GeomSubset::ElementType, const char *>;
-    const std::vector<EnumTy> enums = {
-        std::make_pair(GeomSubset::ElementType::Face, "face"),
-        std::make_pair(GeomSubset::ElementType::Point, "point"),
-    };
-    return EnumHandler<GeomSubset::ElementType>("elementType", tok,
-                                                    enums);
-  };
+  // Use centralized enum handler
+  auto ElementTypeHandler = enum_handler::ElementType;
 
   std::set<std::string> table;
 
@@ -4668,13 +4491,25 @@ bool ReconstructPrim<GeomSubset>(
     return false;
   }
 
+#if defined(__clang__)
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wunused-macros"
+#endif
+#define PRIM_CLASS_ GeomSubset
+#define PRIM_PTR_ subset
+#if defined(__clang__)
+#pragma clang diagnostic pop
+#endif
+
   for (const auto &prop : properties) {
-    PARSE_TYPED_ATTRIBUTE(table, prop, "familyName", GeomSubset, subset->familyName)
-    PARSE_TYPED_ATTRIBUTE(table, prop, "indices", GeomSubset, subset->indices)
-    PARSE_UNIFORM_ENUM_PROPERTY(table, prop, "elementType", GeomSubset::ElementType, ElementTypeHandler, GeomSubset, subset->elementType, options.strict_allowedToken_check)
+    GEOM_SUBSET_TYPED_ATTRS(EXPAND_TYPED_ATTR)
+    GEOM_SUBSET_UNIFORM_ENUMS(EXPAND_UNIFORM_ENUM)
     ADD_PROPERTY(table, prop, GeomSubset, subset->props)
     PARSE_PROPERTY_END_MAKE_WARN(table, prop)
   }
+
+#undef PRIM_CLASS_
+#undef PRIM_PTR_
 
   return true;
 }
@@ -4691,7 +4526,6 @@ bool ReconstructPrim<GeomPointInstancer>(
 
   (void)warn;
   (void)references;
-  (void)options;
 
   DCOUT("Reconstruct GeomPointInstancer.");
 
@@ -4700,22 +4534,25 @@ bool ReconstructPrim<GeomPointInstancer>(
     return false;
   }
 
-  for (const auto &prop : properties) {
-    PARSE_TARGET_PATHS_RELATION(table, prop, "prototypes", instancer->prototypes)
-    PARSE_TYPED_ATTRIBUTE(table, prop, "protoIndices", GeomPointInstancer, instancer->protoIndices)
-    PARSE_TYPED_ATTRIBUTE(table, prop, "ids", GeomPointInstancer, instancer->ids)
-    PARSE_TYPED_ATTRIBUTE(table, prop, "positions", GeomPointInstancer, instancer->positions)
-    PARSE_TYPED_ATTRIBUTE(table, prop, "orientations", GeomPointInstancer, instancer->orientations)
-    PARSE_TYPED_ATTRIBUTE(table, prop, "scales", GeomPointInstancer, instancer->scales)
-    PARSE_TYPED_ATTRIBUTE(table, prop, "velocities", GeomPointInstancer, instancer->velocities)
-    PARSE_TYPED_ATTRIBUTE(table, prop, "accelerations", GeomPointInstancer, instancer->accelerations)
-    PARSE_TYPED_ATTRIBUTE(table, prop, "angularVelocities", GeomPointInstancer, instancer->angularVelocities)
-    PARSE_TYPED_ATTRIBUTE(table, prop, "invisibleIds", GeomPointInstancer, instancer->invisibleIds)
-    PARSE_TYPED_ATTRIBUTE(table, prop, "inactiveIds", GeomPointInstancer, instancer->inactiveIds)
+#if defined(__clang__)
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wunused-macros"
+#endif
+#define PRIM_CLASS_ GeomPointInstancer
+#define PRIM_PTR_ instancer
+#if defined(__clang__)
+#pragma clang diagnostic pop
+#endif
 
+  for (const auto &prop : properties) {
+    GEOM_POINT_INSTANCER_RELATIONS(EXPAND_SINGLE_REL, EXPAND_MULTI_REL)
+    GEOM_POINT_INSTANCER_TYPED_ATTRS(EXPAND_TYPED_ATTR)
     ADD_PROPERTY(table, prop, GeomPointInstancer, instancer->props)
     PARSE_PROPERTY_END_MAKE_ERROR(table, prop)
   }
+
+#undef PRIM_CLASS_
+#undef PRIM_PTR_
 
   return true;
 }
@@ -4766,17 +4603,8 @@ bool ReconstructShader<UsdPreviewSurface>(
   (void)references;
   (void)options;
 
-  auto OpacityModeHandler = [](const std::string &tok)
-      -> nonstd::expected<UsdPreviewSurface::OpacityMode, std::string> {
-    using EnumTy = std::pair<UsdPreviewSurface::OpacityMode, const char *>;
-    const std::vector<EnumTy> enums = {
-        std::make_pair(UsdPreviewSurface::OpacityMode::Transparent, "transparent"),
-        std::make_pair(UsdPreviewSurface::OpacityMode::Presence, "presence"),
-    };
-
-    return EnumHandler<UsdPreviewSurface::OpacityMode>(
-        "inputs:opacityMode", tok, enums);
-  };
+  // Use centralized enum handler
+  auto OpacityModeHandler = enum_handler::OpacityMode;
 
   std::set<std::string> table;
   table.insert("info:id"); // `info:id` is already parsed in ReconstructPrim<Shader>
@@ -4839,33 +4667,9 @@ bool ReconstructShader<UsdUVTexture>(
   (void)references;
   (void)options;
 
-  auto SourceColorSpaceHandler = [](const std::string &tok)
-      -> nonstd::expected<UsdUVTexture::SourceColorSpace, std::string> {
-    using EnumTy = std::pair<UsdUVTexture::SourceColorSpace, const char *>;
-    const std::vector<EnumTy> enums = {
-        std::make_pair(UsdUVTexture::SourceColorSpace::Auto, "auto"),
-        std::make_pair(UsdUVTexture::SourceColorSpace::Raw, "raw"),
-        std::make_pair(UsdUVTexture::SourceColorSpace::SRGB, "sRGB"),
-    };
-
-    return EnumHandler<UsdUVTexture::SourceColorSpace>(
-        "inputs:sourceColorSpace", tok, enums);
-  };
-
-  auto WrapHandler = [](const std::string &tok)
-      -> nonstd::expected<UsdUVTexture::Wrap, std::string> {
-    using EnumTy = std::pair<UsdUVTexture::Wrap, const char *>;
-    const std::vector<EnumTy> enums = {
-        std::make_pair(UsdUVTexture::Wrap::UseMetadata, "useMetadata"),
-        std::make_pair(UsdUVTexture::Wrap::Black, "black"),
-        std::make_pair(UsdUVTexture::Wrap::Clamp, "clamp"),
-        std::make_pair(UsdUVTexture::Wrap::Repeat, "repeat"),
-        std::make_pair(UsdUVTexture::Wrap::Mirror, "mirror"),
-    };
-
-    return EnumHandler<UsdUVTexture::Wrap>(
-        "inputs:wrap*", tok, enums);
-  };
+  // Use centralized enum handlers
+  auto SourceColorSpaceHandler = enum_handler::SourceColorSpace;
+  auto WrapHandler = enum_handler::TextureWrap;
 
   std::set<std::string> table;
   table.insert("info:id"); // `info:id` is already parsed in ReconstructPrim<Shader>
