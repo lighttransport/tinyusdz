@@ -1032,7 +1032,23 @@ bool USDCReader::Impl::ParseProperty(const SpecType spec_type,
         // same TimeSamples from the fieldset. Using std::move would leave the
         // CrateValue empty after the first use, causing subsequent attributes
         // to get an empty TimeSamples.
-        var.set_timesamples(ts);
+        //
+        // We make a copy and apply role type casting to the copy if needed.
+        value::TimeSamples ts_copy = ts;
+
+        // Apply role type casting if typeName specifies a role type
+        // (e.g., cast float3 to color3f, point3f, etc.)
+        if (typeName) {
+          uint32_t role_type_id = value::GetTypeId(typeName.value().str());
+          if (role_type_id != value::TYPE_ID_INVALID) {
+            if (ts_copy.cast_to_role_type(role_type_id)) {
+              DCOUT(fmt::format("Cast TimeSamples to role type {}", typeName.value().str()));
+            }
+            // It's ok if casting fails - the base type is still valid
+          }
+        }
+
+        var.set_timesamples(ts_copy);
       } else {
         PUSH_ERROR_AND_RETURN_TAG(kTag,
                                   "`timeSamples` is not TimeSamples data.");
@@ -1320,7 +1336,7 @@ bool USDCReader::Impl::ParseProperty(const SpecType spec_type,
 #endif
 
   // Do role type cast for default value.
-  // (TODO: do role type cast for timeSamples?)
+  // (NOTE: role type cast for timeSamples is done earlier when processing timeSamples field)
   if (defaultValue.has_value()) {
     if (typeName) {
       if (defaultValue.value().type_id() == value::TypeTraits<value::ValueBlock>::type_id()) {
