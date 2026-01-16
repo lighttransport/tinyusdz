@@ -255,11 +255,11 @@ bool ListSceneNamesRec(const tinyusdz::Prim &root, uint32_t depth,
     return false;
   }
 
-  if (root.metas().sceneName.has_value()) {
+  if (root.metas().has_sceneName()) {
     bool is_over = (root.specifier() == Specifier::Over);
 
     sceneNames->push_back(
-        std::make_pair(is_over, root.metas().sceneName.value()));
+        std::make_pair(is_over, root.metas().get_sceneName()));
   }
 
   return true;
@@ -2271,8 +2271,8 @@ bool ListSceneNames(const tinyusdz::Prim &root,
   }
 
   bool has_sceneLibrary = false;
-  if (root.metas().kind.has_value()) {
-    if (root.metas().kind.value() == Kind::SceneLibrary) {
+  if (root.metas().has_kind()) {
+    if (root.metas().get_kind_enum() == Kind::SceneLibrary) {
       // ok
       has_sceneLibrary = true;
     }
@@ -2916,11 +2916,11 @@ bool GetGeomPrimvar(const Stage &stage, const GPrim *gprim,
 
     primvar.set_name(varname);
 
-    if (attr.metas().interpolation.has_value()) {
-      primvar.set_interpolation(attr.metas().interpolation.value());
+    if (attr.metas().has_interpolation()) {
+      primvar.set_interpolation(attr.metas().get_interpolation_enum());
     }
-    if (attr.metas().elementSize.has_value()) {
-      primvar.set_elementSize(attr.metas().elementSize.value());
+    if (attr.metas().has_elementSize()) {
+      primvar.set_elementSize(attr.metas().get_elementSize());
     }
     if (attr.metas().has_unauthoredValuesIndex()) {
       primvar.set_unauthoredValuesIndex(attr.metas().get_unauthoredValuesIndex());

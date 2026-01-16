@@ -1746,6 +1746,26 @@ if(TINYUSDZ_BUILD_TESTS)
   endif()
 
   #
+  # USDC roundtrip tester (USDA -> USDC -> reparse -> compare)
+  #
+  if(TINYUSDZ_WITH_MODULE_USDA_READER AND TINYUSDZ_WITH_MODULE_USDC_WRITER AND TINYUSDZ_WITH_MODULE_USDC_READER)
+    set(TINYUSDZ_USDC_ROUNDTRIP_TARGET "usdc_roundtrip")
+    add_executable(${TINYUSDZ_USDC_ROUNDTRIP_TARGET} ${PROJECT_SOURCE_DIR}/tests/usdc-roundtrip.cc)
+    add_sanitizers(${TINYUSDZ_USDC_ROUNDTRIP_TARGET})
+    target_include_directories(${TINYUSDZ_USDC_ROUNDTRIP_TARGET} PRIVATE ${PROJECT_SOURCE_DIR}/src)
+    target_link_libraries(${TINYUSDZ_USDC_ROUNDTRIP_TARGET} PRIVATE ${TINYUSDZ_TARGET_STATIC})
+    if(TINYUSDZ_WITH_JSON)
+      target_compile_definitions(${TINYUSDZ_USDC_ROUNDTRIP_TARGET} PRIVATE "TINYUSDZ_WITH_JSON")
+    endif()
+
+    add_test(
+      NAME usdc-roundtrip-test
+      COMMAND python3 ${PROJECT_SOURCE_DIR}/tests/usda/usdc-roundtrip-runner.py --app
+              "$<TARGET_FILE:usdc_roundtrip>" --basedir "${PROJECT_SOURCE_DIR}/tests/usda"
+      )
+  endif()
+
+  #
   # USDA parser tester
   #
   if(TINYUSDZ_WITH_MODULE_USDC_READER)
