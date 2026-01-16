@@ -1,0 +1,228 @@
+#usda 1.0
+(
+    doc = "Enum roundtrip test part 2 - Collection and additional enums"
+    defaultPrim = "EnumTests2"
+)
+
+def Xform "EnumTests2"
+{
+    # =========================================================================
+    # Collection::ExpansionRule enum tests (explicitOnly, expandPrims, expandPrimsAndProperties)
+    # =========================================================================
+    def Xform "CollectionTests" (
+        prepend apiSchemas = ["CollectionAPI:setA", "CollectionAPI:setB", "CollectionAPI:setC"]
+    )
+    {
+        # Collection with explicitOnly expansion
+        uniform token collection:setA:expansionRule = "explicitOnly"
+        rel collection:setA:includes = [
+            </EnumTests2/CollectionTests/Sphere1>,
+            </EnumTests2/CollectionTests/Sphere2>
+        ]
+
+        # Collection with expandPrims expansion
+        uniform token collection:setB:expansionRule = "expandPrims"
+        rel collection:setB:includes = [
+            </EnumTests2/CollectionTests/Group>
+        ]
+
+        # Collection with expandPrimsAndProperties expansion
+        uniform token collection:setC:expansionRule = "expandPrimsAndProperties"
+        rel collection:setC:includes = [
+            </EnumTests2/CollectionTests>
+        ]
+
+        def Sphere "Sphere1"
+        {
+            double radius = 1.0
+        }
+
+        def Sphere "Sphere2"
+        {
+            double radius = 0.5
+        }
+
+        def Xform "Group"
+        {
+            def Cube "Cube1"
+            {
+                double size = 1.0
+            }
+
+            def Cube "Cube2"
+            {
+                double size = 0.5
+            }
+        }
+    }
+
+    # =========================================================================
+    # GeomSubset::FamilyType enum tests (partition, nonOverlapping, unrestricted)
+    # These are set via metadata, not direct attributes
+    # =========================================================================
+    def Mesh "MeshWithFamilyTypes"
+    {
+        int[] faceVertexCounts = [4, 4, 4, 4]
+        int[] faceVertexIndices = [
+            0, 1, 2, 3,
+            4, 5, 6, 7,
+            8, 9, 10, 11,
+            12, 13, 14, 15
+        ]
+        point3f[] points = [
+            (0, 0, 0), (1, 0, 0), (1, 1, 0), (0, 1, 0),
+            (2, 0, 0), (3, 0, 0), (3, 1, 0), (2, 1, 0),
+            (0, 2, 0), (1, 2, 0), (1, 3, 0), (0, 3, 0),
+            (2, 2, 0), (3, 2, 0), (3, 3, 0), (2, 3, 0)
+        ]
+
+        # Partition family - mutually exclusive, complete coverage
+        def GeomSubset "PartitionA"
+        {
+            uniform token elementType = "face"
+            uniform token familyName = "partitionFamily"
+            int[] indices = [0, 1]
+        }
+
+        def GeomSubset "PartitionB"
+        {
+            uniform token elementType = "face"
+            uniform token familyName = "partitionFamily"
+            int[] indices = [2, 3]
+        }
+
+        # Non-overlapping family - no overlap but may not cover all
+        def GeomSubset "NonOverlapA"
+        {
+            uniform token elementType = "face"
+            uniform token familyName = "nonOverlapFamily"
+            int[] indices = [0]
+        }
+
+        def GeomSubset "NonOverlapB"
+        {
+            uniform token elementType = "face"
+            uniform token familyName = "nonOverlapFamily"
+            int[] indices = [2]
+        }
+
+        # Unrestricted family - can overlap
+        def GeomSubset "UnrestrictedA"
+        {
+            uniform token elementType = "face"
+            uniform token familyName = "unrestrictedFamily"
+            int[] indices = [0, 1, 2]
+        }
+
+        def GeomSubset "UnrestrictedB"
+        {
+            uniform token elementType = "face"
+            uniform token familyName = "unrestrictedFamily"
+            int[] indices = [1, 2, 3]
+        }
+    }
+
+    # =========================================================================
+    # Light visibility/purpose combined with light-specific attributes
+    # =========================================================================
+    def SphereLight "LightWithVisibility"
+    {
+        token visibility = "inherited"
+        uniform token purpose = "default"
+        color3f inputs:color = (1, 1, 1)
+        float inputs:intensity = 100.0
+    }
+
+    def SphereLight "InvisibleLight"
+    {
+        token visibility = "invisible"
+        uniform token purpose = "render"
+        color3f inputs:color = (1, 0.9, 0.8)
+        float inputs:intensity = 50.0
+    }
+
+    def SphereLight "GuideLight"
+    {
+        token visibility = "inherited"
+        uniform token purpose = "guide"
+        color3f inputs:color = (0, 1, 0)
+        float inputs:intensity = 10.0
+    }
+
+    # =========================================================================
+    # Animated enum tokens (visibility, projection)
+    # =========================================================================
+    def Xform "AnimatedVisibility"
+    {
+        token visibility.timeSamples = {
+            1: "inherited",
+            12: "invisible",
+            24: "inherited",
+        }
+    }
+
+    def Camera "AnimatedProjection"
+    {
+        token projection.timeSamples = {
+            1: "perspective",
+            30: "orthographic",
+            60: "perspective",
+        }
+        float focalLength = 50.0
+        uniform token stereoRole = "mono"
+    }
+
+    # =========================================================================
+    # APISchemas applied to various prim types
+    # =========================================================================
+    def Mesh "MeshWithAPIs" (
+        prepend apiSchemas = ["MaterialBindingAPI", "SkelBindingAPI"]
+    )
+    {
+        int[] faceVertexCounts = [3]
+        int[] faceVertexIndices = [0, 1, 2]
+        point3f[] points = [(0, 0, 5), (1, 0, 5), (0.5, 1, 5)]
+    }
+
+    def SphereLight "LightWithAPIs" (
+        prepend apiSchemas = ["ShapingAPI", "ShadowAPI"]
+    )
+    {
+        color3f inputs:color = (1, 1, 1)
+        float inputs:intensity = 100.0
+        float inputs:radius = 0.5
+
+        # ShapingAPI attributes
+        float inputs:shaping:focus = 0.5
+        color3f inputs:shaping:focusTint = (1, 1, 1)
+        float inputs:shaping:cone:angle = 45.0
+        float inputs:shaping:cone:softness = 0.1
+
+        # ShadowAPI attributes
+        bool inputs:shadow:enable = true
+        color3f inputs:shadow:color = (0, 0, 0)
+    }
+
+    # =========================================================================
+    # Basic mesh for interpolation testing
+    # Note: Interpolation metadata roundtrip not yet supported
+    # =========================================================================
+    def Mesh "MeshWithAttributes"
+    {
+        int[] faceVertexCounts = [4, 4]
+        int[] faceVertexIndices = [0, 1, 2, 3, 4, 5, 6, 7]
+        point3f[] points = [
+            (0, 0, 10), (1, 0, 10), (1, 1, 10), (0, 1, 10),
+            (1, 0, 10), (2, 0, 10), (2, 1, 10), (1, 1, 10)
+        ]
+        normal3f[] normals = [
+            (0, 0, 1), (0, 0, 1), (0, 0, 1), (0, 0, 1),
+            (0, 0, 1), (0, 0, 1), (0, 0, 1), (0, 0, 1)
+        ]
+        texCoord2f[] primvars:st = [
+            (0, 0), (1, 0), (1, 1), (0, 1),
+            (0, 0), (1, 0), (1, 1), (0, 1)
+        ]
+        color3f[] primvars:displayColor = [(1, 0, 0), (0, 1, 0)]
+    }
+}
