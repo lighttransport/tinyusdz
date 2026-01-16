@@ -470,6 +470,35 @@ bool AsciiParser::ReadBasicType(nonstd::optional<value::matrix4d> *value) {
   return false;
 }
 
+// frame4d - same data layout as matrix4d
+bool AsciiParser::ReadBasicType(value::frame4d *value) {
+  if (!value) {
+    return false;
+  }
+  value::matrix4d mat;
+  if (!ParseMatrix(&mat)) {
+    return false;
+  }
+  // Copy data from matrix4d to frame4d (same layout)
+  memcpy(value->m, mat.m, sizeof(value->m));
+  return true;
+}
+
+bool AsciiParser::ReadBasicType(nonstd::optional<value::frame4d> *value) {
+  if (MaybeNone()) {
+    (*value) = nonstd::nullopt;
+    return true;
+  }
+
+  value::frame4d v;
+  if (ReadBasicType(&v)) {
+    (*value) = v;
+    return true;
+  }
+
+  return false;
+}
+
 bool AsciiParser::ReadBasicType(value::matrix2f *value) {
   if (value) {
     return ParseMatrix(value);
@@ -1034,6 +1063,349 @@ bool AsciiParser::ReadBasicType(nonstd::optional<value::uint4> *value) {
   return false;
 }
 
+// char (int8_t) - parse as int32_t and range check
+bool AsciiParser::ReadBasicType(char *value) {
+  int32_t v;
+  if (!ReadBasicType(&v)) {
+    return false;
+  }
+  if (v < -128 || v > 127) {
+    PushError("Value out of range for char (int8): " + std::to_string(v));
+    return false;
+  }
+  (*value) = static_cast<char>(v);
+  return true;
+}
+
+bool AsciiParser::ReadBasicType(nonstd::optional<char> *value) {
+  if (MaybeNone()) {
+    (*value) = nonstd::nullopt;
+    return true;
+  }
+
+  char v;
+  if (ReadBasicType(&v)) {
+    (*value) = v;
+    return true;
+  }
+
+  return false;
+}
+
+bool AsciiParser::ReadBasicType(value::char2 *value) {
+  return ParseBasicTypeTuple<char, 2>(value);
+}
+
+bool AsciiParser::ReadBasicType(nonstd::optional<value::char2> *value) {
+  if (MaybeNone()) {
+    (*value) = nonstd::nullopt;
+    return true;
+  }
+
+  value::char2 v;
+  if (ReadBasicType(&v)) {
+    (*value) = v;
+    return true;
+  }
+
+  return false;
+}
+
+bool AsciiParser::ReadBasicType(value::char3 *value) {
+  return ParseBasicTypeTuple<char, 3>(value);
+}
+
+bool AsciiParser::ReadBasicType(nonstd::optional<value::char3> *value) {
+  if (MaybeNone()) {
+    (*value) = nonstd::nullopt;
+    return true;
+  }
+
+  value::char3 v;
+  if (ReadBasicType(&v)) {
+    (*value) = v;
+    return true;
+  }
+
+  return false;
+}
+
+bool AsciiParser::ReadBasicType(value::char4 *value) {
+  return ParseBasicTypeTuple<char, 4>(value);
+}
+
+bool AsciiParser::ReadBasicType(nonstd::optional<value::char4> *value) {
+  if (MaybeNone()) {
+    (*value) = nonstd::nullopt;
+    return true;
+  }
+
+  value::char4 v;
+  if (ReadBasicType(&v)) {
+    (*value) = v;
+    return true;
+  }
+
+  return false;
+}
+
+// uchar (uint8_t) - parse as uint32_t and range check
+bool AsciiParser::ReadBasicType(uint8_t *value) {
+  uint32_t v;
+  if (!ReadBasicType(&v)) {
+    return false;
+  }
+  if (v > 255) {
+    PushError("Value out of range for uchar (uint8): " + std::to_string(v));
+    return false;
+  }
+  (*value) = static_cast<uint8_t>(v);
+  return true;
+}
+
+bool AsciiParser::ReadBasicType(nonstd::optional<uint8_t> *value) {
+  if (MaybeNone()) {
+    (*value) = nonstd::nullopt;
+    return true;
+  }
+
+  uint8_t v;
+  if (ReadBasicType(&v)) {
+    (*value) = v;
+    return true;
+  }
+
+  return false;
+}
+
+bool AsciiParser::ReadBasicType(value::uchar2 *value) {
+  return ParseBasicTypeTuple<uint8_t, 2>(value);
+}
+
+bool AsciiParser::ReadBasicType(nonstd::optional<value::uchar2> *value) {
+  if (MaybeNone()) {
+    (*value) = nonstd::nullopt;
+    return true;
+  }
+
+  value::uchar2 v;
+  if (ReadBasicType(&v)) {
+    (*value) = v;
+    return true;
+  }
+
+  return false;
+}
+
+bool AsciiParser::ReadBasicType(value::uchar3 *value) {
+  return ParseBasicTypeTuple<uint8_t, 3>(value);
+}
+
+bool AsciiParser::ReadBasicType(nonstd::optional<value::uchar3> *value) {
+  if (MaybeNone()) {
+    (*value) = nonstd::nullopt;
+    return true;
+  }
+
+  value::uchar3 v;
+  if (ReadBasicType(&v)) {
+    (*value) = v;
+    return true;
+  }
+
+  return false;
+}
+
+bool AsciiParser::ReadBasicType(value::uchar4 *value) {
+  return ParseBasicTypeTuple<uint8_t, 4>(value);
+}
+
+bool AsciiParser::ReadBasicType(nonstd::optional<value::uchar4> *value) {
+  if (MaybeNone()) {
+    (*value) = nonstd::nullopt;
+    return true;
+  }
+
+  value::uchar4 v;
+  if (ReadBasicType(&v)) {
+    (*value) = v;
+    return true;
+  }
+
+  return false;
+}
+
+// short (int16_t) - parse as int32_t and range check
+bool AsciiParser::ReadBasicType(int16_t *value) {
+  int32_t v;
+  if (!ReadBasicType(&v)) {
+    return false;
+  }
+  if (v < -32768 || v > 32767) {
+    PushError("Value out of range for short (int16): " + std::to_string(v));
+    return false;
+  }
+  (*value) = static_cast<int16_t>(v);
+  return true;
+}
+
+bool AsciiParser::ReadBasicType(nonstd::optional<int16_t> *value) {
+  if (MaybeNone()) {
+    (*value) = nonstd::nullopt;
+    return true;
+  }
+
+  int16_t v;
+  if (ReadBasicType(&v)) {
+    (*value) = v;
+    return true;
+  }
+
+  return false;
+}
+
+bool AsciiParser::ReadBasicType(value::short2 *value) {
+  return ParseBasicTypeTuple<int16_t, 2>(value);
+}
+
+bool AsciiParser::ReadBasicType(nonstd::optional<value::short2> *value) {
+  if (MaybeNone()) {
+    (*value) = nonstd::nullopt;
+    return true;
+  }
+
+  value::short2 v;
+  if (ReadBasicType(&v)) {
+    (*value) = v;
+    return true;
+  }
+
+  return false;
+}
+
+bool AsciiParser::ReadBasicType(value::short3 *value) {
+  return ParseBasicTypeTuple<int16_t, 3>(value);
+}
+
+bool AsciiParser::ReadBasicType(nonstd::optional<value::short3> *value) {
+  if (MaybeNone()) {
+    (*value) = nonstd::nullopt;
+    return true;
+  }
+
+  value::short3 v;
+  if (ReadBasicType(&v)) {
+    (*value) = v;
+    return true;
+  }
+
+  return false;
+}
+
+bool AsciiParser::ReadBasicType(value::short4 *value) {
+  return ParseBasicTypeTuple<int16_t, 4>(value);
+}
+
+bool AsciiParser::ReadBasicType(nonstd::optional<value::short4> *value) {
+  if (MaybeNone()) {
+    (*value) = nonstd::nullopt;
+    return true;
+  }
+
+  value::short4 v;
+  if (ReadBasicType(&v)) {
+    (*value) = v;
+    return true;
+  }
+
+  return false;
+}
+
+// ushort (uint16_t) - parse as uint32_t and range check
+bool AsciiParser::ReadBasicType(uint16_t *value) {
+  uint32_t v;
+  if (!ReadBasicType(&v)) {
+    return false;
+  }
+  if (v > 65535) {
+    PushError("Value out of range for ushort (uint16): " + std::to_string(v));
+    return false;
+  }
+  (*value) = static_cast<uint16_t>(v);
+  return true;
+}
+
+bool AsciiParser::ReadBasicType(nonstd::optional<uint16_t> *value) {
+  if (MaybeNone()) {
+    (*value) = nonstd::nullopt;
+    return true;
+  }
+
+  uint16_t v;
+  if (ReadBasicType(&v)) {
+    (*value) = v;
+    return true;
+  }
+
+  return false;
+}
+
+bool AsciiParser::ReadBasicType(value::ushort2 *value) {
+  return ParseBasicTypeTuple<uint16_t, 2>(value);
+}
+
+bool AsciiParser::ReadBasicType(nonstd::optional<value::ushort2> *value) {
+  if (MaybeNone()) {
+    (*value) = nonstd::nullopt;
+    return true;
+  }
+
+  value::ushort2 v;
+  if (ReadBasicType(&v)) {
+    (*value) = v;
+    return true;
+  }
+
+  return false;
+}
+
+bool AsciiParser::ReadBasicType(value::ushort3 *value) {
+  return ParseBasicTypeTuple<uint16_t, 3>(value);
+}
+
+bool AsciiParser::ReadBasicType(nonstd::optional<value::ushort3> *value) {
+  if (MaybeNone()) {
+    (*value) = nonstd::nullopt;
+    return true;
+  }
+
+  value::ushort3 v;
+  if (ReadBasicType(&v)) {
+    (*value) = v;
+    return true;
+  }
+
+  return false;
+}
+
+bool AsciiParser::ReadBasicType(value::ushort4 *value) {
+  return ParseBasicTypeTuple<uint16_t, 4>(value);
+}
+
+bool AsciiParser::ReadBasicType(nonstd::optional<value::ushort4> *value) {
+  if (MaybeNone()) {
+    (*value) = nonstd::nullopt;
+    return true;
+  }
+
+  value::ushort4 v;
+  if (ReadBasicType(&v)) {
+    (*value) = v;
+    return true;
+  }
+
+  return false;
+}
 
 bool AsciiParser::ReadBasicType(uint32_t *value) {
   std::stringstream ss;
@@ -3461,6 +3833,26 @@ bool AsciiParser::ParseBasicTypeArray(std::vector<double> *result) {
 template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<int32_t>> *result);
 template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<value::int2>> *result);
 template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<uint32_t>> *result);
+// char types (optional)
+template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<char>> *result);
+template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<value::char2>> *result);
+template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<value::char3>> *result);
+template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<value::char4>> *result);
+// uchar types (optional)
+template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<uint8_t>> *result);
+template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<value::uchar2>> *result);
+template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<value::uchar3>> *result);
+template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<value::uchar4>> *result);
+// short types (optional)
+template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<int16_t>> *result);
+template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<value::short2>> *result);
+template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<value::short3>> *result);
+template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<value::short4>> *result);
+// ushort types (optional)
+template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<uint16_t>> *result);
+template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<value::ushort2>> *result);
+template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<value::ushort3>> *result);
+template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<value::ushort4>> *result);
 template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<int64_t>> *result);
 template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<uint64_t>> *result);
 template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<value::half>> *result);
@@ -3499,6 +3891,7 @@ template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<valu
 template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<value::matrix2d>> *result);
 template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<value::matrix3d>> *result);
 template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<value::matrix4d>> *result);
+template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<value::frame4d>> *result);
 template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<value::token>> *result);
 template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<value::StringData>> *result);
 template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<std::string>> *result);
@@ -3516,6 +3909,26 @@ template bool AsciiParser::ParseBasicTypeArray(std::vector<uint32_t> *result);
 template bool AsciiParser::ParseBasicTypeArray(std::vector<value::uint2> *result);
 template bool AsciiParser::ParseBasicTypeArray(std::vector<value::uint3> *result);
 template bool AsciiParser::ParseBasicTypeArray(std::vector<value::uint4> *result);
+// char types
+template bool AsciiParser::ParseBasicTypeArray(std::vector<char> *result);
+template bool AsciiParser::ParseBasicTypeArray(std::vector<value::char2> *result);
+template bool AsciiParser::ParseBasicTypeArray(std::vector<value::char3> *result);
+template bool AsciiParser::ParseBasicTypeArray(std::vector<value::char4> *result);
+// uchar types
+template bool AsciiParser::ParseBasicTypeArray(std::vector<uint8_t> *result);
+template bool AsciiParser::ParseBasicTypeArray(std::vector<value::uchar2> *result);
+template bool AsciiParser::ParseBasicTypeArray(std::vector<value::uchar3> *result);
+template bool AsciiParser::ParseBasicTypeArray(std::vector<value::uchar4> *result);
+// short types
+template bool AsciiParser::ParseBasicTypeArray(std::vector<int16_t> *result);
+template bool AsciiParser::ParseBasicTypeArray(std::vector<value::short2> *result);
+template bool AsciiParser::ParseBasicTypeArray(std::vector<value::short3> *result);
+template bool AsciiParser::ParseBasicTypeArray(std::vector<value::short4> *result);
+// ushort types
+template bool AsciiParser::ParseBasicTypeArray(std::vector<uint16_t> *result);
+template bool AsciiParser::ParseBasicTypeArray(std::vector<value::ushort2> *result);
+template bool AsciiParser::ParseBasicTypeArray(std::vector<value::ushort3> *result);
+template bool AsciiParser::ParseBasicTypeArray(std::vector<value::ushort4> *result);
 template bool AsciiParser::ParseBasicTypeArray(std::vector<int64_t> *result);
 template bool AsciiParser::ParseBasicTypeArray(std::vector<uint64_t> *result);
 template bool AsciiParser::ParseBasicTypeArray(std::vector<value::half> *result);
@@ -3558,6 +3971,7 @@ template bool AsciiParser::ParseBasicTypeArray(std::vector<value::matrix4f> *res
 template bool AsciiParser::ParseBasicTypeArray(std::vector<value::matrix2d> *result);
 template bool AsciiParser::ParseBasicTypeArray(std::vector<value::matrix3d> *result);
 template bool AsciiParser::ParseBasicTypeArray(std::vector<value::matrix4d> *result);
+template bool AsciiParser::ParseBasicTypeArray(std::vector<value::frame4d> *result);
 template bool AsciiParser::ParseBasicTypeArray(std::vector<value::quath> *result);
 template bool AsciiParser::ParseBasicTypeArray(std::vector<value::quatf> *result);
 template bool AsciiParser::ParseBasicTypeArray(std::vector<value::quatd> *result);
@@ -3580,6 +3994,26 @@ template bool AsciiParser::ParseBasicTypeArray(TypedArray<uint32_t> *result);
 template bool AsciiParser::ParseBasicTypeArray(TypedArray<value::uint2> *result);
 template bool AsciiParser::ParseBasicTypeArray(TypedArray<value::uint3> *result);
 template bool AsciiParser::ParseBasicTypeArray(TypedArray<value::uint4> *result);
+// char types
+template bool AsciiParser::ParseBasicTypeArray(TypedArray<char> *result);
+template bool AsciiParser::ParseBasicTypeArray(TypedArray<value::char2> *result);
+template bool AsciiParser::ParseBasicTypeArray(TypedArray<value::char3> *result);
+template bool AsciiParser::ParseBasicTypeArray(TypedArray<value::char4> *result);
+// uchar types
+template bool AsciiParser::ParseBasicTypeArray(TypedArray<uint8_t> *result);
+template bool AsciiParser::ParseBasicTypeArray(TypedArray<value::uchar2> *result);
+template bool AsciiParser::ParseBasicTypeArray(TypedArray<value::uchar3> *result);
+template bool AsciiParser::ParseBasicTypeArray(TypedArray<value::uchar4> *result);
+// short types
+template bool AsciiParser::ParseBasicTypeArray(TypedArray<int16_t> *result);
+template bool AsciiParser::ParseBasicTypeArray(TypedArray<value::short2> *result);
+template bool AsciiParser::ParseBasicTypeArray(TypedArray<value::short3> *result);
+template bool AsciiParser::ParseBasicTypeArray(TypedArray<value::short4> *result);
+// ushort types
+template bool AsciiParser::ParseBasicTypeArray(TypedArray<uint16_t> *result);
+template bool AsciiParser::ParseBasicTypeArray(TypedArray<value::ushort2> *result);
+template bool AsciiParser::ParseBasicTypeArray(TypedArray<value::ushort3> *result);
+template bool AsciiParser::ParseBasicTypeArray(TypedArray<value::ushort4> *result);
 template bool AsciiParser::ParseBasicTypeArray(TypedArray<int64_t> *result);
 template bool AsciiParser::ParseBasicTypeArray(TypedArray<uint64_t> *result);
 template bool AsciiParser::ParseBasicTypeArray(TypedArray<value::half> *result);
@@ -3621,6 +4055,7 @@ template bool AsciiParser::ParseBasicTypeArray(TypedArray<value::matrix4f> *resu
 template bool AsciiParser::ParseBasicTypeArray(TypedArray<value::matrix2d> *result);
 template bool AsciiParser::ParseBasicTypeArray(TypedArray<value::matrix3d> *result);
 template bool AsciiParser::ParseBasicTypeArray(TypedArray<value::matrix4d> *result);
+template bool AsciiParser::ParseBasicTypeArray(TypedArray<value::frame4d> *result);
 template bool AsciiParser::ParseBasicTypeArray(TypedArray<value::quath> *result);
 template bool AsciiParser::ParseBasicTypeArray(TypedArray<value::quatf> *result);
 template bool AsciiParser::ParseBasicTypeArray(TypedArray<value::quatd> *result);
