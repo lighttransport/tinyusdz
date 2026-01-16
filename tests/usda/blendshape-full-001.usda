@@ -1,0 +1,224 @@
+#usda 1.0
+(
+    doc = "Comprehensive BlendShape test - all attributes from BLEND_SHAPE_TYPED_ATTRS"
+    defaultPrim = "BlendShapeTests"
+    startTimeCode = 1
+    endTimeCode = 48
+)
+
+def Xform "BlendShapeTests"
+{
+    # Test 1: Basic BlendShape with all attributes
+    def SkelRoot "BasicBlendShapeRoot"
+    {
+        def Mesh "Face"
+        {
+            int[] faceVertexCounts = [4]
+            int[] faceVertexIndices = [0, 1, 2, 3]
+            point3f[] points = [
+                (-1, -1, 0), (1, -1, 0), (1, 1, 0), (-1, 1, 0)
+            ]
+
+            uniform token[] skel:blendShapes = ["smile", "frown", "wink"]
+            rel skel:blendShapeTargets = [
+                </BlendShapeTests/BasicBlendShapeRoot/Smile>,
+                </BlendShapeTests/BasicBlendShapeRoot/Frown>,
+                </BlendShapeTests/BasicBlendShapeRoot/Wink>
+            ]
+        }
+
+        # BlendShape: Smile - moves corners up (testing offsets, normalOffsets, pointIndices)
+        def BlendShape "Smile"
+        {
+            uniform vector3f[] offsets = [
+                (0.2, 0.3, 0.1),
+                (-0.2, 0.3, 0.1),
+                (0, 0, 0),
+                (0, 0, 0)
+            ]
+            uniform vector3f[] normalOffsets = [
+                (0.1, 0.1, 0),
+                (-0.1, 0.1, 0),
+                (0, 0, 0),
+                (0, 0, 0)
+            ]
+            uniform int[] pointIndices = [0, 1, 2, 3]
+        }
+
+        # BlendShape: Frown - moves corners down
+        def BlendShape "Frown"
+        {
+            uniform vector3f[] offsets = [
+                (0.1, -0.3, -0.05),
+                (-0.1, -0.3, -0.05),
+                (0, 0, 0),
+                (0, 0, 0)
+            ]
+            uniform vector3f[] normalOffsets = [
+                (0.05, -0.1, 0),
+                (-0.05, -0.1, 0),
+                (0, 0, 0),
+                (0, 0, 0)
+            ]
+            uniform int[] pointIndices = [0, 1, 2, 3]
+        }
+
+        # BlendShape: Wink - sparse indices (only some vertices)
+        def BlendShape "Wink"
+        {
+            uniform vector3f[] offsets = [
+                (0, 0.2, -0.1),
+                (0.1, 0.1, -0.05)
+            ]
+            uniform vector3f[] normalOffsets = [
+                (0, 0, -0.2),
+                (0.05, 0, -0.1)
+            ]
+            uniform int[] pointIndices = [2, 1]
+        }
+    }
+
+    # Test 2: BlendShape with animation via SkelAnimation
+    def SkelRoot "AnimatedBlendShapeRoot"
+    {
+        def Skeleton "Skeleton"
+        {
+            uniform token[] joints = ["Root"]
+            uniform matrix4d[] bindTransforms = [
+                ((1, 0, 0, 0), (0, 1, 0, 0), (0, 0, 1, 0), (0, 0, 0, 1))
+            ]
+            uniform matrix4d[] restTransforms = [
+                ((1, 0, 0, 0), (0, 1, 0, 0), (0, 0, 1, 0), (0, 0, 0, 1))
+            ]
+
+            def SkelAnimation "Animation"
+            {
+                uniform token[] joints = ["Root"]
+                quatf[] rotations = [(1, 0, 0, 0)]
+                half3[] scales = [(1, 1, 1)]
+                float3[] translations = [(0, 0, 0)]
+
+                # BlendShape weights animation
+                uniform token[] blendShapes = ["open", "smile"]
+                float[] blendShapeWeights.timeSamples = {
+                    1: [0.0, 0.0],
+                    12: [1.0, 0.0],
+                    24: [1.0, 1.0],
+                    36: [0.5, 1.0],
+                    48: [0.0, 0.0],
+                }
+            }
+
+            rel skel:animationSource = </BlendShapeTests/AnimatedBlendShapeRoot/Skeleton/Animation>
+        }
+
+        def Mesh "Mouth"
+        {
+            int[] faceVertexCounts = [4, 4]
+            int[] faceVertexIndices = [0, 1, 2, 3, 4, 5, 6, 7]
+            point3f[] points = [
+                (-0.5, 0, 5), (0.5, 0, 5), (0.5, 0.2, 5), (-0.5, 0.2, 5),
+                (-0.5, -0.2, 5), (0.5, -0.2, 5), (0.5, 0, 5), (-0.5, 0, 5)
+            ]
+
+            rel skel:skeleton = </BlendShapeTests/AnimatedBlendShapeRoot/Skeleton>
+            uniform token[] skel:blendShapes = ["open", "smile"]
+            rel skel:blendShapeTargets = [
+                </BlendShapeTests/AnimatedBlendShapeRoot/MouthOpen>,
+                </BlendShapeTests/AnimatedBlendShapeRoot/MouthSmile>
+            ]
+        }
+
+        def BlendShape "MouthOpen"
+        {
+            uniform vector3f[] offsets = [
+                (0, 0.1, 0), (0, 0.1, 0), (0, 0.15, 0), (0, 0.15, 0),
+                (0, -0.15, 0), (0, -0.15, 0), (0, -0.1, 0), (0, -0.1, 0)
+            ]
+            uniform vector3f[] normalOffsets = [
+                (0, 0, 0), (0, 0, 0), (0, 0, 0), (0, 0, 0),
+                (0, 0, 0), (0, 0, 0), (0, 0, 0), (0, 0, 0)
+            ]
+            uniform int[] pointIndices = [0, 1, 2, 3, 4, 5, 6, 7]
+        }
+
+        def BlendShape "MouthSmile"
+        {
+            uniform vector3f[] offsets = [
+                (-0.1, 0.05, 0), (0.1, 0.05, 0), (0.15, 0.1, 0), (-0.15, 0.1, 0),
+                (-0.1, 0.05, 0), (0.1, 0.05, 0), (0.1, 0, 0), (-0.1, 0, 0)
+            ]
+            uniform vector3f[] normalOffsets = [
+                (0, 0, 0), (0, 0, 0), (0, 0, 0), (0, 0, 0),
+                (0, 0, 0), (0, 0, 0), (0, 0, 0), (0, 0, 0)
+            ]
+            uniform int[] pointIndices = [0, 1, 2, 3, 4, 5, 6, 7]
+        }
+    }
+
+    # Test 3: Complex mesh with multiple blendshapes
+    def SkelRoot "ComplexBlendShapeRoot"
+    {
+        def Mesh "Head"
+        {
+            int[] faceVertexCounts = [4, 4, 4, 4]
+            int[] faceVertexIndices = [
+                0, 1, 4, 3,
+                1, 2, 5, 4,
+                3, 4, 7, 6,
+                4, 5, 8, 7
+            ]
+            point3f[] points = [
+                (-1, -1, 10), (0, -1, 10), (1, -1, 10),
+                (-1, 0, 10), (0, 0, 10.2), (1, 0, 10),
+                (-1, 1, 10), (0, 1, 10), (1, 1, 10)
+            ]
+
+            uniform token[] skel:blendShapes = ["bulge", "pinch", "twist"]
+            rel skel:blendShapeTargets = [
+                </BlendShapeTests/ComplexBlendShapeRoot/HeadBulge>,
+                </BlendShapeTests/ComplexBlendShapeRoot/HeadPinch>,
+                </BlendShapeTests/ComplexBlendShapeRoot/HeadTwist>
+            ]
+        }
+
+        # BlendShape: Bulge - sparse (center vertex only)
+        def BlendShape "HeadBulge"
+        {
+            uniform vector3f[] offsets = [(0, 0, 0.5)]
+            uniform vector3f[] normalOffsets = [(0, 0, 0)]
+            uniform int[] pointIndices = [4]
+        }
+
+        # BlendShape: Pinch - corners move inward
+        def BlendShape "HeadPinch"
+        {
+            uniform vector3f[] offsets = [
+                (0.2, 0.2, 0),
+                (-0.2, 0.2, 0),
+                (0.2, -0.2, 0),
+                (-0.2, -0.2, 0)
+            ]
+            uniform vector3f[] normalOffsets = [
+                (0, 0, 0), (0, 0, 0), (0, 0, 0), (0, 0, 0)
+            ]
+            uniform int[] pointIndices = [0, 2, 6, 8]
+        }
+
+        # BlendShape: Twist - rotational deformation
+        def BlendShape "HeadTwist"
+        {
+            uniform vector3f[] offsets = [
+                (-0.1, 0.1, 0), (0, 0.15, 0), (0.1, 0.1, 0),
+                (-0.15, 0, 0), (0, 0, 0), (0.15, 0, 0),
+                (-0.1, -0.1, 0), (0, -0.15, 0), (0.1, -0.1, 0)
+            ]
+            uniform vector3f[] normalOffsets = [
+                (0, 0, 0), (0, 0, 0), (0, 0, 0),
+                (0, 0, 0), (0, 0, 0), (0, 0, 0),
+                (0, 0, 0), (0, 0, 0), (0, 0, 0)
+            ]
+            uniform int[] pointIndices = [0, 1, 2, 3, 4, 5, 6, 7, 8]
+        }
+    }
+}
