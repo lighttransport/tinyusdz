@@ -180,6 +180,12 @@ struct TimeSamples {
   /// This determines whether to use POD optimization or regular storage
   bool init(uint32_t type_id);
 
+  /// Cast the TimeSamples' type to a role type if the underlying types are compatible.
+  /// This allows reinterpreting stored base types (e.g., float3) as role types (e.g., color3f).
+  /// @param role_type_id The target role type's type_id
+  /// @return true if the cast was successful, false if the underlying types don't match
+  bool cast_to_role_type(uint32_t role_type_id);
+
   /// Check if unified storage has samples (i.e., _times is not empty)
   /// Returns true if any samples have been added to unified storage path.
   /// Note: After PODTimeSamples removal, this checks unified storage, not a separate POD type.
