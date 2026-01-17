@@ -158,6 +158,10 @@ bool LoadUSDCFromMemory(const uint8_t *addr, const size_t length,
   config.kMaxAllowedMemoryInMB = size_t(options.max_memory_limit_in_mb);
   usdc::USDCReader reader(&sr, config);
 
+  if (options.progress_callback) {
+    reader.SetProgressCallback(options.progress_callback, options.progress_userptr);
+  }
+
   if (!reader.ReadUSDC()) {
     if (warn) {
       (*warn) = reader.GetWarning();
@@ -761,6 +765,10 @@ bool LoadUSDAFromMemory(const uint8_t *addr, const size_t length,
   config.allow_unknown_apiSchema = !options.strict_apiSchema_check;
   config.max_memory_limit_in_mb = size_t(options.max_memory_limit_in_mb);
   reader.set_reader_config(config);
+
+  if (options.progress_callback) {
+    reader.SetProgressCallback(options.progress_callback, options.progress_userptr);
+  }
 
   reader.SetBaseDir(base_dir);
   reader.set_filename(base_dir);  // Pass filename for error context display
@@ -1765,6 +1773,9 @@ bool SetupUSDZAssetResolution(
   resolver.register_asset_resolution_handler("JPEG", handler);
   resolver.register_asset_resolution_handler("exr", handler);
   resolver.register_asset_resolution_handler("EXR", handler);
+  // HDR (Radiance HDR format) - commonly used for environment maps
+  resolver.register_asset_resolution_handler("hdr", handler);
+  resolver.register_asset_resolution_handler("HDR", handler);
 
   return true;
 }

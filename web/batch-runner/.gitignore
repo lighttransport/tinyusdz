@@ -1,0 +1,7 @@
+# Batch runner output
+batch-results/
+node_modules/
+
+# Debug files
+*.png
+*.pdf

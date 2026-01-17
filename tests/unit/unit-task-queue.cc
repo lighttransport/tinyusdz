@@ -158,7 +158,7 @@ void task_queue_multithreaded_test(void) {
   // Producer threads
   std::vector<std::thread> producers;
   for (int i = 0; i < NUM_PRODUCERS; i++) {
-    producers.emplace_back([&queue, &counter]() {
+    producers.emplace_back([&queue, &counter, TASKS_PER_PRODUCER]() {
       for (int j = 0; j < TASKS_PER_PRODUCER; j++) {
         while (!queue.Push(simple_increment, &counter)) {
           std::this_thread::yield();

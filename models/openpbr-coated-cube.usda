@@ -1,0 +1,66 @@
+#usda 1.0
+(
+    doc = "OpenPBR coated material with roughness texture"
+    metersPerUnit = 1
+    upAxis = "Y"
+    defaultPrim = "World"
+)
+
+def Xform "World"
+{
+    def Cube "CoatedCube"
+    {
+        double size = 2.0
+        rel material:binding = </World/_materials/CoatedMaterial>
+
+        texCoord2f[] primvars:st = [
+            (0, 0), (1, 0), (1, 1), (0, 1),
+            (0, 0), (1, 0), (1, 1), (0, 1),
+            (0, 0), (1, 0), (1, 1), (0, 1),
+            (0, 0), (1, 0), (1, 1), (0, 1),
+            (0, 0), (1, 0), (1, 1), (0, 1),
+            (0, 0), (1, 0), (1, 1), (0, 1)
+        ] (
+            interpolation = "faceVarying"
+        )
+    }
+
+    def Scope "_materials"
+    {
+        def Material "CoatedMaterial"
+        {
+            token outputs:surface.connect = </World/_materials/CoatedMaterial/OpenPBRSurface.outputs:surface>
+
+            def Shader "OpenPBRSurface"
+            {
+                uniform token info:id = "OpenPBRSurface"
+                color3f inputs:base_color.connect = </World/_materials/CoatedMaterial/BrickTexture.outputs:rgb>
+                float inputs:base_weight = 1.0
+                float inputs:base_metalness = 0.0
+                float inputs:specular_roughness = 0.5
+                float inputs:specular_weight = 0.5
+                float inputs:coat_weight = 0.8
+                float inputs:coat_roughness = 0.1
+                float inputs:coat_ior = 1.5
+                color3f inputs:coat_color = (1.0, 1.0, 1.0)
+                token outputs:surface
+            }
+
+            def Shader "BrickTexture"
+            {
+                uniform token info:id = "UsdUVTexture"
+                asset inputs:file = @./textures/brick.bmp@
+                string inputs:filtertype = "linear"
+                float2 inputs:texcoord.connect = </World/_materials/CoatedMaterial/Primvar.outputs:result>
+                color3f outputs:rgb
+            }
+
+            def Shader "Primvar"
+            {
+                uniform token info:id = "UsdPrimvarReader_float2"
+                int inputs:index = 0
+                float2 outputs:result
+            }
+        }
+    }
+}

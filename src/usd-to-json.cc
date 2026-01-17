@@ -142,10 +142,10 @@ json SerializeArrayData(const std::vector<T>& array, USDToJSONContext* context,
 // Helper function to serialize attribute metadata
 json SerializeAttributeMetadata(const AttrMetas& metas) {
   json metadata;
-  
+
   // Serialize interpolation
-  if (metas.interpolation) {
-    switch (metas.interpolation.value()) {
+  if (metas.has_interpolation()) {
+    switch (metas.get_interpolation_enum()) {
       case Interpolation::Constant:
         metadata["interpolation"] = "constant";
         break;
@@ -166,58 +166,58 @@ json SerializeAttributeMetadata(const AttrMetas& metas) {
         break;
     }
   }
-  
+
   // Serialize elementSize
-  if (metas.elementSize) {
-    metadata["elementSize"] = metas.elementSize.value();
+  if (metas.has_elementSize()) {
+    metadata["elementSize"] = metas.get_elementSize();
   }
-  
+
   // Serialize hidden
-  if (metas.hidden) {
-    metadata["hidden"] = metas.hidden.value();
+  if (metas.has_hidden()) {
+    metadata["hidden"] = metas.get_hidden();
   }
-  
+
   // Serialize comment
-  if (metas.comment) {
-    metadata["comment"] = metas.comment.value().value;
+  if (metas.has_comment()) {
+    metadata["comment"] = metas.get_comment().value;
   }
-  
+
   // Serialize weight (for BlendShapes)
-  if (metas.weight) {
-    metadata["weight"] = metas.weight.value();
+  if (metas.has_weight()) {
+    metadata["weight"] = metas.get_weight();
   }
-  
+
   // Serialize usdShade metadata
-  if (metas.connectability) {
-    metadata["connectability"] = metas.connectability.value().str();
+  if (metas.has_connectability()) {
+    metadata["connectability"] = metas.get_connectability().str();
   }
-  
-  if (metas.outputName) {
-    metadata["outputName"] = metas.outputName.value().str();
+
+  if (metas.has_outputName()) {
+    metadata["outputName"] = metas.get_outputName().str();
   }
-  
-  if (metas.renderType) {
-    metadata["renderType"] = metas.renderType.value().str();
+
+  if (metas.has_renderType()) {
+    metadata["renderType"] = metas.get_renderType().str();
   }
-  
+
   // Serialize display metadata
-  if (metas.displayName) {
-    metadata["displayName"] = metas.displayName.value();
+  if (metas.has_displayName()) {
+    metadata["displayName"] = metas.get_displayName();
   }
-  
-  if (metas.displayGroup) {
-    metadata["displayGroup"] = metas.displayGroup.value();
+
+  if (metas.has_displayGroup()) {
+    metadata["displayGroup"] = metas.get_displayGroup();
   }
-  
+
   // Serialize bindMaterialAs
-  if (metas.bindMaterialAs) {
-    metadata["bindMaterialAs"] = metas.bindMaterialAs.value().str();
+  if (metas.has_bindMaterialAs()) {
+    metadata["bindMaterialAs"] = metas.get_bindMaterialAs().str();
   }
-  
+
   // Serialize customData
-  if (metas.customData) {
+  if (metas.has_customData()) {
     json customDataJson;
-    const auto& customData = metas.customData.value();
+    const auto& customData = metas.get_customData();
     for (const auto& item : customData) {
       // For now, serialize as string representation
       // TODO: Implement proper Dictionary to JSON conversion
@@ -229,9 +229,9 @@ json SerializeAttributeMetadata(const AttrMetas& metas) {
   }
   
   // Serialize sdrMetadata
-  if (metas.sdrMetadata) {
+  if (metas.has_sdrMetadata()) {
     json sdrJson;
-    const auto& sdrData = metas.sdrMetadata.value();
+    const auto& sdrData = metas.get_sdrMetadata();
     for (const auto& item : sdrData) {
       // For now, serialize as string representation
       // TODO: Implement proper Dictionary to JSON conversion
@@ -242,8 +242,9 @@ json SerializeAttributeMetadata(const AttrMetas& metas) {
     }
   }
   
-  // Serialize other custom metadata
-  for (const auto& item : metas.meta) {
+  // Serialize other custom metadata from the underlying dictionary
+  for (const auto& item : metas.data()) {
+    // Skip known keys that are already serialized above
     // TODO: Implement proper MetaVariable to JSON conversion
     metadata[item.first] = "[MetaVariable]";
   }
@@ -990,28 +991,67 @@ nonstd::expected<json, std::string> ToJSON(const tinyusdz::StageMetas& metas) {
   return j;
 }
 
-bool PrimToJSONRec(json &root, const tinyusdz::Prim& prim, int depth) {
-  json j = ToJSON(prim.data());
+// Iterative version of PrimToJSON using explicit stack
+bool PrimToJSONIterative(json &root, const tinyusdz::Prim& root_prim) {
+  // Stack entry for iterative processing
+  struct StackEntry {
+    const tinyusdz::Prim *prim;
+    size_t child_idx;
+    json j;
+    json jchildren;
 
-  json jchildren = json::object();
-
-  // TODO: Traverse Prim according to primChildren.
-  for (const auto &child : prim.children()) {
-    json cj;
-    if (!PrimToJSONRec(cj, child, depth+1)) {
-      return false;
+    explicit StackEntry(const tinyusdz::Prim *p)
+        : prim(p), child_idx(0), jchildren(json::object()) {
+      // Convert prim data to JSON immediately
+      j = ToJSON(p->data());
     }
-    std::string cname = child.element_name();
-    jchildren[cname] = cj;
-  }
+  };
 
-  if (jchildren.size()) {
-    j["primChildren"] = jchildren;
-  }
+  std::vector<StackEntry> stack;
+  stack.reserve(64);
 
-  root[prim.element_name()] = j;
+  // Initialize with root prim
+  stack.emplace_back(&root_prim);
+
+  while (!stack.empty()) {
+    StackEntry &curr = stack.back();
+    const auto &children = curr.prim->children();
+
+    if (curr.child_idx < children.size()) {
+      // Push next child
+      const tinyusdz::Prim &child = children[curr.child_idx];
+      curr.child_idx++;
+
+      stack.emplace_back(&child);
+    } else {
+      // All children processed
+      // Finalize this node's JSON
+      if (curr.jchildren.size()) {
+        curr.j["primChildren"] = curr.jchildren;
+      }
+
+      std::string prim_name = curr.prim->element_name();
+      json completed_j = std::move(curr.j);
+
+      if (stack.size() > 1) {
+        // Add to parent's children
+        stack.pop_back();
+        stack.back().jchildren[prim_name] = std::move(completed_j);
+      } else {
+        // Root node - add to output
+        root[prim_name] = std::move(completed_j);
+        stack.pop_back();
+      }
+    }
+  }
 
   return true;
+}
+
+// Wrapper to maintain backward compatibility with PrimToJSONRec signature
+bool PrimToJSONRec(json &root, const tinyusdz::Prim& prim, int depth) {
+  (void)depth;  // Iterative version doesn't need depth
+  return PrimToJSONIterative(root, prim);
 }
 
 // Helper function to serialize context to JSON
@@ -1385,8 +1425,8 @@ json ToJSON(const tinyusdz::Attribute& attribute, USDToJSONContext* /* context *
   }
   
   // Interpolation (from metadata)
-  if (attribute.metas().interpolation) {
-    switch (attribute.metas().interpolation.value()) {
+  if (attribute.metas().has_interpolation()) {
+    switch (attribute.metas().get_interpolation_enum()) {
       case Interpolation::Invalid:
         j["interpolation"] = "invalid";
         break;
