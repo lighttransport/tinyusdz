@@ -4443,37 +4443,37 @@ bool CrateWriter::ConvertPrimSpecRecursive(
   const PrimMeta& metas = primspec.metas();
 
   // Add common metadata
-  if (metas.active) {
+  if (metas.has_active()) {
     crate::CrateValue active_value;
-    active_value.Set(metas.active.value());
+    active_value.Set(metas.get_active());
     fields.push_back({"active", active_value});
   }
 
-  if (metas.hidden) {
+  if (metas.has_hidden()) {
     crate::CrateValue hidden_value;
-    hidden_value.Set(metas.hidden.value());
+    hidden_value.Set(metas.get_hidden());
     fields.push_back({"hidden", hidden_value});
   }
 
-  if (metas.kind) {
+  if (metas.has_kind()) {
     crate::CrateValue kind_value;
-    // Convert Kind enum to string first using to_string()
-    std::string kind_str = to_string(metas.kind.value());
+    // get_kind() returns the kind as a string
+    std::string kind_str = metas.get_kind();
     crate::TokenIndex kind_tok = GetOrCreateToken(kind_str);
     kind_value.Set(kind_tok.value);
     fields.push_back({"kind", kind_value});
   }
 
-  if (metas.displayName) {
+  if (metas.has_displayName()) {
     crate::CrateValue display_value;
-    display_value.Set(metas.displayName.value());
+    display_value.Set(metas.get_displayName());
     fields.push_back({"displayName", display_value});
   }
 
-  if (metas.doc) {
+  if (metas.has_doc()) {
     crate::CrateValue doc_value;
-    // StringData.value is the std::string, not .str()
-    doc_value.Set(metas.doc.value().value);
+    // get_doc() returns StringData, extract .value for the string
+    doc_value.Set(metas.get_doc().value);
     fields.push_back({"documentation", doc_value});
   }
 
@@ -4587,17 +4587,17 @@ bool CrateWriter::ConvertPrimSpecRecursive(
   }
 
   // Add customData if present
-  if (metas.customData) {
+  if (metas.has_customData()) {
     crate::CrateValue custom_data_value;
-    custom_data_value.Set(metas.customData.value());
+    custom_data_value.Set(metas.get_customData());
     fields.push_back({"customData", custom_data_value});
     std::cerr << "[ConvertPrimSpecRecursive] Added customData with "
-              << metas.customData.value().size() << " entries\n";
+              << metas.get_customData().size() << " entries\n";
   }
 
   // Add apiSchemas if present
-  if (metas.apiSchemas) {
-    const APISchemas& api_schemas = metas.apiSchemas.value();
+  if (metas.has_apiSchemas()) {
+    const APISchemas& api_schemas = metas.get_apiSchemas();
 
     // Convert APISchemas to TokenListOp
     ListOp<value::token> api_listop;
@@ -4735,21 +4735,21 @@ bool CrateWriter::ConvertPrimSpecRecursive(
   }
 
   // Add assetInfo if present
-  if (metas.assetInfo) {
+  if (metas.has_assetInfo()) {
     crate::CrateValue asset_info_value;
-    asset_info_value.Set(metas.assetInfo.value());
+    asset_info_value.Set(metas.get_assetInfo());
     fields.push_back({"assetInfo", asset_info_value});
     std::cerr << "[ConvertPrimSpecRecursive] Added assetInfo with "
-              << metas.assetInfo.value().size() << " entries\n";
+              << metas.get_assetInfo().size() << " entries\n";
   }
 
   // Add instanceable if present
-  if (metas.instanceable) {
+  if (metas.has_instanceable()) {
     crate::CrateValue instanceable_value;
-    instanceable_value.Set(metas.instanceable.value());
+    instanceable_value.Set(metas.get_instanceable());
     fields.push_back({"instanceable", instanceable_value});
     std::cerr << "[ConvertPrimSpecRecursive] Added instanceable: "
-              << metas.instanceable.value() << "\n";
+              << metas.get_instanceable() << "\n";
   }
 
   // 5. Add spec to file
@@ -4873,27 +4873,27 @@ bool CrateWriter::ConvertAttributeToFields(
   const AttrMetas& metas = attr.metas();
 
   // Add interpolation if specified
-  if (metas.interpolation) {
+  if (metas.has_interpolation()) {
     crate::CrateValue interp_value;
-    crate::TokenIndex interp_tok = GetOrCreateToken(to_string(metas.interpolation.value()));
+    crate::TokenIndex interp_tok = GetOrCreateToken(metas.get_interpolation().str());
     interp_value.Set(interp_tok.value);
     attr_fields.push_back({"interpolation", interp_value});
   }
 
   // Add hidden if specified
-  if (metas.hidden) {
+  if (metas.has_hidden()) {
     crate::CrateValue hidden_value;
-    hidden_value.Set(metas.hidden.value());
+    hidden_value.Set(metas.get_hidden());
     attr_fields.push_back({"hidden", hidden_value});
   }
 
   // Add customData if present
-  if (metas.customData) {
+  if (metas.has_customData()) {
     crate::CrateValue custom_data_value;
-    custom_data_value.Set(metas.customData.value());
+    custom_data_value.Set(metas.get_customData());
     attr_fields.push_back({"customData", custom_data_value});
     std::cerr << "[ConvertAttributeToFields] Added customData for " << attr_name
-              << " with " << metas.customData.value().size() << " entries\n";
+              << " with " << metas.get_customData().size() << " entries\n";
   }
 
   // Add custom flag if attribute is custom
@@ -5003,39 +5003,39 @@ bool CrateWriter::ConvertRelationshipToFields(
   const AttrMeta& metas = rel.metas();
 
   // Add comment if present
-  if (metas.comment) {
+  if (metas.has_comment()) {
     crate::CrateValue comment_value;
-    comment_value.Set(metas.comment.value().value);  // StringData.value
+    comment_value.Set(metas.get_comment().value);  // StringData.value
     rel_fields.push_back({"comment", comment_value});
   }
 
   // Add hidden if present
-  if (metas.hidden) {
+  if (metas.has_hidden()) {
     crate::CrateValue hidden_value;
-    hidden_value.Set(metas.hidden.value());
+    hidden_value.Set(metas.get_hidden());
     rel_fields.push_back({"hidden", hidden_value});
   }
 
   // Add customData if present
-  if (metas.customData) {
+  if (metas.has_customData()) {
     crate::CrateValue custom_data_value;
-    custom_data_value.Set(metas.customData.value());
+    custom_data_value.Set(metas.get_customData());
     rel_fields.push_back({"customData", custom_data_value});
     std::cerr << "[ConvertRelationshipToFields] Added customData for " << rel_name
-              << " with " << metas.customData.value().size() << " entries\n";
+              << " with " << metas.get_customData().size() << " entries\n";
   }
 
   // Add displayName if present
-  if (metas.displayName) {
+  if (metas.has_displayName()) {
     crate::CrateValue display_name_value;
-    display_name_value.Set(metas.displayName.value());
+    display_name_value.Set(metas.get_displayName());
     rel_fields.push_back({"displayName", display_name_value});
   }
 
   // Add displayGroup if present
-  if (metas.displayGroup) {
+  if (metas.has_displayGroup()) {
     crate::CrateValue display_group_value;
-    display_group_value.Set(metas.displayGroup.value());
+    display_group_value.Set(metas.get_displayGroup());
     rel_fields.push_back({"displayGroup", display_group_value});
   }
 
