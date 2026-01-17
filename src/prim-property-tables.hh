@@ -224,6 +224,18 @@
   X("inputs:shaping:cone:angle", shapingConeAngle) \
   X("inputs:shaping:cone:softness", shapingConeSoftness)
 
+// Composite macros for light reconstruction
+// Use these in ReconstructPrim to reduce boilerplate
+
+// For lights WITH shaping (SphereLight, RectLight, DiskLight, CylinderLight)
+#define LIGHT_COMMON_ATTRS_WITH_SHAPING(X) \
+  LIGHT_SHADOW_ATTRS(X) \
+  LIGHT_SHAPING_ATTRS(X)
+
+// For lights WITHOUT shaping (DistantLight, GeometryLight, DomeLight)
+#define LIGHT_COMMON_ATTRS_NO_SHAPING(X) \
+  LIGHT_SHADOW_ATTRS(X)
+
 // ============================================================================
 // SphereLight Properties
 // ============================================================================
