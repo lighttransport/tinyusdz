@@ -456,7 +456,10 @@ static ParseResult ParseTypedAttributeUnified(
   }
 
   // Handle non-empty attribute
-  if (prop.get_property_type() == Property::Type::Attrib) {
+  // Note: Type::Connection means the attribute has connections, but it may also have values.
+  // Connections are already extracted above, so we need to also parse any values.
+  if (prop.get_property_type() == Property::Type::Attrib ||
+      prop.get_property_type() == Property::Type::Connection) {
     DCOUT("Adding typed prop: " << name);
 
     // Check blocked attribute
@@ -680,7 +683,8 @@ static ParseResult ParseTypedAttribute_OLD1(std::set<std::string> &table, /* ino
         table.insert(name);
         ret.code = ParseResult::ResultCode::Success;
         return ret;
-      } else if (prop.get_property_type() == Property::Type::Attrib) {
+      } else if (prop.get_property_type() == Property::Type::Attrib ||
+                 prop.get_property_type() == Property::Type::Connection) {
 
         DCOUT("Adding typed prop: " << name);
 
@@ -861,7 +865,8 @@ static ParseResult ParseTypedAttribute_OLD2(std::set<std::string> &table, /* ino
         table.insert(name);
         ret.code = ParseResult::ResultCode::Success;
         return ret;
-      } else if (prop.get_property_type() == Property::Type::Attrib) {
+      } else if (prop.get_property_type() == Property::Type::Attrib ||
+                 prop.get_property_type() == Property::Type::Connection) {
         DCOUT("Adding prop: " << name);
 
         // Config attributes (config:*) are implicitly uniform even if not explicitly marked
@@ -1003,7 +1008,8 @@ static ParseResult ParseTypedAttribute_OLD3(std::set<std::string> &table, /* ino
         table.insert(name);
         ret.code = ParseResult::ResultCode::Success;
         return ret;
-      } else if (prop.get_property_type() == Property::Type::Attrib) {
+      } else if (prop.get_property_type() == Property::Type::Attrib ||
+                 prop.get_property_type() == Property::Type::Connection) {
 
         DCOUT("Adding typed attribute: " << name);
         DCOUT("T.tyid = " << value::TypeTraits<T>::type_id() << ", var.tyid = " << attr.get_var().type_id());
@@ -1156,8 +1162,9 @@ static ParseResult ParseTypedAttribute_OLD4(std::set<std::string> &table, /* ino
       if (prop.get_property_type() == Property::Type::EmptyAttrib) {
         DCOUT("Added prop with empty value: " << name);
         target.set_value_empty();
-        has_default = true; // has empty 'default' 
-      } else if (prop.get_property_type() == Property::Type::Attrib) {
+        has_default = true; // has empty 'default'
+      } else if (prop.get_property_type() == Property::Type::Attrib ||
+                 prop.get_property_type() == Property::Type::Connection) {
 
         DCOUT("Adding typed attribute: " << name);
 
@@ -1275,7 +1282,8 @@ static ParseResult ParseExtentAttribute(std::set<std::string> &table, /* inout *
       table.insert(name);
       ret.code = ParseResult::ResultCode::Success;
       return ret;
-    } else if (prop.get_property_type() == Property::Type::Attrib) {
+    } else if (prop.get_property_type() == Property::Type::Attrib ||
+               prop.get_property_type() == Property::Type::Connection) {
 
       //bool has_default{false};
       bool has_connections{false};
@@ -4029,6 +4037,47 @@ bool ReconstructPrim(
   return true;
 }
 
+// ============================================================================
+// Generic macro for light prim reconstruction
+// ============================================================================
+// Consolidates the common pattern for all light types:
+// SphereLight, RectLight, DiskLight, CylinderLight, DistantLight, GeometryLight, DomeLight
+//
+// IMPORTANT: Caller must define PRIM_CLASS_ and PRIM_PTR_ macros before calling
+//            this macro, and undef them afterward. These are required by
+//            EXPAND_TYPED_ATTR macros.
+//
+// Parameters:
+//   LightClass: The light class (e.g., SphereLight, RectLight)
+//   light_ptr: Pointer to the light instance
+//   TYPED_ATTRS: Property table macro (e.g., SPHERE_LIGHT_TYPED_ATTRS)
+//   COMMON_ATTRS: Light common attrs macro (LIGHT_COMMON_ATTRS_WITH_SHAPING or LIGHT_COMMON_ATTRS_NO_SHAPING)
+//   EXTENT_HANDLING: Either PARSE_EXTENT_ATTRIBUTE(...) or /* no extent */
+//   SPECIAL_HANDLING: Special attribute handling for exceptions like RectLight's texture:file or /* no special handling */
+#define RECONSTRUCT_LIGHT_PRIM_BODY(LightClass, light_ptr, TYPED_ATTRS, COMMON_ATTRS, EXTENT_HANDLING, SPECIAL_HANDLING) \
+  (void)references; \
+  \
+  std::set<std::string> table; \
+  \
+  if (!prim::ReconstructXformOpsFromProperties(spec, table, properties, &light_ptr->xformOps, err)) { \
+    return false; \
+  } \
+  \
+  for (auto &prop : properties) { \
+    SPECIAL_HANDLING \
+    TYPED_ATTRS(EXPAND_TYPED_ATTR) \
+    COMMON_ATTRS(EXPAND_TYPED_ATTR) \
+    EXTENT_HANDLING \
+    PARSE_TIMESAMPLED_ENUM_PROPERTY(table, prop, kVisibility, Visibility, VisibilityEnumHandler, LightClass, \
+                       light_ptr->visibility, options.strict_allowedToken_check) \
+    PARSE_UNIFORM_ENUM_PROPERTY(table, prop, kPurpose, Purpose, PurposeEnumHandler, LightClass, \
+                       light_ptr->purpose, options.strict_allowedToken_check) \
+    ADD_PROPERTY(table, prop, LightClass, light_ptr->props) \
+    PARSE_PROPERTY_END_MAKE_WARN(table, prop) \
+  } \
+  \
+  return true;
+
 template <>
 bool ReconstructPrim<SphereLight>(
     const Specifier &spec,
@@ -4038,15 +4087,6 @@ bool ReconstructPrim<SphereLight>(
     std::string *warn,
     std::string *err,
     const PrimReconstructOptions &options) {
-
-  (void)references;
-
-  std::set<std::string> table;
-
-  if (!prim::ReconstructXformOpsFromProperties(spec, table, properties, &light->xformOps, err)) {
-    return false;
-  }
-
 #if defined(__clang__)
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wunused-macros"
@@ -4056,23 +4096,11 @@ bool ReconstructPrim<SphereLight>(
 #if defined(__clang__)
 #pragma clang diagnostic pop
 #endif
-
-  for (auto &prop : properties) {  // Non-const to allow move from property metadata
-    SPHERE_LIGHT_TYPED_ATTRS(EXPAND_TYPED_ATTR)
-    LIGHT_COMMON_ATTRS_WITH_SHAPING(EXPAND_TYPED_ATTR)
-    PARSE_TIMESAMPLED_ENUM_PROPERTY(table, prop, kVisibility, Visibility, VisibilityEnumHandler, SphereLight,
-                   light->visibility, options.strict_allowedToken_check)
-    PARSE_UNIFORM_ENUM_PROPERTY(table, prop, kPurpose, Purpose, PurposeEnumHandler, SphereLight,
-                       light->purpose, options.strict_allowedToken_check)
-    PARSE_EXTENT_ATTRIBUTE(table, prop, kExtent, SphereLight, light->extent)
-    ADD_PROPERTY(table, prop, SphereLight, light->props)
-    PARSE_PROPERTY_END_MAKE_WARN(table, prop)
-  }
-
+  RECONSTRUCT_LIGHT_PRIM_BODY(SphereLight, light, SPHERE_LIGHT_TYPED_ATTRS, LIGHT_COMMON_ATTRS_WITH_SHAPING,
+                              PARSE_EXTENT_ATTRIBUTE(table, prop, kExtent, SphereLight, light->extent),
+                              /* no special handling */)
 #undef PRIM_CLASS_
 #undef PRIM_PTR_
-
-  return true;
 }
 
 template <>
@@ -4084,15 +4112,6 @@ bool ReconstructPrim<RectLight>(
     std::string *warn,
     std::string *err,
     const PrimReconstructOptions &options) {
-
-  (void)references;
-
-  std::set<std::string> table;
-
-  if (!prim::ReconstructXformOpsFromProperties(spec, table, properties, &light->xformOps, err)) {
-    return false;
-  }
-
 #if defined(__clang__)
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wunused-macros"
@@ -4102,25 +4121,12 @@ bool ReconstructPrim<RectLight>(
 #if defined(__clang__)
 #pragma clang diagnostic pop
 #endif
-
-  for (auto &prop : properties) {  // Non-const to allow move from property metadata
-    // Special case: texture:file uses UsdUVTexture type
-    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:texture:file", UsdUVTexture, light->file)
-    RECT_LIGHT_TYPED_ATTRS(EXPAND_TYPED_ATTR)
-    LIGHT_COMMON_ATTRS_WITH_SHAPING(EXPAND_TYPED_ATTR)
-    PARSE_EXTENT_ATTRIBUTE(table, prop, kExtent, RectLight, light->extent)
-    PARSE_TIMESAMPLED_ENUM_PROPERTY(table, prop, kVisibility, Visibility, VisibilityEnumHandler, RectLight,
-                   light->visibility, options.strict_allowedToken_check)
-    PARSE_UNIFORM_ENUM_PROPERTY(table, prop, kPurpose, Purpose, PurposeEnumHandler, RectLight,
-                       light->purpose, options.strict_allowedToken_check)
-    ADD_PROPERTY(table, prop, RectLight, light->props)
-    PARSE_PROPERTY_END_MAKE_WARN(table, prop)
-  }
-
+  // Special case: texture:file uses UsdUVTexture type
+  RECONSTRUCT_LIGHT_PRIM_BODY(RectLight, light, RECT_LIGHT_TYPED_ATTRS, LIGHT_COMMON_ATTRS_WITH_SHAPING,
+                              PARSE_EXTENT_ATTRIBUTE(table, prop, kExtent, RectLight, light->extent),
+                              PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:texture:file", UsdUVTexture, light->file))
 #undef PRIM_CLASS_
 #undef PRIM_PTR_
-
-  return true;
 }
 
 template <>
@@ -4132,15 +4138,6 @@ bool ReconstructPrim<DiskLight>(
     std::string *warn,
     std::string *err,
     const PrimReconstructOptions &options) {
-
-  (void)references;
-
-  std::set<std::string> table;
-
-  if (!prim::ReconstructXformOpsFromProperties(spec, table, properties, &light->xformOps, err)) {
-    return false;
-  }
-
 #if defined(__clang__)
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wunused-macros"
@@ -4150,23 +4147,11 @@ bool ReconstructPrim<DiskLight>(
 #if defined(__clang__)
 #pragma clang diagnostic pop
 #endif
-
-  for (auto &prop : properties) {  // Non-const to allow move from property metadata
-    DISK_LIGHT_TYPED_ATTRS(EXPAND_TYPED_ATTR)
-    LIGHT_COMMON_ATTRS_WITH_SHAPING(EXPAND_TYPED_ATTR)
-    PARSE_EXTENT_ATTRIBUTE(table, prop, kExtent, DiskLight, light->extent)
-    PARSE_TIMESAMPLED_ENUM_PROPERTY(table, prop, kVisibility, Visibility, VisibilityEnumHandler, DiskLight,
-                       light->visibility, options.strict_allowedToken_check)
-    PARSE_UNIFORM_ENUM_PROPERTY(table, prop, kPurpose, Purpose, PurposeEnumHandler, DiskLight,
-                       light->purpose, options.strict_allowedToken_check)
-    ADD_PROPERTY(table, prop, DiskLight, light->props)
-    PARSE_PROPERTY_END_MAKE_WARN(table, prop)
-  }
-
+  RECONSTRUCT_LIGHT_PRIM_BODY(DiskLight, light, DISK_LIGHT_TYPED_ATTRS, LIGHT_COMMON_ATTRS_WITH_SHAPING,
+                              PARSE_EXTENT_ATTRIBUTE(table, prop, kExtent, DiskLight, light->extent),
+                              /* no special handling */)
 #undef PRIM_CLASS_
 #undef PRIM_PTR_
-
-  return true;
 }
 
 template <>
@@ -4178,15 +4163,6 @@ bool ReconstructPrim<CylinderLight>(
     std::string *warn,
     std::string *err,
     const PrimReconstructOptions &options) {
-
-  (void)references;
-
-  std::set<std::string> table;
-
-  if (!prim::ReconstructXformOpsFromProperties(spec, table, properties, &light->xformOps, err)) {
-    return false;
-  }
-
 #if defined(__clang__)
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wunused-macros"
@@ -4196,23 +4172,11 @@ bool ReconstructPrim<CylinderLight>(
 #if defined(__clang__)
 #pragma clang diagnostic pop
 #endif
-
-  for (auto &prop : properties) {  // Non-const to allow move from property metadata
-    CYLINDER_LIGHT_TYPED_ATTRS(EXPAND_TYPED_ATTR)
-    LIGHT_COMMON_ATTRS_WITH_SHAPING(EXPAND_TYPED_ATTR)
-    PARSE_EXTENT_ATTRIBUTE(table, prop, kExtent, CylinderLight, light->extent)
-    PARSE_TIMESAMPLED_ENUM_PROPERTY(table, prop, kVisibility, Visibility, VisibilityEnumHandler, CylinderLight,
-                   light->visibility, options.strict_allowedToken_check)
-    PARSE_UNIFORM_ENUM_PROPERTY(table, prop, kPurpose, Purpose, PurposeEnumHandler, CylinderLight,
-                       light->purpose, options.strict_allowedToken_check)
-    ADD_PROPERTY(table, prop, CylinderLight, light->props)
-    PARSE_PROPERTY_END_MAKE_WARN(table, prop)
-  }
-
+  RECONSTRUCT_LIGHT_PRIM_BODY(CylinderLight, light, CYLINDER_LIGHT_TYPED_ATTRS, LIGHT_COMMON_ATTRS_WITH_SHAPING,
+                              PARSE_EXTENT_ATTRIBUTE(table, prop, kExtent, CylinderLight, light->extent),
+                              /* no special handling */)
 #undef PRIM_CLASS_
 #undef PRIM_PTR_
-
-  return true;
 }
 
 template <>
@@ -4224,15 +4188,6 @@ bool ReconstructPrim<DistantLight>(
     std::string *warn,
     std::string *err,
     const PrimReconstructOptions &options) {
-
-  (void)references;
-
-  std::set<std::string> table;
-
-  if (!prim::ReconstructXformOpsFromProperties(spec, table, properties, &light->xformOps, err)) {
-    return false;
-  }
-
 #if defined(__clang__)
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wunused-macros"
@@ -4242,23 +4197,11 @@ bool ReconstructPrim<DistantLight>(
 #if defined(__clang__)
 #pragma clang diagnostic pop
 #endif
-
-  for (auto &prop : properties) {  // Non-const to allow move from property metadata
-    DISTANT_LIGHT_TYPED_ATTRS(EXPAND_TYPED_ATTR)
-    LIGHT_COMMON_ATTRS_NO_SHAPING(EXPAND_TYPED_ATTR)
-    // DistantLight has no shaping attrs or extent
-    PARSE_UNIFORM_ENUM_PROPERTY(table, prop, kPurpose, Purpose, PurposeEnumHandler, DistantLight,
-                       light->purpose, options.strict_allowedToken_check)
-    PARSE_TIMESAMPLED_ENUM_PROPERTY(table, prop, kVisibility, Visibility, VisibilityEnumHandler, DistantLight,
-                   light->visibility, options.strict_allowedToken_check)
-    ADD_PROPERTY(table, prop, DistantLight, light->props)
-    PARSE_PROPERTY_END_MAKE_WARN(table, prop)
-  }
-
+  RECONSTRUCT_LIGHT_PRIM_BODY(DistantLight, light, DISTANT_LIGHT_TYPED_ATTRS, LIGHT_COMMON_ATTRS_NO_SHAPING,
+                              /* no extent */,
+                              /* no special handling */)
 #undef PRIM_CLASS_
 #undef PRIM_PTR_
-
-  return true;
 }
 
 template <>
@@ -4270,15 +4213,6 @@ bool ReconstructPrim<GeometryLight>(
     std::string *warn,
     std::string *err,
     const PrimReconstructOptions &options) {
-
-  (void)references;
-
-  std::set<std::string> table;
-
-  if (!prim::ReconstructXformOpsFromProperties(spec, table, properties, &light->xformOps, err)) {
-    return false;
-  }
-
 #if defined(__clang__)
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wunused-macros"
@@ -4288,23 +4222,11 @@ bool ReconstructPrim<GeometryLight>(
 #if defined(__clang__)
 #pragma clang diagnostic pop
 #endif
-
-  for (auto &prop : properties) {  // Non-const to allow move from property metadata
-    GEOMETRY_LIGHT_TYPED_ATTRS(EXPAND_TYPED_ATTR)
-    LIGHT_COMMON_ATTRS_NO_SHAPING(EXPAND_TYPED_ATTR)
-    // GeometryLight has no shaping attrs or extent
-    PARSE_TIMESAMPLED_ENUM_PROPERTY(table, prop, kVisibility, Visibility, VisibilityEnumHandler, GeometryLight,
-                   light->visibility, options.strict_allowedToken_check)
-    PARSE_UNIFORM_ENUM_PROPERTY(table, prop, kPurpose, Purpose, PurposeEnumHandler, GeometryLight,
-                       light->purpose, options.strict_allowedToken_check)
-    ADD_PROPERTY(table, prop, GeometryLight, light->props)
-    PARSE_PROPERTY_END_MAKE_WARN(table, prop)
-  }
-
+  RECONSTRUCT_LIGHT_PRIM_BODY(GeometryLight, light, GEOMETRY_LIGHT_TYPED_ATTRS, LIGHT_COMMON_ATTRS_NO_SHAPING,
+                              /* no extent */,
+                              /* no special handling */)
 #undef PRIM_CLASS_
 #undef PRIM_PTR_
-
-  return true;
 }
 
 template <>
@@ -4316,15 +4238,6 @@ bool ReconstructPrim<DomeLight>(
     std::string *warn,
     std::string *err,
     const PrimReconstructOptions &options) {
-
-  (void)references;
-
-  std::set<std::string> table;
-
-  if (!prim::ReconstructXformOpsFromProperties(spec, table, properties, &light->xformOps, err)) {
-    return false;
-  }
-
 #if defined(__clang__)
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wunused-macros"
@@ -4334,24 +4247,12 @@ bool ReconstructPrim<DomeLight>(
 #if defined(__clang__)
 #pragma clang diagnostic pop
 #endif
-
-  for (auto &prop : properties) {  // Non-const to allow move from property metadata
-    DOME_LIGHT_TYPED_ATTRS(EXPAND_TYPED_ATTR)
-    LIGHT_COMMON_ATTRS_NO_SHAPING(EXPAND_TYPED_ATTR)
-    // DomeLight has no shaping attrs or extent
-    PARSE_TIMESAMPLED_ENUM_PROPERTY(table, prop, kVisibility, Visibility, VisibilityEnumHandler, DomeLight,
-                   light->visibility, options.strict_allowedToken_check)
-    PARSE_UNIFORM_ENUM_PROPERTY(table, prop, kPurpose, Purpose, PurposeEnumHandler, DomeLight,
-                       light->purpose, options.strict_allowedToken_check)
-    ADD_PROPERTY(table, prop, DomeLight, light->props)
-    PARSE_PROPERTY_END_MAKE_WARN(table, prop)
-  }
-
+  DCOUT("Implement DomeLight");
+  RECONSTRUCT_LIGHT_PRIM_BODY(DomeLight, light, DOME_LIGHT_TYPED_ATTRS, LIGHT_COMMON_ATTRS_NO_SHAPING,
+                              /* no extent */,
+                              /* no special handling */)
 #undef PRIM_CLASS_
 #undef PRIM_PTR_
-
-  DCOUT("Implement DomeLight");
-  return true;
 }
 
 // ============================================================================
@@ -4959,12 +4860,19 @@ bool ReconstructShader<UsdUVTexture>(
     }                                                                                    \
   }
 
-template <>
-bool ReconstructShader<UsdPrimvarReader_int>(
+// ============================================================================
+// Generic PrimvarReader Shader Reconstruction
+// ============================================================================
+// All PrimvarReader variants (int, float, float2, float3, float4, string,
+// vector, normal, point, matrix) follow identical logic - only the type differs.
+// This helper eliminates ~220 lines of duplication.
+
+template<typename PrimvarReaderT>
+static bool ReconstructPrimvarReaderShaderImpl(
     const Specifier &spec,
     PropertyMap &properties,
     const ReferenceList &references,
-    UsdPrimvarReader_int *preader,
+    PrimvarReaderT *preader,
     std::string *warn,
     std::string *err,
     const PrimReconstructOptions &options)
@@ -4975,15 +4883,28 @@ bool ReconstructShader<UsdPrimvarReader_int>(
   std::set<std::string> table;
   table.insert("info:id"); // `info:id` is already parsed in ReconstructPrim<Shader>
   for (auto &prop : properties) {
-    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:fallback", UsdPrimvarReader_int,
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:fallback", PrimvarReaderT,
                    preader->fallback)
     PARSE_PRIMVAR_READER_VARNAME(table, prop, preader->varname, "")
     PARSE_SHADER_TERMINAL_ATTRIBUTE(table, prop, "outputs:result",
-                                  UsdPrimvarReader_int, preader->result)
-    ADD_PROPERTY(table, prop, UsdPrimvarReader_int, preader->props)
+                                  PrimvarReaderT, preader->result)
+    ADD_PROPERTY(table, prop, PrimvarReaderT, preader->props)
     PARSE_PROPERTY_END_MAKE_WARN(table, prop)
   }
   return true;
+}
+
+template <>
+bool ReconstructShader<UsdPrimvarReader_int>(
+    const Specifier &spec,
+    PropertyMap &properties,
+    const ReferenceList &references,
+    UsdPrimvarReader_int *preader,
+    std::string *warn,
+    std::string *err,
+    const PrimReconstructOptions &options)
+{
+  return ReconstructPrimvarReaderShaderImpl(spec, properties, references, preader, warn, err, options);
 }
 
 template <>
@@ -4996,21 +4917,7 @@ bool ReconstructShader<UsdPrimvarReader_float>(
     std::string *err,
     const PrimReconstructOptions &options)
 {
-  (void)spec;
-  (void)references;
-  (void)options;
-  std::set<std::string> table;
-  table.insert("info:id"); // `info:id` is already parsed in ReconstructPrim<Shader>
-  for (auto &prop : properties) {
-    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:fallback", UsdPrimvarReader_float,
-                   preader->fallback)
-    PARSE_PRIMVAR_READER_VARNAME(table, prop, preader->varname, "")
-    PARSE_SHADER_TERMINAL_ATTRIBUTE(table, prop, "outputs:result",
-                                  UsdPrimvarReader_float, preader->result)
-    ADD_PROPERTY(table, prop, UsdPrimvarReader_float, preader->props)
-    PARSE_PROPERTY_END_MAKE_WARN(table, prop)
-  }
-  return true;
+  return ReconstructPrimvarReaderShaderImpl(spec, properties, references, preader, warn, err, options);
 }
 
 template <>
@@ -5023,23 +4930,7 @@ bool ReconstructShader<UsdPrimvarReader_float2>(
     std::string *err,
     const PrimReconstructOptions &options)
 {
-  (void)spec;
-  (void)references;
-  (void)options;
-  std::set<std::string> table;
-  table.insert("info:id"); // `info:id` is already parsed in ReconstructPrim<Shader>
-  for (auto &prop : properties) {
-    DCOUT("Primreader_float2 prop = " << prop.first);
-    PARSE_PRIMVAR_READER_VARNAME(table, prop, preader->varname, "")
-    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:fallback", UsdPrimvarReader_float2,
-                   preader->fallback)
-    PARSE_SHADER_TERMINAL_ATTRIBUTE(table, prop, "outputs:result",
-                                  UsdPrimvarReader_float2, preader->result)
-    ADD_PROPERTY(table, prop, UsdPrimvarReader_float2, preader->props)
-    PARSE_PROPERTY_END_MAKE_WARN(table, prop)
-  }
-
-  return true;
+  return ReconstructPrimvarReaderShaderImpl(spec, properties, references, preader, warn, err, options);
 }
 
 template <>
@@ -5052,22 +4943,7 @@ bool ReconstructShader<UsdPrimvarReader_float3>(
     std::string *err,
     const PrimReconstructOptions &options)
 {
-  (void)spec;
-  (void)references;
-  (void)options;
-  std::set<std::string> table;
-  table.insert("info:id"); // `info:id` is already parsed in ReconstructPrim<Shader>
-  for (auto &prop : properties) {
-    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:fallback", UsdPrimvarReader_float3,
-                   preader->fallback)
-    PARSE_PRIMVAR_READER_VARNAME(table, prop, preader->varname, "")
-    PARSE_SHADER_TERMINAL_ATTRIBUTE(table, prop, "outputs:result",
-                                  UsdPrimvarReader_float3, preader->result)
-    ADD_PROPERTY(table, prop, UsdPrimvarReader_float3, preader->props)
-    PARSE_PROPERTY_END_MAKE_WARN(table, prop)
-  }
-
-  return true;
+  return ReconstructPrimvarReaderShaderImpl(spec, properties, references, preader, warn, err, options);
 }
 
 template <>
@@ -5080,22 +4956,7 @@ bool ReconstructShader<UsdPrimvarReader_float4>(
     std::string *err,
     const PrimReconstructOptions &options)
 {
-  (void)spec;
-  (void)references;
-  (void)options;
-  std::set<std::string> table;
-  table.insert("info:id"); // `info:id` is already parsed in ReconstructPrim<Shader>
-
-  for (auto &prop : properties) {
-    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:fallback", UsdPrimvarReader_float4,
-                   preader->fallback)
-    PARSE_PRIMVAR_READER_VARNAME(table, prop, preader->varname, "")
-    PARSE_SHADER_TERMINAL_ATTRIBUTE(table, prop, "outputs:result",
-                                  UsdPrimvarReader_float4, preader->result)
-    ADD_PROPERTY(table, prop, UsdPrimvarReader_float4, preader->props)
-    PARSE_PROPERTY_END_MAKE_WARN(table, prop)
-  }
-  return true;
+  return ReconstructPrimvarReaderShaderImpl(spec, properties, references, preader, warn, err, options);
 }
 
 template <>
@@ -5108,22 +4969,7 @@ bool ReconstructShader<UsdPrimvarReader_string>(
     std::string *err,
     const PrimReconstructOptions &options)
 {
-  (void)spec;
-  (void)references;
-  (void)options;
-  std::set<std::string> table;
-  table.insert("info:id"); // `info:id` is already parsed in ReconstructPrim<Shader>
-
-  for (auto &prop : properties) {
-    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:fallback", UsdPrimvarReader_string,
-                   preader->fallback)
-    PARSE_PRIMVAR_READER_VARNAME(table, prop, preader->varname, "")
-    PARSE_SHADER_TERMINAL_ATTRIBUTE(table, prop, "outputs:result",
-                                  UsdPrimvarReader_string, preader->result)
-    ADD_PROPERTY(table, prop, UsdPrimvarReader_string, preader->props)
-    PARSE_PROPERTY_END_MAKE_WARN(table, prop)
-  }
-  return true;
+  return ReconstructPrimvarReaderShaderImpl(spec, properties, references, preader, warn, err, options);
 }
 
 template <>
@@ -5136,22 +4982,7 @@ bool ReconstructShader<UsdPrimvarReader_vector>(
     std::string *err,
     const PrimReconstructOptions &options)
 {
-  (void)spec;
-  (void)references;
-  (void)options;
-  std::set<std::string> table;
-  table.insert("info:id"); // `info:id` is already parsed in ReconstructPrim<Shader>
-
-  for (auto &prop : properties) {
-    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:fallback", UsdPrimvarReader_vector,
-                   preader->fallback)
-    PARSE_PRIMVAR_READER_VARNAME(table, prop, preader->varname, "")
-    PARSE_SHADER_TERMINAL_ATTRIBUTE(table, prop, "outputs:result",
-                                  UsdPrimvarReader_vector, preader->result)
-    ADD_PROPERTY(table, prop, UsdPrimvarReader_vector, preader->props)
-    PARSE_PROPERTY_END_MAKE_WARN(table, prop)
-  }
-  return true;
+  return ReconstructPrimvarReaderShaderImpl(spec, properties, references, preader, warn, err, options);
 }
 
 template <>
@@ -5164,22 +4995,7 @@ bool ReconstructShader<UsdPrimvarReader_normal>(
     std::string *err,
     const PrimReconstructOptions &options)
 {
-  (void)spec;
-  (void)references;
-  (void)options;
-  std::set<std::string> table;
-  table.insert("info:id"); // `info:id` is already parsed in ReconstructPrim<Shader>
-
-  for (auto &prop : properties) {
-    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:fallback", UsdPrimvarReader_normal,
-                   preader->fallback)
-    PARSE_PRIMVAR_READER_VARNAME(table, prop, preader->varname, "")
-    PARSE_SHADER_TERMINAL_ATTRIBUTE(table, prop, "outputs:result",
-                                  UsdPrimvarReader_normal, preader->result)
-    ADD_PROPERTY(table, prop, UsdPrimvarReader_normal, preader->props)
-    PARSE_PROPERTY_END_MAKE_WARN(table, prop)
-  }
-  return true;
+  return ReconstructPrimvarReaderShaderImpl(spec, properties, references, preader, warn, err, options);
 }
 
 template <>
@@ -5192,22 +5008,7 @@ bool ReconstructShader<UsdPrimvarReader_point>(
     std::string *err,
     const PrimReconstructOptions &options)
 {
-  (void)spec;
-  (void)references;
-  (void)options;
-  std::set<std::string> table;
-  table.insert("info:id"); // `info:id` is already parsed in ReconstructPrim<Shader>
-
-  for (auto &prop : properties) {
-    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:fallback", UsdPrimvarReader_point,
-                   preader->fallback)
-    PARSE_PRIMVAR_READER_VARNAME(table, prop, preader->varname, "")
-    PARSE_SHADER_TERMINAL_ATTRIBUTE(table, prop, "outputs:result",
-                                  UsdPrimvarReader_point, preader->result)
-    ADD_PROPERTY(table, prop, UsdPrimvarReader_point, preader->props)
-    PARSE_PROPERTY_END_MAKE_WARN(table, prop)
-  }
-  return true;
+  return ReconstructPrimvarReaderShaderImpl(spec, properties, references, preader, warn, err, options);
 }
 
 template <>
@@ -5220,22 +5021,7 @@ bool ReconstructShader<UsdPrimvarReader_matrix>(
     std::string *err,
     const PrimReconstructOptions &options)
 {
-  (void)spec;
-  (void)references;
-  (void)options;
-  std::set<std::string> table;
-  table.insert("info:id"); // `info:id` is already parsed in ReconstructPrim<Shader>
-
-  for (auto &prop : properties) {
-    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:fallback", UsdPrimvarReader_matrix,
-                   preader->fallback)
-    PARSE_PRIMVAR_READER_VARNAME(table, prop, preader->varname, "")
-    PARSE_SHADER_TERMINAL_ATTRIBUTE(table, prop, "outputs:result",
-                                  UsdPrimvarReader_matrix, preader->result)
-    ADD_PROPERTY(table, prop, UsdPrimvarReader_matrix, preader->props)
-    PARSE_PROPERTY_END_MAKE_WARN(table, prop)
-  }
-  return true;
+  return ReconstructPrimvarReaderShaderImpl(spec, properties, references, preader, warn, err, options);
 }
 
 template <>
