@@ -4,6 +4,7 @@
 
 #include "unicode-xid.hh"
 #include "common-macros.inc"
+#include "external/dtoa_milo.h"
 
 #ifdef __SSE2__
 #include <emmintrin.h>
@@ -145,6 +146,31 @@ std::string unescapeControlSequence(const std::string &str) {
             i++;
           } else if (str[i + 1] == '\\') {
             s += "\\";
+            i++;
+          } else if (str[i + 1] == 'x') {
+            // Hex escape: \xNN
+            if (i + 3 < str.size()) {
+              char h1 = str[i + 2];
+              char h2 = str[i + 3];
+              auto hex_digit = [](char c) -> int {
+                if (c >= '0' && c <= '9') return c - '0';
+                if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+                if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+                return -1;
+              };
+              int d1 = hex_digit(h1);
+              int d2 = hex_digit(h2);
+              if (d1 >= 0 && d2 >= 0) {
+                s += static_cast<char>((d1 << 4) | d2);
+                i += 3;
+              } else {
+                // Invalid hex, keep backslash
+                s += str[i];
+              }
+            } else {
+              // Not enough characters for \xNN
+              s += str[i];
+            }
           } else {
             // ignore backslash
           }
@@ -1104,5 +1130,128 @@ std::string base64_decode(std::string const &encoded_string) {
    -- end base64.cpp and base64.h
 */
 
+bool GlobMatch(const std::string &pattern, const std::string &str) {
+  // Simple glob matching with * (any chars) and ? (single char)
+  // Uses dynamic programming approach
+
+  size_t p = 0;  // pattern index
+  size_t s = 0;  // string index
+  size_t starIdx = std::string::npos;
+  size_t matchIdx = 0;
+
+  while (s < str.size()) {
+    if (p < pattern.size() && (pattern[p] == '?' || pattern[p] == str[s])) {
+      // Current characters match, or pattern has ?
+      p++;
+      s++;
+    } else if (p < pattern.size() && pattern[p] == '*') {
+      // Star found, remember position
+      starIdx = p;
+      matchIdx = s;
+      p++;
+    } else if (starIdx != std::string::npos) {
+      // Mismatch, but we have a previous star
+      // Backtrack: try matching one more character with the star
+      p = starIdx + 1;
+      matchIdx++;
+      s = matchIdx;
+    } else {
+      // No match and no star to backtrack
+      return false;
+    }
+  }
+
+  // Check remaining pattern characters (should all be *)
+  while (p < pattern.size() && pattern[p] == '*') {
+    p++;
+  }
+
+  return p == pattern.size();
+}
+
+bool GlobMatchPath(const std::string &pattern, const std::string &path) {
+  // Glob matching for paths with ** support for recursive matching
+  // ** matches zero or more path segments (including /)
+  // * matches any characters except /
+  // ? matches single character except /
+
+  size_t p = 0;
+  size_t s = 0;
+  size_t starStarIdx = std::string::npos;
+  size_t starStarMatchIdx = 0;
+  size_t starIdx = std::string::npos;
+  size_t matchIdx = 0;
+
+  while (s < path.size()) {
+    // Check for **
+    if (p + 1 < pattern.size() && pattern[p] == '*' && pattern[p + 1] == '*') {
+      starStarIdx = p;
+      starStarMatchIdx = s;
+      p += 2;
+      // Skip trailing / after **
+      if (p < pattern.size() && pattern[p] == '/') {
+        p++;
+      }
+      continue;
+    }
+
+    if (p < pattern.size() && pattern[p] == '*' &&
+        (p + 1 >= pattern.size() || pattern[p + 1] != '*')) {
+      // Single * - matches any except /
+      starIdx = p;
+      matchIdx = s;
+      p++;
+    } else if (p < pattern.size() &&
+               ((pattern[p] == '?' && path[s] != '/') || pattern[p] == path[s])) {
+      p++;
+      s++;
+    } else if (starIdx != std::string::npos && path[s] != '/') {
+      // Backtrack to single star
+      p = starIdx + 1;
+      matchIdx++;
+      s = matchIdx;
+    } else if (starStarIdx != std::string::npos) {
+      // Backtrack to double star
+      p = starStarIdx + 2;
+      if (p < pattern.size() && pattern[p] == '/') {
+        p++;
+      }
+      starStarMatchIdx++;
+      s = starStarMatchIdx;
+      starIdx = std::string::npos;
+    } else {
+      return false;
+    }
+  }
+
+  // Check remaining pattern
+  while (p < pattern.size()) {
+    if (pattern[p] == '*') {
+      p++;
+    } else if (p + 1 < pattern.size() && pattern[p] == '*' && pattern[p + 1] == '*') {
+      p += 2;
+    } else {
+      break;
+    }
+  }
+
+  return p == pattern.size();
+}
+
+char *dtoa(float f, char *buf) {
+  // For float, use simple sprintf for now
+  // dtoa_milo is optimized for double and doesn't work well with float
+  int n = snprintf(buf, 384, "%.9g", static_cast<double>(f));
+  if (n < 0 || n >= 384) {
+    buf[0] = '0';
+    return &buf[1];
+  }
+  return &buf[n];
+}
+
+char *dtoa(double d, char *buf) {
+  // Use dtoa_milo for double precision
+  return dtoa_milo(d, buf);
+}
 
 }  // namespace tinyusdz

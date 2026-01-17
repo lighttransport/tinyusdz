@@ -8,6 +8,9 @@ export default defineConfig({
       'Cross-Origin-Opener-Policy': 'same-origin',
       'Cross-Origin-Embedder-Policy': 'require-corp',
     },
+    watch: {
+      ignored: ['**/node_modules/**']
+    }
   },
   resolve: {
     alias: [

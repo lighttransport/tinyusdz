@@ -1,0 +1,132 @@
+#usda 1.0
+(
+    doc = "Comprehensive Camera test - all attributes from GEOM_CAMERA_TYPED_ATTRS"
+    defaultPrim = "Cameras"
+)
+
+def Xform "Cameras"
+{
+    # Test 1: Perspective camera with all attributes
+    def Camera "PerspectiveCamera"
+    {
+        float focalLength = 50.0
+        float focusDistance = 5.0
+        float exposure = 0.0
+        float fStop = 5.6
+        float horizontalAperture = 36.0
+        float horizontalApertureOffset = 0.0
+        float verticalAperture = 24.0
+        float verticalApertureOffset = 0.0
+        float2 clippingRange = (0.1, 10000.0)
+        float4[] clippingPlanes = []
+        double shutter:open = 0.0
+        double shutter:close = 0.5
+        token projection = "perspective"
+        uniform token stereoRole = "mono"
+
+        double3 xformOp:translate = (0, 1.5, 5)
+        float3 xformOp:rotateXYZ = (-15, 0, 0)
+        uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:rotateXYZ"]
+    }
+
+    # Test 2: Orthographic camera
+    def Camera "OrthographicCamera"
+    {
+        float focalLength = 50.0
+        float focusDistance = 10.0
+        float exposure = 1.0
+        float fStop = 22.0
+        float horizontalAperture = 20.955
+        float horizontalApertureOffset = 0.5
+        float verticalAperture = 15.2908
+        float verticalApertureOffset = -0.25
+        float2 clippingRange = (1.0, 100.0)
+        double shutter:open = -0.25
+        double shutter:close = 0.25
+        token projection = "orthographic"
+        uniform token stereoRole = "mono"
+
+        double3 xformOp:translate = (0, 10, 0)
+        float3 xformOp:rotateXYZ = (-90, 0, 0)
+        uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:rotateXYZ"]
+    }
+
+    # Test 3: Stereo camera - left eye
+    def Camera "LeftEyeCamera"
+    {
+        float focalLength = 35.0
+        float focusDistance = 2.0
+        float exposure = 0.5
+        float fStop = 2.8
+        float horizontalAperture = 36.0
+        float horizontalApertureOffset = -0.032
+        float verticalAperture = 24.0
+        float verticalApertureOffset = 0.0
+        float2 clippingRange = (0.01, 1000.0)
+        double shutter:open = 0.0
+        double shutter:close = 0.0208333
+        token projection = "perspective"
+        uniform token stereoRole = "left"
+
+        double3 xformOp:translate = (-0.032, 1.6, 3)
+        uniform token[] xformOpOrder = ["xformOp:translate"]
+    }
+
+    # Test 4: Stereo camera - right eye
+    def Camera "RightEyeCamera"
+    {
+        float focalLength = 35.0
+        float focusDistance = 2.0
+        float exposure = 0.5
+        float fStop = 2.8
+        float horizontalAperture = 36.0
+        float horizontalApertureOffset = 0.032
+        float verticalAperture = 24.0
+        float verticalApertureOffset = 0.0
+        float2 clippingRange = (0.01, 1000.0)
+        double shutter:open = 0.0
+        double shutter:close = 0.0208333
+        token projection = "perspective"
+        uniform token stereoRole = "right"
+
+        double3 xformOp:translate = (0.032, 1.6, 3)
+        uniform token[] xformOpOrder = ["xformOp:translate"]
+    }
+
+    # Test 5: Camera with clipping planes
+    def Camera "ClippingPlanesCamera"
+    {
+        float focalLength = 50.0
+        float focusDistance = 5.0
+        float exposure = 0.0
+        float fStop = 8.0
+        float horizontalAperture = 36.0
+        float horizontalApertureOffset = 0.0
+        float verticalAperture = 24.0
+        float verticalApertureOffset = 0.0
+        float2 clippingRange = (0.5, 500.0)
+        float4[] clippingPlanes = [(1, 0, 0, -5), (-1, 0, 0, -5), (0, 1, 0, 0)]
+        double shutter:open = 0.0
+        double shutter:close = 0.0
+        token projection = "perspective"
+        uniform token stereoRole = "mono"
+    }
+
+    # Test 6: Camera with extreme values
+    def Camera "ExtremesCamera"
+    {
+        float focalLength = 8.0
+        float focusDistance = 0.5
+        float exposure = -2.0
+        float fStop = 1.2
+        float horizontalAperture = 70.0
+        float horizontalApertureOffset = 2.5
+        float verticalAperture = 52.5
+        float verticalApertureOffset = -1.5
+        float2 clippingRange = (0.001, 100000.0)
+        double shutter:open = -0.5
+        double shutter:close = 0.5
+        token projection = "perspective"
+        uniform token stereoRole = "mono"
+    }
+}

@@ -1,0 +1,236 @@
+#usda 1.0
+(
+    doc = "XformOp full coverage test - all transformation operation types"
+    defaultPrim = "XformOpTests"
+)
+
+def Xform "XformOpTests"
+{
+    # =========================================================================
+    # Basic translate, rotate, scale
+    # =========================================================================
+    def Xform "BasicTRS"
+    {
+        double3 xformOp:translate = (1, 2, 3)
+        float3 xformOp:rotateXYZ = (45, 30, 15)
+        float3 xformOp:scale = (1.5, 1.5, 1.5)
+        uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:rotateXYZ", "xformOp:scale"]
+
+        def Cube "Cube"
+        {
+            double size = 1.0
+        }
+    }
+
+    # =========================================================================
+    # All rotation order variants
+    # =========================================================================
+    def Xform "RotateXYZ"
+    {
+        float3 xformOp:rotateXYZ = (30, 45, 60)
+        uniform token[] xformOpOrder = ["xformOp:rotateXYZ"]
+    }
+
+    def Xform "RotateXZY"
+    {
+        float3 xformOp:rotateXZY = (30, 45, 60)
+        uniform token[] xformOpOrder = ["xformOp:rotateXZY"]
+    }
+
+    def Xform "RotateYXZ"
+    {
+        float3 xformOp:rotateYXZ = (30, 45, 60)
+        uniform token[] xformOpOrder = ["xformOp:rotateYXZ"]
+    }
+
+    def Xform "RotateYZX"
+    {
+        float3 xformOp:rotateYZX = (30, 45, 60)
+        uniform token[] xformOpOrder = ["xformOp:rotateYZX"]
+    }
+
+    def Xform "RotateZXY"
+    {
+        float3 xformOp:rotateZXY = (30, 45, 60)
+        uniform token[] xformOpOrder = ["xformOp:rotateZXY"]
+    }
+
+    def Xform "RotateZYX"
+    {
+        float3 xformOp:rotateZYX = (30, 45, 60)
+        uniform token[] xformOpOrder = ["xformOp:rotateZYX"]
+    }
+
+    # =========================================================================
+    # Single axis rotations
+    # =========================================================================
+    def Xform "RotateX"
+    {
+        float xformOp:rotateX = 45
+        uniform token[] xformOpOrder = ["xformOp:rotateX"]
+    }
+
+    def Xform "RotateY"
+    {
+        float xformOp:rotateY = 90
+        uniform token[] xformOpOrder = ["xformOp:rotateY"]
+    }
+
+    def Xform "RotateZ"
+    {
+        float xformOp:rotateZ = -30
+        uniform token[] xformOpOrder = ["xformOp:rotateZ"]
+    }
+
+    # =========================================================================
+    # Orient (quaternion rotation)
+    # =========================================================================
+    def Xform "Orient"
+    {
+        quatf xformOp:orient = (0.707, 0.707, 0, 0)
+        uniform token[] xformOpOrder = ["xformOp:orient"]
+    }
+
+    def Xform "OrientDouble"
+    {
+        quatd xformOp:orient = (0.5, 0.5, 0.5, 0.5)
+        uniform token[] xformOpOrder = ["xformOp:orient"]
+    }
+
+    # =========================================================================
+    # Transform matrix (4x4)
+    # =========================================================================
+    def Xform "TransformMatrix"
+    {
+        matrix4d xformOp:transform = (
+            (1, 0, 0, 0),
+            (0, 0.866, 0.5, 0),
+            (0, -0.5, 0.866, 0),
+            (5, 10, 15, 1)
+        )
+        uniform token[] xformOpOrder = ["xformOp:transform"]
+    }
+
+    # =========================================================================
+    # Named/suffixed xformOps (for multiple of same type)
+    # =========================================================================
+    def Xform "NamedOps"
+    {
+        double3 xformOp:translate:pivot = (0, 1, 0)
+        float3 xformOp:rotateXYZ:rotation = (0, 45, 0)
+        double3 xformOp:translate:offset = (2, 0, 0)
+        uniform token[] xformOpOrder = ["xformOp:translate:pivot", "xformOp:rotateXYZ:rotation", "xformOp:translate:offset"]
+    }
+
+    # =========================================================================
+    # Inverse operations (!invert!)
+    # =========================================================================
+    def Xform "InverseOps"
+    {
+        double3 xformOp:translate:pivot = (0, 5, 0)
+        float3 xformOp:rotateXYZ = (0, 90, 0)
+        double3 xformOp:translate:pivotInv = (0, -5, 0)
+        uniform token[] xformOpOrder = ["xformOp:translate:pivot", "xformOp:rotateXYZ", "!invert!xformOp:translate:pivot"]
+    }
+
+    # =========================================================================
+    # Reset xform stack
+    # =========================================================================
+    def Xform "ParentWithTransform"
+    {
+        double3 xformOp:translate = (100, 100, 100)
+        float3 xformOp:rotateXYZ = (45, 45, 45)
+        uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:rotateXYZ"]
+
+        def Xform "ResetChild"
+        {
+            double3 xformOp:translate = (1, 2, 3)
+            uniform token[] xformOpOrder = ["!resetXformStack!", "xformOp:translate"]
+        }
+    }
+
+    # =========================================================================
+    # Double precision variants
+    # =========================================================================
+    def Xform "DoublePrecision"
+    {
+        double3 xformOp:translate = (1.123456789012345, 2.234567890123456, 3.345678901234567)
+        double3 xformOp:rotateXYZ = (12.345678901234567, 23.456789012345678, 34.567890123456789)
+        double3 xformOp:scale = (1.111111111111111, 2.222222222222222, 3.333333333333333)
+        uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:rotateXYZ", "xformOp:scale"]
+    }
+
+    # =========================================================================
+    # Animated xformOps
+    # =========================================================================
+    def Xform "AnimatedXform"
+    {
+        double3 xformOp:translate.timeSamples = {
+            1: (0, 0, 0),
+            24: (10, 0, 0),
+            48: (10, 10, 0),
+            72: (0, 10, 0),
+            96: (0, 0, 0),
+        }
+        float3 xformOp:rotateXYZ.timeSamples = {
+            1: (0, 0, 0),
+            24: (90, 0, 0),
+            48: (90, 90, 0),
+            72: (90, 90, 90),
+            96: (0, 0, 0),
+        }
+        float3 xformOp:scale.timeSamples = {
+            1: (1, 1, 1),
+            48: (2, 2, 2),
+            96: (1, 1, 1),
+        }
+        uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:rotateXYZ", "xformOp:scale"]
+    }
+
+    # =========================================================================
+    # Complex pivot point rotation
+    # =========================================================================
+    def Xform "PivotRotation"
+    {
+        # Rotate around a pivot point at (5, 0, 0)
+        double3 xformOp:translate:moveToPivot = (-5, 0, 0)
+        float xformOp:rotateY:spin = 45
+        double3 xformOp:translate:moveBack = (5, 0, 0)
+        uniform token[] xformOpOrder = [
+            "xformOp:translate:moveBack",
+            "xformOp:rotateY:spin",
+            "xformOp:translate:moveToPivot"
+        ]
+    }
+
+    # =========================================================================
+    # Multiple transforms in hierarchy
+    # =========================================================================
+    def Xform "HierarchyRoot"
+    {
+        double3 xformOp:translate = (0, 0, 0)
+        float xformOp:rotateY = 30
+        uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:rotateY"]
+
+        def Xform "Child1"
+        {
+            double3 xformOp:translate = (5, 0, 0)
+            float xformOp:rotateZ = 45
+            uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:rotateZ"]
+
+            def Xform "GrandChild"
+            {
+                double3 xformOp:translate = (2, 0, 0)
+                float3 xformOp:scale = (0.5, 0.5, 0.5)
+                uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+            }
+        }
+
+        def Xform "Child2"
+        {
+            double3 xformOp:translate = (0, 5, 0)
+            quatf xformOp:orient = (0.924, 0, 0.383, 0)
+            uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient"]
+        }
+    }
+}

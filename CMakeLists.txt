@@ -247,6 +247,7 @@ option(TINYUSDZ_WITH_TIFF
 
 # -- EXR --
 option(TINYUSDZ_WITH_EXR "Build with EXR HDR texture support" ON)
+option(TINYUSDZ_USE_TINYEXR_V3 "Use TinyEXR v3 API (modern C17/C++17 API). Set OFF for legacy v1 API" ON)
 # ---------
 
 # -- ColorIO --
@@ -314,15 +315,10 @@ if (PROJECT_IS_TOP_LEVEL)
     #set(CMAKE_CXX_STANDARD 17) # nanobind requires C++17
 
     # for pybind11
-    set(CMAKE_CXX_STANDARD 14)
+    set(CMAKE_CXX_STANDARD 17)
   else()
-    if (TINYUSDZ_MSAN)
-      # Require strict C++17 or later for MSAN build
-      set(CMAKE_CXX_STANDARD 17)
-    else()
-      # Require strict C++14 mode(e.g. `-std=c++14`)
-      set(CMAKE_CXX_STANDARD 14)
-    endif()
+    # Require strict C++17 mode(e.g. `-std=c++17`)
+    set(CMAKE_CXX_STANDARD 17)
   endif()
   set(CMAKE_CXX_STANDARD_REQUIRED ON)
   set(CMAKE_CXX_EXTENSIONS OFF)
@@ -435,11 +431,15 @@ set(TINYUSDZ_SOURCES
     ${PROJECT_SOURCE_DIR}/src/prim-reconstruct.cc
     ${PROJECT_SOURCE_DIR}/src/prim-composition.cc
     ${PROJECT_SOURCE_DIR}/src/prim-types.cc
+    ${PROJECT_SOURCE_DIR}/src/enum-handlers.cc
     ${PROJECT_SOURCE_DIR}/src/layer.cc
     ${PROJECT_SOURCE_DIR}/src/primvar.cc
     ${PROJECT_SOURCE_DIR}/src/str-util.cc
+    ${PROJECT_SOURCE_DIR}/src/usd-dump.cc
     ${PROJECT_SOURCE_DIR}/src/value-pprint.cc
     ${PROJECT_SOURCE_DIR}/src/value-types.cc
+    ${PROJECT_SOURCE_DIR}/src/color-space.cc
+    ${PROJECT_SOURCE_DIR}/src/color-space.hh
     ${PROJECT_SOURCE_DIR}/src/tiny-format.cc
     ${PROJECT_SOURCE_DIR}/src/tiny-string.cc
     ${PROJECT_SOURCE_DIR}/src/io-util.cc
@@ -452,6 +452,10 @@ set(TINYUSDZ_SOURCES
     ${PROJECT_SOURCE_DIR}/src/usdShade.cc
     ${PROJECT_SOURCE_DIR}/src/usdLux.cc
     # usdMtlX has less dependency(pugixml), so add it to core component
+    ${PROJECT_SOURCE_DIR}/src/mtlx-xml-tokenizer.cc
+    ${PROJECT_SOURCE_DIR}/src/mtlx-xml-parser.cc
+    ${PROJECT_SOURCE_DIR}/src/mtlx-dom.cc
+    ${PROJECT_SOURCE_DIR}/src/mtlx-simple-parser.cc
     ${PROJECT_SOURCE_DIR}/src/usdMtlx.cc
     ${PROJECT_SOURCE_DIR}/src/usdObj.cc
     ${PROJECT_SOURCE_DIR}/src/image-loader.cc
@@ -497,6 +501,14 @@ if (TINYUSDZ_WITH_TYDRA)
         ${PROJECT_SOURCE_DIR}/src/tydra/render-data.hh
         ${PROJECT_SOURCE_DIR}/src/tydra/render-data-pprint.cc
         ${PROJECT_SOURCE_DIR}/src/tydra/render-data-pprint.hh
+        ${PROJECT_SOURCE_DIR}/src/tydra/raytracing-data.cc
+        ${PROJECT_SOURCE_DIR}/src/tydra/raytracing-data.hh
+        ${PROJECT_SOURCE_DIR}/src/tydra/raytracing-scene-converter.cc
+        ${PROJECT_SOURCE_DIR}/src/tydra/raytracing-scene-converter.hh
+        ${PROJECT_SOURCE_DIR}/src/tydra/material-serializer.cc
+        ${PROJECT_SOURCE_DIR}/src/tydra/material-serializer.hh
+        ${PROJECT_SOURCE_DIR}/src/tydra/materialx-to-json.cc
+        ${PROJECT_SOURCE_DIR}/src/tydra/materialx-to-json.hh
         ${PROJECT_SOURCE_DIR}/src/tydra/render-scene-dump.cc
         ${PROJECT_SOURCE_DIR}/src/tydra/render-scene-dump.hh
         ${PROJECT_SOURCE_DIR}/src/tydra/bone-util.cc
@@ -516,6 +528,8 @@ if (TINYUSDZ_WITH_TYDRA)
         ${PROJECT_SOURCE_DIR}/src/tydra/diff-and-compare.hh
         ${PROJECT_SOURCE_DIR}/src/tydra/js-script.hh
         ${PROJECT_SOURCE_DIR}/src/tydra/js-script.cc
+        ${PROJECT_SOURCE_DIR}/src/tydra/threejs-exporter.hh
+        ${PROJECT_SOURCE_DIR}/src/tydra/threejs-exporter.cc
         )
     
     if(TINYUSDZ_WITH_WAMR)
@@ -594,23 +608,55 @@ if(TINYUSDZ_WITH_TIFF)
       PROPERTIES INCLUDE_DIRECTORIES ${PROJECT_SOURCE_DIR}/src/external)
   endif()
 
-  list(APPEND TINYUSDZ_DEP_SOURCES
-       ${PROJECT_SOURCE_DIR}/src/external/tinyexr.cc)
+  # NOTE: tiny_dng_loader doesn't depend on tinyexr,
+  # tinyexr is now added separately in the TINYUSDZ_WITH_EXR section
 endif(TINYUSDZ_WITH_TIFF)
 
 if(TINYUSDZ_WITH_EXR)
-  if(TINYUSDZ_USE_SYSTEM_ZLIB)
-    set_source_files_properties(
-      ${PROJECT_SOURCE_DIR}/src/external/tinyexr.cc
-      PROPERTIES COMPILE_DEFINITIONS "TINYEXR_USE_MINIZ=0")
-  else()
-    set_source_files_properties(
-      ${PROJECT_SOURCE_DIR}/src/external/tinyexr.cc
-      PROPERTIES INCLUDE_DIRECTORIES ${PROJECT_SOURCE_DIR}/src/external)
-  endif()
+  if(TINYUSDZ_USE_TINYEXR_V3)
+    # TinyEXR v3 API (modern C17/C++17 API)
+    # NOTE: We also compile tinyexr.cc (v1 implementation) for backward compatibility
+    # since image-loader.cc uses the v1 API (LoadEXRFromMemory, etc.)
+    message(STATUS "TinyUSDZ: Using TinyEXR v3 API")
 
-  list(APPEND TINYUSDZ_DEP_SOURCES
-       ${PROJECT_SOURCE_DIR}/src/external/tinyexr.cc)
+    if(TINYUSDZ_USE_SYSTEM_ZLIB)
+      set_source_files_properties(
+        ${PROJECT_SOURCE_DIR}/src/external/tinyexr_c_impl.c
+        PROPERTIES COMPILE_DEFINITIONS "TINYEXR_V3_HAS_DEFLATE=1;TINYEXR_V3_NO_MINIZ=1")
+      set_source_files_properties(
+        ${PROJECT_SOURCE_DIR}/src/external/tinyexr.cc
+        PROPERTIES COMPILE_DEFINITIONS "TINYEXR_USE_MINIZ=0")
+    else()
+      # Use bundled miniz (default)
+      set_source_files_properties(
+        ${PROJECT_SOURCE_DIR}/src/external/tinyexr_c_impl.c
+        PROPERTIES INCLUDE_DIRECTORIES ${PROJECT_SOURCE_DIR}/src/external)
+      set_source_files_properties(
+        ${PROJECT_SOURCE_DIR}/src/external/tinyexr.cc
+        PROPERTIES INCLUDE_DIRECTORIES ${PROJECT_SOURCE_DIR}/src/external)
+    endif()
+
+    list(APPEND TINYUSDZ_DEP_SOURCES
+         ${PROJECT_SOURCE_DIR}/src/external/tinyexr_c_impl.c
+         ${PROJECT_SOURCE_DIR}/src/external/tinyexr.cc)
+
+  else()
+    # TinyEXR v1 API (legacy API)
+    message(STATUS "TinyUSDZ: Using TinyEXR v1 API (legacy)")
+
+    if(TINYUSDZ_USE_SYSTEM_ZLIB)
+      set_source_files_properties(
+        ${PROJECT_SOURCE_DIR}/src/external/tinyexr.cc
+        PROPERTIES COMPILE_DEFINITIONS "TINYEXR_USE_MINIZ=0")
+    else()
+      set_source_files_properties(
+        ${PROJECT_SOURCE_DIR}/src/external/tinyexr.cc
+        PROPERTIES INCLUDE_DIRECTORIES ${PROJECT_SOURCE_DIR}/src/external)
+    endif()
+
+    list(APPEND TINYUSDZ_DEP_SOURCES
+         ${PROJECT_SOURCE_DIR}/src/external/tinyexr.cc)
+  endif()
 endif(TINYUSDZ_WITH_EXR)
 
 if(TINYUSDZ_WITH_TIFF OR TINYUSDZ_WITH_EXR)
@@ -1341,7 +1387,8 @@ foreach(TINYUSDZ_LIB_TARGET ${TINYUSDZ_LIBS})
 
   # On 32-bit systems, 64-bit atomic operations require libatomic
   # (Skip for emscripten as libatomic doesn't exist in wasm environment)
-  if (CMAKE_SIZEOF_VOID_P EQUAL 4 AND NOT EMSCRIPTEN)
+  # (Skip for MSVC as atomics are built into the runtime)
+  if (CMAKE_SIZEOF_VOID_P EQUAL 4 AND NOT EMSCRIPTEN AND NOT MSVC)
     target_link_libraries(${TINYUSDZ_LIB_TARGET} atomic)
   endif()
 
@@ -1684,6 +1731,47 @@ if(TINYUSDZ_BUILD_TESTS)
       COMMAND python3 ${PROJECT_SOURCE_DIR}/tests/usda/unit-runner.py --app
               "$<TARGET_FILE:test_tinyusdz>" --basedir "${PROJECT_SOURCE_DIR}/tests/usda"
       )
+  endif()
+
+  #
+  # USDA roundtrip tester
+  #
+  if(TINYUSDZ_WITH_MODULE_USDA_READER)
+    set(TINYUSDZ_ROUNDTRIP_TARGET "usda_roundtrip")
+    add_executable(${TINYUSDZ_ROUNDTRIP_TARGET} ${PROJECT_SOURCE_DIR}/tests/usda-roundtrip.cc)
+    add_sanitizers(${TINYUSDZ_ROUNDTRIP_TARGET})
+    target_include_directories(${TINYUSDZ_ROUNDTRIP_TARGET} PRIVATE ${PROJECT_SOURCE_DIR}/src)
+    target_link_libraries(${TINYUSDZ_ROUNDTRIP_TARGET} PRIVATE ${TINYUSDZ_TARGET_STATIC})
+    if(TINYUSDZ_WITH_JSON)
+      target_compile_definitions(${TINYUSDZ_ROUNDTRIP_TARGET} PRIVATE "TINYUSDZ_WITH_JSON")
+    endif()
+
+    add_test(
+      NAME usda-roundtrip-test
+      COMMAND python3 ${PROJECT_SOURCE_DIR}/tests/usda/roundtrip-runner.py --app
+              "$<TARGET_FILE:usda_roundtrip>" --basedir "${PROJECT_SOURCE_DIR}/tests/usda"
+      )
+  endif()
+
+  #
+  # USDC roundtrip tester (USDA -> USDC -> reparse -> compare)
+  #
+  if(TINYUSDZ_WITH_MODULE_USDA_READER AND TINYUSDZ_WITH_MODULE_USDC_WRITER AND TINYUSDZ_WITH_MODULE_USDC_READER)
+    set(TINYUSDZ_USDC_ROUNDTRIP_TARGET "usdc_roundtrip")
+    add_executable(${TINYUSDZ_USDC_ROUNDTRIP_TARGET} ${PROJECT_SOURCE_DIR}/tests/usdc-roundtrip.cc)
+    add_sanitizers(${TINYUSDZ_USDC_ROUNDTRIP_TARGET})
+    target_include_directories(${TINYUSDZ_USDC_ROUNDTRIP_TARGET} PRIVATE ${PROJECT_SOURCE_DIR}/src)
+    target_link_libraries(${TINYUSDZ_USDC_ROUNDTRIP_TARGET} PRIVATE ${TINYUSDZ_TARGET_STATIC})
+    if(TINYUSDZ_WITH_JSON)
+      target_compile_definitions(${TINYUSDZ_USDC_ROUNDTRIP_TARGET} PRIVATE "TINYUSDZ_WITH_JSON")
+    endif()
+
+    # TODO: Enable when USDC writer is fully implemented
+    #add_test(
+    #  NAME usdc-roundtrip-test
+    #  COMMAND python3 ${PROJECT_SOURCE_DIR}/tests/usda/usdc-roundtrip-runner.py --app
+    #          "$<TARGET_FILE:usdc_roundtrip>" --basedir "${PROJECT_SOURCE_DIR}/tests/usda"
+    #  )
   endif()
 
   #

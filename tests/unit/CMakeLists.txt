@@ -3,6 +3,7 @@ set(TEST_TARGET_NAME unit-test-tinyusdz)
 set(TEST_SOURCES
 	unit-main.cc
 
+	unit-ascii-parse.cc
 	unit-customdata.cc
 	unit-handle-allocator.cc
 	unit-prim-types.cc
@@ -15,9 +16,13 @@ set(TEST_SOURCES
 	unit-math.cc
 	unit-ioutil.cc
 	unit-timesamples.cc
+	unit-materialx.cc
 	unit-task-queue.cc
 	# unit-dedup.cc  # Temporarily disabled - needs API updates
 	unit-crate-writer.cc
+	unit-stage.cc
+	unit-tiny-container.cc
+	unit-usda-roundtrip.cc
    )
 
 if (TINYUSDZ_WITH_PXR_COMPAT_API)
