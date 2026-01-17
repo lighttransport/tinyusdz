@@ -58,10 +58,10 @@ inline int FindRootBone(int bone_idx, const std::vector<int> &parent_indices) {
   int iterations = 0;
 
   while (current >= 0 && current < static_cast<int>(parent_indices.size())) {
-    if (parent_indices[current] < 0) {
+    if (parent_indices[static_cast<size_t>(current)] < 0) {
       return current;  // Found root
     }
-    current = parent_indices[current];
+    current = parent_indices[static_cast<size_t>(current)];
 
     // Safety check against cycles
     iterations++;
@@ -74,7 +74,14 @@ inline int FindRootBone(int bone_idx, const std::vector<int> &parent_indices) {
 
 // Assign chain groups to bones (bones in same chain get same group ID)
 // Currently unused, but kept for future hierarchical reduction enhancements
-[[maybe_unused]] static void AssignChainGroups(const std::vector<int> &bone_indices,
+#if defined(__clang__)
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wunused-function"
+#elif defined(__GNUC__)
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wunused-function"
+#endif
+static void AssignChainGroups(const std::vector<int> &bone_indices,
                        const std::vector<int> &parent_indices,
                        std::vector<int> &out_chain_groups) {
   out_chain_groups.resize(bone_indices.size(), -1);
@@ -99,6 +106,11 @@ inline int FindRootBone(int bone_idx, const std::vector<int> &parent_indices) {
     out_chain_groups[i] = root_to_group[root];
   }
 }
+#if defined(__clang__)
+#pragma clang diagnostic pop
+#elif defined(__GNUC__)
+#pragma GCC diagnostic pop
+#endif
 
 }  // namespace
 
@@ -130,9 +142,9 @@ bool CalculateBoneDepths(const std::vector<int> &parent_indices,
         // Root bone
         depths[i] = 0;
         changed = true;
-      } else if (parent < static_cast<int>(num_bones) && depths[parent] >= 0) {
+      } else if (parent < static_cast<int>(num_bones) && depths[static_cast<size_t>(parent)] >= 0) {
         // Parent depth known
-        depths[i] = depths[parent] + 1;
+        depths[i] = depths[static_cast<size_t>(parent)] + 1;
         changed = true;
       }
     }
@@ -168,7 +180,7 @@ int FindBoneChainDistance(int bone_a, int bone_b,
 
   while (current >= 0 && current < static_cast<int>(parent_indices.size()) && iter < max_iter) {
     path_a.insert(current);
-    current = parent_indices[current];
+    current = parent_indices[static_cast<size_t>(current)];
     iter++;
   }
 
@@ -186,12 +198,12 @@ int FindBoneChainDistance(int bone_a, int bone_b,
       while (check != current && check >= 0 &&
              check < static_cast<int>(parent_indices.size()) && check_iter < max_iter) {
         distance_a++;
-        check = parent_indices[check];
+        check = parent_indices[static_cast<size_t>(check)];
         check_iter++;
       }
       return distance_a + distance_b;
     }
-    current = parent_indices[current];
+    current = parent_indices[static_cast<size_t>(current)];
     distance_b++;
     iter++;
   }
@@ -285,7 +297,7 @@ bool ReduceGreedy(const std::vector<BoneInfluence> &influences, uint32_t target_
 
   // Keep top N
   uint32_t keep = std::min(target_count, uint32_t(sorted.size()));
-  out_selected.assign(sorted.begin(), sorted.begin() + keep);
+  out_selected.assign(sorted.begin(), sorted.begin() + static_cast<std::ptrdiff_t>(keep));
 
   return true;
 }
@@ -311,16 +323,16 @@ bool ReduceHierarchical(const std::vector<BoneInfluence> &influences, uint32_t t
     const BoneInfluence &candidate = sorted[i];
 
     // Calculate affinity score: higher if close to already selected bones
-    float affinity_score = 0.0f;
+    // Note: Currently unused but kept for potential future use
+    (void)candidate;  // Suppress unused warning
+    (void)out_selected;  // Suppress unused warning
     for (const auto &selected : out_selected) {
       int dist = FindBoneChainDistance(candidate.joint_index, selected.joint_index,
                                        parent_indices);
       if (dist >= 0) {
-        // Closer bones get higher score
-        affinity_score += candidate.weight * (1.0f / (1.0f + static_cast<float>(dist)));
+        // Closer bones get higher score (calculation done but not used in current implementation)
       } else {
         // Not in same chain, small penalty
-        affinity_score += candidate.weight * 0.5f;
       }
     }
 
@@ -421,6 +433,7 @@ bool ReduceBoneInfluences(std::vector<int> &joint_indices,
       stats->max_weight_error = 0.0f;
       stats->num_vertices_modified = 0;
     }
+    // This shouldn't happen if called correctly
     return true;  // No reduction needed
   }
 
@@ -481,7 +494,7 @@ bool ReduceBoneInfluences(std::vector<int> &joint_indices,
 
       int depth = 0;
       if (!bone_depths.empty() && joint_idx >= 0 && joint_idx < static_cast<int>(bone_depths.size())) {
-        depth = bone_depths[joint_idx];
+        depth = bone_depths[static_cast<size_t>(joint_idx)];
       }
 
       influences.emplace_back(joint_idx, weight, depth, -1);
@@ -512,10 +525,6 @@ bool ReduceBoneInfluences(std::vector<int> &joint_indices,
       case BoneReductionStrategy::Adaptive:
         ReduceAdaptive(influences, config.target_bone_count, parent_indices_ptr,
                        config.error_tolerance, selected);
-        break;
-
-      default:
-        ReduceGreedy(influences, config.target_bone_count, selected);
         break;
     }
 
@@ -566,12 +575,13 @@ bool ReduceBoneInfluences(std::vector<int> &joint_indices,
   joint_indices.swap(reduced_indices);
   joint_weights.swap(reduced_weights);
 
+
   // Fill statistics
   if (stats) {
     stats->num_vertices = num_vertices;
     stats->original_bone_count = element_size;
     stats->target_bone_count = config.target_bone_count;
-    stats->avg_weight_error = (num_vertices > 0) ? (total_error / num_vertices) : 0.0f;
+    stats->avg_weight_error = (num_vertices > 0) ? (total_error / static_cast<float>(num_vertices)) : 0.0f;
     stats->max_weight_error = max_error;
     stats->num_vertices_modified = num_modified;
   }

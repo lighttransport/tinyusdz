@@ -4,6 +4,7 @@
 
 #include "acutest.h"
 
+#include "unit-ascii-parse.h"
 #include "unit-prim-types.h"
 #include "unit-primvar.h"
 #include "unit-pathutil.h"
@@ -16,9 +17,13 @@
 #include "unit-strutil.h"
 #include "unit-timesamples.h"
 #include "unit-pprint.h"
+#include "unit-materialx.h"
 #include "unit-task-queue.h"
 //#include "unit-dedup.h"  // Temporarily disabled - needs API updates
 #include "unit-crate-writer.h"
+#include "unit-stage.h"
+#include "unit-tiny-container.h"
+#include "unit-usda-roundtrip.h"
 
 #if defined(TINYUSDZ_WITH_PXR_COMPAT_API)
 #include "unit-pxr-compat-api.h"
@@ -27,10 +32,15 @@
 
 
 TEST_LIST = {
+  { "ascii_parse_int64_valid_test", ascii_parse_int64_valid_test },
+  { "ascii_parse_int64_excessive_digits_test", ascii_parse_int64_excessive_digits_test },
+  { "ascii_parse_uint64_valid_test", ascii_parse_uint64_valid_test },
+  { "ascii_parse_uint64_excessive_digits_test", ascii_parse_uint64_excessive_digits_test },
   { "prim_type_test", prim_type_test },
   { "prim_add_test", prim_add_test },
   { "primvar_test", primvar_test },
   { "value_types_test", value_types_test },
+  { "role_type_cast_test", role_type_cast_test },
   { "xformOp_test", xformOp_test },
   { "customdata_test", customdata_test },
   { "handle_allocator_test", handle_allocator_test },
@@ -42,7 +52,15 @@ TEST_LIST = {
   { "strutil_test", strutil_test },
   { "tinystring_test", tinystring_test },
   { "parse_int_test", parse_int_test },
+  { "dtoa_test", dtoa_test },
   { "timesamples_test", timesamples_test },
+  { "materialx_config_api_struct_test", materialx_config_api_struct_test },
+  { "materialx_config_api_parsing_test", materialx_config_api_parsing_test },
+  { "openpbr_surface_reconstruction_test", openpbr_surface_reconstruction_test },
+  { "mtlx_standard_surface_reconstruction_test", mtlx_standard_surface_reconstruction_test },
+  { "nodegraph_support_test", nodegraph_support_test },
+  { "materialx_shader_constants_test", materialx_shader_constants_test },
+  { "materialx_shader_fallback_values_test", materialx_shader_fallback_values_test },
   { "task_queue_basic_test", task_queue_basic_test },
   { "task_queue_func_test", task_queue_func_test },
   { "task_queue_full_test", task_queue_full_test },
@@ -116,6 +134,19 @@ TEST_LIST = {
   { "crate_writer_validation_disabled_test", crate_writer_validation_disabled_test },
   { "crate_writer_compression_test", crate_writer_compression_test },
   { "crate_writer_specializes_test", crate_writer_specializes_test },
+  { "stage_get_prim_at_path_test", stage_get_prim_at_path_test },
+  { "stage_find_prim_by_id_test", stage_find_prim_by_id_test },
+  { "stack_vector_basic_test", stack_vector_basic_test },
+  { "stack_vector_overflow_test", stack_vector_overflow_test },
+  { "stack_vector_copy_test", stack_vector_copy_test },
+  { "stack_vector_move_test", stack_vector_move_test },
+  { "stack_vector_iterator_test", stack_vector_iterator_test },
+  { "stack_vector_complex_type_test", stack_vector_complex_type_test },
+  { "usda_roundtrip_basic_test", usda_roundtrip_basic_test },
+  { "usda_roundtrip_xform_test", usda_roundtrip_xform_test },
+  { "usda_roundtrip_mesh_test", usda_roundtrip_mesh_test },
+  { "usda_roundtrip_material_test", usda_roundtrip_material_test },
+  { "usda_roundtrip_timesamples_test", usda_roundtrip_timesamples_test },
 #if defined(TINYUSDZ_WITH_PXR_COMPAT_API)
   { "pxr_compat_api_test", pxr_compat_api_test },
 #endif

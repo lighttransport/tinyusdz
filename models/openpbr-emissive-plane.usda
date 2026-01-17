@@ -1,0 +1,55 @@
+#usda 1.0
+(
+    doc = "OpenPBR emissive material with cat texture"
+    metersPerUnit = 1
+    upAxis = "Y"
+    defaultPrim = "World"
+)
+
+def Xform "World"
+{
+    def Mesh "EmissivePlane"
+    {
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0, 1, 2, 3]
+        point3f[] points = [(-2, 0, -2), (2, 0, -2), (2, 0, 2), (-2, 0, 2)]
+        texCoord2f[] primvars:st = [(0, 0), (1, 0), (1, 1), (0, 1)] (
+            interpolation = "vertex"
+        )
+        rel material:binding = </World/_materials/EmissiveMaterial>
+    }
+
+    def Scope "_materials"
+    {
+        def Material "EmissiveMaterial"
+        {
+            token outputs:surface.connect = </World/_materials/EmissiveMaterial/OpenPBRSurface.outputs:surface>
+
+            def Shader "OpenPBRSurface"
+            {
+                uniform token info:id = "OpenPBRSurface"
+                color3f inputs:base_color = (0.1, 0.1, 0.1)
+                float inputs:base_weight = 0.5
+                color3f inputs:emission_color.connect = </World/_materials/EmissiveMaterial/CatTexture.outputs:rgb>
+                float inputs:emission_luminance = 10.0
+                token outputs:surface
+            }
+
+            def Shader "CatTexture"
+            {
+                uniform token info:id = "UsdUVTexture"
+                asset inputs:file = @./textures/texture-cat.jpg@
+                string inputs:filtertype = "linear"
+                float2 inputs:texcoord.connect = </World/_materials/EmissiveMaterial/Primvar.outputs:result>
+                color3f outputs:rgb
+            }
+
+            def Shader "Primvar"
+            {
+                uniform token info:id = "UsdPrimvarReader_float2"
+                int inputs:index = 0
+                float2 outputs:result
+            }
+        }
+    }
+}

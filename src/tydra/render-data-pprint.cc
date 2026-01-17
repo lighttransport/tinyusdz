@@ -2,6 +2,9 @@
 // Copyright 2025 - Present, Light Transport Entertainment Inc.
 //
 
+#include <algorithm>
+#include <cmath>
+
 #include "tydra/render-data-pprint.hh"
 #include "tydra/render-data.hh"
 
@@ -44,12 +47,36 @@ std::string to_string(ColorSpace cty) {
       s = "rec709";
       break;
     }
+    case ColorSpace::Lin_Rec709: {
+      s = "lin_rec709";
+      break;
+    }
+    case ColorSpace::g22_Rec709: {
+      s = "g22_rec709";
+      break;
+    }
+    case ColorSpace::g18_Rec709: {
+      s = "g18_rec709";
+      break;
+    }
+    case ColorSpace::sRGB_Texture: {
+      s = "srgb_texture";
+      break;
+    }
     case ColorSpace::OCIO: {
       s = "ocio";
       break;
     }
     case ColorSpace::Lin_ACEScg: {
       s = "lin_acescg";
+      break;
+    }
+    case ColorSpace::ACES2065_1: {
+      s = "aces2065-1";
+      break;
+    }
+    case ColorSpace::Lin_Rec2020: {
+      s = "lin_rec2020";
       break;
     }
     case ColorSpace::Lin_DisplayP3: {
@@ -73,6 +100,18 @@ std::string to_string(ColorSpace cty) {
   return s;
 }
 
+std::string to_string(NodeCategory category) {
+  switch (category) {
+    case NodeCategory::Group:    return "group";
+    case NodeCategory::Geom:     return "geom";
+    case NodeCategory::Light:    return "light";
+    case NodeCategory::Camera:   return "camera";
+    case NodeCategory::Material: return "material";
+    case NodeCategory::Skeleton: return "skeleton";
+  }
+  return "???";
+}
+
 std::string to_string(NodeType ntype) {
   if (ntype == NodeType::Xform) {
     return "xform";
@@ -86,6 +125,16 @@ std::string to_string(NodeType ntype) {
     return "directionalLight";
   } else if (ntype == NodeType::Skeleton) {
     return "skeleton";
+  } else if (ntype == NodeType::EnvmapLight) {
+    return "envmapLight";
+  } else if (ntype == NodeType::RectLight) {
+    return "rectLight";
+  } else if (ntype == NodeType::DiskLight) {
+    return "diskLight";
+  } else if (ntype == NodeType::CylinderLight) {
+    return "cylinderLight";
+  } else if (ntype == NodeType::GeometryLight) {
+    return "geometryLight";
   }
   return "???";
 }
@@ -393,6 +442,258 @@ std::string to_string(UVReaderFloatComponentType ty) {
     }
   }
   return s;
+}
+
+// ============================================================================
+// LTE SpectralAPI String Conversion Implementations
+// ============================================================================
+
+std::string to_string(SpectralInterpolation interp) {
+  switch (interp) {
+    case SpectralInterpolation::Linear:
+      return "linear";
+    case SpectralInterpolation::Held:
+      return "held";
+    case SpectralInterpolation::Cubic:
+      return "cubic";
+    case SpectralInterpolation::Sellmeier:
+      return "sellmeier";
+  }
+  return "linear";
+}
+
+std::string to_string(IlluminantPreset preset) {
+  switch (preset) {
+    case IlluminantPreset::None:
+      return "none";
+    case IlluminantPreset::A:
+      return "a";
+    case IlluminantPreset::D50:
+      return "d50";
+    case IlluminantPreset::D65:
+      return "d65";
+    case IlluminantPreset::E:
+      return "e";
+    case IlluminantPreset::F1:
+      return "f1";
+    case IlluminantPreset::F2:
+      return "f2";
+    case IlluminantPreset::F7:
+      return "f7";
+    case IlluminantPreset::F11:
+      return "f11";
+  }
+  return "none";
+}
+
+std::string to_string(WavelengthUnit unit) {
+  switch (unit) {
+    case WavelengthUnit::Nanometers:
+      return "nanometers";
+    case WavelengthUnit::Micrometers:
+      return "micrometers";
+  }
+  return "nanometers";
+}
+
+// ============================================================================
+// LTE SpectralAPI Evaluate Implementations
+// ============================================================================
+
+float SpectralData::evaluate(float wavelength) const {
+  if (samples.empty()) {
+    return 0.0f;
+  }
+
+  // Convert wavelength to internal unit (nanometers)
+  float wl = to_nanometers(wavelength);
+
+  // Binary search for the interval containing wavelength
+  if (wl <= samples[0][0]) {
+    return samples[0][1];
+  }
+  if (wl >= samples.back()[0]) {
+    return samples.back()[1];
+  }
+
+  // Find the interval
+  size_t i = 0;
+  for (; i < samples.size() - 1; ++i) {
+    if (wl < samples[i + 1][0]) {
+      break;
+    }
+  }
+
+  float wl0 = samples[i][0];
+  float wl1 = samples[i + 1][0];
+  float v0 = samples[i][1];
+  float v1 = samples[i + 1][1];
+
+  switch (interpolation) {
+    case SpectralInterpolation::Held:
+      return v0;
+
+    case SpectralInterpolation::Linear: {
+      float t = (wl - wl0) / (wl1 - wl0);
+      return v0 + t * (v1 - v0);
+    }
+
+    case SpectralInterpolation::Cubic: {
+      // Simple cubic interpolation (Catmull-Rom style)
+      // For proper cubic, we'd need more samples
+      float t = (wl - wl0) / (wl1 - wl0);
+      float t2 = t * t;
+      float t3 = t2 * t;
+      // Hermite basis (simplified, assumes tangent = 0 at endpoints)
+      float h00 = 2.0f * t3 - 3.0f * t2 + 1.0f;
+      float h01 = -2.0f * t3 + 3.0f * t2;
+      return h00 * v0 + h01 * v1;
+    }
+
+    case SpectralInterpolation::Sellmeier:
+      // Sellmeier not applicable to generic spectral data
+      return v0;
+  }
+
+  // Fallback (should not reach here)
+  return v0;
+}
+
+float SpectralIOR::evaluate(float wavelength_nm) const {
+  // Sellmeier equation
+  if (interpolation == SpectralInterpolation::Sellmeier) {
+    // Convert nm to um for Sellmeier equation
+    float lambda_um = wavelength_nm / 1000.0f;
+    float lambda2 = lambda_um * lambda_um;
+
+    float n2 = 1.0f;
+    n2 += (sellmeier_B1 * lambda2) / (lambda2 - sellmeier_C1);
+    n2 += (sellmeier_B2 * lambda2) / (lambda2 - sellmeier_C2);
+    n2 += (sellmeier_B3 * lambda2) / (lambda2 - sellmeier_C3);
+
+    return std::sqrt(std::max(1.0f, n2));
+  }
+
+  // Use standard interpolation for sample-based IOR
+  if (samples.empty()) {
+    return 1.5f;  // Default IOR
+  }
+
+  float wl = wavelength_nm;
+  if (unit == WavelengthUnit::Micrometers) {
+    wl = wavelength_nm / 1000.0f;
+  }
+
+  if (wl <= samples[0][0]) {
+    return samples[0][1];
+  }
+  if (wl >= samples.back()[0]) {
+    return samples.back()[1];
+  }
+
+  // Find interval and interpolate
+  size_t i = 0;
+  for (; i < samples.size() - 1; ++i) {
+    if (wl < samples[i + 1][0]) {
+      break;
+    }
+  }
+
+  float wl0 = samples[i][0];
+  float wl1 = samples[i + 1][0];
+  float v0 = samples[i][1];
+  float v1 = samples[i + 1][1];
+
+  switch (interpolation) {
+    case SpectralInterpolation::Held:
+      return v0;
+
+    case SpectralInterpolation::Linear: {
+      float t = (wl - wl0) / (wl1 - wl0);
+      return v0 + t * (v1 - v0);
+    }
+
+    case SpectralInterpolation::Cubic: {
+      float t = (wl - wl0) / (wl1 - wl0);
+      float t2 = t * t;
+      float t3 = t2 * t;
+      float h00 = 2.0f * t3 - 3.0f * t2 + 1.0f;
+      float h01 = -2.0f * t3 + 3.0f * t2;
+      return h00 * v0 + h01 * v1;
+    }
+
+    case SpectralInterpolation::Sellmeier:
+      // Already handled above
+      return 1.5f;
+  }
+
+  // Fallback (should not reach here)
+  return 1.5f;
+}
+
+float SpectralEmission::evaluate(float wavelength_nm) const {
+  // If using a preset, return a placeholder (actual SPD data should be
+  // loaded from built-in tables in a real implementation)
+  if (preset != IlluminantPreset::None && samples.empty()) {
+    // Placeholder: return normalized value at D65 peak
+    // Real implementation should use CIE standard illuminant tables
+    return 1.0f;
+  }
+
+  if (samples.empty()) {
+    return 0.0f;
+  }
+
+  float wl = wavelength_nm;
+  if (unit == WavelengthUnit::Micrometers) {
+    wl = wavelength_nm / 1000.0f;
+  }
+
+  if (wl <= samples[0][0]) {
+    return samples[0][1];
+  }
+  if (wl >= samples.back()[0]) {
+    return samples.back()[1];
+  }
+
+  // Find interval
+  size_t i = 0;
+  for (; i < samples.size() - 1; ++i) {
+    if (wl < samples[i + 1][0]) {
+      break;
+    }
+  }
+
+  float wl0 = samples[i][0];
+  float wl1 = samples[i + 1][0];
+  float v0 = samples[i][1];
+  float v1 = samples[i + 1][1];
+
+  switch (interpolation) {
+    case SpectralInterpolation::Held:
+      return v0;
+
+    case SpectralInterpolation::Linear: {
+      float t = (wl - wl0) / (wl1 - wl0);
+      return v0 + t * (v1 - v0);
+    }
+
+    case SpectralInterpolation::Cubic: {
+      float t = (wl - wl0) / (wl1 - wl0);
+      float t2 = t * t;
+      float t3 = t2 * t;
+      float h00 = 2.0f * t3 - 3.0f * t2 + 1.0f;
+      float h01 = -2.0f * t3 + 3.0f * t2;
+      return h00 * v0 + h01 * v1;
+    }
+
+    case SpectralInterpolation::Sellmeier:
+      // Not applicable to emission
+      return v0;
+  }
+
+  // Fallback (should not reach here)
+  return v0;
 }
 
 }  // namespace tydra

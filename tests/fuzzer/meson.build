@@ -1,4 +1,4 @@
-project('fuzz_tinyusdz', 'c', 'cpp', default_options : ['cpp_std=c++14'])
+project('fuzz_tinyusdz', 'c', 'cpp', default_options : ['cpp_std=c++17'])
 
 tinyusdz_sources=[
   '../../src/asset-resolution.cc',

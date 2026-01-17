@@ -32,6 +32,7 @@
 #include "usda-reader.hh"
 #include "layer.hh"
 #include "parser-timing.hh"
+#include "enum-handlers.hh"
 
 //
 #if !defined(TINYUSDZ_DISABLE_MODULE_USDA_READER)
@@ -97,6 +98,8 @@ RECONSTRUCT_PRIM_DECL(SphereLight);
 RECONSTRUCT_PRIM_DECL(CylinderLight);
 RECONSTRUCT_PRIM_DECL(DiskLight);
 RECONSTRUCT_PRIM_DECL(DistantLight);
+RECONSTRUCT_PRIM_DECL(RectLight);
+RECONSTRUCT_PRIM_DECL(GeometryLight);
 RECONSTRUCT_PRIM_DECL(GPrim);
 RECONSTRUCT_PRIM_DECL(GeomMesh);
 RECONSTRUCT_PRIM_DECL(GeomSubset);
@@ -191,7 +194,9 @@ DEFINE_PRIM_TYPE(SphereLight, kSphereLight, value::TYPE_ID_LUX_SPHERE);
 DEFINE_PRIM_TYPE(DomeLight, kDomeLight, value::TYPE_ID_LUX_DOME);
 DEFINE_PRIM_TYPE(DiskLight, kDiskLight, value::TYPE_ID_LUX_DISK);
 DEFINE_PRIM_TYPE(DistantLight, kDistantLight, value::TYPE_ID_LUX_DISTANT);
-DEFINE_PRIM_TYPE(CylinderLight,  kCylinderLight, value::TYPE_ID_LUX_CYLINDER);
+DEFINE_PRIM_TYPE(CylinderLight, kCylinderLight, value::TYPE_ID_LUX_CYLINDER);
+DEFINE_PRIM_TYPE(RectLight, kRectLight, value::TYPE_ID_LUX_RECT);
+DEFINE_PRIM_TYPE(GeometryLight, kGeometryLight, value::TYPE_ID_LUX_GEOMETRY);
 DEFINE_PRIM_TYPE(Material, kMaterial, value::TYPE_ID_MATERIAL);
 DEFINE_PRIM_TYPE(Shader, kShader, value::TYPE_ID_SHADER);
 DEFINE_PRIM_TYPE(NodeGraph, kNodeGraph, value::TYPE_ID_NODEGRAPH);
@@ -242,49 +247,8 @@ inline bool hasOutputs(const std::string &str) {
   return startsWith(str, "outputs:");
 }
 
-template <class E>
-static nonstd::expected<bool, std::string> CheckAllowedTokens(
-    const std::vector<std::pair<E, const char *>> &allowedTokens,
-    const std::string &tok) {
-  if (allowedTokens.empty()) {
-    return true;
-  }
-
-  for (size_t i = 0; i < allowedTokens.size(); i++) {
-    if (tok.compare(std::get<1>(allowedTokens[i])) == 0) {
-      return true;
-    }
-  }
-
-  std::vector<std::string> toks;
-  for (size_t i = 0; i < allowedTokens.size(); i++) {
-    toks.push_back(std::get<1>(allowedTokens[i]));
-  }
-
-  std::string s = join(", ", tinyusdz::quote(toks));
-
-  return nonstd::make_unexpected("Allowed tokens are [" + s + "] but got " +
-                                 quote(tok) + ".");
-};
-
-template <typename T>
-nonstd::expected<T, std::string> EnumHandler(
-    const std::string &prop_name, const std::string &tok,
-    const std::vector<std::pair<T, const char *>> &enums) {
-  auto ret = CheckAllowedTokens<T>(enums, tok);
-  if (!ret) {
-    return nonstd::make_unexpected(ret.error());
-  }
-
-  for (auto &item : enums) {
-    if (tok == item.second) {
-      return item.first;
-    }
-  }
-  // Should never reach here, though.
-  return nonstd::make_unexpected(
-      quote(tok) + " is an invalid token for attribute `" + prop_name + "`");
-}
+// NOTE: CheckAllowedTokens and EnumHandler templates removed.
+// Use centralized handlers from enum-handlers.hh instead.
 
 class USDAReader::Impl {
  private:
@@ -328,6 +292,10 @@ class USDAReader::Impl {
 
   const USDAReaderConfig get_reader_config() const {
     return _config;
+  }
+
+  void SetProgressCallback(std::function<bool(float progress, void *userptr)> callback, void *userptr) {
+    _parser.SetProgressCallback(callback, userptr);
   }
 
   std::string GetCurrentPath() {
@@ -726,55 +694,8 @@ class USDAReader::Impl {
   bool ReconstructPrimMeta(const ascii::AsciiParser::PrimMetaMap &in_meta,
                            PrimMeta *out) {
 
-    auto ApiSchemaHandler = [](const std::string &tok)
-        -> nonstd::expected<APISchemas::APIName, std::string> {
-      using EnumTy = std::pair<APISchemas::APIName, const char *>;
-      const std::vector<EnumTy> enums = {
-          std::make_pair(APISchemas::APIName::SkelBindingAPI, "SkelBindingAPI"),
-          std::make_pair(APISchemas::APIName::CollectionAPI, "CollectionAPI"),
-          std::make_pair(APISchemas::APIName::MaterialBindingAPI,
-                         "MaterialBindingAPI"),
-          std::make_pair(APISchemas::APIName::ShapingAPI,
-                         "ShapingAPI"),
-          std::make_pair(APISchemas::APIName::ShadowAPI,
-                         "ShadowAPI"),
-          std::make_pair(APISchemas::APIName::VolumeLightAPI,
-                         "VolumeLightAPI"),
-          std::make_pair(APISchemas::APIName::Preliminary_PhysicsMaterialAPI,
-                         "Preliminary_PhysicsMaterialAPI"),
-          std::make_pair(APISchemas::APIName::Preliminary_PhysicsRigidBodyAPI,
-                         "Preliminary_PhysicsRigidBodyAPI"),
-          std::make_pair(APISchemas::APIName::Preliminary_PhysicsColliderAPI,
-                         "Preliminary_PhysicsColliderAPI"),
-          std::make_pair(APISchemas::APIName::Preliminary_AnchoringAPI,
-                         "Preliminary_AnchoringAPI"),
-          std::make_pair(APISchemas::APIName::LightAPI,
-                         "LightAPI"),
-          std::make_pair(APISchemas::APIName::MeshLightAPI,
-                         "MeshLightAPI"),
-          std::make_pair(APISchemas::APIName::LightListAPI,
-                         "LightListAPI"),
-          std::make_pair(APISchemas::APIName::ListAPI,
-                         "ListAPI"),
-          std::make_pair(APISchemas::APIName::MotionAPI,
-                         "MotionAPI"),
-          std::make_pair(APISchemas::APIName::PrimvarsAPI,
-                         "PrimvarsAPI"),
-          std::make_pair(APISchemas::APIName::GeomModelAPI,
-                         "GeomModelAPI"),
-          std::make_pair(APISchemas::APIName::VisibilityAPI,
-                         "VisibilityAPI"),
-          std::make_pair(APISchemas::APIName::XformCommonAPI,
-                         "XformCommonAPI"),
-          std::make_pair(APISchemas::APIName::NodeDefAPI,
-                         "NodeDefAPI"),
-          std::make_pair(APISchemas::APIName::CoordSysAPI,
-                         "CoordSysAPI"),
-          std::make_pair(APISchemas::APIName::ConnectableAPI,
-                         "ConnectableAPI")
-      };
-      return EnumHandler<APISchemas::APIName>("apiSchemas", tok, enums);
-    };
+    // Use centralized handler from enum-handlers.hh
+    auto ApiSchemaHandler = enum_handler::APISchemaName;
 
     auto BuildVariants = [](const Dictionary &dict) -> nonstd::expected<VariantSelectionMap, std::string> {
 
@@ -809,7 +730,7 @@ class USDAReader::Impl {
         DCOUT("active. type = " << var.type_name());
         if (var.type_name() == "bool") {
           if (auto pv = var.get_value<bool>()) {
-            out->active = pv.value();
+            out->set_active(pv.value());
           } else {
             PUSH_ERROR_AND_RETURN(
                 "(Internal error?) `active` metadataum is not type `bool`.");
@@ -823,7 +744,7 @@ class USDAReader::Impl {
         DCOUT("hidden. type = " << var.type_name());
         if (var.type_name() == "bool") {
           if (auto pv = var.get_value<bool>()) {
-            out->hidden = pv.value();
+            out->set_hidden(pv.value());
           } else {
             PUSH_ERROR_AND_RETURN(
                 "(Internal error?) `hidden` metadataum is not type `bool`.");
@@ -838,7 +759,7 @@ class USDAReader::Impl {
         DCOUT("instanceable. type = " << var.type_name());
         if (var.type_name() == "bool") {
           if (auto pv = var.get_value<bool>()) {
-            out->instanceable = pv.value();
+            out->set_instanceable(pv.value());
           } else {
             PUSH_ERROR_AND_RETURN(
                 "(Internal error?) `instanceable` metadataum is not type `bool`.");
@@ -853,7 +774,7 @@ class USDAReader::Impl {
         DCOUT("sceneName. type = " << var.type_name());
         if (var.type_name() == value::kString) {
           if (auto pv = var.get_value<std::string>()) {
-            out->sceneName = pv.value();
+            out->set_sceneName(pv.value());
           } else {
             PUSH_ERROR_AND_RETURN(
                 "(Internal error?) `sceneName` metadataum is not type `string`.");
@@ -867,7 +788,7 @@ class USDAReader::Impl {
         DCOUT("displayName. type = " << var.type_name());
         if (var.type_name() == value::kString) {
           if (auto pv = var.get_value<std::string>()) {
-            out->displayName = pv.value();
+            out->set_displayName(pv.value());
           } else {
             PUSH_ERROR_AND_RETURN(
                 "(Internal error?) `displayName` metadataum is not type `string`.");
@@ -885,25 +806,24 @@ class USDAReader::Impl {
           if (auto pv = var.get_value<value::token>()) {
             const value::token tok = pv.value();
             if (tok.str() == "subcomponent") {
-              out->kind = Kind::Subcomponent;
+              out->set_kind(Kind::Subcomponent);
             } else if (tok.str() == "component") {
-              out->kind = Kind::Component;
+              out->set_kind(Kind::Component);
             } else if (tok.str() == "model") {
-              out->kind = Kind::Model;
+              out->set_kind(Kind::Model);
             } else if (tok.str() == "group") {
-              out->kind = Kind::Group;
+              out->set_kind(Kind::Group);
             } else if (tok.str() == "assembly") {
-              out->kind = Kind::Assembly;
+              out->set_kind(Kind::Assembly);
             } else if (tok.str() == "sceneLibrary") {
               // USDZ specific: https://developer.apple.com/documentation/arkit/usdz_schemas_for_ar/scenelibrary
-              out->kind = Kind::SceneLibrary;
+              out->set_kind(Kind::SceneLibrary);
             } else {
               // NOTE: empty token allowed.
-
-              out->kind = Kind::UserDef;
-              out->_kind_str = tok.str();
+              // For user-defined kind, store the string directly
+              out->set_kind(tok.str());
             }
-            DCOUT("Added kind: " << to_string(out->kind.value()));
+            DCOUT("Added kind: " << out->get_kind_str());
           } else {
             PUSH_ERROR_AND_RETURN(
                 "(Internal error?) `kind` metadataum is not type `token`.");
@@ -918,7 +838,7 @@ class USDAReader::Impl {
         if (var.type_id() == value::TypeTraits<Dictionary>::type_id()) {
           if (auto pv = var.get_value<Dictionary>()) {
             // TODO: Check if all items are string type.
-            out->sdrMetadata = pv.value();
+            out->set_sdrMetadata(pv.value());
           } else {
             PUSH_ERROR_AND_RETURN_TAG(kTag,
                 "(Internal error?) `sdrMetadata` metadataum is not type "
@@ -936,7 +856,7 @@ class USDAReader::Impl {
         DCOUT("customData. type = " << var.type_name());
         if (var.type_id() == value::TypeTraits<Dictionary>::type_id()) {
           if (auto pv = var.get_value<Dictionary>()) {
-            out->customData = pv.value();
+            out->set_customData(pv.value());
           } else {
             PUSH_ERROR_AND_RETURN_TAG(kTag,
                 "(Internal error?) `customData` metadataum is not type "
@@ -954,7 +874,7 @@ class USDAReader::Impl {
         DCOUT("clips. type = " << var.type_name());
         if (var.type_id() == value::TypeTraits<Dictionary>::type_id()) {
           if (auto pv = var.get_value<Dictionary>()) {
-            out->clips = pv.value();
+            out->set_clips(pv.value());
           } else {
             PUSH_ERROR_AND_RETURN_TAG(kTag,
                 "(Internal error?) `clips` metadataum is not type "
@@ -971,7 +891,7 @@ class USDAReader::Impl {
       } else if (meta.first == "assetInfo") {
         DCOUT("assetInfo. type = " << var.type_name());
         if (auto pv = var.get_value<Dictionary>()) {
-          out->assetInfo = pv.value();
+          out->set_assetInfo(pv.value());
         } else {
           PUSH_ERROR_AND_RETURN_TAG(kTag,
               "(Internal error?) `assetInfo` metadataum is not type "
@@ -1089,7 +1009,7 @@ class USDAReader::Impl {
             << var.type_name() << "`");
           }
 
-          out->apiSchemas = std::move(apiSchemas);
+          out->set_apiSchemas(std::move(apiSchemas));
         } else {
           PUSH_ERROR_AND_RETURN_TAG(kTag, "(Internal error?) `apiSchemas` metadataum is not type "
           "`token[]`. got type `"
@@ -1148,9 +1068,12 @@ class USDAReader::Impl {
         }
       } else if (meta.first == "comment") {
         if (auto pv = var.get_value<value::StringData>()) {
-          out->comment = pv.value().value;
+          // Preserve full StringData including has_comment_prefix flag
+          out->set_comment(pv.value());
         } else if (auto spv = var.get_value<std::string>()) {
-          out->comment = spv.value();
+          value::StringData sdata;
+          sdata.value = spv.value();
+          out->set_comment(sdata);
         }
       } else {
         // Must be string value for unregisteredMeta for now.
@@ -1679,6 +1602,7 @@ bool USDAReader::Impl::Read(const uint32_t state_flags, bool as_primspec) {
 
   RegisterReconstructCallback<Material>();
   RegisterReconstructCallback<Shader>();
+  RegisterReconstructCallback<NodeGraph>();
 
   RegisterReconstructCallback<Scope>();
 
@@ -1687,6 +1611,8 @@ bool USDAReader::Impl::Read(const uint32_t state_flags, bool as_primspec) {
   RegisterReconstructCallback<DiskLight>();
   RegisterReconstructCallback<DistantLight>();
   RegisterReconstructCallback<CylinderLight>();
+  RegisterReconstructCallback<RectLight>();
+  RegisterReconstructCallback<GeometryLight>();
 
   RegisterReconstructCallback<SkelRoot>();
   RegisterReconstructCallback<Skeleton>();
@@ -1778,6 +1704,10 @@ const USDAReaderConfig USDAReader::get_reader_config() const {
   return _impl->get_reader_config();
 }
 
+void USDAReader::SetProgressCallback(std::function<bool(float progress, void *userptr)> callback, void *userptr) {
+  _impl->SetProgressCallback(callback, userptr);
+}
+
 }  // namespace usda
 }  // namespace tinyusdz
 
@@ -1828,6 +1758,11 @@ void USDAReader::set_reader_config(const USDAReaderConfig &config) {
 
 USDAReaderConfig USDAReader::get_reader_config() const {
   return USDAReaderConfig();
+}
+
+void USDAReader::SetProgressCallback(std::function<bool(float progress, void *userptr)> callback, void *userptr) {
+  (void)callback;
+  (void)userptr;
 }
 
 }  // namespace usda

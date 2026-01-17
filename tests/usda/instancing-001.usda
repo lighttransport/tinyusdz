@@ -1,0 +1,248 @@
+#usda 1.0
+(
+    doc = "Native USD instancing test - instanceable prims and prototypes"
+    defaultPrim = "InstancingTests"
+)
+
+def Xform "InstancingTests"
+{
+    # =========================================================================
+    # Prototype definition (instanceable source)
+    # =========================================================================
+    def Xform "Prototypes" (
+        active = false
+    )
+    {
+        def Xform "TreePrototype" (
+            instanceable = true
+        )
+        {
+            def Mesh "Trunk"
+            {
+                int[] faceVertexCounts = [4, 4, 4, 4]
+                int[] faceVertexIndices = [
+                    0, 1, 5, 4,
+                    1, 2, 6, 5,
+                    2, 3, 7, 6,
+                    3, 0, 4, 7
+                ]
+                point3f[] points = [
+                    (-0.1, 0, -0.1), (0.1, 0, -0.1), (0.1, 0, 0.1), (-0.1, 0, 0.1),
+                    (-0.1, 1, -0.1), (0.1, 1, -0.1), (0.1, 1, 0.1), (-0.1, 1, 0.1)
+                ]
+                color3f[] primvars:displayColor = [(0.4, 0.25, 0.1)]
+            }
+
+            def Mesh "Leaves"
+            {
+                int[] faceVertexCounts = [3, 3, 3, 3]
+                int[] faceVertexIndices = [0, 1, 2, 0, 2, 3, 0, 3, 4, 0, 4, 1]
+                point3f[] points = [
+                    (0, 2, 0),
+                    (-0.5, 1, -0.5), (0.5, 1, -0.5), (0.5, 1, 0.5), (-0.5, 1, 0.5)
+                ]
+                color3f[] primvars:displayColor = [(0.2, 0.6, 0.2)]
+            }
+        }
+
+        def Xform "RockPrototype" (
+            instanceable = true
+        )
+        {
+            def Mesh "Rock"
+            {
+                int[] faceVertexCounts = [3, 3, 3, 3, 3, 3, 3, 3]
+                int[] faceVertexIndices = [
+                    0, 1, 2,  0, 2, 3,  0, 3, 4,  0, 4, 1,
+                    5, 2, 1,  5, 3, 2,  5, 4, 3,  5, 1, 4
+                ]
+                point3f[] points = [
+                    (0, 0.3, 0),
+                    (-0.3, 0, -0.2), (0.2, 0, -0.3), (0.3, 0, 0.2), (-0.2, 0, 0.3),
+                    (0, -0.1, 0)
+                ]
+                color3f[] primvars:displayColor = [(0.5, 0.5, 0.5)]
+            }
+        }
+    }
+
+    # =========================================================================
+    # Instances referencing prototypes
+    # =========================================================================
+    def Xform "Forest"
+    {
+        def Xform "Tree1" (
+            instanceable = true
+            references = </InstancingTests/Prototypes/TreePrototype>
+        )
+        {
+            double3 xformOp:translate = (0, 0, 0)
+            uniform token[] xformOpOrder = ["xformOp:translate"]
+        }
+
+        def Xform "Tree2" (
+            instanceable = true
+            references = </InstancingTests/Prototypes/TreePrototype>
+        )
+        {
+            double3 xformOp:translate = (3, 0, 0)
+            double3 xformOp:scale = (1.2, 1.5, 1.2)
+            uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+        }
+
+        def Xform "Tree3" (
+            instanceable = true
+            references = </InstancingTests/Prototypes/TreePrototype>
+        )
+        {
+            double3 xformOp:translate = (1.5, 0, 2)
+            float xformOp:rotateY = 45
+            uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:rotateY"]
+        }
+
+        def Xform "Tree4" (
+            instanceable = true
+            references = </InstancingTests/Prototypes/TreePrototype>
+        )
+        {
+            double3 xformOp:translate = (-2, 0, 1)
+            double3 xformOp:scale = (0.8, 0.9, 0.8)
+            uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+        }
+
+        def Xform "Rock1" (
+            instanceable = true
+            references = </InstancingTests/Prototypes/RockPrototype>
+        )
+        {
+            double3 xformOp:translate = (1, 0, 0)
+            uniform token[] xformOpOrder = ["xformOp:translate"]
+        }
+
+        def Xform "Rock2" (
+            instanceable = true
+            references = </InstancingTests/Prototypes/RockPrototype>
+        )
+        {
+            double3 xformOp:translate = (2.5, 0, 1.5)
+            double3 xformOp:scale = (1.5, 1.2, 1.5)
+            float xformOp:rotateY = 30
+            uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale", "xformOp:rotateY"]
+        }
+    }
+
+    # =========================================================================
+    # Instance with local overrides (breaks instancing for that prim)
+    # =========================================================================
+    def Xform "ModifiedTree" (
+        instanceable = false
+        references = </InstancingTests/Prototypes/TreePrototype>
+    )
+    {
+        double3 xformOp:translate = (5, 0, 0)
+        uniform token[] xformOpOrder = ["xformOp:translate"]
+
+        # Override changes the leaves color - breaks instancing
+        over "Leaves"
+        {
+            color3f[] primvars:displayColor = [(0.8, 0.2, 0.1)]
+        }
+    }
+
+    # =========================================================================
+    # Nested instancing (instance containing instances)
+    # =========================================================================
+    def Xform "TreeClusterPrototype" (
+        active = false
+        instanceable = true
+    )
+    {
+        def Xform "CenterTree" (
+            instanceable = true
+            references = </InstancingTests/Prototypes/TreePrototype>
+        )
+        {
+            double3 xformOp:translate = (0, 0, 0)
+            uniform token[] xformOpOrder = ["xformOp:translate"]
+        }
+
+        def Xform "LeftTree" (
+            instanceable = true
+            references = </InstancingTests/Prototypes/TreePrototype>
+        )
+        {
+            double3 xformOp:translate = (-1.5, 0, 0)
+            double3 xformOp:scale = (0.7, 0.8, 0.7)
+            uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+        }
+
+        def Xform "RightTree" (
+            instanceable = true
+            references = </InstancingTests/Prototypes/TreePrototype>
+        )
+        {
+            double3 xformOp:translate = (1.5, 0, 0)
+            double3 xformOp:scale = (0.7, 0.8, 0.7)
+            uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+        }
+    }
+
+    def Xform "TreeClusters"
+    {
+        def Xform "Cluster1" (
+            instanceable = true
+            references = </InstancingTests/TreeClusterPrototype>
+        )
+        {
+            double3 xformOp:translate = (0, 0, 10)
+            uniform token[] xformOpOrder = ["xformOp:translate"]
+        }
+
+        def Xform "Cluster2" (
+            instanceable = true
+            references = </InstancingTests/TreeClusterPrototype>
+        )
+        {
+            double3 xformOp:translate = (5, 0, 12)
+            float xformOp:rotateY = 90
+            uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:rotateY"]
+        }
+    }
+
+    # =========================================================================
+    # PointInstancer for massive instancing
+    # =========================================================================
+    def PointInstancer "MassiveForest"
+    {
+        int[] protoIndices = [0, 0, 0, 0, 1, 1, 0, 0, 1, 0]
+        point3f[] positions = [
+            (0, 0, 20), (2, 0, 20), (4, 0, 20), (6, 0, 20), (8, 0, 20),
+            (1, 0, 22), (3, 0, 22), (5, 0, 22), (7, 0, 22), (9, 0, 22)
+        ]
+        quath[] orientations = [
+            (1, 0, 0, 0), (0.966, 0, 0.259, 0), (1, 0, 0, 0), (0.866, 0, 0.5, 0), (1, 0, 0, 0),
+            (1, 0, 0, 0), (0.707, 0, 0.707, 0), (1, 0, 0, 0), (0.5, 0, 0.866, 0), (1, 0, 0, 0)
+        ]
+        float3[] scales = [
+            (1, 1, 1), (1.1, 1.2, 1.1), (0.9, 0.95, 0.9), (1.2, 1.3, 1.2), (1, 1.1, 1),
+            (0.8, 0.85, 0.8), (1.15, 1.25, 1.15), (0.95, 1, 0.95), (1.05, 1.1, 1.05), (1, 1, 1)
+        ]
+
+        rel prototypes = [
+            </InstancingTests/MassiveForest/TreeProto>,
+            </InstancingTests/MassiveForest/RockProto>
+        ]
+
+        def Xform "TreeProto" (
+            references = </InstancingTests/Prototypes/TreePrototype>
+        )
+        {
+        }
+
+        def Xform "RockProto" (
+            references = </InstancingTests/Prototypes/RockPrototype>
+        )
+        {
+        }
+    }
+}

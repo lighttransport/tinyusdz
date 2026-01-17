@@ -402,186 +402,6 @@ void timesamples_test(void) {
     TEST_CHECK(!t3.has_value());
   }
 
-  // Test PODTimeSamples with underlying_type_id support
-  // This tests that PODTimeSamples can get values using role types
-  // even when the actual stored type is the underlying type.
-  {
-    PODTimeSamples samples;
-
-    // Test 1: Store as float3, retrieve as normal3f
-    {
-      value::float3 v1 = {1.0f, 2.0f, 3.0f};
-      value::float3 v2 = {4.0f, 5.0f, 6.0f};
-
-      // Add samples as float3
-      std::string err;
-      TEST_CHECK(samples.add_sample(1.0, v1, &err));
-      TEST_CHECK(samples.add_sample(2.0, v2, &err));
-
-      // Retrieve as normal3f (role type)
-      value::normal3f retrieved;
-      bool blocked;
-      TEST_CHECK(samples.get_value_at(0, &retrieved, &blocked));
-      TEST_CHECK(!blocked);
-
-      // Verify values
-      TEST_CHECK(math::is_close(retrieved[0], 1.0f));
-      TEST_CHECK(math::is_close(retrieved[1], 2.0f));
-      TEST_CHECK(math::is_close(retrieved[2], 3.0f));
-
-      // Get second value
-      TEST_CHECK(samples.get_value_at(1, &retrieved, &blocked));
-      TEST_CHECK(math::is_close(retrieved[0], 4.0f));
-      TEST_CHECK(math::is_close(retrieved[1], 5.0f));
-      TEST_CHECK(math::is_close(retrieved[2], 6.0f));
-    }
-
-    samples.clear();
-
-    // Test 2: Store as normal3f, retrieve as float3
-    {
-      value::normal3f n1 = {0.577f, 0.577f, 0.577f};
-      value::normal3f n2 = {1.0f, 0.0f, 0.0f};
-
-      // Add samples as normal3f (will be stored as underlying float3)
-      std::string err;
-      TEST_CHECK(samples.add_sample(1.0, n1, &err));
-      TEST_CHECK(samples.add_sample(2.0, n2, &err));
-
-      // Retrieve as float3 (underlying type)
-      value::float3 retrieved;
-      bool blocked;
-      TEST_CHECK(samples.get_value_at(0, &retrieved, &blocked));
-      TEST_CHECK(!blocked);
-
-      // Verify values
-      TEST_CHECK(math::is_close(retrieved[0], 0.577f, 1e-3f));
-      TEST_CHECK(math::is_close(retrieved[1], 0.577f, 1e-3f));
-      TEST_CHECK(math::is_close(retrieved[2], 0.577f, 1e-3f));
-    }
-
-    samples.clear();
-
-    // Test 3: Mixed role types with same underlying type
-    {
-      value::point3f p1 = {100.0f, 200.0f, 300.0f};
-
-      // Add sample as point3f
-      std::string err;
-      TEST_CHECK(samples.add_sample(1.0, p1, &err));
-
-      // Retrieve as color3f (different role, same underlying type)
-      value::color3f color_retrieved;
-      bool blocked;
-      TEST_CHECK(samples.get_value_at(0, &color_retrieved, &blocked));
-
-      // Verify values
-      TEST_CHECK(math::is_close(color_retrieved[0], 100.0f));
-      TEST_CHECK(math::is_close(color_retrieved[1], 200.0f));
-      TEST_CHECK(math::is_close(color_retrieved[2], 300.0f));
-
-      // Also retrieve as vector3f
-      value::vector3f vec_retrieved;
-      TEST_CHECK(samples.get_value_at(0, &vec_retrieved, &blocked));
-
-      TEST_CHECK(math::is_close(vec_retrieved[0], 100.0f));
-      TEST_CHECK(math::is_close(vec_retrieved[1], 200.0f));
-      TEST_CHECK(math::is_close(vec_retrieved[2], 300.0f));
-    }
-
-    samples.clear();
-
-    // Test 4: get_value_at_time with role types
-    {
-      value::float3 v1 = {1.0f, 1.0f, 1.0f};
-      value::float3 v2 = {2.0f, 2.0f, 2.0f};
-
-      // Add samples
-      std::string err;
-      TEST_CHECK(samples.add_sample(10.0, v1, &err));
-      TEST_CHECK(samples.add_sample(20.0, v2, &err));
-
-      // Get value at specific time as normal3f
-      value::normal3f retrieved;
-      bool blocked;
-      TEST_CHECK(samples.get_value_at_time(10.0, &retrieved, &blocked));
-      TEST_CHECK(math::is_close(retrieved[0], 1.0f));
-
-      TEST_CHECK(samples.get_value_at_time(20.0, &retrieved, &blocked));
-      TEST_CHECK(math::is_close(retrieved[0], 2.0f));
-    }
-
-    samples.clear();
-
-    // Test 5: Blocked samples with role types
-    {
-      value::float3 v1 = {1.0f, 1.0f, 1.0f};
-
-      // Add regular sample and blocked sample
-      std::string err;
-      TEST_CHECK(samples.add_sample(1.0, v1, &err));
-      TEST_CHECK(samples.add_blocked_sample<value::float3>(2.0, &err));
-
-      // Get blocked sample as normal3f
-      value::normal3f retrieved;
-      bool blocked;
-      TEST_CHECK(samples.get_value_at(1, &retrieved, &blocked));
-      TEST_CHECK(blocked);
-
-      // Blocked values should be default-initialized
-      TEST_CHECK(retrieved[0] == 0.0f);
-      TEST_CHECK(retrieved[1] == 0.0f);
-      TEST_CHECK(retrieved[2] == 0.0f);
-    }
-
-    samples.clear();
-
-    // Test 6: Type consistency with multiple role types
-    {
-      value::float3 v1 = {1.0f, 1.0f, 1.0f};
-      value::normal3f n1 = {2.0f, 2.0f, 2.0f};
-      value::color3f c1 = {3.0f, 3.0f, 3.0f};
-
-      // Add samples with different role types but same underlying type
-      std::string err;
-      TEST_CHECK(samples.add_sample(1.0, v1, &err));
-      TEST_CHECK(samples.add_sample(2.0, n1, &err));
-      TEST_CHECK(samples.add_sample(3.0, c1, &err));
-
-      // Verify we can retrieve all as any of the role types
-      value::point3f retrieved;
-      TEST_CHECK(samples.get_value_at(0, &retrieved, nullptr));
-      TEST_CHECK(math::is_close(retrieved[0], 1.0f));
-
-      TEST_CHECK(samples.get_value_at(1, &retrieved, nullptr));
-      TEST_CHECK(math::is_close(retrieved[0], 2.0f));
-
-      TEST_CHECK(samples.get_value_at(2, &retrieved, nullptr));
-      TEST_CHECK(math::is_close(retrieved[0], 3.0f));
-    }
-
-    samples.clear();
-
-    // Test 7: Test with double3 and related role types
-    {
-      value::double3 d1 = {1.0, 2.0, 3.0};
-      value::normal3d n1 = {4.0, 5.0, 6.0};
-
-      std::string err;
-      TEST_CHECK(samples.add_sample(1.0, d1, &err));
-      TEST_CHECK(samples.add_sample(2.0, n1, &err));
-
-      // Retrieve double3 as normal3d
-      value::normal3d retrieved_n;
-      TEST_CHECK(samples.get_value_at(0, &retrieved_n, nullptr));
-      TEST_CHECK(math::is_close(retrieved_n[0], 1.0));
-
-      // Retrieve normal3d as double3
-      value::double3 retrieved_d;
-      TEST_CHECK(samples.get_value_at(1, &retrieved_d, nullptr));
-      TEST_CHECK(math::is_close(retrieved_d[0], 4.0));
-    }
-  }
 
 
   // Test duplicate time entries (std::stable_sort preserves order)
@@ -625,5 +445,273 @@ void timesamples_test(void) {
         TEST_CHECK(math::is_close((*result)[0], 1.0f));
         TEST_CHECK(math::is_close((*result)[1], 2.0f));
     }
+  }
+
+  // ==========================================================================
+  // OpenUSD Behavior Compatibility Tests
+  // ==========================================================================
+  // These tests ensure TinyUSDZ matches OpenUSD's timeSamples evaluation behavior
+
+  // Test 1: Single TimeSample Behavior (should be held constant for all times)
+  {
+    primvar::PrimVar pvar;
+    value::TimeSamples ts;
+    value::float3 scale_value = {0.1f, 0.2f, 0.3f};
+    ts.add_sample(0.0, value::Value(scale_value));
+    pvar.set_timesamples(ts);
+
+    value::float3 result;
+
+    // Test before the sample (t = -10)
+    TEST_CHECK(pvar.get_interpolated_value(-10.0, value::TimeSampleInterpolationType::Linear, &result));
+    TEST_CHECK(math::is_close(result[0], 0.1f));
+    TEST_CHECK(math::is_close(result[1], 0.2f));
+    TEST_CHECK(math::is_close(result[2], 0.3f));
+
+    // Test at the sample (t = 0)
+    TEST_CHECK(pvar.get_interpolated_value(0.0, value::TimeSampleInterpolationType::Linear, &result));
+    TEST_CHECK(math::is_close(result[0], 0.1f));
+    TEST_CHECK(math::is_close(result[1], 0.2f));
+    TEST_CHECK(math::is_close(result[2], 0.3f));
+
+    // Test after the sample (t = 10)
+    TEST_CHECK(pvar.get_interpolated_value(10.0, value::TimeSampleInterpolationType::Linear, &result));
+    TEST_CHECK(math::is_close(result[0], 0.1f));
+    TEST_CHECK(math::is_close(result[1], 0.2f));
+    TEST_CHECK(math::is_close(result[2], 0.3f));
+  }
+
+  // Test 2: Default Value vs TimeSamples Coexistence
+  // Default value should be returned for Default TimeCode,
+  // TimeSamples should be used for numeric time codes
+  {
+    primvar::PrimVar pvar;
+    value::TimeSamples ts;
+    value::float3 sample_value = {0.1f, 0.2f, 0.3f};
+    value::float3 default_value = {7.0f, 8.0f, 9.0f};
+
+    ts.add_sample(0.0, value::Value(sample_value));
+    pvar.set_timesamples(ts);
+    pvar.set_value(default_value);  // Set default value
+
+    value::float3 result;
+
+    // Test Default TimeCode - should return default value (7, 8, 9)
+    TEST_CHECK(pvar.get_interpolated_value(value::TimeCode::Default(), value::TimeSampleInterpolationType::Linear, &result));
+    TEST_CHECK(math::is_close(result[0], 7.0f));
+    TEST_CHECK(math::is_close(result[1], 8.0f));
+    TEST_CHECK(math::is_close(result[2], 9.0f));
+
+    // Test numeric time codes - should use time samples
+    TEST_CHECK(pvar.get_interpolated_value(-10.0, value::TimeSampleInterpolationType::Linear, &result));
+    TEST_CHECK(math::is_close(result[0], 0.1f));
+    TEST_CHECK(math::is_close(result[1], 0.2f));
+    TEST_CHECK(math::is_close(result[2], 0.3f));
+
+    TEST_CHECK(pvar.get_interpolated_value(0.0, value::TimeSampleInterpolationType::Linear, &result));
+    TEST_CHECK(math::is_close(result[0], 0.1f));
+    TEST_CHECK(math::is_close(result[1], 0.2f));
+    TEST_CHECK(math::is_close(result[2], 0.3f));
+
+    TEST_CHECK(pvar.get_interpolated_value(10.0, value::TimeSampleInterpolationType::Linear, &result));
+    TEST_CHECK(math::is_close(result[0], 0.1f));
+    TEST_CHECK(math::is_close(result[1], 0.2f));
+    TEST_CHECK(math::is_close(result[2], 0.3f));
+  }
+
+  // Test 3: Multiple TimeSamples with Linear Interpolation
+  {
+    primvar::PrimVar pvar;
+    value::TimeSamples ts;
+    value::float3 sample1 = {0.1f, 0.1f, 0.1f};
+    value::float3 sample2 = {0.5f, 0.5f, 0.5f};
+    value::float3 sample3 = {1.0f, 1.0f, 1.0f};
+
+    ts.add_sample(-5.0, value::Value(sample1));
+    ts.add_sample(0.0, value::Value(sample2));
+    ts.add_sample(5.0, value::Value(sample3));
+    pvar.set_timesamples(ts);
+
+    value::float3 result;
+
+    // Test before first sample (t = -10) - should hold first value
+    TEST_CHECK(pvar.get_interpolated_value(-10.0, value::TimeSampleInterpolationType::Linear, &result));
+    TEST_CHECK(math::is_close(result[0], 0.1f));
+    TEST_CHECK(math::is_close(result[1], 0.1f));
+    TEST_CHECK(math::is_close(result[2], 0.1f));
+
+    // Test at first sample (t = -5)
+    TEST_CHECK(pvar.get_interpolated_value(-5.0, value::TimeSampleInterpolationType::Linear, &result));
+    TEST_CHECK(math::is_close(result[0], 0.1f));
+
+    // Test between samples (t = -2.5) - should interpolate
+    TEST_CHECK(pvar.get_interpolated_value(-2.5, value::TimeSampleInterpolationType::Linear, &result));
+    TEST_CHECK(math::is_close(result[0], 0.3f));  // Linear interpolation between 0.1 and 0.5
+    TEST_CHECK(math::is_close(result[1], 0.3f));
+    TEST_CHECK(math::is_close(result[2], 0.3f));
+
+    // Test at middle sample (t = 0)
+    TEST_CHECK(pvar.get_interpolated_value(0.0, value::TimeSampleInterpolationType::Linear, &result));
+    TEST_CHECK(math::is_close(result[0], 0.5f));
+
+    // Test between samples (t = 2.5) - should interpolate
+    TEST_CHECK(pvar.get_interpolated_value(2.5, value::TimeSampleInterpolationType::Linear, &result));
+    TEST_CHECK(math::is_close(result[0], 0.75f));  // Linear interpolation between 0.5 and 1.0
+    TEST_CHECK(math::is_close(result[1], 0.75f));
+    TEST_CHECK(math::is_close(result[2], 0.75f));
+
+    // Test at last sample (t = 5)
+    TEST_CHECK(pvar.get_interpolated_value(5.0, value::TimeSampleInterpolationType::Linear, &result));
+    TEST_CHECK(math::is_close(result[0], 1.0f));
+
+    // Test after last sample (t = 10) - should hold last value
+    TEST_CHECK(pvar.get_interpolated_value(10.0, value::TimeSampleInterpolationType::Linear, &result));
+    TEST_CHECK(math::is_close(result[0], 1.0f));
+    TEST_CHECK(math::is_close(result[1], 1.0f));
+    TEST_CHECK(math::is_close(result[2], 1.0f));
+  }
+
+  // Test 4: Attribute::get() with Default Value and TimeSamples
+  {
+    primvar::PrimVar pvar;
+    value::TimeSamples ts;
+    value::float3 sample1 = {0.1f, 0.1f, 0.1f};
+    value::float3 sample2 = {0.5f, 0.5f, 0.5f};
+    value::float3 sample3 = {1.0f, 1.0f, 1.0f};
+    value::float3 default_value = {7.0f, 8.0f, 9.0f};
+
+    ts.add_sample(-5.0, value::Value(sample1));
+    ts.add_sample(0.0, value::Value(sample2));
+    ts.add_sample(5.0, value::Value(sample3));
+    pvar.set_timesamples(ts);
+    pvar.set_value(default_value);
+
+    Attribute attr;
+    attr.set_var(pvar);
+
+    value::float3 result;
+
+    // Test Default TimeCode via Attribute::get()
+    TEST_CHECK(attr.get(value::TimeCode::Default(), &result, value::TimeSampleInterpolationType::Linear));
+    TEST_CHECK(math::is_close(result[0], 7.0f));
+    TEST_CHECK(math::is_close(result[1], 8.0f));
+    TEST_CHECK(math::is_close(result[2], 9.0f));
+
+    // Test numeric time codes via Attribute::get()
+    TEST_CHECK(attr.get(-10.0, &result, value::TimeSampleInterpolationType::Linear));
+    TEST_CHECK(math::is_close(result[0], 0.1f));  // Before samples, held constant
+
+    TEST_CHECK(attr.get(-2.5, &result, value::TimeSampleInterpolationType::Linear));
+    TEST_CHECK(math::is_close(result[0], 0.3f));  // Interpolated
+
+    TEST_CHECK(attr.get(0.0, &result, value::TimeSampleInterpolationType::Linear));
+    TEST_CHECK(math::is_close(result[0], 0.5f));  // At sample
+
+    TEST_CHECK(attr.get(2.5, &result, value::TimeSampleInterpolationType::Linear));
+    TEST_CHECK(math::is_close(result[0], 0.75f));  // Interpolated
+
+    TEST_CHECK(attr.get(10.0, &result, value::TimeSampleInterpolationType::Linear));
+    TEST_CHECK(math::is_close(result[0], 1.0f));  // After samples, held constant
+  }
+
+  // Test 5: Default Value Only (no time samples)
+  {
+    primvar::PrimVar pvar;
+    value::float3 default_value = {7.0f, 8.0f, 9.0f};
+    pvar.set_value(default_value);  // Only default value, no time samples
+
+    Attribute attr;
+    attr.set_var(pvar);
+
+    value::float3 result;
+
+    // All time codes should return the default value when no time samples exist
+    TEST_CHECK(attr.get(value::TimeCode::Default(), &result, value::TimeSampleInterpolationType::Linear));
+    TEST_CHECK(math::is_close(result[0], 7.0f));
+    TEST_CHECK(math::is_close(result[1], 8.0f));
+    TEST_CHECK(math::is_close(result[2], 9.0f));
+
+    TEST_CHECK(attr.get(-10.0, &result, value::TimeSampleInterpolationType::Linear));
+    TEST_CHECK(math::is_close(result[0], 7.0f));
+    TEST_CHECK(math::is_close(result[1], 8.0f));
+    TEST_CHECK(math::is_close(result[2], 9.0f));
+
+    TEST_CHECK(attr.get(0.0, &result, value::TimeSampleInterpolationType::Linear));
+    TEST_CHECK(math::is_close(result[0], 7.0f));
+    TEST_CHECK(math::is_close(result[1], 8.0f));
+    TEST_CHECK(math::is_close(result[2], 9.0f));
+
+    TEST_CHECK(attr.get(10.0, &result, value::TimeSampleInterpolationType::Linear));
+    TEST_CHECK(math::is_close(result[0], 7.0f));
+    TEST_CHECK(math::is_close(result[1], 8.0f));
+    TEST_CHECK(math::is_close(result[2], 9.0f));
+  }
+
+  // Test 6: Held Interpolation Mode
+  {
+    primvar::PrimVar pvar;
+    value::TimeSamples ts;
+    value::float3 sample1 = {1.0f, 1.0f, 1.0f};
+    value::float3 sample2 = {2.0f, 2.0f, 2.0f};
+    value::float3 sample3 = {3.0f, 3.0f, 3.0f};
+
+    ts.add_sample(0.0, value::Value(sample1));
+    ts.add_sample(5.0, value::Value(sample2));
+    ts.add_sample(10.0, value::Value(sample3));
+    pvar.set_timesamples(ts);
+
+    value::float3 result;
+
+    // With Held interpolation, values between samples should hold the earlier sample
+    TEST_CHECK(pvar.get_interpolated_value(2.5, value::TimeSampleInterpolationType::Held, &result));
+    TEST_CHECK(math::is_close(result[0], 1.0f));  // Should hold earlier value
+
+    TEST_CHECK(pvar.get_interpolated_value(7.5, value::TimeSampleInterpolationType::Held, &result));
+    TEST_CHECK(math::is_close(result[0], 2.0f));  // Should hold earlier value
+
+    // At exact sample times
+    TEST_CHECK(pvar.get_interpolated_value(5.0, value::TimeSampleInterpolationType::Held, &result));
+    TEST_CHECK(math::is_close(result[0], 2.0f));  // Exact value at sample
+  }
+
+  // Test 7: Edge Cases - Empty TimeSamples with Default Value
+  {
+    primvar::PrimVar pvar;
+    value::float3 default_value = {100.0f, 200.0f, 300.0f};
+    pvar.set_value(default_value);  // Default value only
+
+    // TimeSamples exist but are empty
+    value::TimeSamples ts;
+    pvar.set_timesamples(ts);
+
+    value::float3 result;
+
+    // Should still return default value for all time codes
+    TEST_CHECK(pvar.get_interpolated_value(value::TimeCode::Default(), value::TimeSampleInterpolationType::Linear, &result));
+    TEST_CHECK(math::is_close(result[0], 100.0f));
+    TEST_CHECK(math::is_close(result[1], 200.0f));
+    TEST_CHECK(math::is_close(result[2], 300.0f));
+
+    TEST_CHECK(pvar.get_interpolated_value(0.0, value::TimeSampleInterpolationType::Linear, &result));
+    TEST_CHECK(math::is_close(result[0], 100.0f));
+  }
+
+  // Test 8: Test Boundary Conditions with Epsilon Values
+  {
+    primvar::PrimVar pvar;
+    value::TimeSamples ts;
+    ts.add_sample(0.0, value::Value(10.0f));
+    ts.add_sample(1.0, value::Value(20.0f));
+    pvar.set_timesamples(ts);
+
+    float result;
+    const float epsilon = 1e-6f;
+
+    // Just before and after samples
+    TEST_CHECK(pvar.get_interpolated_value(0.0 - epsilon, value::TimeSampleInterpolationType::Linear, &result));
+    TEST_CHECK(math::is_close(result, 10.0f, 1e-3f));  // Should be very close to first sample
+
+    TEST_CHECK(pvar.get_interpolated_value(1.0 + epsilon, value::TimeSampleInterpolationType::Linear, &result));
+    TEST_CHECK(math::is_close(result, 20.0f, 1e-3f));  // Should be very close to last sample
   }
 }

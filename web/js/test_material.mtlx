@@ -1,0 +1,35 @@
+<?xml version="1.0"?>
+<materialx version="1.38" xmlns:xi="http://www.w3.org/2001/XInclude">
+  <!-- Test MaterialX file for import functionality -->
+
+  <surfacematerial name="TestMaterial" type="material">
+    <input name="surfaceshader" type="surfaceshader" nodename="TestMaterial_shader" />
+  </surfacematerial>
+
+  <open_pbr_surface name="TestMaterial_shader" type="surfaceshader">
+    <!-- Base layer -->
+    <input name="base_color" type="color3" value="0.8, 0.2, 0.2" />
+    <input name="base_weight" type="float" value="1.0" />
+    <input name="base_metalness" type="float" value="0.8" />
+
+    <!-- Specular layer -->
+    <input name="specular_weight" type="float" value="1.0" />
+    <input name="specular_roughness" type="float" value="0.3" />
+    <input name="specular_ior" type="float" value="1.5" />
+
+    <!-- Transmission -->
+    <input name="transmission_weight" type="float" value="0.0" />
+
+    <!-- Coat (clearcoat) -->
+    <input name="coat_weight" type="float" value="0.5" />
+    <input name="coat_roughness" type="float" value="0.1" />
+
+    <!-- Emission -->
+    <input name="emission_color" type="color3" value="0.0, 0.0, 0.0" />
+    <input name="emission_luminance" type="float" value="0.0" />
+
+    <!-- Geometry -->
+    <input name="geometry_opacity" type="float" value="1.0" />
+  </open_pbr_surface>
+
+</materialx>

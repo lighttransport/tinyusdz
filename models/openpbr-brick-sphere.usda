@@ -1,0 +1,55 @@
+#usda 1.0
+(
+    doc = "Simple OpenPBR material with brick texture"
+    metersPerUnit = 1
+    upAxis = "Y"
+    defaultPrim = "World"
+)
+
+def Xform "World"
+{
+    def Sphere "BrickSphere"
+    {
+        double radius = 1.0
+        rel material:binding = </World/_materials/BrickMaterial>
+
+        texCoord2f[] primvars:st = [(0, 0), (1, 0), (1, 1), (0, 1)] (
+            interpolation = "vertex"
+        )
+    }
+
+    def Scope "_materials"
+    {
+        def Material "BrickMaterial"
+        {
+            token outputs:surface.connect = </World/_materials/BrickMaterial/OpenPBRSurface.outputs:surface>
+
+            def Shader "OpenPBRSurface"
+            {
+                uniform token info:id = "OpenPBRSurface"
+                color3f inputs:base_color.connect = </World/_materials/BrickMaterial/BrickTexture.outputs:rgb>
+                float inputs:base_metalness = 0.0
+                float inputs:base_weight = 1.0
+                float inputs:specular_roughness = 0.7
+                float inputs:specular_weight = 0.5
+                token outputs:surface
+            }
+
+            def Shader "BrickTexture"
+            {
+                uniform token info:id = "UsdUVTexture"
+                asset inputs:file = @./textures/brick.bmp@
+                string inputs:filtertype = "linear"
+                float2 inputs:texcoord.connect = </World/_materials/BrickMaterial/Primvar.outputs:result>
+                color3f outputs:rgb
+            }
+
+            def Shader "Primvar"
+            {
+                uniform token info:id = "UsdPrimvarReader_float2"
+                int inputs:index = 0
+                float2 outputs:result
+            }
+        }
+    }
+}
