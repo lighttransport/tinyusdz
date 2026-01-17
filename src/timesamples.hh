@@ -889,27 +889,6 @@ struct TimeSamples {
 #pragma clang diagnostic pop
 #endif
 
-    if (_use_pod && !_pod_samples._times.empty()) {
-      // For old PODTimeSamples storage (backward compatibility), convert samples on demand
-      // This path is for legacy data stored in _pod_samples
-      if (_dirty) {
-        update();
-      }
-
-      // Convert POD samples to regular samples
-      _samples.clear();
-      auto converted = _pod_samples.get_samples_converted();
-      _samples.reserve(converted.size());
-      for (const auto& item : converted) {
-        Sample s;
-        s.t = item.first;
-        s.value = item.second.first;
-        s.blocked = item.second.second;
-        _samples.push_back(s);
-      }
-      return _samples;
-    }
-
     // If unified storage has data, convert to generic samples on demand
     // Skip if using value array storage - that's handled below
     if (!_use_value_array && !_times.empty() && _samples.empty()) {
