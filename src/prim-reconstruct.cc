@@ -1807,50 +1807,40 @@ bool ParseTimeSampledEnumProperty(
   } \
 }
 #else
-#define PARSE_UNIFORM_ENUM_PROPERTY(__table, __prop, __name, __enum_ty, __enum_handler, __klass, \
-                           __target, __strict_check) {                          \
-  if (__prop.first == __name) {                                              \
-    if (__table.count(__name)) { continue; } \
-    if ((__prop.second.value_type_name() == value::TypeTraits<value::token>::type_name()) && __prop.second.is_attribute() && __prop.second.is_empty()) { \
+// Unified enum property parsing macro
+// __parser_fn should be ParseUniformEnumProperty or ParseTimeSampledEnumProperty
+#define PARSE_ENUM_PROPERTY_IMPL(__table, __prop, __name, __enum_ty, __enum_handler, __klass, \
+                                 __target, __strict_check, __parser_fn) {        \
+  if (__prop.first == __name) {                                                  \
+    if (__table.count(__name)) { continue; }                                     \
+    const Attribute &attr = __prop.second.get_attribute();                       \
+    if ((__prop.second.value_type_name() == value::TypeTraits<value::token>::type_name()) && \
+        __prop.second.is_attribute() && __prop.second.is_empty()) {              \
       PUSH_WARN("No value assigned to `" << __name << "` token attribute. Set default token value."); \
-      __target.metas() = __prop.second.get_attribute().metas();                    \
-      __table.insert(__name);                                              \
-      continue; \
-    } else { \
-      const Attribute &attr = __prop.second.get_attribute();                           \
-      std::function<nonstd::expected<__enum_ty, std::string>(const std::string &)> fun = __enum_handler; \
-      if (!ParseUniformEnumProperty(__name, __strict_check, fun, attr, &__target, warn, err)) { \
-        return false; \
-      } \
-      __target.metas() = attr.metas(); \
-      __table.insert(__name);                                              \
-      continue; \
-    } \
-  } \
+      __target.metas() = attr.metas();                                           \
+      __table.insert(__name);                                                    \
+      continue;                                                                  \
+    }                                                                            \
+    std::function<nonstd::expected<__enum_ty, std::string>(const std::string &)> fun = __enum_handler; \
+    if (!__parser_fn(__name, __strict_check, fun, attr, &__target, warn, err)) { \
+      return false;                                                              \
+    }                                                                            \
+    __target.metas() = attr.metas();                                             \
+    __table.insert(__name);                                                      \
+    continue;                                                                    \
+  }                                                                              \
 }
 
+// Convenience wrappers for backward compatibility
+#define PARSE_UNIFORM_ENUM_PROPERTY(__table, __prop, __name, __enum_ty, __enum_handler, __klass, \
+                                    __target, __strict_check) \
+  PARSE_ENUM_PROPERTY_IMPL(__table, __prop, __name, __enum_ty, __enum_handler, __klass, \
+                           __target, __strict_check, ParseUniformEnumProperty)
+
 #define PARSE_TIMESAMPLED_ENUM_PROPERTY(__table, __prop, __name, __enum_ty, __enum_handler, __klass, \
-                           __target, __strict_check) {                          \
-  if (__prop.first == __name) {                                              \
-    if (__table.count(__name)) { continue; } \
-    if ((__prop.second.value_type_name() == value::TypeTraits<value::token>::type_name()) && __prop.second.is_attribute() && __prop.second.is_empty()) { \
-      PUSH_WARN("No value assigned to `" << __name << "` token attribute. Set default token value."); \
-      const Attribute &attr = __prop.second.get_attribute();                           \
-      __target.metas() = attr.metas();                    \
-      __table.insert(__name);                                              \
-      continue; \
-    } else { \
-      const Attribute &attr = __prop.second.get_attribute();                           \
-      std::function<nonstd::expected<__enum_ty, std::string>(const std::string &)> fun = __enum_handler; \
-      if (!ParseTimeSampledEnumProperty(__name, __strict_check, fun, attr, &__target, warn, err)) { \
-        return false; \
-      } \
-      __target.metas() = attr.metas(); \
-     __table.insert(__name);                                              \
-     continue; \
-    } \
-  } \
-}
+                                        __target, __strict_check) \
+  PARSE_ENUM_PROPERTY_IMPL(__table, __prop, __name, __enum_ty, __enum_handler, __klass, \
+                           __target, __strict_check, ParseTimeSampledEnumProperty)
 #endif
 
 
@@ -3774,8 +3764,7 @@ bool ReconstructPrim<SphereLight>(
 
   for (const auto &prop : properties) {
     SPHERE_LIGHT_TYPED_ATTRS(EXPAND_TYPED_ATTR)
-    LIGHT_SHADOW_ATTRS(EXPAND_TYPED_ATTR)
-    LIGHT_SHAPING_ATTRS(EXPAND_TYPED_ATTR)
+    LIGHT_COMMON_ATTRS_WITH_SHAPING(EXPAND_TYPED_ATTR)
     PARSE_TIMESAMPLED_ENUM_PROPERTY(table, prop, kVisibility, Visibility, VisibilityEnumHandler, SphereLight,
                    light->visibility, options.strict_allowedToken_check)
     PARSE_UNIFORM_ENUM_PROPERTY(table, prop, kPurpose, Purpose, PurposeEnumHandler, SphereLight,
@@ -3823,8 +3812,7 @@ bool ReconstructPrim<RectLight>(
     // Special case: texture:file uses UsdUVTexture type
     PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:texture:file", UsdUVTexture, light->file)
     RECT_LIGHT_TYPED_ATTRS(EXPAND_TYPED_ATTR)
-    LIGHT_SHADOW_ATTRS(EXPAND_TYPED_ATTR)
-    LIGHT_SHAPING_ATTRS(EXPAND_TYPED_ATTR)
+    LIGHT_COMMON_ATTRS_WITH_SHAPING(EXPAND_TYPED_ATTR)
     PARSE_EXTENT_ATTRIBUTE(table, prop, kExtent, RectLight, light->extent)
     PARSE_TIMESAMPLED_ENUM_PROPERTY(table, prop, kVisibility, Visibility, VisibilityEnumHandler, RectLight,
                    light->visibility, options.strict_allowedToken_check)
@@ -3870,8 +3858,7 @@ bool ReconstructPrim<DiskLight>(
 
   for (const auto &prop : properties) {
     DISK_LIGHT_TYPED_ATTRS(EXPAND_TYPED_ATTR)
-    LIGHT_SHADOW_ATTRS(EXPAND_TYPED_ATTR)
-    LIGHT_SHAPING_ATTRS(EXPAND_TYPED_ATTR)
+    LIGHT_COMMON_ATTRS_WITH_SHAPING(EXPAND_TYPED_ATTR)
     PARSE_EXTENT_ATTRIBUTE(table, prop, kExtent, DiskLight, light->extent)
     PARSE_TIMESAMPLED_ENUM_PROPERTY(table, prop, kVisibility, Visibility, VisibilityEnumHandler, DiskLight,
                        light->visibility, options.strict_allowedToken_check)
@@ -3917,8 +3904,7 @@ bool ReconstructPrim<CylinderLight>(
 
   for (const auto &prop : properties) {
     CYLINDER_LIGHT_TYPED_ATTRS(EXPAND_TYPED_ATTR)
-    LIGHT_SHADOW_ATTRS(EXPAND_TYPED_ATTR)
-    LIGHT_SHAPING_ATTRS(EXPAND_TYPED_ATTR)
+    LIGHT_COMMON_ATTRS_WITH_SHAPING(EXPAND_TYPED_ATTR)
     PARSE_EXTENT_ATTRIBUTE(table, prop, kExtent, CylinderLight, light->extent)
     PARSE_TIMESAMPLED_ENUM_PROPERTY(table, prop, kVisibility, Visibility, VisibilityEnumHandler, CylinderLight,
                    light->visibility, options.strict_allowedToken_check)
@@ -3964,7 +3950,7 @@ bool ReconstructPrim<DistantLight>(
 
   for (const auto &prop : properties) {
     DISTANT_LIGHT_TYPED_ATTRS(EXPAND_TYPED_ATTR)
-    LIGHT_SHADOW_ATTRS(EXPAND_TYPED_ATTR)
+    LIGHT_COMMON_ATTRS_NO_SHAPING(EXPAND_TYPED_ATTR)
     // DistantLight has no shaping attrs or extent
     PARSE_UNIFORM_ENUM_PROPERTY(table, prop, kPurpose, Purpose, PurposeEnumHandler, DistantLight,
                        light->purpose, options.strict_allowedToken_check)
@@ -4010,7 +3996,7 @@ bool ReconstructPrim<GeometryLight>(
 
   for (const auto &prop : properties) {
     GEOMETRY_LIGHT_TYPED_ATTRS(EXPAND_TYPED_ATTR)
-    LIGHT_SHADOW_ATTRS(EXPAND_TYPED_ATTR)
+    LIGHT_COMMON_ATTRS_NO_SHAPING(EXPAND_TYPED_ATTR)
     // GeometryLight has no shaping attrs or extent
     PARSE_TIMESAMPLED_ENUM_PROPERTY(table, prop, kVisibility, Visibility, VisibilityEnumHandler, GeometryLight,
                    light->visibility, options.strict_allowedToken_check)
@@ -4056,7 +4042,7 @@ bool ReconstructPrim<DomeLight>(
 
   for (const auto &prop : properties) {
     DOME_LIGHT_TYPED_ATTRS(EXPAND_TYPED_ATTR)
-    LIGHT_SHADOW_ATTRS(EXPAND_TYPED_ATTR)
+    LIGHT_COMMON_ATTRS_NO_SHAPING(EXPAND_TYPED_ATTR)
     // DomeLight has no shaping attrs or extent
     PARSE_TIMESAMPLED_ENUM_PROPERTY(table, prop, kVisibility, Visibility, VisibilityEnumHandler, DomeLight,
                    light->visibility, options.strict_allowedToken_check)
