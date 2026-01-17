@@ -4059,6 +4059,41 @@ bool ReconstructPrim<DomeLight>(
   return true;
 }
 
+// ============================================================================
+// Generic macro for simple geometry prim reconstruction
+// ============================================================================
+// Consolidates the common pattern for GeomSphere, GeomCone, GeomCylinder,
+// GeomCapsule, GeomCube: ReconstructGPrimProperties + property loop
+//
+// IMPORTANT: Caller must define PRIM_CLASS_ and PRIM_PTR_ macros before calling
+//            this macro, and undef them afterward. These are required by
+//            EXPAND_TYPED_ATTR and EXPAND_UNIFORM_ENUM macros.
+//
+// Parameters:
+//   PrimClass: The geometry class (e.g., GeomSphere, GeomCone)
+//   prim_ptr: Pointer to the prim instance
+//   TYPED_ATTRS: Property table macro (e.g., GEOM_SPHERE_TYPED_ATTRS)
+//   ENUM_EXPANSION: Enum handling macro call or empty
+//                   - For shapes without enums: /* empty */
+//                   - For shapes with enums: GEOM_XXX_UNIFORM_ENUMS(EXPAND_UNIFORM_ENUM)
+#define RECONSTRUCT_SIMPLE_GEOM_PRIM_BODY(PrimClass, prim_ptr, TYPED_ATTRS, ENUM_EXPANSION) \
+  (void)references; \
+  \
+  std::set<std::string> table; \
+  if (!ReconstructGPrimProperties(spec, table, properties, prim_ptr, warn, err, \
+                                   options.strict_allowedToken_check)) { \
+    return false; \
+  } \
+  \
+  for (auto &prop : properties) { \
+    TYPED_ATTRS(EXPAND_TYPED_ATTR) \
+    ENUM_EXPANSION \
+    ADD_PROPERTY(table, prop, PrimClass, prim_ptr->props) \
+    PARSE_PROPERTY_END_MAKE_ERROR(table, prop) \
+  } \
+  \
+  return true;
+
 template <>
 bool ReconstructPrim<GeomSphere>(
     const Specifier &spec,
@@ -4068,16 +4103,7 @@ bool ReconstructPrim<GeomSphere>(
     std::string *warn,
     std::string *err,
     const PrimReconstructOptions &options) {
-
-  (void)references;
-
   DCOUT("Reconstruct Sphere.");
-
-  std::set<std::string> table;
-  if (!ReconstructGPrimProperties(spec, table, properties, sphere, warn, err, options.strict_allowedToken_check)) {
-    return false;
-  }
-
 #if defined(__clang__)
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wunused-macros"
@@ -4087,17 +4113,9 @@ bool ReconstructPrim<GeomSphere>(
 #if defined(__clang__)
 #pragma clang diagnostic pop
 #endif
-
-  for (auto &prop : properties) {  // Non-const to allow move from property metadata
-    GEOM_SPHERE_TYPED_ATTRS(EXPAND_TYPED_ATTR)
-    ADD_PROPERTY(table, prop, GeomSphere, sphere->props)
-    PARSE_PROPERTY_END_MAKE_ERROR(table, prop)
-  }
-
+  RECONSTRUCT_SIMPLE_GEOM_PRIM_BODY(GeomSphere, sphere, GEOM_SPHERE_TYPED_ATTRS, /* no enums */)
 #undef PRIM_CLASS_
 #undef PRIM_PTR_
-
-  return true;
 }
 
 template <>
@@ -4151,14 +4169,6 @@ bool ReconstructPrim<GeomCone>(
     std::string *warn,
     std::string *err,
     const PrimReconstructOptions &options) {
-
-  (void)references;
-
-  std::set<std::string> table;
-  if (!ReconstructGPrimProperties(spec, table, properties, cone, warn, err, options.strict_allowedToken_check)) {
-    return false;
-  }
-
 #if defined(__clang__)
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wunused-macros"
@@ -4168,19 +4178,10 @@ bool ReconstructPrim<GeomCone>(
 #if defined(__clang__)
 #pragma clang diagnostic pop
 #endif
-
-  for (auto &prop : properties) {  // Non-const to allow move from property metadata
-    DCOUT("prop: " << prop.first);
-    GEOM_CONE_TYPED_ATTRS(EXPAND_TYPED_ATTR)
-    GEOM_CONE_UNIFORM_ENUMS(EXPAND_UNIFORM_ENUM)
-    ADD_PROPERTY(table, prop, GeomCone, cone->props)
-    PARSE_PROPERTY_END_MAKE_ERROR(table, prop)
-  }
-
+  RECONSTRUCT_SIMPLE_GEOM_PRIM_BODY(GeomCone, cone, GEOM_CONE_TYPED_ATTRS,
+                                     GEOM_CONE_UNIFORM_ENUMS(EXPAND_UNIFORM_ENUM))
 #undef PRIM_CLASS_
 #undef PRIM_PTR_
-
-  return true;
 }
 
 template <>
@@ -4192,14 +4193,6 @@ bool ReconstructPrim<GeomCylinder>(
     std::string *warn,
     std::string *err,
     const PrimReconstructOptions &options) {
-
-  (void)references;
-
-  std::set<std::string> table;
-  if (!ReconstructGPrimProperties(spec, table, properties, cylinder, warn, err, options.strict_allowedToken_check)) {
-    return false;
-  }
-
 #if defined(__clang__)
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wunused-macros"
@@ -4209,19 +4202,10 @@ bool ReconstructPrim<GeomCylinder>(
 #if defined(__clang__)
 #pragma clang diagnostic pop
 #endif
-
-  for (auto &prop : properties) {  // Non-const to allow move from property metadata
-    DCOUT("prop: " << prop.first);
-    GEOM_CYLINDER_TYPED_ATTRS(EXPAND_TYPED_ATTR)
-    GEOM_CYLINDER_UNIFORM_ENUMS(EXPAND_UNIFORM_ENUM)
-    ADD_PROPERTY(table, prop, GeomCylinder, cylinder->props)
-    PARSE_PROPERTY_END_MAKE_ERROR(table, prop)
-  }
-
+  RECONSTRUCT_SIMPLE_GEOM_PRIM_BODY(GeomCylinder, cylinder, GEOM_CYLINDER_TYPED_ATTRS,
+                                     GEOM_CYLINDER_UNIFORM_ENUMS(EXPAND_UNIFORM_ENUM))
 #undef PRIM_CLASS_
 #undef PRIM_PTR_
-
-  return true;
 }
 
 template <>
@@ -4233,14 +4217,6 @@ bool ReconstructPrim<GeomCapsule>(
     std::string *warn,
     std::string *err,
     const PrimReconstructOptions &options) {
-
-  (void)references;
-
-  std::set<std::string> table;
-  if (!ReconstructGPrimProperties(spec, table, properties, capsule, warn, err, options.strict_allowedToken_check)) {
-    return false;
-  }
-
 #if defined(__clang__)
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wunused-macros"
@@ -4250,18 +4226,10 @@ bool ReconstructPrim<GeomCapsule>(
 #if defined(__clang__)
 #pragma clang diagnostic pop
 #endif
-
-  for (auto &prop : properties) {  // Non-const to allow move from property metadata
-    GEOM_CAPSULE_TYPED_ATTRS(EXPAND_TYPED_ATTR)
-    GEOM_CAPSULE_UNIFORM_ENUMS(EXPAND_UNIFORM_ENUM)
-    ADD_PROPERTY(table, prop, GeomCapsule, capsule->props)
-    PARSE_PROPERTY_END_MAKE_ERROR(table, prop)
-  }
-
+  RECONSTRUCT_SIMPLE_GEOM_PRIM_BODY(GeomCapsule, capsule, GEOM_CAPSULE_TYPED_ATTRS,
+                                     GEOM_CAPSULE_UNIFORM_ENUMS(EXPAND_UNIFORM_ENUM))
 #undef PRIM_CLASS_
 #undef PRIM_PTR_
-
-  return true;
 }
 
 template <>
@@ -4273,17 +4241,7 @@ bool ReconstructPrim<GeomCube>(
     std::string *warn,
     std::string *err,
     const PrimReconstructOptions &options) {
-
-  (void)references;
-
-  //
   // pxrUSD says... "If you author size you must also author extent."
-  //
-  std::set<std::string> table;
-  if (!ReconstructGPrimProperties(spec, table, properties, cube, warn, err, options.strict_allowedToken_check)) {
-    return false;
-  }
-
 #if defined(__clang__)
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wunused-macros"
@@ -4293,18 +4251,9 @@ bool ReconstructPrim<GeomCube>(
 #if defined(__clang__)
 #pragma clang diagnostic pop
 #endif
-
-  for (auto &prop : properties) {  // Non-const to allow move from property metadata
-    DCOUT("prop: " << prop.first);
-    GEOM_CUBE_TYPED_ATTRS(EXPAND_TYPED_ATTR)
-    ADD_PROPERTY(table, prop, GeomCube, cube->props)
-    PARSE_PROPERTY_END_MAKE_ERROR(table, prop)
-  }
-
+  RECONSTRUCT_SIMPLE_GEOM_PRIM_BODY(GeomCube, cube, GEOM_CUBE_TYPED_ATTRS, /* no enums */)
 #undef PRIM_CLASS_
 #undef PRIM_PTR_
-
-  return true;
 }
 
 template <>
