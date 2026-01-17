@@ -72,6 +72,15 @@
 				background: rgba(255, 255, 255, 0.1);
 				border-radius: 3px;
 			}
+			#loadingIndicator {
+				display: none;
+				color: #ffd700;
+				font-weight: bold;
+				margin-top: 5px;
+			}
+			#loadingIndicator.active {
+				display: block;
+			}
 		</style>
 	</head>
 	<body>
@@ -83,11 +92,12 @@
 			</p>
 			<p>
 				<strong>Current file:</strong> <span id="currentFile"></span>
+				<span id="loadingIndicator">⏳ Loading...</span>
 			</p>
 			<div id="file-controls">
 				<input type="file" id="fileInput" accept=".usd,.usda,.usdc,.usdz">
-				<button class="button" onclick="document.getElementById('fileInput').click()">Load USD File(Not working)</button>
-				<button class="button" onclick="window.reloadDefaultModel()">Reset to Default</button>
+				<button class="button" onclick="document.getElementById('fileInput').click()">Load USD File(w.i.p)</button>
+				<!-- <button class="button" onclick="window.reloadDefaultModel()">Reset to Default</button> -->
 			</div>
 			<div id="animation-info" style="display:none;">
 				<strong>USD Animations Found:</strong>
@@ -101,6 +111,9 @@
 				const file = event.target.files[0];
 				if (!file) return;
 
+				// Show loading indicator
+				const loadingIndicator = document.getElementById('loadingIndicator');
+				loadingIndicator.classList.add('active');
 				document.getElementById('currentFile').textContent = file.name;
 
 				// Trigger custom event that animation.js can listen to
@@ -108,7 +121,17 @@
 					detail: { file }
 				});
 				window.dispatchEvent(customEvent);
+
+				// Clear the input value to allow reloading the same file
+				// This ensures the 'change' event fires even if the same file is selected again
+				event.target.value = '';
 			});
+
+			// Function to hide loading indicator (called from animation.js after load completes)
+			window.hideLoadingIndicator = function() {
+				const loadingIndicator = document.getElementById('loadingIndicator');
+				loadingIndicator.classList.remove('active');
+			};
 
 			// Function to update animation list display
 			window.updateAnimationList = function(animations, animationInfos) {

@@ -1,0 +1,208 @@
+#usda 1.0
+(
+    doc = "Nested references test - multi-level reference chains"
+    defaultPrim = "NestedReferenceTests"
+)
+
+# Level 3: Base geometry
+def Xform "BaseGeometry" (
+    active = false
+)
+{
+    def Mesh "Cube"
+    {
+        int[] faceVertexCounts = [4, 4, 4, 4, 4, 4]
+        int[] faceVertexIndices = [
+            0, 1, 3, 2,
+            4, 5, 7, 6,
+            0, 2, 6, 4,
+            1, 3, 7, 5,
+            0, 1, 5, 4,
+            2, 3, 7, 6
+        ]
+        point3f[] points = [
+            (-0.5, -0.5, -0.5), (0.5, -0.5, -0.5),
+            (-0.5, 0.5, -0.5), (0.5, 0.5, -0.5),
+            (-0.5, -0.5, 0.5), (0.5, -0.5, 0.5),
+            (-0.5, 0.5, 0.5), (0.5, 0.5, 0.5)
+        ]
+        color3f[] primvars:displayColor = [(0.5, 0.5, 0.5)]
+    }
+}
+
+# Level 2: Component that references base geometry
+def Xform "ComponentA" (
+    active = false
+)
+{
+    def Xform "Part1" (
+        references = </BaseGeometry>
+    )
+    {
+        double3 xformOp:translate = (0, 0, 0)
+        uniform token[] xformOpOrder = ["xformOp:translate"]
+
+        over "Cube"
+        {
+            color3f[] primvars:displayColor = [(1, 0, 0)]
+        }
+    }
+
+    def Xform "Part2" (
+        references = </BaseGeometry>
+    )
+    {
+        double3 xformOp:translate = (2, 0, 0)
+        uniform token[] xformOpOrder = ["xformOp:translate"]
+
+        over "Cube"
+        {
+            color3f[] primvars:displayColor = [(0, 1, 0)]
+        }
+    }
+}
+
+# Level 2: Another component
+def Xform "ComponentB" (
+    active = false
+)
+{
+    def Xform "SubPart" (
+        references = </BaseGeometry>
+    )
+    {
+        double3 xformOp:translate = (0, 0, 0)
+        double3 xformOp:scale = (2, 0.5, 1)
+        uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+
+        over "Cube"
+        {
+            color3f[] primvars:displayColor = [(0, 0, 1)]
+        }
+    }
+}
+
+# Level 1: Assembly that references components
+def Xform "Assembly" (
+    active = false
+)
+{
+    def Xform "Left" (
+        references = </ComponentA>
+    )
+    {
+        double3 xformOp:translate = (-5, 0, 0)
+        uniform token[] xformOpOrder = ["xformOp:translate"]
+    }
+
+    def Xform "Right" (
+        references = </ComponentA>
+    )
+    {
+        double3 xformOp:translate = (5, 0, 0)
+        float3 xformOp:rotateXYZ = (0, 180, 0)
+        uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:rotateXYZ"]
+    }
+
+    def Xform "Center" (
+        references = </ComponentB>
+    )
+    {
+        double3 xformOp:translate = (0, 2, 0)
+        uniform token[] xformOpOrder = ["xformOp:translate"]
+    }
+}
+
+def Xform "NestedReferenceTests"
+{
+    # =========================================================================
+    # Single level reference
+    # =========================================================================
+    def Xform "SingleLevel" (
+        references = </BaseGeometry>
+    )
+    {
+        double3 xformOp:translate = (0, 0, 0)
+        uniform token[] xformOpOrder = ["xformOp:translate"]
+    }
+
+    # =========================================================================
+    # Two level reference chain
+    # =========================================================================
+    def Xform "TwoLevel" (
+        references = </ComponentA>
+    )
+    {
+        double3 xformOp:translate = (0, 5, 0)
+        uniform token[] xformOpOrder = ["xformOp:translate"]
+    }
+
+    # =========================================================================
+    # Three level reference chain
+    # =========================================================================
+    def Xform "ThreeLevel" (
+        references = </Assembly>
+    )
+    {
+        double3 xformOp:translate = (0, 10, 0)
+        uniform token[] xformOpOrder = ["xformOp:translate"]
+    }
+
+    # =========================================================================
+    # Multiple instances of same reference
+    # =========================================================================
+    def Xform "Instance1" (
+        references = </Assembly>
+    )
+    {
+        double3 xformOp:translate = (0, 15, 0)
+        uniform token[] xformOpOrder = ["xformOp:translate"]
+    }
+
+    def Xform "Instance2" (
+        references = </Assembly>
+    )
+    {
+        double3 xformOp:translate = (0, 15, 10)
+        float3 xformOp:rotateXYZ = (0, 90, 0)
+        uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:rotateXYZ"]
+    }
+
+    # =========================================================================
+    # Reference with deep override
+    # =========================================================================
+    def Xform "DeepOverride" (
+        references = </Assembly>
+    )
+    {
+        double3 xformOp:translate = (0, 20, 0)
+        uniform token[] xformOpOrder = ["xformOp:translate"]
+
+        over "Left"
+        {
+            over "Part1"
+            {
+                over "Cube"
+                {
+                    color3f[] primvars:displayColor = [(1, 1, 0)]
+                }
+            }
+        }
+    }
+
+    # =========================================================================
+    # Reference chain with visibility override
+    # =========================================================================
+    def Xform "VisibilityOverride" (
+        references = </Assembly>
+    )
+    {
+        double3 xformOp:translate = (0, 25, 0)
+        uniform token[] xformOpOrder = ["xformOp:translate"]
+
+        over "Center"
+        {
+            token visibility = "invisible"
+        }
+    }
+}

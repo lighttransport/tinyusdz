@@ -38,6 +38,7 @@ constexpr auto kMaterial = "Material";
 constexpr auto kShader = "Shader";
 constexpr auto kNodeGraph = "NodeGraph";
 constexpr auto kShaderNode = "ShaderNode";
+constexpr auto kMaterialXConfigAPI = "MaterialXConfigAPI";
 
 constexpr auto kShaderInfoId = "info:id";
 
@@ -54,6 +55,8 @@ constexpr auto kUsdPrimvarReader_normal = "UsdPrimvarReader_normal";
 constexpr auto kUsdPrimvarReader_point = "UsdPrimvarReader_point";
 constexpr auto kUsdPrimvarReader_vector = "UsdPrimvarReader_vector";
 constexpr auto kUsdPrimvarReader_matrix = "UsdPrimvarReader_matrix";
+
+constexpr auto kOpenPBRSurface = "OpenPBRSurface";
 
 // TODO: Inherit from Prim?
 struct UsdShadePrim {
@@ -101,6 +104,23 @@ struct UsdShadePrim {
 //
 // Similar to Maya's ShadingGroup
 //
+// MaterialXConfigAPI is an API schema that provides an interface for
+// storing information about the MaterialX environment.
+struct MaterialXConfigAPI {
+  // MaterialX library version that the data has been authored against.
+  // Defaults to 1.38 to allow correct versioning of old files.
+  TypedAttributeWithFallback<std::string> mtlx_version{"1.38"}; // "string config:mtlx:version"
+
+  // MaterialX namespace for node definitions
+  TypedAttributeWithFallback<std::string> mtlx_namespace{""}; // "string config:mtlx:namespace"
+
+  // Default colorspace for MaterialX documents
+  TypedAttributeWithFallback<std::string> mtlx_colorspace{"lin_rec709"}; // "string config:mtlx:colorspace"
+
+  // Source URI for MaterialX document references
+  TypedAttributeWithFallback<std::string> mtlx_sourceUri{""}; // "string config:mtlx:sourceUri"
+};
+
 struct Material : UsdShadePrim {
 
   ///
@@ -111,13 +131,29 @@ struct Material : UsdShadePrim {
   TypedConnection<value::token> displacement; // "token outputs:displacement.connect"
   TypedConnection<value::token> volume; // "token outputs:volume.connect"
 
+  // Optional MaterialXConfigAPI
+  nonstd::optional<MaterialXConfigAPI> materialXConfig;
 
 };
 
+///
 /// NodeGraph (Shader Network Container)
+///
+/// A NodeGraph is a container for shading nodes that can expose arbitrary outputs.
 /// Container for organizing shader nodes and connections in a network.
 /// Can contain multiple shader nodes as children and provide interface inputs/outputs.
+/// Unlike Material which has fixed outputs (surface, displacement, volume),
+/// NodeGraph outputs are stored in the props map with the "outputs:" prefix.
+///
+/// Example:
+///   def NodeGraph "MyNodeGraph" {
+///     float3 outputs:result.connect = </path/to/shader.outputs:out>
+///   }
+///
 struct NodeGraph : UsdShadePrim {
+  // NodeGraph can have arbitrary inputs and outputs (e.g., outputs:result, outputs:normal, etc.)
+  // These are stored in the inherited props map from UsdShadePrim
+  // Child nodes are stored as children in the USD hierarchy, not directly here
 
   // Optional properties for shader network node management
   // Child shaders and their connections are managed through the standard prim children mechanism
@@ -131,6 +167,9 @@ struct NodeGraph : UsdShadePrim {
   std::vector<value::token> &primChildrenNames() { return _primChildren; }
   std::vector<value::token> &propertyNames() { return _properties; }
 
+  // Optional MaterialX-specific attributes
+  TypedAttribute<std::string> nodedef;  // Reference to a nodedef
+  TypedAttribute<std::string> nodegraph_type;  // Type of the nodegraph
 };
 
 //
@@ -177,6 +216,15 @@ using UsdPrimvarReader_matrix  = UsdPrimvarReader<value::matrix4d>;
 //                      UsdPrimvarReader_int>;
 
 
+// UV Set specification for multiple UV coordinate support
+struct UVSetInfo {
+  std::string name;  // UV set name (e.g., "st", "st0", "st1", "uv0", "uv1")
+  int index{0};      // UV set index (0, 1, 2, etc.)
+
+  UVSetInfo() = default;
+  UVSetInfo(const std::string& n, int idx = 0) : name(n), index(idx) {}
+};
+
 struct UsdUVTexture : ShaderNode {
 
   // NOTE: transparent black(0, 0, 0, 0) for "black"
@@ -198,6 +246,12 @@ struct UsdUVTexture : ShaderNode {
   TypedAttribute<Animatable<value::AssetPath>> file; // "asset inputs:file" interfaceOnly
 
   TypedAttributeWithFallback<Animatable<value::texcoord2f>> st{value::texcoord2f{0.0f, 0.0f}}; // "inputs:st"
+
+  // UV set selection - which UV coordinate set to use
+  // Default is 0 (primary UV set)
+  // MaterialX uses "texcoord" input, USD typically uses "st", "st0", "st1", etc.
+  TypedAttributeWithFallback<int> uv_set{0}; // "int inputs:uv_set" - UV set index
+  TypedAttribute<value::token> uv_set_name; // "token inputs:uv_set_name" - UV set name (e.g., "st0", "st1")
 
   TypedAttributeWithFallback<Animatable<Wrap>> wrapS{Wrap::UseMetadata}; // "token inputs:wrapS" interfaceOnly
   TypedAttributeWithFallback<Animatable<Wrap>> wrapT{Wrap::UseMetadata}; // "token inputs:wrapT" interfaceOnly
@@ -297,6 +351,84 @@ struct UsdTransform2d : ShaderNode {
 
 };
 
+// OpenPBR Surface shader
+// OpenPBR is a physically-based shading model developed by the Academy Software Foundation
+// https://github.com/AcademySoftwareFoundation/OpenPBR
+struct OpenPBRSurface : ShaderNode {
+
+  // Base layer properties
+  TypedAttributeWithFallback<Animatable<float>> base_weight{1.0f}; // "inputs:base_weight"
+  TypedAttributeWithFallback<Animatable<value::color3f>> base_color{value::color3f{0.8f, 0.8f, 0.8f}}; // "inputs:base_color"
+  TypedAttributeWithFallback<Animatable<float>> base_roughness{0.0f}; // "inputs:base_roughness"
+  TypedAttributeWithFallback<Animatable<float>> base_metalness{0.0f}; // "inputs:base_metalness"
+  TypedAttributeWithFallback<Animatable<float>> base_diffuse_roughness{0.0f}; // "inputs:base_diffuse_roughness"
+
+  // Specular properties  
+  TypedAttributeWithFallback<Animatable<float>> specular_weight{1.0f}; // "inputs:specular_weight"
+  TypedAttributeWithFallback<Animatable<value::color3f>> specular_color{value::color3f{1.0f, 1.0f, 1.0f}}; // "inputs:specular_color"
+  TypedAttributeWithFallback<Animatable<float>> specular_roughness{0.3f}; // "inputs:specular_roughness"
+  TypedAttributeWithFallback<Animatable<float>> specular_ior{1.5f}; // "inputs:specular_ior"
+  TypedAttributeWithFallback<Animatable<float>> specular_ior_level{0.5f}; // "inputs:specular_ior_level"
+  TypedAttributeWithFallback<Animatable<float>> specular_anisotropy{0.0f}; // "inputs:specular_anisotropy"
+  TypedAttributeWithFallback<Animatable<float>> specular_rotation{0.0f}; // "inputs:specular_rotation"
+
+  // Transmission properties
+  TypedAttributeWithFallback<Animatable<float>> transmission_weight{0.0f}; // "inputs:transmission_weight"
+  TypedAttributeWithFallback<Animatable<value::color3f>> transmission_color{value::color3f{1.0f, 1.0f, 1.0f}}; // "inputs:transmission_color"
+  TypedAttributeWithFallback<Animatable<float>> transmission_depth{0.0f}; // "inputs:transmission_depth"
+  TypedAttributeWithFallback<Animatable<value::color3f>> transmission_scatter{value::color3f{0.0f, 0.0f, 0.0f}}; // "inputs:transmission_scatter"
+  TypedAttributeWithFallback<Animatable<float>> transmission_scatter_anisotropy{0.0f}; // "inputs:transmission_scatter_anisotropy"
+  TypedAttributeWithFallback<Animatable<float>> transmission_dispersion{0.0f}; // "inputs:transmission_dispersion"
+
+  // Subsurface properties
+  TypedAttributeWithFallback<Animatable<float>> subsurface_weight{0.0f}; // "inputs:subsurface_weight"
+  TypedAttributeWithFallback<Animatable<value::color3f>> subsurface_color{value::color3f{0.8f, 0.8f, 0.8f}}; // "inputs:subsurface_color"
+  TypedAttributeWithFallback<Animatable<float>> subsurface_radius{1.0f}; // "inputs:subsurface_radius"
+  TypedAttributeWithFallback<Animatable<value::color3f>> subsurface_radius_scale{value::color3f{1.0f, 1.0f, 1.0f}}; // "inputs:subsurface_radius_scale"
+  TypedAttributeWithFallback<Animatable<float>> subsurface_scale{1.0f}; // "inputs:subsurface_scale"
+  TypedAttributeWithFallback<Animatable<float>> subsurface_anisotropy{0.0f}; // "inputs:subsurface_anisotropy"
+
+  // Sheen properties
+  TypedAttributeWithFallback<Animatable<float>> sheen_weight{0.0f}; // "inputs:sheen_weight"
+  TypedAttributeWithFallback<Animatable<value::color3f>> sheen_color{value::color3f{1.0f, 1.0f, 1.0f}}; // "inputs:sheen_color"
+  TypedAttributeWithFallback<Animatable<float>> sheen_roughness{0.3f}; // "inputs:sheen_roughness"
+
+  // Fuzz properties - velvet/fabric-like appearance
+  TypedAttributeWithFallback<Animatable<float>> fuzz_weight{0.0f}; // "inputs:fuzz_weight"
+  TypedAttributeWithFallback<Animatable<value::color3f>> fuzz_color{value::color3f{1.0f, 1.0f, 1.0f}}; // "inputs:fuzz_color"
+  TypedAttributeWithFallback<Animatable<float>> fuzz_roughness{0.5f}; // "inputs:fuzz_roughness"
+
+  // Thin film properties - iridescence from thin film interference
+  TypedAttributeWithFallback<Animatable<float>> thin_film_weight{0.0f}; // "inputs:thin_film_weight"
+  TypedAttributeWithFallback<Animatable<float>> thin_film_thickness{500.0f}; // "inputs:thin_film_thickness" (nanometers)
+  TypedAttributeWithFallback<Animatable<float>> thin_film_ior{1.5f}; // "inputs:thin_film_ior"
+
+  // Coat properties
+  TypedAttributeWithFallback<Animatable<float>> coat_weight{0.0f}; // "inputs:coat_weight"
+  TypedAttributeWithFallback<Animatable<value::color3f>> coat_color{value::color3f{1.0f, 1.0f, 1.0f}}; // "inputs:coat_color"
+  TypedAttributeWithFallback<Animatable<float>> coat_roughness{0.0f}; // "inputs:coat_roughness"
+  TypedAttributeWithFallback<Animatable<float>> coat_anisotropy{0.0f}; // "inputs:coat_anisotropy"
+  TypedAttributeWithFallback<Animatable<float>> coat_rotation{0.0f}; // "inputs:coat_rotation"
+  TypedAttributeWithFallback<Animatable<float>> coat_ior{1.5f}; // "inputs:coat_ior"
+  TypedAttributeWithFallback<Animatable<value::color3f>> coat_affect_color{value::color3f{1.0f, 1.0f, 1.0f}}; // "inputs:coat_affect_color"
+  TypedAttributeWithFallback<Animatable<float>> coat_affect_roughness{0.0f}; // "inputs:coat_affect_roughness"
+
+  // Emission properties
+  TypedAttributeWithFallback<Animatable<float>> emission_luminance{0.0f}; // "inputs:emission_luminance"
+  TypedAttributeWithFallback<Animatable<value::color3f>> emission_color{value::color3f{1.0f, 1.0f, 1.0f}}; // "inputs:emission_color"
+
+  // Geometry properties
+  TypedAttributeWithFallback<Animatable<float>> opacity{1.0f}; // "inputs:opacity" or "inputs:geometry_opacity" (maps to alpha in Three.js)
+  TypedAttributeWithFallback<Animatable<value::normal3f>> normal{value::normal3f{0.0f, 0.0f, 1.0f}}; // "inputs:normal"
+  TypedAttributeWithFallback<Animatable<value::vector3f>> tangent{value::vector3f{1.0f, 0.0f, 0.0f}}; // "inputs:tangent"
+
+  ///
+  /// Outputs
+  ///
+  TypedTerminalAttribute<value::token> surface; // "token outputs:surface"
+
+};
+
 // Shader Prim
 struct Shader : UsdShadePrim {
 
@@ -361,10 +493,16 @@ DEFINE_TYPE_TRAIT(UsdPrimvarReader_matrix, kUsdPrimvarReader_matrix,
                   TYPE_ID_IMAGING_PRIMVAR_READER_MATRIX, 1);
 DEFINE_TYPE_TRAIT(UsdTransform2d, kUsdTransform2d,
                   TYPE_ID_IMAGING_TRANSFORM_2D, 1);
+DEFINE_TYPE_TRAIT(OpenPBRSurface, kOpenPBRSurface,
+                  TYPE_ID_IMAGING_OPENPBR_SURFACE, 1);
 
 DEFINE_TYPE_TRAIT(MaterialBinding, "MaterialBindingAPI",
                   TYPE_ID_MATERIAL_BINDING, 1);
 
+DEFINE_TYPE_TRAIT(MaterialXConfigAPI, kMaterialXConfigAPI,
+                  TYPE_ID_MATERIALX_CONFIG_API, 1);
+
+// FIXME: assign unique id
 // Add TypeTraits for SourceColorSpace enum
 template <>
 struct TypeTraits<UsdUVTexture::SourceColorSpace> {

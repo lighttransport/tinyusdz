@@ -199,6 +199,10 @@ struct StringData {
   bool is_triple_quoted{false};
   bool single_quote{false};  // true for ', false for "
 
+  // For prim metadata comment: track whether parsed with "comment =" prefix
+  // When true, pprint outputs "comment = ...", otherwise just the string
+  bool has_comment_prefix{false};
+
   // optional(for USDA)
   int line_row{0};
   int line_col{0};
@@ -502,6 +506,12 @@ enum TypeId {
 
   TYPE_ID_IMAGING_MTLX_PREVIEWSURFACE,
   TYPE_ID_IMAGING_MTLX_STANDARDSURFACE,
+  TYPE_ID_IMAGING_MTLX_OPENPBRSURFACE,
+  TYPE_ID_IMAGING_MTLX_UNIFORMEDF,
+  TYPE_ID_IMAGING_MTLX_CONICALEDF,
+  TYPE_ID_IMAGING_MTLX_MEASUREDEDF,
+  TYPE_ID_IMAGING_MTLX_LIGHT,
+  TYPE_ID_IMAGING_OPENPBR_SURFACE,
 
   TYPE_ID_IMAGING_END,
 
@@ -525,6 +535,8 @@ enum TypeId {
   TYPE_ID_COLLECTION,
   TYPE_ID_COLLECTION_INSTANCE,
   TYPE_ID_MATERIAL_BINDING,
+  TYPE_ID_MATERIALX_CONFIG_API,
+  TYPE_ID_COLOR_SPACE_API,
   TYPE_ID_API_END,
 
   // Base ID for user data type(less than `TYPE_ID_1D_ARRAY_BIT-1`)
@@ -2080,16 +2092,18 @@ class Value {
   }
 #endif
 
+#if 0
   // Helper to log vector size
   template <typename T>
   static void log_vector_size(const std::vector<T>& vec) {
-    TUSDZ_LOG_I("  vector size: " << vec.size());
+    //TUSDZ_LOG_I("  vector size: " << vec.size());
   }
 
   template <typename T>
   static void log_vector_size(const T&) {
     // Non-vector type, do nothing
   }
+#endif
 
   // Helper to check vector size bounds
   template <typename T>
@@ -2119,7 +2133,7 @@ class Value {
       }
 
       //TUSDZ_LOG_I("get_value: about to move/copy value of type " << TypeTraits<T>::type_name());
-      log_vector_size(*pv);
+      //log_vector_size(*pv);
       return std::move(*pv);
     } else if (!strict_cast) {
 
@@ -2129,7 +2143,7 @@ class Value {
           const T* pv = linb::cast<const T>(&v_);
           //TUSDZ_LOG_I("get_value: cast successful, pv=" << (pv ? "valid" : "null"));
           if (pv) {
-            log_vector_size(*pv);
+            //log_vector_size(*pv);
             if (!check_vector_size(*pv)) {
               return nonstd::nullopt;
             }
@@ -2181,6 +2195,7 @@ class Value {
 #endif
 
   const linb::any &get_raw() const { return v_; }
+  linb::any &get_raw_mutable() { return v_; }
 
   bool is_array() const { return (v_.type_id() & value::TYPE_ID_1D_ARRAY_BIT); }
 

@@ -7,6 +7,7 @@
 //
 #include "prim-types.hh"
 #include "str-util.hh"
+#include "tiny-container.hh"
 #include "tiny-format.hh"
 //
 #include "usdGeom.hh"
@@ -1547,63 +1548,69 @@ bool GetCustomDataByKey(const CustomDataType &custom, const std::string &key,
 
 namespace {
 
-bool OverrideCustomDataRec(uint32_t depth, CustomDataType &dst,
-                           const CustomDataType &src, const bool override_existing) {
-  if (depth > (1024 * 1024 * 128)) {
-    // too deep
-    return false;
-  }
+// Iterative version of dictionary override using explicit stack
+// Avoids recursion for deeply nested dictionary structures
+void OverrideCustomDataIterative(CustomDataType &dst, const CustomDataType &src,
+                                 const bool override_existing) {
+  // Stack of pairs: (dst_dict pointer, src_dict pointer)
+  StackVector<std::pair<CustomDataType *, const CustomDataType *>, 4> stack;
+  stack.reserve(16);
 
-  for (const auto &item : src) {
-    if (dst.count(item.first)) {
-      if (override_existing) {
-        CustomDataType *dst_dict =
-            dst.at(item.first).get_raw_value().as<CustomDataType>();
+  // Start with the root dictionaries
+  stack.emplace_back(&dst, &src);
 
-        const value::Value &src_data = item.second.get_raw_value();
-        const CustomDataType *src_dict = src_data.as<CustomDataType>();
+  while (!stack.empty()) {
+    auto current = stack.back();
+    stack.pop_back();
 
-        //
-        // Recursively apply override op both types are dict.
-        //
-        if (src_dict && dst_dict) {
-          // recursively override dict
-          if (!OverrideCustomDataRec(depth + 1, (*dst_dict), (*src_dict), override_existing)) {
-            return false;
+    CustomDataType *current_dst = current.first;
+    const CustomDataType *current_src = current.second;
+
+    for (const auto &item : *current_src) {
+      if (current_dst->count(item.first)) {
+        if (override_existing) {
+          CustomDataType *dst_dict =
+              current_dst->at(item.first).get_raw_value().as<CustomDataType>();
+
+          const value::Value &src_data = item.second.get_raw_value();
+          const CustomDataType *src_dict = src_data.as<CustomDataType>();
+
+          // If both are dicts, push to stack for later processing
+          if (src_dict && dst_dict) {
+            stack.emplace_back(dst_dict, src_dict);
+          } else {
+            (*current_dst)[item.first] = item.second;
           }
-
-        } else {
-          dst[item.first] = item.second;
         }
+      } else {
+        // add dict value
+        current_dst->emplace(item.first, item.second);
       }
-    } else {
-      // add dict value
-      dst.emplace(item.first, item.second);
     }
   }
-
-  return true;
 }
 
 }  // namespace
 
 void OverrideDictionary(CustomDataType &dst, const CustomDataType &src, const bool override_existing) {
-  OverrideCustomDataRec(0, dst, src, override_existing);
+  OverrideCustomDataIterative(dst, src, override_existing);
 }
 
-AssetInfo PrimMeta::get_assetInfo(bool *is_authored) const {
+AssetInfo PrimMetas::get_assetInfo_struct(bool *is_authored) const {
   AssetInfo ainfo;
 
+  bool has_assetinfo = has_assetInfo();
   if (is_authored) {
-    (*is_authored) = authored();
+    (*is_authored) = has_assetinfo;
   }
 
-  if (authored()) {
-    ainfo._fields = meta;
+  if (has_assetinfo) {
+    Dictionary asset_dict = get_assetInfo();
+    ainfo._fields = asset_dict;
 
     {
       MetaVariable identifier_var;
-      if (GetCustomDataByKey(meta, "identifier", &identifier_var)) {
+      if (GetCustomDataByKey(asset_dict, "identifier", &identifier_var)) {
         std::string identifier;
         if (identifier_var.get_value<std::string>(&identifier)) {
           ainfo.identifier = identifier;
@@ -1614,7 +1621,7 @@ AssetInfo PrimMeta::get_assetInfo(bool *is_authored) const {
 
     {
       MetaVariable name_var;
-      if (GetCustomDataByKey(meta, "name", &name_var)) {
+      if (GetCustomDataByKey(asset_dict, "name", &name_var)) {
         std::string name;
         if (name_var.get_value<std::string>(&name)) {
           ainfo.name = name;
@@ -1625,7 +1632,7 @@ AssetInfo PrimMeta::get_assetInfo(bool *is_authored) const {
 
     {
       MetaVariable payloadDeps_var;
-      if (GetCustomDataByKey(meta, "payloadAssetDependencies",
+      if (GetCustomDataByKey(asset_dict, "payloadAssetDependencies",
                              &payloadDeps_var)) {
         std::vector<value::AssetPath> assets;
         if (payloadDeps_var.get_value<std::vector<value::AssetPath>>(&assets)) {
@@ -1637,7 +1644,7 @@ AssetInfo PrimMeta::get_assetInfo(bool *is_authored) const {
 
     {
       MetaVariable version_var;
-      if (GetCustomDataByKey(meta, "version", &version_var)) {
+      if (GetCustomDataByKey(asset_dict, "version", &version_var)) {
         std::string version;
         if (version_var.get_value<std::string>(&version)) {
           ainfo.version = version;
@@ -1650,18 +1657,7 @@ AssetInfo PrimMeta::get_assetInfo(bool *is_authored) const {
   return ainfo;
 }
 
-const std::string PrimMeta::get_kind() const {
-
-  if (kind.has_value()) {
-    if (kind.value() == Kind::UserDef) {
-      return _kind_str;
-    } else {
-      return to_string(kind.value());
-    }
-  }
-
-  return "";
-}
+// NOTE: PrimMetas::get_kind() is now implemented inline in the header
 
 bool IsXformablePrim(const Prim &prim) {
   uint32_t tyid = prim.type_id();
@@ -1823,92 +1819,17 @@ value::matrix4d GetLocalTransform(const Prim &prim, bool *resetXformStack,
 }
 
 void PrimMetas::update_from(const PrimMetas &rhs, const bool override_authored) {
-  if (rhs.active.has_value()) {
-    if (override_authored || !active.has_value()) {
-      active = rhs.active;
+  // Simple metadata fields - use MetadataBase merge
+  merge_from(rhs, override_authored);
+
+  // apiSchemas (special handling since it's a custom type)
+  if (rhs.has_apiSchemas()) {
+    if (override_authored || !has_apiSchemas()) {
+      set_apiSchemas(rhs.get_apiSchemas());
     }
   }
 
-  if (rhs.hidden.has_value()) {
-    if (override_authored || !hidden.has_value()) {
-      hidden = rhs.hidden;
-    }
-  }
-
-  if (rhs.kind.has_value()) {
-    if (override_authored || !kind.has_value()) {
-      kind = rhs.kind;
-    }
-  }
-
-  if (rhs.instanceable.has_value()) {
-    if (override_authored || !instanceable.has_value()) {
-      instanceable = rhs.instanceable;
-    }
-  }
-
-  if (rhs.assetInfo) {
-    if (assetInfo) {
-      OverrideDictionary(assetInfo.value(), rhs.assetInfo.value(), override_authored);
-    } else if (override_authored) {
-      assetInfo = rhs.assetInfo;
-    }
-  }
-
-  if (rhs.clips) {
-    if (clips) {
-      OverrideDictionary(clips.value(), rhs.clips.value(), override_authored);
-    } else if (override_authored) {
-      clips = rhs.clips;
-    }
-  }
-
-  if (rhs.customData) {
-    if (customData) {
-      OverrideDictionary(customData.value(), rhs.customData.value(), override_authored);
-    } else if (override_authored) {
-      customData = rhs.customData;
-    }
-  }
-
-  if (rhs.doc) {
-    if (override_authored || !doc.has_value()) {
-      doc = rhs.doc;
-    }
-  }
-
-  if (rhs.comment) {
-    if (override_authored || !comment.has_value()) {
-      comment = rhs.comment;
-    }
-  }
-
-  if (rhs.apiSchemas) {
-    if (override_authored || !apiSchemas.has_value()) {
-      apiSchemas = rhs.apiSchemas;
-    }
-  }
-
-  if (rhs.sdrMetadata) {
-    if (sdrMetadata) {
-      OverrideDictionary(sdrMetadata.value(), rhs.sdrMetadata.value(), override_authored);
-    } else if (override_authored) {
-      sdrMetadata = rhs.sdrMetadata;
-    }
-  }
-
-  if (rhs.sceneName) {
-    if (override_authored || !sceneName.has_value()) {
-      sceneName = rhs.sceneName;
-    }
-  }
-
-  if (rhs.displayName) {
-    if (override_authored || !displayName.has_value()) {
-      displayName = rhs.displayName;
-    }
-  }
-
+  // Composition fields
   if (rhs.references) {
     if (override_authored || !references.has_value()) {
       references = rhs.references;
@@ -1940,7 +1861,8 @@ void PrimMetas::update_from(const PrimMetas &rhs, const bool override_authored) 
     }
   }
 
-  if (rhs.unregisteredMetas.size()) {
+  // Unregistered metadata
+  if (!rhs.unregisteredMetas.empty()) {
     for (const auto &item : rhs.unregisteredMetas) {
       if (unregisteredMetas.count(item.first)) {
         if (override_authored) {
@@ -1952,43 +1874,12 @@ void PrimMetas::update_from(const PrimMetas &rhs, const bool override_authored) 
     }
   }
 
+  // Legacy meta dictionary
   OverrideDictionary(meta, rhs.meta, override_authored);
 }
 
-bool AttrMetas::has_colorSpace() const {
-  return meta.count("colorSpace");
-}
-
-value::token AttrMetas::get_colorSpace() const {
-  value::token tok;
-
-  if (has_colorSpace()) {
-    const MetaVariable &mv = meta.at("colorSpace");
-    if (!mv.get_value<value::token>(&tok)) {
-      tok = value::token();
-    }
-  }
-
-  return tok;
-}
-
-bool AttrMetas::has_unauthoredValuesIndex() const {
-  return meta.count("unauthoredValuesIndex");
-}
-
-int AttrMetas::get_unauthoredValuesIndex() const {
-  if (!has_unauthoredValuesIndex()) {
-    return -1;
-  }
-
-  const MetaVariable &mv = meta.at("unauthoredValuesIndex");
-  int v;
-  if (mv.get_value<int>(&v)) {
-    return v;
-  }
-
-  return -1;
-}
+// NOTE: AttrMetas accessors (has_colorSpace, get_colorSpace, has_unauthoredValuesIndex,
+// get_unauthoredValuesIndex) are now provided by MetadataBase base class
 
 namespace {
 
@@ -2003,14 +1894,14 @@ namespace {
 size_t Property::estimate_memory_usage() const {
   size_t total = sizeof(Property);
 
-  // String storage
-  total += _prop_value_type_name.capacity();
-
-  total += _attrib.estimate_memory_usage();
-  total += _rel.estimate_memory_usage();
+  // Add storage for the active variant member
+  if (auto* attr = get_attribute_or_null()) {
+    total += attr->estimate_memory_usage();
+  } else if (auto* rel = get_relationship_or_null()) {
+    total += rel->estimate_memory_usage();
+  }
 
   return total;
-
 }
 
 size_t Relationship::estimate_memory_usage() const {

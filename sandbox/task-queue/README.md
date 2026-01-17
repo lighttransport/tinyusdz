@@ -112,7 +112,7 @@ The implementation is designed to work without C++ exceptions or RTTI:
 
 To verify:
 ```bash
-g++ -std=c++14 -fno-exceptions -fno-rtti -c task-queue.hh
+g++ -std=c++17 -fno-exceptions -fno-rtti -c task-queue.hh
 ```
 
 ## Example Output

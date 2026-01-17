@@ -549,6 +549,7 @@ class CrateReader {
 
   // Integer types (scalar and array)
   std::unordered_map<crate::ValueRep, bool, crate::ValueRep::Hash> _dedup_bool;
+  std::unordered_map<crate::ValueRep, size_t, crate::ValueRep::Hash> _dedup_bool_array;
   std::unordered_map<crate::ValueRep, int32_t, crate::ValueRep::Hash> _dedup_int32;
   std::unordered_map<crate::ValueRep, uint32_t, crate::ValueRep::Hash> _dedup_uint32;
   std::unordered_map<crate::ValueRep, int64_t, crate::ValueRep::Hash> _dedup_int64;
@@ -619,6 +620,11 @@ class CrateReader {
   std::unordered_map<crate::ValueRep, value::token, crate::ValueRep::Hash> _dedup_token;
   // Stores ref_index (sample index) for deduplication
   std::unordered_map<crate::ValueRep, size_t, crate::ValueRep::Hash> _dedup_token_array;
+
+  // Reusable buffers for integer decompression to avoid repeated allocation
+  // These are mutable because they're used as internal working buffers in const-like operations
+  mutable std::vector<char> _decomp_comp_buffer;      // Buffer for compressed data
+  mutable std::vector<char> _decomp_working_buffer;   // Buffer for decompression working space
 
   class Impl;
   Impl *_impl;
