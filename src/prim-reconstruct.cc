@@ -351,7 +351,7 @@ static bool ConvertStringDataAttributeToStringAttribute(
 template<typename T>
 static ParseResult ParseTypedAttribute(std::set<std::string> &table, /* inout */
   const std::string prop_name,
-  const Property &prop,
+  Property &prop,  // Non-const to allow move from metadata
   const std::string &name,
   TypedAttributeWithFallback<Animatable<T>> &target)
 {
@@ -418,7 +418,7 @@ static ParseResult ParseTypedAttribute(std::set<std::string> &table, /* inout */
       if (prop.get_property_type() == Property::Type::EmptyAttrib) {
         DCOUT("Added prop with empty value: " << name);
         target.set_value_empty();
-        target.metas() = attr.metas();
+        target.metas() = std::move(prop.attribute().metas());  // Move instead of copy
         table.insert(name);
         ret.code = ParseResult::ResultCode::Success;
         return ret;
@@ -492,7 +492,7 @@ static ParseResult ParseTypedAttribute(std::set<std::string> &table, /* inout */
 
       if (has_connections || has_timesamples || has_default) {
 
-        target.metas() = attr.metas();
+        target.metas() = std::move(prop.attribute().metas());  // Move instead of copy
         table.insert(name);
         ret.code = ParseResult::ResultCode::Success;
         return ret;
@@ -524,7 +524,7 @@ static ParseResult ParseTypedAttribute(std::set<std::string> &table, /* inout */
 template<typename T>
 static ParseResult ParseTypedAttribute(std::set<std::string> &table, /* inout */
   const std::string prop_name,
-  const Property &prop,
+  Property &prop,  // Non-const to allow move from metadata
   const std::string &name,
   TypedAttributeWithFallback<T> &target) /* out */
 {
@@ -587,7 +587,7 @@ static ParseResult ParseTypedAttribute(std::set<std::string> &table, /* inout */
       if (prop.get_property_type() == Property::Type::EmptyAttrib) {
         DCOUT("Added prop with empty value: " << name);
         target.set_value_empty();
-        target.metas() = attr.metas();
+        target.metas() = std::move(prop.attribute().metas());  // Move instead of copy
         table.insert(name);
         ret.code = ParseResult::ResultCode::Success;
         return ret;
@@ -624,7 +624,7 @@ static ParseResult ParseTypedAttribute(std::set<std::string> &table, /* inout */
           return ret;
         }
 
-        target.metas() = attr.metas();
+        target.metas() = std::move(prop.attribute().metas());  // Move instead of copy
         table.insert(name);
         ret.code = ParseResult::ResultCode::Success;
         return ret;
@@ -655,7 +655,7 @@ static ParseResult ParseTypedAttribute(std::set<std::string> &table, /* inout */
 template<typename T>
 static ParseResult ParseTypedAttribute(std::set<std::string> &table, /* inout */
   const std::string prop_name,
-  const Property &prop,
+  Property &prop,  // Non-const to allow move from metadata
   const std::string &name,
   TypedAttribute<Animatable<T>> &target) /* out */
 {
@@ -717,7 +717,7 @@ static ParseResult ParseTypedAttribute(std::set<std::string> &table, /* inout */
       if (prop.get_property_type() == Property::Type::EmptyAttrib) {
         DCOUT("Added prop with empty value: " << name);
         target.set_value_empty();
-        target.metas() = attr.metas();
+        target.metas() = std::move(prop.attribute().metas());  // Move instead of copy
         table.insert(name);
         ret.code = ParseResult::ResultCode::Success;
         return ret;
@@ -798,7 +798,7 @@ static ParseResult ParseTypedAttribute(std::set<std::string> &table, /* inout */
 template<typename T>
 static ParseResult ParseTypedAttribute(std::set<std::string> &table, /* inout */
   const std::string prop_name,
-  const Property &prop,
+  Property &prop,  // Non-const to allow move from metadata
   const std::string &name,
   TypedAttribute<T> &target) /* out */
 {
@@ -896,7 +896,7 @@ static ParseResult ParseTypedAttribute(std::set<std::string> &table, /* inout */
       }
 
       if (has_connections || has_default) {
-        target.metas() = attr.metas();
+        target.metas() = std::move(prop.attribute().metas());  // Move instead of copy
         table.insert(name);
         ret.code = ParseResult::ResultCode::Success;
         return ret;
@@ -929,7 +929,7 @@ static ParseResult ParseTypedAttribute(std::set<std::string> &table, /* inout */
 // TODO: Reuse code of ParseTypedAttribute as much as possible
 static ParseResult ParseExtentAttribute(std::set<std::string> &table, /* inout */
   const std::string prop_name,
-  const Property &prop,
+  Property &prop,  // Non-const to allow move from metadata
   const std::string &name,
   TypedAttribute<Animatable<Extent>> &target) /* out */
 {
@@ -1047,7 +1047,7 @@ static ParseResult ParseExtentAttribute(std::set<std::string> &table, /* inout *
 
       if (has_default || has_timesamples) {
         DCOUT("Added Extent attribute: " << name);
-        target.metas() = attr.metas();
+        target.metas() = std::move(prop.attribute().metas());  // Move instead of copy
         table.insert(name);
         ret.code = ParseResult::ResultCode::Success;
         return ret;
@@ -1073,7 +1073,7 @@ static ParseResult ParseExtentAttribute(std::set<std::string> &table, /* inout *
 
         DCOUT("Added typed extent attribute: " << name);
 
-        target.metas() = attr.metas();
+        target.metas() = std::move(prop.attribute().metas());  // Move instead of copy
         table.insert(name);
         ret.code = ParseResult::ResultCode::Success;
         return ret;
@@ -1081,7 +1081,7 @@ static ParseResult ParseExtentAttribute(std::set<std::string> &table, /* inout *
 
       if (has_connections) {
         DCOUT("Added Extent connection attribute: " << name);
-        target.metas() = attr.metas();
+        target.metas() = std::move(prop.attribute().metas());  // Move instead of copy
         table.insert(name);
         ret.code = ParseResult::ResultCode::Success;
         return ret;
@@ -1110,7 +1110,7 @@ static ParseResult ParseExtentAttribute(std::set<std::string> &table, /* inout *
 template<typename T>
 static ParseResult ParseShaderOutputTerminalAttribute(std::set<std::string> &table, /* inout */
   const std::string prop_name,
-  const Property &prop,
+  Property &prop,  // Non-const to allow move from metadata
   const std::string &name,
   TypedTerminalAttribute<T> &target) /* out */
 {
@@ -1221,7 +1221,7 @@ static ParseResult ParseShaderOutputTerminalAttribute(std::set<std::string> &tab
 //   "token outputs:surface.connect = </path/to/conn/>"
 static ParseResult ParseShaderOutputProperty(std::set<std::string> &table, /* inout */
   const std::string prop_name,
-  const Property &prop,
+  Property &prop,  // Non-const to allow move from metadata
   const std::string &name,
   nonstd::optional<Relationship> &target) /* out */
 {
@@ -1317,7 +1317,7 @@ static ParseResult ParseShaderOutputProperty(std::set<std::string> &table, /* in
 //   "token outputs:surface.connect = </path/to/conn/>"
 static ParseResult ParseShaderInputConnectionProperty(std::set<std::string> &table, /* inout */
   const std::string prop_name,
-  const Property &prop,
+  Property &prop,  // Non-const to allow move from metadata
   const std::string &name,
   TypedConnection<value::token> &target) /* out */
 {
@@ -1817,7 +1817,7 @@ bool ParseTimeSampledEnumProperty(
     if ((__prop.second.value_type_name() == value::TypeTraits<value::token>::type_name()) && \
         __prop.second.is_attribute() && __prop.second.is_empty()) {              \
       PUSH_WARN("No value assigned to `" << __name << "` token attribute. Set default token value."); \
-      __target.metas() = attr.metas();                                           \
+      __target.metas() = std::move(__prop.second.attribute().metas());           \
       __table.insert(__name);                                                    \
       continue;                                                                  \
     }                                                                            \
@@ -1825,7 +1825,7 @@ bool ParseTimeSampledEnumProperty(
     if (!__parser_fn(__name, __strict_check, fun, attr, &__target, warn, err)) { \
       return false;                                                              \
     }                                                                            \
-    __target.metas() = attr.metas();                                             \
+    __target.metas() = std::move(__prop.second.attribute().metas());             \
     __table.insert(__name);                                                      \
     continue;                                                                    \
   }                                                                              \
@@ -3105,7 +3105,7 @@ bool ReconstructMaterialBindingProperties(
     return false;
   }
 
-  for (const auto &prop : properties) {
+  for (auto &prop : properties) {  // Non-const to allow move from property metadata
     PARSE_SINGLE_TARGET_PATH_RELATION(table, prop, kMaterialBinding, mb->materialBinding)
     PARSE_SINGLE_TARGET_PATH_RELATION(table, prop, kMaterialBindingPreview, mb->materialBindingPreview)
     PARSE_SINGLE_TARGET_PATH_RELATION(table, prop, kMaterialBindingPreview, mb->materialBindingFull)
@@ -3211,7 +3211,7 @@ bool ReconstructCollectionProperties(
     return false;
   }
 
-  for (const auto &prop : properties) {
+  for (auto &prop : properties) {  // Non-const to allow move from property metadata
     if (startsWith(prop.first, kCollectionPrefix)) {
       if (table.count(prop.first)) {
          continue;
@@ -3302,7 +3302,7 @@ bool ReconstructGPrimProperties(
     return false;
   }
 
-  for (const auto &prop : properties) {
+  for (auto &prop : properties) {  // Non-const to allow move from property metadata
     PARSE_SINGLE_TARGET_PATH_RELATION(table, prop, kProxyPrim, gprim->proxyPrim)
     PARSE_TYPED_ATTRIBUTE(table, prop, "doubleSided", GPrim, gprim->doubleSided)
     PARSE_TIMESAMPLED_ENUM_PROPERTY(table, prop, kVisibility, Visibility, VisibilityEnumHandler, GPrim,
@@ -3338,7 +3338,7 @@ bool ReconstructPrim<Xform>(
     return false;
   }
 
-  for (const auto &prop : properties) {
+  for (auto &prop : properties) {  // Non-const to allow move from property metadata
     ADD_PROPERTY(table, prop, Xform, xform->props)
     PARSE_PROPERTY_END_MAKE_WARN(table, prop)
   }
@@ -3363,7 +3363,7 @@ bool ReconstructPrim<Model>(
   (void)options;
 
   std::set<std::string> table;
-  for (const auto &prop : properties) {
+  for (auto &prop : properties) {  // Non-const to allow move from property metadata
     ADD_PROPERTY(table, prop, Model, model->props)
     PARSE_PROPERTY_END_MAKE_WARN(table, prop)
   }
@@ -3390,7 +3390,7 @@ bool ReconstructPrim<Scope>(
 
   DCOUT("Scope");
   std::set<std::string> table;
-  for (const auto &prop : properties) {
+  for (auto &prop : properties) {  // Non-const to allow move from property metadata
     PARSE_TIMESAMPLED_ENUM_PROPERTY(table, prop, kVisibility, Visibility, VisibilityEnumHandler, Scope,
                    scope->visibility, options.strict_allowedToken_check)
     ADD_PROPERTY(table, prop, Scope, scope->props)
@@ -3423,7 +3423,7 @@ bool ReconstructPrim<SkelRoot>(
   // No specific properties for SkelRoot(AFAIK)
 
   // custom props only
-  for (const auto &prop : properties) {
+  for (auto &prop : properties) {  // Non-const to allow move from property metadata
     PARSE_TIMESAMPLED_ENUM_PROPERTY(table, prop, kVisibility, Visibility, VisibilityEnumHandler, SkelRoot,
                    root->visibility, options.strict_allowedToken_check)
     PARSE_UNIFORM_ENUM_PROPERTY(table, prop, kPurpose, Purpose, PurposeEnumHandler, SkelRoot,
@@ -3678,7 +3678,7 @@ bool ReconstructPrim(
 #pragma clang diagnostic pop
 #endif
 
-  for (const auto &prop : properties) {
+  for (auto &prop : properties) {  // Non-const to allow move from property metadata
     GEOM_BASIS_CURVES_TYPED_ATTRS(EXPAND_TYPED_ATTR)
     GEOM_BASIS_CURVES_UNIFORM_ENUMS(EXPAND_UNIFORM_ENUM)
     ADD_PROPERTY(table, prop, GeomBasisCurves, curves->props)
@@ -3708,7 +3708,7 @@ bool ReconstructPrim(
     return false;
   }
 
-  for (const auto &prop : properties) {
+  for (auto &prop : properties) {  // Non-const to allow move from property metadata
     PARSE_TYPED_ATTRIBUTE(table, prop, "curveVertexCounts", GeomNurbsCurves,
                          curves->curveVertexCounts)
     PARSE_TYPED_ATTRIBUTE(table, prop, "points", GeomNurbsCurves, curves->points)
@@ -3762,7 +3762,7 @@ bool ReconstructPrim<SphereLight>(
 #pragma clang diagnostic pop
 #endif
 
-  for (const auto &prop : properties) {
+  for (auto &prop : properties) {  // Non-const to allow move from property metadata
     SPHERE_LIGHT_TYPED_ATTRS(EXPAND_TYPED_ATTR)
     LIGHT_COMMON_ATTRS_WITH_SHAPING(EXPAND_TYPED_ATTR)
     PARSE_TIMESAMPLED_ENUM_PROPERTY(table, prop, kVisibility, Visibility, VisibilityEnumHandler, SphereLight,
@@ -3808,7 +3808,7 @@ bool ReconstructPrim<RectLight>(
 #pragma clang diagnostic pop
 #endif
 
-  for (const auto &prop : properties) {
+  for (auto &prop : properties) {  // Non-const to allow move from property metadata
     // Special case: texture:file uses UsdUVTexture type
     PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:texture:file", UsdUVTexture, light->file)
     RECT_LIGHT_TYPED_ATTRS(EXPAND_TYPED_ATTR)
@@ -3856,7 +3856,7 @@ bool ReconstructPrim<DiskLight>(
 #pragma clang diagnostic pop
 #endif
 
-  for (const auto &prop : properties) {
+  for (auto &prop : properties) {  // Non-const to allow move from property metadata
     DISK_LIGHT_TYPED_ATTRS(EXPAND_TYPED_ATTR)
     LIGHT_COMMON_ATTRS_WITH_SHAPING(EXPAND_TYPED_ATTR)
     PARSE_EXTENT_ATTRIBUTE(table, prop, kExtent, DiskLight, light->extent)
@@ -3902,7 +3902,7 @@ bool ReconstructPrim<CylinderLight>(
 #pragma clang diagnostic pop
 #endif
 
-  for (const auto &prop : properties) {
+  for (auto &prop : properties) {  // Non-const to allow move from property metadata
     CYLINDER_LIGHT_TYPED_ATTRS(EXPAND_TYPED_ATTR)
     LIGHT_COMMON_ATTRS_WITH_SHAPING(EXPAND_TYPED_ATTR)
     PARSE_EXTENT_ATTRIBUTE(table, prop, kExtent, CylinderLight, light->extent)
@@ -3948,7 +3948,7 @@ bool ReconstructPrim<DistantLight>(
 #pragma clang diagnostic pop
 #endif
 
-  for (const auto &prop : properties) {
+  for (auto &prop : properties) {  // Non-const to allow move from property metadata
     DISTANT_LIGHT_TYPED_ATTRS(EXPAND_TYPED_ATTR)
     LIGHT_COMMON_ATTRS_NO_SHAPING(EXPAND_TYPED_ATTR)
     // DistantLight has no shaping attrs or extent
@@ -3994,7 +3994,7 @@ bool ReconstructPrim<GeometryLight>(
 #pragma clang diagnostic pop
 #endif
 
-  for (const auto &prop : properties) {
+  for (auto &prop : properties) {  // Non-const to allow move from property metadata
     GEOMETRY_LIGHT_TYPED_ATTRS(EXPAND_TYPED_ATTR)
     LIGHT_COMMON_ATTRS_NO_SHAPING(EXPAND_TYPED_ATTR)
     // GeometryLight has no shaping attrs or extent
@@ -4040,7 +4040,7 @@ bool ReconstructPrim<DomeLight>(
 #pragma clang diagnostic pop
 #endif
 
-  for (const auto &prop : properties) {
+  for (auto &prop : properties) {  // Non-const to allow move from property metadata
     DOME_LIGHT_TYPED_ATTRS(EXPAND_TYPED_ATTR)
     LIGHT_COMMON_ATTRS_NO_SHAPING(EXPAND_TYPED_ATTR)
     // DomeLight has no shaping attrs or extent
@@ -4088,7 +4088,7 @@ bool ReconstructPrim<GeomSphere>(
 #pragma clang diagnostic pop
 #endif
 
-  for (const auto &prop : properties) {
+  for (auto &prop : properties) {  // Non-const to allow move from property metadata
     GEOM_SPHERE_TYPED_ATTRS(EXPAND_TYPED_ATTR)
     ADD_PROPERTY(table, prop, GeomSphere, sphere->props)
     PARSE_PROPERTY_END_MAKE_ERROR(table, prop)
@@ -4129,7 +4129,7 @@ bool ReconstructPrim<GeomPoints>(
 #pragma clang diagnostic pop
 #endif
 
-  for (const auto &prop : properties) {
+  for (auto &prop : properties) {  // Non-const to allow move from property metadata
     DCOUT("prop: " << prop.first);
     GEOM_POINTS_TYPED_ATTRS(EXPAND_TYPED_ATTR)
     ADD_PROPERTY(table, prop, GeomPoints, points->props)
@@ -4169,7 +4169,7 @@ bool ReconstructPrim<GeomCone>(
 #pragma clang diagnostic pop
 #endif
 
-  for (const auto &prop : properties) {
+  for (auto &prop : properties) {  // Non-const to allow move from property metadata
     DCOUT("prop: " << prop.first);
     GEOM_CONE_TYPED_ATTRS(EXPAND_TYPED_ATTR)
     GEOM_CONE_UNIFORM_ENUMS(EXPAND_UNIFORM_ENUM)
@@ -4210,7 +4210,7 @@ bool ReconstructPrim<GeomCylinder>(
 #pragma clang diagnostic pop
 #endif
 
-  for (const auto &prop : properties) {
+  for (auto &prop : properties) {  // Non-const to allow move from property metadata
     DCOUT("prop: " << prop.first);
     GEOM_CYLINDER_TYPED_ATTRS(EXPAND_TYPED_ATTR)
     GEOM_CYLINDER_UNIFORM_ENUMS(EXPAND_UNIFORM_ENUM)
@@ -4251,7 +4251,7 @@ bool ReconstructPrim<GeomCapsule>(
 #pragma clang diagnostic pop
 #endif
 
-  for (const auto &prop : properties) {
+  for (auto &prop : properties) {  // Non-const to allow move from property metadata
     GEOM_CAPSULE_TYPED_ATTRS(EXPAND_TYPED_ATTR)
     GEOM_CAPSULE_UNIFORM_ENUMS(EXPAND_UNIFORM_ENUM)
     ADD_PROPERTY(table, prop, GeomCapsule, capsule->props)
@@ -4294,7 +4294,7 @@ bool ReconstructPrim<GeomCube>(
 #pragma clang diagnostic pop
 #endif
 
-  for (const auto &prop : properties) {
+  for (auto &prop : properties) {  // Non-const to allow move from property metadata
     DCOUT("prop: " << prop.first);
     GEOM_CUBE_TYPED_ATTRS(EXPAND_TYPED_ATTR)
     ADD_PROPERTY(table, prop, GeomCube, cube->props)
@@ -4434,7 +4434,7 @@ bool ReconstructPrim<GeomCamera>(
 #pragma clang diagnostic pop
 #endif
 
-  for (const auto &prop : properties) {
+  for (auto &prop : properties) {  // Non-const to allow move from property metadata
     GEOM_CAMERA_TYPED_ATTRS(EXPAND_TYPED_ATTR)
     GEOM_CAMERA_TIMESAMPLED_ENUMS(EXPAND_TIMESAMPLED_ENUM)
     GEOM_CAMERA_UNIFORM_ENUMS(EXPAND_UNIFORM_ENUM)
@@ -4487,7 +4487,7 @@ bool ReconstructPrim<GeomSubset>(
 #pragma clang diagnostic pop
 #endif
 
-  for (const auto &prop : properties) {
+  for (auto &prop : properties) {  // Non-const to allow move from property metadata
     GEOM_SUBSET_TYPED_ATTRS(EXPAND_TYPED_ATTR)
     GEOM_SUBSET_UNIFORM_ENUMS(EXPAND_UNIFORM_ENUM)
     ADD_PROPERTY(table, prop, GeomSubset, subset->props)
@@ -4530,7 +4530,7 @@ bool ReconstructPrim<GeomPointInstancer>(
 #pragma clang diagnostic pop
 #endif
 
-  for (const auto &prop : properties) {
+  for (auto &prop : properties) {  // Non-const to allow move from property metadata
     GEOM_POINT_INSTANCER_RELATIONS(EXPAND_SINGLE_REL, EXPAND_MULTI_REL)
     GEOM_POINT_INSTANCER_TYPED_ATTRS(EXPAND_TYPED_ATTR)
     ADD_PROPERTY(table, prop, GeomPointInstancer, instancer->props)
