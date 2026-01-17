@@ -347,9 +347,267 @@ static bool ConvertStringDataAttributeToStringAttribute(
 }
 #endif
 
-// For animatable attribute(`varying`)
+// ============================================================================
+// Traits for ParseTypedAttribute unification
+// ============================================================================
+
+// Detect if type is Animatable<T>
+template<typename T>
+struct is_animatable : std::false_type {
+  using value_type = T;
+};
+
+template<typename T>
+struct is_animatable<Animatable<T>> : std::true_type {
+  using value_type = T;
+};
+
+// Detect if type is TypedAttributeWithFallback<T>
+template<typename T>
+struct is_with_fallback : std::false_type {};
+
+template<typename T>
+struct is_with_fallback<TypedAttributeWithFallback<T>> : std::true_type {};
+
+// Extract value type from target
+template<typename Target>
+struct target_traits; // Forward declaration
+
+// Specialization for TypedAttribute<T>
+template<typename T>
+struct target_traits<TypedAttribute<T>> {
+  using value_type = T;
+  static constexpr bool has_fallback = false;
+  static constexpr bool is_varying = is_animatable<T>::value;
+  using underlying_type = typename is_animatable<T>::value_type;
+};
+
+// Specialization for TypedAttributeWithFallback<T>
+template<typename T>
+struct target_traits<TypedAttributeWithFallback<T>> {
+  using value_type = T;
+  static constexpr bool has_fallback = true;
+  static constexpr bool is_varying = is_animatable<T>::value;
+  using underlying_type = typename is_animatable<T>::value_type;
+};
+
+// ============================================================================
+// Unified ParseTypedAttribute implementation
+// ============================================================================
+
+template<typename Target>
+static ParseResult ParseTypedAttributeUnified(
+    std::set<std::string> &table,
+    const std::string prop_name,
+    Property &prop,
+    const std::string &name,
+    Target &target)
+{
+  using Traits = target_traits<Target>;
+  using T = typename Traits::underlying_type;
+  constexpr bool is_varying = Traits::is_varying;
+  constexpr bool has_fallback = Traits::has_fallback;
+
+  ParseResult ret;
+
+  if (prop_name.compare(name) != 0) {
+    ret.code = ParseResult::ResultCode::Unmatched;
+    return ret;
+  }
+
+  // Check if property is relationship (should be attribute)
+  if (prop.is_relationship()) {
+    ret.code = ParseResult::ResultCode::PropertyTypeMismatch;
+    ret.err = fmt::format("Property `{}` must be Attribute, but declared as Relationship.", name);
+    return ret;
+  }
+
+  const Attribute &attr = prop.get_attribute();
+  std::string attr_type_name = attr.type_name();
+
+  // Check type match
+  if ((value::TypeTraits<T>::type_name() != attr_type_name) &&
+      (value::TypeTraits<T>::underlying_type_name() != attr_type_name)) {
+    DCOUT("tyname = " << value::TypeTraits<T>::type_name() << ", attr.type = " << attr_type_name);
+    ret.code = ParseResult::ResultCode::TypeMismatch;
+    ret.err = fmt::format("Property type mismatch. {} expects type `{}` but defined as type `{}`",
+                          name, value::TypeTraits<T>::type_name(), attr_type_name);
+    return ret;
+  }
+
+  bool has_connections = false;
+  bool has_default = false;
+  bool has_timesamples = false;
+
+  // Handle connections
+  if (attr.has_connections()) {
+    target.set_connections(attr.connections());
+    has_connections = true;
+  }
+
+  // Handle empty attribute
+  if (prop.get_property_type() == Property::Type::EmptyAttrib) {
+    DCOUT("Added prop with empty value: " << name);
+    target.set_value_empty();
+    target.metas() = std::move(prop.attribute().metas());
+    table.insert(name);
+    ret.code = ParseResult::ResultCode::Success;
+    return ret;
+  }
+
+  // Handle non-empty attribute
+  if (prop.get_property_type() == Property::Type::Attrib) {
+    DCOUT("Adding typed prop: " << name);
+
+    // Check blocked attribute
+    if (attr.is_blocked()) {
+      target.set_blocked(true);
+      has_default = true;
+    } else {
+      // Variability checks
+      bool is_config_attr = (name.find("config:") == 0);
+
+      if constexpr (!is_varying) {
+        // Uniform attribute - no timeSamples allowed
+        if (!is_config_attr && attr.variability() != Variability::Uniform) {
+          ret.code = ParseResult::ResultCode::VariabilityMismatch;
+          ret.err = fmt::format("Attribute `{}` must be `uniform` variability.", name);
+          return ret;
+        }
+
+        if (is_config_attr && attr.variability() != Variability::Uniform) {
+          ret.warn = fmt::format("Config attribute `{}` should have explicit `uniform` variability.", name);
+        }
+
+        if (attr.get_var().has_timesamples()) {
+          ret.code = ParseResult::ResultCode::VariabilityMismatch;
+          ret.err = "TimeSample assigned to a property where `uniform` variability is set.";
+          return ret;
+        }
+      }
+
+      // Extract value based on varying vs uniform
+      if constexpr (is_varying) {
+        // Varying: can have both timeSamples and default
+        typename Traits::value_type animatable_value;
+
+        // Check uniform variability for attributes with fallback
+        if constexpr (has_fallback) {
+          if (attr.variability() == Variability::Uniform) {
+            if (attr.get_var().has_timesamples()) {
+              ret.code = ParseResult::ResultCode::VariabilityMismatch;
+              ret.err = fmt::format("TimeSample value is assigned to `uniform` property `{}`", name);
+              return ret;
+            }
+
+            if (auto pv = attr.get_value<T>()) {
+              target.set_value(std::move(pv.value()));
+              target.metas() = std::move(prop.attribute().metas());
+              table.insert(name);
+              ret.code = ParseResult::ResultCode::Success;
+              return ret;
+            } else {
+              ret.code = ParseResult::ResultCode::TypeMismatch;
+              ret.err = fmt::format("Failed to retrieve value with requested type `{}`.", value::TypeTraits<T>::type_name());
+              return ret;
+            }
+          }
+        }
+
+        // Parse timeSamples
+        if (attr.get_var().has_timesamples()) {
+          if (auto av = ConvertToAnimatable<T>(attr.get_var())) {
+            animatable_value = std::move(av.value());
+            has_timesamples = true;
+          } else {
+            ret.code = ParseResult::ResultCode::InternalError;
+            ret.err = fmt::format("Converting timeSamples failed for `{}`. TimeSamples may have values with different type (expected `{}`).",
+                                  prop_name, value::TypeTraits<T>::type_name());
+            return ret;
+          }
+        }
+
+        // Parse default value
+        if (attr.get_var().has_default()) {
+          if (auto pv = attr.get_var().get_value<T>()) {
+            animatable_value.set(std::move(pv.value()));
+            has_default = true;
+          } else {
+            ret.code = ParseResult::ResultCode::InternalError;
+            ret.err = fmt::format("get_value<{}> failed. Attribute has type {}",
+                                  value::TypeTraits<T>::type_name(), attr.get_var().type_name());
+            return ret;
+          }
+        }
+
+        if (has_timesamples || has_default) {
+          target.set_value(std::move(animatable_value));
+        } else if (!has_connections) {
+          // No value, default, timeSamples, or connections - use default-constructed
+          target.set_value(typename Traits::value_type());
+        }
+
+      } else {
+        // Uniform: only default value
+        if (attr.get_var().has_default()) {
+          if (auto pv = attr.get_value<T>()) {
+            target.set_value(std::move(pv.value()));
+            has_default = true;
+          } else {
+            ret.code = ParseResult::ResultCode::InternalError;
+            ret.err = "Internal data corrupted.";
+            return ret;
+          }
+        } else if (!has_connections) {
+          ret.code = ParseResult::ResultCode::VariabilityMismatch;
+          ret.err = "TimeSample or corrupted value assigned to a property where `uniform` variability is set.";
+          return ret;
+        }
+      }
+    }
+  } else {
+    ret.code = ParseResult::ResultCode::InternalError;
+    ret.err = "ParseTypedAttribute: Invalid Property type(internal error)";
+    return ret;
+  }
+
+  // Connections only case
+  if (has_connections && !has_timesamples && !has_default) {
+    target.set_value_empty();
+  }
+
+  // Success cases
+  if (has_connections || has_timesamples || has_default) {
+    target.metas() = std::move(prop.attribute().metas());
+    table.insert(name);
+    ret.code = ParseResult::ResultCode::Success;
+    return ret;
+  }
+
+  ret.code = ParseResult::ResultCode::InternalError;
+  ret.err = "ParseTypedAttribute: No valid data found(internal error)";
+  return ret;
+}
+
+// ============================================================================
+// Overload wrappers (delegate to unified implementation)
+// ============================================================================
+
+// For animatable attribute(`varying`) with fallback
 template<typename T>
 static ParseResult ParseTypedAttribute(std::set<std::string> &table, /* inout */
+  const std::string prop_name,
+  Property &prop,  // Non-const to allow move from metadata
+  const std::string &name,
+  TypedAttributeWithFallback<Animatable<T>> &target)
+{
+  return ParseTypedAttributeUnified(table, prop_name, prop, name, target);
+}
+
+#if 0 // deprecated. TODO: Remove
+// Old implementation kept for reference during transition
+template<typename T>
+static ParseResult ParseTypedAttribute_OLD1(std::set<std::string> &table, /* inout */
   const std::string prop_name,
   Property &prop,  // Non-const to allow move from metadata
   const std::string &name,
@@ -519,10 +777,22 @@ static ParseResult ParseTypedAttribute(std::set<std::string> &table, /* inout */
   ret.code = ParseResult::ResultCode::Unmatched;
   return ret;
 }
+#endif // Old implementation 1
 
-// For 'uniform' attribute
+// For 'uniform' attribute with fallback
 template<typename T>
 static ParseResult ParseTypedAttribute(std::set<std::string> &table, /* inout */
+  const std::string prop_name,
+  Property &prop,  // Non-const to allow move from metadata
+  const std::string &name,
+  TypedAttributeWithFallback<T> &target) /* out */
+{
+  return ParseTypedAttributeUnified(table, prop_name, prop, name, target);
+}
+
+#if 0 // Old implementation 2
+template<typename T>
+static ParseResult ParseTypedAttribute_OLD2(std::set<std::string> &table, /* inout */
   const std::string prop_name,
   Property &prop,  // Non-const to allow move from metadata
   const std::string &name,
@@ -650,10 +920,22 @@ static ParseResult ParseTypedAttribute(std::set<std::string> &table, /* inout */
   ret.code = ParseResult::ResultCode::Unmatched;
   return ret;
 }
+#endif // Old implementation 2
 
-// For animatable attribute(`varying`)
+// For animatable attribute(`varying`) without fallback
 template<typename T>
 static ParseResult ParseTypedAttribute(std::set<std::string> &table, /* inout */
+  const std::string prop_name,
+  Property &prop,  // Non-const to allow move from metadata
+  const std::string &name,
+  TypedAttribute<Animatable<T>> &target) /* out */
+{
+  return ParseTypedAttributeUnified(table, prop_name, prop, name, target);
+}
+
+#if 0 // Old implementation 3
+template<typename T>
+static ParseResult ParseTypedAttribute_OLD3(std::set<std::string> &table, /* inout */
   const std::string prop_name,
   Property &prop,  // Non-const to allow move from metadata
   const std::string &name,
@@ -793,10 +1075,22 @@ static ParseResult ParseTypedAttribute(std::set<std::string> &table, /* inout */
   ret.code = ParseResult::ResultCode::Unmatched;
   return ret;
 }
+#endif // Old implementation 3
 
-// TODO: Unify code with TypedAttribute<Animatable<T>> variant
+// For uniform attribute without fallback
 template<typename T>
 static ParseResult ParseTypedAttribute(std::set<std::string> &table, /* inout */
+  const std::string prop_name,
+  Property &prop,  // Non-const to allow move from metadata
+  const std::string &name,
+  TypedAttribute<T> &target) /* out */
+{
+  return ParseTypedAttributeUnified(table, prop_name, prop, name, target);
+}
+
+#if 0 // Old implementation 4
+template<typename T>
+static ParseResult ParseTypedAttribute_OLD4(std::set<std::string> &table, /* inout */
   const std::string prop_name,
   Property &prop,  // Non-const to allow move from metadata
   const std::string &name,
@@ -924,6 +1218,7 @@ static ParseResult ParseTypedAttribute(std::set<std::string> &table, /* inout */
 
   return ret;
 }
+#endif // Old implementation 4
 
 // Special case for Extent(float3[2]) type.
 // TODO: Reuse code of ParseTypedAttribute as much as possible
