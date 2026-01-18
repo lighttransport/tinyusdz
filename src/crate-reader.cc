@@ -2022,18 +2022,28 @@ bool CrateReader::ReadCustomData(CustomDataType *d) {
       PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read key string for Dictionary element.");
     }
 
+    // 8byte for the offset for recursive value. See RecursiveRead() in
+    // crateFile.cpp for details.
+    int64_t offset{0};
+    if (!_sr->read8(&offset)) {
+      PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read the offset for value in Dictionary.");
+    }
+
+    // -8 to compensate sizeof(offset)
+    if (!_sr->seek_from_current(offset - 8)) {
+      PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to seek. Invalid offset value: " + std::to_string(offset));
+    }
+
     DCOUT("key = " << key);
 
-    // Read ValueRep directly (OpenUSD simple format: count + (key, value) pairs)
-    // This matches OpenUSD's ReadMap template (crateFile.cpp:1128-1139)
-    // Previous TinyUSDZ implementation expected recursive offset format, but
-    // OpenUSD's standard VtDictionary uses simple sequential format
     crate::ValueRep rep{0};
     if (!ReadValueRep(&rep)) {
       PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read value for Dictionary element.");
     }
 
     DCOUT("vrep =" << crate::GetCrateDataTypeName(rep.GetType()));
+
+    auto saved_position = _sr->tell();
 
     crate::CrateValue value;
     if (!UnpackValueRep(rep, &value)) {
@@ -2049,6 +2059,10 @@ bool CrateReader::ReadCustomData(CustomDataType *d) {
     var.set_value(key, value.get_raw());
 
     dict[key] = var;
+
+    if (!_sr->seek_set(saved_position)) {
+      PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to set seek.");
+    }
   }
 
   (*d) = std::move(dict);
