@@ -330,31 +330,31 @@ bool CrateWriter::ExtractTypeSpecificProperties(
 ) {
   // Try to extract properties based on prim type
   if (type_name == "Xform") {
-    return ExtractXformProperties(prim, fields, err);
+    return ExtractXformProperties(prim, prim_path, fields, err);
   } else if (type_name == "Mesh") {
-    return ExtractMeshProperties(prim, fields, err);
+    return ExtractMeshProperties(prim, prim_path, fields, err);
   } else if (type_name == "Cube") {
-    return ExtractCubeProperties(prim, fields, err);
+    return ExtractCubeProperties(prim, prim_path, fields, err);
   } else if (type_name == "Sphere") {
-    return ExtractSphereProperties(prim, fields, err);
+    return ExtractSphereProperties(prim, prim_path, fields, err);
   } else if (type_name == "Cylinder") {
-    return ExtractCylinderProperties(prim, fields, err);
+    return ExtractCylinderProperties(prim, prim_path, fields, err);
   } else if (type_name == "Cone") {
-    return ExtractConeProperties(prim, fields, err);
+    return ExtractConeProperties(prim, prim_path, fields, err);
   } else if (type_name == "Capsule") {
-    return ExtractCapsuleProperties(prim, fields, err);
+    return ExtractCapsuleProperties(prim, prim_path, fields, err);
   } else if (type_name == "Points") {
-    return ExtractPointsProperties(prim, fields, err);
+    return ExtractPointsProperties(prim, prim_path, fields, err);
   } else if (type_name == "Camera") {
-    return ExtractCameraProperties(prim, fields, err);
+    return ExtractCameraProperties(prim, prim_path, fields, err);
   } else if (type_name == "BasisCurves") {
-    return ExtractBasisCurvesProperties(prim, fields, err);
+    return ExtractBasisCurvesProperties(prim, prim_path, fields, err);
   } else if (type_name == "NurbsCurves") {
-    return ExtractNurbsCurvesProperties(prim, fields, err);
+    return ExtractNurbsCurvesProperties(prim, prim_path, fields, err);
   } else if (type_name == "PointInstancer") {
-    return ExtractPointInstancerProperties(prim, fields, err);
+    return ExtractPointInstancerProperties(prim, prim_path, fields, err);
   } else if (type_name == "GeomSubset") {
-    return ExtractGeomSubsetProperties(prim, fields, err);
+    return ExtractGeomSubsetProperties(prim, prim_path, fields, err);
   } else if (type_name == "Material") {
     return ExtractMaterialProperties(prim, prim_path, fields, err);
   } else if (type_name == "Shader") {
@@ -362,34 +362,34 @@ bool CrateWriter::ExtractTypeSpecificProperties(
   } else if (type_name == "NodeGraph") {
     return ExtractNodeGraphProperties(prim, fields, err);
   } else if (type_name == "BlendShape") {
-    return ExtractBlendShapeProperties(prim, fields, err);
+    return ExtractBlendShapeProperties(prim, prim_path, fields, err);
   } else if (type_name == "SphereLight") {
-    return ExtractSphereLightProperties(prim, fields, err);
+    return ExtractSphereLightProperties(prim, prim_path, fields, err);
   } else if (type_name == "RectLight") {
-    return ExtractRectLightProperties(prim, fields, err);
+    return ExtractRectLightProperties(prim, prim_path, fields, err);
   } else if (type_name == "DiskLight") {
-    return ExtractDiskLightProperties(prim, fields, err);
+    return ExtractDiskLightProperties(prim, prim_path, fields, err);
   } else if (type_name == "CylinderLight") {
-    return ExtractCylinderLightProperties(prim, fields, err);
+    return ExtractCylinderLightProperties(prim, prim_path, fields, err);
   } else if (type_name == "DistantLight") {
-    return ExtractDistantLightProperties(prim, fields, err);
+    return ExtractDistantLightProperties(prim, prim_path, fields, err);
   } else if (type_name == "DomeLight") {
-    return ExtractDomeLightProperties(prim, fields, err);
+    return ExtractDomeLightProperties(prim, prim_path, fields, err);
   } else if (type_name == "GeometryLight") {
-    return ExtractGeometryLightProperties(prim, fields, err);
+    return ExtractGeometryLightProperties(prim, prim_path, fields, err);
   } else if (type_name == "PortalLight") {
-    return ExtractPortalLightProperties(prim, fields, err);
+    return ExtractPortalLightProperties(prim, prim_path, fields, err);
   } else if (type_name == "Skeleton") {
-    return ExtractSkeletonProperties(prim, fields, err);
+    return ExtractSkeletonProperties(prim, prim_path, fields, err);
   } else if (type_name == "SkelAnimation") {
-    return ExtractSkelAnimationProperties(prim, fields, err);
+    return ExtractSkelAnimationProperties(prim, prim_path, fields, err);
   } else if (type_name == "SkelRoot") {
-    return ExtractSkelRootProperties(prim, fields, err);
+    return ExtractSkelRootProperties(prim, prim_path, fields, err);
   }
 
   // For unknown types or types without specific handlers,
   // try extracting from the generic GPrim properties
-  return ExtractGPrimProperties(prim, fields, err);
+  return ExtractGPrimProperties(prim, prim_path, fields, err);
 }
 
 // ============================================================================
@@ -398,6 +398,7 @@ bool CrateWriter::ExtractTypeSpecificProperties(
 
 bool CrateWriter::ExtractXformProperties(
   const Prim& prim,
+  const Path& prim_path,
   crate::FieldValuePairVector& fields,
   std::string* err
 ) {
@@ -409,7 +410,7 @@ bool CrateWriter::ExtractXformProperties(
 
   // Extract xformOps from the Xformable base class
   // (Xform inherits from Xformable, so this will handle xformOps and xformOpOrder)
-  return ExtractXformOpsFromXformable(prim, fields, err);
+  return ExtractXformOpsFromXformable(prim, prim_path, fields, err);
 }
 
 // ============================================================================
@@ -418,6 +419,7 @@ bool CrateWriter::ExtractXformProperties(
 
 bool CrateWriter::ExtractMeshProperties(
   const Prim& prim,
+  const Path& prim_path,
   crate::FieldValuePairVector& fields,
   std::string* err
 ) {
@@ -693,7 +695,7 @@ bool CrateWriter::ExtractMeshProperties(
   }
 
   // Extract common GPrim properties
-  return ExtractGPrimProperties(prim, fields, err);
+  return ExtractGPrimProperties(prim, prim_path, fields, err);
 }
 
 // ============================================================================
@@ -702,6 +704,7 @@ bool CrateWriter::ExtractMeshProperties(
 
 bool CrateWriter::ExtractCubeProperties(
   const Prim& prim,
+  const Path& prim_path,
   crate::FieldValuePairVector& fields,
   std::string* err
 ) {
@@ -745,7 +748,7 @@ bool CrateWriter::ExtractCubeProperties(
   }
 
   // Extract common GPrim properties (including xformOps)
-  return ExtractGPrimProperties(prim, fields, err);
+  return ExtractGPrimProperties(prim, prim_path, fields, err);
 }
 
 // ============================================================================
@@ -754,6 +757,7 @@ bool CrateWriter::ExtractCubeProperties(
 
 bool CrateWriter::ExtractSphereProperties(
   const Prim& prim,
+  const Path& prim_path,
   crate::FieldValuePairVector& fields,
   std::string* err
 ) {
@@ -778,7 +782,7 @@ bool CrateWriter::ExtractSphereProperties(
     }
   }
 
-  return ExtractGPrimProperties(prim, fields, err);
+  return ExtractGPrimProperties(prim, prim_path, fields, err);
 }
 
 // ============================================================================
@@ -787,6 +791,7 @@ bool CrateWriter::ExtractSphereProperties(
 
 bool CrateWriter::ExtractCylinderProperties(
   const Prim& prim,
+  const Path& prim_path,
   crate::FieldValuePairVector& fields,
   std::string* err
 ) {
@@ -826,11 +831,12 @@ bool CrateWriter::ExtractCylinderProperties(
     }
   }
 
-  return ExtractGPrimProperties(prim, fields, err);
+  return ExtractGPrimProperties(prim, prim_path, fields, err);
 }
 
 bool CrateWriter::ExtractConeProperties(
   const Prim& prim,
+  const Path& prim_path,
   crate::FieldValuePairVector& fields,
   std::string* err
 ) {
@@ -880,11 +886,12 @@ bool CrateWriter::ExtractConeProperties(
     fields.push_back({"axis", axis_crate_val});
   }
 
-  return ExtractGPrimProperties(prim, fields, err);
+  return ExtractGPrimProperties(prim, prim_path, fields, err);
 }
 
 bool CrateWriter::ExtractCapsuleProperties(
   const Prim& prim,
+  const Path& prim_path,
   crate::FieldValuePairVector& fields,
   std::string* err
 ) {
@@ -934,11 +941,12 @@ bool CrateWriter::ExtractCapsuleProperties(
     fields.push_back({"axis", axis_crate_val});
   }
 
-  return ExtractGPrimProperties(prim, fields, err);
+  return ExtractGPrimProperties(prim, prim_path, fields, err);
 }
 
 bool CrateWriter::ExtractPointsProperties(
   const Prim& prim,
+  const Path& prim_path,
   crate::FieldValuePairVector& fields,
   std::string* err
 ) {
@@ -1043,11 +1051,12 @@ bool CrateWriter::ExtractPointsProperties(
     }
   }
 
-  return ExtractGPrimProperties(prim, fields, err);
+  return ExtractGPrimProperties(prim, prim_path, fields, err);
 }
 
 bool CrateWriter::ExtractCameraProperties(
   const Prim& prim,
+  const Path& prim_path,
   crate::FieldValuePairVector& fields,
   std::string* err
 ) {
@@ -1174,11 +1183,12 @@ bool CrateWriter::ExtractCameraProperties(
     }
   }
 
-  return ExtractGPrimProperties(prim, fields, err);
+  return ExtractGPrimProperties(prim, prim_path, fields, err);
 }
 
 bool CrateWriter::ExtractBasisCurvesProperties(
   const Prim& prim,
+  const Path& prim_path,
   crate::FieldValuePairVector& fields,
   std::string* err
 ) {
@@ -1346,11 +1356,12 @@ bool CrateWriter::ExtractBasisCurvesProperties(
     }
   }
 
-  return ExtractGPrimProperties(prim, fields, err);
+  return ExtractGPrimProperties(prim, prim_path, fields, err);
 }
 
 bool CrateWriter::ExtractNurbsCurvesProperties(
   const Prim& prim,
+  const Path& prim_path,
   crate::FieldValuePairVector& fields,
   std::string* err
 ) {
@@ -1527,11 +1538,12 @@ bool CrateWriter::ExtractNurbsCurvesProperties(
     }
   }
 
-  return ExtractGPrimProperties(prim, fields, err);
+  return ExtractGPrimProperties(prim, prim_path, fields, err);
 }
 
 bool CrateWriter::ExtractPointInstancerProperties(
   const Prim& prim,
+  const Path& prim_path,
   crate::FieldValuePairVector& fields,
   std::string* err
 ) {
@@ -1714,11 +1726,12 @@ bool CrateWriter::ExtractPointInstancerProperties(
 
   // Note: prototypes (relationship) - handled separately in AddRelationshipSpecs
 
-  return ExtractGPrimProperties(prim, fields, err);
+  return ExtractGPrimProperties(prim, prim_path, fields, err);
 }
 
 bool CrateWriter::ExtractGeomSubsetProperties(
   const Prim& prim,
+  const Path& prim_path,
   crate::FieldValuePairVector& fields,
   std::string* err
 ) {
@@ -1794,6 +1807,7 @@ bool CrateWriter::ExtractGeomSubsetProperties(
 
 bool CrateWriter::ExtractBlendShapeProperties(
   const Prim& prim,
+  const Path& prim_path,
   crate::FieldValuePairVector& fields,
   std::string* err
 ) {
@@ -1858,6 +1872,7 @@ bool CrateWriter::ExtractBlendShapeProperties(
 
 bool CrateWriter::ExtractSphereLightProperties(
     const Prim& prim,
+    const Path& prim_path,
     crate::FieldValuePairVector& fields,
     std::string* err) {
   const SphereLight* light = prim.data().as<SphereLight>();
@@ -1931,6 +1946,7 @@ bool CrateWriter::ExtractSphereLightProperties(
 
 bool CrateWriter::ExtractRectLightProperties(
     const Prim& prim,
+    const Path& prim_path,
     crate::FieldValuePairVector& fields,
     std::string* err) {
   const RectLight* light = prim.data().as<RectLight>();
@@ -1989,6 +2005,7 @@ bool CrateWriter::ExtractRectLightProperties(
 
 bool CrateWriter::ExtractDiskLightProperties(
     const Prim& prim,
+    const Path& prim_path,
     crate::FieldValuePairVector& fields,
     std::string* err) {
   const DiskLight* light = prim.data().as<DiskLight>();
@@ -2032,6 +2049,7 @@ bool CrateWriter::ExtractDiskLightProperties(
 
 bool CrateWriter::ExtractCylinderLightProperties(
     const Prim& prim,
+    const Path& prim_path,
     crate::FieldValuePairVector& fields,
     std::string* err) {
   const CylinderLight* light = prim.data().as<CylinderLight>();
@@ -2090,6 +2108,7 @@ bool CrateWriter::ExtractCylinderLightProperties(
 
 bool CrateWriter::ExtractDistantLightProperties(
     const Prim& prim,
+    const Path& prim_path,
     crate::FieldValuePairVector& fields,
     std::string* err) {
   const DistantLight* light = prim.data().as<DistantLight>();
@@ -2133,6 +2152,7 @@ bool CrateWriter::ExtractDistantLightProperties(
 
 bool CrateWriter::ExtractDomeLightProperties(
     const Prim& prim,
+    const Path& prim_path,
     crate::FieldValuePairVector& fields,
     std::string* err) {
   const DomeLight* light = prim.data().as<DomeLight>();
@@ -2180,6 +2200,7 @@ bool CrateWriter::ExtractDomeLightProperties(
 
 bool CrateWriter::ExtractGeometryLightProperties(
     const Prim& prim,
+    const Path& prim_path,
     crate::FieldValuePairVector& fields,
     std::string* err) {
   const GeometryLight* light = prim.data().as<GeometryLight>();
@@ -2241,6 +2262,7 @@ bool CrateWriter::ExtractGeometryLightProperties(
 
 bool CrateWriter::ExtractPortalLightProperties(
     const Prim& prim,
+    const Path& prim_path,
     crate::FieldValuePairVector& fields,
     std::string* err) {
   const PortalLight* light = prim.data().as<PortalLight>();
@@ -2306,6 +2328,7 @@ bool CrateWriter::ExtractPortalLightProperties(
 
 bool CrateWriter::ExtractSkeletonProperties(
     const Prim& prim,
+    const Path& prim_path,
     crate::FieldValuePairVector& fields,
     std::string* err) {
   const Skeleton* skel = prim.data().as<Skeleton>();
@@ -2327,6 +2350,7 @@ bool CrateWriter::ExtractSkeletonProperties(
 
 bool CrateWriter::ExtractSkelAnimationProperties(
     const Prim& prim,
+    const Path& prim_path,
     crate::FieldValuePairVector& fields,
     std::string* err) {
   const SkelAnimation* anim = prim.data().as<SkelAnimation>();
@@ -2348,6 +2372,7 @@ bool CrateWriter::ExtractSkelAnimationProperties(
 
 bool CrateWriter::ExtractSkelRootProperties(
     const Prim& prim,
+    const Path& prim_path,
     crate::FieldValuePairVector& fields,
     std::string* err) {
   const SkelRoot* skel_root = prim.data().as<SkelRoot>();
@@ -2409,6 +2434,7 @@ bool CrateWriter::ExtractSkelRootProperties(
 
 bool CrateWriter::ExtractXformOpsFromXformable(
   const Prim& prim,
+  const Path& prim_path,
   crate::FieldValuePairVector& fields,
   std::string* err
 ) {
@@ -2506,20 +2532,45 @@ bool CrateWriter::ExtractXformOpsFromXformable(
         continue;
     }
 
-    // Add suffix if present
+    // Add suffix if present (e.g., ":spin" for "xformOp:rotateZ:spin")
     if (!xformOp.suffix.empty()) {
-      op_name += xformOp.suffix;
+      op_name += ":" + xformOp.suffix;
     }
 
 
-    // Extract the value from the PrimVar
+    // Create a separate Attribute spec for this xformOp
+    Path attr_path = prim_path.AppendProperty(op_name);
+    crate::FieldValuePairVector attr_fields;
+
+    // Add typeName based on the value type
+    std::string type_name;
+    if (xformOp.has_default()) {
+      type_name = xformOp._var.value_raw().type_name();
+    } else if (xformOp.has_timesamples()) {
+      // Get type from first sample
+      const value::TimeSamples& ts = xformOp._var._ts;
+      if (ts.size() > 0) {
+        type_name = ts.get_samples()[0].value.type_name();
+      } else {
+        type_name = "float";  // fallback
+      }
+    } else {
+      type_name = "float";  // fallback
+    }
+
+    crate::CrateValue type_value;
+    value::token type_tok(type_name);
+    type_value.Set(type_tok);
+    attr_fields.push_back({"typeName", type_value});
+
+    // Add default value if present
     if (xformOp.has_default()) {
       const value::Value& val = xformOp._var.value_raw();
 
       crate::CrateValue crate_val;
       if (ConvertValue(val, crate_val, err)) {
-        fields.push_back({op_name, crate_val});
-        std::cerr << "DEBUG: Successfully extracted xformOp: " << op_name
+        attr_fields.push_back({"default", crate_val});
+        std::cerr << "DEBUG: Successfully extracted xformOp default: " << op_name
                   << " (type: " << val.type_name() << ")\n";
       } else {
         std::cerr << "WARNING: Failed to convert xformOp value for " << op_name
@@ -2527,34 +2578,54 @@ bool CrateWriter::ExtractXformOpsFromXformable(
       }
     }
 
-    // Handle time samples for animated xformOps
+    // Add timeSamples if present (as a field on the same spec)
     if (xformOp.has_timesamples()) {
       const value::TimeSamples& ts = xformOp._var._ts;
 
       crate::CrateValue ts_crate_val;
       ts_crate_val.Set(ts);
-      fields.push_back({op_name + ".timeSamples", ts_crate_val});
+      attr_fields.push_back({"timeSamples", ts_crate_val});
 
       std::cerr << "DEBUG: Successfully extracted animated xformOp: " << op_name
                 << " with " << ts.size() << " samples\n";
     }
+
+    // Create the Attribute spec
+    if (!AddSpec(attr_path, SpecType::Attribute, attr_fields, err)) {
+      std::cerr << "WARNING: Failed to add spec for xformOp: " << op_name << "\n";
+    }
   }
 
-  // Extract xformOpOrder
+  // Extract xformOpOrder as a separate Attribute spec
   const std::vector<value::token>& xform_op_order = xformable->xformOpOrder();
   if (!xform_op_order.empty()) {
+    Path order_path = prim_path.AppendProperty("xformOpOrder");
+    crate::FieldValuePairVector order_fields;
 
-    // Convert token vector to string vector for CrateValue
-    std::vector<std::string> op_order_strings;
+    // Add typeName: token[]
+    crate::CrateValue type_value;
+    value::token type_tok("token[]");
+    type_value.Set(type_tok);
+    order_fields.push_back({"typeName", type_value});
+
+    // Add variability: uniform
+    crate::CrateValue variability_value;
+    variability_value.Set(Variability::Uniform);
+    order_fields.push_back({"variability", variability_value});
+
+    // Add default value: token array
+    std::vector<value::token> op_order_tokens;
     for (const auto& tok : xform_op_order) {
-      op_order_strings.push_back(tok.str());
+      op_order_tokens.push_back(tok);
     }
 
-    // Create CrateValue for token array
-    crate::CrateValue crate_val;
-    value::Value op_order_value(op_order_strings);
-    if (ConvertValue(op_order_value, crate_val, err)) {
-      fields.push_back({"xformOpOrder", crate_val});
+    crate::CrateValue default_value;
+    default_value.Set(op_order_tokens);
+    order_fields.push_back({"default", default_value});
+
+    // Create the Attribute spec
+    if (!AddSpec(order_path, SpecType::Attribute, order_fields, err)) {
+      std::cerr << "WARNING: Failed to add spec for xformOpOrder\n";
     }
   }
 
@@ -2567,11 +2638,12 @@ bool CrateWriter::ExtractXformOpsFromXformable(
 
 bool CrateWriter::ExtractGPrimProperties(
   const Prim& prim,
+  const Path& prim_path,
   crate::FieldValuePairVector& fields,
   std::string* err
 ) {
   // Extract xformOps (GPrim inherits from Xformable)
-  if (!ExtractXformOpsFromXformable(prim, fields, err)) {
+  if (!ExtractXformOpsFromXformable(prim, prim_path, fields, err)) {
   }
 
   // Try to get as GPrim to access common properties
