@@ -59,10 +59,10 @@ bool CrateWriter::ConvertStageToSpecs(const Stage& stage, std::string* err) {
   // Add upAxis
   if (metas.upAxis.authored()) {
     crate::CrateValue axis_value;
-    // Convert Axis enum to token string
+    // Convert Axis enum to token - must be actual token, not TokenIndex
     std::string axis_str = to_string(metas.upAxis.get_value());
-    crate::TokenIndex axis_tok = GetOrCreateToken(axis_str);
-    axis_value.Set(axis_tok.value);
+    value::token axis_tok(axis_str);
+    axis_value.Set(axis_tok);
     root_fields.push_back({"upAxis", axis_value});
   }
 
@@ -76,8 +76,9 @@ bool CrateWriter::ConvertStageToSpecs(const Stage& stage, std::string* err) {
   // Add defaultPrim
   if (!metas.defaultPrim.str().empty()) {
     crate::CrateValue dp_value;
-    crate::TokenIndex dp_tok = GetOrCreateToken(metas.defaultPrim.str());
-    dp_value.Set(dp_tok.value);
+    // defaultPrim must be actual token, not TokenIndex
+    value::token dp_tok(metas.defaultPrim.str());
+    dp_value.Set(dp_tok);
     root_fields.push_back({"defaultPrim", dp_value});
   }
 
@@ -86,6 +87,13 @@ bool CrateWriter::ConvertStageToSpecs(const Stage& stage, std::string* err) {
     crate::CrateValue doc_value;
     doc_value.Set(metas.doc.value);
     root_fields.push_back({"documentation", doc_value});
+  }
+
+  // Add comment (string)
+  if (!metas.comment.value.empty()) {
+    crate::CrateValue comment_value;
+    comment_value.Set(metas.comment.value);
+    root_fields.push_back({"comment", comment_value});
   }
 
   // Add customLayerData
@@ -4412,10 +4420,13 @@ bool CrateWriter::ConvertLayerToSpecs(const Layer& layer, std::string* err) {
     }
 
     // comment (string)
+    std::cerr << "DEBUG stage-converter: metas.comment.value = '" << metas.comment.value
+              << "' (empty=" << metas.comment.value.empty() << ")\n";
     if (!metas.comment.value.empty()) {
       crate::CrateValue comment_value;
       comment_value.Set(metas.comment.value);
       root_fields.push_back({"comment", comment_value});
+      std::cerr << "DEBUG stage-converter: Added comment field\n";
     }
 
     // kilogramsPerUnit (double) - UsdPhysics
@@ -5223,11 +5234,13 @@ bool CrateWriter::ConvertVariantSetToFields(
             << variantset.variantSet.size() << " variants\n";
 
   // For each variant, create a Variant spec
+  // IMPORTANT: Pass parent_path (the Prim), not vs_path (the VariantSet)
+  // Variant path should be /Prim{variantSet=value}, NOT /Prim{variantSet}{variantSet=value}
   for (const auto& variant_item : variantset.variantSet) {
     const auto& variant_name = variant_item.first;
     const auto& variant_data = variant_item.second;
 
-    if (!ConvertVariantToFields(variant_name, variant_data, vs_path, variantset_name, err)) {
+    if (!ConvertVariantToFields(variant_name, variant_data, parent_path, variantset_name, err)) {
       if (err) *err = "Failed to convert variant '" + variant_name + "': " + *err;
       return false;
     }
@@ -5239,13 +5252,14 @@ bool CrateWriter::ConvertVariantSetToFields(
 bool CrateWriter::ConvertVariantToFields(
     const std::string& variant_name,
     const Variant& variant,
-    const Path& variantset_path,
+    const Path& parent_prim_path,  // The prim that owns the variantSet (e.g., /Chair)
     const std::string& variantset_name,
     std::string* err) {
 
-  // Variant path: variantset_path{variantName=variant_name}
+  // Variant path: parent_prim_path{variantSetName=variant_name}
   // (e.g., /Chair{materialVariant=plastic})
-  std::string variant_path_str = variantset_path.prim_part() + "{" +
+  // NOTE: The variant path is based on the prim path, NOT the variantSet path
+  std::string variant_path_str = parent_prim_path.prim_part() + "{" +
                                  variantset_name + "=" + variant_name + "}";
   Path v_path(variant_path_str, "");
 
@@ -5279,6 +5293,16 @@ bool CrateWriter::ConvertVariantToFields(
     }
   }
 
+  // IMPORTANT: Create the variant spec BEFORE adding child prims
+  // The parent spec must exist before children in the spec list
+  if (!AddSpec(v_path, SpecType::Variant, v_fields, err)) {
+    if (err) *err = "Failed to add Variant spec: " + v_path.full_path_name() + ": " + *err;
+    return false;
+  }
+
+  std::cerr << "[ConvertVariantToFields] Created Variant spec with "
+            << v_fields.size() << " fields\n";
+
   // Add variant prim children (recursively convert each child prim)
   // Variant prim children are full prims that exist only within this variant
   const auto& child_prims = variant.primChildren();
@@ -5293,15 +5317,6 @@ bool CrateWriter::ConvertVariantToFields(
       }
     }
   }
-
-  // Create the variant spec
-  if (!AddSpec(v_path, SpecType::Variant, v_fields, err)) {
-    if (err) *err = "Failed to add Variant spec: " + v_path.full_path_name() + ": " + *err;
-    return false;
-  }
-
-  std::cerr << "[ConvertVariantToFields] Created Variant spec with "
-            << v_fields.size() << " fields\n";
 
   return true;
 }

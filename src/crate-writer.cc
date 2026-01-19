@@ -241,11 +241,65 @@ bool CrateWriter::Finalize(std::string* err) {
     // Get or create fieldset
     crate::FieldSetIndex fieldset_idx = GetOrCreateFieldSet(field_indices);
 
-    // Now we can fill in the actual crate::Spec
+    // Temporarily assign path_index (will be updated after sorting)
     crate::PathIndex path_idx = GetOrCreatePath(spec_data.path);
     spec_data.spec.path_index = path_idx;
     spec_data.spec.fieldset_index = fieldset_idx;
     spec_data.spec.spec_type = spec_data.spec_type;  // Use the stored spec type
+  }
+
+  // ========================================================================
+  // CRITICAL: Re-sort paths_ and update spec path_indexes
+  // ========================================================================
+  // During field packing, connection target paths were added to paths_.
+  // These paths need to be in sorted order for correct tree encoding.
+  // After sorting, we must update all spec path_indexes to use the new indices.
+
+  {
+    // Convert paths_ to SimplePaths for sorting
+    std::vector<std::pair<pathlib::SimplePath, size_t>> paths_with_old_idx;
+    for (size_t i = 0; i < paths_.size(); ++i) {
+      paths_with_old_idx.emplace_back(
+        pathlib::SimplePath(paths_[i].prim_part(), paths_[i].prop_part()),
+        i
+      );
+    }
+
+    // Sort using USD path comparison
+    std::sort(paths_with_old_idx.begin(), paths_with_old_idx.end(),
+      [](const auto& a, const auto& b) {
+        return pathlib::ComparePaths(a.first, b.first) < 0;
+      });
+
+    // Build old -> new index mapping
+    std::vector<uint32_t> old_to_new(paths_.size());
+    for (size_t new_idx = 0; new_idx < paths_with_old_idx.size(); ++new_idx) {
+      size_t old_idx = paths_with_old_idx[new_idx].second;
+      old_to_new[old_idx] = static_cast<uint32_t>(new_idx);
+    }
+
+    // Rebuild paths_ in sorted order
+    std::vector<Path> sorted_paths;
+    sorted_paths.reserve(paths_.size());
+    for (const auto& pair : paths_with_old_idx) {
+      // Find original path by old index
+      sorted_paths.push_back(paths_[pair.second]);
+    }
+    paths_ = std::move(sorted_paths);
+
+    // Rebuild path_to_index_ with new indices
+    path_to_index_.clear();
+    for (size_t i = 0; i < paths_.size(); ++i) {
+      path_to_index_[paths_[i]] = crate::PathIndex(static_cast<uint32_t>(i));
+    }
+
+    // Update all spec path_indexes using the mapping
+    for (auto& spec_data : spec_data_) {
+      uint32_t old_idx = spec_data.spec.path_index.value;
+      spec_data.spec.path_index.value = old_to_new[old_idx];
+    }
+
+    std::cerr << "DEBUG Finalize: Re-sorted " << paths_.size() << " paths" << std::endl;
   }
 
   // ========================================================================
@@ -308,6 +362,14 @@ bool CrateWriter::Finalize(std::string* err) {
     int32_t path_tree_idx = pair.first;  // Keep original sign!
     const std::string& token_str = pair.second;
 
+    // Skip empty string tokens - root path doesn't need a token entry
+    // The root is implicit in the path tree structure
+    if (token_str.empty()) {
+      // Map to token index 0 (will be replaced with actual first token)
+      path_tree_to_our_index[path_tree_idx] = 0;
+      continue;
+    }
+
     // Check if this token already exists in our token table
     auto it = token_to_index_.find(token_str);
     if (it != token_to_index_.end()) {
@@ -324,6 +386,14 @@ bool CrateWriter::Finalize(std::string* err) {
 
   // Store the mapping for later use when writing the path tree
   path_tree_token_remap_ = path_tree_to_our_index;
+
+  // Ensure we have at least one token - USD Crate format requires non-empty TOKENS section
+  // The reader checks: (3 + num_tokens) <= uncompressedSize, so minimum is token of length 3+
+  if (tokens_.empty()) {
+    // Add a minimal valid token (";-)" is used in pxrUSD as a sentinel/placeholder)
+    tokens_.push_back(";-)");
+    token_to_index_[";-)"] = crate::TokenIndex(0);
+  }
 
   // Debug loops removed (original debug statements deleted)
 
@@ -687,6 +757,11 @@ bool CrateWriter::WriteTokensSection(std::string* err) {
   }
 
   // Build token blob (null-terminated strings)
+  std::cerr << "DEBUG WriteTokensSection: tokens_.size()=" << tokens_.size() << std::endl;
+  for (size_t i = 0; i < tokens_.size(); ++i) {
+    std::cerr << "  token[" << i << "]: \"" << tokens_[i] << "\"" << std::endl;
+  }
+
   std::ostringstream blob;
   for (const auto& token : tokens_) {
     blob << token;
@@ -973,8 +1048,9 @@ bool CrateWriter::WritePathsSection(std::string* err) {
     simple_paths.emplace_back(path.prim_part(), path.prop_part());
   }
 
-  // Sort paths
-  pathlib::SortSimplePaths(simple_paths);
+  // paths_ is already sorted (re-sorted in Finalize after all paths were collected).
+  // Spec path_indexes have been updated to match the sorted order.
+  // No additional sorting needed here.
 
   // Encode to compressed tree
   pathlib::CompressedPathTree tree = pathlib::EncodePaths(simple_paths);
@@ -1054,10 +1130,14 @@ bool CrateWriter::WritePathsSection(std::string* err) {
   }
 
   // Debug: Print element_token_indexes array
+  std::cerr << "DEBUG WritePathsSection: element_token_indexes (count=" << tree.element_token_indexes.size() << "):" << std::endl;
   for (size_t i = 0; i < tree.element_token_indexes.size(); ++i) {
-    if (tree.element_token_indexes[i] < 0) {
-    } else {
+    int32_t tok_idx = tree.element_token_indexes[i];
+    std::cerr << "  [" << i << "]: " << tok_idx;
+    if (tok_idx < 0) {
+      std::cerr << " (PROPERTY)";
     }
+    std::cerr << std::endl;
   }
 
   // Compress and write elementTokenIndexes array (int32_t - can be negative)
@@ -1433,6 +1513,10 @@ crate::ValueRep CrateWriter::PackValue(const crate::CrateValue& value, std::stri
   }
   // Phase 2: Dictionary type
   else if (value.as<value::dict>()) {
+    rep.SetType(static_cast<int32_t>(crate::CrateDataTypeId::CRATE_DATA_TYPE_DICTIONARY));
+  }
+  // Phase 2: CustomDataType (serializes like dictionary)
+  else if (value.as<CustomDataType>()) {
     rep.SetType(static_cast<int32_t>(crate::CrateDataTypeId::CRATE_DATA_TYPE_DICTIONARY));
   }
   // Phase 2: ListOp types
@@ -2236,10 +2320,10 @@ int64_t CrateWriter::WriteValueData(const crate::CrateValue& value, std::string*
     }
   }
   // Phase 2: Dictionary serialization
-  // Dictionary format (OpenUSD simple WriteMap): uint64_t count + for each: (StringIndex key, ValueRep value)
-  // This matches OpenUSD's WriteMap template (crateFile.cpp:1410-1416)
-  // Note: TinyUSDZ's ReadCustomData (crate-reader.cc:2027-2094) expects recursive offset format,
-  // but we're testing if it can also handle the simple format
+  // Dictionary format (recursive offset pattern as expected by TinyUSDZ reader):
+  // uint64_t count + for each: (StringIndex key, int64_t offset, ValueRep)
+  // The offset is relative to the position after reading the offset field.
+  // offset=8 means ValueRep immediately follows the offset field.
   else if (auto* dict_val = value.as<value::dict>()) {
     uint64_t count = dict_val->size();
     if (!Write(count)) {
@@ -2247,12 +2331,19 @@ int64_t CrateWriter::WriteValueData(const crate::CrateValue& value, std::string*
       return -1;
     }
 
-    // Write each (key, value) pair directly
+    // Write each (key, offset, value) tuple
     for (const auto& kv : *dict_val) {
       // Write key as StringIndex
       crate::StringIndex key_idx = GetOrCreateString(kv.first);
       if (!Write(key_idx.value)) {
         if (err) *err = "Failed to write dictionary key index";
+        return -1;
+      }
+
+      // Write offset = 8 (ValueRep immediately follows the offset)
+      int64_t offset = 8;
+      if (!Write(offset)) {
+        if (err) *err = "Failed to write dictionary value offset";
         return -1;
       }
 
@@ -2326,11 +2417,181 @@ int64_t CrateWriter::WriteValueData(const crate::CrateValue& value, std::string*
         return -1;
       }
 
-      // Write ValueRep directly (no offset indirection)
+      // Write ValueRep
       if (!Write(value_rep.GetData())) {
         if (err) *err = "Failed to write dictionary ValueRep";
         return -1;
       }
+    }
+  }
+  // Phase 2: CustomDataType serialization (similar to dictionary but uses MetaVariable)
+  // CustomDataType = std::map<std::string, MetaVariable> where MetaVariable wraps value::Value
+  // Uses same offset pattern as dictionary: StringIndex key + int64_t offset, ValueRep
+  //
+  // IMPORTANT: We must reserve space for the entire dictionary structure FIRST,
+  // then call PackValue for each value. Otherwise, nested PackValue calls for
+  // out-of-line values would write to value_data_end_offset_ which still points
+  // to the start of the dictionary, corrupting the data.
+  else if (auto* custom_data = value.as<CustomDataType>()) {
+    uint64_t count = custom_data->size();
+
+    // Calculate size of dictionary structure:
+    // 8 bytes for count + (4 + 8 + 8) bytes per entry = 8 + 20*count
+    int64_t dict_struct_size = 8 + (count * 20);
+    int64_t dict_struct_start = Tell();
+
+    // Reserve space by writing zeros
+    for (int64_t i = 0; i < dict_struct_size; i++) {
+      char zero = 0;
+      if (!WriteBytes(&zero, 1)) {
+        if (err) *err = "Failed to reserve CustomDataType space";
+        return -1;
+      }
+    }
+
+    // Update value_data_end_offset_ NOW, before calling PackValue
+    // This ensures nested writes go AFTER the dictionary structure
+    value_data_end_offset_ = Tell();
+
+    // Now pack all values first (this may write out-of-line data after dict structure)
+    std::vector<crate::ValueRep> value_reps;
+    value_reps.reserve(count);
+
+    for (const auto& kv : *custom_data) {
+      // Get the raw value::Value from MetaVariable and pack it
+      const value::Value& raw_value = kv.second.get_raw_value();
+      crate::ValueRep value_rep;
+      bool value_packed = false;
+
+      // Try int32
+      if (auto* int_val = raw_value.as<int32_t>()) {
+        crate::CrateValue cv;
+        cv.Set(*int_val);
+        value_rep = PackValue(cv, err);
+        value_packed = true;
+      }
+      // Try int (convert to int32)
+      else if (auto* int_val = raw_value.as<int>()) {
+        crate::CrateValue cv;
+        cv.Set(static_cast<int32_t>(*int_val));
+        value_rep = PackValue(cv, err);
+        value_packed = true;
+      }
+      // Try uint32
+      else if (auto* uint_val = raw_value.as<uint32_t>()) {
+        crate::CrateValue cv;
+        cv.Set(*uint_val);
+        value_rep = PackValue(cv, err);
+        value_packed = true;
+      }
+      // Try float
+      else if (auto* float_val = raw_value.as<float>()) {
+        crate::CrateValue cv;
+        cv.Set(*float_val);
+        value_rep = PackValue(cv, err);
+        value_packed = true;
+      }
+      // Try double
+      else if (auto* double_val = raw_value.as<double>()) {
+        crate::CrateValue cv;
+        cv.Set(*double_val);
+        value_rep = PackValue(cv, err);
+        value_packed = true;
+      }
+      // Try bool
+      else if (auto* bool_val = raw_value.as<bool>()) {
+        crate::CrateValue cv;
+        cv.Set(*bool_val);
+        value_rep = PackValue(cv, err);
+        value_packed = true;
+      }
+      // Try string
+      else if (auto* str_val = raw_value.as<std::string>()) {
+        crate::CrateValue cv;
+        cv.Set(*str_val);
+        value_rep = PackValue(cv, err);
+        value_packed = true;
+      }
+      // Try StringData (string with metadata like triple-quote)
+      else if (auto* str_data = raw_value.as<value::StringData>()) {
+        crate::CrateValue cv;
+        cv.Set(str_data->value);  // Extract the string value
+        value_rep = PackValue(cv, err);
+        value_packed = true;
+      }
+      // Try token
+      else if (auto* tok_val = raw_value.as<value::token>()) {
+        crate::CrateValue cv;
+        cv.Set(*tok_val);
+        value_rep = PackValue(cv, err);
+        value_packed = true;
+      }
+      // Try nested CustomDataType (dictionary)
+      else if (auto* nested_dict = raw_value.as<CustomDataType>()) {
+        crate::CrateValue cv;
+        cv.Set(*nested_dict);
+        value_rep = PackValue(cv, err);
+        value_packed = true;
+      }
+      else {
+        std::cerr << "DEBUG CustomDataType: Unsupported type key=" << kv.first
+                  << " type_name=" << raw_value.type_name()
+                  << " type_id=" << raw_value.type_id() << std::endl;
+        if (err) *err = "Unsupported CustomDataType value type: " + std::string(raw_value.type_name()) + " (type_id=" + std::to_string(raw_value.type_id()) + ")";
+        return -1;
+      }
+
+      if (!value_packed) {
+        if (err) *err = "Failed to pack CustomDataType value";
+        return -1;
+      }
+
+      value_reps.push_back(value_rep);
+    }
+
+    // Now go back and write the dictionary structure
+    int64_t saved_pos = Tell();
+    if (!Seek(dict_struct_start)) {
+      if (err) *err = "Failed to seek to dictionary structure start";
+      return -1;
+    }
+
+    // Write count
+    if (!Write(count)) {
+      if (err) *err = "Failed to write CustomDataType count";
+      return -1;
+    }
+
+    // Write each (key, offset, ValueRep) tuple
+    size_t idx = 0;
+    for (const auto& kv : *custom_data) {
+      // Write key as StringIndex
+      crate::StringIndex key_idx = GetOrCreateString(kv.first);
+      if (!Write(key_idx.value)) {
+        if (err) *err = "Failed to write CustomDataType key index";
+        return -1;
+      }
+
+      // Write offset = 8 (ValueRep immediately follows the offset)
+      int64_t offset = 8;
+      if (!Write(offset)) {
+        if (err) *err = "Failed to write CustomDataType value offset";
+        return -1;
+      }
+
+      // Write ValueRep
+      if (!Write(value_reps[idx].GetData())) {
+        if (err) *err = "Failed to write CustomDataType ValueRep";
+        return -1;
+      }
+
+      ++idx;
+    }
+
+    // Seek back to end of value data section
+    if (!Seek(saved_pos)) {
+      if (err) *err = "Failed to seek back after CustomDataType";
+      return -1;
     }
   }
   // Phase 2: TokenListOp serialization
@@ -3504,7 +3765,9 @@ int64_t CrateWriter::WriteValueData(const crate::CrateValue& value, std::string*
   // Integer ListOps are handled above (IntListOp, UIntListOp, Int64ListOp, UInt64ListOp)
   else {
     // Unsupported type for out-of-line storage
-    if (err) *err = "Unsupported value type for out-of-line storage";
+    std::cerr << "DEBUG WriteValueData: Unsupported type_id=" << value.type_id()
+              << " type_name=" << value.type_name() << std::endl;
+    if (err) *err = "Unsupported value type for out-of-line storage: " + std::string(value.type_name()) + " (type_id=" + std::to_string(value.type_id()) + ")";
     return -1;
   }
 
