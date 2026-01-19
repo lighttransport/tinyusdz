@@ -598,6 +598,9 @@ bool CrateWriter::ExtractXformOpsFromXformable(
 
   std::cerr << "DEBUG: Found " << xformable->xformOps.size() << " xformOps\n";
 
+  // Collect property names for the prim's "properties" field
+  std::vector<std::string> property_names;
+
   // Extract each xformOp
   for (const auto& xformOp : xformable->xformOps) {
     // Build attribute name (e.g., "xformOp:translate")
@@ -648,12 +651,15 @@ bool CrateWriter::ExtractXformOpsFromXformable(
         continue;
     }
 
-    // Add suffix if present
+    // Add suffix if present (e.g., ":spin" for "xformOp:rotateZ:spin")
     if (!xformOp.suffix.empty()) {
-      op_name += xformOp.suffix;
+      op_name += ":" + xformOp.suffix;
     }
 
     std::cerr << "DEBUG: Extracting xformOp: " << op_name << "\n";
+
+    // Add property name to the list
+    property_names.push_back(op_name);
 
     // Extract the value from the PrimVar
     if (xformOp.has_default()) {
@@ -671,11 +677,15 @@ bool CrateWriter::ExtractXformOpsFromXformable(
     }
 
     // Handle time samples for animated xformOps
+    // NOTE: We store TimeSamples directly with the op_name, and add ".timeSamples" suffix
+    // for the field name (to match OpenUSD's format which stores both default and timeSamples)
     if (xformOp.has_timesamples()) {
       const value::TimeSamples& ts = xformOp._var._ts;
 
       crate::CrateValue ts_crate_val;
       ts_crate_val.Set(ts);
+      // Use the property name with .timeSamples suffix
+      // This matches how OpenUSD stores animated values on the prim spec
       fields.push_back({op_name + ".timeSamples", ts_crate_val});
 
       std::cerr << "DEBUG: Successfully extracted animated xformOp: " << op_name
@@ -683,8 +693,21 @@ bool CrateWriter::ExtractXformOpsFromXformable(
     }
   }
 
-  // Extract xformOpOrder
+  // Add xformOpOrder to property names
   const std::vector<value::token>& xform_op_order = xformable->xformOpOrder();
+  if (!xform_op_order.empty()) {
+    property_names.push_back("xformOpOrder");
+  }
+
+  // Add "properties" field to the prim listing all property names
+  if (!property_names.empty()) {
+    crate::CrateValue props_value;
+    props_value.Set(property_names);
+    fields.push_back({"properties", props_value});
+    std::cerr << "DEBUG: Added properties field with " << property_names.size() << " properties\n";
+  }
+
+  // Extract xformOpOrder value
   if (!xform_op_order.empty()) {
     std::cerr << "DEBUG: Extracting xformOpOrder with " << xform_op_order.size() << " elements\n";
 
