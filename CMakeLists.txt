@@ -1766,12 +1766,11 @@ if(TINYUSDZ_BUILD_TESTS)
       target_compile_definitions(${TINYUSDZ_USDC_ROUNDTRIP_TARGET} PRIVATE "TINYUSDZ_WITH_JSON")
     endif()
 
-    # TODO: Enable when USDC writer is fully implemented
-    #add_test(
-    #  NAME usdc-roundtrip-test
-    #  COMMAND python3 ${PROJECT_SOURCE_DIR}/tests/usda/usdc-roundtrip-runner.py --app
-    #          "$<TARGET_FILE:usdc_roundtrip>" --basedir "${PROJECT_SOURCE_DIR}/tests/usda"
-    #  )
+    add_test(
+      NAME usdc-roundtrip-test
+      COMMAND python3 ${PROJECT_SOURCE_DIR}/tests/usda/usdc-roundtrip-runner.py --app
+              "$<TARGET_FILE:usdc_roundtrip>" --basedir "${PROJECT_SOURCE_DIR}/tests/usda"
+      )
   endif()
 
   #
