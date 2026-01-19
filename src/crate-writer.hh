@@ -341,82 +341,82 @@ private:
                                      crate::FieldValuePairVector& fields, std::string* err);
 
   /// Extract Xform-specific properties (xformOps)
-  bool ExtractXformProperties(const Prim& prim, crate::FieldValuePairVector& fields, std::string* err);
+  bool ExtractXformProperties(const Prim& prim, const Path& prim_path, crate::FieldValuePairVector& fields, std::string* err);
 
   /// Extract Mesh-specific properties (points, normals, etc.)
-  bool ExtractMeshProperties(const Prim& prim, crate::FieldValuePairVector& fields, std::string* err);
+  bool ExtractMeshProperties(const Prim& prim, const Path& prim_path, crate::FieldValuePairVector& fields, std::string* err);
 
   /// Extract Cube-specific properties (size, extent)
-  bool ExtractCubeProperties(const Prim& prim, crate::FieldValuePairVector& fields, std::string* err);
+  bool ExtractCubeProperties(const Prim& prim, const Path& prim_path, crate::FieldValuePairVector& fields, std::string* err);
 
   /// Extract Sphere-specific properties (radius)
-  bool ExtractSphereProperties(const Prim& prim, crate::FieldValuePairVector& fields, std::string* err);
+  bool ExtractSphereProperties(const Prim& prim, const Path& prim_path, crate::FieldValuePairVector& fields, std::string* err);
 
   /// Extract Cylinder-specific properties (radius, height)
-  bool ExtractCylinderProperties(const Prim& prim, crate::FieldValuePairVector& fields, std::string* err);
+  bool ExtractCylinderProperties(const Prim& prim, const Path& prim_path, crate::FieldValuePairVector& fields, std::string* err);
 
   /// Extract Cone-specific properties (radius, height, axis)
-  bool ExtractConeProperties(const Prim& prim, crate::FieldValuePairVector& fields, std::string* err);
+  bool ExtractConeProperties(const Prim& prim, const Path& prim_path, crate::FieldValuePairVector& fields, std::string* err);
 
   /// Extract Capsule-specific properties (radius, height, axis)
-  bool ExtractCapsuleProperties(const Prim& prim, crate::FieldValuePairVector& fields, std::string* err);
+  bool ExtractCapsuleProperties(const Prim& prim, const Path& prim_path, crate::FieldValuePairVector& fields, std::string* err);
 
   /// Extract Points-specific properties (points, widths, ids, normals, velocities, accelerations)
-  bool ExtractPointsProperties(const Prim& prim, crate::FieldValuePairVector& fields, std::string* err);
+  bool ExtractPointsProperties(const Prim& prim, const Path& prim_path, crate::FieldValuePairVector& fields, std::string* err);
 
   /// Extract Camera-specific properties (focal length, aperture, clipping range, etc.)
-  bool ExtractCameraProperties(const Prim& prim, crate::FieldValuePairVector& fields, std::string* err);
+  bool ExtractCameraProperties(const Prim& prim, const Path& prim_path, crate::FieldValuePairVector& fields, std::string* err);
 
   /// Extract BasisCurves-specific properties (type, basis, wrap, points, widths, etc.)
-  bool ExtractBasisCurvesProperties(const Prim& prim, crate::FieldValuePairVector& fields, std::string* err);
+  bool ExtractBasisCurvesProperties(const Prim& prim, const Path& prim_path, crate::FieldValuePairVector& fields, std::string* err);
 
   /// Extract NurbsCurves-specific properties (order, knots, ranges, pointWeights, points, etc.)
-  bool ExtractNurbsCurvesProperties(const Prim& prim, crate::FieldValuePairVector& fields, std::string* err);
+  bool ExtractNurbsCurvesProperties(const Prim& prim, const Path& prim_path, crate::FieldValuePairVector& fields, std::string* err);
 
   /// Extract PointInstancer-specific properties (protoIndices, positions, orientations, scales, velocities, etc.)
-  bool ExtractPointInstancerProperties(const Prim& prim, crate::FieldValuePairVector& fields, std::string* err);
+  bool ExtractPointInstancerProperties(const Prim& prim, const Path& prim_path, crate::FieldValuePairVector& fields, std::string* err);
 
   /// Extract GeomSubset-specific properties (elementType, familyName, indices)
-  bool ExtractGeomSubsetProperties(const Prim& prim, crate::FieldValuePairVector& fields, std::string* err);
+  bool ExtractGeomSubsetProperties(const Prim& prim, const Path& prim_path, crate::FieldValuePairVector& fields, std::string* err);
 
   /// Extract BlendShape properties (offsets, normalOffsets, pointIndices)
-  bool ExtractBlendShapeProperties(const Prim& prim, crate::FieldValuePairVector& fields, std::string* err);
+  bool ExtractBlendShapeProperties(const Prim& prim, const Path& prim_path, crate::FieldValuePairVector& fields, std::string* err);
 
   /// Extract SphereLight properties (radius, color, intensity, exposure, shaping)
-  bool ExtractSphereLightProperties(const Prim& prim, crate::FieldValuePairVector& fields, std::string* err);
+  bool ExtractSphereLightProperties(const Prim& prim, const Path& prim_path, crate::FieldValuePairVector& fields, std::string* err);
 
   /// Extract RectLight properties (width, height, color, intensity, exposure, shaping)
-  bool ExtractRectLightProperties(const Prim& prim, crate::FieldValuePairVector& fields, std::string* err);
+  bool ExtractRectLightProperties(const Prim& prim, const Path& prim_path, crate::FieldValuePairVector& fields, std::string* err);
 
   /// Extract DiskLight properties (radius, color, intensity, exposure, shaping)
-  bool ExtractDiskLightProperties(const Prim& prim, crate::FieldValuePairVector& fields, std::string* err);
+  bool ExtractDiskLightProperties(const Prim& prim, const Path& prim_path, crate::FieldValuePairVector& fields, std::string* err);
 
   /// Extract CylinderLight properties (radius, length, color, intensity, exposure, shaping)
-  bool ExtractCylinderLightProperties(const Prim& prim, crate::FieldValuePairVector& fields, std::string* err);
+  bool ExtractCylinderLightProperties(const Prim& prim, const Path& prim_path, crate::FieldValuePairVector& fields, std::string* err);
 
   /// Extract DistantLight properties (angle, color, intensity, exposure)
-  bool ExtractDistantLightProperties(const Prim& prim, crate::FieldValuePairVector& fields, std::string* err);
+  bool ExtractDistantLightProperties(const Prim& prim, const Path& prim_path, crate::FieldValuePairVector& fields, std::string* err);
 
   /// Extract DomeLight properties (texture path, color, intensity, exposure)
-  bool ExtractDomeLightProperties(const Prim& prim, crate::FieldValuePairVector& fields, std::string* err);
+  bool ExtractDomeLightProperties(const Prim& prim, const Path& prim_path, crate::FieldValuePairVector& fields, std::string* err);
 
   /// Extract GeometryLight properties (geometry relationship, color, intensity, exposure)
-  bool ExtractGeometryLightProperties(const Prim& prim, crate::FieldValuePairVector& fields, std::string* err);
+  bool ExtractGeometryLightProperties(const Prim& prim, const Path& prim_path, crate::FieldValuePairVector& fields, std::string* err);
 
   /// Extract PortalLight properties (geometry relationship, color, intensity, exposure)
-  bool ExtractPortalLightProperties(const Prim& prim, crate::FieldValuePairVector& fields, std::string* err);
+  bool ExtractPortalLightProperties(const Prim& prim, const Path& prim_path, crate::FieldValuePairVector& fields, std::string* err);
 
   /// Extract Skeleton properties (jointNames, joints, bindTransforms, restTransforms)
-  bool ExtractSkeletonProperties(const Prim& prim, crate::FieldValuePairVector& fields, std::string* err);
+  bool ExtractSkeletonProperties(const Prim& prim, const Path& prim_path, crate::FieldValuePairVector& fields, std::string* err);
 
   /// Extract SkelAnimation properties (joints, rotations, translations, scales, blendShapeWeights)
-  bool ExtractSkelAnimationProperties(const Prim& prim, crate::FieldValuePairVector& fields, std::string* err);
+  bool ExtractSkelAnimationProperties(const Prim& prim, const Path& prim_path, crate::FieldValuePairVector& fields, std::string* err);
 
   /// Extract SkelRoot properties (visibility, purpose, extent)
-  bool ExtractSkelRootProperties(const Prim& prim, crate::FieldValuePairVector& fields, std::string* err);
+  bool ExtractSkelRootProperties(const Prim& prim, const Path& prim_path, crate::FieldValuePairVector& fields, std::string* err);
 
   /// Extract common GPrim properties (visibility, purpose, etc.)
-  bool ExtractGPrimProperties(const Prim& prim, crate::FieldValuePairVector& fields, std::string* err);
+  bool ExtractGPrimProperties(const Prim& prim, const Path& prim_path, crate::FieldValuePairVector& fields, std::string* err);
 
   /// Extract Material properties (outputs: surface, displacement, volume)
   bool ExtractMaterialProperties(const Prim& prim, const Path& prim_path, crate::FieldValuePairVector& fields, std::string* err);
@@ -452,7 +452,8 @@ private:
   bool AddLightFilterSpecs(const Prim& prim, const Path& prim_path, std::string* err);
 
   /// Extract xformOps from Xformable (GPrim or Xform)
-  bool ExtractXformOpsFromXformable(const Prim& prim, crate::FieldValuePairVector& fields, std::string* err);
+  /// Creates separate Attribute specs for each xformOp property
+  bool ExtractXformOpsFromXformable(const Prim& prim, const Path& prim_path, crate::FieldValuePairVector& fields, std::string* err);
 
   /// Convert TinyUSDZ value to CrateValue
   bool ConvertValue(const value::Value& val, crate::CrateValue& out, std::string* err);
