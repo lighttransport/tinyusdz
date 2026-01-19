@@ -1562,6 +1562,10 @@ crate::ValueRep CrateWriter::PackValue(const crate::CrateValue& value, std::stri
 
   rep.SetPayload(static_cast<uint64_t>(offset));
 
+  if (value.as<CustomDataType>() || value.as<value::dict>()) {
+    std::cerr << "DEBUG PackValue: Dictionary offset=" << offset << " type=" << value.type_name() << std::endl;
+  }
+
   return rep;
 }
 
@@ -1570,12 +1574,19 @@ int64_t CrateWriter::WriteValueData(const crate::CrateValue& value, std::string*
   int64_t current_pos = Tell();
 
   // Seek to end of value data section
+  if (value.as<CustomDataType>() || value.as<value::dict>()) {
+    std::cerr << "DEBUG WriteValueData: Seeking to value_data_end_offset_=" << value_data_end_offset_
+              << " from current_pos=" << current_pos << std::endl;
+  }
   if (!Seek(value_data_end_offset_)) {
     if (err) *err = "Failed to seek to value data section";
     return -1;
   }
 
   int64_t value_offset = Tell();
+  if (value.as<CustomDataType>() || value.as<value::dict>()) {
+    std::cerr << "DEBUG WriteValueData: After seek, Tell()=" << value_offset << std::endl;
+  }
 
   // Phase 1: Write out-of-line value data based on type
   // This handles values that cannot be inlined in the 48-bit payload
@@ -2324,29 +2335,39 @@ int64_t CrateWriter::WriteValueData(const crate::CrateValue& value, std::string*
   // uint64_t count + for each: (StringIndex key, int64_t offset, ValueRep)
   // The offset is relative to the position after reading the offset field.
   // offset=8 means ValueRep immediately follows the offset field.
+  //
+  // IMPORTANT: We must reserve space for the entire dictionary structure FIRST,
+  // then call PackValue for each value. Otherwise, nested PackValue calls for
+  // out-of-line values would write to value_data_end_offset_ which still points
+  // to the start of the dictionary, corrupting the data.
   else if (auto* dict_val = value.as<value::dict>()) {
     uint64_t count = dict_val->size();
-    if (!Write(count)) {
-      if (err) *err = "Failed to write dictionary count";
-      return -1;
+
+    // Calculate size of dictionary structure:
+    // 8 bytes for count + (4 + 8 + 8) bytes per entry = 8 + 20*count
+    int64_t dict_struct_size = 8 + (count * 20);
+    int64_t dict_struct_start = Tell();
+
+    // Reserve space by writing zeros
+    for (int64_t i = 0; i < dict_struct_size; i++) {
+      char zero = 0;
+      if (!WriteBytes(&zero, 1)) {
+        if (err) *err = "Failed to reserve dictionary space";
+        return -1;
+      }
     }
 
-    // Write each (key, offset, value) tuple
+    // Update value_data_end_offset_ NOW, before calling PackValue
+    // This ensures nested writes go AFTER the dictionary structure
+    value_data_end_offset_ = Tell();
+
+    // Now pack all values first (this may write out-of-line data after dict structure)
+    // IMPORTANT: PackValue calls will further update value_data_end_offset_,
+    // so we need to capture the final end position before seeking back
+    std::vector<crate::ValueRep> value_reps;
+    value_reps.reserve(count);
+
     for (const auto& kv : *dict_val) {
-      // Write key as StringIndex
-      crate::StringIndex key_idx = GetOrCreateString(kv.first);
-      if (!Write(key_idx.value)) {
-        if (err) *err = "Failed to write dictionary key index";
-        return -1;
-      }
-
-      // Write offset = 8 (ValueRep immediately follows the offset)
-      int64_t offset = 8;
-      if (!Write(offset)) {
-        if (err) *err = "Failed to write dictionary value offset";
-        return -1;
-      }
-
       // Pack value to ValueRep
       crate::ValueRep value_rep;
       bool value_packed = false;
@@ -2417,11 +2438,52 @@ int64_t CrateWriter::WriteValueData(const crate::CrateValue& value, std::string*
         return -1;
       }
 
+      value_reps.push_back(value_rep);
+    }
+
+    // Now go back and write the dictionary structure
+    int64_t saved_pos = Tell();
+    if (!Seek(dict_struct_start)) {
+      if (err) *err = "Failed to seek to dictionary structure start";
+      return -1;
+    }
+
+    // Write count
+    if (!Write(count)) {
+      if (err) *err = "Failed to write dictionary count";
+      return -1;
+    }
+
+    // Write each (key, offset, ValueRep) tuple
+    size_t idx = 0;
+    for (const auto& kv : *dict_val) {
+      // Write key as StringIndex
+      crate::StringIndex key_idx = GetOrCreateString(kv.first);
+      if (!Write(key_idx.value)) {
+        if (err) *err = "Failed to write dictionary key index";
+        return -1;
+      }
+
+      // Write offset = 8 (ValueRep immediately follows the offset)
+      int64_t offset = 8;
+      if (!Write(offset)) {
+        if (err) *err = "Failed to write dictionary value offset";
+        return -1;
+      }
+
       // Write ValueRep
-      if (!Write(value_rep.GetData())) {
+      if (!Write(value_reps[idx].GetData())) {
         if (err) *err = "Failed to write dictionary ValueRep";
         return -1;
       }
+
+      ++idx;
+    }
+
+    // Seek back to end of value data section
+    if (!Seek(saved_pos)) {
+      if (err) *err = "Failed to seek back after dictionary";
+      return -1;
     }
   }
   // Phase 2: CustomDataType serialization (similar to dictionary but uses MetaVariable)
@@ -2434,6 +2496,8 @@ int64_t CrateWriter::WriteValueData(const crate::CrateValue& value, std::string*
   // to the start of the dictionary, corrupting the data.
   else if (auto* custom_data = value.as<CustomDataType>()) {
     uint64_t count = custom_data->size();
+
+    std::cerr << "DEBUG CustomDataType: Writing dictionary with " << count << " entries at offset " << Tell() << std::endl;
 
     // Calculate size of dictionary structure:
     // 8 bytes for count + (4 + 8 + 8) bytes per entry = 8 + 20*count
@@ -2454,6 +2518,8 @@ int64_t CrateWriter::WriteValueData(const crate::CrateValue& value, std::string*
     value_data_end_offset_ = Tell();
 
     // Now pack all values first (this may write out-of-line data after dict structure)
+    // IMPORTANT: PackValue calls will further update value_data_end_offset_,
+    // so we need to capture the final end position before seeking back
     std::vector<crate::ValueRep> value_reps;
     value_reps.reserve(count);
 
@@ -2551,22 +2617,30 @@ int64_t CrateWriter::WriteValueData(const crate::CrateValue& value, std::string*
 
     // Now go back and write the dictionary structure
     int64_t saved_pos = Tell();
+    std::cerr << "DEBUG CustomDataType: After packing nested values, pos=" << saved_pos
+              << " now seeking back to dict_struct_start=" << dict_struct_start << std::endl;
+    file_.flush();  // Flush before seeking to ensure buffered writes are committed
     if (!Seek(dict_struct_start)) {
       if (err) *err = "Failed to seek to dictionary structure start";
       return -1;
     }
+    file_.flush();  // Flush after seeking to ensure we're at the right position
 
     // Write count
+    std::cerr << "DEBUG CustomDataType: Writing count=" << count << " at pos=" << Tell() << std::endl;
     if (!Write(count)) {
       if (err) *err = "Failed to write CustomDataType count";
       return -1;
     }
+    std::cerr << "DEBUG CustomDataType: After writing count, pos=" << Tell() << std::endl;
 
     // Write each (key, offset, ValueRep) tuple
     size_t idx = 0;
     for (const auto& kv : *custom_data) {
       // Write key as StringIndex
       crate::StringIndex key_idx = GetOrCreateString(kv.first);
+      std::cerr << "DEBUG CustomDataType: Writing entry[" << idx << "] key='" << kv.first
+                << "' key_idx=" << key_idx.value << " offset=8 ValueRep=" << std::hex << value_reps[idx].GetData() << std::dec << std::endl;
       if (!Write(key_idx.value)) {
         if (err) *err = "Failed to write CustomDataType key index";
         return -1;
