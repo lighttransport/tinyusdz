@@ -365,3 +365,6 @@ cmake_install.cmake
 
 # OpenUSD source tree (should be external)
 aousd/OpenUSD/
+
+# OpenUSD build outputs
+aousd/dist*/
