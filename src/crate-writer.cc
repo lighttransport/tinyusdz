@@ -4288,7 +4288,15 @@ crate::PathIndex CrateWriter::GetOrCreatePath(const Path& path) {
   // must have valid path indices. For example, adding "/Material/bora" should
   // also add "/Material" and "/" if they don't exist.
   std::string prim_part = path.prim_part();
-  if (!prim_part.empty() && prim_part != "/") {
+  std::string prop_part = path.prop_part();
+
+  // If this is a property path, first ensure the prim path (without property) exists
+  if (!prop_part.empty() && !prim_part.empty()) {
+    Path prim_only_path(prim_part, "");
+    GetOrCreatePath(prim_only_path);
+  }
+  // Then ensure all parent prim paths exist
+  else if (!prim_part.empty() && prim_part != "/") {
     // Build parent path by removing the last element
     size_t last_slash = prim_part.find_last_of('/');
     if (last_slash != std::string::npos && last_slash > 0) {
