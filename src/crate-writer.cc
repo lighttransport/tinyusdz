@@ -2635,6 +2635,55 @@ int64_t CrateWriter::WriteValueData(const crate::CrateValue& value, std::string*
         value_rep = PackValue(cv, err);
         value_packed = true;
       }
+      // Try string array
+      else if (auto* str_array = raw_value.as<std::vector<std::string>>()) {
+        crate::CrateValue cv;
+        cv.Set(*str_array);
+        value_rep = PackValue(cv, err);
+        value_packed = true;
+      }
+      // Fallback: if type name indicates string array, try MetaVariable::get_value
+      else if (raw_value.type_name() == "string[]") {
+        auto str_array_opt = kv.second.get_value<std::vector<std::string>>();
+        if (str_array_opt) {
+          crate::CrateValue cv;
+          cv.Set(*str_array_opt);
+          value_rep = PackValue(cv, err);
+          value_packed = true;
+          std::cerr << "DEBUG CustomDataType: Successfully extracted string[] via MetaVariable::get_value for key="
+                    << kv.first << " size=" << str_array_opt->size() << std::endl;
+        } else {
+          std::cerr << "DEBUG CustomDataType: string[] type detected but couldn't extract value for key=" << kv.first << std::endl;
+        }
+      }
+      // Try token array
+      else if (auto* tok_array = raw_value.as<std::vector<value::token>>()) {
+        crate::CrateValue cv;
+        cv.Set(*tok_array);
+        value_rep = PackValue(cv, err);
+        value_packed = true;
+      }
+      // Try float array
+      else if (auto* float_array = raw_value.as<std::vector<float>>()) {
+        crate::CrateValue cv;
+        cv.Set(*float_array);
+        value_rep = PackValue(cv, err);
+        value_packed = true;
+      }
+      // Try double array
+      else if (auto* double_array = raw_value.as<std::vector<double>>()) {
+        crate::CrateValue cv;
+        cv.Set(*double_array);
+        value_rep = PackValue(cv, err);
+        value_packed = true;
+      }
+      // Try int array
+      else if (auto* int_array = raw_value.as<std::vector<int32_t>>()) {
+        crate::CrateValue cv;
+        cv.Set(*int_array);
+        value_rep = PackValue(cv, err);
+        value_packed = true;
+      }
       else {
         std::cerr << "DEBUG CustomDataType: Unsupported type key=" << kv.first
                   << " type_name=" << raw_value.type_name()
