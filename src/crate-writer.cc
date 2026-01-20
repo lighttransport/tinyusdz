@@ -639,7 +639,7 @@ bool ConvertValueToCrateValue(const value::Value& val, crate::CrateValue* out, s
     // For now, we store the type name in a dictionary as metadata
     Dictionary custom_dict;
     custom_dict["__type__"] = type_name;
-    custom_dict["__note__"] = "Custom unregistered value type - type information preserved in metadata";
+    custom_dict["__note__"] = std::string("Custom unregistered value type - type information preserved in metadata");
     out->Set(custom_dict);
     return true;
   }
@@ -2596,6 +2596,21 @@ int64_t CrateWriter::WriteValueData(const crate::CrateValue& value, std::string*
         cv.Set(str_data->value);  // Extract the string value
         value_rep = PackValue(cv, err);
         value_packed = true;
+      }
+      // Fallback: if type_id indicates string but as<std::string>() failed, try MetaVariable's get_value
+      else if (raw_value.type_id() == value::TYPE_ID_STRING) {
+        // String type but as<std::string>() didn't work - try MetaVariable's get_value method
+        auto str_opt = kv.second.get_value<std::string>();
+        if (str_opt) {
+          crate::CrateValue cv;
+          cv.Set(*str_opt);
+          value_rep = PackValue(cv, err);
+          value_packed = true;
+          std::cerr << "DEBUG CustomDataType: Successfully extracted string via MetaVariable::get_value for key="
+                    << kv.first << " value=\"" << *str_opt << "\"" << std::endl;
+        } else {
+          std::cerr << "DEBUG CustomDataType: String type detected but couldn't extract value for key=" << kv.first << std::endl;
+        }
       }
       // Try token
       else if (auto* tok_val = raw_value.as<value::token>()) {
