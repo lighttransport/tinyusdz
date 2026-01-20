@@ -825,6 +825,15 @@ bool CrateWriter::WriteStringsSection(std::string* err) {
   // Each string maps to a token index
 
   uint64_t string_count = static_cast<uint64_t>(strings_.size());
+
+  std::cerr << "DEBUG WriteStringsSection: strings_.size()=" << string_count << std::endl;
+  for (size_t i = 0; i < strings_.size(); ++i) {
+    auto it = token_to_index_.find(strings_[i]);
+    if (it != token_to_index_.end()) {
+      std::cerr << "  string[" << i << "]: \"" << strings_[i] << "\" -> token_idx=" << it->second.value << std::endl;
+    }
+  }
+
   if (!Write(string_count)) {
     if (err) *err = "Failed to write string count";
     return false;
@@ -1593,10 +1602,12 @@ int64_t CrateWriter::WriteValueData(const crate::CrateValue& value, std::string*
 
   // Double - 8 bytes
   if (auto* double_val = value.as<double>()) {
+    std::cerr << "DEBUG WriteValueData: Writing double at offset=" << Tell() << std::endl;
     if (!Write(*double_val)) {
       if (err) *err = "Failed to write double value";
       return -1;
     }
+    std::cerr << "DEBUG WriteValueData: After double, offset=" << Tell() << std::endl;
   }
   // Int64 - 8 bytes (when doesn't fit in 48 bits)
   else if (auto* int64_val = value.as<int64_t>()) {
@@ -2442,7 +2453,6 @@ int64_t CrateWriter::WriteValueData(const crate::CrateValue& value, std::string*
     }
 
     // Now go back and write the dictionary structure
-    int64_t saved_pos = Tell();
     if (!Seek(dict_struct_start)) {
       if (err) *err = "Failed to seek to dictionary structure start";
       return -1;
@@ -2480,9 +2490,11 @@ int64_t CrateWriter::WriteValueData(const crate::CrateValue& value, std::string*
       ++idx;
     }
 
-    // Seek back to end of value data section
-    if (!Seek(saved_pos)) {
-      if (err) *err = "Failed to seek back after dictionary";
+    // IMPORTANT: Seek to value_data_end_offset_, not saved_pos!
+    // value_data_end_offset_ has been updated by all the PackValue calls to point to
+    // the end of all written data. saved_pos was captured before we packed values.
+    if (!Seek(value_data_end_offset_)) {
+      if (err) *err = "Failed to seek to end of value data";
       return -1;
     }
   }
@@ -2616,15 +2628,12 @@ int64_t CrateWriter::WriteValueData(const crate::CrateValue& value, std::string*
     }
 
     // Now go back and write the dictionary structure
-    int64_t saved_pos = Tell();
-    std::cerr << "DEBUG CustomDataType: After packing nested values, pos=" << saved_pos
+    std::cerr << "DEBUG CustomDataType: After packing nested values, pos=" << Tell()
               << " now seeking back to dict_struct_start=" << dict_struct_start << std::endl;
-    file_.flush();  // Flush before seeking to ensure buffered writes are committed
     if (!Seek(dict_struct_start)) {
       if (err) *err = "Failed to seek to dictionary structure start";
       return -1;
     }
-    file_.flush();  // Flush after seeking to ensure we're at the right position
 
     // Write count
     std::cerr << "DEBUG CustomDataType: Writing count=" << count << " at pos=" << Tell() << std::endl;
@@ -2662,8 +2671,10 @@ int64_t CrateWriter::WriteValueData(const crate::CrateValue& value, std::string*
       ++idx;
     }
 
-    // Seek back to end of value data section
-    if (!Seek(saved_pos)) {
+    // IMPORTANT: Seek to value_data_end_offset_, not saved_pos!
+    // value_data_end_offset_ has been updated by all the PackValue calls to point to
+    // the end of all written data.
+    if (!Seek(value_data_end_offset_)) {
       if (err) *err = "Failed to seek back after CustomDataType";
       return -1;
     }
@@ -3993,6 +4004,14 @@ bool CrateWriter::TryInlineValue(const crate::CrateValue& value, crate::ValueRep
     return true;
   }
 
+  // Try to get as ValueBlock (None)
+  if (value.as<value::ValueBlock>()) {
+    rep->SetType(static_cast<int32_t>(crate::CrateDataTypeId::CRATE_DATA_TYPE_VALUE_BLOCK));
+    rep->SetIsInlined();
+    rep->SetPayload(0);  // ValueBlock has no payload data
+    return true;
+  }
+
   // Try to get as uchar
   if (auto* uchar_val = value.as<uint8_t>()) {
     rep->SetType(static_cast<int32_t>(crate::CrateDataTypeId::CRATE_DATA_TYPE_UCHAR));
@@ -4238,6 +4257,26 @@ crate::PathIndex CrateWriter::GetOrCreatePath(const Path& path) {
   auto it = path_to_index_.find(path);
   if (it != path_to_index_.end()) {
     return it->second;
+  }
+
+  // IMPORTANT: Ensure all parent paths exist first
+  // This is necessary for building a valid path tree where intermediate nodes
+  // must have valid path indices. For example, adding "/Material/bora" should
+  // also add "/Material" and "/" if they don't exist.
+  std::string prim_part = path.prim_part();
+  if (!prim_part.empty() && prim_part != "/") {
+    // Build parent path by removing the last element
+    size_t last_slash = prim_part.find_last_of('/');
+    if (last_slash != std::string::npos && last_slash > 0) {
+      std::string parent_prim = prim_part.substr(0, last_slash);
+      Path parent_path(parent_prim, "");
+      // Recursively ensure parent exists
+      GetOrCreatePath(parent_path);
+    } else if (last_slash == 0) {
+      // Parent is root "/"
+      Path root_path("/", "");
+      GetOrCreatePath(root_path);
+    }
   }
 
   // Create new path
