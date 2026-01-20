@@ -96,6 +96,15 @@ bool CrateWriter::AddSpec(const Path& path,
     return false;
   }
 
+  // Check for duplicate specs with same path
+  // USD Crate format requires each path to appear only once
+  for (const auto& existing_spec : spec_data_) {
+    if (existing_spec.path.full_path_name() == path.full_path_name()) {
+      std::cerr << "DEBUG AddSpec: Skipping duplicate spec for path=" << path.full_path_name() << "\n";
+      return true;  // Silently skip duplicate (not an error)
+    }
+  }
+
   // Create spec data
   SpecData spec_data;
   spec_data.path = path;
