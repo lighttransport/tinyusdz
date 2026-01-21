@@ -16,6 +16,7 @@
 #include "usd-dump.hh"
 #include "logger.hh"
 #include "crate-writer.hh"
+#include "crate-dump.hh"
 
 #include "tydra/scene-access.hh"
 
@@ -187,6 +188,10 @@ void print_help() {
   std::cout << "  --attr=PATTERN      Filter attributes by name glob pattern\n";
   std::cout << "  --time=T            Query TimeSamples at time T\n";
   std::cout << "  --time=S:E          Query TimeSamples in range [S, E]\n";
+  std::cout << "\n";
+  std::cout << "Low-level USDC dump options:\n";
+  std::cout << "  --dumpcrate         Dump low-level USDC Crate structure (YAML)\n";
+  std::cout << "                      Only works with .usdc files\n";
 }
 
 int main(int argc, char **argv) {
@@ -213,6 +218,9 @@ int main(int argc, char **argv) {
   // Inspect options
   bool do_inspect{false};
   tinyusdz::InspectOptions inspect_opts;
+
+  // Dumpcrate option
+  bool do_dumpcrate{false};
 
   constexpr int kMaxIteration = 128;
 
@@ -248,6 +256,8 @@ int main(int argc, char **argv) {
       memstat = true;
     } else if (arg.compare("--progress") == 0) {
       show_progress = true;
+    } else if (arg.compare("--dumpcrate") == 0) {
+      do_dumpcrate = true;
     } else if (arg.compare("--inspect") == 0) {
       do_inspect = true;
       inspect_opts.format = tinyusdz::InspectOutputFormat::Yaml;
@@ -383,6 +393,26 @@ int main(int argc, char **argv) {
   std::string ext = str_tolower(GetFileExtension(filepath));
   std::string base_dir;
   base_dir = tinyusdz::io::GetBaseDir(filepath);
+
+  // Handle --dumpcrate mode (low-level USDC crate dump)
+  if (do_dumpcrate) {
+    if (ext != "usdc") {
+      std::cerr << "Error: --dumpcrate only works with .usdc files\n";
+      std::cerr << "  Input file: " << filepath << "\n";
+      std::cerr << "  Extension: ." << ext << "\n";
+      return EXIT_FAILURE;
+    }
+
+    tinyusdz::crate::DumpOptions dump_opts;
+    dump_opts.format = tinyusdz::crate::OutputFormat::YAML;
+
+    if (!tinyusdz::crate::DumpCrate(filepath, dump_opts, &err)) {
+      std::cerr << "Failed to dump crate: " << err << "\n";
+      return EXIT_FAILURE;
+    }
+
+    return EXIT_SUCCESS;
+  }
 
   // Handle --inspect mode
   if (do_inspect) {
