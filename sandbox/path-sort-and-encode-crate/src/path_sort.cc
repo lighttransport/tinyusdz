@@ -179,9 +179,13 @@ static int ComparePathElements(
 }
 
 int ComparePaths(const IPath& lhs, const IPath& rhs) {
-  // Parse paths
-  auto lhs_elements = ParsePath(lhs.GetPrimPart(), lhs.GetPropertyPart());
-  auto rhs_elements = ParsePath(rhs.GetPrimPart(), rhs.GetPropertyPart());
+  // IMPORTANT: Parse prim parts ONLY for prim comparison
+  // Properties should not be included in prim path comparison,
+  // as they don't add depth to the path hierarchy.
+  // In USD path ordering: /A < /A.prop < /A/B
+  // (prim before its properties, properties before children)
+  auto lhs_prim_elements = ParsePath(lhs.GetPrimPart(), "");  // No property
+  auto rhs_prim_elements = ParsePath(rhs.GetPrimPart(), "");  // No property
 
   // Check absolute vs relative
   bool lhs_is_abs = lhs.IsAbsolute();
@@ -192,13 +196,14 @@ int ComparePaths(const IPath& lhs, const IPath& rhs) {
     return lhs_is_abs ? -1 : 1;
   }
 
-  // Compare prim parts
-  int prim_cmp = ComparePathElements(lhs_elements, rhs_elements);
+  // Compare prim parts ONLY
+  int prim_cmp = ComparePathElements(lhs_prim_elements, rhs_prim_elements);
   if (prim_cmp != 0) {
     return prim_cmp;
   }
 
   // Prim parts equal, compare property parts
+  // Properties sort after their prim but before any child prims
   const std::string& lhs_prop = lhs.GetPropertyPart();
   const std::string& rhs_prop = rhs.GetPropertyPart();
 
@@ -206,6 +211,7 @@ int ComparePaths(const IPath& lhs, const IPath& rhs) {
     return 0;
   }
 
+  // Prim without property comes first
   if (lhs_prop.empty()) {
     return -1;
   }
@@ -214,6 +220,7 @@ int ComparePaths(const IPath& lhs, const IPath& rhs) {
     return 1;
   }
 
+  // Both have properties - compare alphabetically
   if (lhs_prop < rhs_prop) {
     return -1;
   } else if (lhs_prop > rhs_prop) {
