@@ -1646,6 +1646,23 @@ struct TypeTraits<void> {
   static bool is_array() { return false; }
 };
 
+// Specialization for const char* to support string literals
+template <>
+struct TypeTraits<const char*> {
+  using value_type = const char*;
+  using value_underlying_type = const char*;
+  static constexpr uint32_t ndim() { return 0; }
+  static constexpr uint32_t size = sizeof(const char*);
+  static constexpr uint32_t ncomp() { return 1; }
+  static constexpr uint32_t type_id() { return TYPE_ID_STRING; }
+  static constexpr uint32_t get_type_id() { return TYPE_ID_STRING; }
+  static constexpr uint32_t underlying_type_id() { return TYPE_ID_STRING; }
+  static std::string type_name() { return kString; }
+  static std::string underlying_type_name() { return kString; }
+  static bool is_role_type() { return false; }
+  static bool is_array() { return false; }
+};
+
 DEFINE_TYPE_TRAIT(std::nullptr_t, "null", TYPE_ID_NULL, 1);
 // DEFINE_TYPE_TRAIT(void, "void", TYPE_ID_VOID, 1);
 DEFINE_TYPE_TRAIT(ValueBlock, "None", TYPE_ID_VALUEBLOCK, 1);
