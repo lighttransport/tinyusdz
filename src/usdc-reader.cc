@@ -1100,7 +1100,12 @@ bool USDCReader::Impl::ParseProperty(const SpecType spec_type,
       //propType = Property::Type::Relation;
       hasTargetPaths = true;
 
-      if (auto pv = fv.second.get_value<ListOp<Path>>()) {
+      // Check for ValueBlock first (rel ... = None)
+      if (fv.second.get_value<value::ValueBlock>()) {
+        // Relationship is blocked (None)
+        rel.set_blocked();
+        DCOUT("targetPaths = None (blocked)");
+      } else if (auto pv = fv.second.get_value<ListOp<Path>>()) {
         const ListOp<Path> &p = pv.value();
         DCOUT("targetPaths = " << to_string(p));
 
@@ -1136,7 +1141,7 @@ bool USDCReader::Impl::ParseProperty(const SpecType spec_type,
 
       } else {
         PUSH_ERROR_AND_RETURN_TAG(
-            kTag, "`targetPaths` field is not `ListOp[Path]` type.");
+            kTag, "`targetPaths` field is not `ListOp[Path]` or ValueBlock type.");
       }
 
     } else if (fv.first == "hidden") {
