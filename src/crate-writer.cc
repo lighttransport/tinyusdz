@@ -631,6 +631,11 @@ bool ConvertValueToCrateValue(const value::Value& val, crate::CrateValue* out, s
   // For unknown types, attempt to encode as an unregistered value
   // This allows custom attributes with user-defined types to be stored
   const std::string& type_name = val.type_name();
+
+  // DEBUG: Print what type we received that wasn't matched
+  std::cerr << "[ConvertValueToCrateValue] DEBUG: Unmatched type! type_name='" << type_name
+            << "' type_id=" << type_id << std::endl;
+
   if (!type_name.empty()) {
     // Try to encode as Dictionary (most flexible representation)
     if (auto* v = val.as<Dictionary>()) {
@@ -642,7 +647,7 @@ bool ConvertValueToCrateValue(const value::Value& val, crate::CrateValue* out, s
 
     // Try to encode as generic string representation
     // This is a fallback for values that can be stringified
-    std::cerr << "[ConvertValueToCrateValue] Warning: Encoding custom type as string: "
+    std::cerr << "[ConvertValueToCrateValue] Warning: Encoding custom type as Dictionary: "
               << type_name << " (type_id=" << type_id << ")\n";
 
     // For now, we store the type name in a dictionary as metadata
@@ -2196,6 +2201,8 @@ int64_t CrateWriter::WriteValueData(const crate::CrateValue& value, std::string*
   // Vec4f array
   else if (auto* vec4f_array = value.as<std::vector<value::float4>>()) {
     uint64_t count = vec4f_array->size();
+    std::cerr << "DEBUG WriteValueData: Writing float4[] at offset=" << Tell()
+              << " count=" << count << std::endl;
     if (!Write(count)) {
       if (err) *err = "Failed to write Vec4f array count";
       return -1;
@@ -2208,6 +2215,7 @@ int64_t CrateWriter::WriteValueData(const crate::CrateValue& value, std::string*
         }
       }
     }
+    std::cerr << "DEBUG WriteValueData: After float4[], offset=" << Tell() << std::endl;
   }
   // Vec2d array (double2[])
   else if (auto* vec2d_array = value.as<std::vector<value::double2>>()) {
@@ -2642,18 +2650,65 @@ int64_t CrateWriter::WriteValueData(const crate::CrateValue& value, std::string*
         value_rep = PackValue(cv, err);
         value_packed = true;
       }
-      // Fallback: if type name indicates string array, try MetaVariable::get_value
-      else if (raw_value.type_name() == "string[]") {
-        auto str_array_opt = kv.second.get_value<std::vector<std::string>>();
-        if (str_array_opt) {
+      // Try StringData array (stored with TYPE_ID_STRING_DATA + array bit)
+      else if (auto* str_data_array = raw_value.as<std::vector<value::StringData>>()) {
+        // Convert StringData array to string array
+        std::vector<std::string> str_array;
+        str_array.reserve(str_data_array->size());
+        for (const auto& sd : *str_data_array) {
+          str_array.push_back(sd.value);
+        }
+        crate::CrateValue cv;
+        cv.Set(str_array);
+        value_rep = PackValue(cv, err);
+        value_packed = true;
+        std::cerr << "DEBUG CustomDataType: Successfully extracted StringData[] and converted to string[] for key="
+                  << kv.first << " size=" << str_array.size() << std::endl;
+      }
+      // Fallback: if type name indicates string array, check is_array() and extract
+      else if (raw_value.type_name() == "string[]" || (raw_value.is_array() && raw_value.type_id() == value::TYPE_ID_STRING)) {
+        std::cerr << "DEBUG CustomDataType: Detected string[] for key=" << kv.first
+                  << " is_array=" << raw_value.is_array()
+                  << " type_id=" << raw_value.type_id()
+                  << " underlying_type_id=" << raw_value.underlying_type_id() << std::endl;
+
+        // First try direct as<std::vector<std::string>>()
+        if (auto* str_array_direct = raw_value.as<std::vector<std::string>>()) {
           crate::CrateValue cv;
-          cv.Set(*str_array_opt);
+          cv.Set(*str_array_direct);
           value_rep = PackValue(cv, err);
           value_packed = true;
-          std::cerr << "DEBUG CustomDataType: Successfully extracted string[] via MetaVariable::get_value for key="
-                    << kv.first << " size=" << str_array_opt->size() << std::endl;
+          std::cerr << "DEBUG CustomDataType: Successfully extracted string[] directly for key="
+                    << kv.first << " size=" << str_array_direct->size() << std::endl;
+        }
+        // Try as std::vector<value::token> (tokens can be converted to strings)
+        else if (auto* tok_array = raw_value.as<std::vector<value::token>>()) {
+          std::cerr << "DEBUG CustomDataType: Extracting as token[] for key=" << kv.first
+                    << " size=" << tok_array->size() << std::endl;
+          std::vector<std::string> str_array;
+          str_array.reserve(tok_array->size());
+          for (const auto& tok : *tok_array) {
+            str_array.push_back(tok.str());
+          }
+          crate::CrateValue cv;
+          cv.Set(str_array);
+          value_rep = PackValue(cv, err);
+          value_packed = true;
+          std::cerr << "DEBUG CustomDataType: Successfully converted token[] to string[] for key="
+                    << kv.first << " size=" << str_array.size() << std::endl;
         } else {
-          std::cerr << "DEBUG CustomDataType: string[] type detected but couldn't extract value for key=" << kv.first << std::endl;
+          // Try MetaVariable::get_value as fallback
+          auto str_array_opt = kv.second.get_value<std::vector<std::string>>();
+          if (str_array_opt) {
+            crate::CrateValue cv;
+            cv.Set(*str_array_opt);
+            value_rep = PackValue(cv, err);
+            value_packed = true;
+            std::cerr << "DEBUG CustomDataType: Successfully extracted string[] via MetaVariable::get_value for key="
+                      << kv.first << " size=" << str_array_opt->size() << std::endl;
+          } else {
+            std::cerr << "DEBUG CustomDataType: string[] type detected but couldn't extract with any method for key=" << kv.first << std::endl;
+          }
         }
       }
       // Try token array
@@ -4250,44 +4305,58 @@ bool CrateWriter::TryInlineValue(const crate::CrateValue& value, crate::ValueRep
     return false;
   }
 
-  // Phase 1: Arrays are NEVER inlined - always out-of-line storage
-  // Arrays require size prefix + data
+  // Phase 1: Empty arrays are inlined with payload=0
+  // Non-empty arrays require out-of-line storage with size prefix + data
+  //
+  // IMPORTANT: The Crate reader expects empty arrays to have payload=0.
+  // When the reader sees payload=0 for an array type, it creates an empty array
+  // without seeking to any offset.
 
-  // Check for all array types (std::vector<T>)
-  // We detect arrays by trying all known array types
-  if (value.as<std::vector<bool>>() ||
-      value.as<std::vector<uint8_t>>() ||
-      value.as<std::vector<int32_t>>() ||
-      value.as<std::vector<uint32_t>>() ||
-      value.as<std::vector<int64_t>>() ||
-      value.as<std::vector<uint64_t>>() ||
-      value.as<std::vector<value::half>>() ||
-      value.as<std::vector<float>>() ||
-      value.as<std::vector<double>>() ||
-      value.as<std::vector<value::half2>>() ||
-      value.as<std::vector<value::half3>>() ||
-      value.as<std::vector<value::half4>>() ||
-      value.as<std::vector<value::float2>>() ||
-      value.as<std::vector<value::float3>>() ||
-      value.as<std::vector<value::float4>>() ||
-      value.as<std::vector<value::double2>>() ||
-      value.as<std::vector<value::double3>>() ||
-      value.as<std::vector<value::double4>>() ||
-      value.as<std::vector<value::int2>>() ||
-      value.as<std::vector<value::int3>>() ||
-      value.as<std::vector<value::int4>>() ||
-      value.as<std::vector<value::matrix2d>>() ||
-      value.as<std::vector<value::matrix3d>>() ||
-      value.as<std::vector<value::matrix4d>>() ||
-      value.as<std::vector<value::quath>>() ||
-      value.as<std::vector<value::quatf>>() ||
-      value.as<std::vector<value::quatd>>() ||
-      value.as<std::vector<std::string>>() ||
-      value.as<std::vector<value::token>>() ||
-      value.as<std::vector<value::AssetPath>>()) {
-    // Arrays cannot be inlined - need out-of-line storage
-    return false;
+  // Helper macro to check if array is empty and inline it
+#define TRY_INLINE_EMPTY_ARRAY(VecType, CrateTypeId) \
+  if (auto* arr = value.as<VecType>()) { \
+    if (arr->empty()) { \
+      rep->SetType(static_cast<int32_t>(CrateTypeId)); \
+      rep->SetIsArray(); \
+      rep->SetPayload(0); /* Empty array marker */ \
+      return true; \
+    } \
+    return false; /* Non-empty array needs out-of-line storage */ \
   }
+
+  // Check all array types - inline if empty, otherwise out-of-line
+  TRY_INLINE_EMPTY_ARRAY(std::vector<bool>, crate::CrateDataTypeId::CRATE_DATA_TYPE_BOOL)
+  TRY_INLINE_EMPTY_ARRAY(std::vector<uint8_t>, crate::CrateDataTypeId::CRATE_DATA_TYPE_UCHAR)
+  TRY_INLINE_EMPTY_ARRAY(std::vector<int32_t>, crate::CrateDataTypeId::CRATE_DATA_TYPE_INT)
+  TRY_INLINE_EMPTY_ARRAY(std::vector<uint32_t>, crate::CrateDataTypeId::CRATE_DATA_TYPE_UINT)
+  TRY_INLINE_EMPTY_ARRAY(std::vector<int64_t>, crate::CrateDataTypeId::CRATE_DATA_TYPE_INT64)
+  TRY_INLINE_EMPTY_ARRAY(std::vector<uint64_t>, crate::CrateDataTypeId::CRATE_DATA_TYPE_UINT64)
+  TRY_INLINE_EMPTY_ARRAY(std::vector<value::half>, crate::CrateDataTypeId::CRATE_DATA_TYPE_HALF)
+  TRY_INLINE_EMPTY_ARRAY(std::vector<float>, crate::CrateDataTypeId::CRATE_DATA_TYPE_FLOAT)
+  TRY_INLINE_EMPTY_ARRAY(std::vector<double>, crate::CrateDataTypeId::CRATE_DATA_TYPE_DOUBLE)
+  TRY_INLINE_EMPTY_ARRAY(std::vector<value::half2>, crate::CrateDataTypeId::CRATE_DATA_TYPE_VEC2H)
+  TRY_INLINE_EMPTY_ARRAY(std::vector<value::half3>, crate::CrateDataTypeId::CRATE_DATA_TYPE_VEC3H)
+  TRY_INLINE_EMPTY_ARRAY(std::vector<value::half4>, crate::CrateDataTypeId::CRATE_DATA_TYPE_VEC4H)
+  TRY_INLINE_EMPTY_ARRAY(std::vector<value::float2>, crate::CrateDataTypeId::CRATE_DATA_TYPE_VEC2F)
+  TRY_INLINE_EMPTY_ARRAY(std::vector<value::float3>, crate::CrateDataTypeId::CRATE_DATA_TYPE_VEC3F)
+  TRY_INLINE_EMPTY_ARRAY(std::vector<value::float4>, crate::CrateDataTypeId::CRATE_DATA_TYPE_VEC4F)
+  TRY_INLINE_EMPTY_ARRAY(std::vector<value::double2>, crate::CrateDataTypeId::CRATE_DATA_TYPE_VEC2D)
+  TRY_INLINE_EMPTY_ARRAY(std::vector<value::double3>, crate::CrateDataTypeId::CRATE_DATA_TYPE_VEC3D)
+  TRY_INLINE_EMPTY_ARRAY(std::vector<value::double4>, crate::CrateDataTypeId::CRATE_DATA_TYPE_VEC4D)
+  TRY_INLINE_EMPTY_ARRAY(std::vector<value::int2>, crate::CrateDataTypeId::CRATE_DATA_TYPE_VEC2I)
+  TRY_INLINE_EMPTY_ARRAY(std::vector<value::int3>, crate::CrateDataTypeId::CRATE_DATA_TYPE_VEC3I)
+  TRY_INLINE_EMPTY_ARRAY(std::vector<value::int4>, crate::CrateDataTypeId::CRATE_DATA_TYPE_VEC4I)
+  TRY_INLINE_EMPTY_ARRAY(std::vector<value::matrix2d>, crate::CrateDataTypeId::CRATE_DATA_TYPE_MATRIX2D)
+  TRY_INLINE_EMPTY_ARRAY(std::vector<value::matrix3d>, crate::CrateDataTypeId::CRATE_DATA_TYPE_MATRIX3D)
+  TRY_INLINE_EMPTY_ARRAY(std::vector<value::matrix4d>, crate::CrateDataTypeId::CRATE_DATA_TYPE_MATRIX4D)
+  TRY_INLINE_EMPTY_ARRAY(std::vector<value::quath>, crate::CrateDataTypeId::CRATE_DATA_TYPE_QUATH)
+  TRY_INLINE_EMPTY_ARRAY(std::vector<value::quatf>, crate::CrateDataTypeId::CRATE_DATA_TYPE_QUATF)
+  TRY_INLINE_EMPTY_ARRAY(std::vector<value::quatd>, crate::CrateDataTypeId::CRATE_DATA_TYPE_QUATD)
+  TRY_INLINE_EMPTY_ARRAY(std::vector<std::string>, crate::CrateDataTypeId::CRATE_DATA_TYPE_STRING)
+  TRY_INLINE_EMPTY_ARRAY(std::vector<value::token>, crate::CrateDataTypeId::CRATE_DATA_TYPE_TOKEN)
+  TRY_INLINE_EMPTY_ARRAY(std::vector<value::AssetPath>, crate::CrateDataTypeId::CRATE_DATA_TYPE_ASSET_PATH)
+
+#undef TRY_INLINE_EMPTY_ARRAY
 
   // Cannot inline - need out-of-line storage
   return false;
