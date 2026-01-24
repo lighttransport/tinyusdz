@@ -180,6 +180,12 @@ struct TimeSamples {
   /// This determines whether to use POD optimization or regular storage
   bool init(uint32_t type_id);
 
+  /// Cast the TimeSamples' type to a role type if the underlying types are compatible.
+  /// This allows reinterpreting stored base types (e.g., float3) as role types (e.g., color3f).
+  /// @param role_type_id The target role type's type_id
+  /// @return true if the cast was successful, false if the underlying types don't match
+  bool cast_to_role_type(uint32_t role_type_id);
+
   /// Check if unified storage has samples (i.e., _times is not empty)
   /// Returns true if any samples have been added to unified storage path.
   /// Note: After PODTimeSamples removal, this checks unified storage, not a separate POD type.
@@ -896,6 +902,11 @@ struct TimeSamples {
       _samples.reserve(_times.size());
 
       uint32_t type_id = _type_id;
+      // IMPORTANT: Index handling differs between small and large types:
+      // - Small types (<=8 bytes): blocked samples DON'T add to _small_values, so use separate index
+      // - Large types (>8 bytes): blocked samples DO add SIZE_MAX to _offsets, so index matches _times
+      size_t small_value_idx = 0;  // Only for small types (<= 8 bytes)
+
       for (size_t i = 0; i < _times.size(); ++i) {
         Sample s;
         s.t = _times[i];
@@ -904,12 +915,15 @@ struct TimeSamples {
         if (s.blocked) {
           // Blocked sample
           s.value = value::Value();  // None value
+          // For small types, don't increment small_value_idx (blocked samples not in _small_values)
+          // For large types, _offsets[i] will be SIZE_MAX (blocked marker), handled below
         } else {
           // Reconstruct value from storage based on type_id
           // For POD types, values are stored in _small_values (up to 8 bytes) or _values (larger)
           // First check if this is a small value (<= 8 bytes) stored in _small_values
-          if (i < _small_values.size()) {
-            uint64_t stored = _small_values[i];
+          if (small_value_idx < _small_values.size()) {
+            uint64_t stored = _small_values[small_value_idx];
+            ++small_value_idx;  // Increment for next non-blocked sample (small types only)
             // Reconstruct typed value based on type_id
             switch (type_id) {
               case value::TypeTraits<float>::type_id(): {
@@ -959,45 +973,73 @@ struct TimeSamples {
             }
           } else if (i < _offsets.size()) {
             // Larger types (> 8 bytes) are stored in _values with offsets
+            // Note: For large types, _offsets has 1:1 correspondence with _times
+            // (blocked samples add SIZE_MAX marker to _offsets)
             uint64_t encoded_offset = _offsets[i];
             size_t byte_offset = static_cast<size_t>(encoded_offset & OFFSET_VALUE_MASK);
 
             // Reconstruct value based on type_id
+            // Helper macro to reduce repetition
+#define RECONSTRUCT_VALUE(TYPE) \
+            case value::TypeTraits<TYPE>::type_id(): { \
+              if (byte_offset + sizeof(TYPE) <= _values.size()) { \
+                TYPE val; \
+                std::memcpy(&val, _values.data() + byte_offset, sizeof(TYPE)); \
+                s.value = value::Value(val); \
+              } else { \
+                s.value = value::Value(); \
+              } \
+              break; \
+            }
+
             switch (type_id) {
-              case value::TypeTraits<value::float3>::type_id(): {
-                if (byte_offset + sizeof(value::float3) <= _values.size()) {
-                  value::float3 f3val;
-                  std::memcpy(&f3val, _values.data() + byte_offset, sizeof(value::float3));
-                  s.value = value::Value(f3val);
-                } else {
-                  s.value = value::Value();  // Invalid offset
-                }
-                break;
-              }
-              case value::TypeTraits<value::point3f>::type_id(): {
-                if (byte_offset + sizeof(value::point3f) <= _values.size()) {
-                  value::point3f p3val;
-                  std::memcpy(&p3val, _values.data() + byte_offset, sizeof(value::point3f));
-                  s.value = value::Value(p3val);
-                } else {
-                  s.value = value::Value();  // Invalid offset
-                }
-                break;
-              }
-              case value::TypeTraits<value::color3f>::type_id(): {
-                if (byte_offset + sizeof(value::color3f) <= _values.size()) {
-                  value::color3f c3val;
-                  std::memcpy(&c3val, _values.data() + byte_offset, sizeof(value::color3f));
-                  s.value = value::Value(c3val);
-                } else {
-                  s.value = value::Value();  // Invalid offset
-                }
-                break;
-              }
+              // Float vector types
+              RECONSTRUCT_VALUE(value::float2)
+              RECONSTRUCT_VALUE(value::float3)
+              RECONSTRUCT_VALUE(value::float4)
+              // Double vector types
+              RECONSTRUCT_VALUE(value::double2)
+              RECONSTRUCT_VALUE(value::double3)
+              RECONSTRUCT_VALUE(value::double4)
+              // Int vector types
+              RECONSTRUCT_VALUE(value::int2)
+              RECONSTRUCT_VALUE(value::int3)
+              RECONSTRUCT_VALUE(value::int4)
+              // Half vector types
+              RECONSTRUCT_VALUE(value::half2)
+              RECONSTRUCT_VALUE(value::half3)
+              RECONSTRUCT_VALUE(value::half4)
+              // Quaternion types
+              RECONSTRUCT_VALUE(value::quath)
+              RECONSTRUCT_VALUE(value::quatf)
+              RECONSTRUCT_VALUE(value::quatd)
+              // Semantic types (point, normal, color, texcoord, vector)
+              RECONSTRUCT_VALUE(value::point3f)
+              RECONSTRUCT_VALUE(value::point3d)
+              RECONSTRUCT_VALUE(value::normal3f)
+              RECONSTRUCT_VALUE(value::normal3d)
+              RECONSTRUCT_VALUE(value::vector3f)
+              RECONSTRUCT_VALUE(value::vector3d)
+              RECONSTRUCT_VALUE(value::color3f)
+              RECONSTRUCT_VALUE(value::color3d)
+              RECONSTRUCT_VALUE(value::color4f)
+              RECONSTRUCT_VALUE(value::color4d)
+              RECONSTRUCT_VALUE(value::texcoord2f)
+              RECONSTRUCT_VALUE(value::texcoord2d)
+              RECONSTRUCT_VALUE(value::texcoord3f)
+              RECONSTRUCT_VALUE(value::texcoord3d)
+              // Matrix types
+              RECONSTRUCT_VALUE(value::matrix2f)
+              RECONSTRUCT_VALUE(value::matrix2d)
+              RECONSTRUCT_VALUE(value::matrix3f)
+              RECONSTRUCT_VALUE(value::matrix3d)
+              RECONSTRUCT_VALUE(value::matrix4f)
+              RECONSTRUCT_VALUE(value::matrix4d)
               default:
                 s.value = value::Value();  // Fallback for types not yet supported
                 break;
             }
+#undef RECONSTRUCT_VALUE
           } else {
             s.value = value::Value();  // Fallback
           }
@@ -1451,8 +1493,12 @@ struct TimeSamples {
     _times.push_back(t);
     _blocked.push_back(1);  // Blocked
 
-    // No data needed for blocked sample, just add a dummy offset
-    _offsets.push_back(SIZE_MAX);  // Special marker for blocked
+    // For small types (sizeof <= 8), don't use offsets - just rely on _blocked flag
+    // For large types (sizeof > 8), need offset table entry
+    if (sizeof(T) > 8) {
+      _offsets.push_back(SIZE_MAX);  // Special marker for blocked
+    }
+    // Note: No entry in _small_values for blocked samples (for small types)
 
     _dirty = true;
     return true;
@@ -1614,6 +1660,13 @@ struct TimeSamples {
       update();
     }
     return _offsets;
+  }
+
+  const std::vector<uint64_t>& get_small_values() const {
+    if (_dirty) {
+      update();
+    }
+    return _small_values;
   }
 
   bool is_array() const {

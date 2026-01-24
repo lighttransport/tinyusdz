@@ -1,0 +1,289 @@
+#usda 1.0
+(
+    doc = "Comprehensive light types test - all 7 UsdLux light types with full attributes"
+    defaultPrim = "Lights"
+)
+
+def Xform "Lights"
+{
+    # =========================================================================
+    # DistantLight - Directional light from infinitely far away
+    # =========================================================================
+    def DistantLight "DistantLight" (
+        prepend apiSchemas = ["ShapingAPI", "ShadowAPI"]
+    )
+    {
+        # Base light attributes
+        color3f inputs:color = (1, 0.95, 0.9)
+        float inputs:colorTemperature = 6500
+        float inputs:diffuse = 1.0
+        bool inputs:enableColorTemperature = false
+        float inputs:exposure = 0.0
+        float inputs:intensity = 50000
+        bool inputs:normalize = false
+        float inputs:specular = 1.0
+
+        # DistantLight specific
+        float inputs:angle = 0.53
+
+        # ShapingAPI attributes
+        float inputs:shaping:cone:angle = 180.0
+        float inputs:shaping:cone:softness = 0.0
+        float inputs:shaping:focus = 0.0
+        color3f inputs:shaping:focusTint = (0, 0, 0)
+        asset inputs:shaping:ies:file
+
+        # ShadowAPI attributes
+        color3f inputs:shadow:color = (0, 0, 0)
+        float inputs:shadow:distance = -1.0
+        bool inputs:shadow:enable = true
+        float inputs:shadow:falloff = -1.0
+        float inputs:shadow:falloffGamma = 1.0
+
+        # Common Imageable attributes
+        token visibility = "inherited"
+        uniform token purpose = "default"
+    }
+
+    # =========================================================================
+    # DiskLight - Circular area light
+    # =========================================================================
+    def DiskLight "DiskLight" (
+        prepend apiSchemas = ["ShapingAPI", "ShadowAPI"]
+    )
+    {
+        color3f inputs:color = (1, 1, 1)
+        float inputs:colorTemperature = 5500
+        float inputs:diffuse = 1.0
+        bool inputs:enableColorTemperature = true
+        float inputs:exposure = 0.0
+        float inputs:intensity = 1000
+        bool inputs:normalize = true
+        float inputs:specular = 1.0
+
+        # DiskLight specific
+        float inputs:radius = 0.5
+
+        # ShapingAPI
+        float inputs:shaping:cone:angle = 90.0
+        float inputs:shaping:cone:softness = 0.1
+        float inputs:shaping:focus = 0.5
+        color3f inputs:shaping:focusTint = (1, 1, 1)
+
+        # ShadowAPI
+        color3f inputs:shadow:color = (0, 0, 0)
+        bool inputs:shadow:enable = true
+
+        double3 xformOp:translate = (0, 5, 0)
+        float3 xformOp:rotateXYZ = (-90, 0, 0)
+        uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:rotateXYZ"]
+    }
+
+    # =========================================================================
+    # RectLight - Rectangular area light
+    # =========================================================================
+    def RectLight "RectLight" (
+        prepend apiSchemas = ["ShapingAPI", "ShadowAPI"]
+    )
+    {
+        color3f inputs:color = (1, 0.98, 0.95)
+        float inputs:colorTemperature = 4500
+        float inputs:diffuse = 1.0
+        bool inputs:enableColorTemperature = false
+        float inputs:exposure = 1.0
+        float inputs:intensity = 500
+        bool inputs:normalize = true
+        float inputs:specular = 1.0
+
+        # RectLight specific
+        float inputs:width = 2.0
+        float inputs:height = 1.0
+        asset inputs:texture:file = @rect_light_texture.png@
+
+        # ShapingAPI
+        float inputs:shaping:cone:angle = 120.0
+        float inputs:shaping:cone:softness = 0.2
+
+        # ShadowAPI
+        bool inputs:shadow:enable = true
+        color3f inputs:shadow:color = (0.1, 0.1, 0.1)
+
+        double3 xformOp:translate = (5, 3, 0)
+        uniform token[] xformOpOrder = ["xformOp:translate"]
+    }
+
+    # =========================================================================
+    # SphereLight - Point/spherical light
+    # =========================================================================
+    def SphereLight "SphereLight" (
+        prepend apiSchemas = ["ShapingAPI", "ShadowAPI"]
+    )
+    {
+        color3f inputs:color = (1, 0.9, 0.7)
+        float inputs:colorTemperature = 3200
+        float inputs:diffuse = 1.0
+        bool inputs:enableColorTemperature = true
+        float inputs:exposure = 0.0
+        float inputs:intensity = 100
+        bool inputs:normalize = false
+        float inputs:specular = 1.0
+
+        # SphereLight specific
+        float inputs:radius = 0.1
+        bool inputs:treatAsPoint = false
+
+        # ShapingAPI (for spot light behavior)
+        float inputs:shaping:cone:angle = 45.0
+        float inputs:shaping:cone:softness = 0.25
+        float inputs:shaping:focus = 0.8
+        color3f inputs:shaping:focusTint = (1, 0.95, 0.9)
+
+        # ShadowAPI
+        bool inputs:shadow:enable = true
+        color3f inputs:shadow:color = (0, 0, 0)
+        float inputs:shadow:distance = 100.0
+        float inputs:shadow:falloff = 50.0
+        float inputs:shadow:falloffGamma = 2.2
+
+        double3 xformOp:translate = (-3, 2, 2)
+        uniform token[] xformOpOrder = ["xformOp:translate"]
+    }
+
+    # =========================================================================
+    # CylinderLight - Tube/linear light
+    # =========================================================================
+    def CylinderLight "CylinderLight" (
+        prepend apiSchemas = ["ShapingAPI", "ShadowAPI"]
+    )
+    {
+        color3f inputs:color = (0.9, 0.95, 1)
+        float inputs:colorTemperature = 7000
+        float inputs:diffuse = 1.0
+        bool inputs:enableColorTemperature = false
+        float inputs:exposure = 0.5
+        float inputs:intensity = 200
+        bool inputs:normalize = true
+        float inputs:specular = 1.0
+
+        # CylinderLight specific
+        float inputs:length = 2.0
+        float inputs:radius = 0.05
+        bool inputs:treatAsLine = false
+
+        # ShadowAPI
+        bool inputs:shadow:enable = true
+        color3f inputs:shadow:color = (0, 0, 0)
+
+        double3 xformOp:translate = (0, 3, -2)
+        float3 xformOp:rotateXYZ = (0, 0, 90)
+        uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:rotateXYZ"]
+    }
+
+    # =========================================================================
+    # DomeLight - Environment/IBL light
+    # =========================================================================
+    def DomeLight "DomeLight"
+    {
+        color3f inputs:color = (1, 1, 1)
+        float inputs:colorTemperature = 6500
+        float inputs:diffuse = 1.0
+        bool inputs:enableColorTemperature = false
+        float inputs:exposure = 0.0
+        float inputs:intensity = 1.0
+        bool inputs:normalize = false
+        float inputs:specular = 1.0
+
+        # DomeLight specific
+        asset inputs:texture:file = @environment.hdr@
+        token inputs:texture:format = "latlong"
+        float guideRadius = 1000.0
+
+        # Portal relationships (for interior scenes)
+        rel portals = [
+            </Lights/PortalLight1>,
+            </Lights/PortalLight2>
+        ]
+
+        token visibility = "inherited"
+        uniform token purpose = "default"
+    }
+
+    # =========================================================================
+    # PortalLight - Window/opening for DomeLight optimization
+    # =========================================================================
+    def PortalLight "PortalLight1"
+    {
+        float inputs:intensity = 1.0
+
+        # Portal dimensions (implicit rectangle)
+        double3 xformOp:translate = (5, 1.5, 0)
+        float3 xformOp:rotateXYZ = (0, -90, 0)
+        double3 xformOp:scale = (2, 3, 1)
+        uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:rotateXYZ", "xformOp:scale"]
+    }
+
+    def PortalLight "PortalLight2"
+    {
+        float inputs:intensity = 0.5
+
+        double3 xformOp:translate = (0, 2, 5)
+        double3 xformOp:scale = (4, 2, 1)
+        uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+    }
+
+    # =========================================================================
+    # Light with animation
+    # =========================================================================
+    def SphereLight "AnimatedLight"
+    {
+        color3f inputs:color.timeSamples = {
+            1: (1, 1, 1),
+            30: (1, 0, 0),
+            60: (0, 1, 0),
+            90: (0, 0, 1),
+            120: (1, 1, 1),
+        }
+        float inputs:intensity.timeSamples = {
+            1: 100,
+            60: 500,
+            120: 100,
+        }
+        float inputs:radius = 0.2
+
+        double3 xformOp:translate.timeSamples = {
+            1: (0, 2, 0),
+            60: (3, 2, 3),
+            120: (0, 2, 0),
+        }
+        uniform token[] xformOpOrder = ["xformOp:translate"]
+    }
+
+    # =========================================================================
+    # Light visibility/purpose variations
+    # =========================================================================
+    def SphereLight "RenderOnlyLight"
+    {
+        color3f inputs:color = (1, 1, 1)
+        float inputs:intensity = 100
+        float inputs:radius = 0.1
+        token visibility = "inherited"
+        uniform token purpose = "render"
+    }
+
+    def SphereLight "GuideLight"
+    {
+        color3f inputs:color = (0, 1, 0)
+        float inputs:intensity = 50
+        float inputs:radius = 0.2
+        token visibility = "inherited"
+        uniform token purpose = "guide"
+    }
+
+    def SphereLight "InvisibleLight"
+    {
+        color3f inputs:color = (1, 1, 1)
+        float inputs:intensity = 100
+        float inputs:radius = 0.1
+        token visibility = "invisible"
+    }
+}

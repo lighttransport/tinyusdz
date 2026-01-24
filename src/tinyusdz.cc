@@ -26,6 +26,7 @@
 #include "integerCoding.h"
 #include "io-util.hh"
 #include "lz4-compression.hh"
+#include "zstd-compression.hh"
 #include "pprinter.hh"
 #include "str-util.hh"
 #include "stream-reader.hh"
@@ -920,6 +921,51 @@ bool LoadUSDFromMemory(const uint8_t *addr, const size_t length,
                        const std::string &base_dir, Stage *stage,
                        std::string *warn, std::string *err,
                        const USDLoadOptions &options) {
+  // Check for zstd-compressed data first (file-level compression)
+  if (IsZstdCompressed(addr, length)) {
+    DCOUT("Detected as zstd-compressed USD.");
+#ifdef TINYUSDZ_WITH_ZSTD_COMPRESSION
+    // Get decompressed size for memory budget check
+    std::string zstd_err;
+    size_t decompressed_size = ZstdCompression::GetDecompressedSize(addr, length, &zstd_err);
+    if (decompressed_size == 0) {
+      if (err) {
+        (*err) += "Failed to get zstd decompressed size: " + zstd_err + "\n";
+      }
+      return false;
+    }
+
+    // Check against memory budget
+    size_t max_length = size_t(1024) * size_t(1024) * size_t(options.max_memory_limit_in_mb);
+    if (decompressed_size > max_length) {
+      if (err) {
+        (*err) += "Decompressed USD size (" + std::to_string(decompressed_size) +
+                  " bytes) exceeds memory limit (" + std::to_string(max_length) + " bytes)\n";
+      }
+      return false;
+    }
+
+    // Decompress
+    std::vector<uint8_t> decompressed_data;
+    if (!ZstdCompression::Decompress(addr, length, &decompressed_data, &zstd_err)) {
+      if (err) {
+        (*err) += "Failed to decompress zstd data: " + zstd_err + "\n";
+      }
+      return false;
+    }
+
+    // Recursively call LoadUSDFromMemory with decompressed data
+    return LoadUSDFromMemory(decompressed_data.data(), decompressed_data.size(),
+                            base_dir, stage, warn, err, options);
+#else
+    if (err) {
+      (*err) += "zstd-compressed USD file detected, but zstd compression support is not enabled. "
+                "Rebuild with TINYUSDZ_WITH_ZSTD_COMPRESSION=ON.\n";
+    }
+    return false;
+#endif
+  }
+
   if (IsUSDC(addr, length)) {
     DCOUT("Detected as USDC.");
     return LoadUSDCFromMemory(addr, length, base_dir, stage, warn, err,
@@ -1084,6 +1130,10 @@ bool IsUSDZ(const uint8_t *addr, const size_t length) {
   std::string err;
 
   return ParseUSDZHeader(addr, length, /* [out] assets */ nullptr, &warn, &err);
+}
+
+bool IsZstdCompressed(const uint8_t *addr, const size_t length) {
+  return ZstdCompression::IsZstdCompressed(addr, length);
 }
 
 bool IsUSD(const std::string &filename, std::string *detected_format) {

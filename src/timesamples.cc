@@ -991,6 +991,87 @@ bool TimeSamples::init(uint32_t type_id) {
   return true;
 }
 
+namespace {
+
+// Helper function to get underlying type_id from a type_id
+// For role types (color3f, point3f, etc.), returns the base type's type_id
+// For non-role types, returns the same type_id
+uint32_t GetUnderlyingTypeIdFromTypeId(uint32_t tyid) {
+  // Strip array bit if present
+  bool is_array = (tyid & TYPE_ID_1D_ARRAY_BIT) != 0;
+  uint32_t base_tyid = tyid & (~TYPE_ID_1D_ARRAY_BIT);
+
+  // Map role types to their underlying types
+  // This is needed because we don't have TypeTraits access at runtime
+#define MAP_ROLE_TO_UNDERLYING(role_id, underlying_id) \
+  if (base_tyid == role_id) return is_array ? (underlying_id | TYPE_ID_1D_ARRAY_BIT) : underlying_id;
+
+  // Texcoord types
+  MAP_ROLE_TO_UNDERLYING(TYPE_ID_TEXCOORD2H, TYPE_ID_HALF2)
+  MAP_ROLE_TO_UNDERLYING(TYPE_ID_TEXCOORD2F, TYPE_ID_FLOAT2)
+  MAP_ROLE_TO_UNDERLYING(TYPE_ID_TEXCOORD2D, TYPE_ID_DOUBLE2)
+  MAP_ROLE_TO_UNDERLYING(TYPE_ID_TEXCOORD3H, TYPE_ID_HALF3)
+  MAP_ROLE_TO_UNDERLYING(TYPE_ID_TEXCOORD3F, TYPE_ID_FLOAT3)
+  MAP_ROLE_TO_UNDERLYING(TYPE_ID_TEXCOORD3D, TYPE_ID_DOUBLE3)
+
+  // Normal types
+  MAP_ROLE_TO_UNDERLYING(TYPE_ID_NORMAL3H, TYPE_ID_HALF3)
+  MAP_ROLE_TO_UNDERLYING(TYPE_ID_NORMAL3F, TYPE_ID_FLOAT3)
+  MAP_ROLE_TO_UNDERLYING(TYPE_ID_NORMAL3D, TYPE_ID_DOUBLE3)
+
+  // Vector types
+  MAP_ROLE_TO_UNDERLYING(TYPE_ID_VECTOR3H, TYPE_ID_HALF3)
+  MAP_ROLE_TO_UNDERLYING(TYPE_ID_VECTOR3F, TYPE_ID_FLOAT3)
+  MAP_ROLE_TO_UNDERLYING(TYPE_ID_VECTOR3D, TYPE_ID_DOUBLE3)
+
+  // Point types
+  MAP_ROLE_TO_UNDERLYING(TYPE_ID_POINT3H, TYPE_ID_HALF3)
+  MAP_ROLE_TO_UNDERLYING(TYPE_ID_POINT3F, TYPE_ID_FLOAT3)
+  MAP_ROLE_TO_UNDERLYING(TYPE_ID_POINT3D, TYPE_ID_DOUBLE3)
+
+  // Color types
+  MAP_ROLE_TO_UNDERLYING(TYPE_ID_COLOR3H, TYPE_ID_HALF3)
+  MAP_ROLE_TO_UNDERLYING(TYPE_ID_COLOR3F, TYPE_ID_FLOAT3)
+  MAP_ROLE_TO_UNDERLYING(TYPE_ID_COLOR3D, TYPE_ID_DOUBLE3)
+  MAP_ROLE_TO_UNDERLYING(TYPE_ID_COLOR4H, TYPE_ID_HALF4)
+  MAP_ROLE_TO_UNDERLYING(TYPE_ID_COLOR4F, TYPE_ID_FLOAT4)
+  MAP_ROLE_TO_UNDERLYING(TYPE_ID_COLOR4D, TYPE_ID_DOUBLE4)
+
+  // Frame type
+  MAP_ROLE_TO_UNDERLYING(TYPE_ID_FRAME4D, TYPE_ID_MATRIX4D)
+
+#undef MAP_ROLE_TO_UNDERLYING
+
+  // Not a role type, return as-is
+  return tyid;
+}
+
+}  // namespace
+
+bool TimeSamples::cast_to_role_type(uint32_t role_type_id) {
+  if (_type_id == 0) {
+    return false;  // Not initialized
+  }
+
+  // If already the target type, nothing to do
+  if (_type_id == role_type_id) {
+    return true;
+  }
+
+  // Get underlying type_ids for both current and target types
+  uint32_t current_underlying = GetUnderlyingTypeIdFromTypeId(_type_id);
+  uint32_t target_underlying = GetUnderlyingTypeIdFromTypeId(role_type_id);
+
+  // Check if the underlying types match
+  if (current_underlying != target_underlying) {
+    return false;  // Incompatible types
+  }
+
+  // Safe to cast - just update the type_id
+  _type_id = role_type_id;
+  return true;
+}
+
 } // namespace value
 } // namespace tinyusdz
 

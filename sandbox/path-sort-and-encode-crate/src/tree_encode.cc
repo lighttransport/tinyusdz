@@ -5,6 +5,7 @@
 #include "crate/tree_encode.hh"
 #include <algorithm>
 #include <functional>
+#include <iostream>
 #include <sstream>
 #include <stdexcept>
 
@@ -81,7 +82,9 @@ std::unique_ptr<PathTreeNode> BuildPathTree(
 
   // Create root node (represents the root "/" path)
   // Note: In Crate format, root is implicit and starts with empty element
-  auto root = std::make_unique<PathTreeNode>("", 0, 0, false);
+  // CRITICAL: Root element must have a token in the token table
+  TokenIndex root_token_idx = token_table.GetOrCreateToken("", false);
+  auto root = std::make_unique<PathTreeNode>("", root_token_idx, 0, false);
   root->path_index = 0;  // Root path is always at index 0 if it exists
 
   // Map from path string to node (for quick lookup)
@@ -95,6 +98,9 @@ std::unique_ptr<PathTreeNode> BuildPathTree(
     std::string prim_part = path.prim_part();
     std::string prop_part = path.prop_part();
 
+    std::cerr << "DEBUG BuildPathTree: Processing path[" << path_idx << "]: prim='"
+              << prim_part << "', prop='" << prop_part << "'\n";
+
     // Skip root path - it's already represented by root node
     if (prim_part == "/" && prop_part.empty()) {
       continue;
@@ -102,8 +108,10 @@ std::unique_ptr<PathTreeNode> BuildPathTree(
 
     // Handle root with property (e.g., "/.prop")
     if (prim_part == "/" && !prop_part.empty()) {
+      std::cerr << "DEBUG BuildPathTree: Creating root property node with path_idx=" << path_idx << "\n";
       TokenIndex token_idx = token_table.GetOrCreateToken(prop_part, true);
       auto prop_node = new PathTreeNode(prop_part, token_idx, path_idx, true);
+      std::cerr << "DEBUG BuildPathTree: Created prop_node with path_index=" << prop_node->path_index << "\n";
       prop_node->parent = root.get();
 
       if (root->first_child == nullptr) {
@@ -119,6 +127,7 @@ std::unique_ptr<PathTreeNode> BuildPathTree(
     }
 
     // Split prim part into elements
+    // This handles both regular prims (/A/B/C) and variant paths (/A{varSet}{varSet=val}/B)
     std::vector<std::string> elements;
     std::string current_path;
 
@@ -132,9 +141,36 @@ std::unique_ptr<PathTreeNode> BuildPathTree(
           end = prim_part.size();
         }
 
-        std::string element = prim_part.substr(start, end - start);
-        if (!element.empty()) {
-          elements.push_back(element);
+        std::string segment = prim_part.substr(start, end - start);
+        if (!segment.empty()) {
+          // Check if segment contains variant selections (e.g., "Implicits{shapeVariant}")
+          // Split into base prim name and variant parts
+          size_t brace_pos = segment.find('{');
+          if (brace_pos != std::string::npos) {
+            // Extract base prim name (if any)
+            if (brace_pos > 0) {
+              std::string base_name = segment.substr(0, brace_pos);
+              elements.push_back(base_name);
+            }
+
+            // Extract all variant selections (can be multiple like {a}{a=b})
+            size_t var_start = brace_pos;
+            while (var_start < segment.size() && segment[var_start] == '{') {
+              size_t var_end = segment.find('}', var_start);
+              if (var_end == std::string::npos) {
+                // Malformed variant, just take the rest
+                elements.push_back(segment.substr(var_start));
+                break;
+              }
+              // Include the closing brace
+              std::string variant_part = segment.substr(var_start, var_end - var_start + 1);
+              elements.push_back(variant_part);
+              var_start = var_end + 1;
+            }
+          } else {
+            // No variant selection, just a regular prim name
+            elements.push_back(segment);
+          }
         }
 
         start = end + 1;
@@ -147,7 +183,15 @@ std::unique_ptr<PathTreeNode> BuildPathTree(
 
     for (size_t i = 0; i < elements.size(); ++i) {
       const std::string& element = elements[i];
-      current_path = current_path.empty() ? "/" + element : current_path + "/" + element;
+      // Variant elements (starting with '{') are appended directly without '/'
+      bool is_variant = !element.empty() && element[0] == '{';
+      if (current_path.empty()) {
+        current_path = "/" + element;
+      } else if (is_variant) {
+        current_path = current_path + element;  // No '/' before variant selections
+      } else {
+        current_path = current_path + "/" + element;
+      }
 
       // Check if node already exists
       auto it = path_to_node.find(current_path);
@@ -158,7 +202,9 @@ std::unique_ptr<PathTreeNode> BuildPathTree(
 
       // Create new node
       TokenIndex token_idx = token_table.GetOrCreateToken(element, false);
-      PathIndex node_path_idx = (i == elements.size() - 1 && prop_part.empty()) ? path_idx : 0;
+      // Use UINT64_MAX as sentinel for intermediate nodes that don't have their own path index
+      // This avoids conflicts with path_index=0 which is reserved for the root "/"
+      PathIndex node_path_idx = (i == elements.size() - 1 && prop_part.empty()) ? path_idx : UINT64_MAX;
 
       auto new_node = new PathTreeNode(element, token_idx, node_path_idx, false);
       new_node->parent = parent_node;
@@ -248,6 +294,8 @@ void WalkTreeDepthFirst(
     current_pos = path_indexes.size();
 
     // Add this node
+    std::cerr << "DEBUG tree_encode: Adding node '" << node->element_name
+              << "' with path_index=" << node->path_index << "\n";
     path_indexes.push_back(node->path_index);
     element_token_indexes.push_back(node->element_token_index);
 
@@ -302,6 +350,7 @@ CompressedPathTree EncodePaths(const std::vector<SimplePath>& sorted_paths) {
 
   // Start from root's children (root itself is implicit in the structure)
   // But we need to add root as the first node
+  std::cerr << "DEBUG tree_encode: Adding root node with path_index=" << root->path_index << "\n";
   result.path_indexes.push_back(root->path_index);
   result.element_token_indexes.push_back(root->element_token_index);
   result.jumps.push_back(-1);  // Root always has children (or is a leaf if no children)

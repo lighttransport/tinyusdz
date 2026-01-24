@@ -1,0 +1,284 @@
+#usda 1.0
+(
+    doc = "Enum roundtrip test part 1 - Testing all enum values from enum-handlers.cc"
+    defaultPrim = "EnumTests"
+)
+
+def Xform "EnumTests"
+{
+    # Axis enum tests (X, Y, Z)
+    def Cylinder "AxisX"
+    {
+        uniform token axis = "X"
+        double height = 1.0
+        double radius = 0.25
+    }
+
+    def Cylinder "AxisY"
+    {
+        uniform token axis = "Y"
+        double height = 1.0
+        double radius = 0.25
+    }
+
+    def Cylinder "AxisZ"
+    {
+        uniform token axis = "Z"
+        double height = 1.0
+        double radius = 0.25
+    }
+
+    # Visibility enum tests (inherited, invisible)
+    def Xform "VisibilityInherited"
+    {
+        token visibility = "inherited"
+    }
+
+    def Xform "VisibilityInvisible"
+    {
+        token visibility = "invisible"
+    }
+
+    # Purpose enum tests (default, render, proxy, guide)
+    def Xform "PurposeDefault"
+    {
+        uniform token purpose = "default"
+    }
+
+    def Xform "PurposeRender"
+    {
+        uniform token purpose = "render"
+    }
+
+    def Xform "PurposeProxy"
+    {
+        uniform token purpose = "proxy"
+    }
+
+    def Xform "PurposeGuide"
+    {
+        uniform token purpose = "guide"
+    }
+
+    # Orientation enum tests (rightHanded, leftHanded)
+    def Mesh "OrientationRightHanded"
+    {
+        uniform token orientation = "rightHanded"
+        int[] faceVertexCounts = [3]
+        int[] faceVertexIndices = [0, 1, 2]
+        point3f[] points = [(0, 0, 0), (1, 0, 0), (0.5, 1, 0)]
+    }
+
+    def Mesh "OrientationLeftHanded"
+    {
+        uniform token orientation = "leftHanded"
+        int[] faceVertexCounts = [3]
+        int[] faceVertexIndices = [0, 1, 2]
+        point3f[] points = [(0, 0, 1), (1, 0, 1), (0.5, 1, 1)]
+    }
+
+    # SubdivisionScheme enum tests
+    def Mesh "SubdivCatmullClark"
+    {
+        uniform token subdivisionScheme = "catmullClark"
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0, 1, 2, 3]
+        point3f[] points = [(0, 0, 2), (1, 0, 2), (1, 1, 2), (0, 1, 2)]
+    }
+
+    def Mesh "SubdivLoop"
+    {
+        uniform token subdivisionScheme = "loop"
+        int[] faceVertexCounts = [3]
+        int[] faceVertexIndices = [0, 1, 2]
+        point3f[] points = [(0, 0, 3), (1, 0, 3), (0.5, 1, 3)]
+    }
+
+    def Mesh "SubdivBilinear"
+    {
+        uniform token subdivisionScheme = "bilinear"
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0, 1, 2, 3]
+        point3f[] points = [(0, 0, 4), (1, 0, 4), (1, 1, 4), (0, 1, 4)]
+    }
+
+    def Mesh "SubdivNone"
+    {
+        uniform token subdivisionScheme = "none"
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0, 1, 2, 3]
+        point3f[] points = [(0, 0, 5), (1, 0, 5), (1, 1, 5), (0, 1, 5)]
+    }
+
+    # InterpolateBoundary enum tests
+    def Mesh "InterpolateBoundaryNone"
+    {
+        uniform token interpolateBoundary = "none"
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0, 1, 2, 3]
+        point3f[] points = [(0, 0, 6), (1, 0, 6), (1, 1, 6), (0, 1, 6)]
+    }
+
+    def Mesh "InterpolateBoundaryEdgeOnly"
+    {
+        uniform token interpolateBoundary = "edgeOnly"
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0, 1, 2, 3]
+        point3f[] points = [(0, 0, 7), (1, 0, 7), (1, 1, 7), (0, 1, 7)]
+    }
+
+    def Mesh "InterpolateBoundaryEdgeAndCorner"
+    {
+        uniform token interpolateBoundary = "edgeAndCorner"
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0, 1, 2, 3]
+        point3f[] points = [(0, 0, 8), (1, 0, 8), (1, 1, 8), (0, 1, 8)]
+    }
+
+    # BasisCurves Type enum tests (cubic, linear)
+    def BasisCurves "CurveTypeCubic"
+    {
+        uniform token type = "cubic"
+        uniform token basis = "bezier"
+        uniform token wrap = "nonperiodic"
+        int[] curveVertexCounts = [4]
+        point3f[] points = [(0, 0, 9), (1, 1, 9), (2, 1, 9), (3, 0, 9)]
+    }
+
+    def BasisCurves "CurveTypeLinear"
+    {
+        uniform token type = "linear"
+        uniform token wrap = "nonperiodic"
+        int[] curveVertexCounts = [3]
+        point3f[] points = [(0, 0, 10), (1, 1, 10), (2, 0, 10)]
+    }
+
+    # BasisCurves Basis enum tests
+    def BasisCurves "CurveBasisBezier"
+    {
+        uniform token type = "cubic"
+        uniform token basis = "bezier"
+        uniform token wrap = "nonperiodic"
+        int[] curveVertexCounts = [4]
+        point3f[] points = [(0, 0, 11), (1, 1, 11), (2, 1, 11), (3, 0, 11)]
+    }
+
+    def BasisCurves "CurveBasisBspline"
+    {
+        uniform token type = "cubic"
+        uniform token basis = "bspline"
+        uniform token wrap = "nonperiodic"
+        int[] curveVertexCounts = [4]
+        point3f[] points = [(0, 0, 12), (1, 1, 12), (2, 1, 12), (3, 0, 12)]
+    }
+
+    def BasisCurves "CurveBasisCatmullRom"
+    {
+        uniform token type = "cubic"
+        uniform token basis = "catmullRom"
+        uniform token wrap = "nonperiodic"
+        int[] curveVertexCounts = [4]
+        point3f[] points = [(0, 0, 13), (1, 1, 13), (2, 1, 13), (3, 0, 13)]
+    }
+
+    # BasisCurves Wrap enum tests
+    def BasisCurves "CurveWrapNonperiodic"
+    {
+        uniform token type = "cubic"
+        uniform token basis = "bspline"
+        uniform token wrap = "nonperiodic"
+        int[] curveVertexCounts = [4]
+        point3f[] points = [(0, 0, 14), (1, 1, 14), (2, 1, 14), (3, 0, 14)]
+    }
+
+    def BasisCurves "CurveWrapPeriodic"
+    {
+        uniform token type = "cubic"
+        uniform token basis = "bspline"
+        uniform token wrap = "periodic"
+        int[] curveVertexCounts = [4]
+        point3f[] points = [(0, 0, 15), (1, 1, 15), (2, 1, 15), (1, -1, 15)]
+    }
+
+    def BasisCurves "CurveWrapPinned"
+    {
+        uniform token type = "cubic"
+        uniform token basis = "bspline"
+        uniform token wrap = "pinned"
+        int[] curveVertexCounts = [4]
+        point3f[] points = [(0, 0, 16), (1, 1, 16), (2, 1, 16), (3, 0, 16)]
+    }
+
+    # Camera Projection enum tests
+    def Camera "CameraProjectionPerspective"
+    {
+        token projection = "perspective"
+        float focalLength = 50.0
+    }
+
+    def Camera "CameraProjectionOrthographic"
+    {
+        token projection = "orthographic"
+        float focalLength = 50.0
+    }
+
+    # Camera StereoRole enum tests
+    def Camera "CameraStereoMono"
+    {
+        uniform token stereoRole = "mono"
+        float focalLength = 35.0
+    }
+
+    def Camera "CameraStereoLeft"
+    {
+        uniform token stereoRole = "left"
+        float focalLength = 35.0
+    }
+
+    def Camera "CameraStereoRight"
+    {
+        uniform token stereoRole = "right"
+        float focalLength = 35.0
+    }
+
+    # GeomSubset ElementType enum tests
+    def Mesh "MeshWithSubsets"
+    {
+        int[] faceVertexCounts = [4, 4]
+        int[] faceVertexIndices = [0, 1, 2, 3, 4, 5, 6, 7]
+        point3f[] points = [
+            (0, 0, 17), (1, 0, 17), (1, 1, 17), (0, 1, 17),
+            (1, 0, 17), (2, 0, 17), (2, 1, 17), (1, 1, 17)
+        ]
+
+        def GeomSubset "FaceSubset"
+        {
+            uniform token elementType = "face"
+            int[] indices = [0]
+        }
+
+        def GeomSubset "PointSubset"
+        {
+            uniform token elementType = "point"
+            int[] indices = [0, 1, 2, 3]
+        }
+
+        def GeomSubset "EdgeSubset"
+        {
+            uniform token elementType = "edge"
+            int[] indices = [0, 1]
+        }
+    }
+
+    # Material shader enum tests
+    def Material "MaterialOpacityMode"
+    {
+        def Shader "Surface"
+        {
+            uniform token info:id = "UsdPreviewSurface"
+            color3f inputs:diffuseColor = (0.8, 0.2, 0.2)
+            float inputs:opacity = 0.5
+            token outputs:surface
+        }
+    }
+}
