@@ -7,10 +7,6 @@
 #include "composition.hh"
 #include "prim-types.hh"
 
-#if defined(TINYUSDZ_ENABLE_THREAD)
-#include <mutex>
-#endif
-
 namespace tinyusdz {
 
 // TODO: Use LayerMetas?
@@ -23,6 +19,14 @@ class Stage {
  public:
   // pxrUSD compat API ----------------------------------------
   static Stage CreateInMemory() { return Stage(); }
+
+  // Special member functions
+  Stage() = default;
+  Stage(const Stage&) = default;
+  Stage& operator=(const Stage&) = default;
+  Stage(Stage&&) = default;
+  Stage& operator=(Stage&&) = default;
+  ~Stage() = default;
 
   ///
   /// Traverse by depth-first order.
@@ -50,8 +54,9 @@ class Stage {
   ///
   /// Dump Stage as ASCII(USDA) representation.
   /// @param[in] relative_path (optional) Print Path as relative Path.
+  /// @param[in] parallel (optional) Use parallel printing for Prims.
   ///
-  std::string ExportToString(bool relative_path = false) const;
+  std::string ExportToString(bool relative_path = false, bool parallel = false) const;
 
   // pxrUSD compat API end -------------------------------------
 
@@ -242,11 +247,14 @@ class Stage {
     return _err;
   }
 
- private:
+  ///
+  /// Estimate memory usage of this Stage in bytes
+  ///
+  /// @return Estimated memory usage in bytes
+  ///
+  size_t estimate_memory_usage() const;
 
-#if defined(TINYUSDZ_ENABLE_THREAD)
-  mutable std::mutex _mutex;
-#endif
+ private:
 
 #if 0 // Deprecated. remove.
   ///

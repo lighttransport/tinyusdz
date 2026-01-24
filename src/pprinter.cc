@@ -8,11 +8,16 @@
 #include "pprinter.hh"
 
 #include "prim-pprint.hh"
+#include "prim-pprint-parallel.hh"
 #include "prim-types.hh"
+#include "layer.hh"
 #include "str-util.hh"
 #include "tiny-format.hh"
+#include "usdLux.hh"
 #include "usdShade.hh"
+#include "usdMtlx.hh"
 #include "value-pprint.hh"
+#include "timesamples-pprint.hh"
 //
 #include "common-macros.inc"
 
@@ -44,7 +49,7 @@
 // TODO:
 // - [ ] Print properties based on lexcographically(USDA)
 // - [ ] Refactor variantSet stmt print.
-// - [ ] wrap float/double print with `dtos` for accurate float/double value
+// - [ ] Implement our own dtos
 // stringify.
 
 namespace tinyusdz {
@@ -69,8 +74,8 @@ inline std::string dtos(const float v) {
 #endif
 
 inline std::string dtos(const double v) {
-  char buf[128];
-  dtoa_milo(v, buf);
+  char buf[384];
+  *dtoa_milo(v, buf) = '\0';
 
   return std::string(buf);
 }
@@ -246,6 +251,21 @@ std::string print_typed_timesamples(const TypedTimeSamples<T> &v,
 
   ss << "{\n";
 
+#ifdef TINYUSDZ_USE_TIMESAMPLES_SOA
+  const auto &times = v.get_times();
+  const auto &values = v.get_values();
+  const auto &blocked = v.get_blocked();
+
+  for (size_t i = 0; i < times.size(); i++) {
+    ss << pprint::Indent(indent + 1) << times[i] << ": ";
+    if (blocked[i]) {
+      ss << "None";
+    } else {
+      ss << values[i];
+    }
+    ss << ",\n";
+  }
+#else
   const auto &samples = v.get_samples();
 
   for (size_t i = 0; i < samples.size(); i++) {
@@ -257,6 +277,7 @@ std::string print_typed_timesamples(const TypedTimeSamples<T> &v,
     }
     ss << ",\n";
   }
+#endif
 
   ss << pprint::Indent(indent) << "}\n";
 
@@ -270,6 +291,21 @@ std::string print_typed_token_timesamples(const TypedTimeSamples<T> &v,
 
   ss << "{\n";
 
+#ifdef TINYUSDZ_USE_TIMESAMPLES_SOA
+  const auto &times = v.get_times();
+  const auto &values = v.get_values();
+  const auto &blocked = v.get_blocked();
+
+  for (size_t i = 0; i < times.size(); i++) {
+    ss << pprint::Indent(indent + 1) << times[i] << ": ";
+    if (blocked[i]) {
+      ss << "None";
+    } else {
+      ss << quote(to_string(values[i]));
+    }
+    ss << ",\n";
+  }
+#else
   const auto &samples = v.get_samples();
 
   for (size_t i = 0; i < samples.size(); i++) {
@@ -281,6 +317,7 @@ std::string print_typed_token_timesamples(const TypedTimeSamples<T> &v,
     }
     ss << ",\n";
   }
+#endif
 
   ss << pprint::Indent(indent) << "}\n";
 
@@ -293,6 +330,21 @@ static std::string print_str_timesamples(const TypedTimeSamples<std::string> &v,
 
   ss << "{\n";
 
+#ifdef TINYUSDZ_USE_TIMESAMPLES_SOA
+  const auto &times = v.get_times();
+  const auto &values = v.get_values();
+  const auto &blocked = v.get_blocked();
+
+  for (size_t i = 0; i < times.size(); i++) {
+    ss << pprint::Indent(indent + 1) << times[i] << ": ";
+    if (blocked[i]) {
+      ss << "None";
+    } else {
+      ss << buildEscapedAndQuotedStringForUSDA(values[i]);
+    }
+    ss << ",\n";
+  }
+#else
   const auto &samples = v.get_samples();
 
   for (size_t i = 0; i < samples.size(); i++) {
@@ -304,6 +356,7 @@ static std::string print_str_timesamples(const TypedTimeSamples<std::string> &v,
     }
     ss << ",\n";
   }
+#endif
 
   ss << pprint::Indent(indent) << "}\n";
 
@@ -435,13 +488,14 @@ std::string print_relationship(const Relationship &rel,
 
   ss << pprint::Indent(indent);
 
-  if (custom) {
-    ss << "custom ";
-  }
-
-  // List editing
+  // USD spec order: [listop] [custom] [variability] rel name
+  // List editing qualifier comes first
   if (qual != ListEditQual::ResetToExplicit) {
     ss << to_string(qual) << " ";
+  }
+
+  if (custom) {
+    ss << "custom ";
   }
 
   if (rel.is_varying_authored()) {
@@ -486,43 +540,43 @@ std::string print_payload(const prim::PayloadList &payload,
 std::string print_prim_metas(const PrimMeta &meta, const uint32_t indent) {
   std::stringstream ss;
 
-  if (meta.active) {
+  if (meta.has_active()) {
     ss << pprint::Indent(indent)
-       << "active = " << to_string(meta.active.value()) << "\n";
+       << "active = " << to_string(meta.get_active()) << "\n";
   }
 
-  if (meta.clips) {
-    ss << print_customData(meta.clips.value(), "clips", indent);
+  if (meta.has_clips()) {
+    ss << print_customData(meta.get_clips(), "clips", indent);
   }
 
-  if (meta.instanceable) {
+  if (meta.has_instanceable()) {
     ss << pprint::Indent(indent)
-       << "instanceable = " << to_string(meta.instanceable.value()) << "\n";
+       << "instanceable = " << to_string(meta.get_instanceable()) << "\n";
   }
 
-  if (meta.hidden) {
+  if (meta.has_hidden()) {
     ss << pprint::Indent(indent)
-       << "hidden = " << to_string(meta.hidden.value()) << "\n";
+       << "hidden = " << to_string(meta.get_hidden()) << "\n";
   }
 
-  if (meta.kind) {
+  if (meta.has_kind()) {
     ss << pprint::Indent(indent) << "kind = " << quote(meta.get_kind()) << "\n";
   }
 
   // TODO: UTF-8 ready pprint
-  if (meta.sceneName) {
+  if (meta.has_sceneName()) {
     ss << pprint::Indent(indent)
-       << "sceneName = " << quote(meta.sceneName.value()) << "\n";
+       << "sceneName = " << quote(meta.get_sceneName()) << "\n";
   }
 
   // TODO: UTF-8 ready pprint
-  if (meta.displayName) {
+  if (meta.has_displayName()) {
     ss << pprint::Indent(indent)
-       << "displayName = " << quote(meta.displayName.value()) << "\n";
+       << "displayName = " << quote(meta.get_displayName()) << "\n";
   }
 
-  if (meta.assetInfo) {
-    ss << print_customData(meta.assetInfo.value(), "assetInfo", indent);
+  if (meta.has_assetInfo()) {
+    ss << print_customData(meta.get_assetInfo(), "assetInfo", indent);
   }
 
   if (meta.inherits) {
@@ -570,8 +624,8 @@ std::string print_prim_metas(const PrimMeta &meta, const uint32_t indent) {
   }
 
   // TODO: only print in usdShade Prims.
-  if (meta.sdrMetadata) {
-    ss << print_customData(meta.sdrMetadata.value(), "sdrMetadata", indent);
+  if (meta.has_sdrMetadata()) {
+    ss << print_customData(meta.get_sdrMetadata(), "sdrMetadata", indent);
   }
 
   if (meta.variants) {
@@ -599,8 +653,8 @@ std::string print_prim_metas(const PrimMeta &meta, const uint32_t indent) {
     ss << "\n";
   }
 
-  if (meta.apiSchemas) {
-    auto schemas = meta.apiSchemas.value();
+  if (meta.has_apiSchemas()) {
+    auto schemas = meta.get_apiSchemas();
 
     if (schemas.names.size()) {
       ss << pprint::Indent(indent) << to_string(schemas.listOpQual)
@@ -626,23 +680,35 @@ std::string print_prim_metas(const PrimMeta &meta, const uint32_t indent) {
     }
   }
 
-  if (meta.doc) {
-    ss << pprint::Indent(indent) << "doc = " << to_string(meta.doc.value())
+  if (meta.has_doc()) {
+    ss << pprint::Indent(indent) << "doc = " << to_string(meta.get_doc())
        << "\n";
   }
 
-  if (meta.comment) {
-    ss << pprint::Indent(indent)
-       << "comment = " << to_string(meta.comment.value()) << "\n";
+  if (meta.has_comment()) {
+    // Output with or without "comment =" prefix based on how it was parsed
+    ss << pprint::Indent(indent);
+    if (meta.get_comment().has_comment_prefix) {
+      ss << "comment = ";
+    }
+    ss << to_string(meta.get_comment()) << "\n";
   }
 
-  if (meta.customData) {
-    ss << print_customData(meta.customData.value(), "customData", indent);
+  if (meta.has_customData()) {
+    ss << print_customData(meta.get_customData(), "customData", indent);
   }
 
   for (const auto &item : meta.unregisteredMetas) {
-    // do not quote
-    ss << pprint::Indent(indent) << item.first << " = " << item.second << "\n";
+    // Quote string values, but keep non-string values as-is
+    std::string value_str = item.second;
+    // Check if the value looks like a string (unquoted) by checking if it needs quoting
+    // String values that are not already quoted should be quoted
+    if (!value_str.empty() && value_str.front() != '"' && value_str.front() != '\'' &&
+        value_str.front() != '[' && !std::isdigit(value_str.front()) &&
+        value_str != "None" && value_str.find("(") == std::string::npos) {
+      value_str = quote(value_str);
+    }
+    ss << pprint::Indent(indent) << item.first << " = " << value_str << "\n";
   }
 
   // TODO: deprecate meta.meta and remove it.
@@ -660,75 +726,88 @@ std::string print_prim_metas(const PrimMeta &meta, const uint32_t indent) {
 std::string print_attr_metas(const AttrMeta &meta, const uint32_t indent) {
   std::stringstream ss;
 
-  if (meta.interpolation) {
+  if (meta.has_interpolation()) {
     ss << pprint::Indent(indent)
-       << "interpolation = " << quote(to_string(meta.interpolation.value()))
+       << "interpolation = " << to_string(meta.get_interpolation())
        << "\n";
   }
 
-  if (meta.elementSize) {
+  if (meta.has_elementSize()) {
     ss << pprint::Indent(indent)
-       << "elementSize = " << to_string(meta.elementSize.value()) << "\n";
+       << "elementSize = " << to_string(meta.get_elementSize()) << "\n";
   }
 
-  if (meta.bindMaterialAs) {
+  if (meta.has_bindMaterialAs()) {
     ss << pprint::Indent(indent)
-       << "bindMaterialAs = " << quote(to_string(meta.bindMaterialAs.value()))
+       << "bindMaterialAs = " << to_string(meta.get_bindMaterialAs())
        << "\n";
   }
 
-  if (meta.connectability) {
+  if (meta.has_connectability()) {
     ss << pprint::Indent(indent)
-       << "connectability = " << quote(to_string(meta.connectability.value()))
+       << "connectability = " << to_string(meta.get_connectability())
        << "\n";
   }
 
-  if (meta.displayName) {
+  if (meta.has_displayName()) {
     ss << pprint::Indent(indent)
-       << "displayName = " << quote(meta.displayName.value()) << "\n";
+       << "displayName = " << quote(meta.get_displayName()) << "\n";
   }
 
-  if (meta.displayGroup) {
+  if (meta.has_displayGroup()) {
     ss << pprint::Indent(indent)
-       << "displayGroup = " << quote(meta.displayGroup.value()) << "\n";
+       << "displayGroup = " << quote(meta.get_displayGroup()) << "\n";
   }
 
-  if (meta.outputName) {
+  if (meta.has_outputName()) {
     ss << pprint::Indent(indent)
-       << "outputName = " << quote(to_string(meta.outputName.value())) << "\n";
+       << "outputName = " << to_string(meta.get_outputName()) << "\n";
   }
 
-  if (meta.renderType) {
+  if (meta.has_renderType()) {
     ss << pprint::Indent(indent)
-       << "renderType = " << quote(to_string(meta.renderType.value())) << "\n";
+       << "renderType = " << to_string(meta.get_renderType()) << "\n";
   }
 
-  if (meta.sdrMetadata) {
+  if (meta.has_sdrMetadata()) {
     ss << pprint::Indent(indent)
-       << print_customData(meta.sdrMetadata.value(), "sdrMetadata", indent);
+       << print_customData(meta.get_sdrMetadata(), "sdrMetadata", indent);
   }
 
-  if (meta.hidden) {
+  if (meta.has_hidden()) {
     ss << pprint::Indent(indent)
-       << "hidden = " << to_string(meta.hidden.value()) << "\n";
+       << "hidden = " << to_string(meta.get_hidden()) << "\n";
   }
 
-  if (meta.comment) {
+  if (meta.has_comment()) {
     ss << pprint::Indent(indent)
-       << "comment = " << to_string(meta.comment.value()) << "\n";
+       << "comment = " << to_string(meta.get_comment()) << "\n";
   }
 
-  if (meta.weight) {
-    ss << pprint::Indent(indent) << "weight = " << dtos(meta.weight.value())
+  if (meta.has_weight()) {
+    ss << pprint::Indent(indent) << "weight = " << dtos(meta.get_weight())
        << "\n";
   }
 
-  if (meta.customData) {
-    ss << print_customData(meta.customData.value(), "customData", indent);
+  if (meta.has_customData()) {
+    ss << print_customData(meta.get_customData(), "customData", indent);
   }
 
   // other user defined metadataum.
-  for (const auto &item : meta.meta) {
+  auto is_known_key = [](const std::string &key) {
+    // Keys already printed above
+    constexpr const char* known[] = {
+      "interpolation", "elementSize", "bindMaterialAs", "connectability",
+      "displayName", "displayGroup", "outputName", "renderType",
+      "sdrMetadata", "hidden", "comment", "weight", "customData"
+    };
+    for (const char* k : known) {
+      if (key == k) return true;
+    }
+    return false;
+  };
+  for (const auto &item : meta.data()) {
+    if (is_known_key(item.first)) continue;
     // attribute meta does not emit type_name
     ss << print_meta(item.second, indent, /* emit_type_name */false, item.first);
   }
@@ -757,6 +836,7 @@ std::string print_typed_attr(const TypedAttribute<Animatable<T>> &attr,
     has_default = (pv && pv.value().has_default());
     has_timesamples = (pv && pv.value().has_timesamples());
     is_timesamples = (pv && pv.value().is_timesamples());
+    (void)is_timesamples;  // Used only in debug logging
 
     DCOUT("name " << name);
     DCOUT("is_value_empty " << is_value_empty);
@@ -766,15 +846,24 @@ std::string print_typed_attr(const TypedAttribute<Animatable<T>> &attr,
     DCOUT("has_default " << has_default);
 
     //
-    // Emit default value(includes ValueBlock and empty definition) and metada
+    // Emit default value(includes ValueBlock and empty definition) and metadata
     //
     // float a METADATA
     // float a = None METADATA
     // float a = 1.5 METADATA
-    // 
+    //
     // Also emit this line if the attribute contains metadata
     // Do not emit when Attribute is connection only or timesamples only.
-    if (attr.metas().authored() || attr.is_blocked() || has_default || is_value_empty || ((!is_connection) && (!is_timesamples))) {
+    // Note: has_default can be true even when has_timesamples is true if _has_value
+    // was set (even without an actual default). Use has_timesamples to check if
+    // timeSamples exist, not is_timesamples (which returns false when has_default is true).
+    bool should_emit_declaration =
+        attr.metas().authored() ||
+        attr.is_blocked() ||
+        (has_default && !has_timesamples) ||  // Only emit default if no timeSamples
+        is_value_empty ||
+        ((!is_connection) && (!has_timesamples));
+    if (should_emit_declaration) {
 
       ss << pprint::Indent(indent);
       ss << value::TypeTraits<T>::type_name() << " " << name;
@@ -784,10 +873,15 @@ std::string print_typed_attr(const TypedAttribute<Animatable<T>> &attr,
       } else if (has_default) {
         T a;
         if (pv.value().get_scalar(&a)) {
-          ss << " = " << a;
-        } else {
-          ss << " = [InternalError]";
+          std::stringstream val_ss;
+          val_ss << a;
+          std::string val_str = val_ss.str();
+          // Only print " = value" if value prints something
+          if (!val_str.empty()) {
+            ss << " = " << val_str;
+          }
         }
+        // Else: no value to print (skip " = [InternalError]" for graceful handling)
       } else { // is_value_empty
       }
 
@@ -1041,18 +1135,30 @@ std::string print_typed_attr(
 
     bool is_connection = attr.is_connection();
     bool is_timesamples = v.is_timesamples();
-    bool has_value = attr.has_value();
+    bool has_timesamples = v.has_timesamples();
+    // Note: attr.has_value() always returns true for TypedAttributeWithFallback (due to fallback)
+    // Use v.has_value() to check if Animatable has an explicit default value
+    bool has_default = v.has_value();
     bool is_value_empty = attr.is_value_empty();
+    (void)is_timesamples;  // Used only in debug logging
 
     DCOUT("name " << name);
     DCOUT("is_value_empty " << attr.is_value_empty());
     DCOUT("is_connection " << is_connection);
     DCOUT("is_timesamples " << is_timesamples);
+    DCOUT("has_timesamples " << has_timesamples);
     DCOUT("is_value_empty " << is_value_empty);
-    DCOUT("has_value " << has_value);
+    DCOUT("has_default " << has_default);
 
-    if (attr.metas().authored() || has_value || is_value_empty || ((!is_connection) && (!is_timesamples))) {
-      if (has_value) {
+    // Emit declaration line if:
+    // - Has metadata to emit
+    // - Has explicit default value (in the Animatable, not just fallback)
+    // - Is empty declaration (e.g., "float myval;")
+    // - Not a connection-only and not timeSamples-only attribute
+    // Note: Use has_timesamples instead of is_timesamples because is_timesamples
+    // returns false when there's a default/fallback value (even if timeSamples exist)
+    if (attr.metas().authored() || has_default || is_value_empty || ((!is_connection) && (!has_timesamples))) {
+      if (has_default) {
         ss << pprint::Indent(indent);
         ss << value::TypeTraits<T>::type_name() << " " << name;
         ss << " = " << print_animatable_default(v, indent);
@@ -1287,19 +1393,16 @@ std::string print_typed_token_attr(const TypedAttributeWithFallback<T> &attr,
 
 std::string print_timesamples(const value::TimeSamples &v,
                               const uint32_t indent) {
-  std::stringstream ss;
+  // Use the new pprint_timesamples function from timesamples-pprint
+  // which handles both POD and non-POD cases efficiently
+  std::string result = pprint_timesamples(v, indent);
 
-  ss << "{\n";
-
-  for (size_t i = 0; i < v.size(); i++) {
-    ss << pprint::Indent(indent + 1);
-    ss << v.get_samples()[i].t << ": "
-       << value::pprint_value(v.get_samples()[i].value);
-    ss << ",\n";  // USDA allow ',' for the last item
+  // Add a trailing newline if not present (for consistency with other pprinter functions)
+  if (!result.empty() && result.back() != '\n') {
+    result += '\n';
   }
-  ss << pprint::Indent(indent) << "}\n";
 
-  return ss.str();
+  return result;
 }
 
 std::string print_rel_prop(const Property &prop, const std::string &name,
@@ -1312,13 +1415,14 @@ std::string print_rel_prop(const Property &prop, const std::string &name,
 
   ss << pprint::Indent(indent);
 
-  if (prop.has_custom()) {
-    ss << "custom ";
-  }
-
-  // List editing
+  // USD spec order: [listop] [custom] [variability] rel name
+  // List editing qualifier comes first
   if (prop.get_listedit_qual() != ListEditQual::ResetToExplicit) {
     ss << to_string(prop.get_listedit_qual()) << " ";
+  }
+
+  if (prop.has_custom()) {
+    ss << "custom ";
   }
 
   const Relationship &rel = prop.get_relationship();
@@ -1352,7 +1456,12 @@ std::string print_prop(const Property &prop, const std::string &prop_name,
     // timeSamples and connect cannot have attrMeta
     // 
 
-    if (attr.metas().authored() || attr.has_value()) {
+    // Print attribute if it has metadata, has a value, OR is just typed (but not connection-only)
+    // NOTE: Some attributes (like outputs:out) may be typed but not have a value
+    // Skip printing declaration if this is a connection-only attribute (will be printed in the connection section below)
+    bool is_connection_only = attr.has_connections() && !attr.has_value() && !attr.has_timesamples() && !attr.metas().authored();
+
+    if ((attr.metas().authored() || attr.has_value() || !attr.type_name().empty()) && !is_connection_only) {
 
       ss << pprint::Indent(indent);
 
@@ -1377,13 +1486,16 @@ std::string print_prop(const Property &prop, const std::string &prop_name,
       } else {
         // has value content
 
-        ss << " = ";
-
         if (attr.is_blocked()) {
-          ss << "None";
+          ss << " = None";
         } else {
           // default value
-          ss << value::pprint_value(attr.get_var().value_raw());
+          std::string value_str = value::pprint_value(attr.get_var().value_raw());
+          // Only print " = value" if value_str is not empty
+          // (value could be typed but empty when only timeSamples are set)
+          if (!value_str.empty()) {
+            ss << " = " << value_str;
+          }
         }
       }
 
@@ -1396,7 +1508,11 @@ std::string print_prop(const Property &prop, const std::string &prop_name,
       ss << "\n";
     }
 
-    if (attr.has_timesamples() && (attr.variability() != Variability::Uniform)) {
+    // Check if timeSamples were authored (even if empty)
+    // An authored but empty timeSamples will have a valid type_id but size=0
+    bool has_timesamples_authored = (attr.has_timesamples() || attr.get_var().ts_raw().type_id() != 0);
+
+    if (has_timesamples_authored && (attr.variability() != Variability::Uniform)) {
 
       ss << pprint::Indent(indent);
 
@@ -1576,7 +1692,10 @@ std::string print_xformOps(const std::vector<XformOp> &xformOps,
         ss << "\n";
       }
 
-      if (xformOp.has_timesamples()) {
+      // Check if timeSamples were authored (even if empty)
+      bool has_timesamples_authored = (xformOp.has_timesamples() || xformOp.get_var().ts_raw().type_id() != 0);
+
+      if (has_timesamples_authored) {
 
         if (printed_vars.count(varname + ".timeSamples")) {
           continue;
@@ -1590,11 +1709,8 @@ std::string print_xformOps(const std::vector<XformOp> &xformOps,
         ss << ".timeSamples";
         ss << " = ";
 
-        if (auto pv = xformOp.get_timesamples()) {
-          ss << print_timesamples(pv.value(), indent);
-        } else {
-          ss << "[InternalError]";
-        }
+        // Always use ts_raw() to get timeSamples even if empty
+        ss << print_timesamples(xformOp.get_var().ts_raw(), indent);
         ss << "\n";
       }
 
@@ -3165,7 +3281,7 @@ std::string to_string(const GeomMesh &mesh, const uint32_t indent,
                          indent + 1);
   ss << print_typed_attr(mesh.holeIndices, "holeIndices", indent + 1);
 
-  ss << print_typed_token_attr(mesh.subdivisionScheme, "subdivisonScheme",
+  ss << print_typed_token_attr(mesh.subdivisionScheme, "subdivisionScheme",
                                indent + 1);
   ss << print_typed_token_attr(mesh.interpolateBoundary, "interpolateBoundary",
                                indent + 1);
@@ -3527,7 +3643,7 @@ std::string to_string(const GeomCapsule &geom, const uint32_t indent,
   return ss.str();
 }
 
-std::string to_string(const PointInstancer &instancer, const uint32_t indent,
+std::string to_string(const GeomPointInstancer &instancer, const uint32_t indent,
                       bool closing_brace) {
   std::stringstream ss;
 
@@ -3549,6 +3665,7 @@ std::string to_string(const PointInstancer &instancer, const uint32_t indent,
   ss << print_typed_attr(instancer.protoIndices, "protoIndices", indent + 1);
   ss << print_typed_attr(instancer.ids, "ids", indent + 1);
   ss << print_typed_attr(instancer.invisibleIds, "invisibleIds", indent + 1);
+  ss << print_typed_attr(instancer.inactiveIds, "inactiveIds", indent + 1);
   ss << print_typed_attr(instancer.positions, "positions", indent + 1);
   ss << print_typed_attr(instancer.orientations, "orientations", indent + 1);
   ss << print_typed_attr(instancer.scales, "scales", indent + 1);
@@ -4015,6 +4132,86 @@ static std::string print_shader_params(const UsdUVTexture &shader,
   return ss.str();
 }
 
+static std::string print_shader_params(const MtlxOpenPBRSurface &shader,
+                                       const uint32_t indent) {
+  std::stringstream ss;
+
+  // Base properties
+  ss << print_typed_attr(shader.base_weight, "inputs:base_weight", indent);
+  ss << print_typed_attr(shader.base_color, "inputs:base_color", indent);
+  ss << print_typed_attr(shader.base_metalness, "inputs:base_metalness", indent);
+  ss << print_typed_attr(shader.base_diffuse_roughness, "inputs:base_diffuse_roughness", indent);
+
+  // Specular properties
+  ss << print_typed_attr(shader.specular_weight, "inputs:specular_weight", indent);
+  ss << print_typed_attr(shader.specular_color, "inputs:specular_color", indent);
+  ss << print_typed_attr(shader.specular_roughness, "inputs:specular_roughness", indent);
+  ss << print_typed_attr(shader.specular_ior, "inputs:specular_ior", indent);
+  ss << print_typed_attr(shader.specular_anisotropy, "inputs:specular_anisotropy", indent);
+  ss << print_typed_attr(shader.specular_rotation, "inputs:specular_rotation", indent);
+  ss << print_typed_attr(shader.specular_roughness_anisotropy, "inputs:specular_roughness_anisotropy", indent);
+
+  // Transmission properties
+  ss << print_typed_attr(shader.transmission_weight, "inputs:transmission_weight", indent);
+  ss << print_typed_attr(shader.transmission_color, "inputs:transmission_color", indent);
+  ss << print_typed_attr(shader.transmission_depth, "inputs:transmission_depth", indent);
+  ss << print_typed_attr(shader.transmission_scatter, "inputs:transmission_scatter", indent);
+  ss << print_typed_attr(shader.transmission_scatter_anisotropy, "inputs:transmission_scatter_anisotropy", indent);
+  ss << print_typed_attr(shader.transmission_dispersion, "inputs:transmission_dispersion", indent);
+  ss << print_typed_attr(shader.transmission_dispersion_abbe_number, "inputs:transmission_dispersion_abbe_number", indent);
+  ss << print_typed_attr(shader.transmission_dispersion_scale, "inputs:transmission_dispersion_scale", indent);
+
+  // Subsurface properties
+  ss << print_typed_attr(shader.subsurface_weight, "inputs:subsurface_weight", indent);
+  ss << print_typed_attr(shader.subsurface_color, "inputs:subsurface_color", indent);
+  ss << print_typed_attr(shader.subsurface_radius, "inputs:subsurface_radius", indent);
+  ss << print_typed_attr(shader.subsurface_radius_scale, "inputs:subsurface_radius_scale", indent);
+  ss << print_typed_attr(shader.subsurface_scale, "inputs:subsurface_scale", indent);
+  ss << print_typed_attr(shader.subsurface_anisotropy, "inputs:subsurface_anisotropy", indent);
+  ss << print_typed_attr(shader.subsurface_scatter_anisotropy, "inputs:subsurface_scatter_anisotropy", indent);
+
+  // Coat properties
+  ss << print_typed_attr(shader.coat_weight, "inputs:coat_weight", indent);
+  ss << print_typed_attr(shader.coat_color, "inputs:coat_color", indent);
+  ss << print_typed_attr(shader.coat_roughness, "inputs:coat_roughness", indent);
+  ss << print_typed_attr(shader.coat_anisotropy, "inputs:coat_anisotropy", indent);
+  ss << print_typed_attr(shader.coat_rotation, "inputs:coat_rotation", indent);
+  ss << print_typed_attr(shader.coat_roughness_anisotropy, "inputs:coat_roughness_anisotropy", indent);
+  ss << print_typed_attr(shader.coat_ior, "inputs:coat_ior", indent);
+  ss << print_typed_attr(shader.coat_darkening, "inputs:coat_darkening", indent);
+  ss << print_typed_attr(shader.coat_affect_color, "inputs:coat_affect_color", indent);
+  ss << print_typed_attr(shader.coat_affect_roughness, "inputs:coat_affect_roughness", indent);
+
+  // Fuzz properties
+  ss << print_typed_attr(shader.fuzz_weight, "inputs:fuzz_weight", indent);
+  ss << print_typed_attr(shader.fuzz_color, "inputs:fuzz_color", indent);
+  ss << print_typed_attr(shader.fuzz_roughness, "inputs:fuzz_roughness", indent);
+
+  // Thin film properties
+  ss << print_typed_attr(shader.thin_film_thickness, "inputs:thin_film_thickness", indent);
+  ss << print_typed_attr(shader.thin_film_ior, "inputs:thin_film_ior", indent);
+  ss << print_typed_attr(shader.thin_film_weight, "inputs:thin_film_weight", indent);
+
+  // Emission properties
+  ss << print_typed_attr(shader.emission_luminance, "inputs:emission_luminance", indent);
+  ss << print_typed_attr(shader.emission_color, "inputs:emission_color", indent);
+
+  // Geometry properties
+  ss << print_typed_attr(shader.geometry_opacity, "inputs:geometry_opacity", indent);
+  ss << print_typed_attr(shader.geometry_thin_walled, "inputs:geometry_thin_walled", indent);
+  ss << print_typed_attr(shader.geometry_normal, "inputs:geometry_normal", indent);
+  ss << print_typed_attr(shader.geometry_tangent, "inputs:geometry_tangent", indent);
+  ss << print_typed_attr(shader.geometry_coat_normal, "inputs:geometry_coat_normal", indent);
+  ss << print_typed_attr(shader.geometry_coat_tangent, "inputs:geometry_coat_tangent", indent);
+
+  // Output
+  ss << print_typed_terminal_attr(shader.surface, "outputs:surface", indent);
+
+  ss << print_common_shader_params(shader, indent);
+
+  return ss.str();
+}
+
 std::string to_string(const Shader &shader, const uint32_t indent,
                       bool closing_brace) {
   // generic Shader class
@@ -4059,6 +4256,9 @@ std::string to_string(const Shader &shader, const uint32_t indent,
     ss << print_shader_params(pvtx2d.value(), indent + 1);
   } else if (auto pvs = shader.value.get_value<UsdPreviewSurface>()) {
     ss << print_shader_params(pvs.value(), indent + 1);
+  } else if (auto mtlx_opbr = shader.value.get_value<MtlxOpenPBRSurface>()) {
+    // Blender v4.5 MaterialX OpenPBR Surface
+    ss << print_shader_params(mtlx_opbr.value(), indent + 1);
   } else if (auto pvsn = shader.value.get_value<ShaderNode>()) {
     // Generic ShaderNode
     ss << print_common_shader_params(pvsn.value(), indent + 1);
@@ -4066,6 +4266,38 @@ std::string to_string(const Shader &shader, const uint32_t indent,
     ss << pprint::Indent(indent + 1)
        << "[???] Invalid ShaderNode in Shader Prim\n";
   }
+
+  if (closing_brace) {
+    ss << pprint::Indent(indent) << "}\n";
+  }
+
+  return ss.str();
+}
+
+std::string to_string(const NodeGraph &nodegraph, const uint32_t indent,
+                      bool closing_brace) {
+  std::stringstream ss;
+
+  ss << pprint::Indent(indent) << to_string(nodegraph.spec) << " NodeGraph \""
+     << nodegraph.name << "\"\n";
+  if (nodegraph.meta.authored()) {
+    ss << pprint::Indent(indent) << "(\n";
+    ss << print_prim_metas(nodegraph.metas(), indent + 1);
+    ss << pprint::Indent(indent) << ")\n";
+  }
+  ss << pprint::Indent(indent) << "{\n";
+
+  // NodeGraph-specific attributes
+  if (nodegraph.nodedef.authored()) {
+    ss << print_typed_attr(nodegraph.nodedef, "nodedef", indent + 1);
+  }
+
+  if (nodegraph.nodegraph_type.authored()) {
+    ss << print_typed_attr(nodegraph.nodegraph_type, "nodegraph_type", indent + 1);
+  }
+
+  // Print properties (inputs, outputs, etc.)
+  ss << print_props(nodegraph.props, indent + 1);
 
   if (closing_brace) {
     ss << pprint::Indent(indent) << "}\n";
@@ -4479,30 +4711,7 @@ std::string to_string(const XformOp::OpType &op) {
 
 //std::string to_string(const tinyusdz::value::token &v) { return v.str(); }
 
-std::string to_string(const DomeLight::TextureFormat &texformat) {
-  std::string s = "[InvalidTextureFormat]";
-
-  switch (texformat) {
-    case DomeLight::TextureFormat::Automatic: {
-      s = "automatic";
-      break;
-    }
-    case DomeLight::TextureFormat::Latlong: {
-      s = "latlong";
-      break;
-    }
-    case DomeLight::TextureFormat::MirroredBall: {
-      s = "mirroedBall";
-      break;
-    }
-    case DomeLight::TextureFormat::Angular: {
-      s = "angular";
-      break;
-    }
-  }
-
-  return s;
-}
+// to_string(DomeLight::TextureFormat) is defined in usdLux.cc
 
 std::string dump_path(const Path &path) {
   std::stringstream ss;
@@ -4607,7 +4816,11 @@ std::string print_layer_metas(const LayerMetas &metas, const uint32_t indent) {
   return meta_ss.str();
 }
 
-std::string print_layer(const Layer &layer, const uint32_t indent) {
+std::string print_layer(const Layer &layer, const uint32_t indent, bool parallel) {
+#if !defined(TINYUSDZ_ENABLE_THREAD)
+  (void)parallel; // Threading disabled
+#endif
+
   std::stringstream ss;
 
   // FIXME: print magic-header outside of this function?
@@ -4630,26 +4843,64 @@ std::string print_layer(const Layer &layer, const uint32_t indent) {
       primNameTable.emplace(item.first, &item.second);
     }
 
-    for (size_t i = 0; i < layer.metas().primChildren.size(); i++) {
-      value::token nameTok = layer.metas().primChildren[i];
-      // DCOUT(fmt::format("primChildren  {}/{} = {}", i,
-      //                   layer.metas().primChildren.size(), nameTok.str()));
-      const auto it = primNameTable.find(nameTok.str());
-      if (it != primNameTable.end()) {
-        ss << prim::print_primspec((*it->second), indent);
-        if (i != (layer.metas().primChildren.size() - 1)) {
-          ss << "\n";
+#if defined(TINYUSDZ_ENABLE_THREAD)
+    if (parallel) {
+      // Parallel printing path
+      std::vector<const PrimSpec*> ordered_primspecs;
+      ordered_primspecs.reserve(layer.metas().primChildren.size());
+
+      for (size_t i = 0; i < layer.metas().primChildren.size(); i++) {
+        value::token nameTok = layer.metas().primChildren[i];
+        const auto it = primNameTable.find(nameTok.str());
+        if (it != primNameTable.end()) {
+          ordered_primspecs.push_back(it->second);
         }
-      } else {
-        // TODO: Report warning?
+      }
+
+      prim::ParallelPrintConfig config;
+      ss << prim::print_primspecs_parallel(ordered_primspecs, indent, config);
+    } else
+#endif  // TINYUSDZ_ENABLE_THREAD
+    {
+      // Sequential printing path (original)
+      for (size_t i = 0; i < layer.metas().primChildren.size(); i++) {
+        value::token nameTok = layer.metas().primChildren[i];
+        // DCOUT(fmt::format("primChildren  {}/{} = {}", i,
+        //                   layer.metas().primChildren.size(), nameTok.str()));
+        const auto it = primNameTable.find(nameTok.str());
+        if (it != primNameTable.end()) {
+          ss << prim::print_primspec((*it->second), indent);
+          if (i != (layer.metas().primChildren.size() - 1)) {
+            ss << "\n";
+          }
+        } else {
+          // TODO: Report warning?
+        }
       }
     }
   } else {
-    size_t i = 0;
-    for (const auto &item : layer.primspecs()) {
-      ss << prim::print_primspec(item.second, indent);
-      if (i != (layer.primspecs().size() - 1)) {
-        ss << "\n";
+#if defined(TINYUSDZ_ENABLE_THREAD)
+    if (parallel) {
+      // Parallel printing path
+      std::vector<const PrimSpec*> primspecs;
+      primspecs.reserve(layer.primspecs().size());
+      for (const auto &item : layer.primspecs()) {
+        primspecs.push_back(&item.second);
+      }
+
+      prim::ParallelPrintConfig config;
+      ss << prim::print_primspecs_parallel(primspecs, indent, config);
+    } else
+#endif  // TINYUSDZ_ENABLE_THREAD
+    {
+      // Sequential printing path (original)
+      size_t i = 0;
+      for (const auto &item : layer.primspecs()) {
+        ss << prim::print_primspec(item.second, indent);
+        if (i != (layer.primspecs().size() - 1)) {
+          ss << "\n";
+        }
+        i++;
       }
     }
   }

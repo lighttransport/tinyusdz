@@ -1,0 +1,58 @@
+#usda 1.0
+(
+    doc = "Simple MaterialX material with texture for testing"
+    metersPerUnit = 1
+    upAxis = "Y"
+    defaultPrim = "World"
+)
+
+def Xform "World"
+{
+    def Cube "TexturedCube"
+    {
+        double size = 1.0
+        rel material:binding = </World/_materials/TexturedMaterial>
+
+        texCoord2f[] primvars:st = [(0, 0), (1, 0), (1, 1), (0, 1)] (
+            interpolation = "vertex"
+        )
+    }
+
+    def Scope "_materials"
+    {
+        def Material "TexturedMaterial" (
+            prepend apiSchemas = ["MaterialXConfigAPI"]
+        )
+        {
+            uniform string config:mtlx:version = "1.38"
+            token outputs:surface.connect = </World/_materials/TexturedMaterial/OpenPBRSurface.outputs:surface>
+            token outputs:mtlx:surface.connect = </World/_materials/TexturedMaterial/OpenPBRSurface.outputs:surface>
+
+            def Shader "OpenPBRSurface"
+            {
+                uniform token info:id = "OpenPBRSurface"
+                color3f inputs:base_color.connect = </World/_materials/TexturedMaterial/TextureNode.outputs:rgb>
+                float inputs:base_weight = 1.0
+                float inputs:base_metalness = 0.0
+                float inputs:specular_roughness = 0.5
+                token outputs:surface
+            }
+
+            def Shader "TextureNode"
+            {
+                uniform token info:id = "UsdUVTexture"
+                asset inputs:file = @./textures/checkerboard.png@
+                string inputs:filtertype = "linear"
+                float2 inputs:texcoord.connect = </World/_materials/TexturedMaterial/PrimvarNode.outputs:result>
+                color3f outputs:rgb
+            }
+
+            def Shader "PrimvarNode"
+            {
+                uniform token info:id = "UsdPrimvarReader_float2"
+                string inputs:varname = "st"
+                float2 outputs:result
+            }
+        }
+    }
+}

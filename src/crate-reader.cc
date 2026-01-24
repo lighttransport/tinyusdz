@@ -21,13 +21,16 @@
 #include <thread>
 #endif
 
+#include <algorithm>
 #include <unordered_set>
 #include <stack>
 
 #include "crate-format.hh"
+#include "parser-timing.hh"
 #include "crate-pprint.hh"
 #include "integerCoding.h"
 #include "lz4-compression.hh"
+#include "memory-budget.hh"
 #include "path-util.hh"
 #include "pprinter.hh"
 #include "prim-types.hh"
@@ -63,18 +66,11 @@ namespace crate {
 
 #define kTag "[Crate]"
 
-#define CHECK_MEMORY_USAGE(__nbytes) do { \
-  _memoryUsage += (__nbytes); \
-  if (_memoryUsage > _config.maxMemoryBudget) { \
-    PUSH_ERROR_AND_RETURN_TAG(kTag, "Reached to max memory budget."); \
-  }  \
-  } while(0)
+#define CHECK_MEMORY_USAGE(__nbytes) \
+  MEMORY_BUDGET_CHECK(memory_manager_, (__nbytes), kTag)
 
-#define REDUCE_MEMORY_USAGE(__nbytes) do { \
-  if (_memoryUsage < (__nbytes)) { \
-    _memoryUsage -= (__nbytes); \
-  } \
-  } while(0)
+#define REDUCE_MEMORY_USAGE(__nbytes) \
+  memory_manager_.Release(__nbytes)
 
 
 
@@ -83,7 +79,8 @@ namespace crate {
 //
 // --
 //
-CrateReader::CrateReader(StreamReader *sr, const CrateReaderConfig &config) : _sr(sr), _impl(nullptr) {
+CrateReader::CrateReader(StreamReader *sr, const CrateReaderConfig &config) 
+    : _sr(sr), memory_manager_(config.maxMemoryBudget), _impl(nullptr) {
   _config = config;
   if (_config.numThreads == -1) {
 #if defined(__wasi__)
@@ -108,8 +105,24 @@ CrateReader::CrateReader(StreamReader *sr, const CrateReaderConfig &config) : _s
 }
 
 CrateReader::~CrateReader() {
+  // All dedup array caches now store indices (size_t) instead of TypedArray objects
+  // No manual cleanup needed - the actual array data is owned by TimeSamples
+
   //delete _impl;
   //_impl = nullptr;
+}
+
+bool CrateReader::ReportProgress(float progress) {
+  // Check if callback exists and is callable
+  if (!_progress_callback) {
+    return true;  // No callback, continue parsing
+  }
+  
+  // Clamp progress to [0.0, 1.0]
+  progress = std::max(0.0f, std::min(1.0f, progress));
+  
+  // Call the callback and return its result
+  return _progress_callback(progress, _progress_userptr);
 }
 
 std::string CrateReader::GetError() { return _err; }
@@ -307,8 +320,9 @@ bool CrateReader::ReadCompressedInts(Int *out,
       typename std::conditional<sizeof(Int) == 4, Usd_IntegerCompression,
                                 Usd_IntegerCompression64>::type;
 
+  // Threshold for streaming decompression (1M elements = ~4MB for int32)
+  constexpr size_t kStreamingThreshold = 1024 * 1024;
 
-  // TODO: Read compressed data from _sr directly
   size_t compBufferSize = Compressor::GetCompressedBufferSize(num_ints);
   CHECK_MEMORY_USAGE(compBufferSize);
 
@@ -332,6 +346,8 @@ bool CrateReader::ReadCompressedInts(Int *out,
     return false;
   }
 
+#if 0
+  // Original implementation: allocates new buffer each time
   std::vector<char> compBuffer;
   compBuffer.resize(compBufferSize);
   if (!_sr->read(size_t(compSize), size_t(compSize),
@@ -345,6 +361,51 @@ bool CrateReader::ReadCompressedInts(Int *out,
   REDUCE_MEMORY_USAGE(compBufferSize);
 
   return ret;
+#else
+  // Optimized implementation: reuse buffers across calls
+
+  // Reuse compressed data buffer - only grow, never shrink
+  if (_decomp_comp_buffer.size() < compBufferSize) {
+    _decomp_comp_buffer.resize(compBufferSize);
+  }
+
+  if (!_sr->read(size_t(compSize), size_t(compSize),
+                reinterpret_cast<uint8_t *>(_decomp_comp_buffer.data()))) {
+    PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read compressedInts.");
+  }
+
+  // Get working space size for decompression
+  size_t workingSpaceSize = Compressor::GetDecompressionWorkingSpaceSize(num_ints);
+
+  // For large arrays, use streaming decompression to reduce peak memory
+  if (num_ints > kStreamingThreshold) {
+    // Streaming mode: process in chunks to reduce peak memory
+    // Note: USDC integer compression doesn't support true streaming,
+    // but we can at least reuse the working buffer
+    if (_decomp_working_buffer.size() < workingSpaceSize) {
+      _decomp_working_buffer.resize(workingSpaceSize);
+    }
+
+    bool ret = Compressor::DecompressFromBuffer(
+        _decomp_comp_buffer.data(), size_t(compSize), out, num_ints, &_err,
+        _decomp_working_buffer.data());
+
+    REDUCE_MEMORY_USAGE(compBufferSize);
+    return ret;
+  } else {
+    // Small arrays: use reusable working buffer
+    if (_decomp_working_buffer.size() < workingSpaceSize) {
+      _decomp_working_buffer.resize(workingSpaceSize);
+    }
+
+    bool ret = Compressor::DecompressFromBuffer(
+        _decomp_comp_buffer.data(), size_t(compSize), out, num_ints, &_err,
+        _decomp_working_buffer.data());
+
+    REDUCE_MEMORY_USAGE(compBufferSize);
+    return ret;
+  }
+#endif
 }
 
 template <typename T>
@@ -767,6 +828,315 @@ bool CrateReader::ReadDoubleArray(bool is_compressed, std::vector<double> *d) {
   }
 }
 
+// TypedArray version with mmap support for float arrays
+bool CrateReader::ReadFloatArrayTyped(bool is_compressed, TypedArray<float> *d) {
+  size_t length;
+  // < ver 0.7.0  use 32bit
+  if (VERSION_LESS_THAN_0_8_0(_version)) {
+      uint32_t shapesize; // not used
+      if (!_sr->read4(&shapesize)) {
+        PUSH_ERROR("Failed to read the number of array elements.");
+        return false;
+      }
+    uint32_t n;
+    if (!_sr->read4(&n)) {
+      _err += "Failed to read the number of array elements.\n";
+      return false;
+    }
+    length = size_t(n);
+  } else {
+    uint64_t n;
+    if (!_sr->read8(&n)) {
+      _err += "Failed to read the number of array elements.\n";
+      return false;
+    }
+    length = size_t(n);
+  }
+
+  if (length > _config.maxArrayElements) {
+    PUSH_ERROR_AND_RETURN_TAG(kTag, "Too many array elements.");
+  }
+
+  CHECK_MEMORY_USAGE(length * sizeof(float));
+
+  d->resize(length);
+
+  if (!is_compressed) {
+    if (!_sr->read(sizeof(float) * length, sizeof(float) * length,
+                   reinterpret_cast<uint8_t *>(d->data()))) {
+      _err += "Failed to read float array data.\n";
+      return false;
+    }
+    return true;
+  } else {
+    // Handle compressed data
+    if (length < crate::kMinCompressedArraySize) {
+      size_t sz = sizeof(float) * length;
+      if (!_sr->read(sz, sz, reinterpret_cast<uint8_t *>(d->data()))) {
+        _err += "Failed to read uncompressed array data.\n";
+        return false;
+      }
+      return true;
+    }
+
+    char code;
+    if (!_sr->read1(&code)) {
+      _err += "Failed to read the code.\n";
+      return false;
+    }
+
+    if (code == 'i') {
+      std::vector<int32_t> ints;
+      ints.resize(length);
+      if (!ReadCompressedInts(ints.data(), ints.size())) {
+        _err += "Failed to read compressed ints in ReadFloatArrayTyped.\n";
+        return false;
+      }
+      for (size_t i = 0; i < length; i++) {
+        d->data()[i] = float(ints[i]);
+      }
+    } else if (code == 't') {
+      uint32_t lutSize;
+      if (!_sr->read4(&lutSize)) {
+        _err += "Failed to read lutSize in ReadFloatArrayTyped.\n";
+        return false;
+      }
+
+      std::vector<float> lut;
+      lut.resize(lutSize);
+      if (!_sr->read(sizeof(float) * lutSize, sizeof(float) * lutSize,
+                     reinterpret_cast<uint8_t *>(lut.data()))) {
+        _err += "Failed to read lut table in ReadFloatArrayTyped.\n";
+        return false;
+      }
+
+      std::vector<uint32_t> indexes;
+      indexes.resize(length);
+      if (!ReadCompressedInts(indexes.data(), indexes.size())) {
+        _err += "Failed to read lut indices in ReadFloatArrayTyped.\n";
+        return false;
+      }
+
+      auto o = d->data();
+      for (auto index : indexes) {
+        *o++ = lut[index];
+      }
+    } else {
+      _err += "Invalid code. Data is corrupted\n";
+      return false;
+    }
+    return true;
+  }
+}
+
+// TypedArray version with mmap support for float arrays
+bool CrateReader::ReadFloat2ArrayTyped(TypedArray<value::float2> *d) {
+  size_t length;
+  // < ver 0.7.0  use 32bit
+  if (VERSION_LESS_THAN_0_8_0(_version)) {
+      uint32_t shapesize; // not used
+      if (!_sr->read4(&shapesize)) {
+        PUSH_ERROR("Failed to read the number of array elements.");
+        return false;
+      }
+    uint32_t n;
+    if (!_sr->read4(&n)) {
+      _err += "Failed to read the number of array elements.\n";
+      return false;
+    }
+    length = size_t(n);
+  } else {
+    uint64_t n;
+    if (!_sr->read8(&n)) {
+      _err += "Failed to read the number of array elements.\n";
+      return false;
+    }
+    length = size_t(n);
+  }
+
+  if (length > _config.maxArrayElements) {
+    PUSH_ERROR_AND_RETURN_TAG(kTag, "Too many array elements.");
+  }
+
+  CHECK_MEMORY_USAGE(length * sizeof(value::float2));
+
+  d->resize(length);
+
+  if (!_sr->read(sizeof(value::float2) * length, sizeof(value::float2) * length,
+                 reinterpret_cast<uint8_t *>(d->data()))) {
+    _err += "Failed to read float2 array data.\n";
+    return false;
+  }
+  return true;
+}
+
+// TypedArray version with mmap support for double arrays
+bool CrateReader::ReadDoubleArrayTyped(bool is_compressed, TypedArray<double> *d) {
+  size_t length;
+  // < ver 0.7.0  use 32bit
+  if (VERSION_LESS_THAN_0_8_0(_version)) {
+      uint32_t shapesize; // not used
+      if (!_sr->read4(&shapesize)) {
+        PUSH_ERROR("Failed to read the number of array elements.");
+        return false;
+      }
+    uint32_t n;
+    if (!_sr->read4(&n)) {
+      _err += "Failed to read the number of array elements.\n";
+      return false;
+    }
+    length = size_t(n);
+  } else {
+    uint64_t n;
+    if (!_sr->read8(&n)) {
+      _err += "Failed to read the number of array elements.\n";
+      return false;
+    }
+    length = size_t(n);
+  }
+
+  if (length == 0) {
+    d->clear();
+    return true;
+  }
+
+  if (length > _config.maxArrayElements) {
+    PUSH_ERROR_AND_RETURN_TAG(kTag, "Too many array elements.");
+  }
+
+  CHECK_MEMORY_USAGE(length * sizeof(double));
+
+  d->resize(length);
+
+  if (!is_compressed) {
+    if (!_sr->read(sizeof(double) * length, sizeof(double) * length,
+                   reinterpret_cast<uint8_t *>(d->data()))) {
+      _err += "Failed to read double array data.\n";
+      return false;
+    }
+    return true;
+  } else {
+    // Handle compressed data
+    if (length < crate::kMinCompressedArraySize) {
+      size_t sz = sizeof(double) * length;
+      if (!_sr->read(sz, sz, reinterpret_cast<uint8_t *>(d->data()))) {
+        _err += "Failed to read uncompressed array data.\n";
+        return false;
+      }
+      return true;
+    }
+
+    char code;
+    if (!_sr->read1(&code)) {
+      _err += "Failed to read the code.\n";
+      return false;
+    }
+
+    if (code == 'i') {
+      std::vector<int64_t> ints;
+      ints.resize(length);
+      if (!ReadCompressedInts(ints.data(), ints.size())) {
+        _err += "Failed to read compressed ints in ReadDoubleArrayTyped.\n";
+        return false;
+      }
+      std::transform(ints.begin(), ints.end(), d->data(),
+                     [](int64_t v) { return static_cast<double>(v); });
+    } else if (code == 't') {
+      uint32_t lutSize;
+      if (!_sr->read4(&lutSize)) {
+        _err += "Failed to read lutSize in ReadDoubleArrayTyped.\n";
+        return false;
+      }
+
+      std::vector<double> lut;
+      lut.resize(lutSize);
+      if (!_sr->read(sizeof(double) * lutSize, sizeof(double) * lutSize,
+                     reinterpret_cast<uint8_t *>(lut.data()))) {
+        _err += "Failed to read lut table in ReadDoubleArrayTyped.\n";
+        return false;
+      }
+
+      std::vector<uint32_t> indexes;
+      indexes.resize(length);
+      if (!ReadCompressedInts(indexes.data(), indexes.size())) {
+        _err += "Failed to read lut indices in ReadDoubleArrayTyped.\n";
+        return false;
+      }
+
+      auto o = d->data();
+      for (auto index : indexes) {
+        *o++ = lut[index];
+      }
+    } else {
+      _err += "Invalid code. Data is corrupted\n";
+      return false;
+    }
+    return true;
+  }
+}
+
+// Template implementation for TypedArray version with mmap support for integer arrays
+template <typename T>
+bool CrateReader::ReadIntArrayTyped(bool is_compressed, TypedArray<T> *d) {
+  size_t length{0};
+  // < ver 0.7.0  use 32bit
+  if (VERSION_LESS_THAN_0_8_0(_version)) {
+      uint32_t shapesize; // not used
+      if (!_sr->read4(&shapesize)) {
+        PUSH_ERROR("Failed to read the number of array elements.");
+        return false;
+      }
+    uint32_t n;
+    if (!_sr->read4(&n)) {
+      _err += "Failed to read the number of array elements.\n";
+      return false;
+    }
+    length = size_t(n);
+  } else {
+    uint64_t n;
+    if (!_sr->read8(&n)) {
+      _err += "Failed to read the number of array elements.\n";
+      return false;
+    }
+    length = size_t(n);
+  }
+
+  if (length == 0) {
+    d->clear();
+    return true;
+  }
+
+  if (length > _config.maxInts) {
+    PUSH_ERROR_AND_RETURN_TAG(kTag, "Too many int elements.");
+  }
+
+  CHECK_MEMORY_USAGE(length * sizeof(T));
+
+  d->resize(length);
+
+  if (!is_compressed) {
+    if (!_sr->read(sizeof(T) * length, sizeof(T) * length,
+                   reinterpret_cast<uint8_t *>(d->data()))) {
+      _err += "Failed to read int array data.\n";
+      return false;
+    }
+    return true;
+  } else {
+    // Handle compressed data
+    if (!ReadCompressedInts(d->data(), length)) {
+      _err += "Failed to read compressed int array.\n";
+      return false;
+    }
+    return true;
+  }
+}
+
+// Explicit template instantiations for common integer types
+template bool CrateReader::ReadIntArrayTyped<int32_t>(bool, TypedArray<int32_t>*);
+template bool CrateReader::ReadIntArrayTyped<uint32_t>(bool, TypedArray<uint32_t>*);
+template bool CrateReader::ReadIntArrayTyped<int64_t>(bool, TypedArray<int64_t>*);
+template bool CrateReader::ReadIntArrayTyped<uint64_t>(bool, TypedArray<uint64_t>*);
+
 bool CrateReader::ReadDoubleVector(std::vector<double> *d) {
   size_t length;
 
@@ -797,144 +1167,6 @@ bool CrateReader::ReadDoubleVector(std::vector<double> *d) {
     _err += "Failed to read double vector data.\n";
     return false;
   }
-
-  return true;
-}
-
-bool CrateReader::ReadTimeSamples(value::TimeSamples *d) {
-
-  // Layout
-  //
-  // - `times`(double[])
-  // - NumValueReps(int64)
-  // - ArrayOfValueRep
-  //
-
-  // TODO(syoyo): Deferred loading of TimeSamples?(See USD's implementation for details)
-
-  DCOUT("ReadTimeSamples: offt before tell = " << _sr->tell());
-
-  // 8byte for the offset for recursive value. See RecursiveRead() in
-  // https://github.com/PixarAnimationStudios/USD/blob/release/pxr/usd/usd/crateFile.cpp for details.
-  int64_t offset{0};
-  if (!_sr->read8(&offset)) {
-    PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read the offset for value in Dictionary.");
-    return false;
-  }
-
-  DCOUT("TimeSample times value offset = " << offset);
-  DCOUT("TimeSample tell = " << _sr->tell());
-
-  // -8 to compensate sizeof(offset)
-  if (!_sr->seek_from_current(offset - 8)) {
-    PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to seek to TimeSample times. Invalid offset value: " +
-            std::to_string(offset));
-  }
-
-  // TODO(syoyo): Deduplicate times?
-
-  crate::ValueRep times_rep{0};
-  if (!ReadValueRep(&times_rep)) {
-    PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read ValueRep for TimeSample' `times` element.");
-  }
-
-  // Save offset
-  auto values_offset = _sr->tell();
-
-  // TODO: Enable Check if  type `double[]`
-#if 0
-  if (times_rep.GetType() == crate::CrateDataTypeId::CRATE_DATA_TYPE_DOUBLE_VECTOR) {
-    // ok
-  } else if ((times_rep.GetType() == crate::CrateDataTypeId::CRATE_DATA_TYPE_DOUBOLE) && times_rep.IsArray()) {
-    // ok
-  } else {
-    PUSH_ERROR_AND_RETURN_TAG(kTag, fmt::format("`times` value must be type `double[]`, but got type `{}`", times_rep.GetTypeName()));
-  }
-#endif
-
-  crate::CrateValue times_value;
-  if (!UnpackValueRep(times_rep, &times_value)) {
-    PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to unpack value of TimeSample's `times` element.");
-  }
-
-  // must be an array of double.
-  DCOUT("TimeSample times:" << times_value.type_name());
-
-  std::vector<double> times;
-  if (auto pv = times_value.get_value<std::vector<double>>()) {
-    times = pv.value();
-    DCOUT("`times` = " << times);
-  } else {
-    PUSH_ERROR_AND_RETURN_TAG(kTag, fmt::format("`times` in TimeSamples must be type `double[]`, but got type `{}`", times_value.type_name()));
-  }
-
-  //
-  // Parse values(elements) of TimeSamples.
-  //
-
-  // seek position will be changed in `_UnpackValueRep`, so revert it.
-  if (!_sr->seek_set(values_offset)) {
-    PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to seek to TimeSamples values.");
-  }
-
-  // 8byte for the offset for recursive value. See RecursiveRead() in
-  // crateFile.cpp for details.
-  if (!_sr->read8(&offset)) {
-    PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read the offset for value in TimeSamples.");
-    return false;
-  }
-
-  DCOUT("TimeSample value offset = " << offset);
-  DCOUT("TimeSample tell = " << _sr->tell());
-
-  // -8 to compensate sizeof(offset)
-  if (!_sr->seek_from_current(offset - 8)) {
-    PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to seek to TimeSample values. Invalid offset value: " + std::to_string(offset));
-  }
-
-  uint64_t num_values{0};
-  if (!_sr->read8(&num_values)) {
-    PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read the number of values from TimeSamples.");
-    return false;
-  }
-
-  DCOUT("Number of values = " << num_values);
-
-  if (times.size() != num_values) {
-    PUSH_ERROR_AND_RETURN_TAG(kTag, "# of `times` elements and # of values in Crate differs.");
-  }
-
-  for (size_t i = 0; i < num_values; i++) {
-
-    crate::ValueRep rep;
-    if (!ReadValueRep(&rep)) {
-      PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read ValueRep for TimeSample' value element.");
-    }
-
-    auto next_vrep_loc = _sr->tell();
-
-    ///
-    /// Type check of the content of `value` will be done at ReconstructPrim() in usdc-reader.cc.
-    ///
-    crate::CrateValue value;
-    if (!UnpackValueRep(rep, &value)) {
-      PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to unpack value of TimeSample's value element.");
-    }
-
-    d->add_sample(times[i], value.get_raw());
-
-    // UnpackValueRep() will change StreamReader's read position.
-    // Revert to next ValueRep location here.
-    _sr->seek_set(next_vrep_loc);
-  }
-
-  // Move to next location.
-  // sizeof(uint64) = sizeof(ValueRep)
-  _sr->seek_set(values_offset);
-  if (!_sr->seek_from_current(int64_t(sizeof(uint64_t) * num_values))) {
-    PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to seek over TimeSamples's values.");
-  }
-
 
   return true;
 }
@@ -1619,12 +1851,34 @@ bool CrateReader::ReadArray(std::vector<T> *d) {
   CHECK_MEMORY_USAGE(sizeof(T) * size_t(n));
 
   d->resize(size_t(n));
-  if (_sr->read(sizeof(T) * n, sizeof(T) * size_t(n), reinterpret_cast<uint8_t *>(d->data()))) {
-    return false;
+  if (!_sr->read(sizeof(T) * n, sizeof(T) * size_t(n), reinterpret_cast<uint8_t *>(d->data()))) {
+    PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read array data");
   }
 
   return true;
 }
+
+// Explicit instantiations for types used in timesamples
+template bool CrateReader::ReadArray<unsigned char>(std::vector<unsigned char>*);
+template bool CrateReader::ReadArray<value::AssetPath>(std::vector<value::AssetPath>*);
+template bool CrateReader::ReadArray<value::matrix2d>(std::vector<value::matrix2d>*);
+template bool CrateReader::ReadArray<value::matrix3d>(std::vector<value::matrix3d>*);
+template bool CrateReader::ReadArray<value::matrix4d>(std::vector<value::matrix4d>*);
+// Vector type instantiations needed by crate-reader-timesamples.cc
+template bool CrateReader::ReadArray<value::half2>(std::vector<value::half2>*);
+template bool CrateReader::ReadArray<value::half3>(std::vector<value::half3>*);
+template bool CrateReader::ReadArray<value::half4>(std::vector<value::half4>*);
+template bool CrateReader::ReadArray<value::float2>(std::vector<value::float2>*);
+template bool CrateReader::ReadArray<value::float3>(std::vector<value::float3>*);
+template bool CrateReader::ReadArray<value::float4>(std::vector<value::float4>*);
+template bool CrateReader::ReadArray<value::double2>(std::vector<value::double2>*);
+template bool CrateReader::ReadArray<value::double3>(std::vector<value::double3>*);
+template bool CrateReader::ReadArray<value::double4>(std::vector<value::double4>*);
+template bool CrateReader::ReadArray<value::quatf>(std::vector<value::quatf>*);
+template bool CrateReader::ReadArray<value::quath>(std::vector<value::quath>*);
+template bool CrateReader::ReadArray<value::quatd>(std::vector<value::quatd>*);
+// String type instantiation needed by crate-reader-timesamples.cc
+template bool CrateReader::ReadArray<std::string>(std::vector<std::string>*);
 
 template<typename T>
 bool CrateReader::ReadListOp(ListOp<T> *d) {
@@ -2115,7 +2369,7 @@ bool CrateReader::UnpackInlinedValueRep(const crate::ValueRep &rep,
       int8_t data[2];
       memcpy(&data, &d, 2);
 
-      value::half3 v;
+      value::half2 v;
       v[0] = value::float_to_half_full(float(data[0]));
       v[1] = value::float_to_half_full(float(data[1]));
 
@@ -2245,9 +2499,9 @@ bool CrateReader::UnpackInlinedValueRep(const crate::ValueRep &rep,
 
       value::half4 v;
       v[0] = value::float_to_half_full(float(data[0]));
-      v[1] = value::float_to_half_full(float(data[0]));
-      v[2] = value::float_to_half_full(float(data[0]));
-      v[3] = value::float_to_half_full(float(data[0]));
+      v[1] = value::float_to_half_full(float(data[1]));
+      v[2] = value::float_to_half_full(float(data[2]));
+      v[3] = value::float_to_half_full(float(data[3]));
 
       DCOUT("value.vec4h = " << v);
 
@@ -2346,8 +2600,623 @@ CrateReader::UnpackArrayValue(CrateDataTypeId dty, crate::CrateValue *value_out)
 }
 #endif
 
+#if 0
+bool CrateReader::UnpackValueRepForTimeSamples(const crate::ValueRep &rep, uint64_t offset, crate::CrateValue *value) {
+  if (rep.IsInlined()) {
+    return UnpackInlinedValueRep(rep, value);
+  }
+
+  auto tyRet = crate::GetCrateDataType(rep.GetType());
+  if (!tyRet) {
+    PUSH_ERROR(tyRet.error());
+    return false;
+  }
+
+  const auto dty = tyRet.value();
+
+  if (!_sr->seek_set(offset)) {
+    PUSH_ERROR("Invalid offset for TimeSamples value.");
+    return false;
+  }
+
+#ifdef __clang__
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wswitch-enum"
+#endif
+  switch (dty.dtype_id) {
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_INT: {
+      if (rep.IsArray()) {
+        std::vector<int32_t> v;
+        if (rep.GetPayload() == 0) {
+          value->Set(v);
+          return true;
+        }
+        if (!ReadIntArray(rep.IsCompressed(), &v)) {
+          PUSH_ERROR("Failed to read Int array.");
+          return false;
+        }
+        value->Set(std::move(v));
+        return true;
+      } else {
+        PUSH_ERROR_AND_RETURN("int value must be inlined");
+      }
+    }
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_UINT: {
+      if (rep.IsArray()) {
+        std::vector<uint32_t> v;
+        if (rep.GetPayload() == 0) {
+          value->Set(v);
+          return true;
+        }
+        if (!ReadIntArray(rep.IsCompressed(), &v)) {
+          PUSH_ERROR("Failed to read UInt array.");
+          return false;
+        }
+        value->Set(std::move(v));
+        return true;
+      } else {
+        PUSH_ERROR_AND_RETURN("uint value must be inlined");
+      }
+      return false;
+    }
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_INT64: {
+      if (rep.IsArray()) {
+        std::vector<int64_t> v;
+        if (rep.GetPayload() == 0) {
+          value->Set(v);
+          return true;
+        }
+        if (!ReadIntArray(rep.IsCompressed(), &v)) {
+          PUSH_ERROR("Failed to read Int64 array.");
+          return false;
+        }
+        value->Set(std::move(v));
+        return true;
+      } else {
+        if (rep.IsCompressed()) {
+          PUSH_ERROR("Compressed int64 not supported.");
+          return false;
+        }
+        int64_t v;
+        if (!_sr->read(sizeof(int64_t), sizeof(int64_t), reinterpret_cast<uint8_t *>(&v))) {
+          PUSH_ERROR("Failed to read int64 data.");
+          return false;
+        }
+        value->Set(v);
+        return true;
+      }
+    }
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_FLOAT: {
+      if (rep.IsArray()) {
+        if (rep.GetPayload() == 0) {
+          std::vector<float> v;
+          value->Set(std::move(v));
+          return true;
+        }
+        std::vector<float> v;
+        if (!ReadFloatArray(rep.IsCompressed(), &v)) {
+          PUSH_ERROR("Failed to read float array value.");
+          return false;
+        }
+        value->Set(std::move(v));
+        return true;
+      }
+      return false;
+    }
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_DOUBLE: {
+      if (rep.IsArray()) {
+        if (rep.GetPayload() == 0) {
+          std::vector<double> v;
+          value->Set(std::move(v));
+          return true;
+        }
+        std::vector<double> v;
+        if (!ReadDoubleArray(rep.IsCompressed(), &v)) {
+          PUSH_ERROR("Failed to read double array value.");
+          return false;
+        }
+        value->Set(std::move(v));
+        return true;
+      } else {
+        if (rep.IsCompressed()) {
+          PUSH_ERROR("Compressed double not supported.");
+          return false;
+        }
+        double v;
+        if (!_sr->read(sizeof(double), sizeof(double), reinterpret_cast<uint8_t *>(&v))) {
+          PUSH_ERROR("Failed to read double data.");
+          return false;
+        }
+        value->Set(v);
+        return true;
+      }
+    }
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_STRING: {
+      if (rep.IsCompressed()) {
+        PUSH_ERROR("Compressed string not supported for TimeSamples.");
+        return false;
+      }
+      if (rep.IsArray()) {
+        uint64_t n;
+        if (!_sr->read8(&n)) {
+          PUSH_ERROR("Failed to read the number of array elements.");
+          return false;
+        }
+        if (n > _config.maxArrayElements) {
+          PUSH_ERROR_AND_RETURN_TAG(kTag, fmt::format("String array too large. TinyUSDZ limites it up to {}", _config.maxArrayElements));
+        }
+        CHECK_MEMORY_USAGE(n * sizeof(crate::Index));
+        std::vector<crate::Index> v(static_cast<size_t>(n));
+        if (!_sr->read(size_t(n) * sizeof(crate::Index), size_t(n) * sizeof(crate::Index), reinterpret_cast<uint8_t *>(v.data()))) {
+          PUSH_ERROR("Failed to read StringIndex array.");
+          return false;
+        }
+        std::vector<std::string> stringArray(static_cast<size_t>(n));
+        for (size_t i = 0; i < n; i++) {
+          if (auto stok = GetStringToken(v[i])) {
+            stringArray[i] = stok.value().str();
+          } else {
+            return false;
+          }
+        }
+        value->Set(std::move(stringArray));
+        return true;
+      }
+      return false;
+    }
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_MATRIX2D: {
+      if (rep.IsCompressed()) {
+        PUSH_ERROR("Compressed matrix2d not supported for TimeSamples.");
+        return false;
+      }
+      if (rep.IsArray()) {
+        std::vector<value::matrix2d> v;
+        if (rep.GetPayload() == 0) {
+          value->Set(v);
+          return true;
+        }
+        uint64_t n{0};
+        if (VERSION_LESS_THAN_0_8_0(_version)) {
+          uint32_t shapesize;
+          if (!_sr->read4(&shapesize)) {
+            PUSH_ERROR("Failed to read the number of array elements.");
+            return false;
+          }
+          uint32_t _n;
+          if (!_sr->read4(&_n)) {
+            PUSH_ERROR("Failed to read the number of array elements.");
+            return false;
+          }
+          n = _n;
+        } else {
+          if (!_sr->read8(&n)) {
+            PUSH_ERROR("Failed to read the number of array elements.");
+            return false;
+          }
+        }
+        if (n == 0) {
+          value->Set(std::move(v));
+          return true;
+        }
+        if (n > _config.maxArrayElements) {
+          PUSH_ERROR_AND_RETURN_TAG(kTag, fmt::format("Array size {} too large.", n));
+        }
+        CHECK_MEMORY_USAGE(n * sizeof(value::matrix2d));
+        v.resize(static_cast<size_t>(n));
+        if (!_sr->read(size_t(n) * sizeof(value::matrix2d), size_t(n) * sizeof(value::matrix2d), reinterpret_cast<uint8_t *>(v.data()))) {
+          PUSH_ERROR("Failed to read Matrix2d array.");
+          return false;
+        }
+        value->Set(std::move(v));
+        return true;
+      } else {
+        CHECK_MEMORY_USAGE(sizeof(value::matrix2d));
+        value::matrix2d v;
+        if (!_sr->read(sizeof(value::matrix2d), sizeof(value::matrix2d), reinterpret_cast<uint8_t *>(v.m))) {
+          PUSH_ERROR("Failed to read value of `matrix2d` type");
+          return false;
+        }
+        value->Set(v);
+        return true;
+      }
+    }
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_MATRIX3D: {
+      if (rep.IsCompressed()) {
+        PUSH_ERROR("Compressed matrix3d not supported for TimeSamples.");
+        return false;
+      }
+      if (rep.IsArray()) {
+        std::vector<value::matrix3d> v;
+        if (rep.GetPayload() == 0) {
+          value->Set(v);
+          return true;
+        }
+        uint64_t n{0};
+        if (VERSION_LESS_THAN_0_8_0(_version)) {
+          uint32_t shapesize;
+          if (!_sr->read4(&shapesize)) {
+            PUSH_ERROR("Failed to read the number of array elements.");
+            return false;
+          }
+          uint32_t _n;
+          if (!_sr->read4(&_n)) {
+            PUSH_ERROR("Failed to read the number of array elements.");
+            return false;
+          }
+          n = _n;
+        } else {
+          if (!_sr->read8(&n)) {
+            PUSH_ERROR("Failed to read the number of array elements.");
+            return false;
+          }
+        }
+        if (n == 0) {
+          value->Set(std::move(v));
+          return true;
+        }
+        if (n > _config.maxArrayElements) {
+          PUSH_ERROR_AND_RETURN_TAG(kTag, fmt::format("Array size {} too large.", n));
+        }
+        CHECK_MEMORY_USAGE(n * sizeof(value::matrix3d));
+        v.resize(static_cast<size_t>(n));
+        if (!_sr->read(size_t(n) * sizeof(value::matrix3d), size_t(n) * sizeof(value::matrix3d), reinterpret_cast<uint8_t *>(v.data()))) {
+          PUSH_ERROR("Failed to read Matrix3d array.");
+          return false;
+        }
+        value->Set(std::move(v));
+        return true;
+      } else {
+        CHECK_MEMORY_USAGE(sizeof(value::matrix3d));
+        value::matrix3d v;
+        if (!_sr->read(sizeof(value::matrix3d), sizeof(value::matrix3d), reinterpret_cast<uint8_t *>(v.m))) {
+          PUSH_ERROR("Failed to read value of `matrix3d` type");
+          return false;
+        }
+        value->Set(v);
+        return true;
+      }
+    }
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_MATRIX4D: {
+      if (rep.IsCompressed()) {
+        PUSH_ERROR("Compressed matrix4d not supported for TimeSamples.");
+        return false;
+      }
+      if (rep.IsArray()) {
+        std::vector<value::matrix4d> v;
+        if (rep.GetPayload() == 0) {
+          value->Set(v);
+          return true;
+        }
+        uint64_t n{0};
+        if (VERSION_LESS_THAN_0_8_0(_version)) {
+          uint32_t shapesize;
+          if (!_sr->read4(&shapesize)) {
+            PUSH_ERROR("Failed to read the number of array elements.");
+            return false;
+          }
+          uint32_t _n;
+          if (!_sr->read4(&_n)) {
+            PUSH_ERROR("Failed to read the number of array elements.");
+            return false;
+          }
+          n = _n;
+        } else {
+          if (!_sr->read8(&n)) {
+            PUSH_ERROR("Failed to read the number of array elements.");
+            return false;
+          }
+        }
+        if (n == 0) {
+          value->Set(std::move(v));
+          return true;
+        }
+        if (n > _config.maxArrayElements) {
+          PUSH_ERROR_AND_RETURN_TAG(kTag, fmt::format("Array size {} too large.", n));
+        }
+        CHECK_MEMORY_USAGE(n * sizeof(value::matrix4d));
+        v.resize(static_cast<size_t>(n));
+        if (!_sr->read(size_t(n) * sizeof(value::matrix4d), size_t(n) * sizeof(value::matrix4d), reinterpret_cast<uint8_t *>(v.data()))) {
+          PUSH_ERROR("Failed to read Matrix4d array.");
+          return false;
+        }
+        value->Set(std::move(v));
+        return true;
+      } else {
+        CHECK_MEMORY_USAGE(sizeof(value::matrix4d));
+        value::matrix4d v;
+        if (!_sr->read(sizeof(value::matrix4d), sizeof(value::matrix4d), reinterpret_cast<uint8_t *>(v.m))) {
+          PUSH_ERROR("Failed to read value of `matrix4d` type");
+          return false;
+        }
+        value->Set(v);
+        return true;
+      }
+    }
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_TOKEN: {
+      if (rep.IsCompressed()) {
+        PUSH_ERROR("Compressed token not supported for TimeSamples.");
+        return false;
+      }
+      if (rep.IsArray()) {
+        uint64_t n;
+        if (!_sr->read8(&n)) {
+          PUSH_ERROR("Failed to read the number of array elements.");
+          return false;
+        }
+        if (n > _config.maxArrayElements) {
+          PUSH_ERROR_AND_RETURN_TAG(kTag, fmt::format("Token array too large. TinyUSDZ limites it up to {}", _config.maxArrayElements));
+        }
+        CHECK_MEMORY_USAGE(n * sizeof(crate::Index));
+        std::vector<crate::Index> v(static_cast<size_t>(n));
+        if (!_sr->read(size_t(n) * sizeof(crate::Index), size_t(n) * sizeof(crate::Index), reinterpret_cast<uint8_t *>(v.data()))) {
+          PUSH_ERROR("Failed to read TokenIndex array.");
+          return false;
+        }
+        std::vector<value::token> tokenArray(static_cast<size_t>(n));
+        for (size_t i = 0; i < n; i++) {
+          if (auto tok = GetToken(v[i])) {
+            tokenArray[i] = tok.value();
+          } else {
+            return false;
+          }
+        }
+        value->Set(std::move(tokenArray));
+        return true;
+      }
+      return false;
+    }
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_HALF: {
+      if (rep.IsArray()) {
+        if (rep.GetPayload() == 0) {
+          std::vector<value::half> v;
+          value->Set(std::move(v));
+          return true;
+        }
+        std::vector<value::half> v;
+        if (!ReadHalfArray(rep.IsCompressed(), &v)) {
+          PUSH_ERROR("Failed to read half array value.");
+          return false;
+        }
+        value->Set(std::move(v));
+        return true;
+      }
+      return false;
+    }
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_VEC2H: {
+      if (rep.IsCompressed()) {
+        PUSH_ERROR("Compressed half2 not supported for TimeSamples.");
+        return false;
+      }
+      if (rep.IsArray()) {
+        std::vector<value::half2> v;
+        if (!ReadArray(&v)) {
+          PUSH_ERROR("Failed to read half2 array.");
+          return false;
+        }
+        value->Set(std::move(v));
+        return true;
+      }
+      return false;
+    }
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_VEC3H: {
+      if (rep.IsCompressed()) {
+        PUSH_ERROR("Compressed half3 not supported for TimeSamples.");
+        return false;
+      }
+      if (rep.IsArray()) {
+        std::vector<value::half3> v;
+        if (!ReadArray(&v)) {
+          PUSH_ERROR("Failed to read half3 array.");
+          return false;
+        }
+        value->Set(std::move(v));
+        return true;
+      }
+      return false;
+    }
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_VEC4H: {
+      if (rep.IsCompressed()) {
+        PUSH_ERROR("Compressed half4 not supported for TimeSamples.");
+        return false;
+      }
+      if (rep.IsArray()) {
+        std::vector<value::half4> v;
+        if (!ReadArray(&v)) {
+          PUSH_ERROR("Failed to read half4 array.");
+          return false;
+        }
+        value->Set(std::move(v));
+        return true;
+      }
+      return false;
+    }
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_VEC2F: {
+      if (rep.IsCompressed()) {
+        PUSH_ERROR("Compressed float2 not supported for TimeSamples.");
+        return false;
+      }
+      if (rep.IsArray()) {
+        std::vector<value::float2> v;
+        if (!ReadArray(&v)) {
+          PUSH_ERROR("Failed to read float2 array.");
+          return false;
+        }
+        value->Set(std::move(v));
+        return true;
+      }
+      return false;
+    }
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_VEC3F: {
+      if (rep.IsCompressed()) {
+        PUSH_ERROR("Compressed float3 not supported for TimeSamples.");
+        return false;
+      }
+      if (rep.IsArray()) {
+        std::vector<value::float3> v;
+        if (!ReadArray(&v)) {
+          PUSH_ERROR("Failed to read float3 array.");
+          return false;
+        }
+        value->Set(std::move(v));
+        return true;
+      }
+      return false;
+    }
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_VEC4F: {
+      if (rep.IsCompressed()) {
+        PUSH_ERROR("Compressed float4 not supported for TimeSamples.");
+        return false;
+      }
+      if (rep.IsArray()) {
+        std::vector<value::float4> v;
+        if (!ReadArray(&v)) {
+          PUSH_ERROR("Failed to read float4 array.");
+          return false;
+        }
+        value->Set(std::move(v));
+        return true;
+      }
+      return false;
+    }
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_VEC2D: {
+      if (rep.IsCompressed()) {
+        PUSH_ERROR("Compressed double2 not supported for TimeSamples.");
+        return false;
+      }
+      if (rep.IsArray()) {
+        std::vector<value::double2> v;
+        if (!ReadArray(&v)) {
+          PUSH_ERROR("Failed to read double2 array.");
+          return false;
+        }
+        value->Set(std::move(v));
+        return true;
+      }
+      return false;
+    }
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_VEC3D: {
+      if (rep.IsCompressed()) {
+        PUSH_ERROR("Compressed double3 not supported for TimeSamples.");
+        return false;
+      }
+      if (rep.IsArray()) {
+        std::vector<value::double3> v;
+        if (!ReadArray(&v)) {
+          PUSH_ERROR("Failed to read double3 array.");
+          return false;
+        }
+        value->Set(std::move(v));
+        return true;
+      }
+      return false;
+    }
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_VEC4D: {
+      if (rep.IsCompressed()) {
+        PUSH_ERROR("Compressed double4 not supported for TimeSamples.");
+        return false;
+      }
+      if (rep.IsArray()) {
+        std::vector<value::double4> v;
+        if (!ReadArray(&v)) {
+          PUSH_ERROR("Failed to read double4 array.");
+          return false;
+        }
+        value->Set(std::move(v));
+        return true;
+      }
+      return false;
+    }
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_QUATH: {
+      if (rep.IsCompressed()) {
+        PUSH_ERROR("Compressed quath not supported for TimeSamples.");
+        return false;
+      }
+      if (rep.IsArray()) {
+        std::vector<value::quath> v;
+        if (!ReadArray(&v)) {
+          PUSH_ERROR("Failed to read quath array.");
+          return false;
+        }
+        value->Set(std::move(v));
+        return true;
+      } else {
+        // Support scalar quath
+        value::quath v;
+        if (!_sr->read(sizeof(value::quath), sizeof(value::quath),
+                       reinterpret_cast<uint8_t *>(&v))) {
+          PUSH_ERROR("Failed to read quath value.");
+          return false;
+        }
+        value->Set(v);
+        return true;
+      }
+    }
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_QUATF: {
+      if (rep.IsCompressed()) {
+        PUSH_ERROR("Compressed quatf not supported for TimeSamples.");
+        return false;
+      }
+      if (rep.IsArray()) {
+        std::vector<value::quatf> v;
+        if (!ReadArray(&v)) {
+          PUSH_ERROR("Failed to read quatf array.");
+          return false;
+        }
+        value->Set(std::move(v));
+        return true;
+      } else {
+        // Support scalar quatf
+        value::quatf v;
+        if (!_sr->read(sizeof(value::quatf), sizeof(value::quatf),
+                       reinterpret_cast<uint8_t *>(&v))) {
+          PUSH_ERROR("Failed to read quatf value.");
+          return false;
+        }
+        value->Set(v);
+        return true;
+      }
+    }
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_QUATD: {
+      if (rep.IsCompressed()) {
+        PUSH_ERROR("Compressed quatd not supported for TimeSamples.");
+        return false;
+      }
+      if (rep.IsArray()) {
+        std::vector<value::quatd> v;
+        if (!ReadArray(&v)) {
+          PUSH_ERROR("Failed to read quatd array.");
+          return false;
+        }
+        value->Set(std::move(v));
+        return true;
+      } else {
+        // Support scalar quatd
+        value::quatd v;
+        if (!_sr->read(sizeof(value::quatd), sizeof(value::quatd),
+                       reinterpret_cast<uint8_t *>(&v))) {
+          PUSH_ERROR("Failed to read quatd value.");
+          return false;
+        }
+        value->Set(v);
+        return true;
+      }
+    }
+    default: {
+      PUSH_ERROR(fmt::format("Unsupported type for TimeSamples optimization: {}", crate::GetCrateDataTypeName(dty.dtype_id)));
+      return false;
+    }
+  }
+#ifdef __clang__
+#pragma clang diagnostic pop
+#endif
+}
+#endif
+
 bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
                                  crate::CrateValue *value) {
+
+  //TUSDZ_LOG_I("unpack . ty " << GetCrateDataTypeName(rep.GetType()) << ", inlined " << rep.IsInlined());
+
   if (rep.IsInlined()) {
     return UnpackInlinedValueRep(rep, value);
   }
@@ -2398,7 +3267,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
   switch (dty.dtype_id) {
     case crate::CrateDataTypeId::NumDataTypes:
     case crate::CrateDataTypeId::CRATE_DATA_TYPE_INVALID: {
-      DCOUT("dtype_id = " << to_string(uint32_t(dty.dtype_id)));
+      DCOUT("dtype_id = " << std::to_string(uint32_t(dty.dtype_id)));
       PUSH_ERROR("`Invalid` DataType.");
       return false;
     }
@@ -2410,7 +3279,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
         std::vector<bool> v;
 
         if (rep.GetPayload() == 0) { // empty array
-          value->Set(v);
+          value->Set(std::move(v));
           return true;
         }
 
@@ -2442,7 +3311,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
           v[i] = data[i] ? true : false;
         }
 
-        value->Set(v);
+        value->Set(std::move(v));
         return true;
 
       } else {
@@ -2507,7 +3376,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
           }
         }
 
-        value->Set(apaths);
+        value->Set(std::move(apaths));
         return true;
       } else {
 
@@ -2620,10 +3489,11 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
         DCOUT("stringArray = " << stringArray);
 
         // TODO: Use token type?
-        value->Set(stringArray);
+        value->Set(std::move(stringArray));
 
         return true;
       } else {
+        // TODO: support non-array string?
         return false;
       }
     }
@@ -2644,7 +3514,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
       if (rep.IsArray()) {
         std::vector<int32_t> v;
         if (rep.GetPayload() == 0) { // empty array
-          value->Set(v);
+          value->Set(std::move(v));
           return true;
         }
         if (!ReadIntArray(rep.IsCompressed(), &v)) {
@@ -2659,7 +3529,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
 
         DCOUT("IntArray = " << value::print_array_snipped(v));
 
-        value->Set(v);
+        value->Set(std::move(v));
         return true;
       } else {
         return false;
@@ -2671,7 +3541,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
       if (rep.IsArray()) {
         std::vector<uint32_t> v;
         if (rep.GetPayload() == 0) { // empty array
-          value->Set(v);
+          value->Set(std::move(v));
           return true;
         }
         if (!ReadIntArray(rep.IsCompressed(), &v)) {
@@ -2686,7 +3556,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
 
         DCOUT("UIntArray = " << value::print_array_snipped(v));
 
-        value->Set(v);
+        value->Set(std::move(v));
         return true;
       } else {
         return false;
@@ -2696,7 +3566,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
       if (rep.IsArray()) {
         std::vector<int64_t> v;
         if (rep.GetPayload() == 0) { // empty array
-          value->Set(v);
+          value->Set(std::move(v));
           return true;
         }
         if (!ReadIntArray(rep.IsCompressed(), &v)) {
@@ -2711,7 +3581,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
 
         DCOUT("Int64Array = " << v);
 
-        value->Set(v);
+        value->Set(std::move(v));
         return true;
       } else {
         COMPRESS_UNSUPPORTED_CHECK(dty)
@@ -2735,7 +3605,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
       if (rep.IsArray()) {
         std::vector<uint64_t> v;
         if (rep.GetPayload() == 0) { // empty array
-          value->Set(v);
+          value->Set(std::move(v));
           return true;
         }
 
@@ -2751,7 +3621,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
 
         DCOUT("UInt64Array = " << value::print_array_snipped(v));
 
-        value->Set(v);
+        value->Set(std::move(v));
         return true;
       } else {
         COMPRESS_UNSUPPORTED_CHECK(dty)
@@ -2775,7 +3645,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
       if (rep.IsArray()) {
         std::vector<value::half> v;
         if (rep.GetPayload() == 0) { // empty array
-          value->Set(v);
+          value->Set(std::move(v));
           return true;
         }
         if (!ReadHalfArray(rep.IsCompressed(), &v)) {
@@ -2783,7 +3653,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
           return false;
         }
 
-        value->Set(v);
+        value->Set(std::move(v));
 
         return true;
       } else {
@@ -2793,11 +3663,13 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
     }
     case crate::CrateDataTypeId::CRATE_DATA_TYPE_FLOAT: {
       if (rep.IsArray()) {
-        std::vector<float> v;
         if (rep.GetPayload() == 0) { // empty array
-          value->Set(v);
+          std::vector<float> empty_v;
+          value->Set(std::move(empty_v));
           return true;
         }
+        
+        std::vector<float> v;
         if (!ReadFloatArray(rep.IsCompressed(), &v)) {
           PUSH_ERROR("Failed to read float array value.");
           return false;
@@ -2805,7 +3677,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
 
         DCOUT("FloatArray = " << value::print_array_snipped(v));
 
-        value->Set(v);
+        value->Set(std::move(v));
 
         return true;
       } else {
@@ -2817,18 +3689,20 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
     }
     case crate::CrateDataTypeId::CRATE_DATA_TYPE_DOUBLE: {
       if (rep.IsArray()) {
-        std::vector<double> v;
         if (rep.GetPayload() == 0) { // empty array
-          value->Set(v);
+          std::vector<double> empty_v;
+          value->Set(std::move(empty_v));
           return true;
         }
+        
+        std::vector<double> v;
         if (!ReadDoubleArray(rep.IsCompressed(), &v)) {
           PUSH_ERROR("Failed to read Double value.");
           return false;
         }
 
         DCOUT("DoubleArray = " << value::print_array_snipped(v));
-        value->Set(v);
+        value->Set(std::move(v));
 
         return true;
       } else {
@@ -2855,7 +3729,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
       if (rep.IsArray()) {
         std::vector<value::matrix2d> v;
         if (rep.GetPayload() == 0) { // empty array
-          value->Set(v);
+          value->Set(std::move(v));
           return true;
         }
 
@@ -2880,7 +3754,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
         }
 
         if (n == 0) {
-          value->Set(v);
+          value->Set(std::move(v));
           return true;
         }
 
@@ -2899,7 +3773,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
           return false;
         }
 
-        value->Set(v);
+        value->Set(std::move(v));
 
       } else {
         static_assert(sizeof(value::matrix2d) == (8 * 4), "");
@@ -2926,7 +3800,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
       if (rep.IsArray()) {
         std::vector<value::matrix3d> v;
         if (rep.GetPayload() == 0) { // empty array
-          value->Set(v);
+          value->Set(std::move(v));
           return true;
         }
 
@@ -2951,7 +3825,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
         }
 
         if (n == 0) {
-          value->Set(v);
+          value->Set(std::move(v));
           return true;
         }
 
@@ -2969,7 +3843,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
           return false;
         }
 
-        value->Set(v);
+        value->Set(std::move(v));
 
       } else {
         static_assert(sizeof(value::matrix3d) == (8 * 9), "");
@@ -2997,7 +3871,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
       if (rep.IsArray()) {
         std::vector<value::matrix4d> v;
         if (rep.GetPayload() == 0) { // empty array
-          value->Set(v);
+          value->Set(std::move(v));
           return true;
         }
 
@@ -3022,7 +3896,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
         }
 
         if (n == 0) {
-          value->Set(v);
+          value->Set(std::move(v));
           return true;
         }
 
@@ -3040,7 +3914,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
           return false;
         }
 
-        value->Set(v);
+        value->Set(std::move(v));
 
       } else {
         static_assert(sizeof(value::matrix4d) == (8 * 16), "");
@@ -3065,7 +3939,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
       if (rep.IsArray()) {
         std::vector<value::quatd> v;
         if (rep.GetPayload() == 0) { // empty array
-          value->Set(v);
+          value->Set(std::move(v));
           return true;
         }
         uint64_t n{0};
@@ -3089,7 +3963,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
         }
 
         if (n == 0) {
-          value->Set(v);
+          value->Set(std::move(v));
           return true;
         }
 
@@ -3109,7 +3983,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
 
         DCOUT("Quatf[] = " << v);
 
-        value->Set(v);
+        value->Set(std::move(v));
 
       } else {
         COMPRESS_UNSUPPORTED_CHECK(dty)
@@ -3133,7 +4007,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
       if (rep.IsArray()) {
         std::vector<value::quatf> v;
         if (rep.GetPayload() == 0) { // empty array
-          value->Set(v);
+          value->Set(std::move(v));
           return true;
         }
         uint64_t n{0};
@@ -3157,7 +4031,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
         }
 
         if (n == 0) {
-          value->Set(v);
+          value->Set(std::move(v));
           return true;
         }
 
@@ -3177,7 +4051,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
 
         DCOUT("Quatf[] = " << v);
 
-        value->Set(v);
+        value->Set(std::move(v));
 
       } else {
         COMPRESS_UNSUPPORTED_CHECK(dty)
@@ -3201,7 +4075,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
       if (rep.IsArray()) {
         std::vector<value::quath> v;
         if (rep.GetPayload() == 0) { // empty array
-          value->Set(v);
+          value->Set(std::move(v));
           return true;
         }
 
@@ -3226,7 +4100,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
         }
 
         if (n == 0) {
-          value->Set(v);
+          value->Set(std::move(v));
           return true;
         }
 
@@ -3246,7 +4120,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
 
         DCOUT("Quath[] = " << v);
 
-        value->Set(v);
+        value->Set(std::move(v));
 
       } else {
         COMPRESS_UNSUPPORTED_CHECK(dty)
@@ -3270,9 +4144,9 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
       COMPRESS_UNSUPPORTED_CHECK(dty)
 
       if (rep.IsArray()) {
-        std::vector<value::double2> v;
         if (rep.GetPayload() == 0) { // empty array
-          value->Set(v);
+          std::vector<value::double2> empty_v;
+          value->Set(std::move(empty_v));
           return true;
         }
 
@@ -3297,7 +4171,8 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
         }
 
         if (n == 0) {
-          value->Set(v);
+          std::vector<value::double2> empty_v;
+          value->Set(std::move(empty_v));
           return true;
         }
 
@@ -3307,6 +4182,8 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
 
         CHECK_MEMORY_USAGE(n * sizeof(value::double2));
 
+        std::vector<value::double2> v;
+        // Always use std::vector - no mmap view mode
         v.resize(static_cast<size_t>(n));
         if (!_sr->read(size_t(n) * sizeof(value::double2),
                        size_t(n) * sizeof(value::double2),
@@ -3317,7 +4194,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
 
         DCOUT("double2[] = " << value::print_array_snipped(v));
 
-        value->Set(v);
+        value->Set(std::move(v));
         return true;
       } else {
         CHECK_MEMORY_USAGE(sizeof(value::double2));
@@ -3339,9 +4216,9 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
       COMPRESS_UNSUPPORTED_CHECK(dty)
 
       if (rep.IsArray()) {
-        std::vector<value::float2> v;
         if (rep.GetPayload() == 0) { // empty array
-          value->Set(v);
+          std::vector<value::float2> empty_v;
+          value->Set(std::move(empty_v));
           return true;
         }
 
@@ -3370,12 +4247,15 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
         }
 
         if (n == 0) {
-          value->Set(v);
+          std::vector<value::float2> empty_v;
+          value->Set(std::move(empty_v));
           return true;
         }
 
         CHECK_MEMORY_USAGE(n * sizeof(value::float2));
 
+        std::vector<value::float2> v;
+        // Always use std::vector - no mmap view mode
         v.resize(static_cast<size_t>(n));
         if (!_sr->read(size_t(n) * sizeof(value::float2),
                        size_t(n) * sizeof(value::float2),
@@ -3385,8 +4265,10 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
         }
 
         DCOUT("float2[] = " << value::print_array_snipped(v));
+        //TUSDZ_LOG_D("float2[] = " << value::print_array_snipped(v));
+        //TUSDZ_LOG_I("float2[].size" << v.size());
 
-        value->Set(v);
+        value->Set(std::move(v));
         return true;
       } else {
         CHECK_MEMORY_USAGE(sizeof(value::float2));
@@ -3408,9 +4290,9 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
       COMPRESS_UNSUPPORTED_CHECK(dty)
 
       if (rep.IsArray()) {
-        std::vector<value::half2> v;
         if (rep.GetPayload() == 0) { // empty array
-          value->Set(v);
+          std::vector<value::half2> empty_v;
+          value->Set(std::move(empty_v));
           return true;
         }
         uint64_t n{0};
@@ -3439,6 +4321,8 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
 
         CHECK_MEMORY_USAGE(n * sizeof(value::half2));
 
+        std::vector<value::half2> v;
+        // Always use std::vector - no mmap view mode
         v.resize(static_cast<size_t>(n));
         if (!_sr->read(size_t(n) * sizeof(value::half2),
                        size_t(n) * sizeof(value::half2),
@@ -3448,7 +4332,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
         }
 
         DCOUT("half2[] = " << value::print_array_snipped(v));
-        value->Set(v);
+        value->Set(std::move(v));
 
       } else {
         CHECK_MEMORY_USAGE(sizeof(value::half2));
@@ -3472,7 +4356,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
       if (rep.IsArray()) {
         std::vector<value::int2> v;
         if (rep.GetPayload() == 0) { // empty array
-          value->Set(v);
+          value->Set(std::move(v));
           return true;
         }
 
@@ -3511,7 +4395,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
         }
 
         DCOUT("int2[] = " << value::print_array_snipped(v));
-        value->Set(v);
+        value->Set(std::move(v));
 
       } else {
         CHECK_MEMORY_USAGE(sizeof(value::int2));
@@ -3533,9 +4417,9 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
       COMPRESS_UNSUPPORTED_CHECK(dty)
 
       if (rep.IsArray()) {
-        std::vector<value::double3> v;
         if (rep.GetPayload() == 0) { // empty array
-          value->Set(v);
+          std::vector<value::double3> empty_v;
+          value->Set(std::move(empty_v));
           return true;
         }
 
@@ -3565,6 +4449,8 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
 
         CHECK_MEMORY_USAGE(n * sizeof(value::double3));
 
+        std::vector<value::double3> v;
+        // Always use std::vector - no mmap view mode
         v.resize(static_cast<size_t>(n));
         if (!_sr->read(size_t(n) * sizeof(value::double3),
                        size_t(n) * sizeof(value::double3),
@@ -3574,7 +4460,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
         }
 
         DCOUT("double3[] = " << value::print_array_snipped(v));
-        value->Set(v);
+        value->Set(std::move(v));
 
       } else {
         CHECK_MEMORY_USAGE(sizeof(value::double3));
@@ -3596,9 +4482,9 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
       COMPRESS_UNSUPPORTED_CHECK(dty)
 
       if (rep.IsArray()) {
-        std::vector<value::float3> v;
         if (rep.GetPayload() == 0) { // empty array
-          value->Set(v);
+          std::vector<value::float3> empty_v;
+          value->Set(std::move(empty_v));
           return true;
         }
 
@@ -3628,16 +4514,42 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
 
         CHECK_MEMORY_USAGE(n * sizeof(value::float3));
 
-        v.resize(static_cast<size_t>(n));
-        if (!_sr->read(size_t(n) * sizeof(value::float3),
-                       size_t(n) * sizeof(value::float3),
-                       reinterpret_cast<uint8_t *>(v.data()))) {
-          PUSH_ERROR("Failed to read float3 array.");
-          return false;
+#if 0
+        //TypedArray<value::float3> v;
+        if (!rep.IsCompressed() && _config.use_mmap) {
+          TypedArray<value::float3> v;
+          // Use TypedArray view mode - no allocation, just point to mmap'd data
+          uint64_t current_pos = _sr->tell();
+          const uint8_t* data_ptr = _sr->data() + current_pos;
+          
+          // Create a view over the mmap'd data
+          v = TypedArray<value::float3>(new TypedArray<value::float3>(const_cast<value::float3*>(reinterpret_cast<const value::float3*>(data_ptr)), static_cast<size_t>(n), true), true);
+          
+          // Advance stream reader position
+          if (!_sr->seek_set(current_pos + n * sizeof(value::float3))) {
+            PUSH_ERROR("Failed to advance stream reader position.");
+            return false;
+          }
+          DCOUT("float3f[] = " << value::print_array_snipped(v));
+          value->Set(std::move(v));
+        } else {
+#else
+        {
+#endif
+          // Regular allocation for compressed data or when mmap is disabled
+          // TODO: Chunked
+          std::vector<value::float3> v;
+          v.resize(static_cast<size_t>(n));
+          if (!_sr->read(size_t(n) * sizeof(value::float3),
+                         size_t(n) * sizeof(value::float3),
+                         reinterpret_cast<uint8_t *>(v.data()))) {
+            PUSH_ERROR("Failed to read float3 array.");
+            return false;
+          }
+          DCOUT("float3f[] = " << value::print_array_snipped(v));
+          value->Set(std::move(v));
         }
 
-        DCOUT("float3f[] = " << value::print_array_snipped(v));
-        value->Set(v);
 
       } else {
         CHECK_MEMORY_USAGE(sizeof(value::float3));
@@ -3660,9 +4572,10 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
       COMPRESS_UNSUPPORTED_CHECK(dty)
 
       if (rep.IsArray()) {
-        std::vector<value::half3> v;
         if (rep.GetPayload() == 0) { // empty array
-          value->Set(v);
+          //TypedArray<value::half3> empty_v;
+          std::vector<value::half3> empty_v;
+          value->Set(std::move(empty_v));
           return true;
         }
         uint64_t n{0};
@@ -3691,16 +4604,37 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
 
         CHECK_MEMORY_USAGE(n * sizeof(value::half3));
 
-        v.resize(static_cast<size_t>(n));
-        if (!_sr->read(size_t(n) * sizeof(value::half3),
-                       size_t(n) * sizeof(value::half3),
-                       reinterpret_cast<uint8_t *>(v.data()))) {
-          PUSH_ERROR("Failed to read half3 array.");
-          return false;
+        std::vector<value::half3> v;
+#if 0
+        if (!rep.IsCompressed() && _config.use_mmap) {
+          // Use TypedArray view mode - no allocation, just point to mmap'd data
+          uint64_t current_pos = _sr->tell();
+          const uint8_t* data_ptr = _sr->data() + current_pos;
+          
+          // Create a view over the mmap'd data
+          v = TypedArray<value::half3>(new TypedArray<value::half3>(const_cast<value::half3*>(reinterpret_cast<const value::half3*>(data_ptr)), static_cast<size_t>(n), true), true);
+          
+          // Advance stream reader position
+          if (!_sr->seek_set(current_pos + n * sizeof(value::half3))) {
+            PUSH_ERROR("Failed to advance stream reader position.");
+            return false;
+          }
+        } else {
+#else
+        {
+#endif
+          // Regular allocation for compressed data or when mmap is disabled
+          v.resize(static_cast<size_t>(n));
+          if (!_sr->read(size_t(n) * sizeof(value::half3),
+                         size_t(n) * sizeof(value::half3),
+                         reinterpret_cast<uint8_t *>(v.data()))) {
+            PUSH_ERROR("Failed to read half3 array.");
+            return false;
+          }
         }
 
         DCOUT("half3[] = " << value::print_array_snipped(v));
-        value->Set(v);
+        value->Set(std::move(v));
 
       } else {
         CHECK_MEMORY_USAGE(sizeof(value::half3));
@@ -3722,18 +4656,18 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
       COMPRESS_UNSUPPORTED_CHECK(dty)
 
       if (rep.IsArray()) {
-        std::vector<value::int3> v;
         if (rep.GetPayload() == 0) { // empty array
-          value->Set(v);
+          std::vector<value::int3> empty_v;
+          value->Set(std::move(empty_v));
           return true;
         }
         uint64_t n{0};
         if (VERSION_LESS_THAN_0_8_0(_version)) {
-      uint32_t shapesize; // not used
-      if (!_sr->read4(&shapesize)) {
-        PUSH_ERROR("Failed to read the number of array elements.");
-        return false;
-      }
+          uint32_t shapesize; // not used
+          if (!_sr->read4(&shapesize)) {
+            PUSH_ERROR("Failed to read the number of array elements.");
+            return false;
+          }
           uint32_t _n;
           if (!_sr->read4(&_n)) {
             PUSH_ERROR("Failed to read the number of array elements.");
@@ -3753,16 +4687,37 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
 
         CHECK_MEMORY_USAGE(n * sizeof(value::int3));
 
-        v.resize(static_cast<size_t>(n));
-        if (!_sr->read(size_t(n) * sizeof(value::int3),
-                       size_t(n) * sizeof(value::int3),
-                       reinterpret_cast<uint8_t *>(v.data()))) {
-          PUSH_ERROR("Failed to read int3 array.");
-          return false;
+        std::vector<value::int3> v;
+#if 0
+        if (!rep.IsCompressed() && _config.use_mmap) {
+          // Use TypedArray view mode - no allocation, just point to mmap'd data
+          uint64_t current_pos = _sr->tell();
+          const uint8_t* data_ptr = _sr->data() + current_pos;
+          
+          // Create a view over the mmap'd data
+          v = TypedArray<value::int3>(new TypedArray<value::int3>(const_cast<value::int3*>(reinterpret_cast<const value::int3*>(data_ptr)), static_cast<size_t>(n), true), true);
+          
+          // Advance stream reader position
+          if (!_sr->seek_set(current_pos + n * sizeof(value::int3))) {
+            PUSH_ERROR("Failed to advance stream reader position.");
+            return false;
+          }
+        } else {
+#else
+        {
+#endif
+          // Regular allocation for compressed data or when mmap is disabled
+          v.resize(static_cast<size_t>(n));
+          if (!_sr->read(size_t(n) * sizeof(value::int3),
+                         size_t(n) * sizeof(value::int3),
+                         reinterpret_cast<uint8_t *>(v.data()))) {
+            PUSH_ERROR("Failed to read int3 array.");
+            return false;
+          }
         }
 
         DCOUT("int3[] = " << value::print_array_snipped(v));
-        value->Set(v);
+        value->Set(std::move(v));
 
       } else {
         CHECK_MEMORY_USAGE(sizeof(value::int3));
@@ -3784,19 +4739,19 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
       COMPRESS_UNSUPPORTED_CHECK(dty)
 
       if (rep.IsArray()) {
-        std::vector<value::double4> v;
         if (rep.GetPayload() == 0) { // empty array
-          value->Set(v);
+          std::vector<value::double4> empty_v;
+          value->Set(std::move(empty_v));
           return true;
         }
 
         uint64_t n{0};
         if (VERSION_LESS_THAN_0_8_0(_version)) {
-      uint32_t shapesize; // not used
-      if (!_sr->read4(&shapesize)) {
-        PUSH_ERROR("Failed to read the number of array elements.");
-        return false;
-      }
+          uint32_t shapesize; // not used
+          if (!_sr->read4(&shapesize)) {
+            PUSH_ERROR("Failed to read the number of array elements.");
+            return false;
+          }
           uint32_t _n;
           if (!_sr->read4(&_n)) {
             PUSH_ERROR("Failed to read the number of array elements.");
@@ -3816,16 +4771,37 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
 
         CHECK_MEMORY_USAGE(n * sizeof(value::double4));
 
-        v.resize(static_cast<size_t>(n));
-        if (!_sr->read(size_t(n) * sizeof(value::double4),
-                       size_t(n) * sizeof(value::double4),
-                       reinterpret_cast<uint8_t *>(v.data()))) {
-          PUSH_ERROR("Failed to read double4 array.");
-          return false;
+        std::vector<value::double4> v;
+#if 0
+        if (!rep.IsCompressed() && _config.use_mmap) {
+          // Use TypedArray view mode - no allocation, just point to mmap'd data
+          uint64_t current_pos = _sr->tell();
+          const uint8_t* data_ptr = _sr->data() + current_pos;
+          
+          // Create a view over the mmap'd data
+          v = TypedArray<value::double4>(new TypedArray<value::double4>(const_cast<value::double4*>(reinterpret_cast<const value::double4*>(data_ptr)), static_cast<size_t>(n), true), true);
+          
+          // Advance stream reader position
+          if (!_sr->seek_set(current_pos + n * sizeof(value::double4))) {
+            PUSH_ERROR("Failed to advance stream reader position.");
+            return false;
+          }
+        } else {
+#else
+        {
+#endif
+          // Regular allocation for compressed data or when mmap is disabled
+          v.resize(static_cast<size_t>(n));
+          if (!_sr->read(size_t(n) * sizeof(value::double4),
+                         size_t(n) * sizeof(value::double4),
+                         reinterpret_cast<uint8_t *>(v.data()))) {
+            PUSH_ERROR("Failed to read double4 array.");
+            return false;
+          }
         }
 
         DCOUT("double4[] = " << value::print_array_snipped(v));
-        value->Set(v);
+        value->Set(std::move(v));
 
       } else {
         CHECK_MEMORY_USAGE(sizeof(value::double4));
@@ -3847,18 +4823,18 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
       COMPRESS_UNSUPPORTED_CHECK(dty)
 
       if (rep.IsArray()) {
-        std::vector<value::float4> v;
         if (rep.GetPayload() == 0) { // empty array
-          value->Set(v);
+          std::vector<value::float4> empty_v;
+          value->Set(std::move(empty_v));
           return true;
         }
         uint64_t n{0};
         if (VERSION_LESS_THAN_0_8_0(_version)) {
-      uint32_t shapesize; // not used
-      if (!_sr->read4(&shapesize)) {
-        PUSH_ERROR("Failed to read the number of array elements.");
-        return false;
-      }
+          uint32_t shapesize; // not used
+          if (!_sr->read4(&shapesize)) {
+            PUSH_ERROR("Failed to read the number of array elements.");
+            return false;
+          }
           uint32_t _n;
           if (!_sr->read4(&_n)) {
             PUSH_ERROR("Failed to read the number of array elements.");
@@ -3878,16 +4854,37 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
 
         CHECK_MEMORY_USAGE(n * sizeof(value::float4));
 
-        v.resize(static_cast<size_t>(n));
-        if (!_sr->read(size_t(n) * sizeof(value::float4),
-                       size_t(n) * sizeof(value::float4),
-                       reinterpret_cast<uint8_t *>(v.data()))) {
-          PUSH_ERROR("Failed to read float4 array.");
-          return false;
+        std::vector<value::float4> v;
+#if 0
+        if (!rep.IsCompressed() && _config.use_mmap) {
+          // Use TypedArray view mode - no allocation, just point to mmap'd data
+          uint64_t current_pos = _sr->tell();
+          const uint8_t* data_ptr = _sr->data() + current_pos;
+          
+          // Create a view over the mmap'd data
+          v = TypedArray<value::float4>(new TypedArray<value::float4>(const_cast<value::float4*>(reinterpret_cast<const value::float4*>(data_ptr)), static_cast<size_t>(n), true), true);
+          
+          // Advance stream reader position
+          if (!_sr->seek_set(current_pos + n * sizeof(value::float4))) {
+            PUSH_ERROR("Failed to advance stream reader position.");
+            return false;
+          }
+        } else {
+#else
+        {
+          // Regular allocation for compressed data or when mmap is disabled
+          v.resize(static_cast<size_t>(n));
+          if (!_sr->read(size_t(n) * sizeof(value::float4),
+                         size_t(n) * sizeof(value::float4),
+                         reinterpret_cast<uint8_t *>(v.data()))) {
+            PUSH_ERROR("Failed to read float4 array.");
+            return false;
+          }
         }
+#endif
 
         DCOUT("float4[] = " << value::print_array_snipped(v));
-        value->Set(v);
+        value->Set(std::move(v));
 
       } else {
         CHECK_MEMORY_USAGE(sizeof(value::float4));
@@ -3909,18 +4906,18 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
       COMPRESS_UNSUPPORTED_CHECK(dty)
 
       if (rep.IsArray()) {
-        std::vector<value::half4> v;
         if (rep.GetPayload() == 0) { // empty array
-          value->Set(v);
+          std::vector<value::half4> empty_v;
+          value->Set(std::move(empty_v));
           return true;
         }
         uint64_t n{0};
         if (VERSION_LESS_THAN_0_8_0(_version)) {
-      uint32_t shapesize; // not used
-      if (!_sr->read4(&shapesize)) {
-        PUSH_ERROR("Failed to read the number of array elements.");
-        return false;
-      }
+          uint32_t shapesize; // not used
+          if (!_sr->read4(&shapesize)) {
+            PUSH_ERROR("Failed to read the number of array elements.");
+            return false;
+          }
           uint32_t _n;
           if (!_sr->read4(&_n)) {
             PUSH_ERROR("Failed to read the number of array elements.");
@@ -3940,6 +4937,8 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
 
         CHECK_MEMORY_USAGE(n * sizeof(value::half4));
 
+        std::vector<value::half4> v;
+        // Always use std::vector - no mmap view mode
         v.resize(static_cast<size_t>(n));
         if (!_sr->read(size_t(n) * sizeof(value::half4),
                        size_t(n) * sizeof(value::half4),
@@ -3949,7 +4948,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
         }
 
         DCOUT("half4[] = " << value::print_array_snipped(v));
-        value->Set(v);
+        value->Set(std::move(v));
 
       } else {
         CHECK_MEMORY_USAGE(sizeof(value::half4));
@@ -3973,7 +4972,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
       if (rep.IsArray()) {
         std::vector<value::int4> v;
         if (rep.GetPayload() == 0) { // empty array
-          value->Set(v);
+          value->Set(std::move(v));
           return true;
         }
         uint64_t n{0};
@@ -4011,7 +5010,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
         }
 
         DCOUT("int4[] = " << value::print_array_snipped(v));
-        value->Set(v);
+        value->Set(std::move(v));
 
       } else {
         CHECK_MEMORY_USAGE(sizeof(value::int4));
@@ -4043,7 +5042,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
 
       DCOUT("Dict. nelems = " << dict.size());
 
-      value->Set(dict);
+      value->Set(std::move(dict));
 
       return true;
     }
@@ -4055,7 +5054,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
         return false;
       }
 
-      value->Set(lst);
+      value->Set(std::move(lst));
       return true;
     }
     case crate::CrateDataTypeId::CRATE_DATA_TYPE_PATH_LIST_OP: {
@@ -4070,7 +5069,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
         return false;
       }
 
-      value->Set(lst);
+      value->Set(std::move(lst));
 
       return true;
     }
@@ -4096,7 +5095,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
 
       DCOUT("PathVector = " << to_string(v));
 
-      value->Set(v);
+      value->Set(std::move(v));
 
       return true;
     }
@@ -4136,7 +5135,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
 
       DCOUT("TokenVector = " << tokens);
 
-      value->Set(tokens);
+      value->Set(std::move(tokens));
 
       return true;
     }
@@ -4148,7 +5147,9 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
         PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read TimeSamples data");
       }
 
-      value->Set(ts);
+      //TUSDZ_LOG_I("Set TimeSamples begin\n");
+      value->Set(std::move(ts));
+      //TUSDZ_LOG_I("Set TimeSamples end\n");
 
       return true;
     }
@@ -4161,7 +5162,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
 
       DCOUT("DoubleArray = " << v);
 
-      value->Set(v);
+      value->Set(std::move(v));
 
       return true;
     }
@@ -4175,7 +5176,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
 
       DCOUT("StringArray = " << v);
 
-      value->Set(v);
+      value->Set(std::move(v));
 
       return true;
     }
@@ -4189,7 +5190,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
 
       DCOUT("VariantSelectionMap = " << print_variantSelectionMap(m, 0));
 
-      value->Set(m);
+      value->Set(std::move(m));
 
       return true;
     }
@@ -4204,7 +5205,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
 
       DCOUT("LayerOffsetVector = " << v);
 
-      value->Set(v);
+      value->Set(std::move(v));
 
       return true;
 
@@ -4231,7 +5232,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
         return false;
       }
 
-      value->Set(lst);
+      value->Set(std::move(lst));
       return true;
     }
     case crate::CrateDataTypeId::CRATE_DATA_TYPE_REFERENCE_LIST_OP: {
@@ -4242,7 +5243,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
         return false;
       }
 
-      value->Set(lst);
+      value->Set(std::move(lst));
       return true;
     }
     case crate::CrateDataTypeId::CRATE_DATA_TYPE_INT_LIST_OP: {
@@ -4253,7 +5254,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
         return false;
       }
 
-      value->Set(lst);
+      value->Set(std::move(lst));
       return true;
     }
     case crate::CrateDataTypeId::CRATE_DATA_TYPE_INT64_LIST_OP: {
@@ -4264,7 +5265,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
         return false;
       }
 
-      value->Set(lst);
+      value->Set(std::move(lst));
       return true;
     }
     case crate::CrateDataTypeId::CRATE_DATA_TYPE_UINT_LIST_OP: {
@@ -4275,7 +5276,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
         return false;
       }
 
-      value->Set(lst);
+      value->Set(std::move(lst));
       return true;
     }
     case crate::CrateDataTypeId::CRATE_DATA_TYPE_UINT64_LIST_OP: {
@@ -4286,7 +5287,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
         return false;
       }
 
-      value->Set(lst);
+      value->Set(std::move(lst));
       return true;
     }
     case crate::CrateDataTypeId::CRATE_DATA_TYPE_VALUE_BLOCK: {
@@ -4323,7 +5324,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
           return false;
         }
 
-        (*value) = local_val;
+        (*value) = std::move(local_val);
 
         unpackRecursionGuard.erase(local_rep.GetData());
         return true;
@@ -4411,7 +5412,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
             return false;
           }
         }
-        value->Set(dict);
+        value->Set(std::move(dict));
         if (!_sr->seek_set(saved_position)) {
           PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to set seek.");
         }
@@ -5215,9 +6216,23 @@ bool CrateReader::ReadCompressedPaths(const uint64_t maxNumPaths) {
   CHECK_MEMORY_USAGE(compBufferSize);
   CHECK_MEMORY_USAGE(workspaceBufferSize);
 
+#if 0
+  // Original implementation: allocates new buffers each time
   // Create temporary space for decompressing.
   std::vector<char> compBuffer(compBufferSize);
   std::vector<char> workingSpace(workspaceBufferSize);
+#else
+  // Optimized implementation: reuse buffers across calls
+  if (_decomp_comp_buffer.size() < compBufferSize) {
+    _decomp_comp_buffer.resize(compBufferSize);
+  }
+  if (_decomp_working_buffer.size() < workspaceBufferSize) {
+    _decomp_working_buffer.resize(workspaceBufferSize);
+  }
+  // Create references for compatibility with existing code
+  std::vector<char> &compBuffer = _decomp_comp_buffer;
+  std::vector<char> &workingSpace = _decomp_working_buffer;
+#endif
 
   // pathIndexes.
   {
@@ -5447,6 +6462,13 @@ bool CrateReader::ReadSection(crate::Section *s) {
 }
 
 bool CrateReader::ReadTokens() {
+  TINYUSDZ_PROFILE_SCOPE("crate-reader", "ReadTokens");
+  
+  // Report progress (20%)
+  if (!ReportProgress(0.2f)) {
+    PUSH_ERROR("Parsing cancelled by progress callback.");
+    return false;
+  }
   if ((_tokens_index < 0) || (_tokens_index >= int64_t(_toc.sections.size()))) {
     PUSH_ERROR_AND_RETURN_TAG(kTag, "Invalid index for `TOKENS` section.");
   }
@@ -5606,6 +6628,7 @@ bool CrateReader::ReadTokens() {
     }
 
     value::token tok(str);
+    CHECK_MEMORY_USAGE(sizeof(value::token) + str.size());
 
     DCOUT("token[" << i << "] = " << tok);
     _tokens.push_back(tok);
@@ -5624,6 +6647,13 @@ bool CrateReader::ReadTokens() {
 }
 
 bool CrateReader::ReadStrings() {
+  TINYUSDZ_PROFILE_SCOPE("crate-reader", "ReadStrings");
+  
+  // Report progress (30%)
+  if (!ReportProgress(0.3f)) {
+    PUSH_ERROR("Parsing cancelled by progress callback.");
+    return false;
+  }
   if ((_strings_index < 0) ||
       (_strings_index >= int64_t(_toc.sections.size()))) {
     _err += "Invalid index for `STRINGS` section.\n";
@@ -5656,6 +6686,12 @@ bool CrateReader::ReadStrings() {
 }
 
 bool CrateReader::ReadFields() {
+  // Report progress (40%)
+  if (!ReportProgress(0.4f)) {
+    PUSH_ERROR("Parsing cancelled by progress callback.");
+    return false;
+  }
+  
   if ((_fields_index < 0) || (_fields_index >= int64_t(_toc.sections.size()))) {
     _err += "Invalid index for `FIELDS` section.\n";
     return false;
@@ -5788,6 +6824,12 @@ bool CrateReader::ReadFields() {
 }
 
 bool CrateReader::ReadFieldSets() {
+  // Report progress (50%)
+  if (!ReportProgress(0.5f)) {
+    PUSH_ERROR("Parsing cancelled by progress callback.");
+    return false;
+  }
+  
   if ((_fieldsets_index < 0) ||
       (_fieldsets_index >= int64_t(_toc.sections.size()))) {
     _err += "Invalid index for `FIELDSETS` section.\n";
@@ -5834,9 +6876,6 @@ bool CrateReader::ReadFieldSets() {
 
   CHECK_MEMORY_USAGE(compBufferSize);
 
-  std::vector<char> comp_buffer;
-  comp_buffer.resize(compBufferSize);
-
   CHECK_MEMORY_USAGE(sizeof(uint32_t) * size_t(num_fieldsets));
   std::vector<uint32_t> tmp;
   tmp.resize(static_cast<size_t>(num_fieldsets));
@@ -5845,8 +6884,24 @@ bool CrateReader::ReadFieldSets() {
           static_cast<size_t>(num_fieldsets));
 
   CHECK_MEMORY_USAGE(workBufferSize);
+
+#if 0
+  // Original implementation: allocates new buffers each time
+  std::vector<char> comp_buffer;
+  comp_buffer.resize(compBufferSize);
   std::vector<char> working_space;
   working_space.resize(workBufferSize);
+#else
+  // Optimized implementation: reuse buffers across calls
+  if (_decomp_comp_buffer.size() < compBufferSize) {
+    _decomp_comp_buffer.resize(compBufferSize);
+  }
+  if (_decomp_working_buffer.size() < workBufferSize) {
+    _decomp_working_buffer.resize(workBufferSize);
+  }
+  std::vector<char> &comp_buffer = _decomp_comp_buffer;
+  std::vector<char> &working_space = _decomp_working_buffer;
+#endif
 
   uint64_t fsets_size;
   if (!_sr->read8(&fsets_size)) {
@@ -5893,6 +6948,12 @@ bool CrateReader::ReadFieldSets() {
 }
 
 bool CrateReader::BuildLiveFieldSets() {
+  // Report progress (80%)
+  if (!ReportProgress(0.8f)) {
+    PUSH_ERROR("Parsing cancelled by progress callback.");
+    return false;
+  }
+  
   for (auto fsBegin = _fieldset_indices.begin(),
             fsEnd = std::find(fsBegin, _fieldset_indices.end(), crate::Index());
        fsBegin != _fieldset_indices.end();
@@ -5948,6 +7009,12 @@ bool CrateReader::BuildLiveFieldSets() {
 }
 
 bool CrateReader::ReadSpecs() {
+  // Report progress (60%)
+  if (!ReportProgress(0.6f)) {
+    PUSH_ERROR("Parsing cancelled by progress callback.");
+    return false;
+  }
+  
   if ((_specs_index < 0) || (_specs_index >= int64_t(_toc.sections.size()))) {
     PUSH_ERROR("Invalid index for `SPECS` section.");
     return false;
@@ -5997,10 +7064,6 @@ bool CrateReader::ReadSpecs() {
       static_cast<size_t>(num_specs));
 
   CHECK_MEMORY_USAGE(compBufferSize);
-
-  std::vector<char> comp_buffer;
-  comp_buffer.resize(compBufferSize);
-
   CHECK_MEMORY_USAGE(size_t(num_specs) * sizeof(uint32_t)); // tmp
 
   std::vector<uint32_t> tmp(static_cast<size_t>(num_specs));
@@ -6009,8 +7072,24 @@ bool CrateReader::ReadSpecs() {
           static_cast<size_t>(num_specs));
 
   CHECK_MEMORY_USAGE(workBufferSize);
+
+#if 0
+  // Original implementation: allocates new buffers each time
+  std::vector<char> comp_buffer;
+  comp_buffer.resize(compBufferSize);
   std::vector<char> working_space;
   working_space.resize(workBufferSize);
+#else
+  // Optimized implementation: reuse buffers across calls
+  if (_decomp_comp_buffer.size() < compBufferSize) {
+    _decomp_comp_buffer.resize(compBufferSize);
+  }
+  if (_decomp_working_buffer.size() < workBufferSize) {
+    _decomp_working_buffer.resize(workBufferSize);
+  }
+  std::vector<char> &comp_buffer = _decomp_comp_buffer;
+  std::vector<char> &working_space = _decomp_working_buffer;
+#endif
 
   // path indices
   {
@@ -6134,6 +7213,13 @@ bool CrateReader::ReadSpecs() {
 }
 
 bool CrateReader::ReadPaths() {
+  TINYUSDZ_PROFILE_SCOPE("crate-reader", "ReadPaths");
+  
+  // Report progress (70%)
+  if (!ReportProgress(0.7f)) {
+    PUSH_ERROR("Parsing cancelled by progress callback.");
+    return false;
+  }
   if ((_paths_index < 0) || (_paths_index >= int64_t(_toc.sections.size()))) {
     PUSH_ERROR("Invalid index for `PATHS` section.");
     return false;
@@ -6193,6 +7279,19 @@ bool CrateReader::ReadPaths() {
 }
 
 bool CrateReader::ReadBootStrap() {
+  TINYUSDZ_PROFILE_FUNCTION("crate-reader");
+
+  // Clear dedup map to prevent stale entries from previous file loads
+  // This ensures each file starts with a clean dedup state
+  // NOTE: This is NOT thread-safe - concurrent parsing requires external synchronization
+  clear_all_timesamples_dedup_entries();
+
+  // Report initial progress
+  if (!ReportProgress(0.0f)) {
+    PUSH_ERROR("Parsing cancelled by progress callback.");
+    return false;
+  }
+
   // parse header.
   uint8_t magic[8];
   if (8 != _sr->read(/* req */ 8, /* dst len */ 8, magic)) {
@@ -6254,6 +7353,13 @@ bool CrateReader::ReadBootStrap() {
 }
 
 bool CrateReader::ReadTOC() {
+  TINYUSDZ_PROFILE_FUNCTION("crate-reader");
+  
+  // Report progress (10% after bootstrap)
+  if (!ReportProgress(0.1f)) {
+    PUSH_ERROR("Parsing cancelled by progress callback.");
+    return false;
+  }
 
   DCOUT(fmt::format("Memory budget: {} bytes", _config.maxMemoryBudget));
 

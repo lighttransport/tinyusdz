@@ -1,0 +1,10 @@
+#usda 1.0
+
+def Xform "test_vec2f"
+{
+  float2 uv.timeSamples = {
+      0: (0.0, 0.0),
+      10: (0.5, 0.5),
+      20: (1.0, 1.0),
+  }
+}

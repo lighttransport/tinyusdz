@@ -1,13 +1,25 @@
 // SPDX-License-Identifier: Apache 2.0
 // Copyright 2022 - 2023, Syoyo Fujita.
 // Copyright 2023 - Present, Light Transport Entertainment Inc.
-//
-// UsdGeom
-//
-// TODO
-//
-// - [ ] Replace nonstd::optional<T> member to RelationshipProperty or TypedAttribute***<T>
-//
+
+///
+/// @file usdGeom.hh
+/// @brief USD Geometry schema definitions
+///
+/// Implements geometry primitives and related utilities following USD's
+/// UsdGeom schema. Includes basic geometry types like Mesh, Cube, Sphere,
+/// BasisCurves, Camera, and supporting classes like GeomPrimvar for
+/// primitive variables (vertex data, texture coordinates, etc).
+///
+/// Key classes:
+/// - GPrim: Base class for geometry primitives
+/// - GeomPrimvar: Wrapper for primvars (per-vertex data)
+/// - Mesh, Cube, Sphere, etc.: Specific geometry types
+/// - Xform: Transformation primitive
+///
+/// TODO:
+/// - [ ] Replace nonstd::optional<T> member to RelationshipProperty or TypedAttribute***<T>
+///
 #pragma once
 
 #include "prim-types.hh"
@@ -65,31 +77,37 @@ class GeomPrimvar {
 
  public:
   GeomPrimvar() : _has_value(false) {
+    //TUSDZ_LOG_I("GeomPrimvar default constructor called");
   }
 
   GeomPrimvar(const Attribute &attr) : _attr(attr) {
+    //TUSDZ_LOG_I("GeomPrimvar constructor called with Attribute");
     _has_value = true;
   }
 
   GeomPrimvar(const Attribute &attr, const std::vector<int32_t> &indices) : _attr(attr)
   {
+    //TUSDZ_LOG_I("GeomPrimvar constructor called with Attribute and indices vector");
     _indices = indices;
     _has_value = true;
   }
 
   GeomPrimvar(const Attribute &attr, const TypedTimeSamples<std::vector<int32_t>> &indices) : _attr(attr)
   {
+    //TUSDZ_LOG_I("GeomPrimvar constructor called with Attribute and const TypedTimeSamples indices");
     _ts_indices = indices;
     _has_value = true;
   }
 
   GeomPrimvar(const Attribute &attr, TypedTimeSamples<std::vector<int32_t>> &&indices) : _attr(attr)
   {
+    //TUSDZ_LOG_I("GeomPrimvar constructor called with Attribute and move TypedTimeSamples indices");
     _ts_indices = std::move(indices);
     _has_value = true;
   }
 
   GeomPrimvar(const GeomPrimvar &rhs) {
+    //TUSDZ_LOG_I("GeomPrimvar copy constructor called");
     _name = rhs._name;
     _attr = rhs._attr;
     _indices = rhs._indices;
@@ -106,6 +124,7 @@ class GeomPrimvar {
   }
 
   GeomPrimvar &operator=(const GeomPrimvar &rhs) {
+    //TUSDZ_LOG_I("GeomPrimvar copy assignment operator called");
     _name = rhs._name;
     _attr = rhs._attr;
     _indices = rhs._indices;
@@ -120,6 +139,35 @@ class GeomPrimvar {
     }
     _unauthoredValuesIndex = rhs._unauthoredValuesIndex;
 
+    return *this;
+  }
+
+  // Move constructor
+  GeomPrimvar(GeomPrimvar&& rhs) noexcept
+      : _name(std::move(rhs._name)),
+        _has_value(rhs._has_value),
+        _attr(std::move(rhs._attr)),
+        _indices(std::move(rhs._indices)),
+        _ts_indices(std::move(rhs._ts_indices)),
+        _unauthoredValuesIndex(rhs._unauthoredValuesIndex),
+        _elementSize(rhs._elementSize),
+        _interpolation(rhs._interpolation) {
+    //TUSDZ_LOG_I("GeomPrimvar move constructor called");
+  }
+
+  // Move assignment operator
+  GeomPrimvar& operator=(GeomPrimvar&& rhs) noexcept {
+    //TUSDZ_LOG_I("GeomPrimvar move assignment operator called");
+    if (this != &rhs) {
+      _name = std::move(rhs._name);
+      _attr = std::move(rhs._attr);
+      _indices = std::move(rhs._indices);
+      _ts_indices = std::move(rhs._ts_indices);
+      _has_value = rhs._has_value;
+      _elementSize = rhs._elementSize;
+      _interpolation = rhs._interpolation;
+      _unauthoredValuesIndex = rhs._unauthoredValuesIndex;
+    }
     return *this;
   }
 
@@ -1089,7 +1137,7 @@ struct GeomPoints : public GPrim {
 //
 // Point instancer(TODO).
 //
-struct PointInstancer : public GPrim {
+struct GeomPointInstancer : public GPrim {
   nonstd::optional<Relationship> prototypes;  // rel prototypes
 
   TypedAttribute<Animatable<std::vector<int32_t>>>
@@ -1109,6 +1157,8 @@ struct PointInstancer : public GPrim {
       angularVelocities;  // vector3f[] angularVelocities
   TypedAttribute<Animatable<std::vector<int64_t>>>
       invisibleIds;  // int64[] invisibleIds
+  TypedAttribute<std::vector<int64_t>>
+      inactiveIds;  // int64[] inactiveIds
 };
 
 
@@ -1134,7 +1184,7 @@ DEFINE_TYPE_TRAIT(GeomCapsule, kGeomCapsule, TYPE_ID_GEOM_CAPSULE, 1);
 DEFINE_TYPE_TRAIT(GeomPoints, kGeomPoints, TYPE_ID_GEOM_POINTS, 1);
 DEFINE_TYPE_TRAIT(GeomSubset, kGeomSubset, TYPE_ID_GEOM_GEOMSUBSET, 1);
 DEFINE_TYPE_TRAIT(GeomCamera, kGeomCamera, TYPE_ID_GEOM_CAMERA, 1);
-DEFINE_TYPE_TRAIT(PointInstancer, kPointInstancer, TYPE_ID_GEOM_POINT_INSTANCER,
+DEFINE_TYPE_TRAIT(GeomPointInstancer, kPointInstancer, TYPE_ID_GEOM_POINT_INSTANCER,
                   1);
 
 #undef DEFINE_TYPE_TRAIT

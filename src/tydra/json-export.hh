@@ -1,8 +1,26 @@
 // SPDX-License-Identifier: Apache 2.0
 // Copyright 2024 - Present, Light Transport Entertainment Inc.
-//
-// Simple RenderScene -> glTF-like JSON exporter
-//
+
+///
+/// @file json-export.hh
+/// @brief Export Tydra render data to JSON format
+///
+/// Provides JSON export functionality for TinyUSDZ render scenes, with a
+/// schema designed for web applications and Three.js compatibility. Supports
+/// both embedded and binary asset formats similar to glTF.
+///
+/// Features:
+/// - Three.js-compatible JSON scene format
+/// - Embedded or binary asset storage (like glTF/GLB)
+/// - Complete scene export (geometry, materials, textures, transforms)
+/// - Optimized for web delivery and streaming
+///
+/// Output formats:
+/// - JSON with embedded BASE64 assets (smaller scenes)
+/// - JSON + binary buffer (recommended for large scenes with textures)
+///
+/// Reference: https://github.com/mrdoob/three.js/wiki/JSON-Object-Scene-format-4
+///
 #pragma once
 
 #include "render-data.hh"

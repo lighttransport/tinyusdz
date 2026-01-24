@@ -10,6 +10,8 @@
  </a>
 </p>
 
+[![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/lighttransport/tinyusdz)
+
 [![npm version](https://img.shields.io/npm/v/tinyusdz.svg)](https://www.npmjs.com/package/tinyusdz)
 
 ## Releases
@@ -24,6 +26,28 @@
 
 More on the status: https://github.com/lighttransport/tinyusdz/blob/release/doc/status.md
 
+## Next release(Early 2026 planned)
+
+* We plan to use C++17 by default: https://github.com/lighttransport/tinyusdz/issues/220
+* Better JS/WASM binding
+* MCP(ModelContextProtocol) support 
+  * USDJ(JSON representation of USD)
+  * Scripting USD with JavaScript(using embedded JS runtime(QuickJS-ng)) 
+* Various optimization, memory usage reduction
+  * Timesamples dedup support 
+* Better animation(TimeSamples) support https://github.com/lighttransport/tinyusdz/tree/skinning
+* MaterialX support https://github.com/lighttransport/tinyusdz/tree/mtlx-2025
+* USDC writer(experimental) https://github.com/lighttransport/tinyusdz/issues/261
+* Subdivision surface https://github.com/lighttransport/tinyusdz/tree/subdiv-2025
+* Curves(hairs) https://github.com/lighttransport/tinyusdz/tree/curves-2025
+* PCP composition(experimental) https://github.com/lighttransport/tinyusdz/issues/262
+  * Documentation(w.i.p) https://lighttransport.github.io/tinyusdz/pcp.html 
+
+## Lab project
+
+* LightUSD: https://github.com/lighttransport/tinyusdz/tree/lightusd/sandbox/lightusd
+  * USD for 3D genAI/VLM/LLM
+    
 ## Branches
 
 * `release` Release branch
@@ -34,7 +58,17 @@ More on the status: https://github.com/lighttransport/tinyusdz/blob/release/doc/
 ## High priority
 
 * Support MCP interface for AI agents: https://github.com/lighttransport/tinyusdz/issues/243
-
+* MaterialX https://github.com/syoyo/tinyusdz/issues/86
+  * Write our own MaterialX parser
+  * OpenPBR shading model support https://github.com/lighttransport/tinyusdz/issues/172
+  * USD + MateriralX + OpenPBR rendering verification using pbrlab? https://github.com/lighttransport/pbrlab
+* Enhancement for wasm, webgpu https://github.com/syoyo/tinyusdz/issues/118
+  * Three.js loader addon(TinyUSDZLoader) https://github.com/lighttransport/tinyusdz/issues/185 
+* Improve Animation(timeSamples) support in JS/WASM
+  * Support rigid node animation(xformOp + timeSamples)
+  * Skinning support
+  * Convert USD animation data to Three.js friendly format.
+    
 ## Mid-term todo
 
 * USD import/export feature using TinyUSDZ for robotics/sim2real/digitalTwin/genAI tools https://github.com/lighttransport/tinyusdz/issues/226
@@ -43,13 +77,7 @@ More on the status: https://github.com/lighttransport/tinyusdz/blob/release/doc/
   * For OpenGL + MaterialX example, please refer ASF MaterialXViewer fork to load USD model through TinyUSDZ https://github.com/lighttransport/materialx
 * Support PLY and point primitive for Gaussian Splatting https://github.com/lighttransport/tinyusdz/issues/190
 * Performace optimization https://github.com/syoyo/tinyusdz/issues/164
-* MaterialX https://github.com/syoyo/tinyusdz/issues/86
-  * Write our own MaterialX parser
-  * OpenPBR shading model support https://github.com/lighttransport/tinyusdz/issues/172
-  * USD + MateriralX + OpenPBR rendering verification using pbrlab? https://github.com/lighttransport/pbrlab
 * Nested variantSet https://github.com/lighttransport/tinyusdz/issues/94 
-* Enhancement for wasm, webgpu https://github.com/syoyo/tinyusdz/issues/118
-  * Three.js loader addon(TinyUSDZLoader) https://github.com/lighttransport/tinyusdz/issues/185 
 * better colorspace + wide-gamut support https://github.com/syoyo/tinyusdz/issues/142
 * Better skinning + blendshapes support
   * Write example using mediapipe for motion tracking and face tracking with rigged USDZ model.  
@@ -120,6 +148,10 @@ Core loading feature(both USDA and USDC) is now working and production-grade(And
 Somewhat working Tydra framwork for rendering USD model with OpenGL/Vulkan-like renderer. https://github.com/syoyo/tinyusdz/issues/148
 
 v0.9.0 has better JS/WASM support and some USD composition features(including composition in JS/WASM).
+
+### Thread Safety
+
+**Important:** The TinyUSDZ API is **not thread-safe**. Core classes (`Stage`, `Prim`, `Layer`, `PrimSpec`) do not provide internal synchronization. Applications must implement their own synchronization mechanisms (e.g., mutexes, locks) when accessing these objects from multiple threads concurrently.
 
 * [x] USDZ/USDC(Crate) parser
   * USDC Crate version v0.8.0(most commonly used version as of 2022 Nov) or higher is supported.
@@ -438,24 +470,27 @@ Please see [tydra_api](examples/tydra_api/)
 
 ### Higher priority
 
-* [ ] Built-in usdObj(wavefront .obj mesh) support.
-  * via tinyobjloader.
 * [x] Support Crate(binary) version 0.8.0(USD v20.11 default)
-* [ ] usdSkel utilities
-  * [ ] Joint hierachy reconstruction and compute skinning matrix(usdSkel)
-  * [ ] Blend shapes
-    * [x] Basic Blendshapes support
-    * [ ] In-between blend shapes
-* [ ] Read USD data with bounded memory size. This feature is especially useful for mobile platform(e.g. in terms of security, memory consumption, etc)
+* [x] Read USD data with bounded memory size. This feature is especially useful for mobile platform(e.g. in terms of security, memory consumption, etc)
+  * Mostly done
 * [ ] USDC writer
-* [ ] Support Nested USDZ
-* [ ] UDIM texture support
 * [ ] MaterialX support
   * [ ] Parse XML file using tinyxml2
 
 ### Middle priority
 
+* [ ] Support Nested USDZ
+* [ ] UDIM texture support
+* [ ] usdSkel utilities
+  * [ ] Joint hierachy reconstruction and compute skinning matrix(usdSkel)
+  * [ ] Blend shapes
+    * [x] Basic Blendshapes support
+    * [ ] In-between blend shapes
+* [ ] Built-in usdObj(wavefront .obj mesh) support.
+  * via tinyobjloader.
 * [ ] Composition arcs
+  * [x] Basic composition
+  * [ ] Advanced composition 
 * [ ] Code refactoring, code optimization
 
 ### Lower priority
@@ -533,6 +568,8 @@ Some helper code is licensed under MIT license.
 * SDL2 : zlib license. https://www.libsdl.org/index.php
 * optional-lite: BSL 1.0 license. https://github.com/martinmoene/optional-lite
 * expected-lite: BSL 1.0 license. https://github.com/martinmoene/expected-lite
+* span-lite: BSL 1.0 license. https://github.com/martinmoene/span-lite
+* string-view-lite: BSL 1.0 license. https://github.com/martinmoene/string-view-lite
 * mapbox/earcut.hpp: ISC license. https://github.com/mapbox/earcut.hpp
 * par_shapes.h generate parametric surfaces and other simple shapes: MIT license https://github.com/prideout/par
 * MaterialX: Apache 2.0 license. https://github.com/AcademySoftwareFoundation/MaterialX
@@ -567,5 +604,10 @@ Some helper code is licensed under MIT license.
 * pugixml: MIT license. https://github.com/zeux/pugixml
 * nanoflann: 2-clause BSD license. https://github.com/jlblancoc/nanoflann
 * tinymeshutils: MIT license. https://github.com/syoyo/tinymeshutils
+* dragonbox : Apache 2.0 or Boost 1.0 license(tinyusdz prefer Boost 1.0 license) https://github.com/jk-jeon/dragonbox
 * criterion(for benchmark): MIT license. https://github.com/p-ranav/criterion
 * yyjson: MIT license. https://github.com/ibireme/yyjson
+* civetweb: MIT license. https://github.com/civetweb/civetweb
+* libsais: Apache 2.0 license. https://github.com/IlyaGrebnov/libsais
+* quickjs-ng: MIT license: https://github.com/quickjs-ng/quickjs
+* meshoptimizer: MIT license: https://github.com/zeux/meshoptimizer

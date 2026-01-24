@@ -1,24 +1,13 @@
 // SPDX-License-Identifier: Apache 2.0
 // Copyright 2023 - Present, Light Transport Entertainment, Inc.
 
-#if defined(TINYUSDZ_USE_USDMTLX)
-
-#ifdef __clang__
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Weverything"
-#endif
-
-#include "external/pugixml.hpp"
-// #include "external/jsonhpp/nlohmann/json.hpp"
-
-#ifdef __clang__
-#pragma clang diagnostic pop
-#endif
-#endif  // TINYUSDZ_USE_USDMTLX
-
 #include <sstream>
 
 #include "usdMtlx.hh"
+#include "usdShade.hh"
+
+// Use built-in MaterialX parser instead of pugixml
+#include "mtlx-usd-adapter.hh"
 
 #if defined(TINYUSDZ_USE_USDMTLX)
 
@@ -31,10 +20,30 @@
 #include "value-pprint.hh"
 
 inline std::string dtos(const double v) {
-  char buf[128];
-  dtoa_milo(v, buf);
+  char buf[384];
+  *dtoa_milo(v, buf) = '\0';
 
   return std::string(buf);
+}
+
+// Helper function to format float values cleanly for MaterialX XML
+inline std::string float_to_xml_string(float val) {
+  std::ostringstream oss;
+  oss.precision(6);  // 6 significant digits
+  oss << val;
+  std::string result = oss.str();
+
+  // Remove trailing zeros after decimal point
+  if (result.find('.') != std::string::npos) {
+    size_t end = result.find_last_not_of('0');
+    if (end != std::string::npos && result[end] != '.') {
+      result = result.substr(0, end + 1);
+    } else if (end != std::string::npos && result[end] == '.') {
+      result = result.substr(0, end);
+    }
+  }
+
+  return result;
 }
 
 #define PushWarn(msg) \
@@ -387,12 +396,24 @@ bool ParseMaterialXValue(const std::string &str, T *value, std::string *err) {
   return true;
 }
 
+// Specialization for std::string - MaterialX XML attributes are already unquoted
+template <>
+bool ParseMaterialXValue<std::string>(const std::string &str, std::string *value, std::string *err) {
+  (void)err;
+  (*value) = str;
+  return true;
+}
+
 template <typename T>
 std::string to_xml_string(const T &val);
 
+// Forward declaration
+static bool SerializeNodeGraphs(const std::map<std::string, PrimSpec> &nodegraphs,
+                                std::stringstream &ss, std::string *warn, std::string *err);
+
 template <>
 std::string to_xml_string(const float &val) {
-  return dtos(double(val));
+  return float_to_xml_string(val);
 }
 
 template <>
@@ -401,15 +422,20 @@ std::string to_xml_string(const int &val) {
 }
 
 template <>
+std::string to_xml_string(const bool &val) {
+  return val ? "true" : "false";
+}
+
+template <>
 std::string to_xml_string(const value::color3f &val) {
-  return dtos(double(val.r)) + ", " + dtos(double(val.g)) + ", " +
-         dtos(double(val.b));
+  return float_to_xml_string(val.r) + ", " + float_to_xml_string(val.g) + ", " +
+         float_to_xml_string(val.b);
 }
 
 template <>
 std::string to_xml_string(const value::normal3f &val) {
-  return dtos(double(val.x)) + ", " + dtos(double(val.y)) + ", " +
-         dtos(double(val.z));
+  return float_to_xml_string(val.x) + ", " + float_to_xml_string(val.y) + ", " +
+         float_to_xml_string(val.z);
 }
 
 template <typename T>
@@ -447,38 +473,67 @@ bool SerializeAttribute(const std::string &attr_name,
 }
 
 static bool WriteMaterialXToString(const MtlxUsdPreviewSurface &shader,
+                                   const std::string &shader_name,
+                                   const std::vector<MtlxShaderConnection> &connections,
+                                   const std::map<std::string, PrimSpec> &nodegraphs,
                                    std::string &xml_str, std::string *warn,
                                    std::string *err) {
   (void)warn;
 
-  // We directly write xml string for simplicity.
-  //
-  // TODO:
-  // - [ ] Use pugixml to write xml string.
-
   std::stringstream ss;
 
-  std::string node_name = "SR_default";
+  std::string node_name = shader_name.empty() ? "SR_default" : shader_name;
 
   ss << "<?xml version=\"1.0\"?>\n";
-  // TODO: colorspace
   ss << "<materialx version=\"1.38\" colorspace=\"lin_rec709\">\n";
+
+  // Serialize nodegraphs first
+  if (!nodegraphs.empty()) {
+    SerializeNodeGraphs(nodegraphs, ss, warn, err);
+  }
+
   ss << pprint::Indent(1) << "<UsdPreviewSurface name=\"" << node_name
-     << "\" type =\"surfaceshader\">\n";
+     << "\" type=\"surfaceshader\">\n";
+
+  // Helper to check if an input has a connection
+  auto has_connection = [&connections](const std::string &input_name) -> const MtlxShaderConnection* {
+    for (const auto &conn : connections) {
+      if (conn.input_name == input_name) {
+        return &conn;
+      }
+    }
+    return nullptr;
+  };
 
 #define EMIT_ATTRIBUTE(__name, __tyname, __attr)                            \
   {                                                                         \
-    std::string value_str;                                                  \
-    if (!SerializeAttribute(__name, __attr, value_str, err)) {              \
-      return false;                                                         \
-    }                                                                       \
-    if (value_str.size()) {                                                 \
+    const MtlxShaderConnection *conn = has_connection(__name);              \
+    if (conn) {                                                             \
+      /* Emit connection */                                                 \
       ss << pprint::Indent(2) << "<input name=\"" << __name << "\" type=\"" \
-         << __tyname << "\" value=\"" << value_str << "\" />\n";            \
+         << __tyname << "\"";                                               \
+      if (!conn->nodegraph.empty()) {                                       \
+        ss << " nodegraph=\"" << conn->nodegraph << "\"";                   \
+        if (!conn->output.empty()) {                                        \
+          ss << " output=\"" << conn->output << "\"";                       \
+        }                                                                   \
+      } else if (!conn->nodename.empty()) {                                 \
+        ss << " nodename=\"" << conn->nodename << "\"";                     \
+      }                                                                     \
+      ss << " />\n";                                                        \
+    } else {                                                                \
+      /* Emit value */                                                      \
+      std::string value_str;                                                \
+      if (!SerializeAttribute(__name, __attr, value_str, err)) {            \
+        return false;                                                       \
+      }                                                                     \
+      if (value_str.size()) {                                               \
+        ss << pprint::Indent(2) << "<input name=\"" << __name << "\" type=\"" \
+           << __tyname << "\" value=" << value_str << " />\n";              \
+      }                                                                     \
     }                                                                       \
   }
 
-  // TODO: Attribute Connection
   EMIT_ATTRIBUTE("diffuseColor", "color3", shader.diffuseColor)
   EMIT_ATTRIBUTE("emissiveColor", "color3", shader.emissiveColor)
   EMIT_ATTRIBUTE("useSpecularWorkflow", "integer", shader.useSpecularWorkflow)
@@ -510,50 +565,393 @@ static bool WriteMaterialXToString(const MtlxUsdPreviewSurface &shader,
   return true;
 }
 
-static bool ConvertPlace2d(const pugi::xml_node &node, PrimSpec &ps,
+static bool WriteMaterialXToString(const MtlxAutodeskStandardSurface &shader,
+                                   const std::string &shader_name,
+                                   const std::vector<MtlxShaderConnection> &connections,
+                                   const std::map<std::string, PrimSpec> &nodegraphs,
+                                   std::string &xml_str, std::string *warn,
+                                   std::string *err) {
+  (void)warn;
+
+  std::stringstream ss;
+
+  std::string node_name = shader_name.empty() ? "SR_default" : shader_name;
+
+  ss << "<?xml version=\"1.0\"?>\n";
+  ss << "<materialx version=\"1.38\" colorspace=\"lin_rec709\">\n";
+
+  // Serialize nodegraphs first
+  if (!nodegraphs.empty()) {
+    SerializeNodeGraphs(nodegraphs, ss, warn, err);
+  }
+
+  ss << pprint::Indent(1) << "<standard_surface name=\"" << node_name
+     << "\" type=\"surfaceshader\">\n";
+
+  // Helper to check if an input has a connection
+  auto has_connection = [&connections](const std::string &input_name) -> const MtlxShaderConnection* {
+    for (const auto &conn : connections) {
+      if (conn.input_name == input_name) {
+        return &conn;
+      }
+    }
+    return nullptr;
+  };
+
+#define EMIT_ATTRIBUTE(__name, __tyname, __attr)                            \
+  {                                                                         \
+    const MtlxShaderConnection *conn = has_connection(__name);              \
+    if (conn) {                                                             \
+      /* Emit connection */                                                 \
+      ss << pprint::Indent(2) << "<input name=\"" << __name << "\" type=\"" \
+         << __tyname << "\"";                                               \
+      if (!conn->nodegraph.empty()) {                                       \
+        ss << " nodegraph=\"" << conn->nodegraph << "\"";                   \
+        if (!conn->output.empty()) {                                        \
+          ss << " output=\"" << conn->output << "\"";                       \
+        }                                                                   \
+      } else if (!conn->nodename.empty()) {                                 \
+        ss << " nodename=\"" << conn->nodename << "\"";                     \
+      }                                                                     \
+      ss << " />\n";                                                        \
+    } else {                                                                \
+      /* Emit value */                                                      \
+      std::string value_str;                                                \
+      if (!SerializeAttribute(__name, __attr, value_str, err)) {            \
+        return false;                                                       \
+      }                                                                     \
+      if (value_str.size()) {                                               \
+        ss << pprint::Indent(2) << "<input name=\"" << __name << "\" type=\"" \
+           << __tyname << "\" value=" << value_str << " />\n";              \
+      }                                                                     \
+    }                                                                       \
+  }
+
+  // Base properties
+  EMIT_ATTRIBUTE("base", "float", shader.base)
+  EMIT_ATTRIBUTE("base_color", "color3", shader.base_color)
+  EMIT_ATTRIBUTE("diffuse_roughness", "float", shader.diffuse_roughness)
+  EMIT_ATTRIBUTE("metalness", "float", shader.metalness)
+
+  // Specular properties
+  EMIT_ATTRIBUTE("specular", "float", shader.specular)
+  EMIT_ATTRIBUTE("specular_color", "color3", shader.specular_color)
+  EMIT_ATTRIBUTE("specular_roughness", "float", shader.specular_roughness)
+  EMIT_ATTRIBUTE("specular_IOR", "float", shader.specular_IOR)
+  EMIT_ATTRIBUTE("specular_anisotropy", "float", shader.specular_anisotropy)
+  EMIT_ATTRIBUTE("specular_rotation", "float", shader.specular_rotation)
+
+  // Transmission properties
+  EMIT_ATTRIBUTE("transmission", "float", shader.transmission)
+  EMIT_ATTRIBUTE("transmission_color", "color3", shader.transmission_color)
+  EMIT_ATTRIBUTE("transmission_depth", "float", shader.transmission_depth)
+  EMIT_ATTRIBUTE("transmission_scatter", "color3", shader.transmission_scatter)
+  EMIT_ATTRIBUTE("transmission_scatter_anisotropy", "float", shader.transmission_scatter_anisotropy)
+  EMIT_ATTRIBUTE("transmission_dispersion", "float", shader.transmission_dispersion)
+  EMIT_ATTRIBUTE("transmission_extra_roughness", "float", shader.transmission_extra_roughness)
+
+  // Subsurface properties
+  EMIT_ATTRIBUTE("subsurface", "float", shader.subsurface)
+  EMIT_ATTRIBUTE("subsurface_color", "color3", shader.subsurface_color)
+  EMIT_ATTRIBUTE("subsurface_radius", "float", shader.subsurface_radius)
+  EMIT_ATTRIBUTE("subsurface_scale", "float", shader.subsurface_scale)
+  EMIT_ATTRIBUTE("subsurface_anisotropy", "float", shader.subsurface_anisotropy)
+
+  // Sheen properties
+  EMIT_ATTRIBUTE("sheen", "float", shader.sheen)
+  EMIT_ATTRIBUTE("sheen_color", "color3", shader.sheen_color)
+  EMIT_ATTRIBUTE("sheen_roughness", "float", shader.sheen_roughness)
+
+  // Coat properties
+  EMIT_ATTRIBUTE("coat", "float", shader.coat)
+  EMIT_ATTRIBUTE("coat_color", "color3", shader.coat_color)
+  EMIT_ATTRIBUTE("coat_roughness", "float", shader.coat_roughness)
+  EMIT_ATTRIBUTE("coat_anisotropy", "float", shader.coat_anisotropy)
+  EMIT_ATTRIBUTE("coat_rotation", "float", shader.coat_rotation)
+  EMIT_ATTRIBUTE("coat_IOR", "float", shader.coat_IOR)
+  EMIT_ATTRIBUTE("coat_affect_color", "float", shader.coat_affect_color)
+  EMIT_ATTRIBUTE("coat_affect_roughness", "float", shader.coat_affect_roughness)
+
+  // Thin film properties
+  EMIT_ATTRIBUTE("thin_film_thickness", "float", shader.thin_film_thickness)
+  EMIT_ATTRIBUTE("thin_film_IOR", "float", shader.thin_film_IOR)
+
+  // Emission properties
+  EMIT_ATTRIBUTE("emission", "float", shader.emission)
+  EMIT_ATTRIBUTE("emission_color", "color3", shader.emission_color)
+
+  // Opacity
+  EMIT_ATTRIBUTE("opacity", "color3", shader.opacity)
+
+  // Thin walled
+  EMIT_ATTRIBUTE("thin_walled", "boolean", shader.thin_walled)
+
+  // Normal and tangent - these are TypedAttribute (not TypedAttributeWithFallback)
+  // Skip for now as they require different serialization
+  // TODO: Add serialization support for TypedAttribute
+
+#undef EMIT_ATTRIBUTE
+
+  ss << pprint::Indent(1) << "</standard_surface>\n";
+
+  ss << pprint::Indent(1)
+     << "<surfacematerial name=\"StandardSurface_Material\" type=\"material\">\n";
+  ss << pprint::Indent(2)
+     << "<input name=\"surfaceshader\" type=\"surfaceshader\" nodename=\""
+     << node_name << "\" />\n";
+  ss << pprint::Indent(1) << "</surfacematerial>\n";
+
+  ss << "</materialx>\n";
+
+  xml_str = ss.str();
+
+  return true;
+}
+
+static bool WriteMaterialXToString(const MtlxOpenPBRSurface &shader,
+                                   const std::string &shader_name,
+                                   const std::vector<MtlxShaderConnection> &connections,
+                                   const std::map<std::string, PrimSpec> &nodegraphs,
+                                   std::string &xml_str, std::string *warn,
+                                   std::string *err) {
+  (void)warn;
+
+  std::stringstream ss;
+
+  std::string node_name = shader_name.empty() ? "SR_default" : shader_name;
+
+  ss << "<?xml version=\"1.0\"?>\n";
+  ss << "<materialx version=\"1.38\" colorspace=\"lin_rec709\">\n";
+
+  // Serialize nodegraphs first
+  if (!nodegraphs.empty()) {
+    SerializeNodeGraphs(nodegraphs, ss, warn, err);
+  }
+
+  ss << pprint::Indent(1) << "<open_pbr_surface name=\"" << node_name
+     << "\" type=\"surfaceshader\">\n";
+
+  // Helper to check if an input has a connection
+  auto has_connection = [&connections](const std::string &input_name) -> const MtlxShaderConnection* {
+    for (const auto &conn : connections) {
+      if (conn.input_name == input_name) {
+        return &conn;
+      }
+    }
+    return nullptr;
+  };
+
+#define EMIT_ATTRIBUTE(__name, __tyname, __attr)                            \
+  {                                                                         \
+    const MtlxShaderConnection *conn = has_connection(__name);              \
+    if (conn) {                                                             \
+      /* Emit connection */                                                 \
+      ss << pprint::Indent(2) << "<input name=\"" << __name << "\" type=\"" \
+         << __tyname << "\"";                                               \
+      if (!conn->nodegraph.empty()) {                                       \
+        ss << " nodegraph=\"" << conn->nodegraph << "\"";                   \
+        if (!conn->output.empty()) {                                        \
+          ss << " output=\"" << conn->output << "\"";                       \
+        }                                                                   \
+      } else if (!conn->nodename.empty()) {                                 \
+        ss << " nodename=\"" << conn->nodename << "\"";                     \
+      }                                                                     \
+      ss << " />\n";                                                        \
+    } else {                                                                \
+      /* Emit value */                                                      \
+      std::string value_str;                                                \
+      if (!SerializeAttribute(__name, __attr, value_str, err)) {            \
+        return false;                                                       \
+      }                                                                     \
+      if (value_str.size()) {                                               \
+        ss << pprint::Indent(2) << "<input name=\"" << __name << "\" type=\"" \
+           << __tyname << "\" value=" << value_str << " />\n";              \
+      }                                                                     \
+    }                                                                       \
+  }
+
+  // Base properties
+  EMIT_ATTRIBUTE("base_weight", "float", shader.base_weight)
+  EMIT_ATTRIBUTE("base_color", "color3", shader.base_color)
+  EMIT_ATTRIBUTE("base_metalness", "float", shader.base_metalness)
+  EMIT_ATTRIBUTE("base_diffuse_roughness", "float", shader.base_diffuse_roughness)
+
+  // Specular properties
+  EMIT_ATTRIBUTE("specular_weight", "float", shader.specular_weight)
+  EMIT_ATTRIBUTE("specular_color", "color3", shader.specular_color)
+  EMIT_ATTRIBUTE("specular_roughness", "float", shader.specular_roughness)
+  EMIT_ATTRIBUTE("specular_ior", "float", shader.specular_ior)
+  EMIT_ATTRIBUTE("specular_anisotropy", "float", shader.specular_anisotropy)
+  EMIT_ATTRIBUTE("specular_rotation", "float", shader.specular_rotation)
+
+  // Transmission properties
+  EMIT_ATTRIBUTE("transmission_weight", "float", shader.transmission_weight)
+  EMIT_ATTRIBUTE("transmission_color", "color3", shader.transmission_color)
+  EMIT_ATTRIBUTE("transmission_depth", "float", shader.transmission_depth)
+  EMIT_ATTRIBUTE("transmission_scatter", "color3", shader.transmission_scatter)
+  EMIT_ATTRIBUTE("transmission_scatter_anisotropy", "float", shader.transmission_scatter_anisotropy)
+  EMIT_ATTRIBUTE("transmission_dispersion", "float", shader.transmission_dispersion)
+
+  // Subsurface properties
+  EMIT_ATTRIBUTE("subsurface_weight", "float", shader.subsurface_weight)
+  EMIT_ATTRIBUTE("subsurface_color", "color3", shader.subsurface_color)
+  EMIT_ATTRIBUTE("subsurface_radius", "float", shader.subsurface_radius)
+  EMIT_ATTRIBUTE("subsurface_radius_scale", "color3", shader.subsurface_radius_scale)
+  EMIT_ATTRIBUTE("subsurface_scale", "float", shader.subsurface_scale)
+  EMIT_ATTRIBUTE("subsurface_anisotropy", "float", shader.subsurface_anisotropy)
+
+  // Coat properties
+  EMIT_ATTRIBUTE("coat_weight", "float", shader.coat_weight)
+  EMIT_ATTRIBUTE("coat_color", "color3", shader.coat_color)
+  EMIT_ATTRIBUTE("coat_roughness", "float", shader.coat_roughness)
+  EMIT_ATTRIBUTE("coat_anisotropy", "float", shader.coat_anisotropy)
+  EMIT_ATTRIBUTE("coat_rotation", "float", shader.coat_rotation)
+  EMIT_ATTRIBUTE("coat_ior", "float", shader.coat_ior)
+  EMIT_ATTRIBUTE("coat_affect_color", "float", shader.coat_affect_color)
+  EMIT_ATTRIBUTE("coat_affect_roughness", "float", shader.coat_affect_roughness)
+
+  // Thin film properties
+  EMIT_ATTRIBUTE("thin_film_thickness", "float", shader.thin_film_thickness)
+  EMIT_ATTRIBUTE("thin_film_ior", "float", shader.thin_film_ior)
+
+  // Emission properties
+  EMIT_ATTRIBUTE("emission_luminance", "float", shader.emission_luminance)
+  EMIT_ATTRIBUTE("emission_color", "color3", shader.emission_color)
+
+  // Geometry properties
+  EMIT_ATTRIBUTE("geometry_opacity", "float", shader.geometry_opacity)
+  EMIT_ATTRIBUTE("geometry_thin_walled", "boolean", shader.geometry_thin_walled)
+
+  // Normal and tangent - these are TypedAttribute (not TypedAttributeWithFallback)
+  // Skip for now as they require different serialization
+  // TODO: Add serialization support for TypedAttribute
+
+#undef EMIT_ATTRIBUTE
+
+  ss << pprint::Indent(1) << "</open_pbr_surface>\n";
+
+  ss << pprint::Indent(1)
+     << "<surfacematerial name=\"OpenPBR_Material\" type=\"material\">\n";
+  ss << pprint::Indent(2)
+     << "<input name=\"surfaceshader\" type=\"surfaceshader\" nodename=\""
+     << node_name << "\" />\n";
+  ss << pprint::Indent(1) << "</surfacematerial>\n";
+
+  ss << "</materialx>\n";
+
+  xml_str = ss.str();
+
+  return true;
+}
+
+// Helper function to serialize nodegraphs to MaterialX XML
+static bool SerializeNodeGraphs(const std::map<std::string, PrimSpec> &nodegraphs,
+                                std::stringstream &ss, std::string *warn, std::string *err) {
+  (void)warn;
+  (void)err;
+
+  for (const auto &ng_item : nodegraphs) {
+    const std::string &ng_name = ng_item.first;
+    const PrimSpec &ng_ps = ng_item.second;
+
+    ss << pprint::Indent(1) << "<nodegraph name=\"" << ng_name << "\">\n";
+
+    // Serialize child nodes
+    for (const auto &child_ps : ng_ps.children()) {
+      std::string node_type = child_ps.typeName();
+      std::string node_name = child_ps.name();
+
+      // TODO: Add more complete node serialization
+      // For now, just add a placeholder comment
+      ss << pprint::Indent(2) << "<!-- Node: " << node_name
+         << " (type: " << node_type << ") -->\n";
+    }
+
+    // Serialize outputs
+    for (const auto &prop_item : ng_ps.props()) {
+      const std::string &prop_name = prop_item.first;
+
+      // Check if this is an output property
+      if (prop_name.find("outputs:") == 0) {
+        std::string output_name = prop_name.substr(8); // Remove "outputs:" prefix
+
+        // Try to extract the nodename reference from the connection
+        if (prop_item.second.is_attribute()) {
+          const Attribute &attr = prop_item.second.get_attribute();
+          if (attr.is_connection()) {
+            // TODO: Extract connection info
+            ss << pprint::Indent(2) << "<output name=\"" << output_name
+               << "\" type=\"color3\" />\n";
+          } else if (auto conn_str = attr.get_var().as<std::string>()) {
+            // Connection stored as string like "nodename.outputs:out"
+            size_t dot_pos = conn_str->find('.');
+            if (dot_pos != std::string::npos) {
+              std::string nodename_ref = conn_str->substr(0, dot_pos);
+              ss << pprint::Indent(2) << "<output name=\"" << output_name
+                 << "\" type=\"color3\" nodename=\"" << nodename_ref << "\" />\n";
+            }
+          }
+        }
+      }
+    }
+
+    ss << pprint::Indent(1) << "</nodegraph>\n";
+  }
+
+  return true;
+}
+
+static bool ConvertPlace2d(const tinyusdz::mtlx::pugi::xml_node &node, PrimSpec &ps,
                            std::string *warn, std::string *err) {
   // texcoord(vector2). default index=0 uv coordinate
   // pivot(vector2). default (0, 0)
   // scale(vector2). default (1, 1)
-  // rotate(float). in degrees, Conter-clockwise
+  // rotate(float). in degrees, Counter-clockwise
   // offset(vector2)
-  if (pugi::xml_attribute texcoord_attr = node.attribute("texcoord")) {
+
+  // Get node name
+  tinyusdz::mtlx::pugi::xml_attribute name_attr = node.attribute("name");
+  if (name_attr) {
+    ps.name() = name_attr.as_string();
+  }
+
+  if (tinyusdz::mtlx::pugi::xml_attribute texcoord_attr = node.attribute("texcoord")) {
     PUSH_WARN("TODO: `texcoord` attribute.\n");
   }
 
-  if (pugi::xml_attribute pivot_attr = node.attribute("pivot")) {
+  if (tinyusdz::mtlx::pugi::xml_attribute pivot_attr = node.attribute("pivot")) {
     value::float2 value{};
-    if (!ParseMaterialXValue(pivot_attr.as_string(), &value, err)) {
+    if (ParseMaterialXValue(pivot_attr.as_string(), &value, err)) {
       ps.props()["inputs:pivot"] = Property(Attribute::Uniform(value));
     }
   }
 
-  if (pugi::xml_attribute scale_attr = node.attribute("scale")) {
+  if (tinyusdz::mtlx::pugi::xml_attribute scale_attr = node.attribute("scale")) {
     value::float2 value{};
     if (!ParseMaterialXValue(scale_attr.as_string(), &value, err)) {
       PUSH_ERROR_AND_RETURN(
-          "Failed to parse `rotate` attribute of `place2d`.\n");
+          "Failed to parse `scale` attribute of `place2d`.\n");
     }
     ps.props()["inputs:scale"] = Property(Attribute::Uniform(value));
   }
 
-  if (pugi::xml_attribute rotate_attr = node.attribute("rotate")) {
+  if (tinyusdz::mtlx::pugi::xml_attribute rotate_attr = node.attribute("rotate")) {
     float value{};
     if (!ParseMaterialXValue(rotate_attr.as_string(), &value, err)) {
       PUSH_ERROR_AND_RETURN(
           "Failed to parse `rotate` attribute of `place2d`.\n");
     }
-    ps.props()["inputs:rotate"] = Property(Attribute::Uniform(value));
+    ps.props()["inputs:rotation"] = Property(Attribute::Uniform(value));
   }
 
-  pugi::xml_attribute offset_attr = node.attribute("offset");
+  tinyusdz::mtlx::pugi::xml_attribute offset_attr = node.attribute("offset");
   if (offset_attr) {
     value::float2 value{};
     if (!ParseMaterialXValue(offset_attr.as_string(), &value, err)) {
       PUSH_ERROR_AND_RETURN(
           "Failed to parse `offset` attribute of `place2d`.\n");
     }
-    ps.props()["inputs:offset"] = Property(Attribute::Uniform(value));
+    ps.props()["inputs:translation"] = Property(Attribute::Uniform(value));
   }
 
   ps.specifier() = Specifier::Def;
@@ -564,55 +962,500 @@ static bool ConvertPlace2d(const pugi::xml_node &node, PrimSpec &ps,
   return true;
 }
 
-static bool ConvertNodeGraphRec(const uint32_t depth,
-                                const pugi::xml_node &node, PrimSpec &ps_out,
-                                std::string *warn, std::string *err) {
-  if (depth > (1024 * 1024)) {
-    PUSH_ERROR_AND_RETURN("Network too deep.\n");
+// Convert MaterialX tiledimage node to USD UsdUVTexture
+static bool ConvertTiledImage(const tinyusdz::mtlx::pugi::xml_node &node, PrimSpec &ps,
+                              std::string *warn, std::string *err) {
+  (void)warn;
+
+  // Get node name and type
+  tinyusdz::mtlx::pugi::xml_attribute name_attr = node.attribute("name");
+  if (name_attr) {
+    ps.name() = name_attr.as_string();
   }
 
-  PrimSpec ps;
+  // Parse inputs
+  for (auto inp : node.children("input")) {
+    std::string input_name;
+    std::string input_type;
+    std::string input_value;
 
-  std::string node_name = node.name();
-
-  if (node_name == "place2d") {
-    if (!ConvertPlace2d(node, ps, warn, err)) {
-      return false;
-    }
-  } else {
-    PUSH_ERROR_AND_RETURN("Unknown/unsupported Shader Node: " << node.name());
-  }
-
-  for (const auto &child : node.children()) {
-    PrimSpec child_ps;
-    if (!ConvertNodeGraphRec(depth + 1, child, child_ps, warn, err)) {
-      return false;
+    tinyusdz::mtlx::pugi::xml_attribute inp_name_attr = inp.attribute("name");
+    if (inp_name_attr) {
+      input_name = inp_name_attr.as_string();
     }
 
-    ps.children().emplace_back(std::move(child_ps));
+    tinyusdz::mtlx::pugi::xml_attribute type_attr = inp.attribute("type");
+    if (type_attr) {
+      input_type = type_attr.as_string();
+    }
+
+    tinyusdz::mtlx::pugi::xml_attribute value_attr = inp.attribute("value");
+    if (value_attr) {
+      input_value = value_attr.as_string();
+    }
+
+    // Map MaterialX inputs to USD inputs
+    if (input_name == "file" && input_type == "filename") {
+      // Convert filename to asset path
+      ps.props()["inputs:file"] = Property(Attribute::Uniform(value::AssetPath(input_value)));
+    } else if (input_name == "uvtiling" && input_type == "vector2") {
+      value::float2 tiling;
+      if (ParseMaterialXValue(input_value, &tiling, err)) {
+        // Store for potential scale transformation
+        ps.props()["inputs:scale"] = Property(Attribute::Uniform(tiling));
+      }
+    } else if (input_name == "uvoffset" && input_type == "vector2") {
+      value::float2 offset;
+      if (ParseMaterialXValue(input_value, &offset, err)) {
+        ps.props()["inputs:translation"] = Property(Attribute::Uniform(offset));
+      }
+    } else if (input_name == "default") {
+      // Fallback value
+      if (input_type == "color3") {
+        value::color3f fallback;
+        if (ParseMaterialXValue(input_value, &fallback, err)) {
+          ps.props()["inputs:fallback"] = Property(Attribute::Uniform(value::color4f{fallback.r, fallback.g, fallback.b, 1.0f}));
+        }
+      } else if (input_type == "float") {
+        float fallback;
+        if (ParseMaterialXValue(input_value, &fallback, err)) {
+          ps.props()["inputs:fallback"] = Property(Attribute::Uniform(value::color4f{fallback, fallback, fallback, 1.0f}));
+        }
+      }
+    }
   }
 
-  ps_out = std::move(ps);
+  ps.specifier() = Specifier::Def;
+  ps.typeName() = kShader;
+  ps.props()[kShaderInfoId] = Property(Attribute::Uniform(value::token(kUsdUVTexture)));
 
   return true;
 }
 
+// Convert MaterialX image node to USD UsdUVTexture
+static bool ConvertImage(const tinyusdz::mtlx::pugi::xml_node &node, PrimSpec &ps,
+                         std::string *warn, std::string *err) {
+  // Image node is similar to tiledimage but without tiling parameters
+  return ConvertTiledImage(node, ps, warn, err);
+}
+
+// Convert MaterialX texcoord node to USD UsdPrimvarReader_float2
+static bool ConvertTexCoord(const tinyusdz::mtlx::pugi::xml_node &node, PrimSpec &ps,
+                            const MtlxConfig &config,
+                            std::string *warn, std::string *err) {
+  (void)warn;
+
+  // Get node name
+  tinyusdz::mtlx::pugi::xml_attribute name_attr = node.attribute("name");
+  if (name_attr) {
+    ps.name() = name_attr.as_string();
+  }
+
+  // Parse index attribute (UV set index)
+  int uv_index = 0;
+  tinyusdz::mtlx::pugi::xml_attribute index_attr = node.attribute("index");
+  if (index_attr) {
+    std::string index_str = index_attr.as_string();
+    if (!ParseMaterialXValue(index_str, &uv_index, err)) {
+      PUSH_ERROR_AND_RETURN("Failed to parse `index` attribute of `texcoord`.\n");
+    }
+  }
+
+  // Map to USD primvar name convention using MtlxConfig
+  // Similar to OpenUSD's USDMTLX_PRIMARY_UV_NAME environment variable
+  std::string varname;
+  if (uv_index == 0) {
+    // Primary UV: use config.primary_uv_name, fallback to "st" if empty
+    varname = config.primary_uv_name.empty() ? "st" : config.primary_uv_name;
+  } else {
+    // Secondary UV: use config.secondary_uv_name_prefix + index, fallback to "st" + index
+    std::string prefix = config.secondary_uv_name_prefix.empty() ? "st" : config.secondary_uv_name_prefix;
+    varname = prefix + std::to_string(uv_index);
+  }
+  ps.props()["inputs:varname"] = Property(Attribute::Uniform(varname));
+
+  // Set fallback to (0, 0)
+  ps.props()["inputs:fallback"] = Property(Attribute::Uniform(value::float2{0.0f, 0.0f}));
+
+  ps.specifier() = Specifier::Def;
+  ps.typeName() = kShader;
+  ps.props()[kShaderInfoId] = Property(Attribute::Uniform(value::token(kUsdPrimvarReader_float2)));
+
+  return true;
+}
+
+// Convert MaterialX constant node - stores a constant value
+static bool ConvertConstant(const tinyusdz::mtlx::pugi::xml_node &node, PrimSpec &ps,
+                            std::string *warn, std::string *err) {
+  (void)warn;
+
+  tinyusdz::mtlx::pugi::xml_attribute name_attr = node.attribute("name");
+  if (name_attr) {
+    ps.name() = name_attr.as_string();
+  }
+
+  // Get the type attribute to determine what kind of constant
+  tinyusdz::mtlx::pugi::xml_attribute type_attr = node.attribute("type");
+  std::string node_type = type_attr ? type_attr.as_string() : "float";
+
+  // Parse value from input child or value attribute
+  for (auto inp : node.children("input")) {
+    tinyusdz::mtlx::pugi::xml_attribute inp_name_attr = inp.attribute("name");
+    if (!inp_name_attr || std::string(inp_name_attr.as_string()) != "value") continue;
+
+    tinyusdz::mtlx::pugi::xml_attribute value_attr = inp.attribute("value");
+    if (!value_attr) continue;
+
+    std::string value_str = value_attr.as_string();
+
+    if (node_type == "float") {
+      float val;
+      if (ParseMaterialXValue(value_str, &val, err)) {
+        ps.props()["inputs:value"] = Property(Attribute::Uniform(val));
+      }
+    } else if (node_type == "color3") {
+      value::color3f val;
+      if (ParseMaterialXValue(value_str, &val, err)) {
+        ps.props()["inputs:value"] = Property(Attribute::Uniform(val));
+      }
+    } else if (node_type == "vector3") {
+      value::float3 val;
+      if (ParseMaterialXValue(value_str, &val, err)) {
+        ps.props()["inputs:value"] = Property(Attribute::Uniform(val));
+      }
+    }
+  }
+
+  ps.specifier() = Specifier::Def;
+  ps.typeName() = kShader;
+  // Use a generic shader ID for constant nodes
+  ps.props()[kShaderInfoId] = Property(Attribute::Uniform(value::token("MaterialXConstant")));
+
+  return true;
+}
+
+// Convert MaterialX multiply node
+static bool ConvertMultiply(const tinyusdz::mtlx::pugi::xml_node &node, PrimSpec &ps,
+                            std::string *warn, std::string *err) {
+  (void)warn;
+
+  tinyusdz::mtlx::pugi::xml_attribute name_attr = node.attribute("name");
+  if (name_attr) {
+    ps.name() = name_attr.as_string();
+  }
+
+  // Parse inputs (in1, in2)
+  for (auto inp : node.children("input")) {
+    std::string input_name;
+    std::string input_value;
+
+    tinyusdz::mtlx::pugi::xml_attribute inp_name_attr = inp.attribute("name");
+    if (inp_name_attr) {
+      input_name = inp_name_attr.as_string();
+    }
+
+    tinyusdz::mtlx::pugi::xml_attribute value_attr = inp.attribute("value");
+    if (value_attr) {
+      input_value = value_attr.as_string();
+
+      // Store as shader input
+      std::string prop_name = "inputs:" + input_name;
+
+      tinyusdz::mtlx::pugi::xml_attribute type_attr = inp.attribute("type");
+      if (type_attr) {
+        std::string type_str = type_attr.as_string();
+        if (type_str == "float") {
+          float val;
+          if (ParseMaterialXValue(input_value, &val, err)) {
+            ps.props()[prop_name] = Property(Attribute::Uniform(val));
+          }
+        } else if (type_str == "color3") {
+          value::color3f val;
+          if (ParseMaterialXValue(input_value, &val, err)) {
+            ps.props()[prop_name] = Property(Attribute::Uniform(val));
+          }
+        }
+      }
+    }
+  }
+
+  ps.specifier() = Specifier::Def;
+  ps.typeName() = kShader;
+  ps.props()[kShaderInfoId] = Property(Attribute::Uniform(value::token("MaterialXMultiply")));
+
+  return true;
+}
+
+// Convert MaterialX add node
+static bool ConvertAdd(const tinyusdz::mtlx::pugi::xml_node &node, PrimSpec &ps,
+                       std::string *warn, std::string *err) {
+  // Same pattern as multiply
+  return ConvertMultiply(node, ps, warn, err);  // Reuse multiply logic
+}
+
+// Convert MaterialX mix node (linear blend)
+static bool ConvertMix(const tinyusdz::mtlx::pugi::xml_node &node, PrimSpec &ps,
+                       std::string *warn, std::string *err) {
+  (void)warn;
+
+  tinyusdz::mtlx::pugi::xml_attribute name_attr = node.attribute("name");
+  if (name_attr) {
+    ps.name() = name_attr.as_string();
+  }
+
+  // Parse inputs (fg, bg, mix)
+  for (auto inp : node.children("input")) {
+    std::string input_name;
+    std::string input_value;
+
+    tinyusdz::mtlx::pugi::xml_attribute inp_name_attr = inp.attribute("name");
+    if (inp_name_attr) {
+      input_name = inp_name_attr.as_string();
+    }
+
+    tinyusdz::mtlx::pugi::xml_attribute value_attr = inp.attribute("value");
+    if (value_attr) {
+      input_value = value_attr.as_string();
+      std::string prop_name = "inputs:" + input_name;
+
+      tinyusdz::mtlx::pugi::xml_attribute type_attr = inp.attribute("type");
+      if (type_attr) {
+        std::string type_str = type_attr.as_string();
+        if (type_str == "float") {
+          float val;
+          if (ParseMaterialXValue(input_value, &val, err)) {
+            ps.props()[prop_name] = Property(Attribute::Uniform(val));
+          }
+        } else if (type_str == "color3") {
+          value::color3f val;
+          if (ParseMaterialXValue(input_value, &val, err)) {
+            ps.props()[prop_name] = Property(Attribute::Uniform(val));
+          }
+        }
+      }
+    }
+  }
+
+  ps.specifier() = Specifier::Def;
+  ps.typeName() = kShader;
+  ps.props()[kShaderInfoId] = Property(Attribute::Uniform(value::token("MaterialXMix")));
+
+  return true;
+}
+
+// Convert MaterialX noise2d/noise3d nodes - simple procedural noise
+static bool ConvertNoise(const tinyusdz::mtlx::pugi::xml_node &node, PrimSpec &ps,
+                         std::string *warn, std::string *err) {
+  (void)warn;
+
+  tinyusdz::mtlx::pugi::xml_attribute name_attr = node.attribute("name");
+  if (name_attr) {
+    ps.name() = name_attr.as_string();
+  }
+
+  // Parse noise parameters
+  for (auto inp : node.children("input")) {
+    std::string input_name;
+    std::string input_value;
+
+    tinyusdz::mtlx::pugi::xml_attribute inp_name_attr = inp.attribute("name");
+    if (inp_name_attr) {
+      input_name = inp_name_attr.as_string();
+    }
+
+    tinyusdz::mtlx::pugi::xml_attribute value_attr = inp.attribute("value");
+    if (value_attr) {
+      input_value = value_attr.as_string();
+      std::string prop_name = "inputs:" + input_name;
+
+      // Common noise params: amplitude, pivot, lacunarity, octaves, etc.
+      float val;
+      if (ParseMaterialXValue(input_value, &val, err)) {
+        ps.props()[prop_name] = Property(Attribute::Uniform(val));
+      }
+    }
+  }
+
+  ps.specifier() = Specifier::Def;
+  ps.typeName() = kShader;
+  ps.props()[kShaderInfoId] = Property(Attribute::Uniform(value::token("MaterialXNoise")));
+
+  return true;
+}
+
+// Helper to convert a single MaterialX node to PrimSpec
+// Returns true if successful (including skip case), false on error
+// Sets is_skip to true if the node should be skipped (input/output/unknown)
+static bool ConvertSingleNode(const tinyusdz::mtlx::pugi::xml_node &node,
+                              PrimSpec &ps, bool &is_skip,
+                              const MtlxConfig &config,
+                              std::string *warn, std::string *err) {
+  is_skip = false;
+  std::string node_name = node.name();
+
+  // Convert MaterialX nodes to USD shader nodes
+  if (node_name == "place2d") {
+    if (!ConvertPlace2d(node, ps, warn, err)) {
+      return false;
+    }
+  } else if (node_name == "tiledimage") {
+    if (!ConvertTiledImage(node, ps, warn, err)) {
+      return false;
+    }
+  } else if (node_name == "image") {
+    if (!ConvertImage(node, ps, warn, err)) {
+      return false;
+    }
+  } else if (node_name == "texcoord") {
+    if (!ConvertTexCoord(node, ps, config, warn, err)) {
+      return false;
+    }
+  } else if (node_name == "constant") {
+    if (!ConvertConstant(node, ps, warn, err)) {
+      return false;
+    }
+  } else if (node_name == "multiply") {
+    if (!ConvertMultiply(node, ps, warn, err)) {
+      return false;
+    }
+  } else if (node_name == "add") {
+    if (!ConvertAdd(node, ps, warn, err)) {
+      return false;
+    }
+  } else if (node_name == "subtract") {
+    // Subtract uses same logic as add
+    if (!ConvertAdd(node, ps, warn, err)) {
+      return false;
+    }
+  } else if (node_name == "mix") {
+    if (!ConvertMix(node, ps, warn, err)) {
+      return false;
+    }
+  } else if (node_name == "noise2d" || node_name == "noise3d" ||
+             node_name == "cellnoise2d" || node_name == "cellnoise3d" ||
+             node_name == "worleynoise2d" || node_name == "worleynoise3d" ||
+             node_name == "fractal3d") {
+    if (!ConvertNoise(node, ps, warn, err)) {
+      return false;
+    }
+  } else if (node_name == "input" || node_name == "output") {
+    // Skip input/output nodes - they are handled separately
+    is_skip = true;
+    return true;
+  } else {
+    PUSH_WARN(fmt::format("Unknown/unsupported Shader Node: {}. Skipping.\n", node.name()));
+    is_skip = true;
+    return true; // Don't fail, just skip unknown nodes
+  }
+
+  return true;
+}
+
+// Iterative version of ConvertNodeGraph using explicit stack
+static bool ConvertNodeGraphIterative(const tinyusdz::mtlx::pugi::xml_node &root_node,
+                                      PrimSpec &ps_out,
+                                      const MtlxConfig &config,
+                                      std::string *warn, std::string *err) {
+  constexpr size_t kMaxDepth = 1024 * 1024;
+
+  // Stack entry for iterative processing
+  // We need to collect children into a vector since the iterator is temporary
+  struct StackEntry {
+    tinyusdz::mtlx::pugi::xml_node xml_node;
+    std::vector<tinyusdz::mtlx::pugi::xml_node> children;
+    size_t child_idx;
+    PrimSpec ps;
+    bool is_skip;
+
+    explicit StackEntry(const tinyusdz::mtlx::pugi::xml_node &n)
+        : xml_node(n), child_idx(0), is_skip(false) {
+      // Collect children into vector
+      for (auto it = n.begin(); it != n.end(); ++it) {
+        children.push_back(*it);
+      }
+    }
+  };
+
+  std::vector<StackEntry> stack;
+  stack.reserve(64);
+
+  // Initialize with root node
+  stack.emplace_back(root_node);
+
+  // Convert root node
+  if (!ConvertSingleNode(root_node, stack.back().ps, stack.back().is_skip, config, warn, err)) {
+    return false;
+  }
+
+  while (!stack.empty()) {
+    if (stack.size() > kMaxDepth) {
+      PUSH_ERROR_AND_RETURN("Network too deep.\n");
+    }
+
+    StackEntry &curr = stack.back();
+
+    // Check if there are more children to process
+    if (curr.child_idx < curr.children.size()) {
+      // Get current child and advance index
+      tinyusdz::mtlx::pugi::xml_node child = curr.children[curr.child_idx];
+      curr.child_idx++;
+
+      // Push child onto stack
+      stack.emplace_back(child);
+
+      // Convert the child node
+      if (!ConvertSingleNode(child, stack.back().ps, stack.back().is_skip, config, warn, err)) {
+        return false;
+      }
+    } else {
+      // All children processed
+      if (stack.size() > 1) {
+        // Move completed node to parent's children if not skipped and has name
+        PrimSpec completed = std::move(curr.ps);
+        bool was_skip = curr.is_skip;
+        stack.pop_back();
+
+        if (!was_skip && !completed.name().empty()) {
+          stack.back().ps.children().emplace_back(std::move(completed));
+        }
+      } else {
+        // Root node - copy to output
+        if (!curr.is_skip) {
+          ps_out = std::move(curr.ps);
+        }
+        stack.pop_back();
+      }
+    }
+  }
+
+  return true;
+}
+
+// Wrapper to maintain backward compatibility with ConvertNodeGraphRec signature
+static bool ConvertNodeGraphRec(const uint32_t depth,
+                                const tinyusdz::mtlx::pugi::xml_node &node, PrimSpec &ps_out,
+                                const MtlxConfig &config,
+                                std::string *warn, std::string *err) {
+  (void)depth;  // Iterative version handles depth internally
+  return ConvertNodeGraphIterative(node, ps_out, config, warn, err);
+}
+
 #if 0  // TODO
-static bool ConvertPlace2d(const pugi::xml_node &node, UsdTransform2d &tx, std::string *warn, std::string *err) {
+static bool ConvertPlace2d(const tinyusdz::mtlx::pugi::xml_node &node, UsdTransform2d &tx, std::string *warn, std::string *err) {
   // texcoord(vector2). default index=0 uv coordinate
   // pivot(vector2). default (0, 0)
   // scale(vector2). default (1, 1)
   // rotate(float). in degrees, Conter-clockwise
   // offset(vector2)
-  if (pugi::xml_attribute texcoord_attr = node.attribute("texcoord")) {
+  if (tinyusdz::mtlx::pugi::xml_attribute texcoord_attr = node.attribute("texcoord")) {
     PUSH_WARN("TODO: `texcoord` attribute.\n");
   }
 
-  if (pugi::xml_attribute pivot_attr = node.attribute("pivot")) {
+  if (tinyusdz::mtlx::pugi::xml_attribute pivot_attr = node.attribute("pivot")) {
     PUSH_WARN("TODO: `pivot` attribute.\n");
   }
 
-  if (pugi::xml_attribute scale_attr = node.attribute("scale")) {
+  if (tinyusdz::mtlx::pugi::xml_attribute scale_attr = node.attribute("scale")) {
     value::float2 value;
     if (!ParseMaterialXValue(scale_attr.as_string(), &value, err)) {
       PUSH_ERROR_AND_RETURN("Failed to parse `rotate` attribute of `place2d`.\n");
@@ -620,7 +1463,7 @@ static bool ConvertPlace2d(const pugi::xml_node &node, UsdTransform2d &tx, std::
     tx.scale = value;
   }
 
-  if (pugi::xml_attribute rotate_attr = node.attribute("rotate")) {
+  if (tinyusdz::mtlx::pugi::xml_attribute rotate_attr = node.attribute("rotate")) {
     float value;
     if (!ParseMaterialXValue(rotate_attr.as_string(), &value, err)) {
       PUSH_ERROR_AND_RETURN("Failed to parse `rotate` attribute of `place2d`.\n");
@@ -628,7 +1471,7 @@ static bool ConvertPlace2d(const pugi::xml_node &node, UsdTransform2d &tx, std::
     tx.rotation = value;
   }
 
-  pugi::xml_attribute offset_attr = node.attribute("offset");
+  tinyusdz::mtlx::pugi::xml_attribute offset_attr = node.attribute("offset");
   if (offset_attr) {
     PUSH_WARN("TODO: `offset` attribute.\n");
   }
@@ -636,7 +1479,7 @@ static bool ConvertPlace2d(const pugi::xml_node &node, UsdTransform2d &tx, std::
   return true;
 }
 
-static bool ConvertTiledImage(const pugi::xml_node &node, UsdUVTexture &tex, std::string *err) {
+static bool ConvertTiledImage(const tinyusdz::mtlx::pugi::xml_node &node, UsdUVTexture &tex, std::string *err) {
   (void)tex;
   // file: uniform filename
   // default: float or colorN or vectorN
@@ -646,7 +1489,7 @@ static bool ConvertTiledImage(const pugi::xml_node &node, UsdUVTexture &tex, std
   // realworldimagesize: vector2
   // realworldtilesize: vector2
   // filtertype: string: "closest", "linear" or "cubic"
-  if (pugi::xml_attribute file_attr = node.attribute("file")) {
+  if (tinyusdz::mtlx::pugi::xml_attribute file_attr = node.attribute("file")) {
     std::string filename;
     if (!ParseMaterialXValue(file_attr.as_string(), &filename, err)) {
       PUSH_ERROR_AND_RETURN("Failed to parse `file` attribute in `tiledimage`.\n");
@@ -666,10 +1509,11 @@ static bool ConvertTiledImage(const pugi::xml_node &node, UsdUVTexture &tex, std
 
 bool ReadMaterialXFromString(const std::string &str,
                              const std::string &asset_path, MtlxModel *mtlx,
-                             std::string *warn, std::string *err) {
+                             std::string *warn, std::string *err,
+                             const MtlxConfig &config) {
 #define GET_ATTR_VALUE(__xml, __name, __ty, __var)                        \
   do {                                                                    \
-    pugi::xml_attribute attr = __xml.attribute(__name);                   \
+    tinyusdz::mtlx::pugi::xml_attribute attr = __xml.attribute(__name);                   \
     if (!attr) {                                                          \
       PUSH_ERROR_AND_RETURN(                                              \
           fmt::format("Required XML Attribute `{}` not found.", __name)); \
@@ -696,14 +1540,14 @@ bool ReadMaterialXFromString(const std::string &str,
     __attr.set_value(v);                                                 \
   } else
 
-  pugi::xml_document doc;
-  pugi::xml_parse_result result = doc.load_string(str.c_str());
+  tinyusdz::mtlx::pugi::xml_document doc;
+  tinyusdz::mtlx::pugi::xml_parse_result result = doc.load_string(str.c_str());
   if (!result) {
     std::string msg(result.description());
     PUSH_ERROR_AND_RETURN("Failed to parse XML: " + msg);
   }
 
-  pugi::xml_node root = doc.child("materialx");
+  tinyusdz::mtlx::pugi::xml_node root = doc.child("materialx");
   if (!root) {
     PUSH_ERROR_AND_RETURN("<materialx> tag not found: " + asset_path);
   }
@@ -717,7 +1561,7 @@ bool ReadMaterialXFromString(const std::string &str,
   // - [x] colorspace(string, optional)
   // - [x] namespace(string, optional)
 
-  pugi::xml_attribute ver_attr = root.attribute("version");
+  tinyusdz::mtlx::pugi::xml_attribute ver_attr = root.attribute("version");
   if (!ver_attr) {
     PUSH_ERROR_AND_RETURN("version attribute not found in <materialx>:" +
                           asset_path);
@@ -740,42 +1584,379 @@ bool ReadMaterialXFromString(const std::string &str,
     mtlx->version = ver_attr.as_string();
   }
 
-  pugi::xml_attribute cms_attr = root.attribute("cms");
+  tinyusdz::mtlx::pugi::xml_attribute cms_attr = root.attribute("cms");
   if (cms_attr) {
     mtlx->cms = cms_attr.as_string();
   }
 
-  pugi::xml_attribute cmsconfig_attr = root.attribute("cms");
+  tinyusdz::mtlx::pugi::xml_attribute cmsconfig_attr = root.attribute("cms");
   if (cmsconfig_attr) {
     mtlx->cmsconfig = cmsconfig_attr.as_string();
   }
-  pugi::xml_attribute colorspace_attr = root.attribute("colorspace");
+  tinyusdz::mtlx::pugi::xml_attribute colorspace_attr = root.attribute("colorspace");
   if (colorspace_attr) {
     mtlx->color_space = colorspace_attr.as_string();
   }
 
-  pugi::xml_attribute namespace_attr = root.attribute("namespace");
+  tinyusdz::mtlx::pugi::xml_attribute namespace_attr = root.attribute("namespace");
   if (namespace_attr) {
     mtlx->name_space = namespace_attr.as_string();
   }
 
-  std::vector<PrimSpec> nodegraph_pss;
+  std::map<std::string, PrimSpec> nodegraph_map;
 
   // NodeGraph
   for (auto ng : root.children("nodegraph")) {
-    PrimSpec root_ps;
-    if (detail::ConvertNodeGraphRec(0, ng, root_ps, warn, err)) {
-      return false;
+    std::string ng_name;
+
+    // Get nodegraph name
+    tinyusdz::mtlx::pugi::xml_attribute name_attr = ng.attribute("name");
+    if (!name_attr) {
+      PUSH_WARN("NodeGraph without name attribute. Skipping.\n");
+      continue;
+    }
+    ng_name = name_attr.as_string();
+
+    PrimSpec ng_ps;
+    ng_ps.name() = ng_name;
+    ng_ps.specifier() = Specifier::Def;
+    ng_ps.typeName() = kNodeGraph;
+
+    // Process all child nodes
+    for (auto child : ng) {
+      std::string child_name = child.name();
+
+      if (child_name == "output") {
+        // Handle output declarations
+        std::string output_name;
+        std::string output_type;
+        std::string nodename_ref;
+
+        tinyusdz::mtlx::pugi::xml_attribute out_name_attr = child.attribute("name");
+        if (out_name_attr) {
+          output_name = out_name_attr.as_string();
+        }
+
+        tinyusdz::mtlx::pugi::xml_attribute out_type_attr = child.attribute("type");
+        if (out_type_attr) {
+          output_type = out_type_attr.as_string();
+        }
+
+        tinyusdz::mtlx::pugi::xml_attribute nodename_attr = child.attribute("nodename");
+        if (nodename_attr) {
+          nodename_ref = nodename_attr.as_string();
+
+          // Create connection to the referenced node
+          std::string connection_path = nodename_ref + ".outputs:out";
+
+          // Store output as a connection property
+          std::string prop_name = "outputs:" + output_name;
+          // For now, store as a string connection path
+          ng_ps.props()[prop_name] = Property(Attribute::Uniform(connection_path));
+        }
+      } else if (child_name == "input") {
+        // Handle nodegraph inputs
+        // TODO: Implement if needed
+      } else {
+        // Process shader nodes
+        PrimSpec child_ps;
+        if (detail::ConvertNodeGraphRec(0, child, child_ps, config, warn, err)) {
+          if (!child_ps.name().empty()) {
+            ng_ps.children().emplace_back(std::move(child_ps));
+          }
+        }
+      }
     }
 
-    nodegraph_pss.emplace_back(std::move(root_ps));
+    nodegraph_map[ng_name] = std::move(ng_ps);
   }
 
-  // standard_surface
+  // Store nodegraphs in the model
+  mtlx->nodegraphs = std::move(nodegraph_map);
+
+  // standard_surface (Autodesk StandardSurface)
   for (auto sd_surface : root.children("standard_surface")) {
-    PUSH_WARN("TODO: `look`");
-    // TODO
-    (void)sd_surface;
+    std::string surface_name;
+    {
+      std::string typeName;
+      GET_ATTR_VALUE(sd_surface, "name", std::string, surface_name);
+      GET_ATTR_VALUE(sd_surface, "type", std::string, typeName);
+
+      if (typeName != "surfaceshader") {
+        PUSH_ERROR_AND_RETURN(
+            fmt::format("`surfaceshader` expected for type of "
+                        "standard_surface, but got `{}`",
+                        typeName));
+      }
+    }
+
+    MtlxAutodeskStandardSurface surface;
+    for (auto inp : sd_surface.children("input")) {
+      std::string name;
+      std::string typeName;
+      std::string valueStr;
+      std::string nodegraphRef;
+      std::string outputRef;
+      std::string nodenameRef;
+
+      GET_ATTR_VALUE(inp, "name", std::string, name);
+      GET_ATTR_VALUE(inp, "type", std::string, typeName);
+
+      // Check for value attribute (direct value)
+      tinyusdz::mtlx::pugi::xml_attribute value_attr = inp.attribute("value");
+      if (value_attr) {
+        valueStr = value_attr.as_string();
+      }
+
+      // Check for connection attributes
+      tinyusdz::mtlx::pugi::xml_attribute nodegraph_attr = inp.attribute("nodegraph");
+      if (nodegraph_attr) {
+        nodegraphRef = nodegraph_attr.as_string();
+      }
+
+      tinyusdz::mtlx::pugi::xml_attribute output_attr = inp.attribute("output");
+      if (output_attr) {
+        outputRef = output_attr.as_string();
+      }
+
+      tinyusdz::mtlx::pugi::xml_attribute nodename_attr = inp.attribute("nodename");
+      if (nodename_attr) {
+        nodenameRef = nodename_attr.as_string();
+      }
+
+      // Handle connections vs values
+      bool is_connection = !nodegraphRef.empty() || !nodenameRef.empty();
+
+      if (is_connection) {
+        // Store connection information
+        MtlxShaderConnection conn;
+        conn.input_name = name;
+        conn.nodegraph = nodegraphRef;
+        conn.output = outputRef;
+        conn.nodename = nodenameRef;
+        mtlx->shader_connections[surface_name].push_back(conn);
+        continue;  // Skip value parsing for connections
+      }
+
+      // Parse standard_surface direct values
+      GET_SHADER_PARAM(name, typeName, "base", "float", float, valueStr, surface.base)
+      GET_SHADER_PARAM(name, typeName, "base_color", "color3", value::color3f, valueStr, surface.base_color)
+      GET_SHADER_PARAM(name, typeName, "diffuse_roughness", "float", float, valueStr, surface.diffuse_roughness)
+      GET_SHADER_PARAM(name, typeName, "metalness", "float", float, valueStr, surface.metalness)
+      GET_SHADER_PARAM(name, typeName, "specular", "float", float, valueStr, surface.specular)
+      GET_SHADER_PARAM(name, typeName, "specular_color", "color3", value::color3f, valueStr, surface.specular_color)
+      GET_SHADER_PARAM(name, typeName, "specular_roughness", "float", float, valueStr, surface.specular_roughness)
+      GET_SHADER_PARAM(name, typeName, "specular_IOR", "float", float, valueStr, surface.specular_IOR)
+      GET_SHADER_PARAM(name, typeName, "specular_anisotropy", "float", float, valueStr, surface.specular_anisotropy)
+      GET_SHADER_PARAM(name, typeName, "specular_rotation", "float", float, valueStr, surface.specular_rotation)
+      GET_SHADER_PARAM(name, typeName, "transmission", "float", float, valueStr, surface.transmission)
+      GET_SHADER_PARAM(name, typeName, "transmission_color", "color3", value::color3f, valueStr, surface.transmission_color)
+      GET_SHADER_PARAM(name, typeName, "transmission_depth", "float", float, valueStr, surface.transmission_depth)
+      GET_SHADER_PARAM(name, typeName, "transmission_scatter", "color3", value::color3f, valueStr, surface.transmission_scatter)
+      GET_SHADER_PARAM(name, typeName, "transmission_scatter_anisotropy", "float", float, valueStr, surface.transmission_scatter_anisotropy)
+      GET_SHADER_PARAM(name, typeName, "transmission_dispersion", "float", float, valueStr, surface.transmission_dispersion)
+      GET_SHADER_PARAM(name, typeName, "transmission_extra_roughness", "float", float, valueStr, surface.transmission_extra_roughness)
+      GET_SHADER_PARAM(name, typeName, "subsurface", "float", float, valueStr, surface.subsurface)
+      GET_SHADER_PARAM(name, typeName, "subsurface_color", "color3", value::color3f, valueStr, surface.subsurface_color)
+      GET_SHADER_PARAM(name, typeName, "subsurface_radius", "float", float, valueStr, surface.subsurface_radius)
+      GET_SHADER_PARAM(name, typeName, "subsurface_scale", "float", float, valueStr, surface.subsurface_scale)
+      GET_SHADER_PARAM(name, typeName, "subsurface_anisotropy", "float", float, valueStr, surface.subsurface_anisotropy)
+      GET_SHADER_PARAM(name, typeName, "sheen", "float", float, valueStr, surface.sheen)
+      GET_SHADER_PARAM(name, typeName, "sheen_color", "color3", value::color3f, valueStr, surface.sheen_color)
+      GET_SHADER_PARAM(name, typeName, "sheen_roughness", "float", float, valueStr, surface.sheen_roughness)
+      GET_SHADER_PARAM(name, typeName, "coat", "float", float, valueStr, surface.coat)
+      GET_SHADER_PARAM(name, typeName, "coat_color", "color3", value::color3f, valueStr, surface.coat_color)
+      GET_SHADER_PARAM(name, typeName, "coat_roughness", "float", float, valueStr, surface.coat_roughness)
+      GET_SHADER_PARAM(name, typeName, "coat_anisotropy", "float", float, valueStr, surface.coat_anisotropy)
+      GET_SHADER_PARAM(name, typeName, "coat_rotation", "float", float, valueStr, surface.coat_rotation)
+      GET_SHADER_PARAM(name, typeName, "coat_IOR", "float", float, valueStr, surface.coat_IOR)
+      GET_SHADER_PARAM(name, typeName, "coat_affect_color", "float", float, valueStr, surface.coat_affect_color)
+      GET_SHADER_PARAM(name, typeName, "coat_affect_roughness", "float", float, valueStr, surface.coat_affect_roughness)
+      GET_SHADER_PARAM(name, typeName, "thin_film_thickness", "float", float, valueStr, surface.thin_film_thickness)
+      GET_SHADER_PARAM(name, typeName, "thin_film_IOR", "float", float, valueStr, surface.thin_film_IOR)
+      GET_SHADER_PARAM(name, typeName, "emission", "float", float, valueStr, surface.emission)
+      GET_SHADER_PARAM(name, typeName, "emission_color", "color3", value::color3f, valueStr, surface.emission_color)
+      GET_SHADER_PARAM(name, typeName, "opacity", "color3", value::color3f, valueStr, surface.opacity)
+      GET_SHADER_PARAM(name, typeName, "thin_walled", "boolean", bool, valueStr, surface.thin_walled)
+      GET_SHADER_PARAM(name, typeName, "normal", "vector3", value::normal3f, valueStr, surface.normal)
+      GET_SHADER_PARAM(name, typeName, "tangent", "vector3", value::vector3f, valueStr, surface.tangent)
+      {
+        PUSH_WARN(fmt::format("Unknown/unsupported standard_surface input `{}`", name));
+      }
+    }
+
+    mtlx->shaders[surface_name] = surface;
+    if (mtlx->shader_name.empty()) {
+      mtlx->shader_name = kMtlxAutodeskStandardSurface;
+      mtlx->shader = surface;  // Set the primary shader value
+    }
+  }
+
+  // uniform_edf
+  for (auto uniform_edf : root.children("uniform_edf")) {
+    std::string node_name;
+    {
+      std::string typeName;
+      GET_ATTR_VALUE(uniform_edf, "name", std::string, node_name);
+      GET_ATTR_VALUE(uniform_edf, "type", std::string, typeName);
+
+      if (typeName != "EDF") {
+        PUSH_ERROR_AND_RETURN(
+            fmt::format("`EDF` expected for type of uniform_edf, but got `{}`",
+                        typeName));
+      }
+    }
+
+    MtlxUniformEdf edf;
+    for (auto inp : uniform_edf.children("input")) {
+      std::string name;
+      std::string typeName;
+      std::string valueStr;
+      GET_ATTR_VALUE(inp, "name", std::string, name);
+      GET_ATTR_VALUE(inp, "type", std::string, typeName);
+      GET_ATTR_VALUE(inp, "value", std::string, valueStr);
+
+      GET_SHADER_PARAM(name, typeName, "color", "color3", value::color3f,
+                       valueStr, edf.color) {
+        PUSH_WARN("Unknown/unsupported input " << name);
+      }
+    }
+
+    mtlx->light_shaders[node_name] = edf;
+  }
+
+  // conical_edf
+  for (auto conical_edf : root.children("conical_edf")) {
+    std::string node_name;
+    {
+      std::string typeName;
+      GET_ATTR_VALUE(conical_edf, "name", std::string, node_name);
+      GET_ATTR_VALUE(conical_edf, "type", std::string, typeName);
+
+      if (typeName != "EDF") {
+        PUSH_ERROR_AND_RETURN(
+            fmt::format("`EDF` expected for type of conical_edf, but got `{}`",
+                        typeName));
+      }
+    }
+
+    MtlxConicalEdf edf;
+    for (auto inp : conical_edf.children("input")) {
+      std::string name;
+      std::string typeName;
+      std::string valueStr;
+      GET_ATTR_VALUE(inp, "name", std::string, name);
+      GET_ATTR_VALUE(inp, "type", std::string, typeName);
+      GET_ATTR_VALUE(inp, "value", std::string, valueStr);
+
+      GET_SHADER_PARAM(name, typeName, "color", "color3", value::color3f,
+                       valueStr, edf.color)
+      GET_SHADER_PARAM(name, typeName, "normal", "vector3", value::normal3f,
+                       valueStr, edf.normal)
+      GET_SHADER_PARAM(name, typeName, "inner_angle", "float", float, valueStr,
+                       edf.inner_angle)
+      GET_SHADER_PARAM(name, typeName, "outer_angle", "float", float, valueStr,
+                       edf.outer_angle) {
+        PUSH_WARN("Unknown/unsupported input " << name);
+      }
+    }
+
+    mtlx->light_shaders[node_name] = edf;
+  }
+
+  // measured_edf
+  for (auto measured_edf : root.children("measured_edf")) {
+    std::string node_name;
+    {
+      std::string typeName;
+      GET_ATTR_VALUE(measured_edf, "name", std::string, node_name);
+      GET_ATTR_VALUE(measured_edf, "type", std::string, typeName);
+
+      if (typeName != "EDF") {
+        PUSH_ERROR_AND_RETURN(
+            fmt::format("`EDF` expected for type of measured_edf, but got `{}`",
+                        typeName));
+      }
+    }
+
+    MtlxMeasuredEdf edf;
+    for (auto inp : measured_edf.children("input")) {
+      std::string name;
+      std::string typeName;
+      std::string valueStr;
+      GET_ATTR_VALUE(inp, "name", std::string, name);
+      GET_ATTR_VALUE(inp, "type", std::string, typeName);
+      GET_ATTR_VALUE(inp, "value", std::string, valueStr);
+
+      GET_SHADER_PARAM(name, typeName, "color", "color3", value::color3f,
+                       valueStr, edf.color)
+      // file is a filename type
+      if (name == "file") {
+        if (typeName != "filename") {
+          PUSH_ERROR_AND_RETURN(
+              fmt::format("type `{}` expected for input `{}`, but got `{}`",
+                          "filename", "file", typeName));
+        }
+        std::string filepath;
+        if (!detail::ParseMaterialXValue(valueStr, &filepath, err)) {
+          return false;
+        }
+        edf.file.set_value(value::AssetPath(filepath));
+      } else {
+        PUSH_WARN("Unknown/unsupported input " << name);
+      }
+    }
+
+    mtlx->light_shaders[node_name] = edf;
+  }
+
+  // light
+  for (auto light : root.children("light")) {
+    std::string node_name;
+    {
+      std::string typeName;
+      GET_ATTR_VALUE(light, "name", std::string, node_name);
+      GET_ATTR_VALUE(light, "type", std::string, typeName);
+
+      if (typeName != "lightshader") {
+        PUSH_ERROR_AND_RETURN(
+            fmt::format("`lightshader` expected for type of light, but got `{}`",
+                        typeName));
+      }
+    }
+
+    MtlxLight light_shader;
+    for (auto inp : light.children("input")) {
+      std::string name;
+      std::string typeName;
+      std::string valueStr;
+      mtlx::pugi::xml_attribute nodename_attr = inp.attribute("nodename");
+
+      GET_ATTR_VALUE(inp, "name", std::string, name);
+      GET_ATTR_VALUE(inp, "type", std::string, typeName);
+
+      // Handle connections via nodename
+      if (nodename_attr) {
+        std::string nodename = nodename_attr.as_string();
+        if (name == "edf") {
+          light_shader.edf.set_value(value::token(nodename));
+        } else {
+          PUSH_WARN("Unknown/unsupported connection input " << name);
+        }
+      } else {
+        // Handle direct values
+        GET_ATTR_VALUE(inp, "value", std::string, valueStr);
+
+        GET_SHADER_PARAM(name, typeName, "intensity", "color3", value::color3f,
+                         valueStr, light_shader.intensity)
+        GET_SHADER_PARAM(name, typeName, "exposure", "float", float, valueStr,
+                         light_shader.exposure) {
+          PUSH_WARN("Unknown/unsupported input " << name);
+        }
+      }
+    }
+
+    mtlx->light_shaders[node_name] = light_shader;
   }
 
   // standard_surface
@@ -800,11 +1981,51 @@ bool ReadMaterialXFromString(const std::string &str,
       std::string name;
       std::string typeName;
       std::string valueStr;
+      std::string nodegraphRef;
+      std::string outputRef;
+      std::string nodenameRef;
+
       GET_ATTR_VALUE(inp, "name", std::string, name);
       GET_ATTR_VALUE(inp, "type", std::string, typeName);
-      GET_ATTR_VALUE(inp, "value", std::string, valueStr);
 
-      // TODO: connection
+      // Check for value attribute (direct value)
+      tinyusdz::mtlx::pugi::xml_attribute value_attr = inp.attribute("value");
+      if (value_attr) {
+        valueStr = value_attr.as_string();
+      }
+
+      // Check for connection attributes
+      tinyusdz::mtlx::pugi::xml_attribute nodegraph_attr = inp.attribute("nodegraph");
+      if (nodegraph_attr) {
+        nodegraphRef = nodegraph_attr.as_string();
+      }
+
+      tinyusdz::mtlx::pugi::xml_attribute output_attr = inp.attribute("output");
+      if (output_attr) {
+        outputRef = output_attr.as_string();
+      }
+
+      tinyusdz::mtlx::pugi::xml_attribute nodename_attr = inp.attribute("nodename");
+      if (nodename_attr) {
+        nodenameRef = nodename_attr.as_string();
+      }
+
+      // Handle connections vs values
+      bool is_connection = !nodegraphRef.empty() || !nodenameRef.empty();
+
+      if (is_connection) {
+        // This is a connection, not a direct value
+        // Store connection information
+        MtlxShaderConnection conn;
+        conn.input_name = name;
+        conn.nodegraph = nodegraphRef;
+        conn.output = outputRef;
+        conn.nodename = nodenameRef;
+        mtlx->shader_connections[surface_name].push_back(conn);
+        continue;  // Skip value parsing for connections
+      }
+
+      // Parse direct values
       GET_SHADER_PARAM(name, typeName, "diffuseColor", "color3", value::color3f,
                        valueStr, surface.diffuseColor)
       GET_SHADER_PARAM(name, typeName, "emissiveColor", "color3",
@@ -838,6 +2059,133 @@ bool ReadMaterialXFromString(const std::string &str,
     }
 
     mtlx->shaders[surface_name] = surface;
+    if (mtlx->shader_name.empty()) {
+      mtlx->shader_name = kUsdPreviewSurface;
+      mtlx->shader = surface;  // Set the primary shader value
+    }
+  }
+
+  // OpenPBR Surface - check both "OpenPBRSurface" and "open_pbr_surface"
+  std::vector<tinyusdz::mtlx::pugi::xml_node> openpbr_nodes;
+  {
+    auto nodes1 = root.children("OpenPBRSurface");
+    auto nodes2 = root.children("open_pbr_surface");
+    openpbr_nodes.insert(openpbr_nodes.end(), nodes1.begin(), nodes1.end());
+    openpbr_nodes.insert(openpbr_nodes.end(), nodes2.begin(), nodes2.end());
+  }
+
+  for (auto openpbr_surface : openpbr_nodes) {
+    std::string surface_name;
+    {
+      std::string typeName;
+      GET_ATTR_VALUE(openpbr_surface, "name", std::string, surface_name);
+      GET_ATTR_VALUE(openpbr_surface, "type", std::string, typeName);
+      if (typeName != "surfaceshader") {
+        PUSH_ERROR_AND_RETURN(
+            fmt::format("`surfaceshader` expected for type of "
+                        "OpenPBRSurface, but got `{}`",
+                        typeName));
+      }
+    }
+    
+    OpenPBRSurface surface;
+    for (auto inp : openpbr_surface.children("input")) {
+      std::string name;
+      std::string typeName;
+      std::string valueStr;
+      std::string nodegraphRef;
+      std::string outputRef;
+      std::string nodenameRef;
+
+      GET_ATTR_VALUE(inp, "name", std::string, name);
+      GET_ATTR_VALUE(inp, "type", std::string, typeName);
+
+      // Check for value attribute (direct value)
+      tinyusdz::mtlx::pugi::xml_attribute value_attr = inp.attribute("value");
+      if (value_attr) {
+        valueStr = value_attr.as_string();
+      }
+
+      // Check for connection attributes
+      tinyusdz::mtlx::pugi::xml_attribute nodegraph_attr = inp.attribute("nodegraph");
+      if (nodegraph_attr) {
+        nodegraphRef = nodegraph_attr.as_string();
+      }
+
+      tinyusdz::mtlx::pugi::xml_attribute output_attr = inp.attribute("output");
+      if (output_attr) {
+        outputRef = output_attr.as_string();
+      }
+
+      tinyusdz::mtlx::pugi::xml_attribute nodename_attr = inp.attribute("nodename");
+      if (nodename_attr) {
+        nodenameRef = nodename_attr.as_string();
+      }
+
+      // Handle connections vs values
+      bool is_connection = !nodegraphRef.empty() || !nodenameRef.empty();
+
+      if (is_connection) {
+        // Store connection information
+        MtlxShaderConnection conn;
+        conn.input_name = name;
+        conn.nodegraph = nodegraphRef;
+        conn.output = outputRef;
+        conn.nodename = nodenameRef;
+        mtlx->shader_connections[surface_name].push_back(conn);
+        continue;  // Skip value parsing for connections
+      }
+
+      // Parse OpenPBR direct values
+      GET_SHADER_PARAM(name, typeName, "base_weight", "float", float, valueStr, surface.base_weight)
+      GET_SHADER_PARAM(name, typeName, "base_color", "color3", value::color3f, valueStr, surface.base_color)
+      GET_SHADER_PARAM(name, typeName, "base_roughness", "float", float, valueStr, surface.base_roughness)
+      GET_SHADER_PARAM(name, typeName, "base_metalness", "float", float, valueStr, surface.base_metalness)
+      GET_SHADER_PARAM(name, typeName, "specular_weight", "float", float, valueStr, surface.specular_weight)
+      GET_SHADER_PARAM(name, typeName, "specular_color", "color3", value::color3f, valueStr, surface.specular_color)
+      GET_SHADER_PARAM(name, typeName, "specular_roughness", "float", float, valueStr, surface.specular_roughness)
+      GET_SHADER_PARAM(name, typeName, "specular_ior", "float", float, valueStr, surface.specular_ior)
+      GET_SHADER_PARAM(name, typeName, "specular_ior_level", "float", float, valueStr, surface.specular_ior_level)
+      GET_SHADER_PARAM(name, typeName, "specular_anisotropy", "float", float, valueStr, surface.specular_anisotropy)
+      GET_SHADER_PARAM(name, typeName, "specular_rotation", "float", float, valueStr, surface.specular_rotation)
+      GET_SHADER_PARAM(name, typeName, "transmission_weight", "float", float, valueStr, surface.transmission_weight)
+      GET_SHADER_PARAM(name, typeName, "transmission_color", "color3", value::color3f, valueStr, surface.transmission_color)
+      GET_SHADER_PARAM(name, typeName, "transmission_depth", "float", float, valueStr, surface.transmission_depth)
+      GET_SHADER_PARAM(name, typeName, "transmission_scatter", "color3", value::color3f, valueStr, surface.transmission_scatter)
+      GET_SHADER_PARAM(name, typeName, "transmission_scatter_anisotropy", "float", float, valueStr, surface.transmission_scatter_anisotropy)
+      GET_SHADER_PARAM(name, typeName, "transmission_dispersion", "float", float, valueStr, surface.transmission_dispersion)
+      GET_SHADER_PARAM(name, typeName, "subsurface_weight", "float", float, valueStr, surface.subsurface_weight)
+      GET_SHADER_PARAM(name, typeName, "subsurface_color", "color3", value::color3f, valueStr, surface.subsurface_color)
+      GET_SHADER_PARAM(name, typeName, "subsurface_radius", "float", float, valueStr, surface.subsurface_radius)
+      GET_SHADER_PARAM(name, typeName, "subsurface_radius_scale", "color3", value::color3f, valueStr, surface.subsurface_radius_scale)
+      GET_SHADER_PARAM(name, typeName, "subsurface_scale", "float", float, valueStr, surface.subsurface_scale)
+      GET_SHADER_PARAM(name, typeName, "subsurface_anisotropy", "float", float, valueStr, surface.subsurface_anisotropy)
+      GET_SHADER_PARAM(name, typeName, "sheen_weight", "float", float, valueStr, surface.sheen_weight)
+      GET_SHADER_PARAM(name, typeName, "sheen_color", "color3", value::color3f, valueStr, surface.sheen_color)
+      GET_SHADER_PARAM(name, typeName, "sheen_roughness", "float", float, valueStr, surface.sheen_roughness)
+      GET_SHADER_PARAM(name, typeName, "coat_weight", "float", float, valueStr, surface.coat_weight)
+      GET_SHADER_PARAM(name, typeName, "coat_color", "color3", value::color3f, valueStr, surface.coat_color)
+      GET_SHADER_PARAM(name, typeName, "coat_roughness", "float", float, valueStr, surface.coat_roughness)
+      GET_SHADER_PARAM(name, typeName, "coat_anisotropy", "float", float, valueStr, surface.coat_anisotropy)
+      GET_SHADER_PARAM(name, typeName, "coat_rotation", "float", float, valueStr, surface.coat_rotation)
+      GET_SHADER_PARAM(name, typeName, "coat_ior", "float", float, valueStr, surface.coat_ior)
+      GET_SHADER_PARAM(name, typeName, "coat_affect_color", "color3", value::color3f, valueStr, surface.coat_affect_color)
+      GET_SHADER_PARAM(name, typeName, "coat_affect_roughness", "float", float, valueStr, surface.coat_affect_roughness)
+      GET_SHADER_PARAM(name, typeName, "emission_luminance", "float", float, valueStr, surface.emission_luminance)
+      GET_SHADER_PARAM(name, typeName, "emission_color", "color3", value::color3f, valueStr, surface.emission_color)
+      GET_SHADER_PARAM(name, typeName, "opacity", "float", float, valueStr, surface.opacity)
+      GET_SHADER_PARAM(name, typeName, "normal", "vector3", value::normal3f, valueStr, surface.normal)
+      GET_SHADER_PARAM(name, typeName, "tangent", "vector3", value::vector3f, valueStr, surface.tangent)
+      {
+        PUSH_WARN(fmt::format("TODO: OpenPBR input `{}`", name));
+      }
+    }
+    
+    mtlx->shaders[surface_name] = surface;
+    if (mtlx->shader_name.empty()) {
+      mtlx->shader_name = kOpenPBRSurface;
+      mtlx->shader = surface;  // Set the primary shader value
+    }
   }
 
   // surfacematerial
@@ -899,7 +2247,8 @@ bool ReadMaterialXFromString(const std::string &str,
 
 bool ReadMaterialXFromFile(const AssetResolutionResolver &resolver,
                            const std::string &asset_path, MtlxModel *mtlx,
-                           std::string *warn, std::string *err) {
+                           std::string *warn, std::string *err,
+                           const MtlxConfig &config) {
   std::string filepath = resolver.resolve(asset_path);
   if (filepath.empty()) {
     PUSH_ERROR_AND_RETURN("Asset not found: " + asset_path);
@@ -915,17 +2264,33 @@ bool ReadMaterialXFromFile(const AssetResolutionResolver &resolver,
   }
 
   std::string str(reinterpret_cast<const char *>(&data[0]), data.size());
-  return ReadMaterialXFromString(str, asset_path, mtlx, warn, err);
+  return ReadMaterialXFromString(str, asset_path, mtlx, warn, err, config);
 }
 
 bool WriteMaterialXToString(const MtlxModel &mtlx, std::string &xml_str,
                             std::string *warn, std::string *err) {
+  // Find shader name - use the first shader in the shaders map if available
+  // Priority: shader key from shaders map > mtlx.shader_name
+  std::string shader_name;
+  if (!mtlx.shaders.empty()) {
+    shader_name = mtlx.shaders.begin()->first;
+  } else {
+    shader_name = mtlx.shader_name;
+  }
+
+  // Get connections for this shader
+  std::vector<MtlxShaderConnection> connections;
+  auto it = mtlx.shader_connections.find(shader_name);
+  if (it != mtlx.shader_connections.end()) {
+    connections = it->second;
+  }
+
   if (auto usdps = mtlx.shader.as<MtlxUsdPreviewSurface>()) {
-    return detail::WriteMaterialXToString(*usdps, xml_str, warn, err);
+    return detail::WriteMaterialXToString(*usdps, shader_name, connections, mtlx.nodegraphs, xml_str, warn, err);
   } else if (auto adskss = mtlx.shader.as<MtlxAutodeskStandardSurface>()) {
-    (void)adskss;
-    // TODO
-    PUSH_ERROR_AND_RETURN("TODO: AutodeskStandardSurface");
+    return detail::WriteMaterialXToString(*adskss, shader_name, connections, mtlx.nodegraphs, xml_str, warn, err);
+  } else if (auto openpbr = mtlx.shader.as<MtlxOpenPBRSurface>()) {
+    return detail::WriteMaterialXToString(*openpbr, shader_name, connections, mtlx.nodegraphs, xml_str, warn, err);
   } else {
     // TODO
     PUSH_ERROR_AND_RETURN("Unknown/unsupported shader: " << mtlx.shader_name);
@@ -952,6 +2317,9 @@ bool ToPrimSpec(const MtlxModel &model, PrimSpec &ps, std::string *err) {
   } else if (model.shader_name == kAutodeskStandardSurface) {
     ps.props()["info:id"] =
         detail::MakeProperty(value::token(kAutodeskStandardSurface));
+  } else if (model.shader_name == kOpenPBRSurface) {
+    ps.props()["info:id"] =
+        detail::MakeProperty(value::token(kOpenPBRSurface));
   } else {
     PUSH_ERROR_AND_RETURN("Unsupported shader_name: " << model.shader_name);
   }
@@ -964,13 +2332,36 @@ bool ToPrimSpec(const MtlxModel &model, PrimSpec &ps, std::string *err) {
     PrimSpec material;
     material.specifier() = Specifier::Def;
     material.typeName() = "Material";
-
     material.name() = item.second.name;
+
+    // Add MaterialXConfigAPI with version from MaterialX
+    if (!model.version.empty()) {
+      material.props()["config:mtlx:version"] =
+          detail::MakeProperty(model.version);
+    }
+
+    materials.children().push_back(std::move(material));
   }
 
   PrimSpec shaders;
   shaders.name() = "Shaders";
   shaders.specifier() = Specifier::Def;
+
+  // Add shader nodes (e.g., UsdPreviewSurface, OpenPBRSurface)
+  // TODO: Convert shader value to PrimSpec
+  // For now, we skip this as shaders are typically referenced in materials
+  (void)model.shaders;  // Avoid unused variable warning
+
+  // Add NodeGraphs container
+  PrimSpec nodegraphs;
+  nodegraphs.name() = "NodeGraphs";
+  nodegraphs.specifier() = Specifier::Def;
+
+  // Add all nodegraphs
+  for (const auto &ng_item : model.nodegraphs) {
+    PrimSpec ng_copy = ng_item.second; // Copy the nodegraph PrimSpec
+    nodegraphs.children().push_back(std::move(ng_copy));
+  }
 
   PrimSpec root;
   root.name() = "MaterialX";
@@ -978,6 +2369,9 @@ bool ToPrimSpec(const MtlxModel &model, PrimSpec &ps, std::string *err) {
 
   root.children().push_back(materials);
   root.children().push_back(shaders);
+  if (!model.nodegraphs.empty()) {
+    root.children().push_back(nodegraphs);
+  }
 
   ps = std::move(root);
 
@@ -1011,6 +2405,149 @@ bool LoadMaterialXFromAsset(const Asset &asset, const std::string &asset_path,
   return true;
 }
 
+///
+/// Convert MaterialX Light shader to UsdLux light
+///
+bool ConvertMtlxLightToUsdLux(const MtlxLight &mtlx_light,
+                               const std::map<std::string, value::Value> &light_shaders,
+                               value::Value *usd_light,
+                               std::string *warn, std::string *err) {
+  (void)warn;
+
+  if (!usd_light) {
+    PUSH_ERROR_AND_RETURN("usd_light is nullptr");
+  }
+
+  // Get the EDF node name from the light shader
+  value::token edf_name;
+  if (!mtlx_light.edf.get_value(&edf_name)) {
+    PUSH_ERROR_AND_RETURN("Light shader has no EDF connection");
+  }
+
+  // Find the EDF node in light_shaders
+  auto edf_it = light_shaders.find(edf_name.str());
+  if (edf_it == light_shaders.end()) {
+    PUSH_ERROR_AND_RETURN(fmt::format("EDF node '{}' not found", edf_name.str()));
+  }
+
+  const value::Value &edf_value = edf_it->second;
+
+  // Get intensity and exposure from the light shader
+  value::color3f intensity{1.0f, 1.0f, 1.0f};
+  mtlx_light.intensity.get_value().get_scalar(&intensity);
+
+  float exposure = 0.0f;
+  if (mtlx_light.exposure.authored()) {
+    if (auto exp_val = mtlx_light.exposure.get_value()) {
+      exp_val.value().get_scalar(&exposure);
+    }
+  }
+
+  // Convert based on EDF type
+  if (auto uniform_edf = edf_value.as<MtlxUniformEdf>()) {
+    // uniform_edf -> SphereLight (omnidirectional point light)
+    SphereLight light;
+
+    value::color3f edf_color{1.0f, 1.0f, 1.0f};
+    uniform_edf->color.get_value().get_scalar(&edf_color);
+
+    // Combine EDF color with light intensity
+    value::color3f final_color{
+      edf_color[0] * intensity[0],
+      edf_color[1] * intensity[1],
+      edf_color[2] * intensity[2]
+    };
+
+    light.color.set_value(final_color);
+    light.exposure.set_value(exposure);
+    light.intensity.set_value(1.0f); // Already baked into color
+
+    (*usd_light) = light;
+    return true;
+
+  } else if (auto conical_edf = edf_value.as<MtlxConicalEdf>()) {
+    // conical_edf -> RectLight with ShapingAPI (spot light effect)
+    RectLight light;
+
+    value::color3f edf_color{1.0f, 1.0f, 1.0f};
+    conical_edf->color.get_value().get_scalar(&edf_color);
+
+    // Combine EDF color with light intensity
+    value::color3f final_color{
+      edf_color[0] * intensity[0],
+      edf_color[1] * intensity[1],
+      edf_color[2] * intensity[2]
+    };
+
+    light.color.set_value(final_color);
+    light.exposure.set_value(exposure);
+    light.intensity.set_value(1.0f);
+
+    // Add ShapingAPI for cone control
+    ShapingAPI shaping;
+
+    float inner_angle = 60.0f;
+    conical_edf->inner_angle.get_value().get_scalar(&inner_angle);
+    shaping.shapingConeAngle.set_value(inner_angle);
+
+    if (conical_edf->outer_angle.authored()) {
+      float outer_angle = 60.0f;
+      if (auto oa_val = conical_edf->outer_angle.get_value()) {
+        oa_val.value().get_scalar(&outer_angle);
+        // Use softness to represent the difference between inner and outer angles
+        float softness = (outer_angle - inner_angle) / inner_angle;
+        shaping.shapingConeSoftness.set_value(std::max(0.0f, softness));
+      }
+    }
+
+    light.shaping = shaping;
+
+    (*usd_light) = light;
+    return true;
+
+  } else if (auto measured_edf = edf_value.as<MtlxMeasuredEdf>()) {
+    // measured_edf -> RectLight or SphereLight with IES profile via ShapingAPI
+    SphereLight light;
+
+    value::color3f edf_color{1.0f, 1.0f, 1.0f};
+    measured_edf->color.get_value().get_scalar(&edf_color);
+
+    // Combine EDF color with light intensity
+    value::color3f final_color{
+      edf_color[0] * intensity[0],
+      edf_color[1] * intensity[1],
+      edf_color[2] * intensity[2]
+    };
+
+    light.color.set_value(final_color);
+    light.exposure.set_value(exposure);
+    light.intensity.set_value(1.0f);
+
+    // Add ShapingAPI with IES profile
+    if (measured_edf->file.authored()) {
+      ShapingAPI shaping;
+
+      if (auto file_val = measured_edf->file.get_value()) {
+        value::AssetPath ies_file;
+        if (file_val.value().get_scalar(&ies_file)) {
+          shaping.shapingIesFile.set_value(ies_file);
+          shaping.shapingIesNormalize.set_value(true);
+        }
+      }
+
+      light.shaping = shaping;
+    }
+
+    (*usd_light) = light;
+    return true;
+
+  } else {
+    PUSH_ERROR_AND_RETURN(fmt::format("Unknown EDF type for node '{}'", edf_name.str()));
+  }
+
+  return false;
+}
+
 //} // namespace usdMtlx
 }  // namespace tinyusdz
 
@@ -1020,11 +2557,13 @@ namespace tinyusdz {
 
 bool ReadMaterialXFromFile(const AssetResolutionResolver &resolver,
                            const std::string &asset_path, MtlxModel *mtlx,
-                           std::string *warn, std::string *err) {
+                           std::string *warn, std::string *err,
+                           const MtlxConfig &config) {
   (void)resolver;
   (void)asset_path;
   (void)mtlx;
   (void)warn;
+  (void)config;
 
   if (err) {
     (*err) += "MaterialX support is disabled in this build.\n";

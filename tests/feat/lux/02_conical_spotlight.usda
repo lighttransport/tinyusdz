@@ -1,0 +1,89 @@
+#usda 1.0
+(
+    doc = """MaterialX Conical Spotlight Example
+
+    This example demonstrates a spotlight using MaterialX's conical_edf node.
+    The conical_edf emits light within a cone, with controls for inner/outer
+    angles to create soft-edged spotlights.
+
+    This maps to USD's RectLight with ShapingAPI applied for cone control.
+    """
+    metersPerUnit = 1
+    upAxis = "Y"
+)
+
+def Xform "World"
+{
+    def Sphere "Sphere" (
+        prepend apiSchemas = ["MaterialBindingAPI"]
+    )
+    {
+        rel material:binding = </World/Materials/GlossyMaterial>
+        double radius = 1
+        double3 xformOp:translate = (0, 0, 0)
+        uniform token[] xformOpOrder = ["xformOp:translate"]
+    }
+
+    def Scope "Materials"
+    {
+        def Material "GlossyMaterial"
+        {
+            token outputs:surface.connect = </World/Materials/GlossyMaterial/PreviewSurface.outputs:surface>
+
+            def Shader "PreviewSurface"
+            {
+                uniform token info:id = "UsdPreviewSurface"
+                color3f inputs:diffuseColor = (0.2, 0.4, 0.8)  # Blue
+                float inputs:metallic = 0.8
+                float inputs:roughness = 0.2
+                token outputs:surface
+            }
+        }
+    }
+
+    def Scope "Lights"
+    {
+        # MaterialX conical_edf for spotlight effect
+        def Shader "ConicalEDF" (
+            doc = "Conical emission distribution - spotlight"
+        )
+        {
+            uniform token info:id = "conical_edf"
+            color3f inputs:color = (1.0, 1.0, 1.0)  # White light
+            vector3f inputs:normal = (0, -1, 0)  # Pointing down
+            float inputs:inner_angle = 30.0  # Inner cone: 30 degrees
+            float inputs:outer_angle = 45.0  # Outer cone: 45 degrees (soft edge)
+            token outputs:out
+        }
+
+        def Shader "SpotLightShader"
+        {
+            uniform token info:id = "light"
+            token inputs:edf.connect = </World/Lights/ConicalEDF.outputs:out>
+            color3f inputs:intensity = (10.0, 10.0, 10.0)
+            float inputs:exposure = 1.0  # +1 EV brighter
+            token outputs:out
+        }
+
+        # USD RectLight with ShapingAPI (equivalent to conical_edf)
+        def RectLight "SpotLight" (
+            prepend apiSchemas = ["ShapingAPI"]
+        )
+        {
+            color3f inputs:color = (1.0, 1.0, 1.0)
+            float inputs:intensity = 10.0
+            float inputs:exposure = 1.0
+            float inputs:width = 0.1
+            float inputs:height = 0.1
+
+            # ShapingAPI attributes for cone control
+            float inputs:shaping:cone:angle = 30.0  # Inner angle
+            float inputs:shaping:cone:softness = 0.5  # Soft edge (outer_angle relationship)
+            float inputs:shaping:focus = 0.0
+
+            float3 xformOp:rotateXYZ = (90, 0, 0)  # Point down
+            double3 xformOp:translate = (0, 5, 0)
+            uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:rotateXYZ"]
+        }
+    }
+}

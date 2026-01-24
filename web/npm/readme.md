@@ -61,6 +61,16 @@ If you want to use zstd compressed WASM, set 'useZstdCompressedWasm' true in `in
   await loader.init({useZstdCompressedWasm: true});
 ```
 
+## Use wasm64bit version
+
+npm package contains memory64 build of tinyusdz wasm.
+You can use memory64 version of tinyusdz by:
+
+```
+  await loader.init({useMemory64: true});
+```
+
+
 ## Find more on TinyUSDZ module
 
 See https://github.com/lighttransport/tinyusdz/tree/release/web/demo 
