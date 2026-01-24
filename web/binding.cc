@@ -2943,6 +2943,169 @@ class TinyUSDZLoaderNative {
     return infos;
   }
 
+  // ========================================================================
+  // Skeleton hierarchy methods
+  // ========================================================================
+
+  int numSkeletons() const {
+    if (!loaded_) return 0;
+    return static_cast<int>(render_scene_.skeletons.size());
+  }
+
+  // Convert SkelNode to JS object recursively
+  emscripten::val skelNodeToJS(const tinyusdz::tydra::SkelNode& node) const {
+    emscripten::val obj = emscripten::val::object();
+
+    obj.set("joint_path", node.joint_path);
+    obj.set("joint_name", node.joint_name);
+    obj.set("joint_id", node.joint_id);
+
+    // Export bind and rest transforms - must copy data, not use typed_memory_view
+    // (typed_memory_view would point to stack memory that becomes invalid)
+    std::array<double, 16> bind_mat = detail::toArray(node.bind_transform);
+    std::array<double, 16> rest_mat = detail::toArray(node.rest_transform);
+
+    emscripten::val bind_arr = emscripten::val::array();
+    emscripten::val rest_arr = emscripten::val::array();
+    for (int i = 0; i < 16; i++) {
+      bind_arr.call<void>("push", bind_mat[i]);
+      rest_arr.call<void>("push", rest_mat[i]);
+    }
+    obj.set("bind_transform", bind_arr);
+    obj.set("rest_transform", rest_arr);
+
+    // Recursively convert children
+    emscripten::val children = emscripten::val::array();
+    for (const auto& child : node.children) {
+      children.call<void>("push", skelNodeToJS(child));
+    }
+    obj.set("children", children);
+
+    return obj;
+  }
+
+  emscripten::val getSkeleton(int skel_id) const {
+    emscripten::val result = emscripten::val::object();
+
+    if (!loaded_) {
+      result.set("error", "Scene not loaded");
+      return result;
+    }
+
+    if (skel_id < 0 || skel_id >= static_cast<int>(render_scene_.skeletons.size())) {
+      result.set("error", "Invalid skeleton ID");
+      return result;
+    }
+
+    const auto& skel = render_scene_.skeletons[skel_id];
+
+    result.set("id", skel_id);
+    result.set("prim_name", skel.prim_name);
+    result.set("abs_path", skel.abs_path);
+    result.set("display_name", skel.display_name);
+    result.set("anim_id", skel.anim_id);
+
+    // Convert root node and hierarchy
+    result.set("root_node", skelNodeToJS(skel.root_node));
+
+    return result;
+  }
+
+  emscripten::val getAllSkeletons() const {
+    emscripten::val skeletons = emscripten::val::array();
+
+    if (!loaded_) {
+      return skeletons;
+    }
+
+    for (int i = 0; i < static_cast<int>(render_scene_.skeletons.size()); ++i) {
+      skeletons.call<void>("push", getSkeleton(i));
+    }
+
+    return skeletons;
+  }
+
+  // Get skeleton joints as flat array (useful for Three.js)
+  emscripten::val getSkeletonJointsFlat(int skel_id) const {
+    emscripten::val result = emscripten::val::object();
+
+    if (!loaded_) {
+      result.set("error", "Scene not loaded");
+      return result;
+    }
+
+    if (skel_id < 0 || skel_id >= static_cast<int>(render_scene_.skeletons.size())) {
+      result.set("error", "Invalid skeleton ID");
+      return result;
+    }
+
+    const auto& skel = render_scene_.skeletons[skel_id];
+
+    // Flatten skeleton hierarchy into arrays
+    std::vector<std::string> joint_names;
+    std::vector<std::string> joint_paths;
+    std::vector<int> joint_ids;
+    std::vector<int> parent_indices;
+    std::vector<double> bind_matrices;
+    std::vector<double> rest_matrices;
+
+    // Recursive function to traverse skeleton hierarchy
+    std::function<void(const tinyusdz::tydra::SkelNode&, int)> traverseNode;
+    traverseNode = [&](const tinyusdz::tydra::SkelNode& node, int parent_idx) {
+      int current_idx = static_cast<int>(joint_names.size());
+
+      joint_names.push_back(node.joint_name);
+      joint_paths.push_back(node.joint_path);
+      joint_ids.push_back(node.joint_id);
+      parent_indices.push_back(parent_idx);
+
+      // Add bind transform (16 doubles)
+      const auto& bind = node.bind_transform;
+      for (int row = 0; row < 4; row++) {
+        for (int col = 0; col < 4; col++) {
+          bind_matrices.push_back(bind.m[row][col]);
+        }
+      }
+
+      // Add rest transform (16 doubles)
+      const auto& rest = node.rest_transform;
+      for (int row = 0; row < 4; row++) {
+        for (int col = 0; col < 4; col++) {
+          rest_matrices.push_back(rest.m[row][col]);
+        }
+      }
+
+      // Traverse children
+      for (const auto& child : node.children) {
+        traverseNode(child, current_idx);
+      }
+    };
+
+    // Start traversal from root (root has no parent, so parent_idx = -1)
+    traverseNode(skel.root_node, -1);
+
+    // Convert to JS arrays
+    emscripten::val js_joint_names = emscripten::val::array();
+    for (const auto& name : joint_names) {
+      js_joint_names.call<void>("push", name);
+    }
+
+    emscripten::val js_joint_paths = emscripten::val::array();
+    for (const auto& path : joint_paths) {
+      js_joint_paths.call<void>("push", path);
+    }
+
+    result.set("joint_names", js_joint_names);
+    result.set("joint_paths", js_joint_paths);
+    result.set("joint_ids", emscripten::val(emscripten::typed_memory_view(joint_ids.size(), joint_ids.data())));
+    result.set("parent_indices", emscripten::val(emscripten::typed_memory_view(parent_indices.size(), parent_indices.data())));
+    result.set("bind_matrices", emscripten::val(emscripten::typed_memory_view(bind_matrices.size(), bind_matrices.data())));
+    result.set("rest_matrices", emscripten::val(emscripten::typed_memory_view(rest_matrices.size(), rest_matrices.data())));
+    result.set("num_joints", static_cast<int>(joint_names.size()));
+
+    return result;
+  }
+
   void setEnableComposition(bool enabled) { enableComposition_ = enabled; }
   void setLoadTextureInNative(bool onoff) {
     loadTextureInNative_ = onoff;
@@ -4625,6 +4788,12 @@ EMSCRIPTEN_BINDINGS(tinyusdz_module) {
       .function("getAllAnimations", &TinyUSDZLoaderNative::getAllAnimations)
       .function("getAnimationInfo", &TinyUSDZLoaderNative::getAnimationInfo)
       .function("getAllAnimationInfos", &TinyUSDZLoaderNative::getAllAnimationInfos)
+
+      // Skeleton hierarchy methods
+      .function("numSkeletons", &TinyUSDZLoaderNative::numSkeletons)
+      .function("getSkeleton", &TinyUSDZLoaderNative::getSkeleton)
+      .function("getAllSkeletons", &TinyUSDZLoaderNative::getAllSkeletons)
+      .function("getSkeletonJointsFlat", &TinyUSDZLoaderNative::getSkeletonJointsFlat)
 
       .function("setLoadTextureInNative",
                 &TinyUSDZLoaderNative::setLoadTextureInNative)

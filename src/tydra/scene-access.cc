@@ -255,11 +255,11 @@ bool ListSceneNamesRec(const tinyusdz::Prim &root, uint32_t depth,
     return false;
   }
 
-  if (root.metas().sceneName.has_value()) {
+  if (root.metas().has_sceneName()) {
     bool is_over = (root.specifier() == Specifier::Over);
 
     sceneNames->push_back(
-        std::make_pair(is_over, root.metas().sceneName.value()));
+        std::make_pair(is_over, root.metas().get_sceneName()));
   }
 
   return true;
@@ -2271,8 +2271,8 @@ bool ListSceneNames(const tinyusdz::Prim &root,
   }
 
   bool has_sceneLibrary = false;
-  if (root.metas().kind.has_value()) {
-    if (root.metas().kind.value() == Kind::SceneLibrary) {
+  if (root.metas().has_kind()) {
+    if (root.metas().get_kind_enum() == Kind::SceneLibrary) {
       // ok
       has_sceneLibrary = true;
     }
@@ -2916,11 +2916,11 @@ bool GetGeomPrimvar(const Stage &stage, const GPrim *gprim,
 
     primvar.set_name(varname);
 
-    if (attr.metas().interpolation.has_value()) {
-      primvar.set_interpolation(attr.metas().interpolation.value());
+    if (attr.metas().has_interpolation()) {
+      primvar.set_interpolation(attr.metas().get_interpolation_enum());
     }
-    if (attr.metas().elementSize.has_value()) {
-      primvar.set_elementSize(attr.metas().elementSize.value());
+    if (attr.metas().has_elementSize()) {
+      primvar.set_elementSize(attr.metas().get_elementSize());
     }
     if (attr.metas().has_unauthoredValuesIndex()) {
       primvar.set_unauthoredValuesIndex(attr.metas().get_unauthoredValuesIndex());
@@ -3182,7 +3182,7 @@ static bool BuildSkelHierarchyImpl(
     const std::vector<int> &parentJointIds,
     const std::vector<value::token> &joints,
     const std::vector<value::token> &jointNames,
-    const std::vector<value::matrix4d> bindTransforms,
+    const std::vector<value::matrix4d> &bindTransforms,
     const std::vector<value::matrix4d> &restTransforms,
     std::string *err = nullptr) {
   // Simple linear search
@@ -3261,11 +3261,17 @@ bool BuildSkelHierarchy(const Skeleton &skel, SkelNode &dst, std::string *err) {
 
   std::vector<value::matrix4d> restTransforms;
   if (skel.restTransforms.authored()) {
+    DCOUT("restTransforms is authored");
     if (!skel.restTransforms.get_value(&restTransforms)) {
       PUSH_ERROR_AND_RETURN(fmt::format(
           "Failed to get Skeleton.restTransforms attrbitue: {}", skel.name));
     }
+    DCOUT("restTransforms.size() = " << restTransforms.size());
+    if (restTransforms.size() > 0) {
+      DCOUT("restTransforms[0] = " << restTransforms[0]);
+    }
   } else {
+    DCOUT("restTransforms is NOT authored - using identity");
     // TODO: Report error when `restTransforms` attribute is omitted?
     restTransforms.assign(joints.size(), value::matrix4d::identity());
   }
@@ -3279,13 +3285,19 @@ bool BuildSkelHierarchy(const Skeleton &skel, SkelNode &dst, std::string *err) {
 
   std::vector<value::matrix4d> bindTransforms;
   if (skel.bindTransforms.authored()) {
+    DCOUT("bindTransforms is authored");
     if (!skel.bindTransforms.get_value(&bindTransforms)) {
       PUSH_ERROR_AND_RETURN(fmt::format(
           "Failed to get Skeleton.bindTransforms attrbitue: {}", skel.name));
     }
+    DCOUT("bindTransforms.size() = " << bindTransforms.size());
+    if (bindTransforms.size() > 0) {
+      DCOUT("bindTransforms[0] = " << bindTransforms[0]);
+    }
   } else {
-    // TODO: Report error when `restTransforms` attribute is omitted?
-    restTransforms.assign(joints.size(), value::matrix4d::identity());
+    DCOUT("bindTransforms is NOT authored - using identity");
+    // Use identity when bindTransforms is not authored
+    bindTransforms.assign(joints.size(), value::matrix4d::identity());
   }
 
   if (joints.size() != bindTransforms.size()) {

@@ -1386,4 +1386,100 @@ void fp_shortest_representation_test(void) {
                   v1, s1.c_str(), v2, s2.c_str(), v3, s3.c_str());
     }
   }
+
+  // Test 6.13: Float precision limit (max 9 significant digits)
+  // Verify that float output never exceeds max_digits10 = 9
+  // Note: "significant digits" excludes leading zeros (e.g., in 0.00123, only 123 counts)
+  {
+    // Helper to count true significant digits (excludes leading zeros)
+    auto count_true_significant_digits = [](const std::string& s) -> size_t {
+      size_t count = 0;
+      bool started = false;
+      bool in_exponent = false;
+      for (char c : s) {
+        if (c == 'e' || c == 'E') {
+          in_exponent = true;
+        } else if (!in_exponent && c >= '0' && c <= '9') {
+          if (c != '0' || started) {
+            started = true;
+            count++;
+          }
+        }
+      }
+      return count;
+    };
+
+    std::vector<float> test_floats = {
+      0.707f,      // The case that triggered precision limiting
+      0.123456789f,
+      3.14159265f,
+      2.71828182f,
+      1.41421356f,  // sqrt(2)
+      0.0001234567f,
+      1234567.0f,
+      9.99999999f,
+    };
+
+    for (float v : test_floats) {
+      std::string s = dtos(v);
+      size_t sig_digits = count_true_significant_digits(s);
+
+      TEST_CHECK_(sig_digits <= 9,
+                  "float 0x%08X (%.9g) has %zu significant digits (max 9): '%s'",
+                  float_to_bits(v), v, sig_digits, s.c_str());
+
+      // Also verify roundtrip still works
+      float parsed = std::strtof(s.c_str(), nullptr);
+      TEST_CHECK_(bitwise_equal_float(parsed, v),
+                  "float precision limit broke roundtrip: v=%.9g, s='%s', parsed=%.9g",
+                  v, s.c_str(), parsed);
+    }
+  }
+
+  // Test 6.14: Double precision limit (max 17 significant digits)
+  // Verify that double output never exceeds max_digits10 = 17
+  {
+    // Helper to count true significant digits (excludes leading zeros)
+    auto count_true_significant_digits = [](const std::string& s) -> size_t {
+      size_t count = 0;
+      bool started = false;
+      bool in_exponent = false;
+      for (char c : s) {
+        if (c == 'e' || c == 'E') {
+          in_exponent = true;
+        } else if (!in_exponent && c >= '0' && c <= '9') {
+          if (c != '0' || started) {
+            started = true;
+            count++;
+          }
+        }
+      }
+      return count;
+    };
+
+    std::vector<double> test_doubles = {
+      3.14159265358979323846,  // pi
+      2.71828182845904523536,  // e
+      1.41421356237309504880,  // sqrt(2)
+      0.12345678901234567890,
+      123456789012345.0,
+      9.99999999999999999,
+      0.00000000000000001,
+    };
+
+    for (double v : test_doubles) {
+      std::string s = dtos(v);
+      size_t sig_digits = count_true_significant_digits(s);
+
+      TEST_CHECK_(sig_digits <= 17,
+                  "double %.17g has %zu significant digits (max 17): '%s'",
+                  v, sig_digits, s.c_str());
+
+      // Also verify roundtrip still works
+      double parsed = std::strtod(s.c_str(), nullptr);
+      TEST_CHECK_(bitwise_equal_double(parsed, v),
+                  "double precision limit broke roundtrip: v=%.17g, s='%s', parsed=%.17g",
+                  v, s.c_str(), parsed);
+    }
+  }
 }

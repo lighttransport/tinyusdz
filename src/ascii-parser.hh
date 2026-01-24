@@ -517,6 +517,26 @@ class AsciiParser {
   bool ReadBasicType(nonstd::optional<value::uint2> *value);
   bool ReadBasicType(nonstd::optional<value::uint3> *value);
   bool ReadBasicType(nonstd::optional<value::uint4> *value);
+  // char types (int8_t)
+  bool ReadBasicType(nonstd::optional<char> *value);
+  bool ReadBasicType(nonstd::optional<value::char2> *value);
+  bool ReadBasicType(nonstd::optional<value::char3> *value);
+  bool ReadBasicType(nonstd::optional<value::char4> *value);
+  // uchar types (uint8_t)
+  bool ReadBasicType(nonstd::optional<uint8_t> *value);
+  bool ReadBasicType(nonstd::optional<value::uchar2> *value);
+  bool ReadBasicType(nonstd::optional<value::uchar3> *value);
+  bool ReadBasicType(nonstd::optional<value::uchar4> *value);
+  // short types (int16_t)
+  bool ReadBasicType(nonstd::optional<int16_t> *value);
+  bool ReadBasicType(nonstd::optional<value::short2> *value);
+  bool ReadBasicType(nonstd::optional<value::short3> *value);
+  bool ReadBasicType(nonstd::optional<value::short4> *value);
+  // ushort types (uint16_t)
+  bool ReadBasicType(nonstd::optional<uint16_t> *value);
+  bool ReadBasicType(nonstd::optional<value::ushort2> *value);
+  bool ReadBasicType(nonstd::optional<value::ushort3> *value);
+  bool ReadBasicType(nonstd::optional<value::ushort4> *value);
   bool ReadBasicType(nonstd::optional<int64_t> *value);
   bool ReadBasicType(nonstd::optional<uint64_t> *value);
   bool ReadBasicType(nonstd::optional<float> *value);
@@ -551,6 +571,7 @@ class AsciiParser {
   bool ReadBasicType(nonstd::optional<value::matrix2d> *value);
   bool ReadBasicType(nonstd::optional<value::matrix3d> *value);
   bool ReadBasicType(nonstd::optional<value::matrix4d> *value);
+  bool ReadBasicType(nonstd::optional<value::frame4d> *value);
   bool ReadBasicType(nonstd::optional<value::texcoord2h> *value);
   bool ReadBasicType(nonstd::optional<value::texcoord2f> *value);
   bool ReadBasicType(nonstd::optional<value::texcoord2d> *value);
@@ -583,6 +604,26 @@ class AsciiParser {
   bool ReadBasicType(value::uint2 *value);
   bool ReadBasicType(value::uint3 *value);
   bool ReadBasicType(value::uint4 *value);
+  // char types (int8_t)
+  bool ReadBasicType(char *value);
+  bool ReadBasicType(value::char2 *value);
+  bool ReadBasicType(value::char3 *value);
+  bool ReadBasicType(value::char4 *value);
+  // uchar types (uint8_t)
+  bool ReadBasicType(uint8_t *value);
+  bool ReadBasicType(value::uchar2 *value);
+  bool ReadBasicType(value::uchar3 *value);
+  bool ReadBasicType(value::uchar4 *value);
+  // short types (int16_t)
+  bool ReadBasicType(int16_t *value);
+  bool ReadBasicType(value::short2 *value);
+  bool ReadBasicType(value::short3 *value);
+  bool ReadBasicType(value::short4 *value);
+  // ushort types (uint16_t)
+  bool ReadBasicType(uint16_t *value);
+  bool ReadBasicType(value::ushort2 *value);
+  bool ReadBasicType(value::ushort3 *value);
+  bool ReadBasicType(value::ushort4 *value);
   bool ReadBasicType(int64_t *value);
   bool ReadBasicType(uint64_t *value);
   bool ReadBasicType(float *value);
@@ -623,6 +664,7 @@ class AsciiParser {
   bool ReadBasicType(value::matrix2d *value);
   bool ReadBasicType(value::matrix3d *value);
   bool ReadBasicType(value::matrix4d *value);
+  bool ReadBasicType(value::frame4d *value);
   bool ReadBasicType(value::StringData *value);
   bool ReadBasicType(std::string *value);
   bool ReadBasicType(value::token *value);

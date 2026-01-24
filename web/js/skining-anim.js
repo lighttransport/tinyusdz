@@ -4,6 +4,45 @@ import { TransformControls } from 'three/examples/jsm/controls/TransformControls
 import GUI from 'three/examples/jsm/libs/lil-gui.module.min.js';
 import { TinyUSDZLoader } from 'tinyusdz/TinyUSDZLoader.js';
 import { TinyUSDZLoaderUtils } from 'tinyusdz/TinyUSDZLoaderUtils.js';
+// USD Skeletal Animation Helper - provides simplified Three.js integration
+import {
+	createThreeSkeletonFromUSD,
+	createThreeAnimationClip,
+	createSkinnedMeshFromUSD,
+	playAnimation as helperPlayAnimation
+} from 'tinyusdz/USDSkeletalHelper.js';
+
+// ===========================================
+// Configuration
+// ===========================================
+
+/**
+ * USD Skeletal Animation - Two Implementation Approaches
+ *
+ * This demo supports two ways to handle skeletal animation from USD files:
+ *
+ * 1. SIMPLIFIED HELPER APPROACH (USE_SKELETAL_HELPER = true):
+ *    - Uses USDSkeletalHelper.js functions for minimal code
+ *    - Best for: Basic skeletal animation playback
+ *    - Pros: Simple, clean, easy to understand
+ *    - Example usage:
+ *      ```javascript
+ *      const skeleton = createThreeSkeletonFromUSD(usdSkeleton);
+ *      const clip = createThreeAnimationClip(usdAnimation, skeleton);
+ *      // or even simpler:
+ *      const result = createSkinnedMeshFromUSD(usd, meshId, skelId, animId);
+ *      ```
+ *
+ * 2. CUSTOM ADVANCED APPROACH (USE_SKELETAL_HELPER = false, default):
+ *    - Manual skeleton building with custom functions
+ *    - Best for: Advanced features and debugging
+ *    - Pros: Full control, weight visualization, joint manipulation, transform controls
+ *    - Includes: Custom shader for weight visualization, joint sphere gizmos,
+ *                transform controls, joint hierarchy display, bone reduction
+ *
+ * Toggle between approaches by changing USE_SKELETAL_HELPER below.
+ */
+const USE_SKELETAL_HELPER = false;
 
 // Scene setup
 const scene = new THREE.Scene();
@@ -44,17 +83,24 @@ scene.add(transformControls);
 const raycaster = new THREE.Raycaster();
 const mouse = new THREE.Vector2();
 
-// Lighting
-const ambientLight = new THREE.AmbientLight(0x404040, 1);
+// Lighting - brighter ambient for better visibility
+const ambientLight = new THREE.AmbientLight(0x808080, 1.5);
 scene.add(ambientLight);
 
-const directionalLight = new THREE.DirectionalLight(0xffffff, 1);
+const directionalLight = new THREE.DirectionalLight(0xffffff, 2.5);
 directionalLight.position.set(5, 10, 5);
 directionalLight.castShadow = true;
+// Higher resolution shadow map
+directionalLight.shadow.mapSize.width = 2048;
+directionalLight.shadow.mapSize.height = 2048;
+// Initial shadow camera frustum (will be updated based on scene)
 directionalLight.shadow.camera.left = -10;
 directionalLight.shadow.camera.right = 10;
 directionalLight.shadow.camera.top = 10;
 directionalLight.shadow.camera.bottom = -10;
+directionalLight.shadow.camera.near = 0.1;
+directionalLight.shadow.camera.far = 50;
+directionalLight.shadow.bias = -0.001;
 scene.add(directionalLight);
 
 // Ground plane
@@ -96,6 +142,9 @@ let boneMap = new Map(); // Map from joint_id to THREE.Bone
 // Store the current file's upAxis (Y or Z)
 let currentFileUpAxis = "Y";
 
+// Store the current file's timeCodesPerSecond (default 24)
+let currentTimeCodesPerSecond = 24;
+
 // Debug visualization
 let jointSpheres = [];
 let weightVisualizationMaterial = null;
@@ -114,9 +163,10 @@ let selectedSphere = null;
  * Extracts only SkeletonJoint animations from USD SkelAnimation
  * @param {Object} usdLoader - TinyUSDZ loader instance
  * @param {Map} boneMap - Map from joint_id to THREE.Bone
+ * @param {number} [timeCodesPerSecond=24] - USD timeCodesPerSecond for time conversion
  * @returns {Array<THREE.AnimationClip>} Array of Three.js AnimationClips
  */
-function convertUSDSkeletalAnimationsToThreeJS(usdLoader, boneMap) {
+function convertUSDSkeletalAnimationsToThreeJS(usdLoader, boneMap, timeCodesPerSecond = 24) {
 	const animationClips = [];
 
 	// Get number of animations
@@ -267,6 +317,7 @@ function getUSDInterpolationMode(interpolation) {
 
 /**
  * Build Three.js Skeleton from USD skeleton hierarchy
+ * Uses bind_transform for world-space positioning (accounts for SkelRoot transform)
  * @param {Object} usdSkeleton - USD skeleton data
  * @param {number} skeletonId - Index of the skeleton
  * @returns {Object} { bones: Array<THREE.Bone>, boneMap: Map }
@@ -278,32 +329,62 @@ function buildSkeletonFromUSD(usdSkeleton, skeletonId) {
 	const boneMap = new Map();
 	let jointId = 0;
 
+	// Helper to parse matrix from USD format
+	function parseMatrix(m) {
+		const matrix = new THREE.Matrix4();
+		if (Array.isArray(m) && m.length === 16) {
+			matrix.fromArray(m);
+		} else if (m && m[0] !== undefined && Array.isArray(m[0])) {
+			// Legacy 2D array format (4x4) - flatten to column-major
+			const flat = [
+				m[0][0], m[1][0], m[2][0], m[3][0],
+				m[0][1], m[1][1], m[2][1], m[3][1],
+				m[0][2], m[1][2], m[2][2], m[3][2],
+				m[0][3], m[1][3], m[2][3], m[3][3]
+			];
+			matrix.fromArray(flat);
+		}
+		return matrix;
+	}
+
 	/**
-	 * Recursively build bone hierarchy
+	 * Recursively build bone hierarchy using bind_transform for world-space positioning
+	 * bind_transform includes SkelRoot transform, giving correct world position
 	 * @param {Object} skelNode - USD SkelNode
 	 * @param {THREE.Bone} parentBone - Parent bone (null for root)
+	 * @param {THREE.Matrix4} parentBindMatrix - Parent's bind transform (world space)
 	 */
-	function buildBoneHierarchy(skelNode, parentBone) {
+	function buildBoneHierarchy(skelNode, parentBone, parentBindMatrix) {
 		const bone = new THREE.Bone();
-		bone.name = skelNode.joint_name || skelNode.joint_path || `joint_${jointId}`;
+		// Extract leaf name from path (e.g., "a/b/c" -> "c") for Three.js compatibility
+		// Three.js uses "/" as hierarchy separator, so we need just the leaf name
+		let jointName = skelNode.joint_name || skelNode.joint_path || `joint_${jointId}`;
+		const lastSlash = jointName.lastIndexOf('/');
+		if (lastSlash !== -1) {
+			jointName = jointName.substring(lastSlash + 1);
+		}
+		bone.name = jointName;
 
 		// Store mapping from joint_id to bone
 		const currentJointId = skelNode.joint_id !== undefined ? skelNode.joint_id : jointId;
 		boneMap.set(currentJointId, bone);
 		jointId++;
 
-		// Apply rest transform if available
-		if (skelNode.rest_transform) {
-			const matrix = new THREE.Matrix4();
-			const m = skelNode.rest_transform;
-			// USD uses row-major, Three.js uses column-major
-			matrix.set(
-				m[0][0], m[1][0], m[2][0], m[3][0],
-				m[0][1], m[1][1], m[2][1], m[3][1],
-				m[0][2], m[1][2], m[2][2], m[3][2],
-				m[0][3], m[1][3], m[2][3], m[3][3]
-			);
-			matrix.decompose(bone.position, bone.quaternion, bone.scale);
+		// Use bind_transform for world-space positioning
+		// bind_transform includes SkelRoot transform, giving correct world position
+		// Fall back to rest_transform if bind_transform is not available
+		const bindMatrix = skelNode.bind_transform
+			? parseMatrix(skelNode.bind_transform)
+			: parseMatrix(skelNode.rest_transform);
+
+		if (parentBone && parentBindMatrix) {
+			// Compute local transform: inverse(parent_bind) * child_bind
+			const parentInverse = parentBindMatrix.clone().invert();
+			const localMatrix = parentInverse.multiply(bindMatrix);
+			localMatrix.decompose(bone.position, bone.quaternion, bone.scale);
+		} else {
+			// Root bone: use bind_transform directly (world space)
+			bindMatrix.decompose(bone.position, bone.quaternion, bone.scale);
 		}
 
 		if (parentBone) {
@@ -312,10 +393,10 @@ function buildSkeletonFromUSD(usdSkeleton, skeletonId) {
 			bones.push(bone); // Root bone
 		}
 
-		// Process children
+		// Process children with current bone's bind matrix as parent reference
 		if (skelNode.children && skelNode.children.length > 0) {
 			for (const childNode of skelNode.children) {
-				buildBoneHierarchy(childNode, bone);
+				buildBoneHierarchy(childNode, bone, bindMatrix);
 			}
 		}
 
@@ -324,7 +405,7 @@ function buildSkeletonFromUSD(usdSkeleton, skeletonId) {
 
 	// Build from root node
 	if (usdSkeleton.root_node) {
-		const rootBone = buildBoneHierarchy(usdSkeleton.root_node, null);
+		const rootBone = buildBoneHierarchy(usdSkeleton.root_node, null, null);
 
 		// Collect all bones in depth-first order
 		const allBones = [];
@@ -343,12 +424,14 @@ function buildSkeletonFromUSD(usdSkeleton, skeletonId) {
 
 /**
  * Create weight visualization material with pseudo-color shader
+ * Includes proper Three.js skinning support for SkinnedMesh
  * @returns {THREE.ShaderMaterial} Weight visualization shader material
  */
 function createWeightVisualizationMaterial() {
+	// Use Three.js shader chunks for skinning support
 	const vertexShader = `
-		attribute vec4 skinIndex;
-		attribute vec4 skinWeight;
+		#include <common>
+		#include <skinning_pars_vertex>
 
 		varying vec3 vColor;
 		varying vec4 vSkinWeight;
@@ -379,6 +462,8 @@ function createWeightVisualizationMaterial() {
 		}
 
 		void main() {
+			#include <skinbase_vertex>
+
 			vSkinWeight = skinWeight;
 			vSkinIndex = skinIndex;
 
@@ -389,7 +474,11 @@ function createWeightVisualizationMaterial() {
 			vColor += getWeightColor(skinWeight.z, skinIndex.z) * skinWeight.z;
 			vColor += getWeightColor(skinWeight.w, skinIndex.w) * skinWeight.w;
 
-			vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
+			// Apply skinning transformation
+			vec3 transformed = vec3(position);
+			#include <skinning_vertex>
+
+			vec4 mvPosition = modelViewMatrix * vec4(transformed, 1.0);
 			gl_Position = projectionMatrix * mvPosition;
 		}
 	`;
@@ -425,12 +514,19 @@ function createWeightVisualizationMaterial() {
 		}
 	`;
 
+	// Merge Three.js skinning uniforms with our custom uniforms
+	const uniforms = THREE.UniformsUtils.merge([
+		THREE.UniformsLib.skinning,
+		{
+			visualizationMode: { value: 0 }
+		}
+	]);
+
 	return new THREE.ShaderMaterial({
 		vertexShader: vertexShader,
 		fragmentShader: fragmentShader,
-		uniforms: {
-			visualizationMode: { value: 0 }
-		},
+		uniforms: uniforms,
+		skinning: true,  // Enable skinning for this material
 		side: THREE.DoubleSide
 	});
 }
@@ -473,6 +569,72 @@ function updateJointSpheres() {
 		bone.getWorldPosition(worldPos);
 		sphere.position.copy(worldPos);
 	});
+}
+
+/**
+ * Compute scene bounding box from meshes (static state, ignores skinning deformation)
+ * @param {THREE.Object3D} root - Root object to traverse
+ * @returns {THREE.Box3} Bounding box
+ */
+function computeSceneBoundingBox(root) {
+	const box = new THREE.Box3();
+
+	root.traverse((child) => {
+		if (child.isMesh && child.geometry) {
+			child.geometry.computeBoundingBox();
+			if (child.geometry.boundingBox) {
+				const meshBox = child.geometry.boundingBox.clone();
+				meshBox.applyMatrix4(child.matrixWorld);
+				box.union(meshBox);
+			}
+		}
+	});
+
+	// If no valid box found, return default
+	if (box.isEmpty()) {
+		box.set(new THREE.Vector3(-5, -5, -5), new THREE.Vector3(5, 5, 5));
+	}
+
+	return box;
+}
+
+/**
+ * Update shadow camera frustum based on scene bounding box
+ * @param {THREE.DirectionalLight} light - Directional light with shadow
+ * @param {THREE.Box3} sceneBounds - Scene bounding box
+ */
+function updateShadowCameraFromBounds(light, sceneBounds) {
+	const center = new THREE.Vector3();
+	const size = new THREE.Vector3();
+	sceneBounds.getCenter(center);
+	sceneBounds.getSize(size);
+
+	// Calculate the maximum extent with some padding
+	const maxDim = Math.max(size.x, size.y, size.z);
+	const padding = maxDim * 0.5;
+	const frustumSize = maxDim + padding;
+
+	// Update shadow camera frustum
+	light.shadow.camera.left = -frustumSize;
+	light.shadow.camera.right = frustumSize;
+	light.shadow.camera.top = frustumSize;
+	light.shadow.camera.bottom = -frustumSize;
+
+	// Update near/far based on light position and scene bounds
+	const lightPos = light.position.clone();
+	const lightToCenter = center.clone().sub(lightPos);
+	const dist = lightToCenter.length();
+	light.shadow.camera.near = Math.max(0.1, dist - maxDim);
+	light.shadow.camera.far = dist + maxDim * 2;
+
+	// Move light target to scene center
+	light.target.position.copy(center);
+	light.target.updateMatrixWorld();
+
+	// Update shadow camera
+	light.shadow.camera.updateProjectionMatrix();
+
+	console.log(`Shadow camera updated: frustum=${frustumSize.toFixed(2)}, near=${light.shadow.camera.near.toFixed(2)}, far=${light.shadow.camera.far.toFixed(2)}`);
 }
 
 /**
@@ -611,12 +773,19 @@ async function loadUSDModel() {
 	await loader.init({ useZstdCompressedWasm: false, useMemory64: false });
 
 	// Default USD file to load
-	const usd_filename = "./assets/skintest-blender-4.1.usda";
+	const usd_filename = "./assets/skintest.usda";
 
 	console.log(`Loading USD file: ${usd_filename}`);
 
-	// Load USD scene
-	const usd_scene = await loader.loadAsync(usd_filename);
+	// Load USD scene using Promise-based API
+	const usd_scene = await new Promise((resolve, reject) => {
+		loader.load(
+			usd_filename,
+			resolve,  // onLoad
+			null,     // onProgress
+			reject    // onError
+		);
+	});
 
 	console.log('USD scene loaded:', usd_scene);
 
@@ -633,18 +802,17 @@ async function loadUSDFromArrayBuffer(arrayBuffer, filename) {
 	const loader = new TinyUSDZLoader();
 	await loader.init({ useZstdCompressedWasm: false, useMemory64: false });
 
-	// Create a Blob URL from the ArrayBuffer
-	// This allows the loader to load the file as if it were a normal URL
-	const blob = new Blob([arrayBuffer]);
-	const blobUrl = URL.createObjectURL(blob);
-
 	console.log(`Loading USD from file: ${filename} (${(arrayBuffer.byteLength / 1024).toFixed(2)} KB)`);
 
-	// Load USD scene from Blob URL
-	const usd_scene = await loader.loadAsync(blobUrl);
-
-	// Clean up the Blob URL after loading
-	URL.revokeObjectURL(blobUrl);
+	// Parse USD directly from array buffer
+	const usd_scene = await new Promise((resolve, reject) => {
+		loader.parse(
+			new Uint8Array(arrayBuffer),
+			filename,
+			resolve,  // onLoad
+			reject    // onError
+		);
+	});
 
 	console.log('USD scene loaded:', usd_scene);
 
@@ -686,14 +854,64 @@ async function processUSDScene(usd_scene, loader, filename) {
 	animationParams.hasUSDAnimations = false;
 	animationParams.usdAnimationCount = 0;
 
+	// Store loader globally for debugging
+	window.usd_scene = usd_scene;
+
 	// Get scene metadata from the USD file
 	const sceneMetadata = usd_scene.getSceneMetadata ? usd_scene.getSceneMetadata() : {};
-	const fileUpAxis = sceneMetadata.upAxis || "Y";
-	currentFileUpAxis = fileUpAxis; // Store globally for toggle function
+	let fileUpAxis = sceneMetadata.upAxis || "Y";
+	const timeCodesPerSecond = sceneMetadata.timeCodesPerSecond || 24;
+
+	// Update global timeCodesPerSecond and speed parameter
+	currentTimeCodesPerSecond = timeCodesPerSecond;
+	animationParams.speed = timeCodesPerSecond;
 
 	console.log('=== USD Scene Metadata ===');
-	console.log(`upAxis: "${fileUpAxis}"`);
+	console.log(`upAxis (from metadata): "${fileUpAxis}"`);
 	console.log(`metersPerUnit: ${sceneMetadata.metersPerUnit || 1.0}`);
+	console.log(`timeCodesPerSecond: ${timeCodesPerSecond}`);
+
+	// Debug: Log mesh skinning data
+	const numMeshes = usd_scene.numMeshes ? usd_scene.numMeshes() : 0;
+	console.log(`=== Mesh Skinning Data (${numMeshes} meshes) ===`);
+	let hasSkinnedMeshData = false;
+	let skinnedMeshUSDData = null; // Store USD mesh data for adding skinning attributes later
+	let detectedZUpFromPath = false;
+	for (let i = 0; i < numMeshes; i++) {
+		const mesh = usd_scene.getMesh(i);
+		const hasJointIndices = mesh.jointIndices && mesh.jointIndices.length > 0;
+		const hasJointWeights = mesh.jointWeights && mesh.jointWeights.length > 0;
+		if (hasJointIndices || hasJointWeights) {
+			hasSkinnedMeshData = true;
+			// Store the first mesh with skinning data for later use
+			if (!skinnedMeshUSDData) {
+				skinnedMeshUSDData = {
+					jointIndices: mesh.jointIndices,
+					jointWeights: mesh.jointWeights,
+					elementSize: mesh.elementSize || 4,
+					absPath: mesh.absPath
+				};
+			}
+			console.log(`Mesh ${i}: ${mesh.absPath}`);
+			console.log(`  - skel_id: ${mesh.skel_id}`);
+			console.log(`  - jointIndices: ${mesh.jointIndices ? mesh.jointIndices.length : 0} elements`);
+			console.log(`  - jointWeights: ${mesh.jointWeights ? mesh.jointWeights.length : 0} elements`);
+			console.log(`  - elementSize (influences per vertex): ${mesh.elementSize}`);
+		}
+		// Check path for Z_UP hint (some models have this in their hierarchy)
+		if (mesh.absPath && (mesh.absPath.includes('Z_UP') || mesh.absPath.includes('z_up') || mesh.absPath.includes('Z_up'))) {
+			detectedZUpFromPath = true;
+		}
+	}
+
+	// Override upAxis if detected from path but metadata says Y
+	if (detectedZUpFromPath && fileUpAxis === "Y") {
+		console.log(`WARNING: Path contains 'Z_UP' but metadata says upAxis="Y". Overriding to "Z".`);
+		fileUpAxis = "Z";
+	}
+
+	currentFileUpAxis = fileUpAxis; // Store globally for toggle function
+	console.log(`upAxis (final): "${fileUpAxis}"`);
 	console.log('========================');
 
 	// Configure bone reduction (if enabled in UI)
@@ -715,25 +933,112 @@ async function processUSDScene(usd_scene, loader, filename) {
 		const usdSkeleton = usd_scene.getSkeleton(0);
 		console.log('USD Skeleton:', usdSkeleton);
 
-		// Build Three.js skeleton
-		const skeletonData = buildSkeletonFromUSD(usdSkeleton, 0);
-		bones = skeletonData.bones;
-		boneMap = skeletonData.boneMap;
-		rootBone = skeletonData.rootBone;
+		if (USE_SKELETAL_HELPER) {
+			// ===== SIMPLIFIED APPROACH: Use USDSkeletalHelper =====
+			// This creates the skeleton using the helper function
+			const threeSkeleton = createThreeSkeletonFromUSD(usdSkeleton);
+			bones = threeSkeleton.bones;
+			rootBone = bones[0];
 
-		console.log(`Built skeleton with ${bones.length} bones`);
+			// Build bone map from skeleton
+			boneMap = new Map();
+			threeSkeleton.bones.forEach(bone => {
+				if (bone.userData.joint_id !== undefined) {
+					boneMap.set(bone.userData.joint_id, bone);
+				}
+			});
+			console.log(`[Helper] Built skeleton with ${bones.length} bones`);
+		} else {
+			// ===== CUSTOM APPROACH: Manual skeleton building with advanced features =====
+			// Build Three.js skeleton using custom function
+			const skeletonData = buildSkeletonFromUSD(usdSkeleton, 0);
+			bones = skeletonData.bones;
+			boneMap = skeletonData.boneMap;
+			rootBone = skeletonData.rootBone;
+			console.log(`[Custom] Built skeleton with ${bones.length} bones`);
+		}
 
 		// Update skeleton info display
 		if (window.updateSkeletonInfo) {
 			window.updateSkeletonInfo(numSkeletons, bones.length);
 		}
 	} else {
-		console.warn('No skeletons found in USD file - loading as static mesh');
+		console.warn('No skeletons found in USD file');
+
+		// WORKAROUND: If mesh has skinning data but no skeleton, try to build from animation
+		if (hasSkinnedMeshData) {
+			console.log('Mesh has skinning data but no skeleton hierarchy - attempting fallback skeleton creation');
+
+			// Try to build skeleton from animation channels
+			const numAnimations = usd_scene.numAnimations ? usd_scene.numAnimations() : 0;
+			if (numAnimations > 0) {
+				const anim = usd_scene.getAnimation(0);
+				if (anim && anim.channels) {
+					// Find max joint_id from skeleton joint channels
+					let maxJointId = -1;
+					const jointIds = new Set();
+					for (const channel of anim.channels) {
+						if (channel.target_type === 'SkeletonJoint' && channel.joint_id !== undefined) {
+							jointIds.add(channel.joint_id);
+							maxJointId = Math.max(maxJointId, channel.joint_id);
+						}
+					}
+
+					if (maxJointId >= 0) {
+						console.log(`Building fallback skeleton from animation: ${jointIds.size} joints (max id: ${maxJointId})`);
+
+						// Create flat bone hierarchy (all bones at root level)
+						// This won't have correct rest poses but allows animation to play
+						const rootBoneContainer = new THREE.Bone();
+						rootBoneContainer.name = 'skeleton_root';
+						boneMap.set(-1, rootBoneContainer);
+
+						for (let i = 0; i <= maxJointId; i++) {
+							const bone = new THREE.Bone();
+							bone.name = `joint_${i}`;
+							bone.userData.joint_id = i;
+							boneMap.set(i, bone);
+							bones.push(bone);
+
+							// Add all bones to root for now (flat hierarchy)
+							rootBoneContainer.add(bone);
+						}
+
+						// Add root container as first bone
+						bones.unshift(rootBoneContainer);
+						rootBone = rootBoneContainer;
+
+						console.log(`[Fallback] Built skeleton with ${bones.length} bones (flat hierarchy)`);
+					}
+				}
+			}
+		}
+
 		// Update skeleton info display
 		if (window.updateSkeletonInfo) {
-			window.updateSkeletonInfo(0, 0);
+			window.updateSkeletonInfo(0, bones.length);
 		}
 	}
+
+	// ===========================================
+	// ULTRA-SIMPLIFIED ALTERNATIVE (commented out):
+	// If you just want to load and display a skinned mesh with animation,
+	// you could replace most of the code below with this single helper call:
+	//
+	// const result = createSkinnedMeshFromUSD(
+	//     usd_scene,
+	//     0,  // meshId
+	//     0,  // skelId
+	//     0,  // animId (optional)
+	//     { material: new THREE.MeshStandardMaterial({ color: 0x3399ff, skinning: true }), fps: 24 }
+	// );
+	// characterGroup.add(result.mesh);
+	// if (result.animationClip) {
+	//     mixer = helperPlayAnimation(result.mesh, result.animationClip);
+	// }
+	//
+	// However, this demo uses the manual approach to showcase advanced features.
+	// ===========================================
 
 	// Get the default root node from USD
 	const usdRootNode = usd_scene.getDefaultRootNode();
@@ -748,7 +1053,7 @@ async function processUSDScene(usd_scene, loader, filename) {
 	};
 
 	// Build Three.js node from USD
-	const threeNode = TinyUSDZLoaderUtils.buildThreeNode(usdRootNode, defaultMtl, usd_scene, options);
+	const threeNode = await TinyUSDZLoaderUtils.buildThreeNode(usdRootNode, defaultMtl, usd_scene, options);
 
 	// Find skinned meshes in the loaded geometry
 	let foundSkinnedMesh = false;
@@ -827,8 +1132,84 @@ async function processUSDScene(usd_scene, loader, filename) {
 			// Have skeleton but mesh wasn't detected as skinned - create SkinnedMesh
 			console.log('Creating SkinnedMesh from regular mesh with skeleton');
 			skeleton = new THREE.Skeleton(bones);
+
+			// Add skinning attributes to geometry from USD data if available
+			const geometry = firstMesh.geometry;
+			if (skinnedMeshUSDData && geometry.attributes.position) {
+				const vertexCount = geometry.attributes.position.count;
+				const influencesPerVertex = skinnedMeshUSDData.elementSize || 4;
+				const usdVertexCount = Math.floor(skinnedMeshUSDData.jointIndices.length / influencesPerVertex);
+
+				console.log(`Adding skinning attributes: ${vertexCount} Three.js vertices`);
+				console.log(`  USD jointIndices: ${skinnedMeshUSDData.jointIndices.length} elements`);
+				console.log(`  USD jointWeights: ${skinnedMeshUSDData.jointWeights.length} elements`);
+				console.log(`  USD vertex count (inferred): ${usdVertexCount} (${influencesPerVertex} influences per vertex)`);
+
+				// Check if vertex counts match
+				if (vertexCount !== usdVertexCount) {
+					console.warn(`Vertex count mismatch: Three.js has ${vertexCount}, USD has ${usdVertexCount}`);
+					console.warn('Skinning may not work correctly - using min of both counts');
+				}
+
+				const effectiveVertexCount = Math.min(vertexCount, usdVertexCount);
+
+				// Three.js always uses 4 influences per vertex
+				const skinIndices = new Uint16Array(vertexCount * 4);
+				const skinWeights = new Float32Array(vertexCount * 4);
+
+				const usdJointIndices = skinnedMeshUSDData.jointIndices;
+				const usdJointWeights = skinnedMeshUSDData.jointWeights;
+
+				// Copy from USD format (influencesPerVertex) to Three.js format (4)
+				for (let i = 0; i < effectiveVertexCount; i++) {
+					for (let j = 0; j < 4; j++) {
+						const srcIdx = i * influencesPerVertex + j;
+						const dstIdx = i * 4 + j;
+
+						if (j < influencesPerVertex && srcIdx < usdJointIndices.length) {
+							skinIndices[dstIdx] = usdJointIndices[srcIdx];
+							skinWeights[dstIdx] = usdJointWeights[srcIdx];
+						} else {
+							skinIndices[dstIdx] = 0;
+							skinWeights[dstIdx] = 0;
+						}
+					}
+				}
+
+				// For any remaining vertices (if Three.js has more), set default values
+				for (let i = effectiveVertexCount; i < vertexCount; i++) {
+					for (let j = 0; j < 4; j++) {
+						const dstIdx = i * 4 + j;
+						skinIndices[dstIdx] = 0;
+						skinWeights[dstIdx] = j === 0 ? 1 : 0; // First bone gets full weight
+					}
+				}
+
+				// Add attributes to geometry
+				geometry.setAttribute('skinIndex', new THREE.Uint16BufferAttribute(skinIndices, 4));
+				geometry.setAttribute('skinWeight', new THREE.Float32BufferAttribute(skinWeights, 4));
+				console.log('Added skinIndex and skinWeight attributes to geometry');
+			} else {
+				console.warn('No USD skinning data available to add to geometry');
+			}
+
+			// Validate rootBone before creating SkinnedMesh
+			if (!rootBone || !(rootBone instanceof THREE.Bone)) {
+				console.error('Invalid rootBone:', rootBone);
+				throw new Error('rootBone is not a valid THREE.Bone');
+			}
+
+			console.log(`Creating SkinnedMesh with ${bones.length} bones, rootBone: ${rootBone.name}`);
+
 			const newSkinnedMesh = new THREE.SkinnedMesh(firstMesh.geometry, firstMesh.material);
+
+			// Add root bone to mesh first
 			newSkinnedMesh.add(rootBone);
+
+			// Update bone world matrices after adding to scene graph
+			newSkinnedMesh.updateMatrixWorld(true);
+
+			// Now bind skeleton - this computes inverse bind matrices
 			newSkinnedMesh.bind(skeleton);
 			newSkinnedMesh.castShadow = true;
 			newSkinnedMesh.receiveShadow = true;
@@ -877,7 +1258,24 @@ async function processUSDScene(usd_scene, loader, filename) {
 
 		// Only try to extract animations if we have bones
 		if (bones.length > 0 && boneMap.size > 0) {
-			usdAnimations = convertUSDSkeletalAnimationsToThreeJS(usd_scene, boneMap);
+			if (USE_SKELETAL_HELPER) {
+				// ===== SIMPLIFIED APPROACH: Use USDSkeletalHelper =====
+				const numAnimations = usd_scene.numAnimations();
+				usdAnimations = [];
+				for (let i = 0; i < numAnimations; i++) {
+					const usdAnimation = usd_scene.getAnimation(i);
+					// Use helper to create animation clip with timeCodesPerSecond from metadata
+					const clip = createThreeAnimationClip(usdAnimation, skeleton, { fps: timeCodesPerSecond });
+					if (clip.tracks.length > 0) {
+						usdAnimations.push(clip);
+					}
+				}
+				console.log(`[Helper] Converted ${usdAnimations.length} animations (fps: ${timeCodesPerSecond})`);
+			} else {
+				// ===== CUSTOM APPROACH: Custom animation conversion with filtering =====
+				usdAnimations = convertUSDSkeletalAnimationsToThreeJS(usd_scene, boneMap, timeCodesPerSecond);
+				console.log(`[Custom] Converted ${usdAnimations.length} animations (fps: ${timeCodesPerSecond})`);
+			}
 		} else {
 			console.log('No skeleton data available - skipping animation extraction');
 			usdAnimations = [];
@@ -910,6 +1308,12 @@ async function processUSDScene(usd_scene, loader, filename) {
 			if (skinnedMesh && usdAnimations.length > 0 && skeleton) {
 				mixer = new THREE.AnimationMixer(skinnedMesh);
 				playAnimation(0);
+
+				// Update timeline range to match animation duration
+				const firstClipDuration = usdAnimations[0].duration;
+				if (window.updateTimelineRange) {
+					window.updateTimelineRange(firstClipDuration);
+				}
 			}
 		} else {
 			if (window.updateAnimationList) {
@@ -936,6 +1340,11 @@ async function processUSDScene(usd_scene, loader, filename) {
 		usdSceneRoot.rotation.x = 0;
 		console.log(`[processUSDScene] No upAxis conversion needed (file upAxis="${fileUpAxis}", conversion ${animationParams.applyUpAxisConversion ? 'enabled' : 'disabled'})`);
 	}
+
+	// Update shadow camera frustum based on scene bounds
+	usdSceneRoot.updateMatrixWorld(true);
+	const sceneBounds = computeSceneBoundingBox(usdSceneRoot);
+	updateShadowCameraFromBounds(directionalLight, sceneBounds);
 }
 
 /**
@@ -974,7 +1383,6 @@ window.addEventListener('loadUSDFile', async (event) => {
 		console.log('USD file loaded successfully:', file.name);
 	} catch (error) {
 		console.error('Failed to load USD file:', error);
-		alert('Failed to load USD file: ' + error.message);
 	}
 });
 
@@ -990,8 +1398,8 @@ window.addEventListener('loadDefaultModel', async () => {
 
 // Load USD model on startup
 loadUSDModel().catch((error) => {
-	console.error('Failed to load USD model:', error);
-	alert('Failed to load default USD file: ' + error.message + '\n\nPlease upload a USD file (with or without skeletal animation).');
+	console.error('Failed to load default USD file:', error);
+	console.log('Please upload a USD file (with or without skeletal animation).');
 });
 
 // Listen for mouse clicks for joint selection
@@ -1052,7 +1460,7 @@ const animationParams = {
 			animationAction.play();
 		}
 	},
-	speed: 1.0,
+	speed: 24,  // Default to timeCodesPerSecond (updated on file load)
 	time: 0,
 
 	// Skeletal animation properties
@@ -1122,6 +1530,20 @@ const animationParams = {
 	enableBoneReduction: false,
 	targetBoneCount: 4,
 
+	// Shadows
+	enableShadows: true,
+	toggleShadows: function() {
+		renderer.shadowMap.enabled = this.enableShadows;
+		directionalLight.castShadow = this.enableShadows;
+		// Need to update materials and re-render
+		scene.traverse((child) => {
+			if (child.isMesh) {
+				child.material.needsUpdate = true;
+			}
+		});
+		console.log(`Shadows ${this.enableShadows ? 'enabled' : 'disabled'}`);
+	},
+
 	// Up axis conversion (Z-up to Y-up)
 	applyUpAxisConversion: true,
 	toggleUpAxisConversion: function() {
@@ -1149,18 +1571,32 @@ gui.title('Skeletal Animation Controls');
 const playbackFolder = gui.addFolder('Playback');
 playbackFolder.add(animationParams, 'playPause').name('Play / Pause');
 playbackFolder.add(animationParams, 'reset').name('Reset');
-playbackFolder.add(animationParams, 'speed', 0, 3, 0.1).name('Speed').onChange(() => {
+playbackFolder.add(animationParams, 'speed', 1, 120, 1).name('Speed').onChange(() => {
 	if (animationAction) {
+		// Speed represents playback FPS (timeCodes per second)
 		animationAction.setEffectiveTimeScale(animationParams.speed);
 	}
 });
-playbackFolder.add(animationParams, 'time', 0, 30, 0.01)
+const timelineController = playbackFolder.add(animationParams, 'time', 0, 30, 0.01)
 	.name('Timeline').listen().onChange(() => {
 		if (animationAction) {
 			animationAction.time = animationParams.time;
 		}
 	});
 playbackFolder.open();
+
+// Function to update timeline range when animation loads
+window.updateTimelineRange = function(duration) {
+	console.log('updateTimelineRange called with duration:', duration);
+	if (timelineController && duration > 0) {
+		// lil-gui: need to destroy and recreate the controller to change range
+		// Or use the _max property directly
+		timelineController._max = duration;
+		timelineController.$slider.max = duration;
+		timelineController.updateDisplay();
+		console.log('Timeline range updated to:', duration);
+	}
+};
 
 // Animation controls
 const animationFolder = gui.addFolder('Skeletal Animations');
@@ -1177,6 +1613,9 @@ const visualFolder = gui.addFolder('Visualization');
 visualFolder.add(animationParams, 'showSkeleton')
 	.name('Show Skeleton')
 	.onChange(() => animationParams.toggleSkeleton());
+visualFolder.add(animationParams, 'enableShadows')
+	.name('Enable Shadows')
+	.onChange(() => animationParams.toggleShadows());
 visualFolder.add(animationParams, 'applyUpAxisConversion')
 	.name('Z-up to Y-up')
 	.onChange(() => animationParams.toggleUpAxisConversion());
@@ -1277,6 +1716,8 @@ function animate() {
 	}
 
 	// Update animation mixer
+	// Speed represents playback FPS (timeCodes per second)
+	// Animation times are in timeCodes, so speed directly controls how many timeCodes advance per second
 	if (mixer && animationParams.isPlaying) {
 		mixer.update(deltaTime * animationParams.speed);
 
@@ -1287,7 +1728,7 @@ function animate() {
 	}
 
 	// Update skeleton helper
-	if (skeletonHelper) {
+	if (skeletonHelper && typeof skeletonHelper.update === 'function') {
 		skeletonHelper.update();
 	}
 

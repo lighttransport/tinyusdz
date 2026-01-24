@@ -6,6 +6,7 @@
 #include <sstream>
 #include <cstring>
 #include <map>
+#include "str-util.hh"
 
 #ifdef TINYUSDZ_ENABLE_THREAD
 #include <thread>
@@ -46,7 +47,7 @@ struct ThreadedPrintConfig {
     return 1;
 #endif
   }
-};;;;;
+};
 
 // Global configuration (can be customized)
 static ThreadedPrintConfig g_threaded_print_config;
@@ -192,6 +193,28 @@ void print_type<char>(OutputAdapter& out, const uint8_t* data) {
   char value;
   std::memcpy(&value, data, sizeof(char));
   out.write(static_cast<int>(value));
+}
+
+// Specialization for double - print with full precision using dtoa
+template<>
+void print_type<double>(OutputAdapter& out, const uint8_t* data) {
+  double value;
+  std::memcpy(&value, data, sizeof(double));
+  char buf[384];
+  char *end = dtoa(value, buf);
+  *end = '\0';
+  out.write(std::string(buf));
+}
+
+// Specialization for float - print with full precision using dtoa
+template<>
+void print_type<float>(OutputAdapter& out, const uint8_t* data) {
+  float value;
+  std::memcpy(&value, data, sizeof(float));
+  char buf[384];
+  char *end = dtoa(value, buf);
+  *end = '\0';
+  out.write(std::string(buf));
 }
 
 // Unified print function for vector types
@@ -1399,8 +1422,16 @@ void pprint_timesamples(StreamWriter& writer, const value::TimeSamples& samples,
         return;
     }
 
-    // Check if using unified storage (_times non-empty) vs legacy Sample-based storage
-    if (!samples.get_times().empty()) {
+    // Check if using unified storage (_times non-empty AND has actual data in buffers)
+    // vs Sample-based storage (_samples vector)
+    // Note: Some operations like add_value_array_sample() populate _times but store data
+    // in _samples, so we need to check if unified storage buffers actually have data
+    bool has_unified_data = !samples.get_times().empty() &&
+                           (!samples.get_values().empty() ||
+                            !samples.get_small_values().empty() ||
+                            !samples.get_offsets().empty());
+
+    if (has_unified_data) {
 
         // Phase 3: Access unified storage directly from TimeSamples
         // Note: TypedArray is no longer supported in Phase 3, so we skip that path
@@ -1427,6 +1458,7 @@ void pprint_timesamples(StreamWriter& writer, const value::TimeSamples& samples,
         const auto& blocked = samples.get_blocked();
         const auto& values = samples.get_values();
         const auto& offsets = samples.get_offsets();
+        const auto& small_values = samples.get_small_values();
         const auto& array_counts = samples.get_array_counts();
 
         // Write samples - handle offset table if present
@@ -1476,9 +1508,12 @@ void pprint_timesamples(StreamWriter& writer, const value::TimeSamples& samples,
                 writer.write("\n");
             }
         } else {
-            // Legacy: blocked values still counted in offset calculation
-            // Handle case where values is empty but times is not
-            if (values.empty() && !times.empty()) {
+            // No offset table - using direct storage (either _values or _small_values)
+            // Check if using small_values (for types sizeof <= 8) or values buffer (for types sizeof > 8)
+            bool using_small_values = !small_values.empty();
+
+            // Handle case where both storage types are empty but times is not (error case)
+            if (values.empty() && small_values.empty() && !times.empty()) {
                 for (size_t i = 0; i < times.size(); ++i) {
                     writer.write(pprint::Indent(indent + 1));
                     writer.write(times[i]);
@@ -1488,7 +1523,39 @@ void pprint_timesamples(StreamWriter& writer, const value::TimeSamples& samples,
                     }
                     writer.write("\n");
                 }
+            } else if (using_small_values) {
+                // Print small values (stored as uint64_t, need to extract typed value)
+                // NOTE: small_values only contains non-blocked samples, so we need a separate index
+                size_t small_values_index = 0;
+                for (size_t i = 0; i < times.size(); ++i) {
+                    writer.write(pprint::Indent(indent + 1));
+                    writer.write(times[i]);
+                    writer.write(": ");
+
+                    // Check blocked array bounds before accessing
+                    bool is_blocked = (i < blocked.size()) ? blocked[i] : false;
+                    if (is_blocked) {
+                        writer.write("None");
+                    } else {
+                        // Get value from small_values and print it
+                        if (small_values_index < small_values.size()) {
+                            uint64_t stored_value = small_values[small_values_index];
+                            // Cast to typed pointer and print
+                            const uint8_t* value_ptr = reinterpret_cast<const uint8_t*>(&stored_value);
+                            pprint_pod_value_by_type(writer, value_ptr, type_id);
+                            small_values_index++;  // Only increment for non-blocked samples
+                        } else {
+                            writer.write("/* ERROR: small_values index out of bounds */");
+                        }
+                    }
+
+                    if (i < times.size() - 1) {
+                        writer.write(",");
+                    }
+                    writer.write("\n");
+                }
             } else {
+            // Use values buffer (large types)
             size_t value_offset = 0;
             for (size_t i = 0; i < times.size(); ++i) {
                 //TUSDZ_LOG_I("times[" << i << "] = " << times[i]);
@@ -1524,8 +1591,8 @@ void pprint_timesamples(StreamWriter& writer, const value::TimeSamples& samples,
                 }
                 writer.write("\n");
             }
-            } // end else for values.empty() check
-        }
+            } // end else for using_small_values check
+        } // end else for offsets.empty() check
     } else {
         // Non-POD path: use regular samples
         const auto& samples_vec = samples.get_samples();
