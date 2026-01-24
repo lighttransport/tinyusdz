@@ -130,7 +130,8 @@ The `MtlxOpenPBRSurface` shader supports all OpenPBR specification parameters:
 ### Subsurface
 - `subsurface_weight` (float)
 - `subsurface_color` (color3)
-- `subsurface_radius` (color3)
+- `subsurface_radius` (float)
+- `subsurface_radius_scale` (color3)
 - `subsurface_scale` (float)
 - `subsurface_anisotropy` (float)
 

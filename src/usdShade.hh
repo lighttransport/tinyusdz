@@ -137,9 +137,11 @@ struct Material : UsdShadePrim {
 };
 
 ///
-/// NodeGraph
+/// NodeGraph (Shader Network Container)
 ///
 /// A NodeGraph is a container for shading nodes that can expose arbitrary outputs.
+/// Container for organizing shader nodes and connections in a network.
+/// Can contain multiple shader nodes as children and provide interface inputs/outputs.
 /// Unlike Material which has fixed outputs (surface, displacement, volume),
 /// NodeGraph outputs are stored in the props map with the "outputs:" prefix.
 ///
@@ -148,11 +150,22 @@ struct Material : UsdShadePrim {
 ///     float3 outputs:result.connect = </path/to/shader.outputs:out>
 ///   }
 ///
-// NodeGraph Prim - A container for shading nodes that defines a shading graph
 struct NodeGraph : UsdShadePrim {
   // NodeGraph can have arbitrary inputs and outputs (e.g., outputs:result, outputs:normal, etc.)
   // These are stored in the inherited props map from UsdShadePrim
   // Child nodes are stored as children in the USD hierarchy, not directly here
+
+  // Optional properties for shader network node management
+  // Child shaders and their connections are managed through the standard prim children mechanism
+  // Interface inputs/outputs can be defined through typed attributes
+  std::map<std::string, Property> props;  // Additional properties for interface definitions
+  std::vector<value::token> _primChildren;  // Child prim names
+  std::vector<value::token> _properties;    // Property names
+
+  const std::vector<value::token> &primChildrenNames() const { return _primChildren; }
+  const std::vector<value::token> &propertyNames() const { return _properties; }
+  std::vector<value::token> &primChildrenNames() { return _primChildren; }
+  std::vector<value::token> &propertyNames() { return _properties; }
 
   // Optional MaterialX-specific attributes
   TypedAttribute<std::string> nodedef;  // Reference to a nodedef
@@ -370,7 +383,8 @@ struct OpenPBRSurface : ShaderNode {
   // Subsurface properties
   TypedAttributeWithFallback<Animatable<float>> subsurface_weight{0.0f}; // "inputs:subsurface_weight"
   TypedAttributeWithFallback<Animatable<value::color3f>> subsurface_color{value::color3f{0.8f, 0.8f, 0.8f}}; // "inputs:subsurface_color"
-  TypedAttributeWithFallback<Animatable<value::color3f>> subsurface_radius{value::color3f{1.0f, 1.0f, 1.0f}}; // "inputs:subsurface_radius"
+  TypedAttributeWithFallback<Animatable<float>> subsurface_radius{1.0f}; // "inputs:subsurface_radius"
+  TypedAttributeWithFallback<Animatable<value::color3f>> subsurface_radius_scale{value::color3f{1.0f, 1.0f, 1.0f}}; // "inputs:subsurface_radius_scale"
   TypedAttributeWithFallback<Animatable<float>> subsurface_scale{1.0f}; // "inputs:subsurface_scale"
   TypedAttributeWithFallback<Animatable<float>> subsurface_anisotropy{0.0f}; // "inputs:subsurface_anisotropy"
 

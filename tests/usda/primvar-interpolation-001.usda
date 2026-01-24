@@ -1,0 +1,239 @@
+#usda 1.0
+(
+    doc = "Primvar interpolation modes test - constant, uniform, vertex, faceVarying"
+    defaultPrim = "PrimvarTests"
+)
+
+def Xform "PrimvarTests"
+{
+    # =========================================================================
+    # Test mesh with all interpolation modes
+    # A 2x2 quad grid (4 faces, 9 vertices, 16 face-vertex corners)
+    # =========================================================================
+    def Mesh "InterpolationMesh"
+    {
+        # Basic mesh topology
+        int[] faceVertexCounts = [4, 4, 4, 4]
+        int[] faceVertexIndices = [
+            0, 1, 4, 3,
+            1, 2, 5, 4,
+            3, 4, 7, 6,
+            4, 5, 8, 7
+        ]
+        point3f[] points = [
+            (0, 0, 0), (1, 0, 0), (2, 0, 0),
+            (0, 1, 0), (1, 1, 0), (2, 1, 0),
+            (0, 2, 0), (1, 2, 0), (2, 2, 0)
+        ]
+
+        # =====================================================================
+        # CONSTANT interpolation - one value for entire prim
+        # =====================================================================
+        color3f[] primvars:constantColor = [(0.5, 0.5, 0.5)] (
+            interpolation = "constant"
+        )
+        float primvars:constantOpacity = 1.0 (
+            interpolation = "constant"
+        )
+        string primvars:constantLabel = "test_mesh" (
+            interpolation = "constant"
+        )
+
+        # =====================================================================
+        # UNIFORM interpolation - one value per face
+        # =====================================================================
+        color3f[] primvars:uniformColor = [
+            (1, 0, 0),
+            (0, 1, 0),
+            (0, 0, 1),
+            (1, 1, 0)
+        ] (
+            interpolation = "uniform"
+        )
+        int[] primvars:uniformMaterialId = [0, 1, 0, 2] (
+            interpolation = "uniform"
+        )
+        float[] primvars:uniformRoughness = [0.2, 0.4, 0.6, 0.8] (
+            interpolation = "uniform"
+        )
+
+        # =====================================================================
+        # VERTEX interpolation - one value per vertex (shared across faces)
+        # =====================================================================
+        color3f[] primvars:vertexColor = [
+            (1, 0, 0), (0.5, 0.5, 0), (0, 1, 0),
+            (0.5, 0, 0.5), (0.5, 0.5, 0.5), (0, 0.5, 0.5),
+            (0, 0, 1), (0, 0.5, 0.5), (0.5, 0, 0.5)
+        ] (
+            interpolation = "vertex"
+        )
+        float[] primvars:vertexDisplacement = [
+            0.0, 0.1, 0.0,
+            0.1, 0.2, 0.1,
+            0.0, 0.1, 0.0
+        ] (
+            interpolation = "vertex"
+        )
+        normal3f[] normals = [
+            (0, 0, 1), (0, 0, 1), (0, 0, 1),
+            (0, 0, 1), (0, 0, 1), (0, 0, 1),
+            (0, 0, 1), (0, 0, 1), (0, 0, 1)
+        ] (
+            interpolation = "vertex"
+        )
+
+        # =====================================================================
+        # FACEVARYING interpolation - one value per face-vertex corner
+        # =====================================================================
+        texCoord2f[] primvars:st = [
+            (0, 0), (0.5, 0), (0.5, 0.5), (0, 0.5),
+            (0.5, 0), (1, 0), (1, 0.5), (0.5, 0.5),
+            (0, 0.5), (0.5, 0.5), (0.5, 1), (0, 1),
+            (0.5, 0.5), (1, 0.5), (1, 1), (0.5, 1)
+        ] (
+            interpolation = "faceVarying"
+        )
+        color3f[] primvars:faceVaryingColor = [
+            (1, 0, 0), (1, 0, 0), (1, 0, 0), (1, 0, 0),
+            (0, 1, 0), (0, 1, 0), (0, 1, 0), (0, 1, 0),
+            (0, 0, 1), (0, 0, 1), (0, 0, 1), (0, 0, 1),
+            (1, 1, 0), (1, 1, 0), (1, 1, 0), (1, 1, 0)
+        ] (
+            interpolation = "faceVarying"
+        )
+        normal3f[] primvars:faceVaryingNormals = [
+            (0, 0, 1), (0, 0, 1), (0, 0, 1), (0, 0, 1),
+            (0, 0, 1), (0, 0, 1), (0, 0, 1), (0, 0, 1),
+            (0, 0, 1), (0, 0, 1), (0, 0, 1), (0, 0, 1),
+            (0, 0, 1), (0, 0, 1), (0, 0, 1), (0, 0, 1)
+        ] (
+            interpolation = "faceVarying"
+        )
+    }
+
+    # =========================================================================
+    # Triangle mesh with primvars
+    # =========================================================================
+    def Mesh "TriangleMesh"
+    {
+        int[] faceVertexCounts = [3, 3]
+        int[] faceVertexIndices = [0, 1, 2, 1, 3, 2]
+        point3f[] points = [
+            (0, 0, 5), (1, 0, 5), (0.5, 1, 5), (1.5, 1, 5)
+        ]
+
+        # Constant
+        int primvars:id = 42 (
+            interpolation = "constant"
+        )
+
+        # Uniform (per face)
+        token[] primvars:faceLabel = ["front", "back"] (
+            interpolation = "uniform"
+        )
+
+        # Vertex
+        color3f[] primvars:Cd = [
+            (1, 0, 0), (0, 1, 0), (0, 0, 1), (1, 1, 0)
+        ] (
+            interpolation = "vertex"
+        )
+
+        # FaceVarying
+        texCoord2f[] primvars:uv = [
+            (0, 0), (1, 0), (0.5, 1),
+            (0, 0), (1, 1), (0.5, 0)
+        ] (
+            interpolation = "faceVarying"
+        )
+    }
+
+    # =========================================================================
+    # Indexed primvars (using indices to reduce data size)
+    # =========================================================================
+    def Mesh "IndexedPrimvarMesh"
+    {
+        int[] faceVertexCounts = [4, 4]
+        int[] faceVertexIndices = [0, 1, 3, 2, 1, 4, 5, 3]
+        point3f[] points = [
+            (0, 0, 10), (1, 0, 10), (0, 1, 10),
+            (1, 1, 10), (2, 0, 10), (2, 1, 10)
+        ]
+
+        # FaceVarying with indices - reduces data when values repeat
+        texCoord2f[] primvars:st = [
+            (0, 0), (1, 0), (0, 1), (1, 1)
+        ] (
+            interpolation = "faceVarying"
+        )
+        int[] primvars:st:indices = [0, 1, 3, 2, 1, 1, 3, 3]
+
+        # Vertex with indices
+        color3f[] primvars:displayColor = [
+            (1, 0, 0), (0, 1, 0), (0, 0, 1)
+        ] (
+            interpolation = "vertex"
+        )
+        int[] primvars:displayColor:indices = [0, 1, 0, 2, 1, 2]
+    }
+
+    # =========================================================================
+    # Points prim with primvars
+    # =========================================================================
+    def Points "PointsWithPrimvars"
+    {
+        point3f[] points = [
+            (0, 0, 15), (1, 0, 15), (2, 0, 15), (3, 0, 15)
+        ]
+        float[] widths = [0.1, 0.15, 0.2, 0.1]
+
+        # Constant
+        float primvars:globalScale = 1.5 (
+            interpolation = "constant"
+        )
+
+        # Vertex (per-point for Points prim)
+        color3f[] primvars:Cd = [
+            (1, 0, 0), (0, 1, 0), (0, 0, 1), (1, 1, 0)
+        ] (
+            interpolation = "vertex"
+        )
+        float[] primvars:pscale = [1.0, 1.5, 2.0, 0.5] (
+            interpolation = "vertex"
+        )
+    }
+
+    # =========================================================================
+    # BasisCurves with primvars
+    # =========================================================================
+    def BasisCurves "CurvesWithPrimvars"
+    {
+        uniform token type = "cubic"
+        uniform token basis = "bezier"
+        uniform token wrap = "nonperiodic"
+
+        int[] curveVertexCounts = [4, 4]
+        point3f[] points = [
+            (0, 0, 20), (1, 1, 20), (2, 1, 20), (3, 0, 20),
+            (0, 2, 20), (1, 3, 20), (2, 3, 20), (3, 2, 20)
+        ]
+        float[] widths = [0.1, 0.15, 0.15, 0.1, 0.1, 0.15, 0.15, 0.1] (
+            interpolation = "vertex"
+        )
+
+        # Constant
+        int primvars:curveId = 1 (
+            interpolation = "constant"
+        )
+
+        # Uniform (per-curve)
+        color3f[] primvars:curveColor = [(1, 0, 0), (0, 0, 1)] (
+            interpolation = "uniform"
+        )
+
+        # Vertex (per control point)
+        float[] primvars:u = [0, 0.33, 0.67, 1, 0, 0.33, 0.67, 1] (
+            interpolation = "vertex"
+        )
+    }
+}

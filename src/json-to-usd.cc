@@ -465,38 +465,38 @@ static bool DeserializeAttributeMetadata(const nlohmann::json& metadata_json, At
   if (metadata_json.contains("interpolation") && metadata_json["interpolation"].is_string()) {
     std::string interp_str = metadata_json["interpolation"].get<std::string>();
     if (interp_str == "constant") {
-      metas->interpolation = Interpolation::Constant;
+      metas->set_interpolation_enum(Interpolation::Constant);
     } else if (interp_str == "uniform") {
-      metas->interpolation = Interpolation::Uniform;
+      metas->set_interpolation_enum(Interpolation::Uniform);
     } else if (interp_str == "varying") {
-      metas->interpolation = Interpolation::Varying;
+      metas->set_interpolation_enum(Interpolation::Varying);
     } else if (interp_str == "vertex") {
-      metas->interpolation = Interpolation::Vertex;
+      metas->set_interpolation_enum(Interpolation::Vertex);
     } else if (interp_str == "faceVarying") {
-      metas->interpolation = Interpolation::FaceVarying;
+      metas->set_interpolation_enum(Interpolation::FaceVarying);
     }
   }
-  
+
   // Parse elementSize
   if (metadata_json.contains("elementSize") && metadata_json["elementSize"].is_number_integer()) {
-    metas->elementSize = static_cast<uint32_t>(metadata_json["elementSize"].get<int>());
+    metas->set_elementSize(static_cast<uint32_t>(metadata_json["elementSize"].get<int>()));
   }
-  
+
   // Parse hidden flag
   if (metadata_json.contains("hidden") && metadata_json["hidden"].is_boolean()) {
-    metas->hidden = metadata_json["hidden"].get<bool>();
+    metas->set_hidden(metadata_json["hidden"].get<bool>());
   }
-  
+
   // Parse comment
   if (metadata_json.contains("comment") && metadata_json["comment"].is_string()) {
     value::StringData comment_data;
     comment_data.value = metadata_json["comment"].get<std::string>();
-    metas->comment = comment_data;
+    metas->set_comment(comment_data);
   }
-  
+
   // Parse displayName
   if (metadata_json.contains("displayName") && metadata_json["displayName"].is_string()) {
-    metas->displayName = metadata_json["displayName"].get<std::string>();
+    metas->set_displayName(metadata_json["displayName"].get<std::string>());
   }
   
   // TODO: Parse customData (requires Dictionary support)

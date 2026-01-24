@@ -234,9 +234,18 @@ bool CrateReader::ReadTimeSamples(value::TimeSamples *d) {
   // bool is_homogeneous = true;
   auto first_type = value_reps[0].GetType();
   bool first_is_array = value_reps[0].IsArray();
+
+  std::cerr << "DEBUG ReadTimeSamples: first_type=" << first_type
+            << " (" << crate::GetCrateDataTypeName(static_cast<crate::CrateDataTypeId>(first_type)) << ")"
+            << " is_array=" << first_is_array << std::endl;
+
   for (size_t i = 1; i < num_values; i++) {
     auto curr_type = value_reps[i].GetType();
     bool curr_is_array = value_reps[i].IsArray();
+
+    std::cerr << "DEBUG ReadTimeSamples: sample[" << i << "] type=" << curr_type
+              << " (" << crate::GetCrateDataTypeName(static_cast<crate::CrateDataTypeId>(curr_type)) << ")"
+              << " is_array=" << curr_is_array << std::endl;
 
     // Allow VALUE_BLOCK to mix with any type
     bool is_value_block_first =
@@ -249,6 +258,8 @@ bool CrateReader::ReadTimeSamples(value::TimeSamples *d) {
     if (!is_value_block_first && !is_value_block_curr) {
       // Neither is VALUE_BLOCK, so they must match
       if (curr_type != first_type || curr_is_array != first_is_array) {
+        std::cerr << "DEBUG ReadTimeSamples: TYPE MISMATCH! first=" << first_type
+                  << " curr=" << curr_type << std::endl;
         PUSH_ERROR_AND_RETURN_TAG(
             kTag, "Types in TimeSamples' ValueRep isn't the same.");
         // is_homogeneous = false;
