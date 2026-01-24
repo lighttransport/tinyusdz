@@ -10,7 +10,18 @@
 #include <cstdint>
 #include <cmath>
 #include <array>
+
+// Disable dragonbox's internal asserts for hardened builds
+// We handle all special cases (inf, nan, zero) before calling dragonbox
+#ifndef NDEBUG
+#define TINYUSDZ_DRAGONBOX_NDEBUG_DEFINED
+#define NDEBUG
+#endif
 #include "external/dragonbox/dragonbox_to_chars.h"
+#ifdef TINYUSDZ_DRAGONBOX_NDEBUG_DEFINED
+#undef NDEBUG
+#undef TINYUSDZ_DRAGONBOX_NDEBUG_DEFINED
+#endif
 
 #ifdef __SSE2__
 #include <emmintrin.h>
@@ -1249,14 +1260,43 @@ inline char* write_significand(char* out, uint64_t significand,
 // Template implementation for both float and double
 // max_digits: maximum significant digits (9 for float, 17 for double)
 // exp_upper: threshold for switching to exponential notation
+// Returns nullptr on invalid input (null buffer)
 template<typename Float>
 char* dtoa_dragonbox_impl_t(const Float f, char* buf, int max_digits, int exp_upper) {
+  // Null buffer check - return nullptr for invalid input
+  if (!buf) {
+    return nullptr;
+  }
+
+  // Handle special cases first (dragonbox requires finite, non-zero values)
+  if (std::isnan(f)) {
+    std::memcpy(buf, "nan", 3);
+    return buf + 3;
+  }
+  if (std::isinf(f)) {
+    if (std::signbit(f)) {
+      std::memcpy(buf, "-inf", 4);
+      return buf + 4;
+    } else {
+      std::memcpy(buf, "inf", 3);
+      return buf + 3;
+    }
+  }
+
   bool is_negative = std::signbit(f);
 
   // Handle zero specially
   if (f == Float(0)) {
     *buf++ = '0';
     return buf;
+  }
+
+  // Final safety guard: ensure value is finite before calling dragonbox
+  // This should never trigger given the checks above, but provides defense in depth
+  if (!std::isfinite(f)) {
+    // Fallback for any unexpected non-finite value
+    std::memcpy(buf, "0", 1);
+    return buf + 1;
   }
 
   // Use dragonbox directly on the original type (float or double)
@@ -1363,7 +1403,13 @@ char* dtoa_dragonbox_impl_t(const Float f, char* buf, int max_digits, int exp_up
 }
 
 // Double precision: max 17 significant digits (std::numeric_limits<double>::max_digits10)
+// Returns nullptr on invalid input (null buffer)
 char* dtoa_dragonbox_impl(const double f, char* buf, int exp_upper = 16) {
+  // Null buffer check
+  if (!buf) {
+    return nullptr;
+  }
+
   // Fast path for common values 1.0 and -1.0 (bitwise comparison)
   // IEEE 754 double precision: 1.0 = 0x3FF0000000000000, -1.0 = 0xBFF0000000000000
   uint64_t bits;
@@ -1386,7 +1432,13 @@ char* dtoa_dragonbox_impl(const double f, char* buf, int exp_upper = 16) {
 }
 
 // Single precision: max 9 significant digits (std::numeric_limits<float>::max_digits10)
+// Returns nullptr on invalid input (null buffer)
 char* dtoa_dragonbox_impl(const float f, char* buf) {
+  // Null buffer check
+  if (!buf) {
+    return nullptr;
+  }
+
   // Fast path for common values 1.0f and -1.0f (bitwise comparison)
   // IEEE 754 single precision: 1.0f = 0x3F800000, -1.0f = 0xBF800000
   uint32_t bits;
@@ -1427,13 +1479,21 @@ std::string dtos(double v) {
 }
 
 // Public API for dtos - buffer version (efficient, no std::string construction)
+// Returns 0 if buffer is null
 size_t dtos(float v, char* buffer) {
   char* end = dtoa_dragonbox_impl(v, buffer);
+  if (!end) {
+    return 0;  // Invalid input (null buffer)
+  }
   return static_cast<size_t>(end - buffer);
 }
 
+// Returns 0 if buffer is null
 size_t dtos(double v, char* buffer) {
   char* end = dtoa_dragonbox_impl(v, buffer);
+  if (!end) {
+    return 0;  // Invalid input (null buffer)
+  }
   return static_cast<size_t>(end - buffer);
 }
 
