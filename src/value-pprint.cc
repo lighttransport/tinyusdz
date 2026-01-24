@@ -520,13 +520,12 @@ std::ostream &operator<<(std::ostream &ofs,
     if (tinyusdz::contains(in_s, '@')) {
       // Escape '@@@'(to '\@@@') if the input path contains '@@@'
       for (size_t i = 0; i < in_s.length(); i++) {
-        if ((i + 2) < in_s.length()) {
-          if (in_s[i] == '@' && in_s[i + 1] == '@' && in_s[i + 2] == '@') {
-            s += "\\@@@";
-            i += 2;
-          } else {
-            s += in_s[i];
-          }
+        if ((i + 2) < in_s.length() &&
+            in_s[i] == '@' && in_s[i + 1] == '@' && in_s[i + 2] == '@') {
+          s += "\\@@@";
+          i += 2;
+        } else {
+          s += in_s[i];
         }
       }
 
@@ -742,6 +741,7 @@ namespace value {
   __FUNC(DiskLight)             \
   __FUNC(DistantLight)          \
   __FUNC(CylinderLight)         \
+  __FUNC(RectLight)             \
   __FUNC(SkelRoot)              \
   __FUNC(Skeleton)              \
   __FUNC(SkelAnimation)         \

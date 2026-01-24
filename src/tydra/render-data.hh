@@ -1651,7 +1651,8 @@ class OpenPBRSurfaceShader {
   // Subsurface scattering
   ShaderParam<float> subsurface_weight{0.0f};
   ShaderParam<vec3> subsurface_color{{0.8f, 0.8f, 0.8f}};
-  ShaderParam<vec3> subsurface_radius{{1.0f, 1.0f, 1.0f}};
+  ShaderParam<float> subsurface_radius{1.0f};
+  ShaderParam<vec3> subsurface_radius_scale{{1.0f, 1.0f, 1.0f}};
   ShaderParam<float> subsurface_scale{1.0f};
   ShaderParam<float> subsurface_anisotropy{0.0f};
   
@@ -2991,6 +2992,12 @@ class RenderSceneConverter {
   std::vector<AnimationClip> animations;
 #endif
 
+  // Pre-discovered skeleton/animation prims for ancestor-based discovery
+  // These are set temporarily during ConvertToRenderScene
+  const PathPrimMap<Skeleton> *_allSkeletons{nullptr};
+  const PathPrimMap<SkelRoot> *_allSkelRoots{nullptr};
+  const PathPrimMap<SkelAnimation> *_allAnimations{nullptr};
+
   ///
   /// Convert GeomMesh to renderer-friendly mesh.
   /// Also apply triangulation when MeshConverterConfig::triangulate is set to
@@ -3293,6 +3300,19 @@ class RenderSceneConverter {
   // Also get SkelAnimation attached to Skeleton(if exists)
   //
   bool ConvertSkeletonImpl(const RenderSceneConverterEnv &env, const tinyusdz::GeomMesh &mesh,
+                       int32_t skeleton_id,
+                       SkelHierarchy *out_skel, nonstd::optional<AnimationClip> *out_anim);
+
+  // Convert skeleton from explicit path (for ancestor-discovered skeletons)
+  bool ConvertSkeletonImplWithPath(const RenderSceneConverterEnv &env, const Path &skelPath,
+                       int32_t skeleton_id,
+                       SkelHierarchy *out_skel, nonstd::optional<AnimationClip> *out_anim);
+
+  // Convert skeleton from Skeleton pointer directly (more efficient for pre-discovered skeletons)
+  bool ConvertSkeletonFromPtr(const RenderSceneConverterEnv &env,
+                       const Path &skelPath,
+                       const Skeleton &skel,
+                       const std::string &primName,
                        int32_t skeleton_id,
                        SkelHierarchy *out_skel, nonstd::optional<AnimationClip> *out_anim);
 

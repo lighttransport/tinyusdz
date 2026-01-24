@@ -1,0 +1,272 @@
+#usda 1.0
+(
+    doc = "Complex shader network test - multi-node material graphs"
+    defaultPrim = "ShaderNetworkTests"
+)
+
+def Xform "ShaderNetworkTests"
+{
+    # =========================================================================
+    # Simple UsdPreviewSurface with single texture
+    # =========================================================================
+    def Material "SimpleMaterial"
+    {
+        token outputs:surface.connect = </ShaderNetworkTests/SimpleMaterial/Surface.outputs:surface>
+
+        def Shader "Surface"
+        {
+            uniform token info:id = "UsdPreviewSurface"
+            color3f inputs:diffuseColor.connect = </ShaderNetworkTests/SimpleMaterial/DiffuseTexture.outputs:rgb>
+            float inputs:metallic = 0.0
+            float inputs:roughness = 0.5
+            token outputs:surface
+        }
+
+        def Shader "DiffuseTexture"
+        {
+            uniform token info:id = "UsdUVTexture"
+            asset inputs:file = @textures/diffuse.png@
+            token inputs:sourceColorSpace = "sRGB"
+            float2 inputs:st.connect = </ShaderNetworkTests/SimpleMaterial/UVReader.outputs:result>
+            token inputs:wrapS = "repeat"
+            token inputs:wrapT = "repeat"
+            float3 outputs:rgb
+        }
+
+        def Shader "UVReader"
+        {
+            uniform token info:id = "UsdPrimvarReader_float2"
+            string inputs:varname = "st"
+            float2 outputs:result
+        }
+    }
+
+    # =========================================================================
+    # Full PBR material with multiple textures
+    # =========================================================================
+    def Material "PBRMaterial"
+    {
+        token outputs:surface.connect = </ShaderNetworkTests/PBRMaterial/Surface.outputs:surface>
+
+        def Shader "Surface"
+        {
+            uniform token info:id = "UsdPreviewSurface"
+            color3f inputs:diffuseColor.connect = </ShaderNetworkTests/PBRMaterial/DiffuseTexture.outputs:rgb>
+            float inputs:metallic.connect = </ShaderNetworkTests/PBRMaterial/MetallicTexture.outputs:r>
+            float inputs:roughness.connect = </ShaderNetworkTests/PBRMaterial/RoughnessTexture.outputs:r>
+            normal3f inputs:normal.connect = </ShaderNetworkTests/PBRMaterial/NormalTexture.outputs:rgb>
+            float inputs:occlusion.connect = </ShaderNetworkTests/PBRMaterial/AOTexture.outputs:r>
+            color3f inputs:emissiveColor.connect = </ShaderNetworkTests/PBRMaterial/EmissiveTexture.outputs:rgb>
+            float inputs:opacity = 1.0
+            float inputs:ior = 1.5
+            token outputs:surface
+        }
+
+        def Shader "DiffuseTexture"
+        {
+            uniform token info:id = "UsdUVTexture"
+            asset inputs:file = @textures/basecolor.png@
+            token inputs:sourceColorSpace = "sRGB"
+            float2 inputs:st.connect = </ShaderNetworkTests/PBRMaterial/UVReader.outputs:result>
+            float3 outputs:rgb
+        }
+
+        def Shader "MetallicTexture"
+        {
+            uniform token info:id = "UsdUVTexture"
+            asset inputs:file = @textures/metallic.png@
+            token inputs:sourceColorSpace = "raw"
+            float2 inputs:st.connect = </ShaderNetworkTests/PBRMaterial/UVReader.outputs:result>
+            float outputs:r
+        }
+
+        def Shader "RoughnessTexture"
+        {
+            uniform token info:id = "UsdUVTexture"
+            asset inputs:file = @textures/roughness.png@
+            token inputs:sourceColorSpace = "raw"
+            float2 inputs:st.connect = </ShaderNetworkTests/PBRMaterial/UVReader.outputs:result>
+            float outputs:r
+        }
+
+        def Shader "NormalTexture"
+        {
+            uniform token info:id = "UsdUVTexture"
+            asset inputs:file = @textures/normal.png@
+            token inputs:sourceColorSpace = "raw"
+            float2 inputs:st.connect = </ShaderNetworkTests/PBRMaterial/UVReader.outputs:result>
+            float4 inputs:scale = (2, 2, 2, 1)
+            float4 inputs:bias = (-1, -1, -1, 0)
+            float3 outputs:rgb
+        }
+
+        def Shader "AOTexture"
+        {
+            uniform token info:id = "UsdUVTexture"
+            asset inputs:file = @textures/ao.png@
+            token inputs:sourceColorSpace = "raw"
+            float2 inputs:st.connect = </ShaderNetworkTests/PBRMaterial/UVReader.outputs:result>
+            float outputs:r
+        }
+
+        def Shader "EmissiveTexture"
+        {
+            uniform token info:id = "UsdUVTexture"
+            asset inputs:file = @textures/emissive.png@
+            token inputs:sourceColorSpace = "sRGB"
+            float2 inputs:st.connect = </ShaderNetworkTests/PBRMaterial/UVReader.outputs:result>
+            float3 outputs:rgb
+        }
+
+        def Shader "UVReader"
+        {
+            uniform token info:id = "UsdPrimvarReader_float2"
+            string inputs:varname = "st"
+            float2 outputs:result
+        }
+    }
+
+    # =========================================================================
+    # Material with UV transform
+    # =========================================================================
+    def Material "TransformedUVMaterial"
+    {
+        token outputs:surface.connect = </ShaderNetworkTests/TransformedUVMaterial/Surface.outputs:surface>
+
+        def Shader "Surface"
+        {
+            uniform token info:id = "UsdPreviewSurface"
+            color3f inputs:diffuseColor.connect = </ShaderNetworkTests/TransformedUVMaterial/Texture.outputs:rgb>
+            float inputs:roughness = 0.3
+            token outputs:surface
+        }
+
+        def Shader "Texture"
+        {
+            uniform token info:id = "UsdUVTexture"
+            asset inputs:file = @textures/pattern.png@
+            token inputs:sourceColorSpace = "sRGB"
+            float2 inputs:st.connect = </ShaderNetworkTests/TransformedUVMaterial/UVTransform.outputs:result>
+            token inputs:wrapS = "repeat"
+            token inputs:wrapT = "repeat"
+            float3 outputs:rgb
+        }
+
+        def Shader "UVTransform"
+        {
+            uniform token info:id = "UsdTransform2d"
+            float2 inputs:in.connect = </ShaderNetworkTests/TransformedUVMaterial/UVReader.outputs:result>
+            float inputs:rotation = 45
+            float2 inputs:scale = (2, 2)
+            float2 inputs:translation = (0.5, 0.5)
+            float2 outputs:result
+        }
+
+        def Shader "UVReader"
+        {
+            uniform token info:id = "UsdPrimvarReader_float2"
+            string inputs:varname = "st"
+            float2 outputs:result
+        }
+    }
+
+    # =========================================================================
+    # Transparent material
+    # =========================================================================
+    def Material "TransparentMaterial"
+    {
+        token outputs:surface.connect = </ShaderNetworkTests/TransparentMaterial/Surface.outputs:surface>
+
+        def Shader "Surface"
+        {
+            uniform token info:id = "UsdPreviewSurface"
+            color3f inputs:diffuseColor = (0.8, 0.9, 1.0)
+            float inputs:opacity.connect = </ShaderNetworkTests/TransparentMaterial/OpacityTexture.outputs:r>
+            token inputs:opacityMode = "opacity"
+            float inputs:ior = 1.5
+            float inputs:roughness = 0.1
+            token outputs:surface
+        }
+
+        def Shader "OpacityTexture"
+        {
+            uniform token info:id = "UsdUVTexture"
+            asset inputs:file = @textures/opacity.png@
+            token inputs:sourceColorSpace = "raw"
+            float2 inputs:st.connect = </ShaderNetworkTests/TransparentMaterial/UVReader.outputs:result>
+            float outputs:r
+        }
+
+        def Shader "UVReader"
+        {
+            uniform token info:id = "UsdPrimvarReader_float2"
+            string inputs:varname = "st"
+            float2 outputs:result
+        }
+    }
+
+    # =========================================================================
+    # Material with vertex color
+    # =========================================================================
+    def Material "VertexColorMaterial"
+    {
+        token outputs:surface.connect = </ShaderNetworkTests/VertexColorMaterial/Surface.outputs:surface>
+
+        def Shader "Surface"
+        {
+            uniform token info:id = "UsdPreviewSurface"
+            color3f inputs:diffuseColor.connect = </ShaderNetworkTests/VertexColorMaterial/VertexColorReader.outputs:result>
+            float inputs:roughness = 0.8
+            token outputs:surface
+        }
+
+        def Shader "VertexColorReader"
+        {
+            uniform token info:id = "UsdPrimvarReader_float3"
+            string inputs:varname = "displayColor"
+            float3 outputs:result
+        }
+    }
+
+    # =========================================================================
+    # Mesh with material binding
+    # =========================================================================
+    def Mesh "TexturedCube" (
+        prepend apiSchemas = ["MaterialBindingAPI"]
+    )
+    {
+        rel material:binding = </ShaderNetworkTests/PBRMaterial>
+
+        int[] faceVertexCounts = [4, 4, 4, 4, 4, 4]
+        int[] faceVertexIndices = [
+            0, 1, 3, 2,
+            4, 5, 7, 6,
+            0, 2, 6, 4,
+            1, 3, 7, 5,
+            0, 1, 5, 4,
+            2, 3, 7, 6
+        ]
+        point3f[] points = [
+            (-1, -1, -1), (1, -1, -1), (-1, 1, -1), (1, 1, -1),
+            (-1, -1, 1), (1, -1, 1), (-1, 1, 1), (1, 1, 1)
+        ]
+        normal3f[] normals = [
+            (0, 0, -1), (0, 0, -1), (0, 0, -1), (0, 0, -1),
+            (0, 0, 1), (0, 0, 1), (0, 0, 1), (0, 0, 1),
+            (-1, 0, 0), (-1, 0, 0), (-1, 0, 0), (-1, 0, 0),
+            (1, 0, 0), (1, 0, 0), (1, 0, 0), (1, 0, 0),
+            (0, -1, 0), (0, -1, 0), (0, -1, 0), (0, -1, 0),
+            (0, 1, 0), (0, 1, 0), (0, 1, 0), (0, 1, 0)
+        ]
+        texCoord2f[] primvars:st = [
+            (0, 0), (1, 0), (1, 1), (0, 1),
+            (0, 0), (1, 0), (1, 1), (0, 1),
+            (0, 0), (1, 0), (1, 1), (0, 1),
+            (0, 0), (1, 0), (1, 1), (0, 1),
+            (0, 0), (1, 0), (1, 1), (0, 1),
+            (0, 0), (1, 0), (1, 1), (0, 1)
+        ] (
+            interpolation = "faceVarying"
+        )
+    }
+}

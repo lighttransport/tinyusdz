@@ -19,15 +19,17 @@ namespace usdc {
 ///
 /// Save scene as USDC(binary) to a file
 ///
-/// @param[in] filename USDC filename
+/// @param[in] filename USDC filename. If filename ends with ".zst", zstd compression is auto-enabled.
 /// @param[in] stage Stage
 /// @param[out] warn Warning message
 /// @param[out] err Error message
+/// @param[in] options Write options (optional). Includes zstd compression settings.
 ///
 /// @return true upon success.
 ///
 bool SaveAsUSDCToFile(const std::string &filename, const Stage &stage,
-                      std::string *warn, std::string *err);
+                      std::string *warn, std::string *err,
+                      const USDWriteOptions &options = USDWriteOptions());
 
 ///
 /// Save scene as USDC(binary) to a memory

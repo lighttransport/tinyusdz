@@ -186,6 +186,11 @@ endif ()
 option(TINYUSDZ_USE_SYSTEM_ZLIB
        "Use system's zlib instead of miniz for TinyEXR/TIFF" OFF)
 
+# -- Zstd compression --
+option(TINYUSDZ_WITH_ZSTD_COMPRESSION
+       "Enable zstd compression for USD files" ON)
+option(TINYUSDZ_USE_SYSTEM_ZSTD
+       "Use system's zstd instead of bundled version" OFF)
 
 option(
   TINYUSDZ_PRODUCTION_BUILD
@@ -400,6 +405,9 @@ if(TINYUSDZ_WITH_PYTHON)
   add_subdirectory(${PROJECT_SOURCE_DIR}/src/external/pybind11)
 endif()
 
+# Add path-sort-and-encode-crate library for USDC crate writer
+add_subdirectory(${PROJECT_SOURCE_DIR}/sandbox/path-sort-and-encode-crate ${CMAKE_CURRENT_BINARY_DIR}/path-sort-and-encode-crate)
+
 set(TINYUSDZ_SOURCES
     ${PROJECT_SOURCE_DIR}/src/arg-parser.cc
     ${PROJECT_SOURCE_DIR}/src/asset-resolution.cc
@@ -422,11 +430,14 @@ set(TINYUSDZ_SOURCES
     ${PROJECT_SOURCE_DIR}/src/crate-reader-timesamples.cc
     ${PROJECT_SOURCE_DIR}/src/crate-format.cc
     ${PROJECT_SOURCE_DIR}/src/crate-writer.cc
+    ${PROJECT_SOURCE_DIR}/src/stage-converter.cc
     ${PROJECT_SOURCE_DIR}/src/crate-pprint.cc
+    ${PROJECT_SOURCE_DIR}/src/crate-dump.cc
     ${PROJECT_SOURCE_DIR}/src/path-util.cc
     ${PROJECT_SOURCE_DIR}/src/prim-reconstruct.cc
     ${PROJECT_SOURCE_DIR}/src/prim-composition.cc
     ${PROJECT_SOURCE_DIR}/src/prim-types.cc
+    ${PROJECT_SOURCE_DIR}/src/enum-handlers.cc
     ${PROJECT_SOURCE_DIR}/src/layer.cc
     ${PROJECT_SOURCE_DIR}/src/primvar.cc
     ${PROJECT_SOURCE_DIR}/src/str-util.cc
@@ -665,6 +676,21 @@ if(TINYUSDZ_WITH_TIFF OR TINYUSDZ_WITH_EXR)
       PROPERTIES COMPILE_DEFINITIONS "_LARGEFILE64_SOURCE=1")
   endif()
 
+endif()
+
+# -- Zstd compression --
+if(TINYUSDZ_WITH_ZSTD_COMPRESSION)
+  if(NOT TINYUSDZ_USE_SYSTEM_ZSTD)
+    list(APPEND TINYUSDZ_DEP_SOURCES ${PROJECT_SOURCE_DIR}/src/external/zstd.c)
+    # Disable ASM to avoid linker issues, suppress warnings for third-party code
+    set_source_files_properties(
+      ${PROJECT_SOURCE_DIR}/src/external/zstd.c
+      PROPERTIES COMPILE_DEFINITIONS "ZSTD_DISABLE_ASM=1"
+                 COMPILE_FLAGS "-w")
+  else()
+    find_package(zstd REQUIRED)
+  endif()
+  list(APPEND TINYUSDZ_DEP_SOURCES ${PROJECT_SOURCE_DIR}/src/zstd-compression.cc)
 endif()
 
 if(TINYUSDZ_WITH_ALAC_AUDIO)
@@ -1341,6 +1367,13 @@ foreach(TINYUSDZ_LIB_TARGET ${TINYUSDZ_LIBS})
     target_compile_definitions(${TINYUSDZ_LIB_TARGET} PRIVATE "TINYUSDZ_NO_STB_IMAGE_WRITE_IMPLEMENTATION")
   endif()
 
+  if(TINYUSDZ_WITH_ZSTD_COMPRESSION)
+    target_compile_definitions(${TINYUSDZ_LIB_TARGET} PRIVATE "TINYUSDZ_WITH_ZSTD_COMPRESSION")
+    if(TINYUSDZ_USE_SYSTEM_ZSTD)
+      target_link_libraries(${TINYUSDZ_LIB_TARGET} PUBLIC zstd::zstd)
+    endif()
+  endif()
+
   target_include_directories(${TINYUSDZ_LIB_TARGET}
                              PRIVATE ${PROJECT_SOURCE_DIR}/src)
 
@@ -1371,7 +1404,8 @@ foreach(TINYUSDZ_LIB_TARGET ${TINYUSDZ_LIBS})
   endif()
 
   target_link_libraries(${TINYUSDZ_LIB_TARGET} ${TINYUSDZ_EXT_LIBRARIES}
-                        ${CMAKE_DL_LIBS})
+                        ${CMAKE_DL_LIBS}
+                        crate-encoding)
 
   if (TINYUSDZ_ENABLE_THREAD)
     target_compile_definitions(${TINYUSDZ_LIB_TARGET}
@@ -1638,6 +1672,9 @@ if(TINYUSDZ_BUILD_EXAMPLES)
   endif()
 endif(TINYUSDZ_BUILD_EXAMPLES)
 
+# Tools
+add_subdirectory(tools/tusddumpcrate)
+
 if(TINYUSDZ_BUILD_BENCHMARKS)
 
   #
@@ -1726,6 +1763,46 @@ if(TINYUSDZ_BUILD_TESTS)
       NAME usda-parser-unit-test
       COMMAND python3 ${PROJECT_SOURCE_DIR}/tests/usda/unit-runner.py --app
               "$<TARGET_FILE:test_tinyusdz>" --basedir "${PROJECT_SOURCE_DIR}/tests/usda"
+      )
+  endif()
+
+  #
+  # USDA roundtrip tester
+  #
+  if(TINYUSDZ_WITH_MODULE_USDA_READER)
+    set(TINYUSDZ_ROUNDTRIP_TARGET "usda_roundtrip")
+    add_executable(${TINYUSDZ_ROUNDTRIP_TARGET} ${PROJECT_SOURCE_DIR}/tests/usda-roundtrip.cc)
+    add_sanitizers(${TINYUSDZ_ROUNDTRIP_TARGET})
+    target_include_directories(${TINYUSDZ_ROUNDTRIP_TARGET} PRIVATE ${PROJECT_SOURCE_DIR}/src)
+    target_link_libraries(${TINYUSDZ_ROUNDTRIP_TARGET} PRIVATE ${TINYUSDZ_TARGET_STATIC})
+    if(TINYUSDZ_WITH_JSON)
+      target_compile_definitions(${TINYUSDZ_ROUNDTRIP_TARGET} PRIVATE "TINYUSDZ_WITH_JSON")
+    endif()
+
+    add_test(
+      NAME usda-roundtrip-test
+      COMMAND python3 ${PROJECT_SOURCE_DIR}/tests/usda/roundtrip-runner.py --app
+              "$<TARGET_FILE:usda_roundtrip>" --basedir "${PROJECT_SOURCE_DIR}/tests/usda"
+      )
+  endif()
+
+  #
+  # USDC roundtrip tester (USDA -> USDC -> reparse -> compare)
+  #
+  if(TINYUSDZ_WITH_MODULE_USDA_READER AND TINYUSDZ_WITH_MODULE_USDC_WRITER AND TINYUSDZ_WITH_MODULE_USDC_READER)
+    set(TINYUSDZ_USDC_ROUNDTRIP_TARGET "usdc_roundtrip")
+    add_executable(${TINYUSDZ_USDC_ROUNDTRIP_TARGET} ${PROJECT_SOURCE_DIR}/tests/usdc-roundtrip.cc)
+    add_sanitizers(${TINYUSDZ_USDC_ROUNDTRIP_TARGET})
+    target_include_directories(${TINYUSDZ_USDC_ROUNDTRIP_TARGET} PRIVATE ${PROJECT_SOURCE_DIR}/src)
+    target_link_libraries(${TINYUSDZ_USDC_ROUNDTRIP_TARGET} PRIVATE ${TINYUSDZ_TARGET_STATIC})
+    if(TINYUSDZ_WITH_JSON)
+      target_compile_definitions(${TINYUSDZ_USDC_ROUNDTRIP_TARGET} PRIVATE "TINYUSDZ_WITH_JSON")
+    endif()
+
+    add_test(
+      NAME usdc-roundtrip-test
+      COMMAND python3 ${PROJECT_SOURCE_DIR}/tests/usda/usdc-roundtrip-runner.py --app
+              "$<TARGET_FILE:usdc_roundtrip>" --basedir "${PROJECT_SOURCE_DIR}/tests/usda"
       )
   endif()
 

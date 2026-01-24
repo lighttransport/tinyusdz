@@ -142,10 +142,10 @@ json SerializeArrayData(const std::vector<T>& array, USDToJSONContext* context,
 // Helper function to serialize attribute metadata
 json SerializeAttributeMetadata(const AttrMetas& metas) {
   json metadata;
-  
+
   // Serialize interpolation
-  if (metas.interpolation) {
-    switch (metas.interpolation.value()) {
+  if (metas.has_interpolation()) {
+    switch (metas.get_interpolation_enum()) {
       case Interpolation::Constant:
         metadata["interpolation"] = "constant";
         break;
@@ -166,58 +166,58 @@ json SerializeAttributeMetadata(const AttrMetas& metas) {
         break;
     }
   }
-  
+
   // Serialize elementSize
-  if (metas.elementSize) {
-    metadata["elementSize"] = metas.elementSize.value();
+  if (metas.has_elementSize()) {
+    metadata["elementSize"] = metas.get_elementSize();
   }
-  
+
   // Serialize hidden
-  if (metas.hidden) {
-    metadata["hidden"] = metas.hidden.value();
+  if (metas.has_hidden()) {
+    metadata["hidden"] = metas.get_hidden();
   }
-  
+
   // Serialize comment
-  if (metas.comment) {
-    metadata["comment"] = metas.comment.value().value;
+  if (metas.has_comment()) {
+    metadata["comment"] = metas.get_comment().value;
   }
-  
+
   // Serialize weight (for BlendShapes)
-  if (metas.weight) {
-    metadata["weight"] = metas.weight.value();
+  if (metas.has_weight()) {
+    metadata["weight"] = metas.get_weight();
   }
-  
+
   // Serialize usdShade metadata
-  if (metas.connectability) {
-    metadata["connectability"] = metas.connectability.value().str();
+  if (metas.has_connectability()) {
+    metadata["connectability"] = metas.get_connectability().str();
   }
-  
-  if (metas.outputName) {
-    metadata["outputName"] = metas.outputName.value().str();
+
+  if (metas.has_outputName()) {
+    metadata["outputName"] = metas.get_outputName().str();
   }
-  
-  if (metas.renderType) {
-    metadata["renderType"] = metas.renderType.value().str();
+
+  if (metas.has_renderType()) {
+    metadata["renderType"] = metas.get_renderType().str();
   }
-  
+
   // Serialize display metadata
-  if (metas.displayName) {
-    metadata["displayName"] = metas.displayName.value();
+  if (metas.has_displayName()) {
+    metadata["displayName"] = metas.get_displayName();
   }
-  
-  if (metas.displayGroup) {
-    metadata["displayGroup"] = metas.displayGroup.value();
+
+  if (metas.has_displayGroup()) {
+    metadata["displayGroup"] = metas.get_displayGroup();
   }
-  
+
   // Serialize bindMaterialAs
-  if (metas.bindMaterialAs) {
-    metadata["bindMaterialAs"] = metas.bindMaterialAs.value().str();
+  if (metas.has_bindMaterialAs()) {
+    metadata["bindMaterialAs"] = metas.get_bindMaterialAs().str();
   }
-  
+
   // Serialize customData
-  if (metas.customData) {
+  if (metas.has_customData()) {
     json customDataJson;
-    const auto& customData = metas.customData.value();
+    const auto& customData = metas.get_customData();
     for (const auto& item : customData) {
       // For now, serialize as string representation
       // TODO: Implement proper Dictionary to JSON conversion
@@ -229,9 +229,9 @@ json SerializeAttributeMetadata(const AttrMetas& metas) {
   }
   
   // Serialize sdrMetadata
-  if (metas.sdrMetadata) {
+  if (metas.has_sdrMetadata()) {
     json sdrJson;
-    const auto& sdrData = metas.sdrMetadata.value();
+    const auto& sdrData = metas.get_sdrMetadata();
     for (const auto& item : sdrData) {
       // For now, serialize as string representation
       // TODO: Implement proper Dictionary to JSON conversion
@@ -242,8 +242,9 @@ json SerializeAttributeMetadata(const AttrMetas& metas) {
     }
   }
   
-  // Serialize other custom metadata
-  for (const auto& item : metas.meta) {
+  // Serialize other custom metadata from the underlying dictionary
+  for (const auto& item : metas.data()) {
+    // Skip known keys that are already serialized above
     // TODO: Implement proper MetaVariable to JSON conversion
     metadata[item.first] = "[MetaVariable]";
   }
@@ -1424,8 +1425,8 @@ json ToJSON(const tinyusdz::Attribute& attribute, USDToJSONContext* /* context *
   }
   
   // Interpolation (from metadata)
-  if (attribute.metas().interpolation) {
-    switch (attribute.metas().interpolation.value()) {
+  if (attribute.metas().has_interpolation()) {
+    switch (attribute.metas().get_interpolation_enum()) {
       case Interpolation::Invalid:
         j["interpolation"] = "invalid";
         break;
