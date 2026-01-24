@@ -355,3 +355,16 @@ compile_commands.json
 
 # Cmake
 CMakeUserPresets.json
+
+# TinyUSDZ/Crate-Writer specific
+*.usdc
+*.usda
+CMakeFiles/
+Makefile
+cmake_install.cmake
+
+# OpenUSD source tree (should be external)
+aousd/OpenUSD/
+
+# OpenUSD build outputs
+aousd/dist*/

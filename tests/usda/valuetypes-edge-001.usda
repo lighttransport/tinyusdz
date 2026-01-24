@@ -1,0 +1,237 @@
+#usda 1.0
+(
+    doc = "Value types edge cases test - precision, special values, boundaries"
+    defaultPrim = "ValueTypeTests"
+)
+
+def Xform "ValueTypeTests"
+{
+    # =========================================================================
+    # Numeric precision tests
+    # =========================================================================
+    def Xform "NumericPrecision"
+    {
+        # Half precision (float16)
+        half halfMin = -65504
+        half halfMax = 65504
+        half halfSmallPositive = 0.00006103515625
+        half halfNormal = 1.5
+
+        # Single precision (float32)
+        float floatPi = 3.14159265358979
+        float floatE = 2.71828182845905
+        float floatSmall = 0.000001
+        float floatLarge = 1000000.0
+
+        # Double precision (float64)
+        double doublePi = 3.141592653589793238
+        double doubleE = 2.718281828459045235
+        double doubleSmall = 0.00000000000001
+        double doubleLarge = 100000000000000.0
+
+        # Vectors with precision
+        float2 float2Val = (0.123456789, 0.987654321)
+        float3 float3Val = (1.111111111, 2.222222222, 3.333333333)
+        float4 float4Val = (0.1, 0.2, 0.3, 0.4)
+
+        double2 double2Val = (0.12345678901234567, 0.98765432109876543)
+        double3 double3Val = (1.1111111111111111, 2.2222222222222222, 3.3333333333333333)
+        double4 double4Val = (0.1111111111111111, 0.2222222222222222, 0.3333333333333333, 0.4444444444444444)
+
+        # Half vectors
+        half2 half2Val = (0.5, 1.5)
+        half3 half3Val = (1, 2, 3)
+        half4 half4Val = (0.25, 0.5, 0.75, 1)
+    }
+
+    # =========================================================================
+    # Integer types and boundaries
+    # =========================================================================
+    def Xform "IntegerBoundaries"
+    {
+        # Signed integers
+        int intMin = -2147483648
+        int intMax = 2147483647
+        int intZero = 0
+        int intNegOne = -1
+
+        int64 int64Min = -9223372036854775808
+        int64 int64Max = 9223372036854775807
+        int64 int64Zero = 0
+
+        # Unsigned integers
+        uint uintMin = 0
+        uint uintMax = 4294967295
+
+        uint64 uint64Min = 0
+        uint64 uint64Max = 18446744073709551615
+
+        # Integer arrays
+        int[] intArray = [-1000000, 0, 1000000]
+        int64[] int64Array = [-9000000000000000000, 0, 9000000000000000000]
+        uint[] uintArray = [0, 1, 4294967295]
+        uint64[] uint64Array = [0, 1, 18446744073709551615]
+
+        # Multi-component integer types
+        int2 int2Val = (-100, 100)
+        int3 int3Val = (-1, 0, 1)
+        int4 int4Val = (0, 1, 2, 3)
+    }
+
+    # =========================================================================
+    # Quaternion normalization
+    # =========================================================================
+    def Xform "QuaternionTests"
+    {
+        # Identity quaternion
+        quatf quatIdentity = (1, 0, 0, 0)
+        quatd quatdIdentity = (1, 0, 0, 0)
+        quath quathIdentity = (1, 0, 0, 0)
+
+        # 90 degree rotations around axes
+        quatf quatRotX90 = (0.7071067811865476, 0.7071067811865476, 0, 0)
+        quatf quatRotY90 = (0.7071067811865476, 0, 0.7071067811865476, 0)
+        quatf quatRotZ90 = (0.7071067811865476, 0, 0, 0.7071067811865476)
+
+        # 45 degree rotation
+        quatf quatRot45 = (0.9238795325112867, 0.3826834323650898, 0, 0)
+
+        # Arbitrary normalized quaternion
+        quatf quatArbitrary = (0.5, 0.5, 0.5, 0.5)
+
+        # Quaternion arrays
+        quatf[] quatArray = [
+            (1, 0, 0, 0),
+            (0.707, 0.707, 0, 0),
+            (0.5, 0.5, 0.5, 0.5)
+        ]
+    }
+
+    # =========================================================================
+    # Matrix types
+    # =========================================================================
+    def Xform "MatrixTests"
+    {
+        # Identity matrices
+        matrix2d matrix2dIdentity = ((1, 0), (0, 1))
+        matrix3d matrix3dIdentity = ((1, 0, 0), (0, 1, 0), (0, 0, 1))
+        matrix4d matrix4dIdentity = ((1, 0, 0, 0), (0, 1, 0, 0), (0, 0, 1, 0), (0, 0, 0, 1))
+
+        # Translation matrix
+        matrix4d matrixTranslation = ((1, 0, 0, 0), (0, 1, 0, 0), (0, 0, 1, 0), (5, 10, 15, 1))
+
+        # Rotation matrix (90 deg around Z)
+        matrix4d matrixRotation = ((0, 1, 0, 0), (-1, 0, 0, 0), (0, 0, 1, 0), (0, 0, 0, 1))
+
+        # Scale matrix
+        matrix4d matrixScale = ((2, 0, 0, 0), (0, 3, 0, 0), (0, 0, 4, 0), (0, 0, 0, 1))
+
+        # Combined TRS matrix
+        matrix4d matrixTRS = (
+            (1.414, 1.414, 0, 0),
+            (-1.414, 1.414, 0, 0),
+            (0, 0, 2, 0),
+            (10, 20, 30, 1)
+        )
+
+        # Matrix array
+        matrix4d[] matrixArray = [
+            ((1, 0, 0, 0), (0, 1, 0, 0), (0, 0, 1, 0), (0, 0, 0, 1)),
+            ((2, 0, 0, 0), (0, 2, 0, 0), (0, 0, 2, 0), (0, 0, 0, 1))
+        ]
+    }
+
+    # =========================================================================
+    # Color types
+    # =========================================================================
+    def Xform "ColorTests"
+    {
+        # Color3 types
+        color3f color3fBlack = (0, 0, 0)
+        color3f color3fWhite = (1, 1, 1)
+        color3f color3fRed = (1, 0, 0)
+        color3f color3fGreen = (0, 1, 0)
+        color3f color3fBlue = (0, 0, 1)
+        color3f color3fGray = (0.5, 0.5, 0.5)
+
+        color3d color3dPrecise = (0.12345678901234567, 0.23456789012345678, 0.34567890123456789)
+
+        # Color4 types (with alpha)
+        color4f color4fTransparent = (1, 0, 0, 0.5)
+        color4f color4fOpaque = (0, 1, 0, 1)
+        color4d color4dPrecise = (0.1, 0.2, 0.3, 0.9)
+
+        # Color arrays
+        color3f[] color3fArray = [(1, 0, 0), (0, 1, 0), (0, 0, 1)]
+        color4f[] color4fArray = [(1, 0, 0, 1), (0, 1, 0, 0.5), (0, 0, 1, 0.25)]
+    }
+
+    # =========================================================================
+    # Extent and bounds
+    # =========================================================================
+    def Mesh "ExtentTests"
+    {
+        # Valid extent
+        float3[] extent = [(-10, -20, -30), (10, 20, 30)]
+
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0, 1, 2, 3]
+        point3f[] points = [(0, 0, 0), (1, 0, 0), (1, 1, 0), (0, 1, 0)]
+    }
+
+    def Mesh "ZeroExtent"
+    {
+        # Zero-volume extent (valid for 2D geometry)
+        float3[] extent = [(0, 0, 0), (1, 1, 0)]
+
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0, 1, 2, 3]
+        point3f[] points = [(0, 0, 0), (1, 0, 0), (1, 1, 0), (0, 1, 0)]
+    }
+
+    # =========================================================================
+    # Empty and special arrays
+    # =========================================================================
+    def Xform "EmptyArrays"
+    {
+        int[] emptyIntArray = []
+        float[] emptyFloatArray = []
+        point3f[] emptyPointArray = []
+        token[] emptyTokenArray = []
+        string[] emptyStringArray = []
+        matrix4d[] emptyMatrixArray = []
+    }
+
+    # =========================================================================
+    # Special string values
+    # =========================================================================
+    def Xform "StringTests"
+    {
+        string emptyString = ""
+        string simpleString = "hello"
+        string unicodeString = "Hello \u4e16\u754c"
+        string pathLikeString = "/root/child/grandchild"
+        string escapedString = "line1\nline2\ttabbed"
+        string quotedString = "She said \"hello\""
+
+        string[] stringArray = ["one", "two", "three"]
+        token[] tokenArray = ["tokenA", "tokenB", "tokenC"]
+    }
+
+    # =========================================================================
+    # Normal vectors (should be normalized)
+    # =========================================================================
+    def Mesh "NormalTests"
+    {
+        int[] faceVertexCounts = [3]
+        int[] faceVertexIndices = [0, 1, 2]
+        point3f[] points = [(0, 0, 0), (1, 0, 0), (0.5, 1, 0)]
+
+        # Normalized normals
+        normal3f[] normals = [
+            (0, 0, 1),
+            (0.5773502691896258, 0.5773502691896258, 0.5773502691896258),
+            (0.7071067811865476, 0.7071067811865476, 0)
+        ]
+    }
+}

@@ -4,6 +4,7 @@
 
 #include "unicode-xid.hh"
 #include "common-macros.inc"
+#include "external/dtoa_milo.h"
 
 #ifdef __SSE2__
 #include <emmintrin.h>
@@ -145,6 +146,31 @@ std::string unescapeControlSequence(const std::string &str) {
             i++;
           } else if (str[i + 1] == '\\') {
             s += "\\";
+            i++;
+          } else if (str[i + 1] == 'x') {
+            // Hex escape: \xNN
+            if (i + 3 < str.size()) {
+              char h1 = str[i + 2];
+              char h2 = str[i + 3];
+              auto hex_digit = [](char c) -> int {
+                if (c >= '0' && c <= '9') return c - '0';
+                if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+                if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+                return -1;
+              };
+              int d1 = hex_digit(h1);
+              int d2 = hex_digit(h2);
+              if (d1 >= 0 && d2 >= 0) {
+                s += static_cast<char>((d1 << 4) | d2);
+                i += 3;
+              } else {
+                // Invalid hex, keep backslash
+                s += str[i];
+              }
+            } else {
+              // Not enough characters for \xNN
+              s += str[i];
+            }
           } else {
             // ignore backslash
           }
@@ -1210,6 +1236,22 @@ bool GlobMatchPath(const std::string &pattern, const std::string &path) {
   }
 
   return p == pattern.size();
+}
+
+char *dtoa(float f, char *buf) {
+  // For float, use simple sprintf for now
+  // dtoa_milo is optimized for double and doesn't work well with float
+  int n = snprintf(buf, 384, "%.9g", static_cast<double>(f));
+  if (n < 0 || n >= 384) {
+    buf[0] = '0';
+    return &buf[1];
+  }
+  return &buf[n];
+}
+
+char *dtoa(double d, char *buf) {
+  // Use dtoa_milo for double precision
+  return dtoa_milo(d, buf);
 }
 
 }  // namespace tinyusdz
