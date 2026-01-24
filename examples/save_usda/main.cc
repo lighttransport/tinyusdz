@@ -88,9 +88,7 @@ void SimpleScene(tinyusdz::Stage *stage)
       //uvAttr.set_var(std::move(uvVar));
 
       // Currently `interpolation` is described in Attribute metadataum.
-      tinyusdz::AttrMeta meta;
-      meta.interpolation = tinyusdz::Interpolation::Vertex;
-      uvAttr.metas() = meta;
+      uvAttr.metas().set_interpolation_enum(tinyusdz::Interpolation::Vertex);
 
       tinyusdz::Property uvProp(uvAttr, /* custom*/false);
 
@@ -127,9 +125,7 @@ void SimpleScene(tinyusdz::Stage *stage)
 
       attrib.variability() = tinyusdz::Variability::Uniform;
 
-      tinyusdz::AttrMeta meta;
-      meta.hidden = false;
-      attrib.metas() = meta;
+      attrib.metas().set_hidden(false);
 
       tinyusdz::Property prop(attrib, /* custom*/true);
 

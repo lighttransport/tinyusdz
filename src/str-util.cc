@@ -152,6 +152,31 @@ std::string unescapeControlSequence(const std::string &str) {
             i++;
           } else if (str[i + 1] == '\\') {
             s += "\\";
+            i++;
+          } else if (str[i + 1] == 'x') {
+            // Hex escape: \xNN
+            if (i + 3 < str.size()) {
+              char h1 = str[i + 2];
+              char h2 = str[i + 3];
+              auto hex_digit = [](char c) -> int {
+                if (c >= '0' && c <= '9') return c - '0';
+                if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+                if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+                return -1;
+              };
+              int d1 = hex_digit(h1);
+              int d2 = hex_digit(h2);
+              if (d1 >= 0 && d2 >= 0) {
+                s += static_cast<char>((d1 << 4) | d2);
+                i += 3;
+              } else {
+                // Invalid hex, keep backslash
+                s += str[i];
+              }
+            } else {
+              // Not enough characters for \xNN
+              s += str[i];
+            }
           } else {
             // ignore backslash
           }
@@ -1221,32 +1246,20 @@ inline char* write_significand(char* out, uint64_t significand,
   return end;
 }
 
-char* dtoa_dragonbox_impl(const double f, char* buf, int exp_upper = 16) {
-  // Fast path for common values 1.0 and -1.0 (bitwise comparison)
-  // IEEE 754 double precision: 1.0 = 0x3FF0000000000000, -1.0 = 0xBFF0000000000000
-  uint64_t bits;
-  std::memcpy(&bits, &f, sizeof(double));
-
-  if (bits == 0x3FF0000000000000ULL) {
-    // Exactly 1.0
-    *buf++ = '1';
-    return buf;
-  }
-  if (bits == 0xBFF0000000000000ULL) {
-    // Exactly -1.0
-    *buf++ = '-';
-    *buf++ = '1';
-    return buf;
-  }
-
+// Template implementation for both float and double
+// max_digits: maximum significant digits (9 for float, 17 for double)
+// exp_upper: threshold for switching to exponential notation
+template<typename Float>
+char* dtoa_dragonbox_impl_t(const Float f, char* buf, int max_digits, int exp_upper) {
   bool is_negative = std::signbit(f);
 
   // Handle zero specially
-  if (f == 0.0) {
+  if (f == Float(0)) {
     *buf++ = '0';
     return buf;
   }
 
+  // Use dragonbox directly on the original type (float or double)
   auto ret = jkj::dragonbox::to_decimal(f);
 
   // print human-readable float for the value in range [1e-exp_lower, 1e+exp_upper]
@@ -1256,11 +1269,36 @@ char* dtoa_dragonbox_impl(const double f, char* buf, int exp_upper = 16) {
 
   auto significand = ret.significand;
   int significand_size = count_digits(significand);
+  int exponent = ret.exponent;
+
+  // Limit to max_digits significant digits (round half to even)
+  if (significand_size > max_digits) {
+    int digits_to_remove = significand_size - max_digits;
+    uint64_t divisor = 1;
+    for (int i = 0; i < digits_to_remove; i++) {
+      divisor *= 10;
+    }
+    uint64_t remainder = significand % divisor;
+    significand /= divisor;
+    exponent += digits_to_remove;
+
+    // Round half to even
+    uint64_t half = divisor / 2;
+    if (remainder > half || (remainder == half && (significand & 1))) {
+      significand++;
+      // Check if rounding caused overflow (e.g., 999 -> 1000)
+      if (count_digits(significand) > max_digits) {
+        significand /= 10;
+        exponent++;
+      }
+    }
+    significand_size = count_digits(significand);
+  }
 
   size_t size = size_t(significand_size) + (is_negative ? 1u : 0u);
   (void)size;  // Used for tracking output size, may be used in future optimizations
 
-  int output_exp = ret.exponent + significand_size - 1;
+  int output_exp = exponent + significand_size - 1;
   bool use_exp_format = (output_exp < exp_lower) || (output_exp >= exp_upper);
 
   char decimal_point = '.';
@@ -1286,16 +1324,16 @@ char* dtoa_dragonbox_impl(const double f, char* buf, int exp_upper = 16) {
     return write_exponent(output_exp, buf);
   }
 
-  int exp = ret.exponent + significand_size;
-  if (ret.exponent >= 0) {
-    size += static_cast<size_t>(ret.exponent);
+  int exp = exponent + significand_size;
+  if (exponent >= 0) {
+    size += static_cast<size_t>(exponent);
 
     if (is_negative) {
       *buf++ = '-';
     }
 
     return write_significand_e(buf, significand, significand_size,
-                               ret.exponent);
+                               exponent);
 
   } else if (exp > 0) {
     size += 1;
@@ -1324,6 +1362,30 @@ char* dtoa_dragonbox_impl(const double f, char* buf, int exp_upper = 16) {
   return format_decimal(buf, significand, static_cast<uint32_t>(significand_size));
 }
 
+// Double precision: max 17 significant digits (std::numeric_limits<double>::max_digits10)
+char* dtoa_dragonbox_impl(const double f, char* buf, int exp_upper = 16) {
+  // Fast path for common values 1.0 and -1.0 (bitwise comparison)
+  // IEEE 754 double precision: 1.0 = 0x3FF0000000000000, -1.0 = 0xBFF0000000000000
+  uint64_t bits;
+  std::memcpy(&bits, &f, sizeof(double));
+
+  if (bits == 0x3FF0000000000000ULL) {
+    // Exactly 1.0
+    *buf++ = '1';
+    return buf;
+  }
+  if (bits == 0xBFF0000000000000ULL) {
+    // Exactly -1.0
+    *buf++ = '-';
+    *buf++ = '1';
+    return buf;
+  }
+
+  constexpr int kMaxDigits10Double = 17;  // std::numeric_limits<double>::max_digits10
+  return dtoa_dragonbox_impl_t(f, buf, kMaxDigits10Double, exp_upper);
+}
+
+// Single precision: max 9 significant digits (std::numeric_limits<float>::max_digits10)
 char* dtoa_dragonbox_impl(const float f, char* buf) {
   // Fast path for common values 1.0f and -1.0f (bitwise comparison)
   // IEEE 754 single precision: 1.0f = 0x3F800000, -1.0f = 0xBF800000
@@ -1342,7 +1404,9 @@ char* dtoa_dragonbox_impl(const float f, char* buf) {
     return buf;
   }
 
-  return dtoa_dragonbox_impl(double(f), buf, 7);
+  constexpr int kMaxDigits10Float = 9;  // std::numeric_limits<float>::max_digits10
+  constexpr int kExpUpperFloat = 7;     // Use exponential notation for values >= 1e7
+  return dtoa_dragonbox_impl_t(f, buf, kMaxDigits10Float, kExpUpperFloat);
 }
 
 } // anonymous namespace
@@ -1659,6 +1723,18 @@ bool GlobMatchPath(const std::string &pattern, const std::string &path) {
   }
 
   return p == pattern.size();
+}
+
+char *dtoa(float f, char *buf) {
+  // Use dragonbox for float-to-string conversion
+  size_t len = dtos(f, buf);
+  return buf + len;
+}
+
+char *dtoa(double d, char *buf) {
+  // Use dragonbox for double-to-string conversion
+  size_t len = dtos(d, buf);
+  return buf + len;
 }
 
 }  // namespace tinyusdz

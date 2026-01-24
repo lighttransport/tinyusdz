@@ -15,6 +15,8 @@
 #include "usd-to-json.hh"
 #include "usd-dump.hh"
 #include "logger.hh"
+#include "crate-writer.hh"
+#include "crate-dump.hh"
 
 #include "tydra/scene-access.hh"
 
@@ -58,6 +60,36 @@ static std::string format_memory_size(size_t bytes) {
     ss << std::fixed << size << " " << units[unit_index];
   }
   return ss.str();
+}
+
+// Helper function to write Stage to USDC file
+static bool WriteStageToUSdc(const tinyusdz::Stage& stage, const std::string& output_path) {
+  using namespace tinyusdz::experimental;
+
+  std::cout << "Writing USDC to: " << output_path << "\n";
+
+  CrateWriter writer(output_path);
+  std::string err;
+
+  if (!writer.Open(&err)) {
+    std::cerr << "Failed to open USDC writer: " << err << "\n";
+    return false;
+  }
+
+  if (!writer.ConvertStageToSpecs(stage, &err)) {
+    std::cerr << "Failed to convert Stage to USDC specs: " << err << "\n";
+    return false;
+  }
+
+  if (!writer.Finalize(&err)) {
+    std::cerr << "Failed to finalize USDC file: " << err << "\n";
+    return false;
+  }
+
+  writer.Close();
+
+  std::cout << "Successfully wrote USDC file: " << output_path << "\n";
+  return true;
 }
 
 // Progress bar state
@@ -135,6 +167,7 @@ void print_help() {
   std::cout << "  --relative          Print Path as relative Path (not implemented)\n";
   std::cout << "  -l, --loadOnly      Load/parse USD file only (validate input)\n";
   std::cout << "  -j, --json          Output parsed USD as JSON string\n";
+  std::cout << "  -o, --output FILE   Write output to USDC file\n";
   std::cout << "  --memstat           Print memory usage statistics\n";
   std::cout << "  --progress          Show ASCII progress bar\n";
   std::cout << "                      (only shown if loading takes > 3 seconds)\n";
@@ -155,6 +188,10 @@ void print_help() {
   std::cout << "  --attr=PATTERN      Filter attributes by name glob pattern\n";
   std::cout << "  --time=T            Query TimeSamples at time T\n";
   std::cout << "  --time=S:E          Query TimeSamples in range [S, E]\n";
+  std::cout << "\n";
+  std::cout << "Low-level USDC dump options:\n";
+  std::cout << "  --dumpcrate         Dump low-level USDC Crate structure (YAML)\n";
+  std::cout << "                      Only works with .usdc files\n";
 }
 
 int main(int argc, char **argv) {
@@ -182,9 +219,13 @@ int main(int argc, char **argv) {
   bool do_inspect{false};
   tinyusdz::InspectOptions inspect_opts;
 
+  // Dumpcrate option
+  bool do_dumpcrate{false};
+
   constexpr int kMaxIteration = 128;
 
   std::string filepath;
+  std::string output_filepath;
 
   int input_index = -1;
   CompositionFeatures comp_features;
@@ -202,12 +243,21 @@ int main(int argc, char **argv) {
       load_only = true;
     } else if ((arg.compare("-j") == 0) || (arg.compare("--json") == 0)) {
       json_output = true;
+    } else if ((arg.compare("-o") == 0) || (arg.compare("--output") == 0)) {
+      if (i + 1 >= argc) {
+        std::cerr << "-o/--output requires a filename argument\n";
+        return EXIT_FAILURE;
+      }
+      i++; // Move to next argument
+      output_filepath = argv[i];
     } else if (arg.compare("--extract-variants") == 0) {
       has_extract_variants = true;
     } else if (arg.compare("--memstat") == 0) {
       memstat = true;
     } else if (arg.compare("--progress") == 0) {
       show_progress = true;
+    } else if (arg.compare("--dumpcrate") == 0) {
+      do_dumpcrate = true;
     } else if (arg.compare("--inspect") == 0) {
       do_inspect = true;
       inspect_opts.format = tinyusdz::InspectOutputFormat::Yaml;
@@ -343,6 +393,26 @@ int main(int argc, char **argv) {
   std::string ext = str_tolower(GetFileExtension(filepath));
   std::string base_dir;
   base_dir = tinyusdz::io::GetBaseDir(filepath);
+
+  // Handle --dumpcrate mode (low-level USDC crate dump)
+  if (do_dumpcrate) {
+    if (ext != "usdc") {
+      std::cerr << "Error: --dumpcrate only works with .usdc files\n";
+      std::cerr << "  Input file: " << filepath << "\n";
+      std::cerr << "  Extension: ." << ext << "\n";
+      return EXIT_FAILURE;
+    }
+
+    tinyusdz::crate::DumpOptions dump_opts;
+    dump_opts.format = tinyusdz::crate::OutputFormat::YAML;
+
+    if (!tinyusdz::crate::DumpCrate(filepath, dump_opts, &err)) {
+      std::cerr << "Failed to dump crate: " << err << "\n";
+      return EXIT_FAILURE;
+    }
+
+    return EXIT_SUCCESS;
+  }
 
   // Handle --inspect mode
   if (do_inspect) {
@@ -646,6 +716,13 @@ int main(int argc, char **argv) {
       std::cout << comp_stage.ExportToString() << "\n";
     }
 
+    // Write to USDC if output file is specified
+    if (!output_filepath.empty()) {
+      if (!WriteStageToUSdc(comp_stage, output_filepath)) {
+        return EXIT_FAILURE;
+      }
+    }
+
     using MeshMap = std::map<std::string, const tinyusdz::GeomMesh *>;
     MeshMap meshmap;
 
@@ -717,6 +794,13 @@ int main(int argc, char **argv) {
     } else {
       std::string s = stage.ExportToString(has_relative);
       std::cout << s << "\n";
+    }
+
+    // Write to USDC if output file is specified
+    if (!output_filepath.empty()) {
+      if (!WriteStageToUSdc(stage, output_filepath)) {
+        return EXIT_FAILURE;
+      }
     }
 
     if (has_extract_variants) {

@@ -11,6 +11,8 @@
 // Phase 4: Compression support
 #include "../../../src/lz4-compression.hh"
 #include "../../../src/integerCoding.h"
+// Direct LZ4 API for OpenUSD compatibility
+#include "../../../src/lz4/lz4.h"
 
 // Namespace alias to avoid collision between tinyusdz::crate and ::crate (path library)
 namespace pathlib = ::crate;
@@ -55,7 +57,7 @@ bool CrateWriter::Open(std::string* err) {
     return false;
   }
 
-  // Open file for binary writing
+  // Open file for binary write
   file_.open(filepath_, std::ios::binary | std::ios::out | std::ios::trunc);
   if (!file_.is_open()) {
     if (err) *err = "Failed to open file: " + filepath_;
@@ -65,9 +67,9 @@ bool CrateWriter::Open(std::string* err) {
   is_open_ = true;
 
   // Reserve space for bootstrap header (we'll write it at the end)
-  // Bootstrap is always 64 bytes at offset 0
-  char zeros[64] = {0};
-  if (!WriteBytes(zeros, 64)) {
+  // Bootstrap is 72 bytes: 8 (ident) + 8 (version) + 8 (toc_offset) + 48 (reserved)
+  char zeros[72] = {0};
+  if (!WriteBytes(zeros, sizeof(zeros))) {
     if (err) *err = "Failed to write bootstrap placeholder";
     Close();
     return false;
@@ -96,6 +98,7 @@ bool CrateWriter::AddSpec(const Path& path,
   // Create spec data
   SpecData spec_data;
   spec_data.path = path;
+  spec_data.spec_type = spec_type;  // Store the spec type
   spec_data.fields = fields;
 
   // We'll fill in the actual crate::Spec later during Finalize
@@ -183,15 +186,88 @@ bool CrateWriter::Finalize(std::string* err) {
     crate::PathIndex path_idx = GetOrCreatePath(spec_data.path);
     spec_data.spec.path_index = path_idx;
     spec_data.spec.fieldset_index = fieldset_idx;
-    spec_data.spec.spec_type = SpecType::Prim; // TODO: detect proper type from context
+    spec_data.spec.spec_type = spec_data.spec_type;  // Use the stored spec type
   }
 
   // ========================================================================
   // Step 2: Write all structural sections
   // ========================================================================
 
-  // Mark end of value data section
-  value_data_end_offset_ = Tell();
+  // Note: value_data_end_offset_ is already updated by WriteValueData()
+  // during PackValue() calls above. Do NOT reset it here.
+
+  // ========================================================================
+  // Prepare path tree and extract tokens (must happen before TOKENS section)
+  // ========================================================================
+
+  // Build the path tree now so we can extract tokens
+  std::vector<pathlib::SimplePath> simple_paths_prep;
+
+  // Check if root exists
+  bool has_root_prep = false;
+  for (const auto& path : paths_) {
+    if (path.prim_part() == "/" && path.prop_part().empty()) {
+      has_root_prep = true;
+      break;
+    }
+  }
+
+  if (!has_root_prep) {
+    simple_paths_prep.emplace_back("/", "");
+  }
+
+  for (const auto& path : paths_) {
+    simple_paths_prep.emplace_back(path.prim_part(), path.prop_part());
+  }
+
+  // Sort and encode
+  pathlib::SortSimplePaths(simple_paths_prep);
+  pathlib::CompressedPathTree tree_prep = pathlib::EncodePaths(simple_paths_prep);
+
+  // Extract tokens from path tree and merge with existing tokens
+  // The path tree has its own token table, but we need to merge it with
+  // field name tokens that were already registered in AddSpec()
+  const auto& reverse_tokens_prep = tree_prep.token_table.GetReverseTokens();
+
+  // Build a map of path tree tokens (original index -> token string)
+  std::map<int32_t, std::string> path_tree_tokens;
+  for (const auto& pair : reverse_tokens_prep) {
+    if (pair.first >= 0) {
+      path_tree_tokens[pair.first] = pair.second;
+    }
+  }
+
+  // For each path tree token, check if it already exists in our token table
+  // If it exists, we can reuse it. If not, append it.
+  std::map<int32_t, uint32_t> path_tree_to_our_index;  // Maps path tree index -> our token index
+
+  for (const auto& pair : path_tree_tokens) {
+    int32_t path_tree_idx = pair.first;
+    const std::string& token_str = pair.second;
+
+    // Check if this token already exists in our token table
+    auto it = token_to_index_.find(token_str);
+    if (it != token_to_index_.end()) {
+      // Token already exists, reuse it
+      path_tree_to_our_index[path_tree_idx] = it->second.value;
+    } else {
+      // New token, append it
+      uint32_t new_idx = static_cast<uint32_t>(tokens_.size());
+      tokens_.push_back(token_str);
+      token_to_index_[token_str] = crate::TokenIndex(new_idx);
+      path_tree_to_our_index[path_tree_idx] = new_idx;
+    }
+  }
+
+  // Store the mapping for later use when writing the path tree
+  path_tree_token_remap_ = path_tree_to_our_index;
+
+  // Seek to the end of value data section before writing structural sections
+  // (WriteValueData() seeks back after writing, so file position is not at the end)
+  if (!Seek(value_data_end_offset_)) {
+    if (err) *err = "Failed to seek to end of value data section";
+    return false;
+  }
 
   // Write sections in order
   if (!WriteTokensSection(err)) return false;
@@ -220,6 +296,7 @@ bool CrateWriter::Finalize(std::string* err) {
 
 void CrateWriter::Close() {
   if (file_.is_open()) {
+    file_.flush();  // Ensure all writes are flushed before closing
     file_.close();
   }
   is_open_ = false;
@@ -438,44 +515,55 @@ bool CrateWriter::CompressData(const char* input, size_t inputSize,
     return false;
   }
 
-  // Check if compression is enabled
-  if (!options_.enable_compression) {
-    // No compression - just copy data
-    compressed->assign(input, input + inputSize);
-    return true;
-  }
+  // IMPORTANT: USD crate format uses OpenUSD's TfFastCompression format:
+  // - 1 byte: chunk count (0 for single chunk, N for multiple chunks)
+  // - If chunk count == 0: raw LZ4 compressed data
+  // - If chunk count > 0: for each chunk: int32_t size + LZ4 compressed data
+  //
+  // For simplicity, we always use single-chunk mode (chunk count = 0)
+  // See: pxr/base/tf/fastCompression.cpp in OpenUSD
 
-  // Get required buffer size for compression
-  size_t maxCompressedSize = LZ4Compression::GetCompressedBufferSize(inputSize);
-  if (maxCompressedSize == 0) {
-    if (err) *err = "Input size too large for compression: " + std::to_string(inputSize);
+  // Get maximum compressed size
+  int maxCompressedSize = LZ4_compressBound(static_cast<int>(inputSize));
+  if (maxCompressedSize <= 0) {
+    if (err) *err = "Input size too large for LZ4 compression: " + std::to_string(inputSize);
     return false;
   }
 
-  // Allocate compression buffer
-  compressed->resize(maxCompressedSize);
+  // Allocate buffer: 1 byte for chunk count + compressed data
+  compressed->resize(1 + static_cast<size_t>(maxCompressedSize));
 
-  // Compress
-  std::string compress_err;
-  size_t compressedSize = LZ4Compression::CompressToBuffer(
-      input, compressed->data(), inputSize, &compress_err);
+  // Write chunk count byte (0 = single chunk)
+  (*compressed)[0] = 0;
 
-  if (compressedSize == static_cast<size_t>(~0)) {
-    // Compression failed
-    if (err) *err = "LZ4 compression failed: " + compress_err;
+  // Compress with LZ4 (compatible with OpenUSD TfFastCompression)
+  int compressedSize = LZ4_compress_default(
+      input,
+      compressed->data() + 1,  // Skip the chunk count byte
+      static_cast<int>(inputSize),
+      maxCompressedSize);
+
+  std::cerr << "DEBUG CompressData: inputSize=" << inputSize
+            << ", compressedSize=" << compressedSize
+            << ", maxCompressedSize=" << maxCompressedSize << std::endl;
+
+  if (compressedSize <= 0) {
+    if (err) *err = "LZ4 compression failed with error code: " + std::to_string(compressedSize);
     return false;
   }
 
-  // Check if compression actually reduced size
-  // If not, use uncompressed data (common for small or incompressible data)
-  if (compressedSize >= inputSize) {
-    // No benefit from compression - use original
-    compressed->assign(input, input + inputSize);
-    return true;
-  }
+  // Resize to actual size: 1 byte chunk count + compressed data
+  compressed->resize(1 + static_cast<size_t>(compressedSize));
 
-  // Resize to actual compressed size
-  compressed->resize(compressedSize);
+  // DEBUG: Print first few bytes of compressed data
+  std::cerr << "DEBUG CompressData: First 16 bytes after chunk byte: ";
+  for (int i = 1; i < std::min(17, (int)compressed->size()); ++i) {
+    char buf[4];
+    snprintf(buf, sizeof(buf), "%02x ", (unsigned char)(*compressed)[i]);
+    std::cerr << buf;
+  }
+  std::cerr << std::endl;
+
   return true;
 }
 
@@ -486,12 +574,36 @@ bool CrateWriter::CompressData(const char* input, size_t inputSize,
 bool CrateWriter::WriteTokensSection(std::string* err) {
   int64_t section_start = Tell();
 
+  // Debug: print token count
+  std::cerr << "DEBUG: WriteTokensSection called with " << tokens_.size() << " tokens" << std::endl;
+  for (size_t i = 0; i < std::min(tokens_.size(), size_t(10)); ++i) {
+    std::cerr << "  Token[" << i << "]: " << tokens_[i] << std::endl;
+  }
+
   // Write token count
   uint64_t token_count = static_cast<uint64_t>(tokens_.size());
-  if (!Write(token_count)) {
-    if (err) *err = "Failed to write token count";
+  int64_t token_count_offset = Tell();
+  std::cerr << "DEBUG: Writing token_count = " << token_count << " at offset " << token_count_offset << std::endl;
+
+  // DEBUG: Print bytes being written
+  const unsigned char* bytes = reinterpret_cast<const unsigned char*>(&token_count);
+  std::cerr << "DEBUG: Bytes to write: ";
+  for (size_t i = 0; i < sizeof(token_count); ++i) {
+    char buf[4];
+    snprintf(buf, sizeof(buf), "%02x ", bytes[i]);
+    std::cerr << buf;
+  }
+  std::cerr << std::endl;
+
+  // Write directly as bytes instead of using Write() template
+  file_.write(reinterpret_cast<const char*>(&token_count), sizeof(token_count));
+  file_.flush();
+
+  if (!file_.good()) {
+    if (err) *err = "Failed to write token count bytes";
     return false;
   }
+  std::cerr << "DEBUG: After write, offset = " << Tell() << ", file.good() = " << file_.good() << std::endl;
 
   // Build token blob (null-terminated strings)
   std::ostringstream blob;
@@ -502,12 +614,29 @@ bool CrateWriter::WriteTokensSection(std::string* err) {
 
   std::string token_blob = blob.str();
 
+  std::cerr << "DEBUG: Token blob size = " << token_blob.size() << " bytes" << std::endl;
+  std::cerr << "DEBUG: First 60 bytes: ";
+  for (size_t i = 0; i < std::min(token_blob.size(), size_t(60)); ++i) {
+    if (token_blob[i] == '\0') {
+      std::cerr << "\\0";
+    } else if (isprint(token_blob[i])) {
+      std::cerr << token_blob[i];
+    } else {
+      char buf[5];
+      snprintf(buf, sizeof(buf), "\\x%02x", (unsigned char)token_blob[i]);
+      std::cerr << buf;
+    }
+  }
+  std::cerr << std::endl;
+
   // Phase 4: Compress the blob if compression is enabled
   std::vector<char> compressed_blob;
   if (!CompressData(token_blob.data(), token_blob.size(), &compressed_blob, err)) {
     if (err) *err = "Failed to compress token blob: " + *err;
     return false;
   }
+
+  std::cerr << "DEBUG: Compressed blob size (with chunk byte) = " << compressed_blob.size() << " bytes" << std::endl;
 
   // Write in compressed format (version 0.4.0+):
   // - uncompressedSize (uint64_t)
@@ -577,51 +706,86 @@ bool CrateWriter::WriteStringsSection(std::string* err) {
 bool CrateWriter::WriteFieldsSection(std::string* err) {
   int64_t section_start = Tell();
 
+  // IMPORTANT: Format for v0.4.0+ (we target v0.7.0+):
+  // 1. uint64_t numFields
+  // 2. uint64_t tokenIndicesCompressedSize
+  // 3. Compressed token indices (using Usd_IntegerCompression)
+  // 4. uint64_t repsSize
+  // 5. Compressed value reps (using TfFastCompression)
+  //
+  // This differs from older versions which mixed token indices and value reps.
+  // See: pxr/usd/sdf/crateFile.cpp _ReadFields() and _WriteFields()
+
+  size_t num_fields = fields_.size();
+
   // Write field count
-  uint64_t field_count = static_cast<uint64_t>(fields_.size());
+  uint64_t field_count = static_cast<uint64_t>(num_fields);
   if (!Write(field_count)) {
     if (err) *err = "Failed to write field count";
     return false;
   }
 
-  // Build fields data buffer
-  std::vector<char> fields_data;
-  size_t fields_size = fields_.size() * (sizeof(crate::TokenIndex) + sizeof(crate::ValueRep));
-  fields_data.reserve(fields_size);
+  // Separate token indices from value reps
+  std::vector<uint32_t> token_indices;
+  std::vector<uint64_t> value_reps;
+  token_indices.reserve(num_fields);
+  value_reps.reserve(num_fields);
 
   for (const auto& field : fields_) {
-    // Append token index
-    const char* ti_bytes = reinterpret_cast<const char*>(&field.token_index);
-    fields_data.insert(fields_data.end(), ti_bytes, ti_bytes + sizeof(crate::TokenIndex));
-
-    // Append value rep
-    const char* vr_bytes = reinterpret_cast<const char*>(&field.value_rep);
-    fields_data.insert(fields_data.end(), vr_bytes, vr_bytes + sizeof(crate::ValueRep));
+    token_indices.push_back(field.token_index.value);
+    value_reps.push_back(field.value_rep.GetData());
   }
 
-  // Phase 4: Compress fields data
-  std::vector<char> compressed_fields;
-  if (!CompressData(fields_data.data(), fields_data.size(), &compressed_fields, err)) {
-    if (err) *err = "Failed to compress fields data: " + *err;
+  // Compress token indices using Usd_IntegerCompression
+  size_t token_indices_compressed_buffer_size =
+      Usd_IntegerCompression::GetCompressedBufferSize(num_fields);
+  std::vector<char> compressed_token_indices(token_indices_compressed_buffer_size);
+
+  std::string compress_err;
+  size_t token_indices_compressed_size = Usd_IntegerCompression::CompressToBuffer(
+      token_indices.data(), num_fields,
+      compressed_token_indices.data(), &compress_err);
+
+  if (token_indices_compressed_size == 0) {
+    if (err) *err = "Failed to compress token indices: " + compress_err;
     return false;
   }
 
-  // Write compressed format
-  uint64_t uncompressed_size = static_cast<uint64_t>(fields_data.size());
-  uint64_t compressed_size = static_cast<uint64_t>(compressed_fields.size());
+  compressed_token_indices.resize(token_indices_compressed_size);
 
-  if (!Write(uncompressed_size)) {
-    if (err) *err = "Failed to write fields uncompressed size";
+  // Write tokenIndicesCompressedSize
+  uint64_t token_indices_size = static_cast<uint64_t>(token_indices_compressed_size);
+  if (!Write(token_indices_size)) {
+    if (err) *err = "Failed to write token indices compressed size";
     return false;
   }
 
-  if (!Write(compressed_size)) {
-    if (err) *err = "Failed to write fields compressed size";
+  // Write compressed token indices
+  if (!WriteBytes(compressed_token_indices.data(), token_indices_compressed_size)) {
+    if (err) *err = "Failed to write compressed token indices";
     return false;
   }
 
-  if (!WriteBytes(compressed_fields.data(), compressed_fields.size())) {
-    if (err) *err = "Failed to write compressed fields data";
+  // Compress value reps using TfFastCompression (our CompressData)
+  const char* reps_data = reinterpret_cast<const char*>(value_reps.data());
+  size_t reps_data_size = value_reps.size() * sizeof(uint64_t);
+
+  std::vector<char> compressed_reps;
+  if (!CompressData(reps_data, reps_data_size, &compressed_reps, err)) {
+    if (err) *err = "Failed to compress value reps: " + *err;
+    return false;
+  }
+
+  // Write repsSize
+  uint64_t reps_size = static_cast<uint64_t>(compressed_reps.size());
+  if (!Write(reps_size)) {
+    if (err) *err = "Failed to write value reps size";
+    return false;
+  }
+
+  // Write compressed value reps
+  if (!WriteBytes(compressed_reps.data(), compressed_reps.size())) {
+    if (err) *err = "Failed to write compressed value reps";
     return false;
   }
 
@@ -636,49 +800,66 @@ bool CrateWriter::WriteFieldsSection(std::string* err) {
 bool CrateWriter::WriteFieldSetsSection(std::string* err) {
   int64_t section_start = Tell();
 
-  // Write fieldset count
-  uint64_t fieldset_count = static_cast<uint64_t>(fieldsets_.size());
-  if (!Write(fieldset_count)) {
-    if (err) *err = "Failed to write fieldset count";
-    return false;
-  }
+  // IMPORTANT: Format for v0.4.0+ (we target v0.7.0+):
+  // 1. uint64_t numFieldSetVals (total number of FieldIndex values)
+  // 2. uint64_t compressedSize (size of compressed data)
+  // 3. Compressed field index array (using Usd_IntegerCompression)
+  //
+  // Fieldsets are stored as a flat array of FieldIndex values.
+  // Each fieldset is terminated by a default-constructed FieldIndex.
+  //
+  // See: pxr/usd/sdf/crateFile.cpp _WriteFieldSets()
 
-  // Build fieldsets data buffer (null-terminated lists)
-  std::vector<char> fieldsets_data;
-  for (const auto& fieldset : fieldsets_) {
+  std::cerr << "DEBUG: WriteFieldSetsSection with " << fieldsets_.size() << " fieldsets" << std::endl;
+
+  // Flatten all fieldsets into a single array with terminators
+  std::vector<uint32_t> fieldset_vals;
+  for (size_t i = 0; i < fieldsets_.size(); ++i) {
+    const auto& fieldset = fieldsets_[i];
+    std::cerr << "  Fieldset[" << i << "]: size=" << fieldset.size() << " values: [";
     for (const auto& field_idx : fieldset) {
-      const char* bytes = reinterpret_cast<const char*>(&field_idx);
-      fieldsets_data.insert(fieldsets_data.end(), bytes, bytes + sizeof(crate::FieldIndex));
+      std::cerr << field_idx.value << " ";
+      fieldset_vals.push_back(field_idx.value);
     }
-    // Write terminator (index with value ~0u)
-    crate::FieldIndex terminator;
-    const char* term_bytes = reinterpret_cast<const char*>(&terminator);
-    fieldsets_data.insert(fieldsets_data.end(), term_bytes, term_bytes + sizeof(crate::FieldIndex));
+    // Write terminator (default FieldIndex() has value ~0u)
+    fieldset_vals.push_back(~0u);
+    std::cerr << "~0u]" << std::endl;
   }
 
-  // Phase 4: Compress fieldsets data
-  std::vector<char> compressed_fieldsets;
-  if (!CompressData(fieldsets_data.data(), fieldsets_data.size(), &compressed_fieldsets, err)) {
-    if (err) *err = "Failed to compress fieldsets data: " + *err;
+  std::cerr << "DEBUG: Total fieldset_vals = " << fieldset_vals.size() << std::endl;
+
+  size_t num_vals = fieldset_vals.size();
+
+  // Write total number of field index values
+  uint64_t val_count = static_cast<uint64_t>(num_vals);
+  if (!Write(val_count)) {
+    if (err) *err = "Failed to write fieldset value count";
     return false;
   }
 
-  // Write compressed format
-  uint64_t uncompressed_size = static_cast<uint64_t>(fieldsets_data.size());
-  uint64_t compressed_size = static_cast<uint64_t>(compressed_fieldsets.size());
+  // Compress fieldset values using Usd_IntegerCompression
+  size_t buffer_size = Usd_IntegerCompression::GetCompressedBufferSize(num_vals);
+  std::vector<char> compressed(buffer_size);
 
-  if (!Write(uncompressed_size)) {
-    if (err) *err = "Failed to write fieldsets uncompressed size";
+  std::string compress_err;
+  size_t compressed_size = Usd_IntegerCompression::CompressToBuffer(
+      fieldset_vals.data(), num_vals, compressed.data(), &compress_err);
+
+  if (compressed_size == 0) {
+    if (err) *err = "Failed to compress fieldset values: " + compress_err;
     return false;
   }
 
-  if (!Write(compressed_size)) {
-    if (err) *err = "Failed to write fieldsets compressed size";
+  // Write compressed size
+  uint64_t size = static_cast<uint64_t>(compressed_size);
+  if (!Write(size)) {
+    if (err) *err = "Failed to write compressed size";
     return false;
   }
 
-  if (!WriteBytes(compressed_fieldsets.data(), compressed_fieldsets.size())) {
-    if (err) *err = "Failed to write compressed fieldsets data";
+  // Write compressed data
+  if (!WriteBytes(compressed.data(), compressed_size)) {
+    if (err) *err = "Failed to write compressed fieldset data";
     return false;
   }
 
@@ -693,9 +874,32 @@ bool CrateWriter::WriteFieldSetsSection(std::string* err) {
 bool CrateWriter::WritePathsSection(std::string* err) {
   int64_t section_start = Tell();
 
+  // IMPORTANT: Format for v0.4.0+ (we target v0.7.0+):
+  // 1. uint64_t numPaths
+  // 2. For each of three arrays (pathIndexes, elementTokenIndexes, jumps):
+  //    - uint64_t arrayCompressedSize
+  //    - Compressed array data (using Usd_IntegerCompression)
+  //
+  // See: pxr/usd/sdf/crateFile.cpp _WriteCompressedPathData()
+
   // Use the path sorting and encoding library
   // Convert TinyUSDZ Path to SimplePath for encoding
   std::vector<pathlib::SimplePath> simple_paths;
+
+  // CRITICAL: Always include the root "/" path first
+  // OpenUSD requires root to be in the paths list
+  bool has_root = false;
+  for (const auto& path : paths_) {
+    if (path.prim_part() == "/" && path.prop_part().empty()) {
+      has_root = true;
+      break;
+    }
+  }
+
+  if (!has_root) {
+    simple_paths.emplace_back("/", "");  // Add root path
+  }
+
   for (const auto& path : paths_) {
     simple_paths.emplace_back(path.prim_part(), path.prop_part());
   }
@@ -706,62 +910,125 @@ bool CrateWriter::WritePathsSection(std::string* err) {
   // Encode to compressed tree
   pathlib::CompressedPathTree tree = pathlib::EncodePaths(simple_paths);
 
-  // Write the compressed tree
-  // Format: count + three arrays
+  // Remap the path tree token indices to our token indices
+  // The path tree has its own token indices, but we need to use our global token indices
+  // that were computed in Finalize() to preserve field name tokens
+  std::vector<int32_t> remapped_element_token_indexes;
+  remapped_element_token_indexes.reserve(tree.element_token_indexes.size());
 
+  for (int32_t path_tree_idx : tree.element_token_indexes) {
+    if (path_tree_idx < 0) {
+      // Negative indices for properties: negate, remap, then negate again
+      int32_t abs_idx = -path_tree_idx;
+      auto it = path_tree_token_remap_.find(abs_idx);
+      if (it != path_tree_token_remap_.end()) {
+        remapped_element_token_indexes.push_back(-static_cast<int32_t>(it->second));
+      } else {
+        // Shouldn't happen, but preserve original if not found
+        remapped_element_token_indexes.push_back(path_tree_idx);
+      }
+    } else {
+      // Positive indices for prim parts
+      auto it = path_tree_token_remap_.find(path_tree_idx);
+      if (it != path_tree_token_remap_.end()) {
+        remapped_element_token_indexes.push_back(static_cast<int32_t>(it->second));
+      } else {
+        // Shouldn't happen, but preserve original if not found
+        remapped_element_token_indexes.push_back(path_tree_idx);
+      }
+    }
+  }
+
+  // Replace the tree's token indices with our remapped ones
+  tree.element_token_indexes = remapped_element_token_indexes;
+
+  // CRITICAL: OpenUSD expects TWO uint64_t values:
+  // 1. Total number of paths (for resizing _paths vector)
+  // 2. Number of encoded paths in the tree
+  // For the tree encoding, these values are identical.
   uint64_t path_count = static_cast<uint64_t>(tree.size());
   if (!Write(path_count)) {
-    if (err) *err = "Failed to write path count";
+    if (err) *err = "Failed to write total path count";
     return false;
   }
 
-  // Build paths data buffer (three arrays concatenated)
-  std::vector<char> paths_data;
-  size_t array_sizes = tree.size() * (sizeof(pathlib::PathIndex) + sizeof(pathlib::TokenIndex) + sizeof(int32_t));
-  paths_data.reserve(array_sizes);
-
-  // Append path_indexes array
-  for (size_t i = 0; i < tree.size(); ++i) {
-    const char* bytes = reinterpret_cast<const char*>(&tree.path_indexes[i]);
-    paths_data.insert(paths_data.end(), bytes, bytes + sizeof(pathlib::PathIndex));
-  }
-
-  // Append element_token_indexes array
-  for (size_t i = 0; i < tree.size(); ++i) {
-    const char* bytes = reinterpret_cast<const char*>(&tree.element_token_indexes[i]);
-    paths_data.insert(paths_data.end(), bytes, bytes + sizeof(pathlib::TokenIndex));
-  }
-
-  // Append jumps array
-  for (size_t i = 0; i < tree.size(); ++i) {
-    const char* bytes = reinterpret_cast<const char*>(&tree.jumps[i]);
-    paths_data.insert(paths_data.end(), bytes, bytes + sizeof(int32_t));
-  }
-
-  // Phase 4: Compress paths data
-  std::vector<char> compressed_paths;
-  if (!CompressData(paths_data.data(), paths_data.size(), &compressed_paths, err)) {
-    if (err) *err = "Failed to compress paths data: " + *err;
+  // Write the same value again for numEncodedPaths
+  if (!Write(path_count)) {
+    if (err) *err = "Failed to write encoded path count";
     return false;
   }
 
-  // Write compressed format
-  uint64_t uncompressed_size = static_cast<uint64_t>(paths_data.size());
-  uint64_t compressed_size = static_cast<uint64_t>(compressed_paths.size());
-
-  if (!Write(uncompressed_size)) {
-    if (err) *err = "Failed to write paths uncompressed size";
-    return false;
+  // Convert path_indexes from uint64_t to uint32_t
+  // (USD paths typically won't exceed 2^32 entries)
+  std::vector<uint32_t> path_indexes_32(tree.path_indexes.size());
+  std::cerr << "DEBUG: Path tree has " << tree.path_indexes.size() << " path indices:\n";
+  for (size_t i = 0; i < tree.path_indexes.size(); ++i) {
+    path_indexes_32[i] = static_cast<uint32_t>(tree.path_indexes[i]);
+    std::cerr << "  pathIndex[" << i << "] = " << path_indexes_32[i] << "\n";
   }
 
-  if (!Write(compressed_size)) {
-    if (err) *err = "Failed to write paths compressed size";
-    return false;
+  // Compress and write pathIndexes array (uint32_t)
+  {
+    size_t buffer_size = Usd_IntegerCompression::GetCompressedBufferSize(path_indexes_32.size());
+    std::vector<char> compressed(buffer_size);
+
+    std::string compress_err;
+    size_t compressed_size = Usd_IntegerCompression::CompressToBuffer(
+        path_indexes_32.data(), path_indexes_32.size(), compressed.data(), &compress_err);
+
+    if (compressed_size == 0) {
+      if (err) *err = std::string("Failed to compress pathIndexes: ") + compress_err;
+      return false;
+    }
+
+    uint64_t size = static_cast<uint64_t>(compressed_size);
+    if (!Write(size) || !WriteBytes(compressed.data(), compressed_size)) {
+      if (err) *err = "Failed to write pathIndexes";
+      return false;
+    }
   }
 
-  if (!WriteBytes(compressed_paths.data(), compressed_paths.size())) {
-    if (err) *err = "Failed to write compressed paths data";
-    return false;
+  // Compress and write elementTokenIndexes array (int32_t - can be negative)
+  {
+    size_t buffer_size = Usd_IntegerCompression::GetCompressedBufferSize(tree.element_token_indexes.size());
+    std::vector<char> compressed(buffer_size);
+
+    std::string compress_err;
+    size_t compressed_size = Usd_IntegerCompression::CompressToBuffer(
+        tree.element_token_indexes.data(), tree.element_token_indexes.size(),
+        compressed.data(), &compress_err);
+
+    if (compressed_size == 0) {
+      if (err) *err = std::string("Failed to compress elementTokenIndexes: ") + compress_err;
+      return false;
+    }
+
+    uint64_t size = static_cast<uint64_t>(compressed_size);
+    if (!Write(size) || !WriteBytes(compressed.data(), compressed_size)) {
+      if (err) *err = "Failed to write elementTokenIndexes";
+      return false;
+    }
+  }
+
+  // Compress and write jumps array (int32_t)
+  {
+    size_t buffer_size = Usd_IntegerCompression::GetCompressedBufferSize(tree.jumps.size());
+    std::vector<char> compressed(buffer_size);
+
+    std::string compress_err;
+    size_t compressed_size = Usd_IntegerCompression::CompressToBuffer(
+        tree.jumps.data(), tree.jumps.size(), compressed.data(), &compress_err);
+
+    if (compressed_size == 0) {
+      if (err) *err = std::string("Failed to compress jumps: ") + compress_err;
+      return false;
+    }
+
+    uint64_t size = static_cast<uint64_t>(compressed_size);
+    if (!Write(size) || !WriteBytes(compressed.data(), compressed_size)) {
+      if (err) *err = "Failed to write jumps";
+      return false;
+    }
   }
 
   int64_t section_end = Tell();
@@ -775,47 +1042,125 @@ bool CrateWriter::WritePathsSection(std::string* err) {
 bool CrateWriter::WriteSpecsSection(std::string* err) {
   int64_t section_start = Tell();
 
+  // IMPORTANT: Format for v0.4.0+ (we target v0.7.0+):
+  // 1. uint64_t numSpecs
+  // 2. pathIndexes (compressed with Usd_IntegerCompression):
+  //    - uint64_t pathIndexesSize
+  //    - Compressed pathIndexes array
+  // 3. fieldSetIndexes (compressed with Usd_IntegerCompression):
+  //    - uint64_t fieldSetIndexesSize
+  //    - Compressed fieldSetIndexes array
+  // 4. specTypes (compressed with Usd_IntegerCompression):
+  //    - uint64_t specTypesSize
+  //    - Compressed specTypes array
+  //
+  // See: pxr/usd/sdf/crateFile.cpp _WriteSpecs()
+
+  size_t num_specs = spec_data_.size();
+
   // Write spec count
-  uint64_t spec_count = static_cast<uint64_t>(spec_data_.size());
+  uint64_t spec_count = static_cast<uint64_t>(num_specs);
   if (!Write(spec_count)) {
     if (err) *err = "Failed to write spec count";
     return false;
   }
 
-  // Build specs data buffer
-  std::vector<char> specs_data;
-  size_t specs_size = spec_data_.size() * sizeof(crate::Spec);
-  specs_data.reserve(specs_size);
+  // IMPORTANT: Build mapping from fieldset number to offset in flat array
+  // The reader expects fieldset_index to be the OFFSET in the flat fieldset array,
+  // not the fieldset number. We need to convert from fieldset_number -> offset.
+  std::vector<uint32_t> fieldset_number_to_offset;
+  fieldset_number_to_offset.resize(fieldsets_.size());
 
-  // TODO: Sort specs by path for better compression (Phase 4 optimization)
-  for (const auto& spec_data : spec_data_) {
-    const char* bytes = reinterpret_cast<const char*>(&spec_data.spec);
-    specs_data.insert(specs_data.end(), bytes, bytes + sizeof(crate::Spec));
+  uint32_t current_offset = 0;
+  for (size_t i = 0; i < fieldsets_.size(); ++i) {
+    fieldset_number_to_offset[i] = current_offset;
+    // Each fieldset takes (num_fields + 1) slots (fields + sentinel)
+    current_offset += static_cast<uint32_t>(fieldsets_[i].size() + 1);
   }
 
-  // Phase 4: Compress specs data
-  std::vector<char> compressed_specs;
-  if (!CompressData(specs_data.data(), specs_data.size(), &compressed_specs, err)) {
-    if (err) *err = "Failed to compress specs data: " + *err;
+  std::cerr << "DEBUG: Fieldset number to offset mapping:\n";
+  for (size_t i = 0; i < fieldset_number_to_offset.size(); ++i) {
+    std::cerr << "  Fieldset[" << i << "] -> offset " << fieldset_number_to_offset[i] << "\n";
+  }
+
+  // Separate pathIndexes, fieldSetIndexes, specTypes
+  std::vector<uint32_t> path_indexes;
+  std::vector<uint32_t> fieldset_indexes;
+  std::vector<uint32_t> spec_types;
+
+  path_indexes.reserve(num_specs);
+  fieldset_indexes.reserve(num_specs);
+  spec_types.reserve(num_specs);
+
+  std::cerr << "DEBUG WriteSpecsSection: Processing " << num_specs << " specs:\n";
+  for (size_t i = 0; i < spec_data_.size(); ++i) {
+    const auto& spec_data = spec_data_[i];
+    path_indexes.push_back(spec_data.spec.path_index.value);
+
+    // Convert fieldset number to offset in flat array
+    uint32_t fieldset_number = spec_data.spec.fieldset_index.value;
+    uint32_t fieldset_offset = fieldset_number_to_offset[fieldset_number];
+    fieldset_indexes.push_back(fieldset_offset);
+
+    spec_types.push_back(static_cast<uint32_t>(spec_data.spec.spec_type));
+
+    std::cerr << "  Spec[" << i << "]: path_index=" << spec_data.spec.path_index.value
+              << " fieldset_number=" << fieldset_number
+              << " fieldset_offset=" << fieldset_offset
+              << " spec_type=" << static_cast<uint32_t>(spec_data.spec.spec_type)
+              << " (";
+    switch(spec_data.spec.spec_type) {
+      case SpecType::PseudoRoot: std::cerr << "PseudoRoot"; break;
+      case SpecType::Prim: std::cerr << "Prim"; break;
+      case SpecType::Attribute: std::cerr << "Attribute"; break;
+      default: std::cerr << "Other"; break;
+    }
+    std::cerr << ")\n";
+  }
+
+  // Helper to compress and write an integer array
+  auto writeCompressedIntArray = [this, err](const std::vector<uint32_t>& data,
+                                              const char* array_name) -> bool {
+    size_t buffer_size = Usd_IntegerCompression::GetCompressedBufferSize(data.size());
+    std::vector<char> compressed(buffer_size);
+
+    std::string compress_err;
+    size_t compressed_size = Usd_IntegerCompression::CompressToBuffer(
+        data.data(), data.size(), compressed.data(), &compress_err);
+
+    if (compressed_size == 0) {
+      if (err) *err = std::string("Failed to compress ") + array_name + ": " + compress_err;
+      return false;
+    }
+
+    // Write compressed size
+    uint64_t size = static_cast<uint64_t>(compressed_size);
+    if (!Write(size)) {
+      if (err) *err = std::string("Failed to write ") + array_name + " size";
+      return false;
+    }
+
+    // Write compressed data
+    if (!WriteBytes(compressed.data(), compressed_size)) {
+      if (err) *err = std::string("Failed to write compressed ") + array_name;
+      return false;
+    }
+
+    return true;
+  };
+
+  // Compress and write pathIndexes
+  if (!writeCompressedIntArray(path_indexes, "pathIndexes")) {
     return false;
   }
 
-  // Write compressed format
-  uint64_t uncompressed_size = static_cast<uint64_t>(specs_data.size());
-  uint64_t compressed_size = static_cast<uint64_t>(compressed_specs.size());
-
-  if (!Write(uncompressed_size)) {
-    if (err) *err = "Failed to write specs uncompressed size";
+  // Compress and write fieldSetIndexes
+  if (!writeCompressedIntArray(fieldset_indexes, "fieldSetIndexes")) {
     return false;
   }
 
-  if (!Write(compressed_size)) {
-    if (err) *err = "Failed to write specs compressed size";
-    return false;
-  }
-
-  if (!WriteBytes(compressed_specs.data(), compressed_specs.size())) {
-    if (err) *err = "Failed to write compressed specs data";
+  // Compress and write specTypes
+  if (!writeCompressedIntArray(spec_types, "specTypes")) {
     return false;
   }
 
@@ -829,12 +1174,19 @@ bool CrateWriter::WriteSpecsSection(std::string* err) {
 
 bool CrateWriter::WriteTableOfContents(std::string* err) {
   int64_t toc_offset = Tell();
+  std::cerr << "DEBUG: WriteTableOfContents() at offset " << toc_offset << std::endl;
 
   // Write section count
   uint64_t section_count = static_cast<uint64_t>(toc_.sections.size());
   if (!Write(section_count)) {
     if (err) *err = "Failed to write section count";
     return false;
+  }
+
+  // Debug: print first few sections
+  for (size_t i = 0; i < std::min(toc_.sections.size(), size_t(3)); ++i) {
+    const auto& sec = toc_.sections[i];
+    std::cerr << "  Section[" << i << "]: " << sec.name << " start=" << sec.start << " size=" << sec.size << std::endl;
   }
 
   // Write sections
@@ -862,7 +1214,19 @@ bool CrateWriter::WriteTableOfContents(std::string* err) {
   // We need to save this before writing bootstrap
   int64_t saved_toc_offset = toc_offset;
 
-  // Seek back to write bootstrap
+  std::cerr << "DEBUG: Before bootstrap write, TOC offset = " << saved_toc_offset << std::endl;
+
+  // IMPORTANT: Flush before seeking to beginning
+  // We need to flush all buffered writes before seeking backwards
+  file_.flush();
+
+  // Seek to beginning to write bootstrap (no need to close/reopen)
+  if (!Seek(0)) {
+    if (err) *err = "Failed to seek to beginning for bootstrap write";
+    return false;
+  }
+
+  // Build bootstrap header
   BootStrap boot;
   memset(&boot, 0, sizeof(boot));
 
@@ -872,15 +1236,14 @@ bool CrateWriter::WriteTableOfContents(std::string* err) {
   boot.version[2] = options_.version_patch;
   boot.toc_offset = saved_toc_offset;
 
-  if (!Seek(0)) {
-    if (err) *err = "Failed to seek to bootstrap";
-    return false;
-  }
-
+  // Write bootstrap header
   if (!WriteBytes(&boot, sizeof(boot))) {
     if (err) *err = "Failed to write bootstrap";
     return false;
   }
+
+  file_.flush();
+  std::cerr << "DEBUG: Bootstrap written successfully" << std::endl;
 
   return true;
 }
@@ -952,35 +1315,52 @@ crate::ValueRep CrateWriter::PackValue(const crate::CrateValue& value, std::stri
     rep.SetType(static_cast<int32_t>(crate::CrateDataTypeId::CRATE_DATA_TYPE_QUATD));
   }
   // Phase 1: Array types - detect and set proper type
-  // Note: Arrays have specific data type IDs that indicate they are arrays
+  // Note: Arrays use the element type ID + IsArray flag (bit 63), NOT a modified type code
   else if (value.as<std::vector<bool>>()) {
-    rep.SetType(static_cast<int32_t>(crate::CrateDataTypeId::CRATE_DATA_TYPE_BOOL) | (1 << 6)); // Array flag
+    rep.SetType(static_cast<int32_t>(crate::CrateDataTypeId::CRATE_DATA_TYPE_BOOL));
+    rep.SetIsArray();
   } else if (value.as<std::vector<uint8_t>>()) {
-    rep.SetType(static_cast<int32_t>(crate::CrateDataTypeId::CRATE_DATA_TYPE_UCHAR) | (1 << 6));
+    rep.SetType(static_cast<int32_t>(crate::CrateDataTypeId::CRATE_DATA_TYPE_UCHAR));
+    rep.SetIsArray();
   } else if (value.as<std::vector<int32_t>>()) {
-    rep.SetType(static_cast<int32_t>(crate::CrateDataTypeId::CRATE_DATA_TYPE_INT) | (1 << 6));
+    rep.SetType(static_cast<int32_t>(crate::CrateDataTypeId::CRATE_DATA_TYPE_INT));
+    rep.SetIsArray();
   } else if (value.as<std::vector<uint32_t>>()) {
-    rep.SetType(static_cast<int32_t>(crate::CrateDataTypeId::CRATE_DATA_TYPE_UINT) | (1 << 6));
+    rep.SetType(static_cast<int32_t>(crate::CrateDataTypeId::CRATE_DATA_TYPE_UINT));
+    rep.SetIsArray();
   } else if (value.as<std::vector<int64_t>>()) {
-    rep.SetType(static_cast<int32_t>(crate::CrateDataTypeId::CRATE_DATA_TYPE_INT64) | (1 << 6));
+    rep.SetType(static_cast<int32_t>(crate::CrateDataTypeId::CRATE_DATA_TYPE_INT64));
+    rep.SetIsArray();
   } else if (value.as<std::vector<uint64_t>>()) {
-    rep.SetType(static_cast<int32_t>(crate::CrateDataTypeId::CRATE_DATA_TYPE_UINT64) | (1 << 6));
+    rep.SetType(static_cast<int32_t>(crate::CrateDataTypeId::CRATE_DATA_TYPE_UINT64));
+    rep.SetIsArray();
   } else if (value.as<std::vector<value::half>>()) {
-    rep.SetType(static_cast<int32_t>(crate::CrateDataTypeId::CRATE_DATA_TYPE_HALF) | (1 << 6));
+    rep.SetType(static_cast<int32_t>(crate::CrateDataTypeId::CRATE_DATA_TYPE_HALF));
+    rep.SetIsArray();
   } else if (value.as<std::vector<float>>()) {
-    rep.SetType(static_cast<int32_t>(crate::CrateDataTypeId::CRATE_DATA_TYPE_FLOAT) | (1 << 6));
+    rep.SetType(static_cast<int32_t>(crate::CrateDataTypeId::CRATE_DATA_TYPE_FLOAT));
+    rep.SetIsArray();
   } else if (value.as<std::vector<double>>()) {
-    rep.SetType(static_cast<int32_t>(crate::CrateDataTypeId::CRATE_DATA_TYPE_DOUBLE) | (1 << 6));
+    rep.SetType(static_cast<int32_t>(crate::CrateDataTypeId::CRATE_DATA_TYPE_DOUBLE));
+    rep.SetIsArray();
   } else if (value.as<std::vector<value::float2>>()) {
-    rep.SetType(static_cast<int32_t>(crate::CrateDataTypeId::CRATE_DATA_TYPE_VEC2F) | (1 << 6));
+    rep.SetType(static_cast<int32_t>(crate::CrateDataTypeId::CRATE_DATA_TYPE_VEC2F));
+    rep.SetIsArray();
   } else if (value.as<std::vector<value::float3>>()) {
-    rep.SetType(static_cast<int32_t>(crate::CrateDataTypeId::CRATE_DATA_TYPE_VEC3F) | (1 << 6));
+    rep.SetType(static_cast<int32_t>(crate::CrateDataTypeId::CRATE_DATA_TYPE_VEC3F));
+    rep.SetIsArray();
   } else if (value.as<std::vector<value::float4>>()) {
-    rep.SetType(static_cast<int32_t>(crate::CrateDataTypeId::CRATE_DATA_TYPE_VEC4F) | (1 << 6));
+    rep.SetType(static_cast<int32_t>(crate::CrateDataTypeId::CRATE_DATA_TYPE_VEC4F));
+    rep.SetIsArray();
   } else if (value.as<std::vector<std::string>>()) {
-    rep.SetType(static_cast<int32_t>(crate::CrateDataTypeId::CRATE_DATA_TYPE_STRING) | (1 << 6));
+    rep.SetType(static_cast<int32_t>(crate::CrateDataTypeId::CRATE_DATA_TYPE_STRING));
+    rep.SetIsArray();
   } else if (value.as<std::vector<value::token>>()) {
-    rep.SetType(static_cast<int32_t>(crate::CrateDataTypeId::CRATE_DATA_TYPE_TOKEN) | (1 << 6));
+    rep.SetType(static_cast<int32_t>(crate::CrateDataTypeId::CRATE_DATA_TYPE_TOKEN));
+    rep.SetIsArray();
+  } else if (value.as<std::vector<Path>>()) {
+    // PathVector is a special type (type code 40) that doesn't use the array flag
+    rep.SetType(static_cast<int32_t>(crate::CrateDataTypeId::CRATE_DATA_TYPE_PATH_VECTOR));
   }
   // Phase 2: Dictionary type
   else if (value.as<value::dict>()) {
@@ -1667,8 +2047,26 @@ int64_t CrateWriter::WriteValueData(const crate::CrateValue& value, std::string*
       }
     }
   }
+  // Path array - special handling (paths are stored as indices)
+  else if (auto* path_array = value.as<std::vector<Path>>()) {
+    uint64_t count = path_array->size();
+    if (!Write(count)) {
+      if (err) *err = "Failed to write path array count";
+      return -1;
+    }
+    for (const auto& path : *path_array) {
+      crate::PathIndex idx = GetOrCreatePath(path);
+      if (!Write(idx.value)) {
+        if (err) *err = "Failed to write path array element index";
+        return -1;
+      }
+    }
+  }
   // Phase 2: Dictionary serialization
-  // Dictionary format: uint64_t count + (key as StringIndex, value as ValueRep) pairs
+  // Dictionary format (OpenUSD simple WriteMap): uint64_t count + for each: (StringIndex key, ValueRep value)
+  // This matches OpenUSD's WriteMap template (crateFile.cpp:1410-1416)
+  // Note: TinyUSDZ's ReadCustomData (crate-reader.cc:2027-2094) expects recursive offset format,
+  // but we're testing if it can also handle the simple format
   else if (auto* dict_val = value.as<value::dict>()) {
     uint64_t count = dict_val->size();
     if (!Write(count)) {
@@ -1676,86 +2074,89 @@ int64_t CrateWriter::WriteValueData(const crate::CrateValue& value, std::string*
       return -1;
     }
 
-    // Write each key-value pair
+    // Write each (key, value) pair directly
     for (const auto& kv : *dict_val) {
-      // Key is stored as StringIndex
+      // Write key as StringIndex
       crate::StringIndex key_idx = GetOrCreateString(kv.first);
       if (!Write(key_idx.value)) {
         if (err) *err = "Failed to write dictionary key index";
         return -1;
       }
 
-      // Value is stored as ValueRep - need to pack it
-      // Use pointer form of linb::any_cast to check type
+      // Pack value to ValueRep
       crate::ValueRep value_rep;
-      bool value_written = false;
+      bool value_packed = false;
 
       // Try int32
       if (auto* int_val = linb::any_cast<int32_t>(&kv.second)) {
         crate::CrateValue cv;
         cv.Set(*int_val);
         value_rep = PackValue(cv, err);
-        value_written = true;
+        value_packed = true;
       }
       // Try int (convert to int32)
       else if (auto* int_val = linb::any_cast<int>(&kv.second)) {
         crate::CrateValue cv;
         cv.Set(static_cast<int32_t>(*int_val));
         value_rep = PackValue(cv, err);
-        value_written = true;
+        value_packed = true;
       }
       // Try uint32
       else if (auto* uint_val = linb::any_cast<uint32_t>(&kv.second)) {
         crate::CrateValue cv;
         cv.Set(*uint_val);
         value_rep = PackValue(cv, err);
-        value_written = true;
+        value_packed = true;
       }
       // Try float
       else if (auto* float_val = linb::any_cast<float>(&kv.second)) {
         crate::CrateValue cv;
         cv.Set(*float_val);
         value_rep = PackValue(cv, err);
-        value_written = true;
+        value_packed = true;
       }
       // Try double
       else if (auto* double_val = linb::any_cast<double>(&kv.second)) {
         crate::CrateValue cv;
         cv.Set(*double_val);
         value_rep = PackValue(cv, err);
-        value_written = true;
+        value_packed = true;
       }
       // Try bool
       else if (auto* bool_val = linb::any_cast<bool>(&kv.second)) {
         crate::CrateValue cv;
         cv.Set(*bool_val);
         value_rep = PackValue(cv, err);
-        value_written = true;
+        value_packed = true;
       }
       // Try string
       else if (auto* str_val = linb::any_cast<std::string>(&kv.second)) {
         crate::CrateValue cv;
         cv.Set(*str_val);
         value_rep = PackValue(cv, err);
-        value_written = true;
+        value_packed = true;
       }
       // Try token
       else if (auto* tok_val = linb::any_cast<value::token>(&kv.second)) {
         crate::CrateValue cv;
         cv.Set(*tok_val);
         value_rep = PackValue(cv, err);
-        value_written = true;
+        value_packed = true;
       }
       else {
         if (err) *err = "Unsupported dictionary value type";
         return -1;
       }
 
-      if (value_written) {
-        if (!Write(value_rep.GetData())) {
-          if (err) *err = "Failed to write dictionary value";
-          return -1;
-        }
+      if (!value_packed) {
+        if (err) *err = "Failed to pack dictionary value";
+        return -1;
+      }
+
+      // Write ValueRep directly (no offset indirection)
+      if (!Write(value_rep.GetData())) {
+        if (err) *err = "Failed to write dictionary ValueRep";
+        return -1;
       }
     }
   }
@@ -2305,10 +2706,297 @@ int64_t CrateWriter::WriteValueData(const crate::CrateValue& value, std::string*
         return -1;
       }
 
-      // Pack the value to get ValueRep
-      crate::ValueRep value_rep = PackValue(crate_value, err);
-      if (err && !err->empty()) {
-        return -1;
+      // DEDUPLICATION: Check if this value can be deduplicated
+      crate::ValueRep value_rep;
+      bool dedup_attempted = false;
+
+      if (options_.enable_deduplication) {
+        bool is_dedup_candidate = false;
+        std::vector<char> value_bytes;
+
+        // ===== NUMERIC ARRAY TYPES =====
+        if (auto* float_arr = crate_value.as<std::vector<float>>()) {
+          is_dedup_candidate = true;
+          size_t byte_size = float_arr->size() * sizeof(float);
+          value_bytes.resize(byte_size);
+          std::memcpy(value_bytes.data(), float_arr->data(), byte_size);
+        } else if (auto* double_arr = crate_value.as<std::vector<double>>()) {
+          is_dedup_candidate = true;
+          size_t byte_size = double_arr->size() * sizeof(double);
+          value_bytes.resize(byte_size);
+          std::memcpy(value_bytes.data(), double_arr->data(), byte_size);
+        } else if (auto* int_arr = crate_value.as<std::vector<int32_t>>()) {
+          is_dedup_candidate = true;
+          size_t byte_size = int_arr->size() * sizeof(int32_t);
+          value_bytes.resize(byte_size);
+          std::memcpy(value_bytes.data(), int_arr->data(), byte_size);
+        } else if (auto* uint_arr = crate_value.as<std::vector<uint32_t>>()) {
+          is_dedup_candidate = true;
+          size_t byte_size = uint_arr->size() * sizeof(uint32_t);
+          value_bytes.resize(byte_size);
+          std::memcpy(value_bytes.data(), uint_arr->data(), byte_size);
+        } else if (auto* int64_arr = crate_value.as<std::vector<int64_t>>()) {
+          is_dedup_candidate = true;
+          size_t byte_size = int64_arr->size() * sizeof(int64_t);
+          value_bytes.resize(byte_size);
+          std::memcpy(value_bytes.data(), int64_arr->data(), byte_size);
+        } else if (auto* uint64_arr = crate_value.as<std::vector<uint64_t>>()) {
+          is_dedup_candidate = true;
+          size_t byte_size = uint64_arr->size() * sizeof(uint64_t);
+          value_bytes.resize(byte_size);
+          std::memcpy(value_bytes.data(), uint64_arr->data(), byte_size);
+        }
+        // ===== STRING/TOKEN ARRAY TYPES =====
+        else if (auto* string_arr = crate_value.as<std::vector<std::string>>()) {
+          is_dedup_candidate = true;
+          // Serialize strings: [count][len1][str1][len2][str2]...
+          size_t total_size = sizeof(uint64_t); // array count
+          for (const auto& str : *string_arr) {
+            total_size += sizeof(uint64_t) + str.size(); // length + data
+          }
+          value_bytes.reserve(total_size);
+
+          // Write count
+          uint64_t count = string_arr->size();
+          value_bytes.insert(value_bytes.end(),
+                            reinterpret_cast<const char*>(&count),
+                            reinterpret_cast<const char*>(&count) + sizeof(uint64_t));
+
+          // Write each string with length prefix
+          for (const auto& str : *string_arr) {
+            uint64_t len = str.size();
+            value_bytes.insert(value_bytes.end(),
+                              reinterpret_cast<const char*>(&len),
+                              reinterpret_cast<const char*>(&len) + sizeof(uint64_t));
+            value_bytes.insert(value_bytes.end(), str.begin(), str.end());
+          }
+        } else if (auto* token_arr = crate_value.as<std::vector<value::token>>()) {
+          is_dedup_candidate = true;
+          // Serialize tokens: [count][len1][str1][len2][str2]...
+          size_t total_size = sizeof(uint64_t);
+          for (const auto& tok : *token_arr) {
+            total_size += sizeof(uint64_t) + tok.str().size();
+          }
+          value_bytes.reserve(total_size);
+
+          uint64_t count = token_arr->size();
+          value_bytes.insert(value_bytes.end(),
+                            reinterpret_cast<const char*>(&count),
+                            reinterpret_cast<const char*>(&count) + sizeof(uint64_t));
+
+          for (const auto& tok : *token_arr) {
+            uint64_t len = tok.str().size();
+            value_bytes.insert(value_bytes.end(),
+                              reinterpret_cast<const char*>(&len),
+                              reinterpret_cast<const char*>(&len) + sizeof(uint64_t));
+            value_bytes.insert(value_bytes.end(), tok.str().begin(), tok.str().end());
+          }
+        }
+        // ===== VECTOR ARRAY TYPES =====
+        else if (auto* float3_arr = crate_value.as<std::vector<value::float3>>()) {
+          is_dedup_candidate = true;
+          size_t byte_size = float3_arr->size() * sizeof(value::float3);
+          value_bytes.resize(byte_size);
+          std::memcpy(value_bytes.data(), float3_arr->data(), byte_size);
+        } else if (auto* double3_arr = crate_value.as<std::vector<value::double3>>()) {
+          is_dedup_candidate = true;
+          size_t byte_size = double3_arr->size() * sizeof(value::double3);
+          value_bytes.resize(byte_size);
+          std::memcpy(value_bytes.data(), double3_arr->data(), byte_size);
+        } else if (auto* float2_arr = crate_value.as<std::vector<value::float2>>()) {
+          is_dedup_candidate = true;
+          size_t byte_size = float2_arr->size() * sizeof(value::float2);
+          value_bytes.resize(byte_size);
+          std::memcpy(value_bytes.data(), float2_arr->data(), byte_size);
+        } else if (auto* float4_arr = crate_value.as<std::vector<value::float4>>()) {
+          is_dedup_candidate = true;
+          size_t byte_size = float4_arr->size() * sizeof(value::float4);
+          value_bytes.resize(byte_size);
+          std::memcpy(value_bytes.data(), float4_arr->data(), byte_size);
+        }
+        // ===== SCALAR MATRIX TYPES =====
+        else if (auto* matrix2d = crate_value.as<value::matrix2d>()) {
+          is_dedup_candidate = true;
+          value_bytes.resize(sizeof(value::matrix2d));
+          std::memcpy(value_bytes.data(), matrix2d, sizeof(value::matrix2d));
+        } else if (auto* matrix3d = crate_value.as<value::matrix3d>()) {
+          is_dedup_candidate = true;
+          value_bytes.resize(sizeof(value::matrix3d));
+          std::memcpy(value_bytes.data(), matrix3d, sizeof(value::matrix3d));
+        } else if (auto* matrix4d = crate_value.as<value::matrix4d>()) {
+          is_dedup_candidate = true;
+          value_bytes.resize(sizeof(value::matrix4d));
+          std::memcpy(value_bytes.data(), matrix4d, sizeof(value::matrix4d));
+        }
+        // ===== SCALAR QUATERNION TYPES =====
+        else if (auto* quatf = crate_value.as<value::quatf>()) {
+          is_dedup_candidate = true;
+          value_bytes.resize(sizeof(value::quatf));
+          std::memcpy(value_bytes.data(), quatf, sizeof(value::quatf));
+        } else if (auto* quatd = crate_value.as<value::quatd>()) {
+          is_dedup_candidate = true;
+          value_bytes.resize(sizeof(value::quatd));
+          std::memcpy(value_bytes.data(), quatd, sizeof(value::quatd));
+        } else if (auto* quath = crate_value.as<value::quath>()) {
+          is_dedup_candidate = true;
+          value_bytes.resize(sizeof(value::quath));
+          std::memcpy(value_bytes.data(), quath, sizeof(value::quath));
+        }
+        // ===== SCALAR VECTOR TYPES =====
+        else if (auto* float3 = crate_value.as<value::float3>()) {
+          is_dedup_candidate = true;
+          value_bytes.resize(sizeof(value::float3));
+          std::memcpy(value_bytes.data(), float3, sizeof(value::float3));
+        } else if (auto* double3 = crate_value.as<value::double3>()) {
+          is_dedup_candidate = true;
+          value_bytes.resize(sizeof(value::double3));
+          std::memcpy(value_bytes.data(), double3, sizeof(value::double3));
+        } else if (auto* float2 = crate_value.as<value::float2>()) {
+          is_dedup_candidate = true;
+          value_bytes.resize(sizeof(value::float2));
+          std::memcpy(value_bytes.data(), float2, sizeof(value::float2));
+        } else if (auto* float4 = crate_value.as<value::float4>()) {
+          is_dedup_candidate = true;
+          value_bytes.resize(sizeof(value::float4));
+          std::memcpy(value_bytes.data(), float4, sizeof(value::float4));
+        } else if (auto* double2 = crate_value.as<value::double2>()) {
+          is_dedup_candidate = true;
+          value_bytes.resize(sizeof(value::double2));
+          std::memcpy(value_bytes.data(), double2, sizeof(value::double2));
+        } else if (auto* double4 = crate_value.as<value::double4>()) {
+          is_dedup_candidate = true;
+          value_bytes.resize(sizeof(value::double4));
+          std::memcpy(value_bytes.data(), double4, sizeof(value::double4));
+        }
+
+        if (is_dedup_candidate && !value_bytes.empty()) {
+          // Check dedup cache
+          auto it = array_dedup_map_.find(value_bytes);
+          if (it != array_dedup_map_.end()) {
+            // Found duplicate! Reuse the offset without writing data
+            int64_t cached_offset = it->second;
+
+            // Create ValueRep manually without calling PackValue (which would write data)
+            // Determine type ID and whether it's an array
+            crate::CrateDataTypeId type_id = crate::CrateDataTypeId::CRATE_DATA_TYPE_INVALID;
+            bool is_array = false;
+
+            // Numeric arrays
+            if (crate_value.as<std::vector<float>>()) {
+              type_id = crate::CrateDataTypeId::CRATE_DATA_TYPE_FLOAT;
+              is_array = true;
+            } else if (crate_value.as<std::vector<double>>()) {
+              type_id = crate::CrateDataTypeId::CRATE_DATA_TYPE_DOUBLE;
+              is_array = true;
+            } else if (crate_value.as<std::vector<int32_t>>()) {
+              type_id = crate::CrateDataTypeId::CRATE_DATA_TYPE_INT;
+              is_array = true;
+            } else if (crate_value.as<std::vector<uint32_t>>()) {
+              type_id = crate::CrateDataTypeId::CRATE_DATA_TYPE_UINT;
+              is_array = true;
+            } else if (crate_value.as<std::vector<int64_t>>()) {
+              type_id = crate::CrateDataTypeId::CRATE_DATA_TYPE_INT64;
+              is_array = true;
+            } else if (crate_value.as<std::vector<uint64_t>>()) {
+              type_id = crate::CrateDataTypeId::CRATE_DATA_TYPE_UINT64;
+              is_array = true;
+            }
+            // String/token arrays
+            else if (crate_value.as<std::vector<std::string>>()) {
+              type_id = crate::CrateDataTypeId::CRATE_DATA_TYPE_STRING;
+              is_array = true;
+            } else if (crate_value.as<std::vector<value::token>>()) {
+              type_id = crate::CrateDataTypeId::CRATE_DATA_TYPE_TOKEN;
+              is_array = true;
+            }
+            // Vector arrays
+            else if (crate_value.as<std::vector<value::float3>>()) {
+              type_id = crate::CrateDataTypeId::CRATE_DATA_TYPE_VEC3F;
+              is_array = true;
+            } else if (crate_value.as<std::vector<value::double3>>()) {
+              type_id = crate::CrateDataTypeId::CRATE_DATA_TYPE_VEC3D;
+              is_array = true;
+            } else if (crate_value.as<std::vector<value::float2>>()) {
+              type_id = crate::CrateDataTypeId::CRATE_DATA_TYPE_VEC2F;
+              is_array = true;
+            } else if (crate_value.as<std::vector<value::float4>>()) {
+              type_id = crate::CrateDataTypeId::CRATE_DATA_TYPE_VEC4F;
+              is_array = true;
+            }
+            // Scalar matrix types
+            else if (crate_value.as<value::matrix2d>()) {
+              type_id = crate::CrateDataTypeId::CRATE_DATA_TYPE_MATRIX2D;
+              is_array = false;
+            } else if (crate_value.as<value::matrix3d>()) {
+              type_id = crate::CrateDataTypeId::CRATE_DATA_TYPE_MATRIX3D;
+              is_array = false;
+            } else if (crate_value.as<value::matrix4d>()) {
+              type_id = crate::CrateDataTypeId::CRATE_DATA_TYPE_MATRIX4D;
+              is_array = false;
+            }
+            // Scalar quaternion types
+            else if (crate_value.as<value::quatf>()) {
+              type_id = crate::CrateDataTypeId::CRATE_DATA_TYPE_QUATF;
+              is_array = false;
+            } else if (crate_value.as<value::quatd>()) {
+              type_id = crate::CrateDataTypeId::CRATE_DATA_TYPE_QUATD;
+              is_array = false;
+            } else if (crate_value.as<value::quath>()) {
+              type_id = crate::CrateDataTypeId::CRATE_DATA_TYPE_QUATH;
+              is_array = false;
+            }
+            // Scalar vector types
+            else if (crate_value.as<value::float3>()) {
+              type_id = crate::CrateDataTypeId::CRATE_DATA_TYPE_VEC3F;
+              is_array = false;
+            } else if (crate_value.as<value::double3>()) {
+              type_id = crate::CrateDataTypeId::CRATE_DATA_TYPE_VEC3D;
+              is_array = false;
+            } else if (crate_value.as<value::float2>()) {
+              type_id = crate::CrateDataTypeId::CRATE_DATA_TYPE_VEC2F;
+              is_array = false;
+            } else if (crate_value.as<value::float4>()) {
+              type_id = crate::CrateDataTypeId::CRATE_DATA_TYPE_VEC4F;
+              is_array = false;
+            } else if (crate_value.as<value::double2>()) {
+              type_id = crate::CrateDataTypeId::CRATE_DATA_TYPE_VEC2D;
+              is_array = false;
+            } else if (crate_value.as<value::double4>()) {
+              type_id = crate::CrateDataTypeId::CRATE_DATA_TYPE_VEC4D;
+              is_array = false;
+            }
+
+            value_rep.SetType(static_cast<int32_t>(type_id));
+            if (is_array) {
+              value_rep.SetIsArray();  // Mark as array
+            }
+            value_rep.SetPayload(static_cast<uint64_t>(cached_offset));
+            dedup_attempted = true;
+
+            std::cerr << "[TimeSamples Dedup] Reused value at offset " << cached_offset
+                      << " for sample " << i << " (" << value_bytes.size() << " bytes saved)\n";
+          } else {
+            // New value - pack normally and cache the offset
+            value_rep = PackValue(crate_value, err);
+            if (err && !err->empty()) {
+              return -1;
+            }
+            int64_t new_offset = static_cast<int64_t>(value_rep.GetPayload());
+            array_dedup_map_[value_bytes] = new_offset;
+            dedup_attempted = true;
+
+            std::cerr << "[TimeSamples Dedup] Cached new value at offset " << new_offset
+                      << " for sample " << i << " (" << value_bytes.size() << " bytes)\n";
+          }
+        }
+      }
+
+      // If deduplication wasn't attempted, pack normally
+      if (!dedup_attempted) {
+        value_rep = PackValue(crate_value, err);
+        if (err && !err->empty()) {
+          return -1;
+        }
       }
 
       // Write the ValueRep
@@ -2385,6 +3073,30 @@ bool CrateWriter::TryInlineValue(const crate::CrateValue& value, crate::ValueRep
     rep->SetType(static_cast<int32_t>(crate::CrateDataTypeId::CRATE_DATA_TYPE_UINT));
     rep->SetIsInlined();
     rep->SetPayload(static_cast<uint64_t>(*uint_val));
+    return true;
+  }
+
+  // Try to get as Specifier enum
+  if (auto* spec_val = value.as<Specifier>()) {
+    rep->SetType(static_cast<int32_t>(crate::CrateDataTypeId::CRATE_DATA_TYPE_SPECIFIER));
+    rep->SetIsInlined();
+    rep->SetPayload(static_cast<uint64_t>(*spec_val));
+    return true;
+  }
+
+  // Try to get as Permission enum
+  if (auto* perm_val = value.as<Permission>()) {
+    rep->SetType(static_cast<int32_t>(crate::CrateDataTypeId::CRATE_DATA_TYPE_PERMISSION));
+    rep->SetIsInlined();
+    rep->SetPayload(static_cast<uint64_t>(*perm_val));
+    return true;
+  }
+
+  // Try to get as Variability enum
+  if (auto* var_val = value.as<Variability>()) {
+    rep->SetType(static_cast<int32_t>(crate::CrateDataTypeId::CRATE_DATA_TYPE_VARIABILITY));
+    rep->SetIsInlined();
+    rep->SetPayload(static_cast<uint64_t>(*var_val));
     return true;
   }
 
