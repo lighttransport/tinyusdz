@@ -449,6 +449,80 @@ void fp_roundtrip_special_values_test(void) {
       TEST_CHECK_(dtos(v) == "-1", "bit pattern -1.0f should print as '-1'");
     }
   }
+
+  // Infinity and NaN tests
+  {
+    // Positive infinity (double)
+    {
+      double v = std::numeric_limits<double>::infinity();
+      std::string s = dtos(v);
+      TEST_CHECK_(s == "inf", "double +inf should print as 'inf', got '%s'", s.c_str());
+      double parsed = tinyusdz::atof(s);
+      TEST_CHECK_(std::isinf(parsed) && parsed > 0, "double +inf roundtrip failed");
+    }
+
+    // Negative infinity (double)
+    {
+      double v = -std::numeric_limits<double>::infinity();
+      std::string s = dtos(v);
+      TEST_CHECK_(s == "-inf", "double -inf should print as '-inf', got '%s'", s.c_str());
+      double parsed = tinyusdz::atof(s);
+      TEST_CHECK_(std::isinf(parsed) && parsed < 0, "double -inf roundtrip failed");
+    }
+
+    // NaN (double)
+    {
+      double v = std::numeric_limits<double>::quiet_NaN();
+      std::string s = dtos(v);
+      TEST_CHECK_(s == "nan", "double nan should print as 'nan', got '%s'", s.c_str());
+      double parsed = tinyusdz::atof(s);
+      TEST_CHECK_(std::isnan(parsed), "double nan roundtrip failed");
+    }
+
+    // Positive infinity (float)
+    {
+      float v = std::numeric_limits<float>::infinity();
+      std::string s = dtos(v);
+      TEST_CHECK_(s == "inf", "float +inf should print as 'inf', got '%s'", s.c_str());
+      float parsed = static_cast<float>(tinyusdz::atof(s));
+      TEST_CHECK_(std::isinf(parsed) && parsed > 0, "float +inf roundtrip failed");
+    }
+
+    // Negative infinity (float)
+    {
+      float v = -std::numeric_limits<float>::infinity();
+      std::string s = dtos(v);
+      TEST_CHECK_(s == "-inf", "float -inf should print as '-inf', got '%s'", s.c_str());
+      float parsed = static_cast<float>(tinyusdz::atof(s));
+      TEST_CHECK_(std::isinf(parsed) && parsed < 0, "float -inf roundtrip failed");
+    }
+
+    // NaN (float)
+    {
+      float v = std::numeric_limits<float>::quiet_NaN();
+      std::string s = dtos(v);
+      TEST_CHECK_(s == "nan", "float nan should print as 'nan', got '%s'", s.c_str());
+      float parsed = static_cast<float>(tinyusdz::atof(s));
+      TEST_CHECK_(std::isnan(parsed), "float nan roundtrip failed");
+    }
+  }
+
+  // Null buffer handling test (hardening)
+  {
+    // dtos with null buffer should return 0 (not crash)
+    size_t len_f = dtos(1.0f, nullptr);
+    TEST_CHECK_(len_f == 0, "dtos(float, nullptr) should return 0, got %zu", len_f);
+
+    size_t len_d = dtos(1.0, nullptr);
+    TEST_CHECK_(len_d == 0, "dtos(double, nullptr) should return 0, got %zu", len_d);
+
+    // Test with special values and null buffer
+    len_f = dtos(std::numeric_limits<float>::infinity(), nullptr);
+    TEST_CHECK_(len_f == 0, "dtos(inf, nullptr) should return 0");
+
+    len_d = dtos(std::numeric_limits<double>::quiet_NaN(), nullptr);
+    TEST_CHECK_(len_d == 0, "dtos(nan, nullptr) should return 0");
+  }
 }
 
 //
