@@ -1,4 +1,13 @@
 // SPDX-License-Identifier: Apache 2.0
+
+///
+/// @file prim-types.hh
+/// @brief Core USD primitive type definitions and data structures
+///
+/// Contains fundamental USD concepts including Prim (primitive), Layer,
+/// Properties, Attributes, Relationships, and supporting data structures.
+/// These form the building blocks of USD scene graphs.
+///
 #pragma once
 
 #ifdef _MSC_VER
@@ -20,6 +29,7 @@
 #include <string>
 #include <unordered_map>
 #include <utility>
+#include <variant>
 #include <vector>
 
 #if defined(TINYUSDZ_ENABLE_THREAD)
@@ -44,13 +54,18 @@
 
 #include "handle-allocator.hh"
 #include "primvar.hh"
+// Note: MetadataBase is defined below after MetaVariable
 //
 #include "value-eval-util.hh"
 #include "math-util.inc"
 
 namespace tinyusdz {
 
-// Simple Python-like OrderedDict
+///
+/// Simple Python-like OrderedDict implementation.
+/// Preserves insertion order while providing O(1) key-based lookup.
+/// Used throughout USD data structures where order matters.
+///
 template <typename T>
 class ordered_dict {
  public:
@@ -380,16 +395,10 @@ class Path {
   //    : prim_part(prim), prop_part(prop) {}
 
   Path(const Path &rhs) = default;
+  Path(Path &&rhs) noexcept = default;
 
-  Path &operator=(const Path &rhs) {
-    this->_valid = rhs._valid;
-
-    this->_prim_part = rhs._prim_part;
-    this->_prop_part = rhs._prop_part;
-    this->_element = rhs._element;
-
-    return (*this);
-  }
+  Path &operator=(const Path &rhs) = default;
+  Path &operator=(Path &&rhs) noexcept = default;
 
   std::string full_path_name() const {
     std::string s;
@@ -775,21 +784,15 @@ void OverrideDictionary(Dictionary &customData, const Dictionary &src, const boo
 //
 class MetaVariable {
  public:
-  MetaVariable &operator=(const MetaVariable &rhs) {
-    _name = rhs._name;
-    _value = rhs._value;
-
-    return *this;
-  }
+  MetaVariable() = default;
+  MetaVariable(const MetaVariable &rhs) = default;
+  MetaVariable(MetaVariable &&rhs) noexcept = default;
+  MetaVariable &operator=(const MetaVariable &rhs) = default;
+  MetaVariable &operator=(MetaVariable &&rhs) noexcept = default;
 
   template <typename T>
   MetaVariable(const T &v) {
     set_value(v);
-  }
-
-  MetaVariable(const MetaVariable &rhs) {
-    _name = rhs._name;
-    _value = rhs._value;
   }
 
   template <typename T>
@@ -805,11 +808,6 @@ class MetaVariable {
   bool is_valid() const {
     return _value.type_id() != value::TypeTraits<std::nullptr_t>::type_id();
   }
-
-  //// TODO
-  // bool is_timesamples() const { return false; }
-
-  MetaVariable() = default;
 
   //
   // custom data must have some value, so no set_type()
@@ -880,6 +878,435 @@ class MetaVariable {
  private:
   value::Value _value{nullptr};
   std::string _name;
+};
+
+///
+/// MetadataBase: Dictionary-based metadata storage with typed accessors
+///
+/// Instead of storing many optional<T> fields (which wastes memory when
+/// most are empty), this class uses a single Dictionary and provides
+/// typed accessor methods for commonly used metadata fields.
+///
+/// Usage:
+///   meta.set_displayName("My Object");
+///   if (meta.has_displayName()) {
+///     std::string name = meta.get_displayName();
+///   }
+///   meta.remove_displayName();
+///
+class MetadataBase {
+ public:
+  MetadataBase() = default;
+  MetadataBase(const MetadataBase&) = default;
+  MetadataBase(MetadataBase&&) noexcept = default;
+  MetadataBase& operator=(const MetadataBase&) = default;
+  MetadataBase& operator=(MetadataBase&&) noexcept = default;
+
+  //
+  // Generic Dictionary access
+  //
+
+  /// Get the underlying dictionary (const)
+  const Dictionary& data() const { return _data; }
+
+  /// Get the underlying dictionary (mutable)
+  Dictionary& data() { return _data; }
+
+  /// Check if any metadata is authored
+  bool authored() const { return !_data.empty(); }
+
+  /// Clear all metadata
+  void clear() { _data.clear(); }
+
+  //
+  // Generic typed accessors
+  //
+
+  /// Check if a key exists
+  bool has(const std::string& key) const {
+    return _data.count(key) > 0;
+  }
+
+  /// Get a value by key (returns nullopt if not found or type mismatch)
+  template<typename T>
+  nonstd::optional<T> get(const std::string& key) const {
+    auto it = _data.find(key);
+    if (it == _data.end()) {
+      return nonstd::nullopt;
+    }
+    return it->second.get_value<T>();
+  }
+
+  /// Set a value by key
+  template<typename T>
+  void set(const std::string& key, const T& value) {
+    _data[key] = MetaVariable(value);
+  }
+
+  /// Remove a key
+  bool remove(const std::string& key) {
+    return _data.erase(key) > 0;
+  }
+
+  //
+  // ============================================================
+  // Typed accessors for commonly used metadata
+  // ============================================================
+  //
+
+  // ----- displayName (string) -----
+  static constexpr const char* kDisplayName = "displayName";
+
+  bool has_displayName() const { return has(kDisplayName); }
+
+  std::string get_displayName() const {
+    auto v = get<std::string>(kDisplayName);
+    return v.has_value() ? v.value() : std::string();
+  }
+
+  void set_displayName(const std::string& value) {
+    set(kDisplayName, value);
+  }
+
+  void remove_displayName() { remove(kDisplayName); }
+
+  // ----- displayGroup (string) -----
+  static constexpr const char* kDisplayGroup = "displayGroup";
+
+  bool has_displayGroup() const { return has(kDisplayGroup); }
+
+  std::string get_displayGroup() const {
+    auto v = get<std::string>(kDisplayGroup);
+    return v.has_value() ? v.value() : std::string();
+  }
+
+  void set_displayGroup(const std::string& value) {
+    set(kDisplayGroup, value);
+  }
+
+  void remove_displayGroup() { remove(kDisplayGroup); }
+
+  // ----- comment (StringData) -----
+  static constexpr const char* kComment = "comment";
+
+  bool has_comment() const { return has(kComment); }
+
+  value::StringData get_comment() const {
+    auto v = get<value::StringData>(kComment);
+    return v.has_value() ? v.value() : value::StringData();
+  }
+
+  void set_comment(const value::StringData& value) {
+    set(kComment, value);
+  }
+
+  void set_comment(const std::string& value) {
+    set(kComment, value::StringData(value));
+  }
+
+  void remove_comment() { remove(kComment); }
+
+  // ----- doc/documentation (StringData) -----
+  static constexpr const char* kDoc = "documentation";
+
+  bool has_doc() const { return has(kDoc); }
+
+  value::StringData get_doc() const {
+    auto v = get<value::StringData>(kDoc);
+    return v.has_value() ? v.value() : value::StringData();
+  }
+
+  void set_doc(const value::StringData& value) {
+    set(kDoc, value);
+  }
+
+  void set_doc(const std::string& value) {
+    set(kDoc, value::StringData(value));
+  }
+
+  void remove_doc() { remove(kDoc); }
+
+  // ----- hidden (bool) -----
+  static constexpr const char* kHidden = "hidden";
+
+  bool has_hidden() const { return has(kHidden); }
+
+  bool get_hidden() const {
+    auto v = get<bool>(kHidden);
+    return v.has_value() ? v.value() : false;
+  }
+
+  void set_hidden(bool value) {
+    set(kHidden, value);
+  }
+
+  void remove_hidden() { remove(kHidden); }
+
+  // ----- active (bool) - Prim only -----
+  static constexpr const char* kActive = "active";
+
+  bool has_active() const { return has(kActive); }
+
+  bool get_active() const {
+    auto v = get<bool>(kActive);
+    return v.has_value() ? v.value() : true;  // default is true
+  }
+
+  void set_active(bool value) {
+    set(kActive, value);
+  }
+
+  void remove_active() { remove(kActive); }
+
+  // ----- customData (Dictionary) -----
+  static constexpr const char* kCustomData = "customData";
+
+  bool has_customData() const { return has(kCustomData); }
+
+  Dictionary get_customData() const {
+    auto v = get<Dictionary>(kCustomData);
+    return v.has_value() ? v.value() : Dictionary();
+  }
+
+  void set_customData(const Dictionary& value) {
+    set(kCustomData, value);
+  }
+
+  void remove_customData() { remove(kCustomData); }
+
+  // ----- sdrMetadata (Dictionary) - usdShade -----
+  static constexpr const char* kSdrMetadata = "sdrMetadata";
+
+  bool has_sdrMetadata() const { return has(kSdrMetadata); }
+
+  Dictionary get_sdrMetadata() const {
+    auto v = get<Dictionary>(kSdrMetadata);
+    return v.has_value() ? v.value() : Dictionary();
+  }
+
+  void set_sdrMetadata(const Dictionary& value) {
+    set(kSdrMetadata, value);
+  }
+
+  void remove_sdrMetadata() { remove(kSdrMetadata); }
+
+  // ----- interpolation (token) - Attribute only -----
+  static constexpr const char* kInterpolation = "interpolation";
+
+  bool has_interpolation() const { return has(kInterpolation); }
+
+  value::token get_interpolation() const {
+    auto v = get<value::token>(kInterpolation);
+    return v.has_value() ? v.value() : value::token();
+  }
+
+  void set_interpolation(const value::token& value) {
+    set(kInterpolation, value);
+  }
+
+  void set_interpolation(const std::string& value) {
+    set(kInterpolation, value::token(value));
+  }
+
+  void remove_interpolation() { remove(kInterpolation); }
+
+  // ----- elementSize (uint32_t) - usdSkel -----
+  static constexpr const char* kElementSize = "elementSize";
+
+  bool has_elementSize() const { return has(kElementSize); }
+
+  uint32_t get_elementSize() const {
+    auto v = get<uint32_t>(kElementSize);
+    return v.has_value() ? v.value() : 0;
+  }
+
+  void set_elementSize(uint32_t value) {
+    set(kElementSize, value);
+  }
+
+  void remove_elementSize() { remove(kElementSize); }
+
+  // ----- weight (double) - usdSkel BlendShape -----
+  static constexpr const char* kWeight = "weight";
+
+  bool has_weight() const { return has(kWeight); }
+
+  double get_weight() const {
+    auto v = get<double>(kWeight);
+    return v.has_value() ? v.value() : 0.0;
+  }
+
+  void set_weight(double value) {
+    set(kWeight, value);
+  }
+
+  void remove_weight() { remove(kWeight); }
+
+  // ----- colorSpace (token) - Texture attributes -----
+  static constexpr const char* kColorSpace = "colorSpace";
+
+  bool has_colorSpace() const { return has(kColorSpace); }
+
+  value::token get_colorSpace() const {
+    auto v = get<value::token>(kColorSpace);
+    return v.has_value() ? v.value() : value::token();
+  }
+
+  void set_colorSpace(const value::token& value) {
+    set(kColorSpace, value);
+  }
+
+  void set_colorSpace(const std::string& value) {
+    set(kColorSpace, value::token(value));
+  }
+
+  void remove_colorSpace() { remove(kColorSpace); }
+
+  // ----- connectability (token) - usdShade -----
+  static constexpr const char* kConnectability = "connectability";
+
+  bool has_connectability() const { return has(kConnectability); }
+
+  value::token get_connectability() const {
+    auto v = get<value::token>(kConnectability);
+    return v.has_value() ? v.value() : value::token();
+  }
+
+  void set_connectability(const value::token& value) {
+    set(kConnectability, value);
+  }
+
+  void remove_connectability() { remove(kConnectability); }
+
+  // ----- renderType (token) - usdShade -----
+  static constexpr const char* kRenderType = "renderType";
+
+  bool has_renderType() const { return has(kRenderType); }
+
+  value::token get_renderType() const {
+    auto v = get<value::token>(kRenderType);
+    return v.has_value() ? v.value() : value::token();
+  }
+
+  void set_renderType(const value::token& value) {
+    set(kRenderType, value);
+  }
+
+  void remove_renderType() { remove(kRenderType); }
+
+  // ----- outputName (token) - usdShade -----
+  static constexpr const char* kOutputName = "outputName";
+
+  bool has_outputName() const { return has(kOutputName); }
+
+  value::token get_outputName() const {
+    auto v = get<value::token>(kOutputName);
+    return v.has_value() ? v.value() : value::token();
+  }
+
+  void set_outputName(const value::token& value) {
+    set(kOutputName, value);
+  }
+
+  void remove_outputName() { remove(kOutputName); }
+
+  // ----- bindMaterialAs (token) - MaterialBinding -----
+  static constexpr const char* kBindMaterialAs = "bindMaterialAs";
+
+  bool has_bindMaterialAs() const { return has(kBindMaterialAs); }
+
+  value::token get_bindMaterialAs() const {
+    auto v = get<value::token>(kBindMaterialAs);
+    return v.has_value() ? v.value() : value::token();
+  }
+
+  void set_bindMaterialAs(const value::token& value) {
+    set(kBindMaterialAs, value);
+  }
+
+  void remove_bindMaterialAs() { remove(kBindMaterialAs); }
+
+  // ----- instanceable (bool) - Prim only -----
+  static constexpr const char* kInstanceable = "instanceable";
+
+  bool has_instanceable() const { return has(kInstanceable); }
+
+  bool get_instanceable() const {
+    auto v = get<bool>(kInstanceable);
+    return v.has_value() ? v.value() : false;
+  }
+
+  void set_instanceable(bool value) {
+    set(kInstanceable, value);
+  }
+
+  void remove_instanceable() { remove(kInstanceable); }
+
+  // ----- sceneName (string) - USDZ extension -----
+  static constexpr const char* kSceneName = "sceneName";
+
+  bool has_sceneName() const { return has(kSceneName); }
+
+  std::string get_sceneName() const {
+    auto v = get<std::string>(kSceneName);
+    return v.has_value() ? v.value() : std::string();
+  }
+
+  void set_sceneName(const std::string& value) {
+    set(kSceneName, value);
+  }
+
+  void remove_sceneName() { remove(kSceneName); }
+
+  // ----- assetInfo (Dictionary) - Prim only -----
+  static constexpr const char* kAssetInfo = "assetInfo";
+
+  bool has_assetInfo() const { return has(kAssetInfo); }
+
+  Dictionary get_assetInfo() const {
+    auto v = get<Dictionary>(kAssetInfo);
+    return v.has_value() ? v.value() : Dictionary();
+  }
+
+  void set_assetInfo(const Dictionary& value) {
+    set(kAssetInfo, value);
+  }
+
+  void remove_assetInfo() { remove(kAssetInfo); }
+
+  // ----- clips (Dictionary) - Prim only -----
+  static constexpr const char* kClips = "clips";
+
+  bool has_clips() const { return has(kClips); }
+
+  Dictionary get_clips() const {
+    auto v = get<Dictionary>(kClips);
+    return v.has_value() ? v.value() : Dictionary();
+  }
+
+  void set_clips(const Dictionary& value) {
+    set(kClips, value);
+  }
+
+  void remove_clips() { remove(kClips); }
+
+  //
+  // Merge/update operations
+  //
+
+  /// Merge metadata from another MetadataBase
+  /// @param rhs Source metadata
+  /// @param override_existing If true, overwrite existing keys; if false, only add new keys
+  void merge_from(const MetadataBase& rhs, bool override_existing = true) {
+    for (const auto& [key, mv] : rhs._data) {
+      if (override_existing || _data.count(key) == 0) {
+        _data[key] = mv;
+      }
+    }
+  }
+
+ protected:
+  Dictionary _data;
 };
 
 struct AssetInfo {
@@ -974,37 +1401,117 @@ struct Payload {
 };
 
 // Metadata for Prim
-struct PrimMetas {
-  nonstd::optional<bool> active;  // 'active'
-  nonstd::optional<bool> hidden;  // 'hidden'
-  nonstd::optional<Kind> kind;    // 'kind'. user-defined kind value is stored in _kind_str;
-  std::string _kind_str;
+// Uses Dictionary-based storage via MetadataBase for memory efficiency.
+// Simple metadata fields (active, hidden, doc, comment, displayName, sceneName,
+// instanceable, customData, sdrMetadata, assetInfo, clips) are stored in MetadataBase.
+// Composition fields and structural fields remain as direct members.
+//
+// Example usage:
+//   PrimMetas meta;
+//   meta.set_active(false);
+//   meta.set_kind(Kind::Component);
+//   if (meta.has_displayName()) {
+//     std::string name = meta.get_displayName();
+//   }
+//
+struct PrimMetas : public MetadataBase {
+  PrimMetas() = default;
+  PrimMetas(const PrimMetas &) = default;
+  PrimMetas(PrimMetas &&) noexcept = default;
+  PrimMetas &operator=(const PrimMetas &) = default;
+  PrimMetas &operator=(PrimMetas &&) noexcept = default;
 
-  nonstd::optional<Dictionary>
-      assetInfo;  // 'assetInfo' // TODO: Use AssetInfo?
-  nonstd::optional<Dictionary> customData;  // `customData`
-  nonstd::optional<value::StringData> doc;  // 'documentation'
-  nonstd::optional<value::StringData>
-      comment;  // 'comment'  (String only metadata value)
-  nonstd::optional<APISchemas> apiSchemas;  // 'apiSchemas'
-  nonstd::optional<Dictionary>
-      sdrMetadata;  // 'sdrMetadata' (usdShade Prim only?)
+  //
+  // Kind - needs special handling for enum conversion
+  //
+  static constexpr const char* kKind = "kind";
 
-  nonstd::optional<bool> instanceable; // 'instanceable'
-  nonstd::optional<Dictionary> clips; // 'clips'
+  bool has_kind() const { return has(kKind); }
 
-  // String representation of Kind.
-  // For user-defined Kind, it returns `_kind_str`
-  const std::string get_kind() const;
+  Kind get_kind_enum() const {
+    auto v = get<value::token>(kKind);
+    if (!v.has_value()) {
+      return Kind::Invalid;
+    }
+    const std::string& s = v.value().str();
+    if (s == "model") return Kind::Model;
+    if (s == "group") return Kind::Group;
+    if (s == "assembly") return Kind::Assembly;
+    if (s == "component") return Kind::Component;
+    if (s == "subcomponent") return Kind::Subcomponent;
+    if (s == "sceneLibrary") return Kind::SceneLibrary;
+    // User-defined kind
+    return Kind::UserDef;
+  }
+
+  // Get the string representation of kind (works for user-defined kinds too)
+  std::string get_kind_str() const {
+    auto v = get<value::token>(kKind);
+    return v.has_value() ? v.value().str() : std::string();
+  }
+
+  void set_kind(Kind k) {
+    const char* s = "";
+    switch (k) {
+      case Kind::Model: s = "model"; break;
+      case Kind::Group: s = "group"; break;
+      case Kind::Assembly: s = "assembly"; break;
+      case Kind::Component: s = "component"; break;
+      case Kind::Subcomponent: s = "subcomponent"; break;
+      case Kind::SceneLibrary: s = "sceneLibrary"; break;
+      case Kind::UserDef: s = ""; break;  // Use set_kind(string) for custom
+      case Kind::Invalid: s = ""; break;
+    }
+    if (s[0] != '\0') {
+      set(kKind, value::token(s));
+    }
+  }
+
+  void set_kind(const std::string& kind_str) {
+    set(kKind, value::token(kind_str));
+  }
+
+  void remove_kind() { remove(kKind); }
+
+  // Legacy: get_kind() returns string for backward compatibility
+  const std::string get_kind() const { return get_kind_str(); }
+
+  //
+  // apiSchemas - needs special handling for APISchemas type
+  //
+  static constexpr const char* kApiSchemas = "apiSchemas";
+
+  bool has_apiSchemas() const { return _apiSchemas.has_value(); }
+
+  const APISchemas* get_apiSchemas_ptr() const {
+    return _apiSchemas.has_value() ? &_apiSchemas.value() : nullptr;
+  }
+
+  APISchemas get_apiSchemas() const {
+    return _apiSchemas.has_value() ? _apiSchemas.value() : APISchemas();
+  }
+
+  APISchemas& get_apiSchemas_mutable() {
+    if (!_apiSchemas.has_value()) {
+      _apiSchemas = APISchemas();
+    }
+    return _apiSchemas.value();
+  }
+
+  void set_apiSchemas(const APISchemas& schemas) {
+    _apiSchemas = schemas;
+  }
+
+  void remove_apiSchemas() { _apiSchemas = nonstd::nullopt; }
 
   //
   // AssetInfo utility function
   //
-  // Convert CustomDataType to AssetInfo
-  AssetInfo get_assetInfo(bool *authored = nullptr) const;
+  // Convert Dictionary assetInfo to AssetInfo struct
+  AssetInfo get_assetInfo_struct(bool *authored = nullptr) const;
 
   //
-  // Compositions
+  // Compositions - keep as direct members due to complex types
   //
   nonstd::optional<std::pair<ListEditQual, std::vector<Reference>>> references;
   nonstd::optional<std::pair<ListEditQual, std::vector<Payload>>>
@@ -1020,13 +1527,6 @@ struct PrimMetas {
   nonstd::optional<std::pair<ListEditQual, std::vector<Path>>>
       specializes;  // 'specializes'
 
-  // USDZ extensions
-  nonstd::optional<std::string> sceneName;  // 'sceneName'
-
-  // Omniverse extensions(TODO: Use UTF8 string type?)
-  // https://github.com/PixarAnimationStudios/USD/pull/2055
-  nonstd::optional<std::string> displayName;  // 'displayName'
-
   // Unregistered metadatum. value is represented as string.
   std::map<std::string, std::string> unregisteredMetas;
 
@@ -1041,19 +1541,14 @@ struct PrimMetas {
   ///
   void update_from(const PrimMetas &rhs, bool override_authored = true);
 
-
-#if 0
-  // String only metadataum.
-  // TODO: Represent as `MetaVariable`?
-  std::vector<value::StringData> stringData;
-#endif
-
-  // FIXME: Find a better way to detect Prim meta is authored...
+  // Check if any metadata is authored
   bool authored() const {
-    return (active || hidden || kind || customData || references || payload ||
-            inherits || variants || variantSets || specializes || displayName ||
-            sceneName || doc || comment || unregisteredMetas.size() || meta.size() || apiSchemas ||
-            sdrMetadata || assetInfo || instanceable || clips);
+    return MetadataBase::authored() ||
+           _apiSchemas.has_value() ||
+           references.has_value() || payload.has_value() ||
+           inherits.has_value() || variants.has_value() ||
+           variantSets.has_value() || specializes.has_value() ||
+           !unregisteredMetas.empty() || !meta.empty();
   }
 
   //
@@ -1072,62 +1567,102 @@ struct PrimMetas {
 
   nonstd::optional<std::vector<value::token>> variantChildren;
   nonstd::optional<std::vector<value::token>> variantSetChildren;
+
+ private:
+  // apiSchemas needs special storage since it's a custom type
+  nonstd::optional<APISchemas> _apiSchemas;
 };
 
 // For backward compatibility
 using PrimMeta = PrimMetas;
 
 // Metadata for Property(Relationship and Attribute)
-// TODO: Rename to PropMetas
-struct AttrMetas {
-  // frequently used items
-  // nullopt = not specified in USD data
-  nonstd::optional<Interpolation> interpolation;  // 'interpolation'
-  nonstd::optional<uint32_t> elementSize;         // usdSkel 'elementSize'
-  nonstd::optional<bool> hidden;                  // 'hidden'
-  nonstd::optional<value::StringData> comment;    // `comment`
-  nonstd::optional<Dictionary> customData;        // `customData`
-
-  nonstd::optional<double> weight;  // usdSkel inbetween BlendShape weight.
-
-  // usdShade
-  nonstd::optional<value::token> connectability; // NOTE: applies to attr
-  nonstd::optional<value::token> outputName; // NOTE: applies to rel
-  nonstd::optional<value::token> renderType; // NOTE: applies to prop
-  nonstd::optional<Dictionary> sdrMetadata; // NOTE: applies to attr(also seen in prim meta)
-
-  nonstd::optional<std::string> displayName;  // 'displayName'
-  nonstd::optional<std::string> displayGroup;  // 'displayGroup'
-
+// Uses Dictionary-based storage via MetadataBase for memory efficiency.
+// Provides typed accessor methods for commonly used metadata fields.
+//
+// Example usage:
+//   AttrMetas meta;
+//   meta.set_displayName("myAttr");
+//   if (meta.has_interpolation()) {
+//     Interpolation interp = meta.get_interpolation_enum();
+//   }
+//
+struct AttrMetas : public MetadataBase {
+  AttrMetas() = default;
+  AttrMetas(const AttrMetas&) = default;
+  AttrMetas(AttrMetas&&) noexcept = default;
+  AttrMetas& operator=(const AttrMetas&) = default;
+  AttrMetas& operator=(AttrMetas&&) noexcept = default;
 
   //
-  // MaterialBinding
+  // Interpolation - needs special handling for enum conversion
   //
-  // Could be arbitrary token value so use `token[]` type.
-  // For now, either `weakerThanDescendants` or `strongerThanDescendants` are
-  // valid token.
-  nonstd::optional<value::token> bindMaterialAs;  // 'bindMaterialAs' NOTE: applies to rel.
+  bool has_interpolation_enum() const { return has_interpolation(); }
 
-  std::map<std::string, MetaVariable> meta;  // other meta values
+  Interpolation get_interpolation_enum() const {
+    value::token tok = get_interpolation();
+    if (tok.str() == "constant") return Interpolation::Constant;
+    if (tok.str() == "uniform") return Interpolation::Uniform;
+    if (tok.str() == "varying") return Interpolation::Varying;
+    if (tok.str() == "vertex") return Interpolation::Vertex;
+    if (tok.str() == "faceVarying") return Interpolation::FaceVarying;
+    return Interpolation::Invalid;
+  }
 
-  // String only metadataum.
-  // TODO: Represent as `MetaVariable`?
+  void set_interpolation_enum(Interpolation value) {
+    const char* s = "constant";
+    switch (value) {
+      case Interpolation::Constant: s = "constant"; break;
+      case Interpolation::Uniform: s = "uniform"; break;
+      case Interpolation::Varying: s = "varying"; break;
+      case Interpolation::Vertex: s = "vertex"; break;
+      case Interpolation::FaceVarying: s = "faceVarying"; break;
+      case Interpolation::Invalid: s = ""; break;
+    }
+    set_interpolation(s);
+  }
+
+  //
+  // unauthoredValuesIndex - usdSkel specific
+  //
+  static constexpr const char* kUnauthoredValuesIndex = "unauthoredValuesIndex";
+
+  bool has_unauthoredValuesIndex() const { return has(kUnauthoredValuesIndex); }
+
+  int get_unauthoredValuesIndex() const {
+    auto v = get<int>(kUnauthoredValuesIndex);
+    return v.has_value() ? v.value() : -1;
+  }
+
+  void set_unauthoredValuesIndex(int value) {
+    set(kUnauthoredValuesIndex, value);
+  }
+
+  //
+  // String-only metadata (legacy support)
+  // TODO: Migrate to use comment field instead
+  //
   std::vector<value::StringData> stringData;
 
-
   //
-  // Some handy methods for non-frequently used metadatum.
+  // Check if any metadata is authored
   //
-  bool has_colorSpace() const;
-  value::token get_colorSpace() const; // return empty when not authored or 'colorSpace' metadataum is not token type.
-
-  bool has_unauthoredValuesIndex() const;
-  int get_unauthoredValuesIndex() const; // return -1 when not authored or 'unauthoredValuesIndex' metadataum is not int type.
-
   bool authored() const {
-    return (interpolation || elementSize || hidden || customData || weight ||
-            connectability || outputName || renderType || sdrMetadata || displayName || displayGroup || bindMaterialAs || meta.size() || stringData.size());
+    return MetadataBase::authored() || !stringData.empty();
   }
+
+  //
+  // Legacy accessor aliases for backwards compatibility
+  // These will be deprecated in future versions
+  //
+
+  // Legacy: direct field access pattern -> use accessor methods instead
+  // Example migration:
+  //   Old: if (meta.interpolation) { ... }
+  //   New: if (meta.has_interpolation()) { ... }
+  //
+  //   Old: meta.displayName = "foo";
+  //   New: meta.set_displayName("foo");
 };
 
 // For backward compatibility
@@ -1148,289 +1683,7 @@ using PropMetas = AttrMetas;
 // 2: (3.0, false)
 //
 
-template <typename T>
-struct TypedTimeSamples {
- public:
-  struct Sample {
-    double t;
-    T value;
-    bool blocked{false};
-  };
-
-  bool empty() const { return _samples.empty(); }
-
-  void update() const {
-    std::sort(_samples.begin(), _samples.end(),
-              [](const Sample &a, const Sample &b) { return a.t < b.t; });
-
-    _dirty = false;
-
-    return;
-  }
-
-  // Get value at specified time.
-  // For non-interpolatable types(includes enums and unknown types)
-  //
-  // Return `Held` value even when TimeSampleInterpolationType is
-  // Linear. Returns nullopt when specified time is out-of-range.
-  template<typename V = T, std::enable_if_t<!value::LerpTraits<V>::supported(), std::nullptr_t> = nullptr>
-  bool get(T *dst, double t = value::TimeCode::Default(),
-           value::TimeSampleInterpolationType interp =
-               value::TimeSampleInterpolationType::Linear) const {
-
-    (void)interp;
-
-    if (!dst) {
-      return false;
-    }
-
-    if (empty()) {
-      return false;
-    }
-
-    if (_dirty) {
-      update();
-    }
-
-    if (value::TimeCode(t).is_default()) {
-      // FIXME: Use the first item for now.
-      // TODO: Handle bloked
-      (*dst) = _samples[0].value;
-      return true;
-    } else {
-
-      if (_samples.size() == 1) {
-        (*dst) = _samples[0].value;
-        return true;
-      }
-
-      // Held = nerarest preceding value for a gien time.
-      // example:
-      // input = 0.0: 100, 1.0: 200
-      //
-      // t -1.0 => 100(time 0.0)
-      // t 0.0 => 100(time 0.0)
-      // t 0.1 => 100(time 0.0)
-      // t 0.9 => 100(time 0.0)
-      // t 1.0 => 200(time 1.0)
-      //
-      // This can be achieved by using upper_bound, and subtract 1 from the found position.
-      auto it = std::upper_bound(
-        _samples.begin(), _samples.end(), t,
-        [](double tval, const Sample &a) { return tval < a.t; });
-
-      const auto it_minus_1 = (it == _samples.begin()) ? _samples.begin() : (it - 1);
-
-      (*dst) = it_minus_1->value;
-      return true;
-    }
-
-  }
-
-  // TODO: Move to .cc to save compile time.
-  // Get value at specified time.
-  // Return linearly interpolated value when TimeSampleInterpolationType is
-  // Linear. Returns nullopt when specified time is out-of-range.
-  template<typename V = T, std::enable_if_t<value::LerpTraits<V>::supported(), std::nullptr_t> = nullptr>
-  bool get(T *dst, double t = value::TimeCode::Default(),
-           value::TimeSampleInterpolationType interp =
-               value::TimeSampleInterpolationType::Linear) const {
-    if (!dst) {
-      return false;
-    }
-
-    if (empty()) {
-      return false;
-    }
-
-    if (_dirty) {
-      update();
-    }
-
-    if (value::TimeCode(t).is_default()) {
-      // FIXME: Use the first item for now.
-      // TODO: Handle bloked
-      (*dst) = _samples[0].value;
-      return true;
-    } else {
-
-      if (_samples.size() == 1) {
-        (*dst) = _samples[0].value;
-        return true;
-      }
-
-      auto it = std::lower_bound(
-        _samples.begin(), _samples.end(), t,
-        [](const Sample &a, double tval) { return a.t < tval; });
-
-      if (interp == value::TimeSampleInterpolationType::Linear) {
-
-        // MS STL does not allow seek vector iterator before begin
-        // Issue #110
-        const auto it_minus_1 = (it == _samples.begin()) ? _samples.begin() : (it - 1);
-
-        size_t idx0 = size_t((std::max)(
-            int64_t(0),
-            (std::min)(int64_t(_samples.size() - 1),
-                     int64_t(std::distance(_samples.begin(), it_minus_1)))));
-        size_t idx1 =
-            size_t((std::max)(int64_t(0), (std::min)(int64_t(_samples.size() - 1),
-                                                 int64_t(idx0) + 1)));
-
-        double tl = _samples[idx0].t;
-        double tu = _samples[idx1].t;
-
-        double dt = (t - tl);
-        if (std::fabs(tu - tl) < std::numeric_limits<double>::epsilon()) {
-          // slope is zero.
-          dt = 0.0;
-        } else {
-          dt /= (tu - tl);
-        }
-
-        // Just in case.
-        dt = (std::max)(0.0, (std::min)(1.0, dt));
-
-        const value::Value &pv0 = _samples[idx0].value;
-        const value::Value &pv1 = _samples[idx1].value;
-
-        if (pv0.type_id() != pv1.type_id()) {
-          // Type mismatch.
-          return false;
-        }
-
-        // To concrete type
-        const T *p0 = pv0.as<T>();
-        const T *p1 = pv1.as<T>();
-
-        if (!p0 || !p1) {
-          return false;
-        }
-
-        const T p = lerp(*p0, *p1, dt);
-
-        (*dst) = std::move(p);
-        return true;
-      } else {
-        if (it == _samples.end()) {
-          // ???
-          return false;
-        }
-
-        (*dst) = it->value;
-        return true;
-      }
-    }
-
-    return false;
-  }
-
-  void add_sample(const Sample &s) {
-    _samples.push_back(s);
-    _dirty = true;
-  }
-
-  void add_sample(const double t, const T &v) {
-    Sample s;
-    s.t = t;
-    s.value = v;
-    _samples.emplace_back(s);
-    _dirty = true;
-  }
-
-  void add_blocked_sample(const double t) {
-    Sample s;
-    s.t = t;
-    s.blocked = true;
-    _samples.emplace_back(s);
-    _dirty = true;
-  }
-
-  bool has_sample_at(const double t) const {
-    if (_dirty) {
-      update();
-    }
-
-    const auto it = std::find_if(_samples.begin(), _samples.end(), [&t](const Sample &s) {
-      return tinyusdz::math::is_close(t, s.t);
-    });
-
-    return (it != _samples.end());
-  }
-
-  bool get_sample_at(const double t, Sample **dst) {
-    if (!dst) {
-      return false;
-    }
-
-    if (_dirty) {
-      update();
-    }
-
-    const auto it = std::find_if(_samples.begin(), _samples.end(), [&t](const Sample &sample) {
-      return math::is_close(t, sample.t);
-    });
-
-    if (it != _samples.end()) {
-      (*dst) = &(*it); 
-    }
-    return false;
-  }
-
-  const std::vector<Sample> &get_samples() const {
-    if (_dirty) {
-      update();
-    }
-
-    return _samples;
-  }
-
-  std::vector<Sample> &samples() {
-    if (_dirty) {
-      update();
-    }
-
-    return _samples;
-  }
-
-  // From typeless timesamples.
-  bool from_timesamples(const value::TimeSamples &ts) {
-    std::vector<Sample> buf;
-    for (size_t i = 0; i < ts.size(); i++) {
-      if (ts.get_samples()[i].value.type_id() != value::TypeTraits<T>::type_id()) {
-        return false;
-      }
-      Sample s;
-      s.t = ts.get_samples()[i].t;
-      s.blocked = ts.get_samples()[i].blocked;
-      if (const auto pv = ts.get_samples()[i].value.as<T>()) {
-        s.value = (*pv);
-      } else {
-        return false;
-      }
-
-      buf.push_back(s);
-    }
-
-
-    _samples = std::move(buf);
-    _dirty = true;
-
-    return true;
-  }
-
-  size_t size() const {
-    if (_dirty) {
-      update();
-    }
-    return _samples.size();
-  }
-
- private:
-  // Need to be sorted when looking up the value.
-  mutable std::vector<Sample> _samples;
-  mutable bool _dirty{false};
-};
+// TypedTimeSamples has been moved to timesamples.hh
 
 //
 // Scalar(default) and/or TimeSamples
@@ -1530,8 +1783,19 @@ struct Animatable {
     _has_value = true;
   }
 
+  // Move overload for scalar - avoids copy for large vectors
+  void set(T &&v) {
+    _value = std::move(v);
+    _blocked = false;
+    _has_value = true;
+  }
+
   void set_default(const T &v) {
     set(v);
+  }
+
+  void set_default(T &&v) {
+    set(std::move(v));
   }
 
   void set(const TypedTimeSamples<T> &ts) {
@@ -1547,7 +1811,7 @@ struct Animatable {
   }
 
   void set_timesamples(TypedTimeSamples<T> &&ts) {
-    return set(ts);
+    return set(std::move(ts));
   }
 
   void clear_scalar() {
@@ -1622,8 +1886,19 @@ class TypedAttribute {
     return (*this);
   }
 
+  // Move overload for operator= - avoids copy for large vectors
+  TypedAttribute &operator=(T &&value) {
+    _attrib = std::move(value);
+
+    return (*this);
+  }
+
   // 'default' value or timeSampled value(when T = Animatable)
   void set_value(const T &v) { _attrib = v; }
+
+  // Move overload for set_value - avoids copy for large vectors
+  void set_value(T &&v) { _attrib = std::move(v); }
+
   bool has_value() const { return _attrib.has_value(); }
 
   const nonstd::optional<T> get_value() const {
@@ -1839,6 +2114,9 @@ class TypedAttributeWithFallback {
   // }
 
   void set_value(const T &v) { _attrib = v; }
+
+  // Move overload for set_value - avoids copy for large vectors
+  void set_value(T &&v) { _attrib = std::move(v); }
 
   void set_value_empty() { _empty = true; }
 
@@ -2192,6 +2470,12 @@ struct ConnectionPath {
 //
 class Relationship {
  public:
+  Relationship() = default;
+  Relationship(const Relationship &) = default;
+  Relationship(Relationship &&) noexcept = default;
+  Relationship &operator=(const Relationship &) = default;
+  Relationship &operator=(Relationship &&) noexcept = default;
+
   // NOTE: no explicit `uniform` variability for Relationship
   // Relatinship have `uniform` variability implicitly.
   // (in Crate, variability is encoded as `uniform`)
@@ -2203,6 +2487,7 @@ class Relationship {
   //
   enum class Type { DefineOnly, Path, PathVector, ValueBlock };
 
+  // TODO: move to private
   Type type{Type::DefineOnly};
   Path targetPath;
   std::vector<Path> targetPathVector;
@@ -2245,6 +2530,8 @@ class Relationship {
   const AttrMeta &metas() const { return _metas; }
   AttrMeta &metas() { return _metas; }
 
+  size_t estimate_memory_usage() const;
+
  private:
   AttrMeta _metas;
 
@@ -2264,6 +2551,10 @@ class Relationship {
 class RelationshipProperty {
  public:
   RelationshipProperty() = default;
+  RelationshipProperty(const RelationshipProperty &) = default;
+  RelationshipProperty(RelationshipProperty &&) noexcept = default;
+  RelationshipProperty &operator=(const RelationshipProperty &) = default;
+  RelationshipProperty &operator=(RelationshipProperty &&) noexcept = default;
 
   RelationshipProperty(const Relationship &rel)
       : _authored(true), _relationship(rel) {}
@@ -2418,7 +2709,67 @@ enum class TimeSampleInterpolation {
 class Attribute {
 
  public:
-  Attribute() = default;
+  Attribute() {
+    //TUSDZ_LOG_I("Attribute default constructor called");
+  }
+
+  // Copy constructor
+  Attribute(const Attribute& rhs) 
+    : _name(rhs._name),
+      _variability(rhs._variability),
+      _varying_authored(rhs._varying_authored),
+      _type_name(rhs._type_name),
+      _var(rhs._var),
+      _paths(rhs._paths),
+      _metas(rhs._metas) {
+    //TUSDZ_LOG_I("Attribute copy constructor called");
+  }
+
+  // Move constructor
+  Attribute(Attribute&& rhs) noexcept
+    : _name(std::move(rhs._name)),
+      _variability(rhs._variability),
+      _varying_authored(rhs._varying_authored),
+      _type_name(std::move(rhs._type_name)),
+      _var(std::move(rhs._var)),
+      _paths(std::move(rhs._paths)),
+      _metas(std::move(rhs._metas)) {
+    //TUSDZ_LOG_I("Attribute move constructor called");
+    rhs._variability = Variability::Varying;
+    rhs._varying_authored = false;
+  }
+
+  // Copy assignment operator
+  Attribute& operator=(const Attribute& rhs) {
+    //TUSDZ_LOG_I("Attribute copy assignment operator called");
+    if (this != &rhs) {
+      _name = rhs._name;
+      _variability = rhs._variability;
+      _varying_authored = rhs._varying_authored;
+      _type_name = rhs._type_name;
+      _var = rhs._var;
+      _paths = rhs._paths;
+      _metas = rhs._metas;
+    }
+    return *this;
+  }
+
+  // Move assignment operator
+  Attribute& operator=(Attribute&& rhs) noexcept {
+    //TUSDZ_LOG_I("Attribute move assignment operator called");
+    if (this != &rhs) {
+      _name = std::move(rhs._name);
+      _variability = rhs._variability;
+      _varying_authored = rhs._varying_authored;
+      _type_name = std::move(rhs._type_name);
+      _var = std::move(rhs._var);
+      _paths = std::move(rhs._paths);
+      _metas = std::move(rhs._metas);
+      rhs._variability = Variability::Varying;
+      rhs._varying_authored = false;
+    }
+    return *this;
+  }
 
   ///
   /// Construct Attribute with typed value(`float`, `token`, ...).
@@ -2508,6 +2859,14 @@ class Attribute {
     _var.set_value(v);
   }
 
+  template <typename T>
+  void set_value(T &&v) {
+    if (_type_name.empty()) {
+      _type_name = value::TypeTraits<T>::type_name();
+    }
+    _var.set_value(std::move(v));
+  }
+
   void set_var(primvar::PrimVar &v) {
     if (_type_name.empty()) {
       _type_name = v.type_name();
@@ -2574,6 +2933,24 @@ class Attribute {
     _var.set_timesample(t, v);
   }
 
+  /// Set TypedTimeSamples for frequently used types with move semantics
+  template <typename T>
+  void set_typed_timesamples(TypedTimeSamples<T> &&typed_ts) {
+    if (_type_name.empty()) {
+      _type_name = value::TypeTraits<T>::type_name();
+    }
+    _var.set_typed_timesamples(std::move(typed_ts));
+  }
+
+  /// Set TypedTimeSamples for frequently used types (const ref)
+  template <typename T>
+  void set_typed_timesamples(const TypedTimeSamples<T> &typed_ts) {
+    if (_type_name.empty()) {
+      _type_name = value::TypeTraits<T>::type_name();
+    }
+    _var.set_typed_timesamples(typed_ts);
+  }
+
   template <typename T>
   bool get(const double t, T *dst,
            value::TimeSampleInterpolationType tinterp =
@@ -2606,6 +2983,101 @@ class Attribute {
                  value::TimeSampleInterpolationType tinterp =
                      value::TimeSampleInterpolationType::Linear) const {
     return get(t, dst, tinterp);
+  }
+
+  /// @brief Get TypedArrayView to the underlying array data of this Attribute.
+  /// 
+  /// Returns a zero-copy view over array data for scalar (default) values only.
+  /// This method does NOT support timesamples - only works with default values.
+  /// For non-array types or timesamples, returns an empty view.
+  ///
+  /// The view provides efficient access to array data without copying, enabling
+  /// memory-optimized processing of vertex attributes, indices, and other array data.
+  ///
+  /// @tparam T The desired element type for the view
+  /// @param strict_cast If true, requires exact type match; if false, allows compatible role type casting
+  /// @return TypedArrayView<const T> - may be empty if type conversion not possible or attribute has timesamples
+  ///
+  /// Example:
+  /// ```cpp
+  /// // Get view of vertex positions as float3
+  /// auto positions_view = position_attr.get_value_view<value::float3>();
+  /// if (!positions_view.empty()) {
+  ///   for (const auto& pos : positions_view) {
+  ///     // Process position without copying data
+  ///   }
+  /// }
+  ///
+  /// // Get view as compatible role type
+  /// auto normals_view = normal_attr.get_value_view<value::vector3f>();  // float3 -> vector3f
+  /// ```
+  template <typename T>
+  TypedArrayView<const T> get_value_view(bool strict_cast = false) const {
+    // Only support scalar (default) values, not timesamples
+    if (has_timesamples()) {
+      return TypedArrayView<const T>();  // Empty view for timesamples
+    }
+    
+    if (is_blocked()) {
+      return TypedArrayView<const T>();  // Empty view for blocked attributes
+    }
+    
+    if (is_connection()) {
+      return TypedArrayView<const T>();  // Empty view for connections
+    }
+    
+    if (!has_value()) {
+      return TypedArrayView<const T>();  // Empty view if no value
+    }
+    
+    // Get the underlying value and create a view using Value::as_view()
+    const primvar::PrimVar& pvar = get_var();
+    const value::Value& val = pvar.value_raw();
+    
+    return val.as_view<T>(strict_cast);
+  }
+
+  /// @brief Mutable version of get_value_view() for write access to array data.
+  ///
+  /// Same as get_value_view() but returns a mutable view that allows modification
+  /// of the underlying array data. Only works with scalar (default) values.
+  ///
+  /// @tparam T The desired element type for the view  
+  /// @param strict_cast If true, requires exact type match; if false, allows compatible role type casting
+  /// @return TypedArrayView<T> - may be empty if type conversion not possible or attribute has timesamples
+  ///
+  /// Example:
+  /// ```cpp
+  /// // Get mutable view and modify data in-place
+  /// auto positions_view = position_attr.get_value_view<value::float3>();
+  /// if (!positions_view.empty()) {
+  ///   positions_view[0] = {1.0f, 2.0f, 3.0f};  // Modifies original data
+  /// }
+  /// ```
+  template <typename T>
+  TypedArrayView<T> get_value_view(bool strict_cast = false) {
+    // Only support scalar (default) values, not timesamples
+    if (has_timesamples()) {
+      return TypedArrayView<T>();  // Empty view for timesamples
+    }
+    
+    if (is_blocked()) {
+      return TypedArrayView<T>();  // Empty view for blocked attributes
+    }
+    
+    if (is_connection()) {
+      return TypedArrayView<T>();  // Empty view for connections
+    }
+    
+    if (!has_value()) {
+      return TypedArrayView<T>();  // Empty view if no value
+    }
+    
+    // Get the underlying value and create a view using Value::as_view()
+    primvar::PrimVar& pvar = get_var();
+    value::Value& val = pvar.value_raw();
+    
+    return val.as_view<T>(strict_cast);
   }
 
 
@@ -2692,6 +3164,11 @@ class Attribute {
   const std::vector<Path> &connections() const { return _paths; }
   std::vector<Path> &connections() { return _paths; }
 
+  ///
+  /// Estimate memory usage of this Attribute in bytes
+  ///
+  size_t estimate_memory_usage() const;
+
  private:
   std::string _name;  // attrib name
   Variability _variability{
@@ -2711,105 +3188,129 @@ class Attribute {
 // Generic container for Attribute or Relation/Connection. And has this property
 // is custom or not (Need to lookup schema if the property is custom or not for
 // Crate data)
-// TODO: Move Connection to Attribute
+// Uses std::variant for efficient storage - only one of Attribute/Relationship
+// is stored at a time, saving ~80-150 bytes per Property compared to dual storage.
 // TODO: Deprecate `custom` attribute:
 // https://github.com/PixarAnimationStudios/USD/issues/2069
 class Property {
  public:
+  // Simplified type enum:
+  // - Empty: No data (monostate in variant)
+  // - Attribute: Holds Attribute (may or may not have value/connection)
+  // - Relationship: Holds Relationship (may or may not have targets)
+  //
+  // Legacy enum values mapped as:
+  // - EmptyAttrib -> is_attribute() && !get_attribute().has_value() && !get_attribute().has_connections()
+  // - Attrib -> is_attribute() && (get_attribute().has_value() || get_attribute().has_timesamples())
+  // - Relation -> is_relationship() && get_relationship().has_value()
+  // - NoTargetsRelation -> is_relationship() && !get_relationship().has_value()
+  // - Connection -> is_attribute() && get_attribute().has_connections()
   enum class Type {
-    EmptyAttrib,        // Attrib with no data.
+    EmptyAttrib,        // Attrib with no data. (DEPRECATED: use is_attribute() && !attr.has_value())
     Attrib,             // Attrib which contains actual data
     Relation,           // `rel` with targetPath(s).
-    NoTargetsRelation,  // `rel` with no targets.
-    Connection,  // Connection attribute(`.connect` suffix). TODO: Deprecate
-                 // this and use Attrib.
+    NoTargetsRelation,  // `rel` with no targets. (DEPRECATED: use is_relationship() && !rel.has_value())
+    Connection,         // Connection attribute(`.connect` suffix). (DEPRECATED: use is_attribute_connection())
   };
 
   Property() = default;
 
-  // TODO: Deprecate this constructor.
-  // Property(const std::string &type_name, bool custom = false)
-  //    : _has_custom(custom) {
-  //  _attrib.set_type_name(type_name);
-  //  _type = Type::EmptyAttrib;
-  //}
-
   template <typename T>
   Property(bool custom = false) : _has_custom(custom) {
-    _attrib.set_type_name(value::TypeTraits<T>::type_name());
-    _type = Type::EmptyAttrib;
+    Attribute a;
+    a.set_type_name(value::TypeTraits<T>::type_name());
+    _data = std::move(a);
   }
 
   static Property MakeEmptyAttrib(const std::string &type_name,
                                   bool custom = false) {
     Property p;
     p.set_custom(custom);
-    p.set_property_type(Type::EmptyAttrib);
-    p.attribute().set_type_name(type_name);
+    Attribute a;
+    a.set_type_name(type_name);
+    p._data = std::move(a);
     return p;
   }
 
   Property(const Attribute &a, bool custom = false)
-      : _attrib(a), _has_custom(custom) {
-    _type = Type::Attrib;
+      : _data(a), _has_custom(custom) {
   }
 
   Property(Attribute &&a, bool custom = false)
-      : _attrib(std::move(a)), _has_custom(custom) {
-    _type = Type::Attrib;
+      : _data(std::move(a)), _has_custom(custom) {
   }
 
   // Relationship(typeless)
   Property(const Relationship &r, bool custom = false)
-      : _rel(r), _has_custom(custom) {
-    _type = Type::Relation;
+      : _data(r), _has_custom(custom) {
     set_listedit_qual(r.get_listedit_qual());
   }
 
   // Relationship(typeless)
   Property(Relationship &&r, bool custom = false)
       : _has_custom(custom) {
-    _type = Type::Relation;
     set_listedit_qual(r.get_listedit_qual());
-    _rel = std::move(r);
+    _data = std::move(r);
   }
 
   // Attribute Connection: has type
   Property(const Path &path, const std::string &prop_value_type_name,
            bool custom = false)
-      : _prop_value_type_name(prop_value_type_name), _has_custom(custom) {
-    _attrib.set_connection(path);
-    _attrib.set_type_name(prop_value_type_name);
-    _type = Type::Connection;
+      : _has_custom(custom) {
+    Attribute a;
+    a.set_connection(path);
+    a.set_type_name(prop_value_type_name);
+    _data = std::move(a);
   }
 
   // Attribute Connection: has multiple targetPaths
   Property(const std::vector<Path> &paths,
            const std::string &prop_value_type_name, bool custom = false)
-      : _prop_value_type_name(prop_value_type_name), _has_custom(custom) {
-    _attrib.set_connections(paths);
-    _attrib.set_type_name(prop_value_type_name);
-    _type = Type::Connection;
+      : _has_custom(custom) {
+    Attribute a;
+    a.set_connections(paths);
+    a.set_type_name(prop_value_type_name);
+    _data = std::move(a);
   }
+
+  // Copy constructor
+  Property(const Property& rhs) = default;
+
+  // Move constructor
+  Property(Property&& rhs) noexcept = default;
+
+  // Copy assignment operator
+  Property& operator=(const Property& rhs) = default;
+
+  // Move assignment operator
+  Property& operator=(Property&& rhs) noexcept = default;
 
   bool is_attribute() const {
-    return (_type == Type::EmptyAttrib) || (_type == Type::Attrib);
-  }
-  bool is_empty() const {
-    return (_type == Type::EmptyAttrib) || (_type == Type::NoTargetsRelation);
-  }
-  bool is_relationship() const {
-    return (_type == Type::Relation) || (_type == Type::NoTargetsRelation);
+    return std::holds_alternative<Attribute>(_data);
   }
 
-  // TODO: Deprecate this and use is_attribute_connection
-  //bool is_connection() const { return _type == Type::Connection; }
+  bool is_empty() const {
+    if (std::holds_alternative<std::monostate>(_data)) {
+      return true;
+    }
+    if (is_attribute()) {
+      const auto& a = std::get<Attribute>(_data);
+      return !a.has_value() && !a.has_timesamples() && !a.has_connections();
+    }
+    if (is_relationship()) {
+      return !std::get<Relationship>(_data).has_value();
+    }
+    return true;
+  }
+
+  bool is_relationship() const {
+    return std::holds_alternative<Relationship>(_data);
+  }
 
   bool is_attribute_connection() const {
     if (is_attribute()) {
-      return _attrib.is_connection();
+      return std::get<Attribute>(_data).is_connection();
     }
-
     return false;
   }
 
@@ -2817,35 +3318,132 @@ class Property {
     if (is_relationship()) {
       // relation is typeless.
       return std::string();
-    } else {
-      return _attrib.type_name();
+    } else if (is_attribute()) {
+      return std::get<Attribute>(_data).type_name();
     }
+    return std::string();
   }
 
   bool has_custom() const { return _has_custom; }
   void set_custom(const bool onoff) { _has_custom = onoff; }
 
-  void set_property_type(Type ty) { _type = ty; }
+  // set_property_type: For backwards compatibility
+  // This converts legacy Type enum values to the new variant storage
+  void set_property_type(Type ty) {
+    switch (ty) {
+      case Type::EmptyAttrib:
+        // If already an attribute, keep it but it's "empty"
+        if (!is_attribute()) {
+          _data = Attribute();
+        }
+        break;
+      case Type::Attrib:
+        // Should already have attribute set, just validate
+        if (!is_attribute()) {
+          _data = Attribute();
+        }
+        break;
+      case Type::Connection:
+        // Should already have attribute with connections set
+        if (!is_attribute()) {
+          _data = Attribute();
+        }
+        break;
+      case Type::Relation:
+        if (!is_relationship()) {
+          _data = Relationship();
+        }
+        break;
+      case Type::NoTargetsRelation:
+        if (!is_relationship()) {
+          _data = Relationship();
+        }
+        break;
+    }
+  }
 
-  Type get_property_type() const { return _type; }
+  // get_property_type: For backwards compatibility
+  // Maps the variant state back to legacy Type enum
+  Type get_property_type() const {
+    if (std::holds_alternative<std::monostate>(_data)) {
+      return Type::EmptyAttrib;
+    }
+    if (is_attribute()) {
+      const auto& a = std::get<Attribute>(_data);
+      if (a.has_connections()) {
+        return Type::Connection;
+      }
+      if (a.has_value() || a.has_timesamples()) {
+        return Type::Attrib;
+      }
+      return Type::EmptyAttrib;
+    }
+    if (is_relationship()) {
+      const auto& r = std::get<Relationship>(_data);
+      if (r.has_value()) {
+        return Type::Relation;
+      }
+      return Type::NoTargetsRelation;
+    }
+    return Type::EmptyAttrib;
+  }
 
   void set_listedit_qual(ListEditQual qual) { _listOpQual = qual; }
 
-  const Attribute &get_attribute() const { return _attrib; }
-
-  Attribute &attribute() { return _attrib; }
-
-  void set_attribute(const Attribute &attrib) {
-    _attrib = attrib;
-    _type = Type::Attrib;
+  // get_attribute: Returns const reference to stored Attribute
+  // Throws std::bad_variant_access if not an attribute
+  const Attribute &get_attribute() const {
+    return std::get<Attribute>(_data);
   }
 
-  const Relationship &get_relationship() const { return _rel; }
+  // attribute: Returns mutable reference to stored Attribute
+  // Creates empty Attribute if not currently storing one
+  Attribute &attribute() {
+    if (!is_attribute()) {
+      _data = Attribute();
+    }
+    return std::get<Attribute>(_data);
+  }
 
-  Relationship &relationship() { return _rel; }
+  // Safe accessor - returns nullptr if not an attribute
+  const Attribute* get_attribute_or_null() const {
+    return std::get_if<Attribute>(&_data);
+  }
+
+  Attribute* get_attribute_or_null() {
+    return std::get_if<Attribute>(&_data);
+  }
+
+  void set_attribute(const Attribute &attrib) {
+    _data = attrib;
+  }
+
+  // get_relationship: Returns const reference to stored Relationship
+  // Throws std::bad_variant_access if not a relationship
+  const Relationship &get_relationship() const {
+    return std::get<Relationship>(_data);
+  }
+
+  // relationship: Returns mutable reference to stored Relationship
+  // Creates empty Relationship if not currently storing one
+  Relationship &relationship() {
+    if (!is_relationship()) {
+      _data = Relationship();
+    }
+    return std::get<Relationship>(_data);
+  }
+
+  // Safe accessor - returns nullptr if not a relationship
+  const Relationship* get_relationship_or_null() const {
+    return std::get_if<Relationship>(&_data);
+  }
+
+  Relationship* get_relationship_or_null() {
+    return std::get_if<Relationship>(&_data);
+  }
 
   ///
-  /// Convienient methos when Property is a Relationship
+  /// Convenient methods when Property is a Relationship
   ///
 
   ///
@@ -2854,15 +3452,17 @@ class Property {
   /// paths)
   ///
   nonstd::optional<Path> get_relationTarget() const {
-
-    if (_rel.is_path()) {
-      return _rel.targetPath;
-    } else if (_rel.is_pathvector()) {
-      if (_rel.targetPathVector.size() > 0) {
-        return _rel.targetPathVector[0];
+    if (!is_relationship()) {
+      return nonstd::nullopt;
+    }
+    const auto& rel = std::get<Relationship>(_data);
+    if (rel.is_path()) {
+      return rel.targetPath;
+    } else if (rel.is_pathvector()) {
+      if (rel.targetPathVector.size() > 0) {
+        return rel.targetPathVector[0];
       }
     }
-
     return nonstd::nullopt;
   }
 
@@ -2873,28 +3473,30 @@ class Property {
   ///
   std::vector<Path> get_relationTargets() const {
     std::vector<Path> pv;
-
-    if (_rel.is_path()) {
-      pv.push_back(_rel.targetPath);
-    } else if (_rel.is_pathvector()) {
-      pv = _rel.targetPathVector;
+    if (!is_relationship()) {
+      return pv;
     }
-
+    const auto& rel = std::get<Relationship>(_data);
+    if (rel.is_path()) {
+      pv.push_back(rel.targetPath);
+    } else if (rel.is_pathvector()) {
+      pv = rel.targetPathVector;
+    }
     return pv;
   }
 
   ListEditQual get_listedit_qual() const { return _listOpQual; }
 
+  size_t estimate_memory_usage() const;
+
  private:
-  Attribute _attrib;  // attribute(value or ".connect")
+  // Variant storage: only one of monostate/Attribute/Relationship is active
+  // This saves ~80-150 bytes compared to storing both Attribute and Relationship
+  std::variant<std::monostate, Attribute, Relationship> _data;
 
   // List Edit qualifier(Attribute can never be list editable)
-  // TODO:  Store listEdit qualifier to `Relation`
   ListEditQual _listOpQual{ListEditQual::ResetToExplicit};
 
-  Type _type{Type::EmptyAttrib};
-  Relationship _rel;                  // Relation(`rel`)
-  std::string _prop_value_type_name;  // for Connection.
   bool _has_custom{false};  // Qualified with 'custom' keyword? This will be
                             // deprecated though
 };
@@ -2961,7 +3563,7 @@ struct XformOp {
 
   void set_timesamples(const value::TimeSamples &v) { _var.set_timesamples(v); }
 
-  void set_timesamples(value::TimeSamples &&v) { _var.set_timesamples(v); }
+  void set_timesamples(value::TimeSamples &&v) { _var.set_timesamples(std::move(v)); }
 
   bool is_timesamples() const { return _var.is_timesamples(); }
   bool has_timesamples() const { return _var.has_timesamples(); }
@@ -3035,6 +3637,12 @@ struct VariantSet;
 // Variant item in VariantSet.
 // Variant can contain Prim metas, Prim tree and properties.
 struct Variant {
+  Variant() = default;
+  Variant(const Variant &) = default;
+  Variant(Variant &&) noexcept = default;
+  Variant &operator=(const Variant &) = default;
+  Variant &operator=(Variant &&) noexcept = default;
+
   // const std::string &name() const { return _name; }
   // std::string &name() { return _name; }
 
@@ -3065,6 +3673,12 @@ struct Variant {
 
 
 struct VariantSet {
+  VariantSet() = default;
+  VariantSet(const VariantSet &) = default;
+  VariantSet(VariantSet &&) noexcept = default;
+  VariantSet &operator=(const VariantSet &) = default;
+  VariantSet &operator=(VariantSet &&) noexcept = default;
+
   // variantSet name = {
   //   "variant1" ...
   //   "variant2" ...
@@ -3078,11 +3692,28 @@ struct VariantSet {
 // For variantSet statement in PrimSpec(composition).
 struct VariantSetSpec
 {
+  VariantSetSpec() = default;
+  VariantSetSpec(const VariantSetSpec &) = default;
+  VariantSetSpec(VariantSetSpec &&) noexcept = default;
+  VariantSetSpec &operator=(const VariantSetSpec &) = default;
+  VariantSetSpec &operator=(VariantSetSpec &&) noexcept = default;
+
   std::string name;
   std::map<std::string, PrimSpec> variantSet;
 };
 
 // Collection API
+///
+/// ColorSpaceAPI - API schema for specifying color space of a prim
+/// See: https://openusd.org/dev/user_guides/color_user_guide.html
+///
+/// Apply to prims: prepend apiSchemas = ["ColorSpaceAPI"]
+/// Sets source color space via: uniform token colorSpace:name
+///
+struct ColorSpaceAPI {
+  TypedAttributeWithFallback<Animatable<value::token>> colorSpace_name;  // uniform token colorSpace:name
+};
+
 // https://openusd.org/release/api/class_usd_collection_a_p_i.html
 
 constexpr auto kExpandPrims = "expandPrims";
@@ -3107,6 +3738,12 @@ struct CollectionInstance {
 class Collection
 {
  public:
+  Collection() = default;
+  Collection(const Collection &) = default;
+  Collection(Collection &&) noexcept = default;
+  Collection &operator=(const Collection &) = default;
+  Collection &operator=(Collection &&) noexcept = default;
+
   const ordered_dict<CollectionInstance> instances() const {
     return _instances;
   }
@@ -3160,6 +3797,11 @@ std::string to_string(const MaterialBindingStrength strength);
 
 class MaterialBinding {
  public:
+  MaterialBinding() = default;
+  MaterialBinding(const MaterialBinding &) = default;
+  MaterialBinding(MaterialBinding &&) noexcept = default;
+  MaterialBinding &operator=(const MaterialBinding &) = default;
+  MaterialBinding &operator=(MaterialBinding &&) noexcept = default;
 
   static value::token kAllPurpose() {
     return value::token("");
@@ -3230,7 +3872,7 @@ class MaterialBinding {
   void set_materialBinding(const Relationship &rel, const MaterialBindingStrength strength) {
     value::token strength_tok(to_string(strength));
     materialBinding = rel;
-    materialBinding.value().metas().bindMaterialAs = strength_tok;
+    materialBinding.value().metas().set_bindMaterialAs(strength_tok);
   }
 
   void set_materialBindingPreview(const Relationship &rel) {
@@ -3240,7 +3882,7 @@ class MaterialBinding {
   void set_materialBindingPreview(const Relationship &rel, const MaterialBindingStrength strength) {
     value::token strength_tok(to_string(strength));
     materialBindingPreview = rel;
-    materialBindingPreview.value().metas().bindMaterialAs = strength_tok;
+    materialBindingPreview.value().metas().set_bindMaterialAs(strength_tok);
   }
 
   void set_materialBindingFull(const Relationship &rel) {
@@ -3250,7 +3892,7 @@ class MaterialBinding {
   void set_materialBindingFull(const Relationship &rel, const MaterialBindingStrength strength) {
     value::token strength_tok(to_string(strength));
     materialBindingFull = rel;
-    materialBindingFull.value().metas().bindMaterialAs = strength_tok;
+    materialBindingFull.value().metas().set_bindMaterialAs(strength_tok);
   }
 
   void set_materialBinding(const Relationship &rel, const value::token &mat_purpose) {
@@ -3277,7 +3919,7 @@ class MaterialBinding {
       return set_materialBindingFull(rel, strength);
     } else {
       _materialBindingMap[mat_purpose.str()] = rel;
-      _materialBindingMap[mat_purpose.str()].metas().bindMaterialAs = strength_tok;
+      _materialBindingMap[mat_purpose.str()].metas().set_bindMaterialAs(strength_tok);
     }
   }
 
@@ -3313,7 +3955,7 @@ class MaterialBinding {
     value::token strength_tok(to_string(strength));
 
     Relationship r = rel;
-    r.metas().bindMaterialAs = strength_tok;
+    r.metas().set_bindMaterialAs(strength_tok);
 
     _materialBindingCollectionMap[tok.str()].insert(mat_purpose.str(), r);
   }
@@ -3383,6 +4025,12 @@ class MaterialBinding {
 // Generic primspec container.
 // Unknown or unsupported Prim type are also reprenseted as Model for now.
 struct Model : public Collection, MaterialBinding {
+  Model() = default;
+  Model(const Model &) = default;
+  Model(Model &&) noexcept = default;
+  Model &operator=(const Model &) = default;
+  Model &operator=(Model &&) noexcept = default;
+
   std::string name;
 
   std::string prim_type_name;  // e.g. "" for `def "bora" {}`, "UnknownPrim" for
@@ -3554,6 +4202,12 @@ struct Volume {
 // From USD doc: Scope is the simplest grouping primitive, and does not carry
 // the baggage of transformability.
 struct Scope : Collection, MaterialBinding {
+  Scope() = default;
+  Scope(const Scope &) = default;
+  Scope(Scope &&) noexcept = default;
+  Scope &operator=(const Scope &) = default;
+  Scope &operator=(Scope &&) noexcept = default;
+
   std::string name;
   Specifier spec{Specifier::Def};
 
@@ -3619,6 +4273,15 @@ class Prim {
   Prim(const std::string &elementName, const T &prim) {
     set_primdata(elementName, prim);
   }
+
+  // Default constructor (creates empty/invalid Prim)
+  Prim() = default;
+
+  // Special member functions (copy and move)
+  Prim(const Prim&) = default;
+  Prim& operator=(const Prim&) = default;
+  Prim(Prim&&) noexcept = default;
+  Prim& operator=(Prim&&) noexcept = default;
 
   // Replace exting prim
   template <typename T>
@@ -3849,10 +4512,6 @@ class Prim {
             // NumPrimsInStage)
 
   std::map<std::string, VariantSet> _variantSets;
-
-#if defined(TINYUSDZ_ENABLE_THREAD)
-  mutable std::mutex _mutex;
-#endif
 };
 
 bool IsXformablePrim(const Prim &prim);
@@ -3974,21 +4633,29 @@ class PrimNode {
 /// Properties(Relationships and Attributes)
 class PrimSpec {
  public:
-  PrimSpec() = default;
+  PrimSpec() {
+    //TUSDZ_LOG_I("PrimSpec default constructor called");
+  }
 
   PrimSpec(const Specifier &spec, const std::string &name)
-      : _specifier(spec), _name(name) {}
+      : _specifier(spec), _name(name) {
+    //TUSDZ_LOG_I("PrimSpec constructor called with spec and name: " << name);
+  }
   PrimSpec(const Specifier &spec, const std::string &typeName,
            const std::string &name)
-      : _specifier(spec), _typeName(typeName), _name(name) {}
+      : _specifier(spec), _typeName(typeName), _name(name) {
+    //TUSDZ_LOG_I("PrimSpec constructor called with spec, typeName, and name: " << name);
+  }
 
   PrimSpec(const PrimSpec &rhs) {
+    //TUSDZ_LOG_I("PrimSpec copy constructor called");
     if (this != &rhs) {
       CopyFrom(rhs);
     }
   }
 
   PrimSpec &operator=(const PrimSpec &rhs) {
+    //TUSDZ_LOG_I("PrimSpec copy assignment operator called");
     if (this != &rhs) {
       CopyFrom(rhs);
     }
@@ -3996,7 +4663,15 @@ class PrimSpec {
     return *this;
   }
 
+  PrimSpec(PrimSpec &&rhs) noexcept {
+    //TUSDZ_LOG_I("PrimSpec move constructor called");
+    if (this != &rhs) {
+      MoveFrom(rhs);
+    }
+  }
+
   PrimSpec &operator=(PrimSpec &&rhs) noexcept {
+    //TUSDZ_LOG_I("PrimSpec move assignment operator called");
     if (this != &rhs) {
       MoveFrom(rhs);
     }
@@ -4265,276 +4940,9 @@ struct LayerMetas {
 };
 
 
-// Similar to SdfLayer or Stage
-// It is basically hold the list of PrimSpec and Layer metadatum.
-class Layer {
- public:
-  const std::string name() const { return _name; }
-
-  void set_name(const std::string name) { _name = name; }
-
-  void clear_primspecs() { _prim_specs.clear(); }
-
-  // Check if `primname` exists in root Prims?
-  bool has_primspec(const std::string &primname) const {
-    return _prim_specs.count(primname) > 0;
-  }
-
-  ///
-  /// Add PrimSpec(copy PrimSpec instance).
-  ///
-  /// @return false when `name` already exists in `primspecs`, `name` is empty
-  /// string or `name` contains invalid character to be used in Prim
-  /// element_name.
-  ///
-  bool add_primspec(const std::string &name, const PrimSpec &ps) {
-    if (name.empty()) {
-      return false;
-    }
-
-    if (!ValidatePrimElementName(name)) {
-      return false;
-    }
-
-    if (has_primspec(name)) {
-      return false;
-    }
-
-    _prim_specs.emplace(name, ps);
-
-    return true;
-  }
-
-  ///
-  /// Add PrimSpec.
-  ///
-  /// @return false when `name` already exists in `primspecs`, `name` is empty
-  /// string or `name` contains invalid character to be used in Prim
-  /// element_name.
-  ///
-  bool emplace_primspec(const std::string &name, PrimSpec &&ps) {
-    if (name.empty()) {
-      return false;
-    }
-
-    if (!ValidatePrimElementName(name)) {
-      return false;
-    }
-
-    if (has_primspec(name)) {
-      return false;
-    }
-
-    _prim_specs.emplace(name, std::move(ps));
-
-    return true;
-  }
-
-  ///
-  /// Replace PrimSpec(copy PrimSpec instance)
-  ///
-  /// @return false when `name` does not exist in `primspecs`, `name` is empty
-  /// string or `name` contains invalid character to be used in Prim
-  /// element_name.
-  ///
-  bool replace_primspec(const std::string &name, const PrimSpec &ps) {
-    if (name.empty()) {
-      return false;
-    }
-
-    if (!ValidatePrimElementName(name)) {
-      return false;
-    }
-
-    if (!has_primspec(name)) {
-      return false;
-    }
-
-    _prim_specs.at(name) = ps;
-
-    return true;
-  }
-
-  ///
-  /// Replace PrimSpec
-  ///
-  /// @return false when `name` does not exist in `primspecs`, `name` is empty
-  /// string or `name` contains invalid character to be used in Prim
-  /// element_name.
-  ///
-  bool replace_primspec(const std::string &name, PrimSpec &&ps) {
-    if (name.empty()) {
-      return false;
-    }
-
-    if (!ValidatePrimElementName(name)) {
-      return false;
-    }
-
-    if (!has_primspec(name)) {
-      return false;
-    }
-
-    _prim_specs.at(name) = std::move(ps);
-
-    return true;
-  }
-
-  const std::unordered_map<std::string, PrimSpec> &primspecs() const {
-    return _prim_specs;
-  }
-
-  std::unordered_map<std::string, PrimSpec> &primspecs() { return _prim_specs; }
-
-  const LayerMetas &metas() const { return _metas; }
-  LayerMetas &metas() { return _metas; }
-
-  bool has_unresolved_references() const {
-    return _has_unresolved_references;
-  }
-
-  bool has_unresolved_payload() const {
-    return _has_unresolved_payload;
-  }
-
-  bool has_unresolved_variant() const {
-    return _has_unresolved_variant;
-  }
-
-  bool has_over_primspec() const {
-    return _has_over_primspec;
-  }
-
-  bool has_class_primspec() const {
-    return _has_class_primspec;
-  }
-
-  bool has_unresolved_inherits() const {
-    return _has_unresolved_inherits;
-  }
-
-  bool has_unresolved_specializes() const {
-    return _has_unresolved_specializes;
-  }
-
-  ///
-  /// Check if PrimSpec tree contains any `references` and cache the result.
-  ///
-  /// @param[in] max_depth Maximum PrimSpec traversal depth.
-  /// @returns true if PrimSpec tree contains any (unresolved) `references`. false if not.
-  ///
-  bool check_unresolved_references(const uint32_t max_depth = 1024 * 1024) const;
-
-  ///
-  /// Check if PrimSpec tree contains any `payload` and cache the result.
-  ///
-  /// @param[in] max_depth Maximum PrimSpec traversal depth.
-  /// @returns true if PrimSpec tree contains any (unresolved) `payload`. false if not.
-  ///
-  bool check_unresolved_payload(const uint32_t max_depth = 1024 * 1024) const;
-
-  ///
-  /// Check if PrimSpec tree contains any `variant` and cache the result.
-  ///
-  /// @param[in] max_depth Maximum PrimSpec traversal depth.
-  /// @returns true if PrimSpec tree contains any (unresolved) `variant`. false if not.
-  ///
-  bool check_unresolved_variant(const uint32_t max_depth = 1024 * 1024) const;
-
-  ///
-  /// Check if PrimSpec tree contains any `specializes` and cache the result.
-  ///
-  /// @param[in] max_depth Maximum PrimSpec traversal depth.
-  /// @returns true if PrimSpec tree contains any (unresolved) `specializes`. false if not.
-  ///
-  bool check_unresolved_specializes(const uint32_t max_depth = 1024 * 1024) const;
-
-  ///
-  /// Check if PrimSpec tree contains any `inherits` and cache the result.
-  ///
-  /// @param[in] max_depth Maximum PrimSpec traversal depth.
-  /// @returns true if PrimSpec tree contains any (unresolved) `inherits`. false if not.
-  ///
-  bool check_unresolved_inherits(const uint32_t max_depth = 1024 * 1024) const;
-
-  ///
-  /// Check if PrimSpec tree contains any Prim with `over` specifier and cache the result.
-  ///
-  /// @param[in] max_depth Maximum PrimSpec traversal depth.
-  /// @returns true if PrimSpec tree contains any Prim with `over` specifier. false if not.
-  ///
-  bool check_over_primspec(const uint32_t max_depth = 1024 * 1024) const;
-
-  ///
-  /// Find a PrimSpec at `path` and returns it if found.
-  ///
-  /// @param[in] path PrimSpec path to find.
-  /// @param[out] ps Pointer to PrimSpec pointer
-  /// @param[out] err Error message
-  ///
-  bool find_primspec_at(const Path &path, const PrimSpec **ps, std::string *err) const;
-
-
-  ///
-  /// Set state for AssetResolution in the subsequent composition operation.
-  ///
-  void set_asset_resolution_state(
-    const std::string &cwp, const std::vector<std::string> &search_paths, void *userdata=nullptr) {
-    _current_working_path = cwp;
-    _asset_search_paths = search_paths;
-    _asset_resolution_userdata = userdata;
-  }
-
-  void get_asset_resolution_state(
-    std::string &cwp, std::vector<std::string> &search_paths, void *&userdata) {
-    cwp = _current_working_path;
-    search_paths = _asset_search_paths;
-    userdata = _asset_resolution_userdata;
-  }
-
-  const std::string get_current_working_path() const {
-    return _current_working_path;
-  }
-
-  const std::vector<std::string> get_asset_search_paths() const {
-    return _asset_search_paths;
-  }
-
- private:
-  std::string _name;  // layer name ~= USD filename
-
-  // key = prim name
-  std::unordered_map<std::string, PrimSpec> _prim_specs;
-  LayerMetas _metas;
-
-#if defined(TINYUSDZ_ENABLE_THREAD)
-  mutable std::mutex _mutex;
-#endif
-
-  // Cached primspec path.
-  // key : prim_part string (e.g. "/path/bora")
-  mutable std::map<std::string, const PrimSpec *> _primspec_path_cache;
-  mutable bool _dirty{true};
-
-  // Cached flags for composition.
-  // true by default even PrimSpec tree does not contain any `references`, `payload`, etc.
-  mutable bool _has_unresolved_references{true};
-  mutable bool _has_unresolved_payload{true};
-  mutable bool _has_unresolved_variant{true};
-  mutable bool _has_unresolved_inherits{true};
-  mutable bool _has_unresolved_specializes{true};
-  mutable bool _has_over_primspec{true};
-  mutable bool _has_class_primspec{true};
-
-  //
-  // Record AssetResolution state(search paths, current working directory)
-  // when this layer is opened by compostion(`references`, `payload`, `subLayers`)
-  //
-  mutable std::string _current_working_path;
-  mutable std::vector<std::string> _asset_search_paths;
-  mutable void *_asset_resolution_userdata{nullptr};
-
-};
+// Forward declaration for Layer class
+// Layer class has been moved to layer.hh
+class Layer;
 
 
 nonstd::optional<Interpolation> InterpolationFromString(const std::string &v);
@@ -4581,6 +4989,7 @@ DEFINE_TYPE_TRAIT(value::TimeSamples, "TimeSamples", TYPE_ID_TIMESAMPLES, 1);
 
 DEFINE_TYPE_TRAIT(Collection, "Collection", TYPE_ID_COLLECTION, 1);
 DEFINE_TYPE_TRAIT(CollectionInstance, "CollectionInstance", TYPE_ID_COLLECTION_INSTANCE, 1);
+DEFINE_TYPE_TRAIT(ColorSpaceAPI, "ColorSpaceAPI", TYPE_ID_COLOR_SPACE_API, 1);
 
 DEFINE_TYPE_TRAIT(Model, "Model", TYPE_ID_MODEL, 1);
 DEFINE_TYPE_TRAIT(Scope, "Scope", TYPE_ID_SCOPE, 1);

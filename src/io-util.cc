@@ -241,7 +241,7 @@ bool MMapFile(const std::string &filepath, MMapFileHandle *handle, bool writable
     return false;
   }
 
-  handle->hFile = hFile;  
+  handle->hFile = hFile;
   handle->filename = filepath;
   handle->unicode_filename = unicode_filepath;
 
@@ -325,13 +325,13 @@ bool MMapFile(const std::wstring &unicode_filepath, MMapFileHandle *handle, bool
     return false;
   }
 
-  handle->hFile = hFile; 
+  handle->hFile = hFile;
   handle->filename = WcharToUTF8(unicode_filepath);
   handle->unicode_filename = unicode_filepath;
 
   return true;
-    
-#else 
+
+#else
   (void)unicode_filepath;
   (void)handle;
   (void)writable;
@@ -354,7 +354,7 @@ bool UnmapFile(const MMapFileHandle &handle, std::string *err) {
 
       // may be ok for now.
       // result = false;
-    } 
+    }
   } else {
     // arg is invalid
     result = false;
@@ -366,8 +366,8 @@ bool UnmapFile(const MMapFileHandle &handle, std::string *err) {
         (*err) += "CloseHandle failed: " +
                   llama_format_win_err(GetLastError());
       }
-      
-      result =false; 
+
+      result =false;
     }
   }
 
@@ -423,27 +423,29 @@ std::string ExpandFilePath(const std::string &_filepath, void *) {
   wordexp_t p;
 
   if (filepath.empty()) {
-    return "";
-  }
-
-  // Quote the string to keep any spaces in filepath intact.
-  std::string quoted_path = "\"" + filepath + "\"";
-  // char** w;
-  // TODO: wordexp() is a awful API. Implement our own file path expansion
-  // routine. Set NOCMD for security.
-  int ret = wordexp(quoted_path.c_str(), &p, WRDE_NOCMD);
-  if (ret) {
-    // err
-    s = filepath;
-    return s;
-  }
-
-  // Use first element only.
-  if (p.we_wordv) {
-    s = std::string(p.we_wordv[0]);
-    wordfree(&p);
+    s = "";
   } else {
-    s = filepath;
+
+    // Quote the string to keep any spaces in filepath intact.
+    std::string quoted_path = "\"" + filepath + "\"";
+    // char** w;
+    // TODO: wordexp() is a awful API. Implement our own file path expansion
+    // routine. Set NOCMD for security.
+    int ret = wordexp(quoted_path.c_str(), &p, WRDE_NOCMD);
+    if (ret) {
+      // err
+      s = filepath;
+      //return s;
+    } else {
+
+      // Use first element only.
+      if (p.we_wordv) {
+        s = std::string(p.we_wordv[0]);
+        wordfree(&p);
+      } else {
+        s = filepath;
+      }
+    }
   }
 
 #endif

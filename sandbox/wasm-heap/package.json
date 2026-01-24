@@ -1,0 +1,14 @@
+{
+  "name": "wasm-heap-test",
+  "version": "1.0.0",
+  "description": "WASM memory allocation test with std::vector",
+  "main": "test.js",
+  "scripts": {
+    "build": "./build.sh",
+    "test": "node test.js",
+    "all": "npm run build && npm run test"
+  },
+  "engines": {
+    "node": ">=14.0.0"
+  }
+}

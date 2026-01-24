@@ -1,0 +1,10 @@
+#usda 1.0
+
+def Xform "test_token_array"
+{
+  token[] modes.timeSamples = {
+      0: ["idle", "waiting"],
+      10: ["active", "running", "processing"],
+      20: ["disabled"],
+  }
+}

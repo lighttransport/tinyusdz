@@ -1,0 +1,15 @@
+<?xml version="1.0"?>
+<materialx version="1.38">
+  <surfacematerial name="Gold" type="material">
+    <input name="surfaceshader" type="surfaceshader" nodename="Gold_shader" />
+  </surfacematerial>
+
+  <open_pbr_surface name="Gold_shader" type="surfaceshader">
+    <input name="base_color" type="color3" value="1.0, 0.766, 0.336" />
+    <input name="base_weight" type="float" value="1.0" />
+    <input name="base_metalness" type="float" value="1.0" />
+    <input name="specular_roughness" type="float" value="0.2" />
+    <input name="specular_ior" type="float" value="20.0" />
+    <input name="specular_color" type="color3" value="1.0, 0.85, 0.57" />
+  </open_pbr_surface>
+</materialx>

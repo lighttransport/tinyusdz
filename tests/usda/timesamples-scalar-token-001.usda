@@ -1,0 +1,10 @@
+#usda 1.0
+
+def Xform "test_token"
+{
+  token mode.timeSamples = {
+      0: "idle",
+      10: "active",
+      20: "disabled",
+  }
+}

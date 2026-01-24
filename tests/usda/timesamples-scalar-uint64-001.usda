@@ -1,0 +1,10 @@
+#usda 1.0
+
+def Xform "test_uint64"
+{
+  uint64 bigindex.timeSamples = {
+      0: 0,
+      10: 18446744073709551615,
+      20: 1000000000000,
+  }
+}
