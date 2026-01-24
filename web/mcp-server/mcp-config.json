@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "tinyusdz": {
+      "command": "bun",
+      "args": ["run", "server.ts"],
+      "cwd": "/path/to/tinyusdz/web/mcp-server"
+    }
+  }
+}

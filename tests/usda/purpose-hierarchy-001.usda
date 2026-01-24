@@ -1,0 +1,420 @@
+#usda 1.0
+(
+    doc = "Purpose and visibility hierarchy test - inheritance and overrides"
+    defaultPrim = "PurposeHierarchyTests"
+)
+
+def Xform "PurposeHierarchyTests"
+{
+    # =========================================================================
+    # Basic purpose values
+    # =========================================================================
+    def Xform "DefaultPurpose"
+    {
+        # default purpose (no explicit value)
+        
+        def Cube "Cube"
+        {
+            double size = 1.0
+        }
+    }
+
+    def Xform "RenderPurpose" (
+        purpose = "render"
+    )
+    {
+        def Mesh "RenderMesh"
+        {
+            int[] faceVertexCounts = [4]
+            int[] faceVertexIndices = [0, 1, 2, 3]
+            point3f[] points = [(0, 0, 0), (1, 0, 0), (1, 1, 0), (0, 1, 0)]
+        }
+    }
+
+    def Xform "ProxyPurpose" (
+        purpose = "proxy"
+    )
+    {
+        def Cube "ProxyCube"
+        {
+            double size = 1.0
+            color3f[] primvars:displayColor = [(0, 1, 0)]
+        }
+    }
+
+    def Xform "GuidePurpose" (
+        purpose = "guide"
+    )
+    {
+        def Xform "GuideLines"
+        {
+            def BasisCurves "XAxis"
+            {
+                uniform token type = "linear"
+                int[] curveVertexCounts = [2]
+                point3f[] points = [(0, 0, 0), (10, 0, 0)]
+                color3f[] primvars:displayColor = [(1, 0, 0)]
+            }
+
+            def BasisCurves "YAxis"
+            {
+                uniform token type = "linear"
+                int[] curveVertexCounts = [2]
+                point3f[] points = [(0, 0, 0), (0, 10, 0)]
+                color3f[] primvars:displayColor = [(0, 1, 0)]
+            }
+
+            def BasisCurves "ZAxis"
+            {
+                uniform token type = "linear"
+                int[] curveVertexCounts = [2]
+                point3f[] points = [(0, 0, 0), (0, 0, 10)]
+                color3f[] primvars:displayColor = [(0, 0, 1)]
+            }
+        }
+    }
+
+    # =========================================================================
+    # Purpose inheritance
+    # =========================================================================
+    def Xform "PurposeInheritance"
+    {
+        # Parent with render purpose
+        def Xform "RenderParent" (
+            purpose = "render"
+        )
+        {
+            # Children inherit render purpose
+            def Mesh "Child1"
+            {
+                int[] faceVertexCounts = [4]
+                int[] faceVertexIndices = [0, 1, 2, 3]
+                point3f[] points = [(0, 0, 0), (1, 0, 0), (1, 1, 0), (0, 1, 0)]
+            }
+
+            def Mesh "Child2"
+            {
+                int[] faceVertexCounts = [3]
+                int[] faceVertexIndices = [0, 1, 2]
+                point3f[] points = [(0, 0, 0), (1, 0, 0), (0.5, 1, 0)]
+            }
+
+            # Child with proxy override
+            def Mesh "ProxyChild" (
+                purpose = "proxy"
+            )
+            {
+                int[] faceVertexCounts = [4]
+                int[] faceVertexIndices = [0, 1, 2, 3]
+                point3f[] points = [(-0.5, -0.5, 0), (0.5, -0.5, 0), (0.5, 0.5, 0), (-0.5, 0.5, 0)]
+            }
+        }
+
+        # Deep hierarchy
+        def Xform "DeepHierarchy" (
+            purpose = "render"
+        )
+        {
+            def Xform "Level1"
+            {
+                def Xform "Level2"
+                {
+                    def Xform "Level3" (
+                        purpose = "guide"
+                    )
+                    {
+                        # This and below should be guide
+                        def Mesh "GuideMesh"
+                        {
+                            int[] faceVertexCounts = [3]
+                            int[] faceVertexIndices = [0, 1, 2]
+                            point3f[] points = [(0, 0, 0), (1, 0, 0), (0.5, 1, 0)]
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    # =========================================================================
+    # Visibility states
+    # =========================================================================
+    def Xform "VisibilityTests"
+    {
+        # Inherited visibility (default)
+        def Cube "InheritedVisibility"
+        {
+            double size = 1.0
+            token visibility = "inherited"
+        }
+
+        # Invisible prim
+        def Cube "InvisibleCube"
+        {
+            double size = 1.0
+            token visibility = "invisible"
+        }
+
+        # Visibility hierarchy
+        def Xform "VisibleParent"
+        {
+            token visibility = "inherited"
+
+            def Cube "VisibleChild1"
+            {
+                double size = 0.5
+                token visibility = "inherited"
+            }
+
+            def Cube "InvisibleChild"
+            {
+                double size = 0.5
+                token visibility = "invisible"
+            }
+        }
+
+        # Invisible parent with children
+        def Xform "InvisibleParent"
+        {
+            token visibility = "invisible"
+
+            # Children should also be effectively invisible
+            def Cube "Child1"
+            {
+                double size = 0.5
+                token visibility = "inherited"
+            }
+
+            def Cube "Child2"
+            {
+                double size = 0.5
+                token visibility = "inherited"
+            }
+        }
+    }
+
+    # =========================================================================
+    # Animated visibility
+    # =========================================================================
+    def Xform "AnimatedVisibility"
+    {
+        def Cube "BlinkingCube"
+        {
+            double size = 1.0
+            token visibility.timeSamples = {
+                1: "inherited",
+                12: "invisible",
+                24: "inherited",
+                36: "invisible",
+                48: "inherited",
+            }
+        }
+
+        def Xform "FadeGroup"
+        {
+            token visibility.timeSamples = {
+                1: "inherited",
+                24: "inherited",
+                25: "invisible",
+                48: "inherited",
+            }
+
+            def Sphere "Sphere1"
+            {
+                double radius = 0.5
+            }
+
+            def Sphere "Sphere2"
+            {
+                double radius = 0.3
+                double3 xformOp:translate = (2, 0, 0)
+                uniform token[] xformOpOrder = ["xformOp:translate"]
+            }
+        }
+    }
+
+    # =========================================================================
+    # Combined purpose and visibility
+    # =========================================================================
+    def Xform "CombinedPurposeVisibility"
+    {
+        # Render purpose with visibility control
+        def Xform "RenderGroup" (
+            purpose = "render"
+        )
+        {
+            token visibility = "inherited"
+
+            def Mesh "VisibleRenderMesh"
+            {
+                int[] faceVertexCounts = [4]
+                int[] faceVertexIndices = [0, 1, 2, 3]
+                point3f[] points = [(0, 0, 0), (1, 0, 0), (1, 1, 0), (0, 1, 0)]
+                token visibility = "inherited"
+            }
+
+            def Mesh "HiddenRenderMesh"
+            {
+                int[] faceVertexCounts = [4]
+                int[] faceVertexIndices = [0, 1, 2, 3]
+                point3f[] points = [(2, 0, 0), (3, 0, 0), (3, 1, 0), (2, 1, 0)]
+                token visibility = "invisible"
+            }
+        }
+
+        # Proxy purpose with visibility
+        def Xform "ProxyGroup" (
+            purpose = "proxy"
+        )
+        {
+            def Cube "VisibleProxy"
+            {
+                double size = 2.0
+                token visibility = "inherited"
+            }
+
+            def Cube "HiddenProxy"
+            {
+                double size = 2.0
+                token visibility = "invisible"
+            }
+        }
+
+        # Guide purpose with visibility
+        def Xform "GuideGroup" (
+            purpose = "guide"
+        )
+        {
+            token visibility = "inherited"
+
+            def BasisCurves "VisibleGuide"
+            {
+                uniform token type = "linear"
+                int[] curveVertexCounts = [2]
+                point3f[] points = [(0, 0, 0), (5, 0, 0)]
+                token visibility = "inherited"
+            }
+
+            def BasisCurves "HiddenGuide"
+            {
+                uniform token type = "linear"
+                int[] curveVertexCounts = [2]
+                point3f[] points = [(0, 0, 0), (0, 5, 0)]
+                token visibility = "invisible"
+            }
+        }
+    }
+
+    # =========================================================================
+    # Active state (different from visibility)
+    # =========================================================================
+    def Xform "ActiveStateTests"
+    {
+        # Active prim (default)
+        def Cube "ActiveCube"
+        {
+            double size = 1.0
+        }
+
+        # Inactive prim - removed from stage composition
+        def Cube "InactiveCube" (
+            active = false
+        )
+        {
+            double size = 1.0
+        }
+
+        # Active parent with inactive child
+        def Xform "MixedActiveParent"
+        {
+            def Cube "ActiveChild"
+            {
+                double size = 0.5
+            }
+
+            def Cube "InactiveChild" (
+                active = false
+            )
+            {
+                double size = 0.5
+            }
+        }
+
+        # Inactive parent (entire subtree removed)
+        def Xform "InactiveParent" (
+            active = false
+        )
+        {
+            def Cube "Child1"
+            {
+                double size = 0.5
+            }
+
+            def Cube "Child2"
+            {
+                double size = 0.5
+            }
+        }
+    }
+
+    # =========================================================================
+    # Proxy/render pairs (LOD pattern)
+    # =========================================================================
+    def Xform "LODPattern"
+    {
+        def Xform "HighDetailRender" (
+            purpose = "render"
+        )
+        {
+            def Mesh "DetailedMesh"
+            {
+                int[] faceVertexCounts = [3, 3, 3, 3, 3, 3, 3, 3]
+                int[] faceVertexIndices = [
+                    0, 1, 2,  0, 2, 3,  0, 3, 4,  0, 4, 1,
+                    5, 2, 1,  5, 3, 2,  5, 4, 3,  5, 1, 4
+                ]
+                point3f[] points = [
+                    (0, 1, 0),
+                    (-1, 0, -1), (1, 0, -1), (1, 0, 1), (-1, 0, 1),
+                    (0, -0.5, 0)
+                ]
+                normal3f[] normals = [
+                    (0, 1, 0), (0, 1, 0), (0, 1, 0), (0, 1, 0),
+                    (0, 1, 0), (0, 1, 0), (0, 1, 0), (0, 1, 0)
+                ]
+            }
+        }
+
+        def Xform "LowDetailProxy" (
+            purpose = "proxy"
+        )
+        {
+            def Cube "SimpleCube"
+            {
+                double size = 1.8
+                color3f[] primvars:displayColor = [(0.5, 0.5, 0.5)]
+            }
+        }
+
+        def Xform "GuideAnnotations" (
+            purpose = "guide"
+        )
+        {
+            def BasisCurves "BoundingBox"
+            {
+                uniform token type = "linear"
+                int[] curveVertexCounts = [5, 5, 4, 4, 4, 4]
+                point3f[] points = [
+                    # Bottom square
+                    (-1, -0.5, -1), (1, -0.5, -1), (1, -0.5, 1), (-1, -0.5, 1), (-1, -0.5, -1),
+                    # Top square
+                    (-1, 1, -1), (1, 1, -1), (1, 1, 1), (-1, 1, 1), (-1, 1, -1),
+                    # Verticals
+                    (-1, -0.5, -1), (-1, 1, -1), (1, 1, -1), (1, -0.5, -1),
+                    (1, -0.5, 1), (1, 1, 1), (-1, 1, 1), (-1, -0.5, 1)
+                ]
+                color3f[] primvars:displayColor = [(1, 1, 0)]
+            }
+        }
+    }
+}

@@ -26,11 +26,13 @@
 #include "integerCoding.h"
 #include "io-util.hh"
 #include "lz4-compression.hh"
+#include "zstd-compression.hh"
 #include "pprinter.hh"
 #include "str-util.hh"
 #include "stream-reader.hh"
 #include "tiny-format.hh"
 #include "tinyusdz.hh"
+#include "layer.hh"
 #include "usda-reader.hh"
 #include "usdc-reader.hh"
 #include "value-pprint.hh"
@@ -67,6 +69,10 @@
 
 namespace tinyusdz {
 
+// Global flag to control DCOUT output. Defaults to false to suppress flood of output.
+// Set to true via TINYUSDZ_ENABLE_DCOUT environment variable.
+bool g_enable_dcout_output = false;
+
 // constexpr auto kTagUSDA = "[USDA]";
 // constexpr auto kTagUSDC = "[USDC]";
 // constexpr auto kTagUSDZ = "[USDZ]";
@@ -77,6 +83,31 @@ namespace tinyusdz {
     (*err) += s;     \
   }
 //#define PushWarn(s) if (warn) { (*warn) += s; }
+
+// Helper function to format magic header bytes for error messages
+static std::string FormatMagicHeader(const uint8_t *addr, const size_t length, size_t max_bytes = 16) {
+  if (!addr || length == 0) {
+    return "(empty)";
+  }
+  
+  std::string result = "0x";
+  size_t bytes_to_show = std::min(length, max_bytes);
+  
+  for (size_t i = 0; i < bytes_to_show; i++) {
+    char hex[3];
+    snprintf(hex, sizeof(hex), "%02x", addr[i]);
+    result += hex;
+    if (i < bytes_to_show - 1) {
+      result += " ";
+    }
+  }
+  
+  if (length > max_bytes) {
+    result += "...";
+  }
+  
+  return result;
+}
 
 bool LoadUSDCFromMemory(const uint8_t *addr, const size_t length,
                         const std::string &filename, Stage *stage,
@@ -125,7 +156,12 @@ bool LoadUSDCFromMemory(const uint8_t *addr, const size_t length,
   usdc::USDCReaderConfig config;
   config.numThreads = options.num_threads;
   config.strict_allowedToken_check = options.strict_allowedToken_check;
+  config.kMaxAllowedMemoryInMB = size_t(options.max_memory_limit_in_mb);
   usdc::USDCReader reader(&sr, config);
+
+  if (options.progress_callback) {
+    reader.SetProgressCallback(options.progress_callback, options.progress_userptr);
+  }
 
   if (!reader.ReadUSDC()) {
     if (warn) {
@@ -728,9 +764,15 @@ bool LoadUSDAFromMemory(const uint8_t *addr, const size_t length,
   tinyusdz::usda::USDAReaderConfig config;
   config.strict_allowedToken_check = options.strict_allowedToken_check;
   config.allow_unknown_apiSchema = !options.strict_apiSchema_check;
+  config.max_memory_limit_in_mb = size_t(options.max_memory_limit_in_mb);
   reader.set_reader_config(config);
 
+  if (options.progress_callback) {
+    reader.SetProgressCallback(options.progress_callback, options.progress_userptr);
+  }
+
   reader.SetBaseDir(base_dir);
+  reader.set_filename(base_dir);  // Pass filename for error context display
 
   {
     bool ret = reader.Read();
@@ -816,7 +858,7 @@ bool LoadUSDAFromFile(const std::string &_filename, Stage *stage,
       }
     }
 
-    return LoadUSDAFromMemory(data.data(), data.size(), base_dir, stage, warn,
+    return LoadUSDAFromMemory(data.data(), data.size(), filepath, stage, warn,
                               err, options);
   }
 }
@@ -879,6 +921,51 @@ bool LoadUSDFromMemory(const uint8_t *addr, const size_t length,
                        const std::string &base_dir, Stage *stage,
                        std::string *warn, std::string *err,
                        const USDLoadOptions &options) {
+  // Check for zstd-compressed data first (file-level compression)
+  if (IsZstdCompressed(addr, length)) {
+    DCOUT("Detected as zstd-compressed USD.");
+#ifdef TINYUSDZ_WITH_ZSTD_COMPRESSION
+    // Get decompressed size for memory budget check
+    std::string zstd_err;
+    size_t decompressed_size = ZstdCompression::GetDecompressedSize(addr, length, &zstd_err);
+    if (decompressed_size == 0) {
+      if (err) {
+        (*err) += "Failed to get zstd decompressed size: " + zstd_err + "\n";
+      }
+      return false;
+    }
+
+    // Check against memory budget
+    size_t max_length = size_t(1024) * size_t(1024) * size_t(options.max_memory_limit_in_mb);
+    if (decompressed_size > max_length) {
+      if (err) {
+        (*err) += "Decompressed USD size (" + std::to_string(decompressed_size) +
+                  " bytes) exceeds memory limit (" + std::to_string(max_length) + " bytes)\n";
+      }
+      return false;
+    }
+
+    // Decompress
+    std::vector<uint8_t> decompressed_data;
+    if (!ZstdCompression::Decompress(addr, length, &decompressed_data, &zstd_err)) {
+      if (err) {
+        (*err) += "Failed to decompress zstd data: " + zstd_err + "\n";
+      }
+      return false;
+    }
+
+    // Recursively call LoadUSDFromMemory with decompressed data
+    return LoadUSDFromMemory(decompressed_data.data(), decompressed_data.size(),
+                            base_dir, stage, warn, err, options);
+#else
+    if (err) {
+      (*err) += "zstd-compressed USD file detected, but zstd compression support is not enabled. "
+                "Rebuild with TINYUSDZ_WITH_ZSTD_COMPRESSION=ON.\n";
+    }
+    return false;
+#endif
+  }
+
   if (IsUSDC(addr, length)) {
     DCOUT("Detected as USDC.");
     return LoadUSDCFromMemory(addr, length, base_dir, stage, warn, err,
@@ -893,7 +980,11 @@ bool LoadUSDFromMemory(const uint8_t *addr, const size_t length,
                               options);
   } else {
     if (err) {
-      (*err) += "Couldn't determine USD format(USDA/USDC/USDZ).\n";
+      (*err) += "Couldn't determine USD format(USDA/USDC/USDZ). ";
+      (*err) += "Found magic header: " + FormatMagicHeader(addr, length, 8) + ", ";
+      (*err) += "expected: \"#usda 1.0\" (0x23 75 73 64 61 20 31 2e 30) for USDA, ";
+      (*err) += "\"PXR-USDC\" (0x50 58 52 2d 55 53 44 43) for USDC, ";
+      (*err) += "or ZIP signature (0x50 4b 03 04) for USDZ.\n";
     }
     return false;
   }
@@ -1039,6 +1130,10 @@ bool IsUSDZ(const uint8_t *addr, const size_t length) {
   std::string err;
 
   return ParseUSDZHeader(addr, length, /* [out] assets */ nullptr, &warn, &err);
+}
+
+bool IsZstdCompressed(const uint8_t *addr, const size_t length) {
+  return ZstdCompression::IsZstdCompressed(addr, length);
 }
 
 bool IsUSD(const std::string &filename, std::string *detected_format) {
@@ -1470,7 +1565,11 @@ bool LoadLayerFromMemory(const uint8_t *addr, const size_t length,
 #endif
   } else {
     if (err) {
-      (*err) += "Couldn't determine USD format(USDA/USDC/USDZ).\n";
+      (*err) += "Couldn't determine USD format(USDA/USDC/USDZ). ";
+      (*err) += "Found magic header: " + FormatMagicHeader(addr, length, 8) + ", ";
+      (*err) += "expected: \"#usda 1.0\" (0x23 75 73 64 61 20 31 2e 30) for USDA, ";
+      (*err) += "\"PXR-USDC\" (0x50 58 52 2d 55 53 44 43) for USDC, ";
+      (*err) += "or ZIP signature (0x50 4b 03 04) for USDZ.\n";
     }
     return false;
   }
@@ -1724,6 +1823,9 @@ bool SetupUSDZAssetResolution(
   resolver.register_asset_resolution_handler("JPEG", handler);
   resolver.register_asset_resolution_handler("exr", handler);
   resolver.register_asset_resolution_handler("EXR", handler);
+  // HDR (Radiance HDR format) - commonly used for environment maps
+  resolver.register_asset_resolution_handler("hdr", handler);
+  resolver.register_asset_resolution_handler("HDR", handler);
 
   return true;
 }

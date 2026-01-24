@@ -116,9 +116,63 @@ jobs:
     - name: tests
       run: cd build && ctest --output-on-failure
 
-  build-arm64:
+    # Test with OpenUSD binary
+    - name: Install TBB dependency
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y libtbb12
 
-    runs-on: ubuntu-22.04-arm
+    - name: Download OpenUSD binary
+      run: |
+        gh release download v25.11-lte \
+          --repo lighttransport/openusd-bin \
+          --pattern 'openusd-*-minsizerel-linux-x86_64.tar.gz'
+      env:
+        GH_TOKEN: ${{ github.token }}
+
+    - name: Extract and setup OpenUSD
+      run: |
+        mkdir -p openusd
+        tar -xzf openusd-*-minsizerel-linux-x86_64.tar.gz -C openusd
+        USD_ROOT="$(pwd)/openusd"
+        echo "USD_INSTALL_ROOT=$USD_ROOT" >> $GITHUB_ENV
+        echo "$USD_ROOT/bin" >> $GITHUB_PATH
+        echo "LD_LIBRARY_PATH=$USD_ROOT/lib:$USD_ROOT/tbb/lib:$LD_LIBRARY_PATH" >> $GITHUB_ENV
+        echo "PYTHONPATH=$USD_ROOT/lib/python:$PYTHONPATH" >> $GITHUB_ENV
+        echo "PXR_PLUGINPATH_NAME=$USD_ROOT/lib/usd" >> $GITHUB_ENV
+
+    - name: Verify OpenUSD installation
+      run: |
+        usdcat --help
+        echo "OpenUSD binary: $(which usdcat)"
+
+    - name: Test TinyUSDZ and OpenUSD interoperability
+      run: |
+        echo "=== Testing TinyUSDZ <-> OpenUSD interoperability ==="
+
+        # Test 1: Read files with both tools
+        for usd_file in models/suzanne.usdc models/cube.usda; do
+          if [ -f "$usd_file" ]; then
+            echo "Testing $usd_file"
+            ./build/tusdcat "$usd_file" > /tmp/tusdcat.txt
+            usdcat "$usd_file" > /tmp/usdcat.txt
+            echo "✓ Both tools read $usd_file"
+          fi
+        done
+
+        # Test 2: Convert with TinyUSDZ, verify with OpenUSD
+        if [ -f "models/suzanne.usdc" ]; then
+          ./build/tusdcat models/suzanne.usdc > /tmp/tinyusdz.usda
+          usdcat /tmp/tinyusdz.usda > /dev/null
+          echo "✓ OpenUSD read TinyUSDZ-generated USDA"
+        fi
+
+        echo "All tests passed!"
+
+  # ARM64 ASan build to debug segfaults
+  build-arm64-asan:
+
+    runs-on: ubuntu-24.04-arm
 
     steps:
     - uses: actions/checkout@v2
@@ -127,12 +181,155 @@ jobs:
       run: |
         lscpu
         cat /proc/cpuinfo
-    # ubuntu-latest(Ubuntu 22.04 as of 2024/01/03) has clang installed,
-    # so use clang
-    # TODO: Use libc++ for STL?
     - name: configure
-      run: CXX=clang++ CC=clang ./scripts/bootstrap-cmake-linux.sh
+      run: CXX=clang++ CC=clang ./scripts/bootstrap-cmake-linux-asan.sh
+    - name: make
+      run: cd build_asan && make -j4
+
+    # Dedicated USDC tests for files that have shown issues on ARM64
+    - name: test usdc timesamples files with ASan
+      run: |
+        echo "Testing USDC timesamples files with tusdcat (ASan enabled)..."
+        ./build_asan/tusdcat tests/usdc/timesamples-array-vec2f-001.usdc
+        ./build_asan/tusdcat tests/usdc/timesamples-array-float-001.usdc
+        ./build_asan/tusdcat tests/usdc/timesamples-array-int-001.usdc
+        ./build_asan/tusdcat tests/usdc/timesamples-array-dedup-002.usdc
+        ./build_asan/tusdcat tests/usdc/timesamples-array-dedup-001.usdc
+        ./build_asan/tusdcat tests/usdc/timesamples-array-double-001.usdc
+        echo "All USDC timesamples tests passed."
+
+  build-arm64-gcc:
+
+    runs-on: ubuntu-24.04-arm
+
+    steps:
+    - uses: actions/checkout@v2
+
+    - name: prep
+      run: |
+        lscpu
+        cat /proc/cpuinfo
+    - name: configure
+      run: CXX=g++ CC=gcc ./scripts/bootstrap-cmake-linux.sh
     - name: make
       run: cd build && make
+
+    - name: Upload ARM64 tusdcat binary
+      uses: actions/upload-artifact@v4
+      with:
+        name: tusdcat-linux-arm64-gcc
+        path: build/tusdcat
+        retention-days: 7
+
+    # Dedicated USDC tests for files that have shown issues on ARM64
+    - name: test usdc timesamples files
+      run: |
+        echo "Testing USDC timesamples files with tusdcat..."
+        ./build/tusdcat tests/usdc/timesamples-array-vec2f-001.usdc
+        ./build/tusdcat tests/usdc/timesamples-array-float-001.usdc
+        ./build/tusdcat tests/usdc/timesamples-array-int-001.usdc
+        ./build/tusdcat tests/usdc/timesamples-array-dedup-002.usdc
+        ./build/tusdcat tests/usdc/timesamples-array-dedup-001.usdc
+        ./build/tusdcat tests/usdc/timesamples-array-double-001.usdc
+        echo "All USDC timesamples tests passed."
+
     - name: tests
       run: cd build && ctest --output-on-failure
+
+  build-arm64-clang:
+
+    runs-on: ubuntu-24.04-arm
+
+    steps:
+    - uses: actions/checkout@v2
+
+    - name: prep
+      run: |
+        lscpu
+        cat /proc/cpuinfo
+    # Install recent Clang from LLVM apt repository
+    - name: install clang-21
+      run: |
+        wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key | sudo tee /etc/apt/trusted.gpg.d/apt.llvm.org.asc
+        sudo add-apt-repository -y "deb http://apt.llvm.org/noble/ llvm-toolchain-noble-21 main"
+        sudo apt-get update
+        sudo apt-get install -y clang-21
+    - name: configure
+      run: CXX=clang++-21 CC=clang-21 ./scripts/bootstrap-cmake-linux.sh
+    - name: make
+      run: cd build && make
+
+    - name: Upload ARM64 tusdcat binary
+      uses: actions/upload-artifact@v4
+      with:
+        name: tusdcat-linux-arm64-clang
+        path: build/tusdcat
+        retention-days: 7
+
+    # Dedicated USDC tests for files that have shown issues on ARM64
+    - name: test usdc timesamples files
+      run: |
+        echo "Testing USDC timesamples files with tusdcat..."
+        ./build/tusdcat tests/usdc/timesamples-array-vec2f-001.usdc
+        ./build/tusdcat tests/usdc/timesamples-array-float-001.usdc
+        ./build/tusdcat tests/usdc/timesamples-array-int-001.usdc
+        ./build/tusdcat tests/usdc/timesamples-array-dedup-002.usdc
+        ./build/tusdcat tests/usdc/timesamples-array-dedup-001.usdc
+        ./build/tusdcat tests/usdc/timesamples-array-double-001.usdc
+        echo "All USDC timesamples tests passed."
+
+    - name: tests
+      run: cd build && ctest --output-on-failure
+
+    # Test with OpenUSD binary (ARM64)
+    - name: Install TBB dependency (ARM64)
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y libtbb12
+
+    - name: Download OpenUSD binary (ARM64)
+      run: |
+        gh release download v25.11-lte \
+          --repo lighttransport/openusd-bin \
+          --pattern 'openusd-*-minsizerel-linux-arm64.tar.gz'
+      env:
+        GH_TOKEN: ${{ github.token }}
+
+    - name: Extract and setup OpenUSD (ARM64)
+      run: |
+        mkdir -p openusd
+        tar -xzf openusd-*-minsizerel-linux-arm64.tar.gz -C openusd
+        USD_ROOT="$(pwd)/openusd"
+        echo "USD_INSTALL_ROOT=$USD_ROOT" >> $GITHUB_ENV
+        echo "$USD_ROOT/bin" >> $GITHUB_PATH
+        echo "LD_LIBRARY_PATH=$USD_ROOT/lib:$USD_ROOT/tbb/lib:$LD_LIBRARY_PATH" >> $GITHUB_ENV
+        echo "PYTHONPATH=$USD_ROOT/lib/python:$PYTHONPATH" >> $GITHUB_ENV
+        echo "PXR_PLUGINPATH_NAME=$USD_ROOT/lib/usd" >> $GITHUB_ENV
+
+    - name: Verify OpenUSD installation (ARM64)
+      run: |
+        usdcat --help
+        echo "OpenUSD binary: $(which usdcat)"
+
+    - name: Test TinyUSDZ and OpenUSD interoperability (ARM64)
+      run: |
+        echo "=== Testing TinyUSDZ <-> OpenUSD interoperability on ARM64 ==="
+
+        # Test 1: Read files with both tools
+        for usd_file in models/suzanne.usdc models/cube.usda tests/usdc/timesamples-array-vec2f-001.usdc; do
+          if [ -f "$usd_file" ]; then
+            echo "Testing $usd_file"
+            ./build/tusdcat "$usd_file" > /tmp/tusdcat.txt
+            usdcat "$usd_file" > /tmp/usdcat.txt
+            echo "✓ Both tools read $usd_file"
+          fi
+        done
+
+        # Test 2: Convert with TinyUSDZ, verify with OpenUSD
+        if [ -f "models/suzanne.usdc" ]; then
+          ./build/tusdcat models/suzanne.usdc > /tmp/tinyusdz.usda
+          usdcat /tmp/tinyusdz.usda > /dev/null
+          echo "✓ OpenUSD read TinyUSDZ-generated USDA"
+        fi
+
+        echo "All ARM64 tests passed!"

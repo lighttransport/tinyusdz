@@ -154,7 +154,7 @@ std::string to_string(const GeomBasisCurves::Wrap &v);
 std::string to_string(const GeomBasisCurves::Type &v);
 std::string to_string(const GeomBasisCurves::Basis &v);
 
-std::string to_string(const PointInstancer &instancer, const uint32_t indent = 0,
+std::string to_string(const GeomPointInstancer &instancer, const uint32_t indent = 0,
                       bool closing_brace = true);
 
 
@@ -189,6 +189,9 @@ std::string to_string(const PluginLight &light, const uint32_t indent = 0,
 std::string to_string(const DomeLight::TextureFormat &texformat);
 
 std::string to_string(const Material &material, const uint32_t indent = 0,
+                      bool closing_brace = true);
+
+std::string to_string(const NodeGraph &nodegraph, const uint32_t indent = 0,
                       bool closing_brace = true);
 
 // It will delegate to to_string() of concrete Shader type(e.g.
@@ -272,7 +275,7 @@ std::string print_props(const std::map<std::string, Property> &props,
                         uint32_t indent);
 
 std::string print_layer_metas(const LayerMetas &metas, const uint32_t indent);
-std::string print_layer(const Layer &layer, const uint32_t indent);
+std::string print_layer(const Layer &layer, const uint32_t indent, bool parallel = false);
 
 std::string print_material_binding(const MaterialBinding *mb, const uint32_t indent);
 std::string print_collection(const Collection *coll, const uint32_t indent);
