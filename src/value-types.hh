@@ -199,6 +199,10 @@ struct StringData {
   bool is_triple_quoted{false};
   bool single_quote{false};  // true for ', false for "
 
+  // For prim metadata comment: track whether parsed with "comment =" prefix
+  // When true, pprint outputs "comment = ...", otherwise just the string
+  bool has_comment_prefix{false};
+
   // optional(for USDA)
   int line_row{0};
   int line_col{0};
@@ -1638,6 +1642,23 @@ struct TypeTraits<void> {
   static constexpr uint32_t underlying_type_id() { return TYPE_ID_VOID; }
   static std::string type_name() { return "void"; }
   static std::string underlying_type_name() { return "void"; }
+  static bool is_role_type() { return false; }
+  static bool is_array() { return false; }
+};
+
+// Specialization for const char* to support string literals
+template <>
+struct TypeTraits<const char*> {
+  using value_type = const char*;
+  using value_underlying_type = const char*;
+  static constexpr uint32_t ndim() { return 0; }
+  static constexpr uint32_t size = sizeof(const char*);
+  static constexpr uint32_t ncomp() { return 1; }
+  static constexpr uint32_t type_id() { return TYPE_ID_STRING; }
+  static constexpr uint32_t get_type_id() { return TYPE_ID_STRING; }
+  static constexpr uint32_t underlying_type_id() { return TYPE_ID_STRING; }
+  static std::string type_name() { return kString; }
+  static std::string underlying_type_name() { return kString; }
   static bool is_role_type() { return false; }
   static bool is_array() { return false; }
 };

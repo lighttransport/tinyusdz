@@ -109,7 +109,7 @@ static bool ExportBlendShape(const ShapeTarget &target, BlendShape *dst, std::st
 
   dst->name = target.prim_name;
   if (target.display_name.size()) {
-    dst->metas().displayName = target.display_name;
+    dst->metas().set_displayName(target.display_name);
   }
 
   if (target.pointIndices.size()) {
@@ -181,7 +181,7 @@ static bool ToGeomMesh(const RenderScene &scene, const RenderMesh &rmesh, GeomMe
 
   dst->name = rmesh.prim_name;
   if (rmesh.display_name.size()) {
-    dst->meta.displayName = rmesh.display_name;
+    dst->meta.set_displayName(rmesh.display_name);
   }
 
   if (!rmesh.vertex_colors.empty()) {
@@ -383,7 +383,7 @@ static bool ToGeomMesh(const RenderScene &scene, const RenderMesh &rmesh, GeomMe
     mbAPISchema.listOpQual = ListEditQual::Prepend;
     mbAPISchema.names.push_back({APISchemas::APIName::MaterialBindingAPI, ""});
 
-    dst->metas().apiSchemas = mbAPISchema;
+    dst->metas().set_apiSchemas(mbAPISchema);
   }
 
   return true;
@@ -903,7 +903,7 @@ bool export_to_usda(const RenderScene &scene,
         APISchemas skelAPISchema;
         skelAPISchema.listOpQual = ListEditQual::Prepend;
         skelAPISchema.names.push_back({APISchemas::APIName::SkelBindingAPI, ""});
-        skel.metas().apiSchemas = skelAPISchema;
+        skel.metas().set_apiSchemas(skelAPISchema);
 
         skelMap[skel_id] = std::move(skel);
       } else {
@@ -914,27 +914,29 @@ bool export_to_usda(const RenderScene &scene,
       has_skelroot = true;
 
       // Add some skel settings to GeomMesh.
-      
+
       // rel skel:skeleton
       Relationship skelRel;
-      // FIXME: Set abs_path 
+      // FIXME: Set abs_path
       Path skelTargetPath("/skelRoot/" + skel_name, "");
       skelRel.set(skelTargetPath);
       mesh.skeleton = skelRel;
 
-    
+
       // Add apiSchemas both for GeomMesh and Skeleton
       //
       // prepend apiSchemas = ["SkelBindingAPI"]
       //
-      APISchemas skelAPISchema;
-      skelAPISchema.listOpQual = ListEditQual::Prepend;
-      skelAPISchema.names.push_back({APISchemas::APIName::SkelBindingAPI, ""});
-      if (mesh.metas().apiSchemas) {
+      APISchemas meshSkelAPISchema;
+      meshSkelAPISchema.listOpQual = ListEditQual::Prepend;
+      meshSkelAPISchema.names.push_back({APISchemas::APIName::SkelBindingAPI, ""});
+      if (mesh.metas().has_apiSchemas()) {
         // Assume existing apiSchemas uses prepend listEditOp.
-        mesh.metas().apiSchemas.value().names.push_back({APISchemas::APIName::SkelBindingAPI, ""});
+        APISchemas existingSchemas = mesh.metas().get_apiSchemas();
+        existingSchemas.names.push_back({APISchemas::APIName::SkelBindingAPI, ""});
+        mesh.metas().set_apiSchemas(existingSchemas);
       } else {
-        mesh.metas().apiSchemas = skelAPISchema;
+        mesh.metas().set_apiSchemas(meshSkelAPISchema);
       }
 
     }
