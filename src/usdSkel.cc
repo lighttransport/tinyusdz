@@ -35,7 +35,7 @@ bool BlendShape::add_inbetweenBlendShape(const double weight, Attribute &&attr) 
   std::string attr_name = fmt::format("{}:{}", kInbetweensNamespace, attr.name());
   attr.set_name(attr_name);
 
-  attr.metas().weight = weight;
+  attr.metas().set_weight(weight);
 
   props[attr_name] = Property(attr, /* custom */false);
 

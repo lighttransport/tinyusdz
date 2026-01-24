@@ -1,0 +1,135 @@
+#usda 1.0
+(
+    doc = "Comprehensive PointInstancer test - all attributes from GEOM_POINT_INSTANCER_TYPED_ATTRS"
+    defaultPrim = "Instancers"
+    startTimeCode = 1
+    endTimeCode = 24
+)
+
+def Xform "Instancers"
+{
+    # Test 1: Basic PointInstancer with all static attributes
+    def PointInstancer "StaticInstancer"
+    {
+        int[] protoIndices = [0, 1, 0, 1, 0, 1, 0, 1]
+        int64[] ids = [100, 101, 102, 103, 104, 105, 106, 107]
+        point3f[] positions = [
+            (0, 0, 0), (2, 0, 0), (4, 0, 0), (6, 0, 0),
+            (0, 2, 0), (2, 2, 0), (4, 2, 0), (6, 2, 0)
+        ]
+        quath[] orientations = [
+            (1, 0, 0, 0), (0.707, 0.707, 0, 0), (1, 0, 0, 0), (0.707, 0, 0.707, 0),
+            (1, 0, 0, 0), (0.707, 0, 0, 0.707), (1, 0, 0, 0), (0.5, 0.5, 0.5, 0.5)
+        ]
+        float3[] scales = [
+            (1, 1, 1), (1.5, 1.5, 1.5), (0.5, 0.5, 0.5), (1, 2, 1),
+            (2, 1, 1), (1, 1, 2), (0.8, 0.8, 0.8), (1.2, 1.2, 1.2)
+        ]
+        vector3f[] velocities = [
+            (0, 0, 0), (0.1, 0, 0), (0, 0.1, 0), (0, 0, 0.1),
+            (-0.1, 0, 0), (0, -0.1, 0), (0, 0, -0.1), (0.1, 0.1, 0.1)
+        ]
+        vector3f[] accelerations = [
+            (0, -0.1, 0), (0, -0.1, 0), (0, -0.1, 0), (0, -0.1, 0),
+            (0, -0.1, 0), (0, -0.1, 0), (0, -0.1, 0), (0, -0.1, 0)
+        ]
+        vector3f[] angularVelocities = [
+            (0, 0, 0), (0, 1, 0), (1, 0, 0), (0, 0, 1),
+            (0, -1, 0), (-1, 0, 0), (0, 0, -1), (0.5, 0.5, 0.5)
+        ]
+
+        rel prototypes = [
+            </Instancers/StaticInstancer/Prototypes/Cube>,
+            </Instancers/StaticInstancer/Prototypes/Sphere>
+        ]
+
+        def Scope "Prototypes"
+        {
+            def Cube "Cube"
+            {
+                double size = 0.5
+            }
+
+            def Sphere "Sphere"
+            {
+                double radius = 0.3
+            }
+        }
+    }
+
+    # Test 2: Animated PointInstancer
+    def PointInstancer "AnimatedInstancer"
+    {
+        int[] protoIndices = [0, 0, 0, 0]
+        int64[] ids = [0, 1, 2, 3]
+
+        point3f[] positions.timeSamples = {
+            1: [(0, 0, 5), (1, 0, 5), (2, 0, 5), (3, 0, 5)],
+            12: [(0, 1, 5), (1, 1, 5), (2, 1, 5), (3, 1, 5)],
+            24: [(0, 0, 5), (1, 0, 5), (2, 0, 5), (3, 0, 5)],
+        }
+
+        quath[] orientations.timeSamples = {
+            1: [(1, 0, 0, 0), (1, 0, 0, 0), (1, 0, 0, 0), (1, 0, 0, 0)],
+            12: [(0.707, 0.707, 0, 0), (0.707, 0.707, 0, 0), (0.707, 0.707, 0, 0), (0.707, 0.707, 0, 0)],
+            24: [(1, 0, 0, 0), (1, 0, 0, 0), (1, 0, 0, 0), (1, 0, 0, 0)],
+        }
+
+        float3[] scales.timeSamples = {
+            1: [(1, 1, 1), (1, 1, 1), (1, 1, 1), (1, 1, 1)],
+            12: [(1.5, 1.5, 1.5), (1.5, 1.5, 1.5), (1.5, 1.5, 1.5), (1.5, 1.5, 1.5)],
+            24: [(1, 1, 1), (1, 1, 1), (1, 1, 1), (1, 1, 1)],
+        }
+
+        rel prototypes = [
+            </Instancers/AnimatedInstancer/Prototypes/Cone>
+        ]
+
+        def Scope "Prototypes"
+        {
+            def Cone "Cone"
+            {
+                double height = 0.5
+                double radius = 0.25
+            }
+        }
+    }
+
+    # Test 3: PointInstancer with visibility control
+    def PointInstancer "VisibilityInstancer"
+    {
+        int[] protoIndices = [0, 0, 0, 0, 0, 0]
+        int64[] ids = [0, 1, 2, 3, 4, 5]
+        point3f[] positions = [
+            (0, 0, 10), (1, 0, 10), (2, 0, 10),
+            (0, 1, 10), (1, 1, 10), (2, 1, 10)
+        ]
+        quath[] orientations = [
+            (1, 0, 0, 0), (1, 0, 0, 0), (1, 0, 0, 0),
+            (1, 0, 0, 0), (1, 0, 0, 0), (1, 0, 0, 0)
+        ]
+        float3[] scales = [
+            (1, 1, 1), (1, 1, 1), (1, 1, 1),
+            (1, 1, 1), (1, 1, 1), (1, 1, 1)
+        ]
+
+        # Invisible instances (by ID)
+        int64[] invisibleIds = [1, 4]
+
+        # Inactive instances (by ID) - excluded from traversal
+        int64[] inactiveIds = [2, 5]
+
+        rel prototypes = [
+            </Instancers/VisibilityInstancer/Prototypes/Cylinder>
+        ]
+
+        def Scope "Prototypes"
+        {
+            def Cylinder "Cylinder"
+            {
+                double height = 0.4
+                double radius = 0.15
+            }
+        }
+    }
+}

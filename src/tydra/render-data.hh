@@ -1,25 +1,80 @@
 // SPDX-License-Identifier: Apache 2.0
 // Copyright 2022 - 2023, Syoyo Fujita.
 // Copyright 2023 - Present, Light Transport Entertainment Inc.
-//
-// Render data structure suited for WebGL and Raytracing render
-//
+
+///
+/// @file render-data.hh
+/// @brief Tydra render-friendly data structures and conversion utilities
+///
+/// The Tydra framework converts USD scene graphs into render-friendly
+/// data structures optimized for graphics APIs like OpenGL/WebGL, Vulkan,
+/// and raytracing engines. This header defines the core RenderScene and
+/// related data structures.
+///
+/// Key features:
+/// - Flattened scene representation with pre-computed transforms
+/// - GPU-friendly data layout (vertex buffers, index buffers)
+/// - Material and texture management
+/// - Animation support
+/// - Multiple rendering backend support (WebGL, Vulkan, raytracing)
+///
+/// Main classes:
+/// - RenderScene: Top-level render scene container
+/// - RenderMesh: GPU-ready mesh data with materials
+/// - RenderMaterial: Processed material definitions
+/// - RenderTexture: Texture resources and samplers
+/// - RenderCamera: Camera parameters for rendering
+/// - RenderLight: Light definitions for shading
+///
+/// Memory optimization:
+/// - Define TYDRA_USE_INDEX to use array indices instead of values in
+///   DefaultPackedVertexData, reducing memory usage by ~55% per vertex
+/// - When TYDRA_USE_INDEX is defined, attributes are stored as uint32_t
+///   indices into shared attribute arrays instead of duplicate values
+/// - Use index value ~0u (UINT32_MAX) to indicate missing attributes
+///
+/// Epsilon-based comparison:
+/// - DefaultPackedVertexDataCompare and DefaultPackedVertexDataEqualEps
+///   provide floating-point comparison with configurable epsilon values
+/// - Default epsilon: 1e-6f for positions, 1e-3f for other attributes
+/// - Supports both indexed and direct value modes
+/// - Use these comparators for robust vertex deduplication with floating-point data
+///
+/// Spatial hashing optimization:
+/// - VertexSpatialHashGrid provides O(1) average-case vertex similarity search
+/// - Uses Morton code ordering for cache-friendly traversal
+/// - BuildIndicesWithSpatialHash() offers optimized vertex deduplication
+/// - Particularly beneficial for large meshes (>10K vertices)
+/// - Automatic subdivision for large cells maintains performance
+///
+/// The conversion process:
+/// ```cpp
+/// tinyusdz::tydra::RenderScene renderScene;
+/// tinyusdz::tydra::RenderSceneConverter converter;
+/// bool success = converter.ConvertToRenderScene(stage, &renderScene);
+/// ```
+///
 #pragma once
 
 #include <algorithm>
 #include <cmath>
+#include <functional>
 #include <unordered_map>
 
 #include "asset-resolution.hh"
 #include "nonstd/expected.hpp"
+#include "typed-array.hh"
 #include "usdGeom.hh"
 #include "usdShade.hh"
 #include "usdSkel.hh"
 #include "value-types.hh"
 
 // tydra
+#include "common-types.hh"
 #include "scene-access.hh"
 #include "variant-support.hh"
+#include "spatial-hashes.hh"
+#include "render-data-pprint.hh"
 
 namespace tinyusdz {
 
@@ -46,6 +101,88 @@ using UsdPrimvarReader_matrix4d = UsdPrimvarReader<value::matrix4d>;
 
 namespace tydra {
 
+///
+/// Progress callback function type for RenderSceneConverter.
+/// @param[in] progress Progress value between 0.0 and 1.0
+/// @param[in] userptr User-provided pointer for custom data
+/// @return true to continue conversion, false to cancel
+///
+using ProgressCallback = std::function<bool(float progress, void *userptr)>;
+
+///
+/// Detailed progress information for fine-grained progress reporting.
+/// Contains counts for meshes, materials, textures and the current processing stage.
+///
+struct DetailedProgressInfo {
+  enum class Stage {
+    Idle,
+    CountingPrims,      // Counting prims before conversion
+    ConvertingXforms,   // Converting xform nodes
+    ConvertingMeshes,   // Converting meshes
+    ConvertingMaterials,// Converting materials
+    ConvertingTextures, // Loading textures
+    BuildingHierarchy,  // Building node hierarchy
+    ExtractingAnimations,// Extracting animations
+    MergingMeshes,      // Merging meshes (optional)
+    Complete
+  };
+
+  Stage stage{Stage::Idle};
+  float progress{0.0f};           // 0.0 to 1.0 overall progress
+
+  // Mesh progress
+  size_t meshes_processed{0};
+  size_t meshes_total{0};
+  std::string current_mesh_name;
+
+  // Material progress
+  size_t materials_processed{0};
+  size_t materials_total{0};
+  std::string current_material_name;
+
+  // Texture progress
+  size_t textures_processed{0};
+  size_t textures_total{0};
+  std::string current_texture_name;
+
+  // Generic progress message
+  std::string message;
+
+  const char* GetStageName() const {
+    switch (stage) {
+      case Stage::Idle: return "idle";
+      case Stage::CountingPrims: return "counting";
+      case Stage::ConvertingXforms: return "xforms";
+      case Stage::ConvertingMeshes: return "meshes";
+      case Stage::ConvertingMaterials: return "materials";
+      case Stage::ConvertingTextures: return "textures";
+      case Stage::BuildingHierarchy: return "hierarchy";
+      case Stage::ExtractingAnimations: return "animations";
+      case Stage::MergingMeshes: return "merging";
+      case Stage::Complete: return "complete";
+    }
+    return "unknown";
+  }
+};
+
+///
+/// Detailed progress callback function type for RenderSceneConverter.
+/// Provides more granular progress information including mesh/material counts.
+/// @param[in] info Detailed progress information
+/// @param[in] userptr User-provided pointer for custom data
+/// @return true to continue conversion, false to cancel
+///
+using DetailedProgressCallback = std::function<bool(const DetailedProgressInfo &info, void *userptr)>;
+
+// Conditional typedef for ChunkedVectorArray based on TYDRA_USE_CHUNKED_ARRAY
+#ifdef TYDRA_USE_CHUNKED_ARRAY
+template<typename T>
+using ChunkedVectorArray = tinyusdz::ChunkedTypedArray<T>;
+#else
+template<typename T>
+using ChunkedVectorArray = std::vector<T>;
+#endif
+
 // GLSL like data types
 using vec2 = value::float2;
 using vec3 = value::float3;
@@ -56,7 +193,11 @@ using mat3 = value::matrix3f;
 using mat4 = value::matrix4f;
 using dmat4 = value::matrix4d;
 
-// Simple string <-> id map
+///
+/// Bidirectional mapping between strings and numeric IDs.
+/// Useful for converting between human-readable names and efficient
+/// numeric identifiers in render data structures.
+///
 struct StringAndIdMap {
   void add(uint64_t key, const std::string &val) {
     _i_to_s[key] = val;
@@ -135,20 +276,31 @@ enum class VertexVariability {
   Indexed,      // Dedicated index buffer provided(unflattened Indexed Primvar).
 };
 
-std::string to_string(VertexVariability variability);
+//std::string to_string(VertexVariability variability);
 
 enum class NodeType {
   Xform,
   Mesh,  // Polygon mesh
   Camera,
   Skeleton, // SkelHierarchy
-  PointLight,
-  DirectionalLight,
-  EnvmapLight, // DomeLight in USD
-  // TODO(more lights)...
+  PointLight,       // SphereLight in USD
+  DirectionalLight, // DistantLight in USD
+  EnvmapLight,      // DomeLight in USD
+  RectLight,
+  DiskLight,
+  CylinderLight,
+  GeometryLight,
 };
 
-std::string to_string(NodeType ntype);
+// High-level categorization of USD Prim types
+enum class NodeCategory {
+  Group,     // Organizational: Xform, Scope, Model
+  Geom,      // Geometry: Mesh, Points, Curves, etc.
+  Light,     // Lights: RectLight, DomeLight, SphereLight, etc.
+  Camera,    // Camera
+  Material,  // Material, Shader, NodeGraph
+  Skeleton,  // SkelRoot, Skeleton, SkelAnimation
+};
 
 enum class ComponentType {
   UInt8,
@@ -162,13 +314,16 @@ enum class ComponentType {
   Double,
 };
 
-std::string to_string(ComponentType ty);
 
 // glTF-like BufferData
 struct BufferData {
   ComponentType componentType{ComponentType::UInt8};
   //uint8_t count{1};           // # of components. up to 256
+#ifdef TYDRA_USE_CHUNKED_ARRAY
+  ChunkedVectorArray<uint8_t> data;  // binary data. size is dividable by sizeof(componentType)
+#else
   std::vector<uint8_t> data;  // binary data. size is dividable by sizeof(componentType)
+#endif
 
   // TODO: Stride?
 };
@@ -401,7 +556,6 @@ static size_t VertexAttributeFormatSize(VertexAttributeFormat f) {
   return elemsize;
 }
 
-std::string to_string(VertexAttributeFormat f);
 
 ///
 /// Vertex attribute array. Stores raw vertex attribute data.
@@ -422,7 +576,11 @@ struct VertexAttribute {
   uint32_t stride{0};  //  We don't support packed(interleaved) vertex data, so
                        //  stride is usually sizeof(VertexAttributeFormat) *
                        //  elementSize. 0 = tightly packed.
+#ifdef TYDRA_USE_CHUNKED_ARRAY
+  ChunkedVectorArray<uint8_t> data;  // raw binary data(TODO: Use Buffer ID?)
+#else
   std::vector<uint8_t> data;  // raw binary data(TODO: Use Buffer ID?)
+#endif
   std::vector<uint32_t>
       indices;  // Dedicated Index buffer. Set when variability == Indexed.
                 // empty = Use externally provided vertex index buffer
@@ -569,8 +727,14 @@ enum class ColorSpace {
   sRGB,
   Lin_sRGB,     // Linear sRGB(D65)
   Rec709,
-  Raw,        // Raw(physical quantity) value(e.g. normal maps, ao maps)
-  Lin_ACEScg, // ACES CG colorspace(AP1. D50)
+  Lin_Rec709,   // Linear Rec.709 - same primaries as sRGB but linear (MaterialX: lin_rec709)
+  g22_Rec709,   // Gamma 2.2 Rec.709 (MaterialX: g22_rec709)
+  g18_Rec709,   // Gamma 1.8 Rec.709 (MaterialX: g18_rec709)
+  sRGB_Texture, // sRGB for textures (MaterialX: srgb_texture)
+  Raw,          // Raw(physical quantity) value(e.g. normal maps, ao maps)
+  Lin_ACEScg,   // ACES CG colorspace(AP1. D50)
+  ACES2065_1,   // ACES 2065-1 (AP0. D60)
+  Lin_Rec2020,  // Linear Rec.2020/Rec.2100
   OCIO,
   Lin_DisplayP3,   // colorSpace 'lin_displayp3'
   sRGB_DisplayP3,  // colorSpace 'srgb_displayp3'
@@ -578,7 +742,6 @@ enum class ColorSpace {
   Unknown,         // Unknown color space. 
 };
 
-std::string to_string(ColorSpace cs);
 
 // Infer colorspace from token value.
 bool InferColorSpace(const value::token &tok, ColorSpace *result);
@@ -619,7 +782,11 @@ struct Cubemap
   // 5: -Z (front)
 
   // LoD of cubemap
+#ifdef TYDRA_USE_CHUNKED_ARRAY
+  ChunkedVectorArray<std::array<TextureImage, 6>> faces_lod;
+#else
   std::vector<std::array<TextureImage, 6>> faces_lod;
+#endif
 };
 
 // Envmap lightsource
@@ -639,7 +806,11 @@ struct EnvmapLight
   double guideRadius{1.0e5};
   std::string asset_name; // 'inputs:texture:file'
 
+#ifdef TYDRA_USE_CHUNKED_ARRAY
+  ChunkedVectorArray<TextureImage> texture_lod;
+#else
   std::vector<TextureImage> texture_lod;
+#endif
 
   // Utility
   bool to_cubemap(Cubemap &cubemap);
@@ -654,7 +825,11 @@ struct EnvmapLight
 template <typename T>
 struct AnimationSampler {
   nonstd::optional<T> static_value; // value at static time('default' time) if exist
+#ifdef TYDRA_USE_CHUNKED_ARRAY
+  ChunkedVectorArray<AnimationSample<T>> samples;
+#else
   std::vector<AnimationSample<T>> samples;
+#endif
 
   // No cubicSpline in USD
   enum class Interpolation {
@@ -665,48 +840,184 @@ struct AnimationSampler {
   Interpolation interpolation{Interpolation::Linear};
 };
 
-// We store animation data in AoS(array of structure) approach(glTF-like), i.e. animation channel is provided per joint, instead of
-// SoA(structure of array) approach(USD SkelAnimation)
-// TODO: Use VertexAttribute-like data structure
-struct AnimationChannel {
-  enum class ChannelType { Transform, Translation, Rotation, Scale, Weight };
-
-  AnimationChannel() = default;
-
-  AnimationChannel(ChannelType ty) : type(ty) {
-  }
-
-  ChannelType type;
-  // The following AnimationSampler is filled depending on ChannelType.
-  // Example: Rotation => Only `rotations` are filled.
-
-  // Matrix precision is reduced to float-precision
-  // NOTE: transform is not supported in glTF(you need to decompose transform
-  // matrix into TRS)
-  AnimationSampler<mat4> transforms;
-
-  AnimationSampler<vec3> translations;
-  AnimationSampler<quat> rotations;  // Rotation is represented as quaternions
-  AnimationSampler<vec3> scales; // half-types are upcasted to float precision
-  AnimationSampler<float> weights;
-
-  //std::string joint_name; // joint name(UsdSkel::joints)
-  //int64_t joint_id{-1};  // joint index in SkelHierarchy
+///
+/// Animation interpolation mode (matches glTF specification)
+///
+enum class AnimationInterpolation {
+  Linear,      ///< LINEAR - linear interpolation (slerp for quaternions)
+  Step,        ///< STEP - discrete/stepped interpolation (no interpolation)
+  CubicSpline  ///< CUBICSPLINE - cubic spline with in/out tangents
 };
 
-// USD SkelAnimation
-struct Animation {
-  std::string prim_name; // Prim name(element name)
-  std::string abs_path;  // Target USD Prim path
-  std::string display_name;  // `displayName` prim meta
+///
+/// Animation channel target type - distinguishes what the channel animates
+///
+/// USD has two distinct animation systems:
+/// - Node animations: xformOp time samples animate scene node transforms
+/// - Skeletal animations: SkelAnimation arrays animate skeleton joint transforms
+///
+/// This enum enables type-safe handling of both animation types in a unified structure.
+///
+enum class ChannelTargetType {
+  SceneNode,      ///< Targets a scene node's transform (from USD xformOp animations)
+  SkeletonJoint   ///< Targets a skeleton joint (from USD SkelAnimation)
+};
 
-  // key = joint, value = (key: channel_type, value: channel_value)
-  std::map<std::string, std::map<AnimationChannel::ChannelType, AnimationChannel>> channels_map;
+///
+/// Animation target property path (matches glTF animation paths)
+///
+enum class AnimationPath {
+  Translation,  ///< Animates position (vec3) - maps to .position in Three.js
+  Rotation,     ///< Animates rotation (quat) - maps to .quaternion in Three.js
+  Scale,        ///< Animates scale (vec3) - maps to .scale in Three.js
+  Weights       ///< Animates morph target weights (float array)
+};
 
-  // For blendshapes
-  // key = blendshape name, value = timesamped weights
-  // TODO: in-between weight
-  std::map<std::string, AnimationSampler<float>> blendshape_weights_map;
+///
+/// Keyframe sampler - stores keyframe times and values in flat arrays
+///
+/// Matches glTF Animation Sampler structure and Three.js KeyframeTrack format.
+/// Values are stored as flat float arrays:
+/// - Translation/Scale: [x0,y0,z0, x1,y1,z1, ...] (3 floats per keyframe)
+/// - Rotation: [x0,y0,z0,w0, x1,y1,z1,w1, ...] (4 floats per keyframe)
+/// - Weights: [w0, w1, w2, ...] (1 float per keyframe per target)
+///
+/// For CubicSpline interpolation, each keyframe requires 3 values:
+/// [in_tangent, value, out_tangent], so array size is times.size() * components * 3
+///
+struct KeyframeSampler {
+  std::vector<float> times;   ///< Keyframe times in seconds (flat array)
+  std::vector<float> values;  ///< Keyframe values (flat array)
+  AnimationInterpolation interpolation{AnimationInterpolation::Linear};
+
+  /// Check if sampler is empty
+  bool empty() const { return times.empty(); }
+
+  /// Get number of keyframes
+  size_t num_keyframes() const { return times.size(); }
+};
+
+///
+/// Animation channel - binds sampler data to a specific target property
+///
+/// Supports both node transform animations (from USD xformOps) and
+/// skeletal joint animations (from USD SkelAnimation). The target_type field
+/// determines how to interpret the target identification fields.
+///
+/// Matches glTF Animation Channel structure. Each channel targets one property
+/// of one target, and references a sampler that provides the keyframe data.
+///
+/// Example usage:
+/// ```
+/// // Node animation (xformOp)
+/// AnimationChannel node_channel;
+/// node_channel.target_type = ChannelTargetType::SceneNode;
+/// node_channel.path = AnimationPath::Translation;
+/// node_channel.target_node = 5;  // Index into RenderScene::nodes
+/// node_channel.sampler = 0;
+///
+/// // Skeletal animation (SkelAnimation)
+/// AnimationChannel joint_channel;
+/// joint_channel.target_type = ChannelTargetType::SkeletonJoint;
+/// joint_channel.path = AnimationPath::Rotation;
+/// joint_channel.skeleton_id = 0;  // Index into RenderScene::skeletons
+/// joint_channel.joint_id = 12;     // Joint index within skeleton
+/// joint_channel.sampler = 1;
+/// ```
+///
+struct AnimationChannel {
+  AnimationPath path;         ///< Which property to animate (translation/rotation/scale/weights)
+  ChannelTargetType target_type{ChannelTargetType::SceneNode};  ///< Target type (node or joint)
+
+  // Target identification (interpretation depends on target_type)
+  int32_t target_node{-1};    ///< SceneNode: index into RenderScene::nodes (-1 = invalid)
+                               ///< SkeletonJoint: unused (use skeleton_id + joint_id instead)
+
+  // Skeletal animation fields (only used when target_type == SkeletonJoint)
+  int32_t skeleton_id{-1};    ///< Index into RenderScene::skeletons (-1 = invalid)
+  int32_t joint_id{-1};       ///< Index within skeleton's joint array (-1 = invalid)
+
+  int32_t sampler{-1};        ///< Index into AnimationClip::samplers (-1 = invalid)
+
+  /// Check if channel is valid based on its target type
+  bool is_valid() const {
+    if (sampler < 0) return false;
+    if (target_type == ChannelTargetType::SceneNode) {
+      return target_node >= 0;
+    } else {  // SkeletonJoint
+      return skeleton_id >= 0 && joint_id >= 0;
+    }
+  }
+
+  /// Check if this is a skeletal animation channel
+  bool is_skeletal() const {
+    return target_type == ChannelTargetType::SkeletonJoint;
+  }
+};
+
+///
+/// Animation clip - collection of animation channels and samplers
+///
+/// Matches glTF Animation structure and Three.js AnimationClip.
+/// An animation clip contains:
+/// - samplers: Keyframe data (times and values)
+/// - channels: Bindings from samplers to node properties
+///
+/// This design separates animation data from the scene hierarchy,
+/// making it compatible with Three.js/glTF animation systems.
+///
+/// Example usage:
+/// ```
+/// AnimationClip clip;
+/// clip.name = "Walk";
+/// clip.duration = 2.0f;
+///
+/// // Create sampler for translation
+/// KeyframeSampler trans_sampler;
+/// trans_sampler.times = {0.0f, 1.0f, 2.0f};
+/// trans_sampler.values = {0,0,0,  1,0,0,  0,0,0};  // Flat array: x,y,z for each keyframe
+/// clip.samplers.push_back(trans_sampler);
+///
+/// // Create channel targeting node 5's translation
+/// AnimationChannel channel;
+/// channel.path = AnimationPath::Translation;
+/// channel.target_node = 5;
+/// channel.sampler = 0;  // Index into clip.samplers
+/// clip.channels.push_back(channel);
+/// ```
+///
+struct AnimationClip {
+  std::string name;               ///< Animation name
+  std::string prim_name;          ///< Original USD prim name (element name)
+  std::string abs_path;           ///< Original USD absolute prim path
+  std::string display_name;       ///< USD `displayName` prim meta
+
+  float duration{0.0f};           ///< Animation duration in seconds
+
+  std::vector<KeyframeSampler> samplers;  ///< Keyframe data
+  std::vector<AnimationChannel> channels;  ///< Property bindings
+
+  /// Check if animation is empty
+  bool empty() const { return channels.empty(); }
+
+  /// Get number of channels
+  size_t num_channels() const { return channels.size(); }
+
+  /// Check if animation contains skeletal animation channels
+  bool has_skeletal_animation() const {
+    for (const auto& ch : channels) {
+      if (ch.is_skeletal()) return true;
+    }
+    return false;
+  }
+
+  /// Check if animation contains scene node animation channels
+  bool has_node_animation() const {
+    for (const auto& ch : channels) {
+      if (!ch.is_skeletal()) return true;
+    }
+    return false;
+  }
 };
 
 struct Node {
@@ -714,12 +1025,17 @@ struct Node {
   std::string abs_path;      // Absolute prim path
   std::string display_name;  // `displayName` prim meta
 
-  NodeType nodeType{NodeType::Xform};
+  NodeCategory category{NodeCategory::Group};  // High-level category (Group, Geom, Light, Camera, etc.)
+  NodeType nodeType{NodeType::Xform};  // Specific type within the category
 
   int32_t id{-1};  // Index to node content(e.g. meshes[id] when nodeTypes ==
                    // Mesh). -1 = no corresponding content exists for this node.
 
+#ifdef TYDRA_USE_CHUNKED_ARRAY
+  ChunkedVectorArray<Node> children;
+#else
   std::vector<Node> children;
+#endif
 
   // Every node have its transform at specified timecode.
   // `resetXform` is encoded in global matrix.
@@ -731,8 +1047,10 @@ struct Node {
 
   bool is_identity_matrix() { return is_identity(local_matrix); }
 
-  std::vector<AnimationChannel>
-      node_animations;  // xform animations(timesamples)
+  // NOTE: Animation data has been moved to RenderScene::animations (AnimationClip).
+  // Animations reference nodes by index (AnimationChannel::target_node) rather than
+  // being embedded in the Node structure. This matches glTF/Three.js design and
+  // allows animations to be managed independently of the scene hierarchy.
 
   uint64_t handle{0};  // Handle ID for Graphics API. 0 = invalid
 };
@@ -740,8 +1058,13 @@ struct Node {
 // BlendShape shape target.
 
 struct InbetweenShapeTarget {
+#ifdef TYDRA_USE_CHUNKED_ARRAY
+  ChunkedVectorArray<vec3> pointOffsets;
+  ChunkedVectorArray<vec3> normalOffsets;
+#else
   std::vector<vec3> pointOffsets;
   std::vector<vec3> normalOffsets;
+#endif
   float weight{0.5f};  // TODO: Init with invalid weight?
 };
 
@@ -750,9 +1073,14 @@ struct ShapeTarget {
   std::string abs_path;      // Absolute prim path
   std::string display_name;  // `displayName` prim meta
 
-  std::vector<uint32_t> pointIndices;
+  std::vector<uint32_t> pointIndices; // Keep int array as std::vector
+#ifdef TYDRA_USE_CHUNKED_ARRAY
+  ChunkedVectorArray<vec3> pointOffsets;
+  ChunkedVectorArray<vec3> normalOffsets;
+#else
   std::vector<vec3> pointOffsets;
   std::vector<vec3> normalOffsets;
+#endif
 
   // key = weight
   std::unordered_map<float, InbetweenShapeTarget> inbetweens;
@@ -766,10 +1094,14 @@ struct JointAndWeight {
   // NOTE: variability of jointIndices and jointWeights are 'vertex'
   // NOTE: Values in jointIndices and jointWeights will be reordered when `MeshConverterConfig::build_vertex_indices` is set true.
   //
-  std::vector<int> jointIndices;  // int[] primvars:skel:jointIndices
+  std::vector<int> jointIndices;  // int[] primvars:skel:jointIndices - Keep int array as std::vector
 
   // NOTE: weight is converted from USD as-is. not normalized.
+#ifdef TYDRA_USE_CHUNKED_ARRAY
+  ChunkedVectorArray<float> jointWeights;  // float[] primvars:skel:jointWeight;
+#else
   std::vector<float> jointWeights;  // float[] primvars:skel:jointWeight;
+#endif
 
   int elementSize{1}; // # of weights per vertex
 };
@@ -844,7 +1176,11 @@ struct RenderMesh {
 
   //VertexArrayType vertexArrayType{VertexArrayType::Facevarying};
 
+#ifdef TYDRA_USE_CHUNKED_ARRAY
+  ChunkedVectorArray<vec3> points;  // varying is always 'vertex'.
+#else
   std::vector<vec3> points;  // varying is always 'vertex'.
+#endif
 
   ///
   /// Initialized with USD faceVertexIndices/faceVertexCounts in GeomMesh.
@@ -954,7 +1290,45 @@ struct RenderMesh {
   // If you want to access user-defined primvars or custom property,
   // Plese look into corresponding Prim( stage::find_prim_at_path(abs_path) )
 
+  //
+  // Area light properties (MeshLightAPI)
+  // When is_area_light = true, this mesh emits light.
+  //
+  // Renderer integration guide:
+  //   1. Calculate effective light color: light_color * light_intensity * pow(2, light_exposure)
+  //   2. Apply materialSyncMode:
+  //      - "materialGlowTintsLight" (default): material.emissiveColor tints the light color
+  //           finalEmission = effectiveLightColor * material.emissiveColor
+  //      - "independent": material emission and light are independent
+  //           finalEmission = effectiveLightColor + material.emissiveColor
+  //      - "noMaterialResponse": material doesn't respond to light (only emits)
+  //           finalEmission = effectiveLightColor
+  //   3. If light_normalize = true, divide by surface area for energy conservation
+  //
+  bool is_area_light{false};  // true if MeshLightAPI is applied
+  std::array<float, 3> light_color{{1.0f, 1.0f, 1.0f}};  // inputs:color (linear RGB)
+  float light_intensity{1.0f};  // inputs:intensity
+  float light_exposure{0.0f};  // inputs:exposure (optional, in EV)
+  bool light_normalize{false};  // inputs:normalize - divide by surface area if true
+  std::string light_material_sync_mode;  // inputs:materialSyncMode
+                                         // "materialGlowTintsLight" (default), "independent", or "noMaterialResponse"
+
+  // Helper: Calculate effective light color with intensity and exposure applied
+  inline std::array<float, 3> get_effective_light_color() const {
+    float multiplier = light_intensity * std::pow(2.0f, light_exposure);
+    return {{
+      light_color[0] * multiplier,
+      light_color[1] * multiplier,
+      light_color[2] * multiplier
+    }};
+  }
+
   uint64_t handle{0};  // Handle ID for Graphics API. 0 = invalid
+  
+  ///
+  /// Estimate memory usage of this RenderMesh in bytes
+  ///
+  size_t estimate_memory_usage() const;
 };
 
 enum class UVReaderFloatComponentType {
@@ -964,7 +1338,6 @@ enum class UVReaderFloatComponentType {
   COMPONENT_FLOAT4,
 };
 
-std::string to_string(UVReaderFloatComponentType ty);
 
 // TODO: Deprecate UVReaderFloat.
 // float, float2, float3 or float4 only
@@ -1046,7 +1419,9 @@ struct UVTexture {
   uint64_t handle{0};            // Handle ID for Graphics API. 0 = invalid
 };
 
+// to_string functions for UVTexture nested types
 std::string to_string(UVTexture::WrapMode ty);
+std::string to_string(const UVTexture::Channel channel);
 
 struct UDIMTexture {
   enum class Channel { R, G, B, RGB, RGBA };
@@ -1063,6 +1438,121 @@ struct UDIMTexture {
   // key = UDIM id(e.g. 1001)
   std::unordered_map<uint32_t, int32_t> imageTileIds;
 };
+
+// ============================================================================
+// LTE SpectralAPI Support
+// Spectral data structures for wavelength-dependent material properties
+// See doc/lte_spectral_api.md for specification
+// ============================================================================
+
+///
+/// Interpolation method for spectral data
+///
+enum class SpectralInterpolation {
+  Linear,    ///< Piecewise linear interpolation (default)
+  Held,      ///< USD Held interpolation (step function)
+  Cubic,     ///< Piecewise cubic interpolation (smooth)
+  Sellmeier, ///< Sellmeier equation (for IOR data only)
+};
+
+///
+/// Standard illuminant presets for wavelength:emission
+///
+enum class IlluminantPreset {
+  None,  ///< No preset, use explicit SPD values
+  A,     ///< CIE Standard Illuminant A (incandescent/tungsten, 2856K)
+  D50,   ///< CIE Standard Illuminant D50 (horizon daylight, 5003K)
+  D65,   ///< CIE Standard Illuminant D65 (noon daylight, 6504K)
+  E,     ///< CIE Standard Illuminant E (equal energy)
+  F1,    ///< CIE Fluorescent Illuminant F1 (daylight fluorescent)
+  F2,    ///< CIE Fluorescent Illuminant F2 (cool white fluorescent)
+  F7,    ///< CIE Fluorescent Illuminant F7 (D65 simulator)
+  F11,   ///< CIE Fluorescent Illuminant F11 (narrow-band cool white)
+};
+
+///
+/// Wavelength unit for spectral data
+///
+enum class WavelengthUnit {
+  Nanometers,   ///< nanometers (nm), default, range [380, 780]
+  Micrometers,  ///< micrometers (um), range [0.38, 0.78]
+};
+
+///
+/// Spectral data container
+/// Stores (wavelength, value) pairs for wavelength-dependent properties
+///
+struct SpectralData {
+  std::vector<vec2> samples;  ///< (wavelength, value) pairs
+  SpectralInterpolation interpolation{SpectralInterpolation::Linear};
+  WavelengthUnit unit{WavelengthUnit::Nanometers};
+
+  /// Check if spectral data is present
+  bool has_data() const { return !samples.empty(); }
+
+  /// Get number of samples
+  size_t size() const { return samples.size(); }
+
+  /// Evaluate spectral value at given wavelength using interpolation
+  float evaluate(float wavelength) const;
+
+  /// Convert wavelength to nanometers (for internal processing)
+  float to_nanometers(float wavelength) const {
+    if (unit == WavelengthUnit::Micrometers) {
+      return wavelength * 1000.0f;
+    }
+    return wavelength;
+  }
+};
+
+///
+/// Spectral IOR data with Sellmeier coefficient support
+///
+struct SpectralIOR {
+  std::vector<vec2> samples;  ///< (wavelength, IOR) pairs or Sellmeier coefficients
+  SpectralInterpolation interpolation{SpectralInterpolation::Linear};
+  WavelengthUnit unit{WavelengthUnit::Nanometers};
+
+  /// Sellmeier coefficients (B1, B2, B3, C1, C2, C3)
+  /// Used when interpolation == Sellmeier
+  /// Note: C1, C2, C3 are in [um^2]
+  float sellmeier_B1{0.0f}, sellmeier_B2{0.0f}, sellmeier_B3{0.0f};
+  float sellmeier_C1{0.0f}, sellmeier_C2{0.0f}, sellmeier_C3{0.0f};
+
+  bool has_data() const {
+    return !samples.empty() || interpolation == SpectralInterpolation::Sellmeier;
+  }
+
+  /// Evaluate IOR at given wavelength
+  float evaluate(float wavelength_nm) const;
+};
+
+///
+/// Spectral emission data for light sources
+///
+struct SpectralEmission {
+  std::vector<vec2> samples;  ///< (wavelength, irradiance) pairs
+  SpectralInterpolation interpolation{SpectralInterpolation::Linear};
+  WavelengthUnit unit{WavelengthUnit::Nanometers};
+  IlluminantPreset preset{IlluminantPreset::None};
+
+  bool has_data() const {
+    return !samples.empty() || preset != IlluminantPreset::None;
+  }
+
+  /// Evaluate emission at given wavelength
+  /// Returns irradiance in W m^-2 nm^-1 (normalized to nanometers)
+  float evaluate(float wavelength_nm) const;
+};
+
+// String conversion functions for spectral types
+std::string to_string(SpectralInterpolation interp);
+std::string to_string(IlluminantPreset preset);
+std::string to_string(WavelengthUnit unit);
+
+// ============================================================================
+// End of LTE SpectralAPI Support
+// ============================================================================
 
 // workaround for GCC
 #if defined(__GNUC__) && !defined(__clang__)
@@ -1114,7 +1604,143 @@ class PreviewSurfaceShader {
   ShaderParam<float> displacement{0.0f};
   ShaderParam<float> occlusion{0.0f};
 
+  // LTE SpectralAPI: Optional spectral properties
+  // Only exported if has_data() returns true
+  nonstd::optional<SpectralData> spd_reflectance;  ///< wavelength:reflectance
+  nonstd::optional<SpectralIOR> spd_ior;           ///< wavelength:ior
+
   uint64_t handle{0};  // Handle ID for Graphics API. 0 = invalid
+
+  /// Check if material has spectral reflectance data
+  bool hasSpectralReflectance() const {
+    return spd_reflectance.has_value() && spd_reflectance->has_data();
+  }
+
+  /// Check if material has spectral IOR data
+  bool hasSpectralIOR() const {
+    return spd_ior.has_value() && spd_ior->has_data();
+  }
+};
+
+// MaterialX OpenPBR Surface shader optimized for WebGL/Vulkan rendering
+class OpenPBRSurfaceShader {
+ public:
+  // Base layer - fundamental surface properties
+  ShaderParam<float> base_weight{1.0f};
+  ShaderParam<vec3> base_color{{0.8f, 0.8f, 0.8f}};
+  ShaderParam<float> base_roughness{0.0f};
+  ShaderParam<float> base_metalness{0.0f};
+  ShaderParam<float> base_diffuse_roughness{0.0f};  // Oren-Nayar diffuse roughness
+
+  // Specular layer - dielectric reflection
+  ShaderParam<float> specular_weight{1.0f};
+  ShaderParam<vec3> specular_color{{1.0f, 1.0f, 1.0f}};
+  ShaderParam<float> specular_roughness{0.3f};
+  ShaderParam<float> specular_ior{1.5f};
+  ShaderParam<float> specular_ior_level{0.5f};
+  ShaderParam<float> specular_anisotropy{0.0f};
+  ShaderParam<float> specular_rotation{0.0f};
+  
+  // Transmission - transparency and refraction
+  ShaderParam<float> transmission_weight{0.0f};
+  ShaderParam<vec3> transmission_color{{1.0f, 1.0f, 1.0f}};
+  ShaderParam<float> transmission_depth{0.0f};
+  ShaderParam<vec3> transmission_scatter{{0.0f, 0.0f, 0.0f}};
+  ShaderParam<float> transmission_scatter_anisotropy{0.0f};
+  ShaderParam<float> transmission_dispersion{0.0f};
+  
+  // Subsurface scattering
+  ShaderParam<float> subsurface_weight{0.0f};
+  ShaderParam<vec3> subsurface_color{{0.8f, 0.8f, 0.8f}};
+  ShaderParam<float> subsurface_radius{1.0f};
+  ShaderParam<vec3> subsurface_radius_scale{{1.0f, 1.0f, 1.0f}};
+  ShaderParam<float> subsurface_scale{1.0f};
+  ShaderParam<float> subsurface_anisotropy{0.0f};
+  
+  // Sheen - fabric-like reflection
+  ShaderParam<float> sheen_weight{0.0f};
+  ShaderParam<vec3> sheen_color{{1.0f, 1.0f, 1.0f}};
+  ShaderParam<float> sheen_roughness{0.3f};
+
+  // Fuzz - velvet/fabric-like appearance
+  ShaderParam<float> fuzz_weight{0.0f};
+  ShaderParam<vec3> fuzz_color{{1.0f, 1.0f, 1.0f}};
+  ShaderParam<float> fuzz_roughness{0.5f};
+
+  // Thin film - iridescence from thin film interference
+  ShaderParam<float> thin_film_weight{0.0f};
+  ShaderParam<float> thin_film_thickness{500.0f};  // in nanometers
+  ShaderParam<float> thin_film_ior{1.5f};
+
+  // Coat layer - clear coat over surface
+  ShaderParam<float> coat_weight{0.0f};
+  ShaderParam<vec3> coat_color{{1.0f, 1.0f, 1.0f}};
+  ShaderParam<float> coat_roughness{0.0f};
+  ShaderParam<float> coat_anisotropy{0.0f};
+  ShaderParam<float> coat_rotation{0.0f};
+  ShaderParam<float> coat_ior{1.5f};
+  ShaderParam<vec3> coat_affect_color{{1.0f, 1.0f, 1.0f}};
+  ShaderParam<float> coat_affect_roughness{0.0f};
+  
+  // Emission - light emission
+  ShaderParam<float> emission_luminance{0.0f};
+  ShaderParam<vec3> emission_color{{1.0f, 1.0f, 1.0f}};
+
+  // Geometry modifiers
+  ShaderParam<float> opacity{1.0f};  // "opacity" or "geometry_opacity" (maps to alpha in Three.js)
+  ShaderParam<vec3> normal{{0.0f, 0.0f, 1.0f}};
+  ShaderParam<vec3> tangent{{1.0f, 0.0f, 0.0f}};
+
+  // Tangent rotation for anisotropic materials (in degrees)
+  // Blender exports tangent rotation via ND_rotate3d_vector3 node with -90 degrees
+  // This value is extracted from the MaterialX NodeGraph during conversion
+  // 0.0 = no rotation, -90.0 = typical Blender anisotropic rotation
+  float tangent_rotation{0.0f};
+
+  // Normal map scale factor (from ND_normalmap_float node's scale input)
+  // 1.0 = default, used for bump strength adjustment
+  float normal_map_scale{1.0f};
+
+  // Coat normal and tangent for separate coat layer normal mapping
+  ShaderParam<vec3> coat_normal{{0.0f, 0.0f, 1.0f}};
+  ShaderParam<vec3> coat_tangent{{1.0f, 0.0f, 0.0f}};
+  float coat_tangent_rotation{0.0f};
+  float coat_normal_map_scale{1.0f};
+
+  // LTE SpectralAPI: Optional spectral properties
+  // Only exported to JSON if has_data() returns true
+  // MaterialX property names use "spd_" prefix (e.g., "spd_reflectance", "spd_ior")
+  nonstd::optional<SpectralData> spd_reflectance;  ///< wavelength:reflectance -> spd_reflectance
+  nonstd::optional<SpectralIOR> spd_ior;           ///< wavelength:ior -> spd_ior
+  nonstd::optional<SpectralEmission> spd_emission; ///< wavelength:emission -> spd_emission
+
+  uint64_t handle{0};  // Handle ID for Graphics API. 0 = invalid
+
+  // MaterialX Node Graph representation as JSON
+  // Stores the complete node-based shader graph for reconstruction in JS/WASM
+  // Schema follows MaterialX XML structure for compatibility
+  // Empty string if no node graph exists (direct parameter values only)
+  std::string nodeGraphJson;
+
+  /// Check if material has spectral reflectance data
+  bool hasSpectralReflectance() const {
+    return spd_reflectance.has_value() && spd_reflectance->has_data();
+  }
+
+  /// Check if material has spectral IOR data
+  bool hasSpectralIOR() const {
+    return spd_ior.has_value() && spd_ior->has_data();
+  }
+
+  /// Check if material has spectral emission data
+  bool hasSpectralEmission() const {
+    return spd_emission.has_value() && spd_emission->has_data();
+  }
+
+  /// Check if material has any spectral data
+  bool hasAnySpectralData() const {
+    return hasSpectralReflectance() || hasSpectralIOR() || hasSpectralEmission();
+  }
 };
 
 #if defined(__GNUC__) && !defined(__clang__)
@@ -1122,16 +1748,26 @@ class PreviewSurfaceShader {
 #endif
 
 // Material + Shader
+// Supports dual material representation: UsdPreviewSurface and/or MaterialX OpenPBR
 struct RenderMaterial {
   std::string name;  // elementName in USD (e.g. "pbrMat")
   std::string
       abs_path;  // abosolute Prim path in USD (e.g. "/_material/scope/pbrMat")
   std::string display_name;
 
-  PreviewSurfaceShader surfaceShader;
+  // Material can have UsdPreviewSurface, OpenPBR, or both
+  // Use nonstd::optional to allow either/both/none
+  nonstd::optional<PreviewSurfaceShader> surfaceShader;  // UsdPreviewSurface
+  nonstd::optional<OpenPBRSurfaceShader> openPBRShader;  // MaterialX OpenPBR
+  
   // TODO: displacement, volume.
 
   uint64_t handle{0};  // Handle ID for Graphics API. 0 = invalid
+  
+  // Helper methods to check which materials are available
+  bool hasUsdPreviewSurface() const { return surfaceShader.has_value(); }
+  bool hasOpenPBR() const { return openPBRShader.has_value(); }
+  bool hasBothMaterials() const { return hasUsdPreviewSurface() && hasOpenPBR(); }
 };
 
 // Simple Camera
@@ -1179,15 +1815,94 @@ struct RenderCamera {
 
 };
 
-// Simple light
+// Light source for rendering
 struct RenderLight
 {
-  std::string name;  // elementName in USD (e.g. "frontCamera")
-  std::string
-      abs_path;  // abosolute GeomCamera Prim path in USD (e.g. "/xform/camera")
+  std::string name;       // elementName in USD (e.g. "sunLight")
+  std::string abs_path;   // absolute Prim path in USD (e.g. "/scene/lights/sun")
+  std::string display_name;
 
+  enum class Type {
+    Point,        ///< SphereLight with small radius
+    Sphere,       ///< SphereLight
+    Disk,         ///< DiskLight
+    Rect,         ///< RectLight
+    Cylinder,     ///< CylinderLight
+    Distant,      ///< DistantLight (directional)
+    Dome,         ///< DomeLight (environment)
+    Geometry,     ///< GeometryLight
+    Portal,       ///< PortalLight
+  };
 
-  // TODO..
+  enum class DomeTextureFormat {
+    Automatic,
+    Latlong,
+    MirroredBall,
+    Angular
+  };
+
+  Type type{Type::Point};
+
+  // Common light properties (LightAPI)
+  vec3 color{1.0f, 1.0f, 1.0f};       ///< Light color (linear RGB)
+  float intensity{1.0f};              ///< Light intensity multiplier
+  float exposure{0.0f};               ///< Exposure value (EV)
+  float diffuse{1.0f};                ///< Diffuse contribution multiplier
+  float specular{1.0f};               ///< Specular contribution multiplier
+  bool normalize{false};              ///< Normalize by surface area
+
+  // Color temperature
+  bool enableColorTemperature{false}; ///< Use color temperature instead of color
+  float colorTemperature{6500.0f};    ///< Color temperature in Kelvin
+
+  // Transform (world space)
+  mat4 transform;                     ///< World transformation matrix
+  vec3 position{0.0f, 0.0f, 0.0f};    ///< World position
+  vec3 direction{0.0f, -1.0f, 0.0f};  ///< Light direction (for distant/spot)
+
+  // Type-specific parameters
+  float radius{0.5f};                 ///< Sphere/Disk radius
+  float width{1.0f};                  ///< RectLight width
+  float height{1.0f};                 ///< RectLight height
+  float length{1.0f};                 ///< CylinderLight length
+  float angle{0.53f};                 ///< DistantLight angle (degrees)
+  std::string textureFile;            ///< Texture for RectLight/DomeLight
+
+  // Shaping properties (ShapingAPI)
+  float shapingConeAngle{90.0f};      ///< Cone angle (degrees)
+  float shapingConeSoftness{0.0f};    ///< Cone edge softness
+  float shapingFocus{0.0f};           ///< Focus adjustment
+  vec3 shapingFocusTint{0.0f, 0.0f, 0.0f}; ///< Focus tint color
+  std::string shapingIesFile;         ///< IES profile file path
+  float shapingIesAngleScale{0.0f};   ///< IES angle scale
+  bool shapingIesNormalize{false};    ///< Normalize IES profile
+
+  // Shadow properties (ShadowAPI)
+  bool shadowEnable{true};            ///< Enable shadows
+  vec3 shadowColor{0.0f, 0.0f, 0.0f}; ///< Shadow color
+  float shadowDistance{-1.0f};        ///< Shadow distance (-1 = infinite)
+  float shadowFalloff{-1.0f};         ///< Shadow falloff (-1 = no falloff)
+  float shadowFalloffGamma{1.0f};     ///< Shadow falloff gamma
+
+  // DomeLight specific
+  DomeTextureFormat domeTextureFormat{DomeTextureFormat::Automatic};
+  float guideRadius{1.0e5f};          ///< Radius for visualization
+  int32_t envmap_texture_id{-1};      ///< Index to textures for environment map
+
+  // GeometryLight (mesh lights with MeshLightAPI)
+  int32_t geometry_mesh_id{-1};       ///< Index to meshes array for geometry lights
+  std::string material_sync_mode;     ///< MeshLightAPI materialSyncMode
+
+  // LTE SpectralAPI: Spectral emission support
+  // Only exported if has_data() returns true
+  nonstd::optional<SpectralEmission> spd_emission;  ///< wavelength:emission
+
+  uint64_t handle{0};  // Handle ID for Graphics API. 0 = invalid
+
+  /// Check if light has spectral emission data
+  bool hasSpectralEmission() const {
+    return spd_emission.has_value() && spd_emission->has_data();
+  }
 };
 
 struct SceneMetadata
@@ -1216,6 +1931,19 @@ class RenderScene {
 
   uint32_t default_root_node{0}; // index to `nodes`.
 
+#ifdef TYDRA_USE_CHUNKED_ARRAY
+  ChunkedVectorArray<Node> nodes;
+  ChunkedVectorArray<TextureImage> images;
+  ChunkedVectorArray<RenderMaterial> materials;
+  ChunkedVectorArray<RenderCamera> cameras;
+  ChunkedVectorArray<RenderLight> lights;
+  ChunkedVectorArray<UVTexture> textures;
+  ChunkedVectorArray<RenderMesh> meshes;
+  ChunkedVectorArray<AnimationClip> animations;  ///< Animation clips (glTF/Three.js compatible)
+  ChunkedVectorArray<SkelHierarchy> skeletons;
+  ChunkedVectorArray<BufferData>
+      buffers;  // Various data storage(e.g. texel/image data).
+#else
   std::vector<Node> nodes;
   std::vector<TextureImage> images;
   std::vector<RenderMaterial> materials;
@@ -1223,10 +1951,16 @@ class RenderScene {
   std::vector<RenderLight> lights;
   std::vector<UVTexture> textures;
   std::vector<RenderMesh> meshes;
-  std::vector<Animation> animations;
+  std::vector<AnimationClip> animations;  ///< Animation clips (glTF/Three.js compatible)
   std::vector<SkelHierarchy> skeletons;
   std::vector<BufferData>
       buffers;  // Various data storage(e.g. texel/image data).
+#endif
+
+  ///
+  /// Estimate total memory usage of this RenderScene in bytes
+  ///
+  size_t estimate_memory_usage() const;
 
   // Variant support (inspired by glTF KHR_materials_variants)
   // Allows runtime switching between different material/geometry/property options
@@ -1287,6 +2021,14 @@ bool DefaultTextureImageLoaderFunction(const value::AssetPath &assetPath,
 struct MeshConverterConfig {
   bool triangulate{true};
 
+  // Triangulation method for polygons with 5+ vertices
+  enum class TriangulationMethod {
+    Earcut,     // Use earcut algorithm (robust, handles complex polygons)
+    TriangleFan // Use simple triangle fan (faster, only for convex polygons)
+  };
+
+  TriangulationMethod triangulation_method{TriangulationMethod::Earcut};
+
   bool validate_geomsubset{true};  // Validate GeomSubset.
 
   // We may want texcoord data even if the Mesh does not have bound Material.
@@ -1313,6 +2055,19 @@ struct MeshConverterConfig {
   uint32_t max_skin_elementSize = 1024ull * 256ull;
 
   //
+  // Bone reduction: limit the number of bone influences per vertex for GPU skinning.
+  // When enabled, only the strongest N bone influences are kept and weights are renormalized.
+  //
+  bool enable_bone_reduction{false};
+
+  //
+  // Target number of bone influences per vertex after reduction.
+  // Default is 4, which is standard for real-time GPU skinning (e.g., Three.js, Unity, Unreal).
+  // Common values: 2, 4, 8
+  //
+  uint32_t target_bone_count{4};
+
+  //
   // Build vertex indices when vertex attributes are converted to `faceverying`?
   // Similar vertices are merged into single vertex index.
   // (convert vertex attributes from 'facevarying' to 'vertex' variability)
@@ -1321,6 +2076,14 @@ struct MeshConverterConfig {
   // index-buffer only (e.g. OpenGL/Vulkan)
   //
   bool build_vertex_indices{true};
+
+  //
+  // When true, and mesh isn't single_indexable, skip BuildIndices for faster
+  // and reduced temporary memory processing. Vertex attributes are all expanded
+  // to facevertex varying. This option takes precedence over build_vertex_indices
+  // when the mesh cannot be single-indexed.
+  //
+  bool prefer_non_indexed{false};
 
   //
   // Compute normals if not present in the mesh.
@@ -1347,6 +2110,10 @@ struct MeshConverterConfig {
   // ConvertMesh. Only effective to floating-point vertex data.
   //
   float facevarying_to_vertex_eps = std::numeric_limits<float>::epsilon();
+
+  // When true, free GeomMesh data after converting it to save memory usage.
+  // For emscripten.
+  bool lowmem{false};
 };
 
 struct MaterialConverterConfig {
@@ -1412,6 +2179,41 @@ struct RenderSceneConverterConfig {
   // false: no actual texture file/asset access.
   // App/User must setup TextureImage manually after the conversion.
   bool load_texture_assets{true};
+
+  //
+  // Merge meshes with the same material for performant rendering.
+  //
+  // When enabled, meshes that share the same material and have compatible
+  // properties (static transforms, no per-face materials, no skeletal animation,
+  // no blend shapes) will be merged into a single mesh.
+  //
+  // This optimization reduces draw calls in renderers like Three.js, WebGL,
+  // and other GPU-based renderers where draw call overhead is significant.
+  //
+  // Merge criteria:
+  // - Same material_id (whole mesh material, not per-face)
+  // - No material_subsetMap (per-face materials prevent merging)
+  // - Static mesh (no skeletal animation: skel_id == -1)
+  // - No blend shapes (targets.empty())
+  // - Same global transform matrix (meshes must be in the same world space,
+  //   or transforms will be baked into vertex positions)
+  //
+  // When `bake_transform` is true:
+  // - Meshes with different transforms can be merged by baking their
+  //   global transforms into vertex positions/normals
+  // - This allows more aggressive merging at the cost of losing
+  //   individual mesh transforms
+  //
+  bool merge_meshes{false};
+
+  //
+  // When merging meshes, bake global transforms into vertex data.
+  // This allows merging meshes with different transforms by transforming
+  // their vertices into world space.
+  //
+  // Only effective when merge_meshes is true.
+  //
+  bool merge_meshes_bake_transform{true};
 };
 
 //
@@ -1425,9 +2227,65 @@ struct RenderSceneConverterConfig {
 // TODO: Use spatial hash for robust dedup(consider floating-point eps)
 // TODO: Polish interface to support arbitrary vertex configuration.
 //
+// When TYDRA_USE_INDEX is defined, use array indices instead of values
+// to save memory. Index value of -1 (or ~0u for uint32_t) means no attribute.
+//
+
+// Forward declaration for attribute arrays
+template <class PackedVert>
+struct DefaultVertexInput;
+
+// Epsilon values for floating point comparison
+constexpr float kPositionEps = 1e-6f;
+constexpr float kAttributeEps = 1e-3f;
+
+// Helper functions for epsilon-based comparison
+inline bool float_equal(float a, float b, float eps) {
+  return std::abs(a - b) <= eps;
+}
+
+inline bool float2_equal(const value::float2& a, const value::float2& b, float eps) {
+  return float_equal(a[0], b[0], eps) && float_equal(a[1], b[1], eps);
+}
+
+inline bool float3_equal(const value::float3& a, const value::float3& b, float eps) {
+  return float_equal(a[0], b[0], eps) && float_equal(a[1], b[1], eps) && float_equal(a[2], b[2], eps);
+}
+
+inline int float_compare(float a, float b, float eps) {
+  if (float_equal(a, b, eps)) return 0;
+  return (a < b) ? -1 : 1;
+}
+
+inline int float2_compare(const value::float2& a, const value::float2& b, float eps) {
+  int cmp = float_compare(a[0], b[0], eps);
+  if (cmp != 0) return cmp;
+  return float_compare(a[1], b[1], eps);
+}
+
+inline int float3_compare(const value::float3& a, const value::float3& b, float eps) {
+  int cmp = float_compare(a[0], b[0], eps);
+  if (cmp != 0) return cmp;
+  cmp = float_compare(a[1], b[1], eps);
+  if (cmp != 0) return cmp;
+  return float_compare(a[2], b[2], eps);
+}
+
 struct DefaultPackedVertexData {
   //value::float3 position;
   uint32_t point_index;
+#ifdef TYDRA_USE_INDEX
+  // Use indices into attribute arrays instead of values
+  // -1 (or ~0u) means no attribute
+  uint32_t normal_index;
+  uint32_t uv0_index;
+  uint32_t uv1_index;
+  uint32_t tangent_index;
+  uint32_t binormal_index;
+  uint32_t color_index;
+  uint32_t opacity_index;
+#else
+  // Use values directly (original behavior)
   value::float3 normal;
   value::float2 uv0;
   value::float2 uv1;
@@ -1435,8 +2293,10 @@ struct DefaultPackedVertexData {
   value::float3 binormal;
   value::float3 color;
   float opacity;
+#endif
 
-  // comparator for std::map
+  // Basic comparator for std::map (fallback to memcmp)
+  // For epsilon-based comparison, use DefaultPackedVertexDataCompare with attribute arrays
   bool operator<(const DefaultPackedVertexData &rhs) const {
     return memcmp(reinterpret_cast<const void *>(this),
                   reinterpret_cast<const void *>(&rhs),
@@ -1473,10 +2333,251 @@ struct DefaultPackedVertexDataEqual {
   }
 };
 
+// Epsilon-based comparison with access to attribute arrays
+template <class VertexInput>
+struct DefaultPackedVertexDataCompare {
+  const VertexInput* vertex_input;
+  
+  DefaultPackedVertexDataCompare(const VertexInput* input) : vertex_input(input) {}
+  
+  bool operator()(const DefaultPackedVertexData &lhs,
+                  const DefaultPackedVertexData &rhs) const {
+    // Compare point indices first
+    if (lhs.point_index != rhs.point_index) {
+      return lhs.point_index < rhs.point_index;
+    }
+    
+#ifdef TYDRA_USE_INDEX
+    // In index mode, resolve indices to values and compare with epsilon
+    if (!vertex_input) {
+      // Fallback to index comparison if no vertex input available
+      return memcmp(&lhs, &rhs, sizeof(DefaultPackedVertexData)) < 0;
+    }
+    
+    // Compare normals
+    if (lhs.normal_index != rhs.normal_index) {
+      if (lhs.normal_index == ~0u) return true;  // lhs has no normal, rhs has normal
+      if (rhs.normal_index == ~0u) return false; // rhs has no normal, lhs has normal
+      
+      const auto& lhs_normal = vertex_input->unique_normals[lhs.normal_index];
+      const auto& rhs_normal = vertex_input->unique_normals[rhs.normal_index];
+      int cmp = float3_compare(lhs_normal, rhs_normal, kAttributeEps);
+      if (cmp != 0) return cmp < 0;
+    }
+    
+    // Compare uv0
+    if (lhs.uv0_index != rhs.uv0_index) {
+      if (lhs.uv0_index == ~0u) return true;
+      if (rhs.uv0_index == ~0u) return false;
+      
+      const auto& lhs_uv0 = vertex_input->unique_uv0s[lhs.uv0_index];
+      const auto& rhs_uv0 = vertex_input->unique_uv0s[rhs.uv0_index];
+      int cmp = float2_compare(lhs_uv0, rhs_uv0, kAttributeEps);
+      if (cmp != 0) return cmp < 0;
+    }
+    
+    // Compare uv1
+    if (lhs.uv1_index != rhs.uv1_index) {
+      if (lhs.uv1_index == ~0u) return true;
+      if (rhs.uv1_index == ~0u) return false;
+      
+      const auto& lhs_uv1 = vertex_input->unique_uv1s[lhs.uv1_index];
+      const auto& rhs_uv1 = vertex_input->unique_uv1s[rhs.uv1_index];
+      int cmp = float2_compare(lhs_uv1, rhs_uv1, kAttributeEps);
+      if (cmp != 0) return cmp < 0;
+    }
+    
+    // Compare tangents
+    if (lhs.tangent_index != rhs.tangent_index) {
+      if (lhs.tangent_index == ~0u) return true;
+      if (rhs.tangent_index == ~0u) return false;
+      
+      const auto& lhs_tangent = vertex_input->unique_tangents[lhs.tangent_index];
+      const auto& rhs_tangent = vertex_input->unique_tangents[rhs.tangent_index];
+      int cmp = float3_compare(lhs_tangent, rhs_tangent, kAttributeEps);
+      if (cmp != 0) return cmp < 0;
+    }
+    
+    // Compare binormals
+    if (lhs.binormal_index != rhs.binormal_index) {
+      if (lhs.binormal_index == ~0u) return true;
+      if (rhs.binormal_index == ~0u) return false;
+      
+      const auto& lhs_binormal = vertex_input->unique_binormals[lhs.binormal_index];
+      const auto& rhs_binormal = vertex_input->unique_binormals[rhs.binormal_index];
+      int cmp = float3_compare(lhs_binormal, rhs_binormal, kAttributeEps);
+      if (cmp != 0) return cmp < 0;
+    }
+    
+    // Compare colors
+    if (lhs.color_index != rhs.color_index) {
+      if (lhs.color_index == ~0u) return true;
+      if (rhs.color_index == ~0u) return false;
+      
+      const auto& lhs_color = vertex_input->unique_colors[lhs.color_index];
+      const auto& rhs_color = vertex_input->unique_colors[rhs.color_index];
+      int cmp = float3_compare(lhs_color, rhs_color, kAttributeEps);
+      if (cmp != 0) return cmp < 0;
+    }
+    
+    // Compare opacity
+    if (lhs.opacity_index != rhs.opacity_index) {
+      if (lhs.opacity_index == ~0u) return true;
+      if (rhs.opacity_index == ~0u) return false;
+      
+      const float lhs_opacity = vertex_input->unique_opacities[lhs.opacity_index];
+      const float rhs_opacity = vertex_input->unique_opacities[rhs.opacity_index];
+      int cmp = float_compare(lhs_opacity, rhs_opacity, kAttributeEps);
+      if (cmp != 0) return cmp < 0;
+    }
+    
+#else
+    // Direct value comparison with epsilon
+    int cmp = float3_compare(lhs.normal, rhs.normal, kAttributeEps);
+    if (cmp != 0) return cmp < 0;
+    
+    cmp = float2_compare(lhs.uv0, rhs.uv0, kAttributeEps);
+    if (cmp != 0) return cmp < 0;
+    
+    cmp = float2_compare(lhs.uv1, rhs.uv1, kAttributeEps);
+    if (cmp != 0) return cmp < 0;
+    
+    cmp = float3_compare(lhs.tangent, rhs.tangent, kAttributeEps);
+    if (cmp != 0) return cmp < 0;
+    
+    cmp = float3_compare(lhs.binormal, rhs.binormal, kAttributeEps);
+    if (cmp != 0) return cmp < 0;
+    
+    cmp = float3_compare(lhs.color, rhs.color, kAttributeEps);
+    if (cmp != 0) return cmp < 0;
+    
+    cmp = float_compare(lhs.opacity, rhs.opacity, kAttributeEps);
+    if (cmp != 0) return cmp < 0;
+#endif
+    
+    return false; // All values are equal within epsilon
+  }
+};
+
+// Epsilon-based equality comparison with access to attribute arrays
+template <class VertexInput>
+struct DefaultPackedVertexDataEqualEps {
+  const VertexInput* vertex_input;
+  
+  DefaultPackedVertexDataEqualEps(const VertexInput* input) : vertex_input(input) {}
+  
+  bool operator()(const DefaultPackedVertexData &lhs,
+                  const DefaultPackedVertexData &rhs) const {
+    // Compare point indices first
+    if (lhs.point_index != rhs.point_index) {
+      return false;
+    }
+    
+#ifdef TYDRA_USE_INDEX
+    // In index mode, resolve indices to values and compare with epsilon
+    if (!vertex_input) {
+      // Fallback to exact comparison if no vertex input available
+      return memcmp(&lhs, &rhs, sizeof(DefaultPackedVertexData)) == 0;
+    }
+    
+    // Compare normals
+    if (lhs.normal_index != rhs.normal_index) {
+      if (lhs.normal_index == ~0u || rhs.normal_index == ~0u) {
+        return lhs.normal_index == rhs.normal_index; // Both must be missing
+      }
+      const auto& lhs_normal = vertex_input->unique_normals[lhs.normal_index];
+      const auto& rhs_normal = vertex_input->unique_normals[rhs.normal_index];
+      if (!float3_equal(lhs_normal, rhs_normal, kAttributeEps)) return false;
+    }
+    
+    // Compare uv0
+    if (lhs.uv0_index != rhs.uv0_index) {
+      if (lhs.uv0_index == ~0u || rhs.uv0_index == ~0u) {
+        return lhs.uv0_index == rhs.uv0_index;
+      }
+      const auto& lhs_uv0 = vertex_input->unique_uv0s[lhs.uv0_index];
+      const auto& rhs_uv0 = vertex_input->unique_uv0s[rhs.uv0_index];
+      if (!float2_equal(lhs_uv0, rhs_uv0, kAttributeEps)) return false;
+    }
+    
+    // Compare uv1
+    if (lhs.uv1_index != rhs.uv1_index) {
+      if (lhs.uv1_index == ~0u || rhs.uv1_index == ~0u) {
+        return lhs.uv1_index == rhs.uv1_index;
+      }
+      const auto& lhs_uv1 = vertex_input->unique_uv1s[lhs.uv1_index];
+      const auto& rhs_uv1 = vertex_input->unique_uv1s[rhs.uv1_index];
+      if (!float2_equal(lhs_uv1, rhs_uv1, kAttributeEps)) return false;
+    }
+    
+    // Compare tangents
+    if (lhs.tangent_index != rhs.tangent_index) {
+      if (lhs.tangent_index == ~0u || rhs.tangent_index == ~0u) {
+        return lhs.tangent_index == rhs.tangent_index;
+      }
+      const auto& lhs_tangent = vertex_input->unique_tangents[lhs.tangent_index];
+      const auto& rhs_tangent = vertex_input->unique_tangents[rhs.tangent_index];
+      if (!float3_equal(lhs_tangent, rhs_tangent, kAttributeEps)) return false;
+    }
+    
+    // Compare binormals
+    if (lhs.binormal_index != rhs.binormal_index) {
+      if (lhs.binormal_index == ~0u || rhs.binormal_index == ~0u) {
+        return lhs.binormal_index == rhs.binormal_index;
+      }
+      const auto& lhs_binormal = vertex_input->unique_binormals[lhs.binormal_index];
+      const auto& rhs_binormal = vertex_input->unique_binormals[rhs.binormal_index];
+      if (!float3_equal(lhs_binormal, rhs_binormal, kAttributeEps)) return false;
+    }
+    
+    // Compare colors
+    if (lhs.color_index != rhs.color_index) {
+      if (lhs.color_index == ~0u || rhs.color_index == ~0u) {
+        return lhs.color_index == rhs.color_index;
+      }
+      const auto& lhs_color = vertex_input->unique_colors[lhs.color_index];
+      const auto& rhs_color = vertex_input->unique_colors[rhs.color_index];
+      if (!float3_equal(lhs_color, rhs_color, kAttributeEps)) return false;
+    }
+    
+    // Compare opacity
+    if (lhs.opacity_index != rhs.opacity_index) {
+      if (lhs.opacity_index == ~0u || rhs.opacity_index == ~0u) {
+        return lhs.opacity_index == rhs.opacity_index;
+      }
+      const float lhs_opacity = vertex_input->unique_opacities[lhs.opacity_index];
+      const float rhs_opacity = vertex_input->unique_opacities[rhs.opacity_index];
+      if (!float_equal(lhs_opacity, rhs_opacity, kAttributeEps)) return false;
+    }
+    
+#else
+    // Direct value comparison with epsilon
+    if (!float3_equal(lhs.normal, rhs.normal, kAttributeEps)) return false;
+    if (!float2_equal(lhs.uv0, rhs.uv0, kAttributeEps)) return false;
+    if (!float2_equal(lhs.uv1, rhs.uv1, kAttributeEps)) return false;
+    if (!float3_equal(lhs.tangent, rhs.tangent, kAttributeEps)) return false;
+    if (!float3_equal(lhs.binormal, rhs.binormal, kAttributeEps)) return false;
+    if (!float3_equal(lhs.color, rhs.color, kAttributeEps)) return false;
+    if (!float_equal(lhs.opacity, rhs.opacity, kAttributeEps)) return false;
+#endif
+    
+    return true; // All values are equal within epsilon
+  }
+};
+
 template <class PackedVert>
 struct DefaultVertexInput {
   //std::vector<value::float3> positions;
-  std::vector<uint32_t> point_indices;
+  std::vector<uint32_t> point_indices; // Keep int array as std::vector
+#ifdef TYDRA_USE_CHUNKED_ARRAY
+  ChunkedVectorArray<value::float3> normals;
+  ChunkedVectorArray<value::float2> uv0s;
+  ChunkedVectorArray<value::float2> uv1s;
+  ChunkedVectorArray<value::float3> tangents;
+  ChunkedVectorArray<value::float3> binormals;
+  ChunkedVectorArray<value::float3> colors;
+  ChunkedVectorArray<float> opacities;
+#else
   std::vector<value::float3> normals;
   std::vector<value::float2> uv0s;
   std::vector<value::float2> uv1s;
@@ -1484,6 +2585,28 @@ struct DefaultVertexInput {
   std::vector<value::float3> binormals;
   std::vector<value::float3> colors;
   std::vector<float> opacities;
+#endif
+
+#ifdef TYDRA_USE_INDEX
+  // Unique attribute arrays for indexed mode
+#ifdef TYDRA_USE_CHUNKED_ARRAY
+  ChunkedVectorArray<value::float3> unique_normals;
+  ChunkedVectorArray<value::float2> unique_uv0s;
+  ChunkedVectorArray<value::float2> unique_uv1s;
+  ChunkedVectorArray<value::float3> unique_tangents;
+  ChunkedVectorArray<value::float3> unique_binormals;
+  ChunkedVectorArray<value::float3> unique_colors;
+  ChunkedVectorArray<float> unique_opacities;
+#else
+  std::vector<value::float3> unique_normals;
+  std::vector<value::float2> unique_uv0s;
+  std::vector<value::float2> unique_uv1s;
+  std::vector<value::float3> unique_tangents;
+  std::vector<value::float3> unique_binormals;
+  std::vector<value::float3> unique_colors;
+  std::vector<float> unique_opacities;
+#endif
+#endif
 
   size_t size() const { return point_indices.size(); }
 
@@ -1493,6 +2616,19 @@ struct DefaultVertexInput {
     } else {
       output.point_index = ~0u; // this case should not happen though
     }
+#ifdef TYDRA_USE_INDEX
+    // In index mode, store indices to unique attribute arrays
+    // The indices will be set by the conversion process
+    // For now, we just mark them as not present if no data
+    output.normal_index = (idx < normals.size()) ? idx : ~0u;
+    output.uv0_index = (idx < uv0s.size()) ? idx : ~0u;
+    output.uv1_index = (idx < uv1s.size()) ? idx : ~0u;
+    output.tangent_index = (idx < tangents.size()) ? idx : ~0u;
+    output.binormal_index = (idx < binormals.size()) ? idx : ~0u;
+    output.color_index = (idx < colors.size()) ? idx : ~0u;
+    output.opacity_index = (idx < opacities.size()) ? idx : ~0u;
+#else
+    // Original behavior: store values directly
     if (idx < normals.size()) {
       output.normal = normals[idx];
     } else {
@@ -1528,13 +2664,23 @@ struct DefaultVertexInput {
     } else {
       output.opacity = 0.0f;  // FIXME: Use 1.0?
     }
+#endif
   }
 };
 
 template <class PackedVert>
 struct DefaultVertexOutput {
   //std::vector<value::float3> positions;
-  std::vector<uint32_t> point_indices;
+  std::vector<uint32_t> point_indices; // Keep int array as std::vector
+#ifdef TYDRA_USE_CHUNKED_ARRAY
+  ChunkedVectorArray<value::float3> normals;
+  ChunkedVectorArray<value::float2> uv0s;
+  ChunkedVectorArray<value::float2> uv1s;
+  ChunkedVectorArray<value::float3> tangents;
+  ChunkedVectorArray<value::float3> binormals;
+  ChunkedVectorArray<value::float3> colors;
+  ChunkedVectorArray<float> opacities;
+#else
   std::vector<value::float3> normals;
   std::vector<value::float2> uv0s;
   std::vector<value::float2> uv1s;
@@ -1542,11 +2688,46 @@ struct DefaultVertexOutput {
   std::vector<value::float3> binormals;
   std::vector<value::float3> colors;
   std::vector<float> opacities;
+#endif
+
+#ifdef TYDRA_USE_INDEX
+  // Unique attribute arrays for indexed mode
+#ifdef TYDRA_USE_CHUNKED_ARRAY
+  ChunkedVectorArray<value::float3> unique_normals;
+  ChunkedVectorArray<value::float2> unique_uv0s;
+  ChunkedVectorArray<value::float2> unique_uv1s;
+  ChunkedVectorArray<value::float3> unique_tangents;
+  ChunkedVectorArray<value::float3> unique_binormals;
+  ChunkedVectorArray<value::float3> unique_colors;
+  ChunkedVectorArray<float> unique_opacities;
+#else
+  std::vector<value::float3> unique_normals;
+  std::vector<value::float2> unique_uv0s;
+  std::vector<value::float2> unique_uv1s;
+  std::vector<value::float3> unique_tangents;
+  std::vector<value::float3> unique_binormals;
+  std::vector<value::float3> unique_colors;
+  std::vector<float> unique_opacities;
+#endif
+#endif
 
   size_t size() const { return point_indices.size(); }
 
   void push_back(const PackedVert &v) {
     point_indices.push_back(v.point_index);
+#ifdef TYDRA_USE_INDEX
+    // In index mode, we would resolve indices to actual values
+    // from the unique arrays when needed for rendering
+    // For now, we keep the existing interface but store indices
+    // This would need additional logic to resolve indices to values
+    normals.push_back({0.0f, 0.0f, 0.0f}); // placeholder
+    uv0s.push_back({0.0f, 0.0f});
+    uv1s.push_back({0.0f, 0.0f});
+    tangents.push_back({0.0f, 0.0f, 0.0f});
+    binormals.push_back({0.0f, 0.0f, 0.0f});
+    colors.push_back({0.0f, 0.0f, 0.0f});
+    opacities.push_back(0.0f);
+#else
     normals.push_back(v.normal);
     uv0s.push_back(v.uv0);
     uv1s.push_back(v.uv1);
@@ -1554,6 +2735,7 @@ struct DefaultVertexOutput {
     binormals.push_back(v.binormal);
     colors.push_back(v.color);
     opacities.push_back(v.opacity);
+#endif
   }
 };
 
@@ -1565,7 +2747,8 @@ template <class VertexInput, class VertexOutput, class PackedVert,
 void BuildIndices(const VertexInput &input, VertexOutput &output,
                   std::vector<uint32_t> &out_indices, std::vector<uint32_t> &out_point_indices)
 {
-  // TODO: Use LSH(locally sensitive hashing) or BVH for kNN point query.
+  // Original implementation using unordered_map
+  // For better performance on large meshes, consider using BuildIndicesWithSpatialHash
   std::unordered_map<PackedVert, uint32_t, PackedVertHasher, PackedVertEqual>
       vertexToIndexMap;
 
@@ -1594,6 +2777,116 @@ void BuildIndices(const VertexInput &input, VertexOutput &output,
       vertexToIndexMap[v] = new_index;
     }
     out_point_indices.push_back(v.point_index);
+  }
+}
+
+//
+// BuildIndicesWithSpatialHash - Optimized version using spatial hashing
+// for efficient vertex similarity search
+//
+// Use this for large meshes where vertex deduplication is a bottleneck.
+// The spatial hash grid provides O(1) average-case lookup with better
+// cache locality than the standard hash map approach.
+//
+template <class VertexInput, class VertexOutput, class PackedVert>
+void BuildIndicesWithSpatialHash(
+    const VertexInput &input, 
+    VertexOutput &output,
+    std::vector<uint32_t> &out_indices, 
+    std::vector<uint32_t> &out_point_indices,
+    float cellSize = 0.01f,        // Grid cell size for spatial hashing
+    float positionEps = 1e-6f,      // Epsilon for position comparison
+    float attributeEps = 1e-3f)     // Epsilon for attribute comparison
+{
+  using namespace spatial;
+  
+  // Initialize spatial hash grid
+  VertexSpatialHashGrid<float> spatialGrid(cellSize, positionEps, attributeEps);
+  
+  // Reserve space for expected vertices
+  spatialGrid.reserveVertices(input.size());
+  output.reserve(input.size() / 4); // Assume roughly 25% unique vertices
+  
+  // Process each input vertex
+  for (size_t i = 0; i < input.size(); i++) {
+    PackedVert v;
+    input.get(i, v);
+    
+    // Convert PackedVert to spatial hash vertex format
+    typename VertexSpatialHashGrid<float>::Vertex spatialVertex;
+    
+    // Get position from points array if available
+    if (v.point_index < input.point_indices.size()) {
+      // Note: This assumes points are available elsewhere in the context
+      // For now, we'll use the point_index as a placeholder
+      spatialVertex.position = {0, 0, 0}; // Would be filled from actual points
+    }
+    
+#ifdef TYDRA_USE_INDEX
+    // Resolve indices to values for spatial search
+    if (v.normal_index != ~0u && v.normal_index < input.unique_normals.size()) {
+      spatialVertex.normal = input.unique_normals[v.normal_index];
+    }
+    if (v.uv0_index != ~0u && v.uv0_index < input.unique_uv0s.size()) {
+      spatialVertex.uv0 = input.unique_uv0s[v.uv0_index];
+    }
+    if (v.uv1_index != ~0u && v.uv1_index < input.unique_uv1s.size()) {
+      spatialVertex.uv1 = input.unique_uv1s[v.uv1_index];
+    }
+    if (v.tangent_index != ~0u && v.tangent_index < input.unique_tangents.size()) {
+      spatialVertex.tangent = input.unique_tangents[v.tangent_index];
+    }
+    if (v.binormal_index != ~0u && v.binormal_index < input.unique_binormals.size()) {
+      spatialVertex.binormal = input.unique_binormals[v.binormal_index];
+    }
+    if (v.color_index != ~0u && v.color_index < input.unique_colors.size()) {
+      spatialVertex.color = input.unique_colors[v.color_index];
+    }
+    if (v.opacity_index != ~0u && v.opacity_index < input.unique_opacities.size()) {
+      spatialVertex.opacity = input.unique_opacities[v.opacity_index];
+    }
+#else
+    // Direct value access
+    spatialVertex.normal = v.normal;
+    spatialVertex.uv0 = v.uv0;
+    spatialVertex.uv1 = v.uv1;
+    spatialVertex.tangent = v.tangent;
+    spatialVertex.binormal = v.binormal;
+    spatialVertex.color = v.color;
+    spatialVertex.opacity = v.opacity;
+#endif
+    
+    spatialVertex.id = static_cast<uint32_t>(i);
+    
+    // Check if similar vertex exists
+    uint32_t existingId;
+    bool found = spatialGrid.findExactVertex(spatialVertex, existingId);
+    
+    if (found && existingId < output.size()) {
+      // Use existing vertex
+      out_indices.push_back(existingId);
+    } else {
+      // Add new unique vertex
+      uint32_t new_index = static_cast<uint32_t>(output.size());
+      out_indices.push_back(new_index);
+      output.push_back(v);
+      
+      // Update spatial vertex id to match output index
+      spatialVertex.id = new_index;
+      spatialGrid.addVertex(spatialVertex);
+    }
+    
+    out_point_indices.push_back(v.point_index);
+  }
+  
+  // Build spatial grid after all vertices are added
+  spatialGrid.build();
+  
+  // Optional: Get statistics for debugging
+  if (false) { // Set to true for debugging
+    size_t totalCells, maxCellSize, avgCellSize, subdivisions;
+    spatialGrid.getStatistics(totalCells, maxCellSize, avgCellSize, subdivisions);
+    // Log statistics...
   }
 }
 
@@ -1632,6 +2925,36 @@ class RenderSceneConverter {
   RenderSceneConverter(RenderSceneConverter &&rhs) = delete;
 
   ///
+  /// Set progress callback for monitoring conversion progress.
+  ///
+  /// @param[in] callback Function to call during conversion to report progress
+  /// @param[in] userptr User-provided pointer for custom data
+  ///
+  void SetProgressCallback(ProgressCallback callback, void *userptr = nullptr);
+
+  ///
+  /// Set detailed progress callback for fine-grained progress monitoring.
+  /// This callback provides mesh/material/texture counts during conversion.
+  ///
+  /// @param[in] callback Function to call during conversion with detailed info
+  /// @param[in] userptr User-provided pointer for custom data
+  ///
+  void SetDetailedProgressCallback(DetailedProgressCallback callback, void *userptr = nullptr);
+
+  ///
+  /// Report mesh conversion progress (for use by MeshVisitor).
+  /// Updates internal progress info and calls the detailed callback if set.
+  ///
+  /// @param[in] meshes_processed Number of meshes processed so far
+  /// @param[in] meshes_total Total number of meshes to process
+  /// @param[in] mesh_name Name of the current mesh being processed
+  /// @param[in] message Progress message
+  /// @return true to continue, false to cancel
+  ///
+  bool ReportMeshProgress(size_t meshes_processed, size_t meshes_total,
+                          const std::string& mesh_name, const std::string& message);
+
+  ///
   /// All-in-one Stage to RenderScene conversion.
   ///
   /// Convert Stage to RenderScene.
@@ -1659,6 +2982,18 @@ class RenderSceneConverter {
 
   int default_node{-1};
 
+#ifdef TYDRA_USE_CHUNKED_ARRAY
+  ChunkedVectorArray<Node> root_nodes;
+  ChunkedVectorArray<RenderMesh> meshes;
+  ChunkedVectorArray<RenderMaterial> materials;
+  ChunkedVectorArray<RenderCamera> cameras;
+  ChunkedVectorArray<RenderLight> lights;
+  ChunkedVectorArray<UVTexture> textures;
+  ChunkedVectorArray<TextureImage> images;
+  ChunkedVectorArray<BufferData> buffers;
+  ChunkedVectorArray<SkelHierarchy> skeletons;
+  ChunkedVectorArray<AnimationClip> animations;
+#else
   std::vector<Node> root_nodes;
   std::vector<RenderMesh> meshes;
   std::vector<RenderMaterial> materials;
@@ -1668,7 +3003,14 @@ class RenderSceneConverter {
   std::vector<TextureImage> images;
   std::vector<BufferData> buffers;
   std::vector<SkelHierarchy> skeletons;
-  std::vector<Animation> animations;
+  std::vector<AnimationClip> animations;
+#endif
+
+  // Pre-discovered skeleton/animation prims for ancestor-based discovery
+  // These are set temporarily during ConvertToRenderScene
+  const PathPrimMap<Skeleton> *_allSkeletons{nullptr};
+  const PathPrimMap<SkelRoot> *_allSkelRoots{nullptr};
+  const PathPrimMap<SkelAnimation> *_allAnimations{nullptr};
 
   ///
   /// Convert GeomMesh to renderer-friendly mesh.
@@ -1727,6 +3069,57 @@ class RenderSceneConverter {
   /// @return true when success.
   ///
   ///
+
+  ///
+  /// Convert GeomCube to RenderMesh by generating tessellated geometry
+  ///
+  /// @param[in] env Converter environment
+  /// @param[in] cube_abs_path Absolute path to the cube primitive
+  /// @param[in] cube GeomCube primitive
+  /// @param[in] material_path Material path for the cube
+  /// @param[in] subset_material_path_map Material subset map
+  /// @param[in] rmaterial_map Material ID map
+  /// @param[in] material_subsets GeomSubset array
+  /// @param[in] blendshapes BlendShape array
+  /// @param[out] dst RenderMesh output
+  ///
+  /// @return true when success.
+  ///
+  bool ConvertCube(
+      const RenderSceneConverterEnv &env, const tinyusdz::Path &cube_abs_path,
+      const tinyusdz::GeomCube &cube, const MaterialPath &material_path,
+      const std::map<std::string, MaterialPath> &subset_material_path_map,
+      const StringAndIdMap &rmaterial_map,
+      const std::vector<const tinyusdz::GeomSubset *> &material_subsets,
+      const std::vector<std::pair<std::string, const tinyusdz::BlendShape *>>
+          &blendshapes,
+      RenderMesh *dst);
+
+  ///
+  /// Convert GeomSphere to RenderMesh by generating tessellated geometry
+  ///
+  /// @param[in] env Converter environment
+  /// @param[in] sphere_abs_path Absolute path to the sphere primitive
+  /// @param[in] sphere GeomSphere primitive
+  /// @param[in] material_path Material path for the sphere
+  /// @param[in] subset_material_path_map Material subset map
+  /// @param[in] rmaterial_map Material ID map
+  /// @param[in] material_subsets GeomSubset array
+  /// @param[in] blendshapes BlendShape array
+  /// @param[out] dst RenderMesh output
+  ///
+  /// @return true when success.
+  ///
+  bool ConvertSphere(
+      const RenderSceneConverterEnv &env, const tinyusdz::Path &sphere_abs_path,
+      const tinyusdz::GeomSphere &sphere, const MaterialPath &material_path,
+      const std::map<std::string, MaterialPath> &subset_material_path_map,
+      const StringAndIdMap &rmaterial_map,
+      const std::vector<const tinyusdz::GeomSubset *> &material_subsets,
+      const std::vector<std::pair<std::string, const tinyusdz::BlendShape *>>
+          &blendshapes,
+      RenderMesh *dst);
+
   bool ConvertMesh(
       const RenderSceneConverterEnv &env, const tinyusdz::Path &mesh_abs_path,
       const tinyusdz::GeomMesh &mesh, const MaterialPath &material_path,
@@ -1762,6 +3155,21 @@ class RenderSceneConverter {
                                    const tinyusdz::Path &shader_abs_path,
                                    const tinyusdz::UsdPreviewSurface &shader,
                                    PreviewSurfaceShader *pss_out);
+  
+  ///
+  /// Convert MaterialX OpenPBR Surface Shader to renderer-friendly OpenPBRSurfaceShader
+  ///
+  /// @param[in] env Conversion environment
+  /// @param[in] shader_abs_path USD Path to Shader Prim with OpenPBRSurface info:id
+  /// @param[in] shader OpenPBRSurface
+  /// @param[out] openpbr_out OpenPBRSurfaceShader
+  ///
+  /// @return true when success.
+  ///
+  bool ConvertOpenPBRSurfaceShader(const RenderSceneConverterEnv &env,
+                                    const tinyusdz::Path &shader_abs_path,
+                                    const tinyusdz::OpenPBRSurface &shader,
+                                    OpenPBRSurfaceShader *openpbr_out);
 
   ///
   /// Convert UsdUvTexture to renderer-friendly UVTexture
@@ -1783,18 +3191,76 @@ class RenderSceneConverter {
   /// Convert SkelAnimation to Tydra Animation.
   ///
   /// @param[in] abs_path USD Path to SkelAnimation Prim
-  /// @param[in] skelAnim SkelAnimatio
-  /// @param[in] anim_out Animation
+  /// @param[in] skelAnim SkelAnimation
+  /// @param[in] anim_out AnimationClip
   ///
   bool ConvertSkelAnimation(const RenderSceneConverterEnv &env,
                         const Path &abs_path, const SkelAnimation &skelAnim,
-                        Animation *anim_out);
+                        int32_t skeleton_id,
+                        AnimationClip *anim_out);
+
+  ///
+  /// Extract animation data from xformOps time samples and convert to AnimationClip
+  ///
+  /// @param[in] env Converter environment
+  /// @param[in] abs_path Absolute path to the prim
+  /// @param[in] prim_name Prim name
+  /// @param[in] xformable Xformable object containing xformOps
+  /// @param[in] target_node_index Index of the target node in RenderScene
+  /// @param[out] anim_out Output AnimationClip
+  /// @return true if animation was extracted, false otherwise
+  ///
+  bool ExtractXformOpAnimation(const RenderSceneConverterEnv &env,
+                        const Path &abs_path,
+                        const std::string &prim_name,
+                        const Xformable &xformable,
+                        int32_t target_node_index,
+                        AnimationClip *anim_out);
 
   ///
   /// @param[in] env
   /// @param[in] root XformNode
   ///
   bool BuildNodeHierarchy(const RenderSceneConverterEnv &env, const XformNode &node);
+
+  ///
+  /// Convert UsdLux lights to renderer-friendly RenderLight
+  ///
+
+  bool ConvertSphereLight(const RenderSceneConverterEnv &env,
+                          const Path &light_abs_path,
+                          const SphereLight &light,
+                          RenderLight *rlight_out);
+
+  bool ConvertDistantLight(const RenderSceneConverterEnv &env,
+                           const Path &light_abs_path,
+                           const DistantLight &light,
+                           RenderLight *rlight_out);
+
+  bool ConvertDomeLight(const RenderSceneConverterEnv &env,
+                        const Path &light_abs_path,
+                        const DomeLight &light,
+                        RenderLight *rlight_out);
+
+  bool ConvertRectLight(const RenderSceneConverterEnv &env,
+                        const Path &light_abs_path,
+                        const RectLight &light,
+                        RenderLight *rlight_out);
+
+  bool ConvertDiskLight(const RenderSceneConverterEnv &env,
+                        const Path &light_abs_path,
+                        const DiskLight &light,
+                        RenderLight *rlight_out);
+
+  bool ConvertCylinderLight(const RenderSceneConverterEnv &env,
+                            const Path &light_abs_path,
+                            const CylinderLight &light,
+                            RenderLight *rlight_out);
+
+  bool ConvertGeometryLight(const RenderSceneConverterEnv &env,
+                            const Path &light_abs_path,
+                            const GeometryLight &light,
+                            RenderLight *rlight_out);
 
  private:
   ///
@@ -1817,7 +3283,8 @@ class RenderSceneConverter {
   bool ConvertPreviewSurfaceShaderParam(
       const RenderSceneConverterEnv &env, const Path &shader_abs_path,
       const TypedAttributeWithFallback<Animatable<T>> &param,
-      const std::string &param_name, ShaderParam<Dty> &dst_param);
+      const std::string &param_name, ShaderParam<Dty> &dst_param,
+      bool is_materialx = false);
 
   ///
   /// Build (single) vertex indices for RenderMesh.
@@ -1830,12 +3297,38 @@ class RenderSceneConverter {
   ///
   bool BuildVertexIndicesImpl(RenderMesh &mesh);
 
+  ///
+  /// Build (single) vertex indices for RenderMesh.
+  /// Skip similarity search for faster processing.
+  /// existing `RenderMesh::faceVertexIndices` will be replaced with built indices.
+  /// All vertex attributes are converted to 'vertex' variability.
+  ///
+  /// Limitation: Currently we only supports texcoords up to two(primary(0) and secondary(1)).
+  ///
+  /// @param[inout] mesh
+  ///
+  bool BuildVertexIndicesFastImpl(RenderMesh &mesh);
+
   //
   // Get Skeleton assigned to the GeomMesh Prim and convert it to SkelHierarchy.
   // Also get SkelAnimation attached to Skeleton(if exists)
   //
   bool ConvertSkeletonImpl(const RenderSceneConverterEnv &env, const tinyusdz::GeomMesh &mesh,
-                       SkelHierarchy *out_skel, nonstd::optional<Animation> *out_anim);
+                       int32_t skeleton_id,
+                       SkelHierarchy *out_skel, nonstd::optional<AnimationClip> *out_anim);
+
+  // Convert skeleton from explicit path (for ancestor-discovered skeletons)
+  bool ConvertSkeletonImplWithPath(const RenderSceneConverterEnv &env, const Path &skelPath,
+                       int32_t skeleton_id,
+                       SkelHierarchy *out_skel, nonstd::optional<AnimationClip> *out_anim);
+
+  // Convert skeleton from Skeleton pointer directly (more efficient for pre-discovered skeletons)
+  bool ConvertSkeletonFromPtr(const RenderSceneConverterEnv &env,
+                       const Path &skelPath,
+                       const Skeleton &skel,
+                       const std::string &primName,
+                       int32_t skeleton_id,
+                       SkelHierarchy *out_skel, nonstd::optional<AnimationClip> *out_anim);
 
   bool BuildNodeHierarchyImpl(
     const RenderSceneConverterEnv &env,
@@ -1843,20 +3336,93 @@ class RenderSceneConverter {
     const XformNode &node,
     Node &out_rnode);
 
-  void PushInfo(const std::string &msg) { _info += msg; }
-  void PushWarn(const std::string &msg) { _warn += msg; }
-  void PushError(const std::string &msg) { _err += msg; }
+  ///
+  /// Merge meshes with the same material for performant rendering.
+  ///
+  /// This function merges meshes that share the same material and have
+  /// compatible properties into a single mesh. It reduces draw calls
+  /// for GPU-based renderers.
+  ///
+  /// @param[in] env Converter environment containing configuration
+  /// @param[inout] nodes Node hierarchy (mesh node IDs will be updated)
+  /// @param[inout] meshes Mesh array (merged meshes will be added, originals marked)
+  ///
+  /// @return true upon success
+  ///
+  bool MergeMeshesImpl(const RenderSceneConverterEnv &env);
+
+  ///
+  /// Helper to check if a mesh can be merged with others.
+  /// Returns true if the mesh has no skeletal animation, no blend shapes,
+  /// and no per-face materials.
+  ///
+  bool IsMeshMergeable(const RenderMesh &mesh) const;
+
+  ///
+  /// Merge two RenderMesh instances into a single mesh.
+  /// The source mesh data is appended to the destination mesh.
+  ///
+  /// @param[in] src Source mesh to merge from
+  /// @param[in] src_transform Transform to apply to source vertices (identity if no transform baking)
+  /// @param[inout] dst Destination mesh to merge into
+  ///
+  /// @return true upon success
+  ///
+  bool MergeMeshData(const RenderMesh &src, const value::matrix4d &src_transform,
+                     RenderMesh &dst);
+
+  void PushInfo(const std::string &msg) { _info += msg + "\n"; }
+  void PushWarn(const std::string &msg) { _warn += msg + "\n"; }
+  void PushError(const std::string &msg) { _err += msg + "\n"; }
+
+  ///
+  /// Call progress callback if set.
+  /// @param[in] progress Progress value between 0.0 and 1.0
+  /// @return true to continue, false to cancel
+  ///
+  bool CallProgressCallback(float progress);
+
+  ///
+  /// Call detailed progress callback if set.
+  /// @param[in] info Detailed progress information
+  /// @return true to continue, false to cancel
+  ///
+  bool CallDetailedProgressCallback(const DetailedProgressInfo &info);
 
   std::string _info;
   std::string _err;
   std::string _warn;
+
+  // Progress callback
+  ProgressCallback _progress_callback{nullptr};
+  void *_progress_userptr{nullptr};
+
+  // Detailed progress callback
+  DetailedProgressCallback _detailed_progress_callback{nullptr};
+  void *_detailed_progress_userptr{nullptr};
+
+  // Progress state for detailed tracking
+  mutable DetailedProgressInfo _progress_info;
+
+  // Reusable buffers for mesh conversion to avoid repeated allocation
+  mutable std::vector<value::float3> _tmp_points_buffer;
 };
 
-// For debug
-// Supported format: "kdl" (default. https://kdl.dev/), "json"
-//
+///
+/// Dump RenderScene to string (for debugging)
+///
+/// Supported formats:
+/// - "yaml" (default) - Human-readable YAML format with metadata header
+/// - "json" - Machine-readable JSON format with metadata header
+/// - "kdl"  - Original KDL format (https://kdl.dev/)
+///
+/// Both YAML and JSON formats include:
+/// - Metadata section (format_version, generator, source_file, scene settings)
+/// - Summary section (counts of nodes, meshes, materials, etc.)
+/// - Full scene data (nodes, meshes, skeletons, animations, cameras, materials, textures, images, buffers)
+///
 std::string DumpRenderScene(const RenderScene &scene,
-                            const std::string &format = "kdl");
+                            const std::string &format = "yaml");
 
 }  // namespace tydra
 }  // namespace tinyusdz

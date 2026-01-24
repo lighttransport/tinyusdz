@@ -1,0 +1,404 @@
+#usda 1.0
+(
+    doc = "MaterialX Normal Map Test - Plane Geometry"
+    metersPerUnit = 1
+    upAxis = "Y"
+    defaultPrim = "World"
+)
+
+def Xform "World"
+{
+    def Xform "Planes"
+    {
+        # Plane with bumps normal map
+        def Mesh "Plane_Bumps" (
+            prepend apiSchemas = ["MaterialBindingAPI"]
+        )
+        {
+            uniform bool doubleSided = 1
+            float3[] extent = [(-1, 0, -1), (1, 0, 1)]
+            int[] faceVertexCounts = [4]
+            int[] faceVertexIndices = [0, 3, 2, 1]
+            rel material:binding = </World/_materials/NormalMapMaterial_Bumps>
+            normal3f[] normals = [(0, 1, 0), (0, 1, 0), (0, 1, 0), (0, 1, 0)] (
+                interpolation = "faceVarying"
+            )
+            point3f[] points = [(-1, 0, -1), (1, 0, -1), (1, 0, 1), (-1, 0, 1)]
+            texCoord2f[] primvars:st = [(0, 0), (0, 1), (1, 1), (1, 0)] (
+                interpolation = "faceVarying"
+            )
+            uniform token subdivisionScheme = "none"
+            double3 xformOp:translate = (-2.5, 0, 0)
+            uniform token[] xformOpOrder = ["xformOp:translate"]
+        }
+
+        # Plane with gradient normal map
+        def Mesh "Plane_Gradient" (
+            prepend apiSchemas = ["MaterialBindingAPI"]
+        )
+        {
+            uniform bool doubleSided = 1
+            float3[] extent = [(-1, 0, -1), (1, 0, 1)]
+            int[] faceVertexCounts = [4]
+            int[] faceVertexIndices = [0, 3, 2, 1]
+            rel material:binding = </World/_materials/NormalMapMaterial_Gradient>
+            normal3f[] normals = [(0, 1, 0), (0, 1, 0), (0, 1, 0), (0, 1, 0)] (
+                interpolation = "faceVarying"
+            )
+            point3f[] points = [(-1, 0, -1), (1, 0, -1), (1, 0, 1), (-1, 0, 1)]
+            texCoord2f[] primvars:st = [(0, 0), (0, 1), (1, 1), (1, 0)] (
+                interpolation = "faceVarying"
+            )
+            uniform token subdivisionScheme = "none"
+            double3 xformOp:translate = (0, 0, 0)
+            uniform token[] xformOpOrder = ["xformOp:translate"]
+        }
+
+        # Plane with bricks normal map
+        def Mesh "Plane_Bricks" (
+            prepend apiSchemas = ["MaterialBindingAPI"]
+        )
+        {
+            uniform bool doubleSided = 1
+            float3[] extent = [(-1, 0, -1), (1, 0, 1)]
+            int[] faceVertexCounts = [4]
+            int[] faceVertexIndices = [0, 3, 2, 1]
+            rel material:binding = </World/_materials/NormalMapMaterial_Bricks>
+            normal3f[] normals = [(0, 1, 0), (0, 1, 0), (0, 1, 0), (0, 1, 0)] (
+                interpolation = "faceVarying"
+            )
+            point3f[] points = [(-1, 0, -1), (1, 0, -1), (1, 0, 1), (-1, 0, 1)]
+            texCoord2f[] primvars:st = [(0, 0), (0, 1), (1, 1), (1, 0)] (
+                interpolation = "faceVarying"
+            )
+            uniform token subdivisionScheme = "none"
+            double3 xformOp:translate = (2.5, 0, 0)
+            uniform token[] xformOpOrder = ["xformOp:translate"]
+        }
+    }
+
+    def Scope "_materials"
+    {
+        # Material with bumps normal map
+        def Material "NormalMapMaterial_Bumps" (
+            prepend apiSchemas = ["MaterialXConfigAPI"]
+        )
+        {
+            string config:mtlx:version = "1.39"
+            token outputs:mtlx:surface.connect = </World/_materials/NormalMapMaterial_Bumps/OpenPBRShader.outputs:surface>
+            token outputs:surface.connect = </World/_materials/NormalMapMaterial_Bumps/FallbackShader.outputs:surface>
+
+            # OpenPBR Surface Shader
+            def Shader "OpenPBRShader"
+            {
+                uniform token info:id = "ND_open_pbr_surface_surfaceshader"
+                color3f inputs:base_color = (0.8, 0.8, 0.8)
+                float inputs:base_weight = 1.0
+                float inputs:base_metalness = 0.0
+                float inputs:base_diffuse_roughness = 0.0
+                float inputs:specular_weight = 1.0
+                float inputs:specular_roughness = 0.3
+                float inputs:specular_ior = 1.5
+                float3 inputs:geometry_normal.connect = </World/_materials/NormalMapMaterial_Bumps/NodeGraph.outputs:normal_out>
+                float3 inputs:geometry_tangent.connect = </World/_materials/NormalMapMaterial_Bumps/NodeGraph.outputs:tangent_out>
+                token outputs:surface
+            }
+
+            # Fallback UsdPreviewSurface
+            def Shader "FallbackShader"
+            {
+                uniform token info:id = "UsdPreviewSurface"
+                color3f inputs:diffuseColor = (0.8, 0.8, 0.8)
+                float inputs:roughness = 0.3
+                float inputs:metallic = 0.0
+                normal3f inputs:normal.connect = </World/_materials/NormalMapMaterial_Bumps/FallbackNormalTexture.outputs:rgb>
+                token outputs:surface
+            }
+
+            def Shader "FallbackNormalTexture"
+            {
+                uniform token info:id = "UsdUVTexture"
+                asset inputs:file = @./textures/normalmap-bumps.png@ (
+                    colorSpace = "raw"
+                )
+                token inputs:sourceColorSpace = "raw"
+                float2 inputs:st.connect = </World/_materials/NormalMapMaterial_Bumps/FallbackTexCoord.outputs:result>
+                float4 inputs:scale = (2.0, 2.0, 2.0, 1.0)
+                float4 inputs:bias = (-1.0, -1.0, -1.0, 0.0)
+                float3 outputs:rgb
+            }
+
+            def Shader "FallbackTexCoord"
+            {
+                uniform token info:id = "UsdPrimvarReader_float2"
+                string inputs:varname = "st"
+                float2 outputs:result
+            }
+
+            # MaterialX NodeGraph for normal/tangent handling
+            def NodeGraph "NodeGraph"
+            {
+                float3 outputs:normal_out.connect = </World/_materials/NormalMapMaterial_Bumps/NodeGraph/NormalMapNode.outputs:out>
+                float3 outputs:tangent_out.connect = </World/_materials/NormalMapMaterial_Bumps/NodeGraph/TangentNormalize.outputs:out>
+
+                # Read UV coordinates
+                def Shader "TexCoord"
+                {
+                    uniform token info:id = "ND_texcoord_vector2"
+                    int inputs:index = 0
+                    float2 outputs:out
+                }
+
+                # Load normal map texture as vector3
+                def Shader "NormalMapTexture"
+                {
+                    uniform token info:id = "ND_image_vector3"
+                    asset inputs:file = @./textures/normalmap-bumps.png@ (
+                        colorSpace = "raw"
+                    )
+                    float2 inputs:texcoord.connect = </World/_materials/NormalMapMaterial_Bumps/NodeGraph/TexCoord.outputs:out>
+                    float3 outputs:out
+                }
+
+                # Convert tangent space normal to world space
+                def Shader "NormalMapNode"
+                {
+                    uniform token info:id = "ND_normalmap_float"
+                    float3 inputs:in.connect = </World/_materials/NormalMapMaterial_Bumps/NodeGraph/NormalMapTexture.outputs:out>
+                    float inputs:scale = 1.0
+                    float3 outputs:out
+                }
+
+                # Get world space tangent
+                def Shader "TangentNode"
+                {
+                    uniform token info:id = "ND_tangent_vector3"
+                    string inputs:space = "world"
+                    float3 outputs:out
+                }
+
+                # Normalize tangent
+                def Shader "TangentNormalize"
+                {
+                    uniform token info:id = "ND_normalize_vector3"
+                    float3 inputs:in.connect = </World/_materials/NormalMapMaterial_Bumps/NodeGraph/TangentNode.outputs:out>
+                    float3 outputs:out
+                }
+            }
+        }
+
+        # Material with gradient normal map
+        def Material "NormalMapMaterial_Gradient" (
+            prepend apiSchemas = ["MaterialXConfigAPI"]
+        )
+        {
+            string config:mtlx:version = "1.39"
+            token outputs:mtlx:surface.connect = </World/_materials/NormalMapMaterial_Gradient/OpenPBRShader.outputs:surface>
+            token outputs:surface.connect = </World/_materials/NormalMapMaterial_Gradient/FallbackShader.outputs:surface>
+
+            def Shader "OpenPBRShader"
+            {
+                uniform token info:id = "ND_open_pbr_surface_surfaceshader"
+                color3f inputs:base_color = (0.6, 0.8, 0.6)
+                float inputs:base_weight = 1.0
+                float inputs:base_metalness = 0.0
+                float inputs:base_diffuse_roughness = 0.0
+                float inputs:specular_weight = 1.0
+                float inputs:specular_roughness = 0.2
+                float inputs:specular_ior = 1.5
+                float3 inputs:geometry_normal.connect = </World/_materials/NormalMapMaterial_Gradient/NodeGraph.outputs:normal_out>
+                float3 inputs:geometry_tangent.connect = </World/_materials/NormalMapMaterial_Gradient/NodeGraph.outputs:tangent_out>
+                token outputs:surface
+            }
+
+            def Shader "FallbackShader"
+            {
+                uniform token info:id = "UsdPreviewSurface"
+                color3f inputs:diffuseColor = (0.6, 0.8, 0.6)
+                float inputs:roughness = 0.2
+                float inputs:metallic = 0.0
+                normal3f inputs:normal.connect = </World/_materials/NormalMapMaterial_Gradient/FallbackNormalTexture.outputs:rgb>
+                token outputs:surface
+            }
+
+            def Shader "FallbackNormalTexture"
+            {
+                uniform token info:id = "UsdUVTexture"
+                asset inputs:file = @./textures/normalmap-gradient.png@ (
+                    colorSpace = "raw"
+                )
+                token inputs:sourceColorSpace = "raw"
+                float2 inputs:st.connect = </World/_materials/NormalMapMaterial_Gradient/FallbackTexCoord.outputs:result>
+                float4 inputs:scale = (2.0, 2.0, 2.0, 1.0)
+                float4 inputs:bias = (-1.0, -1.0, -1.0, 0.0)
+                float3 outputs:rgb
+            }
+
+            def Shader "FallbackTexCoord"
+            {
+                uniform token info:id = "UsdPrimvarReader_float2"
+                string inputs:varname = "st"
+                float2 outputs:result
+            }
+
+            def NodeGraph "NodeGraph"
+            {
+                float3 outputs:normal_out.connect = </World/_materials/NormalMapMaterial_Gradient/NodeGraph/NormalMapNode.outputs:out>
+                float3 outputs:tangent_out.connect = </World/_materials/NormalMapMaterial_Gradient/NodeGraph/TangentNormalize.outputs:out>
+
+                def Shader "TexCoord"
+                {
+                    uniform token info:id = "ND_texcoord_vector2"
+                    int inputs:index = 0
+                    float2 outputs:out
+                }
+
+                def Shader "NormalMapTexture"
+                {
+                    uniform token info:id = "ND_image_vector3"
+                    asset inputs:file = @./textures/normalmap-gradient.png@ (
+                        colorSpace = "raw"
+                    )
+                    float2 inputs:texcoord.connect = </World/_materials/NormalMapMaterial_Gradient/NodeGraph/TexCoord.outputs:out>
+                    float3 outputs:out
+                }
+
+                def Shader "NormalMapNode"
+                {
+                    uniform token info:id = "ND_normalmap_float"
+                    float3 inputs:in.connect = </World/_materials/NormalMapMaterial_Gradient/NodeGraph/NormalMapTexture.outputs:out>
+                    float inputs:scale = 1.0
+                    float3 outputs:out
+                }
+
+                def Shader "TangentNode"
+                {
+                    uniform token info:id = "ND_tangent_vector3"
+                    string inputs:space = "world"
+                    float3 outputs:out
+                }
+
+                def Shader "TangentNormalize"
+                {
+                    uniform token info:id = "ND_normalize_vector3"
+                    float3 inputs:in.connect = </World/_materials/NormalMapMaterial_Gradient/NodeGraph/TangentNode.outputs:out>
+                    float3 outputs:out
+                }
+            }
+        }
+
+        # Material with bricks normal map
+        def Material "NormalMapMaterial_Bricks" (
+            prepend apiSchemas = ["MaterialXConfigAPI"]
+        )
+        {
+            string config:mtlx:version = "1.39"
+            token outputs:mtlx:surface.connect = </World/_materials/NormalMapMaterial_Bricks/OpenPBRShader.outputs:surface>
+            token outputs:surface.connect = </World/_materials/NormalMapMaterial_Bricks/FallbackShader.outputs:surface>
+
+            def Shader "OpenPBRShader"
+            {
+                uniform token info:id = "ND_open_pbr_surface_surfaceshader"
+                color3f inputs:base_color = (0.7, 0.4, 0.3)
+                float inputs:base_weight = 1.0
+                float inputs:base_metalness = 0.0
+                float inputs:base_diffuse_roughness = 0.0
+                float inputs:specular_weight = 0.5
+                float inputs:specular_roughness = 0.6
+                float inputs:specular_ior = 1.5
+                float3 inputs:geometry_normal.connect = </World/_materials/NormalMapMaterial_Bricks/NodeGraph.outputs:normal_out>
+                float3 inputs:geometry_tangent.connect = </World/_materials/NormalMapMaterial_Bricks/NodeGraph.outputs:tangent_out>
+                token outputs:surface
+            }
+
+            def Shader "FallbackShader"
+            {
+                uniform token info:id = "UsdPreviewSurface"
+                color3f inputs:diffuseColor = (0.7, 0.4, 0.3)
+                float inputs:roughness = 0.6
+                float inputs:metallic = 0.0
+                normal3f inputs:normal.connect = </World/_materials/NormalMapMaterial_Bricks/FallbackNormalTexture.outputs:rgb>
+                token outputs:surface
+            }
+
+            def Shader "FallbackNormalTexture"
+            {
+                uniform token info:id = "UsdUVTexture"
+                asset inputs:file = @./textures/normalmap-bricks.png@ (
+                    colorSpace = "raw"
+                )
+                token inputs:sourceColorSpace = "raw"
+                float2 inputs:st.connect = </World/_materials/NormalMapMaterial_Bricks/FallbackTexCoord.outputs:result>
+                float4 inputs:scale = (2.0, 2.0, 2.0, 1.0)
+                float4 inputs:bias = (-1.0, -1.0, -1.0, 0.0)
+                float3 outputs:rgb
+            }
+
+            def Shader "FallbackTexCoord"
+            {
+                uniform token info:id = "UsdPrimvarReader_float2"
+                string inputs:varname = "st"
+                float2 outputs:result
+            }
+
+            def NodeGraph "NodeGraph"
+            {
+                float3 outputs:normal_out.connect = </World/_materials/NormalMapMaterial_Bricks/NodeGraph/NormalMapNode.outputs:out>
+                float3 outputs:tangent_out.connect = </World/_materials/NormalMapMaterial_Bricks/NodeGraph/TangentNormalize.outputs:out>
+
+                def Shader "TexCoord"
+                {
+                    uniform token info:id = "ND_texcoord_vector2"
+                    int inputs:index = 0
+                    float2 outputs:out
+                }
+
+                def Shader "NormalMapTexture"
+                {
+                    uniform token info:id = "ND_image_vector3"
+                    asset inputs:file = @./textures/normalmap-bricks.png@ (
+                        colorSpace = "raw"
+                    )
+                    float2 inputs:texcoord.connect = </World/_materials/NormalMapMaterial_Bricks/NodeGraph/TexCoord.outputs:out>
+                    float3 outputs:out
+                }
+
+                def Shader "NormalMapNode"
+                {
+                    uniform token info:id = "ND_normalmap_float"
+                    float3 inputs:in.connect = </World/_materials/NormalMapMaterial_Bricks/NodeGraph/NormalMapTexture.outputs:out>
+                    float inputs:scale = 1.0
+                    float3 outputs:out
+                }
+
+                def Shader "TangentNode"
+                {
+                    uniform token info:id = "ND_tangent_vector3"
+                    string inputs:space = "world"
+                    float3 outputs:out
+                }
+
+                def Shader "TangentNormalize"
+                {
+                    uniform token info:id = "ND_normalize_vector3"
+                    float3 inputs:in.connect = </World/_materials/NormalMapMaterial_Bricks/NodeGraph/TangentNode.outputs:out>
+                    float3 outputs:out
+                }
+            }
+        }
+    }
+
+    # Lighting
+    def DomeLight "EnvLight"
+    {
+        float inputs:intensity = 1.0
+        asset inputs:texture:file = @./textures/env_studio_default.hdr@
+    }
+
+    def DistantLight "KeyLight"
+    {
+        float inputs:intensity = 2.0
+        float3 xformOp:rotateXYZ = (-45, 30, 0)
+        uniform token[] xformOpOrder = ["xformOp:rotateXYZ"]
+    }
+}
