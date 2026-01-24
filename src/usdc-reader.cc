@@ -20,6 +20,7 @@
 
 #include "usdc-reader.hh"
 #include "parser-timing.hh"
+#include "enum-handlers.hh"
 
 #if !defined(TINYUSDZ_DISABLE_MODULE_USDC_READER)
 
@@ -590,57 +591,10 @@ nonstd::expected<APISchemas, std::string> USDCReader::Impl::ToAPISchemas(
     const ListOp<value::token> &arg, bool ignore_unknown, std::string &warn) {
   APISchemas schemas;
 
+  // Use centralized handler from enum-handlers.hh (wrapper for value::token)
   auto SchemaHandler =
       [](const value::token &tok) -> nonstd::optional<APISchemas::APIName> {
-    if (tok.str() == "MaterialBindingAPI") {
-      return APISchemas::APIName::MaterialBindingAPI;
-    } else if (tok.str() == "NodeDefAPI") {
-      return APISchemas::APIName::NodeDefAPI;
-    } else if (tok.str() == "CoordSysAPI") {
-      return APISchemas::APIName::CoordSysAPI;
-    } else if (tok.str() == "ConnectableAPI") {
-      return APISchemas::APIName::ConnectableAPI;
-    } else if (tok.str() == "CollectionAPI") {
-      return APISchemas::APIName::CollectionAPI;
-    } else if (tok.str() == "SkelBindingAPI") {
-      return APISchemas::APIName::SkelBindingAPI;
-    } else if (tok.str() == "VisibilityAPI") {
-      return APISchemas::APIName::VisibilityAPI;
-    } else if (tok.str() == "GeomModelAPI") {
-      return APISchemas::APIName::GeomModelAPI;
-    } else if (tok.str() == "MotionAPI") {
-      return APISchemas::APIName::MotionAPI;
-    } else if (tok.str() == "PrimvarsAPI") {
-      return APISchemas::APIName::PrimvarsAPI;
-    } else if (tok.str() == "XformCommonAPI") {
-      return APISchemas::APIName::XformCommonAPI;
-    } else if (tok.str() == "ListAPI") {
-      return APISchemas::APIName::ListAPI;
-    } else if (tok.str() == "LightListAPI") {
-      return APISchemas::APIName::LightListAPI;
-    } else if (tok.str() == "LightAPI") {
-      return APISchemas::APIName::LightAPI;
-    } else if (tok.str() == "MeshLightAPI") {
-      return APISchemas::APIName::MeshLightAPI;
-    } else if (tok.str() == "VolumeLightAPI") {
-      return APISchemas::APIName::VolumeLightAPI;
-    } else if (tok.str() == "ConnectableAPI") {
-      return APISchemas::APIName::ConnectableAPI;
-    } else if (tok.str() == "ShadowAPI") {
-      return APISchemas::APIName::ShadowAPI;
-    } else if (tok.str() == "ShapingAPI") {
-      return APISchemas::APIName::ShapingAPI;
-    } else if (tok.str() == "Preliminary_AnchoringAPI") {
-      return APISchemas::APIName::Preliminary_AnchoringAPI;
-    } else if (tok.str() == "Preliminary_PhysicsColliderAPI") {
-      return APISchemas::APIName::Preliminary_PhysicsColliderAPI;
-    } else if (tok.str() == "Preliminary_PhysicsMaterialAPI") {
-      return APISchemas::APIName::Preliminary_PhysicsMaterialAPI;
-    } else if (tok.str() == "Preliminary_PhysicsRigidBodyAPI") {
-      return APISchemas::APIName::Preliminary_PhysicsRigidBodyAPI;
-    } else {
-      return nonstd::nullopt;
-    }
+    return enum_handler::APISchemaNameOpt(tok.str());
   };
 
   if (arg.IsExplicit()) {  // fast path
@@ -1078,7 +1032,23 @@ bool USDCReader::Impl::ParseProperty(const SpecType spec_type,
         // same TimeSamples from the fieldset. Using std::move would leave the
         // CrateValue empty after the first use, causing subsequent attributes
         // to get an empty TimeSamples.
-        var.set_timesamples(ts);
+        //
+        // We make a copy and apply role type casting to the copy if needed.
+        value::TimeSamples ts_copy = ts;
+
+        // Apply role type casting if typeName specifies a role type
+        // (e.g., cast float3 to color3f, point3f, etc.)
+        if (typeName) {
+          uint32_t role_type_id = value::GetTypeId(typeName.value().str());
+          if (role_type_id != value::TYPE_ID_INVALID) {
+            if (ts_copy.cast_to_role_type(role_type_id)) {
+              DCOUT(fmt::format("Cast TimeSamples to role type {}", typeName.value().str()));
+            }
+            // It's ok if casting fails - the base type is still valid
+          }
+        }
+
+        var.set_timesamples(ts_copy);
       } else {
         PUSH_ERROR_AND_RETURN_TAG(kTag,
                                   "`timeSamples` is not TimeSamples data.");
@@ -1130,7 +1100,12 @@ bool USDCReader::Impl::ParseProperty(const SpecType spec_type,
       //propType = Property::Type::Relation;
       hasTargetPaths = true;
 
-      if (auto pv = fv.second.get_value<ListOp<Path>>()) {
+      // Check for ValueBlock first (rel ... = None)
+      if (fv.second.get_value<value::ValueBlock>()) {
+        // Relationship is blocked (None)
+        rel.set_blocked();
+        DCOUT("targetPaths = None (blocked)");
+      } else if (auto pv = fv.second.get_value<ListOp<Path>>()) {
         const ListOp<Path> &p = pv.value();
         DCOUT("targetPaths = " << to_string(p));
 
@@ -1166,7 +1141,7 @@ bool USDCReader::Impl::ParseProperty(const SpecType spec_type,
 
       } else {
         PUSH_ERROR_AND_RETURN_TAG(
-            kTag, "`targetPaths` field is not `ListOp[Path]` type.");
+            kTag, "`targetPaths` field is not `ListOp[Path]` or ValueBlock type.");
       }
 
     } else if (fv.first == "hidden") {
@@ -1312,12 +1287,7 @@ bool USDCReader::Impl::ParseProperty(const SpecType spec_type,
 
     } else if (fv.first == "colorSpace") {
       if (auto pv = fv.second.get_value<value::token>()) {
-        
-        MetaVariable mv;
-        mv.set_name("colorSpace");
-        mv.set_value(pv.value());
-
-        meta.meta["colorSpace"] = std::move(mv);
+        meta.set_colorSpace(pv.value());
       } else {
         PUSH_ERROR_AND_RETURN_TAG(
             kTag, "`colorSpace` must be type `token`, but got type `"
@@ -1325,7 +1295,7 @@ bool USDCReader::Impl::ParseProperty(const SpecType spec_type,
       }
     } else if (fv.first == "displayName") {
       if (auto pv = fv.second.get_value<std::string>()) {
-        meta.displayName = pv.value();
+        meta.set_displayName(pv.value());
       } else {
         PUSH_ERROR_AND_RETURN_TAG(
             kTag, "`displayName` must be type `string`, but got type `"
@@ -1333,7 +1303,7 @@ bool USDCReader::Impl::ParseProperty(const SpecType spec_type,
       }
     } else if (fv.first == "displayGroup") {
       if (auto pv = fv.second.get_value<std::string>()) {
-        meta.displayGroup = pv.value();
+        meta.set_displayGroup(pv.value());
       } else {
         PUSH_ERROR_AND_RETURN_TAG(
             kTag, "`displayGroup` must be type `string`, but got type `"
@@ -1341,11 +1311,7 @@ bool USDCReader::Impl::ParseProperty(const SpecType spec_type,
       }
     } else if (fv.first == "unauthoredValuesIndex") {
       if (auto pv = fv.second.get_value<int>()) {
-        MetaVariable mv;
-        mv.set_name("unauthoredValuesIndex");
-        mv.set_value(pv.value());
-
-        meta.meta["unauthoredValuesIndex"] = mv;
+        meta.set_unauthoredValuesIndex(pv.value());
       } else {
         PUSH_ERROR_AND_RETURN_TAG(
             kTag, "`unauthoredValuesIndex` must be type `int`, but got type `"
@@ -1375,7 +1341,7 @@ bool USDCReader::Impl::ParseProperty(const SpecType spec_type,
 #endif
 
   // Do role type cast for default value.
-  // (TODO: do role type cast for timeSamples?)
+  // (NOTE: role type cast for timeSamples is done earlier when processing timeSamples field)
   if (defaultValue.has_value()) {
     if (typeName) {
       if (defaultValue.value().type_id() == value::TypeTraits<value::ValueBlock>::type_id()) {
@@ -1425,37 +1391,37 @@ bool USDCReader::Impl::ParseProperty(const SpecType spec_type,
   // Attribute metas
   {
     if (interpolation) {
-      meta.interpolation = interpolation.value();
+      meta.set_interpolation_enum(interpolation.value());
     }
     if (elementSize) {
-      meta.elementSize = elementSize.value();
+      meta.set_elementSize(static_cast<uint32_t>(elementSize.value()));
     }
     if (hidden) {
-      meta.hidden = hidden.value();
+      meta.set_hidden(hidden.value());
     }
     if (customData) {
-      meta.customData = customData.value();
+      meta.set_customData(customData.value());
     }
     if (weight) {
-      meta.weight = weight.value();
+      meta.set_weight(weight.value());
     }
     if (comment) {
-      meta.comment = comment.value();
+      meta.set_comment(comment.value());
     }
     if (bindMaterialAs) {
-      meta.bindMaterialAs = bindMaterialAs.value();
+      meta.set_bindMaterialAs(bindMaterialAs.value());
     }
     if (outputName) {
-      meta.outputName = outputName.value();
+      meta.set_outputName(outputName.value());
     }
     if (sdrMetadata) {
-      meta.sdrMetadata = sdrMetadata.value();
+      meta.set_sdrMetadata(sdrMetadata.value());
     }
     if (connectability) {
-      meta.connectability = connectability.value();
+      meta.set_connectability(connectability.value());
     }
     if (renderType) {
-      meta.renderType = renderType.value();
+      meta.set_renderType(renderType.value());
     }
   }
 
@@ -1978,8 +1944,8 @@ bool USDCReader::Impl::ParsePrimSpec(const crate::FieldValuePairVector &fvs,
       }
     } else if (fv.first == "active") {
       if (auto pv = fv.second.as<bool>()) {
-        primMeta.active = (*pv);
-        DCOUT("active = " << to_string(primMeta.active.value()));
+        primMeta.set_active(*pv);
+        DCOUT("active = " << to_string(primMeta.get_active()));
       } else {
         PUSH_ERROR_AND_RETURN_TAG(kTag,
                                   "`active` must be type `bool`, but got type `"
@@ -1987,8 +1953,8 @@ bool USDCReader::Impl::ParsePrimSpec(const crate::FieldValuePairVector &fvs,
       }
     } else if (fv.first == "hidden") {
       if (auto pv = fv.second.as<bool>()) {
-        primMeta.hidden = (*pv);
-        DCOUT("hidden = " << to_string(primMeta.hidden.value()));
+        primMeta.set_hidden(*pv);
+        DCOUT("hidden = " << to_string(primMeta.get_hidden()));
       } else {
         PUSH_ERROR_AND_RETURN_TAG(kTag,
                                   "`hidden` must be type `bool`, but got type `"
@@ -1996,8 +1962,8 @@ bool USDCReader::Impl::ParsePrimSpec(const crate::FieldValuePairVector &fvs,
       }
     } else if (fv.first == "instanceable") {
       if (auto pv = fv.second.as<bool>()) {
-        primMeta.instanceable = (*pv);
-        DCOUT("instanceable = " << to_string(primMeta.instanceable.value()));
+        primMeta.set_instanceable(*pv);
+        DCOUT("instanceable = " << to_string(primMeta.get_instanceable()));
       } else {
         PUSH_ERROR_AND_RETURN_TAG(kTag,
                                   "`instanceable` must be type `bool`, but got type `"
@@ -2006,7 +1972,7 @@ bool USDCReader::Impl::ParsePrimSpec(const crate::FieldValuePairVector &fvs,
     } else if (fv.first == "assetInfo") {
       // CustomData(dict)
       if (auto pv = fv.second.as<CustomDataType>()) {
-        primMeta.assetInfo = (*pv);
+        primMeta.set_assetInfo(*pv);
       } else {
         PUSH_ERROR_AND_RETURN_TAG(
             kTag, "`assetInfo` must be type `dictionary`, but got type `"
@@ -2015,7 +1981,7 @@ bool USDCReader::Impl::ParsePrimSpec(const crate::FieldValuePairVector &fvs,
     } else if (fv.first == "clips") {
       // CustomData(dict)
       if (auto pv = fv.second.as<CustomDataType>()) {
-        primMeta.clips = (*pv);
+        primMeta.set_clips(*pv);
       } else {
         PUSH_ERROR_AND_RETURN_TAG(
             kTag, "`clips` must be type `dictionary`, but got type `"
@@ -2026,22 +1992,21 @@ bool USDCReader::Impl::ParsePrimSpec(const crate::FieldValuePairVector &fvs,
 
           const value::token tok = (*pv);
           if (tok.str() == "subcomponent") {
-            primMeta.kind = Kind::Subcomponent;
+            primMeta.set_kind(Kind::Subcomponent);
           } else if (tok.str() == "component") {
-            primMeta.kind = Kind::Component;
+            primMeta.set_kind(Kind::Component);
           } else if (tok.str() == "model") {
-            primMeta.kind = Kind::Model;
+            primMeta.set_kind(Kind::Model);
           } else if (tok.str() == "group") {
-            primMeta.kind = Kind::Group;
+            primMeta.set_kind(Kind::Group);
           } else if (tok.str() == "assembly") {
-            primMeta.kind = Kind::Assembly;
+            primMeta.set_kind(Kind::Assembly);
           } else if (tok.str() == "sceneLibrary") {
             // USDZ specific: https://developer.apple.com/documentation/arkit/usdz_schemas_for_ar/scenelibrary
-            primMeta.kind = Kind::SceneLibrary;
+            primMeta.set_kind(Kind::SceneLibrary);
           } else {
-
-            primMeta.kind = Kind::UserDef;
-            primMeta._kind_str = tok.str();
+            // For user-defined kind, store the string directly
+            primMeta.set_kind(tok.str());
           }
       } else {
         PUSH_ERROR_AND_RETURN_TAG(kTag,
@@ -2061,7 +2026,7 @@ bool USDCReader::Impl::ParsePrimSpec(const crate::FieldValuePairVector &fvs,
           if (warn.size()) {
             PUSH_WARN(warn);
           }
-          primMeta.apiSchemas = (*ret);
+          primMeta.set_apiSchemas(*ret);
         }
         // DCOUT("apiSchemas = " << to_string(listop));
       } else {
@@ -2074,7 +2039,7 @@ bool USDCReader::Impl::ParsePrimSpec(const crate::FieldValuePairVector &fvs,
         value::StringData s;
         s.value = (*pv);
         s.is_triple_quoted = hasNewline(s.value);
-        primMeta.doc = s;
+        primMeta.set_doc(s);
       } else {
         PUSH_ERROR_AND_RETURN_TAG(
             kTag, "`documentation` must be type `string`, but got type `"
@@ -2085,7 +2050,7 @@ bool USDCReader::Impl::ParsePrimSpec(const crate::FieldValuePairVector &fvs,
         value::StringData s;
         s.value = (*pv);
         s.is_triple_quoted = hasNewline(s.value);
-        primMeta.comment = s;
+        primMeta.set_comment(s);
       } else {
         PUSH_ERROR_AND_RETURN_TAG(
             kTag, "`comment` must be type `string`, but got type `"
@@ -2095,7 +2060,7 @@ bool USDCReader::Impl::ParsePrimSpec(const crate::FieldValuePairVector &fvs,
       // CustomData(dict)
       if (auto pv = fv.second.as<CustomDataType>()) {
         // TODO: Check if all keys are string type.
-        primMeta.sdrMetadata = (*pv);
+        primMeta.set_sdrMetadata(*pv);
       } else {
         PUSH_ERROR_AND_RETURN_TAG(
             kTag, "`sdrMetadata` must be type `dictionary`, but got type `"
@@ -2104,7 +2069,7 @@ bool USDCReader::Impl::ParsePrimSpec(const crate::FieldValuePairVector &fvs,
     } else if (fv.first == "customData") {
       // CustomData(dict)
       if (auto pv = fv.second.as<CustomDataType>()) {
-        primMeta.customData = (*pv);
+        primMeta.set_customData(*pv);
       } else {
         PUSH_ERROR_AND_RETURN_TAG(
             kTag, "`customData` must be type `dictionary`, but got type `"
@@ -2166,7 +2131,7 @@ bool USDCReader::Impl::ParsePrimSpec(const crate::FieldValuePairVector &fvs,
       }
     } else if (fv.first == "sceneName") {  // USDZ extension
       if (auto pv = fv.second.as<std::string>()) {
-        primMeta.sceneName = (*pv);
+        primMeta.set_sceneName(*pv);
       } else {
         PUSH_ERROR_AND_RETURN_TAG(
             kTag, "`sceneName` must be type `string`, but got type `"
@@ -2174,7 +2139,7 @@ bool USDCReader::Impl::ParsePrimSpec(const crate::FieldValuePairVector &fvs,
       }
     } else if (fv.first == "displayName") {  // USD supported since 23.xx?
       if (auto pv = fv.second.as<std::string>()) {
-        primMeta.displayName = (*pv);
+        primMeta.set_displayName(*pv);
       } else {
         PUSH_ERROR_AND_RETURN_TAG(
             kTag, "`displayName` must be type `string`, but got type `"
@@ -2324,6 +2289,15 @@ bool USDCReader::Impl::ParsePrimSpec(const crate::FieldValuePairVector &fvs,
                       << fv.second.type_name() << "`");
       }
 
+    } else if (endsWith(fv.first, ".targetPaths")) {
+      // Handle relationship target paths (e.g., "myRel.targetPaths")
+      // Store as unregistered metadata for now (full relationship support would require Prim changes)
+      if (auto pv = fv.second.as<std::vector<Path>>()) {
+        DCOUT("Relationship " << fv.first << " = " << to_string(*pv));
+        primMeta.unregisteredMetas[fv.first] = to_string(*pv);
+      } else {
+        PUSH_WARN("Relationship targetPaths field `" << fv.first << "` is not Path vector type (got " << fv.second.type_name() << "). Ignoring.");
+      }
     } else {
       // TODO: support int, int[], uint, uint[], int64, uint64, ...
       // https://github.com/syoyo/tinyusdz/issues/106

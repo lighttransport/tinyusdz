@@ -74,22 +74,135 @@ static bool SetupNullAssetResolution(
   return true;
 }
 
+static std::string AnimationPathToString(tinyusdz::tydra::AnimationPath path) {
+  switch (path) {
+    case tinyusdz::tydra::AnimationPath::Translation:
+      return "Translation";
+    case tinyusdz::tydra::AnimationPath::Rotation:
+      return "Rotation";
+    case tinyusdz::tydra::AnimationPath::Scale:
+      return "Scale";
+    case tinyusdz::tydra::AnimationPath::Weights:
+      return "Weights";
+  }
+  return "Unknown";
+}
+
+static std::string InterpolationToString(tinyusdz::tydra::AnimationInterpolation interp) {
+  switch (interp) {
+    case tinyusdz::tydra::AnimationInterpolation::Linear:
+      return "Linear";
+    case tinyusdz::tydra::AnimationInterpolation::Step:
+      return "Step";
+    case tinyusdz::tydra::AnimationInterpolation::CubicSpline:
+      return "CubicSpline";
+  }
+  return "Unknown";
+}
+
+static void DumpAnimationTimesamples(const tinyusdz::tydra::RenderScene& scene) {
+  std::cout << "\n========================================\n";
+  std::cout << "Animation Timesamples Dump\n";
+  std::cout << "========================================\n";
+  std::cout << "Total animations: " << scene.animations.size() << "\n\n";
+
+  for (size_t anim_idx = 0; anim_idx < scene.animations.size(); anim_idx++) {
+    const auto& anim = scene.animations[anim_idx];
+
+    std::cout << "Animation [" << anim_idx << "]: " << anim.name << "\n";
+    std::cout << "  Prim name: " << anim.prim_name << "\n";
+    std::cout << "  Abs path: " << anim.abs_path << "\n";
+    std::cout << "  Duration: " << anim.duration << " seconds\n";
+    std::cout << "  Channels: " << anim.channels.size() << "\n";
+    std::cout << "  Samplers: " << anim.samplers.size() << "\n";
+
+    // Dump each channel
+    for (size_t ch_idx = 0; ch_idx < anim.channels.size(); ch_idx++) {
+      const auto& channel = anim.channels[ch_idx];
+
+      std::cout << "\n  Channel [" << ch_idx << "]:\n";
+      std::cout << "    Path: " << AnimationPathToString(channel.path) << "\n";
+
+      if (channel.target_type == tinyusdz::tydra::ChannelTargetType::SceneNode) {
+        std::cout << "    Target type: SceneNode\n";
+        std::cout << "    Target node: " << channel.target_node << "\n";
+      } else {
+        std::cout << "    Target type: SkeletonJoint\n";
+        std::cout << "    Skeleton ID: " << channel.skeleton_id << "\n";
+        std::cout << "    Joint ID: " << channel.joint_id << "\n";
+      }
+      std::cout << "    Sampler index: " << channel.sampler << "\n";
+
+      // Dump sampler data
+      if (channel.sampler >= 0 &&
+          static_cast<size_t>(channel.sampler) < anim.samplers.size()) {
+        const auto& sampler = anim.samplers[channel.sampler];
+
+        std::cout << "    Interpolation: " << InterpolationToString(sampler.interpolation) << "\n";
+        std::cout << "    Keyframes: " << sampler.num_keyframes() << "\n";
+
+        // Determine components per value based on path
+        size_t components = 1;
+        switch (channel.path) {
+          case tinyusdz::tydra::AnimationPath::Translation:
+          case tinyusdz::tydra::AnimationPath::Scale:
+            components = 3;  // vec3
+            break;
+          case tinyusdz::tydra::AnimationPath::Rotation:
+            components = 4;  // quat (x, y, z, w)
+            break;
+          case tinyusdz::tydra::AnimationPath::Weights:
+            // Variable, depends on number of morph targets
+            if (!sampler.times.empty() && !sampler.values.empty()) {
+              components = sampler.values.size() / sampler.times.size();
+            }
+            break;
+        }
+
+        // Dump timesamples
+        std::cout << "    Timesamples:\n";
+        for (size_t i = 0; i < sampler.times.size(); i++) {
+          std::cout << "      [" << i << "] t=" << sampler.times[i] << " : (";
+
+          size_t value_start = i * components;
+          for (size_t c = 0; c < components && (value_start + c) < sampler.values.size(); c++) {
+            if (c > 0) std::cout << ", ";
+            std::cout << sampler.values[value_start + c];
+          }
+          std::cout << ")\n";
+        }
+      } else {
+        std::cout << "    [Invalid sampler index]\n";
+      }
+    }
+    std::cout << "\n";
+  }
+
+  std::cout << "========================================\n\n";
+}
+
+static void print_help(const char* prog_name) {
+  std::cout << "Usage: " << prog_name << " input.usd [OPTIONS]\n";
+  std::cout << "\nConvert USD Stage to RenderScene (glTF-like data structure)\n";
+  std::cout << "\nOptions:\n";
+  std::cout << "  --help                Show this help message\n";
+  std::cout << "  --timecode VALUE      Specify timecode value (e.g. 3.14)\n";
+  std::cout << "  --noidxbuild          Do not rebuild vertex indices\n";
+  std::cout << "  --notri               Do not triangulate mesh\n";
+  std::cout << "  --trifan              Use triangle fan triangulation (instead of earcut)\n";
+  std::cout << "  --texload             Load textures\n";
+  std::cout << "  --noar                Do not use (default) AssetResolver\n";
+  std::cout << "  --usdprint            Print parsed USD\n";
+  std::cout << "  --dumpobj             Dump mesh as wavefront .obj (for visual debugging)\n";
+  std::cout << "  --dumpusd             Dump scene as USD (USDA Ascii)\n";
+  std::cout << "  --dump-timesamples    Dump animation channel timesamples values\n";
+  std::cout << "  --yaml                Output RenderScene as YAML (human-readable)\n";
+  std::cout << "  --json                Output RenderScene as JSON (machine-readable)\n";
+}
+
 int main(int argc, char **argv) {
   if (argc < 2) {
-    std::cout << "Usage: " << argv[0] << " input.usd [OPTIONS].\n";
-    std::cout << "\n\nOptions\n\n";
-    std::cout << "  --timecode VALUE: Specify timecode value(e.g. 3.14)\n";
-    std::cout << "  --noidxbuild: Do not rebuild vertex indices\n";
-    std::cout << "  --notri: Do not triangulate mesh\n";
-    std::cout << "  --trifan: Use triangle fan triangulation (instead of earcut)\n";
-    std::cout << "  --texload: Load textures\n";
-    std::cout << "  --noar: Do not use (default) AssertResolver\n";
-    std::cout << "  --usdprint: Print parsed USD\n";
-    std::cout
-        << "  --dumpobj: Dump mesh as wavefront .obj(for visual debugging)\n";
-    std::cout << "  --dumpusd: Dump scene as USD(USDA Ascii)\n";
-    std::cout << "  --yaml: Output RenderScene as YAML (human-readable)\n";
-    std::cout << "  --json: Output RenderScene as JSON (machine-readable)\n";
+    print_help(argv[0]);
     return EXIT_FAILURE;
   }
 
@@ -106,11 +219,15 @@ int main(int argc, char **argv) {
   bool usdprint = false;
   bool texload = false;
   bool no_assetresolver = false;
+  bool dump_timesamples = false;
   std::string output_format = "yaml";  // "yaml" (human-readable), "json" (machine-readable)
 
   std::string filepath;
   for (int i = 1; i < argc; i++) {
-    if (strcmp(argv[i], "--notri") == 0) {
+    if (strcmp(argv[i], "--help") == 0) {
+      print_help(argv[0]);
+      return EXIT_SUCCESS;
+    } else if (strcmp(argv[i], "--notri") == 0) {
       triangulate = false;
     } else if (strcmp(argv[i], "--trifan") == 0) {
       use_triangle_fan = true;
@@ -126,6 +243,8 @@ int main(int argc, char **argv) {
       export_obj = true;
     } else if (strcmp(argv[i], "--dumpusd") == 0) {
       export_usd = true;
+    } else if (strcmp(argv[i], "--dump-timesamples") == 0) {
+      dump_timesamples = true;
     } else if (strcmp(argv[i], "--timecode") == 0) {
       if ((i + 1) >= argc) {
         std::cerr << "arg is missing for --timecode flag.\n";
@@ -301,6 +420,11 @@ int main(int argc, char **argv) {
   std::string converter_warn = converter.GetWarning();
   if (!converter_warn.empty()) {
     config_info.push_back({"converter_warning", converter_warn});
+  }
+
+  // Dump animation timesamples if requested
+  if (dump_timesamples) {
+    DumpAnimationTimesamples(render_scene);
   }
 
   // Helper to escape value for single-line output
