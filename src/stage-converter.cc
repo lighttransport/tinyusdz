@@ -1764,10 +1764,16 @@ bool CrateWriter::ExtractGeomSubsetProperties(
            (fields.push_back({attr_name, crate_val}), true);
   };
 
-  // Extract elementType enum (Face/Point)
+  // Extract elementType enum (Face/Point/Edge/Tetrahedron)
   {
     const GeomSubset::ElementType& elem_type = subset->elementType.get_value();
-    std::string elem_str = (elem_type == GeomSubset::ElementType::Face) ? "face" : "point";
+    std::string elem_str;
+    switch (elem_type) {
+      case GeomSubset::ElementType::Face: elem_str = "face"; break;
+      case GeomSubset::ElementType::Point: elem_str = "point"; break;
+      case GeomSubset::ElementType::Edge: elem_str = "edge"; break;
+      case GeomSubset::ElementType::Tetrahedron: elem_str = "tetrahedron"; break;
+    }
     if (!add_enum_attribute("elementType", elem_str)) {
       return false;
     }
