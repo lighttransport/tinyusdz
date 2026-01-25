@@ -438,7 +438,12 @@ std::string print_rel_only(const Relationship &rel, const std::string &name,
   } else if (rel.is_path()) {
     ss << " = " << rel.targetPath;
   } else if (rel.is_pathvector()) {
-    ss << " = " << rel.targetPathVector;
+    // Single-element path vector: print as scalar path without brackets
+    if (rel.targetPathVector.size() == 1) {
+      ss << " = " << rel.targetPathVector[0];
+    } else {
+      ss << " = " << rel.targetPathVector;
+    }
   } else if (rel.is_blocked()) {
     ss << " = None";
   } else {
@@ -2539,6 +2544,14 @@ std::string to_string(tinyusdz::GeomSubset::ElementType v) {
     }
     case tinyusdz::GeomSubset::ElementType::Point: {
       s = "point";
+      break;
+    }
+    case tinyusdz::GeomSubset::ElementType::Edge: {
+      s = "edge";
+      break;
+    }
+    case tinyusdz::GeomSubset::ElementType::Tetrahedron: {
+      s = "tetrahedron";
       break;
     }
   }
