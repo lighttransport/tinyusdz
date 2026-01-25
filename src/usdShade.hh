@@ -286,8 +286,9 @@ struct UsdUVTexture : ShaderNode {
 struct UsdPreviewSurface : ShaderNode {
   
   // From 2.6
-  // NOTE: When opacityThreshold is non-zero, opacityMode is ignored. 
+  // NOTE: When opacityThreshold is non-zero, opacityMode is ignored.
   enum class OpacityMode {
+    Opacity, // "opacity" : treat opacity as standard alpha (legacy name)
     Transparent, // "transparent" : the material will still receive a lighting response
     Presence, // "presence" : no lighting response
   };
