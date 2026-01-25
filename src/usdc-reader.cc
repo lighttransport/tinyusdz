@@ -603,8 +603,10 @@ nonstd::expected<APISchemas, std::string> USDCReader::Impl::ToAPISchemas(
         std::string instanceName = "";  // TODO
         schemas.names.push_back({pv.value(), instanceName});
       } else if (ignore_unknown) {
-        warn += "Ignored unknown or unsupported API schema: " +
-                                       item.str() + "\n";
+        // Store unknown schema instead of just warning
+        std::string instanceName = "";  // TODO: parse instance name if present
+        schemas.unknownSchemas.push_back({item.str(), instanceName});
+        warn += "Preserving unknown API schema: " + item.str() + "\n";
       } else {
         return nonstd::make_unexpected("Invalid or Unsupported API schema: " +
                                        item.str());
@@ -627,8 +629,10 @@ nonstd::expected<APISchemas, std::string> USDCReader::Impl::ToAPISchemas(
           std::string instanceName = "";  // TODO
           schemas.names.push_back({pv.value(), instanceName});
         } else if (ignore_unknown) {
-          warn += "Ignored unknown or unsupported API schema: " +
-                                         item.str() + "\n";
+          // Store unknown schema instead of just warning
+          std::string instanceName = "";  // TODO: parse instance name if present
+          schemas.unknownSchemas.push_back({item.str(), instanceName});
+          warn += "Preserving unknown API schema: " + item.str() + "\n";
         } else {
           return nonstd::make_unexpected("Invalid or Unsupported API schema: " +
                                          item.str());
@@ -649,8 +653,10 @@ nonstd::expected<APISchemas, std::string> USDCReader::Impl::ToAPISchemas(
           std::string instanceName = "";  // TODO
           schemas.names.push_back({pv.value(), instanceName});
         } else if (ignore_unknown) {
-          warn += "Ignored unknown or unsupported API schema: " +
-                                         item.str() + "\n";
+          // Store unknown schema instead of just warning
+          std::string instanceName = "";  // TODO: parse instance name if present
+          schemas.unknownSchemas.push_back({item.str(), instanceName});
+          warn += "Preserving unknown API schema: " + item.str() + "\n";
         } else {
           return nonstd::make_unexpected("Invalid or Unsupported API schema: " +
                                          item.str());
@@ -670,8 +676,10 @@ nonstd::expected<APISchemas, std::string> USDCReader::Impl::ToAPISchemas(
           std::string instanceName = "";  // TODO
           schemas.names.push_back({pv.value(), instanceName});
         } else if (ignore_unknown) {
-          warn += "Ignored unknown or unsupported API schema: " +
-                                         item.str() + "\n";
+          // Store unknown schema instead of just warning
+          std::string instanceName = "";  // TODO: parse instance name if present
+          schemas.unknownSchemas.push_back({item.str(), instanceName});
+          warn += "Preserving unknown API schema: " + item.str() + "\n";
         } else {
           return nonstd::make_unexpected("Invalid or Unsupported API schema: " +
                                          item.str());
@@ -691,8 +699,10 @@ nonstd::expected<APISchemas, std::string> USDCReader::Impl::ToAPISchemas(
           std::string instanceName = "";  // TODO
           schemas.names.push_back({pv.value(), instanceName});
         } else if (ignore_unknown) {
-          warn += "Ignored unknown or unsupported API schema: " +
-                                         item.str() + "\n";
+          // Store unknown schema instead of just warning
+          std::string instanceName = "";  // TODO: parse instance name if present
+          schemas.unknownSchemas.push_back({item.str(), instanceName});
+          warn += "Preserving unknown API schema: " + item.str() + "\n";
         } else {
           return nonstd::make_unexpected("Invalid or Unsupported API schema: " +
                                          item.str());
@@ -712,8 +722,10 @@ nonstd::expected<APISchemas, std::string> USDCReader::Impl::ToAPISchemas(
           std::string instanceName = "";  // TODO
           schemas.names.push_back({pv.value(), instanceName});
         } else if (ignore_unknown) {
-          warn += "Ignored unknown or unsupported API schema: " +
-                                         item.str() + "\n";
+          // Store unknown schema instead of just warning
+          std::string instanceName = "";  // TODO: parse instance name if present
+          schemas.unknownSchemas.push_back({item.str(), instanceName});
+          warn += "Preserving unknown API schema: " + item.str() + "\n";
         } else {
           return nonstd::make_unexpected("Invalid or Unsupported API schema: " +
                                          item.str());
@@ -2264,7 +2276,7 @@ bool USDCReader::Impl::ParsePrimSpec(const crate::FieldValuePairVector &fvs,
             kTag, "`specializes` must be type `ListOp[Path]`, but got type `"
                       << fv.second.type_name() << "`");
       }
-    } else if (fv.first == "inheritPaths") {  // `specializes` composition
+    } else if (fv.first == "inheritPaths") {  // `inherits` composition (alternate field name)
       if (auto pv = fv.second.as<ListOp<Path>>()) {
         const ListOp<Path> &p = *pv;
         DCOUT("inheritPaths = " << to_string(p));
@@ -2282,7 +2294,8 @@ bool USDCReader::Impl::ParsePrimSpec(const crate::FieldValuePairVector &fvs,
         auto qual = std::get<0>(ps[0]);
         auto items = std::get<1>(ps[0]);
         auto listop = (*pv);
-        primMeta.inheritPaths = std::make_pair(qual, items);
+        // USDC uses "inheritPaths" field name but we store it in "inherits" for consistency
+        primMeta.inherits = std::make_pair(qual, items);
       } else {
         PUSH_ERROR_AND_RETURN_TAG(
             kTag, "`inheritPaths` must be type `ListOp[Path]`, but got type `"
