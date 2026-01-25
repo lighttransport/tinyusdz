@@ -115,7 +115,10 @@ std::ostream &operator<<(std::ostream &ofs, const tinyusdz::LayerOffset &v) {
 }
 
 std::ostream &operator<<(std::ostream &ofs, const tinyusdz::Reference &v) {
-  ofs << v.asset_path;
+  // For internal references (no asset path, just prim path), don't output "@@"
+  if (!v.asset_path.GetAssetPath().empty()) {
+    ofs << v.asset_path;
+  }
   if (v.prim_path.is_valid()) {
     ofs << v.prim_path;
   }
@@ -132,7 +135,10 @@ std::ostream &operator<<(std::ostream &ofs, const tinyusdz::Payload &v) {
   if (v.is_none()) {
     ofs << "None";
   } else {
-    ofs << v.asset_path;
+    // For internal payloads (no asset path, just prim path), don't output "@@"
+    if (!v.asset_path.GetAssetPath().empty()) {
+      ofs << v.asset_path;
+    }
     if (v.prim_path.is_valid()) {
       ofs << v.prim_path;
     }
@@ -2279,7 +2285,10 @@ std::string to_string(const std::string &v) {
 std::string to_string(const Reference &v) {
   std::stringstream ss;
 
-  ss << v.asset_path;
+  // For internal references (no asset path, just prim path), don't output "@@"
+  if (!v.asset_path.GetAssetPath().empty()) {
+    ss << v.asset_path;
+  }
   if (v.prim_path.is_valid()) {
     ss << v.prim_path;
   }
@@ -2302,7 +2311,10 @@ std::string to_string(const Payload &v) {
     ss << "None";
 
   } else {
-    ss << v.asset_path;
+    // For internal payloads (no asset path, just prim path), don't output "@@"
+    if (!v.asset_path.GetAssetPath().empty()) {
+      ss << v.asset_path;
+    }
     if (v.prim_path.is_valid()) {
       ss << v.prim_path;
     }
@@ -3102,6 +3114,10 @@ std::string to_string(const GeomCamera &camera, const uint32_t indent,
   ss << print_typed_attr(camera.verticalApertureOffset,
                          "verticalApertureOffset", indent + 1);
 
+  ss << print_typed_attr(camera.exposure, "exposure", indent + 1);
+  ss << print_typed_attr(camera.focusDistance, "focusDistance", indent + 1);
+  ss << print_typed_attr(camera.fStop, "fStop", indent + 1);
+
   ss << print_typed_token_attr(camera.projection, "projection", indent + 1);
   ss << print_typed_token_attr(camera.stereoRole, "stereoRole", indent + 1);
 
@@ -3410,7 +3426,7 @@ std::string to_string(const GeomBasisCurves &geom, const uint32_t indent,
   ss << print_typed_attr(geom.points, "points", indent + 1);
   ss << print_typed_attr(geom.normals, "normals", indent + 1);
   ss << print_typed_attr(geom.widths, "widths", indent + 1);
-  ss << print_typed_attr(geom.velocities, "velocites", indent + 1);
+  ss << print_typed_attr(geom.velocities, "velocities", indent + 1);
   ss << print_typed_attr(geom.accelerations, "accelerations", indent + 1);
   ss << print_typed_attr(geom.curveVertexCounts, "curveVertexCounts",
                          indent + 1);
@@ -3443,7 +3459,7 @@ std::string to_string(const GeomNurbsCurves &geom, const uint32_t indent,
   ss << print_typed_attr(geom.points, "points", indent + 1);
   ss << print_typed_attr(geom.normals, "normals", indent + 1);
   ss << print_typed_attr(geom.widths, "widths", indent + 1);
-  ss << print_typed_attr(geom.velocities, "velocites", indent + 1);
+  ss << print_typed_attr(geom.velocities, "velocities", indent + 1);
   ss << print_typed_attr(geom.accelerations, "accelerations", indent + 1);
   ss << print_typed_attr(geom.curveVertexCounts, "curveVertexCounts",
                          indent + 1);
