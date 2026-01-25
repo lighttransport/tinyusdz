@@ -859,14 +859,12 @@ std::string print_typed_attr(const TypedAttribute<Animatable<T>> &attr,
     // float a = 1.5 METADATA
     //
     // Also emit this line if the attribute contains metadata
-    // Do not emit when Attribute is connection only or timesamples only.
-    // Note: has_default can be true even when has_timesamples is true if _has_value
-    // was set (even without an actual default). Use has_timesamples to check if
-    // timeSamples exist, not is_timesamples (which returns false when has_default is true).
+    // Do not emit when Attribute is connection only or timesamples only (no default).
+    // USD allows both default value AND timeSamples - default is used when no sample exists.
     bool should_emit_declaration =
         attr.metas().authored() ||
         attr.is_blocked() ||
-        (has_default && !has_timesamples) ||  // Only emit default if no timeSamples
+        has_default ||  // Emit default even if timeSamples exist (USD allows both)
         is_value_empty ||
         ((!is_connection) && (!has_timesamples));
     if (should_emit_declaration) {
@@ -4409,6 +4407,19 @@ std::string to_string(const SphereLight &light, const uint32_t indent,
 
   ss << print_typed_attr(light.radius, "inputs:radius", indent + 1);
 
+  // ShadowAPI attributes
+  ss << print_typed_attr(light.shadowColor, "inputs:shadow:color", indent + 1);
+  ss << print_typed_attr(light.shadowDistance, "inputs:shadow:distance", indent + 1);
+  ss << print_typed_attr(light.shadowEnable, "inputs:shadow:enable", indent + 1);
+  ss << print_typed_attr(light.shadowFalloff, "inputs:shadow:falloff", indent + 1);
+  ss << print_typed_attr(light.shadowFalloffGamma, "inputs:shadow:falloffGamma", indent + 1);
+
+  // ShapingAPI attributes
+  ss << print_typed_attr(light.shapingConeAngle, "inputs:shaping:cone:angle", indent + 1);
+  ss << print_typed_attr(light.shapingConeSoftness, "inputs:shaping:cone:softness", indent + 1);
+  ss << print_typed_attr(light.shapingFocus, "inputs:shaping:focus", indent + 1);
+  ss << print_typed_attr(light.shapingFocusTint, "inputs:shaping:focusTint", indent + 1);
+
   ss << print_typed_attr(light.extent, "extent", indent + 1);
   ss << print_typed_token_attr(light.visibility, "visibility", indent + 1);
   ss << print_typed_token_attr(light.purpose, "purpose", indent + 1);
@@ -4449,6 +4460,13 @@ std::string to_string(const DistantLight &light, const uint32_t indent,
   ss << print_typed_attr(light.specular, "inputs:specular", indent + 1);
 
   ss << print_typed_attr(light.angle, "inputs:angle", indent + 1);
+
+  // ShadowAPI attributes
+  ss << print_typed_attr(light.shadowColor, "inputs:shadow:color", indent + 1);
+  ss << print_typed_attr(light.shadowDistance, "inputs:shadow:distance", indent + 1);
+  ss << print_typed_attr(light.shadowEnable, "inputs:shadow:enable", indent + 1);
+  ss << print_typed_attr(light.shadowFalloff, "inputs:shadow:falloff", indent + 1);
+  ss << print_typed_attr(light.shadowFalloffGamma, "inputs:shadow:falloffGamma", indent + 1);
 
   //ss << print_typed_attr(light.extent, "extent", indent + 1);
   ss << print_typed_token_attr(light.visibility, "visibility", indent + 1);
@@ -4492,6 +4510,19 @@ std::string to_string(const CylinderLight &light, const uint32_t indent,
   ss << print_typed_attr(light.length, "inputs:length", indent + 1);
   ss << print_typed_attr(light.radius, "inputs:radius", indent + 1);
 
+  // ShadowAPI attributes
+  ss << print_typed_attr(light.shadowColor, "inputs:shadow:color", indent + 1);
+  ss << print_typed_attr(light.shadowDistance, "inputs:shadow:distance", indent + 1);
+  ss << print_typed_attr(light.shadowEnable, "inputs:shadow:enable", indent + 1);
+  ss << print_typed_attr(light.shadowFalloff, "inputs:shadow:falloff", indent + 1);
+  ss << print_typed_attr(light.shadowFalloffGamma, "inputs:shadow:falloffGamma", indent + 1);
+
+  // ShapingAPI attributes
+  ss << print_typed_attr(light.shapingConeAngle, "inputs:shaping:cone:angle", indent + 1);
+  ss << print_typed_attr(light.shapingConeSoftness, "inputs:shaping:cone:softness", indent + 1);
+  ss << print_typed_attr(light.shapingFocus, "inputs:shaping:focus", indent + 1);
+  ss << print_typed_attr(light.shapingFocusTint, "inputs:shaping:focusTint", indent + 1);
+
   ss << print_typed_attr(light.extent, "extent", indent + 1);
   ss << print_typed_token_attr(light.visibility, "visibility", indent + 1);
   ss << print_typed_token_attr(light.purpose, "purpose", indent + 1);
@@ -4533,6 +4564,19 @@ std::string to_string(const DiskLight &light, const uint32_t indent,
 
   ss << print_typed_attr(light.radius, "inputs:radius", indent + 1);
 
+  // ShadowAPI attributes
+  ss << print_typed_attr(light.shadowColor, "inputs:shadow:color", indent + 1);
+  ss << print_typed_attr(light.shadowDistance, "inputs:shadow:distance", indent + 1);
+  ss << print_typed_attr(light.shadowEnable, "inputs:shadow:enable", indent + 1);
+  ss << print_typed_attr(light.shadowFalloff, "inputs:shadow:falloff", indent + 1);
+  ss << print_typed_attr(light.shadowFalloffGamma, "inputs:shadow:falloffGamma", indent + 1);
+
+  // ShapingAPI attributes
+  ss << print_typed_attr(light.shapingConeAngle, "inputs:shaping:cone:angle", indent + 1);
+  ss << print_typed_attr(light.shapingConeSoftness, "inputs:shaping:cone:softness", indent + 1);
+  ss << print_typed_attr(light.shapingFocus, "inputs:shaping:focus", indent + 1);
+  ss << print_typed_attr(light.shapingFocusTint, "inputs:shaping:focusTint", indent + 1);
+
   ss << print_typed_attr(light.extent, "extent", indent + 1);
   ss << print_typed_token_attr(light.visibility, "visibility", indent + 1);
   ss << print_typed_token_attr(light.purpose, "purpose", indent + 1);
@@ -4572,9 +4616,9 @@ std::string to_string(const DomeLight &light, const uint32_t indent,
   ss << print_typed_attr(light.normalize, "inputs:normalize", indent + 1);
   ss << print_typed_attr(light.specular, "inputs:specular", indent + 1);
 
-  ss << print_typed_attr(light.guideRadius, "inputs:guideRadius", indent + 1);
-  ss << print_typed_attr(light.file, "inputs:file", indent + 1);
-  ss << print_typed_token_attr(light.textureFormat, "inputs:textureFormat",
+  ss << print_typed_attr(light.guideRadius, "guideRadius", indent + 1);
+  ss << print_typed_attr(light.file, "inputs:texture:file", indent + 1);
+  ss << print_typed_token_attr(light.textureFormat, "inputs:texture:format",
                                indent + 1);
 
   //ss << print_typed_attr(light.extent, "extent", indent + 1);
@@ -4617,10 +4661,22 @@ std::string to_string(const RectLight &light, const uint32_t indent,
   ss << print_typed_attr(light.normalize, "inputs:normalize", indent + 1);
   ss << print_typed_attr(light.specular, "inputs:specular", indent + 1);
 
-  ss << print_typed_attr(light.file, "inputs:file", indent + 1);
+  ss << print_typed_attr(light.file, "inputs:texture:file", indent + 1);
   ss << print_typed_attr(light.height, "inputs:height", indent + 1);
   ss << print_typed_attr(light.width, "inputs:width", indent + 1);
-  ss << print_typed_attr(light.height, "inputs:height", indent + 1);
+
+  // ShadowAPI attributes
+  ss << print_typed_attr(light.shadowColor, "inputs:shadow:color", indent + 1);
+  ss << print_typed_attr(light.shadowDistance, "inputs:shadow:distance", indent + 1);
+  ss << print_typed_attr(light.shadowEnable, "inputs:shadow:enable", indent + 1);
+  ss << print_typed_attr(light.shadowFalloff, "inputs:shadow:falloff", indent + 1);
+  ss << print_typed_attr(light.shadowFalloffGamma, "inputs:shadow:falloffGamma", indent + 1);
+
+  // ShapingAPI attributes
+  ss << print_typed_attr(light.shapingConeAngle, "inputs:shaping:cone:angle", indent + 1);
+  ss << print_typed_attr(light.shapingConeSoftness, "inputs:shaping:cone:softness", indent + 1);
+  ss << print_typed_attr(light.shapingFocus, "inputs:shaping:focus", indent + 1);
+  ss << print_typed_attr(light.shapingFocusTint, "inputs:shaping:focusTint", indent + 1);
 
   ss << print_typed_attr(light.extent, "extent", indent + 1);
   ss << print_typed_token_attr(light.visibility, "visibility", indent + 1);
