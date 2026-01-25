@@ -2603,6 +2603,10 @@ std::string to_string(const tinyusdz::UsdPreviewSurface::OpacityMode v) {
   std::string s;
 
   switch (v) {
+    case tinyusdz::UsdPreviewSurface::OpacityMode::Opacity: {
+      s = "opacity";
+      break;
+    }
     case tinyusdz::UsdPreviewSurface::OpacityMode::Transparent: {
       s = "transparent";
       break;
