@@ -1128,18 +1128,28 @@ std::string print_typed_attr(
     // Emit declaration line if:
     // - Has metadata to emit
     // - Has explicit default value (in the Animatable, not just fallback)
-    // - Is empty declaration (e.g., "float myval;")
+    // - Is empty declaration without connection (e.g., "float myval;")
     // - Not a connection-only and not timeSamples-only attribute
     // Note: Use has_timesamples instead of is_timesamples because is_timesamples
     // returns false when there's a default/fallback value (even if timeSamples exist)
-    if (attr.metas().authored() || has_default || is_value_empty || ((!is_connection) && (!has_timesamples))) {
-      if (has_default) {
+    // Note: Check is_value_empty first, since get_value() returns the fallback for empty attrs,
+    // and the fallback's has_value() may return true even though no value was authored
+    // Note: For connection-only attributes (is_value_empty && has_connections), skip the declaration line
+    bool has_connections = attr.has_connections();
+    bool is_connection_only = is_value_empty && has_connections;
+    bool is_pure_empty_decl = is_value_empty && !has_connections && !has_timesamples;
+
+    if (attr.metas().authored() || (!is_value_empty && has_default) || is_pure_empty_decl || ((!is_connection) && (!has_timesamples) && !is_connection_only)) {
+      if (is_value_empty) {
+        // declare only - no value was authored (pure empty declaration)
+        ss << pprint::Indent(indent);
+        ss << value::TypeTraits<T>::type_name() << " " << name;
+      } else if (has_default) {
         ss << pprint::Indent(indent);
         ss << value::TypeTraits<T>::type_name() << " " << name;
         ss << " = " << print_animatable_default(v, indent);
-
-      } else { // attr.is_value_empty()
-        // declare only
+      } else {
+        // declare only (for cases without connection or timesamples)
         ss << pprint::Indent(indent);
         ss << value::TypeTraits<T>::type_name() << " " << name;
       }
@@ -1215,13 +1225,15 @@ std::string print_typed_attr(const TypedAttributeWithFallback<T> &attr,
   if (attr.authored()) {
 
     // default
-    if (attr.metas().authored() || attr.is_blocked() || (!attr.is_connection())) {
+    if (attr.metas().authored() || attr.is_blocked() || attr.is_value_empty() || (!attr.is_connection())) {
       ss << pprint::Indent(indent);
       ss << "uniform ";
       ss << value::TypeTraits<T>::type_name() << " " << name;
 
       if (attr.is_blocked()) {
         ss << " = None";
+      } else if (attr.is_value_empty()) {
+        // Definition only - no value to output
       } else {
         ss << " = " << attr.get_value();
       }
@@ -1334,6 +1346,8 @@ std::string print_typed_token_attr(const TypedAttributeWithFallback<T> &attr,
 
     if (attr.is_blocked()) {
       ss << " = None";
+    } else if (attr.is_value_empty()) {
+      // Definition only - no value to output
     } else {
       ss << " = " << quote(to_string(attr.get_value()));
     }
