@@ -1601,10 +1601,11 @@ size_t print_half4(const value::half4& v, char* buffer) {
 }
 #endif
 
-// Matrix printing: ((row0), (row1), ...)
+// Matrix printing: ( (row0), (row1), ... ) - with spaces for USD compatibility
 size_t print_matrix2d(const value::matrix2d& m, char* buffer) {
   char* p = buffer;
   *p++ = '(';
+  *p++ = ' ';  // Space after opening paren for USD compatibility
 
   for (size_t row = 0; row < 2; row++) {
     if (row > 0) {
@@ -1623,6 +1624,7 @@ size_t print_matrix2d(const value::matrix2d& m, char* buffer) {
     *p++ = ')';
   }
 
+  *p++ = ' ';  // Space before closing paren for USD compatibility
   *p++ = ')';
   return static_cast<size_t>(p - buffer);
 }
@@ -1630,6 +1632,7 @@ size_t print_matrix2d(const value::matrix2d& m, char* buffer) {
 size_t print_matrix3d(const value::matrix3d& m, char* buffer) {
   char* p = buffer;
   *p++ = '(';
+  *p++ = ' ';  // Space after opening paren for USD compatibility
 
   for (size_t row = 0; row < 3; row++) {
     if (row > 0) {
@@ -1648,6 +1651,7 @@ size_t print_matrix3d(const value::matrix3d& m, char* buffer) {
     *p++ = ')';
   }
 
+  *p++ = ' ';  // Space before closing paren for USD compatibility
   *p++ = ')';
   return static_cast<size_t>(p - buffer);
 }
@@ -1655,6 +1659,7 @@ size_t print_matrix3d(const value::matrix3d& m, char* buffer) {
 size_t print_matrix4d(const value::matrix4d& m, char* buffer) {
   char* p = buffer;
   *p++ = '(';
+  *p++ = ' ';  // Space after opening paren for USD compatibility
 
   for (size_t row = 0; row < 4; row++) {
     if (row > 0) {
@@ -1673,6 +1678,7 @@ size_t print_matrix4d(const value::matrix4d& m, char* buffer) {
     *p++ = ')';
   }
 
+  *p++ = ' ';  // Space before closing paren for USD compatibility
   *p++ = ')';
   return static_cast<size_t>(p - buffer);
 }

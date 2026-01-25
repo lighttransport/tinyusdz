@@ -621,6 +621,9 @@ std::string print_prim_metas(const PrimMeta &meta, const uint32_t indent) {
 
     if (vs.empty()) {
       ss << "None";
+    } else if (vs.size() == 1) {
+      // Single element: print as scalar (without brackets)
+      ss << quote(vs[0]);
     } else {
       ss << to_string(vs);
     }
@@ -631,14 +634,37 @@ std::string print_prim_metas(const PrimMeta &meta, const uint32_t indent) {
   if (meta.has_apiSchemas()) {
     auto schemas = meta.get_apiSchemas();
 
-    if (schemas.names.size()) {
+    // Check if there are any schemas (known or unknown) to print
+    if (schemas.names.size() || schemas.unknownSchemas.size()) {
       ss << pprint::Indent(indent) << to_string(schemas.listOpQual)
          << " apiSchemas = [";
 
-      for (size_t i = 0; i < schemas.names.size(); i++) {
-        if (i != 0) {
+      bool first = true;
+
+      // Print unknown schemas first (they typically appear first in USD files)
+      for (size_t i = 0; i < schemas.unknownSchemas.size(); i++) {
+        if (!first) {
           ss << ", ";
         }
+        first = false;
+
+        auto schemaName = std::get<0>(schemas.unknownSchemas[i]);
+        ss << "\"" << schemaName;
+
+        auto instanceName = std::get<1>(schemas.unknownSchemas[i]);
+        if (!instanceName.empty()) {
+          ss << ":" << instanceName;
+        }
+
+        ss << "\"";
+      }
+
+      // Print known schemas
+      for (size_t i = 0; i < schemas.names.size(); i++) {
+        if (!first) {
+          ss << ", ";
+        }
+        first = false;
 
         auto name = std::get<0>(schemas.names[i]);
         ss << "\"" << to_string(name);
