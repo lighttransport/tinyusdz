@@ -2127,12 +2127,11 @@ class TypedAttributeWithFallback {
   // e.g.
   //
   // float myval;
+  // float myval.connect = </path>  (connection-only, no default value)
   //
   bool is_value_empty() const {
-    if (has_connections()) {
-      return false;
-    }
-
+    // Check _empty first - this is set for connection-only attributes
+    // and for definition-only attributes
     if (_empty) {
       return true;
     }
@@ -2141,6 +2140,7 @@ class TypedAttributeWithFallback {
       return false;
     }
 
+    // No explicit value authored
     return true;
   }
 

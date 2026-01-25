@@ -2144,6 +2144,29 @@ bool ParseTimeSampledEnumProperty(
                                         __target, __strict_check) \
   PARSE_ENUM_PROPERTY_IMPL(__table, __prop, __name, __enum_ty, __enum_handler, __klass, \
                            __target, __strict_check, ParseTimeSampledEnumProperty)
+
+// NOCONTINUE version for use within if-else branches where we need to do additional work after parsing
+#define PARSE_UNIFORM_ENUM_PROPERTY_NOCONTINUE(__table, __prop, __name, __enum_ty, __enum_handler, __klass, \
+                                               __target, __strict_check) {                              \
+  if (__prop.first == __name) {                                                                         \
+    if (!__table.count(__name)) {                                                                       \
+      const Attribute &attr = __prop.second.get_attribute();                                            \
+      if ((__prop.second.value_type_name() == value::TypeTraits<value::token>::type_name()) &&          \
+          __prop.second.is_attribute() && __prop.second.is_empty()) {                                   \
+        PUSH_WARN("No value assigned to `" << __name << "` token attribute. Set default token value."); \
+        __target.metas() = std::move(__prop.second.attribute().metas());                                \
+        __table.insert(__name);                                                                         \
+      } else {                                                                                          \
+        std::function<nonstd::expected<__enum_ty, std::string>(const std::string &)> fun = __enum_handler; \
+        if (!ParseUniformEnumProperty(__name, __strict_check, fun, attr, &__target, warn, err)) {       \
+          return false;                                                                                 \
+        }                                                                                               \
+        __target.metas() = std::move(__prop.second.attribute().metas());                                \
+        __table.insert(__name);                                                                         \
+      }                                                                                                 \
+    }                                                                                                   \
+  }                                                                                                     \
+}
 #endif
 
 
@@ -3548,12 +3571,12 @@ bool ReconstructCollectionProperties(
 
         TypedAttributeWithFallback<CollectionInstance::ExpansionRule> r{CollectionInstance::ExpansionRule::ExpandPrims};
 
-        PARSE_UNIFORM_ENUM_PROPERTY(table, prop, prop.first, CollectionInstance::ExpansionRule, ExpansionRuleEnumHandler, CollectionInstance,
+        PARSE_UNIFORM_ENUM_PROPERTY_NOCONTINUE(table, prop, prop.first, CollectionInstance::ExpansionRule, ExpansionRuleEnumHandler, CollectionInstance,
                        r, strict_allowedToken_check)
 
         if (table.count(prop.first)) {
           CollectionInstance &coll_instance = coll->get_or_add_instance(instance_name);
-          coll_instance.expansionRule = r.get_value();
+          coll_instance.expansionRule = r;  // Assign full TypedAttributeWithFallback to preserve authored state
         }
       } else if (names[1] == "includeRoot") {
 
