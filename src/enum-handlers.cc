@@ -129,9 +129,11 @@ FaceVaryingLinearInterpolation(const std::string &tok) {
 nonstd::expected<GeomSubset::ElementType, std::string>
 ElementType(const std::string &tok) {
   using E = GeomSubset::ElementType;
-  constexpr std::array<std::pair<E, const char *>, 2> enums = {{
+  constexpr std::array<std::pair<E, const char *>, 4> enums = {{
       {E::Face, "face"},
       {E::Point, "point"},
+      {E::Edge, "edge"},
+      {E::Tetrahedron, "tetrahedron"},
   }};
   return LookupEnum("elementType", tok, enums);
 }
