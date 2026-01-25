@@ -217,7 +217,8 @@ CameraStereoRole(const std::string &tok) {
 nonstd::expected<UsdPreviewSurface::OpacityMode, std::string>
 OpacityMode(const std::string &tok) {
   using E = UsdPreviewSurface::OpacityMode;
-  constexpr std::array<std::pair<E, const char *>, 2> enums = {{
+  constexpr std::array<std::pair<E, const char *>, 3> enums = {{
+      {E::Opacity, "opacity"},
       {E::Transparent, "transparent"},
       {E::Presence, "presence"},
   }};
