@@ -998,7 +998,10 @@ class USDAReader::Impl {
               if (ret) {
                 apiSchemas.names.push_back({ret.value(), /* instanceName */""});
               } else if (_config.allow_unknown_apiSchema) {
-                PUSH_WARN("(PrimMeta) " << ret.error());
+                // Store unknown schema instead of just warning
+                std::string instanceName = "";  // TODO: parse instance name if present
+                apiSchemas.unknownSchemas.push_back({item.str(), instanceName});
+                PUSH_WARN("(PrimMeta) Preserving unknown API schema: " << item.str());
               } else {
                 PUSH_ERROR_AND_RETURN("Unknown or invalid apiSchema: " + ret.error());
               }
