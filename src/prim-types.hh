@@ -1370,6 +1370,10 @@ struct APISchemas {
   // std::get<1>: instance name. For Multi-apply API Schema e.g.
   // `material:MainMaterial` for `CollectionAPI:material:MainMaterial`
   std::vector<std::pair<APIName, std::string>> names;
+
+  // Unknown/unsupported API schemas - stored as raw strings to preserve them
+  // Each entry is (schema_name, instance_name) where instance_name may be empty
+  std::vector<std::pair<std::string, std::string>> unknownSchemas;
 };
 
 // SdfLayerOffset
