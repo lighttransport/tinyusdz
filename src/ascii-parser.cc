@@ -2549,6 +2549,20 @@ bool AsciiParser::ParseStageMetaOpt() {
     } else {
       PUSH_ERROR_AND_RETURN(fmt::format("`{}` isn't a string value.", varname));
     }
+  } else if (varname == "autoPlay") {
+    // USDZ extension
+    if (auto pv = var.get_value<bool>()) {
+      _stage_metas.autoPlay = pv.value();
+    } else {
+      PUSH_ERROR_AND_RETURN("`autoPlay` isn't a bool value.");
+    }
+  } else if (varname == "playbackMode") {
+    // USDZ extension
+    if (auto pv = var.get_value<value::token>()) {
+      _stage_metas.playbackMode = pv.value();
+    } else {
+      PUSH_ERROR_AND_RETURN("`playbackMode` isn't a token value.");
+    }
   } else {
     DCOUT("TODO: Stage meta: " << varname);
     PUSH_WARN("TODO: Stage meta: " << varname);
