@@ -23,6 +23,13 @@
 #include <map>
 #include <string>
 #include <unordered_set>
+#include <thread>
+#include <atomic>
+#include <queue>
+#include <mutex>
+#include <condition_variable>
+#include <iostream>
+#include <sstream>
 
 // TODO
 //
@@ -81,6 +88,26 @@ enum JsonRpcErrorCode {
 // <params, sess_id, err>
 using MethodHandler = std::function<nlohmann::json(const nlohmann::json&, const std::string &, std::string &)>;
 
+// SSE connection structure
+struct SSEConnection {
+  struct mg_connection* conn;
+  std::string session_id;
+  bool active;
+
+  SSEConnection(struct mg_connection* c, const std::string& sid)
+    : conn(c), session_id(sid), active(true) {}
+};
+
+// SSE event structure
+struct SSEEvent {
+  std::string session_id;
+  std::string event_type;
+  std::string data;
+
+  SSEEvent(const std::string& sid, const std::string& type, const std::string& d)
+    : session_id(sid), event_type(type), data(d) {}
+};
+
 
 namespace {
 
@@ -111,23 +138,22 @@ class MCPServer::Impl {
   // Constructor and destructor
   Impl() = default;
   ~Impl() {
-    if (ctx_) {
-      mg_stop(ctx_);
-    }
+    stop_all_transports();
   }
 
-  // Initialize the server with the specified port and host
+  // Initialize the server with transport configuration
+  bool init(const TransportConfig& config);
+
+  // Legacy HTTP-only init for backwards compatibility
   bool init(int port, const std::string &host = "localhost");
 
   // Run the server
   bool run();
 
   bool stop() {
-    // Nothing to do here.
-    // mg_stop() is called in dtor.
-    return true;
+    return stop_all_transports();
   }
-  
+
   // Register a JSON-RPC method handler
   void register_method(const std::string& method, MethodHandler handler);
 
@@ -139,26 +165,62 @@ class MCPServer::Impl {
     sessions_.insert(s);
   }
 
+  // SSE-specific methods
+  void set_sse_event_handler(std::function<void(const std::string&, const std::string&)> handler);
+  void send_sse_event(const std::string& session_id, const std::string& event_type, const std::string& data);
+  void broadcast_sse_event(const std::string& event_type, const std::string& data);
+
  private:
-  struct mg_context *ctx_ = nullptr; // Pointer to the CivetWeb context
+  // Transport configuration
+  TransportConfig config_;
+
+  // HTTP transport (existing)
+  struct mg_context *ctx_ = nullptr;
+
+  // SSE transport
+  std::vector<SSEConnection> sse_connections_;
+  std::mutex sse_connections_mutex_;
+  std::queue<SSEEvent> sse_event_queue_;
+  std::mutex sse_event_queue_mutex_;
+  std::condition_variable sse_event_cv_;
+  std::thread sse_worker_thread_;
+  std::atomic<bool> sse_worker_running_{false};
+  std::function<void(const std::string&, const std::string&)> sse_event_handler_;
+
+  // Stdio transport
+  std::thread stdio_thread_;
+  std::atomic<bool> stdio_running_{false};
+  std::atomic<bool> should_stop_{false};
+
   std::map<std::string, MethodHandler> method_handlers_;
-  
-  // Static callback for MCP requests(POST + jsonrpc)
+
+  // Common methods
+  bool stop_all_transports();
+
+  // HTTP transport methods (existing)
   static int mcp_handler(struct mg_connection *conn, void *user_data);
-  
-  // Process JSON-RPC request
+
+  // SSE transport methods
+  static int sse_handler(struct mg_connection *conn, void *user_data);
+  void sse_worker();
+  void cleanup_sse_connections();
+
+  // Stdio transport methods
+  void stdio_worker();
+
+  // Transport-specific init methods
+  void register_common_methods();
+  bool init_http_transport();
+  bool init_stdio_transport();
+
+  // JSON-RPC processing methods
   JsonRpcResponse process_request(const JsonRpcRequest& request, const std::string &sess_id);
-  
-  // Parse JSON-RPC request from string
   JsonRpcRequest parse_request(const std::string& json_str);
-  
-  // Create JSON-RPC error response
   JsonRpcResponse create_error_response(int code, const std::string& message, const nlohmann::json& id = nullptr);
 
+  // Shared data
   Context mcp_ctx_;
   UUIDGenerator uuid_gen_;
-
-
   std::unordered_set<std::string> sessions_;
 };
 
@@ -249,6 +311,49 @@ int MCPServer::Impl::mcp_handler(struct mg_connection *conn, void *user_data) {
   return 404; // Not found
 }
 
+int MCPServer::Impl::sse_handler(struct mg_connection *conn, void *user_data) {
+  MCPServer::Impl* server = static_cast<MCPServer::Impl*>(user_data);
+
+  const struct mg_request_info *request_info = mg_get_request_info(conn);
+
+  if (strcmp(request_info->request_method, "GET") == 0) {
+    // Set SSE headers
+    mg_printf(conn,
+              "HTTP/1.1 200 OK\r\n"
+              "Content-Type: text/event-stream\r\n"
+              "Cache-Control: no-cache\r\n"
+              "Connection: keep-alive\r\n");
+
+    if (server->config_.enable_cors) {
+      mg_printf(conn,
+                "Access-Control-Allow-Origin: *\r\n"
+                "Access-Control-Allow-Headers: Cache-Control\r\n");
+    }
+
+    mg_printf(conn, "\r\n");
+
+    // Generate session ID for this SSE connection
+    std::string session_id = server->genSessionID();
+    server->addSessionID(session_id);
+
+    // Send initial connection event
+    mg_printf(conn, "event: connection\r\n");
+    mg_printf(conn, "data: {\"sessionId\":\"%s\"}\r\n\r\n", session_id.c_str());
+
+    // Add this connection to the SSE connections list
+    {
+      std::lock_guard<std::mutex> lock(server->sse_connections_mutex_);
+      server->sse_connections_.emplace_back(conn, session_id);
+    }
+
+    // Keep connection alive until client disconnects
+    // This handler will be called periodically to check if connection is still active
+    return 200;
+  }
+
+  return 404;
+}
+
 JsonRpcRequest MCPServer::Impl::parse_request(const std::string& json_str) {
   JsonRpcRequest request;
   
@@ -321,10 +426,163 @@ void MCPServer::Impl::register_method(const std::string& method, MethodHandler h
   method_handlers_[method] = handler;
 }
 
-bool MCPServer::Impl::init(int port, const std::string &host) {
-  // TODO
-  (void)host;
+bool MCPServer::Impl::stop_all_transports() {
+  should_stop_.store(true);
 
+  // Stop HTTP/SSE server
+  if (ctx_) {
+    mg_stop(ctx_);
+    ctx_ = nullptr;
+  }
+
+  // Stop SSE worker thread
+  if (sse_worker_running_.load()) {
+    sse_worker_running_.store(false);
+    sse_event_cv_.notify_all();
+    if (sse_worker_thread_.joinable()) {
+      sse_worker_thread_.join();
+    }
+  }
+
+  // Stop stdio worker thread
+  if (stdio_running_.load()) {
+    stdio_running_.store(false);
+    if (stdio_thread_.joinable()) {
+      stdio_thread_.join();
+    }
+  }
+
+  return true;
+}
+
+void MCPServer::Impl::set_sse_event_handler(std::function<void(const std::string&, const std::string&)> handler) {
+  sse_event_handler_ = handler;
+}
+
+void MCPServer::Impl::send_sse_event(const std::string& session_id, const std::string& event_type, const std::string& data) {
+  {
+    std::lock_guard<std::mutex> lock(sse_event_queue_mutex_);
+    sse_event_queue_.emplace(session_id, event_type, data);
+  }
+  sse_event_cv_.notify_one();
+}
+
+void MCPServer::Impl::broadcast_sse_event(const std::string& event_type, const std::string& data) {
+  {
+    std::lock_guard<std::mutex> lock(sse_event_queue_mutex_);
+    sse_event_queue_.emplace("", event_type, data);  // Empty session_id means broadcast
+  }
+  sse_event_cv_.notify_one();
+}
+
+void MCPServer::Impl::sse_worker() {
+  while (sse_worker_running_.load()) {
+    std::unique_lock<std::mutex> lock(sse_event_queue_mutex_);
+    sse_event_cv_.wait(lock, [this] { return !sse_event_queue_.empty() || !sse_worker_running_.load(); });
+
+    if (!sse_worker_running_.load()) break;
+
+    while (!sse_event_queue_.empty()) {
+      SSEEvent event = sse_event_queue_.front();
+      sse_event_queue_.pop();
+      lock.unlock();
+
+      // Send event to appropriate connections
+      {
+        std::lock_guard<std::mutex> conn_lock(sse_connections_mutex_);
+        auto it = sse_connections_.begin();
+        while (it != sse_connections_.end()) {
+          bool should_send = event.session_id.empty() || it->session_id == event.session_id;
+
+          if (should_send && it->active) {
+            int result = mg_printf(it->conn, "event: %s\r\ndata: %s\r\n\r\n",
+                                  event.event_type.c_str(), event.data.c_str());
+            if (result <= 0) {
+              it->active = false;
+            }
+          }
+
+          if (!it->active) {
+            it = sse_connections_.erase(it);
+          } else {
+            ++it;
+          }
+        }
+      }
+
+      lock.lock();
+    }
+  }
+}
+
+void MCPServer::Impl::cleanup_sse_connections() {
+  std::lock_guard<std::mutex> lock(sse_connections_mutex_);
+  auto it = sse_connections_.begin();
+  while (it != sse_connections_.end()) {
+    if (!it->active) {
+      it = sse_connections_.erase(it);
+    } else {
+      ++it;
+    }
+  }
+}
+
+void MCPServer::Impl::stdio_worker() {
+  std::string line;
+  while (stdio_running_.load() && !should_stop_.load()) {
+    if (!std::getline(std::cin, line)) {
+      break;  // EOF or error
+    }
+
+    if (line.empty()) continue;
+
+    // Parse and process JSON-RPC request
+    JsonRpcRequest rpc_request = parse_request(line);
+    if (rpc_request.jsonrpc.empty()) {
+      // Invalid JSON, send error
+      JsonRpcResponse error_response = create_error_response(PARSE_ERROR, "Parse error", nullptr);
+      std::cout << error_response.to_json().dump() << std::endl;
+      continue;
+    }
+
+    JsonRpcResponse rpc_response = process_request(rpc_request, "stdio-session");
+
+    if (!rpc_request.is_notification()) {
+      std::cout << rpc_response.to_json().dump() << std::endl;
+    }
+  }
+}
+
+bool MCPServer::Impl::init(const TransportConfig& config) {
+  config_ = config;
+  should_stop_.store(false);
+
+  // Register common MCP methods (same as before)
+  register_common_methods();
+
+  switch (config_.type) {
+    case TransportType::HTTP_POST:
+    case TransportType::HTTP_SSE:
+      return init_http_transport();
+
+    case TransportType::STDIO:
+      return init_stdio_transport();
+
+    default:
+      return false;
+  }
+}
+
+bool MCPServer::Impl::init(int port, const std::string &host) {
+  // Legacy init - defaults to HTTP_POST transport
+  TransportConfig config;
+  config.type = TransportType::HTTP_POST;
+  config.port = port;
+  config.host = host;
+  return init(config);
+}
+
+void MCPServer::Impl::register_common_methods() {
   register_method("ping", [](const nlohmann::json& params, const std::string &sess_id, std::string &err) -> nlohmann::json {
     (void)sess_id;
     (void)err;
@@ -459,13 +717,15 @@ bool MCPServer::Impl::init(int port, const std::string &host) {
     (void)params;
     (void)err;
     (void)sess_id;
-    
+
     // Return server capabilities
     return nlohmann::json::object();
   });
+}
 
+bool MCPServer::Impl::init_http_transport() {
   // CivetWeb options
-  std::string port_str = std::to_string(port);
+  std::string port_str = std::to_string(config_.port);
   std::vector<const char *> options;
 
   options.push_back("listening_ports");
@@ -479,24 +739,64 @@ bool MCPServer::Impl::init(int port, const std::string &host) {
   if (!ctx_) {
     return false; // Failed to start server
   }
-  
+
   // Register HTTP handler for MCP endpoint
   mg_set_request_handler(ctx_, "/mcp", mcp_handler, this);
-  
+
+  // If SSE transport is enabled, also register SSE handler
+  if (config_.type == TransportType::HTTP_SSE) {
+    mg_set_request_handler(ctx_, config_.sse_endpoint.c_str(), sse_handler, this);
+
+    // Start SSE worker thread
+    sse_worker_running_.store(true);
+    sse_worker_thread_ = std::thread(&MCPServer::Impl::sse_worker, this);
+  }
+
   return true; // Server initialized successfully
 }
 
-bool MCPServer::Impl::run() {
-  if (!ctx_) {
-    return false;
-  }
-  
-  // Server is already running after mg_start
-  // This method can be used for additional setup or monitoring
+bool MCPServer::Impl::init_stdio_transport() {
+  // Stdio transport doesn't need server setup, just prepare for worker thread
   return true;
 }
 
+bool MCPServer::Impl::run() {
+  switch (config_.type) {
+    case TransportType::HTTP_POST:
+    case TransportType::HTTP_SSE:
+      if (!ctx_) {
+        return false;
+      }
+      // HTTP Server is already running after mg_start
+      // This method can be used for additional setup or monitoring
+      return true;
+
+    case TransportType::STDIO:
+      // Start stdio worker thread and wait for it to complete
+      stdio_running_.store(true);
+      stdio_thread_ = std::thread(&MCPServer::Impl::stdio_worker, this);
+
+      // Block until stdio worker completes
+      if (stdio_thread_.joinable()) {
+        stdio_thread_.join();
+      }
+      return true;
+
+    default:
+      return false;
+  }
+}
+
 MCPServer::MCPServer() : impl_(new tydra::mcp::MCPServer::Impl()) {}
+
+MCPServer::~MCPServer() {
+  delete impl_;
+}
+
+bool MCPServer::init(const TransportConfig& config) {
+  return impl_->init(config);
+}
+
 bool MCPServer::init(int port, const std::string &host) {
   return impl_->init(port, host);
 }
@@ -507,6 +807,10 @@ bool MCPServer::run() {
 
 bool MCPServer::stop() {
   return impl_->stop();
+}
+
+void MCPServer::set_sse_event_handler(std::function<void(const std::string&, const std::string&)> handler) {
+  impl_->set_sse_event_handler(handler);
 }
 
 } // namespace mcp
@@ -522,6 +826,13 @@ namespace mcp {
 
 MCPServer::MCPServer() {}
 
+MCPServer::~MCPServer() {}
+
+bool MCPServer::init(const TransportConfig& config) {
+  (void)config;
+  return false;
+}
+
 bool MCPServer::init(int port, const std::string &host) {
   (void)port;
   (void)host;
@@ -534,6 +845,10 @@ bool MCPServer::run() {
 
 bool MCPServer::stop() {
   return false;
+}
+
+void MCPServer::set_sse_event_handler(std::function<void(const std::string&, const std::string&)> handler) {
+  (void)handler;
 }
 
 

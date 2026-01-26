@@ -1,10 +1,7 @@
+#include "sha256.hh"
+
 #include <cstdint>
 #include <cstring>
-#include <iomanip>
-#include <sstream>
-#include <cstdint>
-
-#include "sha256.hh"
 
 namespace tinyusdz {
 
@@ -106,6 +103,17 @@ void sha256_transform(uint32_t state[8], const uint8_t block[64]) {
 
 }  // anonymous namespace
 
+namespace {
+
+inline void uint32_to_hex(uint32_t value, char* buffer) {
+    static const char hex_chars[] = "0123456789abcdef";
+    for (int i = 7; i >= 0; i--) {
+        buffer[7 - i] = hex_chars[(value >> (i * 4)) & 0xf];
+    }
+}
+
+}  // anonymous namespace
+
 std::string sha256(const char *binary, size_t size) {
     uint32_t state[8] = {
         0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a,
@@ -139,12 +147,15 @@ std::string sha256(const char *binary, size_t size) {
 
     delete[] msg;
 
-    std::stringstream ss;
+    static char hex_buffer[65];
+    char *ptr = hex_buffer;
     for (int i = 0; i < 8; i++) {
-        ss << std::hex << std::setfill('0') << std::setw(8) << state[i];
+        uint32_to_hex(state[i], ptr);
+        ptr += 8;
     }
+    hex_buffer[64] = '\0';
 
-    return ss.str();
+    return std::string(hex_buffer);
 }
 
 }  // namespace tinyusdz
