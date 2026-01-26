@@ -5288,10 +5288,15 @@ bool AsciiParser::IsStageMeta(const std::string &name) {
 
 bool AsciiParser::ParseVariantSet(
     const int64_t primIdx, const int64_t parentPrimIdx, const uint32_t depth,
-    std::map<std::string, VariantContent> *variantSetOut) {
-  if (!variantSetOut) {
+    VariantSetContent *variantSetContentOut) {
+
+  if (depth > 1024 * 1024) {
+    PUSH_ERROR_AND_RETURN_TAG(kAscii, "[InternalError] too deep nested call.");
+  }
+
+  if (!variantSetContentOut) {
     PUSH_ERROR_AND_RETURN_TAG(kAscii,
-                              "[InternalError] variantSetOut arg is nullptr.");
+                              "[InternalError] variantSetContentOut arg is nullptr.");
   }
 
   // variantSet =
@@ -5308,7 +5313,7 @@ bool AsciiParser::ParseVariantSet(
     return false;
   }
 
-  std::map<std::string, VariantContent> variantContentMap;
+  VariantSetContent variantSetContent;
 
   // for each variantStatement
   while (!Eof()) {
@@ -5361,13 +5366,18 @@ bool AsciiParser::ParseVariantSet(
       return false;
     }
 
-    if (!SkipCommentAndWhitespaceAndNewline()) {
-      return false;
-    }
-
     VariantContent variantContent;
 
+    int64_t variantPrimIdx = _prim_idx_assign_fun(parentPrimIdx);
+    //variantContent.variantPrimIdx = variantPrimIdx;
+    DCOUT("primIdx for variant = " << variantPrimIdx);
+
     while (!Eof()) {
+
+      if (!SkipCommentAndWhitespaceAndNewline()) {
+        return false;
+      }
+
       {
         char c;
         if (!Char1(&c)) {
@@ -5392,55 +5402,86 @@ bool AsciiParser::ParseVariantSet(
             "Failed to parse an identifier in variantSet block statement.");
       }
 
-      if (!Rewind(tok.size())) {
-        return false;
-      }
-
       if (tok == "variantSet") {
-        PUSH_ERROR_AND_RETURN("Nested `variantSet` is not supported yet.");
-      }
 
-      Specifier child_spec{Specifier::Invalid};
-      if (tok == "def") {
-        child_spec = Specifier::Def;
-      } else if (tok == "over") {
-        child_spec = Specifier::Over;
-      } else if (tok == "class") {
-        child_spec = Specifier::Class;
-      }
-
-      // No specifier => Assume properties only.
-      // Has specifier => Prim
-      if (child_spec != Specifier::Invalid) {
-        // FIXME: Assign idx dedicated for variant.
-        int64_t idx = _prim_idx_assign_fun(parentPrimIdx);
-        DCOUT("enter parseBlock in variantSet. spec = "
-              << to_string(child_spec) << ", idx = " << idx
-              << ", rootIdx = " << primIdx);
-
-        // recusive call
-        if (!ParseBlock(child_spec, idx, primIdx, depth + 1,
-                        /* in_variantStmt */ true)) {
-          PUSH_ERROR_AND_RETURN(
-              fmt::format("`{}` block parse failed.", to_string(child_spec)));
+        if (!SkipWhitespace()) {
+          return false;
         }
-        DCOUT(fmt::format("Done parse `{}` block.", to_string(child_spec)));
 
-        DCOUT(fmt::format("Add primIdx {} to variant {}", idx, variantName));
-        CHECK_MEMORY_USAGE(sizeof(int64_t));
-        variantContent.primIndices.push_back(idx);
+        std::string childVariantName;
+        if (!ReadBasicType(&childVariantName)) {
+          PUSH_ERROR_AND_RETURN("Failed to parse `variantSet` statement.");
+        }
+
+        DCOUT("childVariantName = " << childVariantName);
+
+        if (!SkipWhitespace()) {
+          return false;
+        }
+
+        if (!Expect('=')) {
+          return false;
+        }
+
+        if (!SkipWhitespace()) {
+          return false;
+        }
+
+
+        VariantSetContent child_vmap;
+        if (!ParseVariantSet(variantPrimIdx, primIdx, depth+1, &child_vmap)) {
+          PUSH_ERROR_AND_RETURN("Failed to parse `variantSet` statement.");
+        }
+
+        variantContent.variantSets[childVariantName] = child_vmap;
 
       } else {
-        DCOUT("Enter ParsePrimProps.");
-        if (!ParsePrimProps(&variantContent.props,
-                            &variantContent.properties)) {
-          PUSH_ERROR_AND_RETURN("Failed to parse Prim attribute.");
-        }
-        DCOUT(fmt::format("Done parse ParsePrimProps."));
-      }
 
-      if (!SkipCommentAndWhitespaceAndNewline()) {
-        return false;
+        if (!Rewind(tok.size())) {
+          return false;
+        }
+
+        if (!SkipWhitespace()) {
+          return false;
+        }
+
+        Specifier child_spec{Specifier::Invalid};
+        if (tok == "def") {
+          child_spec = Specifier::Def;
+        } else if (tok == "over") {
+          child_spec = Specifier::Over;
+        } else if (tok == "class") {
+          child_spec = Specifier::Class;
+        }
+
+        // No specifier => Assume properties only.
+        // Has specifier => Prim
+        if (child_spec != Specifier::Invalid) {
+          int64_t idx = _prim_idx_assign_fun(parentPrimIdx);
+          DCOUT("enter parseBlock in variantSet. spec = " << to_string(child_spec) << ", idx = "
+                                          << idx << ", rootIdx = " << primIdx);
+
+          // recusive call
+          if (!ParseBlock(child_spec, idx, primIdx, depth + 1, /* in_variantStmt */true)) {
+            PUSH_ERROR_AND_RETURN(
+                fmt::format("`{}` block parse failed.", to_string(child_spec)));
+          }
+          DCOUT(fmt::format("Done parse `{}` block.", to_string(child_spec)));
+
+          DCOUT(fmt::format("Add primIdx {} to variant {}", idx, variantName));
+          variantContent.primIndices.push_back(idx);
+
+        } else {
+          DCOUT("Enter ParsePrimProps.");
+          if (!ParsePrimProps(&variantContent.props, &variantContent.properties)) {
+            PUSH_ERROR_AND_RETURN("Failed to parse Prim attribute.");
+          }
+          DCOUT(fmt::format("Done parse ParsePrimProps."));
+        }
+
+        if (!SkipCommentAndWhitespaceAndNewline()) {
+          return false;
+        }
       }
     }
 
@@ -5450,11 +5491,15 @@ bool AsciiParser::ParseVariantSet(
 
     DCOUT(fmt::format("variantSet item {} parsed.", variantName));
 
+
+
     variantContent.metas = metas;
-    variantContentMap.emplace(variantName, variantContent);
+    variantSetContent.variantSets[variantName] = variantContent;
   }
 
-  (*variantSetOut) = std::move(variantContentMap);
+  variantSetContent.variantPrimIdx = primIdx;
+
+  (*variantSetContentOut) = std::move(variantSetContent);
 
   return true;
 }
@@ -5680,12 +5725,15 @@ bool AsciiParser::ParseBlock(const Specifier spec, const int64_t primIdx,
           return false;
         }
 
-        std::map<std::string, VariantContent> vmap;
-        if (!ParseVariantSet(primIdx, parentPrimIdx, depth, &vmap)) {
+        int64_t variantPrimIdx = _prim_idx_assign_fun(parentPrimIdx);
+
+        VariantSetContent vs;
+        if (!ParseVariantSet(variantPrimIdx, primIdx, depth, &vs)) {
           PUSH_ERROR_AND_RETURN("Failed to parse `variantSet` statement.");
         }
 
-        variantSetList.emplace(variantName, vmap);
+        vs.variantPrimIdx = variantPrimIdx;
+        variantSetList[variantName] = vs;
 
         continue;
       }

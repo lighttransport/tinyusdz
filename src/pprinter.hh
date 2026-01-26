@@ -98,6 +98,8 @@ std::string to_string(const ListOp<T> &op, const uint32_t indent_level = 0) {
   ss << pprint::Indent(indent_level)
      << "  added_items = " << to_string(op.GetAddedItems()) << "\n";
   ss << pprint::Indent(indent_level)
+     << "  appended_items = " << to_string(op.GetAppendedItems()) << "\n";
+  ss << pprint::Indent(indent_level)
      << "  prepended_items = " << to_string(op.GetPrependedItems()) << "\n";
   ss << pprint::Indent(indent_level)
      << "  deleted_items = " << to_string(op.GetDeletedItems()) << "\n";
