@@ -13,6 +13,17 @@
 #include "pprinter.hh"  // For to_string(Specifier), to_string(Variability)
 #include "usdShade.hh"  // For Material and Shader
 
+// Disable specific clang warnings for this file
+// - unused-parameter: functions have consistent signatures for API purposes
+// - covered-switch-default: default cases provide fallback safety
+// - switch-enum: some enum values are intentionally not handled
+#if defined(__clang__)
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wunused-parameter"
+#pragma clang diagnostic ignored "-Wcovered-switch-default"
+#pragma clang diagnostic ignored "-Wswitch-enum"
+#endif
+
 namespace tinyusdz {
 namespace experimental {
 
@@ -3148,10 +3159,11 @@ bool CrateWriter::AddUsdPreviewSurfaceInputSpecs(
   // Helper to convert OpacityMode enum to token string
   auto opacity_mode_to_string = [](UsdPreviewSurface::OpacityMode mode) -> std::string {
     switch (mode) {
+      case UsdPreviewSurface::OpacityMode::Opacity: return "opacity";
       case UsdPreviewSurface::OpacityMode::Transparent: return "transparent";
       case UsdPreviewSurface::OpacityMode::Presence: return "presence";
-      default: return "transparent";
     }
+    return "transparent"; // fallback
   };
 
   // Helper to handle timesampled float shader inputs
@@ -5346,3 +5358,7 @@ bool CrateWriter::ConvertVariantToFields(
 
 } // namespace experimental
 } // namespace tinyusdz
+
+#if defined(__clang__)
+#pragma clang diagnostic pop
+#endif

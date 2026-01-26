@@ -1288,8 +1288,8 @@ char* dtoa_dragonbox_impl_t(const Float f, char* buf, int max_digits, int exp_up
 
   bool is_negative = std::signbit(f);
 
-  // Handle zero specially
-  if (f == Float(0)) {
+  // Handle zero specially (use fpclassify to avoid float comparison warning)
+  if (std::fpclassify(f) == FP_ZERO) {
     *buf++ = '0';
     return buf;
   }
