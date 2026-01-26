@@ -25,6 +25,7 @@
 #include "unit-stage.h"
 #include "unit-tiny-container.h"
 #include "unit-usda-roundtrip.h"
+#include "unit-half-roundtrip.h"
 
 #if defined(TINYUSDZ_WITH_PXR_COMPAT_API)
 #include "unit-pxr-compat-api.h"
@@ -156,6 +157,9 @@ TEST_LIST = {
   { "usda_roundtrip_mesh_test", usda_roundtrip_mesh_test },
   { "usda_roundtrip_material_test", usda_roundtrip_material_test },
   { "usda_roundtrip_timesamples_test", usda_roundtrip_timesamples_test },
+  { "half_roundtrip_exhaustive_test", half_roundtrip_exhaustive_test },
+  { "half_roundtrip_edge_cases_test", half_roundtrip_edge_cases_test },
+  { "half_shortest_representation_test", half_shortest_representation_test },
 #if defined(TINYUSDZ_WITH_PXR_COMPAT_API)
   { "pxr_compat_api_test", pxr_compat_api_test },
 #endif

@@ -49,10 +49,12 @@ inline void append_float_to_stream(std::ostream &os, float v) {
 namespace std {
 
 std::ostream &operator<<(std::ostream &os, const tinyusdz::value::half &v) {
-  // Use dtos for consistent shortest representation
-  os << tinyusdz::dtos(tinyusdz::value::half_to_float(v));
+  // Use direct half-precision dtos for shortest representation
+  os << tinyusdz::dtos(v);
   return os;
 }
+
+// Note: operator<< for StringData is defined in pprinter.cc
 
 std::ostream &operator<<(std::ostream &os, const tinyusdz::value::half2 &v) {
   os << "(" << v[0] << ", " << v[1] << ")";
@@ -1236,9 +1238,8 @@ std::string to_string(const value::texcoord3d &v) {
   return ss.str();
 }
 std::string to_string(const value::StringData &v) {
-  std::stringstream ss;
-  ss << v;
-  return ss.str();
+  // Use buildEscapedAndQuotedStringForUSDA directly for proper quoting
+  return buildEscapedAndQuotedStringForUSDA(v.value);
 }
 std::string to_string(const value::token &v) {
   std::stringstream ss;
