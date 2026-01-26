@@ -2123,18 +2123,8 @@ bool USDCReader::Impl::ParsePrimSpec(const crate::FieldValuePairVector &fvs,
 
         auto ps = DecodeListOp<std::string>(p);
 
-        if (ps.size() > 1) {
-          // This should not happen though.
-          PUSH_WARN(
-              "ListOp with multiple ListOpType is not supported for now. Use "
-              "the first one: " +
-              to_string(std::get<0>(ps[0])));
-        }
-
-        auto qual = std::get<0>(ps[0]);
-        auto items = std::get<1>(ps[0]);
-        auto listop = (*pv);
-        primMeta.variantSets = std::make_pair(qual, items);
+        // Store all listops (supports multiple listops per arc)
+        primMeta.variantSets = ps;
       } else {
         PUSH_ERROR_AND_RETURN_TAG(
             kTag,
@@ -2161,25 +2151,17 @@ bool USDCReader::Impl::ParsePrimSpec(const crate::FieldValuePairVector &fvs,
       if (auto pvb = fv.second.as<value::ValueBlock>()) {
         (void)pvb;
         // make empty array
-        primMeta.inherits =
-            std::make_pair(ListEditQual::ResetToExplicit, std::vector<Path>());
+        primMeta.inherits = std::vector<std::pair<ListEditQual, std::vector<Path>>>();
+        primMeta.inherits->push_back(
+            std::make_pair(ListEditQual::ResetToExplicit, std::vector<Path>()));
       } else if (auto pv = fv.second.as<ListOp<Path>>()) {
         const ListOp<Path> &p = *pv;
         DCOUT("inherits = " << to_string(p));
 
         auto ps = DecodeListOp<Path>(p);
 
-        if (ps.size() > 1) {
-          // This should not happen though.
-          PUSH_WARN(
-              "ListOp with multiple ListOpType is not supported for now. Use "
-              "the first one: " +
-              to_string(std::get<0>(ps[0])));
-        }
-
-        auto qual = std::get<0>(ps[0]);
-        auto items = std::get<1>(ps[0]);
-        primMeta.inherits = std::make_pair(qual, items);
+        // Store all listops (supports multiple listops per arc)
+        primMeta.inherits = ps;
       } else {
         PUSH_ERROR_AND_RETURN_TAG(
             kTag, "`inherits` must be type `path` o `path[]`, but got type `"
@@ -2190,26 +2172,17 @@ bool USDCReader::Impl::ParsePrimSpec(const crate::FieldValuePairVector &fvs,
       if (auto pvb = fv.second.as<value::ValueBlock>()) {
         (void)pvb;
         // make empty array
-        primMeta.references = std::make_pair(ListEditQual::ResetToExplicit,
-                                             std::vector<Reference>());
+        primMeta.references = std::vector<std::pair<ListEditQual, std::vector<Reference>>>();
+        primMeta.references->push_back(
+            std::make_pair(ListEditQual::ResetToExplicit, std::vector<Reference>()));
       } else if (auto pv = fv.second.as<ListOp<Reference>>()) {
         const ListOp<Reference> &p = *pv;
         DCOUT("references = " << to_string(p));
 
         auto ps = DecodeListOp<Reference>(p);
 
-        if (ps.size() > 1) {
-          // This should not happen though.
-          PUSH_WARN(
-              "ListOp with multiple ListOpType is not supported for now. Use "
-              "the first one: " +
-              to_string(std::get<0>(ps[0])));
-        }
-
-        auto qual = std::get<0>(ps[0]);
-        auto items = std::get<1>(ps[0]);
-        auto listop = (*pv);
-        primMeta.references = std::make_pair(qual, items);
+        // Store all listops (supports multiple listops per arc)
+        primMeta.references = ps;
       } else {
         PUSH_ERROR_AND_RETURN_TAG(
             kTag,
@@ -2220,32 +2193,23 @@ bool USDCReader::Impl::ParsePrimSpec(const crate::FieldValuePairVector &fvs,
       if (auto pvb = fv.second.as<value::ValueBlock>()) {
         (void)pvb;
         // make empty array
-        primMeta.payload = std::make_pair(ListEditQual::ResetToExplicit,
-                                             std::vector<Payload>());
+        primMeta.payload = std::vector<std::pair<ListEditQual, std::vector<Payload>>>();
+        primMeta.payload->push_back(
+            std::make_pair(ListEditQual::ResetToExplicit, std::vector<Payload>()));
       } else if (auto pv = fv.second.as<Payload>()) {
         // payload can be non-listop
-
         std::vector<Payload> pls;
         pls.push_back(*pv);
-        primMeta.payload = std::make_pair(ListEditQual::ResetToExplicit, pls);
+        primMeta.payload = std::vector<std::pair<ListEditQual, std::vector<Payload>>>();
+        primMeta.payload->push_back(std::make_pair(ListEditQual::ResetToExplicit, pls));
       } else if (auto pvs = fv.second.as<ListOp<Payload>>()) {
         const ListOp<Payload> &p = *pvs;
         DCOUT("payload = " << to_string(p));
 
         auto ps = DecodeListOp<Payload>(p);
 
-        if (ps.size() > 1) {
-          // This should not happen though.
-          PUSH_WARN(
-              "ListOp with multiple ListOpType is not supported for now. Use "
-              "the first one: " +
-              to_string(std::get<0>(ps[0])));
-        }
-
-        auto qual = std::get<0>(ps[0]);
-        auto items = std::get<1>(ps[0]);
-        auto listop = (*pvs);
-        primMeta.payload = std::make_pair(qual, items);
+        // Store all listops (supports multiple listops per arc)
+        primMeta.payload = ps;
       } else {
         PUSH_ERROR_AND_RETURN_TAG(
             kTag,
@@ -2259,18 +2223,8 @@ bool USDCReader::Impl::ParsePrimSpec(const crate::FieldValuePairVector &fvs,
 
         auto ps = DecodeListOp<Path>(p);
 
-        if (ps.size() > 1) {
-          // This should not happen though.
-          PUSH_WARN(
-              "ListOp with multiple ListOpType is not supported for now. Use "
-              "the first one: " +
-              to_string(std::get<0>(ps[0])));
-        }
-
-        auto qual = std::get<0>(ps[0]);
-        auto items = std::get<1>(ps[0]);
-        auto listop = (*pv);
-        primMeta.specializes = std::make_pair(qual, items);
+        // Store all listops (supports multiple listops per arc)
+        primMeta.specializes = ps;
       } else {
         PUSH_ERROR_AND_RETURN_TAG(
             kTag, "`specializes` must be type `ListOp[Path]`, but got type `"
@@ -2283,19 +2237,9 @@ bool USDCReader::Impl::ParsePrimSpec(const crate::FieldValuePairVector &fvs,
 
         auto ps = DecodeListOp<Path>(p);
 
-        if (ps.size() > 1) {
-          // This should not happen though.
-          PUSH_WARN(
-              "ListOp with multiple ListOpType is not supported for now. Use "
-              "the first one: " +
-              to_string(std::get<0>(ps[0])));
-        }
-
-        auto qual = std::get<0>(ps[0]);
-        auto items = std::get<1>(ps[0]);
-        auto listop = (*pv);
         // USDC uses "inheritPaths" field name but we store it in "inherits" for consistency
-        primMeta.inherits = std::make_pair(qual, items);
+        // Store all listops (supports multiple listops per arc)
+        primMeta.inherits = ps;
       } else {
         PUSH_ERROR_AND_RETURN_TAG(
             kTag, "`inheritPaths` must be type `ListOp[Path]`, but got type `"
