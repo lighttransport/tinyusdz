@@ -6123,10 +6123,9 @@ void crate_writer_specializes_test(void) {
         specializes_paths.push_back(Path("/BaseXform", ""));
 
         PrimMetas& metas = const_cast<PrimMetas&>(specialized_prim.metas());
-        metas.specializes = std::make_pair(
-          ListEditQual::ResetToExplicit,
-          specializes_paths
-        );
+        metas.specializes = std::vector<std::pair<ListEditQual, std::vector<Path>>>{
+          std::make_pair(ListEditQual::ResetToExplicit, specializes_paths)
+        };
       }
 
       stage.root_prims().push_back(specialized_prim);
@@ -6199,9 +6198,10 @@ void crate_writer_specializes_test(void) {
       // Verify specializes metadata
       const PrimMetas& metas = spec_prim->metas();
       TEST_MSG("Specializes metadata present: %d", (int)metas.specializes.has_value());
-      if (metas.specializes) {
-        const auto& specializes_pair = metas.specializes.value();
-        const auto& specializes_paths = specializes_pair.second;
+      if (metas.specializes && !metas.specializes.value().empty()) {
+        // Get first listop entry
+        const auto& specializes_op = metas.specializes.value()[0];
+        const auto& specializes_paths = specializes_op.second;
         TEST_CHECK(specializes_paths.size() == 1);
         if (specializes_paths.size() > 0) {
           TEST_MSG("Specializes path: %s", specializes_paths[0].full_path_name().c_str());

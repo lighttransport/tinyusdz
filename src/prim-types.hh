@@ -1516,19 +1516,21 @@ struct PrimMetas : public MetadataBase {
 
   //
   // Compositions - keep as direct members due to complex types
+  // Uses vector of pairs to support multiple listops per arc type
+  // (e.g., "delete references" + "prepend references" on same prim)
   //
-  nonstd::optional<std::pair<ListEditQual, std::vector<Reference>>> references;
-  nonstd::optional<std::pair<ListEditQual, std::vector<Payload>>>
+  nonstd::optional<std::vector<std::pair<ListEditQual, std::vector<Reference>>>> references;
+  nonstd::optional<std::vector<std::pair<ListEditQual, std::vector<Payload>>>>
       payload;  // NOTE: not `payloads`
-  nonstd::optional<std::pair<ListEditQual, std::vector<Path>>>
+  nonstd::optional<std::vector<std::pair<ListEditQual, std::vector<Path>>>>
       inherits;  // 'inherits'
-  nonstd::optional<std::pair<ListEditQual, std::vector<std::string>>>
+  nonstd::optional<std::vector<std::pair<ListEditQual, std::vector<std::string>>>>
       variantSets;  // 'variantSets'. Could be `token` but treat as
                     // `string`(Crate format uses `string`)
 
   nonstd::optional<VariantSelectionMap> variants;  // `variants`
 
-  nonstd::optional<std::pair<ListEditQual, std::vector<Path>>>
+  nonstd::optional<std::vector<std::pair<ListEditQual, std::vector<Path>>>>
       specializes;  // 'specializes'
 
   // Unregistered metadatum. value is represented as string.
@@ -1567,7 +1569,7 @@ struct PrimMetas : public MetadataBase {
   // USDA: By appearance. USDC: "properties" TokenVector field
   std::vector<value::token> properties;
 
-  nonstd::optional<std::pair<ListEditQual, std::vector<Path>>> inheritPaths;
+  nonstd::optional<std::vector<std::pair<ListEditQual, std::vector<Path>>>> inheritPaths;
 
   nonstd::optional<std::vector<value::token>> variantChildren;
   nonstd::optional<std::vector<value::token>> variantSetChildren;
@@ -4927,6 +4929,7 @@ struct LayerMetas {
   TypedAttributeWithFallback<double> kilogramsPerUnit{1.0};
 
   CustomDataType customLayerData;  // customLayerData
+  bool customLayerDataAuthored{false};  // Track if customLayerData was explicitly authored (even if empty)
 
   // USDZ extension
   TypedAttributeWithFallback<bool> autoPlay{
@@ -5006,8 +5009,12 @@ DEFINE_TYPE_TRAIT(Extent, "float3[]", TYPE_ID_EXTENT, 2);  // float3[2]
 namespace prim {
 
 using PropertyMap = std::map<std::string, Property>;
-using ReferenceList = std::pair<ListEditQual, std::vector<Reference>>;
-using PayloadList = std::pair<ListEditQual, std::vector<Payload>>;
+// Single listop+items pair (used internally and in printing)
+using ReferenceListOp = std::pair<ListEditQual, std::vector<Reference>>;
+using PayloadListOp = std::pair<ListEditQual, std::vector<Payload>>;
+// Full list supporting multiple listops
+using ReferenceList = std::vector<ReferenceListOp>;
+using PayloadList = std::vector<PayloadListOp>;
 
 }  // namespace prim
 
