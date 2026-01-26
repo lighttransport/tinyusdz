@@ -10,6 +10,13 @@
 #include <string>
 #include <vector>
 
+// Disable weak-vtables warning for interface classes
+// These are header-only interfaces, vtable duplication is acceptable
+#if defined(__clang__)
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wweak-vtables"
+#endif
+
 namespace crate {
 
 ///
@@ -21,6 +28,11 @@ namespace crate {
 class IPath {
 public:
   virtual ~IPath() = default;
+  IPath() = default;
+  IPath(const IPath&) = default;
+  IPath(IPath&&) = default;
+  IPath& operator=(const IPath&) = default;
+  IPath& operator=(IPath&&) = default;
 
   /// Get the full path as a string (e.g., "/World/Geom.points")
   virtual std::string GetString() const = 0;
@@ -50,6 +62,12 @@ public:
 class SimplePath : public IPath {
 public:
   SimplePath() = default;
+  ~SimplePath() override = default;
+  SimplePath(const SimplePath&) = default;
+  SimplePath(SimplePath&&) noexcept = default;
+  SimplePath& operator=(const SimplePath&) = default;
+  SimplePath& operator=(SimplePath&&) noexcept = default;
+
   SimplePath(const std::string& prim, const std::string& prop = "")
     : prim_part_(prim), prop_part_(prop) {}
 
@@ -89,3 +107,7 @@ private:
 };
 
 } // namespace crate
+
+#if defined(__clang__)
+#pragma clang diagnostic pop
+#endif
