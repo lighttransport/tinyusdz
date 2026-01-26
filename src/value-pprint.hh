@@ -55,6 +55,8 @@ std::ostream &operator<<(std::ostream &os, const tinyusdz::value::half2 &v);
 std::ostream &operator<<(std::ostream &os, const tinyusdz::value::half3 &v);
 std::ostream &operator<<(std::ostream &os, const tinyusdz::value::half4 &v);
 
+// Note: operator<< for StringData is declared in pprinter.hh
+
 std::ostream &operator<<(std::ostream &os, const tinyusdz::value::float2 &v);
 std::ostream &operator<<(std::ostream &os, const tinyusdz::value::float3 &v);
 std::ostream &operator<<(std::ostream &os, const tinyusdz::value::float4 &v);

@@ -235,17 +235,17 @@ bool CrateReader::ReadTimeSamples(value::TimeSamples *d) {
   auto first_type = value_reps[0].GetType();
   bool first_is_array = value_reps[0].IsArray();
 
-  std::cerr << "DEBUG ReadTimeSamples: first_type=" << first_type
-            << " (" << crate::GetCrateDataTypeName(static_cast<crate::CrateDataTypeId>(first_type)) << ")"
-            << " is_array=" << first_is_array << std::endl;
+  DCOUT("ReadTimeSamples: first_type=" << first_type
+        << " (" << crate::GetCrateDataTypeName(static_cast<crate::CrateDataTypeId>(first_type)) << ")"
+        << " is_array=" << first_is_array);
 
   for (size_t i = 1; i < num_values; i++) {
     auto curr_type = value_reps[i].GetType();
     bool curr_is_array = value_reps[i].IsArray();
 
-    std::cerr << "DEBUG ReadTimeSamples: sample[" << i << "] type=" << curr_type
-              << " (" << crate::GetCrateDataTypeName(static_cast<crate::CrateDataTypeId>(curr_type)) << ")"
-              << " is_array=" << curr_is_array << std::endl;
+    DCOUT("ReadTimeSamples: sample[" << i << "] type=" << curr_type
+          << " (" << crate::GetCrateDataTypeName(static_cast<crate::CrateDataTypeId>(curr_type)) << ")"
+          << " is_array=" << curr_is_array);
 
     // Allow VALUE_BLOCK to mix with any type
     bool is_value_block_first =
@@ -258,8 +258,8 @@ bool CrateReader::ReadTimeSamples(value::TimeSamples *d) {
     if (!is_value_block_first && !is_value_block_curr) {
       // Neither is VALUE_BLOCK, so they must match
       if (curr_type != first_type || curr_is_array != first_is_array) {
-        std::cerr << "DEBUG ReadTimeSamples: TYPE MISMATCH! first=" << first_type
-                  << " curr=" << curr_type << std::endl;
+        DCOUT("ReadTimeSamples: TYPE MISMATCH! first=" << first_type
+              << " curr=" << curr_type);
         PUSH_ERROR_AND_RETURN_TAG(
             kTag, "Types in TimeSamples' ValueRep isn't the same.");
         // is_homogeneous = false;
@@ -1961,10 +1961,10 @@ bool CrateReader::UnpackTimeSampleValue_TOKEN(
       PUSH_ERROR_AND_RETURN_TAG(kTag,
                                 "Invalid inlined ValueRep in TimeSamples.");
     }
-    // Token is stored as StringIndex for inlined value
+    // Token is stored as token index for inlined value
     uint32_t data = (rep.GetPayload() & ((1ull << (sizeof(uint32_t) * 8)) - 1));
-    if (auto v = GetStringToken(crate::Index(data))) {
-      value::token tok(v.value().str());
+    if (auto v = GetToken(crate::Index(data))) {
+      value::token tok = v.value();
 
       if (!add_sample_to_timesamples<value::token>(
               &dst, t, tok, &_err, expected_total_samples)) {
@@ -1989,16 +1989,20 @@ bool CrateReader::UnpackTimeSampleValue_TOKEN(
       return true;
     }
 
-    // Read token array (stored as string indices)
-    std::vector<std::string> str_v;
-    if (!ReadStringArray(&str_v)) {
-      PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read Token array.");
+    // Read token array (stored as token indices)
+    std::vector<crate::Index> indices;
+    if (!ReadIndices(&indices)) {
+      PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read Token index array.");
     }
 
-    // Convert strings to tokens
-    v.reserve(str_v.size());
-    for (const auto& s : str_v) {
-      v.emplace_back(s);
+    // Convert indices to tokens
+    v.reserve(indices.size());
+    for (const auto& idx : indices) {
+      if (auto tokv = GetToken(idx)) {
+        v.emplace_back(tokv.value());
+      } else {
+        PUSH_ERROR_AND_RETURN_TAG(kTag, "Invalid token index in array.");
+      }
     }
 
     if (!add_sample_to_timesamples<std::vector<value::token>>(
@@ -2014,7 +2018,7 @@ bool CrateReader::UnpackTimeSampleValue_TOKEN(
 
     // Scalar deduplication was removed - see FLOAT3 fix
       // Read and cache scalar value
-      // Token is stored as StringIndex in the stream
+      // Token is stored as token index in the stream
       uint32_t index_data;
       CHECK_MEMORY_USAGE(sizeof(uint32_t));
       if (!_sr->read(sizeof(uint32_t), sizeof(uint32_t),
@@ -2022,8 +2026,8 @@ bool CrateReader::UnpackTimeSampleValue_TOKEN(
         PUSH_ERROR_AND_RETURN("Failed to read token index");
       }
       value::token v;
-      if (auto tok_val = GetStringToken(crate::Index(index_data))) {
-        v = value::token(tok_val.value().str());
+      if (auto tok_val = GetToken(crate::Index(index_data))) {
+        v = tok_val.value();
         DCOUT("token = " << v.str());
       } else {
         PUSH_ERROR_AND_RETURN("Invalid token index in TimeSamples.");

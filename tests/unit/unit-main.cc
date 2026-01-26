@@ -16,6 +16,7 @@
 #include "unit-ioutil.h"
 #include "unit-strutil.h"
 #include "unit-timesamples.h"
+#include "unit-fp-parse-print.h"
 #include "unit-pprint.h"
 #include "unit-materialx.h"
 #include "unit-task-queue.h"
@@ -24,6 +25,7 @@
 #include "unit-stage.h"
 #include "unit-tiny-container.h"
 #include "unit-usda-roundtrip.h"
+#include "unit-half-roundtrip.h"
 
 #if defined(TINYUSDZ_WITH_PXR_COMPAT_API)
 #include "unit-pxr-compat-api.h"
@@ -36,6 +38,7 @@ TEST_LIST = {
   { "ascii_parse_int64_excessive_digits_test", ascii_parse_int64_excessive_digits_test },
   { "ascii_parse_uint64_valid_test", ascii_parse_uint64_valid_test },
   { "ascii_parse_uint64_excessive_digits_test", ascii_parse_uint64_excessive_digits_test },
+  { "ascii_parse_string_array_test", ascii_parse_string_array_test },
   { "prim_type_test", prim_type_test },
   { "prim_add_test", prim_add_test },
   { "primvar_test", primvar_test },
@@ -52,8 +55,15 @@ TEST_LIST = {
   { "strutil_test", strutil_test },
   { "tinystring_test", tinystring_test },
   { "parse_int_test", parse_int_test },
-  { "dtoa_test", dtoa_test },
+  { "fp_string_conversion_test", fp_string_conversion_test },
   { "timesamples_test", timesamples_test },
+  { "fp_roundtrip_basic_test", fp_roundtrip_basic_test },
+  { "fp_roundtrip_edge_cases_test", fp_roundtrip_edge_cases_test },
+  { "fp_roundtrip_special_values_test", fp_roundtrip_special_values_test },
+  { "fp_roundtrip_precision_test", fp_roundtrip_precision_test },
+  { "fp_roundtrip_buffer_test", fp_roundtrip_buffer_test },
+  { "fp_shortest_representation_test", fp_shortest_representation_test },
+  { "fp_format_range_test", fp_format_range_test },
   { "materialx_config_api_struct_test", materialx_config_api_struct_test },
   { "materialx_config_api_parsing_test", materialx_config_api_parsing_test },
   { "openpbr_surface_reconstruction_test", openpbr_surface_reconstruction_test },
@@ -147,6 +157,9 @@ TEST_LIST = {
   { "usda_roundtrip_mesh_test", usda_roundtrip_mesh_test },
   { "usda_roundtrip_material_test", usda_roundtrip_material_test },
   { "usda_roundtrip_timesamples_test", usda_roundtrip_timesamples_test },
+  { "half_roundtrip_exhaustive_test", half_roundtrip_exhaustive_test },
+  { "half_roundtrip_edge_cases_test", half_roundtrip_edge_cases_test },
+  { "half_shortest_representation_test", half_shortest_representation_test },
 #if defined(TINYUSDZ_WITH_PXR_COMPAT_API)
   { "pxr_compat_api_test", pxr_compat_api_test },
 #endif

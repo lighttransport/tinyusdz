@@ -18,6 +18,24 @@
 // Namespace alias to avoid collision between tinyusdz::crate and ::crate (path library)
 namespace pathlib = ::crate;
 
+// Disable specific clang warnings for this file
+// - shadow: if-else chains reuse variable names intentionally
+// - sign-conversion: safe narrowing in serialization code
+// - old-style-cast: debug print formatting
+// - nrvo: return value optimization hints
+// - exceptions: comparator functions may throw in debug builds
+// - unused-parameter: some functions have consistent API signatures
+#if defined(__clang__)
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wshadow"
+#pragma clang diagnostic ignored "-Wsign-conversion"
+#pragma clang diagnostic ignored "-Wold-style-cast"
+#pragma clang diagnostic ignored "-Wnrvo"
+#pragma clang diagnostic ignored "-Wshorten-64-to-32"
+#pragma clang diagnostic ignored "-Wexceptions"
+#pragma clang diagnostic ignored "-Wunused-parameter"
+#endif
+
 namespace tinyusdz {
 namespace experimental {
 
@@ -137,10 +155,19 @@ bool CrateWriter::AddSpec(const Path& path,
   std::cerr << "DEBUG AddSpec[" << (spec_data_.size()-1) << "]: path=" << path.full_path_name()
             << " spec_type=" << static_cast<int>(spec_type) << " (";
   switch(spec_type) {
-    case SpecType::PseudoRoot: std::cerr << "PseudoRoot"; break;
-    case SpecType::Prim: std::cerr << "Prim"; break;
+    case SpecType::Unknown: std::cerr << "Unknown"; break;
     case SpecType::Attribute: std::cerr << "Attribute"; break;
-    default: std::cerr << "Other"; break;
+    case SpecType::Connection: std::cerr << "Connection"; break;
+    case SpecType::Expression: std::cerr << "Expression"; break;
+    case SpecType::Mapper: std::cerr << "Mapper"; break;
+    case SpecType::MapperArg: std::cerr << "MapperArg"; break;
+    case SpecType::Prim: std::cerr << "Prim"; break;
+    case SpecType::PseudoRoot: std::cerr << "PseudoRoot"; break;
+    case SpecType::Relationship: std::cerr << "Relationship"; break;
+    case SpecType::RelationshipTarget: std::cerr << "RelationshipTarget"; break;
+    case SpecType::Variant: std::cerr << "Variant"; break;
+    case SpecType::VariantSet: std::cerr << "VariantSet"; break;
+    case SpecType::Invalid: std::cerr << "Invalid"; break;
   }
 
   // Pre-register the path for deduplication
@@ -204,10 +231,19 @@ bool CrateWriter::Finalize(std::string* err) {
     std::cerr << "  Spec[" << i << "]: path=" << spec_data_[i].path.full_path_name()
               << " spec_type=" << static_cast<int>(spec_data_[i].spec_type) << " (";
     switch(spec_data_[i].spec_type) {
-      case SpecType::PseudoRoot: std::cerr << "PseudoRoot"; break;
-      case SpecType::Prim: std::cerr << "Prim"; break;
+      case SpecType::Unknown: std::cerr << "Unknown"; break;
       case SpecType::Attribute: std::cerr << "Attribute"; break;
-      default: std::cerr << "Other"; break;
+      case SpecType::Connection: std::cerr << "Connection"; break;
+      case SpecType::Expression: std::cerr << "Expression"; break;
+      case SpecType::Mapper: std::cerr << "Mapper"; break;
+      case SpecType::MapperArg: std::cerr << "MapperArg"; break;
+      case SpecType::Prim: std::cerr << "Prim"; break;
+      case SpecType::PseudoRoot: std::cerr << "PseudoRoot"; break;
+      case SpecType::Relationship: std::cerr << "Relationship"; break;
+      case SpecType::RelationshipTarget: std::cerr << "RelationshipTarget"; break;
+      case SpecType::Variant: std::cerr << "Variant"; break;
+      case SpecType::VariantSet: std::cerr << "VariantSet"; break;
+      case SpecType::Invalid: std::cerr << "Invalid"; break;
     }
   }
 
@@ -452,7 +488,7 @@ void CrateWriter::Close() {
 
 /// Helper to convert value::Value to CrateValue for TimeSamples serialization
 /// Returns true if conversion succeeded
-bool ConvertValueToCrateValue(const value::Value& val, crate::CrateValue* out, std::string* err) {
+static bool ConvertValueToCrateValue(const value::Value& val, crate::CrateValue* out, std::string* err) {
   if (!out) {
     if (err) *err = "ConvertValueToCrateValue: output is null";
     return false;
@@ -732,9 +768,9 @@ bool CrateWriter::CompressData(const char* input, size_t inputSize,
   compressed->resize(1 + static_cast<size_t>(compressedSize));
 
   // DEBUG: Print first few bytes of compressed data
-  for (int i = 1; i < std::min(17, (int)compressed->size()); ++i) {
+  for (size_t i = 1; i < std::min(size_t(17), compressed->size()); ++i) {
     char buf[4];
-    snprintf(buf, sizeof(buf), "%02x ", (unsigned char)(*compressed)[i]);
+    snprintf(buf, sizeof(buf), "%02x ", static_cast<unsigned char>((*compressed)[i]));
   }
 
   return true;
@@ -786,10 +822,10 @@ bool CrateWriter::WriteTokensSection(std::string* err) {
 
   for (size_t i = 0; i < std::min(token_blob.size(), size_t(60)); ++i) {
     if (token_blob[i] == '\0') {
-    } else if (isprint(token_blob[i])) {
+    } else if (isprint(static_cast<unsigned char>(token_blob[i]))) {
     } else {
       char buf[5];
-      snprintf(buf, sizeof(buf), "\\x%02x", (unsigned char)token_blob[i]);
+      snprintf(buf, sizeof(buf), "\\x%02x", static_cast<unsigned char>(token_blob[i]));
     }
   }
 
@@ -1290,10 +1326,19 @@ bool CrateWriter::WriteSpecsSection(std::string* err) {
               << " spec_type=" << static_cast<uint32_t>(spec_data.spec.spec_type)
               << " (";
     switch(spec_data.spec.spec_type) {
-      case SpecType::PseudoRoot: std::cerr << "PseudoRoot"; break;
-      case SpecType::Prim: std::cerr << "Prim"; break;
+      case SpecType::Unknown: std::cerr << "Unknown"; break;
       case SpecType::Attribute: std::cerr << "Attribute"; break;
-      default: std::cerr << "Other"; break;
+      case SpecType::Connection: std::cerr << "Connection"; break;
+      case SpecType::Expression: std::cerr << "Expression"; break;
+      case SpecType::Mapper: std::cerr << "Mapper"; break;
+      case SpecType::MapperArg: std::cerr << "MapperArg"; break;
+      case SpecType::Prim: std::cerr << "Prim"; break;
+      case SpecType::PseudoRoot: std::cerr << "PseudoRoot"; break;
+      case SpecType::Relationship: std::cerr << "Relationship"; break;
+      case SpecType::RelationshipTarget: std::cerr << "RelationshipTarget"; break;
+      case SpecType::Variant: std::cerr << "Variant"; break;
+      case SpecType::VariantSet: std::cerr << "VariantSet"; break;
+      case SpecType::Invalid: std::cerr << "Invalid"; break;
     }
   }
 
@@ -1420,7 +1465,7 @@ bool CrateWriter::WriteTableOfContents(std::string* err) {
   return true;
 }
 
-bool CrateWriter::WriteBootStrap(std::string* err) {
+bool CrateWriter::WriteBootStrap(std::string* /* err */) {
   // Bootstrap is already written in WriteTableOfContents
   // This is just a placeholder for consistency
   return true;
@@ -4675,3 +4720,7 @@ std::string CrateWriter::GetValidationSummary() const {
 
 } // namespace experimental
 } // namespace tinyusdz
+
+#if defined(__clang__)
+#pragma clang diagnostic pop
+#endif

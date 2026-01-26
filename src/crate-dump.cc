@@ -18,6 +18,15 @@
 #include "value-types.hh"
 #include "prim-types.hh"
 
+// Disable specific clang warnings for this file
+#if defined(__clang__)
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wcovered-switch-default"
+#pragma clang diagnostic ignored "-Wunused-parameter"
+#pragma clang diagnostic ignored "-Wsign-conversion"
+#pragma clang diagnostic ignored "-Wshorten-64-to-32"
+#endif
+
 namespace tinyusdz {
 namespace crate {
 
@@ -572,3 +581,7 @@ bool DumpCrate(const std::string& filename, const DumpOptions& opts, std::string
 
 }  // namespace crate
 }  // namespace tinyusdz
+
+#if defined(__clang__)
+#pragma clang diagnostic pop
+#endif
