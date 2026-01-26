@@ -23,6 +23,9 @@
 #undef TINYUSDZ_DRAGONBOX_NDEBUG_DEFINED
 #endif
 
+// Note: dragonbox_binary16.hh exists for direct fp16 conversion but needs work
+// Currently using half→float→dragonbox for correct output
+
 #ifdef __SSE2__
 #include <emmintrin.h>
 #endif
@@ -1495,6 +1498,281 @@ size_t dtos(double v, char* buffer) {
     return 0;  // Invalid input (null buffer)
   }
   return static_cast<size_t>(end - buffer);
+}
+
+// ============================================================================
+// Half-precision (fp16) to string conversion
+// Produces shortest decimal representation that round-trips through fp16.
+// Half-precision has ~3.31 decimal digits of precision (11-bit mantissa).
+// We find the shortest decimal that, when parsed back, gives the same fp16.
+// ============================================================================
+
+namespace {
+
+// Round a decimal mantissa to N significant digits
+// Returns the rounded value and adjusts exponent if needed
+uint64_t round_to_digits(uint64_t mantissa, int num_digits, int& exp_adjust) {
+  exp_adjust = 0;
+  if (mantissa == 0) return 0;
+
+  // Count digits in mantissa
+  uint64_t temp = mantissa;
+  int digits = 0;
+  while (temp > 0) {
+    digits++;
+    temp /= 10;
+  }
+
+  if (digits <= num_digits) return mantissa;
+
+  // Need to round off (digits - num_digits) digits
+  int to_remove = digits - num_digits;
+  exp_adjust = to_remove;
+
+  // Compute divisor and remainder for rounding
+  uint64_t divisor = 1;
+  for (int i = 0; i < to_remove; i++) divisor *= 10;
+
+  uint64_t result = mantissa / divisor;
+  uint64_t remainder = mantissa % divisor;
+
+  // Round half-even (banker's rounding)
+  uint64_t half = divisor / 2;
+  if (remainder > half || (remainder == half && (result & 1))) {
+    result++;
+    // Check for overflow (e.g., 999 -> 1000)
+    temp = result;
+    int new_digits = 0;
+    while (temp > 0) {
+      new_digits++;
+      temp /= 10;
+    }
+    if (new_digits > num_digits) {
+      result /= 10;
+      exp_adjust++;
+    }
+  }
+
+  return result;
+}
+
+// Parse a decimal string back to float (simplified parser)
+float parse_decimal(uint64_t mantissa, int exponent) {
+  double result = static_cast<double>(mantissa);
+  if (exponent > 0) {
+    for (int i = 0; i < exponent; i++) result *= 10.0;
+  } else if (exponent < 0) {
+    for (int i = 0; i < -exponent; i++) result /= 10.0;
+  }
+  return static_cast<float>(result);
+}
+
+// Format mantissa with exponent into buffer
+// Returns number of chars written
+size_t format_decimal(uint64_t mantissa, int exponent, char* buffer) {
+  if (mantissa == 0) {
+    buffer[0] = '0';
+    return 1;
+  }
+
+  char* p = buffer;
+
+  // Convert mantissa to string (reversed)
+  char digits[20];
+  int num_digits = 0;
+  uint64_t temp = mantissa;
+  while (temp > 0) {
+    digits[num_digits++] = '0' + static_cast<char>(temp % 10);
+    temp /= 10;
+  }
+
+  // Total exponent adjustment for decimal point position
+  int total_exp = exponent + num_digits - 1;
+
+  // Decide on format: fixed or scientific
+  // For values in range [0.0001, 10000), use fixed notation
+  // Otherwise use scientific
+
+  if (total_exp >= -4 && total_exp < 5) {
+    // Fixed notation
+    if (total_exp >= 0) {
+      // Value >= 1
+      int int_digits = total_exp + 1;
+      int frac_digits = num_digits - int_digits;
+
+      // Write integer part
+      for (int i = num_digits - 1; i >= num_digits - int_digits && i >= 0; i--) {
+        *p++ = digits[i];
+      }
+      // Pad with zeros if needed
+      for (int i = 0; i < int_digits - num_digits; i++) {
+        *p++ = '0';
+      }
+
+      // Write fractional part if any
+      if (frac_digits > 0) {
+        *p++ = '.';
+        for (int i = num_digits - int_digits - 1; i >= 0; i--) {
+          *p++ = digits[i];
+        }
+      }
+    } else {
+      // Value < 1
+      *p++ = '0';
+      *p++ = '.';
+      // Leading zeros
+      for (int i = 0; i < -total_exp - 1; i++) {
+        *p++ = '0';
+      }
+      // Digits
+      for (int i = num_digits - 1; i >= 0; i--) {
+        *p++ = digits[i];
+      }
+    }
+  } else {
+    // Scientific notation (but USD prefers fixed, so we'll extend fixed range)
+    // For half-precision, values are in range [~6e-8, 65504]
+    // Let's use fixed notation for most cases
+
+    if (total_exp >= 0) {
+      // Large value - still use fixed
+      int int_digits = total_exp + 1;
+
+      for (int i = num_digits - 1; i >= 0; i--) {
+        *p++ = digits[i];
+      }
+      for (int i = 0; i < int_digits - num_digits; i++) {
+        *p++ = '0';
+      }
+    } else {
+      // Small value
+      *p++ = '0';
+      *p++ = '.';
+      for (int i = 0; i < -total_exp - 1; i++) {
+        *p++ = '0';
+      }
+      for (int i = num_digits - 1; i >= 0; i--) {
+        *p++ = digits[i];
+      }
+    }
+  }
+
+  return static_cast<size_t>(p - buffer);
+}
+
+} // anonymous namespace
+
+// Public API for dtos - half-precision version (std::string)
+std::string dtos(value::half h) {
+  float f = value::half_to_float(h);
+
+  // Handle special cases
+  if (std::isnan(f)) return "nan";
+  if (std::isinf(f)) return f > 0 ? "inf" : "-inf";
+  if (f == 0.0f) return h.value & 0x8000 ? "-0" : "0";
+
+  bool negative = f < 0;
+  if (negative) f = -f;
+
+  // Get dragonbox result for float
+  char float_buf[32];
+  size_t float_len = dtos(f, float_buf);
+  float_buf[float_len] = '\0';
+
+  // Parse the dragonbox output to get mantissa and exponent
+  uint64_t mantissa = 0;
+  int exponent = 0;
+  bool in_frac = false;
+  int frac_digits = 0;
+  bool in_exp = false;
+  bool exp_neg = false;
+  int exp_val = 0;
+
+  for (size_t i = 0; i < float_len; i++) {
+    char c = float_buf[i];
+    if (c == '.') {
+      in_frac = true;
+    } else if (c == 'e' || c == 'E') {
+      in_exp = true;
+    } else if (in_exp) {
+      if (c == '-') {
+        exp_neg = true;
+      } else if (c == '+') {
+        // skip
+      } else if (c >= '0' && c <= '9') {
+        exp_val = exp_val * 10 + (c - '0');
+      }
+    } else if (c >= '0' && c <= '9') {
+      mantissa = mantissa * 10 + static_cast<uint64_t>(c - '0');
+      if (in_frac) frac_digits++;
+    }
+  }
+
+  exponent = (exp_neg ? -exp_val : exp_val) - frac_digits;
+
+  // Now try to find shortest representation that round-trips
+  // Start with 4 digits (minimum for half precision) and go up to 7
+  char result_buf[32];
+  size_t result_len = 0;
+
+  for (int precision = 4; precision <= 7; precision++) {
+    int exp_adjust = 0;
+    uint64_t rounded = round_to_digits(mantissa, precision, exp_adjust);
+    int new_exp = exponent + exp_adjust;
+
+    // Strip trailing zeros from mantissa
+    while (rounded > 0 && rounded % 10 == 0) {
+      rounded /= 10;
+      new_exp++;
+    }
+
+    // Format and parse back
+    char test_buf[32];
+    size_t test_len = format_decimal(rounded, new_exp, test_buf);
+    test_buf[test_len] = '\0';
+
+    // Parse back to float, then convert to half
+    float parsed_f = parse_decimal(rounded, new_exp);
+    value::half parsed_h = value::float_to_half_full(parsed_f);
+
+    // Check if round-trip succeeds (ignoring sign bit which we handle separately)
+    uint16_t original_bits = h.value & 0x7FFF;
+    uint16_t parsed_bits = parsed_h.value & 0x7FFF;
+
+    if (original_bits == parsed_bits) {
+      // Found shortest representation
+      if (negative) {
+        result_buf[0] = '-';
+        std::memcpy(result_buf + 1, test_buf, test_len);
+        result_len = test_len + 1;
+      } else {
+        std::memcpy(result_buf, test_buf, test_len);
+        result_len = test_len;
+      }
+      break;
+    }
+  }
+
+  // If no short representation found, use full float precision
+  if (result_len == 0) {
+    if (negative) {
+      result_buf[0] = '-';
+      std::memcpy(result_buf + 1, float_buf, float_len);
+      result_len = float_len + 1;
+    } else {
+      std::memcpy(result_buf, float_buf, float_len);
+      result_len = float_len;
+    }
+  }
+
+  return std::string(result_buf, result_len);
+}
+
+// Public API for dtos - half-precision buffer version
+size_t dtos(value::half h, char* buffer) {
+  std::string s = dtos(h);
+  std::memcpy(buffer, s.c_str(), s.size());
+  return s.size();
 }
 
 // ============================================================================

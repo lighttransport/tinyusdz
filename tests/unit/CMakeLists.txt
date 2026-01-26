@@ -24,6 +24,7 @@ set(TEST_SOURCES
 	unit-stage.cc
 	unit-tiny-container.cc
 	unit-usda-roundtrip.cc
+	unit-half-roundtrip.cc
    )
 
 if (TINYUSDZ_WITH_PXR_COMPAT_API)

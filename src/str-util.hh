@@ -439,6 +439,20 @@ size_t dtos(double v, char* buffer);
 // Forward declarations for types (actual definitions in value-types.hh)
 namespace value {
 struct half;
+}  // namespace value (forward declaration only)
+
+///
+/// Half-precision float to string conversion using direct dragonbox algorithm
+/// Produces shortest representation that uniquely identifies the half value
+/// Maximum output length: 16 characters (including null terminator)
+///
+constexpr size_t DTOS_MAX_CHARS_HALF = 16;
+
+std::string dtos(value::half v);
+size_t dtos(value::half v, char* buffer);
+
+// Continue forward declarations
+namespace value {
 struct matrix2d;
 struct matrix3d;
 struct matrix4d;
