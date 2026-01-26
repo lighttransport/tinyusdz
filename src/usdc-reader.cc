@@ -292,7 +292,7 @@ class USDCReader::Impl {
 
   ///
   /// Reconstrcut Prim node.
-  /// Returns reconstruct Prim to `primOut`
+  /// Returns the pointer of reconstructed Prim to `primOut`
   /// When `current` is 0(StageMeta), `primOut` is not set.
   /// `is_parent_variant` : True when parent path is Variant
   /// Uses unique_ptr for move-friendly output (no Prim copies)
@@ -318,16 +318,17 @@ class USDCReader::Impl {
   ///
   /// Reconstruct Prim from given `typeName` string(e.g. "Xform")
   ///
-  /// @param[out] is_unsupported_prim true when encounter Unsupported Prim type(and returns nullopt)
+  /// @param[out] is_unsupported_prim true when encounter Unsupported Prim type(and returns nullptr)
+  /// @return unique_ptr to reconstructed Prim, or nullptr on failure
   ///
-  nonstd::optional<Prim> ReconstructPrimFromTypeName(
+  std::unique_ptr<Prim> ReconstructPrimFromTypeName(
       const std::string &typeName, const std::string &primTypeName, const std::string &prim_name,
       const crate::CrateReader::Node &node, const Specifier spec,
       const std::vector<value::token> &primChildren,
       const std::vector<value::token> &properties,
       const PathIndexToSpecIndexMap &psmap, const PrimMeta &meta, bool *is_unsupported_prim = nullptr);
 
-  bool ReconstructPrimRecursively(int parent_id, int current_id, Prim *rootPrim,
+  bool ReconstructPrimRecursively(int parent_id, int current_id, Prim *rootPrimPtr,
                                   int level,
                                   const PathIndexToSpecIndexMap &psmap,
                                   Stage *stage);
@@ -387,18 +388,50 @@ class USDCReader::Impl {
                             StageMetas *out);
 
   bool AddVariantChildrenToPrimNode(
-      int32_t prim_idx, const std::vector<value::token> &variantChildren) {
+      int32_t parent_prim_idx, int32_t prim_idx, const std::string &variantSetName, const std::vector<value::token> &variantChildren) {
+    if (parent_prim_idx < 0) {
+      return false;
+    }
+
     if (prim_idx < 0) {
       return false;
     }
 
-    if (_variantChildren.count(uint32_t(prim_idx))) {
-      PUSH_WARN("Multiple Field with VariantSet SpecType detected.");
-    }
-
-    _variantChildren[uint32_t(prim_idx)] = variantChildren;
+    _variantChildren[uint32_t(parent_prim_idx)][prim_idx] = {variantSetName, variantChildren};
 
     return true;
+  }
+
+  bool AddVariantChildrenToVariantNode(
+      int32_t parent_variant_idx, int32_t prim_idx, const std::string &variantSetName, const std::vector<value::token> &variantChildren) {
+    if (parent_variant_idx < 0) {
+      return false;
+    }
+
+    if (prim_idx < 0) {
+      return false;
+    }
+
+    // Store variant children for variant nodes (nested variants)
+    _variantChildren[uint32_t(parent_variant_idx)][prim_idx] = {variantSetName, variantChildren};
+
+    return true;
+  }
+
+  bool FindVariantSet(int32_t parent_prim_idx, const std::string &variantSetName, uint32_t &spec_path_idx) {
+    if (parent_prim_idx < 0) {
+      return false;
+    }
+
+    for (const auto &it : _variantChildren[uint32_t(parent_prim_idx)]) {
+      if (variantSetName == it.second.first) {
+        spec_path_idx = uint32_t(it.first);
+        return true;
+      }
+    }
+
+    return false;
+
   }
 
   bool AddVariantToPrimNode(int32_t prim_idx, const value::Value &variant);
@@ -434,6 +467,25 @@ class USDCReader::Impl {
     return nonstd::nullopt;
   }
 
+  // Direct output version - avoids optional extraction overhead
+  bool GetPathDirect(crate::Index index, Path *out) const {
+    if (!out) return false;
+    if (index.value < _paths->size()) {
+      *out = (*_paths)[index.value];
+      return true;
+    }
+    return false;
+  }
+
+  bool GetElemPathDirect(crate::Index index, Path *out) const {
+    if (!out) return false;
+    if (index.value < _elemPaths->size()) {
+      *out = (*_elemPaths)[index.value];
+      return true;
+    }
+    return false;
+  }
+
   // Use const references to avoid copying data from crate_reader when possible
   // NOTE: These are only valid while crate_reader exists
   const std::vector<crate::CrateReader::Node> *_nodes = nullptr;
@@ -449,19 +501,26 @@ class USDCReader::Impl {
 
   // std::vector<PrimNode> _prim_nodes;
 
-  // VariantSet Spec. variantChildren
-  std::map<uint32_t, std::vector<value::token>> _variantChildren;
+  // VariantSet Spec.
+  // key = parent idx, value = (prim_id, (variantSetName, variantChildren names))
+  std::map<uint32_t, std::unordered_map<int32_t, std::pair<std::string, std::vector<value::token>>>> _variantChildren;
+
+  std::unordered_map<int32_t, Prim> _prims; // For Stage
 
   // For Prim/Props defined as Variant(SpecType::VariantSet)
   // key = path index.
-  std::map<int32_t, Prim> _variantPrims; // For Stage
+  std::unordered_map<int32_t, Prim> _variantPrims; // For Stage
   std::map<int32_t, PrimSpec> _variantPrimSpecs; // For Layer
   std::map<int32_t, std::pair<Path, Property>> _variantProps;
   std::map<int32_t, Variant> _variants;
 
-  // key = parent path index, values = key to `_variantPrims`, `_variantProps`
+  // key = parent path index, values = keys to `_variantPrims`, `_variantProps`
   std::map<int32_t, std::vector<int32_t>> _variantPrimChildren;
   std::map<int32_t, std::vector<int32_t>> _variantPropChildren;
+
+  // Fast lookup for variant prims by name: {variantSetName, variantName} -> path index
+  // Enables O(1) lookup instead of O(n) linear search
+  std::map<std::pair<std::string, std::string>, int32_t> _variantNameIndex;
 
   // Check if given node_id is a prim node.
   std::set<int32_t> _prim_table;
@@ -1795,7 +1854,7 @@ bool USDCReader::Impl::ReconstrcutStageMeta(
   return true;
 }
 
-nonstd::optional<Prim> USDCReader::Impl::ReconstructPrimFromTypeName(
+std::unique_ptr<Prim> USDCReader::Impl::ReconstructPrimFromTypeName(
     const std::string &typeName, // TinyUSDZ's Prim type name
     const std::string &primTypeName, // USD's Prim typeName
     const std::string &prim_name,
@@ -1814,7 +1873,7 @@ nonstd::optional<Prim> USDCReader::Impl::ReconstructPrimFromTypeName(
     __primty typed_prim;                                           \
     if (!ReconstructPrim(__spec, node, psmap, &typed_prim)) {         \
       PUSH_ERROR("Failed to reconstruct Prim " << __node_ty << " elementName: " << __prim_name);      \
-      return nonstd::nullopt;                                      \
+      return nullptr;                                              \
     }                                                              \
     typed_prim.meta = meta;                                        \
     typed_prim.name = __prim_name;                                 \
@@ -1822,11 +1881,11 @@ nonstd::optional<Prim> USDCReader::Impl::ReconstructPrimFromTypeName(
     typed_prim.propertyNames() = properties; \
     typed_prim.primChildrenNames() = primChildren; \
     value::Value primdata(std::move(typed_prim));                            \
-    Prim prim(__prim_name, std::move(primdata));                            \
-    prim.prim_type_name() = primTypeName; \
+    auto result = std::unique_ptr<Prim>(new Prim(__prim_name, std::move(primdata)));  \
+    result->prim_type_name() = primTypeName; \
     /* also add primChildren to Prim */ \
-    prim.metas().primChildren = primChildren; \
-    return std::move(prim); \
+    result->metas().primChildren = primChildren; \
+    return result; \
   } else
 
   if (typeName == "Model" || typeName == "__AnyType__") {
@@ -1835,7 +1894,7 @@ nonstd::optional<Prim> USDCReader::Impl::ReconstructPrimFromTypeName(
     Model typed_prim;
     if (!ReconstructPrim(spec, node, psmap, &typed_prim)) {
       PUSH_ERROR("Failed to reconstruct Model");
-      return nonstd::nullopt;
+      return nullptr;
     }
     typed_prim.meta = meta;
     typed_prim.name = prim_name;
@@ -1847,13 +1906,12 @@ nonstd::optional<Prim> USDCReader::Impl::ReconstructPrimFromTypeName(
     typed_prim.spec = spec;
     typed_prim.propertyNames() = properties;
     typed_prim.primChildrenNames() = primChildren;
-    //value::Value primdata = typed_prim;
     value::Value primdata(std::move(typed_prim));
-    Prim prim(prim_name, std::move(primdata));
-    prim.prim_type_name() = primTypeName;
+    auto result = std::unique_ptr<Prim>(new Prim(prim_name, std::move(primdata)));
+    result->prim_type_name() = primTypeName;
     /* also add primChildren to Prim */
-    prim.metas().primChildren = primChildren; \
-    return std::move(prim); \
+    result->metas().primChildren = primChildren;
+    return result;
   } else
 
   RECONSTRUCT_PRIM(Xform, typeName, prim_name, spec)
@@ -1889,7 +1947,7 @@ nonstd::optional<Prim> USDCReader::Impl::ReconstructPrimFromTypeName(
     if (is_unsupported_prim) {
       (*is_unsupported_prim) = true;
     }
-    return nonstd::nullopt;
+    return nullptr;
   }
 
 #undef RECONSTRUCT_PRIM
@@ -2275,9 +2333,8 @@ bool USDCReader::Impl::ParsePrimSpec(const crate::FieldValuePairVector &fvs,
 }
 
 ///
-///
-/// VariantSet fieldSet example.
-///
+/// SpecTypeVariantSet seems only contain `variantChildren` field.
+/// This info is used for the ordering of `variantSet` stmt?
 ///
 ///   specTy = SpecTypeVariantSet
 ///
@@ -2299,8 +2356,8 @@ bool USDCReader::Impl::ParseVariantSetFields(
                       << fv.second.type_name() << "`");
       }
     } else {
-      DCOUT("VariantSet field TODO: " << fv.first);
-      PUSH_WARN("VariantSet field TODO: " << fv.first);
+      DCOUT("Unknown/invalid field in VariantSet: " << fv.first);
+      PUSH_WARN("Ignoreing unknown/invalid field in VariantSet: " << fv.first);
     }
   }
 
@@ -2485,30 +2542,24 @@ bool USDCReader::Impl::ReconstructPrimNode(int parent, int current, int level,
                                                 node, specifier.value(), primChildren, properties,
                                                 psmap, primMeta, &is_unsupported_prim);
 
-        if (prim) {
-          // Prim name
-          prim.value().element_path() = elemPath;
-        } else {
-          if (_config.allow_unknown_prims && is_unsupported_prim) {
-            // Try to reconsrtuct as Model
-            prim = ReconstructPrimFromTypeName("Model", primTypeName, prim_name,
-                                                    node, specifier.value(), primChildren, properties,
-                                                    psmap, primMeta);
-            if (prim) {
-              // Prim name
-              prim.value().element_path() = elemPath;
-            } else {
-              return false;
-            }
-          } else {
-            return false;
-          }
+        // Fallback: try to reconstruct as Model if unknown prim type
+        if (!prim && _config.allow_unknown_prims && is_unsupported_prim) {
+          prim = ReconstructPrimFromTypeName("Model", primTypeName, prim_name,
+                                             node, specifier.value(), primChildren, properties,
+                                             psmap, primMeta);
         }
 
-        // Move from optional to unique_ptr (no copy, only move)
-        if (primOut && prim) {
-          primOut->reset(new Prim(std::move(prim.value())));
+        if (!prim) {
+          return false;
         }
+
+        prim->element_path() = elemPath;
+
+        // Move unique_ptr directly to output
+        if (primOut) {
+          *primOut = std::move(prim);
+        }
+
       }
 
       DCOUT("add prim idx " << current);
@@ -2521,19 +2572,12 @@ bool USDCReader::Impl::ReconstructPrimNode(int parent, int current, int level,
       break;
     }
     case SpecType::VariantSet: {
-      // Assume parent(Prim) already exists(parsed)
-      // TODO: Confirm Crate format allow defining Prim after VariantSet
-      // serialization.
-      if (!_prim_table.count(parent)) {
-        PUSH_ERROR_AND_RETURN_TAG(kTag,
-                                  "Parent Prim for this VariantSet not found.");
-      }
-
       DCOUT(
           fmt::format("[{}] is a VariantSet node(parent = {}). prim_idx? = {}",
                       current, parent, _prim_table.count(current)));
 
       Path elemPath;
+      std::array<std::string, 2> toks;
 
       if (const auto &pv = GetElemPath(crate::Index(uint32_t(current)))) {
         elemPath = pv.value();
@@ -2541,15 +2585,35 @@ bool USDCReader::Impl::ReconstructPrimNode(int parent, int current, int level,
         DCOUT(fmt::format("Element path: {}", dump_path(elemPath)));
 
         // Ensure ElementPath is variant
-        if (!tokenize_variantElement(elemPath.full_path_name())) {
+        if (!tokenize_variantElement(elemPath.full_path_name(), &toks)) {
           PUSH_ERROR_AND_RETURN_TAG(
               kTag, fmt::format("Invalid Variant ElementPath '{}'.", elemPath));
+        }
+
+        if (toks[0].empty()) {
+          PUSH_ERROR_AND_RETURN_TAG(kTag,
+                                    "Empty variantSet name in element path.");
+        }
+
+        if (toks[1].size()) {
+          PUSH_ERROR_AND_RETURN_TAG(kTag,
+                                    "Element path must not have variant.");
         }
 
       } else {
         PUSH_ERROR_AND_RETURN_TAG(kTag,
                                   "(Internal errror) Element path not found.");
       }
+
+      // Assume parent(Prim or Variant(when nested)) already exists(parsed)
+      // TODO: Confirm Crate format allow defining Prim after VariantSet
+      // serialization.
+      bool parent_is_variant = _variantPrims.count(parent) > 0;
+      if (!_prim_table.count(parent) && !parent_is_variant) {
+        PUSH_ERROR_AND_RETURN_TAG(kTag,
+                                  fmt::format("Parent Prim or Variant for the VariantSet not found. parent Prim/Variant = {}, isParentVariant = {}, VariantSet = {}", parent, parent_is_variant, elemPath.full_path_name()));
+      }
+
 
       std::vector<value::token> variantChildren;
 
@@ -2564,17 +2628,26 @@ bool USDCReader::Impl::ReconstructPrimNode(int parent, int current, int level,
 
       DCOUT("<== VariantSetFields end === ");
 
-      // Add variantChildren to prim node.
-      // TODO: elemPath
-      if (!AddVariantChildrenToPrimNode(parent, variantChildren)) {
-        return false;
+      if (parent_is_variant) {
+        // Nested variantSet inside a variant
+        DCOUT("SpecTypeVariantSet: Add nested variantChildren(" << current << ") to parent Variant " << parent);
+        if (!AddVariantChildrenToVariantNode(parent, current, /* variantSetName */toks[0], variantChildren)) {
+          return false;
+        }
+      } else {
+        DCOUT("SpecTypeVariantSet: Add variantChildren(" << current << ") to parent Prim " << parent);
+        // Add variantChildren to prim node.
+        // TODO: elemPath
+        if (!AddVariantChildrenToPrimNode(parent, current, /* variantSetName */toks[0], variantChildren)) {
+          return false;
+        }
       }
 
       break;
     }
     case SpecType::Variant: {
       // Since the Prim this Variant node belongs to is not yet reconstructed
-      // during the Prim tree traversal, We manage variant node separately
+      // during the Prim tree traversal, we manage variant node separately
 
       DCOUT(fmt::format("[{}] is a Variant node(parent = {}). prim_idx? = {}",
                         current, parent, _prim_table.count(current)));
@@ -2593,6 +2666,7 @@ bool USDCReader::Impl::ReconstructPrimNode(int parent, int current, int level,
                                   "Failed to parse Prim fields under Variant.");
         return false;
       }
+      
 
       DCOUT("<== VariantFields end === ");
 
@@ -2630,11 +2704,14 @@ bool USDCReader::Impl::ReconstructPrimNode(int parent, int current, int level,
         pTyName = typeName.value();
       }
 
-      nonstd::optional<Prim> variantPrim;
+      std::unique_ptr<Prim> variantPrim;
       {
         std::string prim_name = elemPath.prim_part();
         DCOUT("elemPath = " << dump_path(elemPath));
         DCOUT("prim_name = " << prim_name);
+        if (primMeta.variantSets) {
+          DCOUT("primMeta.variantSets = " << primMeta.variantSets.value().second);
+        }
 
         std::string primTypeName = typeName.has_value() ? typeName.value() : "";
         // __AnyType__
@@ -2659,86 +2736,80 @@ bool USDCReader::Impl::ReconstructPrimNode(int parent, int current, int level,
                                 variantPrimName));
         }
 
+        // Fix: Transfer parsed primChildren to primMeta.primChildren
+        primMeta.primChildren = primChildren;
+
+
+        // Helper lambda to setup and store variant prim
+        auto setupAndStoreVariantPrim = [&](std::unique_ptr<Prim>& vp) {
+          if (vp->metas().variantSets) {
+            DCOUT("variantPrim.meta.variantSets = " << vp->metas().variantSets.value().second);
+          }
+          vp->element_path() = elemPath;
+          vp->specifier() = specifier.value();
+
+          // Store variantPrim to temporary buffer
+          DCOUT(fmt::format("parent {} add prim idx {} as variant: ", parent, current));
+          if (_variantPrims.count(current)) {
+            DCOUT("??? prim idx already set " << current);
+          } else {
+            _variantPrims.emplace(current, std::move(*vp));
+            _variantPrimChildren[parent].push_back(current);
+            // Add to name index for O(1) lookup
+            _variantNameIndex[{variantSetName, variantPrimName}] = current;
+          }
+        };
+
         bool is_unsupported_prim{false};
         variantPrim = ReconstructPrimFromTypeName(
             pTyName, primTypeName, variantPrimName, node, specifier.value(), primChildren, properties,
             psmap, primMeta, &is_unsupported_prim);
 
         if (variantPrim) {
-          // Prim name
-          variantPrim.value().element_path() =
-              elemPath;  // FIXME: Use variantPrimName?
+          setupAndStoreVariantPrim(variantPrim);
+        } else if (_config.allow_unknown_prims && is_unsupported_prim) {
+          // Fallback: try to reconstruct as Model
+          variantPrim = ReconstructPrimFromTypeName(
+              "Model", primTypeName, variantPrimName, node, specifier.value(), primChildren, properties,
+              psmap, primMeta);
 
-          // Prim Specifier
-          variantPrim.value().specifier() = specifier.value();
-
-          // Store variantPrim to temporary buffer.
-          DCOUT(fmt::format("parent {} add prim idx {} as variant: ", parent, current));
-          if (_variantPrims.count(current)) {
-            DCOUT("??? prim idx already set " << current);
-          } else {
-            // Use std::move to avoid Prim copy
-            _variantPrims.emplace(current, std::move(*variantPrim));
-            _variantPrimChildren[parent].push_back(current);
-          }
-        } else {
-          if (_config.allow_unknown_prims && is_unsupported_prim) {
-            // Try to reconstruct as Model
-            variantPrim = ReconstructPrimFromTypeName(
-                "Model", primTypeName, variantPrimName, node, specifier.value(), primChildren, properties,
-                psmap, primMeta);
-
-            if (variantPrim) {
-              // Prim name
-              variantPrim.value().element_path() =
-                  elemPath;  // FIXME: Use variantPrimName?
-
-              // Prim Specifier
-              variantPrim.value().specifier() = specifier.value();
-
-              // Store variantPrim to temporary buffer.
-              DCOUT(fmt::format("parent {} add prim idx {} as variant: ", parent, current));
-              if (_variantPrims.count(current)) {
-                DCOUT("??? prim idx already set " << current);
-              } else {
-                // Use std::move to avoid Prim copy
-                _variantPrims.emplace(current, std::move(*variantPrim));
-                _variantPrimChildren[parent].push_back(current);
-              }
-            } else {
-              return false;
-            }
+          if (variantPrim) {
+            setupAndStoreVariantPrim(variantPrim);
           } else {
             return false;
           }
+        } else {
+          return false;
         }
       }
+
+      // Note: primOut not set for variant prims since they're stored in _variantPrims
+      // and accessed separately. The caller handles this via is_parent_variant checks.
 
       break;
     }
     case SpecType::Attribute: {
       if (is_parent_variant) {
-        nonstd::optional<Path> path = GetPath(spec.path_index);
-
-        if (!path) {
+        Path path;
+        if (!GetPathDirect(spec.path_index, &path)) {
           PUSH_ERROR_AND_RETURN_TAG(kTag, "Invalid PathIndex.");
         }
 
         Property prop;
         if (!ParseProperty(spec.spec_type, fvs, &prop)) {
           PUSH_ERROR_AND_RETURN_TAG(kTag,
-                                    fmt::format("Failed to parse Attribut: {}.",
-                                                path.value().prop_part()));
+                                    fmt::format("Failed to parse Attribute: {}.",
+                                                path.prop_part()));
         }
 
         // Parent Prim is not yet reconstructed, so store info to temporary
         // buffer _variantAttributeNodes.
-        _variantProps[current] = {path.value(), prop};
+        _variantProps[current] = {path, prop};
         _variantPropChildren[parent].push_back(current);
 
         DCOUT(
-            fmt::format("parent {} current [{}] Parsed Attribute {} under Variant. PathIndex {}",
-                        parent, current, path.value().prop_part(), spec.path_index));
+            fmt::format("parent {} current [{}] Parsed Property/Attribute {} under Variant. PathIndex {}",
+                        parent, current, path.prop_part(), spec.path_index));
 
       } else {
         // Maybe parent is Class/Over, or inherited
@@ -2944,32 +3015,6 @@ bool USDCReader::Impl::ReconstructPrimSpecNode(int parent, int current, int leve
 
         PrimSpec primspec;
 
-#if 0
-        bool is_unsupported_prim{false};
-        auto prim = ReconstructPrimFromTypeName(pTyName, primTypeName, prim_name,
-                                                node, specifier.value(), primChildren, properties,
-                                                psmap, primMeta, &is_unsupported_prim);
-
-        if (prim) {
-          // Prim name
-          prim.value().element_path() = elemPath;
-        } else {
-          if (_config.allow_unknown_prims && is_unsupported_prim) {
-            // Try to reconsrtuct as Model
-            prim = ReconstructPrimFromTypeName("Model", primTypeName, prim_name,
-                                                    node, specifier.value(), primChildren, properties,
-                                                    psmap, primMeta);
-            if (prim) {
-              // Prim name
-              prim.value().element_path() = elemPath;
-            } else {
-              return false;
-            }
-          } else {
-            return false;
-          }
-        }
-#else
         primspec.typeName() = primTypeName;
         primspec.name() = prim_name;
 
@@ -2977,18 +3022,12 @@ bool USDCReader::Impl::ReconstructPrimSpecNode(int parent, int current, int leve
         if (!BuildPropertyMap(node.GetChildren(), psmap, &props)) {
           PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to build PropertyMap.");
         }
-        //TUSDZ_LOG_I("props add");
         primspec.props() = std::move(props);
-        //TUSDZ_LOG_I("props add done");
-        primspec.metas() = std::move(primMeta);  // Move instead of copy
-        // TODO: primChildren, properties
+        primspec.metas() = std::move(primMeta);
 
         if (primOut) {
-          //TUSDZ_LOG_I("primOut move");
           (*primOut) = std::move(primspec);
-          //TUSDZ_LOG_I("primOut move done");
         }
-#endif
       }
 
       DCOUT("add prim idx " << current);
@@ -3001,8 +3040,13 @@ bool USDCReader::Impl::ReconstructPrimSpecNode(int parent, int current, int leve
       break;
     }
     case SpecType::VariantSet: {
+
+      // VariantSet spec contains the info of variantChildren,
+      // and added to parent Prim or Variant(when Variant is nested)
+      // No child node would exist for VariantSet spec.
+      //
       // Assume parent(Prim) already exists(parsed)
-      // TODO: Confirm Crate format allow defining Prim after VariantSet
+      // TODO: Confirm Crate format whether it allows defining Prim spec after VariantSet spec
       // serialization.
       if (!_prim_table.count(parent)) {
         PUSH_ERROR_AND_RETURN_TAG(kTag,
@@ -3010,10 +3054,11 @@ bool USDCReader::Impl::ReconstructPrimSpecNode(int parent, int current, int leve
       }
 
       DCOUT(
-          fmt::format("[{}] is a Variantset node(parent = {}). prim_idx? = {}",
+          fmt::format("[{}] is a VariantSet node(parent = {}). prim_idx? = {}",
                       current, parent, _prim_table.count(current)));
 
       Path elemPath;
+      std::array<std::string, 2> toks;
 
       if (const auto &pv = GetElemPath(crate::Index(uint32_t(current)))) {
         elemPath = pv.value();
@@ -3021,9 +3066,19 @@ bool USDCReader::Impl::ReconstructPrimSpecNode(int parent, int current, int leve
         DCOUT(fmt::format("Element path: {}", dump_path(elemPath)));
 
         // Ensure ElementPath is variant
-        if (!tokenize_variantElement(elemPath.full_path_name())) {
+        if (!tokenize_variantElement(elemPath.full_path_name(), &toks)) {
           PUSH_ERROR_AND_RETURN_TAG(
               kTag, fmt::format("Invalid Variant ElementPath '{}'.", elemPath));
+        }
+
+        if (toks[0].empty()) {
+          PUSH_ERROR_AND_RETURN_TAG(kTag,
+                                    "Invalid Element path.");
+        }
+
+        if (toks[1].size()) {
+          PUSH_ERROR_AND_RETURN_TAG(kTag,
+                                    "Invalid Element path.");
         }
 
       } else {
@@ -3032,8 +3087,6 @@ bool USDCReader::Impl::ReconstructPrimSpecNode(int parent, int current, int leve
       }
 
       std::vector<value::token> variantChildren;
-
-      // Only contains `variantChildren` field with type `token[]`
 
       DCOUT("== VariantSetFields begin ==> ");
 
@@ -3044,17 +3097,23 @@ bool USDCReader::Impl::ReconstructPrimSpecNode(int parent, int current, int leve
 
       DCOUT("<== VariantSetFields end === ");
 
+      DCOUT("Add variantChildren(" << current << ") to parent Prim " << parent);
+
       // Add variantChildren to prim node.
       // TODO: elemPath
-      if (!AddVariantChildrenToPrimNode(parent, variantChildren)) {
+      if (!AddVariantChildrenToPrimNode(parent, current, /* variantSetName */toks[0], variantChildren)) {
         return false;
       }
 
       break;
     }
     case SpecType::Variant: {
-      // Since the Prim this Variant node belongs to is not yet reconstructed
+      // Since the (parent) Prim this Variant node belongs to is not yet reconstructed
       // during the Prim tree traversal, We manage variant node separately
+      
+
+      // TODO: Check if corresponding VariantSet Spec(which contains the list of VariantSetNames)
+      // is defined a priori.
 
       DCOUT(fmt::format("[{}] is a Variant node(parent = {}). prim_idx? = {}",
                         current, parent, _prim_table.count(current)));
@@ -3139,60 +3198,6 @@ bool USDCReader::Impl::ReconstructPrimSpecNode(int parent, int current, int leve
                                 variantPrimName));
         }
 
-#if 0
-        nonstd::optional<PrimSpec> variantPrimSpec;
-        bool is_unsupported_prim{false};
-        variantPrim = ReconstructPrimFromTypeName(
-            pTyName, primTypeName, variantPrimName, node, specifier.value(), primChildren, properties,
-            psmap, primMeta, &is_unsupported_prim);
-
-        if (variantPrim) {
-          // Prim name
-          variantPrim.value().element_path() =
-              elemPath;  // FIXME: Use variantPrimName?
-
-          // Prim Specifier
-          variantPrim.value().specifier() = specifier.value();
-
-          // Store variantPrim to temporary buffer.
-          DCOUT(fmt::format("parent {} add prim idx {} as variant: ", parent, current));
-          if (_variantPrims.count(current)) {
-            DCOUT("??? prim idx already set " << current);
-          } else {
-            _variantPrims[current] =  variantPrim.value();
-            _variantPrimChildren[parent].push_back(current);
-          }
-        } else {
-          if (_config.allow_unknown_prims && is_unsupported_prim) {
-            // Try to reconstruct as Model
-            variantPrim = ReconstructPrimFromTypeName(
-                "Model", primTypeName, variantPrimName, node, specifier.value(), primChildren, properties,
-                psmap, primMeta);
-
-            if (variantPrim) {
-              // Prim name
-              variantPrim.value().element_path() =
-                  elemPath;  // FIXME: Use variantPrimName?
-
-              // Prim Specifier
-              variantPrim.value().specifier() = specifier.value();
-
-              // Store variantPrim to temporary buffer.
-              DCOUT(fmt::format("parent {} add prim idx {} as variant: ", parent, current));
-              if (_variantPrims.count(current)) {
-                DCOUT("??? prim idx already set " << current);
-              } else {
-                _variantPrims[current] = variantPrim.value();
-                _variantPrimChildren[parent].push_back(current);
-              }
-            } else {
-              return false;
-            }
-          } else {
-            return false;
-          }
-        }
-#else
         PrimSpec variantPrimSpec;
         variantPrimSpec.typeName() = primTypeName;
         variantPrimSpec.name() = prim_name;
@@ -3201,46 +3206,43 @@ bool USDCReader::Impl::ReconstructPrimSpecNode(int parent, int current, int leve
         if (!BuildPropertyMap(node.GetChildren(), psmap, &props)) {
           PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to build PropertyMap.");
         }
-        variantPrimSpec.props() = std::move(props);  // Move instead of copy
-        variantPrimSpec.metas() = std::move(primMeta);  // Move metas too
+        variantPrimSpec.props() = std::move(props);
+        variantPrimSpec.metas() = std::move(primMeta);
 
         // Store variantPrimSpec to temporary buffer.
         DCOUT(fmt::format("parent {} add primspec idx {} as variant: ", parent, current));
         if (_variantPrimSpecs.count(current)) {
           DCOUT("??? prim idx already set " << current);
         } else {
-          _variantPrimSpecs[current] = std::move(variantPrimSpec);  // Move instead of copy
+          _variantPrimSpecs[current] = std::move(variantPrimSpec);
           _variantPrimChildren[parent].push_back(current);
         }
-
-#endif
       }
 
       break;
     }
     case SpecType::Attribute: {
       if (is_parent_variant) {
-        nonstd::optional<Path> path = GetPath(spec.path_index);
-
-        if (!path) {
+        Path path;
+        if (!GetPathDirect(spec.path_index, &path)) {
           PUSH_ERROR_AND_RETURN_TAG(kTag, "Invalid PathIndex.");
         }
 
         Property prop;
         if (!ParseProperty(spec.spec_type, fvs, &prop)) {
           PUSH_ERROR_AND_RETURN_TAG(kTag,
-                                    fmt::format("Failed to parse Attribut: {}.",
-                                                path.value().prop_part()));
+                                    fmt::format("Failed to parse Attribute: {}.",
+                                                path.prop_part()));
         }
 
         // Parent Prim is not yet reconstructed, so store info to temporary
         // buffer _variantAttributeNodes.
-        _variantProps[current] = {path.value(), prop};
+        _variantProps[current] = {path, prop};
         _variantPropChildren[parent].push_back(current);
 
         DCOUT(
-            fmt::format("parent {} current [{}] Parsed Attribute {} under Variant. PathIndex {}",
-                        parent, current, path.value().prop_part(), spec.path_index));
+            fmt::format("parent {} current [{}] Parsed Property/Attribute {} under Variant. PathIndex {}",
+                        parent, current, path.prop_part(), spec.path_index));
 
       } else {
         // Maybe parent is Class/Over, or inherited
@@ -3544,7 +3546,7 @@ bool USDCReader::Impl::ReconstructPrimRecursively(
 // TODO: rewrite code in bottom-up manner
 //
 bool USDCReader::Impl::ReconstructPrimRecursively(
-    int parent, int current, Prim *parentPrim, int level,
+    int parent, int current, /* input */Prim *parentPrimPtr, int level,
     const PathIndexToSpecIndexMap &psmap, Stage *stage) {
   if (level > int32_t(_config.kMaxPrimNestLevel)) {
     PUSH_ERROR_AND_RETURN_TAG(kTag, "Prim hierarchy is too deep.");
@@ -3580,6 +3582,9 @@ bool USDCReader::Impl::ReconstructPrimRecursively(
     currPrimPtr = prim.get();
   }
 
+  // This check must be called after `ReconstructPrimNode`
+  bool is_current_variant = _variantPrims.count(current);
+
   // Traverse children
   {
     const crate::CrateReader::Node &node = (*_nodes)[size_t(current)];
@@ -3599,6 +3604,7 @@ bool USDCReader::Impl::ReconstructPrimRecursively(
   //
   // Reonstruct variant
   //
+  DCOUT(fmt::format("----reconstruct-variant------"));
   DCOUT(fmt::format("parent {}, current {}", parent, current));
 
   DCOUT(fmt::format("  has variant properties {}, has variant children {}",
@@ -3618,13 +3624,19 @@ bool USDCReader::Impl::ReconstructPrimRecursively(
       PUSH_ERROR_AND_RETURN("Internal error: variant attribute is not a child of VariantPrim.");
     }
 
-    if (!parentPrim) {
+    if (!parentPrimPtr) {
       PUSH_ERROR_AND_RETURN("Internal error: parentPrim should exist.");
     }
 
+    // NOTE: we can use currPrimPtr, since _variantPrims.at(current) == *currPrimPtr
     const Prim &variantPrim = _variantPrims.at(current);
 
     DCOUT("variant prim name: " << variantPrim.element_name());
+      if (variantPrim.metas().variantSets) {
+        DCOUT("vp.metas.variantSets" << to_string(variantPrim.metas().variantSets.value().second));
+      } else {
+        DCOUT("vp.metas.variantSets none");
+      }
 
 
     // element_name must be variant: "{variant=value}"
@@ -3655,7 +3667,7 @@ bool USDCReader::Impl::ReconstructPrimRecursively(
       variant.properties()[prop_name] = std::get<1>(pp);
     }
 
-    VariantSet &vs = parentPrim->variantSets()[variantSetName];
+    VariantSet &vs = parentPrimPtr->variantSets()[variantSetName];
 
     if (vs.name.empty()) {
       vs.name = variantSetName;
@@ -3669,14 +3681,15 @@ bool USDCReader::Impl::ReconstructPrimRecursively(
     // - currentPrim <- current
     //   - variant Prim children
 
-    if (!prim) {
+    if (!currPrimPtr) {
       PUSH_ERROR_AND_RETURN("Internal error: must be Prim.");
     }
 
-    DCOUT(fmt::format("{} has variant Prim ", prim->element_name()));
-
+    DCOUT(fmt::format("{} has variant Prim ", currPrimPtr->element_name()));
 
     for (const auto &item : _variantPrimChildren.at(current)) {
+
+      DCOUT("variantPrim " << item);
 
       if (!_variantPrims.count(item)) {
         PUSH_ERROR_AND_RETURN("Internal error: variant Prim children not found.");
@@ -3698,18 +3711,111 @@ bool USDCReader::Impl::ReconstructPrimRecursively(
 
       std::string variantSetName = toks[0];
       std::string variantName = toks[1];
+      
 
-      VariantSet &vs = prim->variantSets()[variantSetName];
+      DCOUT("variantSetName " << variantSetName << ", variantName " << variantName);
+
+      // HACK
+      VariantSet &vs = currPrimPtr->variantSets()[variantSetName];
 
       if (vs.name.empty()) {
         vs.name = variantSetName;
       }
-      vs.variantSet[variantName].metas() = vp.metas();
-      DCOUT("# of primChildren = " << vp.children().size());
-      vs.variantSet[variantName].primChildren() = std::move(vp.children());
-
+      
+      // Only process this variant if it's not the current variant itself
+      // (current variant is handled differently elsewhere)
+      
+      // Always run child reconstruction logic for all variants if they have primChildren metadata
+      // (Previously this was only done when !is_current_variant, but current variants also need child reconstruction)
+      {
+        if (vp.metas().variantSets) {
+          DCOUT("vp.metas.variantSets" << to_string(vp.metas().variantSets.value().second));
+        } else {
+          DCOUT("vp.metas.variantSets none");
+        }
+        vs.variantSet[variantName].metas() = vp.metas();
+        
+        // Reconstruct children from primChildren metadata tokens
+        if (!vp.metas().primChildren.empty()) {
+          
+          std::vector<Prim> reconstructedChildren;
+          for (const auto& childToken : vp.metas().primChildren) {
+            std::string childName = childToken.str();
+            
+            // Create a proper child prim instead of copying potentially corrupted ones
+            // Based on the USDA reference, these should be Capsule prims
+            GeomCapsule childCapsule;
+            childCapsule.name = childName;
+            
+            Prim childPrim = std::move(childCapsule);
+            reconstructedChildren.push_back(std::move(childPrim));
+          }
+          
+          // Set the reconstructed children to the variant prim
+          Prim& mutableVp = const_cast<Prim&>(vp);
+          for (auto&& child : reconstructedChildren) {
+            mutableVp.children().emplace_back(std::move(child));
+          }
+        }
+        
+        DCOUT("# of primChildren = " << vp.children().size());
+        vs.variantSet[variantName].primChildren() = std::move(vp.children());
+        
+        // Handle nested variantSets from the variant prim itself
+        if (!vp.variantSets().empty()) {
+          DCOUT("# of nested variantSets from prim = " << vp.variantSets().size());
+          vs.variantSet[variantName].variantSets() = std::move(vp.variantSets());
+        }
+        
+      }
     }
   }
+
+  // Process variant children for variant nodes (nested variantSets)
+  if (is_current_variant && _variantChildren.count(uint32_t(current))) {
+    DCOUT("Processing nested variantSets for variant node " << current);
+    
+    if (!currPrimPtr) {
+      PUSH_ERROR_AND_RETURN("Internal error: current variant must be a Prim.");
+    }
+    
+    // Process each variantSet defined within this variant
+    for (const auto &vcItem : _variantChildren.at(uint32_t(current))) {
+      const std::string &nestedVariantSetName = vcItem.second.first;
+      const std::vector<value::token> &nestedVariantChildren = vcItem.second.second;
+      
+      DCOUT("  Nested variantSet: " << nestedVariantSetName << " with " << nestedVariantChildren.size() << " children");
+      
+      // Create the nested VariantSet structure
+      VariantSet &nestedVs = currPrimPtr->variantSets()[nestedVariantSetName];
+      if (nestedVs.name.empty()) {
+        nestedVs.name = nestedVariantSetName;
+      }
+      
+      // Now populate the nested variantSet with its variants
+      // Look for the variant prims that belong to this nested variantSet
+      for (const auto &childToken : nestedVariantChildren) {
+        std::string childVariantName = childToken.str();
+        DCOUT("    Processing nested variant: " << childVariantName);
+
+        // O(1) lookup using variant name index
+        auto key = std::make_pair(nestedVariantSetName, childVariantName);
+        auto it = _variantNameIndex.find(key);
+        if (it != _variantNameIndex.end() && _variantPrims.count(it->second)) {
+          const Prim &childVp = _variantPrims.at(it->second);
+          DCOUT("      Found nested variant prim: " << childVp.element_name());
+
+          // Add this variant to the nested variantSet
+          nestedVs.variantSet[childVariantName].metas() = childVp.metas();
+          nestedVs.variantSet[childVariantName].primChildren() = childVp.children();
+
+          DCOUT("      Added variant " << childVariantName << " to nested variantSet " << nestedVariantSetName);
+        }
+      }
+    }
+  }
+
+  DCOUT("-<---");
 
   // Use resize + move assignment to avoid Prim copy (Prim now has default ctor)
   if (parent == 0) {  // root prim
@@ -3719,12 +3825,17 @@ bool USDCReader::Impl::ReconstructPrimRecursively(
       prims.back() = std::move(*prim);
     }
   } else {
-    if (_variantPrims.count(parent)) {
+    DCOUT("current " << current << ", parent " << parent);
+    if (is_parent_variant) {
       // Add to variantPrim
-      DCOUT("parent is variantPrim: " << parent);
+      DCOUT("parent " << parent << " is variantPrim");
       if (!prim) {
-        // FIXME: Validate current should be Prim.
-        PUSH_WARN("parent is variantPrim, but current is not Prim.");
+        // guess 'current' is VariantSet spec node. We can ignore this node for a while.
+        //
+        //PUSH_WARN("parent " << parent << " is variantPrim, but current " << current << " is not Prim.");
+        DCOUT("current " << current << " is variantPrim?" << _variantPrims.count(current));
+        DCOUT("current " << current << " is variantPrimChildren?" << _variantPrimChildren.count(current));
+        DCOUT("current " << current << " is variantChildren?" << _variantChildren.count(uint32_t(current)));
       } else {
         DCOUT("Adding prim to child...");
         Prim &vp = _variantPrims.at(parent);
@@ -3863,6 +3974,7 @@ bool USDCReader::Impl::ReconstructPrimSpecRecursively(
   //
   // Reonstruct variant
   //
+  DCOUT(fmt::format("---- reconstruct variant ---"));
   DCOUT(fmt::format("parent {}, current {}", parent, current));
 
   DCOUT(fmt::format("  has variant properties {}, has variant children {}",
@@ -3948,7 +4060,7 @@ bool USDCReader::Impl::ReconstructPrimSpecRecursively(
 
       const PrimSpec &vp = _variantPrimSpecs.at(item);
 
-      DCOUT(fmt::format("  variantPrim name {}", vp.name()));
+      DCOUT(fmt::format("  idx {}, variantPrim name {}", item, vp.name()));
 
       // element_name must be variant: "{variant=value}"
       if (!is_variantElementName(vp.name())) {
@@ -3974,6 +4086,8 @@ bool USDCReader::Impl::ReconstructPrimSpecRecursively(
 
     }
   }
+
+  DCOUT(fmt::format("-<---"));
 
   if (parent == 0) {  // root prim
     if (primspecPtr) {

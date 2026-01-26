@@ -1,0 +1,80 @@
+#usda 1.0
+(
+    doc = "Triple nested variantSet test - 3 levels deep"
+)
+
+def Xform "Asset" (
+    variantSets = ["lod"]
+)
+{
+    variantSet "lod" = {
+        "high" {
+            variantSet "material" = {
+                "metal" {
+                    variantSet "finish" = {
+                        "polished" {
+                            def Mesh "HighPolyMetalPolished"
+                            {
+                                int[] faceVertexCounts = [4, 4, 4, 4, 4, 4]
+                                int[] faceVertexIndices = [0, 1, 3, 2, 2, 3, 5, 4, 4, 5, 7, 6, 6, 7, 1, 0, 1, 7, 5, 3, 6, 0, 2, 4]
+                                point3f[] points = [(-0.5, -0.5, 0.5), (0.5, -0.5, 0.5), (-0.5, 0.5, 0.5), (0.5, 0.5, 0.5), (-0.5, 0.5, -0.5), (0.5, 0.5, -0.5), (-0.5, -0.5, -0.5), (0.5, -0.5, -0.5)]
+                                float metallic = 1.0
+                                float roughness = 0.1
+                            }
+                        }
+                        "brushed" {
+                            def Mesh "HighPolyMetalBrushed"
+                            {
+                                int[] faceVertexCounts = [4, 4, 4, 4, 4, 4]
+                                int[] faceVertexIndices = [0, 1, 3, 2, 2, 3, 5, 4, 4, 5, 7, 6, 6, 7, 1, 0, 1, 7, 5, 3, 6, 0, 2, 4]
+                                point3f[] points = [(-0.5, -0.5, 0.5), (0.5, -0.5, 0.5), (-0.5, 0.5, 0.5), (0.5, 0.5, 0.5), (-0.5, 0.5, -0.5), (0.5, 0.5, -0.5), (-0.5, -0.5, -0.5), (0.5, -0.5, -0.5)]
+                                float metallic = 1.0
+                                float roughness = 0.4
+                            }
+                        }
+                    }
+                }
+                "plastic" {
+                    variantSet "finish" = {
+                        "glossy" {
+                            def Mesh "HighPolyPlasticGlossy"
+                            {
+                                int[] faceVertexCounts = [4, 4, 4, 4, 4, 4]
+                                int[] faceVertexIndices = [0, 1, 3, 2, 2, 3, 5, 4, 4, 5, 7, 6, 6, 7, 1, 0, 1, 7, 5, 3, 6, 0, 2, 4]
+                                point3f[] points = [(-0.5, -0.5, 0.5), (0.5, -0.5, 0.5), (-0.5, 0.5, 0.5), (0.5, 0.5, 0.5), (-0.5, 0.5, -0.5), (0.5, 0.5, -0.5), (-0.5, -0.5, -0.5), (0.5, -0.5, -0.5)]
+                                float metallic = 0.0
+                                float roughness = 0.2
+                            }
+                        }
+                        "matte" {
+                            def Mesh "HighPolyPlasticMatte"
+                            {
+                                int[] faceVertexCounts = [4, 4, 4, 4, 4, 4]
+                                int[] faceVertexIndices = [0, 1, 3, 2, 2, 3, 5, 4, 4, 5, 7, 6, 6, 7, 1, 0, 1, 7, 5, 3, 6, 0, 2, 4]
+                                point3f[] points = [(-0.5, -0.5, 0.5), (0.5, -0.5, 0.5), (-0.5, 0.5, 0.5), (0.5, 0.5, 0.5), (-0.5, 0.5, -0.5), (0.5, 0.5, -0.5), (-0.5, -0.5, -0.5), (0.5, -0.5, -0.5)]
+                                float metallic = 0.0
+                                float roughness = 0.8
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        "low" {
+            variantSet "material" = {
+                "metal" {
+                    variantSet "finish" = {
+                        "polished" {
+                            def Sphere "LowPolySphere"
+                            {
+                                double radius = 1.0
+                                float metallic = 1.0
+                                float roughness = 0.1
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

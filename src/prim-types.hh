@@ -3637,6 +3637,7 @@ class MaterialBinding;
 struct Model;
 class Prim;
 class PrimSpec;
+struct VariantSet;
 
 // TODO: deprecate this and use PrimSpec for variantSet statement.
 // Variant item in VariantSet.
@@ -3660,11 +3661,15 @@ struct Variant {
   const std::vector<Prim> &primChildren() const { return _primChildren; }
   std::vector<Prim> &primChildren() { return _primChildren; }
 
+  // For nested variantSet
+  const std::map<std::string, VariantSet> &variantSets() const { return _variantSets; }
+  std::map<std::string, VariantSet> &variantSets() { return _variantSets; }
+
  private:
-  // std::vector<int64_t> primIndices;
+  std::map<std::string, VariantSet> _variantSets;
+
   std::map<std::string, Property> _props;
 
-  // std::string _name; // variant name
   PrimMeta _metas;
 
   // We represent Prim children as `Prim` for a while.

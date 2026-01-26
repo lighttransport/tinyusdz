@@ -1,0 +1,178 @@
+#usda 1.0
+(
+    doc = "Asymmetric nested variantSet - different depths in different branches"
+)
+
+def Xform "Tree" (
+    variantSets = ["season"]
+)
+{
+    variantSet "season" = {
+        "spring" {
+            variantSet "bloom" = {
+                "early" {
+                    def Xform "SpringTreeEarly"
+                    {
+                        def Cylinder "Trunk"
+                        {
+                            double radius = 0.5
+                            double height = 5.0
+                        }
+
+                        def Sphere "Leaves"
+                        {
+                            double radius = 2.0
+                            color3f color = (0.5, 1.0, 0.5)
+                        }
+                    }
+                }
+                "full" {
+                    variantSet "health" = {
+                        "healthy" {
+                            def Xform "SpringTreeFullHealthy"
+                            {
+                                def Cylinder "Trunk"
+                                {
+                                    double radius = 0.6
+                                    double height = 6.0
+                                }
+
+                                def Sphere "Leaves"
+                                {
+                                    double radius = 3.0
+                                    color3f color = (0.2, 1.0, 0.2)
+                                }
+
+                                def Sphere "Flowers"
+                                {
+                                    double radius = 3.2
+                                    color3f color = (1.0, 0.7, 0.8)
+                                }
+                            }
+                        }
+                        "diseased" {
+                            def Xform "SpringTreeFullDiseased"
+                            {
+                                def Cylinder "Trunk"
+                                {
+                                    double radius = 0.5
+                                    double height = 5.5
+                                }
+
+                                def Sphere "Leaves"
+                                {
+                                    double radius = 2.5
+                                    color3f color = (0.6, 0.8, 0.4)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        "summer" {
+            def Xform "SummerTree"
+            {
+                def Cylinder "Trunk"
+                {
+                    double radius = 0.6
+                    double height = 6.0
+                }
+
+                def Sphere "Leaves"
+                {
+                    double radius = 3.5
+                    color3f color = (0.1, 0.8, 0.1)
+                }
+            }
+        }
+        "autumn" {
+            variantSet "leafColor" = {
+                "yellow" {
+                    def Xform "AutumnTreeYellow"
+                    {
+                        def Cylinder "Trunk"
+                        {
+                            double radius = 0.6
+                            double height = 6.0
+                        }
+
+                        def Sphere "Leaves"
+                        {
+                            double radius = 3.0
+                            color3f color = (1.0, 1.0, 0.2)
+                        }
+                    }
+                }
+                "orange" {
+                    def Xform "AutumnTreeOrange"
+                    {
+                        def Cylinder "Trunk"
+                        {
+                            double radius = 0.6
+                            double height = 6.0
+                        }
+
+                        def Sphere "Leaves"
+                        {
+                            double radius = 3.0
+                            color3f color = (1.0, 0.5, 0.0)
+                        }
+                    }
+                }
+                "red" {
+                    variantSet "intensity" = {
+                        "light" {
+                            def Xform "AutumnTreeRedLight"
+                            {
+                                def Cylinder "Trunk"
+                                {
+                                    double radius = 0.6
+                                    double height = 6.0
+                                }
+
+                                def Sphere "Leaves"
+                                {
+                                    double radius = 2.8
+                                    color3f color = (1.0, 0.3, 0.3)
+                                }
+                            }
+                        }
+                        "dark" {
+                            def Xform "AutumnTreeRedDark"
+                            {
+                                def Cylinder "Trunk"
+                                {
+                                    double radius = 0.6
+                                    double height = 6.0
+                                }
+
+                                def Sphere "Leaves"
+                                {
+                                    double radius = 2.5
+                                    color3f color = (0.8, 0.1, 0.1)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        "winter" {
+            def Xform "WinterTree"
+            {
+                def Cylinder "Trunk"
+                {
+                    double radius = 0.5
+                    double height = 6.0
+                }
+
+                def Cylinder "Branches"
+                {
+                    double radius = 0.1
+                    double height = 2.0
+                }
+            }
+        }
+    }
+}

@@ -19,6 +19,7 @@
 #include "crate-dump.hh"
 
 #include "tydra/scene-access.hh"
+#include "variant-format.hh"
 
 struct CompositionFeatures {
   bool subLayers{true};
@@ -211,6 +212,7 @@ int main(int argc, char **argv) {
   bool has_relative{false};
   bool has_extract_variants{false};
   bool load_only{false};
+  std::string variant_format = "yaml";  // Default format: yaml
   bool json_output{false};
   bool memstat{false};
   bool show_progress{false};
@@ -252,6 +254,19 @@ int main(int argc, char **argv) {
       output_filepath = argv[i];
     } else if (arg.compare("--extract-variants") == 0) {
       has_extract_variants = true;
+    } else if (tinyusdz::startsWith(arg, "--variant-format=")) {
+      std::string fmt = tinyusdz::removePrefix(arg, "--variant-format=");
+      if (fmt.empty()) {
+        std::cerr << "No format specified to --variant-format.\n";
+        exit(-1);
+      }
+      std::string fmt_lower = str_tolower(fmt);
+      if (fmt_lower == "yaml" || fmt_lower == "json") {
+        variant_format = fmt_lower;
+      } else {
+        std::cerr << "Invalid variant format: " << fmt << ". Must be 'yaml' or 'json'.\n";
+        exit(-1);
+      }
     } else if (arg.compare("--memstat") == 0) {
       memstat = true;
     } else if (arg.compare("--progress") == 0) {
@@ -674,11 +689,17 @@ int main(int argc, char **argv) {
     }
 
     if (has_extract_variants) {
+      std::cout << "\n=== VARIANT EXTRACTION (" << variant_format << ") ===\n";
+
       tinyusdz::Dictionary dict;
       if (!tinyusdz::ExtractVariants(src_layer, &dict, &err)) {
         std::cerr << "Failed to extract variants info: " << err;
       } else {
-        std::cout << "== Variants info ==\n" << tinyusdz::to_string(dict) << "\n";
+        if (variant_format == "json") {
+          std::cout << variant_format::dictionary_to_json(dict) << "\n";
+        } else {
+          std::cout << variant_format::dictionary_to_yaml(dict) << "\n";
+        }
       }
 
     }
@@ -804,11 +825,17 @@ int main(int argc, char **argv) {
     }
 
     if (has_extract_variants) {
+      std::cout << "\n=== VARIANT EXTRACTION (" << variant_format << ") ===\n";
+
       tinyusdz::Dictionary dict;
       if (!tinyusdz::ExtractVariants(stage, &dict, &err)) {
         std::cerr << "Failed to extract variants info: " << err;
       } else {
-        std::cout << "== Variants info ==\n" << tinyusdz::to_string(dict) << "\n";
+        if (variant_format == "json") {
+          std::cout << variant_format::dictionary_to_json(dict) << "\n";
+        } else {
+          std::cout << variant_format::dictionary_to_yaml(dict) << "\n";
+        }
       }
 
     }
