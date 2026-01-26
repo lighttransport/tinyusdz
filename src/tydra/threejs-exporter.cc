@@ -12,6 +12,7 @@
 #include <sstream>
 #include <iomanip>
 #include <cmath>
+#include "str-util.hh"  // For dragonbox-based dtos()
 
 namespace tinyusdz {
 namespace tydra {
@@ -636,7 +637,7 @@ bool ThreeJSMaterialExporter::ExportMaterialX(const RenderMaterial& material,
     auto export_float = [&ss](const std::string& name, const ShaderParam<float>& param) {
       if (!param.is_texture()) {
         ss << "    <input name=\"" << name << "\" type=\"float\" value=\""
-           << param.value << "\" />\n";
+           << dtos(param.value) << "\" />\n";
       } else {
         ss << "    <input name=\"" << name << "\" type=\"float\" nodename=\""
            << name << "_texture\" />\n";
@@ -647,9 +648,9 @@ bool ThreeJSMaterialExporter::ExportMaterialX(const RenderMaterial& material,
     auto export_color3 = [&ss](const std::string& name, const ShaderParam<vec3>& param) {
       if (!param.is_texture()) {
         ss << "    <input name=\"" << name << "\" type=\"color3\" value=\""
-           << param.value[0] << ", "
-           << param.value[1] << ", "
-           << param.value[2] << "\" />\n";
+           << dtos(param.value[0]) << ", "
+           << dtos(param.value[1]) << ", "
+           << dtos(param.value[2]) << "\" />\n";
       } else {
         ss << "    <input name=\"" << name << "\" type=\"color3\" nodename=\""
            << name << "_texture\" />\n";
@@ -660,9 +661,9 @@ bool ThreeJSMaterialExporter::ExportMaterialX(const RenderMaterial& material,
     auto export_vector3 = [&ss](const std::string& name, const ShaderParam<vec3>& param) {
       if (!param.is_texture()) {
         ss << "    <input name=\"" << name << "\" type=\"vector3\" value=\""
-           << param.value[0] << ", "
-           << param.value[1] << ", "
-           << param.value[2] << "\" />\n";
+           << dtos(param.value[0]) << ", "
+           << dtos(param.value[1]) << ", "
+           << dtos(param.value[2]) << "\" />\n";
       } else {
         ss << "    <input name=\"" << name << "\" type=\"vector3\" nodename=\""
            << name << "_texture\" />\n";
@@ -806,33 +807,33 @@ bool ThreeJSMaterialExporter::ExportMaterialX(const RenderMaterial& material,
 
     // Map UsdPreviewSurface to standard_surface parameters
     ss << "    <input name=\"base_color\" type=\"color3\" value=\""
-       << shader.diffuseColor.value[0] << ", "
-       << shader.diffuseColor.value[1] << ", "
-       << shader.diffuseColor.value[2] << "\" />\n";
+       << dtos(shader.diffuseColor.value[0]) << ", "
+       << dtos(shader.diffuseColor.value[1]) << ", "
+       << dtos(shader.diffuseColor.value[2]) << "\" />\n";
 
     ss << "    <input name=\"metalness\" type=\"float\" value=\""
-       << shader.metallic.value << "\" />\n";
+       << dtos(shader.metallic.value) << "\" />\n";
 
     ss << "    <input name=\"specular_roughness\" type=\"float\" value=\""
-       << shader.roughness.value << "\" />\n";
+       << dtos(shader.roughness.value) << "\" />\n";
 
     ss << "    <input name=\"emission_color\" type=\"color3\" value=\""
-       << shader.emissiveColor.value[0] << ", "
-       << shader.emissiveColor.value[1] << ", "
-       << shader.emissiveColor.value[2] << "\" />\n";
+       << dtos(shader.emissiveColor.value[0]) << ", "
+       << dtos(shader.emissiveColor.value[1]) << ", "
+       << dtos(shader.emissiveColor.value[2]) << "\" />\n";
 
     ss << "    <input name=\"opacity\" type=\"float\" value=\""
-       << shader.opacity.value << "\" />\n";
+       << dtos(shader.opacity.value) << "\" />\n";
 
     if (shader.clearcoat.value > 0.0f) {
       ss << "    <input name=\"coat\" type=\"float\" value=\""
-         << shader.clearcoat.value << "\" />\n";
+         << dtos(shader.clearcoat.value) << "\" />\n";
       ss << "    <input name=\"coat_roughness\" type=\"float\" value=\""
-         << shader.clearcoatRoughness.value << "\" />\n";
+         << dtos(shader.clearcoatRoughness.value) << "\" />\n";
     }
 
     ss << "    <input name=\"specular_IOR\" type=\"float\" value=\""
-       << shader.ior.value << "\" />\n";
+       << dtos(shader.ior.value) << "\" />\n";
 
     ss << "  </standard_surface>\n\n";
 

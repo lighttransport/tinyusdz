@@ -18,6 +18,7 @@
 #include "usdMtlx.hh"
 #include "value-pprint.hh"
 #include "timesamples-pprint.hh"
+#include "stream-writer.hh"
 //
 #include "common-macros.inc"
 
@@ -29,28 +30,13 @@
 #include "external/jeaiii_to_text.h"
 #endif
 
-// dtoa_milo does not work well for float types
-// (e.g. it prints float 0.01 as 0.009999999997),
-// so use floaxie for float types
-// TODO: Use floaxie also for double?
-#include "external/dtoa_milo.h"
+// NOTE: Using dragonbox-based dtos() from str-util.hh for float-to-string
+// conversion - it produces shortest representation for 100% of values
 
-#ifdef __clang__
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Weverything"
-#endif
-
-// #include "external/floaxie/floaxie/ftoa.h"
-
-#ifdef __clang__
-#pragma clang diagnostic pop
-#endif
 
 // TODO:
 // - [ ] Print properties based on lexcographically(USDA)
 // - [ ] Refactor variantSet stmt print.
-// - [ ] Implement our own dtos
-// stringify.
 
 namespace tinyusdz {
 
@@ -62,23 +48,6 @@ void itoa(int32_t n, char *b) { *jeaiii::to_text_from_integer(b, n) = '\0'; }
 void itoa(uint64_t n, char *b) { *jeaiii::to_text_from_integer(b, n) = '\0'; }
 void itoa(int64_t n, char *b) { *jeaiii::to_text_from_integer(b, n) = '\0'; }
 #endif
-
-#if 0
-inline std::string dtos(const float v) {
-
-  char buf[floaxie::max_buffer_size<float>()];
-  size_t n = floaxie::ftoa(v, buf);
-
-  return std::string(buf, buf + n);
-}
-#endif
-
-inline std::string dtos(const double v) {
-  char buf[384];
-  *dtoa_milo(v, buf) = '\0';
-
-  return std::string(buf);
-}
 
 // Path quote
 std::string pquote(const Path &p) {
@@ -146,7 +115,10 @@ std::ostream &operator<<(std::ostream &ofs, const tinyusdz::LayerOffset &v) {
 }
 
 std::ostream &operator<<(std::ostream &ofs, const tinyusdz::Reference &v) {
-  ofs << v.asset_path;
+  // For internal references (no asset path, just prim path), don't output "@@"
+  if (!v.asset_path.GetAssetPath().empty()) {
+    ofs << v.asset_path;
+  }
   if (v.prim_path.is_valid()) {
     ofs << v.prim_path;
   }
@@ -163,7 +135,10 @@ std::ostream &operator<<(std::ostream &ofs, const tinyusdz::Payload &v) {
   if (v.is_none()) {
     ofs << "None";
   } else {
-    ofs << v.asset_path;
+    // For internal payloads (no asset path, just prim path), don't output "@@"
+    if (!v.asset_path.GetAssetPath().empty()) {
+      ofs << v.asset_path;
+    }
     if (v.prim_path.is_valid()) {
       ofs << v.prim_path;
     }
@@ -423,12 +398,13 @@ std::string print_animatable_token(const Animatable<T> &v,
 
 namespace {
 
-std::string print_references(const prim::ReferenceList &references,
-                             const uint32_t indent) {
+// Print a single reference listop (e.g., "prepend references = ...")
+std::string print_reference_listop(const prim::ReferenceListOp &ref_op,
+                                   const uint32_t indent) {
   std::stringstream ss;
 
-  auto listEditQual = std::get<0>(references);
-  auto vars = std::get<1>(references);
+  auto listEditQual = std::get<0>(ref_op);
+  auto vars = std::get<1>(ref_op);
 
   ss << pprint::Indent(indent);
 
@@ -452,6 +428,16 @@ std::string print_references(const prim::ReferenceList &references,
   return ss.str();
 }
 
+// Print all reference listops (supports multiple listops per prim)
+std::string print_references(const prim::ReferenceList &references,
+                             const uint32_t indent) {
+  std::stringstream ss;
+  for (const auto &ref_op : references) {
+    ss << print_reference_listop(ref_op, indent);
+  }
+  return ss.str();
+}
+
 std::string print_rel_only(const Relationship &rel, const std::string &name,
                            uint32_t indent) {
   std::stringstream ss;
@@ -463,7 +449,12 @@ std::string print_rel_only(const Relationship &rel, const std::string &name,
   } else if (rel.is_path()) {
     ss << " = " << rel.targetPath;
   } else if (rel.is_pathvector()) {
-    ss << " = " << rel.targetPathVector;
+    // Single-element path vector: print as scalar path without brackets
+    if (rel.targetPathVector.size() == 1) {
+      ss << " = " << rel.targetPathVector[0];
+    } else {
+      ss << " = " << rel.targetPathVector;
+    }
   } else if (rel.is_blocked()) {
     ss << " = None";
   } else {
@@ -509,12 +500,13 @@ std::string print_relationship(const Relationship &rel,
 
 }  // namespace
 
-std::string print_payload(const prim::PayloadList &payload,
-                          const uint32_t indent) {
+// Print a single payload listop (e.g., "prepend payload = ...")
+static std::string print_payload_listop(const prim::PayloadListOp &payload_op,
+                                        const uint32_t indent) {
   std::stringstream ss;
 
-  auto listEditQual = std::get<0>(payload);
-  auto vars = std::get<1>(payload);
+  auto listEditQual = std::get<0>(payload_op);
+  auto vars = std::get<1>(payload_op);
 
   ss << pprint::Indent(indent);
 
@@ -534,6 +526,16 @@ std::string print_payload(const prim::PayloadList &payload,
   }
   ss << "\n";
 
+  return ss.str();
+}
+
+// Print all payload listops (supports multiple listops per prim)
+std::string print_payload(const prim::PayloadList &payload,
+                          const uint32_t indent) {
+  std::stringstream ss;
+  for (const auto &payload_op : payload) {
+    ss << print_payload_listop(payload_op, indent);
+  }
   return ss.str();
 }
 
@@ -580,39 +582,45 @@ std::string print_prim_metas(const PrimMeta &meta, const uint32_t indent) {
   }
 
   if (meta.inherits) {
-    ss << pprint::Indent(indent);
-    auto listEditQual = std::get<0>(meta.inherits.value());
-    auto var = std::get<1>(meta.inherits.value());
+    // Print all inherits listops
+    for (const auto &inherit_op : meta.inherits.value()) {
+      ss << pprint::Indent(indent);
+      auto listEditQual = std::get<0>(inherit_op);
+      auto var = std::get<1>(inherit_op);
 
-    if (listEditQual != ListEditQual::ResetToExplicit) {
-      ss << to_string(listEditQual) << " ";
-    }
+      if (listEditQual != ListEditQual::ResetToExplicit) {
+        ss << to_string(listEditQual) << " ";
+      }
 
-    if (var.size() == 1) {
-      // print as scalar
-      ss << "inherits = " << var[0];
-    } else {
-      ss << "inherits = " << var;
+      if (var.size() == 1) {
+        // print as scalar
+        ss << "inherits = " << var[0];
+      } else {
+        ss << "inherits = " << var;
+      }
+      ss << "\n";
     }
-    ss << "\n";
   }
 
   if (meta.specializes) {
-    ss << pprint::Indent(indent);
-    auto listEditQual = std::get<0>(meta.specializes.value());
-    auto var = std::get<1>(meta.specializes.value());
+    // Print all specializes listops
+    for (const auto &specialize_op : meta.specializes.value()) {
+      ss << pprint::Indent(indent);
+      auto listEditQual = std::get<0>(specialize_op);
+      auto var = std::get<1>(specialize_op);
 
-    if (listEditQual != ListEditQual::ResetToExplicit) {
-      ss << to_string(listEditQual) << " ";
-    }
+      if (listEditQual != ListEditQual::ResetToExplicit) {
+        ss << to_string(listEditQual) << " ";
+      }
 
-    if (var.size() == 1) {
-      // print as scalar
-      ss << "specializes = " << var[0];
-    } else {
-      ss << "specializes = " << var;
+      if (var.size() == 1) {
+        // print as scalar
+        ss << "specializes = " << var[0];
+      } else {
+        ss << "specializes = " << var;
+      }
+      ss << "\n";
     }
-    ss << "\n";
   }
 
   if (meta.references) {
@@ -633,37 +641,65 @@ std::string print_prim_metas(const PrimMeta &meta, const uint32_t indent) {
   }
 
   if (meta.variantSets) {
-    ss << pprint::Indent(indent);
-    auto listEditQual = std::get<0>(meta.variantSets.value());
-    const std::vector<std::string> &vs =
-        std::get<1>(meta.variantSets.value());  // string[]
+    // Print all variantSets listops
+    for (const auto &variantSets_op : meta.variantSets.value()) {
+      ss << pprint::Indent(indent);
+      auto listEditQual = std::get<0>(variantSets_op);
+      const std::vector<std::string> &vs = std::get<1>(variantSets_op);  // string[]
 
-    if (listEditQual != ListEditQual::ResetToExplicit) {
-      ss << to_string(listEditQual) << " ";
+      if (listEditQual != ListEditQual::ResetToExplicit) {
+        ss << to_string(listEditQual) << " ";
+      }
+
+      ss << "variantSets = ";
+
+      if (vs.empty()) {
+        ss << "None";
+      } else if (vs.size() == 1) {
+        // Single element: print as scalar (without brackets)
+        ss << quote(vs[0]);
+      } else {
+        ss << to_string(vs);
+      }
+
+      ss << "\n";
     }
-
-    ss << "variantSets = ";
-
-    if (vs.empty()) {
-      ss << "None";
-    } else {
-      ss << to_string(vs);
-    }
-
-    ss << "\n";
   }
 
   if (meta.has_apiSchemas()) {
     auto schemas = meta.get_apiSchemas();
 
-    if (schemas.names.size()) {
+    // Check if there are any schemas (known or unknown) to print
+    if (schemas.names.size() || schemas.unknownSchemas.size()) {
       ss << pprint::Indent(indent) << to_string(schemas.listOpQual)
          << " apiSchemas = [";
 
-      for (size_t i = 0; i < schemas.names.size(); i++) {
-        if (i != 0) {
+      bool first = true;
+
+      // Print unknown schemas first (they typically appear first in USD files)
+      for (size_t i = 0; i < schemas.unknownSchemas.size(); i++) {
+        if (!first) {
           ss << ", ";
         }
+        first = false;
+
+        auto schemaName = std::get<0>(schemas.unknownSchemas[i]);
+        ss << "\"" << schemaName;
+
+        auto instanceName = std::get<1>(schemas.unknownSchemas[i]);
+        if (!instanceName.empty()) {
+          ss << ":" << instanceName;
+        }
+
+        ss << "\"";
+      }
+
+      // Print known schemas
+      for (size_t i = 0; i < schemas.names.size(); i++) {
+        if (!first) {
+          ss << ", ";
+        }
+        first = false;
 
         auto name = std::get<0>(schemas.names[i]);
         ss << "\"" << to_string(name);
@@ -681,8 +717,8 @@ std::string print_prim_metas(const PrimMeta &meta, const uint32_t indent) {
   }
 
   if (meta.has_doc()) {
-    ss << pprint::Indent(indent) << "doc = " << to_string(meta.get_doc())
-       << "\n";
+    ss << pprint::Indent(indent) << "doc = "
+       << buildEscapedAndQuotedStringForUSDA(meta.get_doc().value) << "\n";
   }
 
   if (meta.has_comment()) {
@@ -691,7 +727,7 @@ std::string print_prim_metas(const PrimMeta &meta, const uint32_t indent) {
     if (meta.get_comment().has_comment_prefix) {
       ss << "comment = ";
     }
-    ss << to_string(meta.get_comment()) << "\n";
+    ss << buildEscapedAndQuotedStringForUSDA(meta.get_comment().value) << "\n";
   }
 
   if (meta.has_customData()) {
@@ -701,11 +737,15 @@ std::string print_prim_metas(const PrimMeta &meta, const uint32_t indent) {
   for (const auto &item : meta.unregisteredMetas) {
     // Quote string values, but keep non-string values as-is
     std::string value_str = item.second;
-    // Check if the value looks like a string (unquoted) by checking if it needs quoting
-    // String values that are not already quoted should be quoted
-    if (!value_str.empty() && value_str.front() != '"' && value_str.front() != '\'' &&
-        value_str.front() != '[' && !std::isdigit(value_str.front()) &&
-        value_str != "None" && value_str.find("(") == std::string::npos) {
+    // Check if the value looks like a non-string value
+    // Array values start with '[', numbers start with digit or '-'
+    bool is_array = !value_str.empty() && value_str.front() == '[';
+    bool is_number = !value_str.empty() && (std::isdigit(value_str.front()) || value_str.front() == '-');
+    bool is_none = (value_str == "None");
+    bool is_already_quoted = !value_str.empty() && (value_str.front() == '"' || value_str.front() == '\'');
+
+    // Quote string values (anything that isn't an array, number, None, or already quoted)
+    if (!is_array && !is_number && !is_none && !is_already_quoted) {
       value_str = quote(value_str);
     }
     ss << pprint::Indent(indent) << item.first << " = " << value_str << "\n";
@@ -853,14 +893,12 @@ std::string print_typed_attr(const TypedAttribute<Animatable<T>> &attr,
     // float a = 1.5 METADATA
     //
     // Also emit this line if the attribute contains metadata
-    // Do not emit when Attribute is connection only or timesamples only.
-    // Note: has_default can be true even when has_timesamples is true if _has_value
-    // was set (even without an actual default). Use has_timesamples to check if
-    // timeSamples exist, not is_timesamples (which returns false when has_default is true).
+    // Do not emit when Attribute is connection only or timesamples only (no default).
+    // USD allows both default value AND timeSamples - default is used when no sample exists.
     bool should_emit_declaration =
         attr.metas().authored() ||
         attr.is_blocked() ||
-        (has_default && !has_timesamples) ||  // Only emit default if no timeSamples
+        has_default ||  // Emit default even if timeSamples exist (USD allows both)
         is_value_empty ||
         ((!is_connection) && (!has_timesamples));
     if (should_emit_declaration) {
@@ -1153,18 +1191,28 @@ std::string print_typed_attr(
     // Emit declaration line if:
     // - Has metadata to emit
     // - Has explicit default value (in the Animatable, not just fallback)
-    // - Is empty declaration (e.g., "float myval;")
+    // - Is empty declaration without connection (e.g., "float myval;")
     // - Not a connection-only and not timeSamples-only attribute
     // Note: Use has_timesamples instead of is_timesamples because is_timesamples
     // returns false when there's a default/fallback value (even if timeSamples exist)
-    if (attr.metas().authored() || has_default || is_value_empty || ((!is_connection) && (!has_timesamples))) {
-      if (has_default) {
+    // Note: Check is_value_empty first, since get_value() returns the fallback for empty attrs,
+    // and the fallback's has_value() may return true even though no value was authored
+    // Note: For connection-only attributes (is_value_empty && has_connections), skip the declaration line
+    bool has_connections = attr.has_connections();
+    bool is_connection_only = is_value_empty && has_connections;
+    bool is_pure_empty_decl = is_value_empty && !has_connections && !has_timesamples;
+
+    if (attr.metas().authored() || (!is_value_empty && has_default) || is_pure_empty_decl || ((!is_connection) && (!has_timesamples) && !is_connection_only)) {
+      if (is_value_empty) {
+        // declare only - no value was authored (pure empty declaration)
+        ss << pprint::Indent(indent);
+        ss << value::TypeTraits<T>::type_name() << " " << name;
+      } else if (has_default) {
         ss << pprint::Indent(indent);
         ss << value::TypeTraits<T>::type_name() << " " << name;
         ss << " = " << print_animatable_default(v, indent);
-
-      } else { // attr.is_value_empty()
-        // declare only
+      } else {
+        // declare only (for cases without connection or timesamples)
         ss << pprint::Indent(indent);
         ss << value::TypeTraits<T>::type_name() << " " << name;
       }
@@ -1240,13 +1288,15 @@ std::string print_typed_attr(const TypedAttributeWithFallback<T> &attr,
   if (attr.authored()) {
 
     // default
-    if (attr.metas().authored() || attr.is_blocked() || (!attr.is_connection())) {
+    if (attr.metas().authored() || attr.is_blocked() || attr.is_value_empty() || (!attr.is_connection())) {
       ss << pprint::Indent(indent);
       ss << "uniform ";
       ss << value::TypeTraits<T>::type_name() << " " << name;
 
       if (attr.is_blocked()) {
         ss << " = None";
+      } else if (attr.is_value_empty()) {
+        // Definition only - no value to output
       } else {
         ss << " = " << attr.get_value();
       }
@@ -1359,6 +1409,8 @@ std::string print_typed_token_attr(const TypedAttributeWithFallback<T> &attr,
 
     if (attr.is_blocked()) {
       ss << " = None";
+    } else if (attr.is_value_empty()) {
+      // Definition only - no value to output
     } else {
       ss << " = " << quote(to_string(attr.get_value()));
     }
@@ -2310,7 +2362,10 @@ std::string to_string(const std::string &v) {
 std::string to_string(const Reference &v) {
   std::stringstream ss;
 
-  ss << v.asset_path;
+  // For internal references (no asset path, just prim path), don't output "@@"
+  if (!v.asset_path.GetAssetPath().empty()) {
+    ss << v.asset_path;
+  }
   if (v.prim_path.is_valid()) {
     ss << v.prim_path;
   }
@@ -2333,7 +2388,10 @@ std::string to_string(const Payload &v) {
     ss << "None";
 
   } else {
-    ss << v.asset_path;
+    // For internal payloads (no asset path, just prim path), don't output "@@"
+    if (!v.asset_path.GetAssetPath().empty()) {
+      ss << v.asset_path;
+    }
     if (v.prim_path.is_valid()) {
       ss << v.prim_path;
     }
@@ -2520,6 +2578,14 @@ std::string to_string(tinyusdz::GeomSubset::ElementType v) {
       s = "point";
       break;
     }
+    case tinyusdz::GeomSubset::ElementType::Edge: {
+      s = "edge";
+      break;
+    }
+    case tinyusdz::GeomSubset::ElementType::Tetrahedron: {
+      s = "tetrahedron";
+      break;
+    }
   }
 
   return s;
@@ -2571,6 +2637,10 @@ std::string to_string(const tinyusdz::UsdPreviewSurface::OpacityMode v) {
   std::string s;
 
   switch (v) {
+    case tinyusdz::UsdPreviewSurface::OpacityMode::Opacity: {
+      s = "opacity";
+      break;
+    }
     case tinyusdz::UsdPreviewSurface::OpacityMode::Transparent: {
       s = "transparent";
       break;
@@ -3137,6 +3207,10 @@ std::string to_string(const GeomCamera &camera, const uint32_t indent,
   ss << print_typed_attr(camera.verticalApertureOffset,
                          "verticalApertureOffset", indent + 1);
 
+  ss << print_typed_attr(camera.exposure, "exposure", indent + 1);
+  ss << print_typed_attr(camera.focusDistance, "focusDistance", indent + 1);
+  ss << print_typed_attr(camera.fStop, "fStop", indent + 1);
+
   ss << print_typed_token_attr(camera.projection, "projection", indent + 1);
   ss << print_typed_token_attr(camera.stereoRole, "stereoRole", indent + 1);
 
@@ -3445,7 +3519,7 @@ std::string to_string(const GeomBasisCurves &geom, const uint32_t indent,
   ss << print_typed_attr(geom.points, "points", indent + 1);
   ss << print_typed_attr(geom.normals, "normals", indent + 1);
   ss << print_typed_attr(geom.widths, "widths", indent + 1);
-  ss << print_typed_attr(geom.velocities, "velocites", indent + 1);
+  ss << print_typed_attr(geom.velocities, "velocities", indent + 1);
   ss << print_typed_attr(geom.accelerations, "accelerations", indent + 1);
   ss << print_typed_attr(geom.curveVertexCounts, "curveVertexCounts",
                          indent + 1);
@@ -3478,7 +3552,7 @@ std::string to_string(const GeomNurbsCurves &geom, const uint32_t indent,
   ss << print_typed_attr(geom.points, "points", indent + 1);
   ss << print_typed_attr(geom.normals, "normals", indent + 1);
   ss << print_typed_attr(geom.widths, "widths", indent + 1);
-  ss << print_typed_attr(geom.velocities, "velocites", indent + 1);
+  ss << print_typed_attr(geom.velocities, "velocities", indent + 1);
   ss << print_typed_attr(geom.accelerations, "accelerations", indent + 1);
   ss << print_typed_attr(geom.curveVertexCounts, "curveVertexCounts",
                          indent + 1);
@@ -3919,6 +3993,27 @@ std::string to_string(const Material &material, const uint32_t indent,
     ss << "\n";
   }
 
+  // Print MaterialXConfigAPI attributes if present
+  if (material.materialXConfig) {
+    const auto &mtlxConfig = material.materialXConfig.value();
+    if (mtlxConfig.mtlx_version.authored()) {
+      ss << pprint::Indent(indent + 1) << "string config:mtlx:version = "
+         << quote(mtlxConfig.mtlx_version.get_value()) << "\n";
+    }
+    if (mtlxConfig.mtlx_namespace.authored()) {
+      ss << pprint::Indent(indent + 1) << "string config:mtlx:namespace = "
+         << quote(mtlxConfig.mtlx_namespace.get_value()) << "\n";
+    }
+    if (mtlxConfig.mtlx_colorspace.authored()) {
+      ss << pprint::Indent(indent + 1) << "string config:mtlx:colorspace = "
+         << quote(mtlxConfig.mtlx_colorspace.get_value()) << "\n";
+    }
+    if (mtlxConfig.mtlx_sourceUri.authored()) {
+      ss << pprint::Indent(indent + 1) << "asset config:mtlx:sourceUri = "
+         << mtlxConfig.mtlx_sourceUri.get_value() << "\n";
+    }
+  }
+
   ss << print_props(material.props, indent + 1);
 
   if (closing_brace) {
@@ -4212,6 +4307,84 @@ static std::string print_shader_params(const MtlxOpenPBRSurface &shader,
   return ss.str();
 }
 
+static std::string print_shader_params(const OpenPBRSurface &shader,
+                                       const uint32_t indent) {
+  std::stringstream ss;
+
+  // Base properties
+  ss << print_typed_attr(shader.base_weight, "inputs:base_weight", indent);
+  ss << print_typed_attr(shader.base_color, "inputs:base_color", indent);
+  ss << print_typed_attr(shader.base_roughness, "inputs:base_roughness", indent);
+  ss << print_typed_attr(shader.base_metalness, "inputs:base_metalness", indent);
+  ss << print_typed_attr(shader.base_diffuse_roughness, "inputs:base_diffuse_roughness", indent);
+
+  // Specular properties
+  ss << print_typed_attr(shader.specular_weight, "inputs:specular_weight", indent);
+  ss << print_typed_attr(shader.specular_color, "inputs:specular_color", indent);
+  ss << print_typed_attr(shader.specular_roughness, "inputs:specular_roughness", indent);
+  ss << print_typed_attr(shader.specular_ior, "inputs:specular_ior", indent);
+  ss << print_typed_attr(shader.specular_ior_level, "inputs:specular_ior_level", indent);
+  ss << print_typed_attr(shader.specular_anisotropy, "inputs:specular_anisotropy", indent);
+  ss << print_typed_attr(shader.specular_rotation, "inputs:specular_rotation", indent);
+
+  // Transmission properties
+  ss << print_typed_attr(shader.transmission_weight, "inputs:transmission_weight", indent);
+  ss << print_typed_attr(shader.transmission_color, "inputs:transmission_color", indent);
+  ss << print_typed_attr(shader.transmission_depth, "inputs:transmission_depth", indent);
+  ss << print_typed_attr(shader.transmission_scatter, "inputs:transmission_scatter", indent);
+  ss << print_typed_attr(shader.transmission_scatter_anisotropy, "inputs:transmission_scatter_anisotropy", indent);
+  ss << print_typed_attr(shader.transmission_dispersion, "inputs:transmission_dispersion", indent);
+
+  // Subsurface properties
+  ss << print_typed_attr(shader.subsurface_weight, "inputs:subsurface_weight", indent);
+  ss << print_typed_attr(shader.subsurface_color, "inputs:subsurface_color", indent);
+  ss << print_typed_attr(shader.subsurface_radius, "inputs:subsurface_radius", indent);
+  ss << print_typed_attr(shader.subsurface_radius_scale, "inputs:subsurface_radius_scale", indent);
+  ss << print_typed_attr(shader.subsurface_scale, "inputs:subsurface_scale", indent);
+  ss << print_typed_attr(shader.subsurface_anisotropy, "inputs:subsurface_anisotropy", indent);
+
+  // Sheen properties
+  ss << print_typed_attr(shader.sheen_weight, "inputs:sheen_weight", indent);
+  ss << print_typed_attr(shader.sheen_color, "inputs:sheen_color", indent);
+  ss << print_typed_attr(shader.sheen_roughness, "inputs:sheen_roughness", indent);
+
+  // Fuzz properties
+  ss << print_typed_attr(shader.fuzz_weight, "inputs:fuzz_weight", indent);
+  ss << print_typed_attr(shader.fuzz_color, "inputs:fuzz_color", indent);
+  ss << print_typed_attr(shader.fuzz_roughness, "inputs:fuzz_roughness", indent);
+
+  // Thin film properties
+  ss << print_typed_attr(shader.thin_film_weight, "inputs:thin_film_weight", indent);
+  ss << print_typed_attr(shader.thin_film_thickness, "inputs:thin_film_thickness", indent);
+  ss << print_typed_attr(shader.thin_film_ior, "inputs:thin_film_ior", indent);
+
+  // Coat properties
+  ss << print_typed_attr(shader.coat_weight, "inputs:coat_weight", indent);
+  ss << print_typed_attr(shader.coat_color, "inputs:coat_color", indent);
+  ss << print_typed_attr(shader.coat_roughness, "inputs:coat_roughness", indent);
+  ss << print_typed_attr(shader.coat_anisotropy, "inputs:coat_anisotropy", indent);
+  ss << print_typed_attr(shader.coat_rotation, "inputs:coat_rotation", indent);
+  ss << print_typed_attr(shader.coat_ior, "inputs:coat_ior", indent);
+  ss << print_typed_attr(shader.coat_affect_color, "inputs:coat_affect_color", indent);
+  ss << print_typed_attr(shader.coat_affect_roughness, "inputs:coat_affect_roughness", indent);
+
+  // Emission properties
+  ss << print_typed_attr(shader.emission_luminance, "inputs:emission_luminance", indent);
+  ss << print_typed_attr(shader.emission_color, "inputs:emission_color", indent);
+
+  // Geometry properties
+  ss << print_typed_attr(shader.opacity, "inputs:opacity", indent);
+  ss << print_typed_attr(shader.normal, "inputs:normal", indent);
+  ss << print_typed_attr(shader.tangent, "inputs:tangent", indent);
+
+  // Output
+  ss << print_typed_terminal_attr(shader.surface, "outputs:surface", indent);
+
+  ss << print_common_shader_params(shader, indent);
+
+  return ss.str();
+}
+
 std::string to_string(const Shader &shader, const uint32_t indent,
                       bool closing_brace) {
   // generic Shader class
@@ -4259,6 +4432,9 @@ std::string to_string(const Shader &shader, const uint32_t indent,
   } else if (auto mtlx_opbr = shader.value.get_value<MtlxOpenPBRSurface>()) {
     // Blender v4.5 MaterialX OpenPBR Surface
     ss << print_shader_params(mtlx_opbr.value(), indent + 1);
+  } else if (auto opbr = shader.value.get_value<OpenPBRSurface>()) {
+    // Native OpenPBR Surface shader
+    ss << print_shader_params(opbr.value(), indent + 1);
   } else if (auto pvsn = shader.value.get_value<ShaderNode>()) {
     // Generic ShaderNode
     ss << print_common_shader_params(pvsn.value(), indent + 1);
@@ -4375,6 +4551,19 @@ std::string to_string(const SphereLight &light, const uint32_t indent,
 
   ss << print_typed_attr(light.radius, "inputs:radius", indent + 1);
 
+  // ShadowAPI attributes
+  ss << print_typed_attr(light.shadowColor, "inputs:shadow:color", indent + 1);
+  ss << print_typed_attr(light.shadowDistance, "inputs:shadow:distance", indent + 1);
+  ss << print_typed_attr(light.shadowEnable, "inputs:shadow:enable", indent + 1);
+  ss << print_typed_attr(light.shadowFalloff, "inputs:shadow:falloff", indent + 1);
+  ss << print_typed_attr(light.shadowFalloffGamma, "inputs:shadow:falloffGamma", indent + 1);
+
+  // ShapingAPI attributes
+  ss << print_typed_attr(light.shapingConeAngle, "inputs:shaping:cone:angle", indent + 1);
+  ss << print_typed_attr(light.shapingConeSoftness, "inputs:shaping:cone:softness", indent + 1);
+  ss << print_typed_attr(light.shapingFocus, "inputs:shaping:focus", indent + 1);
+  ss << print_typed_attr(light.shapingFocusTint, "inputs:shaping:focusTint", indent + 1);
+
   ss << print_typed_attr(light.extent, "extent", indent + 1);
   ss << print_typed_token_attr(light.visibility, "visibility", indent + 1);
   ss << print_typed_token_attr(light.purpose, "purpose", indent + 1);
@@ -4415,6 +4604,13 @@ std::string to_string(const DistantLight &light, const uint32_t indent,
   ss << print_typed_attr(light.specular, "inputs:specular", indent + 1);
 
   ss << print_typed_attr(light.angle, "inputs:angle", indent + 1);
+
+  // ShadowAPI attributes
+  ss << print_typed_attr(light.shadowColor, "inputs:shadow:color", indent + 1);
+  ss << print_typed_attr(light.shadowDistance, "inputs:shadow:distance", indent + 1);
+  ss << print_typed_attr(light.shadowEnable, "inputs:shadow:enable", indent + 1);
+  ss << print_typed_attr(light.shadowFalloff, "inputs:shadow:falloff", indent + 1);
+  ss << print_typed_attr(light.shadowFalloffGamma, "inputs:shadow:falloffGamma", indent + 1);
 
   //ss << print_typed_attr(light.extent, "extent", indent + 1);
   ss << print_typed_token_attr(light.visibility, "visibility", indent + 1);
@@ -4458,6 +4654,19 @@ std::string to_string(const CylinderLight &light, const uint32_t indent,
   ss << print_typed_attr(light.length, "inputs:length", indent + 1);
   ss << print_typed_attr(light.radius, "inputs:radius", indent + 1);
 
+  // ShadowAPI attributes
+  ss << print_typed_attr(light.shadowColor, "inputs:shadow:color", indent + 1);
+  ss << print_typed_attr(light.shadowDistance, "inputs:shadow:distance", indent + 1);
+  ss << print_typed_attr(light.shadowEnable, "inputs:shadow:enable", indent + 1);
+  ss << print_typed_attr(light.shadowFalloff, "inputs:shadow:falloff", indent + 1);
+  ss << print_typed_attr(light.shadowFalloffGamma, "inputs:shadow:falloffGamma", indent + 1);
+
+  // ShapingAPI attributes
+  ss << print_typed_attr(light.shapingConeAngle, "inputs:shaping:cone:angle", indent + 1);
+  ss << print_typed_attr(light.shapingConeSoftness, "inputs:shaping:cone:softness", indent + 1);
+  ss << print_typed_attr(light.shapingFocus, "inputs:shaping:focus", indent + 1);
+  ss << print_typed_attr(light.shapingFocusTint, "inputs:shaping:focusTint", indent + 1);
+
   ss << print_typed_attr(light.extent, "extent", indent + 1);
   ss << print_typed_token_attr(light.visibility, "visibility", indent + 1);
   ss << print_typed_token_attr(light.purpose, "purpose", indent + 1);
@@ -4499,6 +4708,19 @@ std::string to_string(const DiskLight &light, const uint32_t indent,
 
   ss << print_typed_attr(light.radius, "inputs:radius", indent + 1);
 
+  // ShadowAPI attributes
+  ss << print_typed_attr(light.shadowColor, "inputs:shadow:color", indent + 1);
+  ss << print_typed_attr(light.shadowDistance, "inputs:shadow:distance", indent + 1);
+  ss << print_typed_attr(light.shadowEnable, "inputs:shadow:enable", indent + 1);
+  ss << print_typed_attr(light.shadowFalloff, "inputs:shadow:falloff", indent + 1);
+  ss << print_typed_attr(light.shadowFalloffGamma, "inputs:shadow:falloffGamma", indent + 1);
+
+  // ShapingAPI attributes
+  ss << print_typed_attr(light.shapingConeAngle, "inputs:shaping:cone:angle", indent + 1);
+  ss << print_typed_attr(light.shapingConeSoftness, "inputs:shaping:cone:softness", indent + 1);
+  ss << print_typed_attr(light.shapingFocus, "inputs:shaping:focus", indent + 1);
+  ss << print_typed_attr(light.shapingFocusTint, "inputs:shaping:focusTint", indent + 1);
+
   ss << print_typed_attr(light.extent, "extent", indent + 1);
   ss << print_typed_token_attr(light.visibility, "visibility", indent + 1);
   ss << print_typed_token_attr(light.purpose, "purpose", indent + 1);
@@ -4538,9 +4760,9 @@ std::string to_string(const DomeLight &light, const uint32_t indent,
   ss << print_typed_attr(light.normalize, "inputs:normalize", indent + 1);
   ss << print_typed_attr(light.specular, "inputs:specular", indent + 1);
 
-  ss << print_typed_attr(light.guideRadius, "inputs:guideRadius", indent + 1);
-  ss << print_typed_attr(light.file, "inputs:file", indent + 1);
-  ss << print_typed_token_attr(light.textureFormat, "inputs:textureFormat",
+  ss << print_typed_attr(light.guideRadius, "guideRadius", indent + 1);
+  ss << print_typed_attr(light.file, "inputs:texture:file", indent + 1);
+  ss << print_typed_token_attr(light.textureFormat, "inputs:texture:format",
                                indent + 1);
 
   //ss << print_typed_attr(light.extent, "extent", indent + 1);
@@ -4583,10 +4805,22 @@ std::string to_string(const RectLight &light, const uint32_t indent,
   ss << print_typed_attr(light.normalize, "inputs:normalize", indent + 1);
   ss << print_typed_attr(light.specular, "inputs:specular", indent + 1);
 
-  ss << print_typed_attr(light.file, "inputs:file", indent + 1);
+  ss << print_typed_attr(light.file, "inputs:texture:file", indent + 1);
   ss << print_typed_attr(light.height, "inputs:height", indent + 1);
   ss << print_typed_attr(light.width, "inputs:width", indent + 1);
-  ss << print_typed_attr(light.height, "inputs:height", indent + 1);
+
+  // ShadowAPI attributes
+  ss << print_typed_attr(light.shadowColor, "inputs:shadow:color", indent + 1);
+  ss << print_typed_attr(light.shadowDistance, "inputs:shadow:distance", indent + 1);
+  ss << print_typed_attr(light.shadowEnable, "inputs:shadow:enable", indent + 1);
+  ss << print_typed_attr(light.shadowFalloff, "inputs:shadow:falloff", indent + 1);
+  ss << print_typed_attr(light.shadowFalloffGamma, "inputs:shadow:falloffGamma", indent + 1);
+
+  // ShapingAPI attributes
+  ss << print_typed_attr(light.shapingConeAngle, "inputs:shaping:cone:angle", indent + 1);
+  ss << print_typed_attr(light.shapingConeSoftness, "inputs:shaping:cone:softness", indent + 1);
+  ss << print_typed_attr(light.shapingFocus, "inputs:shaping:focus", indent + 1);
+  ss << print_typed_attr(light.shapingFocusTint, "inputs:shaping:focusTint", indent + 1);
 
   ss << print_typed_attr(light.extent, "extent", indent + 1);
   ss << print_typed_token_attr(light.visibility, "visibility", indent + 1);
@@ -4811,6 +5045,10 @@ std::string print_layer_metas(const LayerMetas &metas, const uint32_t indent) {
   if (metas.customLayerData.size()) {
     meta_ss << print_customData(metas.customLayerData, "customLayerData",
                                 /* indent */ 1);
+  } else if (metas.customLayerDataAuthored) {
+    // Print empty customLayerData if explicitly authored (match pxrUSD behavior)
+    meta_ss << pprint::Indent(1) << "customLayerData = {\n";
+    meta_ss << pprint::Indent(1) << "}\n";
   }
 
   return meta_ss.str();
@@ -5090,6 +5328,221 @@ std::string print_primspec(const PrimSpec &primspec, const uint32_t indent) {
 
   return ss.str();
 }
+
+// ============================================================================
+// StreamWriter overloads for efficient printing
+// ============================================================================
+
+void print_prim(StreamWriter& writer, const Prim &prim, const uint32_t indent) {
+  // For now, delegate to string version
+  // TODO: In future, refactor to write directly to StreamWriter
+  writer.write(print_prim(prim, indent));
+}
+
+void print_primspec(StreamWriter& writer, const PrimSpec &primspec, const uint32_t indent) {
+  // For now, delegate to string version
+  // TODO: In future, refactor to write directly to StreamWriter
+  writer.write(print_primspec(primspec, indent));
+}
+
+// ============================================================================
+// ChunkedStreamWriter template implementations
+// ============================================================================
+
+template <size_t ChunkSize, size_t Alignment>
+void print_prim(ChunkedStreamWriter<ChunkSize, Alignment>& writer, const Prim &prim, const uint32_t indent) {
+  // Write directly to ChunkedStreamWriter for better performance
+  // This avoids creating one giant string in memory
+
+  // Currently, Prim's elementName is read from name variable in concrete Prim
+  // class(e.g. Xform::name).
+  // TODO: use prim.elementPath for elementName.
+  std::string s = pprint_value(prim.data(), indent, /* closing_brace */ false);
+
+  bool require_newline = true;
+
+  // Check last 2 chars.
+  // if it ends with '{\n', no properties are authored so do not emit blank line
+  // before printing VariantSet or child Prims.
+  if (s.size() > 2) {
+    if ((s[s.size() - 2] == '{') && (s[s.size() - 1] == '\n')) {
+      require_newline = false;
+    }
+  }
+
+  writer.write(s);
+
+  //
+  // print variant
+  //
+  if (prim.variantSets().size()) {
+    if (require_newline) {
+      writer.write("\n");
+    }
+
+    // need to add blank line after VariantSet stmt and before child Prims,
+    // so set require_newline true
+    require_newline = true;
+
+    for (const auto &variantSet : prim.variantSets()) {
+      writer.write(pprint::Indent(indent + 1));
+      writer.write("variantSet ");
+      writer.write(quote(variantSet.first));
+      writer.write(" = {\n");
+
+      for (const auto &variantItem : variantSet.second.variantSet) {
+        writer.write(pprint::Indent(indent + 2));
+        writer.write(quote(variantItem.first));
+
+        const Variant &variant = variantItem.second;
+
+        if (variant.metas().authored()) {
+          writer.write(" (\n");
+          writer.write(print_prim_metas(variant.metas(), indent + 3));
+          writer.write(pprint::Indent(indent + 2));
+          writer.write(")");
+        }
+
+        writer.write(" {\n");
+
+        writer.write(print_props(variant.properties(), indent + 3));
+
+        if (variant.metas().variantChildren.has_value() &&
+            (variant.metas().variantChildren.value().size() ==
+             variant.primChildren().size())) {
+          std::map<std::string, const Prim *> primNameTable;
+          for (size_t i = 0; i < variant.primChildren().size(); i++) {
+            primNameTable.emplace(variant.primChildren()[i].element_name(),
+                                  &variant.primChildren()[i]);
+          }
+
+          for (size_t i = 0; i < variant.metas().variantChildren.value().size();
+               i++) {
+            value::token nameTok = variant.metas().variantChildren.value()[i];
+            const auto it = primNameTable.find(nameTok.str());
+            if (it != primNameTable.end()) {
+              print_prim(writer, *(it->second), indent + 3);
+              if (i != (variant.primChildren().size() - 1)) {
+                writer.write("\n");
+              }
+            } else {
+              // TODO: Report warning?
+            }
+          }
+
+        } else {
+          for (size_t i = 0; i < variant.primChildren().size(); i++) {
+            print_prim(writer, variant.primChildren()[i], indent + 3);
+            if (i != (variant.primChildren().size() - 1)) {
+              writer.write("\n");
+            }
+          }
+        }
+
+        writer.write(pprint::Indent(indent + 2));
+        writer.write("}\n");
+      }
+
+      writer.write(pprint::Indent(indent + 1));
+      writer.write("}\n");
+    }
+  }
+
+  //
+  // primChildren
+  //
+  if (prim.children().size()) {
+    if (require_newline) {
+      writer.write("\n");
+      require_newline = false;
+    }
+    if (prim.metas().primChildren.size() == prim.children().size()) {
+      // Use primChildren info to determine the order of the traversal.
+
+      std::map<std::string, const Prim *> primNameTable;
+      for (size_t i = 0; i < prim.children().size(); i++) {
+        primNameTable.emplace(prim.children()[i].element_name(),
+                              &prim.children()[i]);
+      }
+
+      for (size_t i = 0; i < prim.metas().primChildren.size(); i++) {
+        if (i > 0) {
+          writer.write("\n");
+        }
+        value::token nameTok = prim.metas().primChildren[i];
+        DCOUT(fmt::format("primChildren  {}/{} = {}", i,
+                          prim.metas().primChildren.size(), nameTok.str()));
+        const auto it = primNameTable.find(nameTok.str());
+        if (it != primNameTable.end()) {
+          print_prim(writer, *(it->second), indent + 1);
+        } else {
+          // TODO: Report warning?
+        }
+      }
+
+    } else {
+      for (size_t i = 0; i < prim.children().size(); i++) {
+        if (i > 0) {
+          writer.write("\n");
+        }
+        print_prim(writer, prim.children()[i], indent + 1);
+      }
+    }
+  }
+
+  writer.write(pprint::Indent(indent));
+  writer.write("}\n");
+}
+
+template <size_t ChunkSize, size_t Alignment>
+void print_primspec(ChunkedStreamWriter<ChunkSize, Alignment>& writer, const PrimSpec &primspec, const uint32_t indent) {
+  // Write directly to ChunkedStreamWriter for better performance
+  writer.write(pprint::Indent(indent));
+  writer.write(to_string(primspec.specifier()));
+  writer.write(" ");
+
+  if (primspec.typeName().empty() || primspec.typeName() == "Model") {
+    // do not emit typeName
+  } else {
+    writer.write(primspec.typeName());
+    writer.write(" ");
+  }
+
+  writer.write("\"");
+  writer.write(primspec.name());
+  writer.write("\"\n");
+
+  if (primspec.metas().authored()) {
+    writer.write(pprint::Indent(indent));
+    writer.write("(\n");
+    writer.write(print_prim_metas(primspec.metas(), indent + 1));
+    writer.write(pprint::Indent(indent));
+    writer.write(")\n");
+  }
+  writer.write(pprint::Indent(indent));
+  writer.write("{\n");
+
+  writer.write(print_props(primspec.props(), indent + 1));
+
+  // TODO: print according to primChildren metadatum
+  for (size_t i = 0; i < primspec.children().size(); i++) {
+    if (i > 0) {
+      writer.write(pprint::Indent(indent));
+      writer.write("\n");
+    }
+    print_primspec(writer, primspec.children()[i], indent + 1);
+  }
+
+  // writer.write("# variant \n");
+  writer.write(print_variantSetSpecStmt(primspec.variantSets(), indent + 1));
+
+  writer.write(pprint::Indent(indent));
+  writer.write("}\n");
+}
+
+// Explicit template instantiations for common parameters
+template void print_prim<4096, 16>(ChunkedStreamWriter<4096, 16>& writer, const Prim &prim, const uint32_t indent);
+template void print_primspec<4096, 16>(ChunkedStreamWriter<4096, 16>& writer, const PrimSpec &primspec, const uint32_t indent);
 
 }  // namespace prim
 

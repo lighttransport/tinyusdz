@@ -4,7 +4,27 @@
 
 #include "unicode-xid.hh"
 #include "common-macros.inc"
-#include "external/dtoa_milo.h"
+#include "value-types.hh"
+
+#include <cstring>
+#include <cstdint>
+#include <cmath>
+#include <array>
+
+// Disable dragonbox's internal asserts for hardened builds
+// We handle all special cases (inf, nan, zero) before calling dragonbox
+#ifndef NDEBUG
+#define TINYUSDZ_DRAGONBOX_NDEBUG_DEFINED
+#define NDEBUG
+#endif
+#include "external/dragonbox/dragonbox_to_chars.h"
+#ifdef TINYUSDZ_DRAGONBOX_NDEBUG_DEFINED
+#undef NDEBUG
+#undef TINYUSDZ_DRAGONBOX_NDEBUG_DEFINED
+#endif
+
+// Note: dragonbox_binary16.hh exists for direct fp16 conversion but needs work
+// Currently using half→float→dragonbox for correct output
 
 #ifdef __SSE2__
 #include <emmintrin.h>
@@ -1130,6 +1150,817 @@ std::string base64_decode(std::string const &encoded_string) {
    -- end base64.cpp and base64.h
 */
 
+// ============================================================================
+// dtoa_dragonbox - Fast floating-point to string conversion
+// Based on Dragonbox algorithm by Junekey Jeon
+// ============================================================================
+
+namespace {
+
+// Helper functions for dragonbox formatting
+template <typename T>
+inline int count_digits(T n) {
+  int count = 1;
+  for (;;) {
+    if (n < 10) return count;
+    if (n < 100) return count + 1;
+    if (n < 1000) return count + 2;
+    if (n < 10000) return count + 3;
+    n /= 10000u;
+    count += 4;
+  }
+}
+
+inline auto digits2(size_t value) -> const char* {
+  alignas(2) static const char data[] =
+      "0001020304050607080910111213141516171819"
+      "2021222324252627282930313233343536373839"
+      "4041424344454647484950515253545556575859"
+      "6061626364656667686970717273747576777879"
+      "8081828384858687888990919293949596979899";
+  return &data[value * 2];
+}
+
+inline void write2digits(char* out, size_t value) {
+  *out++ = static_cast<char>('0' + value / 10);
+  *out = static_cast<char>('0' + value % 10);
+}
+
+char* write_exponent(int exp, char* out) {
+  if (exp < 0) {
+    *out++ = '-';
+    exp = -exp;
+  } else {
+    *out++ = '+';
+  }
+  auto uexp = static_cast<uint32_t>(exp);
+  if (uexp >= 100u) {
+    const char* top = digits2(uexp / 100);
+    if (uexp >= 1000u) *out++ = top[0];
+    *out++ = static_cast<char>(top[1]);
+    uexp %= 100;
+  }
+  const char* d = digits2(uexp);
+  *out++ = static_cast<char>(d[0]);
+  *out++ = static_cast<char>(d[1]);
+  return out;
+}
+
+inline char* fill_n(char* p, int n, char c) {
+  for (int i = 0; i < n; i++, p++) {
+    *p = c;
+  }
+  return p;
+}
+
+inline void format_decimal_impl(char* out, uint64_t value, uint32_t size) {
+  unsigned n = size;
+  while (value >= 100) {
+    n -= 2;
+    write2digits(out + n, static_cast<unsigned>(value % 100));
+    value /= 100;
+  }
+  if (value >= 10) {
+    n -= 2;
+    write2digits(out + n, static_cast<unsigned>(value));
+  } else {
+    out[--n] = static_cast<char>('0' + value);
+  }
+}
+
+inline char* format_decimal(char* out, uint64_t value, uint32_t num_digits) {
+  format_decimal_impl(out, value, num_digits);
+  return out + num_digits;
+}
+
+inline char* write_significand_e(char* out, uint64_t significand,
+                                 int significand_size, int exponent) {
+  out = format_decimal(out, significand, static_cast<uint32_t>(significand_size));
+  return fill_n(out, exponent, '0');
+}
+
+inline char* write_significand(char* out, uint64_t significand,
+                               int significand_size, int integral_size,
+                               char decimal_point) {
+  if (!decimal_point) return format_decimal(out, significand, static_cast<uint32_t>(significand_size));
+  out += significand_size + 1;
+  char* end = out;
+  int floating_size = significand_size - integral_size;
+  for (int i = floating_size / 2; i > 0; --i) {
+    out -= 2;
+    write2digits(out, static_cast<std::size_t>(significand % 100));
+    significand /= 100;
+  }
+  if (floating_size % 2 != 0) {
+    *--out = static_cast<char>('0' + significand % 10);
+    significand /= 10;
+  }
+  *--out = decimal_point;
+  format_decimal(out - integral_size, significand, static_cast<uint32_t>(integral_size));
+  return end;
+}
+
+// Template implementation for both float and double
+// max_digits: maximum significant digits (9 for float, 17 for double)
+// exp_upper: threshold for switching to exponential notation
+// Returns nullptr on invalid input (null buffer)
+template<typename Float>
+char* dtoa_dragonbox_impl_t(const Float f, char* buf, int max_digits, int exp_upper) {
+  // Null buffer check - return nullptr for invalid input
+  if (!buf) {
+    return nullptr;
+  }
+
+  // Handle special cases first (dragonbox requires finite, non-zero values)
+  if (std::isnan(f)) {
+    std::memcpy(buf, "nan", 3);
+    return buf + 3;
+  }
+  if (std::isinf(f)) {
+    if (std::signbit(f)) {
+      std::memcpy(buf, "-inf", 4);
+      return buf + 4;
+    } else {
+      std::memcpy(buf, "inf", 3);
+      return buf + 3;
+    }
+  }
+
+  bool is_negative = std::signbit(f);
+
+  // Handle zero specially (use fpclassify to avoid float comparison warning)
+  if (std::fpclassify(f) == FP_ZERO) {
+    *buf++ = '0';
+    return buf;
+  }
+
+  // Final safety guard: ensure value is finite before calling dragonbox
+  // This should never trigger given the checks above, but provides defense in depth
+  if (!std::isfinite(f)) {
+    // Fallback for any unexpected non-finite value
+    std::memcpy(buf, "0", 1);
+    return buf + 1;
+  }
+
+  // Use dragonbox directly on the original type (float or double)
+  auto ret = jkj::dragonbox::to_decimal(f);
+
+  // print human-readable float for the value in range [1e-exp_lower, 1e+exp_upper]
+  const int exp_lower = -4;
+  char exp_char = 'e';
+  char zero_char = '0';
+
+  auto significand = ret.significand;
+  int significand_size = count_digits(significand);
+  int exponent = ret.exponent;
+
+  // Limit to max_digits significant digits (round half to even)
+  if (significand_size > max_digits) {
+    int digits_to_remove = significand_size - max_digits;
+    uint64_t divisor = 1;
+    for (int i = 0; i < digits_to_remove; i++) {
+      divisor *= 10;
+    }
+    uint64_t remainder = significand % divisor;
+    significand /= divisor;
+    exponent += digits_to_remove;
+
+    // Round half to even
+    uint64_t half = divisor / 2;
+    if (remainder > half || (remainder == half && (significand & 1))) {
+      significand++;
+      // Check if rounding caused overflow (e.g., 999 -> 1000)
+      if (count_digits(significand) > max_digits) {
+        significand /= 10;
+        exponent++;
+      }
+    }
+    significand_size = count_digits(significand);
+  }
+
+  size_t size = size_t(significand_size) + (is_negative ? 1u : 0u);
+  (void)size;  // Used for tracking output size, may be used in future optimizations
+
+  int output_exp = exponent + significand_size - 1;
+  bool use_exp_format = (output_exp < exp_lower) || (output_exp >= exp_upper);
+
+  char decimal_point = '.';
+  if (use_exp_format) {
+    int num_zeros = 0;
+    if (significand_size == 1) {
+      decimal_point = '\0';
+    }
+    auto abs_output_exp = output_exp >= 0 ? output_exp : -output_exp;
+    int exp_digits = 2;
+    if (abs_output_exp >= 100) exp_digits = abs_output_exp >= 1000 ? 4 : 3;
+
+    size += (decimal_point ? 1u : 0u) + 2u + size_t(exp_digits);
+
+    if (is_negative) {
+      *buf++ = '-';
+    }
+
+    buf = write_significand(buf, significand, significand_size, 1, decimal_point);
+
+    if (num_zeros > 0) buf = fill_n(buf, num_zeros, zero_char);
+    *buf++ = exp_char;
+    return write_exponent(output_exp, buf);
+  }
+
+  int exp = exponent + significand_size;
+  if (exponent >= 0) {
+    size += static_cast<size_t>(exponent);
+
+    if (is_negative) {
+      *buf++ = '-';
+    }
+
+    return write_significand_e(buf, significand, significand_size,
+                               exponent);
+
+  } else if (exp > 0) {
+    size += 1;
+    if (is_negative) {
+      *buf++ = '-';
+    }
+
+    return write_significand(buf, significand, significand_size, exp,
+                             decimal_point);
+  }
+
+  int num_zeros = -exp;
+  bool pointy = num_zeros != 0 || significand_size != 0;
+  size += 1u + (pointy ? 1u : 0u) + size_t(num_zeros);
+
+  if (is_negative) {
+    *buf++ = '-';
+  }
+
+  *buf++ = zero_char;
+
+  if (!pointy) return buf;
+  *buf++ = decimal_point;
+  buf = fill_n(buf, num_zeros, zero_char);
+
+  return format_decimal(buf, significand, static_cast<uint32_t>(significand_size));
+}
+
+// Double precision: max 17 significant digits (std::numeric_limits<double>::max_digits10)
+// Returns nullptr on invalid input (null buffer)
+char* dtoa_dragonbox_impl(const double f, char* buf, int exp_upper = 16) {
+  // Null buffer check
+  if (!buf) {
+    return nullptr;
+  }
+
+  // Fast path for common values 1.0 and -1.0 (bitwise comparison)
+  // IEEE 754 double precision: 1.0 = 0x3FF0000000000000, -1.0 = 0xBFF0000000000000
+  uint64_t bits;
+  std::memcpy(&bits, &f, sizeof(double));
+
+  if (bits == 0x3FF0000000000000ULL) {
+    // Exactly 1.0
+    *buf++ = '1';
+    return buf;
+  }
+  if (bits == 0xBFF0000000000000ULL) {
+    // Exactly -1.0
+    *buf++ = '-';
+    *buf++ = '1';
+    return buf;
+  }
+
+  constexpr int kMaxDigits10Double = 17;  // std::numeric_limits<double>::max_digits10
+  return dtoa_dragonbox_impl_t(f, buf, kMaxDigits10Double, exp_upper);
+}
+
+// Single precision: max 9 significant digits (std::numeric_limits<float>::max_digits10)
+// Returns nullptr on invalid input (null buffer)
+char* dtoa_dragonbox_impl(const float f, char* buf) {
+  // Null buffer check
+  if (!buf) {
+    return nullptr;
+  }
+
+  // Fast path for common values 1.0f and -1.0f (bitwise comparison)
+  // IEEE 754 single precision: 1.0f = 0x3F800000, -1.0f = 0xBF800000
+  uint32_t bits;
+  std::memcpy(&bits, &f, sizeof(float));
+
+  if (bits == 0x3F800000U) {
+    // Exactly 1.0f
+    *buf++ = '1';
+    return buf;
+  }
+  if (bits == 0xBF800000U) {
+    // Exactly -1.0f
+    *buf++ = '-';
+    *buf++ = '1';
+    return buf;
+  }
+
+  constexpr int kMaxDigits10Float = 9;  // std::numeric_limits<float>::max_digits10
+  constexpr int kExpUpperFloat = 7;     // Use exponential notation for values >= 1e7
+  return dtoa_dragonbox_impl_t(f, buf, kMaxDigits10Float, kExpUpperFloat);
+}
+
+} // anonymous namespace
+
+// Public API for dtos - std::string version
+std::string dtos(float v) {
+  constexpr size_t kBufferSize = 24; // DTOA_DRAGONBOX_BUFFER_SIZE_FLOAT
+  char buffer[kBufferSize];
+  char* end = dtoa_dragonbox_impl(v, buffer);
+  return std::string(buffer, end);
+}
+
+std::string dtos(double v) {
+  constexpr size_t kBufferSize = 32; // DTOA_DRAGONBOX_BUFFER_SIZE_DOUBLE
+  char buffer[kBufferSize];
+  char* end = dtoa_dragonbox_impl(v, buffer);
+  return std::string(buffer, end);
+}
+
+// Public API for dtos - buffer version (efficient, no std::string construction)
+// Returns 0 if buffer is null
+size_t dtos(float v, char* buffer) {
+  char* end = dtoa_dragonbox_impl(v, buffer);
+  if (!end) {
+    return 0;  // Invalid input (null buffer)
+  }
+  return static_cast<size_t>(end - buffer);
+}
+
+// Returns 0 if buffer is null
+size_t dtos(double v, char* buffer) {
+  char* end = dtoa_dragonbox_impl(v, buffer);
+  if (!end) {
+    return 0;  // Invalid input (null buffer)
+  }
+  return static_cast<size_t>(end - buffer);
+}
+
+// ============================================================================
+// Half-precision (fp16) to string conversion
+// Produces shortest decimal representation that round-trips through fp16.
+// Half-precision has ~3.31 decimal digits of precision (11-bit mantissa).
+// We find the shortest decimal that, when parsed back, gives the same fp16.
+// ============================================================================
+
+namespace {
+
+// Round a decimal mantissa to N significant digits
+// Returns the rounded value and adjusts exponent if needed
+uint64_t round_to_digits(uint64_t mantissa, int num_digits, int& exp_adjust) {
+  exp_adjust = 0;
+  if (mantissa == 0) return 0;
+
+  // Count digits in mantissa
+  uint64_t temp = mantissa;
+  int digits = 0;
+  while (temp > 0) {
+    digits++;
+    temp /= 10;
+  }
+
+  if (digits <= num_digits) return mantissa;
+
+  // Need to round off (digits - num_digits) digits
+  int to_remove = digits - num_digits;
+  exp_adjust = to_remove;
+
+  // Compute divisor and remainder for rounding
+  uint64_t divisor = 1;
+  for (int i = 0; i < to_remove; i++) divisor *= 10;
+
+  uint64_t result = mantissa / divisor;
+  uint64_t remainder = mantissa % divisor;
+
+  // Round half-even (banker's rounding)
+  uint64_t half = divisor / 2;
+  if (remainder > half || (remainder == half && (result & 1))) {
+    result++;
+    // Check for overflow (e.g., 999 -> 1000)
+    temp = result;
+    int new_digits = 0;
+    while (temp > 0) {
+      new_digits++;
+      temp /= 10;
+    }
+    if (new_digits > num_digits) {
+      result /= 10;
+      exp_adjust++;
+    }
+  }
+
+  return result;
+}
+
+// Parse a decimal string back to float (simplified parser)
+float parse_decimal(uint64_t mantissa, int exponent) {
+  double result = static_cast<double>(mantissa);
+  if (exponent > 0) {
+    for (int i = 0; i < exponent; i++) result *= 10.0;
+  } else if (exponent < 0) {
+    for (int i = 0; i < -exponent; i++) result /= 10.0;
+  }
+  return static_cast<float>(result);
+}
+
+// Format mantissa with exponent into buffer
+// Returns number of chars written
+size_t format_decimal(uint64_t mantissa, int exponent, char* buffer) {
+  if (mantissa == 0) {
+    buffer[0] = '0';
+    return 1;
+  }
+
+  char* p = buffer;
+
+  // Convert mantissa to string (reversed)
+  char digits[20];
+  int num_digits = 0;
+  uint64_t temp = mantissa;
+  while (temp > 0) {
+    digits[num_digits++] = '0' + static_cast<char>(temp % 10);
+    temp /= 10;
+  }
+
+  // Total exponent adjustment for decimal point position
+  int total_exp = exponent + num_digits - 1;
+
+  // Decide on format: fixed or scientific
+  // For values in range [0.0001, 10000), use fixed notation
+  // Otherwise use scientific
+
+  if (total_exp >= -4 && total_exp < 5) {
+    // Fixed notation
+    if (total_exp >= 0) {
+      // Value >= 1
+      int int_digits = total_exp + 1;
+      int frac_digits = num_digits - int_digits;
+
+      // Write integer part
+      for (int i = num_digits - 1; i >= num_digits - int_digits && i >= 0; i--) {
+        *p++ = digits[i];
+      }
+      // Pad with zeros if needed
+      for (int i = 0; i < int_digits - num_digits; i++) {
+        *p++ = '0';
+      }
+
+      // Write fractional part if any
+      if (frac_digits > 0) {
+        *p++ = '.';
+        for (int i = num_digits - int_digits - 1; i >= 0; i--) {
+          *p++ = digits[i];
+        }
+      }
+    } else {
+      // Value < 1
+      *p++ = '0';
+      *p++ = '.';
+      // Leading zeros
+      for (int i = 0; i < -total_exp - 1; i++) {
+        *p++ = '0';
+      }
+      // Digits
+      for (int i = num_digits - 1; i >= 0; i--) {
+        *p++ = digits[i];
+      }
+    }
+  } else {
+    // Scientific notation (but USD prefers fixed, so we'll extend fixed range)
+    // For half-precision, values are in range [~6e-8, 65504]
+    // Let's use fixed notation for most cases
+
+    if (total_exp >= 0) {
+      // Large value - still use fixed
+      int int_digits = total_exp + 1;
+
+      for (int i = num_digits - 1; i >= 0; i--) {
+        *p++ = digits[i];
+      }
+      for (int i = 0; i < int_digits - num_digits; i++) {
+        *p++ = '0';
+      }
+    } else {
+      // Small value
+      *p++ = '0';
+      *p++ = '.';
+      for (int i = 0; i < -total_exp - 1; i++) {
+        *p++ = '0';
+      }
+      for (int i = num_digits - 1; i >= 0; i--) {
+        *p++ = digits[i];
+      }
+    }
+  }
+
+  return static_cast<size_t>(p - buffer);
+}
+
+} // anonymous namespace
+
+// Public API for dtos - half-precision version (std::string)
+std::string dtos(value::half h) {
+  float f = value::half_to_float(h);
+
+  // Handle special cases
+  if (std::isnan(f)) return "nan";
+  if (std::isinf(f)) return f > 0 ? "inf" : "-inf";
+  if (f == 0.0f) return h.value & 0x8000 ? "-0" : "0";
+
+  bool negative = f < 0;
+  if (negative) f = -f;
+
+  // Get dragonbox result for float
+  char float_buf[32];
+  size_t float_len = dtos(f, float_buf);
+  float_buf[float_len] = '\0';
+
+  // Parse the dragonbox output to get mantissa and exponent
+  uint64_t mantissa = 0;
+  int exponent = 0;
+  bool in_frac = false;
+  int frac_digits = 0;
+  bool in_exp = false;
+  bool exp_neg = false;
+  int exp_val = 0;
+
+  for (size_t i = 0; i < float_len; i++) {
+    char c = float_buf[i];
+    if (c == '.') {
+      in_frac = true;
+    } else if (c == 'e' || c == 'E') {
+      in_exp = true;
+    } else if (in_exp) {
+      if (c == '-') {
+        exp_neg = true;
+      } else if (c == '+') {
+        // skip
+      } else if (c >= '0' && c <= '9') {
+        exp_val = exp_val * 10 + (c - '0');
+      }
+    } else if (c >= '0' && c <= '9') {
+      mantissa = mantissa * 10 + static_cast<uint64_t>(c - '0');
+      if (in_frac) frac_digits++;
+    }
+  }
+
+  exponent = (exp_neg ? -exp_val : exp_val) - frac_digits;
+
+  // Now try to find shortest representation that round-trips
+  // Start with 4 digits (minimum for half precision) and go up to 7
+  char result_buf[32];
+  size_t result_len = 0;
+
+  for (int precision = 4; precision <= 7; precision++) {
+    int exp_adjust = 0;
+    uint64_t rounded = round_to_digits(mantissa, precision, exp_adjust);
+    int new_exp = exponent + exp_adjust;
+
+    // Strip trailing zeros from mantissa
+    while (rounded > 0 && rounded % 10 == 0) {
+      rounded /= 10;
+      new_exp++;
+    }
+
+    // Format and parse back
+    char test_buf[32];
+    size_t test_len = format_decimal(rounded, new_exp, test_buf);
+    test_buf[test_len] = '\0';
+
+    // Parse back to float, then convert to half
+    float parsed_f = parse_decimal(rounded, new_exp);
+    value::half parsed_h = value::float_to_half_full(parsed_f);
+
+    // Check if round-trip succeeds (ignoring sign bit which we handle separately)
+    uint16_t original_bits = h.value & 0x7FFF;
+    uint16_t parsed_bits = parsed_h.value & 0x7FFF;
+
+    if (original_bits == parsed_bits) {
+      // Found shortest representation
+      if (negative) {
+        result_buf[0] = '-';
+        std::memcpy(result_buf + 1, test_buf, test_len);
+        result_len = test_len + 1;
+      } else {
+        std::memcpy(result_buf, test_buf, test_len);
+        result_len = test_len;
+      }
+      break;
+    }
+  }
+
+  // If no short representation found, use full float precision
+  if (result_len == 0) {
+    if (negative) {
+      result_buf[0] = '-';
+      std::memcpy(result_buf + 1, float_buf, float_len);
+      result_len = float_len + 1;
+    } else {
+      std::memcpy(result_buf, float_buf, float_len);
+      result_len = float_len;
+    }
+  }
+
+  return std::string(result_buf, result_len);
+}
+
+// Public API for dtos - half-precision buffer version
+size_t dtos(value::half h, char* buffer) {
+  std::string s = dtos(h);
+  std::memcpy(buffer, s.c_str(), s.size());
+  return s.size();
+}
+
+// ============================================================================
+// Vector and Matrix Printing Functions
+// ============================================================================
+
+// Helper template for printing vector types
+template<typename T, size_t N>
+size_t print_vector_impl(const std::array<T, N>& v, char* buffer) {
+  char* p = buffer;
+  *p++ = '(';
+
+  for (size_t i = 0; i < N; i++) {
+    if (i > 0) {
+      *p++ = ',';
+      *p++ = ' ';
+    }
+    size_t len = dtos(static_cast<T>(v[i]), p);
+    p += len;
+  }
+
+  *p++ = ')';
+  return static_cast<size_t>(p - buffer);
+}
+
+// Float vectors
+size_t print_float2(const value::float2& v, char* buffer) {
+  return print_vector_impl(v, buffer);
+}
+
+size_t print_float3(const value::float3& v, char* buffer) {
+  return print_vector_impl(v, buffer);
+}
+
+size_t print_float4(const value::float4& v, char* buffer) {
+  return print_vector_impl(v, buffer);
+}
+
+// Double vectors
+size_t print_double2(const value::double2& v, char* buffer) {
+  return print_vector_impl(v, buffer);
+}
+
+size_t print_double3(const value::double3& v, char* buffer) {
+  return print_vector_impl(v, buffer);
+}
+
+size_t print_double4(const value::double4& v, char* buffer) {
+  return print_vector_impl(v, buffer);
+}
+
+// Half vectors (convert to float for printing)
+// Note: These functions are only available when linking with value-types
+#if 0
+size_t print_half2(const value::half2& v, char* buffer) {
+  char* p = buffer;
+  *p++ = '(';
+
+  for (size_t i = 0; i < 2; i++) {
+    if (i > 0) {
+      *p++ = ',';
+      *p++ = ' ';
+    }
+    size_t len = dtos(value::half_to_float(v[i]), p);
+    p += len;
+  }
+
+  *p++ = ')';
+  return static_cast<size_t>(p - buffer);
+}
+
+size_t print_half3(const value::half3& v, char* buffer) {
+  char* p = buffer;
+  *p++ = '(';
+
+  for (size_t i = 0; i < 3; i++) {
+    if (i > 0) {
+      *p++ = ',';
+      *p++ = ' ';
+    }
+    size_t len = dtos(value::half_to_float(v[i]), p);
+    p += len;
+  }
+
+  *p++ = ')';
+  return static_cast<size_t>(p - buffer);
+}
+
+size_t print_half4(const value::half4& v, char* buffer) {
+  char* p = buffer;
+  *p++ = '(';
+
+  for (size_t i = 0; i < 4; i++) {
+    if (i > 0) {
+      *p++ = ',';
+      *p++ = ' ';
+    }
+    size_t len = dtos(value::half_to_float(v[i]), p);
+    p += len;
+  }
+
+  *p++ = ')';
+  return static_cast<size_t>(p - buffer);
+}
+#endif
+
+// Matrix printing: ( (row0), (row1), ... ) - with spaces for USD compatibility
+size_t print_matrix2d(const value::matrix2d& m, char* buffer) {
+  char* p = buffer;
+  *p++ = '(';
+  *p++ = ' ';  // Space after opening paren for USD compatibility
+
+  for (size_t row = 0; row < 2; row++) {
+    if (row > 0) {
+      *p++ = ',';
+      *p++ = ' ';
+    }
+    *p++ = '(';
+    for (size_t col = 0; col < 2; col++) {
+      if (col > 0) {
+        *p++ = ',';
+        *p++ = ' ';
+      }
+      size_t len = dtos(m.m[row][col], p);
+      p += len;
+    }
+    *p++ = ')';
+  }
+
+  *p++ = ' ';  // Space before closing paren for USD compatibility
+  *p++ = ')';
+  return static_cast<size_t>(p - buffer);
+}
+
+size_t print_matrix3d(const value::matrix3d& m, char* buffer) {
+  char* p = buffer;
+  *p++ = '(';
+  *p++ = ' ';  // Space after opening paren for USD compatibility
+
+  for (size_t row = 0; row < 3; row++) {
+    if (row > 0) {
+      *p++ = ',';
+      *p++ = ' ';
+    }
+    *p++ = '(';
+    for (size_t col = 0; col < 3; col++) {
+      if (col > 0) {
+        *p++ = ',';
+        *p++ = ' ';
+      }
+      size_t len = dtos(m.m[row][col], p);
+      p += len;
+    }
+    *p++ = ')';
+  }
+
+  *p++ = ' ';  // Space before closing paren for USD compatibility
+  *p++ = ')';
+  return static_cast<size_t>(p - buffer);
+}
+
+size_t print_matrix4d(const value::matrix4d& m, char* buffer) {
+  char* p = buffer;
+  *p++ = '(';
+  *p++ = ' ';  // Space after opening paren for USD compatibility
+
+  for (size_t row = 0; row < 4; row++) {
+    if (row > 0) {
+      *p++ = ',';
+      *p++ = ' ';
+    }
+    *p++ = '(';
+    for (size_t col = 0; col < 4; col++) {
+      if (col > 0) {
+        *p++ = ',';
+        *p++ = ' ';
+      }
+      size_t len = dtos(m.m[row][col], p);
+      p += len;
+    }
+    *p++ = ')';
+  }
+
+  *p++ = ' ';  // Space before closing paren for USD compatibility
+  *p++ = ')';
+  return static_cast<size_t>(p - buffer);
+}
+
 bool GlobMatch(const std::string &pattern, const std::string &str) {
   // Simple glob matching with * (any chars) and ? (single char)
   // Uses dynamic programming approach
@@ -1239,19 +2070,15 @@ bool GlobMatchPath(const std::string &pattern, const std::string &path) {
 }
 
 char *dtoa(float f, char *buf) {
-  // For float, use simple sprintf for now
-  // dtoa_milo is optimized for double and doesn't work well with float
-  int n = snprintf(buf, 384, "%.9g", static_cast<double>(f));
-  if (n < 0 || n >= 384) {
-    buf[0] = '0';
-    return &buf[1];
-  }
-  return &buf[n];
+  // Use dragonbox for float-to-string conversion
+  size_t len = dtos(f, buf);
+  return buf + len;
 }
 
 char *dtoa(double d, char *buf) {
-  // Use dtoa_milo for double precision
-  return dtoa_milo(d, buf);
+  // Use dragonbox for double-to-string conversion
+  size_t len = dtos(d, buf);
+  return buf + len;
 }
 
 }  // namespace tinyusdz

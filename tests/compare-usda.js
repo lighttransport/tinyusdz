@@ -187,6 +187,228 @@ function expandFilePatterns(patterns, baseDir = '.') {
   return [...new Set(files)];
 }
 
+/**
+ * Half-precision (fp16/binary16) utilities
+ * IEEE 754 half-precision: 1 sign bit, 5 exponent bits, 10 mantissa bits
+ */
+
+/**
+ * Convert a float (parsed from string) to half-precision binary representation
+ * Returns the 16-bit unsigned integer representation
+ */
+function floatToHalfBits(f) {
+  // Handle special cases
+  if (isNaN(f)) {
+    return 0x7E00; // Canonical NaN
+  }
+  if (!isFinite(f)) {
+    return f > 0 ? 0x7C00 : 0xFC00; // +inf or -inf
+  }
+  if (f === 0) {
+    // Check for -0
+    return Object.is(f, -0) ? 0x8000 : 0x0000;
+  }
+
+  const sign = f < 0 ? 1 : 0;
+  f = Math.abs(f);
+
+  // Get the float32 representation to extract components
+  const float32View = new Float32Array(1);
+  const uint32View = new Uint32Array(float32View.buffer);
+  float32View[0] = f;
+  const bits32 = uint32View[0];
+
+  const exp32 = (bits32 >> 23) & 0xFF;
+  const mant32 = bits32 & 0x7FFFFF;
+
+  let exp16, mant16;
+
+  if (exp32 === 0) {
+    // Float32 denormal -> Half denormal or zero
+    exp16 = 0;
+    mant16 = 0;
+  } else if (exp32 === 0xFF) {
+    // Inf or NaN
+    exp16 = 0x1F;
+    mant16 = mant32 ? 0x200 : 0; // NaN or Inf
+  } else {
+    // Normal number
+    const newExp = exp32 - 127 + 15; // Rebias from float32 to half
+
+    if (newExp >= 0x1F) {
+      // Overflow -> Infinity
+      exp16 = 0x1F;
+      mant16 = 0;
+    } else if (newExp <= 0) {
+      // Underflow -> denormal or zero
+      if (newExp < -10) {
+        // Too small, becomes zero
+        exp16 = 0;
+        mant16 = 0;
+      } else {
+        // Denormal
+        exp16 = 0;
+        // Add implicit leading 1 and shift
+        const shift = 1 - newExp;
+        mant16 = ((mant32 | 0x800000) + (1 << (shift + 12))) >> (shift + 13);
+      }
+    } else {
+      // Normal number
+      exp16 = newExp;
+      // Round mantissa from 23 bits to 10 bits
+      mant16 = (mant32 + 0x1000) >> 13; // Round to nearest
+      if (mant16 & 0x400) {
+        // Mantissa overflow due to rounding
+        mant16 = 0;
+        exp16++;
+        if (exp16 >= 0x1F) {
+          exp16 = 0x1F;
+          mant16 = 0; // Overflow to infinity
+        }
+      }
+    }
+  }
+
+  return (sign << 15) | (exp16 << 10) | (mant16 & 0x3FF);
+}
+
+/**
+ * Convert half-precision bits back to float for display
+ */
+function halfBitsToFloat(bits) {
+  const sign = (bits >> 15) & 1;
+  const exp = (bits >> 10) & 0x1F;
+  const mant = bits & 0x3FF;
+
+  let value;
+  if (exp === 0) {
+    // Denormal or zero
+    value = mant * Math.pow(2, -24); // 2^(-14-10)
+  } else if (exp === 0x1F) {
+    // Inf or NaN
+    value = mant ? NaN : Infinity;
+  } else {
+    // Normal number
+    value = (1 + mant / 1024) * Math.pow(2, exp - 15);
+  }
+
+  return sign ? -value : value;
+}
+
+/**
+ * Check if a string value appears to be a half-precision special value
+ */
+function isHalfSpecialValue(str) {
+  const lower = str.toLowerCase().trim();
+  return lower === 'nan' || lower === 'inf' || lower === '-inf' ||
+         lower === '+inf' || lower === 'infinity' || lower === '-infinity';
+}
+
+/**
+ * Compare two numeric values as half-precision floats
+ * Returns true if they have the same binary representation
+ */
+function areHalfValuesEqual(val1, val2) {
+  // Handle special values (nan, inf) as string comparison
+  const isSpecial1 = isHalfSpecialValue(String(val1));
+  const isSpecial2 = isHalfSpecialValue(String(val2));
+
+  if (isSpecial1 || isSpecial2) {
+    // For nan/inf, compare as strings (normalized)
+    const norm1 = String(val1).toLowerCase().trim();
+    const norm2 = String(val2).toLowerCase().trim();
+    // Normalize inf variants
+    const normalize = s => s.replace(/^\+/, '').replace(/^infinity$/, 'inf').replace(/^-infinity$/, '-inf');
+    return normalize(norm1) === normalize(norm2);
+  }
+
+  // Parse as floats and convert to half binary
+  const f1 = parseFloat(val1);
+  const f2 = parseFloat(val2);
+
+  if (isNaN(f1) || isNaN(f2)) {
+    return false;
+  }
+
+  const bits1 = floatToHalfBits(f1);
+  const bits2 = floatToHalfBits(f2);
+
+  return bits1 === bits2;
+}
+
+/**
+ * Check if an attribute name suggests half-precision type
+ * Half types in USD: half, half2, half3, half4, quath (quaternion half)
+ */
+function isHalfPrecisionAttribute(attrName) {
+  // Match type annotations like "half", "half2", "half3", "half4", "quath"
+  // Also match array types like "half[]", "half3[]", "quath[]"
+  const halfTypePattern = /\b(half[234]?|quath)\b/i;
+  return halfTypePattern.test(attrName);
+}
+
+/**
+ * Recursively compare two values as half-precision
+ * Handles scalars, tuples (half2, half3, half4), and arrays
+ */
+function areValuesEqualAsHalf(val1, val2) {
+  // Handle null/undefined
+  if (val1 === null || val1 === undefined || val2 === null || val2 === undefined) {
+    return val1 === val2;
+  }
+
+  // Handle objects (parsed USDA values)
+  if (typeof val1 === 'object' && typeof val2 === 'object') {
+    // Both are tuples (e.g., half3 = (1.0, 2.0, 3.0))
+    if (val1.type === 'tuple' && val2.type === 'tuple') {
+      if (val1.value.length !== val2.value.length) return false;
+      for (let i = 0; i < val1.value.length; i++) {
+        if (!areValuesEqualAsHalf(val1.value[i], val2.value[i])) {
+          return false;
+        }
+      }
+      return true;
+    }
+
+    // Both are arrays (e.g., half3[] = [(1,2,3), (4,5,6)])
+    if (val1.type === 'array' && val2.type === 'array') {
+      if (val1.value.length !== val2.value.length) return false;
+      for (let i = 0; i < val1.value.length; i++) {
+        if (!areValuesEqualAsHalf(val1.value[i], val2.value[i])) {
+          return false;
+        }
+      }
+      return true;
+    }
+
+    // Both are numbers
+    if (val1.type === 'number' && val2.type === 'number') {
+      return areHalfValuesEqual(val1.value, val2.value);
+    }
+
+    // Mixed types - not equal
+    if (val1.type !== val2.type) return false;
+
+    // Other types - compare normally
+    return normalizeValue(val1) === normalizeValue(val2);
+  }
+
+  // Handle primitive strings (raw number strings)
+  if (typeof val1 === 'string' && typeof val2 === 'string') {
+    // Try to parse as numbers and compare as half
+    const num1 = parseFloat(val1);
+    const num2 = parseFloat(val2);
+    if (!isNaN(num1) && !isNaN(num2)) {
+      return areHalfValuesEqual(val1, val2);
+    }
+    // Non-numeric strings - compare directly
+    return val1 === val2;
+  }
+
+  // Fallback to string comparison
+  return String(val1) === String(val2);
+}
+
 // USDA Token types
 const TokenType = {
   IDENTIFIER: 'IDENTIFIER',
@@ -553,23 +775,35 @@ class UsdaParser {
   constructor(tokens) {
     this.tokens = tokens;
     this.pos = 0;
-    this.depth = 0;
-    this.maxDepth = 10000;  // Very deep nesting for complex USD files (skeletal animation, etc.)
     this.iterations = 0;
-    this.maxIterations = 100000;
+    this.maxIterations = 50000000;  // Large limit for files with huge arrays (e.g., suzanne with 7800 vertices)
   }
 
-  checkDepth() {
-    if (++this.depth > this.maxDepth) {
-      throw new Error(`Parser depth limit exceeded (${this.maxDepth})`);
-    }
+  checkIterations() {
     if (++this.iterations > this.maxIterations) {
       throw new Error(`Parser iteration limit exceeded (${this.maxIterations})`);
     }
   }
 
-  resetDepth() {
-    this.depth = 0;
+  // Check if current token starts a relationship declaration
+  // Valid starts: rel, custom rel, delete rel, prepend rel, append rel, add rel, reorder rel
+  // Also: append custom rel, delete custom rel, etc.
+  isRelationshipStart(tokenValue) {
+    if (tokenValue === 'rel') return true;
+
+    const relQualifiers = ['custom', 'delete', 'prepend', 'append', 'add', 'reorder'];
+    if (!relQualifiers.includes(tokenValue)) return false;
+
+    // Look ahead to find 'rel' (may be after other qualifiers)
+    let offset = 1;
+    while (offset < 5) { // Max 4 qualifiers before 'rel'
+      const nextToken = this.peek(offset);
+      if (!nextToken || nextToken.type !== TokenType.IDENTIFIER) return false;
+      if (nextToken.value === 'rel') return true;
+      if (!relQualifiers.includes(nextToken.value)) return false;
+      offset++;
+    }
+    return false;
   }
 
   peek(offset = 0) {
@@ -757,7 +991,7 @@ class UsdaParser {
   }
 
   parseValue() {
-    this.checkDepth();
+    this.checkIterations();
     const token = this.peek();
 
     if (!token) {
@@ -961,10 +1195,16 @@ class UsdaParser {
           continue;
         }
 
-        // Relationship
-        if (token.type === TokenType.IDENTIFIER && token.value === 'rel') {
-          this.advance();
-          const relName = this.parseRelationshipName();
+        // Relationship (with optional qualifiers: custom, delete, prepend, append, add, reorder)
+        // Valid patterns: rel X, custom rel X, delete rel X, append custom rel X, etc.
+        if (token.type === TokenType.IDENTIFIER && this.isRelationshipStart(token.value)) {
+          // Collect all qualifiers before 'rel'
+          let qualifiers = '';
+          while (this.peek() && this.peek().type === TokenType.IDENTIFIER && this.peek().value !== 'rel') {
+            qualifiers += this.advance().value + ' ';
+          }
+          this.advance(); // consume 'rel'
+          const relName = qualifiers + this.parseRelationshipName();
           if (this.match(TokenType.EQUALS)) {
             prim.relationships[relName] = this.parseValue();
           } else {
@@ -1225,12 +1465,19 @@ function areNumbersEqual(val1, val2, epsilon = 1e-6) {
 
 /**
  * Compare two timeSamples values with epsilon tolerance for numeric values
+ * @param {Object} val1 - First timeSamples object
+ * @param {Object} val2 - Second timeSamples object
+ * @param {boolean|number} epsilonOrIsHalf - Either epsilon tolerance (number) or isHalf flag (boolean)
  */
-function areTimeSamplesEqual(val1, val2, epsilon = 1e-6) {
+function areTimeSamplesEqual(val1, val2, epsilonOrIsHalf = 1e-6) {
   // Check if both are timeSamples objects
   if (!val1 || !val2 || val1.type !== 'timeSamples' || val2.type !== 'timeSamples') {
     return false;
   }
+
+  // Determine if we're using half-precision comparison
+  const isHalf = typeof epsilonOrIsHalf === 'boolean' ? epsilonOrIsHalf : false;
+  const epsilon = typeof epsilonOrIsHalf === 'number' ? epsilonOrIsHalf : 1e-6;
 
   const times1 = Object.keys(val1.value);
   const times2 = Object.keys(val2.value);
@@ -1254,19 +1501,30 @@ function areTimeSamplesEqual(val1, val2, epsilon = 1e-6) {
       return false;
     }
 
-    // Compare values at this time
-    const v1 = normalizeValue(val1.value[t1]);
-    const v2 = normalizeValue(val2.value[t2]);
+    // Get raw values for half-precision comparison
+    const rawV1 = val1.value[t1];
+    const rawV2 = val2.value[t2];
 
-    // Use epsilon comparison for numeric values
-    if (isNumericValue(v1) && isNumericValue(v2)) {
-      if (!areNumbersEqual(v1, v2, epsilon)) {
+    if (isHalf) {
+      // Use half-precision binary comparison
+      if (!areValuesEqualAsHalf(rawV1, rawV2)) {
         return false;
       }
     } else {
-      // Non-numeric values must match exactly
-      if (v1 !== v2) {
-        return false;
+      // Compare values at this time
+      const v1 = normalizeValue(rawV1);
+      const v2 = normalizeValue(rawV2);
+
+      // Use epsilon comparison for numeric values
+      if (isNumericValue(v1) && isNumericValue(v2)) {
+        if (!areNumbersEqual(v1, v2, epsilon)) {
+          return false;
+        }
+      } else {
+        // Non-numeric values must match exactly
+        if (v1 !== v2) {
+          return false;
+        }
       }
     }
   }
@@ -1347,8 +1605,8 @@ function compareUsda(usda1, usda2, options = {}) {
     const attrDiff = compareAttributes(prim1.attributes, prim2.attributes, path);
     differences.push(...attrDiff);
 
-    // Compare relationships
-    const relDiff = compareObjects(prim1.relationships, prim2.relationships, `${path} relationships`);
+    // Compare relationships (normalize listop qualifiers)
+    const relDiff = compareRelationships(prim1.relationships, prim2.relationships, path);
     differences.push(...relDiff);
 
     // Compare prim metadata
@@ -1476,13 +1734,19 @@ function compareAttributes(attrs1, attrs2, primPath) {
     let actualVal1 = val1 && typeof val1 === 'object' && val1.value !== undefined && val1.line !== undefined ? val1.value : val1;
     let actualVal2 = val2 && typeof val2 === 'object' && val2.value !== undefined && val2.line !== undefined ? val2.value : val2;
 
+    // Check if this is a half-precision attribute (using original keys which have type info)
+    const isHalfAttr = isHalfPrecisionAttribute(key1 || '') || isHalfPrecisionAttribute(key2 || '');
+
     // Check for timeSamples before normalization
     let valuesEqual = false;
 
     // Special handling for timeSamples (compare before normalization)
     if (actualVal1 && typeof actualVal1 === 'object' && actualVal1.type === 'timeSamples' &&
         actualVal2 && typeof actualVal2 === 'object' && actualVal2.type === 'timeSamples') {
-      valuesEqual = areTimeSamplesEqual(actualVal1, actualVal2);
+      valuesEqual = areTimeSamplesEqual(actualVal1, actualVal2, isHalfAttr);
+    } else if (isHalfAttr) {
+      // Half-precision comparison: compare as binary representation
+      valuesEqual = areValuesEqualAsHalf(actualVal1, actualVal2);
     } else {
       // Normal comparison path
       const norm1 = normalizeValue(val1);
@@ -1509,6 +1773,103 @@ function compareAttributes(attrs1, attrs2, primPath) {
         file1: norm1,
         file2: norm2,
         message: `Attribute "${normName}" at "${primPath}" differs: "${truncate(norm1, 50)}" vs "${truncate(norm2, 50)}"`
+      });
+    }
+  }
+
+  return differences;
+}
+
+/**
+ * Normalize relationship name by stripping qualifiers (listops and custom)
+ * E.g., "delete myheight" -> "myheight", "append custom myval" -> "myval"
+ */
+function normalizeRelationshipName(name) {
+  const qualifierPrefixes = ['delete ', 'prepend ', 'append ', 'add ', 'reorder ', 'custom '];
+  let normalized = name;
+  let changed = true;
+  // Keep stripping qualifiers until no more are found
+  while (changed) {
+    changed = false;
+    for (const prefix of qualifierPrefixes) {
+      if (normalized.startsWith(prefix)) {
+        normalized = normalized.slice(prefix.length);
+        changed = true;
+        break;
+      }
+    }
+  }
+  return normalized;
+}
+
+/**
+ * Compare relationships between two prims
+ * Normalizes listop qualifiers (delete/prepend/append/add/reorder) for comparison
+ */
+function compareRelationships(rels1, rels2, primPath) {
+  const differences = [];
+
+  // Create maps of normalized names to original keys
+  const relMap1 = {};
+  const relMap2 = {};
+
+  for (const key of Object.keys(rels1)) {
+    const normName = normalizeRelationshipName(key);
+    relMap1[normName] = key;
+  }
+
+  for (const key of Object.keys(rels2)) {
+    const normName = normalizeRelationshipName(key);
+    relMap2[normName] = key;
+  }
+
+  const allNormNames = new Set([...Object.keys(relMap1), ...Object.keys(relMap2)]);
+
+  for (const normName of allNormNames) {
+    const key1 = relMap1[normName];
+    const key2 = relMap2[normName];
+
+    const val1 = key1 ? rels1[key1] : undefined;
+    const val2 = key2 ? rels2[key2] : undefined;
+
+    if (val1 === undefined) {
+      differences.push({
+        type: 'relationship_missing',
+        location: 'file1',
+        path: primPath,
+        relationship: normName,
+        message: `Relationship "${normName}" at "${primPath}" exists in file2 but not in file1`
+      });
+      continue;
+    }
+
+    if (val2 === undefined) {
+      differences.push({
+        type: 'relationship_missing',
+        location: 'file2',
+        path: primPath,
+        relationship: normName,
+        message: `Relationship "${normName}" at "${primPath}" exists in file1 but not in file2`
+      });
+      continue;
+    }
+
+    // Compare values (both null means declaration-only, which is equivalent)
+    if (val1 === null && val2 === null) {
+      continue; // Both are declaration-only, equivalent
+    }
+
+    const norm1 = normalizeValue(val1);
+    const norm2 = normalizeValue(val2);
+
+    if (norm1 !== norm2) {
+      differences.push({
+        type: 'relationship_value_mismatch',
+        path: primPath,
+        relationship: normName,
+        file1: norm1,
+        file2: norm2,
+        message: `Relationship "${normName}" at "${primPath}" differs: "${truncate(norm1, 50)}" vs "${truncate(norm2, 50)}"`
       });
     }
   }
@@ -2138,7 +2499,13 @@ module.exports = {
   expandGlob,
   expandFilePatterns,
   isGlobPattern,
-  globToRegex
+  globToRegex,
+  // Half-precision (fp16) utilities
+  floatToHalfBits,
+  halfBitsToFloat,
+  areHalfValuesEqual,
+  areValuesEqualAsHalf,
+  isHalfPrecisionAttribute
 };
 
 // Run if executed directly

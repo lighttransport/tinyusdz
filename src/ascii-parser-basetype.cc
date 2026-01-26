@@ -3698,37 +3698,43 @@ bool AsciiParser::ParseFloatArrayOptimized(std::vector<float> *result) {
     return false;
   }
 
+  // Save the starting position (before '[')
+  uint64_t start_loc = CurrLoc();
+
   // Find the end of the array by matching brackets
   if (!Expect('[')) {
     return false;
   }
-  
+
   int bracket_depth = 1;
-  std::string array_str = "[";
-  
+
   while (bracket_depth > 0) {
     char c;
     if (!Char1(&c)) {
       PushError("Unexpected end of input while parsing float array");
       return false;
     }
-    
-    array_str += c;
-    
+
     if (c == '[') {
       bracket_depth++;
     } else if (c == ']') {
       bracket_depth--;
     }
   }
-  
-  // Use tiny-string optimized parsing
-  tstring_view sv(array_str.c_str());
+
+  // Get the end position (after ']')
+  uint64_t end_loc = CurrLoc();
+
+  // Create a string_view directly from the input buffer without copying
+  const char *array_start = reinterpret_cast<const char *>(_sr->data() + start_loc);
+  size_t array_len = static_cast<size_t>(end_loc - start_loc);
+  tstring_view sv(array_start, array_len);
+
   if (!str::parse_float_arary(sv, result)) {
     PushError("Failed to parse float array with tiny-string");
     return false;
   }
-  
+
   return true;
 }
 
@@ -3737,37 +3743,43 @@ bool AsciiParser::ParseDoubleArrayOptimized(std::vector<double> *result) {
     return false;
   }
 
+  // Save the starting position (before '[')
+  uint64_t start_loc = CurrLoc();
+
   // Find the end of the array by matching brackets
   if (!Expect('[')) {
     return false;
   }
-  
+
   int bracket_depth = 1;
-  std::string array_str = "[";
-  
+
   while (bracket_depth > 0) {
     char c;
     if (!Char1(&c)) {
       PushError("Unexpected end of input while parsing double array");
       return false;
     }
-    
-    array_str += c;
-    
+
     if (c == '[') {
       bracket_depth++;
     } else if (c == ']') {
       bracket_depth--;
     }
   }
-  
-  // Use tiny-string optimized parsing
-  tstring_view sv(array_str.c_str());
+
+  // Get the end position (after ']')
+  uint64_t end_loc = CurrLoc();
+
+  // Create a string_view directly from the input buffer without copying
+  const char *array_start = reinterpret_cast<const char *>(_sr->data() + start_loc);
+  size_t array_len = static_cast<size_t>(end_loc - start_loc);
+  tstring_view sv(array_start, array_len);
+
   if (!str::parse_double_arary(sv, result)) {
     PushError("Failed to parse double array with tiny-string");
     return false;
   }
-  
+
   return true;
 }
 

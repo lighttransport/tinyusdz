@@ -716,139 +716,141 @@ bool CompositeReferencesRec(uint32_t depth, AssetResolutionResolver &resolver,
   std::vector<std::string> search_paths = primspec.get_asset_search_paths();
 
   if (primspec.metas().references) {
-    const ListEditQual &qual = primspec.metas().references.value().first;
-    const auto &refecences = primspec.metas().references.value().second;
+    // Process all listops in order (supports multiple listops per arc)
+    for (const auto &ref_op : primspec.metas().references.value()) {
+      const ListEditQual &qual = ref_op.first;
+      const auto &refecences = ref_op.second;
 
-    if ((qual == ListEditQual::ResetToExplicit) ||
-        (qual == ListEditQual::Prepend)) {
-      for (const auto &reference : refecences) {
-        Layer layer;
-        const PrimSpec *src_ps{nullptr};
+      if ((qual == ListEditQual::ResetToExplicit) ||
+          (qual == ListEditQual::Prepend)) {
+        for (const auto &reference : refecences) {
+          Layer layer;
+          const PrimSpec *src_ps{nullptr};
 
-        if (reference.asset_path.GetAssetPath().empty()) {
-          if (reference.prim_path.is_absolute_path()) {
-            // Inherit-like operation.
+          if (reference.asset_path.GetAssetPath().empty()) {
+            if (reference.prim_path.is_absolute_path()) {
+              // Inherit-like operation.
 
-            if (!in_layer.find_primspec_at(reference.prim_path, &src_ps, err)) {
-              return false;
+              if (!in_layer.find_primspec_at(reference.prim_path, &src_ps, err)) {
+                return false;
+              }
+
+            } else {
+              PUSH_ERROR_AND_RETURN(
+                  fmt::format("Invalid asset path. assetPath is empty and "
+                              "primPath is not absolute path: {}",
+                              reference.prim_path.full_path_name()));
             }
-
           } else {
-            PUSH_ERROR_AND_RETURN(
-                fmt::format("Invalid asset path. assetPath is empty and "
-                            "primPath is not absolute path: {}",
-                            reference.prim_path.full_path_name()));
-          }
-        } else {
 
-          DCOUT("reference.prim_path = " << reference.prim_path);
-          DCOUT("primspec.cwp = " << cwp);
-          DCOUT("primspec.search_paths = " << search_paths);
-          if (!LoadAsset(resolver, cwp, search_paths, options.fileformats,
-                         reference.asset_path, reference.prim_path, &layer,
-                         &src_ps, /* error_when_no_prims_found */ true,
-                         options.error_when_asset_not_found,
-                         options.error_when_unsupported_fileformat, warn, err)) {
-            PUSH_ERROR_AND_RETURN(
-                fmt::format("Failed to `references` asset `{}`",
-                            reference.asset_path.GetAssetPath()));
-          }
-        }
-
-        if (!src_ps) {
-          // LoadAsset allowed not-found or unsupported file. so do nothing.
-          continue;
-        }
-
-        // Replace prim path prefix
-        if (!ReplaceRootPrimPathRec(0, reference.prim_path, dst_prim_path, *const_cast<PrimSpec *>(src_ps), warn, err)) {
-          return false;
-        }
-
-        // `inherits` op
-        if (!InheritPrimSpec(primspec, *src_ps, warn, err)) {
-          PUSH_ERROR_AND_RETURN(fmt::format("Failed to reference layer `{}`",
-                                            reference.asset_path));
-        }
-
-        // Modify Prim type if this PrimSpec is Model type.
-        if (primspec.typeName().empty() || primspec.typeName() == "Model") {
-          if (src_ps->typeName().empty() || src_ps->typeName() == "Model") {
-            // pass
-          } else {
-            primspec.typeName() = src_ps->typeName();
-          }
-        }
-
-        DCOUT("inherit done: primspec = " << primspec.name());
-      }
-
-    } else if (qual == ListEditQual::Delete) {
-      PUSH_ERROR_AND_RETURN("`delete` references are not supported yet.");
-    } else if (qual == ListEditQual::Add) {
-      PUSH_ERROR_AND_RETURN("`add` references are not supported yet.");
-    } else if (qual == ListEditQual::Order) {
-      PUSH_ERROR_AND_RETURN("`order` references are not supported yet.");
-    } else if (qual == ListEditQual::Invalid) {
-      PUSH_ERROR_AND_RETURN("Invalid listedit qualifier to for `references`.");
-    } else if (qual == ListEditQual::Append) {
-      for (const auto &reference : refecences) {
-        Layer layer;
-        const PrimSpec *src_ps{nullptr};
-
-        if (reference.asset_path.GetAssetPath().empty()) {
-          if (reference.prim_path.is_absolute_path()) {
-            // Inherit-like operation.
-
-            if (!in_layer.find_primspec_at(reference.prim_path, &src_ps, err)) {
-              return false;
+            DCOUT("reference.prim_path = " << reference.prim_path);
+            DCOUT("primspec.cwp = " << cwp);
+            DCOUT("primspec.search_paths = " << search_paths);
+            if (!LoadAsset(resolver, cwp, search_paths, options.fileformats,
+                           reference.asset_path, reference.prim_path, &layer,
+                           &src_ps, /* error_when_no_prims_found */ true,
+                           options.error_when_asset_not_found,
+                           options.error_when_unsupported_fileformat, warn, err)) {
+              PUSH_ERROR_AND_RETURN(
+                  fmt::format("Failed to `references` asset `{}`",
+                              reference.asset_path.GetAssetPath()));
             }
-
-          } else {
-            PUSH_ERROR_AND_RETURN(
-                fmt::format("Invalid asset path. assetPath is empty and "
-                            "primPath is not absolute path: {}",
-                            reference.prim_path.full_path_name()));
           }
-        } else {
-          if (!LoadAsset(resolver, cwp, search_paths, options.fileformats,
-                         reference.asset_path, reference.prim_path, &layer,
-                         &src_ps, /* error_when_no_prims */ true,
-                         options.error_when_asset_not_found,
-                         options.error_when_unsupported_fileformat, warn, err)) {
-            PUSH_ERROR_AND_RETURN(
-                fmt::format("Failed to `references` asset `{}`",
-                            reference.asset_path.GetAssetPath()));
+
+          if (!src_ps) {
+            // LoadAsset allowed not-found or unsupported file. so do nothing.
+            continue;
           }
+
+          // Replace prim path prefix
+          if (!ReplaceRootPrimPathRec(0, reference.prim_path, dst_prim_path, *const_cast<PrimSpec *>(src_ps), warn, err)) {
+            return false;
+          }
+
+          // `inherits` op
+          if (!InheritPrimSpec(primspec, *src_ps, warn, err)) {
+            PUSH_ERROR_AND_RETURN(fmt::format("Failed to reference layer `{}`",
+                                              reference.asset_path));
+          }
+
+          // Modify Prim type if this PrimSpec is Model type.
+          if (primspec.typeName().empty() || primspec.typeName() == "Model") {
+            if (src_ps->typeName().empty() || src_ps->typeName() == "Model") {
+              // pass
+            } else {
+              primspec.typeName() = src_ps->typeName();
+            }
+          }
+
+          DCOUT("inherit done: primspec = " << primspec.name());
         }
 
-        if (!src_ps) {
-          // LoadAsset allowed not-found or unsupported file. so do nothing.
-          continue;
-        }
+      } else if (qual == ListEditQual::Delete) {
+        PUSH_ERROR_AND_RETURN("`delete` references are not supported yet.");
+      } else if (qual == ListEditQual::Add) {
+        PUSH_ERROR_AND_RETURN("`add` references are not supported yet.");
+      } else if (qual == ListEditQual::Order) {
+        PUSH_ERROR_AND_RETURN("`order` references are not supported yet.");
+      } else if (qual == ListEditQual::Invalid) {
+        PUSH_ERROR_AND_RETURN("Invalid listedit qualifier to for `references`.");
+      } else if (qual == ListEditQual::Append) {
+        for (const auto &reference : refecences) {
+          Layer layer;
+          const PrimSpec *src_ps{nullptr};
 
-        // Replace prim path prefix
-        if (!ReplaceRootPrimPathRec(0, reference.prim_path, dst_prim_path, *const_cast<PrimSpec *>(src_ps), warn, err)) {
-          return false;
-        }
+          if (reference.asset_path.GetAssetPath().empty()) {
+            if (reference.prim_path.is_absolute_path()) {
+              // Inherit-like operation.
 
-        // `over` op
-        if (!OverridePrimSpec(primspec, *src_ps, warn, err)) {
-          PUSH_ERROR_AND_RETURN(fmt::format("Failed to reference layer `{}`",
-                                            reference.asset_path));
-        }
+              if (!in_layer.find_primspec_at(reference.prim_path, &src_ps, err)) {
+                return false;
+              }
 
-        // Modify Prim type if this PrimSpec is Model type.
-        if (primspec.typeName().empty() || primspec.typeName() == "Model") {
-          if (src_ps->typeName().empty() || src_ps->typeName() == "Model") {
-            // pass
+            } else {
+              PUSH_ERROR_AND_RETURN(
+                  fmt::format("Invalid asset path. assetPath is empty and "
+                              "primPath is not absolute path: {}",
+                              reference.prim_path.full_path_name()));
+            }
           } else {
-            primspec.typeName() = src_ps->typeName();
+            if (!LoadAsset(resolver, cwp, search_paths, options.fileformats,
+                           reference.asset_path, reference.prim_path, &layer,
+                           &src_ps, /* error_when_no_prims */ true,
+                           options.error_when_asset_not_found,
+                           options.error_when_unsupported_fileformat, warn, err)) {
+              PUSH_ERROR_AND_RETURN(
+                  fmt::format("Failed to `references` asset `{}`",
+                              reference.asset_path.GetAssetPath()));
+            }
+          }
+
+          if (!src_ps) {
+            // LoadAsset allowed not-found or unsupported file. so do nothing.
+            continue;
+          }
+
+          // Replace prim path prefix
+          if (!ReplaceRootPrimPathRec(0, reference.prim_path, dst_prim_path, *const_cast<PrimSpec *>(src_ps), warn, err)) {
+            return false;
+          }
+
+          // `over` op
+          if (!OverridePrimSpec(primspec, *src_ps, warn, err)) {
+            PUSH_ERROR_AND_RETURN(fmt::format("Failed to reference layer `{}`",
+                                              reference.asset_path));
+          }
+
+          // Modify Prim type if this PrimSpec is Model type.
+          if (primspec.typeName().empty() || primspec.typeName() == "Model") {
+            if (src_ps->typeName().empty() || src_ps->typeName() == "Model") {
+              // pass
+            } else {
+              primspec.typeName() = src_ps->typeName();
+            }
           }
         }
       }
     }
-
   }
 
   // Remove `references`.
@@ -882,138 +884,140 @@ bool CompositePayloadRec(uint32_t depth, AssetResolutionResolver &resolver,
   std::vector<std::string> search_paths = primspec.get_asset_search_paths();
 
   if (primspec.metas().payload) {
-    const ListEditQual &qual = primspec.metas().payload.value().first;
-    const auto &payloads = primspec.metas().payload.value().second;
+    // Process all listops in order (supports multiple listops per arc)
+    for (const auto &payload_op : primspec.metas().payload.value()) {
+      const ListEditQual &qual = payload_op.first;
+      const auto &payloads = payload_op.second;
 
-    if ((qual == ListEditQual::ResetToExplicit) ||
-        (qual == ListEditQual::Prepend)) {
-      for (const auto &pl : payloads) {
-        std::string asset_path = pl.asset_path.GetAssetPath();
-        DCOUT("asset_path = " << asset_path);
+      if ((qual == ListEditQual::ResetToExplicit) ||
+          (qual == ListEditQual::Prepend)) {
+        for (const auto &pl : payloads) {
+          std::string asset_path = pl.asset_path.GetAssetPath();
+          DCOUT("asset_path = " << asset_path);
 
-        Layer layer;
-        const PrimSpec *src_ps{nullptr};
+          Layer layer;
+          const PrimSpec *src_ps{nullptr};
 
-        if (pl.asset_path.GetAssetPath().empty()) {
-          if (pl.prim_path.is_absolute_path()) {
-            // Inherit-like operation.
+          if (pl.asset_path.GetAssetPath().empty()) {
+            if (pl.prim_path.is_absolute_path()) {
+              // Inherit-like operation.
 
-            if (!in_layer.find_primspec_at(pl.prim_path, &src_ps, err)) {
-              return false;
+              if (!in_layer.find_primspec_at(pl.prim_path, &src_ps, err)) {
+                return false;
+              }
+
+            } else {
+              PUSH_ERROR_AND_RETURN(
+                  fmt::format("primPath is not absolute path: {}",
+                              pl.prim_path.full_path_name()));
             }
-
           } else {
-            PUSH_ERROR_AND_RETURN(
-                fmt::format("primPath is not absolute path: {}",
-                            pl.prim_path.full_path_name()));
-          }
-        } else {
 
-          if (!LoadAsset(resolver, cwp, search_paths, options.fileformats,
-                         pl.asset_path, pl.prim_path, &layer, &src_ps,
-                         /* error_when_no_prims_found */ true,
-                         options.error_when_asset_not_found,
-                         options.error_when_unsupported_fileformat, warn, err)) {
-            PUSH_ERROR_AND_RETURN(fmt::format("Failed to `references` asset `{}`",
-                                              pl.asset_path.GetAssetPath()));
-          }
-        }
-
-        if (!src_ps) {
-          // LoadAsset allowed not-found or unsupported file. so do nothing.
-          continue;
-        }
-
-        // Replace prim path prefix
-        if (!ReplaceRootPrimPathRec(0, pl.prim_path, dst_prim_path, *const_cast<PrimSpec *>(src_ps), warn, err)) {
-          return false;
-        }
-
-        // `inherits` op
-        if (!InheritPrimSpec(primspec, *src_ps, warn, err)) {
-          PUSH_ERROR_AND_RETURN(
-              fmt::format("Failed to reference layer `{}`", asset_path));
-        }
-
-        // Modify Prim type if this PrimSpec is Model type.
-        if (primspec.typeName().empty() || primspec.typeName() == "Model") {
-          if (src_ps->typeName().empty() || src_ps->typeName() == "Model") {
-            // pass
-          } else {
-            primspec.typeName() = src_ps->typeName();
-          }
-        }
-
-        DCOUT("inherit done: primspec = " << primspec.name());
-      }
-
-    } else if (qual == ListEditQual::Delete) {
-      PUSH_ERROR_AND_RETURN("`delete` references are not supported yet.");
-    } else if (qual == ListEditQual::Add) {
-      PUSH_ERROR_AND_RETURN("`add` references are not supported yet.");
-    } else if (qual == ListEditQual::Order) {
-      PUSH_ERROR_AND_RETURN("`order` references are not supported yet.");
-    } else if (qual == ListEditQual::Invalid) {
-      PUSH_ERROR_AND_RETURN("Invalid listedit qualifier to for `references`.");
-    } else if (qual == ListEditQual::Append) {
-      for (const auto &pl : payloads) {
-        std::string asset_path = pl.asset_path.GetAssetPath();
-
-        Layer layer;
-        const PrimSpec *src_ps{nullptr};
-
-        if (pl.asset_path.GetAssetPath().empty()) {
-          if (pl.prim_path.is_absolute_path()) {
-            // Inherit-like operation.
-
-            if (!in_layer.find_primspec_at(pl.prim_path, &src_ps, err)) {
-              return false;
+            if (!LoadAsset(resolver, cwp, search_paths, options.fileformats,
+                           pl.asset_path, pl.prim_path, &layer, &src_ps,
+                           /* error_when_no_prims_found */ true,
+                           options.error_when_asset_not_found,
+                           options.error_when_unsupported_fileformat, warn, err)) {
+              PUSH_ERROR_AND_RETURN(fmt::format("Failed to `references` asset `{}`",
+                                                pl.asset_path.GetAssetPath()));
             }
+          }
 
-          } else {
+          if (!src_ps) {
+            // LoadAsset allowed not-found or unsupported file. so do nothing.
+            continue;
+          }
+
+          // Replace prim path prefix
+          if (!ReplaceRootPrimPathRec(0, pl.prim_path, dst_prim_path, *const_cast<PrimSpec *>(src_ps), warn, err)) {
+            return false;
+          }
+
+          // `inherits` op
+          if (!InheritPrimSpec(primspec, *src_ps, warn, err)) {
             PUSH_ERROR_AND_RETURN(
-                fmt::format("primPath is not absolute path: {}",
-                            pl.prim_path.full_path_name()));
+                fmt::format("Failed to reference layer `{}`", asset_path));
           }
-        } else {
 
-          if (!LoadAsset(resolver, cwp, search_paths, options.fileformats,
-                         pl.asset_path, pl.prim_path, &layer, &src_ps,
-                         /* error_when_no_prims_found */ true,
-                         options.error_when_asset_not_found,
-                         options.error_when_unsupported_fileformat, warn, err)) {
-            PUSH_ERROR_AND_RETURN(fmt::format("Failed to `references` asset `{}`",
-                                              pl.asset_path.GetAssetPath()));
+          // Modify Prim type if this PrimSpec is Model type.
+          if (primspec.typeName().empty() || primspec.typeName() == "Model") {
+            if (src_ps->typeName().empty() || src_ps->typeName() == "Model") {
+              // pass
+            } else {
+              primspec.typeName() = src_ps->typeName();
+            }
           }
+
+          DCOUT("inherit done: primspec = " << primspec.name());
         }
 
-        if (!src_ps) {
-          // LoadAsset allowed not-found or unsupported file. so do nothing.
-          continue;
-        }
+      } else if (qual == ListEditQual::Delete) {
+        PUSH_ERROR_AND_RETURN("`delete` references are not supported yet.");
+      } else if (qual == ListEditQual::Add) {
+        PUSH_ERROR_AND_RETURN("`add` references are not supported yet.");
+      } else if (qual == ListEditQual::Order) {
+        PUSH_ERROR_AND_RETURN("`order` references are not supported yet.");
+      } else if (qual == ListEditQual::Invalid) {
+        PUSH_ERROR_AND_RETURN("Invalid listedit qualifier to for `references`.");
+      } else if (qual == ListEditQual::Append) {
+        for (const auto &pl : payloads) {
+          std::string asset_path = pl.asset_path.GetAssetPath();
 
-        // Replace prim path prefix
-        if (!ReplaceRootPrimPathRec(0, pl.prim_path, dst_prim_path, *const_cast<PrimSpec *>(src_ps), warn, err)) {
-          return false;
-        }
+          Layer layer;
+          const PrimSpec *src_ps{nullptr};
 
-        // `over` op
-        if (!OverridePrimSpec(primspec, *src_ps, warn, err)) {
-          PUSH_ERROR_AND_RETURN(
-              fmt::format("Failed to reference layer `{}`", asset_path));
-        }
+          if (pl.asset_path.GetAssetPath().empty()) {
+            if (pl.prim_path.is_absolute_path()) {
+              // Inherit-like operation.
 
-        // Modify Prim type if this PrimSpec is Model type.
-        if (primspec.typeName().empty() || primspec.typeName() == "Model") {
-          if (src_ps->typeName().empty() || src_ps->typeName() == "Model") {
-            // pass
+              if (!in_layer.find_primspec_at(pl.prim_path, &src_ps, err)) {
+                return false;
+              }
+
+            } else {
+              PUSH_ERROR_AND_RETURN(
+                  fmt::format("primPath is not absolute path: {}",
+                              pl.prim_path.full_path_name()));
+            }
           } else {
-            primspec.typeName() = src_ps->typeName();
+
+            if (!LoadAsset(resolver, cwp, search_paths, options.fileformats,
+                           pl.asset_path, pl.prim_path, &layer, &src_ps,
+                           /* error_when_no_prims_found */ true,
+                           options.error_when_asset_not_found,
+                           options.error_when_unsupported_fileformat, warn, err)) {
+              PUSH_ERROR_AND_RETURN(fmt::format("Failed to `references` asset `{}`",
+                                                pl.asset_path.GetAssetPath()));
+            }
+          }
+
+          if (!src_ps) {
+            // LoadAsset allowed not-found or unsupported file. so do nothing.
+            continue;
+          }
+
+          // Replace prim path prefix
+          if (!ReplaceRootPrimPathRec(0, pl.prim_path, dst_prim_path, *const_cast<PrimSpec *>(src_ps), warn, err)) {
+            return false;
+          }
+
+          // `over` op
+          if (!OverridePrimSpec(primspec, *src_ps, warn, err)) {
+            PUSH_ERROR_AND_RETURN(
+                fmt::format("Failed to reference layer `{}`", asset_path));
+          }
+
+          // Modify Prim type if this PrimSpec is Model type.
+          if (primspec.typeName().empty() || primspec.typeName() == "Model") {
+            if (src_ps->typeName().empty() || src_ps->typeName() == "Model") {
+              // pass
+            } else {
+              primspec.typeName() = src_ps->typeName();
+            }
           }
         }
       }
     }
-
   }
 
   // Remove `payload`.
@@ -1063,55 +1067,56 @@ bool CompositeInheritsRec(uint32_t depth, const Layer &layer,
   }
 
   if (primspec.metas().inherits) {
-    const auto &qual = primspec.metas().inherits.value().first;
-    const auto &inherits = primspec.metas().inherits.value().second;
+    // Process all listops in order (supports multiple listops per arc)
+    for (const auto &inherit_op : primspec.metas().inherits.value()) {
+      const auto &qual = inherit_op.first;
+      const auto &inherits = inherit_op.second;
 
-    if (inherits.size() == 0) {
-      // no-op, just remove `inherits` metadataum.
-      primspec.metas().inherits.reset();
-      return true;
-    }
-
-    if (inherits.size() != 1) {
-      if (err) {
-        (*err) += "Multiple inheritance is not supporetd.\n";
-      }
-      return false;
-    }
-
-    const Path &inheritPath = inherits[0];
-
-    const PrimSpec *inheritPrimSpec{nullptr};
-
-    if (!layer.find_primspec_at(inheritPath, &inheritPrimSpec, err)) {
-      if (err) {
-        (*err) += "Inheirt primspec failed since Path <" +
-                  inheritPath.prim_part() + "> not found or is invalid.\n";
+      if (inherits.size() == 0) {
+        // no-op, continue to next listop
+        continue;
       }
 
-      return false;
-    }
-
-    // TODO: listEdit
-    DCOUT("TODO: listEdit in `inherits`");
-    (void)qual;
-
-    if (inheritPrimSpec) {
-      if (!InheritPrimSpec(primspec, *inheritPrimSpec, warn, err)) {
+      if (inherits.size() != 1) {
+        if (err) {
+          (*err) += "Multiple inheritance is not supporetd.\n";
+        }
         return false;
       }
 
-      // remove `inherits` metadataum.
-      primspec.metas().inherits.reset();
+      const Path &inheritPath = inherits[0];
 
-    } else {
-      // ???
-      if (err) {
-        (*err) +=
-            "Inernal error. PrimSpec is nullptr in CompositeInehritsRec.\n";
+      const PrimSpec *inheritPrimSpec{nullptr};
+
+      if (!layer.find_primspec_at(inheritPath, &inheritPrimSpec, err)) {
+        if (err) {
+          (*err) += "Inheirt primspec failed since Path <" +
+                    inheritPath.prim_part() + "> not found or is invalid.\n";
+        }
+
+        return false;
       }
-      return false;
+
+      // TODO: listEdit
+      DCOUT("TODO: listEdit in `inherits`");
+      (void)qual;
+
+      if (inheritPrimSpec) {
+        if (!InheritPrimSpec(primspec, *inheritPrimSpec, warn, err)) {
+          return false;
+        }
+      } else {
+        // ???
+        if (err) {
+          (*err) +=
+              "Inernal error. PrimSpec is nullptr in CompositeInehritsRec.\n";
+        }
+        return false;
+      }
     }
+
+    // remove `inherits` metadataum after processing all listops.
+    primspec.metas().inherits.reset();
   }
 
   return true;
@@ -1131,15 +1136,16 @@ bool ExtractReferencesAssetPathsImpl(uint32_t depth, const PrimSpec &primspec, s
   }
 
   if (primspec.metas().references) {
-    // TODO: qualifier
-    //const ListEditQual &qual = primspec.metas().references.value().first;
-    const auto &refecences = primspec.metas().references.value().second;
+    // Iterate over all listops (supports multiple listops per arc)
+    for (const auto &ref_op : primspec.metas().references.value()) {
+      // TODO: qualifier
+      //const ListEditQual &qual = ref_op.first;
+      const auto &refecences = ref_op.second;
 
-    for (const auto &reference : refecences) {
-
-      paths.push_back(reference.asset_path.GetAssetPath());
+      for (const auto &reference : refecences) {
+        paths.push_back(reference.asset_path.GetAssetPath());
+      }
     }
-
   }
 
   return true;
@@ -1204,15 +1210,16 @@ bool ExtractPayloadAssetPathsImpl(uint32_t depth, const PrimSpec &primspec, std:
   }
 
   if (primspec.metas().payload) {
-    // TODO: qualifier
-    //const ListEditQual &qual = primspec.metas().references.value().first;
-    const auto &payload = primspec.metas().payload.value().second;
+    // Iterate over all listops (supports multiple listops per arc)
+    for (const auto &payload_op : primspec.metas().payload.value()) {
+      // TODO: qualifier
+      //const ListEditQual &qual = payload_op.first;
+      const auto &payload = payload_op.second;
 
-    for (const auto &pl : payload) {
-
-      paths.push_back(pl.asset_path.GetAssetPath());
+      for (const auto &pl : payload) {
+        paths.push_back(pl.asset_path.GetAssetPath());
+      }
     }
-
   }
 
   return true;
@@ -1770,8 +1777,14 @@ bool ExtractVariantsRec(uint32_t depth, const std::string &root_path,
   std::string full_prim_path = root_path + "/" + ps.name();
 
   if (ps.metas().variantSets) {
-    const std::vector<std::string> &vsets =
-        ps.metas().variantSets.value().second;
+    // Collect all variant sets from all listops
+    std::vector<std::string> vsets;
+    for (const auto &variantSets_op : ps.metas().variantSets.value()) {
+      const auto &items = variantSets_op.second;
+      for (const auto &vs : items) {
+        vsets.push_back(vs);
+      }
+    }
     MetaVariable var;
     var.set_value(vsets);
     variantInfos["variantSets"] = var;
@@ -1828,8 +1841,14 @@ bool ExtractVariantsRec(uint32_t depth, const std::string &root_path,
   std::string full_prim_path = root_path + "/" + prim.element_name();
 
   if (prim.metas().variantSets) {
-    const std::vector<std::string> &vsets =
-        prim.metas().variantSets.value().second;
+    // Collect all variant sets from all listops
+    std::vector<std::string> vsets;
+    for (const auto &variantSets_op : prim.metas().variantSets.value()) {
+      const auto &items = variantSets_op.second;
+      for (const auto &vs : items) {
+        vsets.push_back(vs);
+      }
+    }
     MetaVariable var;
     var.set_value(vsets);
     variantInfos["variantSets"] = var;
@@ -1979,18 +1998,23 @@ bool VariantSelectPrimSpec(
     return true;
   }
 
-  const auto &variantSetMeta = src.metas().variantSets.value();
-
-  const ListEditQual qual = variantSetMeta.first;
-  (void)qual;
+  // Collect all variant set names from all listops
+  std::vector<std::string> allVariantSetNames;
+  for (const auto &variantSets_op : src.metas().variantSets.value()) {
+    // TODO: handle different list edit qualifiers appropriately
+    const auto &items = variantSets_op.second;
+    for (const auto &vs : items) {
+      allVariantSetNames.push_back(vs);
+    }
+  }
 
   dst = src;
 
   PrimSpec ps = src;  // temp PrimSpec. Init with src.
 
   // Evaluate from the last element.
-  for (int64_t i = int64_t(variantSetMeta.second.size()) - 1; i >= 0; i--) {
-    const auto &variantSetName = variantSetMeta.second[size_t(i)];
+  for (int64_t i = int64_t(allVariantSetNames.size()) - 1; i >= 0; i--) {
+    const auto &variantSetName = allVariantSetNames[size_t(i)];
 
     // 1. look into `variant_selection`.
     // 2. look into variant setting in this PrimSpec.
