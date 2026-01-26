@@ -667,7 +667,7 @@ class USDAReader::Impl {
           }
 
           _stage.metas().customLayerData = metas.customLayerData;
-
+          _stage.metas().customLayerDataAuthored = metas.customLayerDataAuthored;
 
           return true;  // ok
         });
@@ -912,20 +912,24 @@ class USDAReader::Impl {
               << var.type_name() << "`");
         }
       } else if (meta.first == "inherits") {
+        // Initialize vector if not present
+        if (!out->inherits) {
+          out->inherits = std::vector<std::pair<ListEditQual, std::vector<Path>>>();
+        }
         if (auto pvb = var.get_value<value::ValueBlock>()) {
           if (listEditQual != ListEditQual::ResetToExplicit) {
             PUSH_ERROR_AND_RETURN_TAG(kTag, fmt::format("None or Empty list must be `explicit`(no qualifier), but has qualifier `{}`", to_string(listEditQual)));
           }
-          out->inherits = std::make_pair(listEditQual, std::vector<Path>());
+          out->inherits->push_back(std::make_pair(listEditQual, std::vector<Path>()));
         } else if (auto pv = var.get_value<std::vector<Path>>()) {
           if (pv.value().empty() && (listEditQual != ListEditQual::ResetToExplicit)) {
             PUSH_ERROR_AND_RETURN_TAG(kTag, fmt::format("None or Empty list must be `explicit`(no qualifier), but has qualifier `{}`", to_string(listEditQual)));
           }
-          out->inherits = std::make_pair(listEditQual, pv.value());
+          out->inherits->push_back(std::make_pair(listEditQual, pv.value()));
         } else if (auto pvp = var.get_value<Path>()) {
           std::vector<Path> vs;
           vs.push_back(pvp.value());
-          out->inherits = std::make_pair(listEditQual, vs);
+          out->inherits->push_back(std::make_pair(listEditQual, vs));
         } else {
           PUSH_ERROR_AND_RETURN(
               "(Internal error?) `inherits` metadataum should be either `path` or `path[]`. "
@@ -934,20 +938,24 @@ class USDAReader::Impl {
         }
 
       } else if (meta.first == "specializes") {
+        // Initialize vector if not present
+        if (!out->specializes) {
+          out->specializes = std::vector<std::pair<ListEditQual, std::vector<Path>>>();
+        }
         if (auto pvb = var.get_value<value::ValueBlock>()) {
           if (listEditQual != ListEditQual::ResetToExplicit) {
             PUSH_ERROR_AND_RETURN_TAG(kTag, fmt::format("None or Empty list must be `explicit`(no qualifier), but has qualifier `{}`", to_string(listEditQual)));
           }
-          out->specializes = std::make_pair(listEditQual, std::vector<Path>());
+          out->specializes->push_back(std::make_pair(listEditQual, std::vector<Path>()));
         } else if (auto pv = var.get_value<std::vector<Path>>()) {
           if (pv.value().empty() && (listEditQual != ListEditQual::ResetToExplicit)) {
             PUSH_ERROR_AND_RETURN_TAG(kTag, fmt::format("None or Empty list must be `explicit`(no qualifier), but has qualifier `{}`", to_string(listEditQual)));
           }
-          out->specializes = std::make_pair(listEditQual, pv.value());
+          out->specializes->push_back(std::make_pair(listEditQual, pv.value()));
         } else if (auto pvp = var.get_value<Path>()) {
           std::vector<Path> vs;
           vs.push_back(pvp.value());
-          out->specializes = std::make_pair(listEditQual, vs);
+          out->specializes->push_back(std::make_pair(listEditQual, vs));
         } else {
           PUSH_ERROR_AND_RETURN(
               "(Internal error?) `specializes` metadataum should be either `path` or `path[]`. "
@@ -956,25 +964,29 @@ class USDAReader::Impl {
         }
 
       } else if (meta.first == "variantSets") {
+        // Initialize vector if not present
+        if (!out->variantSets) {
+          out->variantSets = std::vector<std::pair<ListEditQual, std::vector<std::string>>>();
+        }
         // treat as `string`
         if (auto pvb = var.get_value<value::ValueBlock>()) {
           if (listEditQual != ListEditQual::ResetToExplicit) {
             PUSH_ERROR_AND_RETURN_TAG(kTag, fmt::format("None or Empty list must be `explicit`(no qualifier), but has qualifier `{}`", to_string(listEditQual)));
           }
-          out->variantSets = std::make_pair(listEditQual, std::vector<std::string>());
+          out->variantSets->push_back(std::make_pair(listEditQual, std::vector<std::string>()));
         } else if (auto pv = var.get_value<value::StringData>()) {
           std::vector<std::string> vs;
           vs.push_back(pv.value().value);
-          out->variantSets = std::make_pair(listEditQual, vs);
+          out->variantSets->push_back(std::make_pair(listEditQual, vs));
         } else if (auto pvs = var.get_value<std::string>()) {
           std::vector<std::string> vs;
           vs.push_back(pvs.value());
-          out->variantSets = std::make_pair(listEditQual, vs);
+          out->variantSets->push_back(std::make_pair(listEditQual, vs));
         } else if (auto pva = var.get_value<std::vector<std::string>>()) {
           if (pva.value().empty() && (listEditQual != ListEditQual::ResetToExplicit)) {
             PUSH_ERROR_AND_RETURN_TAG(kTag, fmt::format("None or Empty list must be `explicit`(no qualifier), but has qualifier `{}`", to_string(listEditQual)));
           }
-          out->variantSets = std::make_pair(listEditQual, pva.value());
+          out->variantSets->push_back(std::make_pair(listEditQual, pva.value()));
         } else {
           PUSH_ERROR_AND_RETURN(
               "(Internal error?) `variantSets` metadataum is not type "
@@ -1019,25 +1031,28 @@ class USDAReader::Impl {
           << var.type_name() << "`");
         }
       } else if (meta.first == "references") {
-
+        // Initialize vector if not present
+        if (!out->references) {
+          out->references = std::vector<std::pair<ListEditQual, std::vector<Reference>>>();
+        }
         if (var.is_blocked()) {
           // Treat as empty list
-          // empty list must be qualified as 'explicit' 
+          // empty list must be qualified as 'explicit'
           if (listEditQual != ListEditQual::ResetToExplicit) {
             PUSH_ERROR_AND_RETURN_TAG(kTag, fmt::format("None or Empty list must be `explicit`(no qualifier), but has qualifier `{}`", to_string(listEditQual)));
           }
           std::vector<Reference> refs;
-          out->references = std::make_pair(listEditQual, refs);
+          out->references->push_back(std::make_pair(listEditQual, refs));
         } else if (auto pv = var.get_value<Reference>()) {
           // To Reference
           std::vector<Reference> refs;
           refs.emplace_back(pv.value());
-          out->references = std::make_pair(listEditQual, refs);
+          out->references->push_back(std::make_pair(listEditQual, refs));
         } else if (auto pva = var.get_value<std::vector<Reference>>()) {
           if (pva.value().empty() && (listEditQual != ListEditQual::ResetToExplicit)) {
             PUSH_ERROR_AND_RETURN_TAG(kTag, fmt::format("None or Empty list must be `explicit`(no qualifier), but has qualifier `{}`", to_string(listEditQual)));
           }
-          out->references = std::make_pair(listEditQual, pva.value());
+          out->references->push_back(std::make_pair(listEditQual, pva.value()));
         } else {
           PUSH_ERROR_AND_RETURN(
               "(Internal error?) `references` metadataum is not type "
@@ -1045,24 +1060,27 @@ class USDAReader::Impl {
               << var.type_name() << "`");
         }
       } else if (meta.first == "payload") {
-
+        // Initialize vector if not present
+        if (!out->payload) {
+          out->payload = std::vector<std::pair<ListEditQual, std::vector<Payload>>>();
+        }
         if (var.is_blocked()) {
           if (listEditQual != ListEditQual::ResetToExplicit) {
             PUSH_ERROR_AND_RETURN_TAG(kTag, fmt::format("None or Empty list must be `explicit`(no qualifier), but has qualifier `{}`", to_string(listEditQual)));
           }
           // make empty
           std::vector<Payload> refs;
-          out->payload = std::make_pair(listEditQual, refs);
+          out->payload->push_back(std::make_pair(listEditQual, refs));
         } else if (auto pv = var.get_value<Payload>()) {
           // To Payload
           std::vector<Payload> pls;
           pls.emplace_back(pv.value());
-          out->payload = std::make_pair(listEditQual, pls);
+          out->payload->push_back(std::make_pair(listEditQual, pls));
         } else if (auto pva = var.get_value<std::vector<Payload>>()) {
           if (pva.value().empty() && (listEditQual != ListEditQual::ResetToExplicit)) {
             PUSH_ERROR_AND_RETURN_TAG(kTag, fmt::format("None or Empty list must be `explicit`(no qualifier), but has qualifier `{}`", to_string(listEditQual)));
           }
-          out->payload = std::make_pair(listEditQual, pva.value());
+          out->payload->push_back(std::make_pair(listEditQual, pva.value()));
         } else {
           PUSH_ERROR_AND_RETURN(
               "(Internal error) `payload` metadataum is not type "

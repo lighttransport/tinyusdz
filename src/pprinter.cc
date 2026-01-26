@@ -398,12 +398,13 @@ std::string print_animatable_token(const Animatable<T> &v,
 
 namespace {
 
-std::string print_references(const prim::ReferenceList &references,
-                             const uint32_t indent) {
+// Print a single reference listop (e.g., "prepend references = ...")
+std::string print_reference_listop(const prim::ReferenceListOp &ref_op,
+                                   const uint32_t indent) {
   std::stringstream ss;
 
-  auto listEditQual = std::get<0>(references);
-  auto vars = std::get<1>(references);
+  auto listEditQual = std::get<0>(ref_op);
+  auto vars = std::get<1>(ref_op);
 
   ss << pprint::Indent(indent);
 
@@ -424,6 +425,16 @@ std::string print_references(const prim::ReferenceList &references,
   }
   ss << "\n";
 
+  return ss.str();
+}
+
+// Print all reference listops (supports multiple listops per prim)
+std::string print_references(const prim::ReferenceList &references,
+                             const uint32_t indent) {
+  std::stringstream ss;
+  for (const auto &ref_op : references) {
+    ss << print_reference_listop(ref_op, indent);
+  }
   return ss.str();
 }
 
@@ -489,12 +500,13 @@ std::string print_relationship(const Relationship &rel,
 
 }  // namespace
 
-std::string print_payload(const prim::PayloadList &payload,
-                          const uint32_t indent) {
+// Print a single payload listop (e.g., "prepend payload = ...")
+std::string print_payload_listop(const prim::PayloadListOp &payload_op,
+                                 const uint32_t indent) {
   std::stringstream ss;
 
-  auto listEditQual = std::get<0>(payload);
-  auto vars = std::get<1>(payload);
+  auto listEditQual = std::get<0>(payload_op);
+  auto vars = std::get<1>(payload_op);
 
   ss << pprint::Indent(indent);
 
@@ -514,6 +526,16 @@ std::string print_payload(const prim::PayloadList &payload,
   }
   ss << "\n";
 
+  return ss.str();
+}
+
+// Print all payload listops (supports multiple listops per prim)
+std::string print_payload(const prim::PayloadList &payload,
+                          const uint32_t indent) {
+  std::stringstream ss;
+  for (const auto &payload_op : payload) {
+    ss << print_payload_listop(payload_op, indent);
+  }
   return ss.str();
 }
 
@@ -560,39 +582,45 @@ std::string print_prim_metas(const PrimMeta &meta, const uint32_t indent) {
   }
 
   if (meta.inherits) {
-    ss << pprint::Indent(indent);
-    auto listEditQual = std::get<0>(meta.inherits.value());
-    auto var = std::get<1>(meta.inherits.value());
+    // Print all inherits listops
+    for (const auto &inherit_op : meta.inherits.value()) {
+      ss << pprint::Indent(indent);
+      auto listEditQual = std::get<0>(inherit_op);
+      auto var = std::get<1>(inherit_op);
 
-    if (listEditQual != ListEditQual::ResetToExplicit) {
-      ss << to_string(listEditQual) << " ";
-    }
+      if (listEditQual != ListEditQual::ResetToExplicit) {
+        ss << to_string(listEditQual) << " ";
+      }
 
-    if (var.size() == 1) {
-      // print as scalar
-      ss << "inherits = " << var[0];
-    } else {
-      ss << "inherits = " << var;
+      if (var.size() == 1) {
+        // print as scalar
+        ss << "inherits = " << var[0];
+      } else {
+        ss << "inherits = " << var;
+      }
+      ss << "\n";
     }
-    ss << "\n";
   }
 
   if (meta.specializes) {
-    ss << pprint::Indent(indent);
-    auto listEditQual = std::get<0>(meta.specializes.value());
-    auto var = std::get<1>(meta.specializes.value());
+    // Print all specializes listops
+    for (const auto &specialize_op : meta.specializes.value()) {
+      ss << pprint::Indent(indent);
+      auto listEditQual = std::get<0>(specialize_op);
+      auto var = std::get<1>(specialize_op);
 
-    if (listEditQual != ListEditQual::ResetToExplicit) {
-      ss << to_string(listEditQual) << " ";
-    }
+      if (listEditQual != ListEditQual::ResetToExplicit) {
+        ss << to_string(listEditQual) << " ";
+      }
 
-    if (var.size() == 1) {
-      // print as scalar
-      ss << "specializes = " << var[0];
-    } else {
-      ss << "specializes = " << var;
+      if (var.size() == 1) {
+        // print as scalar
+        ss << "specializes = " << var[0];
+      } else {
+        ss << "specializes = " << var;
+      }
+      ss << "\n";
     }
-    ss << "\n";
   }
 
   if (meta.references) {
@@ -613,27 +641,29 @@ std::string print_prim_metas(const PrimMeta &meta, const uint32_t indent) {
   }
 
   if (meta.variantSets) {
-    ss << pprint::Indent(indent);
-    auto listEditQual = std::get<0>(meta.variantSets.value());
-    const std::vector<std::string> &vs =
-        std::get<1>(meta.variantSets.value());  // string[]
+    // Print all variantSets listops
+    for (const auto &variantSets_op : meta.variantSets.value()) {
+      ss << pprint::Indent(indent);
+      auto listEditQual = std::get<0>(variantSets_op);
+      const std::vector<std::string> &vs = std::get<1>(variantSets_op);  // string[]
 
-    if (listEditQual != ListEditQual::ResetToExplicit) {
-      ss << to_string(listEditQual) << " ";
+      if (listEditQual != ListEditQual::ResetToExplicit) {
+        ss << to_string(listEditQual) << " ";
+      }
+
+      ss << "variantSets = ";
+
+      if (vs.empty()) {
+        ss << "None";
+      } else if (vs.size() == 1) {
+        // Single element: print as scalar (without brackets)
+        ss << quote(vs[0]);
+      } else {
+        ss << to_string(vs);
+      }
+
+      ss << "\n";
     }
-
-    ss << "variantSets = ";
-
-    if (vs.empty()) {
-      ss << "None";
-    } else if (vs.size() == 1) {
-      // Single element: print as scalar (without brackets)
-      ss << quote(vs[0]);
-    } else {
-      ss << to_string(vs);
-    }
-
-    ss << "\n";
   }
 
   if (meta.has_apiSchemas()) {
@@ -4905,6 +4935,10 @@ std::string print_layer_metas(const LayerMetas &metas, const uint32_t indent) {
   if (metas.customLayerData.size()) {
     meta_ss << print_customData(metas.customLayerData, "customLayerData",
                                 /* indent */ 1);
+  } else if (metas.customLayerDataAuthored) {
+    // Print empty customLayerData if explicitly authored (match pxrUSD behavior)
+    meta_ss << pprint::Indent(1) << "customLayerData = {\n";
+    meta_ss << pprint::Indent(1) << "}\n";
   }
 
   return meta_ss.str();

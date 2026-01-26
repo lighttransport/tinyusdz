@@ -563,6 +563,27 @@ class UsdaParser {
     }
   }
 
+  // Check if current token starts a relationship declaration
+  // Valid starts: rel, custom rel, delete rel, prepend rel, append rel, add rel, reorder rel
+  // Also: append custom rel, delete custom rel, etc.
+  isRelationshipStart(tokenValue) {
+    if (tokenValue === 'rel') return true;
+
+    const relQualifiers = ['custom', 'delete', 'prepend', 'append', 'add', 'reorder'];
+    if (!relQualifiers.includes(tokenValue)) return false;
+
+    // Look ahead to find 'rel' (may be after other qualifiers)
+    let offset = 1;
+    while (offset < 5) { // Max 4 qualifiers before 'rel'
+      const nextToken = this.peek(offset);
+      if (!nextToken || nextToken.type !== TokenType.IDENTIFIER) return false;
+      if (nextToken.value === 'rel') return true;
+      if (!relQualifiers.includes(nextToken.value)) return false;
+      offset++;
+    }
+    return false;
+  }
+
   peek(offset = 0) {
     const idx = this.pos + offset;
     if (idx >= this.tokens.length) {
@@ -952,10 +973,16 @@ class UsdaParser {
           continue;
         }
 
-        // Relationship
-        if (token.type === TokenType.IDENTIFIER && token.value === 'rel') {
-          this.advance();
-          const relName = this.parseRelationshipName();
+        // Relationship (with optional qualifiers: custom, delete, prepend, append, add, reorder)
+        // Valid patterns: rel X, custom rel X, delete rel X, append custom rel X, etc.
+        if (token.type === TokenType.IDENTIFIER && this.isRelationshipStart(token.value)) {
+          // Collect all qualifiers before 'rel'
+          let qualifiers = '';
+          while (this.peek() && this.peek().type === TokenType.IDENTIFIER && this.peek().value !== 'rel') {
+            qualifiers += this.advance().value + ' ';
+          }
+          this.advance(); // consume 'rel'
+          const relName = qualifiers + this.parseRelationshipName();
           if (this.match(TokenType.EQUALS)) {
             prim.relationships[relName] = this.parseValue();
           } else {
@@ -1338,8 +1365,8 @@ function compareUsda(usda1, usda2, options = {}) {
     const attrDiff = compareAttributes(prim1.attributes, prim2.attributes, path);
     differences.push(...attrDiff);
 
-    // Compare relationships
-    const relDiff = compareObjects(prim1.relationships, prim2.relationships, `${path} relationships`);
+    // Compare relationships (normalize listop qualifiers)
+    const relDiff = compareRelationships(prim1.relationships, prim2.relationships, path);
     differences.push(...relDiff);
 
     // Compare prim metadata
@@ -1500,6 +1527,103 @@ function compareAttributes(attrs1, attrs2, primPath) {
         file1: norm1,
         file2: norm2,
         message: `Attribute "${normName}" at "${primPath}" differs: "${truncate(norm1, 50)}" vs "${truncate(norm2, 50)}"`
+      });
+    }
+  }
+
+  return differences;
+}
+
+/**
+ * Normalize relationship name by stripping qualifiers (listops and custom)
+ * E.g., "delete myheight" -> "myheight", "append custom myval" -> "myval"
+ */
+function normalizeRelationshipName(name) {
+  const qualifierPrefixes = ['delete ', 'prepend ', 'append ', 'add ', 'reorder ', 'custom '];
+  let normalized = name;
+  let changed = true;
+  // Keep stripping qualifiers until no more are found
+  while (changed) {
+    changed = false;
+    for (const prefix of qualifierPrefixes) {
+      if (normalized.startsWith(prefix)) {
+        normalized = normalized.slice(prefix.length);
+        changed = true;
+        break;
+      }
+    }
+  }
+  return normalized;
+}
+
+/**
+ * Compare relationships between two prims
+ * Normalizes listop qualifiers (delete/prepend/append/add/reorder) for comparison
+ */
+function compareRelationships(rels1, rels2, primPath) {
+  const differences = [];
+
+  // Create maps of normalized names to original keys
+  const relMap1 = {};
+  const relMap2 = {};
+
+  for (const key of Object.keys(rels1)) {
+    const normName = normalizeRelationshipName(key);
+    relMap1[normName] = key;
+  }
+
+  for (const key of Object.keys(rels2)) {
+    const normName = normalizeRelationshipName(key);
+    relMap2[normName] = key;
+  }
+
+  const allNormNames = new Set([...Object.keys(relMap1), ...Object.keys(relMap2)]);
+
+  for (const normName of allNormNames) {
+    const key1 = relMap1[normName];
+    const key2 = relMap2[normName];
+
+    const val1 = key1 ? rels1[key1] : undefined;
+    const val2 = key2 ? rels2[key2] : undefined;
+
+    if (val1 === undefined) {
+      differences.push({
+        type: 'relationship_missing',
+        location: 'file1',
+        path: primPath,
+        relationship: normName,
+        message: `Relationship "${normName}" at "${primPath}" exists in file2 but not in file1`
+      });
+      continue;
+    }
+
+    if (val2 === undefined) {
+      differences.push({
+        type: 'relationship_missing',
+        location: 'file2',
+        path: primPath,
+        relationship: normName,
+        message: `Relationship "${normName}" at "${primPath}" exists in file1 but not in file2`
+      });
+      continue;
+    }
+
+    // Compare values (both null means declaration-only, which is equivalent)
+    if (val1 === null && val2 === null) {
+      continue; // Both are declaration-only, equivalent
+    }
+
+    const norm1 = normalizeValue(val1);
+    const norm2 = normalizeValue(val2);
+
+    if (norm1 !== norm2) {
+      differences.push({
+        type: 'relationship_value_mismatch',
+        path: primPath,
+        relationship: normName,
+        file1: norm1,
+        file2: norm2,
+        message: `Relationship "${normName}" at "${primPath}" differs: "${truncate(norm1, 50)}" vs "${truncate(norm2, 50)}"`
       });
     }
   }
