@@ -24,6 +24,7 @@
 // before including the library headers, into whatever they want.
 #ifndef JKJ_STATIC_DATA_SECTION
     #define JKJ_STATIC_DATA_SECTION
+    #define JKJ_STATIC_DATA_SECTION_DEFINED 0
 #else
     #define JKJ_STATIC_DATA_SECTION_DEFINED 1
 #endif
@@ -33,6 +34,7 @@
 // features used in this header. (The list can be found below.)
 #ifndef JKJ_STD_REPLACEMENT_NAMESPACE
     #define JKJ_STD_REPLACEMENT_NAMESPACE std
+    #define JKJ_STD_REPLACEMENT_NAMESPACE_DEFINED 0
     #include <cassert>
     #include <cstdint>
     #include <cstring>

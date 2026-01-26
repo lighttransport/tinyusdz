@@ -34,6 +34,7 @@
 #include <cmath>
 #include <cstring>
 #include "value-types.hh"
+#include "str-util.hh"  // For dragonbox-based dtos()
 #endif
 
 namespace tinyusdz {
@@ -486,7 +487,7 @@ static std::string AttributeToJSON(const Attribute* attr) {
         for (int i = 0; i < 3; i++) {
           for (int j = 0; j < 3; j++) {
             if (i > 0 || j > 0) oss << ",";
-            oss << v.value().m[i][j];
+            oss << dtos(v.value().m[i][j]);
           }
         }
         oss << "]";
@@ -501,7 +502,7 @@ static std::string AttributeToJSON(const Attribute* attr) {
         for (int i = 0; i < 4; i++) {
           for (int j = 0; j < 4; j++) {
             if (i > 0 || j > 0) oss << ",";
-            oss << v.value().m[i][j];
+            oss << dtos(v.value().m[i][j]);
           }
         }
         oss << "]";
@@ -514,7 +515,7 @@ static std::string AttributeToJSON(const Attribute* attr) {
     else if (tid == value::TypeTraits<value::half2>::type_id()) {
       auto v = attr->get_value<value::half2>();
       if (v) {
-        oss << "[" << value::half_to_float(v.value()[0]) << "," << value::half_to_float(v.value()[1]) << "]";
+        oss << "[" << dtos(value::half_to_float(v.value()[0])) << "," << dtos(value::half_to_float(v.value()[1])) << "]";
       } else {
         oss << "null";
       }
@@ -523,7 +524,7 @@ static std::string AttributeToJSON(const Attribute* attr) {
     else if (tid == value::TypeTraits<value::half3>::type_id()) {
       auto v = attr->get_value<value::half3>();
       if (v) {
-        oss << "[" << value::half_to_float(v.value()[0]) << "," << value::half_to_float(v.value()[1]) << "," << value::half_to_float(v.value()[2]) << "]";
+        oss << "[" << dtos(value::half_to_float(v.value()[0])) << "," << dtos(value::half_to_float(v.value()[1])) << "," << dtos(value::half_to_float(v.value()[2])) << "]";
       } else {
         oss << "null";
       }
@@ -532,8 +533,8 @@ static std::string AttributeToJSON(const Attribute* attr) {
     else if (tid == value::TypeTraits<value::half4>::type_id()) {
       auto v = attr->get_value<value::half4>();
       if (v) {
-        oss << "[" << value::half_to_float(v.value()[0]) << "," << value::half_to_float(v.value()[1]) << "," 
-            << value::half_to_float(v.value()[2]) << "," << value::half_to_float(v.value()[3]) << "]";
+        oss << "[" << dtos(value::half_to_float(v.value()[0])) << "," << dtos(value::half_to_float(v.value()[1])) << ","
+            << dtos(value::half_to_float(v.value()[2])) << "," << dtos(value::half_to_float(v.value()[3])) << "]";
       } else {
         oss << "null";
       }
@@ -556,7 +557,7 @@ static std::string AttributeToJSON(const Attribute* attr) {
         oss << "[";
         for (size_t i = 0; i < v.value().size(); i++) {
           if (i > 0) oss << ",";
-          oss << v.value()[i];
+          oss << dtos(v.value()[i]);
         }
         oss << "]";
       } else {
@@ -583,7 +584,7 @@ static std::string AttributeToJSON(const Attribute* attr) {
         for (size_t i = 0; i < v.value().size(); i++) {
           if (i > 0) oss << ",";
           // Flatten each float3 into the main array
-          oss << v.value()[i][0] << "," << v.value()[i][1] << "," << v.value()[i][2];
+          oss << dtos(v.value()[i][0]) << "," << dtos(v.value()[i][1]) << "," << dtos(v.value()[i][2]);
         }
         oss << "]";
       } else {
@@ -598,7 +599,7 @@ static std::string AttributeToJSON(const Attribute* attr) {
         oss << "[";
         for (size_t i = 0; i < v.value().size(); i++) {
           if (i > 0) oss << ",";
-          oss << v.value()[i];
+          oss << dtos(v.value()[i]);
         }
         oss << "]";
       } else {
@@ -612,7 +613,7 @@ static std::string AttributeToJSON(const Attribute* attr) {
         for (size_t i = 0; i < v.value().size(); i++) {
           if (i > 0) oss << ",";
           // Flatten each double2 into the main array
-          oss << v.value()[i][0] << "," << v.value()[i][1];
+          oss << dtos(v.value()[i][0]) << "," << dtos(v.value()[i][1]);
         }
         oss << "]";
       } else {
@@ -626,7 +627,7 @@ static std::string AttributeToJSON(const Attribute* attr) {
         for (size_t i = 0; i < v.value().size(); i++) {
           if (i > 0) oss << ",";
           // Flatten each double3 into the main array
-          oss << v.value()[i][0] << "," << v.value()[i][1] << "," << v.value()[i][2];
+          oss << dtos(v.value()[i][0]) << "," << dtos(v.value()[i][1]) << "," << dtos(v.value()[i][2]);
         }
         oss << "]";
       } else {
@@ -640,7 +641,7 @@ static std::string AttributeToJSON(const Attribute* attr) {
         for (size_t i = 0; i < v.value().size(); i++) {
           if (i > 0) oss << ",";
           // Flatten each double4 into the main array
-          oss << v.value()[i][0] << "," << v.value()[i][1] << "," << v.value()[i][2] << "," << v.value()[i][3];
+          oss << dtos(v.value()[i][0]) << "," << dtos(v.value()[i][1]) << "," << dtos(v.value()[i][2]) << "," << dtos(v.value()[i][3]);
         }
         oss << "]";
       } else {
@@ -703,7 +704,7 @@ static std::string AttributeToJSON(const Attribute* attr) {
           for (int row = 0; row < 3; row++) {
             for (int col = 0; col < 3; col++) {
               if (row > 0 || col > 0) oss << ",";
-              oss << v.value()[i].m[row][col];
+              oss << dtos(v.value()[i].m[row][col]);
             }
           }
         }
@@ -722,7 +723,7 @@ static std::string AttributeToJSON(const Attribute* attr) {
           for (int row = 0; row < 4; row++) {
             for (int col = 0; col < 4; col++) {
               if (row > 0 || col > 0) oss << ",";
-              oss << v.value()[i].m[row][col];
+              oss << dtos(v.value()[i].m[row][col]);
             }
           }
         }
@@ -739,7 +740,7 @@ static std::string AttributeToJSON(const Attribute* attr) {
         oss << "[";
         for (size_t i = 0; i < v.value().size(); ++i) {
           if (i > 0) oss << ",";
-          oss << value::half_to_float(v.value()[i]);
+          oss << dtos(value::half_to_float(v.value()[i]));
         }
         oss << "]";
       } else {
@@ -753,7 +754,7 @@ static std::string AttributeToJSON(const Attribute* attr) {
         oss << "[";
         for (size_t i = 0; i < v.value().size(); ++i) {
           if (i > 0) oss << ",";
-          oss << value::half_to_float(v.value()[i][0]) << "," << value::half_to_float(v.value()[i][1]);
+          oss << dtos(value::half_to_float(v.value()[i][0])) << "," << dtos(value::half_to_float(v.value()[i][1]));
         }
         oss << "]";
       } else {
@@ -767,8 +768,8 @@ static std::string AttributeToJSON(const Attribute* attr) {
         oss << "[";
         for (size_t i = 0; i < v.value().size(); ++i) {
           if (i > 0) oss << ",";
-          oss << value::half_to_float(v.value()[i][0]) << "," << value::half_to_float(v.value()[i][1]) << "," 
-              << value::half_to_float(v.value()[i][2]);
+          oss << dtos(value::half_to_float(v.value()[i][0])) << "," << dtos(value::half_to_float(v.value()[i][1])) << ","
+              << dtos(value::half_to_float(v.value()[i][2]));
         }
         oss << "]";
       } else {
@@ -782,8 +783,8 @@ static std::string AttributeToJSON(const Attribute* attr) {
         oss << "[";
         for (size_t i = 0; i < v.value().size(); ++i) {
           if (i > 0) oss << ",";
-          oss << value::half_to_float(v.value()[i][0]) << "," << value::half_to_float(v.value()[i][1]) << "," 
-              << value::half_to_float(v.value()[i][2]) << "," << value::half_to_float(v.value()[i][3]);
+          oss << dtos(value::half_to_float(v.value()[i][0])) << "," << dtos(value::half_to_float(v.value()[i][1])) << ","
+              << dtos(value::half_to_float(v.value()[i][2])) << "," << dtos(value::half_to_float(v.value()[i][3]));
         }
         oss << "]";
       } else {

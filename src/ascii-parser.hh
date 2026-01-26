@@ -137,6 +137,7 @@ class AsciiParser {
     nonstd::optional<value::token> playbackMode;  // 'none' or 'loop'
 
     std::map<std::string, MetaVariable> customLayerData;  // `customLayerData`.
+    bool customLayerDataAuthored{false};  // Track if customLayerData was explicitly authored
     value::StringData comment;  // String only comment string.
   };
 
@@ -308,8 +309,10 @@ class AsciiParser {
     //}
   };
 
+  // Use multimap to support multiple listop qualifiers per composition arc
+  // (e.g., both "delete references" and "prepend references" on same prim)
   using PrimMetaMap =
-      std::map<std::string, std::pair<ListEditQual, MetaVariable>>;
+      std::multimap<std::string, std::pair<ListEditQual, MetaVariable>>;
 
   struct VariantContent;
 

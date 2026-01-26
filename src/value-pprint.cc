@@ -24,68 +24,37 @@
 #include "external/jeaiii_to_text.h"
 #endif
 
-// dtoa_milo does not work well for float types
-// (e.g. it prints float 0.01 as 0.009999999997),
-// so use floaxie for float types
-// TODO: Use floaxie also for double?
-#include "external/dtoa_milo.h"
+// NOTE: Using dragonbox-based dtos() from str-util.hh for all float/double
+// conversions - it produces shortest representation for 100% of values.
 
 #ifdef __clang__
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Weverything"
 #endif
 
-#include "external/floaxie/floaxie/ftoa.h"
-
 #ifdef __clang__
 #pragma clang diagnostic pop
 #endif
 
-namespace tinyusdz {
-
 namespace {
 
-#if defined(TINYUSDZ_LOCAL_USE_JEAIII_ITOA)
-void itoa(uint32_t n, char *b) { *jeaiii::to_text_from_integer(b, n) = '\0'; }
-void itoa(int32_t n, char *b) { *jeaiii::to_text_from_integer(b, n) = '\0'; }
-void itoa(uint64_t n, char *b) { *jeaiii::to_text_from_integer(b, n) = '\0'; }
-void itoa(int64_t n, char *b) { *jeaiii::to_text_from_integer(b, n) = '\0'; }
-#endif
-
-inline std::string dtos(const float v) {
-  char buf[floaxie::max_buffer_size<float>()];
-  size_t n = floaxie::ftoa(v, buf);
-
-  return std::string(buf, buf + n);
-}
-
-inline std::string dtos(const double v) {
-#if 0
-  char buf[floaxie::max_buffer_size<double>()];
-  size_t n = floaxie::ftoa(v, buf);
-
-  return std::string(buf, buf + n);
-#else
-  char buf[384];
-
-  // dtoa_milo returns strlen + 1 position
-  char *e = dtoa_milo(v, buf);
-  (*e) = '\0';
-
-  return std::string(buf);
-#endif
+inline void append_float_to_stream(std::ostream &os, float v) {
+  char buf[tinyusdz::DTOS_MAX_CHARS_FLOAT];
+  size_t len = tinyusdz::dtos(v, buf);
+  os.write(buf, static_cast<std::streamsize>(len));
 }
 
 }  // namespace
 
-}  // namespace tinyusdz
-
 namespace std {
 
 std::ostream &operator<<(std::ostream &os, const tinyusdz::value::half &v) {
-  os << tinyusdz::value::half_to_float(v);
+  // Use direct half-precision dtos for shortest representation
+  os << tinyusdz::dtos(v);
   return os;
 }
+
+// Note: operator<< for StringData is defined in pprinter.cc
 
 std::ostream &operator<<(std::ostream &os, const tinyusdz::value::half2 &v) {
   os << "(" << v[0] << ", " << v[1] << ")";
@@ -196,36 +165,44 @@ std::ostream &operator<<(std::ostream &os, const tinyusdz::value::uint4 &v) {
 }
 
 std::ostream &operator<<(std::ostream &os, const tinyusdz::value::float2 &v) {
-  os << "(" << tinyusdz::dtos(v[0]) << ", " << tinyusdz::dtos(v[1]) << ")";
+  char buffer[tinyusdz::PRINT_FLOAT2_MAX_CHARS];
+  size_t len = tinyusdz::print_float2(v, buffer);
+  os.write(buffer, static_cast<std::streamsize>(len));
   return os;
 }
 
 std::ostream &operator<<(std::ostream &os, const tinyusdz::value::float3 &v) {
-  os << "(" << tinyusdz::dtos(v[0]) << ", " << tinyusdz::dtos(v[1]) << ", "
-     << tinyusdz::dtos(v[2]) << ")";
+  char buffer[tinyusdz::PRINT_FLOAT3_MAX_CHARS];
+  size_t len = tinyusdz::print_float3(v, buffer);
+  os.write(buffer, static_cast<std::streamsize>(len));
   return os;
 }
 
 std::ostream &operator<<(std::ostream &os, const tinyusdz::value::float4 &v) {
-  os << "(" << tinyusdz::dtos(v[0]) << ", " << tinyusdz::dtos(v[1]) << ", "
-     << tinyusdz::dtos(v[2]) << ", " << tinyusdz::dtos(v[3]) << ")";
+  char buffer[tinyusdz::PRINT_FLOAT4_MAX_CHARS];
+  size_t len = tinyusdz::print_float4(v, buffer);
+  os.write(buffer, static_cast<std::streamsize>(len));
   return os;
 }
 
 std::ostream &operator<<(std::ostream &os, const tinyusdz::value::double2 &v) {
-  os << "(" << tinyusdz::dtos(v[0]) << ", " << tinyusdz::dtos(v[1]) << ")";
+  char buffer[tinyusdz::PRINT_DOUBLE2_MAX_CHARS];
+  size_t len = tinyusdz::print_double2(v, buffer);
+  os.write(buffer, static_cast<std::streamsize>(len));
   return os;
 }
 
 std::ostream &operator<<(std::ostream &os, const tinyusdz::value::double3 &v) {
-  os << "(" << tinyusdz::dtos(v[0]) << ", " << tinyusdz::dtos(v[1]) << ", "
-     << tinyusdz::dtos(v[2]) << ")";
+  char buffer[tinyusdz::PRINT_DOUBLE3_MAX_CHARS];
+  size_t len = tinyusdz::print_double3(v, buffer);
+  os.write(buffer, static_cast<std::streamsize>(len));
   return os;
 }
 
 std::ostream &operator<<(std::ostream &os, const tinyusdz::value::double4 &v) {
-  os << "(" << tinyusdz::dtos(v[0]) << ", " << tinyusdz::dtos(v[1]) << ", "
-     << tinyusdz::dtos(v[2]) << ", " << tinyusdz::dtos(v[3]) << ")";
+  char buffer[tinyusdz::PRINT_DOUBLE4_MAX_CHARS];
+  size_t len = tinyusdz::print_double4(v, buffer);
+  os.write(buffer, static_cast<std::streamsize>(len));
   return os;
 }
 
@@ -235,8 +212,13 @@ std::ostream &operator<<(std::ostream &os, const tinyusdz::value::vector3h &v) {
 }
 
 std::ostream &operator<<(std::ostream &os, const tinyusdz::value::vector3f &v) {
-  os << "(" << tinyusdz::dtos(v.x) << ", " << tinyusdz::dtos(v.y) << ", "
-     << tinyusdz::dtos(v.z) << ")";
+  os << "(";
+  append_float_to_stream(os, v.x);
+  os << ", ";
+  append_float_to_stream(os, v.y);
+  os << ", ";
+  append_float_to_stream(os, v.z);
+  os << ")";
   return os;
 }
 
@@ -252,8 +234,13 @@ std::ostream &operator<<(std::ostream &os, const tinyusdz::value::normal3h &v) {
 }
 
 std::ostream &operator<<(std::ostream &os, const tinyusdz::value::normal3f &v) {
-  os << "(" << tinyusdz::dtos(v.x) << ", " << tinyusdz::dtos(v.y) << ", "
-     << tinyusdz::dtos(v.z) << ")";
+  os << "(";
+  append_float_to_stream(os, v.x);
+  os << ", ";
+  append_float_to_stream(os, v.y);
+  os << ", ";
+  append_float_to_stream(os, v.z);
+  os << ")";
   return os;
 }
 
@@ -269,8 +256,13 @@ std::ostream &operator<<(std::ostream &os, const tinyusdz::value::point3h &v) {
 }
 
 std::ostream &operator<<(std::ostream &os, const tinyusdz::value::point3f &v) {
-  os << "(" << tinyusdz::dtos(v.x) << ", " << tinyusdz::dtos(v.y) << ", "
-     << tinyusdz::dtos(v.z) << ")";
+  os << "(";
+  append_float_to_stream(os, v.x);
+  os << ", ";
+  append_float_to_stream(os, v.y);
+  os << ", ";
+  append_float_to_stream(os, v.z);
+  os << ")";
   return os;
 }
 
@@ -288,8 +280,13 @@ std::ostream &operator<<(std::ostream &os, const tinyusdz::value::color3h &v) {
 }
 
 std::ostream &operator<<(std::ostream &os, const tinyusdz::value::color3f &v) {
-  os << "(" << tinyusdz::dtos(v.r) << ", " << tinyusdz::dtos(v.g) << ", "
-     << tinyusdz::dtos(v.b) << ")";
+  os << "(";
+  append_float_to_stream(os, v.r);
+  os << ", ";
+  append_float_to_stream(os, v.g);
+  os << ", ";
+  append_float_to_stream(os, v.b);
+  os << ")";
   return os;
 }
 
@@ -308,8 +305,15 @@ std::ostream &operator<<(std::ostream &os, const tinyusdz::value::color4h &v) {
 }
 
 std::ostream &operator<<(std::ostream &os, const tinyusdz::value::color4f &v) {
-  os << "(" << tinyusdz::dtos(v.r) << ", " << tinyusdz::dtos(v.g) << ", "
-     << tinyusdz::dtos(v.b) << ", " << tinyusdz::dtos(v.a) << ")";
+  os << "(";
+  append_float_to_stream(os, v.r);
+  os << ", ";
+  append_float_to_stream(os, v.g);
+  os << ", ";
+  append_float_to_stream(os, v.b);
+  os << ", ";
+  append_float_to_stream(os, v.a);
+  os << ")";
   return os;
 }
 
@@ -349,7 +353,11 @@ std::ostream &operator<<(std::ostream &os,
 
 std::ostream &operator<<(std::ostream &os,
                          const tinyusdz::value::texcoord2f &v) {
-  os << "(" << tinyusdz::dtos(v.s) << ", " << tinyusdz::dtos(v.t) << ")";
+  os << "(";
+  append_float_to_stream(os, v.s);
+  os << ", ";
+  append_float_to_stream(os, v.t);
+  os << ")";
   return os;
 }
 
@@ -367,8 +375,13 @@ std::ostream &operator<<(std::ostream &os,
 
 std::ostream &operator<<(std::ostream &os,
                          const tinyusdz::value::texcoord3f &v) {
-  os << "(" << tinyusdz::dtos(v.s) << ", " << tinyusdz::dtos(v.t) << ", "
-     << tinyusdz::dtos(v.r) << ")";
+  os << "(";
+  append_float_to_stream(os, v.s);
+  os << ", ";
+  append_float_to_stream(os, v.t);
+  os << ", ";
+  append_float_to_stream(os, v.r);
+  os << ")";
   return os;
 }
 
@@ -433,53 +446,25 @@ std::ostream &operator<<(std::ostream &ofs,
 
 std::ostream &operator<<(std::ostream &ofs,
                          const tinyusdz::value::matrix2d &m) {
-  ofs << "( ";
-
-  ofs << "(" << tinyusdz::dtos(m.m[0][0]) << ", " << tinyusdz::dtos(m.m[0][1])
-      << "), ";
-  ofs << "(" << tinyusdz::dtos(m.m[1][0]) << ", " << tinyusdz::dtos(m.m[1][1])
-      << ")";
-
-  ofs << " )";
-
+  char buffer[tinyusdz::PRINT_MATRIX2D_MAX_CHARS];
+  size_t len = tinyusdz::print_matrix2d(m, buffer);
+  ofs.write(buffer, static_cast<std::streamsize>(len));
   return ofs;
 }
 
 std::ostream &operator<<(std::ostream &ofs,
                          const tinyusdz::value::matrix3d &m) {
-  ofs << "( ";
-
-  ofs << "(" << tinyusdz::dtos(m.m[0][0]) << ", " << tinyusdz::dtos(m.m[0][1])
-      << ", " << tinyusdz::dtos(m.m[0][2]) << "), ";
-  ofs << "(" << tinyusdz::dtos(m.m[1][0]) << ", " << tinyusdz::dtos(m.m[1][1])
-      << ", " << tinyusdz::dtos(m.m[1][2]) << "), ";
-  ofs << "(" << tinyusdz::dtos(m.m[2][0]) << ", " << tinyusdz::dtos(m.m[2][1])
-      << ", " << tinyusdz::dtos(m.m[2][2]) << ")";
-
-  ofs << " )";
-
+  char buffer[tinyusdz::PRINT_MATRIX3D_MAX_CHARS];
+  size_t len = tinyusdz::print_matrix3d(m, buffer);
+  ofs.write(buffer, static_cast<std::streamsize>(len));
   return ofs;
 }
 
 std::ostream &operator<<(std::ostream &ofs,
                          const tinyusdz::value::matrix4d &m) {
-  ofs << "( ";
-
-  ofs << "(" << tinyusdz::dtos(m.m[0][0]) << ", " << tinyusdz::dtos(m.m[0][1])
-      << ", " << tinyusdz::dtos(m.m[0][2]) << ", " << tinyusdz::dtos(m.m[0][3])
-      << "), ";
-  ofs << "(" << tinyusdz::dtos(m.m[1][0]) << ", " << tinyusdz::dtos(m.m[1][1])
-      << ", " << tinyusdz::dtos(m.m[1][2]) << ", " << tinyusdz::dtos(m.m[1][3])
-      << "), ";
-  ofs << "(" << tinyusdz::dtos(m.m[2][0]) << ", " << tinyusdz::dtos(m.m[2][1])
-      << ", " << tinyusdz::dtos(m.m[2][2]) << ", " << tinyusdz::dtos(m.m[2][3])
-      << "), ";
-  ofs << "(" << tinyusdz::dtos(m.m[3][0]) << ", " << tinyusdz::dtos(m.m[3][1])
-      << ", " << tinyusdz::dtos(m.m[3][2]) << ", " << tinyusdz::dtos(m.m[3][3])
-      << ")";
-
-  ofs << " )";
-
+  char buffer[tinyusdz::PRINT_MATRIX4D_MAX_CHARS];
+  size_t len = tinyusdz::print_matrix4d(m, buffer);
+  ofs.write(buffer, static_cast<std::streamsize>(len));
   return ofs;
 }
 
@@ -560,21 +545,12 @@ std::ostream &operator<<(std::ostream &ofs,
 
 template <>
 std::ostream &operator<<(std::ostream &ofs, const std::vector<double> &v) {
-  // Not sure what is the HARD-LIMT buffer length for dtoa_milo,
-  // but according to std::numeric_limits<double>::digits10(=15),
-  // 32 should be sufficient, but allocate 384 just in case
-  char buf[384];
-
-  // TODO: multi-threading for further performance gain?
-
   ofs << "[";
   for (size_t i = 0; i < v.size(); i++) {
     if (i > 0) {
       ofs << ", ";
     }
-    char *e = dtoa_milo(v[i], buf);
-    (*e) = '\0';
-    ofs << std::string(buf);
+    ofs << tinyusdz::dtos(v[i]);  // use dragonbox for shortest representation
   }
   ofs << "]";
 
@@ -583,18 +559,12 @@ std::ostream &operator<<(std::ostream &ofs, const std::vector<double> &v) {
 
 template <>
 std::ostream &operator<<(std::ostream &ofs, const std::vector<float> &v) {
-  // Use floaxie
-  char buf[128];
-
-  // TODO: multi-threading for further performance gain?
-
   ofs << "[";
   for (size_t i = 0; i < v.size(); i++) {
     if (i > 0) {
       ofs << ", ";
     }
-    floaxie::ftoa(v[i], buf);
-    ofs << std::string(buf);
+    ofs << tinyusdz::dtos(v[i]);  // use float-precision dragonbox path
   }
   ofs << "]";
 
@@ -1268,9 +1238,8 @@ std::string to_string(const value::texcoord3d &v) {
   return ss.str();
 }
 std::string to_string(const value::StringData &v) {
-  std::stringstream ss;
-  ss << v;
-  return ss.str();
+  // Use buildEscapedAndQuotedStringForUSDA directly for proper quoting
+  return buildEscapedAndQuotedStringForUSDA(v.value);
 }
 std::string to_string(const value::token &v) {
   std::stringstream ss;
