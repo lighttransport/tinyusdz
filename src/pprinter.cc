@@ -717,8 +717,8 @@ std::string print_prim_metas(const PrimMeta &meta, const uint32_t indent) {
   }
 
   if (meta.has_doc()) {
-    ss << pprint::Indent(indent) << "doc = " << to_string(meta.get_doc())
-       << "\n";
+    ss << pprint::Indent(indent) << "doc = "
+       << buildEscapedAndQuotedStringForUSDA(meta.get_doc().value) << "\n";
   }
 
   if (meta.has_comment()) {
@@ -727,7 +727,7 @@ std::string print_prim_metas(const PrimMeta &meta, const uint32_t indent) {
     if (meta.get_comment().has_comment_prefix) {
       ss << "comment = ";
     }
-    ss << to_string(meta.get_comment()) << "\n";
+    ss << buildEscapedAndQuotedStringForUSDA(meta.get_comment().value) << "\n";
   }
 
   if (meta.has_customData()) {
@@ -737,11 +737,15 @@ std::string print_prim_metas(const PrimMeta &meta, const uint32_t indent) {
   for (const auto &item : meta.unregisteredMetas) {
     // Quote string values, but keep non-string values as-is
     std::string value_str = item.second;
-    // Check if the value looks like a string (unquoted) by checking if it needs quoting
-    // String values that are not already quoted should be quoted
-    if (!value_str.empty() && value_str.front() != '"' && value_str.front() != '\'' &&
-        value_str.front() != '[' && !std::isdigit(value_str.front()) &&
-        value_str != "None" && value_str.find("(") == std::string::npos) {
+    // Check if the value looks like a non-string value
+    // Array values start with '[', numbers start with digit or '-'
+    bool is_array = !value_str.empty() && value_str.front() == '[';
+    bool is_number = !value_str.empty() && (std::isdigit(value_str.front()) || value_str.front() == '-');
+    bool is_none = (value_str == "None");
+    bool is_already_quoted = !value_str.empty() && (value_str.front() == '"' || value_str.front() == '\'');
+
+    // Quote string values (anything that isn't an array, number, None, or already quoted)
+    if (!is_array && !is_number && !is_none && !is_already_quoted) {
       value_str = quote(value_str);
     }
     ss << pprint::Indent(indent) << item.first << " = " << value_str << "\n";
@@ -3985,6 +3989,27 @@ std::string to_string(const Material &material, const uint32_t indent,
     ss << "\n";
   }
 
+  // Print MaterialXConfigAPI attributes if present
+  if (material.materialXConfig) {
+    const auto &mtlxConfig = material.materialXConfig.value();
+    if (mtlxConfig.mtlx_version.authored()) {
+      ss << pprint::Indent(indent + 1) << "string config:mtlx:version = "
+         << quote(mtlxConfig.mtlx_version.get_value()) << "\n";
+    }
+    if (mtlxConfig.mtlx_namespace.authored()) {
+      ss << pprint::Indent(indent + 1) << "string config:mtlx:namespace = "
+         << quote(mtlxConfig.mtlx_namespace.get_value()) << "\n";
+    }
+    if (mtlxConfig.mtlx_colorspace.authored()) {
+      ss << pprint::Indent(indent + 1) << "string config:mtlx:colorspace = "
+         << quote(mtlxConfig.mtlx_colorspace.get_value()) << "\n";
+    }
+    if (mtlxConfig.mtlx_sourceUri.authored()) {
+      ss << pprint::Indent(indent + 1) << "asset config:mtlx:sourceUri = "
+         << mtlxConfig.mtlx_sourceUri.get_value() << "\n";
+    }
+  }
+
   ss << print_props(material.props, indent + 1);
 
   if (closing_brace) {
@@ -4278,6 +4303,84 @@ static std::string print_shader_params(const MtlxOpenPBRSurface &shader,
   return ss.str();
 }
 
+static std::string print_shader_params(const OpenPBRSurface &shader,
+                                       const uint32_t indent) {
+  std::stringstream ss;
+
+  // Base properties
+  ss << print_typed_attr(shader.base_weight, "inputs:base_weight", indent);
+  ss << print_typed_attr(shader.base_color, "inputs:base_color", indent);
+  ss << print_typed_attr(shader.base_roughness, "inputs:base_roughness", indent);
+  ss << print_typed_attr(shader.base_metalness, "inputs:base_metalness", indent);
+  ss << print_typed_attr(shader.base_diffuse_roughness, "inputs:base_diffuse_roughness", indent);
+
+  // Specular properties
+  ss << print_typed_attr(shader.specular_weight, "inputs:specular_weight", indent);
+  ss << print_typed_attr(shader.specular_color, "inputs:specular_color", indent);
+  ss << print_typed_attr(shader.specular_roughness, "inputs:specular_roughness", indent);
+  ss << print_typed_attr(shader.specular_ior, "inputs:specular_ior", indent);
+  ss << print_typed_attr(shader.specular_ior_level, "inputs:specular_ior_level", indent);
+  ss << print_typed_attr(shader.specular_anisotropy, "inputs:specular_anisotropy", indent);
+  ss << print_typed_attr(shader.specular_rotation, "inputs:specular_rotation", indent);
+
+  // Transmission properties
+  ss << print_typed_attr(shader.transmission_weight, "inputs:transmission_weight", indent);
+  ss << print_typed_attr(shader.transmission_color, "inputs:transmission_color", indent);
+  ss << print_typed_attr(shader.transmission_depth, "inputs:transmission_depth", indent);
+  ss << print_typed_attr(shader.transmission_scatter, "inputs:transmission_scatter", indent);
+  ss << print_typed_attr(shader.transmission_scatter_anisotropy, "inputs:transmission_scatter_anisotropy", indent);
+  ss << print_typed_attr(shader.transmission_dispersion, "inputs:transmission_dispersion", indent);
+
+  // Subsurface properties
+  ss << print_typed_attr(shader.subsurface_weight, "inputs:subsurface_weight", indent);
+  ss << print_typed_attr(shader.subsurface_color, "inputs:subsurface_color", indent);
+  ss << print_typed_attr(shader.subsurface_radius, "inputs:subsurface_radius", indent);
+  ss << print_typed_attr(shader.subsurface_radius_scale, "inputs:subsurface_radius_scale", indent);
+  ss << print_typed_attr(shader.subsurface_scale, "inputs:subsurface_scale", indent);
+  ss << print_typed_attr(shader.subsurface_anisotropy, "inputs:subsurface_anisotropy", indent);
+
+  // Sheen properties
+  ss << print_typed_attr(shader.sheen_weight, "inputs:sheen_weight", indent);
+  ss << print_typed_attr(shader.sheen_color, "inputs:sheen_color", indent);
+  ss << print_typed_attr(shader.sheen_roughness, "inputs:sheen_roughness", indent);
+
+  // Fuzz properties
+  ss << print_typed_attr(shader.fuzz_weight, "inputs:fuzz_weight", indent);
+  ss << print_typed_attr(shader.fuzz_color, "inputs:fuzz_color", indent);
+  ss << print_typed_attr(shader.fuzz_roughness, "inputs:fuzz_roughness", indent);
+
+  // Thin film properties
+  ss << print_typed_attr(shader.thin_film_weight, "inputs:thin_film_weight", indent);
+  ss << print_typed_attr(shader.thin_film_thickness, "inputs:thin_film_thickness", indent);
+  ss << print_typed_attr(shader.thin_film_ior, "inputs:thin_film_ior", indent);
+
+  // Coat properties
+  ss << print_typed_attr(shader.coat_weight, "inputs:coat_weight", indent);
+  ss << print_typed_attr(shader.coat_color, "inputs:coat_color", indent);
+  ss << print_typed_attr(shader.coat_roughness, "inputs:coat_roughness", indent);
+  ss << print_typed_attr(shader.coat_anisotropy, "inputs:coat_anisotropy", indent);
+  ss << print_typed_attr(shader.coat_rotation, "inputs:coat_rotation", indent);
+  ss << print_typed_attr(shader.coat_ior, "inputs:coat_ior", indent);
+  ss << print_typed_attr(shader.coat_affect_color, "inputs:coat_affect_color", indent);
+  ss << print_typed_attr(shader.coat_affect_roughness, "inputs:coat_affect_roughness", indent);
+
+  // Emission properties
+  ss << print_typed_attr(shader.emission_luminance, "inputs:emission_luminance", indent);
+  ss << print_typed_attr(shader.emission_color, "inputs:emission_color", indent);
+
+  // Geometry properties
+  ss << print_typed_attr(shader.opacity, "inputs:opacity", indent);
+  ss << print_typed_attr(shader.normal, "inputs:normal", indent);
+  ss << print_typed_attr(shader.tangent, "inputs:tangent", indent);
+
+  // Output
+  ss << print_typed_terminal_attr(shader.surface, "outputs:surface", indent);
+
+  ss << print_common_shader_params(shader, indent);
+
+  return ss.str();
+}
+
 std::string to_string(const Shader &shader, const uint32_t indent,
                       bool closing_brace) {
   // generic Shader class
@@ -4325,6 +4428,9 @@ std::string to_string(const Shader &shader, const uint32_t indent,
   } else if (auto mtlx_opbr = shader.value.get_value<MtlxOpenPBRSurface>()) {
     // Blender v4.5 MaterialX OpenPBR Surface
     ss << print_shader_params(mtlx_opbr.value(), indent + 1);
+  } else if (auto opbr = shader.value.get_value<OpenPBRSurface>()) {
+    // Native OpenPBR Surface shader
+    ss << print_shader_params(opbr.value(), indent + 1);
   } else if (auto pvsn = shader.value.get_value<ShaderNode>()) {
     // Generic ShaderNode
     ss << print_common_shader_params(pvsn.value(), indent + 1);

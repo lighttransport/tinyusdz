@@ -287,4 +287,7 @@ std::ostream &operator<<(std::ostream &ofs, const tinyusdz::Extent v);
 std::ostream &operator<<(std::ostream &ofs, const tinyusdz::Interpolation v);
 std::ostream &operator<<(std::ostream &ofs, const tinyusdz::Layer &layer);
 
+// StringData needs proper quoting for USDA output
+std::ostream &operator<<(std::ostream &ofs, const tinyusdz::value::StringData &v);
+
 }  // namespace std
