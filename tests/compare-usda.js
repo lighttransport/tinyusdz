@@ -553,23 +553,14 @@ class UsdaParser {
   constructor(tokens) {
     this.tokens = tokens;
     this.pos = 0;
-    this.depth = 0;
-    this.maxDepth = 10000;  // Very deep nesting for complex USD files (skeletal animation, etc.)
     this.iterations = 0;
-    this.maxIterations = 100000;
+    this.maxIterations = 50000000;  // Large limit for files with huge arrays (e.g., suzanne with 7800 vertices)
   }
 
-  checkDepth() {
-    if (++this.depth > this.maxDepth) {
-      throw new Error(`Parser depth limit exceeded (${this.maxDepth})`);
-    }
+  checkIterations() {
     if (++this.iterations > this.maxIterations) {
       throw new Error(`Parser iteration limit exceeded (${this.maxIterations})`);
     }
-  }
-
-  resetDepth() {
-    this.depth = 0;
   }
 
   peek(offset = 0) {
@@ -757,7 +748,7 @@ class UsdaParser {
   }
 
   parseValue() {
-    this.checkDepth();
+    this.checkIterations();
     const token = this.peek();
 
     if (!token) {
