@@ -2534,6 +2534,7 @@ bool AsciiParser::ParseStageMetaOpt() {
   } else if (varname == "customLayerData") {
     if (auto pv = var.get_value<Dictionary>()) {
       _stage_metas.customLayerData = pv.value();
+      _stage_metas.customLayerDataAuthored = true;  // Mark as authored even if empty
     } else {
       PUSH_ERROR_AND_RETURN("`customLayerData` isn't a dictionary value.");
     }
@@ -3819,7 +3820,8 @@ bool AsciiParser::ParsePrimMetas(PrimMetaMap *args) {
         PUSH_ERROR_AND_RETURN("[InternalError] Metadataum name is empty.");
       }
 
-      (*args)[std::get<1>(m.value()).get_name()] = m.value();
+      // Use insert/emplace for multimap (supports multiple listops per arc)
+      args->emplace(std::get<1>(m.value()).get_name(), m.value());
     } else {
       PUSH_ERROR_AND_RETURN("Failed to parse Meta value.");
     }
@@ -5569,7 +5571,7 @@ bool AsciiParser::ParseBlock(const Specifier spec, const int64_t primIdx,
     return false;
   }
 
-  std::map<std::string, std::pair<ListEditQual, MetaVariable>> in_metas;
+  PrimMetaMap in_metas;
   {
     // look ahead
     char c;
