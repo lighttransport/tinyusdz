@@ -366,8 +366,8 @@ void CreateScene(tinyusdz::Stage *stage) {
       std::vector<tinyusdz::Reference> referencesList;
       referencesList.push_back(ref);
 
-      meshPrim.metas().references =
-          std::make_pair(tinyusdz::ListEditQual::Append, referencesList);
+      meshPrim.metas().references = std::vector<std::pair<tinyusdz::ListEditQual, std::vector<tinyusdz::Reference>>>{
+          std::make_pair(tinyusdz::ListEditQual::Append, referencesList)};
     }
 
     {
@@ -377,8 +377,8 @@ void CreateScene(tinyusdz::Stage *stage) {
       std::vector<tinyusdz::Payload> payloadList;
       payloadList.push_back(pl);
 
-      meshPrim.metas().payload =
-          std::make_pair(tinyusdz::ListEditQual::Append, payloadList);
+      meshPrim.metas().payload = std::vector<std::pair<tinyusdz::ListEditQual, std::vector<tinyusdz::Payload>>>{
+          std::make_pair(tinyusdz::ListEditQual::Append, payloadList)};
     }
   }
 
@@ -397,8 +397,8 @@ void CreateScene(tinyusdz::Stage *stage) {
     vsmap.emplace("colorVariant", "red");
 
     spherePrim.metas().variants = vsmap;
-    spherePrim.metas().variantSets =
-        std::make_pair(tinyusdz::ListEditQual::Append, variantSetList);
+    spherePrim.metas().variantSets = std::vector<std::pair<tinyusdz::ListEditQual, std::vector<std::string>>>{
+        std::make_pair(tinyusdz::ListEditQual::Append, variantSetList)};
 
     // VariantSet is composed of metas + properties + childPrims
     tinyusdz::VariantSet variantSet;

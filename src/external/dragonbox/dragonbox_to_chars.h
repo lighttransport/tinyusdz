@@ -195,7 +195,7 @@ namespace jkj {
                 }
 
                 // Print exponent.
-                *buffer = 'E';
+                *buffer = 'e';
                 ++buffer;
                 if (exponent < 0) {
                     *buffer = '-';
@@ -283,7 +283,7 @@ namespace jkj {
                     }
                     else {
                         buffer[0] = '0';
-                        buffer[1] = 'E';
+                        buffer[1] = 'e';
                         buffer[2] = '0';
                         return buffer + 3;
                     }

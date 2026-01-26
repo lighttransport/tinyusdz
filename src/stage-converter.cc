@@ -13,6 +13,17 @@
 #include "pprinter.hh"  // For to_string(Specifier), to_string(Variability)
 #include "usdShade.hh"  // For Material and Shader
 
+// Disable specific clang warnings for this file
+// - unused-parameter: functions have consistent signatures for API purposes
+// - covered-switch-default: default cases provide fallback safety
+// - switch-enum: some enum values are intentionally not handled
+#if defined(__clang__)
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wunused-parameter"
+#pragma clang diagnostic ignored "-Wcovered-switch-default"
+#pragma clang diagnostic ignored "-Wswitch-enum"
+#endif
+
 namespace tinyusdz {
 namespace experimental {
 
@@ -1764,10 +1775,16 @@ bool CrateWriter::ExtractGeomSubsetProperties(
            (fields.push_back({attr_name, crate_val}), true);
   };
 
-  // Extract elementType enum (Face/Point)
+  // Extract elementType enum (Face/Point/Edge/Tetrahedron)
   {
     const GeomSubset::ElementType& elem_type = subset->elementType.get_value();
-    std::string elem_str = (elem_type == GeomSubset::ElementType::Face) ? "face" : "point";
+    std::string elem_str;
+    switch (elem_type) {
+      case GeomSubset::ElementType::Face: elem_str = "face"; break;
+      case GeomSubset::ElementType::Point: elem_str = "point"; break;
+      case GeomSubset::ElementType::Edge: elem_str = "edge"; break;
+      case GeomSubset::ElementType::Tetrahedron: elem_str = "tetrahedron"; break;
+    }
     if (!add_enum_attribute("elementType", elem_str)) {
       return false;
     }
@@ -3142,10 +3159,11 @@ bool CrateWriter::AddUsdPreviewSurfaceInputSpecs(
   // Helper to convert OpacityMode enum to token string
   auto opacity_mode_to_string = [](UsdPreviewSurface::OpacityMode mode) -> std::string {
     switch (mode) {
+      case UsdPreviewSurface::OpacityMode::Opacity: return "opacity";
       case UsdPreviewSurface::OpacityMode::Transparent: return "transparent";
       case UsdPreviewSurface::OpacityMode::Presence: return "presence";
-      default: return "transparent";
     }
+    return "transparent"; // fallback
   };
 
   // Helper to handle timesampled float shader inputs
@@ -4573,8 +4591,13 @@ bool CrateWriter::ConvertPrimSpecRecursive(
 
   // Add variantSets list if present
   if (metas.variantSets) {
-    const auto& variant_sets_pair = metas.variantSets.value();
-    const std::vector<std::string>& variant_sets_list = variant_sets_pair.second;
+    // Collect all variant sets from all listops
+    std::vector<std::string> variant_sets_list;
+    for (const auto& variantSets_op : metas.variantSets.value()) {
+      for (const auto& vs : variantSets_op.second) {
+        variant_sets_list.push_back(vs);
+      }
+    }
 
     // Convert to string array for CrateValue
     crate::CrateValue variant_sets_value;
@@ -4587,36 +4610,39 @@ bool CrateWriter::ConvertPrimSpecRecursive(
 
   // Add references if present
   if (metas.references) {
-    const auto& references_pair = metas.references.value();
-    const ListEditQual& qual = references_pair.first;
-    const std::vector<Reference>& ref_list = references_pair.second;
-
-    // Convert to ListOp<Reference>
+    // Convert all listops to ListOp<Reference>
     ListOp<Reference> ref_listop;
+    size_t total_refs = 0;
 
-    // Set the appropriate list based on ListEditQual
-    switch (qual) {
-      case ListEditQual::ResetToExplicit:
-        ref_listop.ClearAndMakeExplicit();
-        ref_listop.SetExplicitItems(ref_list);
-        break;
-      case ListEditQual::Append:
-        ref_listop.SetAppendedItems(ref_list);
-        break;
-      case ListEditQual::Prepend:
-        ref_listop.SetPrependedItems(ref_list);
-        break;
-      case ListEditQual::Add:
-        ref_listop.SetAddedItems(ref_list);
-        break;
-      case ListEditQual::Delete:
-        ref_listop.SetDeletedItems(ref_list);
-        break;
-      default:
-        // Default to explicit
-        ref_listop.ClearAndMakeExplicit();
-        ref_listop.SetExplicitItems(ref_list);
-        break;
+    for (const auto& ref_op : metas.references.value()) {
+      const ListEditQual& qual = ref_op.first;
+      const std::vector<Reference>& ref_list = ref_op.second;
+      total_refs += ref_list.size();
+
+      // Accumulate items based on ListEditQual
+      switch (qual) {
+        case ListEditQual::ResetToExplicit:
+          ref_listop.ClearAndMakeExplicit();
+          ref_listop.SetExplicitItems(ref_list);
+          break;
+        case ListEditQual::Append:
+          ref_listop.SetAppendedItems(ref_list);
+          break;
+        case ListEditQual::Prepend:
+          ref_listop.SetPrependedItems(ref_list);
+          break;
+        case ListEditQual::Add:
+          ref_listop.SetAddedItems(ref_list);
+          break;
+        case ListEditQual::Delete:
+          ref_listop.SetDeletedItems(ref_list);
+          break;
+        default:
+          // Default to explicit
+          ref_listop.ClearAndMakeExplicit();
+          ref_listop.SetExplicitItems(ref_list);
+          break;
+      }
     }
 
     crate::CrateValue ref_value;
@@ -4624,41 +4650,44 @@ bool CrateWriter::ConvertPrimSpecRecursive(
     fields.push_back({"references", ref_value});
 
     std::cerr << "[ConvertPrimSpecRecursive] Added references field with "
-              << ref_list.size() << " references\n";
+              << total_refs << " references\n";
   }
 
   // Add payload if present
   if (metas.payload) {
-    const auto& payload_pair = metas.payload.value();
-    const ListEditQual& qual = payload_pair.first;
-    const std::vector<Payload>& payload_list = payload_pair.second;
-
-    // Convert to ListOp<Payload>
+    // Convert all listops to ListOp<Payload>
     ListOp<Payload> payload_listop;
+    size_t total_payloads = 0;
 
-    // Set the appropriate list based on ListEditQual
-    switch (qual) {
-      case ListEditQual::ResetToExplicit:
-        payload_listop.ClearAndMakeExplicit();
-        payload_listop.SetExplicitItems(payload_list);
-        break;
-      case ListEditQual::Append:
-        payload_listop.SetAppendedItems(payload_list);
-        break;
-      case ListEditQual::Prepend:
-        payload_listop.SetPrependedItems(payload_list);
-        break;
-      case ListEditQual::Add:
-        payload_listop.SetAddedItems(payload_list);
-        break;
-      case ListEditQual::Delete:
-        payload_listop.SetDeletedItems(payload_list);
-        break;
-      default:
-        // Default to explicit
-        payload_listop.ClearAndMakeExplicit();
-        payload_listop.SetExplicitItems(payload_list);
-        break;
+    for (const auto& payload_op : metas.payload.value()) {
+      const ListEditQual& qual = payload_op.first;
+      const std::vector<Payload>& payload_list = payload_op.second;
+      total_payloads += payload_list.size();
+
+      // Accumulate items based on ListEditQual
+      switch (qual) {
+        case ListEditQual::ResetToExplicit:
+          payload_listop.ClearAndMakeExplicit();
+          payload_listop.SetExplicitItems(payload_list);
+          break;
+        case ListEditQual::Append:
+          payload_listop.SetAppendedItems(payload_list);
+          break;
+        case ListEditQual::Prepend:
+          payload_listop.SetPrependedItems(payload_list);
+          break;
+        case ListEditQual::Add:
+          payload_listop.SetAddedItems(payload_list);
+          break;
+        case ListEditQual::Delete:
+          payload_listop.SetDeletedItems(payload_list);
+          break;
+        default:
+          // Default to explicit
+          payload_listop.ClearAndMakeExplicit();
+          payload_listop.SetExplicitItems(payload_list);
+          break;
+      }
     }
 
     crate::CrateValue payload_value;
@@ -4666,7 +4695,7 @@ bool CrateWriter::ConvertPrimSpecRecursive(
     fields.push_back({"payload", payload_value});
 
     std::cerr << "[ConvertPrimSpecRecursive] Added payload field with "
-              << payload_list.size() << " payloads\n";
+              << total_payloads << " payloads\n";
   }
 
   // Add customData if present
@@ -4735,36 +4764,39 @@ bool CrateWriter::ConvertPrimSpecRecursive(
 
   // Add inherits if present
   if (metas.inherits) {
-    const auto& inherits_pair = metas.inherits.value();
-    const ListEditQual& qual = inherits_pair.first;
-    const std::vector<Path>& inherits_list = inherits_pair.second;
-
-    // Convert to ListOp<Path>
+    // Convert all listops to ListOp<Path>
     ListOp<Path> inherits_listop;
+    size_t total_inherits = 0;
 
-    // Set the appropriate list based on ListEditQual
-    switch (qual) {
-      case ListEditQual::ResetToExplicit:
-        inherits_listop.ClearAndMakeExplicit();
-        inherits_listop.SetExplicitItems(inherits_list);
-        break;
-      case ListEditQual::Append:
-        inherits_listop.SetAppendedItems(inherits_list);
-        break;
-      case ListEditQual::Prepend:
-        inherits_listop.SetPrependedItems(inherits_list);
-        break;
-      case ListEditQual::Add:
-        inherits_listop.SetAddedItems(inherits_list);
-        break;
-      case ListEditQual::Delete:
-        inherits_listop.SetDeletedItems(inherits_list);
-        break;
-      default:
-        // Default to explicit
-        inherits_listop.ClearAndMakeExplicit();
-        inherits_listop.SetExplicitItems(inherits_list);
-        break;
+    for (const auto& inherits_op : metas.inherits.value()) {
+      const ListEditQual& qual = inherits_op.first;
+      const std::vector<Path>& inherits_list = inherits_op.second;
+      total_inherits += inherits_list.size();
+
+      // Accumulate items based on ListEditQual
+      switch (qual) {
+        case ListEditQual::ResetToExplicit:
+          inherits_listop.ClearAndMakeExplicit();
+          inherits_listop.SetExplicitItems(inherits_list);
+          break;
+        case ListEditQual::Append:
+          inherits_listop.SetAppendedItems(inherits_list);
+          break;
+        case ListEditQual::Prepend:
+          inherits_listop.SetPrependedItems(inherits_list);
+          break;
+        case ListEditQual::Add:
+          inherits_listop.SetAddedItems(inherits_list);
+          break;
+        case ListEditQual::Delete:
+          inherits_listop.SetDeletedItems(inherits_list);
+          break;
+        default:
+          // Default to explicit
+          inherits_listop.ClearAndMakeExplicit();
+          inherits_listop.SetExplicitItems(inherits_list);
+          break;
+      }
     }
 
     crate::CrateValue inherits_value;
@@ -4772,41 +4804,44 @@ bool CrateWriter::ConvertPrimSpecRecursive(
     fields.push_back({"inherits", inherits_value});
 
     std::cerr << "[ConvertPrimSpecRecursive] Added inherits with "
-              << inherits_list.size() << " paths\n";
+              << total_inherits << " paths\n";
   }
 
   // Add specializes if present
   if (metas.specializes) {
-    const auto& specializes_pair = metas.specializes.value();
-    const ListEditQual& qual = specializes_pair.first;
-    const std::vector<Path>& specializes_list = specializes_pair.second;
-
-    // Convert to ListOp<Path>
+    // Convert all listops to ListOp<Path>
     ListOp<Path> specializes_listop;
+    size_t total_specializes = 0;
 
-    // Set the appropriate list based on ListEditQual
-    switch (qual) {
-      case ListEditQual::ResetToExplicit:
-        specializes_listop.ClearAndMakeExplicit();
-        specializes_listop.SetExplicitItems(specializes_list);
-        break;
-      case ListEditQual::Append:
-        specializes_listop.SetAppendedItems(specializes_list);
-        break;
-      case ListEditQual::Prepend:
-        specializes_listop.SetPrependedItems(specializes_list);
-        break;
-      case ListEditQual::Add:
-        specializes_listop.SetAddedItems(specializes_list);
-        break;
-      case ListEditQual::Delete:
-        specializes_listop.SetDeletedItems(specializes_list);
-        break;
-      default:
-        // Default to explicit
-        specializes_listop.ClearAndMakeExplicit();
-        specializes_listop.SetExplicitItems(specializes_list);
-        break;
+    for (const auto& specializes_op : metas.specializes.value()) {
+      const ListEditQual& qual = specializes_op.first;
+      const std::vector<Path>& specializes_list = specializes_op.second;
+      total_specializes += specializes_list.size();
+
+      // Accumulate items based on ListEditQual
+      switch (qual) {
+        case ListEditQual::ResetToExplicit:
+          specializes_listop.ClearAndMakeExplicit();
+          specializes_listop.SetExplicitItems(specializes_list);
+          break;
+        case ListEditQual::Append:
+          specializes_listop.SetAppendedItems(specializes_list);
+          break;
+        case ListEditQual::Prepend:
+          specializes_listop.SetPrependedItems(specializes_list);
+          break;
+        case ListEditQual::Add:
+          specializes_listop.SetAddedItems(specializes_list);
+          break;
+        case ListEditQual::Delete:
+          specializes_listop.SetDeletedItems(specializes_list);
+          break;
+        default:
+          // Default to explicit
+          specializes_listop.ClearAndMakeExplicit();
+          specializes_listop.SetExplicitItems(specializes_list);
+          break;
+      }
     }
 
     crate::CrateValue specializes_value;
@@ -4814,7 +4849,7 @@ bool CrateWriter::ConvertPrimSpecRecursive(
     fields.push_back({"specializes", specializes_value});
 
     std::cerr << "[ConvertPrimSpecRecursive] Added specializes with "
-              << specializes_list.size() << " paths\n";
+              << total_specializes << " paths\n";
   }
 
   // Add assetInfo if present
@@ -5323,3 +5358,7 @@ bool CrateWriter::ConvertVariantToFields(
 
 } // namespace experimental
 } // namespace tinyusdz
+
+#if defined(__clang__)
+#pragma clang diagnostic pop
+#endif

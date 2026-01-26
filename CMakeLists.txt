@@ -1755,6 +1755,11 @@ if(TINYUSDZ_BUILD_TESTS)
   #
   add_subdirectory(${PROJECT_SOURCE_DIR}/tests/decompress-int)
 
+  #
+  # Pretty-print benchmark
+  #
+  add_subdirectory(${PROJECT_SOURCE_DIR}/tests/pprint)
+
 
   #
   # TODO: Add feature to specify Python interpreter at ctest run

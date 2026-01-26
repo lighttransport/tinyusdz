@@ -16,6 +16,7 @@ set(TEST_SOURCES
 	unit-math.cc
 	unit-ioutil.cc
 	unit-timesamples.cc
+	unit-fp-parse-print.cc
 	unit-materialx.cc
 	unit-task-queue.cc
 	# unit-dedup.cc  # Temporarily disabled - needs API updates
@@ -23,6 +24,7 @@ set(TEST_SOURCES
 	unit-stage.cc
 	unit-tiny-container.cc
 	unit-usda-roundtrip.cc
+	unit-half-roundtrip.cc
    )
 
 if (TINYUSDZ_WITH_PXR_COMPAT_API)

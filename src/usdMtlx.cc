@@ -13,38 +13,15 @@
 
 #include "ascii-parser.hh"  // To parse color3f value
 #include "common-macros.inc"
-#include "external/dtoa_milo.h"
 #include "io-util.hh"
 #include "pprinter.hh"
+#include "str-util.hh"  // For dragonbox-based dtos()
 #include "tiny-format.hh"
 #include "value-pprint.hh"
 
-inline std::string dtos(const double v) {
-  char buf[384];
-  *dtoa_milo(v, buf) = '\0';
-
-  return std::string(buf);
-}
-
-// Helper function to format float values cleanly for MaterialX XML
-inline std::string float_to_xml_string(float val) {
-  std::ostringstream oss;
-  oss.precision(6);  // 6 significant digits
-  oss << val;
-  std::string result = oss.str();
-
-  // Remove trailing zeros after decimal point
-  if (result.find('.') != std::string::npos) {
-    size_t end = result.find_last_not_of('0');
-    if (end != std::string::npos && result[end] != '.') {
-      result = result.substr(0, end + 1);
-    } else if (end != std::string::npos && result[end] == '.') {
-      result = result.substr(0, end);
-    }
-  }
-
-  return result;
-}
+// Use dragonbox-based dtos from str-util.hh for shortest representation
+// No need for local dtos() or float_to_xml_string() - dtos() already
+// produces the shortest round-trip-correct representation without trailing zeros
 
 #define PushWarn(msg) \
   do {                \
@@ -413,7 +390,7 @@ static bool SerializeNodeGraphs(const std::map<std::string, PrimSpec> &nodegraph
 
 template <>
 std::string to_xml_string(const float &val) {
-  return float_to_xml_string(val);
+  return dtos(val);
 }
 
 template <>
@@ -428,14 +405,12 @@ std::string to_xml_string(const bool &val) {
 
 template <>
 std::string to_xml_string(const value::color3f &val) {
-  return float_to_xml_string(val.r) + ", " + float_to_xml_string(val.g) + ", " +
-         float_to_xml_string(val.b);
+  return dtos(val.r) + ", " + dtos(val.g) + ", " + dtos(val.b);
 }
 
 template <>
 std::string to_xml_string(const value::normal3f &val) {
-  return float_to_xml_string(val.x) + ", " + float_to_xml_string(val.y) + ", " +
-         float_to_xml_string(val.z);
+  return dtos(val.x) + ", " + dtos(val.y) + ", " + dtos(val.z);
 }
 
 template <typename T>
