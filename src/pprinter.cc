@@ -501,8 +501,8 @@ std::string print_relationship(const Relationship &rel,
 }  // namespace
 
 // Print a single payload listop (e.g., "prepend payload = ...")
-std::string print_payload_listop(const prim::PayloadListOp &payload_op,
-                                 const uint32_t indent) {
+static std::string print_payload_listop(const prim::PayloadListOp &payload_op,
+                                        const uint32_t indent) {
   std::stringstream ss;
 
   auto listEditQual = std::get<0>(payload_op);

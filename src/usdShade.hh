@@ -158,7 +158,7 @@ struct NodeGraph : UsdShadePrim {
   // Optional properties for shader network node management
   // Child shaders and their connections are managed through the standard prim children mechanism
   // Interface inputs/outputs can be defined through typed attributes
-  std::map<std::string, Property> props;  // Additional properties for interface definitions
+  // Note: Uses inherited `props` from UsdShadePrim for additional properties
   std::vector<value::token> _primChildren;  // Child prim names
   std::vector<value::token> _properties;    // Property names
 
