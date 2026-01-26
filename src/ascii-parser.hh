@@ -314,6 +314,19 @@ class AsciiParser {
   using PrimMetaMap =
       std::multimap<std::string, std::pair<ListEditQual, MetaVariable>>;
 
+  struct VariantContent;
+
+  //
+  // variantSet "keyname" = {
+  //    "key0" : { ... }
+  //    "key1" : { ... }
+  // }
+  // 
+  struct VariantSetContent {
+    int64_t variantPrimIdx{-1}; // Pseudo Prim Idx for `variantSet`. -1 = no variantSet node
+    std::map<std::string, VariantContent> variantSets;
+  };
+
   struct VariantContent {
     PrimMetaMap metas;
     std::vector<int64_t> primIndices;  // primIdx of Reconstrcuted Prim.
@@ -321,12 +334,14 @@ class AsciiParser {
     std::vector<value::token> properties;
 
     // for nested `variantSet` 
-    std::map<std::string, std::map<std::string, VariantContent>> variantSets;
+    std::map<std::string, VariantSetContent> variantSets;
   };
+
+  
 
   // TODO: Use std::vector instead of std::map?
   using VariantSetList =
-      std::map<std::string, std::map<std::string, VariantContent>>;
+      std::map<std::string, VariantSetContent>;
 
   AsciiParser();
   AsciiParser(tinyusdz::StreamReader *sr);
@@ -1031,10 +1046,10 @@ class AsciiParser {
                   const int64_t parentPrimIdx, const uint32_t depth,
                   const bool in_variant = false);
 
-  // Parse `varianntSet` stmt
+  // Parse `variantSet` stmt
   bool ParseVariantSet(const int64_t primIdx, const int64_t parentPrimIdx,
                        const uint32_t depth,
-                       std::map<std::string, VariantContent> *variantSetMap);
+                       VariantSetContent *variantSetContent);
 
   // --------------------------------------------
 

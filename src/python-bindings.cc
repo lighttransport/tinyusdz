@@ -7,6 +7,8 @@
 #include "tinyusdz.hh"
 #include "prim-pprint.hh"
 #include "tydra/render-data.hh"
+#include "tydra/variant-support.hh"
+#include "tydra/variant-converter.hh"
 //
 #include "value-type-macros.inc"
 
@@ -508,5 +510,94 @@ PYBIND11_MODULE(ctinyusdz, m) {
     m_tydra.def("to_render_scene", [](const Stage &stage) {
       py::print("TODO");
     }, py::arg("config") = tydra::RenderSceneConverterConfig());
+
+    // Variant support bindings
+    py::class_<tydra::VariantOption>(m_tydra, "VariantOption")
+      .def(py::init<>())
+      .def_readwrite("name", &tydra::VariantOption::name)
+      .def_readwrite("description", &tydra::VariantOption::description)
+      .def_readwrite("mesh_ids", &tydra::VariantOption::mesh_ids)
+      .def_readwrite("material_ids", &tydra::VariantOption::material_ids)
+      .def_readwrite("node_ids", &tydra::VariantOption::node_ids)
+      .def_readwrite("animation_ids", &tydra::VariantOption::animation_ids)
+      .def_readwrite("property_overrides", &tydra::VariantOption::property_overrides)
+    ;
+
+    py::class_<tydra::VariantSet>(m_tydra, "VariantSet")
+      .def(py::init<>())
+      .def_readwrite("name", &tydra::VariantSet::name)
+      .def_readwrite("options", &tydra::VariantSet::options)
+      .def_readwrite("default_option_index", &tydra::VariantSet::default_option_index)
+      .def_readwrite("parent_prim_id", &tydra::VariantSet::parent_prim_id)
+      .def_readwrite("parent_variant_option_name", &tydra::VariantSet::parent_variant_option_name)
+    ;
+
+    py::class_<tydra::VariantGroup>(m_tydra, "VariantGroup")
+      .def(py::init<>())
+      .def_readwrite("prim_path", &tydra::VariantGroup::prim_path)
+      .def_readwrite("variant_sets", &tydra::VariantGroup::variant_sets)
+      .def_readwrite("affected_node_id", &tydra::VariantGroup::affected_node_id)
+      .def_readwrite("secondary_node_ids", &tydra::VariantGroup::secondary_node_ids)
+    ;
+
+    py::class_<tydra::VariantSelection>(m_tydra, "VariantSelection")
+      .def(py::init<>())
+      .def_readwrite("variant_group_id", &tydra::VariantSelection::variant_group_id)
+      .def_readwrite("variant_set_id", &tydra::VariantSelection::variant_set_id)
+      .def_readwrite("selected_option_index", &tydra::VariantSelection::selected_option_index)
+    ;
+
+    py::class_<tydra::VariantConverter>(m_tydra, "VariantConverter")
+      .def(py::init<>())
+      .def("convert_variants", [](tydra::VariantConverter &converter, const Stage &stage, RenderScene &scene) -> bool {
+        std::string err;
+        return converter.ConvertVariants(stage, &scene, &err);
+      }, py::arg("stage"), py::arg("scene"))
+    ;
+
+    // VariantStatistics
+    py::class_<tydra::VariantStatistics>(m_tydra, "VariantStatistics")
+      .def(py::init<>())
+      .def_readwrite("num_variant_groups", &tydra::VariantStatistics::num_variant_groups)
+      .def_readwrite("num_variant_sets", &tydra::VariantStatistics::num_variant_sets)
+      .def_readwrite("num_variant_options", &tydra::VariantStatistics::num_variant_options)
+      .def_readwrite("max_nesting_depth", &tydra::VariantStatistics::max_nesting_depth)
+    ;
+
+    py::class_<tydra::DefaultVariantManager>(m_tydra, "DefaultVariantManager")
+      .def(py::init<>())
+      .def("has_variants", &tydra::DefaultVariantManager::HasVariants)
+      .def("find_variant_group", &tydra::DefaultVariantManager::FindVariantGroup,
+           py::arg("prim_path"), py::return_value_policy::reference)
+      .def("find_variant_set", [](tydra::DefaultVariantManager &mgr, int32_t group_id, const std::string &set_name) -> tydra::VariantSet* {
+           return mgr.FindVariantSet(group_id, set_name);
+      }, py::arg("group_id"), py::arg("set_name"), py::return_value_policy::reference)
+      .def("find_variant_option", [](tydra::DefaultVariantManager &mgr, int32_t group_id, int32_t set_id, const std::string &option_name) -> tydra::VariantOption* {
+           return mgr.FindVariantOption(group_id, set_id, option_name);
+      }, py::arg("group_id"), py::arg("set_id"), py::arg("option_name"), py::return_value_policy::reference)
+      .def("select_variant", [](tydra::DefaultVariantManager &mgr, int32_t group_id, const std::string &set_name, const std::string &option_name) -> bool {
+           std::string err;
+           return mgr.SelectVariant(group_id, set_name, option_name, &err);
+      }, py::arg("group_id"), py::arg("set_name"), py::arg("option_name"))
+      .def("select_variant_by_index", [](tydra::DefaultVariantManager &mgr, int32_t group_id, int32_t set_id, int32_t option_index) -> bool {
+           std::string err;
+           return mgr.SelectVariantByIndex(group_id, set_id, option_index, &err);
+      }, py::arg("group_id"), py::arg("set_id"), py::arg("option_index"))
+      .def("get_current_selection", &tydra::DefaultVariantManager::GetCurrentSelection,
+           py::arg("group_id"), py::return_value_policy::reference)
+      .def("get_all_selections", &tydra::DefaultVariantManager::GetAllSelections,
+           py::return_value_policy::reference)
+      .def("reset_to_defaults", [](tydra::DefaultVariantManager &mgr) -> bool {
+           std::string err;
+           return mgr.ResetToDefaults(&err);
+      })
+      .def("get_mutable_variant_groups", &tydra::DefaultVariantManager::GetMutableVariantGroups,
+           py::return_value_policy::reference)
+      .def("get_variant_groups", &tydra::DefaultVariantManager::GetVariantGroups,
+           py::return_value_policy::reference)
+      .def("set_variant_groups", &tydra::DefaultVariantManager::SetVariantGroups,
+           py::arg("groups"))
+      .def("get_statistics", &tydra::DefaultVariantManager::GetStatistics)
+    ;
   }
 }
