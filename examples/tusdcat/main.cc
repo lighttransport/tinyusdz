@@ -1,7 +1,9 @@
 #include <algorithm>
 #include <cctype>
+#include <chrono>
 #include <cstdlib>
 #include <cstring>
+#include <iomanip>
 #include <iostream>
 #include <sstream>
 
@@ -11,9 +13,13 @@
 #include "str-util.hh"
 #include "io-util.hh"
 #include "usd-to-json.hh"
+#include "usd-dump.hh"
 #include "logger.hh"
+#include "crate-writer.hh"
+#include "crate-dump.hh"
 
 #include "tydra/scene-access.hh"
+#include "variant-format.hh"
 
 struct CompositionFeatures {
   bool subLayers{true};
@@ -41,12 +47,12 @@ static std::string format_memory_size(size_t bytes) {
   const char* units[] = {"B", "KB", "MB", "GB", "TB"};
   int unit_index = 0;
   double size = static_cast<double>(bytes);
-  
+
   while (size >= 1024.0 && unit_index < 4) {
     size /= 1024.0;
     unit_index++;
   }
-  
+
   std::stringstream ss;
   if (unit_index == 0) {
     ss << static_cast<size_t>(size) << " " << units[unit_index];
@@ -57,22 +63,136 @@ static std::string format_memory_size(size_t bytes) {
   return ss.str();
 }
 
-void print_help() {
-    std::cout << "Usage tusdcat [--flatten] [--loadOnly] [--composition=STRLIST] [--relative] [--extract-variants] [--memstat] [--loglevel INT] [-j|--json] input.usda/usdc/usdz\n";
-    std::cout << "\n --flatten (not fully implemented yet) Do composition(load sublayers, refences, payload, evaluate `over`, inherit, variants..)";
-    std::cout << "  --composition: Specify which composition feature to be "
-                 "enabled(valid when `--flatten` is supplied). Comma separated "
-                 "list. \n    l "
-                 "`subLayers`, i `inherits`, v `variantSets`, r `references`, "
-                 "p `payload`, s `specializes`. \n    Example: "
-                 "--composition=r,p --composition=references,subLayers\n";
-    std::cout << "\n --extract-variants (w.i.p) Dump variants information to .json\n";
-    std::cout << "\n --relative (not implemented yet) Print Path as relative Path\n";
-    std::cout << "\n -l, --loadOnly Load(Parse) USD file only(Check if input USD is valid or not)\n";
-    std::cout << "\n -j, --json Output parsed USD as JSON string\n";
-    std::cout << "\n --memstat Print memory usage statistics for loaded Layer and Stage\n";
-    std::cout << "\n --loglevel INT Set logging level (0=Debug, 1=Warn, 2=Info, 3=Error, 4=Critical, 5=Off)\n";
+// Helper function to write Stage to USDC file
+static bool WriteStageToUSdc(const tinyusdz::Stage& stage, const std::string& output_path) {
+  using namespace tinyusdz::experimental;
 
+  std::cout << "Writing USDC to: " << output_path << "\n";
+
+  CrateWriter writer(output_path);
+  std::string err;
+
+  if (!writer.Open(&err)) {
+    std::cerr << "Failed to open USDC writer: " << err << "\n";
+    return false;
+  }
+
+  if (!writer.ConvertStageToSpecs(stage, &err)) {
+    std::cerr << "Failed to convert Stage to USDC specs: " << err << "\n";
+    return false;
+  }
+
+  if (!writer.Finalize(&err)) {
+    std::cerr << "Failed to finalize USDC file: " << err << "\n";
+    return false;
+  }
+
+  writer.Close();
+
+  std::cout << "Successfully wrote USDC file: " << output_path << "\n";
+  return true;
+}
+
+// Progress bar state
+struct ProgressState {
+  std::chrono::steady_clock::time_point start_time;
+  bool display_started{false};
+  float last_progress{0.0f};
+  static constexpr int kBarWidth = 40;
+  static constexpr double kDelaySeconds = 3.0;  // Don't show progress under 3 seconds
+};
+
+static bool progress_callback(float progress, void *userptr) {
+  ProgressState *state = static_cast<ProgressState*>(userptr);
+  if (!state) {
+    return true;
+  }
+
+  auto now = std::chrono::steady_clock::now();
+  double elapsed = std::chrono::duration<double>(now - state->start_time).count();
+
+  // Don't show progress if loading takes less than 3 seconds
+  if (elapsed < ProgressState::kDelaySeconds) {
+    return true;
+  }
+
+  // Only update display if progress changed significantly (1% or more)
+  if (progress - state->last_progress < 0.01f && progress < 1.0f) {
+    return true;
+  }
+  state->last_progress = progress;
+
+  if (!state->display_started) {
+    state->display_started = true;
+    std::cerr << "\n";  // Start on new line
+  }
+
+  int percent = static_cast<int>(progress * 100.0f);
+  int filled = static_cast<int>(progress * ProgressState::kBarWidth);
+
+  std::cerr << "\r[";
+  for (int i = 0; i < ProgressState::kBarWidth; ++i) {
+    if (i < filled) {
+      std::cerr << "=";
+    } else if (i == filled) {
+      std::cerr << ">";
+    } else {
+      std::cerr << " ";
+    }
+  }
+  std::cerr << "] " << std::setw(3) << percent << " %" << std::flush;
+
+  if (progress >= 1.0f) {
+    std::cerr << "\n";  // Finish with newline
+  }
+
+  return true;  // Continue parsing
+}
+
+void print_help() {
+  std::cout << "Usage: tusdcat [OPTIONS] input.usda/usdc/usdz\n";
+  std::cout << "\n";
+  std::cout << "Options:\n";
+  std::cout << "  -h, --help          Show this help message\n";
+  std::cout << "  -f, --flatten       Do composition (load sublayers, references,\n";
+  std::cout << "                      payload, evaluate `over`, inherit, variants)\n";
+  std::cout << "                      (not fully implemented yet)\n";
+  std::cout << "  --composition=LIST  Specify which composition features to enable\n";
+  std::cout << "                      (valid when --flatten is supplied).\n";
+  std::cout << "                      Comma-separated list of:\n";
+  std::cout << "                        l or subLayers, i or inherits,\n";
+  std::cout << "                        v or variantSets, r or references,\n";
+  std::cout << "                        p or payload, s or specializes\n";
+  std::cout << "                      Example: --composition=r,p\n";
+  std::cout << "  --extract-variants  Dump variants information to JSON (w.i.p)\n";
+  std::cout << "  --relative          Print Path as relative Path (not implemented)\n";
+  std::cout << "  -l, --loadOnly      Load/parse USD file only (validate input)\n";
+  std::cout << "  -j, --json          Output parsed USD as JSON string\n";
+  std::cout << "  -o, --output FILE   Write output to USDC file\n";
+  std::cout << "  --memstat           Print memory usage statistics\n";
+  std::cout << "  --progress          Show ASCII progress bar\n";
+  std::cout << "                      (only shown if loading takes > 3 seconds)\n";
+  std::cout << "  --loglevel INT      Set logging level:\n";
+  std::cout << "                        0=Debug, 1=Warn, 2=Info,\n";
+  std::cout << "                        3=Error, 4=Critical, 5=Off\n";
+  std::cout << "\n";
+  std::cout << "Inspect options (YAML-like tree output):\n";
+  std::cout << "  --inspect           Inspect Layer structure (YAML-like output)\n";
+  std::cout << "  --inspect-json      Inspect Layer structure (JSON output)\n";
+  std::cout << "  --value=MODE        Value printing mode:\n";
+  std::cout << "                        none = schema only, no values\n";
+  std::cout << "                        snip = first N items (default)\n";
+  std::cout << "                        full = all values\n";
+  std::cout << "  --snip=N            Show first N items in snip mode (default: 8)\n";
+  std::cout << "  --path=PATTERN      Filter prims by path glob pattern\n";
+  std::cout << "                      (* = any chars, ** = any path segments)\n";
+  std::cout << "  --attr=PATTERN      Filter attributes by name glob pattern\n";
+  std::cout << "  --time=T            Query TimeSamples at time T\n";
+  std::cout << "  --time=S:E          Query TimeSamples in range [S, E]\n";
+  std::cout << "\n";
+  std::cout << "Low-level USDC dump options:\n";
+  std::cout << "  --dumpcrate         Dump low-level USDC Crate structure (YAML)\n";
+  std::cout << "                      Only works with .usdc files\n";
 }
 
 int main(int argc, char **argv) {
@@ -92,12 +212,22 @@ int main(int argc, char **argv) {
   bool has_relative{false};
   bool has_extract_variants{false};
   bool load_only{false};
+  std::string variant_format = "yaml";  // Default format: yaml
   bool json_output{false};
   bool memstat{false};
+  bool show_progress{false};
+
+  // Inspect options
+  bool do_inspect{false};
+  tinyusdz::InspectOptions inspect_opts;
+
+  // Dumpcrate option
+  bool do_dumpcrate{false};
 
   constexpr int kMaxIteration = 128;
 
   std::string filepath;
+  std::string output_filepath;
 
   int input_index = -1;
   CompositionFeatures comp_features;
@@ -115,10 +245,97 @@ int main(int argc, char **argv) {
       load_only = true;
     } else if ((arg.compare("-j") == 0) || (arg.compare("--json") == 0)) {
       json_output = true;
+    } else if ((arg.compare("-o") == 0) || (arg.compare("--output") == 0)) {
+      if (i + 1 >= argc) {
+        std::cerr << "-o/--output requires a filename argument\n";
+        return EXIT_FAILURE;
+      }
+      i++; // Move to next argument
+      output_filepath = argv[i];
     } else if (arg.compare("--extract-variants") == 0) {
       has_extract_variants = true;
+    } else if (tinyusdz::startsWith(arg, "--variant-format=")) {
+      std::string fmt = tinyusdz::removePrefix(arg, "--variant-format=");
+      if (fmt.empty()) {
+        std::cerr << "No format specified to --variant-format.\n";
+        exit(-1);
+      }
+      std::string fmt_lower = str_tolower(fmt);
+      if (fmt_lower == "yaml" || fmt_lower == "json") {
+        variant_format = fmt_lower;
+      } else {
+        std::cerr << "Invalid variant format: " << fmt << ". Must be 'yaml' or 'json'.\n";
+        exit(-1);
+      }
     } else if (arg.compare("--memstat") == 0) {
       memstat = true;
+    } else if (arg.compare("--progress") == 0) {
+      show_progress = true;
+    } else if (arg.compare("--dumpcrate") == 0) {
+      do_dumpcrate = true;
+    } else if (arg.compare("--inspect") == 0) {
+      do_inspect = true;
+      inspect_opts.format = tinyusdz::InspectOutputFormat::Yaml;
+    } else if (arg.compare("--inspect-json") == 0) {
+      do_inspect = true;
+      inspect_opts.format = tinyusdz::InspectOutputFormat::Json;
+    } else if (tinyusdz::startsWith(arg, "--value=")) {
+      std::string value_str = tinyusdz::removePrefix(arg, "--value=");
+      if (value_str == "none") {
+        inspect_opts.value_mode = tinyusdz::InspectValueMode::NoValue;
+      } else if (value_str == "snip") {
+        inspect_opts.value_mode = tinyusdz::InspectValueMode::Snip;
+      } else if (value_str == "full") {
+        inspect_opts.value_mode = tinyusdz::InspectValueMode::Full;
+      } else {
+        std::cerr << "Invalid value mode: " << value_str
+                  << ". Use: none, snip, or full\n";
+        return EXIT_FAILURE;
+      }
+    } else if (tinyusdz::startsWith(arg, "--snip=")) {
+      std::string snip_str = tinyusdz::removePrefix(arg, "--snip=");
+      try {
+        int snip_val = std::stoi(snip_str);
+        if (snip_val < 1) {
+          std::cerr << "Invalid snip value: " << snip_val
+                    << ". Must be >= 1\n";
+          return EXIT_FAILURE;
+        }
+        inspect_opts.snip_count = static_cast<size_t>(snip_val);
+      } catch (...) {
+        std::cerr << "Invalid snip value: " << snip_str << "\n";
+        return EXIT_FAILURE;
+      }
+    } else if (tinyusdz::startsWith(arg, "--path=")) {
+      inspect_opts.prim_path_pattern = tinyusdz::removePrefix(arg, "--path=");
+    } else if (tinyusdz::startsWith(arg, "--attr=")) {
+      inspect_opts.attr_pattern = tinyusdz::removePrefix(arg, "--attr=");
+    } else if (tinyusdz::startsWith(arg, "--time=")) {
+      std::string time_str = tinyusdz::removePrefix(arg, "--time=");
+      inspect_opts.has_time_query = true;
+      // Check for range format "start:end"
+      size_t colon_pos = time_str.find(':');
+      if (colon_pos != std::string::npos) {
+        std::string start_str = time_str.substr(0, colon_pos);
+        std::string end_str = time_str.substr(colon_pos + 1);
+        try {
+          inspect_opts.time_start = std::stod(start_str);
+          inspect_opts.time_end = std::stod(end_str);
+        } catch (...) {
+          std::cerr << "Invalid time range: " << time_str << "\n";
+          return EXIT_FAILURE;
+        }
+      } else {
+        // Single time value
+        try {
+          double t = std::stod(time_str);
+          inspect_opts.time_start = t;
+          inspect_opts.time_end = t;
+        } catch (...) {
+          std::cerr << "Invalid time value: " << time_str << "\n";
+          return EXIT_FAILURE;
+        }
+      }
     } else if (arg.compare("--loglevel") == 0) {
       if (i + 1 >= argc) {
         std::cerr << "--loglevel requires an integer argument\n";
@@ -192,6 +409,51 @@ int main(int argc, char **argv) {
   std::string base_dir;
   base_dir = tinyusdz::io::GetBaseDir(filepath);
 
+  // Handle --dumpcrate mode (low-level USDC crate dump)
+  if (do_dumpcrate) {
+    if (ext != "usdc") {
+      std::cerr << "Error: --dumpcrate only works with .usdc files\n";
+      std::cerr << "  Input file: " << filepath << "\n";
+      std::cerr << "  Extension: ." << ext << "\n";
+      return EXIT_FAILURE;
+    }
+
+    tinyusdz::crate::DumpOptions dump_opts;
+    dump_opts.format = tinyusdz::crate::OutputFormat::YAML;
+
+    if (!tinyusdz::crate::DumpCrate(filepath, dump_opts, &err)) {
+      std::cerr << "Failed to dump crate: " << err << "\n";
+      return EXIT_FAILURE;
+    }
+
+    return EXIT_SUCCESS;
+  }
+
+  // Handle --inspect mode
+  if (do_inspect) {
+    // Load as Layer for inspection
+    tinyusdz::Layer layer;
+    bool ret = tinyusdz::LoadLayerFromFile(filepath, &layer, &warn, &err);
+
+    if (!warn.empty()) {
+      std::cerr << "WARN: " << warn << "\n";
+    }
+
+    if (!ret) {
+      std::cerr << "Failed to load USD file as Layer: " << filepath << "\n";
+      if (!err.empty()) {
+        std::cerr << err << "\n";
+      }
+      return EXIT_FAILURE;
+    }
+
+    // Output inspection result
+    std::string output = tinyusdz::InspectLayer(layer, inspect_opts);
+    std::cout << output;
+
+    return EXIT_SUCCESS;
+  }
+
   if (has_flatten) {
 
     if (load_only) {
@@ -205,8 +467,17 @@ int main(int argc, char **argv) {
       std::cout << "--flatten is ignored for USDZ at the moment.\n";
 
       tinyusdz::Stage stage;
+      tinyusdz::USDLoadOptions usdz_options;
 
-      bool ret = tinyusdz::LoadUSDZFromFile(filepath, &stage, &warn, &err);
+      // Set up progress callback if requested
+      ProgressState usdz_progress_state;
+      if (show_progress) {
+        usdz_progress_state.start_time = std::chrono::steady_clock::now();
+        usdz_options.progress_callback = progress_callback;
+        usdz_options.progress_userptr = &usdz_progress_state;
+      }
+
+      bool ret = tinyusdz::LoadUSDZFromFile(filepath, &stage, &warn, &err, usdz_options);
       if (!warn.empty()) {
         std::cerr << "WARN : " << warn << "\n";
       }
@@ -418,11 +689,17 @@ int main(int argc, char **argv) {
     }
 
     if (has_extract_variants) {
+      std::cout << "\n=== VARIANT EXTRACTION (" << variant_format << ") ===\n";
+
       tinyusdz::Dictionary dict;
       if (!tinyusdz::ExtractVariants(src_layer, &dict, &err)) {
         std::cerr << "Failed to extract variants info: " << err;
       } else {
-        std::cout << "== Variants info ==\n" << tinyusdz::to_string(dict) << "\n";
+        if (variant_format == "json") {
+          std::cout << variant_format::dictionary_to_json(dict) << "\n";
+        } else {
+          std::cout << variant_format::dictionary_to_yaml(dict) << "\n";
+        }
       }
 
     }
@@ -460,6 +737,13 @@ int main(int argc, char **argv) {
       std::cout << comp_stage.ExportToString() << "\n";
     }
 
+    // Write to USDC if output file is specified
+    if (!output_filepath.empty()) {
+      if (!WriteStageToUSdc(comp_stage, output_filepath)) {
+        return EXIT_FAILURE;
+      }
+    }
+
     using MeshMap = std::map<std::string, const tinyusdz::GeomMesh *>;
     MeshMap meshmap;
 
@@ -475,6 +759,14 @@ int main(int argc, char **argv) {
     tinyusdz::Stage stage;
 
     tinyusdz::USDLoadOptions options;
+
+    // Set up progress callback if requested
+    ProgressState progress_state;
+    if (show_progress) {
+      progress_state.start_time = std::chrono::steady_clock::now();
+      options.progress_callback = progress_callback;
+      options.progress_userptr = &progress_state;
+    }
 
     // auto detect format.
     bool ret = tinyusdz::LoadUSDFromFile(filepath, &stage, &warn, &err, options);
@@ -525,12 +817,25 @@ int main(int argc, char **argv) {
       std::cout << s << "\n";
     }
 
+    // Write to USDC if output file is specified
+    if (!output_filepath.empty()) {
+      if (!WriteStageToUSdc(stage, output_filepath)) {
+        return EXIT_FAILURE;
+      }
+    }
+
     if (has_extract_variants) {
+      std::cout << "\n=== VARIANT EXTRACTION (" << variant_format << ") ===\n";
+
       tinyusdz::Dictionary dict;
       if (!tinyusdz::ExtractVariants(stage, &dict, &err)) {
         std::cerr << "Failed to extract variants info: " << err;
       } else {
-        std::cout << "== Variants info ==\n" << tinyusdz::to_string(dict) << "\n";
+        if (variant_format == "json") {
+          std::cout << variant_format::dictionary_to_json(dict) << "\n";
+        } else {
+          std::cout << variant_format::dictionary_to_yaml(dict) << "\n";
+        }
       }
 
     }

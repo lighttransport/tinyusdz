@@ -3,11 +3,8 @@
 #include "str-util.hh"
 #include <string>
 
-// dtoa_milo does not work well for float types
-// (e.g. it prints float 0.01 as 0.009999999997),
-// so use floaxie for float types
-// TODO: Use floaxie also for double?
-#include "external/dtoa_milo.h"
+// NOTE: dtos() from str-util.hh uses dragonbox algorithm for
+// shortest float-to-string conversion
 
 #ifdef __clang__
 #pragma clang diagnostic push
@@ -29,24 +26,17 @@ namespace json {
 
 namespace detail {
 
-#if 0
-inline std::string dtos(const double v) {
-  char buf[384];
-  *dtoa_milo(v, buf) = '\0';
-
-  return std::string(buf);
-}
-#endif
+// NOTE: Use tinyusdz::dtos() from str-util.hh instead
 
 
 #if 0
 static bool WriteInt(const int value, std::string *out_json) {
   if (!out_json) return false;
 
-  (*out_json) = detail::dtos(double(value));
+  (*out_json) = tinyusdz::dtos(double(value));
 
   return true;
-  
+
 }
 
 static bool WriteString(const std::string &str, std::string *out_json) {

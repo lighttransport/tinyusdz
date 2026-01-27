@@ -199,6 +199,10 @@ struct StringData {
   bool is_triple_quoted{false};
   bool single_quote{false};  // true for ', false for "
 
+  // For prim metadata comment: track whether parsed with "comment =" prefix
+  // When true, pprint outputs "comment = ...", otherwise just the string
+  bool has_comment_prefix{false};
+
   // optional(for USDA)
   int line_row{0};
   int line_col{0};
@@ -504,6 +508,10 @@ enum TypeId {
   TYPE_ID_IMAGING_MTLX_PREVIEWSURFACE,
   TYPE_ID_IMAGING_MTLX_STANDARDSURFACE,
   TYPE_ID_IMAGING_MTLX_OPENPBRSURFACE,
+  TYPE_ID_IMAGING_MTLX_UNIFORMEDF,
+  TYPE_ID_IMAGING_MTLX_CONICALEDF,
+  TYPE_ID_IMAGING_MTLX_MEASUREDEDF,
+  TYPE_ID_IMAGING_MTLX_LIGHT,
   TYPE_ID_IMAGING_OPENPBR_SURFACE,
 
   TYPE_ID_IMAGING_END,
@@ -529,6 +537,7 @@ enum TypeId {
   TYPE_ID_COLLECTION_INSTANCE,
   TYPE_ID_MATERIAL_BINDING,
   TYPE_ID_MATERIALX_CONFIG_API,
+  TYPE_ID_COLOR_SPACE_API,
   TYPE_ID_API_END,
 
   // Base ID for user data type(less than `TYPE_ID_1D_ARRAY_BIT-1`)
@@ -1638,6 +1647,23 @@ struct TypeTraits<void> {
   static bool is_array() { return false; }
 };
 
+// Specialization for const char* to support string literals
+template <>
+struct TypeTraits<const char*> {
+  using value_type = const char*;
+  using value_underlying_type = const char*;
+  static constexpr uint32_t ndim() { return 0; }
+  static constexpr uint32_t size = sizeof(const char*);
+  static constexpr uint32_t ncomp() { return 1; }
+  static constexpr uint32_t type_id() { return TYPE_ID_STRING; }
+  static constexpr uint32_t get_type_id() { return TYPE_ID_STRING; }
+  static constexpr uint32_t underlying_type_id() { return TYPE_ID_STRING; }
+  static std::string type_name() { return kString; }
+  static std::string underlying_type_name() { return kString; }
+  static bool is_role_type() { return false; }
+  static bool is_array() { return false; }
+};
+
 DEFINE_TYPE_TRAIT(std::nullptr_t, "null", TYPE_ID_NULL, 1);
 // DEFINE_TYPE_TRAIT(void, "void", TYPE_ID_VOID, 1);
 DEFINE_TYPE_TRAIT(ValueBlock, "None", TYPE_ID_VALUEBLOCK, 1);
@@ -2071,7 +2097,7 @@ class Value {
   // Helper to log vector size
   template <typename T>
   static void log_vector_size(const std::vector<T>& vec) {
-    TUSDZ_LOG_I("  vector size: " << vec.size());
+    //TUSDZ_LOG_I("  vector size: " << vec.size());
   }
 
   template <typename T>
@@ -2170,6 +2196,7 @@ class Value {
 #endif
 
   const linb::any &get_raw() const { return v_; }
+  linb::any &get_raw_mutable() { return v_; }
 
   bool is_array() const { return (v_.type_id() & value::TYPE_ID_1D_ARRAY_BIT); }
 

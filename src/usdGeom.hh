@@ -689,7 +689,7 @@ struct Xform : GPrim {
 
 // GeomSubset
 struct GeomSubset : public MaterialBinding, Collection {
-  enum class ElementType { Face, Point };
+  enum class ElementType { Face, Point, Edge, Tetrahedron };
 
   enum class FamilyType {
     Partition,       // 'partition'
@@ -715,10 +715,16 @@ struct GeomSubset : public MaterialBinding, Collection {
     } else if (str == "point") {
       elementType = ElementType::Point;
       return true;
+    } else if (str == "edge") {
+      elementType = ElementType::Edge;
+      return true;
+    } else if (str == "tetrahedron") {
+      elementType = ElementType::Tetrahedron;
+      return true;
     }
 
     return nonstd::make_unexpected(
-        "`face` or `point` is supported for `elementType`, but `" + str +
+        "`face`, `point`, `edge` or `tetrahedron` is supported for `elementType`, but `" + str +
         "` specified");
   }
 

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 // Copyright 2024-Present Light Transport Entertainment Inc.
 #include "tiny-string.hh"
+#include "value-types.hh"  // For complete matrix type definitions
 
 #if defined(TINYUSDZ_USE_THREAD)
 #include <thread>
@@ -369,7 +370,7 @@ bool parse_int(const tstring_view &sv, int32_t *ret) {
     }
   }
   
-  *ret = negative ? -static_cast<int32_t>(result) : static_cast<int32_t>(result);
+  *ret = static_cast<int32_t>(negative ? -result : result);
   return true;
 }
 
@@ -758,6 +759,643 @@ bool print_float_array(std::vector<float> &v,
   return false;
 }
 
+// Helper function to skip whitespace
+static inline const char* skip_whitespace(const char *p, const char *end) {
+  while (p < end && (*p == ' ' || *p == '\t' || *p == '\n' || *p == '\r')) {
+    p++;
+  }
+  return p;
+}
+
+// Helper function to parse a single float from a pointer, advancing the pointer
+static inline bool parse_single_float(const char **p, const char *end, float *value) {
+  const char *start = *p;
+  // Find end of number
+  while (*p < end && (**p != ',' && **p != ')' && **p != ']' &&
+         **p != ' ' && **p != '\t' && **p != '\n' && **p != '\r')) {
+    (*p)++;
+  }
+  auto result = fast_float::from_chars(start, *p, *value);
+  return result.ec == std::errc{};
+}
+
+// Helper function to parse a single double from a pointer, advancing the pointer
+static inline bool parse_single_double(const char **p, const char *end, double *value) {
+  const char *start = *p;
+  // Find end of number
+  while (*p < end && (**p != ',' && **p != ')' && **p != ']' &&
+         **p != ' ' && **p != '\t' && **p != '\n' && **p != '\r')) {
+    (*p)++;
+  }
+  auto result = fast_float::from_chars(start, *p, *value);
+  return result.ec == std::errc{};
+}
+
+// Parse float2 array: [(1, 2), (3, 4), ...]
+__attribute__((unused)) static bool parse_float2_arary(const tstring_view &sv, std::vector<tinyusdz::value::float2> *result) {
+  if (!result) return false;
+  result->clear();
+  if (sv.size() == 0) return false;
+
+  const char *p = sv.c_str();
+  const char *end = p + sv.size();
+
+  p = skip_whitespace(p, end);
+  if (p >= end || *p != '[') return false;
+  p++; // skip '['
+
+  p = skip_whitespace(p, end);
+  if (p < end && *p == ']') return true; // empty array
+
+  while (p < end) {
+    p = skip_whitespace(p, end);
+    if (p >= end) break;
+    if (*p == ']') break;
+
+    // Expect '('
+    if (*p != '(') return false;
+    p++;
+
+    tinyusdz::value::float2 vec;
+    for (size_t i = 0; i < 2; i++) {
+      p = skip_whitespace(p, end);
+      if (!parse_single_float(&p, end, &vec[i])) return false;
+      p = skip_whitespace(p, end);
+      if (i == 0) {
+        if (p >= end || *p != ',') return false;
+        p++; // skip ','
+      }
+    }
+
+    p = skip_whitespace(p, end);
+    if (p >= end || *p != ')') return false;
+    p++; // skip ')'
+
+    result->push_back(vec);
+
+    p = skip_whitespace(p, end);
+    if (p < end && *p == ',') p++; // skip optional delimiter
+  }
+
+  return true;
+}
+
+// Parse float3 array: [(1, 2, 3), (4, 5, 6), ...]
+__attribute__((unused)) static bool parse_float3_arary(const tstring_view &sv, std::vector<tinyusdz::value::float3> *result) {
+  if (!result) return false;
+  result->clear();
+  if (sv.size() == 0) return false;
+
+  const char *p = sv.c_str();
+  const char *end = p + sv.size();
+
+  p = skip_whitespace(p, end);
+  if (p >= end || *p != '[') return false;
+  p++; // skip '['
+
+  p = skip_whitespace(p, end);
+  if (p < end && *p == ']') return true; // empty array
+
+  while (p < end) {
+    p = skip_whitespace(p, end);
+    if (p >= end) break;
+    if (*p == ']') break;
+
+    // Expect '('
+    if (*p != '(') return false;
+    p++;
+
+    tinyusdz::value::float3 vec;
+    for (size_t i = 0; i < 3; i++) {
+      p = skip_whitespace(p, end);
+      if (!parse_single_float(&p, end, &vec[i])) return false;
+      p = skip_whitespace(p, end);
+      if (i < 2) {
+        if (p >= end || *p != ',') return false;
+        p++; // skip ','
+      }
+    }
+
+    p = skip_whitespace(p, end);
+    if (p >= end || *p != ')') return false;
+    p++; // skip ')'
+
+    result->push_back(vec);
+
+    p = skip_whitespace(p, end);
+    if (p < end && *p == ',') p++; // skip optional delimiter
+  }
+
+  return true;
+}
+
+// Parse float4 array: [(1, 2, 3, 4), (5, 6, 7, 8), ...]
+__attribute__((unused)) static bool parse_float4_arary(const tstring_view &sv, std::vector<tinyusdz::value::float4> *result) {
+  if (!result) return false;
+  result->clear();
+  if (sv.size() == 0) return false;
+
+  const char *p = sv.c_str();
+  const char *end = p + sv.size();
+
+  p = skip_whitespace(p, end);
+  if (p >= end || *p != '[') return false;
+  p++; // skip '['
+
+  p = skip_whitespace(p, end);
+  if (p < end && *p == ']') return true; // empty array
+
+  while (p < end) {
+    p = skip_whitespace(p, end);
+    if (p >= end) break;
+    if (*p == ']') break;
+
+    // Expect '('
+    if (*p != '(') return false;
+    p++;
+
+    tinyusdz::value::float4 vec;
+    for (size_t i = 0; i < 4; i++) {
+      p = skip_whitespace(p, end);
+      if (!parse_single_float(&p, end, &vec[i])) return false;
+      p = skip_whitespace(p, end);
+      if (i < 3) {
+        if (p >= end || *p != ',') return false;
+        p++; // skip ','
+      }
+    }
+
+    p = skip_whitespace(p, end);
+    if (p >= end || *p != ')') return false;
+    p++; // skip ')'
+
+    result->push_back(vec);
+
+    p = skip_whitespace(p, end);
+    if (p < end && *p == ',') p++; // skip optional delimiter
+  }
+
+  return true;
+}
+
+// Parse double2 array: [(1, 2), (3, 4), ...]
+__attribute__((unused)) static bool parse_double2_arary(const tstring_view &sv, std::vector<tinyusdz::value::double2> *result) {
+  if (!result) return false;
+  result->clear();
+  if (sv.size() == 0) return false;
+
+  const char *p = sv.c_str();
+  const char *end = p + sv.size();
+
+  p = skip_whitespace(p, end);
+  if (p >= end || *p != '[') return false;
+  p++; // skip '['
+
+  p = skip_whitespace(p, end);
+  if (p < end && *p == ']') return true; // empty array
+
+  while (p < end) {
+    p = skip_whitespace(p, end);
+    if (p >= end) break;
+    if (*p == ']') break;
+
+    // Expect '('
+    if (*p != '(') return false;
+    p++;
+
+    tinyusdz::value::double2 vec;
+    for (size_t i = 0; i < 2; i++) {
+      p = skip_whitespace(p, end);
+      if (!parse_single_double(&p, end, &vec[i])) return false;
+      p = skip_whitespace(p, end);
+      if (i == 0) {
+        if (p >= end || *p != ',') return false;
+        p++; // skip ','
+      }
+    }
+
+    p = skip_whitespace(p, end);
+    if (p >= end || *p != ')') return false;
+    p++; // skip ')'
+
+    result->push_back(vec);
+
+    p = skip_whitespace(p, end);
+    if (p < end && *p == ',') p++; // skip optional delimiter
+  }
+
+  return true;
+}
+
+// Parse double3 array: [(1, 2, 3), (4, 5, 6), ...]
+__attribute__((unused)) static bool parse_double3_arary(const tstring_view &sv, std::vector<tinyusdz::value::double3> *result) {
+  if (!result) return false;
+  result->clear();
+  if (sv.size() == 0) return false;
+
+  const char *p = sv.c_str();
+  const char *end = p + sv.size();
+
+  p = skip_whitespace(p, end);
+  if (p >= end || *p != '[') return false;
+  p++; // skip '['
+
+  p = skip_whitespace(p, end);
+  if (p < end && *p == ']') return true; // empty array
+
+  while (p < end) {
+    p = skip_whitespace(p, end);
+    if (p >= end) break;
+    if (*p == ']') break;
+
+    // Expect '('
+    if (*p != '(') return false;
+    p++;
+
+    tinyusdz::value::double3 vec;
+    for (size_t i = 0; i < 3; i++) {
+      p = skip_whitespace(p, end);
+      if (!parse_single_double(&p, end, &vec[i])) return false;
+      p = skip_whitespace(p, end);
+      if (i < 2) {
+        if (p >= end || *p != ',') return false;
+        p++; // skip ','
+      }
+    }
+
+    p = skip_whitespace(p, end);
+    if (p >= end || *p != ')') return false;
+    p++; // skip ')'
+
+    result->push_back(vec);
+
+    p = skip_whitespace(p, end);
+    if (p < end && *p == ',') p++; // skip optional delimiter
+  }
+
+  return true;
+}
+
+// Parse double4 array: [(1, 2, 3, 4), (5, 6, 7, 8), ...]
+__attribute__((unused)) static bool parse_double4_arary(const tstring_view &sv, std::vector<tinyusdz::value::double4> *result) {
+  if (!result) return false;
+  result->clear();
+  if (sv.size() == 0) return false;
+
+  const char *p = sv.c_str();
+  const char *end = p + sv.size();
+
+  p = skip_whitespace(p, end);
+  if (p >= end || *p != '[') return false;
+  p++; // skip '['
+
+  p = skip_whitespace(p, end);
+  if (p < end && *p == ']') return true; // empty array
+
+  while (p < end) {
+    p = skip_whitespace(p, end);
+    if (p >= end) break;
+    if (*p == ']') break;
+
+    // Expect '('
+    if (*p != '(') return false;
+    p++;
+
+    tinyusdz::value::double4 vec;
+    for (size_t i = 0; i < 4; i++) {
+      p = skip_whitespace(p, end);
+      if (!parse_single_double(&p, end, &vec[i])) return false;
+      p = skip_whitespace(p, end);
+      if (i < 3) {
+        if (p >= end || *p != ',') return false;
+        p++; // skip ','
+      }
+    }
+
+    p = skip_whitespace(p, end);
+    if (p >= end || *p != ')') return false;
+    p++; // skip ')'
+
+    result->push_back(vec);
+
+    p = skip_whitespace(p, end);
+    if (p < end && *p == ',') p++; // skip optional delimiter
+  }
+
+  return true;
+}
+
+// Parse matrix2f array: [( e0, e1, e2, e3 ), ...]
+__attribute__((unused)) static bool parse_matrix2f_arary(const tstring_view &sv, std::vector<tinyusdz::value::matrix2f> *result) {
+  if (!result) return false;
+  result->clear();
+  if (sv.size() == 0) return false;
+
+  const char *p = sv.c_str();
+  const char *end = p + sv.size();
+
+  p = skip_whitespace(p, end);
+  if (p >= end || *p != '[') return false;
+  p++; // skip '['
+
+  p = skip_whitespace(p, end);
+  if (p < end && *p == ']') return true; // empty array
+
+  while (p < end) {
+    p = skip_whitespace(p, end);
+    if (p >= end) break;
+    if (*p == ']') break;
+
+    // Expect '('
+    if (*p != '(') return false;
+    p++;
+
+    tinyusdz::value::matrix2f mat;
+    // Parse 4 elements in row-major order
+    for (size_t i = 0; i < 2; i++) {
+      for (size_t j = 0; j < 2; j++) {
+        p = skip_whitespace(p, end);
+        if (!parse_single_float(&p, end, &mat.m[i][j])) return false;
+        p = skip_whitespace(p, end);
+        if (i * 2 + j < 3) {  // Need comma after first 3 elements
+          if (p >= end || *p != ',') return false;
+          p++; // skip ','
+        }
+      }
+    }
+
+    p = skip_whitespace(p, end);
+    if (p >= end || *p != ')') return false;
+    p++; // skip ')'
+
+    result->push_back(mat);
+
+    p = skip_whitespace(p, end);
+    if (p < end && *p == ',') p++; // skip optional delimiter
+  }
+
+  return true;
+}
+
+// Parse matrix3f array: [( e0, e1, ..., e8 ), ...]
+__attribute__((unused)) static bool parse_matrix3f_arary(const tstring_view &sv, std::vector<tinyusdz::value::matrix3f> *result) {
+  if (!result) return false;
+  result->clear();
+  if (sv.size() == 0) return false;
+
+  const char *p = sv.c_str();
+  const char *end = p + sv.size();
+
+  p = skip_whitespace(p, end);
+  if (p >= end || *p != '[') return false;
+  p++; // skip '['
+
+  p = skip_whitespace(p, end);
+  if (p < end && *p == ']') return true; // empty array
+
+  while (p < end) {
+    p = skip_whitespace(p, end);
+    if (p >= end) break;
+    if (*p == ']') break;
+
+    // Expect '('
+    if (*p != '(') return false;
+    p++;
+
+    tinyusdz::value::matrix3f mat;
+    // Parse 9 elements in row-major order
+    for (size_t i = 0; i < 3; i++) {
+      for (size_t j = 0; j < 3; j++) {
+        p = skip_whitespace(p, end);
+        if (!parse_single_float(&p, end, &mat.m[i][j])) return false;
+        p = skip_whitespace(p, end);
+        if (i * 3 + j < 8) {  // Need comma after first 8 elements
+          if (p >= end || *p != ',') return false;
+          p++; // skip ','
+        }
+      }
+    }
+
+    p = skip_whitespace(p, end);
+    if (p >= end || *p != ')') return false;
+    p++; // skip ')'
+
+    result->push_back(mat);
+
+    p = skip_whitespace(p, end);
+    if (p < end && *p == ',') p++; // skip optional delimiter
+  }
+
+  return true;
+}
+
+// Parse matrix4f array: [( e0, e1, ..., e15 ), ...]
+__attribute__((unused)) static bool parse_matrix4f_arary(const tstring_view &sv, std::vector<tinyusdz::value::matrix4f> *result) {
+  if (!result) return false;
+  result->clear();
+  if (sv.size() == 0) return false;
+
+  const char *p = sv.c_str();
+  const char *end = p + sv.size();
+
+  p = skip_whitespace(p, end);
+  if (p >= end || *p != '[') return false;
+  p++; // skip '['
+
+  p = skip_whitespace(p, end);
+  if (p < end && *p == ']') return true; // empty array
+
+  while (p < end) {
+    p = skip_whitespace(p, end);
+    if (p >= end) break;
+    if (*p == ']') break;
+
+    // Expect '('
+    if (*p != '(') return false;
+    p++;
+
+    tinyusdz::value::matrix4f mat;
+    // Parse 16 elements in row-major order
+    for (size_t i = 0; i < 4; i++) {
+      for (size_t j = 0; j < 4; j++) {
+        p = skip_whitespace(p, end);
+        if (!parse_single_float(&p, end, &mat.m[i][j])) return false;
+        p = skip_whitespace(p, end);
+        if (i * 4 + j < 15) {  // Need comma after first 15 elements
+          if (p >= end || *p != ',') return false;
+          p++; // skip ','
+        }
+      }
+    }
+
+    p = skip_whitespace(p, end);
+    if (p >= end || *p != ')') return false;
+    p++; // skip ')'
+
+    result->push_back(mat);
+
+    p = skip_whitespace(p, end);
+    if (p < end && *p == ',') p++; // skip optional delimiter
+  }
+
+  return true;
+}
+
+// Parse matrix2d array: [( e0, e1, e2, e3 ), ...]
+__attribute__((unused)) static bool parse_matrix2d_arary(const tstring_view &sv, std::vector<tinyusdz::value::matrix2d> *result) {
+  if (!result) return false;
+  result->clear();
+  if (sv.size() == 0) return false;
+
+  const char *p = sv.c_str();
+  const char *end = p + sv.size();
+
+  p = skip_whitespace(p, end);
+  if (p >= end || *p != '[') return false;
+  p++; // skip '['
+
+  p = skip_whitespace(p, end);
+  if (p < end && *p == ']') return true; // empty array
+
+  while (p < end) {
+    p = skip_whitespace(p, end);
+    if (p >= end) break;
+    if (*p == ']') break;
+
+    // Expect '('
+    if (*p != '(') return false;
+    p++;
+
+    tinyusdz::value::matrix2d mat;
+    // Parse 4 elements in row-major order
+    for (size_t i = 0; i < 2; i++) {
+      for (size_t j = 0; j < 2; j++) {
+        p = skip_whitespace(p, end);
+        if (!parse_single_double(&p, end, &mat.m[i][j])) return false;
+        p = skip_whitespace(p, end);
+        if (i * 2 + j < 3) {  // Need comma after first 3 elements
+          if (p >= end || *p != ',') return false;
+          p++; // skip ','
+        }
+      }
+    }
+
+    p = skip_whitespace(p, end);
+    if (p >= end || *p != ')') return false;
+    p++; // skip ')'
+
+    result->push_back(mat);
+
+    p = skip_whitespace(p, end);
+    if (p < end && *p == ',') p++; // skip optional delimiter
+  }
+
+  return true;
+}
+
+// Parse matrix3d array: [( e0, e1, ..., e8 ), ...]
+__attribute__((unused)) static bool parse_matrix3d_arary(const tstring_view &sv, std::vector<tinyusdz::value::matrix3d> *result) {
+  if (!result) return false;
+  result->clear();
+  if (sv.size() == 0) return false;
+
+  const char *p = sv.c_str();
+  const char *end = p + sv.size();
+
+  p = skip_whitespace(p, end);
+  if (p >= end || *p != '[') return false;
+  p++; // skip '['
+
+  p = skip_whitespace(p, end);
+  if (p < end && *p == ']') return true; // empty array
+
+  while (p < end) {
+    p = skip_whitespace(p, end);
+    if (p >= end) break;
+    if (*p == ']') break;
+
+    // Expect '('
+    if (*p != '(') return false;
+    p++;
+
+    tinyusdz::value::matrix3d mat;
+    // Parse 9 elements in row-major order
+    for (size_t i = 0; i < 3; i++) {
+      for (size_t j = 0; j < 3; j++) {
+        p = skip_whitespace(p, end);
+        if (!parse_single_double(&p, end, &mat.m[i][j])) return false;
+        p = skip_whitespace(p, end);
+        if (i * 3 + j < 8) {  // Need comma after first 8 elements
+          if (p >= end || *p != ',') return false;
+          p++; // skip ','
+        }
+      }
+    }
+
+    p = skip_whitespace(p, end);
+    if (p >= end || *p != ')') return false;
+    p++; // skip ')'
+
+    result->push_back(mat);
+
+    p = skip_whitespace(p, end);
+    if (p < end && *p == ',') p++; // skip optional delimiter
+  }
+
+  return true;
+}
+
+// Parse matrix4d array: [( e0, e1, ..., e15 ), ...]
+__attribute__((unused)) static bool parse_matrix4d_arary(const tstring_view &sv, std::vector<tinyusdz::value::matrix4d> *result) {
+  if (!result) return false;
+  result->clear();
+  if (sv.size() == 0) return false;
+
+  const char *p = sv.c_str();
+  const char *end = p + sv.size();
+
+  p = skip_whitespace(p, end);
+  if (p >= end || *p != '[') return false;
+  p++; // skip '['
+
+  p = skip_whitespace(p, end);
+  if (p < end && *p == ']') return true; // empty array
+
+  while (p < end) {
+    p = skip_whitespace(p, end);
+    if (p >= end) break;
+    if (*p == ']') break;
+
+    // Expect '('
+    if (*p != '(') return false;
+    p++;
+
+    tinyusdz::value::matrix4d mat;
+    // Parse 16 elements in row-major order
+    for (size_t i = 0; i < 4; i++) {
+      for (size_t j = 0; j < 4; j++) {
+        p = skip_whitespace(p, end);
+        if (!parse_single_double(&p, end, &mat.m[i][j])) return false;
+        p = skip_whitespace(p, end);
+        if (i * 4 + j < 15) {  // Need comma after first 15 elements
+          if (p >= end || *p != ',') return false;
+          p++; // skip ','
+        }
+      }
+    }
+
+    p = skip_whitespace(p, end);
+    if (p >= end || *p != ')') return false;
+    p++; // skip ')'
+
+    result->push_back(mat);
+
+    p = skip_whitespace(p, end);
+    if (p < end && *p == ',') p++; // skip optional delimiter
+  }
+
+  return true;
+}
 
 }
 

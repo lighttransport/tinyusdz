@@ -19,6 +19,7 @@
 // Suppress warnings from nlohmann/json.hpp
 #ifdef __clang__
 #pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wunknown-warning-option"
 #pragma clang diagnostic ignored "-Wcovered-switch-default"
 #pragma clang diagnostic ignored "-Wdeprecated-literal-operator"
 #endif
@@ -49,6 +50,7 @@ public:
     std::string texture_path = "";  ///< External texture directory path
     bool export_mtlx = false;       ///< Export as MaterialX document
     std::string color_space = "sRGB"; ///< Target color space for textures
+    bool use_grouped_parameters = false; ///< Use grouped parameters (e.g., base.color) instead of flattened (e.g., base_color)
   };
 
   /// Export entire RenderScene to Three.js format
@@ -73,10 +75,10 @@ public:
 
 private:
   /// Convert OpenPBR shader to Three.js node material
-  json ConvertOpenPBRToNodeMaterial(const OpenPBRSurfaceShader& shader);
+  json ConvertOpenPBRToNodeMaterial(const OpenPBRSurfaceShader& shader, const ExportOptions& options);
 
   /// Convert OpenPBR shader to Three.js MeshPhysicalMaterial (WebGL fallback)
-  json ConvertOpenPBRToPhysicalMaterial(const OpenPBRSurfaceShader& shader);
+  json ConvertOpenPBRToPhysicalMaterial(const OpenPBRSurfaceShader& shader, const ExportOptions& options);
 
   /// Convert UsdPreviewSurface to Three.js materials
   json ConvertPreviewSurfaceToNodeMaterial(const PreviewSurfaceShader& shader);

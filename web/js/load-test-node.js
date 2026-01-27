@@ -123,7 +123,24 @@ function checkMemory64Support() {
 
 console.log("memory64:", checkMemory64Support());
 
-const usd_filename = "../../models/suzanne-subd-lv4.usdc";
+// Parse command line arguments
+const args = process.argv.slice(2);
+if (args.length === 0) {
+  console.log('Usage: node load-test-node.js <path-to-usd-file>');
+  console.log('');
+  console.log('Examples:');
+  console.log('  node load-test-node.js model.usdz');
+  console.log('  node load-test-node.js ../../models/suzanne-subd-lv4.usdc');
+  process.exit(1);
+}
+
+const usd_filename = args[0];
+
+// Check if file exists
+if (!fs.existsSync(usd_filename)) {
+  console.error(`Error: File not found: ${usd_filename}`);
+  process.exit(1);
+}
 
 async function initScene() {
 
@@ -134,11 +151,17 @@ async function initScene() {
 
   // Option 1: Use traditional file loading (existing method)
   console.log("\n=== Traditional file loading ===");
+  console.log(`File: ${usd_filename}`);
   const f = loadFile(usd_filename);
+  if (!f) {
+    console.error('Failed to load file');
+    process.exit(1);
+  }
   const url = URL.createObjectURL(f);
   //const usd = await loader.loadTestAsync(url);
   const usd = await loader.loadAsync(url);
   //console.log("Traditional loading completed");
+  console.log("Load completed");
   reportMemUsage();
 
   /*
@@ -183,4 +206,7 @@ Object [WebAssembly] {
 */
 
 
-initScene();
+initScene().catch(err => {
+  console.error('Error:', err);
+  process.exit(1);
+});

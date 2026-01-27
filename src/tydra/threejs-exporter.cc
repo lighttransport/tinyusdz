@@ -12,6 +12,7 @@
 #include <sstream>
 #include <iomanip>
 #include <cmath>
+#include "str-util.hh"  // For dragonbox-based dtos()
 
 namespace tinyusdz {
 namespace tydra {
@@ -93,6 +94,32 @@ const std::map<std::string, std::string>& MaterialParameterMapping::colorspace_m
 // Helper function to convert vec3 to JSON array
 static json vec3ToJson(const vec3& v) {
   return json::array({v[0], v[1], v[2]});
+}
+
+// Helper function to set a parameter in JSON with optional grouping
+// For flattened: "base_color" stays as inputs["base_color"]
+// For grouped: "base_color" becomes inputs["base"]["color"]
+static void setJsonParameter(json& inputs, const std::string& param_name, const json& value, bool use_grouped) {
+  if (!use_grouped) {
+    // Flattened format: base_color
+    inputs[param_name] = value;
+  } else {
+    // Grouped format: base.color
+    size_t underscore_pos = param_name.find('_');
+    if (underscore_pos != std::string::npos) {
+      std::string group = param_name.substr(0, underscore_pos);
+      std::string property = param_name.substr(underscore_pos + 1);
+
+      // Create group object if it doesn't exist
+      if (!inputs.contains(group)) {
+        inputs[group] = json::object();
+      }
+      inputs[group][property] = value;
+    } else {
+      // No underscore, keep as-is
+      inputs[param_name] = value;
+    }
+  }
 }
 
 // Helper function to convert vec2 to JSON array
@@ -251,11 +278,11 @@ bool ThreeJSMaterialExporter::ExportMaterial(const RenderMaterial& material,
   if (has_openpbr && options.use_webgpu) {
     // Export as WebGPU node material
     output["type"] = "NodeMaterial";
-    output["nodes"] = ConvertOpenPBRToNodeMaterial(material.openPBRShader.value());
+    output["nodes"] = ConvertOpenPBRToNodeMaterial(material.openPBRShader.value(), options);
   } else if (has_openpbr && options.generate_fallback) {
     // Export as WebGL MeshPhysicalMaterial
     output["type"] = "MeshPhysicalMaterial";
-    json params = ConvertOpenPBRToPhysicalMaterial(material.openPBRShader.value());
+    json params = ConvertOpenPBRToPhysicalMaterial(material.openPBRShader.value(), options);
     for (auto it = params.items().begin(); it != params.items().end(); ++it) {
       output[it.key()] = it.value();
     }
@@ -285,7 +312,7 @@ bool ThreeJSMaterialExporter::ExportMaterial(const RenderMaterial& material,
   return true;
 }
 
-json ThreeJSMaterialExporter::ConvertOpenPBRToNodeMaterial(const OpenPBRSurfaceShader& shader) {
+json ThreeJSMaterialExporter::ConvertOpenPBRToNodeMaterial(const OpenPBRSurfaceShader& shader, const ExportOptions& options) {
   json nodes = json::object();
 
   // Create OpenPBR surface node
@@ -295,27 +322,31 @@ json ThreeJSMaterialExporter::ConvertOpenPBRToNodeMaterial(const OpenPBRSurfaceS
     {"inputs", json::object()}
   };
 
+  bool use_grouped = options.use_grouped_parameters;
+
   // Map all OpenPBR parameters
   auto add_param = [&](const std::string& name, const auto& param) {
+    json value;
     if (param.is_texture()) {
-      surface_node["inputs"][name] = {
+      value = {
         {"type", "texture"},
         {"textureId", param.texture_id}
       };
     } else {
-      surface_node["inputs"][name] = param.value;
+      value = param.value;
     }
+    setJsonParameter(surface_node["inputs"], name, value, use_grouped);
   };
 
   // Base layer
   add_param("base_weight", shader.base_weight);
-  surface_node["inputs"]["base_color"] = vec3ToJson(shader.base_color.value);
+  setJsonParameter(surface_node["inputs"], "base_color", vec3ToJson(shader.base_color.value), use_grouped);
   add_param("base_roughness", shader.base_roughness);
   add_param("base_metalness", shader.base_metalness);
 
   // Specular layer
   add_param("specular_weight", shader.specular_weight);
-  surface_node["inputs"]["specular_color"] = vec3ToJson(shader.specular_color.value);
+  setJsonParameter(surface_node["inputs"], "specular_color", vec3ToJson(shader.specular_color.value), use_grouped);
   add_param("specular_roughness", shader.specular_roughness);
   add_param("specular_ior", shader.specular_ior);
   add_param("specular_ior_level", shader.specular_ior_level);
@@ -324,42 +355,43 @@ json ThreeJSMaterialExporter::ConvertOpenPBRToNodeMaterial(const OpenPBRSurfaceS
 
   // Transmission
   add_param("transmission_weight", shader.transmission_weight);
-  surface_node["inputs"]["transmission_color"] = vec3ToJson(shader.transmission_color.value);
+  setJsonParameter(surface_node["inputs"], "transmission_color", vec3ToJson(shader.transmission_color.value), use_grouped);
   add_param("transmission_depth", shader.transmission_depth);
-  surface_node["inputs"]["transmission_scatter"] = vec3ToJson(shader.transmission_scatter.value);
+  setJsonParameter(surface_node["inputs"], "transmission_scatter", vec3ToJson(shader.transmission_scatter.value), use_grouped);
   add_param("transmission_scatter_anisotropy", shader.transmission_scatter_anisotropy);
   add_param("transmission_dispersion", shader.transmission_dispersion);
 
   // Subsurface
   add_param("subsurface_weight", shader.subsurface_weight);
-  surface_node["inputs"]["subsurface_color"] = vec3ToJson(shader.subsurface_color.value);
-  surface_node["inputs"]["subsurface_radius"] = vec3ToJson(shader.subsurface_radius.value);
+  setJsonParameter(surface_node["inputs"], "subsurface_color", vec3ToJson(shader.subsurface_color.value), use_grouped);
+  add_param("subsurface_radius", shader.subsurface_radius);
+  setJsonParameter(surface_node["inputs"], "subsurface_radius_scale", vec3ToJson(shader.subsurface_radius_scale.value), use_grouped);
   add_param("subsurface_scale", shader.subsurface_scale);
   add_param("subsurface_anisotropy", shader.subsurface_anisotropy);
 
   // Sheen
   add_param("sheen_weight", shader.sheen_weight);
-  surface_node["inputs"]["sheen_color"] = vec3ToJson(shader.sheen_color.value);
+  setJsonParameter(surface_node["inputs"], "sheen_color", vec3ToJson(shader.sheen_color.value), use_grouped);
   add_param("sheen_roughness", shader.sheen_roughness);
 
   // Coat
   add_param("coat_weight", shader.coat_weight);
-  surface_node["inputs"]["coat_color"] = vec3ToJson(shader.coat_color.value);
+  setJsonParameter(surface_node["inputs"], "coat_color", vec3ToJson(shader.coat_color.value), use_grouped);
   add_param("coat_roughness", shader.coat_roughness);
   add_param("coat_anisotropy", shader.coat_anisotropy);
   add_param("coat_rotation", shader.coat_rotation);
   add_param("coat_ior", shader.coat_ior);
-  surface_node["inputs"]["coat_affect_color"] = vec3ToJson(shader.coat_affect_color.value);
+  setJsonParameter(surface_node["inputs"], "coat_affect_color", vec3ToJson(shader.coat_affect_color.value), use_grouped);
   add_param("coat_affect_roughness", shader.coat_affect_roughness);
 
   // Emission
   add_param("emission_luminance", shader.emission_luminance);
-  surface_node["inputs"]["emission_color"] = vec3ToJson(shader.emission_color.value);
+  setJsonParameter(surface_node["inputs"], "emission_color", vec3ToJson(shader.emission_color.value), use_grouped);
 
   // Geometry
   add_param("opacity", shader.opacity);
-  surface_node["inputs"]["normal"] = vec3ToJson(shader.normal.value);
-  surface_node["inputs"]["tangent"] = vec3ToJson(shader.tangent.value);
+  setJsonParameter(surface_node["inputs"], "normal", vec3ToJson(shader.normal.value), use_grouped);
+  setJsonParameter(surface_node["inputs"], "tangent", vec3ToJson(shader.tangent.value), use_grouped);
 
   nodes["surface"] = surface_node;
 
@@ -378,7 +410,8 @@ json ThreeJSMaterialExporter::ConvertOpenPBRToNodeMaterial(const OpenPBRSurfaceS
   return nodes;
 }
 
-json ThreeJSMaterialExporter::ConvertOpenPBRToPhysicalMaterial(const OpenPBRSurfaceShader& shader) {
+json ThreeJSMaterialExporter::ConvertOpenPBRToPhysicalMaterial(const OpenPBRSurfaceShader& shader, const ExportOptions& options) {
+  (void)options; // Options reserved for future use (e.g., grouped userData)
   json params = json::object();
 
   // Map OpenPBR to MeshPhysicalMaterial parameters
@@ -437,7 +470,8 @@ json ThreeJSMaterialExporter::ConvertOpenPBRToPhysicalMaterial(const OpenPBRSurf
     params["userData"]["subsurface"] = {
       {"weight", shader.subsurface_weight.value},
       {"color", vec3ToJson(shader.subsurface_color.value)},
-      {"radius", vec3ToJson(shader.subsurface_radius.value)},
+      {"radius", shader.subsurface_radius.value},
+      {"radius_scale", vec3ToJson(shader.subsurface_radius_scale.value)},
       {"scale", shader.subsurface_scale.value},
       {"anisotropy", shader.subsurface_anisotropy.value}
     };
@@ -603,7 +637,7 @@ bool ThreeJSMaterialExporter::ExportMaterialX(const RenderMaterial& material,
     auto export_float = [&ss](const std::string& name, const ShaderParam<float>& param) {
       if (!param.is_texture()) {
         ss << "    <input name=\"" << name << "\" type=\"float\" value=\""
-           << param.value << "\" />\n";
+           << dtos(param.value) << "\" />\n";
       } else {
         ss << "    <input name=\"" << name << "\" type=\"float\" nodename=\""
            << name << "_texture\" />\n";
@@ -614,9 +648,9 @@ bool ThreeJSMaterialExporter::ExportMaterialX(const RenderMaterial& material,
     auto export_color3 = [&ss](const std::string& name, const ShaderParam<vec3>& param) {
       if (!param.is_texture()) {
         ss << "    <input name=\"" << name << "\" type=\"color3\" value=\""
-           << param.value[0] << ", "
-           << param.value[1] << ", "
-           << param.value[2] << "\" />\n";
+           << dtos(param.value[0]) << ", "
+           << dtos(param.value[1]) << ", "
+           << dtos(param.value[2]) << "\" />\n";
       } else {
         ss << "    <input name=\"" << name << "\" type=\"color3\" nodename=\""
            << name << "_texture\" />\n";
@@ -627,9 +661,9 @@ bool ThreeJSMaterialExporter::ExportMaterialX(const RenderMaterial& material,
     auto export_vector3 = [&ss](const std::string& name, const ShaderParam<vec3>& param) {
       if (!param.is_texture()) {
         ss << "    <input name=\"" << name << "\" type=\"vector3\" value=\""
-           << param.value[0] << ", "
-           << param.value[1] << ", "
-           << param.value[2] << "\" />\n";
+           << dtos(param.value[0]) << ", "
+           << dtos(param.value[1]) << ", "
+           << dtos(param.value[2]) << "\" />\n";
       } else {
         ss << "    <input name=\"" << name << "\" type=\"vector3\" nodename=\""
            << name << "_texture\" />\n";
@@ -662,7 +696,8 @@ bool ThreeJSMaterialExporter::ExportMaterialX(const RenderMaterial& material,
     // Subsurface parameters
     export_float("subsurface_weight", shader.subsurface_weight);
     export_color3("subsurface_color", shader.subsurface_color);
-    export_color3("subsurface_radius", shader.subsurface_radius);
+    export_float("subsurface_radius", shader.subsurface_radius);
+    export_color3("subsurface_radius_scale", shader.subsurface_radius_scale);
     export_float("subsurface_scale", shader.subsurface_scale);
     export_float("subsurface_anisotropy", shader.subsurface_anisotropy);
 
@@ -734,7 +769,8 @@ bool ThreeJSMaterialExporter::ExportMaterialX(const RenderMaterial& material,
 
     export_texture_node("subsurface_weight", shader.subsurface_weight, "float");
     export_texture_node_vec3("subsurface_color", shader.subsurface_color, "color3");
-    export_texture_node_vec3("subsurface_radius", shader.subsurface_radius, "color3");
+    export_texture_node("subsurface_radius", shader.subsurface_radius, "float");
+    export_texture_node_vec3("subsurface_radius_scale", shader.subsurface_radius_scale, "color3");
     export_texture_node("subsurface_scale", shader.subsurface_scale, "float");
     export_texture_node("subsurface_anisotropy", shader.subsurface_anisotropy, "float");
 
@@ -771,33 +807,33 @@ bool ThreeJSMaterialExporter::ExportMaterialX(const RenderMaterial& material,
 
     // Map UsdPreviewSurface to standard_surface parameters
     ss << "    <input name=\"base_color\" type=\"color3\" value=\""
-       << shader.diffuseColor.value[0] << ", "
-       << shader.diffuseColor.value[1] << ", "
-       << shader.diffuseColor.value[2] << "\" />\n";
+       << dtos(shader.diffuseColor.value[0]) << ", "
+       << dtos(shader.diffuseColor.value[1]) << ", "
+       << dtos(shader.diffuseColor.value[2]) << "\" />\n";
 
     ss << "    <input name=\"metalness\" type=\"float\" value=\""
-       << shader.metallic.value << "\" />\n";
+       << dtos(shader.metallic.value) << "\" />\n";
 
     ss << "    <input name=\"specular_roughness\" type=\"float\" value=\""
-       << shader.roughness.value << "\" />\n";
+       << dtos(shader.roughness.value) << "\" />\n";
 
     ss << "    <input name=\"emission_color\" type=\"color3\" value=\""
-       << shader.emissiveColor.value[0] << ", "
-       << shader.emissiveColor.value[1] << ", "
-       << shader.emissiveColor.value[2] << "\" />\n";
+       << dtos(shader.emissiveColor.value[0]) << ", "
+       << dtos(shader.emissiveColor.value[1]) << ", "
+       << dtos(shader.emissiveColor.value[2]) << "\" />\n";
 
     ss << "    <input name=\"opacity\" type=\"float\" value=\""
-       << shader.opacity.value << "\" />\n";
+       << dtos(shader.opacity.value) << "\" />\n";
 
     if (shader.clearcoat.value > 0.0f) {
       ss << "    <input name=\"coat\" type=\"float\" value=\""
-         << shader.clearcoat.value << "\" />\n";
+         << dtos(shader.clearcoat.value) << "\" />\n";
       ss << "    <input name=\"coat_roughness\" type=\"float\" value=\""
-         << shader.clearcoatRoughness.value << "\" />\n";
+         << dtos(shader.clearcoatRoughness.value) << "\" />\n";
     }
 
     ss << "    <input name=\"specular_IOR\" type=\"float\" value=\""
-       << shader.ior.value << "\" />\n";
+       << dtos(shader.ior.value) << "\" />\n";
 
     ss << "  </standard_surface>\n\n";
 
@@ -942,6 +978,18 @@ json ThreeJSSceneExporter::ConvertNode(const Node& node, const RenderScene& scen
     case NodeType::EnvmapLight:
       obj["type"] = "EnvironmentLight";
       break;
+    case NodeType::RectLight:
+      obj["type"] = "RectAreaLight";
+      break;
+    case NodeType::DiskLight:
+      obj["type"] = "DiskLight";
+      break;
+    case NodeType::CylinderLight:
+      obj["type"] = "CylinderLight";
+      break;
+    case NodeType::GeometryLight:
+      obj["type"] = "GeometryLight";
+      break;
   }
 
   // Transform matrix
@@ -980,11 +1028,205 @@ json ThreeJSSceneExporter::ConvertCamera(const RenderCamera& camera) {
 }
 
 json ThreeJSSceneExporter::ConvertLight(const RenderLight& light) {
-  // This would need to be implemented based on RenderLight structure
-  json light_json = {
-    {"type", "Light"},
-    {"name", light.name}
-  };
+  json light_json = json::object();
+
+  light_json["name"] = light.name;
+  light_json["uuid"] = light.abs_path;
+
+  // Common light properties
+  light_json["color"] = vec3ToJson(vec3{light.color[0], light.color[1], light.color[2]});
+
+  // Calculate effective intensity from intensity and exposure
+  // exposure is in stops: intensity_final = intensity * 2^exposure
+  float effective_intensity = light.intensity * std::pow(2.0f, light.exposure);
+  light_json["intensity"] = effective_intensity;
+
+  // Map RenderLight types to Three.js light types
+  switch (light.type) {
+    case RenderLight::Type::Point:
+    case RenderLight::Type::Sphere:
+      light_json["type"] = "PointLight";
+      // Three.js PointLight doesn't have a physical radius, but we can store it in userData
+      if (light.radius > 0.0f) {
+        light_json["userData"] = {{"radius", light.radius}};
+      }
+      // Distance for attenuation (0 means no limit)
+      light_json["distance"] = 0.0f;
+      // Power=1 for inverse square falloff (physically correct)
+      light_json["decay"] = 2.0f;
+      break;
+
+    case RenderLight::Type::Distant:
+      light_json["type"] = "DirectionalLight";
+      // Directional lights have uniform intensity, no attenuation
+      // Store angle for disk shape if specified
+      if (light.angle > 0.0f) {
+        if (!light_json.contains("userData")) {
+          light_json["userData"] = json::object();
+        }
+        light_json["userData"]["angle"] = light.angle;
+      }
+      break;
+
+    case RenderLight::Type::Rect:
+      // Three.js has RectAreaLight (requires RectAreaLightUniformsLib)
+      light_json["type"] = "RectAreaLight";
+      light_json["width"] = light.width;
+      light_json["height"] = light.height;
+      // RectAreaLight doesn't support distance/decay in Three.js r140+
+      // Store texture file if present
+      if (!light.textureFile.empty()) {
+        if (!light_json.contains("userData")) {
+          light_json["userData"] = json::object();
+        }
+        light_json["userData"]["textureFile"] = light.textureFile;
+      }
+      break;
+
+    case RenderLight::Type::Disk:
+      // Three.js doesn't have a disk light, use PointLight as approximation
+      light_json["type"] = "PointLight";
+      light_json["distance"] = 0.0f;
+      light_json["decay"] = 2.0f;
+      // Store disk shape parameters in userData
+      light_json["userData"] = {
+        {"shape", "disk"},
+        {"radius", light.radius}
+      };
+      break;
+
+    case RenderLight::Type::Cylinder:
+      // Cylinder lights with shaping are like spotlights
+      if (light.shapingConeAngle > 0.0f) {
+        light_json["type"] = "SpotLight";
+        // Convert cone angle (full angle) to Three.js angle (half angle in radians)
+        light_json["angle"] = light.shapingConeAngle * 0.5f * (3.14159265359f / 180.0f);
+        // Penumbra (0-1) represents the percent of the spotlight cone attenuated due to penumbra
+        light_json["penumbra"] = light.shapingConeSoftness;
+        light_json["distance"] = 0.0f;
+        light_json["decay"] = 2.0f;
+
+        // Store cylinder dimensions in userData
+        light_json["userData"] = {
+          {"shape", "cylinder"},
+          {"radius", light.radius},
+          {"length", light.length}
+        };
+
+        // Store IES profile if present
+        if (!light.shapingIesFile.empty()) {
+          light_json["userData"]["iesFile"] = light.shapingIesFile;
+        }
+      } else {
+        // Without shaping, treat as point light with cylindrical metadata
+        light_json["type"] = "PointLight";
+        light_json["distance"] = 0.0f;
+        light_json["decay"] = 2.0f;
+        light_json["userData"] = {
+          {"shape", "cylinder"},
+          {"radius", light.radius},
+          {"length", light.length}
+        };
+      }
+      break;
+
+    case RenderLight::Type::Dome:
+      // Dome lights are environment maps, closest is HemisphereLight or PMREMGenerator
+      light_json["type"] = "HemisphereLight";
+      // HemisphereLight has groundColor (opposite hemisphere)
+      // For dome lights, we just use black for ground
+      light_json["groundColor"] = json::array({0.0f, 0.0f, 0.0f});
+
+      // Store dome-specific parameters in userData
+      if (!light.textureFile.empty()) {
+        if (!light_json.contains("userData")) {
+          light_json["userData"] = json::object();
+        }
+        light_json["userData"]["textureFile"] = light.textureFile;
+
+        // Store texture format (latlong, mirroredBall, angular)
+        std::string format_str;
+        switch (light.domeTextureFormat) {
+          case RenderLight::DomeTextureFormat::Automatic:
+            format_str = "automatic";
+            break;
+          case RenderLight::DomeTextureFormat::Latlong:
+            format_str = "latlong";
+            break;
+          case RenderLight::DomeTextureFormat::MirroredBall:
+            format_str = "mirroredBall";
+            break;
+          case RenderLight::DomeTextureFormat::Angular:
+            format_str = "angular";
+            break;
+        }
+        light_json["userData"]["textureFormat"] = format_str;
+      }
+      break;
+
+    case RenderLight::Type::Geometry:
+      // Geometry lights are meshes with emissive materials
+      light_json["type"] = "MeshEmissive";
+      light_json["geometry_mesh_id"] = light.geometry_mesh_id;
+
+      if (!light.material_sync_mode.empty()) {
+        if (!light_json.contains("userData")) {
+          light_json["userData"] = json::object();
+        }
+        light_json["userData"]["material_sync_mode"] = light.material_sync_mode;
+      }
+      break;
+
+    case RenderLight::Type::Portal:
+      // Portal lights are special lights for portals
+      light_json["type"] = "PortalLight";
+      break;
+  }
+
+  // Shadow properties (if shadow is enabled)
+  if (light.shadowEnable) {
+    json shadow = json::object();
+    shadow["enabled"] = true;
+    shadow["color"] = vec3ToJson(vec3{light.shadowColor[0], light.shadowColor[1], light.shadowColor[2]});
+
+    // Shadow distance and falloff parameters
+    if (light.shadowDistance > 0.0f) {
+      shadow["distance"] = light.shadowDistance;
+      shadow["falloff"] = light.shadowFalloff;
+      shadow["falloffGamma"] = light.shadowFalloffGamma;
+    }
+
+    light_json["shadow"] = shadow;
+  }
+
+  // Store additional UsdLux properties that don't map directly to Three.js
+  if (!light_json.contains("userData")) {
+    light_json["userData"] = json::object();
+  }
+
+  // Diffuse and specular contribution multipliers
+  light_json["userData"]["diffuse"] = light.diffuse;
+  light_json["userData"]["specular"] = light.specular;
+  light_json["userData"]["normalize"] = light.normalize;
+
+  // Color temperature
+  if (light.enableColorTemperature) {
+    light_json["userData"]["colorTemperature"] = light.colorTemperature;
+  }
+
+  // Shaping properties for lights that support them (but aren't spotlights)
+  if (light.type != RenderLight::Type::Cylinder &&
+      (light.shapingConeAngle > 0.0f || light.shapingFocus != 0.0f || !light.shapingIesFile.empty())) {
+    light_json["userData"]["shaping"] = {
+      {"focus", light.shapingFocus},
+      {"coneAngle", light.shapingConeAngle},
+      {"coneSoftness", light.shapingConeSoftness}
+    };
+    if (!light.shapingIesFile.empty()) {
+      light_json["userData"]["shaping"]["iesFile"] = light.shapingIesFile;
+    }
+  }
+
   return light_json;
 }
 

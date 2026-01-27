@@ -234,9 +234,18 @@ bool CrateReader::ReadTimeSamples(value::TimeSamples *d) {
   // bool is_homogeneous = true;
   auto first_type = value_reps[0].GetType();
   bool first_is_array = value_reps[0].IsArray();
+
+  DCOUT("ReadTimeSamples: first_type=" << first_type
+        << " (" << crate::GetCrateDataTypeName(static_cast<crate::CrateDataTypeId>(first_type)) << ")"
+        << " is_array=" << first_is_array);
+
   for (size_t i = 1; i < num_values; i++) {
     auto curr_type = value_reps[i].GetType();
     bool curr_is_array = value_reps[i].IsArray();
+
+    DCOUT("ReadTimeSamples: sample[" << i << "] type=" << curr_type
+          << " (" << crate::GetCrateDataTypeName(static_cast<crate::CrateDataTypeId>(curr_type)) << ")"
+          << " is_array=" << curr_is_array);
 
     // Allow VALUE_BLOCK to mix with any type
     bool is_value_block_first =
@@ -249,6 +258,8 @@ bool CrateReader::ReadTimeSamples(value::TimeSamples *d) {
     if (!is_value_block_first && !is_value_block_curr) {
       // Neither is VALUE_BLOCK, so they must match
       if (curr_type != first_type || curr_is_array != first_is_array) {
+        DCOUT("ReadTimeSamples: TYPE MISMATCH! first=" << first_type
+              << " curr=" << curr_type);
         PUSH_ERROR_AND_RETURN_TAG(
             kTag, "Types in TimeSamples' ValueRep isn't the same.");
         // is_homogeneous = false;
@@ -534,7 +545,7 @@ add_sample_to_timesamples(value::TimeSamples *d, double time, const T &val,
 // TODO: Use pod path for array type.
 template<typename T>
 bool add_sample_to_timesamples(value::TimeSamples *d, double time, const std::vector<T>& val, std::string *err) {
-  TUSDZ_LOG_I("arr non pod_ty: " << value::TypeTraits<T>::type_name());
+  //TUSDZ_LOG_I("arr non pod_ty: " << value::TypeTraits<T>::type_name());
   return d->add_sample(time, value::Value(val), err);
 }
 #else
@@ -869,20 +880,38 @@ bool CrateReader::UnpackTimeSampleValue_BOOL(double t,
       return true;
     }
 
-    if (!ReadArray(&v_uint8)) {
-      PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read bool array.");
-    }
+    // Check deduplication cache for bool array
+    auto it = _dedup_bool_array.find(rep);
+    if (it != _dedup_bool_array.end()) {
+      // Reuse cached array via ref_index
+      size_t ref_index = it->second;
+      DCOUT("Reusing cached BOOL array at sample index " << ref_index);
 
-    // Convert uint8_t array to bool array
-    std::vector<bool> v_bool;
-    v_bool.reserve(v_uint8.size());
-    for (uint8_t val : v_uint8) {
-      v_bool.push_back(val != 0);
-    }
+      if (!dst.add_dedup_sample(t, ref_index, &_err)) {
+        PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add dedup sample to TimeSamples.");
+      }
+    } else {
+      // First occurrence - read and cache array
+      if (!ReadArray(&v_uint8)) {
+        PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read bool array.");
+      }
 
-    if (!add_array_sample_to_timesamples<bool>(&dst, t, v_bool, &_err,
-                                                  expected_total_samples)) {
-      PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add sample to TimeSamples.");
+      // Convert uint8_t array to bool array
+      std::vector<bool> v_bool;
+      v_bool.reserve(v_uint8.size());
+      for (uint8_t val : v_uint8) {
+        v_bool.push_back(val != 0);
+      }
+
+      // Store current index before adding
+      size_t current_index = dst.size();
+      _dedup_bool_array[rep] = current_index;
+      DCOUT("Caching BOOL array at sample index " << current_index);
+
+      // Use value::Value array storage with dedup support (move, no copy)
+      if (!dst.add_value_array_sample(t, value::Value(std::move(v_bool)), &_err)) {
+        PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add sample to TimeSamples.");
+      }
     }
 
   } else {
@@ -949,16 +978,12 @@ bool CrateReader::UnpackTimeSampleValue_INT32(double t,
     auto it = dedup_map.find(key);
 
     if (it != dedup_map.end()) {
-      // Deduplicated array - reuse offset from first occurrence
+      // Deduplicated array - reuse value from first occurrence (no copy)
       size_t ref_index = it->second;
       DCOUT("INT32 array dedup: reusing sample index " << ref_index << " for ValueRep payload " << rep.GetPayload());
 
-      if (dst.is_using_pod()) {
-        if (!dst.add_dedup_array_sample_pod<int32_t>(t, ref_index, &_err)) {
-          PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add dedup sample to TimeSamples.");
-        }
-      } else {
-        PUSH_ERROR_AND_RETURN_TAG(kTag, "Non-POD path not supported for int32 dedup.");
+      if (!dst.add_dedup_sample(t, ref_index, &_err)) {
+        PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add dedup sample to TimeSamples.");
       }
     } else {
       // First occurrence - read data, store as original and remember the index
@@ -973,20 +998,13 @@ bool CrateReader::UnpackTimeSampleValue_INT32(double t,
 
       DCOUT("timeSamples.INT32 " << value::print_array_snipped(v));
 
-      if (dst.is_using_pod()) {
-        size_t current_index = dst.size();
-        dedup_map[key] = current_index;
-        DCOUT("INT32 array: storing new sample at index " << current_index << " for ValueRep payload " << rep.GetPayload());
+      size_t current_index = dst.size();
+      dedup_map[key] = current_index;
 
-        if (!dst.add_array_sample_pod<int32_t>(t, v, &_err, expected_total_samples)) {
-          PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add sample to TimeSamples.");
-        }
-      } else {
-        // Non-POD path - already in std::vector
-        std::vector<int32_t> vec(v.data(), v.data() + v.size());
-        if (!dst.add_sample(t, value::Value(v), &_err)) {
-          PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add sample to TimeSamples.");
-        }
+      // Use value::Value array storage with dedup support (move, no copy)
+      std::vector<int32_t> vec(v.data(), v.data() + v.size());
+      if (!dst.add_value_array_sample(t, value::Value(std::move(vec)), &_err)) {
+        PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add sample to TimeSamples.");
       }
     }
 
@@ -1053,23 +1071,18 @@ bool CrateReader::UnpackTimeSampleValue_HALF(double t,
     // Check deduplication cache for array
     auto it = _dedup_half_array.find(rep);
     if (it != _dedup_half_array.end()) {
-      // Reuse cached array via ref_index
+      // Deduplicated array - reuse value from first occurrence (no copy)
       size_t ref_index = it->second;
       DCOUT("Reusing cached HALF array at sample index " << ref_index);
 
-      if (dst.is_using_pod()) {
-        if (!dst.add_dedup_array_sample_pod<value::half>(t, ref_index, &_err)) {
-          PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add dedup sample to TimeSamples.");
-        }
-      } else {
-        PUSH_ERROR_AND_RETURN_TAG(kTag, "Non-POD path not supported for half dedup.");
+      if (!dst.add_dedup_sample(t, ref_index, &_err)) {
+        PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add dedup sample to TimeSamples.");
       }
     } else {
-      // Read and cache array - fallback to std::vector for now
-      // TODO: Implement ReadHalfArrayTyped
+      // Read and cache array
       std::vector<value::half> temp_v;
       if (!ReadHalfArray(rep.IsCompressed(), &temp_v)) {
-        PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read Int array.");
+        PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read half array.");
       }
 
       DCOUT("timeSamples.HALF " << value::print_array_snipped(temp_v));
@@ -1079,24 +1092,12 @@ bool CrateReader::UnpackTimeSampleValue_HALF(double t,
         return false;
       }
 
-      // Convert std::vector to TypedArray
-      v = TypedArray<value::half>(new TypedArrayImpl<value::half>(temp_v.data(), temp_v.size()));
+      size_t current_index = dst.size();
+      _dedup_half_array[rep] = current_index;
 
-      if (dst.is_using_pod()) {
-        // Store current index before adding
-        size_t current_index = dst.size();
-        _dedup_half_array[rep] = current_index;
-        DCOUT("Caching HALF array at sample index " << current_index);
-
-        if (!dst.add_array_sample_pod<value::half>(t, v, &_err, expected_total_samples)) {
-          PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add sample to TimeSamples.");
-        }
-      } else {
-        // Non-POD path - already in std::vector
-        std::vector<value::half> vec(v.data(), v.data() + v.size());
-        if (!dst.add_sample(t, value::Value(v), &_err)) {
-          PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add sample to TimeSamples.");
-        }
+      // Use value::Value array storage with dedup support (move, no copy)
+      if (!dst.add_value_array_sample(t, value::Value(std::move(temp_v)), &_err)) {
+        PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add sample to TimeSamples.");
       }
     }
 
@@ -1175,16 +1176,12 @@ bool CrateReader::UnpackTimeSampleValue_HALF2(double t,
     // Check deduplication cache for array
     auto it = _dedup_half2_array.find(rep);
     if (it != _dedup_half2_array.end()) {
-      // Reuse cached array via ref_index
+      // Deduplicated array - reuse value from first occurrence (no copy)
       size_t ref_index = it->second;
       DCOUT("Reusing cached HALF2 array at sample index " << ref_index);
 
-      if (dst.is_using_pod()) {
-        if (!dst.add_dedup_array_sample_pod<value::half2>(t, ref_index, &_err)) {
-          PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add dedup sample to TimeSamples.");
-        }
-      } else {
-        PUSH_ERROR_AND_RETURN_TAG(kTag, "Non-POD path not supported for half2 dedup.");
+      if (!dst.add_dedup_sample(t, ref_index, &_err)) {
+        PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add dedup sample to TimeSamples.");
       }
     } else {
       // Read and cache array
@@ -1194,21 +1191,12 @@ bool CrateReader::UnpackTimeSampleValue_HALF2(double t,
 
       DCOUT("timeSamples.VEC2H " << value::print_array_snipped(v));
 
-      if (dst.is_using_pod()) {
-        // Store current index before adding
-        size_t current_index = dst.size();
-        _dedup_half2_array[rep] = current_index;
-        DCOUT("Caching HALF2 array at sample index " << current_index);
+      size_t current_index = dst.size();
+      _dedup_half2_array[rep] = current_index;
 
-        if (!dst.add_array_sample_pod<value::half2>(t, v, &_err, expected_total_samples)) {
-          PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add sample to TimeSamples.");
-        }
-      } else {
-        // Non-POD path - already in std::vector
-        std::vector<value::half2> vec(v.data(), v.data() + v.size());
-        if (!dst.add_sample(t, value::Value(v), &_err)) {
-          PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add sample to TimeSamples.");
-        }
+      // Use value::Value array storage with dedup support (move, no copy)
+      if (!dst.add_value_array_sample(t, value::Value(std::move(v)), &_err)) {
+        PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add sample to TimeSamples.");
       }
     }
 
@@ -1303,16 +1291,12 @@ bool CrateReader::UnpackTimeSampleValue_HALF3(double t,
     // Check deduplication cache for array
     auto it = _dedup_half3_array.find(rep);
     if (it != _dedup_half3_array.end()) {
-      // Reuse cached array via ref_index
+      // Deduplicated array - reuse value from first occurrence (no copy)
       size_t ref_index = it->second;
       DCOUT("Reusing cached HALF3 array at sample index " << ref_index);
 
-      if (dst.is_using_pod()) {
-        if (!dst.add_dedup_array_sample_pod<value::half3>(t, ref_index, &_err)) {
-          PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add dedup sample to TimeSamples.");
-        }
-      } else {
-        PUSH_ERROR_AND_RETURN_TAG(kTag, "Non-POD path not supported for half3 dedup.");
+      if (!dst.add_dedup_sample(t, ref_index, &_err)) {
+        PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add dedup sample to TimeSamples.");
       }
     } else {
       // Read and cache array
@@ -1320,21 +1304,13 @@ bool CrateReader::UnpackTimeSampleValue_HALF3(double t,
         PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read vec3 array.");
       }
       DCOUT("timeSamples.VEC3H " << value::print_array_snipped(v));
-      if (dst.is_using_pod()) {
-        // Store current index before adding
-        size_t current_index = dst.size();
-        _dedup_half3_array[rep] = current_index;
-        DCOUT("Caching HALF3 array at sample index " << current_index);
 
-        if (!dst.add_array_sample_pod<value::half3>(t, v, &_err, expected_total_samples)) {
-          PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add sample to TimeSamples.");
-        }
-      } else {
-        // Non-POD path - already in std::vector
-        std::vector<value::half3> vec(v.data(), v.data() + v.size());
-        if (!dst.add_sample(t, value::Value(v), &_err)) {
-          PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add sample to TimeSamples.");
-        }
+      size_t current_index = dst.size();
+      _dedup_half3_array[rep] = current_index;
+
+      // Use value::Value array storage with dedup support (move, no copy)
+      if (!dst.add_value_array_sample(t, value::Value(std::move(v)), &_err)) {
+        PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add sample to TimeSamples.");
       }
     }
 
@@ -1432,38 +1408,26 @@ bool CrateReader::UnpackTimeSampleValue_HALF4(double t,
     // Check deduplication cache for array
     auto it = _dedup_half4_array.find(rep);
     if (it != _dedup_half4_array.end()) {
-      // Reuse cached array via ref_index
+      // Deduplicated array - reuse value from first occurrence (no copy)
       size_t ref_index = it->second;
       DCOUT("Reusing cached HALF4 array at sample index " << ref_index);
 
-      if (dst.is_using_pod()) {
-        if (!dst.add_dedup_array_sample_pod<value::half4>(t, ref_index, &_err)) {
-          PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add dedup sample to TimeSamples.");
-        }
-      } else {
-        PUSH_ERROR_AND_RETURN_TAG(kTag, "Non-POD path not supported for half4 dedup.");
+      if (!dst.add_dedup_sample(t, ref_index, &_err)) {
+        PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add dedup sample to TimeSamples.");
       }
     } else {
       // Read and cache array
       if (!ReadArray(&v)) {
         PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read vec4 array.");
       }
-      DCOUT("timeSamples.VEC3H " << value::print_array_snipped(v));
-      if (dst.is_using_pod()) {
-        // Store current index before adding
-        size_t current_index = dst.size();
-        _dedup_half4_array[rep] = current_index;
-        DCOUT("Caching HALF4 array at sample index " << current_index);
+      DCOUT("timeSamples.VEC4H " << value::print_array_snipped(v));
 
-        if (!dst.add_array_sample_pod<value::half4>(t, v, &_err, expected_total_samples)) {
-          PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add sample to TimeSamples.");
-        }
-      } else {
-        // Non-POD path - already in std::vector
-        std::vector<value::half4> vec(v.data(), v.data() + v.size());
-        if (!dst.add_sample(t, value::Value(v), &_err)) {
-          PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add sample to TimeSamples.");
-        }
+      size_t current_index = dst.size();
+      _dedup_half4_array[rep] = current_index;
+
+      // Use value::Value array storage with dedup support (move, no copy)
+      if (!dst.add_value_array_sample(t, value::Value(std::move(v)), &_err)) {
+        PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add sample to TimeSamples.");
       }
     }
 
@@ -1550,16 +1514,12 @@ bool CrateReader::UnpackTimeSampleValue_FLOAT(double t,
     auto it = dedup_map.find(key);
 
     if (it != dedup_map.end()) {
-      // Deduplicated array - reuse offset from first occurrence
+      // Deduplicated array - reuse value from first occurrence (no copy)
       size_t ref_index = it->second;
       DCOUT("FLOAT array dedup: reusing sample index " << ref_index << " for ValueRep payload " << rep.GetPayload());
 
-      if (dst.is_using_pod()) {
-        if (!dst.add_dedup_array_sample_pod<float>(t, ref_index, &_err)) {
-          PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add dedup sample to TimeSamples.");
-        }
-      } else {
-        PUSH_ERROR_AND_RETURN_TAG(kTag, "Non-POD path not supported for float dedup.");
+      if (!dst.add_dedup_sample(t, ref_index, &_err)) {
+        PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add dedup sample to TimeSamples.");
       }
     } else {
       // First occurrence - read data, store as original and remember the index
@@ -1569,20 +1529,13 @@ bool CrateReader::UnpackTimeSampleValue_FLOAT(double t,
 
       DCOUT("timeSamples.FLOAT " << value::print_array_snipped(v));
 
-      if (dst.is_using_pod()) {
-        size_t current_index = dst.size();
-        dedup_map[key] = current_index;
-        DCOUT("FLOAT array: storing new sample at index " << current_index << " for ValueRep payload " << rep.GetPayload());
+      size_t current_index = dst.size();
+      dedup_map[key] = current_index;
 
-        if (!dst.add_array_sample_pod<float>(t, v, &_err, expected_total_samples)) {
-          PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add sample to TimeSamples.");
-        }
-      } else {
-        // Non-POD path - already in std::vector
-        std::vector<float> vec(v.data(), v.data() + v.size());
-        if (!dst.add_sample(t, value::Value(v), &_err)) {
-          PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add sample to TimeSamples.");
-        }
+      // Use value::Value array storage with dedup support (move, no copy)
+      std::vector<float> vec(v.data(), v.data() + v.size());
+      if (!dst.add_value_array_sample(t, value::Value(std::move(vec)), &_err)) {
+        PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add sample to TimeSamples.");
       }
     }
 
@@ -1683,16 +1636,12 @@ bool CrateReader::UnpackTimeSampleValue_FLOAT2(double t,
     auto it = dedup_map.find(key);
 
     if (it != dedup_map.end()) {
-      // Deduplicated array - reuse offset from first occurrence
+      // Deduplicated array - reuse value from first occurrence (no copy)
       size_t ref_index = it->second;
       DCOUT("FLOAT2 array dedup: reusing sample index " << ref_index << " for ValueRep payload " << rep.GetPayload());
 
-      if (dst.is_using_pod()) {
-        if (!dst.add_dedup_array_sample_pod<value::float2>(t, ref_index, &_err)) {
-          PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add dedup sample to TimeSamples.");
-        }
-      } else {
-        PUSH_ERROR_AND_RETURN_TAG(kTag, "Non-POD path not supported for float2 dedup.");
+      if (!dst.add_dedup_sample(t, ref_index, &_err)) {
+        PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add dedup sample to TimeSamples.");
       }
     } else {
       // First occurrence - read data, store as original and remember the index
@@ -1705,21 +1654,10 @@ bool CrateReader::UnpackTimeSampleValue_FLOAT2(double t,
       size_t current_index = dst.size();
       dedup_map[key] = current_index;
 
-      //TUSDZ_LOG_I("add dedup: " << std::get<1>(key)  << ", index " << current_index);
-      //TUSDZ_LOG_I("is_using_pod: " << dst.is_using_pod());
-
-      if (dst.is_using_pod()) {
-        DCOUT("FLOAT2 array: storing new sample at index " << current_index << " for ValueRep payload " << rep.GetPayload());
-
-        if (!dst.add_array_sample_pod<value::float2>(t, v, &_err, expected_total_samples)) {
-          PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add sample to TimeSamples.");
-        }
-      } else {
-        // Non-POD path - already in std::vector
-        std::vector<value::float2> vec(v.data(), v.data() + v.size());
-        if (!dst.add_sample(t, value::Value(v), &_err)) {
-          PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add sample to TimeSamples.");
-        }
+      // Use value::Value array storage with dedup support (move, no copy)
+      std::vector<value::float2> vec(v.data(), v.data() + v.size());
+      if (!dst.add_value_array_sample(t, value::Value(std::move(vec)), &_err)) {
+        PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add sample to TimeSamples.");
       }
     }
 
@@ -1791,16 +1729,12 @@ bool CrateReader::UnpackTimeSampleValue_QUATF(double t,
     // Check deduplication cache for array
     auto it = _dedup_quatf_array.find(rep);
     if (it != _dedup_quatf_array.end()) {
-      // Reuse cached array via ref_index
+      // Deduplicated array - reuse value from first occurrence (no copy)
       size_t ref_index = it->second;
       DCOUT("Reusing cached QUATF array at sample index " << ref_index);
 
-      if (dst.is_using_pod()) {
-        if (!dst.add_dedup_array_sample_pod<value::quatf>(t, ref_index, &_err)) {
-          PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add dedup sample to TimeSamples.");
-        }
-      } else {
-        PUSH_ERROR_AND_RETURN_TAG(kTag, "Non-POD path not supported for quatf dedup.");
+      if (!dst.add_dedup_sample(t, ref_index, &_err)) {
+        PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add dedup sample to TimeSamples.");
       }
     } else {
       // Read and cache array
@@ -1810,21 +1744,12 @@ bool CrateReader::UnpackTimeSampleValue_QUATF(double t,
 
       DCOUT("timeSamples.QUATF " << value::print_array_snipped(v));
 
-      if (dst.is_using_pod()) {
-        // Store current index before adding
-        size_t current_index = dst.size();
-        _dedup_quatf_array[rep] = current_index;
-        DCOUT("Caching QUATF array at sample index " << current_index);
+      size_t current_index = dst.size();
+      _dedup_quatf_array[rep] = current_index;
 
-        if (!dst.add_array_sample_pod<value::quatf>(t, v, &_err, expected_total_samples)) {
-          PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add sample to TimeSamples.");
-        }
-      } else {
-        // Non-POD path - already in std::vector
-        std::vector<value::quatf> vec(v.data(), v.data() + v.size());
-        if (!dst.add_sample(t, value::Value(v), &_err)) {
-          PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add sample to TimeSamples.");
-        }
+      // Use value::Value array storage with dedup support (move, no copy)
+      if (!dst.add_value_array_sample(t, value::Value(std::move(v)), &_err)) {
+        PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add sample to TimeSamples.");
       }
     }
 
@@ -2036,10 +1961,10 @@ bool CrateReader::UnpackTimeSampleValue_TOKEN(
       PUSH_ERROR_AND_RETURN_TAG(kTag,
                                 "Invalid inlined ValueRep in TimeSamples.");
     }
-    // Token is stored as StringIndex for inlined value
+    // Token is stored as token index for inlined value
     uint32_t data = (rep.GetPayload() & ((1ull << (sizeof(uint32_t) * 8)) - 1));
-    if (auto v = GetStringToken(crate::Index(data))) {
-      value::token tok(v.value().str());
+    if (auto v = GetToken(crate::Index(data))) {
+      value::token tok = v.value();
 
       if (!add_sample_to_timesamples<value::token>(
               &dst, t, tok, &_err, expected_total_samples)) {
@@ -2064,16 +1989,20 @@ bool CrateReader::UnpackTimeSampleValue_TOKEN(
       return true;
     }
 
-    // Read token array (stored as string indices)
-    std::vector<std::string> str_v;
-    if (!ReadStringArray(&str_v)) {
-      PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read Token array.");
+    // Read token array (stored as token indices)
+    std::vector<crate::Index> indices;
+    if (!ReadIndices(&indices)) {
+      PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read Token index array.");
     }
 
-    // Convert strings to tokens
-    v.reserve(str_v.size());
-    for (const auto& s : str_v) {
-      v.emplace_back(s);
+    // Convert indices to tokens
+    v.reserve(indices.size());
+    for (const auto& idx : indices) {
+      if (auto tokv = GetToken(idx)) {
+        v.emplace_back(tokv.value());
+      } else {
+        PUSH_ERROR_AND_RETURN_TAG(kTag, "Invalid token index in array.");
+      }
     }
 
     if (!add_sample_to_timesamples<std::vector<value::token>>(
@@ -2089,7 +2018,7 @@ bool CrateReader::UnpackTimeSampleValue_TOKEN(
 
     // Scalar deduplication was removed - see FLOAT3 fix
       // Read and cache scalar value
-      // Token is stored as StringIndex in the stream
+      // Token is stored as token index in the stream
       uint32_t index_data;
       CHECK_MEMORY_USAGE(sizeof(uint32_t));
       if (!_sr->read(sizeof(uint32_t), sizeof(uint32_t),
@@ -2097,8 +2026,8 @@ bool CrateReader::UnpackTimeSampleValue_TOKEN(
         PUSH_ERROR_AND_RETURN("Failed to read token index");
       }
       value::token v;
-      if (auto tok_val = GetStringToken(crate::Index(index_data))) {
-        v = value::token(tok_val.value().str());
+      if (auto tok_val = GetToken(crate::Index(index_data))) {
+        v = tok_val.value();
         DCOUT("token = " << v.str());
       } else {
         PUSH_ERROR_AND_RETURN("Invalid token index in TimeSamples.");
@@ -2176,16 +2105,12 @@ bool CrateReader::UnpackTimeSampleValue_FLOAT3(double t,
     // Check deduplication cache for array
     auto it = _dedup_float3_array.find(rep);
     if (it != _dedup_float3_array.end()) {
-      // Reuse cached array via ref_index
+      // Deduplicated array - reuse value from first occurrence (no copy)
       size_t ref_index = it->second;
       DCOUT("Reusing cached FLOAT3 array at sample index " << ref_index);
 
-      if (dst.is_using_pod()) {
-        if (!dst.add_dedup_array_sample_pod<value::float3>(t, ref_index, &_err)) {
-          PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add dedup sample to TimeSamples.");
-        }
-      } else {
-        PUSH_ERROR_AND_RETURN_TAG(kTag, "Non-POD path not supported for float3 dedup.");
+      if (!dst.add_dedup_sample(t, ref_index, &_err)) {
+        PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add dedup sample to TimeSamples.");
       }
     } else {
       // Read and cache array
@@ -2195,20 +2120,12 @@ bool CrateReader::UnpackTimeSampleValue_FLOAT3(double t,
 
       DCOUT("timeSamples.FLOAT3 " << value::print_array_snipped(v));
 
-      if (dst.is_using_pod()) {
-        // Store current index before adding
-        size_t current_index = dst.size();
-        _dedup_float3_array[rep] = current_index;
-        DCOUT("Caching FLOAT3 array at sample index " << current_index);
+      size_t current_index = dst.size();
+      _dedup_float3_array[rep] = current_index;
 
-        if (!dst.add_array_sample_pod<value::float3>(t, v, &_err, expected_total_samples)) {
-          PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add sample to TimeSamples.");
-        }
-      } else {
-        // Non-POD path - already in std::vector
-        if (!dst.add_sample(t, value::Value(v), &_err)) {
-          PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add sample to TimeSamples.");
-        }
+      // Use value::Value array storage with dedup support (move, no copy)
+      if (!dst.add_value_array_sample(t, value::Value(std::move(v)), &_err)) {
+        PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add sample to TimeSamples.");
       }
     }
   } else {
@@ -2301,16 +2218,12 @@ bool CrateReader::UnpackTimeSampleValue_FLOAT4(double t,
     // Check deduplication cache for array
     auto it = _dedup_float4_array.find(rep);
     if (it != _dedup_float4_array.end()) {
-      // Reuse cached array via ref_index
+      // Deduplicated array - reuse value from first occurrence (no copy)
       size_t ref_index = it->second;
       DCOUT("Reusing cached FLOAT4 array at sample index " << ref_index);
 
-      if (dst.is_using_pod()) {
-        if (!dst.add_dedup_array_sample_pod<value::float4>(t, ref_index, &_err)) {
-          PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add dedup sample to TimeSamples.");
-        }
-      } else {
-        PUSH_ERROR_AND_RETURN_TAG(kTag, "Non-POD path not supported for float4 dedup.");
+      if (!dst.add_dedup_sample(t, ref_index, &_err)) {
+        PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add dedup sample to TimeSamples.");
       }
     } else {
       // Read and cache array
@@ -2320,20 +2233,12 @@ bool CrateReader::UnpackTimeSampleValue_FLOAT4(double t,
 
       DCOUT("timeSamples.FLOAT4 " << value::print_array_snipped(v));
 
-      if (dst.is_using_pod()) {
-        // Store current index before adding
-        size_t current_index = dst.size();
-        _dedup_float4_array[rep] = current_index;
-        DCOUT("Caching FLOAT4 array at sample index " << current_index);
+      size_t current_index = dst.size();
+      _dedup_float4_array[rep] = current_index;
 
-        if (!dst.add_array_sample_pod<value::float4>(t, v, &_err, expected_total_samples)) {
-          PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add sample to TimeSamples.");
-        }
-      } else {
-        // Non-POD path - already in std::vector
-        if (!dst.add_sample(t, value::Value(v), &_err)) {
-          PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add sample to TimeSamples.");
-        }
+      // Use value::Value array storage with dedup support (move, no copy)
+      if (!dst.add_value_array_sample(t, value::Value(std::move(v)), &_err)) {
+        PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add sample to TimeSamples.");
       }
     }
   } else {
@@ -2422,16 +2327,12 @@ bool CrateReader::UnpackTimeSampleValue_DOUBLE2(double t,
     // Check deduplication cache for array
     auto it = _dedup_double2_array.find(rep);
     if (it != _dedup_double2_array.end()) {
-      // Reuse cached array via ref_index
+      // Deduplicated array - reuse value from first occurrence (no copy)
       size_t ref_index = it->second;
       DCOUT("Reusing cached DOUBLE2 array at sample index " << ref_index);
 
-      if (dst.is_using_pod()) {
-        if (!dst.add_dedup_array_sample_pod<value::double2>(t, ref_index, &_err)) {
-          PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add dedup sample to TimeSamples.");
-        }
-      } else {
-        PUSH_ERROR_AND_RETURN_TAG(kTag, "Non-POD path not supported for double2 dedup.");
+      if (!dst.add_dedup_sample(t, ref_index, &_err)) {
+        PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add dedup sample to TimeSamples.");
       }
     } else {
       // Read and cache array
@@ -2439,20 +2340,12 @@ bool CrateReader::UnpackTimeSampleValue_DOUBLE2(double t,
         PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read double2 array.");
       }
 
-      if (dst.is_using_pod()) {
-        // Store current index before adding
-        size_t current_index = dst.size();
-        _dedup_double2_array[rep] = current_index;
-        DCOUT("Caching DOUBLE2 array at sample index " << current_index);
+      size_t current_index = dst.size();
+      _dedup_double2_array[rep] = current_index;
 
-        if (!dst.add_array_sample_pod<value::double2>(t, v, &_err, expected_total_samples)) {
-          PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add sample to TimeSamples.");
-        }
-      } else {
-        // Non-POD path - already in std::vector
-        if (!dst.add_sample(t, value::Value(v), &_err)) {
-          PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add sample to TimeSamples.");
-        }
+      // Use value::Value array storage with dedup support (move, no copy)
+      if (!dst.add_value_array_sample(t, value::Value(std::move(v)), &_err)) {
+        PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add sample to TimeSamples.");
       }
     }
   } else {
@@ -2542,16 +2435,12 @@ bool CrateReader::UnpackTimeSampleValue_DOUBLE3(double t,
     // Check deduplication cache for array
     auto it = _dedup_double3_array.find(rep);
     if (it != _dedup_double3_array.end()) {
-      // Reuse cached array via ref_index
+      // Deduplicated array - reuse value from first occurrence (no copy)
       size_t ref_index = it->second;
       DCOUT("Reusing cached DOUBLE3 array at sample index " << ref_index);
 
-      if (dst.is_using_pod()) {
-        if (!dst.add_dedup_array_sample_pod<value::double3>(t, ref_index, &_err)) {
-          PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add dedup sample to TimeSamples.");
-        }
-      } else {
-        PUSH_ERROR_AND_RETURN_TAG(kTag, "Non-POD path not supported for double3 dedup.");
+      if (!dst.add_dedup_sample(t, ref_index, &_err)) {
+        PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add dedup sample to TimeSamples.");
       }
     } else {
       // Read and cache array
@@ -2559,21 +2448,12 @@ bool CrateReader::UnpackTimeSampleValue_DOUBLE3(double t,
         PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read double3 array.");
       }
 
-      if (dst.is_using_pod()) {
-        // Store current index before adding
-        size_t current_index = dst.size();
-        _dedup_double3_array[rep] = current_index;
-        DCOUT("Caching DOUBLE3 array at sample index " << current_index);
+      size_t current_index = dst.size();
+      _dedup_double3_array[rep] = current_index;
 
-        if (!dst.add_array_sample_pod<value::double3>(t, v, &_err, expected_total_samples)) {
-          PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add sample to TimeSamples.");
-        }
-      } else {
-        // Non-POD path - already in std::vector
-
-        if (!dst.add_sample(t, value::Value(v), &_err)) {
-          PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add sample to TimeSamples.");
-        }
+      // Use value::Value array storage with dedup support (move, no copy)
+      if (!dst.add_value_array_sample(t, value::Value(std::move(v)), &_err)) {
+        PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add sample to TimeSamples.");
       }
     }
   } else {
@@ -2664,16 +2544,12 @@ bool CrateReader::UnpackTimeSampleValue_DOUBLE4(double t,
     // Check deduplication cache for array
     auto it = _dedup_double4_array.find(rep);
     if (it != _dedup_double4_array.end()) {
-      // Reuse cached array via ref_index
+      // Deduplicated array - reuse value from first occurrence (no copy)
       size_t ref_index = it->second;
       DCOUT("Reusing cached DOUBLE4 array at sample index " << ref_index);
 
-      if (dst.is_using_pod()) {
-        if (!dst.add_dedup_array_sample_pod<value::double4>(t, ref_index, &_err)) {
-          PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add dedup sample to TimeSamples.");
-        }
-      } else {
-        PUSH_ERROR_AND_RETURN_TAG(kTag, "Non-POD path not supported for double4 dedup.");
+      if (!dst.add_dedup_sample(t, ref_index, &_err)) {
+        PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add dedup sample to TimeSamples.");
       }
     } else {
       // Read and cache array
@@ -2681,21 +2557,12 @@ bool CrateReader::UnpackTimeSampleValue_DOUBLE4(double t,
         PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read double4 array.");
       }
 
-      if (dst.is_using_pod()) {
-        // Store current index before adding
-        size_t current_index = dst.size();
-        _dedup_double4_array[rep] = current_index;
-        DCOUT("Caching DOUBLE4 array at sample index " << current_index);
+      size_t current_index = dst.size();
+      _dedup_double4_array[rep] = current_index;
 
-        if (!dst.add_array_sample_pod<value::double4>(t, v, &_err, expected_total_samples)) {
-          PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add sample to TimeSamples.");
-        }
-      } else {
-        // Non-POD path - already in std::vector
-
-        if (!dst.add_sample(t, value::Value(v), &_err)) {
-          PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add sample to TimeSamples.");
-        }
+      // Use value::Value array storage with dedup support (move, no copy)
+      if (!dst.add_value_array_sample(t, value::Value(std::move(v)), &_err)) {
+        PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add sample to TimeSamples.");
       }
     }
   } else {
@@ -2766,16 +2633,12 @@ bool CrateReader::UnpackTimeSampleValue_QUATH(double t,
     // Check deduplication cache for array
     auto it = _dedup_quath_array.find(rep);
     if (it != _dedup_quath_array.end()) {
-      // Reuse cached array via ref_index
+      // Deduplicated array - reuse value from first occurrence (no copy)
       size_t ref_index = it->second;
       DCOUT("Reusing cached QUATH array at sample index " << ref_index);
 
-      if (dst.is_using_pod()) {
-        if (!dst.add_dedup_array_sample_pod<value::quath>(t, ref_index, &_err)) {
-          PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add dedup sample to TimeSamples.");
-        }
-      } else {
-        PUSH_ERROR_AND_RETURN_TAG(kTag, "Non-POD path not supported for quath dedup.");
+      if (!dst.add_dedup_sample(t, ref_index, &_err)) {
+        PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add dedup sample to TimeSamples.");
       }
     } else {
       // Read and cache array
@@ -2785,21 +2648,12 @@ bool CrateReader::UnpackTimeSampleValue_QUATH(double t,
 
       DCOUT("timeSamples.QUATH " << value::print_array_snipped(v));
 
-      if (dst.is_using_pod()) {
-        // Store current index before adding
-        size_t current_index = dst.size();
-        _dedup_quath_array[rep] = current_index;
-        DCOUT("Caching QUATH array at sample index " << current_index);
+      size_t current_index = dst.size();
+      _dedup_quath_array[rep] = current_index;
 
-        if (!dst.add_array_sample_pod<value::quath>(t, v, &_err, expected_total_samples)) {
-          PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add sample to TimeSamples.");
-        }
-      } else {
-        // Non-POD path - already in std::vector
-
-        if (!dst.add_sample(t, value::Value(v), &_err)) {
-          PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add sample to TimeSamples.");
-        }
+      // Use value::Value array storage with dedup support (move, no copy)
+      if (!dst.add_value_array_sample(t, value::Value(std::move(v)), &_err)) {
+        PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add sample to TimeSamples.");
       }
     }
   } else {
@@ -2870,16 +2724,12 @@ bool CrateReader::UnpackTimeSampleValue_QUATD(double t,
     // Check deduplication cache for array
     auto it = _dedup_quatd_array.find(rep);
     if (it != _dedup_quatd_array.end()) {
-      // Reuse cached array via ref_index
+      // Deduplicated array - reuse value from first occurrence (no copy)
       size_t ref_index = it->second;
       DCOUT("Reusing cached QUATD array at sample index " << ref_index);
 
-      if (dst.is_using_pod()) {
-        if (!dst.add_dedup_array_sample_pod<value::quatd>(t, ref_index, &_err)) {
-          PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add dedup sample to TimeSamples.");
-        }
-      } else {
-        PUSH_ERROR_AND_RETURN_TAG(kTag, "Non-POD path not supported for quatd dedup.");
+      if (!dst.add_dedup_sample(t, ref_index, &_err)) {
+        PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add dedup sample to TimeSamples.");
       }
     } else {
       // Read and cache array
@@ -2889,21 +2739,12 @@ bool CrateReader::UnpackTimeSampleValue_QUATD(double t,
 
       DCOUT("timeSamples.QUATD " << value::print_array_snipped(v));
 
-      if (dst.is_using_pod()) {
-        // Store current index before adding
-        size_t current_index = dst.size();
-        _dedup_quatd_array[rep] = current_index;
-        DCOUT("Caching QUATD array at sample index " << current_index);
+      size_t current_index = dst.size();
+      _dedup_quatd_array[rep] = current_index;
 
-        if (!dst.add_array_sample_pod<value::quatd>(t, v, &_err, expected_total_samples)) {
-          PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add sample to TimeSamples.");
-        }
-      } else {
-        // Non-POD path - already in std::vector
-
-        if (!dst.add_sample(t, value::Value(v), &_err)) {
-          PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add sample to TimeSamples.");
-        }
+      // Use value::Value array storage with dedup support (move, no copy)
+      if (!dst.add_value_array_sample(t, value::Value(std::move(v)), &_err)) {
+        PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add sample to TimeSamples.");
       }
     }
   } else {
@@ -2994,16 +2835,12 @@ bool CrateReader::UnpackTimeSampleValue_MATRIX2D(
     // Check deduplication cache for array
     auto it = _dedup_matrix2d_array.find(rep);
     if (it != _dedup_matrix2d_array.end()) {
-      // Reuse cached array via ref_index
+      // Deduplicated array - reuse value from first occurrence (no copy)
       size_t ref_index = it->second;
       DCOUT("Reusing cached MATRIX2D array at sample index " << ref_index);
 
-      if (dst.is_using_pod()) {
-        if (!dst.add_dedup_matrix_array_sample_pod<value::matrix2d>(t, ref_index, &_err)) {
-          PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add dedup sample to TimeSamples.");
-        }
-      } else {
-        PUSH_ERROR_AND_RETURN_TAG(kTag, "Non-POD path not supported for matrix2d dedup.");
+      if (!dst.add_dedup_sample(t, ref_index, &_err)) {
+        PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add dedup sample to TimeSamples.");
       }
     } else {
       // Read and cache array
@@ -3011,19 +2848,12 @@ bool CrateReader::UnpackTimeSampleValue_MATRIX2D(
         PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read matrix2d array.");
       }
 
-      if (dst.is_using_pod()) {
-        // Store current index before adding
-        size_t current_index = dst.size();
-        _dedup_matrix2d_array[rep] = current_index;
-        DCOUT("Caching MATRIX2D array at sample index " << current_index);
+      size_t current_index = dst.size();
+      _dedup_matrix2d_array[rep] = current_index;
 
-        if (!dst.add_matrix_array_sample_pod<value::matrix2d>(t, v, &_err, expected_total_samples)) {
-          PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add sample to TimeSamples.");
-        }
-      } else {
-        if (!dst.add_sample(t, value::Value(v), &_err)) {
-          PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add sample to TimeSamples.");
-        }
+      // Use value::Value array storage with dedup support (move, no copy)
+      if (!dst.add_value_array_sample(t, value::Value(std::move(v)), &_err)) {
+        PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add sample to TimeSamples.");
       }
     }
   } else {
@@ -3095,16 +2925,12 @@ bool CrateReader::UnpackTimeSampleValue_MATRIX3D(
     // Check deduplication cache for array
     auto it = _dedup_matrix3d_array.find(rep);
     if (it != _dedup_matrix3d_array.end()) {
-      // Reuse cached array via ref_index
+      // Deduplicated array - reuse value from first occurrence (no copy)
       size_t ref_index = it->second;
       DCOUT("Reusing cached MATRIX3D array at sample index " << ref_index);
 
-      if (dst.is_using_pod()) {
-        if (!dst.add_dedup_matrix_array_sample_pod<value::matrix3d>(t, ref_index, &_err)) {
-          PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add dedup sample to TimeSamples.");
-        }
-      } else {
-        PUSH_ERROR_AND_RETURN_TAG(kTag, "Non-POD path not supported for matrix3d dedup.");
+      if (!dst.add_dedup_sample(t, ref_index, &_err)) {
+        PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add dedup sample to TimeSamples.");
       }
     } else {
       // Read and cache array
@@ -3112,19 +2938,12 @@ bool CrateReader::UnpackTimeSampleValue_MATRIX3D(
         PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read matrix3d array.");
       }
 
-      if (dst.is_using_pod()) {
-        // Store current index before adding
-        size_t current_index = dst.size();
-        _dedup_matrix3d_array[rep] = current_index;
-        DCOUT("Caching MATRIX3D array at sample index " << current_index);
+      size_t current_index = dst.size();
+      _dedup_matrix3d_array[rep] = current_index;
 
-        if (!dst.add_matrix_array_sample_pod<value::matrix3d>(t, v, &_err, expected_total_samples)) {
-          PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add sample to TimeSamples.");
-        }
-      } else {
-        if (!dst.add_sample(t, value::Value(v), &_err)) {
-          PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add sample to TimeSamples.");
-        }
+      // Use value::Value array storage with dedup support (move, no copy)
+      if (!dst.add_value_array_sample(t, value::Value(std::move(v)), &_err)) {
+        PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add sample to TimeSamples.");
       }
     }
   } else {
@@ -3197,16 +3016,12 @@ bool CrateReader::UnpackTimeSampleValue_MATRIX4D(
     // Check deduplication cache for array
     auto it = _dedup_matrix4d_array.find(rep);
     if (it != _dedup_matrix4d_array.end()) {
-      // Reuse cached array via ref_index
+      // Deduplicated array - reuse value from first occurrence (no copy)
       size_t ref_index = it->second;
       DCOUT("Reusing cached MATRIX4D array at sample index " << ref_index);
 
-      if (dst.is_using_pod()) {
-        if (!dst.add_dedup_matrix_array_sample_pod<value::matrix4d>(t, ref_index, &_err)) {
-          PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add dedup sample to TimeSamples.");
-        }
-      } else {
-        PUSH_ERROR_AND_RETURN_TAG(kTag, "Non-POD path not supported for matrix4d dedup.");
+      if (!dst.add_dedup_sample(t, ref_index, &_err)) {
+        PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add dedup sample to TimeSamples.");
       }
     } else {
       // Read and cache array
@@ -3214,19 +3029,12 @@ bool CrateReader::UnpackTimeSampleValue_MATRIX4D(
         PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read matrix4d array.");
       }
 
-      if (dst.is_using_pod()) {
-        // Store current index before adding
-        size_t current_index = dst.size();
-        _dedup_matrix4d_array[rep] = current_index;
-        DCOUT("Caching MATRIX4D array at sample index " << current_index);
+      size_t current_index = dst.size();
+      _dedup_matrix4d_array[rep] = current_index;
 
-        if (!dst.add_matrix_array_sample_pod<value::matrix4d>(t, v, &_err, expected_total_samples)) {
-          PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add sample to TimeSamples.");
-        }
-      } else {
-        if (!dst.add_sample(t, value::Value(v), &_err)) {
-          PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add sample to TimeSamples.");
-        }
+      // Use value::Value array storage with dedup support (move, no copy)
+      if (!dst.add_value_array_sample(t, value::Value(std::move(v)), &_err)) {
+        PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add sample to TimeSamples.");
       }
     }
   } else {
@@ -3286,16 +3094,12 @@ bool CrateReader::UnpackTimeSampleValue_UINT32(double t,
     // Check deduplication cache for array
     auto it = _dedup_uint32_array.find(rep);
     if (it != _dedup_uint32_array.end()) {
-      // Reuse cached array via ref_index
+      // Deduplicated array - reuse value from first occurrence (no copy)
       size_t ref_index = it->second;
       DCOUT("Reusing cached UINT32 array at sample index " << ref_index);
 
-      if (dst.is_using_pod()) {
-        if (!dst.add_dedup_array_sample_pod<uint32_t>(t, ref_index, &_err)) {
-          PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add dedup sample to TimeSamples.");
-        }
-      } else {
-        PUSH_ERROR_AND_RETURN_TAG(kTag, "Non-POD path not supported for uint32 dedup.");
+      if (!dst.add_dedup_sample(t, ref_index, &_err)) {
+        PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add dedup sample to TimeSamples.");
       }
     } else {
       // Read and cache array
@@ -3305,21 +3109,13 @@ bool CrateReader::UnpackTimeSampleValue_UINT32(double t,
 
       DCOUT("timeSamples.UINT32 " << value::print_array_snipped(v));
 
-      if (dst.is_using_pod()) {
-        // Store current index before adding
-        size_t current_index = dst.size();
-        _dedup_uint32_array[rep] = current_index;
-        DCOUT("Caching UINT32 array at sample index " << current_index);
+      size_t current_index = dst.size();
+      _dedup_uint32_array[rep] = current_index;
 
-        if (!dst.add_array_sample_pod<uint32_t>(t, v, &_err, expected_total_samples)) {
-          PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add sample to TimeSamples.");
-        }
-      } else {
-        // Non-POD path - already in std::vector
-        std::vector<uint32_t> vec(v.data(), v.data() + v.size());
-        if (!dst.add_sample(t, value::Value(v), &_err)) {
-          PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add sample to TimeSamples.");
-        }
+      // Use value::Value array storage with dedup support (move, no copy)
+      std::vector<uint32_t> vec(v.data(), v.data() + v.size());
+      if (!dst.add_value_array_sample(t, value::Value(std::move(vec)), &_err)) {
+        PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add sample to TimeSamples.");
       }
     }
   } else {
@@ -3383,16 +3179,12 @@ bool CrateReader::UnpackTimeSampleValue_INT64(double t,
     // Check deduplication cache for array
     auto it = _dedup_int64_array.find(rep);
     if (it != _dedup_int64_array.end()) {
-      // Reuse cached array via ref_index
+      // Deduplicated array - reuse value from first occurrence (no copy)
       size_t ref_index = it->second;
       DCOUT("Reusing cached INT64 array at sample index " << ref_index);
 
-      if (dst.is_using_pod()) {
-        if (!dst.add_dedup_array_sample_pod<int64_t>(t, ref_index, &_err)) {
-          PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add dedup sample to TimeSamples.");
-        }
-      } else {
-        PUSH_ERROR_AND_RETURN_TAG(kTag, "Non-POD path not supported for int64 dedup.");
+      if (!dst.add_dedup_sample(t, ref_index, &_err)) {
+        PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add dedup sample to TimeSamples.");
       }
     } else {
       // Read and cache array
@@ -3402,21 +3194,13 @@ bool CrateReader::UnpackTimeSampleValue_INT64(double t,
 
       DCOUT("timeSamples.INT64 " << value::print_array_snipped(v));
 
-      if (dst.is_using_pod()) {
-        // Store current index before adding
-        size_t current_index = dst.size();
-        _dedup_int64_array[rep] = current_index;
-        DCOUT("Caching INT64 array at sample index " << current_index);
+      size_t current_index = dst.size();
+      _dedup_int64_array[rep] = current_index;
 
-        if (!dst.add_array_sample_pod<int64_t>(t, v, &_err, expected_total_samples)) {
-          PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add sample to TimeSamples.");
-        }
-      } else {
-        // Non-POD path - already in std::vector
-        std::vector<int64_t> vec(v.data(), v.data() + v.size());
-        if (!dst.add_sample(t, value::Value(v), &_err)) {
-          PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add sample to TimeSamples.");
-        }
+      // Use value::Value array storage with dedup support (move, no copy)
+      std::vector<int64_t> vec(v.data(), v.data() + v.size());
+      if (!dst.add_value_array_sample(t, value::Value(std::move(vec)), &_err)) {
+        PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add sample to TimeSamples.");
       }
     }
   } else {
@@ -3498,16 +3282,12 @@ bool CrateReader::UnpackTimeSampleValue_UINT64(double t,
     // Check deduplication cache for array
     auto it = _dedup_uint64_array.find(rep);
     if (it != _dedup_uint64_array.end()) {
-      // Reuse cached array via ref_index
+      // Deduplicated array - reuse value from first occurrence (no copy)
       size_t ref_index = it->second;
       DCOUT("Reusing cached UINT64 array at sample index " << ref_index);
 
-      if (dst.is_using_pod()) {
-        if (!dst.add_dedup_array_sample_pod<uint64_t>(t, ref_index, &_err)) {
-          PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add dedup sample to TimeSamples.");
-        }
-      } else {
-        PUSH_ERROR_AND_RETURN_TAG(kTag, "Non-POD path not supported for uint64 dedup.");
+      if (!dst.add_dedup_sample(t, ref_index, &_err)) {
+        PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add dedup sample to TimeSamples.");
       }
     } else {
       // Read and cache array
@@ -3517,21 +3297,13 @@ bool CrateReader::UnpackTimeSampleValue_UINT64(double t,
 
       DCOUT("timeSamples.UINT64 " << value::print_array_snipped(v));
 
-      if (dst.is_using_pod()) {
-        // Store current index before adding
-        size_t current_index = dst.size();
-        _dedup_uint64_array[rep] = current_index;
-        DCOUT("Caching UINT64 array at sample index " << current_index);
+      size_t current_index = dst.size();
+      _dedup_uint64_array[rep] = current_index;
 
-        if (!dst.add_array_sample_pod<uint64_t>(t, v, &_err, expected_total_samples)) {
-          PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add sample to TimeSamples.");
-        }
-      } else {
-        // Non-POD path - already in std::vector
-        std::vector<uint64_t> vec(v.data(), v.data() + v.size());
-        if (!dst.add_sample(t, value::Value(v), &_err)) {
-          PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add sample to TimeSamples.");
-        }
+      // Use value::Value array storage with dedup support (move, no copy)
+      std::vector<uint64_t> vec(v.data(), v.data() + v.size());
+      if (!dst.add_value_array_sample(t, value::Value(std::move(vec)), &_err)) {
+        PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add sample to TimeSamples.");
       }
     }
   } else {
@@ -3615,16 +3387,12 @@ bool CrateReader::UnpackTimeSampleValue_DOUBLE(double t,
     // Check deduplication cache for array
     auto it = _dedup_double_array.find(rep);
     if (it != _dedup_double_array.end()) {
-      // Reuse cached array via ref_index
+      // Deduplicated array - reuse value from first occurrence (no copy)
       size_t ref_index = it->second;
       DCOUT("Reusing cached DOUBLE array at sample index " << ref_index);
 
-      if (dst.is_using_pod()) {
-        if (!dst.add_dedup_array_sample_pod<double>(t, ref_index, &_err)) {
-          PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add dedup sample to TimeSamples.");
-        }
-      } else {
-        PUSH_ERROR_AND_RETURN_TAG(kTag, "Non-POD path not supported for double dedup.");
+      if (!dst.add_dedup_sample(t, ref_index, &_err)) {
+        PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add dedup sample to TimeSamples.");
       }
     } else {
       // Read and cache array using TypedArray
@@ -3639,21 +3407,13 @@ bool CrateReader::UnpackTimeSampleValue_DOUBLE(double t,
         return false;
       }
 
-      if (dst.is_using_pod()) {
-        // Store current index before adding
-        size_t current_index = dst.size();
-        _dedup_double_array[rep] = current_index;
-        DCOUT("Caching DOUBLE array at sample index " << current_index);
+      size_t current_index = dst.size();
+      _dedup_double_array[rep] = current_index;
 
-        if (!dst.add_array_sample_pod<double>(t, v, &_err, expected_total_samples)) {
-          PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add sample to TimeSamples.");
-        }
-      } else {
-        // Non-POD path - already in std::vector
-        std::vector<double> vec(v.data(), v.data() + v.size());
-        if (!dst.add_sample(t, value::Value(v), &_err)) {
-          PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add sample to TimeSamples.");
-        }
+      // Use value::Value array storage with dedup support (move, no copy)
+      std::vector<double> vec(v.data(), v.data() + v.size());
+      if (!dst.add_value_array_sample(t, value::Value(std::move(vec)), &_err)) {
+        PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add sample to TimeSamples.");
       }
     }
   } else {

@@ -35,6 +35,57 @@ jobs:
           path: |
             build/Release/tusdcat.exe
 
+      # Test with OpenUSD binary (Windows x64)
+      - name: Download OpenUSD binary (Windows x64)
+        run: |
+          gh release download v25.11-lte `
+            --repo lighttransport/openusd-bin `
+            --pattern 'openusd-*-minsizerel-windows-x86_64.zip'
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+      - name: Extract and setup OpenUSD (Windows x64)
+        run: |
+          $archive = Get-ChildItem -Filter "openusd-*-minsizerel-windows-x86_64.zip" | Select-Object -First 1
+          New-Item -ItemType Directory -Name openusd -Force | Out-Null
+          Expand-Archive -Path $archive.FullName -DestinationPath openusd -Force
+          $usdRoot = Resolve-Path openusd
+          echo "USD_INSTALL_ROOT=$usdRoot" >> $env:GITHUB_ENV
+          echo "$usdRoot\bin" >> $env:GITHUB_PATH
+          echo "$usdRoot\lib" >> $env:GITHUB_PATH
+          echo "$usdRoot\tbb\bin" >> $env:GITHUB_PATH
+          echo "PYTHONPATH=$usdRoot\lib\python;$env:PYTHONPATH" >> $env:GITHUB_ENV
+          echo "PXR_PLUGINPATH_NAME=$usdRoot\lib\usd" >> $env:GITHUB_ENV
+
+      - name: Verify OpenUSD installation (Windows x64)
+        run: |
+          usdcat --help
+          Write-Host "OpenUSD binary location: $(Get-Command usdcat | Select-Object -ExpandProperty Source)"
+
+      - name: Test TinyUSDZ and OpenUSD interoperability (Windows x64)
+        run: |
+          Write-Host "=== Testing TinyUSDZ <-> OpenUSD interoperability on Windows x64 ==="
+
+          # Test 1: Read files with both tools
+          $testFiles = @("models/suzanne.usdc", "models/cube.usda")
+          foreach ($usdFile in $testFiles) {
+            if (Test-Path $usdFile) {
+              Write-Host "Testing $usdFile"
+              .\build\Release\tusdcat.exe $usdFile > $null
+              usdcat $usdFile > $null
+              Write-Host "✓ Both tools read $usdFile"
+            }
+          }
+
+          # Test 2: Convert with TinyUSDZ, verify with OpenUSD
+          if (Test-Path "models/suzanne.usdc") {
+            .\build\Release\tusdcat.exe models/suzanne.usdc > tinyusdz_output.usda
+            usdcat tinyusdz_output.usda > $null
+            Write-Host "✓ OpenUSD read TinyUSDZ-generated USDA"
+          }
+
+          Write-Host "All Windows x64 tests passed!"
+
   # Windows(32bit) + Visual Studio 2019 build
   build-windows-msvc-win32:
 

@@ -19,6 +19,10 @@
 #include "layer.hh"
 
 namespace tinyusdz {
+
+// Forward declarations
+template <size_t ChunkSize, size_t Alignment> class ChunkedStreamWriter;
+
 namespace prim {
 
 #if defined(TINYUSDZ_ENABLE_THREAD)
@@ -89,6 +93,36 @@ std::string print_prims_parallel(
 /// @return Concatenated string of all printed primspecs
 ///
 std::string print_primspecs_parallel(
+    const std::vector<const PrimSpec*>& primspecs,
+    uint32_t indent,
+    const ParallelPrintConfig& config = ParallelPrintConfig());
+
+///
+/// Print multiple Prims in parallel using ChunkedStreamWriter for zero-copy concatenation
+///
+/// @param[out] writer ChunkedStreamWriter to write output
+/// @param[in] prims Vector of Prim pointers to print
+/// @param[in] indent Indentation level
+/// @param[in] config Parallel printing configuration
+///
+template <size_t ChunkSize = 4096, size_t Alignment = 16>
+void print_prims_parallel(
+    ChunkedStreamWriter<ChunkSize, Alignment>& writer,
+    const std::vector<const Prim*>& prims,
+    uint32_t indent,
+    const ParallelPrintConfig& config = ParallelPrintConfig());
+
+///
+/// Print multiple PrimSpecs in parallel using ChunkedStreamWriter for zero-copy concatenation
+///
+/// @param[out] writer ChunkedStreamWriter to write output
+/// @param[in] primspecs Vector of PrimSpec pointers to print
+/// @param[in] indent Indentation level
+/// @param[in] config Parallel printing configuration
+///
+template <size_t ChunkSize = 4096, size_t Alignment = 16>
+void print_primspecs_parallel(
+    ChunkedStreamWriter<ChunkSize, Alignment>& writer,
     const std::vector<const PrimSpec*>& primspecs,
     uint32_t indent,
     const ParallelPrintConfig& config = ParallelPrintConfig());

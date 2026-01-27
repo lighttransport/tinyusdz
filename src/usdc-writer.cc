@@ -37,10 +37,19 @@
 #include <fstream>
 #include <iostream>
 #include <sstream>
+#include <cstdio>    // for remove
+#include <cstring>   // for strerror
+#include <cerrno>    // for errno
+
+#ifndef _WIN32
+#include <unistd.h>  // for close, mkstemp
+#endif
 
 #include "crate-format.hh"
+#include "crate-writer.hh"  // experimental CrateWriter
 #include "io-util.hh"
 #include "lz4-compression.hh"
+#include "zstd-compression.hh"
 #include "token-type.hh"
 
 #include "common-macros.inc"
@@ -49,6 +58,13 @@ namespace tinyusdz {
 namespace usdc {
 
 namespace {
+
+// Check if filename ends with ".zst" extension (case-insensitive)
+bool HasZstdExtension(const std::string &filename) {
+  if (filename.size() < 4) return false;
+  std::string ext = filename.substr(filename.size() - 4);
+  return (ext == ".zst" || ext == ".ZST");
+}
 
 constexpr size_t kSectionNameMaxLength = 15;
 
@@ -480,11 +496,13 @@ class Writer {
 }  // namespace
 
 bool SaveAsUSDCToFile(const std::string &filename, const Stage &stage,
-                      std::string *warn, std::string *err) {
+                      std::string *warn, std::string *err,
+                      const USDWriteOptions &options) {
 #ifdef __ANDROID__
   (void)filename;
   (void)stage;
   (void)warn;
+  (void)options;
 
   if (err) {
     (*err) += "Saving USDC to a file is not supported for Android platform(at the moment).\n";
@@ -496,6 +514,30 @@ bool SaveAsUSDCToFile(const std::string &filename, const Stage &stage,
 
   if (!SaveAsUSDCToMemory(stage, &output, warn, err)) {
     return false;
+  }
+
+  // Check if we should use zstd compression
+  bool use_compression = options.use_zstd_compression || HasZstdExtension(filename);
+
+  const uint8_t *write_data = output.data();
+  size_t write_size = output.size();
+  std::vector<uint8_t> compressed;
+
+  if (use_compression) {
+#ifdef TINYUSDZ_WITH_ZSTD_COMPRESSION
+    if (!ZstdCompression::Compress(output.data(), output.size(),
+                                   &compressed, options.zstd_compression_level, err)) {
+      return false;
+    }
+    write_data = compressed.data();
+    write_size = compressed.size();
+    std::cout << "Compressing USDC with zstd (" << output.size() << " -> " << compressed.size() << " bytes)\n";
+#else
+    if (err) {
+      (*err) = "zstd compression requested but TINYUSDZ_WITH_ZSTD_COMPRESSION is not enabled.\n";
+    }
+    return false;
+#endif
   }
 
 #ifdef _WIN32
@@ -530,9 +572,11 @@ bool SaveAsUSDCToFile(const std::string &filename, const Stage &stage,
   }
 #endif
 
-  size_t n = fwrite(output.data(), /* size */ 1, /* count */ output.size(), fp);
-  if (n < output.size()) {
-    // TODO: Retry writing data when n < output.size()
+  size_t n = fwrite(write_data, /* size */ 1, /* count */ write_size, fp);
+  fclose(fp);
+
+  if (n < write_size) {
+    // TODO: Retry writing data when n < write_size
 
     if (err) {
       (*err) += "Failed to write data to a file.\n";
@@ -547,16 +591,121 @@ bool SaveAsUSDCToFile(const std::string &filename, const Stage &stage,
 bool SaveAsUSDCToMemory(const Stage &stage, std::vector<uint8_t> *output,
                         std::string *warn, std::string *err) {
   (void)warn;
-  (void)output;
 
-  // TODO
-  Writer writer(stage);
-
-  if (err) {
-    (*err) += "USDC writer is not yet implemented.\n";
+  if (!output) {
+    if (err) {
+      (*err) += "Output buffer is null.\n";
+    }
+    return false;
   }
 
-  return false;
+  // Use experimental CrateWriter via temporary file approach
+  // This is not optimal but provides a working implementation
+  // TODO: Implement memory-based CrateWriter for better performance
+
+  // Generate a temporary file path
+#ifdef _WIN32
+  char temp_path[MAX_PATH];
+  if (GetTempPathA(MAX_PATH, temp_path) == 0) {
+    if (err) {
+      (*err) += "Failed to get temp path.\n";
+    }
+    return false;
+  }
+  char temp_file[MAX_PATH];
+  if (GetTempFileNameA(temp_path, "usd", 0, temp_file) == 0) {
+    if (err) {
+      (*err) += "Failed to create temp file name.\n";
+    }
+    return false;
+  }
+  std::string temp_filepath = temp_file;
+#else
+  // On Unix, use /tmp with a unique name
+  char temp_template[] = "/tmp/tinyusdz_XXXXXX";
+  int fd = mkstemp(temp_template);
+  if (fd == -1) {
+    if (err) {
+      (*err) += "Failed to create temp file: ";
+      (*err) += std::strerror(errno);
+      (*err) += "\n";
+    }
+    return false;
+  }
+  close(fd);
+  std::string temp_filepath = temp_template;
+#endif
+
+  // Create CrateWriter and write to temp file
+  experimental::CrateWriter writer(temp_filepath);
+
+  experimental::CrateWriter::Options opts;
+  opts.version_major = 0;
+  opts.version_minor = 8;
+  opts.version_patch = 0;
+  opts.enable_compression = true;
+  opts.enable_deduplication = true;
+  writer.SetOptions(opts);
+
+  std::string open_err;
+  if (!writer.Open(&open_err)) {
+    std::remove(temp_filepath.c_str());
+    if (err) {
+      (*err) += "Failed to open CrateWriter: " + open_err + "\n";
+    }
+    return false;
+  }
+
+  std::string convert_err;
+  if (!writer.ConvertStageToSpecs(stage, &convert_err)) {
+    writer.Close();
+    std::remove(temp_filepath.c_str());
+    if (err) {
+      (*err) += "Failed to convert Stage to USDC: " + convert_err + "\n";
+    }
+    return false;
+  }
+
+  std::string finalize_err;
+  if (!writer.Finalize(&finalize_err)) {
+    writer.Close();
+    std::remove(temp_filepath.c_str());
+    if (err) {
+      (*err) += "Failed to finalize USDC: " + finalize_err + "\n";
+    }
+    return false;
+  }
+
+  writer.Close();
+
+  // Read the temp file into memory
+  std::ifstream file(temp_filepath, std::ios::binary | std::ios::ate);
+  if (!file) {
+    std::remove(temp_filepath.c_str());
+    if (err) {
+      (*err) += "Failed to read temp USDC file.\n";
+    }
+    return false;
+  }
+
+  std::streamsize size = file.tellg();
+  file.seekg(0, std::ios::beg);
+
+  output->resize(static_cast<size_t>(size));
+  if (!file.read(reinterpret_cast<char*>(output->data()), size)) {
+    std::remove(temp_filepath.c_str());
+    if (err) {
+      (*err) += "Failed to read USDC data into memory.\n";
+    }
+    return false;
+  }
+
+  file.close();
+
+  // Clean up temp file
+  std::remove(temp_filepath.c_str());
+
+  return true;
 }
 
 }  // namespace usdc
@@ -568,10 +717,12 @@ namespace tinyusdz {
 namespace usdc {
 
 bool SaveAsUSDCToFile(const std::string &filename, const Stage &stage,
-                      std::string *warn, std::string *err) {
+                      std::string *warn, std::string *err,
+                      const USDWriteOptions &options) {
   (void)filename;
   (void)stage;
   (void)warn;
+  (void)options;
 
   if (err) {
     (*err) = "USDC writer feature is disabled in this build.\n";

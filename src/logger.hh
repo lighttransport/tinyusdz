@@ -408,9 +408,11 @@ class TraceManager {
         // Format timestamp as ISO 8601 string
 #ifndef __EMSCRIPTEN__
         // Emscripten has issues with time_point duration conversion
+        // Use duration_cast to handle different clock duration types
         auto start_time_t = std::chrono::system_clock::to_time_t(
           std::chrono::system_clock::now() +
-          (record.start_time - std::chrono::high_resolution_clock::now()));
+          std::chrono::duration_cast<std::chrono::system_clock::duration>(
+            record.start_time - std::chrono::high_resolution_clock::now()));
 
         std::stringstream timestamp_ss;
         timestamp_ss << std::put_time(std::gmtime(&start_time_t), "%Y-%m-%dT%H:%M:%S");

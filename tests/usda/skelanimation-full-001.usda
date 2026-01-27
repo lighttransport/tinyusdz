@@ -1,0 +1,168 @@
+#usda 1.0
+(
+    doc = "Comprehensive SkelAnimation test - all attributes including blendShapes and blendShapeWeights"
+    defaultPrim = "AnimationTests"
+    startTimeCode = 1
+    endTimeCode = 48
+)
+
+def Xform "AnimationTests"
+{
+    # Test 1: Basic SkelAnimation with all transforms
+    def SkelRoot "BasicAnimationRoot"
+    {
+        def Skeleton "Skeleton"
+        {
+            uniform token[] joints = ["Root", "Root/Spine", "Root/Spine/Head"]
+            uniform matrix4d[] bindTransforms = [
+                ((1, 0, 0, 0), (0, 1, 0, 0), (0, 0, 1, 0), (0, 0, 0, 1)),
+                ((1, 0, 0, 0), (0, 1, 0, 0), (0, 0, 1, 0), (0, 1, 0, 1)),
+                ((1, 0, 0, 0), (0, 1, 0, 0), (0, 0, 1, 0), (0, 2, 0, 1))
+            ]
+            uniform matrix4d[] restTransforms = [
+                ((1, 0, 0, 0), (0, 1, 0, 0), (0, 0, 1, 0), (0, 0, 0, 1)),
+                ((1, 0, 0, 0), (0, 1, 0, 0), (0, 0, 1, 0), (0, 1, 0, 1)),
+                ((1, 0, 0, 0), (0, 1, 0, 0), (0, 0, 1, 0), (0, 2, 0, 1))
+            ]
+
+            rel skel:animationSource = </AnimationTests/BasicAnimationRoot/Animation>
+        }
+
+        def SkelAnimation "Animation"
+        {
+            uniform token[] joints = ["Root", "Root/Spine", "Root/Spine/Head"]
+
+            # Translations - static for basic test
+            float3[] translations = [(0, 0, 0), (0, 1, 0), (0, 1, 0)]
+
+            # Rotations - animated
+            quatf[] rotations.timeSamples = {
+                1: [(1, 0, 0, 0), (1, 0, 0, 0), (1, 0, 0, 0)],
+                12: [(1, 0, 0, 0), (0.9659, 0.2588, 0, 0), (0.9659, 0.2588, 0, 0)],
+                24: [(1, 0, 0, 0), (1, 0, 0, 0), (0.9659, -0.2588, 0, 0)],
+                36: [(1, 0, 0, 0), (0.9659, -0.2588, 0, 0), (1, 0, 0, 0)],
+                48: [(1, 0, 0, 0), (1, 0, 0, 0), (1, 0, 0, 0)],
+            }
+
+            # Scales - static
+            half3[] scales = [(1, 1, 1), (1, 1, 1), (1, 1, 1)]
+        }
+
+        def Mesh "Body"
+        {
+            int[] faceVertexCounts = [4, 4, 4]
+            int[] faceVertexIndices = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
+            point3f[] points = [
+                (-0.5, 0, 0), (0.5, 0, 0), (0.5, 1, 0), (-0.5, 1, 0),
+                (-0.4, 1, 0), (0.4, 1, 0), (0.4, 2, 0), (-0.4, 2, 0),
+                (-0.3, 2, 0), (0.3, 2, 0), (0.3, 2.5, 0), (-0.3, 2.5, 0)
+            ]
+            rel skel:skeleton = </AnimationTests/BasicAnimationRoot/Skeleton>
+            int[] primvars:skel:jointIndices = [0, 0, 1, 1, 1, 1, 2, 2, 2, 2, 2, 2]
+            float[] primvars:skel:jointWeights = [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1]
+        }
+    }
+
+    # Test 2: SkelAnimation with BlendShapes
+    def SkelRoot "BlendShapeAnimationRoot"
+    {
+        def Skeleton "Skeleton"
+        {
+            uniform token[] joints = ["Root"]
+            uniform matrix4d[] bindTransforms = [
+                ((1, 0, 0, 0), (0, 1, 0, 0), (0, 0, 1, 0), (0, 0, 0, 1))
+            ]
+            uniform matrix4d[] restTransforms = [
+                ((1, 0, 0, 0), (0, 1, 0, 0), (0, 0, 1, 0), (0, 0, 0, 1))
+            ]
+
+            rel skel:animationSource = </AnimationTests/BlendShapeAnimationRoot/Animation>
+        }
+
+        def SkelAnimation "Animation"
+        {
+            uniform token[] joints = ["Root"]
+            float3[] translations = [(0, 0, 5)]
+            quatf[] rotations = [(1, 0, 0, 0)]
+            half3[] scales = [(1, 1, 1)]
+
+            # BlendShape animation
+            uniform token[] blendShapes = ["smile", "frown", "blink"]
+            float[] blendShapeWeights.timeSamples = {
+                1: [0.0, 0.0, 0.0],
+                12: [1.0, 0.0, 0.0],
+                24: [0.5, 0.5, 0.0],
+                36: [0.0, 1.0, 1.0],
+                48: [0.0, 0.0, 0.0],
+            }
+        }
+
+        def Mesh "Face"
+        {
+            int[] faceVertexCounts = [4]
+            int[] faceVertexIndices = [0, 1, 2, 3]
+            point3f[] points = [(-1, -1, 5), (1, -1, 5), (1, 1, 5), (-1, 1, 5)]
+
+            rel skel:skeleton = </AnimationTests/BlendShapeAnimationRoot/Skeleton>
+            uniform token[] skel:blendShapes = ["smile", "frown", "blink"]
+            rel skel:blendShapeTargets = [
+                </AnimationTests/BlendShapeAnimationRoot/Smile>,
+                </AnimationTests/BlendShapeAnimationRoot/Frown>,
+                </AnimationTests/BlendShapeAnimationRoot/Blink>
+            ]
+        }
+
+        def BlendShape "Smile"
+        {
+            uniform vector3f[] offsets = [(0.1, 0.2, 0), (-0.1, 0.2, 0), (0, 0, 0), (0, 0, 0)]
+            uniform int[] pointIndices = [0, 1, 2, 3]
+        }
+
+        def BlendShape "Frown"
+        {
+            uniform vector3f[] offsets = [(0.1, -0.2, 0), (-0.1, -0.2, 0), (0, 0, 0), (0, 0, 0)]
+            uniform int[] pointIndices = [0, 1, 2, 3]
+        }
+
+        def BlendShape "Blink"
+        {
+            uniform vector3f[] offsets = [(0, 0, 0), (0, 0, 0), (0, -0.1, 0), (0, -0.1, 0)]
+            uniform int[] pointIndices = [0, 1, 2, 3]
+        }
+    }
+
+    # Test 3: Additive blendshape weights
+    def SkelRoot "AdditiveBlendShapeRoot"
+    {
+        def Skeleton "Skeleton"
+        {
+            uniform token[] joints = ["Root"]
+            uniform matrix4d[] bindTransforms = [
+                ((1, 0, 0, 0), (0, 1, 0, 0), (0, 0, 1, 0), (0, 0, 0, 1))
+            ]
+            uniform matrix4d[] restTransforms = [
+                ((1, 0, 0, 0), (0, 1, 0, 0), (0, 0, 1, 0), (0, 0, 0, 1))
+            ]
+
+            rel skel:animationSource = </AnimationTests/AdditiveBlendShapeRoot/Animation>
+        }
+
+        def SkelAnimation "Animation"
+        {
+            uniform token[] joints = ["Root"]
+            float3[] translations = [(0, 0, 15)]
+            quatf[] rotations = [(1, 0, 0, 0)]
+            half3[] scales = [(1, 1, 1)]
+
+            # Multiple simultaneous blendshapes (additive)
+            uniform token[] blendShapes = ["base", "detail1", "detail2", "detail3"]
+            float[] blendShapeWeights.timeSamples = {
+                1: [1.0, 0.0, 0.0, 0.0],
+                12: [1.0, 0.5, 0.0, 0.0],
+                24: [1.0, 0.5, 0.5, 0.0],
+                36: [1.0, 0.5, 0.5, 0.5],
+                48: [1.0, 1.0, 1.0, 1.0],
+            }
+        }
+    }
+}
