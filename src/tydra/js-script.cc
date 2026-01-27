@@ -94,57 +94,57 @@ static std::string PrimMetasToJSON(const PrimMetas* metas) {
   };
 
   // active
-  if (metas->active.has_value()) {
+  if (metas->has_active()) {
     addComma();
-    oss << "\"active\":" << (metas->active.value() ? "true" : "false");
+    oss << "\"active\":" << (metas->get_active() ? "true" : "false");
   }
 
   // hidden
-  if (metas->hidden.has_value()) {
+  if (metas->has_hidden()) {
     addComma();
-    oss << "\"hidden\":" << (metas->hidden.value() ? "true" : "false");
+    oss << "\"hidden\":" << (metas->get_hidden() ? "true" : "false");
   }
 
   // instanceable
-  if (metas->instanceable.has_value()) {
+  if (metas->has_instanceable()) {
     addComma();
-    oss << "\"instanceable\":" << (metas->instanceable.value() ? "true" : "false");
+    oss << "\"instanceable\":" << (metas->get_instanceable() ? "true" : "false");
   }
 
   // kind
-  if (metas->kind.has_value() || !metas->_kind_str.empty()) {
+  if (metas->has_kind() ) {
     addComma();
-    oss << "\"kind\":\"" << escapeJson(metas->get_kind()) << "\"";
+    oss << "\"kind\":\"" << escapeJson(metas->get_kind_str()) << "\"";
   }
 
   // doc
-  if (metas->doc.has_value()) {
+  if (metas->has_doc()) {
     addComma();
-    oss << "\"documentation\":\"" << escapeJson(metas->doc.value().value) << "\"";
+    oss << "\"documentation\":\"" << escapeJson(metas->get_doc().value) << "\"";
   }
 
   // comment
-  if (metas->comment.has_value()) {
+  if (metas->has_comment()) {
     addComma();
-    oss << "\"comment\":\"" << escapeJson(metas->comment.value().value) << "\"";
+    oss << "\"comment\":\"" << escapeJson(metas->get_comment().value) << "\"";
   }
 
   // sceneName
-  if (metas->sceneName.has_value()) {
+  if (metas->has_sceneName()) {
     addComma();
-    oss << "\"sceneName\":\"" << escapeJson(metas->sceneName.value()) << "\"";
+    oss << "\"sceneName\":\"" << escapeJson(metas->get_sceneName()) << "\"";
   }
 
   // displayName
-  if (metas->displayName.has_value()) {
+  if (metas->has_displayName()) {
     addComma();
-    oss << "\"displayName\":\"" << escapeJson(metas->displayName.value()) << "\"";
+    oss << "\"displayName\":\"" << escapeJson(metas->get_displayName()) << "\"";
   }
 
   // apiSchemas - simplified for now, just store the count
-  if (metas->apiSchemas.has_value()) {
+  if (metas->has_apiSchemas()) {
     addComma();
-    oss << "\"apiSchemas_count\":" << metas->apiSchemas.value().names.size();
+    oss << "\"apiSchemas_count\":" << metas->get_apiSchemas().names.size();
   }
 
   // primChildren
@@ -189,9 +189,9 @@ static bool PrimMetasFromJSON(const std::string& json, PrimMetas* metas, std::st
   if (pos != std::string::npos) {
     pos += 9; // length of "active":
     if (json.substr(pos, 4) == "true") {
-      metas->active = true;
+      metas->set_active(true);
     } else if (json.substr(pos, 5) == "false") {
-      metas->active = false;
+      metas->set_active(false);
     }
   }
 
@@ -200,9 +200,9 @@ static bool PrimMetasFromJSON(const std::string& json, PrimMetas* metas, std::st
   if (pos != std::string::npos) {
     pos += 9; // length of "hidden":
     if (json.substr(pos, 4) == "true") {
-      metas->hidden = true;
+      metas->set_hidden(true);
     } else if (json.substr(pos, 5) == "false") {
-      metas->hidden = false;
+      metas->set_hidden(false);
     }
   }
 
@@ -211,9 +211,9 @@ static bool PrimMetasFromJSON(const std::string& json, PrimMetas* metas, std::st
   if (pos != std::string::npos) {
     pos += 15; // length of "instanceable":
     if (json.substr(pos, 4) == "true") {
-      metas->instanceable = true;
+      metas->set_instanceable(true);
     } else if (json.substr(pos, 5) == "false") {
-      metas->instanceable = false;
+      metas->set_instanceable(false);
     }
   }
 
@@ -228,18 +228,18 @@ static bool PrimMetasFromJSON(const std::string& json, PrimMetas* metas, std::st
       std::string kind_str = json.substr(pos, end - pos);
       // Check for standard kinds
       if (kind_str == "model") {
-        metas->kind = Kind::Model;
+        metas->set_kind(Kind::Model);
       } else if (kind_str == "group") {
-        metas->kind = Kind::Group;
+        metas->set_kind(Kind::Group);
       } else if (kind_str == "assembly") {
-        metas->kind = Kind::Assembly;
+        metas->set_kind(Kind::Assembly);
       } else if (kind_str == "component") {
-        metas->kind = Kind::Component;
+        metas->set_kind(Kind::Component);
       } else if (kind_str == "subcomponent") {
-        metas->kind = Kind::Subcomponent;
+        metas->set_kind(Kind::Subcomponent);
       } else {
         // User-defined kind
-        metas->_kind_str = kind_str;
+        metas->set_kind(kind_str);
       }
     }
   }
@@ -252,8 +252,8 @@ static bool PrimMetasFromJSON(const std::string& json, PrimMetas* metas, std::st
     pos++; // skip opening quote
     size_t end = json.find('"', pos);
     if (end != std::string::npos) {
-      metas->doc = value::StringData();
-      metas->doc->value = json.substr(pos, end - pos);
+      ;
+      metas->set_doc(json.substr(pos, end - pos));
     }
   }
 
@@ -265,8 +265,8 @@ static bool PrimMetasFromJSON(const std::string& json, PrimMetas* metas, std::st
     pos++; // skip opening quote
     size_t end = json.find('"', pos);
     if (end != std::string::npos) {
-      metas->comment = value::StringData();
-      metas->comment->value = json.substr(pos, end - pos);
+      ;
+      metas->set_comment(json.substr(pos, end - pos));
     }
   }
 
@@ -278,7 +278,7 @@ static bool PrimMetasFromJSON(const std::string& json, PrimMetas* metas, std::st
     pos++; // skip opening quote
     size_t end = json.find('"', pos);
     if (end != std::string::npos) {
-      metas->sceneName = json.substr(pos, end - pos);
+      metas->set_sceneName(json.substr(pos, end - pos));
     }
   }
 
@@ -290,7 +290,7 @@ static bool PrimMetasFromJSON(const std::string& json, PrimMetas* metas, std::st
     pos++; // skip opening quote
     size_t end = json.find('"', pos);
     if (end != std::string::npos) {
-      metas->displayName = json.substr(pos, end - pos);
+      metas->set_displayName(json.substr(pos, end - pos));
     }
   }
 
@@ -315,10 +315,10 @@ static std::string AttrMetasToJSON(const AttrMetas* metas) {
   };
 
   // interpolation
-  if (metas->interpolation.has_value()) {
+  if (metas->has_interpolation()) {
     addComma();
     oss << "\"interpolation\":\"";
-    switch (metas->interpolation.value()) {
+    switch (metas->get_interpolation_enum()) {
       case Interpolation::Constant: oss << "constant"; break;
       case Interpolation::Uniform: oss << "uniform"; break;
       case Interpolation::Varying: oss << "varying"; break;
@@ -330,25 +330,25 @@ static std::string AttrMetasToJSON(const AttrMetas* metas) {
   }
 
   // elementSize
-  if (metas->elementSize.has_value()) {
+  if (metas->has_elementSize()) {
     addComma();
-    oss << "\"elementSize\":" << metas->elementSize.value();
+    oss << "\"elementSize\":" << metas->get_elementSize();
   }
 
   // hidden
-  if (metas->hidden.has_value()) {
+  if (metas->has_hidden()) {
     addComma();
-    oss << "\"hidden\":" << (metas->hidden.value() ? "true" : "false");
+    oss << "\"hidden\":" << (metas->get_hidden() ? "true" : "false");
   }
 
   // weight
-  if (metas->weight.has_value()) {
+  if (metas->has_weight()) {
     addComma();
-    oss << "\"weight\":" << metas->weight.value();
+    oss << "\"weight\":" << metas->get_weight();
   }
 
   // comment
-  if (metas->comment.has_value()) {
+  if (metas->has_comment()) {
     addComma();
     auto escapeJson = [](const std::string& str) -> std::string {
       std::string escaped;
@@ -366,43 +366,43 @@ static std::string AttrMetasToJSON(const AttrMetas* metas) {
       }
       return escaped;
     };
-    oss << "\"comment\":\"" << escapeJson(metas->comment.value().value) << "\"";
+    oss << "\"comment\":\"" << escapeJson(metas->get_comment().value) << "\"";
   }
 
   // connectability
-  if (metas->connectability.has_value()) {
+  if (metas->has_connectability()) {
     addComma();
-    oss << "\"connectability\":\"" << metas->connectability.value().str() << "\"";
+    oss << "\"connectability\":\"" << metas->get_connectability().str() << "\"";
   }
 
   // outputName
-  if (metas->outputName.has_value()) {
+  if (metas->has_outputName()) {
     addComma();
-    oss << "\"outputName\":\"" << metas->outputName.value().str() << "\"";
+    oss << "\"outputName\":\"" << metas->get_outputName().str() << "\"";
   }
 
   // renderType
-  if (metas->renderType.has_value()) {
+  if (metas->has_renderType()) {
     addComma();
-    oss << "\"renderType\":\"" << metas->renderType.value().str() << "\"";
+    oss << "\"renderType\":\"" << metas->get_renderType().str() << "\"";
   }
 
   // displayName
-  if (metas->displayName.has_value()) {
+  if (metas->has_displayName()) {
     addComma();
-    oss << "\"displayName\":\"" << metas->displayName.value() << "\"";
+    oss << "\"displayName\":\"" << metas->get_displayName() << "\"";
   }
 
   // displayGroup
-  if (metas->displayGroup.has_value()) {
+  if (metas->has_displayGroup()) {
     addComma();
-    oss << "\"displayGroup\":\"" << metas->displayGroup.value() << "\"";
+    oss << "\"displayGroup\":\"" << metas->get_displayGroup() << "\"";
   }
 
   // bindMaterialAs
-  if (metas->bindMaterialAs.has_value()) {
+  if (metas->has_bindMaterialAs()) {
     addComma();
-    oss << "\"bindMaterialAs\":\"" << metas->bindMaterialAs.value().str() << "\"";
+    oss << "\"bindMaterialAs\":\"" << metas->get_bindMaterialAs().str() << "\"";
   }
 
   oss << "}";
@@ -434,11 +434,11 @@ static bool AttrMetasFromJSON(const std::string& json, AttrMetas* metas, std::st
     size_t end = json.find('"', pos);
     if (end != std::string::npos) {
       std::string value = json.substr(pos, end - pos);
-      if (value == "constant") metas->interpolation = Interpolation::Constant;
-      else if (value == "uniform") metas->interpolation = Interpolation::Uniform;
-      else if (value == "varying") metas->interpolation = Interpolation::Varying;
-      else if (value == "vertex") metas->interpolation = Interpolation::Vertex;
-      else if (value == "faceVarying") metas->interpolation = Interpolation::FaceVarying;
+      if (value == "constant") metas->set_interpolation_enum(Interpolation::Constant);
+      else if (value == "uniform") metas->set_interpolation_enum(Interpolation::Uniform);
+      else if (value == "varying") metas->set_interpolation_enum(Interpolation::Varying);
+      else if (value == "vertex") metas->set_interpolation_enum(Interpolation::Vertex);
+      else if (value == "faceVarying") metas->set_interpolation_enum(Interpolation::FaceVarying);
     }
   }
 
@@ -453,7 +453,7 @@ static bool AttrMetasFromJSON(const std::string& json, AttrMetas* metas, std::st
       char* endptr;
       unsigned long val = std::strtoul(value.c_str(), &endptr, 10);
       if (endptr != value.c_str() && *endptr == '\0') {
-        metas->elementSize = static_cast<uint32_t>(val);
+        metas->set_elementSize(static_cast<uint32_t>(val));
       }
     }
   }
@@ -463,9 +463,9 @@ static bool AttrMetasFromJSON(const std::string& json, AttrMetas* metas, std::st
   if (pos != std::string::npos) {
     pos += 9; // length of "hidden":
     if (json.substr(pos, 4) == "true") {
-      metas->hidden = true;
+      metas->set_hidden(true);
     } else if (json.substr(pos, 5) == "false") {
-      metas->hidden = false;
+      metas->set_hidden(false);
     }
   }
 
@@ -480,7 +480,7 @@ static bool AttrMetasFromJSON(const std::string& json, AttrMetas* metas, std::st
       char* endptr;
       double val = std::strtod(value.c_str(), &endptr);
       if (endptr != value.c_str() && *endptr == '\0') {
-        metas->weight = val;
+        metas->set_weight(val);
       }
     }
   }
@@ -493,7 +493,7 @@ static bool AttrMetasFromJSON(const std::string& json, AttrMetas* metas, std::st
     pos++; // skip opening quote
     size_t end = json.find('"', pos);
     if (end != std::string::npos) {
-      metas->displayName = json.substr(pos, end - pos);
+      metas->set_displayName(json.substr(pos, end - pos));
     }
   }
 
@@ -505,7 +505,7 @@ static bool AttrMetasFromJSON(const std::string& json, AttrMetas* metas, std::st
     pos++; // skip opening quote
     size_t end = json.find('"', pos);
     if (end != std::string::npos) {
-      metas->displayGroup = json.substr(pos, end - pos);
+      metas->set_displayGroup(json.substr(pos, end - pos));
     }
   }
 
@@ -1315,44 +1315,44 @@ static std::string PrimMetaToJSON_OLD(const PrimMeta* metas) {
   
   // Basic metadata flags
   oss << "\"active\":";
-  if (metas->active.has_value()) {
-    oss << (metas->active.value() ? "true" : "false");
+  if (metas->has_active()) {
+    oss << (metas->get_active() ? "true" : "false");
   } else {
     oss << "null";
   }
   oss << ",";
   
   oss << "\"hidden\":";
-  if (metas->hidden.has_value()) {
-    oss << (metas->hidden.value() ? "true" : "false");
+  if (metas->has_hidden()) {
+    oss << (metas->get_hidden() ? "true" : "false");
   } else {
     oss << "null";
   }
   oss << ",";
   
   oss << "\"instanceable\":";
-  if (metas->instanceable.has_value()) {
-    oss << (metas->instanceable.value() ? "true" : "false");
+  if (metas->has_instanceable()) {
+    oss << (metas->get_instanceable() ? "true" : "false");
   } else {
     oss << "null";
   }
   oss << ",";
   
   // Kind
-  oss << "\"kind\":\"" << metas->get_kind() << "\",";
+  oss << "\"kind\":\"" << metas->get_kind_str() << "\",";
   
   // Documentation and comment
   oss << "\"documentation\":";
-  if (metas->doc.has_value()) {
-    oss << "\"" << metas->doc.value().value << "\"";
+  if (metas->has_doc()) {
+    oss << "\"" << metas->get_doc().value << "\"";
   } else {
     oss << "null";
   }
   oss << ",";
   
   oss << "\"comment\":";
-  if (metas->comment.has_value()) {
-    oss << "\"" << metas->comment.value().value << "\"";
+  if (metas->has_comment()) {
+    oss << "\"" << metas->get_comment().value << "\"";
   } else {
     oss << "null";
   }
@@ -1360,16 +1360,16 @@ static std::string PrimMetaToJSON_OLD(const PrimMeta* metas) {
   
   // Display name and scene name (extensions)
   oss << "\"displayName\":";
-  if (metas->displayName.has_value()) {
-    oss << "\"" << metas->displayName.value() << "\"";
+  if (metas->has_displayName()) {
+    oss << "\"" << metas->get_displayName() << "\"";
   } else {
     oss << "null";
   }
   oss << ",";
   
   oss << "\"sceneName\":";
-  if (metas->sceneName.has_value()) {
-    oss << "\"" << metas->sceneName.value() << "\"";
+  if (metas->has_sceneName()) {
+    oss << "\"" << metas->get_sceneName() << "\"";
   } else {
     oss << "null";
   }
@@ -1377,31 +1377,58 @@ static std::string PrimMetaToJSON_OLD(const PrimMeta* metas) {
   
   // References count
   oss << "\"hasReferences\":";
-  if (metas->references.has_value() && !metas->references.value().second.empty()) {
-    oss << "true,";
-    oss << "\"referencesCount\":" << metas->references.value().second.size();
+  if (metas->references.has_value()) {
+    size_t total_refs = 0;
+    for (const auto& pair : metas->references.value()) {
+      total_refs += pair.second.size();
+    }
+    if (total_refs > 0) {
+      oss << "true,";
+      oss << "\"referencesCount\":" << total_refs;
+    } else {
+      oss << "false,";
+      oss << "\"referencesCount\":0";
+    }
   } else {
     oss << "false,";
     oss << "\"referencesCount\":0";
   }
   oss << ",";
-  
+
   // Payload count
   oss << "\"hasPayload\":";
-  if (metas->payload.has_value() && !metas->payload.value().second.empty()) {
-    oss << "true,";
-    oss << "\"payloadCount\":" << metas->payload.value().second.size();
+  if (metas->payload.has_value()) {
+    size_t total_payloads = 0;
+    for (const auto& pair : metas->payload.value()) {
+      total_payloads += pair.second.size();
+    }
+    if (total_payloads > 0) {
+      oss << "true,";
+      oss << "\"payloadCount\":" << total_payloads;
+    } else {
+      oss << "false,";
+      oss << "\"payloadCount\":0";
+    }
   } else {
     oss << "false,";
     oss << "\"payloadCount\":0";
   }
   oss << ",";
-  
+
   // Inherits count
   oss << "\"hasInherits\":";
-  if (metas->inherits.has_value() && !metas->inherits.value().second.empty()) {
-    oss << "true,";
-    oss << "\"inheritsCount\":" << metas->inherits.value().second.size();
+  if (metas->inherits.has_value()) {
+    size_t total_inherits = 0;
+    for (const auto& pair : metas->inherits.value()) {
+      total_inherits += pair.second.size();
+    }
+    if (total_inherits > 0) {
+      oss << "true,";
+      oss << "\"inheritsCount\":" << total_inherits;
+    } else {
+      oss << "false,";
+      oss << "\"inheritsCount\":0";
+    }
   } else {
     oss << "false,";
     oss << "\"inheritsCount\":0";
@@ -1430,17 +1457,31 @@ static std::string PrimMetaToJSON_OLD(const PrimMeta* metas) {
   
   // VariantSets info
   oss << "\"hasVariantSets\":";
-  if (metas->variantSets.has_value() && !metas->variantSets.value().second.empty()) {
-    oss << "true,";
-    oss << "\"variantSetsCount\":" << metas->variantSets.value().second.size() << ",";
-    oss << "\"variantSetNames\":[";
-    bool first = true;
-    for (const auto& varSet : metas->variantSets.value().second) {
-      if (!first) oss << ",";
-      oss << "\"" << varSet << "\"";
-      first = false;
+  if (metas->variantSets.has_value()) {
+    size_t total_variantsets = 0;
+    std::vector<std::string> all_varset_names;
+    for (const auto& pair : metas->variantSets.value()) {
+      for (const auto& varSet : pair.second) {
+        all_varset_names.push_back(varSet);
+      }
+      total_variantsets += pair.second.size();
     }
-    oss << "]";
+    if (total_variantsets > 0) {
+      oss << "true,";
+      oss << "\"variantSetsCount\":" << total_variantsets << ",";
+      oss << "\"variantSetNames\":[";
+      bool first = true;
+      for (const auto& varSet : all_varset_names) {
+        if (!first) oss << ",";
+        oss << "\"" << varSet << "\"";
+        first = false;
+      }
+      oss << "]";
+    } else {
+      oss << "false,";
+      oss << "\"variantSetsCount\":0,";
+      oss << "\"variantSetNames\":[]";
+    }
   } else {
     oss << "false,";
     oss << "\"variantSetsCount\":0,";
@@ -1449,8 +1490,8 @@ static std::string PrimMetaToJSON_OLD(const PrimMeta* metas) {
   oss << ",";
   
   // Custom data and unregistered metas
-  oss << "\"hasCustomData\":" << (metas->customData.has_value() ? "true" : "false") << ",";
-  oss << "\"hasAssetInfo\":" << (metas->assetInfo.has_value() ? "true" : "false") << ",";
+  oss << "\"hasCustomData\":" << (metas->has_customData() ? "true" : "false") << ",";
+  oss << "\"hasAssetInfo\":" << (metas->has_assetInfo() ? "true" : "false") << ",";
   oss << "\"unregisteredMetasCount\":" << metas->unregisteredMetas.size() << ",";
   
   // Unregistered metadata names

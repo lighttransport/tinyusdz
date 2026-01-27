@@ -229,10 +229,10 @@ bool NewLayer(Context &ctx, const nlohmann::json &args,
           auto meta_obj = prim_json["metadata"];
 
           if (meta_obj.contains("doc") && meta_obj["doc"].is_string()) {
-            prim_spec.metas().doc = tinyusdz::value::StringData(meta_obj["doc"].get<std::string>());
+            prim_spec.metas().set_doc(meta_obj["doc"].get<std::string>());
           }
           if (meta_obj.contains("comment") && meta_obj["comment"].is_string()) {
-            prim_spec.metas().comment = tinyusdz::value::StringData(meta_obj["comment"].get<std::string>());
+            prim_spec.metas().set_comment(meta_obj["comment"].get<std::string>());
           }
         }
 
@@ -691,20 +691,22 @@ bool ListReferences(Context &ctx, const nlohmann::json &args,
     // Access references from PrimMeta
     const auto &metas = prim_spec.metas();
     if (metas.references.has_value()) {
-      const auto &refs_pair = metas.references.value();
-      const auto &listop = refs_pair.first;
-      const auto &refs = refs_pair.second;
+      const auto &refs_pairs = metas.references.value();
+      for (const auto &refs_pair : refs_pairs) {
+        const auto &listop = refs_pair.first;
+        const auto &refs = refs_pair.second;
 
-      for (const auto &ref : refs) {
-        nlohmann::json item;
-        item["primName"] = prim_name_iter;
-        item["assetPath"] = ref.asset_path.GetAssetPath();
-        item["primPath"] = ref.prim_path.prim_part();
-        item["listOp"] = ListEditQualToString(listop);
-        item["layerOffset"] = nlohmann::json::object();
-        item["layerOffset"]["offset"] = ref.layerOffset._offset;
-        item["layerOffset"]["scale"] = ref.layerOffset._scale;
-        references_array.push_back(item);
+        for (const auto &ref : refs) {
+          nlohmann::json item;
+          item["primName"] = prim_name_iter;
+          item["assetPath"] = ref.asset_path.GetAssetPath();
+          item["primPath"] = ref.prim_path.prim_part();
+          item["listOp"] = ListEditQualToString(listop);
+          item["layerOffset"] = nlohmann::json::object();
+          item["layerOffset"]["offset"] = ref.layerOffset._offset;
+          item["layerOffset"]["scale"] = ref.layerOffset._scale;
+          references_array.push_back(item);
+        }
       }
     }
   }
@@ -760,20 +762,22 @@ bool ListPayloads(Context &ctx, const nlohmann::json &args,
     // Access payloads from PrimMeta
     const auto &metas = prim_spec.metas();
     if (metas.payload.has_value()) {
-      const auto &payload_pair = metas.payload.value();
-      const auto &listop = payload_pair.first;
-      const auto &payloads = payload_pair.second;
+      const auto &payload_pairs = metas.payload.value();
+      for (const auto &payload_pair : payload_pairs) {
+        const auto &listop = payload_pair.first;
+        const auto &payloads = payload_pair.second;
 
-      for (const auto &payload : payloads) {
-        nlohmann::json item;
-        item["primName"] = prim_name_iter;
-        item["assetPath"] = payload.asset_path.GetAssetPath();
-        item["primPath"] = payload.prim_path.prim_part();
-        item["listOp"] = ListEditQualToString(listop);
-        item["layerOffset"] = nlohmann::json::object();
-        item["layerOffset"]["offset"] = payload.layerOffset._offset;
-        item["layerOffset"]["scale"] = payload.layerOffset._scale;
-        payloads_array.push_back(item);
+        for (const auto &payload : payloads) {
+          nlohmann::json item;
+          item["primName"] = prim_name_iter;
+          item["assetPath"] = payload.asset_path.GetAssetPath();
+          item["primPath"] = payload.prim_path.prim_part();
+          item["listOp"] = ListEditQualToString(listop);
+          item["layerOffset"] = nlohmann::json::object();
+          item["layerOffset"]["offset"] = payload.layerOffset._offset;
+          item["layerOffset"]["scale"] = payload.layerOffset._scale;
+          payloads_array.push_back(item);
+        }
       }
     }
   }
@@ -1141,21 +1145,21 @@ bool GetPrim(Context &ctx, const nlohmann::json &args,
       const auto &metas = prim_spec.metas();
       nlohmann::json metas_json = nlohmann::json::object();
 
-      if (metas.doc.has_value()) {
-        metas_json["doc"] = metas.doc.value().value;
+      if (metas.has_doc()) {
+        metas_json["doc"] = metas.get_doc().value;
       }
-      if (metas.comment.has_value()) {
-        metas_json["comment"] = metas.comment.value().value;
+      if (metas.has_comment()) {
+        metas_json["comment"] = metas.get_comment().value;
       }
-      if (metas.hidden.has_value()) {
-        metas_json["hidden"] = metas.hidden.value();
+      if (metas.has_hidden()) {
+        metas_json["hidden"] = metas.get_hidden();
       }
-      if (metas.active.has_value()) {
-        metas_json["active"] = metas.active.value();
+      if (metas.has_active()) {
+        metas_json["active"] = metas.get_active();
       }
-      if (metas.kind.has_value()) {
+      if (metas.has_kind()) {
         // Kind is an enum, convert to string
-        Kind k = metas.kind.value();
+        Kind k = metas.get_kind_enum();
         std::string kind_str;
         switch (k) {
           case Kind::Model: kind_str = "model"; break;
@@ -1165,7 +1169,7 @@ bool GetPrim(Context &ctx, const nlohmann::json &args,
           case Kind::Subcomponent: kind_str = "subcomponent"; break;
           case Kind::SceneLibrary: kind_str = "sceneLibrary"; break;
           case Kind::UserDef: kind_str = "userDef"; break;
-          default: kind_str = "invalid"; break;
+          case Kind::Invalid: kind_str = "invalid"; break;
         }
         metas_json["kind"] = kind_str;
       }
@@ -1177,24 +1181,28 @@ bool GetPrim(Context &ctx, const nlohmann::json &args,
       // Add composition arcs
       if (metas.references.has_value()) {
         nlohmann::json refs_json = nlohmann::json::array();
-        const auto &refs_pair = metas.references.value();
-        for (const auto &ref : refs_pair.second) {
-          nlohmann::json ref_json = nlohmann::json::object();
-          ref_json["assetPath"] = ref.asset_path.GetAssetPath();
-          ref_json["primPath"] = ref.prim_path.prim_part();
-          refs_json.push_back(ref_json);
+        const auto &refs_pairs = metas.references.value();
+        for (const auto &refs_pair : refs_pairs) {
+          for (const auto &ref : refs_pair.second) {
+            nlohmann::json ref_json = nlohmann::json::object();
+            ref_json["assetPath"] = ref.asset_path.GetAssetPath();
+            ref_json["primPath"] = ref.prim_path.prim_part();
+            refs_json.push_back(ref_json);
+          }
         }
         prim_json["references"] = refs_json;
       }
 
       if (metas.payload.has_value()) {
         nlohmann::json payloads_json = nlohmann::json::array();
-        const auto &payload_pair = metas.payload.value();
-        for (const auto &payload : payload_pair.second) {
-          nlohmann::json payload_json = nlohmann::json::object();
-          payload_json["assetPath"] = payload.asset_path.GetAssetPath();
-          payload_json["primPath"] = payload.prim_path.prim_part();
-          payloads_json.push_back(payload_json);
+        const auto &payload_pairs = metas.payload.value();
+        for (const auto &payload_pair : payload_pairs) {
+          for (const auto &payload : payload_pair.second) {
+            nlohmann::json payload_json = nlohmann::json::object();
+            payload_json["assetPath"] = payload.asset_path.GetAssetPath();
+            payload_json["primPath"] = payload.prim_path.prim_part();
+            payloads_json.push_back(payload_json);
+          }
         }
         prim_json["payloads"] = payloads_json;
       }
@@ -1324,7 +1332,7 @@ bool AddProp(Context &ctx, const nlohmann::json &args,
         if (is_numeric) {
           // Use strtod for safer parsing without exceptions
           d = std::strtod(value.c_str(), nullptr);
-          attr.set_value(d);
+          attr.set_value(static_cast<double>(d));
           attr.set_type_name("double");
         } else {
           attr.set_value(tinyusdz::value::token(value));
@@ -1333,7 +1341,7 @@ bool AddProp(Context &ctx, const nlohmann::json &args,
       } else if (!value.empty() && std::all_of(value.begin(), value.end(), ::isdigit)) {
         // Likely an integer - use strtoll without exceptions
         int64_t i = std::strtoll(value.c_str(), nullptr, 10);
-        attr.set_value(i);
+        attr.set_value(static_cast<int64_t>(i));
         attr.set_type_name("int64");
       } else {
         // Default to token
@@ -1807,14 +1815,14 @@ bool GetPrimMeta(Context &ctx, const nlohmann::json &args,
 
   nlohmann::json meta_json = nlohmann::json::object();
 
-  if (prim_metas.active.has_value()) {
-    meta_json["active"] = prim_metas.active.value();
+  if (prim_metas.has_active()) {
+    meta_json["active"] = prim_metas.get_active();
   }
-  if (prim_metas.hidden.has_value()) {
-    meta_json["hidden"] = prim_metas.hidden.value();
+  if (prim_metas.has_hidden()) {
+    meta_json["hidden"] = prim_metas.get_hidden();
   }
-  if (prim_metas.kind.has_value()) {
-    Kind k = prim_metas.kind.value();
+  if (prim_metas.has_kind()) {
+    Kind k = prim_metas.get_kind_enum();
     if (k == Kind::Model) {
       meta_json["kind"] = "model";
     } else if (k == Kind::Group) {
@@ -1829,16 +1837,18 @@ bool GetPrimMeta(Context &ctx, const nlohmann::json &args,
       meta_json["kind"] = "sceneLibrary";
     } else if (k == Kind::UserDef) {
       meta_json["kind"] = "userDef";
+    } else if (k == Kind::Invalid) {
+      meta_json["kind"] = "invalid";
     }
   }
-  if (prim_metas.doc.has_value()) {
-    meta_json["doc"] = prim_metas.doc.value().value;
+  if (prim_metas.has_doc()) {
+    meta_json["doc"] = prim_metas.get_doc().value;
   }
-  if (prim_metas.comment.has_value()) {
-    meta_json["comment"] = prim_metas.comment.value().value;
+  if (prim_metas.has_comment()) {
+    meta_json["comment"] = prim_metas.get_comment().value;
   }
-  if (prim_metas.displayName.has_value()) {
-    meta_json["displayName"] = prim_metas.displayName.value();
+  if (prim_metas.has_displayName()) {
+    meta_json["displayName"] = prim_metas.get_displayName();
   }
 
   result["content"] = nlohmann::json::array();
@@ -1919,26 +1929,26 @@ bool AddPrimMeta(Context &ctx, const nlohmann::json &args,
   auto &prim_metas = prim_spec.metas();
 
   if (meta_key == "active") {
-    prim_metas.active = (meta_value == "true" || meta_value == "1");
+    prim_metas.set_active(meta_value == "true" || meta_value == "1");
   } else if (meta_key == "hidden") {
-    prim_metas.hidden = (meta_value == "true" || meta_value == "1");
+    prim_metas.set_hidden(meta_value == "true" || meta_value == "1");
   } else if (meta_key == "doc") {
-    prim_metas.doc = tinyusdz::value::StringData(meta_value);
+    prim_metas.set_doc(meta_value);
   } else if (meta_key == "comment") {
-    prim_metas.comment = tinyusdz::value::StringData(meta_value);
+    prim_metas.set_comment(meta_value);
   } else if (meta_key == "displayName") {
-    prim_metas.displayName = meta_value;
+    prim_metas.set_displayName(meta_value);
   } else if (meta_key == "kind") {
     if (meta_value == "model") {
-      prim_metas.kind = Kind::Model;
+      prim_metas.set_kind(Kind::Model);
     } else if (meta_value == "group") {
-      prim_metas.kind = Kind::Group;
+      prim_metas.set_kind(Kind::Group);
     } else if (meta_value == "assembly") {
-      prim_metas.kind = Kind::Assembly;
+      prim_metas.set_kind(Kind::Assembly);
     } else if (meta_value == "component") {
-      prim_metas.kind = Kind::Component;
+      prim_metas.set_kind(Kind::Component);
     } else if (meta_value == "subcomponent") {
-      prim_metas.kind = Kind::Subcomponent;
+      prim_metas.set_kind(Kind::Subcomponent);
     } else {
       err = "Invalid kind value: " + meta_value;
       return false;
@@ -2025,17 +2035,17 @@ bool DelPrimMeta(Context &ctx, const nlohmann::json &args,
   auto &prim_metas = prim_spec.metas();
 
   if (meta_key == "active") {
-    prim_metas.active = nonstd::nullopt;
+    prim_metas.remove_active();
   } else if (meta_key == "hidden") {
-    prim_metas.hidden = nonstd::nullopt;
+    prim_metas.remove_hidden();
   } else if (meta_key == "doc") {
-    prim_metas.doc = nonstd::nullopt;
+    prim_metas.remove_doc();
   } else if (meta_key == "comment") {
-    prim_metas.comment = nonstd::nullopt;
+    prim_metas.remove_comment();
   } else if (meta_key == "displayName") {
-    prim_metas.displayName = nonstd::nullopt;
+    prim_metas.remove_displayName();
   } else if (meta_key == "kind") {
-    prim_metas.kind = nonstd::nullopt;
+    prim_metas.remove_kind();
   } else {
     err = "Unknown or cannot delete prim metadata key: " + meta_key;
     return false;
@@ -2135,22 +2145,22 @@ bool GetAttrMeta(Context &ctx, const nlohmann::json &args,
   nlohmann::json meta_json = nlohmann::json::object();
 
   // Get all available metadata
-  if (attr_metas.comment) {
-    meta_json["comment"] = attr_metas.comment.value().value;
+  if (attr_metas.has_comment()) {
+    meta_json["comment"] = attr_metas.get_comment().value;
   }
-  if (attr_metas.hidden) {
-    meta_json["hidden"] = attr_metas.hidden.value();
+  if (attr_metas.has_hidden()) {
+    meta_json["hidden"] = attr_metas.get_hidden();
   }
-  if (attr_metas.displayName) {
-    meta_json["displayName"] = attr_metas.displayName.value();
+  if (attr_metas.has_displayName()) {
+    meta_json["displayName"] = attr_metas.get_displayName();
   }
-  if (attr_metas.displayGroup) {
-    meta_json["displayGroup"] = attr_metas.displayGroup.value();
+  if (attr_metas.has_displayGroup()) {
+    meta_json["displayGroup"] = attr_metas.get_displayGroup();
   }
-  if (attr_metas.interpolation) {
+  if (attr_metas.has_interpolation()) {
     // Convert interpolation enum to string
     std::string interp_str;
-    switch (attr_metas.interpolation.value()) {
+    switch (attr_metas.get_interpolation_enum()) {
       case Interpolation::Constant:
         interp_str = "constant";
         break;
@@ -2166,8 +2176,9 @@ bool GetAttrMeta(Context &ctx, const nlohmann::json &args,
       case Interpolation::FaceVarying:
         interp_str = "faceVarying";
         break;
-      default:
-        interp_str = "unknown";
+      case Interpolation::Invalid:
+        interp_str = "invalid";
+        break;
     }
     meta_json["interpolation"] = interp_str;
   }
@@ -2260,8 +2271,7 @@ bool AddAttrMeta(Context &ctx, const nlohmann::json &args,
   // Update metadata by key
   if (meta_key == "comment") {
     std::string comment_str = args["value"];
-    tinyusdz::value::StringData comment_data(comment_str);
-    attr_metas.comment = comment_data;
+    attr_metas.set_comment(comment_str);
   } else if (meta_key == "hidden") {
     bool hidden_val = false;
     if (args["value"].is_boolean()) {
@@ -2270,13 +2280,13 @@ bool AddAttrMeta(Context &ctx, const nlohmann::json &args,
       std::string val_str = args["value"].get<std::string>();
       hidden_val = (val_str == "true" || val_str == "1");
     }
-    attr_metas.hidden = hidden_val;
+    attr_metas.set_hidden(hidden_val);
   } else if (meta_key == "displayName") {
     std::string display_name = args["value"];
-    attr_metas.displayName = display_name;
+    attr_metas.set_displayName(display_name);
   } else if (meta_key == "displayGroup") {
     std::string display_group = args["value"];
-    attr_metas.displayGroup = display_group;
+    attr_metas.set_displayGroup(display_group);
   } else if (meta_key == "interpolation") {
     std::string interp_str = args["value"];
     Interpolation interp_val = Interpolation::Varying; // default
@@ -2291,7 +2301,7 @@ bool AddAttrMeta(Context &ctx, const nlohmann::json &args,
     } else if (interp_str == "faceVarying") {
       interp_val = Interpolation::FaceVarying;
     }
-    attr_metas.interpolation = interp_val;
+    attr_metas.set_interpolation_enum(interp_val);
   } else {
     err = "Unknown or read-only attribute metadata key: " + meta_key;
     return false;
@@ -2384,15 +2394,15 @@ bool DelAttrMeta(Context &ctx, const nlohmann::json &args,
 
   // Clear metadata for given key
   if (meta_key == "comment") {
-    attr_metas.comment = nonstd::nullopt;
+    attr_metas.remove_comment();
   } else if (meta_key == "hidden") {
-    attr_metas.hidden = nonstd::nullopt;
+    attr_metas.remove_hidden();
   } else if (meta_key == "displayName") {
-    attr_metas.displayName = nonstd::nullopt;
+    attr_metas.remove_displayName();
   } else if (meta_key == "displayGroup") {
-    attr_metas.displayGroup = nonstd::nullopt;
+    attr_metas.remove_displayGroup();
   } else if (meta_key == "interpolation") {
-    attr_metas.interpolation = nonstd::nullopt;
+    attr_metas.remove_interpolation();
   } else {
     err = "Cannot delete unknown attribute metadata key: " + meta_key;
     return false;
