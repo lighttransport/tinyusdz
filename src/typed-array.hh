@@ -110,6 +110,10 @@ class TypedArray {
     return _storage.max_size() / sizeof(T);
   }
 
+  size_type memory_usage() const noexcept {
+    return _storage.capacity();
+  }
+
   // Data access
   pointer data() noexcept {
     return reinterpret_cast<pointer>(_storage.data());

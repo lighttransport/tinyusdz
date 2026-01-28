@@ -462,6 +462,10 @@ private:
   // Layer/PrimSpec conversion helpers
   // ======================================================================
 
+  /// Build fields for a PrimSpec (shared by PrimSpec/VariantSpec writers)
+  bool BuildPrimSpecFields(const PrimSpec& primspec, const Path& prim_path,
+                           crate::FieldValuePairVector& fields, std::string* err);
+
   /// Convert a PrimSpec and its children recursively
   bool ConvertPrimSpecRecursive(const PrimSpec& primspec, const Path& parent_path, std::string* err);
 
@@ -491,12 +495,24 @@ private:
                                  const VariantSet& variantset,
                                  const Path& parent_path, std::string* err);
 
+  /// Convert a VariantSetSpec to separate specs (Layer/PrimSpec variant data)
+  bool ConvertVariantSetSpecToFields(const std::string& variantset_name,
+                                     const VariantSetSpec& variantset,
+                                     const Path& parent_path, std::string* err);
+
   /// Convert a Variant to separate spec (proper USD format)
   /// Creates a spec with SpecType::Variant containing variant properties and children
   bool ConvertVariantToFields(const std::string& variant_name,
                               const Variant& variant,
                               const Path& variantset_path,
                               const std::string& variantset_name, std::string* err);
+
+  /// Convert a Variant PrimSpec to separate spec (Layer/PrimSpec variant data)
+  bool ConvertVariantSpecToFields(const std::string& variant_name,
+                                  const PrimSpec& variant_primspec,
+                                  const Path& parent_prim_path,
+                                  const std::string& variantset_name,
+                                  std::string* err);
 
   // ======================================================================
   // Value encoding

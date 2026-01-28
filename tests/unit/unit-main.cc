@@ -25,6 +25,7 @@
 #include "unit-stage.h"
 #include "unit-tiny-container.h"
 #include "unit-usda-roundtrip.h"
+#include "unit-usdc-reconstruct.h"
 #include "unit-half-roundtrip.h"
 
 #if defined(TINYUSDZ_WITH_PXR_COMPAT_API)
@@ -41,9 +42,11 @@ TEST_LIST = {
   { "ascii_parse_string_array_test", ascii_parse_string_array_test },
   { "prim_type_test", prim_type_test },
   { "prim_add_test", prim_add_test },
+  { "prim_element_name_test", prim_element_name_test },
   { "primvar_test", primvar_test },
   { "value_types_test", value_types_test },
   { "role_type_cast_test", role_type_cast_test },
+  { "value_types_typed_array_memory_test", value_types_typed_array_memory_test },
   { "xformOp_test", xformOp_test },
   { "customdata_test", customdata_test },
   { "handle_allocator_test", handle_allocator_test },
@@ -146,6 +149,27 @@ TEST_LIST = {
   { "crate_writer_specializes_test", crate_writer_specializes_test },
   { "stage_get_prim_at_path_test", stage_get_prim_at_path_test },
   { "stage_find_prim_by_id_test", stage_find_prim_by_id_test },
+  { "usdc_reconstruct_variant_properties_test", usdc_reconstruct_variant_properties_test },
+  { "usdc_reconstruct_variant_prim_children_test", usdc_reconstruct_variant_prim_children_test },
+  { "usdc_reconstruct_nested_variant_sets_test", usdc_reconstruct_nested_variant_sets_test },
+  { "usdc_reconstruct_variant_name_collision_test", usdc_reconstruct_variant_name_collision_test },
+  { "usdc_reconstruct_variant_selection_test", usdc_reconstruct_variant_selection_test },
+  { "usdc_memory_budget_customdata_limit_test", usdc_memory_budget_customdata_limit_test },
+  { "usdc_memory_budget_customdata_success_test", usdc_memory_budget_customdata_success_test },
+  { "usdc_memory_budget_references_limit_test", usdc_memory_budget_references_limit_test },
+  { "usdc_memory_budget_references_success_test", usdc_memory_budget_references_success_test },
+  { "usdc_memory_budget_stage_meta_sublayers_limit_test", usdc_memory_budget_stage_meta_sublayers_limit_test },
+  { "usdc_memory_budget_stage_meta_sublayers_success_test", usdc_memory_budget_stage_meta_sublayers_success_test },
+  { "usdc_memory_budget_stage_meta_customdata_limit_test", usdc_memory_budget_stage_meta_customdata_limit_test },
+  { "usdc_memory_budget_stage_meta_customdata_success_test", usdc_memory_budget_stage_meta_customdata_success_test },
+  { "usdc_memory_budget_composition_limit_test", usdc_memory_budget_composition_limit_test },
+  { "usdc_memory_budget_composition_success_test", usdc_memory_budget_composition_success_test },
+  { "usdc_layer_variant_roundtrip_test", usdc_layer_variant_roundtrip_test },
+  { "usdc_layer_variant_nested_roundtrip_test", usdc_layer_variant_nested_roundtrip_test },
+  { "usdc_stage_variant_roundtrip_test", usdc_stage_variant_roundtrip_test },
+  { "usdc_layer_nested_variant_sets_test", usdc_layer_nested_variant_sets_test },
+  { "usdc_layer_variant_name_collision_test", usdc_layer_variant_name_collision_test },
+  { "usdc_layer_variant_selection_test", usdc_layer_variant_selection_test },
   { "stack_vector_basic_test", stack_vector_basic_test },
   { "stack_vector_overflow_test", stack_vector_overflow_test },
   { "stack_vector_copy_test", stack_vector_copy_test },

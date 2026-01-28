@@ -7,6 +7,7 @@
 
 #include <map>
 #include <string>
+#include <utility>
 
 #include "nonstd/optional.hpp"
 #include "value-types.hh"
@@ -91,6 +92,16 @@ class MetaVariable {
     // TODO: Check T is supported type for Metadatum.
     _value = v;
 
+    _name = name;
+  }
+
+  void set_value(value::Value &&v) {
+    _value = std::move(v);
+    _name = std::string();
+  }
+
+  void set_value(const std::string &name, value::Value &&v) {
+    _value = std::move(v);
     _name = name;
   }
 

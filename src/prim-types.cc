@@ -938,6 +938,7 @@ nonstd::optional<std::string> GetPrimElementName(const value::Value &v) {
   EXTRACT_NAME_AND_RETURN_PATH(GeomSubset)
   EXTRACT_NAME_AND_RETURN_PATH(GeomCamera)
   EXTRACT_NAME_AND_RETURN_PATH(GeomBasisCurves)
+  EXTRACT_NAME_AND_RETURN_PATH(GeomPointInstancer)
   EXTRACT_NAME_AND_RETURN_PATH(DomeLight)
   EXTRACT_NAME_AND_RETURN_PATH(SphereLight)
   EXTRACT_NAME_AND_RETURN_PATH(CylinderLight)
@@ -994,6 +995,7 @@ bool SetPrimElementName(value::Value &v, const std::string &elementName) {
   SET_ELEMENT_NAME(elementName, GeomSubset)
   SET_ELEMENT_NAME(elementName, GeomCamera)
   SET_ELEMENT_NAME(elementName, GeomBasisCurves)
+  SET_ELEMENT_NAME(elementName, GeomPointInstancer)
   SET_ELEMENT_NAME(elementName, DomeLight)
   SET_ELEMENT_NAME(elementName, SphereLight)
   SET_ELEMENT_NAME(elementName, CylinderLight)
@@ -1904,6 +1906,48 @@ size_t Property::estimate_memory_usage() const {
   return total;
 }
 
+namespace {
+
+size_t EstimateMetaVariableMemory(const MetaVariable &var) {
+  size_t total = sizeof(MetaVariable);
+  total += var.get_name().capacity();
+
+  const value::Value &raw = var.get_raw_value();
+  if (auto *nested = raw.as<CustomDataType>()) {
+    size_t nested_total = sizeof(CustomDataType);
+    for (const auto &kv : *nested) {
+      nested_total += kv.first.capacity();
+      nested_total += EstimateMetaVariableMemory(kv.second);
+    }
+    total += nested_total;
+  } else {
+    total += raw.estimate_memory_usage();
+  }
+
+  return total;
+}
+
+size_t EstimateDictionaryMemory(const Dictionary &dict) {
+  size_t total = sizeof(Dictionary);
+  for (const auto &kv : dict) {
+    total += kv.first.capacity();
+    total += EstimateMetaVariableMemory(kv.second);
+  }
+  return total;
+}
+
+size_t EstimateAttrMetaMemory(const AttrMeta &meta) {
+  size_t total = sizeof(AttrMeta);
+  total += EstimateDictionaryMemory(meta.data());
+  total += sizeof(value::StringData) * meta.stringData.size();
+  for (const auto &s : meta.stringData) {
+    total += s.value.capacity();
+  }
+  return total;
+}
+
+}  // namespace
+
 size_t Relationship::estimate_memory_usage() const {
   size_t total = sizeof(Relationship);
 
@@ -1912,6 +1956,8 @@ size_t Relationship::estimate_memory_usage() const {
     // Path internally contains strings, estimate their capacity
     total += path.full_path_name().size();
   }
+
+  total += EstimateAttrMetaMemory(_metas);
 
   return total;
 }
@@ -1924,11 +1970,13 @@ size_t Attribute::estimate_memory_usage() const {
   total += _name.capacity();
   total += _type_name.capacity();
 
-  // PrimVar memory - basic estimate
-  // TODO: For more accurate estimation, PrimVar should have its own estimate_memory_usage method
-  total += sizeof(primvar::PrimVar);
-  // The PrimVar contains value::Value and value::TimeSamples which can be large
-  // This is a basic estimate - actual size depends on the stored data type and time samples
+  // PrimVar memory - include value/time sample storage without double-counting base struct size
+  size_t primvar_estimate = _var.estimate_memory_usage();
+  if (primvar_estimate >= sizeof(primvar::PrimVar)) {
+    total += primvar_estimate - sizeof(primvar::PrimVar);
+  } else {
+    total += primvar_estimate;
+  }
 
   // Connection paths
   total += _paths.capacity() * sizeof(Path);
@@ -1937,9 +1985,8 @@ size_t Attribute::estimate_memory_usage() const {
     total += path.full_path_name().capacity();
   }
 
-  // Attribute metadata
-  total += sizeof(AttrMeta); // Basic size of metadata structure
-  // TODO: Add detailed AttrMeta internal memory estimation if needed
+  // Attribute metadata (dictionary + stringData)
+  total += EstimateAttrMetaMemory(_metas);
 
   return total;
 }
