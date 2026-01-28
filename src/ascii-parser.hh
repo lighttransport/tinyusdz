@@ -10,9 +10,12 @@
 #include <stdio.h>
 
 #include <stack>
+#include <string>
+#include <vector>
 
 // #include "external/better-enums/enum.h"
 #include "composition.hh"
+#include "memory-budget.hh"
 #include "prim-types.hh"
 #include "stream-reader.hh"
 #include "string-similarity.hh"
@@ -449,7 +452,7 @@ class AsciiParser {
   /// Set memory limit in MB
   ///
   void SetMaxMemoryLimit(size_t limit_mb) {
-    _max_memory_limit_bytes = limit_mb * 1024ull * 1024ull;
+    _memory_manager.SetMaxBudget(limit_mb * 1024ull * 1024ull);
   }
 
   ///
@@ -1137,8 +1140,90 @@ class AsciiParser {
   StageMetas _stage_metas;
 
   // Memory tracking
-  uint64_t _max_memory_limit_bytes{128ull * 1024ull * 1024ull * 1024ull}; // Default 128GB
-  uint64_t _memory_usage{0};
+  MemoryBudgetManager _memory_manager{128ull * 1024ull * 1024ull * 1024ull}; // Default 128GB
+
+  bool CheckAndReserveMemory(uint64_t bytes) {
+    if (!_memory_manager.CheckAndReserve(bytes)) {
+      PushError("Memory limit exceeded. Limit: " +
+                std::to_string(_memory_manager.GetMaxBudget() / (1024 * 1024)) +
+                " MB, Current usage: " +
+                std::to_string(_memory_manager.GetCurrentUsage() / (1024 * 1024)) +
+                " MB");
+      return false;
+    }
+    return true;
+  }
+
+  void ReleaseMemory(uint64_t bytes) { _memory_manager.Release(bytes); }
+
+  bool ReserveStringLikeMemory(const std::string &str) {
+    return CheckAndReserveMemory(uint64_t(str.size()));
+  }
+
+  bool ReserveStringLikeMemory(const value::StringData &str) {
+    return CheckAndReserveMemory(uint64_t(str.value.size()));
+  }
+
+  bool ReserveStringLikeMemory(const value::AssetPath &path) {
+    return CheckAndReserveMemory(uint64_t(path.GetAssetPath().size()));
+  }
+
+  template <typename T>
+  bool ReserveStringLikeMemory(const std::vector<T> &vec) {
+    for (const auto &item : vec) {
+      if (!ReserveStringLikeMemory(item)) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  template <typename T>
+  bool ReserveStringLikeMemory(const T &) {
+    return true;
+  }
+
+  bool ReserveStringLikeMemory(const value::Value &v);
+  bool ReserveMetaVariableMemory(const MetaVariable &var);
+  bool ReserveDictionaryStringMemory(const Dictionary &dict);
+
+  template <typename T>
+  bool ReserveVectorGrowth(const std::vector<T> &vec, size_t old_capacity) {
+    size_t new_capacity = vec.capacity();
+    if (new_capacity > old_capacity) {
+      return CheckAndReserveMemory(uint64_t(new_capacity - old_capacity) * sizeof(T));
+    }
+    return true;
+  }
+
+  template <typename T>
+  bool ReserveTypedArrayGrowth(const TypedArray<T> &arr, size_t old_capacity) {
+    size_t new_capacity = arr.capacity();
+    if (new_capacity > old_capacity) {
+      return CheckAndReserveMemory(uint64_t(new_capacity - old_capacity) * sizeof(T));
+    }
+    return true;
+  }
+
+  template <typename T>
+  class ScopedVectorMemoryRelease {
+   public:
+    ScopedVectorMemoryRelease(AsciiParser *parser, std::vector<T> *vec)
+        : parser_(parser), vec_(vec) {}
+
+    ~ScopedVectorMemoryRelease() {
+      if (parser_ && vec_) {
+        parser_->ReleaseMemory(uint64_t(vec_->capacity()) * sizeof(T));
+      }
+    }
+
+    ScopedVectorMemoryRelease(const ScopedVectorMemoryRelease &) = delete;
+    ScopedVectorMemoryRelease &operator=(const ScopedVectorMemoryRelease &) = delete;
+
+   private:
+    AsciiParser *parser_;
+    std::vector<T> *vec_;
+  };
 
   //
   // Callbacks

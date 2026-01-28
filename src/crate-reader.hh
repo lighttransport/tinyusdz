@@ -70,6 +70,10 @@ struct CrateReaderConfig {
 
   ///< Total memory budget for uncompressed data in bytes (default 2GB)
   size_t maxMemoryBudget = std::numeric_limits<int32_t>::max();
+
+  /// Optional external memory budget manager shared with other components.
+  /// If set, CrateReader uses this manager instead of an internal one.
+  MemoryBudgetManager *memory_budget_manager = nullptr;
 };
 
 // Enable SoA (Struct of Arrays) layout for TypedTimeSamples
@@ -238,7 +242,7 @@ class CrateReader {
 
   // Approximated memory usage in [mb]
   size_t GetMemoryUsageInMB() const {
-    return memory_manager_.GetUsageInMB();
+    return memory_manager_->GetUsageInMB();
   }
 
   /// -------------------------------------
@@ -541,8 +545,9 @@ class CrateReader {
 
   CrateReaderConfig _config;
 
-  // RAII Memory budget manager
-  mutable MemoryBudgetManager memory_manager_;
+  // RAII Memory budget manager (owned) and optional external manager.
+  mutable MemoryBudgetManager owned_memory_manager_;
+  MemoryBudgetManager *memory_manager_{nullptr};
 
   // TimeSamples deduplication caches: ValueRep -> decoded value
   // Caches decoded values to avoid redundant file reads when same ValueRep appears

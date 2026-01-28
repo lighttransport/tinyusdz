@@ -24,6 +24,7 @@
 #include <set>
 #include <sstream>
 #include <stack>
+#include <utility>
 #if defined(__wasi__)
 #else
 #include <mutex>
@@ -52,18 +53,13 @@
 #include "external/fast_float/include/fast_float/fast_float.h"
 
 #define CHECK_MEMORY_USAGE(__nbytes) do { \
-  _memory_usage += (__nbytes); \
-  if (_memory_usage > _max_memory_limit_bytes) { \
-    PushError(fmt::format("Memory limit exceeded. Limit: {} MB, Current usage: {} MB", \
-      _max_memory_limit_bytes / (1024*1024), _memory_usage / (1024*1024))); \
+  if (!CheckAndReserveMemory(__nbytes)) { \
     return false; \
-  }  \
+  } \
   } while(0)
 
 #define REDUCE_MEMORY_USAGE(__nbytes) do { \
-  if (_memory_usage >= (__nbytes)) { \
-    _memory_usage -= (__nbytes); \
-  } \
+  ReleaseMemory(__nbytes); \
   } while(0)
 #include "external/jsteemann/atoi.h"
 //#include "external/simple_match/include/simple_match/simple_match.hpp"
@@ -197,6 +193,8 @@ bool AsciiParser::ParseMatrix(value::matrix2f *result) {
   }
 
   std::vector<std::array<float, 2>> content;
+  ScopedVectorMemoryRelease<std::array<float, 2>> content_release(this, &content);
+  (void)content_release;
   if (!SepBy1TupleType<float, 2>(',', &content)) {
     return false;
   }
@@ -226,6 +224,8 @@ bool AsciiParser::ParseMatrix(value::matrix3f *result) {
   }
 
   std::vector<std::array<float, 3>> content;
+  ScopedVectorMemoryRelease<std::array<float, 3>> content_release(this, &content);
+  (void)content_release;
   if (!SepBy1TupleType<float, 3>(',', &content)) {
     return false;
   }
@@ -256,6 +256,8 @@ bool AsciiParser::ParseMatrix(value::matrix4f *result) {
   }
 
   std::vector<std::array<float, 4>> content;
+  ScopedVectorMemoryRelease<std::array<float, 4>> content_release(this, &content);
+  (void)content_release;
   if (!SepBy1TupleType<float, 4>(',', &content)) {
     return false;
   }
@@ -287,6 +289,8 @@ bool AsciiParser::ParseMatrix(value::matrix2d *result) {
   }
 
   std::vector<std::array<double, 2>> content;
+  ScopedVectorMemoryRelease<std::array<double, 2>> content_release(this, &content);
+  (void)content_release;
   if (!SepBy1TupleType<double, 2>(',', &content)) {
     return false;
   }
@@ -316,6 +320,8 @@ bool AsciiParser::ParseMatrix(value::matrix3d *result) {
   }
 
   std::vector<std::array<double, 3>> content;
+  ScopedVectorMemoryRelease<std::array<double, 3>> content_release(this, &content);
+  (void)content_release;
   if (!SepBy1TupleType<double, 3>(',', &content)) {
     return false;
   }
@@ -346,6 +352,8 @@ bool AsciiParser::ParseMatrix(value::matrix4d *result) {
   }
 
   std::vector<std::array<double, 4>> content;
+  ScopedVectorMemoryRelease<std::array<double, 4>> content_release(this, &content);
+  (void)content_release;
   if (!SepBy1TupleType<double, 4>(',', &content)) {
     return false;
   }
@@ -1992,8 +2000,11 @@ bool AsciiParser::SepBy1BasicType(const char sep,
       return false;
     }
 
-    CHECK_MEMORY_USAGE(sizeof(nonstd::optional<T>) + sizeof(T));
+    size_t old_capacity = result->capacity();
     result->push_back(value);
+    if (!ReserveVectorGrowth(*result, old_capacity)) {
+      return false;
+    }
   }
 
   while (!Eof()) {
@@ -2022,8 +2033,11 @@ bool AsciiParser::SepBy1BasicType(const char sep,
       break;
     }
 
-    CHECK_MEMORY_USAGE(sizeof(nonstd::optional<T>) + sizeof(T));
+    size_t old_capacity = result->capacity();
     result->push_back(value);
+    if (!ReserveVectorGrowth(*result, old_capacity)) {
+      return false;
+    }
   }
 
   if (result->empty()) {
@@ -2053,8 +2067,11 @@ bool AsciiParser::SepBy1BasicType(const char sep, std::vector<T> *result) {
       return false;
     }
 
-    CHECK_MEMORY_USAGE(sizeof(nonstd::optional<T>) + sizeof(T));
+    size_t old_capacity = result->capacity();
     result->push_back(value);
+    if (!ReserveVectorGrowth(*result, old_capacity)) {
+      return false;
+    }
   }
 
   while (!Eof()) {
@@ -2083,8 +2100,11 @@ bool AsciiParser::SepBy1BasicType(const char sep, std::vector<T> *result) {
       break;
     }
 
-    CHECK_MEMORY_USAGE(sizeof(nonstd::optional<T>) + sizeof(T));
+    size_t old_capacity = result->capacity();
     result->push_back(value);
+    if (!ReserveVectorGrowth(*result, old_capacity)) {
+      return false;
+    }
   }
 
   if (result->empty()) {
@@ -2115,8 +2135,11 @@ bool AsciiParser::SepBy1BasicType(const char sep, const char end_symbol, std::ve
       return false;
     }
 
-    CHECK_MEMORY_USAGE(sizeof(nonstd::optional<T>) + sizeof(T));
+    size_t old_capacity = result->capacity();
     result->push_back(value);
+    if (!ReserveVectorGrowth(*result, old_capacity)) {
+      return false;
+    }
   }
 
   while (!Eof()) {
@@ -2162,8 +2185,11 @@ bool AsciiParser::SepBy1BasicType(const char sep, const char end_symbol, std::ve
       break;
     }
 
-    CHECK_MEMORY_USAGE(sizeof(nonstd::optional<T>) + sizeof(T));
+    size_t old_capacity = result->capacity();
     result->push_back(value);
+    if (!ReserveVectorGrowth(*result, old_capacity)) {
+      return false;
+    }
 
 
   }
@@ -2190,7 +2216,11 @@ bool AsciiParser::SepBy1TupleType(
   }
 
   if (MaybeNone()) {
+    size_t old_capacity = result->capacity();
     result->push_back(nonstd::nullopt);
+    if (!ReserveVectorGrowth(*result, old_capacity)) {
+      return false;
+    }
   } else {
     std::array<T, N> value;
     if (!ParseBasicTypeTuple<T, N>(&value)) {
@@ -2198,8 +2228,11 @@ bool AsciiParser::SepBy1TupleType(
       return false;
     }
 
-    CHECK_MEMORY_USAGE(sizeof(nonstd::optional<T>) + sizeof(T));
+    size_t old_capacity = result->capacity();
     result->push_back(value);
+    if (!ReserveVectorGrowth(*result, old_capacity)) {
+      return false;
+    }
   }
 
   while (!Eof()) {
@@ -2223,14 +2256,21 @@ bool AsciiParser::SepBy1TupleType(
     }
 
     if (MaybeNone()) {
+      size_t old_capacity = result->capacity();
       result->push_back(nonstd::nullopt);
+      if (!ReserveVectorGrowth(*result, old_capacity)) {
+        return false;
+      }
     } else {
       std::array<T, N> value;
       if (!ParseBasicTypeTuple<T, N>(&value)) {
         break;
       }
-      CHECK_MEMORY_USAGE(sizeof(nonstd::optional<T>) + sizeof(T));
-    result->push_back(value);
+      size_t old_capacity = result->capacity();
+      result->push_back(value);
+      if (!ReserveVectorGrowth(*result, old_capacity)) {
+        return false;
+      }
     }
   }
 
@@ -2262,8 +2302,11 @@ bool AsciiParser::SepBy1TupleType(const char sep,
       return false;
     }
 
-    CHECK_MEMORY_USAGE(sizeof(nonstd::optional<T>) + sizeof(T));
+    size_t old_capacity = result->capacity();
     result->push_back(value);
+    if (!ReserveVectorGrowth(*result, old_capacity)) {
+      return false;
+    }
   }
 
   while (!Eof()) {
@@ -2291,8 +2334,11 @@ bool AsciiParser::SepBy1TupleType(const char sep,
       break;
     }
 
-    CHECK_MEMORY_USAGE(sizeof(nonstd::optional<T>) + sizeof(T));
+    size_t old_capacity = result->capacity();
     result->push_back(value);
+    if (!ReserveVectorGrowth(*result, old_capacity)) {
+      return false;
+    }
   }
 
   if (result->empty()) {
@@ -2419,6 +2465,8 @@ bool AsciiParser::ParseBasicTypeArray(TypedArray<T> *result) {
 
   // Parse elements into a temporary vector first
   std::vector<T> temp_result;
+  ScopedVectorMemoryRelease<T> temp_release(this, &temp_result);
+  (void)temp_release;
   if (!SepBy1BasicType<T>(',', ']', &temp_result)) {
     return false;
   }
@@ -2433,9 +2481,17 @@ bool AsciiParser::ParseBasicTypeArray(TypedArray<T> *result) {
 
   // Transfer to TypedArray for memory optimization
   result->clear();
+  size_t old_capacity = result->capacity();
   result->reserve(temp_result.size());
+  if (!ReserveTypedArrayGrowth(*result, old_capacity)) {
+    return false;
+  }
   for (const auto& item : temp_result) {
+    old_capacity = result->capacity();
     result->push_back(item);
+    if (!ReserveTypedArrayGrowth(*result, old_capacity)) {
+      return false;
+    }
   }
   
   return true;
@@ -2467,8 +2523,11 @@ bool AsciiParser::SepBy1BasicType(const char sep,
 
     (void)triple_deliminated;
 
-    CHECK_MEMORY_USAGE(sizeof(Reference));
+    size_t old_capacity = result->capacity();
     result->push_back(ref);
+    if (!ReserveVectorGrowth(*result, old_capacity)) {
+      return false;
+    }
   }
 
   while (!Eof()) {
@@ -2516,8 +2575,11 @@ bool AsciiParser::SepBy1BasicType(const char sep,
     }
 
     (void)triple_deliminated;
-    CHECK_MEMORY_USAGE(sizeof(Reference));
+    size_t old_capacity = result->capacity();
     result->push_back(ref);
+    if (!ReserveVectorGrowth(*result, old_capacity)) {
+      return false;
+    }
   }
 
   if (result->empty()) {
@@ -2564,6 +2626,8 @@ bool AsciiParser::ParseBasicTypeTuple(std::array<T, N> *result) {
   }
 
   std::vector<T> values;
+  ScopedVectorMemoryRelease<T> values_release(this, &values);
+  (void)values_release;
   if (!SepBy1BasicType<T>(',', &values)) {
     return false;
   }
@@ -2600,6 +2664,8 @@ bool AsciiParser::ParseBasicTypeTuple(
   }
 
   std::vector<T> values;
+  ScopedVectorMemoryRelease<T> values_release(this, &values);
+  (void)values_release;
   if (!SepBy1BasicType<T>(',', &values)) {
     return false;
   }
@@ -2651,8 +2717,11 @@ bool AsciiParser::ParseBasicTypeArray(std::vector<Reference> *result) {
 
     (void)triple_deliminated;
     result->clear();
-    CHECK_MEMORY_USAGE(sizeof(Reference));
+    size_t old_capacity = result->capacity();
     result->push_back(ref);
+    if (!ReserveVectorGrowth(*result, old_capacity)) {
+      return false;
+    }
 
   } else {
 
@@ -2984,6 +3053,8 @@ bool AsciiParser::ReadBasicType(value::texcoord3d *value) {
   }
 
   std::vector<double> values;
+  ScopedVectorMemoryRelease<double> values_release(this, &values);
+  (void)values_release;
   if (!SepBy1BasicType<double>(',', &values)) {
     return false;
   }
@@ -3680,7 +3751,7 @@ bool AsciiParser::ReadBasicType(nonstd::optional<std::vector<T>> *value) {
 
   std::vector<T> v;
   if (ParseBasicTypeArray(&v)) {
-    (*value) = v;
+    (*value) = std::move(v);
     return true;
   }
 

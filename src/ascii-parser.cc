@@ -60,19 +60,14 @@
 #include "common-macros.inc"
 
 #define CHECK_MEMORY_USAGE(__nbytes) do { \
-  _memory_usage += (__nbytes); \
-  if (_memory_usage > _max_memory_limit_bytes) { \
-    PushError(fmt::format("Memory limit exceeded. Limit: {} MB, Current usage: {} MB", \
-      _max_memory_limit_bytes / (1024*1024), _memory_usage / (1024*1024))); \
+  if (!CheckAndReserveMemory(__nbytes)) { \
     return false; \
-  }  \
+  } \
   } while(0)
 
 #if 0
 #define REDUCE_MEMORY_USAGE(__nbytes) do { \
-  if (_memory_usage >= (__nbytes)) { \
-    _memory_usage -= (__nbytes); \
-  } \
+  ReleaseMemory(__nbytes); \
   } while(0)
 #endif
 #include "io-util.hh"
@@ -1366,7 +1361,7 @@ bool AsciiParser::ParseDictElement(std::string *out_key,
             fmt::format("Failed to parse a value of type `{}[]`", \
                         value::TypeTraits<__ty>::type_name()));   \
       }                                                           \
-      var.set_value(vss);                                         \
+      var.set_value(std::move(vss));                              \
     } else {                                                      \
       __ty val;                                                   \
       if (!ReadBasicType(&val)) {                                 \
@@ -1388,13 +1383,13 @@ bool AsciiParser::ParseDictElement(std::string *out_key,
         if (!ParseBasicTypeArray(&strs)) {
           PUSH_ERROR_AND_RETURN("Failed to parse `string[]`");
         }
-        var.set_value(strs);
+        var.set_value(std::move(strs));
       } else {
         value::StringData str;
         if (!ReadBasicType(&str)) {
           PUSH_ERROR_AND_RETURN("Failed to parse `string`");
         }
-        var.set_value(str);
+        var.set_value(std::move(str));
       }
       break;
     }
@@ -1404,13 +1399,13 @@ bool AsciiParser::ParseDictElement(std::string *out_key,
         if (!ParseBasicTypeArray(&arrs)) {
           PUSH_ERROR_AND_RETURN("Failed to parse `asset[]`");
         }
-        var.set_value(arrs);
+        var.set_value(std::move(arrs));
       } else {
         value::AssetPath asset;
         if (!ReadBasicType(&asset)) {
           PUSH_ERROR_AND_RETURN("Failed to parse `asset`");
         }
-        var.set_value(asset);
+        var.set_value(std::move(asset));
       }
       break;
     }
@@ -1421,7 +1416,7 @@ bool AsciiParser::ParseDictElement(std::string *out_key,
       if (!ParseDict(&dict)) {
         PUSH_ERROR_AND_RETURN("Failed to parse `dictionary`");
       }
-      var.set_value(dict);
+      var.set_value(std::move(dict));
       break;
     }
     default: {
@@ -1433,7 +1428,7 @@ bool AsciiParser::ParseDictElement(std::string *out_key,
 #undef PARSE_BASE_TYPE
 
   MetaVariable metavar;
-  metavar.set_value(key_name, var.value_raw());
+  metavar.set_value(key_name, std::move(var.value_raw()));
 
   DCOUT("key: " << key_name << ", type: " << type_name);
 
@@ -1512,6 +1507,47 @@ bool AsciiParser::ParseDict(std::map<std::string, MetaVariable> *out_dict) {
   }
 
   return true;
+}
+
+bool AsciiParser::ReserveStringLikeMemory(const value::Value &v) {
+  if (auto vec = v.as<std::vector<std::string>>()) {
+    return ReserveStringLikeMemory(*vec);
+  }
+  if (auto vec = v.as<std::vector<value::StringData>>()) {
+    return ReserveStringLikeMemory(*vec);
+  }
+  if (auto vec = v.as<std::vector<value::AssetPath>>()) {
+    return ReserveStringLikeMemory(*vec);
+  }
+  if (auto str = v.as<std::string>()) {
+    return ReserveStringLikeMemory(*str);
+  }
+  if (auto sdata = v.as<value::StringData>()) {
+    return ReserveStringLikeMemory(*sdata);
+  }
+  if (auto ap = v.as<value::AssetPath>()) {
+    return ReserveStringLikeMemory(*ap);
+  }
+  return true;
+}
+
+bool AsciiParser::ReserveDictionaryStringMemory(const Dictionary &dict) {
+  for (const auto &kv : dict) {
+    if (!CheckAndReserveMemory(uint64_t(kv.first.size()))) {
+      return false;
+    }
+    if (!ReserveMetaVariableMemory(kv.second)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+bool AsciiParser::ReserveMetaVariableMemory(const MetaVariable &var) {
+  if (auto dict = var.get_value<Dictionary>()) {
+    return ReserveDictionaryStringMemory(dict.value());
+  }
+  return ReserveStringLikeMemory(var.get_raw_value());
 }
 
 bool AsciiParser::ParseVariantsElement(std::string *out_key,
@@ -1625,6 +1661,8 @@ bool AsciiParser::MaybeNone() {
     SeekTo(loc);
     return false;
   }
+  ScopedVectorMemoryRelease<char> buf_release(this, &buf);
+  (void)buf_release;
 
   if ((buf[0] == 'N') && (buf[1] == 'o') && (buf[2] == 'n') &&
       (buf[3] == 'e')) {
@@ -1889,6 +1927,8 @@ bool AsciiParser::MaybeTripleQuotedString(value::StringData *str) {
     SeekTo(loc);
     return false;
   }
+  ScopedVectorMemoryRelease<char> triple_quote_release(this, &triple_quote);
+  (void)triple_quote_release;
 
   if (triple_quote.size() != 3) {
     SeekTo(loc);
@@ -1931,6 +1971,11 @@ bool AsciiParser::MaybeTripleQuotedString(value::StringData *str) {
     // Unescape '\'
     if (c == '\\') {
       std::vector<char> buf(3, '\0');
+      if (!ReserveVectorGrowth(buf, 0)) {
+        return false;
+      }
+      ScopedVectorMemoryRelease<char> buf_release(this, &buf);
+      (void)buf_release;
       if (!LookCharN(3, &buf)) {
         // at least 3 chars should be read
         return false;
@@ -2450,11 +2495,15 @@ bool AsciiParser::ParseStageMetaOpt() {
     if (auto pv = var.get_value<value::StringData>()) {
       DCOUT("doc = " << to_string(pv.value()));
       _stage_metas.doc = pv.value();
+      CHECK_MEMORY_USAGE(sizeof(value::StringData) +
+                         _stage_metas.doc.value.size());
     } else if (auto pvs = var.get_value<std::string>()) {
       value::StringData sdata;
       sdata.value = pvs.value();
       sdata.is_triple_quoted = false;
       _stage_metas.doc = sdata;
+      CHECK_MEMORY_USAGE(sizeof(value::StringData) +
+                         _stage_metas.doc.value.size());
     } else {
       PUSH_ERROR_AND_RETURN(fmt::format("`{}` isn't a string value.", varname));
     }
@@ -2535,6 +2584,9 @@ bool AsciiParser::ParseStageMetaOpt() {
     if (auto pv = var.get_value<Dictionary>()) {
       _stage_metas.customLayerData = pv.value();
       _stage_metas.customLayerDataAuthored = true;  // Mark as authored even if empty
+      if (!ReserveDictionaryStringMemory(_stage_metas.customLayerData)) {
+        return false;
+      }
     } else {
       PUSH_ERROR_AND_RETURN("`customLayerData` isn't a dictionary value.");
     }
@@ -2542,11 +2594,15 @@ bool AsciiParser::ParseStageMetaOpt() {
     if (auto pv = var.get_value<value::StringData>()) {
       DCOUT("comment = " << to_string(pv.value()));
       _stage_metas.comment = pv.value();
+      CHECK_MEMORY_USAGE(sizeof(value::StringData) +
+                         _stage_metas.comment.value.size());
     } else if (auto pvs = var.get_value<std::string>()) {
       value::StringData sdata;
       sdata.value = pvs.value();
       sdata.is_triple_quoted = false;
       _stage_metas.comment = sdata;
+      CHECK_MEMORY_USAGE(sizeof(value::StringData) +
+                         _stage_metas.comment.value.size());
     } else {
       PUSH_ERROR_AND_RETURN(fmt::format("`{}` isn't a string value.", varname));
     }
@@ -2653,13 +2709,27 @@ bool AsciiParser::LookChar1(char *c) {
 
 // Fetch N chars. Do not change input stream position.
 bool AsciiParser::LookCharN(size_t n, std::vector<char> *nc) {
+  if (!nc) {
+    return false;
+  }
+
   std::vector<char> buf(n);
+  if (!ReserveVectorGrowth(buf, 0)) {
+    return false;
+  }
+  ScopedVectorMemoryRelease<char> buf_release(this, &buf);
+  (void)buf_release;
 
   auto loc = CurrLoc();
 
   bool ok = _sr->read(n, n, reinterpret_cast<uint8_t *>(buf.data()));
   if (ok) {
+    size_t old_capacity = nc->capacity();
     (*nc) = buf;
+    if (!ReserveVectorGrowth(*nc, old_capacity)) {
+      SeekTo(loc);
+      return false;
+    }
   }
 
   SeekTo(loc);
@@ -2670,11 +2740,24 @@ bool AsciiParser::LookCharN(size_t n, std::vector<char> *nc) {
 bool AsciiParser::Char1(char *c) { return _sr->read1(c); }
 
 bool AsciiParser::CharN(size_t n, std::vector<char> *nc) {
+  if (!nc) {
+    return false;
+  }
+
   std::vector<char> buf(n);
+  if (!ReserveVectorGrowth(buf, 0)) {
+    return false;
+  }
+  ScopedVectorMemoryRelease<char> buf_release(this, &buf);
+  (void)buf_release;
 
   bool ok = _sr->read(n, n, reinterpret_cast<uint8_t *>(buf.data()));
   if (ok) {
+    size_t old_capacity = nc->capacity();
     (*nc) = buf;
+    if (!ReserveVectorGrowth(*nc, old_capacity)) {
+      return false;
+    }
   }
 
   return ok;
@@ -2983,6 +3066,8 @@ bool AsciiParser::ParseAssetIdentifier(value::AssetPath *out,
   }
 
   if (CharN(3, &buf)) {
+    ScopedVectorMemoryRelease<char> buf_release(this, &buf);
+    (void)buf_release;
     if (buf[0] == '@' && buf[1] == '@' && buf[2] == '@') {
       maybe_triple = true;
     }
@@ -3264,7 +3349,7 @@ bool AsciiParser::ParseMetaValue(const VariableDef &def, MetaVariable *outvar) {
             fmt::format("Failed to parse a value of type `{}[]`", \
                         value::TypeTraits<__ty>::type_name()));   \
       }                                                           \
-      var.set_value(vss);                                         \
+      var.set_value(std::move(vss));                              \
     } else {                                                      \
       __ty val;                                                   \
       if (!ReadBasicType(&val)) {                                 \
@@ -3286,7 +3371,7 @@ bool AsciiParser::ParseMetaValue(const VariableDef &def, MetaVariable *outvar) {
             kAscii,
             fmt::format("Failed to parse `{}` in Prim metadataum.", def.name));
       }
-      var.set_value(refs);
+      var.set_value(std::move(refs));
     } else {
       nonstd::optional<Reference> ref;
       if (!ReadBasicType(&ref)) {
@@ -3309,7 +3394,7 @@ bool AsciiParser::ParseMetaValue(const VariableDef &def, MetaVariable *outvar) {
             kAscii,
             fmt::format("Failed to parse `{}` in Prim metadataum.", def.name));
       }
-      var.set_value(refs);
+      var.set_value(std::move(refs));
     } else {
       nonstd::optional<Payload> ref;
       if (!ReadBasicType(&ref)) {
@@ -3332,7 +3417,7 @@ bool AsciiParser::ParseMetaValue(const VariableDef &def, MetaVariable *outvar) {
             kAscii,
             fmt::format("Failed to parse `{}` in Prim metadatum.", def.name));
       }
-      var.set_value(paths);
+      var.set_value(std::move(paths));
 
     } else {
       Path path;
@@ -3352,7 +3437,7 @@ bool AsciiParser::ParseMetaValue(const VariableDef &def, MetaVariable *outvar) {
           if (!ParseBasicTypeArray(&strs)) {
             PUSH_ERROR_AND_RETURN("Failed to parse `string[]`");
           }
-          var.set_value(strs);
+          var.set_value(std::move(strs));
         } else {
           std::string str;
           if (!ReadBasicType(&str)) {
@@ -3368,7 +3453,7 @@ bool AsciiParser::ParseMetaValue(const VariableDef &def, MetaVariable *outvar) {
           if (!ParseBasicTypeArray(&arrs)) {
             PUSH_ERROR_AND_RETURN("Failed to parse `asset[]`");
           }
-          var.set_value(arrs);
+          var.set_value(std::move(arrs));
         } else {
           value::AssetPath asset;
           if (!ReadBasicType(&asset)) {
@@ -3385,7 +3470,7 @@ bool AsciiParser::ParseMetaValue(const VariableDef &def, MetaVariable *outvar) {
         if (!ParseDict(&dict)) {
           PUSH_ERROR_AND_RETURN("Failed to parse `dictionary`");
         }
-        var.set_value(dict);
+        var.set_value(std::move(dict));
         break;
       }
       default: {
@@ -3401,7 +3486,7 @@ bool AsciiParser::ParseMetaValue(const VariableDef &def, MetaVariable *outvar) {
 
 #undef PARSE_BASE_TYPE
 
-  (*outvar) = var;
+  (*outvar) = std::move(var);
 
   return true;
 }
@@ -3820,6 +3905,11 @@ bool AsciiParser::ParsePrimMetas(PrimMetaMap *args) {
         PUSH_ERROR_AND_RETURN("[InternalError] Metadataum name is empty.");
       }
 
+      CHECK_MEMORY_USAGE(std::get<1>(m.value()).get_name().size());
+      if (!ReserveMetaVariableMemory(std::get<1>(m.value()))) {
+        return false;
+      }
+
       // Use insert/emplace for multimap (supports multiple listops per arc)
       args->emplace(std::get<1>(m.value()).get_name(), m.value());
     } else {
@@ -4059,6 +4149,10 @@ bool AsciiParser::ParseAttrMeta(AttrMeta *out_meta) {
           metavar.set_name(varname);
 
           // add to custom meta
+          CHECK_MEMORY_USAGE(varname.size());
+          if (!ReserveMetaVariableMemory(metavar)) {
+            return false;
+          }
           out_meta->data()[varname] = metavar;
 
         } else {
@@ -4149,7 +4243,7 @@ bool AsciiParser::ParseRelationship(Relationship *result) {
       values[i] = abs_path;
     }
 
-    result->set(values);
+    result->set(std::move(values));
   } else if (c == 'N') {
     // None
     nonstd::optional<Path> value;
@@ -4196,7 +4290,10 @@ bool AsciiParser::ParseBasicPrimAttr(bool array_qual,
       // Empty array allowed.
       DCOUT("Got it: primatrr " << primattr_name << ", ty = " + std::string(value::TypeTraits<T>::type_name()) +
             ", sz = " + std::to_string(value.size()));
-      var.set_value(value);
+      if (!ReserveStringLikeMemory(value)) {
+        return false;
+      }
+      var.set_value(std::move(value));
     }
 
 #if 0
@@ -4251,6 +4348,9 @@ bool AsciiParser::ParseBasicPrimAttr(bool array_qual,
       DCOUT("ParseBasicPrimAttr: " << value::TypeTraits<T>::type_name() << " = "
                                    << (*value));
 
+      if (!ReserveStringLikeMemory(*value)) {
+        return false;
+      }
       var.set_value(value.value());
 
     } else {
@@ -6001,7 +6101,7 @@ bool ParseUnregistredValue(const std::string &_typeName, const std::string &str,
         }                                                                \
         return false;                                                    \
       }                                                                  \
-      dst = vss;                                                         \
+      dst = std::move(vss);                                              \
     } else {                                                             \
       __ty val;                                                          \
       if (!parser.ReadBasicType(&val)) {                                 \

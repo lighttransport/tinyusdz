@@ -473,13 +473,18 @@ static ParseResult ParseTypedAttributeUnified(
       if constexpr (!is_varying) {
         // Uniform attribute - no timeSamples allowed
         if (!is_config_attr && attr.variability() != Variability::Uniform) {
-          ret.code = ParseResult::ResultCode::VariabilityMismatch;
-          ret.err = fmt::format("Attribute `{}` must be `uniform` variability.", name);
-          return ret;
+          // If `varying` wasn't explicitly authored, allow schema-default uniform.
+          if (!(attr.variability() == Variability::Varying && !attr.is_varying_authored())) {
+            ret.code = ParseResult::ResultCode::VariabilityMismatch;
+            ret.err = fmt::format("Attribute `{}` must be `uniform` variability.", name);
+            return ret;
+          }
         }
 
         if (is_config_attr && attr.variability() != Variability::Uniform) {
-          ret.warn = fmt::format("Config attribute `{}` should have explicit `uniform` variability.", name);
+          if (attr.is_varying_authored()) {
+            ret.warn = fmt::format("Config attribute `{}` should have explicit `uniform` variability.", name);
+          }
         }
 
         if (attr.get_var().has_timesamples()) {

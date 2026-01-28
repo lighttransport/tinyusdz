@@ -25,6 +25,7 @@ set(TEST_SOURCES
 	unit-tiny-container.cc
 	unit-usda-roundtrip.cc
 	unit-half-roundtrip.cc
+	unit-usdc-reconstruct.cc
    )
 
 if (TINYUSDZ_WITH_PXR_COMPAT_API)
@@ -62,5 +63,4 @@ if (TINYUSDZ_WITH_PXR_COMPAT_API)
   # FIXME: support dll build
   target_compile_definitions(${TEST_TARGET_NAME} PRIVATE "PXR_STATIC")
 endif ()
-
 

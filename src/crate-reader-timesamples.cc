@@ -75,7 +75,7 @@ namespace crate {
 #define kTag "[Crate]"
 
 #define CHECK_MEMORY_USAGE(__nbytes) \
-  MEMORY_BUDGET_CHECK(memory_manager_, (__nbytes), kTag)
+  MEMORY_BUDGET_CHECK((*memory_manager_), (__nbytes), kTag)
 
 // Extern template declaration - instantiated in crate-reader.cc
 extern template bool CrateReader::ReadArray<unsigned char>(

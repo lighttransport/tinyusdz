@@ -812,14 +812,7 @@ matrix4d &matrix4d::operator=(const matrix4f &src) {
 }
 
 
-size_t Value::array_size() const {
-  if (!is_array()) {
-    return 0;
-  }
-
-  // primvar types only.
-
-#define APPLY_FUNC_TO_TYPES(__FUNC) \
+#define VALUE_ARRAY_TYPES(__FUNC) \
   __FUNC(bool)                 \
   __FUNC(value::token)                 \
   __FUNC(std::string)                 \
@@ -874,8 +867,21 @@ size_t Value::array_size() const {
   __FUNC(matrix4d) \
   __FUNC(frame4d)
 
+size_t Value::array_size() const {
+  if (!is_array()) {
+    return 0;
+  }
+
+  // primvar types only.
+
 #define ARRAY_SIZE_GET(__ty) case value::TypeTraits<__ty>::type_id() | value::TYPE_ID_1D_ARRAY_BIT: { \
     if (auto pv = v_.cast<std::vector<__ty>>()) { \
+      return pv->size(); \
+    } \
+    if (auto pv = v_.cast<TypedArray<__ty>>()) { \
+      return pv->size(); \
+    } \
+    if (auto pv = v_.cast<ChunkedTypedArray<__ty>>()) { \
       return pv->size(); \
     } \
     return 0; \
@@ -883,13 +889,12 @@ size_t Value::array_size() const {
 
 
   switch (v_.type_id()) {
-    APPLY_FUNC_TO_TYPES(ARRAY_SIZE_GET)
+    VALUE_ARRAY_TYPES(ARRAY_SIZE_GET)
     default:
       return 0;
   }
 
 #undef ARRAY_SIZE_GET
-#undef APPLY_FUNC_TO_TYPES
 
 }
 
@@ -1276,17 +1281,44 @@ size_t Value::estimate_memory_usage() const {
   // Check if it's an array type
   if (tid & TYPE_ID_1D_ARRAY_BIT) {
     // For arrays, compute element size * array count
-    size_t element_size = GetTypeSize(tid);
+    uint32_t base_type = tid & (~TYPE_ID_1D_ARRAY_BIT);
+    size_t element_size = GetTypeSize(base_type);
     size_t element_count = array_size();
-    
+
+    bool has_typed_array = false;
+    size_t typed_array_bytes = 0;
+    size_t typed_array_overhead = 0;
+
+#define TYPED_ARRAY_BYTES(__ty) \
+    if (!has_typed_array) { \
+      if (auto pv = v_.cast<TypedArray<__ty>>()) { \
+        has_typed_array = true; \
+        typed_array_bytes = pv->memory_usage(); \
+        typed_array_overhead = sizeof(TypedArray<__ty>); \
+      } else if (auto pv = v_.cast<ChunkedTypedArray<__ty>>()) { \
+        has_typed_array = true; \
+        typed_array_bytes = pv->memory_usage(); \
+        typed_array_overhead = sizeof(ChunkedTypedArray<__ty>); \
+      } \
+    }
+
+    VALUE_ARRAY_TYPES(TYPED_ARRAY_BYTES)
+
+#undef TYPED_ARRAY_BYTES
+
+    if (has_typed_array) {
+      total_size += typed_array_overhead;
+      total_size += typed_array_bytes;
+      return total_size;
+    }
+
     // Add array storage overhead (vector typically has 3 pointers)
-    total_size += sizeof(void*) * 3; 
-    
+    total_size += sizeof(void*) * 3;
+
     // Add actual data size
     total_size += element_size * element_count;
-    
+
     // Handle special cases for string arrays
-    uint32_t base_type = tid & (~TYPE_ID_1D_ARRAY_BIT);
     if (base_type == TYPE_ID_STRING || base_type == TYPE_ID_TOKEN || 
         base_type == TYPE_ID_STRING_DATA || base_type == TYPE_ID_ASSET_PATH) {
       // For string arrays, add estimated string sizes
@@ -1336,6 +1368,8 @@ size_t Value::estimate_memory_usage() const {
   
   return total_size;
 }
+
+#undef VALUE_ARRAY_TYPES
 
 bool TimeSamples::has_sample_at(const double t) const {
   if (_dirty) {
