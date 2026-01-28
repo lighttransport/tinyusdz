@@ -8,9 +8,9 @@
 #define kTag "[Crate]"
 
 #define CHECK_MEMORY_USAGE(__nbytes) \
-  MEMORY_BUDGET_CHECK(memory_manager_, (__nbytes), kTag)
+  MEMORY_BUDGET_CHECK((*memory_manager_), (__nbytes), kTag)
 
 #define REDUCE_MEMORY_USAGE(__nbytes) \
-  memory_manager_.Release(__nbytes)
+  memory_manager_->Release(__nbytes)
 
 #define VERSION_LESS_THAN_0_8_0(__version) ((_version[0] == 0) && (_version[1] < 7))

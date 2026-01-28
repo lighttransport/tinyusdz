@@ -1234,6 +1234,7 @@ bool LoadUSDCLayerFromMemory(const uint8_t *addr, const size_t length,
   config.numThreads = options.num_threads;
   config.strict_allowedToken_check = options.strict_allowedToken_check;
   config.allow_unknown_apiSchemas = !options.strict_apiSchema_check;
+  config.kMaxAllowedMemoryInMB = size_t(options.max_memory_limit_in_mb);
   usdc::USDCReader reader(&sr, config);
 
   if (!reader.ReadUSDC()) {

@@ -9,9 +9,21 @@
 
 #include "crate-writer.hh"
 #include <iostream>
+#include <sstream>
 #include "layer.hh"
 #include "pprinter.hh"  // For to_string(Specifier), to_string(Variability)
 #include "usdShade.hh"  // For Material and Shader
+
+#if defined(TINYUSDZ_DEBUG_PRINT)
+#define SC_DLOG(x)         \
+  do {                     \
+    std::cerr << x;         \
+  } while (0)
+#else
+#define SC_DLOG(x) \
+  do {             \
+  } while (0)
+#endif
 
 // Disable specific clang warnings for this file
 // - unused-parameter: functions have consistent signatures for API purposes
@@ -259,6 +271,18 @@ bool CrateWriter::ConvertPrimRecursive(
     }
   }
 
+  // Add custom properties stored on Model prims as separate specs.
+  if (const Model* model = prim.data().as<Model>()) {
+    for (const auto& prop_item : model->props) {
+      const auto& prop_name = prop_item.first;
+      const auto& prop = prop_item.second;
+      if (!ConvertPropertyToFields(prop_name, prop, prim_path, fields, err)) {
+        if (err) *err = "Failed to convert custom property: " + prop_name + " on prim: " + prim_path.full_path_name();
+        return false;
+      }
+    }
+  }
+
   // After adding prim spec, handle material bindings as separate relationship specs
   // This applies to any prim that might have material bindings (typically geometry)
   if (!AddMaterialBindingSpecs(prim, prim_path, err)) {
@@ -331,6 +355,62 @@ bool CrateWriter::ExtractPrimProperties(
     // Log warning but don't fail - we still want to create the prim
     std::cerr << "WARNING: Failed to extract type-specific properties for "
               << type_name << ": " << (err ? *err : "unknown error") << "\n";
+  }
+
+  // Add variant metadata if authored
+  const PrimMeta& metas = prim.metas();
+  if (metas.variants) {
+    const VariantSelectionMap& variant_map = metas.variants.value();
+    crate::CrateValue variant_value;
+    variant_value.Set(variant_map);
+    fields.push_back({"variantSelection", variant_value});
+  }
+
+  if (metas.variantSets) {
+    ListOp<std::string> variant_sets_listop;
+    for (const auto& variantSets_op : metas.variantSets.value()) {
+      const ListEditQual& qual = variantSets_op.first;
+      const std::vector<std::string>& variant_sets = variantSets_op.second;
+      switch (qual) {
+        case ListEditQual::ResetToExplicit:
+          variant_sets_listop.ClearAndMakeExplicit();
+          variant_sets_listop.SetExplicitItems(variant_sets);
+          break;
+        case ListEditQual::Append:
+          variant_sets_listop.SetAppendedItems(variant_sets);
+          break;
+        case ListEditQual::Prepend:
+          variant_sets_listop.SetPrependedItems(variant_sets);
+          break;
+        case ListEditQual::Add:
+          variant_sets_listop.SetAddedItems(variant_sets);
+          break;
+        case ListEditQual::Delete:
+          variant_sets_listop.SetDeletedItems(variant_sets);
+          break;
+        default:
+          variant_sets_listop.ClearAndMakeExplicit();
+          variant_sets_listop.SetExplicitItems(variant_sets);
+          break;
+      }
+    }
+
+    crate::CrateValue variant_sets_value;
+    variant_sets_value.Set(variant_sets_listop);
+    fields.push_back({"variantSetNames", variant_sets_value});
+  } else if (!prim.variantSets().empty()) {
+    // Fallback: synthesize explicit variantSetNames from authored variantSets
+    std::vector<std::string> variant_sets_list;
+    variant_sets_list.reserve(prim.variantSets().size());
+    for (const auto& item : prim.variantSets()) {
+      variant_sets_list.push_back(item.first);
+    }
+    ListOp<std::string> variant_sets_listop;
+    variant_sets_listop.ClearAndMakeExplicit();
+    variant_sets_listop.SetExplicitItems(variant_sets_list);
+    crate::CrateValue variant_sets_value;
+    variant_sets_value.Set(variant_sets_listop);
+    fields.push_back({"variantSetNames", variant_sets_value});
   }
 
   return true;
@@ -490,8 +570,8 @@ bool CrateWriter::ExtractMeshProperties(
       ts_crate_val.Set(ts);
       fields.push_back({"points.timeSamples", ts_crate_val});
 
-      std::cerr << "DEBUG: Successfully extracted animated mesh points with "
-                << ts.size() << " samples\n";
+      SC_DLOG("DEBUG: Successfully extracted animated mesh points with "
+                << ts.size() << " samples\n");
     }
   } else {
     // Try extracting from props map as fallback
@@ -1156,9 +1236,8 @@ bool CrateWriter::ExtractCameraProperties(
     GeomCamera::Projection proj_val;
     if (proj_anim.get_scalar(&proj_val)) {
       std::string proj_str = (proj_val == GeomCamera::Projection::Perspective) ? "perspective" : "orthographic";
-      crate::TokenIndex proj_tok = GetOrCreateToken(proj_str);
       crate::CrateValue crate_val;
-      crate_val.Set(proj_tok.value);
+      crate_val.Set(value::token(proj_str));
       fields.push_back({"projection", crate_val});
     }
   }
@@ -1175,9 +1254,8 @@ bool CrateWriter::ExtractCameraProperties(
     } else {
       stereo_str = "mono";  // default
     }
-    crate::TokenIndex stereo_tok = GetOrCreateToken(stereo_str);
     crate::CrateValue crate_val;
-    crate_val.Set(stereo_tok.value);
+    crate_val.Set(value::token(stereo_str));
     fields.push_back({"stereoRole", crate_val});
   }
 
@@ -2595,8 +2673,8 @@ bool CrateWriter::ExtractXformOpsFromXformable(
       crate::CrateValue crate_val;
       if (ConvertValue(val, crate_val, err)) {
         attr_fields.push_back({"default", crate_val});
-        std::cerr << "DEBUG: Successfully extracted xformOp default: " << op_name
-                  << " (type: " << val.type_name() << ")\n";
+        SC_DLOG("DEBUG: Successfully extracted xformOp default: " << op_name
+                  << " (type: " << val.type_name() << ")\n");
       } else {
         std::cerr << "WARNING: Failed to convert xformOp value for " << op_name
                   << ": " << (err ? *err : "unknown") << "\n";
@@ -2611,8 +2689,8 @@ bool CrateWriter::ExtractXformOpsFromXformable(
       ts_crate_val.Set(ts);
       attr_fields.push_back({"timeSamples", ts_crate_val});
 
-      std::cerr << "DEBUG: Successfully extracted animated xformOp: " << op_name
-                << " with " << ts.size() << " samples\n";
+      SC_DLOG("DEBUG: Successfully extracted animated xformOp: " << op_name
+                << " with " << ts.size() << " samples\n");
     }
 
     // Create the Attribute spec
@@ -2688,8 +2766,7 @@ bool CrateWriter::ExtractGPrimProperties(
       if (vis_animatable.get_default(&vis_val)) {
         if (vis_val != Visibility::Inherited) {  // Only write if not default
           crate::CrateValue vis_crate_val;
-          crate::TokenIndex vis_tok = GetOrCreateToken(to_string(vis_val));
-          vis_crate_val.Set(vis_tok.value);
+          vis_crate_val.Set(value::token(to_string(vis_val)));
           fields.push_back({"visibility", vis_crate_val});
         }
       }
@@ -2725,8 +2802,8 @@ bool CrateWriter::ExtractGPrimProperties(
       ts_crate_val.Set(ts);
       fields.push_back({"visibility.timeSamples", ts_crate_val});
 
-      std::cerr << "[ExtractGPrimProperties] Added animated visibility with "
-                << ts.size() << " samples\n";
+      SC_DLOG("[ExtractGPrimProperties] Added animated visibility with "
+                << ts.size() << " samples\n");
     }
   }
 
@@ -2735,8 +2812,7 @@ bool CrateWriter::ExtractGPrimProperties(
     Purpose purpose_val = gprim->purpose.get_value();
     if (purpose_val != Purpose::Default) {  // Only write if not default
       crate::CrateValue purpose_crate_val;
-      crate::TokenIndex purpose_tok = GetOrCreateToken(to_string(purpose_val));
-      purpose_crate_val.Set(purpose_tok.value);
+      purpose_crate_val.Set(value::token(to_string(purpose_val)));
       fields.push_back({"purpose", purpose_crate_val});
     }
   }
@@ -2771,8 +2847,7 @@ bool CrateWriter::ExtractGPrimProperties(
     Orientation orient_val = gprim->orientation.get_value();
     if (orient_val != Orientation::RightHanded) {  // Only write if not default
       crate::CrateValue orient_crate_val;
-      crate::TokenIndex orient_tok = GetOrCreateToken(to_string(orient_val));
-      orient_crate_val.Set(orient_tok.value);
+      orient_crate_val.Set(value::token(to_string(orient_val)));
       fields.push_back({"orientation", orient_crate_val});
     }
   }
@@ -3689,8 +3764,8 @@ bool CrateWriter::AddUsdPrimvarReaderInputSpecs(
   const Path& prim_path,
   std::string* err
 ) {
-  std::cerr << "[AddUsdPrimvarReaderInputSpecs] prim_path: " << prim_path.full_path_name()
-            << ", type: " << reader_type << "\n";
+  SC_DLOG("[AddUsdPrimvarReaderInputSpecs] prim_path: " << prim_path.full_path_name()
+            << ", type: " << reader_type << "\n");
 
   // Helper lambda to add an input spec as a separate attribute
   auto add_input_spec = [&](const std::string& input_name, const std::string& type_name, const crate::CrateValue& value) -> bool {
@@ -3990,6 +4065,65 @@ bool CrateWriter::ExtractNodeGraphProperties(
 // Value Conversion
 // ============================================================================
 
+namespace {
+
+template <typename T>
+bool ExtractArrayValueStrict(const value::Value& val, std::vector<T>* out) {
+  if (!out) {
+    return false;
+  }
+  if (const auto* vec = val.as<std::vector<T>>(true)) {
+    *out = *vec;
+    return true;
+  }
+  if (const auto* arr = val.as<TypedArray<T>>(true)) {
+    out->assign(arr->data(), arr->data() + arr->size());
+    return true;
+  }
+  if (const auto* arr = val.as<ChunkedTypedArray<T>>(true)) {
+    out->clear();
+    out->reserve(arr->size());
+    for (size_t i = 0; i < arr->size(); ++i) {
+      out->push_back((*arr)[i]);
+    }
+    return true;
+  }
+  return false;
+}
+
+template <typename RoleT, typename UnderlyingT>
+bool ExtractRoleArrayToUnderlying(const value::Value& val,
+                                  std::vector<UnderlyingT>* out) {
+  if (!out) {
+    return false;
+  }
+  if (const auto* vec = val.as<std::vector<RoleT>>(true)) {
+    const UnderlyingT* data =
+        reinterpret_cast<const UnderlyingT*>(vec->data());
+    out->assign(data, data + vec->size());
+    return true;
+  }
+  if (const auto* arr = val.as<TypedArray<RoleT>>(true)) {
+    const UnderlyingT* data =
+        reinterpret_cast<const UnderlyingT*>(arr->data());
+    out->assign(data, data + arr->size());
+    return true;
+  }
+  if (const auto* arr = val.as<ChunkedTypedArray<RoleT>>(true)) {
+    out->clear();
+    out->reserve(arr->size());
+    for (size_t i = 0; i < arr->size(); ++i) {
+      const UnderlyingT* data =
+          reinterpret_cast<const UnderlyingT*>(&(*arr)[i]);
+      out->push_back(*data);
+    }
+    return true;
+  }
+  return false;
+}
+
+}  // namespace
+
 bool CrateWriter::ConvertValue(
   const value::Value& val,
   crate::CrateValue& out,
@@ -4038,14 +4172,25 @@ bool CrateWriter::ConvertValue(
   // Token and String types
   else if (type_name == "token") {
     if (auto v = val.get_value<value::token>()) {
-      crate::TokenIndex tok_idx = GetOrCreateToken(v->str());
-      out.Set(tok_idx.value);
+      out.Set(*v);
+      return true;
+    }
+    if (auto v = val.get_value<std::string>()) {
+      out.Set(value::token(*v));
       return true;
     }
   } else if (type_name == "string") {
     if (auto v = val.get_value<std::string>()) {
-      crate::StringIndex str_idx = GetOrCreateString(*v);
-      out.Set(str_idx.value);
+      out.Set(*v);
+      return true;
+    }
+  } else if (type_name == "asset") {
+    if (auto v = val.get_value<value::AssetPath>()) {
+      out.Set(*v);
+      return true;
+    }
+    if (auto v = val.get_value<std::string>()) {
+      out.Set(value::AssetPath(*v));
       return true;
     }
   }
@@ -4100,6 +4245,21 @@ bool CrateWriter::ConvertValue(
   } else if (type_name == "int4") {
     if (auto v = val.get_value<value::int4>()) {
       out.Set(*v);
+      return true;
+    }
+  } else if (type_name == "uint2") {
+    if (auto v = val.get_value<value::uint2>()) {
+      out.Set(tinyusdz::to_string(*v));
+      return true;
+    }
+  } else if (type_name == "uint3") {
+    if (auto v = val.get_value<value::uint3>()) {
+      out.Set(tinyusdz::to_string(*v));
+      return true;
+    }
+  } else if (type_name == "uint4") {
+    if (auto v = val.get_value<value::uint4>()) {
+      out.Set(tinyusdz::to_string(*v));
       return true;
     }
   }
@@ -4191,159 +4351,253 @@ bool CrateWriter::ConvertValue(
   }
 
   // Array types
-  else if (type_name == "int[]") {
-    if (auto v = val.get_value<std::vector<int32_t>>()) {
-      out.Set(*v);
+  else if (type_name == "bool[]") {
+    std::vector<bool> values;
+    if (ExtractArrayValueStrict<bool>(val, &values)) {
+      out.Set(values);
+      return true;
+    }
+  } else if (type_name == "int[]") {
+    std::vector<int32_t> values;
+    if (ExtractArrayValueStrict<int32_t>(val, &values)) {
+      out.Set(values);
+      return true;
+    }
+  } else if (type_name == "uint[]") {
+    std::vector<uint32_t> values;
+    if (ExtractArrayValueStrict<uint32_t>(val, &values)) {
+      out.Set(values);
+      return true;
+    }
+  } else if (type_name == "int64[]") {
+    std::vector<int64_t> values;
+    if (ExtractArrayValueStrict<int64_t>(val, &values)) {
+      out.Set(values);
+      return true;
+    }
+  } else if (type_name == "uint64[]") {
+    std::vector<uint64_t> values;
+    if (ExtractArrayValueStrict<uint64_t>(val, &values)) {
+      out.Set(values);
       return true;
     }
   } else if (type_name == "float[]") {
-    if (auto v = val.get_value<std::vector<float>>()) {
-      out.Set(*v);
+    std::vector<float> values;
+    if (ExtractArrayValueStrict<float>(val, &values)) {
+      out.Set(values);
       return true;
     }
   } else if (type_name == "double[]") {
-    if (auto v = val.get_value<std::vector<double>>()) {
-      out.Set(*v);
+    std::vector<double> values;
+    if (ExtractArrayValueStrict<double>(val, &values)) {
+      out.Set(values);
+      return true;
+    }
+  } else if (type_name == "float2[]") {
+    std::vector<value::float2> values;
+    if (ExtractArrayValueStrict<value::float2>(val, &values)) {
+      out.Set(values);
       return true;
     }
   } else if (type_name == "double2[]") {
-    if (auto v = val.get_value<std::vector<value::double2>>()) {
-      out.Set(*v);
-      return true;
-    }
-  } else if (type_name == "string[]") {
-    if (auto v = val.get_value<std::vector<std::string>>()) {
-      out.Set(*v);
+    std::vector<value::double2> values;
+    if (ExtractArrayValueStrict<value::double2>(val, &values)) {
+      out.Set(values);
       return true;
     }
   } else if (type_name == "float3[]") {
-    if (auto v = val.get_value<std::vector<value::float3>>()) {
-      out.Set(*v);
+    std::vector<value::float3> values;
+    if (ExtractArrayValueStrict<value::float3>(val, &values)) {
+      out.Set(values);
       return true;
     }
   } else if (type_name == "double3[]") {
-    if (auto v = val.get_value<std::vector<value::double3>>()) {
-      out.Set(*v);
+    std::vector<value::double3> values;
+    if (ExtractArrayValueStrict<value::double3>(val, &values)) {
+      out.Set(values);
+      return true;
+    }
+  } else if (type_name == "float4[]") {
+    std::vector<value::float4> values;
+    if (ExtractArrayValueStrict<value::float4>(val, &values)) {
+      out.Set(values);
+      return true;
+    }
+  } else if (type_name == "double4[]") {
+    std::vector<value::double4> values;
+    if (ExtractArrayValueStrict<value::double4>(val, &values)) {
+      out.Set(values);
+      return true;
+    }
+  } else if (type_name == "int2[]") {
+    std::vector<value::int2> values;
+    if (ExtractArrayValueStrict<value::int2>(val, &values)) {
+      out.Set(values);
+      return true;
+    }
+  } else if (type_name == "int3[]") {
+    std::vector<value::int3> values;
+    if (ExtractArrayValueStrict<value::int3>(val, &values)) {
+      out.Set(values);
+      return true;
+    }
+  } else if (type_name == "int4[]") {
+    std::vector<value::int4> values;
+    if (ExtractArrayValueStrict<value::int4>(val, &values)) {
+      out.Set(values);
+      return true;
+    }
+  } else if (type_name == "uint2[]") {
+    std::vector<value::uint2> values;
+    if (ExtractArrayValueStrict<value::uint2>(val, &values)) {
+      std::ostringstream ss;
+      ss << values;
+      out.Set(ss.str());
+      return true;
+    }
+  } else if (type_name == "uint3[]") {
+    std::vector<value::uint3> values;
+    if (ExtractArrayValueStrict<value::uint3>(val, &values)) {
+      std::ostringstream ss;
+      ss << values;
+      out.Set(ss.str());
+      return true;
+    }
+  } else if (type_name == "uint4[]") {
+    std::vector<value::uint4> values;
+    if (ExtractArrayValueStrict<value::uint4>(val, &values)) {
+      std::ostringstream ss;
+      ss << values;
+      out.Set(ss.str());
+      return true;
+    }
+  } else if (type_name == "half3[]") {
+    std::vector<value::half3> values;
+    if (ExtractArrayValueStrict<value::half3>(val, &values)) {
+      out.Set(values);
+      return true;
+    }
+  } else if (type_name == "half4[]") {
+    std::vector<value::half4> values;
+    if (ExtractArrayValueStrict<value::half4>(val, &values)) {
+      out.Set(values);
+      return true;
+    }
+  } else if (type_name == "quath[]") {
+    std::vector<value::quath> values;
+    if (ExtractArrayValueStrict<value::quath>(val, &values)) {
+      out.Set(values);
+      return true;
+    }
+  } else if (type_name == "quatf[]") {
+    std::vector<value::quatf> values;
+    if (ExtractArrayValueStrict<value::quatf>(val, &values)) {
+      out.Set(values);
+      return true;
+    }
+  } else if (type_name == "quatd[]") {
+    std::vector<value::quatd> values;
+    if (ExtractArrayValueStrict<value::quatd>(val, &values)) {
+      out.Set(values);
+      return true;
+    }
+  } else if (type_name == "matrix4d[]") {
+    std::vector<value::matrix4d> values;
+    if (ExtractArrayValueStrict<value::matrix4d>(val, &values)) {
+      out.Set(values);
+      return true;
+    }
+  } else if (type_name == "string[]") {
+    std::vector<std::string> values;
+    if (ExtractArrayValueStrict<std::string>(val, &values)) {
+      out.Set(values);
+      return true;
+    }
+  } else if (type_name == "token[]") {
+    std::vector<value::token> values;
+    if (ExtractArrayValueStrict<value::token>(val, &values)) {
+      out.Set(values);
+      return true;
+    }
+    std::vector<std::string> strings;
+    if (ExtractArrayValueStrict<std::string>(val, &strings)) {
+      values.reserve(strings.size());
+      for (const auto& s : strings) {
+        values.emplace_back(s);
+      }
+      out.Set(values);
       return true;
     }
   }
   // Role type arrays - convert to underlying type
   else if (type_name == "point3f[]") {
-    if (auto v = val.get_value<std::vector<value::float3>>(false)) {
-      out.Set(*v);
+    std::vector<value::float3> values;
+    if (ExtractArrayValueStrict<value::float3>(val, &values) ||
+        ExtractRoleArrayToUnderlying<value::point3f, value::float3>(val, &values)) {
+      out.Set(values);
       return true;
     }
   } else if (type_name == "point3d[]") {
-    if (auto v = val.get_value<std::vector<value::double3>>(false)) {
-      out.Set(*v);
+    std::vector<value::double3> values;
+    if (ExtractArrayValueStrict<value::double3>(val, &values) ||
+        ExtractRoleArrayToUnderlying<value::point3d, value::double3>(val, &values)) {
+      out.Set(values);
       return true;
     }
   } else if (type_name == "normal3f[]") {
-    if (auto v = val.get_value<std::vector<value::float3>>(false)) {
-      out.Set(*v);
+    std::vector<value::float3> values;
+    if (ExtractArrayValueStrict<value::float3>(val, &values) ||
+        ExtractRoleArrayToUnderlying<value::normal3f, value::float3>(val, &values)) {
+      out.Set(values);
       return true;
     }
   } else if (type_name == "normal3d[]") {
-    if (auto v = val.get_value<std::vector<value::double3>>(false)) {
-      out.Set(*v);
+    std::vector<value::double3> values;
+    if (ExtractArrayValueStrict<value::double3>(val, &values) ||
+        ExtractRoleArrayToUnderlying<value::normal3d, value::double3>(val, &values)) {
+      out.Set(values);
       return true;
     }
   } else if (type_name == "vector3f[]") {
-    if (auto v = val.get_value<std::vector<value::float3>>(false)) {
-      out.Set(*v);
+    std::vector<value::float3> values;
+    if (ExtractArrayValueStrict<value::float3>(val, &values) ||
+        ExtractRoleArrayToUnderlying<value::vector3f, value::float3>(val, &values)) {
+      out.Set(values);
       return true;
     }
   } else if (type_name == "vector3d[]") {
-    if (auto v = val.get_value<std::vector<value::double3>>(false)) {
-      out.Set(*v);
+    std::vector<value::double3> values;
+    if (ExtractArrayValueStrict<value::double3>(val, &values) ||
+        ExtractRoleArrayToUnderlying<value::vector3d, value::double3>(val, &values)) {
+      out.Set(values);
       return true;
     }
   } else if (type_name == "color3f[]") {
-    if (auto v = val.get_value<std::vector<value::float3>>(false)) {
-      out.Set(*v);
+    std::vector<value::float3> values;
+    if (ExtractArrayValueStrict<value::float3>(val, &values) ||
+        ExtractRoleArrayToUnderlying<value::color3f, value::float3>(val, &values)) {
+      out.Set(values);
       return true;
     }
   } else if (type_name == "color3d[]") {
-    if (auto v = val.get_value<std::vector<value::double3>>(false)) {
-      out.Set(*v);
+    std::vector<value::double3> values;
+    if (ExtractArrayValueStrict<value::double3>(val, &values) ||
+        ExtractRoleArrayToUnderlying<value::color3d, value::double3>(val, &values)) {
+      out.Set(values);
       return true;
     }
   } else if (type_name == "color4f[]") {
-    if (auto v = val.get_value<std::vector<value::float4>>(false)) {
-      out.Set(*v);
+    std::vector<value::float4> values;
+    if (ExtractArrayValueStrict<value::float4>(val, &values) ||
+        ExtractRoleArrayToUnderlying<value::color4f, value::float4>(val, &values)) {
+      out.Set(values);
       return true;
     }
   } else if (type_name == "color4d[]") {
-    if (auto v = val.get_value<std::vector<value::double4>>(false)) {
-      out.Set(*v);
-      return true;
-    }
-  } else if (type_name == "token[]") {
-    if (auto v = val.get_value<std::vector<value::token>>()) {
-      // For now, skip token[] arrays as they require special handling
-      // They will be handled through the generic property system if needed
-      // Return false to indicate this type needs special handling
-      if (err) *err = "token[] arrays require special handling";
-      return false;
-    }
-  } else if (type_name == "int64[]") {
-    if (auto v = val.get_value<std::vector<int64_t>>()) {
-      out.Set(*v);
-      return true;
-    }
-  } else if (type_name == "quath[]") {
-    if (auto v = val.get_value<std::vector<value::quath>>()) {
-      out.Set(*v);
-      return true;
-    }
-  } else if (type_name == "quatf[]") {
-    if (auto v = val.get_value<std::vector<value::quatf>>()) {
-      out.Set(*v);
-      return true;
-    }
-  } else if (type_name == "quatd[]") {
-    if (auto v = val.get_value<std::vector<value::quatd>>()) {
-      out.Set(*v);
-      return true;
-    }
-  } else if (type_name == "half3[]") {
-    if (auto v = val.get_value<std::vector<value::half3>>()) {
-      out.Set(*v);
-      return true;
-    }
-  } else if (type_name == "half4[]") {
-    if (auto v = val.get_value<std::vector<value::half4>>()) {
-      out.Set(*v);
-      return true;
-    }
-  } else if (type_name == "float4[]") {
-    if (auto v = val.get_value<std::vector<value::float4>>()) {
-      out.Set(*v);
-      return true;
-    }
-  } else if (type_name == "double4[]") {
-    if (auto v = val.get_value<std::vector<value::double4>>()) {
-      out.Set(*v);
-      return true;
-    }
-  } else if (type_name == "int2[]") {
-    if (auto v = val.get_value<std::vector<value::int2>>()) {
-      out.Set(*v);
-      return true;
-    }
-  } else if (type_name == "int3[]") {
-    if (auto v = val.get_value<std::vector<value::int3>>()) {
-      out.Set(*v);
-      return true;
-    }
-  } else if (type_name == "int4[]") {
-    if (auto v = val.get_value<std::vector<value::int4>>()) {
-      out.Set(*v);
-      return true;
-    }
-  } else if (type_name == "matrix4d[]") {
-    if (auto v = val.get_value<std::vector<value::matrix4d>>()) {
-      out.Set(*v);
+    std::vector<value::double4> values;
+    if (ExtractArrayValueStrict<value::double4>(val, &values) ||
+        ExtractRoleArrayToUnderlying<value::color4d, value::double4>(val, &values)) {
+      out.Set(values);
       return true;
     }
   }
@@ -4438,13 +4692,13 @@ bool CrateWriter::ConvertLayerToSpecs(const Layer& layer, std::string* err) {
     }
 
     // comment (string)
-    std::cerr << "DEBUG stage-converter: metas.comment.value = '" << metas.comment.value
-              << "' (empty=" << metas.comment.value.empty() << ")\n";
+    SC_DLOG("DEBUG stage-converter: metas.comment.value = '" << metas.comment.value
+              << "' (empty=" << metas.comment.value.empty() << ")\n");
     if (!metas.comment.value.empty()) {
       crate::CrateValue comment_value;
       comment_value.Set(metas.comment.value);
       root_fields.push_back({"comment", comment_value});
-      std::cerr << "DEBUG stage-converter: Added comment field\n";
+      SC_DLOG("DEBUG stage-converter: Added comment field\n");
     }
 
     // kilogramsPerUnit (double) - UsdPhysics
@@ -4476,7 +4730,7 @@ bool CrateWriter::ConvertLayerToSpecs(const Layer& layer, std::string* err) {
     std::cout << "[ConvertLayerToSpecs] Converting primspec: " << prim_name << "\n";
 
     // Each top-level primspec is a direct child of root
-    Path root_path = Path();  // Root path
+    Path root_path = Path::make_root_path();
 
     if (!ConvertPrimSpecRecursive(primspec, root_path, err)) {
       if (err) *err = "Failed to convert primspec: " + prim_name + ". Error: " + (*err);
@@ -4499,19 +4753,11 @@ bool CrateWriter::ConvertLayerToSpecs(const Layer& layer, std::string* err) {
   return true;
 }
 
-bool CrateWriter::ConvertPrimSpecRecursive(
+bool CrateWriter::BuildPrimSpecFields(
     const PrimSpec& primspec,
-    const Path& parent_path,
+    const Path& prim_path,
+    crate::FieldValuePairVector& fields,
     std::string* err) {
-
-  // 1. Build path for this prim
-  Path prim_path = parent_path.AppendPrim(primspec.name());
-
-  std::cout << "[ConvertPrimSpecRecursive] Processing prim: " << prim_path.full_path_name() << "\n";
-
-  // 2. Create fields for this prim spec
-  crate::FieldValuePairVector fields;
-
   // Add specifier (def, over, class) - use Specifier enum directly, not token
   Specifier spec = primspec.specifier();
   // USD files don't allow Invalid specifier - default to Def if we get Invalid
@@ -4530,7 +4776,7 @@ bool CrateWriter::ConvertPrimSpecRecursive(
     fields.push_back({"typeName", type_value});
   }
 
-  // 3. Convert properties (attributes, relationships, connections)
+  // Convert properties (attributes, relationships, connections)
   for (const auto& item : primspec.props()) {
     const auto& prop_name = item.first;
     const auto& prop = item.second;
@@ -4540,7 +4786,7 @@ bool CrateWriter::ConvertPrimSpecRecursive(
     }
   }
 
-  // 4. Convert metadata from PrimMeta
+  // Convert metadata from PrimMeta
   const PrimMeta& metas = primspec.metas();
 
   // Add common metadata
@@ -4560,8 +4806,7 @@ bool CrateWriter::ConvertPrimSpecRecursive(
     crate::CrateValue kind_value;
     // get_kind() returns the kind as a string
     std::string kind_str = metas.get_kind();
-    crate::TokenIndex kind_tok = GetOrCreateToken(kind_str);
-    kind_value.Set(kind_tok.value);
+    kind_value.Set(value::token(kind_str));
     fields.push_back({"kind", kind_value});
   }
 
@@ -4583,29 +4828,52 @@ bool CrateWriter::ConvertPrimSpecRecursive(
     const VariantSelectionMap& variant_map = metas.variants.value();
     crate::CrateValue variant_value;
     variant_value.Set(variant_map);
-    fields.push_back({"variants", variant_value});
+    fields.push_back({"variantSelection", variant_value});
 
-    std::cerr << "[ConvertPrimSpecRecursive] Added variants field with "
-              << variant_map.size() << " selections\n";
+    SC_DLOG("[BuildPrimSpecFields] Added variantSelection field with "
+              << variant_map.size() << " selections\n");
   }
 
-  // Add variantSets list if present
+  // Add variantSetNames list if present
   if (metas.variantSets) {
-    // Collect all variant sets from all listops
-    std::vector<std::string> variant_sets_list;
+    ListOp<std::string> variant_sets_listop;
+    size_t total_variant_sets = 0;
+
     for (const auto& variantSets_op : metas.variantSets.value()) {
-      for (const auto& vs : variantSets_op.second) {
-        variant_sets_list.push_back(vs);
+      const ListEditQual& qual = variantSets_op.first;
+      const std::vector<std::string>& variant_sets = variantSets_op.second;
+      total_variant_sets += variant_sets.size();
+
+      switch (qual) {
+        case ListEditQual::ResetToExplicit:
+          variant_sets_listop.ClearAndMakeExplicit();
+          variant_sets_listop.SetExplicitItems(variant_sets);
+          break;
+        case ListEditQual::Append:
+          variant_sets_listop.SetAppendedItems(variant_sets);
+          break;
+        case ListEditQual::Prepend:
+          variant_sets_listop.SetPrependedItems(variant_sets);
+          break;
+        case ListEditQual::Add:
+          variant_sets_listop.SetAddedItems(variant_sets);
+          break;
+        case ListEditQual::Delete:
+          variant_sets_listop.SetDeletedItems(variant_sets);
+          break;
+        default:
+          variant_sets_listop.ClearAndMakeExplicit();
+          variant_sets_listop.SetExplicitItems(variant_sets);
+          break;
       }
     }
 
-    // Convert to string array for CrateValue
     crate::CrateValue variant_sets_value;
-    variant_sets_value.Set(variant_sets_list);
-    fields.push_back({"variantSets", variant_sets_value});
+    variant_sets_value.Set(variant_sets_listop);
+    fields.push_back({"variantSetNames", variant_sets_value});
 
-    std::cerr << "[ConvertPrimSpecRecursive] Added variantSets field with "
-              << variant_sets_list.size() << " sets\n";
+    SC_DLOG("[BuildPrimSpecFields] Added variantSetNames field with "
+              << total_variant_sets << " sets\n");
   }
 
   // Add references if present
@@ -4649,8 +4917,8 @@ bool CrateWriter::ConvertPrimSpecRecursive(
     ref_value.Set(ref_listop);
     fields.push_back({"references", ref_value});
 
-    std::cerr << "[ConvertPrimSpecRecursive] Added references field with "
-              << total_refs << " references\n";
+    SC_DLOG("[BuildPrimSpecFields] Added references field with "
+              << total_refs << " references\n");
   }
 
   // Add payload if present
@@ -4694,8 +4962,8 @@ bool CrateWriter::ConvertPrimSpecRecursive(
     payload_value.Set(payload_listop);
     fields.push_back({"payload", payload_value});
 
-    std::cerr << "[ConvertPrimSpecRecursive] Added payload field with "
-              << total_payloads << " payloads\n";
+    SC_DLOG("[BuildPrimSpecFields] Added payload field with "
+              << total_payloads << " payloads\n");
   }
 
   // Add customData if present
@@ -4703,8 +4971,8 @@ bool CrateWriter::ConvertPrimSpecRecursive(
     crate::CrateValue custom_data_value;
     custom_data_value.Set(metas.get_customData());
     fields.push_back({"customData", custom_data_value});
-    std::cerr << "[ConvertPrimSpecRecursive] Added customData with "
-              << metas.get_customData().size() << " entries\n";
+    SC_DLOG("[BuildPrimSpecFields] Added customData with "
+              << metas.get_customData().size() << " entries\n");
   }
 
   // Add apiSchemas if present
@@ -4758,8 +5026,8 @@ bool CrateWriter::ConvertPrimSpecRecursive(
     api_value.Set(api_listop);
     fields.push_back({"apiSchemas", api_value});
 
-    std::cerr << "[ConvertPrimSpecRecursive] Added apiSchemas with "
-              << api_tokens.size() << " schemas\n";
+    SC_DLOG("[BuildPrimSpecFields] Added apiSchemas with "
+              << api_tokens.size() << " schemas\n");
   }
 
   // Add inherits if present
@@ -4803,8 +5071,8 @@ bool CrateWriter::ConvertPrimSpecRecursive(
     inherits_value.Set(inherits_listop);
     fields.push_back({"inherits", inherits_value});
 
-    std::cerr << "[ConvertPrimSpecRecursive] Added inherits with "
-              << total_inherits << " paths\n";
+    SC_DLOG("[BuildPrimSpecFields] Added inherits with "
+              << total_inherits << " paths\n");
   }
 
   // Add specializes if present
@@ -4848,8 +5116,8 @@ bool CrateWriter::ConvertPrimSpecRecursive(
     specializes_value.Set(specializes_listop);
     fields.push_back({"specializes", specializes_value});
 
-    std::cerr << "[ConvertPrimSpecRecursive] Added specializes with "
-              << total_specializes << " paths\n";
+    SC_DLOG("[BuildPrimSpecFields] Added specializes with "
+              << total_specializes << " paths\n");
   }
 
   // Add assetInfo if present
@@ -4857,8 +5125,8 @@ bool CrateWriter::ConvertPrimSpecRecursive(
     crate::CrateValue asset_info_value;
     asset_info_value.Set(metas.get_assetInfo());
     fields.push_back({"assetInfo", asset_info_value});
-    std::cerr << "[ConvertPrimSpecRecursive] Added assetInfo with "
-              << metas.get_assetInfo().size() << " entries\n";
+    SC_DLOG("[BuildPrimSpecFields] Added assetInfo with "
+              << metas.get_assetInfo().size() << " entries\n");
   }
 
   // Add instanceable if present
@@ -4866,8 +5134,27 @@ bool CrateWriter::ConvertPrimSpecRecursive(
     crate::CrateValue instanceable_value;
     instanceable_value.Set(metas.get_instanceable());
     fields.push_back({"instanceable", instanceable_value});
-    std::cerr << "[ConvertPrimSpecRecursive] Added instanceable: "
-              << metas.get_instanceable() << "\n";
+    SC_DLOG("[BuildPrimSpecFields] Added instanceable: "
+              << metas.get_instanceable() << "\n");
+  }
+
+  return true;
+}
+
+bool CrateWriter::ConvertPrimSpecRecursive(
+    const PrimSpec& primspec,
+    const Path& parent_path,
+    std::string* err) {
+
+  // 1. Build path for this prim
+  Path prim_path = parent_path.AppendPrim(primspec.name());
+
+  SC_DLOG("[ConvertPrimSpecRecursive] Processing prim: " << prim_path.full_path_name() << "\n");
+
+  // 2. Create fields for this prim spec
+  crate::FieldValuePairVector fields;
+  if (!BuildPrimSpecFields(primspec, prim_path, fields, err)) {
+    return false;
   }
 
   // 5. Add spec to file
@@ -4876,7 +5163,17 @@ bool CrateWriter::ConvertPrimSpecRecursive(
     return false;
   }
 
-  // 6. Recursively process children
+  // 6. Process variant sets for this primspec
+  if (!primspec.variantSets().empty()) {
+    for (const auto& vs_item : primspec.variantSets()) {
+      if (!ConvertVariantSetSpecToFields(vs_item.first, vs_item.second, prim_path, err)) {
+        if (err) *err = "Failed to convert VariantSetSpec '" + vs_item.first + "' for " + prim_path.full_path_name() + ": " + *err;
+        return false;
+      }
+    }
+  }
+
+  // 7. Recursively process children
   for (const PrimSpec& child : primspec.children()) {
     if (!ConvertPrimSpecRecursive(child, prim_path, err)) {
       return false;
@@ -4928,8 +5225,8 @@ bool CrateWriter::ConvertAttributeToFields(
   // Create the attribute path
   Path attr_path = parent_path.AppendProperty(attr_name);
 
-  std::cerr << "[ConvertAttributeToFields] Creating separate spec for attribute: "
-            << attr_path.full_path_name() << "\n";
+  SC_DLOG("[ConvertAttributeToFields] Creating separate spec for attribute: "
+            << attr_path.full_path_name() << "\n");
 
   // 1. Add type name - store as value::token, not as token index!
   if (!attr.type_name().empty()) {
@@ -4975,15 +5272,14 @@ bool CrateWriter::ConvertAttributeToFields(
     // Add the timeSamples field
     attr_fields.push_back({"timeSamples", ts_crate_val});
 
-    std::cerr << "[ConvertAttributeToFields] Added TimeSamples for " << attr_name
-              << " with " << ts.size() << " samples\n";
+    SC_DLOG("[ConvertAttributeToFields] Added TimeSamples for " << attr_name
+              << " with " << ts.size() << " samples\n");
   }
 
   // 3. Add variability if not default
   if (attr.variability() != Variability::Varying) {
     crate::CrateValue var_value;
-    crate::TokenIndex var_tok = GetOrCreateToken(to_string(attr.variability()));
-    var_value.Set(var_tok.value);
+    var_value.Set(attr.variability());
     attr_fields.push_back({"variability", var_value});
   }
 
@@ -4993,8 +5289,7 @@ bool CrateWriter::ConvertAttributeToFields(
   // Add interpolation if specified
   if (metas.has_interpolation()) {
     crate::CrateValue interp_value;
-    crate::TokenIndex interp_tok = GetOrCreateToken(metas.get_interpolation().str());
-    interp_value.Set(interp_tok.value);
+    interp_value.Set(value::token(metas.get_interpolation().str()));
     attr_fields.push_back({"interpolation", interp_value});
   }
 
@@ -5010,8 +5305,8 @@ bool CrateWriter::ConvertAttributeToFields(
     crate::CrateValue custom_data_value;
     custom_data_value.Set(metas.get_customData());
     attr_fields.push_back({"customData", custom_data_value});
-    std::cerr << "[ConvertAttributeToFields] Added customData for " << attr_name
-              << " with " << metas.get_customData().size() << " entries\n";
+    SC_DLOG("[ConvertAttributeToFields] Added customData for " << attr_name
+              << " with " << metas.get_customData().size() << " entries\n");
   }
 
   // Add custom flag if attribute is custom
@@ -5019,7 +5314,7 @@ bool CrateWriter::ConvertAttributeToFields(
     crate::CrateValue custom_value;
     custom_value.Set(true);  // The field name "custom" with value true indicates custom attribute
     attr_fields.push_back({"custom", custom_value});
-    std::cerr << "[ConvertAttributeToFields] Added custom flag for " << attr_name << "\n";
+    SC_DLOG("[ConvertAttributeToFields] Added custom flag for " << attr_name << "\n");
   }
 
   // Create the attribute spec
@@ -5028,8 +5323,8 @@ bool CrateWriter::ConvertAttributeToFields(
     return false;
   }
 
-  std::cerr << "[ConvertAttributeToFields] Successfully created attribute spec with "
-            << attr_fields.size() << " fields\n";
+  SC_DLOG("[ConvertAttributeToFields] Successfully created attribute spec with "
+            << attr_fields.size() << " fields\n");
 
   return true;
 }
@@ -5048,8 +5343,8 @@ bool CrateWriter::ConvertRelationshipToFields(
   // Create the relationship path
   Path rel_path = parent_path.AppendProperty(rel_name);
 
-  std::cerr << "[ConvertRelationshipToFields] Creating separate spec for relationship: "
-            << rel_path.full_path_name() << "\n";
+  SC_DLOG("[ConvertRelationshipToFields] Creating separate spec for relationship: "
+            << rel_path.full_path_name() << "\n");
 
   // 1. Check relationship type and add targetPaths
   if (rel.is_blocked()) {
@@ -5105,8 +5400,7 @@ bool CrateWriter::ConvertRelationshipToFields(
         qual_str = "explicit";
         break;
     }
-    crate::TokenIndex qual_tok = GetOrCreateToken(qual_str);
-    qual_value.Set(qual_tok.value);
+    qual_value.Set(value::token(qual_str));
     rel_fields.push_back({"listOpQual", qual_value});
   }
 
@@ -5139,8 +5433,8 @@ bool CrateWriter::ConvertRelationshipToFields(
     crate::CrateValue custom_data_value;
     custom_data_value.Set(metas.get_customData());
     rel_fields.push_back({"customData", custom_data_value});
-    std::cerr << "[ConvertRelationshipToFields] Added customData for " << rel_name
-              << " with " << metas.get_customData().size() << " entries\n";
+    SC_DLOG("[ConvertRelationshipToFields] Added customData for " << rel_name
+              << " with " << metas.get_customData().size() << " entries\n");
   }
 
   // Add displayName if present
@@ -5163,8 +5457,8 @@ bool CrateWriter::ConvertRelationshipToFields(
     return false;
   }
 
-  std::cerr << "[ConvertRelationshipToFields] Successfully created relationship spec with "
-            << rel_fields.size() << " fields\n";
+  SC_DLOG("[ConvertRelationshipToFields] Successfully created relationship spec with "
+            << rel_fields.size() << " fields\n");
 
   return true;
 }
@@ -5190,8 +5484,8 @@ bool CrateWriter::ConvertConnectionToFields(
   // Connection path is: /Prim.attribute.connect
   Path conn_path = parent_path.AppendProperty(conn_name).AppendProperty("connect");
 
-  std::cerr << "[ConvertConnectionToFields] Creating separate spec for connection: "
-            << conn_path.full_path_name() << "\n";
+  SC_DLOG("[ConvertConnectionToFields] Creating separate spec for connection: "
+            << conn_path.full_path_name() << "\n");
 
   // 1. Add connection paths (targets)
   const std::vector<Path>& conn_paths = attr.connections();
@@ -5225,8 +5519,8 @@ bool CrateWriter::ConvertConnectionToFields(
     return false;
   }
 
-  std::cerr << "[ConvertConnectionToFields] Successfully created connection spec with "
-            << conn_fields.size() << " fields\n";
+  SC_DLOG("[ConvertConnectionToFields] Successfully created connection spec with "
+            << conn_fields.size() << " fields\n");
 
   return true;
 }
@@ -5245,8 +5539,8 @@ bool CrateWriter::ConvertVariantSetToFields(
   std::string variantset_path_str = parent_path.prim_part() + "{" + variantset_name + "}";
   Path vs_path(variantset_path_str, "");
 
-  std::cerr << "[ConvertVariantSetToFields] Creating VariantSet spec: "
-            << vs_path.full_path_name() << "\n";
+  SC_DLOG("[ConvertVariantSetToFields] Creating VariantSet spec: "
+            << vs_path.full_path_name() << "\n");
 
   // VariantSet spec needs "variantChildren" field listing all variant names
   crate::FieldValuePairVector vs_fields;
@@ -5265,8 +5559,8 @@ bool CrateWriter::ConvertVariantSetToFields(
     return false;
   }
 
-  std::cerr << "[ConvertVariantSetToFields] Created VariantSet with "
-            << variantset.variantSet.size() << " variants\n";
+  SC_DLOG("[ConvertVariantSetToFields] Created VariantSet with "
+            << variantset.variantSet.size() << " variants\n");
 
   // For each variant, create a Variant spec
   // IMPORTANT: Pass parent_path (the Prim), not vs_path (the VariantSet)
@@ -5276,6 +5570,52 @@ bool CrateWriter::ConvertVariantSetToFields(
     const auto& variant_data = variant_item.second;
 
     if (!ConvertVariantToFields(variant_name, variant_data, parent_path, variantset_name, err)) {
+      if (err) *err = "Failed to convert variant '" + variant_name + "': " + *err;
+      return false;
+    }
+  }
+
+  return true;
+}
+
+bool CrateWriter::ConvertVariantSetSpecToFields(
+    const std::string& variantset_name,
+    const VariantSetSpec& variantset,
+    const Path& parent_path,
+    std::string* err) {
+
+  // VariantSet path: parent{variantSetName} (e.g., /Chair{materialVariant})
+  std::string variantset_path_str = parent_path.prim_part() + "{" + variantset_name + "}";
+  Path vs_path(variantset_path_str, "");
+
+  SC_DLOG("[ConvertVariantSetSpecToFields] Creating VariantSet spec: "
+            << vs_path.full_path_name() << "\n");
+
+  crate::FieldValuePairVector vs_fields;
+
+  std::vector<value::token> variant_tokens;
+  for (const auto& variant_item : variantset.variantSet) {
+    variant_tokens.push_back(value::token(variant_item.first));
+  }
+
+  crate::CrateValue variant_children_value;
+  variant_children_value.Set(variant_tokens);
+  vs_fields.push_back({"variantChildren", variant_children_value});
+
+  if (!AddSpec(vs_path, SpecType::VariantSet, vs_fields, err)) {
+    if (err) *err = "Failed to add VariantSet spec: " + vs_path.full_path_name() + ": " + *err;
+    return false;
+  }
+
+  SC_DLOG("[ConvertVariantSetSpecToFields] Created VariantSet with "
+            << variantset.variantSet.size() << " variants\n");
+
+  // For each variant, create a Variant spec
+  for (const auto& variant_item : variantset.variantSet) {
+    const auto& variant_name = variant_item.first;
+    const auto& variant_spec = variant_item.second;
+
+    if (!ConvertVariantSpecToFields(variant_name, variant_spec, parent_path, variantset_name, err)) {
       if (err) *err = "Failed to convert variant '" + variant_name + "': " + *err;
       return false;
     }
@@ -5298,8 +5638,8 @@ bool CrateWriter::ConvertVariantToFields(
                                  variantset_name + "=" + variant_name + "}";
   Path v_path(variant_path_str, "");
 
-  std::cerr << "[ConvertVariantToFields] Creating Variant spec: "
-            << v_path.full_path_name() << "\n";
+  SC_DLOG("[ConvertVariantToFields] Creating Variant spec: "
+            << v_path.full_path_name() << "\n");
 
   // Variant spec contains variant metadata and prim children
   crate::FieldValuePairVector v_fields;
@@ -5335,19 +5675,78 @@ bool CrateWriter::ConvertVariantToFields(
     return false;
   }
 
-  std::cerr << "[ConvertVariantToFields] Created Variant spec with "
-            << v_fields.size() << " fields\n";
+  SC_DLOG("[ConvertVariantToFields] Created Variant spec with "
+            << v_fields.size() << " fields\n");
 
   // Add variant prim children (recursively convert each child prim)
   // Variant prim children are full prims that exist only within this variant
   const auto& child_prims = variant.primChildren();
   if (!child_prims.empty()) {
-    std::cerr << "[ConvertVariantToFields] Processing " << child_prims.size()
-              << " prim children for variant: " << variant_name << "\n";
+    SC_DLOG("[ConvertVariantToFields] Processing " << child_prims.size()
+              << " prim children for variant: " << variant_name << "\n");
     for (const auto& child_prim : child_prims) {
       // Recursively convert each prim child (they inherit the variant path context)
       if (!ConvertPrimRecursive(child_prim, v_path, err)) {
         if (err) *err = "Failed to convert variant prim child: " + child_prim.element_name() + ": " + *err;
+        return false;
+      }
+    }
+  }
+
+  // Add nested variant sets (variants inside this variant)
+  const auto& nested_variant_sets = variant.variantSets();
+  if (!nested_variant_sets.empty()) {
+    for (const auto& nested_item : nested_variant_sets) {
+      if (!ConvertVariantSetToFields(nested_item.first, nested_item.second, v_path, err)) {
+        if (err) *err = "Failed to convert nested variant set '" + nested_item.first + "': " + *err;
+        return false;
+      }
+    }
+  }
+
+  return true;
+}
+
+bool CrateWriter::ConvertVariantSpecToFields(
+    const std::string& variant_name,
+    const PrimSpec& variant_primspec,
+    const Path& parent_prim_path,
+    const std::string& variantset_name,
+    std::string* err) {
+
+  // Variant path: parent_prim_path{variantSetName=variant_name}
+  std::string variant_path_str = parent_prim_path.prim_part() + "{" +
+                                 variantset_name + "=" + variant_name + "}";
+  Path v_path(variant_path_str, "");
+
+  SC_DLOG("[ConvertVariantSpecToFields] Creating Variant spec: "
+            << v_path.full_path_name() << "\n");
+
+  crate::FieldValuePairVector v_fields;
+  if (!BuildPrimSpecFields(variant_primspec, v_path, v_fields, err)) {
+    return false;
+  }
+
+  if (!AddSpec(v_path, SpecType::Variant, v_fields, err)) {
+    if (err) *err = "Failed to add Variant spec: " + v_path.full_path_name() + ": " + *err;
+    return false;
+  }
+
+  SC_DLOG("[ConvertVariantSpecToFields] Created Variant spec with "
+            << v_fields.size() << " fields\n");
+
+  // Add variant prim children (regular primspec children within this variant)
+  for (const PrimSpec& child : variant_primspec.children()) {
+    if (!ConvertPrimSpecRecursive(child, v_path, err)) {
+      return false;
+    }
+  }
+
+  // Add nested variant sets inside this variant
+  if (!variant_primspec.variantSets().empty()) {
+    for (const auto& nested_item : variant_primspec.variantSets()) {
+      if (!ConvertVariantSetSpecToFields(nested_item.first, nested_item.second, v_path, err)) {
+        if (err) *err = "Failed to convert nested VariantSetSpec '" + nested_item.first + "': " + *err;
         return false;
       }
     }

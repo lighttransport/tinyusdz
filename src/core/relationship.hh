@@ -7,6 +7,7 @@
 
 #include <cstddef>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "nonstd/optional.hpp"
@@ -57,6 +58,11 @@ class Relationship {
 
   void set(const std::vector<Path> &pv) {
     targetPathVector = pv;
+    type = Type::PathVector;
+  }
+
+  void set(std::vector<Path> &&pv) {
+    targetPathVector = std::move(pv);
     type = Type::PathVector;
   }
 
@@ -139,6 +145,11 @@ class RelationshipProperty {
 
   void set(const std::vector<Path> &pv) {
     _relationship.set(pv);
+    _authored = true;
+  }
+
+  void set(std::vector<Path> &&pv) {
+    _relationship.set(std::move(pv));
     _authored = true;
   }
 
