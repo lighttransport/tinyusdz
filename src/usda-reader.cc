@@ -1858,6 +1858,7 @@ bool USDAReader::Impl::Read(const uint32_t state_flags, bool as_primspec) {
   RegisterReconstructCallback<GeomBasisCurves>();
   RegisterReconstructCallback<GeomNurbsCurves>();
   RegisterReconstructCallback<GeomCamera>();
+  RegisterReconstructCallback<GeomPointInstancer>();
 
   RegisterReconstructCallback<Material>();
   RegisterReconstructCallback<Shader>();

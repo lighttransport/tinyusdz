@@ -1,0 +1,23 @@
+#pragma once
+
+void usdc_reconstruct_variant_properties_test(void);
+void usdc_reconstruct_variant_prim_children_test(void);
+void usdc_reconstruct_nested_variant_sets_test(void);
+void usdc_reconstruct_variant_name_collision_test(void);
+void usdc_reconstruct_variant_selection_test(void);
+void usdc_memory_budget_customdata_limit_test(void);
+void usdc_memory_budget_customdata_success_test(void);
+void usdc_memory_budget_references_limit_test(void);
+void usdc_memory_budget_references_success_test(void);
+void usdc_memory_budget_stage_meta_sublayers_limit_test(void);
+void usdc_memory_budget_stage_meta_sublayers_success_test(void);
+void usdc_memory_budget_stage_meta_customdata_limit_test(void);
+void usdc_memory_budget_stage_meta_customdata_success_test(void);
+void usdc_memory_budget_composition_limit_test(void);
+void usdc_memory_budget_composition_success_test(void);
+void usdc_layer_variant_roundtrip_test(void);
+void usdc_layer_variant_nested_roundtrip_test(void);
+void usdc_stage_variant_roundtrip_test(void);
+void usdc_layer_nested_variant_sets_test(void);
+void usdc_layer_variant_name_collision_test(void);
+void usdc_layer_variant_selection_test(void);

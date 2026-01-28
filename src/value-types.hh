@@ -2444,7 +2444,8 @@ class ValueView {
   // Constructor from const Value pointer
   explicit ValueView(const Value* value) noexcept
     : ptr_(value),
-      type_id_(value ? value->type_id() : TYPE_ID_INVALID),
+      type_id_(value ? value->type_id()
+                     : static_cast<uint32_t>(TYPE_ID_INVALID)),
       flags_(FLAG_NONE) {
     std::memset(padding_, 0, sizeof(padding_));
     if (value && (type_id_ & TYPE_ID_1D_ARRAY_BIT)) {

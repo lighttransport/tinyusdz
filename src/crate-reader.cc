@@ -67,10 +67,10 @@ namespace crate {
 #define kTag "[Crate]"
 
 #define CHECK_MEMORY_USAGE(__nbytes) \
-  MEMORY_BUDGET_CHECK(memory_manager_, (__nbytes), kTag)
+  MEMORY_BUDGET_CHECK((*memory_manager_), (__nbytes), kTag)
 
 #define REDUCE_MEMORY_USAGE(__nbytes) \
-  memory_manager_.Release(__nbytes)
+  memory_manager_->Release(__nbytes)
 
 
 
@@ -80,7 +80,11 @@ namespace crate {
 // --
 //
 CrateReader::CrateReader(StreamReader *sr, const CrateReaderConfig &config) 
-    : _sr(sr), memory_manager_(config.maxMemoryBudget), _impl(nullptr) {
+    : _sr(sr),
+      owned_memory_manager_(config.maxMemoryBudget),
+      memory_manager_(config.memory_budget_manager ? config.memory_budget_manager
+                                                   : &owned_memory_manager_),
+      _impl(nullptr) {
   _config = config;
   if (_config.numThreads == -1) {
 #if defined(__wasi__)

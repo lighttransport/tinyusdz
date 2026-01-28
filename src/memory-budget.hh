@@ -40,6 +40,8 @@ class MemoryBudgetManager {
   
   size_t GetUsageInMB() const { return size_t(current_usage_ / (1024 * 1024)); }
 
+  void SetMaxBudget(uint64_t max_budget) { max_budget_ = max_budget; }
+
   void Reset() { current_usage_ = 0; }
 
   class ScopedReservation {
