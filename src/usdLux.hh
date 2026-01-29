@@ -84,19 +84,13 @@ struct VolumeLightAPI {
 // Light Base Classes
 //
 
-class BoundableLight : public Xformable, public Collection {
-
+/// LightAPI: Common attributes shared by all USD light types.
+/// This base class implements UsdLuxLightAPI, UsdLuxShadowAPI, and UsdLuxShapingAPI.
+/// Both BoundableLight and NonboundableLight inherit from this class.
+class LightAPI {
  public:
-  std::string name;
-  Specifier spec{Specifier::Def};
-  int64_t parent_id{-1};  // Index to xform node
-
-  TypedAttribute<Animatable<Extent>> extent; // float3[]
-  TypedAttributeWithFallback<Animatable<Visibility>> visibility{Visibility::Inherited};
-  TypedAttributeWithFallback<Purpose> purpose{Purpose::Default};
-
-  // Light API
-  TypedAttributeWithFallback<Animatable<value::color3f>> color{value::color3f({1.0f, 1.0f, 1.0f})}; // inputs.color Light energy in linear color space.
+  // Core Light API (UsdLuxLightAPI)
+  TypedAttributeWithFallback<Animatable<value::color3f>> color{value::color3f({1.0f, 1.0f, 1.0f})}; // inputs:color Light energy in linear color space.
   TypedAttributeWithFallback<Animatable<float>> colorTemperature{6500.0f};  // inputs:colorTemperature
   TypedAttributeWithFallback<Animatable<float>> diffuse{1.0f}; // inputs:diffuse diffuse multiplier
   TypedAttributeWithFallback<Animatable<bool>> enableColorTemperature{false}; // inputs:enableColorTemperature
@@ -108,14 +102,14 @@ class BoundableLight : public Xformable, public Collection {
   // Light Filter Relationships
   RelationshipProperty lightFilters; // rel light:filters - Array of filter prims to apply
 
-  // Shadow API
+  // Shadow API (UsdLuxShadowAPI)
   TypedAttributeWithFallback<Animatable<bool>> shadowEnable{true}; // bool inputs:shadow:enable = 1
   TypedAttributeWithFallback<Animatable<value::color3f>> shadowColor{value::color3f({0.0f, 0.0f, 0.0f})}; // color3f inputs:shadow:color = (0, 0, 0)
   TypedAttributeWithFallback<Animatable<float>> shadowDistance{-1.0f}; // float inputs:shadow:distance = -1
   TypedAttributeWithFallback<Animatable<float>> shadowFalloff{-1.0f}; // float inputs:shadow:falloff = -1
   TypedAttributeWithFallback<Animatable<float>> shadowFalloffGamma{1.0f}; // float inputs:shadow:falloffGamma = 1
 
-  // Shaping API
+  // Shaping API (UsdLuxShapingAPI)
   TypedAttributeWithFallback<Animatable<float>> shapingFocus{0.0f}; // float inputs:shaping:focus = 0
   TypedAttributeWithFallback<Animatable<value::color3f>> shapingFocusTint{value::color3f({0.0f, 0.0f, 0.0f})}; // color3f inputs:shaping:focusTint = (0, 0, 0)
   TypedAttributeWithFallback<Animatable<float>> shapingConeAngle{90.0f}; // float inputs:shaping:cone:angle = 90
@@ -131,6 +125,21 @@ class BoundableLight : public Xformable, public Collection {
   // - string interpolation: "linear" (default), "held", "cubic"
   // - string illuminantPreset: "d65", "d50", "a", "e", "f1", "f2", "f7", "f11"
   // - string unitForWavelength: "nanometers" (default), "micrometers"
+};
+
+/// BoundableLight: Base class for lights with a bounding extent (SphereLight, RectLight, etc.)
+class BoundableLight : public Xformable, public Collection, public LightAPI {
+
+ public:
+  std::string name;
+  Specifier spec{Specifier::Def};
+  int64_t parent_id{-1};  // Index to xform node
+
+  TypedAttribute<Animatable<Extent>> extent; // float3[] - bounding extent
+  TypedAttributeWithFallback<Animatable<Visibility>> visibility{Visibility::Inherited};
+  TypedAttributeWithFallback<Purpose> purpose{Purpose::Default};
+
+  // LightAPI attributes inherited via LightAPI base class
 
   std::pair<ListEditQual, std::vector<Reference>> references;
   std::pair<ListEditQual, std::vector<Payload>> payload;
@@ -152,9 +161,9 @@ class BoundableLight : public Xformable, public Collection {
   std::vector<value::token> _properties;
 };
 
-// non-boundable still inherits Xformable. 
-// Differences with boundable is just `extent` attribute is omitted.
-class NonboundableLight : public Xformable, public Collection {
+/// NonboundableLight: Base class for lights without a bounding extent (DistantLight, DomeLight, etc.)
+/// Differences with BoundableLight: no `extent` attribute.
+class NonboundableLight : public Xformable, public Collection, public LightAPI {
 
  public:
   std::string name;
@@ -164,42 +173,7 @@ class NonboundableLight : public Xformable, public Collection {
   TypedAttributeWithFallback<Animatable<Visibility>> visibility{Visibility::Inherited};
   TypedAttributeWithFallback<Purpose> purpose{Purpose::Default};
 
-  // Light API
-  TypedAttributeWithFallback<Animatable<value::color3f>> color{value::color3f({1.0f, 1.0f, 1.0f})}; // inputs.color Light energy in linear color space.
-  TypedAttributeWithFallback<Animatable<float>> colorTemperature{6500.0f};  // inputs:colorTemperature
-  TypedAttributeWithFallback<Animatable<float>> diffuse{1.0f}; // inputs:diffuse diffuse multiplier
-  TypedAttributeWithFallback<Animatable<bool>> enableColorTemperature{false}; // inputs:enableColorTemperature
-  TypedAttributeWithFallback<Animatable<float>> exposure{0.0f}; // inputs:exposure EV
-  TypedAttributeWithFallback<Animatable<float>> intensity{1.0f}; // inputs:intensity
-  TypedAttributeWithFallback<Animatable<bool>> normalize{false}; // inputs:normalize normalize power by the surface area of the light.
-  TypedAttributeWithFallback<Animatable<float>> specular{1.0f}; // inputs:specular specular multiplier
-
-  // Light Filter Relationships
-  RelationshipProperty lightFilters; // rel light:filters - Array of filter prims to apply
-
-  // Shadow API
-  TypedAttributeWithFallback<Animatable<bool>> shadowEnable{true}; // bool inputs:shadow:enable = 1
-  TypedAttributeWithFallback<Animatable<value::color3f>> shadowColor{value::color3f({0.0f, 0.0f, 0.0f})}; // color3f inputs:shadow:color = (0, 0, 0)
-  TypedAttributeWithFallback<Animatable<float>> shadowDistance{-1.0f}; // float inputs:shadow:distance = -1
-  TypedAttributeWithFallback<Animatable<float>> shadowFalloff{-1.0f}; // float inputs:shadow:falloff = -1
-  TypedAttributeWithFallback<Animatable<float>> shadowFalloffGamma{1.0f}; // float inputs:shadow:falloffGamma = 1
-
-  // Shaping API
-  TypedAttributeWithFallback<Animatable<float>> shapingFocus{0.0f}; // float inputs:shaping:focus = 0
-  TypedAttributeWithFallback<Animatable<value::color3f>> shapingFocusTint{value::color3f({0.0f, 0.0f, 0.0f})}; // color3f inputs:shaping:focusTint = (0, 0, 0)
-  TypedAttributeWithFallback<Animatable<float>> shapingConeAngle{90.0f}; // float inputs:shaping:cone:angle = 90
-  TypedAttributeWithFallback<Animatable<float>> shapingConeSoftness{0.0f}; // float inputs:shaping:cone:softness = 0
-  TypedAttribute<Animatable<value::AssetPath>> shapingIesFile; // asset inputs:shaping:ies:file
-  TypedAttributeWithFallback<Animatable<float>> shapingIesAngleScale{0.0f}; // float inputs:shaping:ies:angleScale = 0
-  TypedAttributeWithFallback<Animatable<bool>> shapingIesNormalize{false}; // bool inputs:shaping:ies:normalize = false
-
-  // LTE SpectralAPI: Spectral emission support
-  // See doc/lte_spectral_api.md for specification
-  TypedAttribute<std::vector<value::float2>> spectralEmission; // float2[] wavelength:emission
-  // Metadata stored in attribute's customData:
-  // - string interpolation: "linear" (default), "held", "cubic"
-  // - string illuminantPreset: "d65", "d50", "a", "e", "f1", "f2", "f7", "f11"
-  // - string unitForWavelength: "nanometers" (default), "micrometers"
+  // LightAPI attributes inherited via LightAPI base class
 
   std::pair<ListEditQual, std::vector<Reference>> references;
   std::pair<ListEditQual, std::vector<Payload>> payload;
