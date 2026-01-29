@@ -7061,8 +7061,6 @@ bool CrateReader::ReadSpecs() {
 
   _specs.resize(static_cast<size_t>(num_specs));
 
-  // TODO: Memory size check
-
   // Create temporary space for decompressing.
   size_t compBufferSize= Usd_IntegerCompression::GetCompressedBufferSize(
       static_cast<size_t>(num_specs));

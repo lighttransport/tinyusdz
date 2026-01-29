@@ -6,8 +6,10 @@
 #pragma once
 
 #include <string>
+#include <vector>
 
 #include "nonstd/optional.hpp"
+#include "path.hh"
 #include "primvar.hh"
 #include "value-types.hh"
 
@@ -133,9 +135,37 @@ struct XformOp {
 
   primvar::PrimVar &var() { return _var; }
 
+  // Connection support
+  bool has_connections() const { return !_connections.empty(); }
+
+  void set_connection(const Path &path) {
+    _connections.clear();
+    _connections.push_back(path);
+  }
+
+  void set_connections(const std::vector<Path> &paths) {
+    _connections = paths;
+  }
+
+  nonstd::optional<Path> get_connection() const {
+    if (_connections.size() == 1) {
+      return _connections[0];
+    }
+    return nonstd::nullopt;
+  }
+
+  const std::vector<Path> &connections() const { return _connections; }
+  std::vector<Path> &connections() { return _connections; }
+
+  // Check if this xformOp is connection-only (no default value or timeSamples)
+  bool is_connection_only() const {
+    return has_connections() && !has_default() && !has_timesamples();
+  }
+
  private:
 
   bool _is_blocked{false};
+  std::vector<Path> _connections;  // Connection targets for this xformOp
 };
 
 }  // namespace tinyusdz
