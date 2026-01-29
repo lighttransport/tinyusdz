@@ -784,12 +784,12 @@ bool CrateWriter::ExtractMeshProperties(
   }
 
   // Extract skeleton relationship
-  if (mesh->skeleton) {
+  if (mesh->skeleton.authored()) {
     // Relationships are handled separately
   }
 
   // Extract blend shape targets relationship
-  if (mesh->blendShapeTargets) {
+  if (mesh->blendShapeTargets.authored()) {
     // Relationships are handled separately
   }
 
@@ -3056,7 +3056,7 @@ bool CrateWriter::AddMaterialBindingSpecs(
 
   // Add material:binding relationship if present
   if (mat_binding->has_materialBinding()) {
-    const Relationship& binding = mat_binding->materialBinding.value();
+    const Relationship& binding = mat_binding->materialBinding.relationship();
     if (!ConvertRelationshipToFields("material:binding", binding, prim_path, err)) {
       if (err) *err = "Failed to add material:binding relationship: " + *err;
       return false;
@@ -3065,7 +3065,7 @@ bool CrateWriter::AddMaterialBindingSpecs(
 
   // Add material:binding:preview relationship if present
   if (mat_binding->has_materialBindingPreview()) {
-    const Relationship& binding = mat_binding->materialBindingPreview.value();
+    const Relationship& binding = mat_binding->materialBindingPreview.relationship();
     if (!ConvertRelationshipToFields("material:binding:preview", binding, prim_path, err)) {
       if (err) *err = "Failed to add material:binding:preview relationship: " + *err;
       return false;
@@ -3074,7 +3074,7 @@ bool CrateWriter::AddMaterialBindingSpecs(
 
   // Add material:binding:full relationship if present
   if (mat_binding->has_materialBindingFull()) {
-    const Relationship& binding = mat_binding->materialBindingFull.value();
+    const Relationship& binding = mat_binding->materialBindingFull.relationship();
     if (!ConvertRelationshipToFields("material:binding:full", binding, prim_path, err)) {
       if (err) *err = "Failed to add material:binding:full relationship: " + *err;
       return false;
@@ -3172,29 +3172,29 @@ bool CrateWriter::AddLightFilterSpecs(
   }
 
   // Get the lightFilters relationship from the appropriate light type
-  nonstd::optional<Relationship> light_filters;
+  const RelationshipProperty* light_filters = nullptr;
 
   if (sphere_light) {
-    light_filters = sphere_light->lightFilters;
+    light_filters = &sphere_light->lightFilters;
   } else if (rect_light) {
-    light_filters = rect_light->lightFilters;
+    light_filters = &rect_light->lightFilters;
   } else if (disk_light) {
-    light_filters = disk_light->lightFilters;
+    light_filters = &disk_light->lightFilters;
   } else if (cylinder_light) {
-    light_filters = cylinder_light->lightFilters;
+    light_filters = &cylinder_light->lightFilters;
   } else if (distant_light) {
-    light_filters = distant_light->lightFilters;
+    light_filters = &distant_light->lightFilters;
   } else if (dome_light) {
-    light_filters = dome_light->lightFilters;
+    light_filters = &dome_light->lightFilters;
   } else if (geometry_light) {
-    light_filters = geometry_light->lightFilters;
+    light_filters = &geometry_light->lightFilters;
   } else if (portal_light) {
-    light_filters = portal_light->lightFilters;
+    light_filters = &portal_light->lightFilters;
   }
 
   // Add light:filters relationship if present
-  if (light_filters.has_value()) {
-    const Relationship& filters = light_filters.value();
+  if (light_filters && light_filters->authored()) {
+    const Relationship& filters = light_filters->relationship();
     if (!ConvertRelationshipToFields("light:filters", filters, prim_path, err)) {
       if (err) *err = "Failed to add light:filters relationship: " + *err;
       return false;

@@ -2554,7 +2554,7 @@ void crate_writer_material_binding_test(void) {
   if (loaded_sphere) {
     TEST_CHECK(loaded_sphere->has_materialBinding());
     if (loaded_sphere->has_materialBinding()) {
-      const Relationship& binding = loaded_sphere->materialBinding.value();
+      const Relationship& binding = loaded_sphere->materialBinding.relationship();
       if (binding.is_path()) {
         TEST_MSG("Material binding target: %s", binding.targetPath.full_path_name().c_str());
         TEST_CHECK(binding.targetPath.full_path_name() == "/SimpleMaterial");
@@ -3301,7 +3301,7 @@ void crate_writer_relationship_features_test(void) {
       const GeomSphere* sphere_data = sphere1->data().as<GeomSphere>();
       TEST_CHECK(sphere_data != nullptr);
       if (sphere_data && sphere_data->has_materialBinding()) {
-        const Relationship& binding = sphere_data->materialBinding.value();
+        const Relationship& binding = sphere_data->materialBinding.relationship();
         TEST_CHECK(binding.is_path());
         TEST_MSG("Sphere1 single-target relationship verified");
       }
@@ -3317,7 +3317,7 @@ void crate_writer_relationship_features_test(void) {
       const GeomSphere* sphere_data = sphere2->data().as<GeomSphere>();
       TEST_CHECK(sphere_data != nullptr);
       if (sphere_data && sphere_data->has_materialBinding()) {
-        const Relationship& binding = sphere_data->materialBinding.value();
+        const Relationship& binding = sphere_data->materialBinding.relationship();
         TEST_CHECK(binding.is_path());
         TEST_CHECK(binding.targetPath == Path("/Material2", ""));
         TEST_MSG("Sphere2 single-target relationship verified: %s", binding.targetPath.full_path_name().c_str());
@@ -3505,7 +3505,7 @@ void crate_writer_material_shader_enhancements_test(void) {
     const GeomSphere* sphere_data = sphere_prim->data().as<GeomSphere>();
     TEST_CHECK(sphere_data != nullptr);
     if (sphere_data && sphere_data->has_materialBinding()) {
-      const Relationship& binding = sphere_data->materialBinding.value();
+      const Relationship& binding = sphere_data->materialBinding.relationship();
       TEST_CHECK(binding.is_path());
       TEST_MSG("Sphere material binding: %s", binding.targetPath.full_path_name().c_str());
     }
