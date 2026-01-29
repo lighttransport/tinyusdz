@@ -1159,9 +1159,6 @@ class USDAReader::Impl {
   /// -- Members --
   ///
 
-  // TODO: Remove
-  // std::set<std::string> _node_types;
-
   std::stack<ParseState> parse_stack;
 
   std::string _base_dir;  // Used for importing another USD file
