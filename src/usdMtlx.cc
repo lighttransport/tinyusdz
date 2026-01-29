@@ -2458,12 +2458,10 @@ bool ConvertMtlxLightToUsdLux(const MtlxLight &mtlx_light,
     light.exposure.set_value(exposure);
     light.intensity.set_value(1.0f);
 
-    // Add ShapingAPI for cone control
-    ShapingAPI shaping;
-
+    // Set ShapingAPI attributes for cone control (inherited from BoundableLight)
     float inner_angle = 60.0f;
     conical_edf->inner_angle.get_value().get_scalar(&inner_angle);
-    shaping.shapingConeAngle.set_value(inner_angle);
+    light.shapingConeAngle.set_value(inner_angle);
 
     if (conical_edf->outer_angle.authored()) {
       float outer_angle = 60.0f;
@@ -2471,11 +2469,9 @@ bool ConvertMtlxLightToUsdLux(const MtlxLight &mtlx_light,
         oa_val.value().get_scalar(&outer_angle);
         // Use softness to represent the difference between inner and outer angles
         float softness = (outer_angle - inner_angle) / inner_angle;
-        shaping.shapingConeSoftness.set_value(std::max(0.0f, softness));
+        light.shapingConeSoftness.set_value(std::max(0.0f, softness));
       }
     }
-
-    light.shaping = shaping;
 
     (*usd_light) = light;
     return true;
@@ -2498,19 +2494,15 @@ bool ConvertMtlxLightToUsdLux(const MtlxLight &mtlx_light,
     light.exposure.set_value(exposure);
     light.intensity.set_value(1.0f);
 
-    // Add ShapingAPI with IES profile
+    // Set ShapingAPI attributes with IES profile (inherited from BoundableLight)
     if (measured_edf->file.authored()) {
-      ShapingAPI shaping;
-
       if (auto file_val = measured_edf->file.get_value()) {
         value::AssetPath ies_file;
         if (file_val.value().get_scalar(&ies_file)) {
-          shaping.shapingIesFile.set_value(ies_file);
-          shaping.shapingIesNormalize.set_value(true);
+          light.shapingIesFile.set_value(ies_file);
+          light.shapingIesNormalize.set_value(true);
         }
       }
-
-      light.shaping = shaping;
     }
 
     (*usd_light) = light;
