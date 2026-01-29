@@ -1065,6 +1065,22 @@ class AsciiParser {
   ///
   std::string GenerateSuggestion(const std::string& invalid_token);
 
+  /// Options for diagnostic formatting.
+  struct DiagnosticFormatOptions {
+    bool show_suggestion{false};   ///< Show suggestion from ErrorDiagnostic
+    bool show_caret{false};        ///< Show caret (^) indicator at error column
+    bool show_hints{false};        ///< Show recovery hints from ErrorDiagnostic
+    bool show_counts{false};       ///< Show occurrence counts for repeated errors
+    bool dedupe_by_message{false}; ///< Dedupe by message only (vs location+message)
+  };
+
+  /// Format diagnostics from a stack into a string.
+  /// @param[inout] diag_stack Stack of diagnostics (will be emptied)
+  /// @param[in] opts Formatting options
+  /// @return Formatted diagnostic string
+  std::string FormatDiagnostics(std::stack<ErrorDiagnostic>& diag_stack,
+                                const DiagnosticFormatOptions& opts);
+
   ///
   /// Do common setups. Assume called in ctor.
   ///

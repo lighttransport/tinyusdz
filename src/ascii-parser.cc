@@ -638,346 +638,146 @@ void AsciiParser::SetBaseDir(const std::string &str) { _base_dir = str; }
 
 void AsciiParser::SetStream(StreamReader *sr) { _sr = sr; }
 
-std::string AsciiParser::GetError() {
-  if (err_stack.empty()) {
+std::string AsciiParser::FormatDiagnostics(
+    std::stack<ErrorDiagnostic>& diag_stack,
+    const DiagnosticFormatOptions& opts) {
+  if (diag_stack.empty()) {
     return std::string();
   }
 
   std::stringstream ss;
-  
-  // Track unique error messages to avoid duplicates
-  std::set<std::string> seen_errors;
-  std::vector<ErrorDiagnostic> errors;
-  
-  // Collect all errors
-  while (!err_stack.empty()) {
-    errors.push_back(err_stack.top());
-    err_stack.pop();
+  std::vector<ErrorDiagnostic> diagnostics;
+
+  // Collect all diagnostics from stack
+  while (!diag_stack.empty()) {
+    diagnostics.push_back(diag_stack.top());
+    diag_stack.pop();
   }
-  
-  // Process errors in reverse order (oldest first)
-  for (auto it = errors.rbegin(); it != errors.rend(); ++it) {
+
+  // For show_counts mode, build occurrence counts by message
+  std::map<std::string, int> message_counts;
+  if (opts.show_counts) {
+    for (auto it = diagnostics.rbegin(); it != diagnostics.rend(); ++it) {
+      message_counts[it->err]++;
+    }
+  }
+
+  // Track seen diagnostics for deduplication
+  std::set<std::string> seen;
+
+  // Process diagnostics in reverse order (oldest first)
+  for (auto it = diagnostics.rbegin(); it != diagnostics.rend(); ++it) {
     const ErrorDiagnostic& diag = *it;
-    
-    // Create a unique key for this error location and message
-    std::stringstream error_key;
-    error_key << diag.cursor.row << ":" << diag.cursor.col << ":" << diag.err;
-    
-    // Skip duplicate errors
-    if (seen_errors.count(error_key.str()) > 0) {
+
+    // Create deduplication key
+    std::string dedup_key;
+    if (opts.dedupe_by_message) {
+      dedup_key = diag.err;
+    } else {
+      std::stringstream key_ss;
+      key_ss << diag.cursor.row << ":" << diag.cursor.col << ":" << diag.err;
+      dedup_key = key_ss.str();
+    }
+
+    // Skip duplicates
+    if (seen.count(dedup_key) > 0) {
       continue;
     }
-    seen_errors.insert(error_key.str());
-    
-    // Format error with error type and precise location
-    ss << diag.TypeName() << " at line " << (diag.cursor.row + 1)
-       << ", column " << (diag.cursor.col + 1) << ": ";
+    seen.insert(dedup_key);
 
-    // Remove redundant newlines from error message
-    std::string clean_err = diag.err;
-    if (!clean_err.empty() && clean_err.back() == '\n') {
-      clean_err.pop_back();
-    }
-    ss << clean_err;
-
-    // Add suggestion if available (Priority 5)
-    if (!diag.suggestion.empty()) {
-      ss << "\n  Suggestion: " << diag.suggestion;
+    // Clean message (remove trailing newline)
+    std::string clean_msg = diag.err;
+    if (!clean_msg.empty() && clean_msg.back() == '\n') {
+      clean_msg.pop_back();
     }
 
-    ss << "\n";
+    // Format based on options
+    if (opts.show_caret) {
+      // Multi-line format with caret indicator
+      ss << diag.TypeName() << " at line " << (diag.cursor.row + 1)
+         << ", column " << (diag.cursor.col + 1) << ":\n";
+      ss << "  " << clean_msg << "\n";
+      if (diag.cursor.col > 0) {
+        ss << "  ";
+        for (int i = 0; i < diag.cursor.col; i++) {
+          ss << " ";
+        }
+        ss << "^\n";
+      }
+    } else {
+      // Single-line format
+      ss << diag.TypeName() << " at line " << (diag.cursor.row + 1)
+         << ", column " << (diag.cursor.col + 1) << ": ";
+      ss << clean_msg;
+
+      // Add occurrence count if enabled
+      if (opts.show_counts) {
+        int count = message_counts[diag.err];
+        if (count > 1) {
+          ss << " [" << count << " occurrence" << (count > 1 ? "s" : "") << "]";
+        }
+      }
+
+      ss << "\n";
+
+      // Add suggestion if enabled and available
+      if (opts.show_suggestion && !diag.suggestion.empty()) {
+        ss << "  Suggestion: " << diag.suggestion << "\n";
+      }
+
+      // Add recovery hint if enabled and available
+      if (opts.show_hints && diag.hint != ErrorRecoveryHint::NoHint) {
+        const char* hint = diag.GetHint();
+        if (hint && std::strlen(hint) > 0) {
+          ss << "  Hint: " << hint << "\n";
+        }
+      }
+    }
   }
 
   return ss.str();
+}
+
+std::string AsciiParser::GetError() {
+  DiagnosticFormatOptions opts;
+  opts.show_suggestion = true;
+  return FormatDiagnostics(err_stack, opts);
 }
 
 std::string AsciiParser::GetWarning() {
-  if (warn_stack.empty()) {
-    return std::string();
-  }
-
-  std::stringstream ss;
-  
-  // Track unique warning messages to avoid duplicates
-  std::set<std::string> seen_warnings;
-  std::vector<ErrorDiagnostic> warnings;
-  
-  // Collect all warnings
-  while (!warn_stack.empty()) {
-    warnings.push_back(warn_stack.top());
-    warn_stack.pop();
-  }
-  
-  // Process warnings in reverse order (oldest first)
-  for (auto it = warnings.rbegin(); it != warnings.rend(); ++it) {
-    const ErrorDiagnostic& diag = *it;
-    
-    // Create a unique key for this warning location and message
-    std::stringstream warning_key;
-    warning_key << diag.cursor.row << ":" << diag.cursor.col << ":" << diag.err;
-    
-    // Skip duplicate warnings
-    if (seen_warnings.count(warning_key.str()) > 0) {
-      continue;
-    }
-    seen_warnings.insert(warning_key.str());
-    
-    // Format warning with error type and precise location
-    ss << diag.TypeName() << " at line " << (diag.cursor.row + 1)
-       << ", column " << (diag.cursor.col + 1) << ": ";
-
-    // Remove redundant newlines from warning message
-    std::string clean_warn = diag.err;
-    if (!clean_warn.empty() && clean_warn.back() == '\n') {
-      clean_warn.pop_back();
-    }
-    ss << clean_warn;
-
-    // Add suggestion if available (Priority 5)
-    if (!diag.suggestion.empty()) {
-      ss << "\n  Suggestion: " << diag.suggestion;
-    }
-
-    ss << "\n";
-  }
-
-  return ss.str();
+  DiagnosticFormatOptions opts;
+  opts.show_suggestion = true;
+  return FormatDiagnostics(warn_stack, opts);
 }
 
 std::string AsciiParser::GetErrorWithContext(int context_lines) {
-  (void)context_lines;  // Not yet implemented - parameter reserved for future use
-  if (err_stack.empty()) {
-    return std::string();
-  }
-
-  std::stringstream ss;
-
-  // Track unique error messages to avoid duplicates
-  std::set<std::string> seen_errors;
-  std::vector<ErrorDiagnostic> errors;
-
-  // Collect all errors
-  while (!err_stack.empty()) {
-    errors.push_back(err_stack.top());
-    err_stack.pop();
-  }
-
-  // Process errors in reverse order (oldest first)
-  for (auto it = errors.rbegin(); it != errors.rend(); ++it) {
-    const ErrorDiagnostic& diag = *it;
-
-    // Create a unique key for this error location and message
-    std::stringstream error_key;
-    error_key << diag.cursor.row << ":" << diag.cursor.col << ":" << diag.err;
-
-    // Skip duplicate errors
-    if (seen_errors.count(error_key.str()) > 0) {
-      continue;
-    }
-    seen_errors.insert(error_key.str());
-
-    // Format error with error type and precise location
-    ss << diag.TypeName() << " at line " << (diag.cursor.row + 1)
-       << ", column " << (diag.cursor.col + 1) << ":\n";
-
-    // Remove redundant newlines from error message
-    std::string clean_err = diag.err;
-    if (!clean_err.empty() && clean_err.back() == '\n') {
-      clean_err.pop_back();
-    }
-    ss << "  " << clean_err << "\n";
-
-    // Add visual caret indicator for error location
-    if (diag.cursor.col > 0) {
-      ss << "  ";
-      for (int i = 0; i < diag.cursor.col; i++) {
-        ss << " ";
-      }
-      ss << "^\n";
-    }
-  }
-
-  return ss.str();
+  (void)context_lines;  // Reserved for future source line display
+  DiagnosticFormatOptions opts;
+  opts.show_caret = true;
+  return FormatDiagnostics(err_stack, opts);
 }
 
 std::string AsciiParser::GetWarningWithContext(int context_lines) {
-  (void)context_lines;  // Not yet implemented - parameter reserved for future use
-  if (warn_stack.empty()) {
-    return std::string();
-  }
-
-  std::stringstream ss;
-
-  // Track unique warning messages to avoid duplicates
-  std::set<std::string> seen_warnings;
-  std::vector<ErrorDiagnostic> warnings;
-
-  // Collect all warnings
-  while (!warn_stack.empty()) {
-    warnings.push_back(warn_stack.top());
-    warn_stack.pop();
-  }
-
-  // Process warnings in reverse order (oldest first)
-  for (auto it = warnings.rbegin(); it != warnings.rend(); ++it) {
-    const ErrorDiagnostic& diag = *it;
-
-    // Create a unique key for this warning location and message
-    std::stringstream warning_key;
-    warning_key << diag.cursor.row << ":" << diag.cursor.col << ":" << diag.err;
-
-    // Skip duplicate warnings
-    if (seen_warnings.count(warning_key.str()) > 0) {
-      continue;
-    }
-    seen_warnings.insert(warning_key.str());
-
-    // Format warning with error type and precise location
-    ss << diag.TypeName() << " at line " << (diag.cursor.row + 1)
-       << ", column " << (diag.cursor.col + 1) << ":\n";
-
-    // Remove redundant newlines from warning message
-    std::string clean_warn = diag.err;
-    if (!clean_warn.empty() && clean_warn.back() == '\n') {
-      clean_warn.pop_back();
-    }
-    ss << "  " << clean_warn << "\n";
-
-    // Add visual caret indicator for warning location
-    if (diag.cursor.col > 0) {
-      ss << "  ";
-      for (int i = 0; i < diag.cursor.col; i++) {
-        ss << " ";
-      }
-      ss << "^\n";
-    }
-  }
-
-  return ss.str();
+  (void)context_lines;  // Reserved for future source line display
+  DiagnosticFormatOptions opts;
+  opts.show_caret = true;
+  return FormatDiagnostics(warn_stack, opts);
 }
 
 std::string AsciiParser::GetErrorWithHints(bool show_hints) {
-  (void)show_hints;  // Not yet implemented - parameter reserved for future use
-  if (err_stack.empty()) {
-    return std::string();
-  }
-
-  std::stringstream ss;
-  std::set<std::string> seen_errors;
-  std::vector<ErrorDiagnostic> errors;
-
-  // Collect all errors
-  while (!err_stack.empty()) {
-    errors.push_back(err_stack.top());
-    err_stack.pop();
-  }
-
-  // Process errors in reverse order (oldest first) with aggressive deduplication
-  std::map<std::string, int> error_counts;  // Group similar errors by message
-  for (auto it = errors.rbegin(); it != errors.rend(); ++it) {
-    const ErrorDiagnostic& diag = *it;
-    error_counts[diag.err]++;
-  }
-
-  // Now output with counts for grouped errors
-  std::set<std::string> seen_messages;
-  for (auto it = errors.rbegin(); it != errors.rend(); ++it) {
-    const ErrorDiagnostic& diag = *it;
-
-    if (seen_messages.count(diag.err) > 0) {
-      continue;
-    }
-    seen_messages.insert(diag.err);
-
-    ss << diag.TypeName() << " at line " << (diag.cursor.row + 1)
-       << ", column " << (diag.cursor.col + 1) << ": ";
-
-    std::string clean_err = diag.err;
-    if (!clean_err.empty() && clean_err.back() == '\n') {
-      clean_err.pop_back();
-    }
-    ss << clean_err;
-
-    // Add occurrence count if this error appears multiple times
-    int count = error_counts[diag.err];
-    if (count > 1) {
-      ss << " [" << count << " occurrence" << (count > 1 ? "s" : "") << "]";
-    }
-
-    ss << "\n";
-
-    // Add recovery hint if requested
-    if (show_hints && diag.hint != ErrorRecoveryHint::NoHint) {
-      const char* hint = diag.GetHint();
-      if (hint && std::strlen(hint) > 0) {
-        ss << "  Hint: " << hint << "\n";
-      }
-    }
-  }
-
-  return ss.str();
+  DiagnosticFormatOptions opts;
+  opts.show_hints = show_hints;
+  opts.show_counts = true;
+  opts.dedupe_by_message = true;
+  return FormatDiagnostics(err_stack, opts);
 }
 
 std::string AsciiParser::GetWarningWithHints(bool show_hints) {
-  (void)show_hints;  // Not yet implemented - parameter reserved for future use
-  if (warn_stack.empty()) {
-    return std::string();
-  }
-
-  std::stringstream ss;
-  std::set<std::string> seen_warnings;
-  std::vector<ErrorDiagnostic> warnings;
-
-  // Collect all warnings
-  while (!warn_stack.empty()) {
-    warnings.push_back(warn_stack.top());
-    warn_stack.pop();
-  }
-
-  // Process warnings in reverse order (oldest first) with aggressive deduplication
-  std::map<std::string, int> warning_counts;  // Group similar warnings by message
-  for (auto it = warnings.rbegin(); it != warnings.rend(); ++it) {
-    const ErrorDiagnostic& diag = *it;
-    warning_counts[diag.err]++;
-  }
-
-  // Now output with counts for grouped warnings
-  std::set<std::string> seen_messages;
-  for (auto it = warnings.rbegin(); it != warnings.rend(); ++it) {
-    const ErrorDiagnostic& diag = *it;
-
-    if (seen_messages.count(diag.err) > 0) {
-      continue;
-    }
-    seen_messages.insert(diag.err);
-
-    ss << diag.TypeName() << " at line " << (diag.cursor.row + 1)
-       << ", column " << (diag.cursor.col + 1) << ": ";
-
-    std::string clean_warn = diag.err;
-    if (!clean_warn.empty() && clean_warn.back() == '\n') {
-      clean_warn.pop_back();
-    }
-    ss << clean_warn;
-
-    // Add occurrence count if this warning appears multiple times
-    int count = warning_counts[diag.err];
-    if (count > 1) {
-      ss << " [" << count << " occurrence" << (count > 1 ? "s" : "") << "]";
-    }
-
-    ss << "\n";
-
-    // Add recovery hint if requested
-    if (show_hints && diag.hint != ErrorRecoveryHint::NoHint) {
-      const char* hint = diag.GetHint();
-      if (hint && std::strlen(hint) > 0) {
-        ss << "  Hint: " << hint << "\n";
-      }
-    }
-  }
-
-  return ss.str();
+  DiagnosticFormatOptions opts;
+  opts.show_hints = show_hints;
+  opts.show_counts = true;
+  opts.dedupe_by_message = true;
+  return FormatDiagnostics(warn_stack, opts);
 }
 
 std::string AsciiParser::GetErrorWithSourceContext(const std::string& filename, int context_lines, int column_width) {
