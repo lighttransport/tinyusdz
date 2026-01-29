@@ -1336,7 +1336,7 @@ static nonstd::optional<Prim> ReconstructPrimFromPrimSpec(
     prim.prim_type_name() = primspec.typeName();                         \
     /* also add primChildren to Prim */                                  \
     /* prim.metas().primChildren = primChildren; */                      \
-    return std::move(prim);                                              \
+    return prim;  /* Don't use std::move - it prevents NRVO */           \
   } else
 
   if (primspec.typeName().empty() || primspec.typeName() == "Model") {
@@ -1358,7 +1358,7 @@ static nonstd::optional<Prim> ReconstructPrimFromPrimSpec(
     prim.prim_type_name() = primspec.typeName();
     /* also add primChildren to Prim */
     // prim.metas().primChildren = primChildren;
-    return std::move(prim);
+    return prim;  // Don't use std::move - it prevents NRVO
   } else
 
     RECONSTRUCT_PRIM(Xform)
