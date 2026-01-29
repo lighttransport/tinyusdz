@@ -259,33 +259,9 @@ class USDAReader::Impl {
  public:
   Impl(StreamReader *sr) { _parser.SetStream(sr); }
 
-#if 0 // TODO: Remove
-  // Return the flag if the .usda is read from `references`
-  bool IsReferenced() { return _referenced; }
-
-  // Return the flag if the .usda is read from `subLayers`
-  bool IsSubLayered() { return _sub_layered; }
-
-  // Return the flag if the .usda is read from `payload`
-  bool IsPayloaded() { return _payloaded; }
-
-  // Return true if the .udsa is read in the top layer(stage)
-  bool IsToplevel() {
-    return !IsReferenced() && !IsSubLayered() && !IsPayloaded();
-  }
-#endif
-
   void SetBaseDir(const std::string &str) { _base_dir = str; }
 
   void SetFilename(const std::string &str) { _filename = str; }
-
-#if 0
-  ///
-  /// True: create PrimSpec instead of typed Prim.
-  /// Set true if you do USD composition.
-  ///
-  void set_primspec_mode(bool onoff) { _primspec_mode = onoff; }
-#endif
 
   void set_reader_config(const USDAReaderConfig &config) {
     _config = config;
@@ -474,45 +450,9 @@ class USDAReader::Impl {
           // NOTE: variantChildren setup is delayed. It will be processed in ConstructPrimSpecTreeRec
           //
           std::map<std::string, std::map<std::string, VariantNode>> variantSets;
-#if 0
-          for (const auto &variantContext : in_variants) {
-            const std::string variant_name = variantContext.first;
-
-            // Convert VariantContent -> VariantNode
-            std::map<std::string, VariantNode> variantNodes;
-            for (const auto &item : variantContext.second) {
-              VariantNode variant;
-              if (!ReconstructPrimMeta(item.second.metas, &variant.metas)) {
-                return nonstd::make_unexpected(fmt::format("Failed to process Prim metadataum in variantSet {} item {} ", variant_name, item.first));
-              }
-              variant.props = item.second.props;
-
-              // child Prim should be already reconstructed.
-              for (const auto &childPrimIdx : item.second.primIndices) {
-                if (childPrimIdx < 0) {
-                  return nonstd::make_unexpected(fmt::format("[InternalError] Invalid primIndex found within VariantSet."));
-                }
-
-                if (size_t(childPrimIdx) >= _prim_nodes.size()) {
-                  return nonstd::make_unexpected(fmt::format("[InternalError] Invalid primIndex found within VariantSet. variantChildPrimIdsx {} Exceeds _prim_nodes.size() {}", childPrimIdx, _prim_nodes.size()));
-                }
-
-                variant.primChildren.push_back(childPrimIdx);
-
-                //_prim_nodes[size_t(childPrimIdx)].parent_is_variant = true;
-              }
-              DCOUT("Add variant: " << item.first);
-              variantNodes.emplace(item.first, std::move(variant));
-            }
-
-            DCOUT("Add variantSet: " << variant_name);
-            variantSets.emplace(variant_name, std::move(variantNodes));
-          }
-#else
           if (!ProcessVariantSetContent(0, in_variants, variantSets)) {
             return nonstd::make_unexpected(fmt::format("[InternalError] Failed to process VariantSet"));
           }
-#endif
 
           // Add to scene graph.
           // NOTE: Scene graph is constructed from bottom up manner(Children
@@ -1215,46 +1155,6 @@ class USDAReader::Impl {
   const Stage &GetStage() const { return _stage; }
 
  private:
-  //bool stage_reconstructed_{false};
-
-#if 0
-  ///
-  /// -- Iterators --
-  ///
-  class PrimIterator {
-   public:
-    PrimIterator(const std::vector<size_t> &indices,
-                 const std::vector<value::Value> &values, size_t idx = 0)
-        : _indices(indices), _values(values), _idx(idx) {}
-
-    const value::Value &operator*() const { return _values[_indices[_idx]]; }
-
-    PrimIterator &operator++() {
-      _idx++;
-      return *this;
-    }
-    bool operator!=(const PrimIterator &rhs) { return _idx != rhs._idx; }
-
-   private:
-    const std::vector<size_t> &_indices;
-    const std::vector<value::Value> &_values;
-    size_t _idx{0};
-  };
-  friend class PrimIterator;
-
-  // currently const only
-  using const_prim_iterator = const PrimIterator;
-
-  // Iterate over toplevel prims
-  const_prim_iterator PrimBegin() {
-    return PrimIterator(_toplevel_prims, _prims);
-  }
-  const_prim_iterator PrimEnd() {
-    return PrimIterator(_toplevel_prims, _prims, _toplevel_prims.size());
-  }
-  size_t PrimSize() { return _toplevel_prims.size(); }
-#endif
-
   ///
   /// -- Members --
   ///
@@ -1266,14 +1166,8 @@ class USDAReader::Impl {
 
   std::string _base_dir;  // Used for importing another USD file
   std::string _filename;  // Used for displaying error context from source file
-  //AssetResolutionResolver _arr;
-
-#if 0 // TODO: Remove since not used.
-  nonstd::optional<tinyusdz::Stage> _imported_scene;  // Imported scene.
-#endif
 
   // "class" defs
-  //std::map<std::string, Klass> _klasses;
 
   std::stack<std::string> _path_stack;
 
@@ -1496,25 +1390,9 @@ bool ConstructVariantPrimTreeRec(const size_t variantPrimIdx,
         DCOUT("  variantPrimIdx " << variantPrimIdx);
 
         const std::string childVariantName = childVariantNode.first;
-        Prim variantChildPrim(value::Value(nullptr)); // dummy
         if (!ConstructVariantPrimTreeRec(size_t(variantPrimIdx), prim_nodes, childVariantName, childVariantNode.second, variant.variantSets(), err)) {
           return false;
         }
-
-#if 0
-        // extract variant part.
-        DCOUT("childVariant.size " << variantChildPrim.variantSets().size());
-        for (auto &childVariantItem : variantChildPrim.variantSets())
-        {
-          DCOUT("childVariant " << childVariantItem.first);
-          std::map<std::string, Variant> childVariant;
-          for (auto &vitem : childVariantItem.second.variantSet) {
-            childVariant[vitem.first] = vitem.second;
-          }
-          variant.variantSets()[item.first].name = item.first;
-          variant.variantSets()[item.first].variantSet = childVariant;
-        }
-#endif
       }
 
       for (const int64_t vidx : item.second.primChildren) {
@@ -1633,25 +1511,9 @@ bool ConstructPrimTreeRec(const size_t primIdx,
         DCOUT("variantSet node " << childVariantNode.first);
         DCOUT("  variantPrimIdx " << variantPrimIdx);
 
-        Prim variantChildPrim(value::Value(nullptr)); // dummy
         if (!ConstructVariantPrimTreeRec(size_t(variantPrimIdx), prim_nodes, childVariantNode.first, childVariantNode.second, variant.variantSets(), err)) {
           return false;
         }
-
-#if 0
-        // extract variant part.
-        DCOUT("childVariant.size " << variantChildPrim.variantSets().size());
-        for (auto &childVariantItem : variantChildPrim.variantSets())
-        {
-          DCOUT("childVariant " << childVariantItem.first);
-          std::map<std::string, Variant> childVariant;
-          for (auto &vitem : childVariantItem.second.variantSet) {
-            childVariant[vitem.first] = vitem.second;
-          }
-          variant.variantSets()[item.first].name = item.first;
-          variant.variantSets()[item.first].variantSet = childVariant;
-        }
-#endif
       }
 
       for (const int64_t vidx : item.second.primChildren) {
@@ -1754,44 +1616,6 @@ bool USDAReader::Impl::ReconstructPrim(
   }
   return true;
 }
-
-#if 0
-///
-/// -- RegisterReconstructCallback specializations
-///
-
-template <>
-bool USDAReader::Impl::ReconstructPrim(
-    const Specifier &spec,
-    const prim::PropertyMap &properties,
-    const prim::ReferenceList &references,
-    GPrim *gprim) {
-  (void)spec;
-  (void)gprim;
-
-  DCOUT("TODO: Reconstruct GPrim.");
-
-  PUSH_WARN("TODO: Reconstruct GPrim.");
-
-  return true;
-}
-
-
-template <>
-bool USDAReader::Impl::ReconstructPrim<NodeGraph>(
-    const Specifier &spec,
-    const prim::PropertyMap &properties,
-    const prim::ReferenceList &references,
-    NodeGraph *graph) {
-  (void)properties;
-  (void)references;
-  (void)graph;
-
-  PUSH_WARN("TODO: reconstruct NodeGrah.");
-
-  return true;
-}
-#endif
 
 // Generic Prim handler. T = Xform, GeomMesh, ...
 template <typename T>
