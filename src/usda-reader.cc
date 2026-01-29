@@ -1344,17 +1344,54 @@ bool USDAReader::Impl::GetAsLayer(Layer *layer) {
 
 namespace {
 
-//
-// TODO: Refeactor ConstructPrimTreeRec and ConstructVariantPrimTreeRec
-//
+// Forward declaration
 bool ConstructPrimTreeRec(const size_t primIdx,
                         const std::vector<PrimNode> &prim_nodes,
                         const bool parent_is_variant,
                         Prim *destPrim,
                         std::string *err);
 
+///
+/// Helper function to process variant prim children.
+/// Shared by ConstructPrimTreeRec and ConstructVariantPrimTreeRec.
+///
+static bool ProcessVariantPrimChildren(
+    const std::vector<int64_t> &primChildren,
+    const std::vector<PrimNode> &prim_nodes,
+    Variant &variant,
+    std::set<int64_t> &variantChildrenIndices,
+    std::string *err) {
+
+  for (const int64_t vidx : primChildren) {
+    if (variantChildrenIndices.count(vidx)) {
+      // Duplicated variant childrenIndices
+      if (err) {
+        (*err) = fmt::format("variant primIdx {} is referenced multiple times.\n", vidx);
+      }
+      return false;
+    }
+
+    // Add prim to variants
+    if ((vidx >= 0) && (size_t(vidx) <= prim_nodes.size())) {
+      Prim variantChildPrim(value::Value(nullptr)); // dummy
+      if (!ConstructPrimTreeRec(size_t(vidx), prim_nodes, /* parent_is_variant */true, &variantChildPrim, err)) {
+        return false;
+      }
+      variant.primChildren().emplace_back(variantChildPrim);
+    } else {
+      if (err) {
+        (*err) = "primIndex exceeds prim_nodes.size()\n";
+      }
+      return false;
+    }
+
+    variantChildrenIndices.insert(vidx);
+  }
+  return true;
+}
+
 //
-// Construct VariantPrim from with botom-up approach
+// Construct VariantPrim from with bottom-up approach
 //
 bool ConstructVariantPrimTreeRec(const size_t variantPrimIdx,
                         const std::vector<PrimNode> &prim_nodes,
@@ -1386,39 +1423,16 @@ bool ConstructVariantPrimTreeRec(const size_t variantPrimIdx,
         DCOUT("variantSet child " << childVariantNode.first);
         DCOUT("  variantPrimIdx " << variantPrimIdx);
 
-        const std::string childVariantName = childVariantNode.first;
-        if (!ConstructVariantPrimTreeRec(size_t(variantPrimIdx), prim_nodes, childVariantName, childVariantNode.second, variant.variantSets(), err)) {
+        if (!ConstructVariantPrimTreeRec(size_t(variantPrimIdx), prim_nodes, childVariantNode.first, childVariantNode.second, variant.variantSets(), err)) {
           return false;
         }
       }
 
-      for (const int64_t vidx : item.second.primChildren) {
-        if (variantChildrenIndices.count(vidx)) {
-          // Duplicated variant childrenIndices
-          if (err) {
-            (*err) = fmt::format("variant primIdx {} is referenced multiple times.\n", vidx);
-          }
-          return false;
-        } else {
-          // Add prim to variants
-          if ((vidx >= 0) && (size_t(vidx) <= prim_nodes.size())) {
-
-            Prim variantChildPrim(value::Value(nullptr)); // dummy
-            if (!ConstructPrimTreeRec(size_t(vidx), prim_nodes, /* parent_is_variant */true, &variantChildPrim, err)) {
-              return false;
-            }
-
-            variant.primChildren().emplace_back(variantChildPrim);
-          } else {
-            if (err) {
-              (*err) = "primIndex exceeds prim_nodes.size()\n";
-            }
-            return false;
-          }
-
-          variantChildrenIndices.insert(vidx);
-        }
+      // Process variant prim children
+      if (!ProcessVariantPrimChildren(item.second.primChildren, prim_nodes, variant, variantChildrenIndices, err)) {
+        return false;
       }
+
       variant.metas() = std::move(item.second.metas);
       variant.properties() = std::move(item.second.props);
 
@@ -1428,31 +1442,15 @@ bool ConstructVariantPrimTreeRec(const size_t variantPrimIdx,
 
   destVariantSets[variantName] = std::move(variantSet);
 
-  for (const auto &cidx : node.children) {
-    DCOUT("parent: " << variantPrimIdx << ", child: " << cidx);
-    if (variantChildrenIndices.count(int64_t(cidx))) {
-      DCOUT("primIdx " << cidx << " processed");
-      // Prim is processed
-      continue;
-    }
-
-    Prim childPrim(value::Value(nullptr)); // dummy
-    if (!ConstructPrimTreeRec(cidx, prim_nodes, /*parent_is_variant*/true, &childPrim, err)) {
-      return false;
-    }
-
-    //DCOUT("Add childPrim " << childPrim.element_name() << " to Prim " << prim.element_name());
-    //prim.children().emplace_back(std::move(childPrim));
-  }
-
-  //prim.variantSets() = std::move(variantSets);
-  //(*destPrim) = std::move(prim);
+  // Note: We don't add regular children here as this function only handles variant construction.
+  // Regular children are processed by ConstructPrimTreeRec.
+  (void)node;
 
   return true;
 }
 
 //
-// Construct Prim from PrimNode with botom-up approach
+// Construct Prim from PrimNode with bottom-up approach
 //
 bool ConstructPrimTreeRec(const size_t primIdx,
                         const std::vector<PrimNode> &prim_nodes,
@@ -1513,34 +1511,11 @@ bool ConstructPrimTreeRec(const size_t primIdx,
         }
       }
 
-      for (const int64_t vidx : item.second.primChildren) {
-        if (variantChildrenIndices.count(vidx)) {
-          // Duplicated variant childrenIndices
-          if (err) {
-            (*err) = fmt::format("variant primIdx {} is referenced multiple times.\n", vidx);
-          }
-          return false;
-        } else {
-          // Add prim to variants
-          if ((vidx >= 0) && (size_t(vidx) <= prim_nodes.size())) {
-
-            Prim variantChildPrim(value::Value(nullptr)); // dummy
-            if (!ConstructPrimTreeRec(size_t(vidx), prim_nodes, /* parent_is_variant */true, &variantChildPrim, err)) {
-              return false;
-            }
-
-            DCOUT(fmt::format("Added prim {} to variantSet {} : variant {}", variantChildPrim.element_name(), variantNodes.first, item.first));
-            variant.primChildren().emplace_back(variantChildPrim);
-          } else {
-            if (err) {
-              (*err) = "primIndex exceeds prim_nodes.size()\n";
-            }
-            return false;
-          }
-
-          variantChildrenIndices.insert(vidx);
-        }
+      // Process variant prim children
+      if (!ProcessVariantPrimChildren(item.second.primChildren, prim_nodes, variant, variantChildrenIndices, err)) {
+        return false;
       }
+
       variant.metas() = std::move(item.second.metas);
       variant.properties() = std::move(item.second.props);
 
