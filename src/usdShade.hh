@@ -209,13 +209,6 @@ using UsdPrimvarReader_point  = UsdPrimvarReader<value::point3f>;
 // The underlying type is matrix4d
 using UsdPrimvarReader_matrix  = UsdPrimvarReader<value::matrix4d>;
 
-// TODO: Remove
-//using UsdPrimvarReaderType =
-//    tinyusdz::variant<UsdPrimvarReader_float, UsdPrimvarReader_float2,
-//                      UsdPrimvarReader_float3, UsdPrimvarReader_float4,
-//                      UsdPrimvarReader_int>;
-
-
 // UV Set specification for multiple UV coordinate support
 struct UVSetInfo {
   std::string name;  // UV set name (e.g., "st", "st0", "st1", "uv0", "uv1")
