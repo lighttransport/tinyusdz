@@ -11639,20 +11639,38 @@ size_t RenderMesh::estimate_memory_usage() const {
     total += it->first.capacity();
   }
 
-  // Joint and weights (basic estimate)
+  // Joint and weights
   total += sizeof(JointAndWeight);
-  // TODO: Add detailed JointAndWeight internal memory estimation
+  total += joint_and_weights.jointIndices.capacity() * sizeof(int);
+  total += joint_and_weights.jointWeights.capacity() * sizeof(float);
 
   // Blend shapes
   for (const auto& blend_shape_pair : targets) {
     total += blend_shape_pair.first.capacity() + sizeof(ShapeTarget);
-    // TODO: Add detailed ShapeTarget internal memory estimation
+    const ShapeTarget& st = blend_shape_pair.second;
+    total += st.prim_name.capacity();
+    total += st.abs_path.capacity();
+    total += st.display_name.capacity();
+    total += st.pointIndices.capacity() * sizeof(uint32_t);
+    total += st.pointOffsets.capacity() * sizeof(vec3);
+    total += st.normalOffsets.capacity() * sizeof(vec3);
+    // Inbetween shapes
+    for (const auto& inbetween_pair : st.inbetweens) {
+      total += sizeof(float) + sizeof(InbetweenShapeTarget);
+      total += inbetween_pair.second.pointOffsets.capacity() * sizeof(vec3);
+      total += inbetween_pair.second.normalOffsets.capacity() * sizeof(vec3);
+    }
   }
 
   // Material subset map
   for (const auto& subset_pair : material_subsetMap) {
     total += subset_pair.first.capacity() + sizeof(MaterialSubset);
-    // TODO: Add detailed MaterialSubset internal memory estimation
+    const MaterialSubset& ms = subset_pair.second;
+    total += ms.prim_name.capacity();
+    total += ms.abs_path.capacity();
+    total += ms.display_name.capacity();
+    total += ms.usdIndices.capacity() * sizeof(int);
+    total += ms.triangulatedIndices.capacity() * sizeof(int);
   }
 
   return total;

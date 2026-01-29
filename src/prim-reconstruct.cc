@@ -528,35 +528,6 @@ static ParseResult ParseExtentAttribute(std::set<std::string> &table, /* inout *
 {
   ParseResult ret;
 
-#if 0
-  if (prop_name.compare(name + ".connect") == 0) {
-    std::string propname = removeSuffix(name, ".connect");
-    if (table.count(propname)) {
-      DCOUT("Already processed: " << prop_name);
-      ret.code = ParseResult::ResultCode::AlreadyProcessed;
-      return ret;
-    }
-    if (prop.is_connection()) {
-      const Attribute &attr = prop.get_attribute();
-      if (attr.is_connection()) {
-        target.set_connections(attr.connections());
-        //target.variability = prop.attrib.variability;
-        target.metas() = prop.get_attribute().metas();
-        table.insert(propname);
-        ret.code = ParseResult::ResultCode::Success;
-        DCOUT("Added as property with connection: " << propname);
-        return ret;
-      } else {
-        ret.code = ParseResult::ResultCode::InvalidConnection;
-        ret.err = "Connection target not found.";
-        return ret;
-      }
-    } else {
-      ret.code = ParseResult::ResultCode::InternalError;
-      ret.err = "Internal error. Unsupported/Unimplemented property type.";
-      return ret;
-    }
-#endif
   if (prop_name.compare(name) == 0) {
     if (table.count(name)) {
       ret.code = ParseResult::ResultCode::AlreadyProcessed;
@@ -596,63 +567,6 @@ static ParseResult ParseExtentAttribute(std::set<std::string> &table, /* inout *
         target.set_blocked(true);
       }
 
-#if 0
-      } else {
-        
-        //
-        // No variability check. allow `uniform extent`(promote to varying)
-        //
-        if (auto pv = attr.get_value<std::vector<value::float3>>()) {
-          if (pv.value().size() != 2) {
-            ret.code = ParseResult::ResultCode::TypeMismatch;
-            ret.err = fmt::format("`extent` must be `float3[2]`, but got array size {}", pv.value().size());
-            return ret;
-          }
-
-          Extent ext;
-          ext.lower = pv.value()[0];
-          ext.upper = pv.value()[1];
-
-          //target.set_value(ext);
-          animatable_value.set(ext);
-        } else {
-          ret.code = ParseResult::ResultCode::TypeMismatch;
-          ret.err = fmt::format("`extent` must be `float3[]` type, but got `{}`", attr.type_name());
-          return ret;
-        }
-      }
-
-      if (attr.get_var().has_timesamples()) {
-        // e.g. "float3[] extent.timeSamples = ..."
-
-        if (auto av = ConvertToAnimatable<Extent>(attr.get_var())) {
-          animatable_value.set(av.value().get_timesamples());
-          //target.set_value(anim);
-          
-          has_timesamples = true;
-        } else {
-          // Conversion failed.
-          DCOUT("ConvertToAnimatable failed.");
-          ret.code = ParseResult::ResultCode::InternalError;
-          ret.err = "Converting Attribute data failed. Maybe TimeSamples have values with different types or invalid array size?";
-          return ret;
-        }
-      }
-
-      if (has_default || has_timesamples) {
-        DCOUT("Added Extent attribute: " << name);
-        target.metas() = std::move(prop.attribute().metas());  // Move instead of copy
-        table.insert(name);
-        ret.code = ParseResult::ResultCode::Success;
-        return ret;
-      } else {
-        DCOUT("Internal error.");
-        ret.code = ParseResult::ResultCode::InternalError;
-        ret.err = "Internal error. Invalid Attribute data";
-        return ret;
-      }
-#else
-      
       const auto &var = attr.get_var();
 
       if (var.has_default() || var.has_timesamples()) {
@@ -680,8 +594,6 @@ static ParseResult ParseExtentAttribute(std::set<std::string> &table, /* inout *
         ret.code = ParseResult::ResultCode::Success;
         return ret;
       }
-
-#endif
 
     } else {
       DCOUT("Invalid Property.type");
@@ -814,27 +726,6 @@ static ParseResult ParseShaderInputConnectionProperty(std::set<std::string> &tab
   ParseResult ret;
   ret.code = ParseResult::ResultCode::InternalError;
 
-#if 0
-  if (prop_name.compare(name + ".connect") == 0) {
-    std::string propname = removeSuffix(name, ".connect");
-    if (table.count(propname)) {
-      ret.code = ParseResult::ResultCode::AlreadyProcessed;
-      return ret;
-    }
-    if (auto pv = prop.get_relationTarget()) {
-      TypedConnection<value::token> conn;
-      conn.set(pv.value());
-      conn.metas() = prop.get_attribute().metas();
-      target = conn;
-      table.insert(propname);
-      ret.code = ParseResult::ResultCode::Success;
-      return ret;
-    } else {
-      ret.code = ParseResult::ResultCode::InternalError;
-      ret.err = "Property does not contain connectionPath.";
-      return ret;
-    }
-#endif
   if (prop_name.compare(name) == 0) {
     if (table.count(name)) {
       ret.code = ParseResult::ResultCode::AlreadyProcessed;
@@ -1247,42 +1138,6 @@ bool ParseTimeSampledEnumProperty(
 #endif
 
 
-#if 0
-// TODO: TimeSamples
-#define PARSE_ENUM_PROPETY(__table, __prop, __name, __enum_handler, __klass, \
-                           __target, __strict_check) {                          \
-  if (__prop.first == __name) {                                              \
-    if (__table.count(__name)) { continue; } \
-    if ((__prop.second.value_type_name() == value::TypeTraits<value::token>::type_name()) && __prop.second.is_attribute() && __prop.second.is_empty()) { \
-      PUSH_WARN("No value assigned to `" << __name << "` token attribute. Set default token value."); \
-      /* TODO: attr meta __target.meta = attr.meta;  */                    \
-      __table.insert(__name);                                              \
-    } else { \
-      const Attribute &attr = __prop.second.get_attribute();                           \
-      if (auto tok = attr.get_value<value::token>()) {                     \
-        auto e = __enum_handler(tok.value().str());                            \
-        if (e) {                                                               \
-          __target = e.value();                                                \
-          /* TODO: attr meta __target.meta = attr.meta;  */                    \
-          __table.insert(__name);                                              \
-        } else if (__strict_check) {                                            \
-          PUSH_ERROR_AND_RETURN("(" << value::TypeTraits<__klass>::type_name()  \
-                                    << ") " << e.error());                     \
-        } else { \
-          PUSH_WARN("`" << tok.value().str() << "` is not allowed token for `" << __name << "`. Set to default token value."); \
-          /* TODO: attr meta __target.meta = attr.meta;  */                    \
-          __table.insert(__name);                                              \
-        } \
-      } else {                                                                 \
-        PUSH_ERROR_AND_RETURN("(" << value::TypeTraits<__klass>::type_name()    \
-                                  << ") Property type mismatch. " << __name    \
-                                  << " must be type `token`, but got `"        \
-                                  << attr.type_name() << "`.");            \
-      }                                                                        \
-    } \
-  } \
-}
-#else
 // Unified enum property parsing macro
 // __parser_fn should be ParseUniformEnumProperty or ParseTimeSampledEnumProperty
 #define PARSE_ENUM_PROPERTY_IMPL(__table, __prop, __name, __enum_ty, __enum_handler, __klass, \
@@ -1340,7 +1195,6 @@ bool ParseTimeSampledEnumProperty(
     }                                                                                                   \
   }                                                                                                     \
 }
-#endif
 
 
 // Add custom property(including property with "primvars" prefix)
@@ -2146,56 +2000,6 @@ bool ReconstructXformOpsFromProperties(
     // Do not materialize xformOps here.
     return true;
   }
-
-#if 0
-
-  constexpr auto kTranslate = "xformOp:translate";
-  constexpr auto kTransform = "xformOp:transform";
-  constexpr auto kScale = "xformOp:scale";
-  constexpr auto kRotateX = "xformOp:rotateX";
-  constexpr auto kRotateY = "xformOp:rotateY";
-  constexpr auto kRotateZ = "xformOp:rotateZ";
-  constexpr auto kRotateXYZ = "xformOp:rotateXYZ";
-  constexpr auto kRotateXZY = "xformOp:rotateXZY";
-  constexpr auto kRotateYXZ = "xformOp:rotateYXZ";
-  constexpr auto kRotateYZX = "xformOp:rotateYZX";
-  constexpr auto kRotateZXY = "xformOp:rotateZXY";
-  constexpr auto kRotateZYX = "xformOp:rotateZYX";
-  constexpr auto kOrient = "xformOp:orient";
-
-  // false : no prefix found.
-  // true : return suffix(first namespace ':' is ommited.).
-  // - "" for prefix only "xformOp:translate"
-  // - "blender:pivot" for "xformOp:translate:blender:pivot"
-  auto SplitXformOpToken =
-      [](const std::string &s,
-         const std::string &prefix) -> nonstd::optional<std::string> {
-    if (startsWith(s, prefix)) {
-      if (s.compare(prefix) == 0) {
-        // prefix only.
-        return std::string();  // empty suffix
-      } else {
-        std::string suffix = removePrefix(s, prefix);
-        DCOUT("suffix = " << suffix);
-        if (suffix.length() == 1) {  // maybe namespace only.
-          return nonstd::nullopt;
-        }
-
-        // remove namespace ':'
-        if (suffix[0] == ':') {
-          // ok
-          suffix.erase(0, 1);
-        } else {
-          return nonstd::nullopt;
-        }
-
-        return std::move(suffix);
-      }
-    }
-
-    return nonstd::nullopt;
-  };
-#endif
 
   // Lookup xform values from `xformOpOrder`
   // Note: xformOp connections are stored but not evaluated here - evaluation
