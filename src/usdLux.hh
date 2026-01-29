@@ -120,6 +120,9 @@ class BoundableLight : public Xformable, public Collection {
   TypedAttributeWithFallback<Animatable<value::color3f>> shapingFocusTint{value::color3f({0.0f, 0.0f, 0.0f})}; // color3f inputs:shaping:focusTint = (0, 0, 0)
   TypedAttributeWithFallback<Animatable<float>> shapingConeAngle{90.0f}; // float inputs:shaping:cone:angle = 90
   TypedAttributeWithFallback<Animatable<float>> shapingConeSoftness{0.0f}; // float inputs:shaping:cone:softness = 0
+  TypedAttribute<Animatable<value::AssetPath>> shapingIesFile; // asset inputs:shaping:ies:file
+  TypedAttributeWithFallback<Animatable<float>> shapingIesAngleScale{0.0f}; // float inputs:shaping:ies:angleScale = 0
+  TypedAttributeWithFallback<Animatable<bool>> shapingIesNormalize{false}; // bool inputs:shaping:ies:normalize = false
 
   // LTE SpectralAPI: Spectral emission support
   // See doc/lte_spectral_api.md for specification
@@ -212,7 +215,7 @@ class NonboundableLight : public Xformable, public Collection {
 struct SphereLight : public BoundableLight {
 
   TypedAttributeWithFallback<Animatable<float>> radius{0.5f}; // inputs:radius
-  nonstd::optional<ShapingAPI> shaping; // Optional shaping API
+  // ShapingAPI attributes inherited from BoundableLight
 
 };
 
@@ -229,7 +232,7 @@ struct RectLight : public BoundableLight {
   TypedAttribute<Animatable<value::AssetPath>> file; // asset inputs:texture:file
   TypedAttributeWithFallback<Animatable<float>> height{1.0f}; // inputs:height size in Y axis
   TypedAttributeWithFallback<Animatable<float>> width{1.0f}; // inputs:width  size in X axis
-  nonstd::optional<ShapingAPI> shaping; // Optional shaping API
+  // ShapingAPI attributes inherited from BoundableLight
 
 };
 
