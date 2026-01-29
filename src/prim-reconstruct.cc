@@ -99,23 +99,6 @@ struct ParseResult
   std::string warn;
 };
 
-#if 0
-inline std::string to_string(ParseResult::ResultCode rescode) {
-  switch (rescode) {
-    case ParseResult::ResultCode::Success: return "success";
-    case ParseResult::ResultCode::Unmatched: return "unmatched";
-    case ParseResult::ResultCode::AlreadyProcessed: return "alreadyProcessed";
-    case ParseResult::ResultCode::TypeMismatch: return "typeMismatch";
-    case ParseResult::ResultCode::PropertyTypeMismatch: return "propertyTypeMismatch";
-    case ParseResult::ResultCode::VariabilityMismatch: return "variabilityMismatch";
-    case ParseResult::ResultCode::ConnectionNotAllowed: return "connectionNotAllowed";
-    case ParseResult::ResultCode::InvalidConnection: return "invalidConnection";
-    case ParseResult::ResultCode::InternalError: return "internalError";
-  } 
-  return "[[???ResultCode]]";
-}
-#endif
-
 template<typename T>
 static nonstd::optional<Animatable<T>> ConvertToAnimatable(const primvar::PrimVar &var)
 {
@@ -236,116 +219,6 @@ nonstd::optional<Animatable<Extent>> ConvertToAnimatable(const primvar::PrimVar 
   DCOUT("???");
   return nonstd::nullopt;
 }
-
-#if 0 // TODO: remove. moved to prim-types.cc
-static bool ConvertTokenAttributeToStringAttribute(
-  const TypedAttribute<Animatable<value::token>> &inp,
-  TypedAttribute<Animatable<std::string>> &out) {
-
-  out.metas() = inp.metas();
-
-  if (inp.is_blocked()) {
-    out.set_blocked(true);
-  } else if (inp.is_value_empty()) {
-    out.set_value_empty();
-  }
-
-  if (inp.has_connections()) {
-    out.set_connections(inp.get_connections());
-  }
-
-  if (inp.has_value()) {
-    Animatable<value::token> toks;
-    Animatable<std::string> strs;
-    if (inp.get_value(&toks)) {
-      if (toks.is_blocked()) {
-        // TODO
-      }
-
-      if (toks.has_default()) {
-        value::token tok;
-        toks.get_scalar(&tok);
-        strs.set(tok.str());
-      }
-
-      
-      if (toks.has_timesamples()) {
-        auto tok_ts = toks.get_timesamples();
-
-#ifndef TINYUSDZ_USE_TIMESAMPLES_SOA
-        for (auto &item : tok_ts.get_samples()) {
-          strs.add_sample(item.t, item.value.str());
-        }
-#else
-        const auto &times = tok_ts.get_times();
-        const auto &values = tok_ts.get_values();
-        for (size_t i = 0; i < times.size(); i++) {
-          strs.add_sample(times[i], values[i].str());
-        }
-#endif
-      }
-    }
-    out.set_value(strs);
-  }
-
-  return true;
-}
-#endif
-
-#if 0 // not used anymore. TODO: remove
-static bool ConvertStringDataAttributeToStringAttribute(
-  const TypedAttribute<Animatable<value::StringData>> &inp,
-  TypedAttribute<Animatable<std::string>> &out) {
-
-  out.metas() = inp.metas();
-
-  if (inp.is_blocked()) {
-    out.set_blocked(true);
-  } else if (inp.is_value_empty()) {
-    out.set_value_empty();
-  }
-
-
-  if (inp.has_connections()) {
-    out.set_connections(inp.get_connections());
-  }
-  
-  if (inp.has_value()) {
-    Animatable<value::StringData> toks;
-    Animatable<std::string> strs;
-    if (inp.get_value(&toks)) {
-      if (toks.is_blocked()) {
-        // TODO
-      }
-
-      if (toks.has_default()) {
-        value::StringData tok;
-        toks.get_scalar(&tok);
-        strs.set(tok.value);
-      }
-
-      if (toks.has_timesamples()) {
-        auto tok_ts = toks.get_timesamples();
-
-#ifndef TINYUSDZ_USE_TIMESAMPLES_SOA
-        for (auto &item : tok_ts.get_samples()) {
-          strs.add_sample(item.t, item.value.value);
-        }
-#else
-        const auto &times = tok_ts.get_times();
-        const auto &values = tok_ts.get_values();
-        for (size_t i = 0; i < times.size(); i++) {
-          strs.add_sample(times[i], values[i].value);
-        }
-#endif
-      }
-    }
-    out.set_value(strs);
-  }
-
-  return true;
-}
-#endif
 
 // ============================================================================
 // Traits for ParseTypedAttribute unification
@@ -612,182 +485,6 @@ static ParseResult ParseTypedAttribute(std::set<std::string> &table, /* inout */
   return ParseTypedAttributeUnified(table, prop_name, prop, name, target);
 }
 
-#if 0 // deprecated. TODO: Remove
-// Old implementation kept for reference during transition
-template<typename T>
-static ParseResult ParseTypedAttribute_OLD1(std::set<std::string> &table, /* inout */
-  const std::string prop_name,
-  Property &prop,  // Non-const to allow move from metadata
-  const std::string &name,
-  TypedAttributeWithFallback<Animatable<T>> &target)
-{
-  ParseResult ret;
-
-#if 0 // deprecated. TODO: Remove
-  if (prop_name.compare(name + ".connect") == 0) {
-    std::string propname = removeSuffix(name, ".connect");
-    if (table.count(propname)) {
-      DCOUT("Already processed: " << prop_name);
-      ret.code = ParseResult::ResultCode::AlreadyProcessed;
-      return ret;
-    }
-    if (prop.is_connection()) {
-      if (auto pv = prop.get_relationTarget()) {
-        target.set_connection(pv.value());
-        //target.variability = prop.attrib.variability;
-        target.metas() = prop.get_attribute().metas();
-        table.insert(propname);
-        ret.code = ParseResult::ResultCode::Success;
-        DCOUT("Added as property with connection: " << propname);
-        return ret;
-      } else {
-        ret.code = ParseResult::ResultCode::InvalidConnection;
-        ret.err = "Connection target not found.";
-        return ret;
-      }
-    } else {
-      ret.code = ParseResult::ResultCode::InternalError;
-      ret.err = "Internal error. Unsupported/Unimplemented property type.";
-      return ret;
-    }
-#endif
-  if (prop_name.compare(name) == 0) {
-    //if (table.count(name)) {
-    //  ret.code = ParseResult::ResultCode::AlreadyProcessed;
-    //  return ret;
-    //}
-
-    if (prop.is_relationship()) {
-      ret.code = ParseResult::ResultCode::PropertyTypeMismatch;
-      ret.err = fmt::format("Property {} must be Attribute, but declared as Relationhip.", name);
-      return ret;
-    }
-
-    const Attribute &attr = prop.get_attribute();
-
-
-    std::string attr_type_name = attr.type_name();
-    if ((value::TypeTraits<T>::type_name() == attr_type_name) || (value::TypeTraits<T>::underlying_type_name() == attr_type_name)) {
-
-      bool has_connections{false};
-      bool has_default{false};
-      bool has_timesamples{false};
-
-      if (attr.has_connections()) {
-        target.set_connections(attr.connections());
-        //target.metas() = attr.metas();
-        //table.insert(prop_name);
-        //ret.code = ParseResult::ResultCode::Success;
-        has_connections = true;
-      }
-
-      if (prop.get_property_type() == Property::Type::EmptyAttrib) {
-        DCOUT("Added prop with empty value: " << name);
-        target.set_value_empty();
-        target.metas() = std::move(prop.attribute().metas());  // Move instead of copy
-        table.insert(name);
-        ret.code = ParseResult::ResultCode::Success;
-        return ret;
-      } else if (prop.get_property_type() == Property::Type::Attrib ||
-                 prop.get_property_type() == Property::Type::Connection) {
-
-        DCOUT("Adding typed prop: " << name);
-
-        if (attr.is_blocked()) {
-          // e.g. "float radius = None"
-          target.set_blocked(true);
-        } else if (attr.variability() == Variability::Uniform) {
-          DCOUT("Property is uniform: " << name);
-          // e.g. "float radius = 1.2"
-          if (attr.get_var().is_timesamples()) {
-            ret.code = ParseResult::ResultCode::VariabilityMismatch;
-            ret.err = fmt::format("TimeSample value is assigned to `uniform` property `{}", name);
-            return ret;
-          }
-
-          if (auto pv = attr.get_value<T>()) {
-            target.set_value(std::move(pv.value()));  // Use move to avoid copy
-          } else {
-            ret.code = ParseResult::ResultCode::TypeMismatch;
-            ret.err = fmt::format("Fallback. Failed to retrieve value with requested type `{}`.", value::TypeTraits<T>::type_name());
-            return ret;
-          }
-
-        }
-
-        Animatable<T> animatable_value;
-
-        if (attr.get_var().has_timesamples()) {
-          // e.g. "float radius.timeSamples = {0: 1.2, 1: 2.3}"
-
-          if (auto av = ConvertToAnimatable<T>(attr.get_var())) {
-            animatable_value = std::move(av.value());  // Use move to avoid copy
-            //target.set_value(anim);
-          } else {
-            // Conversion failed.
-            DCOUT("ConvertToAnimatable failed.");
-            ret.code = ParseResult::ResultCode::InternalError;
-            ret.err = fmt::format("Converting timeSamples Attribute data failed for `{}`. Guess TimeSamples have values with different type(expected is `{}`)?", prop_name, value::TypeTraits<T>::type_name());
-            return ret;
-          }
-
-          has_timesamples = true;
-        }
-
-        if (attr.get_var().has_value()) {
-          if (auto pv = attr.get_var().get_value<T>()) {
-            //target.set_value(pv.value());
-            animatable_value.set(std::move(pv.value()));  // Use move to avoid copy
-          } else {
-            ret.code = ParseResult::ResultCode::InternalError;
-            ret.err = fmt::format("Internal error. Invalid attribute value? get_value<{}> failed. Attribute has type {}", value::TypeTraits<T>::type_name(), attr.get_var().type_name());
-            return ret;
-          }
-
-          has_default = true;
-        }
-
-        if (has_timesamples || has_default) {
-          target.set_value(std::move(animatable_value));  // Use move to avoid copy
-        }
-      }
-
-      // connections only?
-      if (has_connections && (!has_timesamples && !has_default)) {
-        target.set_value_empty();
-      }
-
-      if (has_connections || has_timesamples || has_default) {
-
-        target.metas() = std::move(prop.attribute().metas());  // Move instead of copy
-        table.insert(name);
-        ret.code = ParseResult::ResultCode::Success;
-        return ret;
-
-      } else {
-        DCOUT("Invalid Property.type");
-        ret.err = "ParseTypedAttribute: Invalid Property type(internal error)";
-        ret.code = ParseResult::ResultCode::InternalError;
-        return ret;
-      }
-    } else {
-      DCOUT("tyname = " << value::TypeTraits<T>::type_name() << ", attr.type = " << attr_type_name);
-      ret.code = ParseResult::ResultCode::TypeMismatch;
-      std::stringstream ss;
-      ss  << "Property type mismatch. " << name << " expects type `"
-              << value::TypeTraits<T>::type_name()
-              << "` but defined as type `" << attr_type_name << "`";
-      ret.err = ss.str();
-      return ret;
-    }
-
-  }
-
-  ret.code = ParseResult::ResultCode::Unmatched;
-  return ret;
-}
-#endif // Old implementation 1
-
 // For 'uniform' attribute with fallback
 template<typename T>
 static ParseResult ParseTypedAttribute(std::set<std::string> &table, /* inout */
@@ -798,139 +495,6 @@ static ParseResult ParseTypedAttribute(std::set<std::string> &table, /* inout */
 {
   return ParseTypedAttributeUnified(table, prop_name, prop, name, target);
 }
-
-#if 0 // Old implementation 2
-template<typename T>
-static ParseResult ParseTypedAttribute_OLD2(std::set<std::string> &table, /* inout */
-  const std::string prop_name,
-  Property &prop,  // Non-const to allow move from metadata
-  const std::string &name,
-  TypedAttributeWithFallback<T> &target) /* out */
-{
-  ParseResult ret;
-
-#if 0
-  if (prop_name.compare(name + ".connect") == 0) {
-    std::string propname = removeSuffix(name, ".connect");
-    if (table.count(propname)) {
-      DCOUT("Already processed: " << prop_name);
-      ret.code = ParseResult::ResultCode::AlreadyProcessed;
-      return ret;
-    }
-    if (prop.is_connection()) {
-      const Attribute &attr = prop.get_attribute();
-      if (attr.is_connection()) {
-        target.set_connections(attr.connections());
-        //target.variability = prop.attrib.variability;
-        target.metas() = prop.get_attribute().metas();
-        table.insert(propname);
-        ret.code = ParseResult::ResultCode::Success;
-        DCOUT("Added as property with connection: " << propname);
-        return ret;
-      } else {
-        ret.code = ParseResult::ResultCode::InvalidConnection;
-        ret.err = "Connection target not found.";
-        return ret;
-      }
-    } else {
-      ret.code = ParseResult::ResultCode::InternalError;
-      ret.err = "Internal error. Unsupported/Unimplemented property type.";
-      return ret;
-    }
-#endif
-  if (prop_name.compare(name) == 0) {
-    //if (table.count(name)) {
-    //  ret.code = ParseResult::ResultCode::AlreadyProcessed;
-    //  return ret;
-    //}
-
-    if (prop.is_relationship()) {
-      ret.code = ParseResult::ResultCode::PropertyTypeMismatch;
-      ret.err = fmt::format("Property `{}` must be Attribute, but declared as Relationship.", name);
-      
-    }
-    
-    const Attribute &attr = prop.get_attribute();
-
-    std::string attr_type_name = attr.type_name();
-    if ((value::TypeTraits<T>::type_name() == attr_type_name) || (value::TypeTraits<T>::underlying_type_name() == attr_type_name)) {
-
-      if (attr.has_connections()) {
-        target.set_connections(attr.connections());
-        //target.variability = prop.attrib.variability;
-        target.metas() = prop.get_attribute().metas();
-        table.insert(prop_name);
-        ret.code = ParseResult::ResultCode::Success;
-      }
-
-      if (prop.get_property_type() == Property::Type::EmptyAttrib) {
-        DCOUT("Added prop with empty value: " << name);
-        target.set_value_empty();
-        target.metas() = std::move(prop.attribute().metas());  // Move instead of copy
-        table.insert(name);
-        ret.code = ParseResult::ResultCode::Success;
-        return ret;
-      } else if (prop.get_property_type() == Property::Type::Attrib ||
-                 prop.get_property_type() == Property::Type::Connection) {
-        DCOUT("Adding prop: " << name);
-
-        // Config attributes (config:*) are implicitly uniform even if not explicitly marked
-        bool is_config_attr = (name.find("config:") == 0);
-
-        if (!is_config_attr && prop.get_attribute().variability() != Variability::Uniform) {
-          ret.code = ParseResult::ResultCode::VariabilityMismatch;
-          ret.err = fmt::format("Attribute `{}` must be `uniform` variability.", name);
-          return ret;
-        }
-
-        // Warn if config attribute is missing explicit uniform variability
-        if (is_config_attr && prop.get_attribute().variability() != Variability::Uniform) {
-          ret.warn = fmt::format("Config attribute `{}` should have explicit `uniform` variability.", name);
-        }
-
-        if (attr.is_blocked()) {
-          target.set_blocked(true);
-        } else if (attr.get_var().has_default()) {
-          if (auto pv = attr.get_value<T>()) {
-            target.set_value(std::move(pv.value()));  // Use move to avoid copy
-          } else {
-            ret.code = ParseResult::ResultCode::InternalError;
-            ret.err = "Internal data corrupsed.";
-            return ret;
-          }
-        } else {
-          ret.code = ParseResult::ResultCode::VariabilityMismatch;
-          ret.err = "TimeSample or corrupted value assigned to a property where `uniform` variability is set.";
-          return ret;
-        }
-
-        target.metas() = std::move(prop.attribute().metas());  // Move instead of copy
-        table.insert(name);
-        ret.code = ParseResult::ResultCode::Success;
-        return ret;
-      } else {
-        DCOUT("Invalid Property.type");
-        ret.err = "ParseTypedAttribute(Uniform): Invalid Property type(internal error)";
-        ret.code = ParseResult::ResultCode::InternalError;
-        return ret;
-      }
-    } else {
-      DCOUT("tyname = " << value::TypeTraits<T>::type_name() << ", attr.type = " << attr_type_name);
-      ret.code = ParseResult::ResultCode::TypeMismatch;
-      std::stringstream ss;
-      ss  << "Property type mismatch. " << name << " expects type `"
-              << value::TypeTraits<T>::type_name()
-              << "` but defined as type `" << attr_type_name << "`";
-      ret.err = ss.str();
-      return ret;
-    }
-
-  }
-
-  ret.code = ParseResult::ResultCode::Unmatched;
-  return ret;
-}
-#endif // Old implementation 2
 
 // For animatable attribute(`varying`) without fallback
 template<typename T>
@@ -943,151 +507,6 @@ static ParseResult ParseTypedAttribute(std::set<std::string> &table, /* inout */
   return ParseTypedAttributeUnified(table, prop_name, prop, name, target);
 }
 
-#if 0 // Old implementation 3
-template<typename T>
-static ParseResult ParseTypedAttribute_OLD3(std::set<std::string> &table, /* inout */
-  const std::string prop_name,
-  Property &prop,  // Non-const to allow move from metadata
-  const std::string &name,
-  TypedAttribute<Animatable<T>> &target) /* out */
-{
-  ParseResult ret;
-
-#if 0
-  if (prop_name.compare(name + ".connect") == 0) {
-    std::string propname = removeSuffix(name, ".connect");
-    if (table.count(propname)) {
-      DCOUT("Already processed: " << prop_name);
-      ret.code = ParseResult::ResultCode::AlreadyProcessed;
-      return ret;
-    }
-    if (prop.is_connection()) {
-      const Attribute &attr = prop.get_attribute();
-      if (attr.is_connection()) {
-        target.set_connections(attr.connections());
-        //target.variability = prop.attrib.variability;
-        target.metas() = prop.get_attribute().metas();
-        table.insert(propname);
-        ret.code = ParseResult::ResultCode::Success;
-        DCOUT("Added as property with connection: " << propname);
-        return ret;
-      } else {
-        ret.code = ParseResult::ResultCode::InvalidConnection;
-        ret.err = "Connection target not found.";
-        return ret;
-      }
-    } else {
-      ret.code = ParseResult::ResultCode::InternalError;
-      ret.err = "Internal error. Unsupported/Unimplemented property type.";
-      return ret;
-    }
-#endif
-  if (prop_name.compare(name) == 0) {
-    //if (table.count(name)) {
-    //  ret.code = ParseResult::ResultCode::AlreadyProcessed;
-    //  return ret;
-    //}
-    
-    if (prop.is_relationship()) {
-      ret.code = ParseResult::ResultCode::PropertyTypeMismatch;
-      ret.err = fmt::format("Property `{}` must be Attribute, but declared as Relationship.", name);
-      
-    }
-
-    const Attribute &attr = prop.get_attribute();
-
-    if (attr.has_connections()) {
-      target.set_connections(attr.connections());
-      //target.variability = prop.attrib.variability;
-      //target.metas() = prop.get_attribute().metas();
-      //table.insert(prop_name);
-      ret.code = ParseResult::ResultCode::Success;
-    }
-
-    std::string attr_type_name = attr.type_name();
-    if ((value::TypeTraits<T>::type_name() == attr_type_name) || (value::TypeTraits<T>::underlying_type_name() == attr_type_name)) {
-      if (prop.get_property_type() == Property::Type::EmptyAttrib) {
-        DCOUT("Added prop with empty value: " << name);
-        target.set_value_empty();
-        target.metas() = std::move(prop.attribute().metas());  // Move instead of copy
-        table.insert(name);
-        ret.code = ParseResult::ResultCode::Success;
-        return ret;
-      } else if (prop.get_property_type() == Property::Type::Attrib ||
-                 prop.get_property_type() == Property::Type::Connection) {
-
-        DCOUT("Adding typed attribute: " << name);
-        DCOUT("T.tyid = " << value::TypeTraits<T>::type_id() << ", var.tyid = " << attr.get_var().type_id());
-
-        if (attr.is_blocked()) {
-          DCOUT("Attribute is blocked: " << name);
-          // e.g. "uniform float radius = None"
-          target.set_blocked(true);
-        }
-
-        const auto &var = attr.get_var();
-        DCOUT("has_value = " << var.has_value());
-
-        if (var.has_default() || var.has_timesamples()) {
-          if (auto av = ConvertToAnimatable<T>(var)) {
-            target.set_value(std::move(av.value()));  // Use move to avoid copy
-          } else {
-            DCOUT("ConvertToAnimatable failed.");
-            ret.code = ParseResult::ResultCode::InternalError;
-            ret.err = "Converting Attribute data failed. Maybe TimeSamples have values with different types?";
-            return ret;
-          }
-
-          DCOUT("Added typed attribute: " << name);
-
-          target.metas() = attr.metas();
-          table.insert(name);
-          ret.code = ParseResult::ResultCode::Success;
-          return ret;
-        }
-      } else {
-        DCOUT("Invalid Property.type");
-        ret.err = "ParseTypedAttribute(Animatable) Invalid Property type(internal error)";
-        ret.code = ParseResult::ResultCode::InternalError;
-        return ret;
-      }
-    } else {
-      DCOUT("tyname = " << value::TypeTraits<T>::type_name() << ", attr.type = " << attr_type_name);
-      ret.code = ParseResult::ResultCode::TypeMismatch;
-      std::stringstream ss;
-      ss  << "Property type mismatch. " << name << " expects type `"
-              << value::TypeTraits<T>::type_name()
-              << "` but defined as type `" << attr_type_name << "`";
-      ret.err = ss.str();
-      return ret;
-    }
-
-    if (attr.has_connections()) { // connection only
-      DCOUT("Connection only attribute.");
-      target.metas() = prop.get_attribute().metas();
-      table.insert(prop_name);
-      ret.code = ParseResult::ResultCode::Success;
-      return ret;
-    } else {
-      // Handle attributes that have no value, default, timeSamples, or connections
-      // This can happen for empty attributes or attributes that are just placeholders
-      DCOUT("Attribute has no value, using default-constructed value.");
-
-      // Set an empty/default value so the attribute is valid but empty
-      target.set_value(Animatable<T>());  // Default-constructed, no need for move
-      target.metas() = attr.metas();
-      table.insert(prop_name);
-      ret.code = ParseResult::ResultCode::Success;
-      return ret;
-    }
-    return ret;
-  }
-
-  ret.code = ParseResult::ResultCode::Unmatched;
-  return ret;
-}
-#endif // Old implementation 3
-
 // For uniform attribute without fallback
 template<typename T>
 static ParseResult ParseTypedAttribute(std::set<std::string> &table, /* inout */
@@ -1098,139 +517,6 @@ static ParseResult ParseTypedAttribute(std::set<std::string> &table, /* inout */
 {
   return ParseTypedAttributeUnified(table, prop_name, prop, name, target);
 }
-
-#if 0 // Old implementation 4
-template<typename T>
-static ParseResult ParseTypedAttribute_OLD4(std::set<std::string> &table, /* inout */
-  const std::string prop_name,
-  Property &prop,  // Non-const to allow move from metadata
-  const std::string &name,
-  TypedAttribute<T> &target) /* out */
-{
-  ParseResult ret;
-
-  DCOUT(fmt::format("prop name {}", prop_name));
-
-#if 0
-  if (prop_name.compare(name + ".connect") == 0) {
-    std::string propname = removeSuffix(name, ".connect");
-    if (table.count(propname)) {
-      DCOUT("Already processed: " << prop_name);
-      ret.code = ParseResult::ResultCode::AlreadyProcessed;
-      return ret;
-    }
-    if (prop.is_connection()) {
-      const Attribute &attr = prop.get_attribute();
-      if (attr.is_connection()) {
-        target.set_connections(attr.connections());
-        //target.variability = prop.attrib.variability;
-        target.metas() = prop.get_attribute().metas();
-        table.insert(propname);
-        ret.code = ParseResult::ResultCode::Success;
-        DCOUT("Added as property with connection: " << propname);
-        return ret;
-      } else {
-        ret.code = ParseResult::ResultCode::InvalidConnection;
-        ret.err = "Connection target not found.";
-        return ret;
-      }
-    } else {
-      ret.code = ParseResult::ResultCode::InternalError;
-      ret.err = "Internal error. Unsupported/Unimplemented property type.";
-      return ret;
-    }
-#endif
-  if (prop_name.compare(name) == 0) {
-    DCOUT(fmt::format("prop name match {}", name));
-    //if (table.count(name)) {
-    //  ret.code = ParseResult::ResultCode::AlreadyProcessed;
-    //  return ret;
-    //}
-
-    const Attribute &attr = prop.get_attribute();
-    std::string attr_type_name = attr.type_name();
-    DCOUT(fmt::format("prop name {}, type = {}", prop_name, attr_type_name));
-    if ((value::TypeTraits<T>::type_name() == attr_type_name) || (value::TypeTraits<T>::underlying_type_name() == attr_type_name)) {
-
-      bool has_connections{false};
-      bool has_default{false};
-
-      if (attr.has_connections()) {
-        target.set_connections(attr.connections());
-        //target.variability = prop.attrib.variability;
-        //target.metas() = prop.get_attribute().metas();
-        //table.insert(prop_name);
-        //ret.code = ParseResult::ResultCode::Success;
-        has_connections = true;
-      }
-
-      if (prop.get_property_type() == Property::Type::EmptyAttrib) {
-        DCOUT("Added prop with empty value: " << name);
-        target.set_value_empty();
-        has_default = true; // has empty 'default'
-      } else if (prop.get_property_type() == Property::Type::Attrib ||
-                 prop.get_property_type() == Property::Type::Connection) {
-
-        DCOUT("Adding typed attribute: " << name);
-
-        if (prop.get_attribute().variability() != Variability::Uniform) {
-          ret.code = ParseResult::ResultCode::VariabilityMismatch;
-          ret.err = fmt::format("Attribute `{}` must be `uniform` variability.", name);
-          return ret;
-        }
-
-        if (attr.get_var().has_timesamples()) {
-          ret.code = ParseResult::ResultCode::VariabilityMismatch;
-          ret.err = "TimeSample or corrupted value assigned to a property where `uniform` variability is set.";
-          return ret;
-        }
-
-        if (attr.is_blocked()) {
-          target.set_blocked(true);
-          has_default = true;
-        } else if (attr.get_var().has_default()) {
-          if (auto pv = attr.get_value<T>()) {
-            target.set_value(std::move(pv.value()));  // Use move to avoid copy
-            has_default = true;
-          } else {
-            ret.code = ParseResult::ResultCode::VariabilityMismatch;
-            ret.err = "Internal data corrupsed.";
-            return ret;
-          }
-        }
-
-      }
-
-      if (has_connections || has_default) {
-        target.metas() = std::move(prop.attribute().metas());  // Move instead of copy
-        table.insert(name);
-        ret.code = ParseResult::ResultCode::Success;
-        return ret;
-      } else {
-        ret.code = ParseResult::ResultCode::InternalError;
-        ret.err = "Internal data corrupsed.";
-        return ret;
-      }
-      
-    } else {
-      DCOUT("tyname = " << value::TypeTraits<T>::type_name() << ", attr.type = " << attr_type_name);
-      ret.code = ParseResult::ResultCode::TypeMismatch;
-      std::stringstream ss;
-      ss  << "Property type mismatch. " << name << " expects type `"
-              << value::TypeTraits<T>::type_name()
-              << "` but defined as type `" << attr_type_name << "`";
-      ret.err = ss.str();
-      return ret;
-    }
-
-    return ret;
-  }
-
-  ret.code = ParseResult::ResultCode::Unmatched;
-
-  return ret;
-}
-#endif // Old implementation 4
 
 // Special case for Extent(float3[2]) type.
 // TODO: Reuse code of ParseTypedAttribute as much as possible
@@ -1424,12 +710,6 @@ static ParseResult ParseShaderOutputTerminalAttribute(std::set<std::string> &tab
 {
   ParseResult ret;
 
-#if 0 // Old code: TODO: Remove
-  if (prop_name.compare(name + ".connect") == 0) {
-    ret.code = ParseResult::ResultCode::ConnectionNotAllowed;
-    ret.err = "Connection is not allowed for output terminal attribute.";
-    return ret;
-#endif
   if (prop_name.compare(name) == 0) {
     if (table.count(name)) {
       ret.code = ParseResult::ResultCode::AlreadyProcessed;
@@ -1522,104 +802,6 @@ static ParseResult ParseShaderOutputTerminalAttribute(std::set<std::string> &tab
   ret.code = ParseResult::ResultCode::Unmatched;
   return ret;
 }
-
-#if 0 // TODO: Remove since not used.
-// Allowed syntax:
-//   "token outputs:surface"
-//   "token outputs:surface.connect = </path/to/conn/>"
-static ParseResult ParseShaderOutputProperty(std::set<std::string> &table, /* inout */
-  const std::string prop_name,
-  Property &prop,  // Non-const to allow move from metadata
-  const std::string &name,
-  nonstd::optional<Relationship> &target) /* out */
-{
-  ParseResult ret;
-
-  if (prop_name.compare(name + ".connect") == 0) {
-    std::string propname = removeSuffix(name, ".connect");
-    if (table.count(propname)) {
-      ret.code = ParseResult::ResultCode::AlreadyProcessed;
-      return ret;
-    }
-    if (auto pv = prop.get_relationTarget()) {
-      Relationship rel;
-      rel.set(pv.value());
-      rel.metas() = prop.get_attribute().metas();
-      target = rel;
-      table.insert(propname);
-      ret.code = ParseResult::ResultCode::Success;
-      return ret;
-    }
-  } else if (prop_name.compare(name) == 0) {
-    if (table.count(name)) {
-      ret.code = ParseResult::ResultCode::AlreadyProcessed;
-      return ret;
-    }
-
-    if (prop.is_connection()) {
-      const Attribute &attr = prop.get_attribute();
-      if (attr.is_connection()) {
-        Relationship rel;
-        std::vector<Path> conns = attr.connections();
-
-        if (conns.size() == 0) {
-          ret.code = ParseResult::ResultCode::InternalError;
-          ret.err = "Invalid shader output attribute with connection. connection targetPath size is zero.";
-          return ret;
-        }
-
-        if (conns.size() == 1) {
-          rel.set(conns[0]);
-        } else if (conns.size() > 1) {
-          rel.set(conns);
-        }
-
-        rel.metas() = prop.get_attribute().metas();
-        target = rel;
-        table.insert(prop_name);
-        ret.code = ParseResult::ResultCode::Success;
-        return ret;
-
-      } else {
-        ret.code = ParseResult::ResultCode::InternalError;
-        ret.err = "Invalid shader output attribute with connection.";
-        return ret;
-      }
-    } else {
-
-      const Attribute &attr = prop.get_attribute();
-
-      std::string attr_type_name = attr.type_name();
-      if (value::TypeTraits<value::token>::type_name() == attr_type_name) {
-        if (prop.get_property_type() == Property::Type::EmptyAttrib) {
-          Relationship rel;
-          rel.set_novalue();
-          rel.metas() = prop.get_attribute().metas();
-          table.insert(name);
-          target = rel;
-          ret.code = ParseResult::ResultCode::Success;
-          return ret;
-        } else {
-          DCOUT("Output Invalid Property.type");
-          ret.err = "Invalid connection or value assigned for output attribute.";
-          ret.code = ParseResult::ResultCode::InvalidConnection;
-          return ret;
-        }
-      } else {
-        DCOUT("attr.type = " << attr.type_name());
-        ret.code = ParseResult::ResultCode::TypeMismatch;
-        std::stringstream ss;
-        ss  << "Property type mismatch. " << name << " expects type `token` but defined as type `" << attr.type_name() << "`";
-        ret.err = ss.str();
-        return ret;
-      }
-    }
-  }
-
-  ret.code = ParseResult::ResultCode::Unmatched;
-  return ret;
-}
-#endif
 
 // Allowed syntax:
 //   "token outputs:surface.connect = </path/to/conn/>"
@@ -1759,20 +941,6 @@ static ParseResult ParseShaderInputConnectionProperty(std::set<std::string> &tab
     PUSH_ERROR_AND_RETURN(fmt::format("Parsing shader output property `{}` failed. Error: {}", __name, ret.err)); \
   } \
 }
-
-#if 0 // TODO: Remove since not used.
-#define PARSE_SHADER_OUTPUT_PROPERTY(__table, __prop, __name, __klass, __target) { \
-  ParseResult ret = ParseShaderOutputProperty(__table, __prop.first, __prop.second, __name, __target); \
-  if (ret.code == ParseResult::ResultCode::Success || ret.code == ParseResult::ResultCode::AlreadyProcessed) { \
-    DCOUT("Added shader output property: " << __name); \
-    continue; /* got it */\
-  } else if (ret.code == ParseResult::ResultCode::Unmatched) { \
-    /* go next */ \
-  } else { \
-    PUSH_ERROR_AND_RETURN(fmt::format("Parsing shader output property `{}` failed. Error: {}", __name, ret.err)); \
-  } \
-}
-#endif
 
 #define PARSE_SHADER_INPUT_CONNECTION_PROPERTY(__table, __prop, __name, __klass, __target) { \
   ParseResult ret = ParseShaderInputConnectionProperty(__table, __prop.first, __prop.second, __name, __target); \
@@ -2295,13 +1463,13 @@ static bool ReconstructXformOpFromToken(
         if (it == properties.end()) {
           PUSH_ERROR_AND_RETURN("Property `" + tok + "` not found.");
         }
-        if (it->second.is_attribute_connection()) {
-          PUSH_ERROR_AND_RETURN(
-              "Connection(.connect) for xformOp attribute is not yet supported: "
-              "`" +
-              tok + "`");
-        }
         const Attribute &attr = it->second.get_attribute();
+
+        // Store connections if present
+        // Note: An attribute can have both connections AND values/timeSamples
+        if (attr.has_connections()) {
+          op.set_connections(attr.connections());
+        }
 
         // Check `xformOp` namespace
         if (auto xfm = SplitXformOpToken(tok, kTransform)) {
@@ -2331,6 +1499,17 @@ static bool ReconstructXformOpFromToken(
             } else {
               PUSH_ERROR_AND_RETURN(
                   "`xformOp:transform` must be type `matrix4d`, but got type `" +
+                  attr.type_name() + "`.");
+            }
+          } else if (op.has_connections() && !op.has_timesamples()) {
+            // Connection-only: set dummy value for type info
+            if (attr.type_id() == value::TypeTraits<value::matrix4d>::type_id()) {
+              value::matrix4d dummy{value::matrix4d::identity()};
+              op.set_value(dummy);
+            } else {
+              PUSH_ERROR_AND_RETURN(
+                  "`xformOp:transform` must be type `matrix4d`, but got "
+                  "type `" +
                   attr.type_name() + "`.");
             }
           }
@@ -2370,6 +1549,20 @@ static bool ReconstructXformOpFromToken(
                   "got type `" +
                   attr.type_name() + "`.");
             }
+          } else if (op.has_connections() && !op.has_timesamples()) {
+            // Connection-only: set dummy value for type info
+            if (attr.type_id() == value::TypeTraits<value::double3>::type_id()) {
+              value::double3 dummy{0.0, 0.0, 0.0};
+              op.set_value(dummy);
+            } else if (attr.type_id() == value::TypeTraits<value::float3>::type_id()) {
+              value::float3 dummy{0.0f, 0.0f, 0.0f};
+              op.set_value(dummy);
+            } else {
+              PUSH_ERROR_AND_RETURN(
+                  "`xformOp:translate` must be type `double3` or `float3`, but got "
+                  "type `" +
+                  attr.type_name() + "`.");
+            }
           }
         } else if (auto scale = SplitXformOpToken(tok, kScale)) {
           op.op_type = XformOp::OpType::Scale;
@@ -2400,6 +1593,20 @@ static bool ReconstructXformOpFromToken(
               op.set_value(pvd.value());
             } else if (auto pvf = attr.get_value<value::float3>()) {
               op.set_value(pvf.value());
+            } else {
+              PUSH_ERROR_AND_RETURN(
+                  "`xformOp:scale` must be type `double3` or `float3`, but got "
+                  "type `" +
+                  attr.type_name() + "`.");
+            }
+          } else if (op.has_connections() && !op.has_timesamples()) {
+            // Connection-only: set dummy value for type info
+            if (attr.type_id() == value::TypeTraits<value::double3>::type_id()) {
+              value::double3 dummy{1.0, 1.0, 1.0};
+              op.set_value(dummy);
+            } else if (attr.type_id() == value::TypeTraits<value::float3>::type_id()) {
+              value::float3 dummy{1.0f, 1.0f, 1.0f};
+              op.set_value(dummy);
             } else {
               PUSH_ERROR_AND_RETURN(
                   "`xformOp:scale` must be type `double3` or `float3`, but got "
@@ -2442,6 +1649,20 @@ static bool ReconstructXformOpFromToken(
                   "type `" +
                   attr.type_name() + "`.");
             }
+          } else if (op.has_connections() && !op.has_timesamples()) {
+            // Connection-only: set dummy value for type info
+            if (attr.type_id() == value::TypeTraits<double>::type_id()) {
+              double dummy(0.0);
+              op.set_value(dummy);
+            } else if (attr.type_id() == value::TypeTraits<float>::type_id()) {
+              float dummy(0.0f);
+              op.set_value(dummy);
+            } else {
+              PUSH_ERROR_AND_RETURN(
+                  "`xformOp:rotateX` must be type `double` or `float`, but got "
+                  "type `" +
+                  attr.type_name() + "`.");
+            }
           }
         } else if (auto rotY = SplitXformOpToken(tok, kRotateY)) {
           op.op_type = XformOp::OpType::RotateY;
@@ -2472,6 +1693,20 @@ static bool ReconstructXformOpFromToken(
               op.set_value(pvd.value());
             } else if (auto pvf = attr.get_value<float>()) {
               op.set_value(pvf.value());
+            } else {
+              PUSH_ERROR_AND_RETURN(
+                  "`xformOp:rotateY` must be type `double` or `float`, but got "
+                  "type `" +
+                  attr.type_name() + "`.");
+            }
+          } else if (op.has_connections() && !op.has_timesamples()) {
+            // Connection-only: set dummy value for type info
+            if (attr.type_id() == value::TypeTraits<double>::type_id()) {
+              double dummy(0.0);
+              op.set_value(dummy);
+            } else if (attr.type_id() == value::TypeTraits<float>::type_id()) {
+              float dummy(0.0f);
+              op.set_value(dummy);
             } else {
               PUSH_ERROR_AND_RETURN(
                   "`xformOp:rotateY` must be type `double` or `float`, but got "
@@ -2514,6 +1749,20 @@ static bool ReconstructXformOpFromToken(
                   "type `" +
                   attr.type_name() + "`.");
             }
+          } else if (op.has_connections() && !op.has_timesamples()) {
+            // Connection-only: set dummy value for type info
+            if (attr.type_id() == value::TypeTraits<double>::type_id()) {
+              double dummy(0.0);
+              op.set_value(dummy);
+            } else if (attr.type_id() == value::TypeTraits<float>::type_id()) {
+              float dummy(0.0f);
+              op.set_value(dummy);
+            } else {
+              PUSH_ERROR_AND_RETURN(
+                  "`xformOp:rotateZ` must be type `double` or `float`, but got "
+                  "type `" +
+                  attr.type_name() + "`.");
+            }
           }
         } else if (auto rotateXYZ = SplitXformOpToken(tok, kRotateXYZ)) {
           op.op_type = XformOp::OpType::RotateXYZ;
@@ -2544,6 +1793,20 @@ static bool ReconstructXformOpFromToken(
               op.set_value(pvd.value());
             } else if (auto pvf = attr.get_value<value::float3>()) {
               op.set_value(pvf.value());
+            } else {
+              PUSH_ERROR_AND_RETURN(
+                  "`xformOp:rotateXYZ` must be type `double3` or `float3`, but got "
+                  "type `" +
+                  attr.type_name() + "`.");
+            }
+          } else if (op.has_connections() && !op.has_timesamples()) {
+            // Connection-only: set dummy value for type info
+            if (attr.type_id() == value::TypeTraits<value::double3>::type_id()) {
+              value::double3 dummy{0.0, 0.0, 0.0};
+              op.set_value(dummy);
+            } else if (attr.type_id() == value::TypeTraits<value::float3>::type_id()) {
+              value::float3 dummy{0.0f, 0.0f, 0.0f};
+              op.set_value(dummy);
             } else {
               PUSH_ERROR_AND_RETURN(
                   "`xformOp:rotateXYZ` must be type `double3` or `float3`, but got "
@@ -2586,6 +1849,20 @@ static bool ReconstructXformOpFromToken(
                   "type `" +
                   attr.type_name() + "`.");
             }
+          } else if (op.has_connections() && !op.has_timesamples()) {
+            // Connection-only: set dummy value for type info
+            if (attr.type_id() == value::TypeTraits<value::double3>::type_id()) {
+              value::double3 dummy{0.0, 0.0, 0.0};
+              op.set_value(dummy);
+            } else if (attr.type_id() == value::TypeTraits<value::float3>::type_id()) {
+              value::float3 dummy{0.0f, 0.0f, 0.0f};
+              op.set_value(dummy);
+            } else {
+              PUSH_ERROR_AND_RETURN(
+                  "`xformOp:rotateXZY` must be type `double3` or `float3`, but got "
+                  "type `" +
+                  attr.type_name() + "`.");
+            }
           }
         } else if (auto rotateYXZ = SplitXformOpToken(tok, kRotateYXZ)) {
           op.op_type = XformOp::OpType::RotateYXZ;
@@ -2616,6 +1893,20 @@ static bool ReconstructXformOpFromToken(
               op.set_value(pvd.value());
             } else if (auto pvf = attr.get_value<value::float3>()) {
               op.set_value(pvf.value());
+            } else {
+              PUSH_ERROR_AND_RETURN(
+                  "`xformOp:rotateYXZ` must be type `double3` or `float3`, but got "
+                  "type `" +
+                  attr.type_name() + "`.");
+            }
+          } else if (op.has_connections() && !op.has_timesamples()) {
+            // Connection-only: set dummy value for type info
+            if (attr.type_id() == value::TypeTraits<value::double3>::type_id()) {
+              value::double3 dummy{0.0, 0.0, 0.0};
+              op.set_value(dummy);
+            } else if (attr.type_id() == value::TypeTraits<value::float3>::type_id()) {
+              value::float3 dummy{0.0f, 0.0f, 0.0f};
+              op.set_value(dummy);
             } else {
               PUSH_ERROR_AND_RETURN(
                   "`xformOp:rotateYXZ` must be type `double3` or `float3`, but got "
@@ -2658,6 +1949,20 @@ static bool ReconstructXformOpFromToken(
                   "type `" +
                   attr.type_name() + "`.");
             }
+          } else if (op.has_connections() && !op.has_timesamples()) {
+            // Connection-only: set dummy value for type info
+            if (attr.type_id() == value::TypeTraits<value::double3>::type_id()) {
+              value::double3 dummy{0.0, 0.0, 0.0};
+              op.set_value(dummy);
+            } else if (attr.type_id() == value::TypeTraits<value::float3>::type_id()) {
+              value::float3 dummy{0.0f, 0.0f, 0.0f};
+              op.set_value(dummy);
+            } else {
+              PUSH_ERROR_AND_RETURN(
+                  "`xformOp:rotateYZX` must be type `double3` or `float3`, but got "
+                  "type `" +
+                  attr.type_name() + "`.");
+            }
           }
         } else if (auto rotateZXY = SplitXformOpToken(tok, kRotateZXY)) {
           op.op_type = XformOp::OpType::RotateZXY;
@@ -2688,6 +1993,20 @@ static bool ReconstructXformOpFromToken(
               op.set_value(pvd.value());
             } else if (auto pvf = attr.get_value<value::float3>()) {
               op.set_value(pvf.value());
+            } else {
+              PUSH_ERROR_AND_RETURN(
+                  "`xformOp:rotateZXY` must be type `double3` or `float3`, but got "
+                  "type `" +
+                  attr.type_name() + "`.");
+            }
+          } else if (op.has_connections() && !op.has_timesamples()) {
+            // Connection-only: set dummy value for type info
+            if (attr.type_id() == value::TypeTraits<value::double3>::type_id()) {
+              value::double3 dummy{0.0, 0.0, 0.0};
+              op.set_value(dummy);
+            } else if (attr.type_id() == value::TypeTraits<value::float3>::type_id()) {
+              value::float3 dummy{0.0f, 0.0f, 0.0f};
+              op.set_value(dummy);
             } else {
               PUSH_ERROR_AND_RETURN(
                   "`xformOp:rotateZXY` must be type `double3` or `float3`, but got "
@@ -2730,6 +2049,20 @@ static bool ReconstructXformOpFromToken(
                   "type `" +
                   attr.type_name() + "`.");
             }
+          } else if (op.has_connections() && !op.has_timesamples()) {
+            // Connection-only: set dummy value for type info
+            if (attr.type_id() == value::TypeTraits<value::double3>::type_id()) {
+              value::double3 dummy{0.0, 0.0, 0.0};
+              op.set_value(dummy);
+            } else if (attr.type_id() == value::TypeTraits<value::float3>::type_id()) {
+              value::float3 dummy{0.0f, 0.0f, 0.0f};
+              op.set_value(dummy);
+            } else {
+              PUSH_ERROR_AND_RETURN(
+                  "`xformOp:rotateZYX` must be type `double3` or `float3`, but got "
+                  "type `" +
+                  attr.type_name() + "`.");
+            }
           }
         } else if (auto orient = SplitXformOpToken(tok, kOrient)) {
           op.op_type = XformOp::OpType::Orient;
@@ -2764,6 +2097,24 @@ static bool ReconstructXformOpFromToken(
               op.set_value(pvd.value());
             } else if (auto pvf = attr.get_value<value::quatd>()) {
               op.set_value(pvf.value());
+            } else {
+              PUSH_ERROR_AND_RETURN(
+                  "`xformOp:orient` must be type `quatf` or `quatd`, but got "
+                  "type `" +
+                  attr.type_name() + "`.");
+            }
+          } else if (op.has_connections() && !op.has_timesamples()) {
+            // Connection-only: set dummy value for type info
+            if (attr.type_id() == value::TypeTraits<value::quatf>::type_id()) {
+              value::quatf q;
+              q.real = 1.0f;
+              q.imag = {0.0f, 0.0f, 0.0f};
+              op.set_value(q);
+            } else if (attr.type_id() == value::TypeTraits<value::quatd>::type_id()) {
+              value::quatd q;
+              q.real = 1.0;
+              q.imag = {0.0, 0.0, 0.0};
+              op.set_value(q);
             } else {
               PUSH_ERROR_AND_RETURN(
                   "`xformOp:orient` must be type `quatf` or `quatd`, but got "
@@ -2847,7 +2198,8 @@ bool ReconstructXformOpsFromProperties(
 #endif
 
   // Lookup xform values from `xformOpOrder`
-  // TODO: TimeSamples, Connection
+  // Note: xformOp connections are stored but not evaluated here - evaluation
+  // requires Stage access to resolve connection targets at runtime.
   if (properties.count("xformOpOrder")) {
     // array of string
     auto prop = properties.at("xformOpOrder");
@@ -2888,528 +2240,6 @@ bool ReconstructXformOpsFromProperties(
         if (!ReconstructXformOpFromToken(item.str(), int(i), properties, table, xformOps, err)) {
           return false;
         }
-#if 0
-
-        XformOp op;
-
-        std::string tok = item.str();
-        DCOUT("xformOp token = " << tok);
-
-        if (startsWith(tok, "!resetXformStack!")) {
-          if (tok.compare("!resetXformStack!") != 0) {
-            PUSH_ERROR_AND_RETURN(
-                "`!resetXformStack!` must be defined solely(not to be a prefix "
-                "to \"xformOp:*\")");
-          }
-
-          if (i != 0) {
-            PUSH_ERROR_AND_RETURN(
-                "`!resetXformStack!` must appear at the first element of "
-                "xformOpOrder list.");
-          }
-
-          op.op_type = XformOp::OpType::ResetXformStack;
-          xformOps->emplace_back(op);
-
-          // skip looking up property
-          continue;
-        }
-
-        if (startsWith(tok, "!invert!")) {
-          DCOUT("invert!");
-          op.inverted = true;
-          tok = removePrefix(tok, "!invert!");
-          DCOUT("tok = " << tok);
-        }
-
-        auto it = properties.find(tok);
-        if (it == properties.end()) {
-          PUSH_ERROR_AND_RETURN("Property `" + tok + "` not found.");
-        }
-        if (it->second.is_attribute_connection()) {
-          PUSH_ERROR_AND_RETURN(
-              "Connection(.connect) for xformOp attribute is not yet supported: "
-              "`" +
-              tok + "`");
-        }
-        const Attribute &attr = it->second.get_attribute();
-
-        // Check `xformOp` namespace
-        if (auto xfm = SplitXformOpToken(tok, kTransform)) {
-          op.op_type = XformOp::OpType::Transform;
-          op.suffix = xfm.value();  // may contain nested namespaces
-
-          // Check if timeSamples were authored (even if empty)
-          if (attr.get_var().has_timesamples() || attr.get_var().ts_raw().type_id() != 0) {
-            op.set_timesamples(attr.get_var().ts_raw());
-          }
-
-          if (attr.get_var().has_default()) {
-            if (attr.has_blocked()) {
-              // Set dummy value for `op.get_value_type_id/op.get_value_type_name'
-              if (attr.type_id() == value::TypeTraits<value::matrix4d>::type_id()) {
-                value::matrix4d dummy{value::matrix4d::identity()};
-                op.set_value(dummy);
-              } else {
-                PUSH_ERROR_AND_RETURN(
-                    "`xformOp:transform` must be type `matrix4d`, but got "
-                    "type `" +
-                    attr.type_name() + "`.");
-              }
-              op.set_blocked(true);
-            } else if (auto pvd = attr.get_value<value::matrix4d>()) {
-              op.set_value(pvd.value());
-            } else {
-              PUSH_ERROR_AND_RETURN(
-                  "`xformOp:transform` must be type `matrix4d`, but got type `" +
-                  attr.type_name() + "`.");
-            }
-          }
-
-        } else if (auto tx = SplitXformOpToken(tok, kTranslate)) {
-          op.op_type = XformOp::OpType::Translate;
-          op.suffix = tx.value();
-
-          // Check if timeSamples were authored (even if empty)
-          if (attr.get_var().has_timesamples() || attr.get_var().ts_raw().type_id() != 0) {
-            op.set_timesamples(attr.get_var().ts_raw());
-          }
-
-          if (attr.get_var().has_default()) {
-            if (attr.has_blocked()) {
-              // Set dummy value for `op.get_value_type_id/op.get_value_type_name'
-              if (attr.type_id() == value::TypeTraits<value::double3>::type_id()) {
-                value::double3 dummy{0.0, 0.0, 0.0};
-                op.set_value(dummy);
-              } else if (attr.type_id() == value::TypeTraits<value::float3>::type_id()) {
-                value::float3 dummy{0.0f, 0.0f, 0.0f};
-                op.set_value(dummy);
-              } else {
-                PUSH_ERROR_AND_RETURN(
-                    "`xformOp:translate` must be type `double3` or `float3`, but got "
-                    "type `" +
-                    attr.type_name() + "`.");
-              }
-              op.set_blocked(true);
-            } else if (auto pvd = attr.get_value<value::double3>()) {
-              op.set_value(pvd.value());
-            } else if (auto pvf = attr.get_value<value::float3>()) {
-              op.set_value(pvf.value());
-            } else {
-              PUSH_ERROR_AND_RETURN(
-                  "`xformOp:translate` must be type `double3` or `float3`, but "
-                  "got type `" +
-                  attr.type_name() + "`.");
-            }
-          }
-        } else if (auto scale = SplitXformOpToken(tok, kScale)) {
-          op.op_type = XformOp::OpType::Scale;
-          op.suffix = scale.value();
-
-          // Check if timeSamples were authored (even if empty)
-          if (attr.get_var().has_timesamples() || attr.get_var().ts_raw().type_id() != 0) {
-            op.set_timesamples(attr.get_var().ts_raw());
-          }
-
-          if (attr.get_var().has_default()) {
-            if (attr.has_blocked()) {
-              // Set dummy value for `op.get_value_type_id/op.get_value_type_name'
-              if (attr.type_id() == value::TypeTraits<value::double3>::type_id()) {
-                value::double3 dummy{0.0, 0.0, 0.0};
-                op.set_value(dummy);
-              } else if (attr.type_id() == value::TypeTraits<value::float3>::type_id()) {
-                value::float3 dummy{0.0f, 0.0f, 0.0f};
-                op.set_value(dummy);
-              } else {
-                PUSH_ERROR_AND_RETURN(
-                    "`xformOp:scale` must be type `double3` or `float3`, but got "
-                    "type `" +
-                    attr.type_name() + "`.");
-              }
-              op.set_blocked(true);
-            } else if (auto pvd = attr.get_value<value::double3>()) {
-              op.set_value(pvd.value());
-            } else if (auto pvf = attr.get_value<value::float3>()) {
-              op.set_value(pvf.value());
-            } else {
-              PUSH_ERROR_AND_RETURN(
-                  "`xformOp:scale` must be type `double3` or `float3`, but got "
-                  "type `" +
-                  attr.type_name() + "`.");
-            }
-          }
-        } else if (auto rotX = SplitXformOpToken(tok, kRotateX)) {
-          op.op_type = XformOp::OpType::RotateX;
-          op.suffix = rotX.value();
-
-          // Check if timeSamples were authored (even if empty)
-          if (attr.get_var().has_timesamples() || attr.get_var().ts_raw().type_id() != 0) {
-            op.set_timesamples(attr.get_var().ts_raw());
-          }
-
-          if (attr.get_var().has_default()) {
-            if (attr.has_blocked()) {
-              // Set dummy value for `op.get_value_type_id/op.get_value_type_name'
-              if (attr.type_id() == value::TypeTraits<double>::type_id()) {
-                double dummy(0.0);
-                op.set_value(dummy);
-              } else if (attr.type_id() == value::TypeTraits<float>::type_id()) {
-                float dummy(0.0f);
-                op.set_value(dummy);
-              } else {
-                PUSH_ERROR_AND_RETURN(
-                    "`xformOp:rotateX` must be type `double` or `float`, but got "
-                    "type `" +
-                    attr.type_name() + "`.");
-              }
-              op.set_blocked(true);
-            } else if (auto pvd = attr.get_value<double>()) {
-              op.set_value(pvd.value());
-            } else if (auto pvf = attr.get_value<float>()) {
-              op.set_value(pvf.value());
-            } else {
-              PUSH_ERROR_AND_RETURN(
-                  "`xformOp:rotateX` must be type `double` or `float`, but got "
-                  "type `" +
-                  attr.type_name() + "`.");
-            }
-          }
-        } else if (auto rotY = SplitXformOpToken(tok, kRotateY)) {
-          op.op_type = XformOp::OpType::RotateY;
-          op.suffix = rotY.value();
-
-          // Check if timeSamples were authored (even if empty)
-          if (attr.get_var().has_timesamples() || attr.get_var().ts_raw().type_id() != 0) {
-            op.set_timesamples(attr.get_var().ts_raw());
-          }
-
-          if (attr.get_var().has_default()) {
-            if (attr.has_blocked()) {
-              // Set dummy value for `op.get_value_type_id/op.get_value_type_name'
-              if (attr.type_id() == value::TypeTraits<double>::type_id()) {
-                double dummy(0.0);
-                op.set_value(dummy);
-              } else if (attr.type_id() == value::TypeTraits<float>::type_id()) {
-                float dummy(0.0f);
-                op.set_value(dummy);
-              } else {
-                PUSH_ERROR_AND_RETURN(
-                    "`xformOp:rotateY` must be type `double` or `float`, but got "
-                    "type `" +
-                    attr.type_name() + "`.");
-              }
-              op.set_blocked(true);
-            } else if (auto pvd = attr.get_value<double>()) {
-              op.set_value(pvd.value());
-            } else if (auto pvf = attr.get_value<float>()) {
-              op.set_value(pvf.value());
-            } else {
-              PUSH_ERROR_AND_RETURN(
-                  "`xformOp:rotateY` must be type `double` or `float`, but got "
-                  "type `" +
-                  attr.type_name() + "`.");
-            }
-          }
-        } else if (auto rotZ = SplitXformOpToken(tok, kRotateZ)) {
-          op.op_type = XformOp::OpType::RotateZ;
-          op.suffix = rotZ.value();
-
-          // Check if timeSamples were authored (even if empty)
-          if (attr.get_var().has_timesamples() || attr.get_var().ts_raw().type_id() != 0) {
-            op.set_timesamples(attr.get_var().ts_raw());
-          }
-
-          if (attr.get_var().has_default()) {
-            if (attr.has_blocked()) {
-              // Set dummy value for `op.get_value_type_id/op.get_value_type_name'
-              if (attr.type_id() == value::TypeTraits<double>::type_id()) {
-                double dummy(0.0);
-                op.set_value(dummy);
-              } else if (attr.type_id() == value::TypeTraits<float>::type_id()) {
-                float dummy(0.0f);
-                op.set_value(dummy);
-              } else {
-                PUSH_ERROR_AND_RETURN(
-                    "`xformOp:rotateZ` must be type `double` or `float`, but got "
-                    "type `" +
-                    attr.type_name() + "`.");
-              }
-              op.set_blocked(true);
-            } else if (auto pvd = attr.get_value<double>()) {
-              op.set_value(pvd.value());
-            } else if (auto pvf = attr.get_value<float>()) {
-              op.set_value(pvf.value());
-            } else {
-              PUSH_ERROR_AND_RETURN(
-                  "`xformOp:rotateZ` must be type `double` or `float`, but got "
-                  "type `" +
-                  attr.type_name() + "`.");
-            }
-          }
-        } else if (auto rotateXYZ = SplitXformOpToken(tok, kRotateXYZ)) {
-          op.op_type = XformOp::OpType::RotateXYZ;
-          op.suffix = rotateXYZ.value();
-
-          // Check if timeSamples were authored (even if empty)
-          if (attr.get_var().has_timesamples() || attr.get_var().ts_raw().type_id() != 0) {
-            op.set_timesamples(attr.get_var().ts_raw());
-          }
-
-          if (attr.get_var().has_default()) {
-            if (attr.has_blocked()) {
-              // Set dummy value for `op.get_value_type_id/op.get_value_type_name'
-              if (attr.type_id() == value::TypeTraits<value::double3>::type_id()) {
-                value::double3 dummy{0.0, 0.0, 0.0};
-                op.set_value(dummy);
-              } else if (attr.type_id() == value::TypeTraits<value::float3>::type_id()) {
-                value::float3 dummy{0.0f, 0.0f, 0.0f};
-                op.set_value(dummy);
-              } else {
-                PUSH_ERROR_AND_RETURN(
-                    "`xformOp:rotateXYZ` must be type `double3` or `float3`, but got "
-                    "type `" +
-                    attr.type_name() + "`.");
-              }
-              op.set_blocked(true);
-            } else if (auto pvd = attr.get_value<value::double3>()) {
-              op.set_value(pvd.value());
-            } else if (auto pvf = attr.get_value<value::float3>()) {
-              op.set_value(pvf.value());
-            } else {
-              PUSH_ERROR_AND_RETURN(
-                  "`xformOp:rotateXYZ` must be type `double3` or `float3`, but got "
-                  "type `" +
-                  attr.type_name() + "`.");
-            }
-          }
-        } else if (auto rotateXZY = SplitXformOpToken(tok, kRotateXZY)) {
-          op.op_type = XformOp::OpType::RotateXZY;
-          op.suffix = rotateXZY.value();
-
-          // Check if timeSamples were authored (even if empty)
-          if (attr.get_var().has_timesamples() || attr.get_var().ts_raw().type_id() != 0) {
-            op.set_timesamples(attr.get_var().ts_raw());
-          }
-
-          if (attr.get_var().has_default()) {
-            if (attr.has_blocked()) {
-              // Set dummy value for `op.get_value_type_id/op.get_value_type_name'
-              if (attr.type_id() == value::TypeTraits<value::double3>::type_id()) {
-                value::double3 dummy{0.0, 0.0, 0.0};
-                op.set_value(dummy);
-              } else if (attr.type_id() == value::TypeTraits<value::float3>::type_id()) {
-                value::float3 dummy{0.0f, 0.0f, 0.0f};
-                op.set_value(dummy);
-              } else {
-                PUSH_ERROR_AND_RETURN(
-                    "`xformOp:rotateXZY` must be type `double3` or `float3`, but got "
-                    "type `" +
-                    attr.type_name() + "`.");
-              }
-              op.set_blocked(true);
-            } else if (auto pvd = attr.get_value<value::double3>()) {
-              op.set_value(pvd.value());
-            } else if (auto pvf = attr.get_value<value::float3>()) {
-              op.set_value(pvf.value());
-            } else {
-              PUSH_ERROR_AND_RETURN(
-                  "`xformOp:rotateXZY` must be type `double3` or `float3`, but got "
-                  "type `" +
-                  attr.type_name() + "`.");
-            }
-          }
-        } else if (auto rotateYXZ = SplitXformOpToken(tok, kRotateYXZ)) {
-          op.op_type = XformOp::OpType::RotateYXZ;
-          op.suffix = rotateYXZ.value();
-
-          // Check if timeSamples were authored (even if empty)
-          if (attr.get_var().has_timesamples() || attr.get_var().ts_raw().type_id() != 0) {
-            op.set_timesamples(attr.get_var().ts_raw());
-          }
-
-          if (attr.get_var().has_default()) {
-            if (attr.has_blocked()) {
-              // Set dummy value for `op.get_value_type_id/op.get_value_type_name'
-              if (attr.type_id() == value::TypeTraits<value::double3>::type_id()) {
-                value::double3 dummy{0.0, 0.0, 0.0};
-                op.set_value(dummy);
-              } else if (attr.type_id() == value::TypeTraits<value::float3>::type_id()) {
-                value::float3 dummy{0.0f, 0.0f, 0.0f};
-                op.set_value(dummy);
-              } else {
-                PUSH_ERROR_AND_RETURN(
-                    "`xformOp:rotateYXZ` must be type `double3` or `float3`, but got "
-                    "type `" +
-                    attr.type_name() + "`.");
-              }
-              op.set_blocked(true);
-            } else if (auto pvd = attr.get_value<value::double3>()) {
-              op.set_value(pvd.value());
-            } else if (auto pvf = attr.get_value<value::float3>()) {
-              op.set_value(pvf.value());
-            } else {
-              PUSH_ERROR_AND_RETURN(
-                  "`xformOp:rotateYXZ` must be type `double3` or `float3`, but got "
-                  "type `" +
-                  attr.type_name() + "`.");
-            }
-          }
-        } else if (auto rotateYZX = SplitXformOpToken(tok, kRotateYZX)) {
-          op.op_type = XformOp::OpType::RotateYZX;
-          op.suffix = rotateYZX.value();
-
-          // Check if timeSamples were authored (even if empty)
-          if (attr.get_var().has_timesamples() || attr.get_var().ts_raw().type_id() != 0) {
-            op.set_timesamples(attr.get_var().ts_raw());
-          }
-
-          if (attr.get_var().has_default()) {
-            if (attr.has_blocked()) {
-              // Set dummy value for `op.get_value_type_id/op.get_value_type_name'
-              if (attr.type_id() == value::TypeTraits<value::double3>::type_id()) {
-                value::double3 dummy{0.0, 0.0, 0.0};
-                op.set_value(dummy);
-              } else if (attr.type_id() == value::TypeTraits<value::float3>::type_id()) {
-                value::float3 dummy{0.0f, 0.0f, 0.0f};
-                op.set_value(dummy);
-              } else {
-                PUSH_ERROR_AND_RETURN(
-                    "`xformOp:rotateYZX` must be type `double3` or `float3`, but got "
-                    "type `" +
-                    attr.type_name() + "`.");
-              }
-              op.set_blocked(true);
-            } else if (auto pvd = attr.get_value<value::double3>()) {
-              op.set_value(pvd.value());
-            } else if (auto pvf = attr.get_value<value::float3>()) {
-              op.set_value(pvf.value());
-            } else {
-              PUSH_ERROR_AND_RETURN(
-                  "`xformOp:rotateYZX` must be type `double3` or `float3`, but got "
-                  "type `" +
-                  attr.type_name() + "`.");
-            }
-          }
-        } else if (auto rotateZXY = SplitXformOpToken(tok, kRotateZXY)) {
-          op.op_type = XformOp::OpType::RotateZXY;
-          op.suffix = rotateZXY.value();
-
-          // Check if timeSamples were authored (even if empty)
-          if (attr.get_var().has_timesamples() || attr.get_var().ts_raw().type_id() != 0) {
-            op.set_timesamples(attr.get_var().ts_raw());
-          }
-
-          if (attr.get_var().has_default()) {
-            if (attr.has_blocked()) {
-              // Set dummy value for `op.get_value_type_id/op.get_value_type_name'
-              if (attr.type_id() == value::TypeTraits<value::double3>::type_id()) {
-                value::double3 dummy{0.0, 0.0, 0.0};
-                op.set_value(dummy);
-              } else if (attr.type_id() == value::TypeTraits<value::float3>::type_id()) {
-                value::float3 dummy{0.0f, 0.0f, 0.0f};
-                op.set_value(dummy);
-              } else {
-                PUSH_ERROR_AND_RETURN(
-                    "`xformOp:rotateZXY` must be type `double3` or `float3`, but got "
-                    "type `" +
-                    attr.type_name() + "`.");
-              }
-              op.set_blocked(true);
-            } else if (auto pvd = attr.get_value<value::double3>()) {
-              op.set_value(pvd.value());
-            } else if (auto pvf = attr.get_value<value::float3>()) {
-              op.set_value(pvf.value());
-            } else {
-              PUSH_ERROR_AND_RETURN(
-                  "`xformOp:rotateZXY` must be type `double3` or `float3`, but got "
-                  "type `" +
-                  attr.type_name() + "`.");
-            }
-          }
-        } else if (auto rotateZYX = SplitXformOpToken(tok, kRotateZYX)) {
-          op.op_type = XformOp::OpType::RotateZYX;
-          op.suffix = rotateZYX.value();
-
-          // Check if timeSamples were authored (even if empty)
-          if (attr.get_var().has_timesamples() || attr.get_var().ts_raw().type_id() != 0) {
-            op.set_timesamples(attr.get_var().ts_raw());
-          }
-
-          if (attr.get_var().has_default()) {
-            if (attr.has_blocked()) {
-              // Set dummy value for `op.get_value_type_id/op.get_value_type_name'
-              if (attr.type_id() == value::TypeTraits<value::double3>::type_id()) {
-                value::double3 dummy{0.0, 0.0, 0.0};
-                op.set_value(dummy);
-              } else if (attr.type_id() == value::TypeTraits<value::float3>::type_id()) {
-                value::float3 dummy{0.0f, 0.0f, 0.0f};
-                op.set_value(dummy);
-              } else {
-                PUSH_ERROR_AND_RETURN(
-                    "`xformOp:rotateZYX` must be type `double3` or `float3`, but got "
-                    "type `" +
-                    attr.type_name() + "`.");
-              }
-              op.set_blocked(true);
-            } else if (auto pvd = attr.get_value<value::double3>()) {
-              op.set_value(pvd.value());
-            } else if (auto pvf = attr.get_value<value::float3>()) {
-              op.set_value(pvf.value());
-            } else {
-              PUSH_ERROR_AND_RETURN(
-                  "`xformOp:rotateZYX` must be type `double3` or `float3`, but got "
-                  "type `" +
-                  attr.type_name() + "`.");
-            }
-          }
-        } else if (auto orient = SplitXformOpToken(tok, kOrient)) {
-          op.op_type = XformOp::OpType::Orient;
-          op.suffix = orient.value();
-
-          // Check if timeSamples were authored (even if empty)
-          if (attr.get_var().has_timesamples() || attr.get_var().ts_raw().type_id() != 0) {
-            op.set_timesamples(attr.get_var().ts_raw());
-          }
-
-          if (attr.get_var().has_default()) {
-            if (attr.has_blocked()) {
-              // Set dummy value for `op.get_value_type_id/op.get_value_type_name'
-              if (attr.type_id() == value::TypeTraits<value::quatf>::type_id()) {
-                value::quatf q;
-                q.real = 1.0f;
-                q.imag = {0.0f, 0.0f, 0.0f};
-                op.set_value(q);
-              } else if (attr.type_id() == value::TypeTraits<value::quatd>::type_id()) {
-                value::quatd q;
-                q.real = 1.0;
-                q.imag = {0.0, 0.0, 0.0};
-                op.set_value(q);
-              } else {
-                PUSH_ERROR_AND_RETURN(
-                    "`xformOp:orient` must be type `quatf` or `quatd`, but got "
-                    "type `" +
-                    attr.type_name() + "`.");
-              }
-              op.set_blocked(true);
-            } else if (auto pvd = attr.get_value<value::quatf>()) {
-              op.set_value(pvd.value());
-            } else if (auto pvf = attr.get_value<value::quatd>()) {
-              op.set_value(pvf.value());
-            } else {
-              PUSH_ERROR_AND_RETURN(
-                  "`xformOp:orient` must be type `quatf` or `quatd`, but got "
-                  "type `" +
-                  attr.type_name() + "`.");
-            }
-          }
-        } else {
-          PUSH_ERROR_AND_RETURN(
-              "token for xformOpOrder must have namespace `xformOp:***`, or .");
-        }
-
-        xformOps->emplace_back(op);
-        table.insert(tok);
-#endif
       }
 
     } else {
@@ -3827,39 +2657,8 @@ bool ReconstructPrim<Skeleton>(
 #undef PRIM_CLASS_
 #undef PRIM_PTR_
 
-#if 0 // TODO: bindTransforms & restTransforms check somewhere.
-  // usdview and Houdini USD importer expects both `bindTransforms` and `restTransforms` are authored in USD
-  if (!table.count("bindTransforms")) {
-    // usdview and Houdini allow `bindTransforms` is not authord in USD, but it cannot compute skinning correctly without it,
-    // so report an error in TinyUSDZ for a while.
-    PUSH_ERROR_AND_RETURN_TAG(kTag, "`bindTransforms` is missing in Skeleton. Currently TinyUSDZ expects `bindTransforms` must exist in Skeleton.");
-  }
-
-  if (!table.count("restTransforms")) {
-    // usdview and Houdini allow `restTransforms` is not authord in USD(usdview warns it), but it cannot compute skinning correctly without it,
-    // (even SkelAnimation supplies trasnforms for all joints)
-    // so report an error in TinyUSDZ for a while.
-    PUSH_ERROR_AND_RETURN_TAG(kTag, "`restTransforms`(local joint matrices at rest state) is missing in Skeleton. Currently TinyUSDZ expects `restTransforms` must exist in Skeleton.");
-  }
-
-  // len(bindTransforms) must be equal to len(restTransforms)
-  // TODO: Support connection
-  {
-    bool valid = false;
-    if (auto bt = skel->bindTransforms.get_value()) {
-      if (auto rt = skel->restTransforms.get_value()) {
-        if (bt.value().size() == rt.value().size()) {
-          // ok
-          valid = true;
-        }
-      }
-    }
-
-    if (!valid) {
-      PUSH_ERROR_AND_RETURN_TAG(kTag, "Array length must be same for `bindTransforms` and `restTransforms`.");
-    }
-  }
-#endif
+  // TODO: Add bindTransforms & restTransforms validation somewhere
+  // (usdview and Houdini expect both to be authored, and their lengths must match)
 
   return true;
 }
@@ -3940,15 +2739,8 @@ bool ReconstructPrim<BlendShape>(
 #undef PRIM_CLASS_
 #undef PRIM_PTR_
 
-#if 0 // TODO: Check required properties exist in strict mode.
-  // `offsets` and `normalOffsets` are required property
-  if (!table.count("offsets")) {
-    PUSH_ERROR_AND_RETURN("`offsets` property is missing. `uniform vector3f[] offsets` is a required property.");
-  }
-  if (!table.count("normalOffsets")) {
-    PUSH_ERROR_AND_RETURN("`normalOffsets` property is missing. `uniform vector3f[] normalOffsets` is a required property.");
-  }
-#endif
+  // TODO: Check required properties exist in strict mode
+  // (`offsets` and `normalOffsets` are required properties)
 
   return true;
 }
