@@ -184,6 +184,15 @@ class NonboundableLight : public Xformable, public Collection {
   TypedAttributeWithFallback<Animatable<float>> shadowFalloff{-1.0f}; // float inputs:shadow:falloff = -1
   TypedAttributeWithFallback<Animatable<float>> shadowFalloffGamma{1.0f}; // float inputs:shadow:falloffGamma = 1
 
+  // Shaping API
+  TypedAttributeWithFallback<Animatable<float>> shapingFocus{0.0f}; // float inputs:shaping:focus = 0
+  TypedAttributeWithFallback<Animatable<value::color3f>> shapingFocusTint{value::color3f({0.0f, 0.0f, 0.0f})}; // color3f inputs:shaping:focusTint = (0, 0, 0)
+  TypedAttributeWithFallback<Animatable<float>> shapingConeAngle{90.0f}; // float inputs:shaping:cone:angle = 90
+  TypedAttributeWithFallback<Animatable<float>> shapingConeSoftness{0.0f}; // float inputs:shaping:cone:softness = 0
+  TypedAttribute<Animatable<value::AssetPath>> shapingIesFile; // asset inputs:shaping:ies:file
+  TypedAttributeWithFallback<Animatable<float>> shapingIesAngleScale{0.0f}; // float inputs:shaping:ies:angleScale = 0
+  TypedAttributeWithFallback<Animatable<bool>> shapingIesNormalize{false}; // bool inputs:shaping:ies:normalize = false
+
   // LTE SpectralAPI: Spectral emission support
   // See doc/lte_spectral_api.md for specification
   TypedAttribute<std::vector<value::float2>> spectralEmission; // float2[] wavelength:emission

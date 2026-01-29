@@ -4612,6 +4612,12 @@ std::string to_string(const DistantLight &light, const uint32_t indent,
   ss << print_typed_attr(light.shadowFalloff, "inputs:shadow:falloff", indent + 1);
   ss << print_typed_attr(light.shadowFalloffGamma, "inputs:shadow:falloffGamma", indent + 1);
 
+  // ShapingAPI attributes
+  ss << print_typed_attr(light.shapingConeAngle, "inputs:shaping:cone:angle", indent + 1);
+  ss << print_typed_attr(light.shapingConeSoftness, "inputs:shaping:cone:softness", indent + 1);
+  ss << print_typed_attr(light.shapingFocus, "inputs:shaping:focus", indent + 1);
+  ss << print_typed_attr(light.shapingFocusTint, "inputs:shaping:focusTint", indent + 1);
+
   //ss << print_typed_attr(light.extent, "extent", indent + 1);
   ss << print_typed_token_attr(light.visibility, "visibility", indent + 1);
   ss << print_typed_token_attr(light.purpose, "purpose", indent + 1);
@@ -4764,6 +4770,19 @@ std::string to_string(const DomeLight &light, const uint32_t indent,
   ss << print_typed_attr(light.file, "inputs:texture:file", indent + 1);
   ss << print_typed_token_attr(light.textureFormat, "inputs:texture:format",
                                indent + 1);
+
+  // ShadowAPI attributes
+  ss << print_typed_attr(light.shadowColor, "inputs:shadow:color", indent + 1);
+  ss << print_typed_attr(light.shadowDistance, "inputs:shadow:distance", indent + 1);
+  ss << print_typed_attr(light.shadowEnable, "inputs:shadow:enable", indent + 1);
+  ss << print_typed_attr(light.shadowFalloff, "inputs:shadow:falloff", indent + 1);
+  ss << print_typed_attr(light.shadowFalloffGamma, "inputs:shadow:falloffGamma", indent + 1);
+
+  // ShapingAPI attributes
+  ss << print_typed_attr(light.shapingConeAngle, "inputs:shaping:cone:angle", indent + 1);
+  ss << print_typed_attr(light.shapingConeSoftness, "inputs:shaping:cone:softness", indent + 1);
+  ss << print_typed_attr(light.shapingFocus, "inputs:shaping:focus", indent + 1);
+  ss << print_typed_attr(light.shapingFocusTint, "inputs:shaping:focusTint", indent + 1);
 
   //ss << print_typed_attr(light.extent, "extent", indent + 1);
   ss << print_typed_token_attr(light.visibility, "visibility", indent + 1);
