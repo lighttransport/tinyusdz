@@ -65,6 +65,34 @@ struct LayerMetas {
 
   // Indirectly used.
   std::vector<value::token> primChildren;
+
+  ///
+  /// Estimate memory usage of this LayerMetas in bytes
+  ///
+  size_t estimate_memory_usage() const {
+    size_t total = sizeof(LayerMetas);
+    // defaultPrim token
+    total += defaultPrim.str().capacity();
+    // subLayers
+    for (const auto& sl : subLayers) {
+      total += sizeof(SubLayer);
+      total += sl.assetPath.GetAssetPath().capacity();
+      total += sl.assetPath.GetResolvedPath().capacity();
+    }
+    // comment and doc strings
+    total += comment.value.capacity();
+    total += doc.value.capacity();
+    // customLayerData (rough estimate - map of string to MetaVariable)
+    for (const auto& kv : customLayerData) {
+      total += kv.first.capacity();
+      total += sizeof(MetaVariable);  // MetaVariable internal estimation not detailed
+    }
+    // primChildren tokens
+    for (const auto& tok : primChildren) {
+      total += tok.str().capacity();
+    }
+    return total;
+  }
 };
 
 // Forward declaration for Layer class

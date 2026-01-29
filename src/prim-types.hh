@@ -341,6 +341,39 @@ class Prim {
   // TODO: Add API to get parent Prim directly?
   // (Currently we need to traverse parent Prim using Stage)
 
+  ///
+  /// Estimate memory usage of this Prim (including children) in bytes
+  ///
+  size_t estimate_memory_usage() const {
+    size_t total = sizeof(Prim);
+    // Path memory
+    total += _abs_path.estimate_memory_usage() - sizeof(Path);
+    total += _path.estimate_memory_usage() - sizeof(Path);
+    total += _elementPath.estimate_memory_usage() - sizeof(Path);
+    // String storage
+    total += _prim_type_name.capacity();
+    // value::Value data (basic estimate - detailed estimation would require type dispatch)
+    total += sizeof(value::Value);
+    // Children (recursive)
+    total += _children.capacity() * sizeof(Prim);
+    for (const auto& child : _children) {
+      total += child.estimate_memory_usage() - sizeof(Prim);  // Avoid double counting sizeof
+    }
+    // Children name set
+    for (const auto& name : _childrenNameSet) {
+      total += name.capacity() + sizeof(std::string);
+    }
+    // primChildren indices cache
+    total += _primChildrenIndices.capacity() * sizeof(int64_t);
+    // Variant sets
+    for (const auto& vs : _variantSets) {
+      total += vs.first.capacity();
+      total += sizeof(VariantSet);
+      // VariantSet internal estimation not detailed
+    }
+    return total;
+  }
+
  private:
   Path _abs_path;  // Absolute Prim path in a freezed(after composition state).
                    // Usually set by Stage::compute_absolute_path()

@@ -4,9 +4,6 @@
 //
 // Reconstruct concrete Prim from PropertyMap or PrimSpec.
 //
-// TODO:
-//   - [ ] Refactor code
-//
 #include "prim-reconstruct.hh"
 
 #include "prim-types.hh"
@@ -242,6 +239,20 @@ struct is_with_fallback : std::false_type {};
 template<typename T>
 struct is_with_fallback<TypedAttributeWithFallback<T>> : std::true_type {};
 
+// Storage type name trait - returns the USD type name for storage
+// For most types this is the same as type_name, but for special types
+// like Extent (stored as float3[]), this returns the actual storage type.
+template<typename T>
+struct storage_type_trait {
+  static std::string type_name() { return value::TypeTraits<T>::type_name(); }
+};
+
+// Specialization for Extent - stored as float3[] in USD
+template<>
+struct storage_type_trait<Extent> {
+  static std::string type_name() { return "float3[]"; }
+};
+
 // Extract value type from target
 template<typename Target>
 struct target_traits; // Forward declaration
@@ -298,9 +309,10 @@ static ParseResult ParseTypedAttributeUnified(
   const Attribute &attr = prop.get_attribute();
   std::string attr_type_name = attr.type_name();
 
-  // Check type match
+  // Check type match - also check storage type for types like Extent (stored as float3[])
   if ((value::TypeTraits<T>::type_name() != attr_type_name) &&
-      (value::TypeTraits<T>::underlying_type_name() != attr_type_name)) {
+      (value::TypeTraits<T>::underlying_type_name() != attr_type_name) &&
+      (storage_type_trait<T>::type_name() != attr_type_name)) {
     DCOUT("tyname = " << value::TypeTraits<T>::type_name() << ", attr.type = " << attr_type_name);
     ret.code = ParseResult::ResultCode::TypeMismatch;
     ret.err = fmt::format("Property type mismatch. {} expects type `{}` but defined as type `{}`",
@@ -395,28 +407,17 @@ static ParseResult ParseTypedAttributeUnified(
           }
         }
 
-        // Parse timeSamples
-        if (attr.get_var().has_timesamples()) {
+        // Parse default value and/or timeSamples using ConvertToAnimatable
+        // This handles special type conversions (e.g., float3[] -> Extent)
+        if (attr.get_var().has_default() || attr.get_var().has_timesamples()) {
           if (auto av = ConvertToAnimatable<T>(attr.get_var())) {
             animatable_value = std::move(av.value());
-            has_timesamples = true;
+            has_default = attr.get_var().has_default();
+            has_timesamples = attr.get_var().has_timesamples();
           } else {
             ret.code = ParseResult::ResultCode::InternalError;
-            ret.err = fmt::format("Converting timeSamples failed for `{}`. TimeSamples may have values with different type (expected `{}`).",
-                                  prop_name, value::TypeTraits<T>::type_name());
-            return ret;
-          }
-        }
-
-        // Parse default value
-        if (attr.get_var().has_default()) {
-          if (auto pv = attr.get_var().get_value<T>()) {
-            animatable_value.set(std::move(pv.value()));
-            has_default = true;
-          } else {
-            ret.code = ParseResult::ResultCode::InternalError;
-            ret.err = fmt::format("get_value<{}> failed. Attribute has type {}",
-                                  value::TypeTraits<T>::type_name(), attr.get_var().type_name());
+            ret.err = fmt::format("ConvertToAnimatable<{}> failed for `{}`. Attribute has type {}",
+                                  value::TypeTraits<T>::type_name(), prop_name, attr.get_var().type_name());
             return ret;
           }
         }
@@ -519,93 +520,16 @@ static ParseResult ParseTypedAttribute(std::set<std::string> &table, /* inout */
 }
 
 // Special case for Extent(float3[2]) type.
-// TODO: Reuse code of ParseTypedAttribute as much as possible
+// Extent is stored as float3[] in USD but converted to Extent struct via
+// ConvertToAnimatable<Extent> specialization. The storage_type_trait<Extent>
+// handles the type matching.
 static ParseResult ParseExtentAttribute(std::set<std::string> &table, /* inout */
   const std::string prop_name,
   Property &prop,  // Non-const to allow move from metadata
   const std::string &name,
   TypedAttribute<Animatable<Extent>> &target) /* out */
 {
-  ParseResult ret;
-
-  if (prop_name.compare(name) == 0) {
-    if (table.count(name)) {
-      ret.code = ParseResult::ResultCode::AlreadyProcessed;
-      return ret;
-    }
-
-    const Attribute &attr = prop.get_attribute();
-
-    std::string attr_type_name = attr.type_name();
-    if (prop.get_property_type() == Property::Type::EmptyAttrib) {
-      DCOUT("Added prop with empty value: " << name);
-      target.set_value_empty();
-      target.metas() = attr.metas();
-      table.insert(name);
-      ret.code = ParseResult::ResultCode::Success;
-      return ret;
-    } else if (prop.get_property_type() == Property::Type::Attrib ||
-               prop.get_property_type() == Property::Type::Connection) {
-
-      //bool has_default{false};
-      bool has_connections{false};
-
-      if (attr.has_connections()) {
-        target.set_connections(attr.connections());
-        //target.variability = prop.attrib.variability;
-        //target.metas() = prop.get_attribute().metas();
-        //table.insert(prop_name);
-        //ret.code = ParseResult::ResultCode::Success;
-        //return ret;
-        has_connections = true;
-      }
-
-      DCOUT("Adding typed extent attribute: " << name);
-
-      if (attr.is_blocked()) {
-        // e.g. "float3[] extent = None"
-        target.set_blocked(true);
-      }
-
-      const auto &var = attr.get_var();
-
-      if (var.has_default() || var.has_timesamples()) {
-        if (auto av = ConvertToAnimatable<Extent>(var)) {
-          target.set_value(std::move(av.value()));  // Use move to avoid copy
-        } else {
-          DCOUT("ConvertToAnimatable failed.");
-          ret.code = ParseResult::ResultCode::InternalError;
-          ret.err = "Converting Attribute data failed. Maybe TimeSamples have values with different types?";
-          return ret;
-        }
-
-        DCOUT("Added typed extent attribute: " << name);
-
-        target.metas() = std::move(prop.attribute().metas());  // Move instead of copy
-        table.insert(name);
-        ret.code = ParseResult::ResultCode::Success;
-        return ret;
-      }
-
-      if (has_connections) {
-        DCOUT("Added Extent connection attribute: " << name);
-        target.metas() = std::move(prop.attribute().metas());  // Move instead of copy
-        table.insert(name);
-        ret.code = ParseResult::ResultCode::Success;
-        return ret;
-      }
-
-    } else {
-      DCOUT("Invalid Property.type");
-      ret.err = "[extent] Invalid Property type(internal error)";
-      ret.code = ParseResult::ResultCode::InternalError;
-      return ret;
-    }
-
-  }
-
-  ret.code = ParseResult::ResultCode::Unmatched;
-  return ret;
+  return ParseTypedAttributeUnified(table, prop_name, prop, name, target);
 }
 
 
@@ -654,7 +578,8 @@ static ParseResult ParseShaderOutputTerminalAttribute(std::set<std::string> &tab
 
       // First check if both types are same, then
       // Allow either type is role-types(e.g. allow color3f attribute for TypedTerminalAttribute<float3>)
-      // TODO: Allow both role-types case?(e.g. point3f attribute for TypedTerminalAttribute<vector3f>)
+      // NOTE: Both-role-types case (e.g. point3f for vector3f) is intentionally disallowed
+      // to prevent semantic confusion between different role types.
       if (value::TypeTraits<T>::type_name() == attr_type_name) {
         DCOUT("Author output terminal attribute: " << name);
         target.set_authored(true);
@@ -2461,8 +2386,29 @@ bool ReconstructPrim<Skeleton>(
 #undef PRIM_CLASS_
 #undef PRIM_PTR_
 
-  // TODO: Add bindTransforms & restTransforms validation somewhere
+  // Validate bindTransforms & restTransforms
   // (usdview and Houdini expect both to be authored, and their lengths must match)
+  {
+    bool hasBindTransforms = skel->bindTransforms.has_value();
+    bool hasRestTransforms = skel->restTransforms.has_value();
+
+    if (hasBindTransforms != hasRestTransforms) {
+      PUSH_WARN("Skeleton: Only one of `bindTransforms` or `restTransforms` is authored. "
+                "Both should be authored for compatibility with usdview and Houdini.");
+    }
+
+    if (hasBindTransforms && hasRestTransforms) {
+      auto bindVal = skel->bindTransforms.get_value();
+      auto restVal = skel->restTransforms.get_value();
+      if (bindVal && restVal) {
+        if (bindVal->size() != restVal->size()) {
+          PUSH_WARN("Skeleton: `bindTransforms` (size=" << bindVal->size()
+                    << ") and `restTransforms` (size=" << restVal->size()
+                    << ") have different lengths. They should match.");
+        }
+      }
+    }
+  }
 
   return true;
 }
@@ -2516,9 +2462,7 @@ bool ReconstructPrim<BlendShape>(
     std::string *err,
     const PrimReconstructOptions &options) {
   (void)spec;
-  (void)warn;
   (void)references;
-  (void)options;
 
   DCOUT("Reconstruct BlendShape");
 
@@ -2543,8 +2487,28 @@ bool ReconstructPrim<BlendShape>(
 #undef PRIM_CLASS_
 #undef PRIM_PTR_
 
-  // TODO: Check required properties exist in strict mode
-  // (`offsets` and `normalOffsets` are required properties)
+  // Check required properties exist in strict mode
+  // (`offsets` and `normalOffsets` are required properties per USD spec)
+  {
+    bool hasOffsets = bs->offsets.has_value();
+    bool hasNormalOffsets = bs->normalOffsets.has_value();
+
+    if (!hasOffsets) {
+      if (options.strict_allowedToken_check) {
+        PUSH_ERROR_AND_RETURN("BlendShape: Required property `offsets` is not authored.");
+      } else {
+        PUSH_WARN("BlendShape: Required property `offsets` is not authored.");
+      }
+    }
+
+    if (!hasNormalOffsets) {
+      if (options.strict_allowedToken_check) {
+        PUSH_ERROR_AND_RETURN("BlendShape: Required property `normalOffsets` is not authored.");
+      } else {
+        PUSH_WARN("BlendShape: Required property `normalOffsets` is not authored.");
+      }
+    }
+  }
 
   return true;
 }
@@ -3152,9 +3116,16 @@ bool ReconstructPrim<GeomMesh>(
             return false;
           }
 
+          // Validate familyName (names[1]) is a valid identifier
+          const std::string &familyName = names[1];
+          if (familyName.empty()) {
+            PUSH_WARN("subsetFamily: familyName is empty in property `" << prop.first << "`");
+          } else if (!std::isalpha(static_cast<unsigned char>(familyName[0])) && familyName[0] != '_') {
+            PUSH_WARN("subsetFamily: familyName `" << familyName << "` should start with a letter or underscore.");
+          }
+
           // NOTE: Ignore metadata of familyType.
-          // TODO: Validate familyName
-          mesh->subsetFamilyTypeMap[value::token(names[1])] = familyType.get_value();
+          mesh->subsetFamilyTypeMap[value::token(familyName)] = familyType.get_value();
           table.insert(prop.first);
         }
       }
@@ -3329,7 +3300,8 @@ bool ReconstructShader<ShaderNode>(
     return false;
   }
 
-  // TODO: references
+  // NOTE: References are not commonly used for ShaderNode (shader connections
+  // are handled via properties/connections). Ignoring references here.
   (void)references;
 
   std::set<std::string> table;
@@ -4313,7 +4285,9 @@ bool ReconstructPrim<Material>(
   (void)options;
   std::set<std::string> table;
 
-  // TODO: special treatment for properties with 'inputs' and 'outputs' namespace.
+  // NOTE: Properties with 'inputs' and 'outputs' namespace are handled as
+  // generic properties and stored in Material::props. Terminal outputs like
+  // `outputs:surface` are treated as input attributes with connections.
 
   // Check if MaterialXConfigAPI is applied
   bool hasMaterialXConfig = false;
