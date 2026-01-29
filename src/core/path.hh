@@ -359,6 +359,20 @@ class Path {
     return LessThan(*this, rhs);
   }
 
+  ///
+  /// Estimate memory usage of this Path in bytes
+  ///
+  size_t estimate_memory_usage() const {
+    size_t total = sizeof(Path);
+    total += _prim_part.capacity();
+    total += _prop_part.capacity();
+    total += _variant_part.capacity();
+    total += _variant_selection_part.capacity();
+    total += _variant_part_str.capacity();
+    total += _element.capacity();
+    return total;
+  }
+
  private:
   void _update(const std::string &p, const std::string &prop);
 
