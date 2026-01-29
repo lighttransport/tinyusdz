@@ -2921,46 +2921,6 @@ struct AnimatableValue {
 };
 #endif
 
-#if 0  // TODO: Remove? since not used so frequently at the moment.
-//
-// typecast from type_id
-// It does not throw exception.
-//
-template <uint32_t tid>
-struct typecast {};
-
-#define TYPECAST_BASETYPE(__tid, __ty)                   \
-  template <>                                            \
-  struct typecast<__tid> {                               \
-    static __ty to(const any_value &v) {                 \
-      return *reinterpret_cast<const __ty *>(v.value()); \
-    }                                                    \
-  }
-
-TYPECAST_BASETYPE(TYPE_ID_BOOL, bool);
-TYPECAST_BASETYPE(TYPE_ID_UCHAR, uint8_t);
-TYPECAST_BASETYPE(TYPE_ID_HALF, half);
-TYPECAST_BASETYPE(TYPE_ID_HALF2, half2);
-TYPECAST_BASETYPE(TYPE_ID_HALF3, half3);
-TYPECAST_BASETYPE(TYPE_ID_HALF4, half4);
-
-TYPECAST_BASETYPE(TYPE_ID_UINT32, uint32_t);
-TYPECAST_BASETYPE(TYPE_ID_FLOAT, float);
-TYPECAST_BASETYPE(TYPE_ID_DOUBLE, double);
-
-TYPECAST_BASETYPE(TYPE_ID_FLOAT | TYPE_ID_1D_ARRAY_BIT, std::vector<float>);
-
-// TODO(syoyo): Implement more types...
-
-#undef TYPECAST_BASETYPE
-#endif
-
-#if 0
-struct AttribMap {
-  std::map<std::string, Value> attribs;
-};
-#endif
-
 }  // namespace value
 
 }  // namespace tinyusdz
