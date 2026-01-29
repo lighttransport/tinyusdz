@@ -936,33 +936,24 @@ std::string Stage::dump_prim_tree() const {
 
 size_t Stage::estimate_memory_usage() const {
   size_t total = sizeof(Stage);
-  
-  // Stage metadata
-  // TODO: Add detailed StageMetas memory estimation
-  total += sizeof(StageMetas);
-  
-  // Estimate memory for root prims
-  // Since Prim doesn't have estimate_memory_usage yet, we do a basic estimate
+
+  // Stage metadata (uses LayerMetas::estimate_memory_usage)
+  total += stage_metas.estimate_memory_usage() - sizeof(StageMetas);
+
+  // Estimate memory for root prims (recursive via Prim::estimate_memory_usage)
   total += _root_nodes.capacity() * sizeof(Prim);
-  
-  // For each Prim, estimate string storage
   for (const auto& prim : _root_nodes) {
-    // Basic string estimates
-    total += prim.element_name().capacity();
-    total += prim.element_path().full_path_name().capacity();
-    
-    // TODO: Add more detailed Prim memory estimation when Prim::estimate_memory_usage is implemented
-    // This would include properties, children, metadata, etc.
+    total += prim.estimate_memory_usage() - sizeof(Prim);  // Avoid double counting sizeof
   }
-  
+
   // Internal string storage
   total += _warn.capacity();
   total += _err.capacity();
-  
+
   // Prim ID management
   total += _prim_id_cache.size() * (sizeof(uint64_t) + sizeof(const Prim*)) * 2; // Rough estimate for map overhead
   // Note: _prim_id_allocator internal memory is harder to estimate without its implementation details
-  
+
   return total;
 }
 
