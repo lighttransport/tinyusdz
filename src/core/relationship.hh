@@ -132,6 +132,12 @@ class RelationshipProperty {
 
   bool authored() const { return _authored; }
 
+  // Clear the relationship and reset authored state
+  void reset() {
+    _authored = false;
+    _relationship = Relationship();
+  }
+
   // Declare-only: e.g. `rel myrel`
   void set_empty() {
     _relationship.set_novalue();

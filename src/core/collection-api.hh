@@ -44,8 +44,8 @@ struct CollectionInstance {
 
   TypedAttributeWithFallback<ExpansionRule> expansionRule{ExpansionRule::ExpandPrims}; // uniform token collection:collectionName:expansionRule
   TypedAttributeWithFallback<Animatable<bool>> includeRoot{false}; // bool collection:<collectionName>:includeRoot
-  nonstd::optional<Relationship> includes; // rel collection:<collectionName>:includes
-  nonstd::optional<Relationship> excludes; // rel collection:<collectionName>:excludes
+  RelationshipProperty includes; // rel collection:<collectionName>:includes
+  RelationshipProperty excludes; // rel collection:<collectionName>:excludes
 
 };
 
