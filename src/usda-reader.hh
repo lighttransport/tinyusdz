@@ -43,10 +43,9 @@ class USDAReader {
 
   ///
   /// Base filesystem directory to search asset files.
-  /// TODO: Not used so remove it.
   ///
   void set_base_dir(const std::string &base_dir);
-  void SetBaseDir(const std::string &base_dir) { // Deprecared
+  void SetBaseDir(const std::string &base_dir) { // Deprecated
     set_base_dir(base_dir);
   }
 
