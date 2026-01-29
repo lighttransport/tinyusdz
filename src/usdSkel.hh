@@ -122,11 +122,10 @@ struct Skeleton : Xformable {
       restTransforms;  // uniform matrix4d[] rest-pose transforms of each
                        // joint in local coordinate.
 
-  nonstd::optional<Relationship> proxyPrim;  // rel proxyPrim
+  RelationshipProperty proxyPrim;  // rel proxyPrim
 
   // SkelBindingAPI
-  nonstd::optional<Relationship>
-      animationSource;  // rel skel:animationSource = </path/...>
+  RelationshipProperty animationSource;  // rel skel:animationSource = </path/...>
 
   TypedAttributeWithFallback<Animatable<Visibility>> visibility{
       Visibility::Inherited};  // "token visibility"
@@ -158,21 +157,24 @@ struct Skeleton : Xformable {
       return false;
     }
 
-    const Relationship &rel = animationSource.value();
+    if (!animationSource.authored()) {
+      return false;
+    }
+
+    const Relationship &rel = animationSource.relationship();
     if (qual) {
       (*qual) = rel.get_listedit_qual();
     }
 
     if (rel.is_path()) {
       (*path) = rel.targetPath;
+      return true;
     } else if (rel.is_pathvector()) {
       if (rel.targetPathVector.size()) {
         (*path) = rel.targetPathVector[0];
+        return true;
       }
-    } else {
-      return false;
     }
-
 
     return false;
   }
@@ -213,11 +215,10 @@ struct SkelRoot : Xformable {
   TypedAttributeWithFallback<Animatable<Visibility>> visibility{
     Visibility::Inherited};  // "token visibility"
 
-  nonstd::optional<Relationship> proxyPrim;  // rel proxyPrim
-  //std::vector<XformOp> xformOps;
+  RelationshipProperty proxyPrim;  // rel proxyPrim
 
   // TODO: Add function to check if SkelRoot contains `Skeleton` and `GeomMesh`
-  // node?;
+  // node?
 
 
   std::pair<ListEditQual, std::vector<Reference>> references;

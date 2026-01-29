@@ -1847,23 +1847,23 @@ std::string print_material_binding(const MaterialBinding *mb, const uint32_t ind
 
   std::stringstream ss;
 
-  if (mb->materialBinding) {
-    ss << print_relationship(mb->materialBinding.value(),
-                             mb->materialBinding.value().get_listedit_qual(),
+  if (mb->materialBinding.authored()) {
+    ss << print_relationship(mb->materialBinding.relationship(),
+                             mb->materialBinding.relationship().get_listedit_qual(),
                              /* custom */ false, kMaterialBinding, indent);
   }
 
-  if (mb->materialBindingPreview) {
+  if (mb->materialBindingPreview.authored()) {
     ss << print_relationship(
-        mb->materialBindingPreview.value(),
-        mb->materialBindingPreview.value().get_listedit_qual(),
+        mb->materialBindingPreview.relationship(),
+        mb->materialBindingPreview.relationship().get_listedit_qual(),
         /* custom */ false, kMaterialBindingPreview, indent);
   }
 
-  if (mb->materialBindingFull) {
+  if (mb->materialBindingFull.authored()) {
     ss << print_relationship(
-        mb->materialBindingFull.value(),
-        mb->materialBindingFull.value().get_listedit_qual(),
+        mb->materialBindingFull.relationship(),
+        mb->materialBindingFull.relationship().get_listedit_qual(),
         /* custom */ false, kMaterialBindingFull, indent);
   }
 
@@ -1950,20 +1950,20 @@ std::string print_collection(const Collection *coll, const uint32_t indent) {
       ss << print_typed_attr(instance.includeRoot, prefix + ":includeRoot", indent);
     }
 
-    if (instance.includes) {
+    if (instance.includes.authored()) {
       ss << print_relationship(
-          instance.includes.value(),
-          instance.includes.value().get_listedit_qual(),
+          instance.includes.relationship(),
+          instance.includes.relationship().get_listedit_qual(),
           /* custom */ false, prefix + ":includes", indent);
-        
+
     }
 
-    if (instance.excludes) {
+    if (instance.excludes.authored()) {
       ss << print_relationship(
-          instance.excludes.value(),
-          instance.excludes.value().get_listedit_qual(),
+          instance.excludes.relationship(),
+          instance.excludes.relationship().get_listedit_qual(),
           /* custom */ false, prefix + ":excludes", indent);
-        
+
     }
   }
 
@@ -2018,26 +2018,26 @@ static bool emit_gprim_predefined(std::stringstream &ss, const GPrim *gprim,
     ss << print_typed_token_attr(gprim->visibility, "visibility", indent);
     table.insert("visibility");
   } else if (prop_name == "material:binding") {
-    if (gprim->materialBinding) {
+    if (gprim->materialBinding.authored()) {
       ss << print_relationship(
-          gprim->materialBinding.value(),
-          gprim->materialBinding.value().get_listedit_qual(),
+          gprim->materialBinding.relationship(),
+          gprim->materialBinding.relationship().get_listedit_qual(),
           /* custom */ false, "material:binding", indent);
       table.insert("material:binding");
     }
   } else if (prop_name == "material:binding:collection") {
-    if (gprim->materialBindingCollection) {
+    if (gprim->materialBindingCollection.authored()) {
       ss << print_relationship(
-          gprim->materialBindingCollection.value(),
-          gprim->materialBindingCollection.value().get_listedit_qual(),
+          gprim->materialBindingCollection.relationship(),
+          gprim->materialBindingCollection.relationship().get_listedit_qual(),
           /* custom */ false, "material:binding:collection", indent);
       table.insert("material:binding:collection");
     }
   } else if (prop_name == "material:binding:preview") {
-    if (gprim->materialBindingPreview) {
+    if (gprim->materialBindingPreview.authored()) {
       ss << print_relationship(
-          gprim->materialBindingPreview.value(),
-          gprim->materialBindingPreview.value().get_listedit_qual(),
+          gprim->materialBindingPreview.relationship(),
+          gprim->materialBindingPreview.relationship().get_listedit_qual(),
           /* custom */ false, "material:binding:preview", indent);
       table.insert("material:binding:preview");
     }
@@ -3325,16 +3325,16 @@ std::string to_string(const GeomMesh &mesh, const uint32_t indent,
                          indent + 1);
   ss << print_typed_attr(mesh.faceVertexCounts, "faceVertexCounts", indent + 1);
 
-  if (mesh.skeleton) {
-    ss << print_relationship(mesh.skeleton.value(),
-                             mesh.skeleton.value().get_listedit_qual(),
+  if (mesh.skeleton.authored()) {
+    ss << print_relationship(mesh.skeleton.relationship(),
+                             mesh.skeleton.relationship().get_listedit_qual(),
                              /* custom */ false, "skel:skeleton", indent + 1);
   }
 
   ss << print_typed_attr(mesh.blendShapes, "skel:blendShapes", indent + 1);
-  if (mesh.blendShapeTargets) {
-    ss << print_relationship(mesh.blendShapeTargets.value(),
-                             mesh.blendShapeTargets.value().get_listedit_qual(),
+  if (mesh.blendShapeTargets.authored()) {
+    ss << print_relationship(mesh.blendShapeTargets.relationship(),
+                             mesh.blendShapeTargets.relationship().get_listedit_qual(),
                              /* custom */ false, "skel:blendShapeTargets",
                              indent + 1);
   }
@@ -3731,9 +3731,9 @@ std::string to_string(const GeomPointInstancer &instancer, const uint32_t indent
   ss << pprint::Indent(indent) << "{\n";
 
   // members
-  if (instancer.prototypes) {
-    ss << print_relationship(instancer.prototypes.value(),
-                             instancer.prototypes.value().get_listedit_qual(),
+  if (instancer.prototypes.authored()) {
+    ss << print_relationship(instancer.prototypes.relationship(),
+                             instancer.prototypes.relationship().get_listedit_qual(),
                              /* custom */ false, "prototypes", indent + 1);
   }
   ss << print_typed_attr(instancer.protoIndices, "protoIndices", indent + 1);
@@ -3776,9 +3776,9 @@ std::string to_string(const SkelRoot &root, const uint32_t indent,
   ss << print_typed_token_attr(root.purpose, "purpose", indent + 1);
   ss << print_typed_attr(root.extent, "extent", indent + 1);
 
-  if (root.proxyPrim) {
-    ss << print_relationship(root.proxyPrim.value(),
-                             root.proxyPrim.value().get_listedit_qual(),
+  if (root.proxyPrim.authored()) {
+    ss << print_relationship(root.proxyPrim.relationship(),
+                             root.proxyPrim.relationship().get_listedit_qual(),
                              /* custom */ false, "proxyPrim", indent + 1);
   }
 
@@ -3815,16 +3815,16 @@ std::string to_string(const Skeleton &skel, const uint32_t indent,
   ss << print_typed_attr(skel.joints, "joints", indent + 1);
   ss << print_typed_attr(skel.restTransforms, "restTransforms", indent + 1);
 
-  if (skel.animationSource) {
-    ss << print_relationship(skel.animationSource.value(),
-                             skel.animationSource.value().get_listedit_qual(),
+  if (skel.animationSource.authored()) {
+    ss << print_relationship(skel.animationSource.relationship(),
+                             skel.animationSource.relationship().get_listedit_qual(),
                              /* custom */ false, "skel:animationSource",
                              indent + 1);
   }
 
-  if (skel.proxyPrim) {
-    ss << print_relationship(skel.proxyPrim.value(),
-                             skel.proxyPrim.value().get_listedit_qual(),
+  if (skel.proxyPrim.authored()) {
+    ss << print_relationship(skel.proxyPrim.relationship(),
+                             skel.proxyPrim.relationship().get_listedit_qual(),
                              /* custom */ false, "proxyPrim", indent + 1);
   }
 

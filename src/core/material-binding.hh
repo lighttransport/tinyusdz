@@ -53,25 +53,23 @@ class MaterialBinding {
   //
 
   // Some frequently used materialBindings
-  nonstd::optional<Relationship> materialBinding; // material:binding
-  nonstd::optional<Relationship> materialBindingPreview; // material:binding:preview
-  nonstd::optional<Relationship> materialBindingFull; // material:binding:full
-
-  //nonstd::optional<Relationship> materialBindingCollection; // material:binding:collection  Deprecated. use materialBindingCollectionMap[""][""] instead.
+  RelationshipProperty materialBinding; // material:binding
+  RelationshipProperty materialBindingPreview; // material:binding:preview
+  RelationshipProperty materialBindingFull; // material:binding:full
 
   value::token get_materialBindingStrength(const value::token &purpose);
   value::token get_materialBindingStrengthCollection(const value::token &collection_name, const value::token &purpose);
 
   bool has_materialBinding() const {
-    return materialBinding.has_value();
+    return materialBinding.authored();
   }
 
   bool has_materialBindingPreview() const {
-    return materialBindingPreview.has_value();
+    return materialBindingPreview.authored();
   }
 
   bool has_materialBindingFull() const {
-    return materialBindingFull.has_value();
+    return materialBindingFull.authored();
   }
 
   bool has_materialBinding(const value::token &mat_purpose) const {
@@ -105,7 +103,7 @@ class MaterialBinding {
   void set_materialBinding(const Relationship &rel, const MaterialBindingStrength strength) {
     value::token strength_tok(to_string(strength));
     materialBinding = rel;
-    materialBinding.value().metas().set_bindMaterialAs(strength_tok);
+    materialBinding.relationship().metas().set_bindMaterialAs(strength_tok);
   }
 
   void set_materialBindingPreview(const Relationship &rel) {
@@ -115,7 +113,7 @@ class MaterialBinding {
   void set_materialBindingPreview(const Relationship &rel, const MaterialBindingStrength strength) {
     value::token strength_tok(to_string(strength));
     materialBindingPreview = rel;
-    materialBindingPreview.value().metas().set_bindMaterialAs(strength_tok);
+    materialBindingPreview.relationship().metas().set_bindMaterialAs(strength_tok);
   }
 
   void set_materialBindingFull(const Relationship &rel) {
@@ -125,7 +123,7 @@ class MaterialBinding {
   void set_materialBindingFull(const Relationship &rel, const MaterialBindingStrength strength) {
     value::token strength_tok(to_string(strength));
     materialBindingFull = rel;
-    materialBindingFull.value().metas().set_bindMaterialAs(strength_tok);
+    materialBindingFull.relationship().metas().set_bindMaterialAs(strength_tok);
   }
 
   void set_materialBinding(const Relationship &rel, const value::token &mat_purpose) {
@@ -207,22 +205,22 @@ class MaterialBinding {
     }
 
     if (mat_purpose.str().empty()) {
-      if (materialBinding.has_value()) {
-        (*relOut) = materialBinding.value();
+      if (materialBinding.authored()) {
+        (*relOut) = materialBinding.relationship();
         return true;
       } else {
         return false; // not authored
       }
     } else if (mat_purpose.str() == "full") {
-      if (materialBindingFull.has_value()) {
-        (*relOut) = materialBindingFull.value();
+      if (materialBindingFull.authored()) {
+        (*relOut) = materialBindingFull.relationship();
         return true;
       } else {
         return false; // not authored
       }
     } else if (mat_purpose.str() == "preview") {
-      if (materialBindingPreview.has_value()) {
-        (*relOut) = materialBindingPreview.value();
+      if (materialBindingPreview.authored()) {
+        (*relOut) = materialBindingPreview.relationship();
         return true;
       } else {
         return false; // not authored

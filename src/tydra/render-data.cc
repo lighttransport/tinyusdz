@@ -4980,16 +4980,16 @@ bool RenderSceneConverter::ConvertMesh(
       bool hasSkelPath = false;
 
       // First try explicit skel:skeleton relationship
-      if (mesh.skeleton.has_value()) {
+      if (mesh.skeleton.authored()) {
         DCOUT("Convert Skeleton (explicit relationship)");
 
-        if (mesh.skeleton.value().is_path()) {
-          skelPath = mesh.skeleton.value().targetPath;
+        if (mesh.skeleton.relationship().is_path()) {
+          skelPath = mesh.skeleton.relationship().targetPath;
           hasSkelPath = true;
-        } else if (mesh.skeleton.value().is_pathvector()) {
+        } else if (mesh.skeleton.relationship().is_pathvector()) {
           // Use the first one
-          if (mesh.skeleton.value().targetPathVector.size()) {
-            skelPath = mesh.skeleton.value().targetPathVector[0];
+          if (mesh.skeleton.relationship().targetPathVector.size()) {
+            skelPath = mesh.skeleton.relationship().targetPathVector[0];
             hasSkelPath = true;
           } else {
             PUSH_WARN("`skel:skeleton` has invalid definition.");
@@ -10535,13 +10535,13 @@ bool RenderSceneConverter::ConvertSkeletonImpl(const RenderSceneConverterEnv &en
   Path skelPath;
 
   // Get skeleton path from mesh.skeleton relationship if available
-  if (mesh.skeleton.has_value()) {
-    if (mesh.skeleton.value().is_path()) {
-      skelPath = mesh.skeleton.value().targetPath;
-    } else if (mesh.skeleton.value().is_pathvector()) {
+  if (mesh.skeleton.authored()) {
+    if (mesh.skeleton.relationship().is_path()) {
+      skelPath = mesh.skeleton.relationship().targetPath;
+    } else if (mesh.skeleton.relationship().is_pathvector()) {
       // Use the first one
-      if (mesh.skeleton.value().targetPathVector.size()) {
-        skelPath = mesh.skeleton.value().targetPathVector[0];
+      if (mesh.skeleton.relationship().targetPathVector.size()) {
+        skelPath = mesh.skeleton.relationship().targetPathVector[0];
       } else {
         PUSH_WARN("`skel:skeleton` has invalid definition.");
       }
@@ -10581,10 +10581,10 @@ bool RenderSceneConverter::ConvertSkeletonFromPtr(const RenderSceneConverterEnv 
   dst.root_node = root;
 
   // Handle animation source
-  if (skel.animationSource.has_value()) {
+  if (skel.animationSource.authored()) {
     DCOUT("skel:animationSource (from ptr)");
 
-    const Relationship &animSourceRel = skel.animationSource.value();
+    const Relationship &animSourceRel = skel.animationSource.relationship();
 
     Path animSourcePath;
 
@@ -10649,10 +10649,10 @@ bool RenderSceneConverter::ConvertSkeletonImplWithPath(const RenderSceneConverte
       dst.display_name = pskel->metas().has_displayName() ? pskel->metas().get_displayName() : "";
       dst.root_node = root;
 
-      if (pskel->animationSource.has_value()) {
+      if (pskel->animationSource.authored()) {
         DCOUT("skel:animationSource");
 
-        const Relationship &animSourceRel = pskel->animationSource.value();
+        const Relationship &animSourceRel = pskel->animationSource.relationship();
 
         Path animSourcePath;
 

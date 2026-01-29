@@ -566,7 +566,7 @@ struct GPrim : Xformable, MaterialBinding, Collection {
   void set_materialBinding(const Relationship &rel, const MaterialBindingStrength strength) {
     value::token strength_tok(to_string(strength));
     materialBinding = rel;
-    materialBinding.value().metas().bindMaterialAs = strength_tok;
+    materialBinding.relationship().metas().bindMaterialAs = strength_tok;
   }
 
   void set_materialBindingPreview(const Relationship &rel) {
@@ -576,7 +576,7 @@ struct GPrim : Xformable, MaterialBinding, Collection {
   void set_materialBindingPreview(const Relationship &rel, const MaterialBindingStrength strength) {
     value::token strength_tok(to_string(strength));
     materialBindingPreview = rel;
-    materialBindingPreview.value().metas().bindMaterialAs = strength_tok;
+    materialBindingPreview.relationship().metas().bindMaterialAs = strength_tok;
   }
 
   void set_materialBindingFull(const Relationship &rel) {
@@ -586,7 +586,7 @@ struct GPrim : Xformable, MaterialBinding, Collection {
   void set_materialBindingFull(const Relationship &rel, const MaterialBindingStrength strength) {
     value::token strength_tok(to_string(strength));
     materialBindingFull = rel;
-    materialBindingFull.value().metas().bindMaterialAs = strength_tok;
+    materialBindingFull.relationship().metas().bindMaterialAs = strength_tok;
   }
 
   void set_materialBinding(const Relationship &rel, const value::token &mat_purpose) {
@@ -808,7 +808,7 @@ struct GeomMesh : GPrim {
       faceVertexIndices;  // int[] faceVertexIndices
 
   // Make SkelBindingAPI first citizen.
-  nonstd::optional<Relationship> skeleton;  // rel skel:skeleton
+  RelationshipProperty skeleton;  // rel skel:skeleton
 
   //
   // Utility functions
@@ -893,7 +893,7 @@ struct GeomMesh : GPrim {
               CornersPlus1};  // token faceVaryingLinearInterpolation
 
   TypedAttribute<std::vector<value::token>> blendShapes; // uniform token[] skel:blendShapes
-  nonstd::optional<Relationship> blendShapeTargets; // rel skel:blendShapeTargets (Path[])
+  RelationshipProperty blendShapeTargets; // rel skel:blendShapeTargets (Path[])
 
   //
   // TODO: Make these primvars first citizen?
@@ -1144,7 +1144,7 @@ struct GeomPoints : public GPrim {
 // Point instancer(TODO).
 //
 struct GeomPointInstancer : public GPrim {
-  nonstd::optional<Relationship> prototypes;  // rel prototypes
+  RelationshipProperty prototypes;  // rel prototypes
 
   TypedAttribute<Animatable<std::vector<int32_t>>>
       protoIndices;                                      // int[] protoIndices

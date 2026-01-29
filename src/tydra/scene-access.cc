@@ -1335,8 +1335,8 @@ nonstd::expected<bool, std::string> GetPrimProperty(
                     mesh.faceVaryingLinearInterpolation)
 
   if (prop_name == "skeleton") {
-    if (mesh.skeleton) {
-      const Relationship &rel = mesh.skeleton.value();
+    if (mesh.skeleton.authored()) {
+      const Relationship &rel = mesh.skeleton.relationship();
       (*out_prop) = Property(rel, /* custom */ false);
     } else {
       // empty
@@ -1377,8 +1377,8 @@ nonstd::expected<bool, std::string> GetPrimProperty(
   TO_PROPERTY("familyName", subset.familyName);
 
   if (prop_name == "material:binding") {
-    if (subset.materialBinding) {
-      const Relationship &rel = subset.materialBinding.value();
+    if (subset.materialBinding.authored()) {
+      const Relationship &rel = subset.materialBinding.relationship();
       (*out_prop) = Property(rel, /* custom */ false);
     } else {
       return false;
@@ -1767,8 +1767,8 @@ nonstd::expected<bool, std::string> GetPrimProperty(
   TO_PROPERTY("restTransforms", skel.restTransforms)
 
   if (prop_name == "animationSource") {
-    if (skel.animationSource) {
-      const Relationship &rel = skel.animationSource.value();
+    if (skel.animationSource.authored()) {
+      const Relationship &rel = skel.animationSource.relationship();
       (*out_prop) = Property(rel, /* custom */ false);
     } else {
       // empty
@@ -1946,15 +1946,15 @@ bool GetGPrimPropertyNamesImpl(const GPrim *gprim,
   }
 
   if (rel_prop) {
-    if (gprim->materialBinding) {
+    if (gprim->materialBinding.authored()) {
       prop_names->push_back(kMaterialBinding);
     }
 
-    if (gprim->materialBindingPreview) {
+    if (gprim->materialBindingPreview.authored()) {
       prop_names->push_back(kMaterialBindingPreview);
     }
 
-    if (gprim->materialBindingFull) {
+    if (gprim->materialBindingFull.authored()) {
       prop_names->push_back(kMaterialBindingFull);
     }
 
@@ -2786,7 +2786,7 @@ GetBlendShapes(const tinyusdz::Stage &stage, const tinyusdz::Prim &prim,
       return dst;
     }
 
-    if (pmesh->blendShapeTargets.value().is_path()) {
+    if (pmesh->blendShapeTargets.relationship().is_path()) {
       if (blendShapeNames.size() != 1) {
         if (err) {
           (*err) +=
@@ -2796,7 +2796,7 @@ GetBlendShapes(const tinyusdz::Stage &stage, const tinyusdz::Prim &prim,
         return dst;
       }
 
-      const Path &targetPath = pmesh->blendShapeTargets.value().targetPath;
+      const Path &targetPath = pmesh->blendShapeTargets.relationship().targetPath;
       const Prim *bsprim{nullptr};
       if (!stage.find_prim_at_path(targetPath, bsprim, err)) {
         return dst;
@@ -2818,9 +2818,9 @@ GetBlendShapes(const tinyusdz::Stage &stage, const tinyusdz::Prim &prim,
         return dst;
       }
 
-    } else if (pmesh->blendShapeTargets.value().is_pathvector()) {
+    } else if (pmesh->blendShapeTargets.relationship().is_pathvector()) {
       if (blendShapeNames.size() !=
-          pmesh->blendShapeTargets.value().targetPathVector.size()) {
+          pmesh->blendShapeTargets.relationship().targetPathVector.size()) {
         if (err) {
           (*err) +=
               "Array size mismatch with `skel:blendShapes` and "
@@ -2838,9 +2838,9 @@ GetBlendShapes(const tinyusdz::Stage &stage, const tinyusdz::Prim &prim,
     }
 
     for (size_t i = 0;
-         i < pmesh->blendShapeTargets.value().targetPathVector.size(); i++) {
+         i < pmesh->blendShapeTargets.relationship().targetPathVector.size(); i++) {
       const Path &targetPath =
-          pmesh->blendShapeTargets.value().targetPathVector[i];
+          pmesh->blendShapeTargets.relationship().targetPathVector[i];
       const Prim *bsprim{nullptr};
       if (!stage.find_prim_at_path(targetPath, bsprim, err)) {
         return dst;
