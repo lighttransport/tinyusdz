@@ -630,42 +630,6 @@ static nonstd::expected<std::vector<uint8_t>, std::string> ConstantToVertex(
   return dst;
 }
 
-#if 0
-static nonstd::expected<std::vector<uint8_t>, std::string>
-ConstantToFaceVarying(const std::vector<uint8_t> &src,
-                      const size_t stride_bytes,
-                      const std::vector<uint32_t> &faceVertexCounts) {
-  std::vector<uint8_t> dst;
-
-  if (src.empty()) {
-    return nonstd::make_unexpected("src data is empty.");
-  }
-
-  if (stride_bytes == 0) {
-    return nonstd::make_unexpected("stride_bytes must be non-zero.");
-  }
-
-  if ((src.size() != stride_bytes)) {
-    return nonstd::make_unexpected(
-        fmt::format("src size {} must be equal to stride_bytes {}", src.size(),
-                    stride_bytes));
-  }
-
-  std::vector<uint8_t> buf;
-  buf.resize(stride_bytes);
-
-  for (size_t i = 0; i < faceVertexCounts.size(); i++) {
-    size_t cnt = faceVertexCounts[i];
-
-    for (size_t k = 0; k < cnt; k++) {
-      dst.insert(dst.end(), buf.begin(), buf.end());
-    }
-  }
-
-  return dst;
-}
-#endif
-
 // T = int
 template <typename T>
 bool TryConvertFacevaryingToVertexInt(
@@ -955,23 +919,6 @@ static bool TryConvertFacevaryingToVertex(
 
   return false;
 }
-
-#if 0
-static void DumpTriangle(
-  const std::vector<value::float3> &points,
-  const std::vector<uint32_t> &faces) {
-  std::cout << "# ntris = \n";
-  for (size_t v = 0; v < points.size(); v++) {
-    std::cout << "v " << points[v][0] << " " << points[v][1] << " " << points[v][2] << "\n";
-  }
-  std::cout << "f ";
-  for (size_t f = 0; f < faces.size(); f++) {
-    std::cout << " " << faces[f];
-  }
-  std::cout << "\n";
-}
-#endif
-
 
 ///
 /// Triangulate VeretexAttribute data.
@@ -2481,39 +2428,6 @@ static bool ComputeNormals(const std::vector<vec3> &vertices,
 }
 
 }  // namespace
-
-#if 0
-// Currently float2 only
-std::vector<UsdPrimvarReader_float2> ExtractPrimvarReadersFromMaterialNode(
-    const Prim &node) {
-  std::vector<UsdPrimvarReader_float2> dst;
-
-  if (!node.is<Material>()) {
-    return dst;
-  }
-
-  for (const auto &child : node.children()) {
-    (void)child;
-  }
-
-  // Traverse and find PrimvarReader_float2 shader.
-  return dst;
-}
-
-nonstd::expected<Node, std::string> ConvertXform(const Stage &stage,
-                                            const Xform &xform) {
-  (void)stage;
-
-  // TODO: timeSamples
-
-  Node node;
-  if (auto m = xform.GetLocalMatrix()) {
-    node.local_matrix = m.value();
-  }
-
-  return std::move(node);
-}
-#endif
 
 namespace {
 
@@ -5160,15 +5074,6 @@ nonstd::expected<bool, std::string> ConvertTexTransform2d(
 
   // 'string' for inputs:varname preferred.
   std::string varname;
-#if 0
-  if (!tydra::EvaluateShaderAttribute(stage, *pshader, "inputs:varname",
-                                      &varname, &err)) {
-    return nonstd::make_unexpected(
-        fmt::format("Failed to evaluate UsdPrimvarReader_float2's "
-                    "inputs:varname: {}\n",
-                    err));
-  }
-#else
   TerminalAttributeValue attr;
   if (!tydra::EvaluateAttribute(stage, *pprim, "inputs:varname", &attr, &err)) {
     return nonstd::make_unexpected(
@@ -5189,7 +5094,6 @@ nonstd::expected<bool, std::string> ConvertTexTransform2d(
     return nonstd::make_unexpected("`inputs:varname` is empty token\n");
   }
   DCOUT("inputs:varname = " << varname);
-#endif
 
   // Build transform matrix.
   // https://github.com/KhronosGroup/glTF/tree/main/extensions/2.0/Khronos/KHR_texture_transform
