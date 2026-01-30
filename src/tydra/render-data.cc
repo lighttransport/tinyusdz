@@ -392,108 +392,6 @@ static nonstd::expected<MtlxNodeGraphInfo, std::string> ExtractMtlxNodeGraphInfo
   return info;
 }
 
-//
-// Convert vertex attribute with Uniform variability(interpolation) to
-// facevarying variability, by replicating uniform value per face over face
-// vertices.
-//
-#if 0  // unused atm
-template <typename T>
-nonstd::expected<std::vector<T>, std::string> UniformToFaceVarying(
-    const std::vector<T> &inputs,
-    const std::vector<uint32_t> &faceVertexCounts) {
-  std::vector<T> dst;
-
-  if (inputs.size() == faceVertexCounts.size()) {
-    return nonstd::make_unexpected(
-        fmt::format("The number of inputs {} must be the same with "
-                    "faceVertexCounts.size() {}",
-                    inputs.size(), faceVertexCounts.size()));
-  }
-
-  for (size_t i = 0; i < faceVertexCounts.size(); i++) {
-    size_t cnt = faceVertexCounts[i];
-
-    // repeat cnt times.
-    for (size_t k = 0; k < cnt; k++) {
-      dst.emplace_back(inputs[i]);
-    }
-  }
-
-  return dst;
-}
-#endif
-
-//
-// Convert vertex attribute with Uniform variability(interpolation) to vertex
-// variability, by replicating uniform value for vertices of a face. For shared
-// vertex, the value will be overwritten.
-//
-#if 0  // unused atm
-template <typename T>
-nonstd::expected<std::vector<T>, std::string> UniformToVertex(
-    const std::vector<T> &inputs, const size_t elementSize,
-    const std::vector<uint32_t> &faceVertexCounts,
-    const std::vector<uint32_t> &faceVertexIndices) {
-  std::vector<T> dst;
-
-  if (faceVertexIndices.size() < 3) {
-    return nonstd::make_unexpected(
-        fmt::format("faceVertexIndices.size must be 3 or greater, but got {}.",
-                    faceVertexCounts.size()));
-  }
-
-  if (faceVertexCounts.empty()) {
-    return nonstd::make_unexpected("faceVertexCounts.size is zero");
-  }
-
-  if (elementSize == 0) {
-    return nonstd::make_unexpected("`elementSize` is zero.");
-  }
-
-  if ((inputs.size() % elementSize) != 0) {
-    return nonstd::make_unexpected(
-        fmt::format("input bytes {} must be dividable by elementSize {}.",
-                    inputs.size(), elementSize));
-  }
-
-  size_t num_uniforms = faceVertexCounts.size();
-
-  dst.resize(num_uniforms * elementSize);
-
-  size_t fvIndexOffset{0};
-
-  for (size_t i = 0; i < faceVertexCounts.size(); i++) {
-    size_t cnt = faceVertexCounts[i];
-
-    if ((fvIndexOffset + cnt) > faceVertexIndices.size()) {
-      return nonstd::make_unexpected(
-          fmt::format("faceVertexCounts[{}] {} gives buffer-overrun to "
-                      "faceVertexIndices.size {}.",
-                      i, cnt, faceVertexIndices.size()));
-    }
-
-    for (size_t k = 0; k < cnt; k++) {
-      uint32_t v_idx = faceVertexIndices[fvIndexOffset + k];
-
-      if (v_idx >= inputs.size()) {
-        return nonstd::make_unexpected(
-            fmt::format("vertexIndex {} is out-of-range for inputs.size {}.",
-                        v_idx, inputs.size()));
-      }
-
-      // may overwrite the value
-      memcpy(&dst[v_idx * elementSize], &inputs[i * elementSize],
-             sizeof(T) * elementSize);
-    }
-
-    fvIndexOffset += cnt;
-  }
-
-  return dst;
-}
-#endif
-
 nonstd::expected<std::vector<uint8_t>, std::string> UniformToVertex(
     const std::vector<uint8_t> &inputs, const size_t stride_bytes,
     const std::vector<uint32_t> &faceVertexCounts,
@@ -599,47 +497,6 @@ nonstd::expected<std::vector<uint8_t>, std::string> UniformToFaceVarying(
   return dst;
 }
 
-//
-// Convert vertex attribute with Vertex variability(interpolation) to
-// facevarying attribute, by expanding(flatten) the value per vertex per face.
-//
-#if 0  // unsued atm
-template <typename T>
-nonstd::expected<std::vector<T>, std::string> VertexToFaceVarying(
-    const std::vector<T> &inputs, const std::vector<uint32_t> &faceVertexCounts,
-    const std::vector<uint32_t> &faceVertexIndices) {
-  std::vector<T> dst;
-
-  size_t face_offset{0};
-  for (size_t i = 0; i < faceVertexCounts.size(); i++) {
-    size_t cnt = faceVertexCounts[i];
-
-    for (size_t k = 0; k < cnt; k++) {
-      size_t idx = k + face_offset;
-
-      if (idx >= faceVertexIndices.size()) {
-        return nonstd::make_unexpected(fmt::format(
-            "faeVertexIndex out-of-range at faceVertexCount[{}]", i));
-      }
-
-      size_t v_idx = faceVertexIndices[idx];
-
-      if (v_idx >= inputs.size()) {
-        return nonstd::make_unexpected(
-            fmt::format("faeVertexIndices[{}] {} exceeds input array size {}",
-                        idx, v_idx, inputs.size()));
-      }
-
-      dst.emplace_back(inputs[v_idx]);
-    }
-
-    face_offset += cnt;
-  }
-
-  return dst;
-}
-#endif
-
 // Generic vertex to facevarying conversion
 nonstd::expected<std::vector<uint8_t>, std::string> VertexToFaceVarying(
     const std::vector<uint8_t> &src, const size_t stride_bytes,
@@ -702,25 +559,6 @@ nonstd::expected<std::vector<uint8_t>, std::string> VertexToFaceVarying(
 
   return dst;
 }
-
-#if 0  // unused a.t.m
-// Copy single value to facevarying vertices.
-template <typename T>
-static nonstd::expected<std::vector<T>, std::string> ConstantToFaceVarying(
-    const T &input, const std::vector<uint32_t> &faceVertexCounts) {
-  std::vector<T> dst;
-
-  for (size_t i = 0; i < faceVertexCounts.size(); i++) {
-    size_t cnt = faceVertexCounts[i];
-
-    for (size_t k = 0; k < cnt; k++) {
-      dst.emplace_back(input);
-    }
-  }
-
-  return dst;
-}
-#endif
 
 static nonstd::expected<std::vector<uint8_t>, std::string> ConstantToVertex(
     const std::vector<uint8_t> &src, const size_t stride_bytes,
@@ -1118,149 +956,6 @@ static bool TryConvertFacevaryingToVertex(
   return false;
 }
 
-#if 0  // Not used atm.
-static bool ToFaceVaryingAttribute(const std::string &attr_name,
-  const VertexAttribute &src,
-  const std::vector<uint32_t> &faceVertexCounts,
-  const std::vector<uint32_t> &faceVertexIndices,
-  VertexAttribute *dst,
-  std::string *err) {
-
-#define PushError(msg) TYDRA_PUSH_ERROR(err, msg)
-
-  if (!dst) {
-    PUSH_ERROR_AND_RETURN("'dest' parameter is nullptr.");
-  }
-
-  if (src.variability == VertexVariability::Indexed) {
-    PUSH_ERROR_AND_RETURN(fmt::format("'indexed' variability for {} is not supported.", attr_name));
-  } else if (src.variability == VertexVariability::Constant) {
-
-    auto result = ConstantToFaceVarying(src.get_data(), src.stride_bytes(),
-            faceVertexCounts);
-
-    if (!result) {
-      PUSH_ERROR_AND_RETURN(fmt::format("Failed to convert vertex data with 'constant' variability to 'facevarying': name {}.", attr_name));
-    }
-
-    dst->data = result.value();
-    dst->elementSize = src.elementSize;
-    dst->format = src.format;
-    dst->stride = src.stride;
-    dst->variability = VertexVariability::FaceVarying;
-
-    return true;
-
-  } else if (src.variability == VertexVariability::Uniform) {
-
-    auto result = UniformToFaceVarying(src.get_data(), src.stride_bytes(),
-            faceVertexCounts);
-
-    if (!result) {
-      PUSH_ERROR_AND_RETURN(fmt::format("Failed to convert vertex data with 'uniform' variability to 'facevarying': name {}.", attr_name));
-    }
-
-    dst->data = result.value();
-    dst->elementSize = src.elementSize;
-    dst->format = src.format;
-    dst->stride = src.stride;
-    dst->variability = VertexVariability::FaceVarying;
-
-    return true;
-
-  } else if (src.variability == VertexVariability::Vertex) {
-
-    auto result = VertexToFaceVarying(src.get_data(), src.stride_bytes(),
-            faceVertexCounts, faceVertexIndices);
-
-    if (!result) {
-      PUSH_ERROR_AND_RETURN(fmt::format("Failed to convert vertex data with 'vertex' variability to 'facevarying': name {}.", attr_name));
-    }
-
-    dst->data = result.value();
-    dst->elementSize = src.elementSize;
-    dst->format = src.format;
-    dst->stride = src.stride;
-    dst->variability = VertexVariability::FaceVarying;
-
-    return true;
-  } else if (src.variability == VertexVariability::FaceVarying) {
-    (*dst) = src;
-    return true;
-  }
-
-#undef PushError
-
-  return false;
-}
-
-static bool ToVertexVaryingAttribute(
-  const std::string &attr_name,
-  const VertexAttribute &src,
-  const std::vector<uint32_t> &faceVertexCounts,
-  const std::vector<uint32_t> &faceVertexIndices,
-  VertexAttribute *dst,
-  std::string *err) {
-
-#define PushError(msg) TYDRA_PUSH_ERROR(err, msg)
-
-  if (!dst) {
-    PUSH_ERROR_AND_RETURN("'dest' parameter is nullptr.");
-  }
-
-  if (src.variability == VertexVariability::Indexed) {
-    PUSH_ERROR_AND_RETURN(fmt::format("'indexed' variability for {} is not supported.", attr_name));
-  } else if (src.variability == VertexVariability::Constant) {
-
-    auto result = ConstantToVertex(src.get_data(), src.stride_bytes(),
-            faceVertexCounts, faceVertexIndices);
-
-    if (!result) {
-      PUSH_ERROR_AND_RETURN(fmt::format("Failed to convert vertex data with 'constant' variability to 'facevarying': name {}.", attr_name));
-    }
-
-    dst->data = result.value();
-    dst->elementSize = src.elementSize;
-    dst->format = src.format;
-    dst->stride = src.stride;
-    dst->variability = VertexVariability::Vertex;
-
-    return true;
-
-  } else if (src.variability == VertexVariability::Uniform) {
-
-    auto result = UniformToVertex(src.get_data(), src.stride_bytes(),
-            faceVertexCounts, faceVertexIndices);
-
-    if (!result) {
-      PUSH_ERROR_AND_RETURN(fmt::format("Failed to convert vertex data with 'uniform' variability to 'facevarying': name {}.", attr_name));
-    }
-
-    dst->data = result.value();
-    dst->elementSize = src.elementSize;
-    dst->format = src.format;
-    dst->stride = src.stride;
-    dst->variability = VertexVariability::Vertex;
-
-    return true;
-
-  } else if (src.variability == VertexVariability::Vertex) {
-
-    (*dst) = src;
-    return true;
-  } else if (src.variability == VertexVariability::FaceVarying) {
-
-    PUSH_ERROR_AND_RETURN(fmt::format("'facevarying' variability cannot be converted to 'vertex' variability: name {}.", attr_name));
-
-  }
-
-#undef PushError
-
-  return false;
-
-}
-#endif
-
 #if 0
 static void DumpTriangle(
   const std::vector<value::float3> &points,
@@ -1470,26 +1165,6 @@ nonstd::expected<VertexAttribute, std::string> GetTextureCoordinate(
 
   return std::move(vattr);
 }
-
-#if 0  // not used at the moment.
-///
-/// For GeomSubset. Build offset table to corresponding array index in
-/// mesh.faceVertexIndices. No need to use this function for triangulated mesh,
-/// since the index can be easily computed as `3 * subset.indices[i]`
-///
-bool BuildFaceVertexIndexOffsets(const std::vector<uint32_t> &faceVertexCounts,
-                                 std::vector<size_t> &faceVertexIndexOffsets) {
-  size_t offset = 0;
-  for (size_t i = 0; i < faceVertexCounts.size(); i++) {
-    uint32_t npolys = faceVertexCounts[i];
-
-    faceVertexIndexOffsets.push_back(offset);
-    offset += npolys;
-  }
-
-  return true;
-}
-#endif
 
 namespace {
 
@@ -1836,66 +1511,6 @@ bool ToVertexAttribute(const GeomPrimvar &primvar, const std::string &name,
 #undef TO_TYPED_VALUE
 }
 
-#if 0  // TODO: Remove. The following could be done using ToVertexAttribute +
-       // TriangulateVertexAttribute
-///
-/// Triangulate Geom primvar.
-///
-/// triangulatted indices are computed in `TriangulatePolygon` API.
-///
-/// @param[in] mesh Geom mesh
-/// @param[in] name Geom Primvar name.
-/// @param[in] triangulatedFaceVertexIndices Triangulated faceVertexIndices(len
-/// = 3 * triangles)
-/// @param[in] triangulatedToOrigFaceVertexIndexMap Triangulated faceVertexIndex
-/// to original faceVertexIndex remapping table. len = 3 * triangles.
-///
-nonstd::expected<VertexAttribute, std::string> TriangulateGeomPrimvar(
-    const GeomMesh &mesh, const std::string &name,
-    const std::vector<uint32_t> &faceVertexCounts,
-    const std::vector<uint32_t> &faceVertexIndices,
-    const std::vector<uint32_t> &triangulatedFaceVertexIndices,
-    const std::vector<size_t> &triangulatedToOrigFaceVertexIndexMap) {
-  GeomPrimvar primvar;
-
-  if (triangulatedFaceVertexIndices.size() % 3 != 0) {
-    return nonstd::make_unexpected(fmt::format(
-        "triangulatedFaceVertexIndices.size {} must be the multiple of 3.\n",
-        triangulatedFaceVertexIndices.size()));
-  }
-
-  if (!GetGeomPrimvar(name, &primvar)) {
-    return nonstd::make_unexpected(
-        fmt::format("No primvars:{} found in GeomMesh {}\n", name, mesh.name));
-  }
-
-  if (!primvar.has_value()) {
-    // TODO: Create empty VertexAttribute?
-    return nonstd::make_unexpected(
-        fmt::format("No value exist for primvars:{}\n", name));
-  }
-
-  //
-  // Flatten Indexed PrimVar(return raw primvar for non-Indexed PrimVar)
-  //
-  std::string err;
-  value::Value flattened;
-  if (!primvar.flatten_with_indices(t, &flattened, tinterp, &err)) {
-    return nonstd::make_unexpected(fmt::format(
-        "Failed to flatten Indexed PrimVar: {}. Error = {}\n", name, err));
-  }
-
-  VertexAttribute vattr;
-
-  if (!ToVertexAttributeData(primvar, &vattr, &err)) {
-    return nonstd::make_unexpected(fmt::format(
-        "Failed to convert Geom PrimVar to VertexAttribute for {}. Error = {}\n", name, err));
-  }
-
-  return vattr;
-}
-#endif
-
 #if 1
 ///
 /// Input: points, faceVertexCounts, faceVertexIndices
@@ -2194,26 +1809,6 @@ bool TriangulatePolygon(
   }
 
   return true;
-}
-#endif
-
-#if 0  // not used atm.
-// Building an Orthonormal Basis, Revisited
-// http://jcgt.org/published/0006/01/01/
-static void GenerateBasis(const vec3 &n, vec3 *tangent,
-                         vec3 *binormal)
-{
-  if (n[2] < 0.0f) {
-    const float a = 1.0f / (1.0f - n[2]);
-    const float b = n[0] * n[1] * a;
-    (*tangent) = vec3{1.0f - n[0] * n[0] * a, -b, n[0]};
-    (*binormal) = vec3{b, n[1] * n[1] * a - 1.0f, -n[1]};
-  } else {
-    const float a = 1.0f / (1.0f + n[2]);
-    const float b = -n[0] * n[1] * a;
-    (*tangent) = vec3{1.0f - n[0] * n[0] * a, b, -n[0]};
-    (*binormal) = vec3{b, 1.0f - n[1] * n[1] * a, -n[1]};
-  }
 }
 #endif
 
