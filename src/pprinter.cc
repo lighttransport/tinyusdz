@@ -156,28 +156,7 @@ std::ostream &operator<<(std::ostream &ofs, const tinyusdz::SubLayer &v) {
 
 std::ostream &operator<<(std::ostream &ofs,
                          const tinyusdz::value::StringData &v) {
-#if 0
-  std::string delim = v.single_quote ? "'" : "\"";
-
-  if (v.is_triple_quoted) {
-    if (v.single_quote) {
-      if (tinyusdz::hasEscapedTripleQuotes(v.value, /* double quote */false)) {
-        // Change to use """
-        delim = "\"\"\"";
-      } else {
-        delim = "'''";
-      }
-    } else {
-      delim = "\"\"\"";
-    }
-  }
-
-  ofs << delim;
-  ofs << tinyusdz::escapeBackslash(v.value, v.is_triple_quoted);
-  ofs << delim;
-#else
   ofs << tinyusdz::buildEscapedAndQuotedStringForUSDA(v.value);
-#endif
 
   return ofs;
 }
@@ -371,30 +350,6 @@ std::string print_animatable_timesamples(const Animatable<T> &v,
 
   return ss.str();
 }
-
-#if 0
-template <typename T>
-std::string print_animatable_token(const Animatable<T> &v,
-                                   const uint32_t indent = 0) {
-  std::stringstream ss;
-
-  if (v.is_timesamples()) {
-    ss << print_typed_token_timesamples(v.get_timesamples(), indent);
-  } else if (v.is_blocked()) {
-    ss << "None";
-  } else if (v.is_scalar()) {
-    T a;
-    if (!v.get_scalar(&a)) {
-      return "[Animatable: InternalError]";
-    }
-    ss << quote(to_string(a));
-  } else {
-    return "[FIXME: Invalid Animatable]";
-  }
-
-  return ss.str();
-}
-#endif
 
 namespace {
 
@@ -1042,39 +997,6 @@ static std::string print_str_attr(
   return ss.str();
 }
 
-#if 0
-template<typename T>
-std::string print_typed_token_attr(const TypedAttribute<Animatable<T>> &attr, const std::string &name, const uint32_t indent) {
-
-  std::stringstream ss;
-
-  if (attr.value) {
-
-    ss << pprint::Indent(indent);
-
-    ss << "token " << name;
-
-    if (attr.is_blocked()) {
-      ss << " = None";
-    } else if (!attr.define_only) {
-      ss << " = ";
-      if (attr.value.value().is_timesamples()) {
-        ss << print_token_timesamples(attr.value.value().ts, indent+1);
-      } else {
-        ss << quote(to_string(attr.value.value().value));
-      }
-    }
-
-    if (attr.meta.authored()) {
-      ss << " (\n" << print_attr_metas(attr.meta, indent + 1) << pprint::Indent(indent) << ")";
-    }
-    ss << "\n";
-  }
-
-  return ss.str();
-}
-#endif
-
 template <typename T>
 std::string print_typed_attr(const TypedAttribute<T> &attr,
                              const std::string &name, const uint32_t indent) {
@@ -1127,39 +1049,6 @@ std::string print_typed_attr(const TypedAttribute<T> &attr,
 
   return ss.str();
 }
-
-#if 0
-template<typename T>
-std::string print_typed_token_attr(const TypedAttribute<T> &attr, const std::string &name, const uint32_t indent) {
-
-  std::stringstream ss;
-
-  if (attr.authored()) {
-
-    auto pv = attr.get();
-
-    ss << pprint::Indent(indent);
-
-    ss << "uniform token " << name;
-
-
-    if (attr.is_blocked()) {
-      ss << " = None";
-    } else {
-      if (pv) {
-        ss << " = " << to_string(pv.value());
-      }
-    }
-
-    if (attr.meta.authored()) {
-      ss << " (\n" << print_attr_metas(attr.meta, indent + 1) << pprint::Indent(indent) << ")";
-    }
-    ss << "\n";
-  }
-
-  return ss.str();
-}
-#endif
 
 template <typename T>
 std::string print_typed_attr(
@@ -1775,71 +1664,6 @@ std::string print_xformOps(const std::vector<XformOp> &xformOps,
   return ss.str();
 }
 
-#if 0
-static std::string print_xformOp(const std::vector<XformOp> &xformOps,
-                                 const std::string &prop_name,
-                                 const uint32_t indent,
-                                 std::set<std::string> &table) {
-  std::stringstream ss;
-
-  if (xformOps.empty()) {
-    return ss.str();
-  }
-
-  // simple linear search
-  for (size_t i = 0; i < xformOps.size(); i++) {
-    const auto xformOp = xformOps[i];
-
-    if (xformOp.op_type == XformOp::OpType::ResetXformStack) {
-      // No need to print value.
-      continue;
-    }
-
-    std::string varname = to_string(xformOp.op_type);
-    if (!xformOp.suffix.empty()) {
-      varname += ":" + xformOp.suffix;
-    }
-
-    if (prop_name != varname) {
-      continue;
-    }
-
-    ss << pprint::Indent(indent);
-
-    ss << xformOp.get_value_type_name() << " ";
-
-    ss << varname;
-
-    if (xformOp.is_timesamples()) {
-      ss << ".timeSamples";
-    }
-
-    ss << " = ";
-
-    if (xformOp.is_timesamples()) {
-      if (auto pv = xformOp.get_timesamples()) {
-        ss << print_timesamples(pv.value(), indent);
-      } else {
-        ss << "[InternalError]";
-      }
-    } else {
-      if (auto pv = xformOp.get_scalar()) {
-        ss << value::pprint_value(pv.value(), indent);
-      } else {
-        ss << "[InternalError]";
-      }
-    }
-
-    ss << "\n";
-
-    table.insert(prop_name);
-    break;
-  }
-
-  return ss.str();
-}
-#endif
-
 std::string print_material_binding(const MaterialBinding *mb, const uint32_t indent) {
   if (!mb) {
     return std::string();
@@ -1997,252 +1821,6 @@ std::string print_gprim_predefined(const T &gprim, const uint32_t indent) {
   return ss.str();
 }
 
-#if 0
-static bool emit_gprim_predefined(std::stringstream &ss, const GPrim *gprim,
-                                  const std::string &prop_name,
-                                  const uint32_t indent,
-                                  std::set<std::string> &table) {
-  if (prop_name == "doubleSided") {
-    ss << print_typed_attr(gprim->doubleSided, "doubleSided", indent);
-    table.insert("doubleSided");
-  } else if (prop_name == "orientation") {
-    ss << print_typed_token_attr(gprim->orientation, "orientation", indent);
-    table.insert("orientation");
-  } else if (prop_name == "purpose") {
-    ss << print_typed_token_attr(gprim->purpose, "purpose", indent);
-    table.insert("purpose");
-  } else if (prop_name == "extent") {
-    ss << print_typed_attr(gprim->extent, "extent", indent);
-    table.insert("extent");
-  } else if (prop_name == "visibility") {
-    ss << print_typed_token_attr(gprim->visibility, "visibility", indent);
-    table.insert("visibility");
-  } else if (prop_name == "material:binding") {
-    if (gprim->materialBinding.authored()) {
-      ss << print_relationship(
-          gprim->materialBinding.relationship(),
-          gprim->materialBinding.relationship().get_listedit_qual(),
-          /* custom */ false, "material:binding", indent);
-      table.insert("material:binding");
-    }
-  } else if (prop_name == "material:binding:collection") {
-    if (gprim->materialBindingCollection.authored()) {
-      ss << print_relationship(
-          gprim->materialBindingCollection.relationship(),
-          gprim->materialBindingCollection.relationship().get_listedit_qual(),
-          /* custom */ false, "material:binding:collection", indent);
-      table.insert("material:binding:collection");
-    }
-  } else if (prop_name == "material:binding:preview") {
-    if (gprim->materialBindingPreview.authored()) {
-      ss << print_relationship(
-          gprim->materialBindingPreview.relationship(),
-          gprim->materialBindingPreview.relationship().get_listedit_qual(),
-          /* custom */ false, "material:binding:preview", indent);
-      table.insert("material:binding:preview");
-    }
-  } else if (prop_name == "proxyPrim") {
-    if (gprim->proxyPrim.authored()) {
-      const Relationship &rel = gprim->proxyPrim.relationship();
-      ss << print_relationship(rel, rel.get_listedit_qual(), /* custom */ false,
-                               "proxyPrim", indent);
-      table.insert("proxyPrim");
-    }
-  } else if (prop_name == "xformOpOrder") {
-    ss << print_xformOpOrder(gprim->xformOps, indent);
-    table.insert("xformOpOrder");
-  } else if (startsWith(prop_name, "xformOp:")) {
-    ss << print_xformOp(gprim->xformOps, prop_name, indent, table);
-  } else {
-    // not found
-    return false;
-  }
-
-  return true;
-}
-#endif
-
-// Moved some 'to_string' to value-pprint.cc
-#if 0
-// TODO: Move to value-pprint.cc
-
-std::string to_string(bool v) {
-  if (v) {
-    return "true";
-  } else {
-    return "false";
-  }
-}
-
-std::string to_string(int32_t v) {
-  std::stringstream ss;
-  ss << v;
-  return ss.str();
-}
-
-std::string to_string(uint32_t v) {
-  std::stringstream ss;
-  ss << v;
-  return ss.str();
-}
-
-std::string to_string(int64_t v) {
-  std::stringstream ss;
-  ss << v;
-  return ss.str();
-}
-
-std::string to_string(uint64_t v) {
-  std::stringstream ss;
-  ss << v;
-  return ss.str();
-}
-
-std::string to_string(const value::int2 &v) {
-  std::stringstream ss;
-  ss << v;
-  return ss.str();
-}
-
-std::string to_string(const value::int3 &v) {
-  std::stringstream ss;
-  ss << v;
-  return ss.str();
-}
-
-std::string to_string(const value::int4 &v) {
-  std::stringstream ss;
-  ss << v;
-  return ss.str();
-}
-
-std::string to_string(const value::uint2 &v) {
-  std::stringstream ss;
-  ss << v;
-  return ss.str();
-}
-
-std::string to_string(const value::uint3 &v) {
-  std::stringstream ss;
-  ss << v;
-  return ss.str();
-}
-
-std::string to_string(const value::uint4 &v) {
-  std::stringstream ss;
-  ss << v;
-  return ss.str();
-}
-
-std::string to_string(const value::float2 &v) {
-  std::stringstream ss;
-  ss << v;
-  return ss.str();
-}
-
-std::string to_string(const value::float3 &v) {
-  std::stringstream ss;
-  ss << v;
-  return ss.str();
-}
-
-std::string to_string(const value::float4 &v) {
-  std::stringstream ss;
-  ss << v;
-  return ss.str();
-}
-
-std::string to_string(const value::double2 &v) {
-  std::stringstream ss;
-  ss << v;
-  return ss.str();
-}
-
-std::string to_string(const value::double3 &v) {
-  std::stringstream ss;
-  ss << v;
-  return ss.str();
-}
-
-std::string to_string(const value::double4 &v) {
-  std::stringstream ss;
-  ss << v;
-  return ss.str();
-}
-
-std::string to_string(const value::texcoord2h &v) {
-  std::stringstream ss;
-  ss << v;
-  return ss.str();
-}
-
-std::string to_string(const value::texcoord2f &v) {
-  std::stringstream ss;
-  ss << v;
-  return ss.str();
-}
-
-std::string to_string(const value::texcoord2d &v) {
-  std::stringstream ss;
-  ss << v;
-  return ss.str();
-}
-
-std::string to_string(const value::texcoord3h &v) {
-  std::stringstream ss;
-  ss << v;
-  return ss.str();
-}
-
-std::string to_string(const value::texcoord3f &v) {
-  std::stringstream ss;
-  ss << v;
-  return ss.str();
-}
-
-std::string to_string(const value::texcoord3d &v) {
-  std::stringstream ss;
-  ss << v;
-  return ss.str();
-}
-
-std::string to_string(const value::matrix2f &v) {
-  std::stringstream ss;
-  ss << v;
-  return ss.str();
-}
-
-std::string to_string(const value::matrix3f &v) {
-  std::stringstream ss;
-  ss << v;
-  return ss.str();
-}
-
-std::string to_string(const value::matrix4f &v) {
-  std::stringstream ss;
-  ss << v;
-  return ss.str();
-}
-
-std::string to_string(const value::matrix2d &v) {
-  std::stringstream ss;
-  ss << v;
-  return ss.str();
-}
-
-std::string to_string(const value::matrix3d &v) {
-  std::stringstream ss;
-  ss << v;
-  return ss.str();
-}
-
-std::string to_string(const value::matrix4d &v) {
-  std::stringstream ss;
-  ss << v;
-  return ss.str();
-}
-#endif
-
 std::string to_string(const APISchemas::APIName &name) {
   std::string s;
 
@@ -2343,21 +1921,6 @@ std::string to_string(const APISchemas::APIName &name) {
 std::string to_string(const CustomDataType &custom) {
   return print_customData(custom, "", 0);
 }
-
-#if 0
-std::string to_string(const value::StringData &s) {
-  std::stringstream ss;
-  ss << s;
-  return ss.str();
-}
-
-std::string to_string(const std::string &v) {
-  // TODO: Escape `"` character.
-
-  // Escape backslash
-  return quote(escapeBackslash(v));
-}
-#endif
 
 std::string to_string(const Reference &v) {
   std::stringstream ss;
@@ -2880,72 +2443,6 @@ std::string to_string(tinyusdz::Extent e) {
   return ss.str();
 }
 
-#if 0
-std::string to_string(const tinyusdz::AnimatableVisibility &v, const uint32_t indent) {
-  if (auto p = nonstd::get_if<Visibility>(&v)) {
-    return to_string(*p);
-  }
-
-  if (auto p = nonstd::get_if<TimeSampled<Visibility>>(&v)) {
-
-    std::stringstream ss;
-
-    ss << "{";
-
-    for (size_t i = 0; i < p->times.size(); i++) {
-      ss << pprint::Indent(indent+2) << p->times[i] << " : " << to_string(p->values[i]) << ", ";
-      // TODO: indent and newline
-    }
-
-    ss << pprint::Indent(indent+1) << "}";
-
-  }
-
-  return "[[??? AnimatableVisibility]]";
-}
-#endif
-
-#if 0
-std::string to_string(const tinyusdz::Klass &klass, uint32_t indent, bool closing_brace) {
-  std::stringstream ss;
-
-  ss << tinyusdz::pprint::Indent(indent) << "class " << klass.name << " (\n";
-  ss << tinyusdz::pprint::Indent(indent) << ")\n";
-  ss << tinyusdz::pprint::Indent(indent) << "{\n";
-
-  for (auto prop : klass.props) {
-
-    if (prop.second.is_relationship()) {
-        ss << "TODO: Rel\n";
-    } else {
-      //const PrimAttrib &attrib = prop.second.GetAttrib();
-#if 0  // TODO
-      if (auto p = tinyusdz::primvar::as_basic<double>(&pattr->var)) {
-        ss << tinyusdz::pprint::Indent(indent);
-        if (pattr->custom) {
-          ss << " custom ";
-        }
-        if (pattr->uniform) {
-          ss << " uniform ";
-        }
-        ss << " double " << prop.first << " = " << *p;
-      } else {
-        ss << "TODO:" << pattr->type_name << "\n";
-      }
-#endif
-    }
-
-    ss << "\n";
-  }
-
-  if (closing_brace) {
-    ss << tinyusdz::pprint::Indent(indent) << "}\n";
-  }
-
-  return ss.str();
-}
-#endif
-
 std::string print_variantSetStmt(
     const std::map<std::string, VariantSet> &vslist, const uint32_t indent) {
   std::stringstream ss;
@@ -3228,15 +2725,6 @@ std::string to_string(const GeomCamera &camera, const uint32_t indent,
   return ss.str();
 }
 
-#if 0
-#define PRINT_TYPED_ATTR(__table, __propName, __var, __name, __indent) \
-  if (__propName == __name) {                                          \
-    ss << print_typed_attr(__var, __name, __indent);                   \
-    __table.insert(__name);                                            \
-    continue;                                                          \
-  }
-#endif
-
 std::string to_string(const GeomSphere &sphere, const uint32_t indent,
                       bool closing_brace) {
   std::stringstream ss;
@@ -3250,53 +2738,11 @@ std::string to_string(const GeomSphere &sphere, const uint32_t indent,
   }
   ss << pprint::Indent(indent) << "{\n";
 
-  std::set<std::string> table;
-
-#if 0 // TODO
-  if (sphere.propertyNames().size()) {
-    // pxrUSD sorts property, so does TinyUSDZ also.
-    std::vector<std::string> sortedPropertyNames;
-    for (size_t i = 0; i < sphere.propertyNames().size(); i++) {
-      sortedPropertyNames.push_back(sphere.propertyNames()[i].str());
-    }
-    std::sort(sortedPropertyNames.begin(), sortedPropertyNames.end());
-
-    for (size_t i = 0; i < sortedPropertyNames.size(); i++) {
-      std::string propName = sortedPropertyNames[i];
-
-      PRINT_TYPED_ATTR(table, propName, sphere.radius, "radius", indent + 1)
-
-      if (emit_gprim_predefined(ss, &sphere, propName, indent + 1, table)) {
-        continue;
-      }
-      if (sphere.props.count(propName)) {
-        ss << print_prop(sphere.props.at(propName), propName, indent + 1);
-        table.insert(propName);
-        continue;
-      }
-
-      // not found
-      ss << fmt::format(
-          "# Property `{}` is described in `properties` Prim metadatum, but "
-          "not found in this Prim. Possibly USDC file is corrupted.\n");
-    }
-  } else {
-    // members
-    ss << print_typed_attr(sphere.radius, "radius", indent + 1);
-
-    ss << print_gprim_predefined(sphere, indent + 1);
-
-    ss << print_props(sphere.props, indent + 1);
-  }
-#else
-
   ss << print_typed_attr(sphere.radius, "radius", indent + 1);
 
   ss << print_gprim_predefined(sphere, indent + 1);
 
   ss << print_props(sphere.props, indent + 1);
-
-#endif
 
   if (closing_brace) {
     ss << pprint::Indent(indent) << "}\n";
@@ -3363,13 +2809,6 @@ std::string to_string(const GeomMesh &mesh, const uint32_t indent,
                                "faceVaryingLinearInterpolation", indent + 1);
 
   ss << print_gprim_predefined(mesh, indent + 1);
-
-#if 0
-  // GeomSubset.
-  for (const auto &subset : mesh.geom_subset_children) {
-    ss << to_string(subset, indent + 1, /* closing_brace */ true);
-  }
-#endif
 
   ss << print_props(mesh.props, indent + 1);
 
@@ -5202,66 +4641,7 @@ std::string print_prim(const Prim &prim, const uint32_t indent) {
     // so set require_newline true
     require_newline = true;
 
-#if 0
-    for (const auto &variantSet : prim.variantSets()) {
-      ss << pprint::Indent(indent + 1) << "variantSet "
-         << quote(variantSet.first) << " = {\n";
-
-      for (const auto &variantItem : variantSet.second.variantSet) {
-        ss << pprint::Indent(indent + 2) << quote(variantItem.first);
-
-        const Variant &variant = variantItem.second;
-
-        if (variant.metas().authored()) {
-          ss << " (\n";
-          ss << print_prim_metas(variant.metas(), indent + 3);
-          ss << pprint::Indent(indent + 2) << ")";
-        }
-
-        ss << " {\n";
-
-        ss << print_props(variant.properties(), indent + 3);
-
-        if (variant.metas().variantChildren.has_value() &&
-            (variant.metas().variantChildren.value().size() ==
-             variant.primChildren().size())) {
-          std::map<std::string, const Prim *> primNameTable;
-          for (size_t i = 0; i < variant.primChildren().size(); i++) {
-            primNameTable.emplace(variant.primChildren()[i].element_name(),
-                                  &variant.primChildren()[i]);
-          }
-
-          for (size_t i = 0; i < variant.metas().variantChildren.value().size();
-               i++) {
-            value::token nameTok = variant.metas().variantChildren.value()[i];
-            const auto it = primNameTable.find(nameTok.str());
-            if (it != primNameTable.end()) {
-              ss << print_prim(*(it->second), indent + 3);
-              if (i != (variant.primChildren().size() - 1)) {
-                ss << "\n";
-              }
-            } else {
-              // TODO: Report warning?
-            }
-          }
-
-        } else {
-          for (size_t i = 0; i < variant.primChildren().size(); i++) {
-            ss << print_prim(variant.primChildren()[i], indent + 3);
-            if (i != (variant.primChildren().size() - 1)) {
-              ss << "\n";
-            }
-          }
-        }
-
-        ss << pprint::Indent(indent + 2) << "}\n";
-      }
-
-      ss << pprint::Indent(indent + 1) << "}\n";
-    }
-#else
     ss << print_variantSetStmt(prim.variantSets(), indent+1);
-#endif
   }
 
   //
