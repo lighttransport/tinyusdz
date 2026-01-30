@@ -357,13 +357,6 @@ class GeomPrimvar {
   nonstd::optional<uint32_t> _elementSize;
   nonstd::optional<Interpolation> _interpolation;
 
-#if 0 // TODO
-  bool get_value(const value::Value *value,
-                 const double t = value::TimeCode::Default(),
-                 const value::TimeSampleInterpolationType tinterp =
-                     value::TimeSampleInterpolationType::Held);
-#endif
-
 };
 
 // Geometric Prim. Encapsulates Imagable + Boundable in pxrUSD schema.
@@ -419,14 +412,6 @@ struct GPrim : Xformable, MaterialBinding, Collection {
   Interpolation get_displayColorsInterpolation() const;
 
   RelationshipProperty proxyPrim;
-
-#if 0
-  // Some frequently used materialBindings
-  nonstd::optional<Relationship> materialBinding; // material:binding
-  nonstd::optional<Relationship> materialBindingCollection; // material:binding:collection  TODO: deprecate?(seems `material:binding:collection` without leaf NAME seems ignored in pxrUSD.
-  nonstd::optional<Relationship> materialBindingPreview; // material:binding:preview
-  nonstd::optional<Relationship> materialBindingFull; // material:binding:full
-#endif
 
   std::map<std::string, Property> props;
 
@@ -512,153 +497,6 @@ struct GPrim : Xformable, MaterialBinding, Collection {
     return meta;
   }
 
-#if 0
-  //
-  // NOTE on material binding.
-  // https://openusd.org/release/wp_usdshade.html
-  //
-  //  - "all purpose", direct binding, material:binding. single relationship target only
-  //  - a purpose-restricted, direct, fallback binding, e.g. material:binding:preview
-  //  - an all-purpose, collection-based binding, e.g. material:binding:collection:metalBits
-  //  - a purpose-restricted, collection-based binding, e.g. material:binding:collection:full:metalBits
-  //
-  // In TinyUSDZ, treat empty purpose token as "all purpose"
-  //
-
-  bool has_materialBinding() const {
-    return materialBinding.has_value();
-  }
-
-  bool has_materialBindingPreview() const {
-    return materialBindingPreview.has_value();
-  }
-
-  bool has_materialBindingFull() const {
-    return materialBindingFull.has_value();
-  }
-
-  bool has_materialBinding(const value::token &mat_purpose) const {
-    if (mat_purpose.str() == "full") {
-      return has_materialBindingFull();
-    } else if (mat_purpose.str() == "preview") {
-      return has_materialBindingPreview();
-    } else {
-      return _materialBindingMap.count(mat_purpose.str());
-    }
-  }
-
-  void clear_materialBinding() {
-    materialBinding.reset();
-  }
-
-  void clear_materialBindingPreview() {
-    materialBindingPreview.reset();
-  }
-
-  void clear_materialBindingFull() {
-    materialBindingFull.reset();
-  }
-
-  void set_materialBinding(const Relationship &rel) {
-    materialBinding = rel;
-  }
-
-  void set_materialBinding(const Relationship &rel, const MaterialBindingStrength strength) {
-    value::token strength_tok(to_string(strength));
-    materialBinding = rel;
-    materialBinding.relationship().metas().bindMaterialAs = strength_tok;
-  }
-
-  void set_materialBindingPreview(const Relationship &rel) {
-    materialBindingPreview = rel;
-  }
-
-  void set_materialBindingPreview(const Relationship &rel, const MaterialBindingStrength strength) {
-    value::token strength_tok(to_string(strength));
-    materialBindingPreview = rel;
-    materialBindingPreview.relationship().metas().bindMaterialAs = strength_tok;
-  }
-
-  void set_materialBindingFull(const Relationship &rel) {
-    materialBindingFull = rel;
-  }
-
-  void set_materialBindingFull(const Relationship &rel, const MaterialBindingStrength strength) {
-    value::token strength_tok(to_string(strength));
-    materialBindingFull = rel;
-    materialBindingFull.relationship().metas().bindMaterialAs = strength_tok;
-  }
-
-  void set_materialBinding(const Relationship &rel, const value::token &mat_purpose) {
-
-    if (mat_purpose.str().empty()) {
-      return set_materialBinding(rel);
-    } else if (mat_purpose.str() == "full") {
-      return set_materialBindingFull(rel);
-    } else if (mat_purpose.str() == "preview") {
-      return set_materialBindingFull(rel);
-    } else {
-      _materialBindingMap[mat_purpose.str()] = rel;
-    }
-  }
-
-  void set_materialBinding(const Relationship &rel, const value::token &mat_purpose, const MaterialBindingStrength strength) {
-    value::token strength_tok(to_string(strength));
-
-    if (mat_purpose.str().empty()) {
-      return set_materialBinding(rel, strength);
-    } else if (mat_purpose.str() == "full") {
-      return set_materialBindingFull(rel, strength);
-    } else if (mat_purpose.str() == "preview") {
-      return set_materialBindingFull(rel, strength);
-    } else {
-      _materialBindingMap[mat_purpose.str()] = rel;
-      _materialBindingMap[mat_purpose.str()].metas().bindMaterialAs = strength_tok;
-    }
-  }
-
-  bool has_materialBindingCollection(const std::string &tok) {
-
-    if (!_materialBindingCollectionMap.count(tok)) {
-      return false;
-    }
-
-    return _materialBindingCollectionMap.count(tok);
-  }
-
-  void set_materialBindingCollection(const value::token &tok, const value::token &mat_purpose, const Relationship &rel) {
-
-    // NOTE:
-    // https://openusd.org/release/wp_usdshade.html#basic-proposal-for-collection-based-assignment
-    // says: material:binding:collection defines a namespace of binding relationships to be applied in namespace order, with the earliest ordered binding relationship the strongest
-    //
-    // so the app is better first check if `tok` element alreasy exists(using has_materialBindingCollection)
-
-    auto &m = _materialBindingCollectionMap[tok.str()];
-
-    m[mat_purpose.str()] = rel;
-  }
-
-  void clear_materialBindingCollection(const value::token &tok, const value::token &mat_purpose) {
-    if (_materialBindingCollectionMap.count(tok.str())) {
-      _materialBindingCollectionMap[tok.str()].erase(mat_purpose.str());
-    }
-  }
-
-  void set_materialBindingCollection(const value::token &tok, const value::token &mat_purpose, const Relationship &rel, MaterialBindingStrength strength) {
-    value::token strength_tok(to_string(strength));
-
-    _materialBindingCollectionMap[tok.str()][mat_purpose.str()] = rel;
-    _materialBindingCollectionMap[tok.str()][mat_purpose.str()].metas().bindMaterialAs = strength_tok;
-
-  }
-
-  const std::map<std::string, std::map<std::string, Relationship>> materialBindingCollectionMap() const {
-    return _materialBindingCollectionMap;
-  }
-#endif
-
-
  private:
 
   //bool _valid{true};  // default behavior is valid(allow empty GPrim)
@@ -668,17 +506,6 @@ struct GPrim : Xformable, MaterialBinding, Collection {
 
   // For Variants
   std::map<std::string, VariantSet> _variantSetMap;
-
-#if 0
-  // For material:binding(excludes frequently used `material:binding`, `material:binding:full` and `material:binding:preview`)
-  // key = PURPOSE, value = rel
-  std::map<std::string, Relationship> _materialBindingMap;
-
-  // For material:binding:collection
-  // key = NAME, value = map<PURPOSE, Rel>
-  // TODO: Use multi-index map
-  std::map<std::string, std::map<std::string, Relationship>> _materialBindingCollectionMap;
-#endif
 
 };
 
@@ -726,13 +553,6 @@ struct GeomSubset : public MaterialBinding, Collection {
         "`face`, `point`, `edge` or `tetrahedron` is supported for `elementType`, but `" + str +
         "` specified");
   }
-
-#if 0
-  // Some frequently used materialBindings
-  nonstd::optional<Relationship> materialBinding; // rel material:binding
-  nonstd::optional<Relationship> materialBindingCollection; // rel material:binding:collection
-  nonstd::optional<Relationship> materialBindingPreview; // rel material:binding:preview
-#endif
 
   TypedAttribute<Animatable<std::vector<int32_t>>> indices; // int[] indices
 
@@ -945,30 +765,8 @@ struct GeomMesh : GPrim {
   // familyName -> familyType map
   std::map<value::token, GeomSubset::FamilyType> subsetFamilyTypeMap;
 
-#if 0 // GeomSubset Prim is now managed as a child Prim
-  //
-  // GeomSubset
-  //
-  // uniform token `subsetFamily:materialBind:familyType`
-  GeomSubset::FamilyType materialBindFamilyType{
-      GeomSubset::FamilyType::Partition};
-
-  std::vector<GeomSubset> geom_subset_children;
-
-#endif
-
   // Get Explicit Joint orders: `uniform token[] skel:joints`
   std::vector<value::token> get_joints() const;
-
-#if 0 // Deprecated: Use tydra::GetGeomSubsets() instead.
-  ///
-  /// Get GeomSubset list assgied to this GeomMesh(child Prim).
-  ///
-  /// The pointer points to the address of child Prim,
-  /// so should not free it and this GeomMesh object must be valid during using the pointer to GeomSubset.
-  ///
-  std::vector<const GeomSubset *> GetGeomSubsets();
-#endif
 
 };
 
