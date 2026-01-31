@@ -1,16 +1,8 @@
 // SPDX-License-Identifier: Apache 2.0
 // Copyright 2022-Present Light Transport Entertainment, Inc.
 //
-#include "attribute-eval.hh"
-#include "scene-access.hh"
-
-#include "common-macros.inc"
-#include "pprinter.hh"
-#include "tiny-format.hh"
-#include "value-pprint.hh"
-
-namespace tinyusdz {
-namespace tydra {
+// EvaluateTypedAnimatableAttribute implementations
+// This file is included by split instantiation files
 
 // For PUSH_ERROR_AND_RETURN
 #define PushError(msg) \
@@ -129,76 +121,6 @@ Attribute ToAttributeConnection(
 
 } // namespace
 
-template<> bool EvaluateTypedAnimatableAttribute<std::string>(
-    const tinyusdz::Stage &stage, const TypedAttribute<Animatable<std::string>> &tattr,
-    const std::string &attr_name,
-    std::string *value_out,
-    std::string *err,
-    const double t,
-    const value::TimeSampleInterpolationType tinterp) {
-
-  if (!value_out) {
-    PUSH_ERROR_AND_RETURN("`value_out` param is nullptr.");
-  }
-
-  if (tattr.is_blocked()) {
-    if (err) {
-      (*err) += "Attribute is Blocked.\n";
-    }
-    return false;
-  } else if (tattr.is_value_empty()) {
-    if (err) {
-      (*err) += "Attribute value is empty.\n";
-    }
-    return false;
-  } else if (tattr.is_connection()) {
-
-    // Follow targetPath
-    Attribute attr = ToAttributeConnection(tattr);
-
-    TerminalAttributeValue value;
-    bool ret = EvaluateAttribute(stage, attr, attr_name, &value, err,
-                                 t, tinterp);
-
-    if (!ret) {
-      return false;
-    }
-
-    if (auto pv = value.as<std::string>()) {
-      (*value_out) = *pv;
-      return true;
-    }
-
-    // Allow `token` typed value in the attribute of targetPath.
-    if (auto pv = value.as<value::token>()) {
-      (*value_out) = pv->str();
-      return true;
-    }
-
-    if (err) {
-      (*err) += fmt::format("Type mismatch. Value producing attribute has type {}, but requested type is {}[]. Attribute: {}", value.type_name(), value::TypeTraits<std::string>::type_name(), attr_name);
-    }
-
-  } else {
-    Animatable<std::string> value;
-    if (tattr.get_value(&value)) {
-      if (value.get(t, value_out, tinterp)) {
-        return true;
-      } else {
-        if (err) {
-          (*err) += fmt::format("Failed to get TypedAnimatableAttribute value: {} \n", attr_name);
-        }
-        return false;
-      }
-    }
-
-    if (err) {
-      (*err) += fmt::format("[Internal error] Invalid TypedAttribute? : {} \n", attr_name);
-    }
-  }
-  return false;
-}
-
 template<typename T>
 bool EvaluateTypedAnimatableAttribute(
     const tinyusdz::Stage &stage, const TypedAttribute<Animatable<T>> &tattr,
@@ -269,10 +191,4 @@ bool EvaluateTypedAnimatableAttribute(
   return false;
 }
 
-
-// Template instantiations are in split files for parallel compilation:
-// - attribute-eval-typed-animatable-inst-scalar.cc (scalar types)
-// - attribute-eval-typed-animatable-inst-array.cc (array types)
-
-}  // namespace tydra
-}  // namespace tinyusdz
+#undef PushError

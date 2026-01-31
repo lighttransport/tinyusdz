@@ -120,6 +120,216 @@ namespace tinyusdz {
 
 namespace ascii {
 
+namespace {
+
+// ============================================================================
+// TimeSample Array Value Parser Registry
+// Replaces PARSE_TYPE macro if-else chain with O(1) lookup
+// ============================================================================
+
+// Function pointer type for array timesample value parsers
+using TimeSampleArrayValueParserFn = bool (*)(AsciiParser*, value::Value*);
+
+// Registry for ParseTimeSampleValueOfArrayType dispatch
+struct TimeSampleArrayValueParserRegistry {
+  std::map<uint32_t, TimeSampleArrayValueParserFn> parsers;
+
+  static const TimeSampleArrayValueParserRegistry& Instance() {
+    // Use pointer to avoid exit-time destructor (intentional leak for static registry)
+    static TimeSampleArrayValueParserRegistry* instance = new TimeSampleArrayValueParserRegistry();
+    return *instance;
+  }
+
+  TimeSampleArrayValueParserRegistry();
+
+  bool Parse(AsciiParser* parser, uint32_t type_id, value::Value* result) const {
+    auto it = parsers.find(type_id);
+    if (it == parsers.end()) {
+      return false;
+    }
+    return it->second(parser, result);
+  }
+
+  bool HasParser(uint32_t type_id) const {
+    return parsers.find(type_id) != parsers.end();
+  }
+};
+
+// Template helper for generating array parser functions
+template<typename T>
+static bool ParseTimeSampleArrayValue_impl(AsciiParser* parser, value::Value* result) {
+  std::vector<T> typed_val;
+  if (!parser->ParseBasicTypeArray(&typed_val)) {
+    return false;
+  }
+  *result = value::Value(typed_val);
+  return true;
+}
+
+// Initialize all parsers
+TimeSampleArrayValueParserRegistry::TimeSampleArrayValueParserRegistry() {
+  // Special types
+  parsers[value::TypeTraits<value::AssetPath>::type_id()] = &ParseTimeSampleArrayValue_impl<value::AssetPath>;
+  parsers[value::TypeTraits<value::token>::type_id()] = &ParseTimeSampleArrayValue_impl<value::token>;
+  parsers[value::TypeTraits<std::string>::type_id()] = &ParseTimeSampleArrayValue_impl<std::string>;
+  // Boolean
+  parsers[value::TypeTraits<bool>::type_id()] = &ParseTimeSampleArrayValue_impl<bool>;
+  // Int types
+  parsers[value::TypeTraits<int32_t>::type_id()] = &ParseTimeSampleArrayValue_impl<int32_t>;
+  parsers[value::TypeTraits<value::int2>::type_id()] = &ParseTimeSampleArrayValue_impl<value::int2>;
+  parsers[value::TypeTraits<value::int3>::type_id()] = &ParseTimeSampleArrayValue_impl<value::int3>;
+  parsers[value::TypeTraits<value::int4>::type_id()] = &ParseTimeSampleArrayValue_impl<value::int4>;
+  // Unsigned int types
+  parsers[value::TypeTraits<uint32_t>::type_id()] = &ParseTimeSampleArrayValue_impl<uint32_t>;
+  parsers[value::TypeTraits<value::uint2>::type_id()] = &ParseTimeSampleArrayValue_impl<value::uint2>;
+  parsers[value::TypeTraits<value::uint3>::type_id()] = &ParseTimeSampleArrayValue_impl<value::uint3>;
+  parsers[value::TypeTraits<value::uint4>::type_id()] = &ParseTimeSampleArrayValue_impl<value::uint4>;
+  // Char types
+  parsers[value::TypeTraits<char>::type_id()] = &ParseTimeSampleArrayValue_impl<char>;
+  parsers[value::TypeTraits<value::char2>::type_id()] = &ParseTimeSampleArrayValue_impl<value::char2>;
+  parsers[value::TypeTraits<value::char3>::type_id()] = &ParseTimeSampleArrayValue_impl<value::char3>;
+  parsers[value::TypeTraits<value::char4>::type_id()] = &ParseTimeSampleArrayValue_impl<value::char4>;
+  // Uchar types
+  parsers[value::TypeTraits<uint8_t>::type_id()] = &ParseTimeSampleArrayValue_impl<uint8_t>;
+  parsers[value::TypeTraits<value::uchar2>::type_id()] = &ParseTimeSampleArrayValue_impl<value::uchar2>;
+  parsers[value::TypeTraits<value::uchar3>::type_id()] = &ParseTimeSampleArrayValue_impl<value::uchar3>;
+  parsers[value::TypeTraits<value::uchar4>::type_id()] = &ParseTimeSampleArrayValue_impl<value::uchar4>;
+  // Short types
+  parsers[value::TypeTraits<int16_t>::type_id()] = &ParseTimeSampleArrayValue_impl<int16_t>;
+  parsers[value::TypeTraits<value::short2>::type_id()] = &ParseTimeSampleArrayValue_impl<value::short2>;
+  parsers[value::TypeTraits<value::short3>::type_id()] = &ParseTimeSampleArrayValue_impl<value::short3>;
+  parsers[value::TypeTraits<value::short4>::type_id()] = &ParseTimeSampleArrayValue_impl<value::short4>;
+  // Ushort types
+  parsers[value::TypeTraits<uint16_t>::type_id()] = &ParseTimeSampleArrayValue_impl<uint16_t>;
+  parsers[value::TypeTraits<value::ushort2>::type_id()] = &ParseTimeSampleArrayValue_impl<value::ushort2>;
+  parsers[value::TypeTraits<value::ushort3>::type_id()] = &ParseTimeSampleArrayValue_impl<value::ushort3>;
+  parsers[value::TypeTraits<value::ushort4>::type_id()] = &ParseTimeSampleArrayValue_impl<value::ushort4>;
+  // 64-bit integer types
+  parsers[value::TypeTraits<int64_t>::type_id()] = &ParseTimeSampleArrayValue_impl<int64_t>;
+  parsers[value::TypeTraits<uint64_t>::type_id()] = &ParseTimeSampleArrayValue_impl<uint64_t>;
+  // Half precision types
+  parsers[value::TypeTraits<value::half>::type_id()] = &ParseTimeSampleArrayValue_impl<value::half>;
+  parsers[value::TypeTraits<value::half2>::type_id()] = &ParseTimeSampleArrayValue_impl<value::half2>;
+  parsers[value::TypeTraits<value::half3>::type_id()] = &ParseTimeSampleArrayValue_impl<value::half3>;
+  parsers[value::TypeTraits<value::half4>::type_id()] = &ParseTimeSampleArrayValue_impl<value::half4>;
+  // Float types
+  parsers[value::TypeTraits<float>::type_id()] = &ParseTimeSampleArrayValue_impl<float>;
+  parsers[value::TypeTraits<value::float2>::type_id()] = &ParseTimeSampleArrayValue_impl<value::float2>;
+  parsers[value::TypeTraits<value::float3>::type_id()] = &ParseTimeSampleArrayValue_impl<value::float3>;
+  parsers[value::TypeTraits<value::float4>::type_id()] = &ParseTimeSampleArrayValue_impl<value::float4>;
+  // Double types
+  parsers[value::TypeTraits<double>::type_id()] = &ParseTimeSampleArrayValue_impl<double>;
+  parsers[value::TypeTraits<value::double2>::type_id()] = &ParseTimeSampleArrayValue_impl<value::double2>;
+  parsers[value::TypeTraits<value::double3>::type_id()] = &ParseTimeSampleArrayValue_impl<value::double3>;
+  parsers[value::TypeTraits<value::double4>::type_id()] = &ParseTimeSampleArrayValue_impl<value::double4>;
+  // Quaternion types
+  parsers[value::TypeTraits<value::quath>::type_id()] = &ParseTimeSampleArrayValue_impl<value::quath>;
+  parsers[value::TypeTraits<value::quatf>::type_id()] = &ParseTimeSampleArrayValue_impl<value::quatf>;
+  parsers[value::TypeTraits<value::quatd>::type_id()] = &ParseTimeSampleArrayValue_impl<value::quatd>;
+  // Color types (half)
+  parsers[value::TypeTraits<value::color3h>::type_id()] = &ParseTimeSampleArrayValue_impl<value::color3h>;
+  parsers[value::TypeTraits<value::color4h>::type_id()] = &ParseTimeSampleArrayValue_impl<value::color4h>;
+  // Color types (float)
+  parsers[value::TypeTraits<value::color3f>::type_id()] = &ParseTimeSampleArrayValue_impl<value::color3f>;
+  parsers[value::TypeTraits<value::color4f>::type_id()] = &ParseTimeSampleArrayValue_impl<value::color4f>;
+  // Color types (double)
+  parsers[value::TypeTraits<value::color3d>::type_id()] = &ParseTimeSampleArrayValue_impl<value::color3d>;
+  parsers[value::TypeTraits<value::color4d>::type_id()] = &ParseTimeSampleArrayValue_impl<value::color4d>;
+  // Vector types
+  parsers[value::TypeTraits<value::vector3h>::type_id()] = &ParseTimeSampleArrayValue_impl<value::vector3h>;
+  parsers[value::TypeTraits<value::vector3f>::type_id()] = &ParseTimeSampleArrayValue_impl<value::vector3f>;
+  parsers[value::TypeTraits<value::vector3d>::type_id()] = &ParseTimeSampleArrayValue_impl<value::vector3d>;
+  // Normal types
+  parsers[value::TypeTraits<value::normal3h>::type_id()] = &ParseTimeSampleArrayValue_impl<value::normal3h>;
+  parsers[value::TypeTraits<value::normal3f>::type_id()] = &ParseTimeSampleArrayValue_impl<value::normal3f>;
+  parsers[value::TypeTraits<value::normal3d>::type_id()] = &ParseTimeSampleArrayValue_impl<value::normal3d>;
+  // Point types
+  parsers[value::TypeTraits<value::point3h>::type_id()] = &ParseTimeSampleArrayValue_impl<value::point3h>;
+  parsers[value::TypeTraits<value::point3f>::type_id()] = &ParseTimeSampleArrayValue_impl<value::point3f>;
+  parsers[value::TypeTraits<value::point3d>::type_id()] = &ParseTimeSampleArrayValue_impl<value::point3d>;
+  // Texcoord types
+  parsers[value::TypeTraits<value::texcoord2h>::type_id()] = &ParseTimeSampleArrayValue_impl<value::texcoord2h>;
+  parsers[value::TypeTraits<value::texcoord2f>::type_id()] = &ParseTimeSampleArrayValue_impl<value::texcoord2f>;
+  parsers[value::TypeTraits<value::texcoord2d>::type_id()] = &ParseTimeSampleArrayValue_impl<value::texcoord2d>;
+  parsers[value::TypeTraits<value::texcoord3h>::type_id()] = &ParseTimeSampleArrayValue_impl<value::texcoord3h>;
+  parsers[value::TypeTraits<value::texcoord3f>::type_id()] = &ParseTimeSampleArrayValue_impl<value::texcoord3f>;
+  parsers[value::TypeTraits<value::texcoord3d>::type_id()] = &ParseTimeSampleArrayValue_impl<value::texcoord3d>;
+  // Matrix types (float)
+  parsers[value::TypeTraits<value::matrix2f>::type_id()] = &ParseTimeSampleArrayValue_impl<value::matrix2f>;
+  parsers[value::TypeTraits<value::matrix3f>::type_id()] = &ParseTimeSampleArrayValue_impl<value::matrix3f>;
+  parsers[value::TypeTraits<value::matrix4f>::type_id()] = &ParseTimeSampleArrayValue_impl<value::matrix4f>;
+  // Matrix types (double)
+  parsers[value::TypeTraits<value::matrix2d>::type_id()] = &ParseTimeSampleArrayValue_impl<value::matrix2d>;
+  parsers[value::TypeTraits<value::matrix3d>::type_id()] = &ParseTimeSampleArrayValue_impl<value::matrix3d>;
+  parsers[value::TypeTraits<value::matrix4d>::type_id()] = &ParseTimeSampleArrayValue_impl<value::matrix4d>;
+  // Frame type
+  parsers[value::TypeTraits<value::frame4d>::type_id()] = &ParseTimeSampleArrayValue_impl<value::frame4d>;
+}
+
+// ============================================================================
+// Dedup Sample Adder Registry
+// Replaces switch statement in add_array_sample_with_dedup with O(1) lookup
+// ============================================================================
+
+// Function pointer type for adding dedup array samples
+using DedupArraySampleAdderFn = bool (*)(value::TimeSamples*, double, size_t, std::string*);
+
+// Registry for dedup sample addition
+struct DedupArraySampleAdderRegistry {
+  std::map<uint32_t, DedupArraySampleAdderFn> adders;
+
+  static const DedupArraySampleAdderRegistry& Instance() {
+    // Use pointer to avoid exit-time destructor (intentional leak for static registry)
+    static DedupArraySampleAdderRegistry* instance = new DedupArraySampleAdderRegistry();
+    return *instance;
+  }
+
+  DedupArraySampleAdderRegistry();
+
+  bool AddDedupSample(value::TimeSamples* ts, uint32_t elem_type_id, double time, size_t ref_index, std::string* err) const {
+    auto it = adders.find(elem_type_id);
+    if (it == adders.end()) {
+      return false;  // Type not registered
+    }
+    return it->second(ts, time, ref_index, err);
+  }
+
+  bool HasAdder(uint32_t elem_type_id) const {
+    return adders.find(elem_type_id) != adders.end();
+  }
+};
+
+// Template helper for generating dedup adder functions
+template<typename T>
+static bool AddDedupArraySample_impl(value::TimeSamples* ts, double time, size_t ref_index, std::string* err) {
+  return ts->add_dedup_array_sample_pod<T>(time, ref_index, err);
+}
+
+// Initialize all dedup adders
+DedupArraySampleAdderRegistry::DedupArraySampleAdderRegistry() {
+  adders[value::TYPE_ID_INT32] = &AddDedupArraySample_impl<int32_t>;
+  adders[value::TYPE_ID_UINT32] = &AddDedupArraySample_impl<uint32_t>;
+  adders[value::TYPE_ID_INT64] = &AddDedupArraySample_impl<int64_t>;
+  adders[value::TYPE_ID_UINT64] = &AddDedupArraySample_impl<uint64_t>;
+  adders[value::TYPE_ID_FLOAT] = &AddDedupArraySample_impl<float>;
+  adders[value::TYPE_ID_DOUBLE] = &AddDedupArraySample_impl<double>;
+  adders[value::TYPE_ID_FLOAT2] = &AddDedupArraySample_impl<value::float2>;
+  adders[value::TYPE_ID_FLOAT3] = &AddDedupArraySample_impl<value::float3>;
+  adders[value::TYPE_ID_FLOAT4] = &AddDedupArraySample_impl<value::float4>;
+  adders[value::TYPE_ID_DOUBLE2] = &AddDedupArraySample_impl<value::double2>;
+  adders[value::TYPE_ID_DOUBLE3] = &AddDedupArraySample_impl<value::double3>;
+  adders[value::TYPE_ID_DOUBLE4] = &AddDedupArraySample_impl<value::double4>;
+  // Matrix types
+  adders[value::TYPE_ID_MATRIX2F] = &AddDedupArraySample_impl<value::matrix2f>;
+  adders[value::TYPE_ID_MATRIX3F] = &AddDedupArraySample_impl<value::matrix3f>;
+  adders[value::TYPE_ID_MATRIX4F] = &AddDedupArraySample_impl<value::matrix4f>;
+  adders[value::TYPE_ID_MATRIX2D] = &AddDedupArraySample_impl<value::matrix2d>;
+  adders[value::TYPE_ID_MATRIX3D] = &AddDedupArraySample_impl<value::matrix3d>;
+  adders[value::TYPE_ID_MATRIX4D] = &AddDedupArraySample_impl<value::matrix4d>;
+}
+
+}  // anonymous namespace
+
 //
 // -- Deduplication support for array timesamples
 //
@@ -360,115 +570,11 @@ bool AsciiParser::ParseTimeSampleValueOfArrayType(const uint32_t type_id, value:
 
   value::Value val;
 
-#define PARSE_TYPE(__tyid, __type)                       \
-  if (__tyid == value::TypeTraits<__type>::type_id()) {             \
-    std::vector<__type> typed_val; \
-    if (!ParseBasicTypeArray(&typed_val)) {                             \
-      PUSH_ERROR_AND_RETURN("Failed to parse value with requested type `" + value::GetTypeName(__tyid) + "[]`"); \
-    }                                                                  \
-    val = value::Value(typed_val); \
-  } else
-
-  // NOTE: `string` does not support multi-line string.
-  PARSE_TYPE(type_id, value::AssetPath)
-  PARSE_TYPE(type_id, value::token)
-  PARSE_TYPE(type_id, std::string)
-  // Boolean
-  PARSE_TYPE(type_id, bool)
-  // Int types
-  PARSE_TYPE(type_id, int32_t)
-  PARSE_TYPE(type_id, value::int2)
-  PARSE_TYPE(type_id, value::int3)
-  PARSE_TYPE(type_id, value::int4)
-  // Unsigned int types
-  PARSE_TYPE(type_id, uint32_t)
-  PARSE_TYPE(type_id, value::uint2)
-  PARSE_TYPE(type_id, value::uint3)
-  PARSE_TYPE(type_id, value::uint4)
-  // Char types (int8_t)
-  PARSE_TYPE(type_id, char)
-  PARSE_TYPE(type_id, value::char2)
-  PARSE_TYPE(type_id, value::char3)
-  PARSE_TYPE(type_id, value::char4)
-  // Uchar types (uint8_t)
-  PARSE_TYPE(type_id, uint8_t)
-  PARSE_TYPE(type_id, value::uchar2)
-  PARSE_TYPE(type_id, value::uchar3)
-  PARSE_TYPE(type_id, value::uchar4)
-  // Short types (int16_t)
-  PARSE_TYPE(type_id, int16_t)
-  PARSE_TYPE(type_id, value::short2)
-  PARSE_TYPE(type_id, value::short3)
-  PARSE_TYPE(type_id, value::short4)
-  // Ushort types (uint16_t)
-  PARSE_TYPE(type_id, uint16_t)
-  PARSE_TYPE(type_id, value::ushort2)
-  PARSE_TYPE(type_id, value::ushort3)
-  PARSE_TYPE(type_id, value::ushort4)
-  // 64-bit integer types
-  PARSE_TYPE(type_id, int64_t)
-  PARSE_TYPE(type_id, uint64_t)
-  // Half precision types
-  PARSE_TYPE(type_id, value::half)
-  PARSE_TYPE(type_id, value::half2)
-  PARSE_TYPE(type_id, value::half3)
-  PARSE_TYPE(type_id, value::half4)
-  // Float types
-  PARSE_TYPE(type_id, float)
-  PARSE_TYPE(type_id, value::float2)
-  PARSE_TYPE(type_id, value::float3)
-  PARSE_TYPE(type_id, value::float4)
-  // Double types
-  PARSE_TYPE(type_id, double)
-  PARSE_TYPE(type_id, value::double2)
-  PARSE_TYPE(type_id, value::double3)
-  PARSE_TYPE(type_id, value::double4)
-  // Quaternion types
-  PARSE_TYPE(type_id, value::quath)
-  PARSE_TYPE(type_id, value::quatf)
-  PARSE_TYPE(type_id, value::quatd)
-  // Color types (half precision)
-  PARSE_TYPE(type_id, value::color3h)
-  PARSE_TYPE(type_id, value::color4h)
-  // Color types (float precision)
-  PARSE_TYPE(type_id, value::color3f)
-  PARSE_TYPE(type_id, value::color4f)
-  // Color types (double precision)
-  PARSE_TYPE(type_id, value::color3d)
-  PARSE_TYPE(type_id, value::color4d)
-  // Vector types
-  PARSE_TYPE(type_id, value::vector3h)
-  PARSE_TYPE(type_id, value::vector3f)
-  PARSE_TYPE(type_id, value::vector3d)
-  // Normal types
-  PARSE_TYPE(type_id, value::normal3h)
-  PARSE_TYPE(type_id, value::normal3f)
-  PARSE_TYPE(type_id, value::normal3d)
-  // Point types
-  PARSE_TYPE(type_id, value::point3h)
-  PARSE_TYPE(type_id, value::point3f)
-  PARSE_TYPE(type_id, value::point3d)
-  // Texcoord types
-  PARSE_TYPE(type_id, value::texcoord2h)
-  PARSE_TYPE(type_id, value::texcoord2f)
-  PARSE_TYPE(type_id, value::texcoord2d)
-  PARSE_TYPE(type_id, value::texcoord3h)
-  PARSE_TYPE(type_id, value::texcoord3f)
-  PARSE_TYPE(type_id, value::texcoord3d)
-  // Matrix types (float)
-  PARSE_TYPE(type_id, value::matrix2f)
-  PARSE_TYPE(type_id, value::matrix3f)
-  PARSE_TYPE(type_id, value::matrix4f)
-  // Matrix types (double)
-  PARSE_TYPE(type_id, value::matrix2d)
-  PARSE_TYPE(type_id, value::matrix3d)
-  PARSE_TYPE(type_id, value::matrix4d)
-  // Frame type (same as matrix4d)
-  PARSE_TYPE(type_id, value::frame4d) {
-    PUSH_ERROR_AND_RETURN(" : TODO: timeSamples type " + value::GetTypeName(type_id));
+  // Use registry-based lookup instead of macro if-else chain
+  const auto& registry = TimeSampleArrayValueParserRegistry::Instance();
+  if (!registry.Parse(this, type_id, &val)) {
+    PUSH_ERROR_AND_RETURN("Failed to parse value with requested type `" + value::GetTypeName(type_id) + "[]`");
   }
-
-#undef PARSE_TYPE
 
   (*result) = val;
 
@@ -578,69 +684,14 @@ bool AsciiParser::ParseTimeSamplesOfArray(const std::string &type_name,
             std::string err;
             bool dedup_added = false;
 
-            // Call the appropriate typed dedup method based on element type
-            switch (elem_tid) {
-              case value::TYPE_ID_INT32:
-                dedup_added = ts.add_dedup_array_sample_pod<int32_t>(timeVal, ref_index, &err);
-                break;
-              case value::TYPE_ID_UINT32:
-                dedup_added = ts.add_dedup_array_sample_pod<uint32_t>(timeVal, ref_index, &err);
-                break;
-              case value::TYPE_ID_INT64:
-                dedup_added = ts.add_dedup_array_sample_pod<int64_t>(timeVal, ref_index, &err);
-                break;
-              case value::TYPE_ID_UINT64:
-                dedup_added = ts.add_dedup_array_sample_pod<uint64_t>(timeVal, ref_index, &err);
-                break;
-              case value::TYPE_ID_FLOAT:
-                dedup_added = ts.add_dedup_array_sample_pod<float>(timeVal, ref_index, &err);
-                break;
-              case value::TYPE_ID_DOUBLE:
-                dedup_added = ts.add_dedup_array_sample_pod<double>(timeVal, ref_index, &err);
-                break;
-              case value::TYPE_ID_FLOAT2:
-                dedup_added = ts.add_dedup_array_sample_pod<value::float2>(timeVal, ref_index, &err);
-                break;
-              case value::TYPE_ID_FLOAT3:
-                dedup_added = ts.add_dedup_array_sample_pod<value::float3>(timeVal, ref_index, &err);
-                break;
-              case value::TYPE_ID_FLOAT4:
-                dedup_added = ts.add_dedup_array_sample_pod<value::float4>(timeVal, ref_index, &err);
-                break;
-              case value::TYPE_ID_DOUBLE2:
-                dedup_added = ts.add_dedup_array_sample_pod<value::double2>(timeVal, ref_index, &err);
-                break;
-              case value::TYPE_ID_DOUBLE3:
-                dedup_added = ts.add_dedup_array_sample_pod<value::double3>(timeVal, ref_index, &err);
-                break;
-              case value::TYPE_ID_DOUBLE4:
-                dedup_added = ts.add_dedup_array_sample_pod<value::double4>(timeVal, ref_index, &err);
-                break;
-              // Matrix types - now trivial with default constructors and have operator==
-              case value::TYPE_ID_MATRIX2F:
-                dedup_added = ts.add_dedup_array_sample_pod<value::matrix2f>(timeVal, ref_index, &err);
-                break;
-              case value::TYPE_ID_MATRIX3F:
-                dedup_added = ts.add_dedup_array_sample_pod<value::matrix3f>(timeVal, ref_index, &err);
-                break;
-              case value::TYPE_ID_MATRIX4F:
-                dedup_added = ts.add_dedup_array_sample_pod<value::matrix4f>(timeVal, ref_index, &err);
-                break;
-              case value::TYPE_ID_MATRIX2D:
-                dedup_added = ts.add_dedup_array_sample_pod<value::matrix2d>(timeVal, ref_index, &err);
-                break;
-              case value::TYPE_ID_MATRIX3D:
-                dedup_added = ts.add_dedup_array_sample_pod<value::matrix3d>(timeVal, ref_index, &err);
-                break;
-              case value::TYPE_ID_MATRIX4D:
-                dedup_added = ts.add_dedup_array_sample_pod<value::matrix4d>(timeVal, ref_index, &err);
-                break;
-              // Note: Other types like half, quaternions, colors etc. would need operator==
-              // to be properly supported in arrays_equal comparison first
-              default:
-                DCOUT("Array dedup (ASCII): unsupported type for POD dedup optimization, falling back to regular sample");
-                ts.add_sample(timeVal, value, &err);
-                break;
+            // Use registry-based lookup instead of switch statement
+            const auto& dedup_registry = DedupArraySampleAdderRegistry::Instance();
+            if (dedup_registry.HasAdder(elem_tid)) {
+              dedup_added = dedup_registry.AddDedupSample(&ts, elem_tid, timeVal, ref_index, &err);
+            } else {
+              // Type not supported for dedup optimization
+              DCOUT("Array dedup (ASCII): unsupported type for POD dedup optimization, falling back to regular sample");
+              ts.add_sample(timeVal, value, &err);
             }
 
             if (dedup_added) {
