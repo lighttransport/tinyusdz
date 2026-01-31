@@ -17,8 +17,7 @@
 #include <array>
 //#include <cassert>
 #include <cstdlib>
-#include <fstream>
-#include <iostream>
+// NOTE: <fstream> and <iostream> removed - unused
 #include <iterator>
 #include <map>
 #include <set>
@@ -33,10 +32,9 @@
 #include <vector>
 
 #include "ascii-parser.hh"
-#include "str-util.hh"
+// NOTE: str-util.hh, typed-array.hh already included via ascii-parser.hh
 #include "path-util.hh"
 #include "tiny-format.hh"
-#include "typed-array.hh"
 
 //
 #if !defined(TINYUSDZ_DISABLE_MODULE_USDA_READER)
@@ -80,15 +78,18 @@
 
 #include "io-util.hh"
 #include "pprinter.hh"
-#include "prim-types.hh"
-#include "str-util.hh"
-#include "stream-reader.hh"
-#include "tinyusdz.hh"
+// NOTE: prim-types.hh, str-util.hh, stream-reader.hh, tinyusdz.hh, value-types.hh
+// already included via ascii-parser.hh
 #include "value-pprint.hh"
-#include "value-types.hh"
 
 #include "common-macros.inc"
 #include "tiny-string.hh"
+
+// When compiling this file directly (not included by another file),
+// skip TypedArray instantiations - they are compiled in ascii-parser-basetype-typedarray.cc
+#ifndef TINYUSDZ_BASETYPE_TYPEDARRAY_INST_ONLY
+#define TINYUSDZ_BASETYPE_SKIP_TYPEDARRAY_INST
+#endif
 
 namespace tinyusdz {
 
@@ -3983,6 +3984,8 @@ template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<Path
 template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<value::AssetPath>> *result);
 #endif
 
+#ifndef TINYUSDZ_BASETYPE_TYPEDARRAY_INST_ONLY
+// std::vector explicit instantiations
 template bool AsciiParser::ParseBasicTypeArray(std::vector<bool> *result);
 template bool AsciiParser::ParseBasicTypeArray(std::vector<int32_t> *result);
 template bool AsciiParser::ParseBasicTypeArray(std::vector<value::int2> *result);
@@ -4064,10 +4067,12 @@ template bool AsciiParser::ParseBasicTypeArray(std::vector<std::string> *result)
 //template bool AsciiParser::ParseBasicTypeArray(std::vector<Reference> *result);
 //template bool AsciiParser::ParseBasicTypeArray(std::vector<Path> *result);
 template bool AsciiParser::ParseBasicTypeArray(std::vector<value::AssetPath> *result);
+#endif  // TINYUSDZ_BASETYPE_TYPEDARRAY_INST_ONLY
 
-// 
+//
 // TypedArray template instantiations for memory optimization
 //
+#ifndef TINYUSDZ_BASETYPE_SKIP_TYPEDARRAY_INST
 template bool AsciiParser::ParseBasicTypeArray(TypedArray<bool> *result);
 template bool AsciiParser::ParseBasicTypeArray(TypedArray<int32_t> *result);
 template bool AsciiParser::ParseBasicTypeArray(TypedArray<value::int2> *result);
@@ -4146,6 +4151,7 @@ template bool AsciiParser::ParseBasicTypeArray(TypedArray<value::token> *result)
 template bool AsciiParser::ParseBasicTypeArray(TypedArray<value::StringData> *result);
 template bool AsciiParser::ParseBasicTypeArray(TypedArray<std::string> *result);
 template bool AsciiParser::ParseBasicTypeArray(TypedArray<value::AssetPath> *result);
+#endif  // TINYUSDZ_BASETYPE_SKIP_TYPEDARRAY_INST
 
 
 }  // namespace ascii
