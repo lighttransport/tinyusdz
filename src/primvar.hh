@@ -12,7 +12,6 @@
 
 #include <array>
 #include <cstring>
-#include <functional>
 #include <map>
 #include <memory>
 #include <type_traits>
