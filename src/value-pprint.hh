@@ -22,6 +22,10 @@ struct LayerOffset;
 struct SubLayer;
 class Collection;
 
+namespace value {
+struct TimeSamples;
+}  // namespace value
+
 }  // namespace tinyusdz
 
 namespace std {
