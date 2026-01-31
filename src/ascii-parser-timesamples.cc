@@ -83,6 +83,241 @@ namespace tinyusdz {
 
 namespace ascii {
 
+namespace {
+
+// ============================================================================
+// TimeSample Value Parser Registry
+// Replaces PARSE_TYPE macro if-else chain with O(1) lookup
+// ============================================================================
+
+// Function pointer type for timesample value parsers
+using TimeSampleValueParserFn = bool (*)(AsciiParser*, value::Value*);
+
+// Registry for ParseTimeSampleValue dispatch
+struct TimeSampleValueParserRegistry {
+  std::map<uint32_t, TimeSampleValueParserFn> parsers;
+
+  static const TimeSampleValueParserRegistry& Instance() {
+    // Use pointer to avoid exit-time destructor (intentional leak for static registry)
+    static TimeSampleValueParserRegistry* instance = new TimeSampleValueParserRegistry();
+    return *instance;
+  }
+
+  TimeSampleValueParserRegistry();
+
+  bool Parse(AsciiParser* parser, uint32_t type_id, value::Value* result) const {
+    auto it = parsers.find(type_id);
+    if (it == parsers.end()) {
+      return false;
+    }
+    return it->second(parser, result);
+  }
+
+  bool HasParser(uint32_t type_id) const {
+    return parsers.find(type_id) != parsers.end();
+  }
+};
+
+// Template helper for generating parser functions
+template<typename T>
+static bool ParseTimeSampleValue_impl(AsciiParser* parser, value::Value* result) {
+  T typed_val;
+  if (!parser->ReadBasicType(&typed_val)) {
+    return false;
+  }
+  *result = value::Value(typed_val);
+  return true;
+}
+
+// Initialize all parsers
+TimeSampleValueParserRegistry::TimeSampleValueParserRegistry() {
+  // Special types
+  parsers[value::TypeTraits<value::AssetPath>::type_id()] = &ParseTimeSampleValue_impl<value::AssetPath>;
+  parsers[value::TypeTraits<value::token>::type_id()] = &ParseTimeSampleValue_impl<value::token>;
+  parsers[value::TypeTraits<std::string>::type_id()] = &ParseTimeSampleValue_impl<std::string>;
+  // Boolean
+  parsers[value::TypeTraits<bool>::type_id()] = &ParseTimeSampleValue_impl<bool>;
+  // Int types
+  parsers[value::TypeTraits<int32_t>::type_id()] = &ParseTimeSampleValue_impl<int32_t>;
+  parsers[value::TypeTraits<value::int2>::type_id()] = &ParseTimeSampleValue_impl<value::int2>;
+  parsers[value::TypeTraits<value::int3>::type_id()] = &ParseTimeSampleValue_impl<value::int3>;
+  parsers[value::TypeTraits<value::int4>::type_id()] = &ParseTimeSampleValue_impl<value::int4>;
+  // Unsigned int types
+  parsers[value::TypeTraits<uint32_t>::type_id()] = &ParseTimeSampleValue_impl<uint32_t>;
+  parsers[value::TypeTraits<value::uint2>::type_id()] = &ParseTimeSampleValue_impl<value::uint2>;
+  parsers[value::TypeTraits<value::uint3>::type_id()] = &ParseTimeSampleValue_impl<value::uint3>;
+  parsers[value::TypeTraits<value::uint4>::type_id()] = &ParseTimeSampleValue_impl<value::uint4>;
+  // Char types
+  parsers[value::TypeTraits<char>::type_id()] = &ParseTimeSampleValue_impl<char>;
+  parsers[value::TypeTraits<value::char2>::type_id()] = &ParseTimeSampleValue_impl<value::char2>;
+  parsers[value::TypeTraits<value::char3>::type_id()] = &ParseTimeSampleValue_impl<value::char3>;
+  parsers[value::TypeTraits<value::char4>::type_id()] = &ParseTimeSampleValue_impl<value::char4>;
+  // Uchar types
+  parsers[value::TypeTraits<uint8_t>::type_id()] = &ParseTimeSampleValue_impl<uint8_t>;
+  parsers[value::TypeTraits<value::uchar2>::type_id()] = &ParseTimeSampleValue_impl<value::uchar2>;
+  parsers[value::TypeTraits<value::uchar3>::type_id()] = &ParseTimeSampleValue_impl<value::uchar3>;
+  parsers[value::TypeTraits<value::uchar4>::type_id()] = &ParseTimeSampleValue_impl<value::uchar4>;
+  // Short types
+  parsers[value::TypeTraits<int16_t>::type_id()] = &ParseTimeSampleValue_impl<int16_t>;
+  parsers[value::TypeTraits<value::short2>::type_id()] = &ParseTimeSampleValue_impl<value::short2>;
+  parsers[value::TypeTraits<value::short3>::type_id()] = &ParseTimeSampleValue_impl<value::short3>;
+  parsers[value::TypeTraits<value::short4>::type_id()] = &ParseTimeSampleValue_impl<value::short4>;
+  // Ushort types
+  parsers[value::TypeTraits<uint16_t>::type_id()] = &ParseTimeSampleValue_impl<uint16_t>;
+  parsers[value::TypeTraits<value::ushort2>::type_id()] = &ParseTimeSampleValue_impl<value::ushort2>;
+  parsers[value::TypeTraits<value::ushort3>::type_id()] = &ParseTimeSampleValue_impl<value::ushort3>;
+  parsers[value::TypeTraits<value::ushort4>::type_id()] = &ParseTimeSampleValue_impl<value::ushort4>;
+  // 64-bit integer types
+  parsers[value::TypeTraits<int64_t>::type_id()] = &ParseTimeSampleValue_impl<int64_t>;
+  parsers[value::TypeTraits<uint64_t>::type_id()] = &ParseTimeSampleValue_impl<uint64_t>;
+  // Half precision types
+  parsers[value::TypeTraits<value::half>::type_id()] = &ParseTimeSampleValue_impl<value::half>;
+  parsers[value::TypeTraits<value::half2>::type_id()] = &ParseTimeSampleValue_impl<value::half2>;
+  parsers[value::TypeTraits<value::half3>::type_id()] = &ParseTimeSampleValue_impl<value::half3>;
+  parsers[value::TypeTraits<value::half4>::type_id()] = &ParseTimeSampleValue_impl<value::half4>;
+  // Float types
+  parsers[value::TypeTraits<float>::type_id()] = &ParseTimeSampleValue_impl<float>;
+  parsers[value::TypeTraits<value::float2>::type_id()] = &ParseTimeSampleValue_impl<value::float2>;
+  parsers[value::TypeTraits<value::float3>::type_id()] = &ParseTimeSampleValue_impl<value::float3>;
+  parsers[value::TypeTraits<value::float4>::type_id()] = &ParseTimeSampleValue_impl<value::float4>;
+  // Double types
+  parsers[value::TypeTraits<double>::type_id()] = &ParseTimeSampleValue_impl<double>;
+  parsers[value::TypeTraits<value::double2>::type_id()] = &ParseTimeSampleValue_impl<value::double2>;
+  parsers[value::TypeTraits<value::double3>::type_id()] = &ParseTimeSampleValue_impl<value::double3>;
+  parsers[value::TypeTraits<value::double4>::type_id()] = &ParseTimeSampleValue_impl<value::double4>;
+  // Quaternion types
+  parsers[value::TypeTraits<value::quath>::type_id()] = &ParseTimeSampleValue_impl<value::quath>;
+  parsers[value::TypeTraits<value::quatf>::type_id()] = &ParseTimeSampleValue_impl<value::quatf>;
+  parsers[value::TypeTraits<value::quatd>::type_id()] = &ParseTimeSampleValue_impl<value::quatd>;
+  // Color types (half)
+  parsers[value::TypeTraits<value::color3h>::type_id()] = &ParseTimeSampleValue_impl<value::color3h>;
+  parsers[value::TypeTraits<value::color4h>::type_id()] = &ParseTimeSampleValue_impl<value::color4h>;
+  // Color types (float)
+  parsers[value::TypeTraits<value::color3f>::type_id()] = &ParseTimeSampleValue_impl<value::color3f>;
+  parsers[value::TypeTraits<value::color4f>::type_id()] = &ParseTimeSampleValue_impl<value::color4f>;
+  // Color types (double)
+  parsers[value::TypeTraits<value::color3d>::type_id()] = &ParseTimeSampleValue_impl<value::color3d>;
+  parsers[value::TypeTraits<value::color4d>::type_id()] = &ParseTimeSampleValue_impl<value::color4d>;
+  // Vector types
+  parsers[value::TypeTraits<value::vector3h>::type_id()] = &ParseTimeSampleValue_impl<value::vector3h>;
+  parsers[value::TypeTraits<value::vector3f>::type_id()] = &ParseTimeSampleValue_impl<value::vector3f>;
+  parsers[value::TypeTraits<value::vector3d>::type_id()] = &ParseTimeSampleValue_impl<value::vector3d>;
+  // Normal types
+  parsers[value::TypeTraits<value::normal3h>::type_id()] = &ParseTimeSampleValue_impl<value::normal3h>;
+  parsers[value::TypeTraits<value::normal3f>::type_id()] = &ParseTimeSampleValue_impl<value::normal3f>;
+  parsers[value::TypeTraits<value::normal3d>::type_id()] = &ParseTimeSampleValue_impl<value::normal3d>;
+  // Point types
+  parsers[value::TypeTraits<value::point3h>::type_id()] = &ParseTimeSampleValue_impl<value::point3h>;
+  parsers[value::TypeTraits<value::point3f>::type_id()] = &ParseTimeSampleValue_impl<value::point3f>;
+  parsers[value::TypeTraits<value::point3d>::type_id()] = &ParseTimeSampleValue_impl<value::point3d>;
+  // Texcoord types
+  parsers[value::TypeTraits<value::texcoord2h>::type_id()] = &ParseTimeSampleValue_impl<value::texcoord2h>;
+  parsers[value::TypeTraits<value::texcoord2f>::type_id()] = &ParseTimeSampleValue_impl<value::texcoord2f>;
+  parsers[value::TypeTraits<value::texcoord2d>::type_id()] = &ParseTimeSampleValue_impl<value::texcoord2d>;
+  parsers[value::TypeTraits<value::texcoord3h>::type_id()] = &ParseTimeSampleValue_impl<value::texcoord3h>;
+  parsers[value::TypeTraits<value::texcoord3f>::type_id()] = &ParseTimeSampleValue_impl<value::texcoord3f>;
+  parsers[value::TypeTraits<value::texcoord3d>::type_id()] = &ParseTimeSampleValue_impl<value::texcoord3d>;
+  // Matrix types (float)
+  parsers[value::TypeTraits<value::matrix2f>::type_id()] = &ParseTimeSampleValue_impl<value::matrix2f>;
+  parsers[value::TypeTraits<value::matrix3f>::type_id()] = &ParseTimeSampleValue_impl<value::matrix3f>;
+  parsers[value::TypeTraits<value::matrix4f>::type_id()] = &ParseTimeSampleValue_impl<value::matrix4f>;
+  // Matrix types (double)
+  parsers[value::TypeTraits<value::matrix2d>::type_id()] = &ParseTimeSampleValue_impl<value::matrix2d>;
+  parsers[value::TypeTraits<value::matrix3d>::type_id()] = &ParseTimeSampleValue_impl<value::matrix3d>;
+  parsers[value::TypeTraits<value::matrix4d>::type_id()] = &ParseTimeSampleValue_impl<value::matrix4d>;
+  // Frame type
+  parsers[value::TypeTraits<value::frame4d>::type_id()] = &ParseTimeSampleValue_impl<value::frame4d>;
+}
+
+// ============================================================================
+// POD TimeSamples Parser Registry
+// Replaces TRY_POD_TYPE macro if-else chain with O(1) lookup
+// ============================================================================
+
+// Function pointer type for POD timesample parsers
+using PODTimeSamplesParserFn = bool (*)(AsciiParser*, value::TimeSamples*);
+
+// Registry for ParseTimeSamples POD type dispatch
+struct PODTimeSamplesParserRegistry {
+  std::map<uint32_t, PODTimeSamplesParserFn> parsers;
+
+  static const PODTimeSamplesParserRegistry& Instance() {
+    // Use pointer to avoid exit-time destructor (intentional leak for static registry)
+    static PODTimeSamplesParserRegistry* instance = new PODTimeSamplesParserRegistry();
+    return *instance;
+  }
+
+  PODTimeSamplesParserRegistry();
+
+  bool TryParse(AsciiParser* parser, uint32_t type_id, value::TimeSamples* ts_out, uint64_t saved_cursor) const {
+    auto it = parsers.find(type_id);
+    if (it == parsers.end()) {
+      return false;  // Type not registered, use fallback
+    }
+    if (it->second(parser, ts_out)) {
+      return true;  // POD path succeeded
+    }
+    // POD path failed - restore cursor
+    parser->SeekTo(saved_cursor);
+    return false;
+  }
+
+  bool HasParser(uint32_t type_id) const {
+    return parsers.find(type_id) != parsers.end();
+  }
+};
+
+// Template helper for generating POD parser functions
+template<typename T>
+static bool ParseTypedTimeSamples_wrapper(AsciiParser* parser, value::TimeSamples* ts_out) {
+  return parser->ParseTypedTimeSamples<T>(ts_out);
+}
+
+// Initialize all POD parsers
+PODTimeSamplesParserRegistry::PODTimeSamplesParserRegistry() {
+  parsers[value::TypeTraits<bool>::type_id()] = &ParseTypedTimeSamples_wrapper<bool>;
+  parsers[value::TypeTraits<int32_t>::type_id()] = &ParseTypedTimeSamples_wrapper<int32_t>;
+  parsers[value::TypeTraits<uint32_t>::type_id()] = &ParseTypedTimeSamples_wrapper<uint32_t>;
+  parsers[value::TypeTraits<int64_t>::type_id()] = &ParseTypedTimeSamples_wrapper<int64_t>;
+  parsers[value::TypeTraits<uint64_t>::type_id()] = &ParseTypedTimeSamples_wrapper<uint64_t>;
+  parsers[value::TypeTraits<value::half>::type_id()] = &ParseTypedTimeSamples_wrapper<value::half>;
+  parsers[value::TypeTraits<value::half2>::type_id()] = &ParseTypedTimeSamples_wrapper<value::half2>;
+  parsers[value::TypeTraits<value::half3>::type_id()] = &ParseTypedTimeSamples_wrapper<value::half3>;
+  parsers[value::TypeTraits<value::half4>::type_id()] = &ParseTypedTimeSamples_wrapper<value::half4>;
+  parsers[value::TypeTraits<float>::type_id()] = &ParseTypedTimeSamples_wrapper<float>;
+  parsers[value::TypeTraits<value::float2>::type_id()] = &ParseTypedTimeSamples_wrapper<value::float2>;
+  parsers[value::TypeTraits<value::float3>::type_id()] = &ParseTypedTimeSamples_wrapper<value::float3>;
+  parsers[value::TypeTraits<value::float4>::type_id()] = &ParseTypedTimeSamples_wrapper<value::float4>;
+  parsers[value::TypeTraits<double>::type_id()] = &ParseTypedTimeSamples_wrapper<double>;
+  parsers[value::TypeTraits<value::double2>::type_id()] = &ParseTypedTimeSamples_wrapper<value::double2>;
+  parsers[value::TypeTraits<value::double3>::type_id()] = &ParseTypedTimeSamples_wrapper<value::double3>;
+  parsers[value::TypeTraits<value::double4>::type_id()] = &ParseTypedTimeSamples_wrapper<value::double4>;
+  parsers[value::TypeTraits<value::int2>::type_id()] = &ParseTypedTimeSamples_wrapper<value::int2>;
+  parsers[value::TypeTraits<value::int3>::type_id()] = &ParseTypedTimeSamples_wrapper<value::int3>;
+  parsers[value::TypeTraits<value::int4>::type_id()] = &ParseTypedTimeSamples_wrapper<value::int4>;
+  parsers[value::TypeTraits<value::quath>::type_id()] = &ParseTypedTimeSamples_wrapper<value::quath>;
+  parsers[value::TypeTraits<value::quatf>::type_id()] = &ParseTypedTimeSamples_wrapper<value::quatf>;
+  parsers[value::TypeTraits<value::quatd>::type_id()] = &ParseTypedTimeSamples_wrapper<value::quatd>;
+  parsers[value::TypeTraits<value::color3f>::type_id()] = &ParseTypedTimeSamples_wrapper<value::color3f>;
+  parsers[value::TypeTraits<value::color4f>::type_id()] = &ParseTypedTimeSamples_wrapper<value::color4f>;
+  parsers[value::TypeTraits<value::color3d>::type_id()] = &ParseTypedTimeSamples_wrapper<value::color3d>;
+  parsers[value::TypeTraits<value::color4d>::type_id()] = &ParseTypedTimeSamples_wrapper<value::color4d>;
+  parsers[value::TypeTraits<value::vector3f>::type_id()] = &ParseTypedTimeSamples_wrapper<value::vector3f>;
+  parsers[value::TypeTraits<value::normal3f>::type_id()] = &ParseTypedTimeSamples_wrapper<value::normal3f>;
+  parsers[value::TypeTraits<value::point3f>::type_id()] = &ParseTypedTimeSamples_wrapper<value::point3f>;
+  parsers[value::TypeTraits<value::texcoord2f>::type_id()] = &ParseTypedTimeSamples_wrapper<value::texcoord2f>;
+  parsers[value::TypeTraits<value::texcoord3f>::type_id()] = &ParseTypedTimeSamples_wrapper<value::texcoord3f>;
+  // Matrix types
+  parsers[value::TypeTraits<value::matrix2f>::type_id()] = &ParseTypedTimeSamples_wrapper<value::matrix2f>;
+  parsers[value::TypeTraits<value::matrix3f>::type_id()] = &ParseTypedTimeSamples_wrapper<value::matrix3f>;
+  parsers[value::TypeTraits<value::matrix4f>::type_id()] = &ParseTypedTimeSamples_wrapper<value::matrix4f>;
+  parsers[value::TypeTraits<value::matrix2d>::type_id()] = &ParseTypedTimeSamples_wrapper<value::matrix2d>;
+  parsers[value::TypeTraits<value::matrix3d>::type_id()] = &ParseTypedTimeSamples_wrapper<value::matrix3d>;
+  parsers[value::TypeTraits<value::matrix4d>::type_id()] = &ParseTypedTimeSamples_wrapper<value::matrix4d>;
+}
+
+}  // anonymous namespace
+
 // Templated function to parse typed TimeSamples for POD types
 template<typename T>
 bool AsciiParser::ParseTypedTimeSamples(value::TimeSamples *ts_out) {
@@ -223,115 +458,11 @@ bool AsciiParser::ParseTimeSampleValue(const uint32_t type_id, value::Value *res
 
   value::Value val;
 
-#define PARSE_TYPE(__tyid, __type)                       \
-  if (__tyid == value::TypeTraits<__type>::type_id()) {             \
-    __type typed_val; \
-    if (!ReadBasicType(&typed_val)) {                             \
-      PUSH_ERROR_AND_RETURN("Failed to parse value with requested type `" + value::GetTypeName(__tyid) + "`"); \
-    }                                                                  \
-    val = value::Value(typed_val); \
-  } else
-
-  // NOTE: `string` does not support multi-line string.
-  PARSE_TYPE(type_id, value::AssetPath)
-  PARSE_TYPE(type_id, value::token)
-  PARSE_TYPE(type_id, std::string)
-  // Boolean
-  PARSE_TYPE(type_id, bool)
-  // Int types
-  PARSE_TYPE(type_id, int32_t)
-  PARSE_TYPE(type_id, value::int2)
-  PARSE_TYPE(type_id, value::int3)
-  PARSE_TYPE(type_id, value::int4)
-  // Unsigned int types
-  PARSE_TYPE(type_id, uint32_t)
-  PARSE_TYPE(type_id, value::uint2)
-  PARSE_TYPE(type_id, value::uint3)
-  PARSE_TYPE(type_id, value::uint4)
-  // Char types (int8_t)
-  PARSE_TYPE(type_id, char)
-  PARSE_TYPE(type_id, value::char2)
-  PARSE_TYPE(type_id, value::char3)
-  PARSE_TYPE(type_id, value::char4)
-  // Uchar types (uint8_t)
-  PARSE_TYPE(type_id, uint8_t)
-  PARSE_TYPE(type_id, value::uchar2)
-  PARSE_TYPE(type_id, value::uchar3)
-  PARSE_TYPE(type_id, value::uchar4)
-  // Short types (int16_t)
-  PARSE_TYPE(type_id, int16_t)
-  PARSE_TYPE(type_id, value::short2)
-  PARSE_TYPE(type_id, value::short3)
-  PARSE_TYPE(type_id, value::short4)
-  // Ushort types (uint16_t)
-  PARSE_TYPE(type_id, uint16_t)
-  PARSE_TYPE(type_id, value::ushort2)
-  PARSE_TYPE(type_id, value::ushort3)
-  PARSE_TYPE(type_id, value::ushort4)
-  // 64-bit integer types
-  PARSE_TYPE(type_id, int64_t)
-  PARSE_TYPE(type_id, uint64_t)
-  // Half precision types
-  PARSE_TYPE(type_id, value::half)
-  PARSE_TYPE(type_id, value::half2)
-  PARSE_TYPE(type_id, value::half3)
-  PARSE_TYPE(type_id, value::half4)
-  // Float types
-  PARSE_TYPE(type_id, float)
-  PARSE_TYPE(type_id, value::float2)
-  PARSE_TYPE(type_id, value::float3)
-  PARSE_TYPE(type_id, value::float4)
-  // Double types
-  PARSE_TYPE(type_id, double)
-  PARSE_TYPE(type_id, value::double2)
-  PARSE_TYPE(type_id, value::double3)
-  PARSE_TYPE(type_id, value::double4)
-  // Quaternion types
-  PARSE_TYPE(type_id, value::quath)
-  PARSE_TYPE(type_id, value::quatf)
-  PARSE_TYPE(type_id, value::quatd)
-  // Color types (half precision)
-  PARSE_TYPE(type_id, value::color3h)
-  PARSE_TYPE(type_id, value::color4h)
-  // Color types (float precision)
-  PARSE_TYPE(type_id, value::color3f)
-  PARSE_TYPE(type_id, value::color4f)
-  // Color types (double precision)
-  PARSE_TYPE(type_id, value::color3d)
-  PARSE_TYPE(type_id, value::color4d)
-  // Vector types
-  PARSE_TYPE(type_id, value::vector3h)
-  PARSE_TYPE(type_id, value::vector3f)
-  PARSE_TYPE(type_id, value::vector3d)
-  // Normal types
-  PARSE_TYPE(type_id, value::normal3h)
-  PARSE_TYPE(type_id, value::normal3f)
-  PARSE_TYPE(type_id, value::normal3d)
-  // Point types
-  PARSE_TYPE(type_id, value::point3h)
-  PARSE_TYPE(type_id, value::point3f)
-  PARSE_TYPE(type_id, value::point3d)
-  // Texcoord types
-  PARSE_TYPE(type_id, value::texcoord2h)
-  PARSE_TYPE(type_id, value::texcoord2f)
-  PARSE_TYPE(type_id, value::texcoord2d)
-  PARSE_TYPE(type_id, value::texcoord3h)
-  PARSE_TYPE(type_id, value::texcoord3f)
-  PARSE_TYPE(type_id, value::texcoord3d)
-  // Matrix types (float)
-  PARSE_TYPE(type_id, value::matrix2f)
-  PARSE_TYPE(type_id, value::matrix3f)
-  PARSE_TYPE(type_id, value::matrix4f)
-  // Matrix types (double)
-  PARSE_TYPE(type_id, value::matrix2d)
-  PARSE_TYPE(type_id, value::matrix3d)
-  PARSE_TYPE(type_id, value::matrix4d)
-  // Frame type (same as matrix4d)
-  PARSE_TYPE(type_id, value::frame4d) {
-    PUSH_ERROR_AND_RETURN(" : TODO: timeSamples type " + value::GetTypeName(type_id));
+  // Use registry-based lookup instead of macro if-else chain
+  const auto& registry = TimeSampleValueParserRegistry::Instance();
+  if (!registry.Parse(this, type_id, &val)) {
+    PUSH_ERROR_AND_RETURN("Failed to parse value with requested type `" + value::GetTypeName(type_id) + "`");
   }
-
-#undef PARSE_TYPE
 
   (*result) = val;
 
@@ -365,64 +496,16 @@ bool AsciiParser::ParseTimeSamples(const std::string &type_name,
     ts_out->clear();
   }
 
-  // Try optimized path for POD types first
+  // Try optimized path for POD types first using registry-based lookup
   // IMPORTANT: Save cursor position BEFORE attempting POD path
   // The POD path will consume the '{' if it tries to parse,
   // but we need to restore position for the generic fallback path
   uint64_t saved_cursor = CurrLoc();
-#define TRY_POD_TYPE(__type)                                        \
-  if (type_id.value() == value::TypeTraits<__type>::type_id()) {   \
-    if (ParseTypedTimeSamples<__type>(ts_out)) {                    \
-      return true;                                                  \
-    }                                                                \
-    /* POD path failed - restore cursor to original position */ \
-    /* so the generic fallback can parse from the beginning */ \
-    SeekTo(saved_cursor);                                           \
+
+  const auto& pod_registry = PODTimeSamplesParserRegistry::Instance();
+  if (pod_registry.TryParse(this, type_id.value(), ts_out, saved_cursor)) {
+    return true;
   }
-
-  // Try POD types with optimized parsing
-  // Note: only truly POD types - those that are trivial and standard layout
-  TRY_POD_TYPE(bool)
-  TRY_POD_TYPE(int32_t)
-  TRY_POD_TYPE(uint32_t)
-  TRY_POD_TYPE(int64_t)
-  TRY_POD_TYPE(uint64_t)
-  TRY_POD_TYPE(value::half)
-  TRY_POD_TYPE(value::half2)
-  TRY_POD_TYPE(value::half3)
-  TRY_POD_TYPE(value::half4)
-  TRY_POD_TYPE(float)
-  TRY_POD_TYPE(value::float2)
-  TRY_POD_TYPE(value::float3)
-  TRY_POD_TYPE(value::float4)
-  TRY_POD_TYPE(double)
-  TRY_POD_TYPE(value::double2)
-  TRY_POD_TYPE(value::double3)
-  TRY_POD_TYPE(value::double4)
-  TRY_POD_TYPE(value::int2)
-  TRY_POD_TYPE(value::int3)
-  TRY_POD_TYPE(value::int4)
-  TRY_POD_TYPE(value::quath)
-  TRY_POD_TYPE(value::quatf)
-  TRY_POD_TYPE(value::quatd)
-  TRY_POD_TYPE(value::color3f)
-  TRY_POD_TYPE(value::color4f)
-  TRY_POD_TYPE(value::color3d)
-  TRY_POD_TYPE(value::color4d)
-  TRY_POD_TYPE(value::vector3f)
-  TRY_POD_TYPE(value::normal3f)
-  TRY_POD_TYPE(value::point3f)
-  TRY_POD_TYPE(value::texcoord2f)
-  TRY_POD_TYPE(value::texcoord3f)
-  // Matrix types - now trivial with default constructors
-  TRY_POD_TYPE(value::matrix2f)
-  TRY_POD_TYPE(value::matrix3f)
-  TRY_POD_TYPE(value::matrix4f)
-  TRY_POD_TYPE(value::matrix2d)
-  TRY_POD_TYPE(value::matrix3d)
-  TRY_POD_TYPE(value::matrix4d)
-
-#undef TRY_POD_TYPE
 
   // Fall back to generic value::Value-based parsing for non-POD types
   // (strings, tokens, paths, arrays, etc.)

@@ -435,6 +435,10 @@ set(TINYUSDZ_SOURCES
     ${PROJECT_SOURCE_DIR}/src/crate-dump.cc
     ${PROJECT_SOURCE_DIR}/src/path-util.cc
     ${PROJECT_SOURCE_DIR}/src/prim-reconstruct.cc
+    ${PROJECT_SOURCE_DIR}/src/prim-reconstruct-geom.cc
+    ${PROJECT_SOURCE_DIR}/src/prim-reconstruct-skel.cc
+    ${PROJECT_SOURCE_DIR}/src/prim-reconstruct-light.cc
+    ${PROJECT_SOURCE_DIR}/src/prim-reconstruct-shader.cc
     ${PROJECT_SOURCE_DIR}/src/prim-composition.cc
     ${PROJECT_SOURCE_DIR}/src/prim-types.cc
     ${PROJECT_SOURCE_DIR}/src/core/prim-enums.cc
@@ -469,6 +473,8 @@ set(TINYUSDZ_SOURCES
     ${PROJECT_SOURCE_DIR}/src/pprinter.cc
     ${PROJECT_SOURCE_DIR}/src/timesamples-pprint.cc
     ${PROJECT_SOURCE_DIR}/src/timesamples.cc
+    ${PROJECT_SOURCE_DIR}/src/timesamples-inst-scalar.cc
+    ${PROJECT_SOURCE_DIR}/src/timesamples-inst-array.cc
     ${PROJECT_SOURCE_DIR}/src/stage.cc
     ${PROJECT_SOURCE_DIR}/src/stage.hh
     ${PROJECT_SOURCE_DIR}/src/uuid-gen.cc
@@ -497,8 +503,12 @@ if (TINYUSDZ_WITH_TYDRA)
         ${PROJECT_SOURCE_DIR}/src/tydra/attribute-eval.cc
         ${PROJECT_SOURCE_DIR}/src/tydra/attribute-eval-typed.cc
         ${PROJECT_SOURCE_DIR}/src/tydra/attribute-eval-typed-animatable.cc
+        ${PROJECT_SOURCE_DIR}/src/tydra/attribute-eval-typed-animatable-inst-scalar.cc
+        ${PROJECT_SOURCE_DIR}/src/tydra/attribute-eval-typed-animatable-inst-array.cc
         ${PROJECT_SOURCE_DIR}/src/tydra/attribute-eval-typed-fallback.cc
         ${PROJECT_SOURCE_DIR}/src/tydra/attribute-eval-typed-animatable-fallback.cc
+        ${PROJECT_SOURCE_DIR}/src/tydra/attribute-eval-typed-animatable-fallback-inst-scalar.cc
+        ${PROJECT_SOURCE_DIR}/src/tydra/attribute-eval-typed-animatable-fallback-inst-array.cc
         ${PROJECT_SOURCE_DIR}/src/tydra/command-and-history.cc
         ${PROJECT_SOURCE_DIR}/src/tydra/obj-export.cc
         ${PROJECT_SOURCE_DIR}/src/tydra/usd-export.cc
