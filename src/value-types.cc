@@ -2,6 +2,7 @@
 // Copyright 2022 - 2023, Syoyo Fujita.
 // Copyright 2023 - Present, Light Transport Entertainment Inc.
 #include "value-types.hh"
+#include "timesamples.hh"
 
 #include <type_traits>
 
