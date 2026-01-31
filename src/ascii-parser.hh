@@ -1054,6 +1054,68 @@ class AsciiParser {
                        const uint32_t depth,
                        VariantSetContent *variantSetContent);
 
+  //
+  // Type-specific non-template parser wrappers for registry-based dispatch.
+  // These wrap the template ParseBasicPrimAttr<T> to enable function pointer storage.
+  // Declared public for access by PrimAttrParserRegistry.
+  //
+  // Scalars
+  bool ParsePrimAttr_bool(bool array_qual, const std::string& name, Attribute* attr);
+  bool ParsePrimAttr_int(bool array_qual, const std::string& name, Attribute* attr);
+  bool ParsePrimAttr_uint(bool array_qual, const std::string& name, Attribute* attr);
+  bool ParsePrimAttr_int64(bool array_qual, const std::string& name, Attribute* attr);
+  bool ParsePrimAttr_uint64(bool array_qual, const std::string& name, Attribute* attr);
+  bool ParsePrimAttr_half(bool array_qual, const std::string& name, Attribute* attr);
+  bool ParsePrimAttr_float(bool array_qual, const std::string& name, Attribute* attr);
+  bool ParsePrimAttr_double(bool array_qual, const std::string& name, Attribute* attr);
+  bool ParsePrimAttr_string(bool array_qual, const std::string& name, Attribute* attr);
+  bool ParsePrimAttr_token(bool array_qual, const std::string& name, Attribute* attr);
+  bool ParsePrimAttr_asset(bool array_qual, const std::string& name, Attribute* attr);
+  // Int vectors
+  bool ParsePrimAttr_int2(bool array_qual, const std::string& name, Attribute* attr);
+  bool ParsePrimAttr_int3(bool array_qual, const std::string& name, Attribute* attr);
+  bool ParsePrimAttr_int4(bool array_qual, const std::string& name, Attribute* attr);
+  bool ParsePrimAttr_uint2(bool array_qual, const std::string& name, Attribute* attr);
+  bool ParsePrimAttr_uint3(bool array_qual, const std::string& name, Attribute* attr);
+  bool ParsePrimAttr_uint4(bool array_qual, const std::string& name, Attribute* attr);
+  // Half vectors
+  bool ParsePrimAttr_half2(bool array_qual, const std::string& name, Attribute* attr);
+  bool ParsePrimAttr_half3(bool array_qual, const std::string& name, Attribute* attr);
+  bool ParsePrimAttr_half4(bool array_qual, const std::string& name, Attribute* attr);
+  // Float vectors
+  bool ParsePrimAttr_float2(bool array_qual, const std::string& name, Attribute* attr);
+  bool ParsePrimAttr_float3(bool array_qual, const std::string& name, Attribute* attr);
+  bool ParsePrimAttr_float4(bool array_qual, const std::string& name, Attribute* attr);
+  // Double vectors
+  bool ParsePrimAttr_double2(bool array_qual, const std::string& name, Attribute* attr);
+  bool ParsePrimAttr_double3(bool array_qual, const std::string& name, Attribute* attr);
+  bool ParsePrimAttr_double4(bool array_qual, const std::string& name, Attribute* attr);
+  // Quaternions
+  bool ParsePrimAttr_quath(bool array_qual, const std::string& name, Attribute* attr);
+  bool ParsePrimAttr_quatf(bool array_qual, const std::string& name, Attribute* attr);
+  bool ParsePrimAttr_quatd(bool array_qual, const std::string& name, Attribute* attr);
+  // Geometric types (point, normal, vector)
+  bool ParsePrimAttr_point3f(bool array_qual, const std::string& name, Attribute* attr);
+  bool ParsePrimAttr_point3d(bool array_qual, const std::string& name, Attribute* attr);
+  bool ParsePrimAttr_normal3f(bool array_qual, const std::string& name, Attribute* attr);
+  bool ParsePrimAttr_normal3d(bool array_qual, const std::string& name, Attribute* attr);
+  bool ParsePrimAttr_vector3f(bool array_qual, const std::string& name, Attribute* attr);
+  bool ParsePrimAttr_vector3d(bool array_qual, const std::string& name, Attribute* attr);
+  // Color types
+  bool ParsePrimAttr_color3f(bool array_qual, const std::string& name, Attribute* attr);
+  bool ParsePrimAttr_color3d(bool array_qual, const std::string& name, Attribute* attr);
+  bool ParsePrimAttr_color4f(bool array_qual, const std::string& name, Attribute* attr);
+  bool ParsePrimAttr_color4d(bool array_qual, const std::string& name, Attribute* attr);
+  // Matrix types
+  bool ParsePrimAttr_matrix2f(bool array_qual, const std::string& name, Attribute* attr);
+  bool ParsePrimAttr_matrix2d(bool array_qual, const std::string& name, Attribute* attr);
+  bool ParsePrimAttr_matrix3f(bool array_qual, const std::string& name, Attribute* attr);
+  bool ParsePrimAttr_matrix3d(bool array_qual, const std::string& name, Attribute* attr);
+  bool ParsePrimAttr_matrix4f(bool array_qual, const std::string& name, Attribute* attr);
+  bool ParsePrimAttr_matrix4d(bool array_qual, const std::string& name, Attribute* attr);
+  // Texture coordinates
+  bool ParsePrimAttr_texcoord2f(bool array_qual, const std::string& name, Attribute* attr);
+
   // --------------------------------------------
 
  private:
