@@ -506,6 +506,12 @@ if (TINYUSDZ_WITH_TYDRA)
         ${PROJECT_SOURCE_DIR}/src/tydra/shader-network.hh
         ${PROJECT_SOURCE_DIR}/src/tydra/render-data.cc
         ${PROJECT_SOURCE_DIR}/src/tydra/render-data.hh
+        ${PROJECT_SOURCE_DIR}/src/tydra/render-data-internal.hh
+        ${PROJECT_SOURCE_DIR}/src/tydra/render-light-converter.cc
+        ${PROJECT_SOURCE_DIR}/src/tydra/render-mesh-merge.cc
+        ${PROJECT_SOURCE_DIR}/src/tydra/render-animation-converter.cc
+        ${PROJECT_SOURCE_DIR}/src/tydra/render-texture-converter.cc
+        ${PROJECT_SOURCE_DIR}/src/tydra/render-index-builder.cc
         ${PROJECT_SOURCE_DIR}/src/tydra/render-data-pprint.cc
         ${PROJECT_SOURCE_DIR}/src/tydra/render-data-pprint.hh
         ${PROJECT_SOURCE_DIR}/src/tydra/raytracing-data.cc
