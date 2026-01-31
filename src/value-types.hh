@@ -16,7 +16,6 @@
 #include <cmath>
 #include <cstring>
 #include <functional>
-#include <iostream>
 #include <limits>
 #include <map>
 #include <memory>
@@ -2537,7 +2536,8 @@ bool UpcastType(const std::string &toType, value::Value &inout);
 
 }  // namespace tinyusdz
 
-#include "timesamples.hh"
+// NOTE: timesamples.hh is NOT included here to avoid circular dependencies
+// and reduce compile times. Include timesamples.hh directly if needed.
 
 #include <set>  // for RegisterPrimAttrTypes
 
