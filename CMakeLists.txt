@@ -474,6 +474,7 @@ set(TINYUSDZ_SOURCES
     ${PROJECT_SOURCE_DIR}/src/timesamples-pprint.cc
     ${PROJECT_SOURCE_DIR}/src/timesamples.cc
     ${PROJECT_SOURCE_DIR}/src/timesamples-inst-scalar.cc
+    ${PROJECT_SOURCE_DIR}/src/timesamples-inst-scalar-role.cc
     ${PROJECT_SOURCE_DIR}/src/timesamples-inst-array.cc
     ${PROJECT_SOURCE_DIR}/src/timesamples-inst-array-basic.cc
     ${PROJECT_SOURCE_DIR}/src/stage.cc
