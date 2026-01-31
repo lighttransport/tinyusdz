@@ -616,6 +616,111 @@ std::string TrimString(const std::string &str) {
 
 }  // namespace
 
+//
+// PrimAttrParserRegistry - Maps type names to parser functions for efficient dispatch
+// This replaces the long if-else chain with O(1) lookup
+//
+namespace {
+
+// Function pointer type for attribute parsers
+using PrimAttrParserFn = bool (AsciiParser::*)(bool, const std::string&, Attribute*);
+
+struct PrimAttrParserRegistry {
+  std::map<std::string, PrimAttrParserFn> parsers;
+
+  static const PrimAttrParserRegistry& Instance() {
+    // Use pointer to avoid exit-time destructor (intentional leak for static registry)
+    static PrimAttrParserRegistry* instance = new PrimAttrParserRegistry();
+    return *instance;
+  }
+
+  PrimAttrParserRegistry();
+
+  bool Parse(AsciiParser* parser, const std::string& type_name,
+             bool array_qual, const std::string& attr_name, Attribute* attr) const {
+    auto it = parsers.find(type_name);
+    if (it == parsers.end()) {
+      return false;  // Unknown type
+    }
+    return (parser->*(it->second))(array_qual, attr_name, attr);
+  }
+
+  bool HasParser(const std::string& type_name) const {
+    return parsers.find(type_name) != parsers.end();
+  }
+};
+
+// Registry constructor - registers all type parsers
+PrimAttrParserRegistry::PrimAttrParserRegistry() {
+  // Scalars
+  parsers[value::kBool] = &AsciiParser::ParsePrimAttr_bool;
+  parsers[value::kInt] = &AsciiParser::ParsePrimAttr_int;
+  parsers[value::kUInt] = &AsciiParser::ParsePrimAttr_uint;
+  parsers[value::kInt64] = &AsciiParser::ParsePrimAttr_int64;
+  parsers[value::kUInt64] = &AsciiParser::ParsePrimAttr_uint64;
+  parsers[value::kHalf] = &AsciiParser::ParsePrimAttr_half;
+  parsers[value::kFloat] = &AsciiParser::ParsePrimAttr_float;
+  parsers[value::kDouble] = &AsciiParser::ParsePrimAttr_double;
+  parsers[value::kString] = &AsciiParser::ParsePrimAttr_string;
+  parsers[value::kToken] = &AsciiParser::ParsePrimAttr_token;
+  parsers[value::kAssetPath] = &AsciiParser::ParsePrimAttr_asset;
+
+  // Int vectors
+  parsers[value::kInt2] = &AsciiParser::ParsePrimAttr_int2;
+  parsers[value::kInt3] = &AsciiParser::ParsePrimAttr_int3;
+  parsers[value::kInt4] = &AsciiParser::ParsePrimAttr_int4;
+  parsers[value::kUInt2] = &AsciiParser::ParsePrimAttr_uint2;
+  parsers[value::kUInt3] = &AsciiParser::ParsePrimAttr_uint3;
+  parsers[value::kUInt4] = &AsciiParser::ParsePrimAttr_uint4;
+
+  // Half vectors
+  parsers[value::kHalf2] = &AsciiParser::ParsePrimAttr_half2;
+  parsers[value::kHalf3] = &AsciiParser::ParsePrimAttr_half3;
+  parsers[value::kHalf4] = &AsciiParser::ParsePrimAttr_half4;
+
+  // Float vectors
+  parsers[value::kFloat2] = &AsciiParser::ParsePrimAttr_float2;
+  parsers[value::kFloat3] = &AsciiParser::ParsePrimAttr_float3;
+  parsers[value::kFloat4] = &AsciiParser::ParsePrimAttr_float4;
+
+  // Double vectors
+  parsers[value::kDouble2] = &AsciiParser::ParsePrimAttr_double2;
+  parsers[value::kDouble3] = &AsciiParser::ParsePrimAttr_double3;
+  parsers[value::kDouble4] = &AsciiParser::ParsePrimAttr_double4;
+
+  // Quaternions
+  parsers[value::kQuath] = &AsciiParser::ParsePrimAttr_quath;
+  parsers[value::kQuatf] = &AsciiParser::ParsePrimAttr_quatf;
+  parsers[value::kQuatd] = &AsciiParser::ParsePrimAttr_quatd;
+
+  // Geometric types
+  parsers[value::kPoint3f] = &AsciiParser::ParsePrimAttr_point3f;
+  parsers[value::kPoint3d] = &AsciiParser::ParsePrimAttr_point3d;
+  parsers[value::kNormal3f] = &AsciiParser::ParsePrimAttr_normal3f;
+  parsers[value::kNormal3d] = &AsciiParser::ParsePrimAttr_normal3d;
+  parsers[value::kVector3f] = &AsciiParser::ParsePrimAttr_vector3f;
+  parsers[value::kVector3d] = &AsciiParser::ParsePrimAttr_vector3d;
+
+  // Color types
+  parsers[value::kColor3f] = &AsciiParser::ParsePrimAttr_color3f;
+  parsers[value::kColor3d] = &AsciiParser::ParsePrimAttr_color3d;
+  parsers[value::kColor4f] = &AsciiParser::ParsePrimAttr_color4f;
+  parsers[value::kColor4d] = &AsciiParser::ParsePrimAttr_color4d;
+
+  // Matrix types
+  parsers[value::kMatrix2f] = &AsciiParser::ParsePrimAttr_matrix2f;
+  parsers[value::kMatrix2d] = &AsciiParser::ParsePrimAttr_matrix2d;
+  parsers[value::kMatrix3f] = &AsciiParser::ParsePrimAttr_matrix3f;
+  parsers[value::kMatrix3d] = &AsciiParser::ParsePrimAttr_matrix3d;
+  parsers[value::kMatrix4f] = &AsciiParser::ParsePrimAttr_matrix4f;
+  parsers[value::kMatrix4d] = &AsciiParser::ParsePrimAttr_matrix4d;
+
+  // Texture coordinates
+  parsers[value::kTexCoord2f] = &AsciiParser::ParsePrimAttr_texcoord2f;
+}
+
+}  // namespace
+
 inline bool isChar(char c) { return std::isalpha(int(c)); }
 
 inline bool hasConnect(const std::string &str) {
@@ -4108,6 +4213,205 @@ bool AsciiParser::ParseBasicPrimAttr(bool array_qual,
   return true;
 }
 
+//
+// Non-template parser wrapper implementations for registry-based dispatch.
+// Each function wraps ParseBasicPrimAttr<T> for the corresponding type.
+//
+
+// Scalars
+bool AsciiParser::ParsePrimAttr_bool(bool array_qual, const std::string& name, Attribute* attr) {
+  return ParseBasicPrimAttr<bool>(array_qual, name, attr);
+}
+
+bool AsciiParser::ParsePrimAttr_int(bool array_qual, const std::string& name, Attribute* attr) {
+  return ParseBasicPrimAttr<int>(array_qual, name, attr);
+}
+
+bool AsciiParser::ParsePrimAttr_uint(bool array_qual, const std::string& name, Attribute* attr) {
+  return ParseBasicPrimAttr<uint32_t>(array_qual, name, attr);
+}
+
+bool AsciiParser::ParsePrimAttr_int64(bool array_qual, const std::string& name, Attribute* attr) {
+  return ParseBasicPrimAttr<int64_t>(array_qual, name, attr);
+}
+
+bool AsciiParser::ParsePrimAttr_uint64(bool array_qual, const std::string& name, Attribute* attr) {
+  return ParseBasicPrimAttr<uint64_t>(array_qual, name, attr);
+}
+
+bool AsciiParser::ParsePrimAttr_half(bool array_qual, const std::string& name, Attribute* attr) {
+  return ParseBasicPrimAttr<value::half>(array_qual, name, attr);
+}
+
+bool AsciiParser::ParsePrimAttr_float(bool array_qual, const std::string& name, Attribute* attr) {
+  return ParseBasicPrimAttr<float>(array_qual, name, attr);
+}
+
+bool AsciiParser::ParsePrimAttr_double(bool array_qual, const std::string& name, Attribute* attr) {
+  return ParseBasicPrimAttr<double>(array_qual, name, attr);
+}
+
+bool AsciiParser::ParsePrimAttr_string(bool array_qual, const std::string& name, Attribute* attr) {
+  return ParseBasicPrimAttr<std::string>(array_qual, name, attr);
+}
+
+bool AsciiParser::ParsePrimAttr_token(bool array_qual, const std::string& name, Attribute* attr) {
+  return ParseBasicPrimAttr<value::token>(array_qual, name, attr);
+}
+
+bool AsciiParser::ParsePrimAttr_asset(bool array_qual, const std::string& name, Attribute* attr) {
+  return ParseBasicPrimAttr<value::AssetPath>(array_qual, name, attr);
+}
+
+// Int vectors
+bool AsciiParser::ParsePrimAttr_int2(bool array_qual, const std::string& name, Attribute* attr) {
+  return ParseBasicPrimAttr<value::int2>(array_qual, name, attr);
+}
+
+bool AsciiParser::ParsePrimAttr_int3(bool array_qual, const std::string& name, Attribute* attr) {
+  return ParseBasicPrimAttr<value::int3>(array_qual, name, attr);
+}
+
+bool AsciiParser::ParsePrimAttr_int4(bool array_qual, const std::string& name, Attribute* attr) {
+  return ParseBasicPrimAttr<value::int4>(array_qual, name, attr);
+}
+
+bool AsciiParser::ParsePrimAttr_uint2(bool array_qual, const std::string& name, Attribute* attr) {
+  return ParseBasicPrimAttr<value::uint2>(array_qual, name, attr);
+}
+
+bool AsciiParser::ParsePrimAttr_uint3(bool array_qual, const std::string& name, Attribute* attr) {
+  return ParseBasicPrimAttr<value::uint3>(array_qual, name, attr);
+}
+
+bool AsciiParser::ParsePrimAttr_uint4(bool array_qual, const std::string& name, Attribute* attr) {
+  return ParseBasicPrimAttr<value::uint4>(array_qual, name, attr);
+}
+
+// Half vectors
+bool AsciiParser::ParsePrimAttr_half2(bool array_qual, const std::string& name, Attribute* attr) {
+  return ParseBasicPrimAttr<value::half2>(array_qual, name, attr);
+}
+
+bool AsciiParser::ParsePrimAttr_half3(bool array_qual, const std::string& name, Attribute* attr) {
+  return ParseBasicPrimAttr<value::half3>(array_qual, name, attr);
+}
+
+bool AsciiParser::ParsePrimAttr_half4(bool array_qual, const std::string& name, Attribute* attr) {
+  return ParseBasicPrimAttr<value::half4>(array_qual, name, attr);
+}
+
+// Float vectors
+bool AsciiParser::ParsePrimAttr_float2(bool array_qual, const std::string& name, Attribute* attr) {
+  return ParseBasicPrimAttr<value::float2>(array_qual, name, attr);
+}
+
+bool AsciiParser::ParsePrimAttr_float3(bool array_qual, const std::string& name, Attribute* attr) {
+  return ParseBasicPrimAttr<value::float3>(array_qual, name, attr);
+}
+
+bool AsciiParser::ParsePrimAttr_float4(bool array_qual, const std::string& name, Attribute* attr) {
+  return ParseBasicPrimAttr<value::float4>(array_qual, name, attr);
+}
+
+// Double vectors
+bool AsciiParser::ParsePrimAttr_double2(bool array_qual, const std::string& name, Attribute* attr) {
+  return ParseBasicPrimAttr<value::double2>(array_qual, name, attr);
+}
+
+bool AsciiParser::ParsePrimAttr_double3(bool array_qual, const std::string& name, Attribute* attr) {
+  return ParseBasicPrimAttr<value::double3>(array_qual, name, attr);
+}
+
+bool AsciiParser::ParsePrimAttr_double4(bool array_qual, const std::string& name, Attribute* attr) {
+  return ParseBasicPrimAttr<value::double4>(array_qual, name, attr);
+}
+
+// Quaternions
+bool AsciiParser::ParsePrimAttr_quath(bool array_qual, const std::string& name, Attribute* attr) {
+  return ParseBasicPrimAttr<value::quath>(array_qual, name, attr);
+}
+
+bool AsciiParser::ParsePrimAttr_quatf(bool array_qual, const std::string& name, Attribute* attr) {
+  return ParseBasicPrimAttr<value::quatf>(array_qual, name, attr);
+}
+
+bool AsciiParser::ParsePrimAttr_quatd(bool array_qual, const std::string& name, Attribute* attr) {
+  return ParseBasicPrimAttr<value::quatd>(array_qual, name, attr);
+}
+
+// Geometric types (point, normal, vector)
+bool AsciiParser::ParsePrimAttr_point3f(bool array_qual, const std::string& name, Attribute* attr) {
+  return ParseBasicPrimAttr<value::point3f>(array_qual, name, attr);
+}
+
+bool AsciiParser::ParsePrimAttr_point3d(bool array_qual, const std::string& name, Attribute* attr) {
+  return ParseBasicPrimAttr<value::point3d>(array_qual, name, attr);
+}
+
+bool AsciiParser::ParsePrimAttr_normal3f(bool array_qual, const std::string& name, Attribute* attr) {
+  return ParseBasicPrimAttr<value::normal3f>(array_qual, name, attr);
+}
+
+bool AsciiParser::ParsePrimAttr_normal3d(bool array_qual, const std::string& name, Attribute* attr) {
+  return ParseBasicPrimAttr<value::normal3d>(array_qual, name, attr);
+}
+
+bool AsciiParser::ParsePrimAttr_vector3f(bool array_qual, const std::string& name, Attribute* attr) {
+  return ParseBasicPrimAttr<value::vector3f>(array_qual, name, attr);
+}
+
+bool AsciiParser::ParsePrimAttr_vector3d(bool array_qual, const std::string& name, Attribute* attr) {
+  return ParseBasicPrimAttr<value::vector3d>(array_qual, name, attr);
+}
+
+// Color types
+bool AsciiParser::ParsePrimAttr_color3f(bool array_qual, const std::string& name, Attribute* attr) {
+  return ParseBasicPrimAttr<value::color3f>(array_qual, name, attr);
+}
+
+bool AsciiParser::ParsePrimAttr_color3d(bool array_qual, const std::string& name, Attribute* attr) {
+  return ParseBasicPrimAttr<value::color3d>(array_qual, name, attr);
+}
+
+bool AsciiParser::ParsePrimAttr_color4f(bool array_qual, const std::string& name, Attribute* attr) {
+  return ParseBasicPrimAttr<value::color4f>(array_qual, name, attr);
+}
+
+bool AsciiParser::ParsePrimAttr_color4d(bool array_qual, const std::string& name, Attribute* attr) {
+  return ParseBasicPrimAttr<value::color4d>(array_qual, name, attr);
+}
+
+// Matrix types
+bool AsciiParser::ParsePrimAttr_matrix2f(bool array_qual, const std::string& name, Attribute* attr) {
+  return ParseBasicPrimAttr<value::matrix2f>(array_qual, name, attr);
+}
+
+bool AsciiParser::ParsePrimAttr_matrix2d(bool array_qual, const std::string& name, Attribute* attr) {
+  return ParseBasicPrimAttr<value::matrix2d>(array_qual, name, attr);
+}
+
+bool AsciiParser::ParsePrimAttr_matrix3f(bool array_qual, const std::string& name, Attribute* attr) {
+  return ParseBasicPrimAttr<value::matrix3f>(array_qual, name, attr);
+}
+
+bool AsciiParser::ParsePrimAttr_matrix3d(bool array_qual, const std::string& name, Attribute* attr) {
+  return ParseBasicPrimAttr<value::matrix3d>(array_qual, name, attr);
+}
+
+bool AsciiParser::ParsePrimAttr_matrix4f(bool array_qual, const std::string& name, Attribute* attr) {
+  return ParseBasicPrimAttr<value::matrix4f>(array_qual, name, attr);
+}
+
+bool AsciiParser::ParsePrimAttr_matrix4d(bool array_qual, const std::string& name, Attribute* attr) {
+  return ParseBasicPrimAttr<value::matrix4d>(array_qual, name, attr);
+}
+
+// Texture coordinates
+bool AsciiParser::ParsePrimAttr_texcoord2f(bool array_qual, const std::string& name, Attribute* attr) {
+  return ParseBasicPrimAttr<value::texcoord2f>(array_qual, name, attr);
+}
+
 bool AsciiParser::ParsePrimProps(std::map<std::string, Property> *props,
                                  std::vector<value::token> *propNames) {
   (void)propNames;
@@ -4622,331 +4926,10 @@ bool AsciiParser::ParsePrimProps(std::map<std::string, Property> *props,
     }
 
     if (!value_blocked) {
-      // TODO: Refactor. ParseAttrMeta is currently called inside
-      // ParseBasicPrimAttr()
-      if (type_name == value::kBool) {
-        if (!ParseBasicPrimAttr<bool>(array_qual, primattr_name, pattr)) {
-          return false;
-        }
-      } else if (type_name == value::kInt) {
-        if (!ParseBasicPrimAttr<int>(array_qual, primattr_name, pattr)) {
-          return false;
-        }
-      } else if (type_name == value::kInt2) {
-        if (!ParseBasicPrimAttr<value::int2>(array_qual, primattr_name,
-                                             pattr)) {
-          return false;
-        }
-      } else if (type_name == value::kInt3) {
-        if (!ParseBasicPrimAttr<value::int3>(array_qual, primattr_name,
-                                             pattr)) {
-          return false;
-        }
-      } else if (type_name == value::kInt4) {
-        if (!ParseBasicPrimAttr<value::int4>(array_qual, primattr_name,
-                                             pattr)) {
-          return false;
-        }
-      } else if (type_name == value::kUInt) {
-        if (!ParseBasicPrimAttr<uint32_t>(array_qual, primattr_name, pattr)) {
-          return false;
-        }
-      } else if (type_name == value::kUInt2) {
-        if (!ParseBasicPrimAttr<value::uint2>(array_qual, primattr_name,
-                                              pattr)) {
-          return false;
-        }
-      } else if (type_name == value::kUInt3) {
-        if (!ParseBasicPrimAttr<value::uint3>(array_qual, primattr_name,
-                                              pattr)) {
-          return false;
-        }
-      } else if (type_name == value::kUInt4) {
-        if (!ParseBasicPrimAttr<value::uint4>(array_qual, primattr_name,
-                                              pattr)) {
-          return false;
-        }
-      } else if (type_name == value::kInt64) {
-        if (!ParseBasicPrimAttr<int64_t>(array_qual, primattr_name, pattr)) {
-          return false;
-        }
-      } else if (type_name == value::kUInt64) {
-        if (!ParseBasicPrimAttr<uint64_t>(array_qual, primattr_name, pattr)) {
-          return false;
-        }
-      } else if (type_name == value::kDouble) {
-        if (!ParseBasicPrimAttr<double>(array_qual, primattr_name, pattr)) {
-          return false;
-        }
-      } else if (type_name == value::kString) {
-        if (!ParseBasicPrimAttr<std::string>(array_qual, primattr_name,
-                                                   pattr)) {
-          return false;
-        }
-      } else if (type_name == value::kToken) {
-        if (!ParseBasicPrimAttr<value::token>(array_qual, primattr_name,
-                                              pattr)) {
-          return false;
-        }
-      } else if (type_name == value::kHalf) {
-        if (!ParseBasicPrimAttr<value::half>(array_qual, primattr_name,
-                                             pattr)) {
-          return false;
-        }
-      } else if (type_name == value::kHalf2) {
-        if (!ParseBasicPrimAttr<value::half2>(array_qual, primattr_name,
-                                              pattr)) {
-          return false;
-        }
-      } else if (type_name == value::kHalf3) {
-        if (!ParseBasicPrimAttr<value::half3>(array_qual, primattr_name,
-                                              pattr)) {
-          return false;
-        }
-      } else if (type_name == value::kHalf4) {
-        if (!ParseBasicPrimAttr<value::half4>(array_qual, primattr_name,
-                                              pattr)) {
-          return false;
-        }
-      } else if (type_name == value::kFloat) {
-        if (!ParseBasicPrimAttr<float>(array_qual, primattr_name, pattr)) {
-          return false;
-        }
-      } else if (type_name == value::kFloat2) {
-        if (!ParseBasicPrimAttr<value::float2>(array_qual, primattr_name,
-                                               pattr)) {
-          return false;
-        }
-      } else if (type_name == value::kFloat3) {
-        if (!ParseBasicPrimAttr<value::float3>(array_qual, primattr_name,
-                                               pattr)) {
-          return false;
-        }
-      } else if (type_name == value::kFloat4) {
-        if (!ParseBasicPrimAttr<value::float4>(array_qual, primattr_name,
-                                               pattr)) {
-          return false;
-        }
-      } else if (type_name == value::kDouble2) {
-        if (!ParseBasicPrimAttr<value::double2>(array_qual, primattr_name,
-                                                pattr)) {
-          return false;
-        }
-      } else if (type_name == value::kDouble3) {
-        if (!ParseBasicPrimAttr<value::double3>(array_qual, primattr_name,
-                                                pattr)) {
-          return false;
-        }
-      } else if (type_name == value::kDouble4) {
-        if (!ParseBasicPrimAttr<value::double4>(array_qual, primattr_name,
-                                                pattr)) {
-          return false;
-        }
-      } else if (type_name == value::kQuath) {
-        if (!ParseBasicPrimAttr<value::quath>(array_qual, primattr_name,
-                                              pattr)) {
-          return false;
-        }
-      } else if (type_name == value::kQuatf) {
-        if (!ParseBasicPrimAttr<value::quatf>(array_qual, primattr_name,
-                                              pattr)) {
-          return false;
-        }
-      } else if (type_name == value::kQuatd) {
-        if (!ParseBasicPrimAttr<value::quatd>(array_qual, primattr_name,
-                                              pattr)) {
-          return false;
-        }
-      } else if (type_name == value::kPoint3f) {
-        if (!ParseBasicPrimAttr<value::point3f>(array_qual, primattr_name,
-                                                pattr)) {
-          return false;
-        }
-      } else if (type_name == value::kColor3f) {
-        if (!ParseBasicPrimAttr<value::color3f>(array_qual, primattr_name,
-                                                pattr)) {
-          return false;
-        }
-      } else if (type_name == value::kColor4f) {
-        if (!ParseBasicPrimAttr<value::color4f>(array_qual, primattr_name,
-                                                pattr)) {
-          return false;
-        }
-      } else if (type_name == value::kPoint3d) {
-        if (!ParseBasicPrimAttr<value::point3d>(array_qual, primattr_name,
-                                                pattr)) {
-          return false;
-        }
-      } else if (type_name == value::kNormal3f) {
-        if (!ParseBasicPrimAttr<value::normal3f>(array_qual, primattr_name,
-                                                 pattr)) {
-          return false;
-        }
-      } else if (type_name == value::kNormal3d) {
-        if (!ParseBasicPrimAttr<value::normal3d>(array_qual, primattr_name,
-                                                 pattr)) {
-          return false;
-        }
-      } else if (type_name == value::kVector3f) {
-        if (!ParseBasicPrimAttr<value::vector3f>(array_qual, primattr_name,
-                                                 pattr)) {
-          return false;
-        }
-      } else if (type_name == value::kVector3d) {
-        if (!ParseBasicPrimAttr<value::vector3d>(array_qual, primattr_name,
-                                                 pattr)) {
-          return false;
-        }
-      } else if (type_name == value::kColor3d) {
-        if (!ParseBasicPrimAttr<value::color3d>(array_qual, primattr_name,
-                                                pattr)) {
-          return false;
-        }
-      } else if (type_name == value::kColor4d) {
-        if (!ParseBasicPrimAttr<value::color4d>(array_qual, primattr_name,
-                                                pattr)) {
-          return false;
-        }
-      } else if (type_name == value::kMatrix2f) {
-        if (!ParseBasicPrimAttr<value::matrix2f>(array_qual, primattr_name,
-                                                 pattr)) {
-          return false;
-        }
-      } else if (type_name == value::kMatrix3f) {
-        if (!ParseBasicPrimAttr<value::matrix3f>(array_qual, primattr_name,
-                                                 pattr)) {
-          return false;
-        }
-      } else if (type_name == value::kMatrix4f) {
-        if (!ParseBasicPrimAttr<value::matrix4f>(array_qual, primattr_name,
-                                                 pattr)) {
-          return false;
-        }
-      } else if (type_name == value::kMatrix2d) {
-        if (!ParseBasicPrimAttr<value::matrix2d>(array_qual, primattr_name,
-                                                 pattr)) {
-          return false;
-        }
-      } else if (type_name == value::kFloat3) {
-        if (!ParseBasicPrimAttr<value::float3>(array_qual, primattr_name,
-                                               pattr)) {
-          return false;
-        }
-      } else if (type_name == value::kFloat4) {
-        if (!ParseBasicPrimAttr<value::float4>(array_qual, primattr_name,
-                                               pattr)) {
-          return false;
-        }
-      } else if (type_name == value::kDouble2) {
-        if (!ParseBasicPrimAttr<value::double2>(array_qual, primattr_name,
-                                                pattr)) {
-          return false;
-        }
-      } else if (type_name == value::kDouble3) {
-        if (!ParseBasicPrimAttr<value::double3>(array_qual, primattr_name,
-                                                pattr)) {
-          return false;
-        }
-      } else if (type_name == value::kDouble4) {
-        if (!ParseBasicPrimAttr<value::double4>(array_qual, primattr_name,
-                                                pattr)) {
-          return false;
-        }
-      } else if (type_name == value::kPoint3f) {
-        if (!ParseBasicPrimAttr<value::point3f>(array_qual, primattr_name,
-                                                pattr)) {
-          return false;
-        }
-      } else if (type_name == value::kColor3f) {
-        if (!ParseBasicPrimAttr<value::color3f>(array_qual, primattr_name,
-                                                pattr)) {
-          return false;
-        }
-      } else if (type_name == value::kColor4f) {
-        if (!ParseBasicPrimAttr<value::color4f>(array_qual, primattr_name,
-                                                pattr)) {
-          return false;
-        }
-      } else if (type_name == value::kPoint3d) {
-        if (!ParseBasicPrimAttr<value::point3d>(array_qual, primattr_name,
-                                                pattr)) {
-          return false;
-        }
-      } else if (type_name == value::kNormal3f) {
-        if (!ParseBasicPrimAttr<value::normal3f>(array_qual, primattr_name,
-                                                 pattr)) {
-          return false;
-        }
-      } else if (type_name == value::kNormal3d) {
-        if (!ParseBasicPrimAttr<value::normal3d>(array_qual, primattr_name,
-                                                 pattr)) {
-          return false;
-        }
-      } else if (type_name == value::kVector3f) {
-        if (!ParseBasicPrimAttr<value::vector3f>(array_qual, primattr_name,
-                                                 pattr)) {
-          return false;
-        }
-      } else if (type_name == value::kVector3d) {
-        if (!ParseBasicPrimAttr<value::vector3d>(array_qual, primattr_name,
-                                                 pattr)) {
-          return false;
-        }
-      } else if (type_name == value::kColor3d) {
-        if (!ParseBasicPrimAttr<value::color3d>(array_qual, primattr_name,
-                                                pattr)) {
-          return false;
-        }
-      } else if (type_name == value::kColor4d) {
-        if (!ParseBasicPrimAttr<value::color4d>(array_qual, primattr_name,
-                                                pattr)) {
-          return false;
-        }
-      } else if (type_name == value::kMatrix2f) {
-        if (!ParseBasicPrimAttr<value::matrix2f>(array_qual, primattr_name,
-                                                 pattr)) {
-          return false;
-        }
-      } else if (type_name == value::kMatrix3f) {
-        if (!ParseBasicPrimAttr<value::matrix3f>(array_qual, primattr_name,
-                                                 pattr)) {
-          return false;
-        }
-      } else if (type_name == value::kMatrix4f) {
-        if (!ParseBasicPrimAttr<value::matrix4f>(array_qual, primattr_name,
-                                                 pattr)) {
-          return false;
-        }
-
-      } else if (type_name == value::kMatrix2d) {
-        if (!ParseBasicPrimAttr<value::matrix2d>(array_qual, primattr_name,
-                                                 pattr)) {
-          return false;
-        }
-      } else if (type_name == value::kMatrix3d) {
-        if (!ParseBasicPrimAttr<value::matrix3d>(array_qual, primattr_name,
-                                                 pattr)) {
-          return false;
-        }
-      } else if (type_name == value::kMatrix4d) {
-        if (!ParseBasicPrimAttr<value::matrix4d>(array_qual, primattr_name,
-                                                 pattr)) {
-          return false;
-        }
-
-      } else if (type_name == value::kTexCoord2f) {
-        if (!ParseBasicPrimAttr<value::texcoord2f>(array_qual, primattr_name,
-                                                   pattr)) {
-          return false;
-        }
-
-      } else if (type_name == value::kAssetPath) {
-        if (!ParseBasicPrimAttr<value::AssetPath>(array_qual, primattr_name,
-                                                  pattr)) {
-          return false;
-        }
-      } else {
-        PUSH_ERROR_AND_RETURN("TODO: type = " + type_name);
+      // Use registry-based dispatch for type parsing
+      const auto& registry = PrimAttrParserRegistry::Instance();
+      if (!registry.Parse(this, type_name, array_qual, primattr_name, pattr)) {
+        PUSH_ERROR_AND_RETURN("Unsupported or failed to parse type: " + type_name);
       }
     }
 

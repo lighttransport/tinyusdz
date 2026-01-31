@@ -18,80 +18,6 @@ namespace tydra {
     (*err) +=  msg;     \
   }
 
-
-template<typename T>
-bool EvaluateTypedAttributeImpl(
-    const tinyusdz::Stage &stage, const TypedAttributeWithFallback<Animatable<T>> &attr,
-    const std::string &attr_name,
-    T *value,
-    std::string *err,
-    const double t, const value::TimeSampleInterpolationType tinterp)
-{
-
-  if (attr.has_value()) {
-    return attr.get_value(value);
-  } if (attr.has_connections()) {
-    // Follow connection target Path(singple targetPath only).
-    std::vector<Path> pv = attr.connections();
-    if (pv.empty()) {
-      PUSH_ERROR_AND_RETURN(fmt::format("Connection targetPath is empty for Attribute {}.", attr_name));
-    }
-
-    if (pv.size() > 1) {
-      PUSH_ERROR_AND_RETURN(
-          fmt::format("Multiple targetPaths assigned to .connection for Attribute {}.", attr_name));
-    }
-
-    auto target = pv[0];
-
-    std::string targetPrimPath = target.prim_part();
-    std::string targetPrimPropName = target.prop_part();
-    DCOUT("connection targetPath : " << target << "(Prim: " << targetPrimPath
-                                     << ", Prop: " << targetPrimPropName
-                                     << ")");
-
-    auto targetPrimRet =
-        stage.GetPrimAtPath(Path(targetPrimPath, /* prop */ ""));
-    if (targetPrimRet) {
-      // Follow the connetion
-      const Prim *targetPrim = targetPrimRet.value();
-
-      std::string abs_path = target.full_path_name();
-
-      TerminalAttributeValue attr_value;
-
-      bool ret = EvaluateAttribute(stage, *targetPrim, targetPrimPropName,
-                                   &attr_value, err, t, tinterp);
-
-      if (!ret) {
-        return false;
-      }
-
-      if (const auto pav = attr_value.as<T>()) {
-        (*value) = (*pav);
-        return true;
-      } else {
-        PUSH_ERROR_AND_RETURN(
-            fmt::format("Attribute of Connection targetPath has different type `{}. Expected `{}`. Attribute `{}`.", attr_value.type_name(), value::TypeTraits<T>::type_name(), attr_name));
-      }
-
-
-    } else {
-      PUSH_ERROR_AND_RETURN(targetPrimRet.error());
-    }
-  } else if (attr.is_blocked()) {
-      PUSH_ERROR_AND_RETURN(
-          fmt::format("Attribute `{}` is ValueBlocked(None).", attr_name));
-  } else {
-      PUSH_ERROR_AND_RETURN(
-          fmt::format("Internal error. Invalid TypedAttributeWithFallback<Animatable<{}>>.", value::TypeTraits<T>::type_name()));
-
-  }
-
-  return false;
-}
-
-
 namespace {
 
 // Convert TypedAttribute Connection to Attribute Connection.
@@ -124,72 +50,7 @@ Attribute ToAttributeConnection(
 
 } // namespace
 
-template<typename T>
-bool EvaluateTypedAnimatableAttribute(
-    const tinyusdz::Stage &stage, const TypedAttributeWithFallback<Animatable<T>> &tattr,
-    const std::string &attr_name,
-    T *value_out,
-    std::string *err,
-    const double t,
-    const value::TimeSampleInterpolationType tinterp) {
-
-  if (!value_out) {
-    PUSH_ERROR_AND_RETURN("`value_out` param is nullptr.");
-  }
-
-  if (tattr.is_blocked()) {
-    if (err) {
-      (*err) += "Attribute is Blocked.\n";
-    }
-    return false;
-  } else if (tattr.has_value()) {
-    const Animatable<T> &value = tattr.get_value();
-    T v;
-    if (value.get(t, &v, tinterp)) {
-      return true;
-    } else {
-      if (err) {
-        (*err) += fmt::format("Failed to get TypedAnimatableAttribute value: {} \n", attr_name);
-      }
-      return false;
-    }
-  } else if (tattr.is_value_empty()) {
-    if (err) {
-      (*err) += "Attribute value is empty.\n";
-    }
-    return false;
-  } else if (tattr.has_connections()) {
-
-    // Follow targetPath
-    Attribute attr = ToAttributeConnection(tattr);
-
-    //std::set<std::string> visited_paths;
-
-    TerminalAttributeValue value;
-    bool ret = EvaluateAttribute(stage, attr, attr_name, &value, err,
-                                 value::TimeCode::Default(), value::TimeSampleInterpolationType::Held);
-
-    if (!ret) {
-      return false;
-    }
-
-    if (auto pv = value.as<T>()) {
-      (*value_out) = *pv;
-      return true;
-    }
-
-    if (err) {
-      (*err) += fmt::format("Type mismatch. Value producing attribute has type {}, but requested type is {}[]. Attribute: {}", value.type_name(), value::TypeTraits<T>::type_name(), attr_name);
-    }
-
-  } else {
-    if (err) {
-      (*err) += fmt::format("Unsupported/Invalid TypedAnimatableAttribute value: {}", attr_name);
-    }
-  }
-  return false;
-}
-
+// std::string specialization - kept in the main file as it has unique logic
 template<>
 bool EvaluateTypedAnimatableAttribute(
     const tinyusdz::Stage &stage, const TypedAttributeWithFallback<Animatable<std::string>> &tattr,
@@ -264,14 +125,9 @@ bool EvaluateTypedAnimatableAttribute(
   return false;
 }
 
-// template instanciations
-#define EVALUATE_TYPED_ATTRIBUTE_INSTANCIATE(__ty) \
-template bool EvaluateTypedAnimatableAttribute(const tinyusdz::Stage &stage, const TypedAttributeWithFallback<Animatable<__ty>> &attr, const std::string &attr_name, __ty *value, std::string *err, const double t, const value::TimeSampleInterpolationType tinterp);
-
-APPLY_FUNC_TO_VALUE_TYPES_NO_STRING(EVALUATE_TYPED_ATTRIBUTE_INSTANCIATE)
-
-#undef EVALUATE_TYPED_ATTRIBUTE_INSTANCIATE
-
+// Template instantiations are in split files for parallel compilation:
+// - attribute-eval-typed-animatable-fallback-inst-scalar.cc (scalar types)
+// - attribute-eval-typed-animatable-fallback-inst-array.cc (array types)
 
 }  // namespace tydra
 }  // namespace tinyusdz
