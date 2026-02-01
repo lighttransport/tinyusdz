@@ -170,3 +170,45 @@ if(TINYUSDZ_NEXT_BUILD_TESTS)
     )
     target_link_libraries(test_usdc_writer PRIVATE tinyusdz_next)
 endif()
+
+# Tydra Next (render data conversion)
+# Define tydra/next source files
+set(TYDRA_NEXT_SOURCES
+    ${CMAKE_CURRENT_SOURCE_DIR}/../tydra/next/render-data.cc
+    ${CMAKE_CURRENT_SOURCE_DIR}/../tydra/next/scene-access.cc
+    ${CMAKE_CURRENT_SOURCE_DIR}/../tydra/next/render-converter.cc
+)
+
+set(TYDRA_NEXT_HEADERS
+    ${CMAKE_CURRENT_SOURCE_DIR}/../tydra/next/chunked-array.hh
+    ${CMAKE_CURRENT_SOURCE_DIR}/../tydra/next/render-data.hh
+    ${CMAKE_CURRENT_SOURCE_DIR}/../tydra/next/scene-access.hh
+    ${CMAKE_CURRENT_SOURCE_DIR}/../tydra/next/render-converter.hh
+)
+
+add_library(tydra_next STATIC
+    ${TYDRA_NEXT_SOURCES}
+    ${TYDRA_NEXT_HEADERS}
+)
+
+target_link_libraries(tydra_next PUBLIC tinyusdz_next)
+target_compile_features(tydra_next PUBLIC cxx_std_14)
+
+target_include_directories(tydra_next PUBLIC
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/..>
+    $<INSTALL_INTERFACE:include>
+)
+
+if(MSVC)
+    target_compile_options(tydra_next PRIVATE /W4)
+else()
+    target_compile_options(tydra_next PRIVATE -Wall -Wextra -Wpedantic)
+endif()
+
+# Tydra Next test
+if(TINYUSDZ_NEXT_BUILD_TESTS)
+    add_executable(test_tydra_next
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/tydra/next/test_tydra_next.cc
+    )
+    target_link_libraries(test_tydra_next PRIVATE tydra_next tinyusdz_next)
+endif()
