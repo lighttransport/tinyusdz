@@ -176,17 +176,157 @@ void ValueStorage::clear() {
 }
 
 // ============================================================
+// TimeSampleStorage
+// ============================================================
+
+TimeSampleStorage::TimeSampleStorage() {
+  values_.reserve(64);
+}
+
+TimeSampleStorage::~TimeSampleStorage() = default;
+
+uint32_t TimeSampleStorage::find_or_store(Value value) {
+  // Compute hash
+  uint64_t h = value.hash();
+
+  // Check for existing value with same hash
+  auto it = hash_to_offsets_.find(h);
+  if (it != hash_to_offsets_.end()) {
+    // Check each offset for equality (handle hash collisions)
+    for (uint32_t offset : it->second) {
+      if (values_[offset] == value) {
+        // Found duplicate - reuse existing offset
+        ++dedup_count_;
+        return offset;
+      }
+    }
+  }
+
+  // Store new value
+  uint32_t offset = static_cast<uint32_t>(values_.size());
+  values_.push_back(std::move(value));
+
+  // Add to hash table
+  hash_to_offsets_[h].push_back(offset);
+
+  return offset;
+}
+
+uint32_t TimeSampleStorage::add(PropNameId name_id, double time, Value value) {
+  // Store without deduplication (faster for unique values)
+  uint32_t offset = static_cast<uint32_t>(values_.size());
+  values_.push_back(std::move(value));
+  samples_[name_id.id].emplace_back(time, offset);
+  return offset;
+}
+
+uint32_t TimeSampleStorage::add_dedup(PropNameId name_id, double time, Value value) {
+  // Store with deduplication (good for repeated array values)
+  uint32_t offset = find_or_store(std::move(value));
+  samples_[name_id.id].emplace_back(time, offset);
+  return offset;
+}
+
+const std::vector<std::pair<double, uint32_t>>* TimeSampleStorage::get(PropNameId name_id) const {
+  auto it = samples_.find(name_id.id);
+  if (it == samples_.end()) return nullptr;
+  return &it->second;
+}
+
+const Value* TimeSampleStorage::value(uint32_t offset) const {
+  if (offset >= values_.size()) return nullptr;
+  return &values_[offset];
+}
+
+bool TimeSampleStorage::has(PropNameId name_id) const {
+  return samples_.find(name_id.id) != samples_.end();
+}
+
+SampleResult TimeSampleStorage::interpolate(PropNameId name_id, double time,
+                                            TimeInterpolation mode) const {
+  const auto* samples = get(name_id);
+  if (!samples || samples->empty()) {
+    return SampleResult{};
+  }
+
+  // Use the template method with a lambda to get values
+  return TimeInterpolator::InterpolateWithOffsets(
+      *samples,
+      [this](uint32_t offset) -> const Value* { return value(offset); },
+      time,
+      mode);
+}
+
+std::vector<PropNameId> TimeSampleStorage::properties() const {
+  std::vector<PropNameId> result;
+  result.reserve(samples_.size());
+  for (const auto& kv : samples_) {
+    result.push_back(PropNameId{kv.first});
+  }
+  return result;
+}
+
+size_t TimeSampleStorage::memory_usage() const {
+  size_t size = sizeof(*this);
+
+  // Values
+  size += values_.capacity() * sizeof(Value);
+  for (const auto& v : values_) {
+    // Add array storage size if applicable
+    if (v.is_array()) {
+      size += v.array_size() * 4;  // Approximate
+    }
+  }
+
+  // Samples map
+  for (const auto& kv : samples_) {
+    size += kv.second.capacity() * sizeof(std::pair<double, uint32_t>);
+  }
+
+  // Hash table
+  for (const auto& kv : hash_to_offsets_) {
+    size += kv.second.capacity() * sizeof(uint32_t);
+  }
+
+  return size;
+}
+
+void TimeSampleStorage::clear() {
+  samples_.clear();
+  values_.clear();
+  hash_to_offsets_.clear();
+  dedup_count_ = 0;
+}
+
+TimeSampleStorage::Stats TimeSampleStorage::stats() const {
+  Stats s = {};
+  s.property_count = samples_.size();
+  for (const auto& kv : samples_) {
+    s.total_samples += kv.second.size();
+  }
+  s.unique_values = values_.size();
+  s.dedup_count = dedup_count_;
+  s.memory_bytes = memory_usage();
+  return s;
+}
+
+// ============================================================
 // PrimSpec
 // ============================================================
 
 PrimSpec::PrimSpec()
-    : values_(std::make_unique<ValueStorage>()) {}
+    : values_(std::make_unique<ValueStorage>()),
+      time_samples_(std::make_unique<TimeSampleStorage>()) {}
 
 PrimSpec::PrimSpec(const std::string& name)
-    : name_(name), values_(std::make_unique<ValueStorage>()) {}
+    : name_(name),
+      values_(std::make_unique<ValueStorage>()),
+      time_samples_(std::make_unique<TimeSampleStorage>()) {}
 
 PrimSpec::PrimSpec(const std::string& name, const std::string& type_name)
-    : name_(name), values_(std::make_unique<ValueStorage>()) {
+    : name_(name),
+      values_(std::make_unique<ValueStorage>()),
+      time_samples_(std::make_unique<TimeSampleStorage>()) {
   set_type_name(type_name);
 }
 
@@ -268,32 +408,51 @@ void PrimSpec::finalize_properties() {
 }
 
 void PrimSpec::add_time_sample(PropNameId name_id, double time, Value value) {
-  uint32_t offset = values_->store(std::move(value));
-  time_samples_[name_id.id].emplace_back(time, offset);
+  // Use deduplicated storage for array values (common case for animation)
+  time_samples_->add_dedup(name_id, time, std::move(value));
 }
 
 const std::vector<std::pair<double, uint32_t>>* PrimSpec::time_samples(PropNameId name_id) const {
-  auto it = time_samples_.find(name_id.id);
-  if (it == time_samples_.end()) return nullptr;
-  return &it->second;
+  if (!time_samples_) return nullptr;
+  return time_samples_->get(name_id);
 }
 
 bool PrimSpec::has_time_samples(PropNameId name_id) const {
-  return time_samples_.find(name_id.id) != time_samples_.end();
+  if (!time_samples_) return false;
+  return time_samples_->has(name_id);
 }
 
 const Value* PrimSpec::time_sample_value(uint32_t offset) const {
-  if (!values_) return nullptr;
-  return values_->get(offset);
+  if (!time_samples_) return nullptr;
+  return time_samples_->value(offset);
 }
 
 std::vector<PropNameId> PrimSpec::time_sampled_properties() const {
-  std::vector<PropNameId> result;
-  result.reserve(time_samples_.size());
-  for (const auto& kv : time_samples_) {
-    result.push_back(PropNameId{kv.first});
-  }
-  return result;
+  if (!time_samples_) return {};
+  return time_samples_->properties();
+}
+
+bool PrimSpec::has_any_time_samples() const {
+  if (!time_samples_) return false;
+  return !time_samples_->empty();
+}
+
+TimeSampleStorage::Stats PrimSpec::time_sample_stats() const {
+  if (!time_samples_) return {};
+  return time_samples_->stats();
+}
+
+SampleResult PrimSpec::interpolate_time_sample(PropNameId name_id, double time,
+                                               TimeInterpolation mode) const {
+  if (!time_samples_) return SampleResult{};
+  return time_samples_->interpolate(name_id, time, mode);
+}
+
+SampleResult PrimSpec::interpolate_time_sample(const std::string& name, double time,
+                                               TimeInterpolation mode) const {
+  PropNameId name_id = GetPropNameTable().find(name);
+  if (!name_id.is_valid()) return SampleResult{};
+  return interpolate_time_sample(name_id, time, mode);
 }
 
 void PrimSpec::add_relationship(const std::string& name, const Path& target) {
@@ -323,9 +482,9 @@ size_t PrimSpec::memory_usage() const {
     size += values_->size() * sizeof(Value);
   }
 
-  // Time samples
-  for (const auto& ts : time_samples_) {
-    size += ts.second.capacity() * sizeof(std::pair<double, uint32_t>);
+  // Time samples (use TimeSampleStorage's memory tracking)
+  if (time_samples_) {
+    size += time_samples_->memory_usage();
   }
 
   // Relationships

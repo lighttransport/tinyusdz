@@ -307,20 +307,23 @@ bool Stage::HasPrimAtPath(const std::string& path) const {
   return root_layer_->prim_at_path(path) != nullptr;
 }
 
-void Stage::TraverseImpl(uint32_t prim_index, const Layer* layer,
+bool Stage::TraverseImpl(uint32_t prim_index, const Layer* layer,
                           const std::function<bool(const UsdPrim&)>& callback) const {
   const PrimSpec* spec = layer->prim(prim_index);
-  if (!spec) return;
+  if (!spec) return true;
 
   UsdPrim prim(spec, layer, prim_index);
 
   // Call callback, stop if returns false
-  if (!callback(prim)) return;
+  if (!callback(prim)) return false;
 
-  // Recurse to children
+  // Recurse to children, propagate stop signal
   for (uint32_t child_idx : spec->child_indices()) {
-    TraverseImpl(child_idx, layer, callback);
+    if (!TraverseImpl(child_idx, layer, callback)) {
+      return false;
+    }
   }
+  return true;
 }
 
 std::vector<UsdPrim> Stage::GetPrimsOfType(const std::string& typeName) const {

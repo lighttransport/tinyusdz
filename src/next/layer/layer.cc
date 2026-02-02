@@ -84,6 +84,17 @@ const PrimSpec* Layer::prim_at_path(const std::string& path) const {
   return prim(it->second);
 }
 
+PrimSpec* Layer::prim_at_path_mutable(const std::string& path) {
+  auto it = path_to_index_.find(path);
+  if (it == path_to_index_.end()) return nullptr;
+  return prim(it->second);
+}
+
+PrimSpec* Layer::prim_mutable(uint32_t index) {
+  if (index >= prims_.size()) return nullptr;
+  return &prims_[index];
+}
+
 std::vector<const PrimSpec*> Layer::children(uint32_t prim_index) const {
   std::vector<const PrimSpec*> result;
   const PrimSpec* p = prim(prim_index);

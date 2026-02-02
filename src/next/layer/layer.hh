@@ -78,6 +78,10 @@ public:
   /// Get prim by path (O(1) after finalize)
   const PrimSpec* prim_at_path(const Path& path) const;
   const PrimSpec* prim_at_path(const std::string& path) const;
+  PrimSpec* prim_at_path_mutable(const std::string& path);
+
+  /// Get prim by index (mutable)
+  PrimSpec* prim_mutable(uint32_t index);
 
   /// Get root prim indices
   const std::vector<uint32_t>& root_indices() const { return root_indices_; }
