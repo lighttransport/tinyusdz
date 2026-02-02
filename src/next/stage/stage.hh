@@ -258,7 +258,7 @@ private:
 
   // Internal helpers
   void UpdateMetaFromRootLayer();
-  void TraverseImpl(uint32_t prim_index, const Layer* layer,
+  bool TraverseImpl(uint32_t prim_index, const Layer* layer,
                     const std::function<bool(const UsdPrim&)>& callback) const;
 };
 

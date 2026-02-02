@@ -207,6 +207,18 @@ public:
   bool operator==(const Value& other) const;
   bool operator!=(const Value& other) const { return !(*this == other); }
 
+  // ============================================================
+  // Hashing (for deduplication)
+  // ============================================================
+
+  /// Compute hash of the value (for deduplication)
+  /// Returns 0 for empty values
+  uint64_t hash() const;
+
+  /// Get raw bytes for comparison (for array deduplication)
+  /// Returns nullptr and size=0 if not applicable
+  const uint8_t* raw_bytes(size_t* out_size) const;
+
 private:
   TypeId type_id_ = TypeId::Invalid;
   bool is_array_ = false;

@@ -5,6 +5,7 @@
 
 #include <iostream>
 #include <cassert>
+#include <cmath>
 
 #include "next/layer/layer.hh"
 #include "next/layer/prim-spec.hh"
@@ -213,6 +214,150 @@ void test_metadata() {
   std::cout << "  Metadata: PASSED" << std::endl;
 }
 
+void test_interpolation() {
+  std::cout << "Testing time sample interpolation..." << std::endl;
+
+  // Test scalar interpolation
+  {
+    PrimSpec prim("animFloat", "Xform");
+    PropNameTable& table = GetPropNameTable();
+    PropNameId opacity_id = table.intern("opacity");
+
+    // Add time samples: 0.0 -> 0.0, 1.0 -> 1.0
+    prim.add_time_sample(opacity_id, 0.0, Value(0.0f));
+    prim.add_time_sample(opacity_id, 1.0, Value(1.0f));
+
+    // Test exact match
+    auto result = prim.interpolate_time_sample(opacity_id, 0.0);
+    assert(result.success && "should interpolate at t=0");
+    assert(!result.interpolated && "should be exact match");
+    assert(*result.value.as_float() == 0.0f && "should be 0.0");
+
+    // Test linear interpolation at t=0.5
+    result = prim.interpolate_time_sample(opacity_id, 0.5);
+    assert(result.success && "should interpolate at t=0.5");
+    assert(result.interpolated && "should be interpolated");
+    float val = *result.value.as_float();
+    assert(std::abs(val - 0.5f) < 0.001f && "should be ~0.5");
+
+    // Test held interpolation
+    result = prim.interpolate_time_sample(opacity_id, 0.5, TimeInterpolation::Held);
+    assert(result.success && "should work with held");
+    assert(!result.interpolated && "held should not interpolate");
+    assert(*result.value.as_float() == 0.0f && "held should use lower value");
+  }
+
+  // Test vector interpolation (float3)
+  {
+    PrimSpec prim("animVec", "Xform");
+    PropNameTable& table = GetPropNameTable();
+    PropNameId translate_id = table.intern("xformOp:translate");
+
+    // Add time samples
+    prim.add_time_sample(translate_id, 0.0, Value::MakeFloat3(0.0f, 0.0f, 0.0f));
+    prim.add_time_sample(translate_id, 1.0, Value::MakeFloat3(10.0f, 20.0f, 30.0f));
+
+    // Test interpolation at t=0.5
+    auto result = prim.interpolate_time_sample(translate_id, 0.5);
+    assert(result.success && "should interpolate float3");
+    const float* v = result.value.as_float3();
+    assert(v != nullptr && "should have float3");
+    assert(std::abs(v[0] - 5.0f) < 0.001f && "x should be 5");
+    assert(std::abs(v[1] - 10.0f) < 0.001f && "y should be 10");
+    assert(std::abs(v[2] - 15.0f) < 0.001f && "z should be 15");
+  }
+
+  // Test extrapolation (before first / after last)
+  {
+    PrimSpec prim("animExtrap", "Xform");
+    PropNameTable& table = GetPropNameTable();
+    PropNameId scale_id = table.intern("scale");
+
+    prim.add_time_sample(scale_id, 1.0, Value(100.0f));
+    prim.add_time_sample(scale_id, 2.0, Value(200.0f));
+
+    // Before first sample - should use first value
+    auto result = prim.interpolate_time_sample(scale_id, 0.0);
+    assert(result.success && "should work before first");
+    assert(*result.value.as_float() == 100.0f && "should use first value");
+
+    // After last sample - should use last value
+    result = prim.interpolate_time_sample(scale_id, 10.0);
+    assert(result.success && "should work after last");
+    assert(*result.value.as_float() == 200.0f && "should use last value");
+  }
+
+  std::cout << "  Time sample interpolation: PASSED" << std::endl;
+}
+
+void test_time_samples() {
+  std::cout << "Testing time samples with deduplication..." << std::endl;
+
+  PrimSpec prim("animatedPrim", "Mesh");
+
+  PropNameTable& table = GetPropNameTable();
+  PropNameId points_id = table.intern("points");
+
+  // Create a float3 array value (9 floats = 3 vertices)
+  std::vector<float> points_data = {0, 0, 0, 1, 0, 0, 0, 1, 0};
+
+  // Add time samples - some frames have duplicate values
+  prim.add_time_sample(points_id, 0.0, Value::MakeFloat3Array(points_data));
+  prim.add_time_sample(points_id, 1.0, Value::MakeFloat3Array(points_data));  // Same as t=0
+  prim.add_time_sample(points_id, 2.0, Value::MakeFloat3Array(points_data));  // Same as t=0
+
+  // Add a different value
+  std::vector<float> moved_data = {0, 1, 0, 1, 1, 0, 0, 2, 0};
+  prim.add_time_sample(points_id, 3.0, Value::MakeFloat3Array(moved_data));
+  prim.add_time_sample(points_id, 4.0, Value::MakeFloat3Array(moved_data));  // Same as t=3
+
+  // Check that we have time samples
+  assert(prim.has_time_samples(points_id) && "should have time samples for points");
+  assert(prim.has_any_time_samples() && "should have some time samples");
+
+  // Get time samples
+  const auto* samples = prim.time_samples(points_id);
+  assert(samples != nullptr && "should get time samples");
+  assert(samples->size() == 5 && "should have 5 time samples");
+
+  // Verify time values
+  assert((*samples)[0].first == 0.0 && "first sample at t=0");
+  assert((*samples)[4].first == 4.0 && "last sample at t=4");
+
+  // Check deduplication stats
+  auto stats = prim.time_sample_stats();
+  assert(stats.total_samples == 5 && "should have 5 total samples");
+  // frames 0,1,2 share one value, frames 3,4 share another = 2 unique values
+  assert(stats.unique_values == 2 && "should have 2 unique values");
+  // 3 duplicates: frame 1 and 2 reuse frame 0's value, frame 4 reuses frame 3's value
+  assert(stats.dedup_count == 3 && "should have 3 deduplicated values");
+
+  // Verify we can access the values
+  const Value* val0 = prim.time_sample_value((*samples)[0].second);
+  const Value* val1 = prim.time_sample_value((*samples)[1].second);
+  const Value* val3 = prim.time_sample_value((*samples)[3].second);
+
+  assert(val0 != nullptr && "should get value at t=0");
+  assert(val1 != nullptr && "should get value at t=1");
+
+  // Offsets should be the same for deduplicated values
+  assert((*samples)[0].second == (*samples)[1].second && "t=0 and t=1 should share offset");
+  assert((*samples)[0].second == (*samples)[2].second && "t=0 and t=2 should share offset");
+  assert((*samples)[3].second == (*samples)[4].second && "t=3 and t=4 should share offset");
+  assert((*samples)[0].second != (*samples)[3].second && "t=0 and t=3 should have different offsets");
+
+  // Get properties with time samples
+  auto props = prim.time_sampled_properties();
+  assert(props.size() == 1 && "should have 1 property with time samples");
+  assert(props[0] == points_id && "should be points property");
+
+  std::cout << "  Time samples with deduplication: PASSED" << std::endl;
+  std::cout << "    Total samples: " << stats.total_samples << std::endl;
+  std::cout << "    Unique values: " << stats.unique_values << std::endl;
+  std::cout << "    Deduplicated: " << stats.dedup_count << std::endl;
+  std::cout << "    Memory: " << stats.memory_bytes << " bytes" << std::endl;
+}
+
 void test_relationships() {
   std::cout << "Testing relationships..." << std::endl;
 
@@ -250,6 +395,8 @@ int main() {
   test_layer_builder();
   test_layer_stats();
   test_metadata();
+  test_interpolation();
+  test_time_samples();
   test_relationships();
 
   std::cout << "\n=== All Layer tests PASSED ===" << std::endl;

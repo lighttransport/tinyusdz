@@ -5,8 +5,10 @@
 
 #include <iostream>
 #include <cassert>
+#include <cmath>
 
 #include "next/stage/stage.hh"
+#include "next/eval/attribute-eval.hh"
 
 using namespace tinyusdz::next;
 
@@ -282,6 +284,103 @@ void test_stage_stats() {
   std::cout << "  Stage stats: PASSED" << std::endl;
 }
 
+void test_attribute_eval() {
+  std::cout << "Testing AttributeEval..." << std::endl;
+
+  StageBuilder builder;
+  builder.SetTimeCodesPerSecond(24.0);
+  builder.SetStartTimeCode(1.0);
+  builder.SetEndTimeCode(48.0);
+  LayerBuilder& lb = builder.GetLayerBuilder();
+
+  lb.begin_prim("World", "Xform");
+
+  // Mesh with static properties
+  lb.begin_prim("StaticMesh", "Mesh");
+  lb.add_property("doubleSided", Value(true));
+  lb.add_property("radius", Value(1.5f));
+  lb.add_property("extent", Value::MakeFloat3(-1.0f, -1.0f, -1.0f));
+  lb.end_prim();
+
+  // Mesh with animated visibility
+  lb.begin_prim("AnimatedMesh", "Mesh");
+  // Add time samples for visibility (simulating animation)
+  // Note: This would typically be done via lower-level API
+  lb.end_prim();
+
+  lb.end_prim();
+
+  Stage stage = builder.Build();
+  AttributeEval eval(&stage);
+
+  // Test basic scalar evaluation
+  UsdPrim staticMesh = stage.GetPrimAtPath("/World/StaticMesh");
+  assert(staticMesh.IsValid() && "should find StaticMesh");
+
+  // Test EvalBool
+  auto ds = eval.EvalBool(staticMesh, "doubleSided");
+  assert(ds.has_value() && "should get doubleSided");
+  assert(*ds == true && "doubleSided should be true");
+
+  // Test EvalFloat
+  auto radius = eval.EvalFloat(staticMesh, "radius");
+  assert(radius.has_value() && "should get radius");
+  assert(std::abs(*radius - 1.5f) < 0.001f && "radius should be 1.5");
+
+  // Test EvalFloat3
+  float extent[3];
+  bool got_extent = eval.EvalFloat3(staticMesh, "extent", extent);
+  assert(got_extent && "should get extent");
+  assert(std::abs(extent[0] - (-1.0f)) < 0.001f && "extent[0] should be -1");
+
+  // Test EvalOr with fallback
+  float missing = eval.EvalOr(staticMesh, "nonExistent", 99.0f);
+  assert(std::abs(missing - 99.0f) < 0.001f && "should use fallback");
+
+  // Test Eval with result metadata
+  EvalResult result = eval.Eval(staticMesh, "radius");
+  assert(result.success && "should succeed");
+  assert(result.from_default && "should be from default");
+  assert(!result.from_time_sample && "should not be from time sample");
+  assert(!result.interpolated && "should not be interpolated");
+
+  // Test non-existent attribute
+  auto nonexistent = eval.EvalFloat(staticMesh, "nonExistent");
+  assert(!nonexistent.has_value() && "should not find nonExistent");
+
+  std::cout << "  AttributeEval: PASSED" << std::endl;
+}
+
+void test_attribute_eval_convenience() {
+  std::cout << "Testing convenience functions..." << std::endl;
+
+  StageBuilder builder;
+  LayerBuilder& lb = builder.GetLayerBuilder();
+
+  lb.begin_prim("Mesh", "Mesh");
+  lb.add_property("focalLength", Value(50.0f));
+  lb.add_property("translate", Value::MakeDouble3(1.0, 2.0, 3.0));
+  lb.end_prim();
+
+  Stage stage = builder.Build();
+  UsdPrim mesh = stage.GetPrimAtPath("/Mesh");
+
+  // Test convenience functions
+  float fl;
+  bool got_fl = GetFloat(stage, mesh, "focalLength", &fl);
+  assert(got_fl && "should get focalLength");
+  assert(std::abs(fl - 50.0f) < 0.001f && "focalLength should be 50");
+
+  double translate[3];
+  bool got_trans = GetDouble3(stage, mesh, "translate", translate);
+  assert(got_trans && "should get translate");
+  assert(std::abs(translate[0] - 1.0) < 0.001 && "translate[0] should be 1");
+  assert(std::abs(translate[1] - 2.0) < 0.001 && "translate[1] should be 2");
+  assert(std::abs(translate[2] - 3.0) < 0.001 && "translate[2] should be 3");
+
+  std::cout << "  Convenience functions: PASSED" << std::endl;
+}
+
 void test_stage_move() {
   std::cout << "Testing Stage move semantics..." << std::endl;
 
@@ -314,6 +413,8 @@ int main() {
   test_stage_traversal();
   test_stage_relationships();
   test_stage_stats();
+  test_attribute_eval();
+  test_attribute_eval_convenience();
   test_stage_move();
 
   std::cout << "\n=== All Stage tests PASSED ===" << std::endl;
