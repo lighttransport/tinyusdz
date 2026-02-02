@@ -145,9 +145,12 @@ function printSkinningInfo(usd, detailed = false, boneReductionInfo = null) {
 
   console.log('\n=== Skinning Information ===');
   if (boneReductionInfo) {
-    console.log(`Bone Reduction: ${boneReductionInfo.enabled ? 'Enabled' : 'Disabled'}`);
     if (boneReductionInfo.enabled) {
-      console.log(`Target Bones Per Vertex: ${boneReductionInfo.targetCount}`);
+      console.log(`Bone Reduction: Enabled (target: ${boneReductionInfo.targetCount} bones per vertex)`);
+    } else if (boneReductionInfo.roundEnabled) {
+      console.log(`Bone Rounding: Enabled (round up to 4,8,16,32,48,64,80,96,128)`);
+    } else {
+      console.log(`Bone Processing: Disabled (pass-through)`);
     }
   }
   console.log(`Total meshes: ${numMeshes}\n`);
@@ -485,8 +488,9 @@ async function main() {
     console.log('  --detailed              Print detailed skinning and animation information');
     console.log('  --keyframes             Dump skeletal animation keyframe data');
     console.log('  --memory                Print memory usage statistics');
-    console.log('  --reduce-bones          Enable bone reduction');
-    console.log('  --target-bones <N>      Target bone count per vertex (default: 4)');
+    console.log('  --reduce-bones          Enable bone reduction (discard weak influences)');
+    console.log('  --round-bones           Round bone count up to standard values (4,8,16,32,48,64,80,96,128)');
+    console.log('  --target-bones <N>      Target bone count per vertex (default: 4, used with --reduce-bones)');
     console.log('  --help                  Show this help message\n');
     console.log('Examples:');
     console.log('  npx vite-node skinning-info.js ../../models/character.usdc');
@@ -494,12 +498,12 @@ async function main() {
     console.log('  npx vite-node skinning-info.js character.usda --detailed --keyframes');
     console.log('  npx vite-node skinning-info.js model.usdz --detailed --memory');
     console.log('  npx vite-node skinning-info.js character.usdc --reduce-bones --target-bones 2');
-    console.log('  npx vite-node skinning-info.js model.usda --reduce-bones --detailed\n');
+    console.log('  npx vite-node skinning-info.js model.usda --round-bones --detailed\n');
     console.log('This tool displays:');
     console.log('  - Mesh skinning data (joint indices, joint weights)');
     console.log('  - Skeleton hierarchy information');
     console.log('  - Skeletal animation keyframes from SkelAnimation prims');
-    console.log('  - Bone reduction statistics when --reduce-bones is enabled');
+    console.log('  - Bone reduction/rounding statistics when enabled');
     return;
   }
 
@@ -509,6 +513,7 @@ async function main() {
   const showMemory = args.includes('--memory');
   const dumpKeyframes = args.includes('--keyframes');
   const reduceBones = args.includes('--reduce-bones');
+  const roundBones = args.includes('--round-bones');
 
   // Parse --target-bones argument
   let targetBoneCount = 4; // Default value
@@ -540,14 +545,21 @@ async function main() {
     await loader.init({ useMemory64: false });
     loader.setMaxMemoryLimitMB(512);
 
-    // Configure bone reduction settings
+    // Configure bone reduction/rounding settings
     if (reduceBones) {
       console.log(`Bone Reduction: Enabled (target: ${targetBoneCount} bones per vertex)\n`);
       loader.setEnableBoneReduction(true);
       loader.setTargetBoneCount(targetBoneCount);
+      loader.setRoundBoneCount(false); // Reduction takes precedence
       console.log(`[DEBUG] Bone reduction configured: enabled=${loader.getEnableBoneReduction()}, target=${loader.getTargetBoneCount()}`);
+    } else if (roundBones) {
+      console.log(`Bone Rounding: Enabled (round up to 4,8,16,32,48,64,80,96,128)\n`);
+      loader.setEnableBoneReduction(false);
+      loader.setRoundBoneCount(true);
+      console.log(`[DEBUG] Bone rounding configured: enabled=${loader.getRoundBoneCount()}`);
     } else {
       loader.setEnableBoneReduction(false);
+      loader.setRoundBoneCount(false);
     }
 
     // Load USD file
@@ -568,10 +580,11 @@ async function main() {
     const loadTime = Date.now() - startTime;
     console.log(`\n\n✓ USD file loaded successfully (${loadTime}ms)\n`);
 
-    // Prepare bone reduction info
+    // Prepare bone reduction/rounding info
     const boneReductionInfo = {
       enabled: reduceBones,
-      targetCount: targetBoneCount
+      targetCount: targetBoneCount,
+      roundEnabled: roundBones
     };
 
     // Print information
