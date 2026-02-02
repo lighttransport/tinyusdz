@@ -17,7 +17,11 @@ import {
 	getSkinningMode,
 	addExtendedSkinningAttributes,
 	applyExtendedSkinningIfNeeded,
-	createExtendedWeightVisualizationMaterial
+	createExtendedWeightVisualizationMaterial,
+	// WASM bone texture functions for efficient GPU skinning
+	createBoneTextureFromWASM,
+	applyWASMBoneTextureToGeometry,
+	createMaterialFromWASMBoneTexture
 } from 'tinyusdz/ExtendedSkinning.js';
 
 // ===========================================
@@ -960,6 +964,7 @@ async function processUSDScene(usd_scene, loader, filename) {
 				}
 
 				skinnedMeshUSDData = {
+					meshId: i, // Store mesh ID for WASM bone texture generation
 					jointIndices: mesh.jointIndices,
 					jointWeights: mesh.jointWeights,
 					elementSize: mesh.elementSize || 4,
@@ -1165,7 +1170,25 @@ async function processUSDScene(usd_scene, loader, filename) {
 				}
 
 				// Apply extended skinning material if needed (for 8+ bones per vertex)
-				if (applyExtendedSkinningIfNeeded(child)) {
+				// Optionally use WASM bone texture for high bone counts
+				let wasmBoneTexture = null;
+				if (animationParams.useWASMBoneTexture && skinnedMeshUSDData &&
+					skinnedMeshUSDData.elementSize > 8) {
+					try {
+						wasmBoneTexture = usd_scene.generateBoneTexture(skinnedMeshUSDData.meshId, 0);
+						if (wasmBoneTexture.error) {
+							console.warn(`WASM bone texture generation failed: ${wasmBoneTexture.error}`);
+							wasmBoneTexture = null;
+						} else {
+							console.log(`Using WASM bone texture: ${wasmBoneTexture.textureWidth}x${wasmBoneTexture.textureHeight}`);
+						}
+					} catch (texErr) {
+						console.warn(`WASM bone texture error: ${texErr.message}`);
+						wasmBoneTexture = null;
+					}
+				}
+
+				if (applyExtendedSkinningIfNeeded(child, { wasmBoneTexture })) {
 					console.log('Extended skinning material applied for high bone count');
 				}
 
@@ -1243,17 +1266,58 @@ async function processUSDScene(usd_scene, loader, filename) {
 				}
 
 				// Use ExtendedSkinning module for proper handling of 4/8/16/32/64+ bones
-				const skinningConfig = addExtendedSkinningAttributes(
-					geometry,
-					skinnedMeshUSDData.jointIndices,
-					skinnedMeshUSDData.jointWeights,
-					influencesPerVertex,
-					{ normalize: true }
-				);
+				let skinningConfig;
+
+				// Check if WASM bone texture should be used (for 16+ bones)
+				if (animationParams.useWASMBoneTexture && influencesPerVertex > 8) {
+					try {
+						// Generate bone texture from WASM
+						const wasmBoneTexture = usd_scene.generateBoneTexture(skinnedMeshUSDData.meshId, 0); // 0 = auto
+
+						if (wasmBoneTexture.error) {
+							console.warn(`WASM bone texture generation failed: ${wasmBoneTexture.error}, falling back to JS`);
+							skinningConfig = addExtendedSkinningAttributes(
+								geometry,
+								skinnedMeshUSDData.jointIndices,
+								skinnedMeshUSDData.jointWeights,
+								influencesPerVertex,
+								{ normalize: true }
+							);
+						} else {
+							console.log(`Using WASM bone texture: ${wasmBoneTexture.textureWidth}x${wasmBoneTexture.textureHeight}`);
+							skinningConfig = applyWASMBoneTextureToGeometry(geometry, wasmBoneTexture, {
+								jointIndices: skinnedMeshUSDData.jointIndices,
+								jointWeights: skinnedMeshUSDData.jointWeights,
+								influencesPerVertex: influencesPerVertex
+							});
+						}
+					} catch (texErr) {
+						console.warn(`WASM bone texture error: ${texErr.message}, falling back to JS`);
+						skinningConfig = addExtendedSkinningAttributes(
+							geometry,
+							skinnedMeshUSDData.jointIndices,
+							skinnedMeshUSDData.jointWeights,
+							influencesPerVertex,
+							{ normalize: true }
+						);
+					}
+				} else {
+					// Standard JS-based skinning attributes
+					skinningConfig = addExtendedSkinningAttributes(
+						geometry,
+						skinnedMeshUSDData.jointIndices,
+						skinnedMeshUSDData.jointWeights,
+						influencesPerVertex,
+						{ normalize: true }
+					);
+				}
 
 				console.log(`Added skinning attributes with mode: ${skinningConfig.mode} (${influencesPerVertex} influences per vertex)`);
 				if (skinningConfig.mode > SkinningMode.STANDARD) {
 					console.log(`  Extended skinning enabled: ${skinningConfig.mode} bones per vertex`);
+					if (skinningConfig.fromWASM) {
+						console.log(`  Using WASM-generated bone texture`);
+					}
 				}
 			} else {
 				console.warn('No USD skinning data available to add to geometry');
@@ -1633,6 +1697,11 @@ const animationParams = {
 	enableBoneReduction: false,
 	targetBoneCount: 4,
 
+	// WASM bone texture for GPU skinning (applied on next file load)
+	// When enabled, generates bone texture in WASM for efficient GPU skinning
+	// with high bone counts (16+ bones per vertex)
+	useWASMBoneTexture: false,
+
 	// Shadows
 	enableShadows: true,
 	toggleShadows: function() {
@@ -1765,7 +1834,7 @@ gizmoFolder.add(animationParams, 'deselectJoint')
 gizmoFolder.open();
 
 // Bone reduction settings
-const boneReductionFolder = gui.addFolder('Bone Reduction (Next Load)');
+const boneReductionFolder = gui.addFolder('Bone Settings (Next Load)');
 boneReductionFolder.add(animationParams, 'enableBoneReduction')
 	.name('Enable Reduction')
 	.onChange(() => {
@@ -1775,6 +1844,12 @@ boneReductionFolder.add(animationParams, 'targetBoneCount', 1, 8, 1)
 	.name('Target Bone Count')
 	.onChange(() => {
 		console.log(`Target bone count set to ${animationParams.targetBoneCount} (applies on next file load)`);
+	});
+boneReductionFolder.add(animationParams, 'useWASMBoneTexture')
+	.name('WASM Bone Texture')
+	.title('Use WASM-generated bone texture for efficient GPU skinning (16+ bones)')
+	.onChange(() => {
+		console.log(`WASM bone texture ${animationParams.useWASMBoneTexture ? 'enabled' : 'disabled'} (applies on next file load)`);
 	});
 boneReductionFolder.close(); // Closed by default as advanced feature
 
