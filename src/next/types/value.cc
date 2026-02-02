@@ -732,5 +732,106 @@ bool Value::operator==(const Value& other) const {
   return false;
 }
 
+// ============================================================
+// Hashing
+// ============================================================
+
+namespace {
+
+// FNV-1a hash for arbitrary byte sequences
+inline uint64_t fnv1a_hash(const uint8_t* data, size_t len) {
+  constexpr uint64_t FNV_OFFSET = 14695981039346656037ULL;
+  constexpr uint64_t FNV_PRIME = 1099511628211ULL;
+
+  uint64_t hash = FNV_OFFSET;
+  for (size_t i = 0; i < len; ++i) {
+    hash ^= static_cast<uint64_t>(data[i]);
+    hash *= FNV_PRIME;
+  }
+  return hash;
+}
+
+}  // namespace
+
+uint64_t Value::hash() const {
+  if (type_id_ == TypeId::Invalid) return 0;
+
+  // Include type in hash
+  uint64_t h = static_cast<uint64_t>(type_id_) | (is_array_ ? 0x100 : 0);
+
+  if (is_array_) {
+    // Hash array contents
+    if (type_id_ == TypeId::Float || type_id_ == TypeId::Float3) {
+      const auto* arr = as_float_array();
+      if (arr && !arr->empty()) {
+        h ^= fnv1a_hash(reinterpret_cast<const uint8_t*>(arr->data()),
+                        arr->size() * sizeof(float));
+      }
+    } else if (type_id_ == TypeId::Int) {
+      const auto* arr = as_int_array();
+      if (arr && !arr->empty()) {
+        h ^= fnv1a_hash(reinterpret_cast<const uint8_t*>(arr->data()),
+                        arr->size() * sizeof(int32_t));
+      }
+    }
+    return h;
+  }
+
+  // Hash string types
+  if (UsesStringStorage(type_id_)) {
+    const auto& s = reinterpret_cast<const StringStorage*>(storage_)->value;
+    if (!s.empty()) {
+      h ^= fnv1a_hash(reinterpret_cast<const uint8_t*>(s.data()), s.size());
+    }
+    return h;
+  }
+
+  // Hash scalar/vector types from storage
+  size_t size = GetTypeSize(type_id_);
+  if (size > 0) {
+    h ^= fnv1a_hash(reinterpret_cast<const uint8_t*>(storage_), size);
+  }
+
+  return h;
+}
+
+const uint8_t* Value::raw_bytes(size_t* out_size) const {
+  if (!out_size) return nullptr;
+  *out_size = 0;
+
+  if (type_id_ == TypeId::Invalid) return nullptr;
+
+  if (is_array_) {
+    if (type_id_ == TypeId::Float || type_id_ == TypeId::Float3) {
+      const auto* arr = as_float_array();
+      if (arr && !arr->empty()) {
+        *out_size = arr->size() * sizeof(float);
+        return reinterpret_cast<const uint8_t*>(arr->data());
+      }
+    } else if (type_id_ == TypeId::Int) {
+      const auto* arr = as_int_array();
+      if (arr && !arr->empty()) {
+        *out_size = arr->size() * sizeof(int32_t);
+        return reinterpret_cast<const uint8_t*>(arr->data());
+      }
+    }
+    return nullptr;
+  }
+
+  if (UsesStringStorage(type_id_)) {
+    const auto& s = reinterpret_cast<const StringStorage*>(storage_)->value;
+    *out_size = s.size();
+    return reinterpret_cast<const uint8_t*>(s.data());
+  }
+
+  size_t size = GetTypeSize(type_id_);
+  if (size > 0) {
+    *out_size = size;
+    return reinterpret_cast<const uint8_t*>(storage_);
+  }
+
+  return nullptr;
+}
+
 }  // namespace next
 }  // namespace tinyusdz

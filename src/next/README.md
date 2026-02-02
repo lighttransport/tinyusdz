@@ -17,26 +17,49 @@ API breakage and feature deletion are acceptable for this redesign. The goal is 
 
 | Component | Status | Files |
 |-----------|--------|-------|
+| **Core Type System** | | |
 | Type System | ✅ Complete | `types/type-id.hh`, `types/type-info.{hh,cc}`, `types/value.{hh,cc}` |
+| Time Interpolation | ✅ Complete | `types/interpolation.{hh,cc}` |
 | Path | ✅ Complete | `prim/path.{hh,cc}` |
+| **Layer/Stage** | | |
 | Property Index | ✅ Complete | `layer/property-index.{hh,cc}` |
-| PrimSpec | ✅ Complete | `layer/prim-spec.{hh,cc}` |
+| PrimSpec | ✅ Complete | `layer/prim-spec.{hh,cc}` (with TimeSampleStorage) |
 | Layer | ✅ Complete | `layer/layer.{hh,cc}` |
 | Stage | ✅ Complete | `stage/stage.{hh,cc}` |
+| **Parsing** | | |
 | Lexer | ✅ Complete | `parser/lexer.{hh,cc}` |
 | Value Parser | ✅ Complete | `parser/value-parser.{hh,cc}` |
 | ASCII Parser | ✅ Complete | `parser/ascii-parser.{hh,cc}` |
 | USDA Reader | ✅ Complete | `reader/usda-reader.{hh,cc}` |
+| **Binary Format** | | |
 | Crate Format | ✅ Complete | `crate/crate-format.{hh,cc}` |
 | Crate Reader | ✅ Complete | `crate/crate-reader.{hh,cc}` |
 | USDC Reader | ✅ Complete | `reader/usdc-reader.{hh,cc}` |
+| Crate Writer | ✅ Basic | `crate/crate-writer.{hh,cc}` |
+| USDC Writer | ✅ Basic | `writer/usdc-writer.{hh,cc}` |
+| **Writers** | | |
 | Value Printer | ✅ Complete | `writer/value-printer.{hh,cc}` |
 | Prim Printer | ✅ Complete | `writer/prim-printer.{hh,cc}` |
 | USDA Writer | ✅ Complete | `writer/usda-writer.{hh,cc}` |
-| Crate Writer | ✅ Basic | `crate/crate-writer.{hh,cc}` |
-| USDC Writer | ✅ Basic | `writer/usdc-writer.{hh,cc}` |
+| **Evaluation** | | |
+| Attribute Eval | ✅ Complete | `eval/attribute-eval.{hh,cc}` |
+| **Infrastructure** | | |
+| Asset Resolver | ✅ Complete | `resolver/asset-resolver.{hh,cc}` |
+| Composition | ✅ Basic | `composition/composition.{hh,cc}` |
+| **Schema APIs** | | |
 | UsdGeomMesh | ✅ Complete | `schema/geom-mesh.{hh,cc}` |
-| UsdGeomXform | ✅ Basic | `schema/geom-xform.{hh,cc}` |
+| UsdGeomXform | ✅ Complete | `schema/geom-xform.{hh,cc}` |
+| UsdGeomCamera | ✅ Complete | `schema/usd-geom-camera.{hh,cc}` |
+| UsdLux | ✅ Complete | `schema/usd-lux.{hh,cc}` |
+| UsdShade | ✅ Complete | `schema/usd-shade.{hh,cc}` |
+| **Integration** | | |
+| Unified Header | ✅ Complete | `tinyusdz-next.{hh,cc}` |
+| Compat Header | ✅ Complete | `compat.hh` |
+| **Tydra/Next** | | |
+| Render Data | ✅ Complete | `../tydra/next/render-data.{hh,cc}` |
+| Scene Access | ✅ Complete | `../tydra/next/scene-access.{hh,cc}` |
+| Render Converter | ✅ Complete | `../tydra/next/render-converter.{hh,cc}` |
+| MaterialX | ✅ Complete | `../tydra/next/materialx.{hh,cc}` |
 
 ### Build Status
 
@@ -138,27 +161,32 @@ Stage/Layer ──► WriteUSDC()  ──► USDC file (via CrateWriter)
 src/next/
 ├── CMakeLists.txt
 ├── README.md                    # This file
+├── tinyusdz-next.hh            # Unified header (includes all components)
+├── tinyusdz-next.cc            # High-level API implementation
+├── compat.hh                   # Compatibility header for #ifdef switching
 │
 ├── types/                       # Core type system
 │   ├── type-id.hh              # TypeId enum (~200 lines)
 │   ├── type-info.hh            # TypeInfo struct
 │   ├── type-info.cc            # Type registry implementation
-│   ├── value.hh                # Value class with SBO
-│   └── value.cc                # Value implementation
+│   ├── value.hh                # Value class with SBO (136 bytes)
+│   ├── value.cc                # Value implementation
+│   ├── interpolation.hh        # TimeInterpolation, SampleResult
+│   └── interpolation.cc        # Linear/Held interpolation, quaternion slerp
 │
 ├── prim/                        # USD primitives
 │   ├── path.hh                 # Path class
 │   ├── path.cc
-│   ├── attribute.hh            # (minimal, for future use)
+│   ├── attribute.hh            # Attribute types
 │   ├── attribute.cc
-│   ├── prim.hh                 # (minimal, for future use)
+│   ├── prim.hh                 # Prim types
 │   └── prim.cc
 │
 ├── layer/                       # Layer system
 │   ├── property-index.hh       # PropNameTable, PropSlot, PropIndex
 │   ├── property-index.cc
-│   ├── prim-spec.hh            # PrimSpec, TypeNameTable, ValueStorage
-│   ├── prim-spec.cc
+│   ├── prim-spec.hh            # PrimSpec, TimeSampleStorage, ValueStorage
+│   ├── prim-spec.cc            # Includes time sample deduplication
 │   ├── layer.hh                # Layer, LayerBuilder
 │   └── layer.cc
 │
@@ -199,11 +227,40 @@ src/next/
 │   ├── usdc-writer.hh
 │   └── usdc-writer.cc
 │
+├── eval/                        # Attribute evaluation
+│   ├── attribute-eval.hh       # AttributeEval class
+│   └── attribute-eval.cc       # Time interpolation, connection following
+│
+├── resolver/                    # Asset resolution
+│   ├── asset-resolver.hh       # AssetResolver, ResolvedAsset
+│   └── asset-resolver.cc       # Search paths, package support
+│
+├── composition/                 # Composition arcs
+│   ├── composition.hh          # Compositor, CompositionArc
+│   └── composition.cc          # LIVRPS ordering, cycle detection
+│
 └── schema/                      # Schema convenience APIs
     ├── geom-mesh.hh            # UsdGeomMesh wrapper
     ├── geom-mesh.cc
     ├── geom-xform.hh           # UsdGeomXform wrapper
-    └── geom-xform.cc
+    ├── geom-xform.cc
+    ├── usd-geom-camera.hh      # Camera data, projection matrix
+    ├── usd-geom-camera.cc
+    ├── usd-lux.hh              # Light types (Distant, Dome, Rect, etc.)
+    ├── usd-lux.cc
+    ├── usd-shade.hh            # Material, Shader, PreviewSurface
+    └── usd-shade.cc
+
+src/tydra/next/                  # Tydra render data conversion
+├── chunked-array.hh            # Memory-efficient arrays
+├── render-data.hh              # RenderScene, RenderMesh, RenderMaterial
+├── render-data.cc
+├── scene-access.hh             # Scene query utilities
+├── scene-access.cc
+├── render-converter.hh         # Stage to RenderScene converter
+├── render-converter.cc
+├── materialx.hh                # MaterialX conversion
+└── materialx.cc
 ```
 
 ## TODO Tasks
@@ -215,12 +272,35 @@ src/next/
   - ✅ Time sample writing in USDA writer
   - ✅ `GetValueAtTime()` / `GetTimeSampleTimes()` on UsdPrim
   - ✅ `HasTimeSamples()` query API
+  - ✅ Value deduplication via hash-based lookup (60%+ memory savings)
+  - ✅ Time sample interpolation (linear/held modes)
   - [ ] Time sample writing in USDC writer (basic structure only)
+
+- [x] **Attribute Evaluation** ✅ COMPLETE
+  - ✅ `AttributeEval` class for unified value resolution
+  - ✅ Time sample interpolation support
+  - ✅ Default value fallback
+  - ✅ Connection following for shader inputs
+  - ✅ Type-safe accessors (EvalFloat, EvalFloat3, EvalOr, etc.)
 
 - [x] **Connection Support** ✅ COMPLETE
   - ✅ Parse attribute connections (`.connect`)
   - ✅ Store connections in PrimSpec (as string value with kFlagConnection)
   - ✅ Write connections in USDA writer
+
+- [x] **Asset Resolution** ✅ COMPLETE
+  - ✅ `AssetResolver` class with search paths
+  - ✅ Package path parsing (USDZ support)
+  - ✅ Path normalization utilities
+  - ✅ File existence checking
+
+- [x] **Composition Arcs** ✅ BASIC
+  - ✅ `Compositor` class with LIVRPS ordering
+  - ✅ Cycle detection
+  - ✅ Layer caching
+  - [ ] Full reference resolution with asset loading
+  - [ ] Payload lazy loading
+  - [ ] Variant selection with variant sets
 
 - [ ] **Complete USDC Writer** (partial)
   - [x] Basic section structure (TOKENS, STRINGS, FIELDS, SPECS, PATHS)
@@ -229,27 +309,33 @@ src/next/
   - [ ] Add proper fieldset encoding for full pxrUSD compatibility
   - [ ] Test roundtrip with pxrUSD tools
 
-- [ ] **Composition Arcs**
-  - [ ] Implement reference resolution
-  - [ ] Implement payload loading
-  - [ ] Implement inherit/specialize flattening
-  - [ ] Implement variant selection
-
 ### Medium Priority
 
-- [x] **Schema Support** (partial)
-  - [x] Add UsdGeomMesh convenience API (`schema/geom-mesh.hh`)
-  - [x] Add UsdGeomXform convenience API (`schema/geom-xform.hh`)
-  - [ ] Add UsdShadeMaterial convenience API
+- [x] **Schema Support** ✅ COMPLETE
+  - [x] UsdGeomMesh (`schema/geom-mesh.hh`) - topology, points, UVs, normals
+  - [x] UsdGeomXform (`schema/geom-xform.hh`) - transform ops, local matrix
+  - [x] UsdGeomCamera (`schema/usd-geom-camera.hh`) - lens, FOV, projection
+  - [x] UsdLux (`schema/usd-lux.hh`) - all light types
+  - [x] UsdShade (`schema/usd-shade.hh`) - materials, shaders, PreviewSurface
   - [ ] Add UsdSkelSkeleton convenience API
   - [ ] Consider code generation for schema classes
-  - [ ] Add token array support for xformOpOrder
 
-- [x] **Attribute Metadata** (partial)
+- [x] **Attribute Metadata** ✅ COMPLETE
   - [x] Parse attribute qualifiers (custom, uniform, varying)
   - [x] Store in PropSlot flags
   - [x] Write qualifiers in USDA output
-  - [ ] Parse interpolation metadata
+  - [x] Parse interpolation metadata
+
+- [x] **#ifdef Integration** ✅ COMPLETE
+  - [x] Unified header (`tinyusdz-next.hh`)
+  - [x] Compatibility header (`compat.hh`)
+  - [x] `TINYUSDZ_USE_NEXT` cmake flag support
+
+- [x] **MaterialX Support** ✅ COMPLETE (in tydra/next)
+  - [x] `MtlxConverter` class
+  - [x] Standard Surface to PreviewSurface conversion
+  - [x] USD MaterialX material binding support
+  - [x] Texture data extraction
 
 - [ ] **Error Recovery**
   - [ ] Add error recovery in USDA parser
@@ -421,6 +507,61 @@ Measured with GCC 13.3.0 on Linux.
 
 ## Usage Example
 
+### Simple Usage (Unified Header)
+
+```cpp
+#include "next/tinyusdz-next.hh"
+
+using namespace tinyusdz::next;
+
+int main() {
+  Stage stage;
+  std::string warn, err;
+
+  // Auto-detect format and load
+  if (!LoadUSD("model.usd", &stage, &warn, &err)) {
+    std::cerr << "Error: " << err << "\n";
+    return 1;
+  }
+
+  // Traverse all prims
+  stage.Traverse([](const UsdPrim& prim) {
+    std::cout << prim.GetPath().str() << " : " << prim.GetTypeName() << "\n";
+    return true;  // continue traversal
+  });
+
+  // Write to different formats
+  WriteUSDA(stage, "output.usda");
+  WriteUSDC(stage, "output.usdc");
+
+  return 0;
+}
+```
+
+### Using Compatibility Header (#ifdef switching)
+
+```cpp
+// Use -DTINYUSDZ_USE_NEXT=ON to switch architectures
+#include "next/compat.hh"
+
+using namespace tinyusdz::compat;
+
+int main() {
+  Stage stage;
+  std::string warn, err;
+
+  // Same API works with both old and new architectures
+  if (!LoadUSD("model.usd", &stage, &warn, &err)) {
+    return 1;
+  }
+
+  // ... use stage
+  return 0;
+}
+```
+
+### Detailed Reader/Writer API
+
 ```cpp
 #include "next/reader/usda-reader.hh"
 #include "next/writer/usda-writer.hh"
@@ -428,29 +569,32 @@ Measured with GCC 13.3.0 on Linux.
 
 using namespace tinyusdz::next;
 
-// Load USDA
-LoadResult result = LoadUSDAFromFile("model.usda");
+// Load USDA with options
+LoadOptions opts;
+opts.resolve_assets = true;
+opts.base_dir = "/path/to/assets";
+
+LoadResult result = LoadUSDAFromFile("model.usda", opts);
 if (!result.success) {
   std::cerr << "Error: " << result.error_summary << "\n";
+  for (const auto& e : result.errors) {
+    std::cerr << "  Line " << e.line << ": " << e.message << "\n";
+  }
   return 1;
 }
 
 Stage stage = std::move(result.stage);
 
-// Traverse prims
-stage.Traverse([](const UsdPrim& prim) {
-  std::cout << prim.GetPath().str() << " : " << prim.GetTypeName() << "\n";
-  return true;  // continue
-});
-
-// Write USDA
-WriteUSDAToFile("output.usda", stage);
-
-// Write USDC
-WriteUSDCToFile("output.usdc", stage);
+// Write with options
+USDAWriteOptions write_opts;
+write_opts.compact = false;
+write_opts.float_precision = 6;
+WriteUSDAToFile("output.usda", stage, write_opts);
 ```
 
 ## Using Schema APIs
+
+### Geometry (Mesh, Xform)
 
 ```cpp
 #include "next/schema/geom-mesh.hh"
@@ -496,6 +640,162 @@ if (xform.IsValid()) {
 
   float matrix[16];
   xform.ComputeLocalTransform(matrix);
+}
+```
+
+### Camera
+
+```cpp
+#include "next/schema/usd-geom-camera.hh"
+
+using namespace tinyusdz::next;
+
+UsdPrim camPrim = stage.GetPrimAtPath("/World/Camera");
+if (IsCamera(camPrim)) {
+  CameraData cam;
+  GetCameraData(stage, camPrim, &cam);
+
+  // Lens properties
+  float focalLength = cam.focal_length;       // mm
+  float hAperture = cam.horizontal_aperture;  // mm
+
+  // Computed values
+  float hFov = cam.fov_horizontal;  // radians
+  float aspect = cam.aspect_ratio;
+
+  // Projection matrix (OpenGL column-major)
+  float proj[16];
+  ComputeProjectionMatrix(cam, proj);
+}
+```
+
+### Lights
+
+```cpp
+#include "next/schema/usd-lux.hh"
+
+using namespace tinyusdz::next;
+
+stage.Traverse([&](const UsdPrim& prim) {
+  if (IsLight(prim)) {
+    LightType type = GetLightType(prim);
+
+    switch (type) {
+      case LightType::SphereLight: {
+        SphereLightData data;
+        GetSphereLightData(stage, prim, &data);
+        // data.radius, data.intensity, data.color, etc.
+        break;
+      }
+      case LightType::DomeLight: {
+        DomeLightData data;
+        GetDomeLightData(stage, prim, &data);
+        // data.texture_file for HDRI
+        break;
+      }
+      // ... other light types
+    }
+  }
+  return true;
+});
+```
+
+### Materials and Shaders
+
+```cpp
+#include "next/schema/usd-shade.hh"
+
+using namespace tinyusdz::next;
+
+UsdPrim matPrim = stage.GetPrimAtPath("/Materials/Metal");
+if (IsMaterial(matPrim)) {
+  // Get bound shader
+  std::string shaderPath = GetSurfaceShader(stage, matPrim);
+  UsdPrim shaderPrim = stage.GetPrimAtPath(shaderPath);
+
+  if (IsPreviewSurface(shaderPrim)) {
+    PreviewSurfaceData ps;
+    GetPreviewSurfaceData(stage, shaderPrim, &ps);
+
+    // Material properties
+    float* diffuse = ps.diffuse_color;  // [3]
+    float metallic = ps.metallic;
+    float roughness = ps.roughness;
+
+    // Texture connections
+    if (!ps.diffuse_texture.empty()) {
+      // Follow connection to get texture path
+    }
+  }
+}
+```
+
+### Attribute Evaluation
+
+```cpp
+#include "next/eval/attribute-eval.hh"
+
+using namespace tinyusdz::next;
+
+AttributeEval eval(&stage);
+eval.SetTime(1.0);  // Frame 1
+
+UsdPrim prim = stage.GetPrimAtPath("/World/Cube");
+
+// Type-safe evaluation with fallback
+float opacity = eval.EvalOr(prim, "inputs:opacity", 1.0f);
+
+// Vector evaluation
+float color[3];
+if (eval.EvalFloat3(prim, "inputs:diffuseColor", color)) {
+  // Got color
+}
+
+// Full result with metadata
+EvalResult result = eval.Eval(prim, "xformOp:translate");
+if (result.success) {
+  if (result.from_time_sample) {
+    // Value came from time sample (possibly interpolated)
+  }
+  if (result.from_connection) {
+    // Value resolved via connection
+  }
+}
+```
+
+### MaterialX Conversion (in tydra/next)
+
+```cpp
+#include "tydra/next/materialx.hh"
+
+using namespace tinyusdz::tydra::next;
+
+MtlxConverter converter;
+
+// Convert MaterialX XML to render material
+std::string mtlxContent = R"(
+<?xml version="1.0"?>
+<materialx version="1.38">
+  <standard_surface name="SR_Metal" type="surfaceshader">
+    <input name="base_color" type="color3" value="0.8, 0.8, 0.8"/>
+    <input name="metalness" type="float" value="1.0"/>
+    <input name="specular_roughness" type="float" value="0.2"/>
+  </standard_surface>
+  <surfacematerial name="Metal" type="material">
+    <input name="surfaceshader" type="surfaceshader" nodename="SR_Metal"/>
+  </surfacematerial>
+</materialx>
+)";
+
+RenderMaterial material;
+if (converter.ConvertToRenderMaterial(mtlxContent, "Metal", &material)) {
+  // material.preview_surface contains converted PBR data
+}
+
+// Convert USD material with MaterialX binding
+UsdPrim matPrim = stage.GetPrimAtPath("/Materials/MyMaterial");
+if (converter.ConvertUsdMtlxMaterial(stage, matPrim, &material)) {
+  // Got converted material
 }
 ```
 
