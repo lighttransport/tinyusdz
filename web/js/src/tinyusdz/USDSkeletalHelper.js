@@ -14,41 +14,74 @@ import * as THREE from 'three';
  *
  * @param {Object} usdSkeleton - Skeleton data from usd.getSkeleton(id)
  * @param {Object} [options] - Creation options
- * @param {boolean} [options.useBindPose=true] - Use bind pose transforms for skeleton
+ * @param {boolean} [options.useRestPose=true] - Use rest pose transforms (local space) for skeleton
+ * @param {boolean} [options.useBindPose] - Deprecated: use useRestPose instead
  * @returns {THREE.Skeleton} Three.js Skeleton object
  */
 export function createThreeSkeletonFromUSD(usdSkeleton, options = {}) {
-  const useBindPose = options.useBindPose !== undefined ? options.useBindPose : true;
+  // Support deprecated useBindPose option (inverted logic)
+  // useRestPose=true (default) means use rest_transform (local space)
+  // useRestPose=false means compute local from bind_transform (world space)
+  const useRestPose = options.useRestPose !== undefined ? options.useRestPose :
+                      options.useBindPose !== undefined ? !options.useBindPose : true;
 
   // Recursively create bone hierarchy
-  function createBoneHierarchy(skelNode, parentBone = null) {
+  function createBoneHierarchy(skelNode, parentBone = null, parentBindMatrix = null) {
     const bone = new THREE.Bone();
     bone.name = skelNode.joint_name || `joint_${skelNode.joint_id}`;
     bone.userData.joint_id = skelNode.joint_id;
     bone.userData.joint_path = skelNode.joint_path;
 
-    // Get transform matrix (use bind pose or rest pose)
-    const matrixArray = useBindPose ? skelNode.bind_transform : skelNode.rest_transform;
-    const matrix = new THREE.Matrix4();
+    // Check which transforms are available
+    const hasRestTransform = skelNode.rest_transform && skelNode.rest_transform.length === 16;
+    const hasBindTransform = skelNode.bind_transform && skelNode.bind_transform.length === 16;
 
-    // Convert from USD column-major to Three.js column-major (same order)
-    matrix.fromArray(matrixArray);
+    // Parse bind matrix (always need for fallback and hierarchy traversal)
+    let bindMatrix = null;
+    if (hasBindTransform) {
+      bindMatrix = new THREE.Matrix4();
+      bindMatrix.fromArray(skelNode.bind_transform);
+    }
 
-    // Decompose matrix into position, quaternion, scale
-    bone.position.setFromMatrixPosition(matrix);
-    bone.quaternion.setFromRotationMatrix(matrix);
-    bone.scale.setFromMatrixScale(matrix);
+    // Determine bone's local transform
+    if (useRestPose && hasRestTransform) {
+      // rest_transform is in LOCAL space - apply directly
+      const restMatrix = new THREE.Matrix4();
+      restMatrix.fromArray(skelNode.rest_transform);
+      bone.position.setFromMatrixPosition(restMatrix);
+      bone.quaternion.setFromRotationMatrix(restMatrix);
+      bone.scale.setFromMatrixScale(restMatrix);
+    } else if (hasBindTransform) {
+      // Compute local transform from world-space bind_transform
+      // localTransform = inverse(parent_bind) * child_bind
+      if (parentBone && parentBindMatrix) {
+        const parentInverse = parentBindMatrix.clone().invert();
+        const localMatrix = parentInverse.clone().multiply(bindMatrix);
+        bone.position.setFromMatrixPosition(localMatrix);
+        bone.quaternion.setFromRotationMatrix(localMatrix);
+        bone.scale.setFromMatrixScale(localMatrix);
+      } else {
+        // Root bone: use bind_transform directly
+        bone.position.setFromMatrixPosition(bindMatrix);
+        bone.quaternion.setFromRotationMatrix(bindMatrix);
+        bone.scale.setFromMatrixScale(bindMatrix);
+      }
+    }
 
-    // If this bone has a parent, make the transform relative
+    // Store rest pose in userData for later reset
+    bone.userData.restPosition = bone.position.clone();
+    bone.userData.restQuaternion = bone.quaternion.clone();
+    bone.userData.restScale = bone.scale.clone();
+
+    // Add to parent
     if (parentBone) {
       parentBone.add(bone);
-      // Transform is already in parent space from USD
     }
 
     // Recursively create children
     if (skelNode.children && skelNode.children.length > 0) {
       for (const childNode of skelNode.children) {
-        createBoneHierarchy(childNode, bone);
+        createBoneHierarchy(childNode, bone, bindMatrix);
       }
     }
 
@@ -56,7 +89,7 @@ export function createThreeSkeletonFromUSD(usdSkeleton, options = {}) {
   }
 
   // Create root bone and hierarchy
-  const rootBone = createBoneHierarchy(usdSkeleton.root_node);
+  const rootBone = createBoneHierarchy(usdSkeleton.root_node, null, null);
 
   // Collect all bones in breadth-first order for skeleton
   const bones = [];
@@ -83,6 +116,32 @@ export function createThreeSkeletonFromUSD(usdSkeleton, options = {}) {
 }
 
 /**
+ * Reset skeleton bones to their rest pose transforms
+ * Uses stored rest transforms from bone.userData
+ * @param {THREE.Skeleton} skeleton - The skeleton to reset
+ */
+export function resetSkeletonToRestPose(skeleton) {
+  if (!skeleton || !skeleton.bones) return;
+
+  for (const bone of skeleton.bones) {
+    if (bone.userData.restPosition) {
+      bone.position.copy(bone.userData.restPosition);
+    }
+    if (bone.userData.restQuaternion) {
+      bone.quaternion.copy(bone.userData.restQuaternion);
+    }
+    if (bone.userData.restScale) {
+      bone.scale.copy(bone.userData.restScale);
+    }
+  }
+
+  // Update matrices
+  if (skeleton.bones.length > 0) {
+    skeleton.bones[0].updateMatrixWorld(true);
+  }
+}
+
+/**
  * Create a Three.js Skeleton from flattened USD skeleton data (optimized)
  *
  * This is a more efficient version that uses the pre-flattened skeleton data
@@ -90,11 +149,15 @@ export function createThreeSkeletonFromUSD(usdSkeleton, options = {}) {
  *
  * @param {Object} flatSkeleton - Flattened skeleton from usd.getSkeletonJointsFlat(id)
  * @param {Object} [options] - Creation options
- * @param {boolean} [options.useBindPose=true] - Use bind pose transforms
+ * @param {boolean} [options.useRestPose=true] - Use rest pose transforms (local space)
+ * @param {boolean} [options.useBindPose] - Deprecated: use useRestPose instead
  * @returns {THREE.Skeleton} Three.js Skeleton object
  */
 export function createThreeSkeletonFromFlat(flatSkeleton, options = {}) {
-  const useBindPose = options.useBindPose !== undefined ? options.useBindPose : true;
+  // Support deprecated useBindPose option (inverted logic)
+  // useRestPose=true (default) means use rest_matrices (local space)
+  const useRestPose = options.useRestPose !== undefined ? options.useRestPose :
+                      options.useBindPose !== undefined ? !options.useBindPose : true;
   const numJoints = flatSkeleton.num_joints;
 
   // Create all bones first
@@ -107,22 +170,51 @@ export function createThreeSkeletonFromFlat(flatSkeleton, options = {}) {
     bones.push(bone);
   }
 
+  // Pre-compute parent bind matrices for fallback computation
+  const bindMatrices = [];
+  for (let i = 0; i < numJoints; i++) {
+    const matrixOffset = i * 16;
+    const matrixArray = flatSkeleton.bind_matrices.slice(matrixOffset, matrixOffset + 16);
+    const matrix = new THREE.Matrix4();
+    matrix.fromArray(Array.from(matrixArray));
+    bindMatrices.push(matrix);
+  }
+
   // Build hierarchy using parent indices
   for (let i = 0; i < numJoints; i++) {
     const parentIdx = flatSkeleton.parent_indices[i];
 
-    // Get transform matrix
-    const matrices = useBindPose ? flatSkeleton.bind_matrices : flatSkeleton.rest_matrices;
-    const matrixOffset = i * 16;
-    const matrixArray = matrices.slice(matrixOffset, matrixOffset + 16);
+    if (useRestPose && flatSkeleton.rest_matrices) {
+      // Use rest_matrices (local space) directly
+      const matrixOffset = i * 16;
+      const matrixArray = flatSkeleton.rest_matrices.slice(matrixOffset, matrixOffset + 16);
+      const matrix = new THREE.Matrix4();
+      matrix.fromArray(Array.from(matrixArray));
 
-    const matrix = new THREE.Matrix4();
-    matrix.fromArray(matrixArray);
+      bones[i].position.setFromMatrixPosition(matrix);
+      bones[i].quaternion.setFromRotationMatrix(matrix);
+      bones[i].scale.setFromMatrixScale(matrix);
+    } else {
+      // Compute local transform from world-space bind_matrices
+      // localTransform = inverse(parent_bind) * child_bind
+      if (parentIdx >= 0 && parentIdx < numJoints) {
+        const parentInverse = bindMatrices[parentIdx].clone().invert();
+        const localMatrix = parentInverse.clone().multiply(bindMatrices[i]);
+        bones[i].position.setFromMatrixPosition(localMatrix);
+        bones[i].quaternion.setFromRotationMatrix(localMatrix);
+        bones[i].scale.setFromMatrixScale(localMatrix);
+      } else {
+        // Root bone: use bind matrix directly
+        bones[i].position.setFromMatrixPosition(bindMatrices[i]);
+        bones[i].quaternion.setFromRotationMatrix(bindMatrices[i]);
+        bones[i].scale.setFromMatrixScale(bindMatrices[i]);
+      }
+    }
 
-    // Decompose into position, quaternion, scale
-    bones[i].position.setFromMatrixPosition(matrix);
-    bones[i].quaternion.setFromRotationMatrix(matrix);
-    bones[i].scale.setFromMatrixScale(matrix);
+    // Store rest pose in userData for later reset
+    bones[i].userData.restPosition = bones[i].position.clone();
+    bones[i].userData.restQuaternion = bones[i].quaternion.clone();
+    bones[i].userData.restScale = bones[i].scale.clone();
 
     // Add to parent if not root
     if (parentIdx >= 0 && parentIdx < numJoints) {
@@ -262,18 +354,33 @@ export function createThreeAnimationClip(usdAnimation, skeleton, options = {}) {
  * @param {THREE.Material} material - Material for the mesh
  * @param {THREE.Skeleton} skeleton - Skeleton for skinning
  * @param {Object} usdMesh - Original USD mesh data for reference
+ * @param {Object} [options] - Creation options
+ * @param {THREE.Matrix4} [options.geomBindTransform] - Optional geometry bind transform matrix
  * @returns {THREE.SkinnedMesh} Three.js SkinnedMesh
  */
-export function createSkinnedMesh(geometry, material, skeleton, usdMesh) {
+export function createSkinnedMesh(geometry, material, skeleton, usdMesh, options = {}) {
   const mesh = new THREE.SkinnedMesh(geometry, material);
   mesh.add(skeleton.bones[0]); // Add root bone to mesh
-  mesh.bind(skeleton);
+
+  // Bind with optional geomBindTransform
+  // geomBindTransform defines the mesh's transform when it was bound to the skeleton
+  if (options.geomBindTransform) {
+    mesh.bind(skeleton, options.geomBindTransform);
+  } else if (usdMesh && usdMesh.geomBindTransform && usdMesh.geomBindTransform.length === 16) {
+    // Parse geomBindTransform from USD mesh data if provided as array
+    const bindMatrix = new THREE.Matrix4();
+    bindMatrix.fromArray(Array.from(usdMesh.geomBindTransform));
+    mesh.bind(skeleton, bindMatrix);
+  } else {
+    mesh.bind(skeleton);
+  }
 
   // Store USD metadata
   if (usdMesh) {
     mesh.userData.usd_prim_name = usdMesh.primName;
     mesh.userData.usd_abs_path = usdMesh.absPath;
     mesh.userData.usd_skel_id = usdMesh.skel_id;
+    mesh.userData.hasGeomBindTransform = usdMesh.hasGeomBindTransform || false;
   }
 
   return mesh;
@@ -425,5 +532,6 @@ export default {
   createSkinnedMesh,
   addSkinningAttributes,
   createSkinnedMeshFromUSD,
-  playAnimation
+  playAnimation,
+  resetSkeletonToRestPose
 };
