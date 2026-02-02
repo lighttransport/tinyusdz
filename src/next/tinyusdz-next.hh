@@ -21,6 +21,13 @@
 #include "types/type-info.hh"
 #include "types/value.hh"
 #include "types/interpolation.hh"
+#include "types/typed-array-view.hh"
+
+// Memory budget
+#include "memory-budget.hh"
+
+// I/O
+#include "io/mmap-file.hh"
 
 // Prim types
 #include "prim/path.hh"
@@ -90,6 +97,21 @@ bool LoadUSDA(const std::string& filename, Stage* stage,
 
 /// Load USDC (binary/Crate) file
 bool LoadUSDC(const std::string& filename, Stage* stage,
+              std::string* warn = nullptr, std::string* err = nullptr);
+
+/// Load USD with custom options (including memory budget)
+bool LoadUSD(const std::string& filename, Stage* stage,
+             const LoadOptions& options,
+             std::string* warn = nullptr, std::string* err = nullptr);
+
+/// Load USDA with custom options (including memory budget)
+bool LoadUSDA(const std::string& filename, Stage* stage,
+              const LoadOptions& options,
+              std::string* warn = nullptr, std::string* err = nullptr);
+
+/// Load USDC with custom options (including memory budget)
+bool LoadUSDC(const std::string& filename, Stage* stage,
+              const USDCLoadOptions& options,
               std::string* warn = nullptr, std::string* err = nullptr);
 
 // ============================================================

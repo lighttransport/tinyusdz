@@ -6,6 +6,7 @@
 #include "ascii-parser.hh"
 #include "lexer.hh"
 #include "value-parser.hh"
+#include "../memory-budget.hh"
 
 #include <fstream>
 #include <sstream>
@@ -19,7 +20,11 @@ namespace next {
 
 class AsciiParser::Impl {
 public:
-  explicit Impl(const ParseOptions& options) : options_(options) {}
+  explicit Impl(const ParseOptions& options)
+      : options_(options),
+        memory_budget_(options.max_memory_limit_in_mb > 0
+                           ? MemoryBudget::FromMB(options.max_memory_limit_in_mb)
+                           : MemoryBudget()) {}
 
   bool Parse(const char* data, size_t length);
   bool ParseFile(const char* filename);
@@ -34,6 +39,10 @@ private:
   Stage stage_;
   std::vector<ParseError> errors_;
   std::vector<std::string> warnings_;
+
+  // Memory budget tracking
+  MemoryBudget memory_budget_;
+  size_t prim_count_ = 0;
 
   // Parsing state
   std::unique_ptr<Lexer> lexer_;
@@ -53,6 +62,13 @@ private:
   void AddError(const std::string& message);
   void AddWarning(const std::string& message);
 
+  // Memory budget helpers
+  bool CheckMemoryBudget(uint64_t bytes, const char* context);
+  bool CheckPrimCount();
+  bool CheckPropertyCount(size_t count);
+  bool CheckTimeSampleCount(size_t count);
+  bool CheckArraySize(size_t count, size_t element_size);
+
   // Token helpers
   bool Match(TokenType type);
   bool Check(TokenType type);
@@ -63,9 +79,16 @@ bool AsciiParser::Impl::Parse(const char* data, size_t length) {
   errors_.clear();
   warnings_.clear();
   depth_ = 0;
+  prim_count_ = 0;
+  memory_budget_.Reset();
 
   if (options_.max_file_size > 0 && length > options_.max_file_size) {
     AddError("File size exceeds maximum allowed");
+    return false;
+  }
+
+  // Reserve memory for the input data copy (lexer may reference it)
+  if (!CheckMemoryBudget(length, "input data")) {
     return false;
   }
 
@@ -218,6 +241,16 @@ bool AsciiParser::Impl::ParsePrim() {
     return false;
   }
 
+  // Check prim count limit
+  if (!CheckPrimCount()) {
+    return false;
+  }
+
+  // Reserve memory for PrimSpec structure (approximate)
+  if (!CheckMemoryBudget(sizeof(PrimSpec) + 256, "prim")) {
+    return false;
+  }
+
   // Parse specifier: def, over, class
   PrimSpecifier specifier = PrimSpecifier::Def;
   const Token& spec_tok = lexer_->peek();
@@ -251,6 +284,7 @@ bool AsciiParser::Impl::ParsePrim() {
 
   // Begin prim in layer
   builder_->begin_prim(prim_name, type_name, specifier);
+  prim_count_++;
 
   // Parse optional metadata block
   if (Check(TokenType::OpenParen)) {
@@ -622,6 +656,55 @@ void AsciiParser::Impl::AddError(const std::string& message) {
 
 void AsciiParser::Impl::AddWarning(const std::string& message) {
   warnings_.push_back("Line " + std::to_string(lexer_ ? lexer_->line() : 0) + ": " + message);
+}
+
+bool AsciiParser::Impl::CheckMemoryBudget(uint64_t bytes, const char* context) {
+  if (!memory_budget_.TryReserve(bytes)) {
+    std::string msg = "Memory limit exceeded";
+    if (context) {
+      msg += " while allocating ";
+      msg += context;
+    }
+    msg += ". Limit: " + std::to_string(memory_budget_.GetMaxBudget() / (1024 * 1024)) + " MB";
+    msg += ", Current usage: " + std::to_string(memory_budget_.GetCurrentUsage() / (1024 * 1024)) + " MB";
+    msg += ", Requested: " + std::to_string(bytes) + " bytes";
+    AddError(msg);
+    return false;
+  }
+  return true;
+}
+
+bool AsciiParser::Impl::CheckPrimCount() {
+  if (options_.max_prim_count > 0 && prim_count_ >= options_.max_prim_count) {
+    AddError("Maximum prim count exceeded: " + std::to_string(options_.max_prim_count));
+    return false;
+  }
+  return true;
+}
+
+bool AsciiParser::Impl::CheckPropertyCount(size_t count) {
+  if (options_.max_properties_per_prim > 0 && count >= options_.max_properties_per_prim) {
+    AddError("Maximum properties per prim exceeded: " + std::to_string(options_.max_properties_per_prim));
+    return false;
+  }
+  return true;
+}
+
+bool AsciiParser::Impl::CheckTimeSampleCount(size_t count) {
+  if (options_.max_time_samples > 0 && count >= options_.max_time_samples) {
+    AddError("Maximum time samples exceeded: " + std::to_string(options_.max_time_samples));
+    return false;
+  }
+  return true;
+}
+
+bool AsciiParser::Impl::CheckArraySize(size_t count, size_t element_size) {
+  if (options_.max_array_elements > 0 && count > options_.max_array_elements) {
+    AddError("Maximum array elements exceeded: " + std::to_string(options_.max_array_elements) +
+             ", requested: " + std::to_string(count));
+    return false;
+  }
+  return CheckMemoryBudget(count * element_size, "array");
 }
 
 bool AsciiParser::Impl::Match(TokenType type) {

@@ -24,6 +24,25 @@ struct ParseOptions {
 
   /// Maximum nesting depth for prims
   size_t max_depth = 256;
+
+  /// Maximum memory budget in megabytes (0 = unlimited)
+  /// This is an advisory limit - actual memory usage may slightly exceed this
+  /// due to overhead and pre-allocated buffers. Default is 16GB.
+  uint32_t max_memory_limit_in_mb = 16384;
+
+  /// Maximum number of prims allowed (0 = no limit)
+  /// Helps prevent denial-of-service from files with millions of prims
+  size_t max_prim_count = 0;
+
+  /// Maximum number of properties per prim (0 = no limit)
+  size_t max_properties_per_prim = 0;
+
+  /// Maximum number of time samples per property (0 = no limit)
+  size_t max_time_samples = 0;
+
+  /// Maximum array element count (0 = no limit)
+  /// Prevents allocation of huge arrays from malicious files
+  size_t max_array_elements = 0;
 };
 
 /// Error information from parsing

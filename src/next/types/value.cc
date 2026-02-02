@@ -32,6 +32,21 @@ struct IntArrayStorage {
   std::vector<int32_t> data;
 };
 
+struct DoubleArrayStorage {
+  std::vector<double> data;
+};
+
+struct UIntArrayStorage {
+  std::vector<uint32_t> data;
+};
+
+// View storage - non-owning pointer to external data
+struct ArrayViewStorage {
+  const void* data;
+  size_t count;
+  size_t elem_size;  // Size of each element in bytes
+};
+
 // Check if type uses string storage
 bool UsesStringStorage(TypeId id) {
   return id == TypeId::String || id == TypeId::Token || id == TypeId::AssetPath;
@@ -438,6 +453,145 @@ Value Value::MakeFloat3Array(std::vector<float>&& data) {
 }
 
 // ============================================================
+// Zero-copy array view factories
+// ============================================================
+
+Value Value::MakeFloatArrayView(const float* data, size_t count) {
+  Value v;
+  v.type_id_ = TypeId::Float;
+  v.is_array_ = true;
+  v.is_view_ = true;
+  v.array_size_ = static_cast<uint32_t>(count);
+  ArrayViewStorage view{data, count, sizeof(float)};
+  std::memcpy(v.storage_, &view, sizeof(view));
+  return v;
+}
+
+Value Value::MakeIntArrayView(const int32_t* data, size_t count) {
+  Value v;
+  v.type_id_ = TypeId::Int;
+  v.is_array_ = true;
+  v.is_view_ = true;
+  v.array_size_ = static_cast<uint32_t>(count);
+  ArrayViewStorage view{data, count, sizeof(int32_t)};
+  std::memcpy(v.storage_, &view, sizeof(view));
+  return v;
+}
+
+Value Value::MakeUIntArrayView(const uint32_t* data, size_t count) {
+  Value v;
+  v.type_id_ = TypeId::UInt;
+  v.is_array_ = true;
+  v.is_view_ = true;
+  v.array_size_ = static_cast<uint32_t>(count);
+  ArrayViewStorage view{data, count, sizeof(uint32_t)};
+  std::memcpy(v.storage_, &view, sizeof(view));
+  return v;
+}
+
+Value Value::MakeDoubleArrayView(const double* data, size_t count) {
+  Value v;
+  v.type_id_ = TypeId::Double;
+  v.is_array_ = true;
+  v.is_view_ = true;
+  v.array_size_ = static_cast<uint32_t>(count);
+  ArrayViewStorage view{data, count, sizeof(double)};
+  std::memcpy(v.storage_, &view, sizeof(view));
+  return v;
+}
+
+Value Value::MakeFloat2ArrayView(const float* data, size_t count) {
+  Value v;
+  v.type_id_ = TypeId::Float2;
+  v.is_array_ = true;
+  v.is_view_ = true;
+  v.array_size_ = static_cast<uint32_t>(count);
+  ArrayViewStorage view{data, count, sizeof(float) * 2};
+  std::memcpy(v.storage_, &view, sizeof(view));
+  return v;
+}
+
+Value Value::MakeFloat3ArrayView(const float* data, size_t count) {
+  Value v;
+  v.type_id_ = TypeId::Float3;
+  v.is_array_ = true;
+  v.is_view_ = true;
+  v.array_size_ = static_cast<uint32_t>(count);
+  ArrayViewStorage view{data, count, sizeof(float) * 3};
+  std::memcpy(v.storage_, &view, sizeof(view));
+  return v;
+}
+
+Value Value::MakeFloat4ArrayView(const float* data, size_t count) {
+  Value v;
+  v.type_id_ = TypeId::Float4;
+  v.is_array_ = true;
+  v.is_view_ = true;
+  v.array_size_ = static_cast<uint32_t>(count);
+  ArrayViewStorage view{data, count, sizeof(float) * 4};
+  std::memcpy(v.storage_, &view, sizeof(view));
+  return v;
+}
+
+Value Value::MakeDouble3ArrayView(const double* data, size_t count) {
+  Value v;
+  v.type_id_ = TypeId::Double3;
+  v.is_array_ = true;
+  v.is_view_ = true;
+  v.array_size_ = static_cast<uint32_t>(count);
+  ArrayViewStorage view{data, count, sizeof(double) * 3};
+  std::memcpy(v.storage_, &view, sizeof(view));
+  return v;
+}
+
+Value Value::MakeInt2ArrayView(const int32_t* data, size_t count) {
+  Value v;
+  v.type_id_ = TypeId::Int2;
+  v.is_array_ = true;
+  v.is_view_ = true;
+  v.array_size_ = static_cast<uint32_t>(count);
+  ArrayViewStorage view{data, count, sizeof(int32_t) * 2};
+  std::memcpy(v.storage_, &view, sizeof(view));
+  return v;
+}
+
+Value Value::MakeInt3ArrayView(const int32_t* data, size_t count) {
+  Value v;
+  v.type_id_ = TypeId::Int3;
+  v.is_array_ = true;
+  v.is_view_ = true;
+  v.array_size_ = static_cast<uint32_t>(count);
+  ArrayViewStorage view{data, count, sizeof(int32_t) * 3};
+  std::memcpy(v.storage_, &view, sizeof(view));
+  return v;
+}
+
+Value Value::MakeInt4ArrayView(const int32_t* data, size_t count) {
+  Value v;
+  v.type_id_ = TypeId::Int4;
+  v.is_array_ = true;
+  v.is_view_ = true;
+  v.array_size_ = static_cast<uint32_t>(count);
+  ArrayViewStorage view{data, count, sizeof(int32_t) * 4};
+  std::memcpy(v.storage_, &view, sizeof(view));
+  return v;
+}
+
+Value Value::MakeArrayView(TypeId elem_type, const void* data, size_t count) {
+  size_t elem_size = GetTypeSize(elem_type);
+  if (elem_size == 0) return Value();
+
+  Value v;
+  v.type_id_ = elem_type;
+  v.is_array_ = true;
+  v.is_view_ = true;
+  v.array_size_ = static_cast<uint32_t>(count);
+  ArrayViewStorage view{data, count, elem_size};
+  std::memcpy(v.storage_, &view, sizeof(view));
+  return v;
+}
+
+// ============================================================
 // Queries and accessors
 // ============================================================
 
@@ -445,6 +599,7 @@ void Value::clear() {
   destroy();
   type_id_ = TypeId::Invalid;
   is_array_ = false;
+  is_view_ = false;
   array_size_ = 0;
 }
 
@@ -456,12 +611,21 @@ void Value::destroy() {
   if (type_id_ == TypeId::Invalid) return;
 
   if (is_array_) {
-    void* ptr;
-    std::memcpy(&ptr, storage_, sizeof(ptr));
-    if (type_id_ == TypeId::Float || type_id_ == TypeId::Float3) {
-      delete static_cast<FloatArrayStorage*>(ptr);
-    } else if (type_id_ == TypeId::Int) {
-      delete static_cast<IntArrayStorage*>(ptr);
+    // Views don't own their data - nothing to delete
+    if (!is_view_) {
+      void* ptr;
+      std::memcpy(&ptr, storage_, sizeof(ptr));
+      if (type_id_ == TypeId::Float || type_id_ == TypeId::Float3 ||
+          type_id_ == TypeId::Float2 || type_id_ == TypeId::Float4) {
+        delete static_cast<FloatArrayStorage*>(ptr);
+      } else if (type_id_ == TypeId::Int || type_id_ == TypeId::Int2 ||
+                 type_id_ == TypeId::Int3 || type_id_ == TypeId::Int4) {
+        delete static_cast<IntArrayStorage*>(ptr);
+      } else if (type_id_ == TypeId::UInt) {
+        delete static_cast<UIntArrayStorage*>(ptr);
+      } else if (type_id_ == TypeId::Double || type_id_ == TypeId::Double3) {
+        delete static_cast<DoubleArrayStorage*>(ptr);
+      }
     }
   } else if (UsesStringStorage(type_id_)) {
     reinterpret_cast<StringStorage*>(storage_)->~StringStorage();
@@ -469,23 +633,38 @@ void Value::destroy() {
 
   type_id_ = TypeId::Invalid;
   is_array_ = false;
+  is_view_ = false;
   array_size_ = 0;
 }
 
 void Value::copy_from(const Value& other) {
   type_id_ = other.type_id_;
   is_array_ = other.is_array_;
+  is_view_ = other.is_view_;
   array_size_ = other.array_size_;
 
   if (other.is_array_) {
-    void* ptr;
-    std::memcpy(&ptr, other.storage_, sizeof(ptr));
-    if (other.type_id_ == TypeId::Float || other.type_id_ == TypeId::Float3) {
-      auto* new_storage = new FloatArrayStorage{static_cast<FloatArrayStorage*>(ptr)->data};
-      std::memcpy(storage_, &new_storage, sizeof(new_storage));
-    } else if (other.type_id_ == TypeId::Int) {
-      auto* new_storage = new IntArrayStorage{static_cast<IntArrayStorage*>(ptr)->data};
-      std::memcpy(storage_, &new_storage, sizeof(new_storage));
+    if (other.is_view_) {
+      // Copy the view storage (just pointers, not the data)
+      std::memcpy(storage_, other.storage_, sizeof(ArrayViewStorage));
+    } else {
+      void* ptr;
+      std::memcpy(&ptr, other.storage_, sizeof(ptr));
+      if (other.type_id_ == TypeId::Float || other.type_id_ == TypeId::Float3 ||
+          other.type_id_ == TypeId::Float2 || other.type_id_ == TypeId::Float4) {
+        auto* new_storage = new FloatArrayStorage{static_cast<FloatArrayStorage*>(ptr)->data};
+        std::memcpy(storage_, &new_storage, sizeof(new_storage));
+      } else if (other.type_id_ == TypeId::Int || other.type_id_ == TypeId::Int2 ||
+                 other.type_id_ == TypeId::Int3 || other.type_id_ == TypeId::Int4) {
+        auto* new_storage = new IntArrayStorage{static_cast<IntArrayStorage*>(ptr)->data};
+        std::memcpy(storage_, &new_storage, sizeof(new_storage));
+      } else if (other.type_id_ == TypeId::UInt) {
+        auto* new_storage = new UIntArrayStorage{static_cast<UIntArrayStorage*>(ptr)->data};
+        std::memcpy(storage_, &new_storage, sizeof(new_storage));
+      } else if (other.type_id_ == TypeId::Double || other.type_id_ == TypeId::Double3) {
+        auto* new_storage = new DoubleArrayStorage{static_cast<DoubleArrayStorage*>(ptr)->data};
+        std::memcpy(storage_, &new_storage, sizeof(new_storage));
+      }
     }
   } else if (UsesStringStorage(other.type_id_)) {
     new (storage_) StringStorage{reinterpret_cast<const StringStorage*>(other.storage_)->value};
@@ -497,11 +676,17 @@ void Value::copy_from(const Value& other) {
 void Value::move_from(Value&& other) noexcept {
   type_id_ = other.type_id_;
   is_array_ = other.is_array_;
+  is_view_ = other.is_view_;
   array_size_ = other.array_size_;
 
   if (other.is_array_) {
-    // Just copy the pointer - no need to allocate
-    std::memcpy(storage_, other.storage_, sizeof(void*));
+    if (other.is_view_) {
+      // Copy the view storage (just pointers)
+      std::memcpy(storage_, other.storage_, sizeof(ArrayViewStorage));
+    } else {
+      // Just copy the pointer - no need to allocate
+      std::memcpy(storage_, other.storage_, sizeof(void*));
+    }
   } else if (UsesStringStorage(other.type_id_)) {
     new (storage_) StringStorage{std::move(reinterpret_cast<StringStorage*>(other.storage_)->value)};
     reinterpret_cast<StringStorage*>(other.storage_)->~StringStorage();
@@ -511,6 +696,7 @@ void Value::move_from(Value&& other) noexcept {
 
   other.type_id_ = TypeId::Invalid;
   other.is_array_ = false;
+  other.is_view_ = false;
   other.array_size_ = 0;
 }
 
@@ -671,33 +857,191 @@ const double* Value::as_matrix4d() const {
   return reinterpret_cast<const double*>(storage_);
 }
 
-// Array accessors
+// Array accessors (only work for owned arrays, not views)
 const std::vector<float>* Value::as_float_array() const {
-  if ((type_id_ != TypeId::Float && type_id_ != TypeId::Float3) || !is_array_) return nullptr;
+  if ((type_id_ != TypeId::Float && type_id_ != TypeId::Float3) || !is_array_ || is_view_) return nullptr;
   void* ptr;
   std::memcpy(&ptr, storage_, sizeof(ptr));
   return &static_cast<FloatArrayStorage*>(ptr)->data;
 }
 
 std::vector<float>* Value::as_float_array() {
-  if ((type_id_ != TypeId::Float && type_id_ != TypeId::Float3) || !is_array_) return nullptr;
+  if ((type_id_ != TypeId::Float && type_id_ != TypeId::Float3) || !is_array_ || is_view_) return nullptr;
   void* ptr;
   std::memcpy(&ptr, storage_, sizeof(ptr));
   return &static_cast<FloatArrayStorage*>(ptr)->data;
 }
 
 const std::vector<int32_t>* Value::as_int_array() const {
-  if (type_id_ != TypeId::Int || !is_array_) return nullptr;
+  if (type_id_ != TypeId::Int || !is_array_ || is_view_) return nullptr;
   void* ptr;
   std::memcpy(&ptr, storage_, sizeof(ptr));
   return &static_cast<IntArrayStorage*>(ptr)->data;
 }
 
 std::vector<int32_t>* Value::as_int_array() {
-  if (type_id_ != TypeId::Int || !is_array_) return nullptr;
+  if (type_id_ != TypeId::Int || !is_array_ || is_view_) return nullptr;
   void* ptr;
   std::memcpy(&ptr, storage_, sizeof(ptr));
   return &static_cast<IntArrayStorage*>(ptr)->data;
+}
+
+// ============================================================
+// Array view accessors
+// ============================================================
+
+FloatArrayView Value::float_array_view() const {
+  if (!is_array_) return FloatArrayView();
+  if (type_id_ != TypeId::Float && type_id_ != TypeId::Float3 &&
+      type_id_ != TypeId::Float2 && type_id_ != TypeId::Float4) {
+    return FloatArrayView();
+  }
+
+  if (is_view_) {
+    ArrayViewStorage view;
+    std::memcpy(&view, storage_, sizeof(view));
+    size_t elem_count = (type_id_ == TypeId::Float) ? view.count :
+                        (type_id_ == TypeId::Float2) ? view.count * 2 :
+                        (type_id_ == TypeId::Float3) ? view.count * 3 : view.count * 4;
+    return FloatArrayView(static_cast<const float*>(view.data), elem_count);
+  } else {
+    void* ptr;
+    std::memcpy(&ptr, storage_, sizeof(ptr));
+    const auto& data = static_cast<FloatArrayStorage*>(ptr)->data;
+    return FloatArrayView(data.data(), data.size());
+  }
+}
+
+Int32ArrayView Value::int_array_view() const {
+  if (!is_array_) return Int32ArrayView();
+  if (type_id_ != TypeId::Int && type_id_ != TypeId::Int2 &&
+      type_id_ != TypeId::Int3 && type_id_ != TypeId::Int4) {
+    return Int32ArrayView();
+  }
+
+  if (is_view_) {
+    ArrayViewStorage view;
+    std::memcpy(&view, storage_, sizeof(view));
+    size_t elem_count = (type_id_ == TypeId::Int) ? view.count :
+                        (type_id_ == TypeId::Int2) ? view.count * 2 :
+                        (type_id_ == TypeId::Int3) ? view.count * 3 : view.count * 4;
+    return Int32ArrayView(static_cast<const int32_t*>(view.data), elem_count);
+  } else {
+    void* ptr;
+    std::memcpy(&ptr, storage_, sizeof(ptr));
+    const auto& data = static_cast<IntArrayStorage*>(ptr)->data;
+    return Int32ArrayView(data.data(), data.size());
+  }
+}
+
+UInt32ArrayView Value::uint_array_view() const {
+  if (!is_array_ || type_id_ != TypeId::UInt) return UInt32ArrayView();
+
+  if (is_view_) {
+    ArrayViewStorage view;
+    std::memcpy(&view, storage_, sizeof(view));
+    return UInt32ArrayView(static_cast<const uint32_t*>(view.data), view.count);
+  } else {
+    void* ptr;
+    std::memcpy(&ptr, storage_, sizeof(ptr));
+    const auto& data = static_cast<UIntArrayStorage*>(ptr)->data;
+    return UInt32ArrayView(data.data(), data.size());
+  }
+}
+
+DoubleArrayView Value::double_array_view() const {
+  if (!is_array_) return DoubleArrayView();
+  if (type_id_ != TypeId::Double && type_id_ != TypeId::Double3) {
+    return DoubleArrayView();
+  }
+
+  if (is_view_) {
+    ArrayViewStorage view;
+    std::memcpy(&view, storage_, sizeof(view));
+    size_t elem_count = (type_id_ == TypeId::Double) ? view.count : view.count * 3;
+    return DoubleArrayView(static_cast<const double*>(view.data), elem_count);
+  } else {
+    void* ptr;
+    std::memcpy(&ptr, storage_, sizeof(ptr));
+    const auto& data = static_cast<DoubleArrayStorage*>(ptr)->data;
+    return DoubleArrayView(data.data(), data.size());
+  }
+}
+
+const void* Value::array_data() const {
+  if (!is_array_) return nullptr;
+
+  if (is_view_) {
+    ArrayViewStorage view;
+    std::memcpy(&view, storage_, sizeof(view));
+    return view.data;
+  } else {
+    void* ptr;
+    std::memcpy(&ptr, storage_, sizeof(ptr));
+    if (type_id_ == TypeId::Float || type_id_ == TypeId::Float3 ||
+        type_id_ == TypeId::Float2 || type_id_ == TypeId::Float4) {
+      return static_cast<FloatArrayStorage*>(ptr)->data.data();
+    } else if (type_id_ == TypeId::Int || type_id_ == TypeId::Int2 ||
+               type_id_ == TypeId::Int3 || type_id_ == TypeId::Int4) {
+      return static_cast<IntArrayStorage*>(ptr)->data.data();
+    } else if (type_id_ == TypeId::UInt) {
+      return static_cast<UIntArrayStorage*>(ptr)->data.data();
+    } else if (type_id_ == TypeId::Double || type_id_ == TypeId::Double3) {
+      return static_cast<DoubleArrayStorage*>(ptr)->data.data();
+    }
+  }
+  return nullptr;
+}
+
+size_t Value::array_element_count() const {
+  if (!is_array_) return 0;
+
+  if (is_view_) {
+    ArrayViewStorage view;
+    std::memcpy(&view, storage_, sizeof(view));
+    return view.count;
+  }
+  return array_size_;
+}
+
+bool Value::make_owned() {
+  if (!is_array_ || !is_view_) return false;
+
+  ArrayViewStorage view;
+  std::memcpy(&view, storage_, sizeof(view));
+
+  // Create owned copy based on type
+  if (type_id_ == TypeId::Float || type_id_ == TypeId::Float2 ||
+      type_id_ == TypeId::Float3 || type_id_ == TypeId::Float4) {
+    size_t total_floats = view.count * (view.elem_size / sizeof(float));
+    std::vector<float> owned_data(total_floats);
+    std::memcpy(owned_data.data(), view.data, total_floats * sizeof(float));
+    auto* storage = new FloatArrayStorage{std::move(owned_data)};
+    std::memcpy(storage_, &storage, sizeof(storage));
+  } else if (type_id_ == TypeId::Int || type_id_ == TypeId::Int2 ||
+             type_id_ == TypeId::Int3 || type_id_ == TypeId::Int4) {
+    size_t total_ints = view.count * (view.elem_size / sizeof(int32_t));
+    std::vector<int32_t> owned_data(total_ints);
+    std::memcpy(owned_data.data(), view.data, total_ints * sizeof(int32_t));
+    auto* storage = new IntArrayStorage{std::move(owned_data)};
+    std::memcpy(storage_, &storage, sizeof(storage));
+  } else if (type_id_ == TypeId::UInt) {
+    std::vector<uint32_t> owned_data(view.count);
+    std::memcpy(owned_data.data(), view.data, view.count * sizeof(uint32_t));
+    auto* storage = new UIntArrayStorage{std::move(owned_data)};
+    std::memcpy(storage_, &storage, sizeof(storage));
+  } else if (type_id_ == TypeId::Double || type_id_ == TypeId::Double3) {
+    size_t total_doubles = view.count * (view.elem_size / sizeof(double));
+    std::vector<double> owned_data(total_doubles);
+    std::memcpy(owned_data.data(), view.data, total_doubles * sizeof(double));
+    auto* storage = new DoubleArrayStorage{std::move(owned_data)};
+    std::memcpy(storage_, &storage, sizeof(storage));
+  } else {
+    return false;
+  }
+
+  is_view_ = false;
+  return true;
 }
 
 // ============================================================

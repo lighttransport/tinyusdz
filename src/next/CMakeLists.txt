@@ -13,6 +13,10 @@ set(TINYUSDZ_NEXT_SOURCES
     types/type-info.cc
     types/value.cc
     types/interpolation.cc
+    types/typed-array-view.cc
+
+    # I/O
+    io/mmap-file.cc
 
     # Prim types
     prim/path.cc
@@ -69,11 +73,18 @@ set(TINYUSDZ_NEXT_SOURCES
 
 # Define header files (for IDE project generation)
 set(TINYUSDZ_NEXT_HEADERS
+    # Memory budget
+    memory-budget.hh
+
     # Type system
     types/type-id.hh
     types/type-info.hh
     types/value.hh
     types/interpolation.hh
+    types/typed-array-view.hh
+
+    # I/O
+    io/mmap-file.hh
 
     # Prim types
     prim/path.hh
@@ -252,4 +263,16 @@ if(TINYUSDZ_NEXT_BUILD_TESTS)
         ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/next/benchmark_next.cc
     )
     target_link_libraries(benchmark_next PRIVATE tinyusdz_next)
+
+    # Memory budget test
+    add_executable(test_memory_budget
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/next/test_memory_budget.cc
+    )
+    target_link_libraries(test_memory_budget PRIVATE tinyusdz_next)
+
+    # Mmap and zero-copy test
+    add_executable(test_mmap_zerocopy
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/next/test_mmap_zerocopy.cc
+    )
+    target_link_libraries(test_mmap_zerocopy PRIVATE tinyusdz_next)
 endif()

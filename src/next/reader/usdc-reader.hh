@@ -23,6 +23,34 @@ struct USDCLoadOptions {
 
   /// Base directory for resolving relative paths
   std::string base_dir;
+
+  // ============================================================
+  // Memory budget convenience accessors
+  // ============================================================
+
+  /// Set memory limit in bytes (convenience method)
+  USDCLoadOptions& SetMaxMemory(size_t bytes) {
+    crate_options.max_memory = bytes;
+    return *this;
+  }
+
+  /// Set memory limit in megabytes (convenience method)
+  USDCLoadOptions& SetMaxMemoryMB(uint32_t mb) {
+    crate_options.max_memory = static_cast<size_t>(mb) * 1024 * 1024;
+    return *this;
+  }
+
+  /// Set maximum tokens (convenience method)
+  USDCLoadOptions& SetMaxTokens(size_t count) {
+    crate_options.max_tokens = count;
+    return *this;
+  }
+
+  /// Set maximum specs (convenience method)
+  USDCLoadOptions& SetMaxSpecs(size_t count) {
+    crate_options.max_specs = count;
+    return *this;
+  }
 };
 
 /// Load result containing the stage and any messages

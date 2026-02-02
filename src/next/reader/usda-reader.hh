@@ -23,6 +23,34 @@ struct LoadOptions {
 
   /// Base directory for resolving relative paths
   std::string base_dir;
+
+  // ============================================================
+  // Memory budget convenience accessors
+  // ============================================================
+
+  /// Set memory limit in megabytes (convenience method)
+  LoadOptions& SetMaxMemoryMB(uint32_t mb) {
+    parse_options.max_memory_limit_in_mb = mb;
+    return *this;
+  }
+
+  /// Set maximum prim count (convenience method)
+  LoadOptions& SetMaxPrimCount(size_t count) {
+    parse_options.max_prim_count = count;
+    return *this;
+  }
+
+  /// Set maximum properties per prim (convenience method)
+  LoadOptions& SetMaxPropertiesPerPrim(size_t count) {
+    parse_options.max_properties_per_prim = count;
+    return *this;
+  }
+
+  /// Set maximum array elements (convenience method)
+  LoadOptions& SetMaxArrayElements(size_t count) {
+    parse_options.max_array_elements = count;
+    return *this;
+  }
 };
 
 /// Load result containing the stage and any messages

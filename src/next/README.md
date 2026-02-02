@@ -52,6 +52,11 @@ API breakage and feature deletion are acceptable for this redesign. The goal is 
 | UsdGeomCamera | ✅ Complete | `schema/usd-geom-camera.{hh,cc}` |
 | UsdLux | ✅ Complete | `schema/usd-lux.{hh,cc}` |
 | UsdShade | ✅ Complete | `schema/usd-shade.{hh,cc}` |
+| **Security** | | |
+| Memory Budget | ✅ Complete | `memory-budget.hh` |
+| **I/O** | | |
+| Mmap File | ✅ Complete | `io/mmap-file.{hh,cc}` |
+| TypedArrayView | ✅ Complete | `types/typed-array-view.{hh,cc}` |
 | **Integration** | | |
 | Unified Header | ✅ Complete | `tinyusdz-next.{hh,cc}` |
 | Compat Header | ✅ Complete | `compat.hh` |
@@ -155,6 +160,156 @@ Stage/Layer ──► WriteUSDA()  ──► USDA file
 Stage/Layer ──► WriteUSDC()  ──► USDC file (via CrateWriter)
 ```
 
+## Security Features
+
+### Memory Budget
+
+The `MemoryBudget` class provides RAII-style memory tracking to prevent denial-of-service attacks from malicious USD files:
+
+```cpp
+#include "next/tinyusdz-next.hh"
+
+using namespace tinyusdz::next;
+
+// Load with memory constraints
+LoadOptions options;
+options.SetMaxMemoryMB(256)           // Limit total memory to 256MB
+       .SetMaxPrimCount(10000)        // Max 10,000 prims
+       .SetMaxPropertiesPerPrim(100)  // Max 100 properties per prim
+       .SetMaxArrayElements(1000000); // Max 1M array elements
+
+Stage stage;
+std::string err;
+if (!LoadUSDA("model.usda", &stage, options, nullptr, &err)) {
+  // Handle error - may be memory limit exceeded
+}
+```
+
+### Parse Options
+
+`ParseOptions` provides fine-grained control over parsing limits:
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `max_memory_limit_in_mb` | 16384 (16GB) | Total memory budget |
+| `max_file_size` | 0 (unlimited) | Maximum input file size |
+| `max_depth` | 256 | Maximum prim nesting depth |
+| `max_prim_count` | 0 (unlimited) | Maximum number of prims |
+| `max_properties_per_prim` | 0 (unlimited) | Maximum properties per prim |
+| `max_time_samples` | 0 (unlimited) | Maximum time samples per property |
+| `max_array_elements` | 0 (unlimited) | Maximum array elements |
+
+### Memory Budget API
+
+```cpp
+// Create budget with 100MB limit
+MemoryBudget budget = MemoryBudget::FromMB(100);
+
+// Try to allocate
+if (!budget.TryReserve(1024 * 1024)) {
+  // Would exceed budget
+}
+
+// RAII scoped reservation
+{
+  auto reservation = budget.ReserveScoped(1024);
+  if (reservation.IsReserved()) {
+    // Use memory...
+  }
+} // Automatically released when scope ends
+
+// Query usage
+size_t used = budget.GetCurrentUsage();
+size_t remaining = budget.GetRemainingBudget();
+```
+
+### Zero-Copy / Mmap Support
+
+For memory-efficient USDC reading, the library supports memory-mapped file I/O and zero-copy array views:
+
+```cpp
+#include "next/tinyusdz-next.hh"
+
+using namespace tinyusdz::next;
+
+// Load USDC with zero-copy enabled (default on 64-bit)
+USDCLoadOptions options;
+options.use_mmap = true;           // Use mmap for file I/O
+options.zero_copy_arrays = true;   // Use views instead of copies
+options.force_copy = false;        // Don't force copies
+
+USDCLoadResult result = LoadUSDCFromFile("large_model.usdc", options);
+
+// IMPORTANT: Stage may contain views to mmap'd data!
+// The mmap_file reference in result keeps the data alive.
+if (result.has_zero_copy_data()) {
+  // stage depends on result.mmap_file being alive
+}
+
+// Access array data through views (works for both owned and view data)
+UsdPrim prim = result.stage.GetPrimAtPath("/Mesh");
+const Value* points = prim.GetPropertyValue("points");
+if (points && points->is_array()) {
+  FloatArrayView view = points->float_array_view();
+  for (size_t i = 0; i < view.size(); i += 3) {
+    float x = view[i], y = view[i+1], z = view[i+2];
+    // Process vertex...
+  }
+}
+
+// Convert view to owned data if needed (makes a copy)
+Value points_copy = *points;
+points_copy.make_owned();  // Now independent of mmap
+```
+
+### TypedArrayView
+
+Non-owning view to contiguous array data (similar to C++20 std::span):
+
+```cpp
+std::vector<float> data = {1.0f, 2.0f, 3.0f, 4.0f, 5.0f};
+
+// Create view (no copy)
+FloatArrayView view(data.data(), data.size());
+
+// Access elements
+float first = view[0];
+float last = view.back();
+
+// Iterate
+for (float f : view) {
+  // ...
+}
+
+// Subviews
+auto first3 = view.first(3);
+auto last2 = view.last(2);
+auto middle = view.subview(1, 3);
+```
+
+### Value Array Views
+
+Create non-owning Value objects that reference external data:
+
+```cpp
+// Create view from raw pointer (data must remain valid!)
+const float* mesh_points = ...;  // mmap'd data
+size_t num_vertices = 1000;
+
+Value points_view = Value::MakeFloat3ArrayView(mesh_points, num_vertices);
+
+// Check ownership
+if (points_view.is_view()) {
+  // This is a non-owning view
+}
+
+// Get typed view accessor
+FloatArrayView fv = points_view.float_array_view();
+
+// Convert to owned if needed
+points_view.make_owned();
+```
+
 ## File Structure
 
 ```
@@ -164,8 +319,15 @@ src/next/
 ├── tinyusdz-next.hh            # Unified header (includes all components)
 ├── tinyusdz-next.cc            # High-level API implementation
 ├── compat.hh                   # Compatibility header for #ifdef switching
+├── memory-budget.hh            # Memory budget tracking for security
+│
+├── io/                          # I/O utilities
+│   ├── mmap-file.hh            # Memory-mapped file wrapper
+│   └── mmap-file.cc
 │
 ├── types/                       # Core type system
+│   ├── typed-array-view.hh     # Non-owning array view (like std::span)
+│   ├── typed-array-view.cc
 │   ├── type-id.hh              # TypeId enum (~200 lines)
 │   ├── type-info.hh            # TypeInfo struct
 │   ├── type-info.cc            # Type registry implementation

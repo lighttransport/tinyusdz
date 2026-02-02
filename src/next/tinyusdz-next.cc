@@ -197,6 +197,122 @@ bool LoadUSDC(const std::string& filename, Stage* stage,
   return true;
 }
 
+bool LoadUSD(const std::string& filename, Stage* stage,
+             const LoadOptions& options,
+             std::string* warn, std::string* err) {
+  if (!stage) {
+    if (err) *err = "stage is null";
+    return false;
+  }
+
+  // Read file to detect format
+  std::vector<uint8_t> data;
+  if (!ReadFile(filename, &data, err)) {
+    return false;
+  }
+
+  // Detect format
+  FileFormat format = DetectFormatFromExtension(filename);
+  if (format == FileFormat::Unknown) {
+    format = DetectFormat(data.data(), data.size());
+  }
+
+  switch (format) {
+    case FileFormat::USDA: {
+      LoadResult result = LoadUSDAFromFile(filename, options);
+      if (!result.success) {
+        if (err) *err = result.error_summary;
+        return false;
+      }
+      if (warn && !result.warnings.empty()) {
+        for (const auto& w : result.warnings) {
+          *warn += w + "\n";
+        }
+      }
+      *stage = std::move(result.stage);
+      return true;
+    }
+
+    case FileFormat::USDC: {
+      // Convert LoadOptions to USDCLoadOptions
+      USDCLoadOptions usdc_options;
+      usdc_options.SetMaxMemoryMB(options.parse_options.max_memory_limit_in_mb);
+      usdc_options.resolve_assets = options.resolve_assets;
+      usdc_options.base_dir = options.base_dir;
+
+      USDCLoadResult result = LoadUSDCFromFile(filename, usdc_options);
+      if (!result.success) {
+        if (err) *err = result.error_summary;
+        return false;
+      }
+      if (warn && !result.warnings.empty()) {
+        for (const auto& w : result.warnings) {
+          *warn += w + "\n";
+        }
+      }
+      *stage = std::move(result.stage);
+      return true;
+    }
+
+    case FileFormat::USDZ: {
+      if (err) *err = "USDZ format not yet implemented";
+      return false;
+    }
+
+    default:
+      if (err) *err = "Unknown file format";
+      return false;
+  }
+}
+
+bool LoadUSDA(const std::string& filename, Stage* stage,
+              const LoadOptions& options,
+              std::string* warn, std::string* err) {
+  if (!stage) {
+    if (err) *err = "stage is null";
+    return false;
+  }
+
+  LoadResult result = LoadUSDAFromFile(filename, options);
+  if (!result.success) {
+    if (err) *err = result.error_summary;
+    return false;
+  }
+
+  if (warn && !result.warnings.empty()) {
+    for (const auto& w : result.warnings) {
+      *warn += w + "\n";
+    }
+  }
+
+  *stage = std::move(result.stage);
+  return true;
+}
+
+bool LoadUSDC(const std::string& filename, Stage* stage,
+              const USDCLoadOptions& options,
+              std::string* warn, std::string* err) {
+  if (!stage) {
+    if (err) *err = "stage is null";
+    return false;
+  }
+
+  USDCLoadResult result = LoadUSDCFromFile(filename, options);
+  if (!result.success) {
+    if (err) *err = result.error_summary;
+    return false;
+  }
+
+  if (warn && !result.warnings.empty()) {
+    for (const auto& w : result.warnings) {
+      *warn += w + "\n";
+    }
+  }
+
+  *stage = std::move(result.stage);
+  return true;
+}
+
 bool WriteUSDA(const Stage& stage, const std::string& filename,
                std::string* err) {
   USDAWriteResult result = WriteUSDAToFile(filename, stage);

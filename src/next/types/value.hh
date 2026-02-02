@@ -7,6 +7,7 @@
 #pragma once
 
 #include "type-id.hh"
+#include "typed-array-view.hh"
 #include <cstddef>
 #include <string>
 #include <vector>
@@ -122,6 +123,27 @@ public:
   static Value MakeFloat3Array(std::vector<float>&& data);
 
   // ============================================================
+  // Zero-copy array view factories (for mmap'd data)
+  // ============================================================
+
+  /// Create array view (non-owning) from pointer and count
+  /// WARNING: The data must remain valid for the lifetime of this Value!
+  static Value MakeFloatArrayView(const float* data, size_t count);
+  static Value MakeIntArrayView(const int32_t* data, size_t count);
+  static Value MakeUIntArrayView(const uint32_t* data, size_t count);
+  static Value MakeDoubleArrayView(const double* data, size_t count);
+  static Value MakeFloat2ArrayView(const float* data, size_t count);
+  static Value MakeFloat3ArrayView(const float* data, size_t count);
+  static Value MakeFloat4ArrayView(const float* data, size_t count);
+  static Value MakeDouble3ArrayView(const double* data, size_t count);
+  static Value MakeInt2ArrayView(const int32_t* data, size_t count);
+  static Value MakeInt3ArrayView(const int32_t* data, size_t count);
+  static Value MakeInt4ArrayView(const int32_t* data, size_t count);
+
+  /// Generic view factory for any type
+  static Value MakeArrayView(TypeId elem_type, const void* data, size_t count);
+
+  // ============================================================
   // Type queries
   // ============================================================
 
@@ -134,8 +156,15 @@ public:
   /// Check if this is an array value
   bool is_array() const { return is_array_; }
 
+  /// Check if this is a zero-copy view (non-owning reference to external data)
+  bool is_view() const { return is_view_; }
+
   /// Get array size (0 if not an array)
   size_t array_size() const { return is_array_ ? array_size_ : 0; }
+
+  /// Convert a view to owned data (makes a copy)
+  /// Returns true if conversion happened, false if already owned or not an array
+  bool make_owned();
 
   /// Clear the value (becomes empty)
   void clear();
@@ -186,11 +215,22 @@ public:
   const std::string* as_token() const;
   const std::string* as_asset_path() const;
 
-  // Array accessors
+  // Array accessors (for owned arrays)
   const std::vector<float>* as_float_array() const;
   const std::vector<int32_t>* as_int_array() const;
   std::vector<float>* as_float_array();
   std::vector<int32_t>* as_int_array();
+
+  // Array view accessors (works for both owned and view arrays)
+  // These provide read-only access regardless of ownership
+  FloatArrayView float_array_view() const;
+  Int32ArrayView int_array_view() const;
+  UInt32ArrayView uint_array_view() const;
+  DoubleArrayView double_array_view() const;
+
+  // Generic array data pointer and count (works for both owned and view)
+  const void* array_data() const;
+  size_t array_element_count() const;
 
   // ============================================================
   // Raw data access
@@ -222,7 +262,8 @@ public:
 private:
   TypeId type_id_ = TypeId::Invalid;
   bool is_array_ = false;
-  uint16_t reserved_ = 0;
+  bool is_view_ = false;  // True if array data is a non-owning view
+  uint8_t reserved_ = 0;
   uint32_t array_size_ = 0;
 
   // Storage - either inline or heap-allocated

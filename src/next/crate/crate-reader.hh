@@ -8,6 +8,7 @@
 
 #include "crate-format.hh"
 #include "../stage/stage.hh"
+#include "../io/mmap-file.hh"
 #include <string>
 #include <vector>
 #include <memory>
@@ -34,6 +35,25 @@ struct CrateReadOptions {
 
   /// Maximum memory budget (bytes, 0 = unlimited)
   size_t max_memory = 0;
+
+  // ============================================================
+  // Zero-copy / mmap options
+  // ============================================================
+
+  /// Use memory-mapped file I/O when reading from file
+  /// This enables zero-copy access to uncompressed array data
+  /// Default: true on 64-bit systems, false on 32-bit
+  bool use_mmap = (sizeof(void*) >= 8);
+
+  /// Use zero-copy views for uncompressed array data
+  /// When enabled, Value objects will hold views to mmap'd data
+  /// instead of copying. Requires use_mmap=true for file reads.
+  /// WARNING: The Stage must not outlive the mmap'd file data!
+  bool zero_copy_arrays = true;
+
+  /// Copy array data even when zero-copy is possible
+  /// Useful when you need the Stage to be independent of the file
+  bool force_copy = false;
 };
 
 /// Error from crate reading
@@ -49,6 +69,14 @@ struct CrateReadResult {
   std::vector<CrateError> errors;
   std::vector<std::string> warnings;
   CrateVersion version;
+
+  /// Reference to mmap'd file (keeps data alive for zero-copy views)
+  /// This will be valid when use_mmap=true and the stage contains views
+  /// The stage must not outlive this reference!
+  MmapFileRef mmap_file;
+
+  /// Check if this result contains zero-copy data that requires mmap to stay alive
+  bool has_zero_copy_data() const { return mmap_file.IsValid(); }
 };
 
 /// USDC Crate file reader
