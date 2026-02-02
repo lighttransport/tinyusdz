@@ -1025,6 +1025,7 @@ class TinyUSDZLoaderNative {
     // Bone reduction configuration
     env.mesh_config.enable_bone_reduction = enable_bone_reduction_;
     env.mesh_config.target_bone_count = target_bone_count_;
+    env.mesh_config.round_bone_count = round_bone_count_;
 
     if (is_usdz) {
       // TODO: Support USDZ + Composition
@@ -1331,6 +1332,7 @@ class TinyUSDZLoaderNative {
     env.mesh_config.lowmem = true;
     env.mesh_config.enable_bone_reduction = enable_bone_reduction_;
     env.mesh_config.target_bone_count = target_bone_count_;
+    env.mesh_config.round_bone_count = round_bone_count_;
 
     // Yield after setup
     co_await yieldToEventLoop();
@@ -3133,13 +3135,21 @@ class TinyUSDZLoaderNative {
   }
 
   void setTargetBoneCount(uint32_t count) {
-    if (count > 0 && count <= 64) {  // Sanity check: 1-64 bones
+    if (count > 0 && count <= 128) {  // Sanity check: 1-128 bones
       target_bone_count_ = count;
     }
   }
 
   uint32_t getTargetBoneCount() const {
     return target_bone_count_;
+  }
+
+  void setRoundBoneCount(bool enabled) {
+    round_bone_count_ = enabled;
+  }
+
+  bool getRoundBoneCount() const {
+    return round_bone_count_;
   }
 
   emscripten::val getAssetSearchPaths() const {
@@ -4055,6 +4065,7 @@ class TinyUSDZLoaderNative {
   // Bone reduction configuration (disabled by default for backward compatibility)
   bool enable_bone_reduction_{false};
   uint32_t target_bone_count_{4};  // Default to 4 bones (standard for WebGL/Three.js)
+  bool round_bone_count_{false};   // Round up to standard GPU skinning values (4,8,16,32,48,64,80,96,128)
 
   std::string filename_;
   std::string warn_;
@@ -4816,6 +4827,10 @@ EMSCRIPTEN_BINDINGS(tinyusdz_module) {
                 &TinyUSDZLoaderNative::setTargetBoneCount)
       .function("getTargetBoneCount",
                 &TinyUSDZLoaderNative::getTargetBoneCount)
+      .function("setRoundBoneCount",
+                &TinyUSDZLoaderNative::setRoundBoneCount)
+      .function("getRoundBoneCount",
+                &TinyUSDZLoaderNative::getRoundBoneCount)
 
       .function("setEnableComposition",
                 &TinyUSDZLoaderNative::setEnableComposition)

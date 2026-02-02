@@ -4933,6 +4933,18 @@ bool RenderSceneConverter::ConvertMesh(
     dst.joint_and_weights.jointWeights = jointWeightsArray;
     dst.joint_and_weights.elementSize = int(jointIndicesElementSize);
 
+    // Helper lambda to round up bone count to standard GPU skinning values
+    auto roundBoneCountUp = [](uint32_t count) -> uint32_t {
+      // Standard GPU skinning bone counts: 4, 8, 16, 32, 48, 64, 80, 96, 128
+      const uint32_t standardCounts[] = {4, 8, 16, 32, 48, 64, 80, 96, 128};
+      for (uint32_t stdCount : standardCounts) {
+        if (count <= stdCount) {
+          return stdCount;
+        }
+      }
+      return 128; // Max supported
+    };
+
     // Apply bone reduction if enabled
     if (env.mesh_config.enable_bone_reduction &&
         (env.mesh_config.target_bone_count < jointIndicesElementSize)) {
@@ -4971,6 +4983,40 @@ bool RenderSceneConverter::ConvertMesh(
         DCOUT("  Modified vertices: " << reduction_stats.num_vertices_modified << " / " << numVertices);
         DCOUT("  Avg weight error: " << reduction_stats.avg_weight_error);
         DCOUT("  Max weight error: " << reduction_stats.max_weight_error);
+      }
+    }
+    // Round bone count without reduction (pad with zeros)
+    else if (env.mesh_config.round_bone_count && !env.mesh_config.enable_bone_reduction) {
+      uint32_t currentElementSize = jointIndicesElementSize;
+      uint32_t roundedElementSize = roundBoneCountUp(currentElementSize);
+
+      if (roundedElementSize > currentElementSize) {
+        uint32_t numVertices = uint32_t(jointIndicesArray.size() / jointIndicesElementSize);
+
+        DCOUT("Rounding bone count from " << currentElementSize
+              << " to " << roundedElementSize
+              << " per vertex (" << numVertices << " vertices)");
+
+        // Create new arrays with padded size
+        std::vector<int32_t> paddedIndices(numVertices * roundedElementSize, 0);
+        std::vector<float> paddedWeights(numVertices * roundedElementSize, 0.0f);
+
+        // Copy existing data and pad with zeros
+        for (uint32_t v = 0; v < numVertices; v++) {
+          for (uint32_t j = 0; j < currentElementSize; j++) {
+            uint32_t srcIdx = v * currentElementSize + j;
+            uint32_t dstIdx = v * roundedElementSize + j;
+            paddedIndices[dstIdx] = dst.joint_and_weights.jointIndices[srcIdx];
+            paddedWeights[dstIdx] = dst.joint_and_weights.jointWeights[srcIdx];
+          }
+          // Remaining slots are already zero-initialized
+        }
+
+        dst.joint_and_weights.jointIndices = std::move(paddedIndices);
+        dst.joint_and_weights.jointWeights = std::move(paddedWeights);
+        dst.joint_and_weights.elementSize = int(roundedElementSize);
+
+        DCOUT("Bone count rounded. New elementSize: " << dst.joint_and_weights.elementSize);
       }
     }
 

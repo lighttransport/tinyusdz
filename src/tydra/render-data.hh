@@ -2069,6 +2069,15 @@ struct MeshConverterConfig {
   uint32_t target_bone_count{4};
 
   //
+  // Round bone count up to standard GPU skinning values without reducing influences.
+  // When enabled and enable_bone_reduction is false, the elementSize is rounded up
+  // to one of: 4, 8, 16, 32, 48, 64, 80, 96, 128
+  // This allows passing all bone influences while ensuring compatibility with
+  // GPU skinning systems that expect specific bone counts.
+  //
+  bool round_bone_count{false};
+
+  //
   // Build vertex indices when vertex attributes are converted to `faceverying`?
   // Similar vertices are merged into single vertex index.
   // (convert vertex attributes from 'facevarying' to 'vertex' variability)
