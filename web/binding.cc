@@ -1932,6 +1932,144 @@ class TinyUSDZLoaderNative {
 
   int numMeshes() const { return render_scene_.meshes.size(); }
 
+  /**
+   * Generate bone data texture for GPU skinning with high bone counts.
+   *
+   * The texture stores bone indices and weights in RGBA format:
+   * - R: bone index 0, G: weight 0, B: bone index 1, A: weight 1
+   * - Each texel contains 2 bone influences
+   *
+   * @param mesh_id Mesh index
+   * @param max_influences Maximum influences per vertex (0 = use mesh's elementSize)
+   * @return Object with textureData, dimensions, and metadata
+   */
+  emscripten::val generateBoneTexture(int mesh_id, int max_influences = 0) const {
+    emscripten::val result = emscripten::val::object();
+
+    if (!loaded_ || mesh_id < 0 || mesh_id >= static_cast<int>(render_scene_.meshes.size())) {
+      result.set("error", "Invalid mesh ID or scene not loaded");
+      return result;
+    }
+
+    const auto &rmesh = render_scene_.meshes[size_t(mesh_id)];
+    const auto &jw = rmesh.joint_and_weights;
+
+    if (jw.jointIndices.empty() || jw.jointWeights.empty()) {
+      result.set("error", "Mesh has no skinning data");
+      return result;
+    }
+
+    int elementSize = jw.elementSize;
+    int vertexCount = static_cast<int>(jw.jointIndices.size()) / elementSize;
+
+    // Determine max influences for texture
+    int maxInfl = (max_influences > 0) ? max_influences : elementSize;
+
+    // Round up to standard GPU skinning values if needed
+    auto roundUp = [](int count) -> int {
+      const int standardCounts[] = {4, 8, 16, 32, 48, 64, 80, 96, 128};
+      for (int stdCount : standardCounts) {
+        if (count <= stdCount) return stdCount;
+      }
+      return 128;
+    };
+    maxInfl = roundUp(maxInfl);
+
+    // Calculate texture dimensions
+    // Each texel stores 2 influences (boneIdx0, weight0, boneIdx1, weight1)
+    int influencesPerTexel = 2;
+    int texelsPerVertex = (maxInfl + influencesPerTexel - 1) / influencesPerTexel;
+    int totalTexels = vertexCount * texelsPerVertex;
+
+    // Find optimal texture dimensions (prefer power of 2)
+    int texWidth = 1;
+    while (texWidth * texWidth < totalTexels && texWidth < 4096) {
+      texWidth *= 2;
+    }
+    int texHeight = (totalTexels + texWidth - 1) / texWidth;
+
+    // Allocate texture data (RGBA float)
+    std::vector<float> textureData(texWidth * texHeight * 4, 0.0f);
+
+    // Fill texture with bone data
+    for (int v = 0; v < vertexCount; v++) {
+      int texelOffset = v * texelsPerVertex;
+
+      // Collect influences for this vertex, sorted by weight (descending)
+      std::vector<std::pair<int, float>> influences;
+      for (int j = 0; j < elementSize && j < maxInfl; j++) {
+        int srcIdx = v * elementSize + j;
+        if (srcIdx < static_cast<int>(jw.jointIndices.size())) {
+          int boneIdx = jw.jointIndices[srcIdx];
+          float weight = jw.jointWeights[srcIdx];
+          if (weight > 0.0f) {
+            influences.push_back({boneIdx, weight});
+          }
+        }
+      }
+
+      // Sort by weight descending for potential early termination in shader
+      std::sort(influences.begin(), influences.end(),
+                [](const auto &a, const auto &b) { return a.second > b.second; });
+
+      // Write to texture (2 influences per texel)
+      for (int t = 0; t < texelsPerVertex; t++) {
+        int texelIdx = (texelOffset + t) * 4;
+        if (texelIdx + 3 >= static_cast<int>(textureData.size())) break;
+
+        // First influence in texel (RG)
+        int infIdx0 = t * 2;
+        if (infIdx0 < static_cast<int>(influences.size())) {
+          textureData[texelIdx + 0] = static_cast<float>(influences[infIdx0].first);  // R: bone index
+          textureData[texelIdx + 1] = influences[infIdx0].second;  // G: weight
+        } else {
+          textureData[texelIdx + 0] = -1.0f;  // Invalid bone index
+          textureData[texelIdx + 1] = 0.0f;
+        }
+
+        // Second influence in texel (BA)
+        int infIdx1 = t * 2 + 1;
+        if (infIdx1 < static_cast<int>(influences.size())) {
+          textureData[texelIdx + 2] = static_cast<float>(influences[infIdx1].first);  // B: bone index
+          textureData[texelIdx + 3] = influences[infIdx1].second;  // A: weight
+        } else {
+          textureData[texelIdx + 2] = -1.0f;  // Invalid bone index
+          textureData[texelIdx + 3] = 0.0f;
+        }
+      }
+    }
+
+    // Generate vertex offset array (where each vertex's data starts in texture)
+    std::vector<float> vertexOffsets(vertexCount);
+    for (int v = 0; v < vertexCount; v++) {
+      vertexOffsets[v] = static_cast<float>(v * texelsPerVertex);
+    }
+
+    // Return result
+    result.set("textureData", emscripten::val(emscripten::typed_memory_view(
+        textureData.size(), textureData.data())));
+    result.set("textureWidth", texWidth);
+    result.set("textureHeight", texHeight);
+    result.set("texelsPerVertex", texelsPerVertex);
+    result.set("maxInfluences", maxInfl);
+    result.set("vertexCount", vertexCount);
+    result.set("originalElementSize", elementSize);
+    result.set("vertexOffsets", emscripten::val(emscripten::typed_memory_view(
+        vertexOffsets.size(), vertexOffsets.data())));
+
+    // Store in member to keep memory alive
+    bone_texture_data_ = std::move(textureData);
+    bone_vertex_offsets_ = std::move(vertexOffsets);
+
+    // Re-set with valid pointers
+    result.set("textureData", emscripten::val(emscripten::typed_memory_view(
+        bone_texture_data_.size(), bone_texture_data_.data())));
+    result.set("vertexOffsets", emscripten::val(emscripten::typed_memory_view(
+        bone_vertex_offsets_.size(), bone_vertex_offsets_.data())));
+
+    return result;
+  }
+
   int numMaterials() const { return render_scene_.materials.size(); }
 
   int numTextures() const { return render_scene_.textures.size(); }
@@ -4067,6 +4205,10 @@ class TinyUSDZLoaderNative {
   uint32_t target_bone_count_{4};  // Default to 4 bones (standard for WebGL/Three.js)
   bool round_bone_count_{false};   // Round up to standard GPU skinning values (4,8,16,32,48,64,80,96,128)
 
+  // Bone texture data cache (mutable for const member function)
+  mutable std::vector<float> bone_texture_data_;
+  mutable std::vector<float> bone_vertex_offsets_;
+
   std::string filename_;
   std::string warn_;
   std::string error_;
@@ -4776,6 +4918,7 @@ EMSCRIPTEN_BINDINGS(tinyusdz_module) {
       .function("getURI", &TinyUSDZLoaderNative::getURI)
       .function("getMesh", &TinyUSDZLoaderNative::getMesh)
       .function("numMeshes", &TinyUSDZLoaderNative::numMeshes)
+      .function("generateBoneTexture", &TinyUSDZLoaderNative::generateBoneTexture)
       .function("getMaterial", select_overload<emscripten::val(int) const>(&TinyUSDZLoaderNative::getMaterial))
       .function("getMaterialWithFormat", select_overload<emscripten::val(int, const std::string&) const>(&TinyUSDZLoaderNative::getMaterial))
       .function("numMaterials", &TinyUSDZLoaderNative::numMaterials)
