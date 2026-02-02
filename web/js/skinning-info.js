@@ -135,7 +135,7 @@ function printSkeletonInfo(usd, detailed = false) {
 }
 
 // Print skinning information from meshes
-function printSkinningInfo(usd, detailed = false, boneReductionInfo = null) {
+function printSkinningInfo(usd, detailed = false, boneReductionInfo = null, testBoneTexture = false) {
   const numMeshes = usd.numMeshes();
 
   if (numMeshes === 0) {
@@ -278,6 +278,34 @@ function printSkinningInfo(usd, detailed = false, boneReductionInfo = null) {
       // Skeleton reference
       if (mesh.skel_id !== undefined && mesh.skel_id >= 0) {
         console.log(`  Skeleton ID: ${mesh.skel_id}`);
+      }
+
+      // Test bone texture generation
+      if (testBoneTexture && hasJointIndices && hasJointWeights) {
+        try {
+          const boneTexture = usd.generateBoneTexture(i, 0); // 0 = auto
+          if (boneTexture.error) {
+            console.log(`  Bone Texture: Error - ${boneTexture.error}`);
+          } else {
+            console.log(`  Bone Texture Generated:`);
+            console.log(`    Texture Size: ${boneTexture.textureWidth} x ${boneTexture.textureHeight}`);
+            console.log(`    Max Influences: ${boneTexture.maxInfluences} (original: ${boneTexture.originalElementSize})`);
+            console.log(`    Texels Per Vertex: ${boneTexture.texelsPerVertex}`);
+            console.log(`    Texture Data Size: ${boneTexture.textureData.length} floats (${(boneTexture.textureData.length * 4 / 1024).toFixed(2)} KB)`);
+            console.log(`    Vertex Offsets Size: ${boneTexture.vertexOffsets.length} floats`);
+
+            if (detailed) {
+              // Show first few texels
+              console.log(`    First 4 texels (boneIdx0, weight0, boneIdx1, weight1):`);
+              for (let t = 0; t < Math.min(4, boneTexture.textureData.length / 4); t++) {
+                const base = t * 4;
+                console.log(`      [${t}]: bone0=${boneTexture.textureData[base].toFixed(0)}, w0=${boneTexture.textureData[base+1].toFixed(4)}, bone1=${boneTexture.textureData[base+2].toFixed(0)}, w1=${boneTexture.textureData[base+3].toFixed(4)}`);
+              }
+            }
+          }
+        } catch (texErr) {
+          console.log(`  Bone Texture: Error - ${texErr.message}`);
+        }
       }
 
       console.log();
@@ -491,6 +519,7 @@ async function main() {
     console.log('  --reduce-bones          Enable bone reduction (discard weak influences)');
     console.log('  --round-bones           Round bone count up to standard values (4,8,16,32,48,64,80,96,128)');
     console.log('  --target-bones <N>      Target bone count per vertex (default: 4, used with --reduce-bones)');
+    console.log('  --bone-texture          Test bone texture generation for GPU skinning');
     console.log('  --help                  Show this help message\n');
     console.log('Examples:');
     console.log('  npx vite-node skinning-info.js ../../models/character.usdc');
@@ -514,6 +543,7 @@ async function main() {
   const dumpKeyframes = args.includes('--keyframes');
   const reduceBones = args.includes('--reduce-bones');
   const roundBones = args.includes('--round-bones');
+  const testBoneTexture = args.includes('--bone-texture');
 
   // Parse --target-bones argument
   let targetBoneCount = 4; // Default value
@@ -589,7 +619,7 @@ async function main() {
 
     // Print information
     printSceneInfo(usd);
-    printSkinningInfo(usd, detailed, boneReductionInfo);
+    printSkinningInfo(usd, detailed, boneReductionInfo, testBoneTexture);
     printSkeletonInfo(usd, detailed);
     printSkelAnimation(usd, detailed, dumpKeyframes);
 
