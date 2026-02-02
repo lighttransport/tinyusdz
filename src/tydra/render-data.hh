@@ -1089,6 +1089,7 @@ struct ShapeTarget {
 struct JointAndWeight {
   value::matrix4d geomBindTransform{
       value::matrix4d::identity()};  // matrix4d primvars:skel:geomBindTransform
+  bool hasGeomBindTransform{false};  // true if geomBindTransform was explicitly authored in USD
 
   //
   // NOTE: variability of jointIndices and jointWeights are 'vertex'

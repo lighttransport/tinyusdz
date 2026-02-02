@@ -5119,6 +5119,7 @@ bool RenderSceneConverter::ConvertMesh(
     }
 
     // geomBindTransform(optional).
+    // If not authored, defaults to identity matrix (already set in struct initialization)
     if (mesh.has_primvar("skel:geomBindTransform")) {
       GeomPrimvar bindTransformPvar;
 
@@ -5135,6 +5136,11 @@ bool RenderSceneConverter::ConvertMesh(
       }
 
       dst.joint_and_weights.geomBindTransform = bindTransform;
+      dst.joint_and_weights.hasGeomBindTransform = true;
+    } else {
+      // geomBindTransform not authored - use identity (already set by default)
+      // Flag remains false to indicate fallback was used
+      DCOUT("skel:geomBindTransform not authored, using identity matrix");
     }
   }
 

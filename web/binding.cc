@@ -2485,11 +2485,15 @@ class TinyUSDZLoaderNative {
     }
 
     // Export geomBindTransform matrix (4x4 matrix as 16 doubles)
+    // If not authored in USD, defaults to identity matrix
     const double *geom_bind_ptr =
         reinterpret_cast<const double *>(
             rmesh.joint_and_weights.geomBindTransform.m);
     mesh.set("geomBindTransform",
              emscripten::typed_memory_view(16, geom_bind_ptr));
+    // Flag indicating whether geomBindTransform was explicitly authored in USD
+    // If false, the identity matrix is being used as a fallback
+    mesh.set("hasGeomBindTransform", rmesh.joint_and_weights.hasGeomBindTransform);
 
     // Export GeomSubsets (per-face materials) as optimized submeshes
     // Reorder triangles by material so each material has exactly one contiguous group
