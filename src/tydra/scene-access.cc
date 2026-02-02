@@ -16,6 +16,7 @@
 #include "usdShade.hh"
 #include "usdSkel.hh"
 #include "value-pprint.hh"
+#include "xform.hh"  // For matrix inverse
 
 // src/tydra
 #include "attribute-eval.hh"
@@ -3259,32 +3260,13 @@ bool BuildSkelHierarchy(const Skeleton &skel, SkelNode &dst, std::string *err) {
   }
 
 
-  std::vector<value::matrix4d> restTransforms;
-  if (skel.restTransforms.authored()) {
-    DCOUT("restTransforms is authored");
-    if (!skel.restTransforms.get_value(&restTransforms)) {
-      PUSH_ERROR_AND_RETURN(fmt::format(
-          "Failed to get Skeleton.restTransforms attrbitue: {}", skel.name));
-    }
-    DCOUT("restTransforms.size() = " << restTransforms.size());
-    if (restTransforms.size() > 0) {
-      DCOUT("restTransforms[0] = " << restTransforms[0]);
-    }
-  } else {
-    DCOUT("restTransforms is NOT authored - using identity");
-    // TODO: Report error when `restTransforms` attribute is omitted?
-    restTransforms.assign(joints.size(), value::matrix4d::identity());
-  }
+  // Track whether restTransforms is authored (for fallback computation later)
+  bool restTransformsAuthored = skel.restTransforms.authored();
+  bool bindTransformsAuthored = skel.bindTransforms.authored();
 
-  if (joints.size() != restTransforms.size()) {
-    PUSH_ERROR_AND_RETURN(
-        fmt::format("Skeleton.joints.size {} must be equal to "
-                    "Skeleton.restTransforms.size {}: {}",
-                    joints.size(), restTransforms.size(), skel.name));
-  }
-
+  // Read bindTransforms first (needed for potential restTransforms fallback)
   std::vector<value::matrix4d> bindTransforms;
-  if (skel.bindTransforms.authored()) {
+  if (bindTransformsAuthored) {
     DCOUT("bindTransforms is authored");
     if (!skel.bindTransforms.get_value(&bindTransforms)) {
       PUSH_ERROR_AND_RETURN(fmt::format(
@@ -3305,6 +3287,61 @@ bool BuildSkelHierarchy(const Skeleton &skel, SkelNode &dst, std::string *err) {
         fmt::format("Skeleton.joints.size {} must be equal to "
                     "Skeleton.bindTransforms.size {}: {}",
                     joints.size(), bindTransforms.size(), skel.name));
+  }
+
+  std::vector<value::matrix4d> restTransforms;
+  if (restTransformsAuthored) {
+    DCOUT("restTransforms is authored");
+    if (!skel.restTransforms.get_value(&restTransforms)) {
+      PUSH_ERROR_AND_RETURN(fmt::format(
+          "Failed to get Skeleton.restTransforms attrbitue: {}", skel.name));
+    }
+    DCOUT("restTransforms.size() = " << restTransforms.size());
+    if (restTransforms.size() > 0) {
+      DCOUT("restTransforms[0] = " << restTransforms[0]);
+    }
+  } else if (bindTransformsAuthored) {
+    // Fallback: compute restTransforms (local) from bindTransforms (world)
+    // restTransform[i] = inverse(bindTransform[parent[i]]) * bindTransform[i]
+    // For root joints (no parent), restTransform = bindTransform
+    DCOUT("restTransforms is NOT authored - computing from bindTransforms");
+
+    // Build topology first to get parent indices for fallback computation
+    std::vector<int> tempParentIds;
+    if (!BuildSkelTopology(joints, tempParentIds, err)) {
+      PUSH_ERROR_AND_RETURN("Failed to build skeleton topology for restTransforms fallback");
+    }
+
+    restTransforms.resize(joints.size());
+    for (size_t i = 0; i < joints.size(); i++) {
+      int parentIdx = tempParentIds[i];
+      if (parentIdx < 0) {
+        // Root joint: use bindTransform directly (world space becomes local space)
+        restTransforms[i] = bindTransforms[i];
+      } else {
+        // Child joint: compute local transform from world transforms
+        // localTransform = inverse(parentWorldTransform) * childWorldTransform
+        value::matrix4d parentInverse;
+        if (!inverse(bindTransforms[size_t(parentIdx)], parentInverse)) {
+          DCOUT("Failed to compute inverse of parent bindTransform, using identity for restTransform");
+          restTransforms[i] = value::matrix4d::identity();
+        } else {
+          restTransforms[i] = parentInverse * bindTransforms[i];
+        }
+      }
+    }
+    DCOUT("Computed restTransforms from bindTransforms");
+  } else {
+    DCOUT("restTransforms is NOT authored - using identity");
+    // Neither authored: use identity matrices
+    restTransforms.assign(joints.size(), value::matrix4d::identity());
+  }
+
+  if (joints.size() != restTransforms.size()) {
+    PUSH_ERROR_AND_RETURN(
+        fmt::format("Skeleton.joints.size {} must be equal to "
+                    "Skeleton.restTransforms.size {}: {}",
+                    joints.size(), restTransforms.size(), skel.name));
   }
 
   // Get flattened representation of joint hierarchy with BuildSkelTopology.

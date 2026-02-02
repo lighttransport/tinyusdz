@@ -11,6 +11,14 @@ import {
 	createSkinnedMeshFromUSD,
 	playAnimation as helperPlayAnimation
 } from 'tinyusdz/USDSkeletalHelper.js';
+// Extended Skinning Support - supports 4, 8, 16, 32, 64+ bones per vertex
+import {
+	SkinningMode,
+	getSkinningMode,
+	addExtendedSkinningAttributes,
+	applyExtendedSkinningIfNeeded,
+	createExtendedWeightVisualizationMaterial
+} from 'tinyusdz/ExtendedSkinning.js';
 
 // ===========================================
 // Configuration
@@ -317,10 +325,11 @@ function getUSDInterpolationMode(interpolation) {
 
 /**
  * Build Three.js Skeleton from USD skeleton hierarchy
- * Uses bind_transform for world-space positioning (accounts for SkelRoot transform)
+ * Uses rest_transform for local bone transforms (initial/rest pose)
+ * Stores both rest_transform and bind_transform for proper skinning and animation reset
  * @param {Object} usdSkeleton - USD skeleton data
  * @param {number} skeletonId - Index of the skeleton
- * @returns {Object} { bones: Array<THREE.Bone>, boneMap: Map }
+ * @returns {Object} { bones: Array<THREE.Bone>, boneMap: Map, rootBone: THREE.Bone }
  */
 function buildSkeletonFromUSD(usdSkeleton, skeletonId) {
 	console.log('Building skeleton:', usdSkeleton);
@@ -348,11 +357,12 @@ function buildSkeletonFromUSD(usdSkeleton, skeletonId) {
 	}
 
 	/**
-	 * Recursively build bone hierarchy using bind_transform for world-space positioning
-	 * bind_transform includes SkelRoot transform, giving correct world position
+	 * Recursively build bone hierarchy
+	 * Uses rest_transform (local space) for bone positioning when available
+	 * Falls back to computing local transforms from bind_transform (world space) if rest_transform is missing
 	 * @param {Object} skelNode - USD SkelNode
 	 * @param {THREE.Bone} parentBone - Parent bone (null for root)
-	 * @param {THREE.Matrix4} parentBindMatrix - Parent's bind transform (world space)
+	 * @param {THREE.Matrix4} parentBindMatrix - Parent's bind transform (world space) for fallback
 	 */
 	function buildBoneHierarchy(skelNode, parentBone, parentBindMatrix) {
 		const bone = new THREE.Bone();
@@ -368,23 +378,55 @@ function buildSkeletonFromUSD(usdSkeleton, skeletonId) {
 		// Store mapping from joint_id to bone
 		const currentJointId = skelNode.joint_id !== undefined ? skelNode.joint_id : jointId;
 		boneMap.set(currentJointId, bone);
+		bone.userData.joint_id = currentJointId;
 		jointId++;
 
-		// Use bind_transform for world-space positioning
-		// bind_transform includes SkelRoot transform, giving correct world position
-		// Fall back to rest_transform if bind_transform is not available
-		const bindMatrix = skelNode.bind_transform
-			? parseMatrix(skelNode.bind_transform)
-			: parseMatrix(skelNode.rest_transform);
+		// Parse both transforms if available
+		const hasRestTransform = skelNode.rest_transform && skelNode.rest_transform.length === 16;
+		const hasBindTransform = skelNode.bind_transform && skelNode.bind_transform.length === 16;
 
-		if (parentBone && parentBindMatrix) {
-			// Compute local transform: inverse(parent_bind) * child_bind
-			const parentInverse = parentBindMatrix.clone().invert();
-			const localMatrix = parentInverse.multiply(bindMatrix);
-			localMatrix.decompose(bone.position, bone.quaternion, bone.scale);
+		const restMatrix = hasRestTransform ? parseMatrix(skelNode.rest_transform) : null;
+		const bindMatrix = hasBindTransform ? parseMatrix(skelNode.bind_transform) : null;
+
+		// Store rest transform in userData for later reset
+		// rest_transform is in LOCAL space - can be applied directly to bone
+		if (restMatrix) {
+			const restPos = new THREE.Vector3();
+			const restQuat = new THREE.Quaternion();
+			const restScale = new THREE.Vector3();
+			restMatrix.decompose(restPos, restQuat, restScale);
+
+			bone.userData.restPosition = restPos.clone();
+			bone.userData.restQuaternion = restQuat.clone();
+			bone.userData.restScale = restScale.clone();
+		}
+
+		// Determine bone's local transform
+		// Priority: rest_transform (local) > computed from bind_transform (world)
+		if (hasRestTransform) {
+			// rest_transform is in LOCAL space - apply directly
+			restMatrix.decompose(bone.position, bone.quaternion, bone.scale);
+		} else if (hasBindTransform) {
+			// Fallback: compute local transform from world-space bind_transform
+			// localTransform = inverse(parent_bind) * child_bind
+			if (parentBone && parentBindMatrix) {
+				const parentInverse = parentBindMatrix.clone().invert();
+				const localMatrix = parentInverse.clone().multiply(bindMatrix);
+				localMatrix.decompose(bone.position, bone.quaternion, bone.scale);
+			} else {
+				// Root bone: use bind_transform directly (world space)
+				bindMatrix.decompose(bone.position, bone.quaternion, bone.scale);
+			}
+
+			// Store computed local transform as rest pose
+			bone.userData.restPosition = bone.position.clone();
+			bone.userData.restQuaternion = bone.quaternion.clone();
+			bone.userData.restScale = bone.scale.clone();
 		} else {
-			// Root bone: use bind_transform directly (world space)
-			bindMatrix.decompose(bone.position, bone.quaternion, bone.scale);
+			// Neither transform available - use identity
+			bone.userData.restPosition = new THREE.Vector3(0, 0, 0);
+			bone.userData.restQuaternion = new THREE.Quaternion(0, 0, 0, 1);
+			bone.userData.restScale = new THREE.Vector3(1, 1, 1);
 		}
 
 		if (parentBone) {
@@ -420,6 +462,31 @@ function buildSkeletonFromUSD(usdSkeleton, skeletonId) {
 
 	console.warn('No root_node found in skeleton');
 	return { bones: [], boneMap: new Map(), rootBone: null };
+}
+
+/**
+ * Reset skeleton bones to their rest pose transforms
+ * Uses stored rest transforms from bone.userData
+ * @param {THREE.Skeleton} skeleton - The skeleton to reset
+ */
+function resetSkeletonToRestPose(skeleton) {
+	if (!skeleton || !skeleton.bones) return;
+
+	for (const bone of skeleton.bones) {
+		if (bone.userData.restPosition) {
+			bone.position.copy(bone.userData.restPosition);
+		}
+		if (bone.userData.restQuaternion) {
+			bone.quaternion.copy(bone.userData.restQuaternion);
+		}
+		if (bone.userData.restScale) {
+			bone.scale.copy(bone.userData.restScale);
+		}
+	}
+
+	// Update matrices
+	skeleton.bones[0].updateMatrixWorld(true);
+	console.log('Reset skeleton to rest pose');
 }
 
 /**
@@ -885,11 +952,20 @@ async function processUSDScene(usd_scene, loader, filename) {
 			hasSkinnedMeshData = true;
 			// Store the first mesh with skinning data for later use
 			if (!skinnedMeshUSDData) {
+				// Parse geomBindTransform if available
+				let geomBindTransformMatrix = null;
+				if (mesh.geomBindTransform && mesh.geomBindTransform.length === 16) {
+					geomBindTransformMatrix = new THREE.Matrix4();
+					geomBindTransformMatrix.fromArray(Array.from(mesh.geomBindTransform));
+				}
+
 				skinnedMeshUSDData = {
 					jointIndices: mesh.jointIndices,
 					jointWeights: mesh.jointWeights,
 					elementSize: mesh.elementSize || 4,
-					absPath: mesh.absPath
+					absPath: mesh.absPath,
+					geomBindTransform: geomBindTransformMatrix,
+					hasGeomBindTransform: mesh.hasGeomBindTransform || false
 				};
 			}
 			console.log(`Mesh ${i}: ${mesh.absPath}`);
@@ -897,6 +973,7 @@ async function processUSDScene(usd_scene, loader, filename) {
 			console.log(`  - jointIndices: ${mesh.jointIndices ? mesh.jointIndices.length : 0} elements`);
 			console.log(`  - jointWeights: ${mesh.jointWeights ? mesh.jointWeights.length : 0} elements`);
 			console.log(`  - elementSize (influences per vertex): ${mesh.elementSize}`);
+			console.log(`  - hasGeomBindTransform: ${mesh.hasGeomBindTransform || false}`);
 		}
 		// Check path for Z_UP hint (some models have this in their hierarchy)
 		if (mesh.absPath && (mesh.absPath.includes('Z_UP') || mesh.absPath.includes('z_up') || mesh.absPath.includes('Z_up'))) {
@@ -1077,7 +1154,21 @@ async function processUSDScene(usd_scene, loader, filename) {
 				}
 
 				child.add(rootBone); // Add skeleton root to the mesh
-				child.bind(skeleton);
+
+				// Bind skeleton with optional geomBindTransform
+				// geomBindTransform defines the mesh's transform when it was bound to the skeleton
+				if (skinnedMeshUSDData && skinnedMeshUSDData.geomBindTransform) {
+					child.bind(skeleton, skinnedMeshUSDData.geomBindTransform);
+					console.log('Applied geomBindTransform to skinned mesh');
+				} else {
+					child.bind(skeleton);
+				}
+
+				// Apply extended skinning material if needed (for 8+ bones per vertex)
+				if (applyExtendedSkinningIfNeeded(child)) {
+					console.log('Extended skinning material applied for high bone count');
+				}
+
 				child.castShadow = true;
 				child.receiveShadow = true;
 
@@ -1151,44 +1242,19 @@ async function processUSDScene(usd_scene, loader, filename) {
 					console.warn('Skinning may not work correctly - using min of both counts');
 				}
 
-				const effectiveVertexCount = Math.min(vertexCount, usdVertexCount);
+				// Use ExtendedSkinning module for proper handling of 4/8/16/32/64+ bones
+				const skinningConfig = addExtendedSkinningAttributes(
+					geometry,
+					skinnedMeshUSDData.jointIndices,
+					skinnedMeshUSDData.jointWeights,
+					influencesPerVertex,
+					{ normalize: true }
+				);
 
-				// Three.js always uses 4 influences per vertex
-				const skinIndices = new Uint16Array(vertexCount * 4);
-				const skinWeights = new Float32Array(vertexCount * 4);
-
-				const usdJointIndices = skinnedMeshUSDData.jointIndices;
-				const usdJointWeights = skinnedMeshUSDData.jointWeights;
-
-				// Copy from USD format (influencesPerVertex) to Three.js format (4)
-				for (let i = 0; i < effectiveVertexCount; i++) {
-					for (let j = 0; j < 4; j++) {
-						const srcIdx = i * influencesPerVertex + j;
-						const dstIdx = i * 4 + j;
-
-						if (j < influencesPerVertex && srcIdx < usdJointIndices.length) {
-							skinIndices[dstIdx] = usdJointIndices[srcIdx];
-							skinWeights[dstIdx] = usdJointWeights[srcIdx];
-						} else {
-							skinIndices[dstIdx] = 0;
-							skinWeights[dstIdx] = 0;
-						}
-					}
+				console.log(`Added skinning attributes with mode: ${skinningConfig.mode} (${influencesPerVertex} influences per vertex)`);
+				if (skinningConfig.mode > SkinningMode.STANDARD) {
+					console.log(`  Extended skinning enabled: ${skinningConfig.mode} bones per vertex`);
 				}
-
-				// For any remaining vertices (if Three.js has more), set default values
-				for (let i = effectiveVertexCount; i < vertexCount; i++) {
-					for (let j = 0; j < 4; j++) {
-						const dstIdx = i * 4 + j;
-						skinIndices[dstIdx] = 0;
-						skinWeights[dstIdx] = j === 0 ? 1 : 0; // First bone gets full weight
-					}
-				}
-
-				// Add attributes to geometry
-				geometry.setAttribute('skinIndex', new THREE.Uint16BufferAttribute(skinIndices, 4));
-				geometry.setAttribute('skinWeight', new THREE.Float32BufferAttribute(skinWeights, 4));
-				console.log('Added skinIndex and skinWeight attributes to geometry');
 			} else {
 				console.warn('No USD skinning data available to add to geometry');
 			}
@@ -1209,8 +1275,20 @@ async function processUSDScene(usd_scene, loader, filename) {
 			// Update bone world matrices after adding to scene graph
 			newSkinnedMesh.updateMatrixWorld(true);
 
-			// Now bind skeleton - this computes inverse bind matrices
-			newSkinnedMesh.bind(skeleton);
+			// Now bind skeleton with optional geomBindTransform
+			// geomBindTransform defines the mesh's transform when it was bound to the skeleton
+			if (skinnedMeshUSDData && skinnedMeshUSDData.geomBindTransform) {
+				newSkinnedMesh.bind(skeleton, skinnedMeshUSDData.geomBindTransform);
+				console.log('Applied geomBindTransform to skinned mesh');
+			} else {
+				newSkinnedMesh.bind(skeleton);
+			}
+
+			// Apply extended skinning material if needed (for 8+ bones per vertex)
+			if (applyExtendedSkinningIfNeeded(newSkinnedMesh)) {
+				console.log('Extended skinning material applied for high bone count');
+			}
+
 			newSkinnedMesh.castShadow = true;
 			newSkinnedMesh.receiveShadow = true;
 
@@ -1460,6 +1538,17 @@ const animationParams = {
 			animationAction.play();
 		}
 	},
+	resetToRestPose: function() {
+		// Stop animation if playing
+		if (animationAction) {
+			animationAction.stop();
+			this.isPlaying = false;
+		}
+		// Reset skeleton to rest pose
+		if (skeleton) {
+			resetSkeletonToRestPose(skeleton);
+		}
+	},
 	speed: 24,  // Default to timeCodesPerSecond (updated on file load)
 	time: 0,
 
@@ -1493,8 +1582,22 @@ const animationParams = {
 		if (!skinnedMesh || !originalMaterial) return;
 
 		if (this.showWeights) {
-			if (!weightVisualizationMaterial) {
-				weightVisualizationMaterial = createWeightVisualizationMaterial();
+			// Check if mesh has extended skinning and use appropriate visualization
+			const skinningConfig = skinnedMesh.geometry?.userData?.extendedSkinning;
+			if (skinningConfig && skinningConfig.mode > SkinningMode.STANDARD) {
+				// Use extended weight visualization for 8+ bone meshes
+				if (!weightVisualizationMaterial || !weightVisualizationMaterial.userData?.isExtended) {
+					weightVisualizationMaterial = createExtendedWeightVisualizationMaterial({
+						maxInfluences: skinningConfig.maxInfluences
+					});
+					weightVisualizationMaterial.userData = { isExtended: true };
+				}
+			} else {
+				// Use standard weight visualization for 4-bone meshes
+				if (!weightVisualizationMaterial || weightVisualizationMaterial.userData?.isExtended) {
+					weightVisualizationMaterial = createWeightVisualizationMaterial();
+					weightVisualizationMaterial.userData = { isExtended: false };
+				}
 			}
 			weightVisualizationMaterial.uniforms.visualizationMode.value = this.weightVisualizationMode;
 			skinnedMesh.material = weightVisualizationMaterial;
@@ -1570,7 +1673,8 @@ gui.title('Skeletal Animation Controls');
 // Playback controls
 const playbackFolder = gui.addFolder('Playback');
 playbackFolder.add(animationParams, 'playPause').name('Play / Pause');
-playbackFolder.add(animationParams, 'reset').name('Reset');
+playbackFolder.add(animationParams, 'reset').name('Reset Animation');
+playbackFolder.add(animationParams, 'resetToRestPose').name('Reset to Rest Pose');
 playbackFolder.add(animationParams, 'speed', 1, 120, 1).name('Speed').onChange(() => {
 	if (animationAction) {
 		// Speed represents playback FPS (timeCodes per second)
