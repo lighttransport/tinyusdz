@@ -405,11 +405,11 @@ class TinyUSDZLoader extends Loader {
 
     /**
      * Set target bone count for bone reduction
-     * @param {number} count - Target number of bone influences per vertex (1-64)
+     * @param {number} count - Target number of bone influences per vertex (1-128)
      */
     setTargetBoneCount(count) {
-        if (typeof count !== 'number' || count < 1 || count > 64) {
-            throw new Error('Target bone count must be between 1 and 64');
+        if (typeof count !== 'number' || count < 1 || count > 128) {
+            throw new Error('Target bone count must be between 1 and 128');
         }
         this.targetBoneCount_ = count;
     }
@@ -422,6 +422,23 @@ class TinyUSDZLoader extends Loader {
         return this.targetBoneCount_ || 4;
     }
 
+    /**
+     * Enable or disable bone count rounding (round up to standard GPU skinning values)
+     * When enabled, bone counts are rounded up to: 4, 8, 16, 32, 48, 64, 80, 96, 128
+     * This keeps all bone influences but pads to standard sizes for GPU compatibility
+     * @param {boolean} enabled - Enable bone count rounding
+     */
+    setRoundBoneCount(enabled) {
+        this.roundBoneCount_ = !!enabled;
+    }
+
+    /**
+     * Get bone count rounding setting
+     * @returns {boolean} Whether bone count rounding is enabled
+     */
+    getRoundBoneCount() {
+        return this.roundBoneCount_ || false;
+    }
 
     // TODO: remove
     // Set AssetResolver callback.
@@ -595,10 +612,12 @@ class TinyUSDZLoader extends Loader {
             usd.setMaxMemoryLimitMB(memoryLimit);
         }
 
-        // Set bone reduction configuration
+        // Set bone reduction/rounding configuration
         if (this.enableBoneReduction_) {
             usd.setEnableBoneReduction(true);
             usd.setTargetBoneCount(this.targetBoneCount_ || 4);
+        } else if (this.roundBoneCount_) {
+            usd.setRoundBoneCount(true);
         }
 
         const ok = usd.loadFromBinary(binary, filePath);
@@ -755,10 +774,12 @@ class TinyUSDZLoader extends Loader {
             usd.setMaxMemoryLimitMB(memoryLimit);
         }
 
-        // Set bone reduction configuration
+        // Set bone reduction/rounding configuration
         if (this.enableBoneReduction_) {
             usd.setEnableBoneReduction(true);
             usd.setTargetBoneCount(this.targetBoneCount_ || 4);
+        } else if (this.roundBoneCount_) {
+            usd.setRoundBoneCount(true);
         }
 
         // Set up async phase callback on Module if provided
@@ -1307,10 +1328,12 @@ class TinyUSDZLoader extends Loader {
             usd.setMaxMemoryLimitMB(memoryLimit);
         }
 
-        // Set bone reduction configuration
+        // Set bone reduction/rounding configuration
         if (this.enableBoneReduction_) {
             usd.setEnableBoneReduction(true);
             usd.setTargetBoneCount(this.targetBoneCount_ || 4);
+        } else if (this.roundBoneCount_) {
+            usd.setRoundBoneCount(true);
         }
 
         // Stream fetch to WASM using the same instance
@@ -1522,10 +1545,12 @@ class TinyUSDZLoader extends Loader {
                     usd.setMaxMemoryLimitMB(memoryLimit);
                 }
 
-                // Set bone reduction configuration
+                // Set bone reduction/rounding configuration
                 if (scope.enableBoneReduction_) {
                     usd.setEnableBoneReduction(true);
                     usd.setTargetBoneCount(scope.targetBoneCount_ || 4);
+                } else if (scope.roundBoneCount_) {
+                    usd.setRoundBoneCount(true);
                 }
 
                 const ok = usd.loadAsLayerFromBinary(usd_binary, url);
@@ -1596,10 +1621,12 @@ class TinyUSDZLoader extends Loader {
                     usd.setMaxMemoryLimitMB(memoryLimit);
                 }
 
-                // Set bone reduction configuration
+                // Set bone reduction/rounding configuration
                 if (this.enableBoneReduction_) {
                     usd.setEnableBoneReduction(true);
                     usd.setTargetBoneCount(this.targetBoneCount_ || 4);
+                } else if (this.roundBoneCount_) {
+                    usd.setRoundBoneCount(true);
                 }
 
                 const u8data = new Uint8Array(usd_data);
@@ -1743,10 +1770,12 @@ class TinyUSDZLoader extends Loader {
                     usd.setMaxMemoryLimitMB(memoryLimit);
                 }
 
-                // Set bone reduction configuration
+                // Set bone reduction/rounding configuration
                 if (scope.enableBoneReduction_) {
                     usd.setEnableBoneReduction(true);
                     usd.setTargetBoneCount(scope.targetBoneCount_ || 4);
+                } else if (scope.roundBoneCount_) {
+                    usd.setRoundBoneCount(true);
                 }
 
                 const ok = usd.loadFromBinary(usd_binary, url);
