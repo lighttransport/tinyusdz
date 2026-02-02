@@ -21,7 +21,10 @@ export const SkinningMode = {
     EXTENDED_8: 8,    // 8 bones - extra vertex attributes
     TEXTURE_16: 16,   // 16 bones - texture-based
     TEXTURE_32: 32,   // 32 bones - texture-based
+    TEXTURE_48: 48,   // 48 bones - texture-based
     TEXTURE_64: 64,   // 64 bones - texture-based
+    TEXTURE_80: 80,   // 80 bones - texture-based
+    TEXTURE_96: 96,   // 96 bones - texture-based
     TEXTURE_128: 128  // 128 bones - texture-based (max practical)
 };
 
@@ -35,7 +38,10 @@ export function getSkinningMode(influencesPerVertex) {
     if (influencesPerVertex <= 8) return SkinningMode.EXTENDED_8;
     if (influencesPerVertex <= 16) return SkinningMode.TEXTURE_16;
     if (influencesPerVertex <= 32) return SkinningMode.TEXTURE_32;
+    if (influencesPerVertex <= 48) return SkinningMode.TEXTURE_48;
     if (influencesPerVertex <= 64) return SkinningMode.TEXTURE_64;
+    if (influencesPerVertex <= 80) return SkinningMode.TEXTURE_80;
+    if (influencesPerVertex <= 96) return SkinningMode.TEXTURE_96;
     return SkinningMode.TEXTURE_128;
 }
 
