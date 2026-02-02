@@ -12,6 +12,7 @@ set(TINYUSDZ_NEXT_SOURCES
     # Type system
     types/type-info.cc
     types/value.cc
+    types/interpolation.cc
 
     # Prim types
     prim/path.cc
@@ -49,6 +50,21 @@ set(TINYUSDZ_NEXT_SOURCES
     # Schema convenience APIs
     schema/geom-mesh.cc
     schema/geom-xform.cc
+    schema/usd-lux.cc
+    schema/usd-geom-camera.cc
+    schema/usd-shade.cc
+
+    # Attribute evaluation
+    eval/attribute-eval.cc
+
+    # Asset resolution
+    resolver/asset-resolver.cc
+
+    # Composition
+    composition/composition.cc
+
+    # High-level API
+    tinyusdz-next.cc
 )
 
 # Define header files (for IDE project generation)
@@ -57,6 +73,7 @@ set(TINYUSDZ_NEXT_HEADERS
     types/type-id.hh
     types/type-info.hh
     types/value.hh
+    types/interpolation.hh
 
     # Prim types
     prim/path.hh
@@ -95,6 +112,22 @@ set(TINYUSDZ_NEXT_HEADERS
     # Schema convenience APIs
     schema/geom-mesh.hh
     schema/geom-xform.hh
+    schema/usd-lux.hh
+    schema/usd-geom-camera.hh
+    schema/usd-shade.hh
+
+    # Attribute evaluation
+    eval/attribute-eval.hh
+
+    # Asset resolution
+    resolver/asset-resolver.hh
+
+    # Composition
+    composition/composition.hh
+
+    # High-level API
+    tinyusdz-next.hh
+    compat.hh
 )
 
 # LZ4 source (from existing TinyUSDZ)
@@ -177,6 +210,7 @@ set(TYDRA_NEXT_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/../tydra/next/render-data.cc
     ${CMAKE_CURRENT_SOURCE_DIR}/../tydra/next/scene-access.cc
     ${CMAKE_CURRENT_SOURCE_DIR}/../tydra/next/render-converter.cc
+    ${CMAKE_CURRENT_SOURCE_DIR}/../tydra/next/materialx.cc
 )
 
 set(TYDRA_NEXT_HEADERS
@@ -184,6 +218,7 @@ set(TYDRA_NEXT_HEADERS
     ${CMAKE_CURRENT_SOURCE_DIR}/../tydra/next/render-data.hh
     ${CMAKE_CURRENT_SOURCE_DIR}/../tydra/next/scene-access.hh
     ${CMAKE_CURRENT_SOURCE_DIR}/../tydra/next/render-converter.hh
+    ${CMAKE_CURRENT_SOURCE_DIR}/../tydra/next/materialx.hh
 )
 
 add_library(tydra_next STATIC
@@ -211,4 +246,10 @@ if(TINYUSDZ_NEXT_BUILD_TESTS)
         ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/tydra/next/test_tydra_next.cc
     )
     target_link_libraries(test_tydra_next PRIVATE tydra_next tinyusdz_next)
+
+    # Performance benchmark
+    add_executable(benchmark_next
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/next/benchmark_next.cc
+    )
+    target_link_libraries(benchmark_next PRIVATE tinyusdz_next)
 endif()

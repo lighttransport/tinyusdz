@@ -9,6 +9,7 @@
 
 #include "property-index.hh"
 #include "../types/value.hh"
+#include "../types/interpolation.hh"
 #include "../prim/path.hh"
 #include <string>
 #include <vector>
@@ -123,6 +124,81 @@ private:
   std::vector<Value> values_;  // Value objects (may reference data_)
 };
 
+/// TimeSampleStorage - stores time samples with value deduplication
+/// Design goals:
+/// - Deduplicate identical array values across time samples
+/// - Use hash + equality check for efficient lookup
+/// - Store (time, value_offset) pairs per property
+class TimeSampleStorage {
+public:
+  TimeSampleStorage();
+  ~TimeSampleStorage();
+
+  /// Add a time sample for a property
+  /// Returns the value offset (may be shared if duplicate)
+  uint32_t add(PropNameId name_id, double time, Value value);
+
+  /// Add a time sample with explicit deduplication check
+  /// If an identical value exists, reuses its offset
+  uint32_t add_dedup(PropNameId name_id, double time, Value value);
+
+  /// Get time samples for a property
+  /// Returns vector of (time, value_offset) pairs, sorted by time
+  const std::vector<std::pair<double, uint32_t>>* get(PropNameId name_id) const;
+
+  /// Get value at offset
+  const Value* value(uint32_t offset) const;
+
+  /// Check if property has time samples
+  bool has(PropNameId name_id) const;
+
+  /// Get interpolated value at a given time
+  /// @param name_id Property name ID
+  /// @param time Time to sample at
+  /// @param mode Interpolation mode (default: Linear)
+  /// @return SampleResult with interpolated value
+  SampleResult interpolate(PropNameId name_id, double time,
+                           TimeInterpolation mode = TimeInterpolation::Linear) const;
+
+  /// Get all property IDs with time samples
+  std::vector<PropNameId> properties() const;
+
+  /// Check if empty
+  bool empty() const { return samples_.empty(); }
+
+  /// Memory usage in bytes
+  size_t memory_usage() const;
+
+  /// Clear all storage
+  void clear();
+
+  /// Statistics
+  struct Stats {
+    size_t property_count;     // Properties with time samples
+    size_t total_samples;      // Total (time, offset) pairs
+    size_t unique_values;      // Unique values stored
+    size_t dedup_count;        // Values deduplicated (savings)
+    size_t memory_bytes;
+  };
+  Stats stats() const;
+
+private:
+  // Property -> vector of (time, value_offset)
+  std::unordered_map<uint32_t, std::vector<std::pair<double, uint32_t>>> samples_;
+
+  // Value storage
+  std::vector<Value> values_;
+
+  // Deduplication: hash -> list of (offset, hash) for collision handling
+  std::unordered_map<uint64_t, std::vector<uint32_t>> hash_to_offsets_;
+
+  // Stats
+  size_t dedup_count_ = 0;
+
+  // Find existing value or store new one
+  uint32_t find_or_store(Value value);
+};
+
 /// PrimSpec - unified spec/prim representation
 /// Design goals:
 /// - No separate Prim type needed (PrimSpec IS the prim)
@@ -213,7 +289,22 @@ public:
   bool has_time_samples(PropNameId name_id) const;
 
   /// Check if any property has time samples
-  bool has_any_time_samples() const { return !time_samples_.empty(); }
+  bool has_any_time_samples() const;
+
+  /// Get time sample statistics (for debugging/profiling)
+  TimeSampleStorage::Stats time_sample_stats() const;
+
+  /// Get interpolated value at a given time
+  /// @param name_id Property name ID
+  /// @param time Time to sample at
+  /// @param mode Interpolation mode (default: Linear)
+  /// @return SampleResult with interpolated value
+  SampleResult interpolate_time_sample(PropNameId name_id, double time,
+                                       TimeInterpolation mode = TimeInterpolation::Linear) const;
+
+  /// Get interpolated value at a given time (by property name)
+  SampleResult interpolate_time_sample(const std::string& name, double time,
+                                       TimeInterpolation mode = TimeInterpolation::Linear) const;
 
   // ============================================================
   // Relationships
@@ -262,8 +353,8 @@ private:
   PropIndex props_;
   std::unique_ptr<ValueStorage> values_;
 
-  // TimeSamples: property name_id -> vector of (time, value_offset)
-  std::unordered_map<uint32_t, std::vector<std::pair<double, uint32_t>>> time_samples_;
+  // TimeSamples storage with deduplication
+  std::unique_ptr<TimeSampleStorage> time_samples_;
 
   // Relationships: name -> targets
   std::unordered_map<std::string, std::vector<Path>> relationships_;
