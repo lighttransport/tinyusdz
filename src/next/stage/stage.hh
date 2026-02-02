@@ -7,6 +7,7 @@
 #pragma once
 
 #include "../layer/layer.hh"
+#include "../memory/memory-context.hh"
 #include <string>
 #include <vector>
 #include <memory>
@@ -136,6 +137,9 @@ public:
   Stage();
   ~Stage();
 
+  /// Construct with memory context for pool-based allocation
+  explicit Stage(MemoryContextRef mem_ctx);
+
   // Move only
   Stage(Stage&&) noexcept;
   Stage& operator=(Stage&&) noexcept;
@@ -251,10 +255,25 @@ public:
   };
   Stats GetStats() const;
 
+  // ============================================================
+  // Memory Context
+  // ============================================================
+
+  /// Get memory context (may be null)
+  MemoryContext* memory_context() { return mem_ctx_.IsValid() ? mem_ctx_.get() : nullptr; }
+  const MemoryContext* memory_context() const { return mem_ctx_.IsValid() ? mem_ctx_.get() : nullptr; }
+
+  /// Set memory context
+  void set_memory_context(MemoryContextRef ctx) { mem_ctx_ = std::move(ctx); }
+
+  /// Check if using pool allocation
+  bool has_memory_context() const { return mem_ctx_.IsValid(); }
+
 private:
   std::unique_ptr<Layer> root_layer_;
   std::vector<std::unique_ptr<Layer>> sub_layers_;
   StageMeta meta_;
+  MemoryContextRef mem_ctx_;
 
   // Internal helpers
   void UpdateMetaFromRootLayer();
@@ -295,6 +314,9 @@ public:
   StageBuilder();
   ~StageBuilder();
 
+  /// Construct with memory context for pool-based allocation
+  explicit StageBuilder(MemoryContextRef mem_ctx);
+
   /// Set stage metadata
   void SetDefaultPrim(const std::string& primName);
   void SetUpAxis(const std::string& axis);
@@ -309,10 +331,14 @@ public:
   /// Build the stage (moves ownership of layer to stage)
   Stage Build();
 
+  /// Get memory context (may be null)
+  MemoryContext* memory_context();
+
 private:
   std::unique_ptr<Layer> layer_;
   std::unique_ptr<LayerBuilder> layer_builder_;
   StageMeta meta_;
+  MemoryContextRef mem_ctx_;
 };
 
 }  // namespace next

@@ -7,6 +7,7 @@
 #pragma once
 
 #include "../stage/stage.hh"
+#include "../memory/memory-pool.hh"
 #include <string>
 #include <vector>
 #include <memory>
@@ -43,6 +44,11 @@ struct ParseOptions {
   /// Maximum array element count (0 = no limit)
   /// Prevents allocation of huge arrays from malicious files
   size_t max_array_elements = 0;
+
+  /// Optional memory pool for allocations
+  /// If not set (nullptr), uses standard heap allocation
+  /// The pool must outlive all Values created by the parser
+  MemoryPool* memory_pool = nullptr;
 };
 
 /// Error information from parsing

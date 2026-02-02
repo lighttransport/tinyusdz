@@ -9,6 +9,7 @@
 #include "crate-format.hh"
 #include "../stage/stage.hh"
 #include "../io/mmap-file.hh"
+#include "../memory/memory-pool.hh"
 #include <string>
 #include <vector>
 #include <memory>
@@ -54,6 +55,11 @@ struct CrateReadOptions {
   /// Copy array data even when zero-copy is possible
   /// Useful when you need the Stage to be independent of the file
   bool force_copy = false;
+
+  /// Optional memory pool for allocations (decompression buffers, etc.)
+  /// If not set (nullptr), uses standard heap allocation
+  /// The pool must outlive all Values created by the reader
+  MemoryPool* memory_pool = nullptr;
 };
 
 /// Error from crate reading

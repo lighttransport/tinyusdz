@@ -16,6 +16,8 @@ namespace next {
 Layer::Layer() = default;
 Layer::~Layer() = default;
 
+Layer::Layer(MemoryContextRef mem_ctx) : mem_ctx_(std::move(mem_ctx)) {}
+
 Layer::Layer(Layer&&) noexcept = default;
 Layer& Layer::operator=(Layer&&) noexcept = default;
 

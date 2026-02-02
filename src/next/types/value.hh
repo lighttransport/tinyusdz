@@ -12,6 +12,13 @@
 #include <string>
 #include <vector>
 
+// Forward declare MemoryPool to avoid circular dependency
+namespace tinyusdz {
+namespace next {
+class MemoryPool;
+}
+}
+
 namespace tinyusdz {
 namespace next {
 
@@ -144,6 +151,21 @@ public:
   static Value MakeArrayView(TypeId elem_type, const void* data, size_t count);
 
   // ============================================================
+  // Pool-allocated array constructors
+  // ============================================================
+
+  /// Create array value using memory pool for storage
+  /// The pool must outlive the Value!
+  static Value MakeFloatArrayPooled(const float* data, size_t count, MemoryPool* pool);
+  static Value MakeIntArrayPooled(const int32_t* data, size_t count, MemoryPool* pool);
+  static Value MakeUIntArrayPooled(const uint32_t* data, size_t count, MemoryPool* pool);
+  static Value MakeDoubleArrayPooled(const double* data, size_t count, MemoryPool* pool);
+  static Value MakeFloat3ArrayPooled(const float* data, size_t count, MemoryPool* pool);
+
+  /// Generic pool-allocated array factory
+  static Value MakeArrayPooled(TypeId elem_type, const void* data, size_t count, MemoryPool* pool);
+
+  // ============================================================
   // Type queries
   // ============================================================
 
@@ -158,6 +180,9 @@ public:
 
   /// Check if this is a zero-copy view (non-owning reference to external data)
   bool is_view() const { return is_view_; }
+
+  /// Check if array data is pool-allocated (will not be freed on destruction)
+  bool is_pool_owned() const { return is_pool_owned_; }
 
   /// Get array size (0 if not an array)
   size_t array_size() const { return is_array_ ? array_size_ : 0; }
@@ -263,7 +288,7 @@ private:
   TypeId type_id_ = TypeId::Invalid;
   bool is_array_ = false;
   bool is_view_ = false;  // True if array data is a non-owning view
-  uint8_t reserved_ = 0;
+  bool is_pool_owned_ = false;  // True if array data is pool-allocated (no delete needed)
   uint32_t array_size_ = 0;
 
   // Storage - either inline or heap-allocated

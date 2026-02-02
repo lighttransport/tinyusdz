@@ -7,6 +7,7 @@
 #pragma once
 
 #include "prim-spec.hh"
+#include "../memory/memory-context.hh"
 #include <string>
 #include <vector>
 #include <memory>
@@ -37,10 +38,14 @@ struct LayerMeta {
 /// - Path-to-index map for O(1) lookup
 /// - Root prims stored by index
 /// - Children stored as indices (no pointer chasing)
+/// - Optional MemoryContext for pool-based allocation
 class Layer {
 public:
   Layer();
   ~Layer();
+
+  /// Construct with memory context for pool-based allocation
+  explicit Layer(MemoryContextRef mem_ctx);
 
   // Move only
   Layer(Layer&&) noexcept;
@@ -119,18 +124,36 @@ public:
   };
   Stats stats() const;
 
+  // ============================================================
+  // Memory Context
+  // ============================================================
+
+  /// Get memory context (may be invalid if not set)
+  MemoryContext* memory_context() { return mem_ctx_.IsValid() ? mem_ctx_.get() : nullptr; }
+  const MemoryContext* memory_context() const { return mem_ctx_.IsValid() ? mem_ctx_.get() : nullptr; }
+
+  /// Set memory context (for pool-based allocation)
+  void set_memory_context(MemoryContextRef ctx) { mem_ctx_ = std::move(ctx); }
+
+  /// Check if using pool allocation
+  bool has_memory_context() const { return mem_ctx_.IsValid(); }
+
 private:
   std::vector<PrimSpec> prims_;
   std::vector<uint32_t> root_indices_;
   std::unordered_map<std::string, uint32_t> path_to_index_;
   LayerMeta meta_;
   bool finalized_ = false;
+  MemoryContextRef mem_ctx_;
 };
 
 /// Layer builder - helper for constructing layers from parsed data
 class LayerBuilder {
 public:
   explicit LayerBuilder(Layer& layer);
+
+  /// Get memory context from layer (may be null)
+  MemoryContext* memory_context() { return layer_.memory_context(); }
 
   /// Start a new prim at the given path
   /// Returns the prim index

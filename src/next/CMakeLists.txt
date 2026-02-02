@@ -15,6 +15,9 @@ set(TINYUSDZ_NEXT_SOURCES
     types/interpolation.cc
     types/typed-array-view.cc
 
+    # Memory
+    memory/memory-pool.cc
+
     # I/O
     io/mmap-file.cc
 
@@ -82,6 +85,10 @@ set(TINYUSDZ_NEXT_HEADERS
     types/value.hh
     types/interpolation.hh
     types/typed-array-view.hh
+
+    # Memory
+    memory/memory-pool.hh
+    memory/memory-context.hh
 
     # I/O
     io/mmap-file.hh
@@ -275,4 +282,10 @@ if(TINYUSDZ_NEXT_BUILD_TESTS)
         ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/next/test_mmap_zerocopy.cc
     )
     target_link_libraries(test_mmap_zerocopy PRIVATE tinyusdz_next)
+
+    # Memory pool test
+    add_executable(test_memory_pool
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/next/test_memory_pool.cc
+    )
+    target_link_libraries(test_memory_pool PRIVATE tinyusdz_next)
 endif()

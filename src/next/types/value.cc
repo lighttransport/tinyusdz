@@ -5,6 +5,7 @@
 
 #include "value.hh"
 #include "type-info.hh"
+#include "../memory/memory-pool.hh"
 
 #include <cstring>
 #include <new>
@@ -45,6 +46,14 @@ struct ArrayViewStorage {
   const void* data;
   size_t count;
   size_t elem_size;  // Size of each element in bytes
+};
+
+// Pool-allocated storage - raw pointer, no ownership
+// Data is allocated from MemoryPool and freed when pool is reset/cleared
+struct PoolArrayStorage {
+  void* data;
+  size_t count;
+  size_t elem_size;
 };
 
 // Check if type uses string storage
@@ -592,6 +601,147 @@ Value Value::MakeArrayView(TypeId elem_type, const void* data, size_t count) {
 }
 
 // ============================================================
+// Pool-allocated array factories
+// ============================================================
+
+Value Value::MakeFloatArrayPooled(const float* data, size_t count, MemoryPool* pool) {
+  if (!pool || count == 0) return MakeFloatArray(std::vector<float>(data, data + count));
+
+  Value v;
+  v.type_id_ = TypeId::Float;
+  v.is_array_ = true;
+  v.is_pool_owned_ = true;
+  v.array_size_ = static_cast<uint32_t>(count);
+
+  float* pooled = pool->AllocateArray<float>(count);
+  if (pooled && data) {
+    std::memcpy(pooled, data, count * sizeof(float));
+  }
+
+  PoolArrayStorage storage{pooled, count, sizeof(float)};
+  std::memcpy(v.storage_, &storage, sizeof(storage));
+  return v;
+}
+
+Value Value::MakeIntArrayPooled(const int32_t* data, size_t count, MemoryPool* pool) {
+  if (!pool || count == 0) return MakeIntArray(std::vector<int32_t>(data, data + count));
+
+  Value v;
+  v.type_id_ = TypeId::Int;
+  v.is_array_ = true;
+  v.is_pool_owned_ = true;
+  v.array_size_ = static_cast<uint32_t>(count);
+
+  int32_t* pooled = pool->AllocateArray<int32_t>(count);
+  if (pooled && data) {
+    std::memcpy(pooled, data, count * sizeof(int32_t));
+  }
+
+  PoolArrayStorage storage{pooled, count, sizeof(int32_t)};
+  std::memcpy(v.storage_, &storage, sizeof(storage));
+  return v;
+}
+
+Value Value::MakeUIntArrayPooled(const uint32_t* data, size_t count, MemoryPool* pool) {
+  if (!pool || count == 0) {
+    std::vector<uint32_t> vec(data, data + count);
+    Value v;
+    v.type_id_ = TypeId::UInt;
+    v.is_array_ = true;
+    v.array_size_ = static_cast<uint32_t>(count);
+    auto* storage = new UIntArrayStorage{std::move(vec)};
+    std::memcpy(v.storage_, &storage, sizeof(storage));
+    return v;
+  }
+
+  Value v;
+  v.type_id_ = TypeId::UInt;
+  v.is_array_ = true;
+  v.is_pool_owned_ = true;
+  v.array_size_ = static_cast<uint32_t>(count);
+
+  uint32_t* pooled = pool->AllocateArray<uint32_t>(count);
+  if (pooled && data) {
+    std::memcpy(pooled, data, count * sizeof(uint32_t));
+  }
+
+  PoolArrayStorage storage{pooled, count, sizeof(uint32_t)};
+  std::memcpy(v.storage_, &storage, sizeof(storage));
+  return v;
+}
+
+Value Value::MakeDoubleArrayPooled(const double* data, size_t count, MemoryPool* pool) {
+  if (!pool || count == 0) {
+    std::vector<double> vec(data, data + count);
+    Value v;
+    v.type_id_ = TypeId::Double;
+    v.is_array_ = true;
+    v.array_size_ = static_cast<uint32_t>(count);
+    auto* storage = new DoubleArrayStorage{std::move(vec)};
+    std::memcpy(v.storage_, &storage, sizeof(storage));
+    return v;
+  }
+
+  Value v;
+  v.type_id_ = TypeId::Double;
+  v.is_array_ = true;
+  v.is_pool_owned_ = true;
+  v.array_size_ = static_cast<uint32_t>(count);
+
+  double* pooled = pool->AllocateArray<double>(count);
+  if (pooled && data) {
+    std::memcpy(pooled, data, count * sizeof(double));
+  }
+
+  PoolArrayStorage storage{pooled, count, sizeof(double)};
+  std::memcpy(v.storage_, &storage, sizeof(storage));
+  return v;
+}
+
+Value Value::MakeFloat3ArrayPooled(const float* data, size_t count, MemoryPool* pool) {
+  if (!pool || count == 0) return MakeFloat3Array(std::vector<float>(data, data + count * 3));
+
+  Value v;
+  v.type_id_ = TypeId::Float3;
+  v.is_array_ = true;
+  v.is_pool_owned_ = true;
+  v.array_size_ = static_cast<uint32_t>(count);
+
+  float* pooled = pool->AllocateArray<float>(count * 3);
+  if (pooled && data) {
+    std::memcpy(pooled, data, count * 3 * sizeof(float));
+  }
+
+  PoolArrayStorage storage{pooled, count, sizeof(float) * 3};
+  std::memcpy(v.storage_, &storage, sizeof(storage));
+  return v;
+}
+
+Value Value::MakeArrayPooled(TypeId elem_type, const void* data, size_t count, MemoryPool* pool) {
+  size_t elem_size = GetTypeSize(elem_type);
+  if (elem_size == 0) return Value();
+
+  if (!pool || count == 0) {
+    return MakeArrayView(elem_type, data, count);  // Fallback to view
+  }
+
+  Value v;
+  v.type_id_ = elem_type;
+  v.is_array_ = true;
+  v.is_pool_owned_ = true;
+  v.array_size_ = static_cast<uint32_t>(count);
+
+  void* pooled = pool->AllocateAligned(count * elem_size, 8);
+  if (pooled && data) {
+    std::memcpy(pooled, data, count * elem_size);
+  }
+
+  PoolArrayStorage storage{pooled, count, elem_size};
+  std::memcpy(v.storage_, &storage, sizeof(storage));
+  return v;
+}
+
+// ============================================================
 // Queries and accessors
 // ============================================================
 
@@ -600,6 +750,7 @@ void Value::clear() {
   type_id_ = TypeId::Invalid;
   is_array_ = false;
   is_view_ = false;
+  is_pool_owned_ = false;
   array_size_ = 0;
 }
 
@@ -611,8 +762,8 @@ void Value::destroy() {
   if (type_id_ == TypeId::Invalid) return;
 
   if (is_array_) {
-    // Views don't own their data - nothing to delete
-    if (!is_view_) {
+    // Views and pool-owned arrays don't own their data - nothing to delete
+    if (!is_view_ && !is_pool_owned_) {
       void* ptr;
       std::memcpy(&ptr, storage_, sizeof(ptr));
       if (type_id_ == TypeId::Float || type_id_ == TypeId::Float3 ||
@@ -634,6 +785,7 @@ void Value::destroy() {
   type_id_ = TypeId::Invalid;
   is_array_ = false;
   is_view_ = false;
+  is_pool_owned_ = false;
   array_size_ = 0;
 }
 
@@ -641,12 +793,42 @@ void Value::copy_from(const Value& other) {
   type_id_ = other.type_id_;
   is_array_ = other.is_array_;
   is_view_ = other.is_view_;
+  is_pool_owned_ = false;  // Copy always creates heap-owned copy (not pool)
   array_size_ = other.array_size_;
 
   if (other.is_array_) {
     if (other.is_view_) {
       // Copy the view storage (just pointers, not the data)
       std::memcpy(storage_, other.storage_, sizeof(ArrayViewStorage));
+    } else if (other.is_pool_owned_) {
+      // Pool-owned: copy data to heap-allocated storage
+      PoolArrayStorage pool_storage;
+      std::memcpy(&pool_storage, other.storage_, sizeof(pool_storage));
+      size_t total_bytes = pool_storage.count * pool_storage.elem_size;
+
+      if (other.type_id_ == TypeId::Float || other.type_id_ == TypeId::Float3 ||
+          other.type_id_ == TypeId::Float2 || other.type_id_ == TypeId::Float4) {
+        std::vector<float> data(pool_storage.count * (pool_storage.elem_size / sizeof(float)));
+        std::memcpy(data.data(), pool_storage.data, total_bytes);
+        auto* new_storage = new FloatArrayStorage{std::move(data)};
+        std::memcpy(storage_, &new_storage, sizeof(new_storage));
+      } else if (other.type_id_ == TypeId::Int || other.type_id_ == TypeId::Int2 ||
+                 other.type_id_ == TypeId::Int3 || other.type_id_ == TypeId::Int4) {
+        std::vector<int32_t> data(pool_storage.count * (pool_storage.elem_size / sizeof(int32_t)));
+        std::memcpy(data.data(), pool_storage.data, total_bytes);
+        auto* new_storage = new IntArrayStorage{std::move(data)};
+        std::memcpy(storage_, &new_storage, sizeof(new_storage));
+      } else if (other.type_id_ == TypeId::UInt) {
+        std::vector<uint32_t> data(pool_storage.count);
+        std::memcpy(data.data(), pool_storage.data, total_bytes);
+        auto* new_storage = new UIntArrayStorage{std::move(data)};
+        std::memcpy(storage_, &new_storage, sizeof(new_storage));
+      } else if (other.type_id_ == TypeId::Double || other.type_id_ == TypeId::Double3) {
+        std::vector<double> data(pool_storage.count * (pool_storage.elem_size / sizeof(double)));
+        std::memcpy(data.data(), pool_storage.data, total_bytes);
+        auto* new_storage = new DoubleArrayStorage{std::move(data)};
+        std::memcpy(storage_, &new_storage, sizeof(new_storage));
+      }
     } else {
       void* ptr;
       std::memcpy(&ptr, other.storage_, sizeof(ptr));
@@ -677,12 +859,16 @@ void Value::move_from(Value&& other) noexcept {
   type_id_ = other.type_id_;
   is_array_ = other.is_array_;
   is_view_ = other.is_view_;
+  is_pool_owned_ = other.is_pool_owned_;
   array_size_ = other.array_size_;
 
   if (other.is_array_) {
     if (other.is_view_) {
       // Copy the view storage (just pointers)
       std::memcpy(storage_, other.storage_, sizeof(ArrayViewStorage));
+    } else if (other.is_pool_owned_) {
+      // Pool-owned: just copy the storage (transfer ownership)
+      std::memcpy(storage_, other.storage_, sizeof(PoolArrayStorage));
     } else {
       // Just copy the pointer - no need to allocate
       std::memcpy(storage_, other.storage_, sizeof(void*));
@@ -697,6 +883,7 @@ void Value::move_from(Value&& other) noexcept {
   other.type_id_ = TypeId::Invalid;
   other.is_array_ = false;
   other.is_view_ = false;
+  other.is_pool_owned_ = false;
   other.array_size_ = 0;
 }
 
@@ -857,30 +1044,32 @@ const double* Value::as_matrix4d() const {
   return reinterpret_cast<const double*>(storage_);
 }
 
-// Array accessors (only work for owned arrays, not views)
+// Array accessors (only work for heap-owned arrays, not views or pool-owned)
 const std::vector<float>* Value::as_float_array() const {
-  if ((type_id_ != TypeId::Float && type_id_ != TypeId::Float3) || !is_array_ || is_view_) return nullptr;
+  if ((type_id_ != TypeId::Float && type_id_ != TypeId::Float3) ||
+      !is_array_ || is_view_ || is_pool_owned_) return nullptr;
   void* ptr;
   std::memcpy(&ptr, storage_, sizeof(ptr));
   return &static_cast<FloatArrayStorage*>(ptr)->data;
 }
 
 std::vector<float>* Value::as_float_array() {
-  if ((type_id_ != TypeId::Float && type_id_ != TypeId::Float3) || !is_array_ || is_view_) return nullptr;
+  if ((type_id_ != TypeId::Float && type_id_ != TypeId::Float3) ||
+      !is_array_ || is_view_ || is_pool_owned_) return nullptr;
   void* ptr;
   std::memcpy(&ptr, storage_, sizeof(ptr));
   return &static_cast<FloatArrayStorage*>(ptr)->data;
 }
 
 const std::vector<int32_t>* Value::as_int_array() const {
-  if (type_id_ != TypeId::Int || !is_array_ || is_view_) return nullptr;
+  if (type_id_ != TypeId::Int || !is_array_ || is_view_ || is_pool_owned_) return nullptr;
   void* ptr;
   std::memcpy(&ptr, storage_, sizeof(ptr));
   return &static_cast<IntArrayStorage*>(ptr)->data;
 }
 
 std::vector<int32_t>* Value::as_int_array() {
-  if (type_id_ != TypeId::Int || !is_array_ || is_view_) return nullptr;
+  if (type_id_ != TypeId::Int || !is_array_ || is_view_ || is_pool_owned_) return nullptr;
   void* ptr;
   std::memcpy(&ptr, storage_, sizeof(ptr));
   return &static_cast<IntArrayStorage*>(ptr)->data;
@@ -904,6 +1093,11 @@ FloatArrayView Value::float_array_view() const {
                         (type_id_ == TypeId::Float2) ? view.count * 2 :
                         (type_id_ == TypeId::Float3) ? view.count * 3 : view.count * 4;
     return FloatArrayView(static_cast<const float*>(view.data), elem_count);
+  } else if (is_pool_owned_) {
+    PoolArrayStorage pool_storage;
+    std::memcpy(&pool_storage, storage_, sizeof(pool_storage));
+    size_t elem_count = pool_storage.count * (pool_storage.elem_size / sizeof(float));
+    return FloatArrayView(static_cast<const float*>(pool_storage.data), elem_count);
   } else {
     void* ptr;
     std::memcpy(&ptr, storage_, sizeof(ptr));
@@ -926,6 +1120,11 @@ Int32ArrayView Value::int_array_view() const {
                         (type_id_ == TypeId::Int2) ? view.count * 2 :
                         (type_id_ == TypeId::Int3) ? view.count * 3 : view.count * 4;
     return Int32ArrayView(static_cast<const int32_t*>(view.data), elem_count);
+  } else if (is_pool_owned_) {
+    PoolArrayStorage pool_storage;
+    std::memcpy(&pool_storage, storage_, sizeof(pool_storage));
+    size_t elem_count = pool_storage.count * (pool_storage.elem_size / sizeof(int32_t));
+    return Int32ArrayView(static_cast<const int32_t*>(pool_storage.data), elem_count);
   } else {
     void* ptr;
     std::memcpy(&ptr, storage_, sizeof(ptr));
@@ -941,6 +1140,10 @@ UInt32ArrayView Value::uint_array_view() const {
     ArrayViewStorage view;
     std::memcpy(&view, storage_, sizeof(view));
     return UInt32ArrayView(static_cast<const uint32_t*>(view.data), view.count);
+  } else if (is_pool_owned_) {
+    PoolArrayStorage pool_storage;
+    std::memcpy(&pool_storage, storage_, sizeof(pool_storage));
+    return UInt32ArrayView(static_cast<const uint32_t*>(pool_storage.data), pool_storage.count);
   } else {
     void* ptr;
     std::memcpy(&ptr, storage_, sizeof(ptr));
@@ -960,6 +1163,11 @@ DoubleArrayView Value::double_array_view() const {
     std::memcpy(&view, storage_, sizeof(view));
     size_t elem_count = (type_id_ == TypeId::Double) ? view.count : view.count * 3;
     return DoubleArrayView(static_cast<const double*>(view.data), elem_count);
+  } else if (is_pool_owned_) {
+    PoolArrayStorage pool_storage;
+    std::memcpy(&pool_storage, storage_, sizeof(pool_storage));
+    size_t elem_count = pool_storage.count * (pool_storage.elem_size / sizeof(double));
+    return DoubleArrayView(static_cast<const double*>(pool_storage.data), elem_count);
   } else {
     void* ptr;
     std::memcpy(&ptr, storage_, sizeof(ptr));
@@ -975,6 +1183,10 @@ const void* Value::array_data() const {
     ArrayViewStorage view;
     std::memcpy(&view, storage_, sizeof(view));
     return view.data;
+  } else if (is_pool_owned_) {
+    PoolArrayStorage pool_storage;
+    std::memcpy(&pool_storage, storage_, sizeof(pool_storage));
+    return pool_storage.data;
   } else {
     void* ptr;
     std::memcpy(&ptr, storage_, sizeof(ptr));
@@ -1000,40 +1212,59 @@ size_t Value::array_element_count() const {
     ArrayViewStorage view;
     std::memcpy(&view, storage_, sizeof(view));
     return view.count;
+  } else if (is_pool_owned_) {
+    PoolArrayStorage pool_storage;
+    std::memcpy(&pool_storage, storage_, sizeof(pool_storage));
+    return pool_storage.count;
   }
   return array_size_;
 }
 
 bool Value::make_owned() {
-  if (!is_array_ || !is_view_) return false;
+  if (!is_array_ || (!is_view_ && !is_pool_owned_)) return false;
 
-  ArrayViewStorage view;
-  std::memcpy(&view, storage_, sizeof(view));
+  const void* src_data = nullptr;
+  size_t count = 0;
+  size_t elem_size = 0;
+
+  if (is_view_) {
+    ArrayViewStorage view;
+    std::memcpy(&view, storage_, sizeof(view));
+    src_data = view.data;
+    count = view.count;
+    elem_size = view.elem_size;
+  } else if (is_pool_owned_) {
+    PoolArrayStorage pool_storage;
+    std::memcpy(&pool_storage, storage_, sizeof(pool_storage));
+    src_data = pool_storage.data;
+    count = pool_storage.count;
+    elem_size = pool_storage.elem_size;
+  }
 
   // Create owned copy based on type
   if (type_id_ == TypeId::Float || type_id_ == TypeId::Float2 ||
       type_id_ == TypeId::Float3 || type_id_ == TypeId::Float4) {
-    size_t total_floats = view.count * (view.elem_size / sizeof(float));
+    size_t total_floats = count * (elem_size / sizeof(float));
     std::vector<float> owned_data(total_floats);
-    std::memcpy(owned_data.data(), view.data, total_floats * sizeof(float));
+    std::memcpy(owned_data.data(), src_data, total_floats * sizeof(float));
     auto* storage = new FloatArrayStorage{std::move(owned_data)};
     std::memcpy(storage_, &storage, sizeof(storage));
   } else if (type_id_ == TypeId::Int || type_id_ == TypeId::Int2 ||
              type_id_ == TypeId::Int3 || type_id_ == TypeId::Int4) {
-    size_t total_ints = view.count * (view.elem_size / sizeof(int32_t));
+    size_t total_ints = count * (elem_size / sizeof(int32_t));
     std::vector<int32_t> owned_data(total_ints);
-    std::memcpy(owned_data.data(), view.data, total_ints * sizeof(int32_t));
+    std::memcpy(owned_data.data(), src_data, total_ints * sizeof(int32_t));
     auto* storage = new IntArrayStorage{std::move(owned_data)};
     std::memcpy(storage_, &storage, sizeof(storage));
   } else if (type_id_ == TypeId::UInt) {
-    std::vector<uint32_t> owned_data(view.count);
-    std::memcpy(owned_data.data(), view.data, view.count * sizeof(uint32_t));
+    std::vector<uint32_t> owned_data(count);
+    std::memcpy(owned_data.data(), src_data, count * sizeof(uint32_t));
     auto* storage = new UIntArrayStorage{std::move(owned_data)};
     std::memcpy(storage_, &storage, sizeof(storage));
   } else if (type_id_ == TypeId::Double || type_id_ == TypeId::Double3) {
-    size_t total_doubles = view.count * (view.elem_size / sizeof(double));
+    size_t total_doubles = count * (elem_size / sizeof(double));
     std::vector<double> owned_data(total_doubles);
-    std::memcpy(owned_data.data(), view.data, total_doubles * sizeof(double));
+    std::memcpy(owned_data.data(), src_data, total_doubles * sizeof(double));
     auto* storage = new DoubleArrayStorage{std::move(owned_data)};
     std::memcpy(storage_, &storage, sizeof(storage));
   } else {
@@ -1041,6 +1272,7 @@ bool Value::make_owned() {
   }
 
   is_view_ = false;
+  is_pool_owned_ = false;
   return true;
 }
 

@@ -8,6 +8,7 @@
 // - No reallocation/copy on growth (just add new chunk)
 // - Direct pointer access for GPU upload
 // - Memory-efficient for large arrays
+// - Optional MemoryPool support for unified memory management
 
 #pragma once
 
@@ -17,6 +18,16 @@
 #include <stdexcept>
 #include <vector>
 #include <memory>
+
+// Include MemoryPool for pool allocation support
+#include "next/memory/memory-pool.hh"
+
+// Forward declaration
+namespace tinyusdz {
+namespace next {
+class MemoryContext;
+}
+}
 
 namespace tinyusdz {
 namespace tydra {
@@ -29,6 +40,7 @@ constexpr size_t kDefaultChunkSize = 64 * 1024;
 // - Each chunk is allocated separately (no realloc)
 // - Elements accessed via index or iterator
 // - Can get contiguous data via flatten() for GPU upload
+// - Supports both heap allocation and MemoryPool allocation
 template <typename T, size_t ChunkBytes = kDefaultChunkSize>
 class ChunkedArray {
  public:
@@ -36,7 +48,20 @@ class ChunkedArray {
   static_assert(kElementsPerChunk > 0, "Element size too large for chunk");
 
   ChunkedArray() = default;
-  ~ChunkedArray() = default;
+
+  /// Construct with memory pool for allocation
+  /// Note: Pool chunks are not owned by this array - they're freed when pool is cleared
+  explicit ChunkedArray(tinyusdz::next::MemoryPool* pool) {
+    if (pool) {
+      set_allocator(PoolAllocator, static_cast<void*>(pool));
+    }
+  }
+
+  ~ChunkedArray() {
+    // Chunks with is_heap_owned=true are deleted by Chunk destructor
+    // Pool-allocated chunks (is_heap_owned=false) are freed when pool is cleared
+    chunks_.clear();
+  }
 
   // Move only (no copy to avoid accidental large copies)
   ChunkedArray(ChunkedArray&&) = default;
@@ -46,10 +71,7 @@ class ChunkedArray {
 
   // Reserve space for n elements (pre-allocates chunks)
   void reserve(size_t n) {
-    size_t needed_chunks = (n + kElementsPerChunk - 1) / kElementsPerChunk;
-    while (chunks_.size() < needed_chunks) {
-      chunks_.push_back(std::unique_ptr<T[]>(new T[kElementsPerChunk]));
-    }
+    ensure_capacity(n);
   }
 
   // Add element, returns index
@@ -83,7 +105,7 @@ class ChunkedArray {
       size_t space_in_chunk = kElementsPerChunk - offset;
       size_t to_copy = (remaining < space_in_chunk) ? remaining : space_in_chunk;
 
-      std::memcpy(chunks_[chunk_idx].get() + offset, src, to_copy * sizeof(T));
+      std::memcpy(chunks_[chunk_idx].data + offset, src, to_copy * sizeof(T));
 
       src += to_copy;
       size_ += to_copy;
@@ -123,13 +145,13 @@ class ChunkedArray {
   T& operator[](size_t idx) {
     size_t chunk_idx = idx / kElementsPerChunk;
     size_t offset = idx % kElementsPerChunk;
-    return chunks_[chunk_idx][offset];
+    return chunks_[chunk_idx].data[offset];
   }
 
   const T& operator[](size_t idx) const {
     size_t chunk_idx = idx / kElementsPerChunk;
     size_t offset = idx % kElementsPerChunk;
-    return chunks_[chunk_idx][offset];
+    return chunks_[chunk_idx].data[offset];
   }
 
   T& at(size_t idx) {
@@ -160,11 +182,11 @@ class ChunkedArray {
 
   // Get pointer to chunk data (for direct GPU upload)
   T* chunk_data(size_t chunk_idx) {
-    return chunks_[chunk_idx].get();
+    return chunks_[chunk_idx].data;
   }
 
   const T* chunk_data(size_t chunk_idx) const {
-    return chunks_[chunk_idx].get();
+    return chunks_[chunk_idx].data;
   }
 
   // Get size of elements in a specific chunk
@@ -182,7 +204,7 @@ class ChunkedArray {
     result.reserve(size_);
     for (size_t i = 0; i < chunks_.size(); ++i) {
       size_t count = chunk_size(i);
-      result.insert(result.end(), chunks_[i].get(), chunks_[i].get() + count);
+      result.insert(result.end(), chunks_[i].data, chunks_[i].data + count);
     }
     return result;
   }
@@ -192,7 +214,7 @@ class ChunkedArray {
     size_t copied = 0;
     for (size_t i = 0; i < chunks_.size() && copied < size_; ++i) {
       size_t count = chunk_size(i);
-      std::memcpy(dest + copied, chunks_[i].get(), count * sizeof(T));
+      std::memcpy(dest + copied, chunks_[i].data, count * sizeof(T));
       copied += count;
     }
   }
@@ -267,15 +289,86 @@ class ChunkedArray {
   const_iterator cbegin() const { return const_iterator(this, 0); }
   const_iterator cend() const { return const_iterator(this, size_); }
 
+  /// Set external allocator function for pool-based allocation
+  /// The allocator should return a pointer to kElementsPerChunk elements
+  using AllocatorFn = T* (*)(void* user_data, size_t count);
+  void set_allocator(AllocatorFn fn, void* user_data) {
+    allocator_fn_ = fn;
+    allocator_data_ = user_data;
+  }
+
+  /// Check if using custom allocator
+  bool has_allocator() const { return allocator_fn_ != nullptr; }
+
  private:
+  /// Allocator function that uses MemoryPool
+  static T* PoolAllocator(void* user_data, size_t count) {
+    auto* pool = static_cast<tinyusdz::next::MemoryPool*>(user_data);
+    if (!pool) return nullptr;
+    return static_cast<T*>(pool->Allocate(count * sizeof(T)));
+  }
+
   void ensure_capacity(size_t n) {
     while (capacity() < n) {
-      chunks_.push_back(std::unique_ptr<T[]>(new T[kElementsPerChunk]));
+      T* chunk = nullptr;
+      bool is_heap = true;
+
+      if (allocator_fn_) {
+        chunk = allocator_fn_(allocator_data_, kElementsPerChunk);
+        is_heap = false;
+      }
+
+      if (!chunk) {
+        // Fallback to heap allocation
+        chunk = new T[kElementsPerChunk];
+        is_heap = true;
+      }
+
+      chunks_.push_back({chunk, is_heap});
     }
   }
 
-  std::vector<std::unique_ptr<T[]>> chunks_;
+  // Chunk storage with ownership flag
+  struct Chunk {
+    T* data = nullptr;
+    bool is_heap_owned = true;
+
+    ~Chunk() {
+      if (is_heap_owned && data) {
+        delete[] data;
+      }
+    }
+
+    // Move only
+    Chunk() = default;
+    Chunk(T* d, bool heap) : data(d), is_heap_owned(heap) {}
+    Chunk(Chunk&& o) noexcept : data(o.data), is_heap_owned(o.is_heap_owned) {
+      o.data = nullptr;
+      o.is_heap_owned = false;
+    }
+    Chunk& operator=(Chunk&& o) noexcept {
+      if (this != &o) {
+        if (is_heap_owned && data) delete[] data;
+        data = o.data;
+        is_heap_owned = o.is_heap_owned;
+        o.data = nullptr;
+        o.is_heap_owned = false;
+      }
+      return *this;
+    }
+    Chunk(const Chunk&) = delete;
+    Chunk& operator=(const Chunk&) = delete;
+
+    T& operator[](size_t idx) { return data[idx]; }
+    const T& operator[](size_t idx) const { return data[idx]; }
+    T* get() { return data; }
+    const T* get() const { return data; }
+  };
+
+  std::vector<Chunk> chunks_;
   size_t size_ = 0;
+  AllocatorFn allocator_fn_ = nullptr;
+  void* allocator_data_ = nullptr;
 };
 
 // Type aliases for common vertex data

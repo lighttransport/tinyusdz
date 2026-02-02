@@ -8,6 +8,7 @@
 // - Chunked arrays for WASM heap efficiency
 // - GPU-friendly data layout
 // - Runtime type dispatch (no templates in API)
+// - Optional MemoryPool support for unified memory management
 
 #pragma once
 
@@ -18,6 +19,14 @@
 #include <memory>
 
 #include "chunked-array.hh"
+
+// Forward declaration
+namespace tinyusdz {
+namespace next {
+class MemoryContext;
+class MemoryContextRef;
+}
+}
 
 namespace tinyusdz {
 namespace tydra {
@@ -626,6 +635,9 @@ class RenderScene {
   RenderScene() = default;
   ~RenderScene() = default;
 
+  /// Construct with memory context for pool-based allocation
+  explicit RenderScene(tinyusdz::next::MemoryContext* mem_ctx) : mem_ctx_(mem_ctx) {}
+
   // Move only
   RenderScene(RenderScene&&) = default;
   RenderScene& operator=(RenderScene&&) = default;
@@ -681,6 +693,15 @@ class RenderScene {
     size_t memory_bytes;
   };
   Stats get_stats() const;
+
+  // Memory context
+  tinyusdz::next::MemoryContext* memory_context() { return mem_ctx_; }
+  const tinyusdz::next::MemoryContext* memory_context() const { return mem_ctx_; }
+  void set_memory_context(tinyusdz::next::MemoryContext* ctx) { mem_ctx_ = ctx; }
+  bool has_memory_context() const { return mem_ctx_ != nullptr; }
+
+ private:
+  tinyusdz::next::MemoryContext* mem_ctx_ = nullptr;
 };
 
 }  // namespace next

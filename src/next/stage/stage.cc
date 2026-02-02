@@ -222,6 +222,8 @@ const PrimSpecMeta& UsdPrim::GetMeta() const {
 Stage::Stage() = default;
 Stage::~Stage() = default;
 
+Stage::Stage(MemoryContextRef mem_ctx) : mem_ctx_(std::move(mem_ctx)) {}
+
 Stage::Stage(Stage&&) noexcept = default;
 Stage& Stage::operator=(Stage&&) noexcept = default;
 
@@ -430,7 +432,16 @@ StageBuilder::StageBuilder()
     : layer_(std::make_unique<Layer>()),
       layer_builder_(std::make_unique<LayerBuilder>(*layer_)) {}
 
+StageBuilder::StageBuilder(MemoryContextRef mem_ctx)
+    : layer_(std::make_unique<Layer>(mem_ctx)),
+      layer_builder_(std::make_unique<LayerBuilder>(*layer_)),
+      mem_ctx_(std::move(mem_ctx)) {}
+
 StageBuilder::~StageBuilder() = default;
+
+MemoryContext* StageBuilder::memory_context() {
+  return mem_ctx_.IsValid() ? mem_ctx_.get() : nullptr;
+}
 
 void StageBuilder::SetDefaultPrim(const std::string& primName) {
   meta_.defaultPrim = primName;
