@@ -20,6 +20,7 @@ namespace tinyusdz {
 // Forward declarations
 class Prim;
 class Stage;
+class Path;
 
 namespace mtlx {
   class MtlxNodeGraph;
@@ -97,6 +98,7 @@ bool ConvertNodeGraphToJson(
 /// Includes both the nodegraph structure and shader connections
 ///
 /// @param[in] shader_prim Shader Prim (e.g., MtlxOpenPBRSurface)
+/// @param[in] shader_abs_path Absolute path to the shader prim
 /// @param[in] stage USD Stage for resolving references
 /// @param[out] json_str Output JSON string
 /// @param[out] err Error message if conversion fails
@@ -104,6 +106,7 @@ bool ConvertNodeGraphToJson(
 ///
 bool ConvertShaderWithNodeGraphToJson(
     const Prim &shader_prim,
+    const Path &shader_abs_path,
     const Stage &stage,
     std::string *json_str,
     std::string *err = nullptr);
