@@ -2406,6 +2406,364 @@ function _detectIdentityOps(nodes, nodeMap) {
     return identities;
 }
 
+// ============================================================================
+// Constant Folding (AGGRESSIVE optimization level)
+// ============================================================================
+
+/**
+ * Evaluate a constant expression for the given operation
+ * Returns null if the operation cannot be folded
+ */
+function _evaluateConstantOp(category, inputs) {
+    const getVal = (name) => {
+        const input = inputs.find(i => i.name === name);
+        return input?.value;
+    };
+
+    // Helper for color3/vector3 operations
+    const vec3Op = (a, b, op) => {
+        if (!Array.isArray(a) || !Array.isArray(b) || a.length !== 3 || b.length !== 3) return null;
+        return [op(a[0], b[0]), op(a[1], b[1]), op(a[2], b[2])];
+    };
+
+    const vec3Unary = (a, op) => {
+        if (!Array.isArray(a) || a.length !== 3) return null;
+        return [op(a[0]), op(a[1]), op(a[2])];
+    };
+
+    // Binary operations
+    if (category === 'add_color3' || category === 'add_vector3') {
+        return vec3Op(getVal('in1'), getVal('in2'), (a, b) => a + b);
+    }
+    if (category === 'add_float') {
+        const a = getVal('in1'), b = getVal('in2');
+        return (typeof a === 'number' && typeof b === 'number') ? a + b : null;
+    }
+    if (category === 'subtract_color3' || category === 'subtract_vector3') {
+        return vec3Op(getVal('in1'), getVal('in2'), (a, b) => a - b);
+    }
+    if (category === 'subtract_float') {
+        const a = getVal('in1'), b = getVal('in2');
+        return (typeof a === 'number' && typeof b === 'number') ? a - b : null;
+    }
+    if (category === 'multiply_color3' || category === 'multiply_vector3') {
+        return vec3Op(getVal('in1'), getVal('in2'), (a, b) => a * b);
+    }
+    if (category === 'multiply_float') {
+        const a = getVal('in1'), b = getVal('in2');
+        return (typeof a === 'number' && typeof b === 'number') ? a * b : null;
+    }
+    if (category === 'divide_color3' || category === 'divide_vector3') {
+        const b = getVal('in2');
+        if (Array.isArray(b) && b.some(v => v === 0)) return null; // Avoid div by zero
+        return vec3Op(getVal('in1'), b, (a, b) => a / b);
+    }
+    if (category === 'divide_float') {
+        const a = getVal('in1'), b = getVal('in2');
+        if (b === 0) return null;
+        return (typeof a === 'number' && typeof b === 'number') ? a / b : null;
+    }
+    if (category === 'power_color3' || category === 'power_vector3') {
+        return vec3Op(getVal('in1'), getVal('in2'), (a, b) => Math.pow(a, b));
+    }
+    if (category === 'power_float') {
+        const a = getVal('in1'), b = getVal('in2');
+        return (typeof a === 'number' && typeof b === 'number') ? Math.pow(a, b) : null;
+    }
+    if (category === 'min_color3' || category === 'min_vector3') {
+        return vec3Op(getVal('in1'), getVal('in2'), Math.min);
+    }
+    if (category === 'min_float') {
+        const a = getVal('in1'), b = getVal('in2');
+        return (typeof a === 'number' && typeof b === 'number') ? Math.min(a, b) : null;
+    }
+    if (category === 'max_color3' || category === 'max_vector3') {
+        return vec3Op(getVal('in1'), getVal('in2'), Math.max);
+    }
+    if (category === 'max_float') {
+        const a = getVal('in1'), b = getVal('in2');
+        return (typeof a === 'number' && typeof b === 'number') ? Math.max(a, b) : null;
+    }
+
+    // Unary operations
+    if (category === 'sqrt_float') {
+        const v = getVal('in');
+        return (typeof v === 'number' && v >= 0) ? Math.sqrt(v) : null;
+    }
+    if (category === 'sqrt_color3' || category === 'sqrt_vector3') {
+        const v = getVal('in');
+        if (Array.isArray(v) && v.some(x => x < 0)) return null;
+        return vec3Unary(v, Math.sqrt);
+    }
+    if (category === 'absval_float') {
+        const v = getVal('in');
+        return (typeof v === 'number') ? Math.abs(v) : null;
+    }
+    if (category === 'absval_color3' || category === 'absval_vector3') {
+        return vec3Unary(getVal('in'), Math.abs);
+    }
+    if (category === 'sin_float') {
+        const v = getVal('in');
+        return (typeof v === 'number') ? Math.sin(v) : null;
+    }
+    if (category === 'cos_float') {
+        const v = getVal('in');
+        return (typeof v === 'number') ? Math.cos(v) : null;
+    }
+    if (category === 'floor_float') {
+        const v = getVal('in');
+        return (typeof v === 'number') ? Math.floor(v) : null;
+    }
+    if (category === 'floor_color3' || category === 'floor_vector3') {
+        return vec3Unary(getVal('in'), Math.floor);
+    }
+    if (category === 'ceil_float') {
+        const v = getVal('in');
+        return (typeof v === 'number') ? Math.ceil(v) : null;
+    }
+    if (category === 'ceil_color3' || category === 'ceil_vector3') {
+        return vec3Unary(getVal('in'), Math.ceil);
+    }
+    if (category === 'round_float') {
+        const v = getVal('in');
+        return (typeof v === 'number') ? Math.round(v) : null;
+    }
+    if (category === 'round_color3' || category === 'round_vector3') {
+        return vec3Unary(getVal('in'), Math.round);
+    }
+
+    // Invert: 1 - x
+    if (category === 'invert_color3' || category === 'invert_float') {
+        const v = getVal('in');
+        const amount = getVal('amount') ?? 1;
+        if (category === 'invert_float') {
+            if (typeof v !== 'number') return null;
+            return v + amount * (1 - 2 * v); // lerp(v, 1-v, amount)
+        } else {
+            if (!Array.isArray(v) || v.length !== 3) return null;
+            if (typeof amount === 'number') {
+                return v.map(x => x + amount * (1 - 2 * x));
+            }
+            return null;
+        }
+    }
+
+    // Clamp
+    if (category === 'clamp_float') {
+        const v = getVal('in'), low = getVal('low') ?? 0, high = getVal('high') ?? 1;
+        if (typeof v !== 'number' || typeof low !== 'number' || typeof high !== 'number') return null;
+        return Math.min(Math.max(v, low), high);
+    }
+    if (category === 'clamp_color3' || category === 'clamp_vector3') {
+        const v = getVal('in'), low = getVal('low') ?? [0, 0, 0], high = getVal('high') ?? [1, 1, 1];
+        if (!Array.isArray(v) || !Array.isArray(low) || !Array.isArray(high)) return null;
+        return v.map((x, i) => Math.min(Math.max(x, low[i] ?? 0), high[i] ?? 1));
+    }
+
+    // Mix/lerp
+    if (category === 'mix_float') {
+        const bg = getVal('bg'), fg = getVal('fg'), mix = getVal('mix');
+        if (typeof bg !== 'number' || typeof fg !== 'number' || typeof mix !== 'number') return null;
+        return bg + mix * (fg - bg);
+    }
+    if (category === 'mix_color3') {
+        const bg = getVal('bg'), fg = getVal('fg'), mix = getVal('mix');
+        if (!Array.isArray(bg) || !Array.isArray(fg)) return null;
+        if (typeof mix === 'number') {
+            return bg.map((b, i) => b + mix * (fg[i] - b));
+        }
+        return null;
+    }
+
+    // Extract channel
+    if (category === 'extract_color3' || category === 'extract_vector3') {
+        const v = getVal('in'), index = getVal('index');
+        if (!Array.isArray(v) || typeof index !== 'number' || index < 0 || index > 2) return null;
+        return v[Math.floor(index)];
+    }
+
+    // Combine channels
+    if (category === 'combine3_color3' || category === 'combine3_vector3') {
+        const in1 = getVal('in1'), in2 = getVal('in2'), in3 = getVal('in3');
+        if (typeof in1 !== 'number' || typeof in2 !== 'number' || typeof in3 !== 'number') return null;
+        return [in1, in2, in3];
+    }
+
+    // Luminance (rec709)
+    if (category === 'luminance_color3') {
+        const v = getVal('in');
+        if (!Array.isArray(v) || v.length !== 3) return null;
+        return 0.2126 * v[0] + 0.7152 * v[1] + 0.0722 * v[2];
+    }
+
+    // Normalize vector
+    if (category === 'normalize_vector3') {
+        const v = getVal('in');
+        if (!Array.isArray(v) || v.length !== 3) return null;
+        const len = Math.sqrt(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]);
+        if (len === 0) return [0, 0, 0];
+        return [v[0] / len, v[1] / len, v[2] / len];
+    }
+
+    // Magnitude
+    if (category === 'magnitude_vector3') {
+        const v = getVal('in');
+        if (!Array.isArray(v) || v.length !== 3) return null;
+        return Math.sqrt(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]);
+    }
+
+    // Dot product
+    if (category === 'dotproduct_vector3') {
+        const a = getVal('in1'), b = getVal('in2');
+        if (!Array.isArray(a) || !Array.isArray(b) || a.length !== 3 || b.length !== 3) return null;
+        return a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+    }
+
+    // Cross product
+    if (category === 'crossproduct_vector3') {
+        const a = getVal('in1'), b = getVal('in2');
+        if (!Array.isArray(a) || !Array.isArray(b) || a.length !== 3 || b.length !== 3) return null;
+        return [
+            a[1] * b[2] - a[2] * b[1],
+            a[2] * b[0] - a[0] * b[2],
+            a[0] * b[1] - a[1] * b[0]
+        ];
+    }
+
+    // Type conversions (color3 <-> vector3)
+    if (category === 'convert_color3_vector3' || category === 'convert_vector3_color3') {
+        return getVal('in'); // Same data, different type interpretation
+    }
+
+    return null; // Unknown or unsupported operation
+}
+
+/**
+ * Detect nodes that can be constant folded (all inputs are constant values)
+ * Returns an array of {node, value, type} objects
+ */
+function _detectConstantFoldable(nodes, nodeMap) {
+    const foldable = [];
+    const foldedValues = new Map(); // Cache folded values for chained folding
+
+    // Keep iterating until no more nodes can be folded
+    let changed = true;
+    while (changed) {
+        changed = false;
+
+        for (const node of nodes) {
+            if (foldedValues.has(node.name)) continue; // Already folded
+            if (!node.category || !node.inputs) continue;
+
+            // Check if all inputs are constant (either direct value or already-folded node)
+            let allConstant = true;
+            const resolvedInputs = [];
+
+            for (const input of node.inputs) {
+                if (input.nodename) {
+                    // It's a connection - check if the source was already folded
+                    if (foldedValues.has(input.nodename)) {
+                        resolvedInputs.push({ name: input.name, value: foldedValues.get(input.nodename) });
+                    } else {
+                        allConstant = false;
+                        break;
+                    }
+                } else if (input.value !== undefined) {
+                    resolvedInputs.push({ name: input.name, value: input.value });
+                } else {
+                    // No value and no connection - might have default, skip for safety
+                    allConstant = false;
+                    break;
+                }
+            }
+
+            if (!allConstant) continue;
+
+            // Try to evaluate
+            const result = _evaluateConstantOp(node.category, resolvedInputs);
+            if (result !== null) {
+                foldedValues.set(node.name, result);
+                const outputType = _getOutputType(node.category);
+                foldable.push({
+                    node: node.name,
+                    category: node.category,
+                    value: result,
+                    type: outputType
+                });
+                changed = true;
+            }
+        }
+    }
+
+    return foldable;
+}
+
+/**
+ * Get the output type for a node category
+ */
+function _getOutputType(category) {
+    if (category.endsWith('_color3')) return 'color3f';
+    if (category.endsWith('_vector3')) return 'vector3f';
+    if (category.endsWith('_float') || category === 'luminance_color3' ||
+        category === 'magnitude_vector3' || category === 'dotproduct_vector3' ||
+        category.startsWith('extract_')) {
+        return 'float';
+    }
+    if (category.startsWith('combine3_')) {
+        return category.includes('color') ? 'color3f' : 'vector3f';
+    }
+    return 'float'; // Default
+}
+
+/**
+ * Apply constant folding optimizations to the node graph
+ */
+function _applyConstantFolding(nodeGraph, foldedNodes) {
+    if (foldedNodes.length === 0) return nodeGraph;
+
+    const ng = nodeGraph.nodegraph;
+    const nodes = [...ng.nodes];
+    const foldedMap = new Map(foldedNodes.map(f => [f.node, f]));
+
+    // Replace folded nodes with constant nodes, rewire connections
+    const newNodes = [];
+    const constantReplacements = new Map();
+
+    for (const node of nodes) {
+        if (foldedMap.has(node.name)) {
+            const folded = foldedMap.get(node.name);
+            // Replace with constant node
+            const constantNode = {
+                name: node.name,
+                category: `constant_${folded.type === 'float' ? 'float' : folded.type.replace('f', '')}`,
+                type: `ND_constant_${folded.type === 'float' ? 'float' : folded.type.replace('f', '')}`,
+                inputs: [{ name: 'value', type: folded.type, value: folded.value }]
+            };
+            newNodes.push(constantNode);
+            constantReplacements.set(node.name, folded.value);
+        } else {
+            // Keep original node, but update inputs if they reference folded nodes
+            const updatedNode = { ...node };
+            if (node.inputs) {
+                updatedNode.inputs = node.inputs.map(input => {
+                    if (input.nodename && foldedMap.has(input.nodename)) {
+                        // Replace connection with direct value
+                        const folded = foldedMap.get(input.nodename);
+                        return { name: input.name, type: folded.type, value: folded.value };
+                    }
+                    return input;
+                });
+            }
+            newNodes.push(updatedNode);
+        }
+    }
+
+    return {
+        ...nodeGraph,
+        nodegraph: { ...ng, nodes: newNodes }
+    };
+}
+
 /**
  * Apply pattern optimizations to a node graph
  */
@@ -2544,7 +2902,27 @@ function optimizeNodeGraph(nodeGraph, level = NodeGraphOptimizationLevel.STANDAR
         identities = _detectIdentityOps(nodes, nodeMap);
     }
 
-    return _applyPatternOptimizations(nodeGraph, patterns, identities);
+    // Apply pattern optimizations first
+    let result = _applyPatternOptimizations(nodeGraph, patterns, identities);
+
+    // Then apply constant folding for AGGRESSIVE level
+    if (level >= NodeGraphOptimizationLevel.AGGRESSIVE) {
+        const updatedNodes = result.nodegraph.nodes || [];
+        const updatedNodeMap = _buildNodeMap(updatedNodes);
+        const foldedNodes = _detectConstantFoldable(updatedNodes, updatedNodeMap);
+
+        if (foldedNodes.length > 0) {
+            result = _applyConstantFolding(result, foldedNodes);
+            // Update optimization info
+            result.optimizationInfo = {
+                ...result.optimizationInfo,
+                constantsFolded: foldedNodes.length,
+                foldedOperations: foldedNodes.map(f => f.category)
+            };
+        }
+    }
+
+    return result;
 }
 
 /**
@@ -2652,7 +3030,13 @@ function analyzeNodeGraph(nodeGraph) {
             patternsFound: totalPatterns,
             identitiesFound: identities.length,
             nodesRemovable: allNodesToRemove.size
-        }
+        },
+        // Constant folding analysis (AGGRESSIVE level)
+        constantFolding: _detectConstantFoldable(nodes, nodeMap).map(f => ({
+            node: f.node,
+            operation: f.category,
+            foldedValue: f.value
+        }))
     };
 }
 
@@ -2665,11 +3049,15 @@ function analyzeNodeGraph(nodeGraph) {
 function getOptimizationSummary(optimizedGraph) {
     if (!optimizedGraph?.optimizationInfo) return 'No optimization info available';
     const info = optimizedGraph.optimizationInfo;
-    return [
+    const lines = [
         `Node count: ${info.originalNodeCount} -> ${info.optimizedNodeCount} (${info.nodesRemoved} removed)`,
-        `Patterns applied: ${info.patternsApplied.length > 0 ? info.patternsApplied.join(', ') : 'none'}`,
+        `Patterns applied: ${info.patternsApplied?.length > 0 ? info.patternsApplied.join(', ') : 'none'}`,
         `Identity ops removed: ${info.identitiesRemoved}`
-    ].join('\n');
+    ];
+    if (info.constantsFolded) {
+        lines.push(`Constants folded: ${info.constantsFolded} (${info.foldedOperations?.join(', ') || 'none'})`);
+    }
+    return lines.join('\n');
 }
 
 // ============================================================================
