@@ -837,6 +837,87 @@ static bool WriteMaterialXToString(const MtlxOpenPBRSurface &shader,
   return true;
 }
 
+// Helper to extract MaterialX node category from info:id (e.g., "ND_multiply_color3" -> "multiply")
+static std::string ExtractNodeCategory(const std::string &info_id) {
+  // info:id format: "ND_<category>_<type>" or just "<category>"
+  if (info_id.substr(0, 3) == "ND_") {
+    std::string rest = info_id.substr(3);
+    size_t underscore = rest.rfind('_');
+    if (underscore != std::string::npos) {
+      return rest.substr(0, underscore);
+    }
+    return rest;
+  }
+  return info_id;
+}
+
+// Helper to extract MaterialX type from info:id (e.g., "ND_multiply_color3" -> "color3")
+static std::string ExtractNodeType(const std::string &info_id) {
+  size_t underscore = info_id.rfind('_');
+  if (underscore != std::string::npos) {
+    return info_id.substr(underscore + 1);
+  }
+  return "float";
+}
+
+// Helper to convert USD type to MaterialX type string
+static std::string ToMtlxTypeString(const value::Value &val) {
+  if (val.type_id() == value::TYPE_ID_FLOAT) return "float";
+  if (val.type_id() == value::TYPE_ID_INT32) return "integer";
+  if (val.type_id() == value::TYPE_ID_BOOL) return "boolean";
+  if (val.type_id() == value::TYPE_ID_STRING) return "string";
+  if (val.type_id() == value::TYPE_ID_FLOAT2) return "vector2";
+  if (val.type_id() == value::TYPE_ID_FLOAT3) return "vector3";
+  if (val.type_id() == value::TYPE_ID_FLOAT4) return "vector4";
+  if (val.type_id() == value::TYPE_ID_COLOR3F) return "color3";
+  if (val.type_id() == value::TYPE_ID_COLOR4F) return "color4";
+  if (val.type_id() == value::TYPE_ID_NORMAL3F) return "vector3";
+  if (val.type_id() == value::TYPE_ID_ASSET_PATH) return "filename";
+  if (val.type_id() == value::TYPE_ID_TOKEN) return "string";
+  return "float";
+}
+
+// Helper to convert USD value to MaterialX value string
+static std::string ToMtlxValueString(const value::Value &val) {
+  if (auto f = val.as<float>()) {
+    return dtos(*f);
+  }
+  if (auto i = val.as<int>()) {
+    return std::to_string(*i);
+  }
+  if (auto b = val.as<bool>()) {
+    return *b ? "true" : "false";
+  }
+  if (auto s = val.as<std::string>()) {
+    return *s;
+  }
+  if (auto v2 = val.as<value::float2>()) {
+    return dtos((*v2)[0]) + ", " + dtos((*v2)[1]);
+  }
+  if (auto v3 = val.as<value::float3>()) {
+    return dtos((*v3)[0]) + ", " + dtos((*v3)[1]) + ", " + dtos((*v3)[2]);
+  }
+  if (auto v4 = val.as<value::float4>()) {
+    return dtos((*v4)[0]) + ", " + dtos((*v4)[1]) + ", " + dtos((*v4)[2]) + ", " + dtos((*v4)[3]);
+  }
+  if (auto c3 = val.as<value::color3f>()) {
+    return dtos(c3->r) + ", " + dtos(c3->g) + ", " + dtos(c3->b);
+  }
+  if (auto c4 = val.as<value::color4f>()) {
+    return dtos(c4->r) + ", " + dtos(c4->g) + ", " + dtos(c4->b) + ", " + dtos(c4->a);
+  }
+  if (auto n3 = val.as<value::normal3f>()) {
+    return dtos(n3->x) + ", " + dtos(n3->y) + ", " + dtos(n3->z);
+  }
+  if (auto ap = val.as<value::AssetPath>()) {
+    return ap->GetAssetPath();
+  }
+  if (auto t = val.as<value::token>()) {
+    return t->str();
+  }
+  return "";
+}
+
 // Helper function to serialize nodegraphs to MaterialX XML
 static bool SerializeNodeGraphs(const std::map<std::string, PrimSpec> &nodegraphs,
                                 std::stringstream &ss, std::string *warn, std::string *err) {
@@ -851,13 +932,76 @@ static bool SerializeNodeGraphs(const std::map<std::string, PrimSpec> &nodegraph
 
     // Serialize child nodes
     for (const auto &child_ps : ng_ps.children()) {
-      std::string node_type = child_ps.typeName();
       std::string node_name = child_ps.name();
 
-      // TODO: Add more complete node serialization
-      // For now, just add a placeholder comment
-      ss << pprint::Indent(2) << "<!-- Node: " << node_name
-         << " (type: " << node_type << ") -->\n";
+      // Get info:id to determine node category
+      std::string info_id;
+      auto info_it = child_ps.props().find(kShaderInfoId);
+      if (info_it != child_ps.props().end() && info_it->second.is_attribute()) {
+        const Attribute &attr = info_it->second.get_attribute();
+        if (auto tok = attr.get_value<value::token>()) {
+          info_id = tok->str();
+        }
+      }
+
+      if (info_id.empty()) {
+        // Skip nodes without info:id
+        continue;
+      }
+
+      std::string category = ExtractNodeCategory(info_id);
+      std::string node_type = ExtractNodeType(info_id);
+
+      ss << pprint::Indent(2) << "<" << category << " name=\"" << node_name
+         << "\" type=\"" << node_type << "\">\n";
+
+      // Serialize inputs
+      for (const auto &prop_item : child_ps.props()) {
+        const std::string &prop_name = prop_item.first;
+
+        // Skip non-input properties
+        if (prop_name.find("inputs:") != 0) continue;
+
+        std::string input_name = prop_name.substr(7); // Remove "inputs:" prefix
+
+        if (prop_item.second.is_attribute()) {
+          const Attribute &attr = prop_item.second.get_attribute();
+
+          // Check if it's a connection
+          if (attr.has_connections() && !attr.connections().empty()) {
+            // Extract nodename from connection path
+            const Path &conn_path = attr.connections()[0];
+            std::string full_path = conn_path.full_path_name();
+
+            // Parse connection: "nodename.outputs:out" or just "nodename"
+            size_t dot_pos = full_path.find('.');
+            std::string nodename_ref = (dot_pos != std::string::npos) ?
+                                       full_path.substr(0, dot_pos) : full_path;
+
+            // Determine type from the connected node's output or use default
+            ss << pprint::Indent(3) << "<input name=\"" << input_name
+               << "\" type=\"" << node_type << "\" nodename=\"" << nodename_ref << "\" />\n";
+          } else {
+            // It's a value
+            value::Value val;
+            if (attr.get_var().is_scalar()) {
+              val = attr.get_var().value_raw();
+            }
+
+            if (val.type_id() != value::TYPE_ID_NULL) {
+              std::string type_str = ToMtlxTypeString(val);
+              std::string value_str = ToMtlxValueString(val);
+
+              if (!value_str.empty()) {
+                ss << pprint::Indent(3) << "<input name=\"" << input_name
+                   << "\" type=\"" << type_str << "\" value=\"" << value_str << "\" />\n";
+              }
+            }
+          }
+        }
+      }
+
+      ss << pprint::Indent(2) << "</" << category << ">\n";
     }
 
     // Serialize outputs
@@ -865,25 +1009,38 @@ static bool SerializeNodeGraphs(const std::map<std::string, PrimSpec> &nodegraph
       const std::string &prop_name = prop_item.first;
 
       // Check if this is an output property
-      if (prop_name.find("outputs:") == 0) {
-        std::string output_name = prop_name.substr(8); // Remove "outputs:" prefix
+      if (prop_name.find("outputs:") != 0) continue;
 
-        // Try to extract the nodename reference from the connection
-        if (prop_item.second.is_attribute()) {
-          const Attribute &attr = prop_item.second.get_attribute();
-          if (attr.is_connection()) {
-            // TODO: Extract connection info
-            ss << pprint::Indent(2) << "<output name=\"" << output_name
-               << "\" type=\"color3\" />\n";
-          } else if (auto conn_str = attr.get_var().as<std::string>()) {
-            // Connection stored as string like "nodename.outputs:out"
-            size_t dot_pos = conn_str->find('.');
-            if (dot_pos != std::string::npos) {
-              std::string nodename_ref = conn_str->substr(0, dot_pos);
-              ss << pprint::Indent(2) << "<output name=\"" << output_name
-                 << "\" type=\"color3\" nodename=\"" << nodename_ref << "\" />\n";
+      std::string output_name = prop_name.substr(8); // Remove "outputs:" prefix
+
+      if (prop_item.second.is_attribute()) {
+        const Attribute &attr = prop_item.second.get_attribute();
+
+        if (attr.has_connections() && !attr.connections().empty()) {
+          const Path &conn_path = attr.connections()[0];
+          std::string full_path = conn_path.full_path_name();
+
+          // Parse connection path to extract nodename
+          size_t dot_pos = full_path.find('.');
+          std::string nodename_ref = (dot_pos != std::string::npos) ?
+                                     full_path.substr(0, dot_pos) : full_path;
+
+          // Try to determine type from the connected node
+          std::string output_type = "color3";  // Default
+          for (const auto &child_ps : ng_ps.children()) {
+            if (child_ps.name() == nodename_ref) {
+              auto info_it = child_ps.props().find(kShaderInfoId);
+              if (info_it != child_ps.props().end() && info_it->second.is_attribute()) {
+                if (auto tok = info_it->second.get_attribute().get_value<value::token>()) {
+                  output_type = ExtractNodeType(tok->str());
+                }
+              }
+              break;
             }
           }
+
+          ss << pprint::Indent(2) << "<output name=\"" << output_name
+             << "\" type=\"" << output_type << "\" nodename=\"" << nodename_ref << "\" />\n";
         }
       }
     }
@@ -1282,6 +1439,265 @@ static bool ConvertNoise(const tinyusdz::mtlx::pugi::xml_node &node, PrimSpec &p
   return true;
 }
 
+// ============================================================================
+// Generic Node Converters
+// These handle the common pattern of parsing inputs and setting info:id
+// ============================================================================
+
+// Helper to parse a single input element and store in PrimSpec
+static bool ParseInputElement(const tinyusdz::mtlx::pugi::xml_node &inp, PrimSpec &ps,
+                              std::string *err) {
+  std::string input_name;
+  tinyusdz::mtlx::pugi::xml_attribute inp_name_attr = inp.attribute("name");
+  if (inp_name_attr) {
+    input_name = inp_name_attr.as_string();
+  }
+
+  std::string prop_name = "inputs:" + input_name;
+
+  // Check for connection first (nodename or nodegraph)
+  tinyusdz::mtlx::pugi::xml_attribute nodename_attr = inp.attribute("nodename");
+  tinyusdz::mtlx::pugi::xml_attribute nodegraph_attr = inp.attribute("nodegraph");
+  tinyusdz::mtlx::pugi::xml_attribute output_attr = inp.attribute("output");
+
+  if (nodename_attr || nodegraph_attr) {
+    // This is a connection - store connection info
+    Attribute attr;
+    if (nodename_attr) {
+      std::string target = std::string(nodename_attr.as_string()) + ".outputs:out";
+      attr.set_connections({Path(target, "")});
+    } else if (nodegraph_attr) {
+      std::string output_name = output_attr ? output_attr.as_string() : "out";
+      std::string target = std::string(nodegraph_attr.as_string()) + ".outputs:" + output_name;
+      attr.set_connections({Path(target, "")});
+    }
+    ps.props()[prop_name] = Property(attr);
+    return true;
+  }
+
+  // Parse value
+  tinyusdz::mtlx::pugi::xml_attribute value_attr = inp.attribute("value");
+  if (!value_attr) {
+    return true;  // No value, skip
+  }
+
+  std::string input_value = value_attr.as_string();
+  tinyusdz::mtlx::pugi::xml_attribute type_attr = inp.attribute("type");
+  std::string type_str = type_attr ? type_attr.as_string() : "float";
+
+  if (type_str == "float") {
+    float val;
+    if (ParseMaterialXValue(input_value, &val, err)) {
+      ps.props()[prop_name] = Property(Attribute::Uniform(val));
+    }
+  } else if (type_str == "color3") {
+    value::color3f val;
+    if (ParseMaterialXValue(input_value, &val, err)) {
+      ps.props()[prop_name] = Property(Attribute::Uniform(val));
+    }
+  } else if (type_str == "vector2") {
+    value::float2 val;
+    if (ParseMaterialXValue(input_value, &val, err)) {
+      ps.props()[prop_name] = Property(Attribute::Uniform(val));
+    }
+  } else if (type_str == "vector3") {
+    value::float3 val;
+    if (ParseMaterialXValue(input_value, &val, err)) {
+      ps.props()[prop_name] = Property(Attribute::Uniform(val));
+    }
+  } else if (type_str == "vector4") {
+    value::float4 val;
+    if (ParseMaterialXValue(input_value, &val, err)) {
+      ps.props()[prop_name] = Property(Attribute::Uniform(val));
+    }
+  } else if (type_str == "integer") {
+    int val;
+    if (ParseMaterialXValue(input_value, &val, err)) {
+      ps.props()[prop_name] = Property(Attribute::Uniform(val));
+    }
+  } else if (type_str == "boolean") {
+    bool val;
+    if (ParseMaterialXValue(input_value, &val, err)) {
+      ps.props()[prop_name] = Property(Attribute::Uniform(val));
+    }
+  } else if (type_str == "string") {
+    ps.props()[prop_name] = Property(Attribute::Uniform(input_value));
+  }
+
+  return true;
+}
+
+// Generic converter for any MaterialX node - parses all inputs and sets info:id
+static bool ConvertGenericNode(const tinyusdz::mtlx::pugi::xml_node &node, PrimSpec &ps,
+                               const std::string &info_id,
+                               std::string *warn, std::string *err) {
+  (void)warn;
+
+  tinyusdz::mtlx::pugi::xml_attribute name_attr = node.attribute("name");
+  if (name_attr) {
+    ps.name() = name_attr.as_string();
+  }
+
+  // Parse all inputs
+  for (auto inp : node.children("input")) {
+    if (!ParseInputElement(inp, ps, err)) {
+      return false;
+    }
+  }
+
+  ps.specifier() = Specifier::Def;
+  ps.typeName() = kShader;
+  ps.props()[kShaderInfoId] = Property(Attribute::Uniform(value::token(info_id)));
+
+  return true;
+}
+
+// Convert binary operations (divide, power, min, max, modulo, atan2, dotproduct, crossproduct)
+static bool ConvertBinaryOp(const tinyusdz::mtlx::pugi::xml_node &node, PrimSpec &ps,
+                            const std::string &op_name,
+                            std::string *warn, std::string *err) {
+  // Get output type from node's type attribute
+  tinyusdz::mtlx::pugi::xml_attribute type_attr = node.attribute("type");
+  std::string type_str = type_attr ? type_attr.as_string() : "float";
+  std::string info_id = "ND_" + op_name + "_" + type_str;
+  return ConvertGenericNode(node, ps, info_id, warn, err);
+}
+
+// Convert unary operations (sqrt, absval, sin, cos, tan, floor, ceil, round, normalize, magnitude, luminance, invert, saturate)
+static bool ConvertUnaryOp(const tinyusdz::mtlx::pugi::xml_node &node, PrimSpec &ps,
+                           const std::string &op_name,
+                           std::string *warn, std::string *err) {
+  tinyusdz::mtlx::pugi::xml_attribute type_attr = node.attribute("type");
+  std::string type_str = type_attr ? type_attr.as_string() : "float";
+  std::string info_id = "ND_" + op_name + "_" + type_str;
+  return ConvertGenericNode(node, ps, info_id, warn, err);
+}
+
+// Convert clamp operation (in, low, high)
+static bool ConvertClamp(const tinyusdz::mtlx::pugi::xml_node &node, PrimSpec &ps,
+                         std::string *warn, std::string *err) {
+  tinyusdz::mtlx::pugi::xml_attribute type_attr = node.attribute("type");
+  std::string type_str = type_attr ? type_attr.as_string() : "float";
+  std::string info_id = "ND_clamp_" + type_str;
+  return ConvertGenericNode(node, ps, info_id, warn, err);
+}
+
+// Convert remap operation (in, inlow, inhigh, outlow, outhigh)
+static bool ConvertRemap(const tinyusdz::mtlx::pugi::xml_node &node, PrimSpec &ps,
+                         std::string *warn, std::string *err) {
+  tinyusdz::mtlx::pugi::xml_attribute type_attr = node.attribute("type");
+  std::string type_str = type_attr ? type_attr.as_string() : "float";
+  std::string info_id = "ND_remap_" + type_str;
+  return ConvertGenericNode(node, ps, info_id, warn, err);
+}
+
+// Convert extract operation (extracts single channel from color3/vector3)
+static bool ConvertExtract(const tinyusdz::mtlx::pugi::xml_node &node, PrimSpec &ps,
+                           std::string *warn, std::string *err) {
+  // Input type determines the info:id (e.g., ND_extract_color3)
+  // Find the 'in' input to determine source type
+  std::string source_type = "color3";
+  for (auto inp : node.children("input")) {
+    tinyusdz::mtlx::pugi::xml_attribute inp_name = inp.attribute("name");
+    if (inp_name && std::string(inp_name.as_string()) == "in") {
+      tinyusdz::mtlx::pugi::xml_attribute type_attr = inp.attribute("type");
+      if (type_attr) {
+        source_type = type_attr.as_string();
+      }
+      break;
+    }
+  }
+  std::string info_id = "ND_extract_" + source_type;
+  return ConvertGenericNode(node, ps, info_id, warn, err);
+}
+
+// Convert combine operations (combine2, combine3, combine4)
+static bool ConvertCombine(const tinyusdz::mtlx::pugi::xml_node &node, PrimSpec &ps,
+                           const std::string &combine_type,  // "combine2", "combine3", "combine4"
+                           std::string *warn, std::string *err) {
+  tinyusdz::mtlx::pugi::xml_attribute type_attr = node.attribute("type");
+  std::string type_str = type_attr ? type_attr.as_string() : "color3";
+  std::string info_id = "ND_" + combine_type + "_" + type_str;
+  return ConvertGenericNode(node, ps, info_id, warn, err);
+}
+
+// Convert HSV adjust operation
+static bool ConvertHsvAdjust(const tinyusdz::mtlx::pugi::xml_node &node, PrimSpec &ps,
+                             std::string *warn, std::string *err) {
+  return ConvertGenericNode(node, ps, "ND_hsvadjust_color3", warn, err);
+}
+
+// Convert type conversion operations (e.g., color3 to vector3)
+static bool ConvertConvert(const tinyusdz::mtlx::pugi::xml_node &node, PrimSpec &ps,
+                           std::string *warn, std::string *err) {
+  // Determine from/to types
+  std::string from_type = "color3";
+  std::string to_type = "vector3";
+
+  for (auto inp : node.children("input")) {
+    tinyusdz::mtlx::pugi::xml_attribute inp_name = inp.attribute("name");
+    if (inp_name && std::string(inp_name.as_string()) == "in") {
+      tinyusdz::mtlx::pugi::xml_attribute type_attr = inp.attribute("type");
+      if (type_attr) {
+        from_type = type_attr.as_string();
+      }
+      break;
+    }
+  }
+
+  tinyusdz::mtlx::pugi::xml_attribute type_attr = node.attribute("type");
+  if (type_attr) {
+    to_type = type_attr.as_string();
+  }
+
+  std::string info_id = "ND_convert_" + from_type + "_" + to_type;
+  return ConvertGenericNode(node, ps, info_id, warn, err);
+}
+
+// Convert geometry nodes (position, normal, tangent, bitangent, texcoord with space param)
+static bool ConvertGeometryNode(const tinyusdz::mtlx::pugi::xml_node &node, PrimSpec &ps,
+                                const std::string &geom_type,
+                                std::string *warn, std::string *err) {
+  tinyusdz::mtlx::pugi::xml_attribute type_attr = node.attribute("type");
+  std::string type_str = type_attr ? type_attr.as_string() : "vector3";
+  std::string info_id = "ND_" + geom_type + "_" + type_str;
+  return ConvertGenericNode(node, ps, info_id, warn, err);
+}
+
+// Convert rotate3d operation
+static bool ConvertRotate3d(const tinyusdz::mtlx::pugi::xml_node &node, PrimSpec &ps,
+                            std::string *warn, std::string *err) {
+  return ConvertGenericNode(node, ps, "ND_rotate3d_vector3", warn, err);
+}
+
+// Convert swizzle operation
+static bool ConvertSwizzle(const tinyusdz::mtlx::pugi::xml_node &node, PrimSpec &ps,
+                           std::string *warn, std::string *err) {
+  tinyusdz::mtlx::pugi::xml_attribute type_attr = node.attribute("type");
+  std::string type_str = type_attr ? type_attr.as_string() : "color3";
+  std::string info_id = "ND_swizzle_" + type_str;
+  return ConvertGenericNode(node, ps, info_id, warn, err);
+}
+
+// Convert conditional nodes (ifgreater, ifless, ifequal, etc.)
+static bool ConvertConditional(const tinyusdz::mtlx::pugi::xml_node &node, PrimSpec &ps,
+                               const std::string &cond_type,
+                               std::string *warn, std::string *err) {
+  tinyusdz::mtlx::pugi::xml_attribute type_attr = node.attribute("type");
+  std::string type_str = type_attr ? type_attr.as_string() : "float";
+  std::string info_id = "ND_" + cond_type + "_" + type_str;
+  return ConvertGenericNode(node, ps, info_id, warn, err);
+}
+
+// Convert smoothstep operation
+static bool ConvertSmoothstep(const tinyusdz::mtlx::pugi::xml_node &node, PrimSpec &ps,
+                              std::string *warn, std::string *err) {
+  tinyusdz::mtlx::pugi::xml_attribute type_attr = node.attribute("type");
+  std::string type_str = type_attr ? type_attr.as_string() : "float";
+  std::string info_id = "ND_smoothstep_" + type_str;
+  return ConvertGenericNode(node, ps, info_id, warn, err);
+}
+
 // Helper to convert a single MaterialX node to PrimSpec
 // Returns true if successful (including skip case), false on error
 // Sets is_skip to true if the node should be skipped (input/output/unknown)
@@ -1337,14 +1753,154 @@ static bool ConvertSingleNode(const tinyusdz::mtlx::pugi::xml_node &node,
     if (!ConvertNoise(node, ps, warn, err)) {
       return false;
     }
+  //
+  // Binary operations (two inputs: in1, in2)
+  //
+  } else if (node_name == "divide") {
+    if (!ConvertBinaryOp(node, ps, "divide", warn, err)) return false;
+  } else if (node_name == "power") {
+    if (!ConvertBinaryOp(node, ps, "power", warn, err)) return false;
+  } else if (node_name == "min") {
+    if (!ConvertBinaryOp(node, ps, "min", warn, err)) return false;
+  } else if (node_name == "max") {
+    if (!ConvertBinaryOp(node, ps, "max", warn, err)) return false;
+  } else if (node_name == "modulo") {
+    if (!ConvertBinaryOp(node, ps, "modulo", warn, err)) return false;
+  } else if (node_name == "atan2") {
+    if (!ConvertBinaryOp(node, ps, "atan2", warn, err)) return false;
+  } else if (node_name == "dotproduct") {
+    if (!ConvertBinaryOp(node, ps, "dotproduct", warn, err)) return false;
+  } else if (node_name == "crossproduct") {
+    if (!ConvertBinaryOp(node, ps, "crossproduct", warn, err)) return false;
+  //
+  // Unary operations (single input: in)
+  //
+  } else if (node_name == "sqrt") {
+    if (!ConvertUnaryOp(node, ps, "sqrt", warn, err)) return false;
+  } else if (node_name == "absval") {
+    if (!ConvertUnaryOp(node, ps, "absval", warn, err)) return false;
+  } else if (node_name == "sign") {
+    if (!ConvertUnaryOp(node, ps, "sign", warn, err)) return false;
+  } else if (node_name == "floor") {
+    if (!ConvertUnaryOp(node, ps, "floor", warn, err)) return false;
+  } else if (node_name == "ceil") {
+    if (!ConvertUnaryOp(node, ps, "ceil", warn, err)) return false;
+  } else if (node_name == "round") {
+    if (!ConvertUnaryOp(node, ps, "round", warn, err)) return false;
+  } else if (node_name == "sin") {
+    if (!ConvertUnaryOp(node, ps, "sin", warn, err)) return false;
+  } else if (node_name == "cos") {
+    if (!ConvertUnaryOp(node, ps, "cos", warn, err)) return false;
+  } else if (node_name == "tan") {
+    if (!ConvertUnaryOp(node, ps, "tan", warn, err)) return false;
+  } else if (node_name == "asin") {
+    if (!ConvertUnaryOp(node, ps, "asin", warn, err)) return false;
+  } else if (node_name == "acos") {
+    if (!ConvertUnaryOp(node, ps, "acos", warn, err)) return false;
+  } else if (node_name == "atan") {
+    if (!ConvertUnaryOp(node, ps, "atan", warn, err)) return false;
+  } else if (node_name == "exp") {
+    if (!ConvertUnaryOp(node, ps, "exp", warn, err)) return false;
+  } else if (node_name == "ln") {
+    if (!ConvertUnaryOp(node, ps, "ln", warn, err)) return false;
+  } else if (node_name == "log2") {
+    if (!ConvertUnaryOp(node, ps, "log2", warn, err)) return false;
+  } else if (node_name == "normalize") {
+    if (!ConvertUnaryOp(node, ps, "normalize", warn, err)) return false;
+  } else if (node_name == "magnitude") {
+    if (!ConvertUnaryOp(node, ps, "magnitude", warn, err)) return false;
+  } else if (node_name == "luminance") {
+    if (!ConvertUnaryOp(node, ps, "luminance", warn, err)) return false;
+  } else if (node_name == "invert") {
+    if (!ConvertUnaryOp(node, ps, "invert", warn, err)) return false;
+  } else if (node_name == "saturate") {
+    if (!ConvertUnaryOp(node, ps, "saturate", warn, err)) return false;
+  } else if (node_name == "hueshift") {
+    if (!ConvertUnaryOp(node, ps, "hueshift", warn, err)) return false;
+  //
+  // Clamp and remap operations
+  //
+  } else if (node_name == "clamp") {
+    if (!ConvertClamp(node, ps, warn, err)) return false;
+  } else if (node_name == "remap" || node_name == "range") {
+    if (!ConvertRemap(node, ps, warn, err)) return false;
+  } else if (node_name == "smoothstep") {
+    if (!ConvertSmoothstep(node, ps, warn, err)) return false;
+  //
+  // Channel operations (extract, combine)
+  //
+  } else if (node_name == "extract") {
+    if (!ConvertExtract(node, ps, warn, err)) return false;
+  } else if (node_name == "combine2") {
+    if (!ConvertCombine(node, ps, "combine2", warn, err)) return false;
+  } else if (node_name == "combine3") {
+    if (!ConvertCombine(node, ps, "combine3", warn, err)) return false;
+  } else if (node_name == "combine4") {
+    if (!ConvertCombine(node, ps, "combine4", warn, err)) return false;
+  } else if (node_name == "swizzle") {
+    if (!ConvertSwizzle(node, ps, warn, err)) return false;
+  //
+  // Color/HSV operations
+  //
+  } else if (node_name == "hsvadjust") {
+    if (!ConvertHsvAdjust(node, ps, warn, err)) return false;
+  } else if (node_name == "rgbtohsv") {
+    if (!ConvertUnaryOp(node, ps, "rgbtohsv", warn, err)) return false;
+  } else if (node_name == "hsvtorgb") {
+    if (!ConvertUnaryOp(node, ps, "hsvtorgb", warn, err)) return false;
+  //
+  // Type conversion
+  //
+  } else if (node_name == "convert") {
+    if (!ConvertConvert(node, ps, warn, err)) return false;
+  //
+  // Geometry nodes
+  //
+  } else if (node_name == "position") {
+    if (!ConvertGeometryNode(node, ps, "position", warn, err)) return false;
+  } else if (node_name == "normal") {
+    if (!ConvertGeometryNode(node, ps, "normal", warn, err)) return false;
+  } else if (node_name == "tangent") {
+    if (!ConvertGeometryNode(node, ps, "tangent", warn, err)) return false;
+  } else if (node_name == "bitangent") {
+    if (!ConvertGeometryNode(node, ps, "bitangent", warn, err)) return false;
+  } else if (node_name == "geomcolor") {
+    if (!ConvertGeometryNode(node, ps, "geomcolor", warn, err)) return false;
+  } else if (node_name == "geompropvalue") {
+    if (!ConvertGeometryNode(node, ps, "geompropvalue", warn, err)) return false;
+  //
+  // Rotation
+  //
+  } else if (node_name == "rotate3d") {
+    if (!ConvertRotate3d(node, ps, warn, err)) return false;
+  //
+  // Conditional operations
+  //
+  } else if (node_name == "ifgreater") {
+    if (!ConvertConditional(node, ps, "ifgreater", warn, err)) return false;
+  } else if (node_name == "ifgreatereq") {
+    if (!ConvertConditional(node, ps, "ifgreatereq", warn, err)) return false;
+  } else if (node_name == "ifless") {
+    if (!ConvertConditional(node, ps, "ifless", warn, err)) return false;
+  } else if (node_name == "iflesseq") {
+    if (!ConvertConditional(node, ps, "iflesseq", warn, err)) return false;
+  } else if (node_name == "ifequal") {
+    if (!ConvertConditional(node, ps, "ifequal", warn, err)) return false;
+  } else if (node_name == "switch") {
+    if (!ConvertConditional(node, ps, "switch", warn, err)) return false;
+  //
+  // Skip input/output nodes - they are handled separately
+  //
   } else if (node_name == "input" || node_name == "output") {
-    // Skip input/output nodes - they are handled separately
     is_skip = true;
     return true;
   } else {
-    PUSH_WARN(fmt::format("Unknown/unsupported Shader Node: {}. Skipping.\n", node.name()));
-    is_skip = true;
-    return true; // Don't fail, just skip unknown nodes
+    // Unknown node - try generic conversion instead of skipping
+    tinyusdz::mtlx::pugi::xml_attribute type_attr = node.attribute("type");
+    std::string type_str = type_attr ? type_attr.as_string() : "float";
+    std::string info_id = "ND_" + node_name + "_" + type_str;
+    PUSH_WARN(fmt::format("Unknown node type '{}', using generic conversion with info:id='{}'.\n", node_name, info_id));
+    if (!ConvertGenericNode(node, ps, info_id, warn, err)) return false;
   }
 
   return true;
