@@ -1034,6 +1034,441 @@ function convertOpenPBRToMeshPhysicalMaterial(materialData, usdScene = null, opt
 }
 
 // ============================================================================
+// MaterialX NodeGraph Optimizer
+// ============================================================================
+
+/**
+ * Optimization levels for NodeGraph processing
+ */
+const NodeGraphOptimizationLevel = {
+    NONE: 0,           // No optimization
+    BASIC: 1,          // Remove identity ops only
+    STANDARD: 2,       // Pattern detection + identity removal
+    AGGRESSIVE: 3      // All optimizations + constant folding
+};
+
+// Helper functions for value comparison
+function _approxEqual(a, b, epsilon = 0.0001) {
+    if (typeof a === 'number' && typeof b === 'number') {
+        return Math.abs(a - b) < epsilon;
+    }
+    if (Array.isArray(a) && Array.isArray(b) && a.length === b.length) {
+        return a.every((v, i) => _approxEqual(v, b[i], epsilon));
+    }
+    return a === b;
+}
+
+function _isWhite(value) {
+    return Array.isArray(value) && value.length === 3 && _approxEqual(value, [1, 1, 1]);
+}
+
+function _isBlack(value) {
+    return Array.isArray(value) && value.length === 3 && _approxEqual(value, [0, 0, 0]);
+}
+
+function _isOne(value) {
+    return _approxEqual(value, 1);
+}
+
+function _isZero(value) {
+    return _approxEqual(value, 0);
+}
+
+function _buildNodeMap(nodes) {
+    const map = new Map();
+    for (const node of nodes) {
+        map.set(node.name, node);
+    }
+    return map;
+}
+
+function _getInputInfo(node, inputName) {
+    if (!node.inputs) return null;
+    const input = node.inputs.find(i => i.name === inputName);
+    if (!input) return null;
+    if (input.nodename) {
+        return { type: 'connection', nodename: input.nodename, output: input.output || 'out' };
+    }
+    return { type: 'value', value: input.value };
+}
+
+/**
+ * Detect Invert pattern: constant -> subtract([1,1,1], x) -> mix
+ */
+function _detectInvertPattern(nodes, nodeMap) {
+    const patterns = [];
+    for (const mixNode of nodes) {
+        if (mixNode.category !== 'mix_color3') continue;
+        const bgInput = _getInputInfo(mixNode, 'bg');
+        const fgInput = _getInputInfo(mixNode, 'fg');
+        const mixInput = _getInputInfo(mixNode, 'mix');
+        if (!bgInput || !fgInput || bgInput.type !== 'connection' || fgInput.type !== 'connection') continue;
+
+        const subtractNode = nodeMap.get(fgInput.nodename);
+        if (!subtractNode || subtractNode.category !== 'subtract_color3') continue;
+
+        const in1 = _getInputInfo(subtractNode, 'in1');
+        const in2 = _getInputInfo(subtractNode, 'in2');
+        if (!in1 || in1.type !== 'value' || !_isWhite(in1.value)) continue;
+        if (!in2 || in2.type !== 'connection' || in2.nodename !== bgInput.nodename) continue;
+
+        const factor = mixInput && mixInput.type === 'value' ? mixInput.value : 1;
+        patterns.push({
+            type: 'invert',
+            outputNode: mixNode.name,
+            inputNode: bgInput.nodename,
+            subtractNode: subtractNode.name,
+            factor: factor,
+            nodesToRemove: [subtractNode.name],
+            replacement: {
+                name: mixNode.name,
+                category: 'invert_color3',
+                type: 'ND_invert_color3',
+                inputs: [
+                    { name: 'in', nodename: bgInput.nodename, output: 'out' },
+                    { name: 'amount', type: 'float', value: factor }
+                ]
+            }
+        });
+    }
+    return patterns;
+}
+
+/**
+ * Detect Brightness/Contrast pattern: multiply -> add -> subtract -> max
+ */
+function _detectBrightnessContrastPattern(nodes, nodeMap) {
+    const patterns = [];
+    for (const maxNode of nodes) {
+        if (maxNode.category !== 'max_color3') continue;
+        const maxIn2 = _getInputInfo(maxNode, 'in2');
+        if (!maxIn2 || maxIn2.type !== 'value' || !_isBlack(maxIn2.value)) continue;
+
+        const maxIn1 = _getInputInfo(maxNode, 'in1');
+        if (!maxIn1 || maxIn1.type !== 'connection') continue;
+
+        const subtractNode = nodeMap.get(maxIn1.nodename);
+        if (!subtractNode || subtractNode.category !== 'subtract_color3') continue;
+
+        const subIn1 = _getInputInfo(subtractNode, 'in1');
+        const subIn2 = _getInputInfo(subtractNode, 'in2');
+        if (!subIn1 || subIn1.type !== 'connection') continue;
+
+        const addNode = nodeMap.get(subIn1.nodename);
+        if (!addNode || addNode.category !== 'add_color3') continue;
+
+        const addIn1 = _getInputInfo(addNode, 'in1');
+        const addIn2 = _getInputInfo(addNode, 'in2');
+
+        let multiplyNodeName = null;
+        let brightness = [0, 0, 0];
+
+        if (addIn2?.type === 'connection') {
+            const maybeMultiply = nodeMap.get(addIn2.nodename);
+            if (maybeMultiply?.category === 'multiply_color3') {
+                multiplyNodeName = addIn2.nodename;
+                brightness = addIn1?.type === 'value' ? addIn1.value : [0, 0, 0];
+            }
+        }
+        if (!multiplyNodeName && addIn1?.type === 'connection') {
+            const maybeMultiply = nodeMap.get(addIn1.nodename);
+            if (maybeMultiply?.category === 'multiply_color3') {
+                multiplyNodeName = addIn1.nodename;
+                brightness = addIn2?.type === 'value' ? addIn2.value : [0, 0, 0];
+            }
+        }
+        if (!multiplyNodeName) continue;
+
+        const multiplyNode = nodeMap.get(multiplyNodeName);
+        const mulIn1 = _getInputInfo(multiplyNode, 'in1');
+        const mulIn2 = _getInputInfo(multiplyNode, 'in2');
+
+        let inputNodeName = null;
+        let contrast = [1, 1, 1];
+
+        if (mulIn1?.type === 'connection') {
+            inputNodeName = mulIn1.nodename;
+            contrast = mulIn2?.type === 'value' ? mulIn2.value : [1, 1, 1];
+        } else if (mulIn2?.type === 'connection') {
+            inputNodeName = mulIn2.nodename;
+            contrast = mulIn1?.type === 'value' ? mulIn1.value : [1, 1, 1];
+        }
+        if (!inputNodeName) continue;
+
+        patterns.push({
+            type: 'brightness_contrast',
+            outputNode: maxNode.name,
+            inputNode: inputNodeName,
+            brightness: brightness,
+            contrast: contrast,
+            nodesToRemove: [subtractNode.name, addNode.name, multiplyNodeName],
+            replacement: {
+                name: maxNode.name,
+                category: 'brightness_contrast_color3',
+                type: 'ND_brightness_contrast_color3',
+                inputs: [
+                    { name: 'in', nodename: inputNodeName, output: 'out' },
+                    { name: 'brightness', type: 'color3f', value: brightness },
+                    { name: 'contrast', type: 'color3f', value: contrast }
+                ]
+            }
+        });
+    }
+    return patterns;
+}
+
+/**
+ * Detect HSV Adjust pattern: combine3 -> hsvadjust
+ */
+function _detectHSVAdjustPattern(nodes, nodeMap) {
+    const patterns = [];
+    for (const hsvNode of nodes) {
+        if (hsvNode.category !== 'hsvadjust_color3') continue;
+        const amountInput = _getInputInfo(hsvNode, 'amount');
+        const inInput = _getInputInfo(hsvNode, 'in');
+        if (!amountInput || amountInput.type !== 'connection' || !inInput) continue;
+
+        const combineNode = nodeMap.get(amountInput.nodename);
+        if (!combineNode || combineNode.category !== 'combine3_vector3') continue;
+
+        const in1 = _getInputInfo(combineNode, 'in1');
+        const in2 = _getInputInfo(combineNode, 'in2');
+        const in3 = _getInputInfo(combineNode, 'in3');
+
+        patterns.push({
+            type: 'hsv_adjust',
+            outputNode: hsvNode.name,
+            inputNode: inInput.type === 'connection' ? inInput.nodename : null,
+            hue: in1?.type === 'value' ? in1.value : 0,
+            saturation: in2?.type === 'value' ? in2.value : 1,
+            value: in3?.type === 'value' ? in3.value : 1,
+            nodesToRemove: [combineNode.name],
+            replacement: {
+                name: hsvNode.name,
+                category: 'hsv_adjust_color3',
+                type: 'ND_hsv_adjust_color3',
+                inputs: inInput.type === 'connection' ? [
+                    { name: 'in', nodename: inInput.nodename, output: 'out' },
+                    { name: 'hue', type: 'float', value: in1?.value ?? 0 },
+                    { name: 'saturation', type: 'float', value: in2?.value ?? 1 },
+                    { name: 'value', type: 'float', value: in3?.value ?? 1 }
+                ] : [
+                    { name: 'in', type: 'color3f', value: inInput.value },
+                    { name: 'hue', type: 'float', value: in1?.value ?? 0 },
+                    { name: 'saturation', type: 'float', value: in2?.value ?? 1 },
+                    { name: 'value', type: 'float', value: in3?.value ?? 1 }
+                ]
+            }
+        });
+    }
+    return patterns;
+}
+
+/**
+ * Detect identity operations (multiply by 1, add 0, etc.)
+ */
+function _detectIdentityOps(nodes, nodeMap) {
+    const identities = [];
+    for (const node of nodes) {
+        let isIdentity = false;
+        let inputConnection = null;
+
+        if (node.category === 'multiply_color3' || node.category === 'multiply_float') {
+            const in1 = _getInputInfo(node, 'in1');
+            const in2 = _getInputInfo(node, 'in2');
+            if (in1?.type === 'connection' && in2?.type === 'value' && (_isOne(in2.value) || _isWhite(in2.value))) {
+                isIdentity = true; inputConnection = in1;
+            } else if (in2?.type === 'connection' && in1?.type === 'value' && (_isOne(in1.value) || _isWhite(in1.value))) {
+                isIdentity = true; inputConnection = in2;
+            }
+        }
+        if (node.category === 'add_color3' || node.category === 'add_float') {
+            const in1 = _getInputInfo(node, 'in1');
+            const in2 = _getInputInfo(node, 'in2');
+            if (in1?.type === 'connection' && in2?.type === 'value' && (_isZero(in2.value) || _isBlack(in2.value))) {
+                isIdentity = true; inputConnection = in1;
+            } else if (in2?.type === 'connection' && in1?.type === 'value' && (_isZero(in1.value) || _isBlack(in1.value))) {
+                isIdentity = true; inputConnection = in2;
+            }
+        }
+        if (node.category === 'subtract_color3' || node.category === 'subtract_float') {
+            const in1 = _getInputInfo(node, 'in1');
+            const in2 = _getInputInfo(node, 'in2');
+            if (in1?.type === 'connection' && in2?.type === 'value' && (_isZero(in2.value) || _isBlack(in2.value))) {
+                isIdentity = true; inputConnection = in1;
+            }
+        }
+        if (node.category === 'power_color3' || node.category === 'power_float') {
+            const in1 = _getInputInfo(node, 'in1');
+            const in2 = _getInputInfo(node, 'in2');
+            if (in1?.type === 'connection' && in2?.type === 'value' && (_isOne(in2.value) || _isWhite(in2.value))) {
+                isIdentity = true; inputConnection = in1;
+            }
+        }
+        if (node.category === 'mix_color3' || node.category === 'mix_float') {
+            const mixInput = _getInputInfo(node, 'mix');
+            const bgInput = _getInputInfo(node, 'bg');
+            if (mixInput?.type === 'value' && _isZero(mixInput.value) && bgInput?.type === 'connection') {
+                isIdentity = true; inputConnection = bgInput;
+            }
+        }
+
+        if (isIdentity && inputConnection) {
+            identities.push({ node: node.name, passthrough: inputConnection.nodename, output: inputConnection.output || 'out' });
+        }
+    }
+    return identities;
+}
+
+/**
+ * Apply pattern optimizations to a node graph
+ */
+function _applyPatternOptimizations(nodeGraph, patterns, identities) {
+    if (!nodeGraph?.nodegraph) return nodeGraph;
+
+    const ng = nodeGraph.nodegraph;
+    const nodes = [...ng.nodes];
+
+    const nodesToRemove = new Set();
+    const replacements = new Map();
+
+    for (const pattern of patterns) {
+        for (const name of pattern.nodesToRemove) nodesToRemove.add(name);
+        replacements.set(pattern.outputNode, pattern.replacement);
+    }
+
+    const passthroughMap = new Map();
+    for (const identity of identities) {
+        passthroughMap.set(identity.node, { nodename: identity.passthrough, output: identity.output });
+        nodesToRemove.add(identity.node);
+    }
+
+    const newNodes = [];
+    for (const node of nodes) {
+        if (nodesToRemove.has(node.name) && !replacements.has(node.name)) continue;
+
+        let newNode = replacements.get(node.name) || { ...node };
+        if (newNode.inputs) {
+            newNode.inputs = newNode.inputs.map(input => {
+                if (input.nodename && passthroughMap.has(input.nodename)) {
+                    const pt = passthroughMap.get(input.nodename);
+                    return { ...input, nodename: pt.nodename, output: pt.output };
+                }
+                return input;
+            });
+        }
+        newNodes.push(newNode);
+    }
+
+    const newOutputs = (ng.outputs || []).map(output => {
+        if (output.nodename && passthroughMap.has(output.nodename)) {
+            const pt = passthroughMap.get(output.nodename);
+            return { ...output, nodename: pt.nodename, output: pt.output };
+        }
+        return output;
+    });
+
+    return {
+        ...nodeGraph,
+        nodegraph: { ...ng, nodes: newNodes, outputs: newOutputs },
+        optimizationInfo: {
+            patternsApplied: patterns.map(p => p.type),
+            identitiesRemoved: identities.length,
+            nodesRemoved: nodesToRemove.size,
+            originalNodeCount: nodes.length,
+            optimizedNodeCount: newNodes.length
+        }
+    };
+}
+
+/**
+ * Optimize a MaterialX NodeGraph by detecting and simplifying common patterns
+ *
+ * @param {Object} nodeGraph - The nodeGraph JSON object (from material.openPBR.nodeGraph)
+ * @param {number} level - Optimization level (use NodeGraphOptimizationLevel)
+ * @returns {Object} Optimized nodeGraph with optimizationInfo
+ */
+function optimizeNodeGraph(nodeGraph, level = NodeGraphOptimizationLevel.STANDARD) {
+    if (!nodeGraph?.nodegraph || level === NodeGraphOptimizationLevel.NONE) return nodeGraph;
+
+    const nodes = nodeGraph.nodegraph.nodes || [];
+    const nodeMap = _buildNodeMap(nodes);
+
+    let patterns = [];
+    let identities = [];
+
+    if (level >= NodeGraphOptimizationLevel.STANDARD) {
+        patterns = [
+            ..._detectInvertPattern(nodes, nodeMap),
+            ..._detectBrightnessContrastPattern(nodes, nodeMap),
+            ..._detectHSVAdjustPattern(nodes, nodeMap)
+        ];
+    }
+
+    if (level >= NodeGraphOptimizationLevel.BASIC) {
+        identities = _detectIdentityOps(nodes, nodeMap);
+    }
+
+    return _applyPatternOptimizations(nodeGraph, patterns, identities);
+}
+
+/**
+ * Analyze a NodeGraph and return optimization opportunities without applying them
+ *
+ * @param {Object} nodeGraph - The nodeGraph JSON object
+ * @returns {Object} Analysis results with patterns and potential reductions
+ */
+function analyzeNodeGraph(nodeGraph) {
+    if (!nodeGraph?.nodegraph) return { error: 'Invalid node graph' };
+
+    const nodes = nodeGraph.nodegraph.nodes || [];
+    const nodeMap = _buildNodeMap(nodes);
+
+    const invertPatterns = _detectInvertPattern(nodes, nodeMap);
+    const bcPatterns = _detectBrightnessContrastPattern(nodes, nodeMap);
+    const hsvPatterns = _detectHSVAdjustPattern(nodes, nodeMap);
+    const identities = _detectIdentityOps(nodes, nodeMap);
+
+    const allNodesToRemove = new Set([
+        ...invertPatterns.flatMap(p => p.nodesToRemove),
+        ...bcPatterns.flatMap(p => p.nodesToRemove),
+        ...hsvPatterns.flatMap(p => p.nodesToRemove),
+        ...identities.map(i => i.node)
+    ]);
+
+    return {
+        totalNodes: nodes.length,
+        patterns: {
+            invert: invertPatterns.map(p => ({ outputNode: p.outputNode, inputNode: p.inputNode, factor: p.factor })),
+            brightnessContrast: bcPatterns.map(p => ({ outputNode: p.outputNode, inputNode: p.inputNode, brightness: p.brightness, contrast: p.contrast })),
+            hsvAdjust: hsvPatterns.map(p => ({ outputNode: p.outputNode, inputNode: p.inputNode, hue: p.hue, saturation: p.saturation, value: p.value }))
+        },
+        identityOps: identities,
+        potentialReduction: {
+            patternsFound: invertPatterns.length + bcPatterns.length + hsvPatterns.length,
+            identitiesFound: identities.length,
+            nodesRemovable: allNodesToRemove.size
+        }
+    };
+}
+
+/**
+ * Get a human-readable summary of optimization results
+ *
+ * @param {Object} optimizedGraph - Graph returned from optimizeNodeGraph()
+ * @returns {string} Human-readable summary
+ */
+function getOptimizationSummary(optimizedGraph) {
+    if (!optimizedGraph?.optimizationInfo) return 'No optimization info available';
+    const info = optimizedGraph.optimizationInfo;
+    return [
+        `Node count: ${info.originalNodeCount} -> ${info.optimizedNodeCount} (${info.nodesRemoved} removed)`,
+        `Patterns applied: ${info.patternsApplied.length > 0 ? info.patternsApplied.join(', ') : 'none'}`,
+        `Identity ops removed: ${info.identitiesRemoved}`
+    ].join('\n');
+}
+
+// ============================================================================
 // TinyUSDZOpenPBR Class (Legacy compatibility)
 // ============================================================================
 
@@ -1095,6 +1530,7 @@ class TinyUSDZOpenPBR {
 // ============================================================================
 
 export {
+    // Material conversion
     TinyUSDZOpenPBR,
     convertOpenPBRToMeshPhysicalMaterial,
     convertOpenPBRToMeshPhysicalMaterialLoaded,
@@ -1104,5 +1540,10 @@ export {
     getTextureId,
     createColor,
     OPENPBR_TO_THREEJS_MAP,
-    OPENPBR_TEXTURE_MAP
+    OPENPBR_TEXTURE_MAP,
+    // NodeGraph optimization
+    NodeGraphOptimizationLevel,
+    optimizeNodeGraph,
+    analyzeNodeGraph,
+    getOptimizationSummary
 };
