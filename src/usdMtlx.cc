@@ -11,6 +11,16 @@
 
 #if defined(TINYUSDZ_USE_USDMTLX)
 
+// ============================================================================
+// Configuration flags for MaterialX support
+// ============================================================================
+// Currently only Blender-style OpenPBR + NodeGraph import is actively used.
+// Other shader types (UsdPreviewSurface, StandardSurface) export paths are
+// disabled until needed. Enable these flags to re-enable those code paths.
+// ============================================================================
+#define TINYUSDZ_MTLX_ENABLE_USDPREVIEWSURFACE_EXPORT 0
+#define TINYUSDZ_MTLX_ENABLE_STANDARDSURFACE_EXPORT 0
+
 #include "ascii-parser.hh"  // To parse color3f value
 #include "common-macros.inc"
 #include "io-util.hh"
@@ -447,6 +457,7 @@ bool SerializeAttribute(const std::string &attr_name,
   return true;
 }
 
+#if TINYUSDZ_MTLX_ENABLE_USDPREVIEWSURFACE_EXPORT
 static bool WriteMaterialXToString(const MtlxUsdPreviewSurface &shader,
                                    const std::string &shader_name,
                                    const std::vector<MtlxShaderConnection> &connections,
@@ -539,7 +550,9 @@ static bool WriteMaterialXToString(const MtlxUsdPreviewSurface &shader,
 
   return true;
 }
+#endif // TINYUSDZ_MTLX_ENABLE_USDPREVIEWSURFACE_EXPORT
 
+#if TINYUSDZ_MTLX_ENABLE_STANDARDSURFACE_EXPORT
 static bool WriteMaterialXToString(const MtlxAutodeskStandardSurface &shader,
                                    const std::string &shader_name,
                                    const std::vector<MtlxShaderConnection> &connections,
@@ -682,7 +695,12 @@ static bool WriteMaterialXToString(const MtlxAutodeskStandardSurface &shader,
 
   return true;
 }
+#endif // TINYUSDZ_MTLX_ENABLE_STANDARDSURFACE_EXPORT
 
+// ============================================================================
+// OpenPBR Surface Export - ACTIVE PATH
+// This is the primary export path used for Blender MaterialX exports.
+// ============================================================================
 static bool WriteMaterialXToString(const MtlxOpenPBRSurface &shader,
                                    const std::string &shader_name,
                                    const std::vector<MtlxShaderConnection> &connections,
@@ -875,6 +893,12 @@ static bool SerializeNodeGraphs(const std::map<std::string, PrimSpec> &nodegraph
 
   return true;
 }
+
+// ============================================================================
+// Node Converters - ACTIVE PATH
+// These functions convert MaterialX XML nodes to USD PrimSpec representations.
+// Used for importing Blender MaterialX NodeGraphs.
+// ============================================================================
 
 static bool ConvertPlace2d(const tinyusdz::mtlx::pugi::xml_node &node, PrimSpec &ps,
                            std::string *warn, std::string *err) {
@@ -1406,7 +1430,8 @@ static bool ConvertNodeGraphIterative(const tinyusdz::mtlx::pugi::xml_node &root
   return true;
 }
 
-// Wrapper to maintain backward compatibility with ConvertNodeGraphRec signature
+// Legacy wrapper - forwards to iterative version
+// TODO: Remove this wrapper once all callers are updated to use ConvertNodeGraphIterative directly
 static bool ConvertNodeGraphRec(const uint32_t depth,
                                 const tinyusdz::mtlx::pugi::xml_node &node, PrimSpec &ps_out,
                                 const MtlxConfig &config,
@@ -2260,16 +2285,26 @@ bool WriteMaterialXToString(const MtlxModel &mtlx, std::string &xml_str,
     connections = it->second;
   }
 
+  // OpenPBR is the primary active path (used by Blender exports)
+  if (auto openpbr = mtlx.shader.as<MtlxOpenPBRSurface>()) {
+    return detail::WriteMaterialXToString(*openpbr, shader_name, connections, mtlx.nodegraphs, xml_str, warn, err);
+  }
+
+#if TINYUSDZ_MTLX_ENABLE_USDPREVIEWSURFACE_EXPORT
   if (auto usdps = mtlx.shader.as<MtlxUsdPreviewSurface>()) {
     return detail::WriteMaterialXToString(*usdps, shader_name, connections, mtlx.nodegraphs, xml_str, warn, err);
-  } else if (auto adskss = mtlx.shader.as<MtlxAutodeskStandardSurface>()) {
-    return detail::WriteMaterialXToString(*adskss, shader_name, connections, mtlx.nodegraphs, xml_str, warn, err);
-  } else if (auto openpbr = mtlx.shader.as<MtlxOpenPBRSurface>()) {
-    return detail::WriteMaterialXToString(*openpbr, shader_name, connections, mtlx.nodegraphs, xml_str, warn, err);
-  } else {
-    // TODO
-    PUSH_ERROR_AND_RETURN("Unknown/unsupported shader: " << mtlx.shader_name);
   }
+#endif
+
+#if TINYUSDZ_MTLX_ENABLE_STANDARDSURFACE_EXPORT
+  if (auto adskss = mtlx.shader.as<MtlxAutodeskStandardSurface>()) {
+    return detail::WriteMaterialXToString(*adskss, shader_name, connections, mtlx.nodegraphs, xml_str, warn, err);
+  }
+#endif
+
+  // Fallback error for unsupported shader types
+  PUSH_ERROR_AND_RETURN("Unknown/unsupported shader type: " << mtlx.shader_name
+    << " (Note: UsdPreviewSurface and StandardSurface export are currently disabled)");
 
   return false;
 }
