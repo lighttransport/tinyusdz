@@ -1483,6 +1483,349 @@ function _detectGeometrySetupPattern(nodes, nodeMap) {
 }
 
 /**
+ * Detect chained inverse operations that cancel out
+ * Examples: invert->invert, gamma(g)->gamma(1/g), negate->negate
+ * Can detect chains up to specified depth (default 16)
+ */
+function _detectInverseChainPattern(nodes, nodeMap, maxDepth = 16) {
+    const patterns = [];
+    const processed = new Set();
+
+    // Helper to check if two values are multiplicative inverses (a * b ≈ 1)
+    const areInverses = (a, b) => {
+        if (typeof a === 'number' && typeof b === 'number') {
+            return Math.abs(a * b - 1) < 0.0001;
+        }
+        if (Array.isArray(a) && Array.isArray(b) && a.length === b.length) {
+            return a.every((v, i) => Math.abs(v * b[i] - 1) < 0.0001);
+        }
+        return false;
+    };
+
+    // Invert pattern: subtract(1, x) where the pattern chains
+    // Blender's invert is: constant(1,1,1) -> subtract(constant, input) -> mix
+    // Double invert should cancel out
+    for (const node of nodes) {
+        if (processed.has(node.name)) continue;
+
+        // Detect invert chain: mix nodes with factor=1 that feed into each other
+        if (node.category === 'mix_color3' || node.category === 'mix_float') {
+            const mixInput = _getInputInfo(node, 'mix');
+            const fgInput = _getInputInfo(node, 'fg');
+
+            // Check if this is an invert (mix factor = 1, fg comes from subtract)
+            if (mixInput?.type === 'value' && _isOne(mixInput.value) && fgInput?.type === 'connection') {
+                const fgNode = nodeMap.get(fgInput.nodename);
+                if (fgNode?.category === 'subtract_color3' || fgNode?.category === 'subtract_float') {
+                    // This is an invert pattern, check if input is also an invert
+                    const subIn2 = _getInputInfo(fgNode, 'in2');
+                    if (subIn2?.type === 'connection') {
+                        const inputMix = nodeMap.get(subIn2.nodename);
+                        if (inputMix?.category === node.category) {
+                            const inputMixFactor = _getInputInfo(inputMix, 'mix');
+                            const inputFg = _getInputInfo(inputMix, 'fg');
+                            if (inputMixFactor?.type === 'value' && _isOne(inputMixFactor.value) && inputFg?.type === 'connection') {
+                                const inputFgNode = nodeMap.get(inputFg.nodename);
+                                if (inputFgNode?.category === fgNode.category) {
+                                    // Double invert found! Trace back to original input
+                                    const innerSubIn2 = _getInputInfo(inputFgNode, 'in2');
+                                    if (innerSubIn2?.type === 'connection') {
+                                        patterns.push({
+                                            type: 'double_invert',
+                                            outputNode: node.name,
+                                            chainNodes: [fgNode.name, inputMix.name, inputFgNode.name],
+                                            inputNode: innerSubIn2.nodename,
+                                            nodesToRemove: [node.name, fgNode.name, inputMix.name, inputFgNode.name],
+                                            passthrough: { nodename: innerSubIn2.nodename, output: innerSubIn2.output || 'out' }
+                                        });
+                                        processed.add(node.name);
+                                        processed.add(fgNode.name);
+                                        processed.add(inputMix.name);
+                                        processed.add(inputFgNode.name);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Detect gamma chain: power(x, g) -> power(x, 1/g) = identity
+        if (node.category === 'power_color3' || node.category === 'power_float') {
+            const in1 = _getInputInfo(node, 'in1');
+            const in2 = _getInputInfo(node, 'in2');
+
+            if (in1?.type === 'connection' && in2?.type === 'value') {
+                const prevNode = nodeMap.get(in1.nodename);
+                if (prevNode?.category === node.category) {
+                    const prevIn1 = _getInputInfo(prevNode, 'in1');
+                    const prevIn2 = _getInputInfo(prevNode, 'in2');
+
+                    if (prevIn1?.type === 'connection' && prevIn2?.type === 'value') {
+                        // Check if gamma values are inverses
+                        if (areInverses(in2.value, prevIn2.value)) {
+                            patterns.push({
+                                type: 'gamma_inverse_chain',
+                                outputNode: node.name,
+                                chainNodes: [prevNode.name],
+                                inputNode: prevIn1.nodename,
+                                gamma1: prevIn2.value,
+                                gamma2: in2.value,
+                                nodesToRemove: [node.name, prevNode.name],
+                                passthrough: { nodename: prevIn1.nodename, output: prevIn1.output || 'out' }
+                            });
+                            processed.add(node.name);
+                            processed.add(prevNode.name);
+                        }
+                    }
+                }
+            }
+        }
+
+        // Detect negate chain: negate -> negate = identity (multiply by -1 twice)
+        if (node.category === 'multiply_color3' || node.category === 'multiply_float') {
+            const in1 = _getInputInfo(node, 'in1');
+            const in2 = _getInputInfo(node, 'in2');
+
+            // Check if this is a negate (multiply by -1)
+            const isNegate = (in2?.type === 'value' && (in2.value === -1 || (Array.isArray(in2.value) && in2.value.every(v => v === -1))));
+
+            if (in1?.type === 'connection' && isNegate) {
+                const prevNode = nodeMap.get(in1.nodename);
+                if (prevNode?.category === node.category) {
+                    const prevIn1 = _getInputInfo(prevNode, 'in1');
+                    const prevIn2 = _getInputInfo(prevNode, 'in2');
+                    const prevIsNegate = (prevIn2?.type === 'value' && (prevIn2.value === -1 || (Array.isArray(prevIn2.value) && prevIn2.value.every(v => v === -1))));
+
+                    if (prevIn1?.type === 'connection' && prevIsNegate) {
+                        patterns.push({
+                            type: 'double_negate',
+                            outputNode: node.name,
+                            chainNodes: [prevNode.name],
+                            inputNode: prevIn1.nodename,
+                            nodesToRemove: [node.name, prevNode.name],
+                            passthrough: { nodename: prevIn1.nodename, output: prevIn1.output || 'out' }
+                        });
+                        processed.add(node.name);
+                        processed.add(prevNode.name);
+                    }
+                }
+            }
+        }
+    }
+
+    // Detect longer chains (up to maxDepth)
+    // Walk through nodes and find chains of the same operation type
+    const chainableOps = ['multiply', 'add', 'power', 'mix'];
+
+    for (const startNode of nodes) {
+        if (processed.has(startNode.name)) continue;
+
+        const category = startNode.category?.replace(/_color3|_float|_vector3/g, '');
+        if (!chainableOps.includes(category)) continue;
+
+        // Build chain by following connections
+        let chain = [startNode];
+        let current = startNode;
+        let depth = 0;
+
+        while (depth < maxDepth) {
+            const in1 = _getInputInfo(current, 'in1') || _getInputInfo(current, 'in') || _getInputInfo(current, 'fg');
+            if (!in1 || in1.type !== 'connection') break;
+
+            const prevNode = nodeMap.get(in1.nodename);
+            if (!prevNode) break;
+
+            const prevCategory = prevNode.category?.replace(/_color3|_float|_vector3/g, '');
+            if (prevCategory !== category) break;
+
+            chain.push(prevNode);
+            current = prevNode;
+            depth++;
+        }
+
+        // Analyze chain for cancellation patterns
+        if (chain.length >= 2) {
+            // For multiply chains, check if product of all factors = 1
+            if (category === 'multiply') {
+                let product = 1;
+                let hasNonConnection = false;
+                let firstInput = null;
+
+                for (let i = 0; i < chain.length; i++) {
+                    const node = chain[i];
+                    const in2 = _getInputInfo(node, 'in2');
+                    if (in2?.type === 'value') {
+                        const val = Array.isArray(in2.value) ? in2.value[0] : in2.value;
+                        product *= val;
+                    } else {
+                        hasNonConnection = true;
+                        break;
+                    }
+
+                    if (i === chain.length - 1) {
+                        const in1 = _getInputInfo(node, 'in1');
+                        if (in1?.type === 'connection') {
+                            firstInput = in1;
+                        }
+                    }
+                }
+
+                if (!hasNonConnection && Math.abs(product - 1) < 0.0001 && firstInput) {
+                    patterns.push({
+                        type: 'multiply_chain_identity',
+                        outputNode: startNode.name,
+                        chainLength: chain.length,
+                        chainNodes: chain.map(n => n.name),
+                        product: product,
+                        nodesToRemove: chain.map(n => n.name),
+                        passthrough: { nodename: firstInput.nodename, output: firstInput.output || 'out' }
+                    });
+                    chain.forEach(n => processed.add(n.name));
+                }
+            }
+
+            // For add chains, check if sum of all addends = 0
+            if (category === 'add') {
+                let sum = 0;
+                let hasNonConnection = false;
+                let firstInput = null;
+
+                for (let i = 0; i < chain.length; i++) {
+                    const node = chain[i];
+                    const in2 = _getInputInfo(node, 'in2');
+                    if (in2?.type === 'value') {
+                        const val = Array.isArray(in2.value) ? in2.value[0] : in2.value;
+                        sum += val;
+                    } else {
+                        hasNonConnection = true;
+                        break;
+                    }
+
+                    if (i === chain.length - 1) {
+                        const in1 = _getInputInfo(node, 'in1');
+                        if (in1?.type === 'connection') {
+                            firstInput = in1;
+                        }
+                    }
+                }
+
+                if (!hasNonConnection && Math.abs(sum) < 0.0001 && firstInput) {
+                    patterns.push({
+                        type: 'add_chain_identity',
+                        outputNode: startNode.name,
+                        chainLength: chain.length,
+                        chainNodes: chain.map(n => n.name),
+                        sum: sum,
+                        nodesToRemove: chain.map(n => n.name),
+                        passthrough: { nodename: firstInput.nodename, output: firstInput.output || 'out' }
+                    });
+                    chain.forEach(n => processed.add(n.name));
+                }
+            }
+        }
+    }
+
+    return patterns;
+}
+
+/**
+ * Detect separate->combine passthrough chains at any depth
+ * separate_color3 -> ... -> combine_color3 where channels reconnect = identity
+ */
+function _detectSeparateCombineChain(nodes, nodeMap, maxDepth = 16) {
+    const patterns = [];
+
+    for (const combineNode of nodes) {
+        if (combineNode.category !== 'combine3_color3' && combineNode.category !== 'combine3_vector3') continue;
+
+        const in1 = _getInputInfo(combineNode, 'in1');
+        const in2 = _getInputInfo(combineNode, 'in2');
+        const in3 = _getInputInfo(combineNode, 'in3');
+
+        if (!in1 || !in2 || !in3) continue;
+        if (in1.type !== 'connection' || in2.type !== 'connection' || in3.type !== 'connection') continue;
+
+        // Trace each input back to find if they all come from the same separate node
+        const traceToSeparate = (nodename, output, depth = 0) => {
+            if (depth > maxDepth) return null;
+
+            const node = nodeMap.get(nodename);
+            if (!node) return null;
+
+            // Check if this is a separate/extract node
+            if (node.category === 'separate3_color3' || node.category === 'separate3_vector3' ||
+                node.category === 'extract_color3' || node.category === 'extract_vector3') {
+                return { node: node, output: output, depth: depth };
+            }
+
+            // Follow single-input nodes (passthrough-like)
+            const inInput = _getInputInfo(node, 'in') || _getInputInfo(node, 'in1');
+            if (inInput?.type === 'connection') {
+                return traceToSeparate(inInput.nodename, inInput.output || 'out', depth + 1);
+            }
+
+            return null;
+        };
+
+        const source1 = traceToSeparate(in1.nodename, in1.output || 'out');
+        const source2 = traceToSeparate(in2.nodename, in2.output || 'out');
+        const source3 = traceToSeparate(in3.nodename, in3.output || 'out');
+
+        // Check if all three come from the same separate node with correct outputs
+        if (source1 && source2 && source3 &&
+            source1.node.name === source2.node.name &&
+            source2.node.name === source3.node.name) {
+
+            const separateNode = source1.node;
+            const sepInput = _getInputInfo(separateNode, 'in');
+
+            // Verify outputs are outx/outy/outz or out (with index)
+            const outputs = [source1.output, source2.output, source3.output].sort();
+            const expectedOutputs = ['outx', 'outy', 'outz'];
+            const isCorrectOrder = outputs[0] === 'outx' && outputs[1] === 'outy' && outputs[2] === 'outz';
+
+            if (sepInput?.type === 'connection' && isCorrectOrder) {
+                // Collect all intermediate nodes
+                const collectIntermediateNodes = (startNodename, endNodename) => {
+                    const nodes = [];
+                    let current = startNodename;
+                    while (current && current !== endNodename) {
+                        const node = nodeMap.get(current);
+                        if (!node) break;
+                        nodes.push(current);
+                        const inInput = _getInputInfo(node, 'in') || _getInputInfo(node, 'in1');
+                        if (!inInput?.nodename) break;
+                        current = inInput.nodename;
+                    }
+                    return nodes;
+                };
+
+                const intermediateNodes = new Set([
+                    ...collectIntermediateNodes(in1.nodename, separateNode.name),
+                    ...collectIntermediateNodes(in2.nodename, separateNode.name),
+                    ...collectIntermediateNodes(in3.nodename, separateNode.name)
+                ]);
+
+                patterns.push({
+                    type: 'separate_combine_chain',
+                    outputNode: combineNode.name,
+                    separateNode: separateNode.name,
+                    inputNode: sepInput.nodename,
+                    chainDepth: Math.max(source1.depth, source2.depth, source3.depth),
+                    intermediateNodes: [...intermediateNodes],
+                    nodesToRemove: [combineNode.name, separateNode.name, ...intermediateNodes],
+                    passthrough: { nodename: sepInput.nodename, output: sepInput.output || 'out' }
+                });
+            }
+        }
+    }
+
+    return patterns;
+}
+
+/**
  * Detect identity operations (multiply by 1, add 0, etc.)
  */
 function _detectIdentityOps(nodes, nodeMap) {
@@ -1674,7 +2017,9 @@ function optimizeNodeGraph(nodeGraph, level = NodeGraphOptimizationLevel.STANDAR
             ..._detectConvertRoundtripPattern(nodes, nodeMap),
             ..._detectSeparateCombinePassthrough(nodes, nodeMap),
             ..._detectClampPattern(nodes, nodeMap),
-            ..._detectGeometrySetupPattern(nodes, nodeMap)
+            ..._detectGeometrySetupPattern(nodes, nodeMap),
+            ..._detectInverseChainPattern(nodes, nodeMap, 16),
+            ..._detectSeparateCombineChain(nodes, nodeMap, 16)
         ];
     }
 
@@ -1707,6 +2052,8 @@ function analyzeNodeGraph(nodeGraph) {
     const separateCombinePatterns = _detectSeparateCombinePassthrough(nodes, nodeMap);
     const clampPatterns = _detectClampPattern(nodes, nodeMap);
     const geometrySetupPatterns = _detectGeometrySetupPattern(nodes, nodeMap);
+    const inverseChainPatterns = _detectInverseChainPattern(nodes, nodeMap, 16);
+    const separateCombineChainPatterns = _detectSeparateCombineChain(nodes, nodeMap, 16);
     const identities = _detectIdentityOps(nodes, nodeMap);
 
     const allNodesToRemove = new Set([
@@ -1719,12 +2066,15 @@ function analyzeNodeGraph(nodeGraph) {
         ...separateCombinePatterns.flatMap(p => p.nodesToRemove),
         ...clampPatterns.flatMap(p => p.nodesToRemove),
         ...geometrySetupPatterns.flatMap(p => p.nodesToRemove),
+        ...inverseChainPatterns.flatMap(p => p.nodesToRemove),
+        ...separateCombineChainPatterns.flatMap(p => p.nodesToRemove),
         ...identities.map(i => i.node)
     ]);
 
     const totalPatterns = invertPatterns.length + bcPatterns.length + hsvPatterns.length +
         chainedNormalizePatterns.length + luminanceExtractPatterns.length + convertRoundtripPatterns.length +
-        separateCombinePatterns.length + clampPatterns.length + geometrySetupPatterns.length;
+        separateCombinePatterns.length + clampPatterns.length + geometrySetupPatterns.length +
+        inverseChainPatterns.length + separateCombineChainPatterns.length;
 
     return {
         totalNodes: nodes.length,
@@ -1737,7 +2087,9 @@ function analyzeNodeGraph(nodeGraph) {
             convertRoundtrip: convertRoundtripPatterns.map(p => ({ outputNode: p.outputNode, inputNode: p.inputNode })),
             separateCombine: separateCombinePatterns.map(p => ({ outputNode: p.outputNode, inputNode: p.inputNode })),
             clamp: clampPatterns.map(p => ({ outputNode: p.outputNode, isDefaultRange: p.isDefaultRange })),
-            geometrySetup: geometrySetupPatterns.map(p => ({ outputNode: p.outputNode, mergedCount: p.mergedCount }))
+            geometrySetup: geometrySetupPatterns.map(p => ({ outputNode: p.outputNode, mergedCount: p.mergedCount })),
+            inverseChain: inverseChainPatterns.map(p => ({ type: p.type, outputNode: p.outputNode, chainLength: p.chainNodes?.length || 0 })),
+            separateCombineChain: separateCombineChainPatterns.map(p => ({ outputNode: p.outputNode, chainDepth: p.chainDepth }))
         },
         identityOps: identities,
         potentialReduction: {
