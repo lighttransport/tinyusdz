@@ -1264,6 +1264,508 @@ function _detectHSVAdjustPattern(nodes, nodeMap) {
     return patterns;
 }
 
+// ============================================================================
+// Extract Channel Optimization Patterns
+// ============================================================================
+
+/**
+ * Detect swizzle patterns: extract channels and recombine in different order
+ * e.g., extract(R,G,B) -> combine(B,G,R) = swizzle(BGR)
+ * This can be replaced with a single swizzle node or marked for shader optimization
+ */
+function _detectSwizzlePattern(nodes, nodeMap) {
+    const patterns = [];
+
+    for (const combineNode of nodes) {
+        if (combineNode.category !== 'combine3_color3' && combineNode.category !== 'combine3_vector3') continue;
+
+        const in1 = _getInputInfo(combineNode, 'in1');
+        const in2 = _getInputInfo(combineNode, 'in2');
+        const in3 = _getInputInfo(combineNode, 'in3');
+
+        if (!in1?.nodename || !in2?.nodename || !in3?.nodename) continue;
+
+        const extract1 = nodeMap.get(in1.nodename);
+        const extract2 = nodeMap.get(in2.nodename);
+        const extract3 = nodeMap.get(in3.nodename);
+
+        // All must be extract operations from the same source
+        const isExtract = (n) => n?.category === 'extract_color3' || n?.category === 'extract_vector3' ||
+                                 n?.category === 'separate3_color3' || n?.category === 'separate3_vector3';
+
+        if (!isExtract(extract1) || !isExtract(extract2) || !isExtract(extract3)) continue;
+
+        const src1 = _getInputInfo(extract1, 'in');
+        const src2 = _getInputInfo(extract2, 'in');
+        const src3 = _getInputInfo(extract3, 'in');
+
+        if (!src1?.nodename || src1.nodename !== src2?.nodename || src1.nodename !== src3?.nodename) continue;
+
+        // Get channel indices
+        const idx1 = _getInputInfo(extract1, 'index')?.value ?? (in1.output === 'outx' ? 0 : in1.output === 'outy' ? 1 : in1.output === 'outz' ? 2 : -1);
+        const idx2 = _getInputInfo(extract2, 'index')?.value ?? (in2.output === 'outx' ? 0 : in2.output === 'outy' ? 1 : in2.output === 'outz' ? 2 : -1);
+        const idx3 = _getInputInfo(extract3, 'index')?.value ?? (in3.output === 'outx' ? 0 : in3.output === 'outy' ? 1 : in3.output === 'outz' ? 2 : -1);
+
+        // Identity (0,1,2) is handled by separate_combine_passthrough
+        if (idx1 === 0 && idx2 === 1 && idx3 === 2) continue;
+
+        // Check for valid swizzle pattern
+        const indices = [idx1, idx2, idx3];
+        if (indices.some(i => i < 0 || i > 2)) continue;
+
+        const swizzleMap = { 0: 'R', 1: 'G', 2: 'B' };
+        const swizzle = indices.map(i => swizzleMap[i]).join('');
+
+        patterns.push({
+            type: 'swizzle',
+            outputNode: combineNode.name,
+            inputNode: src1.nodename,
+            swizzle: swizzle,
+            extractNodes: [extract1.name, extract2.name, extract3.name],
+            nodesToRemove: [], // Don't remove, mark for shader optimization
+            replacement: null,
+            optimizationHint: `Can be optimized to single swizzle: .${swizzle.toLowerCase()}`
+        });
+    }
+
+    return patterns;
+}
+
+/**
+ * Detect channel isolation to grayscale: extract(channel) -> combine(x,x,x)
+ * e.g., extract(R) -> combine(R,R,R) = grayscale from red channel
+ */
+function _detectChannelToGrayscalePattern(nodes, nodeMap) {
+    const patterns = [];
+
+    for (const combineNode of nodes) {
+        if (combineNode.category !== 'combine3_color3' && combineNode.category !== 'combine3_vector3') continue;
+
+        const in1 = _getInputInfo(combineNode, 'in1');
+        const in2 = _getInputInfo(combineNode, 'in2');
+        const in3 = _getInputInfo(combineNode, 'in3');
+
+        // All three inputs must come from the same node (same channel duplicated)
+        if (!in1?.nodename || in1.nodename !== in2?.nodename || in1.nodename !== in3?.nodename) continue;
+
+        // Check if outputs are the same (same channel)
+        const out1 = in1.output || 'out';
+        const out2 = in2.output || 'out';
+        const out3 = in3.output || 'out';
+
+        if (out1 !== out2 || out2 !== out3) continue;
+
+        const sourceNode = nodeMap.get(in1.nodename);
+        if (!sourceNode) continue;
+
+        // Check if source is an extract operation
+        const isExtract = sourceNode.category === 'extract_color3' || sourceNode.category === 'extract_vector3';
+        const channelMap = { 'outx': 'R', 'outy': 'G', 'outz': 'B', 'out': '?' };
+        const channel = channelMap[out1] || '?';
+
+        patterns.push({
+            type: 'channel_to_grayscale',
+            outputNode: combineNode.name,
+            sourceNode: sourceNode.name,
+            channel: channel,
+            isFromExtract: isExtract,
+            nodesToRemove: [], // Mark but don't remove - this is a valid pattern
+            replacement: null,
+            optimizationHint: `Grayscale from channel ${channel}`
+        });
+    }
+
+    return patterns;
+}
+
+/**
+ * Detect unused extract outputs (dead code)
+ * Extract nodes whose outputs are never used can be removed
+ */
+function _detectUnusedExtractPattern(nodes, nodeMap) {
+    const patterns = [];
+
+    // Build a map of all node inputs (connections)
+    const usedOutputs = new Set();
+    for (const node of nodes) {
+        if (!node.inputs) continue;
+        for (const input of node.inputs) {
+            if (input.nodename) {
+                usedOutputs.add(`${input.nodename}:${input.output || 'out'}`);
+            }
+        }
+    }
+
+    // Check each extract node
+    for (const node of nodes) {
+        if (node.category !== 'extract_color3' && node.category !== 'extract_vector3' &&
+            node.category !== 'separate3_color3' && node.category !== 'separate3_vector3') continue;
+
+        // For separate nodes, check each output
+        const outputs = node.category.startsWith('separate') ? ['outx', 'outy', 'outz'] : ['out'];
+        const unusedOutputs = outputs.filter(out => !usedOutputs.has(`${node.name}:${out}`));
+
+        if (unusedOutputs.length === outputs.length) {
+            // All outputs unused - node is dead code
+            patterns.push({
+                type: 'unused_extract',
+                outputNode: node.name,
+                unusedOutputs: unusedOutputs,
+                nodesToRemove: [node.name],
+                passthrough: null
+            });
+        } else if (unusedOutputs.length > 0 && node.category.startsWith('separate')) {
+            // Some outputs unused - partial dead code (info only)
+            patterns.push({
+                type: 'partial_unused_extract',
+                outputNode: node.name,
+                unusedOutputs: unusedOutputs,
+                nodesToRemove: [], // Don't remove, just mark
+                optimizationHint: `Unused channels: ${unusedOutputs.join(', ')}`
+            });
+        }
+    }
+
+    return patterns;
+}
+
+/**
+ * Detect single channel modification pattern:
+ * extract(R,G,B) -> modify(R) -> combine(R',G,B)
+ * This is a masked operation that could be optimized
+ */
+function _detectSingleChannelModPattern(nodes, nodeMap) {
+    const patterns = [];
+
+    for (const combineNode of nodes) {
+        if (combineNode.category !== 'combine3_color3' && combineNode.category !== 'combine3_vector3') continue;
+
+        const inputs = [
+            _getInputInfo(combineNode, 'in1'),
+            _getInputInfo(combineNode, 'in2'),
+            _getInputInfo(combineNode, 'in3')
+        ];
+
+        if (inputs.some(i => !i?.nodename)) continue;
+
+        // Track which channels come directly from extract and which are modified
+        const channelSources = inputs.map((input, idx) => {
+            const node = nodeMap.get(input.nodename);
+            if (!node) return { modified: true, source: null };
+
+            // Direct from extract/separate?
+            if (node.category === 'extract_color3' || node.category === 'extract_vector3' ||
+                node.category === 'separate3_color3' || node.category === 'separate3_vector3') {
+                const srcInput = _getInputInfo(node, 'in');
+                const channelIdx = _getInputInfo(node, 'index')?.value ??
+                    (input.output === 'outx' ? 0 : input.output === 'outy' ? 1 : input.output === 'outz' ? 2 : idx);
+                return { modified: false, source: srcInput?.nodename, channel: channelIdx, extractNode: node.name };
+            }
+
+            // Check if it's a math op on an extracted channel
+            const mathOps = ['multiply', 'add', 'subtract', 'divide', 'power'];
+            const isMathOp = mathOps.some(op => node.category?.includes(op));
+            if (isMathOp) {
+                const mathIn = _getInputInfo(node, 'in1') || _getInputInfo(node, 'in');
+                if (mathIn?.nodename) {
+                    const mathSrc = nodeMap.get(mathIn.nodename);
+                    if (mathSrc?.category?.includes('extract') || mathSrc?.category?.includes('separate')) {
+                        const srcInput = _getInputInfo(mathSrc, 'in');
+                        return { modified: true, source: srcInput?.nodename, modNode: node.name, extractNode: mathSrc.name };
+                    }
+                }
+            }
+
+            return { modified: true, source: null };
+        });
+
+        // Check if all unmodified channels come from the same source
+        const unmodifiedSources = channelSources.filter(c => !c.modified && c.source);
+        const modifiedChannels = channelSources.filter(c => c.modified && c.source);
+
+        if (unmodifiedSources.length >= 2 && modifiedChannels.length === 1) {
+            const commonSource = unmodifiedSources[0].source;
+            if (unmodifiedSources.every(c => c.source === commonSource) &&
+                modifiedChannels[0].source === commonSource) {
+                const modIdx = channelSources.findIndex(c => c.modified);
+                const channelNames = ['R', 'G', 'B'];
+
+                patterns.push({
+                    type: 'single_channel_modification',
+                    outputNode: combineNode.name,
+                    inputNode: commonSource,
+                    modifiedChannel: channelNames[modIdx],
+                    modificationNode: modifiedChannels[0].modNode,
+                    nodesToRemove: [], // Don't remove, mark for optimization
+                    optimizationHint: `Single channel ${channelNames[modIdx]} modification - could be masked operation`
+                });
+            }
+        }
+    }
+
+    return patterns;
+}
+
+// ============================================================================
+// Math Operation Optimization Patterns
+// ============================================================================
+
+/**
+ * Detect add-then-subtract or subtract-then-add of same value: a + b - b = a
+ */
+function _detectAddSubtractInversePattern(nodes, nodeMap) {
+    const patterns = [];
+
+    for (const node of nodes) {
+        if (!node.category?.includes('subtract') && !node.category?.includes('add')) continue;
+
+        const in1 = _getInputInfo(node, 'in1');
+        const in2 = _getInputInfo(node, 'in2');
+
+        if (!in1?.nodename || in2?.type !== 'value') continue;
+
+        const prevNode = nodeMap.get(in1.nodename);
+        if (!prevNode) continue;
+
+        // Check for inverse operation
+        const isAdd = node.category.includes('add');
+        const isSubtract = node.category.includes('subtract');
+        const prevIsAdd = prevNode.category?.includes('add');
+        const prevIsSubtract = prevNode.category?.includes('subtract');
+
+        if ((isAdd && prevIsSubtract) || (isSubtract && prevIsAdd)) {
+            const prevIn1 = _getInputInfo(prevNode, 'in1');
+            const prevIn2 = _getInputInfo(prevNode, 'in2');
+
+            if (prevIn1?.type === 'connection' && prevIn2?.type === 'value') {
+                // Check if values are equal
+                const val1 = in2.value;
+                const val2 = prevIn2.value;
+                const areEqual = (a, b) => {
+                    if (typeof a === 'number' && typeof b === 'number') return Math.abs(a - b) < 0.0001;
+                    if (Array.isArray(a) && Array.isArray(b) && a.length === b.length) {
+                        return a.every((v, i) => Math.abs(v - b[i]) < 0.0001);
+                    }
+                    return false;
+                };
+
+                if (areEqual(val1, val2)) {
+                    patterns.push({
+                        type: 'add_subtract_inverse',
+                        outputNode: node.name,
+                        intermediateNode: prevNode.name,
+                        inputNode: prevIn1.nodename,
+                        value: val1,
+                        nodesToRemove: [node.name, prevNode.name],
+                        passthrough: { nodename: prevIn1.nodename, output: prevIn1.output || 'out' }
+                    });
+                }
+            }
+        }
+    }
+
+    return patterns;
+}
+
+/**
+ * Detect multiply-then-divide or divide-then-multiply of same value: a * b / b = a
+ */
+function _detectMultiplyDivideInversePattern(nodes, nodeMap) {
+    const patterns = [];
+
+    for (const node of nodes) {
+        if (!node.category?.includes('divide') && !node.category?.includes('multiply')) continue;
+
+        const in1 = _getInputInfo(node, 'in1');
+        const in2 = _getInputInfo(node, 'in2');
+
+        if (!in1?.nodename || in2?.type !== 'value') continue;
+
+        const prevNode = nodeMap.get(in1.nodename);
+        if (!prevNode) continue;
+
+        const isMul = node.category.includes('multiply');
+        const isDiv = node.category.includes('divide');
+        const prevIsMul = prevNode.category?.includes('multiply');
+        const prevIsDiv = prevNode.category?.includes('divide');
+
+        if ((isMul && prevIsDiv) || (isDiv && prevIsMul)) {
+            const prevIn1 = _getInputInfo(prevNode, 'in1');
+            const prevIn2 = _getInputInfo(prevNode, 'in2');
+
+            if (prevIn1?.type === 'connection' && prevIn2?.type === 'value') {
+                const val1 = in2.value;
+                const val2 = prevIn2.value;
+                const areEqual = (a, b) => {
+                    if (typeof a === 'number' && typeof b === 'number') return Math.abs(a - b) < 0.0001;
+                    if (Array.isArray(a) && Array.isArray(b) && a.length === b.length) {
+                        return a.every((v, i) => Math.abs(v - b[i]) < 0.0001);
+                    }
+                    return false;
+                };
+
+                if (areEqual(val1, val2)) {
+                    patterns.push({
+                        type: 'multiply_divide_inverse',
+                        outputNode: node.name,
+                        intermediateNode: prevNode.name,
+                        inputNode: prevIn1.nodename,
+                        value: val1,
+                        nodesToRemove: [node.name, prevNode.name],
+                        passthrough: { nodename: prevIn1.nodename, output: prevIn1.output || 'out' }
+                    });
+                }
+            }
+        }
+    }
+
+    return patterns;
+}
+
+/**
+ * Detect idempotent operation chains: abs(abs(x)) = abs(x), floor(floor(x)) = floor(x), etc.
+ */
+function _detectIdempotentChainPattern(nodes, nodeMap) {
+    const patterns = [];
+
+    // Idempotent operations: applying twice gives same result as applying once
+    const idempotentOps = [
+        'absval', 'abs',          // |x| = ||x||
+        'floor',                   // floor(floor(x)) = floor(x)
+        'ceil',                    // ceil(ceil(x)) = ceil(x)
+        'sign',                    // sign(sign(x)) = sign(x)
+        'normalize',               // normalize(normalize(x)) = normalize(x) (already have separate)
+        'saturate',                // saturate(saturate(x)) = saturate(x)
+        'clamp'                    // clamp(clamp(x)) = clamp(x) with same bounds
+    ];
+
+    for (const node of nodes) {
+        const category = node.category?.replace(/_color3|_float|_vector3/g, '');
+        if (!idempotentOps.includes(category)) continue;
+
+        const inInput = _getInputInfo(node, 'in') || _getInputInfo(node, 'in1');
+        if (!inInput?.nodename) continue;
+
+        const prevNode = nodeMap.get(inInput.nodename);
+        if (!prevNode) continue;
+
+        const prevCategory = prevNode.category?.replace(/_color3|_float|_vector3/g, '');
+
+        if (category === prevCategory) {
+            // For clamp, verify bounds are the same
+            if (category === 'clamp') {
+                const low1 = _getInputInfo(node, 'low');
+                const high1 = _getInputInfo(node, 'high');
+                const low2 = _getInputInfo(prevNode, 'low');
+                const high2 = _getInputInfo(prevNode, 'high');
+
+                const sameVal = (a, b) => {
+                    if (a?.type !== b?.type) return false;
+                    if (a?.type === 'value') return a.value === b.value;
+                    return a?.nodename === b?.nodename;
+                };
+
+                if (!sameVal(low1, low2) || !sameVal(high1, high2)) continue;
+            }
+
+            const prevIn = _getInputInfo(prevNode, 'in') || _getInputInfo(prevNode, 'in1');
+            if (prevIn?.type === 'connection') {
+                patterns.push({
+                    type: 'idempotent_chain',
+                    operation: category,
+                    outputNode: node.name,
+                    redundantNode: prevNode.name,
+                    inputNode: prevIn.nodename,
+                    nodesToRemove: [prevNode.name],
+                    replacement: {
+                        ...node,
+                        inputs: node.inputs.map(inp =>
+                            (inp.name === 'in' || inp.name === 'in1') ?
+                            { ...inp, nodename: prevIn.nodename, output: prevIn.output || 'out' } : inp
+                        )
+                    }
+                });
+            }
+        }
+    }
+
+    return patterns;
+}
+
+/**
+ * Detect mix with same inputs: mix(a, a, factor) = a
+ */
+function _detectMixSameInputsPattern(nodes, nodeMap) {
+    const patterns = [];
+
+    for (const node of nodes) {
+        if (!node.category?.includes('mix')) continue;
+
+        const bg = _getInputInfo(node, 'bg');
+        const fg = _getInputInfo(node, 'fg');
+
+        // Both must be connections to the same node
+        if (bg?.type !== 'connection' || fg?.type !== 'connection') continue;
+        if (bg.nodename !== fg.nodename) continue;
+        if ((bg.output || 'out') !== (fg.output || 'out')) continue;
+
+        patterns.push({
+            type: 'mix_same_inputs',
+            outputNode: node.name,
+            inputNode: bg.nodename,
+            nodesToRemove: [node.name],
+            passthrough: { nodename: bg.nodename, output: bg.output || 'out' }
+        });
+    }
+
+    return patterns;
+}
+
+/**
+ * Detect colorspace roundtrip: srgb_to_linear -> linear_to_srgb = identity
+ */
+function _detectColorspaceRoundtripPattern(nodes, nodeMap) {
+    const patterns = [];
+
+    const roundtripPairs = [
+        ['srgb_to_linear', 'linear_to_srgb'],
+        ['linear_to_srgb', 'srgb_to_linear'],
+        ['rgb_to_hsv', 'hsv_to_rgb'],
+        ['hsv_to_rgb', 'rgb_to_hsv']
+    ];
+
+    for (const node of nodes) {
+        const category = node.category?.replace(/_color3|_color4/g, '');
+
+        for (const [first, second] of roundtripPairs) {
+            if (category !== second) continue;
+
+            const inInput = _getInputInfo(node, 'in');
+            if (!inInput?.nodename) continue;
+
+            const prevNode = nodeMap.get(inInput.nodename);
+            const prevCategory = prevNode?.category?.replace(/_color3|_color4/g, '');
+
+            if (prevCategory === first) {
+                const origInput = _getInputInfo(prevNode, 'in');
+                if (origInput?.type === 'connection') {
+                    patterns.push({
+                        type: 'colorspace_roundtrip',
+                        conversion: `${first} -> ${second}`,
+                        outputNode: node.name,
+                        intermediateNode: prevNode.name,
+                        inputNode: origInput.nodename,
+                        nodesToRemove: [node.name, prevNode.name],
+                        passthrough: { nodename: origInput.nodename, output: origInput.output || 'out' }
+                    });
+                }
+            }
+        }
+    }
+
+    return patterns;
+}
+
 /**
  * Detect chained normalize pattern: normalize -> normalize
  * Only the last normalize is needed
@@ -2009,17 +2511,32 @@ function optimizeNodeGraph(nodeGraph, level = NodeGraphOptimizationLevel.STANDAR
 
     if (level >= NodeGraphOptimizationLevel.STANDARD) {
         patterns = [
+            // Blender-specific patterns
             ..._detectInvertPattern(nodes, nodeMap),
             ..._detectBrightnessContrastPattern(nodes, nodeMap),
             ..._detectHSVAdjustPattern(nodes, nodeMap),
+            // Normalize and conversion patterns
             ..._detectChainedNormalizePattern(nodes, nodeMap),
             ..._detectLuminanceExtractPattern(nodes, nodeMap),
             ..._detectConvertRoundtripPattern(nodes, nodeMap),
             ..._detectSeparateCombinePassthrough(nodes, nodeMap),
             ..._detectClampPattern(nodes, nodeMap),
             ..._detectGeometrySetupPattern(nodes, nodeMap),
+            // Chain patterns (up to 16 depth)
             ..._detectInverseChainPattern(nodes, nodeMap, 16),
-            ..._detectSeparateCombineChain(nodes, nodeMap, 16)
+            ..._detectSeparateCombineChain(nodes, nodeMap, 16),
+            // Extract channel patterns
+            ..._detectSwizzlePattern(nodes, nodeMap),
+            ..._detectChannelToGrayscalePattern(nodes, nodeMap),
+            ..._detectUnusedExtractPattern(nodes, nodeMap),
+            ..._detectSingleChannelModPattern(nodes, nodeMap),
+            // Math inverse patterns
+            ..._detectAddSubtractInversePattern(nodes, nodeMap),
+            ..._detectMultiplyDivideInversePattern(nodes, nodeMap),
+            // Idempotent and misc patterns
+            ..._detectIdempotentChainPattern(nodes, nodeMap),
+            ..._detectMixSameInputsPattern(nodes, nodeMap),
+            ..._detectColorspaceRoundtripPattern(nodes, nodeMap)
         ];
     }
 
@@ -2054,6 +2571,18 @@ function analyzeNodeGraph(nodeGraph) {
     const geometrySetupPatterns = _detectGeometrySetupPattern(nodes, nodeMap);
     const inverseChainPatterns = _detectInverseChainPattern(nodes, nodeMap, 16);
     const separateCombineChainPatterns = _detectSeparateCombineChain(nodes, nodeMap, 16);
+    // New extract channel patterns
+    const swizzlePatterns = _detectSwizzlePattern(nodes, nodeMap);
+    const channelToGrayscalePatterns = _detectChannelToGrayscalePattern(nodes, nodeMap);
+    const unusedExtractPatterns = _detectUnusedExtractPattern(nodes, nodeMap);
+    const singleChannelModPatterns = _detectSingleChannelModPattern(nodes, nodeMap);
+    // New math patterns
+    const addSubtractInversePatterns = _detectAddSubtractInversePattern(nodes, nodeMap);
+    const multiplyDivideInversePatterns = _detectMultiplyDivideInversePattern(nodes, nodeMap);
+    // New misc patterns
+    const idempotentChainPatterns = _detectIdempotentChainPattern(nodes, nodeMap);
+    const mixSameInputsPatterns = _detectMixSameInputsPattern(nodes, nodeMap);
+    const colorspaceRoundtripPatterns = _detectColorspaceRoundtripPattern(nodes, nodeMap);
     const identities = _detectIdentityOps(nodes, nodeMap);
 
     const allNodesToRemove = new Set([
@@ -2068,28 +2597,55 @@ function analyzeNodeGraph(nodeGraph) {
         ...geometrySetupPatterns.flatMap(p => p.nodesToRemove),
         ...inverseChainPatterns.flatMap(p => p.nodesToRemove),
         ...separateCombineChainPatterns.flatMap(p => p.nodesToRemove),
+        ...swizzlePatterns.flatMap(p => p.nodesToRemove),
+        ...channelToGrayscalePatterns.flatMap(p => p.nodesToRemove),
+        ...unusedExtractPatterns.flatMap(p => p.nodesToRemove),
+        ...singleChannelModPatterns.flatMap(p => p.nodesToRemove),
+        ...addSubtractInversePatterns.flatMap(p => p.nodesToRemove),
+        ...multiplyDivideInversePatterns.flatMap(p => p.nodesToRemove),
+        ...idempotentChainPatterns.flatMap(p => p.nodesToRemove),
+        ...mixSameInputsPatterns.flatMap(p => p.nodesToRemove),
+        ...colorspaceRoundtripPatterns.flatMap(p => p.nodesToRemove),
         ...identities.map(i => i.node)
     ]);
 
     const totalPatterns = invertPatterns.length + bcPatterns.length + hsvPatterns.length +
         chainedNormalizePatterns.length + luminanceExtractPatterns.length + convertRoundtripPatterns.length +
         separateCombinePatterns.length + clampPatterns.length + geometrySetupPatterns.length +
-        inverseChainPatterns.length + separateCombineChainPatterns.length;
+        inverseChainPatterns.length + separateCombineChainPatterns.length +
+        swizzlePatterns.length + channelToGrayscalePatterns.length + unusedExtractPatterns.length +
+        singleChannelModPatterns.length + addSubtractInversePatterns.length + multiplyDivideInversePatterns.length +
+        idempotentChainPatterns.length + mixSameInputsPatterns.length + colorspaceRoundtripPatterns.length;
 
     return {
         totalNodes: nodes.length,
         patterns: {
+            // Blender patterns
             invert: invertPatterns.map(p => ({ outputNode: p.outputNode, inputNode: p.inputNode, factor: p.factor })),
             brightnessContrast: bcPatterns.map(p => ({ outputNode: p.outputNode, inputNode: p.inputNode, brightness: p.brightness, contrast: p.contrast })),
             hsvAdjust: hsvPatterns.map(p => ({ outputNode: p.outputNode, inputNode: p.inputNode, hue: p.hue, saturation: p.saturation, value: p.value })),
+            // Conversion patterns
             chainedNormalize: chainedNormalizePatterns.map(p => ({ outputNode: p.outputNode, chainLength: p.chainLength })),
             luminanceExtract: luminanceExtractPatterns.map(p => ({ outputNode: p.outputNode, inputNode: p.inputNode })),
             convertRoundtrip: convertRoundtripPatterns.map(p => ({ outputNode: p.outputNode, inputNode: p.inputNode })),
             separateCombine: separateCombinePatterns.map(p => ({ outputNode: p.outputNode, inputNode: p.inputNode })),
             clamp: clampPatterns.map(p => ({ outputNode: p.outputNode, isDefaultRange: p.isDefaultRange })),
             geometrySetup: geometrySetupPatterns.map(p => ({ outputNode: p.outputNode, mergedCount: p.mergedCount })),
+            // Chain patterns
             inverseChain: inverseChainPatterns.map(p => ({ type: p.type, outputNode: p.outputNode, chainLength: p.chainNodes?.length || 0 })),
-            separateCombineChain: separateCombineChainPatterns.map(p => ({ outputNode: p.outputNode, chainDepth: p.chainDepth }))
+            separateCombineChain: separateCombineChainPatterns.map(p => ({ outputNode: p.outputNode, chainDepth: p.chainDepth })),
+            // Extract channel patterns
+            swizzle: swizzlePatterns.map(p => ({ outputNode: p.outputNode, swizzle: p.swizzle, hint: p.optimizationHint })),
+            channelToGrayscale: channelToGrayscalePatterns.map(p => ({ outputNode: p.outputNode, channel: p.channel })),
+            unusedExtract: unusedExtractPatterns.map(p => ({ outputNode: p.outputNode, unusedOutputs: p.unusedOutputs })),
+            singleChannelMod: singleChannelModPatterns.map(p => ({ outputNode: p.outputNode, channel: p.modifiedChannel, hint: p.optimizationHint })),
+            // Math patterns
+            addSubtractInverse: addSubtractInversePatterns.map(p => ({ outputNode: p.outputNode, inputNode: p.inputNode })),
+            multiplyDivideInverse: multiplyDivideInversePatterns.map(p => ({ outputNode: p.outputNode, inputNode: p.inputNode })),
+            // Misc patterns
+            idempotentChain: idempotentChainPatterns.map(p => ({ outputNode: p.outputNode, operation: p.operation })),
+            mixSameInputs: mixSameInputsPatterns.map(p => ({ outputNode: p.outputNode, inputNode: p.inputNode })),
+            colorspaceRoundtrip: colorspaceRoundtripPatterns.map(p => ({ outputNode: p.outputNode, conversion: p.conversion }))
         },
         identityOps: identities,
         potentialReduction: {
