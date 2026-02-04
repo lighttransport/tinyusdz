@@ -12,6 +12,7 @@
 #include "mtlx-dom.hh"
 #include "prim-types.hh"
 #include "stage.hh"
+#include "usdShade.hh"  // For NodeGraph, Shader, ShaderNode
 #include "value-pprint.hh"
 #include "color-space.hh"
 #include "render-data.hh"  // For SpectralData, SpectralIOR, SpectralEmission
@@ -230,21 +231,273 @@ bool ConvertNodeGraphToJson(
 // TODO: Implement proper Prim API parsing
 bool ConvertShaderWithNodeGraphToJson(
     const Prim &shader_prim,
+    const Path &shader_abs_path,
     const Stage &stage,
     std::string *json_str,
     std::string *err) {
-
-  (void)shader_prim; // Unused for now
-  (void)stage; // Unused for now
 
   if (!json_str) {
     if (err) *err = "json_str is nullptr";
     return false;
   }
 
-  // STUB: Not yet implemented - requires proper understanding of Prim API
-  if (err) *err = "ConvertShaderWithNodeGraphToJson not yet implemented";
-  return false;
+  // Get the shader to check for connections to NodeGraph
+  const Shader *shader = shader_prim.as<Shader>();
+  if (!shader) {
+    if (err) *err = "Prim is not a Shader";
+    return false;
+  }
+
+  // Find the parent Material prim to locate NodeGraph children
+  // The shader path is like /root/_materials/Material/bnode__Principled_BSDF
+  // The Material is the parent, and NodeGraph is a sibling
+  std::string shader_path = shader_abs_path.prim_part();
+  size_t last_slash = shader_path.rfind('/');
+  if (last_slash == std::string::npos || last_slash == 0) {
+    // No parent found, no NodeGraph
+    *json_str = "";
+    return true;
+  }
+  
+  std::string parent_path = shader_path.substr(0, last_slash);
+  const Prim *parent_prim = nullptr;
+  std::string lookup_err;
+  if (!stage.find_prim_at_path(Path(parent_path, ""), parent_prim, &lookup_err) || !parent_prim) {
+    // Parent not found
+    *json_str = "";
+    return true;
+  }
+
+  // Look for NodeGraph children in the parent Material
+  const NodeGraph *nodegraph = nullptr;
+  const Prim *nodegraph_prim = nullptr;
+  for (const auto &child : parent_prim->children()) {
+    if (child.as<NodeGraph>()) {
+      nodegraph = child.as<NodeGraph>();
+      nodegraph_prim = &child;
+      break;
+    }
+  }
+
+  if (!nodegraph || !nodegraph_prim) {
+    // No NodeGraph found
+    *json_str = "";
+    return true;
+  }
+
+  // Build JSON from the NodeGraph structure
+  std::stringstream ss;
+  ss << "{\n";
+  ss << "  \"version\": \"1.39\",\n";
+  ss << "  \"nodegraph\": {\n";
+  ss << "    \"name\": \"" << EscapeJsonString(nodegraph_prim->element_name()) << "\",\n";
+
+  // Collect all shader nodes in the NodeGraph
+  ss << "    \"nodes\": [\n";
+  bool first_node = true;
+  for (const auto &ng_child : nodegraph_prim->children()) {
+    const Shader *node_shader = ng_child.as<Shader>();
+    if (!node_shader) continue;
+
+    if (!first_node) ss << ",\n";
+    first_node = false;
+
+    ss << "      {\n";
+    ss << "        \"name\": \"" << EscapeJsonString(ng_child.element_name()) << "\",\n";
+    
+    // Get node type from info:id
+    std::string node_type = node_shader->info_id;
+    // Extract category from info:id (e.g., "ND_multiply_color3" -> "multiply")
+    std::string category = node_type;
+    if (node_type.find("ND_") == 0) {
+      size_t underscore = node_type.find('_', 3);
+      if (underscore != std::string::npos) {
+        // Find the last underscore to separate category from type suffix
+        size_t last_under = node_type.rfind('_');
+        if (last_under > underscore) {
+          category = node_type.substr(3, last_under - 3);
+        } else {
+          category = node_type.substr(3);
+        }
+      }
+    }
+    ss << "        \"category\": \"" << EscapeJsonString(category) << "\",\n";
+    ss << "        \"type\": \"" << EscapeJsonString(node_type) << "\",\n";
+
+    // Get properties from ShaderNode if available
+    const std::map<std::string, Property> *props = &node_shader->props;
+    if (const ShaderNode *shader_node = node_shader->value.as<ShaderNode>()) {
+      props = &shader_node->props;
+    }
+
+    // Serialize inputs
+    ss << "        \"inputs\": [\n";
+    bool first_input = true;
+    for (const auto &prop_pair : *props) {
+      const std::string &prop_name = prop_pair.first;
+      if (prop_name.find("inputs:") != 0) continue;
+      
+      std::string input_name = prop_name.substr(7); // Remove "inputs:" prefix
+      
+      if (!first_input) ss << ",\n";
+      first_input = false;
+
+      ss << "          {\n";
+      ss << "            \"name\": \"" << EscapeJsonString(input_name) << "\"";
+
+      if (prop_pair.second.is_attribute()) {
+        const Attribute &attr = prop_pair.second.get_attribute();
+        
+        // Check for connection
+        if (attr.has_connections()) {
+          const auto &conns = attr.connections();
+          if (!conns.empty()) {
+            // Parse connection path to extract nodename and output
+            std::string conn_path = conns[0].full_path_name();
+            // Connection looks like </Material/NodeGraphs/node_001.outputs:out>
+            size_t dot_pos = conn_path.rfind('.');
+            size_t last_slash_pos = conn_path.rfind('/');
+            if (dot_pos != std::string::npos && last_slash_pos != std::string::npos) {
+              std::string nodename = conn_path.substr(last_slash_pos + 1, dot_pos - last_slash_pos - 1);
+              std::string output = conn_path.substr(dot_pos + 1);
+              if (output.find("outputs:") == 0) {
+                output = output.substr(8);
+              }
+              ss << ",\n            \"nodename\": \"" << EscapeJsonString(nodename) << "\"";
+              ss << ",\n            \"output\": \"" << EscapeJsonString(output) << "\"";
+            }
+          }
+        } else {
+          // Direct value
+          ss << ",\n            \"type\": \"" << attr.type_name() << "\"";
+          
+          // Serialize value based on type
+          if (auto v = attr.get_value<float>()) {
+            ss << ",\n            \"value\": " << v.value();
+          } else if (auto v = attr.get_value<int>()) {
+            ss << ",\n            \"value\": " << v.value();
+          } else if (auto v = attr.get_value<bool>()) {
+            ss << ",\n            \"value\": " << (v.value() ? "true" : "false");
+          } else if (auto v = attr.get_value<std::string>()) {
+            ss << ",\n            \"value\": \"" << EscapeJsonString(v.value()) << "\"";
+          } else if (auto v = attr.get_value<value::float2>()) {
+            ss << ",\n            \"value\": [" << v.value()[0] << ", " << v.value()[1] << "]";
+          } else if (auto v = attr.get_value<value::float3>()) {
+            ss << ",\n            \"value\": [" << v.value()[0] << ", " << v.value()[1] << ", " << v.value()[2] << "]";
+          } else if (auto v = attr.get_value<value::float4>()) {
+            ss << ",\n            \"value\": [" << v.value()[0] << ", " << v.value()[1] << ", " << v.value()[2] << ", " << v.value()[3] << "]";
+          } else if (auto v = attr.get_value<value::color3f>()) {
+            ss << ",\n            \"value\": [" << v.value()[0] << ", " << v.value()[1] << ", " << v.value()[2] << "]";
+          } else if (auto v = attr.get_value<value::color4f>()) {
+            ss << ",\n            \"value\": [" << v.value()[0] << ", " << v.value()[1] << ", " << v.value()[2] << ", " << v.value()[3] << "]";
+          } else if (auto v = attr.get_value<value::AssetPath>()) {
+            ss << ",\n            \"value\": \"" << EscapeJsonString(v.value().GetAssetPath()) << "\"";
+          }
+        }
+      }
+
+      ss << "\n          }";
+    }
+    ss << "\n        ]";
+    ss << "\n      }";
+  }
+  ss << "\n    ],\n";
+
+  // Serialize NodeGraph outputs
+  ss << "    \"outputs\": [\n";
+  bool first_output = true;
+  for (const auto &prop_pair : nodegraph->props) {
+    const std::string &prop_name = prop_pair.first;
+    if (prop_name.find("outputs:") != 0) continue;
+    
+    std::string output_name = prop_name.substr(8); // Remove "outputs:" prefix
+    
+    if (!first_output) ss << ",\n";
+    first_output = false;
+
+    ss << "      {\n";
+    ss << "        \"name\": \"" << EscapeJsonString(output_name) << "\"";
+
+    if (prop_pair.second.is_attribute()) {
+      const Attribute &attr = prop_pair.second.get_attribute();
+      ss << ",\n        \"type\": \"" << attr.type_name() << "\"";
+      
+      if (attr.has_connections()) {
+        const auto &conns = attr.connections();
+        if (!conns.empty()) {
+          std::string conn_path = conns[0].full_path_name();
+          size_t dot_pos = conn_path.rfind('.');
+          size_t last_slash_pos = conn_path.rfind('/');
+          if (dot_pos != std::string::npos && last_slash_pos != std::string::npos) {
+            std::string nodename = conn_path.substr(last_slash_pos + 1, dot_pos - last_slash_pos - 1);
+            std::string output = conn_path.substr(dot_pos + 1);
+            if (output.find("outputs:") == 0) {
+              output = output.substr(8);
+            }
+            ss << ",\n        \"nodename\": \"" << EscapeJsonString(nodename) << "\"";
+            ss << ",\n        \"output\": \"" << EscapeJsonString(output) << "\"";
+          }
+        }
+      }
+    }
+
+    ss << "\n      }";
+  }
+  ss << "\n    ]\n";
+
+  ss << "  },\n";
+
+  // Add shader connections (which inputs connect to NodeGraph outputs)
+  ss << "  \"connections\": [\n";
+  bool first_conn = true;
+  
+  const std::map<std::string, Property> *shader_props = &shader->props;
+  if (const ShaderNode *shader_node = shader->value.as<ShaderNode>()) {
+    shader_props = &shader_node->props;
+  }
+  
+  for (const auto &prop_pair : *shader_props) {
+    const std::string &prop_name = prop_pair.first;
+    if (prop_name.find("inputs:") != 0) continue;
+    
+    if (!prop_pair.second.is_attribute()) continue;
+    const Attribute &attr = prop_pair.second.get_attribute();
+    if (!attr.has_connections()) continue;
+    
+    const auto &conns = attr.connections();
+    if (conns.empty()) continue;
+    
+    std::string conn_path = conns[0].full_path_name();
+    // Check if connection points to our NodeGraph
+    if (conn_path.find(nodegraph_prim->element_name()) == std::string::npos) continue;
+    
+    std::string input_name = prop_name.substr(7);
+    
+    // Parse output name from connection
+    size_t dot_pos = conn_path.rfind('.');
+    std::string output_name;
+    if (dot_pos != std::string::npos) {
+      output_name = conn_path.substr(dot_pos + 1);
+      if (output_name.find("outputs:") == 0) {
+        output_name = output_name.substr(8);
+      }
+    }
+    
+    if (!first_conn) ss << ",\n";
+    first_conn = false;
+    
+    ss << "    {\n";
+    ss << "      \"input\": \"" << EscapeJsonString(input_name) << "\",\n";
+    ss << "      \"nodegraph\": \"" << EscapeJsonString(nodegraph_prim->element_name()) << "\",\n";
+    ss << "      \"output\": \"" << EscapeJsonString(output_name) << "\"\n";
+    ss << "    }";
+  }
+  ss << "\n  ]\n";
+
+  ss << "}\n";
+
+  *json_str = ss.str();
+  return true;
 }
 
 // ============================================================================

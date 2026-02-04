@@ -242,6 +242,11 @@ std::string serializeOpenPBRToJson(const OpenPBRSurfaceShader& shader, const Ren
   json << "\"coat_normal_map_scale\": " << shader.coat_normal_map_scale;
   json << "}";
 
+  // Include NodeGraph JSON if available (for shader network reconstruction in JS/WASM)
+  if (!shader.nodeGraphJson.empty()) {
+    json << ",\"nodeGraph\": " << shader.nodeGraphJson;
+  }
+
   json << "}";
   return json.str();
 }

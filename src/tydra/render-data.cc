@@ -372,8 +372,265 @@ static nonstd::expected<MtlxNodeGraphInfo, std::string> ExtractMtlxNodeGraphInfo
         }
       }
       break;
-    } else if (node_type == "ND_tangent_vector3" || node_type == "ND_normal_vector3") {
-      // Geometry nodes - end of chain
+    } else if (node_type == "ND_tangent_vector3" || node_type == "ND_normal_vector3" ||
+               node_type == "ND_position_vector3" || node_type == "ND_geomcolor_color3" ||
+               node_type == "ND_geomcolor_color4" || node_type == "ND_bitangent_vector3" ||
+               node_type == "ND_viewdirection_vector3" || node_type == "ND_texcoord_vector2" ||
+               node_type == "ND_texcoord_vector3") {
+      // Geometry nodes - end of chain (no input connections)
+      break;
+    //
+    // Unary operations (single input: inputs:in)
+    // These nodes process a single input value
+    //
+    } else if (node_type.find("ND_sqrt_") == 0 ||
+               node_type.find("ND_absval_") == 0 ||
+               node_type.find("ND_sign_") == 0 ||
+               node_type.find("ND_floor_") == 0 ||
+               node_type.find("ND_ceil_") == 0 ||
+               node_type.find("ND_round_") == 0 ||
+               node_type.find("ND_sin_") == 0 ||
+               node_type.find("ND_cos_") == 0 ||
+               node_type.find("ND_tan_") == 0 ||
+               node_type.find("ND_asin_") == 0 ||
+               node_type.find("ND_acos_") == 0 ||
+               node_type.find("ND_atan_") == 0 ||
+               node_type.find("ND_exp_") == 0 ||
+               node_type.find("ND_ln_") == 0 ||
+               node_type.find("ND_log2_") == 0 ||
+               node_type.find("ND_magnitude_") == 0 ||
+               node_type.find("ND_luminance_") == 0 ||
+               node_type.find("ND_normalize_") == 0 ||
+               node_type.find("ND_invert_") == 0 ||
+               node_type.find("ND_saturate_") == 0 ||
+               node_type.find("ND_hueshift_") == 0) {
+      // Unary operations - follow inputs:in
+      auto in_it = shader_props->find("inputs:in");
+      if (in_it != shader_props->end() && in_it->second.is_attribute()) {
+        const Attribute &in_attr = in_it->second.get_attribute();
+        if (in_attr.has_connections()) {
+          current_path = in_attr.connections()[0];
+          continue;
+        }
+      }
+      break;
+    //
+    // Binary operations (two inputs: inputs:in1, inputs:in2)
+    // Typically follow in1 for texture chains
+    //
+    } else if (node_type.find("ND_add_") == 0 ||
+               node_type.find("ND_subtract_") == 0 ||
+               node_type.find("ND_multiply_") == 0 ||
+               node_type.find("ND_divide_") == 0 ||
+               node_type.find("ND_power_") == 0 ||
+               node_type.find("ND_min_") == 0 ||
+               node_type.find("ND_max_") == 0 ||
+               node_type.find("ND_modulo_") == 0 ||
+               node_type.find("ND_atan2_") == 0 ||
+               node_type.find("ND_dotproduct_") == 0 ||
+               node_type.find("ND_crossproduct_") == 0) {
+      // Binary operations - follow inputs:in1 (typically the texture/value chain)
+      auto in1_it = shader_props->find("inputs:in1");
+      if (in1_it != shader_props->end() && in1_it->second.is_attribute()) {
+        const Attribute &in1_attr = in1_it->second.get_attribute();
+        if (in1_attr.has_connections()) {
+          current_path = in1_attr.connections()[0];
+          continue;
+        }
+      }
+      // If in1 has no connection, try in2
+      auto in2_it = shader_props->find("inputs:in2");
+      if (in2_it != shader_props->end() && in2_it->second.is_attribute()) {
+        const Attribute &in2_attr = in2_it->second.get_attribute();
+        if (in2_attr.has_connections()) {
+          current_path = in2_attr.connections()[0];
+          continue;
+        }
+      }
+      break;
+    //
+    // Mix/blend operations (fg, bg, mix inputs)
+    // Follow fg (foreground) as it typically has the texture
+    //
+    } else if (node_type.find("ND_mix_") == 0) {
+      // Mix nodes - follow inputs:fg (foreground typically has the texture)
+      auto fg_it = shader_props->find("inputs:fg");
+      if (fg_it != shader_props->end() && fg_it->second.is_attribute()) {
+        const Attribute &fg_attr = fg_it->second.get_attribute();
+        if (fg_attr.has_connections()) {
+          current_path = fg_attr.connections()[0];
+          continue;
+        }
+      }
+      // If fg has no connection, try bg
+      auto bg_it = shader_props->find("inputs:bg");
+      if (bg_it != shader_props->end() && bg_it->second.is_attribute()) {
+        const Attribute &bg_attr = bg_it->second.get_attribute();
+        if (bg_attr.has_connections()) {
+          current_path = bg_attr.connections()[0];
+          continue;
+        }
+      }
+      break;
+    //
+    // Clamp operation (in, low, high inputs)
+    //
+    } else if (node_type.find("ND_clamp_") == 0) {
+      // Clamp nodes - follow inputs:in
+      auto in_it = shader_props->find("inputs:in");
+      if (in_it != shader_props->end() && in_it->second.is_attribute()) {
+        const Attribute &in_attr = in_it->second.get_attribute();
+        if (in_attr.has_connections()) {
+          current_path = in_attr.connections()[0];
+          continue;
+        }
+      }
+      break;
+    //
+    // Remap/range operations (in, inlow, inhigh, outlow, outhigh inputs)
+    //
+    } else if (node_type.find("ND_remap_") == 0 ||
+               node_type.find("ND_range_") == 0) {
+      // Remap/range nodes - follow inputs:in
+      auto in_it = shader_props->find("inputs:in");
+      if (in_it != shader_props->end() && in_it->second.is_attribute()) {
+        const Attribute &in_attr = in_it->second.get_attribute();
+        if (in_attr.has_connections()) {
+          current_path = in_attr.connections()[0];
+          continue;
+        }
+      }
+      break;
+    //
+    // Extract operations (extracts component from color3/vector3)
+    //
+    } else if (node_type.find("ND_extract_") == 0) {
+      // Extract nodes - follow inputs:in
+      auto in_it = shader_props->find("inputs:in");
+      if (in_it != shader_props->end() && in_it->second.is_attribute()) {
+        const Attribute &in_attr = in_it->second.get_attribute();
+        if (in_attr.has_connections()) {
+          current_path = in_attr.connections()[0];
+          continue;
+        }
+      }
+      break;
+    //
+    // HSV/color adjustment operations
+    //
+    } else if (node_type.find("ND_hsvadjust_") == 0 ||
+               node_type.find("ND_rgbtohsv_") == 0 ||
+               node_type.find("ND_hsvtorgb_") == 0) {
+      // HSV adjust - follow inputs:in
+      auto in_it = shader_props->find("inputs:in");
+      if (in_it != shader_props->end() && in_it->second.is_attribute()) {
+        const Attribute &in_attr = in_it->second.get_attribute();
+        if (in_attr.has_connections()) {
+          current_path = in_attr.connections()[0];
+          continue;
+        }
+      }
+      break;
+    //
+    // Type conversion operations (convert color3 to vector3 etc.)
+    //
+    } else if (node_type.find("ND_convert_") == 0) {
+      // Conversion nodes - follow inputs:in
+      auto in_it = shader_props->find("inputs:in");
+      if (in_it != shader_props->end() && in_it->second.is_attribute()) {
+        const Attribute &in_attr = in_it->second.get_attribute();
+        if (in_attr.has_connections()) {
+          current_path = in_attr.connections()[0];
+          continue;
+        }
+      }
+      break;
+    //
+    // Combine operations (combines in1, in2, in3 to color3/vector3)
+    // Terminal nodes - they produce values from scalars
+    //
+    } else if (node_type.find("ND_combine3_") == 0 ||
+               node_type.find("ND_combine2_") == 0 ||
+               node_type.find("ND_combine4_") == 0) {
+      // Combine nodes - terminal (produce vector from components)
+      // Could follow inputs if needed, but typically these are terminals
+      break;
+    //
+    // Constant nodes - terminal (provide constant values)
+    //
+    } else if (node_type.find("ND_constant_") == 0) {
+      // Constant nodes - terminal, no connections to follow
+      break;
+    //
+    // Tiledimage/image nodes (texture sampling)
+    //
+    } else if (node_type.find("ND_tiledimage_") == 0) {
+      // Tiled image node - extract file path
+      auto file_it = shader_props->find("inputs:file");
+      if (file_it != shader_props->end() && file_it->second.is_attribute()) {
+        const Attribute &file_attr = file_it->second.get_attribute();
+        if (auto asset_val = file_attr.get_value<value::AssetPath>()) {
+          info.normal_map_texture = asset_val.value().GetAssetPath();
+        }
+      }
+      break;  // End of chain
+    //
+    // Swizzle operations
+    //
+    } else if (node_type.find("ND_swizzle_") == 0) {
+      // Swizzle - follow inputs:in
+      auto in_it = shader_props->find("inputs:in");
+      if (in_it != shader_props->end() && in_it->second.is_attribute()) {
+        const Attribute &in_attr = in_it->second.get_attribute();
+        if (in_attr.has_connections()) {
+          current_path = in_attr.connections()[0];
+          continue;
+        }
+      }
+      break;
+    //
+    // Ifgreater/ifless/ifequal conditional operations
+    //
+    } else if (node_type.find("ND_ifgreater_") == 0 ||
+               node_type.find("ND_ifgreatereq_") == 0 ||
+               node_type.find("ND_ifless_") == 0 ||
+               node_type.find("ND_iflesseq_") == 0 ||
+               node_type.find("ND_ifequal_") == 0) {
+      // Conditional - follow inputs:in1 (value1)
+      auto in1_it = shader_props->find("inputs:in1");
+      if (in1_it != shader_props->end() && in1_it->second.is_attribute()) {
+        const Attribute &in1_attr = in1_it->second.get_attribute();
+        if (in1_attr.has_connections()) {
+          current_path = in1_attr.connections()[0];
+          continue;
+        }
+      }
+      break;
+    //
+    // Noise operations
+    //
+    } else if (node_type.find("ND_noise2d_") == 0 ||
+               node_type.find("ND_noise3d_") == 0 ||
+               node_type.find("ND_cellnoise2d_") == 0 ||
+               node_type.find("ND_cellnoise3d_") == 0 ||
+               node_type.find("ND_worleynoise2d_") == 0 ||
+               node_type.find("ND_worleynoise3d_") == 0 ||
+               node_type.find("ND_fractal3d_") == 0) {
+      // Noise nodes - terminal (procedural generation)
+      break;
+    //
+    // Place2d texture coordinate transformation
+    //
+    } else if (node_type.find("ND_place2d_") == 0) {
+      // Place2d - follow inputs:texcoord if connected
+      auto texcoord_it = shader_props->find("inputs:texcoord");
+      if (texcoord_it != shader_props->end() && texcoord_it->second.is_attribute()) {
+        const Attribute &texcoord_attr = texcoord_it->second.get_attribute();
+        if (texcoord_attr.has_connections()) {
+          current_path = texcoord_attr.connections()[0];
+          continue;
+        }
+      }
       break;
     } else {
       // Unknown node type, try to follow inputs:in if it exists
@@ -382,6 +639,15 @@ static nonstd::expected<MtlxNodeGraphInfo, std::string> ExtractMtlxNodeGraphInfo
         const Attribute &in_attr = in_it->second.get_attribute();
         if (in_attr.has_connections()) {
           current_path = in_attr.connections()[0];
+          continue;
+        }
+      }
+      // Also try inputs:in1 for binary-style nodes
+      auto in1_it = shader_props->find("inputs:in1");
+      if (in1_it != shader_props->end() && in1_it->second.is_attribute()) {
+        const Attribute &in1_attr = in1_it->second.get_attribute();
+        if (in1_attr.has_connections()) {
+          current_path = in1_attr.connections()[0];
           continue;
         }
       }
@@ -7555,28 +7821,25 @@ bool RenderSceneConverter::ConvertOpenPBRSurfaceShader(
     return false;
   }
 
-  // TODO: Convert MaterialX NodeGraph connections to JSON if present
+  // Convert MaterialX NodeGraph connections to JSON if present
   // This allows reconstruction of node-based shading in JavaScript/WASM
-  // NOTE: Currently disabled because GetPrimAtPath returns Prim* not optional<Prim>
-  // and ConvertShaderWithNodeGraphToJson is not yet implemented
-  #if 0
-  auto shader_prim_opt = env.stage.GetPrimAtPath(shader_abs_path);
-  if (shader_prim_opt) {
-    const Prim *shader_prim_ptr = shader_prim_opt.value();
-    std::string nodegraph_json;
-    std::string err;
-    if (shader_prim_ptr && ConvertShaderWithNodeGraphToJson(*shader_prim_ptr, env.stage, &nodegraph_json, &err)) {
-      rshader.nodeGraphJson = nodegraph_json;
-      DCOUT("Successfully converted MaterialX NodeGraph to JSON for shader: " << shader_abs_path.prim_part());
-    } else {
-      // Not an error - shader may not have node graph connections
-      DCOUT("No MaterialX NodeGraph found for shader: " << shader_abs_path.prim_part());
+  {
+    const Prim *shader_prim_ptr = nullptr;
+    std::string lookup_err;
+    if (env.stage.find_prim_at_path(shader_abs_path, shader_prim_ptr, &lookup_err) && shader_prim_ptr) {
+      std::string nodegraph_json;
+      std::string conv_err;
+      if (ConvertShaderWithNodeGraphToJson(*shader_prim_ptr, shader_abs_path, env.stage, &nodegraph_json, &conv_err)) {
+        if (!nodegraph_json.empty()) {
+          rshader.nodeGraphJson = nodegraph_json;
+          DCOUT("Successfully converted MaterialX NodeGraph to JSON for shader: " << shader_abs_path.prim_part());
+        }
+      } else {
+        // Not an error - shader may not have node graph connections
+        DCOUT("No MaterialX NodeGraph found for shader: " << shader_abs_path.prim_part() << " (" << conv_err << ")");
+      }
     }
   }
-  #endif
-
-  // Leave nodeGraphJson empty for now - will be populated when converter is implemented
-  (void)shader_abs_path; // Suppress unused variable warning
 
   (*rshader_out) = rshader;
   return true;
