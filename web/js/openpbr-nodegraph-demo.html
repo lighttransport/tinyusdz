@@ -1,0 +1,418 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>OpenPBR NodeGraph Demo</title>
+
+    <!-- LiteGraph.js from CDN -->
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/litegraph.js@0.7.18/css/litegraph.css">
+    <script src="https://cdn.jsdelivr.net/npm/litegraph.js@0.7.18/build/litegraph.min.js"></script>
+
+    <style>
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #1a1a2e;
+            color: #eee;
+            overflow: hidden;
+        }
+
+        .container {
+            display: flex;
+            height: 100vh;
+            width: 100vw;
+        }
+
+        /* Left panel - 3D view */
+        .viewer-panel {
+            flex: 1;
+            position: relative;
+            min-width: 400px;
+            border-right: 2px solid #333;
+        }
+
+        #canvas-3d {
+            width: 100%;
+            height: 100%;
+            display: block;
+        }
+
+        .viewer-info {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            background: rgba(0, 0, 0, 0.8);
+            padding: 12px 16px;
+            border-radius: 8px;
+            font-size: 13px;
+            z-index: 100;
+            max-width: 280px;
+        }
+
+        .viewer-info h3 {
+            margin: 0 0 8px 0;
+            color: #4CAF50;
+            font-size: 14px;
+        }
+
+        .viewer-info p {
+            margin: 4px 0;
+            color: #aaa;
+        }
+
+        .viewer-info span {
+            color: #81D4FA;
+        }
+
+        /* Right panel - Node graph */
+        .nodegraph-panel {
+            flex: 1;
+            position: relative;
+            min-width: 500px;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .nodegraph-header {
+            background: #252540;
+            padding: 10px 15px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            border-bottom: 1px solid #333;
+        }
+
+        .nodegraph-header h2 {
+            font-size: 14px;
+            font-weight: 500;
+            color: #4CAF50;
+            margin: 0;
+        }
+
+        .nodegraph-controls {
+            display: flex;
+            gap: 8px;
+        }
+
+        .btn {
+            background: #4CAF50;
+            color: white;
+            border: none;
+            padding: 6px 14px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 12px;
+            font-weight: 500;
+            transition: all 0.2s;
+        }
+
+        .btn:hover {
+            background: #388E3C;
+        }
+
+        .btn.secondary {
+            background: #2196F3;
+        }
+
+        .btn.secondary:hover {
+            background: #1976D2;
+        }
+
+        .btn.warning {
+            background: #FF9800;
+        }
+
+        .btn.warning:hover {
+            background: #F57C00;
+        }
+
+        #nodegraph-canvas {
+            flex: 1;
+            width: 100%;
+        }
+
+        /* Toolbar */
+        .toolbar {
+            position: absolute;
+            top: 10px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: rgba(0, 0, 0, 0.85);
+            padding: 8px 12px;
+            border-radius: 8px;
+            display: flex;
+            gap: 10px;
+            z-index: 100;
+        }
+
+        /* Toast */
+        #toast {
+            position: fixed;
+            bottom: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: rgba(0, 0, 0, 0.9);
+            color: white;
+            padding: 12px 24px;
+            border-radius: 8px;
+            font-size: 14px;
+            opacity: 0;
+            transition: opacity 0.3s;
+            pointer-events: none;
+            z-index: 1000;
+        }
+
+        #toast.visible {
+            opacity: 1;
+        }
+
+        /* Loading */
+        #loading {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.8);
+            display: none;
+            justify-content: center;
+            align-items: center;
+            z-index: 9999;
+        }
+
+        #loading.visible {
+            display: flex;
+        }
+
+        .spinner {
+            width: 50px;
+            height: 50px;
+            border: 3px solid rgba(255, 255, 255, 0.1);
+            border-top-color: #4CAF50;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        /* File input */
+        #file-input {
+            display: none;
+        }
+
+        /* Help text */
+        .help-text {
+            position: absolute;
+            bottom: 10px;
+            left: 10px;
+            background: rgba(0, 0, 0, 0.7);
+            padding: 8px 12px;
+            border-radius: 5px;
+            font-size: 11px;
+            color: #888;
+        }
+
+        .help-text kbd {
+            background: rgba(255, 255, 255, 0.1);
+            padding: 2px 5px;
+            border-radius: 3px;
+            font-family: monospace;
+        }
+
+        /* Material selector */
+        .material-selector {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            background: rgba(0, 0, 0, 0.8);
+            padding: 10px;
+            border-radius: 8px;
+            z-index: 100;
+        }
+
+        .material-selector label {
+            font-size: 12px;
+            color: #aaa;
+            margin-right: 8px;
+        }
+
+        .material-selector select {
+            background: #333;
+            color: #fff;
+            border: 1px solid #555;
+            padding: 5px 10px;
+            border-radius: 4px;
+            font-size: 12px;
+        }
+
+        /* Resizer */
+        .resizer {
+            width: 6px;
+            background: #333;
+            cursor: col-resize;
+            transition: background 0.2s;
+        }
+
+        .resizer:hover {
+            background: #4CAF50;
+        }
+
+        /* Node graph stats */
+        .nodegraph-stats {
+            position: absolute;
+            bottom: 10px;
+            right: 10px;
+            background: rgba(0, 0, 0, 0.8);
+            padding: 8px 12px;
+            border-radius: 5px;
+            font-size: 11px;
+            color: #888;
+        }
+
+        .nodegraph-stats span {
+            color: #4CAF50;
+        }
+
+        /* Bridge panel */
+        .bridge-panel {
+            position: absolute;
+            top: 50px;
+            right: 10px;
+            background: rgba(0, 0, 0, 0.9);
+            padding: 12px;
+            border-radius: 8px;
+            z-index: 100;
+            display: none;
+            min-width: 200px;
+        }
+
+        .bridge-panel.visible {
+            display: block;
+        }
+
+        .bridge-panel h4 {
+            margin: 0 0 10px 0;
+            color: #E91E63;
+            font-size: 12px;
+        }
+
+        .bridge-panel .status {
+            font-size: 11px;
+            color: #888;
+            margin-bottom: 8px;
+        }
+
+        .bridge-panel .status.connected {
+            color: #4CAF50;
+        }
+
+        .bridge-panel input {
+            width: 100%;
+            background: #333;
+            border: 1px solid #555;
+            color: #fff;
+            padding: 5px 8px;
+            border-radius: 4px;
+            font-size: 11px;
+            margin-bottom: 8px;
+        }
+
+        .bridge-panel .btn-row {
+            display: flex;
+            gap: 6px;
+        }
+
+        .bridge-panel .btn {
+            flex: 1;
+            font-size: 11px;
+            padding: 5px 8px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <!-- 3D Viewer Panel -->
+        <div class="viewer-panel" id="viewer-panel">
+            <canvas id="canvas-3d"></canvas>
+
+            <div class="viewer-info">
+                <h3>OpenPBR Material Preview</h3>
+                <p>Status: <span id="status">Initializing...</span></p>
+                <p>Meshes: <span id="mesh-count">0</span></p>
+                <p>Materials: <span id="material-count">0</span></p>
+            </div>
+
+            <div class="material-selector" id="material-selector" style="display: none;">
+                <label>Material:</label>
+                <select id="material-select"></select>
+            </div>
+
+            <div class="help-text">
+                <kbd>Scroll</kbd> zoom | <kbd>Drag</kbd> orbit | <kbd>Right-drag</kbd> pan
+            </div>
+        </div>
+
+        <!-- Resizer -->
+        <div class="resizer" id="resizer"></div>
+
+        <!-- Node Graph Panel -->
+        <div class="nodegraph-panel" id="nodegraph-panel">
+            <div class="nodegraph-header">
+                <h2>MaterialX NodeGraph</h2>
+                <div class="nodegraph-controls">
+                    <button class="btn" onclick="loadFile()">Load USD</button>
+                    <button class="btn secondary" onclick="loadSample()">Sample</button>
+                    <button class="btn" style="background:#9C27B0" onclick="loadBlenderSample()">Blender</button>
+                    <button class="btn" style="background:#E91E63" id="btn-bridge" onclick="toggleBridge()">Connect</button>
+                    <button class="btn warning" onclick="fitGraph()">Fit View</button>
+                </div>
+            </div>
+            <canvas id="nodegraph-canvas"></canvas>
+            <div class="nodegraph-stats">
+                Nodes: <span id="node-count">0</span> |
+                Connections: <span id="connection-count">0</span>
+            </div>
+
+            <!-- Bridge connection panel -->
+            <div class="bridge-panel" id="bridge-panel">
+                <h4>Blender Bridge</h4>
+                <div class="status" id="bridge-status">Disconnected</div>
+                <input type="text" id="bridge-session" placeholder="Session ID (from Blender)">
+                <div class="btn-row">
+                    <button class="btn secondary" onclick="bridgeConnect()">Connect</button>
+                    <button class="btn" style="background:#E91E63" onclick="bridgePullScene()">Pull Scene</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <input type="file" id="file-input" accept=".usd,.usda,.usdc,.usdz">
+
+    <div id="loading">
+        <div class="spinner"></div>
+    </div>
+
+    <div id="toast"></div>
+
+    <!-- Import maps -->
+    <script type="importmap">
+        {
+            "imports": {
+                "three": "https://cdn.jsdelivr.net/npm/three@0.161.0/build/three.module.js",
+                "three/examples/jsm/": "https://cdn.jsdelivr.net/npm/three@0.161.0/examples/jsm/",
+                "tinyusdz/": "./src/tinyusdz/"
+            }
+        }
+    </script>
+
+    <script type="module" src="openpbr-nodegraph-demo.js"></script>
+</body>
+</html>
