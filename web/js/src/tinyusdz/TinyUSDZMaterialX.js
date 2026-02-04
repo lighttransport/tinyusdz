@@ -1265,6 +1265,224 @@ function _detectHSVAdjustPattern(nodes, nodeMap) {
 }
 
 /**
+ * Detect chained normalize pattern: normalize -> normalize
+ * Only the last normalize is needed
+ */
+function _detectChainedNormalizePattern(nodes, nodeMap) {
+    const patterns = [];
+    for (const node of nodes) {
+        if (node.category !== 'normalize_vector3' && node.category !== 'normalize_float') continue;
+        const inInput = _getInputInfo(node, 'in');
+        if (!inInput || inInput.type !== 'connection') continue;
+
+        const prevNode = nodeMap.get(inInput.nodename);
+        if (!prevNode) continue;
+
+        // Check if previous node is also a normalize
+        if (prevNode.category === node.category) {
+            const prevInput = _getInputInfo(prevNode, 'in');
+            if (prevInput?.type === 'connection') {
+                patterns.push({
+                    type: 'chained_normalize',
+                    outputNode: node.name,
+                    redundantNode: prevNode.name,
+                    inputNode: prevInput.nodename,
+                    nodesToRemove: [prevNode.name],
+                    replacement: {
+                        ...node,
+                        inputs: [{ name: 'in', nodename: prevInput.nodename, output: prevInput.output || 'out' }]
+                    }
+                });
+            }
+        }
+    }
+    return patterns;
+}
+
+/**
+ * Detect luminance + extract pattern: luminance_color3 -> extract_color3(index=0)
+ * Extract after luminance is redundant since luminance outputs a scalar-like value
+ */
+function _detectLuminanceExtractPattern(nodes, nodeMap) {
+    const patterns = [];
+    for (const extractNode of nodes) {
+        if (extractNode.category !== 'extract_color3') continue;
+        const inInput = _getInputInfo(extractNode, 'in');
+        const indexInput = _getInputInfo(extractNode, 'index');
+        if (!inInput || inInput.type !== 'connection') continue;
+
+        // Check if index is 0 (red channel, which contains luminance result)
+        if (indexInput?.type === 'value' && indexInput.value === 0) {
+            const prevNode = nodeMap.get(inInput.nodename);
+            if (prevNode?.category === 'luminance_color3') {
+                // The luminance node outputs to all channels equally, extract[0] is redundant
+                patterns.push({
+                    type: 'luminance_extract',
+                    outputNode: extractNode.name,
+                    luminanceNode: prevNode.name,
+                    nodesToRemove: [], // Don't remove luminance, just bypass extract
+                    replacement: null  // Will be handled as passthrough
+                });
+            }
+        }
+    }
+    return patterns;
+}
+
+/**
+ * Detect convert color3<->vector3 roundtrip: convert_color3_vector3 -> convert_vector3_color3
+ * This is a no-op and can be removed
+ */
+function _detectConvertRoundtripPattern(nodes, nodeMap) {
+    const patterns = [];
+    for (const node of nodes) {
+        if (node.category !== 'convert_vector3' && node.type !== 'ND_convert_vector3_color3') continue;
+        const inInput = _getInputInfo(node, 'in');
+        if (!inInput || inInput.type !== 'connection') continue;
+
+        const prevNode = nodeMap.get(inInput.nodename);
+        if (!prevNode) continue;
+
+        // Check if previous is color3 to vector3 conversion
+        if (prevNode.category === 'convert_color3' || prevNode.type === 'ND_convert_color3_vector3') {
+            const origInput = _getInputInfo(prevNode, 'in');
+            if (origInput?.type === 'connection') {
+                patterns.push({
+                    type: 'convert_roundtrip',
+                    outputNode: node.name,
+                    convertNode: prevNode.name,
+                    inputNode: origInput.nodename,
+                    nodesToRemove: [prevNode.name, node.name],
+                    passthrough: { nodename: origInput.nodename, output: origInput.output || 'out' }
+                });
+            }
+        }
+    }
+    return patterns;
+}
+
+/**
+ * Detect separate + combine passthrough pattern
+ * If extract_color3 feeds directly into combine3_color3 in RGB order, it's a no-op
+ */
+function _detectSeparateCombinePassthrough(nodes, nodeMap) {
+    const patterns = [];
+    for (const combineNode of nodes) {
+        if (combineNode.category !== 'combine3_color3') continue;
+
+        const in1 = _getInputInfo(combineNode, 'in1');
+        const in2 = _getInputInfo(combineNode, 'in2');
+        const in3 = _getInputInfo(combineNode, 'in3');
+
+        // All inputs must be connections
+        if (!in1?.nodename || !in2?.nodename || !in3?.nodename) continue;
+
+        const extract1 = nodeMap.get(in1.nodename);
+        const extract2 = nodeMap.get(in2.nodename);
+        const extract3 = nodeMap.get(in3.nodename);
+
+        // All must be extract_color3
+        if (extract1?.category !== 'extract_color3' ||
+            extract2?.category !== 'extract_color3' ||
+            extract3?.category !== 'extract_color3') continue;
+
+        // All must extract from the same source
+        const src1 = _getInputInfo(extract1, 'in');
+        const src2 = _getInputInfo(extract2, 'in');
+        const src3 = _getInputInfo(extract3, 'in');
+
+        if (!src1?.nodename || src1.nodename !== src2?.nodename || src1.nodename !== src3?.nodename) continue;
+
+        // Check indices are 0, 1, 2 (RGB order)
+        const idx1 = _getInputInfo(extract1, 'index');
+        const idx2 = _getInputInfo(extract2, 'index');
+        const idx3 = _getInputInfo(extract3, 'index');
+
+        if (idx1?.value === 0 && idx2?.value === 1 && idx3?.value === 2) {
+            patterns.push({
+                type: 'separate_combine_passthrough',
+                outputNode: combineNode.name,
+                extractNodes: [extract1.name, extract2.name, extract3.name],
+                inputNode: src1.nodename,
+                nodesToRemove: [extract1.name, extract2.name, extract3.name, combineNode.name],
+                passthrough: { nodename: src1.nodename, output: src1.output || 'out' }
+            });
+        }
+    }
+    return patterns;
+}
+
+/**
+ * Detect clamp with default values (0, 1) - common saturation pattern
+ */
+function _detectClampPattern(nodes, nodeMap) {
+    const patterns = [];
+    for (const node of nodes) {
+        if (node.category !== 'clamp_float' && node.category !== 'clamp_color3') continue;
+
+        const inInput = _getInputInfo(node, 'in');
+        const lowInput = _getInputInfo(node, 'low');
+        const highInput = _getInputInfo(node, 'high');
+
+        if (!inInput || inInput.type !== 'connection') continue;
+
+        // Check for clamp(x, 0, 1) - saturate pattern
+        const isLowZero = lowInput?.type === 'value' && (_isZero(lowInput.value) || _isBlack(lowInput.value));
+        const isHighOne = highInput?.type === 'value' && (_isOne(highInput.value) || _isWhite(highInput.value));
+
+        if (isLowZero && isHighOne) {
+            patterns.push({
+                type: 'saturate',
+                outputNode: node.name,
+                inputNode: inInput.nodename,
+                nodesToRemove: [],
+                replacement: {
+                    name: node.name,
+                    category: node.category === 'clamp_color3' ? 'saturate_color3' : 'saturate_float',
+                    type: node.category === 'clamp_color3' ? 'ND_saturate_color3' : 'ND_saturate_float',
+                    inputs: [{ name: 'in', nodename: inInput.nodename, output: 'out' }]
+                }
+            });
+        }
+    }
+    return patterns;
+}
+
+/**
+ * Detect geometry normal/tangent setup chain
+ * Blender exports: normal -> normalize -> tangent -> normalize -> rotate3d -> normalize
+ * This common pattern can be marked as a geometry setup block
+ */
+function _detectGeometrySetupPattern(nodes, nodeMap) {
+    const patterns = [];
+
+    // Find normal_vector3 nodes as starting points
+    for (const normalNode of nodes) {
+        if (normalNode.category !== 'normal_vector3') continue;
+
+        // Look for the chain: normal -> normalize
+        const normalRefs = nodes.filter(n =>
+            n.category === 'normalize_vector3' &&
+            _getInputInfo(n, 'in')?.nodename === normalNode.name
+        );
+
+        if (normalRefs.length === 0) continue;
+
+        // Found a geometry setup - mark the chain for potential optimization
+        // For now, we just detect it but don't modify (it's a useful pattern to preserve)
+        patterns.push({
+            type: 'geometry_setup',
+            normalNode: normalNode.name,
+            normalizeNodes: normalRefs.map(n => n.name),
+            nodesToRemove: [], // Don't remove, just mark
+            replacement: null
+        });
+    }
+
+    return patterns;
+}
+
+/**
  * Detect identity operations (multiply by 1, add 0, etc.)
  */
 function _detectIdentityOps(nodes, nodeMap) {
@@ -1308,8 +1526,31 @@ function _detectIdentityOps(nodes, nodeMap) {
         if (node.category === 'mix_color3' || node.category === 'mix_float') {
             const mixInput = _getInputInfo(node, 'mix');
             const bgInput = _getInputInfo(node, 'bg');
+            const fgInput = _getInputInfo(node, 'fg');
+            // mix=0: use bg only
             if (mixInput?.type === 'value' && _isZero(mixInput.value) && bgInput?.type === 'connection') {
                 isIdentity = true; inputConnection = bgInput;
+            }
+            // mix=1: use fg only
+            else if (mixInput?.type === 'value' && _isOne(mixInput.value) && fgInput?.type === 'connection') {
+                isIdentity = true; inputConnection = fgInput;
+            }
+        }
+        // divide by 1
+        if (node.category === 'divide_color3' || node.category === 'divide_float') {
+            const in1 = _getInputInfo(node, 'in1');
+            const in2 = _getInputInfo(node, 'in2');
+            if (in1?.type === 'connection' && in2?.type === 'value' && (_isOne(in2.value) || _isWhite(in2.value))) {
+                isIdentity = true; inputConnection = in1;
+            }
+        }
+        // clamp where input is already in range (rare but possible)
+        // rotate3d with amount=0
+        if (node.category === 'rotate3d_vector3') {
+            const amount = _getInputInfo(node, 'amount');
+            const inInput = _getInputInfo(node, 'in');
+            if (amount?.type === 'value' && _isZero(amount.value) && inInput?.type === 'connection') {
+                isIdentity = true; inputConnection = inInput;
             }
         }
 
@@ -1331,16 +1572,42 @@ function _applyPatternOptimizations(nodeGraph, patterns, identities) {
 
     const nodesToRemove = new Set();
     const replacements = new Map();
+    const passthroughMap = new Map();
 
+    // Process patterns
     for (const pattern of patterns) {
-        for (const name of pattern.nodesToRemove) nodesToRemove.add(name);
-        replacements.set(pattern.outputNode, pattern.replacement);
+        // Add nodes to remove
+        if (pattern.nodesToRemove) {
+            for (const name of pattern.nodesToRemove) nodesToRemove.add(name);
+        }
+        // Add replacement if exists
+        if (pattern.replacement) {
+            replacements.set(pattern.outputNode, pattern.replacement);
+        }
+        // Handle passthrough patterns (like convert roundtrip, separate+combine)
+        if (pattern.passthrough) {
+            passthroughMap.set(pattern.outputNode, pattern.passthrough);
+            nodesToRemove.add(pattern.outputNode);
+        }
     }
 
-    const passthroughMap = new Map();
+    // Process identity operations
     for (const identity of identities) {
         passthroughMap.set(identity.node, { nodename: identity.passthrough, output: identity.output });
         nodesToRemove.add(identity.node);
+    }
+
+    // Resolve chained passthroughs (A->B->C becomes A->C)
+    let changed = true;
+    while (changed) {
+        changed = false;
+        for (const [node, target] of passthroughMap) {
+            if (passthroughMap.has(target.nodename)) {
+                const finalTarget = passthroughMap.get(target.nodename);
+                passthroughMap.set(node, finalTarget);
+                changed = true;
+            }
+        }
     }
 
     const newNodes = [];
@@ -1348,7 +1615,7 @@ function _applyPatternOptimizations(nodeGraph, patterns, identities) {
         if (nodesToRemove.has(node.name) && !replacements.has(node.name)) continue;
 
         let newNode = replacements.get(node.name) || { ...node };
-        if (newNode.inputs) {
+        if (newNode && newNode.inputs) {
             newNode.inputs = newNode.inputs.map(input => {
                 if (input.nodename && passthroughMap.has(input.nodename)) {
                     const pt = passthroughMap.get(input.nodename);
@@ -1357,7 +1624,7 @@ function _applyPatternOptimizations(nodeGraph, patterns, identities) {
                 return input;
             });
         }
-        newNodes.push(newNode);
+        if (newNode) newNodes.push(newNode);
     }
 
     const newOutputs = (ng.outputs || []).map(output => {
@@ -1372,7 +1639,7 @@ function _applyPatternOptimizations(nodeGraph, patterns, identities) {
         ...nodeGraph,
         nodegraph: { ...ng, nodes: newNodes, outputs: newOutputs },
         optimizationInfo: {
-            patternsApplied: patterns.map(p => p.type),
+            patternsApplied: patterns.filter(p => p.nodesToRemove?.length > 0 || p.replacement).map(p => p.type),
             identitiesRemoved: identities.length,
             nodesRemoved: nodesToRemove.size,
             originalNodeCount: nodes.length,
@@ -1401,7 +1668,13 @@ function optimizeNodeGraph(nodeGraph, level = NodeGraphOptimizationLevel.STANDAR
         patterns = [
             ..._detectInvertPattern(nodes, nodeMap),
             ..._detectBrightnessContrastPattern(nodes, nodeMap),
-            ..._detectHSVAdjustPattern(nodes, nodeMap)
+            ..._detectHSVAdjustPattern(nodes, nodeMap),
+            ..._detectChainedNormalizePattern(nodes, nodeMap),
+            ..._detectLuminanceExtractPattern(nodes, nodeMap),
+            ..._detectConvertRoundtripPattern(nodes, nodeMap),
+            ..._detectSeparateCombinePassthrough(nodes, nodeMap),
+            ..._detectClampPattern(nodes, nodeMap),
+            ..._detectGeometrySetupPattern(nodes, nodeMap)
         ];
     }
 
@@ -1424,28 +1697,51 @@ function analyzeNodeGraph(nodeGraph) {
     const nodes = nodeGraph.nodegraph.nodes || [];
     const nodeMap = _buildNodeMap(nodes);
 
+    // Detect all patterns
     const invertPatterns = _detectInvertPattern(nodes, nodeMap);
     const bcPatterns = _detectBrightnessContrastPattern(nodes, nodeMap);
     const hsvPatterns = _detectHSVAdjustPattern(nodes, nodeMap);
+    const chainedNormalizePatterns = _detectChainedNormalizePattern(nodes, nodeMap);
+    const luminanceExtractPatterns = _detectLuminanceExtractPattern(nodes, nodeMap);
+    const convertRoundtripPatterns = _detectConvertRoundtripPattern(nodes, nodeMap);
+    const separateCombinePatterns = _detectSeparateCombinePassthrough(nodes, nodeMap);
+    const clampPatterns = _detectClampPattern(nodes, nodeMap);
+    const geometrySetupPatterns = _detectGeometrySetupPattern(nodes, nodeMap);
     const identities = _detectIdentityOps(nodes, nodeMap);
 
     const allNodesToRemove = new Set([
         ...invertPatterns.flatMap(p => p.nodesToRemove),
         ...bcPatterns.flatMap(p => p.nodesToRemove),
         ...hsvPatterns.flatMap(p => p.nodesToRemove),
+        ...chainedNormalizePatterns.flatMap(p => p.nodesToRemove),
+        ...luminanceExtractPatterns.flatMap(p => p.nodesToRemove),
+        ...convertRoundtripPatterns.flatMap(p => p.nodesToRemove),
+        ...separateCombinePatterns.flatMap(p => p.nodesToRemove),
+        ...clampPatterns.flatMap(p => p.nodesToRemove),
+        ...geometrySetupPatterns.flatMap(p => p.nodesToRemove),
         ...identities.map(i => i.node)
     ]);
+
+    const totalPatterns = invertPatterns.length + bcPatterns.length + hsvPatterns.length +
+        chainedNormalizePatterns.length + luminanceExtractPatterns.length + convertRoundtripPatterns.length +
+        separateCombinePatterns.length + clampPatterns.length + geometrySetupPatterns.length;
 
     return {
         totalNodes: nodes.length,
         patterns: {
             invert: invertPatterns.map(p => ({ outputNode: p.outputNode, inputNode: p.inputNode, factor: p.factor })),
             brightnessContrast: bcPatterns.map(p => ({ outputNode: p.outputNode, inputNode: p.inputNode, brightness: p.brightness, contrast: p.contrast })),
-            hsvAdjust: hsvPatterns.map(p => ({ outputNode: p.outputNode, inputNode: p.inputNode, hue: p.hue, saturation: p.saturation, value: p.value }))
+            hsvAdjust: hsvPatterns.map(p => ({ outputNode: p.outputNode, inputNode: p.inputNode, hue: p.hue, saturation: p.saturation, value: p.value })),
+            chainedNormalize: chainedNormalizePatterns.map(p => ({ outputNode: p.outputNode, chainLength: p.chainLength })),
+            luminanceExtract: luminanceExtractPatterns.map(p => ({ outputNode: p.outputNode, inputNode: p.inputNode })),
+            convertRoundtrip: convertRoundtripPatterns.map(p => ({ outputNode: p.outputNode, inputNode: p.inputNode })),
+            separateCombine: separateCombinePatterns.map(p => ({ outputNode: p.outputNode, inputNode: p.inputNode })),
+            clamp: clampPatterns.map(p => ({ outputNode: p.outputNode, isDefaultRange: p.isDefaultRange })),
+            geometrySetup: geometrySetupPatterns.map(p => ({ outputNode: p.outputNode, mergedCount: p.mergedCount }))
         },
         identityOps: identities,
         potentialReduction: {
-            patternsFound: invertPatterns.length + bcPatterns.length + hsvPatterns.length,
+            patternsFound: totalPatterns,
             identitiesFound: identities.length,
             nodesRemovable: allNodesToRemove.size
         }
