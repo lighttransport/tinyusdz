@@ -1008,7 +1008,7 @@ async function loadUSDModel() {
 	await loader.init({ useZstdCompressedWasm: false, useMemory64: false });
 
 	// Default USD file to load
-	const usd_filename = "./assets/AnimFinal_LowRes.usdz";
+	const usd_filename = "./assets/skintest-anim.usda";
 
 	console.log(`Loading USD file: ${usd_filename}`);
 
