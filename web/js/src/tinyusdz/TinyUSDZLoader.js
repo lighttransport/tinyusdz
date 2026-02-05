@@ -58,20 +58,30 @@ class FileFetcher {
         throw new Error(`Failed to read file: ${url} - ${error.message}`);
       }
     } else {
-      // Browser environment or blob URL - use fetch API and convert to File
-      const response = await fetch(url);
-      if (!response.ok) {
-        throw new Error(`Failed to fetch: ${response.statusText}`);
-      }
+      // Browser environment or blob URL - use XMLHttpRequest for better large file handling
+      return new Promise((resolve, reject) => {
+        const xhr = new XMLHttpRequest();
+        xhr.open('GET', url, true);
+        xhr.responseType = 'arraybuffer';
 
-      const blob = await response.blob();
-      const fileName = url.split('/').pop() || 'unknown';
-      const file = new File([blob], fileName, {
-        type: blob.type || 'application/octet-stream',
-        lastModified: Date.now()
+        xhr.onload = function() {
+          if (xhr.status === 200 || xhr.status === 206) {
+            const arrayBuffer = xhr.response;
+            // Return object with arrayBuffer method for consistency
+            resolve({
+              arrayBuffer: async () => arrayBuffer
+            });
+          } else {
+            reject(new Error(`Failed to fetch: ${xhr.statusText}`));
+          }
+        };
+
+        xhr.onerror = function() {
+          reject(new Error(`Network error fetching: ${url}`));
+        };
+
+        xhr.send();
       });
-
-      return file;
     }
   }
 }
@@ -85,8 +95,13 @@ class FetchAssetResolver {
 
     async resolveAsync(uri) {
         try {
-            const response = await fetch(uri);
-            if (!response.ok) {
+            const response = await fetch(uri, {
+                cache: 'no-store',
+                headers: {
+                    'Accept': '*/*',
+                }
+            });
+            if (!response.ok && response.status !== 206) {
                 throw new Error(`Failed to fetch asset: ${uri}`);
             }
             const data = await response.arrayBuffer();
