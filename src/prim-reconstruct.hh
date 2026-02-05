@@ -17,6 +17,14 @@ namespace prim {
 struct PrimReconstructOptions
 {
   bool strict_allowedToken_check{false};
+
+  // MaterialX validation options
+  bool validate_mtlx_connection_types{false};
+  bool validate_mtlx_info_id{false};
+  bool validate_mtlx_connection_targets{false};
+  bool validate_mtlx_duplicate_names{false};
+  bool validate_mtlx_index_bounds{false};
+  bool strict_mtlx_check{false};  // Enable all above
 };
 
 

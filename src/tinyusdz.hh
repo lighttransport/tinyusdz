@@ -112,7 +112,41 @@ struct USDLoadOptions {
   /// apiSchema
   ///
   bool strict_apiSchema_check{false}; // Make parse error when unknown apiSchema
-  
+
+  // ==========================================================================
+  // MaterialX Validation Options
+  // ==========================================================================
+
+  ///
+  /// Validate MaterialX connection types (e.g., color3f output to float input)
+  ///
+  bool validate_mtlx_connection_types{false};
+
+  ///
+  /// Validate MaterialX info:id against known shader definitions
+  ///
+  bool validate_mtlx_info_id{false};
+
+  ///
+  /// Validate MaterialX connection targets exist
+  ///
+  bool validate_mtlx_connection_targets{false};
+
+  ///
+  /// Check for duplicate prim names within a scope (e.g., NodeGraph)
+  ///
+  bool validate_mtlx_duplicate_names{false};
+
+  ///
+  /// Validate extract/combine index bounds (0-2 for color3/vector3)
+  ///
+  bool validate_mtlx_index_bounds{false};
+
+  ///
+  /// Enable all MaterialX validation options at once
+  ///
+  bool strict_mtlx_check{false};
+
   ///
   /// User-defined fileformat hander.
   /// key = file(asset) extension(`.` excluded. example: 'mtlx', 'obj').
