@@ -642,7 +642,8 @@ function createWeightVisualizationMaterial() {
  */
 function createJointSpheres(bones) {
 	const spheres = [];
-	const geometry = new THREE.SphereGeometry(0.05, 16, 16);
+	// Use larger sphere radius (0.1) for better visibility
+	const geometry = new THREE.SphereGeometry(0.1, 16, 16);
 
 	bones.forEach((bone, index) => {
 		const material = new THREE.MeshStandardMaterial({
@@ -1246,10 +1247,11 @@ async function processUSDScene(usd_scene, loader, filename) {
 				originalMaterial = skinnedMesh.material;
 
 				// Create skeleton helper for visualization
-				// Note: Add to scene (not usdSceneRoot) since SkeletonHelper uses world positions
+				// Add to scene (not usdSceneRoot) since SkeletonHelper uses bone world positions
+				// which already include the Z-up to Y-up rotation from usdSceneRoot
 				skeletonHelper = new THREE.SkeletonHelper(skinnedMesh);
 				skeletonHelper.visible = animationParams.showSkeleton;
-				usdSceneRoot.add(skeletonHelper);
+				scene.add(skeletonHelper);
 
 				// Create joint spheres
 				jointSpheres = createJointSpheres(bones);
@@ -1414,9 +1416,10 @@ async function processUSDScene(usd_scene, loader, filename) {
 			// Save original material
 			originalMaterial = skinnedMesh.material;
 
+			// Add to scene (not usdSceneRoot) since SkeletonHelper uses bone world positions
 			skeletonHelper = new THREE.SkeletonHelper(skinnedMesh);
 			skeletonHelper.visible = animationParams.showSkeleton;
-			usdSceneRoot.add(skeletonHelper);
+			scene.add(skeletonHelper);
 
 			// Create joint spheres
 			jointSpheres = createJointSpheres(bones);
