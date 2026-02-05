@@ -462,6 +462,7 @@ static bool WriteMaterialXToString(const MtlxUsdPreviewSurface &shader,
                                    const std::string &shader_name,
                                    const std::vector<MtlxShaderConnection> &connections,
                                    const std::map<std::string, PrimSpec> &nodegraphs,
+                                   const std::string &colorspace,
                                    std::string &xml_str, std::string *warn,
                                    std::string *err) {
   (void)warn;
@@ -469,9 +470,11 @@ static bool WriteMaterialXToString(const MtlxUsdPreviewSurface &shader,
   std::stringstream ss;
 
   std::string node_name = shader_name.empty() ? "SR_default" : shader_name;
+  // Use provided colorspace or default to lin_rec709
+  std::string cs = colorspace.empty() ? "lin_rec709" : colorspace;
 
   ss << "<?xml version=\"1.0\"?>\n";
-  ss << "<materialx version=\"1.38\" colorspace=\"lin_rec709\">\n";
+  ss << "<materialx version=\"1.38\" colorspace=\"" << cs << "\">\n";
 
   // Serialize nodegraphs first
   if (!nodegraphs.empty()) {
@@ -557,6 +560,7 @@ static bool WriteMaterialXToString(const MtlxAutodeskStandardSurface &shader,
                                    const std::string &shader_name,
                                    const std::vector<MtlxShaderConnection> &connections,
                                    const std::map<std::string, PrimSpec> &nodegraphs,
+                                   const std::string &colorspace,
                                    std::string &xml_str, std::string *warn,
                                    std::string *err) {
   (void)warn;
@@ -564,9 +568,11 @@ static bool WriteMaterialXToString(const MtlxAutodeskStandardSurface &shader,
   std::stringstream ss;
 
   std::string node_name = shader_name.empty() ? "SR_default" : shader_name;
+  // Use provided colorspace or default to lin_rec709
+  std::string cs = colorspace.empty() ? "lin_rec709" : colorspace;
 
   ss << "<?xml version=\"1.0\"?>\n";
-  ss << "<materialx version=\"1.38\" colorspace=\"lin_rec709\">\n";
+  ss << "<materialx version=\"1.38\" colorspace=\"" << cs << "\">\n";
 
   // Serialize nodegraphs first
   if (!nodegraphs.empty()) {
@@ -705,6 +711,7 @@ static bool WriteMaterialXToString(const MtlxOpenPBRSurface &shader,
                                    const std::string &shader_name,
                                    const std::vector<MtlxShaderConnection> &connections,
                                    const std::map<std::string, PrimSpec> &nodegraphs,
+                                   const std::string &colorspace,
                                    std::string &xml_str, std::string *warn,
                                    std::string *err) {
   (void)warn;
@@ -712,9 +719,11 @@ static bool WriteMaterialXToString(const MtlxOpenPBRSurface &shader,
   std::stringstream ss;
 
   std::string node_name = shader_name.empty() ? "SR_default" : shader_name;
+  // Use provided colorspace or default to lin_rec709
+  std::string cs = colorspace.empty() ? "lin_rec709" : colorspace;
 
   ss << "<?xml version=\"1.0\"?>\n";
-  ss << "<materialx version=\"1.38\" colorspace=\"lin_rec709\">\n";
+  ss << "<materialx version=\"1.38\" colorspace=\"" << cs << "\">\n";
 
   // Serialize nodegraphs first
   if (!nodegraphs.empty()) {
@@ -2843,18 +2852,18 @@ bool WriteMaterialXToString(const MtlxModel &mtlx, std::string &xml_str,
 
   // OpenPBR is the primary active path (used by Blender exports)
   if (auto openpbr = mtlx.shader.as<MtlxOpenPBRSurface>()) {
-    return detail::WriteMaterialXToString(*openpbr, shader_name, connections, mtlx.nodegraphs, xml_str, warn, err);
+    return detail::WriteMaterialXToString(*openpbr, shader_name, connections, mtlx.nodegraphs, mtlx.color_space, xml_str, warn, err);
   }
 
 #if TINYUSDZ_MTLX_ENABLE_USDPREVIEWSURFACE_EXPORT
   if (auto usdps = mtlx.shader.as<MtlxUsdPreviewSurface>()) {
-    return detail::WriteMaterialXToString(*usdps, shader_name, connections, mtlx.nodegraphs, xml_str, warn, err);
+    return detail::WriteMaterialXToString(*usdps, shader_name, connections, mtlx.nodegraphs, mtlx.color_space, xml_str, warn, err);
   }
 #endif
 
 #if TINYUSDZ_MTLX_ENABLE_STANDARDSURFACE_EXPORT
   if (auto adskss = mtlx.shader.as<MtlxAutodeskStandardSurface>()) {
-    return detail::WriteMaterialXToString(*adskss, shader_name, connections, mtlx.nodegraphs, xml_str, warn, err);
+    return detail::WriteMaterialXToString(*adskss, shader_name, connections, mtlx.nodegraphs, mtlx.color_space, xml_str, warn, err);
   }
 #endif
 
