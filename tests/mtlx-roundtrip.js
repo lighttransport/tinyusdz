@@ -1160,6 +1160,623 @@ def Xform "root"
 }
 
 // ============================================================================
+// Negative Test Generation (Error Cases)
+// ============================================================================
+
+/**
+ * Error test case definitions
+ *
+ * Note: Many cases are marked as expectError: false because the parser is lenient.
+ * These test cases document current parser behavior - NOT ideal validation.
+ * Cases marked with "// LENIENT" indicate areas where stricter validation could be added.
+ */
+const ERROR_TEST_CASES = [
+  {
+    name: 'type_mismatch_color_to_float',
+    description: 'Connect color3f output to float input',
+    expectError: false,  // LENIENT: Parser accepts type mismatches on connections
+    note: 'Parser is lenient - does not validate connection types at parse time',
+    usda: `#usda 1.0
+(
+    defaultPrim = "root"
+)
+
+def Xform "root"
+{
+    def Scope "mtl"
+    {
+        def Material "TestMaterial" (
+            prepend apiSchemas = ["MaterialXConfigAPI"]
+        )
+        {
+            string config:mtlx:version = "1.38"
+            token outputs:mtlx:surface.connect = </root/mtl/TestMaterial/OpenPBRShader.outputs:out>
+
+            def Shader "OpenPBRShader"
+            {
+                uniform token info:id = "ND_open_pbr_surface_surfaceshader"
+                color3f inputs:base_color = (0.5, 0.5, 0.5)
+                float inputs:base_metalness.connect = </root/mtl/TestMaterial/NodeGraph/ColorNode.outputs:out>
+                token outputs:out
+            }
+
+            def NodeGraph "NodeGraph"
+            {
+                def Shader "ColorNode"
+                {
+                    uniform token info:id = "ND_constant_color3"
+                    color3f inputs:value = (1.0, 0.0, 0.0)
+                    color3f outputs:out
+                }
+            }
+        }
+    }
+}
+`
+  },
+  {
+    name: 'invalid_info_id',
+    description: 'Invalid info:id that does not exist',
+    expectError: false,  // LENIENT: Parser accepts any info:id string
+    note: 'Parser does not validate info:id against known shader definitions',
+    usda: `#usda 1.0
+(
+    defaultPrim = "root"
+)
+
+def Xform "root"
+{
+    def Scope "mtl"
+    {
+        def Material "TestMaterial" (
+            prepend apiSchemas = ["MaterialXConfigAPI"]
+        )
+        {
+            string config:mtlx:version = "1.38"
+            token outputs:mtlx:surface.connect = </root/mtl/TestMaterial/OpenPBRShader.outputs:out>
+
+            def Shader "OpenPBRShader"
+            {
+                uniform token info:id = "ND_nonexistent_shader_type"
+                color3f inputs:base_color = (0.5, 0.5, 0.5)
+                token outputs:out
+            }
+        }
+    }
+}
+`
+  },
+  {
+    name: 'missing_required_connection',
+    description: 'NodeGraph output with dangling connection',
+    expectError: false,  // LENIENT: Parser accepts dangling connections
+    note: 'Parser does not validate connection targets at parse time',
+    usda: `#usda 1.0
+(
+    defaultPrim = "root"
+)
+
+def Xform "root"
+{
+    def Scope "mtl"
+    {
+        def Material "TestMaterial" (
+            prepend apiSchemas = ["MaterialXConfigAPI"]
+        )
+        {
+            string config:mtlx:version = "1.38"
+            token outputs:mtlx:surface.connect = </root/mtl/TestMaterial/OpenPBRShader.outputs:out>
+
+            def Shader "OpenPBRShader"
+            {
+                uniform token info:id = "ND_open_pbr_surface_surfaceshader"
+                color3f inputs:base_color.connect = </root/mtl/TestMaterial/NodeGraph/NonExistentNode.outputs:out>
+                token outputs:out
+            }
+
+            def NodeGraph "NodeGraph"
+            {
+                def Shader "ActualNode"
+                {
+                    uniform token info:id = "ND_constant_color3"
+                    color3f inputs:value = (1.0, 0.0, 0.0)
+                    color3f outputs:out
+                }
+            }
+        }
+    }
+}
+`
+  },
+  {
+    name: 'wrong_output_type_declaration',
+    description: 'Output type does not match node type',
+    expectError: false,  // LENIENT: Parser accepts declared types without validation
+    note: 'Parser does not verify output type matches node definition',
+    usda: `#usda 1.0
+(
+    defaultPrim = "root"
+)
+
+def Xform "root"
+{
+    def Scope "mtl"
+    {
+        def Material "TestMaterial" (
+            prepend apiSchemas = ["MaterialXConfigAPI"]
+        )
+        {
+            string config:mtlx:version = "1.38"
+            token outputs:mtlx:surface.connect = </root/mtl/TestMaterial/OpenPBRShader.outputs:out>
+
+            def Shader "OpenPBRShader"
+            {
+                uniform token info:id = "ND_open_pbr_surface_surfaceshader"
+                color3f inputs:base_color.connect = </root/mtl/TestMaterial/NodeGraph/WrongType.outputs:out>
+                token outputs:out
+            }
+
+            def NodeGraph "NodeGraph"
+            {
+                color3f outputs:out.connect = </root/mtl/TestMaterial/NodeGraph/WrongType.outputs:out>
+
+                def Shader "WrongType"
+                {
+                    uniform token info:id = "ND_constant_float"
+                    float inputs:value = 0.5
+                    float outputs:out
+                }
+            }
+        }
+    }
+}
+`
+  },
+  {
+    name: 'circular_connection',
+    description: 'Node connected to itself (circular reference)',
+    expectError: false,  // LENIENT: Parser does not detect cycles
+    note: 'Cycle detection would require graph traversal during parsing',
+    usda: `#usda 1.0
+(
+    defaultPrim = "root"
+)
+
+def Xform "root"
+{
+    def Scope "mtl"
+    {
+        def Material "TestMaterial" (
+            prepend apiSchemas = ["MaterialXConfigAPI"]
+        )
+        {
+            string config:mtlx:version = "1.38"
+            token outputs:mtlx:surface.connect = </root/mtl/TestMaterial/OpenPBRShader.outputs:out>
+
+            def Shader "OpenPBRShader"
+            {
+                uniform token info:id = "ND_open_pbr_surface_surfaceshader"
+                color3f inputs:base_color.connect = </root/mtl/TestMaterial/NodeGraph/Circular.outputs:out>
+                token outputs:out
+            }
+
+            def NodeGraph "NodeGraph"
+            {
+                color3f outputs:out.connect = </root/mtl/TestMaterial/NodeGraph/Circular.outputs:out>
+
+                def Shader "Circular"
+                {
+                    uniform token info:id = "ND_add_color3"
+                    color3f inputs:in1.connect = </root/mtl/TestMaterial/NodeGraph/Circular.outputs:out>
+                    color3f inputs:in2 = (0.1, 0.1, 0.1)
+                    color3f outputs:out
+                }
+            }
+        }
+    }
+}
+`
+  },
+  {
+    name: 'invalid_input_value_format',
+    description: 'Color3 value with wrong number of components',
+    expectError: true,
+    errorPattern: /invalid|parse|format|component/i,
+    usda: `#usda 1.0
+(
+    defaultPrim = "root"
+)
+
+def Xform "root"
+{
+    def Scope "mtl"
+    {
+        def Material "TestMaterial" (
+            prepend apiSchemas = ["MaterialXConfigAPI"]
+        )
+        {
+            string config:mtlx:version = "1.38"
+            token outputs:mtlx:surface.connect = </root/mtl/TestMaterial/OpenPBRShader.outputs:out>
+
+            def Shader "OpenPBRShader"
+            {
+                uniform token info:id = "ND_open_pbr_surface_surfaceshader"
+                color3f inputs:base_color = (0.5, 0.5)
+                token outputs:out
+            }
+        }
+    }
+}
+`
+  },
+  {
+    name: 'wrong_variability_timesample',
+    description: 'TimeSample on uniform attribute',
+    expectError: false,  // LENIENT: Parser accepts this syntax even though it's semantically wrong
+    note: 'Variability violation not checked at parse time',
+    usda: `#usda 1.0
+(
+    defaultPrim = "root"
+)
+
+def Xform "root"
+{
+    def Scope "mtl"
+    {
+        def Material "TestMaterial" (
+            prepend apiSchemas = ["MaterialXConfigAPI"]
+        )
+        {
+            string config:mtlx:version = "1.38"
+            token outputs:mtlx:surface.connect = </root/mtl/TestMaterial/OpenPBRShader.outputs:out>
+
+            def Shader "OpenPBRShader"
+            {
+                uniform token info:id = "ND_open_pbr_surface_surfaceshader"
+                uniform token info:id.timeSamples = {
+                    0: "ND_open_pbr_surface_surfaceshader",
+                    1: "ND_standard_surface_surfaceshader"
+                }
+                color3f inputs:base_color = (0.5, 0.5, 0.5)
+                token outputs:out
+            }
+        }
+    }
+}
+`
+  },
+  {
+    name: 'negative_index_extract',
+    description: 'Extract node with negative index',
+    expectError: false,  // LENIENT: Parser accepts any integer value
+    expectWarn: false,   // No specific warning for index validation
+    note: 'Index validation would need to be runtime or semantic validation',
+    usda: `#usda 1.0
+(
+    defaultPrim = "root"
+)
+
+def Xform "root"
+{
+    def Scope "mtl"
+    {
+        def Material "TestMaterial" (
+            prepend apiSchemas = ["MaterialXConfigAPI"]
+        )
+        {
+            string config:mtlx:version = "1.38"
+            token outputs:mtlx:surface.connect = </root/mtl/TestMaterial/OpenPBRShader.outputs:out>
+
+            def Shader "OpenPBRShader"
+            {
+                uniform token info:id = "ND_open_pbr_surface_surfaceshader"
+                color3f inputs:base_color = (0.5, 0.5, 0.5)
+                token outputs:out
+            }
+
+            def NodeGraph "NodeGraph"
+            {
+                float outputs:out.connect = </root/mtl/TestMaterial/NodeGraph/ExtractNode.outputs:out>
+
+                def Shader "ExtractNode"
+                {
+                    uniform token info:id = "ND_extract_color3"
+                    color3f inputs:in = (1.0, 0.5, 0.25)
+                    int inputs:index = -1
+                    float outputs:out
+                }
+            }
+        }
+    }
+}
+`
+  },
+  {
+    name: 'out_of_range_index_extract',
+    description: 'Extract node with index > 2 for color3',
+    expectError: false,  // LENIENT: Parser accepts any integer value
+    expectWarn: false,   // No specific warning for bounds validation
+    note: 'Bounds checking would need to be runtime or semantic validation',
+    usda: `#usda 1.0
+(
+    defaultPrim = "root"
+)
+
+def Xform "root"
+{
+    def Scope "mtl"
+    {
+        def Material "TestMaterial" (
+            prepend apiSchemas = ["MaterialXConfigAPI"]
+        )
+        {
+            string config:mtlx:version = "1.38"
+            token outputs:mtlx:surface.connect = </root/mtl/TestMaterial/OpenPBRShader.outputs:out>
+
+            def Shader "OpenPBRShader"
+            {
+                uniform token info:id = "ND_open_pbr_surface_surfaceshader"
+                color3f inputs:base_color = (0.5, 0.5, 0.5)
+                token outputs:out
+            }
+
+            def NodeGraph "NodeGraph"
+            {
+                float outputs:out.connect = </root/mtl/TestMaterial/NodeGraph/ExtractNode.outputs:out>
+
+                def Shader "ExtractNode"
+                {
+                    uniform token info:id = "ND_extract_color3"
+                    color3f inputs:in = (1.0, 0.5, 0.25)
+                    int inputs:index = 5
+                    float outputs:out
+                }
+            }
+        }
+    }
+}
+`
+  },
+  {
+    name: 'empty_nodegraph',
+    description: 'NodeGraph with no nodes',
+    expectError: false,
+    expectWarn: false,  // Empty NodeGraph should be valid
+    usda: `#usda 1.0
+(
+    defaultPrim = "root"
+)
+
+def Xform "root"
+{
+    def Scope "mtl"
+    {
+        def Material "TestMaterial" (
+            prepend apiSchemas = ["MaterialXConfigAPI"]
+        )
+        {
+            string config:mtlx:version = "1.38"
+            token outputs:mtlx:surface.connect = </root/mtl/TestMaterial/OpenPBRShader.outputs:out>
+
+            def Shader "OpenPBRShader"
+            {
+                uniform token info:id = "ND_open_pbr_surface_surfaceshader"
+                color3f inputs:base_color = (0.5, 0.5, 0.5)
+                token outputs:out
+            }
+
+            def NodeGraph "EmptyNodeGraph"
+            {
+            }
+        }
+    }
+}
+`
+  },
+  {
+    name: 'duplicate_node_names',
+    description: 'Two nodes with the same name in NodeGraph',
+    expectError: false,  // LENIENT: Parser accepts duplicates (second may override first)
+    note: 'Duplicate prim names could cause undefined behavior at render time',
+    usda: `#usda 1.0
+(
+    defaultPrim = "root"
+)
+
+def Xform "root"
+{
+    def Scope "mtl"
+    {
+        def Material "TestMaterial" (
+            prepend apiSchemas = ["MaterialXConfigAPI"]
+        )
+        {
+            string config:mtlx:version = "1.38"
+            token outputs:mtlx:surface.connect = </root/mtl/TestMaterial/OpenPBRShader.outputs:out>
+
+            def Shader "OpenPBRShader"
+            {
+                uniform token info:id = "ND_open_pbr_surface_surfaceshader"
+                color3f inputs:base_color = (0.5, 0.5, 0.5)
+                token outputs:out
+            }
+
+            def NodeGraph "NodeGraph"
+            {
+                def Shader "DuplicateName"
+                {
+                    uniform token info:id = "ND_constant_color3"
+                    color3f inputs:value = (1.0, 0.0, 0.0)
+                    color3f outputs:out
+                }
+
+                def Shader "DuplicateName"
+                {
+                    uniform token info:id = "ND_constant_color3"
+                    color3f inputs:value = (0.0, 1.0, 0.0)
+                    color3f outputs:out
+                }
+            }
+        }
+    }
+}
+`
+  },
+  {
+    name: 'mismatched_connection_types',
+    description: 'Float node connected to color3 input via NodeGraph',
+    expectError: false,  // LENIENT: Parser accepts type mismatches
+    note: 'Type checking on connections would catch this but is not done at parse time',
+    usda: `#usda 1.0
+(
+    defaultPrim = "root"
+)
+
+def Xform "root"
+{
+    def Scope "mtl"
+    {
+        def Material "TestMaterial" (
+            prepend apiSchemas = ["MaterialXConfigAPI"]
+        )
+        {
+            string config:mtlx:version = "1.38"
+            token outputs:mtlx:surface.connect = </root/mtl/TestMaterial/OpenPBRShader.outputs:out>
+
+            def Shader "OpenPBRShader"
+            {
+                uniform token info:id = "ND_open_pbr_surface_surfaceshader"
+                color3f inputs:base_color.connect = </root/mtl/TestMaterial/NodeGraph/MixNode.outputs:out>
+                token outputs:out
+            }
+
+            def NodeGraph "NodeGraph"
+            {
+                color3f outputs:out.connect = </root/mtl/TestMaterial/NodeGraph/MixNode.outputs:out>
+
+                def Shader "FloatNode"
+                {
+                    uniform token info:id = "ND_constant_float"
+                    float inputs:value = 0.5
+                    float outputs:out
+                }
+
+                def Shader "MixNode"
+                {
+                    uniform token info:id = "ND_mix_color3"
+                    color3f inputs:fg.connect = </root/mtl/TestMaterial/NodeGraph/FloatNode.outputs:out>
+                    color3f inputs:bg = (0.0, 0.0, 1.0)
+                    float inputs:mix = 0.5
+                    color3f outputs:out
+                }
+            }
+        }
+    }
+}
+`
+  }
+];
+
+/**
+ * Generate error test files
+ */
+function generateErrorTests(outputDir) {
+  const generated = [];
+
+  if (!fs.existsSync(outputDir)) {
+    fs.mkdirSync(outputDir, { recursive: true });
+  }
+
+  for (const testCase of ERROR_TEST_CASES) {
+    const filename = path.join(outputDir, `error_${testCase.name}.usda`);
+    fs.writeFileSync(filename, testCase.usda);
+    generated.push({
+      file: filename,
+      ...testCase
+    });
+  }
+
+  return generated;
+}
+
+/**
+ * Test error case - verify parser handles it correctly
+ */
+function testErrorCase(testCase, options) {
+  const result = {
+    file: testCase.file,
+    name: testCase.name,
+    description: testCase.description,
+    expectError: testCase.expectError,
+    expectWarn: testCase.expectWarn,
+    status: 'unknown',
+    actualError: null,
+    actualWarn: null,
+    correct: false,
+    message: ''
+  };
+
+  try {
+    const output = execSync(`"${options.tusdcat}" "${testCase.file}" 2>&1`, {
+      encoding: 'utf-8',
+      maxBuffer: 10 * 1024 * 1024,
+      timeout: options.timeout || 30000
+    });
+
+    // No error thrown - command succeeded
+    result.actualError = null;
+    result.actualWarn = output.includes('WARN') ? output : null;
+
+    if (testCase.expectError) {
+      // We expected an error but didn't get one
+      result.status = 'unexpected_success';
+      result.correct = false;
+      result.message = 'Expected error but parsing succeeded';
+    } else if (testCase.expectWarn) {
+      // Check if warning matches expected pattern
+      if (testCase.warnPattern && result.actualWarn) {
+        result.correct = testCase.warnPattern.test(result.actualWarn);
+        result.status = result.correct ? 'correct_warn' : 'wrong_warn';
+        result.message = result.correct ? 'Warning matched expected pattern' : 'Warning did not match expected pattern';
+      } else if (!result.actualWarn) {
+        result.status = 'missing_warn';
+        result.correct = false;
+        result.message = 'Expected warning but none produced';
+      }
+    } else {
+      // Expected success, got success
+      result.status = 'pass';
+      result.correct = true;
+      result.message = 'Parsing succeeded as expected';
+    }
+
+  } catch (err) {
+    // Command failed - error occurred
+    result.actualError = err.stderr || err.stdout || err.message;
+
+    if (testCase.expectError) {
+      // Check if error matches expected pattern
+      if (testCase.errorPattern) {
+        result.correct = testCase.errorPattern.test(result.actualError);
+        result.status = result.correct ? 'correct_error' : 'wrong_error';
+        result.message = result.correct ? 'Error matched expected pattern' : `Error did not match expected pattern. Got: ${result.actualError.substring(0, 200)}`;
+      } else {
+        result.status = 'correct_error';
+        result.correct = true;
+        result.message = 'Error occurred as expected';
+      }
+    } else {
+      // Unexpected error
+      result.status = 'unexpected_error';
+      result.correct = false;
+      result.message = `Unexpected error: ${result.actualError.substring(0, 200)}`;
+    }
+  }
+
+  return result;
+}
+
+// ============================================================================
 // Web-based MaterialX Test Fetching
 // ============================================================================
 
@@ -1400,6 +2017,8 @@ Options:
 Test Generation:
   --generate-synthetic    Generate synthetic test files for all node types
   --synthetic-dir <path>  Directory for synthetic tests (default: /tmp/mtlx-synthetic)
+  --generate-error-tests  Generate error test cases (invalid configurations)
+  --error-dir <path>      Directory for error tests (default: /tmp/mtlx-errors)
   --fetch-mtlx-tests      Fetch MaterialX test files from GitHub
   --fetch-dir <path>      Directory for fetched tests (default: /tmp/mtlx-fetched)
 
@@ -1430,6 +2049,8 @@ function main() {
     files: [],
     generateSynthetic: false,
     syntheticDir: path.join(os.tmpdir(), 'mtlx-synthetic'),
+    generateErrorTests: false,
+    errorDir: path.join(os.tmpdir(), 'mtlx-errors'),
     fetchMtlxTests: false,
     fetchDir: path.join(os.tmpdir(), 'mtlx-fetched')
   };
@@ -1470,6 +2091,12 @@ function main() {
       case '--synthetic-dir':
         options.syntheticDir = args[++i];
         break;
+      case '--generate-error-tests':
+        options.generateErrorTests = true;
+        break;
+      case '--error-dir':
+        options.errorDir = args[++i];
+        break;
       case '--fetch-mtlx-tests':
         options.fetchMtlxTests = true;
         break;
@@ -1500,6 +2127,73 @@ function main() {
       console.log(`Generated ${generated.length} synthetic test files in ${options.syntheticDir}\n`);
     }
     options.files.push(...generated);
+  }
+
+  // Handle error test generation
+  if (options.generateErrorTests) {
+    if (!options.quiet) {
+      console.log('Generating error test cases...');
+    }
+    const errorTests = generateErrorTests(options.errorDir);
+    if (!options.quiet) {
+      console.log(`Generated ${errorTests.length} error test files in ${options.errorDir}\n`);
+    }
+
+    // Run error tests
+    if (!options.quiet) {
+      console.log('Running error tests (verifying error handling)...\n');
+    }
+
+    let errorTestsPassed = 0;
+    let errorTestsFailed = 0;
+    const errorResults = [];
+
+    for (let i = 0; i < errorTests.length; i++) {
+      const testCase = errorTests[i];
+
+      if (!options.quiet && !options.json) {
+        console.log(`[${i + 1}/${errorTests.length}] Error Test: ${testCase.name}`);
+        console.log(`    ${testCase.description}`);
+      }
+
+      const result = testErrorCase(testCase, options);
+      errorResults.push(result);
+
+      if (result.correct) {
+        errorTestsPassed++;
+        if (!options.quiet && !options.json) {
+          console.log(`  ✓ ${result.status}: ${result.message}\n`);
+        }
+      } else {
+        errorTestsFailed++;
+        if (!options.quiet && !options.json) {
+          console.log(`  ✗ ${result.status}: ${result.message}\n`);
+        }
+      }
+    }
+
+    if (!options.quiet && !options.json) {
+      console.log('═'.repeat(50));
+      console.log(`Error Tests Summary:`);
+      console.log(`  ✓ Correct: ${errorTestsPassed}`);
+      console.log(`  ✗ Wrong:   ${errorTestsFailed}`);
+      console.log('');
+    }
+
+    if (options.json) {
+      console.log(JSON.stringify({
+        type: 'error_tests',
+        total: errorTests.length,
+        correct: errorTestsPassed,
+        wrong: errorTestsFailed,
+        results: errorResults
+      }, null, 2));
+    }
+
+    // If only running error tests, exit
+    if (options.files.length === 0 && !options.generateSynthetic) {
+      process.exit(errorTestsFailed > 0 ? 1 : 0);
+    }
   }
 
   // Handle fetching MaterialX tests
@@ -1636,11 +2330,14 @@ module.exports = {
   parseMtlx,
   compareMtlx,
   testRoundtrip,
+  testErrorCase,
   expandGlob,
   expandFilePatterns,
   generateSyntheticTests,
+  generateErrorTests,
   fetchMtlxTests,
-  MTLX_NODE_DEFS
+  MTLX_NODE_DEFS,
+  ERROR_TEST_CASES
 };
 
 // Run if executed directly
