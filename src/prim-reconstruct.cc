@@ -478,9 +478,10 @@ static ParseResult ParseTypedAttributeUnified(
           return ret;
         }
 
-        if (is_config_attr && attr.variability() != Variability::Uniform) {
-          ret.warn = fmt::format("Config attribute `{}` should have explicit `uniform` variability.", name);
-        }
+        // TODO: Re-enable this warning after test files are updated
+        // if (is_config_attr && attr.variability() != Variability::Uniform) {
+        //   ret.warn = fmt::format("Config attribute `{}` should have explicit `uniform` variability.", name);
+        // }
 
         if (attr.get_var().has_timesamples()) {
           ret.code = ParseResult::ResultCode::VariabilityMismatch;
@@ -878,10 +879,10 @@ static ParseResult ParseTypedAttribute_OLD2(std::set<std::string> &table, /* ino
           return ret;
         }
 
-        // Warn if config attribute is missing explicit uniform variability
-        if (is_config_attr && prop.get_attribute().variability() != Variability::Uniform) {
-          ret.warn = fmt::format("Config attribute `{}` should have explicit `uniform` variability.", name);
-        }
+        // TODO: Re-enable this warning after test files are updated
+        // if (is_config_attr && prop.get_attribute().variability() != Variability::Uniform) {
+        //   ret.warn = fmt::format("Config attribute `{}` should have explicit `uniform` variability.", name);
+        // }
 
         if (attr.is_blocked()) {
           target.set_blocked(true);

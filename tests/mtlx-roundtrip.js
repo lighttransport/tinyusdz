@@ -13,6 +13,9 @@
 const fs = require('fs');
 const path = require('path');
 const { execSync } = require('child_process');
+const https = require('https');
+const http = require('http');
+const os = require('os');
 
 // ============================================================================
 // Glob Pattern Matching (from compare-usda.js)
@@ -836,6 +839,528 @@ function testRoundtrip(inputFile, options) {
 }
 
 // ============================================================================
+// Synthetic Test Generation
+// ============================================================================
+
+/**
+ * MaterialX node definitions for synthetic test generation
+ */
+const MTLX_NODE_DEFS = {
+  // Binary operations (in1, in2)
+  binary_float: ['add', 'subtract', 'multiply', 'divide', 'power', 'min', 'max'],
+  binary_color3: ['add', 'subtract', 'multiply', 'divide', 'power', 'min', 'max'],
+  binary_vector3: ['add', 'subtract', 'multiply', 'divide', 'crossproduct'],
+
+  // Unary operations (in)
+  unary_float: ['absval', 'floor', 'ceil', 'round', 'sqrt', 'sin', 'cos', 'tan', 'exp', 'ln'],
+  unary_color3: ['luminance'],
+  unary_vector3: ['normalize', 'magnitude'],
+
+  // Special operations
+  clamp: { inputs: ['in', 'low', 'high'], types: ['float', 'color3', 'vector3'] },
+  mix: { inputs: ['fg', 'bg', 'mix'], types: ['float', 'color3', 'vector3'] },
+  extract: { inputs: ['in', 'index'], types: ['color3', 'vector3'] },
+  combine3: { inputs: ['in1', 'in2', 'in3'], outputTypes: ['color3', 'vector3'] },
+  hsvadjust: { inputs: ['in', 'amount'], types: ['color3'] },
+  remap: { inputs: ['in', 'inlow', 'inhigh', 'outlow', 'outhigh'], types: ['float'] },
+
+  // Geometry
+  geometry: ['position', 'normal', 'tangent', 'texcoord'],
+
+  // Conversion
+  convert: [
+    { from: 'color3', to: 'vector3' },
+    { from: 'vector3', to: 'color3' },
+    { from: 'float', to: 'color3' }
+  ]
+};
+
+/**
+ * Convert MaterialX type to USD type
+ */
+function mtlxTypeToUsdGen(type) {
+  const map = {
+    'float': 'float',
+    'color3': 'color3f',
+    'color4': 'color4f',
+    'vector2': 'float2',
+    'vector3': 'vector3f',
+    'vector4': 'float4',
+    'integer': 'int',
+    'boolean': 'bool',
+    'string': 'string'
+  };
+  return map[type] || 'float';
+}
+
+/**
+ * Generate USDA for a single MaterialX node test
+ */
+function generateNodeTestUsda(nodeName, nodeType, inputs, outputType) {
+  const inputDefs = inputs.map(inp => {
+    let value = '';
+    let type = inp.type || 'float';
+    let usdType = mtlxTypeToUsdGen(type);
+    if (type === 'float') value = inp.value || '0.5';
+    else if (type === 'color3') value = inp.value || '(0.5, 0.5, 0.5)';
+    else if (type === 'vector3') value = inp.value || '(0.5, 0.5, 0.5)';
+    else if (type === 'integer') value = inp.value || '0';
+    return `                    ${usdType} inputs:${inp.name} = ${value}`;
+  }).join('\n');
+
+  const usdOutputType = mtlxTypeToUsdGen(outputType);
+
+  return `#usda 1.0
+(
+    defaultPrim = "root"
+    metersPerUnit = 1
+    upAxis = "Y"
+)
+
+def Xform "root"
+{
+    def Scope "mtl"
+    {
+        def Material "TestMaterial" (
+            prepend apiSchemas = ["MaterialXConfigAPI"]
+        )
+        {
+            string config:mtlx:version = "1.38"
+            token outputs:mtlx:surface.connect = </root/mtl/TestMaterial/OpenPBRShader.outputs:out>
+
+            def Shader "OpenPBRShader"
+            {
+                uniform token info:id = "ND_open_pbr_surface_surfaceshader"
+                color3f inputs:base_color.connect = </root/mtl/TestMaterial/NodeGraph/out.outputs:out>
+                token outputs:out
+            }
+
+            def NodeGraph "NodeGraph"
+            {
+                color3f outputs:out.connect = </root/mtl/TestMaterial/NodeGraph/TestNode.outputs:out>
+
+                def Shader "TestNode"
+                {
+                    uniform token info:id = "ND_${nodeName}_${outputType}"
+${inputDefs}
+                    ${usdOutputType} outputs:out
+                }
+
+                def Shader "ConstInput"
+                {
+                    uniform token info:id = "ND_constant_color3"
+                    color3f inputs:value = (0.8, 0.2, 0.1)
+                    color3f outputs:out
+                }
+            }
+        }
+    }
+}
+`;
+}
+
+/**
+ * Generate synthetic test files
+ */
+function generateSyntheticTests(outputDir) {
+  const generated = [];
+
+  if (!fs.existsSync(outputDir)) {
+    fs.mkdirSync(outputDir, { recursive: true });
+  }
+
+  // Binary float operations
+  for (const op of MTLX_NODE_DEFS.binary_float) {
+    const filename = path.join(outputDir, `synthetic_${op}_float.usda`);
+    const usda = generateNodeTestUsda(op, 'float', [
+      { name: 'in1', type: 'float', value: '0.5' },
+      { name: 'in2', type: 'float', value: '0.25' }
+    ], 'float');
+    fs.writeFileSync(filename, usda);
+    generated.push(filename);
+  }
+
+  // Binary color3 operations
+  for (const op of MTLX_NODE_DEFS.binary_color3) {
+    const filename = path.join(outputDir, `synthetic_${op}_color3.usda`);
+    const usda = generateNodeTestUsda(op, 'color3', [
+      { name: 'in1', type: 'color3', value: '(0.8, 0.2, 0.1)' },
+      { name: 'in2', type: 'color3', value: '(0.1, 0.5, 0.9)' }
+    ], 'color3');
+    fs.writeFileSync(filename, usda);
+    generated.push(filename);
+  }
+
+  // Binary vector3 operations
+  for (const op of MTLX_NODE_DEFS.binary_vector3) {
+    const filename = path.join(outputDir, `synthetic_${op}_vector3.usda`);
+    const usda = generateNodeTestUsda(op, 'vector3', [
+      { name: 'in1', type: 'vector3', value: '(1, 0, 0)' },
+      { name: 'in2', type: 'vector3', value: '(0, 1, 0)' }
+    ], 'vector3');
+    fs.writeFileSync(filename, usda);
+    generated.push(filename);
+  }
+
+  // Unary float operations
+  for (const op of MTLX_NODE_DEFS.unary_float) {
+    const filename = path.join(outputDir, `synthetic_${op}_float.usda`);
+    const usda = generateNodeTestUsda(op, 'float', [
+      { name: 'in', type: 'float', value: '0.5' }
+    ], 'float');
+    fs.writeFileSync(filename, usda);
+    generated.push(filename);
+  }
+
+  // Unary vector3 operations
+  for (const op of MTLX_NODE_DEFS.unary_vector3) {
+    const outputType = op === 'magnitude' ? 'float' : 'vector3';
+    const filename = path.join(outputDir, `synthetic_${op}_vector3.usda`);
+    const usda = generateNodeTestUsda(op, 'vector3', [
+      { name: 'in', type: 'vector3', value: '(1, 2, 3)' }
+    ], outputType);
+    fs.writeFileSync(filename, usda);
+    generated.push(filename);
+  }
+
+  // Clamp
+  for (const type of MTLX_NODE_DEFS.clamp.types) {
+    const val = type === 'float' ? '0.5' : '(0.5, 0.5, 0.5)';
+    const low = type === 'float' ? '0.2' : '(0.2, 0.2, 0.2)';
+    const high = type === 'float' ? '0.8' : '(0.8, 0.8, 0.8)';
+    const filename = path.join(outputDir, `synthetic_clamp_${type}.usda`);
+    const usda = generateNodeTestUsda('clamp', type, [
+      { name: 'in', type, value: val },
+      { name: 'low', type, value: low },
+      { name: 'high', type, value: high }
+    ], type);
+    fs.writeFileSync(filename, usda);
+    generated.push(filename);
+  }
+
+  // Mix
+  for (const type of MTLX_NODE_DEFS.mix.types) {
+    const val = type === 'float' ? '0.8' : '(0.8, 0.2, 0.1)';
+    const filename = path.join(outputDir, `synthetic_mix_${type}.usda`);
+    const usda = generateNodeTestUsda('mix', type, [
+      { name: 'fg', type, value: val },
+      { name: 'bg', type, value: type === 'float' ? '0.2' : '(0.1, 0.5, 0.9)' },
+      { name: 'mix', type: 'float', value: '0.5' }
+    ], type);
+    fs.writeFileSync(filename, usda);
+    generated.push(filename);
+  }
+
+  // Extract
+  for (const type of MTLX_NODE_DEFS.extract.types) {
+    const filename = path.join(outputDir, `synthetic_extract_${type}.usda`);
+    const usda = generateNodeTestUsda('extract', type, [
+      { name: 'in', type, value: '(0.8, 0.5, 0.2)' },
+      { name: 'index', type: 'integer', value: '1' }
+    ], 'float');
+    fs.writeFileSync(filename, usda);
+    generated.push(filename);
+  }
+
+  // Combine3
+  for (const type of MTLX_NODE_DEFS.combine3.outputTypes) {
+    const filename = path.join(outputDir, `synthetic_combine3_${type}.usda`);
+    const usda = generateNodeTestUsda('combine3', type, [
+      { name: 'in1', type: 'float', value: '0.8' },
+      { name: 'in2', type: 'float', value: '0.5' },
+      { name: 'in3', type: 'float', value: '0.2' }
+    ], type);
+    fs.writeFileSync(filename, usda);
+    generated.push(filename);
+  }
+
+  // HSV Adjust
+  {
+    const filename = path.join(outputDir, `synthetic_hsvadjust_color3.usda`);
+    const usda = generateNodeTestUsda('hsvadjust', 'color3', [
+      { name: 'in', type: 'color3', value: '(0.8, 0.2, 0.1)' },
+      { name: 'amount', type: 'vector3', value: '(0.1, 1.2, 1.1)' }
+    ], 'color3');
+    fs.writeFileSync(filename, usda);
+    generated.push(filename);
+  }
+
+  // Luminance
+  {
+    const filename = path.join(outputDir, `synthetic_luminance_color3.usda`);
+    const usda = generateNodeTestUsda('luminance', 'color3', [
+      { name: 'in', type: 'color3', value: '(0.8, 0.5, 0.2)' }
+    ], 'color3');
+    fs.writeFileSync(filename, usda);
+    generated.push(filename);
+  }
+
+  // Conversions
+  for (const conv of MTLX_NODE_DEFS.convert) {
+    const inVal = conv.from === 'float' ? '0.5' : '(0.8, 0.5, 0.2)';
+    const filename = path.join(outputDir, `synthetic_convert_${conv.from}_${conv.to}.usda`);
+    const usda = generateNodeTestUsda(`convert_${conv.from}_${conv.to}`, conv.from, [
+      { name: 'in', type: conv.from, value: inVal }
+    ], conv.to);
+    fs.writeFileSync(filename, usda);
+    generated.push(filename);
+  }
+
+  // Geometry nodes - test as standalone nodes in nodegraph without shader connection issues
+  for (const geo of MTLX_NODE_DEFS.geometry) {
+    const outputType = geo === 'texcoord' ? 'float2' : 'vector3f';
+    const filename = path.join(outputDir, `synthetic_${geo}.usda`);
+    // Geometry nodes don't have inputs, just space parameter
+    // Don't connect to shader inputs to avoid type mismatch issues
+    const usda = `#usda 1.0
+(
+    defaultPrim = "root"
+    metersPerUnit = 1
+    upAxis = "Y"
+)
+
+def Xform "root"
+{
+    def Scope "mtl"
+    {
+        def Material "TestMaterial" (
+            prepend apiSchemas = ["MaterialXConfigAPI"]
+        )
+        {
+            string config:mtlx:version = "1.38"
+            token outputs:mtlx:surface.connect = </root/mtl/TestMaterial/OpenPBRShader.outputs:out>
+
+            def Shader "OpenPBRShader"
+            {
+                uniform token info:id = "ND_open_pbr_surface_surfaceshader"
+                color3f inputs:base_color = (0.5, 0.5, 0.5)
+                token outputs:out
+            }
+
+            def NodeGraph "NodeGraph"
+            {
+                ${outputType} outputs:out.connect = </root/mtl/TestMaterial/NodeGraph/TestNode.outputs:out>
+
+                def Shader "TestNode"
+                {
+                    uniform token info:id = "ND_${geo}_vector3"
+                    token inputs:space = "world"
+                    ${outputType} outputs:out
+                }
+            }
+        }
+    }
+}
+`;
+    fs.writeFileSync(filename, usda);
+    generated.push(filename);
+  }
+
+  return generated;
+}
+
+// ============================================================================
+// Web-based MaterialX Test Fetching
+// ============================================================================
+
+/**
+ * Fetch content from URL
+ */
+function fetchUrl(url) {
+  return new Promise((resolve, reject) => {
+    const protocol = url.startsWith('https') ? https : http;
+
+    const request = protocol.get(url, {
+      headers: { 'User-Agent': 'TinyUSDZ-MaterialX-Tester/1.0' }
+    }, (response) => {
+      // Handle redirects
+      if (response.statusCode >= 300 && response.statusCode < 400 && response.headers.location) {
+        fetchUrl(response.headers.location).then(resolve).catch(reject);
+        return;
+      }
+
+      if (response.statusCode !== 200) {
+        reject(new Error(`HTTP ${response.statusCode}: ${url}`));
+        return;
+      }
+
+      const chunks = [];
+      response.on('data', chunk => chunks.push(chunk));
+      response.on('end', () => resolve(Buffer.concat(chunks)));
+      response.on('error', reject);
+    });
+
+    request.on('error', reject);
+    request.setTimeout(30000, () => {
+      request.destroy();
+      reject(new Error('Request timeout'));
+    });
+  });
+}
+
+/**
+ * MaterialX GitHub raw content URLs
+ */
+const MTLX_TEST_URLS = {
+  // Official MaterialX repo test files
+  standard_surface: 'https://raw.githubusercontent.com/AcademySoftwareFoundation/MaterialX/main/resources/Materials/Examples/StandardSurface/standard_surface_default.mtlx',
+  chess_set: 'https://raw.githubusercontent.com/AcademySoftwareFoundation/MaterialX/main/resources/Materials/Examples/StandardSurface/standard_surface_chess_set.mtlx',
+  marble: 'https://raw.githubusercontent.com/AcademySoftwareFoundation/MaterialX/main/resources/Materials/Examples/StandardSurface/standard_surface_marble_solid.mtlx',
+  jade: 'https://raw.githubusercontent.com/AcademySoftwareFoundation/MaterialX/main/resources/Materials/Examples/StandardSurface/standard_surface_jade.mtlx',
+  brick: 'https://raw.githubusercontent.com/AcademySoftwareFoundation/MaterialX/main/resources/Materials/Examples/StandardSurface/standard_surface_brick_procedural.mtlx',
+
+  // Node definition examples
+  nodegraph_example: 'https://raw.githubusercontent.com/AcademySoftwareFoundation/MaterialX/main/resources/Materials/TestSuite/stdlib/math/math.mtlx'
+};
+
+/**
+ * Convert MaterialX XML to simplified USD for testing
+ * (Basic conversion - full conversion would need full MTLX parser)
+ */
+function mtlxToUsda(mtlxContent, name) {
+  // Extract nodegraphs and surface shaders from MaterialX XML
+  const parser = new MtlxParser(mtlxContent);
+  const parsed = parser.parse();
+
+  let nodeGraphDefs = '';
+  let nodeCount = 0;
+
+  // Build NodeGraph content from parsed nodes
+  for (const ng of parsed.nodegraphs) {
+    let nodeDefs = '';
+    for (const node of ng.nodes) {
+      const infoId = `ND_${node.category.toLowerCase()}_${getOutputType(node)}`;
+      let inputDefs = node.inputs.map(inp => {
+        const type = inp.type || 'float';
+        const usdType = mtlxTypeToUsd(type);
+        if (inp.nodename) {
+          return `                    ${usdType} inputs:${inp.name}.connect = </root/mtl/${name}/NodeGraph/${inp.nodename}.outputs:out>`;
+        } else if (inp.value) {
+          return `                    ${usdType} inputs:${inp.name} = ${formatUsdValue(inp.value, type)}`;
+        }
+        return '';
+      }).filter(s => s).join('\n');
+
+      nodeDefs += `
+                def Shader "${node.name}"
+                {
+                    uniform token info:id = "${infoId}"
+${inputDefs}
+                    ${mtlxTypeToUsd(getOutputType(node))} outputs:out
+                }
+`;
+      nodeCount++;
+    }
+
+    nodeGraphDefs += nodeDefs;
+  }
+
+  return `#usda 1.0
+(
+    defaultPrim = "root"
+    metersPerUnit = 1
+    upAxis = "Y"
+)
+
+def Xform "root"
+{
+    def Scope "mtl"
+    {
+        def Material "${name}" (
+            prepend apiSchemas = ["MaterialXConfigAPI"]
+        )
+        {
+            string config:mtlx:version = "1.38"
+            token outputs:mtlx:surface.connect = </root/mtl/${name}/OpenPBRShader.outputs:out>
+
+            def Shader "OpenPBRShader"
+            {
+                uniform token info:id = "ND_open_pbr_surface_surfaceshader"
+                color3f inputs:base_color = (0.5, 0.5, 0.5)
+                token outputs:out
+            }
+
+            def NodeGraph "NodeGraph"
+            {
+                color3f outputs:out.connect = </root/mtl/${name}/NodeGraph/out.outputs:out>
+${nodeGraphDefs}
+            }
+        }
+    }
+}
+`;
+}
+
+function getOutputType(node) {
+  // Determine output type from node category and inputs
+  const category = node.category.toLowerCase();
+  if (['add', 'subtract', 'multiply', 'divide', 'mix', 'clamp'].includes(category)) {
+    // Check input types
+    for (const inp of node.inputs) {
+      if (inp.type === 'color3' || inp.type === 'color4') return 'color3';
+      if (inp.type === 'vector3' || inp.type === 'vector4') return 'vector3';
+    }
+    return 'float';
+  }
+  if (category === 'luminance') return 'color3';
+  if (category === 'normalize' || category === 'crossproduct') return 'vector3';
+  if (category === 'dotproduct' || category === 'magnitude') return 'float';
+  return 'color3'; // Default
+}
+
+function mtlxTypeToUsd(type) {
+  const map = {
+    'float': 'float',
+    'color3': 'color3f',
+    'color4': 'color4f',
+    'vector2': 'float2',
+    'vector3': 'vector3f',
+    'vector4': 'float4',
+    'integer': 'int',
+    'boolean': 'bool',
+    'string': 'string'
+  };
+  return map[type] || 'float';
+}
+
+function formatUsdValue(value, type) {
+  if (type === 'float' || type === 'integer') {
+    return value;
+  }
+  // Convert "x, y, z" to "(x, y, z)"
+  if (value.includes(',') && !value.startsWith('(')) {
+    return `(${value})`;
+  }
+  return value;
+}
+
+/**
+ * Fetch and convert MaterialX test files
+ */
+async function fetchMtlxTests(outputDir) {
+  const fetched = [];
+
+  if (!fs.existsSync(outputDir)) {
+    fs.mkdirSync(outputDir, { recursive: true });
+  }
+
+  for (const [name, url] of Object.entries(MTLX_TEST_URLS)) {
+    try {
+      console.log(`  Fetching ${name}...`);
+      const content = await fetchUrl(url);
+      const mtlxFile = path.join(outputDir, `${name}.mtlx`);
+      fs.writeFileSync(mtlxFile, content);
+      fetched.push({ name, mtlxFile, status: 'fetched' });
+    } catch (err) {
+      console.log(`  Failed to fetch ${name}: ${err.message}`);
+      fetched.push({ name, status: 'failed', error: err.message });
+    }
+  }
+
+  return fetched;
+}
+
+// ============================================================================
 // CLI
 // ============================================================================
 
@@ -843,7 +1368,8 @@ function printUsage() {
   console.log(`
 Usage: mtlx-roundtrip.js [options] <input.usd>
        mtlx-roundtrip.js --tusdcat <path> <input.usd>
-       mtlx-roundtrip.js --tusdcat <path> "**/*.usd"
+       mtlx-roundtrip.js --tusdcat <path> --generate-synthetic
+       mtlx-roundtrip.js --tusdcat <path> --fetch-mtlx-tests
 
 Test MaterialX import/export roundtrip in TinyUSDZ.
 
@@ -857,7 +1383,8 @@ Supports glob patterns:
 Examples:
   mtlx-roundtrip.js --tusdcat ./tusdcat model.usd
   mtlx-roundtrip.js --tusdcat ./tusdcat "models/*.usda"
-  mtlx-roundtrip.js --tusdcat ./tusdcat "**/*.usd{a,c,z}"
+  mtlx-roundtrip.js --tusdcat ./tusdcat --generate-synthetic
+  mtlx-roundtrip.js --tusdcat ./tusdcat --fetch-mtlx-tests
 
 Options:
   -h, --help              Show this help message
@@ -869,6 +1396,12 @@ Options:
   --json                  Output results as JSON
   --timeout <ms>          Timeout per file in milliseconds (default: 60000)
   --float-tolerance <n>   Tolerance for floating point comparison (default: 1e-6)
+
+Test Generation:
+  --generate-synthetic    Generate synthetic test files for all node types
+  --synthetic-dir <path>  Directory for synthetic tests (default: /tmp/mtlx-synthetic)
+  --fetch-mtlx-tests      Fetch MaterialX test files from GitHub
+  --fetch-dir <path>      Directory for fetched tests (default: /tmp/mtlx-fetched)
 
 Exit codes:
   0 - All files processed successfully
@@ -894,7 +1427,11 @@ function main() {
     json: false,
     timeout: 60000,
     floatTolerance: 1e-6,
-    files: []
+    files: [],
+    generateSynthetic: false,
+    syntheticDir: path.join(os.tmpdir(), 'mtlx-synthetic'),
+    fetchMtlxTests: false,
+    fetchDir: path.join(os.tmpdir(), 'mtlx-fetched')
   };
 
   // Parse arguments
@@ -927,6 +1464,18 @@ function main() {
       case '--float-tolerance':
         options.floatTolerance = parseFloat(args[++i]);
         break;
+      case '--generate-synthetic':
+        options.generateSynthetic = true;
+        break;
+      case '--synthetic-dir':
+        options.syntheticDir = args[++i];
+        break;
+      case '--fetch-mtlx-tests':
+        options.fetchMtlxTests = true;
+        break;
+      case '--fetch-dir':
+        options.fetchDir = args[++i];
+        break;
       default:
         if (!arg.startsWith('-')) {
           options.files.push(arg);
@@ -939,6 +1488,44 @@ function main() {
     console.error('Error: --tusdcat is required');
     printUsage();
     process.exit(2);
+  }
+
+  // Handle synthetic test generation
+  if (options.generateSynthetic) {
+    if (!options.quiet) {
+      console.log('Generating synthetic test files...');
+    }
+    const generated = generateSyntheticTests(options.syntheticDir);
+    if (!options.quiet) {
+      console.log(`Generated ${generated.length} synthetic test files in ${options.syntheticDir}\n`);
+    }
+    options.files.push(...generated);
+  }
+
+  // Handle fetching MaterialX tests
+  if (options.fetchMtlxTests) {
+    if (!options.quiet) {
+      console.log('Fetching MaterialX test files from GitHub...');
+    }
+    // This is async, so we need to handle it
+    fetchMtlxTests(options.fetchDir).then(fetched => {
+      const successful = fetched.filter(f => f.status === 'fetched');
+      if (!options.quiet) {
+        console.log(`Fetched ${successful.length}/${fetched.length} MaterialX test files to ${options.fetchDir}\n`);
+      }
+      // Note: MTLX files need conversion to USD before testing
+      // For now, just report what was fetched
+      for (const f of successful) {
+        console.log(`  - ${f.mtlxFile}`);
+      }
+      console.log('\nNote: MTLX files fetched but require conversion to USD for roundtrip testing.\n');
+    }).catch(err => {
+      console.error(`Error fetching MaterialX tests: ${err.message}`);
+    });
+    // If only fetching, exit early
+    if (options.files.length === 0 && !options.generateSynthetic) {
+      return;
+    }
   }
 
   if (options.files.length === 0) {
@@ -1050,7 +1637,10 @@ module.exports = {
   compareMtlx,
   testRoundtrip,
   expandGlob,
-  expandFilePatterns
+  expandFilePatterns,
+  generateSyntheticTests,
+  fetchMtlxTests,
+  MTLX_NODE_DEFS
 };
 
 // Run if executed directly
