@@ -62,6 +62,162 @@ constexpr auto kSkelBlendShapes = "skel:blendShapes";
 constexpr auto kSkelBlendShapeTargets = "skel:blendShapeTargets";
 constexpr auto kInputsVarname = "inputs:varname";
 
+// ==========================================================================
+// MaterialX Validation Helpers
+// ==========================================================================
+
+namespace mtlx_validation {
+
+// Known MaterialX node categories (from MaterialX spec)
+static const std::set<std::string> kKnownNodeCategories = {
+  // Math operations
+  "add", "subtract", "multiply", "divide", "power", "min", "max",
+  "absval", "floor", "ceil", "round", "sqrt", "sin", "cos", "tan",
+  "asin", "acos", "atan", "atan2", "exp", "log", "ln", "sign",
+  "clamp", "mix", "remap", "smoothstep", "modulo", "invert",
+  // Channel operations
+  "extract", "combine2", "combine3", "combine4", "separate2", "separate3", "separate4",
+  "swizzle", "convert", "luminance",
+  // Color operations
+  "hsvadjust", "saturate", "contrast", "range",
+  // Vector operations
+  "normalize", "magnitude", "dotproduct", "crossproduct", "rotate3d",
+  "transformpoint", "transformvector", "transformnormal",
+  // Geometry
+  "position", "normal", "tangent", "bitangent", "texcoord", "geomcolor",
+  // Texture
+  "image", "tiledimage", "constant", "noise2d", "noise3d",
+  "cellnoise2d", "cellnoise3d", "fractal3d", "worleynoise2d", "worleynoise3d",
+  // Procedural
+  "ramp4", "splitlr", "splittb", "checkerboard",
+  // Surface shaders
+  "open_pbr_surface", "standard_surface", "UsdPreviewSurface"
+};
+
+// Known MaterialX types
+static const std::set<std::string> kKnownTypes = {
+  "float", "color3", "color4", "vector2", "vector3", "vector4",
+  "matrix33", "matrix44", "string", "filename", "boolean", "integer",
+  "surfaceshader", "displacementshader", "volumeshader"
+};
+
+// Check if info:id follows MaterialX naming convention: ND_<category>_<type>
+// Returns true if valid or if validation is disabled
+static bool ValidateInfoId(const std::string &info_id,
+                           const PrimReconstructOptions &options,
+                           std::string *warn,
+                           std::string *err) {
+  if (!options.validate_mtlx_info_id && !options.strict_mtlx_check) {
+    return true;
+  }
+
+  // Check for ND_ prefix (MaterialX node definition)
+  if (info_id.rfind("ND_", 0) != 0) {
+    // Not a MaterialX node definition - might be UsdPreviewSurface etc.
+    return true;
+  }
+
+  // Parse ND_<category>_<type>
+  std::string rest = info_id.substr(3);  // Remove "ND_"
+  size_t lastUnderscore = rest.rfind('_');
+  if (lastUnderscore == std::string::npos || lastUnderscore == 0) {
+    if (err) {
+      *err = fmt::format("Invalid MaterialX info:id format: '{}'. Expected ND_<category>_<type>", info_id);
+    }
+    return false;
+  }
+
+  std::string category = rest.substr(0, lastUnderscore);
+  std::string type = rest.substr(lastUnderscore + 1);
+
+  // Handle multi-part categories like "convert_color3_vector3"
+  // These should be parsed as category="convert_color3" type="vector3"
+  // Actually, format is ND_<category>_<outputtype>, where category may include input type
+  // Let's be more lenient - just check if the base category is known
+
+  // Extract base category (first part before any type specifiers)
+  size_t firstUnderscore = category.find('_');
+  std::string baseCategory = (firstUnderscore != std::string::npos)
+                             ? category.substr(0, firstUnderscore)
+                             : category;
+
+  if (kKnownNodeCategories.find(baseCategory) == kKnownNodeCategories.end()) {
+    // Check full category name as well
+    if (kKnownNodeCategories.find(category) == kKnownNodeCategories.end()) {
+      if (warn) {
+        *warn += fmt::format("Unknown MaterialX node category '{}' in info:id '{}'\n",
+                            category, info_id);
+      }
+      // Don't fail - just warn for unknown categories
+    }
+  }
+
+  if (kKnownTypes.find(type) == kKnownTypes.end()) {
+    if (warn) {
+      *warn += fmt::format("Unknown MaterialX type '{}' in info:id '{}'\n", type, info_id);
+    }
+    // Don't fail - just warn for unknown types
+  }
+
+  return true;
+}
+
+// Validate extract/combine index bounds
+[[maybe_unused]]
+static bool ValidateIndexBounds(const std::string &info_id,
+                                int index,
+                                const PrimReconstructOptions &options,
+                                std::string *warn,
+                                std::string *err) {
+  if (!options.validate_mtlx_index_bounds && !options.strict_mtlx_check) {
+    return true;
+  }
+
+  int maxIndex = 2;  // Default for color3/vector3
+
+  // Determine max index based on type
+  if (info_id.find("color4") != std::string::npos ||
+      info_id.find("vector4") != std::string::npos) {
+    maxIndex = 3;
+  } else if (info_id.find("color2") != std::string::npos ||
+             info_id.find("vector2") != std::string::npos ||
+             info_id.find("float2") != std::string::npos) {
+    maxIndex = 1;
+  }
+
+  if (index < 0) {
+    if (err) {
+      *err = fmt::format("Negative index {} for extract/combine in '{}'", index, info_id);
+    }
+    return false;
+  }
+
+  if (index > maxIndex) {
+    if (err) {
+      *err = fmt::format("Index {} out of bounds (max {}) for extract/combine in '{}'",
+                        index, maxIndex, info_id);
+    }
+    return false;
+  }
+
+  return true;
+}
+
+// Get expected type for a connection based on property name/type
+[[maybe_unused]]
+static std::string GetExpectedConnectionType(const std::string &propName,
+                                             const value::Value &propValue) {
+  (void)propValue;
+  // Map common property names to expected types
+  if (propName.find("color") != std::string::npos) return "color3";
+  if (propName.find("normal") != std::string::npos) return "vector3";
+  if (propName.find("metalness") != std::string::npos) return "float";
+  if (propName.find("roughness") != std::string::npos) return "float";
+  return "";  // Unknown
+}
+
+}  // namespace mtlx_validation
+
 ///
 /// TinyUSDZ reconstruct some frequently used shaders(e.g. UsdPreviewSurface)
 /// here, not in Tydra
@@ -5545,6 +5701,11 @@ bool ReconstructPrim<Shader>(
     }
 
     DCOUT("info:id = " << shader_type);
+
+    // Validate MaterialX info:id if validation is enabled
+    if (!mtlx_validation::ValidateInfoId(shader_type, options, warn, err)) {
+      PUSH_ERROR_AND_RETURN("Invalid MaterialX info:id: " << shader_type);
+    }
   }
 
 
