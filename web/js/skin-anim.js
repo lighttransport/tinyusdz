@@ -483,6 +483,8 @@ function buildSkeletonFromUSD(usdSkeleton, skeletonId) {
 		for (const boneData of boneBindMatrices) {
 			if (boneData.bindMatrix) {
 				// Compute inverse of bind transform
+				// NOTE: We do NOT transform the bind matrix here because the scene root rotation
+				// already handles the coordinate system change for the entire hierarchy
 				const inverseBindMatrix = boneData.bindMatrix.clone().invert();
 				boneInverses.push(inverseBindMatrix);
 			} else {
@@ -771,6 +773,10 @@ function selectJoint(bone, sphere) {
 	if (window.updateSelectedJoint) {
 		window.updateSelectedJoint(bone.name);
 	}
+	// Also update GUI if available
+	if (typeof updateSelectedJointGUI === 'function') {
+		updateSelectedJointGUI(bone.name);
+	}
 
 	console.log(`Selected joint: ${bone.name}`);
 }
@@ -790,6 +796,10 @@ function deselectJoint() {
 
 	if (window.updateSelectedJoint) {
 		window.updateSelectedJoint(null);
+	}
+	// Also update GUI if available
+	if (typeof updateSelectedJointGUI === 'function') {
+		updateSelectedJointGUI(null);
 	}
 }
 
@@ -813,6 +823,126 @@ function onMouseClick(event) {
 		const bone = sphere.userData.bone;
 		selectJoint(bone, sphere);
 	}
+}
+
+/**
+ * Calculate bounding box of the scene and fit camera to view entire scene
+ * @param {THREE.Object3D} targetObject - Object to fit (usually usdSceneRoot)
+ * @param {number} paddingFactor - Extra padding around the object (1.5 = 50% padding)
+ */
+/**
+ * Compute bounding box from skeleton bones
+ * This is more accurate for skinned meshes than using geometry bounds
+ * @param {THREE.Skeleton} skeleton - The skeleton to compute bounds from
+ * @param {THREE.Box3} box - Box to expand with bone positions
+ */
+function expandBoxBySkeletonBones(skeleton, box) {
+	if (!skeleton || !skeleton.bones) return;
+
+	const boneWorldPos = new THREE.Vector3();
+	for (const bone of skeleton.bones) {
+		bone.getWorldPosition(boneWorldPos);
+		box.expandByPoint(boneWorldPos);
+	}
+}
+
+function fitCameraToScene(targetObject = null, paddingFactor = 2.0) {
+	// Use usdSceneRoot to include the Z-up to Y-up transformation
+	const target = targetObject || usdSceneRoot;
+
+	if (!target || target.children.length === 0) {
+		console.warn('fitCameraToScene: No object to fit');
+		return;
+	}
+
+	// Update world matrices to ensure transformations are applied
+	target.updateMatrixWorld(true);
+
+	// Compute bounding box - for animated scenes, sample across all frames
+	const box = new THREE.Box3();
+
+	// Check if we have animations and a skeleton to sample
+	const hasAnimation = mixer && usdAnimations.length > 0 && animationAction;
+	const hasSkeleton = skinnedMesh && skinnedMesh.skeleton && skinnedMesh.skeleton.bones.length > 0;
+
+	if (hasAnimation && hasSkeleton) {
+		// Sample animation at regular intervals to get bounding box for entire animation
+		// Use skeleton bone positions for accurate bounds (geometry bounds don't update with skinning)
+		const clip = usdAnimations[animationParams.currentAnimation] || usdAnimations[0];
+		const duration = clip.duration;
+		const numSamples = 20; // Sample 20 frames across the animation for better coverage
+		const savedTime = animationAction.time;
+
+		console.log(`fitCameraToScene: Sampling ${numSamples} frames over ${duration.toFixed(2)}s animation (using skeleton bones)`);
+
+		for (let i = 0; i <= numSamples; i++) {
+			// Set animation time
+			const sampleTime = (i / numSamples) * duration;
+			animationAction.time = sampleTime;
+			mixer.setTime(sampleTime);
+
+			// Update skeleton
+			skinnedMesh.skeleton.update();
+			target.updateMatrixWorld(true);
+
+			// Expand bounding box using skeleton bone world positions
+			expandBoxBySkeletonBones(skinnedMesh.skeleton, box);
+		}
+
+		// Restore original animation time
+		animationAction.time = savedTime;
+		mixer.setTime(savedTime);
+		skinnedMesh.skeleton.update();
+		target.updateMatrixWorld(true);
+	} else if (hasSkeleton) {
+		// Has skeleton but no animation - use bone positions at current pose
+		expandBoxBySkeletonBones(skinnedMesh.skeleton, box);
+	} else {
+		// No skeleton - use geometry bounds (works for non-skinned meshes)
+		box.expandByObject(target);
+	}
+
+	if (box.isEmpty()) {
+		console.warn('fitCameraToScene: Could not compute bounding box');
+		return;
+	}
+
+	// Add padding to the bounding box to account for mesh volume around bones
+	// Bones are at the center of limbs, so we need extra space for the actual mesh
+	const boneMargin = 0.3; // 30% margin for mesh around bones
+	const size = box.getSize(new THREE.Vector3());
+	const marginVec = size.clone().multiplyScalar(boneMargin * 0.5);
+	box.min.sub(marginVec);
+	box.max.add(marginVec);
+
+	const center = box.getCenter(new THREE.Vector3());
+	const finalSize = box.getSize(new THREE.Vector3());
+	const maxDim = Math.max(finalSize.x, finalSize.y, finalSize.z);
+
+	// Calculate camera distance based on FOV and bounding box size
+	const fov = camera.fov * (Math.PI / 180);
+	const cameraDistance = (maxDim / 2) / Math.tan(fov / 2) * paddingFactor;
+
+	// Position camera at an angle (front-right, slightly above)
+	const cameraOffset = new THREE.Vector3(
+		cameraDistance * 0.7,
+		cameraDistance * 0.5,
+		cameraDistance * 0.7
+	);
+
+	camera.position.copy(center).add(cameraOffset);
+	camera.lookAt(center);
+
+	// Update orbit controls target
+	controls.target.copy(center);
+	controls.update();
+
+	// Update camera near/far planes based on scene size
+	camera.near = Math.max(0.01, maxDim * 0.001);
+	camera.far = maxDim * 100;
+	camera.updateProjectionMatrix();
+
+	console.log(`fitCameraToScene: center=(${center.x.toFixed(2)}, ${center.y.toFixed(2)}, ${center.z.toFixed(2)}), size=(${finalSize.x.toFixed(2)}, ${finalSize.y.toFixed(2)}, ${finalSize.z.toFixed(2)}), distance=${cameraDistance.toFixed(2)}${hasAnimation ? ' (sampled animation)' : ''}`);
 }
 
 /**
@@ -878,7 +1008,7 @@ async function loadUSDModel() {
 	await loader.init({ useZstdCompressedWasm: false, useMemory64: false });
 
 	// Default USD file to load
-	const usd_filename = "./assets/skintest-animated.usda";
+	const usd_filename = "./assets/AnimFinal_LowRes.usdz";
 
 	console.log(`Loading USD file: ${usd_filename}`);
 
@@ -932,6 +1062,14 @@ async function loadUSDFromArrayBuffer(arrayBuffer, filename) {
  * @param {string} filename - File name
  */
 async function processUSDScene(usd_scene, loader, filename) {
+	// Update current file display in UI
+	const currentFileElement = document.getElementById('currentFile');
+	if (currentFileElement) {
+		// Extract just the filename from the path
+		const displayName = filename.split('/').pop();
+		currentFileElement.textContent = displayName;
+	}
+
 	// Clear existing model
 	if (skinnedMesh) {
 		characterGroup.remove(skinnedMesh);
@@ -980,7 +1118,9 @@ async function processUSDScene(usd_scene, loader, filename) {
 	const numMeshes = usd_scene.numMeshes ? usd_scene.numMeshes() : 0;
 	console.log(`=== Mesh Skinning Data (${numMeshes} meshes) ===`);
 	let hasSkinnedMeshData = false;
-	let skinnedMeshUSDData = null; // Store USD mesh data for adding skinning attributes later
+	// Store USD mesh skinning data for ALL meshes, keyed by mesh name (last part of path)
+	const allSkinnedMeshUSDData = new Map();
+	let firstGeomBindTransform = null;
 	let detectedZUpFromPath = false;
 	for (let i = 0; i < numMeshes; i++) {
 		const mesh = usd_scene.getMesh(i);
@@ -988,26 +1128,35 @@ async function processUSDScene(usd_scene, loader, filename) {
 		const hasJointWeights = mesh.jointWeights && mesh.jointWeights.length > 0;
 		if (hasJointIndices || hasJointWeights) {
 			hasSkinnedMeshData = true;
-			// Store the first mesh with skinning data for later use
-			if (!skinnedMeshUSDData) {
-				// Parse geomBindTransform if available
-				let geomBindTransformMatrix = null;
-				if (mesh.geomBindTransform && mesh.geomBindTransform.length === 16) {
-					geomBindTransformMatrix = new THREE.Matrix4();
-					geomBindTransformMatrix.fromArray(Array.from(mesh.geomBindTransform));
-				}
 
-				skinnedMeshUSDData = {
-					meshId: i, // Store mesh ID for WASM bone texture generation
-					jointIndices: mesh.jointIndices,
-					jointWeights: mesh.jointWeights,
-					elementSize: mesh.elementSize || 4,
-					absPath: mesh.absPath,
-					geomBindTransform: geomBindTransformMatrix,
-					hasGeomBindTransform: mesh.hasGeomBindTransform || false
-				};
+			// Parse geomBindTransform if available
+			let geomBindTransformMatrix = null;
+			if (mesh.geomBindTransform && mesh.geomBindTransform.length === 16) {
+				geomBindTransformMatrix = new THREE.Matrix4();
+				geomBindTransformMatrix.fromArray(Array.from(mesh.geomBindTransform));
 			}
-			console.log(`Mesh ${i}: ${mesh.absPath}`);
+
+			// Extract mesh name from path (e.g., "/root/Armature/Body/Body" -> "Body")
+			const meshName = mesh.absPath.split('/').pop();
+
+			const meshData = {
+				meshId: i,
+				jointIndices: mesh.jointIndices,
+				jointWeights: mesh.jointWeights,
+				elementSize: mesh.elementSize || 4,
+				absPath: mesh.absPath,
+				geomBindTransform: geomBindTransformMatrix,
+				hasGeomBindTransform: mesh.hasGeomBindTransform || false
+			};
+
+			allSkinnedMeshUSDData.set(meshName, meshData);
+
+			// Store first geomBindTransform for UI display
+			if (!firstGeomBindTransform && geomBindTransformMatrix) {
+				firstGeomBindTransform = geomBindTransformMatrix;
+			}
+
+			console.log(`Mesh ${i}: ${mesh.absPath} (name: ${meshName})`);
 			console.log(`  - skel_id: ${mesh.skel_id}`);
 			console.log(`  - jointIndices: ${mesh.jointIndices ? mesh.jointIndices.length : 0} elements`);
 			console.log(`  - jointWeights: ${mesh.jointWeights ? mesh.jointWeights.length : 0} elements`);
@@ -1020,6 +1169,23 @@ async function processUSDScene(usd_scene, loader, filename) {
 		}
 	}
 
+	// Update geomBindTransform display in UI
+	if (window.updateGeomBindTransform) {
+		if (firstGeomBindTransform) {
+			window.updateGeomBindTransform(firstGeomBindTransform.elements);
+		} else if (hasSkinnedMeshData) {
+			window.updateGeomBindTransform(null); // Show "Identity" message
+		}
+	}
+
+	// For backward compatibility, also set skinnedMeshUSDData to first entry
+	const skinnedMeshUSDData = allSkinnedMeshUSDData.size > 0 ? allSkinnedMeshUSDData.values().next().value : null;
+
+	// Hide geomBindTransform display if no skinned mesh data
+	if (!hasSkinnedMeshData && window.updateGeomBindTransform) {
+		window.updateGeomBindTransform(undefined); // Hide the section
+	}
+
 	// Override upAxis if detected from path but metadata says Y
 	if (detectedZUpFromPath && fileUpAxis === "Y") {
 		console.log(`WARNING: Path contains 'Z_UP' but metadata says upAxis="Y". Overriding to "Z".`);
@@ -1029,6 +1195,11 @@ async function processUSDScene(usd_scene, loader, filename) {
 	currentFileUpAxis = fileUpAxis; // Store globally for toggle function
 	console.log(`upAxis (final): "${fileUpAxis}"`);
 	console.log('========================');
+
+	// Note: geomBindTransform is NOT pre-transformed here.
+	// The scene root rotation handles the Z-up to Y-up conversion for all scene elements.
+	// The boneInverses ARE pre-transformed (in buildSkeletonFromUSD) because they need to
+	// account for the rotated bone world matrices while still computing correct skin deformation.
 
 	// Configure bone reduction (if enabled in UI)
 	if (animationParams.enableBoneReduction) {
@@ -1240,6 +1411,7 @@ async function processUSDScene(usd_scene, loader, filename) {
 				child.receiveShadow = true;
 
 				skinnedMesh = child;
+				skinnedMesh.visible = animationParams.showMesh;
 				characterGroup.add(skinnedMesh);
 				foundSkinnedMesh = true;
 
@@ -1261,11 +1433,15 @@ async function processUSDScene(usd_scene, loader, filename) {
 				if (window.updateJointHierarchy) {
 					window.updateJointHierarchy(generateJointHierarchy(bones));
 				}
+				if (typeof updateJointHierarchyGUI === 'function') {
+					updateJointHierarchyGUI(bones);
+				}
 			} else {
 				// No skeleton data - just add as regular mesh
 				console.log('No skeleton data available, adding mesh without skeleton');
 				child.castShadow = true;
 				child.receiveShadow = true;
+				child.visible = animationParams.showMesh;
 				characterGroup.add(child);
 
 				// Save as skinnedMesh reference even though it's not actually skinned
@@ -1277,21 +1453,21 @@ async function processUSDScene(usd_scene, loader, filename) {
 	});
 
 	if (!foundSkinnedMesh) {
-		// If no skinned mesh found, try to find any mesh and add it
-		console.log('No skinned mesh found');
+		// If no skinned mesh found, try to find meshes and add skinning
+		console.log('No pre-skinned mesh found, processing all meshes with USD skinning data');
 
-		// Find first mesh
-		let firstMesh = null;
+		// Collect all meshes from the loaded scene
+		const allMeshes = [];
 		threeNode.traverse((child) => {
-			if (child.isMesh && !firstMesh) {
-				firstMesh = child;
+			if (child.isMesh) {
+				allMeshes.push(child);
 			}
 		});
 
-		if (firstMesh && bones.length > 0 && rootBone) {
-			// Have skeleton but mesh wasn't detected as skinned - create SkinnedMesh
-			console.log('Creating SkinnedMesh from regular mesh with skeleton');
-			// Create skeleton with inverse bind matrices from USD
+		console.log(`Found ${allMeshes.length} meshes, ${allSkinnedMeshUSDData.size} have USD skinning data`);
+
+		if (allMeshes.length > 0 && bones.length > 0 && rootBone) {
+			// Create skeleton with inverse bind matrices from USD (shared by all meshes)
 			const boneInverses = _cachedBoneInverses || [];
 			if (boneInverses.length === bones.length) {
 				skeleton = new THREE.Skeleton(bones, boneInverses);
@@ -1301,150 +1477,144 @@ async function processUSDScene(usd_scene, loader, filename) {
 				console.warn(`Skeleton created without inverse bind matrices (expected ${bones.length}, got ${boneInverses.length})`);
 			}
 
-			// Add skinning attributes to geometry from USD data if available
-			const geometry = firstMesh.geometry;
-			if (skinnedMeshUSDData && geometry.attributes.position) {
-				const vertexCount = geometry.attributes.position.count;
-				const influencesPerVertex = skinnedMeshUSDData.elementSize || 4;
-				const usdVertexCount = Math.floor(skinnedMeshUSDData.jointIndices.length / influencesPerVertex);
-
-				console.log(`Adding skinning attributes: ${vertexCount} Three.js vertices`);
-				console.log(`  USD jointIndices: ${skinnedMeshUSDData.jointIndices.length} elements`);
-				console.log(`  USD jointWeights: ${skinnedMeshUSDData.jointWeights.length} elements`);
-				console.log(`  USD vertex count (inferred): ${usdVertexCount} (${influencesPerVertex} influences per vertex)`);
-
-				// Check if vertex counts match
-				if (vertexCount !== usdVertexCount) {
-					console.warn(`Vertex count mismatch: Three.js has ${vertexCount}, USD has ${usdVertexCount}`);
-					console.warn('Skinning may not work correctly - using min of both counts');
-				}
-
-				// Use ExtendedSkinning module for proper handling of 4/8/16/32/64+ bones
-				let skinningConfig;
-
-				// Check if WASM bone texture should be used (for 16+ bones)
-				if (animationParams.useWASMBoneTexture && influencesPerVertex > 8) {
-					try {
-						// Generate bone texture from WASM
-						const wasmBoneTexture = usd_scene.generateBoneTexture(skinnedMeshUSDData.meshId, 0); // 0 = auto
-
-						if (wasmBoneTexture.error) {
-							console.warn(`WASM bone texture generation failed: ${wasmBoneTexture.error}, falling back to JS`);
-							skinningConfig = addExtendedSkinningAttributes(
-								geometry,
-								skinnedMeshUSDData.jointIndices,
-								skinnedMeshUSDData.jointWeights,
-								influencesPerVertex,
-								{ normalize: true }
-							);
-						} else {
-							console.log(`Using WASM bone texture: ${wasmBoneTexture.textureWidth}x${wasmBoneTexture.textureHeight}`);
-							skinningConfig = applyWASMBoneTextureToGeometry(geometry, wasmBoneTexture, {
-								jointIndices: skinnedMeshUSDData.jointIndices,
-								jointWeights: skinnedMeshUSDData.jointWeights,
-								influencesPerVertex: influencesPerVertex
-							});
-						}
-					} catch (texErr) {
-						console.warn(`WASM bone texture error: ${texErr.message}, falling back to JS`);
-						skinningConfig = addExtendedSkinningAttributes(
-							geometry,
-							skinnedMeshUSDData.jointIndices,
-							skinnedMeshUSDData.jointWeights,
-							influencesPerVertex,
-							{ normalize: true }
-						);
-					}
-				} else {
-					// Standard JS-based skinning attributes
-					skinningConfig = addExtendedSkinningAttributes(
-						geometry,
-						skinnedMeshUSDData.jointIndices,
-						skinnedMeshUSDData.jointWeights,
-						influencesPerVertex,
-						{ normalize: true }
-					);
-				}
-
-				console.log(`Added skinning attributes with mode: ${skinningConfig.mode} (${influencesPerVertex} influences per vertex)`);
-				if (skinningConfig.mode > SkinningMode.STANDARD) {
-					console.log(`  Extended skinning enabled: ${skinningConfig.mode} bones per vertex`);
-					if (skinningConfig.fromWASM) {
-						console.log(`  Using WASM-generated bone texture`);
-					}
-				}
-			} else {
-				console.warn('No USD skinning data available to add to geometry');
-			}
-
-			// Validate rootBone before creating SkinnedMesh
+			// Validate rootBone
 			if (!rootBone || !(rootBone instanceof THREE.Bone)) {
 				console.error('Invalid rootBone:', rootBone);
 				throw new Error('rootBone is not a valid THREE.Bone');
 			}
 
-			console.log(`Creating SkinnedMesh with ${bones.length} bones, rootBone: ${rootBone.name}`);
+			// Process each mesh
+			let firstSkinnedMesh = null;
+			let processedCount = 0;
 
-			const newSkinnedMesh = new THREE.SkinnedMesh(firstMesh.geometry, firstMesh.material);
+			for (const mesh of allMeshes) {
+				const meshName = mesh.name;
 
-			// Add root bone to mesh first
-			newSkinnedMesh.add(rootBone);
+				// Look up USD skinning data for this mesh
+				const meshUSDData = allSkinnedMeshUSDData.get(meshName);
 
-			// Update bone world matrices after adding to scene graph
-			newSkinnedMesh.updateMatrixWorld(true);
+				if (meshUSDData) {
+					console.log(`Processing mesh: ${meshName}`);
 
-			// Now bind skeleton with optional geomBindTransform
-			// geomBindTransform defines the mesh's transform when it was bound to the skeleton
-			if (skinnedMeshUSDData && skinnedMeshUSDData.geomBindTransform) {
-				newSkinnedMesh.bind(skeleton, skinnedMeshUSDData.geomBindTransform);
-				console.log('Applied geomBindTransform to skinned mesh');
-			} else {
-				newSkinnedMesh.bind(skeleton);
+					// Add skinning attributes to geometry
+					const geometry = mesh.geometry;
+					if (geometry.attributes.position) {
+						const vertexCount = geometry.attributes.position.count;
+						const influencesPerVertex = meshUSDData.elementSize || 4;
+						const usdVertexCount = Math.floor(meshUSDData.jointIndices.length / influencesPerVertex);
+
+						console.log(`  Adding skinning: ${vertexCount} vertices, ${influencesPerVertex} influences/vertex`);
+
+						if (vertexCount !== usdVertexCount) {
+							console.warn(`  Vertex count mismatch: Three.js=${vertexCount}, USD=${usdVertexCount}`);
+						}
+
+						// Add skinning attributes
+						const skinningConfig = addExtendedSkinningAttributes(
+							geometry,
+							meshUSDData.jointIndices,
+							meshUSDData.jointWeights,
+							influencesPerVertex,
+							{ normalize: true }
+						);
+
+						console.log(`  Skinning mode: ${skinningConfig.mode}`);
+
+						// Create SkinnedMesh
+						const newSkinnedMesh = new THREE.SkinnedMesh(geometry, mesh.material);
+						newSkinnedMesh.name = meshName;
+						newSkinnedMesh.castShadow = true;
+						newSkinnedMesh.receiveShadow = true;
+						newSkinnedMesh.visible = animationParams.showMesh;
+
+						// For first mesh, add rootBone and bind skeleton
+						if (!firstSkinnedMesh) {
+							newSkinnedMesh.add(rootBone);
+							newSkinnedMesh.updateMatrixWorld(true);
+
+							// Bind with geomBindTransform if available
+							if (meshUSDData.geomBindTransform) {
+								newSkinnedMesh.bind(skeleton, meshUSDData.geomBindTransform);
+								console.log(`  Applied geomBindTransform`);
+							} else {
+								newSkinnedMesh.bind(skeleton);
+							}
+
+							firstSkinnedMesh = newSkinnedMesh;
+							skinnedMesh = newSkinnedMesh;
+							originalMaterial = newSkinnedMesh.material;
+						} else {
+							// Subsequent meshes share the skeleton
+							if (meshUSDData.geomBindTransform) {
+								newSkinnedMesh.bind(skeleton, meshUSDData.geomBindTransform);
+							} else {
+								newSkinnedMesh.bind(skeleton);
+							}
+						}
+
+						// Apply extended skinning material if needed
+						if (applyExtendedSkinningIfNeeded(newSkinnedMesh)) {
+							console.log(`  Extended skinning material applied`);
+						}
+
+						characterGroup.add(newSkinnedMesh);
+						processedCount++;
+					}
+				} else {
+					// Mesh without skinning data - add as regular mesh
+					console.log(`Mesh ${meshName}: no USD skinning data, adding as regular mesh`);
+					mesh.castShadow = true;
+					mesh.receiveShadow = true;
+					mesh.visible = animationParams.showMesh;
+					characterGroup.add(mesh);
+
+					if (!skinnedMesh) {
+						skinnedMesh = mesh;
+						originalMaterial = mesh.material;
+					}
+				}
 			}
 
-			// Apply extended skinning material if needed (for 8+ bones per vertex)
-			if (applyExtendedSkinningIfNeeded(newSkinnedMesh)) {
-				console.log('Extended skinning material applied for high bone count');
-			}
+			console.log(`Processed ${processedCount} skinned meshes`);
 
-			newSkinnedMesh.castShadow = true;
-			newSkinnedMesh.receiveShadow = true;
+			if (firstSkinnedMesh) {
+				// Create skeleton helper for visualization
+				skeletonHelper = new THREE.SkeletonHelper(firstSkinnedMesh);
+				skeletonHelper.visible = animationParams.showSkeleton;
+				scene.add(skeletonHelper);
 
-			skinnedMesh = newSkinnedMesh;
-			characterGroup.add(skinnedMesh);
+				// Create joint spheres
+				jointSpheres = createJointSpheres(bones);
+				jointSpheres.forEach(sphere => sphere.visible = animationParams.showJoints);
 
-			// Save original material
-			originalMaterial = skinnedMesh.material;
-
-			// Add to scene (not usdSceneRoot) since SkeletonHelper uses bone world positions
-			skeletonHelper = new THREE.SkeletonHelper(skinnedMesh);
-			skeletonHelper.visible = animationParams.showSkeleton;
-			scene.add(skeletonHelper);
-
-			// Create joint spheres
-			jointSpheres = createJointSpheres(bones);
-			jointSpheres.forEach(sphere => sphere.visible = animationParams.showJoints);
-
-			// Update joint hierarchy display
-			if (window.updateJointHierarchy) {
-				window.updateJointHierarchy(generateJointHierarchy(bones));
+				// Update joint hierarchy display
+				if (window.updateJointHierarchy) {
+					window.updateJointHierarchy(generateJointHierarchy(bones));
+				}
+				if (typeof updateJointHierarchyGUI === 'function') {
+					updateJointHierarchyGUI(bones);
+				}
 			}
 		} else {
 			// No skeleton or no mesh - just add the scene as-is
 			console.log('Adding scene without skeleton');
-			if (firstMesh) {
-				firstMesh.castShadow = true;
-				firstMesh.receiveShadow = true;
-				characterGroup.add(firstMesh);
-				skinnedMesh = firstMesh;
-				originalMaterial = firstMesh.material;
-			} else {
-				characterGroup.add(threeNode);
+			for (const mesh of allMeshes) {
+				mesh.castShadow = true;
+				mesh.receiveShadow = true;
+				mesh.visible = animationParams.showMesh;
+				characterGroup.add(mesh);
+				if (!skinnedMesh) {
+					skinnedMesh = mesh;
+					originalMaterial = mesh.material;
+				}
 			}
 
 			// Update joint hierarchy display (empty)
 			if (window.updateJointHierarchy) {
 				window.updateJointHierarchy(generateJointHierarchy([]));
+			}
+			if (typeof updateJointHierarchyGUI === 'function') {
+				updateJointHierarchyGUI([]);
 			}
 		}
 	}
@@ -1526,14 +1696,27 @@ async function processUSDScene(usd_scene, loader, filename) {
 		}
 	}
 
-	// Apply Z-up to Y-up conversion if enabled AND the file is actually Z-up
-	if (animationParams.applyUpAxisConversion && fileUpAxis === "Z") {
+	// Z-up to Y-up conversion
+	// NOTE: For skinned meshes, rotating the scene root breaks skinning because the
+	// inverse bind matrices were computed in the original coordinate system.
+	// So we skip the conversion for skinned meshes and keep them in original coordinates.
+	const hasSkinnedMeshes = skinnedMesh && skinnedMesh.isSkinnedMesh;
+
+	if (hasSkinnedMeshes) {
+		// Don't apply rotation to skinned meshes - it breaks skinning
+		usdSceneRoot.rotation.x = 0;
+		if (fileUpAxis === "Z") {
+			console.log(`[processUSDScene] Skipping Z-up to Y-up rotation (has skinned meshes - rotation breaks skinning)`);
+			console.log(`[processUSDScene] Model is in original Z-up coordinate system. Use camera orbit to view from different angles.`);
+		}
+	} else if (animationParams.applyUpAxisConversion && fileUpAxis === "Z") {
+		// Non-skinned meshes can be rotated safely
 		usdSceneRoot.rotation.x = -Math.PI / 2;
 		console.log(`[processUSDScene] Applied Z-up to Y-up conversion (file upAxis="${fileUpAxis}"): rotation.x =`, usdSceneRoot.rotation.x);
-	} else if (animationParams.applyUpAxisConversion && fileUpAxis !== "Y") {
-		console.warn(`[processUSDScene] File upAxis is "${fileUpAxis}" (not Y or Z), no rotation applied`);
+	} else if (fileUpAxis !== "Y" && fileUpAxis !== "Z") {
+		usdSceneRoot.rotation.x = 0;
+		console.warn(`[processUSDScene] File upAxis is "${fileUpAxis}" (not Y or Z), no conversion applied`);
 	} else {
-		// Reset rotation (either disabled or file is already Y-up)
 		usdSceneRoot.rotation.x = 0;
 		console.log(`[processUSDScene] No upAxis conversion needed (file upAxis="${fileUpAxis}", conversion ${animationParams.applyUpAxisConversion ? 'enabled' : 'disabled'})`);
 	}
@@ -1542,6 +1725,9 @@ async function processUSDScene(usd_scene, loader, filename) {
 	usdSceneRoot.updateMatrixWorld(true);
 	const sceneBounds = computeSceneBoundingBox(usdSceneRoot);
 	updateShadowCameraFromBounds(directionalLight, sceneBounds);
+
+	// Fit camera to scene after loading
+	fitCameraToScene();
 }
 
 /**
@@ -1596,7 +1782,14 @@ window.addEventListener('loadDefaultModel', async () => {
 // Load USD model on startup
 loadUSDModel().catch((error) => {
 	console.error('Failed to load default USD file:', error);
+	console.error('Error details:', error.message || error);
 	console.log('Please upload a USD file (with or without skeletal animation).');
+	// Update UI to show error
+	const currentFileElement = document.getElementById('currentFile');
+	if (currentFileElement) {
+		currentFileElement.textContent = 'Failed to load (see console)';
+		currentFileElement.style.color = '#ff6b6b';
+	}
 });
 
 // Listen for mouse clicks for joint selection
@@ -1682,11 +1875,23 @@ const animationParams = {
 	},
 
 	// Visualization
+	showMesh: true,
+	toggleMesh: function() {
+		if (skinnedMesh) {
+			skinnedMesh.visible = this.showMesh;
+		}
+	},
+
 	showSkeleton: true,
 	toggleSkeleton: function() {
 		if (skeletonHelper) {
 			skeletonHelper.visible = this.showSkeleton;
 		}
+	},
+
+	// Camera controls
+	fitToScene: function() {
+		fitCameraToScene();
 	},
 
 	// Debug visualization
@@ -1772,20 +1977,25 @@ const animationParams = {
 	},
 
 	// Up axis conversion (Z-up to Y-up)
+	// Note: For skinned meshes, rotation is not applied because it breaks skinning.
+	// For non-skinned meshes, the rotation can be toggled.
 	applyUpAxisConversion: true,
 	toggleUpAxisConversion: function() {
-		if (this.applyUpAxisConversion && currentFileUpAxis === "Z") {
-			// Apply Z-up to Y-up conversion (-90 degrees around X axis)
-			usdSceneRoot.rotation.x = -Math.PI / 2;
-			console.log(`[toggleUpAxisConversion] Applied Z-up to Y-up rotation (file upAxis="${currentFileUpAxis}"): usdSceneRoot.rotation.x =`, usdSceneRoot.rotation.x);
-		} else {
-			// Reset rotation (either disabled or file is already Y-up)
+		// Check if we have skinned meshes
+		const hasSkinnedMeshes = skinnedMesh && skinnedMesh.isSkinnedMesh;
+
+		if (hasSkinnedMeshes) {
+			// For skinned meshes, don't apply rotation - it breaks skinning
+			console.log(`[toggleUpAxisConversion] Skinned mesh detected - Z-up to Y-up rotation disabled to preserve skinning`);
+			console.log(`[toggleUpAxisConversion] Use camera orbit to view the model from different angles`);
 			usdSceneRoot.rotation.x = 0;
-			if (this.applyUpAxisConversion && currentFileUpAxis !== "Z") {
-				console.log(`[toggleUpAxisConversion] No rotation needed (file upAxis="${currentFileUpAxis}"): usdSceneRoot.rotation.x =`, usdSceneRoot.rotation.x);
-			} else {
-				console.log(`[toggleUpAxisConversion] Reset rotation (conversion disabled): usdSceneRoot.rotation.x =`, usdSceneRoot.rotation.x);
-			}
+		} else if (this.applyUpAxisConversion && currentFileUpAxis === "Z") {
+			// Non-skinned meshes can be rotated
+			usdSceneRoot.rotation.x = -Math.PI / 2;
+			console.log(`[toggleUpAxisConversion] Applied Z-up to Y-up rotation: usdSceneRoot.rotation.x =`, usdSceneRoot.rotation.x);
+		} else {
+			usdSceneRoot.rotation.x = 0;
+			console.log(`[toggleUpAxisConversion] Reset rotation: usdSceneRoot.rotation.x =`, usdSceneRoot.rotation.x);
 		}
 	}
 };
@@ -1838,6 +2048,9 @@ animationFolder.open();
 
 // Visualization controls
 const visualFolder = gui.addFolder('Visualization');
+visualFolder.add(animationParams, 'showMesh')
+	.name('Show Mesh')
+	.onChange(() => animationParams.toggleMesh());
 visualFolder.add(animationParams, 'showSkeleton')
 	.name('Show Skeleton')
 	.onChange(() => animationParams.toggleSkeleton());
@@ -1847,6 +2060,7 @@ visualFolder.add(animationParams, 'enableShadows')
 visualFolder.add(animationParams, 'applyUpAxisConversion')
 	.name('Z-up to Y-up')
 	.onChange(() => animationParams.toggleUpAxisConversion());
+visualFolder.add(animationParams, 'fitToScene').name('Fit to Scene');
 visualFolder.open();
 
 // Debug visualization controls
@@ -1906,6 +2120,104 @@ boneReductionFolder.add(animationParams, 'useWASMBoneTexture')
 		console.log(`WASM bone texture ${animationParams.useWASMBoneTexture ? 'enabled' : 'disabled'} (applies on next file load)`);
 	});
 boneReductionFolder.close(); // Closed by default as advanced feature
+
+// Joint Hierarchy folder (with custom HTML content)
+const jointHierarchyFolder = gui.addFolder('Joint Hierarchy');
+
+// Selected joint indicator (add this first so we can append custom content after)
+const selectedJointInfo = {
+	selected: 'None'
+};
+jointHierarchyFolder.add(selectedJointInfo, 'selected').name('Selected').listen().disable();
+
+// Create custom container for joint hierarchy
+const jointHierarchyContainer = document.createElement('div');
+jointHierarchyContainer.id = 'gui-joint-hierarchy';
+jointHierarchyContainer.style.cssText = `
+	max-height: 200px;
+	overflow-y: auto;
+	padding: 4px 8px;
+	font-family: monospace;
+	font-size: 11px;
+	line-height: 1.4;
+	background: rgba(0, 0, 0, 0.2);
+	border-radius: 3px;
+	margin: 4px;
+`;
+jointHierarchyContainer.innerHTML = '<span style="color: #888;">No skeleton loaded</span>';
+
+// Safely append custom container to folder
+try {
+	// Try $children first (lil-gui internal)
+	if (jointHierarchyFolder.$children) {
+		jointHierarchyFolder.$children.appendChild(jointHierarchyContainer);
+	} else if (jointHierarchyFolder.domElement) {
+		// Fallback: find children container in domElement
+		const childrenContainer = jointHierarchyFolder.domElement.querySelector('.children');
+		if (childrenContainer) {
+			childrenContainer.appendChild(jointHierarchyContainer);
+		} else {
+			jointHierarchyFolder.domElement.appendChild(jointHierarchyContainer);
+		}
+	}
+} catch (e) {
+	console.warn('Could not append joint hierarchy container to GUI:', e);
+}
+
+jointHierarchyFolder.open();
+
+// Function to update joint hierarchy in GUI
+function updateJointHierarchyGUI(bones) {
+	if (!jointHierarchyContainer) return;
+
+	if (bones.length === 0) {
+		jointHierarchyContainer.innerHTML = '<span style="color: #888;">No skeleton loaded</span>';
+		return;
+	}
+
+	let html = '';
+
+	function traverseBone(bone, depth = 0) {
+		const indent = '&nbsp;&nbsp;'.repeat(depth);
+		const bullet = depth > 0 ? '└─ ' : '● ';
+		const color = depth === 0 ? '#ff6b6b' : '#4ecdc4';
+
+		html += `<div style="color: ${color}; cursor: pointer; padding: 2px; border-radius: 3px;"
+		              class="gui-joint-item"
+		              data-bone-name="${bone.name}"
+		              onmouseover="this.style.backgroundColor='rgba(255,255,255,0.15)'"
+		              onmouseout="this.style.backgroundColor='transparent'">${indent}${bullet}${bone.name}</div>`;
+
+		bone.children.forEach(child => {
+			if (child.isBone) {
+				traverseBone(child, depth + 1);
+			}
+		});
+	}
+
+	// Find root bones
+	bones.forEach(bone => {
+		if (!bone.parent || !bone.parent.isBone) {
+			traverseBone(bone);
+		}
+	});
+
+	jointHierarchyContainer.innerHTML = html;
+
+	// Add click handlers
+	const jointItems = jointHierarchyContainer.querySelectorAll('.gui-joint-item');
+	jointItems.forEach(item => {
+		item.addEventListener('click', function() {
+			const boneName = this.getAttribute('data-bone-name');
+			selectJointByName(boneName);
+		});
+	});
+}
+
+// Function to update selected joint display in GUI
+function updateSelectedJointGUI(jointName) {
+	selectedJointInfo.selected = jointName || 'None';
+}
 
 // Info folder
 const infoFolder = gui.addFolder('Info');
@@ -1971,8 +2283,10 @@ function animate() {
 	}
 
 	// Update transform controls position if a joint is selected
-	if (selectedJoint && transformControls.visible) {
-		transformControls.updateMatrixWorld();
+	if (selectedJoint && transformControls && transformControls.visible) {
+		if (typeof transformControls.updateMatrixWorld === 'function') {
+			transformControls.updateMatrixWorld();
+		}
 	}
 
 	// Update controls
