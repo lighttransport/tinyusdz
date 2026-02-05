@@ -60,6 +60,9 @@ const USE_SKELETAL_HELPER = false;
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x1a1a1a);
 
+// Module-level variable to store inverse bind matrices from skeleton building
+let _cachedBoneInverses = [];
+
 // Camera
 const camera = new THREE.PerspectiveCamera(
 	75,
@@ -348,6 +351,7 @@ function buildSkeletonFromUSD(usdSkeleton, skeletonId) {
 
 	const bones = [];
 	const boneMap = new Map();
+	const boneBindMatrices = []; // Store bind matrices for computing inverse bind matrices
 	let jointId = 0;
 
 	// Helper to parse matrix from USD format
@@ -399,6 +403,10 @@ function buildSkeletonFromUSD(usdSkeleton, skeletonId) {
 
 		const restMatrix = hasRestTransform ? parseMatrix(skelNode.rest_transform) : null;
 		const bindMatrix = hasBindTransform ? parseMatrix(skelNode.bind_transform) : null;
+
+		// Store bind matrix for computing inverse bind matrix later
+		// This is crucial for proper skinning deformation
+		boneBindMatrices.push({ bone, bindMatrix: bindMatrix ? bindMatrix.clone() : null });
 
 		// Store rest transform in userData for later reset
 		// rest_transform is in LOCAL space - can be applied directly to bone
@@ -469,11 +477,28 @@ function buildSkeletonFromUSD(usdSkeleton, skeletonId) {
 			}
 		});
 
-		return { bones: allBones, boneMap, rootBone };
+		// Compute inverse bind matrices from USD bind transforms
+		// These are crucial for proper skinning - they transform vertices from world space to bone-local space
+		const boneInverses = [];
+		for (const boneData of boneBindMatrices) {
+			if (boneData.bindMatrix) {
+				// Compute inverse of bind transform
+				const inverseBindMatrix = boneData.bindMatrix.clone().invert();
+				boneInverses.push(inverseBindMatrix);
+			} else {
+				// No bind matrix available - use identity (may cause issues)
+				console.warn(`No bind matrix for bone, using identity`);
+				boneInverses.push(new THREE.Matrix4());
+			}
+		}
+
+		console.log(`[Custom] Built skeleton with ${allBones.length} bones, ${boneInverses.length} inverse bind matrices`);
+
+		return { bones: allBones, boneMap, rootBone, boneInverses };
 	}
 
 	console.warn('No root_node found in skeleton');
-	return { bones: [], boneMap: new Map(), rootBone: null };
+	return { bones: [], boneMap: new Map(), rootBone: null, boneInverses: [] };
 }
 
 /**
@@ -852,7 +877,7 @@ async function loadUSDModel() {
 	await loader.init({ useZstdCompressedWasm: false, useMemory64: false });
 
 	// Default USD file to load
-	const usd_filename = "./assets/skintest.usda";
+	const usd_filename = "./assets/skintest-animated.usda";
 
 	console.log(`Loading USD file: ${usd_filename}`);
 
@@ -1045,6 +1070,8 @@ async function processUSDScene(usd_scene, loader, filename) {
 			bones = skeletonData.bones;
 			boneMap = skeletonData.boneMap;
 			rootBone = skeletonData.rootBone;
+			// Store inverse bind matrices for proper skinning
+			_cachedBoneInverses = skeletonData.boneInverses;
 			console.log(`[Custom] Built skeleton with ${bones.length} bones`);
 		}
 
@@ -1153,8 +1180,16 @@ async function processUSDScene(usd_scene, loader, filename) {
 
 			// Only create skeleton if we have bones
 			if (bones.length > 0 && rootBone) {
-				// Create Three.js skeleton
-				skeleton = new THREE.Skeleton(bones);
+				// Create Three.js skeleton with inverse bind matrices from USD
+				// The inverse bind matrices are crucial for proper skinning deformation
+				const boneInverses = _cachedBoneInverses || [];
+				if (boneInverses.length === bones.length) {
+					skeleton = new THREE.Skeleton(bones, boneInverses);
+					console.log('Created skeleton with USD inverse bind matrices');
+				} else {
+					skeleton = new THREE.Skeleton(bones);
+					console.warn(`Skeleton created without inverse bind matrices (expected ${bones.length}, got ${boneInverses.length})`);
+				}
 
 				// Convert to SkinnedMesh if not already
 				if (!child.isSkinnedMesh) {
@@ -1211,9 +1246,10 @@ async function processUSDScene(usd_scene, loader, filename) {
 				originalMaterial = skinnedMesh.material;
 
 				// Create skeleton helper for visualization
+				// Note: Add to scene (not usdSceneRoot) since SkeletonHelper uses world positions
 				skeletonHelper = new THREE.SkeletonHelper(skinnedMesh);
 				skeletonHelper.visible = animationParams.showSkeleton;
-				scene.add(skeletonHelper);
+				usdSceneRoot.add(skeletonHelper);
 
 				// Create joint spheres
 				jointSpheres = createJointSpheres(bones);
@@ -1253,7 +1289,15 @@ async function processUSDScene(usd_scene, loader, filename) {
 		if (firstMesh && bones.length > 0 && rootBone) {
 			// Have skeleton but mesh wasn't detected as skinned - create SkinnedMesh
 			console.log('Creating SkinnedMesh from regular mesh with skeleton');
-			skeleton = new THREE.Skeleton(bones);
+			// Create skeleton with inverse bind matrices from USD
+			const boneInverses = _cachedBoneInverses || [];
+			if (boneInverses.length === bones.length) {
+				skeleton = new THREE.Skeleton(bones, boneInverses);
+				console.log('Created skeleton with USD inverse bind matrices');
+			} else {
+				skeleton = new THREE.Skeleton(bones);
+				console.warn(`Skeleton created without inverse bind matrices (expected ${bones.length}, got ${boneInverses.length})`);
+			}
 
 			// Add skinning attributes to geometry from USD data if available
 			const geometry = firstMesh.geometry;
@@ -1372,7 +1416,7 @@ async function processUSDScene(usd_scene, loader, filename) {
 
 			skeletonHelper = new THREE.SkeletonHelper(skinnedMesh);
 			skeletonHelper.visible = animationParams.showSkeleton;
-			scene.add(skeletonHelper);
+			usdSceneRoot.add(skeletonHelper);
 
 			// Create joint spheres
 			jointSpheres = createJointSpheres(bones);
