@@ -1978,6 +1978,161 @@ async function fetchMtlxTests(outputDir) {
 }
 
 // ============================================================================
+// Roundtrip Tests - ColorSpace Preservation
+// ============================================================================
+
+/**
+ * ColorSpaces to test for roundtrip preservation
+ */
+const COLORSPACE_TESTS = [
+  { name: 'lin_rec709', colorspace: 'lin_rec709', description: 'Linear Rec.709 (default)' },
+  { name: 'srgb_texture', colorspace: 'srgb_texture', description: 'sRGB Texture' },
+  { name: 'acescg', colorspace: 'acescg', description: 'ACEScg' },
+  { name: 'lin_srgb', colorspace: 'lin_srgb', description: 'Linear sRGB' },
+  { name: 'raw', colorspace: 'raw', description: 'Raw (no color management)' }
+];
+
+/**
+ * Generate USDA test file with specific colorspace
+ */
+function generateColorspaceTestUsda(colorspace) {
+  return `#usda 1.0
+(
+    defaultPrim = "root"
+    metersPerUnit = 1
+)
+
+def Xform "root"
+{
+    def Scope "mtl"
+    {
+        def Material "TestMaterial" (
+            prepend apiSchemas = ["MaterialXConfigAPI"]
+        )
+        {
+            string config:mtlx:version = "1.38"
+            string config:mtlx:colorspace = "${colorspace}"
+            token outputs:mtlx:surface.connect = </root/mtl/TestMaterial/OpenPBRShader.outputs:out>
+
+            def Shader "OpenPBRShader"
+            {
+                uniform token info:id = "ND_open_pbr_surface_surfaceshader"
+                color3f inputs:base_color = (0.8, 0.2, 0.2)
+                float inputs:base_weight = 1.0
+                float inputs:specular_roughness = 0.3
+                token outputs:out
+            }
+
+            def NodeGraph "MtlxNodeGraph"
+            {
+                float outputs:roughness.connect = </root/mtl/TestMaterial/MtlxNodeGraph/multiply_roughness.outputs:out>
+
+                def Shader "roughness_value"
+                {
+                    uniform token info:id = "ND_constant_float"
+                    float inputs:value = 0.3
+                    float outputs:out
+                }
+
+                def Shader "multiply_roughness"
+                {
+                    uniform token info:id = "ND_multiply_float"
+                    float inputs:in1.connect = </root/mtl/TestMaterial/MtlxNodeGraph/roughness_value.outputs:out>
+                    float inputs:in2 = 1.5
+                    float outputs:out
+                }
+            }
+        }
+    }
+}
+`;
+}
+
+/**
+ * Generate colorspace roundtrip test files
+ */
+function generateColorspaceRoundtripTests(outputDir) {
+  if (!fs.existsSync(outputDir)) {
+    fs.mkdirSync(outputDir, { recursive: true });
+  }
+
+  const generated = [];
+
+  for (const test of COLORSPACE_TESTS) {
+    const filename = `roundtrip_colorspace_${test.name}.usda`;
+    const filepath = path.join(outputDir, filename);
+    const content = generateColorspaceTestUsda(test.colorspace);
+
+    fs.writeFileSync(filepath, content);
+    generated.push({
+      file: filepath,
+      name: test.name,
+      colorspace: test.colorspace,
+      description: test.description
+    });
+  }
+
+  return generated;
+}
+
+/**
+ * Test colorspace roundtrip - verify colorspace is preserved after parse
+ */
+function testColorspaceRoundtrip(testCase, options) {
+  const result = {
+    file: testCase.file,
+    name: testCase.name,
+    expectedColorspace: testCase.colorspace,
+    actualColorspace: null,
+    status: 'unknown',
+    correct: false,
+    message: ''
+  };
+
+  try {
+    // Parse the file with tusdcat
+    const output = execSync(`"${options.tusdcat}" "${testCase.file}" 2>&1`, {
+      encoding: 'utf-8',
+      maxBuffer: 10 * 1024 * 1024,
+      timeout: options.timeout || 30000
+    });
+
+    // Look for colorspace in the output
+    // The colorspace should appear in config:mtlx:colorspace
+    const colorspaceMatch = output.match(/config:mtlx:colorspace\s*=\s*"([^"]+)"/);
+
+    if (colorspaceMatch) {
+      result.actualColorspace = colorspaceMatch[1];
+      result.correct = result.actualColorspace === result.expectedColorspace;
+      result.status = result.correct ? 'pass' : 'mismatch';
+      result.message = result.correct
+        ? `ColorSpace preserved: ${result.actualColorspace}`
+        : `ColorSpace mismatch: expected '${result.expectedColorspace}', got '${result.actualColorspace}'`;
+    } else {
+      // Check if colorspace appears in any form
+      const anyColorspaceMatch = output.match(/colorspace["\s]*[:=]["\s]*([^\s"<>]+)/i);
+      if (anyColorspaceMatch) {
+        result.actualColorspace = anyColorspaceMatch[1];
+        result.status = 'found_elsewhere';
+        result.correct = false;
+        result.message = `ColorSpace found in different location: ${result.actualColorspace}`;
+      } else {
+        result.status = 'missing';
+        result.correct = false;
+        result.message = 'ColorSpace not found in output';
+      }
+    }
+
+  } catch (err) {
+    result.status = 'error';
+    result.correct = false;
+    result.message = `Parse error: ${(err.stderr || err.message).substring(0, 200)}`;
+  }
+
+  return result;
+}
+
+// ============================================================================
 // CLI
 // ============================================================================
 
@@ -2021,6 +2176,8 @@ Test Generation:
   --error-dir <path>      Directory for error tests (default: /tmp/mtlx-errors)
   --fetch-mtlx-tests      Fetch MaterialX test files from GitHub
   --fetch-dir <path>      Directory for fetched tests (default: /tmp/mtlx-fetched)
+  --roundtrip-tests       Run colorspace roundtrip tests
+  --roundtrip-dir <path>  Directory for roundtrip tests (default: /tmp/mtlx-roundtrip)
 
 Exit codes:
   0 - All files processed successfully
@@ -2052,7 +2209,9 @@ function main() {
     generateErrorTests: false,
     errorDir: path.join(os.tmpdir(), 'mtlx-errors'),
     fetchMtlxTests: false,
-    fetchDir: path.join(os.tmpdir(), 'mtlx-fetched')
+    fetchDir: path.join(os.tmpdir(), 'mtlx-fetched'),
+    roundtripTests: false,
+    roundtripDir: path.join(os.tmpdir(), 'mtlx-roundtrip')
   };
 
   // Parse arguments
@@ -2102,6 +2261,12 @@ function main() {
         break;
       case '--fetch-dir':
         options.fetchDir = args[++i];
+        break;
+      case '--roundtrip-tests':
+        options.roundtripTests = true;
+        break;
+      case '--roundtrip-dir':
+        options.roundtripDir = args[++i];
         break;
       default:
         if (!arg.startsWith('-')) {
@@ -2217,8 +2382,75 @@ function main() {
       console.error(`Error fetching MaterialX tests: ${err.message}`);
     });
     // If only fetching, exit early
-    if (options.files.length === 0 && !options.generateSynthetic) {
+    if (options.files.length === 0 && !options.generateSynthetic && !options.roundtripTests) {
       return;
+    }
+  }
+
+  // Handle roundtrip tests
+  if (options.roundtripTests) {
+    if (!options.quiet) {
+      console.log('Generating colorspace roundtrip test files...');
+    }
+    const roundtripTests = generateColorspaceRoundtripTests(options.roundtripDir);
+    if (!options.quiet) {
+      console.log(`Generated ${roundtripTests.length} roundtrip test files in ${options.roundtripDir}\n`);
+    }
+
+    // Run roundtrip tests
+    if (!options.quiet) {
+      console.log('Running colorspace roundtrip tests...\n');
+    }
+
+    let roundtripPassed = 0;
+    let roundtripFailed = 0;
+    const roundtripResults = [];
+
+    for (let i = 0; i < roundtripTests.length; i++) {
+      const testCase = roundtripTests[i];
+
+      if (!options.quiet && !options.json) {
+        console.log(`[${i + 1}/${roundtripTests.length}] Roundtrip Test: ${testCase.name}`);
+        console.log(`    ${testCase.description} (colorspace: ${testCase.colorspace})`);
+      }
+
+      const result = testColorspaceRoundtrip(testCase, options);
+      roundtripResults.push(result);
+
+      if (result.correct) {
+        roundtripPassed++;
+        if (!options.quiet && !options.json) {
+          console.log(`  ✓ ${result.status}: ${result.message}\n`);
+        }
+      } else {
+        roundtripFailed++;
+        if (!options.quiet && !options.json) {
+          console.log(`  ✗ ${result.status}: ${result.message}\n`);
+        }
+      }
+    }
+
+    if (!options.quiet && !options.json) {
+      console.log('═'.repeat(50));
+      console.log(`Roundtrip Tests Summary:`);
+      console.log(`  ✓ Passed: ${roundtripPassed}`);
+      console.log(`  ✗ Failed: ${roundtripFailed}`);
+      console.log('');
+    }
+
+    if (options.json) {
+      console.log(JSON.stringify({
+        type: 'roundtrip_tests',
+        total: roundtripTests.length,
+        passed: roundtripPassed,
+        failed: roundtripFailed,
+        results: roundtripResults
+      }, null, 2));
+    }
+
+    // If only running roundtrip tests, exit
+    if (options.files.length === 0 && !options.generateSynthetic) {
+      process.exit(roundtripFailed > 0 ? 1 : 0);
     }
   }
 
