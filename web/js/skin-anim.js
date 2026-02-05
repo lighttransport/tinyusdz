@@ -89,7 +89,15 @@ transformControls.setSpace('local');
 transformControls.addEventListener('dragging-changed', (event) => {
 	controls.enabled = !event.value; // Disable orbit controls while dragging
 });
-scene.add(transformControls);
+// In Three.js r150+, TransformControls may need special handling
+if (transformControls.isObject3D) {
+	scene.add(transformControls);
+} else if (transformControls.getHelper) {
+	// Some versions use getHelper() for the visual gizmo
+	scene.add(transformControls.getHelper());
+} else {
+	console.warn('TransformControls could not be added to scene - check Three.js version compatibility');
+}
 
 // Raycaster for joint selection
 const raycaster = new THREE.Raycaster();
@@ -1847,7 +1855,6 @@ boneReductionFolder.add(animationParams, 'targetBoneCount', 1, 8, 1)
 	});
 boneReductionFolder.add(animationParams, 'useWASMBoneTexture')
 	.name('WASM Bone Texture')
-	.title('Use WASM-generated bone texture for efficient GPU skinning (16+ bones)')
 	.onChange(() => {
 		console.log(`WASM bone texture ${animationParams.useWASMBoneTexture ? 'enabled' : 'disabled'} (applies on next file load)`);
 	});
