@@ -5068,59 +5068,54 @@ bool RenderSceneConverter::ConvertMesh(
           return sk.abs_path == skelPathStr;
         });
 
-        // Determine skeleton_id before conversion
-        int32_t skel_id{0};
         if (skel_it != skeletons.end()) {
-          skel_id = int32_t(std::distance(skeletons.begin(), skel_it));
+          // Skeleton already converted, reuse it
+          dst.skel_id = int32_t(std::distance(skeletons.begin(), skel_it));
         } else {
-          skel_id = int32_t(skeletons.size());
-        }
+          int32_t skel_id = int32_t(skeletons.size());
 
-        SkelHierarchy skel;
-        nonstd::optional<AnimationClip> anim;
+          SkelHierarchy skel;
+          nonstd::optional<AnimationClip> anim;
 
-        // Use ConvertSkeletonFromPtr if we have the skeleton pointer from discovery,
-        // otherwise use ConvertSkeletonImplWithPath for explicit relationship case
-        if (discoveredSkelPtr) {
-          // Extract prim name from path (last component)
-          std::string primName = skelPath.prim_part();
-          size_t lastSlash = primName.rfind('/');
-          if (lastSlash != std::string::npos) {
-            primName = primName.substr(lastSlash + 1);
-          }
-          if (!ConvertSkeletonFromPtr(env, skelPath, *discoveredSkelPtr, primName, skel_id, &skel, &anim)) {
-            return false;
-          }
-        } else {
-          if (!ConvertSkeletonImplWithPath(env, skelPath, skel_id, &skel, &anim)) {
-            return false;
-          }
-        }
-        DCOUT("Converted skeleton attached to : " << abs_prim_path);
-
-        if (anim) {
-
-          const auto &animAbsPath = anim.value().abs_path;
-          auto anim_it = std::find_if(animations.begin(), animations.end(), [&animAbsPath](const AnimationClip &a) {
-            DCOUT("a.abs_path " << a.abs_path << ", anim_path " << animAbsPath);
-            return a.abs_path == animAbsPath;
-          });
-
-          if (anim_it != animations.end()) {
-            skel.anim_id = int(std::distance(animations.begin(), anim_it));
+          // Use ConvertSkeletonFromPtr if we have the skeleton pointer from discovery,
+          // otherwise use ConvertSkeletonImplWithPath for explicit relationship case
+          if (discoveredSkelPtr) {
+            // Extract prim name from path (last component)
+            std::string primName = skelPath.prim_part();
+            size_t lastSlash = primName.rfind('/');
+            if (lastSlash != std::string::npos) {
+              primName = primName.substr(lastSlash + 1);
+            }
+            if (!ConvertSkeletonFromPtr(env, skelPath, *discoveredSkelPtr, primName, skel_id, &skel, &anim)) {
+              return false;
+            }
           } else {
-            skel.anim_id = int(animations.size());
-            animations.emplace_back(anim.value());
+            if (!ConvertSkeletonImplWithPath(env, skelPath, skel_id, &skel, &anim)) {
+              return false;
+            }
           }
-        }
+          DCOUT("Converted skeleton attached to : " << abs_prim_path);
 
-        // Add skeleton if it's new (skel_it was end())
-        if (skel_it == skeletons.end()) {
+          if (anim) {
+            const auto &animAbsPath = anim.value().abs_path;
+            auto anim_it = std::find_if(animations.begin(), animations.end(), [&animAbsPath](const AnimationClip &a) {
+              DCOUT("a.abs_path " << a.abs_path << ", anim_path " << animAbsPath);
+              return a.abs_path == animAbsPath;
+            });
+
+            if (anim_it != animations.end()) {
+              skel.anim_id = int(std::distance(animations.begin(), anim_it));
+            } else {
+              skel.anim_id = int(animations.size());
+              animations.emplace_back(std::move(anim.value()));
+            }
+          }
+
           skeletons.emplace_back(std::move(skel));
           DCOUT("add skeleton\n");
-        }
 
-        dst.skel_id = skel_id;
+          dst.skel_id = skel_id;
+        }
 
       }
     }
@@ -8778,90 +8773,123 @@ bool RenderSceneConverter::ConvertSkelAnimation(const RenderSceneConverterEnv &e
     }
 
     // Create glTF-style samplers and channels for each joint
-    // Note: This creates one sampler per joint per property (not optimal but simple)
-    // TODO: Optimize to share samplers when possible
+    // Pre-convert shared time arrays once (float), then reuse per joint
+    size_t nJoints = joints.size();
+    size_t nTransTimes = translation_times.size();
+    size_t nRotTimes = rotation_times.size();
+    size_t nScaleTimes = scale_times.size();
 
-    for (size_t joint_idx = 0; joint_idx < joints.size(); joint_idx++) {
+    // Pre-convert time arrays to float once
+    std::vector<float> trans_times_f, rot_times_f, scale_times_f;
+    if (nTransTimes) {
+      trans_times_f.resize(nTransTimes);
+      for (size_t t = 0; t < nTransTimes; t++) trans_times_f[t] = float(translation_times[t]);
+    }
+    if (nRotTimes) {
+      rot_times_f.resize(nRotTimes);
+      for (size_t t = 0; t < nRotTimes; t++) rot_times_f[t] = float(rotation_times[t]);
+    }
+    if (nScaleTimes) {
+      scale_times_f.resize(nScaleTimes);
+      for (size_t t = 0; t < nScaleTimes; t++) scale_times_f[t] = float(scale_times[t]);
+    }
+
+    // Pre-convert scale half->float once (data is [time][joint])
+    std::vector<std::vector<value::float3>> scale_samples_f;
+    if (nScaleTimes) {
+      scale_samples_f.resize(nScaleTimes);
+      for (size_t t = 0; t < nScaleTimes; t++) {
+        scale_samples_f[t].resize(nJoints);
+        for (size_t j = 0; j < nJoints; j++) {
+          const auto &v = scale_samples[t][j];
+          scale_samples_f[t][j][0] = value::half_to_float(v[0]);
+          scale_samples_f[t][j][1] = value::half_to_float(v[1]);
+          scale_samples_f[t][j][2] = value::half_to_float(v[2]);
+        }
+      }
+    }
+
+    // Count total samplers/channels needed and pre-allocate
+    size_t nProps = (nTransTimes ? 1 : 0) + (nRotTimes ? 1 : 0) + (nScaleTimes ? 1 : 0);
+    size_t totalSamplers = nJoints * nProps;
+    size_t baseSamplerIdx = anim_out->samplers.size();
+    anim_out->samplers.resize(baseSamplerIdx + totalSamplers);
+    size_t baseChannelIdx = anim_out->channels.size();
+    anim_out->channels.resize(baseChannelIdx + totalSamplers);
+
+    for (size_t joint_idx = 0; joint_idx < nJoints; joint_idx++) {
+      size_t samplerOffset = baseSamplerIdx + joint_idx * nProps;
+      size_t channelOffset = baseChannelIdx + joint_idx * nProps;
+      size_t propIdx = 0;
+
       // Translation sampler and channel
-      if (!translation_times.empty()) {
-        KeyframeSampler trans_sampler;
-        trans_sampler.times.reserve(translation_times.size());
-        trans_sampler.values.reserve(translation_times.size() * 3);
+      if (nTransTimes) {
+        KeyframeSampler &trans_sampler = anim_out->samplers[samplerOffset + propIdx];
+        trans_sampler.times = trans_times_f;
         trans_sampler.interpolation = AnimationInterpolation::Linear;
-
-        for (size_t t = 0; t < translation_times.size(); t++) {
-          trans_sampler.times.push_back(float(translation_times[t]));
+        trans_sampler.values.resize(nTransTimes * 3);
+        float *dst = trans_sampler.values.data();
+        for (size_t t = 0; t < nTransTimes; t++) {
           const auto &v = translation_samples[t][joint_idx];
-          trans_sampler.values.push_back(v[0]);
-          trans_sampler.values.push_back(v[1]);
-          trans_sampler.values.push_back(v[2]);
+          dst[t * 3 + 0] = v[0];
+          dst[t * 3 + 1] = v[1];
+          dst[t * 3 + 2] = v[2];
         }
 
-        int32_t sampler_idx = int32_t(anim_out->samplers.size());
-        anim_out->samplers.push_back(trans_sampler);
-
-        AnimationChannel channel;
+        AnimationChannel &channel = anim_out->channels[channelOffset + propIdx];
         channel.target_type = ChannelTargetType::SkeletonJoint;
         channel.path = AnimationPath::Translation;
         channel.skeleton_id = skeleton_id;
         channel.joint_id = int32_t(joint_idx);
-        channel.sampler = sampler_idx;
-        anim_out->channels.push_back(channel);
+        channel.sampler = int32_t(samplerOffset + propIdx);
+        propIdx++;
       }
 
       // Rotation sampler and channel
-      if (!rotation_times.empty()) {
-        KeyframeSampler rot_sampler;
-        rot_sampler.times.reserve(rotation_times.size());
-        rot_sampler.values.reserve(rotation_times.size() * 4);
+      if (nRotTimes) {
+        KeyframeSampler &rot_sampler = anim_out->samplers[samplerOffset + propIdx];
+        rot_sampler.times = rot_times_f;
         rot_sampler.interpolation = AnimationInterpolation::Linear;
-
-        for (size_t t = 0; t < rotation_times.size(); t++) {
-          rot_sampler.times.push_back(float(rotation_times[t]));
+        rot_sampler.values.resize(nRotTimes * 4);
+        float *dst = rot_sampler.values.data();
+        for (size_t t = 0; t < nRotTimes; t++) {
           const auto &q = rotation_samples[t][joint_idx];
-          rot_sampler.values.push_back(q[0]);
-          rot_sampler.values.push_back(q[1]);
-          rot_sampler.values.push_back(q[2]);
-          rot_sampler.values.push_back(q[3]);
+          dst[t * 4 + 0] = q[0];
+          dst[t * 4 + 1] = q[1];
+          dst[t * 4 + 2] = q[2];
+          dst[t * 4 + 3] = q[3];
         }
 
-        int32_t sampler_idx = int32_t(anim_out->samplers.size());
-        anim_out->samplers.push_back(rot_sampler);
-
-        AnimationChannel channel;
+        AnimationChannel &channel = anim_out->channels[channelOffset + propIdx];
         channel.target_type = ChannelTargetType::SkeletonJoint;
         channel.path = AnimationPath::Rotation;
         channel.skeleton_id = skeleton_id;
         channel.joint_id = int32_t(joint_idx);
-        channel.sampler = sampler_idx;
-        anim_out->channels.push_back(channel);
+        channel.sampler = int32_t(samplerOffset + propIdx);
+        propIdx++;
       }
 
       // Scale sampler and channel
-      if (!scale_times.empty()) {
-        KeyframeSampler scale_sampler;
-        scale_sampler.times.reserve(scale_times.size());
-        scale_sampler.values.reserve(scale_times.size() * 3);
+      if (nScaleTimes) {
+        KeyframeSampler &scale_sampler = anim_out->samplers[samplerOffset + propIdx];
+        scale_sampler.times = scale_times_f;
         scale_sampler.interpolation = AnimationInterpolation::Linear;
-
-        for (size_t t = 0; t < scale_times.size(); t++) {
-          scale_sampler.times.push_back(float(scale_times[t]));
-          const auto &v = scale_samples[t][joint_idx];
-          scale_sampler.values.push_back(value::half_to_float(v[0]));
-          scale_sampler.values.push_back(value::half_to_float(v[1]));
-          scale_sampler.values.push_back(value::half_to_float(v[2]));
+        scale_sampler.values.resize(nScaleTimes * 3);
+        float *dst = scale_sampler.values.data();
+        for (size_t t = 0; t < nScaleTimes; t++) {
+          const auto &v = scale_samples_f[t][joint_idx];
+          dst[t * 3 + 0] = v[0];
+          dst[t * 3 + 1] = v[1];
+          dst[t * 3 + 2] = v[2];
         }
 
-        int32_t sampler_idx = int32_t(anim_out->samplers.size());
-        anim_out->samplers.push_back(scale_sampler);
-
-        AnimationChannel channel;
+        AnimationChannel &channel = anim_out->channels[channelOffset + propIdx];
         channel.target_type = ChannelTargetType::SkeletonJoint;
         channel.path = AnimationPath::Scale;
         channel.skeleton_id = skeleton_id;
         channel.joint_id = int32_t(joint_idx);
-        channel.sampler = sampler_idx;
-        anim_out->channels.push_back(channel);
+        channel.sampler = int32_t(samplerOffset + propIdx);
+        propIdx++;
       }
     }
   }

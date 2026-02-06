@@ -3178,41 +3178,35 @@ bool GetTerminalAttribute(const tinyusdz::Stage &stage,
 namespace detail {
 
 static bool BuildSkelHierarchyImpl(
-    /* inout */ std::set<size_t> &visitSet,
     /* inout */ SkelNode &parentNode,
-    const std::vector<int> &parentJointIds,
+    const std::vector<std::vector<size_t>> &childrenMap,
     const std::vector<value::token> &joints,
     const std::vector<value::token> &jointNames,
     const std::vector<value::matrix4d> &bindTransforms,
     const std::vector<value::matrix4d> &restTransforms,
     std::string *err = nullptr) {
-  // Simple linear search
-  for (size_t i = 0; i < parentJointIds.size(); i++) {
-    if (visitSet.count(i)) {
-      continue;
+  size_t parentIdx = size_t(parentNode.joint_id);
+  if (parentIdx >= childrenMap.size()) {
+    return true;
+  }
+
+  for (size_t i : childrenMap[parentIdx]) {
+    DCOUT("add joint " << i << "(parent = " << parentNode.joint_id << ")");
+    SkelNode node;
+    node.joint_id = int(i);
+    node.joint_path = joints[i].str();
+    node.joint_name = jointNames[i].str();
+    node.bind_transform = bindTransforms[i];
+    node.rest_transform = restTransforms[i];
+
+    // Recursively traverse children
+    if (!BuildSkelHierarchyImpl(node,
+                                childrenMap, joints, jointNames, bindTransforms,
+                                restTransforms, err)) {
+      return false;
     }
 
-    int parentJointIdOfCurrIdx = parentJointIds[i];
-    if (parentNode.joint_id == parentJointIdOfCurrIdx) {
-      DCOUT("add joint " << i << "(parent = " << parentJointIdOfCurrIdx << ")");
-      SkelNode node;
-      node.joint_id = int(i);
-      node.joint_path = joints[i].str();
-      node.joint_name = jointNames[i].str();
-      node.bind_transform = bindTransforms[i];
-      node.rest_transform = restTransforms[i];
-
-      visitSet.insert(i);
-
-      // Recursively traverse children
-      if (!BuildSkelHierarchyImpl(visitSet, node,
-                                  parentJointIds, joints, jointNames, bindTransforms,
-                                  restTransforms, err)) {
-        return false;
-      }
-
-      parentNode.children.emplace_back(std::move(node));
-    }
+    parentNode.children.emplace_back(std::move(node));
   }
 
   return true;
@@ -3367,16 +3361,19 @@ bool BuildSkelHierarchy(const Skeleton &skel, SkelNode &dst, std::string *err) {
                     nroots, skel.name));
   }
 
-  std::set<size_t> visitSet;
+  // Build parent -> children map for O(n) hierarchy construction
+  std::vector<std::vector<size_t>> childrenMap(joints.size());
+  size_t rootIdx = 0;
+  for (size_t i = 0; i < parentJointIds.size(); i++) {
+    int parentId = parentJointIds[i];
+    if (parentId < 0) {
+      rootIdx = i;
+    } else {
+      childrenMap[size_t(parentId)].push_back(i);
+    }
+  }
 
   SkelNode root;
-
-  auto it = std::find(parentJointIds.begin(), parentJointIds.end(), -1);
-  if (it == parentJointIds.end()) {
-    PUSH_ERROR_AND_RETURN("Internal error.");
-  }
-  size_t rootIdx = size_t(std::distance(parentJointIds.begin(), it));
-
   root.joint_name = jointNames[rootIdx].str();
   root.joint_path = joints[rootIdx].str();
   root.joint_id = int(rootIdx);
@@ -3384,9 +3381,9 @@ bool BuildSkelHierarchy(const Skeleton &skel, SkelNode &dst, std::string *err) {
   root.rest_transform = restTransforms[rootIdx];
 
   DCOUT("parentJointIds = " << parentJointIds);
- 
-  // Construct hierachy from flattened id array.
-  if (!detail::BuildSkelHierarchyImpl(visitSet, root, parentJointIds, joints, jointNames,
+
+  // Construct hierarchy from children map.
+  if (!detail::BuildSkelHierarchyImpl(root, childrenMap, joints, jointNames,
                                       bindTransforms, restTransforms,
                                       err)) {
     return false;
