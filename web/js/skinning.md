@@ -1,43 +1,67 @@
 # Skinning Notes
 
-## TODO/FIXME: Z-up to Y-up Conversion for Skinned Meshes
+## Z-up to Y-up Conversion for Skinned Meshes
 
-### Issue
+### Approach: Per-mesh, No Scene Root Rotation
 
-When a USD file has `upAxis = "Z"` (Z-up coordinate system), the viewer cannot apply the standard Z-up to Y-up rotation to skinned meshes. Rotating the scene root breaks skinning because:
+When `upAxis = "Z"`, instead of rotating the scene root (which breaks skinning), we handle each mesh type differently:
 
-1. The skeleton's inverse bind matrices are computed from the original bind transforms (in Z-up space)
-2. When the scene root is rotated, bone world matrices change to include the rotation
-3. The skinning formula `boneMatrix = bone.matrixWorld * boneInverse` no longer produces identity at bind pose
-4. This causes the mesh to deform incorrectly (mesh and skeleton become misaligned)
+- **Static (non-skinned) meshes**: Rotate geometry directly via `geometry.applyMatrix4(R)`
+- **Skinned meshes**: Skip geometry rotation. Instead, prepend R to `bindMatrixInverse` so the skinning output is rotated to Y-up.
 
-### Current Workaround
+No scene root rotation is used. No auto-detection heuristics.
 
-For skinned meshes, the Z-up to Y-up conversion is **disabled**. The model is displayed in its original Z-up coordinate system. The console outputs:
+### Math (Skinned Mesh)
 
+Three.js skinning vertex shader:
 ```
-[processUSDScene] Skipping Z-up to Y-up rotation (has skinned meshes - rotation breaks skinning)
-[processUSDScene] Model is in original Z-up coordinate system. Use camera orbit to view from different angles.
+skinned = bindMatrixInverse * sum(w_i * boneMatrix_i * bindMatrix * position)
+boneMatrix_i = bone_i.matrixWorld * boneInverse_i
 ```
 
-### Proper Fix Required
+By setting `bindMatrixInverse' = R * bindMatrixInverse` (all else unchanged):
+```
+skinned = R * bindMatrixInverse * sum(w_i * boneMatrix_i) * bindMatrix * position
+        = R * (original Z-up skinned result)
+        = Y-up result
+```
 
-To properly support Z-up to Y-up conversion for skinned meshes, one of the following approaches is needed:
+At bind pose, `boneMatrix_i = I` still holds (boneInverses and bone.matrixWorld are untouched), so:
+```
+skinned = R * bindMatrixInverse * bindMatrix * position = R * position
+```
+Which correctly displays a Y-up position.
 
-1. **Bake transformation at load time**: Transform mesh vertex positions, skeleton bind/rest transforms, inverse bind matrices, and geomBindTransform consistently before setting up skinning. This is complex because all these matrices are interdependent.
+### Implementation (in `processUSDScene`)
 
-2. **Transform in the loader (C++/WASM side)**: Apply coordinate transformation when parsing USD data, before exposing to JavaScript. This would be the cleanest solution.
+```javascript
+const R = new THREE.Matrix4().makeRotationX(-Math.PI / 2);
 
-3. **Use transformed bind matrices**: When computing inverse bind matrices, pre-multiply the bind transforms by the Z-up to Y-up rotation. Also transform geomBindTransform accordingly. Initial attempts at this caused mesh deformation issues.
+characterGroup.traverse((child) => {
+    if (child.isSkinnedMesh) {
+        // Skinned: adjust bindMatrixInverse to rotate output
+        child.bindMatrixInverse.premultiply(R);
+    } else if (child.isMesh && child.geometry) {
+        // Static: rotate geometry directly
+        child.geometry.applyMatrix4(R);
+    }
+});
+```
+
+### Toggle Support
+
+Toggle on: `bindMatrixInverse.premultiply(R)` + `geometry.applyMatrix4(R)`
+Toggle off: `bindMatrixInverse.premultiply(Rinv)` + `geometry.applyMatrix4(Rinv)`
 
 ### Related Files
 
 - `skin-anim.js`: Main skeletal animation viewer
 - `buildSkeletonFromUSD()`: Builds skeleton and computes inverse bind matrices
-- `processUSDScene()`: Handles Z-up to Y-up detection and (for non-skinned meshes) rotation
+- `processUSDScene()`: Applies per-mesh Z-up to Y-up conversion
+- `toggleUpAxisConversion()`: Toggles the conversion on/off at runtime
 
 ### References
 
-- Three.js SkinnedMesh skinning formula: `skinMatrix = bindMatrix * (weighted boneMatrices) * bindMatrixInverse`
+- Three.js SkinnedMesh skinning formula
 - USD Skeleton specification: bindTransforms are world-space, restTransforms are local-space
-- geomBindTransform: mesh's world transform at bind time
+- geomBindTransform: mesh's world transform at bind time (Three.js `bindMatrix`)
