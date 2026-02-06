@@ -177,6 +177,11 @@ let originalMaterial = null;
 let selectedJoint = null;
 let selectedSphere = null;
 
+// Mesh selection state
+let allSceneMeshes = []; // Track all meshes in characterGroup
+let selectedMeshObj = null; // Currently selected mesh
+let bboxHelper = null; // Bounding box visualization helper
+
 // ===========================================
 // USD Skeletal Animation Extraction Functions
 // ===========================================
@@ -804,10 +809,273 @@ function deselectJoint() {
 }
 
 /**
- * Handle mouse click for joint selection via raycasting
+ * Select a mesh and highlight it
+ * @param {THREE.Mesh} mesh - The mesh to select
+ */
+function selectMesh(mesh) {
+	// Deselect previous mesh
+	deselectMesh();
+
+	selectedMeshObj = mesh;
+
+	// Update bbox helper
+	updateBBoxHelper();
+
+	// Update GUI selection
+	const meshIndex = allSceneMeshes.indexOf(mesh);
+	if (meshIndex >= 0) {
+		animationParams.selectedMeshName = mesh.name || `Mesh_${meshIndex}`;
+	}
+
+	console.log(`Selected mesh: ${mesh.name}`);
+}
+
+/**
+ * Deselect current mesh
+ */
+function deselectMesh() {
+	selectedMeshObj = null;
+	removeBBoxHelper();
+	animationParams.selectedMeshName = 'None';
+}
+
+/**
+ * Remove bounding box helper from scene
+ */
+function removeBBoxHelper() {
+	if (bboxHelper) {
+		scene.remove(bboxHelper);
+		if (bboxHelper.geometry) bboxHelper.geometry.dispose();
+		if (bboxHelper.material) bboxHelper.material.dispose();
+		bboxHelper = null;
+	}
+}
+
+/**
+ * Compute skinned bounding box for a mesh using skeleton bone positions
+ * @param {THREE.Mesh} mesh - The mesh to compute bbox for
+ * @returns {THREE.Box3} The bounding box
+ */
+function computeSkinnedBBox(mesh) {
+	const box = new THREE.Box3();
+
+	if (mesh.isSkinnedMesh && mesh.skeleton && mesh.skeleton.bones.length > 0) {
+		// Use bone world positions for skinned meshes
+		expandBoxBySkeletonBones(mesh.skeleton, box);
+		// Add margin for mesh volume around bones
+		const size = box.getSize(new THREE.Vector3());
+		const margin = size.clone().multiplyScalar(0.15);
+		box.min.sub(margin);
+		box.max.add(margin);
+	} else {
+		// Regular mesh - use geometry bounds
+		box.expandByObject(mesh);
+	}
+
+	return box;
+}
+
+/**
+ * Expand bounding box using only the bones that influence a specific mesh
+ * @param {THREE.SkinnedMesh} mesh - The skinned mesh
+ * @param {THREE.Box3} box - Box to expand
+ */
+function expandBoxByMeshBones(mesh, box) {
+	if (!mesh.skeleton || !mesh.geometry) return;
+
+	// Collect unique bone indices used by this mesh
+	const skinIndex = mesh.geometry.attributes.skinIndex;
+	if (!skinIndex) return;
+
+	const usedBoneIndices = new Set();
+	for (let i = 0; i < skinIndex.count; i++) {
+		for (let j = 0; j < skinIndex.itemSize; j++) {
+			const idx = skinIndex.getComponent(i, j);
+			usedBoneIndices.add(idx);
+		}
+	}
+
+	// Use only the bones that influence this mesh
+	const boneWorldPos = new THREE.Vector3();
+	for (const boneIdx of usedBoneIndices) {
+		const bone = mesh.skeleton.bones[boneIdx];
+		if (bone) {
+			bone.getWorldPosition(boneWorldPos);
+			box.expandByPoint(boneWorldPos);
+		}
+	}
+}
+
+/**
+ * Compute the current bounding box for selected mesh or all scene meshes
+ * @returns {THREE.Box3} The computed bounding box
+ */
+function computeCurrentBBox() {
+	const box = new THREE.Box3();
+
+	if (selectedMeshObj) {
+		if (selectedMeshObj.isSkinnedMesh && selectedMeshObj.skeleton) {
+			expandBoxByMeshBones(selectedMeshObj, box);
+		} else {
+			box.expandByObject(selectedMeshObj);
+		}
+	} else {
+		for (const mesh of allSceneMeshes) {
+			if (mesh.isSkinnedMesh && mesh.skeleton) {
+				expandBoxBySkeletonBones(mesh.skeleton, box);
+			} else {
+				box.expandByObject(mesh);
+			}
+		}
+	}
+
+	if (!box.isEmpty()) {
+		const size = box.getSize(new THREE.Vector3());
+		const margin = size.clone().multiplyScalar(0.15);
+		box.min.sub(margin);
+		box.max.add(margin);
+	}
+
+	return box;
+}
+
+/**
+ * Update bounding box helper for the selected mesh or all scene meshes
+ */
+function updateBBoxHelper() {
+	if (!animationParams.showBBox) {
+		removeBBoxHelper();
+		return;
+	}
+
+	const box = computeCurrentBBox();
+
+	if (box.isEmpty()) {
+		removeBBoxHelper();
+		return;
+	}
+
+	if (!bboxHelper) {
+		bboxHelper = new THREE.Box3Helper(box, 0x00ff00);
+		scene.add(bboxHelper);
+	} else {
+		// Update existing helper's box bounds
+		bboxHelper.box.copy(box);
+	}
+}
+
+// Track mouse down position for drag detection
+let _mouseDownPos = { x: 0, y: 0 };
+window.addEventListener('mousedown', (event) => {
+	_mouseDownPos.x = event.clientX;
+	_mouseDownPos.y = event.clientY;
+});
+
+/**
+ * Raycast against skinned meshes using their deformed (post-skinning) positions.
+ * Standard raycasting tests against bind-pose geometry, which fails from side views
+ * when the animated pose differs significantly from the bind pose.
+ *
+ * @param {THREE.Raycaster} raycaster - Configured raycaster
+ * @param {Array<THREE.Mesh>} meshes - Meshes to test
+ * @returns {Array<{distance: number, object: THREE.Mesh}>} Sorted intersections
+ */
+function raycastSkinnedMeshes(raycaster, meshes) {
+	const results = [];
+	const _tempPos = new THREE.Vector3();
+	const _bbox = new THREE.Box3();
+
+	for (const mesh of meshes) {
+		if (!mesh.visible) continue;
+
+		if (mesh.isSkinnedMesh && mesh.skeleton) {
+			// Early rejection: check ray against bone-based bounding box
+			_bbox.makeEmpty();
+			expandBoxByMeshBones(mesh, _bbox);
+			if (_bbox.isEmpty()) continue;
+			// Pad the bbox slightly for tolerance
+			_bbox.expandByScalar(5);
+			if (!raycaster.ray.intersectsBox(_bbox)) continue;
+
+			// Compute skinned positions into a temporary buffer, then raycast
+			const geo = mesh.geometry;
+			const posAttr = geo.attributes.position;
+			const indexAttr = geo.index;
+			if (!posAttr) continue;
+
+			// Create or reuse a temporary skinned position buffer
+			if (!mesh._skinnedPositions || mesh._skinnedPositions.length !== posAttr.count * 3) {
+				mesh._skinnedPositions = new Float32Array(posAttr.count * 3);
+			}
+			const skinned = mesh._skinnedPositions;
+
+			// Compute skinned world positions using applyBoneTransform
+			for (let i = 0; i < posAttr.count; i++) {
+				_tempPos.fromBufferAttribute(posAttr, i);
+				mesh.applyBoneTransform(i, _tempPos);
+				_tempPos.applyMatrix4(mesh.matrixWorld);
+				skinned[i * 3] = _tempPos.x;
+				skinned[i * 3 + 1] = _tempPos.y;
+				skinned[i * 3 + 2] = _tempPos.z;
+			}
+
+			// Raycast triangles against skinned positions
+			const _a = new THREE.Vector3();
+			const _b = new THREE.Vector3();
+			const _c = new THREE.Vector3();
+			const _intersectPoint = new THREE.Vector3();
+			const triCount = indexAttr ? indexAttr.count / 3 : posAttr.count / 3;
+
+			for (let t = 0; t < triCount; t++) {
+				let ia, ib, ic;
+				if (indexAttr) {
+					ia = indexAttr.getX(t * 3);
+					ib = indexAttr.getX(t * 3 + 1);
+					ic = indexAttr.getX(t * 3 + 2);
+				} else {
+					ia = t * 3;
+					ib = t * 3 + 1;
+					ic = t * 3 + 2;
+				}
+				_a.set(skinned[ia * 3], skinned[ia * 3 + 1], skinned[ia * 3 + 2]);
+				_b.set(skinned[ib * 3], skinned[ib * 3 + 1], skinned[ib * 3 + 2]);
+				_c.set(skinned[ic * 3], skinned[ic * 3 + 1], skinned[ic * 3 + 2]);
+
+				const hit = raycaster.ray.intersectTriangle(_c, _b, _a, false, _intersectPoint);
+				if (hit) {
+					const dist = raycaster.ray.origin.distanceTo(_intersectPoint);
+					if (dist >= raycaster.near && dist <= raycaster.far) {
+						results.push({ distance: dist, object: mesh, point: _intersectPoint.clone() });
+						break; // One hit per mesh is enough for selection
+					}
+				}
+			}
+		} else {
+			// Non-skinned mesh: use standard raycasting
+			const hits = raycaster.intersectObject(mesh);
+			if (hits.length > 0) {
+				results.push({ distance: hits[0].distance, object: mesh, point: hits[0].point });
+			}
+		}
+	}
+
+	results.sort((a, b) => a.distance - b.distance);
+	return results;
+}
+
+/**
+ * Handle mouse click for joint and mesh selection via raycasting
  * @param {MouseEvent} event - Mouse event
  */
 function onMouseClick(event) {
+	// Ignore clicks on GUI elements
+	if (event.target && event.target.closest && event.target.closest('.lil-gui')) return;
+
+	// Ignore drags (user was orbiting, not clicking)
+	const dx = event.clientX - _mouseDownPos.x;
+	const dy = event.clientY - _mouseDownPos.y;
+	if (dx * dx + dy * dy > 9) return; // 3px threshold
+
 	// Calculate mouse position in normalized device coordinates
 	mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
 	mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
@@ -815,14 +1083,28 @@ function onMouseClick(event) {
 	// Update raycaster
 	raycaster.setFromCamera(mouse, camera);
 
-	// Check for intersections with joint spheres
-	const intersects = raycaster.intersectObjects(jointSpheres);
-
-	if (intersects.length > 0) {
-		const sphere = intersects[0].object;
-		const bone = sphere.userData.bone;
-		selectJoint(bone, sphere);
+	// Check for intersections with joint spheres first (higher priority)
+	if (jointSpheres.length > 0 && animationParams.showJoints) {
+		const jointIntersects = raycaster.intersectObjects(jointSpheres);
+		if (jointIntersects.length > 0) {
+			const sphere = jointIntersects[0].object;
+			const bone = sphere.userData.bone;
+			selectJoint(bone, sphere);
+			return;
+		}
 	}
+
+	// Check for intersections with scene meshes (using skinned positions)
+	if (allSceneMeshes.length > 0) {
+		const meshIntersects = raycastSkinnedMeshes(raycaster, allSceneMeshes);
+		if (meshIntersects.length > 0) {
+			selectMesh(meshIntersects[0].object);
+			return;
+		}
+	}
+
+	// Click on empty space - deselect mesh
+	deselectMesh();
 }
 
 /**
@@ -1008,7 +1290,7 @@ async function loadUSDModel() {
 	await loader.init({ useZstdCompressedWasm: false, useMemory64: false });
 
 	// Default USD file to load
-	const usd_filename = "./assets/skintest-anim.usda";
+	const usd_filename = "./assets/StandingRunForward.usdz";
 
 	console.log(`Loading USD file: ${usd_filename}`);
 
@@ -1080,6 +1362,10 @@ async function processUSDScene(usd_scene, loader, filename) {
 		skeletonHelper = null;
 	}
 
+	// Clear all tracked meshes
+	allSceneMeshes = [];
+	deselectMesh();
+
 	// Clear joint spheres
 	jointSpheres.forEach(sphere => scene.remove(sphere));
 	jointSpheres = [];
@@ -1096,6 +1382,7 @@ async function processUSDScene(usd_scene, loader, filename) {
 	boneMap.clear();
 	animationParams.hasUSDAnimations = false;
 	animationParams.usdAnimationCount = 0;
+	animationParams._upAxisApplied = false;
 
 	// Store loader globally for debugging
 	window.usd_scene = usd_scene;
@@ -1413,6 +1700,7 @@ async function processUSDScene(usd_scene, loader, filename) {
 				skinnedMesh = child;
 				skinnedMesh.visible = animationParams.showMesh;
 				characterGroup.add(skinnedMesh);
+				allSceneMeshes.push(skinnedMesh);
 				foundSkinnedMesh = true;
 
 				// Save original material
@@ -1443,6 +1731,7 @@ async function processUSDScene(usd_scene, loader, filename) {
 				child.receiveShadow = true;
 				child.visible = animationParams.showMesh;
 				characterGroup.add(child);
+				allSceneMeshes.push(child);
 
 				// Save as skinnedMesh reference even though it's not actually skinned
 				skinnedMesh = child;
@@ -1558,6 +1847,7 @@ async function processUSDScene(usd_scene, loader, filename) {
 						}
 
 						characterGroup.add(newSkinnedMesh);
+						allSceneMeshes.push(newSkinnedMesh);
 						processedCount++;
 					}
 				} else {
@@ -1567,6 +1857,7 @@ async function processUSDScene(usd_scene, loader, filename) {
 					mesh.receiveShadow = true;
 					mesh.visible = animationParams.showMesh;
 					characterGroup.add(mesh);
+					allSceneMeshes.push(mesh);
 
 					if (!skinnedMesh) {
 						skinnedMesh = mesh;
@@ -1603,6 +1894,7 @@ async function processUSDScene(usd_scene, loader, filename) {
 				mesh.receiveShadow = true;
 				mesh.visible = animationParams.showMesh;
 				characterGroup.add(mesh);
+				allSceneMeshes.push(mesh);
 				if (!skinnedMesh) {
 					skinnedMesh = mesh;
 					originalMaterial = mesh.material;
@@ -1697,29 +1989,38 @@ async function processUSDScene(usd_scene, loader, filename) {
 	}
 
 	// Z-up to Y-up conversion
-	// NOTE: For skinned meshes, rotating the scene root breaks skinning because the
-	// inverse bind matrices were computed in the original coordinate system.
-	// So we skip the conversion for skinned meshes and keep them in original coordinates.
-	const hasSkinnedMeshes = skinnedMesh && skinnedMesh.isSkinnedMesh;
+	// Approach: no scene root rotation. Per-mesh handling:
+	// - Static (non-skinned) meshes: rotate geometry directly
+	// - Skinned meshes: skip geometry rotation, instead adjust bindMatrixInverse
+	//   to rotate the skinning output to Y-up (bindMatrixInverse' = R * bindMatrixInverse)
+	usdSceneRoot.rotation.x = 0; // Never rotate scene root
+	animationParams._upAxisApplied = false;
 
-	if (hasSkinnedMeshes) {
-		// Don't apply rotation to skinned meshes - it breaks skinning
-		usdSceneRoot.rotation.x = 0;
-		if (fileUpAxis === "Z") {
-			console.log(`[processUSDScene] Skipping Z-up to Y-up rotation (has skinned meshes - rotation breaks skinning)`);
-			console.log(`[processUSDScene] Model is in original Z-up coordinate system. Use camera orbit to view from different angles.`);
-		}
-	} else if (animationParams.applyUpAxisConversion && fileUpAxis === "Z") {
-		// Non-skinned meshes can be rotated safely
-		usdSceneRoot.rotation.x = -Math.PI / 2;
-		console.log(`[processUSDScene] Applied Z-up to Y-up conversion (file upAxis="${fileUpAxis}"): rotation.x =`, usdSceneRoot.rotation.x);
+	if (animationParams.applyUpAxisConversion && fileUpAxis === "Z") {
+		const R = new THREE.Matrix4().makeRotationX(-Math.PI / 2);
+
+		characterGroup.traverse((child) => {
+			if (child.isSkinnedMesh) {
+				// Skinned mesh: don't rotate geometry.
+				// Instead, prepend R to bindMatrixInverse so skinning output is Y-up.
+				// skinned = (R * bindMatrixInverse) * sum(w_i * boneMatrix_i) * bindMatrix * position
+				//         = R * (original Z-up skinned result) = Y-up
+				child.bindMatrixInverse.premultiply(R);
+			} else if (child.isMesh && child.geometry) {
+				// Static mesh: rotate geometry vertices directly
+				child.geometry.applyMatrix4(R);
+			}
+		});
+		animationParams._upAxisApplied = true;
+		console.log(`[processUSDScene] Applied Z-up to Y-up: static meshes rotated, skinned meshes bindMatrixInverse adjusted`);
 	} else if (fileUpAxis !== "Y" && fileUpAxis !== "Z") {
-		usdSceneRoot.rotation.x = 0;
 		console.warn(`[processUSDScene] File upAxis is "${fileUpAxis}" (not Y or Z), no conversion applied`);
 	} else {
-		usdSceneRoot.rotation.x = 0;
-		console.log(`[processUSDScene] No upAxis conversion needed (file upAxis="${fileUpAxis}", conversion ${animationParams.applyUpAxisConversion ? 'enabled' : 'disabled'})`);
+		console.log(`[processUSDScene] No upAxis conversion needed (file upAxis="${fileUpAxis}")`);
 	}
+
+	// Update mesh list GUI
+	updateMeshListGUI();
 
 	// Update shadow camera frustum based on scene bounds
 	usdSceneRoot.updateMatrixWorld(true);
@@ -1829,6 +2130,11 @@ window.addEventListener('keydown', (event) => {
 			animationParams.setTransformSpace();
 			console.log(`Transform space: ${animationParams.transformSpace}`);
 			break;
+		case ' ': // Space = Play/Pause
+			event.preventDefault();
+			animationParams.playPause();
+			console.log(`Animation ${animationParams.isPlaying ? 'playing' : 'paused'}`);
+			break;
 	}
 });
 
@@ -1877,8 +2183,9 @@ const animationParams = {
 	// Visualization
 	showMesh: true,
 	toggleMesh: function() {
-		if (skinnedMesh) {
-			skinnedMesh.visible = this.showMesh;
+		// Toggle visibility for all tracked meshes
+		for (const mesh of allSceneMeshes) {
+			mesh.visible = this.showMesh;
 		}
 	},
 
@@ -1976,26 +2283,56 @@ const animationParams = {
 		console.log(`Shadows ${this.enableShadows ? 'enabled' : 'disabled'}`);
 	},
 
-	// Up axis conversion (Z-up to Y-up)
-	// Note: For skinned meshes, rotation is not applied because it breaks skinning.
-	// For non-skinned meshes, the rotation can be toggled.
-	applyUpAxisConversion: true,
-	toggleUpAxisConversion: function() {
-		// Check if we have skinned meshes
-		const hasSkinnedMeshes = skinnedMesh && skinnedMesh.isSkinnedMesh;
-
-		if (hasSkinnedMeshes) {
-			// For skinned meshes, don't apply rotation - it breaks skinning
-			console.log(`[toggleUpAxisConversion] Skinned mesh detected - Z-up to Y-up rotation disabled to preserve skinning`);
-			console.log(`[toggleUpAxisConversion] Use camera orbit to view the model from different angles`);
-			usdSceneRoot.rotation.x = 0;
-		} else if (this.applyUpAxisConversion && currentFileUpAxis === "Z") {
-			// Non-skinned meshes can be rotated
-			usdSceneRoot.rotation.x = -Math.PI / 2;
-			console.log(`[toggleUpAxisConversion] Applied Z-up to Y-up rotation: usdSceneRoot.rotation.x =`, usdSceneRoot.rotation.x);
+	// Mesh selection and bounding box
+	selectedMeshName: 'None',
+	showBBox: false,
+	toggleBBox: function() {
+		updateBBoxHelper();
+	},
+	selectMeshByIndex: function(index) {
+		if (index < 0 || index >= allSceneMeshes.length) {
+			deselectMesh();
 		} else {
-			usdSceneRoot.rotation.x = 0;
-			console.log(`[toggleUpAxisConversion] Reset rotation: usdSceneRoot.rotation.x =`, usdSceneRoot.rotation.x);
+			selectMesh(allSceneMeshes[index]);
+		}
+	},
+	deselectMesh: function() {
+		deselectMesh();
+	},
+
+	// Up axis conversion (Z-up to Y-up)
+	// Per-mesh approach: static meshes get geometry rotated, skinned meshes get bindMatrixInverse adjusted.
+	// No scene root rotation used.
+	applyUpAxisConversion: true,
+	_upAxisApplied: false, // Track whether upAxis transform is currently applied
+	toggleUpAxisConversion: function() {
+		if (currentFileUpAxis !== "Z") return; // Nothing to do for Y-up files
+
+		const R = new THREE.Matrix4().makeRotationX(-Math.PI / 2);
+		const Rinv = new THREE.Matrix4().makeRotationX(Math.PI / 2);
+
+		if (this.applyUpAxisConversion && !this._upAxisApplied) {
+			// Apply: rotate static geometry, adjust skinned bindMatrixInverse
+			characterGroup.traverse((child) => {
+				if (child.isSkinnedMesh) {
+					child.bindMatrixInverse.premultiply(R);
+				} else if (child.isMesh && child.geometry) {
+					child.geometry.applyMatrix4(R);
+				}
+			});
+			this._upAxisApplied = true;
+			console.log(`[toggleUpAxisConversion] Applied Z-up to Y-up`);
+		} else if (!this.applyUpAxisConversion && this._upAxisApplied) {
+			// Undo: reverse geometry rotation, reverse bindMatrixInverse adjustment
+			characterGroup.traverse((child) => {
+				if (child.isSkinnedMesh) {
+					child.bindMatrixInverse.premultiply(Rinv);
+				} else if (child.isMesh && child.geometry) {
+					child.geometry.applyMatrix4(Rinv);
+				}
+			});
+			this._upAxisApplied = false;
+			console.log(`[toggleUpAxisConversion] Removed Z-up to Y-up`);
 		}
 	}
 };
@@ -2062,6 +2399,80 @@ visualFolder.add(animationParams, 'applyUpAxisConversion')
 	.onChange(() => animationParams.toggleUpAxisConversion());
 visualFolder.add(animationParams, 'fitToScene').name('Fit to Scene');
 visualFolder.open();
+
+// Mesh Selection controls
+const meshFolder = gui.addFolder('Mesh Selection');
+meshFolder.add(animationParams, 'selectedMeshName').name('Selected').listen().disable();
+meshFolder.add(animationParams, 'showBBox')
+	.name('Show BBox')
+	.onChange(() => animationParams.toggleBBox());
+meshFolder.add(animationParams, 'deselectMesh').name('Deselect Mesh');
+
+// Custom container for mesh list (populated when model loads)
+const meshListContainer = document.createElement('div');
+meshListContainer.id = 'gui-mesh-list';
+meshListContainer.style.cssText = `
+	max-height: 150px;
+	overflow-y: auto;
+	padding: 4px 8px;
+	font-family: monospace;
+	font-size: 11px;
+	line-height: 1.6;
+	background: rgba(0, 0, 0, 0.2);
+	border-radius: 3px;
+	margin: 4px;
+`;
+meshListContainer.innerHTML = '<span style="color: #888;">No meshes loaded</span>';
+try {
+	if (meshFolder.$children) {
+		meshFolder.$children.appendChild(meshListContainer);
+	} else if (meshFolder.domElement) {
+		const childrenContainer = meshFolder.domElement.querySelector('.children');
+		if (childrenContainer) {
+			childrenContainer.appendChild(meshListContainer);
+		} else {
+			meshFolder.domElement.appendChild(meshListContainer);
+		}
+	}
+} catch (e) {
+	console.warn('Could not append mesh list container to GUI:', e);
+}
+meshFolder.open();
+
+/**
+ * Update mesh list in GUI when model is loaded
+ */
+function updateMeshListGUI() {
+	if (!meshListContainer) return;
+
+	if (allSceneMeshes.length === 0) {
+		meshListContainer.innerHTML = '<span style="color: #888;">No meshes loaded</span>';
+		return;
+	}
+
+	let html = '';
+	allSceneMeshes.forEach((mesh, index) => {
+		const name = mesh.name || `Mesh_${index}`;
+		const isSkinned = mesh.isSkinnedMesh ? ' [skinned]' : '';
+		const vertCount = mesh.geometry?.attributes?.position?.count || 0;
+		html += `<div style="color: #6bbfff; cursor: pointer; padding: 2px; border-radius: 3px;"
+		              class="gui-mesh-item"
+		              data-mesh-index="${index}"
+		              onmouseover="this.style.backgroundColor='rgba(255,255,255,0.15)'"
+		              onmouseout="this.style.backgroundColor='transparent'">${name}${isSkinned} (${vertCount}v)</div>`;
+	});
+
+	meshListContainer.innerHTML = html;
+
+	// Add click handlers
+	const meshItems = meshListContainer.querySelectorAll('.gui-mesh-item');
+	meshItems.forEach(item => {
+		item.addEventListener('click', function() {
+			const meshIndex = parseInt(this.getAttribute('data-mesh-index'));
+			animationParams.selectMeshByIndex(meshIndex);
+		});
+	});
+}
 
 // Debug visualization controls
 const debugFolder = gui.addFolder('Debug Visualization');
@@ -2287,6 +2698,11 @@ function animate() {
 		if (typeof transformControls.updateMatrixWorld === 'function') {
 			transformControls.updateMatrixWorld();
 		}
+	}
+
+	// Update bounding box helper (needs to track skinning deformation)
+	if (animationParams.showBBox && bboxHelper) {
+		updateBBoxHelper();
 	}
 
 	// Update controls
