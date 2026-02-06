@@ -4274,11 +4274,17 @@ bool RenderSceneConverter::ConvertMesh(
       if ((rmaterial_id > -1) && (size_t(rmaterial_id) < materials.size())) {
         const RenderMaterial &material = materials[size_t(rmaterial_id)];
 
-        StringAndIdMap uvname_map;
-        if (!ListUVNames(material, textures, uvname_map)) {
-          DCOUT("Failed to list UV names");
-          return false;
+        // Cache ListUVNames per material_id to avoid redundant shader walks
+        auto uv_cache_it = _uvNameCache.find(rmaterial_id);
+        if (uv_cache_it == _uvNameCache.end()) {
+          StringAndIdMap tmp;
+          if (!ListUVNames(material, textures, tmp)) {
+            DCOUT("Failed to list UV names");
+            return false;
+          }
+          uv_cache_it = _uvNameCache.emplace(rmaterial_id, std::move(tmp)).first;
         }
+        const StringAndIdMap &uvname_map = uv_cache_it->second;
 
         for (auto it = uvname_map.i_begin(); it != uvname_map.i_end(); it++) {
           uint64_t slotId = it->first;
@@ -5061,16 +5067,13 @@ bool RenderSceneConverter::ConvertMesh(
       }
 
       if (hasSkelPath && skelPath.is_valid()) {
-        // Check if skeleton already exists
+        // Check if skeleton already exists via O(1) hash lookup
         std::string skelPathStr = skelPath.prim_part();
-        auto skel_it = std::find_if(skeletons.begin(), skeletons.end(), [&skelPathStr](const SkelHierarchy &sk) {
-          DCOUT("sk.abs_path " << sk.abs_path << ", skel_path " << skelPathStr);
-          return sk.abs_path == skelPathStr;
-        });
+        auto skel_cache_it = _skelPathToIndex.find(skelPathStr);
 
-        if (skel_it != skeletons.end()) {
+        if (skel_cache_it != _skelPathToIndex.end()) {
           // Skeleton already converted, reuse it
-          dst.skel_id = int32_t(std::distance(skeletons.begin(), skel_it));
+          dst.skel_id = skel_cache_it->second;
         } else {
           int32_t skel_id = int32_t(skeletons.size());
 
@@ -5098,19 +5101,18 @@ bool RenderSceneConverter::ConvertMesh(
 
           if (anim) {
             const auto &animAbsPath = anim.value().abs_path;
-            auto anim_it = std::find_if(animations.begin(), animations.end(), [&animAbsPath](const AnimationClip &a) {
-              DCOUT("a.abs_path " << a.abs_path << ", anim_path " << animAbsPath);
-              return a.abs_path == animAbsPath;
-            });
+            auto anim_cache_it = _animPathToIndex.find(animAbsPath);
 
-            if (anim_it != animations.end()) {
-              skel.anim_id = int(std::distance(animations.begin(), anim_it));
+            if (anim_cache_it != _animPathToIndex.end()) {
+              skel.anim_id = anim_cache_it->second;
             } else {
               skel.anim_id = int(animations.size());
+              _animPathToIndex[animAbsPath] = int32_t(animations.size());
               animations.emplace_back(std::move(anim.value()));
             }
           }
 
+          _skelPathToIndex[skelPathStr] = skel_id;
           skeletons.emplace_back(std::move(skel));
           DCOUT("add skeleton\n");
 
@@ -5129,18 +5131,24 @@ bool RenderSceneConverter::ConvertMesh(
 
         const auto &skel = skeletons[size_t(dst.skel_id)];
 
-        std::map<std::string, int> name_to_index_map = BuildSkelNameToIndexMap(skel);
+        // Cache BuildSkelNameToIndexMap per skeleton ID (avoids rebuilding per mesh)
+        auto cache_it = _skelNameToIndexCache.find(dst.skel_id);
+        if (cache_it == _skelNameToIndexCache.end()) {
+          cache_it = _skelNameToIndexCache.emplace(dst.skel_id, BuildSkelNameToIndexMap(skel)).first;
+        }
+        const auto &name_to_index_map = cache_it->second;
 
         std::unordered_map<int, int> index_remap;
 
         for (size_t i = 0; i < joints.size(); i++) {
           std::string joint_name = joints[i].str();
 
-          if (!name_to_index_map.count(joint_name)) {
+          auto nit = name_to_index_map.find(joint_name);
+          if (nit == name_to_index_map.end()) {
             PUSH_ERROR_AND_RETURN(fmt::format("joint_name {} not found in Skeleton", joint_name));
           }
 
-          int dst_idx = name_to_index_map.at(joint_name);
+          int dst_idx = nit->second;
           index_remap[int(i)] = dst_idx;
 
           //DCOUT("remap " << i << " to " << dst_idx);
@@ -7794,18 +7802,16 @@ bool RenderSceneConverter::ConvertMaterial(const RenderSceneConverterEnv &env,
                 tex_image.colorSpace = ColorSpace::Raw;  // Normal maps are always raw/linear
                 tex_image.usdColorSpace = ColorSpace::Raw;
 
-                // Check if this image already exists in the images list
+                // Check if this image already exists via imageMap lookup
                 int64_t image_id = -1;
-                for (size_t i = 0; i < images.size(); ++i) {
-                  if (images[i].asset_identifier == normal_info.normal_map_texture) {
-                    image_id = static_cast<int64_t>(i);
-                    break;
-                  }
+                if (imageMap.count(normal_info.normal_map_texture)) {
+                  image_id = static_cast<int64_t>(imageMap.at(normal_info.normal_map_texture));
                 }
 
                 // If not found, add the image
                 if (image_id < 0) {
                   image_id = static_cast<int64_t>(images.size());
+                  imageMap.add(normal_info.normal_map_texture, uint64_t(image_id));
                   images.push_back(tex_image);
                   DCOUT("Added normal map image: " << normal_info.normal_map_texture << " as image_id " << image_id);
                 }
@@ -8075,18 +8081,16 @@ bool RenderSceneConverter::ConvertMaterial(const RenderSceneConverterEnv &env,
                         tex_image.colorSpace = ColorSpace::Raw;  // Normal maps are always raw/linear
                         tex_image.usdColorSpace = ColorSpace::Raw;
 
-                        // Check if this image already exists in the images list
+                        // Check if this image already exists via imageMap lookup
                         int64_t image_id = -1;
-                        for (size_t i = 0; i < images.size(); ++i) {
-                          if (images[i].asset_identifier == normal_info.normal_map_texture) {
-                            image_id = static_cast<int64_t>(i);
-                            break;
-                          }
+                        if (imageMap.count(normal_info.normal_map_texture)) {
+                          image_id = static_cast<int64_t>(imageMap.at(normal_info.normal_map_texture));
                         }
 
                         // If not found, add the image
                         if (image_id < 0) {
                           image_id = static_cast<int64_t>(images.size());
+                          imageMap.add(normal_info.normal_map_texture, uint64_t(image_id));
                           images.push_back(tex_image);
                           PUSH_WARN(fmt::format("DEBUG: Added normal map image: {} as image_id {}", normal_info.normal_map_texture, image_id));
                         }
@@ -10274,6 +10278,12 @@ bool RenderSceneConverter::ConvertToRenderScene(
   // Reset progress state
   _progress_info = DetailedProgressInfo{};
 
+  // Clear lookup caches from previous conversion
+  _skelPathToIndex.clear();
+  _animPathToIndex.clear();
+  _skelNameToIndexCache.clear();
+  _uvNameCache.clear();
+
   // Report initial progress
   if (!CallProgressCallback(0.0f)) {
     PushError("Conversion cancelled by user.\n");
@@ -10511,16 +10521,11 @@ bool RenderSceneConverter::ConvertToRenderScene(
             // Extract xformOp animation
             if (ExtractXformOpAnimation(env, prim_path, node.element_name,
                                        *xformable, node_index, &anim)) {
-              // Check if animation with this path already exists
+              // Check if animation with this path already exists via O(1) lookup
               const auto &anim_abs_path = anim.abs_path;
-              auto anim_it = std::find_if(animations.begin(), animations.end(),
-                                         [&anim_abs_path](const AnimationClip &a) {
-                return a.abs_path == anim_abs_path;
-              });
-
-              // Add animation if it doesn't already exist
-              if (anim_it == animations.end()) {
+              if (_animPathToIndex.find(anim_abs_path) == _animPathToIndex.end()) {
                 DCOUT("Extracted xformOp animation from: " << anim_abs_path);
+                _animPathToIndex[anim_abs_path] = int32_t(animations.size());
                 animations.emplace_back(std::move(anim));
               }
             }

@@ -3416,6 +3416,16 @@ class RenderSceneConverter {
 
   // Reusable buffers for mesh conversion to avoid repeated allocation
   mutable std::vector<value::float3> _tmp_points_buffer;
+
+  // Lookup caches for O(1) skeleton/animation dedup (populated during ConvertToRenderScene)
+  std::unordered_map<std::string, int32_t> _skelPathToIndex;
+  std::unordered_map<std::string, int32_t> _animPathToIndex;
+
+  // Cached BuildSkelNameToIndexMap results per skeleton ID
+  std::unordered_map<int32_t, std::map<std::string, int>> _skelNameToIndexCache;
+
+  // Cached ListUVNames results per material ID
+  std::unordered_map<int64_t, StringAndIdMap> _uvNameCache;
 };
 
 ///
