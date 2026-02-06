@@ -8675,6 +8675,9 @@ bool RenderSceneConverter::ConvertSkelAnimation(const RenderSceneConverterEnv &e
   anim_out->duration = 0.0f;  // Will be computed below
 
   // Joint animations - convert to glTF-style flat arrays
+  // Strategy: Pre-allocate output samplers, then scatter data directly from
+  // TypedTimeSamples into per-joint samplers. Avoids copying all frame data
+  // into intermediate vectors.
   if (joints.size()) {
     Animatable<std::vector<value::float3>> translations;
     if (!skelAnim.translations.get_value(&translations)) {
@@ -8691,125 +8694,27 @@ bool RenderSceneConverter::ConvertSkelAnimation(const RenderSceneConverterEnv &e
       PUSH_ERROR_AND_RETURN(fmt::format("Failed to get `scales` attribute of SkelAnimation: {}", abs_path));
     }
 
-    // Extract timesamples for each animation type
-    std::vector<double> translation_times, rotation_times, scale_times;
-    std::vector<std::vector<value::float3>> translation_samples;
-    std::vector<std::vector<value::quatf>> rotation_samples;
-    std::vector<std::vector<value::half3>> scale_samples;
-
-    if (translations.has_timesamples()) {
-      const TypedTimeSamples<std::vector<value::float3>> &ts_txs = translations.get_timesamples();
-      FOREACH_TIMESAMPLES_BEGIN(ts_txs, sample_t, sample_value, sample_blocked)
-        if (sample_value.size() != joints.size()) {
-          PUSH_ERROR_AND_RETURN(fmt::format("Array length mismatch: translations[{}].size {} != joints.size {} at time {}",
-            translation_times.size(), sample_value.size(), joints.size(), sample_t));
-        }
-        translation_times.push_back(sample_t);
-        translation_samples.push_back(sample_value);
-        if (float(sample_t) > anim_out->duration) anim_out->duration = float(sample_t);
-      FOREACH_TIMESAMPLES_END()
-    } else if (translations.has_value()) {
-      // Handle static (non-time-sampled) values as a single keyframe at time 0.0
-      std::vector<value::float3> default_value;
-      if (!translations.get_scalar(&default_value)) {
-        PUSH_ERROR_AND_RETURN(fmt::format("Failed to get default value for translations in SkelAnimation: {}", abs_path));
-      }
-      if (default_value.size() != joints.size()) {
-        PUSH_ERROR_AND_RETURN(fmt::format("Array length mismatch: translations.size {} != joints.size {}",
-          default_value.size(), joints.size()));
-      }
-      translation_times.push_back(0.0);
-      translation_samples.push_back(default_value);
-    }
-
-    if (rotations.has_timesamples()) {
-      const TypedTimeSamples<std::vector<value::quatf>> &ts_rots = rotations.get_timesamples();
-      FOREACH_TIMESAMPLES_BEGIN(ts_rots, sample_t, sample_value, sample_blocked)
-        if (sample_value.size() != joints.size()) {
-          PUSH_ERROR_AND_RETURN(fmt::format("Array length mismatch: rotations[{}].size {} != joints.size {} at time {}",
-            rotation_times.size(), sample_value.size(), joints.size(), sample_t));
-        }
-        rotation_times.push_back(sample_t);
-        rotation_samples.push_back(sample_value);
-        if (float(sample_t) > anim_out->duration) anim_out->duration = float(sample_t);
-      FOREACH_TIMESAMPLES_END()
-    } else if (rotations.has_value()) {
-      // Handle static (non-time-sampled) values as a single keyframe at time 0.0
-      std::vector<value::quatf> default_value;
-      if (!rotations.get_scalar(&default_value)) {
-        PUSH_ERROR_AND_RETURN(fmt::format("Failed to get default value for rotations in SkelAnimation: {}", abs_path));
-      }
-      if (default_value.size() != joints.size()) {
-        PUSH_ERROR_AND_RETURN(fmt::format("Array length mismatch: rotations.size {} != joints.size {}",
-          default_value.size(), joints.size()));
-      }
-      rotation_times.push_back(0.0);
-      rotation_samples.push_back(default_value);
-    }
-
-    if (scales.has_timesamples()) {
-      const TypedTimeSamples<std::vector<value::half3>> &ts_scales = scales.get_timesamples();
-      FOREACH_TIMESAMPLES_BEGIN(ts_scales, sample_t, sample_value, sample_blocked)
-        if (sample_value.size() != joints.size()) {
-          PUSH_ERROR_AND_RETURN(fmt::format("Array length mismatch: scales[{}].size {} != joints.size {} at time {}",
-            scale_times.size(), sample_value.size(), joints.size(), sample_t));
-        }
-        scale_times.push_back(sample_t);
-        scale_samples.push_back(sample_value);
-        if (float(sample_t) > anim_out->duration) anim_out->duration = float(sample_t);
-      FOREACH_TIMESAMPLES_END()
-    } else if (scales.has_value()) {
-      // Handle static (non-time-sampled) values as a single keyframe at time 0.0
-      std::vector<value::half3> default_value;
-      if (!scales.get_scalar(&default_value)) {
-        PUSH_ERROR_AND_RETURN(fmt::format("Failed to get default value for scales in SkelAnimation: {}", abs_path));
-      }
-      if (default_value.size() != joints.size()) {
-        PUSH_ERROR_AND_RETURN(fmt::format("Array length mismatch: scales.size {} != joints.size {}",
-          default_value.size(), joints.size()));
-      }
-      scale_times.push_back(0.0);
-      scale_samples.push_back(default_value);
-    }
-
-    // Create glTF-style samplers and channels for each joint
-    // Pre-convert shared time arrays once (float), then reuse per joint
     size_t nJoints = joints.size();
-    size_t nTransTimes = translation_times.size();
-    size_t nRotTimes = rotation_times.size();
-    size_t nScaleTimes = scale_times.size();
 
-    // Pre-convert time arrays to float once
-    std::vector<float> trans_times_f, rot_times_f, scale_times_f;
-    if (nTransTimes) {
-      trans_times_f.resize(nTransTimes);
-      for (size_t t = 0; t < nTransTimes; t++) trans_times_f[t] = float(translation_times[t]);
+    // Count frames for each property (first pass - no data copy)
+    size_t nTransTimes = 0, nRotTimes = 0, nScaleTimes = 0;
+    if (translations.has_timesamples()) {
+      nTransTimes = translations.get_timesamples().size();
+    } else if (translations.has_value()) {
+      nTransTimes = 1;
     }
-    if (nRotTimes) {
-      rot_times_f.resize(nRotTimes);
-      for (size_t t = 0; t < nRotTimes; t++) rot_times_f[t] = float(rotation_times[t]);
+    if (rotations.has_timesamples()) {
+      nRotTimes = rotations.get_timesamples().size();
+    } else if (rotations.has_value()) {
+      nRotTimes = 1;
     }
-    if (nScaleTimes) {
-      scale_times_f.resize(nScaleTimes);
-      for (size_t t = 0; t < nScaleTimes; t++) scale_times_f[t] = float(scale_times[t]);
-    }
-
-    // Pre-convert scale half->float once (data is [time][joint])
-    std::vector<std::vector<value::float3>> scale_samples_f;
-    if (nScaleTimes) {
-      scale_samples_f.resize(nScaleTimes);
-      for (size_t t = 0; t < nScaleTimes; t++) {
-        scale_samples_f[t].resize(nJoints);
-        for (size_t j = 0; j < nJoints; j++) {
-          const auto &v = scale_samples[t][j];
-          scale_samples_f[t][j][0] = value::half_to_float(v[0]);
-          scale_samples_f[t][j][1] = value::half_to_float(v[1]);
-          scale_samples_f[t][j][2] = value::half_to_float(v[2]);
-        }
-      }
+    if (scales.has_timesamples()) {
+      nScaleTimes = scales.get_timesamples().size();
+    } else if (scales.has_value()) {
+      nScaleTimes = 1;
     }
 
-    // Count total samplers/channels needed and pre-allocate
+    // Pre-allocate all output samplers and channels
     size_t nProps = (nTransTimes ? 1 : 0) + (nRotTimes ? 1 : 0) + (nScaleTimes ? 1 : 0);
     size_t totalSamplers = nJoints * nProps;
     size_t baseSamplerIdx = anim_out->samplers.size();
@@ -8817,79 +8722,170 @@ bool RenderSceneConverter::ConvertSkelAnimation(const RenderSceneConverterEnv &e
     size_t baseChannelIdx = anim_out->channels.size();
     anim_out->channels.resize(baseChannelIdx + totalSamplers);
 
-    for (size_t joint_idx = 0; joint_idx < nJoints; joint_idx++) {
-      size_t samplerOffset = baseSamplerIdx + joint_idx * nProps;
-      size_t channelOffset = baseChannelIdx + joint_idx * nProps;
-      size_t propIdx = 0;
-
-      // Translation sampler and channel
+    // Setup channels and pre-allocate sampler value arrays
+    for (size_t j = 0; j < nJoints; j++) {
+      size_t samplerOff = baseSamplerIdx + j * nProps;
+      size_t channelOff = baseChannelIdx + j * nProps;
+      size_t pi = 0;
       if (nTransTimes) {
-        KeyframeSampler &trans_sampler = anim_out->samplers[samplerOffset + propIdx];
-        trans_sampler.times = trans_times_f;
-        trans_sampler.interpolation = AnimationInterpolation::Linear;
-        trans_sampler.values.resize(nTransTimes * 3);
-        float *dst = trans_sampler.values.data();
-        for (size_t t = 0; t < nTransTimes; t++) {
-          const auto &v = translation_samples[t][joint_idx];
-          dst[t * 3 + 0] = v[0];
-          dst[t * 3 + 1] = v[1];
-          dst[t * 3 + 2] = v[2];
-        }
-
-        AnimationChannel &channel = anim_out->channels[channelOffset + propIdx];
-        channel.target_type = ChannelTargetType::SkeletonJoint;
-        channel.path = AnimationPath::Translation;
-        channel.skeleton_id = skeleton_id;
-        channel.joint_id = int32_t(joint_idx);
-        channel.sampler = int32_t(samplerOffset + propIdx);
-        propIdx++;
+        auto &s = anim_out->samplers[samplerOff + pi];
+        s.interpolation = AnimationInterpolation::Linear;
+        s.times.resize(nTransTimes);
+        s.values.resize(nTransTimes * 3);
+        auto &ch = anim_out->channels[channelOff + pi];
+        ch.target_type = ChannelTargetType::SkeletonJoint;
+        ch.path = AnimationPath::Translation;
+        ch.skeleton_id = skeleton_id;
+        ch.joint_id = int32_t(j);
+        ch.sampler = int32_t(samplerOff + pi);
+        pi++;
       }
-
-      // Rotation sampler and channel
       if (nRotTimes) {
-        KeyframeSampler &rot_sampler = anim_out->samplers[samplerOffset + propIdx];
-        rot_sampler.times = rot_times_f;
-        rot_sampler.interpolation = AnimationInterpolation::Linear;
-        rot_sampler.values.resize(nRotTimes * 4);
-        float *dst = rot_sampler.values.data();
-        for (size_t t = 0; t < nRotTimes; t++) {
-          const auto &q = rotation_samples[t][joint_idx];
-          dst[t * 4 + 0] = q[0];
-          dst[t * 4 + 1] = q[1];
-          dst[t * 4 + 2] = q[2];
-          dst[t * 4 + 3] = q[3];
-        }
-
-        AnimationChannel &channel = anim_out->channels[channelOffset + propIdx];
-        channel.target_type = ChannelTargetType::SkeletonJoint;
-        channel.path = AnimationPath::Rotation;
-        channel.skeleton_id = skeleton_id;
-        channel.joint_id = int32_t(joint_idx);
-        channel.sampler = int32_t(samplerOffset + propIdx);
-        propIdx++;
+        auto &s = anim_out->samplers[samplerOff + pi];
+        s.interpolation = AnimationInterpolation::Linear;
+        s.times.resize(nRotTimes);
+        s.values.resize(nRotTimes * 4);
+        auto &ch = anim_out->channels[channelOff + pi];
+        ch.target_type = ChannelTargetType::SkeletonJoint;
+        ch.path = AnimationPath::Rotation;
+        ch.skeleton_id = skeleton_id;
+        ch.joint_id = int32_t(j);
+        ch.sampler = int32_t(samplerOff + pi);
+        pi++;
       }
-
-      // Scale sampler and channel
       if (nScaleTimes) {
-        KeyframeSampler &scale_sampler = anim_out->samplers[samplerOffset + propIdx];
-        scale_sampler.times = scale_times_f;
-        scale_sampler.interpolation = AnimationInterpolation::Linear;
-        scale_sampler.values.resize(nScaleTimes * 3);
-        float *dst = scale_sampler.values.data();
-        for (size_t t = 0; t < nScaleTimes; t++) {
-          const auto &v = scale_samples_f[t][joint_idx];
-          dst[t * 3 + 0] = v[0];
-          dst[t * 3 + 1] = v[1];
-          dst[t * 3 + 2] = v[2];
-        }
+        auto &s = anim_out->samplers[samplerOff + pi];
+        s.interpolation = AnimationInterpolation::Linear;
+        s.times.resize(nScaleTimes);
+        s.values.resize(nScaleTimes * 3);
+        auto &ch = anim_out->channels[channelOff + pi];
+        ch.target_type = ChannelTargetType::SkeletonJoint;
+        ch.path = AnimationPath::Scale;
+        ch.skeleton_id = skeleton_id;
+        ch.joint_id = int32_t(j);
+        ch.sampler = int32_t(samplerOff + pi);
+        pi++;
+      }
+    }
 
-        AnimationChannel &channel = anim_out->channels[channelOffset + propIdx];
-        channel.target_type = ChannelTargetType::SkeletonJoint;
-        channel.path = AnimationPath::Scale;
-        channel.skeleton_id = skeleton_id;
-        channel.joint_id = int32_t(joint_idx);
-        channel.sampler = int32_t(samplerOffset + propIdx);
-        propIdx++;
+    // Helper: property index offsets
+    size_t transPI = 0;
+    size_t rotPI = nTransTimes ? 1 : 0;
+    size_t scalePI = rotPI + (nRotTimes ? 1 : 0);
+
+    // Scatter translations directly into output samplers
+    if (nTransTimes) {
+      auto scatterTransFrame = [&](size_t frameIdx, float time, const std::vector<value::float3> &frameData) {
+        if (frameData.size() != nJoints) {
+          _err = fmt::format("Array length mismatch: translations.size {} != joints.size {} at frame {}",
+            frameData.size(), nJoints, frameIdx);
+          return false;
+        }
+        if (time > anim_out->duration) anim_out->duration = time;
+        for (size_t j = 0; j < nJoints; j++) {
+          auto &s = anim_out->samplers[baseSamplerIdx + j * nProps + transPI];
+          s.times[frameIdx] = time;
+          memcpy(&s.values[frameIdx * 3], frameData[j].data(), 3 * sizeof(float));
+        }
+        return true;
+      };
+
+      if (translations.has_timesamples()) {
+        const auto &ts = translations.get_timesamples();
+        size_t frameIdx = 0;
+        FOREACH_TIMESAMPLES_BEGIN(ts, sample_t, sample_value, sample_blocked)
+          if (!scatterTransFrame(frameIdx, float(sample_t), sample_value)) {
+            PUSH_ERROR_AND_RETURN(_err);
+          }
+          frameIdx++;
+        FOREACH_TIMESAMPLES_END()
+      } else {
+        std::vector<value::float3> default_value;
+        if (!translations.get_scalar(&default_value)) {
+          PUSH_ERROR_AND_RETURN(fmt::format("Failed to get default translations: {}", abs_path));
+        }
+        if (!scatterTransFrame(0, 0.0f, default_value)) {
+          PUSH_ERROR_AND_RETURN(_err);
+        }
+      }
+    }
+
+    // Scatter rotations directly into output samplers
+    // quatf layout: { float3 imag; float real; } = 4 contiguous floats
+    if (nRotTimes) {
+      auto scatterRotFrame = [&](size_t frameIdx, float time, const std::vector<value::quatf> &frameData) {
+        if (frameData.size() != nJoints) {
+          _err = fmt::format("Array length mismatch: rotations.size {} != joints.size {} at frame {}",
+            frameData.size(), nJoints, frameIdx);
+          return false;
+        }
+        if (time > anim_out->duration) anim_out->duration = time;
+        for (size_t j = 0; j < nJoints; j++) {
+          auto &s = anim_out->samplers[baseSamplerIdx + j * nProps + rotPI];
+          s.times[frameIdx] = time;
+          memcpy(&s.values[frameIdx * 4], &frameData[j], 4 * sizeof(float));
+        }
+        return true;
+      };
+
+      if (rotations.has_timesamples()) {
+        const auto &ts = rotations.get_timesamples();
+        size_t frameIdx = 0;
+        FOREACH_TIMESAMPLES_BEGIN(ts, sample_t, sample_value, sample_blocked)
+          if (!scatterRotFrame(frameIdx, float(sample_t), sample_value)) {
+            PUSH_ERROR_AND_RETURN(_err);
+          }
+          frameIdx++;
+        FOREACH_TIMESAMPLES_END()
+      } else {
+        std::vector<value::quatf> default_value;
+        if (!rotations.get_scalar(&default_value)) {
+          PUSH_ERROR_AND_RETURN(fmt::format("Failed to get default rotations: {}", abs_path));
+        }
+        if (!scatterRotFrame(0, 0.0f, default_value)) {
+          PUSH_ERROR_AND_RETURN(_err);
+        }
+      }
+    }
+
+    // Scatter scales directly into output samplers (with half->float conversion)
+    if (nScaleTimes) {
+      auto scatterScaleFrame = [&](size_t frameIdx, float time, const std::vector<value::half3> &frameData) {
+        if (frameData.size() != nJoints) {
+          _err = fmt::format("Array length mismatch: scales.size {} != joints.size {} at frame {}",
+            frameData.size(), nJoints, frameIdx);
+          return false;
+        }
+        if (time > anim_out->duration) anim_out->duration = time;
+        for (size_t j = 0; j < nJoints; j++) {
+          auto &s = anim_out->samplers[baseSamplerIdx + j * nProps + scalePI];
+          s.times[frameIdx] = time;
+          float *dst = &s.values[frameIdx * 3];
+          const auto &v = frameData[j];
+          dst[0] = value::half_to_float(v[0]);
+          dst[1] = value::half_to_float(v[1]);
+          dst[2] = value::half_to_float(v[2]);
+        }
+        return true;
+      };
+
+      if (scales.has_timesamples()) {
+        const auto &ts = scales.get_timesamples();
+        size_t frameIdx = 0;
+        FOREACH_TIMESAMPLES_BEGIN(ts, sample_t, sample_value, sample_blocked)
+          if (!scatterScaleFrame(frameIdx, float(sample_t), sample_value)) {
+            PUSH_ERROR_AND_RETURN(_err);
+          }
+          frameIdx++;
+        FOREACH_TIMESAMPLES_END()
+      } else {
+        std::vector<value::half3> default_value;
+        if (!scales.get_scalar(&default_value)) {
+          PUSH_ERROR_AND_RETURN(fmt::format("Failed to get default scales: {}", abs_path));
+        }
+        if (!scatterScaleFrame(0, 0.0f, default_value)) {
+          PUSH_ERROR_AND_RETURN(_err);
+        }
       }
     }
   }
@@ -10285,23 +10281,89 @@ bool RenderSceneConverter::ConvertToRenderScene(
   }
 
   // Count meshes and materials before conversion for accurate progress reporting
+  // Single-pass traversal: walk the stage tree once and classify prims by type_id
   printf("[Tydra] Counting primitives...\n");
   PathPrimMap<GeomMesh> meshPrimMap;
   PathPrimMap<GeomCube> cubePrimMap;
   PathPrimMap<GeomSphere> spherePrimMap;
   PathPrimMap<Material> materialPrimMap;
-  ListPrims(env.stage, meshPrimMap);
-  ListPrims(env.stage, cubePrimMap);
-  ListPrims(env.stage, spherePrimMap);
-  ListPrims(env.stage, materialPrimMap);
-
-  // Pre-discover all Skeleton, SkelRoot, and SkelAnimation prims for ancestor-based discovery
   PathPrimMap<Skeleton> allSkeletons;
   PathPrimMap<SkelRoot> allSkelRoots;
   PathPrimMap<SkelAnimation> allAnimations;
-  ListPrims(env.stage, allSkeletons);
-  ListPrims(env.stage, allSkelRoots);
-  ListPrims(env.stage, allAnimations);
+
+  {
+    // Iterative stack-based traversal visiting each prim exactly once
+    struct StackEntry {
+      const Prim *parent;
+      size_t child_idx;
+      size_t parent_path_len;
+    };
+    std::vector<StackEntry> stack;
+    stack.reserve(64);
+    std::string path_buf;
+    path_buf.reserve(256);
+
+    auto classifyPrim = [&](const Prim &prim) {
+      switch (prim.type_id()) {
+        case value::TYPE_ID_GEOM_MESH:
+          if (const auto *p = prim.as<GeomMesh>()) meshPrimMap[path_buf] = p;
+          break;
+        case value::TYPE_ID_GEOM_CUBE:
+          if (const auto *p = prim.as<GeomCube>()) cubePrimMap[path_buf] = p;
+          break;
+        case value::TYPE_ID_GEOM_SPHERE:
+          if (const auto *p = prim.as<GeomSphere>()) spherePrimMap[path_buf] = p;
+          break;
+        case value::TYPE_ID_MATERIAL:
+          if (const auto *p = prim.as<Material>()) materialPrimMap[path_buf] = p;
+          break;
+        case value::TYPE_ID_SKELETON:
+          if (const auto *p = prim.as<Skeleton>()) allSkeletons[path_buf] = p;
+          break;
+        case value::TYPE_ID_SKEL_ROOT:
+          if (const auto *p = prim.as<SkelRoot>()) allSkelRoots[path_buf] = p;
+          break;
+        case value::TYPE_ID_SKELANIMATION:
+          if (const auto *p = prim.as<SkelAnimation>()) allAnimations[path_buf] = p;
+          break;
+        default:
+          break;
+      }
+    };
+
+    for (const auto &root_prim : env.stage.root_prims()) {
+      path_buf = "/" + root_prim.local_path().full_path_name();
+      classifyPrim(root_prim);
+
+      if (!root_prim.children().empty()) {
+        stack.push_back({&root_prim, 0, 0});
+      }
+
+      while (!stack.empty()) {
+        auto &top = stack.back();
+        if (top.child_idx >= top.parent->children().size()) {
+          path_buf.resize(top.parent_path_len);
+          stack.pop_back();
+          continue;
+        }
+
+        const Prim &child = top.parent->children()[top.child_idx];
+        ++top.child_idx;
+
+        size_t cur_len = path_buf.size();
+        path_buf += "/";
+        path_buf += child.local_path().full_path_name();
+
+        classifyPrim(child);
+
+        if (!child.children().empty()) {
+          stack.push_back({&child, 0, cur_len});
+        } else {
+          path_buf.resize(cur_len);
+        }
+      }
+    }
+  }
   printf("[Tydra] Pre-discovered %zu skeletons, %zu skelroots, %zu animations\n",
          allSkeletons.size(), allSkelRoots.size(), allAnimations.size());
 
