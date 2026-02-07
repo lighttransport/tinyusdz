@@ -567,51 +567,7 @@ union float16be {
   } s;
 };
 
-float half_to_float_le(float16le h) {
-  static const FP32le magic = {113 << 23};
-  static const unsigned int shifted_exp = 0x7c00
-                                          << 13;  // exponent mask after shift
-  FP32le o;
-
-  o.u = (h.u & 0x7fffU) << 13U;           // exponent/mantissa bits
-  unsigned int exp_ = shifted_exp & o.u;  // just the exponent
-  o.u += (127 - 15) << 23;                // exponent adjust
-
-  // handle exponent special cases
-  if (exp_ == shifted_exp)    // Inf/NaN?
-    o.u += (128 - 16) << 23;  // extra exp adjust
-  else if (exp_ == 0)         // Zero/Denormal?
-  {
-    o.u += 1 << 23;  // extra exp adjust
-    o.f -= magic.f;  // renormalize
-  }
-
-  o.u |= (h.u & 0x8000U) << 16U;  // sign bit
-  return o.f;
-}
-
-float half_to_float_be(float16be h) {
-  static const FP32be magic = {113 << 23};
-  static const unsigned int shifted_exp = 0x7c00
-                                          << 13;  // exponent mask after shift
-  FP32be o;
-
-  o.u = (h.u & 0x7fffU) << 13U;           // exponent/mantissa bits
-  unsigned int exp_ = shifted_exp & o.u;  // just the exponent
-  o.u += (127 - 15) << 23;                // exponent adjust
-
-  // handle exponent special cases
-  if (exp_ == shifted_exp)    // Inf/NaN?
-    o.u += (128 - 16) << 23;  // extra exp adjust
-  else if (exp_ == 0)         // Zero/Denormal?
-  {
-    o.u += 1 << 23;  // extra exp adjust
-    o.f -= magic.f;  // renormalize
-  }
-
-  o.u |= (h.u & 0x8000U) << 16U;  // sign bit
-  return o.f;
-}
+// half_to_float_le/be moved to inline in value-types.hh
 
 half float_to_half_full_be(float _f) {
   FP32be f;
@@ -700,23 +656,7 @@ half float_to_half_full_le(float _f) {
 
 }  // namespace
 
-float half_to_float(half h) {
-  // TODO: Compile time detection of endianness
-  HostEndianness endian;
-
-  if (endian.isBig()) {
-    float16be f;
-    f.u = h.value;
-    return half_to_float_be(f);
-  } else if (endian.isLittle()) {
-    float16le f;
-    f.u = h.value;
-    return half_to_float_le(f);
-  }
-
-  ///???
-  return std::numeric_limits<float>::quiet_NaN();
-}
+// half_to_float is now inline in value-types.hh
 
 half float_to_half_full(float _f) {
   // TODO: Compile time detection of endianness
