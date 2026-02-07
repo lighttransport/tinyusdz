@@ -3299,16 +3299,23 @@ bool BuildSkelHierarchy(const Skeleton &skel, SkelNode &dst, std::string *err) {
     // restTransform[i] = inverse(bindTransform[parent[i]]) * bindTransform[i]
     // For root joints (no parent), restTransform = bindTransform
     DCOUT("restTransforms is NOT authored - computing from bindTransforms");
+  } else {
+    DCOUT("restTransforms is NOT authored - using identity");
+    // Neither authored: use identity matrices
+    restTransforms.assign(joints.size(), value::matrix4d::identity());
+  }
 
-    // Build topology first to get parent indices for fallback computation
-    std::vector<int> tempParentIds;
-    if (!BuildSkelTopology(joints, tempParentIds, err)) {
-      PUSH_ERROR_AND_RETURN("Failed to build skeleton topology for restTransforms fallback");
-    }
+  // Build topology once (used for both restTransforms fallback and hierarchy construction)
+  std::vector<int> parentJointIds;
+  if (!BuildSkelTopology(joints, parentJointIds, err)) {
+    return false;
+  }
 
+  // Compute restTransforms from bindTransforms if needed (uses parentJointIds built above)
+  if (!restTransformsAuthored && bindTransformsAuthored) {
     restTransforms.resize(joints.size());
     for (size_t i = 0; i < joints.size(); i++) {
-      int parentIdx = tempParentIds[i];
+      int parentIdx = parentJointIds[i];
       if (parentIdx < 0) {
         // Root joint: use bindTransform directly (world space becomes local space)
         restTransforms[i] = bindTransforms[i];
@@ -3325,10 +3332,6 @@ bool BuildSkelHierarchy(const Skeleton &skel, SkelNode &dst, std::string *err) {
       }
     }
     DCOUT("Computed restTransforms from bindTransforms");
-  } else {
-    DCOUT("restTransforms is NOT authored - using identity");
-    // Neither authored: use identity matrices
-    restTransforms.assign(joints.size(), value::matrix4d::identity());
   }
 
   if (joints.size() != restTransforms.size()) {
@@ -3336,13 +3339,6 @@ bool BuildSkelHierarchy(const Skeleton &skel, SkelNode &dst, std::string *err) {
         fmt::format("Skeleton.joints.size {} must be equal to "
                     "Skeleton.restTransforms.size {}: {}",
                     joints.size(), restTransforms.size(), skel.name));
-  }
-
-  // Get flattened representation of joint hierarchy with BuildSkelTopology.
-  // For root node, parentJointId = -1.
-  std::vector<int> parentJointIds;
-  if (!BuildSkelTopology(joints, parentJointIds, err)) {
-    return false;
   }
 
   // Just in case. Chek if topology is single-rooted.

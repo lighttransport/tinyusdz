@@ -949,14 +949,12 @@ json ThreeJSSceneExporter::ConvertNode(const Node& node, const RenderScene& scen
   switch (node.nodeType) {
     case NodeType::Mesh:
       obj["type"] = "Mesh";
-      // Find associated mesh data
-      for (const auto& mesh : scene.meshes) {
-        if (mesh.prim_name == node.prim_name) {
-          obj["geometry"] = std::to_string(mesh.handle);
-          if (mesh.material_id != -1 && static_cast<size_t>(mesh.material_id) < scene.materials.size()) {
-            obj["material"] = std::to_string(scene.materials[static_cast<size_t>(mesh.material_id)].handle);
-          }
-          break;
+      // Use node.id to directly index mesh data (O(1) instead of O(N) scan)
+      if (node.id >= 0 && static_cast<size_t>(node.id) < scene.meshes.size()) {
+        const auto& mesh = scene.meshes[static_cast<size_t>(node.id)];
+        obj["geometry"] = std::to_string(mesh.handle);
+        if (mesh.material_id != -1 && static_cast<size_t>(mesh.material_id) < scene.materials.size()) {
+          obj["material"] = std::to_string(scene.materials[static_cast<size_t>(mesh.material_id)].handle);
         }
       }
       break;
