@@ -434,33 +434,40 @@ bool decompose(const value::matrix4d &m,
 
   // Convert rotation matrix to quaternion using Shepperd's method
   // This is numerically stable for all cases
+  //
+  // NOTE: TinyUSDZ uses row-vector convention (v' = v * M), so the rotation
+  // matrix is the TRANSPOSE of the column-vector convention matrix.
+  // The standard Shepperd formulas assume column-vector convention, so we
+  // reverse the subtraction order in all antisymmetric terms (R[i][j]-R[j][i]
+  // becomes R[j][i]-R[i][j]). Symmetric terms (R[i][j]+R[j][i]) and diagonal
+  // terms are unaffected by transposition.
   double trace = rot_matrix.m[0][0] + rot_matrix.m[1][1] + rot_matrix.m[2][2];
 
   if (trace > 0.0) {
     // w is the largest component
     double s = std::sqrt(trace + 1.0) * 2.0; // s = 4 * w
     rotation->real = 0.25 * s;
-    rotation->imag[0] = (rot_matrix.m[2][1] - rot_matrix.m[1][2]) / s;
-    rotation->imag[1] = (rot_matrix.m[0][2] - rot_matrix.m[2][0]) / s;
-    rotation->imag[2] = (rot_matrix.m[1][0] - rot_matrix.m[0][1]) / s;
+    rotation->imag[0] = (rot_matrix.m[1][2] - rot_matrix.m[2][1]) / s;
+    rotation->imag[1] = (rot_matrix.m[2][0] - rot_matrix.m[0][2]) / s;
+    rotation->imag[2] = (rot_matrix.m[0][1] - rot_matrix.m[1][0]) / s;
   } else if ((rot_matrix.m[0][0] > rot_matrix.m[1][1]) && (rot_matrix.m[0][0] > rot_matrix.m[2][2])) {
     // x is the largest component
     double s = std::sqrt(1.0 + rot_matrix.m[0][0] - rot_matrix.m[1][1] - rot_matrix.m[2][2]) * 2.0; // s = 4 * x
-    rotation->real = (rot_matrix.m[2][1] - rot_matrix.m[1][2]) / s;
+    rotation->real = (rot_matrix.m[1][2] - rot_matrix.m[2][1]) / s;
     rotation->imag[0] = 0.25 * s;
     rotation->imag[1] = (rot_matrix.m[0][1] + rot_matrix.m[1][0]) / s;
     rotation->imag[2] = (rot_matrix.m[0][2] + rot_matrix.m[2][0]) / s;
   } else if (rot_matrix.m[1][1] > rot_matrix.m[2][2]) {
     // y is the largest component
     double s = std::sqrt(1.0 + rot_matrix.m[1][1] - rot_matrix.m[0][0] - rot_matrix.m[2][2]) * 2.0; // s = 4 * y
-    rotation->real = (rot_matrix.m[0][2] - rot_matrix.m[2][0]) / s;
+    rotation->real = (rot_matrix.m[2][0] - rot_matrix.m[0][2]) / s;
     rotation->imag[0] = (rot_matrix.m[0][1] + rot_matrix.m[1][0]) / s;
     rotation->imag[1] = 0.25 * s;
     rotation->imag[2] = (rot_matrix.m[1][2] + rot_matrix.m[2][1]) / s;
   } else {
     // z is the largest component
     double s = std::sqrt(1.0 + rot_matrix.m[2][2] - rot_matrix.m[0][0] - rot_matrix.m[1][1]) * 2.0; // s = 4 * z
-    rotation->real = (rot_matrix.m[1][0] - rot_matrix.m[0][1]) / s;
+    rotation->real = (rot_matrix.m[0][1] - rot_matrix.m[1][0]) / s;
     rotation->imag[0] = (rot_matrix.m[0][2] + rot_matrix.m[2][0]) / s;
     rotation->imag[1] = (rot_matrix.m[1][2] + rot_matrix.m[2][1]) / s;
     rotation->imag[2] = 0.25 * s;
