@@ -5138,7 +5138,8 @@ bool RenderSceneConverter::ConvertMesh(
         }
         const auto &name_to_index_map = cache_it->second;
 
-        std::unordered_map<int, int> index_remap;
+        // Flat vector remap: index_remap[i] = skeleton joint index for mesh joint i
+        std::vector<int> index_remap(joints.size(), -1);
 
         for (size_t i = 0; i < joints.size(); i++) {
           std::string joint_name = joints[i].str();
@@ -5148,19 +5149,13 @@ bool RenderSceneConverter::ConvertMesh(
             PUSH_ERROR_AND_RETURN(fmt::format("joint_name {} not found in Skeleton", joint_name));
           }
 
-          int dst_idx = nit->second;
-          index_remap[int(i)] = dst_idx;
-
-          //DCOUT("remap " << i << " to " << dst_idx);
+          index_remap[i] = nit->second;
         }
 
         for (size_t i = 0; i < dst.joint_and_weights.jointIndices.size(); i++) {
           int src_idx = dst.joint_and_weights.jointIndices[i];
-          if (index_remap.count(src_idx)) {
-            int dst_idx = index_remap[src_idx];
-
-            dst.joint_and_weights.jointIndices[i] = dst_idx;
-            //DCOUT("jointIndex modified: remap " << src_idx << " to " << dst_idx);
+          if (src_idx >= 0 && size_t(src_idx) < index_remap.size() && index_remap[size_t(src_idx)] >= 0) {
+            dst.joint_and_weights.jointIndices[i] = index_remap[size_t(src_idx)];
           }
         }
       }
@@ -10801,14 +10796,14 @@ bool RenderSceneConverter::ConvertSkeletonFromPtr(const RenderSceneConverterEnv 
       }
 
       DCOUT("Converted SkelAnimation (from ptr)");
-      (*out_anim) = anim;
+      (*out_anim) = std::move(anim);
 
     } else {
       PUSH_ERROR_AND_RETURN(fmt::format("Target Prim of `skel:animationSource` must be `SkelAnimation` Prim, but got `{}`.", animSourcePrim->prim_type_name()));
     }
   }
 
-  (*out_skel) = dst;
+  (*out_skel) = std::move(dst);
   return true;
 }
 
@@ -10870,7 +10865,7 @@ bool RenderSceneConverter::ConvertSkeletonImplWithPath(const RenderSceneConverte
           }
 
           DCOUT("Converted SkelAnimation");
-          (*out_anim) = anim;
+          (*out_anim) = std::move(anim);
 
         } else {
           PUSH_ERROR_AND_RETURN(fmt::format("Target Prim of `skel:animationSource` must be `SkelAnimation` Prim, but got `{}`.", animSourcePrim->prim_type_name()));
@@ -10882,7 +10877,7 @@ bool RenderSceneConverter::ConvertSkeletonImplWithPath(const RenderSceneConverte
       PUSH_ERROR_AND_RETURN("Prim is not Skeleton.");
     }
 
-    (*out_skel) = dst;
+    (*out_skel) = std::move(dst);
     return true;
   }
 

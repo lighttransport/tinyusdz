@@ -536,24 +536,31 @@ double determinant(const value::matrix3d &_m) {
 }
 
 bool inverse(const value::matrix4d &_m, value::matrix4d &inv_m, double eps) {
-  double det = determinant(_m);
+  matrix44d m;
+  memcpy(&m[0][0], _m.m, sizeof(double) * 4 * 4);
 
+  double det = linalg::determinant(m);
   if (math::is_close(std::fabs(det), 0.0, eps)) {
     return false;
   }
 
-  inv_m = inverse(_m);
+  // Compute adjugate/det directly (avoids recomputing determinant inside linalg::inverse)
+  matrix44d result = linalg::adjugate(m) / det;
+  memcpy(inv_m.m, &result[0][0], sizeof(double) * 4 * 4);
   return true;
 }
 
 bool inverse(const value::matrix3d &_m, value::matrix3d &inv_m, double eps) {
-  double det = determinant(_m);
+  matrix33d m;
+  memcpy(&m[0][0], _m.m, sizeof(double) * 3 * 3);
 
+  double det = linalg::determinant(m);
   if (math::is_close(std::fabs(det), 0.0, eps)) {
     return false;
   }
 
-  inv_m = inverse(_m);
+  matrix33d result = linalg::adjugate(m) / det;
+  memcpy(inv_m.m, &result[0][0], sizeof(double) * 3 * 3);
   return true;
 }
 
