@@ -561,7 +561,37 @@ using half2 = std::array<half, 2>;
 using half3 = std::array<half, 3>;
 using half4 = std::array<half, 4>;
 
-float half_to_float(value::half h);
+///
+/// Convert half-precision float to single-precision float (inline for performance).
+/// Uses portable bit manipulation that works on both little-endian and big-endian.
+///
+inline float half_to_float(value::half h) {
+  uint16_t hu = h.value;
+  uint32_t o;
+
+  o = (hu & 0x7fffU) << 13U;              // exponent/mantissa bits
+  uint32_t exp_ = (0x7c00U << 13U) & o;   // just the exponent
+  o += (127 - 15) << 23;                   // exponent adjust
+
+  if (exp_ == (0x7c00U << 13U))            // Inf/NaN?
+    o += (128 - 16) << 23;                 // extra exp adjust
+  else if (exp_ == 0) {                    // Zero/Denormal?
+    o += 1 << 23;                          // extra exp adjust
+    float of;
+    memcpy(&of, &o, sizeof(float));
+    uint32_t magic = 113 << 23;
+    float magicf;
+    memcpy(&magicf, &magic, sizeof(float));
+    of -= magicf;                          // renormalize
+    memcpy(&o, &of, sizeof(uint32_t));
+  }
+
+  o |= (hu & 0x8000U) << 16U;             // sign bit
+  float result;
+  memcpy(&result, &o, sizeof(float));
+  return result;
+}
+
 half float_to_half_full(float f);
 
 inline half operator+(const half &a, const half &b) {
