@@ -41,6 +41,7 @@
 #pragma once
 
 #include <map>
+#include <unordered_map>
 
 #include "prim-type-macros.inc"
 #include "prim-types.hh"
@@ -62,7 +63,7 @@ namespace tydra {
 /// Value = const pointer to prim of type T
 ///
 template <typename T>
-using PathPrimMap = std::map<std::string, const T *>;
+using PathPrimMap = std::unordered_map<std::string, const T *>;
 
 ///
 /// Map from shader path to shader data.

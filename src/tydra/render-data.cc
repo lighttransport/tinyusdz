@@ -8726,16 +8726,37 @@ bool RenderSceneConverter::ConvertSkelAnimation(const RenderSceneConverterEnv &e
     size_t baseChannelIdx = anim_out->channels.size();
     anim_out->channels.resize(baseChannelIdx + totalSamplers);
 
-    // Setup channels and pre-allocate sampler value arrays
+    // Allocate flat bulk buffers for scatter writes (avoids per-sampler resize zero-fill).
+    // Layout: [joint0_frame0, joint0_frame1, ..., joint1_frame0, ...] (joint-major)
+    // Scatter writes in frame-major order; final copy to per-sampler vectors is joint-major memcpy.
+    size_t transBufTimesSize = nTransTimes ? nJoints * nTransTimes : 0;
+    size_t transBufValsSize  = nTransTimes ? nJoints * nTransTimes * 3 : 0;
+    size_t rotBufTimesSize   = nRotTimes   ? nJoints * nRotTimes : 0;
+    size_t rotBufValsSize    = nRotTimes   ? nJoints * nRotTimes * 4 : 0;
+    size_t scaleBufTimesSize = nScaleTimes ? nJoints * nScaleTimes : 0;
+    size_t scaleBufValsSize  = nScaleTimes ? nJoints * nScaleTimes * 3 : 0;
+
+    // Single allocation for all bulk data
+    size_t totalFloats = transBufTimesSize + transBufValsSize
+                       + rotBufTimesSize + rotBufValsSize
+                       + scaleBufTimesSize + scaleBufValsSize;
+    std::unique_ptr<float[]> bulkBuf(new float[totalFloats]);
+    float *ptr = bulkBuf.get();
+
+    float *transTimesBuf = ptr; ptr += transBufTimesSize;
+    float *transValsBuf  = ptr; ptr += transBufValsSize;
+    float *rotTimesBuf   = ptr; ptr += rotBufTimesSize;
+    float *rotValsBuf    = ptr; ptr += rotBufValsSize;
+    float *scaleTimesBuf = ptr; ptr += scaleBufTimesSize;
+    float *scaleValsBuf  = ptr; ptr += scaleBufValsSize;
+
+    // Setup channels (no value arrays yet — will be assigned after scatter)
     for (size_t j = 0; j < nJoints; j++) {
       size_t samplerOff = baseSamplerIdx + j * nProps;
       size_t channelOff = baseChannelIdx + j * nProps;
       size_t pi = 0;
       if (nTransTimes) {
-        auto &s = anim_out->samplers[samplerOff + pi];
-        s.interpolation = AnimationInterpolation::Linear;
-        s.times.resize(nTransTimes);
-        s.values.resize(nTransTimes * 3);
+        anim_out->samplers[samplerOff + pi].interpolation = AnimationInterpolation::Linear;
         auto &ch = anim_out->channels[channelOff + pi];
         ch.target_type = ChannelTargetType::SkeletonJoint;
         ch.path = AnimationPath::Translation;
@@ -8745,10 +8766,7 @@ bool RenderSceneConverter::ConvertSkelAnimation(const RenderSceneConverterEnv &e
         pi++;
       }
       if (nRotTimes) {
-        auto &s = anim_out->samplers[samplerOff + pi];
-        s.interpolation = AnimationInterpolation::Linear;
-        s.times.resize(nRotTimes);
-        s.values.resize(nRotTimes * 4);
+        anim_out->samplers[samplerOff + pi].interpolation = AnimationInterpolation::Linear;
         auto &ch = anim_out->channels[channelOff + pi];
         ch.target_type = ChannelTargetType::SkeletonJoint;
         ch.path = AnimationPath::Rotation;
@@ -8758,10 +8776,7 @@ bool RenderSceneConverter::ConvertSkelAnimation(const RenderSceneConverterEnv &e
         pi++;
       }
       if (nScaleTimes) {
-        auto &s = anim_out->samplers[samplerOff + pi];
-        s.interpolation = AnimationInterpolation::Linear;
-        s.times.resize(nScaleTimes);
-        s.values.resize(nScaleTimes * 3);
+        anim_out->samplers[samplerOff + pi].interpolation = AnimationInterpolation::Linear;
         auto &ch = anim_out->channels[channelOff + pi];
         ch.target_type = ChannelTargetType::SkeletonJoint;
         ch.path = AnimationPath::Scale;
@@ -8772,12 +8787,10 @@ bool RenderSceneConverter::ConvertSkelAnimation(const RenderSceneConverterEnv &e
       }
     }
 
-    // Helper: property index offsets
-    size_t transPI = 0;
-    size_t rotPI = nTransTimes ? 1 : 0;
-    size_t scalePI = rotPI + (nRotTimes ? 1 : 0);
+    // Scatter into bulk buffers (joint-major layout: [j0_f0, j0_f1, ..., j1_f0, ...])
+    // This avoids per-sampler vector::resize() zero-fill overhead.
 
-    // Scatter translations directly into output samplers
+    // Scatter translations into bulk buffer
     if (nTransTimes) {
       auto scatterTransFrame = [&](size_t frameIdx, float time, const std::vector<value::float3> &frameData) {
         if (frameData.size() != nJoints) {
@@ -8787,9 +8800,8 @@ bool RenderSceneConverter::ConvertSkelAnimation(const RenderSceneConverterEnv &e
         }
         if (time > anim_out->duration) anim_out->duration = time;
         for (size_t j = 0; j < nJoints; j++) {
-          auto &s = anim_out->samplers[baseSamplerIdx + j * nProps + transPI];
-          s.times[frameIdx] = time;
-          memcpy(&s.values[frameIdx * 3], frameData[j].data(), 3 * sizeof(float));
+          transTimesBuf[j * nTransTimes + frameIdx] = time;
+          memcpy(&transValsBuf[(j * nTransTimes + frameIdx) * 3], frameData[j].data(), 3 * sizeof(float));
         }
         return true;
       };
@@ -8814,7 +8826,7 @@ bool RenderSceneConverter::ConvertSkelAnimation(const RenderSceneConverterEnv &e
       }
     }
 
-    // Scatter rotations directly into output samplers
+    // Scatter rotations into bulk buffer
     // quatf layout: { float3 imag; float real; } = 4 contiguous floats
     if (nRotTimes) {
       auto scatterRotFrame = [&](size_t frameIdx, float time, const std::vector<value::quatf> &frameData) {
@@ -8825,9 +8837,8 @@ bool RenderSceneConverter::ConvertSkelAnimation(const RenderSceneConverterEnv &e
         }
         if (time > anim_out->duration) anim_out->duration = time;
         for (size_t j = 0; j < nJoints; j++) {
-          auto &s = anim_out->samplers[baseSamplerIdx + j * nProps + rotPI];
-          s.times[frameIdx] = time;
-          memcpy(&s.values[frameIdx * 4], &frameData[j], 4 * sizeof(float));
+          rotTimesBuf[j * nRotTimes + frameIdx] = time;
+          memcpy(&rotValsBuf[(j * nRotTimes + frameIdx) * 4], &frameData[j], 4 * sizeof(float));
         }
         return true;
       };
@@ -8852,7 +8863,7 @@ bool RenderSceneConverter::ConvertSkelAnimation(const RenderSceneConverterEnv &e
       }
     }
 
-    // Scatter scales directly into output samplers (with half->float conversion)
+    // Scatter scales into bulk buffer (with half->float conversion)
     if (nScaleTimes) {
       auto scatterScaleFrame = [&](size_t frameIdx, float time, const std::vector<value::half3> &frameData) {
         if (frameData.size() != nJoints) {
@@ -8862,9 +8873,8 @@ bool RenderSceneConverter::ConvertSkelAnimation(const RenderSceneConverterEnv &e
         }
         if (time > anim_out->duration) anim_out->duration = time;
         for (size_t j = 0; j < nJoints; j++) {
-          auto &s = anim_out->samplers[baseSamplerIdx + j * nProps + scalePI];
-          s.times[frameIdx] = time;
-          float *dst = &s.values[frameIdx * 3];
+          scaleTimesBuf[j * nScaleTimes + frameIdx] = time;
+          float *dst = &scaleValsBuf[(j * nScaleTimes + frameIdx) * 3];
           const auto &v = frameData[j];
           dst[0] = value::half_to_float(v[0]);
           dst[1] = value::half_to_float(v[1]);
@@ -8890,6 +8900,37 @@ bool RenderSceneConverter::ConvertSkelAnimation(const RenderSceneConverterEnv &e
         if (!scatterScaleFrame(0, 0.0f, default_value)) {
           PUSH_ERROR_AND_RETURN(_err);
         }
+      }
+    }
+
+    // Copy from bulk buffers into per-sampler vectors (single memcpy per sampler,
+    // using assign() which allocates + copies without zero-fill overhead)
+    for (size_t j = 0; j < nJoints; j++) {
+      size_t samplerOff = baseSamplerIdx + j * nProps;
+      size_t pi = 0;
+      if (nTransTimes) {
+        auto &s = anim_out->samplers[samplerOff + pi];
+        const float *tBase = &transTimesBuf[j * nTransTimes];
+        const float *vBase = &transValsBuf[j * nTransTimes * 3];
+        s.times.assign(tBase, tBase + nTransTimes);
+        s.values.assign(vBase, vBase + nTransTimes * 3);
+        pi++;
+      }
+      if (nRotTimes) {
+        auto &s = anim_out->samplers[samplerOff + pi];
+        const float *tBase = &rotTimesBuf[j * nRotTimes];
+        const float *vBase = &rotValsBuf[j * nRotTimes * 4];
+        s.times.assign(tBase, tBase + nRotTimes);
+        s.values.assign(vBase, vBase + nRotTimes * 4);
+        pi++;
+      }
+      if (nScaleTimes) {
+        auto &s = anim_out->samplers[samplerOff + pi];
+        const float *tBase = &scaleTimesBuf[j * nScaleTimes];
+        const float *vBase = &scaleValsBuf[j * nScaleTimes * 3];
+        s.times.assign(tBase, tBase + nScaleTimes);
+        s.values.assign(vBase, vBase + nScaleTimes * 3);
+        pi++;
       }
     }
   }
