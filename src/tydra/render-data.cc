@@ -8982,15 +8982,116 @@ bool RenderSceneConverter::ConvertSkelAnimation(const RenderSceneConverterEnv &e
   return true;
 }
 
-// Helper function: Quaternion multiplication
-// q1 * q2
-static value::quatf quat_mul(const value::quatf &q1, const value::quatf &q2) {
-  value::quatf result;
-  result[0] = q1[3] * q2[0] + q1[0] * q2[3] + q1[1] * q2[2] - q1[2] * q2[1];  // x
-  result[1] = q1[3] * q2[1] - q1[0] * q2[2] + q1[1] * q2[3] + q1[2] * q2[0];  // y
-  result[2] = q1[3] * q2[2] + q1[0] * q2[1] - q1[1] * q2[0] + q1[2] * q2[3];  // z
-  result[3] = q1[3] * q2[3] - q1[0] * q2[0] - q1[1] * q2[1] - q1[2] * q2[2];  // w
-  return result;
+// Helper function: Quaternion multiplication using direct member access
+// (avoids operator[] pointer arithmetic overhead)
+// q1 * q2, Hamilton convention
+static inline value::quatf quat_mul(const value::quatf &q1, const value::quatf &q2) {
+  const float x1 = q1.imag[0], y1 = q1.imag[1], z1 = q1.imag[2], w1 = q1.real;
+  const float x2 = q2.imag[0], y2 = q2.imag[1], z2 = q2.imag[2], w2 = q2.real;
+  value::quatf r;
+  r.imag[0] = w1*x2 + x1*w2 + y1*z2 - z1*y2;
+  r.imag[1] = w1*y2 - x1*z2 + y1*w2 + z1*x2;
+  r.imag[2] = w1*z2 + x1*y2 - y1*x2 + z1*w2;
+  r.real    = w1*w2 - x1*x2 - y1*y2 - z1*z2;
+  return r;
+}
+
+// Specialized single-axis angle-to-quaternion (avoids multiply-by-zero for the
+// two unused axis components). Keeps sin_pi/cos_pi for accuracy.
+static inline value::quatf to_quaternion_x(float angle) {
+  float s = float(math::sin_pi(double(angle) / 360.0));
+  float c = float(math::cos_pi(double(angle) / 360.0));
+  value::quatf q;
+  q.imag[0] = s;  q.imag[1] = 0.0f;  q.imag[2] = 0.0f;  q.real = c;
+  return q;
+}
+
+static inline value::quatf to_quaternion_y(float angle) {
+  float s = float(math::sin_pi(double(angle) / 360.0));
+  float c = float(math::cos_pi(double(angle) / 360.0));
+  value::quatf q;
+  q.imag[0] = 0.0f;  q.imag[1] = s;  q.imag[2] = 0.0f;  q.real = c;
+  return q;
+}
+
+static inline value::quatf to_quaternion_z(float angle) {
+  float s = float(math::sin_pi(double(angle) / 360.0));
+  float c = float(math::cos_pi(double(angle) / 360.0));
+  value::quatf q;
+  q.imag[0] = 0.0f;  q.imag[1] = 0.0f;  q.imag[2] = s;  q.real = c;
+  return q;
+}
+
+// Direct Euler-to-quaternion conversion using closed-form formulas.
+// Computes the combined quaternion from 3 axis-aligned rotations in one step,
+// avoiding intermediate quaternion objects and 2 quaternion multiplications.
+// All 6 rotation orders are supported.
+// angles[0] = X angle, angles[1] = Y angle, angles[2] = Z angle (degrees)
+static inline value::quatf euler_to_quatf(
+    const value::double3 &angles, XformOp::OpType rot_order) {
+  // Half-angle trig values (using sin_pi/cos_pi for accuracy)
+  const float sx = float(math::sin_pi(angles[0] / 360.0));
+  const float cx = float(math::cos_pi(angles[0] / 360.0));
+  const float sy = float(math::sin_pi(angles[1] / 360.0));
+  const float cy = float(math::cos_pi(angles[1] / 360.0));
+  const float sz = float(math::sin_pi(angles[2] / 360.0));
+  const float cz = float(math::cos_pi(angles[2] / 360.0));
+
+  value::quatf q;
+
+  switch (rot_order) {
+    case XformOp::OpType::RotateXYZ:
+      // Q = Qz * Qy * Qx
+      q.imag[0] = cz*cy*sx - sz*sy*cx;
+      q.imag[1] = cz*sy*cx + sz*cy*sx;
+      q.imag[2] = sz*cy*cx - cz*sy*sx;
+      q.real    = cz*cy*cx + sz*sy*sx;
+      break;
+    case XformOp::OpType::RotateXZY:
+      // Q = Qy * Qz * Qx
+      q.imag[0] = cy*cz*sx + sy*sz*cx;
+      q.imag[1] = cy*sz*sx + sy*cz*cx;
+      q.imag[2] = cy*sz*cx - sy*cz*sx;
+      q.real    = cy*cz*cx - sy*sz*sx;
+      break;
+    case XformOp::OpType::RotateYXZ:
+      // Q = Qz * Qx * Qy
+      q.imag[0] = cz*sx*cy - sz*cx*sy;
+      q.imag[1] = cz*cx*sy + sz*sx*cy;
+      q.imag[2] = cz*sx*sy + sz*cx*cy;
+      q.real    = cz*cx*cy - sz*sx*sy;
+      break;
+    case XformOp::OpType::RotateYZX:
+      // Q = Qx * Qz * Qy
+      q.imag[0] = sx*cz*cy - cx*sz*sy;
+      q.imag[1] = cx*cz*sy - sx*sz*cy;
+      q.imag[2] = cx*sz*cy + sx*cz*sy;
+      q.real    = cx*cz*cy + sx*sz*sy;
+      break;
+    case XformOp::OpType::RotateZXY:
+      // Q = Qy * Qx * Qz
+      q.imag[0] = cy*sx*cz + sy*cx*sz;
+      q.imag[1] = sy*cx*cz - cy*sx*sz;
+      q.imag[2] = cy*cx*sz - sy*sx*cz;
+      q.real    = cy*cx*cz + sy*sx*sz;
+      break;
+    case XformOp::OpType::RotateZYX:
+      // Q = Qx * Qy * Qz
+      q.imag[0] = cx*sy*sz + sx*cy*cz;
+      q.imag[1] = cx*sy*cz - sx*cy*sz;
+      q.imag[2] = cx*cy*sz + sx*sy*cz;
+      q.real    = cx*cy*cz - sx*sy*sz;
+      break;
+    default:
+      // Fallback: treat as XYZ
+      q.imag[0] = cz*cy*sx - sz*sy*cx;
+      q.imag[1] = cz*sy*cx + sz*cy*sx;
+      q.imag[2] = sz*cy*cx - cz*sy*sx;
+      q.real    = cz*cy*cx + sz*sy*sx;
+      break;
+  }
+
+  return q;
 }
 
 bool RenderSceneConverter::ExtractXformOpAnimation(
@@ -9177,10 +9278,10 @@ bool RenderSceneConverter::ExtractXformOpAnimation(
 
           for (size_t i = 0; i < times.size(); i++) {
             sampler.times.push_back(float(times[i]));
-            sampler.values.push_back(float(rotations[i][0]));
-            sampler.values.push_back(float(rotations[i][1]));
-            sampler.values.push_back(float(rotations[i][2]));
-            sampler.values.push_back(float(rotations[i][3]));
+            sampler.values.push_back(float(rotations[i].imag[0]));
+            sampler.values.push_back(float(rotations[i].imag[1]));
+            sampler.values.push_back(float(rotations[i].imag[2]));
+            sampler.values.push_back(float(rotations[i].real));
           }
 
           int32_t sampler_idx = int32_t(anim_out->samplers.size());
@@ -9299,16 +9400,16 @@ bool RenderSceneConverter::ExtractXformOpAnimation(
             quat = *v;
             got_value = true;
           } else if (auto vd = sample_value.as<value::quatd>()) {
-            quat[0] = float((*vd)[0]);
-            quat[1] = float((*vd)[1]);
-            quat[2] = float((*vd)[2]);
-            quat[3] = float((*vd)[3]);
+            quat.imag[0] = float(vd->imag[0]);
+            quat.imag[1] = float(vd->imag[1]);
+            quat.imag[2] = float(vd->imag[2]);
+            quat.real     = float(vd->real);
             got_value = true;
           } else if (auto vh = sample_value.as<value::quath>()) {
-            quat[0] = value::half_to_float((*vh)[0]);
-            quat[1] = value::half_to_float((*vh)[1]);
-            quat[2] = value::half_to_float((*vh)[2]);
-            quat[3] = value::half_to_float((*vh)[3]);
+            quat.imag[0] = value::half_to_float(vh->imag[0]);
+            quat.imag[1] = value::half_to_float(vh->imag[1]);
+            quat.imag[2] = value::half_to_float(vh->imag[2]);
+            quat.real     = value::half_to_float(vh->real);
             got_value = true;
           }
 
@@ -9356,20 +9457,16 @@ bool RenderSceneConverter::ExtractXformOpAnimation(
             }
           FOREACH_TIMESAMPLES_END()
 
-          // Convert angles to quaternions
-          value::double3 axis;
-          if (xformOp.op_type == XformOp::OpType::RotateX) {
-            axis = {1.0, 0.0, 0.0};
-          } else if (xformOp.op_type == XformOp::OpType::RotateY) {
-            axis = {0.0, 1.0, 0.0};
-          } else {  // RotateZ
-            axis = {0.0, 0.0, 1.0};
-          }
-
+          // Convert angles to quaternions using specialized single-axis functions
           for (size_t i = 0; i < angle_times.size(); i++) {
             times.push_back(angle_times[i]);
-            values.push_back(to_quaternion(value::float3{float(axis[0]), float(axis[1]), float(axis[2])},
-                                          float(angle_values[i])));
+            if (xformOp.op_type == XformOp::OpType::RotateX) {
+              values.push_back(to_quaternion_x(float(angle_values[i])));
+            } else if (xformOp.op_type == XformOp::OpType::RotateY) {
+              values.push_back(to_quaternion_y(float(angle_values[i])));
+            } else {  // RotateZ
+              values.push_back(to_quaternion_z(float(angle_values[i])));
+            }
           }
 
         } else {
@@ -9409,22 +9506,11 @@ bool RenderSceneConverter::ExtractXformOpAnimation(
             }
           FOREACH_TIMESAMPLES_END()
 
-          // Convert Euler angles to quaternions based on rotation order
-          // Note: This is a simplified conversion; proper implementation would use matrix composition
+          // Convert Euler angles to quaternions using direct closed-form formula
+          // (handles all rotation orders correctly)
           for (size_t i = 0; i < angle_times.size(); i++) {
             times.push_back(angle_times[i]);
-
-            // For now, convert XYZ order (most common)
-            // TODO: Support other rotation orders properly
-            const auto &angles = euler_angles[i];
-            value::quatf qx = to_quaternion(value::float3{1.0f, 0.0f, 0.0f}, float(angles[0]));
-            value::quatf qy = to_quaternion(value::float3{0.0f, 1.0f, 0.0f}, float(angles[1]));
-            value::quatf qz = to_quaternion(value::float3{0.0f, 0.0f, 1.0f}, float(angles[2]));
-
-            // Combine quaternions based on rotation order
-            // For XYZ: qz * qy * qx
-            value::quatf combined = quat_mul(quat_mul(qz, qy), qx);
-            values.push_back(combined);
+            values.push_back(euler_to_quatf(euler_angles[i], xformOp.op_type));
           }
         }
       }
@@ -9436,10 +9522,10 @@ bool RenderSceneConverter::ExtractXformOpAnimation(
 
         for (size_t i = 0; i < times.size(); i++) {
           sampler.times.push_back(float(times[i]));
-          sampler.values.push_back(values[i][0]);
-          sampler.values.push_back(values[i][1]);
-          sampler.values.push_back(values[i][2]);
-          sampler.values.push_back(values[i][3]);
+          sampler.values.push_back(values[i].imag[0]);
+          sampler.values.push_back(values[i].imag[1]);
+          sampler.values.push_back(values[i].imag[2]);
+          sampler.values.push_back(values[i].real);
         }
       }
     }
