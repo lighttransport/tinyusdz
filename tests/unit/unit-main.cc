@@ -26,6 +26,8 @@
 #include "unit-tiny-container.h"
 #include "unit-usda-roundtrip.h"
 #include "unit-half-roundtrip.h"
+#include "unit-usdskel.h"
+#include "unit-tydra-skel.h"
 
 #if defined(TINYUSDZ_WITH_PXR_COMPAT_API)
 #include "unit-pxr-compat-api.h"
@@ -168,6 +170,32 @@ TEST_LIST = {
   { "half_roundtrip_exhaustive_test", half_roundtrip_exhaustive_test },
   { "half_roundtrip_edge_cases_test", half_roundtrip_edge_cases_test },
   { "half_shortest_representation_test", half_shortest_representation_test },
+  // usdSkel core tests
+  { "skel_topology_simple_chain_test", skel_topology_simple_chain_test },
+  { "skel_topology_branching_test", skel_topology_branching_test },
+  { "skel_topology_single_joint_test", skel_topology_single_joint_test },
+  { "skel_topology_skipped_hierarchy_test", skel_topology_skipped_hierarchy_test },
+  { "skel_topology_error_test", skel_topology_error_test },
+  { "skeleton_struct_attributes_test", skeleton_struct_attributes_test },
+  { "skelanim_static_values_test", skelanim_static_values_test },
+  { "skelanim_timesampled_test", skelanim_timesampled_test },
+  { "blendshape_struct_test", blendshape_struct_test },
+  // Tydra skeleton hierarchy tests
+  { "build_skel_hierarchy_chain_test", build_skel_hierarchy_chain_test },
+  { "build_skel_hierarchy_branching_test", build_skel_hierarchy_branching_test },
+  { "build_skel_hierarchy_transforms_test", build_skel_hierarchy_transforms_test },
+  { "build_skel_hierarchy_rest_fallback_test", build_skel_hierarchy_rest_fallback_test },
+  { "build_skel_hierarchy_no_joints_test", build_skel_hierarchy_no_joints_test },
+  { "build_skel_hierarchy_multi_root_test", build_skel_hierarchy_multi_root_test },
+  { "build_skel_name_to_index_map_test", build_skel_name_to_index_map_test },
+  // Bone utility tests
+  { "bone_depths_linear_test", bone_depths_linear_test },
+  { "bone_depths_branching_test", bone_depths_branching_test },
+  { "bone_chain_distance_test", bone_chain_distance_test },
+  { "reduce_bones_simple_noop_test", reduce_bones_simple_noop_test },
+  { "reduce_bones_simple_basic_test", reduce_bones_simple_basic_test },
+  { "reduce_bones_greedy_test", reduce_bones_greedy_test },
+  { "reduce_bones_hierarchical_test", reduce_bones_hierarchical_test },
 #if defined(TINYUSDZ_WITH_PXR_COMPAT_API)
   { "pxr_compat_api_test", pxr_compat_api_test },
 #endif
