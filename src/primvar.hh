@@ -42,16 +42,23 @@ namespace primvar {
 struct PrimVar {
   value::Value _value{nullptr}; // For scalar(default) value
   bool _blocked{false}; // ValueBlocked.
-  value::TimeSamples _ts; // For TimeSamples value.
+  value::TimeSamples _ts; // For TimeSamples value (owned).
+
+  // Shared TimeSamples for USDC dedup optimization.
+  // When multiple attributes share the same fieldset, they can share
+  // TimeSamples via shared_ptr instead of deep-copying.
+  std::shared_ptr<const value::TimeSamples> _shared_ts;
 
   // Default constructor
   PrimVar() {
     //TUSDZ_LOG_I("PrimVar default ctor");
   }
 
-  // Copy constructor
+  // Copy constructor: shares _shared_ts (no deep copy of TimeSamples)
   PrimVar(const PrimVar& rhs)
-    : _value(rhs._value), _blocked(rhs._blocked), _ts(rhs._ts) {
+    : _value(rhs._value), _blocked(rhs._blocked),
+      _ts(rhs._shared_ts ? value::TimeSamples() : rhs._ts),
+      _shared_ts(rhs._shared_ts) {
     //TUSDZ_LOG_I("PrimVar copy ctor");
   }
 
@@ -59,18 +66,25 @@ struct PrimVar {
   PrimVar(PrimVar&& rhs) noexcept
     : _value(std::move(rhs._value)),
       _blocked(rhs._blocked),
-      _ts(std::move(rhs._ts)) {
+      _ts(std::move(rhs._ts)),
+      _shared_ts(std::move(rhs._shared_ts)) {
     //TUSDZ_LOG_I("PrimVar move ctor");
     rhs._blocked = false;
   }
 
-  // Copy assignment operator
+  // Copy assignment operator: shares _shared_ts
   PrimVar& operator=(const PrimVar& rhs) {
     //TUSDZ_LOG_I("PrimVar copy assignment op");
     if (this != &rhs) {
       _value = rhs._value;
       _blocked = rhs._blocked;
-      _ts = rhs._ts;
+      if (rhs._shared_ts) {
+        _shared_ts = rhs._shared_ts;
+        _ts = value::TimeSamples();
+      } else {
+        _ts = rhs._ts;
+        _shared_ts.reset();
+      }
     }
     return *this;
   }
@@ -82,6 +96,7 @@ struct PrimVar {
       _value = std::move(rhs._value);
       _blocked = rhs._blocked;
       _ts = std::move(rhs._ts);
+      _shared_ts = std::move(rhs._shared_ts);
       rhs._blocked = false;
     }
     return *this;
@@ -90,6 +105,20 @@ struct PrimVar {
   template<typename T>
   PrimVar(T &&v) noexcept : _value(std::move(v)) {
     //TUSDZ_LOG_I("PrimVar templated ctor");
+  }
+
+  // Helper: get the active TimeSamples (shared or owned)
+  const value::TimeSamples &active_ts() const {
+    return _shared_ts ? *_shared_ts : _ts;
+  }
+
+  bool has_shared_timesamples() const {
+    return _shared_ts != nullptr;
+  }
+
+  void set_shared_timesamples(std::shared_ptr<const value::TimeSamples> ts) {
+    _shared_ts = std::move(ts);
+    _ts = value::TimeSamples(); // clear owned
   }
 
   bool has_value() const {
@@ -107,15 +136,15 @@ struct PrimVar {
   }
 
   bool has_timesamples() const {
-    return _ts.size() > 0;
+    return active_ts().size() > 0;
   }
 
   bool is_scalar() const {
-    return has_value() && _ts.empty();
+    return has_value() && active_ts().empty();
   }
 
   bool is_timesamples() const {
-    return !has_value() && _ts.size();
+    return !has_value() && active_ts().size();
   }
 
   bool is_blocked() const {
@@ -133,7 +162,7 @@ struct PrimVar {
 
   bool is_valid() const {
     if (has_timesamples()) {
-      if ((_ts.type_id() == value::TypeId::TYPE_ID_INVALID) || (_ts.type_id() == value::TypeId::TYPE_ID_NULL)) {
+      if ((active_ts().type_id() == value::TypeId::TYPE_ID_INVALID) || (active_ts().type_id() == value::TypeId::TYPE_ID_NULL)) {
         return false;
       }
 
@@ -152,8 +181,8 @@ struct PrimVar {
     }
 
     // Check if timeSamples were authored (even if empty)
-    if (has_timesamples() || _ts.type_id() != 0) {
-      return _ts.type_name();
+    if (has_timesamples() || active_ts().type_id() != 0) {
+      return active_ts().type_name();
     }
 
     return "[[InvalidType]]";
@@ -169,8 +198,8 @@ struct PrimVar {
     }
 
     // Check if timeSamples were authored (even if empty)
-    if (has_timesamples() || _ts.type_id() != 0) {
-      return _ts.type_id();
+    if (has_timesamples() || active_ts().type_id() != 0) {
+      return active_ts().type_id();
     }
 
     return value::TypeId::TYPE_ID_INVALID;
@@ -207,16 +236,16 @@ struct PrimVar {
       return nonstd::nullopt;
     }
 
-    if (idx >= _ts.size()) {
+    if (idx >= active_ts().size()) {
       return nonstd::nullopt;
     }
 
-    return _ts.get_time(idx);
+    return active_ts().get_time(idx);
   }
 
   nonstd::optional<value::TimeSamples::Sample> get_timesample(size_t idx) const {
-    if (idx < _ts.get_samples().size()) {
-      return _ts.get_samples()[idx];
+    if (idx < active_ts().get_samples().size()) {
+      return active_ts().get_samples()[idx];
     }
     return nonstd::nullopt;
   }
@@ -230,7 +259,7 @@ struct PrimVar {
       return nonstd::nullopt;
     }
 
-    nonstd::optional<value::Value> pv = _ts.get_value(idx);
+    nonstd::optional<value::Value> pv = active_ts().get_value(idx);
     if (!pv) {
       return nonstd::nullopt;
     }
@@ -245,11 +274,11 @@ struct PrimVar {
       return nonstd::nullopt;
     }
 
-    if (idx >= _ts.get_samples().size()) {
+    if (idx >= active_ts().get_samples().size()) {
       return nonstd::nullopt;
     }
 
-    return _ts.get_samples()[idx].blocked;
+    return active_ts().get_samples()[idx].blocked;
   }
 
   // For Scalar only
@@ -299,10 +328,12 @@ struct PrimVar {
 
   void set_timesamples(const value::TimeSamples &v) {
     _ts = v;
+    _shared_ts.reset();
   }
 
   void set_timesamples(value::TimeSamples &&v) {
     _ts = std::move(v);
+    _shared_ts.reset();
   }
 
   /// Set TypedTimeSamples for frequently used types (int, float, double, etc.)
@@ -370,18 +401,22 @@ struct PrimVar {
     #endif
     
     _ts = ts;
+    _shared_ts.reset();
   }
 
   void clear_timesamples() {
     _ts.clear();
+    _shared_ts.reset();
   }
 
   template <typename T>
   void set_timesample(double t, const T &v) {
+    _materialize_shared_ts();
     _ts.add_sample(t, v);
   }
 
   void set_timesample(double t, value::Value &v) {
+    _materialize_shared_ts();
     _ts.add_sample(t, v);
   }
 
@@ -443,13 +478,13 @@ struct PrimVar {
         return true;
       }
 
-      if (_ts.empty()) {
+      if (active_ts().empty()) {
         return false;
       }
     }
 
     if (has_timesamples()) {
-      return _ts.get(v, t, tinterp);
+      return active_ts().get(v, t, tinterp);
     }
 
     if (has_default()) {
@@ -464,13 +499,13 @@ struct PrimVar {
 
   size_t num_timesamples() const {
     if (has_timesamples()) {
-      return _ts.size();
+      return active_ts().size();
     }
     return 0;
   }
 
   const value::TimeSamples &ts_raw() const {
-    return _ts;
+    return active_ts();
   }
   
   value::Value &value_raw() {
@@ -481,15 +516,26 @@ struct PrimVar {
     return _value;
   }
   
+  // Non-const access: COW materialize from shared_ts if needed
   value::TimeSamples &ts_raw() {
+    _materialize_shared_ts();
     return _ts;
   }
 
   size_t estimate_memory_usage() const {
     size_t total = sizeof(PrimVar);
     total += _value.estimate_memory_usage();
-    total += _ts.estimate_memory_usage();
+    total += active_ts().estimate_memory_usage();
     return total;
+  }
+
+ private:
+  // Copy-on-write: materialize shared TimeSamples into owned _ts
+  void _materialize_shared_ts() {
+    if (_shared_ts) {
+      _ts = *_shared_ts;  // deep copy
+      _shared_ts.reset();
+    }
   }
 };
 

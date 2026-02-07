@@ -96,6 +96,7 @@ struct Animatable {
   // void set(double t, const T &v);
 
   void add_sample(const double t, const T &v) { _ts.add_sample(t, v); }
+  void add_sample(const double t, T &&v) { _ts.add_sample(t, std::move(v)); }
 
   // Add None(ValueBlock) sample to timesamples
   void add_blocked_sample(const double t) { _ts.add_blocked_sample(t); }

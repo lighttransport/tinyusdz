@@ -270,6 +270,10 @@ class CrateReader {
     return _live_fieldsets;
   }
 
+  std::map<crate::Index, FieldValuePairVector> &GetLiveFieldSets() {
+    return _live_fieldsets;
+  }
+
 #if 0
   // FIXME: May not need this
   const std::vector<Path> &GetPaths() const {

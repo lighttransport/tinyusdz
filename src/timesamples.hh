@@ -1864,11 +1864,25 @@ struct TypedTimeSamples {
     Sample s;
     s.t = t;
     s.value = v;
-    _samples.emplace_back(s);
+    _samples.emplace_back(std::move(s));
 #else
     _times.push_back(t);
     _values.push_back(v);
     _blocked.push_back(0);  // false = 0
+#endif
+    _dirty = true;
+  }
+
+  void add_sample(const double t, T &&v) {
+#ifndef TINYUSDZ_USE_TIMESAMPLES_SOA
+    Sample s;
+    s.t = t;
+    s.value = std::move(v);
+    _samples.emplace_back(std::move(s));
+#else
+    _times.push_back(t);
+    _values.push_back(std::move(v));
+    _blocked.push_back(0);
 #endif
     _dirty = true;
   }

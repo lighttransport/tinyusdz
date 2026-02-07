@@ -562,34 +562,53 @@ using half3 = std::array<half, 3>;
 using half4 = std::array<half, 4>;
 
 ///
-/// Convert half-precision float to single-precision float (inline for performance).
-/// Uses portable bit manipulation that works on both little-endian and big-endian.
+/// Convert half-precision float to single-precision float.
+/// Uses a 256KB lookup table (65536 entries) for zero-cost conversion.
+/// Table is built once at static init using portable bit manipulation.
 ///
-inline float half_to_float(value::half h) {
-  uint16_t hu = h.value;
+namespace detail {
+
+inline float half_to_float_compute(uint16_t hu) {
   uint32_t o;
-
-  o = (hu & 0x7fffU) << 13U;              // exponent/mantissa bits
-  uint32_t exp_ = (0x7c00U << 13U) & o;   // just the exponent
-  o += (127 - 15) << 23;                   // exponent adjust
-
-  if (exp_ == (0x7c00U << 13U))            // Inf/NaN?
-    o += (128 - 16) << 23;                 // extra exp adjust
-  else if (exp_ == 0) {                    // Zero/Denormal?
-    o += 1 << 23;                          // extra exp adjust
+  o = (hu & 0x7fffU) << 13U;
+  uint32_t exp_ = (0x7c00U << 13U) & o;
+  o += (127 - 15) << 23;
+  if (exp_ == (0x7c00U << 13U))
+    o += (128 - 16) << 23;
+  else if (exp_ == 0) {
+    o += 1 << 23;
     float of;
     memcpy(&of, &o, sizeof(float));
     uint32_t magic = 113 << 23;
     float magicf;
     memcpy(&magicf, &magic, sizeof(float));
-    of -= magicf;                          // renormalize
+    of -= magicf;
     memcpy(&o, &of, sizeof(uint32_t));
   }
-
-  o |= (hu & 0x8000U) << 16U;             // sign bit
+  o |= (hu & 0x8000U) << 16U;
   float result;
   memcpy(&result, &o, sizeof(float));
   return result;
+}
+
+struct HalfToFloatTable {
+  float table[65536];
+  HalfToFloatTable() {
+    for (uint32_t i = 0; i < 65536; i++) {
+      table[i] = half_to_float_compute(static_cast<uint16_t>(i));
+    }
+  }
+};
+
+inline const HalfToFloatTable &get_half_to_float_table() {
+  static const HalfToFloatTable instance;
+  return instance;
+}
+
+}  // namespace detail
+
+inline float half_to_float(value::half h) {
+  return detail::get_half_to_float_table().table[h.value];
 }
 
 half float_to_half_full(float f);

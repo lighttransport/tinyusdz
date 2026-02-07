@@ -270,7 +270,9 @@ class USDCReader::Impl {
   /// FieldValuePairs
   ///
   bool ParseProperty(const SpecType specType,
-                     const crate::FieldValuePairVector &fvs, Property *prop);
+                     crate::FieldValuePairVector &fvs, Property *prop,
+                     bool can_move = false,
+                     uint32_t fieldset_idx = ~0u);
 
   ///
   /// Parse Prim spec from FieldValuePairs
@@ -496,8 +498,19 @@ class USDCReader::Impl {
   const std::vector<Path> *_paths = nullptr;
   const std::vector<Path> *_elemPaths = nullptr;
 
-  const std::map<crate::Index, crate::FieldValuePairVector>
+  std::map<crate::Index, crate::FieldValuePairVector>
       *_live_fieldsets = nullptr;  // <fieldset index, List of field with unpacked Values>
+
+  // Pre-computed reference counts for each fieldset_index.
+  // If a fieldset is only referenced by one spec (refcount == 1),
+  // we can move TimeSamples out of it instead of copying.
+  std::unordered_map<uint32_t, uint32_t> _fieldset_refcounts;
+
+  // Shared TimeSamples cache for USDC dedup optimization.
+  // For shared fieldsets (refcount > 1), we parse the TimeSamples once
+  // and share via shared_ptr across all Properties referencing the same fieldset.
+  // Key: fieldset_index value, Value: shared_ptr to the (role-cast) TimeSamples
+  std::unordered_map<uint32_t, std::shared_ptr<const value::TimeSamples>> _ts_shared_cache;
 
   // std::vector<PrimNode> _prim_nodes;
 
@@ -896,8 +909,19 @@ bool USDCReader::Impl::BuildPropertyMap(const std::vector<size_t> &pathIndices,
       return false;
     }
 
-    const crate::FieldValuePairVector &child_fvs =
+    crate::FieldValuePairVector &child_fvs =
         _live_fieldsets->at(spec.fieldset_index);
+
+    // Decrement refcount. When it reaches 0, this is the last use and
+    // we can move TimeSamples out instead of deep-copying.
+    bool can_move = false;
+    {
+      auto it = _fieldset_refcounts.find(spec.fieldset_index.value);
+      if (it != _fieldset_refcounts.end()) {
+        if (it->second <= 1) can_move = true;
+        else it->second--;
+      }
+    }
 
     {
       std::string prop_name = path.value().prop_part();
@@ -913,7 +937,8 @@ bool USDCReader::Impl::BuildPropertyMap(const std::vector<size_t> &pathIndices,
       }
 
       Property prop;
-      if (!ParseProperty(spec.spec_type, child_fvs, &prop)) {
+      if (!ParseProperty(spec.spec_type, child_fvs, &prop, can_move,
+                         spec.fieldset_index.value)) {
         PUSH_ERROR_AND_RETURN_TAG(
             kTag,
             fmt::format(
@@ -944,8 +969,10 @@ bool USDCReader::Impl::BuildPropertyMap(const std::vector<size_t> &pathIndices,
 ///       - (Empty) : Define only(Neiher connection nor value assigned. e.g.
 ///       "float outputs:rgb")
 bool USDCReader::Impl::ParseProperty(const SpecType spec_type,
-                                     const crate::FieldValuePairVector &fvs,
-                                     Property *prop) {
+                                     crate::FieldValuePairVector &fvs,
+                                     Property *prop,
+                                     bool can_move,
+                                     uint32_t fieldset_idx) {
   if (fvs.size() > _config.kMaxFieldValuePairs) {
     PUSH_ERROR_AND_RETURN_TAG(kTag, "Too much FieldValue pairs.");
   }
@@ -1047,7 +1074,7 @@ bool USDCReader::Impl::ParseProperty(const SpecType spec_type,
       // TODO: Use move
       // FYI: This doesn't work 
       //defaultValue = std::move(*const_cast<value::Value *>(fv.second.get_raw_ptr()));
-      defaultValue = fv.second.get_raw();
+      defaultValue = static_cast<const crate::CrateValue &>(fv.second).get_raw();
       //TUSDZ_LOG_I("defaultValue end");
       hasDefault = true;
 
@@ -1076,50 +1103,68 @@ bool USDCReader::Impl::ParseProperty(const SpecType spec_type,
       hasTimeSamples = true;
 
       //if (auto pv = fv.second.get_value<value::TimeSamples>()) {
-      if (const value::TimeSamples *vptr = fv.second.as<value::TimeSamples>()) {
-        // DANGER:
-        // TODO: remove const from func arg
-        value::TimeSamples &ts = *(const_cast<value::TimeSamples *>(vptr));
+      if (value::TimeSamples *vptr = fv.second.get_raw().as<value::TimeSamples>()) {
 
-        DCOUT("ts.type_id " << ts.type_id());
+        DCOUT("ts.type_id " << vptr->type_id());
 
         // If TimeSamples is uninitialized (all samples were VALUE_BLOCK),
         // initialize it with the type from the attribute's typeName
-        if (ts.type_id() == 0 && typeName) {
+        if (vptr->type_id() == 0 && typeName) {
           uint32_t type_id = value::GetTypeId(typeName.value().str());
 
           if (type_id == value::TYPE_ID_INVALID) {
             PUSH_ERROR_AND_RETURN(fmt::format("Invalid typeName `{}` for TimeSamples", typeName.value().str()));
           }
 
-          if (!ts.init(type_id)) {
+          if (!vptr->init(type_id)) {
             PUSH_ERROR_AND_RETURN(fmt::format("Failed to initialize TimeSamples with type_id {} for typeName `{}`", type_id, typeName.value().str()));
           }
         }
 
         DCOUT("set_timesamples");
 
-        // Don't use std::move here! Multiple attributes might reference the
-        // same TimeSamples from the fieldset. Using std::move would leave the
-        // CrateValue empty after the first use, causing subsequent attributes
-        // to get an empty TimeSamples.
-        //
-        // We make a copy and apply role type casting to the copy if needed.
-        value::TimeSamples ts_copy = ts;
-
-        // Apply role type casting if typeName specifies a role type
-        // (e.g., cast float3 to color3f, point3f, etc.)
-        if (typeName) {
-          uint32_t role_type_id = value::GetTypeId(typeName.value().str());
-          if (role_type_id != value::TYPE_ID_INVALID) {
-            if (ts_copy.cast_to_role_type(role_type_id)) {
-              DCOUT(fmt::format("Cast TimeSamples to role type {}", typeName.value().str()));
+        if (can_move) {
+          // This is the last (or only) use of this fieldset, so we can move
+          // the TimeSamples out directly. No deep copy needed.
+          // Apply role type casting in-place before moving.
+          if (typeName) {
+            uint32_t role_type_id = value::GetTypeId(typeName.value().str());
+            if (role_type_id != value::TYPE_ID_INVALID) {
+              vptr->cast_to_role_type(role_type_id);
             }
-            // It's ok if casting fails - the base type is still valid
           }
+          var.set_timesamples(std::move(*vptr));
+        } else if (fieldset_idx != ~0u) {
+          // Shared fieldset: use shared_ptr cache to avoid deep copies.
+          // First access creates the shared copy; subsequent accesses reuse it.
+          auto cache_it = _ts_shared_cache.find(fieldset_idx);
+          if (cache_it != _ts_shared_cache.end()) {
+            // Cache hit: share the existing TimeSamples (no deep copy!)
+            var.set_shared_timesamples(cache_it->second);
+          } else {
+            // Cache miss: deep copy once, apply role cast, cache as shared_ptr
+            auto ts_ptr = std::make_shared<value::TimeSamples>(*vptr);
+            if (typeName) {
+              uint32_t role_type_id = value::GetTypeId(typeName.value().str());
+              if (role_type_id != value::TYPE_ID_INVALID) {
+                // const_cast safe: we just created this shared_ptr, no other refs yet
+                const_cast<value::TimeSamples*>(ts_ptr.get())->cast_to_role_type(role_type_id);
+              }
+            }
+            var.set_shared_timesamples(ts_ptr);
+            _ts_shared_cache[fieldset_idx] = std::move(ts_ptr);
+          }
+        } else {
+          // Fallback: no fieldset_idx, must deep copy
+          value::TimeSamples ts_copy = *vptr;
+          if (typeName) {
+            uint32_t role_type_id = value::GetTypeId(typeName.value().str());
+            if (role_type_id != value::TYPE_ID_INVALID) {
+              ts_copy.cast_to_role_type(role_type_id);
+            }
+          }
+          var.set_timesamples(std::move(ts_copy));
         }
-
-        var.set_timesamples(ts_copy);
       } else {
         PUSH_ERROR_AND_RETURN_TAG(kTag,
                                   "`timeSamples` is not TimeSamples data.");
@@ -2423,8 +2468,18 @@ bool USDCReader::Impl::ReconstructPrimNode(int parent, int current, int level,
     return false;
   }
 
-  const crate::FieldValuePairVector &fvs =
+  crate::FieldValuePairVector &fvs =
       _live_fieldsets->at(spec.fieldset_index);
+
+  // Decrement refcount. Move on last use.
+  bool can_move_fieldset = false;
+  {
+    auto it = _fieldset_refcounts.find(spec.fieldset_index.value);
+    if (it != _fieldset_refcounts.end()) {
+      if (it->second <= 1) can_move_fieldset = true;
+      else it->second--;
+    }
+  }
 
   if (fvs.size() > _config.kMaxFieldValuePairs) {
     PUSH_ERROR_AND_RETURN_TAG(kTag, "Too much FieldValue pairs.");
@@ -2796,7 +2851,8 @@ bool USDCReader::Impl::ReconstructPrimNode(int parent, int current, int level,
         }
 
         Property prop;
-        if (!ParseProperty(spec.spec_type, fvs, &prop)) {
+        if (!ParseProperty(spec.spec_type, fvs, &prop, can_move_fieldset,
+                           spec.fieldset_index.value)) {
           PUSH_ERROR_AND_RETURN_TAG(kTag,
                                     fmt::format("Failed to parse Attribute: {}.",
                                                 path.prop_part()));
@@ -2804,7 +2860,7 @@ bool USDCReader::Impl::ReconstructPrimNode(int parent, int current, int level,
 
         // Parent Prim is not yet reconstructed, so store info to temporary
         // buffer _variantAttributeNodes.
-        _variantProps[current] = {path, prop};
+        _variantProps[current] = {path, std::move(prop)};
         _variantPropChildren[parent].push_back(current);
 
         DCOUT(
@@ -2901,8 +2957,18 @@ bool USDCReader::Impl::ReconstructPrimSpecNode(int parent, int current, int leve
     return false;
   }
 
-  const crate::FieldValuePairVector &fvs =
+  crate::FieldValuePairVector &fvs =
       _live_fieldsets->at(spec.fieldset_index);
+
+  // Decrement refcount. Move on last use.
+  bool can_move_fieldset = false;
+  {
+    auto it = _fieldset_refcounts.find(spec.fieldset_index.value);
+    if (it != _fieldset_refcounts.end()) {
+      if (it->second <= 1) can_move_fieldset = true;
+      else it->second--;
+    }
+  }
 
   if (fvs.size() > _config.kMaxFieldValuePairs) {
     PUSH_ERROR_AND_RETURN_TAG(kTag, "Too much FieldValue pairs.");
@@ -3229,7 +3295,8 @@ bool USDCReader::Impl::ReconstructPrimSpecNode(int parent, int current, int leve
         }
 
         Property prop;
-        if (!ParseProperty(spec.spec_type, fvs, &prop)) {
+        if (!ParseProperty(spec.spec_type, fvs, &prop, can_move_fieldset,
+                           spec.fieldset_index.value)) {
           PUSH_ERROR_AND_RETURN_TAG(kTag,
                                     fmt::format("Failed to parse Attribute: {}.",
                                                 path.prop_part()));
@@ -3237,7 +3304,7 @@ bool USDCReader::Impl::ReconstructPrimSpecNode(int parent, int current, int leve
 
         // Parent Prim is not yet reconstructed, so store info to temporary
         // buffer _variantAttributeNodes.
-        _variantProps[current] = {path, prop};
+        _variantProps[current] = {path, std::move(prop)};
         _variantPropChildren[parent].push_back(current);
 
         DCOUT(
@@ -3883,6 +3950,16 @@ bool USDCReader::Impl::ReconstructStage(Stage *stage) {
   _elemPaths = &crate_reader->GetElemPaths();
   _live_fieldsets = &crate_reader->GetLiveFieldSets();
 
+  // Pre-compute fieldset reference counts.
+  // If a fieldset is only referenced by one spec, we can move TimeSamples
+  // out of it instead of deep-copying.
+  _fieldset_refcounts.clear();
+  for (size_t i = 0; i < _specs->size(); i++) {
+    if ((*_specs)[i].fieldset_index.value != ~0u) {
+      _fieldset_refcounts[(*_specs)[i].fieldset_index.value]++;
+    }
+  }
+
   PathIndexToSpecIndexMap
       path_index_to_spec_index_map;  // path_index -> spec_index
 
@@ -3916,6 +3993,10 @@ bool USDCReader::Impl::ReconstructStage(Stage *stage) {
   }
 
   stage->compute_absolute_prim_path_and_assign_prim_id();
+
+  // Clear the shared TimeSamples cache — Properties now hold shared_ptrs
+  // so the TimeSamples data stays alive as long as needed.
+  _ts_shared_cache.clear();
 
   return true;
 }
@@ -4149,6 +4230,16 @@ bool USDCReader::Impl::ToLayer(Layer *layer) {
   _paths = &crate_reader->GetPaths();
   _elemPaths = &crate_reader->GetElemPaths();
   _live_fieldsets = &crate_reader->GetLiveFieldSets();
+
+  // Pre-compute fieldset reference counts.
+  // If a fieldset is only referenced by one spec, we can move TimeSamples
+  // out of it instead of deep-copying.
+  _fieldset_refcounts.clear();
+  for (size_t i = 0; i < _specs->size(); i++) {
+    if ((*_specs)[i].fieldset_index.value != ~0u) {
+      _fieldset_refcounts[(*_specs)[i].fieldset_index.value]++;
+    }
+  }
 
   PathIndexToSpecIndexMap
       path_index_to_spec_index_map;  // path_index -> spec_index

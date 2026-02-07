@@ -231,13 +231,16 @@ bool ReduceBoneInfluencesSimple(std::vector<int> &joint_indices,
   std::vector<int> reduced_indices(size_t(num_vertices) * size_t(target_bone_count), 0);
   std::vector<float> reduced_weights(size_t(num_vertices) * size_t(target_bone_count), 0.0f);
 
+  // Pre-allocate reusable vector outside loop
+  std::vector<BoneInfluence> influences;
+  influences.reserve(element_size);
+
   for (uint32_t vid = 0; vid < num_vertices; vid++) {
     size_t src_offset = size_t(vid) * size_t(element_size);
     size_t dst_offset = size_t(vid) * size_t(target_bone_count);
 
     // Collect non-zero influences
-    std::vector<BoneInfluence> influences;
-    influences.reserve(element_size);
+    influences.clear();
 
     for (uint32_t i = 0; i < element_size; i++) {
       size_t idx = src_offset + i;
@@ -465,18 +468,25 @@ bool ReduceBoneInfluences(std::vector<int> &joint_indices,
   float max_error = 0.0f;
   uint32_t num_modified = 0;
 
+  // Pre-allocate reusable vectors outside loop to avoid per-vertex heap allocations
+  std::vector<BoneInfluence> influences;
+  influences.reserve(element_size);
+  std::vector<BoneInfluence> selected;
+  selected.reserve(config.target_bone_count);
+  std::vector<float> original_weights_for_error;
+  if (stats) {
+    original_weights_for_error.reserve(element_size);
+  }
+
   // Process each vertex
   for (uint32_t vid = 0; vid < num_vertices; vid++) {
     size_t src_offset = size_t(vid) * size_t(element_size);
     size_t dst_offset = size_t(vid) * size_t(config.target_bone_count);
 
     // Collect influences for this vertex
-    std::vector<BoneInfluence> influences;
-    influences.reserve(element_size);
-
-    std::vector<float> original_weights_for_error;
+    influences.clear();
     if (stats) {
-      original_weights_for_error.reserve(element_size);
+      original_weights_for_error.clear();
     }
 
     for (uint32_t i = 0; i < element_size; i++) {
@@ -501,7 +511,6 @@ bool ReduceBoneInfluences(std::vector<int> &joint_indices,
     }
 
     // Select bones based on strategy
-    std::vector<BoneInfluence> selected;
 
     switch (config.strategy) {
       case BoneReductionStrategy::Greedy:

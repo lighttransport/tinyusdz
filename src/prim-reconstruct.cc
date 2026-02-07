@@ -136,7 +136,6 @@ static nonstd::optional<Animatable<T>> ConvertToAnimatable(const primvar::PrimVa
       dst.set_default(pv.value());
 
       ok = true;
-      //return std::move(dst);
     }
   }
 
@@ -149,8 +148,10 @@ static nonstd::optional<Animatable<T>> ConvertToAnimatable(const primvar::PrimVa
       // Attribute Block?
       if (s.blocked || s.value.is_none()) {
         dst.add_blocked_sample(s.t);
-      } else if (auto pv = s.value.get_value<T>()) {
-        dst.add_sample(s.t, pv.value());
+      } else if (const T *pv = s.value.as<T>()) {
+        // Use as<T>() to get pointer directly, avoiding the extra copy
+        // that get_value<T>() would make into nonstd::optional<T>
+        dst.add_sample(s.t, *pv);
       } else {
         // Type mismatch
         DCOUT(i << "/" << var.ts_raw().size() << " type mismatch. expected " << value::TypeTraits<T>::type_name() << ", but got " << s.value.type_name());
@@ -166,6 +167,60 @@ static nonstd::optional<Animatable<T>> ConvertToAnimatable(const primvar::PrimVa
   }
 
   DCOUT("???");
+  return nonstd::nullopt;
+}
+
+// Mutable overload: moves values out of PrimVar's TimeSamples to avoid deep copies
+template<typename T>
+static nonstd::optional<Animatable<T>> ConvertToAnimatable(primvar::PrimVar &var)
+{
+  // If PrimVar has shared (immutable) TimeSamples, use the const path
+  // to avoid triggering COW deep copy. This is critical for USDC dedup
+  // performance where hundreds of specs share the same TimeSamples.
+  if (var.has_shared_timesamples()) {
+    const primvar::PrimVar &cvar = var;
+    return ConvertToAnimatable<T>(cvar);
+  }
+
+  Animatable<T> dst;
+
+  if (!var.is_valid()) {
+    return nonstd::nullopt;
+  }
+
+  bool ok = false;
+
+  if (var.has_value()) {
+    if (auto pv = var.get_value<T>()) {
+      dst.set_default(pv.value());
+      ok = true;
+    }
+  }
+
+  if (var.has_timesamples()) {
+    auto &samples = var.ts_raw().samples();
+
+    for (size_t i = 0; i < samples.size(); i++) {
+      value::TimeSamples::Sample &s = samples[i];
+
+      if (s.blocked || s.value.is_none()) {
+        dst.add_blocked_sample(s.t);
+      } else if (T *pv = s.value.as<T>()) {
+        // Move the value out — avoids deep-copying vector<quatf> etc.
+        dst.add_sample(s.t, std::move(*pv));
+      } else {
+        DCOUT(i << "/" << var.ts_raw().size() << " type mismatch. expected " << value::TypeTraits<T>::type_name() << ", but got " << s.value.type_name());
+        return nonstd::nullopt;
+      }
+    }
+
+    ok = true;
+  }
+
+  if (ok) {
+    return std::move(dst);
+  }
+
   return nonstd::nullopt;
 }
 
@@ -235,6 +290,14 @@ nonstd::optional<Animatable<Extent>> ConvertToAnimatable(const primvar::PrimVar 
 
   DCOUT("???");
   return nonstd::nullopt;
+}
+
+// Mutable Extent specialization: Extent is small (24 bytes), delegate to const version
+template<>
+nonstd::optional<Animatable<Extent>> ConvertToAnimatable(primvar::PrimVar &var)
+{
+  const primvar::PrimVar &cvar = var;
+  return ConvertToAnimatable<Extent>(cvar);
 }
 
 #if 0 // TODO: remove. moved to prim-types.cc
@@ -422,7 +485,8 @@ static ParseResult ParseTypedAttributeUnified(
     return ret;
   }
 
-  const Attribute &attr = prop.get_attribute();
+  // Use non-const to allow mutable ConvertToAnimatable (moves values instead of copying)
+  Attribute &attr = prop.attribute();
   std::string attr_type_name = attr.type_name();
 
   // Check type match
@@ -658,7 +722,7 @@ static ParseResult ParseTypedAttribute_OLD1(std::set<std::string> &table, /* ino
       return ret;
     }
 
-    const Attribute &attr = prop.get_attribute();
+    Attribute &attr = prop.attribute();
 
 
     std::string attr_type_name = attr.type_name();
@@ -989,7 +1053,7 @@ static ParseResult ParseTypedAttribute_OLD3(std::set<std::string> &table, /* ino
       
     }
 
-    const Attribute &attr = prop.get_attribute();
+    Attribute &attr = prop.attribute();
 
     if (attr.has_connections()) {
       target.set_connections(attr.connections());
@@ -1020,7 +1084,7 @@ static ParseResult ParseTypedAttribute_OLD3(std::set<std::string> &table, /* ino
           target.set_blocked(true);
         }
 
-        const auto &var = attr.get_var();
+        auto &var = attr.get_var();
         DCOUT("has_value = " << var.has_value());
 
         if (var.has_default() || var.has_timesamples()) {
@@ -1272,7 +1336,7 @@ static ParseResult ParseExtentAttribute(std::set<std::string> &table, /* inout *
       return ret;
     }
 
-    const Attribute &attr = prop.get_attribute();
+    Attribute &attr = prop.attribute();
 
     std::string attr_type_name = attr.type_name();
     if (prop.get_property_type() == Property::Type::EmptyAttrib) {
@@ -1362,7 +1426,7 @@ static ParseResult ParseExtentAttribute(std::set<std::string> &table, /* inout *
       }
 #else
       
-      const auto &var = attr.get_var();
+      auto &var = attr.get_var();
 
       if (var.has_default() || var.has_timesamples()) {
         if (auto av = ConvertToAnimatable<Extent>(var)) {
