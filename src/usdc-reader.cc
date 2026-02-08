@@ -604,8 +604,18 @@ bool USDCReader::Impl::ReconstructGeomSubset(
       return false;
     }
 
-    const FieldValuePairVector &child_fields =
+    FieldValuePairVector &child_fields =
         _live_fieldsets->at(spec.fieldset_index);
+
+    // Resolve any deferred (lazy-loaded) values in this fieldset
+    for (auto &fv : child_fields) {
+      if (fv.second.is_deferred()) {
+        if (!crate_reader->ResolveDeferred(&fv.second)) {
+          _err += "Failed to resolve deferred field '" + fv.first + "'.\n";
+          return false;
+        }
+      }
+    }
 
     {
       std::string prop_name = path.prop_part();
@@ -911,6 +921,15 @@ bool USDCReader::Impl::BuildPropertyMap(const std::vector<size_t> &pathIndices,
 
     crate::FieldValuePairVector &child_fvs =
         _live_fieldsets->at(spec.fieldset_index);
+
+    // Resolve any deferred (lazy-loaded) values in this fieldset before processing
+    for (auto &fv : child_fvs) {
+      if (fv.second.is_deferred()) {
+        if (!crate_reader->ResolveDeferred(&fv.second)) {
+          PUSH_ERROR_AND_RETURN_TAG(kTag, fmt::format("Failed to resolve deferred field '{}'.", fv.first));
+        }
+      }
+    }
 
     // Decrement refcount. When it reaches 0, this is the last use and
     // we can move TimeSamples out instead of deep-copying.
@@ -2471,6 +2490,15 @@ bool USDCReader::Impl::ReconstructPrimNode(int parent, int current, int level,
   crate::FieldValuePairVector &fvs =
       _live_fieldsets->at(spec.fieldset_index);
 
+  // Resolve any deferred (lazy-loaded) values in this fieldset
+  for (auto &fv : fvs) {
+    if (fv.second.is_deferred()) {
+      if (!crate_reader->ResolveDeferred(&fv.second)) {
+        PUSH_ERROR_AND_RETURN_TAG(kTag, fmt::format("Failed to resolve deferred field '{}'.", fv.first));
+      }
+    }
+  }
+
   // Decrement refcount. Move on last use.
   bool can_move_fieldset = false;
   {
@@ -2959,6 +2987,15 @@ bool USDCReader::Impl::ReconstructPrimSpecNode(int parent, int current, int leve
 
   crate::FieldValuePairVector &fvs =
       _live_fieldsets->at(spec.fieldset_index);
+
+  // Resolve any deferred (lazy-loaded) values in this fieldset
+  for (auto &fv : fvs) {
+    if (fv.second.is_deferred()) {
+      if (!crate_reader->ResolveDeferred(&fv.second)) {
+        PUSH_ERROR_AND_RETURN_TAG(kTag, fmt::format("Failed to resolve deferred field '{}'.", fv.first));
+      }
+    }
+  }
 
   // Decrement refcount. Move on last use.
   bool can_move_fieldset = false;
@@ -3998,6 +4035,18 @@ bool USDCReader::Impl::ReconstructStage(Stage *stage) {
   // so the TimeSamples data stays alive as long as needed.
   _ts_shared_cache.clear();
 
+#ifndef NDEBUG
+  // Debug-only: verify all deferred values were resolved during reconstruction
+  for (const auto &kv : *_live_fieldsets) {
+    for (const auto &fv : kv.second) {
+      if (fv.second.is_deferred()) {
+        PUSH_WARN(fmt::format("Deferred field '{}' in fieldset {} was not resolved during reconstruction.",
+                              fv.first, kv.first.value));
+      }
+    }
+  }
+#endif
+
   return true;
 }
 
@@ -4290,6 +4339,7 @@ bool USDCReader::Impl::ReadUSDC() {
   // Transfer settings
   config.numThreads = _config.numThreads;
   config.use_mmap = _config.use_mmap;  // Enable mmap for memory optimization
+  config.enable_lazy_loading = _config.enable_lazy_loading;
 
   size_t sz_mb = _config.kMaxAllowedMemoryInMB;
   if (sizeof(size_t) == 4) {

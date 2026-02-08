@@ -39,6 +39,9 @@ struct USDCReaderConfig {
   
   // Memory optimization: use mmap for uncompressed arrays
   bool use_mmap = false;
+
+  // Defer decoding of large arrays and TimeSamples until first access
+  bool enable_lazy_loading = true;
 };
 
 class USDCReader {

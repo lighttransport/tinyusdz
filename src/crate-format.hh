@@ -257,6 +257,13 @@ inline std::string to_string(const ValueRep &rep) {
   return rep.GetStringRepr();
 }
 
+/// Descriptor stored in CrateValue when its payload is deferred (lazy loading).
+/// Only 12 bytes — much smaller than the decoded array it represents.
+struct LazyValueDescriptor {
+  ValueRep value_rep;       ///< 8 bytes — the original binary handle
+  uint32_t field_index;     ///< 4 bytes — for error context
+};
+
 struct TokenIndex : Index { using Index::Index; };
 struct StringIndex : Index { using Index::Index; };
 struct FieldIndex : Index { using Index::Index; };
@@ -531,8 +538,21 @@ class CrateValue {
     return &value_;
   }
 
+  /// @name Lazy (deferred) value support
+  /// @{
+  bool is_deferred() const { return _deferred; }
+  void SetDeferred(const LazyValueDescriptor &desc) {
+    _lazy_desc = desc;
+    _deferred = true;
+  }
+  const LazyValueDescriptor &get_lazy_desc() const { return _lazy_desc; }
+  void mark_resolved() { _deferred = false; }
+  /// @}
+
  private:
   value::Value value_;
+  LazyValueDescriptor _lazy_desc{};
+  bool _deferred{false};
 };
 
 // In-memory storage for a single "spec" -- prim, property, etc.

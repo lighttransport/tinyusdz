@@ -6947,6 +6947,33 @@ bool CrateReader::ReadFieldSets() {
   return true;
 }
 
+bool CrateReader::ShouldDeferField(const crate::ValueRep &rep) const {
+  if (!_config.enable_lazy_loading) return false;
+  if (rep.IsInlined()) return false;
+
+  int32_t ty = rep.GetType();
+
+  // TimeSamples are always deferred (often large animation data)
+  if (ty == int32_t(CrateDataTypeId::CRATE_DATA_TYPE_TIME_SAMPLES)) return true;
+
+  // Non-inlined arrays of numeric/vector/matrix types (types 1-30)
+  if (rep.IsArray() && ty >= 1 && ty <= 30) return true;
+
+  return false;
+}
+
+bool CrateReader::ResolveDeferred(crate::CrateValue *value) {
+  if (!value || !value->is_deferred()) return true;
+
+  const auto &desc = value->get_lazy_desc();
+  if (!UnpackValueRep(desc.value_rep, value)) {
+    PushError("Failed to resolve deferred ValueRep: " + desc.value_rep.GetStringRepr());
+    return false;
+  }
+  value->mark_resolved();
+  return true;
+}
+
 bool CrateReader::BuildLiveFieldSets() {
   // Report progress (80%)
   if (!ReportProgress(0.8f)) {
@@ -6978,7 +7005,12 @@ bool CrateReader::BuildLiveFieldSets() {
       if (auto tokv = GetToken(field.token_index)) {
         pairs[i].first = tokv.value().str();
 
-        if (!UnpackValueRep(field.value_rep, &pairs[i].second)) {
+        if (ShouldDeferField(field.value_rep)) {
+          crate::LazyValueDescriptor desc;
+          desc.value_rep = field.value_rep;
+          desc.field_index = fsBegin->value;
+          pairs[i].second.SetDeferred(desc);
+        } else if (!UnpackValueRep(field.value_rep, &pairs[i].second)) {
           PUSH_ERROR("BuildLiveFieldSets: Failed to unpack ValueRep : "
                      << field.value_rep.GetStringRepr());
           return false;

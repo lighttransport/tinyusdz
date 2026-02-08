@@ -42,6 +42,7 @@ using ProgressCallback = std::function<bool(float progress, void *userptr)>;
 struct CrateReaderConfig {
   int numThreads = -1;                   ///< Number of threads (-1 = auto-detect)
   bool use_mmap = false;                 ///< Use mmap for reading uncompressed arrays
+  bool enable_lazy_loading = true;       ///< Defer large array/TimeSamples decoding
 
   // Security limits for malicious Crate data
   size_t maxTOCSections = 32;            ///< Maximum number of TOC sections
@@ -233,6 +234,10 @@ class CrateReader {
 
   bool BuildLiveFieldSets();
 
+  /// Resolve a deferred CrateValue by unpacking its stored ValueRep.
+  /// Returns true on success (or if the value is not deferred).
+  bool ResolveDeferred(crate::CrateValue *value);
+
   std::string GetError();
   std::string GetWarning();
 
@@ -361,6 +366,7 @@ class CrateReader {
       size_t curIndex, const Path &parentPath);
 #endif
 
+  bool ShouldDeferField(const crate::ValueRep &rep) const;
   bool UnpackValueRep(const crate::ValueRep &rep, crate::CrateValue *value);
   bool UnpackInlinedValueRep(const crate::ValueRep &rep,
                              crate::CrateValue *value);
