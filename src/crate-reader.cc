@@ -132,8 +132,8 @@ std::string CrateReader::GetWarning() { return _warn; }
 bool CrateReader::HasField(const std::string &key) const {
   // Simple linear search
   for (const auto &field : _fields) {
-    if (auto fv = GetToken(field.token_index)) {
-      if (fv.value().str().compare(key) == 0) {
+    if (const value::token *tokp = GetTokenPtr(field.token_index)) {
+      if (tokp->str() == key) {
         return true;
       }
     }
@@ -263,12 +263,11 @@ bool CrateReader::ReadString(std::string *s) {
     return false;
   }
 
-  if (auto tok = GetStringToken(string_index)) {
-    (*s) = tok.value().str();
+  if (const value::token *tokp = GetStringTokenPtr(string_index)) {
+    (*s) = tokp->str();
     CHECK_MEMORY_USAGE(s->size());
     return true;
   }
-
 
   PUSH_ERROR("Invalid StringIndex.");
   return false;
@@ -1199,8 +1198,8 @@ bool CrateReader::ReadStringArray(std::vector<std::string> *d) {
     CHECK_MEMORY_USAGE(size_t(n) * sizeof(void *));
     result.resize(static_cast<size_t>(n));
     for (size_t i = 0; i < n; i++) {
-      if (auto v = GetStringToken(ivalue[i])) {
-        std::string s = v.value().str();
+      if (const value::token *tokp = GetStringTokenPtr(ivalue[i])) {
+        std::string s = tokp->str();
         CHECK_MEMORY_USAGE(s.size());
         result[i] = s;
       } else {
@@ -1439,9 +1438,10 @@ bool CrateReader::ReadTokenListOp(ListOp<value::token> *d) {
     // reconstruct
     result.resize(static_cast<size_t>(n));
     for (size_t i = 0; i < n; i++) {
-      if (auto v = GetToken(ivalue[i])) {
-        result[i] = v.value();
+      if (const value::token *tokp = GetTokenPtr(ivalue[i])) {
+        result[i] = *tokp;
       } else {
+        PUSH_ERROR("Invalid token index in ListOp.");
         return false;
       }
     }
@@ -1552,9 +1552,10 @@ bool CrateReader::ReadStringListOp(ListOp<std::string> *d) {
     // reconstruct
     result.resize(static_cast<size_t>(n));
     for (size_t i = 0; i < n; i++) {
-      if (auto v = GetStringToken(ivalue[i])) {
-        result[i] = v.value().str();
+      if (const value::token *tokp = GetStringTokenPtr(ivalue[i])) {
+        result[i] = tokp->str();
       } else {
+        PUSH_ERROR("Invalid StringIndex in ListOp.");
         return false;
       }
     }
@@ -2050,15 +2051,12 @@ bool CrateReader::ReadCustomData(CustomDataType *d) {
       PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to unpack value of Dictionary element.");
     }
 
-    if (dict.count(key)) {
-      // Duplicated key. maybe ok?
-    }
     // CrateValue -> MetaVariable
     MetaVariable var;
-
     var.set_value(key, value.get_raw());
 
-    dict[key] = var;
+    // Single insert/overwrite — duplicated keys silently overwrite
+    dict[key] = std::move(var);
 
     if (!_sr->seek_set(saved_position)) {
       PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to set seek.");
@@ -2111,10 +2109,8 @@ bool CrateReader::UnpackInlinedValueRep(const crate::ValueRep &rep,
     }
     case crate::CrateDataTypeId::CRATE_DATA_TYPE_ASSET_PATH: {
       // AssetPath = TokenIndex for inlined value.
-      if (auto v = GetToken(crate::Index(d))) {
-        std::string str = v.value().str();
-
-        value::AssetPath assetp(str);
+      if (const value::token *tokp = GetTokenPtr(crate::Index(d))) {
+        value::AssetPath assetp(tokp->str());
         value->Set(assetp);
         return true;
       } else {
@@ -2123,13 +2119,9 @@ bool CrateReader::UnpackInlinedValueRep(const crate::ValueRep &rep,
       }
     }
     case crate::CrateDataTypeId::CRATE_DATA_TYPE_TOKEN: {
-      if (auto v = GetToken(crate::Index(d))) {
-        value::token tok = v.value();
-
-        DCOUT("value.token = " << tok);
-
-        value->Set(tok);
-
+      if (const value::token *tokp = GetTokenPtr(crate::Index(d))) {
+        DCOUT("value.token = " << *tokp);
+        value->Set(*tokp);
         return true;
       } else {
         PUSH_ERROR("Invalid Index for Token.");
@@ -2137,13 +2129,10 @@ bool CrateReader::UnpackInlinedValueRep(const crate::ValueRep &rep,
       }
     }
     case crate::CrateDataTypeId::CRATE_DATA_TYPE_STRING: {
-      if (auto v = GetStringToken(crate::Index(d))) {
-        std::string str = v.value().str();
-
+      if (const value::token *tokp = GetStringTokenPtr(crate::Index(d))) {
+        std::string str = tokp->str();
         DCOUT("value.string = " << str);
-
         value->Set(str);
-
         return true;
       } else {
         PUSH_ERROR("Invalid Index for StringToken.");
@@ -2753,9 +2742,10 @@ bool CrateReader::UnpackValueRepForTimeSamples(const crate::ValueRep &rep, uint6
         }
         std::vector<std::string> stringArray(static_cast<size_t>(n));
         for (size_t i = 0; i < n; i++) {
-          if (auto stok = GetStringToken(v[i])) {
-            stringArray[i] = stok.value().str();
+          if (const value::token *tokp = GetStringTokenPtr(v[i])) {
+            stringArray[i] = tokp->str();
           } else {
+            PUSH_ERROR("Invalid string token index in compressed string array.");
             return false;
           }
         }
@@ -2954,9 +2944,10 @@ bool CrateReader::UnpackValueRepForTimeSamples(const crate::ValueRep &rep, uint6
         }
         std::vector<value::token> tokenArray(static_cast<size_t>(n));
         for (size_t i = 0; i < n; i++) {
-          if (auto tok = GetToken(v[i])) {
-            tokenArray[i] = tok.value();
+          if (const value::token *tokp = GetTokenPtr(v[i])) {
+            tokenArray[i] = *tokp;
           } else {
+            PUSH_ERROR("Invalid token index in compressed token array.");
             return false;
           }
         }
@@ -3368,10 +3359,11 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
         std::vector<value::AssetPath> apaths(static_cast<size_t>(n));
 
         for (size_t i = 0; i < n; i++) {
-          if (auto tokv = GetStringToken(v[i])) {
-            DCOUT("StringToken[" << i << "] = " << tokv.value());
-            apaths[i] = value::AssetPath(tokv.value().str());
+          if (const value::token *tokp = GetStringTokenPtr(v[i])) {
+            DCOUT("StringToken[" << i << "] = " << *tokp);
+            apaths[i] = value::AssetPath(tokp->str());
           } else {
+            PUSH_ERROR("Invalid string token index in AssetPath array.");
             return false;
           }
         }
@@ -3391,9 +3383,9 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
 
         DCOUT("StrIndex = " << v);
 
-        if (auto tokv = GetStringToken(v)) {
-          DCOUT("StringToken = " << tokv.value());
-          value::AssetPath apath(tokv.value().str());
+        if (const value::token *tokp = GetStringTokenPtr(v)) {
+          DCOUT("StringToken = " << *tokp);
+          value::AssetPath apath(tokp->str());
           value->Set(apath);
         } else {
           PUSH_ERROR_AND_RETURN("Invalid StringToken found.");
@@ -3438,10 +3430,11 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
         std::vector<value::token> tokens(static_cast<size_t>(n));
 
         for (size_t i = 0; i < n; i++) {
-          if (auto tokv = GetToken(v[i])) {
-            DCOUT("Token[" << i << "] = " << tokv.value());
-            tokens[i] = tokv.value();
+          if (const value::token *tokp = GetTokenPtr(v[i])) {
+            DCOUT("Token[" << i << "] = " << *tokp);
+            tokens[i] = *tokp;
           } else {
+            PUSH_ERROR("Invalid token index in token array.");
             return false;
           }
         }
@@ -3479,9 +3472,10 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
         std::vector<std::string> stringArray(static_cast<size_t>(n));
 
         for (size_t i = 0; i < n; i++) {
-          if (auto stok = GetStringToken(v[i])) {
-            stringArray[i] = stok.value().str();
+          if (const value::token *stokp = GetStringTokenPtr(v[i])) {
+            stringArray[i] = stokp->str();
           } else {
+            PUSH_ERROR("Invalid string token index in string array.");
             return false;
           }
         }
@@ -5126,9 +5120,10 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
 
       std::vector<value::token> tokens(indices.size());
       for (size_t i = 0; i < indices.size(); i++) {
-        if (auto tokv = GetToken(indices[i])) {
-          tokens[i] = tokv.value();
+        if (const value::token *tokp = GetTokenPtr(indices[i])) {
+          tokens[i] = *tokp;
         } else {
+          PUSH_ERROR("Invalid token index in TokenVector.");
           return false;
         }
       }
@@ -5375,8 +5370,8 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
 
         if (local_rep.IsInlined()) {
           uint32_t local_d = (local_rep.GetPayload() & ((1ull << (sizeof(uint32_t) * 8)) - 1));
-          if (auto v = GetStringToken(crate::Index(local_d))) {
-            std::string str = v.value().str();
+          if (const value::token *tokp = GetStringTokenPtr(crate::Index(local_d))) {
+            std::string str = tokp->str();
 
             DCOUT("UNREGISTERED_VALUE.string = " << str);
 
@@ -6347,8 +6342,8 @@ bool CrateReader::ReadCompressedPaths(const uint64_t maxNumPaths) {
       // Property Path. Need to negate it.
       tokIdx = -tokIdx;
     }
-    if (auto tokv = GetToken(crate::Index(uint32_t(tokIdx)))) {
-      ss << "(" << tokv.value() << ")";
+    if (const value::token *tokp = GetTokenPtr(crate::Index(uint32_t(tokIdx)))) {
+      ss << "(" << *tokp << ")";
     }
     ss << "\n";
     DCOUT(ss.str());
@@ -6558,12 +6553,11 @@ bool CrateReader::ReadTokens() {
   CHECK_MEMORY_USAGE(uncompressedSize);
 
 
-  // dst
+  // dst — no memset needed: LZ4 decompression overwrites the buffer,
+  // and compressed data is read from stream below.
   std::vector<char> chars(static_cast<size_t>(uncompressedSize));
-  memset(chars.data(), 0, chars.size());
 
   std::vector<char> compressed(static_cast<size_t>(bufSize + 128));
-  memset(compressed.data(), 0, compressed.size());
 
   if (compressedSize !=
       _sr->read(size_t(compressedSize), size_t(compressedSize),
@@ -6824,10 +6818,11 @@ bool CrateReader::ReadFields() {
 
   DCOUT("num_fields = " << num_fields);
   for (size_t i = 0; i < num_fields; i++) {
-    if (auto tokv = GetToken(_fields[i].token_index)) {
-      DCOUT("field[" << i << "] name = " << tokv.value()
-                     << ", value = " << _fields[i].value_rep.GetStringRepr());
-    }
+    DCOUT("field[" << i << "] name = "
+                   << (_fields[i].token_index.value < _tokens.size()
+                         ? _tokens[_fields[i].token_index.value].str()
+                         : std::string("(invalid)"))
+                   << ", value = " << _fields[i].value_rep.GetStringRepr());
   }
 
   return true;

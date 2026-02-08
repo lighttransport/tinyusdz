@@ -299,6 +299,14 @@ class CrateReader {
     return nullptr;
   }
 
+  // Zero-copy string token accessor — resolves string_index → token_index → token pointer
+  const value::token *GetStringTokenPtr(crate::Index string_index) const {
+    if (string_index.value < _string_indices.size()) {
+      return GetTokenPtr(_string_indices[string_index.value]);
+    }
+    return nullptr;
+  }
+
   // Pre-computed field ID for a token index (built after ReadTokens)
   crate::CrateFieldId GetTokenFieldId(crate::Index token_index) const {
     if (token_index.value < _token_field_ids.size()) {
