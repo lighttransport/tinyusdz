@@ -1726,7 +1726,8 @@ bool AsciiParser::IsSupportedAPISchema(const std::string &ty) {
 }
 
 bool AsciiParser::ReadStringLiteral(std::string *literal) {
-  std::stringstream ss;
+  std::string tok;
+  tok.reserve(128);
 
   char c0;
   if (!Char1(&c0)) {
@@ -1771,7 +1772,7 @@ bool AsciiParser::ReadStringLiteral(std::string *literal) {
       break;
     }
 
-    ss << c;
+    tok.push_back(c);
   }
 
   if (!end_with_quotation) {
@@ -1780,7 +1781,7 @@ bool AsciiParser::ReadStringLiteral(std::string *literal) {
                     single_quote ? "'" : "\""));
   }
 
-  (*literal) = ss.str();
+  (*literal) = std::move(tok);
 
   _curr_cursor.col += int(literal->size() + 2);  // +2 for quotation chars
 
@@ -1788,7 +1789,8 @@ bool AsciiParser::ReadStringLiteral(std::string *literal) {
 }
 
 bool AsciiParser::MaybeString(value::StringData *str) {
-  std::stringstream ss;
+  std::string tok;
+  tok.reserve(128);
 
   if (!str) {
     return false;
@@ -1834,11 +1836,11 @@ bool AsciiParser::MaybeString(value::StringData *str) {
       }
 
       if (nc == '\'') {
-        ss << "'";
+        tok.push_back('\'');
         _sr->seek_from_current(1);  // advance 1 char
         continue;
       } else if (nc == '"') {
-        ss << "\"";
+        tok.push_back('"');
         _sr->seek_from_current(1);  // advance 1 char
         continue;
       }
@@ -1856,7 +1858,7 @@ bool AsciiParser::MaybeString(value::StringData *str) {
       }
     }
 
-    ss << c;
+    tok.push_back(c);
   }
 
   if (!end_with_quotation) {
@@ -1867,8 +1869,8 @@ bool AsciiParser::MaybeString(value::StringData *str) {
   DCOUT("Single quoted string found. col " << start_cursor.col << ", row "
                                            << start_cursor.row);
 
-  size_t displayed_string_len = ss.str().size();
-  str->value = unescapeControlSequence(ss.str());
+  size_t displayed_string_len = tok.size();
+  str->value = unescapeControlSequence(tok);
   str->line_col = start_cursor.col;
   str->line_row = start_cursor.row;
   str->is_triple_quoted = false;
@@ -1879,8 +1881,6 @@ bool AsciiParser::MaybeString(value::StringData *str) {
 }
 
 bool AsciiParser::MaybeTripleQuotedString(value::StringData *str) {
-  std::stringstream ss;
-
   auto loc = CurrLoc();
   auto start_cursor = _curr_cursor;
 
@@ -1910,7 +1910,8 @@ bool AsciiParser::MaybeTripleQuotedString(value::StringData *str) {
   }
 
   // Read until next triple-quote `"""` or "'''"
-  std::stringstream str_buf;
+  std::string str_buf;
+  str_buf.reserve(256);
 
   auto locinfo = _curr_cursor;
 
@@ -1937,13 +1938,13 @@ bool AsciiParser::MaybeTripleQuotedString(value::StringData *str) {
       }
 
       if (buf[0] == '\'' && buf[1] == '\'' && buf[2] == '\'') {
-        str_buf << "'''";
+        str_buf += "'''";
         // advance
         _sr->seek_from_current(3);
         locinfo.col += 3;
         continue;
       } else if (buf[0] == '"' && buf[1] == '"' && buf[2] == '"') {
-        str_buf << "\"\"\"";
+        str_buf += "\"\"\"";
         // advance
         _sr->seek_from_current(3);
         locinfo.col += 3;
@@ -1951,7 +1952,7 @@ bool AsciiParser::MaybeTripleQuotedString(value::StringData *str) {
       }
     }
 
-    str_buf << c;
+    str_buf.push_back(c);
 
     if (c == '"') {
       double_quote_count++;
@@ -1981,7 +1982,7 @@ bool AsciiParser::MaybeTripleQuotedString(value::StringData *str) {
 
         if (d == '\n') {
           // CRLF
-          str_buf << d;
+          str_buf.push_back(d);
         } else {
           // unwind 1 char
           if (!_sr->seek_from_current(-1)) {
@@ -2027,14 +2028,13 @@ bool AsciiParser::MaybeTripleQuotedString(value::StringData *str) {
 
   // remove last '"""' or '''
   str->single_quote = single_quote;
-  std::string s = str_buf.str();
-  if (s.size() > 3) {  // just in case
-    s.erase(s.size() - 3);
+  if (str_buf.size() > 3) {  // just in case
+    str_buf.erase(str_buf.size() - 3);
   }
 
-  DCOUT("str = " << s);
+  DCOUT("str = " << str_buf);
 
-  str->value = unescapeControlSequence(s);
+  str->value = unescapeControlSequence(str_buf);
 
   DCOUT("unescape str = " << str->value);
 
@@ -2052,7 +2052,8 @@ bool AsciiParser::ReadPrimAttrIdentifier(std::string *token) {
   // - xformOp:transform
   // - primvars:uvmap1
 
-  std::stringstream ss;
+  std::string tok;
+  tok.reserve(64);  // Most attribute identifiers are short
   Cursor start_cursor;  // Will be set at the first character
   bool first_char = true;
 
@@ -2093,19 +2094,19 @@ bool AsciiParser::ReadPrimAttrIdentifier(std::string *token) {
       // ok
     } else if (c == ':') {  // namespace
       // ':' must lie in the middle of string literal
-      if (ss.str().size() == 0) {
+      if (tok.empty()) {
         calculate_cursor_from_stream_pos();
         PUSH_ERROR_AND_RETURN("PrimAttr name must not starts with `:`");
       }
     } else if (c == '.') {  // delimiter for `connect`
       // '.' must lie in the middle of string literal
-      if (ss.str().size() == 0) {
+      if (tok.empty()) {
         calculate_cursor_from_stream_pos();
         PUSH_ERROR_AND_RETURN("PrimAttr name must not starts with `.`");
       }
     } else if (std::isalnum(int(c))) {
       // number must not be allowed for the first char.
-      if (ss.str().size() == 0) {
+      if (tok.empty()) {
         if (!std::isalpha(int(c))) {
           calculate_cursor_from_stream_pos();
           PUSH_ERROR_AND_RETURN("PrimAttr name must not starts with number.");
@@ -2124,26 +2125,24 @@ bool AsciiParser::ReadPrimAttrIdentifier(std::string *token) {
       first_char = false;
     }
 
-    ss << c;
+    tok.push_back(c);
   }
 
   {
     std::string name_err;
-    if (!pathutil::ValidatePropPath(Path("", ss.str()), &name_err)) {
+    if (!pathutil::ValidatePropPath(Path("", tok), &name_err)) {
       calculate_cursor_from_stream_pos();
       PUSH_ERROR_AND_RETURN_TAG(
           kAscii,
-          fmt::format("Invalid Property name `{}`: {}", ss.str(), name_err));
+          fmt::format("Invalid Property name `{}`: {}", tok, name_err));
     }
   }
 
   // '.' must lie in the middle of string literal
-  if (ss.str().back() == '.') {
+  if (tok.back() == '.') {
     calculate_cursor_from_stream_pos();
     PUSH_ERROR_AND_RETURN("PrimAttr name must not ends with `.`\n");
   }
-
-  std::string tok = ss.str();
 
   if (contains(tok, '.')) {
     if (endsWith(tok, ".connect") || endsWith(tok, ".timeSamples")) {
@@ -2168,14 +2167,15 @@ bool AsciiParser::ReadPrimAttrIdentifier(std::string *token) {
     }
   }
 
-  (*token) = ss.str();
+  (*token) = std::move(tok);
   DCOUT("primAttr identifier = " << (*token));
   return true;
 }
 
 bool AsciiParser::ReadIdentifier(std::string *token) {
   // identifier = (`_` | [a-zA-Z]) (`_` | [a-zA-Z0-9]+)
-  std::stringstream ss;
+  std::string tok;
+  tok.reserve(64);  // Most identifiers are short
 
   // The first character.
   {
@@ -2195,7 +2195,7 @@ bool AsciiParser::ReadIdentifier(std::string *token) {
     }
     _curr_cursor.col++;
 
-    ss << c;
+    tok.push_back(c);
   }
 
   while (!Eof()) {
@@ -2214,16 +2214,17 @@ bool AsciiParser::ReadIdentifier(std::string *token) {
 
     _curr_cursor.col++;
 
-    ss << c;
+    tok.push_back(c);
   }
 
-  (*token) = ss.str();
+  (*token) = std::move(tok);
   return true;
 }
 
 bool AsciiParser::ReadPathIdentifier(std::string *path_identifier) {
   // path_identifier = `<` string `>`
-  std::stringstream ss;
+  std::string tok;
+  tok.reserve(128);  // Paths can be longer than identifiers
 
   if (!Expect('<')) {
     return false;
@@ -2250,21 +2251,21 @@ bool AsciiParser::ReadPathIdentifier(std::string *path_identifier) {
     }
 
     // TODO: Check if character is valid for path identifier
-    ss << c;
+    tok.push_back(c);
   }
 
   if (!ok) {
     return false;
   }
 
-  (*path_identifier) = TrimString(ss.str());
-  // std::cout << "PathIdentifier: " << (*path_identifier) << "\n";
+  (*path_identifier) = TrimString(tok);
 
   return true;
 }
 
 bool AsciiParser::ReadUntilNewline(std::string *str) {
-  std::stringstream ss;
+  std::string tok;
+  tok.reserve(256);
 
   while (!Eof()) {
     char c;
@@ -2298,13 +2299,13 @@ bool AsciiParser::ReadUntilNewline(std::string *str) {
       }
     }
 
-    ss << c;
+    tok.push_back(c);
   }
 
   _curr_cursor.row++;
   _curr_cursor.col = 0;
 
-  (*str) = ss.str();
+  (*str) = std::move(tok);
 
   return true;
 }
@@ -3415,7 +3416,8 @@ bool AsciiParser::LexFloat(std::string *result) {
   //     ;
   // EXPONENT : ('e'|'E') ('+'|'-')? ('0'..'9')+ ;
 
-  std::stringstream ss;
+  std::string tok;
+  tok.reserve(32);
 
   bool has_sign{false};
   bool leading_decimal_dots{false};
@@ -3428,7 +3430,7 @@ bool AsciiParser::LexFloat(std::string *result) {
 
     // sign, '.' or [0-9]
     if ((sc == '+') || (sc == '-')) {
-      ss << sc;
+      tok.push_back(sc);
       has_sign = true;
 
       char c;
@@ -3440,7 +3442,7 @@ bool AsciiParser::LexFloat(std::string *result) {
         // ok. something like `+.7`, `-.53`
         leading_decimal_dots = true;
         _curr_cursor.col++;
-        ss << c;
+        tok.push_back(c);
 
       } else {
         // unwind and continue
@@ -3449,7 +3451,7 @@ bool AsciiParser::LexFloat(std::string *result) {
 
     } else if ((sc >= '0') && (sc <= '9')) {
       // ok
-      ss << sc;
+      tok.push_back(sc);
     } else if (sc == '.') {
       // ok but rescan again in 2.
       leading_decimal_dots = true;
@@ -3467,17 +3469,14 @@ bool AsciiParser::LexFloat(std::string *result) {
   // 1. Read the integer part
   char curr;
   if (!leading_decimal_dots) {
-    // std::cout << "1 read int part: ss = " << ss.str() << "\n";
-
     while (!Eof()) {
       if (!Char1(&curr)) {
         return false;
       }
 
-      // std::cout << "1 curr = " << curr << "\n";
       if ((curr >= '0') && (curr <= '9')) {
         // continue
-        ss << curr;
+        tok.push_back(curr);
       } else {
         _sr->seek_from_current(-1);
         break;
@@ -3486,7 +3485,7 @@ bool AsciiParser::LexFloat(std::string *result) {
   }
 
   if (Eof()) {
-    (*result) = ss.str();
+    (*result) = std::move(tok);
     return true;
   }
 
@@ -3494,12 +3493,9 @@ bool AsciiParser::LexFloat(std::string *result) {
     return false;
   }
 
-  // std::cout << "before 2: ss = " << ss.str() << ", curr = " << curr <<
-  // "\n";
-
   // 2. Read the decimal part
   if (curr == '.') {
-    ss << curr;
+    tok.push_back(curr);
 
     while (!Eof()) {
       if (!Char1(&curr)) {
@@ -3507,7 +3503,7 @@ bool AsciiParser::LexFloat(std::string *result) {
       }
 
       if ((curr >= '0') && (curr <= '9')) {
-        ss << curr;
+        tok.push_back(curr);
       } else {
         break;
       }
@@ -3517,20 +3513,20 @@ bool AsciiParser::LexFloat(std::string *result) {
     // go to 3.
   } else {
     // end
-    (*result) = ss.str();
+    (*result) = std::move(tok);
     _sr->seek_from_current(-1);
     return true;
   }
 
   if (Eof()) {
-    (*result) = ss.str();
+    (*result) = std::move(tok);
     return true;
   }
 
   // 3. Read the exponent part
   bool has_exp_sign{false};
   if ((curr == 'e') || (curr == 'E')) {
-    ss << curr;
+    tok.push_back(curr);
 
     if (!Char1(&curr)) {
       return false;
@@ -3538,12 +3534,12 @@ bool AsciiParser::LexFloat(std::string *result) {
 
     if ((curr == '+') || (curr == '-')) {
       // exp sign
-      ss << curr;
+      tok.push_back(curr);
       has_exp_sign = true;
 
     } else if ((curr >= '0') && (curr <= '9')) {
       // ok
-      ss << curr;
+      tok.push_back(curr);
     } else {
       // Empty E is not allowed.
       PUSH_ERROR_AND_RETURN("Empty `E' is not allowed.");
@@ -3556,7 +3552,7 @@ bool AsciiParser::LexFloat(std::string *result) {
 
       if ((curr >= '0') && (curr <= '9')) {
         // ok
-        ss << curr;
+        tok.push_back(curr);
 
       } else if ((curr == '+') || (curr == '-')) {
         if (has_exp_sign) {
@@ -3564,7 +3560,7 @@ bool AsciiParser::LexFloat(std::string *result) {
           PUSH_ERROR_AND_RETURN("No multiple exponential sign characters.");
         }
 
-        ss << curr;
+        tok.push_back(curr);
         has_exp_sign = true;
       } else {
         // end
@@ -3576,14 +3572,15 @@ bool AsciiParser::LexFloat(std::string *result) {
     _sr->seek_from_current(-1);
   }
 
-  (*result) = ss.str();
+  (*result) = std::move(tok);
   return true;
 }
 
 nonstd::optional<AsciiParser::VariableDef> AsciiParser::GetStageMetaDefinition(
     const std::string &name) {
-  if (_supported_stage_metas.count(name)) {
-    return _supported_stage_metas.at(name);
+  auto it = _supported_stage_metas.find(name);
+  if (it != _supported_stage_metas.end()) {
+    return it->second;
   }
 
   return nonstd::nullopt;
@@ -3591,8 +3588,9 @@ nonstd::optional<AsciiParser::VariableDef> AsciiParser::GetStageMetaDefinition(
 
 nonstd::optional<AsciiParser::VariableDef> AsciiParser::GetPrimMetaDefinition(
     const std::string &name) {
-  if (_supported_prim_metas.count(name)) {
-    return _supported_prim_metas.at(name);
+  auto it = _supported_prim_metas.find(name);
+  if (it != _supported_prim_metas.end()) {
+    return it->second;
   }
 
   return nonstd::nullopt;
@@ -3600,8 +3598,9 @@ nonstd::optional<AsciiParser::VariableDef> AsciiParser::GetPrimMetaDefinition(
 
 nonstd::optional<AsciiParser::VariableDef> AsciiParser::GetPropMetaDefinition(
     const std::string &name) {
-  if (_supported_prop_metas.count(name)) {
-    return _supported_prop_metas.at(name);
+  auto it = _supported_prop_metas.find(name);
+  if (it != _supported_prop_metas.end()) {
+    return it->second;
   }
 
   return nonstd::nullopt;
@@ -5817,8 +5816,9 @@ bool AsciiParser::ParseBlock(const Specifier spec, const int64_t primIdx,
       }
     }
 
-    if (_prim_construct_fun_map.count(pTy)) {
-      auto construct_fun = _prim_construct_fun_map[pTy];
+    auto pcf_it = _prim_construct_fun_map.find(pTy);
+    if (pcf_it != _prim_construct_fun_map.end()) {
+      auto construct_fun = pcf_it->second;
 
       Path fullpath(GetCurrentPrimPath(), "");
       Path pname(prim_name, "");
