@@ -663,6 +663,9 @@ class CrateReader {
   mutable std::vector<crate::Index> _temp_indices;    // Scratch for token/string/assetpath array reads
   mutable std::vector<uint32_t> _temp_lut_indices;    // Scratch for LUT index arrays (half/float/double)
   mutable std::vector<int32_t> _temp_comp_ints;       // Scratch for compressed int arrays (half/float/double)
+  mutable std::vector<value::half> _temp_lut_half;    // Scratch for half LUT table
+  mutable std::vector<float> _temp_lut_float;         // Scratch for float LUT table
+  mutable std::vector<double> _temp_lut_double;       // Scratch for double LUT table
 
   class Impl;
   Impl *_impl;

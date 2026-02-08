@@ -585,6 +585,15 @@ nonstd::expected<std::vector<uint8_t>, std::string> UniformToFaceVarying(
   std::vector<uint8_t> buf;
   buf.resize(stride_bytes);
 
+  // Pre-reserve total output size to avoid repeated reallocations
+  {
+    size_t total = 0;
+    for (size_t i = 0; i < faceVertexCounts.size(); i++) {
+      total += faceVertexCounts[i];
+    }
+    dst.reserve(total * stride_bytes);
+  }
+
   for (size_t i = 0; i < faceVertexCounts.size(); i++) {
     size_t cnt = faceVertexCounts[i];
 
@@ -2535,9 +2544,9 @@ static bool ComputeTangentsAndBinormals(
 
   // tn, bn = facevarying
   std::vector<value::normal3f> tn(faceVertexIndices.size());
-  memset(&tn.at(0), 0, sizeof(value::normal3f) * tn.size());
+  memset(tn.data(), 0, sizeof(value::normal3f) * tn.size());
   std::vector<value::normal3f> bn(faceVertexIndices.size());
-  memset(&bn.at(0), 0, sizeof(value::normal3f) * bn.size());
+  memset(bn.data(), 0, sizeof(value::normal3f) * bn.size());
 
   //
   // 1. Compute facevarying tangent/binormal for each faceVertex.

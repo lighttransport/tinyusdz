@@ -3690,7 +3690,11 @@ bool USDCReader::Impl::ReconstructPrimRecursively(
 
         Variant variant;
 
-        for (const auto &item : _variantPropChildren.at(entry.current_id)) {
+        auto vpc_it = _variantPropChildren.find(entry.current_id);
+        if (vpc_it == _variantPropChildren.end()) {
+          PUSH_ERROR_AND_RETURN("Internal error: variant prop children not found for entry.");
+        }
+        for (const auto &item : vpc_it->second) {
           // item should exist in _variantProps.
           auto vp_it = _variantProps.find(item);
           if (vp_it == _variantProps.end()) {
@@ -3724,7 +3728,11 @@ bool USDCReader::Impl::ReconstructPrimRecursively(
 
         DCOUT(fmt::format("{} has variant Prim ", entry.prim->element_name()));
 
-        for (const auto &item : _variantPrimChildren.at(entry.current_id)) {
+        auto vpcr_it = _variantPrimChildren.find(entry.current_id);
+        if (vpcr_it == _variantPrimChildren.end()) {
+          PUSH_ERROR_AND_RETURN("Internal error: variant prim children not found for entry.");
+        }
+        for (const auto &item : vpcr_it->second) {
 
           auto vpr_it = _variantPrims.find(item);
           if (vpr_it == _variantPrims.end()) {
@@ -3914,7 +3922,11 @@ bool USDCReader::Impl::ReconstructPrimRecursively(
 
     Variant variant;
 
-    for (const auto &item : _variantPropChildren.at(current)) {
+    auto vpc_it = _variantPropChildren.find(current);
+    if (vpc_it == _variantPropChildren.end()) {
+      PUSH_ERROR_AND_RETURN("Internal error: variant prop children not found.");
+    }
+    for (const auto &item : vpc_it->second) {
       // item should exist in _variantProps.
       auto vp_it = _variantProps.find(item);
       if (vp_it == _variantProps.end()) {
@@ -3948,7 +3960,11 @@ bool USDCReader::Impl::ReconstructPrimRecursively(
 
     DCOUT(fmt::format("{} has variant Prim ", currPrimPtr->element_name()));
 
-    for (const auto &item : _variantPrimChildren.at(current)) {
+    auto vpcr_it = _variantPrimChildren.find(current);
+    if (vpcr_it == _variantPrimChildren.end()) {
+      PUSH_ERROR_AND_RETURN("Internal error: variant prim children not found.");
+    }
+    for (const auto &item : vpcr_it->second) {
 
       DCOUT("variantPrim " << item);
 
@@ -4166,13 +4182,11 @@ bool USDCReader::Impl::ReconstructStage(Stage *stage) {
       }
 
       // path_index should be unique.
-      if (path_index_to_spec_index_map.count((*_specs)[i].path_index.value) != 0) {
-        PUSH_ERROR_AND_RETURN("Multiple PathIndex found in Crate data.");
-      }
-
       DCOUT(fmt::format("path index[{}] -> spec index [{}]",
                         (*_specs)[i].path_index.value, uint32_t(i)));
-      path_index_to_spec_index_map[(*_specs)[i].path_index.value] = uint32_t(i);
+      if (!path_index_to_spec_index_map.emplace((*_specs)[i].path_index.value, uint32_t(i)).second) {
+        PUSH_ERROR_AND_RETURN("Multiple PathIndex found in Crate data.");
+      }
     }
   }
 
@@ -4307,7 +4321,11 @@ bool USDCReader::Impl::ReconstructPrimSpecRecursively(
 
     PrimSpec variant;
 
-    for (const auto &item : _variantPropChildren.at(current)) {
+    auto vpc_it = _variantPropChildren.find(current);
+    if (vpc_it == _variantPropChildren.end()) {
+      PUSH_ERROR_AND_RETURN("Internal error: variant prop children not found.");
+    }
+    for (const auto &item : vpc_it->second) {
       // item should exist in _variantProps.
       auto vp_it = _variantProps.find(item);
       if (vp_it == _variantProps.end()) {
@@ -4341,8 +4359,11 @@ bool USDCReader::Impl::ReconstructPrimSpecRecursively(
 
     DCOUT(fmt::format("{} has variant PrimSpec ", primspecPtr->name()));
 
-
-    for (const auto &item : _variantPrimChildren.at(current)) {
+    auto vpcr_it = _variantPrimChildren.find(current);
+    if (vpcr_it == _variantPrimChildren.end()) {
+      PUSH_ERROR_AND_RETURN("Internal error: variant prim children not found.");
+    }
+    for (const auto &item : vpcr_it->second) {
 
       auto vps_it = _variantPrimSpecs.find(item);
       if (vps_it == _variantPrimSpecs.end()) {
@@ -4461,13 +4482,11 @@ bool USDCReader::Impl::ToLayer(Layer *layer) {
       }
 
       // path_index should be unique.
-      if (path_index_to_spec_index_map.count((*_specs)[i].path_index.value) != 0) {
-        PUSH_ERROR_AND_RETURN("Multiple PathIndex found in Crate data.");
-      }
-
       DCOUT(fmt::format("path index[{}] -> spec index [{}]",
                         (*_specs)[i].path_index.value, uint32_t(i)));
-      path_index_to_spec_index_map[(*_specs)[i].path_index.value] = uint32_t(i);
+      if (!path_index_to_spec_index_map.emplace((*_specs)[i].path_index.value, uint32_t(i)).second) {
+        PUSH_ERROR_AND_RETURN("Multiple PathIndex found in Crate data.");
+      }
     }
   }
 

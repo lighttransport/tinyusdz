@@ -1084,6 +1084,7 @@ std::string AsciiParser::GetErrorWithSourceContext(const std::string& filename, 
   const uint8_t* data = _sr->data();
   uint64_t size = _sr->size();
   std::string line;
+  line.reserve(128);
 
   for (uint64_t i = 0; i < size; ++i) {
     if (data[i] == '\n') {
@@ -5658,7 +5659,8 @@ bool AsciiParser::ParseBlock(const Specifier spec, const int64_t primIdx,
     if (full_path == "/") {
       full_path += prim_name;
     } else {
-      full_path += "/" + prim_name;
+      full_path += '/';
+      full_path += prim_name;
     }
     PushPrimPath(full_path);
   }
