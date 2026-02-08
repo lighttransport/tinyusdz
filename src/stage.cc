@@ -421,7 +421,7 @@ void PrimPrintRec(std::stringstream &ss, const Prim &prim, uint32_t indent) {
         if (variant.metas().variantChildren.has_value() &&
             (variant.metas().variantChildren.value().size() ==
              variant.primChildren().size())) {
-          std::map<std::string, const Prim *> primNameTable;
+          std::unordered_map<std::string, const Prim *> primNameTable;
           for (size_t i = 0; i < variant.primChildren().size(); i++) {
             primNameTable.emplace(variant.primChildren()[i].element_name(),
                                   &variant.primChildren()[i]);
@@ -470,7 +470,7 @@ void PrimPrintRec(std::stringstream &ss, const Prim &prim, uint32_t indent) {
     if (prim.metas().primChildren.size() == prim.children().size()) {
       // Use primChildren info to determine the order of the traversal.
 
-      std::map<std::string, const Prim *> primNameTable;
+      std::unordered_map<std::string, const Prim *> primNameTable;
       for (size_t i = 0; i < prim.children().size(); i++) {
         primNameTable.emplace(prim.children()[i].element_name(),
                               &prim.children()[i]);
@@ -528,7 +528,7 @@ std::string Stage::ExportToString(bool relative_path, bool parallel) const {
   ss << "\n";
 
   if (stage_metas.primChildren.size() == _root_nodes.size()) {
-    std::map<std::string, const Prim *> primNameTable;
+    std::unordered_map<std::string, const Prim *> primNameTable;
     for (size_t i = 0; i < _root_nodes.size(); i++) {
       primNameTable.emplace(_root_nodes[i].element_name(), &_root_nodes[i]);
     }

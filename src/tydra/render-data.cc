@@ -2707,6 +2707,7 @@ static bool ComputeTangentsAndBinormals(
 
     if (is_facevarying_input) {
       // input position is still in 'vertex' variability.
+      vertex_input.point_indices.reserve(faceVertexIndices.size());
       for (size_t i = 0; i < faceVertexIndices.size(); i++) {
         vertex_input.point_indices.push_back(faceVertexIndices[i]);
       }
@@ -2714,6 +2715,9 @@ static bool ComputeTangentsAndBinormals(
       vertex_input.uvs = texcoords;
     } else {
       // expand to facevarying.
+      vertex_input.point_indices.reserve(faceVertexIndices.size());
+      vertex_input.normals.reserve(faceVertexIndices.size());
+      vertex_input.uvs.reserve(faceVertexIndices.size());
       for (size_t i = 0; i < faceVertexIndices.size(); i++) {
         vertex_input.point_indices.push_back(faceVertexIndices[i]);
         vertex_input.normals.push_back(normals[faceVertexIndices[i]]);

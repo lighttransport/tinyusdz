@@ -427,7 +427,7 @@ bool VisitPrimsIterative(const tinyusdz::Path &start_abs_path,
 
     // If primChildren metadata matches children count, use it for ordering
     if (prim.metas().primChildren.size() == prim.children().size()) {
-      std::map<std::string, const tinyusdz::Prim *> primNameTable;
+      std::unordered_map<std::string, const tinyusdz::Prim *> primNameTable;
       for (size_t i = 0; i < prim.children().size(); i++) {
         primNameTable.emplace(prim.children()[i].element_name(),
                               &prim.children()[i]);
@@ -2080,7 +2080,7 @@ bool VisitPrims(const tinyusdz::Stage &stage, VisitPrimFunction visitor_fun,
                 void *userdata, std::string *err) {
   // if `primChildren` is available, use it
   if (stage.metas().primChildren.size() == stage.root_prims().size()) {
-    std::map<std::string, const Prim *> primNameTable;
+    std::unordered_map<std::string, const Prim *> primNameTable;
     for (size_t i = 0; i < stage.root_prims().size(); i++) {
       primNameTable.emplace(stage.root_prims()[i].element_name(),
                             &stage.root_prims()[i]);
