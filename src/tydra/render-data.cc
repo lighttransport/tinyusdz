@@ -854,8 +854,9 @@ bool TryConvertFacevaryingToVertexInt(
     uint32_t vidx = faceVertexIndices[i];
     max_vidx = (std::max)(vidx, max_vidx);
 
-    if (vdata.count(vidx)) {
-      if (!math::is_close(vdata[vidx], src[i])) {
+    auto vd_it = vdata.find(vidx);
+    if (vd_it != vdata.end()) {
+      if (!math::is_close(vd_it->second, src[i])) {
         return false;
       }
     } else {
@@ -901,8 +902,9 @@ bool TryConvertFacevaryingToVertexFloat(
     uint32_t vidx = faceVertexIndices[i];
     max_vidx = (std::max)(vidx, max_vidx);
 
-    if (vdata.count(vidx)) {
-      if (!math::is_close(vdata[vidx], src[i], eps)) {
+    auto vd_it = vdata.find(vidx);
+    if (vd_it != vdata.end()) {
+      if (!math::is_close(vd_it->second, src[i], eps)) {
         DCOUT("diff at faceVertexIndices[" << i << "]");
         return false;
       }
@@ -947,8 +949,9 @@ bool TryConvertFacevaryingToVertexMat(
     uint32_t vidx = faceVertexIndices[i];
     max_vidx = (std::max)(vidx, max_vidx);
 
-    if (vdata.count(vidx)) {
-      if (!is_close(vdata[vidx], src[i])) {
+    auto vd_it = vdata.find(vidx);
+    if (vd_it != vdata.end()) {
+      if (!is_close(vd_it->second, src[i])) {
         return false;
       }
     } else {
@@ -3511,10 +3514,11 @@ bool RenderSceneConverter::BuildVertexIndicesImpl(RenderMesh &mesh) {
         for (size_t i = 0; i < target.second.pointIndices.size(); i++) {
 
           uint32_t orgPointIdx = target.second.pointIndices[i];
-          if (!pointIdxRemap.count(orgPointIdx)) {
+          auto pir_it = pointIdxRemap.find(orgPointIdx);
+          if (pir_it == pointIdxRemap.end()) {
             PUSH_ERROR_AND_RETURN("Invalid pointIndices value.");
           }
-          const std::vector<uint32_t> &dstPointIndices = pointIdxRemap.at(orgPointIdx);
+          const std::vector<uint32_t> &dstPointIndices = pir_it->second;
 
           for (size_t k = 0; k < dstPointIndices.size(); k++) {
             if (target.second.pointOffsets.size()) {
@@ -3790,10 +3794,11 @@ bool RenderSceneConverter::BuildVertexIndicesFastImpl(RenderMesh &mesh) {
         for (size_t i = 0; i < target.second.pointIndices.size(); i++) {
 
           uint32_t orgPointIdx = target.second.pointIndices[i];
-          if (!pointIdxRemap.count(orgPointIdx)) {
+          auto pir_it = pointIdxRemap.find(orgPointIdx);
+          if (pir_it == pointIdxRemap.end()) {
             PUSH_ERROR_AND_RETURN("Invalid pointIndices value.");
           }
-          const std::vector<uint32_t> &dstPointIndices = pointIdxRemap.at(orgPointIdx);
+          const std::vector<uint32_t> &dstPointIndices = pir_it->second;
 
           for (size_t k = 0; k < dstPointIndices.size(); k++) {
             if (target.second.pointOffsets.size()) {
@@ -4180,10 +4185,10 @@ bool RenderSceneConverter::ConvertMesh(
   if (env.mesh_config.validate_geomsubset) {
     size_t elementCount = dst.usdFaceVertexCounts.size();
 
+    auto sft_it = mesh.subsetFamilyTypeMap.find(value::token("materialBind"));
     if (material_subsets.size() &&
-        mesh.subsetFamilyTypeMap.count(value::token("materialBind"))) {
-      const GeomSubset::FamilyType familyType =
-          mesh.subsetFamilyTypeMap.at(value::token("materialBind"));
+        sft_it != mesh.subsetFamilyTypeMap.end()) {
+      const GeomSubset::FamilyType familyType = sft_it->second;
       if (!GeomSubset::ValidateSubsets(material_subsets, elementCount,
                                        familyType, &_err)) {
         PUSH_ERROR_AND_RETURN("GeomSubset validation failed.");
@@ -5451,54 +5456,64 @@ bool RenderSceneConverter::ConvertMesh(
       // MeshLightAPI inherits from LightAPI, which uses "inputs:" prefix
 
       // color
-      if (mesh.props.count("inputs:color")) {
-        const Property &prop = mesh.props.at("inputs:color");
-        const Attribute &attr = prop.get_attribute();
-        const primvar::PrimVar &pvar = attr.get_var();
-        if (auto val = pvar.get_value<value::color3f>()) {
-          dst.light_color[0] = val.value()[0];
-          dst.light_color[1] = val.value()[1];
-          dst.light_color[2] = val.value()[2];
+      {
+        auto p_it = mesh.props.find("inputs:color");
+        if (p_it != mesh.props.end()) {
+          const Attribute &attr = p_it->second.get_attribute();
+          const primvar::PrimVar &pvar = attr.get_var();
+          if (auto val = pvar.get_value<value::color3f>()) {
+            dst.light_color[0] = val.value()[0];
+            dst.light_color[1] = val.value()[1];
+            dst.light_color[2] = val.value()[2];
+          }
         }
       }
 
       // intensity
-      if (mesh.props.count("inputs:intensity")) {
-        const Property &prop = mesh.props.at("inputs:intensity");
-        const Attribute &attr = prop.get_attribute();
-        const primvar::PrimVar &pvar = attr.get_var();
-        if (auto val = pvar.get_value<float>()) {
-          dst.light_intensity = val.value();
+      {
+        auto p_it = mesh.props.find("inputs:intensity");
+        if (p_it != mesh.props.end()) {
+          const Attribute &attr = p_it->second.get_attribute();
+          const primvar::PrimVar &pvar = attr.get_var();
+          if (auto val = pvar.get_value<float>()) {
+            dst.light_intensity = val.value();
+          }
         }
       }
 
       // exposure (optional)
-      if (mesh.props.count("inputs:exposure")) {
-        const Property &prop = mesh.props.at("inputs:exposure");
-        const Attribute &attr = prop.get_attribute();
-        const primvar::PrimVar &pvar = attr.get_var();
-        if (auto val = pvar.get_value<float>()) {
-          dst.light_exposure = val.value();
+      {
+        auto p_it = mesh.props.find("inputs:exposure");
+        if (p_it != mesh.props.end()) {
+          const Attribute &attr = p_it->second.get_attribute();
+          const primvar::PrimVar &pvar = attr.get_var();
+          if (auto val = pvar.get_value<float>()) {
+            dst.light_exposure = val.value();
+          }
         }
       }
 
       // normalize
-      if (mesh.props.count("inputs:normalize")) {
-        const Property &prop = mesh.props.at("inputs:normalize");
-        const Attribute &attr = prop.get_attribute();
-        const primvar::PrimVar &pvar = attr.get_var();
-        if (auto val = pvar.get_value<bool>()) {
-          dst.light_normalize = val.value();
+      {
+        auto p_it = mesh.props.find("inputs:normalize");
+        if (p_it != mesh.props.end()) {
+          const Attribute &attr = p_it->second.get_attribute();
+          const primvar::PrimVar &pvar = attr.get_var();
+          if (auto val = pvar.get_value<bool>()) {
+            dst.light_normalize = val.value();
+          }
         }
       }
 
       // materialSyncMode
-      if (mesh.props.count("inputs:materialSyncMode")) {
-        const Property &prop = mesh.props.at("inputs:materialSyncMode");
-        const Attribute &attr = prop.get_attribute();
-        const primvar::PrimVar &pvar = attr.get_var();
-        if (auto val = pvar.get_value<value::token>()) {
-          dst.light_material_sync_mode = val.value().str();
+      {
+        auto p_it = mesh.props.find("inputs:materialSyncMode");
+        if (p_it != mesh.props.end()) {
+          const Attribute &attr = p_it->second.get_attribute();
+          const primvar::PrimVar &pvar = attr.get_var();
+          if (auto val = pvar.get_value<value::token>()) {
+            dst.light_material_sync_mode = val.value().str();
+          }
         }
       }
 

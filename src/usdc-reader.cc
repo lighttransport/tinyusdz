@@ -591,14 +591,14 @@ bool USDCReader::Impl::ReconstructGeomSubset(
 
     // const Node &child_node = _nodes[size_t(child_index)];
 
-    if (!path_index_to_spec_index_map.count(uint32_t(child_index))) {
+    auto pis_it = path_index_to_spec_index_map.find(uint32_t(child_index));
+    if (pis_it == path_index_to_spec_index_map.end()) {
       // No specifier assigned to this child node.
       // TODO: Should we report an error?
       continue;
     }
 
-    uint32_t spec_index =
-        path_index_to_spec_index_map.at(uint32_t(child_index));
+    uint32_t spec_index = pis_it->second;
     if (spec_index >= _specs->size()) {
       PUSH_ERROR("Invalid specifier id: " + std::to_string(spec_index) +
                  ". Must be in range [0, " + std::to_string(_specs->size()) +
@@ -3662,7 +3662,8 @@ bool USDCReader::Impl::ReconstructPrimRecursively(
         //
         // `current` must be VariantPrim and `parentPrim` should exist
         //
-        if (!_variantPrims.count(entry.current_id)) {
+        auto vpr_it = _variantPrims.find(entry.current_id);
+        if (vpr_it == _variantPrims.end()) {
           PUSH_ERROR_AND_RETURN("Internal error: variant attribute is not a child of VariantPrim.");
         }
 
@@ -3670,7 +3671,7 @@ bool USDCReader::Impl::ReconstructPrimRecursively(
           PUSH_ERROR_AND_RETURN("Internal error: parentPrim should exist.");
         }
 
-        const Prim &variantPrim = _variantPrims.at(entry.current_id);
+        const Prim &variantPrim = vpr_it->second;
 
         DCOUT("variant prim name: " << variantPrim.element_name());
 
@@ -3691,10 +3692,11 @@ bool USDCReader::Impl::ReconstructPrimRecursively(
 
         for (const auto &item : _variantPropChildren.at(entry.current_id)) {
           // item should exist in _variantProps.
-          if (!_variantProps.count(item)) {
+          auto vp_it = _variantProps.find(item);
+          if (vp_it == _variantProps.end()) {
             PUSH_ERROR_AND_RETURN("Internal error: variant Property not found.");
           }
-          const std::pair<Path, Property> &pp = _variantProps.at(item);
+          const std::pair<Path, Property> &pp = vp_it->second;
 
           std::string prop_name = std::get<0>(pp).prop_part();
           DCOUT(fmt::format("  node_index = {}, prop name {}", item, prop_name));
@@ -3724,11 +3726,12 @@ bool USDCReader::Impl::ReconstructPrimRecursively(
 
         for (const auto &item : _variantPrimChildren.at(entry.current_id)) {
 
-          if (!_variantPrims.count(item)) {
+          auto vpr_it = _variantPrims.find(item);
+          if (vpr_it == _variantPrims.end()) {
             PUSH_ERROR_AND_RETURN("Internal error: variant Prim children not found.");
           }
 
-          const Prim &vp = _variantPrims.at(item);
+          const Prim &vp = vpr_it->second;
 
           DCOUT(fmt::format("  variantPrim name {}", vp.element_name()));
 
@@ -3876,7 +3879,8 @@ bool USDCReader::Impl::ReconstructPrimRecursively(
     //
     // `current` must be VariantPrim and `parentPrim` should exist
     //
-    if (!_variantPrims.count(current)) {
+    auto vpr_it = _variantPrims.find(current);
+    if (vpr_it == _variantPrims.end()) {
       PUSH_ERROR_AND_RETURN("Internal error: variant attribute is not a child of VariantPrim.");
     }
 
@@ -3884,8 +3888,8 @@ bool USDCReader::Impl::ReconstructPrimRecursively(
       PUSH_ERROR_AND_RETURN("Internal error: parentPrim should exist.");
     }
 
-    // NOTE: we can use currPrimPtr, since _variantPrims.at(current) == *currPrimPtr
-    const Prim &variantPrim = _variantPrims.at(current);
+    // NOTE: we can use currPrimPtr, since _variantPrims[current] == *currPrimPtr
+    const Prim &variantPrim = vpr_it->second;
 
     DCOUT("variant prim name: " << variantPrim.element_name());
       if (variantPrim.metas().variantSets) {
@@ -3912,10 +3916,11 @@ bool USDCReader::Impl::ReconstructPrimRecursively(
 
     for (const auto &item : _variantPropChildren.at(current)) {
       // item should exist in _variantProps.
-      if (!_variantProps.count(item)) {
+      auto vp_it = _variantProps.find(item);
+      if (vp_it == _variantProps.end()) {
         PUSH_ERROR_AND_RETURN("Internal error: variant Property not found.");
       }
-      const std::pair<Path, Property> &pp = _variantProps.at(item);
+      const std::pair<Path, Property> &pp = vp_it->second;
 
       std::string prop_name = std::get<0>(pp).prop_part();
       DCOUT(fmt::format("  node_index = {}, prop name {}", item, prop_name));
@@ -3947,11 +3952,12 @@ bool USDCReader::Impl::ReconstructPrimRecursively(
 
       DCOUT("variantPrim " << item);
 
-      if (!_variantPrims.count(item)) {
+      auto vpr_it = _variantPrims.find(item);
+      if (vpr_it == _variantPrims.end()) {
         PUSH_ERROR_AND_RETURN("Internal error: variant Prim children not found.");
       }
 
-      const Prim &vp = _variantPrims.at(item);
+      const Prim &vp = vpr_it->second;
 
       DCOUT(fmt::format("  variantPrim name {}", vp.element_name()));
 
@@ -4057,8 +4063,9 @@ bool USDCReader::Impl::ReconstructPrimRecursively(
         // O(1) lookup using variant name index
         auto key = std::make_pair(nestedVariantSetName, childVariantName);
         auto it = _variantNameIndex.find(key);
-        if (it != _variantNameIndex.end() && _variantPrims.count(it->second)) {
-          const Prim &childVp = _variantPrims.at(it->second);
+        decltype(_variantPrims)::iterator childVp_it;
+        if (it != _variantNameIndex.end() && (childVp_it = _variantPrims.find(it->second)) != _variantPrims.end()) {
+          const Prim &childVp = childVp_it->second;
           DCOUT("      Found nested variant prim: " << childVp.element_name());
 
           // Add this variant to the nested variantSet
@@ -4302,10 +4309,11 @@ bool USDCReader::Impl::ReconstructPrimSpecRecursively(
 
     for (const auto &item : _variantPropChildren.at(current)) {
       // item should exist in _variantProps.
-      if (!_variantProps.count(item)) {
+      auto vp_it = _variantProps.find(item);
+      if (vp_it == _variantProps.end()) {
         PUSH_ERROR_AND_RETURN("Internal error: variant Property not found.");
       }
-      const std::pair<Path, Property> &pp = _variantProps.at(item);
+      const std::pair<Path, Property> &pp = vp_it->second;
 
       std::string prop_name = std::get<0>(pp).prop_part();
       DCOUT(fmt::format("  node_index = {}, prop name {}", item, prop_name));
@@ -4336,11 +4344,12 @@ bool USDCReader::Impl::ReconstructPrimSpecRecursively(
 
     for (const auto &item : _variantPrimChildren.at(current)) {
 
-      if (!_variantPrimSpecs.count(item)) {
+      auto vps_it = _variantPrimSpecs.find(item);
+      if (vps_it == _variantPrimSpecs.end()) {
         PUSH_ERROR_AND_RETURN("Internal error: variant Prim children not found.");
       }
 
-      const PrimSpec &vp = _variantPrimSpecs.at(item);
+      const PrimSpec &vp = vps_it->second;
 
       DCOUT(fmt::format("  idx {}, variantPrim name {}", item, vp.name()));
 
