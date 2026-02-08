@@ -586,10 +586,10 @@ CrateFieldId StringToFieldId(const std::string &name);
 const char *FieldIdToString(CrateFieldId id);
 
 /// In-memory storage for a single "spec" field -- prim, property, etc.
-/// Uses field_id for fast dispatch; first is kept for error messages and
-/// unrecognized field names.
+/// Uses field_id for fast dispatch; `first` is only populated for Unknown fields
+/// (saves ~40 bytes per known field). Use name() for error messages.
 struct FieldValuePair {
-  std::string first;     ///< Field name string
+  std::string first;     ///< Field name string (empty for known field IDs)
   CrateValue second;     ///< Decoded (or deferred) value
   CrateFieldId field_id{CrateFieldId::Unknown};
 
@@ -598,6 +598,12 @@ struct FieldValuePair {
     : first(std::move(name)), second(std::move(val)) {}
   FieldValuePair(std::string name, CrateValue val, CrateFieldId id)
     : first(std::move(name)), second(std::move(val)), field_id(id) {}
+
+  /// Returns the field name: from `first` if non-empty, else from the enum.
+  const char *name() const {
+    if (!first.empty()) return first.c_str();
+    return FieldIdToString(field_id);
+  }
 };
 using FieldValuePairVector = std::vector<FieldValuePair>;
 

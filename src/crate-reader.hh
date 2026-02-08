@@ -291,6 +291,22 @@ class CrateReader {
   const nonstd::optional<value::token> GetStringToken(
       crate::Index string_index) const;
 
+  // Zero-copy token accessor — returns pointer, no optional overhead
+  const value::token *GetTokenPtr(crate::Index token_index) const {
+    if (token_index.value < _tokens.size()) {
+      return &_tokens[token_index.value];
+    }
+    return nullptr;
+  }
+
+  // Pre-computed field ID for a token index (built after ReadTokens)
+  crate::CrateFieldId GetTokenFieldId(crate::Index token_index) const {
+    if (token_index.value < _token_field_ids.size()) {
+      return _token_field_ids[token_index.value];
+    }
+    return crate::CrateFieldId::Unknown;
+  }
+
   bool HasField(const std::string &key) const;
   nonstd::optional<crate::Field> GetField(crate::Index index) const;
   nonstd::optional<std::string> GetFieldString(crate::Index index) const;
@@ -522,6 +538,7 @@ class CrateReader {
   int64_t _specs_index{-1};
 
   std::vector<value::token> _tokens;
+  std::vector<crate::CrateFieldId> _token_field_ids;  // parallel to _tokens: pre-computed field IDs
   std::vector<crate::Index> _string_indices;
   std::vector<crate::Field> _fields;
   std::vector<crate::Index> _fieldset_indices;

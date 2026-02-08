@@ -626,7 +626,7 @@ bool USDCReader::Impl::ReconstructGeomSubset(
     for (auto &fv : child_fields) {
       if (fv.second.is_deferred()) {
         if (!crate_reader->ResolveDeferred(&fv.second)) {
-          _err += "Failed to resolve deferred field '" + fv.first + "'.\n";
+          _err += std::string("Failed to resolve deferred field '") + fv.name() + "'.\n";
           return false;
         }
       }
@@ -941,7 +941,7 @@ bool USDCReader::Impl::BuildPropertyMap(const std::vector<size_t> &pathIndices,
     for (auto &fv : child_fvs) {
       if (fv.second.is_deferred()) {
         if (!crate_reader->ResolveDeferred(&fv.second)) {
-          PUSH_ERROR_AND_RETURN_TAG(kTag, fmt::format("Failed to resolve deferred field '{}'.", fv.first));
+          PUSH_ERROR_AND_RETURN_TAG(kTag, fmt::format("Failed to resolve deferred field '{}'.", fv.name()));
         }
       }
     }
@@ -1071,14 +1071,12 @@ bool USDCReader::Impl::ParseProperty(const SpecType spec_type,
   }
 
   for (auto &fv : fvs) {
-    DCOUT(" fv name " << fv.first << "(type = " << fv.second.type_name()
+    DCOUT(" fv name " << fv.name() << "(type = " << fv.second.type_name()
                       << ")");
 
     // Debug: Check timeSamples field specifically
-    if (fv.first.find("time") != std::string::npos) {
-      DCOUT(">>> DEBUG: Found field with 'time' in name: '" << fv.first << "', length = " << fv.first.size());
-      //bool matches = (fv.first == "timeSamples");
-      //DCOUT(">>> Comparing with 'timeSamples': matches = " << matches);
+    if (fv.field_id == crate::CrateFieldId::TimeSamples) {
+      DCOUT(">>> DEBUG: Found timeSamples field");
     }
 
     if (fv.field_id == crate::CrateFieldId::Custom) {
@@ -1470,8 +1468,8 @@ bool USDCReader::Impl::ParseProperty(const SpecType spec_type,
       }
     } else {
       // TODO: register unkown metadataum as custom metadata?
-      PUSH_WARN("TODO: " << fv.first);
-      DCOUT("TODO: " << fv.first);
+      PUSH_WARN("TODO: " << fv.name());
+      DCOUT("TODO: " << fv.name());
     }
   }
   DCOUT("== End List of Fields");
@@ -1907,7 +1905,7 @@ bool USDCReader::Impl::ReconstrcutStageMeta(
       metas->comment = sdata;
       DCOUT("comment = " << metas->comment.value);
     } else {
-      PUSH_WARN("[StageMeta] TODO: " + fv.first);
+      PUSH_WARN(std::string("[StageMeta] TODO: ") + fv.name());
     }
   }
 
@@ -2436,8 +2434,8 @@ bool USDCReader::Impl::ParseVariantSetFields(
                       << fv.second.type_name() << "`");
       }
     } else {
-      DCOUT("Unknown/invalid field in VariantSet: " << fv.first);
-      PUSH_WARN("Ignoreing unknown/invalid field in VariantSet: " << fv.first);
+      DCOUT("Unknown/invalid field in VariantSet: " << fv.name());
+      PUSH_WARN("Ignoreing unknown/invalid field in VariantSet: " << fv.name());
     }
   }
 
@@ -2510,7 +2508,7 @@ bool USDCReader::Impl::ReconstructPrimNode(int parent, int current, int level,
   for (auto &fv : fvs) {
     if (fv.second.is_deferred()) {
       if (!crate_reader->ResolveDeferred(&fv.second)) {
-        PUSH_ERROR_AND_RETURN_TAG(kTag, fmt::format("Failed to resolve deferred field '{}'.", fv.first));
+        PUSH_ERROR_AND_RETURN_TAG(kTag, fmt::format("Failed to resolve deferred field '{}'.", fv.name()));
       }
     }
   }
@@ -2533,7 +2531,7 @@ bool USDCReader::Impl::ReconstructPrimNode(int parent, int current, int level,
   // DBG
   for (auto &fv : fvs) {
     DCOUT("parent[" << current << "] level [" << level << "] fv name "
-                    << fv.first << "(type = " << fv.second.type_name() << ")");
+                    << fv.name() << "(type = " << fv.second.type_name() << ")");
   }
 #endif
 
@@ -3008,7 +3006,7 @@ bool USDCReader::Impl::ReconstructPrimSpecNode(int parent, int current, int leve
   for (auto &fv : fvs) {
     if (fv.second.is_deferred()) {
       if (!crate_reader->ResolveDeferred(&fv.second)) {
-        PUSH_ERROR_AND_RETURN_TAG(kTag, fmt::format("Failed to resolve deferred field '{}'.", fv.first));
+        PUSH_ERROR_AND_RETURN_TAG(kTag, fmt::format("Failed to resolve deferred field '{}'.", fv.name()));
       }
     }
   }
@@ -3031,7 +3029,7 @@ bool USDCReader::Impl::ReconstructPrimSpecNode(int parent, int current, int leve
   // DBG
   for (auto &fv : fvs) {
     DCOUT("parent[" << current << "] level [" << level << "] fv name "
-                    << fv.first << "(type = " << fv.second.type_name() << ")");
+                    << fv.name() << "(type = " << fv.second.type_name() << ")");
   }
 #endif
 
@@ -4057,7 +4055,7 @@ bool USDCReader::Impl::ReconstructStage(Stage *stage) {
     for (const auto &fv : kv.second) {
       if (fv.second.is_deferred()) {
         PUSH_WARN(fmt::format("Deferred field '{}' in fieldset {} was not resolved during reconstruction.",
-                              fv.first, kv.first.value));
+                              fv.name(), kv.first.value));
       }
     }
   }

@@ -6599,6 +6599,9 @@ bool CrateReader::ReadTokens() {
     return i;
   };
 
+  // Pre-reserve to avoid repeated reallocations
+  _tokens.reserve(size_t(num_tokens));
+
   // TODO(syoyo): Check if input string has exactly `n` tokens(`n` null
   // characters)
   for (size_t i = 0; i < num_tokens; i++) {
@@ -6641,6 +6644,13 @@ bool CrateReader::ReadTokens() {
 
   if (_tokens.size() != num_tokens) {
     PUSH_ERROR_AND_RETURN_TAG(kTag, fmt::format("The number of tokens parsed {} does not match the requested one {}", _tokens.size(), num_tokens));
+  }
+
+  // Pre-compute token index → CrateFieldId mapping.
+  // This avoids per-field string extraction + StringToFieldId in BuildLiveFieldSets.
+  _token_field_ids.resize(_tokens.size());
+  for (size_t i = 0; i < _tokens.size(); i++) {
+    _token_field_ids[i] = crate::StringToFieldId(_tokens[i].str());
   }
 
   return true;
@@ -7002,10 +7012,19 @@ bool CrateReader::BuildLiveFieldSets() {
 
       DCOUT("fieldIndex = " << (fsBegin->value));
       auto const &field = _fields[fsBegin->value];
-      if (auto tokv = GetToken(field.token_index)) {
-        pairs[i].first = tokv.value().str();
-        pairs[i].field_id = StringToFieldId(pairs[i].first);
-
+      // Use pre-computed field ID and direct token pointer — no string alloc
+      // for known fields, no optional overhead.
+      pairs[i].field_id = GetTokenFieldId(field.token_index);
+      if (pairs[i].field_id == crate::CrateFieldId::Unknown) {
+        // Unknown field: store the name string for error messages/metadata
+        if (const value::token *tokp = GetTokenPtr(field.token_index)) {
+          pairs[i].first = tokp->str();
+        } else {
+          PUSH_ERROR("Invalid token index.");
+          return false;
+        }
+      }
+      {
         if (ShouldDeferField(field.value_rep)) {
           crate::LazyValueDescriptor desc;
           desc.value_rep = field.value_rep;
@@ -7016,8 +7035,6 @@ bool CrateReader::BuildLiveFieldSets() {
                      << field.value_rep.GetStringRepr());
           return false;
         }
-      } else {
-        PUSH_ERROR("Invalid token index.");
       }
     }
   }
@@ -7032,7 +7049,7 @@ bool CrateReader::BuildLiveFieldSets() {
     sum += item.second.size();
 
     for (size_t i = 0; i < item.second.size(); i++) {
-      DCOUT(" [" << i << "] name = " << item.second[i].first);
+      DCOUT(" [" << i << "] name = " << item.second[i].name());
     }
   }
   DCOUT("Total fields used = " << sum);
@@ -7490,8 +7507,13 @@ bool CrateReader::ReadTOC() {
 bool CrateReader::HasFieldValuePair(const FieldValuePairVector &fvs,
                                     const std::string &name,
                                     const std::string &tyname) {
+  // Try enum-based match first, fall back to string for Unknown fields
+  crate::CrateFieldId target_id = crate::StringToFieldId(name);
   for (const auto &fv : fvs) {
-    if ((fv.first == name) && (fv.second.type_name() == tyname)) {
+    bool name_match = (target_id != crate::CrateFieldId::Unknown)
+                        ? (fv.field_id == target_id)
+                        : (fv.first == name);
+    if (name_match && (fv.second.type_name() == tyname)) {
       return true;
     }
   }
@@ -7505,8 +7527,12 @@ bool CrateReader::HasFieldValuePair(const FieldValuePairVector &fvs,
 ///
 bool CrateReader::HasFieldValuePair(const FieldValuePairVector &fvs,
                                     const std::string &name) {
+  crate::CrateFieldId target_id = crate::StringToFieldId(name);
   for (const auto &fv : fvs) {
-    if (fv.first == name) {
+    bool name_match = (target_id != crate::CrateFieldId::Unknown)
+                        ? (fv.field_id == target_id)
+                        : (fv.first == name);
+    if (name_match) {
       return true;
     }
   }
@@ -7518,8 +7544,12 @@ nonstd::expected<FieldValuePair, std::string>
 CrateReader::GetFieldValuePair(const FieldValuePairVector &fvs,
                                const std::string &name,
                                const std::string &tyname) {
+  crate::CrateFieldId target_id = crate::StringToFieldId(name);
   for (const auto &fv : fvs) {
-    if ((fv.first == name) && (fv.second.type_name() == tyname)) {
+    bool name_match = (target_id != crate::CrateFieldId::Unknown)
+                        ? (fv.field_id == target_id)
+                        : (fv.first == name);
+    if (name_match && (fv.second.type_name() == tyname)) {
       return fv;
     }
   }
@@ -7532,8 +7562,12 @@ CrateReader::GetFieldValuePair(const FieldValuePairVector &fvs,
 nonstd::expected<FieldValuePair, std::string>
 CrateReader::GetFieldValuePair(const FieldValuePairVector &fvs,
                                const std::string &name) {
+  crate::CrateFieldId target_id = crate::StringToFieldId(name);
   for (const auto &fv : fvs) {
-    if (fv.first == name) {
+    bool name_match = (target_id != crate::CrateFieldId::Unknown)
+                        ? (fv.field_id == target_id)
+                        : (fv.first == name);
+    if (name_match) {
       return fv;
     }
   }
