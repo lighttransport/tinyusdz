@@ -7004,6 +7004,7 @@ bool CrateReader::BuildLiveFieldSets() {
       auto const &field = _fields[fsBegin->value];
       if (auto tokv = GetToken(field.token_index)) {
         pairs[i].first = tokv.value().str();
+        pairs[i].field_id = StringToFieldId(pairs[i].first);
 
         if (ShouldDeferField(field.value_rep)) {
           crate::LazyValueDescriptor desc;

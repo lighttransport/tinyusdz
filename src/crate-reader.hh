@@ -6,6 +6,7 @@
 #include <functional>
 #include <memory>
 #include <string>
+#include <unordered_map>
 #include <unordered_set>
 
 //
@@ -271,11 +272,11 @@ class CrateReader {
 
   const std::vector<crate::Spec> &GetSpecs() const { return _specs; }
 
-  const std::map<crate::Index, FieldValuePairVector> &GetLiveFieldSets() const {
+  const std::unordered_map<crate::Index, FieldValuePairVector, crate::Index::Hash> &GetLiveFieldSets() const {
     return _live_fieldsets;
   }
 
-  std::map<crate::Index, FieldValuePairVector> &GetLiveFieldSets() {
+  std::unordered_map<crate::Index, FieldValuePairVector, crate::Index::Hash> &GetLiveFieldSets() {
     return _live_fieldsets;
   }
 
@@ -532,8 +533,7 @@ class CrateReader {
                              //
   // `_live_fieldsets` contains unpacked value keyed by fieldset index.
   // Used for reconstructing Scene object
-  // TODO(syoyo): Use unordered_map?
-  std::map<crate::Index, FieldValuePairVector>
+  std::unordered_map<crate::Index, FieldValuePairVector, crate::Index::Hash>
       _live_fieldsets;  // <fieldset index, List of field with unpacked Values>
 
   const StreamReader *_sr{};

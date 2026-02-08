@@ -357,5 +357,174 @@ std::string GetCrateDataTypeName(CrateDataTypeId did) {
 // std::string CrateValue::GetTypeName() const { return value_.type_name(); }
 // uint32_t CrateValue::GetTypeId() const { return value_.type_id(); }
 
+CrateFieldId StringToFieldId(const std::string &s) {
+  // Dispatch on first character for fast rejection
+  if (s.empty()) return CrateFieldId::Unknown;
+  switch (s[0]) {
+    case 'a':
+      if (s == "active") return CrateFieldId::Active;
+      if (s == "apiSchemas") return CrateFieldId::ApiSchemas;
+      if (s == "assetInfo") return CrateFieldId::AssetInfo;
+      if (s == "autoPlay") return CrateFieldId::AutoPlay;
+      if (s == "allowedTokens") return CrateFieldId::AllowedTokens;
+      break;
+    case 'b':
+      if (s == "bindMaterialAs") return CrateFieldId::BindMaterialAs;
+      break;
+    case 'c':
+      if (s == "custom") return CrateFieldId::Custom;
+      if (s == "customData") return CrateFieldId::CustomData;
+      if (s == "customLayerData") return CrateFieldId::CustomLayerData;
+      if (s == "comment") return CrateFieldId::Comment;
+      if (s == "connectionPaths") return CrateFieldId::ConnectionPaths;
+      if (s == "connectionChildren") return CrateFieldId::ConnectionChildren;
+      if (s == "connectability") return CrateFieldId::Connectability;
+      if (s == "colorSpace") return CrateFieldId::ColorSpace;
+      if (s == "clips") return CrateFieldId::Clips;
+      break;
+    case 'd':
+      if (s == "default") return CrateFieldId::Default;
+      if (s == "defaultPrim") return CrateFieldId::DefaultPrim;
+      if (s == "displayName") return CrateFieldId::DisplayName;
+      if (s == "displayGroup") return CrateFieldId::DisplayGroup;
+      if (s == "documentation") return CrateFieldId::Documentation;
+      break;
+    case 'e':
+      if (s == "elementSize") return CrateFieldId::ElementSize;
+      if (s == "endTimeCode") return CrateFieldId::EndTimeCode;
+      break;
+    case 'f':
+      if (s == "framesPerSecond") return CrateFieldId::FramesPerSecond;
+      break;
+    case 'h':
+      if (s == "hidden") return CrateFieldId::Hidden;
+      break;
+    case 'i':
+      if (s == "interpolation") return CrateFieldId::Interpolation;
+      if (s == "instanceable") return CrateFieldId::Instanceable;
+      if (s == "inherits") return CrateFieldId::Inherits;
+      if (s == "inheritPaths") return CrateFieldId::InheritPaths;
+      break;
+    case 'k':
+      if (s == "kind") return CrateFieldId::Kind;
+      if (s == "kilogramsPerUnit") return CrateFieldId::KilogramsPerUnit;
+      break;
+    case 'm':
+      if (s == "metersPerUnit") return CrateFieldId::MetersPerUnit;
+      break;
+    case 'o':
+      if (s == "outputName") return CrateFieldId::OutputName;
+      break;
+    case 'p':
+      if (s == "properties") return CrateFieldId::Properties;
+      if (s == "primChildren") return CrateFieldId::PrimChildren;
+      if (s == "payload") return CrateFieldId::Payload;
+      if (s == "playbackMode") return CrateFieldId::PlaybackMode;
+      if (s == "permission") return CrateFieldId::Permission;
+      break;
+    case 'r':
+      if (s == "renderType") return CrateFieldId::RenderType;
+      if (s == "references") return CrateFieldId::References;
+      break;
+    case 's':
+      if (s == "specifier") return CrateFieldId::Specifier;
+      if (s == "startTimeCode") return CrateFieldId::StartTimeCode;
+      if (s == "subLayers") return CrateFieldId::SubLayers;
+      if (s == "subLayerOffsets") return CrateFieldId::SubLayerOffsets;
+      if (s == "sdrMetadata") return CrateFieldId::SdrMetadata;
+      if (s == "specializes") return CrateFieldId::Specializes;
+      if (s == "sceneName") return CrateFieldId::SceneName;
+      break;
+    case 't':
+      if (s == "typeName") return CrateFieldId::TypeName;
+      if (s == "timeSamples") return CrateFieldId::TimeSamples;
+      if (s == "targetPaths") return CrateFieldId::TargetPaths;
+      if (s == "targetChildren") return CrateFieldId::TargetChildren;
+      if (s == "timeCodesPerSecond") return CrateFieldId::TimeCodesPerSecond;
+      break;
+    case 'u':
+      if (s == "upAxis") return CrateFieldId::UpAxis;
+      if (s == "unauthoredValuesIndex") return CrateFieldId::UnauthoredValuesIndex;
+      break;
+    case 'v':
+      if (s == "variability") return CrateFieldId::Variability;
+      if (s == "variantSelection") return CrateFieldId::VariantSelection;
+      if (s == "variantChildren") return CrateFieldId::VariantChildren;
+      if (s == "variantSetChildren") return CrateFieldId::VariantSetChildren;
+      if (s == "variantSetNames") return CrateFieldId::VariantSetNames;
+      break;
+    case 'w':
+      if (s == "weight") return CrateFieldId::Weight;
+      break;
+  }
+  return CrateFieldId::Unknown;
+}
+
+const char *FieldIdToString(CrateFieldId id) {
+  switch (id) {
+    case CrateFieldId::Unknown: return "(unknown)";
+    case CrateFieldId::TypeName: return "typeName";
+    case CrateFieldId::Custom: return "custom";
+    case CrateFieldId::Variability: return "variability";
+    case CrateFieldId::Default: return "default";
+    case CrateFieldId::TimeSamples: return "timeSamples";
+    case CrateFieldId::Interpolation: return "interpolation";
+    case CrateFieldId::ConnectionPaths: return "connectionPaths";
+    case CrateFieldId::TargetPaths: return "targetPaths";
+    case CrateFieldId::Hidden: return "hidden";
+    case CrateFieldId::ElementSize: return "elementSize";
+    case CrateFieldId::Weight: return "weight";
+    case CrateFieldId::BindMaterialAs: return "bindMaterialAs";
+    case CrateFieldId::TargetChildren: return "targetChildren";
+    case CrateFieldId::ConnectionChildren: return "connectionChildren";
+    case CrateFieldId::Connectability: return "connectability";
+    case CrateFieldId::OutputName: return "outputName";
+    case CrateFieldId::RenderType: return "renderType";
+    case CrateFieldId::SdrMetadata: return "sdrMetadata";
+    case CrateFieldId::CustomData: return "customData";
+    case CrateFieldId::Comment: return "comment";
+    case CrateFieldId::ColorSpace: return "colorSpace";
+    case CrateFieldId::DisplayName: return "displayName";
+    case CrateFieldId::DisplayGroup: return "displayGroup";
+    case CrateFieldId::UnauthoredValuesIndex: return "unauthoredValuesIndex";
+    case CrateFieldId::AllowedTokens: return "allowedTokens";
+    case CrateFieldId::Permission: return "permission";
+    case CrateFieldId::UpAxis: return "upAxis";
+    case CrateFieldId::MetersPerUnit: return "metersPerUnit";
+    case CrateFieldId::KilogramsPerUnit: return "kilogramsPerUnit";
+    case CrateFieldId::TimeCodesPerSecond: return "timeCodesPerSecond";
+    case CrateFieldId::StartTimeCode: return "startTimeCode";
+    case CrateFieldId::SubLayers: return "subLayers";
+    case CrateFieldId::SubLayerOffsets: return "subLayerOffsets";
+    case CrateFieldId::EndTimeCode: return "endTimeCode";
+    case CrateFieldId::FramesPerSecond: return "framesPerSecond";
+    case CrateFieldId::AutoPlay: return "autoPlay";
+    case CrateFieldId::PlaybackMode: return "playbackMode";
+    case CrateFieldId::DefaultPrim: return "defaultPrim";
+    case CrateFieldId::CustomLayerData: return "customLayerData";
+    case CrateFieldId::PrimChildren: return "primChildren";
+    case CrateFieldId::Documentation: return "documentation";
+    case CrateFieldId::Specifier: return "specifier";
+    case CrateFieldId::Properties: return "properties";
+    case CrateFieldId::Active: return "active";
+    case CrateFieldId::Instanceable: return "instanceable";
+    case CrateFieldId::AssetInfo: return "assetInfo";
+    case CrateFieldId::Clips: return "clips";
+    case CrateFieldId::Kind: return "kind";
+    case CrateFieldId::ApiSchemas: return "apiSchemas";
+    case CrateFieldId::VariantSelection: return "variantSelection";
+    case CrateFieldId::VariantChildren: return "variantChildren";
+    case CrateFieldId::VariantSetChildren: return "variantSetChildren";
+    case CrateFieldId::VariantSetNames: return "variantSetNames";
+    case CrateFieldId::SceneName: return "sceneName";
+    case CrateFieldId::Inherits: return "inherits";
+    case CrateFieldId::References: return "references";
+    case CrateFieldId::Payload: return "payload";
+    case CrateFieldId::Specializes: return "specializes";
+    case CrateFieldId::InheritPaths: return "inheritPaths";
+  }
+  return "(unknown)";
+}
+
 }  // namespace crate
 }  // namespace tinyusdz

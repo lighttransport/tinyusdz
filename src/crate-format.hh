@@ -173,6 +173,12 @@ struct Index {
   bool operator!=(const Index &other) const { return !(*this == other); }
   bool operator<(const Index &other) const { return value < other.value; }
   uint32_t value;
+
+  struct Hash {
+    size_t operator()(const Index &idx) const {
+      return std::hash<uint32_t>()(idx.value);
+    }
+  };
 };
 
 // Value in file representation.  Consists of a 2 bytes of type information
@@ -555,8 +561,44 @@ class CrateValue {
   bool _deferred{false};
 };
 
-// In-memory storage for a single "spec" -- prim, property, etc.
-using FieldValuePair = std::pair<std::string, crate::CrateValue>;
+/// Enum for fast comparison of known Crate field names.
+/// Assigned during BuildLiveFieldSets; Unknown for unrecognized field names.
+enum class CrateFieldId : uint16_t {
+  Unknown = 0,
+  // Property fields
+  TypeName, Custom, Variability, Default, TimeSamples, Interpolation,
+  ConnectionPaths, TargetPaths, Hidden, ElementSize, Weight, BindMaterialAs,
+  TargetChildren, ConnectionChildren, Connectability, OutputName, RenderType,
+  SdrMetadata, CustomData, Comment, ColorSpace, DisplayName, DisplayGroup,
+  UnauthoredValuesIndex, AllowedTokens, Permission,
+  // Stage meta fields
+  UpAxis, MetersPerUnit, KilogramsPerUnit, TimeCodesPerSecond, StartTimeCode,
+  SubLayers, SubLayerOffsets, EndTimeCode, FramesPerSecond, AutoPlay,
+  PlaybackMode, DefaultPrim, CustomLayerData, PrimChildren, Documentation,
+  // Prim spec fields
+  Specifier, Properties, Active, Instanceable, AssetInfo, Clips, Kind,
+  ApiSchemas, VariantSelection, VariantChildren, VariantSetChildren,
+  VariantSetNames, SceneName, Inherits, References, Payload, Specializes,
+  InheritPaths,
+};
+
+CrateFieldId StringToFieldId(const std::string &name);
+const char *FieldIdToString(CrateFieldId id);
+
+/// In-memory storage for a single "spec" field -- prim, property, etc.
+/// Uses field_id for fast dispatch; first is kept for error messages and
+/// unrecognized field names.
+struct FieldValuePair {
+  std::string first;     ///< Field name string
+  CrateValue second;     ///< Decoded (or deferred) value
+  CrateFieldId field_id{CrateFieldId::Unknown};
+
+  FieldValuePair() = default;
+  FieldValuePair(std::string name, CrateValue val)
+    : first(std::move(name)), second(std::move(val)) {}
+  FieldValuePair(std::string name, CrateValue val, CrateFieldId id)
+    : first(std::move(name)), second(std::move(val)), field_id(id) {}
+};
 using FieldValuePairVector = std::vector<FieldValuePair>;
 
 struct StdHashWrapper {

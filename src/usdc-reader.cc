@@ -488,6 +488,21 @@ class USDCReader::Impl {
     return false;
   }
 
+  // Zero-copy path accessors — return pointer to vector element, no copy
+  const Path *GetPathPtr(crate::Index index) const {
+    if (index.value < _paths->size()) {
+      return &(*_paths)[index.value];
+    }
+    return nullptr;
+  }
+
+  const Path *GetElemPathPtr(crate::Index index) const {
+    if (index.value < _elemPaths->size()) {
+      return &(*_elemPaths)[index.value];
+    }
+    return nullptr;
+  }
+
   // Use const references to avoid copying data from crate_reader when possible
   // NOTE: These are only valid while crate_reader exists
   const std::vector<crate::CrateReader::Node> *_nodes = nullptr;
@@ -498,7 +513,7 @@ class USDCReader::Impl {
   const std::vector<Path> *_paths = nullptr;
   const std::vector<Path> *_elemPaths = nullptr;
 
-  std::map<crate::Index, crate::FieldValuePairVector>
+  std::unordered_map<crate::Index, crate::FieldValuePairVector, crate::Index::Hash>
       *_live_fieldsets = nullptr;  // <fieldset index, List of field with unpacked Values>
 
   // Pre-computed reference counts for each fieldset_index.
@@ -555,7 +570,7 @@ bool USDCReader::Impl::ReconstructGeomSubset(
   DCOUT("Reconstruct GeomSubset");
 
   for (const auto &fv : fields) {
-    if (fv.first == "properties") {
+    if (fv.field_id == crate::CrateFieldId::Properties) {
       FIELDVALUE_DATATYPE_CHECK(fv, "properties", crate::kTokenVector)
 
       // for (size_t i = 0; i < fv.second.GetStringArray().size(); i++) {
@@ -598,14 +613,14 @@ bool USDCReader::Impl::ReconstructGeomSubset(
                              << ", prop part: " << path.prop_part()
                              << ", spec_index = " << spec_index);
 
-    if (!_live_fieldsets->count(spec.fieldset_index)) {
+    auto fs_it = _live_fieldsets->find(spec.fieldset_index);
+    if (fs_it == _live_fieldsets->end()) {
       _err += "FieldSet id: " + std::to_string(spec.fieldset_index.value) +
               " must exist in live fieldsets.\n";
       return false;
     }
 
-    FieldValuePairVector &child_fields =
-        _live_fieldsets->at(spec.fieldset_index);
+    FieldValuePairVector &child_fields = fs_it->second;
 
     // Resolve any deferred (lazy-loaded) values in this fieldset
     for (auto &fv : child_fields) {
@@ -903,24 +918,24 @@ bool USDCReader::Impl::BuildPropertyMap(const std::vector<size_t> &pathIndices,
       continue;
     }
 
-    nonstd::optional<Path> path = GetPath(spec.path_index);
+    const Path *path = GetPathPtr(spec.path_index);
 
     if (!path) {
       PUSH_ERROR_AND_RETURN_TAG(kTag, "Invalid PathIndex.");
     }
 
-    DCOUT("Path prim part: " << path.value().prim_part()
-                             << ", prop part: " << path.value().prop_part()
+    DCOUT("Path prim part: " << path->prim_part()
+                             << ", prop part: " << path->prop_part()
                              << ", spec_index = " << spec_index);
 
-    if (!_live_fieldsets->count(spec.fieldset_index)) {
+    auto fs_it = _live_fieldsets->find(spec.fieldset_index);
+    if (fs_it == _live_fieldsets->end()) {
       PUSH_ERROR("FieldSet id: " + std::to_string(spec.fieldset_index.value) +
                  " must exist in live fieldsets.");
       return false;
     }
 
-    crate::FieldValuePairVector &child_fvs =
-        _live_fieldsets->at(spec.fieldset_index);
+    crate::FieldValuePairVector &child_fvs = fs_it->second;
 
     // Resolve any deferred (lazy-loaded) values in this fieldset before processing
     for (auto &fv : child_fvs) {
@@ -943,9 +958,9 @@ bool USDCReader::Impl::BuildPropertyMap(const std::vector<size_t> &pathIndices,
     }
 
     {
-      std::string prop_name = path.value().prop_part();
+      std::string prop_name = path->prop_part();
       if (prop_name.empty()) {
-        DCOUT("path = " << dump_path(path.value()));
+        DCOUT("path = " << dump_path(*path));
         // ???
         PUSH_ERROR_AND_RETURN_TAG(kTag, "Property Prop.PropPart is empty");
       }
@@ -1040,7 +1055,7 @@ bool USDCReader::Impl::ParseProperty(const SpecType spec_type,
 
   // first detect typeName
   for (auto &fv : fvs) {
-    if (fv.first == "typeName") {
+    if (fv.field_id == crate::CrateFieldId::TypeName) {
       if (auto pv = fv.second.get_value<value::token>()) {
         DCOUT("  typeName = " << pv.value().str());
         typeName = pv.value();
@@ -1066,14 +1081,14 @@ bool USDCReader::Impl::ParseProperty(const SpecType spec_type,
       //DCOUT(">>> Comparing with 'timeSamples': matches = " << matches);
     }
 
-    if (fv.first == "custom") {
+    if (fv.field_id == crate::CrateFieldId::Custom) {
       if (auto pv = fv.second.get_value<bool>()) {
         custom = pv.value();
         DCOUT("  custom = " << pv.value());
       } else {
         PUSH_ERROR_AND_RETURN_TAG(kTag, "`custom` field is not `bool` type.");
       }
-    } else if (fv.first == "variability") {
+    } else if (fv.field_id == crate::CrateFieldId::Variability) {
       if (auto pv = fv.second.get_value<Variability>()) {
         variability = pv.value();
         DCOUT("  variability = " << to_string(variability.value()));
@@ -1081,19 +1096,20 @@ bool USDCReader::Impl::ParseProperty(const SpecType spec_type,
         PUSH_ERROR_AND_RETURN_TAG(
             kTag, "`variability` field is not `varibility` type.");
       }
-    } else if (fv.first == "typeName") {
+    } else if (fv.field_id == crate::CrateFieldId::TypeName) {
       // 'typeName' is already processed. nothing to do here.
       continue;
-    } else if (fv.first == "default") {
+    } else if (fv.field_id == crate::CrateFieldId::Default) {
       //propType = Property::Type::Attrib;
 
       // Set scalar(non-timesampled) value
       //TUSDZ_LOG_I("defaultValue");
 
-      // TODO: Use move
-      // FYI: This doesn't work 
-      //defaultValue = std::move(*const_cast<value::Value *>(fv.second.get_raw_ptr()));
-      defaultValue = static_cast<const crate::CrateValue &>(fv.second).get_raw();
+      if (can_move) {
+        defaultValue = std::move(fv.second.get_raw());
+      } else {
+        defaultValue = static_cast<const crate::CrateValue &>(fv.second).get_raw();
+      }
       //TUSDZ_LOG_I("defaultValue end");
       hasDefault = true;
 
@@ -1115,7 +1131,7 @@ bool USDCReader::Impl::ParseProperty(const SpecType spec_type,
         }
       }
 
-    } else if (fv.first == "timeSamples") {
+    } else if (fv.field_id == crate::CrateFieldId::TimeSamples) {
       //propType = Property::Type::Attrib;
       DCOUT(">>> Entering timeSamples block");
 
@@ -1188,7 +1204,7 @@ bool USDCReader::Impl::ParseProperty(const SpecType spec_type,
         PUSH_ERROR_AND_RETURN_TAG(kTag,
                                   "`timeSamples` is not TimeSamples data.");
       }
-    } else if (fv.first == "interpolation") {
+    } else if (fv.field_id == crate::CrateFieldId::Interpolation) {
       //propType = Property::Type::Attrib;
 
       if (auto pv = fv.second.get_value<value::token>()) {
@@ -1203,7 +1219,7 @@ bool USDCReader::Impl::ParseProperty(const SpecType spec_type,
         PUSH_ERROR_AND_RETURN_TAG(kTag,
                                   "`interpolation` field is not `token` type.");
       }
-    } else if (fv.first == "connectionPaths") {
+    } else if (fv.field_id == crate::CrateFieldId::ConnectionPaths) {
       // Attribute connection(.connect)
       //propType = Property::Type::Connection;
       hasConnectionPaths = true;
@@ -1230,7 +1246,7 @@ bool USDCReader::Impl::ParseProperty(const SpecType spec_type,
         PUSH_ERROR_AND_RETURN_TAG(
             kTag, "`connectionPaths` field is not `ListOp[Path]` type.");
       }
-    } else if (fv.first == "targetPaths") {
+    } else if (fv.field_id == crate::CrateFieldId::TargetPaths) {
       // `rel`
       //propType = Property::Type::Relation;
       hasTargetPaths = true;
@@ -1279,7 +1295,7 @@ bool USDCReader::Impl::ParseProperty(const SpecType spec_type,
             kTag, "`targetPaths` field is not `ListOp[Path]` or ValueBlock type.");
       }
 
-    } else if (fv.first == "hidden") {
+    } else if (fv.field_id == crate::CrateFieldId::Hidden) {
       // Attribute hidden param
       if (auto pv = fv.second.get_value<bool>()) {
         auto p = pv.value();
@@ -1291,7 +1307,7 @@ bool USDCReader::Impl::ParseProperty(const SpecType spec_type,
         PUSH_ERROR_AND_RETURN_TAG(kTag,
                                   "`elementSize` field is not `int` type.");
       }
-    } else if (fv.first == "elementSize") {
+    } else if (fv.field_id == crate::CrateFieldId::ElementSize) {
       // Attribute Meta
       if (auto pv = fv.second.get_value<int>()) {
         auto p = pv.value();
@@ -1309,7 +1325,7 @@ bool USDCReader::Impl::ParseProperty(const SpecType spec_type,
         PUSH_ERROR_AND_RETURN_TAG(kTag,
                                   "`elementSize` field is not `int` type.");
       }
-    } else if (fv.first == "weight") {
+    } else if (fv.field_id == crate::CrateFieldId::Weight) {
       // pxrUSD uses float type.
       if (auto pv = fv.second.get_value<float>()) {
         auto p = pv.value();
@@ -1321,7 +1337,7 @@ bool USDCReader::Impl::ParseProperty(const SpecType spec_type,
         PUSH_ERROR_AND_RETURN_TAG(kTag,
                                   "`weight` field is not `float` type.");
       }
-    } else if (fv.first == "bindMaterialAs") {
+    } else if (fv.field_id == crate::CrateFieldId::BindMaterialAs) {
       // Attribute Meta
       if (auto pv = fv.second.get_value<value::token>()) {
         auto p = pv.value();
@@ -1338,7 +1354,7 @@ bool USDCReader::Impl::ParseProperty(const SpecType spec_type,
         PUSH_ERROR_AND_RETURN_TAG(kTag,
                                   "`bindMaterialAs` field is not `token` type.");
       }
-    } else if (fv.first == "targetChildren") {
+    } else if (fv.field_id == crate::CrateFieldId::TargetChildren) {
       // `targetChildren` seems optionally exist to validate the existence of
       // target Paths when `targetPaths` field exists.
       // TODO: validate path of `targetChildren`
@@ -1353,7 +1369,7 @@ bool USDCReader::Impl::ParseProperty(const SpecType spec_type,
         PUSH_ERROR_AND_RETURN_TAG(
             kTag, "`targetChildren` field is not `PathVector` type.");
       }
-    } else if (fv.first == "connectionChildren") {
+    } else if (fv.field_id == crate::CrateFieldId::ConnectionChildren) {
       // `connectionChildren` seems optionally exist to validate the existence
       // of connection Paths when `connectiontPaths` field exists.
       // TODO: validate path of `connetionChildren`
@@ -1367,7 +1383,7 @@ bool USDCReader::Impl::ParseProperty(const SpecType spec_type,
         PUSH_ERROR_AND_RETURN_TAG(
             kTag, "`connectionChildren` field is not `PathVector` type.");
       }
-    } else if (fv.first == "connectability") {
+    } else if (fv.field_id == crate::CrateFieldId::Connectability) {
       if (auto pv = fv.second.get_value<value::token>()) {
         connectability = pv.value();
       } else {
@@ -1375,7 +1391,7 @@ bool USDCReader::Impl::ParseProperty(const SpecType spec_type,
             kTag, "`connectability` must be type `token`, but got type `"
                       << fv.second.type_name() << "`");
       }
-    } else if (fv.first == "outputName") {
+    } else if (fv.field_id == crate::CrateFieldId::OutputName) {
       if (auto pv = fv.second.get_value<value::token>()) {
         outputName = pv.value();
       } else {
@@ -1383,7 +1399,7 @@ bool USDCReader::Impl::ParseProperty(const SpecType spec_type,
             kTag, "`outputName` must be type `token`, but got type `"
                       << fv.second.type_name() << "`");
       }
-    } else if (fv.first == "renderType") {
+    } else if (fv.field_id == crate::CrateFieldId::RenderType) {
       if (auto pv = fv.second.get_value<value::token>()) {
         renderType = pv.value();
       } else {
@@ -1391,7 +1407,7 @@ bool USDCReader::Impl::ParseProperty(const SpecType spec_type,
             kTag, "`renderType` must be type `token`, but got type `"
                       << fv.second.type_name() << "`");
       }
-    } else if (fv.first == "sdrMetadata") {
+    } else if (fv.field_id == crate::CrateFieldId::SdrMetadata) {
       if (auto pv = fv.second.get_value<CustomDataType>()) {
         sdrMetadata = pv.value();
       } else {
@@ -1399,7 +1415,7 @@ bool USDCReader::Impl::ParseProperty(const SpecType spec_type,
             kTag, "`sdrMetadata` must be type `dictionary`, but got type `"
                       << fv.second.type_name() << "`");
       }
-    } else if (fv.first == "customData") {
+    } else if (fv.field_id == crate::CrateFieldId::CustomData) {
       // CustomData(dict)
       if (auto pv = fv.second.get_value<CustomDataType>()) {
         customData = pv.value();
@@ -1408,7 +1424,7 @@ bool USDCReader::Impl::ParseProperty(const SpecType spec_type,
             kTag, "`customData` must be type `dictionary`, but got type `"
                       << fv.second.type_name() << "`");
       }
-    } else if (fv.first == "comment") {
+    } else if (fv.field_id == crate::CrateFieldId::Comment) {
       if (auto pv = fv.second.get_value<std::string>()) {
         value::StringData s;
         s.value = pv.value();
@@ -1420,7 +1436,7 @@ bool USDCReader::Impl::ParseProperty(const SpecType spec_type,
                       << fv.second.type_name() << "`");
       }
 
-    } else if (fv.first == "colorSpace") {
+    } else if (fv.field_id == crate::CrateFieldId::ColorSpace) {
       if (auto pv = fv.second.get_value<value::token>()) {
         meta.set_colorSpace(pv.value());
       } else {
@@ -1428,7 +1444,7 @@ bool USDCReader::Impl::ParseProperty(const SpecType spec_type,
             kTag, "`colorSpace` must be type `token`, but got type `"
                       << fv.second.type_name() << "`");
       }
-    } else if (fv.first == "displayName") {
+    } else if (fv.field_id == crate::CrateFieldId::DisplayName) {
       if (auto pv = fv.second.get_value<std::string>()) {
         meta.set_displayName(pv.value());
       } else {
@@ -1436,7 +1452,7 @@ bool USDCReader::Impl::ParseProperty(const SpecType spec_type,
             kTag, "`displayName` must be type `string`, but got type `"
                       << fv.second.type_name() << "`");
       }
-    } else if (fv.first == "displayGroup") {
+    } else if (fv.field_id == crate::CrateFieldId::DisplayGroup) {
       if (auto pv = fv.second.get_value<std::string>()) {
         meta.set_displayGroup(pv.value());
       } else {
@@ -1444,7 +1460,7 @@ bool USDCReader::Impl::ParseProperty(const SpecType spec_type,
             kTag, "`displayGroup` must be type `string`, but got type `"
                       << fv.second.type_name() << "`");
       }
-    } else if (fv.first == "unauthoredValuesIndex") {
+    } else if (fv.field_id == crate::CrateFieldId::UnauthoredValuesIndex) {
       if (auto pv = fv.second.get_value<int>()) {
         meta.set_unauthoredValuesIndex(pv.value());
       } else {
@@ -1690,7 +1706,7 @@ bool USDCReader::Impl::ReconstrcutStageMeta(
   std::vector<LayerOffset> subLayerOffsets;
 
   for (const auto &fv : fvs) {
-    if (fv.first == "upAxis") {
+    if (fv.field_id == crate::CrateFieldId::UpAxis) {
       auto vt = fv.second.get_value<value::token>();
       if (!vt) {
         PUSH_ERROR_AND_RETURN("`upAxis` must be `token` type.");
@@ -1709,7 +1725,7 @@ bool USDCReader::Impl::ReconstrcutStageMeta(
       }
       DCOUT("upAxis = " << to_string(metas->upAxis.get_value()));
 
-    } else if (fv.first == "metersPerUnit") {
+    } else if (fv.field_id == crate::CrateFieldId::MetersPerUnit) {
       if (auto vf = fv.second.get_value<float>()) {
         metas->metersPerUnit = double(vf.value());
       } else if (auto vd = fv.second.get_value<double>()) {
@@ -1720,7 +1736,7 @@ bool USDCReader::Impl::ReconstrcutStageMeta(
             fv.second.type_name() + "'");
       }
       DCOUT("metersPerUnit = " << metas->metersPerUnit.get_value());
-    } else if (fv.first == "kilogramsPerUnit") {
+    } else if (fv.field_id == crate::CrateFieldId::KilogramsPerUnit) {
       if (auto vf = fv.second.get_value<float>()) {
         metas->kilogramsPerUnit = double(vf.value());
       } else if (auto vd = fv.second.get_value<double>()) {
@@ -1731,7 +1747,7 @@ bool USDCReader::Impl::ReconstrcutStageMeta(
             fv.second.type_name() + "'");
       }
       DCOUT("kilogramsPerUnit = " << metas->kilogramsPerUnit.get_value());
-    } else if (fv.first == "timeCodesPerSecond") {
+    } else if (fv.field_id == crate::CrateFieldId::TimeCodesPerSecond) {
       if (auto vf = fv.second.get_value<float>()) {
         metas->timeCodesPerSecond = double(vf.value());
       } else if (auto vd = fv.second.get_value<double>()) {
@@ -1743,7 +1759,7 @@ bool USDCReader::Impl::ReconstrcutStageMeta(
             fv.second.type_name() + "'");
       }
       DCOUT("timeCodesPerSecond = " << metas->timeCodesPerSecond.get_value());
-    } else if (fv.first == "startTimeCode") {
+    } else if (fv.field_id == crate::CrateFieldId::StartTimeCode) {
       if (auto vf = fv.second.get_value<float>()) {
         metas->startTimeCode = double(vf.value());
       } else if (auto vd = fv.second.get_value<double>()) {
@@ -1755,7 +1771,7 @@ bool USDCReader::Impl::ReconstrcutStageMeta(
             fv.second.type_name() + "'");
       }
       DCOUT("startimeCode = " << metas->startTimeCode.get_value());
-    } else if (fv.first == "subLayers") {
+    } else if (fv.field_id == crate::CrateFieldId::SubLayers) {
       if (auto vs = fv.second.get_value<std::vector<std::string>>()) {
         subLayers = vs.value();
       } else {
@@ -1764,7 +1780,7 @@ bool USDCReader::Impl::ReconstrcutStageMeta(
             "type, but got '" +
             fv.second.type_name() + "'");
       }
-    } else if (fv.first == "subLayerOffsets") {
+    } else if (fv.field_id == crate::CrateFieldId::SubLayerOffsets) {
       if (auto vs = fv.second.get_value<std::vector<LayerOffset>>()) {
         subLayerOffsets = vs.value();
       } else {
@@ -1773,7 +1789,7 @@ bool USDCReader::Impl::ReconstrcutStageMeta(
             "type, but got '" +
             fv.second.type_name() + "'");
       }
-    } else if (fv.first == "endTimeCode") {
+    } else if (fv.field_id == crate::CrateFieldId::EndTimeCode) {
       if (auto vf = fv.second.get_value<float>()) {
         metas->endTimeCode = double(vf.value());
       } else if (auto vd = fv.second.get_value<double>()) {
@@ -1785,7 +1801,7 @@ bool USDCReader::Impl::ReconstrcutStageMeta(
             fv.second.type_name() + "'");
       }
       DCOUT("endTimeCode = " << metas->endTimeCode.get_value());
-    } else if (fv.first == "framesPerSecond") {
+    } else if (fv.field_id == crate::CrateFieldId::FramesPerSecond) {
       if (auto vf = fv.second.get_value<float>()) {
         metas->framesPerSecond = double(vf.value());
       } else if (auto vd = fv.second.get_value<double>()) {
@@ -1797,7 +1813,7 @@ bool USDCReader::Impl::ReconstrcutStageMeta(
             fv.second.type_name() + "'");
       }
       DCOUT("framesPerSecond = " << metas->framesPerSecond.get_value());
-    } else if (fv.first == "autoPlay") {
+    } else if (fv.field_id == crate::CrateFieldId::AutoPlay) {
       if (auto vf = fv.second.get_value<bool>()) {
         metas->autoPlay = vf.value();
       } else if (auto vs = fv.second.get_value<std::string>()) {
@@ -1819,7 +1835,7 @@ bool USDCReader::Impl::ReconstrcutStageMeta(
             fv.second.type_name() + "'");
       }
       DCOUT("autoPlay = " << metas->autoPlay.get_value());
-    } else if (fv.first == "playbackMode") {
+    } else if (fv.field_id == crate::CrateFieldId::PlaybackMode) {
       if (auto vf = fv.second.get_value<value::token>()) {
         if (vf.value().str() == "none") {
           metas->playbackMode = StageMetas::PlaybackMode::PlaybackModeNone;
@@ -1844,7 +1860,7 @@ bool USDCReader::Impl::ReconstrcutStageMeta(
             "type, but got '" +
             fv.second.type_name() + "'");
       }
-    } else if ((fv.first == "defaultPrim")) {
+    } else if ((fv.field_id == crate::CrateFieldId::DefaultPrim)) {
       auto v = fv.second.get_value<value::token>();
       if (!v) {
         PUSH_ERROR_AND_RETURN("`defaultPrim` must be `token` type.");
@@ -1852,7 +1868,7 @@ bool USDCReader::Impl::ReconstrcutStageMeta(
 
       metas->defaultPrim = v.value();
       DCOUT("defaultPrim = " << metas->defaultPrim.str());
-    } else if (fv.first == "customLayerData") {
+    } else if (fv.field_id == crate::CrateFieldId::CustomLayerData) {
       if (auto v = fv.second.get_value<CustomDataType>()) {
         metas->customLayerData = v.value();
       } else {
@@ -1860,7 +1876,7 @@ bool USDCReader::Impl::ReconstrcutStageMeta(
             "customLayerData must be `dictionary` type, but got type `" +
             fv.second.type_name());
       }
-    } else if (fv.first == "primChildren") {  // only appears in USDC.
+    } else if (fv.field_id == crate::CrateFieldId::PrimChildren) {  // only appears in USDC.
       auto v = fv.second.get_value<std::vector<value::token>>();
       if (!v) {
         PUSH_ERROR_AND_RETURN("Type must be `token[]` for `primChildren`, but got " +
@@ -1868,7 +1884,7 @@ bool USDCReader::Impl::ReconstrcutStageMeta(
       }
 
       metas->primChildren = v.value();
-    } else if (fv.first == "documentation") {  // 'doc'
+    } else if (fv.field_id == crate::CrateFieldId::Documentation) {  // 'doc'
       auto v = fv.second.get_value<std::string>();
       if (!v) {
         PUSH_ERROR_AND_RETURN("Type must be `string` for `documentation`, but got " +
@@ -1879,7 +1895,7 @@ bool USDCReader::Impl::ReconstrcutStageMeta(
       sdata.is_triple_quoted = hasNewline(sdata.value);
       metas->doc = sdata;
       DCOUT("doc = " << metas->doc.value);
-    } else if (fv.first == "comment") {  // 'comment'
+    } else if (fv.field_id == crate::CrateFieldId::Comment) {  // 'comment'
       auto v = fv.second.get_value<std::string>();
       if (!v) {
         PUSH_ERROR_AND_RETURN("Type must be `string` for `comment`, but got " +
@@ -2040,7 +2056,7 @@ bool USDCReader::Impl::ParsePrimSpec(const crate::FieldValuePairVector &fvs,
                                      PrimMeta &primMeta) {
   // Fields for Prim and Prim metas.
   for (const auto &fv : fvs) {
-    if (fv.first == "typeName") {
+    if (fv.field_id == crate::CrateFieldId::TypeName) {
       if (auto pv = fv.second.as<value::token>()) {
         typeName = pv->str();
         DCOUT("typeName = " << typeName.value());
@@ -2049,7 +2065,7 @@ bool USDCReader::Impl::ParsePrimSpec(const crate::FieldValuePairVector &fvs,
             kTag, "`typeName` must be type `token`, but got type `"
                       << fv.second.type_name() << "`");
       }
-    } else if (fv.first == "specifier") {
+    } else if (fv.field_id == crate::CrateFieldId::Specifier) {
       if (auto pv = fv.second.as<Specifier>()) {
         specifier = (*pv);
         DCOUT("specifier = " << to_string(specifier.value()));
@@ -2058,7 +2074,7 @@ bool USDCReader::Impl::ParsePrimSpec(const crate::FieldValuePairVector &fvs,
             kTag, "`specifier` must be type `Specifier`, but got type `"
                       << fv.second.type_name() << "`");
       }
-    } else if (fv.first == "properties") {
+    } else if (fv.field_id == crate::CrateFieldId::Properties) {
       if (auto pv = fv.second.as<std::vector<value::token>>()) {
         properties = (*pv);
         DCOUT("properties = " << properties);
@@ -2067,7 +2083,7 @@ bool USDCReader::Impl::ParsePrimSpec(const crate::FieldValuePairVector &fvs,
             kTag, "`properties` must be type `token[]`, but got type `"
                       << fv.second.type_name() << "`");
       }
-    } else if (fv.first == "primChildren") {
+    } else if (fv.field_id == crate::CrateFieldId::PrimChildren) {
       // Crate only
       if (auto pv = fv.second.as<std::vector<value::token>>()) {
         primChildren = (*pv);
@@ -2076,7 +2092,7 @@ bool USDCReader::Impl::ParsePrimSpec(const crate::FieldValuePairVector &fvs,
             kTag, "`primChildren` must be type `token[]`, but got type `"
                       << fv.second.type_name() << "`");
       }
-    } else if (fv.first == "active") {
+    } else if (fv.field_id == crate::CrateFieldId::Active) {
       if (auto pv = fv.second.as<bool>()) {
         primMeta.set_active(*pv);
         DCOUT("active = " << to_string(primMeta.get_active()));
@@ -2085,7 +2101,7 @@ bool USDCReader::Impl::ParsePrimSpec(const crate::FieldValuePairVector &fvs,
                                   "`active` must be type `bool`, but got type `"
                                       << fv.second.type_name() << "`");
       }
-    } else if (fv.first == "hidden") {
+    } else if (fv.field_id == crate::CrateFieldId::Hidden) {
       if (auto pv = fv.second.as<bool>()) {
         primMeta.set_hidden(*pv);
         DCOUT("hidden = " << to_string(primMeta.get_hidden()));
@@ -2094,7 +2110,7 @@ bool USDCReader::Impl::ParsePrimSpec(const crate::FieldValuePairVector &fvs,
                                   "`hidden` must be type `bool`, but got type `"
                                       << fv.second.type_name() << "`");
       }
-    } else if (fv.first == "instanceable") {
+    } else if (fv.field_id == crate::CrateFieldId::Instanceable) {
       if (auto pv = fv.second.as<bool>()) {
         primMeta.set_instanceable(*pv);
         DCOUT("instanceable = " << to_string(primMeta.get_instanceable()));
@@ -2103,7 +2119,7 @@ bool USDCReader::Impl::ParsePrimSpec(const crate::FieldValuePairVector &fvs,
                                   "`instanceable` must be type `bool`, but got type `"
                                       << fv.second.type_name() << "`");
       }
-    } else if (fv.first == "assetInfo") {
+    } else if (fv.field_id == crate::CrateFieldId::AssetInfo) {
       // CustomData(dict)
       if (auto pv = fv.second.as<CustomDataType>()) {
         primMeta.set_assetInfo(*pv);
@@ -2112,7 +2128,7 @@ bool USDCReader::Impl::ParsePrimSpec(const crate::FieldValuePairVector &fvs,
             kTag, "`assetInfo` must be type `dictionary`, but got type `"
                       << fv.second.type_name() << "`");
       }
-    } else if (fv.first == "clips") {
+    } else if (fv.field_id == crate::CrateFieldId::Clips) {
       // CustomData(dict)
       if (auto pv = fv.second.as<CustomDataType>()) {
         primMeta.set_clips(*pv);
@@ -2121,7 +2137,7 @@ bool USDCReader::Impl::ParsePrimSpec(const crate::FieldValuePairVector &fvs,
             kTag, "`clips` must be type `dictionary`, but got type `"
                       << fv.second.type_name() << "`");
       }
-    } else if (fv.first == "kind") {
+    } else if (fv.field_id == crate::CrateFieldId::Kind) {
       if (auto pv = fv.second.as<value::token>()) {
 
           const value::token tok = (*pv);
@@ -2147,7 +2163,7 @@ bool USDCReader::Impl::ParsePrimSpec(const crate::FieldValuePairVector &fvs,
                                   "`kind` must be type `token`, but got type `"
                                       << fv.second.type_name() << "`");
       }
-    } else if (fv.first == "apiSchemas") {
+    } else if (fv.field_id == crate::CrateFieldId::ApiSchemas) {
       if (auto pv = fv.second.as<ListOp<value::token>>()) {
         auto listop = (*pv);
 
@@ -2168,7 +2184,7 @@ bool USDCReader::Impl::ParsePrimSpec(const crate::FieldValuePairVector &fvs,
             kTag, "`apiSchemas` must be type `ListOp[Token]`, but got type `"
                       << fv.second.type_name() << "`");
       }
-    } else if (fv.first == "documentation") {
+    } else if (fv.field_id == crate::CrateFieldId::Documentation) {
       if (auto pv = fv.second.as<std::string>()) {
         value::StringData s;
         s.value = (*pv);
@@ -2179,7 +2195,7 @@ bool USDCReader::Impl::ParsePrimSpec(const crate::FieldValuePairVector &fvs,
             kTag, "`documentation` must be type `string`, but got type `"
                       << fv.second.type_name() << "`");
       }
-    } else if (fv.first == "comment") {
+    } else if (fv.field_id == crate::CrateFieldId::Comment) {
       if (auto pv = fv.second.as<std::string>()) {
         value::StringData s;
         s.value = (*pv);
@@ -2190,7 +2206,7 @@ bool USDCReader::Impl::ParsePrimSpec(const crate::FieldValuePairVector &fvs,
             kTag, "`comment` must be type `string`, but got type `"
                       << fv.second.type_name() << "`");
       }
-    } else if (fv.first == "sdrMetadata") {
+    } else if (fv.field_id == crate::CrateFieldId::SdrMetadata) {
       // CustomData(dict)
       if (auto pv = fv.second.as<CustomDataType>()) {
         // TODO: Check if all keys are string type.
@@ -2200,7 +2216,7 @@ bool USDCReader::Impl::ParsePrimSpec(const crate::FieldValuePairVector &fvs,
             kTag, "`sdrMetadata` must be type `dictionary`, but got type `"
                       << fv.second.type_name() << "`");
       }
-    } else if (fv.first == "customData") {
+    } else if (fv.field_id == crate::CrateFieldId::CustomData) {
       // CustomData(dict)
       if (auto pv = fv.second.as<CustomDataType>()) {
         primMeta.set_customData(*pv);
@@ -2209,7 +2225,7 @@ bool USDCReader::Impl::ParsePrimSpec(const crate::FieldValuePairVector &fvs,
             kTag, "`customData` must be type `dictionary`, but got type `"
                       << fv.second.type_name() << "`");
       }
-    } else if (fv.first == "variantSelection") {
+    } else if (fv.field_id == crate::CrateFieldId::VariantSelection) {
       if (auto pv = fv.second.as<VariantSelectionMap>()) {
         primMeta.variants = (*pv);
       } else {
@@ -2217,7 +2233,7 @@ bool USDCReader::Impl::ParsePrimSpec(const crate::FieldValuePairVector &fvs,
             kTag, "`variantSelection` must be type `variants`, but got type `"
                       << fv.second.type_name() << "`");
       }
-    } else if (fv.first == "variantChildren") {
+    } else if (fv.field_id == crate::CrateFieldId::VariantChildren) {
       // Used internally
       if (auto pv = fv.second.as<std::vector<value::token>>()) {
         primMeta.variantChildren = (*pv);
@@ -2227,7 +2243,7 @@ bool USDCReader::Impl::ParsePrimSpec(const crate::FieldValuePairVector &fvs,
                       << fv.second.type_name() << "`");
       }
 
-    } else if (fv.first == "variantSetChildren") {
+    } else if (fv.field_id == crate::CrateFieldId::VariantSetChildren) {
       // Used internally
       if (auto pv = fv.second.as<std::vector<value::token>>()) {
         primMeta.variantSetChildren = (*pv);
@@ -2237,7 +2253,7 @@ bool USDCReader::Impl::ParsePrimSpec(const crate::FieldValuePairVector &fvs,
                       << fv.second.type_name() << "`");
       }
 
-    } else if (fv.first == "variantSetNames") {
+    } else if (fv.field_id == crate::CrateFieldId::VariantSetNames) {
       // ListOp<string>
       if (auto pv = fv.second.as<ListOp<std::string>>()) {
         const ListOp<std::string> &p = *pv;
@@ -2253,7 +2269,7 @@ bool USDCReader::Impl::ParsePrimSpec(const crate::FieldValuePairVector &fvs,
             "`variantSetNames` must be type `ListOp[String]`, but got type `"
                 << fv.second.type_name() << "`");
       }
-    } else if (fv.first == "sceneName") {  // USDZ extension
+    } else if (fv.field_id == crate::CrateFieldId::SceneName) {  // USDZ extension
       if (auto pv = fv.second.as<std::string>()) {
         primMeta.set_sceneName(*pv);
       } else {
@@ -2261,7 +2277,7 @@ bool USDCReader::Impl::ParsePrimSpec(const crate::FieldValuePairVector &fvs,
             kTag, "`sceneName` must be type `string`, but got type `"
                       << fv.second.type_name() << "`");
       }
-    } else if (fv.first == "displayName") {  // USD supported since 23.xx?
+    } else if (fv.field_id == crate::CrateFieldId::DisplayName) {  // USD supported since 23.xx?
       if (auto pv = fv.second.as<std::string>()) {
         primMeta.set_displayName(*pv);
       } else {
@@ -2269,7 +2285,7 @@ bool USDCReader::Impl::ParsePrimSpec(const crate::FieldValuePairVector &fvs,
             kTag, "`displayName` must be type `string`, but got type `"
                       << fv.second.type_name() << "`");
       }
-    } else if (fv.first == "inherits") {  // `inherits` composition
+    } else if (fv.field_id == crate::CrateFieldId::Inherits) {  // `inherits` composition
       if (auto pvb = fv.second.as<value::ValueBlock>()) {
         (void)pvb;
         // make empty array
@@ -2290,7 +2306,7 @@ bool USDCReader::Impl::ParsePrimSpec(const crate::FieldValuePairVector &fvs,
                       << fv.second.type_name() << "`");
       }
 
-    } else if (fv.first == "references") {  // `references` composition
+    } else if (fv.field_id == crate::CrateFieldId::References) {  // `references` composition
       if (auto pvb = fv.second.as<value::ValueBlock>()) {
         (void)pvb;
         // make empty array
@@ -2311,7 +2327,7 @@ bool USDCReader::Impl::ParsePrimSpec(const crate::FieldValuePairVector &fvs,
             "`references` must be type `ListOp[Reference]`, but got type `"
                 << fv.second.type_name() << "`");
       }
-    } else if (fv.first == "payload") {  // `payload` composition
+    } else if (fv.field_id == crate::CrateFieldId::Payload) {  // `payload` composition
       if (auto pvb = fv.second.as<value::ValueBlock>()) {
         (void)pvb;
         // make empty array
@@ -2338,7 +2354,7 @@ bool USDCReader::Impl::ParsePrimSpec(const crate::FieldValuePairVector &fvs,
             "`payload` must be type `ListOp[Payload]`, but got type `"
                 << fv.second.type_name() << "`");
       }
-    } else if (fv.first == "specializes") {  // `specializes` composition
+    } else if (fv.field_id == crate::CrateFieldId::Specializes) {  // `specializes` composition
       if (auto pv = fv.second.as<ListOp<Path>>()) {
         const ListOp<Path> &p = *pv;
         DCOUT("specializes = " << to_string(p));
@@ -2352,7 +2368,7 @@ bool USDCReader::Impl::ParsePrimSpec(const crate::FieldValuePairVector &fvs,
             kTag, "`specializes` must be type `ListOp[Path]`, but got type `"
                       << fv.second.type_name() << "`");
       }
-    } else if (fv.first == "inheritPaths") {  // `inherits` composition (alternate field name)
+    } else if (fv.field_id == crate::CrateFieldId::InheritPaths) {  // `inherits` composition (alternate field name)
       if (auto pv = fv.second.as<ListOp<Path>>()) {
         const ListOp<Path> &p = *pv;
         DCOUT("inheritPaths = " << to_string(p));
@@ -2368,7 +2384,7 @@ bool USDCReader::Impl::ParsePrimSpec(const crate::FieldValuePairVector &fvs,
                       << fv.second.type_name() << "`");
       }
 
-    } else if (endsWith(fv.first, ".targetPaths")) {
+    } else if (fv.field_id == crate::CrateFieldId::Unknown && endsWith(fv.first, ".targetPaths")) {
       // Handle relationship target paths (e.g., "myRel.targetPaths")
       // Store as unregistered metadata for now (full relationship support would require Prim changes)
       if (auto pv = fv.second.as<std::vector<Path>>()) {
@@ -2410,7 +2426,7 @@ bool USDCReader::Impl::ParseVariantSetFields(
     std::vector<value::token> &variantChildren) {
   // Fields for Prim and Prim metas.
   for (const auto &fv : fvs) {
-    if (fv.first == "variantChildren") {
+    if (fv.field_id == crate::CrateFieldId::VariantChildren) {
       if (auto pv = fv.second.as<std::vector<value::token>>()) {
         variantChildren = (*pv);
         DCOUT("variantChildren: " << variantChildren);
@@ -2481,14 +2497,14 @@ bool USDCReader::Impl::ReconstructPrimNode(int parent, int current, int level,
     }
   }
 
-  if (!_live_fieldsets->count(spec.fieldset_index)) {
+  auto fs_it = _live_fieldsets->find(spec.fieldset_index);
+  if (fs_it == _live_fieldsets->end()) {
     PUSH_ERROR("FieldSet id: " + std::to_string(spec.fieldset_index.value) +
                " must exist in live fieldsets.");
     return false;
   }
 
-  crate::FieldValuePairVector &fvs =
-      _live_fieldsets->at(spec.fieldset_index);
+  crate::FieldValuePairVector &fvs = fs_it->second;
 
   // Resolve any deferred (lazy-loaded) values in this fieldset
   for (auto &fv : fvs) {
@@ -2524,8 +2540,8 @@ bool USDCReader::Impl::ReconstructPrimNode(int parent, int current, int level,
   // StageMeta = root only attributes.
   // TODO: Unify reconstrction code with USDAReder?
   if (current == 0) {
-    if (const auto &pv = GetElemPath(crate::Index(uint32_t(current)))) {
-      DCOUT("Root element path: " << pv.value().full_path_name());
+    if (GetElemPathPtr(crate::Index(uint32_t(current)))) {
+      DCOUT("Root element path: " << GetElemPathPtr(crate::Index(uint32_t(current)))->full_path_name());
     } else {
       PUSH_ERROR_AND_RETURN("(Internal error). Root Element Path not found.");
     }
@@ -2572,9 +2588,9 @@ bool USDCReader::Impl::ReconstructPrimNode(int parent, int current, int level,
 
       Path elemPath;
 
-      if (const auto &pv = GetElemPath(crate::Index(uint32_t(current)))) {
-        DCOUT(fmt::format("Element path: {}", pv.value().full_path_name()));
-        elemPath = pv.value();
+      if (const Path *pv = GetElemPathPtr(crate::Index(uint32_t(current)))) {
+        DCOUT(fmt::format("Element path: {}", pv->full_path_name()));
+        elemPath = *pv;
       } else {
         PUSH_ERROR_AND_RETURN_TAG(kTag,
                                   "(Internal errror) Element path not found.");
@@ -2662,8 +2678,8 @@ bool USDCReader::Impl::ReconstructPrimNode(int parent, int current, int level,
       Path elemPath;
       std::array<std::string, 2> toks;
 
-      if (const auto &pv = GetElemPath(crate::Index(uint32_t(current)))) {
-        elemPath = pv.value();
+      if (const Path *pv = GetElemPathPtr(crate::Index(uint32_t(current)))) {
+        elemPath = *pv;
 
         DCOUT(fmt::format("Element path: {}", dump_path(elemPath)));
 
@@ -2754,8 +2770,8 @@ bool USDCReader::Impl::ReconstructPrimNode(int parent, int current, int level,
       DCOUT("<== VariantFields end === ");
 
       Path elemPath;
-      if (const auto &pv = GetElemPath(crate::Index(uint32_t(current)))) {
-        elemPath = pv.value();
+      if (const Path *pv = GetElemPathPtr(crate::Index(uint32_t(current)))) {
+        elemPath = *pv;
         DCOUT(fmt::format("Element path: {}", elemPath.full_path_name()));
       } else {
         PUSH_ERROR_AND_RETURN_TAG(kTag,
@@ -2979,14 +2995,14 @@ bool USDCReader::Impl::ReconstructPrimSpecNode(int parent, int current, int leve
     }
   }
 
-  if (!_live_fieldsets->count(spec.fieldset_index)) {
+  auto fs_it = _live_fieldsets->find(spec.fieldset_index);
+  if (fs_it == _live_fieldsets->end()) {
     PUSH_ERROR("FieldSet id: " + std::to_string(spec.fieldset_index.value) +
                " must exist in live fieldsets.");
     return false;
   }
 
-  crate::FieldValuePairVector &fvs =
-      _live_fieldsets->at(spec.fieldset_index);
+  crate::FieldValuePairVector &fvs = fs_it->second;
 
   // Resolve any deferred (lazy-loaded) values in this fieldset
   for (auto &fv : fvs) {
@@ -3022,8 +3038,8 @@ bool USDCReader::Impl::ReconstructPrimSpecNode(int parent, int current, int leve
   // StageMeta = root only attributes.
   // TODO: Unify reconstrction code with USDAReder?
   if (current == 0) {
-    if (const auto &pv = GetElemPath(crate::Index(uint32_t(current)))) {
-      DCOUT("Root element path: " << pv.value().full_path_name());
+    if (GetElemPathPtr(crate::Index(uint32_t(current)))) {
+      DCOUT("Root element path: " << GetElemPathPtr(crate::Index(uint32_t(current)))->full_path_name());
     } else {
       PUSH_ERROR_AND_RETURN("(Internal error). Root Element Path not found.");
     }
@@ -3069,9 +3085,9 @@ bool USDCReader::Impl::ReconstructPrimSpecNode(int parent, int current, int leve
 
       Path elemPath;
 
-      if (const auto &pv = GetElemPath(crate::Index(uint32_t(current)))) {
-        DCOUT(fmt::format("Element path: {}", pv.value().full_path_name()));
-        elemPath = pv.value();
+      if (const Path *pv = GetElemPathPtr(crate::Index(uint32_t(current)))) {
+        DCOUT(fmt::format("Element path: {}", pv->full_path_name()));
+        elemPath = *pv;
       } else {
         PUSH_ERROR_AND_RETURN_TAG(kTag,
                                   "(Internal errror) Element path not found.");
@@ -3163,8 +3179,8 @@ bool USDCReader::Impl::ReconstructPrimSpecNode(int parent, int current, int leve
       Path elemPath;
       std::array<std::string, 2> toks;
 
-      if (const auto &pv = GetElemPath(crate::Index(uint32_t(current)))) {
-        elemPath = pv.value();
+      if (const Path *pv = GetElemPathPtr(crate::Index(uint32_t(current)))) {
+        elemPath = *pv;
 
         DCOUT(fmt::format("Element path: {}", dump_path(elemPath)));
 
@@ -3239,8 +3255,8 @@ bool USDCReader::Impl::ReconstructPrimSpecNode(int parent, int current, int leve
       DCOUT("<== VariantFields end === ");
 
       Path elemPath;
-      if (const auto &pv = GetElemPath(crate::Index(uint32_t(current)))) {
-        elemPath = pv.value();
+      if (const Path *pv = GetElemPathPtr(crate::Index(uint32_t(current)))) {
+        elemPath = *pv;
         DCOUT(fmt::format("Element path: {}", elemPath.full_path_name()));
       } else {
         PUSH_ERROR_AND_RETURN_TAG(kTag,
