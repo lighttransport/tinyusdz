@@ -656,10 +656,13 @@ class CrateReader {
   // Stores ref_index (sample index) for deduplication
   std::unordered_map<crate::ValueRep, size_t, crate::ValueRep::Hash> _dedup_token_array;
 
-  // Reusable buffers for integer decompression to avoid repeated allocation
-  // These are mutable because they're used as internal working buffers in const-like operations
+  // Reusable buffers to avoid repeated allocation in hot loops.
+  // Mutable because they're internal working buffers in const-like operations.
   mutable std::vector<char> _decomp_comp_buffer;      // Buffer for compressed data
   mutable std::vector<char> _decomp_working_buffer;   // Buffer for decompression working space
+  mutable std::vector<crate::Index> _temp_indices;    // Scratch for token/string/assetpath array reads
+  mutable std::vector<uint32_t> _temp_lut_indices;    // Scratch for LUT index arrays (half/float/double)
+  mutable std::vector<int32_t> _temp_comp_ints;       // Scratch for compressed int arrays (half/float/double)
 
   class Impl;
   Impl *_impl;

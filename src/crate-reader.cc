@@ -319,9 +319,6 @@ bool CrateReader::ReadCompressedInts(Int *out,
       typename std::conditional<sizeof(Int) == 4, Usd_IntegerCompression,
                                 Usd_IntegerCompression64>::type;
 
-  // Threshold for streaming decompression (1M elements = ~4MB for int32)
-  constexpr size_t kStreamingThreshold = 1024 * 1024;
-
   size_t compBufferSize = Compressor::GetCompressedBufferSize(num_ints);
   CHECK_MEMORY_USAGE(compBufferSize);
 
@@ -373,37 +370,17 @@ bool CrateReader::ReadCompressedInts(Int *out,
     PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read compressedInts.");
   }
 
-  // Get working space size for decompression
   size_t workingSpaceSize = Compressor::GetDecompressionWorkingSpaceSize(num_ints);
-
-  // For large arrays, use streaming decompression to reduce peak memory
-  if (num_ints > kStreamingThreshold) {
-    // Streaming mode: process in chunks to reduce peak memory
-    // Note: USDC integer compression doesn't support true streaming,
-    // but we can at least reuse the working buffer
-    if (_decomp_working_buffer.size() < workingSpaceSize) {
-      _decomp_working_buffer.resize(workingSpaceSize);
-    }
-
-    bool ret = Compressor::DecompressFromBuffer(
-        _decomp_comp_buffer.data(), size_t(compSize), out, num_ints, &_err,
-        _decomp_working_buffer.data());
-
-    REDUCE_MEMORY_USAGE(compBufferSize);
-    return ret;
-  } else {
-    // Small arrays: use reusable working buffer
-    if (_decomp_working_buffer.size() < workingSpaceSize) {
-      _decomp_working_buffer.resize(workingSpaceSize);
-    }
-
-    bool ret = Compressor::DecompressFromBuffer(
-        _decomp_comp_buffer.data(), size_t(compSize), out, num_ints, &_err,
-        _decomp_working_buffer.data());
-
-    REDUCE_MEMORY_USAGE(compBufferSize);
-    return ret;
+  if (_decomp_working_buffer.size() < workingSpaceSize) {
+    _decomp_working_buffer.resize(workingSpaceSize);
   }
+
+  bool ret = Compressor::DecompressFromBuffer(
+      _decomp_comp_buffer.data(), size_t(compSize), out, num_ints, &_err,
+      _decomp_working_buffer.data());
+
+  REDUCE_MEMORY_USAGE(compBufferSize);
+  return ret;
 #endif
 }
 
@@ -542,17 +519,16 @@ bool CrateReader::ReadHalfArray(bool is_compressed,
     }
 
     if (code == 'i') {
-      // Compressed integers.
-      std::vector<int32_t> ints;
-      ints.resize(length);
-      if (!ReadCompressedInts(ints.data(), ints.size())) {
+      // Compressed integers — reuse scratch buffer
+      if (_temp_comp_ints.size() < length) {
+        _temp_comp_ints.resize(length);
+      }
+      if (!ReadCompressedInts(_temp_comp_ints.data(), length)) {
         _err += "Failed to read compressed ints in ReadHalfArray.\n";
         return false;
       }
       for (size_t i = 0; i < length; i++) {
-        float f = float(ints[i]);
-        value::half h = value::float_to_half_full(f);
-        (*d)[i] = h;
+        (*d)[i] = value::float_to_half_full(float(_temp_comp_ints[i]));
       }
     } else if (code == 't') {
       // Lookup table & indexes.
@@ -562,24 +538,24 @@ bool CrateReader::ReadHalfArray(bool is_compressed,
         return false;
       }
 
-      std::vector<value::half> lut;
-      lut.resize(lutSize);
+      std::vector<value::half> lut(lutSize);
       if (!_sr->read(sizeof(value::half) * lutSize, sizeof(value::half) * lutSize,
                      reinterpret_cast<uint8_t *>(lut.data()))) {
         _err += "Failed to read lut table in ReadHalfArray.\n";
         return false;
       }
 
-      std::vector<uint32_t> indexes;
-      indexes.resize(length);
-      if (!ReadCompressedInts(indexes.data(), indexes.size())) {
+      if (_temp_lut_indices.size() < length) {
+        _temp_lut_indices.resize(length);
+      }
+      if (!ReadCompressedInts(_temp_lut_indices.data(), length)) {
         _err += "Failed to read lut indices in ReadHalfArray.\n";
         return false;
       }
 
       auto o = d->data();
-      for (auto index : indexes) {
-        *o++ = lut[index];
+      for (size_t i = 0; i < length; i++) {
+        *o++ = lut[_temp_lut_indices[i]];
       }
     } else {
       _err += "Invalid code. Data is currupted\n";
@@ -660,15 +636,16 @@ bool CrateReader::ReadFloatArray(bool is_compressed, std::vector<float> *d) {
     }
 
     if (code == 'i') {
-      // Compressed integers.
-      std::vector<int32_t> ints;
-      ints.resize(length);
-      if (!ReadCompressedInts(ints.data(), ints.size())) {
+      // Compressed integers — reuse scratch buffer
+      if (_temp_comp_ints.size() < length) {
+        _temp_comp_ints.resize(length);
+      }
+      if (!ReadCompressedInts(_temp_comp_ints.data(), length)) {
         _err += "Failed to read compressed ints in ReadFloatArray.\n";
         return false;
       }
       for (size_t i = 0; i < length; i++) {
-        d->data()[i] = float(ints[i]);
+        d->data()[i] = float(_temp_comp_ints[i]);
       }
     } else if (code == 't') {
       // Lookup table & indexes.
@@ -678,24 +655,24 @@ bool CrateReader::ReadFloatArray(bool is_compressed, std::vector<float> *d) {
         return false;
       }
 
-      std::vector<float> lut;
-      lut.resize(lutSize);
+      std::vector<float> lut(lutSize);
       if (!_sr->read(sizeof(float) * lutSize, sizeof(float) * lutSize,
                      reinterpret_cast<uint8_t *>(lut.data()))) {
         _err += "Failed to read lut table in ReadFloatArray.\n";
         return false;
       }
 
-      std::vector<uint32_t> indexes;
-      indexes.resize(length);
-      if (!ReadCompressedInts(indexes.data(), indexes.size())) {
+      if (_temp_lut_indices.size() < length) {
+        _temp_lut_indices.resize(length);
+      }
+      if (!ReadCompressedInts(_temp_lut_indices.data(), length)) {
         _err += "Failed to read lut indices in ReadFloatArray.\n";
         return false;
       }
 
       auto o = d->data();
-      for (auto index : indexes) {
-        *o++ = lut[index];
+      for (size_t i = 0; i < length; i++) {
+        *o++ = lut[_temp_lut_indices[i]];
       }
     } else {
       _err += "Invalid code. Data is currupted\n";
@@ -783,14 +760,15 @@ bool CrateReader::ReadDoubleArray(bool is_compressed, std::vector<double> *d) {
     }
 
     if (code == 'i') {
-      // Compressed integers.
-      std::vector<int32_t> ints;
-      ints.resize(length);
-      if (!ReadCompressedInts(ints.data(), ints.size())) {
+      // Compressed integers — reuse scratch buffer
+      if (_temp_comp_ints.size() < length) {
+        _temp_comp_ints.resize(length);
+      }
+      if (!ReadCompressedInts(_temp_comp_ints.data(), length)) {
         _err += "Failed to read compressed ints in ReadDoubleArray.\n";
         return false;
       }
-      std::copy(ints.begin(), ints.end(), d->data());
+      std::copy(_temp_comp_ints.data(), _temp_comp_ints.data() + length, d->data());
     } else if (code == 't') {
       // Lookup table & indexes.
       uint32_t lutSize;
@@ -799,24 +777,24 @@ bool CrateReader::ReadDoubleArray(bool is_compressed, std::vector<double> *d) {
         return false;
       }
 
-      std::vector<double> lut;
-      lut.resize(lutSize);
+      std::vector<double> lut(lutSize);
       if (!_sr->read(sizeof(double) * lutSize, sizeof(double) * lutSize,
                      reinterpret_cast<uint8_t *>(lut.data()))) {
         _err += "Failed to read lut table in ReadDoubleArray.\n";
         return false;
       }
 
-      std::vector<uint32_t> indexes;
-      indexes.resize(length);
-      if (!ReadCompressedInts(indexes.data(), indexes.size())) {
+      if (_temp_lut_indices.size() < length) {
+        _temp_lut_indices.resize(length);
+      }
+      if (!ReadCompressedInts(_temp_lut_indices.data(), length)) {
         _err += "Failed to read lut indices in ReadDoubleArray.\n";
         return false;
       }
 
       auto o = d->data();
-      for (auto index : indexes) {
-        *o++ = lut[index];
+      for (size_t i = 0; i < length; i++) {
+        *o++ = lut[_temp_lut_indices[i]];
       }
     } else {
       _err += "Invalid code. Data is currupted\n";
@@ -885,14 +863,16 @@ bool CrateReader::ReadFloatArrayTyped(bool is_compressed, TypedArray<float> *d) 
     }
 
     if (code == 'i') {
-      std::vector<int32_t> ints;
-      ints.resize(length);
-      if (!ReadCompressedInts(ints.data(), ints.size())) {
+      // Compressed integers — reuse scratch buffer
+      if (_temp_comp_ints.size() < length) {
+        _temp_comp_ints.resize(length);
+      }
+      if (!ReadCompressedInts(_temp_comp_ints.data(), length)) {
         _err += "Failed to read compressed ints in ReadFloatArrayTyped.\n";
         return false;
       }
       for (size_t i = 0; i < length; i++) {
-        d->data()[i] = float(ints[i]);
+        d->data()[i] = float(_temp_comp_ints[i]);
       }
     } else if (code == 't') {
       uint32_t lutSize;
@@ -901,24 +881,24 @@ bool CrateReader::ReadFloatArrayTyped(bool is_compressed, TypedArray<float> *d) 
         return false;
       }
 
-      std::vector<float> lut;
-      lut.resize(lutSize);
+      std::vector<float> lut(lutSize);
       if (!_sr->read(sizeof(float) * lutSize, sizeof(float) * lutSize,
                      reinterpret_cast<uint8_t *>(lut.data()))) {
         _err += "Failed to read lut table in ReadFloatArrayTyped.\n";
         return false;
       }
 
-      std::vector<uint32_t> indexes;
-      indexes.resize(length);
-      if (!ReadCompressedInts(indexes.data(), indexes.size())) {
+      if (_temp_lut_indices.size() < length) {
+        _temp_lut_indices.resize(length);
+      }
+      if (!ReadCompressedInts(_temp_lut_indices.data(), length)) {
         _err += "Failed to read lut indices in ReadFloatArrayTyped.\n";
         return false;
       }
 
       auto o = d->data();
-      for (auto index : indexes) {
-        *o++ = lut[index];
+      for (size_t i = 0; i < length; i++) {
+        *o++ = lut[_temp_lut_indices[i]];
       }
     } else {
       _err += "Invalid code. Data is corrupted\n";
@@ -1055,16 +1035,17 @@ bool CrateReader::ReadDoubleArrayTyped(bool is_compressed, TypedArray<double> *d
         return false;
       }
 
-      std::vector<uint32_t> indexes;
-      indexes.resize(length);
-      if (!ReadCompressedInts(indexes.data(), indexes.size())) {
+      if (_temp_lut_indices.size() < length) {
+        _temp_lut_indices.resize(length);
+      }
+      if (!ReadCompressedInts(_temp_lut_indices.data(), length)) {
         _err += "Failed to read lut indices in ReadDoubleArrayTyped.\n";
         return false;
       }
 
       auto o = d->data();
-      for (auto index : indexes) {
-        *o++ = lut[index];
+      for (size_t i = 0; i < length; i++) {
+        *o++ = lut[_temp_lut_indices[i]];
       }
     } else {
       _err += "Invalid code. Data is corrupted\n";
@@ -1185,11 +1166,12 @@ bool CrateReader::ReadStringArray(std::vector<std::string> *d) {
 
     CHECK_MEMORY_USAGE(size_t(n) * sizeof(crate::Index));
 
-    std::vector<crate::Index> ivalue(static_cast<size_t>(n));
-
+    if (_temp_indices.size() < size_t(n)) {
+      _temp_indices.resize(size_t(n));
+    }
     if (!_sr->read(size_t(n) * sizeof(crate::Index),
                    size_t(n) * sizeof(crate::Index),
-                   reinterpret_cast<uint8_t *>(ivalue.data()))) {
+                   reinterpret_cast<uint8_t *>(_temp_indices.data()))) {
       PUSH_ERROR("Failed to read STRING_VECTOR data.");
       return false;
     }
@@ -1198,7 +1180,7 @@ bool CrateReader::ReadStringArray(std::vector<std::string> *d) {
     CHECK_MEMORY_USAGE(size_t(n) * sizeof(void *));
     result.resize(static_cast<size_t>(n));
     for (size_t i = 0; i < n; i++) {
-      if (const value::token *tokp = GetStringTokenPtr(ivalue[i])) {
+      if (const value::token *tokp = GetStringTokenPtr(_temp_indices[i])) {
         std::string s = tokp->str();
         CHECK_MEMORY_USAGE(s.size());
         result[i] = s;
@@ -1365,11 +1347,12 @@ bool CrateReader::ReadPathArray(std::vector<Path> *d) {
 
     CHECK_MEMORY_USAGE(size_t(n) * sizeof(crate::Index));
 
-    std::vector<crate::Index> ivalue(static_cast<size_t>(n));
-
+    if (_temp_indices.size() < size_t(n)) {
+      _temp_indices.resize(size_t(n));
+    }
     if (!_sr->read(size_t(n) * sizeof(crate::Index),
                    size_t(n) * sizeof(crate::Index),
-                   reinterpret_cast<uint8_t *>(ivalue.data()))) {
+                   reinterpret_cast<uint8_t *>(_temp_indices.data()))) {
       _err += "Failed to read ListOp data.\n";
       return false;
     }
@@ -1377,7 +1360,7 @@ bool CrateReader::ReadPathArray(std::vector<Path> *d) {
     // reconstruct
     result.resize(static_cast<size_t>(n));
     for (size_t i = 0; i < n; i++) {
-      if (auto pv = GetPath(ivalue[i])) {
+      if (auto pv = GetPath(_temp_indices[i])) {
         result[i] = pv.value();
       } else {
         PUSH_ERROR("Invalid Index for Path.");
@@ -1426,11 +1409,12 @@ bool CrateReader::ReadTokenListOp(ListOp<value::token> *d) {
 
     CHECK_MEMORY_USAGE(size_t(n) * sizeof(crate::Index));
 
-    std::vector<crate::Index> ivalue(static_cast<size_t>(n));
-
+    if (_temp_indices.size() < size_t(n)) {
+      _temp_indices.resize(size_t(n));
+    }
     if (!_sr->read(size_t(n) * sizeof(crate::Index),
                    size_t(n) * sizeof(crate::Index),
-                   reinterpret_cast<uint8_t *>(ivalue.data()))) {
+                   reinterpret_cast<uint8_t *>(_temp_indices.data()))) {
       _err += "Failed to read ListOp data.\n";
       return false;
     }
@@ -1438,7 +1422,7 @@ bool CrateReader::ReadTokenListOp(ListOp<value::token> *d) {
     // reconstruct
     result.resize(static_cast<size_t>(n));
     for (size_t i = 0; i < n; i++) {
-      if (const value::token *tokp = GetTokenPtr(ivalue[i])) {
+      if (const value::token *tokp = GetTokenPtr(_temp_indices[i])) {
         result[i] = *tokp;
       } else {
         PUSH_ERROR("Invalid token index in ListOp.");
@@ -1540,11 +1524,12 @@ bool CrateReader::ReadStringListOp(ListOp<std::string> *d) {
 
     CHECK_MEMORY_USAGE(size_t(n) * sizeof(crate::Index));
 
-    std::vector<crate::Index> ivalue(static_cast<size_t>(n));
-
+    if (_temp_indices.size() < size_t(n)) {
+      _temp_indices.resize(size_t(n));
+    }
     if (!_sr->read(size_t(n) * sizeof(crate::Index),
                    size_t(n) * sizeof(crate::Index),
-                   reinterpret_cast<uint8_t *>(ivalue.data()))) {
+                   reinterpret_cast<uint8_t *>(_temp_indices.data()))) {
       _err += "Failed to read ListOp data.\n";
       return false;
     }
@@ -1552,7 +1537,7 @@ bool CrateReader::ReadStringListOp(ListOp<std::string> *d) {
     // reconstruct
     result.resize(static_cast<size_t>(n));
     for (size_t i = 0; i < n; i++) {
-      if (const value::token *tokp = GetStringTokenPtr(ivalue[i])) {
+      if (const value::token *tokp = GetStringTokenPtr(_temp_indices[i])) {
         result[i] = tokp->str();
       } else {
         PUSH_ERROR("Invalid StringIndex in ListOp.");
@@ -1654,11 +1639,12 @@ bool CrateReader::ReadPathListOp(ListOp<Path> *d) {
 
     CHECK_MEMORY_USAGE(size_t(n) * sizeof(crate::Index));
 
-    std::vector<crate::Index> ivalue(static_cast<size_t>(n));
-
+    if (_temp_indices.size() < size_t(n)) {
+      _temp_indices.resize(size_t(n));
+    }
     if (!_sr->read(size_t(n) * sizeof(crate::Index),
                    size_t(n) * sizeof(crate::Index),
-                   reinterpret_cast<uint8_t *>(ivalue.data()))) {
+                   reinterpret_cast<uint8_t *>(_temp_indices.data()))) {
       PUSH_ERROR("Failed to read ListOp data..");
       return false;
     }
@@ -1666,7 +1652,7 @@ bool CrateReader::ReadPathListOp(ListOp<Path> *d) {
     // reconstruct
     result.resize(static_cast<size_t>(n));
     for (size_t i = 0; i < n; i++) {
-      if (auto pv = GetPath(ivalue[i])) {
+      if (auto pv = GetPath(_temp_indices[i])) {
         result[i] = pv.value();
       } else {
         PUSH_ERROR("Invalid Index for Path.");
@@ -2735,14 +2721,16 @@ bool CrateReader::UnpackValueRepForTimeSamples(const crate::ValueRep &rep, uint6
           PUSH_ERROR_AND_RETURN_TAG(kTag, fmt::format("String array too large. TinyUSDZ limites it up to {}", _config.maxArrayElements));
         }
         CHECK_MEMORY_USAGE(n * sizeof(crate::Index));
-        std::vector<crate::Index> v(static_cast<size_t>(n));
-        if (!_sr->read(size_t(n) * sizeof(crate::Index), size_t(n) * sizeof(crate::Index), reinterpret_cast<uint8_t *>(v.data()))) {
+        if (_temp_indices.size() < size_t(n)) {
+          _temp_indices.resize(size_t(n));
+        }
+        if (!_sr->read(size_t(n) * sizeof(crate::Index), size_t(n) * sizeof(crate::Index), reinterpret_cast<uint8_t *>(_temp_indices.data()))) {
           PUSH_ERROR("Failed to read StringIndex array.");
           return false;
         }
         std::vector<std::string> stringArray(static_cast<size_t>(n));
         for (size_t i = 0; i < n; i++) {
-          if (const value::token *tokp = GetStringTokenPtr(v[i])) {
+          if (const value::token *tokp = GetStringTokenPtr(_temp_indices[i])) {
             stringArray[i] = tokp->str();
           } else {
             PUSH_ERROR("Invalid string token index in compressed string array.");
@@ -2937,14 +2925,16 @@ bool CrateReader::UnpackValueRepForTimeSamples(const crate::ValueRep &rep, uint6
           PUSH_ERROR_AND_RETURN_TAG(kTag, fmt::format("Token array too large. TinyUSDZ limites it up to {}", _config.maxArrayElements));
         }
         CHECK_MEMORY_USAGE(n * sizeof(crate::Index));
-        std::vector<crate::Index> v(static_cast<size_t>(n));
-        if (!_sr->read(size_t(n) * sizeof(crate::Index), size_t(n) * sizeof(crate::Index), reinterpret_cast<uint8_t *>(v.data()))) {
+        if (_temp_indices.size() < size_t(n)) {
+          _temp_indices.resize(size_t(n));
+        }
+        if (!_sr->read(size_t(n) * sizeof(crate::Index), size_t(n) * sizeof(crate::Index), reinterpret_cast<uint8_t *>(_temp_indices.data()))) {
           PUSH_ERROR("Failed to read TokenIndex array.");
           return false;
         }
         std::vector<value::token> tokenArray(static_cast<size_t>(n));
         for (size_t i = 0; i < n; i++) {
-          if (const value::token *tokp = GetTokenPtr(v[i])) {
+          if (const value::token *tokp = GetTokenPtr(_temp_indices[i])) {
             tokenArray[i] = *tokp;
           } else {
             PUSH_ERROR("Invalid token index in compressed token array.");
@@ -3348,10 +3338,12 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
 
         CHECK_MEMORY_USAGE(n * sizeof(crate::Index));
 
-        std::vector<crate::Index> v(static_cast<size_t>(n));
+        if (_temp_indices.size() < size_t(n)) {
+          _temp_indices.resize(size_t(n));
+        }
         if (!_sr->read(size_t(n) * sizeof(crate::Index),
                        size_t(n) * sizeof(crate::Index),
-                       reinterpret_cast<uint8_t *>(v.data()))) {
+                       reinterpret_cast<uint8_t *>(_temp_indices.data()))) {
           PUSH_ERROR("Failed to read StringIndex array.");
           return false;
         }
@@ -3359,7 +3351,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
         std::vector<value::AssetPath> apaths(static_cast<size_t>(n));
 
         for (size_t i = 0; i < n; i++) {
-          if (const value::token *tokp = GetStringTokenPtr(v[i])) {
+          if (const value::token *tokp = GetStringTokenPtr(_temp_indices[i])) {
             DCOUT("StringToken[" << i << "] = " << *tokp);
             apaths[i] = value::AssetPath(tokp->str());
           } else {
@@ -3418,11 +3410,12 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
 
         CHECK_MEMORY_USAGE(n * sizeof(crate::Index));
 
-        std::vector<crate::Index> v;
-        v.resize(static_cast<size_t>(n));
+        if (_temp_indices.size() < size_t(n)) {
+          _temp_indices.resize(size_t(n));
+        }
         if (!_sr->read(size_t(n) * sizeof(crate::Index),
                        size_t(n) * sizeof(crate::Index),
-                       reinterpret_cast<uint8_t *>(v.data()))) {
+                       reinterpret_cast<uint8_t *>(_temp_indices.data()))) {
           PUSH_ERROR("Failed to read TokenIndex array.");
           return false;
         }
@@ -3430,7 +3423,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
         std::vector<value::token> tokens(static_cast<size_t>(n));
 
         for (size_t i = 0; i < n; i++) {
-          if (const value::token *tokp = GetTokenPtr(v[i])) {
+          if (const value::token *tokp = GetTokenPtr(_temp_indices[i])) {
             DCOUT("Token[" << i << "] = " << *tokp);
             tokens[i] = *tokp;
           } else {
@@ -3461,10 +3454,12 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
 
         CHECK_MEMORY_USAGE(n * sizeof(crate::Index));
 
-        std::vector<crate::Index> v(static_cast<size_t>(n));
+        if (_temp_indices.size() < size_t(n)) {
+          _temp_indices.resize(size_t(n));
+        }
         if (!_sr->read(size_t(n) * sizeof(crate::Index),
                        size_t(n) * sizeof(crate::Index),
-                       reinterpret_cast<uint8_t *>(v.data()))) {
+                       reinterpret_cast<uint8_t *>(_temp_indices.data()))) {
           PUSH_ERROR("Failed to read TokenIndex array.");
           return false;
         }
@@ -3472,7 +3467,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
         std::vector<std::string> stringArray(static_cast<size_t>(n));
 
         for (size_t i = 0; i < n; i++) {
-          if (const value::token *stokp = GetStringTokenPtr(v[i])) {
+          if (const value::token *stokp = GetStringTokenPtr(_temp_indices[i])) {
             stringArray[i] = stokp->str();
           } else {
             PUSH_ERROR("Invalid string token index in string array.");
@@ -5108,19 +5103,21 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
 
       CHECK_MEMORY_USAGE(n * sizeof(crate::Index));
 
-      std::vector<crate::Index> indices(static_cast<size_t>(n));
+      if (_temp_indices.size() < size_t(n)) {
+        _temp_indices.resize(size_t(n));
+      }
       if (!_sr->read(static_cast<size_t>(n) * sizeof(crate::Index),
                      static_cast<size_t>(n) * sizeof(crate::Index),
-                     reinterpret_cast<uint8_t *>(indices.data()))) {
+                     reinterpret_cast<uint8_t *>(_temp_indices.data()))) {
         PUSH_ERROR("Failed to read TokenVector value.");
         return false;
       }
 
-      DCOUT("TokenVector(index) = " << indices);
+      DCOUT("TokenVector(index) = " << _temp_indices);
 
-      std::vector<value::token> tokens(indices.size());
-      for (size_t i = 0; i < indices.size(); i++) {
-        if (const value::token *tokp = GetTokenPtr(indices[i])) {
+      std::vector<value::token> tokens(static_cast<size_t>(n));
+      for (size_t i = 0; i < size_t(n); i++) {
+        if (const value::token *tokp = GetTokenPtr(_temp_indices[i])) {
           tokens[i] = *tokp;
         } else {
           PUSH_ERROR("Invalid token index in TokenVector.");
@@ -6609,13 +6606,10 @@ bool CrateReader::ReadTokens() {
       return false;
     }
 
-    std::string str;
-    if (len > 0) {
-      str = std::string(pcurr, len);
-    } else {
-      // Empty string allowed
-      str = std::string();
-    }
+    CHECK_MEMORY_USAGE(sizeof(value::token) + len);
+
+    _tokens.emplace_back(std::string(pcurr, len));
+    DCOUT("token[" << i << "] = " << _tokens.back());
 
     pcurr += len + 1;  // +1 = '\0'
     nbytes_remain = size_t(pe - pcurr);
@@ -6623,12 +6617,6 @@ bool CrateReader::ReadTokens() {
       _err += "Invalid token string array.\n";
       return false;
     }
-
-    value::token tok(str);
-    CHECK_MEMORY_USAGE(sizeof(value::token) + str.size());
-
-    DCOUT("token[" << i << "] = " << tok);
-    _tokens.push_back(tok);
 
     if (nbytes_remain == 0) {
       // reached to the string buffer end.
