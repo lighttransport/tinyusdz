@@ -3514,13 +3514,28 @@ bool RenderSceneConverter::BuildVertexIndicesImpl(RenderMesh &mesh) {
         pointIdxRemap[vertex_output.point_indices[i]].push_back(uint32_t(i));
       }
 
+      // Pre-allocate temp vectors outside loop to avoid per-target allocation
+      std::vector<value::float3> tmpPointOffsets;
+      std::vector<value::float3> tmpNormalOffsets;
+      std::vector<uint32_t> tmpPointIndices;
+
       for (auto &target : mesh.targets) {
 
-        std::vector<value::float3> tmpPointOffsets;
-        std::vector<value::float3> tmpNormalOffsets;
-        std::vector<uint32_t> tmpPointIndices;
+        tmpPointOffsets.clear();
+        tmpNormalOffsets.clear();
+        tmpPointIndices.clear();
 
-        for (size_t i = 0; i < target.second.pointIndices.size(); i++) {
+        // Reserve estimated capacity based on source size
+        size_t srcSize = target.second.pointIndices.size();
+        tmpPointIndices.reserve(srcSize);
+        if (target.second.pointOffsets.size()) {
+          tmpPointOffsets.reserve(srcSize);
+        }
+        if (target.second.normalOffsets.size()) {
+          tmpNormalOffsets.reserve(srcSize);
+        }
+
+        for (size_t i = 0; i < srcSize; i++) {
 
           uint32_t orgPointIdx = target.second.pointIndices[i];
           auto pir_it = pointIdxRemap.find(orgPointIdx);
@@ -3794,13 +3809,28 @@ bool RenderSceneConverter::BuildVertexIndicesFastImpl(RenderMesh &mesh) {
         pointIdxRemap[fvIndices[i]].push_back(uint32_t(i));
       }
 
+      // Pre-allocate temp vectors outside loop to avoid per-target allocation
+      std::vector<value::float3> tmpPointOffsets;
+      std::vector<value::float3> tmpNormalOffsets;
+      std::vector<uint32_t> tmpPointIndices;
+
       for (auto &target : mesh.targets) {
 
-        std::vector<value::float3> tmpPointOffsets;
-        std::vector<value::float3> tmpNormalOffsets;
-        std::vector<uint32_t> tmpPointIndices;
+        tmpPointOffsets.clear();
+        tmpNormalOffsets.clear();
+        tmpPointIndices.clear();
 
-        for (size_t i = 0; i < target.second.pointIndices.size(); i++) {
+        // Reserve estimated capacity based on source size
+        size_t srcSize = target.second.pointIndices.size();
+        tmpPointIndices.reserve(srcSize);
+        if (target.second.pointOffsets.size()) {
+          tmpPointOffsets.reserve(srcSize);
+        }
+        if (target.second.normalOffsets.size()) {
+          tmpNormalOffsets.reserve(srcSize);
+        }
+
+        for (size_t i = 0; i < srcSize; i++) {
 
           uint32_t orgPointIdx = target.second.pointIndices[i];
           auto pir_it = pointIdxRemap.find(orgPointIdx);

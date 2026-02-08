@@ -368,9 +368,10 @@ bool LoadAsset(AssetResolutionResolver &resolver,
     layer.primspecs()["MaterialX"] = ps;
 
   } else {
-    if (fileformats.count(ext)) {
+    auto ff_it = fileformats.find(ext);
+    if (ff_it != fileformats.end()) {
       PrimSpec ps;
-      const FileFormatHandler &handler = fileformats.at(ext);
+      const FileFormatHandler &handler = ff_it->second;
 
       if (!handler.reader(asset, ps, &_warn, &_err, handler.userdata)) {
         PUSH_ERROR_AND_RETURN(fmt::format("Failed to read asset `{}` error: {}",

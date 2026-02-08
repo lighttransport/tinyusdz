@@ -887,9 +887,11 @@ bool CrateReader::ReadFloatArrayTyped(bool is_compressed, TypedArray<float> *d) 
         return false;
       }
 
-      std::vector<float> lut(lutSize);
+      if (_temp_lut_float.size() < lutSize) {
+        _temp_lut_float.resize(lutSize);
+      }
       if (!_sr->read(sizeof(float) * lutSize, sizeof(float) * lutSize,
-                     reinterpret_cast<uint8_t *>(lut.data()))) {
+                     reinterpret_cast<uint8_t *>(_temp_lut_float.data()))) {
         _err += "Failed to read lut table in ReadFloatArrayTyped.\n";
         return false;
       }
@@ -904,7 +906,7 @@ bool CrateReader::ReadFloatArrayTyped(bool is_compressed, TypedArray<float> *d) 
 
       auto o = d->data();
       for (size_t i = 0; i < length; i++) {
-        *o++ = lut[_temp_lut_indices[i]];
+        *o++ = _temp_lut_float[_temp_lut_indices[i]];
       }
     } else {
       _err += "Invalid code. Data is corrupted\n";
@@ -1033,10 +1035,11 @@ bool CrateReader::ReadDoubleArrayTyped(bool is_compressed, TypedArray<double> *d
         return false;
       }
 
-      std::vector<double> lut;
-      lut.resize(lutSize);
+      if (_temp_lut_double.size() < lutSize) {
+        _temp_lut_double.resize(lutSize);
+      }
       if (!_sr->read(sizeof(double) * lutSize, sizeof(double) * lutSize,
-                     reinterpret_cast<uint8_t *>(lut.data()))) {
+                     reinterpret_cast<uint8_t *>(_temp_lut_double.data()))) {
         _err += "Failed to read lut table in ReadDoubleArrayTyped.\n";
         return false;
       }
@@ -1051,7 +1054,7 @@ bool CrateReader::ReadDoubleArrayTyped(bool is_compressed, TypedArray<double> *d
 
       auto o = d->data();
       for (size_t i = 0; i < length; i++) {
-        *o++ = lut[_temp_lut_indices[i]];
+        *o++ = _temp_lut_double[_temp_lut_indices[i]];
       }
     } else {
       _err += "Invalid code. Data is corrupted\n";
