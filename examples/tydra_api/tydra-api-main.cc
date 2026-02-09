@@ -30,14 +30,12 @@ static std::string str_tolower(std::string s) {
 }
 
 // key = Full absolute prim path(e.g. `/bora/dora`)
-using XformMap = std::map<std::string, const tinyusdz::Xform *>;
-using MeshMap = std::map<std::string, const tinyusdz::GeomMesh *>;
-using MaterialMap = std::map<std::string, const tinyusdz::Material *>;
-using PreviewSurfaceMap =
-    std::map<std::string, std::pair<const tinyusdz::Shader *, const tinyusdz::UsdPreviewSurface *>>;
-using UVTextureMap = std::map<std::string, std::pair<const tinyusdz::Shader *, const tinyusdz::UsdUVTexture *>>;
-using PrimvarReader_float2Map =
-    std::map<std::string, std::pair<const tinyusdz::Shader *, const tinyusdz::UsdPrimvarReader_float2 *>>;
+using XformMap = tinyusdz::tydra::PathPrimMap<tinyusdz::Xform>;
+using MeshMap = tinyusdz::tydra::PathPrimMap<tinyusdz::GeomMesh>;
+using MaterialMap = tinyusdz::tydra::PathPrimMap<tinyusdz::Material>;
+using PreviewSurfaceMap = tinyusdz::tydra::PathShaderMap<tinyusdz::UsdPreviewSurface>;
+using UVTextureMap = tinyusdz::tydra::PathShaderMap<tinyusdz::UsdUVTexture>;
+using PrimvarReader_float2Map = tinyusdz::tydra::PathShaderMap<tinyusdz::UsdPrimvarReader_float2>;
 
 #if 0
 template <typename T>
