@@ -1400,8 +1400,9 @@ static nonstd::optional<Prim> ReconstructPrimFromPrimSpecRec(
   auto pprim = ReconstructPrimFromPrimSpec(primspec, warn, err);
 
   if (pprim) {
-    for (size_t i = 0; i < primspec.children().size(); i++) {
-      if (auto pv = ReconstructPrimFromPrimSpecRec(primspec.children()[i], warn, err)) {
+    auto &children = primspec.children();
+    for (size_t i = 0; i < children.size(); i++) {
+      if (auto pv = ReconstructPrimFromPrimSpecRec(children[i], warn, err)) {
         pprim.value().children().emplace_back(std::move(pv.value()));
       }
     }
@@ -1484,14 +1485,8 @@ static bool InheritPrimSpecImpl(PrimSpec &dst, const PrimSpec &src,
 
   // Override properties
   for (const auto &prop : dst.props()) {
-    if (ps.props().count(prop.first)) {
-      // replace
-      ps.props().at(prop.first) = prop.second;
-    }
-    else {
-      // re-add
-      ps.props()[prop.first] = prop.second;
-    }
+    // operator[] handles both insert and replace
+    ps.props()[prop.first] = prop.second;
   }
 
   // Overide child primspecs.

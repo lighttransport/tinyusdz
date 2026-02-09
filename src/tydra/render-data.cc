@@ -12154,6 +12154,7 @@ bool RenderSceneConverter::MergeMeshData(const RenderMesh &src,
   }
 
   // Merge face vertex indices (adjust by vertex offset)
+  dst.usdFaceVertexIndices.reserve(dst.usdFaceVertexIndices.size() + src.usdFaceVertexIndices.size());
   for (uint32_t idx : src.usdFaceVertexIndices) {
     dst.usdFaceVertexIndices.push_back(idx + vertex_offset);
   }
@@ -12165,6 +12166,7 @@ bool RenderSceneConverter::MergeMeshData(const RenderMesh &src,
 
   // Merge triangulated indices if present
   if (!src.triangulatedFaceVertexIndices.empty()) {
+    dst.triangulatedFaceVertexIndices.reserve(dst.triangulatedFaceVertexIndices.size() + src.triangulatedFaceVertexIndices.size());
     for (uint32_t idx : src.triangulatedFaceVertexIndices) {
       dst.triangulatedFaceVertexIndices.push_back(idx + vertex_offset);
     }
