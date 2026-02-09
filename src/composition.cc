@@ -80,7 +80,7 @@ RECONSTRUCT_PRIM_DECL(Shader);
 
 namespace {
 
-bool IsVisited(const std::vector<std::set<std::string>> layer_names_stack,
+bool IsVisited(const std::vector<std::set<std::string>> &layer_names_stack,
                const std::string &name) {
   for (size_t i = 0; i < layer_names_stack.size(); i++) {
     if (layer_names_stack[i].count(name)) {
@@ -479,12 +479,9 @@ bool CombinePrimSpecRec(uint32_t depth, PrimSpec &dst, const PrimSpec &src, std:
   // Combine metadataum
   dst.metas().update_from(src.metas(), false);
 
-  // Combine properties
+  // Combine properties (add if not already existent)
   for (const auto &prop : src.props()) {
-    // add if not existent
-    if (dst.props().count(prop.first) == 0) {
-      dst.props()[prop.first] = prop.second;
-    }
+    dst.props().emplace(prop.first, prop.second);
   }
 
   // Combine child primspecs.

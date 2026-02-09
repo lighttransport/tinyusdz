@@ -1306,7 +1306,7 @@ const std::vector<int64_t> &Prim::get_child_indices_from_primChildren(
   bool valid = true;
 
   for (size_t i = 0; i < _primChildrenIndices.size(); i++) {
-    std::string tok = metas().primChildren[i].str();
+    const std::string &tok = metas().primChildren[i].str();
     const auto it = m.find(tok);
     if (it != m.end()) {
       _primChildrenIndices[i] = int64_t(it->second);

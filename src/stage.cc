@@ -770,15 +770,16 @@ bool Stage::add_root_prim(Prim &&prim, bool rename_prim_name) {
     // Rebuild nameSet
     _root_node_nameSet.clear();
     for (size_t i = 0; i < _root_nodes.size(); i++) {
-      if (_root_nodes[i].element_name().empty()) {
+      const std::string &elem_name = _root_nodes[i].element_name();
+      if (elem_name.empty()) {
         PUSH_ERROR_AND_RETURN("Internal error: Existing root Prim's elementName is empty.");
       }
 
-      if (_root_node_nameSet.count(_root_nodes[i].element_name())) {
+      if (_root_node_nameSet.count(elem_name)) {
         PUSH_ERROR_AND_RETURN("Internal error: Stage contains root Prim with same elementName.");
       }
 
-      _root_node_nameSet.insert(_root_nodes[i].element_name());
+      _root_node_nameSet.insert(elem_name);
     }
   }
 
@@ -826,15 +827,16 @@ bool Stage::replace_root_prim(const std::string &prim_name, Prim &&prim) {
     // Rebuild nameSet
     _root_node_nameSet.clear();
     for (size_t i = 0; i < _root_nodes.size(); i++) {
-      if (_root_nodes[i].element_name().empty()) {
+      const std::string &elem_name = _root_nodes[i].element_name();
+      if (elem_name.empty()) {
         PUSH_ERROR_AND_RETURN("Internal error: Existing root Prim's elementName is empty.");
       }
 
-      if (_root_node_nameSet.count(_root_nodes[i].element_name())) {
+      if (_root_node_nameSet.count(elem_name)) {
         PUSH_ERROR_AND_RETURN("Internal error: Stage contains root Prim with same elementName.");
       }
 
-      _root_node_nameSet.insert(_root_nodes[i].element_name());
+      _root_node_nameSet.insert(elem_name);
     }
   }
 
