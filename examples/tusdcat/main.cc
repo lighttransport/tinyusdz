@@ -744,7 +744,7 @@ int main(int argc, char **argv) {
       }
     }
 
-    using MeshMap = std::map<std::string, const tinyusdz::GeomMesh *>;
+    using MeshMap = tinyusdz::tydra::PathPrimMap<tinyusdz::GeomMesh>;
     MeshMap meshmap;
 
     tinyusdz::tydra::ListPrims(comp_stage, meshmap);
