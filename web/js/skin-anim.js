@@ -58,6 +58,7 @@ const USE_SKELETAL_HELPER = false;
 
 // Scene setup
 const scene = new THREE.Scene();
+window._scene = scene; // Debug: expose for console access
 scene.background = new THREE.Color(0x1a1a1a);
 
 // Module-level variable to store inverse bind matrices from skeleton building
@@ -179,6 +180,7 @@ let selectedSphere = null;
 
 // Mesh selection state
 let allSceneMeshes = []; // Track all meshes in characterGroup
+let meshVisibility = new Map(); // Per-mesh visibility state: Map<THREE.Mesh, boolean>
 let selectedMeshObj = null; // Currently selected mesh
 let bboxHelper = null; // Bounding box visualization helper
 
@@ -243,6 +245,11 @@ function convertUSDSkeletalAnimationsToThreeJS(usdLoader, boneMap, timeCodesPerS
 		}
 
 		// Process each joint's animation
+		// Animation values are absolute joint-local transforms from SkelAnimation.
+		// Bones are positioned from bindTransforms (Blender-style), and animation
+		// replaces the local transform with the animated value (Normal blend mode).
+		// skinningTransform = bone.matrixWorld * inverse(bindTransform) is correct
+		// because bone.matrixWorld is computed by composing animLocal up the hierarchy.
 		for (const [jointId, channels] of jointChannels) {
 			const bone = boneMap.get(jointId);
 			if (!bone) {
@@ -379,11 +386,14 @@ function buildSkeletonFromUSD(usdSkeleton, skeletonId) {
 
 	/**
 	 * Recursively build bone hierarchy
-	 * Uses rest_transform (local space) for bone positioning when available
-	 * Falls back to computing local transforms from bind_transform (world space) if rest_transform is missing
+	 * Following Blender's approach: uses bindTransform (world space) to derive
+	 * bone local transforms, ensuring bone.matrixWorld = bindTransform at rest.
+	 * restTransform is stored separately for fallback.
+	 * Animation is expressed as deltas from bind pose (see convertUSDSkeletalAnimationsToThreeJS).
+	 *
 	 * @param {Object} skelNode - USD SkelNode
 	 * @param {THREE.Bone} parentBone - Parent bone (null for root)
-	 * @param {THREE.Matrix4} parentBindMatrix - Parent's bind transform (world space) for fallback
+	 * @param {THREE.Matrix4} parentBindMatrix - Parent's bind transform (world space)
 	 */
 	function buildBoneHierarchy(skelNode, parentBone, parentBindMatrix) {
 		const bone = new THREE.Bone();
@@ -413,45 +423,53 @@ function buildSkeletonFromUSD(usdSkeleton, skeletonId) {
 		// This is crucial for proper skinning deformation
 		boneBindMatrices.push({ bone, bindMatrix: bindMatrix ? bindMatrix.clone() : null });
 
-		// Store rest transform in userData for later reset
-		// rest_transform is in LOCAL space - can be applied directly to bone
+		// Store rest transform in userData (for potential fallback when no animation)
 		if (restMatrix) {
 			const restPos = new THREE.Vector3();
 			const restQuat = new THREE.Quaternion();
 			const restScale = new THREE.Vector3();
 			restMatrix.decompose(restPos, restQuat, restScale);
-
 			bone.userData.restPosition = restPos.clone();
 			bone.userData.restQuaternion = restQuat.clone();
 			bone.userData.restScale = restScale.clone();
 		}
 
-		// Determine bone's local transform
-		// Priority: rest_transform (local) > computed from bind_transform (world)
-		if (hasRestTransform) {
-			// rest_transform is in LOCAL space - apply directly
-			restMatrix.decompose(bone.position, bone.quaternion, bone.scale);
-		} else if (hasBindTransform) {
-			// Fallback: compute local transform from world-space bind_transform
-			// localTransform = inverse(parent_bind) * child_bind
+		// Determine bone's local transform from BIND transforms (Blender's approach)
+		// This ensures bone.matrixWorld = bindTransform at rest, so
+		// boneMatrix = bone.matrixWorld * inverse(bind) = identity at bind pose
+		if (hasBindTransform) {
+			// Compute local bind transform: localBind = inverse(parent_bind) * child_bind
 			if (parentBone && parentBindMatrix) {
 				const parentInverse = parentBindMatrix.clone().invert();
-				const localMatrix = parentInverse.clone().multiply(bindMatrix);
-				localMatrix.decompose(bone.position, bone.quaternion, bone.scale);
+				const localBindMatrix = parentInverse.clone().multiply(bindMatrix);
+				localBindMatrix.decompose(bone.position, bone.quaternion, bone.scale);
 			} else {
-				// Root bone: use bind_transform directly (world space)
+				// Root bone: use bind_transform directly (world space = local for root)
 				bindMatrix.decompose(bone.position, bone.quaternion, bone.scale);
 			}
 
-			// Store computed local transform as rest pose
+			// Store bind-derived local transform for delta animation computation
+			bone.userData.bindPosition = bone.position.clone();
+			bone.userData.bindQuaternion = bone.quaternion.clone();
+			bone.userData.bindScale = bone.scale.clone();
+		} else if (hasRestTransform) {
+			// No bind transform available - fall back to rest transform
+			restMatrix.decompose(bone.position, bone.quaternion, bone.scale);
+			bone.userData.bindPosition = bone.position.clone();
+			bone.userData.bindQuaternion = bone.quaternion.clone();
+			bone.userData.bindScale = bone.scale.clone();
+		} else {
+			// Neither transform available - use identity
+			bone.userData.bindPosition = new THREE.Vector3(0, 0, 0);
+			bone.userData.bindQuaternion = new THREE.Quaternion(0, 0, 0, 1);
+			bone.userData.bindScale = new THREE.Vector3(1, 1, 1);
+		}
+
+		// If rest transform wasn't stored above, use bind-derived as fallback
+		if (!bone.userData.restPosition) {
 			bone.userData.restPosition = bone.position.clone();
 			bone.userData.restQuaternion = bone.quaternion.clone();
 			bone.userData.restScale = bone.scale.clone();
-		} else {
-			// Neither transform available - use identity
-			bone.userData.restPosition = new THREE.Vector3(0, 0, 0);
-			bone.userData.restQuaternion = new THREE.Quaternion(0, 0, 0, 1);
-			bone.userData.restScale = new THREE.Vector3(1, 1, 1);
 		}
 
 		if (parentBone) {
@@ -509,28 +527,29 @@ function buildSkeletonFromUSD(usdSkeleton, skeletonId) {
 }
 
 /**
- * Reset skeleton bones to their rest pose transforms
- * Uses stored rest transforms from bone.userData
+ * Reset skeleton bones to their bind pose transforms
+ * Uses bind-derived local transforms from bone.userData (Blender-style)
  * @param {THREE.Skeleton} skeleton - The skeleton to reset
  */
 function resetSkeletonToRestPose(skeleton) {
 	if (!skeleton || !skeleton.bones) return;
 
 	for (const bone of skeleton.bones) {
-		if (bone.userData.restPosition) {
-			bone.position.copy(bone.userData.restPosition);
+		// Reset to bind pose (bone.matrixWorld = bindTransform at rest)
+		if (bone.userData.bindPosition) {
+			bone.position.copy(bone.userData.bindPosition);
 		}
-		if (bone.userData.restQuaternion) {
-			bone.quaternion.copy(bone.userData.restQuaternion);
+		if (bone.userData.bindQuaternion) {
+			bone.quaternion.copy(bone.userData.bindQuaternion);
 		}
-		if (bone.userData.restScale) {
-			bone.scale.copy(bone.userData.restScale);
+		if (bone.userData.bindScale) {
+			bone.scale.copy(bone.userData.bindScale);
 		}
 	}
 
 	// Update matrices
 	skeleton.bones[0].updateMatrixWorld(true);
-	console.log('Reset skeleton to rest pose');
+	console.log('Reset skeleton to bind pose');
 }
 
 /**
@@ -1290,7 +1309,9 @@ async function loadUSDModel() {
 	await loader.init({ useZstdCompressedWasm: false, useMemory64: false });
 
 	// Default USD file to load
-	const usd_filename = "./assets/StandingRunForward.usdz";
+	//const usd_filename = "./assets/AnimFinal_LowRes.usdz";
+	const usd_filename = "./assets/CesiumMan.usdz";
+	//const usd_filename = "./assets/skintest-animated.usda";
 
 	console.log(`Loading USD file: ${usd_filename}`);
 
@@ -1364,6 +1385,7 @@ async function processUSDScene(usd_scene, loader, filename) {
 
 	// Clear all tracked meshes
 	allSceneMeshes = [];
+	meshVisibility.clear();
 	deselectMesh();
 
 	// Clear joint spheres
@@ -1701,6 +1723,7 @@ async function processUSDScene(usd_scene, loader, filename) {
 				skinnedMesh.visible = animationParams.showMesh;
 				characterGroup.add(skinnedMesh);
 				allSceneMeshes.push(skinnedMesh);
+				meshVisibility.set(skinnedMesh, true);
 				foundSkinnedMesh = true;
 
 				// Save original material
@@ -1732,6 +1755,7 @@ async function processUSDScene(usd_scene, loader, filename) {
 				child.visible = animationParams.showMesh;
 				characterGroup.add(child);
 				allSceneMeshes.push(child);
+				meshVisibility.set(child, true);
 
 				// Save as skinnedMesh reference even though it's not actually skinned
 				skinnedMesh = child;
@@ -1848,6 +1872,7 @@ async function processUSDScene(usd_scene, loader, filename) {
 
 						characterGroup.add(newSkinnedMesh);
 						allSceneMeshes.push(newSkinnedMesh);
+						meshVisibility.set(newSkinnedMesh, true);
 						processedCount++;
 					}
 				} else {
@@ -1858,6 +1883,7 @@ async function processUSDScene(usd_scene, loader, filename) {
 					mesh.visible = animationParams.showMesh;
 					characterGroup.add(mesh);
 					allSceneMeshes.push(mesh);
+					meshVisibility.set(mesh, true);
 
 					if (!skinnedMesh) {
 						skinnedMesh = mesh;
@@ -1895,6 +1921,7 @@ async function processUSDScene(usd_scene, loader, filename) {
 				mesh.visible = animationParams.showMesh;
 				characterGroup.add(mesh);
 				allSceneMeshes.push(mesh);
+				meshVisibility.set(mesh, true);
 				if (!skinnedMesh) {
 					skinnedMesh = mesh;
 					originalMaterial = mesh.material;
@@ -2045,7 +2072,7 @@ function playAnimation(index) {
 		animationAction.stop();
 	}
 
-	// Play new animation
+	// Play new animation (absolute local transforms, Normal blend mode)
 	const clip = usdAnimations[index];
 	animationAction = mixer.clipAction(clip);
 	animationAction.loop = THREE.LoopRepeat;
@@ -2183,9 +2210,10 @@ const animationParams = {
 	// Visualization
 	showMesh: true,
 	toggleMesh: function() {
-		// Toggle visibility for all tracked meshes
+		// Toggle visibility for all tracked meshes, respecting per-mesh state
 		for (const mesh of allSceneMeshes) {
-			mesh.visible = this.showMesh;
+			const perMesh = meshVisibility.get(mesh) !== false;
+			mesh.visible = perMesh && this.showMesh;
 		}
 	},
 
@@ -2295,6 +2323,15 @@ const animationParams = {
 		} else {
 			selectMesh(allSceneMeshes[index]);
 		}
+	},
+	toggleMeshVisibility: function(index) {
+		if (index < 0 || index >= allSceneMeshes.length) return;
+		const mesh = allSceneMeshes[index];
+		const current = meshVisibility.get(mesh) !== false;
+		const newState = !current;
+		meshVisibility.set(mesh, newState);
+		mesh.visible = newState && this.showMesh;
+		updateMeshListGUI();
 	},
 	deselectMesh: function() {
 		deselectMesh();
@@ -2455,21 +2492,37 @@ function updateMeshListGUI() {
 		const name = mesh.name || `Mesh_${index}`;
 		const isSkinned = mesh.isSkinnedMesh ? ' [skinned]' : '';
 		const vertCount = mesh.geometry?.attributes?.position?.count || 0;
-		html += `<div style="color: #6bbfff; cursor: pointer; padding: 2px; border-radius: 3px;"
+		const isVisible = meshVisibility.get(mesh) !== false;
+		html += `<div style="display: flex; align-items: center; padding: 2px; border-radius: 3px;"
 		              class="gui-mesh-item"
 		              data-mesh-index="${index}"
 		              onmouseover="this.style.backgroundColor='rgba(255,255,255,0.15)'"
-		              onmouseout="this.style.backgroundColor='transparent'">${name}${isSkinned} (${vertCount}v)</div>`;
+		              onmouseout="this.style.backgroundColor='transparent'">` +
+			`<span class="gui-mesh-eye" data-mesh-index="${index}"
+			       style="cursor: pointer; margin-right: 6px; font-size: 14px; user-select: none; opacity: ${isVisible ? '1' : '0.35'};"
+			       title="${isVisible ? 'Hide mesh' : 'Show mesh'}">${isVisible ? '\u{1F441}' : '\u{1F6AB}'}</span>` +
+			`<span class="gui-mesh-name" data-mesh-index="${index}"
+			       style="color: ${isVisible ? '#6bbfff' : '#666'}; cursor: pointer; flex: 1;">${name}${isSkinned} (${vertCount}v)</span></div>`;
 	});
 
 	meshListContainer.innerHTML = html;
 
-	// Add click handlers
-	const meshItems = meshListContainer.querySelectorAll('.gui-mesh-item');
-	meshItems.forEach(item => {
+	// Add click handlers for mesh name (selection)
+	const meshNames = meshListContainer.querySelectorAll('.gui-mesh-name');
+	meshNames.forEach(item => {
 		item.addEventListener('click', function() {
 			const meshIndex = parseInt(this.getAttribute('data-mesh-index'));
 			animationParams.selectMeshByIndex(meshIndex);
+		});
+	});
+
+	// Add click handlers for eye icon (visibility toggle)
+	const eyeIcons = meshListContainer.querySelectorAll('.gui-mesh-eye');
+	eyeIcons.forEach(item => {
+		item.addEventListener('click', function(e) {
+			e.stopPropagation();
+			const meshIndex = parseInt(this.getAttribute('data-mesh-index'));
+			animationParams.toggleMeshVisibility(meshIndex);
 		});
 	});
 }
