@@ -97,6 +97,9 @@ export function addExtendedSkinningAttributes(geometry, jointIndices, jointWeigh
         const textureData = addTextureBasedSkinning(geometry, jointIndices, jointWeights, influencesPerVertex, mode, normalize);
         config.boneDataTexture = textureData.texture;
         config.vertexBoneOffsets = textureData.offsets;
+        config.texelsPerVertex = textureData.texelsPerVertex;
+        config.texWidth = textureData.texWidth;
+        config.texHeight = textureData.texHeight;
     }
 
     // Store config in geometry userData
@@ -329,18 +332,32 @@ function addTextureBasedSkinning(geometry, jointIndices, jointWeights, influence
 export function createExtendedSkinningMaterial(baseMaterial, options = {}) {
     const maxInfluences = options.maxInfluences || 4;
     const mode = getSkinningMode(maxInfluences);
+    const texelsPerVertex = options.texelsPerVertex || Math.ceil(maxInfluences / 2);
 
     // Clone the base material
     const material = baseMaterial.clone();
 
     material.onBeforeCompile = (shader) => {
+        console.log(`[ExtSkin] onBeforeCompile: mode=${mode}, maxInf=${maxInfluences}, texels=${texelsPerVertex}`);
         if (mode === SkinningMode.EXTENDED_8) {
             // 8-bone attribute-based skinning
             apply8BoneShaderMod(shader);
         } else if (mode >= SkinningMode.TEXTURE_16) {
             // 16+ bone texture-based skinning
             applyTextureBoneShaderMod(shader, options);
+            // Verify replacement happened
+            const hasTextureSkinning = shader.vertexShader.includes('USE_TEXTURE_SKINNING');
+            console.log(`[ExtSkin] Shader replacement success: ${hasTextureSkinning}`);
         }
+    };
+
+    // Critical: Three.js caches compiled shader programs by customProgramCacheKey().
+    // The default returns onBeforeCompile.toString(), which is identical for all
+    // closures created here (captured variables are invisible to toString()).
+    // Without unique keys, meshes with different TEXELS_PER_VERTEX / MAX_TEXTURE_INFLUENCES
+    // share the same compiled shader, causing vertices to read wrong bone data.
+    material.customProgramCacheKey = function() {
+        return `ext-skinning-${mode}-${maxInfluences}-${texelsPerVertex}`;
     };
 
     material.needsUpdate = true;
