@@ -147,6 +147,39 @@ export function convertUSDSkeletalAnimationsToThreeJS(usdLoader, boneMap, timeCo
 			}
 		}
 
+		// Expand single-keyframe tracks to span the full duration.
+		// Three.js doesn't extrapolate/hold tracks beyond their keyframe range.
+		// A track with times=[0] only applies at exactly t=0; at t>0 the mixer
+		// resets the property to its default (0 for position, identity for quat).
+		// USD constant attributes (non-time-sampled translations/scales) produce
+		// single-keyframe samplers that must span the full clip to stay applied.
+		if (keyframeTracks.length > 0) {
+			// Find the max time across all tracks to determine the effective duration
+			let maxTime = usdAnimation.duration || 0;
+			for (const track of keyframeTracks) {
+				const lastTime = track.times[track.times.length - 1];
+				if (lastTime > maxTime) maxTime = lastTime;
+			}
+
+			if (maxTime > 0) {
+				for (let t = 0; t < keyframeTracks.length; t++) {
+					const track = keyframeTracks[t];
+					if (track.times.length === 1 && track.times[0] < maxTime) {
+						// Duplicate the single keyframe at the end of the clip
+						const stride = track.getValueSize();
+						const newTimes = new Float32Array([track.times[0], maxTime]);
+						const newValues = new Float32Array(stride * 2);
+						for (let s = 0; s < stride; s++) {
+							newValues[s] = track.values[s];
+							newValues[stride + s] = track.values[s];
+						}
+						track.times = newTimes;
+						track.values = newValues;
+					}
+				}
+			}
+		}
+
 		// Create Three.js AnimationClip
 		if (keyframeTracks.length > 0) {
 			const clip = new THREE.AnimationClip(
