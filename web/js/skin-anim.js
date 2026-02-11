@@ -163,8 +163,6 @@ let animationAction = null;
 let usdAnimations = [];
 let boneMap = new Map(); // Map from joint_id to THREE.Bone
 
-// Store the current file's upAxis (Y or Z)
-let currentFileUpAxis = "Y";
 
 // Store the current file's timeCodesPerSecond (default 24)
 let currentTimeCodesPerSecond = 24;
@@ -358,6 +356,62 @@ function getUSDInterpolationMode(interpolation) {
  * @param {number} skeletonId - Index of the skeleton
  * @returns {Object} { bones: Array<THREE.Bone>, boneMap: Map, rootBone: THREE.Bone }
  */
+
+/**
+ * Find a node in the Three.js hierarchy by matching a USD prim path.
+ * E.g., path="/root/Armature/Armature_001", root.name="root" → finds Armature_001 node.
+ * @param {THREE.Object3D} root - Root of the Three.js hierarchy
+ * @param {string} usdPath - USD absolute prim path (e.g., "/root/Armature/Skeleton")
+ * @returns {THREE.Object3D|null}
+ */
+function findNodeByUSDPath(root, usdPath) {
+	const parts = usdPath.replace(/^\//, '').split('/').filter(p => p.length > 0);
+	if (parts.length === 0) return null;
+
+	let current = root;
+	// If root's name matches the first path component, start matching from the second
+	const startIdx = (current.name === parts[0]) ? 1 : 0;
+
+	for (let i = startIdx; i < parts.length; i++) {
+		const child = current.children.find(c => c.name === parts[i]);
+		if (!child) {
+			console.warn(`findNodeByUSDPath: could not find "${parts[i]}" under "${current.name}" (path: ${usdPath})`);
+			return null;
+		}
+		current = child;
+	}
+	return current;
+}
+
+/**
+ * Replace a THREE.Mesh with a THREE.SkinnedMesh in-place within its parent hierarchy.
+ * Copies geometry, material, name, transform, and children.
+ * @param {THREE.Mesh} mesh - The original mesh to replace
+ * @returns {THREE.SkinnedMesh} The new SkinnedMesh
+ */
+function replaceWithSkinnedMesh(mesh) {
+	const parent = mesh.parent;
+	const skinnedMesh = new THREE.SkinnedMesh(mesh.geometry, mesh.material);
+	skinnedMesh.name = mesh.name;
+	skinnedMesh.position.copy(mesh.position);
+	skinnedMesh.quaternion.copy(mesh.quaternion);
+	skinnedMesh.scale.copy(mesh.scale);
+	skinnedMesh.frustumCulled = false; // Skinned mesh bbox can be stale
+
+	// Move children from original to new
+	while (mesh.children.length > 0) {
+		skinnedMesh.add(mesh.children[0]);
+	}
+
+	// Replace in parent
+	if (parent) {
+		parent.remove(mesh);
+		parent.add(skinnedMesh);
+	}
+
+	return skinnedMesh;
+}
+
 function buildSkeletonFromUSD(usdSkeleton, skeletonId) {
 	console.log('Building skeleton:', usdSkeleton);
 
@@ -1309,9 +1363,8 @@ async function loadUSDModel() {
 	await loader.init({ useZstdCompressedWasm: false, useMemory64: false });
 
 	// Default USD file to load
-	//const usd_filename = "./assets/AnimFinal_LowRes.usdz";
-	const usd_filename = "./assets/CesiumMan.usdz";
-	//const usd_filename = "./assets/skintest-animated.usda";
+	//const usd_filename = "./assets/CesiumMan.usdz";
+	const usd_filename = "./assets/skintest-animated.usda";
 
 	console.log(`Loading USD file: ${usd_filename}`);
 
@@ -1374,10 +1427,8 @@ async function processUSDScene(usd_scene, loader, filename) {
 	}
 
 	// Clear existing model
-	if (skinnedMesh) {
-		characterGroup.remove(skinnedMesh);
-		skinnedMesh = null;
-	}
+	skinnedMesh = null;
+	skeleton = null;
 	if (skeletonHelper) {
 		scene.remove(skeletonHelper);
 		skeletonHelper = null;
@@ -1404,10 +1455,18 @@ async function processUSDScene(usd_scene, loader, filename) {
 	boneMap.clear();
 	animationParams.hasUSDAnimations = false;
 	animationParams.usdAnimationCount = 0;
-	animationParams._upAxisApplied = false;
-
 	// Store loader globally for debugging
 	window.usd_scene = usd_scene;
+
+	// Reset characterGroup transforms to prevent stale state from previous loads
+	characterGroup.position.set(0, 0, 0);
+	characterGroup.quaternion.identity();
+	characterGroup.scale.set(1, 1, 1);
+
+	// Clear previous threeNode children from characterGroup
+	while (characterGroup.children.length > 0) {
+		characterGroup.remove(characterGroup.children[0]);
+	}
 
 	// Get scene metadata from the USD file
 	const sceneMetadata = usd_scene.getSceneMetadata ? usd_scene.getSceneMetadata() : {};
@@ -1430,7 +1489,6 @@ async function processUSDScene(usd_scene, loader, filename) {
 	// Store USD mesh skinning data for ALL meshes, keyed by mesh name (last part of path)
 	const allSkinnedMeshUSDData = new Map();
 	let firstGeomBindTransform = null;
-	let detectedZUpFromPath = false;
 	for (let i = 0; i < numMeshes; i++) {
 		const mesh = usd_scene.getMesh(i);
 		const hasJointIndices = mesh.jointIndices && mesh.jointIndices.length > 0;
@@ -1472,10 +1530,6 @@ async function processUSDScene(usd_scene, loader, filename) {
 			console.log(`  - elementSize (influences per vertex): ${mesh.elementSize}`);
 			console.log(`  - hasGeomBindTransform: ${mesh.hasGeomBindTransform || false}`);
 		}
-		// Check path for Z_UP hint (some models have this in their hierarchy)
-		if (mesh.absPath && (mesh.absPath.includes('Z_UP') || mesh.absPath.includes('z_up') || mesh.absPath.includes('Z_up'))) {
-			detectedZUpFromPath = true;
-		}
 	}
 
 	// Update geomBindTransform display in UI
@@ -1495,20 +1549,8 @@ async function processUSDScene(usd_scene, loader, filename) {
 		window.updateGeomBindTransform(undefined); // Hide the section
 	}
 
-	// Override upAxis if detected from path but metadata says Y
-	if (detectedZUpFromPath && fileUpAxis === "Y") {
-		console.log(`WARNING: Path contains 'Z_UP' but metadata says upAxis="Y". Overriding to "Z".`);
-		fileUpAxis = "Z";
-	}
-
-	currentFileUpAxis = fileUpAxis; // Store globally for toggle function
-	console.log(`upAxis (final): "${fileUpAxis}"`);
+	console.log(`upAxis: "${fileUpAxis}"`);
 	console.log('========================');
-
-	// Note: geomBindTransform is NOT pre-transformed here.
-	// The scene root rotation handles the Z-up to Y-up conversion for all scene elements.
-	// The boneInverses ARE pre-transformed (in buildSkeletonFromUSD) because they need to
-	// account for the rotated bone world matrices while still computing correct skin deformation.
 
 	// Configure bone reduction (if enabled in UI)
 	if (animationParams.enableBoneReduction) {
@@ -1523,10 +1565,12 @@ async function processUSDScene(usd_scene, loader, filename) {
 
 	let bones = [];
 	let rootBone = null;
+	let skeletonAbsPath = null; // USD path of skeleton prim (for hierarchy placement)
 
 	if (numSkeletons > 0) {
 		// Get first skeleton (for simplicity, only support one skeleton for now)
 		const usdSkeleton = usd_scene.getSkeleton(0);
+		skeletonAbsPath = usdSkeleton.abs_path || null;
 		console.log('USD Skeleton:', usdSkeleton);
 
 		if (USE_SKELETAL_HELPER) {
@@ -1653,288 +1697,226 @@ async function processUSDScene(usd_scene, loader, filename) {
 	// Build Three.js node from USD
 	const threeNode = await TinyUSDZLoaderUtils.buildThreeNode(usdRootNode, defaultMtl, usd_scene, options);
 
-	// Find skinned meshes in the loaded geometry
-	let foundSkinnedMesh = false;
+	// =====================================================================
+	// Hierarchy-preserving skinning setup
+	//
+	// Instead of extracting meshes from threeNode and re-parenting to
+	// characterGroup (which loses ancestor transforms like scale and axis
+	// conversion), we:
+	//   1. Add threeNode directly to characterGroup (preserves full hierarchy)
+	//   2. Place rootBone at the skeleton's location in the hierarchy
+	//   3. Replace Mesh → SkinnedMesh in-place within the hierarchy
+	//   4. bind() with explicit geomBindTransform (prevents calculateInverses()
+	//      from overwriting USD boneInverses)
+	//
+	// With AttachedBindMode (default), mesh.matrixWorld cancels in the vertex
+	// shader, so the final world position is:
+	//   world = sum(w * boneMatrix_i) * bindMatrix * pos
+	// where boneMatrix_i = bone.matrixWorld * boneInverse_i
+	//
+	// By placing bones at the skeleton's scene graph location, bone.matrixWorld
+	// includes the correct ancestor transforms (scale, axis conversion), giving
+	// correct display without manual Z-up/scale handling.
+	// =====================================================================
+
+	// 1. Add threeNode to characterGroup (preserves USD scene graph hierarchy)
+	characterGroup.add(threeNode);
+
+	// Set Z-up to Y-up conversion based on file metadata
+	// With AttachedBindMode, this rotation R factors out of boneMatrix:
+	//   world = R * sum(w * old_boneMatrix_i) * bindMatrix * pos
+	// so the entire skinned result is correctly rotated.
+	animationParams.convertZUp = (fileUpAxis.toUpperCase() === 'Z');
+	animationParams.toggleZUp();
+	console.log(`Z-up → Y-up conversion: ${animationParams.convertZUp ? 'ON' : 'OFF'} (upAxis="${fileUpAxis}")`)
+
+	// Collect all meshes from the hierarchy (before we start replacing them)
+	const allMeshes = [];
 	threeNode.traverse((child) => {
-		if (child.isMesh && child.geometry.attributes.skinIndex && child.geometry.attributes.skinWeight) {
-			console.log('Found skinned mesh:', child.name);
-
-			// Only create skeleton if we have bones
-			if (bones.length > 0 && rootBone) {
-				// Create Three.js skeleton with inverse bind matrices from USD
-				// The inverse bind matrices are crucial for proper skinning deformation
-				const boneInverses = _cachedBoneInverses || [];
-				if (boneInverses.length === bones.length) {
-					skeleton = new THREE.Skeleton(bones, boneInverses);
-					console.log('Created skeleton with USD inverse bind matrices');
-				} else {
-					skeleton = new THREE.Skeleton(bones);
-					console.warn(`Skeleton created without inverse bind matrices (expected ${bones.length}, got ${boneInverses.length})`);
-				}
-
-				// Convert to SkinnedMesh if not already
-				if (!child.isSkinnedMesh) {
-					const skinnedMeshChild = new THREE.SkinnedMesh(child.geometry, child.material);
-					skinnedMeshChild.name = child.name;
-					skinnedMeshChild.position.copy(child.position);
-					skinnedMeshChild.quaternion.copy(child.quaternion);
-					skinnedMeshChild.scale.copy(child.scale);
-					child = skinnedMeshChild;
-				}
-
-				child.add(rootBone); // Add skeleton root to the mesh
-
-				// Bind skeleton with optional geomBindTransform
-				// geomBindTransform defines the mesh's transform when it was bound to the skeleton
-				if (skinnedMeshUSDData && skinnedMeshUSDData.geomBindTransform) {
-					child.bind(skeleton, skinnedMeshUSDData.geomBindTransform);
-					console.log('Applied geomBindTransform to skinned mesh');
-				} else {
-					child.bind(skeleton);
-				}
-
-				// Apply extended skinning material if needed (for 8+ bones per vertex)
-				// Optionally use WASM bone texture for high bone counts
-				let wasmBoneTexture = null;
-				if (animationParams.useWASMBoneTexture && skinnedMeshUSDData &&
-					skinnedMeshUSDData.elementSize > 8) {
-					try {
-						wasmBoneTexture = usd_scene.generateBoneTexture(skinnedMeshUSDData.meshId, 0);
-						if (wasmBoneTexture.error) {
-							console.warn(`WASM bone texture generation failed: ${wasmBoneTexture.error}`);
-							wasmBoneTexture = null;
-						} else {
-							console.log(`Using WASM bone texture: ${wasmBoneTexture.textureWidth}x${wasmBoneTexture.textureHeight}`);
-						}
-					} catch (texErr) {
-						console.warn(`WASM bone texture error: ${texErr.message}`);
-						wasmBoneTexture = null;
-					}
-				}
-
-				if (applyExtendedSkinningIfNeeded(child, { wasmBoneTexture })) {
-					console.log('Extended skinning material applied for high bone count');
-				}
-
-				child.castShadow = true;
-				child.receiveShadow = true;
-
-				skinnedMesh = child;
-				skinnedMesh.visible = animationParams.showMesh;
-				characterGroup.add(skinnedMesh);
-				allSceneMeshes.push(skinnedMesh);
-				meshVisibility.set(skinnedMesh, true);
-				foundSkinnedMesh = true;
-
-				// Save original material
-				originalMaterial = skinnedMesh.material;
-
-				// Create skeleton helper for visualization
-				// Add to scene (not usdSceneRoot) since SkeletonHelper uses bone world positions
-				// which already include the Z-up to Y-up rotation from usdSceneRoot
-				skeletonHelper = new THREE.SkeletonHelper(skinnedMesh);
-				skeletonHelper.visible = animationParams.showSkeleton;
-				scene.add(skeletonHelper);
-
-				// Create joint spheres
-				jointSpheres = createJointSpheres(bones);
-				jointSpheres.forEach(sphere => sphere.visible = animationParams.showJoints);
-
-				// Update joint hierarchy display
-				if (window.updateJointHierarchy) {
-					window.updateJointHierarchy(generateJointHierarchy(bones));
-				}
-				if (typeof updateJointHierarchyGUI === 'function') {
-					updateJointHierarchyGUI(bones);
-				}
-			} else {
-				// No skeleton data - just add as regular mesh
-				console.log('No skeleton data available, adding mesh without skeleton');
-				child.castShadow = true;
-				child.receiveShadow = true;
-				child.visible = animationParams.showMesh;
-				characterGroup.add(child);
-				allSceneMeshes.push(child);
-				meshVisibility.set(child, true);
-
-				// Save as skinnedMesh reference even though it's not actually skinned
-				skinnedMesh = child;
-				originalMaterial = child.material;
-				foundSkinnedMesh = true;
-			}
+		if (child.isMesh) {
+			allMeshes.push(child);
 		}
 	});
 
-	if (!foundSkinnedMesh) {
-		// If no skinned mesh found, try to find meshes and add skinning
-		console.log('No pre-skinned mesh found, processing all meshes with USD skinning data');
+	console.log(`Found ${allMeshes.length} meshes in hierarchy, ${allSkinnedMeshUSDData.size} have USD skinning data`);
 
-		// Collect all meshes from the loaded scene
-		const allMeshes = [];
-		threeNode.traverse((child) => {
-			if (child.isMesh) {
-				allMeshes.push(child);
-			}
-		});
+	if (allMeshes.length > 0 && bones.length > 0 && rootBone) {
+		// 2. Create skeleton with USD inverse bind matrices
+		const boneInverses = _cachedBoneInverses || [];
+		if (boneInverses.length === bones.length) {
+			skeleton = new THREE.Skeleton(bones, boneInverses);
+			console.log('Created skeleton with USD inverse bind matrices');
+		} else {
+			skeleton = new THREE.Skeleton(bones);
+			console.warn(`Skeleton created without inverse bind matrices (expected ${bones.length}, got ${boneInverses.length})`);
+		}
 
-		console.log(`Found ${allMeshes.length} meshes, ${allSkinnedMeshUSDData.size} have USD skinning data`);
+		// Validate rootBone
+		if (!rootBone || !(rootBone instanceof THREE.Bone)) {
+			console.error('Invalid rootBone:', rootBone);
+			throw new Error('rootBone is not a valid THREE.Bone');
+		}
 
-		if (allMeshes.length > 0 && bones.length > 0 && rootBone) {
-			// Create skeleton with inverse bind matrices from USD (shared by all meshes)
-			const boneInverses = _cachedBoneInverses || [];
-			if (boneInverses.length === bones.length) {
-				skeleton = new THREE.Skeleton(bones, boneInverses);
-				console.log('Created skeleton with USD inverse bind matrices');
+		// 3. Place rootBone at the skeleton's location in the threeNode hierarchy
+		// This ensures bone.matrixWorld includes the correct ancestor transforms
+		// (e.g., Armature's 0.01*Rx(+90°) for StandingRunForward)
+		let skeletonParentNode = null;
+		if (skeletonAbsPath) {
+			skeletonParentNode = findNodeByUSDPath(threeNode, skeletonAbsPath);
+			if (skeletonParentNode) {
+				console.log(`Placing rootBone at skeleton node: ${skeletonAbsPath} (${skeletonParentNode.name})`);
 			} else {
-				skeleton = new THREE.Skeleton(bones);
-				console.warn(`Skeleton created without inverse bind matrices (expected ${bones.length}, got ${boneInverses.length})`);
+				console.warn(`Could not find skeleton node "${skeletonAbsPath}" in hierarchy, falling back to threeNode root`);
 			}
+		}
+		// Fallback: add rootBone to threeNode root (ancestor transforms may be missing)
+		const boneParent = skeletonParentNode || threeNode;
+		boneParent.add(rootBone);
 
-			// Validate rootBone
-			if (!rootBone || !(rootBone instanceof THREE.Bone)) {
-				console.error('Invalid rootBone:', rootBone);
-				throw new Error('rootBone is not a valid THREE.Bone');
-			}
+		// 4. Propagate all world matrices before binding
+		characterGroup.updateMatrixWorld(true);
 
-			// Process each mesh
-			let firstSkinnedMesh = null;
-			let processedCount = 0;
+		// 5. Process each mesh: add skinning attributes and replace with SkinnedMesh
+		let firstSkinnedMesh = null;
+		let processedCount = 0;
 
-			for (const mesh of allMeshes) {
-				const meshName = mesh.name;
+		for (const mesh of allMeshes) {
+			const meshName = mesh.name;
+			const meshUSDData = allSkinnedMeshUSDData.get(meshName);
 
-				// Look up USD skinning data for this mesh
-				const meshUSDData = allSkinnedMeshUSDData.get(meshName);
+			if (meshUSDData) {
+				console.log(`Processing mesh: ${meshName}`);
 
-				if (meshUSDData) {
-					console.log(`Processing mesh: ${meshName}`);
+				const geometry = mesh.geometry;
+				if (geometry.attributes.position) {
+					const vertexCount = geometry.attributes.position.count;
+					const influencesPerVertex = meshUSDData.elementSize || 4;
+					const usdVertexCount = Math.floor(meshUSDData.jointIndices.length / influencesPerVertex);
+
+					console.log(`  Adding skinning: ${vertexCount} vertices, ${influencesPerVertex} influences/vertex`);
+
+					if (vertexCount !== usdVertexCount) {
+						console.warn(`  Vertex count mismatch: Three.js=${vertexCount}, USD=${usdVertexCount}`);
+					}
 
 					// Add skinning attributes to geometry
-					const geometry = mesh.geometry;
-					if (geometry.attributes.position) {
-						const vertexCount = geometry.attributes.position.count;
-						const influencesPerVertex = meshUSDData.elementSize || 4;
-						const usdVertexCount = Math.floor(meshUSDData.jointIndices.length / influencesPerVertex);
+					const skinningConfig = addExtendedSkinningAttributes(
+						geometry,
+						meshUSDData.jointIndices,
+						meshUSDData.jointWeights,
+						influencesPerVertex,
+						{ normalize: true }
+					);
 
-						console.log(`  Adding skinning: ${vertexCount} vertices, ${influencesPerVertex} influences/vertex`);
+					console.log(`  Skinning mode: ${skinningConfig.mode}`);
 
-						if (vertexCount !== usdVertexCount) {
-							console.warn(`  Vertex count mismatch: Three.js=${vertexCount}, USD=${usdVertexCount}`);
-						}
+					// Replace Mesh with SkinnedMesh in-place within the hierarchy
+					const newSkinnedMesh = replaceWithSkinnedMesh(mesh);
+					newSkinnedMesh.castShadow = true;
+					newSkinnedMesh.receiveShadow = true;
+					newSkinnedMesh.visible = animationParams.showMesh;
 
-						// Add skinning attributes
-						const skinningConfig = addExtendedSkinningAttributes(
-							geometry,
-							meshUSDData.jointIndices,
-							meshUSDData.jointWeights,
-							influencesPerVertex,
-							{ normalize: true }
-						);
-
-						console.log(`  Skinning mode: ${skinningConfig.mode}`);
-
-						// Create SkinnedMesh
-						const newSkinnedMesh = new THREE.SkinnedMesh(geometry, mesh.material);
-						newSkinnedMesh.name = meshName;
-						newSkinnedMesh.castShadow = true;
-						newSkinnedMesh.receiveShadow = true;
-						newSkinnedMesh.visible = animationParams.showMesh;
-
-						// For first mesh, add rootBone and bind skeleton
-						if (!firstSkinnedMesh) {
-							newSkinnedMesh.add(rootBone);
-							newSkinnedMesh.updateMatrixWorld(true);
-
-							// Bind with geomBindTransform if available
-							if (meshUSDData.geomBindTransform) {
-								newSkinnedMesh.bind(skeleton, meshUSDData.geomBindTransform);
-								console.log(`  Applied geomBindTransform`);
-							} else {
-								newSkinnedMesh.bind(skeleton);
-							}
-
-							firstSkinnedMesh = newSkinnedMesh;
-							skinnedMesh = newSkinnedMesh;
-							originalMaterial = newSkinnedMesh.material;
-						} else {
-							// Subsequent meshes share the skeleton
-							if (meshUSDData.geomBindTransform) {
-								newSkinnedMesh.bind(skeleton, meshUSDData.geomBindTransform);
-							} else {
-								newSkinnedMesh.bind(skeleton);
-							}
-						}
-
-						// Apply extended skinning material if needed
-						if (applyExtendedSkinningIfNeeded(newSkinnedMesh)) {
-							console.log(`  Extended skinning material applied`);
-						}
-
-						characterGroup.add(newSkinnedMesh);
-						allSceneMeshes.push(newSkinnedMesh);
-						meshVisibility.set(newSkinnedMesh, true);
-						processedCount++;
+					// Bind with explicit geomBindTransform
+					// MUST pass bindMatrix explicitly to prevent bind() from calling
+					// calculateInverses() which would overwrite USD boneInverses
+					const bindMatrix = meshUSDData.geomBindTransform || new THREE.Matrix4(); // Identity if no geomBindTransform
+					newSkinnedMesh.bind(skeleton, bindMatrix);
+					if (meshUSDData.geomBindTransform) {
+						console.log(`  Bound with geomBindTransform`);
+					} else {
+						console.log(`  Bound with identity bindMatrix`);
 					}
-				} else {
-					// Mesh without skinning data - add as regular mesh
-					console.log(`Mesh ${meshName}: no USD skinning data, adding as regular mesh`);
-					mesh.castShadow = true;
-					mesh.receiveShadow = true;
-					mesh.visible = animationParams.showMesh;
-					characterGroup.add(mesh);
-					allSceneMeshes.push(mesh);
-					meshVisibility.set(mesh, true);
 
-					if (!skinnedMesh) {
-						skinnedMesh = mesh;
-						originalMaterial = mesh.material;
+					// Apply extended skinning material if needed (8+ bones per vertex)
+					let wasmBoneTexture = null;
+					if (animationParams.useWASMBoneTexture && meshUSDData.elementSize > 8) {
+						try {
+							wasmBoneTexture = usd_scene.generateBoneTexture(meshUSDData.meshId, 0);
+							if (wasmBoneTexture && wasmBoneTexture.error) {
+								console.warn(`WASM bone texture generation failed: ${wasmBoneTexture.error}`);
+								wasmBoneTexture = null;
+							}
+						} catch (texErr) {
+							console.warn(`WASM bone texture error: ${texErr.message}`);
+							wasmBoneTexture = null;
+						}
 					}
+
+					if (applyExtendedSkinningIfNeeded(newSkinnedMesh, { wasmBoneTexture })) {
+						console.log(`  Extended skinning material applied`);
+					}
+
+					if (!firstSkinnedMesh) {
+						firstSkinnedMesh = newSkinnedMesh;
+						skinnedMesh = newSkinnedMesh;
+						originalMaterial = newSkinnedMesh.material;
+					}
+
+					allSceneMeshes.push(newSkinnedMesh);
+					meshVisibility.set(newSkinnedMesh, true);
+					processedCount++;
 				}
-			}
-
-			console.log(`Processed ${processedCount} skinned meshes`);
-
-			if (firstSkinnedMesh) {
-				// Create skeleton helper for visualization
-				skeletonHelper = new THREE.SkeletonHelper(firstSkinnedMesh);
-				skeletonHelper.visible = animationParams.showSkeleton;
-				scene.add(skeletonHelper);
-
-				// Create joint spheres
-				jointSpheres = createJointSpheres(bones);
-				jointSpheres.forEach(sphere => sphere.visible = animationParams.showJoints);
-
-				// Update joint hierarchy display
-				if (window.updateJointHierarchy) {
-					window.updateJointHierarchy(generateJointHierarchy(bones));
-				}
-				if (typeof updateJointHierarchyGUI === 'function') {
-					updateJointHierarchyGUI(bones);
-				}
-			}
-		} else {
-			// No skeleton or no mesh - just add the scene as-is
-			console.log('Adding scene without skeleton');
-			for (const mesh of allMeshes) {
+			} else {
+				// Non-skinned mesh: stays in hierarchy as-is (threeNode is already in characterGroup)
+				console.log(`Mesh ${meshName}: no USD skinning data, keeping as regular mesh`);
 				mesh.castShadow = true;
 				mesh.receiveShadow = true;
 				mesh.visible = animationParams.showMesh;
-				characterGroup.add(mesh);
 				allSceneMeshes.push(mesh);
 				meshVisibility.set(mesh, true);
+
 				if (!skinnedMesh) {
 					skinnedMesh = mesh;
 					originalMaterial = mesh.material;
 				}
 			}
+		}
 
-			// Update joint hierarchy display (empty)
+		console.log(`Processed ${processedCount} skinned meshes (hierarchy preserved)`);
+
+		if (firstSkinnedMesh) {
+			// Create skeleton helper for visualization
+			// Use rootBone (not firstSkinnedMesh) because bones are in the hierarchy
+			// under the skeleton node, not under the skinned mesh
+			skeletonHelper = new THREE.SkeletonHelper(rootBone);
+			skeletonHelper.visible = animationParams.showSkeleton;
+			scene.add(skeletonHelper);
+
+			// Create joint spheres
+			jointSpheres = createJointSpheres(bones);
+			jointSpheres.forEach(sphere => sphere.visible = animationParams.showJoints);
+
+			// Update joint hierarchy display
 			if (window.updateJointHierarchy) {
-				window.updateJointHierarchy(generateJointHierarchy([]));
+				window.updateJointHierarchy(generateJointHierarchy(bones));
 			}
 			if (typeof updateJointHierarchyGUI === 'function') {
-				updateJointHierarchyGUI([]);
+				updateJointHierarchyGUI(bones);
 			}
+		}
+	} else {
+		// No skeleton or no meshes — scene is already in characterGroup via threeNode
+		console.log('No skeleton data or no meshes, scene added as-is');
+		threeNode.traverse((child) => {
+			if (child.isMesh) {
+				child.castShadow = true;
+				child.receiveShadow = true;
+				child.visible = animationParams.showMesh;
+				allSceneMeshes.push(child);
+				meshVisibility.set(child, true);
+				if (!skinnedMesh) {
+					skinnedMesh = child;
+					originalMaterial = child.material;
+				}
+			}
+		});
+
+		// Update joint hierarchy display (empty)
+		if (window.updateJointHierarchy) {
+			window.updateJointHierarchy(generateJointHierarchy([]));
+		}
+		if (typeof updateJointHierarchyGUI === 'function') {
+			updateJointHierarchyGUI([]);
 		}
 	}
 
@@ -2013,37 +1995,6 @@ async function processUSDScene(usd_scene, loader, filename) {
 		if (window.updateAnimationList) {
 			window.updateAnimationList([], []);
 		}
-	}
-
-	// Z-up to Y-up conversion
-	// Approach: no scene root rotation. Per-mesh handling:
-	// - Static (non-skinned) meshes: rotate geometry directly
-	// - Skinned meshes: skip geometry rotation, instead adjust bindMatrixInverse
-	//   to rotate the skinning output to Y-up (bindMatrixInverse' = R * bindMatrixInverse)
-	usdSceneRoot.rotation.x = 0; // Never rotate scene root
-	animationParams._upAxisApplied = false;
-
-	if (animationParams.applyUpAxisConversion && fileUpAxis === "Z") {
-		const R = new THREE.Matrix4().makeRotationX(-Math.PI / 2);
-
-		characterGroup.traverse((child) => {
-			if (child.isSkinnedMesh) {
-				// Skinned mesh: don't rotate geometry.
-				// Instead, prepend R to bindMatrixInverse so skinning output is Y-up.
-				// skinned = (R * bindMatrixInverse) * sum(w_i * boneMatrix_i) * bindMatrix * position
-				//         = R * (original Z-up skinned result) = Y-up
-				child.bindMatrixInverse.premultiply(R);
-			} else if (child.isMesh && child.geometry) {
-				// Static mesh: rotate geometry vertices directly
-				child.geometry.applyMatrix4(R);
-			}
-		});
-		animationParams._upAxisApplied = true;
-		console.log(`[processUSDScene] Applied Z-up to Y-up: static meshes rotated, skinned meshes bindMatrixInverse adjusted`);
-	} else if (fileUpAxis !== "Y" && fileUpAxis !== "Z") {
-		console.warn(`[processUSDScene] File upAxis is "${fileUpAxis}" (not Y or Z), no conversion applied`);
-	} else {
-		console.log(`[processUSDScene] No upAxis conversion needed (file upAxis="${fileUpAxis}")`);
 	}
 
 	// Update mesh list GUI
@@ -2217,7 +2168,7 @@ const animationParams = {
 		}
 	},
 
-	showSkeleton: true,
+	showSkeleton: false,
 	toggleSkeleton: function() {
 		if (skeletonHelper) {
 			skeletonHelper.visible = this.showSkeleton;
@@ -2297,6 +2248,16 @@ const animationParams = {
 	// with high bone counts (16+ bones per vertex)
 	useWASMBoneTexture: false,
 
+	// Z-up to Y-up conversion
+	convertZUp: false,
+	toggleZUp: function() {
+		if (this.convertZUp) {
+			characterGroup.rotation.x = -Math.PI / 2;
+		} else {
+			characterGroup.rotation.x = 0;
+		}
+	},
+
 	// Shadows
 	enableShadows: true,
 	toggleShadows: function() {
@@ -2337,41 +2298,6 @@ const animationParams = {
 		deselectMesh();
 	},
 
-	// Up axis conversion (Z-up to Y-up)
-	// Per-mesh approach: static meshes get geometry rotated, skinned meshes get bindMatrixInverse adjusted.
-	// No scene root rotation used.
-	applyUpAxisConversion: true,
-	_upAxisApplied: false, // Track whether upAxis transform is currently applied
-	toggleUpAxisConversion: function() {
-		if (currentFileUpAxis !== "Z") return; // Nothing to do for Y-up files
-
-		const R = new THREE.Matrix4().makeRotationX(-Math.PI / 2);
-		const Rinv = new THREE.Matrix4().makeRotationX(Math.PI / 2);
-
-		if (this.applyUpAxisConversion && !this._upAxisApplied) {
-			// Apply: rotate static geometry, adjust skinned bindMatrixInverse
-			characterGroup.traverse((child) => {
-				if (child.isSkinnedMesh) {
-					child.bindMatrixInverse.premultiply(R);
-				} else if (child.isMesh && child.geometry) {
-					child.geometry.applyMatrix4(R);
-				}
-			});
-			this._upAxisApplied = true;
-			console.log(`[toggleUpAxisConversion] Applied Z-up to Y-up`);
-		} else if (!this.applyUpAxisConversion && this._upAxisApplied) {
-			// Undo: reverse geometry rotation, reverse bindMatrixInverse adjustment
-			characterGroup.traverse((child) => {
-				if (child.isSkinnedMesh) {
-					child.bindMatrixInverse.premultiply(Rinv);
-				} else if (child.isMesh && child.geometry) {
-					child.geometry.applyMatrix4(Rinv);
-				}
-			});
-			this._upAxisApplied = false;
-			console.log(`[toggleUpAxisConversion] Removed Z-up to Y-up`);
-		}
-	}
 };
 
 // GUI setup
@@ -2431,9 +2357,10 @@ visualFolder.add(animationParams, 'showSkeleton')
 visualFolder.add(animationParams, 'enableShadows')
 	.name('Enable Shadows')
 	.onChange(() => animationParams.toggleShadows());
-visualFolder.add(animationParams, 'applyUpAxisConversion')
-	.name('Z-up to Y-up')
-	.onChange(() => animationParams.toggleUpAxisConversion());
+visualFolder.add(animationParams, 'convertZUp')
+	.name('Z-up → Y-up')
+	.onChange(() => animationParams.toggleZUp())
+	.listen();
 visualFolder.add(animationParams, 'fitToScene').name('Fit to Scene');
 visualFolder.open();
 
