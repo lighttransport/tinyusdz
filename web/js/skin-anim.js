@@ -722,9 +722,7 @@ async function loadUSDModel() {
 
 	// Default USD file to load
 	//const usd_filename = "./assets/CesiumMan.usdz";
-	const usd_filename = "./assets/Layout_Scene.usdz";
-	//const usd_filename = "./assets/AnimFinal_LowRes_WithCave.usdz";
-	//const usd_filename = "./assets/skintest-animated.usda";
+	const usd_filename = "./assets/skintest-animated.usda";
 
 	console.log(`Loading USD file: ${usd_filename}`);
 
