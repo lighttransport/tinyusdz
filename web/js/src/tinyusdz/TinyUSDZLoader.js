@@ -803,12 +803,21 @@ class TinyUSDZLoader extends Loader {
         }
 
         try {
-            // Call the C++20 coroutine-based async loader
-            // This returns a Promise that resolves to { success, error?, meshCount?, materialCount?, textureCount? }
-            const result = await usd.loadFromBinaryAsync(binary, filePath || '');
+            // Check if the C++20 coroutine-based async loader is available
+            if (typeof usd.loadFromBinaryAsync === 'function') {
+                // Call the C++20 coroutine-based async loader
+                // This returns a Promise that resolves to { success, error?, meshCount?, materialCount?, textureCount? }
+                const result = await usd.loadFromBinaryAsync(binary, filePath || '');
 
-            if (!result.success) {
-                throw new Error(`TinyUSDZLoader: Failed to load USD: ${result.error || 'unknown error'}`);
+                if (!result.success) {
+                    throw new Error(`TinyUSDZLoader: Failed to load USD: ${result.error || 'unknown error'}`);
+                }
+            } else {
+                // Fall back to synchronous loading
+                const ok = usd.loadFromBinary(binary, filePath || '');
+                if (!ok) {
+                    throw new Error(`TinyUSDZLoader: Failed to load USD: ${usd.error()}`);
+                }
             }
 
             return usd;
