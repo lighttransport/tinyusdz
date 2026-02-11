@@ -1354,7 +1354,7 @@ async function loadUSDModel() {
 
 	// Default USD file to load
 	//const usd_filename = "./assets/CesiumMan.usdz";
-	const usd_filename = "./assets/StandingRunForward.usdz";
+	const usd_filename = "./assets/AnimFinal_LowRes.usdz";
 	//const usd_filename = "./assets/skintest-animated.usda";
 
 	console.log(`Loading USD file: ${usd_filename}`);
@@ -1915,9 +1915,8 @@ async function processUSDScene(usd_scene, loader, filename) {
 			skeletonHelper.visible = animationParams.showSkeleton;
 			scene.add(skeletonHelper);
 
-			// Create joint spheres
-			jointSpheres = createJointSpheres(bones);
-			jointSpheres.forEach(sphere => sphere.visible = animationParams.showJoints);
+			// Joint spheres are created lazily on first showJoints toggle
+			// to avoid 3000+ sphere meshes + materials bloating memory/scene graph
 
 			// Update joint hierarchy display
 			if (window.updateJointHierarchy) {
@@ -2217,7 +2216,19 @@ const animationParams = {
 	// Debug visualization
 	showJoints: false,
 	toggleJoints: function() {
-		jointSpheres.forEach(sphere => sphere.visible = this.showJoints);
+		if (this.showJoints) {
+			// Lazy-create joint spheres on first toggle
+			if (jointSpheres.length === 0 && skeleton && skeleton.bones.length > 0) {
+				jointSpheres = createJointSpheres(skeleton.bones);
+			}
+			jointSpheres.forEach(sphere => {
+				sphere.visible = true;
+				if (!sphere.parent) scene.add(sphere);
+			});
+		} else {
+			// Remove from scene to avoid bloating scene graph traversal
+			jointSpheres.forEach(sphere => scene.remove(sphere));
+		}
 	},
 
 	showWeights: false,
