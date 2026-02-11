@@ -64,6 +64,16 @@ scene.background = new THREE.Color(0x1a1a1a);
 // Module-level variable to store inverse bind matrices from skeleton building
 let _cachedBoneInverses = [];
 
+// Reusable temporaries to reduce per-frame GC pressure
+const _tmpVec3 = new THREE.Vector3();
+const _tmpVec3b = new THREE.Vector3();
+const _tmpVec3c = new THREE.Vector3();
+const _tmpBox3 = new THREE.Box3();
+const _tmpBox3b = new THREE.Box3();
+
+// WeakMap cache for per-mesh bone indices (avoids recomputing each frame)
+const _meshBoneIndexCache = new WeakMap();
+
 // Camera
 const camera = new THREE.PerspectiveCamera(
 	75,
@@ -262,8 +272,8 @@ function convertUSDSkeletalAnimationsToThreeJS(usdLoader, boneMap, timeCodesPerS
 				const channel = channels.Translation;
 				const sampler = usdAnimation.samplers[channel.sampler];
 				if (sampler && sampler.times && sampler.values) {
-					const times = Array.isArray(sampler.times) ? sampler.times : Array.from(sampler.times);
-					const values = Array.isArray(sampler.values) ? sampler.values : Array.from(sampler.values);
+					const times = sampler.times;
+					const values = sampler.values;
 
 					const track = new THREE.VectorKeyframeTrack(
 						`${boneName}.position`,
@@ -280,8 +290,8 @@ function convertUSDSkeletalAnimationsToThreeJS(usdLoader, boneMap, timeCodesPerS
 				const channel = channels.Rotation;
 				const sampler = usdAnimation.samplers[channel.sampler];
 				if (sampler && sampler.times && sampler.values) {
-					const times = Array.isArray(sampler.times) ? sampler.times : Array.from(sampler.times);
-					const values = Array.isArray(sampler.values) ? sampler.values : Array.from(sampler.values);
+					const times = sampler.times;
+					const values = sampler.values;
 
 					const track = new THREE.QuaternionKeyframeTrack(
 						`${boneName}.quaternion`,
@@ -298,8 +308,8 @@ function convertUSDSkeletalAnimationsToThreeJS(usdLoader, boneMap, timeCodesPerS
 				const channel = channels.Scale;
 				const sampler = usdAnimation.samplers[channel.sampler];
 				if (sampler && sampler.times && sampler.values) {
-					const times = Array.isArray(sampler.times) ? sampler.times : Array.from(sampler.times);
-					const values = Array.isArray(sampler.values) ? sampler.values : Array.from(sampler.values);
+					const times = sampler.times;
+					const values = sampler.values;
 
 					const track = new THREE.VectorKeyframeTrack(
 						`${boneName}.scale`,
@@ -750,9 +760,8 @@ function createJointSpheres(bones) {
 function updateJointSpheres() {
 	jointSpheres.forEach(sphere => {
 		const bone = sphere.userData.bone;
-		const worldPos = new THREE.Vector3();
-		bone.getWorldPosition(worldPos);
-		sphere.position.copy(worldPos);
+		bone.getWorldPosition(_tmpVec3);
+		sphere.position.copy(_tmpVec3);
 	});
 }
 
@@ -768,9 +777,9 @@ function computeSceneBoundingBox(root) {
 		if (child.isMesh && child.geometry) {
 			child.geometry.computeBoundingBox();
 			if (child.geometry.boundingBox) {
-				const meshBox = child.geometry.boundingBox.clone();
-				meshBox.applyMatrix4(child.matrixWorld);
-				box.union(meshBox);
+				_tmpBox3b.copy(child.geometry.boundingBox);
+				_tmpBox3b.applyMatrix4(child.matrixWorld);
+				box.union(_tmpBox3b);
 			}
 		}
 	});
@@ -789,13 +798,11 @@ function computeSceneBoundingBox(root) {
  * @param {THREE.Box3} sceneBounds - Scene bounding box
  */
 function updateShadowCameraFromBounds(light, sceneBounds) {
-	const center = new THREE.Vector3();
-	const size = new THREE.Vector3();
-	sceneBounds.getCenter(center);
-	sceneBounds.getSize(size);
+	sceneBounds.getCenter(_tmpVec3);
+	sceneBounds.getSize(_tmpVec3b);
 
 	// Calculate the maximum extent with some padding
-	const maxDim = Math.max(size.x, size.y, size.z);
+	const maxDim = Math.max(_tmpVec3b.x, _tmpVec3b.y, _tmpVec3b.z);
 	const padding = maxDim * 0.5;
 	const frustumSize = maxDim + padding;
 
@@ -806,14 +813,14 @@ function updateShadowCameraFromBounds(light, sceneBounds) {
 	light.shadow.camera.bottom = -frustumSize;
 
 	// Update near/far based on light position and scene bounds
-	const lightPos = light.position.clone();
-	const lightToCenter = center.clone().sub(lightPos);
-	const dist = lightToCenter.length();
+	_tmpVec3c.copy(light.position);
+	const dist = _tmpVec3c.sub(_tmpVec3).length(); // lightToCenter
 	light.shadow.camera.near = Math.max(0.1, dist - maxDim);
 	light.shadow.camera.far = dist + maxDim * 2;
 
-	// Move light target to scene center
-	light.target.position.copy(center);
+	// Move light target to scene center (_tmpVec3 was overwritten by sub, recompute)
+	sceneBounds.getCenter(_tmpVec3);
+	light.target.position.copy(_tmpVec3);
 	light.target.updateMatrixWorld();
 
 	// Update shadow camera
@@ -929,17 +936,18 @@ function removeBBoxHelper() {
  * @param {THREE.Mesh} mesh - The mesh to compute bbox for
  * @returns {THREE.Box3} The bounding box
  */
-function computeSkinnedBBox(mesh) {
-	const box = new THREE.Box3();
+function computeSkinnedBBox(mesh, targetBox = null) {
+	const box = targetBox || new THREE.Box3();
+	box.makeEmpty();
 
 	if (mesh.isSkinnedMesh && mesh.skeleton && mesh.skeleton.bones.length > 0) {
 		// Use bone world positions for skinned meshes
 		expandBoxBySkeletonBones(mesh.skeleton, box);
 		// Add margin for mesh volume around bones
-		const size = box.getSize(new THREE.Vector3());
-		const margin = size.clone().multiplyScalar(0.15);
-		box.min.sub(margin);
-		box.max.add(margin);
+		box.getSize(_tmpVec3b);
+		_tmpVec3c.copy(_tmpVec3b).multiplyScalar(0.15);
+		box.min.sub(_tmpVec3c);
+		box.max.add(_tmpVec3c);
 	} else {
 		// Regular mesh - use geometry bounds
 		box.expandByObject(mesh);
@@ -956,25 +964,28 @@ function computeSkinnedBBox(mesh) {
 function expandBoxByMeshBones(mesh, box) {
 	if (!mesh.skeleton || !mesh.geometry) return;
 
-	// Collect unique bone indices used by this mesh
 	const skinIndex = mesh.geometry.attributes.skinIndex;
 	if (!skinIndex) return;
 
-	const usedBoneIndices = new Set();
-	for (let i = 0; i < skinIndex.count; i++) {
-		for (let j = 0; j < skinIndex.itemSize; j++) {
-			const idx = skinIndex.getComponent(i, j);
-			usedBoneIndices.add(idx);
+	// Use cached bone indices or compute and cache them
+	let usedBoneIndices = _meshBoneIndexCache.get(mesh.geometry);
+	if (!usedBoneIndices) {
+		const indexSet = new Set();
+		for (let i = 0; i < skinIndex.count; i++) {
+			for (let j = 0; j < skinIndex.itemSize; j++) {
+				indexSet.add(skinIndex.getComponent(i, j));
+			}
 		}
+		usedBoneIndices = Array.from(indexSet); // array for faster iteration
+		_meshBoneIndexCache.set(mesh.geometry, usedBoneIndices);
 	}
 
 	// Use only the bones that influence this mesh
-	const boneWorldPos = new THREE.Vector3();
-	for (const boneIdx of usedBoneIndices) {
-		const bone = mesh.skeleton.bones[boneIdx];
+	for (let i = 0; i < usedBoneIndices.length; i++) {
+		const bone = mesh.skeleton.bones[usedBoneIndices[i]];
 		if (bone) {
-			bone.getWorldPosition(boneWorldPos);
-			box.expandByPoint(boneWorldPos);
+			bone.getWorldPosition(_tmpVec3);
+			box.expandByPoint(_tmpVec3);
 		}
 	}
 }
@@ -984,32 +995,32 @@ function expandBoxByMeshBones(mesh, box) {
  * @returns {THREE.Box3} The computed bounding box
  */
 function computeCurrentBBox() {
-	const box = new THREE.Box3();
+	_tmpBox3.makeEmpty();
 
 	if (selectedMeshObj) {
 		if (selectedMeshObj.isSkinnedMesh && selectedMeshObj.skeleton) {
-			expandBoxByMeshBones(selectedMeshObj, box);
+			expandBoxByMeshBones(selectedMeshObj, _tmpBox3);
 		} else {
-			box.expandByObject(selectedMeshObj);
+			_tmpBox3.expandByObject(selectedMeshObj);
 		}
 	} else {
 		for (const mesh of allSceneMeshes) {
 			if (mesh.isSkinnedMesh && mesh.skeleton) {
-				expandBoxBySkeletonBones(mesh.skeleton, box);
+				expandBoxBySkeletonBones(mesh.skeleton, _tmpBox3);
 			} else {
-				box.expandByObject(mesh);
+				_tmpBox3.expandByObject(mesh);
 			}
 		}
 	}
 
-	if (!box.isEmpty()) {
-		const size = box.getSize(new THREE.Vector3());
-		const margin = size.clone().multiplyScalar(0.15);
-		box.min.sub(margin);
-		box.max.add(margin);
+	if (!_tmpBox3.isEmpty()) {
+		_tmpBox3.getSize(_tmpVec3);
+		_tmpVec3b.copy(_tmpVec3).multiplyScalar(0.15);
+		_tmpBox3.min.sub(_tmpVec3b);
+		_tmpBox3.max.add(_tmpVec3b);
 	}
 
-	return box;
+	return _tmpBox3;
 }
 
 /**
@@ -1194,10 +1205,9 @@ function onMouseClick(event) {
 function expandBoxBySkeletonBones(skeleton, box) {
 	if (!skeleton || !skeleton.bones) return;
 
-	const boneWorldPos = new THREE.Vector3();
 	for (const bone of skeleton.bones) {
-		bone.getWorldPosition(boneWorldPos);
-		box.expandByPoint(boneWorldPos);
+		bone.getWorldPosition(_tmpVec3);
+		box.expandByPoint(_tmpVec3);
 	}
 }
 
@@ -1221,39 +1231,30 @@ function fitCameraToScene(targetObject = null, paddingFactor = 2.0) {
 	const hasSkeleton = skinnedMesh && skinnedMesh.skeleton && skinnedMesh.skeleton.bones.length > 0;
 
 	if (hasAnimation && hasSkeleton) {
-		// Sample animation at regular intervals to get bounding box for entire animation
-		// Use skeleton bone positions for accurate bounds (geometry bounds don't update with skinning)
 		const clip = usdAnimations[animationParams.currentAnimation] || usdAnimations[0];
 		const duration = clip.duration;
-		const numSamples = 20; // Sample 20 frames across the animation for better coverage
+		const boneCount = skinnedMesh.skeleton.bones.length;
+		const numSamples = boneCount > 500 ? 5 : 20; // fewer samples for large skeletons
 		const savedTime = animationAction.time;
 
-		console.log(`fitCameraToScene: Sampling ${numSamples} frames over ${duration.toFixed(2)}s animation (using skeleton bones)`);
+		console.log(`fitCameraToScene: Sampling ${numSamples} frames over ${duration.toFixed(2)}s animation (${boneCount} bones)`);
 
 		for (let i = 0; i <= numSamples; i++) {
-			// Set animation time
 			const sampleTime = (i / numSamples) * duration;
 			animationAction.time = sampleTime;
 			mixer.setTime(sampleTime);
-
-			// Update skeleton
 			skinnedMesh.skeleton.update();
 			target.updateMatrixWorld(true);
-
-			// Expand bounding box using skeleton bone world positions
 			expandBoxBySkeletonBones(skinnedMesh.skeleton, box);
 		}
 
-		// Restore original animation time
 		animationAction.time = savedTime;
 		mixer.setTime(savedTime);
 		skinnedMesh.skeleton.update();
 		target.updateMatrixWorld(true);
 	} else if (hasSkeleton) {
-		// Has skeleton but no animation - use bone positions at current pose
 		expandBoxBySkeletonBones(skinnedMesh.skeleton, box);
 	} else {
-		// No skeleton - use geometry bounds (works for non-skinned meshes)
 		box.expandByObject(target);
 	}
 
@@ -1262,42 +1263,31 @@ function fitCameraToScene(targetObject = null, paddingFactor = 2.0) {
 		return;
 	}
 
-	// Add padding to the bounding box to account for mesh volume around bones
-	// Bones are at the center of limbs, so we need extra space for the actual mesh
-	const boneMargin = 0.3; // 30% margin for mesh around bones
-	const size = box.getSize(new THREE.Vector3());
-	const marginVec = size.clone().multiplyScalar(boneMargin * 0.5);
-	box.min.sub(marginVec);
-	box.max.add(marginVec);
+	// Add padding for mesh volume around bones
+	box.getSize(_tmpVec3);
+	_tmpVec3b.copy(_tmpVec3).multiplyScalar(0.15);
+	box.min.sub(_tmpVec3b);
+	box.max.add(_tmpVec3b);
 
-	const center = box.getCenter(new THREE.Vector3());
-	const finalSize = box.getSize(new THREE.Vector3());
-	const maxDim = Math.max(finalSize.x, finalSize.y, finalSize.z);
+	box.getCenter(_tmpVec3);   // center
+	box.getSize(_tmpVec3b);    // finalSize
+	const maxDim = Math.max(_tmpVec3b.x, _tmpVec3b.y, _tmpVec3b.z);
 
-	// Calculate camera distance based on FOV and bounding box size
 	const fov = camera.fov * (Math.PI / 180);
 	const cameraDistance = (maxDim / 2) / Math.tan(fov / 2) * paddingFactor;
 
-	// Position camera at an angle (front-right, slightly above)
-	const cameraOffset = new THREE.Vector3(
-		cameraDistance * 0.7,
-		cameraDistance * 0.5,
-		cameraDistance * 0.7
-	);
+	_tmpVec3c.set(cameraDistance * 0.7, cameraDistance * 0.5, cameraDistance * 0.7);
+	camera.position.copy(_tmpVec3).add(_tmpVec3c);
+	camera.lookAt(_tmpVec3);
 
-	camera.position.copy(center).add(cameraOffset);
-	camera.lookAt(center);
-
-	// Update orbit controls target
-	controls.target.copy(center);
+	controls.target.copy(_tmpVec3);
 	controls.update();
 
-	// Update camera near/far planes based on scene size
 	camera.near = Math.max(0.01, maxDim * 0.001);
 	camera.far = maxDim * 100;
 	camera.updateProjectionMatrix();
 
-	console.log(`fitCameraToScene: center=(${center.x.toFixed(2)}, ${center.y.toFixed(2)}, ${center.z.toFixed(2)}), size=(${finalSize.x.toFixed(2)}, ${finalSize.y.toFixed(2)}, ${finalSize.z.toFixed(2)}), distance=${cameraDistance.toFixed(2)}${hasAnimation ? ' (sampled animation)' : ''}`);
+	console.log(`fitCameraToScene: center=(${_tmpVec3.x.toFixed(2)}, ${_tmpVec3.y.toFixed(2)}, ${_tmpVec3.z.toFixed(2)}), size=(${_tmpVec3b.x.toFixed(2)}, ${_tmpVec3b.y.toFixed(2)}, ${_tmpVec3b.z.toFixed(2)}), distance=${cameraDistance.toFixed(2)}${hasAnimation ? ' (sampled animation)' : ''}`);
 }
 
 /**
@@ -1364,7 +1354,8 @@ async function loadUSDModel() {
 
 	// Default USD file to load
 	//const usd_filename = "./assets/CesiumMan.usdz";
-	const usd_filename = "./assets/skintest-animated.usda";
+	const usd_filename = "./assets/StandingRunForward.usdz";
+	//const usd_filename = "./assets/skintest-animated.usda";
 
 	console.log(`Loading USD file: ${usd_filename}`);
 
@@ -1426,11 +1417,45 @@ async function processUSDScene(usd_scene, loader, filename) {
 		currentFileElement.textContent = displayName;
 	}
 
-	// Clear existing model
+	// Dispose old animation mixer before clearing references
+	if (mixer) {
+		mixer.stopAllAction();
+		mixer.uncacheRoot(mixer.getRoot());
+		mixer = null;
+	}
+	animationAction = null;
+
+	// Dispose all tracked meshes (geometries, materials, textures)
+	for (const mesh of allSceneMeshes) {
+		if (mesh.geometry) mesh.geometry.dispose();
+		if (mesh.material) {
+			if (Array.isArray(mesh.material)) {
+				mesh.material.forEach(m => m.dispose());
+			} else {
+				mesh.material.dispose();
+			}
+		}
+		if (mesh.customDepthMaterial) mesh.customDepthMaterial.dispose();
+	}
+
+	// Dispose skeleton bone textures
+	if (skeleton && skeleton.boneTexture) {
+		skeleton.boneTexture.dispose();
+	}
 	skinnedMesh = null;
 	skeleton = null;
+
+	// Dispose skeleton helper
 	if (skeletonHelper) {
 		scene.remove(skeletonHelper);
+		if (skeletonHelper.geometry) skeletonHelper.geometry.dispose();
+		if (skeletonHelper.material) {
+			if (Array.isArray(skeletonHelper.material)) {
+				skeletonHelper.material.forEach(m => m.dispose());
+			} else {
+				skeletonHelper.material.dispose();
+			}
+		}
 		skeletonHelper = null;
 	}
 
@@ -1439,8 +1464,12 @@ async function processUSDScene(usd_scene, loader, filename) {
 	meshVisibility.clear();
 	deselectMesh();
 
-	// Clear joint spheres
-	jointSpheres.forEach(sphere => scene.remove(sphere));
+	// Dispose and clear joint spheres
+	jointSpheres.forEach(sphere => {
+		if (sphere.geometry) sphere.geometry.dispose();
+		if (sphere.material) sphere.material.dispose();
+		scene.remove(sphere);
+	});
 	jointSpheres = [];
 
 	// Deselect any selected joint
@@ -1448,11 +1477,15 @@ async function processUSDScene(usd_scene, loader, filename) {
 
 	// Reset materials
 	originalMaterial = null;
-	weightVisualizationMaterial = null;
+	if (weightVisualizationMaterial) {
+		weightVisualizationMaterial.dispose();
+		weightVisualizationMaterial = null;
+	}
 
-	// Reset animations
+	// Reset animations and caches
 	usdAnimations = [];
 	boneMap.clear();
+	_cachedBoneInverses = [];
 	animationParams.hasUSDAnimations = false;
 	animationParams.usdAnimationCount = 0;
 	// Store loader globally for debugging
@@ -2028,6 +2061,7 @@ function playAnimation(index) {
 	animationAction = mixer.clipAction(clip);
 	animationAction.loop = THREE.LoopRepeat;
 	animationAction.clampWhenFinished = false;
+	animationAction.setEffectiveTimeScale(animationParams.speed);
 	animationAction.play();
 
 	animationParams.currentAnimation = index;
@@ -2317,8 +2351,12 @@ playbackFolder.add(animationParams, 'speed', 1, 120, 1).name('Speed').onChange((
 });
 const timelineController = playbackFolder.add(animationParams, 'time', 0, 30, 0.01)
 	.name('Timeline').listen().onChange(() => {
-		if (animationAction) {
+		if (animationAction && mixer) {
 			animationAction.time = animationParams.time;
+			// Propagate pose even when paused
+			if (!animationParams.isPlaying) {
+				mixer.update(0);
+			}
 		}
 	});
 playbackFolder.open();
@@ -2655,7 +2693,7 @@ function animate() {
 	// Speed represents playback FPS (timeCodes per second)
 	// Animation times are in timeCodes, so speed directly controls how many timeCodes advance per second
 	if (mixer && animationParams.isPlaying) {
-		mixer.update(deltaTime * animationParams.speed);
+		mixer.update(deltaTime);
 
 		// Update time display
 		if (animationAction) {
@@ -2664,7 +2702,7 @@ function animate() {
 	}
 
 	// Update skeleton helper
-	if (skeletonHelper && typeof skeletonHelper.update === 'function') {
+	if (skeletonHelper && skeletonHelper.visible && typeof skeletonHelper.update === 'function') {
 		skeletonHelper.update();
 	}
 
