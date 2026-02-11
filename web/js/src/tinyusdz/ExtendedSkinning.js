@@ -897,12 +897,14 @@ export function applyExtendedSkinningIfNeeded(skinnedMesh, options = {}) {
                 new THREE.Float32BufferAttribute(boneTextureConfig.offsets, 1));
         }
 
-        skinnedMesh.material = createExtendedSkinningMaterial(skinnedMesh.material, {
+        const matOptions = {
             maxInfluences: boneTextureConfig.maxInfluences,
             boneDataTexture: boneTextureConfig.texture,
             texelsPerVertex: boneTextureConfig.texelsPerVertex,
             boneDataTexWidth: boneTextureConfig.texWidth
-        });
+        };
+        skinnedMesh.material = createExtendedSkinningMaterial(skinnedMesh.material, matOptions);
+        skinnedMesh.customDepthMaterial = createExtendedDepthMaterial(matOptions);
 
         console.log(`Applied WASM ${boneTextureConfig.mode}-bone extended skinning material`);
         return true;
@@ -922,12 +924,14 @@ export function applyExtendedSkinningIfNeeded(skinnedMesh, options = {}) {
                      config.boneDataTexture?.image?.width ||
                      1024;
 
-    skinnedMesh.material = createExtendedSkinningMaterial(skinnedMesh.material, {
+    const matOptions = {
         maxInfluences: config.maxInfluences || mode,
         boneDataTexture: config.boneDataTexture,
         texelsPerVertex: config.texelsPerVertex || Math.ceil((config.maxInfluences || mode) / 2),
         boneDataTexWidth: texWidth
-    });
+    };
+    skinnedMesh.material = createExtendedSkinningMaterial(skinnedMesh.material, matOptions);
+    skinnedMesh.customDepthMaterial = createExtendedDepthMaterial(matOptions);
 
     console.log(`Applied ${mode}-bone extended skinning material`);
     return true;
@@ -1073,12 +1077,47 @@ export function createExtendedWeightVisualizationMaterial(options = {}) {
     });
 }
 
+/**
+ * Create a MeshDepthMaterial with the same extended skinning shader modifications.
+ * Three.js auto-generates shadow depth material that only supports 4 bones per vertex.
+ * Assign the returned material as mesh.customDepthMaterial for correct shadows.
+ *
+ * @param {Object} options - Same options as createExtendedSkinningMaterial
+ * @returns {THREE.MeshDepthMaterial}
+ */
+export function createExtendedDepthMaterial(options = {}) {
+    const maxInfluences = options.maxInfluences || 4;
+    const mode = getSkinningMode(maxInfluences);
+    const texelsPerVertex = options.texelsPerVertex || Math.ceil(maxInfluences / 2);
+
+    const depthMat = new THREE.MeshDepthMaterial({
+        depthPacking: THREE.RGBADepthPacking,
+    });
+
+    depthMat.onBeforeCompile = (shader) => {
+        if (mode === SkinningMode.EXTENDED_8) {
+            apply8BoneShaderMod(shader);
+        } else if (mode >= SkinningMode.TEXTURE_16) {
+            applyTextureBoneShaderMod(shader, options);
+        }
+    };
+
+    depthMat.customProgramCacheKey = function() {
+        return `ext-skinning-depth-${mode}-${maxInfluences}-${texelsPerVertex}`;
+    };
+
+    depthMat.skinning = true;
+    depthMat.needsUpdate = true;
+    return depthMat;
+}
+
 export default {
     SkinningMode,
     getSkinningMode,
     ExtendedSkinningConfig,
     addExtendedSkinningAttributes,
     createExtendedSkinningMaterial,
+    createExtendedDepthMaterial,
     ExtendedSkinnedMesh,
     getGeometrySkinningMode,
     hasExtendedSkinning,
