@@ -1528,6 +1528,7 @@ const animationParams = {
 		for (const mesh of allSceneMeshes) {
 			const perMesh = meshVisibility.get(mesh) !== false;
 			mesh.visible = perMesh && this.showMesh;
+			mesh.castShadow = mesh.visible;
 		}
 	},
 
@@ -1633,6 +1634,18 @@ const animationParams = {
 		}
 	},
 
+	// Extended skinning toggle (texture-based vs 4-bone fallback)
+	useExtendedSkinning: true,
+	toggleExtendedSkinning: function() {
+		const enabled = this.useExtendedSkinning ? 1.0 : 0.0;
+		for (const mesh of allSceneMeshes) {
+			if (mesh._useTexSkinUniform) {
+				mesh._useTexSkinUniform.value = enabled;
+			}
+		}
+		console.log(`Extended skinning: ${this.useExtendedSkinning ? 'texture-based' : '4-bone fallback'}`);
+	},
+
 	// Shadows
 	enableShadows: true,
 	toggleShadows: function() {
@@ -1667,6 +1680,7 @@ const animationParams = {
 		const newState = !current;
 		meshVisibility.set(mesh, newState);
 		mesh.visible = newState && this.showMesh;
+		mesh.castShadow = mesh.visible;
 		updateMeshListGUI();
 	},
 	deselectMesh: function() {
@@ -1736,6 +1750,9 @@ visualFolder.add(animationParams, 'showSkeleton')
 visualFolder.add(animationParams, 'enableShadows')
 	.name('Enable Shadows')
 	.onChange(() => animationParams.toggleShadows());
+visualFolder.add(animationParams, 'useExtendedSkinning')
+	.name('Extended Skinning')
+	.onChange(() => animationParams.toggleExtendedSkinning());
 visualFolder.add(animationParams, 'convertZUp')
 	.name('Z-up → Y-up')
 	.onChange(() => animationParams.toggleZUp())
