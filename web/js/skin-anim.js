@@ -71,6 +71,20 @@ const _tmpVec3c = new THREE.Vector3();
 const _tmpBox3 = new THREE.Box3();
 const _tmpBox3b = new THREE.Box3();
 
+/**
+ * Hint V8 to run garbage collection.
+ * Uses window.gc() if available (Chrome --expose-gc), otherwise creates a
+ * short-lived large allocation to nudge the GC heuristics.
+ */
+function hintGC() {
+	if (typeof window.gc === 'function') {
+		window.gc();
+	} else {
+		// Allocate and immediately discard — pushes V8 past its allocation threshold
+		void new ArrayBuffer(64 * 1024 * 1024);
+	}
+}
+
 // WeakMap cache for per-mesh bone indices (avoids recomputing each frame)
 const _meshBoneIndexCache = new WeakMap();
 
@@ -172,6 +186,8 @@ let mixer = null;
 let animationAction = null;
 let usdAnimations = [];
 let boneMap = new Map(); // Map from joint_id to THREE.Bone
+let _lastMixerUpdateTime = 0; // For mixer update throttling
+let _mixerAccumDelta = 0; // Accumulated delta for throttled updates
 
 
 // Store the current file's timeCodesPerSecond (default 24)
@@ -2160,6 +2176,10 @@ const animationParams = {
 		if (animationAction) {
 			animationAction.paused = !this.isPlaying;
 		}
+		if (!this.isPlaying) {
+			_mixerAccumDelta = 0;
+			hintGC();
+		}
 	},
 	reset: function() {
 		if (animationAction) {
@@ -2177,6 +2197,8 @@ const animationParams = {
 		if (skeleton) {
 			resetSkeletonToRestPose(skeleton);
 		}
+		_mixerAccumDelta = 0;
+		hintGC();
 	},
 	speed: 24,  // Default to timeCodesPerSecond (updated on file load)
 	time: 0,
@@ -2682,6 +2704,7 @@ function onWindowResize() {
 let lastTime = performance.now();
 let frames = 0;
 let fpsUpdateTime = 0;
+let _lastGCHintTime = 0; // For periodic GC hints during playback
 
 // Animation loop
 function animate() {
@@ -2704,11 +2727,22 @@ function animate() {
 	// Speed represents playback FPS (timeCodes per second)
 	// Animation times are in timeCodes, so speed directly controls how many timeCodes advance per second
 	if (mixer && animationParams.isPlaying) {
-		mixer.update(deltaTime);
+		// Throttle mixer updates for large skeletons to reduce GC pressure.
+		// mixer.update() with 9003 tracks allocates ~40KB of transient objects per call;
+		// at 60fps that's 2.4MB/s of allocation churn causing frequent GC pauses.
+		// Limiting mixer updates to ~30fps halves the churn while keeping animation smooth.
+		const trackCount = skeleton ? skeleton.bones.length * 3 : 0;
+		const mixerInterval = trackCount > 3000 ? 1 / 30 : 0; // 30fps cap for large skeletons
+		_mixerAccumDelta += deltaTime;
 
-		// Update time display
-		if (animationAction) {
-			animationParams.time = animationAction.time;
+		if (_mixerAccumDelta >= mixerInterval) {
+			mixer.update(_mixerAccumDelta);
+			_mixerAccumDelta = 0;
+
+			// Update time display
+			if (animationAction) {
+				animationParams.time = animationAction.time;
+			}
 		}
 	}
 
@@ -2742,6 +2776,16 @@ function animate() {
 
 	// Render
 	renderer.render(scene, camera);
+
+	// Periodic GC hint for large skeletons during playback.
+	// mixer.update() with 9003 tracks generates ~40KB/frame of transient allocations.
+	// Without periodic GC, V8 accumulates garbage and eventually triggers a long pause.
+	if (animationParams.isPlaying && skeleton && skeleton.bones.length > 1000) {
+		if (currentTime - _lastGCHintTime > 10000) { // every 10 seconds
+			_lastGCHintTime = currentTime;
+			hintGC();
+		}
+	}
 }
 
 // Start animation loop
