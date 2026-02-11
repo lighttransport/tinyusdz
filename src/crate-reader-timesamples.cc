@@ -3454,6 +3454,38 @@ bool CrateReader::UnpackValueRepsToTimeSamples(
     return false;
   }
 
+  // Clear array dedup maps before each property's TimeSamples.
+  // These maps store sample indices (ref_index) that are specific to a
+  // particular TimeSamples `dst` object. If reused across different properties
+  // that share the same ValueRep (same file offset), the cached index is
+  // invalid for the new dst (e.g., ref_index=0 but dst has 0 samples).
+  // Scalar dedup maps are safe to keep — they cache decoded values, not indices.
+  _dedup_bool_array.clear();
+  _dedup_int32_array.clear();
+  _dedup_uint32_array.clear();
+  _dedup_int64_array.clear();
+  _dedup_uint64_array.clear();
+  _dedup_half_array.clear();
+  _dedup_half2_array.clear();
+  _dedup_half3_array.clear();
+  _dedup_half4_array.clear();
+  _dedup_float_array.clear();
+  _dedup_float2_array.clear();
+  _dedup_float3_array.clear();
+  _dedup_float4_array.clear();
+  _dedup_double_array.clear();
+  _dedup_double2_array.clear();
+  _dedup_double3_array.clear();
+  _dedup_double4_array.clear();
+  _dedup_quath_array.clear();
+  _dedup_quatf_array.clear();
+  _dedup_quatd_array.clear();
+  _dedup_matrix2d_array.clear();
+  _dedup_matrix3d_array.clear();
+  _dedup_matrix4d_array.clear();
+  _dedup_string_array.clear();
+  _dedup_token_array.clear();
+
   // Find the first non-VALUE_BLOCK element to determine the actual type
   crate::CrateDataTypeId crate_type_id =
       static_cast<crate::CrateDataTypeId>(vreps[0].GetType());
