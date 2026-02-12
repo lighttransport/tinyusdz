@@ -808,7 +808,7 @@ async function loadUSDModel() {
 	await loader.init({ useZstdCompressedWasm: false, useMemory64: false });
 
 	// Default USD file to load
-	const usd_filename = "./assets/CesiumMan.usdz";
+	const usd_filename = "./assets/skintest-animated.usda";
 
 	console.log(`Loading USD file: ${usd_filename}`);
 
