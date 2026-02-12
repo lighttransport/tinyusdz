@@ -42,6 +42,55 @@ const _tmpVec3 = new THREE.Vector3();
 const _tmpVec3b = new THREE.Vector3();
 const _tmpVec3c = new THREE.Vector3();
 const _tmpBox3 = new THREE.Box3();
+// =====================================================================
+// CPU Skinning Debug Path
+//
+// Computes skinned vertex positions entirely on the CPU, bypassing the
+// GPU skinning shader.  Useful for isolating shader bugs (e.g. wrong
+// bone texture fetch, precision issues).
+//
+// When enabled, each frame:
+//   1. Creates a non-skinned debug Mesh with cloned geometry
+//   2. Computes: pos' = bindMatrixInverse * sum(w * boneMatrix * bindMatrix * pos)
+//   3. Writes result to the debug mesh geometry
+//   4. Hides the SkinnedMesh, shows the debug Mesh
+// =====================================================================
+
+let _cpuSkinEnabled = false;
+let _rawMeshEnabled = false;
+
+/** Remove CPU skinning debug meshes and restore skinned mesh visibility */
+function _cleanupCpuSkin() {
+	for (const mesh of allSceneMeshes) {
+		if (mesh._cpuDebugMesh) {
+			scene.remove(mesh._cpuDebugMesh);
+			mesh._cpuDebugMesh.geometry.dispose();
+			mesh._cpuDebugMesh.material.dispose();
+			mesh._cpuDebugMesh = null;
+			mesh._cpuOrigPos = null;
+			mesh._cpuOrigNorm = null;
+			mesh._cpuBoneMatrices = null;
+		}
+		if (mesh.isSkinnedMesh) {
+			mesh.visible = animationParams.showMesh;
+		}
+	}
+}
+
+/** Remove raw mesh debug meshes and restore skinned mesh visibility */
+function _cleanupRawMesh() {
+	for (const mesh of allSceneMeshes) {
+		if (mesh._rawDebugMesh) {
+			scene.remove(mesh._rawDebugMesh);
+			mesh._rawDebugMesh.geometry.dispose();
+			mesh._rawDebugMesh.material.dispose();
+			mesh._rawDebugMesh = null;
+		}
+		if (mesh.isSkinnedMesh) {
+			mesh.visible = animationParams.showMesh;
+		}
+	}
+}
 
 /**
  * Hint V8 to run garbage collection.
@@ -579,58 +628,7 @@ function onMouseClick(event) {
 	deselectMesh();
 }
 
-function fitCameraToScene(targetObject = null, paddingFactor = 2.0) {
-	// Use usdSceneRoot to include the Z-up to Y-up transformation
-	const target = targetObject || usdSceneRoot;
-
-	if (!target || target.children.length === 0) {
-		console.warn('fitCameraToScene: No object to fit');
-		return;
-	}
-
-	// Update world matrices to ensure transformations are applied
-	target.updateMatrixWorld(true);
-
-	// Compute bounding box - for animated scenes, sample across all frames
-	const box = new THREE.Box3();
-
-	// Check if we have animations and a skeleton to sample
-	const hasAnimation = mixer && usdAnimations.length > 0 && animationAction;
-	const hasSkeleton = skinnedMesh && skinnedMesh.skeleton && skinnedMesh.skeleton.bones.length > 0;
-
-	if (hasAnimation && hasSkeleton) {
-		const clip = usdAnimations[animationParams.currentAnimation] || usdAnimations[0];
-		const duration = clip.duration;
-		const boneCount = skinnedMesh.skeleton.bones.length;
-		const numSamples = boneCount > 500 ? 5 : 20; // fewer samples for large skeletons
-		const savedTime = animationAction.time;
-
-		console.log(`fitCameraToScene: Sampling ${numSamples} frames over ${duration.toFixed(2)}s animation (${boneCount} bones)`);
-
-		for (let i = 0; i <= numSamples; i++) {
-			const sampleTime = (i / numSamples) * duration;
-			animationAction.time = sampleTime;
-			mixer.setTime(sampleTime);
-			skinnedMesh.skeleton.update();
-			target.updateMatrixWorld(true);
-			expandBoxBySkeletonBones(skinnedMesh.skeleton, box);
-		}
-
-		animationAction.time = savedTime;
-		mixer.setTime(savedTime);
-		skinnedMesh.skeleton.update();
-		target.updateMatrixWorld(true);
-	} else if (hasSkeleton) {
-		expandBoxBySkeletonBones(skinnedMesh.skeleton, box);
-	} else {
-		box.expandByObject(target);
-	}
-
-	if (box.isEmpty()) {
-		console.warn('fitCameraToScene: Could not compute bounding box');
-		return;
-	}
-
+function applyCameraFit(box, paddingFactor, label) {
 	// Add padding for mesh volume around bones
 	box.getSize(_tmpVec3);
 	_tmpVec3b.copy(_tmpVec3).multiplyScalar(0.15);
@@ -649,13 +647,103 @@ function fitCameraToScene(targetObject = null, paddingFactor = 2.0) {
 	camera.lookAt(_tmpVec3);
 
 	controls.target.copy(_tmpVec3);
+
+	// Adapt controls to scene scale
+	controls.minDistance = maxDim * 0.05;
+	controls.maxDistance = maxDim * 50;
+	controls.zoomSpeed = 3.0;
+	controls.panSpeed = 2.0;
 	controls.update();
 
 	camera.near = Math.max(0.01, maxDim * 0.001);
 	camera.far = maxDim * 100;
 	camera.updateProjectionMatrix();
 
-	console.log(`fitCameraToScene: center=(${_tmpVec3.x.toFixed(2)}, ${_tmpVec3.y.toFixed(2)}, ${_tmpVec3.z.toFixed(2)}), size=(${_tmpVec3b.x.toFixed(2)}, ${_tmpVec3b.y.toFixed(2)}, ${_tmpVec3b.z.toFixed(2)}), distance=${cameraDistance.toFixed(2)}${hasAnimation ? ' (sampled animation)' : ''}`);
+	console.log(`fitCameraToScene (${label}): center=(${_tmpVec3.x.toFixed(2)}, ${_tmpVec3.y.toFixed(2)}, ${_tmpVec3.z.toFixed(2)}), size=(${_tmpVec3b.x.toFixed(2)}, ${_tmpVec3b.y.toFixed(2)}, ${_tmpVec3b.z.toFixed(2)}), distance=${cameraDistance.toFixed(2)}, maxDim=${maxDim.toFixed(2)}`);
+}
+
+function fitCameraToScene(targetObject = null, paddingFactor = 1.5) {
+	const target = targetObject || usdSceneRoot;
+	if (!target || target.children.length === 0) {
+		console.warn('fitCameraToScene: No object to fit');
+		return;
+	}
+	target.updateMatrixWorld(true);
+
+	// Compute bounding box at current frame from visible skinned meshes' bone positions
+	const box = new THREE.Box3();
+	let hasMeshBones = false;
+	for (const mesh of allSceneMeshes) {
+		if (!mesh.visible) continue;
+		if (mesh.isSkinnedMesh && mesh.skeleton) {
+			expandBoxByMeshBones(mesh, box);
+			hasMeshBones = true;
+		}
+	}
+	if (!hasMeshBones) box.expandByObject(target);
+
+	if (box.isEmpty()) {
+		console.warn('fitCameraToScene: Could not compute bounding box');
+		return;
+	}
+	applyCameraFit(box, paddingFactor, 'current frame');
+}
+
+function fitCameraToAllFrames(targetObject = null, paddingFactor = 1.5) {
+	const target = targetObject || usdSceneRoot;
+	if (!target || target.children.length === 0) {
+		console.warn('fitCameraToAllFrames: No object to fit');
+		return;
+	}
+	target.updateMatrixWorld(true);
+
+	const box = new THREE.Box3();
+	const hasAnimation = mixer && usdAnimations.length > 0 && animationAction;
+
+	if (hasAnimation && allSceneMeshes.length > 0) {
+		const clip = usdAnimations[animationParams.currentAnimation] || usdAnimations[0];
+		const duration = clip.duration;
+		const boneCount = skinnedMesh?.skeleton?.bones?.length || 0;
+		const numSamples = boneCount > 500 ? 5 : 20;
+		const savedTime = animationAction.time;
+
+		console.log(`fitCameraToAllFrames: Sampling ${numSamples} frames over ${duration.toFixed(2)}s (${boneCount} bones)`);
+
+		for (let i = 0; i <= numSamples; i++) {
+			const sampleTime = (i / numSamples) * duration;
+			animationAction.time = sampleTime;
+			mixer.setTime(sampleTime);
+			if (skinnedMesh?.skeleton) skinnedMesh.skeleton.update();
+			target.updateMatrixWorld(true);
+			for (const mesh of allSceneMeshes) {
+				if (!mesh.visible) continue;
+				if (mesh.isSkinnedMesh && mesh.skeleton) {
+					expandBoxByMeshBones(mesh, box);
+				}
+			}
+		}
+
+		// Restore original time
+		animationAction.time = savedTime;
+		mixer.setTime(savedTime);
+		if (skinnedMesh?.skeleton) skinnedMesh.skeleton.update();
+		target.updateMatrixWorld(true);
+	} else {
+		// No animation — fall back to current frame
+		for (const mesh of allSceneMeshes) {
+			if (!mesh.visible) continue;
+			if (mesh.isSkinnedMesh && mesh.skeleton) {
+				expandBoxByMeshBones(mesh, box);
+			}
+		}
+		if (box.isEmpty()) box.expandByObject(target);
+	}
+
+	if (box.isEmpty()) {
+		console.warn('fitCameraToAllFrames: Could not compute bounding box');
+		return;
+	}
+	applyCameraFit(box, paddingFactor, 'all frames');
 }
 
 /**
@@ -721,8 +809,7 @@ async function loadUSDModel() {
 	await loader.init({ useZstdCompressedWasm: false, useMemory64: false });
 
 	// Default USD file to load
-	//const usd_filename = "./assets/CesiumMan.usdz";
-	const usd_filename = "./assets/skintest-animated.usda";
+	const usd_filename = "./assets/CesiumMan.usdz";
 
 	console.log(`Loading USD file: ${usd_filename}`);
 
@@ -905,10 +992,13 @@ async function processUSDScene(usd_scene, loader, filename) {
 			// Extract mesh name from path (e.g., "/root/Armature/Body/Body" -> "Body")
 			const meshName = mesh.absPath.split('/').pop();
 
+			// Copy WASM typed_memory_view data into JS-owned buffers.
+			// usd_scene.delete() at end of processUSDScene frees C++ render_scene_,
+			// invalidating all typed_memory_view references into that data.
 			const meshData = {
 				meshId: i,
-				jointIndices: mesh.jointIndices,
-				jointWeights: mesh.jointWeights,
+				jointIndices: new Int32Array(mesh.jointIndices),
+				jointWeights: new Float32Array(mesh.jointWeights),
 				elementSize: mesh.elementSize || 4,
 				absPath: mesh.absPath,
 				geomBindTransform: geomBindTransformMatrix,
@@ -960,6 +1050,7 @@ async function processUSDScene(usd_scene, loader, filename) {
 
 	// Get skeletons
 	const numSkeletons = usd_scene.numSkeletons ? usd_scene.numSkeletons() : 0;
+
 	console.log(`Found ${numSkeletons} skeletons in USD file`);
 
 	let bones = [];
@@ -1352,7 +1443,9 @@ async function processUSDScene(usd_scene, loader, filename) {
 	// Fit camera to scene after loading
 	fitCameraToScene();
 
-	// Release WASM scene object — all USD data has been copied into Three.js objects.
+	// Release WASM scene object — all USD data must be copied into JS-owned buffers
+	// BEFORE this point. The C++ destructor frees render_scene_ vectors, invalidating
+	// all typed_memory_view references (mesh.points, sampler.times/values, etc.).
 	// Keeping it alive retains the entire parsed USD scene in WASM heap memory.
 	if (usd_scene && typeof usd_scene.delete === 'function') {
 		usd_scene.delete();
@@ -1543,6 +1636,9 @@ const animationParams = {
 	fitToScene: function() {
 		fitCameraToScene();
 	},
+	fitToAllFrames: function() {
+		fitCameraToAllFrames();
+	},
 
 	// Debug visualization
 	showJoints: false,
@@ -1559,6 +1655,42 @@ const animationParams = {
 		} else {
 			// Remove from scene to avoid bloating scene graph traversal
 			jointSpheres.forEach(sphere => scene.remove(sphere));
+		}
+	},
+
+	// CPU skinning debug mode
+	cpuSkinning: false,
+	toggleCPUSkinning: function() {
+		_cpuSkinEnabled = this.cpuSkinning;
+		if (_cpuSkinEnabled) {
+			// Disable raw mesh if enabling CPU skinning
+			this.rawMesh = false;
+			_rawMeshEnabled = false;
+			_cleanupRawMesh();
+		}
+		if (!_cpuSkinEnabled) {
+			_cleanupCpuSkin();
+			console.log('CPU skinning disabled, GPU skinning restored');
+		} else {
+			console.log('CPU skinning enabled — bypassing GPU shader');
+		}
+	},
+
+	// Raw mesh (no skinning) debug mode
+	rawMesh: false,
+	toggleRawMesh: function() {
+		_rawMeshEnabled = this.rawMesh;
+		if (_rawMeshEnabled) {
+			// Disable CPU skinning if enabling raw mesh
+			this.cpuSkinning = false;
+			_cpuSkinEnabled = false;
+			_cleanupCpuSkin();
+		}
+		if (!_rawMeshEnabled) {
+			_cleanupRawMesh();
+			console.log('Raw mesh disabled, GPU skinning restored');
+		} else {
+			console.log('Raw mesh enabled — showing original geometry (no skinning)');
 		}
 	},
 
@@ -1757,7 +1889,8 @@ visualFolder.add(animationParams, 'convertZUp')
 	.name('Z-up → Y-up')
 	.onChange(() => animationParams.toggleZUp())
 	.listen();
-visualFolder.add(animationParams, 'fitToScene').name('Fit to Scene');
+visualFolder.add(animationParams, 'fitToScene').name('Fit (Current Frame)');
+visualFolder.add(animationParams, 'fitToAllFrames').name('Fit (All Frames)');
 visualFolder.open();
 
 // Mesh Selection controls
@@ -1865,6 +1998,14 @@ debugFolder.add(animationParams, 'weightVisualizationMode', {
 })
 	.name('Weight Mode')
 	.onChange(() => animationParams.updateWeightMode());
+debugFolder.add(animationParams, 'cpuSkinning')
+	.name('CPU Skinning')
+	.listen()
+	.onChange(() => animationParams.toggleCPUSkinning());
+debugFolder.add(animationParams, 'rawMesh')
+	.name('Raw Mesh (No Skin)')
+	.listen()
+	.onChange(() => animationParams.toggleRawMesh());
 debugFolder.open();
 
 // Gizmo controls
@@ -2097,6 +2238,125 @@ function animate() {
 	// Update bounding box helper (needs to track skinning deformation)
 	if (animationParams.showBBox && bboxHelper) {
 		updateBBoxHelper();
+	}
+
+	// CPU skinning debug path: compute positions on CPU, render via a
+	// separate non-skinned debug mesh (avoids fighting Three.js GPU pipeline)
+	if (_cpuSkinEnabled && skeleton) {
+		scene.updateMatrixWorld(true);
+		skeleton.update();
+
+		for (const mesh of allSceneMeshes) {
+			if (!mesh.isSkinnedMesh || !mesh.skeleton) continue;
+
+			// Create debug mesh lazily
+			if (!mesh._cpuDebugMesh) {
+				const debugGeo = mesh.geometry.clone();
+				const debugMat = mesh.material.clone();
+				const debugMesh = new THREE.Mesh(debugGeo, debugMat);
+				debugMesh.name = mesh.name + '_cpuSkin';
+				debugMesh.castShadow = true;
+				debugMesh.receiveShadow = true;
+				// Place at mesh's world transform
+				debugMesh.matrixAutoUpdate = false;
+				mesh._cpuDebugMesh = debugMesh;
+				// Snapshot original positions from the source geometry
+				mesh._cpuOrigPos = new Float32Array(mesh.geometry.attributes.position.array);
+				if (mesh.geometry.attributes.normal) {
+					mesh._cpuOrigNorm = new Float32Array(mesh.geometry.attributes.normal.array);
+				}
+				scene.add(debugMesh);
+			}
+
+			// Sync world transform
+			mesh._cpuDebugMesh.matrix.copy(mesh.matrixWorld);
+			mesh._cpuDebugMesh.matrixWorld.copy(mesh.matrixWorld);
+			mesh._cpuDebugMesh.visible = animationParams.showMesh;
+			mesh.visible = false; // hide GPU-skinned mesh
+
+			// Compute CPU skinning into debug mesh geometry
+			const srcGeo = mesh.geometry;
+			const dstGeo = mesh._cpuDebugMesh.geometry;
+			const srcPos = mesh._cpuOrigPos;
+			const dstPosAttr = dstGeo.attributes.position;
+			const dstNormAttr = dstGeo.attributes.normal;
+			const skinIdx = srcGeo.attributes.skinIndex;
+			const skinWt  = srcGeo.attributes.skinWeight;
+			const skel = mesh.skeleton;
+
+			const bindMat = mesh.bindMatrix;
+			const bindMatInv = mesh.bindMatrixInverse;
+
+			// Pre-compute boneMatrix[b] = bone.matrixWorld * boneInverses[b]
+			if (!mesh._cpuBoneMatrices) {
+				mesh._cpuBoneMatrices = [];
+				for (let b = 0; b < skel.bones.length; b++) {
+					mesh._cpuBoneMatrices.push(new THREE.Matrix4());
+				}
+			}
+			for (let b = 0; b < skel.bones.length; b++) {
+				mesh._cpuBoneMatrices[b].multiplyMatrices(skel.bones[b].matrixWorld, skel.boneInverses[b]);
+			}
+
+			const vSrc = new THREE.Vector4();
+			const vTmp = new THREE.Vector3();
+			const vOut = new THREE.Vector3();
+
+			for (let i = 0; i < dstPosAttr.count; i++) {
+				// bindMatrix * original_pos
+				vSrc.set(srcPos[i*3], srcPos[i*3+1], srcPos[i*3+2], 1).applyMatrix4(bindMat);
+
+				vOut.set(0, 0, 0);
+				for (let j = 0; j < skinIdx.itemSize; j++) {
+					const bi = skinIdx.getComponent(i, j);
+					const wt = skinWt.getComponent(i, j);
+					if (wt === 0) continue;
+					if (bi >= 0 && bi < skel.bones.length) {
+						vTmp.set(vSrc.x, vSrc.y, vSrc.z).applyMatrix4(mesh._cpuBoneMatrices[bi]);
+						vOut.addScaledVector(vTmp, wt);
+					}
+				}
+
+				// bindMatrixInverse * accumulated
+				vOut.applyMatrix4(bindMatInv);
+
+				dstPosAttr.setXYZ(i, vOut.x, vOut.y, vOut.z);
+			}
+
+			dstPosAttr.needsUpdate = true;
+			dstGeo.computeVertexNormals(); // recompute normals from new positions
+			dstGeo.computeBoundingSphere();
+		}
+	}
+
+	// Raw mesh debug path: show original geometry with mesh's world transform,
+	// no skinning applied at all.  Useful to verify mesh data is correct.
+	if (_rawMeshEnabled) {
+		scene.updateMatrixWorld(true);
+
+		for (const mesh of allSceneMeshes) {
+			if (!mesh.isSkinnedMesh) continue;
+
+			// Create raw debug mesh lazily
+			if (!mesh._rawDebugMesh) {
+				const debugGeo = mesh.geometry.clone();
+				const debugMat = mesh.material.clone();
+				const debugMesh = new THREE.Mesh(debugGeo, debugMat);
+				debugMesh.name = mesh.name + '_rawMesh';
+				debugMesh.castShadow = true;
+				debugMesh.receiveShadow = true;
+				debugMesh.matrixAutoUpdate = false;
+				mesh._rawDebugMesh = debugMesh;
+				scene.add(debugMesh);
+				console.log(`Raw mesh created: ${debugMesh.name}, ${debugGeo.attributes.position.count} verts`);
+			}
+
+			// Position at mesh's world transform (includes hierarchy: Z_UP, Armature, etc.)
+			mesh._rawDebugMesh.matrix.copy(mesh.matrixWorld);
+			mesh._rawDebugMesh.matrixWorld.copy(mesh.matrixWorld);
+			mesh._rawDebugMesh.visible = animationParams.showMesh;
+			mesh.visible = false; // hide GPU-skinned mesh
+		}
 	}
 
 	// Update controls

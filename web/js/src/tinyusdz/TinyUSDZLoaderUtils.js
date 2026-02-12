@@ -890,40 +890,39 @@ class TinyUSDZLoaderUtils extends LoaderUtils {
 
     static convertUsdMeshToThreeMesh(mesh) {
         const geometry = new THREE.BufferGeometry();
-        geometry.setAttribute('position', new THREE.BufferAttribute(mesh.points, 3));
+        // IMPORTANT: Copy all typed arrays from WASM heap into JS-owned buffers.
+        // The C++ TinyUSDZLoaderNative object is explicitly deleted via .delete()
+        // at the end of processUSDScene to free WASM heap memory. After deletion,
+        // typed_memory_view references into render_scene_ become stale (data freed
+        // by C++ destructor, overwritten by allocator bookkeeping).
+        geometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array(mesh.points), 3));
 
         if (Object.prototype.hasOwnProperty.call(mesh, 'faceVertexIndices')) {
           if (mesh.faceVertexIndices.length >0 ) {
-            //console.log("setIndex", mesh.faceVertexIndices.length);
-            // Assume mesh is triangulated.
-            // itemsize = 1 since Index expects IntArray for VertexIndices in Three.js?
-            geometry.setIndex(new THREE.BufferAttribute(mesh.faceVertexIndices, 1));
-          } else {
-            //console.log("noindex");
+            geometry.setIndex(new THREE.BufferAttribute(new Uint32Array(mesh.faceVertexIndices), 1));
           }
         }
 
         if (Object.prototype.hasOwnProperty.call(mesh, 'texcoords')) {
-            geometry.setAttribute('uv', new THREE.BufferAttribute(mesh.texcoords, 2));
+            geometry.setAttribute('uv', new THREE.BufferAttribute(new Float32Array(mesh.texcoords), 2));
         }
 
         // TODO: uv1
 
         // faceVarying normals
         if (Object.prototype.hasOwnProperty.call(mesh, 'normals')) {
-            geometry.setAttribute('normal', new THREE.BufferAttribute(mesh.normals, 3));
+            geometry.setAttribute('normal', new THREE.BufferAttribute(new Float32Array(mesh.normals), 3));
         } else {
             geometry.computeVertexNormals();
         }
 
         if (Object.prototype.hasOwnProperty.call(mesh, 'vertexColors')) {
-            geometry.setAttribute('color', new THREE.BufferAttribute(mesh.vertexColors, 3));
-
+            geometry.setAttribute('color', new THREE.BufferAttribute(new Float32Array(mesh.vertexColors), 3));
         }
 
         // Only compute tangents if we have both UV coordinates and normals
         if (Object.prototype.hasOwnProperty.call(mesh, 'tangents')) {
-            geometry.setAttribute('tangent', new THREE.BufferAttribute(mesh.tangents, 3));
+            geometry.setAttribute('tangent', new THREE.BufferAttribute(new Float32Array(mesh.tangents), 3));
         } else if (Object.prototype.hasOwnProperty.call(mesh, 'texcoords') && (Object.prototype.hasOwnProperty.call(mesh, 'normals') || geometry.attributes.normal)) {
             // TODO: try MikTSpace tangent algorithm: https://threejs.org/docs/#examples/en/utils/BufferGeometryUtils.computeMikkTSpaceTangents 
             geometry.computeTangents();

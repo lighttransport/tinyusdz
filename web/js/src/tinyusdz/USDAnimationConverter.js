@@ -106,10 +106,12 @@ export function convertUSDSkeletalAnimationsToThreeJS(usdLoader, boneMap, timeCo
 				const channel = channels.Translation;
 				const sampler = usdAnimation.samplers[channel.sampler];
 				if (sampler && sampler.times && sampler.values) {
+					// Copy WASM typed_memory_view arrays into JS-owned buffers.
+					// usd_scene.delete() frees C++ data, invalidating views.
 					const track = new THREE.VectorKeyframeTrack(
 						`${boneName}.position`,
-						sampler.times,
-						sampler.values,
+						new Float32Array(sampler.times),
+						new Float32Array(sampler.values),
 						getUSDInterpolationMode(sampler.interpolation)
 					);
 					keyframeTracks.push(track);
@@ -121,10 +123,11 @@ export function convertUSDSkeletalAnimationsToThreeJS(usdLoader, boneMap, timeCo
 				const channel = channels.Rotation;
 				const sampler = usdAnimation.samplers[channel.sampler];
 				if (sampler && sampler.times && sampler.values) {
+					// Copy WASM typed_memory_view arrays into JS-owned buffers.
 					const track = new THREE.QuaternionKeyframeTrack(
 						`${boneName}.quaternion`,
-						sampler.times,
-						sampler.values,
+						new Float32Array(sampler.times),
+						new Float32Array(sampler.values),
 						getUSDInterpolationMode(sampler.interpolation)
 					);
 					keyframeTracks.push(track);
@@ -136,10 +139,11 @@ export function convertUSDSkeletalAnimationsToThreeJS(usdLoader, boneMap, timeCo
 				const channel = channels.Scale;
 				const sampler = usdAnimation.samplers[channel.sampler];
 				if (sampler && sampler.times && sampler.values) {
+					// Copy WASM typed_memory_view arrays into JS-owned buffers.
 					const track = new THREE.VectorKeyframeTrack(
 						`${boneName}.scale`,
-						sampler.times,
-						sampler.values,
+						new Float32Array(sampler.times),
+						new Float32Array(sampler.values),
 						getUSDInterpolationMode(sampler.interpolation)
 					);
 					keyframeTracks.push(track);
