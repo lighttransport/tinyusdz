@@ -347,8 +347,7 @@ function createWeightVisualizationMaterial() {
  */
 function createJointSpheres(bones) {
 	const spheres = [];
-	// Use larger sphere radius (0.1) for better visibility
-	const geometry = new THREE.SphereGeometry(0.1, 16, 16);
+	const geometry = new THREE.SphereGeometry(0.05, 16, 16);
 
 	bones.forEach((bone, index) => {
 		const material = new THREE.MeshStandardMaterial({
