@@ -365,7 +365,25 @@ class USDCReader::Impl {
   std::string GetWarning() { return _warn; }
 
   // Approximated memory usage in [mb]
-  size_t GetMemoryUsage() const { return memory_used / (1024 * 1024); }
+  size_t GetMemoryUsage() const {
+    if (!crate_reader) {
+      return 0;
+    }
+    return crate_reader->GetMemoryUsageInMB();
+  }
+
+  USDCMemoryUsageReport GetMemoryUsageReport() const {
+    USDCMemoryUsageReport report;
+    if (!crate_reader) {
+      return report;
+    }
+
+    report.current_usage_bytes = crate_reader->GetMemoryUsageInBytes();
+    report.peak_usage_bytes = crate_reader->GetPeakMemoryUsageInBytes();
+    report.max_budget_bytes = crate_reader->GetMemoryBudgetInBytes();
+    report.remaining_budget_bytes = crate_reader->GetRemainingMemoryBudgetInBytes();
+    return report;
+  }
 
  private:
   nonstd::expected<APISchemas, std::string> ToAPISchemas(
@@ -384,8 +402,22 @@ class USDCReader::Impl {
                         const PathIndexToSpecIndexMap &psmap,
                         prim::PropertyMap *props);
 
+  bool ResolveFieldValuePairs(
+      const crate::Spec &spec,
+      const crate::FieldValuePairVector **fvs,
+      crate::FieldValuePairVector *scratch);
+
   bool ReconstrcutStageMeta(const crate::FieldValuePairVector &fvs,
                             StageMetas *out);
+
+  Prim *ResolveVariantOwnerPrim(int32_t parent_node_id, int32_t current_node_id,
+                                Prim *current_prim, Prim *parent_prim,
+                                bool include_current_node);
+
+  bool AttachVariantPrimChildrenToOwner(int32_t owner_node_id, Prim *owner_prim);
+
+  bool IsExpectedNonPrimVariantChild(
+      int32_t node_id, const PathIndexToSpecIndexMap &psmap) const;
 
   bool AddVariantChildrenToPrimNode(
       int32_t parent_prim_idx, int32_t prim_idx, const std::string &variantSetName, const std::vector<value::token> &variantChildren) {
@@ -446,10 +478,6 @@ class USDCReader::Impl {
   
   usdc::ProgressCallback _progress_callback;
   void *_progress_userptr{nullptr};
-
-  // Tracks the memory used(In advisorily manner since counting memory usage is
-  // done by manually, so not all memory consumption could be tracked)
-  size_t memory_used{0};  // in bytes.
 
   nonstd::optional<Path> GetPath(crate::Index index) const {
     if (index.value < _paths->size()) {
@@ -843,6 +871,164 @@ USDCReader::Impl::DecodeListOp(const ListOp<T> &arg) {
   return dst;
 }
 
+bool USDCReader::Impl::ResolveFieldValuePairs(
+    const crate::Spec &spec, const crate::FieldValuePairVector **fvs,
+    crate::FieldValuePairVector *scratch) {
+  if (!fvs) {
+    PUSH_ERROR_AND_RETURN_TAG(kTag, "Internal error: `fvs` is nullptr.");
+  }
+
+  if (_config.use_lazy_property_construction) {
+    if (!scratch) {
+      PUSH_ERROR_AND_RETURN_TAG(kTag, "Internal error: `scratch` is nullptr.");
+    }
+
+    if (!crate_reader) {
+      PUSH_ERROR_AND_RETURN_TAG(kTag,
+                                "Internal error: crate reader is nullptr.");
+    }
+
+    scratch->clear();
+    if (!crate_reader->DecodeFieldSet(spec.fieldset_index, scratch)) {
+      PUSH_ERROR_AND_RETURN_TAG(
+          kTag, "Failed to decode fieldset id: " +
+                    std::to_string(spec.fieldset_index.value));
+    }
+
+    (*fvs) = scratch;
+    return true;
+  }
+
+  if (!_live_fieldsets) {
+    PUSH_ERROR_AND_RETURN_TAG(kTag,
+                              "Internal error: live fieldsets is nullptr.");
+  }
+
+  if (!_live_fieldsets->count(spec.fieldset_index)) {
+    PUSH_ERROR_AND_RETURN_TAG(
+        kTag, "FieldSet id: " + std::to_string(spec.fieldset_index.value) +
+                  " must exist in live fieldsets.");
+  }
+
+  (*fvs) = &(_live_fieldsets->at(spec.fieldset_index));
+  return true;
+}
+
+Prim *USDCReader::Impl::ResolveVariantOwnerPrim(int32_t parent_node_id,
+                                                int32_t current_node_id,
+                                                Prim *current_prim,
+                                                Prim *parent_prim,
+                                                bool include_current_node) {
+  if (include_current_node) {
+    if (current_prim) {
+      return current_prim;
+    }
+
+    auto current_it = _variantPrims.find(current_node_id);
+    if (current_it != _variantPrims.end()) {
+      return &(current_it->second);
+    }
+  }
+
+  if (parent_prim) {
+    return parent_prim;
+  }
+
+  auto parent_it = _variantPrims.find(parent_node_id);
+  if (parent_it != _variantPrims.end()) {
+    return &(parent_it->second);
+  }
+
+  // Fallback for malformed trees.
+  if (!include_current_node) {
+    if (current_prim) {
+      return current_prim;
+    }
+
+    auto current_it = _variantPrims.find(current_node_id);
+    if (current_it != _variantPrims.end()) {
+      return &(current_it->second);
+    }
+  }
+
+  return nullptr;
+}
+
+bool USDCReader::Impl::AttachVariantPrimChildrenToOwner(int32_t owner_node_id,
+                                                        Prim *owner_prim) {
+  if (!_variantPrimChildren.count(owner_node_id)) {
+    return true;
+  }
+
+  if (!owner_prim) {
+    PUSH_ERROR_AND_RETURN("Internal error: variant owner Prim is null.");
+  }
+
+  DCOUT(fmt::format("{} has variant Prim ", owner_prim->element_name()));
+
+  for (const auto &item : _variantPrimChildren.at(owner_node_id)) {
+    auto vp_it = _variantPrims.find(item);
+    if (vp_it == _variantPrims.end()) {
+      PUSH_ERROR_AND_RETURN("Internal error: variant Prim children not found.");
+    }
+
+    Prim &vp = vp_it->second;
+    DCOUT(fmt::format("  variantPrim name {}", vp.element_name()));
+
+    // element_name must be variant: "{variant=value}"
+    if (!is_variantElementName(vp.element_name())) {
+      PUSH_ERROR_AND_RETURN(
+          "Corrupted Crate. Variant Prim has invalid element_name.");
+    }
+
+    std::array<std::string, 2> toks;
+    if (!tokenize_variantElement(vp.element_name(), &toks)) {
+      PUSH_ERROR_AND_RETURN("Invalid variant element_name.");
+    }
+
+    std::string variantSetName = toks[0];
+    std::string variantName = toks[1];
+
+    VariantSet &vs = owner_prim->variantSets()[variantSetName];
+    if (vs.name.empty()) {
+      vs.name = variantSetName;
+    }
+
+    Variant &variant = vs.variantSet[variantName];
+    variant.metas() = vp.metas();
+    variant.primChildren() = vp.children();
+
+    // Preserve nested variantSets carried by this variant Prim.
+    if (!vp.variantSets().empty()) {
+      variant.variantSets() = vp.variantSets();
+    }
+  }
+
+  return true;
+}
+
+bool USDCReader::Impl::IsExpectedNonPrimVariantChild(
+    int32_t node_id, const PathIndexToSpecIndexMap &psmap) const {
+  if (_variantPrimChildren.count(node_id) || _variantPropChildren.count(node_id)) {
+    return true;
+  }
+
+  auto psit = psmap.find(uint32_t(node_id));
+  if (psit == psmap.end()) {
+    return true;  // Some container nodes may not have a direct spec entry.
+  }
+
+  if (psit->second >= _specs->size()) {
+    return false;
+  }
+
+  SpecType st = (*_specs)[psit->second].spec_type;
+  return ((st == SpecType::Variant) || (st == SpecType::VariantSet) ||
+          (st == SpecType::Attribute) ||
+          (st == SpecType::Connection) || (st == SpecType::Relationship) ||
+          (st == SpecType::RelationshipTarget));
+}
+
 bool USDCReader::Impl::BuildPropertyMap(const std::vector<size_t> &pathIndices,
                                         const PathIndexToSpecIndexMap &psmap,
                                         prim::PropertyMap *props) {
@@ -890,14 +1076,11 @@ bool USDCReader::Impl::BuildPropertyMap(const std::vector<size_t> &pathIndices,
                              << ", prop part: " << path.value().prop_part()
                              << ", spec_index = " << spec_index);
 
-    if (!_live_fieldsets->count(spec.fieldset_index)) {
-      PUSH_ERROR("FieldSet id: " + std::to_string(spec.fieldset_index.value) +
-                 " must exist in live fieldsets.");
+    crate::FieldValuePairVector decoded_fvs;
+    const crate::FieldValuePairVector *child_fvs = nullptr;
+    if (!ResolveFieldValuePairs(spec, &child_fvs, &decoded_fvs)) {
       return false;
     }
-
-    const crate::FieldValuePairVector &child_fvs =
-        _live_fieldsets->at(spec.fieldset_index);
 
     {
       std::string prop_name = path.value().prop_part();
@@ -913,7 +1096,7 @@ bool USDCReader::Impl::BuildPropertyMap(const std::vector<size_t> &pathIndices,
       }
 
       Property prop;
-      if (!ParseProperty(spec.spec_type, child_fvs, &prop)) {
+      if (!ParseProperty(spec.spec_type, (*child_fvs), &prop)) {
         PUSH_ERROR_AND_RETURN_TAG(
             kTag,
             fmt::format(
@@ -2417,14 +2600,12 @@ bool USDCReader::Impl::ReconstructPrimNode(int parent, int current, int level,
     }
   }
 
-  if (!_live_fieldsets->count(spec.fieldset_index)) {
-    PUSH_ERROR("FieldSet id: " + std::to_string(spec.fieldset_index.value) +
-               " must exist in live fieldsets.");
+  crate::FieldValuePairVector decoded_fvs;
+  const crate::FieldValuePairVector *fvs_ptr = nullptr;
+  if (!ResolveFieldValuePairs(spec, &fvs_ptr, &decoded_fvs)) {
     return false;
   }
-
-  const crate::FieldValuePairVector &fvs =
-      _live_fieldsets->at(spec.fieldset_index);
+  const crate::FieldValuePairVector &fvs = (*fvs_ptr);
 
   if (fvs.size() > _config.kMaxFieldValuePairs) {
     PUSH_ERROR_AND_RETURN_TAG(kTag, "Too much FieldValue pairs.");
@@ -2895,14 +3076,12 @@ bool USDCReader::Impl::ReconstructPrimSpecNode(int parent, int current, int leve
     }
   }
 
-  if (!_live_fieldsets->count(spec.fieldset_index)) {
-    PUSH_ERROR("FieldSet id: " + std::to_string(spec.fieldset_index.value) +
-               " must exist in live fieldsets.");
+  crate::FieldValuePairVector decoded_fvs;
+  const crate::FieldValuePairVector *fvs_ptr = nullptr;
+  if (!ResolveFieldValuePairs(spec, &fvs_ptr, &decoded_fvs)) {
     return false;
   }
-
-  const crate::FieldValuePairVector &fvs =
-      _live_fieldsets->at(spec.fieldset_index);
+  const crate::FieldValuePairVector &fvs = (*fvs_ptr);
 
   if (fvs.size() > _config.kMaxFieldValuePairs) {
     PUSH_ERROR_AND_RETURN_TAG(kTag, "Too much FieldValue pairs.");
@@ -3397,6 +3576,53 @@ bool USDCReader::Impl::ReconstructPrimRecursively(
         parentPrimPtr = stack[entry.parent_entry_idx].prim.get();
       }
 
+      auto resolveVariantOwnerPrimFromStack = [&](const StackEntry &target,
+                                                  bool include_current) -> Prim * {
+        if (include_current) {
+          if (target.prim) {
+            return target.prim.get();
+          }
+
+          auto current_variant_it = _variantPrims.find(target.current_id);
+          if (current_variant_it != _variantPrims.end()) {
+            return &(current_variant_it->second);
+          }
+        }
+
+        size_t ancestor_idx = target.parent_entry_idx;
+        while ((ancestor_idx != SIZE_MAX) && (ancestor_idx < stack.size())) {
+          StackEntry &ancestor = stack[ancestor_idx];
+          if (ancestor.prim) {
+            return ancestor.prim.get();
+          }
+
+          auto ancestor_variant_it = _variantPrims.find(ancestor.current_id);
+          if (ancestor_variant_it != _variantPrims.end()) {
+            return &(ancestor_variant_it->second);
+          }
+
+          ancestor_idx = ancestor.parent_entry_idx;
+        }
+
+        auto parent_variant_it = _variantPrims.find(target.parent_id);
+        if (parent_variant_it != _variantPrims.end()) {
+          return &(parent_variant_it->second);
+        }
+
+        if (!include_current) {
+          if (target.prim) {
+            return target.prim.get();
+          }
+
+          auto current_variant_it = _variantPrims.find(target.current_id);
+          if (current_variant_it != _variantPrims.end()) {
+            return &(current_variant_it->second);
+          }
+        }
+
+        return nullptr;
+      };
+
       if (_variantPropChildren.count(entry.current_id)) {
 
         // - parentPrim
@@ -3410,8 +3636,11 @@ bool USDCReader::Impl::ReconstructPrimRecursively(
           PUSH_ERROR_AND_RETURN("Internal error: variant attribute is not a child of VariantPrim.");
         }
 
-        if (!parentPrimPtr) {
-          PUSH_ERROR_AND_RETURN("Internal error: parentPrim should exist.");
+        Prim *variantOwnerPrim =
+            resolveVariantOwnerPrimFromStack(entry, /* include_current */ false);
+        if (!variantOwnerPrim) {
+          PUSH_ERROR_AND_RETURN(
+              "Internal error: parentPrim should exist for variant Property.");
         }
 
         const Prim &variantPrim = _variantPrims.at(entry.current_id);
@@ -3446,7 +3675,7 @@ bool USDCReader::Impl::ReconstructPrimRecursively(
           variant.properties()[prop_name] = std::get<1>(pp);
         }
 
-        VariantSet &vs = parentPrimPtr->variantSets()[variantSetName];
+        VariantSet &vs = variantOwnerPrim->variantSets()[variantSetName];
 
         if (vs.name.empty()) {
           vs.name = variantSetName;
@@ -3456,48 +3685,15 @@ bool USDCReader::Impl::ReconstructPrimRecursively(
       }
 
       if (_variantPrimChildren.count(entry.current_id)) {
-
-        // - currentPrim <- current
-        //   - variant Prim children
-
-        if (!entry.prim) {
-          PUSH_ERROR_AND_RETURN("Internal error: must be Prim.");
+        Prim *variantOwnerPrim =
+            resolveVariantOwnerPrimFromStack(entry, /* include_current */ true);
+        if (!variantOwnerPrim) {
+          PUSH_ERROR_AND_RETURN(
+              "Internal error: failed to resolve variant owner Prim.");
         }
 
-        DCOUT(fmt::format("{} has variant Prim ", entry.prim->element_name()));
-
-        for (const auto &item : _variantPrimChildren.at(entry.current_id)) {
-
-          if (!_variantPrims.count(item)) {
-            PUSH_ERROR_AND_RETURN("Internal error: variant Prim children not found.");
-          }
-
-          const Prim &vp = _variantPrims.at(item);
-
-          DCOUT(fmt::format("  variantPrim name {}", vp.element_name()));
-
-          // element_name must be variant: "{variant=value}"
-          if (!is_variantElementName(vp.element_name())) {
-            PUSH_ERROR_AND_RETURN("Corrupted Crate. Variant Prim has invalid element_name.");
-          }
-
-          std::array<std::string, 2> toks;
-          if (!tokenize_variantElement(vp.element_name(), &toks)) {
-            PUSH_ERROR_AND_RETURN("Invalid variant element_name.");
-          }
-
-          std::string variantSetName = toks[0];
-          std::string variantName = toks[1];
-
-          VariantSet &vs = entry.prim->variantSets()[variantSetName];
-
-          if (vs.name.empty()) {
-            vs.name = variantSetName;
-          }
-          vs.variantSet[variantName].metas() = vp.metas();
-          DCOUT("# of primChildren = " << vp.children().size());
-          vs.variantSet[variantName].primChildren() = std::move(vp.children());
-
+        if (!AttachVariantPrimChildrenToOwner(entry.current_id, variantOwnerPrim)) {
+          return false;
         }
       }
 
@@ -3514,8 +3710,9 @@ bool USDCReader::Impl::ReconstructPrimRecursively(
           // Add to variantPrim
           DCOUT("parent is variantPrim: " << entry.parent_id);
           if (!entry.prim) {
-            // FIXME: Validate current should be Prim.
-            PUSH_WARN("parent is variantPrim, but current is not Prim.");
+            if (!IsExpectedNonPrimVariantChild(entry.current_id, psmap)) {
+              PUSH_WARN("parent is variantPrim, but current is not Prim.");
+            }
           } else {
             DCOUT("Adding prim to child...");
             Prim &vp = _variantPrims.at(entry.parent_id);
@@ -3562,17 +3759,10 @@ bool USDCReader::Impl::ReconstructPrimRecursively(
     return false;
   }
 
-  //
-  // TODO: Use bottom-up reconstruction(traverse child first)
-  //
-
-  // null : parent node is Property or other Spec type.
-  // non-null : parent node is Prim
   Prim *currPrimPtr = nullptr;
   std::unique_ptr<Prim> prim;
 
   bool is_parent_variant = _variantPrims.count(parent);
-
   if (!ReconstructPrimNode(parent, current, level, is_parent_variant, psmap,
                            stage, &prim)) {
     return false;
@@ -3580,10 +3770,14 @@ bool USDCReader::Impl::ReconstructPrimRecursively(
 
   if (prim) {
     currPrimPtr = prim.get();
+  } else {
+    auto it = _variantPrims.find(current);
+    if (it != _variantPrims.end()) {
+      currPrimPtr = &(it->second);
+    }
   }
 
-  // This check must be called after `ReconstructPrimNode`
-  bool is_current_variant = _variantPrims.count(current);
+  Prim *nextParentPrimPtr = currPrimPtr ? currPrimPtr : parentPrimPtr;
 
   // Traverse children
   {
@@ -3593,7 +3787,8 @@ bool USDCReader::Impl::ReconstructPrimRecursively(
       DCOUT("Reconstuct Prim children: " << i << " / "
                                          << node.GetChildren().size());
       if (!ReconstructPrimRecursively(current, int(node.GetChildren()[i]),
-                                      currPrimPtr, level + 1, psmap, stage)) {
+                                      nextParentPrimPtr, level + 1, psmap,
+                                      stage)) {
         return false;
       }
       DCOUT("DONE Reconstuct Prim children: " << i << " / "
@@ -3601,47 +3796,33 @@ bool USDCReader::Impl::ReconstructPrimRecursively(
     }
   }
 
-  //
-  // Reonstruct variant
-  //
   DCOUT(fmt::format("----reconstruct-variant------"));
   DCOUT(fmt::format("parent {}, current {}", parent, current));
-
   DCOUT(fmt::format("  has variant properties {}, has variant children {}",
-    _variantPropChildren.count(current),
-    _variantPrimChildren.count(current)));
+                    _variantPropChildren.count(current),
+                    _variantPrimChildren.count(current)));
 
   if (_variantPropChildren.count(current)) {
-
-    // - parentPrim
-    //   - variantPrim(SpecTypeVariant) <- current
-    //     - variant property(SpecTypeAttribute)
-
-    //
-    // `current` must be VariantPrim and `parentPrim` should exist
-    //
     if (!_variantPrims.count(current)) {
-      PUSH_ERROR_AND_RETURN("Internal error: variant attribute is not a child of VariantPrim.");
+      PUSH_ERROR_AND_RETURN(
+          "Internal error: variant attribute is not a child of VariantPrim.");
     }
 
-    if (!parentPrimPtr) {
-      PUSH_ERROR_AND_RETURN("Internal error: parentPrim should exist.");
+    Prim *variantOwnerPrim =
+        ResolveVariantOwnerPrim(parent, current, currPrimPtr, parentPrimPtr,
+                                /* include_current_node */ false);
+    if (!variantOwnerPrim) {
+      PUSH_ERROR_AND_RETURN(
+          "Internal error: parentPrim should exist for variant Property.");
     }
 
-    // NOTE: we can use currPrimPtr, since _variantPrims.at(current) == *currPrimPtr
     const Prim &variantPrim = _variantPrims.at(current);
-
     DCOUT("variant prim name: " << variantPrim.element_name());
-      if (variantPrim.metas().variantSets) {
-        DCOUT("vp.metas.variantSets" << to_string(variantPrim.metas().variantSets.value().second));
-      } else {
-        DCOUT("vp.metas.variantSets none");
-      }
-
 
     // element_name must be variant: "{variant=value}"
     if (!is_variantElementName(variantPrim.element_name())) {
-      PUSH_ERROR_AND_RETURN("Corrupted Crate. VariantAttribute is not the child of VariantPrim.");
+      PUSH_ERROR_AND_RETURN(
+          "Corrupted Crate. VariantAttribute is not the child of VariantPrim.");
     }
 
     std::array<std::string, 2> toks;
@@ -3653,165 +3834,35 @@ bool USDCReader::Impl::ReconstructPrimRecursively(
     std::string variantName = toks[1];
 
     Variant variant;
-
     for (const auto &item : _variantPropChildren.at(current)) {
       // item should exist in _variantProps.
       if (!_variantProps.count(item)) {
         PUSH_ERROR_AND_RETURN("Internal error: variant Property not found.");
       }
-      const std::pair<Path, Property> &pp = _variantProps.at(item);
 
+      const std::pair<Path, Property> &pp = _variantProps.at(item);
       std::string prop_name = std::get<0>(pp).prop_part();
       DCOUT(fmt::format("  node_index = {}, prop name {}", item, prop_name));
-
       variant.properties()[prop_name] = std::get<1>(pp);
     }
 
-    VariantSet &vs = parentPrimPtr->variantSets()[variantSetName];
-
+    VariantSet &vs = variantOwnerPrim->variantSets()[variantSetName];
     if (vs.name.empty()) {
       vs.name = variantSetName;
     }
     vs.variantSet[variantName] = variant;
-
   }
 
   if (_variantPrimChildren.count(current)) {
-
-    // - currentPrim <- current
-    //   - variant Prim children
-
-    if (!currPrimPtr) {
-      PUSH_ERROR_AND_RETURN("Internal error: must be Prim.");
+    Prim *variantOwnerPrim =
+        ResolveVariantOwnerPrim(parent, current, currPrimPtr, parentPrimPtr,
+                                /* include_current_node */ true);
+    if (!variantOwnerPrim) {
+      PUSH_ERROR_AND_RETURN("Internal error: failed to resolve variant owner Prim.");
     }
 
-    DCOUT(fmt::format("{} has variant Prim ", currPrimPtr->element_name()));
-
-    for (const auto &item : _variantPrimChildren.at(current)) {
-
-      DCOUT("variantPrim " << item);
-
-      if (!_variantPrims.count(item)) {
-        PUSH_ERROR_AND_RETURN("Internal error: variant Prim children not found.");
-      }
-
-      const Prim &vp = _variantPrims.at(item);
-
-      DCOUT(fmt::format("  variantPrim name {}", vp.element_name()));
-
-      // element_name must be variant: "{variant=value}"
-      if (!is_variantElementName(vp.element_name())) {
-        PUSH_ERROR_AND_RETURN("Corrupted Crate. Variant Prim has invalid element_name.");
-      }
-
-      std::array<std::string, 2> toks;
-      if (!tokenize_variantElement(vp.element_name(), &toks)) {
-        PUSH_ERROR_AND_RETURN("Invalid variant element_name.");
-      }
-
-      std::string variantSetName = toks[0];
-      std::string variantName = toks[1];
-      
-
-      DCOUT("variantSetName " << variantSetName << ", variantName " << variantName);
-
-      // HACK
-      VariantSet &vs = currPrimPtr->variantSets()[variantSetName];
-
-      if (vs.name.empty()) {
-        vs.name = variantSetName;
-      }
-      
-      // Only process this variant if it's not the current variant itself
-      // (current variant is handled differently elsewhere)
-      
-      // Always run child reconstruction logic for all variants if they have primChildren metadata
-      // (Previously this was only done when !is_current_variant, but current variants also need child reconstruction)
-      {
-        if (vp.metas().variantSets) {
-          DCOUT("vp.metas.variantSets" << to_string(vp.metas().variantSets.value().second));
-        } else {
-          DCOUT("vp.metas.variantSets none");
-        }
-        vs.variantSet[variantName].metas() = vp.metas();
-        
-        // Reconstruct children from primChildren metadata tokens
-        if (!vp.metas().primChildren.empty()) {
-          
-          std::vector<Prim> reconstructedChildren;
-          for (const auto& childToken : vp.metas().primChildren) {
-            std::string childName = childToken.str();
-            
-            // Create a proper child prim instead of copying potentially corrupted ones
-            // Based on the USDA reference, these should be Capsule prims
-            GeomCapsule childCapsule;
-            childCapsule.name = childName;
-            
-            Prim childPrim = std::move(childCapsule);
-            reconstructedChildren.push_back(std::move(childPrim));
-          }
-          
-          // Set the reconstructed children to the variant prim
-          Prim& mutableVp = const_cast<Prim&>(vp);
-          for (auto&& child : reconstructedChildren) {
-            mutableVp.children().emplace_back(std::move(child));
-          }
-        }
-        
-        DCOUT("# of primChildren = " << vp.children().size());
-        vs.variantSet[variantName].primChildren() = std::move(vp.children());
-        
-        // Handle nested variantSets from the variant prim itself
-        if (!vp.variantSets().empty()) {
-          DCOUT("# of nested variantSets from prim = " << vp.variantSets().size());
-          vs.variantSet[variantName].variantSets() = std::move(vp.variantSets());
-        }
-        
-      }
-    }
-  }
-
-  // Process variant children for variant nodes (nested variantSets)
-  if (is_current_variant && _variantChildren.count(uint32_t(current))) {
-    DCOUT("Processing nested variantSets for variant node " << current);
-    
-    if (!currPrimPtr) {
-      PUSH_ERROR_AND_RETURN("Internal error: current variant must be a Prim.");
-    }
-    
-    // Process each variantSet defined within this variant
-    for (const auto &vcItem : _variantChildren.at(uint32_t(current))) {
-      const std::string &nestedVariantSetName = vcItem.second.first;
-      const std::vector<value::token> &nestedVariantChildren = vcItem.second.second;
-      
-      DCOUT("  Nested variantSet: " << nestedVariantSetName << " with " << nestedVariantChildren.size() << " children");
-      
-      // Create the nested VariantSet structure
-      VariantSet &nestedVs = currPrimPtr->variantSets()[nestedVariantSetName];
-      if (nestedVs.name.empty()) {
-        nestedVs.name = nestedVariantSetName;
-      }
-      
-      // Now populate the nested variantSet with its variants
-      // Look for the variant prims that belong to this nested variantSet
-      for (const auto &childToken : nestedVariantChildren) {
-        std::string childVariantName = childToken.str();
-        DCOUT("    Processing nested variant: " << childVariantName);
-
-        // O(1) lookup using variant name index
-        auto key = std::make_pair(nestedVariantSetName, childVariantName);
-        auto it = _variantNameIndex.find(key);
-        if (it != _variantNameIndex.end() && _variantPrims.count(it->second)) {
-          const Prim &childVp = _variantPrims.at(it->second);
-          DCOUT("      Found nested variant prim: " << childVp.element_name());
-
-          // Add this variant to the nested variantSet
-          nestedVs.variantSet[childVariantName].metas() = childVp.metas();
-          nestedVs.variantSet[childVariantName].primChildren() = childVp.children();
-
-          DCOUT("      Added variant " << childVariantName << " to nested variantSet " << nestedVariantSetName);
-        }
-      }
+    if (!AttachVariantPrimChildrenToOwner(current, variantOwnerPrim)) {
+      return false;
     }
   }
 
@@ -3830,12 +3881,9 @@ bool USDCReader::Impl::ReconstructPrimRecursively(
       // Add to variantPrim
       DCOUT("parent " << parent << " is variantPrim");
       if (!prim) {
-        // guess 'current' is VariantSet spec node. We can ignore this node for a while.
-        //
-        //PUSH_WARN("parent " << parent << " is variantPrim, but current " << current << " is not Prim.");
-        DCOUT("current " << current << " is variantPrim?" << _variantPrims.count(current));
-        DCOUT("current " << current << " is variantPrimChildren?" << _variantPrimChildren.count(current));
-        DCOUT("current " << current << " is variantChildren?" << _variantChildren.count(uint32_t(current)));
+        if (!IsExpectedNonPrimVariantChild(current, psmap)) {
+          PUSH_WARN("parent is variantPrim, but current is not Prim.");
+        }
       } else {
         DCOUT("Adding prim to child...");
         Prim &vp = _variantPrims.at(parent);
@@ -3843,9 +3891,9 @@ bool USDCReader::Impl::ReconstructPrimRecursively(
         children.resize(children.size() + 1);
         children.back() = std::move(*prim);
       }
-    } else if (prim && parentPrim) {
+    } else if (prim && parentPrimPtr) {
       // Add to parent prim.
-      auto &children = parentPrim->children();
+      auto &children = parentPrimPtr->children();
       children.resize(children.size() + 1);
       children.back() = std::move(*prim);
     }
@@ -4288,12 +4336,16 @@ bool USDCReader::Impl::ReadUSDC() {
   ///
   /// Reconstruct C++ representation of USD scene graph.
   ///
-  DCOUT("BuildLiveFieldSets");
-  if (!crate_reader->BuildLiveFieldSets()) {
-    _warn = crate_reader->GetWarning();
-    _err = crate_reader->GetError();
+  if (_config.use_lazy_property_construction) {
+    DCOUT("Skip BuildLiveFieldSets (lazy property construction enabled)");
+  } else {
+    DCOUT("BuildLiveFieldSets");
+    if (!crate_reader->BuildLiveFieldSets()) {
+      _warn = crate_reader->GetWarning();
+      _err = crate_reader->GetError();
 
-    return false;
+      return false;
+    }
   }
 
   _warn += crate_reader->GetWarning();
@@ -4348,6 +4400,14 @@ std::string USDCReader::GetWarning() { return impl_->GetWarning(); }
 
 bool USDCReader::ReadUSDC() { return impl_->ReadUSDC(); }
 
+size_t USDCReader::GetMemoryUsage() const {
+  return impl_->GetMemoryUsage();
+}
+
+USDCMemoryUsageReport USDCReader::GetMemoryUsageReport() const {
+  return impl_->GetMemoryUsageReport();
+}
+
 }  // namespace usdc
 }  // namespace tinyusdz
 
@@ -4359,7 +4419,7 @@ namespace usdc {
 //
 // -- Interface --
 //
-USDCReader::USDCReader(StreamReader *sr, USDCReaderConfig &config) {
+USDCReader::USDCReader(StreamReader *sr, const USDCReaderConfig &config) {
   (void)sr;
   (void)config;
 }
@@ -4375,7 +4435,7 @@ const USDCReaderConfig USDCReader::get_reader_config() const {
 }
 
 bool USDCReader::ReconstructStage(Stage *stage) {
-  (void)scene;
+  (void)stage;
   DCOUT("Reconstruct Stage.");
   return false;
 }
@@ -4390,6 +4450,12 @@ std::string USDCReader::GetError() {
 }
 
 std::string USDCReader::GetWarning() { return ""; }
+
+size_t USDCReader::GetMemoryUsage() const { return 0; }
+
+USDCMemoryUsageReport USDCReader::GetMemoryUsageReport() const {
+  return USDCMemoryUsageReport();
+}
 
 }  // namespace usdc
 }  // namespace tinyusdz
