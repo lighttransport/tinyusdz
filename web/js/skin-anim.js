@@ -674,17 +674,11 @@ function fitCameraToScene(targetObject = null, paddingFactor = 1.5) {
 	}
 	target.updateMatrixWorld(true);
 
-	// Compute bounding box at current frame from visible skinned meshes' bone positions
+	// Since bind() uses mesh.matrixWorld as bindMatrix, skinned meshes
+	// render at their natural hierarchy position. expandByObject correctly
+	// computes world-space bounds via matrixWorld × geometry bbox.
 	const box = new THREE.Box3();
-	let hasMeshBones = false;
-	for (const mesh of allSceneMeshes) {
-		if (!mesh.visible) continue;
-		if (mesh.isSkinnedMesh && mesh.skeleton) {
-			expandBoxByMeshBones(mesh, box);
-			hasMeshBones = true;
-		}
-	}
-	if (!hasMeshBones) box.expandByObject(target);
+	box.expandByObject(target);
 
 	if (box.isEmpty()) {
 		console.warn('fitCameraToScene: Could not compute bounding box');
@@ -1122,11 +1116,12 @@ async function processUSDScene(usd_scene, loader, filename) {
 	}
 
 	// Multi-skeleton support: store skeleton data per skel_id
-	const skeletonDataArray = []; // Array of { skelId, bones, rootBone, skeletonAbsPath, boneInverses, boneMap }
+	const skeletonDataArray = []; // Array of { skelId, bones, rootBone, skeletonAbsPath, boneMap }
 	let bones = [];
 	let rootBone = null;
 	let skeletonAbsPath = null; // USD path of skeleton prim (for hierarchy placement)
-	let cachedBoneInverses = [];
+	// Note: USD boneInverses are no longer used. bind() computes world-space
+	// boneInverses internally via calculateInverses().
 	let totalJointCount = 0;
 
 	if (numSkeletons > 0) {
@@ -1142,7 +1137,6 @@ async function processUSDScene(usd_scene, loader, filename) {
 			const skelBones = skeletonData.bones;
 			const skelBoneMap = skeletonData.boneMap;
 			const skelRootBone = skeletonData.rootBone;
-			const skelBoneInverses = skeletonData.boneInverses;
 			console.log(`Built skeleton ${skelId} with ${skelBones.length} bones`);
 
 			// Store skeleton data for later use
@@ -1151,7 +1145,6 @@ async function processUSDScene(usd_scene, loader, filename) {
 				bones: skelBones,
 				rootBone: skelRootBone,
 				skeletonAbsPath: skelAbsPath,
-				boneInverses: skelBoneInverses,
 				boneMap: skelBoneMap
 			});
 
@@ -1165,7 +1158,6 @@ async function processUSDScene(usd_scene, loader, filename) {
 				boneMap = skelBoneMap;
 				rootBone = skelRootBone;
 				skeletonAbsPath = skelAbsPath;
-				cachedBoneInverses = skelBoneInverses;
 			}
 		}
 
@@ -1217,7 +1209,6 @@ async function processUSDScene(usd_scene, loader, filename) {
 								rootBoneContainer.add(bone);
 							}
 
-							const fallbackBoneInverses = fallbackBones.map(() => new THREE.Matrix4());
 							const fallbackSkelId = 0;
 
 							skeletonDataArray.push({
@@ -1225,7 +1216,6 @@ async function processUSDScene(usd_scene, loader, filename) {
 								bones: fallbackBones,
 								rootBone: rootBoneContainer,
 								skeletonAbsPath: null,
-								boneInverses: fallbackBoneInverses,
 								boneMap: fallbackBoneMap
 							});
 
@@ -1234,7 +1224,6 @@ async function processUSDScene(usd_scene, loader, filename) {
 							boneMap = fallbackBoneMap;
 							rootBone = rootBoneContainer;
 							skeletonAbsPath = null;
-							cachedBoneInverses = fallbackBoneInverses;
 							totalJointCount = fallbackBones.length;
 							fallbackSkeletonCreated = true;
 
@@ -1262,8 +1251,20 @@ async function processUSDScene(usd_scene, loader, filename) {
 		envMapIntensity: 1.0,
 	};
 
+	// Monitor WASM heap for growth during scene building.
+	// If memory.grow() is called, ALL typed_memory_view ArrayBuffers are detached.
+	const wasmHeapBefore = typeof WebAssembly !== 'undefined' && WebAssembly.Memory ?
+		(window._tinyusdz_wasm_memory ? window._tinyusdz_wasm_memory.buffer.byteLength : null) : null;
+
 	// Build Three.js node from USD
 	const threeNode = await TinyUSDZLoaderUtils.buildThreeNode(usdRootNode, defaultMtl, usd_scene, options);
+
+	if (wasmHeapBefore !== null && window._tinyusdz_wasm_memory) {
+		const wasmHeapAfter = window._tinyusdz_wasm_memory.buffer.byteLength;
+		if (wasmHeapAfter !== wasmHeapBefore) {
+			console.error(`[WASM HEAP GREW] ${wasmHeapBefore} → ${wasmHeapAfter} bytes during buildThreeNode! typed_memory_view buffers may be DETACHED.`);
+		}
+	}
 
 	// =====================================================================
 	// UsdSkel Skinning Pipeline (see doc/skinning.md for full spec details)
@@ -1323,17 +1324,13 @@ async function processUSDScene(usd_scene, loader, filename) {
 	// 2. Create THREE.Skeleton objects for ALL skeletons and place them in the hierarchy
 	if (allMeshes.length > 0 && skeletonDataArray.length > 0) {
 		for (const skelData of skeletonDataArray) {
-			const { skelId, bones: skelBones, rootBone: skelRootBone, skeletonAbsPath: skelAbsPath, boneInverses: skelBoneInverses } = skelData;
+			const { skelId, bones: skelBones, rootBone: skelRootBone, skeletonAbsPath: skelAbsPath } = skelData;
 
-			// Create THREE.Skeleton with USD inverse bind matrices
-			let skelThree = null;
-			if (skelBoneInverses.length === skelBones.length) {
-				skelThree = new THREE.Skeleton(skelBones, skelBoneInverses);
-				console.log(`Created skeleton ${skelId} with USD inverse bind matrices`);
-			} else {
-				skelThree = new THREE.Skeleton(skelBones);
-				console.warn(`Skeleton ${skelId} created without inverse bind matrices (expected ${skelBones.length}, got ${skelBoneInverses.length})`);
-			}
+			// Create THREE.Skeleton without boneInverses — bind() will compute
+			// world-space boneInverses via calculateInverses() after bones are
+			// placed in the hierarchy and updateMatrixWorld propagates transforms.
+			let skelThree = new THREE.Skeleton(skelBones);
+			console.log(`Created skeleton ${skelId} with ${skelBones.length} bones`);
 
 			// Store skeleton in map
 			skeletons.set(skelId, skelThree);
@@ -1349,24 +1346,33 @@ async function processUSDScene(usd_scene, loader, filename) {
 				throw new Error(`rootBone for skeleton ${skelId} is not a valid THREE.Bone`);
 			}
 
-			// 3. Place rootBone at the skeleton's location in the threeNode hierarchy
-			// This ensures bone.matrixWorld includes the correct ancestor transforms
-			let skeletonParentNode = null;
+			// 3. Place rootBone at the Skeleton prim node in the hierarchy.
+			// The bones inherit all ancestor transforms (including the Skeleton
+			// prim's own xformOps like scaling). This is fine because we use
+			// calculateInverses() after updateMatrixWorld to compute world-space
+			// boneInverses that include these transforms. At bind pose,
+			// boneMatrix = bone.matrixWorld × inv(bone.matrixWorld_bind) = identity,
+			// so the Skeleton's transforms cancel out correctly.
+			let boneParent = threeNode; // fallback
 			if (skelAbsPath) {
-				skeletonParentNode = findNodeByUSDPath(threeNode, skelAbsPath);
-				if (skeletonParentNode) {
-					console.log(`Placing rootBone ${skelId} at skeleton node: ${skelAbsPath} (${skeletonParentNode.name})`);
+				const skeletonNode = findNodeByUSDPath(threeNode, skelAbsPath);
+				if (skeletonNode) {
+					boneParent = skeletonNode;
+					console.log(`Placing rootBone ${skelId} at skeleton node: ${boneParent.name} (path: ${skelAbsPath})`);
 				} else {
 					console.warn(`Could not find skeleton node "${skelAbsPath}" in hierarchy for skeleton ${skelId}, falling back to threeNode root`);
 				}
 			}
-			// Fallback: add rootBone to threeNode root (ancestor transforms may be missing)
-			const boneParent = skeletonParentNode || threeNode;
 			boneParent.add(skelRootBone);
 		}
 
 		// 4. Propagate all world matrices before binding
 		characterGroup.updateMatrixWorld(true);
+
+		// Note: boneInverses will be computed by bind() → calculateInverses()
+		// when we call bind(skeleton) without a custom bindMatrix.
+		// This ensures boneInverses and bindMatrix are in the same space
+		// (Three.js world space), giving boneMatrix = identity at bind pose.
 
 		// 5. Process each mesh: add skinning attributes and replace with SkinnedMesh
 		let firstSkinnedMesh = null;
@@ -1424,18 +1430,14 @@ async function processUSDScene(usd_scene, loader, filename) {
 					newSkinnedMesh.receiveShadow = true;
 					newSkinnedMesh.visible = animationParams.showMesh;
 
-					// Bind with USD geomBindTransform as bindMatrix.
-					// geomBindTransform = world-space transform of the mesh at bind time.
-					// Per USD spec, this replaces mesh xformOps for skinning.
-					// Passing bindMatrix explicitly prevents bind() from calling
-					// calculateInverses(), preserving USD-derived boneInverses.
-					const bindMatrix = meshUSDData.geomBindTransform || new THREE.Matrix4(); // Identity if not authored
-					newSkinnedMesh.bind(meshSkeleton, bindMatrix);
-					if (meshUSDData.geomBindTransform) {
-						console.log(`  Bound to skeleton ${meshSkelId} with geomBindTransform`);
-					} else {
-						console.log(`  Bound to skeleton ${meshSkelId} with identity bindMatrix (geomBindTransform not authored)`);
-					}
+					// Bind without custom bindMatrix: bind() internally calls
+					// calculateInverses() and sets bindMatrix = mesh.matrixWorld.
+					// This ensures boneInverses and bindMatrix are in the same
+					// space (Three.js world), giving boneMatrix = identity at bind
+					// pose. With AttachedBindMode, bindMatrixInverse adapts each
+					// frame, so mesh hierarchy transforms are handled correctly.
+					newSkinnedMesh.bind(meshSkeleton);
+					console.log(`  Bound to skeleton ${meshSkelId} (bindMatrix = mesh.matrixWorld)`);
 
 					// Apply extended skinning material if needed (8+ bones per vertex)
 					let wasmBoneTexture = null;
