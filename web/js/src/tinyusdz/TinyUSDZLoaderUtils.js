@@ -895,11 +895,42 @@ class TinyUSDZLoaderUtils extends LoaderUtils {
         // at the end of processUSDScene to free WASM heap memory. After deletion,
         // typed_memory_view references into render_scene_ become stale (data freed
         // by C++ destructor, overwritten by allocator bookkeeping).
+
+        // Validate WASM buffer health before copying.
+        // Emscripten typed_memory_view returns TypedArrays sharing the WASM
+        // heap's ArrayBuffer. If memory.grow() is called (heap resize), ALL
+        // existing views' backing buffer is detached (byteLength becomes 0).
+        // Detect this and re-fetch the mesh from WASM if needed.
+        const meshName = mesh.primName || mesh.absPath || '(unknown)';
+        if (mesh.points && mesh.points.buffer && mesh.points.buffer.byteLength === 0) {
+          console.error(`[WASM] DETACHED buffer for mesh "${meshName}" points! WASM heap likely grew.`);
+        }
+        if (mesh.faceVertexIndices && mesh.faceVertexIndices.buffer && mesh.faceVertexIndices.buffer.byteLength === 0) {
+          console.error(`[WASM] DETACHED buffer for mesh "${meshName}" faceVertexIndices! WASM heap likely grew.`);
+        }
+
         geometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array(mesh.points), 3));
 
         if (Object.prototype.hasOwnProperty.call(mesh, 'faceVertexIndices')) {
           if (mesh.faceVertexIndices.length >0 ) {
-            geometry.setIndex(new THREE.BufferAttribute(new Uint32Array(mesh.faceVertexIndices), 1));
+            const indices = new Uint32Array(mesh.faceVertexIndices);
+            // Validate: check for out-of-range indices (common corruption indicator)
+            const numVertices = mesh.points.length / 3;
+            let maxIdx = 0, oobCount = 0, zeroIdxCount = 0;
+            for (let i = 0; i < indices.length; i++) {
+              if (indices[i] >= numVertices) oobCount++;
+              if (indices[i] === 0) zeroIdxCount++;
+              if (indices[i] > maxIdx) maxIdx = indices[i];
+            }
+            if (oobCount > 0) {
+              console.error(`[MESH] "${meshName}": ${oobCount}/${indices.length} indices OUT OF RANGE (max idx=${maxIdx}, numVerts=${numVertices})`);
+            }
+            // High zero-index ratio can indicate corrupted/zeroed-out index data
+            const zeroRatio = zeroIdxCount / indices.length;
+            if (zeroRatio > 0.3 && indices.length > 100) {
+              console.warn(`[MESH] "${meshName}": ${(zeroRatio*100).toFixed(1)}% of indices are 0 (${zeroIdxCount}/${indices.length}) — possible data corruption`);
+            }
+            geometry.setIndex(new THREE.BufferAttribute(indices, 1));
           }
         }
 
@@ -1201,6 +1232,26 @@ class TinyUSDZLoaderUtils extends LoaderUtils {
             // Decompose the matrix into position, rotation, and scale
             // This is necessary for Three.js to properly handle the transform
             node.applyMatrix4(matrix);
+
+        } else if (usdNode.nodeType == 'skelroot') {
+
+            // UsdSkelRoot: encapsulation prim for skinned subtree.
+            // Its world transform (skelLocalToWorld) positions skinned results in world space.
+            // Treated as a group node with transform in Three.js.
+            if (usdNode.localMatrix) {
+                const matrix = this.toMatrix4(usdNode.localMatrix);
+                node.applyMatrix4(matrix);
+            }
+
+        } else if (usdNode.nodeType == 'skeleton') {
+
+            // UsdSkeleton: joint hierarchy prim.
+            // Its transform contributes to skelLocalToWorld.
+            // Treated as a group node with transform in Three.js.
+            if (usdNode.localMatrix) {
+                const matrix = this.toMatrix4(usdNode.localMatrix);
+                node.applyMatrix4(matrix);
+            }
 
         } else if (usdNode.nodeType == 'mesh') {
 
