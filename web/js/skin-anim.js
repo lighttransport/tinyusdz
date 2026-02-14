@@ -982,6 +982,8 @@ async function processUSDScene(usd_scene, loader, filename) {
 	const sceneMetadata = usd_scene.getSceneMetadata ? usd_scene.getSceneMetadata() : {};
 	let fileUpAxis = sceneMetadata.upAxis || "Y";
 	const timeCodesPerSecond = sceneMetadata.timeCodesPerSecond || 24;
+	const startTimeCode = sceneMetadata.startTimeCode !== undefined ? sceneMetadata.startTimeCode : 0;
+	const endTimeCode = sceneMetadata.endTimeCode !== undefined ? sceneMetadata.endTimeCode : 100;
 
 	// Update global timeCodesPerSecond and speed parameter
 	currentTimeCodesPerSecond = timeCodesPerSecond;
@@ -991,6 +993,7 @@ async function processUSDScene(usd_scene, loader, filename) {
 	console.log(`upAxis (from metadata): "${fileUpAxis}"`);
 	console.log(`metersPerUnit: ${sceneMetadata.metersPerUnit || 1.0}`);
 	console.log(`timeCodesPerSecond: ${timeCodesPerSecond}`);
+	console.log(`startTimeCode: ${startTimeCode}, endTimeCode: ${endTimeCode}`);
 
 	// Debug: Log mesh skinning data
 	const numMeshes = usd_scene.numMeshes ? usd_scene.numMeshes() : 0;
@@ -1531,7 +1534,7 @@ async function processUSDScene(usd_scene, loader, filename) {
 						skelIdsInAnim.add(skelId);
 					}
 				}
-				console.log(`Animation ${i} (${usdAnim.name}, ${usdAnim.duration}s): targets skeleton(s) [${Array.from(skelIdsInAnim).sort().join(', ')}]`);
+				console.log(`Animation ${i} (${usdAnim.name}, ${usdAnim.duration} frames): targets skeleton(s) [${Array.from(skelIdsInAnim).sort().join(', ')}]`);
 			}
 			console.log('=== End Animation Targeting ===');
 
@@ -1564,7 +1567,7 @@ async function processUSDScene(usd_scene, loader, filename) {
 				if (info && info.has_skeletal_animation) {
 					typeStr = ' [skeletal]';
 				}
-				console.log(`Animation ${index}: ${clip.name}, duration: ${clip.duration}s, tracks: ${clip.tracks.length}${typeStr}`);
+				console.log(`Animation ${index}: ${clip.name}, duration: ${clip.duration} frames, tracks: ${clip.tracks.length}${typeStr}`);
 			});
 
 			// Create mixer and play first animation
@@ -1573,10 +1576,16 @@ async function processUSDScene(usd_scene, loader, filename) {
 				mixer = new THREE.AnimationMixer(characterGroup);
 				playAnimation(0);
 
-				// Update timeline range to match animation duration
-				const firstClipDuration = usdAnimations[0].duration;
-				if (window.updateTimelineRange && firstClipDuration > 0 && isFinite(firstClipDuration)) {
-					window.updateTimelineRange(firstClipDuration);
+				// Update timeline range to cover all animations (in timeCodes/frames)
+				let maxDuration = endTimeCode;  // Start with scene endTimeCode
+				for (const clip of usdAnimations) {
+					if (clip.duration > maxDuration) {
+						maxDuration = clip.duration;
+					}
+				}
+				if (window.updateTimelineRange && maxDuration > 0 && isFinite(maxDuration)) {
+					console.log(`Setting timeline range to [0, ${maxDuration}] frames (from animations and endTimeCode ${endTimeCode})`);
+					window.updateTimelineRange(maxDuration);
 				}
 			}
 		} else {
@@ -2174,7 +2183,7 @@ function updateAnimationCheckboxes() {
 			enabled: animationEnabled[i]
 		};
 		const controller = animationFolder.add(obj, 'enabled')
-			.name(`  ☐ ${i}: ${clip.name} (${clip.duration.toFixed(1)}s)`)
+			.name(`  ☐ ${i}: ${clip.name} (${Math.round(clip.duration)} frames)`)
 			.listen()
 			.onChange((value) => {
 				animationEnabled[i] = value;
