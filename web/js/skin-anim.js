@@ -1125,7 +1125,8 @@ async function processUSDScene(usd_scene, loader, filename) {
 			console.log(`USD Skeleton ${skelId}: ${skelAbsPath || '(no path)'}`, usdSkeleton);
 
 			// Build Three.js skeleton from USD data (bind-transform based)
-			const skeletonData = createThreeSkeletonFromUSD(usdSkeleton);
+			// Pass skelId to prefix bone names for uniqueness across multiple skeletons
+			const skeletonData = createThreeSkeletonFromUSD(usdSkeleton, { skelId });
 			const skelBones = skeletonData.bones;
 			const skelBoneMap = skeletonData.boneMap;
 			const skelRootBone = skeletonData.rootBone;

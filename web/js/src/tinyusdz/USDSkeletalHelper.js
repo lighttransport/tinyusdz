@@ -22,10 +22,12 @@ import * as THREE from 'three';
  * @param {boolean} [options.useBindTransforms=true] - Use bind transforms (world space) for skeleton.
  *   When true (default), bone positions are derived from bind_transform so that
  *   bone.matrixWorld == bindTransform at rest. When false, uses rest_transform (local space).
+ * @param {number} [options.skelId] - Skeleton ID for unique bone naming across multiple skeletons
  * @returns {{ bones: Array<THREE.Bone>, boneMap: Map<number, THREE.Bone>, rootBone: THREE.Bone, boneInverses: Array<THREE.Matrix4> }}
  */
 export function createThreeSkeletonFromUSD(usdSkeleton, options = {}) {
   const useBindTransforms = options.useBindTransforms !== undefined ? options.useBindTransforms : true;
+  const skelId = options.skelId !== undefined ? options.skelId : 0;
 
   const bones = [];
   const boneMap = new Map();
@@ -64,7 +66,8 @@ export function createThreeSkeletonFromUSD(usdSkeleton, options = {}) {
     if (lastSlash !== -1) {
       jointName = jointName.substring(lastSlash + 1);
     }
-    bone.name = jointName;
+    // Prefix bone name with skeleton ID for uniqueness across multiple skeletons
+    bone.name = `skel${skelId}_${jointName}`;
 
     // Store mapping from joint_id to bone
     const currentJointId = skelNode.joint_id !== undefined ? skelNode.joint_id : jointId;
