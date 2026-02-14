@@ -34,11 +34,11 @@ export function getUSDInterpolationMode(interpolation) {
  * Convert USD skeletal animation data to Three.js AnimationClip
  * Extracts only SkeletonJoint animations from USD SkelAnimation
  * @param {Object} usdLoader - TinyUSDZ loader instance
- * @param {Map} boneMap - Map from joint_id to THREE.Bone
+ * @param {Map} boneMaps - Map from skeleton_id to Map(joint_id -> THREE.Bone)
  * @param {number} [timeCodesPerSecond=24] - USD timeCodesPerSecond for time conversion
  * @returns {Array<THREE.AnimationClip>} Array of Three.js AnimationClips
  */
-export function convertUSDSkeletalAnimationsToThreeJS(usdLoader, boneMap, timeCodesPerSecond = 24) {
+export function convertUSDSkeletalAnimationsToThreeJS(usdLoader, boneMaps, timeCodesPerSecond = 24) {
 	const animationClips = [];
 
 	// Get number of animations
@@ -75,16 +75,21 @@ export function convertUSDSkeletalAnimationsToThreeJS(usdLoader, boneMap, timeCo
 		// Create Three.js KeyframeTracks from USD skeletal animation channels
 		const keyframeTracks = [];
 
-		// Group channels by joint_id to combine TRS into hierarchical bone animation
+		// Group channels by (skeleton_id, joint_id) to combine TRS into hierarchical bone animation
 		const jointChannels = new Map();
+		const skelIdsInAnimation = new Set();
 		for (const channel of skeletalChannels) {
+			const skelId = channel.skeleton_id !== undefined ? channel.skeleton_id : 0;
 			const jointId = channel.joint_id;
-			if (!jointChannels.has(jointId)) {
-				jointChannels.set(jointId, {});
+			skelIdsInAnimation.add(skelId);
+			const key = `${skelId}_${jointId}`;
+			if (!jointChannels.has(key)) {
+				jointChannels.set(key, { skeleton_id: skelId, joint_id: jointId, channels: {} });
 			}
-			const joint = jointChannels.get(jointId);
-			joint[channel.path] = channel;
+			const joint = jointChannels.get(key);
+			joint.channels[channel.path] = channel;
 		}
+		console.log(`Animation ${i} (${usdAnimation.name}): targets skeleton IDs: ${Array.from(skelIdsInAnimation).sort().join(', ')}`);
 
 		// Process each joint's animation
 		// Animation values are absolute joint-local transforms from SkelAnimation.
@@ -92,10 +97,21 @@ export function convertUSDSkeletalAnimationsToThreeJS(usdLoader, boneMap, timeCo
 		// replaces the local transform with the animated value (Normal blend mode).
 		// skinningTransform = bone.matrixWorld * inverse(bindTransform) is correct
 		// because bone.matrixWorld is computed by composing animLocal up the hierarchy.
-		for (const [jointId, channels] of jointChannels) {
+		for (const [key, jointData] of jointChannels) {
+			const skelId = jointData.skeleton_id;
+			const jointId = jointData.joint_id;
+			const channels = jointData.channels;
+
+			// Get the correct boneMap for this skeleton
+			const boneMap = boneMaps.get(skelId);
+			if (!boneMap) {
+				console.warn(`Could not find boneMap for skeleton_id: ${skelId}`);
+				continue;
+			}
+
 			const bone = boneMap.get(jointId);
 			if (!bone) {
-				console.warn(`Could not find bone for joint_id: ${jointId}`);
+				console.warn(`Could not find bone for skeleton_id: ${skelId}, joint_id: ${jointId}`);
 				continue;
 			}
 
@@ -108,6 +124,7 @@ export function convertUSDSkeletalAnimationsToThreeJS(usdLoader, boneMap, timeCo
 				if (sampler && sampler.times && sampler.values) {
 					// Copy WASM typed_memory_view arrays into JS-owned buffers.
 					// usd_scene.delete() frees C++ data, invalidating views.
+					// Keep times in timeCodes (frames), not seconds - mixer handles frame-based playback
 					const track = new THREE.VectorKeyframeTrack(
 						`${boneName}.position`,
 						new Float32Array(sampler.times),
@@ -124,6 +141,7 @@ export function convertUSDSkeletalAnimationsToThreeJS(usdLoader, boneMap, timeCo
 				const sampler = usdAnimation.samplers[channel.sampler];
 				if (sampler && sampler.times && sampler.values) {
 					// Copy WASM typed_memory_view arrays into JS-owned buffers.
+					// Keep times in timeCodes (frames), not seconds
 					const track = new THREE.QuaternionKeyframeTrack(
 						`${boneName}.quaternion`,
 						new Float32Array(sampler.times),
@@ -140,6 +158,7 @@ export function convertUSDSkeletalAnimationsToThreeJS(usdLoader, boneMap, timeCo
 				const sampler = usdAnimation.samplers[channel.sampler];
 				if (sampler && sampler.times && sampler.values) {
 					// Copy WASM typed_memory_view arrays into JS-owned buffers.
+					// Keep times in timeCodes (frames), not seconds
 					const track = new THREE.VectorKeyframeTrack(
 						`${boneName}.scale`,
 						new Float32Array(sampler.times),
@@ -186,14 +205,16 @@ export function convertUSDSkeletalAnimationsToThreeJS(usdLoader, boneMap, timeCo
 
 		// Create Three.js AnimationClip
 		if (keyframeTracks.length > 0) {
+			// Let Three.js auto-calculate duration from the actual track keyframes (use -1)
+			// This ensures we get the full animation range from the keyframe data
 			const clip = new THREE.AnimationClip(
 				usdAnimation.name || `SkeletalAnimation_${i}`,
-				usdAnimation.duration || -1, // -1 will auto-calculate from tracks
+				-1,  // Auto-calculate from tracks to get actual keyframe range
 				keyframeTracks
 			);
 
 			animationClips.push(clip);
-			console.log(`Created skeletal clip: ${clip.name}, duration: ${clip.duration}s, tracks: ${clip.tracks.length}`);
+			console.log(`Created skeletal clip: ${clip.name}, duration: ${clip.duration} frames (auto-calc from tracks), USD duration: ${usdAnimation.duration || 'N/A'}`);
 		}
 	}
 
