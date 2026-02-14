@@ -138,6 +138,15 @@
 			#joint-hierarchy::-webkit-scrollbar-thumb:hover {
 				background: rgba(255, 255, 255, 0.5);
 			}
+			/* Make animation checkbox labels horizontally scrollable */
+			.lil-gui .controller.boolean {
+				overflow-x: auto;
+				overflow-y: hidden;
+			}
+			.lil-gui .controller.boolean .name {
+				white-space: nowrap;
+				overflow: visible;
+			}
 		</style>
 	</head>
 	<body>
