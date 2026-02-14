@@ -999,8 +999,11 @@ async function processUSDScene(usd_scene, loader, filename) {
 	const numMeshes = usd_scene.numMeshes ? usd_scene.numMeshes() : 0;
 	console.log(`=== Mesh Skinning Data (${numMeshes} meshes) ===`);
 	let hasSkinnedMeshData = false;
-	// Store USD mesh skinning data for ALL meshes, keyed by mesh name (last part of path)
-	const allSkinnedMeshUSDData = new Map();
+		// Store USD mesh skinning data for ALL meshes, keyed by absolute prim path.
+		const allSkinnedMeshUSDData = new Map();
+		// Name fallback for cases where primMeta.absPath is unavailable on Three.js nodes.
+		// Value `null` means ambiguous duplicate name, so path-based lookup is required.
+		const skinnedMeshDataByName = new Map();
 	let firstGeomBindTransform = null;
 	for (let i = 0; i < numMeshes; i++) {
 		const mesh = usd_scene.getMesh(i);
@@ -1016,8 +1019,8 @@ async function processUSDScene(usd_scene, loader, filename) {
 				geomBindTransformMatrix.fromArray(Array.from(mesh.geomBindTransform));
 			}
 
-			// Extract mesh name from path (e.g., "/root/Armature/Body/Body" -> "Body")
-			const meshName = mesh.absPath.split('/').pop();
+				const meshAbsPath = mesh.absPath || '';
+				const meshName = meshAbsPath ? meshAbsPath.split('/').pop() : `mesh_${i}`;
 
 			// Copy WASM typed_memory_view data into JS-owned buffers.
 			// usd_scene.delete() at end of processUSDScene frees C++ render_scene_,
@@ -1033,14 +1036,20 @@ async function processUSDScene(usd_scene, loader, filename) {
 				hasGeomBindTransform: mesh.hasGeomBindTransform || false
 			};
 
-			allSkinnedMeshUSDData.set(meshName, meshData);
+				const meshKey = meshAbsPath || `__mesh_id_${i}`;
+				allSkinnedMeshUSDData.set(meshKey, meshData);
+				if (!skinnedMeshDataByName.has(meshName)) {
+					skinnedMeshDataByName.set(meshName, meshData);
+				} else {
+					skinnedMeshDataByName.set(meshName, null);
+				}
 
 			// Store first geomBindTransform for UI display
 			if (!firstGeomBindTransform && geomBindTransformMatrix) {
 				firstGeomBindTransform = geomBindTransformMatrix;
 			}
 
-			console.log(`Mesh ${i}: ${mesh.absPath} (name: ${meshName})`);
+				console.log(`Mesh ${i}: ${meshAbsPath || '(no absPath)'} (name: ${meshName})`);
 			console.log(`  - skel_id: ${mesh.skel_id}`);
 			console.log(`  - jointIndices: ${mesh.jointIndices ? mesh.jointIndices.length : 0} elements`);
 			console.log(`  - jointWeights: ${mesh.jointWeights ? mesh.jointWeights.length : 0} elements`);
@@ -1164,12 +1173,13 @@ async function processUSDScene(usd_scene, loader, filename) {
 		if (window.updateSkeletonInfo) {
 			window.updateSkeletonInfo(numSkeletons, totalJointCount);
 		}
-	} else {
-		console.warn('No skeletons found in USD file');
+		} else {
+			console.warn('No skeletons found in USD file');
+			let fallbackSkeletonCreated = false;
 
-		// WORKAROUND: If mesh has skinning data but no skeleton, try to build from animation
-		if (hasSkinnedMeshData) {
-			console.log('Mesh has skinning data but no skeleton hierarchy - attempting fallback skeleton creation');
+			// WORKAROUND: If mesh has skinning data but no skeleton, try to build from animation
+			if (hasSkinnedMeshData) {
+				console.log('Mesh has skinning data but no skeleton hierarchy - attempting fallback skeleton creation');
 
 			// Try to build skeleton from animation channels
 			const numAnimations = usd_scene.numAnimations ? usd_scene.numAnimations() : 0;
@@ -1186,41 +1196,59 @@ async function processUSDScene(usd_scene, loader, filename) {
 						}
 					}
 
-					if (maxJointId >= 0) {
-						console.log(`Building fallback skeleton from animation: ${jointIds.size} joints (max id: ${maxJointId})`);
+						if (maxJointId >= 0) {
+							console.log(`Building fallback skeleton from animation: ${jointIds.size} joints (max id: ${maxJointId})`);
 
-						// Create flat bone hierarchy (all bones at root level)
-						// This won't have correct rest poses but allows animation to play
-						const rootBoneContainer = new THREE.Bone();
-						rootBoneContainer.name = 'skeleton_root';
-						boneMap.set(-1, rootBoneContainer);
+							// Create flat bone hierarchy (all bones at root level)
+							// This won't have correct rest poses but allows animation to play
+							const rootBoneContainer = new THREE.Bone();
+							rootBoneContainer.name = 'skeleton_root';
+							const fallbackBones = [];
+							const fallbackBoneMap = new Map();
 
-						for (let i = 0; i <= maxJointId; i++) {
-							const bone = new THREE.Bone();
-							bone.name = `joint_${i}`;
-							bone.userData.joint_id = i;
-							boneMap.set(i, bone);
-							bones.push(bone);
+							for (let i = 0; i <= maxJointId; i++) {
+								const bone = new THREE.Bone();
+								bone.name = `joint_${i}`;
+								bone.userData.joint_id = i;
+								fallbackBoneMap.set(i, bone);
+								fallbackBones.push(bone);
 
-							// Add all bones to root for now (flat hierarchy)
-							rootBoneContainer.add(bone);
+								// Add all bones to root for now (flat hierarchy)
+								rootBoneContainer.add(bone);
+							}
+
+							const fallbackBoneInverses = fallbackBones.map(() => new THREE.Matrix4());
+							const fallbackSkelId = 0;
+
+							skeletonDataArray.push({
+								skelId: fallbackSkelId,
+								bones: fallbackBones,
+								rootBone: rootBoneContainer,
+								skeletonAbsPath: null,
+								boneInverses: fallbackBoneInverses,
+								boneMap: fallbackBoneMap
+							});
+
+							boneMaps.set(fallbackSkelId, fallbackBoneMap);
+							bones = fallbackBones;
+							boneMap = fallbackBoneMap;
+							rootBone = rootBoneContainer;
+							skeletonAbsPath = null;
+							cachedBoneInverses = fallbackBoneInverses;
+							totalJointCount = fallbackBones.length;
+							fallbackSkeletonCreated = true;
+
+							console.log(`[Fallback] Built skeleton with ${fallbackBones.length} bones (flat hierarchy)`);
 						}
-
-						// Add root container as first bone
-						bones.unshift(rootBoneContainer);
-						rootBone = rootBoneContainer;
-
-						console.log(`[Fallback] Built skeleton with ${bones.length} bones (flat hierarchy)`);
 					}
 				}
 			}
-		}
 
-		// Update skeleton info display
-		if (window.updateSkeletonInfo) {
-			window.updateSkeletonInfo(0, bones.length);
+			// Update skeleton info display
+			if (window.updateSkeletonInfo) {
+				window.updateSkeletonInfo(fallbackSkeletonCreated ? 1 : 0, totalJointCount);
+			}
 		}
-	}
 
 	// Get the default root node from USD
 	const usdRootNode = usd_scene.getDefaultRootNode();
@@ -1238,25 +1266,37 @@ async function processUSDScene(usd_scene, loader, filename) {
 	const threeNode = await TinyUSDZLoaderUtils.buildThreeNode(usdRootNode, defaultMtl, usd_scene, options);
 
 	// =====================================================================
-	// Hierarchy-preserving skinning setup
+	// UsdSkel Skinning Pipeline (see doc/skinning.md for full spec details)
 	//
-	// Instead of extracting meshes from threeNode and re-parenting to
-	// characterGroup (which loses ancestor transforms like scale and axis
-	// conversion), we:
+	// USD spec: "When a primitive is skinned, any transform on the prim
+	// authored by way of the typical UsdGeomXformable schema has NO EFFECT
+	// on the rendered results." xformOps on skinned meshes are ignored.
+	//
+	// The USD skinning equation (column-vector convention):
+	//   skinnedPoint = sum(w_i * inv(bindTransforms[i]) * jointSkelTransform[i]
+	//                      * geomBindTransform * localPoint)
+	//   worldPoint = skinnedPoint * skelLocalToWorld
+	//
+	// Three.js mapping:
+	//   geomBindTransform       → mesh.bindMatrix
+	//   inv(bindTransforms[i])  → skeleton.boneInverses[i]
+	//   jointSkelTransform * skelLocalToWorld → bone.matrixWorld
+	//
+	// With AttachedBindMode (default), inv(mesh.matrixWorld) replaces
+	// bindMatrixInverse each frame, so mesh xformOps cancel out:
+	//   world = mesh.matrixWorld * inv(mesh.matrixWorld)
+	//           * sum(w_i * bone.matrixWorld * boneInverse_i
+	//                 * geomBindTransform * pos)
+	//         = sum(w_i * bone.matrixWorld * boneInverse_i
+	//               * geomBindTransform * pos)
+	//
+	// Setup steps:
 	//   1. Add threeNode directly to characterGroup (preserves full hierarchy)
 	//   2. Place rootBone at the skeleton's location in the hierarchy
 	//   3. Replace Mesh → SkinnedMesh in-place within the hierarchy
-	//   4. bind() with explicit geomBindTransform (prevents calculateInverses()
-	//      from overwriting USD boneInverses)
-	//
-	// With AttachedBindMode (default), mesh.matrixWorld cancels in the vertex
-	// shader, so the final world position is:
-	//   world = sum(w * boneMatrix_i) * bindMatrix * pos
-	// where boneMatrix_i = bone.matrixWorld * boneInverse_i
-	//
-	// By placing bones at the skeleton's scene graph location, bone.matrixWorld
-	// includes the correct ancestor transforms (scale, axis conversion), giving
-	// correct display without manual Z-up/scale handling.
+	//   4. bind(skeleton, geomBindTransform) to set bindMatrix explicitly
+	//      (passing bindMatrix prevents calculateInverses() from
+	//      overwriting the USD-derived boneInverses)
 	// =====================================================================
 
 	// 1. Add threeNode to characterGroup (preserves USD scene graph hierarchy)
@@ -1332,12 +1372,19 @@ async function processUSDScene(usd_scene, loader, filename) {
 		let firstSkinnedMesh = null;
 		let processedCount = 0;
 
-		for (const mesh of allMeshes) {
-			const meshName = mesh.name;
-			const meshUSDData = allSkinnedMeshUSDData.get(meshName);
+			for (const mesh of allMeshes) {
+				const meshName = mesh.name;
+				const meshAbsPath = mesh.userData?.['primMeta.absPath'] || '';
+				let meshUSDData = allSkinnedMeshUSDData.get(meshAbsPath);
+				if (!meshUSDData && skinnedMeshDataByName.has(meshName)) {
+					meshUSDData = skinnedMeshDataByName.get(meshName);
+					if (meshUSDData === null) {
+						console.warn(`Mesh ${meshName}: ambiguous name fallback (duplicate names), skipping skinning without absPath match`);
+					}
+				}
 
-			if (meshUSDData) {
-				console.log(`Processing mesh: ${meshName} (skel_id: ${meshUSDData.skel_id})`);
+				if (meshUSDData) {
+					console.log(`Processing mesh: ${meshName} (path: ${meshAbsPath}, skel_id: ${meshUSDData.skel_id})`);
 
 				// Get the correct skeleton for this mesh
 				const meshSkelId = meshUSDData.skel_id !== undefined ? meshUSDData.skel_id : 0;
@@ -1377,15 +1424,17 @@ async function processUSDScene(usd_scene, loader, filename) {
 					newSkinnedMesh.receiveShadow = true;
 					newSkinnedMesh.visible = animationParams.showMesh;
 
-					// Bind with explicit geomBindTransform
-					// MUST pass bindMatrix explicitly to prevent bind() from calling
-					// calculateInverses() which would overwrite USD boneInverses
-					const bindMatrix = meshUSDData.geomBindTransform || new THREE.Matrix4(); // Identity if no geomBindTransform
+					// Bind with USD geomBindTransform as bindMatrix.
+					// geomBindTransform = world-space transform of the mesh at bind time.
+					// Per USD spec, this replaces mesh xformOps for skinning.
+					// Passing bindMatrix explicitly prevents bind() from calling
+					// calculateInverses(), preserving USD-derived boneInverses.
+					const bindMatrix = meshUSDData.geomBindTransform || new THREE.Matrix4(); // Identity if not authored
 					newSkinnedMesh.bind(meshSkeleton, bindMatrix);
 					if (meshUSDData.geomBindTransform) {
 						console.log(`  Bound to skeleton ${meshSkelId} with geomBindTransform`);
 					} else {
-						console.log(`  Bound to skeleton ${meshSkelId} with identity bindMatrix`);
+						console.log(`  Bound to skeleton ${meshSkelId} with identity bindMatrix (geomBindTransform not authored)`);
 					}
 
 					// Apply extended skinning material if needed (8+ bones per vertex)
@@ -1417,9 +1466,9 @@ async function processUSDScene(usd_scene, loader, filename) {
 					meshVisibility.set(newSkinnedMesh, true);
 					processedCount++;
 				}
-			} else {
-				// Non-skinned mesh: stays in hierarchy as-is (threeNode is already in characterGroup)
-				console.log(`Mesh ${meshName}: no USD skinning data, keeping as regular mesh`);
+				} else {
+					// Non-skinned mesh: stays in hierarchy as-is (threeNode is already in characterGroup)
+					console.log(`Mesh ${meshName} (${meshAbsPath || 'no absPath'}): no USD skinning data, keeping as regular mesh`);
 				mesh.castShadow = true;
 				mesh.receiveShadow = true;
 				mesh.visible = animationParams.showMesh;
@@ -1436,15 +1485,15 @@ async function processUSDScene(usd_scene, loader, filename) {
 		console.log(`Processed ${processedCount} skinned meshes (hierarchy preserved)`);
 
 		// Diagnostic: Show mesh-to-skeleton binding summary
-		console.log('=== Mesh-to-Skeleton Binding Summary ===');
-		const skelToMeshes = new Map();
-		for (const [meshName, meshData] of allSkinnedMeshUSDData) {
-			const skelId = meshData.skel_id;
-			if (!skelToMeshes.has(skelId)) {
-				skelToMeshes.set(skelId, []);
+			console.log('=== Mesh-to-Skeleton Binding Summary ===');
+			const skelToMeshes = new Map();
+			for (const [meshPath, meshData] of allSkinnedMeshUSDData) {
+				const skelId = meshData.skel_id;
+				if (!skelToMeshes.has(skelId)) {
+					skelToMeshes.set(skelId, []);
+				}
+				skelToMeshes.get(skelId).push(meshPath);
 			}
-			skelToMeshes.get(skelId).push(meshName);
-		}
 		for (const [skelId, meshNames] of skelToMeshes) {
 			console.log(`Skeleton ${skelId}: meshes = [${meshNames.join(', ')}]`);
 		}
