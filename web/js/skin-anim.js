@@ -9,8 +9,8 @@ import {
 	createThreeSkeletonFromUSD,
 	resetSkeletonToRestPose
 } from 'tinyusdz/USDSkeletalHelper.js';
-// USD Animation Converter - skeletal animation extraction
-import { convertUSDSkeletalAnimationsToThreeJS } from 'tinyusdz/USDAnimationConverter.js';
+// USD Animation Converter - skeletal and node animation extraction
+import { convertUSDSkeletalAnimationsToThreeJS, buildNodeIndexMap, convertUSDNodeAnimationsToThreeJS } from 'tinyusdz/USDAnimationConverter.js';
 // Skinned Mesh Utilities - bbox, raycasting, hierarchy helpers
 import {
 	findNodeByUSDPath,
@@ -207,6 +207,7 @@ let mixer = null;
 let animationAction = null;
 let animationActions = []; // Array of actions when playing all animations
 let usdAnimations = [];
+let usdNodeAnimations = []; // Node (xformOp) animation clips — always play alongside skeletal clips
 let animationEnabled = []; // Array of booleans tracking which animations are enabled for multi-play
 let boneMap = new Map(); // Legacy: first skeleton's bone map for backward compatibility
 let boneMaps = new Map(); // Map from skel_id to Map(joint_id -> THREE.Bone)
@@ -807,8 +808,7 @@ async function loadUSDModel() {
 	await loader.init({ useZstdCompressedWasm: false, useMemory64: false });
 
 	// Default USD file to load
-	//const usd_filename = "./assets/skintest-animated.usda";
-	const usd_filename = "./assets/Layout_Scene.usdz";
+	const usd_filename = "./assets/skintest-animated.usda";
 
 	console.log(`Loading USD file: ${usd_filename}`);
 
@@ -955,6 +955,7 @@ async function processUSDScene(usd_scene, loader, filename) {
 
 	// Reset animations and caches
 	usdAnimations = [];
+	usdNodeAnimations = [];
 	boneMap.clear();
 	boneMaps.clear();
 	animationParams.hasUSDAnimations = false;
@@ -1266,6 +1267,11 @@ async function processUSDScene(usd_scene, loader, filename) {
 		}
 	}
 
+	// Build node index map BEFORE bones are added to the hierarchy.
+	// Adding bones changes the DFS traversal order, which would break
+	// the mapping from USD node indices to Three.js objects.
+	const nodeIndexMap = buildNodeIndexMap(threeNode);
+
 	// =====================================================================
 	// UsdSkel Skinning Pipeline (see doc/skinning.md for full spec details)
 	//
@@ -1563,14 +1569,23 @@ async function processUSDScene(usd_scene, loader, filename) {
 		// Pass all boneMaps (for all skeletons) to the converter
 		if (bones.length > 0 && boneMaps.size > 0) {
 			usdAnimations = convertUSDSkeletalAnimationsToThreeJS(usd_scene, boneMaps, timeCodesPerSecond);
-			console.log(`Converted ${usdAnimations.length} animations (fps: ${timeCodesPerSecond})`);
+			console.log(`Converted ${usdAnimations.length} skeletal animations (fps: ${timeCodesPerSecond})`);
 		} else {
-			console.log('No skeleton data available - skipping animation extraction');
+			console.log('No skeleton data available - skipping skeletal animation extraction');
 			usdAnimations = [];
 		}
 
-		if (usdAnimations.length > 0) {
-			console.log(`Extracted ${usdAnimations.length} skeletal animations from USD file`);
+		// Extract node (xformOp) animations — animated translate/rotate/scale
+		// on scene graph nodes (SkelRoot, Xform ancestors of Skeleton).
+		// nodeIndexMap was built before bone placement to match USD DFS indices.
+		usdNodeAnimations = convertUSDNodeAnimationsToThreeJS(usd_scene, nodeIndexMap);
+		if (usdNodeAnimations.length > 0) {
+			console.log(`Extracted ${usdNodeAnimations.length} node animation clip(s) for scene graph xformOps`);
+		}
+
+		if (usdAnimations.length > 0 || usdNodeAnimations.length > 0) {
+			const totalClips = usdAnimations.length + usdNodeAnimations.length;
+			console.log(`Extracted ${totalClips} animation clip(s): ${usdAnimations.length} skeletal, ${usdNodeAnimations.length} node`);
 
 			// Diagnostic: Show animation-to-skeleton targeting
 			console.log('=== Animation-to-Skeleton Targeting ===');
@@ -1623,13 +1638,26 @@ async function processUSDScene(usd_scene, loader, filename) {
 
 			// Create mixer and play first animation
 			// Use characterGroup as the mixer root so animations can target bones from all skeletons
-			if (usdAnimations.length > 0 && skeletons.size > 0) {
-				mixer = new THREE.AnimationMixer(characterGroup);
-				playAnimation(0);
+			// Also supports node animations (xformOps) even without skeletal data
+			if (usdAnimations.length > 0 || usdNodeAnimations.length > 0) {
+				if (!mixer) {
+					mixer = new THREE.AnimationMixer(characterGroup);
+				}
+				if (usdAnimations.length > 0) {
+					playAnimation(0);
+				} else {
+					// Node-only animations: play them directly
+					playNodeAnimations();
+				}
 
 				// Update timeline range to cover all animations (in timeCodes/frames)
 				let maxDuration = endTimeCode;  // Start with scene endTimeCode
 				for (const clip of usdAnimations) {
+					if (clip.duration > maxDuration) {
+						maxDuration = clip.duration;
+					}
+				}
+				for (const clip of usdNodeAnimations) {
 					if (clip.duration > maxDuration) {
 						maxDuration = clip.duration;
 					}
@@ -1688,6 +1716,25 @@ async function processUSDScene(usd_scene, loader, filename) {
 }
 
 /**
+ * Play node (xformOp) animations alongside skeletal animations.
+ * Node animations drive scene graph transforms (SkelRoot, Xform ancestors)
+ * and must always play when any animation is active. With AttachedBindMode,
+ * animated ancestors are handled correctly by the skinning equation.
+ */
+function playNodeAnimations() {
+	if (!mixer || usdNodeAnimations.length === 0) return;
+	for (const nodeClip of usdNodeAnimations) {
+		if (nodeClip.duration <= 0) continue;
+		const action = mixer.clipAction(nodeClip);
+		action.loop = THREE.LoopRepeat;
+		action.clampWhenFinished = false;
+		action.setEffectiveTimeScale(animationParams.speed);
+		action.play();
+		animationActions.push(action);
+	}
+}
+
+/**
  * Play animation by index
  * @param {number} index - Animation index
  */
@@ -1707,22 +1754,25 @@ function playAnimation(index) {
 	animationAction.setEffectiveTimeScale(animationParams.speed);
 	animationAction.play();
 
+	// Also play node animations (xformOps on skeleton ancestors)
+	playNodeAnimations();
+
 	animationParams.currentAnimation = index;
-	console.log(`Playing animation: ${clip.name}`);
+	console.log(`Playing animation: ${clip.name}${usdNodeAnimations.length > 0 ? ` (+${usdNodeAnimations.length} node clip(s))` : ''}`);
 }
 
 /**
  * Play all enabled animations simultaneously (like Blender)
  */
 function playAllAnimations() {
-	if (!mixer || usdAnimations.length === 0) {
+	if (!mixer || (usdAnimations.length === 0 && usdNodeAnimations.length === 0)) {
 		return;
 	}
 
 	// Stop any existing animations
 	stopAllAnimations();
 
-	// Create and play an action for each ENABLED animation
+	// Create and play an action for each ENABLED skeletal animation
 	animationActions = [];
 	let enabledCount = 0;
 	let skippedCount = 0;
@@ -1745,7 +1795,10 @@ function playAllAnimations() {
 		enabledCount++;
 	}
 
-	console.log(`Playing ${enabledCount} enabled animations (${skippedCount} skipped: 0 duration, ${usdAnimations.length} total)`);
+	// Also play node animations (always active alongside skeletal clips)
+	playNodeAnimations();
+
+	console.log(`Playing ${enabledCount} enabled animations (${skippedCount} skipped: 0 duration, ${usdAnimations.length} skeletal + ${usdNodeAnimations.length} node total)`);
 }
 
 /**
@@ -1913,9 +1966,14 @@ const animationParams = {
 		if (this.playAllAnimations) {
 			// Switch to play all mode
 			playAllAnimations();
-			// Update timeline range to max duration across all animations
+			// Update timeline range to max duration across all animations (skeletal + node)
 			let maxDuration = 0;
 			for (const clip of usdAnimations) {
+				if (clip.duration > maxDuration) {
+					maxDuration = clip.duration;
+				}
+			}
+			for (const clip of usdNodeAnimations) {
 				if (clip.duration > maxDuration) {
 					maxDuration = clip.duration;
 				}

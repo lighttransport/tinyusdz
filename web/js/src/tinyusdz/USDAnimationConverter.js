@@ -1,9 +1,9 @@
 /**
- * USD Skeletal Animation Converter
+ * USD Animation Converter
  *
- * Converts USD skeletal animation data (from TinyUSDZ WASM binding)
- * to Three.js AnimationClip format. Filters for SkeletonJoint channels
- * only and groups channels by joint for proper TRS track creation.
+ * Converts USD animation data (from TinyUSDZ WASM binding) to Three.js
+ * AnimationClip format. Supports both SkeletonJoint channels (skeletal
+ * animation) and SceneNode channels (xformOp animation on scene nodes).
  *
  * @module USDAnimationConverter
  */
@@ -221,7 +221,148 @@ export function convertUSDSkeletalAnimationsToThreeJS(usdLoader, boneMaps, timeC
 	return animationClips;
 }
 
+/**
+ * Build a node index map by DFS-traversing a Three.js scene node.
+ * Must be called BEFORE bones are added to the hierarchy, since adding
+ * bones would shift DFS indices and break the mapping to USD node indices.
+ * @param {THREE.Object3D} threeNode - Root of the Three.js scene hierarchy
+ * @returns {Map<number, THREE.Object3D>} Map from DFS index to Three.js object
+ */
+export function buildNodeIndexMap(threeNode) {
+	const nodeIndexMap = new Map();
+	let nodeIndex = 0;
+	threeNode.traverse((obj) => {
+		nodeIndexMap.set(nodeIndex, obj);
+		nodeIndex++;
+	});
+	return nodeIndexMap;
+}
+
+/**
+ * Convert USD SceneNode animation data to Three.js AnimationClips.
+ * Extracts xformOp animations (translate/rotate/scale) on scene graph nodes
+ * such as SkelRoot or Xform ancestors of Skeletons.
+ *
+ * With AttachedBindMode, animated ancestor transforms are handled correctly:
+ * bindMatrixInverse = inv(mesh.matrixWorld) updates each frame, so the
+ * ancestor transform cancels out in the skinning equation.
+ *
+ * @param {Object} usdLoader - TinyUSDZ loader instance
+ * @param {Map<number, THREE.Object3D>} nodeIndexMap - Pre-built DFS index → Object3D map
+ * @returns {Array<THREE.AnimationClip>} Array of Three.js AnimationClips for node animations
+ */
+export function convertUSDNodeAnimationsToThreeJS(usdLoader, nodeIndexMap) {
+	const animationClips = [];
+
+	const numAnimations = usdLoader.numAnimations();
+
+	for (let i = 0; i < numAnimations; i++) {
+		const usdAnimation = usdLoader.getAnimation(i);
+
+		if (!usdAnimation.channels || !usdAnimation.samplers) {
+			continue;
+		}
+
+		// Filter for SceneNode channels only (inverse of skeletal filter)
+		const nodeChannels = usdAnimation.channels.filter(channel => {
+			const targetType = channel.target_type || 'SceneNode';
+			return targetType === 'SceneNode';
+		});
+
+		if (nodeChannels.length === 0) {
+			continue;
+		}
+
+		const keyframeTracks = [];
+
+		for (const channel of nodeChannels) {
+			const sampler = usdAnimation.samplers[channel.sampler];
+			if (!sampler || !sampler.times || !sampler.values) {
+				continue;
+			}
+
+			const targetObject = nodeIndexMap.get(channel.target_node);
+			if (!targetObject) {
+				console.warn(`Node animation: target_node ${channel.target_node} not found in nodeIndexMap`);
+				continue;
+			}
+
+			// Use UUID for reliable hierarchical animation targeting
+			const targetUUID = targetObject.uuid;
+			const interpolation = getUSDInterpolationMode(sampler.interpolation);
+			// Copy WASM typed_memory_view arrays into JS-owned buffers
+			const times = new Float32Array(sampler.times);
+			const values = new Float32Array(sampler.values);
+
+			let track;
+			switch (channel.path) {
+				case 'Translation':
+					track = new THREE.VectorKeyframeTrack(
+						`${targetUUID}.position`, times, values, interpolation
+					);
+					break;
+				case 'Rotation':
+					track = new THREE.QuaternionKeyframeTrack(
+						`${targetUUID}.quaternion`, times, values, interpolation
+					);
+					break;
+				case 'Scale':
+					track = new THREE.VectorKeyframeTrack(
+						`${targetUUID}.scale`, times, values, interpolation
+					);
+					break;
+				default:
+					continue;
+			}
+
+			keyframeTracks.push(track);
+		}
+
+		// Expand single-keyframe tracks to span the full duration
+		if (keyframeTracks.length > 0) {
+			let maxTime = usdAnimation.duration || 0;
+			for (const track of keyframeTracks) {
+				const lastTime = track.times[track.times.length - 1];
+				if (lastTime > maxTime) maxTime = lastTime;
+			}
+
+			if (maxTime > 0) {
+				for (const track of keyframeTracks) {
+					if (track.times.length === 1 && track.times[0] < maxTime) {
+						const stride = track.getValueSize();
+						const newTimes = new Float32Array([track.times[0], maxTime]);
+						const newValues = new Float32Array(stride * 2);
+						for (let s = 0; s < stride; s++) {
+							newValues[s] = track.values[s];
+							newValues[stride + s] = track.values[s];
+						}
+						track.times = newTimes;
+						track.values = newValues;
+					}
+				}
+			}
+
+			const clip = new THREE.AnimationClip(
+				usdAnimation.name ? `${usdAnimation.name}_nodes` : `NodeAnimation_${i}`,
+				-1,
+				keyframeTracks
+			);
+
+			animationClips.push(clip);
+			console.log(`Created node animation clip: ${clip.name}, duration: ${clip.duration} frames, ${keyframeTracks.length} tracks (targeting ${nodeChannels.length} SceneNode channels)`);
+		}
+	}
+
+	if (animationClips.length > 0) {
+		console.log(`Extracted ${animationClips.length} node animation clip(s)`);
+	}
+
+	return animationClips;
+}
+
 export default {
 	getUSDInterpolationMode,
-	convertUSDSkeletalAnimationsToThreeJS
+	convertUSDSkeletalAnimationsToThreeJS,
+	buildNodeIndexMap,
+	convertUSDNodeAnimationsToThreeJS
 };
