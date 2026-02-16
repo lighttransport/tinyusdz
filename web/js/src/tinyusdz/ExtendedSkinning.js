@@ -625,66 +625,6 @@ function applyTextureBoneShaderMod(shader, options) {
 }
 
 /**
- * Create an ExtendedSkinnedMesh class that handles arbitrary bone counts
- */
-export class ExtendedSkinnedMesh extends THREE.SkinnedMesh {
-    constructor(geometry, material, maxInfluences = 4) {
-        super(geometry, material);
-
-        this.maxInfluences = maxInfluences;
-        this.skinningMode = getSkinningMode(maxInfluences);
-        this.boneDataTexture = null;
-        this.texelsPerVertex = 0;
-
-        // If geometry has extended skinning config, use it
-        if (geometry.userData.extendedSkinning) {
-            const config = geometry.userData.extendedSkinning;
-            this.maxInfluences = config.maxInfluences;
-            this.skinningMode = config.mode;
-            this.boneDataTexture = config.boneDataTexture;
-            this.texelsPerVertex = config.texelsPerVertex || 0;
-        }
-    }
-
-    /**
-     * Override bind to set up extended skinning material
-     */
-    bind(skeleton, bindMatrix) {
-        super.bind(skeleton, bindMatrix);
-
-        // Apply extended skinning material if needed
-        if (this.skinningMode > SkinningMode.STANDARD) {
-            this.material = createExtendedSkinningMaterial(this.material, {
-                maxInfluences: this.maxInfluences,
-                boneDataTexture: this.boneDataTexture,
-                texelsPerVertex: this.texelsPerVertex,
-                boneDataTexWidth: this.boneDataTexture ?
-                    this.boneDataTexture.image.width : 1024
-            });
-        }
-    }
-
-    /**
-     * Set up skinning from USD data
-     */
-    setupFromUSD(jointIndices, jointWeights, influencesPerVertex, options = {}) {
-        const config = addExtendedSkinningAttributes(
-            this.geometry,
-            jointIndices,
-            jointWeights,
-            influencesPerVertex,
-            options
-        );
-
-        this.maxInfluences = config.maxInfluences;
-        this.skinningMode = config.mode;
-        this.boneDataTexture = config.boneDataTexture;
-
-        return config;
-    }
-}
-
-/**
  * Create bone data texture and config from WASM-generated bone texture data
  *
  * This function takes the output from usd.generateBoneTexture(meshId) and creates
@@ -740,69 +680,6 @@ export function createBoneTextureFromWASM(wasmBoneTexture) {
         vertexCount,
         mode: getSkinningMode(maxInfluences)
     };
-}
-
-/**
- * Apply WASM-generated bone texture to a geometry
- *
- * This sets up the geometry with bone texture data from WASM, including
- * the boneDataOffset attribute needed for the texture-based skinning shader.
- *
- * @param {THREE.BufferGeometry} geometry - Target geometry
- * @param {Object} wasmBoneTexture - Result from usd.generateBoneTexture(meshId)
- * @param {Object} [options] - Options
- * @param {Uint16Array|Int32Array} [options.jointIndices] - Joint indices for fallback 4-bone attributes
- * @param {Float32Array} [options.jointWeights] - Joint weights for fallback 4-bone attributes
- * @param {number} [options.influencesPerVertex] - Influences per vertex in source data
- * @returns {ExtendedSkinningConfig} Configuration object with skinning setup info
- */
-export function applyWASMBoneTextureToGeometry(geometry, wasmBoneTexture, options = {}) {
-    const boneTextureConfig = createBoneTextureFromWASM(wasmBoneTexture);
-    const vertexCount = geometry.attributes.position.count;
-
-    // Add boneDataOffset attribute
-    geometry.setAttribute('boneDataOffset', new THREE.Float32BufferAttribute(boneTextureConfig.offsets, 1));
-
-    // If fallback joint data is provided, add standard 4-bone attributes
-    if (options.jointIndices && options.jointWeights && options.influencesPerVertex) {
-        addFallback4BoneAttributes(
-            geometry,
-            options.jointIndices,
-            options.jointWeights,
-            options.influencesPerVertex
-        );
-    } else if (!geometry.attributes.skinIndex) {
-        // Create default skinIndex/skinWeight if not present
-        const skinIndices = new Uint16Array(vertexCount * 4);
-        const skinWeights = new Float32Array(vertexCount * 4);
-
-        for (let i = 0; i < vertexCount; i++) {
-            skinIndices[i * 4] = 0;
-            skinWeights[i * 4] = 1;
-        }
-
-        geometry.setAttribute('skinIndex', new THREE.Uint16BufferAttribute(skinIndices, 4));
-        geometry.setAttribute('skinWeight', new THREE.Float32BufferAttribute(skinWeights, 4));
-    }
-
-    // Create config
-    const config = new ExtendedSkinningConfig({
-        maxInfluences: boneTextureConfig.maxInfluences,
-        normalizeWeights: true,
-        fromWASM: true  // Mark as WASM-generated
-    });
-    config.boneDataTexture = boneTextureConfig.texture;
-    config.vertexBoneOffsets = boneTextureConfig.offsets;
-    config.texelsPerVertex = boneTextureConfig.texelsPerVertex;
-    config.texWidth = boneTextureConfig.texWidth;
-    config.texHeight = boneTextureConfig.texHeight;
-
-    // Store in geometry userData
-    geometry.userData.extendedSkinning = config;
-
-    console.log(`Applied WASM bone texture to geometry: ${boneTextureConfig.mode}-bone mode`);
-
-    return config;
 }
 
 /**
@@ -864,26 +741,6 @@ function addFallback4BoneAttributes(geometry, jointIndices, jointWeights, influe
 }
 
 /**
- * Create extended skinning material from WASM bone texture config
- *
- * Convenience function that combines createBoneTextureFromWASM and createExtendedSkinningMaterial
- *
- * @param {THREE.Material} baseMaterial - Base material to extend
- * @param {Object} wasmBoneTexture - Result from usd.generateBoneTexture(meshId)
- * @returns {THREE.Material} Material with extended skinning support
- */
-export function createMaterialFromWASMBoneTexture(baseMaterial, wasmBoneTexture) {
-    const boneTextureConfig = createBoneTextureFromWASM(wasmBoneTexture);
-
-    return createExtendedSkinningMaterial(baseMaterial, {
-        maxInfluences: boneTextureConfig.maxInfluences,
-        boneDataTexture: boneTextureConfig.texture,
-        texelsPerVertex: boneTextureConfig.texelsPerVertex,
-        boneDataTexWidth: boneTextureConfig.texWidth
-    });
-}
-
-/**
  * Check the skinning mode of a geometry
  */
 export function getGeometrySkinningMode(geometry) {
@@ -897,13 +754,6 @@ export function getGeometrySkinningMode(geometry) {
         return SkinningMode.STANDARD;
     }
     return 0; // No skinning
-}
-
-/**
- * Check if geometry has extended skinning attributes
- */
-export function hasExtendedSkinning(geometry) {
-    return getGeometrySkinningMode(geometry) > SkinningMode.STANDARD;
 }
 
 /**
@@ -1109,7 +959,6 @@ export function createExtendedWeightVisualizationMaterial(options = {}) {
         vertexShader,
         fragmentShader,
         uniforms,
-        skinning: true,
         side: THREE.DoubleSide
     });
 }
@@ -1143,25 +992,6 @@ export function createExtendedDepthMaterial(options = {}) {
         return `ext-skinning-depth-${mode}-${maxInfluences}-${texelsPerVertex}`;
     };
 
-    depthMat.skinning = true;
     depthMat.needsUpdate = true;
     return depthMat;
 }
-
-export default {
-    SkinningMode,
-    getSkinningMode,
-    ExtendedSkinningConfig,
-    addExtendedSkinningAttributes,
-    createExtendedSkinningMaterial,
-    createExtendedDepthMaterial,
-    ExtendedSkinnedMesh,
-    getGeometrySkinningMode,
-    hasExtendedSkinning,
-    applyExtendedSkinningIfNeeded,
-    createExtendedWeightVisualizationMaterial,
-    // WASM bone texture functions
-    createBoneTextureFromWASM,
-    applyWASMBoneTextureToGeometry,
-    createMaterialFromWASMBoneTexture
-};

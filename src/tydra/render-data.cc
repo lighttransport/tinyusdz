@@ -5169,7 +5169,6 @@ bool RenderSceneConverter::ConvertMesh(
           int32_t skel_id = int32_t(skeletons.size());
 
           SkelHierarchy skel;
-          nonstd::optional<AnimationClip> anim;
 
           // Use ConvertSkeletonFromPtr if we have the skeleton pointer from discovery,
           // otherwise use ConvertSkeletonImplWithPath for explicit relationship case
@@ -5180,30 +5179,15 @@ bool RenderSceneConverter::ConvertMesh(
             if (lastSlash != std::string::npos) {
               primName = primName.substr(lastSlash + 1);
             }
-            if (!ConvertSkeletonFromPtr(env, skelPath, *discoveredSkelPtr, primName, skel_id, &skel, &anim)) {
+            if (!ConvertSkeletonFromPtr(env, skelPath, *discoveredSkelPtr, primName, &skel)) {
               return false;
             }
           } else {
-            if (!ConvertSkeletonImplWithPath(env, skelPath, skel_id, &skel, &anim)) {
+            if (!ConvertSkeletonImplWithPath(env, skelPath, &skel)) {
               return false;
             }
           }
           DCOUT("Converted skeleton attached to : " << abs_prim_path);
-
-          if (anim) {
-            const auto &animAbsPath = anim.value().abs_path;
-            auto anim_cache_it = _animPathToIndex.find(animAbsPath);
-
-            if (anim_cache_it != _animPathToIndex.end()) {
-              skel.anim_id = anim_cache_it->second;
-              skel.anim_ids.push_back(anim_cache_it->second);
-            } else {
-              skel.anim_id = int(animations.size());
-              _animPathToIndex[animAbsPath] = int32_t(animations.size());
-              skel.anim_ids.push_back(int32_t(animations.size()));
-              animations.emplace_back(std::move(anim.value()));
-            }
-          }
 
           _skelPathToIndex[skelPathStr] = skel_id;
           skeletons.emplace_back(std::move(skel));
@@ -8665,10 +8649,8 @@ bool MeshVisitor(const tinyusdz::Path &abs_path, const tinyusdz::Prim &prim,
       visitorEnv->converter->ReportMeshProgress(
           visitorEnv->meshes_processed, visitorEnv->meshes_total,
           abs_path.full_path_name(), msg);
-      // Log progress to console (visible in browser)
-      printf("[Tydra] Mesh %zu/%zu: %s\n",
-             visitorEnv->meshes_processed, visitorEnv->meshes_total,
-             abs_path.full_path_name().c_str());
+      DCOUT("[Tydra] Mesh " << visitorEnv->meshes_processed << "/" << visitorEnv->meshes_total
+            << ": " << abs_path.full_path_name());
     }
   }
 
@@ -8740,9 +8722,8 @@ bool MeshVisitor(const tinyusdz::Path &abs_path, const tinyusdz::Prim &prim,
     visitorEnv->converter->ReportMeshProgress(
         visitorEnv->meshes_processed, visitorEnv->meshes_total,
         abs_path.full_path_name(), msg);
-    printf("[Tydra] Mesh %zu/%zu (cube): %s\n",
-           visitorEnv->meshes_processed, visitorEnv->meshes_total,
-           abs_path.full_path_name().c_str());
+    DCOUT("[Tydra] Mesh " << visitorEnv->meshes_processed << "/" << visitorEnv->meshes_total
+          << " (cube): " << abs_path.full_path_name());
   }
 
   // Handle GeomSphere primitives by converting to mesh
@@ -8813,9 +8794,8 @@ bool MeshVisitor(const tinyusdz::Path &abs_path, const tinyusdz::Prim &prim,
     visitorEnv->converter->ReportMeshProgress(
         visitorEnv->meshes_processed, visitorEnv->meshes_total,
         abs_path.full_path_name(), msg);
-    printf("[Tydra] Mesh %zu/%zu (sphere): %s\n",
-           visitorEnv->meshes_processed, visitorEnv->meshes_total,
-           abs_path.full_path_name().c_str());
+    DCOUT("[Tydra] Mesh " << visitorEnv->meshes_processed << "/" << visitorEnv->meshes_total
+          << " (sphere): " << abs_path.full_path_name());
   }
 
   return true;  // continue traversal
@@ -10653,7 +10633,7 @@ bool RenderSceneConverter::ConvertToRenderScene(
 
   // Count meshes and materials before conversion for accurate progress reporting
   // Single-pass traversal: walk the stage tree once and classify prims by type_id
-  printf("[Tydra] Counting primitives...\n");
+  DCOUT("[Tydra] Counting primitives...");
   PathPrimMap<GeomMesh> meshPrimMap;
   PathPrimMap<GeomCube> cubePrimMap;
   PathPrimMap<GeomSphere> spherePrimMap;
@@ -10735,8 +10715,8 @@ bool RenderSceneConverter::ConvertToRenderScene(
       }
     }
   }
-  printf("[Tydra] Pre-discovered %zu skeletons, %zu skelroots, %zu animations\n",
-         allSkeletons.size(), allSkelRoots.size(), allAnimations.size());
+  DCOUT("[Tydra] Pre-discovered " << allSkeletons.size() << " skeletons, "
+        << allSkelRoots.size() << " skelroots, " << allAnimations.size() << " animations");
 
   SkelRootSkeletonResolver::BuildMap(allSkeletons, allSkelRoots,
                                      &_skelRootToSkeleton);
@@ -10745,8 +10725,9 @@ bool RenderSceneConverter::ConvertToRenderScene(
   // Total meshes includes GeomMesh, GeomCube, and GeomSphere (all converted to meshes)
   const size_t total_meshes = meshPrimMap.size() + cubePrimMap.size() + spherePrimMap.size();
   const size_t total_materials = materialPrimMap.size();
-  printf("[Tydra] Found %zu meshes (%zu mesh, %zu cube, %zu sphere), %zu materials\n",
-         total_meshes, meshPrimMap.size(), cubePrimMap.size(), spherePrimMap.size(), total_materials);
+  DCOUT("[Tydra] Found " << total_meshes << " meshes ("
+        << meshPrimMap.size() << " mesh, " << cubePrimMap.size() << " cube, "
+        << spherePrimMap.size() << " sphere), " << total_materials << " materials");
 
   // Report counting complete via detailed progress
   _progress_info.stage = DetailedProgressInfo::Stage::CountingPrims;
@@ -11024,55 +11005,18 @@ bool RenderSceneConverter::ConvertToRenderScene(
   CallDetailedProgressCallback(_progress_info);
   CallProgressCallback(1.0f);
 
-  printf("[Tydra] Conversion complete: %zu meshes, %zu materials, %zu textures\n",
-         scene->meshes.size(), scene->materials.size(), scene->textures.size());
+  DCOUT("[Tydra] Conversion complete: " << scene->meshes.size() << " meshes, "
+        << scene->materials.size() << " materials, " << scene->textures.size() << " textures");
 
   return true;
 }
 
-bool RenderSceneConverter::ConvertSkeletonImpl(const RenderSceneConverterEnv &env, const tinyusdz::GeomMesh &mesh,
-                       int32_t skeleton_id,
-                       SkelHierarchy *out_skel, nonstd::optional<AnimationClip> *out_anim) {
-
-  if (!out_skel) {
-    return false;
-  }
-
-  Path skelPath;
-
-  // Get skeleton path from mesh.skeleton relationship if available
-  if (mesh.skeleton.has_value()) {
-    if (mesh.skeleton.value().is_path()) {
-      skelPath = mesh.skeleton.value().targetPath;
-    } else if (mesh.skeleton.value().is_pathvector()) {
-      // Use the first one
-      if (mesh.skeleton.value().targetPathVector.size()) {
-        skelPath = mesh.skeleton.value().targetPathVector[0];
-      } else {
-        PUSH_WARN("`skel:skeleton` has invalid definition.");
-      }
-    } else {
-      PUSH_WARN("`skel:skeleton` has invalid definition.");
-    }
-  }
-
-  // If no skeleton path from relationship, return false (caller should use overload with explicit path)
-  if (!skelPath.is_valid()) {
-    PUSH_ERROR_AND_RETURN("No valid skeleton path found. Use ConvertSkeletonImplWithPath for ancestor-discovered skeletons.");
-  }
-
-  return ConvertSkeletonImplWithPath(env, skelPath, skeleton_id, out_skel, out_anim);
-}
-
-// Helper function that takes skeleton pointer directly (used for ancestor-discovered skeletons)
 bool RenderSceneConverter::ConvertSkeletonFromPtr(const RenderSceneConverterEnv &env,
                        const Path &skelPath,
                        const Skeleton &skel,
                        const std::string &primName,
-                       int32_t skeleton_id,
-                       SkelHierarchy *out_skel, nonstd::optional<AnimationClip> *out_anim) {
+                       SkelHierarchy *out_skel) {
   (void)env;
-  (void)skeleton_id;
 
   if (!out_skel) {
     return false;
@@ -11088,21 +11032,12 @@ bool RenderSceneConverter::ConvertSkeletonFromPtr(const RenderSceneConverterEnv 
   dst.display_name = skel.metas().has_displayName() ? skel.metas().get_displayName() : "";
   dst.root_node = root;
 
-  // NOTE: Animation extraction moved to ConvertAllSkelAnimations() to support
-  // multiple animations per skeleton (animationSource can be a pathvector).
-  // Previously only the first animation was extracted here.
-  // The skel:animationSource relationship is now processed separately after
-  // all skeletons are discovered.
-  (void)out_anim; // Suppress unused parameter warning
-
   (*out_skel) = std::move(dst);
   return true;
 }
 
 bool RenderSceneConverter::ConvertSkeletonImplWithPath(const RenderSceneConverterEnv &env, const Path &skelPath,
-                       int32_t skeleton_id,
-                       SkelHierarchy *out_skel, nonstd::optional<AnimationClip> *out_anim) {
-  (void)skeleton_id;
+                       SkelHierarchy *out_skel) {
 
   if (!out_skel) {
     return false;
@@ -11124,13 +11059,6 @@ bool RenderSceneConverter::ConvertSkeletonImplWithPath(const RenderSceneConverte
       dst.prim_name = skelPrim->element_name();
       dst.display_name = pskel->metas().has_displayName() ? pskel->metas().get_displayName() : "";
       dst.root_node = root;
-
-      // NOTE: Animation extraction moved to ConvertAllSkelAnimations() to support
-      // multiple animations per skeleton (animationSource can be a pathvector).
-      // Previously only the first animation was extracted here.
-      // The skel:animationSource relationship is now processed separately after
-      // all skeletons are discovered.
-      (void)out_anim; // Suppress unused parameter warning
     } else {
       PUSH_ERROR_AND_RETURN("Prim is not Skeleton.");
     }
