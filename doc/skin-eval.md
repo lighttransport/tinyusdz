@@ -1,6 +1,7 @@
 # Skinning Evaluation Equations (General Prim Names)
 
-This note summarizes the **USD spec** evaluation and the **Blender import** evaluation for skinned meshes.
+This note summarizes the **USD spec** evaluation, the **Blender import** evaluation,
+and the **TinyUSDZ / Three.js** evaluation for skinned meshes.
 The equations are written with **generic prim names** so they can be applied to any skinned asset.
 
 ## Notation
@@ -85,10 +86,130 @@ p_world_blender(t) = M_parentAboveSkel(t) * M_parentBelowSkel(t) * M_meshLocal
 
 ---
 
+## TinyUSDZ / Three.js Evaluation
+
+TinyUSDZ does **not** strip mesh xformOps from skinned prims.  Instead it exports the
+**full USD scene graph** (all transforms on every node) and lets Three.js's world-space
+`bind()` mechanism produce the correct result.
+
+### Additional Notation
+
+- `W_mesh`  : `mesh.matrixWorld` — the SkinnedMesh's world transform in Three.js
+               (product of all ancestor local matrices from scene root to mesh)
+- `W_bone_i`: `bone.matrixWorld` — bone `i`'s world transform
+               (product of all ancestor local matrices from scene root to bone)
+- Subscript `_bind` denotes the value captured at bind time (before animation starts).
+- `W_mesh` includes `/SkelRoot`, `/SkinnedMeshXf`, and `/SkinnedMesh` xformOps.
+- `W_bone_i` includes `/SkelRoot`, `/ModelXform`, `/Skeleton` xformOps,
+  plus the bone's rest-transform chain.
+
+### How bind() works (no custom arguments)
+
+`mesh.bind(skeleton)` internally:
+
+1. `calculateInverses()` → `boneInverses[i] = inv(W_bone_i_bind)`
+2. `bindMatrix = W_mesh_bind`
+
+No USD `geomBindTransform` or `bindTransforms` are passed — Three.js computes
+everything from its own scene graph in world space.
+
+### Per-bone skinning matrix
+
+```
+boneMatrix_i(t) = W_bone_i(t) * inv(W_bone_i_bind)
+```
+
+At bind pose `W_bone_i(t) == W_bone_i_bind`, so `boneMatrix_i = I`.
+
+### Skinned point (mesh-local space, computed in vertex shader)
+
+```
+p_skinned(t) = inv(W_mesh) * Σ_i [ w_i * W_bone_i(t) * inv(W_bone_i_bind) * W_mesh_bind * p_local ]
+```
+
+With `AttachedBindMode` (default), `inv(W_mesh)` is recomputed every frame.
+
+### Final clip-space point (vertex shader output)
+
+```
+p_clip(t) = P * V * W_mesh * p_skinned(t)
+           = P * V * Σ_i [ w_i * W_bone_i(t) * inv(W_bone_i_bind) * W_mesh_bind * p_local ]
+```
+
+The outer `W_mesh * inv(W_mesh)` cancels, leaving the weighted sum in world space.
+
+### Why mesh xformOps do not cause double transforms
+
+Both mesh and bones share the `/SkelRoot` ancestor.  Let:
+
+- `A`        = shared ancestor chain (scene root → `/SkelRoot`)
+- `M_mesh`   = mesh-branch local chain (`/SkinnedMeshXf` · `/SkinnedMesh` xformOps)
+- `M_skel`   = skeleton-branch local chain (`/ModelXform` · `/Skeleton` xformOps)
+- `L_i`      = bone `i`'s local rest-transform chain within the Skeleton
+
+Then:
+
+```
+W_mesh_bind   = A · M_mesh
+W_bone_i_bind = A · M_skel · L_i_bind
+```
+
+Substituting into the skinned formula:
+
+```
+p_clip = P * V * Σ[ w_i * A · M_skel · L_i(t) * inv(L_i_bind) * inv(M_skel) * inv(A) * A · M_mesh * p_local ]
+       = P * V * Σ[ w_i * A · M_skel · L_i(t) * inv(L_i_bind) * inv(M_skel) * M_mesh * p_local ]
+```
+
+The shared ancestor `A` appears once (as the outermost world-space placement).
+`M_mesh` and `M_skel` do not need to be equal — they conjugate the bone animation but
+produce the correct world-space result because `inv(M_skel) * M_mesh` maps mesh-local
+vertices into skeleton-local space (serving the same role as `inv(S) * G` in the USD spec).
+
+At **bind pose** (`L_i(t) = L_i_bind`):
+
+```
+p_clip = P * V * A · M_mesh * p_local = P * V * W_mesh_bind * p_local
+```
+
+The mesh renders at its scene-graph position — correct.
+
+### Equivalence to USD spec
+
+The Three.js formula is equivalent to the USD formula when the transforms are
+consistent. Mapping between the two:
+
+| USD spec quantity | Three.js equivalent |
+|---|---|
+| `G` (geomBindTransform) | `W_mesh_bind` (mesh.matrixWorld at bind) |
+| `inv(B_i)` (inverse bind pose) | `inv(W_bone_i_bind)` (calculateInverses) |
+| `J_i(t)` (joint skeleton-space) | Encoded in `W_bone_i(t)` via scene graph |
+| `S(t)` (skeleton world transform) | Implicit in `W_bone_i(t)` ancestor chain |
+| Mesh xformOps ignored | Mesh xformOps present but cancel via `inv(W_mesh)` |
+
+The key difference: the USD spec operates in skeleton-local space then applies `S(t)`,
+while Three.js operates entirely in world space.  Both produce the same `p_world`.
+
+### Why this approach is preferred over literal USD spec for Three.js
+
+1. **Natural scene graph**: Three.js SkinnedMesh/Skeleton are designed around world-space
+   `bind()`.  Stripping mesh xformOps would fight the framework.
+2. **AnimationMixer integration**: node animations (time-sampled xformOps on ancestors)
+   target scene graph nodes by name.  Preserving the full hierarchy makes skeletal and
+   node animations work through a single unified system.
+3. **AttachedBindMode**: any post-bind ancestor change (Z-up toggle, user scene
+   manipulation) is handled automatically because `inv(W_mesh)` is recomputed per frame.
+4. **No geomBindTransform pass-through needed**: `W_mesh_bind` captures the mesh's
+   world-space bind position, which serves the same role as `G` without mixing
+   USD skeleton-local matrices into Three.js world-space math.
+
+---
+
 ## Summary
 
-- **USD spec:** only `geomBindTransform`, joint transforms, and Skeleton world transform affect skinned output.
+- **USD spec:** only `geomBindTransform`, joint transforms, and Skeleton world transform affect skinned output.  Mesh xformOps are ignored.
 - **Blender import:** applies mesh + parent Xforms in addition to skinning, which can create double transforms.
+- **TinyUSDZ / Three.js:** preserves full scene graph with all xformOps.  Three.js `bind()` captures world-space matrices for both mesh and bones; shared ancestors cancel naturally.  Produces correct results equivalent to the USD spec.
 
 ---
 
@@ -140,16 +261,33 @@ Notes:
 - Blender applies `M_meshLocal` and `M_parentBelowSkel`, which is the key deviation
   from the USD spec.
 
+### TinyUSDZ / Three.js Evaluation (Generic Order)
+
+```
+W_mesh_bind   = Root * SceneXform * SkelRoot * SkinnedMeshXf * SkinnedMesh_xform
+W_bone_i_bind = Root * SceneXform * SkelRoot * ModelXform * Skeleton_xform * L_i_bind
+
+p_clip(t) = P * V * Σ_i [ w_i * W_bone_i(t) * inv(W_bone_i_bind) * W_mesh_bind * p_local ]
+```
+
+Notes:
+- All ancestor xforms are preserved in the Three.js scene graph — nothing is stripped.
+- `W_mesh_bind` and `W_bone_i_bind` share the prefix `Root * SceneXform * SkelRoot`,
+  which cancels in the `bone * inv(bone_bind) * mesh_bind` product.
+- `/SkinnedMeshXf` xformOps are present in `W_mesh_bind` (unlike the USD spec where
+  they are ignored), but they do not cause double transforms because the formula
+  self-consistently uses `inv(W_bone_i_bind)` (not USD `inv(B_i)`).
+
 ---
 
-## Addendum: Maya-USD Import Behavior (Evidence from Local Source)
+## Addendum: Maya-USD Import Behavior
 
 Maya-USD avoids double transforms by **disabling inherited transforms** on skinned
 mesh transform nodes and then **applying `geomBindTransform` as the mesh transform**.
 This matches the USD spec expectation that mesh xformOps should not affect the final
 skinned result.
 
-Key behavior in `../maya-usd/lib/mayaUsd/fileio/translators/translatorSkel.cpp`:
+Key behavior in `<maya-usd>/lib/mayaUsd/fileio/translators/translatorSkel.cpp`:
 
 - `_ConfigureSkinnedObjectTransform()` sets `inheritsTransform = false` on the Maya
   transform node. This prevents parent xforms from affecting the skinned mesh.
@@ -157,7 +295,7 @@ Key behavior in `../maya-usd/lib/mayaUsd/fileio/translators/translatorSkel.cpp`:
   transform node as the mesh's world-space bind placement.
 
 Relevant code path:
-- `_ConfigureSkinnedObjectTransform` in `../maya-usd/lib/mayaUsd/fileio/translators/translatorSkel.cpp`
+- `_ConfigureSkinnedObjectTransform` in `<maya-usd>/lib/mayaUsd/fileio/translators/translatorSkel.cpp`
 - Called from `UsdMayaTranslatorSkel::CreateSkinCluster`, which wires the skin cluster
   after configuring the transform.
 
