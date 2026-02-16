@@ -9055,6 +9055,9 @@ bool RenderSceneConverter::ConvertSkelAnimation(const RenderSceneConverterEnv &e
         const auto &ts = translations.get_timesamples();
         size_t frameIdx = 0;
         FOREACH_TIMESAMPLES_BEGIN(ts, sample_t, sample_value, sample_blocked)
+          if (sample_blocked) {
+            continue;
+          }
           if (!scatterTransFrame(frameIdx, float(sample_t), sample_value)) {
             PUSH_ERROR_AND_RETURN(_err);
           }
@@ -9092,6 +9095,9 @@ bool RenderSceneConverter::ConvertSkelAnimation(const RenderSceneConverterEnv &e
         const auto &ts = rotations.get_timesamples();
         size_t frameIdx = 0;
         FOREACH_TIMESAMPLES_BEGIN(ts, sample_t, sample_value, sample_blocked)
+          if (sample_blocked) {
+            continue;
+          }
           if (!scatterRotFrame(frameIdx, float(sample_t), sample_value)) {
             PUSH_ERROR_AND_RETURN(_err);
           }
@@ -9132,6 +9138,9 @@ bool RenderSceneConverter::ConvertSkelAnimation(const RenderSceneConverterEnv &e
         const auto &ts = scales.get_timesamples();
         size_t frameIdx = 0;
         FOREACH_TIMESAMPLES_BEGIN(ts, sample_t, sample_value, sample_blocked)
+          if (sample_blocked) {
+            continue;
+          }
           if (!scatterScaleFrame(frameIdx, float(sample_t), sample_value)) {
             PUSH_ERROR_AND_RETURN(_err);
           }

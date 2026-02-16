@@ -280,23 +280,6 @@ class TinyUSDZLoaderUtils extends LoaderUtils {
         return TinyUSDZLoaderUtils._tinyusdz;
     }
 
-    static async getDataFromURI(uri) {
-        try {
-            const response = await fetch(url);
-            if (!response.ok) {
-                return [null, new Error(`Response status: ${response.status}`)];
-            }
-
-            const buf = await response.arrayBuiffer();
-            const data = new Uint8Array(buf);
-
-            return [data, null];
-
-        } catch (error) {
-            return [null, error];
-        }
-    }
-
     // Extract file extension from URI/path
     static getFileExtension(uri) {
         if (!uri || typeof uri !== 'string') return '';
