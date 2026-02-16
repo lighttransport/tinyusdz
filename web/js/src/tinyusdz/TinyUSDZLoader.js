@@ -105,7 +105,6 @@ class FetchAssetResolver {
                 throw new Error(`Failed to fetch asset: ${uri}`);
             }
             const data = await response.arrayBuffer();
-            //console.log(`Fetched asset ${uri} successfully, size: ${data.byteLength} bytes`);
             this.assetCache.set(uri, data);
             return Promise.resolve([uri, data]);
         } catch (error) {
@@ -196,15 +195,12 @@ class TinyUSDZLoader extends Loader {
 
             const wasmURL = new URL(compressedPath, import.meta.url).href;
 
-            //console.log(`Loading compressed WASM from: ${wasmURL}`);
             const response = await fetch(wasmURL);
-            //console.log(response);
             if (!response.ok) {
                 throw new Error(`Failed to fetch compressed WASM: ${response.statusText}`);
             }
 
             const compressedData = await response.arrayBuffer();
-            //console.log(`Compressed WASM size: ${compressedData.byteLength} bytes`);
 
             if (compressedData.byteLength < 1024*64) {
                 throw new Error('Compressed WASM size is unusually small, may not be valid zstd compressed data.');
@@ -213,8 +209,6 @@ class TinyUSDZLoader extends Loader {
             // Check zstd magic number (0x28B52FFD in little-endian)
             const magicBytes = new Uint8Array(compressedData, 0, 4);
             const expectedMagic = [0x28, 0xB5, 0x2F, 0xFD]; // Little-endian representation
-            //console.log(magicBytes);
-            //console.log(expectedMagic);
             
             if (compressedData.byteLength < 4 || 
                 magicBytes[0] !== expectedMagic[0] || 
@@ -226,7 +220,6 @@ class TinyUSDZLoader extends Loader {
 
             // Decompress using zstd
             const decompressedData = fzstd.decompress(new Uint8Array(compressedData));
-            //console.log(`Decompressed WASM size: ${decompressedData.byteLength} bytes`);
 
             return decompressedData;
         } catch (error) {
@@ -248,7 +241,6 @@ class TinyUSDZLoader extends Loader {
         }
 
         if (!this.native_) {
-            //console.log('Initializing native module...');
           
             // WASM module of TinyUSDZ.
             const url = new URL(import.meta.url);
@@ -256,23 +248,19 @@ class TinyUSDZLoader extends Loader {
             //let initTinyUSDZNative = null;
           
 
-            //console.log("arg:", url.searchParams.get("memory64"));
             let use_memory64 = this.useMemory64_;
             if (url.searchParams.get("memory64") == "true") {
               use_memory64 = true;
             }
-            //console.log(use_memory64);
 
 
             let initTinyUSDZNative = null;
 
             // Use dynamic import based on memory64 parameter
             if (use_memory64) {
-                //console.log("Loading 64bit module");
                 const module = await import('./tinyusdz_64.js');
                 initTinyUSDZNative = module.default;
             } else {
-                //console.log("Loading 32bit module");
                 const module = await import('./tinyusdz.js');
                 initTinyUSDZNative = module.default;
             }
@@ -314,7 +302,6 @@ class TinyUSDZLoader extends Loader {
             if (!this.native_) {
                 throw new Error('TinyUSDZLoader: Failed to initialize native module.');
             }
-            //console.log('Native module initialized');
         }
         return this;
     }
@@ -1513,7 +1500,6 @@ class TinyUSDZLoader extends Loader {
      * @param {number} options.maxMemoryLimitMB - Override memory limit for this load
      */
     loadAsLayer(url, onLoad, onProgress, onError, options = {}) {
-        //console.log('url', url);
 
         const scope = this;
 
@@ -1540,7 +1526,6 @@ class TinyUSDZLoader extends Loader {
 
         initPromise
             .then(() => {
-                //usd_ = new this.native_.TinyUSDZLoaderNative();
                 return fetch(url);
             })
             .then((response) => {
@@ -1551,7 +1536,6 @@ class TinyUSDZLoader extends Loader {
                 console.log('usd_data done:', url);
                 const usd_binary = new Uint8Array(usd_data);
 
-                //console.log('Loaded USD binary data:', usd_binary.length, 'bytes');
                 //return this.parse(usd_binary);
 
                 const usd = new this.native_.TinyUSDZLoaderNative();
@@ -1635,7 +1619,6 @@ class TinyUSDZLoader extends Loader {
                 scope._applySkinningLoadOptions(usd);
 
                 const u8data = new Uint8Array(usd_data);
-                //console.log(u8data);
                 const ok = usd.loadTest(url, u8data);
                 if (!ok) {
                     _onError(new Error('TinyUSDZLoader: Failed to load USD as Layer from binary data. url: ' + url, {cause: usd.error()}));

@@ -683,64 +683,6 @@ export function createBoneTextureFromWASM(wasmBoneTexture) {
 }
 
 /**
- * Add fallback 4-bone attributes from source joint data
- * Used for weight visualization and as fallback for unsupported shaders
- */
-function addFallback4BoneAttributes(geometry, jointIndices, jointWeights, influencesPerVertex) {
-    const vertexCount = geometry.attributes.position.count;
-    const skinIndices = new Uint16Array(vertexCount * 4);
-    const skinWeights = new Float32Array(vertexCount * 4);
-    const sourceVertexCount = Math.floor(jointIndices.length / influencesPerVertex);
-
-    for (let v = 0; v < vertexCount; v++) {
-        // Collect influences for this vertex and sort by weight
-        const influences = [];
-
-        if (v < sourceVertexCount) {
-            for (let j = 0; j < influencesPerVertex; j++) {
-                const srcIdx = v * influencesPerVertex + j;
-                if (srcIdx < jointIndices.length) {
-                    const weight = jointWeights[srcIdx];
-                    if (weight > 0) {
-                        influences.push({
-                            boneIdx: jointIndices[srcIdx],
-                            weight: weight
-                        });
-                    }
-                }
-            }
-            influences.sort((a, b) => b.weight - a.weight);
-        }
-
-        // Take top 4 influences
-        let totalWeight = 0;
-        for (let j = 0; j < 4; j++) {
-            if (j < influences.length) {
-                skinIndices[v * 4 + j] = influences[j].boneIdx;
-                skinWeights[v * 4 + j] = influences[j].weight;
-                totalWeight += influences[j].weight;
-            } else {
-                skinIndices[v * 4 + j] = 0;
-                skinWeights[v * 4 + j] = 0;
-            }
-        }
-
-        // Normalize to 1.0
-        if (totalWeight > 0 && Math.abs(totalWeight - 1.0) > 0.001) {
-            const invTotal = 1.0 / totalWeight;
-            for (let j = 0; j < 4; j++) {
-                skinWeights[v * 4 + j] *= invTotal;
-            }
-        } else if (totalWeight === 0) {
-            skinWeights[v * 4] = 1;
-        }
-    }
-
-    geometry.setAttribute('skinIndex', new THREE.Uint16BufferAttribute(skinIndices, 4));
-    geometry.setAttribute('skinWeight', new THREE.Float32BufferAttribute(skinWeights, 4));
-}
-
-/**
  * Check the skinning mode of a geometry
  */
 export function getGeometrySkinningMode(geometry) {
