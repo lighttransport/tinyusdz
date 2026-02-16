@@ -1,8 +1,7 @@
-# Skinning Evaluation Equations (General Prim Names)
+# Skinning Evaluation Equations 
 
 This note summarizes the **USD spec** evaluation, the **Blender import** evaluation,
 and the **TinyUSDZ / Three.js** evaluation for skinned meshes.
-The equations are written with **generic prim names** so they can be applied to any skinned asset.
 
 ## Notation
 
