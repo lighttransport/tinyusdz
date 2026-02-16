@@ -2,19 +2,30 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { TransformControls } from 'three/examples/jsm/controls/TransformControls.js';
 import GUI from 'three/examples/jsm/libs/lil-gui.module.min.js';
-import { TinyUSDZLoader } from 'tinyusdz/TinyUSDZLoader.js';
 import { TinyUSDZLoaderUtils } from 'tinyusdz/TinyUSDZLoaderUtils.js';
+import {
+	createConfiguredTinyUSDZLoader,
+	loadUSDSceneFromURL,
+	parseUSDSceneFromArrayBuffer
+} from 'tinyusdz/LoaderConfigUtils.js';
+import { buildJointHierarchyHTML } from 'tinyusdz/JointHierarchyUtils.js';
+import { extractSkinnedMeshData } from 'tinyusdz/USDSceneSkinningData.js';
+import { getUSDSceneMetadata } from 'tinyusdz/USDSceneMetadata.js';
+import { buildSkeletonDataFromUSD } from 'tinyusdz/USDSkeletonData.js';
+import { applyUSDSceneSkinningPipeline } from 'tinyusdz/USDSceneSkinningPipeline.js';
 // USD Skeletal Animation Helper - skeleton building with bind-transform logic
 import {
-	createThreeSkeletonFromUSD,
 	resetSkeletonToRestPose
 } from 'tinyusdz/USDSkeletalHelper.js';
 // USD Animation Converter - skeletal and node animation extraction
-import { convertUSDSkeletalAnimationsToThreeJS, buildNodeIndexMap, convertUSDNodeAnimationsToThreeJS } from 'tinyusdz/USDAnimationConverter.js';
+import { buildNodeIndexMap } from 'tinyusdz/USDAnimationConverter.js';
+import {
+	extractUSDSceneAnimations,
+	computeUSDSceneTimelineDuration,
+	createUSDSceneAnimationPlayback
+} from 'tinyusdz/USDSceneAnimationPipeline.js';
 // Skinned Mesh Utilities - bbox, raycasting, hierarchy helpers
 import {
-	findNodeByUSDPath,
-	replaceWithSkinnedMesh,
 	computeSceneBoundingBox,
 	expandBoxByMeshBones,
 	expandBoxBySkeletonBones,
@@ -23,8 +34,6 @@ import {
 // Extended Skinning Support - supports 4, 8, 16, 32, 64+ bones per vertex
 import {
 	SkinningMode,
-	addExtendedSkinningAttributes,
-	applyExtendedSkinningIfNeeded,
 	createExtendedWeightVisualizationMaterial
 } from 'tinyusdz/ExtendedSkinning.js';
 
@@ -204,6 +213,7 @@ let skinnedMesh = null;
 let skeleton = null; // Legacy: first skeleton for backward compatibility
 let skeletons = new Map(); // Map from skel_id to THREE.Skeleton (multi-skeleton support)
 let mixer = null;
+let animationPlayback = null;
 let animationAction = null;
 let animationActions = []; // Array of actions when playing all animations
 let usdAnimations = [];
@@ -211,6 +221,13 @@ let usdNodeAnimations = []; // Node (xformOp) animation clips — always play al
 let animationEnabled = []; // Array of booleans tracking which animations are enabled for multi-play
 let boneMap = new Map(); // Legacy: first skeleton's bone map for backward compatibility
 let boneMaps = new Map(); // Map from skel_id to Map(joint_id -> THREE.Bone)
+let animationParams = null; // Assigned later; keep nullable for early startup loader init
+let timelineController = null;
+let timelineStartController = null;
+let timelineEndController = null;
+let timelineBaseStart = 0;
+let timelineBaseEnd = 30;
+let selectAnimationController = null;
 let _lastMixerUpdateTime = 0; // For mixer update throttling
 let _mixerAccumDelta = 0; // Accumulated delta for throttled updates
 
@@ -745,44 +762,37 @@ function fitCameraToAllFrames(targetObject = null, paddingFactor = 1.5) {
 	applyCameraFit(box, paddingFactor, 'all frames');
 }
 
+async function createConfiguredLoader() {
+	const enableBoneReduction = animationParams?.enableBoneReduction === true;
+	const targetBoneCount = Number.isFinite(animationParams?.targetBoneCount)
+		? animationParams.targetBoneCount
+		: 4;
+
+	return createConfiguredTinyUSDZLoader({
+		initOptions: { useZstdCompressedWasm: false, useMemory64: false },
+		skinningOptions: {
+			enableBoneReduction,
+			targetBoneCount,
+			roundBoneCount: false,
+			logger: console
+		}
+	});
+}
+
 /**
  * Generate joint hierarchy text with clickable elements
  * @param {Array<THREE.Bone>} bones - Array of bones
  * @returns {string} HTML formatted hierarchy
  */
 function generateJointHierarchy(bones) {
-	if (bones.length === 0) return '<p>No skeleton loaded</p>';
-
-	let html = '<div style="font-family: monospace; font-size: 12px; line-height: 1.4;">';
-
-	function traverseBone(bone, depth = 0) {
-		const indent = '&nbsp;&nbsp;'.repeat(depth);
-		const bullet = depth > 0 ? '└─ ' : '● ';
-		const color = depth === 0 ? '#ff6b6b' : '#4ecdc4';
-
-		// Make bone name clickable
-		html += `<div style="color: ${color}; cursor: pointer; padding: 2px; border-radius: 3px;"
-		              class="joint-item"
-		              data-bone-name="${bone.name}"
-		              onmouseover="this.style.backgroundColor='rgba(255,255,255,0.1)'"
-		              onmouseout="this.style.backgroundColor='transparent'">${indent}${bullet}${bone.name}</div>`;
-
-		bone.children.forEach(child => {
-			if (child.isBone) {
-				traverseBone(child, depth + 1);
-			}
-		});
-	}
-
-	// Find root bones
-	bones.forEach(bone => {
-		if (!bone.parent || !bone.parent.isBone) {
-			traverseBone(bone);
-		}
+	return buildJointHierarchyHTML(bones, {
+		wrap: true,
+		wrapperStyle: 'font-family: monospace; font-size: 12px; line-height: 1.4;',
+		itemClassName: 'joint-item',
+		hoverBackground: 'rgba(255,255,255,0.1)',
+		rootColor: '#ff6b6b',
+		childColor: '#4ecdc4'
 	});
-
-	html += '</div>';
-	return html;
 }
 
 /**
@@ -802,30 +812,21 @@ function selectJointByName(boneName) {
  * Load USD model from a URL path
  */
 async function loadUSDModel() {
-	const loader = new TinyUSDZLoader();
-
-	// Initialize the loader (wait for WASM module to load)
-	await loader.init({ useZstdCompressedWasm: false, useMemory64: false });
+	const loader = await createConfiguredLoader();
 
 	// Default USD file to load
-	const usd_filename = "./assets/skintest-animated.usda";
+	//const usd_filename = "./assets/skintest-animated.usda";
+	const usd_filename = "./assets/Layout_Scene.usdz";
 
 	console.log(`Loading USD file: ${usd_filename}`);
 
 	// Load USD scene using Promise-based API
-	const usd_scene = await new Promise((resolve, reject) => {
-		loader.load(
-			usd_filename,
-			resolve,  // onLoad
-			null,     // onProgress
-			reject    // onError
-		);
-	});
+	const usd_scene = await loadUSDSceneFromURL(loader, usd_filename);
 
 	console.log('USD scene loaded:', usd_scene);
 
 	// Process the loaded scene
-	await processUSDScene(usd_scene, loader, usd_filename);
+	await processUSDScene(usd_scene, usd_filename);
 }
 
 /**
@@ -834,34 +835,25 @@ async function loadUSDModel() {
  * @param {string} filename - File name
  */
 async function loadUSDFromArrayBuffer(arrayBuffer, filename) {
-	const loader = new TinyUSDZLoader();
-	await loader.init({ useZstdCompressedWasm: false, useMemory64: false });
+	const loader = await createConfiguredLoader();
 
 	console.log(`Loading USD from file: ${filename} (${(arrayBuffer.byteLength / 1024).toFixed(2)} KB)`);
 
 	// Parse USD directly from array buffer
-	const usd_scene = await new Promise((resolve, reject) => {
-		loader.parse(
-			new Uint8Array(arrayBuffer),
-			filename,
-			resolve,  // onLoad
-			reject    // onError
-		);
-	});
+	const usd_scene = await parseUSDSceneFromArrayBuffer(loader, arrayBuffer, filename);
 
 	console.log('USD scene loaded:', usd_scene);
 
 	// Process the loaded scene
-	await processUSDScene(usd_scene, loader, filename);
+	await processUSDScene(usd_scene, filename);
 }
 
 /**
  * Process loaded USD scene and extract skeletal mesh and animations
  * @param {Object} usd_scene - Loaded USD scene
- * @param {Object} loader - TinyUSDZ loader instance
  * @param {string} filename - File name
  */
-async function processUSDScene(usd_scene, loader, filename) {
+async function processUSDScene(usd_scene, filename) {
 	// Update current file display in UI
 	const currentFileElement = document.getElementById('currentFile');
 	if (currentFileElement) {
@@ -870,13 +862,18 @@ async function processUSDScene(usd_scene, loader, filename) {
 		currentFileElement.textContent = displayName;
 	}
 
-	// Dispose old animation mixer before clearing references
-	if (mixer) {
+	// Dispose old animation mixer/playback before clearing references
+	if (animationPlayback) {
+		animationPlayback.dispose();
+		animationPlayback = null;
+		mixer = null;
+	} else if (mixer) {
 		mixer.stopAllAction();
 		mixer.uncacheRoot(mixer.getRoot());
 		mixer = null;
 	}
 	animationAction = null;
+	animationActions = [];
 
 	// Dispose all tracked meshes (geometries, materials, textures)
 	for (const mesh of allSceneMeshes) {
@@ -956,10 +953,12 @@ async function processUSDScene(usd_scene, loader, filename) {
 	// Reset animations and caches
 	usdAnimations = [];
 	usdNodeAnimations = [];
+	animationEnabled = [];
 	boneMap.clear();
 	boneMaps.clear();
 	animationParams.hasUSDAnimations = false;
 	animationParams.usdAnimationCount = 0;
+	animationParams.playAllAnimations = false;
 	// Store loader globally for debugging
 	window.usd_scene = usd_scene;
 
@@ -973,16 +972,29 @@ async function processUSDScene(usd_scene, loader, filename) {
 		characterGroup.remove(characterGroup.children[0]);
 	}
 
-	// Get scene metadata from the USD file
-	const sceneMetadata = usd_scene.getSceneMetadata ? usd_scene.getSceneMetadata() : {};
-	let fileUpAxis = sceneMetadata.upAxis || "Y";
-	const timeCodesPerSecond = sceneMetadata.timeCodesPerSecond || 24;
-	const startTimeCode = sceneMetadata.startTimeCode !== undefined ? sceneMetadata.startTimeCode : 0;
-	const endTimeCode = sceneMetadata.endTimeCode !== undefined ? sceneMetadata.endTimeCode : 100;
+	// Get normalized scene metadata from library helper.
+	const {
+		sceneMetadata,
+		fileUpAxis,
+		timeCodesPerSecond,
+		startTimeCode,
+		endTimeCode
+	} = getUSDSceneMetadata(usd_scene);
 
 	// Update global timeCodesPerSecond and speed parameter
 	currentTimeCodesPerSecond = timeCodesPerSecond;
 	animationParams.speed = timeCodesPerSecond;
+	animationParams.timelineStart = startTimeCode;
+	animationParams.timelineEnd = endTimeCode;
+	timelineBaseStart = Number.isFinite(Number(startTimeCode)) ? Number(startTimeCode) : 0;
+	timelineBaseEnd = Number.isFinite(Number(endTimeCode)) ? Number(endTimeCode) : timelineBaseStart + 1;
+	animationParams.time = Math.min(
+		Math.max(animationParams.time, startTimeCode),
+		endTimeCode
+	);
+	if (window.updateTimelineRange) {
+		window.updateTimelineRange(startTimeCode, endTimeCode);
+	}
 
 	console.log('=== USD Scene Metadata ===');
 	console.log(`upAxis (from metadata): "${fileUpAxis}"`);
@@ -990,68 +1002,12 @@ async function processUSDScene(usd_scene, loader, filename) {
 	console.log(`timeCodesPerSecond: ${timeCodesPerSecond}`);
 	console.log(`startTimeCode: ${startTimeCode}, endTimeCode: ${endTimeCode}`);
 
-	// Debug: Log mesh skinning data
-	const numMeshes = usd_scene.numMeshes ? usd_scene.numMeshes() : 0;
-	console.log(`=== Mesh Skinning Data (${numMeshes} meshes) ===`);
-	let hasSkinnedMeshData = false;
-		// Store USD mesh skinning data for ALL meshes, keyed by absolute prim path.
-		const allSkinnedMeshUSDData = new Map();
-		// Name fallback for cases where primMeta.absPath is unavailable on Three.js nodes.
-		// Value `null` means ambiguous duplicate name, so path-based lookup is required.
-		const skinnedMeshDataByName = new Map();
-	let firstGeomBindTransform = null;
-	for (let i = 0; i < numMeshes; i++) {
-		const mesh = usd_scene.getMesh(i);
-		const hasJointIndices = mesh.jointIndices && mesh.jointIndices.length > 0;
-		const hasJointWeights = mesh.jointWeights && mesh.jointWeights.length > 0;
-		if (hasJointIndices || hasJointWeights) {
-			hasSkinnedMeshData = true;
-
-			// Parse geomBindTransform if available
-			let geomBindTransformMatrix = null;
-			if (mesh.geomBindTransform && mesh.geomBindTransform.length === 16) {
-				geomBindTransformMatrix = new THREE.Matrix4();
-				geomBindTransformMatrix.fromArray(Array.from(mesh.geomBindTransform));
-			}
-
-				const meshAbsPath = mesh.absPath || '';
-				const meshName = meshAbsPath ? meshAbsPath.split('/').pop() : `mesh_${i}`;
-
-			// Copy WASM typed_memory_view data into JS-owned buffers.
-			// usd_scene.delete() at end of processUSDScene frees C++ render_scene_,
-			// invalidating all typed_memory_view references into that data.
-			const meshData = {
-				meshId: i,
-				skel_id: mesh.skel_id !== undefined ? mesh.skel_id : 0, // Which skeleton this mesh belongs to
-				jointIndices: new Int32Array(mesh.jointIndices),
-				jointWeights: new Float32Array(mesh.jointWeights),
-				elementSize: mesh.elementSize || 4,
-				absPath: mesh.absPath,
-				geomBindTransform: geomBindTransformMatrix,
-				hasGeomBindTransform: mesh.hasGeomBindTransform || false
-			};
-
-				const meshKey = meshAbsPath || `__mesh_id_${i}`;
-				allSkinnedMeshUSDData.set(meshKey, meshData);
-				if (!skinnedMeshDataByName.has(meshName)) {
-					skinnedMeshDataByName.set(meshName, meshData);
-				} else {
-					skinnedMeshDataByName.set(meshName, null);
-				}
-
-			// Store first geomBindTransform for UI display
-			if (!firstGeomBindTransform && geomBindTransformMatrix) {
-				firstGeomBindTransform = geomBindTransformMatrix;
-			}
-
-				console.log(`Mesh ${i}: ${meshAbsPath || '(no absPath)'} (name: ${meshName})`);
-			console.log(`  - skel_id: ${mesh.skel_id}`);
-			console.log(`  - jointIndices: ${mesh.jointIndices ? mesh.jointIndices.length : 0} elements`);
-			console.log(`  - jointWeights: ${mesh.jointWeights ? mesh.jointWeights.length : 0} elements`);
-			console.log(`  - elementSize (influences per vertex): ${mesh.elementSize}`);
-			console.log(`  - hasGeomBindTransform: ${mesh.hasGeomBindTransform || false}`);
-		}
-	}
+	const {
+		hasSkinnedMeshData,
+		firstGeomBindTransform,
+		allSkinnedMeshUSDData,
+		skinnedMeshDataByName
+	} = extractSkinnedMeshData(usd_scene, { logger: console });
 
 	// Update geomBindTransform display in UI
 	if (window.updateGeomBindTransform) {
@@ -1062,9 +1018,6 @@ async function processUSDScene(usd_scene, loader, filename) {
 		}
 	}
 
-	// For backward compatibility, also set skinnedMeshUSDData to first entry
-	const skinnedMeshUSDData = allSkinnedMeshUSDData.size > 0 ? allSkinnedMeshUSDData.values().next().value : null;
-
 	// Hide geomBindTransform display if no skinned mesh data
 	if (!hasSkinnedMeshData && window.updateGeomBindTransform) {
 		window.updateGeomBindTransform(undefined); // Hide the section
@@ -1073,172 +1026,16 @@ async function processUSDScene(usd_scene, loader, filename) {
 	console.log(`upAxis: "${fileUpAxis}"`);
 	console.log('========================');
 
-	// Configure bone reduction (if enabled in UI)
-	if (animationParams.enableBoneReduction) {
-		loader.setEnableBoneReduction(true);
-		loader.setTargetBoneCount(animationParams.targetBoneCount);
-		console.log(`Bone reduction enabled: ${animationParams.targetBoneCount} bones per vertex`);
-	}
-
-	// Get skeletons
-	const numSkeletons = usd_scene.numSkeletons ? usd_scene.numSkeletons() : 0;
-
-	console.log(`Found ${numSkeletons} skeletons in USD file`);
-
-	// WORKAROUND: Detect and merge duplicate skeletons (same bone count/names)
-	// Some USD exports create separate skeleton instances for each animation
-	const skelMap = new Map(); // Maps canonical skel_id to list of equivalent skel_ids
-	const skelRemap = new Map(); // Maps original skel_id to canonical skel_id
-
-	for (let i = 0; i < numSkeletons; i++) {
-		const skelA = usd_scene.getSkeleton(i);
-		const numBonesA = skelA.numBones ? skelA.numBones() : 0;
-		const jointNamesA = skelA.jointNames || [];
-
-		// Find canonical skeleton with same bone count
-		let canonicalId = i;
-		for (const [candId, equivIds] of skelMap) {
-			const skelB = usd_scene.getSkeleton(candId);
-			const numBonesB = skelB.numBones ? skelB.numBones() : 0;
-			if (numBonesA === numBonesB && numBonesA > 0) {
-				// Same bone count - assume same skeleton structure
-				canonicalId = candId;
-				equivIds.push(i);
-				console.log(`Skeleton ${i} merged into skeleton ${canonicalId} (both have ${numBonesA} bones)`);
-				break;
-			}
-		}
-
-		if (canonicalId === i) {
-			// This is a new unique skeleton structure
-			skelMap.set(i, [i]);
-		}
-		skelRemap.set(i, canonicalId);
-	}
-
-	// Multi-skeleton support: store skeleton data per skel_id
-	const skeletonDataArray = []; // Array of { skelId, bones, rootBone, skeletonAbsPath, boneMap }
-	let bones = [];
-	let rootBone = null;
-	let skeletonAbsPath = null; // USD path of skeleton prim (for hierarchy placement)
-	// Note: USD boneInverses are no longer used. bind() computes world-space
-	// boneInverses internally via calculateInverses().
-	let totalJointCount = 0;
-
-	if (numSkeletons > 0) {
-		// Load ALL skeletons (not just the first one)
-		for (let skelId = 0; skelId < numSkeletons; skelId++) {
-			const usdSkeleton = usd_scene.getSkeleton(skelId);
-			const skelAbsPath = usdSkeleton.abs_path || null;
-			console.log(`USD Skeleton ${skelId}: ${skelAbsPath || '(no path)'}`, usdSkeleton);
-
-			// Build Three.js skeleton from USD data (bind-transform based)
-			// Pass skelId to prefix bone names for uniqueness across multiple skeletons
-			const skeletonData = createThreeSkeletonFromUSD(usdSkeleton, { skelId });
-			const skelBones = skeletonData.bones;
-			const skelBoneMap = skeletonData.boneMap;
-			const skelRootBone = skeletonData.rootBone;
-			console.log(`Built skeleton ${skelId} with ${skelBones.length} bones`);
-
-			// Store skeleton data for later use
-			skeletonDataArray.push({
-				skelId,
-				bones: skelBones,
-				rootBone: skelRootBone,
-				skeletonAbsPath: skelAbsPath,
-				boneMap: skelBoneMap
-			});
-
-			// Store bone map for this skeleton
-			boneMaps.set(skelId, skelBoneMap);
-			totalJointCount += skelBones.length;
-
-			// For backward compatibility: set first skeleton as the default
-			if (skelId === 0) {
-				bones = skelBones;
-				boneMap = skelBoneMap;
-				rootBone = skelRootBone;
-				skeletonAbsPath = skelAbsPath;
-			}
-		}
-
-		// Update skeleton info display
-		if (window.updateSkeletonInfo) {
-			window.updateSkeletonInfo(numSkeletons, totalJointCount);
-		}
-		} else {
-			console.warn('No skeletons found in USD file');
-			let fallbackSkeletonCreated = false;
-
-			// WORKAROUND: If mesh has skinning data but no skeleton, try to build from animation
-			if (hasSkinnedMeshData) {
-				console.log('Mesh has skinning data but no skeleton hierarchy - attempting fallback skeleton creation');
-
-			// Try to build skeleton from animation channels
-			const numAnimations = usd_scene.numAnimations ? usd_scene.numAnimations() : 0;
-			if (numAnimations > 0) {
-				const anim = usd_scene.getAnimation(0);
-				if (anim && anim.channels) {
-					// Find max joint_id from skeleton joint channels
-					let maxJointId = -1;
-					const jointIds = new Set();
-					for (const channel of anim.channels) {
-						if (channel.target_type === 'SkeletonJoint' && channel.joint_id !== undefined) {
-							jointIds.add(channel.joint_id);
-							maxJointId = Math.max(maxJointId, channel.joint_id);
-						}
-					}
-
-						if (maxJointId >= 0) {
-							console.log(`Building fallback skeleton from animation: ${jointIds.size} joints (max id: ${maxJointId})`);
-
-							// Create flat bone hierarchy (all bones at root level)
-							// This won't have correct rest poses but allows animation to play
-							const rootBoneContainer = new THREE.Bone();
-							rootBoneContainer.name = 'skeleton_root';
-							const fallbackBones = [];
-							const fallbackBoneMap = new Map();
-
-							for (let i = 0; i <= maxJointId; i++) {
-								const bone = new THREE.Bone();
-								bone.name = `joint_${i}`;
-								bone.userData.joint_id = i;
-								fallbackBoneMap.set(i, bone);
-								fallbackBones.push(bone);
-
-								// Add all bones to root for now (flat hierarchy)
-								rootBoneContainer.add(bone);
-							}
-
-							const fallbackSkelId = 0;
-
-							skeletonDataArray.push({
-								skelId: fallbackSkelId,
-								bones: fallbackBones,
-								rootBone: rootBoneContainer,
-								skeletonAbsPath: null,
-								boneMap: fallbackBoneMap
-							});
-
-							boneMaps.set(fallbackSkelId, fallbackBoneMap);
-							bones = fallbackBones;
-							boneMap = fallbackBoneMap;
-							rootBone = rootBoneContainer;
-							skeletonAbsPath = null;
-							totalJointCount = fallbackBones.length;
-							fallbackSkeletonCreated = true;
-
-							console.log(`[Fallback] Built skeleton with ${fallbackBones.length} bones (flat hierarchy)`);
-						}
-					}
-				}
-			}
-
-			// Update skeleton info display
-			if (window.updateSkeletonInfo) {
-				window.updateSkeletonInfo(fallbackSkeletonCreated ? 1 : 0, totalJointCount);
-			}
-		}
+	// Build skeleton and bone map data from shared library module.
+	const skeletonBuild = buildSkeletonDataFromUSD(usd_scene, {
+		logger: console,
+		hasSkinnedMeshData,
+		onSkeletonInfo: window.updateSkeletonInfo || null
+	});
+	const skeletonDataArray = skeletonBuild.skeletonDataArray;
+	let bones = skeletonBuild.firstBones;
+	boneMap = skeletonBuild.firstBoneMap;
+	boneMaps = skeletonBuild.boneMaps;
 
 	// Get the default root node from USD
 	const usdRootNode = usd_scene.getDefaultRootNode();
@@ -1272,287 +1069,44 @@ async function processUSDScene(usd_scene, loader, filename) {
 	// the mapping from USD node indices to Three.js objects.
 	const nodeIndexMap = buildNodeIndexMap(threeNode);
 
-	// =====================================================================
-	// UsdSkel Skinning Pipeline (see doc/skinning.md for full spec details)
-	//
-	// USD spec: "When a primitive is skinned, any transform on the prim
-	// authored by way of the typical UsdGeomXformable schema has NO EFFECT
-	// on the rendered results." xformOps on skinned meshes are ignored.
-	//
-	// The USD skinning equation (column-vector convention):
-	//   skinnedPoint = sum(w_i * inv(bindTransforms[i]) * jointSkelTransform[i]
-	//                      * geomBindTransform * localPoint)
-	//   worldPoint = skinnedPoint * skelLocalToWorld
-	//
-	// Three.js mapping:
-	//   geomBindTransform       → mesh.bindMatrix
-	//   inv(bindTransforms[i])  → skeleton.boneInverses[i]
-	//   jointSkelTransform * skelLocalToWorld → bone.matrixWorld
-	//
-	// With AttachedBindMode (default), inv(mesh.matrixWorld) replaces
-	// bindMatrixInverse each frame, so mesh xformOps cancel out:
-	//   world = mesh.matrixWorld * inv(mesh.matrixWorld)
-	//           * sum(w_i * bone.matrixWorld * boneInverse_i
-	//                 * geomBindTransform * pos)
-	//         = sum(w_i * bone.matrixWorld * boneInverse_i
-	//               * geomBindTransform * pos)
-	//
-	// Setup steps:
-	//   1. Add threeNode directly to characterGroup (preserves full hierarchy)
-	//   2. Place rootBone at the skeleton's location in the hierarchy
-	//   3. Replace Mesh → SkinnedMesh in-place within the hierarchy
-	//   4. bind(skeleton, geomBindTransform) to set bindMatrix explicitly
-	//      (passing bindMatrix prevents calculateInverses() from
-	//      overwriting the USD-derived boneInverses)
-	// =====================================================================
-
-	// 1. Add threeNode to characterGroup (preserves USD scene graph hierarchy)
-	characterGroup.add(threeNode);
-
-	// Set Z-up to Y-up conversion based on file metadata
-	// With AttachedBindMode, this rotation R factors out of boneMatrix:
-	//   world = R * sum(w * old_boneMatrix_i) * bindMatrix * pos
-	// so the entire skinned result is correctly rotated.
+	// Set Z-up to Y-up conversion based on file metadata.
 	animationParams.convertZUp = (fileUpAxis.toUpperCase() === 'Z');
 	animationParams.toggleZUp();
-	console.log(`Z-up → Y-up conversion: ${animationParams.convertZUp ? 'ON' : 'OFF'} (upAxis="${fileUpAxis}")`)
+	console.log(`Z-up → Y-up conversion: ${animationParams.convertZUp ? 'ON' : 'OFF'} (upAxis="${fileUpAxis}")`);
 
-	// Collect all meshes from the hierarchy (before we start replacing them)
-	const allMeshes = [];
-	threeNode.traverse((child) => {
-		if (child.isMesh) {
-			allMeshes.push(child);
-		}
+	// Build skeletons, bind meshes, and create optional skeleton helpers.
+	const skinningResult = applyUSDSceneSkinningPipeline({
+		threeNode,
+		characterGroup,
+		helperScene: scene,
+		skeletonDataArray,
+		allSkinnedMeshUSDData,
+		skinnedMeshDataByName,
+		usdScene: usd_scene,
+		showMesh: animationParams.showMesh,
+		showSkeleton: animationParams.showSkeleton,
+		useWASMBoneTexture: animationParams.useWASMBoneTexture,
+		logger: console
 	});
 
-	console.log(`Found ${allMeshes.length} meshes in hierarchy, ${allSkinnedMeshUSDData.size} have USD skinning data`);
+	skeletons = skinningResult.skeletons;
+	skeleton = skinningResult.firstSkeleton;
+	skeletonHelpers = skinningResult.skeletonHelpers;
+	skeletonHelper = skinningResult.firstSkeletonHelper;
+	allSceneMeshes = skinningResult.allSceneMeshes;
+	meshVisibility = skinningResult.meshVisibility;
 
-	// 2. Create THREE.Skeleton objects for ALL skeletons and place them in the hierarchy
-	if (allMeshes.length > 0 && skeletonDataArray.length > 0) {
-		for (const skelData of skeletonDataArray) {
-			const { skelId, bones: skelBones, rootBone: skelRootBone, skeletonAbsPath: skelAbsPath } = skelData;
+	skinnedMesh = skinningResult.primaryMesh || null;
+	originalMaterial = skinnedMesh ? skinnedMesh.material : null;
 
-			// Create THREE.Skeleton without boneInverses — bind() will compute
-			// world-space boneInverses via calculateInverses() after bones are
-			// placed in the hierarchy and updateMatrixWorld propagates transforms.
-			let skelThree = new THREE.Skeleton(skelBones);
-			console.log(`Created skeleton ${skelId} with ${skelBones.length} bones`);
-
-			// Store skeleton in map
-			skeletons.set(skelId, skelThree);
-
-			// For backward compatibility: set first skeleton as the default
-			if (skelId === 0) {
-				skeleton = skelThree;
-			}
-
-			// Validate rootBone
-			if (!skelRootBone || !(skelRootBone instanceof THREE.Bone)) {
-				console.error(`Invalid rootBone for skeleton ${skelId}:`, skelRootBone);
-				throw new Error(`rootBone for skeleton ${skelId} is not a valid THREE.Bone`);
-			}
-
-			// 3. Place rootBone at the Skeleton prim node in the hierarchy.
-			// The bones inherit all ancestor transforms (including the Skeleton
-			// prim's own xformOps like scaling). This is fine because we use
-			// calculateInverses() after updateMatrixWorld to compute world-space
-			// boneInverses that include these transforms. At bind pose,
-			// boneMatrix = bone.matrixWorld × inv(bone.matrixWorld_bind) = identity,
-			// so the Skeleton's transforms cancel out correctly.
-			let boneParent = threeNode; // fallback
-			if (skelAbsPath) {
-				const skeletonNode = findNodeByUSDPath(threeNode, skelAbsPath);
-				if (skeletonNode) {
-					boneParent = skeletonNode;
-					console.log(`Placing rootBone ${skelId} at skeleton node: ${boneParent.name} (path: ${skelAbsPath})`);
-				} else {
-					console.warn(`Could not find skeleton node "${skelAbsPath}" in hierarchy for skeleton ${skelId}, falling back to threeNode root`);
-				}
-			}
-			boneParent.add(skelRootBone);
+	if (skinningResult.hasSkeletonHelpers) {
+		if (window.updateJointHierarchy) {
+			window.updateJointHierarchy(generateJointHierarchy(bones));
 		}
-
-		// 4. Propagate all world matrices before binding
-		characterGroup.updateMatrixWorld(true);
-
-		// Note: boneInverses will be computed by bind() → calculateInverses()
-		// when we call bind(skeleton) without a custom bindMatrix.
-		// This ensures boneInverses and bindMatrix are in the same space
-		// (Three.js world space), giving boneMatrix = identity at bind pose.
-
-		// 5. Process each mesh: add skinning attributes and replace with SkinnedMesh
-		let firstSkinnedMesh = null;
-		let processedCount = 0;
-
-			for (const mesh of allMeshes) {
-				const meshName = mesh.name;
-				const meshAbsPath = mesh.userData?.['primMeta.absPath'] || '';
-				let meshUSDData = allSkinnedMeshUSDData.get(meshAbsPath);
-				if (!meshUSDData && skinnedMeshDataByName.has(meshName)) {
-					meshUSDData = skinnedMeshDataByName.get(meshName);
-					if (meshUSDData === null) {
-						console.warn(`Mesh ${meshName}: ambiguous name fallback (duplicate names), skipping skinning without absPath match`);
-					}
-				}
-
-				if (meshUSDData) {
-					console.log(`Processing mesh: ${meshName} (path: ${meshAbsPath}, skel_id: ${meshUSDData.skel_id})`);
-
-				// Get the correct skeleton for this mesh
-				const meshSkelId = meshUSDData.skel_id !== undefined ? meshUSDData.skel_id : 0;
-				const meshSkeleton = skeletons.get(meshSkelId);
-
-				if (!meshSkeleton) {
-					console.warn(`  Skeleton ${meshSkelId} not found for mesh ${meshName}, skipping`);
-					continue;
-				}
-
-				const geometry = mesh.geometry;
-				if (geometry.attributes.position) {
-					const vertexCount = geometry.attributes.position.count;
-					const influencesPerVertex = meshUSDData.elementSize || 4;
-					const usdVertexCount = Math.floor(meshUSDData.jointIndices.length / influencesPerVertex);
-
-					console.log(`  Adding skinning: ${vertexCount} vertices, ${influencesPerVertex} influences/vertex`);
-
-					if (vertexCount !== usdVertexCount) {
-						console.warn(`  Vertex count mismatch: Three.js=${vertexCount}, USD=${usdVertexCount}`);
-					}
-
-					// Add skinning attributes to geometry
-					const skinningConfig = addExtendedSkinningAttributes(
-						geometry,
-						meshUSDData.jointIndices,
-						meshUSDData.jointWeights,
-						influencesPerVertex,
-						{ normalize: true }
-					);
-
-					console.log(`  Skinning mode: ${skinningConfig.mode}`);
-
-					// Replace Mesh with SkinnedMesh in-place within the hierarchy
-					const newSkinnedMesh = replaceWithSkinnedMesh(mesh);
-					newSkinnedMesh.castShadow = true;
-					newSkinnedMesh.receiveShadow = true;
-					newSkinnedMesh.visible = animationParams.showMesh;
-
-					// Bind without custom bindMatrix: bind() internally calls
-					// calculateInverses() and sets bindMatrix = mesh.matrixWorld.
-					// This ensures boneInverses and bindMatrix are in the same
-					// space (Three.js world), giving boneMatrix = identity at bind
-					// pose. With AttachedBindMode, bindMatrixInverse adapts each
-					// frame, so mesh hierarchy transforms are handled correctly.
-					newSkinnedMesh.bind(meshSkeleton);
-					console.log(`  Bound to skeleton ${meshSkelId} (bindMatrix = mesh.matrixWorld)`);
-
-					// Apply extended skinning material if needed (8+ bones per vertex)
-					let wasmBoneTexture = null;
-					if (animationParams.useWASMBoneTexture && meshUSDData.elementSize > 8) {
-						try {
-							wasmBoneTexture = usd_scene.generateBoneTexture(meshUSDData.meshId, 0);
-							if (wasmBoneTexture && wasmBoneTexture.error) {
-								console.warn(`WASM bone texture generation failed: ${wasmBoneTexture.error}`);
-								wasmBoneTexture = null;
-							}
-						} catch (texErr) {
-							console.warn(`WASM bone texture error: ${texErr.message}`);
-							wasmBoneTexture = null;
-						}
-					}
-
-					if (applyExtendedSkinningIfNeeded(newSkinnedMesh, { wasmBoneTexture })) {
-						console.log(`  Extended skinning material applied`);
-					}
-
-					if (!firstSkinnedMesh) {
-						firstSkinnedMesh = newSkinnedMesh;
-						skinnedMesh = newSkinnedMesh;
-						originalMaterial = newSkinnedMesh.material;
-					}
-
-					allSceneMeshes.push(newSkinnedMesh);
-					meshVisibility.set(newSkinnedMesh, true);
-					processedCount++;
-				}
-				} else {
-					// Non-skinned mesh: stays in hierarchy as-is (threeNode is already in characterGroup)
-					console.log(`Mesh ${meshName} (${meshAbsPath || 'no absPath'}): no USD skinning data, keeping as regular mesh`);
-				mesh.castShadow = true;
-				mesh.receiveShadow = true;
-				mesh.visible = animationParams.showMesh;
-				allSceneMeshes.push(mesh);
-				meshVisibility.set(mesh, true);
-
-				if (!skinnedMesh) {
-					skinnedMesh = mesh;
-					originalMaterial = mesh.material;
-				}
-			}
-		}
-
-		console.log(`Processed ${processedCount} skinned meshes (hierarchy preserved)`);
-
-		// Diagnostic: Show mesh-to-skeleton binding summary
-			console.log('=== Mesh-to-Skeleton Binding Summary ===');
-			const skelToMeshes = new Map();
-			for (const [meshPath, meshData] of allSkinnedMeshUSDData) {
-				const skelId = meshData.skel_id;
-				if (!skelToMeshes.has(skelId)) {
-					skelToMeshes.set(skelId, []);
-				}
-				skelToMeshes.get(skelId).push(meshPath);
-			}
-		for (const [skelId, meshNames] of skelToMeshes) {
-			console.log(`Skeleton ${skelId}: meshes = [${meshNames.join(', ')}]`);
-		}
-		console.log('=== End Binding Summary ===');
-
-		if (firstSkinnedMesh && skeletonDataArray.length > 0) {
-			// Create skeleton helpers for ALL skeletons
-			for (const skelData of skeletonDataArray) {
-				const { skelId, rootBone: skelRootBone, bones: skelBones } = skelData;
-				const helper = new THREE.SkeletonHelper(skelRootBone);
-				helper.visible = animationParams.showSkeleton;
-				helper.name = `SkeletonHelper_${skelId}`;
-				scene.add(helper);
-				skeletonHelpers.push(helper);
-				console.log(`Created skeleton helper for skeleton ${skelId}`);
-
-				// For backward compatibility: set first skeleton helper
-				if (skelId === 0) {
-					skeletonHelper = helper;
-				}
-			}
-
-			// Joint spheres are created lazily on first showJoints toggle
-			// to avoid 3000+ sphere meshes + materials bloating memory/scene graph
-
-			// Update joint hierarchy display (use first skeleton for UI)
-			if (window.updateJointHierarchy) {
-				window.updateJointHierarchy(generateJointHierarchy(bones));
-			}
-			if (typeof updateJointHierarchyGUI === 'function') {
-				updateJointHierarchyGUI(bones);
-			}
+		if (typeof updateJointHierarchyGUI === 'function') {
+			updateJointHierarchyGUI(bones);
 		}
 	} else {
-		// No skeleton or no meshes — scene is already in characterGroup via threeNode
-		console.log('No skeleton data or no meshes, scene added as-is');
-		threeNode.traverse((child) => {
-			if (child.isMesh) {
-				child.castShadow = true;
-				child.receiveShadow = true;
-				child.visible = animationParams.showMesh;
-				allSceneMeshes.push(child);
-				meshVisibility.set(child, true);
-				if (!skinnedMesh) {
-					skinnedMesh = child;
-					originalMaterial = child.material;
-				}
-			}
-		});
-
-		// Update joint hierarchy display (empty)
 		if (window.updateJointHierarchy) {
 			window.updateJointHierarchy(generateJointHierarchy([]));
 		}
@@ -1561,129 +1115,107 @@ async function processUSDScene(usd_scene, loader, filename) {
 		}
 	}
 
-	// Extract skeletal animations if available
+	// Extract animations and initialize playback wiring.
 	try {
-		const animationInfos = usd_scene.getAllAnimationInfos ? usd_scene.getAllAnimationInfos() : [];
+		const animationData = extractUSDSceneAnimations(usd_scene, {
+			boneMaps,
+			nodeIndexMap,
+			timeCodesPerSecond,
+			logger: console
+		});
 
-		// Only try to extract animations if we have bones
-		// Pass all boneMaps (for all skeletons) to the converter
-		if (bones.length > 0 && boneMaps.size > 0) {
-			usdAnimations = convertUSDSkeletalAnimationsToThreeJS(usd_scene, boneMaps, timeCodesPerSecond);
-			console.log(`Converted ${usdAnimations.length} skeletal animations (fps: ${timeCodesPerSecond})`);
-		} else {
-			console.log('No skeleton data available - skipping skeletal animation extraction');
-			usdAnimations = [];
+		usdAnimations = animationData.usdAnimations;
+		usdNodeAnimations = animationData.usdNodeAnimations;
+		animationEnabled = animationData.animationEnabled;
+
+		animationParams.hasUSDAnimations = animationData.hasAnyAnimation;
+		animationParams.usdAnimationCount = usdAnimations.length;
+		animationParams.currentAnimation = 0;
+		const hasMultipleAnimations =
+			(animationData.animationInfos?.length || 0) > 1 ||
+			(usdAnimations.length + usdNodeAnimations.length) > 1;
+		animationParams.playAllAnimations = hasMultipleAnimations;
+		updateSelectAnimationControllerState();
+
+		if (animationData.disabledCount > 0) {
+			console.log(`Auto-disabled ${animationData.disabledCount} animation(s) with 0 duration (rest pose only)`);
 		}
 
-		// Extract node (xformOp) animations — animated translate/rotate/scale
-		// on scene graph nodes (SkelRoot, Xform ancestors of Skeleton).
-		// nodeIndexMap was built before bone placement to match USD DFS indices.
-		usdNodeAnimations = convertUSDNodeAnimationsToThreeJS(usd_scene, nodeIndexMap);
-		if (usdNodeAnimations.length > 0) {
-			console.log(`Extracted ${usdNodeAnimations.length} node animation clip(s) for scene graph xformOps`);
-		}
-
-		if (usdAnimations.length > 0 || usdNodeAnimations.length > 0) {
-			const totalClips = usdAnimations.length + usdNodeAnimations.length;
-			console.log(`Extracted ${totalClips} animation clip(s): ${usdAnimations.length} skeletal, ${usdNodeAnimations.length} node`);
-
-			// Diagnostic: Show animation-to-skeleton targeting
-			console.log('=== Animation-to-Skeleton Targeting ===');
-			const numAnimations = usd_scene.numAnimations ? usd_scene.numAnimations() : 0;
-			for (let i = 0; i < numAnimations; i++) {
-				const usdAnim = usd_scene.getAnimation(i);
-				if (!usdAnim.channels) continue;
-				const skelIdsInAnim = new Set();
-				for (const channel of usdAnim.channels) {
-					if (channel.target_type === 'SkeletonJoint') {
-						const skelId = channel.skeleton_id !== undefined ? channel.skeleton_id : 0;
-						skelIdsInAnim.add(skelId);
-					}
-				}
-				console.log(`Animation ${i} (${usdAnim.name}, ${usdAnim.duration} frames): targets skeleton(s) [${Array.from(skelIdsInAnim).sort().join(', ')}]`);
-			}
-			console.log('=== End Animation Targeting ===');
-
-			// Update animation parameters
-			animationParams.hasUSDAnimations = true;
-			animationParams.usdAnimationCount = usdAnimations.length;
-			animationParams.currentAnimation = Math.min(0, usdAnimations.length - 1);
-
-			// Initialize animation enabled states (auto-disable 0-duration animations)
-			animationEnabled = usdAnimations.map(clip => clip.duration > 0);
-			const disabledCount = animationEnabled.filter(enabled => !enabled).length;
-			if (disabledCount > 0) {
-				console.log(`Auto-disabled ${disabledCount} animation(s) with 0 duration (rest pose only)`);
-			}
-
-			// Update animation list in UI with type information
-			if (window.updateAnimationList) {
-				window.updateAnimationList(usdAnimations, animationInfos);
-			}
-
-			// Update individual animation checkboxes in GUI
-			if (typeof updateAnimationCheckboxes === 'function') {
-				updateAnimationCheckboxes();
-			}
-
-			// Log animation details
-			usdAnimations.forEach((clip, index) => {
-				const info = animationInfos[index];
-				let typeStr = '';
-				if (info && info.has_skeletal_animation) {
-					typeStr = ' [skeletal]';
-				}
-				console.log(`Animation ${index}: ${clip.name}, duration: ${clip.duration} frames, tracks: ${clip.tracks.length}${typeStr}`);
-			});
-
-			// Create mixer and play first animation
-			// Use characterGroup as the mixer root so animations can target bones from all skeletons
-			// Also supports node animations (xformOps) even without skeletal data
-			if (usdAnimations.length > 0 || usdNodeAnimations.length > 0) {
-				if (!mixer) {
-					mixer = new THREE.AnimationMixer(characterGroup);
-				}
-				if (usdAnimations.length > 0) {
-					playAnimation(0);
-				} else {
-					// Node-only animations: play them directly
-					playNodeAnimations();
-				}
-
-				// Update timeline range to cover all animations (in timeCodes/frames)
-				let maxDuration = endTimeCode;  // Start with scene endTimeCode
-				for (const clip of usdAnimations) {
-					if (clip.duration > maxDuration) {
-						maxDuration = clip.duration;
-					}
-				}
-				for (const clip of usdNodeAnimations) {
-					if (clip.duration > maxDuration) {
-						maxDuration = clip.duration;
-					}
-				}
-				if (window.updateTimelineRange && maxDuration > 0 && isFinite(maxDuration)) {
-					console.log(`Setting timeline range to [0, ${maxDuration}] frames (from animations and endTimeCode ${endTimeCode})`);
-					window.updateTimelineRange(maxDuration);
-				}
-			}
-		} else {
-			if (window.updateAnimationList) {
+		if (window.updateAnimationList) {
+			if (animationData.hasAnyAnimation) {
+				window.updateAnimationList(usdAnimations, animationData.animationInfos);
+			} else {
 				window.updateAnimationList([], []);
 			}
-			// Clear animation checkboxes
-			if (typeof updateAnimationCheckboxes === 'function') {
-				updateAnimationCheckboxes();
+		}
+		if (typeof updateAnimationCheckboxes === 'function') {
+			updateAnimationCheckboxes();
+		}
+
+		usdAnimations.forEach((clip, index) => {
+			const info = animationData.animationInfos[index];
+			let typeStr = '';
+			if (info && info.has_skeletal_animation) {
+				typeStr = ' [skeletal]';
 			}
+			console.log(`Animation ${index}: ${clip.name}, duration: ${clip.duration} frames, tracks: ${clip.tracks.length}${typeStr}`);
+		});
+
+		if (animationData.hasAnyAnimation) {
+			animationPlayback = createUSDSceneAnimationPlayback(characterGroup, {
+				usdAnimations,
+				usdNodeAnimations,
+				speed: animationParams.speed,
+				logger: console
+			});
+
+			const playbackState = animationPlayback.getState();
+			mixer = playbackState.mixer;
+			animationAction = playbackState.animationAction;
+			animationActions = playbackState.animationActions;
+
+			if (animationParams.playAllAnimations) {
+				playAllAnimations();
+			} else if (usdAnimations.length > 0) {
+				playAnimation(0);
+			} else {
+				playNodeAnimations();
+			}
+
+			const maxDuration = computeUSDSceneTimelineDuration(
+				endTimeCode,
+				usdAnimations,
+				usdNodeAnimations
+			);
+			if (window.updateTimelineRange && maxDuration > 0 && isFinite(maxDuration)) {
+				console.log(`Setting timeline range to [${startTimeCode}, ${maxDuration}] frames (from animations and endTimeCode ${endTimeCode})`);
+				window.updateTimelineRange(startTimeCode, maxDuration);
+			}
+		} else {
+			animationPlayback = null;
+			mixer = null;
+			animationAction = null;
+			animationActions = [];
+			animationParams.playAllAnimations = false;
+			updateSelectAnimationControllerState();
 			console.log('No skeletal animations found in USD file (loading as static mesh)');
 		}
 	} catch (error) {
 		console.error('Error extracting skeletal animations:', error);
 		console.log('Continuing without animations...');
+		animationPlayback = null;
+		mixer = null;
+		animationAction = null;
+		animationActions = [];
+		animationEnabled = [];
+		animationParams.hasUSDAnimations = false;
+		animationParams.usdAnimationCount = 0;
+		animationParams.currentAnimation = 0;
+		animationParams.playAllAnimations = false;
+		updateSelectAnimationControllerState();
 		if (window.updateAnimationList) {
 			window.updateAnimationList([], []);
 		}
-		// Clear animation checkboxes
 		if (typeof updateAnimationCheckboxes === 'function') {
 			updateAnimationCheckboxes();
 		}
@@ -1722,16 +1254,11 @@ async function processUSDScene(usd_scene, loader, filename) {
  * animated ancestors are handled correctly by the skinning equation.
  */
 function playNodeAnimations() {
-	if (!mixer || usdNodeAnimations.length === 0) return;
-	for (const nodeClip of usdNodeAnimations) {
-		if (nodeClip.duration <= 0) continue;
-		const action = mixer.clipAction(nodeClip);
-		action.loop = THREE.LoopRepeat;
-		action.clampWhenFinished = false;
-		action.setEffectiveTimeScale(animationParams.speed);
-		action.play();
-		animationActions.push(action);
-	}
+	if (!animationPlayback) return;
+	const state = animationPlayback.playNodeAnimations();
+	mixer = state.mixer;
+	animationAction = state.animationAction;
+	animationActions = state.animationActions;
 }
 
 /**
@@ -1739,25 +1266,17 @@ function playNodeAnimations() {
  * @param {number} index - Animation index
  */
 function playAnimation(index) {
-	if (!mixer || index < 0 || index >= usdAnimations.length) {
+	if (!animationPlayback || index < 0 || index >= usdAnimations.length) {
 		return;
 	}
 
-	// Stop all animations first
-	stopAllAnimations();
-
-	// Play new animation (absolute local transforms, Normal blend mode)
-	const clip = usdAnimations[index];
-	animationAction = mixer.clipAction(clip);
-	animationAction.loop = THREE.LoopRepeat;
-	animationAction.clampWhenFinished = false;
-	animationAction.setEffectiveTimeScale(animationParams.speed);
-	animationAction.play();
-
-	// Also play node animations (xformOps on skeleton ancestors)
-	playNodeAnimations();
+	const result = animationPlayback.playAnimation(index);
+	mixer = result.mixer;
+	animationAction = result.animationAction;
+	animationActions = result.animationActions;
 
 	animationParams.currentAnimation = index;
+	const clip = result.clip || usdAnimations[index];
 	console.log(`Playing animation: ${clip.name}${usdNodeAnimations.length > 0 ? ` (+${usdNodeAnimations.length} node clip(s))` : ''}`);
 }
 
@@ -1765,39 +1284,23 @@ function playAnimation(index) {
  * Play all enabled animations simultaneously (like Blender)
  */
 function playAllAnimations() {
-	if (!mixer || (usdAnimations.length === 0 && usdNodeAnimations.length === 0)) {
+	if (!animationPlayback || (usdAnimations.length === 0 && usdNodeAnimations.length === 0)) {
 		return;
 	}
 
-	// Stop any existing animations
-	stopAllAnimations();
+	const result = animationPlayback.playAllAnimations(animationEnabled);
+	mixer = result.mixer;
+	animationAction = result.animationAction;
+	animationActions = result.animationActions;
+	const start = Number.isFinite(animationParams.timelineStart) ? animationParams.timelineStart : 0;
+	const initState = animationPlayback.setTime(start, true);
+	mixer = initState.mixer;
+	animationAction = initState.animationAction;
+	animationActions = initState.animationActions;
+	animationParams.time = start;
 
-	// Create and play an action for each ENABLED skeletal animation
-	animationActions = [];
-	let enabledCount = 0;
-	let skippedCount = 0;
-	for (let i = 0; i < usdAnimations.length; i++) {
-		if (!animationEnabled[i]) continue; // Skip disabled animations
-
-		const clip = usdAnimations[i];
-		// Skip animations with 0 duration (no actual animation data, rest pose only)
-		if (clip.duration <= 0) {
-			console.log(`Skipping animation ${i} (${clip.name}): 0 duration (rest pose only)`);
-			skippedCount++;
-			continue;
-		}
-		const action = mixer.clipAction(clip);
-		action.loop = THREE.LoopRepeat;
-		action.clampWhenFinished = false;
-		action.setEffectiveTimeScale(animationParams.speed);
-		action.play();
-		animationActions.push(action);
-		enabledCount++;
-	}
-
-	// Also play node animations (always active alongside skeletal clips)
-	playNodeAnimations();
-
+	const enabledCount = result.enabledCount || 0;
+	const skippedCount = result.skippedCount || 0;
 	console.log(`Playing ${enabledCount} enabled animations (${skippedCount} skipped: 0 duration, ${usdAnimations.length} skeletal + ${usdNodeAnimations.length} node total)`);
 }
 
@@ -1805,17 +1308,15 @@ function playAllAnimations() {
  * Stop all active animations
  */
 function stopAllAnimations() {
-	// Stop single animation mode
-	if (animationAction) {
-		animationAction.stop();
+	if (!animationPlayback) {
 		animationAction = null;
+		animationActions = [];
+		return;
 	}
-
-	// Stop all animations mode
-	for (const action of animationActions) {
-		action.stop();
-	}
-	animationActions = [];
+	const state = animationPlayback.stopAllAnimations();
+	mixer = state.mixer;
+	animationAction = state.animationAction;
+	animationActions = state.animationActions;
 }
 
 // Listen for file upload events
@@ -1903,18 +1404,79 @@ window.addEventListener('keydown', (event) => {
 // Expose selectJointByName for UI hierarchy clicks
 window.selectJointByName = selectJointByName;
 
+function applyTimelineRange(start, end, options = {}) {
+	const updateBaseRange = options.updateBaseRange === true;
+	const clampCurrentTime = options.clampCurrentTime !== false;
+	let timelineStart = Number(start);
+	let timelineEnd = Number(end);
+
+	if (!isFinite(timelineStart)) timelineStart = 0;
+	if (!isFinite(timelineEnd)) timelineEnd = timelineStart + 1;
+	if (timelineEnd <= timelineStart) timelineEnd = timelineStart + 1;
+	if (updateBaseRange) {
+		timelineBaseStart = timelineStart;
+		timelineBaseEnd = timelineEnd;
+	}
+
+	if (animationParams) {
+		animationParams.timelineStart = timelineStart;
+		animationParams.timelineEnd = timelineEnd;
+	}
+
+	if (timelineController) {
+		timelineController._min = timelineStart;
+		timelineController._max = timelineEnd;
+		if (timelineController.$slider) {
+			timelineController.$slider.min = timelineStart;
+			timelineController.$slider.max = timelineEnd;
+		}
+		if (timelineController.$input) {
+			timelineController.$input.min = timelineStart;
+			timelineController.$input.max = timelineEnd;
+		}
+	}
+
+	if (animationParams && clampCurrentTime) {
+		const clampedTime = Math.min(Math.max(animationParams.time, timelineStart), timelineEnd);
+		if (clampedTime !== animationParams.time) {
+			animationParams.time = clampedTime;
+			if (animationPlayback) {
+				const state = animationPlayback.setTime(
+					animationParams.time,
+					!animationParams.isPlaying
+				);
+				mixer = state.mixer;
+				animationAction = state.animationAction;
+				animationActions = state.animationActions;
+			}
+		}
+	}
+
+	if (timelineController) timelineController.updateDisplay();
+	if (timelineStartController) timelineStartController.updateDisplay();
+	if (timelineEndController) timelineEndController.updateDisplay();
+
+	return { timelineStart, timelineEnd };
+}
+
 // Animation parameters
-const animationParams = {
+animationParams = {
 	isPlaying: true,
 	playPause: function() {
 		this.isPlaying = !this.isPlaying;
-		// Handle single animation mode
-		if (animationAction) {
-			animationAction.paused = !this.isPlaying;
+		if (animationPlayback) {
+			const state = animationPlayback.setPaused(!this.isPlaying);
+			mixer = state.mixer;
+			animationAction = state.animationAction;
+			animationActions = state.animationActions;
 		}
-		// Handle all animations mode
-		for (const action of animationActions) {
-			action.paused = !this.isPlaying;
+		if (this.isPlaying && this.playAllAnimations && window.updateTimelineRange) {
+			const maxDuration = computeUSDSceneTimelineDuration(
+				timelineBaseEnd,
+				usdAnimations,
+				usdNodeAnimations
+			);
+			window.updateTimelineRange(timelineBaseStart, maxDuration);
 		}
 		if (!this.isPlaying) {
 			_mixerAccumDelta = 0;
@@ -1922,15 +1484,11 @@ const animationParams = {
 		}
 	},
 	reset: function() {
-		// Handle single animation mode
-		if (animationAction) {
-			animationAction.reset();
-			animationAction.play();
-		}
-		// Handle all animations mode
-		for (const action of animationActions) {
-			action.reset();
-			action.play();
+		if (animationPlayback) {
+			const state = animationPlayback.reset();
+			mixer = state.mixer;
+			animationAction = state.animationAction;
+			animationActions = state.animationActions;
 		}
 	},
 	resetToRestPose: function() {
@@ -1951,6 +1509,8 @@ const animationParams = {
 	},
 	speed: 24,  // Default to timeCodesPerSecond (updated on file load)
 	time: 0,
+	timelineStart: 0,
+	timelineEnd: 30,
 
 	// Skeletal animation properties
 	hasUSDAnimations: false,
@@ -1963,33 +1523,36 @@ const animationParams = {
 	},
 	playAllAnimations: false,
 	togglePlayAllAnimations: function() {
+		const baseStart = Number.isFinite(timelineBaseStart) ? timelineBaseStart : 0;
+		const baseEnd = Number.isFinite(timelineBaseEnd) ? timelineBaseEnd : baseStart + 1;
+
 		if (this.playAllAnimations) {
 			// Switch to play all mode
 			playAllAnimations();
-			// Update timeline range to max duration across all animations (skeletal + node)
-			let maxDuration = 0;
-			for (const clip of usdAnimations) {
-				if (clip.duration > maxDuration) {
-					maxDuration = clip.duration;
-				}
-			}
-			for (const clip of usdNodeAnimations) {
-				if (clip.duration > maxDuration) {
-					maxDuration = clip.duration;
-				}
-			}
+			// Keep USD stage timeline end as baseline, then extend if clips run longer.
+			const maxDuration = computeUSDSceneTimelineDuration(
+				baseEnd,
+				usdAnimations,
+				usdNodeAnimations
+			);
 			if (window.updateTimelineRange && maxDuration > 0) {
-				window.updateTimelineRange(maxDuration);
+				window.updateTimelineRange(baseStart, maxDuration);
 			}
 		} else {
 			// Switch back to single animation mode
-			playAnimation(this.currentAnimation);
-			// Update timeline range to current animation duration
+			if (usdAnimations.length > 0) {
+				playAnimation(this.currentAnimation);
+			} else {
+				playNodeAnimations();
+			}
+			// Preserve stage timeline range when a single clip is shorter.
 			const currentDuration = usdAnimations[this.currentAnimation]?.duration;
-			if (currentDuration > 0 && isFinite(currentDuration) && window.updateTimelineRange) {
-				window.updateTimelineRange(currentDuration);
+			const singleModeEnd = Math.max(baseEnd, isFinite(currentDuration) ? currentDuration : 0);
+			if (singleModeEnd > 0 && window.updateTimelineRange) {
+				window.updateTimelineRange(baseStart, singleModeEnd);
 			}
 		}
+		updateSelectAnimationControllerState();
 	},
 
 	// Visualization
@@ -2214,49 +1777,52 @@ playbackFolder.add(animationParams, 'playPause').name('Play / Pause');
 playbackFolder.add(animationParams, 'reset').name('Reset Animation');
 playbackFolder.add(animationParams, 'resetToRestPose').name('Reset to Rest Pose');
 playbackFolder.add(animationParams, 'speed', 1, 120, 1).name('Speed').onChange(() => {
-	// Update single animation mode
-	if (animationAction) {
-		// Speed represents playback FPS (timeCodes per second)
-		animationAction.setEffectiveTimeScale(animationParams.speed);
-	}
-	// Update all animations mode
-	for (const action of animationActions) {
-		action.setEffectiveTimeScale(animationParams.speed);
+	if (animationPlayback) {
+		const state = animationPlayback.setSpeed(animationParams.speed);
+		mixer = state.mixer;
+		animationAction = state.animationAction;
+		animationActions = state.animationActions;
 	}
 });
-const timelineController = playbackFolder.add(animationParams, 'time', 0, 30, 0.01)
+timelineController = playbackFolder.add(animationParams, 'time', 0, 30, 0.01)
 	.name('Timeline').listen().onChange(() => {
-		if (mixer) {
-			// Update single animation mode
-			if (animationAction) {
-				animationAction.time = animationParams.time;
-			}
-			// Update all animations mode
-			for (const action of animationActions) {
-				action.time = animationParams.time;
-			}
-			// Propagate pose even when paused
-			if (!animationParams.isPlaying) {
-				mixer.update(0);
-			}
+		if (animationPlayback) {
+			const state = animationPlayback.setTime(
+				animationParams.time,
+				!animationParams.isPlaying
+			);
+			mixer = state.mixer;
+			animationAction = state.animationAction;
+			animationActions = state.animationActions;
 		}
 	});
+timelineStartController = playbackFolder.add(animationParams, 'timelineStart', -100000, 100000, 1)
+	.name('Timeline Start')
+	.listen()
+	.onFinishChange((value) => {
+		applyTimelineRange(value, animationParams.timelineEnd, { updateBaseRange: true });
+	});
+timelineEndController = playbackFolder.add(animationParams, 'timelineEnd', -100000, 100000, 1)
+	.name('Timeline End')
+	.listen()
+	.onFinishChange((value) => {
+		applyTimelineRange(animationParams.timelineStart, value, { updateBaseRange: true });
+	});
+applyTimelineRange(animationParams.timelineStart, animationParams.timelineEnd, {
+	clampCurrentTime: false,
+	updateBaseRange: true
+});
 playbackFolder.open();
 
 // Function to update timeline range when animation loads
-window.updateTimelineRange = function(duration) {
-	console.log('updateTimelineRange called with duration:', duration);
-	if (timelineController && duration > 0 && isFinite(duration)) {
-		// lil-gui: need to destroy and recreate the controller to change range
-		// Or use the _max property directly
-		timelineController._max = duration;
-		// Check if $slider exists before setting max
-		if (timelineController.$slider) {
-			timelineController.$slider.max = duration;
-		}
-		timelineController.updateDisplay();
-		console.log('Timeline range updated to:', duration);
-	}
+window.updateTimelineRange = function(startOrEnd, maybeEnd) {
+	const start = maybeEnd === undefined
+		? (Number.isFinite(timelineBaseStart) ? timelineBaseStart : 0)
+		: startOrEnd;
+	const end = maybeEnd === undefined ? startOrEnd : maybeEnd;
+	console.log(`updateTimelineRange called with start=${start}, end=${end}`);
+	const range = applyTimelineRange(start, end);
+	console.log(`Timeline range updated to: [${range.timelineStart}, ${range.timelineEnd}]`);
 };
 
 // Animation controls
@@ -2271,11 +1837,29 @@ animationFolder.add(animationParams, 'playAllAnimations')
 // Container for individual animation checkboxes (dynamically populated)
 let animationCheckboxControllers = [];
 
-animationFolder.add(animationParams, 'currentAnimation', 0, 10, 1)
+selectAnimationController = animationFolder.add(animationParams, 'currentAnimation', 0, 10, 1)
 	.name('Select Animation')
 	.listen()
 	.onChange(() => animationParams.selectAnimation());
 animationFolder.open();
+updateSelectAnimationControllerState();
+
+function updateSelectAnimationControllerState() {
+	if (!selectAnimationController) return;
+	const shouldDisable =
+		animationParams.playAllAnimations ||
+		!animationParams.hasUSDAnimations ||
+		usdAnimations.length === 0;
+	if (shouldDisable) {
+		if (typeof selectAnimationController.disable === 'function') {
+			selectAnimationController.disable();
+		}
+	} else {
+		if (typeof selectAnimationController.enable === 'function') {
+			selectAnimationController.enable();
+		}
+	}
+}
 
 // Function to update individual animation checkboxes
 function updateAnimationCheckboxes() {
@@ -2310,6 +1894,7 @@ function updateAnimationCheckboxes() {
 
 		animationCheckboxControllers.push(controller);
 	}
+	updateSelectAnimationControllerState();
 }
 
 // Visualization controls
@@ -2544,34 +2129,13 @@ function updateJointHierarchyGUI(bones) {
 		return;
 	}
 
-	let html = '';
-
-	function traverseBone(bone, depth = 0) {
-		const indent = '&nbsp;&nbsp;'.repeat(depth);
-		const bullet = depth > 0 ? '└─ ' : '● ';
-		const color = depth === 0 ? '#ff6b6b' : '#4ecdc4';
-
-		html += `<div style="color: ${color}; cursor: pointer; padding: 2px; border-radius: 3px;"
-		              class="gui-joint-item"
-		              data-bone-name="${bone.name}"
-		              onmouseover="this.style.backgroundColor='rgba(255,255,255,0.15)'"
-		              onmouseout="this.style.backgroundColor='transparent'">${indent}${bullet}${bone.name}</div>`;
-
-		bone.children.forEach(child => {
-			if (child.isBone) {
-				traverseBone(child, depth + 1);
-			}
-		});
-	}
-
-	// Find root bones
-	bones.forEach(bone => {
-		if (!bone.parent || !bone.parent.isBone) {
-			traverseBone(bone);
-		}
+	jointHierarchyContainer.innerHTML = buildJointHierarchyHTML(bones, {
+		wrap: false,
+		itemClassName: 'gui-joint-item',
+		hoverBackground: 'rgba(255,255,255,0.15)',
+		rootColor: '#ff6b6b',
+		childColor: '#4ecdc4'
 	});
-
-	jointHierarchyContainer.innerHTML = html;
 
 	// Add click handlers
 	const jointItems = jointHierarchyContainer.querySelectorAll('.gui-joint-item');
@@ -2652,14 +2216,31 @@ function animate() {
 		_mixerAccumDelta += deltaTime;
 
 		if (_mixerAccumDelta >= mixerInterval) {
-			mixer.update(_mixerAccumDelta);
+			const stepDelta = _mixerAccumDelta;
 			_mixerAccumDelta = 0;
 
-			// Update time display (from single animation or first of all animations)
-			if (animationAction && isFinite(animationAction.time)) {
-				animationParams.time = animationAction.time;
-			} else if (animationActions.length > 0 && isFinite(animationActions[0].time)) {
-				animationParams.time = animationActions[0].time;
+			if (animationParams.playAllAnimations && animationPlayback) {
+				const start = Number.isFinite(animationParams.timelineStart) ? animationParams.timelineStart : 0;
+				const end = Number.isFinite(animationParams.timelineEnd) ? animationParams.timelineEnd : (start + 1);
+				const span = Math.max(end - start, 1e-6);
+				const advancedTime = animationParams.time + (stepDelta * animationParams.speed);
+				const wrapped = ((advancedTime - start) % span + span) % span;
+				const globalTime = start + wrapped;
+				animationParams.time = globalTime;
+
+				const state = animationPlayback.setTime(globalTime, true);
+				mixer = state.mixer;
+				animationAction = state.animationAction;
+				animationActions = state.animationActions;
+			} else {
+				mixer.update(stepDelta);
+
+				// Update time display (from single animation or first of all animations)
+				if (animationAction && isFinite(animationAction.time)) {
+					animationParams.time = animationAction.time;
+				} else if (animationActions.length > 0 && isFinite(animationActions[0].time)) {
+					animationParams.time = animationActions[0].time;
+				}
 			}
 		}
 	}
