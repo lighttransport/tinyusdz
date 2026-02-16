@@ -1627,7 +1627,7 @@ bool ArrayValueToVertexAttribute(
 //
 // Optimize RenderMesh indices using meshoptimizer
 //
-void OptimizeRenderMeshIndices(RenderMesh& mesh) {
+[[maybe_unused]] static void OptimizeRenderMeshIndices(RenderMesh& mesh) {
   // Only optimize triangulated meshes with valid indices
   if (!mesh.is_triangulated() || mesh.triangulatedFaceVertexIndices.empty() || mesh.points.empty()) {
     return;
@@ -3045,67 +3045,156 @@ bool ListUVNames(const RenderMaterial &material,
 
 }  // namespace
 
-// Find skeleton for mesh by walking up ancestor hierarchy
-// Returns true if skeleton found, with path and skeleton pointer stored in output params
-static bool FindSkeletonByAncestor(
-    const Path &meshPath,
-    const PathPrimMap<Skeleton> &allSkeletons,
-    const PathPrimMap<SkelRoot> &allSkelRoots,
-    Path *outSkelPath,
-    const Skeleton **outSkelPtr)
-{
-  if (allSkeletons.empty()) {
-    return false;
+class SkelRootSkeletonResolver {
+ public:
+  using SkelRootToSkeletonMap =
+      std::unordered_map<std::string, std::pair<Path, const Skeleton *>>;
+
+  static void BuildMap(const PathPrimMap<Skeleton> &allSkeletons,
+                       const PathPrimMap<SkelRoot> &allSkelRoots,
+                       SkelRootToSkeletonMap *out_map) {
+    if (!out_map) {
+      return;
+    }
+
+    out_map->clear();
+    out_map->reserve(allSkelRoots.size());
+
+    for (const auto &kv : allSkeletons) {
+      const std::string &skel_path_str = kv.first;
+      const Skeleton *skel_ptr = kv.second;
+      Path current_path(skel_path_str, "");
+
+      while (current_path.is_valid() && !current_path.is_root_path()) {
+        Path parent_path = current_path.get_parent_prim_path();
+        const std::string parent_path_str = parent_path.prim_part();
+
+        if (allSkelRoots.find(parent_path_str) != allSkelRoots.end()) {
+          // Deterministic selection: if multiple Skeletons exist under one
+          // SkelRoot, keep lexicographically smallest absolute skeleton path.
+          auto it = out_map->find(parent_path_str);
+          if (it == out_map->end()) {
+            out_map->emplace(parent_path_str,
+                             std::make_pair(Path(skel_path_str, ""), skel_ptr));
+          } else if (skel_path_str < it->second.first.prim_part()) {
+            it->second = std::make_pair(Path(skel_path_str, ""), skel_ptr);
+          }
+          break;
+        }
+
+        current_path = parent_path;
+      }
+    }
   }
 
-  // Walk up ancestor chain
-  Path currentPath = meshPath;
-  while (currentPath.is_valid() && !currentPath.is_root_path()) {
-    Path parentPath = currentPath.get_parent_prim_path();
-    std::string parentPathStr = parentPath.prim_part();
+  // Find skeleton for mesh by walking up ancestor hierarchy.
+  // Returns true if skeleton found, with path and skeleton pointer stored.
+  static bool FindByAncestor(const Path &meshPath,
+                             const PathPrimMap<Skeleton> &allSkeletons,
+                             const PathPrimMap<SkelRoot> &allSkelRoots,
+                             const SkelRootToSkeletonMap *skelRootToSkeleton,
+                             Path *outSkelPath, const Skeleton **outSkelPtr) {
+    if (allSkeletons.empty()) {
+      return false;
+    }
 
-    DCOUT("FindSkeletonByAncestor: checking parent " << parentPathStr);
+    // Walk up ancestor chain
+    Path currentPath = meshPath;
+    while (currentPath.is_valid() && !currentPath.is_root_path()) {
+      Path parentPath = currentPath.get_parent_prim_path();
+      std::string parentPathStr = parentPath.prim_part();
 
-    // Check if parent is a SkelRoot
-    auto skelRootIt = allSkelRoots.find(parentPathStr);
-    if (skelRootIt != allSkelRoots.end()) {
-      DCOUT("Found SkelRoot ancestor: " << parentPathStr);
-      // Found SkelRoot ancestor - search its children for Skeleton
-      for (const auto &kv : allSkeletons) {
-        const std::string &skelPath = kv.first;
-        const Skeleton *skelPtr = kv.second;
-        // Check if skeleton is under this SkelRoot (path starts with parent)
-        if (skelPath.find(parentPathStr) == 0) {
-          *outSkelPath = Path(skelPath, "");
-          if (outSkelPtr) *outSkelPtr = skelPtr;
-          DCOUT("Found skeleton under SkelRoot: " << skelPath);
+      DCOUT("FindSkeletonByAncestor: checking parent " << parentPathStr);
+
+      // Check if parent is a SkelRoot
+      auto skelRootIt = allSkelRoots.find(parentPathStr);
+      if (skelRootIt != allSkelRoots.end()) {
+        DCOUT("Found SkelRoot ancestor: " << parentPathStr);
+
+        if (skelRootToSkeleton) {
+          auto mapped = skelRootToSkeleton->find(parentPathStr);
+          if (mapped != skelRootToSkeleton->end()) {
+            *outSkelPath = mapped->second.first;
+            if (outSkelPtr) *outSkelPtr = mapped->second.second;
+            DCOUT("Found skeleton under SkelRoot from cache: "
+                  << mapped->second.first.prim_part());
+            return true;
+          }
+        }
+
+        // Found SkelRoot ancestor - search its children for Skeleton
+        std::string bestSkelPath;
+        const Skeleton *bestSkelPtr{nullptr};
+        for (const auto &kv : allSkeletons) {
+          const std::string &skelPath = kv.first;
+          const Skeleton *skelPtr = kv.second;
+
+          if (IsStrictDescendantPath(skelPath, parentPathStr)) {
+            if (!bestSkelPtr || skelPath < bestSkelPath) {
+              bestSkelPath = skelPath;
+              bestSkelPtr = skelPtr;
+            }
+          }
+        }
+
+        if (bestSkelPtr) {
+          *outSkelPath = Path(bestSkelPath, "");
+          if (outSkelPtr) *outSkelPtr = bestSkelPtr;
+          DCOUT("Found skeleton under SkelRoot: " << bestSkelPath);
           return true;
         }
       }
+
+      // Also check if parent itself is a Skeleton
+      auto skelIt = allSkeletons.find(parentPathStr);
+      if (skelIt != allSkeletons.end()) {
+        *outSkelPath = Path(parentPathStr, "");
+        if (outSkelPtr) *outSkelPtr = skelIt->second;
+        DCOUT("Found skeleton as ancestor: " << parentPathStr);
+        return true;
+      }
+
+      currentPath = parentPath;
     }
 
-    // Also check if parent itself is a Skeleton
-    auto skelIt = allSkeletons.find(parentPathStr);
-    if (skelIt != allSkeletons.end()) {
-      *outSkelPath = Path(parentPathStr, "");
-      if (outSkelPtr) *outSkelPtr = skelIt->second;
-      DCOUT("Found skeleton as ancestor: " << parentPathStr);
+    // Fallback: if only one skeleton in scene, use it
+    if (allSkeletons.size() == 1) {
+      *outSkelPath = Path(allSkeletons.begin()->first, "");
+      if (outSkelPtr) *outSkelPtr = allSkeletons.begin()->second;
+      DCOUT("Fallback: using only skeleton in scene: "
+            << allSkeletons.begin()->first);
       return true;
     }
 
-    currentPath = parentPath;
+    return false;
   }
 
-  // Fallback: if only one skeleton in scene, use it
-  if (allSkeletons.size() == 1) {
-    *outSkelPath = Path(allSkeletons.begin()->first, "");
-    if (outSkelPtr) *outSkelPtr = allSkeletons.begin()->second;
-    DCOUT("Fallback: using only skeleton in scene: " << allSkeletons.begin()->first);
-    return true;
-  }
+ private:
+  static bool IsStrictDescendantPath(const std::string &descendantPath,
+                                     const std::string &ancestorPath) {
+    if (ancestorPath.empty() || descendantPath.empty()) {
+      return false;
+    }
 
-  return false;
-}
+    // All absolute prim paths are expected to start with '/'.
+    if (descendantPath[0] != '/' || ancestorPath[0] != '/') {
+      return false;
+    }
+
+    if (descendantPath.size() <= ancestorPath.size()) {
+      return false;
+    }
+
+    if (descendantPath.compare(0, ancestorPath.size(), ancestorPath) != 0) {
+      return false;
+    }
+
+    // Require a path-segment boundary:
+    // "/A/SkelRoot/Skel" is a descendant of "/A/SkelRoot", but
+    // "/A/SkelRootExtra/Skel" is not.
+    return descendantPath[ancestorPath.size()] == '/';
+  }
+};
 
 ///
 /// Convert vertex variability either 'vertex' or 'facevarying'
@@ -5057,7 +5146,9 @@ bool RenderSceneConverter::ConvertMesh(
         DCOUT("Mesh has skinning data but no skel:skeleton - trying ancestor discovery");
         if (_allSkeletons && _allSkelRoots) {
           Path meshPath(abs_prim_path.full_path_name(), "");
-          if (FindSkeletonByAncestor(meshPath, *_allSkeletons, *_allSkelRoots, &skelPath, &discoveredSkelPtr)) {
+          if (SkelRootSkeletonResolver::FindByAncestor(
+                  meshPath, *_allSkeletons, *_allSkelRoots,
+                  &_skelRootToSkeleton, &skelPath, &discoveredSkelPtr)) {
             hasSkelPath = true;
             DCOUT("Found skeleton by ancestor: " << skelPath.prim_part());
           } else {
@@ -5105,9 +5196,11 @@ bool RenderSceneConverter::ConvertMesh(
 
             if (anim_cache_it != _animPathToIndex.end()) {
               skel.anim_id = anim_cache_it->second;
+              skel.anim_ids.push_back(anim_cache_it->second);
             } else {
               skel.anim_id = int(animations.size());
               _animPathToIndex[animAbsPath] = int32_t(animations.size());
+              skel.anim_ids.push_back(int32_t(animations.size()));
               animations.emplace_back(std::move(anim.value()));
             }
           }
@@ -5532,6 +5625,42 @@ bool RenderSceneConverter::ConvertMesh(
 
 namespace {
 
+struct UVConnectionResolveCacheEntry {
+  bool found{false};
+  Path tex_abs_path;
+  const UsdUVTexture *texture{nullptr};
+  const Shader *shader{nullptr};
+};
+
+struct MtlxConnectionResolveCacheEntry {
+  Path tex_abs_path;
+  const Shader *image_shader{nullptr};
+  std::string st_varname;
+  const AssetInfo *asset_info{nullptr};
+};
+
+struct ConnectionResolveCache {
+  const Stage *stage{nullptr};
+  std::unordered_map<std::string, UVConnectionResolveCacheEntry> uv_texture_by_connection;
+  std::unordered_map<std::string, MtlxConnectionResolveCacheEntry> mtlx_texture_by_connection;
+};
+
+static ConnectionResolveCache &GetConnectionResolveCache(const Stage &stage) {
+  static thread_local ConnectionResolveCache cache;
+  if (cache.stage != &stage) {
+    cache.stage = &stage;
+    cache.uv_texture_by_connection.clear();
+    cache.mtlx_texture_by_connection.clear();
+  }
+  return cache;
+}
+
+static void ResetConnectionResolveCache(const Stage &stage) {
+  ConnectionResolveCache &cache = GetConnectionResolveCache(stage);
+  cache.uv_texture_by_connection.clear();
+  cache.mtlx_texture_by_connection.clear();
+}
+
 // Convert UsdTransform2d -> PrimvarReader_float2 shader network.
 nonstd::expected<bool, std::string> ConvertTexTransform2d(
     const Stage &stage, const Path &tx_abs_path, const UsdTransform2d &tx,
@@ -5708,6 +5837,36 @@ nonstd::expected<bool, std::string> GetConnectedUVTexture(
 
   const std::string prim_part = path.prim_part();
   const std::string prop_part = path.prop_part();
+  const std::string cache_key = path.full_path_name();
+  ConnectionResolveCache &resolve_cache = GetConnectionResolveCache(stage);
+
+  if (shader_out) {
+    *shader_out = nullptr;
+  }
+  *dst = nullptr;
+
+  auto cache_it = resolve_cache.uv_texture_by_connection.find(cache_key);
+  if (cache_it != resolve_cache.uv_texture_by_connection.end()) {
+    if (tex_abs_path) {
+      *tex_abs_path = cache_it->second.tex_abs_path;
+    }
+    *dst = cache_it->second.texture;
+    if (shader_out) {
+      *shader_out = cache_it->second.shader;
+    }
+    return cache_it->second.found;
+  }
+
+  auto cache_result = [&](bool found, const Path &resolved_path,
+                          const UsdUVTexture *texture,
+                          const Shader *shader) {
+    UVConnectionResolveCacheEntry entry;
+    entry.found = found;
+    entry.tex_abs_path = resolved_path;
+    entry.texture = texture;
+    entry.shader = shader;
+    resolve_cache.uv_texture_by_connection[cache_key] = std::move(entry);
+  };
 
   // NOTE: no `outputs:rgba` in the spec.
   constexpr auto kOutputsRGB = "outputs:rgb";
@@ -5905,12 +6064,14 @@ nonstd::expected<bool, std::string> GetConnectedUVTexture(
           (*tex_abs_path) = ng_output_path;
         }
 
+        cache_result(true, ng_output_path, ptex, pshader);
         return true;
       }
       // Shader exists but it's not a UsdUVTexture - this is OK, NodeGraph might connect to other shader types
       // Return false (not found) rather than error
       DCOUT(fmt::format("NodeGraph {} output {} connects to Shader {} but it's not UsdUVTexture",
                         prim_part, prop_part, next_prim_part));
+      cache_result(false, ng_output_path, nullptr, pshader);
       return false;
     }
 
@@ -5918,6 +6079,7 @@ nonstd::expected<bool, std::string> GetConnectedUVTexture(
     // This is not necessarily an error - the connection might be to a MaterialX shader or other node type
     DCOUT(fmt::format("NodeGraph {} output {} connects to {} (type: {}), not a UsdUVTexture",
                       prim_part, prop_part, next_prim_part, next_prim->prim_type_name()));
+    cache_result(false, ng_output_path, nullptr, nullptr);
     return false;
   }
 
@@ -5942,6 +6104,7 @@ nonstd::expected<bool, std::string> GetConnectedUVTexture(
         (*shader_out) = pshader;
       }
 
+      cache_result(true, Path(prim_part, prop_part), ptex, pshader);
       return true;
     }
   }
@@ -5972,6 +6135,38 @@ nonstd::expected<bool, std::string> GetConnectedMtlxTexture(
   const Path &path = src.get_connections()[0];
   const std::string prim_part = path.prim_part();
   const std::string prop_part = path.prop_part();
+  const std::string cache_key =
+      path.full_path_name() + "|" + default_texcoords_primvar_name;
+  ConnectionResolveCache &resolve_cache = GetConnectionResolveCache(stage);
+
+  auto mtlx_cache_it =
+      resolve_cache.mtlx_texture_by_connection.find(cache_key);
+  if (mtlx_cache_it != resolve_cache.mtlx_texture_by_connection.end()) {
+    if (tex_abs_path) {
+      *tex_abs_path = mtlx_cache_it->second.tex_abs_path;
+    }
+    if (image_shader_out) {
+      *image_shader_out = mtlx_cache_it->second.image_shader;
+    }
+    if (st_varname_out) {
+      *st_varname_out = mtlx_cache_it->second.st_varname;
+    }
+    if (assetInfo_out) {
+      *assetInfo_out = mtlx_cache_it->second.asset_info;
+    }
+    return true;
+  }
+
+  auto cache_result = [&](const Path &resolved_path, const Shader *image_shader,
+                          const std::string &st_varname,
+                          const AssetInfo *asset_info) {
+    MtlxConnectionResolveCacheEntry entry;
+    entry.tex_abs_path = resolved_path;
+    entry.image_shader = image_shader;
+    entry.st_varname = st_varname;
+    entry.asset_info = asset_info;
+    resolve_cache.mtlx_texture_by_connection[cache_key] = std::move(entry);
+  };
 
   DCOUT("Checking MaterialX connection: " << path.full_path_name());
   DCOUT("  prim_part: " << prim_part);
@@ -6185,6 +6380,9 @@ nonstd::expected<bool, std::string> GetConnectedMtlxTexture(
         *st_varname_out = default_texcoords_primvar_name.empty() ? "st" : default_texcoords_primvar_name;
       }
 
+      cache_result(current_path, image_shader,
+                   default_texcoords_primvar_name.empty() ? "st" : default_texcoords_primvar_name,
+                   nullptr);
       return true;
     }
 
@@ -8678,6 +8876,37 @@ bool RenderSceneConverter::ConvertSkelAnimation(const RenderSceneConverterEnv &e
   // TypedTimeSamples into per-joint samplers. Avoids copying all frame data
   // into intermediate vectors.
   if (joints.size()) {
+    if (skeleton_id < 0 || skeleton_id >= int32_t(skeletons.size())) {
+      PUSH_ERROR_AND_RETURN(fmt::format(
+          "Invalid skeleton_id {} for SkelAnimation {}",
+          skeleton_id, abs_path.full_path_name()));
+    }
+
+    // SkelAnimation::joints ordering may differ from Skeleton::joints ordering.
+    // Build an explicit animation-joint -> skeleton-joint remap once, then use
+    // canonical skeleton joint IDs in all emitted channels.
+    auto cache_it = _skelNameToIndexCache.find(skeleton_id);
+    if (cache_it == _skelNameToIndexCache.end()) {
+      cache_it = _skelNameToIndexCache
+                     .emplace(skeleton_id,
+                              BuildSkelNameToIndexMap(skeletons[size_t(skeleton_id)]))
+                     .first;
+    }
+    const auto &token_to_index_map = cache_it->second;
+
+    auto normalize_joint_token = [](const std::string &token) {
+      if (!token.empty() && token[0] == '/') {
+        return token.substr(1);
+      }
+      return token;
+    };
+
+    std::unordered_map<std::string, int32_t> normalized_to_index;
+    normalized_to_index.reserve(token_to_index_map.size() * 2);
+    for (const auto &item : token_to_index_map) {
+      normalized_to_index[normalize_joint_token(item.first)] = int32_t(item.second);
+    }
+
     Animatable<std::vector<value::float3>> translations;
     if (!skelAnim.translations.get_value(&translations)) {
       PUSH_ERROR_AND_RETURN(fmt::format("Failed to get `translations` attribute of SkelAnimation: {}", abs_path));
@@ -8694,6 +8923,26 @@ bool RenderSceneConverter::ConvertSkelAnimation(const RenderSceneConverterEnv &e
     }
 
     size_t nJoints = joints.size();
+    std::vector<int32_t> anim_joint_to_skel_joint(nJoints, -1);
+    for (size_t j = 0; j < nJoints; j++) {
+      const std::string joint_token = joints[j].str();
+
+      auto token_it = token_to_index_map.find(joint_token);
+      if (token_it != token_to_index_map.end()) {
+        anim_joint_to_skel_joint[j] = int32_t(token_it->second);
+        continue;
+      }
+
+      auto norm_it = normalized_to_index.find(normalize_joint_token(joint_token));
+      if (norm_it != normalized_to_index.end()) {
+        anim_joint_to_skel_joint[j] = norm_it->second;
+        continue;
+      }
+
+      PUSH_ERROR_AND_RETURN(fmt::format(
+          "SkelAnimation joint token '{}' is not found in Skeleton {} (id={})",
+          joint_token, skeletons[size_t(skeleton_id)].abs_path, skeleton_id));
+    }
 
     // Count frames for each property (first pass - no data copy)
     size_t nTransTimes = 0, nRotTimes = 0, nScaleTimes = 0;
@@ -8747,6 +8996,7 @@ bool RenderSceneConverter::ConvertSkelAnimation(const RenderSceneConverterEnv &e
 
     // Setup channels (no value arrays yet — will be assigned after scatter)
     for (size_t j = 0; j < nJoints; j++) {
+      const int32_t resolved_joint_id = anim_joint_to_skel_joint[j];
       size_t samplerOff = baseSamplerIdx + j * nProps;
       size_t channelOff = baseChannelIdx + j * nProps;
       size_t pi = 0;
@@ -8756,7 +9006,7 @@ bool RenderSceneConverter::ConvertSkelAnimation(const RenderSceneConverterEnv &e
         ch.target_type = ChannelTargetType::SkeletonJoint;
         ch.path = AnimationPath::Translation;
         ch.skeleton_id = skeleton_id;
-        ch.joint_id = int32_t(j);
+        ch.joint_id = resolved_joint_id;
         ch.sampler = int32_t(samplerOff + pi);
         pi++;
       }
@@ -8766,7 +9016,7 @@ bool RenderSceneConverter::ConvertSkelAnimation(const RenderSceneConverterEnv &e
         ch.target_type = ChannelTargetType::SkeletonJoint;
         ch.path = AnimationPath::Rotation;
         ch.skeleton_id = skeleton_id;
-        ch.joint_id = int32_t(j);
+        ch.joint_id = resolved_joint_id;
         ch.sampler = int32_t(samplerOff + pi);
         pi++;
       }
@@ -8776,7 +9026,7 @@ bool RenderSceneConverter::ConvertSkelAnimation(const RenderSceneConverterEnv &e
         ch.target_type = ChannelTargetType::SkeletonJoint;
         ch.path = AnimationPath::Scale;
         ch.skeleton_id = skeleton_id;
-        ch.joint_id = int32_t(j);
+        ch.joint_id = resolved_joint_id;
         ch.sampler = int32_t(samplerOff + pi);
         pi++;
       }
@@ -8930,53 +9180,14 @@ bool RenderSceneConverter::ConvertSkelAnimation(const RenderSceneConverterEnv &e
     }
   }
 
-  // BlendShape animations
+  // BlendShape animations currently need mesh-node target resolution.
+  // The current conversion stage does not have stable node indices yet, so
+  // emitting Weights channels here would produce invalid target_node values.
   if (blendShapes.size()) {
-    Animatable<std::vector<float>> weights;
-    if (!skelAnim.blendShapeWeights.get_value(&weights)) {
-      PUSH_ERROR_AND_RETURN(fmt::format("Failed to get `blendShapeWeights` attribute: {}", abs_path));
-    }
-
-    if (weights.has_timesamples()) {
-      const TypedTimeSamples<std::vector<float>> &ts_weights = weights.get_timesamples();
-
-      std::vector<double> weight_times;
-      std::vector<std::vector<float>> weight_samples;
-
-      FOREACH_TIMESAMPLES_BEGIN(ts_weights, sample_t, sample_value, sample_blocked)
-        if (sample_value.size() != blendShapes.size()) {
-          PUSH_ERROR_AND_RETURN(fmt::format("blendShapeWeights size mismatch at time {}: {} != {}",
-            sample_t, sample_value.size(), blendShapes.size()));
-        }
-        weight_times.push_back(sample_t);
-        weight_samples.push_back(sample_value);
-        if (float(sample_t) > anim_out->duration) anim_out->duration = float(sample_t);
-      FOREACH_TIMESAMPLES_END()
-
-      // Create one sampler with all weights (glTF morph targets style)
-      if (!weight_times.empty()) {
-        KeyframeSampler weight_sampler;
-        weight_sampler.times.reserve(weight_times.size());
-        weight_sampler.values.reserve(weight_times.size() * blendShapes.size());
-        weight_sampler.interpolation = AnimationInterpolation::Linear;
-
-        for (size_t t = 0; t < weight_times.size(); t++) {
-          weight_sampler.times.push_back(float(weight_times[t]));
-          for (size_t w = 0; w < blendShapes.size(); w++) {
-            weight_sampler.values.push_back(weight_samples[t][w]);
-          }
-        }
-
-        int32_t sampler_idx = int32_t(anim_out->samplers.size());
-        anim_out->samplers.push_back(weight_sampler);
-
-        AnimationChannel channel;
-        channel.path = AnimationPath::Weights;
-        channel.target_node = -1;  // Weights target the mesh, not a specific node
-        channel.sampler = sampler_idx;
-        anim_out->channels.push_back(channel);
-      }
-    }
+    PUSH_WARN(fmt::format(
+        "Skipping blendShapeWeights conversion for SkelAnimation {} "
+        "(mesh target resolution not implemented yet)",
+        abs_path.full_path_name()));
   }
 
   return true;
@@ -8985,7 +9196,7 @@ bool RenderSceneConverter::ConvertSkelAnimation(const RenderSceneConverterEnv &e
 // Helper function: Quaternion multiplication using direct member access
 // (avoids operator[] pointer arithmetic overhead)
 // q1 * q2, Hamilton convention
-static inline value::quatf quat_mul(const value::quatf &q1, const value::quatf &q2) {
+[[maybe_unused]] static inline value::quatf quat_mul(const value::quatf &q1, const value::quatf &q2) {
   const float x1 = q1.imag[0], y1 = q1.imag[1], z1 = q1.imag[2], w1 = q1.real;
   const float x2 = q2.imag[0], y2 = q2.imag[1], z2 = q2.imag[2], w2 = q2.real;
   value::quatf r;
@@ -9557,6 +9768,7 @@ static NodeCategory GetNodeCategoryFromType(NodeType nodeType) {
       return NodeCategory::Geom;
     case NodeType::Camera:
       return NodeCategory::Camera;
+    case NodeType::SkelRoot:
     case NodeType::Skeleton:
       return NodeCategory::Skeleton;
     case NodeType::PointLight:
@@ -9753,6 +9965,22 @@ bool RenderSceneConverter::BuildNodeHierarchyImpl(
       } else {
         rnode.id = -1;
       }
+    } else if (prim->type_id() == value::TYPE_ID_SKEL_ROOT) {
+      // UsdSkelRoot: encapsulation prim for skinned subtree.
+      // SkelRoot is Xformable and its world transform (skelLocalToWorld)
+      // positions the skinned result in world space.
+      rnode.local_matrix = node.get_local_matrix();
+      rnode.global_matrix = node.get_world_matrix();
+      rnode.has_resetXform = node.has_resetXformStack();
+      rnode.nodeType = NodeType::SkelRoot;
+    } else if (prim->type_id() == value::TYPE_ID_SKELETON) {
+      // UsdSkeleton: joint hierarchy with bindTransforms and restTransforms.
+      // Skeleton is Xformable; its world transform contributes to
+      // skelLocalToWorld for positioning skinned results.
+      rnode.local_matrix = node.get_local_matrix();
+      rnode.global_matrix = node.get_world_matrix();
+      rnode.has_resetXform = node.has_resetXformStack();
+      rnode.nodeType = NodeType::Skeleton;
     } else {
       // ignore other node types.
       DCOUT("Unknown/Unsupported prim. " << prim->type_name());
@@ -10404,7 +10632,9 @@ bool RenderSceneConverter::ConvertToRenderScene(
   _skelPathToIndex.clear();
   _animPathToIndex.clear();
   _skelNameToIndexCache.clear();
+  _skelRootToSkeleton.clear();
   _uvNameCache.clear();
+  ResetConnectionResolveCache(env.stage);
 
   // Report initial progress
   if (!CallProgressCallback(0.0f)) {
@@ -10499,6 +10729,10 @@ bool RenderSceneConverter::ConvertToRenderScene(
   printf("[Tydra] Pre-discovered %zu skeletons, %zu skelroots, %zu animations\n",
          allSkeletons.size(), allSkelRoots.size(), allAnimations.size());
 
+  SkelRootSkeletonResolver::BuildMap(allSkeletons, allSkelRoots,
+                                     &_skelRootToSkeleton);
+  DCOUT("Precomputed SkelRoot->Skeleton entries: " << _skelRootToSkeleton.size());
+
   // Total meshes includes GeomMesh, GeomCube, and GeomSphere (all converted to meshes)
   const size_t total_meshes = meshPrimMap.size() + cubePrimMap.size() + spherePrimMap.size();
   const size_t total_materials = materialPrimMap.size();
@@ -10569,14 +10803,23 @@ bool RenderSceneConverter::ConvertToRenderScene(
 
   bool ret = tydra::VisitPrims(env.stage, MeshVisitor, &menv, &err);
 
+  if (!ret) {
+    PUSH_ERROR_AND_RETURN(err);
+  }
+
+  // Convert all SkelAnimation prims now that all skeletons have been discovered.
+  // This supports multiple animations per skeleton (when animationSource is a pathvector).
+  DCOUT("Converting all SkelAnimation prims...");
+  if (!ConvertAllSkelAnimations(env)) {
+    PUSH_ERROR_AND_RETURN("Failed to convert SkelAnimation prims");
+  }
+  DCOUT("SkelAnimation conversion complete");
+
   // Clear temporary pointers
   _allSkeletons = nullptr;
   _allSkelRoots = nullptr;
   _allAnimations = nullptr;
-
-  if (!ret) {
-    PUSH_ERROR_AND_RETURN(err);
-  }
+  _skelRootToSkeleton.clear();
 
   // Report progress after mesh/material conversion (70%)
   _progress_info.stage = DetailedProgressInfo::Stage::BuildingHierarchy;
@@ -10617,19 +10860,12 @@ bool RenderSceneConverter::ConvertToRenderScene(
   // 6. Extract xformOp animations from nodes with time-sampled transforms
   //
   {
-    // Helper to count nodes in subtree (defined first so it can be used in extractAnimationsFromNode)
-    std::function<size_t(const XformNode&)> CountNodesInSubtree;
-    CountNodesInSubtree = [&](const XformNode& node) -> size_t {
-      size_t count = 1;  // Count this node
-      for (const auto& child : node.children) {
-        count += CountNodesInSubtree(child);
-      }
-      return count;
-    };
+    // Single-pass depth-first traversal with stable node indices.
+    // This avoids repeatedly counting subtree sizes.
+    std::function<void(const XformNode&, int32_t&)> extractAnimationsFromNode;
+    extractAnimationsFromNode = [&](const XformNode& node, int32_t& next_node_index) {
+      const int32_t node_index = next_node_index++;
 
-    // Helper lambda to recursively extract xformOp animations from node hierarchy
-    std::function<void(const XformNode&, int32_t)> extractAnimationsFromNode;
-    extractAnimationsFromNode = [&](const XformNode& node, int32_t node_index) {
       // Check if this node has a prim with xformOps
       if (node.prim && IsXformablePrim(*node.prim)) {
         const Xformable *xformable = nullptr;
@@ -10655,22 +10891,14 @@ bool RenderSceneConverter::ConvertToRenderScene(
         }
       }
 
-      // Recursively process children
-      // Note: we increment node_index as we traverse depth-first
-      int32_t child_start_index = node_index + 1;
-      for (size_t i = 0; i < node.children.size(); i++) {
-        extractAnimationsFromNode(node.children[i], child_start_index);
-        // Approximate: each child subtree takes some nodes
-        // This is a simplified approach; proper implementation would track exact indices
-        child_start_index += int32_t(CountNodesInSubtree(node.children[i]));
+      for (const auto& child : node.children) {
+        extractAnimationsFromNode(child, next_node_index);
       }
     };
 
-    // Process each root node
     int32_t current_node_index = 0;
     for (const auto& root : xform_node.children) {
       extractAnimationsFromNode(root, current_node_index);
-      current_node_index += int32_t(CountNodesInSubtree(root));
     }
   }
 
@@ -10834,6 +11062,8 @@ bool RenderSceneConverter::ConvertSkeletonFromPtr(const RenderSceneConverterEnv 
                        const std::string &primName,
                        int32_t skeleton_id,
                        SkelHierarchy *out_skel, nonstd::optional<AnimationClip> *out_anim) {
+  (void)env;
+  (void)skeleton_id;
 
   if (!out_skel) {
     return false;
@@ -10849,45 +11079,12 @@ bool RenderSceneConverter::ConvertSkeletonFromPtr(const RenderSceneConverterEnv 
   dst.display_name = skel.metas().has_displayName() ? skel.metas().get_displayName() : "";
   dst.root_node = root;
 
-  // Handle animation source
-  if (skel.animationSource.has_value()) {
-    DCOUT("skel:animationSource (from ptr)");
-
-    const Relationship &animSourceRel = skel.animationSource.value();
-
-    Path animSourcePath;
-
-    if (animSourceRel.is_path()) {
-      animSourcePath = animSourceRel.targetPath;
-    } else if (animSourceRel.is_pathvector()) {
-      if (animSourceRel.targetPathVector.size()) {
-        animSourcePath = animSourceRel.targetPathVector[0];
-      } else {
-        PUSH_ERROR_AND_RETURN("`skel:animationSource` has invalid definition.");
-      }
-    } else {
-      PUSH_ERROR_AND_RETURN("`skel:animationSource` has invalid definition.");
-    }
-
-    const Prim *animSourcePrim{nullptr};
-    if (!env.stage.find_prim_at_path(animSourcePath, animSourcePrim, &_err)) {
-      return false;
-    }
-
-    if (const auto panim = animSourcePrim->as<SkelAnimation>()) {
-      DCOUT("Convert SkelAnimation (from ptr)");
-      AnimationClip anim;
-      if (!ConvertSkelAnimation(env, animSourcePath, *panim, skeleton_id, &anim)) {
-        return false;
-      }
-
-      DCOUT("Converted SkelAnimation (from ptr)");
-      (*out_anim) = std::move(anim);
-
-    } else {
-      PUSH_ERROR_AND_RETURN(fmt::format("Target Prim of `skel:animationSource` must be `SkelAnimation` Prim, but got `{}`.", animSourcePrim->prim_type_name()));
-    }
-  }
+  // NOTE: Animation extraction moved to ConvertAllSkelAnimations() to support
+  // multiple animations per skeleton (animationSource can be a pathvector).
+  // Previously only the first animation was extracted here.
+  // The skel:animationSource relationship is now processed separately after
+  // all skeletons are discovered.
+  (void)out_anim; // Suppress unused parameter warning
 
   (*out_skel) = std::move(dst);
   return true;
@@ -10896,6 +11093,7 @@ bool RenderSceneConverter::ConvertSkeletonFromPtr(const RenderSceneConverterEnv 
 bool RenderSceneConverter::ConvertSkeletonImplWithPath(const RenderSceneConverterEnv &env, const Path &skelPath,
                        int32_t skeleton_id,
                        SkelHierarchy *out_skel, nonstd::optional<AnimationClip> *out_anim) {
+  (void)skeleton_id;
 
   if (!out_skel) {
     return false;
@@ -10918,47 +11116,12 @@ bool RenderSceneConverter::ConvertSkeletonImplWithPath(const RenderSceneConverte
       dst.display_name = pskel->metas().has_displayName() ? pskel->metas().get_displayName() : "";
       dst.root_node = root;
 
-      if (pskel->animationSource.has_value()) {
-        DCOUT("skel:animationSource");
-
-        const Relationship &animSourceRel = pskel->animationSource.value();
-
-        Path animSourcePath;
-
-        if (animSourceRel.is_path()) {
-          animSourcePath = animSourceRel.targetPath;
-        } else if (animSourceRel.is_pathvector()) {
-          // Use the first one
-          if (animSourceRel.targetPathVector.size()) {
-            animSourcePath = animSourceRel.targetPathVector[0];
-          } else {
-            PUSH_ERROR_AND_RETURN("`skel:animationSource` has invalid definition.");
-          }
-        } else {
-          PUSH_ERROR_AND_RETURN("`skel:animationSource` has invalid definition.");
-        }
-
-        const Prim *animSourcePrim{nullptr};
-        if (!env.stage.find_prim_at_path(animSourcePath, animSourcePrim, &_err)) {
-          return false;
-        }
-
-        if (const auto panim = animSourcePrim->as<SkelAnimation>()) {
-          DCOUT("Convert SkelAnimation");
-          AnimationClip anim;
-          if (!ConvertSkelAnimation(env, animSourcePath, *panim, skeleton_id, &anim)) {
-            return false;
-          }
-
-          DCOUT("Converted SkelAnimation");
-          (*out_anim) = std::move(anim);
-
-        } else {
-          PUSH_ERROR_AND_RETURN(fmt::format("Target Prim of `skel:animationSource` must be `SkelAnimation` Prim, but got `{}`.", animSourcePrim->prim_type_name()));
-        }
-
-
-      }
+      // NOTE: Animation extraction moved to ConvertAllSkelAnimations() to support
+      // multiple animations per skeleton (animationSource can be a pathvector).
+      // Previously only the first animation was extracted here.
+      // The skel:animationSource relationship is now processed separately after
+      // all skeletons are discovered.
+      (void)out_anim; // Suppress unused parameter warning
     } else {
       PUSH_ERROR_AND_RETURN("Prim is not Skeleton.");
     }
@@ -10968,6 +11131,121 @@ bool RenderSceneConverter::ConvertSkeletonImplWithPath(const RenderSceneConverte
   }
 
   PUSH_ERROR_AND_RETURN("`skel:skeleton` path is invalid.");
+}
+
+bool RenderSceneConverter::ConvertAllSkelAnimations(const RenderSceneConverterEnv &env) {
+  // This method processes all SkelAnimation prims discovered during pre-processing.
+  // For each SkelAnimation, we find which Skeleton(s) reference it via their
+  // skel:animationSource relationship, then convert it with the correct skeleton_id.
+  // This supports multiple animations per skeleton (when animationSource is a pathvector).
+
+  if (!_allAnimations || _allAnimations->empty()) {
+    return true; // No animations to process
+  }
+
+  DCOUT("ConvertAllSkelAnimations: processing " << _allAnimations->size() << " SkelAnimation prims");
+
+  // Build reverse map: animationPath -> list of skeleton_ids that reference it
+  std::map<std::string, std::vector<int32_t>> animPathToSkelIds;
+
+  // Iterate through all converted skeletons to build the reverse map
+  for (const auto &skelEntry : _skelPathToIndex) {
+    const std::string &skelPathStr = skelEntry.first;
+    const int32_t skel_id = skelEntry.second;
+
+    // Find the Skeleton prim in the stage
+    Path skelPath(skelPathStr, "");
+    const Prim *skelPrim{nullptr};
+    if (!env.stage.find_prim_at_path(skelPath, skelPrim, &_err)) {
+      continue; // Skip if skeleton prim not found
+    }
+
+    const auto *pskel = skelPrim->as<Skeleton>();
+    if (!pskel || !pskel->animationSource.has_value()) {
+      continue; // No animation source relationship
+    }
+
+    const Relationship &animSourceRel = pskel->animationSource.value();
+    std::vector<Path> animPaths;
+
+    // Extract all animation paths from the relationship
+    if (animSourceRel.is_path()) {
+      animPaths.push_back(animSourceRel.targetPath);
+    } else if (animSourceRel.is_pathvector()) {
+      animPaths = animSourceRel.targetPathVector;
+    }
+
+    // Add this skeleton_id to all animation paths it references
+    for (const Path &animPath : animPaths) {
+      std::string animPathStr = animPath.prim_part();
+      animPathToSkelIds[animPathStr].push_back(skel_id);
+    }
+  }
+
+  DCOUT("Built reverse map: " << animPathToSkelIds.size() << " animations referenced by skeletons");
+
+  // Now convert each SkelAnimation prim
+  for (const auto &animEntry : *_allAnimations) {
+    const std::string &animPathStr = animEntry.first;
+    const SkelAnimation *panimPtr = animEntry.second;
+
+    if (!panimPtr) {
+      PUSH_WARN("Null SkelAnimation pointer for path: " + animPathStr);
+      continue;
+    }
+
+    // Find which skeleton(s) reference this animation
+    auto it = animPathToSkelIds.find(animPathStr);
+    if (it == animPathToSkelIds.end() || it->second.empty()) {
+      // Animation not referenced by any skeleton - this is valid (orphaned animation)
+      DCOUT("SkelAnimation " << animPathStr << " not referenced by any skeleton (skipping)");
+      continue;
+    }
+
+    // Convert the animation for each skeleton that references it
+    for (int32_t skeleton_id : it->second) {
+      // Check if this animation was already converted for this skeleton
+      // (to avoid duplicates if multiple meshes share the same skeleton)
+      std::string cacheKey = animPathStr + ":" + std::to_string(skeleton_id);
+      if (_animPathToIndex.find(cacheKey) != _animPathToIndex.end()) {
+        DCOUT("Animation " << animPathStr << " already converted for skeleton " << skeleton_id);
+        continue;
+      }
+
+      Path animPath(animPathStr, "");
+      AnimationClip anim;
+
+      if (!ConvertSkelAnimation(env, animPath, *panimPtr, skeleton_id, &anim)) {
+        PUSH_WARN("Failed to convert SkelAnimation: " + animPathStr + " for skeleton " + std::to_string(skeleton_id));
+        continue;
+      }
+
+      DCOUT("Converted SkelAnimation " << animPathStr << " for skeleton " << skeleton_id);
+
+      // Add to animations vector
+      int32_t anim_id = int32_t(animations.size());
+      _animPathToIndex[cacheKey] = anim_id;
+      animations.emplace_back(std::move(anim));
+
+      // Update skeleton's animation IDs.
+      if (skeleton_id >= 0 && skeleton_id < int32_t(skeletons.size())) {
+        auto &skel = skeletons[static_cast<size_t>(skeleton_id)];
+        if (std::find(skel.anim_ids.begin(), skel.anim_ids.end(), anim_id) ==
+            skel.anim_ids.end()) {
+          skel.anim_ids.push_back(anim_id);
+        }
+
+        // Keep legacy default animation field for backward compatibility.
+        if (skeletons[static_cast<size_t>(skeleton_id)].anim_id < 0) {
+          skeletons[static_cast<size_t>(skeleton_id)].anim_id = anim_id;
+          DCOUT("Set skeleton " << skeleton_id << " anim_id to " << anim_id);
+        }
+      }
+    }
+  }
+
+  DCOUT("ConvertAllSkelAnimations: converted " << animations.size() << " animation clips");
+  return true;
 }
 
 bool DefaultTextureImageLoaderFunction(
@@ -11441,6 +11719,10 @@ std::string DumpSkeleton(const SkelHierarchy &skel, uint32_t indent) {
      << "\n";
   ss << pprint::Indent(indent + 1) << "anim_id " << skel.anim_id
      << "\n";
+  if (!skel.anim_ids.empty()) {
+    ss << pprint::Indent(indent + 1) << "anim_ids "
+       << quote(value::print_array_snipped(skel.anim_ids)) << "\n";
+  }
   ss << pprint::Indent(indent + 1) << "display_name "
      << quote(skel.display_name) << "\n";
 
@@ -12259,6 +12541,7 @@ bool RenderSceneConverter::MergeMeshesImpl(const RenderSceneConverterEnv &env) {
 
   std::vector<MeshNodeInfo> mesh_node_infos;
   mesh_node_infos.resize(meshes.size());
+  std::vector<std::vector<Node *>> mesh_nodes_by_id(meshes.size());
 
   // Helper to traverse nodes and collect mesh info
   std::function<void(Node &)> collectMeshNodes = [&](Node &node) {
@@ -12267,6 +12550,7 @@ bool RenderSceneConverter::MergeMeshesImpl(const RenderSceneConverterEnv &env) {
       mesh_node_infos[size_t(node.id)].node = &node;
       mesh_node_infos[size_t(node.id)].global_matrix = node.global_matrix;
       mesh_node_infos[size_t(node.id)].mesh_index = size_t(node.id);
+      mesh_nodes_by_id[size_t(node.id)].push_back(&node);
     }
     for (auto &child : node.children) {
       collectMeshNodes(child);
@@ -12297,8 +12581,8 @@ bool RenderSceneConverter::MergeMeshesImpl(const RenderSceneConverterEnv &env) {
 
   // For each material group with 2+ meshes, merge them
   std::vector<RenderMesh> merged_meshes;
-  std::map<size_t, int32_t> old_to_new_mesh_id;  // old mesh index -> new merged mesh index
-  std::set<size_t> meshes_to_remove;
+  std::vector<std::pair<int32_t, std::vector<size_t>>> merged_groups;
+  [[maybe_unused]] size_t merged_source_mesh_count{0};
 
   for (auto &kv : material_to_meshes) {
     int material_id = kv.first;
@@ -12355,6 +12639,9 @@ bool RenderSceneConverter::MergeMeshesImpl(const RenderSceneConverterEnv &env) {
     // If baking transforms, we transform all vertices to world space
     // The merged mesh will have identity transform
 
+    std::vector<size_t> merged_sources;
+    merged_sources.reserve(mesh_indices.size());
+
     for (size_t idx : mesh_indices) {
       const auto &src_mesh = meshes[idx];
       const auto &node_info = mesh_node_infos[idx];
@@ -12373,8 +12660,15 @@ bool RenderSceneConverter::MergeMeshesImpl(const RenderSceneConverterEnv &env) {
         continue;
       }
 
-      meshes_to_remove.insert(idx);
+      merged_sources.push_back(idx);
     }
+
+    if (merged_sources.size() < 2) {
+      // Nothing useful to merge for this material group.
+      continue;
+    }
+
+    merged_source_mesh_count += merged_sources.size();
 
     // The merged mesh is either in world space (if bake_transform) or
     // shares the transform of the first mesh
@@ -12384,10 +12678,8 @@ bool RenderSceneConverter::MergeMeshesImpl(const RenderSceneConverterEnv &env) {
     size_t new_mesh_index = meshes.size() + merged_meshes.size();
     merged_meshes.push_back(std::move(merged));
 
-    // Map old mesh indices to new merged mesh index
-    for (size_t idx : mesh_indices) {
-      old_to_new_mesh_id[idx] = static_cast<int32_t>(new_mesh_index);
-    }
+    merged_groups.emplace_back(static_cast<int32_t>(new_mesh_index),
+                               std::move(merged_sources));
   }
 
   if (merged_meshes.empty()) {
@@ -12395,48 +12687,45 @@ bool RenderSceneConverter::MergeMeshesImpl(const RenderSceneConverterEnv &env) {
     return true;
   }
 
-  DCOUT("Created " << merged_meshes.size() << " merged meshes from " << meshes_to_remove.size() << " source meshes");
+  DCOUT("Created " << merged_meshes.size() << " merged meshes from "
+                   << merged_source_mesh_count << " source meshes");
 
   // Add merged meshes to the mesh array
   for (auto &mm : merged_meshes) {
     meshes.push_back(std::move(mm));
   }
 
-  // Update node references
-  // For merged meshes, we keep only the first node pointing to the merged mesh
-  // and invalidate the other nodes (set id = -1)
-  std::set<int32_t> used_merged_ids;
+  // Update node references for merged sources only.
+  // Keep only one node per merged mesh and invalidate the rest.
+  for (const auto &group : merged_groups) {
+    int32_t new_id = group.first;
+    const auto &source_ids = group.second;
+    bool first_assigned = false;
 
-  std::function<void(Node &)> updateNodeMeshRefs = [&](Node &node) {
-    if (node.nodeType == NodeType::Mesh && node.id >= 0) {
-      size_t old_id = size_t(node.id);
-      auto it = old_to_new_mesh_id.find(old_id);
-      if (it != old_to_new_mesh_id.end()) {
-        int32_t new_id = it->second;
-        if (used_merged_ids.count(new_id) == 0) {
-          // First node for this merged mesh - update to point to merged mesh
-          node.id = new_id;
-          used_merged_ids.insert(new_id);
+    for (size_t old_id : source_ids) {
+      if (old_id >= mesh_nodes_by_id.size()) {
+        continue;
+      }
+
+      for (Node *node_ptr : mesh_nodes_by_id[old_id]) {
+        if (!node_ptr) {
+          continue;
+        }
+
+        if (!first_assigned) {
+          node_ptr->id = new_id;
+          first_assigned = true;
 
           // If we baked transforms, reset the node's transform to identity
           if (env.scene_config.merge_meshes_bake_transform) {
-            node.local_matrix = value::matrix4d::identity();
-            node.global_matrix = value::matrix4d::identity();
+            node_ptr->local_matrix = value::matrix4d::identity();
+            node_ptr->global_matrix = value::matrix4d::identity();
           }
         } else {
-          // This mesh was merged and this is not the first node
-          // Mark as invalid (mesh is now part of merged mesh)
-          node.id = -1;
+          node_ptr->id = -1;
         }
       }
     }
-    for (auto &child : node.children) {
-      updateNodeMeshRefs(child);
-    }
-  };
-
-  for (auto &root : root_nodes) {
-    updateNodeMeshRefs(root);
   }
 
   return true;

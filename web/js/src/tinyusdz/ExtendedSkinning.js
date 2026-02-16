@@ -12,6 +12,7 @@
  */
 
 import * as THREE from 'three';
+import { toOwnedFloat32Array } from './TypedArrayOwnership.js';
 
 /**
  * Skinning modes based on bone influence count
@@ -332,7 +333,7 @@ function addTextureBasedSkinning(geometry, jointIndices, jointWeights, influence
 /**
  * Create an extended skinning material that supports configurable bone counts
  *
- * @param {THREE.Material} baseMaterial - Base material to extend
+ * @param {THREE.Material|THREE.Material[]} baseMaterial - Base material to extend
  * @param {Object} [options] - Options
  * @param {number} [options.maxInfluences=4] - Maximum bone influences (4, 8, 16, 32, 64)
  * @param {THREE.DataTexture} [options.boneDataTexture] - Texture for 16+ bone mode
@@ -341,6 +342,13 @@ function addTextureBasedSkinning(geometry, jointIndices, jointWeights, influence
  * @returns {THREE.Material} Material with extended skinning support
  */
 export function createExtendedSkinningMaterial(baseMaterial, options = {}) {
+    if (Array.isArray(baseMaterial)) {
+        return baseMaterial.map((mat) => createExtendedSkinningMaterial(mat, options));
+    }
+    if (!baseMaterial || typeof baseMaterial.clone !== 'function') {
+        throw new Error('createExtendedSkinningMaterial expects a THREE.Material or material array');
+    }
+
     const maxInfluences = options.maxInfluences || 4;
     const mode = getSkinningMode(maxInfluences);
     const texelsPerVertex = options.texelsPerVertex || Math.ceil(maxInfluences / 2);
@@ -634,6 +642,7 @@ export class ExtendedSkinnedMesh extends THREE.SkinnedMesh {
             this.maxInfluences = config.maxInfluences;
             this.skinningMode = config.mode;
             this.boneDataTexture = config.boneDataTexture;
+            this.texelsPerVertex = config.texelsPerVertex || 0;
         }
     }
 
@@ -650,7 +659,7 @@ export class ExtendedSkinnedMesh extends THREE.SkinnedMesh {
                 boneDataTexture: this.boneDataTexture,
                 texelsPerVertex: this.texelsPerVertex,
                 boneDataTexWidth: this.boneDataTexture ?
-                    Math.sqrt(this.boneDataTexture.image.width * this.boneDataTexture.image.height) : 1024
+                    this.boneDataTexture.image.width : 1024
             });
         }
     }
@@ -702,14 +711,9 @@ export function createBoneTextureFromWASM(wasmBoneTexture) {
         vertexOffsets
     } = wasmBoneTexture;
 
-    // Convert to Float32Array if needed (WASM may return regular array)
-    const textureDataArray = textureData instanceof Float32Array
-        ? textureData
-        : new Float32Array(textureData);
-
-    const offsetsArray = vertexOffsets instanceof Float32Array
-        ? vertexOffsets
-        : new Float32Array(vertexOffsets);
+    // Always copy into JS-owned buffers.
+    const textureDataArray = toOwnedFloat32Array(textureData, 'wasmBoneTexture.textureData');
+    const offsetsArray = toOwnedFloat32Array(vertexOffsets, 'wasmBoneTexture.vertexOffsets');
 
     // Create Three.js DataTexture
     const texture = new THREE.DataTexture(

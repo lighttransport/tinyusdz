@@ -8,6 +8,7 @@
  */
 
 import * as THREE from 'three';
+import { toOwnedFloat32Array, toOwnedUint32Array } from './TypedArrayOwnership.js';
 
 /**
  * Create a Three.js Skeleton from USD skeleton data.
@@ -37,8 +38,8 @@ export function createThreeSkeletonFromUSD(usdSkeleton, options = {}) {
   // Helper to parse matrix from USD format
   function parseMatrix(m) {
     const matrix = new THREE.Matrix4();
-    if (Array.isArray(m) && m.length === 16) {
-      matrix.fromArray(m);
+    if ((Array.isArray(m) || ArrayBuffer.isView(m)) && m.length === 16) {
+      matrix.fromArray(Array.from(m));
     } else if (m && m[0] !== undefined && Array.isArray(m[0])) {
       // Legacy 2D array format (4x4) - flatten to column-major
       const flat = [
@@ -435,32 +436,26 @@ export function createThreeAnimationClip(usdAnimation, skeleton, options = {}) {
 }
 
 /**
- * Create a Three.js SkinnedMesh from USD mesh and skeleton data
+ * Create a Three.js SkinnedMesh from USD mesh and skeleton data.
+ *
+ * IMPORTANT: bind() is called WITHOUT a custom bindMatrix. Three.js bind()
+ * internally sets bindMatrix = mesh.matrixWorld and computes
+ * boneInverses = inv(bone.matrixWorld) — both in world space.
+ * Passing USD geomBindTransform as bindMatrix is INCORRECT because it is in
+ * USD skeleton-local space, which does not match the world-space boneInverses
+ * computed by calculateInverses(). See skinning.md and MEMORY.md for details.
  *
  * @param {THREE.BufferGeometry} geometry - Geometry with skinning attributes
  * @param {THREE.Material} material - Material for the mesh
  * @param {THREE.Skeleton} skeleton - Skeleton for skinning
  * @param {Object} usdMesh - Original USD mesh data for reference
- * @param {Object} [options] - Creation options
- * @param {THREE.Matrix4} [options.geomBindTransform] - Optional geometry bind transform matrix
  * @returns {THREE.SkinnedMesh} Three.js SkinnedMesh
  */
-export function createSkinnedMesh(geometry, material, skeleton, usdMesh, options = {}) {
+export function createSkinnedMesh(geometry, material, skeleton, usdMesh) {
   const mesh = new THREE.SkinnedMesh(geometry, material);
   mesh.add(skeleton.bones[0]); // Add root bone to mesh
 
-  // Bind with optional geomBindTransform
-  // geomBindTransform defines the mesh's transform when it was bound to the skeleton
-  if (options.geomBindTransform) {
-    mesh.bind(skeleton, options.geomBindTransform);
-  } else if (usdMesh && usdMesh.geomBindTransform && usdMesh.geomBindTransform.length === 16) {
-    // Parse geomBindTransform from USD mesh data if provided as array
-    const bindMatrix = new THREE.Matrix4();
-    bindMatrix.fromArray(Array.from(usdMesh.geomBindTransform));
-    mesh.bind(skeleton, bindMatrix);
-  } else {
-    mesh.bind(skeleton);
-  }
+  mesh.bind(skeleton);
 
   // Store USD metadata
   if (usdMesh) {
@@ -538,22 +533,26 @@ export function createSkinnedMeshFromUSD(usd, meshId, skelId, animId, options = 
 
   // Add position attribute
   if (usdMesh.points && usdMesh.points.length > 0) {
-    geometry.setAttribute('position', new THREE.Float32BufferAttribute(usdMesh.points, 3));
+    geometry.setAttribute('position', new THREE.Float32BufferAttribute(
+      toOwnedFloat32Array(usdMesh.points, 'usdMesh.points'), 3));
   }
 
   // Add normal attribute
   if (usdMesh.normals && usdMesh.normals.length > 0) {
-    geometry.setAttribute('normal', new THREE.Float32BufferAttribute(usdMesh.normals, 3));
+    geometry.setAttribute('normal', new THREE.Float32BufferAttribute(
+      toOwnedFloat32Array(usdMesh.normals, 'usdMesh.normals'), 3));
   }
 
   // Add UV attribute
   if (usdMesh.texcoords && usdMesh.texcoords.length > 0) {
-    geometry.setAttribute('uv', new THREE.Float32BufferAttribute(usdMesh.texcoords, 2));
+    geometry.setAttribute('uv', new THREE.Float32BufferAttribute(
+      toOwnedFloat32Array(usdMesh.texcoords, 'usdMesh.texcoords'), 2));
   }
 
   // Add face indices
   if (usdMesh.faceVertexIndices && usdMesh.faceVertexIndices.length > 0) {
-    geometry.setIndex(new THREE.Uint32BufferAttribute(usdMesh.faceVertexIndices, 1));
+    geometry.setIndex(new THREE.Uint32BufferAttribute(
+      toOwnedUint32Array(usdMesh.faceVertexIndices, 'usdMesh.faceVertexIndices'), 1));
   }
 
   // Add skinning attributes
