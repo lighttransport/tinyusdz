@@ -71,20 +71,18 @@ export function buildSkeletonDataFromUSD(usdScene, options = {}) {
         const anim = usdScene.getAnimation(0);
         if (anim && anim.channels) {
           let maxJointId = -1;
-          const jointIds = new Set();
           for (const channel of anim.channels) {
             if (
               channel.target_type === 'SkeletonJoint' &&
               channel.joint_id !== undefined
             ) {
-              jointIds.add(channel.joint_id);
               maxJointId = Math.max(maxJointId, channel.joint_id);
             }
           }
 
           if (maxJointId >= 0) {
             logger.log(
-              `Building fallback skeleton from animation: ${jointIds.size} joints (max id: ${maxJointId})`
+              `Building fallback skeleton from animation: ${maxJointId + 1} joints (max id: ${maxJointId})`
             );
 
             const rootBoneContainer = new THREE.Bone();

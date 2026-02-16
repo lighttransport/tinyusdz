@@ -378,7 +378,6 @@ class TinyUSDZLoaderUtils extends LoaderUtils {
         const tex = usdScene.getTexture(textureId);
 
         const texImage = usdScene.getImage(tex.textureImageId);
-        //console.log("Loading texture from URI:", texImage);
 
         // there are 3 states for texture:
         // 1. URI only. Need to fetch texture(file) from URI in JS layer.
@@ -401,10 +400,8 @@ class TinyUSDZLoaderUtils extends LoaderUtils {
             }
 
         } else if (texImage.bufferId >= 0 && texImage.data) {
-            //console.log("case 2 or 3");
 
             if (texImage.decoded) {
-                //console.log("case 3");
 
                 const image8Array = new Uint8ClampedArray(texImage.data);
                 const texture = new THREE.DataTexture(image8Array, texImage.width, texImage.height);
@@ -483,7 +480,6 @@ class TinyUSDZLoaderUtils extends LoaderUtils {
             }
 
         } else {
-            //console.log("case 3");
             return Promise.reject(new Error("Invalid USD texture info"));
         }
     }
@@ -655,7 +651,6 @@ class TinyUSDZLoaderUtils extends LoaderUtils {
     // Usage:
     //   const materialData = usdScene.getMaterial(materialId, 'json');
     //   const typeInfo = TinyUSDZLoaderUtils.getMaterialType(materialData);
-    //   console.log(`Material has OpenPBR: ${typeInfo.hasOpenPBR}, UsdPreviewSurface: ${typeInfo.hasUsdPreviewSurface}`);
     //
     static getMaterialType(materialData) {
         // Parse JSON if needed
@@ -854,7 +849,6 @@ class TinyUSDZLoaderUtils extends LoaderUtils {
 
         // Log material type selection for debugging
         if (typeInfo.hasBoth) {
-            //console.log(`Material has both OpenPBR and UsdPreviewSurface. Using: ${useOpenPBR ? 'OpenPBR' : 'UsdPreviewSurface'} (preferred: ${preferredType})`);
         }
 
         // Convert using selected material type
@@ -948,15 +942,12 @@ class TinyUSDZLoaderUtils extends LoaderUtils {
         // Store doubleSided param to customData
         if (Object.prototype.hasOwnProperty.call(mesh, 'doubleSided')) {
           geometry.userData['doubleSided'] = mesh.doubleSided;
-          //console.log(`USD Mesh doubleSided attribute: ${mesh.doubleSided}`);
         } else {
-          //console.log('USD Mesh has no doubleSided attribute (will default to FrontSide)');
         }
 
         // Store submesh data for multi-material support (pre-computed in C++)
         if (Object.prototype.hasOwnProperty.call(mesh, 'submeshes') && mesh.submeshes.length > 0) {
           geometry.userData['submeshes'] = mesh.submeshes;
-          //console.log(`USD Mesh has ${mesh.submeshes.length} pre-computed submesh group(s)`);
         }
 
         return geometry;
@@ -970,7 +961,6 @@ class TinyUSDZLoaderUtils extends LoaderUtils {
 
         let mtl = null;
 
-        //console.log("overrideMaterial:", options.overrideMaterial);
         if (options.overrideMaterial) {
             mtl = defaultMtl || normalMtl
         } else {
@@ -996,7 +986,6 @@ class TinyUSDZLoaderUtils extends LoaderUtils {
                 }
             }
 
-            //console.log(`Mesh materialId: ${mesh.materialId}, hasMaterial: ${hasMaterial}, usdMaterial: ${usdMaterialData ? 'valid' : 'null'}`);
 
             let pbrMaterial;
             if (usdMaterialData) {
@@ -1027,20 +1016,16 @@ class TinyUSDZLoaderUtils extends LoaderUtils {
             pbrMaterial.envMap = options.envMap || null;
             pbrMaterial.envMapIntensity = options.envMapIntensity || 1.0;
 
-            //console.log("envmap:", options.envMap);
 
             // Sideness is determined by the mesh's USD doubleSided attribute
             if (Object.prototype.hasOwnProperty.call(geometry.userData, 'doubleSided')) {
               if (geometry.userData.doubleSided) {
-                //console.log(`  Setting material to DoubleSide (from USD doubleSided=true)`);
                 pbrMaterial.side = THREE.DoubleSide;
               } else {
-                //console.log(`  Setting material to FrontSide (from USD doubleSided=false)`);
                 pbrMaterial.side = THREE.FrontSide;
               }
             } else {
               // No doubleSided attribute in USD - default to FrontSide
-              //console.log(`  Setting material to FrontSide (no USD doubleSided attribute)`);
               pbrMaterial.side = THREE.FrontSide;
             }
 
@@ -1050,7 +1035,6 @@ class TinyUSDZLoaderUtils extends LoaderUtils {
         // Handle GeomSubsets (per-face materials)
         if (geometry.userData['submeshes'] && geometry.userData['submeshes'].length > 0) {
             const submeshes = geometry.userData['submeshes'];
-            //console.log(`Setting up multi-material mesh with ${submeshes.length} pre-computed submesh groups`);
 
             // Build materials array indexed by materialId
             const materials = [];
@@ -1091,7 +1075,6 @@ class TinyUSDZLoaderUtils extends LoaderUtils {
                     material.userData.typeString = this.getMaterialTypeString(materialData);
 
                     materials[matIndex] = material;
-                    //console.log(`  Loaded material ${matId} -> index ${matIndex}`);
                 } else {
                     materials[matIndex] = mtl; // Use default material
                 }
@@ -1103,7 +1086,6 @@ class TinyUSDZLoaderUtils extends LoaderUtils {
                 geometry.addGroup(submesh.start, submesh.count, matIndex);
             }
 
-            //console.log(`  Created ${submeshes.length} geometry groups for ${materials.length} unique materials (pre-computed in WASM)`);
 
             // Create mesh with multi-material array
             const threeMesh = new THREE.Mesh(geometry, materials);
@@ -1205,7 +1187,6 @@ class TinyUSDZLoaderUtils extends LoaderUtils {
 
         var node = new THREE.Group();
 
-        //console.log("usdNode.nodeType:", usdNode.nodeType, "primName:", usdNode.primName, "absPath:", usdNode.absPath);
         if (usdNode.nodeType == 'xform') {
 
             // intermediate xform node
