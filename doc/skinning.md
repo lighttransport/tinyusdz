@@ -97,17 +97,6 @@ This means:
 - The **geomBindTransform** replaces the mesh's xformable transform for skinning purposes
 - The **Skeleton prim's world transform** (`skelLocalToWorldTransform`) positions the skinned result in the world
 
-### Example: Layout_Scene.usdz
-
-```
-SkelRoot "objectloc_Droid_Standin"  (scale 1,1,1)
-  └─ Xform "B1_001"                (scale 0.01, 0.01, 0.01)  ← IGNORED for skinned rendering
-      └─ Mesh "B1"                  (extent ~196 units)
-           geomBindTransform = rotation-only matrix (no 0.01 scale)
-```
-
-The `scale(0.01)` on Xform "B1_001" has **no effect** on the skinned mesh per spec. The mesh appears at 100x size because `geomBindTransform` was not authored to include the 0.01 scale from the parent. This is a file authoring issue, not a renderer bug.
-
 ### For baking skinned results to gprim-local space
 
 When baking (as in OpenUSD's `bakeSkinning.cpp`), the mesh's world transform IS used to convert the skeleton-space result back to gprim-local space:
@@ -143,35 +132,32 @@ TinyUSDZ Tydra does NOT compute skinning transforms or apply geomBindTransform t
 **Animation** (`AnimationClip`):
 - Per-joint TRS animation channels with samplers (time/value arrays)
 
-The renderer (JavaScript/Three.js viewer) is responsible for:
-1. Computing `inv(bindTransforms)` (boneInverses)
-2. Applying `geomBindTransform` as bind matrix
-3. Evaluating the skinning equation per frame
+**Scene graph nodes** (`Node`):
+- `local_matrix` : the prim's xformOps (set for ALL node types including skinned meshes)
+- `global_matrix` : local_matrix × parent global_matrix
+- `nodeType` : Xform, Mesh, Skeleton, etc.
 
-## Three.js Mapping
+Tydra does **not** strip mesh xformOps for skinned prims.  The full scene graph
+hierarchy is exported as-is.
 
-Three.js skinning vertex shader (column-vector convention):
+## Three.js Skinning (TinyUSDZ Viewer)
 
-```
-skinned = bindMatrixInverse * Σ(w_i * boneMatrix_i * bindMatrix * pos)
-boneMatrix_i = bone.matrixWorld * skeleton.boneInverses[i]
-```
+The TinyUSDZ JavaScript viewer does **not** follow the USD spec literally.
+Instead of ignoring mesh xformOps and passing `geomBindTransform` / `bindTransforms`
+directly, it preserves the full USD scene graph in Three.js and uses `bind()` without
+custom arguments.  Three.js computes all skinning matrices in world space from its
+own scene graph, producing results equivalent to the USD spec.
 
-Mapping from USD to Three.js:
-| USD | Three.js |
-|-----|----------|
-| `geomBindTransform` | `mesh.bindMatrix` |
-| `inv(bindTransforms[i])` | `skeleton.boneInverses[i]` |
-| `jointSkelTransform * skelLocalToWorld` | `bone.matrixWorld` |
-| (cancelled by AttachedBindMode) | `bindMatrixInverse = inv(mesh.matrixWorld)` |
+**Key points:**
+- `mesh.bind(skeleton)` is called without custom `bindMatrix` or `boneInverses`
+- Three.js internally sets `bindMatrix = mesh.matrixWorld` and
+  `boneInverses[i] = inv(bone.matrixWorld)` — both in world space
+- USD `geomBindTransform` and `bindTransforms` are **not** passed to `bind()`
+- Mesh xformOps are preserved in the scene graph; they cancel through the
+  `inv(W_mesh) * ... * W_mesh_bind` mechanism rather than being ignored
 
-With **AttachedBindMode** (default), `mesh.matrixWorld` cancels out each frame:
-
-```
-world_pos = mesh.matrixWorld * inv(mesh.matrixWorld) * Σ(w_i * boneMatrix_i * bindMatrix * pos)
-          = Σ(w_i * bone.matrixWorld * boneInverse_i * geomBindTransform * pos)
-```
-
-This matches the OpenUSD equation exactly (adjusted for column-vector convention). The mesh's own xformOps are effectively ignored, consistent with the spec.
-
-EoL.
+See **[skin-eval.md](skin-eval.md)** for the full derivation, including:
+- The Three.js skinning formula and proof of ancestor-cancellation
+- Equivalence mapping between USD spec and Three.js quantities
+- Comparison with Blender and Maya-USD import approaches
+- Why this world-space approach is preferred over literal USD spec for Three.js
