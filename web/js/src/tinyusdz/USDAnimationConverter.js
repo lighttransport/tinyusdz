@@ -9,6 +9,7 @@
  */
 
 import * as THREE from 'three';
+import { toOwnedFloat32Array } from './TypedArrayOwnership.js';
 
 /**
  * Convert USD interpolation mode to Three.js InterpolateMode
@@ -127,8 +128,8 @@ export function convertUSDSkeletalAnimationsToThreeJS(usdLoader, boneMaps, timeC
 					// Keep times in timeCodes (frames), not seconds - mixer handles frame-based playback
 					const track = new THREE.VectorKeyframeTrack(
 						`${boneName}.position`,
-						new Float32Array(sampler.times),
-						new Float32Array(sampler.values),
+						toOwnedFloat32Array(sampler.times, 'sampler.times'),
+						toOwnedFloat32Array(sampler.values, 'sampler.values'),
 						getUSDInterpolationMode(sampler.interpolation)
 					);
 					keyframeTracks.push(track);
@@ -144,8 +145,8 @@ export function convertUSDSkeletalAnimationsToThreeJS(usdLoader, boneMaps, timeC
 					// Keep times in timeCodes (frames), not seconds
 					const track = new THREE.QuaternionKeyframeTrack(
 						`${boneName}.quaternion`,
-						new Float32Array(sampler.times),
-						new Float32Array(sampler.values),
+						toOwnedFloat32Array(sampler.times, 'sampler.times'),
+						toOwnedFloat32Array(sampler.values, 'sampler.values'),
 						getUSDInterpolationMode(sampler.interpolation)
 					);
 					keyframeTracks.push(track);
@@ -161,8 +162,8 @@ export function convertUSDSkeletalAnimationsToThreeJS(usdLoader, boneMaps, timeC
 					// Keep times in timeCodes (frames), not seconds
 					const track = new THREE.VectorKeyframeTrack(
 						`${boneName}.scale`,
-						new Float32Array(sampler.times),
-						new Float32Array(sampler.values),
+						toOwnedFloat32Array(sampler.times, 'sampler.times'),
+						toOwnedFloat32Array(sampler.values, 'sampler.values'),
 						getUSDInterpolationMode(sampler.interpolation)
 					);
 					keyframeTracks.push(track);
@@ -291,8 +292,8 @@ export function convertUSDNodeAnimationsToThreeJS(usdLoader, nodeIndexMap) {
 			const targetUUID = targetObject.uuid;
 			const interpolation = getUSDInterpolationMode(sampler.interpolation);
 			// Copy WASM typed_memory_view arrays into JS-owned buffers
-			const times = new Float32Array(sampler.times);
-			const values = new Float32Array(sampler.values);
+			const times = toOwnedFloat32Array(sampler.times, 'sampler.times');
+			const values = toOwnedFloat32Array(sampler.values, 'sampler.values');
 
 			let track;
 			switch (channel.path) {
