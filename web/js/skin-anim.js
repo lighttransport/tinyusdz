@@ -195,8 +195,7 @@ scene.add(ground);
 const gridHelper = new THREE.GridHelper(20, 20, 0x666666, 0x444444);
 scene.add(gridHelper);
 
-// Skeleton visualization helper
-let skeletonHelper = null;
+// Skeleton visualization helpers
 let skeletonHelpers = []; // Array of skeleton helpers for multi-skeleton scenes
 
 // Character root group (virtual USD scene root)
@@ -210,7 +209,6 @@ usdSceneRoot.add(characterGroup);
 
 // Animation state
 let skinnedMesh = null;
-let skeleton = null; // Legacy: first skeleton for backward compatibility
 let skeletons = new Map(); // Map from skel_id to THREE.Skeleton (multi-skeleton support)
 let mixer = null;
 let animationPlayback = null;
@@ -219,8 +217,14 @@ let animationActions = []; // Array of actions when playing all animations
 let usdAnimations = [];
 let usdNodeAnimations = []; // Node (xformOp) animation clips — always play alongside skeletal clips
 let animationEnabled = []; // Array of booleans tracking which animations are enabled for multi-play
-let boneMap = new Map(); // Legacy: first skeleton's bone map for backward compatibility
 let boneMaps = new Map(); // Map from skel_id to Map(joint_id -> THREE.Bone)
+
+/** Sync module-level playback variables from an animationPlayback state object. */
+function syncPlaybackState(state) {
+	mixer = state.mixer;
+	animationAction = state.animationAction;
+	animationActions = state.animationActions;
+}
 let animationParams = null; // Assigned later; keep nullable for early startup loader init
 let timelineController = null;
 let timelineStartController = null;
@@ -889,31 +893,15 @@ async function processUSDScene(usd_scene, filename) {
 	}
 
 	// Dispose skeleton bone textures (all skeletons)
-	if (skeleton && skeleton.boneTexture) {
-		skeleton.boneTexture.dispose();
-	}
 	for (const [skelId, skel] of skeletons) {
 		if (skel && skel.boneTexture) {
 			skel.boneTexture.dispose();
 		}
 	}
 	skinnedMesh = null;
-	skeleton = null;
 	skeletons.clear();
 
-	// Dispose skeleton helpers (all of them)
-	if (skeletonHelper) {
-		scene.remove(skeletonHelper);
-		if (skeletonHelper.geometry) skeletonHelper.geometry.dispose();
-		if (skeletonHelper.material) {
-			if (Array.isArray(skeletonHelper.material)) {
-				skeletonHelper.material.forEach(m => m.dispose());
-			} else {
-				skeletonHelper.material.dispose();
-			}
-		}
-		skeletonHelper = null;
-	}
+	// Dispose skeleton helpers
 	for (const helper of skeletonHelpers) {
 		scene.remove(helper);
 		if (helper.geometry) helper.geometry.dispose();
@@ -954,7 +942,6 @@ async function processUSDScene(usd_scene, filename) {
 	usdAnimations = [];
 	usdNodeAnimations = [];
 	animationEnabled = [];
-	boneMap.clear();
 	boneMaps.clear();
 	animationParams.hasUSDAnimations = false;
 	animationParams.usdAnimationCount = 0;
@@ -1034,7 +1021,6 @@ async function processUSDScene(usd_scene, filename) {
 	});
 	const skeletonDataArray = skeletonBuild.skeletonDataArray;
 	let bones = skeletonBuild.firstBones;
-	boneMap = skeletonBuild.firstBoneMap;
 	boneMaps = skeletonBuild.boneMaps;
 
 	// Get the default root node from USD
@@ -1090,9 +1076,7 @@ async function processUSDScene(usd_scene, filename) {
 	});
 
 	skeletons = skinningResult.skeletons;
-	skeleton = skinningResult.firstSkeleton;
 	skeletonHelpers = skinningResult.skeletonHelpers;
-	skeletonHelper = skinningResult.firstSkeletonHelper;
 	allSceneMeshes = skinningResult.allSceneMeshes;
 	meshVisibility = skinningResult.meshVisibility;
 
@@ -1169,10 +1153,7 @@ async function processUSDScene(usd_scene, filename) {
 				logger: console
 			});
 
-			const playbackState = animationPlayback.getState();
-			mixer = playbackState.mixer;
-			animationAction = playbackState.animationAction;
-			animationActions = playbackState.animationActions;
+			syncPlaybackState(animationPlayback.getState());
 
 			if (animationParams.playAllAnimations) {
 				playAllAnimations();
@@ -1255,10 +1236,7 @@ async function processUSDScene(usd_scene, filename) {
  */
 function playNodeAnimations() {
 	if (!animationPlayback) return;
-	const state = animationPlayback.playNodeAnimations();
-	mixer = state.mixer;
-	animationAction = state.animationAction;
-	animationActions = state.animationActions;
+	syncPlaybackState(animationPlayback.playNodeAnimations());
 }
 
 /**
@@ -1271,9 +1249,7 @@ function playAnimation(index) {
 	}
 
 	const result = animationPlayback.playAnimation(index);
-	mixer = result.mixer;
-	animationAction = result.animationAction;
-	animationActions = result.animationActions;
+	syncPlaybackState(result);
 
 	animationParams.currentAnimation = index;
 	const clip = result.clip || usdAnimations[index];
@@ -1289,14 +1265,9 @@ function playAllAnimations() {
 	}
 
 	const result = animationPlayback.playAllAnimations(animationEnabled);
-	mixer = result.mixer;
-	animationAction = result.animationAction;
-	animationActions = result.animationActions;
+	syncPlaybackState(result);
 	const start = Number.isFinite(animationParams.timelineStart) ? animationParams.timelineStart : 0;
-	const initState = animationPlayback.setTime(start, true);
-	mixer = initState.mixer;
-	animationAction = initState.animationAction;
-	animationActions = initState.animationActions;
+	syncPlaybackState(animationPlayback.setTime(start, true));
 	animationParams.time = start;
 
 	const enabledCount = result.enabledCount || 0;
@@ -1313,10 +1284,7 @@ function stopAllAnimations() {
 		animationActions = [];
 		return;
 	}
-	const state = animationPlayback.stopAllAnimations();
-	mixer = state.mixer;
-	animationAction = state.animationAction;
-	animationActions = state.animationActions;
+	syncPlaybackState(animationPlayback.stopAllAnimations());
 }
 
 // Listen for file upload events
@@ -1441,13 +1409,10 @@ function applyTimelineRange(start, end, options = {}) {
 		if (clampedTime !== animationParams.time) {
 			animationParams.time = clampedTime;
 			if (animationPlayback) {
-				const state = animationPlayback.setTime(
+				syncPlaybackState(animationPlayback.setTime(
 					animationParams.time,
 					!animationParams.isPlaying
-				);
-				mixer = state.mixer;
-				animationAction = state.animationAction;
-				animationActions = state.animationActions;
+				));
 			}
 		}
 	}
@@ -1465,10 +1430,7 @@ animationParams = {
 	playPause: function() {
 		this.isPlaying = !this.isPlaying;
 		if (animationPlayback) {
-			const state = animationPlayback.setPaused(!this.isPlaying);
-			mixer = state.mixer;
-			animationAction = state.animationAction;
-			animationActions = state.animationActions;
+			syncPlaybackState(animationPlayback.setPaused(!this.isPlaying));
 		}
 		if (this.isPlaying && this.playAllAnimations && window.updateTimelineRange) {
 			const maxDuration = computeUSDSceneTimelineDuration(
@@ -1485,10 +1447,7 @@ animationParams = {
 	},
 	reset: function() {
 		if (animationPlayback) {
-			const state = animationPlayback.reset();
-			mixer = state.mixer;
-			animationAction = state.animationAction;
-			animationActions = state.animationActions;
+			syncPlaybackState(animationPlayback.reset());
 		}
 	},
 	resetToRestPose: function() {
@@ -1499,10 +1458,6 @@ animationParams = {
 		// Reset all skeletons to rest pose
 		for (const [skelId, skel] of skeletons) {
 			resetSkeletonToRestPose(skel);
-		}
-		// Legacy: also reset first skeleton
-		if (skeleton) {
-			resetSkeletonToRestPose(skeleton);
 		}
 		_mixerAccumDelta = 0;
 		hintGC();
@@ -1572,10 +1527,6 @@ animationParams = {
 		for (const helper of skeletonHelpers) {
 			helper.visible = this.showSkeleton;
 		}
-		// Legacy: also update single skeleton helper if it exists
-		if (skeletonHelper) {
-			skeletonHelper.visible = this.showSkeleton;
-		}
 	},
 
 	// Camera controls
@@ -1591,8 +1542,9 @@ animationParams = {
 	toggleJoints: function() {
 		if (this.showJoints) {
 			// Lazy-create joint spheres on first toggle
-			if (jointSpheres.length === 0 && skeleton && skeleton.bones.length > 0) {
-				jointSpheres = createJointSpheres(skeleton.bones);
+			const firstSkeleton = skeletons.get(0);
+			if (jointSpheres.length === 0 && firstSkeleton && firstSkeleton.bones.length > 0) {
+				jointSpheres = createJointSpheres(firstSkeleton.bones);
 			}
 			jointSpheres.forEach(sphere => {
 				sphere.visible = true;
@@ -1778,22 +1730,16 @@ playbackFolder.add(animationParams, 'reset').name('Reset Animation');
 playbackFolder.add(animationParams, 'resetToRestPose').name('Reset to Rest Pose');
 playbackFolder.add(animationParams, 'speed', 1, 120, 1).name('Speed').onChange(() => {
 	if (animationPlayback) {
-		const state = animationPlayback.setSpeed(animationParams.speed);
-		mixer = state.mixer;
-		animationAction = state.animationAction;
-		animationActions = state.animationActions;
+		syncPlaybackState(animationPlayback.setSpeed(animationParams.speed));
 	}
 });
 timelineController = playbackFolder.add(animationParams, 'time', 0, 30, 0.01)
 	.name('Timeline').listen().onChange(() => {
 		if (animationPlayback) {
-			const state = animationPlayback.setTime(
+			syncPlaybackState(animationPlayback.setTime(
 				animationParams.time,
 				!animationParams.isPlaying
-			);
-			mixer = state.mixer;
-			animationAction = state.animationAction;
-			animationActions = state.animationActions;
+			));
 		}
 	});
 timelineStartController = playbackFolder.add(animationParams, 'timelineStart', -100000, 100000, 1)
@@ -2228,10 +2174,7 @@ function animate() {
 				const globalTime = start + wrapped;
 				animationParams.time = globalTime;
 
-				const state = animationPlayback.setTime(globalTime, true);
-				mixer = state.mixer;
-				animationAction = state.animationAction;
-				animationActions = state.animationActions;
+				syncPlaybackState(animationPlayback.setTime(globalTime, true));
 			} else {
 				mixer.update(stepDelta);
 
@@ -2250,10 +2193,6 @@ function animate() {
 		if (helper && helper.visible && typeof helper.update === 'function') {
 			helper.update();
 		}
-	}
-	// Legacy: also update single skeleton helper if it exists
-	if (skeletonHelper && skeletonHelper.visible && typeof skeletonHelper.update === 'function') {
-		skeletonHelper.update();
 	}
 
 	// Update joint spheres
@@ -2275,9 +2214,9 @@ function animate() {
 
 	// CPU skinning debug path: compute positions on CPU, render via a
 	// separate non-skinned debug mesh (avoids fighting Three.js GPU pipeline)
-	if (_cpuSkinEnabled && skeleton) {
+	if (_cpuSkinEnabled && skeletons.size > 0) {
 		scene.updateMatrixWorld(true);
-		skeleton.update();
+		skeletons.get(0)?.update();
 
 		for (const mesh of allSceneMeshes) {
 			if (!mesh.isSkinnedMesh || !mesh.skeleton) continue;
@@ -2404,7 +2343,7 @@ function animate() {
 	// Periodic GC hint during animation playback.
 	// mixer.update() generates transient allocations each frame; without periodic GC,
 	// V8 accumulates garbage and eventually triggers a long pause or heap growth.
-	if (animationParams.isPlaying && skeleton) {
+	if (animationParams.isPlaying && skeletons.size > 0) {
 		if (currentTime - _lastGCHintTime > 10000) { // every 10 seconds
 			_lastGCHintTime = currentTime;
 			hintGC();
