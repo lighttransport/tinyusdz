@@ -671,41 +671,7 @@ struct VertexAttribute {
   bool is_indexed() const { return variability == VertexVariability::Indexed; }
 };
 
-#if 0  // TODO: Implement
-///
-/// Flatten(expand by vertexCounts and vertexIndices) VertexAttribute.
-///
-/// @param[in] src Input VertexAttribute.
-/// @param[in] faceVertexCounts Array of faceVertex counts.
-/// @param[in] faceVertexIndices Array of faceVertex indices.
-/// @param[out] dst flattened VertexAttribute data.
-/// @param[out] itemCount # of vertex items = dst.size() / src.stride_bytes().
-///
-static bool FlattenVertexAttribute(
-    const VertexAttribute &src,
-    const std::vector<uint32_t> &faceVertexCounts,
-    const std::vector<uint32_t> &faceVertexIndices,
-    std::vector<uint8_t> &dst,
-    size_t &itemCount);
-#else
 
-#if 0  // TODO: Implement
-///
-/// Convert variability of `src` VertexAttribute to "facevarying".
-///
-/// @param[in] src Input VertexAttribute.
-/// @param[in] faceVertexCounts  # of vertex per face. When the size is empty
-/// and faceVertexIndices is not empty, treat `faceVertexIndices` as
-/// triangulated mesh indices.
-/// @param[in] faceVertexIndices
-/// @param[out] dst VertexAttribute with facevarying variability. `dst.vertex_count()` become `sum(faceVertexCounts)`
-///
-static bool ToFacevaringVertexAttribute(
-    const VertexAttribute &src, VertexAttribute &dst,
-    const std::vector<uint32_t> &faceVertexCounts,
-    const std::vector<uint32_t> &faceVertexIndices);
-#endif
-#endif
 
 //
 // Convert PrimVar(type-erased value) at specified time to VertexAttribute
@@ -1154,23 +1120,6 @@ struct MaterialSubset {
 
 // Currently normals and texcoords are converted as facevarying attribute.
 struct RenderMesh {
-#if 0 // deprecated.
-  //
-  // Type of Vertex attributes of this mesh.
-  //
-  // `Indexed` preferred. `Facevarying` as the last resport.
-  //
-  enum class VertexArrayType {
-    Indexed,  // 'vertex'-varying. i.e, use faceVertexIndices to draw mesh. All
-              // vertex attributes must be representatable by single
-              // indices(i.e, no `facevertex`-varying attribute)
-    Facevarying,  // 'facevertx'-varying. When any of mesh attribute has
-                  // 'facevertex' varying, we cannot represent the mesh with
-                  // single indices, so decompose all vertex attribute to
-                  // Facevaring(no VertexArray indices). This would impact
-                  // rendering performance.
-  };
-#endif
 
   std::string prim_name;     // Prim name
   std::string abs_path;      // Absolute Prim path in Stage
@@ -1353,11 +1302,6 @@ struct UVReaderFloat {
   int64_t mesh_id{-1};   // index to RenderMesh
   int64_t coord_id{-1};  // index to RenderMesh::facevaryingTexcoords
 
-#if 0
-  // Returns interpolated UV coordinate with UV transform
-  // # of components filled are equal to `componentType`.
-  vec4 fetchUV(size_t faceId, float varyu, float varyv);
-#endif
 };
 
 struct UVTexture {
