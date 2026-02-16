@@ -819,8 +819,7 @@ async function loadUSDModel() {
 	const loader = await createConfiguredLoader();
 
 	// Default USD file to load
-	//const usd_filename = "./assets/skintest-animated.usda";
-	const usd_filename = "./assets/Layout_Scene.usdz";
+	const usd_filename = "./assets/skintest-animated.usda";
 
 	console.log(`Loading USD file: ${usd_filename}`);
 

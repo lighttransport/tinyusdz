@@ -539,103 +539,12 @@ bool VisitPrimsIterative(const tinyusdz::Path &start_abs_path,
   return true;
 }
 
-#if 0 // TODO: Remove
-// Scalar-valued attribute.
-// TypedAttribute* => Attribute defined in USD schema, so not a custom attr.
-template<typename T>
-void ToProperty(
-  const TypedAttributeWithFallback<T> &input,
-  Property &output)
-{
-  if (input.IsBlocked()) {
-    Attribute attr;
-    attr.set_blocked(input.IsBlocked());
-    attr.variability() = Variability::Uniform;
-    output = Property(std::move(attr), /*custom*/ false);
-  } else if (input.IsValueEmpty()) {
-    // type info only
-    output = Property(value::TypeTraits<T>::type_name(), /* custom */false);
-  } else if (input.IsConnection()) {
-
-    // Use Relation for Connection(as typed relationshipTarget)
-    // Single connection targetPath only.
-    Relation relTarget;
-    if (auto pv = input.GetConnection()) {
-      relTarget.targetPath = pv.value();
-    } else {
-      // ??? TODO: report internal error.
-    }
-    output = Property(relTarget, /* type */value::TypeTraits<T>::type_name(), /* custom */false);
-
-  } else {
-    // Includes !authored()
-    value::Value val(input.GetValue());
-    primvar::PrimVar pvar;
-    pvar.set_value(val);
-    Attribute attr;
-    attr.set_var(std::move(pvar));
-    attr.variability() = Variability::Uniform;
-    output = Property(attr, /* custom */false);
-  }
-}
-#endif
 
 // Scalar-valued attribute.
 // TypedAttribute* => Attribute defined in USD schema, so not a custom attr.
 template <typename T>
 bool ToProperty(const TypedAttribute<T> &input, Property &output, std::string *err) {
 
-#if 0 // old-code: TODO: Remove
-  if (input.is_blocked()) {
-    Attribute attr;
-    attr.set_blocked(input.is_blocked());
-    attr.variability() = Variability::Uniform;
-    attr.set_type_name(value::TypeTraits<T>::type_name());
-    output = Property(std::move(attr), /*custom*/ false);
-  } else if (input.is_value_empty()) {
-    // type info only
-    output = Property::MakeEmptyAttrib(value::TypeTraits<T>::type_name(),
-                                       /* custom */ false);
-  } else if (input.is_connection()) {
-    // Use Relation for Connection(as typed relationshipTarget)
-    // Single connection targetPath only.
-    Relationship relTarget;
-    std::vector<Path> paths = input.get_connections();
-    if (paths.empty()) {
-      if (err) {
-        (*err) += fmt::format(
-            "[InternalError] Connection attribute but empty targetPaths.");
-      }
-      return false;
-    } else if (paths.size() == 1) {
-      output = Property(paths[0], /* type */ value::TypeTraits<T>::type_name(),
-                        /* custom */ false);
-    } else {
-      output = Property(paths, /* type */ value::TypeTraits<T>::type_name(),
-                        /* custom */ false);
-    }
-
-  } else {
-    // Includes !authored()
-    if (auto pv = input.get_value()) {
-      value::Value val(pv.value());
-      primvar::PrimVar pvar;
-      pvar.set_value(val);
-      Attribute attr;
-      attr.set_var(std::move(pvar));
-      attr.variability() = Variability::Uniform;
-      output = Property(attr, /* custom */ false);
-    } else {
-      if (err) {
-        (*err) +=
-            fmt::format("[InternalError] Invalid TypedAttribute<{}> value.",
-                        value::TypeTraits<T>::type_name());
-      }
-
-      return false;
-    }
-  }
-#else
 
   Attribute attr;
   attr.variability() = Variability::Uniform;
@@ -670,7 +579,6 @@ bool ToProperty(const TypedAttribute<T> &input, Property &output, std::string *e
 
   output = Property(std::move(attr), /* custom */false);
 
-#endif
 
   return true;
 }
@@ -753,83 +661,6 @@ bool ToProperty(const TypedAttribute<Animatable<T>> &input, Property &output, st
 template <typename T>
 bool ToProperty(const TypedAttributeWithFallback<Animatable<T>> &input,
                 Property &output, std::string *err) {
-#if 0
-  if (input.is_blocked()) {
-    Attribute attr;
-    attr.set_blocked(input.is_blocked());
-    attr.variability() = Variability::Uniform;
-    attr.set_type_name(value::TypeTraits<T>::type_name());
-    output = Property(std::move(attr), /*custom*/ false);
-  } else if (input.is_value_empty()) {
-    // type info only
-    Property p;
-    p.set_property_type(Property::Type::EmptyAttrib);
-    p.attribute().set_type_name(value::TypeTraits<T>::type_name());
-    p.set_custom(false);
-    output = p;
-  } else if (input.is_connection()) {
-    // Use Relation for Connection(as typed relationshipTarget)
-    // Single connection targetPath only.
-    Relationship rel;
-    std::vector<Path> pv = input.get_connections();
-    if (pv.empty()) {
-      DCOUT("??? Empty connectionTarget.");
-      if (err) {
-        (*err) += "[InternalError] Empty connectionTarget.";
-      }
-      return false;
-    }
-    if (pv.size() == 1) {
-      DCOUT("targetPath = " << pv[0]);
-      output = Property(pv[0], /* type */ value::TypeTraits<T>::type_name(),
-                        /* custom */ false);
-    } else if (pv.size() > 1) {
-      output = Property(pv, /* type */ value::TypeTraits<T>::type_name(),
-                        /* custom */ false);
-    } else {
-      DCOUT("??? GetConnection faile.");
-      if (err) {
-        (*err) += "[InternalError] Invalid connectionTarget.";
-      }
-      return false;
-    }
-
-  } else {
-    // Includes !authored()
-    // FIXME: Currently scalar only.
-    Animatable<T> v = input.get_value();
-
-    primvar::PrimVar pvar;
-
-    if (v.is_timesamples()) {
-      value::TimeSamples ts = ToTypelessTimeSamples(v.get_timesamples());
-      pvar.set_timesamples(std::move(ts));
-    } else if (v.is_scalar()) {
-      T a;
-      if (v.get_scalar(&a)) {
-        value::Value val(a);
-        pvar.set_value(val);
-      } else {
-        DCOUT("??? Invalid Animatable value.");
-        if (err) {
-          (*err) += "[InternalError] Invalid Animatable value.";
-        }
-        return false;
-      }
-    } else {
-      DCOUT("??? Invalid Animatable value.");
-      if (err) {
-        (*err) += "[InternalError] Invalid Animatable value.";
-      }
-      return false;
-    }
-
-    Attribute attr;
-    attr.set_var(std::move(pvar));
-    attr.variability() = Variability::Varying;
-    output = Property(attr, /* custom */ false);
-  }
-#else
 
   Attribute attr;
   attr.variability() = Variability::Varying;
@@ -880,7 +711,6 @@ bool ToProperty(const TypedAttributeWithFallback<Animatable<T>> &input,
 
   output = Property(std::move(attr), /* custom */ false);
 
-#endif
 
   return true;
 }
@@ -889,79 +719,6 @@ bool ToProperty(const TypedAttributeWithFallback<Animatable<T>> &input,
 template <typename T>
 bool ToTokenProperty(const TypedAttributeWithFallback<Animatable<T>> &input,
                      Property &output, std::string *err) {
-#if 0
-  if (input.is_blocked()) {
-    Attribute attr;
-    attr.set_blocked(input.is_blocked());
-    attr.variability() = Variability::Uniform;
-    attr.set_type_name(value::kToken);
-    output = Property(std::move(attr), /*custom*/ false);
-  } else if (input.is_value_empty()) {
-    // type info only
-    Property p;
-    p.set_property_type(Property::Type::EmptyAttrib);
-    p.attribute().set_type_name(value::kToken);
-    p.set_custom(false);
-    output = p;
-  } else if (input.is_connection()) {
-    // Use Relation for Connection(as typed relationshipTarget)
-    // Single connection targetPath only.
-    Relationship rel;
-    std::vector<Path> pv = input.get_connections();
-    if (pv.empty()) {
-      if (err) {
-        (*err) += "Empty targetPaths.";
-      }
-      return false;
-    }
-    if (pv.size() == 1) {
-      output = Property(pv[0], /* type */ value::kToken, /* custom */ false);
-    } else if (pv.size() > 1) {
-      output = Property(pv, /* type */ value::kToken, /* custom */ false);
-    } else {
-      if (err) {
-        (*err) += "[InternalError] Invalid targetPaths.";
-      }
-      return false;
-    }
-
-  } else {
-    // Includes !authored()
-    // FIXME: Currently scalar only.
-    Animatable<T> v = input.get_value();
-
-    primvar::PrimVar pvar;
-
-    if (v.is_timesamples()) {
-      value::TimeSamples ts =
-          EnumTimeSamplesToTypelessTimeSamples(v.get_timesamples());
-      pvar.set_timesamples(std::move(ts));
-    } else if (v.is_scalar()) {
-      T a;
-      if (v.get_scalar(&a)) {
-        // to token type
-        value::token tok(to_string(a));
-        value::Value val(tok);
-        pvar.set_value(val);
-      } else {
-        if (err) {
-          (*err) += "[InternalError] Invalid Animatable value.";
-        }
-        return false;
-      }
-    } else {
-      if (err) {
-        (*err) += "[InternalError] Invalid Animatable value.";
-      }
-      return false;
-    }
-
-    Attribute attr;
-    attr.set_var(std::move(pvar));
-    attr.variability() = Variability::Varying;
-    output = Property(attr, /* custom */ false);
-  }
-#else
 
   Attribute attr;
   attr.variability() = Variability::Varying;
@@ -1011,7 +768,6 @@ bool ToTokenProperty(const TypedAttributeWithFallback<Animatable<T>> &input,
   attr.metas() = input.metas();
 
   output = Property(attr, /* custom */ false);
-#endif
 
   return true;
 }
@@ -1020,76 +776,6 @@ bool ToTokenProperty(const TypedAttributeWithFallback<Animatable<T>> &input,
 template <typename T>
 bool ToTokenProperty(const TypedAttributeWithFallback<T> &input,
                      Property &output, std::string *err) {
-#if 0
-  if (input.is_blocked()) {
-    Attribute attr;
-    attr.set_blocked(input.is_blocked());
-    attr.variability() = Variability::Uniform;
-    attr.set_type_name(value::kToken);
-    output = Property(std::move(attr), /*custom*/ false);
-  } else if (input.is_value_empty()) {
-    // type info only
-    Property p;
-    p.set_property_type(Property::Type::EmptyAttrib);
-    p.attribute().set_type_name(value::kToken);
-    p.set_custom(false);
-    output = p;
-  } else if (input.is_connection()) {
-    // Use Relation for Connection(as typed relationshipTarget)
-    // Single connection targetPath only.
-    Relationship rel;
-    std::vector<Path> pv = input.get_connections();
-    if (pv.empty()) {
-      DCOUT("??? Empty connectionTarget.");
-      if (err) {
-        (*err) += "Empty connectionTarget.";
-      }
-      return false;
-    }
-    if (pv.size() == 1) {
-      output = Property(pv[0], /* type */ value::kToken, /* custom */ false);
-    } else if (pv.size() > 1) {
-      output = Property(pv, /* type */ value::kToken, /* custom */ false);
-    } else {
-      if (err) {
-        (*err) += "[InternalError] Get connectionTarget failed.";
-      }
-      return false;
-    }
-
-  } else {
-    // Includes !authored()
-    // FIXME: Currently scalar only.
-    Animatable<T> v = input.get_value();
-
-    primvar::PrimVar pvar;
-
-    if (v.is_scalar()) {
-      T a;
-      if (v.get_scalar(&a)) {
-        // to token type
-        value::token tok(to_string(a));
-        value::Value val(tok);
-        pvar.set_value(val);
-      } else {
-        if (err) {
-          (*err) += "[InternalError] Invalid value.";
-        }
-        return false;
-      }
-    } else {
-      if (err) {
-        (*err) += "[InternalError] Invalid value.";
-      }
-      return false;
-    }
-
-    Attribute attr;
-    attr.set_var(std::move(pvar));
-    attr.variability() = Variability::Uniform;
-    output = Property(attr, /* custom */ false);
-  }
-#endif
 
   Attribute attr;
   attr.variability() = Variability::Uniform;
@@ -2686,43 +2372,6 @@ std::vector<const GeomSubset *> GetGeomSubsetChildren(
   return result;
 }
 
-#if 0
-bool ShaderToPrimSpec(const UsdUVTexture &node, PrimSpec &ps, std::string *warn, std::string *err)
-{
-  (void)warn;
-
-#define TO_PROPERTY(__prop_name, __v)                                    \
-  {                                                                      \
-    Property prop;                                                       \
-    if (!ToProperty(__v, prop, err)) {                                   \
-      PUSH_ERROR_AND_RETURN(                                             \
-          fmt::format("Convert {} to Property failed.\n", __prop_name)); \
-    }                                                                    \
-    ps.props()[__prop_name] = prop;                                      \
-  }
-
-  // inputs
-  TO_PROPERTY("inputs:in", node.in)
-  TO_PROPERTY("inputs:rotation", node.rotation)
-  TO_PROPERTY("inputs:scale", node.scale)
-  TO_PROPERTY("inputs:translation", node.translation)
-
-  // outputs
-  if (auto pv = TypedTerminalAttributeToProperty(node.result)) {
-    ps.props()["outputs:result"] = pv.value();
-  }
-
-  for (auto prop : node.props) {
-    ps.props()[prop.first] = prop.second;
-  }
-
-  ps.metas() = node.metas();
-  ps.name() = node.name;
-  ps.specifier() = node.spec;
-
-  return true;
-}
-#endif
 
 bool GetCollection(const Prim &prim, const Collection **dst) {
   if (!dst) {
@@ -3406,8 +3055,28 @@ void BuildSkelNameToIndexMapIterative(const SkelNode &root, std::map<std::string
 
     // Process current node on first visit (child_idx == 0)
     if (child_idx == 0) {
-      if (node->joint_name.size() && (node->joint_id >= 0)) {
-        m[node->joint_name] = node->joint_id;
+      if (node->joint_id >= 0) {
+        auto add_key = [&](const std::string &key) {
+          if (key.empty()) {
+            return;
+          }
+          if (!m.count(key)) {
+            m[key] = node->joint_id;
+          }
+        };
+
+        add_key(node->joint_name);
+        add_key(node->joint_path);
+
+        // Also register absolute/relative variants to handle mixed token forms
+        // (e.g. "root/hip" vs "/root/hip") between Skeleton and SkelAnimation data.
+        if (!node->joint_path.empty()) {
+          if (node->joint_path[0] == '/') {
+            add_key(node->joint_path.substr(1));
+          } else {
+            add_key("/" + node->joint_path);
+          }
+        }
       }
     }
 
