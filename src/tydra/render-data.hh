@@ -199,6 +199,11 @@ using dmat4 = value::matrix4d;
 /// numeric identifiers in render data structures.
 ///
 struct StringAndIdMap {
+  using IdToStringMap = std::unordered_map<uint64_t, std::string>;
+  using StringToIdMap = std::unordered_map<std::string, uint64_t>;
+  using id_const_iterator = IdToStringMap::const_iterator;
+  using string_const_iterator = StringToIdMap::const_iterator;
+
   void add(uint64_t key, const std::string &val) {
     _i_to_s[key] = val;
     _s_to_i[val] = key;
@@ -217,30 +222,29 @@ struct StringAndIdMap {
 
   std::string at(uint64_t i) const { return _i_to_s.at(i); }
 
-  uint64_t at(std::string s) const { return _s_to_i.at(s); }
+  uint64_t at(const std::string &s) const { return _s_to_i.at(s); }
 
-  std::map<uint64_t, std::string>::const_iterator find(uint64_t key) const {
+  id_const_iterator find(uint64_t key) const {
     return _i_to_s.find(key);
   }
 
-  std::map<std::string, uint64_t>::const_iterator find(
-      const std::string &key) const {
+  string_const_iterator find(const std::string &key) const {
     return _s_to_i.find(key);
   }
 
-  std::map<std::string, uint64_t>::const_iterator s_begin() const {
+  string_const_iterator s_begin() const {
     return _s_to_i.begin();
   }
 
-  std::map<std::string, uint64_t>::const_iterator s_end() const {
+  string_const_iterator s_end() const {
     return _s_to_i.end();
   }
 
-  std::map<uint64_t, std::string>::const_iterator i_begin() const {
+  id_const_iterator i_begin() const {
     return _i_to_s.begin();
   }
 
-  std::map<uint64_t, std::string>::const_iterator i_end() const {
+  id_const_iterator i_end() const {
     return _i_to_s.end();
   }
 
@@ -253,8 +257,8 @@ struct StringAndIdMap {
     return 0;
   }
 
-  std::map<uint64_t, std::string> _i_to_s;  // index -> string
-  std::map<std::string, uint64_t> _s_to_i;  // string -> index
+  IdToStringMap _i_to_s;  // index -> string
+  StringToIdMap _s_to_i;  // string -> index
 };
 
 // timeSamples in USD
@@ -282,7 +286,8 @@ enum class NodeType {
   Xform,
   Mesh,  // Polygon mesh
   Camera,
-  Skeleton, // SkelHierarchy
+  SkelRoot, // UsdSkelRoot: encapsulation prim for skinned subtree
+  Skeleton, // UsdSkeleton: joint hierarchy with bind/rest transforms
   PointLight,       // SphereLight in USD
   DirectionalLight, // DistantLight in USD
   EnvmapLight,      // DomeLight in USD
@@ -650,7 +655,7 @@ struct VertexAttribute {
   }
 
   bool is_uniform() const {
-    return (variability == VertexVariability::Constant);
+    return (variability == VertexVariability::Uniform);
   }
 
   // includes 'varying'
@@ -3340,6 +3345,11 @@ class RenderSceneConverter {
                        int32_t skeleton_id,
                        SkelHierarchy *out_skel, nonstd::optional<AnimationClip> *out_anim);
 
+  // Convert all SkelAnimation prims after skeleton conversion is complete.
+  // Supports multiple animations per skeleton by processing all discovered SkelAnimation prims
+  // and finding which Skeleton(s) reference each via their skel:animationSource relationship.
+  bool ConvertAllSkelAnimations(const RenderSceneConverterEnv &env);
+
   bool BuildNodeHierarchyImpl(
     const RenderSceneConverterEnv &env,
     const std::string &parentPrimPath,
@@ -3423,6 +3433,9 @@ class RenderSceneConverter {
 
   // Cached BuildSkelNameToIndexMap results per skeleton ID
   std::unordered_map<int32_t, std::map<std::string, int>> _skelNameToIndexCache;
+
+  // Precomputed SkelRoot -> Skeleton mapping for fast ancestor discovery.
+  std::unordered_map<std::string, std::pair<Path, const Skeleton *>> _skelRootToSkeleton;
 
   // Cached ListUVNames results per material ID
   std::unordered_map<int64_t, StringAndIdMap> _uvNameCache;
