@@ -233,12 +233,32 @@ class CrateReader {
 
   bool BuildLiveFieldSets();
 
+  /// Decode one fieldset on demand from `fieldset_index`.
+  /// Unlike BuildLiveFieldSets(), this does not materialize all fieldsets.
+  bool DecodeFieldSet(crate::Index fieldset_index, FieldValuePairVector *pairs);
+
   std::string GetError();
   std::string GetWarning();
 
   // Approximated memory usage in [mb]
   size_t GetMemoryUsageInMB() const {
     return memory_manager_.GetUsageInMB();
+  }
+
+  uint64_t GetMemoryUsageInBytes() const {
+    return memory_manager_.GetCurrentUsage();
+  }
+
+  uint64_t GetPeakMemoryUsageInBytes() const {
+    return memory_manager_.GetPeakUsage();
+  }
+
+  uint64_t GetMemoryBudgetInBytes() const {
+    return memory_manager_.GetMaxBudget();
+  }
+
+  uint64_t GetRemainingMemoryBudgetInBytes() const {
+    return memory_manager_.GetRemainingBudget();
   }
 
   /// -------------------------------------

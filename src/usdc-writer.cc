@@ -688,11 +688,11 @@ bool SaveAsUSDCToMemory(const Stage &stage, std::vector<uint8_t> *output,
     return false;
   }
 
-  std::streamsize size = file.tellg();
+  std::streamoff file_size = file.tellg();
   file.seekg(0, std::ios::beg);
 
-  output->resize(static_cast<size_t>(size));
-  if (!file.read(reinterpret_cast<char*>(output->data()), size)) {
+  output->resize(static_cast<size_t>(file_size));
+  if (!file.read(reinterpret_cast<char*>(output->data()), static_cast<std::streamsize>(file_size))) {
     std::remove(temp_filepath.c_str());
     if (err) {
       (*err) += "Failed to read USDC data into memory.\n";

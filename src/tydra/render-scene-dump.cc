@@ -331,6 +331,10 @@ std::string DumpSkeleton(const SkelHierarchy &skel, uint32_t indent) {
      << "\n";
   ss << pprint::Indent(indent + 1) << "anim_id " << skel.anim_id
      << "\n";
+  if (!skel.anim_ids.empty()) {
+    ss << pprint::Indent(indent + 1) << "anim_ids "
+       << quote(value::print_array_snipped(skel.anim_ids)) << "\n";
+  }
   ss << pprint::Indent(indent + 1) << "display_name "
      << quote(skel.display_name) << "\n";
 
@@ -975,6 +979,9 @@ static void DumpSkeletonYAML(std::stringstream &ss, const SkelHierarchy &skel, u
   ss << yaml_indent(indent) << "- name: " << yaml_escape(skel.prim_name) << "\n";
   ss << yaml_indent(indent) << "  abs_path: " << yaml_escape(skel.abs_path) << "\n";
   ss << yaml_indent(indent) << "  anim_id: " << skel.anim_id << "\n";
+  if (!skel.anim_ids.empty()) {
+    ss << yaml_indent(indent) << "  anim_ids: " << yaml_escape(value::print_array_snipped(skel.anim_ids)) << "\n";
+  }
   ss << yaml_indent(indent) << "  display_name: " << yaml_escape(skel.display_name) << "\n";
   ss << yaml_indent(indent) << "  root_node:\n";
   DumpSkelNodeYAML(ss, skel.root_node, indent + 2);
@@ -1325,6 +1332,14 @@ static void DumpSkeletonJSON(std::stringstream &ss, const SkelHierarchy &skel, u
   ss << json_indent(indent + 1) << "\"name\": \"" << json_escape(skel.prim_name) << "\",\n";
   ss << json_indent(indent + 1) << "\"abs_path\": \"" << json_escape(skel.abs_path) << "\",\n";
   ss << json_indent(indent + 1) << "\"anim_id\": " << skel.anim_id << ",\n";
+  ss << json_indent(indent + 1) << "\"anim_ids\": [";
+  for (size_t i = 0; i < skel.anim_ids.size(); i++) {
+    if (i > 0) {
+      ss << ", ";
+    }
+    ss << skel.anim_ids[i];
+  }
+  ss << "],\n";
   ss << json_indent(indent + 1) << "\"display_name\": \"" << json_escape(skel.display_name) << "\",\n";
   ss << json_indent(indent + 1) << "\"root_node\": ";
   DumpSkelNodeJSON(ss, skel.root_node, indent + 1, true);
