@@ -964,6 +964,9 @@ json ThreeJSSceneExporter::ConvertNode(const Node& node, const RenderScene& scen
     case NodeType::Camera:
       obj["type"] = "Camera";
       break;
+    case NodeType::SkelRoot:
+      obj["type"] = "SkelRoot";
+      break;
     case NodeType::Skeleton:
       obj["type"] = "Skeleton";
       break;
@@ -1252,7 +1255,8 @@ json ThreeJSSceneExporter::ConvertAnimation(const AnimationClip& anim) {
     if (channel.target_type == ChannelTargetType::SceneNode) {
       target_name = "node_" + std::to_string(channel.target_node);
     } else {
-      target_name = "joint_" + std::to_string(channel.joint_id);
+      target_name = "skel_" + std::to_string(channel.skeleton_id) +
+                    "_joint_" + std::to_string(channel.joint_id);
     }
 
     // Create track based on animation path

@@ -1030,8 +1030,12 @@ endif()
 if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
 
   set(TUSDZ_COMPILE_FLAGS
-      "-Weverything -Wno-poison-system-directories -Wno-padded -Wno-c++98-compat -Wno-c++98-compat-pedantic -Wno-documentation -Wno-unused-member-function"
+      "-Weverything -Wno-poison-system-directories -Wno-padded -Wno-c++98-compat -Wno-c++98-compat-pedantic -Wno-documentation -Wno-unused-member-function -Wno-switch-enum -Wno-exit-time-destructors"
   )
+
+  # Suppress pragma message warnings from external libraries (miniz.c)
+  set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wno-#pragma-messages")
+  set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wno-#pragma-messages")
 
   option(TINYUSDZ_NO_WERROR "Don't set -Werror when building the tinyusdz library" ${TINYUSDZ_DEFAULT_NO_WERROR})
   if (NOT TINYUSDZ_NO_WERROR)

@@ -318,6 +318,28 @@ void timesamples_test(void) {
     TEST_CHECK(samples[4].blocked == false);
   }
 
+  // Test dedup array sorting with index remap
+  {
+    value::TimeSamples ts;
+
+    // Build nearly-sorted samples so insertion sort would be chosen without
+    // dedup-aware fallback.
+    for (size_t i = 0; i < 25; ++i) {
+      float v = static_cast<float>(i);
+      TEST_CHECK(ts.add_array_sample<float>(static_cast<double>(i), &v, 1));
+    }
+
+    // Reference an index that will shift after sorting.
+    TEST_CHECK(ts.add_dedup_array_sample<float>(12.5, 20));
+
+    std::vector<float> out;
+    TEST_CHECK(ts.get_vector_at_time<float>(12.5, &out));
+    TEST_CHECK(out.size() == 1);
+    if (out.size() == 1) {
+      TEST_CHECK(math::is_close(out[0], 20.0f));
+    }
+  }
+
   // Test empty TimeSamples
   {
     value::TimeSamples ts;

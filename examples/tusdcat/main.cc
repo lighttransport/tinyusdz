@@ -17,6 +17,7 @@
 #include "logger.hh"
 #include "crate-writer.hh"
 #include "crate-dump.hh"
+#include "usdc-reader.hh"
 
 #include "tydra/scene-access.hh"
 #include "variant-format.hh"
@@ -149,6 +150,101 @@ static bool progress_callback(float progress, void *userptr) {
   return true;  // Continue parsing
 }
 
+static bool LoadUSDCWithMemoryReport(
+    const std::string &filepath, const bool show_progress, tinyusdz::Stage *stage,
+    tinyusdz::usdc::USDCMemoryUsageReport *memory_report, std::string *warn,
+    std::string *err) {
+  if (!stage) {
+    if (err) {
+      (*err) = "`stage` is nullptr.";
+    }
+    return false;
+  }
+
+  std::vector<uint8_t> data;
+  std::string local_err;
+  if (!tinyusdz::io::ReadWholeFile(&data, &local_err, filepath)) {
+    if (err) {
+      (*err) = local_err;
+    }
+    return false;
+  }
+
+  tinyusdz::StreamReader sr(data.data(), data.size(), /* swap_endian */ false);
+  tinyusdz::usdc::USDCReaderConfig config;
+  if (const char *lazy_env = std::getenv("TINYUSDZ_USDC_LAZY")) {
+    std::string v = str_tolower(std::string(lazy_env));
+    if ((v == "0") || (v == "false") || (v == "off") || (v == "no")) {
+      config.use_lazy_property_construction = false;
+    } else if ((v == "1") || (v == "true") || (v == "on") || (v == "yes")) {
+      config.use_lazy_property_construction = true;
+    }
+  }
+  tinyusdz::usdc::USDCReader reader(&sr, config);
+
+  ProgressState progress_state;
+  if (show_progress) {
+    progress_state.start_time = std::chrono::steady_clock::now();
+    reader.SetProgressCallback(progress_callback, &progress_state);
+  }
+
+  if (!reader.ReadUSDC()) {
+    if (warn) {
+      (*warn) = reader.GetWarning();
+    }
+    if (err) {
+      (*err) = reader.GetError();
+    }
+    return false;
+  }
+
+  if (memory_report) {
+    (*memory_report) = reader.GetMemoryUsageReport();
+  }
+
+  if (!reader.ReconstructStage(stage)) {
+    if (warn) {
+      (*warn) = reader.GetWarning();
+    }
+    if (err) {
+      (*err) = reader.GetError();
+    }
+    return false;
+  }
+
+  if (warn) {
+    (*warn) = reader.GetWarning();
+  }
+  if (err) {
+    (*err) = reader.GetError();
+  }
+
+  return true;
+}
+
+static void PrintUSDCParserMemoryReport(
+    const tinyusdz::usdc::USDCMemoryUsageReport &report) {
+  std::cout << "  USDC parser current usage: "
+            << format_memory_size(size_t(report.current_usage_bytes)) << " ("
+            << report.current_usage_bytes << " bytes)\n";
+  std::cout << "  USDC parser peak usage:    "
+            << format_memory_size(size_t(report.peak_usage_bytes)) << " ("
+            << report.peak_usage_bytes << " bytes)\n";
+  std::cout << "  USDC memory budget:        "
+            << format_memory_size(size_t(report.max_budget_bytes)) << " ("
+            << report.max_budget_bytes << " bytes)\n";
+  std::cout << "  USDC budget remaining:     "
+            << format_memory_size(size_t(report.remaining_budget_bytes)) << " ("
+            << report.remaining_budget_bytes << " bytes)\n";
+
+  if (report.max_budget_bytes > 0) {
+    double ratio =
+        100.0 * (double(report.peak_usage_bytes) / double(report.max_budget_bytes));
+    std::cout << "  USDC peak/budget ratio:    " << std::fixed
+              << std::setprecision(2) << ratio << " %\n";
+  }
+}
+
 void print_help() {
   std::cout << "Usage: tusdcat [OPTIONS] input.usda/usdc/usdz\n";
   std::cout << "\n";
@@ -170,6 +266,7 @@ void print_help() {
   std::cout << "  -j, --json          Output parsed USD as JSON string\n";
   std::cout << "  -o, --output FILE   Write output to USDC file\n";
   std::cout << "  --memstat           Print memory usage statistics\n";
+  std::cout << "                      (includes USDC parser budget report for .usdc)\n";
   std::cout << "  --progress          Show ASCII progress bar\n";
   std::cout << "                      (only shown if loading takes > 3 seconds)\n";
   std::cout << "  --loglevel INT      Set logging level:\n";
@@ -757,6 +854,8 @@ int main(int argc, char **argv) {
   } else {
 
     tinyusdz::Stage stage;
+    tinyusdz::usdc::USDCMemoryUsageReport usdc_memory_report;
+    bool has_usdc_memory_report{false};
 
     tinyusdz::USDLoadOptions options;
 
@@ -768,8 +867,15 @@ int main(int argc, char **argv) {
       options.progress_userptr = &progress_state;
     }
 
-    // auto detect format.
-    bool ret = tinyusdz::LoadUSDFromFile(filepath, &stage, &warn, &err, options);
+    bool ret{false};
+    if (ext == "usdc") {
+      ret = LoadUSDCWithMemoryReport(filepath, show_progress, &stage,
+                                     &usdc_memory_report, &warn, &err);
+      has_usdc_memory_report = true;
+    } else {
+      // auto detect format.
+      ret = tinyusdz::LoadUSDFromFile(filepath, &stage, &warn, &err, options);
+    }
     if (!warn.empty()) {
       std::cerr << "WARN : " << warn << "\n";
     }
@@ -789,6 +895,9 @@ int main(int argc, char **argv) {
         std::cout << "# Memory Statistics (Stage)\n";
         std::cout << "  Stage memory usage: " << format_memory_size(stage_mem) 
                   << " (" << stage_mem << " bytes)\n";
+        if (has_usdc_memory_report) {
+          PrintUSDCParserMemoryReport(usdc_memory_report);
+        }
       }
       return EXIT_SUCCESS;
     }
@@ -798,6 +907,10 @@ int main(int argc, char **argv) {
       std::cout << "# Memory Statistics (Stage)\n";
       std::cout << "  Stage memory usage: " << format_memory_size(stage_mem) 
                 << " (" << stage_mem << " bytes)\n\n";
+      if (has_usdc_memory_report) {
+        PrintUSDCParserMemoryReport(usdc_memory_report);
+        std::cout << "\n";
+      }
     }
 
     if (json_output) {

@@ -14,6 +14,9 @@
 namespace tinyusdz {
 namespace tydra {
 
+// Out-of-line virtual destructor to avoid weak vtables warning
+VariantManager::~VariantManager() = default;
+
 const std::vector<VariantGroup>& DefaultVariantManager::GetVariantGroups() const {
   return _variant_groups;
 }
@@ -24,7 +27,7 @@ const VariantGroup* DefaultVariantManager::FindVariantGroup(
   if (it != _variant_group_map.end()) {
     int32_t idx = it->second;
     if (idx >= 0 && idx < static_cast<int32_t>(_variant_groups.size())) {
-      return &_variant_groups[idx];
+      return &_variant_groups[static_cast<size_t>(idx)];
     }
   }
   return nullptr;
@@ -116,7 +119,7 @@ void DefaultVariantManager::ResetToDefaults() {
     for (const auto& vs : group.variant_sets) {
       if (vs.default_option_index >= 0 &&
           vs.default_option_index < static_cast<int32_t>(vs.options.size())) {
-        VariantSelection sel(vs.name, vs.options[vs.default_option_index].name,
+        VariantSelection sel(vs.name, vs.options[static_cast<size_t>(vs.default_option_index)].name,
                             group.prim_path);
         _current_selections.push_back(sel);
       }

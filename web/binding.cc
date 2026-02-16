@@ -1167,7 +1167,7 @@ class TinyUSDZLoaderNative {
     loaded_as_layer_ = false;
     filename_ = filename;
 
-    std::cout << "loaded\n";
+    //std::cout << "[tusd:loadFromBinary] loaded << " filename << "\n";
 #if 0
     tinyusdz::tydra::RenderSceneConverterEnv env(stage);
 
