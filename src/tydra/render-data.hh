@@ -3325,25 +3325,16 @@ class RenderSceneConverter {
   bool BuildVertexIndicesFastImpl(RenderMesh &mesh);
 
   //
-  // Get Skeleton assigned to the GeomMesh Prim and convert it to SkelHierarchy.
-  // Also get SkelAnimation attached to Skeleton(if exists)
-  //
-  bool ConvertSkeletonImpl(const RenderSceneConverterEnv &env, const tinyusdz::GeomMesh &mesh,
-                       int32_t skeleton_id,
-                       SkelHierarchy *out_skel, nonstd::optional<AnimationClip> *out_anim);
-
   // Convert skeleton from explicit path (for ancestor-discovered skeletons)
   bool ConvertSkeletonImplWithPath(const RenderSceneConverterEnv &env, const Path &skelPath,
-                       int32_t skeleton_id,
-                       SkelHierarchy *out_skel, nonstd::optional<AnimationClip> *out_anim);
+                       SkelHierarchy *out_skel);
 
   // Convert skeleton from Skeleton pointer directly (more efficient for pre-discovered skeletons)
   bool ConvertSkeletonFromPtr(const RenderSceneConverterEnv &env,
                        const Path &skelPath,
                        const Skeleton &skel,
                        const std::string &primName,
-                       int32_t skeleton_id,
-                       SkelHierarchy *out_skel, nonstd::optional<AnimationClip> *out_anim);
+                       SkelHierarchy *out_skel);
 
   // Convert all SkelAnimation prims after skeleton conversion is complete.
   // Supports multiple animations per skeleton by processing all discovered SkelAnimation prims
