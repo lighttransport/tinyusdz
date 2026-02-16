@@ -16,13 +16,16 @@ namespace tinyusdz {
 class MemoryBudgetManager {
  public:
   explicit MemoryBudgetManager(uint64_t max_budget = std::numeric_limits<uint32_t>::max())
-      : max_budget_(max_budget), current_usage_(0) {}
+      : max_budget_(max_budget), current_usage_(0), peak_usage_(0) {}
 
   bool CheckAndReserve(uint64_t requested_bytes) {
     if (current_usage_ + requested_bytes > max_budget_) {
       return false;
     }
     current_usage_ += requested_bytes;
+    if (current_usage_ > peak_usage_) {
+      peak_usage_ = current_usage_;
+    }
     return true;
   }
 
@@ -35,12 +38,17 @@ class MemoryBudgetManager {
   }
 
   uint64_t GetCurrentUsage() const { return current_usage_; }
+  uint64_t GetPeakUsage() const { return peak_usage_; }
   uint64_t GetMaxBudget() const { return max_budget_; }
   uint64_t GetRemainingBudget() const { return max_budget_ - current_usage_; }
   
   size_t GetUsageInMB() const { return size_t(current_usage_ / (1024 * 1024)); }
+  size_t GetPeakUsageInMB() const { return size_t(peak_usage_ / (1024 * 1024)); }
 
-  void Reset() { current_usage_ = 0; }
+  void Reset() {
+    current_usage_ = 0;
+    peak_usage_ = 0;
+  }
 
   class ScopedReservation {
    public:
@@ -90,6 +98,7 @@ class MemoryBudgetManager {
  private:
   uint64_t max_budget_;
   uint64_t current_usage_;
+  uint64_t peak_usage_;
 };
 
 template <typename ReturnType>
