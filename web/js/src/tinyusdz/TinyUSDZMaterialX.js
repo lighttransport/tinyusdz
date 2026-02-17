@@ -158,6 +158,121 @@ function createColor(rgb, colorSpace = 'srgb') {
 }
 
 /**
+ * Extract normal map strength (`normal_map_scale`) from OpenPBR geometry data.
+ */
+function extractNormalMapScale(geometryData) {
+    if (!geometryData || typeof geometryData !== 'object') return 1.0;
+    const scale = extractValue(geometryData.normal_map_scale);
+    return (typeof scale === 'number' && Number.isFinite(scale)) ? scale : 1.0;
+}
+
+/**
+ * Resolve normal parameter (`normal` or `geometry_normal`) from OpenPBR geometry data.
+ */
+function extractNormalParam(geometryData) {
+    if (!geometryData || typeof geometryData !== 'object') return undefined;
+    return geometryData.normal !== undefined ? geometryData.normal : geometryData.geometry_normal;
+}
+
+/**
+ * Apply normal map strength to Three.js material.
+ */
+function applyNormalScale(material, normalScale) {
+    const scale = (typeof normalScale === 'number' && Number.isFinite(normalScale)) ? normalScale : 1.0;
+    material.normalScale = new THREE.Vector2(scale, scale);
+}
+
+/**
+ * Apply normal map texture in async (await) conversion path.
+ */
+async function applyNormalMapLoaded(material, normalParam, normalScale, usdScene, textureCache, textureManager = null) {
+    if (!(normalParam !== undefined && usdScene && hasTexture(normalParam))) {
+        return;
+    }
+
+    const textureId = getTextureId(normalParam);
+    applyNormalScale(material, normalScale);
+
+    if (textureManager) {
+        textureManager.queueTexture(material, 'normalMap', textureId, usdScene, {
+            normalScale
+        });
+        return;
+    }
+
+    const texture = await loadTextureFromUSD(usdScene, textureId, textureCache);
+    if (texture) {
+        material.normalMap = texture;
+        material.userData.textures.normalMap = { textureId, texture };
+    }
+}
+
+/**
+ * Apply normal map texture in legacy fire-and-forget conversion path.
+ */
+function applyNormalMapLegacy(material, normalParam, normalScale, usdScene, textureCache) {
+    if (!(normalParam !== undefined && usdScene && hasTexture(normalParam))) {
+        return;
+    }
+
+    const textureId = getTextureId(normalParam);
+    applyNormalScale(material, normalScale);
+
+    loadTextureFromUSD(usdScene, textureId, textureCache).then((texture) => {
+        if (texture) {
+            material.normalMap = texture;
+            material.userData.textures.normalMap = { textureId, texture };
+            material.needsUpdate = true;
+        }
+    }).catch((err) => {
+        console.error('Failed to load normal texture:', err);
+    });
+}
+
+/**
+ * Extract normal map strength (`normal_map_scale`) from grouped getter access.
+ */
+function extractNormalMapScaleFromGetter(getParam) {
+    if (typeof getParam !== 'function') return 1.0;
+    const scale = extractValue(getParam('normal_map_scale', 'geometry'));
+    return (typeof scale === 'number' && Number.isFinite(scale)) ? scale : 1.0;
+}
+
+/**
+ * Resolve normal parameter (`normal` or `geometry_normal`) from grouped getter access.
+ */
+function extractNormalParamFromGetter(getParam) {
+    if (typeof getParam !== 'function') return undefined;
+    return getParam('normal', 'geometry') ?? getParam('geometry_normal', 'geometry');
+}
+
+/**
+ * Apply OpenPBR normal map using grouped getter access.
+ * `loadTextureFn` can be overridden by callers that own custom texture loading behavior.
+ */
+async function applyOpenPBRNormalMapFromGetter(
+    material,
+    getParam,
+    usdScene,
+    textureCache = null,
+    loadTextureFn = loadTextureFromUSD
+) {
+    const normalParam = extractNormalParamFromGetter(getParam);
+    if (!(normalParam !== undefined && usdScene && hasTexture(normalParam))) {
+        return;
+    }
+
+    const textureId = getTextureId(normalParam);
+    const texture = await loadTextureFn(usdScene, textureId, textureCache);
+    if (texture) {
+        const normalScale = extractNormalMapScaleFromGetter(getParam);
+        material.normalMap = texture;
+        applyNormalScale(material, normalScale);
+        material.userData.textures.normalMap = { textureId, texture };
+    }
+}
+
+/**
  * Detect MIME type from image data
  */
 function getMimeType(imgData) {
@@ -570,22 +685,9 @@ async function convertOpenPBRToMeshPhysicalMaterialLoaded(materialData, usdScene
             }
         }
 
-        // Normal map
-        const normalParam = flat.normal !== undefined ? flat.normal : flat.geometry_normal;
-        if (normalParam !== undefined && usdScene && hasTexture(normalParam)) {
-            const textureId = getTextureId(normalParam);
-            // Initialize normalScale even in delayed mode
-            material.normalScale = new THREE.Vector2(1, 1);
-            if (textureManager) {
-                textureManager.queueTexture(material, 'normalMap', textureId, usdScene);
-            } else {
-                const texture = await loadTextureFromUSD(usdScene, textureId, textureCache);
-                if (texture) {
-                    material.normalMap = texture;
-                    material.userData.textures.normalMap = { textureId, texture };
-                }
-            }
-        }
+        const normalParam = extractNormalParam(flat);
+        const normalScale = extractNormalMapScale(flat);
+        await applyNormalMapLoaded(material, normalParam, normalScale, usdScene, textureCache, textureManager);
     }
 
     // Process grouped format
@@ -688,20 +790,9 @@ async function convertOpenPBRToMeshPhysicalMaterialLoaded(materialData, usdScene
                 }
             }
 
-            const normalParam = pbr.geometry.normal !== undefined ? pbr.geometry.normal : pbr.geometry.geometry_normal;
-            if (normalParam !== undefined && usdScene && hasTexture(normalParam)) {
-                const textureId = getTextureId(normalParam);
-                material.normalScale = new THREE.Vector2(1, 1);
-                if (textureManager) {
-                    textureManager.queueTexture(material, 'normalMap', textureId, usdScene);
-                } else {
-                    const texture = await loadTextureFromUSD(usdScene, textureId, textureCache);
-                    if (texture) {
-                        material.normalMap = texture;
-                        material.userData.textures.normalMap = { textureId, texture };
-                    }
-                }
-            }
+            const normalParam = extractNormalParam(pbr.geometry);
+            const normalScale = extractNormalMapScale(pbr.geometry);
+            await applyNormalMapLoaded(material, normalParam, normalScale, usdScene, textureCache, textureManager);
         }
     }
 
@@ -889,20 +980,9 @@ function convertOpenPBRToMeshPhysicalMaterial(materialData, usdScene = null, opt
             }
         }
 
-        // Normal map
-        const normalParam = flat.normal !== undefined ? flat.normal : flat.geometry_normal;
-        if (normalParam !== undefined && usdScene && hasTexture(normalParam)) {
-            loadTextureFromUSD(usdScene, getTextureId(normalParam), textureCache).then((texture) => {
-                if (texture) {
-                    material.normalMap = texture;
-                    material.normalScale = new THREE.Vector2(1, 1);
-                    material.userData.textures.normalMap = { textureId: getTextureId(normalParam), texture };
-                    material.needsUpdate = true;
-                }
-            }).catch((err) => {
-                console.error('Failed to load normal texture:', err);
-            });
-        }
+        const normalParam = extractNormalParam(flat);
+        const normalScale = extractNormalMapScale(flat);
+        applyNormalMapLegacy(material, normalParam, normalScale, usdScene, textureCache);
     }
 
     // Process grouped format
@@ -1003,19 +1083,9 @@ function convertOpenPBRToMeshPhysicalMaterial(materialData, usdScene = null, opt
                 }
             }
 
-            const normalParam = pbr.geometry.normal !== undefined ? pbr.geometry.normal : pbr.geometry.geometry_normal;
-            if (normalParam !== undefined && usdScene && hasTexture(normalParam)) {
-                loadTextureFromUSD(usdScene, getTextureId(normalParam), textureCache).then((texture) => {
-                    if (texture) {
-                        material.normalMap = texture;
-                        material.normalScale = new THREE.Vector2(1, 1);
-                        material.userData.textures.normalMap = { textureId: getTextureId(normalParam), texture };
-                        material.needsUpdate = true;
-                    }
-                }).catch((err) => {
-                    console.error('Failed to load normal texture:', err);
-                });
-            }
+            const normalParam = extractNormalParam(pbr.geometry);
+            const normalScale = extractNormalMapScale(pbr.geometry);
+            applyNormalMapLegacy(material, normalParam, normalScale, usdScene, textureCache);
         }
     }
 
@@ -3131,6 +3201,11 @@ export {
     hasTexture,
     getTextureId,
     createColor,
+    extractNormalMapScale,
+    extractNormalParam,
+    extractNormalMapScaleFromGetter,
+    extractNormalParamFromGetter,
+    applyOpenPBRNormalMapFromGetter,
     OPENPBR_TO_THREEJS_MAP,
     OPENPBR_TEXTURE_MAP,
     // NodeGraph optimization
