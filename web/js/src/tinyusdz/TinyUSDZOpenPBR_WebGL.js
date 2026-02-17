@@ -1064,6 +1064,7 @@ export class MtlxNodeGraphProcessor {
  */
 export function createOpenPBRMaterial(params = {}, textures = {}) {
     const material = new THREE.MeshPhysicalMaterial();
+    const geometryParams = (params.geometry && typeof params.geometry === 'object') ? params.geometry : null;
 
     // Flag for type checking
     material.isOpenPBRMaterial = true;
@@ -1111,17 +1112,24 @@ export function createOpenPBRMaterial(params = {}, textures = {}) {
     material.emissiveIntensity = params.emission_luminance ?? DEFAULT_OPENPBR_PARAMS.emission_luminance;
 
     // Apply opacity
-    if (params.geometry_opacity !== undefined) {
-        material.opacity = params.geometry_opacity;
-        material.transparent = params.geometry_opacity < 1.0;
+    const geometryOpacity = params.geometry_opacity ?? geometryParams?.geometry_opacity ?? geometryParams?.opacity;
+    if (geometryOpacity !== undefined) {
+        material.opacity = geometryOpacity;
+        material.transparent = geometryOpacity < 1.0;
+    }
+
+    // Apply normal map strength if authored.
+    const normalMapScale = params.normal_map_scale ?? geometryParams?.normal_map_scale;
+    if (typeof normalMapScale === 'number' && Number.isFinite(normalMapScale)) {
+        material.normalScale = new THREE.Vector2(normalMapScale, normalMapScale);
     }
 
     // Apply textures
     if (textures.base_color) {
         material.map = textures.base_color;
     }
-    if (textures.normal) {
-        material.normalMap = textures.normal;
+    if (textures.normal || textures.geometry_normal) {
+        material.normalMap = textures.normal || textures.geometry_normal;
     }
     if (textures.specular_roughness) {
         material.roughnessMap = textures.specular_roughness;
@@ -1234,6 +1242,7 @@ export class MtlxMaterialConverter {
             // Normal
             'normal': 'normal',
             'normalMap': 'normal',
+            'geometry_normal': 'normal',
 
             // Emission
             'emission_color': 'emission_color',

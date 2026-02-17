@@ -7845,6 +7845,218 @@ bool RenderSceneConverter::ConvertOpenPBRSurfaceShader(
   return true;
 }
 
+static OpenPBRSurface ConvertMtlxOpenPBRSurfaceToOpenPBRSurface(
+    const MtlxOpenPBRSurface &src) {
+  OpenPBRSurface dst;
+
+  // Copy base layer properties
+  dst.base_weight = src.base_weight;
+  dst.base_color = src.base_color;
+  dst.base_roughness = src.base_diffuse_roughness;
+  dst.base_metalness = src.base_metalness;
+  dst.base_diffuse_roughness = src.base_diffuse_roughness;
+
+  // Copy specular properties
+  dst.specular_weight = src.specular_weight;
+  dst.specular_color = src.specular_color;
+  dst.specular_roughness = src.specular_roughness;
+  dst.specular_ior = src.specular_ior;
+  dst.specular_anisotropy = src.specular_anisotropy;
+  dst.specular_rotation = src.specular_rotation;
+
+  // Copy transmission properties
+  dst.transmission_weight = src.transmission_weight;
+  dst.transmission_color = src.transmission_color;
+  dst.transmission_depth = src.transmission_depth;
+  dst.transmission_scatter = src.transmission_scatter;
+  dst.transmission_scatter_anisotropy = src.transmission_scatter_anisotropy;
+  dst.transmission_dispersion = src.transmission_dispersion;
+
+  // Copy subsurface properties
+  dst.subsurface_weight = src.subsurface_weight;
+  dst.subsurface_color = src.subsurface_color;
+  dst.subsurface_scale = src.subsurface_scale;
+  dst.subsurface_anisotropy = src.subsurface_anisotropy;
+
+  // Copy coat properties
+  dst.coat_weight = src.coat_weight;
+  dst.coat_color = src.coat_color;
+  dst.coat_roughness = src.coat_roughness;
+  dst.coat_anisotropy = src.coat_anisotropy;
+  dst.coat_rotation = src.coat_rotation;
+  dst.coat_ior = src.coat_ior;
+  // Note: MtlxOpenPBRSurface has float coat_affect_color,
+  // while OpenPBRSurface has color3f coat_affect_color.
+  dst.coat_affect_roughness = src.coat_affect_roughness;
+
+  // Copy fuzz properties (velvet/fabric-like appearance)
+  dst.fuzz_weight = src.fuzz_weight;
+  dst.fuzz_color = src.fuzz_color;
+  dst.fuzz_roughness = src.fuzz_roughness;
+
+  // Copy thin film properties (iridescence)
+  dst.thin_film_weight = src.thin_film_weight;
+  dst.thin_film_thickness = src.thin_film_thickness;
+  dst.thin_film_ior = src.thin_film_ior;
+
+  // Copy emission properties
+  dst.emission_luminance = src.emission_luminance;
+  dst.emission_color = src.emission_color;
+
+  // Copy geometry properties
+  dst.opacity = src.geometry_opacity;
+  if (src.geometry_normal.has_value()) {
+    auto normal_val = src.geometry_normal.get_value();
+    if (normal_val) {
+      dst.normal = normal_val.value();
+    }
+  }
+  if (src.geometry_tangent.has_value()) {
+    auto tangent_val = src.geometry_tangent.get_value();
+    if (tangent_val) {
+      dst.tangent = tangent_val.value();
+    }
+  }
+
+  return dst;
+}
+
+static int32_t ApplyMtlxNormalMapInfoToOpenPBRShader(
+    const MtlxNodeGraphInfo &normal_info, const std::string &default_uv_name,
+    std::vector<TextureImage> *images, std::vector<UVTexture> *textures,
+    OpenPBRSurfaceShader *openpbr_shader) {
+  if (!images || !textures || !openpbr_shader) {
+    return -1;
+  }
+
+  if (!normal_info.has_normal_map) {
+    return -1;
+  }
+
+  openpbr_shader->normal_map_scale = normal_info.normal_map_scale;
+
+  if (normal_info.normal_map_texture.empty()) {
+    return -1;
+  }
+
+  TextureImage tex_image;
+  tex_image.asset_identifier = normal_info.normal_map_texture;
+  tex_image.colorSpace = ColorSpace::Raw;  // Normal maps are always raw/linear
+  tex_image.usdColorSpace = ColorSpace::Raw;
+
+  int64_t image_id = -1;
+  for (size_t i = 0; i < images->size(); ++i) {
+    if ((*images)[i].asset_identifier == normal_info.normal_map_texture) {
+      image_id = static_cast<int64_t>(i);
+      break;
+    }
+  }
+
+  if (image_id < 0) {
+    image_id = static_cast<int64_t>(images->size());
+    images->push_back(tex_image);
+  }
+
+  UVTexture uvtex;
+  uvtex.texture_image_id = static_cast<int32_t>(image_id);
+  uvtex.varname_uv = default_uv_name;
+  uvtex.connectedOutputChannel = UVTexture::Channel::RGB;
+  uvtex.wrapS = UVTexture::WrapMode::REPEAT;
+  uvtex.wrapT = UVTexture::WrapMode::REPEAT;
+
+  int32_t tex_id = static_cast<int32_t>(textures->size());
+  textures->push_back(uvtex);
+  openpbr_shader->normal.texture_id = tex_id;
+  return tex_id;
+}
+
+static bool ApplyMtlxTangentInfoToOpenPBRShader(
+    const MtlxNodeGraphInfo &tangent_info,
+    OpenPBRSurfaceShader *openpbr_shader) {
+  if (!openpbr_shader) {
+    return false;
+  }
+
+  if (!tangent_info.has_tangent_rotation) {
+    return false;
+  }
+
+  openpbr_shader->tangent_rotation = tangent_info.tangent_rotation;
+  return true;
+}
+
+static void ApplyMtlxGeometryNodeGraphInfoToOpenPBRShader(
+    const Stage &stage, const Prim *material_prim,
+    const MtlxOpenPBRSurface &mtlx_openpbr, const std::string &default_uv_name,
+    std::vector<TextureImage> *images, std::vector<UVTexture> *textures,
+    OpenPBRSurfaceShader *openpbr_shader, std::string *err,
+    bool emit_extract_debug_trace) {
+  if (!material_prim || !images || !textures || !openpbr_shader) {
+    return;
+  }
+
+  // Check if geometry_normal has connections (links to NodeGraph with ND_normalmap node)
+  const auto &normal_conns = mtlx_openpbr.geometry_normal.get_connections();
+  DCOUT("DEBUG: geometry_normal has " << normal_conns.size()
+        << " connections, has_value="
+        << mtlx_openpbr.geometry_normal.has_value());
+
+  if (!normal_conns.empty()) {
+    if (emit_extract_debug_trace) {
+      DCOUT("DEBUG: First connection path: " << normal_conns[0].full_path_name());
+    }
+
+    std::string extract_debug;
+    std::string *extract_err = emit_extract_debug_trace ? &extract_debug : err;
+    auto normal_info_result = ExtractMtlxNodeGraphInfo(
+        stage, material_prim, normal_conns, extract_err);
+
+    if (emit_extract_debug_trace && !extract_debug.empty()) {
+      DCOUT("ExtractMtlxNodeGraphInfo debug:\n" << extract_debug);
+    }
+
+    if (normal_info_result) {
+      const auto &normal_info = normal_info_result.value();
+      DCOUT("DEBUG: ExtractMtlxNodeGraphInfo returned: has_normal_map="
+            << normal_info.has_normal_map
+            << ", normal_map_scale=" << normal_info.normal_map_scale
+            << ", normal_map_texture='" << normal_info.normal_map_texture << "'");
+
+      int32_t tex_id = ApplyMtlxNormalMapInfoToOpenPBRShader(
+          normal_info, default_uv_name, images, textures, openpbr_shader);
+      if (normal_info.has_normal_map) {
+        DCOUT("DEBUG: Extracted normal_map_scale: "
+              << normal_info.normal_map_scale);
+      }
+      if (tex_id >= 0) {
+        DCOUT("DEBUG: Created normal map UVTexture with tex_id: " << tex_id);
+      }
+    } else {
+      std::string error_message;
+      if (emit_extract_debug_trace) {
+        error_message = extract_debug;
+      } else if (err) {
+        error_message = *err;
+      }
+      DCOUT("DEBUG: ExtractMtlxNodeGraphInfo failed: " << error_message);
+    }
+  }
+
+  // Check if geometry_tangent has connections (links to NodeGraph with ND_rotate3d_vector3 node)
+  const auto &tangent_conns = mtlx_openpbr.geometry_tangent.get_connections();
+  if (!tangent_conns.empty()) {
+    auto tangent_info_result = ExtractMtlxNodeGraphInfo(
+        stage, material_prim, tangent_conns, err);
+    if (tangent_info_result) {
+      const auto &tangent_info = tangent_info_result.value();
+      if (ApplyMtlxTangentInfoToOpenPBRShader(tangent_info, openpbr_shader)) {
+        DCOUT("DEBUG: Extracted tangent_rotation: "
+              << tangent_info.tangent_rotation);
+      }
+    }
+  }
+}
+
 bool RenderSceneConverter::ConvertMaterial(const RenderSceneConverterEnv &env,
                                            const Path &mat_abs_path,
                                            const tinyusdz::Material &material,
@@ -7950,79 +8162,8 @@ bool RenderSceneConverter::ConvertMaterial(const RenderSceneConverterEnv &env,
 
     if (mtlx_openpbr) {
       // Convert MtlxOpenPBRSurface (Blender v4.5+ MaterialX export with ND_open_pbr_surface_surfaceshader)
-      // For now, convert it to OpenPBRSurface format by copying compatible parameters
-      OpenPBRSurface converted_openpbr;
-
-      // Copy base layer properties
-      converted_openpbr.base_weight = mtlx_openpbr->base_weight;
-      converted_openpbr.base_color = mtlx_openpbr->base_color;
-      converted_openpbr.base_roughness = mtlx_openpbr->base_diffuse_roughness;
-      converted_openpbr.base_metalness = mtlx_openpbr->base_metalness;
-      converted_openpbr.base_diffuse_roughness = mtlx_openpbr->base_diffuse_roughness;
-
-      // Copy specular properties
-      converted_openpbr.specular_weight = mtlx_openpbr->specular_weight;
-      converted_openpbr.specular_color = mtlx_openpbr->specular_color;
-      converted_openpbr.specular_roughness = mtlx_openpbr->specular_roughness;
-      converted_openpbr.specular_ior = mtlx_openpbr->specular_ior;
-      converted_openpbr.specular_anisotropy = mtlx_openpbr->specular_anisotropy;
-      converted_openpbr.specular_rotation = mtlx_openpbr->specular_rotation;
-
-      // Copy transmission properties
-      converted_openpbr.transmission_weight = mtlx_openpbr->transmission_weight;
-      converted_openpbr.transmission_color = mtlx_openpbr->transmission_color;
-      converted_openpbr.transmission_depth = mtlx_openpbr->transmission_depth;
-      converted_openpbr.transmission_scatter = mtlx_openpbr->transmission_scatter;
-      converted_openpbr.transmission_scatter_anisotropy = mtlx_openpbr->transmission_scatter_anisotropy;
-      converted_openpbr.transmission_dispersion = mtlx_openpbr->transmission_dispersion;
-
-      // Copy subsurface properties
-      converted_openpbr.subsurface_weight = mtlx_openpbr->subsurface_weight;
-      converted_openpbr.subsurface_color = mtlx_openpbr->subsurface_color;
-      converted_openpbr.subsurface_scale = mtlx_openpbr->subsurface_scale;
-      converted_openpbr.subsurface_anisotropy = mtlx_openpbr->subsurface_anisotropy;
-
-      // Copy coat properties
-      converted_openpbr.coat_weight = mtlx_openpbr->coat_weight;
-      converted_openpbr.coat_color = mtlx_openpbr->coat_color;
-      converted_openpbr.coat_roughness = mtlx_openpbr->coat_roughness;
-      converted_openpbr.coat_anisotropy = mtlx_openpbr->coat_anisotropy;
-      converted_openpbr.coat_rotation = mtlx_openpbr->coat_rotation;
-      converted_openpbr.coat_ior = mtlx_openpbr->coat_ior;
-      // Note: MtlxOpenPBRSurface has float coat_affect_color, OpenPBRSurface has color3f
-      // Just skip coat_affect_color conversion for now since types don't match easily
-      // TODO: Proper type conversion if needed
-      converted_openpbr.coat_affect_roughness = mtlx_openpbr->coat_affect_roughness;
-
-      // Copy fuzz properties (velvet/fabric-like appearance)
-      converted_openpbr.fuzz_weight = mtlx_openpbr->fuzz_weight;
-      converted_openpbr.fuzz_color = mtlx_openpbr->fuzz_color;
-      converted_openpbr.fuzz_roughness = mtlx_openpbr->fuzz_roughness;
-
-      // Copy thin film properties (iridescence)
-      converted_openpbr.thin_film_weight = mtlx_openpbr->thin_film_weight;
-      converted_openpbr.thin_film_thickness = mtlx_openpbr->thin_film_thickness;
-      converted_openpbr.thin_film_ior = mtlx_openpbr->thin_film_ior;
-
-      // Copy emission properties
-      converted_openpbr.emission_luminance = mtlx_openpbr->emission_luminance;
-      converted_openpbr.emission_color = mtlx_openpbr->emission_color;
-
-      // Copy geometry properties
-      converted_openpbr.opacity = mtlx_openpbr->geometry_opacity;
-      // Copy normal and tangent if they have values (TypedAttribute -> TypedAttributeWithFallback)
-      if (mtlx_openpbr->geometry_normal.has_value()) {
-        auto normal_val = mtlx_openpbr->geometry_normal.get_value();
-        if (normal_val) {
-          converted_openpbr.normal = normal_val.value();
-        }
-      }
-      if (mtlx_openpbr->geometry_tangent.has_value()) {
-        auto tangent_val = mtlx_openpbr->geometry_tangent.get_value();
-        if (tangent_val) {
-          converted_openpbr.tangent = tangent_val.value();
-        }
-      }
+      OpenPBRSurface converted_openpbr =
+          ConvertMtlxOpenPBRSurfaceToOpenPBRSurface(*mtlx_openpbr);
 
       // Convert to OpenPBRSurfaceShader
       OpenPBRSurfaceShader openpbr_shader;
@@ -8041,76 +8182,11 @@ bool RenderSceneConverter::ConvertMaterial(const RenderSceneConverterEnv &env,
       PUSH_WARN(fmt::format("DEBUG: find_prim_at_path({}) returned {}, material_prim={}",
                             mat_abs_path.prim_part(), found_prim, (material_prim ? "valid" : "null")));
       if (found_prim && material_prim) {
-        // Check if geometry_normal has connections (links to NodeGraph with ND_normalmap node)
-        const auto &normal_conns = mtlx_openpbr->geometry_normal.get_connections();
-        PUSH_WARN(fmt::format("DEBUG: geometry_normal has {} connections, has_value={}",
-                              normal_conns.size(), mtlx_openpbr->geometry_normal.has_value()));
-        if (!normal_conns.empty()) {
-          auto normal_info_result = ExtractMtlxNodeGraphInfo(
-              env.stage, material_prim, normal_conns, &err);
-          if (normal_info_result) {
-            const auto &normal_info = normal_info_result.value();
-            if (normal_info.has_normal_map) {
-              openpbr_shader.normal_map_scale = normal_info.normal_map_scale;
-              DCOUT("Extracted normal_map_scale: " << normal_info.normal_map_scale);
-
-              // If a normal map texture was found, create a UVTexture entry
-              if (!normal_info.normal_map_texture.empty()) {
-                // Create a texture image entry
-                TextureImage tex_image;
-                tex_image.asset_identifier = normal_info.normal_map_texture;
-                tex_image.colorSpace = ColorSpace::Raw;  // Normal maps are always raw/linear
-                tex_image.usdColorSpace = ColorSpace::Raw;
-
-                // Check if this image already exists in the images list
-                int64_t image_id = -1;
-                for (size_t i = 0; i < images.size(); ++i) {
-                  if (images[i].asset_identifier == normal_info.normal_map_texture) {
-                    image_id = static_cast<int64_t>(i);
-                    break;
-                  }
-                }
-
-                // If not found, add the image
-                if (image_id < 0) {
-                  image_id = static_cast<int64_t>(images.size());
-                  images.push_back(tex_image);
-                  DCOUT("Added normal map image: " << normal_info.normal_map_texture << " as image_id " << image_id);
-                }
-
-                // Create UVTexture entry
-                UVTexture uvtex;
-                uvtex.texture_image_id = static_cast<int32_t>(image_id);
-                uvtex.varname_uv = env.mesh_config.default_texcoords_primvar_name;
-                uvtex.connectedOutputChannel = UVTexture::Channel::RGB;
-                uvtex.wrapS = UVTexture::WrapMode::REPEAT;
-                uvtex.wrapT = UVTexture::WrapMode::REPEAT;
-
-                int32_t tex_id = static_cast<int32_t>(textures.size());
-                textures.push_back(uvtex);
-
-                // Set the texture_id on the normal parameter
-                openpbr_shader.normal.texture_id = tex_id;
-
-                DCOUT("Created normal map UVTexture with tex_id: " << tex_id);
-              }
-            }
-          }
-        }
-
-        // Check if geometry_tangent has connections (links to NodeGraph with ND_rotate3d_vector3 node)
-        const auto &tangent_conns = mtlx_openpbr->geometry_tangent.get_connections();
-        if (!tangent_conns.empty()) {
-          auto tangent_info_result = ExtractMtlxNodeGraphInfo(
-              env.stage, material_prim, tangent_conns, &err);
-          if (tangent_info_result) {
-            const auto &tangent_info = tangent_info_result.value();
-            if (tangent_info.has_tangent_rotation) {
-              openpbr_shader.tangent_rotation = tangent_info.tangent_rotation;
-              DCOUT("Extracted tangent_rotation: " << tangent_info.tangent_rotation);
-            }
-          }
-        }
+        ApplyMtlxGeometryNodeGraphInfoToOpenPBRShader(
+            env.stage, material_prim, *mtlx_openpbr,
+            env.mesh_config.default_texcoords_primvar_name, &images, &textures,
+            &openpbr_shader, &err,
+            /*emit_extract_debug_trace*/ false);
       }
 
       rmat.openPBRShader = openpbr_shader;
@@ -8229,76 +8305,8 @@ bool RenderSceneConverter::ConvertMaterial(const RenderSceneConverterEnv &env,
             if (mtlx_openpbr) {
               DCOUT("Converting MtlxOpenPBRSurface to RenderMaterial");
 
-              // Convert MtlxOpenPBRSurface to OpenPBRSurface
-              OpenPBRSurface converted_openpbr;
-
-              // Copy base layer properties
-              converted_openpbr.base_weight = mtlx_openpbr->base_weight;
-              converted_openpbr.base_color = mtlx_openpbr->base_color;
-              converted_openpbr.base_roughness = mtlx_openpbr->base_diffuse_roughness;
-              converted_openpbr.base_metalness = mtlx_openpbr->base_metalness;
-              converted_openpbr.base_diffuse_roughness = mtlx_openpbr->base_diffuse_roughness;
-
-              // Copy specular properties
-              converted_openpbr.specular_weight = mtlx_openpbr->specular_weight;
-              converted_openpbr.specular_color = mtlx_openpbr->specular_color;
-              converted_openpbr.specular_roughness = mtlx_openpbr->specular_roughness;
-              converted_openpbr.specular_ior = mtlx_openpbr->specular_ior;
-              converted_openpbr.specular_anisotropy = mtlx_openpbr->specular_anisotropy;
-              converted_openpbr.specular_rotation = mtlx_openpbr->specular_rotation;
-
-              // Copy transmission properties
-              converted_openpbr.transmission_weight = mtlx_openpbr->transmission_weight;
-              converted_openpbr.transmission_color = mtlx_openpbr->transmission_color;
-              converted_openpbr.transmission_depth = mtlx_openpbr->transmission_depth;
-              converted_openpbr.transmission_scatter = mtlx_openpbr->transmission_scatter;
-              converted_openpbr.transmission_scatter_anisotropy = mtlx_openpbr->transmission_scatter_anisotropy;
-              converted_openpbr.transmission_dispersion = mtlx_openpbr->transmission_dispersion;
-
-              // Copy subsurface properties
-              converted_openpbr.subsurface_weight = mtlx_openpbr->subsurface_weight;
-              converted_openpbr.subsurface_color = mtlx_openpbr->subsurface_color;
-              converted_openpbr.subsurface_scale = mtlx_openpbr->subsurface_scale;
-              converted_openpbr.subsurface_anisotropy = mtlx_openpbr->subsurface_anisotropy;
-
-              // Copy coat properties
-              converted_openpbr.coat_weight = mtlx_openpbr->coat_weight;
-              converted_openpbr.coat_color = mtlx_openpbr->coat_color;
-              converted_openpbr.coat_roughness = mtlx_openpbr->coat_roughness;
-              converted_openpbr.coat_anisotropy = mtlx_openpbr->coat_anisotropy;
-              converted_openpbr.coat_rotation = mtlx_openpbr->coat_rotation;
-              converted_openpbr.coat_ior = mtlx_openpbr->coat_ior;
-              converted_openpbr.coat_affect_roughness = mtlx_openpbr->coat_affect_roughness;
-
-              // Copy fuzz properties (velvet/fabric-like appearance)
-              converted_openpbr.fuzz_weight = mtlx_openpbr->fuzz_weight;
-              converted_openpbr.fuzz_color = mtlx_openpbr->fuzz_color;
-              converted_openpbr.fuzz_roughness = mtlx_openpbr->fuzz_roughness;
-
-              // Copy thin film properties (iridescence)
-              converted_openpbr.thin_film_weight = mtlx_openpbr->thin_film_weight;
-              converted_openpbr.thin_film_thickness = mtlx_openpbr->thin_film_thickness;
-              converted_openpbr.thin_film_ior = mtlx_openpbr->thin_film_ior;
-
-              // Copy emission properties
-              converted_openpbr.emission_luminance = mtlx_openpbr->emission_luminance;
-              converted_openpbr.emission_color = mtlx_openpbr->emission_color;
-
-              // Copy geometry properties
-              converted_openpbr.opacity = mtlx_openpbr->geometry_opacity;
-              // Copy normal and tangent if they have values
-              if (mtlx_openpbr->geometry_normal.has_value()) {
-                auto normal_val = mtlx_openpbr->geometry_normal.get_value();
-                if (normal_val) {
-                  converted_openpbr.normal = normal_val.value();
-                }
-              }
-              if (mtlx_openpbr->geometry_tangent.has_value()) {
-                auto tangent_val = mtlx_openpbr->geometry_tangent.get_value();
-                if (tangent_val) {
-                  converted_openpbr.tangent = tangent_val.value();
-                }
-              }
+              OpenPBRSurface converted_openpbr =
+                  ConvertMtlxOpenPBRSurfaceToOpenPBRSurface(*mtlx_openpbr);
 
               // Convert to OpenPBRSurfaceShader
               OpenPBRSurfaceShader openpbr_shader;
@@ -8316,84 +8324,11 @@ bool RenderSceneConverter::ConvertMaterial(const RenderSceneConverterEnv &env,
                   material_prim_for_ng = nullptr;
                 }
 
-                const auto &normal_conns = mtlx_openpbr->geometry_normal.get_connections();
-                PUSH_WARN(fmt::format("DEBUG: geometry_normal has {} connections", normal_conns.size()));
-                if (!normal_conns.empty() && material_prim_for_ng) {
-                  PUSH_WARN(fmt::format("DEBUG: First connection path: {}", normal_conns[0].full_path_name()));
-                  std::string extract_debug;
-                  auto normal_info_result = ExtractMtlxNodeGraphInfo(
-                      env.stage, material_prim_for_ng, normal_conns, &extract_debug);
-                  if (!extract_debug.empty()) {
-                    PUSH_WARN(fmt::format("ExtractMtlxNodeGraphInfo debug:\n{}", extract_debug));
-                  }
-                  if (normal_info_result) {
-                    const auto &normal_info = normal_info_result.value();
-                    PUSH_WARN(fmt::format("DEBUG: ExtractMtlxNodeGraphInfo returned: has_normal_map={}, normal_map_scale={}, normal_map_texture='{}'",
-                                          normal_info.has_normal_map, normal_info.normal_map_scale, normal_info.normal_map_texture));
-                    if (normal_info.has_normal_map) {
-                      openpbr_shader.normal_map_scale = normal_info.normal_map_scale;
-                      PUSH_WARN(fmt::format("DEBUG: Extracted normal_map_scale: {}", normal_info.normal_map_scale));
-
-                      // If a normal map texture was found, create a UVTexture entry
-                      if (!normal_info.normal_map_texture.empty()) {
-                        PUSH_WARN(fmt::format("DEBUG: Found normal_map_texture: {}", normal_info.normal_map_texture));
-                        // Create a texture image entry
-                        TextureImage tex_image;
-                        tex_image.asset_identifier = normal_info.normal_map_texture;
-                        tex_image.colorSpace = ColorSpace::Raw;  // Normal maps are always raw/linear
-                        tex_image.usdColorSpace = ColorSpace::Raw;
-
-                        // Check if this image already exists in the images list
-                        int64_t image_id = -1;
-                        for (size_t i = 0; i < images.size(); ++i) {
-                          if (images[i].asset_identifier == normal_info.normal_map_texture) {
-                            image_id = static_cast<int64_t>(i);
-                            break;
-                          }
-                        }
-
-                        // If not found, add the image
-                        if (image_id < 0) {
-                          image_id = static_cast<int64_t>(images.size());
-                          images.push_back(tex_image);
-                          PUSH_WARN(fmt::format("DEBUG: Added normal map image: {} as image_id {}", normal_info.normal_map_texture, image_id));
-                        }
-
-                        // Create UVTexture entry
-                        UVTexture uvtex;
-                        uvtex.texture_image_id = static_cast<int32_t>(image_id);
-                        uvtex.varname_uv = env.mesh_config.default_texcoords_primvar_name;
-                        uvtex.connectedOutputChannel = UVTexture::Channel::RGB;
-                        uvtex.wrapS = UVTexture::WrapMode::REPEAT;
-                        uvtex.wrapT = UVTexture::WrapMode::REPEAT;
-
-                        int32_t tex_id = static_cast<int32_t>(textures.size());
-                        textures.push_back(uvtex);
-
-                        // Set the texture_id on the normal parameter
-                        openpbr_shader.normal.texture_id = tex_id;
-
-                        PUSH_WARN(fmt::format("DEBUG: Created normal map UVTexture with tex_id: {}", tex_id));
-                      }
-                    }
-                  } else {
-                    PUSH_WARN(fmt::format("DEBUG: ExtractMtlxNodeGraphInfo failed: {}", err));
-                  }
-                }
-
-                // Extract tangent rotation from NodeGraph connections
-                const auto &tangent_conns = mtlx_openpbr->geometry_tangent.get_connections();
-                if (!tangent_conns.empty() && material_prim_for_ng) {
-                  auto tangent_info_result = ExtractMtlxNodeGraphInfo(
-                      env.stage, material_prim_for_ng, tangent_conns, &err);
-                  if (tangent_info_result) {
-                    const auto &tangent_info = tangent_info_result.value();
-                    if (tangent_info.has_tangent_rotation) {
-                      openpbr_shader.tangent_rotation = tangent_info.tangent_rotation;
-                      PUSH_WARN(fmt::format("DEBUG: Extracted tangent_rotation: {}", tangent_info.tangent_rotation));
-                    }
-                  }
-                }
+                ApplyMtlxGeometryNodeGraphInfoToOpenPBRShader(
+                    env.stage, material_prim_for_ng, *mtlx_openpbr,
+                    env.mesh_config.default_texcoords_primvar_name, &images,
+                    &textures, &openpbr_shader, &err,
+                    /*emit_extract_debug_trace*/ true);
 
                 rmat.openPBRShader = openpbr_shader;
                 DCOUT("Successfully attached MaterialX OpenPBR shader to RenderMaterial");
