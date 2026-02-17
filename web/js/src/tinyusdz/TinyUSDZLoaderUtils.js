@@ -145,7 +145,7 @@ class TextureLoadingManager {
                     material[mapProperty] = texture;
 
                     // Apply special options (e.g., normal map scale)
-                    if (taskOptions.normalScale && mapProperty === 'normalMap' && material.normalScale) {
+                    if (taskOptions.normalScale !== undefined && mapProperty === 'normalMap' && material.normalScale) {
                         material.normalScale.set(taskOptions.normalScale, taskOptions.normalScale);
                     }
 
