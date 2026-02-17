@@ -5,6 +5,7 @@
 #pragma once
 
 #include <functional>
+#include <cstdint>
 #include "stream-reader.hh"
 #include "tinyusdz.hh"
 
@@ -18,6 +19,13 @@ namespace usdc {
 /// @return true to continue parsing, false to cancel
 ///
 using ProgressCallback = std::function<bool(float progress, void *userptr)>;
+
+struct USDCMemoryUsageReport {
+  uint64_t current_usage_bytes{0};
+  uint64_t peak_usage_bytes{0};
+  uint64_t max_budget_bytes{0};
+  uint64_t remaining_budget_bytes{0};
+};
 
 ///
 /// USDC(Crate) reader
@@ -39,6 +47,10 @@ struct USDCReaderConfig {
   
   // Memory optimization: use mmap for uncompressed arrays
   bool use_mmap = false;
+
+  // Memory optimization: decode fieldsets/properties on demand instead of
+  // prebuilding all live fieldsets.
+  bool use_lazy_property_construction = false;
 };
 
 class USDCReader {
@@ -67,6 +79,7 @@ class USDCReader {
 
   // Approximated memory usage in [mb]
   size_t GetMemoryUsage() const;
+  USDCMemoryUsageReport GetMemoryUsageReport() const;
 
   std::string GetError();
   std::string GetWarning();

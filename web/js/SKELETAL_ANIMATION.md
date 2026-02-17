@@ -1,257 +1,218 @@
-# Skeletal Animation Demo
+# Skeletal Animation Viewer
 
-This demo shows how to extract and play USD skeletal animations (SkelAnimation) using Three.js SkinnedMesh.
+USD skeletal animation extraction and playback using Three.js SkinnedMesh. Supports multiple skeletons, extended skinning (4/8/16/32/64+ bones per vertex), node animations, and interactive joint manipulation.
 
 ## Files
 
-- **skining-anim.html** - HTML page for the skeletal animation demo
-- **skining-anim.js** - JavaScript implementation with skeleton extraction and animation playback
+### Entry Point
+- **skin-anim.html** - HTML page
+- **skin-anim.js** - Main viewer: scene setup, GUI, render loop, file loading
+
+### Pipeline Modules (`src/tinyusdz/`)
+- **USDSkeletonData.js** - Build skeleton bone maps from WASM scene data
+- **USDSceneSkinningPipeline.js** - Bind skeletons to skinned meshes, collect render meshes
+- **USDAnimationConverter.js** - Convert USD channels/samplers to Three.js AnimationClips
+- **USDSceneAnimationPipeline.js** - Extract animations + create playback controller
+- **USDSkeletalHelper.js** - Create Three.js Skeleton from USD, reset to rest pose
+- **ExtendedSkinning.js** - Extended skinning for >4 bones (attribute-based 8, texture-based 16+)
+- **TinyUSDZLoader.js** - WASM module loading and USD file parsing
+- **TinyUSDZLoaderUtils.js** - Build Three.js scene graph from USD render data
+
+## Architecture
+
+### Pipeline Overview
+
+```
+USD File
+  |
+  v
+TinyUSDZLoader (WASM parse) --> usd_scene object
+  |
+  v
+TinyUSDZLoaderUtils.buildThreeNode() --> Three.js scene hierarchy (threeNode)
+  |
+  +---> USDSkeletonData.buildSkeletonDataFromUSD()
+  |       --> skeleton bone maps, bone arrays
+  |
+  +---> USDSceneSkinningPipeline.applyUSDSceneSkinningPipeline()
+  |       --> SkinnedMesh binding, skeleton helpers
+  |
+  +---> USDAnimationConverter (skeletal + node clips)
+  |     USDSceneAnimationPipeline.extractUSDSceneAnimations()
+  |       --> AnimationClips[]
+  |
+  +---> USDSceneAnimationPipeline.createUSDSceneAnimationPlayback()
+  |       --> playback controller (mixer, actions)
+  |
+  +---> ExtendedSkinning.applyExtendedSkinningIfNeeded()
+          --> shader modifications for >4 bones
+```
+
+### Key Design Decisions
+
+**Preserve full scene graph (NOT literal USD spec):**
+TinyUSDZ preserves all xformOps on all nodes including skinned meshes, rather than following the USD spec which ignores mesh transforms for skinned prims. Three.js world-space `bind()` handles the transform math correctly. See `doc/skin-eval.md` for the full derivation.
+
+**bind() without custom args:**
+`mesh.bind(skeleton)` is called without passing boneInverses or bindMatrix. Three.js internally computes `boneInverses = inv(bone.matrixWorld)` and `bindMatrix = mesh.matrixWorld`, both in world space. Passing USD-space boneInverses would mix coordinate spaces and produce incorrect results.
+
+**AttachedBindMode (default):**
+Skinned meshes use AttachedBindMode so that `bindMatrixInverse` is recomputed from `mesh.matrixWorld` each frame. This correctly handles post-bind hierarchy changes (e.g., Z-up toggle).
+
+**Multi-skeleton support:**
+The viewer supports scenes with multiple skeletons (e.g., Layout_Scene.usdz with 6 skeletons). Skeletons are stored in a `Map<skelId, THREE.Skeleton>`, and bone maps are per-skeleton.
 
 ## Features
 
-### Skeletal Animation Support
-- ✅ Extracts USD SkelAnimation data
-- ✅ Builds Three.js Skeleton from USD skeleton hierarchy
-- ✅ Creates SkinnedMesh with proper bone binding
-- ✅ Filters for SkeletonJoint channels only (ignores node animations)
-- ✅ Maps joint animations to bone transforms
-- ✅ Supports Translation, Rotation, and Scale bone animations
+### Skinning
+- Multiple skeletons per scene
+- Extended skinning: 4 (standard), 8 (attribute-based), 16/32/48/64/80/96/128 (texture-based) bones per vertex
+- Runtime toggle between extended and 4-bone fallback skinning
+- Correct shadow rendering for extended skinning (customDepthMaterial)
+- Point-based deformation rigs (3000+ joints)
+
+### Animation
+- Skeletal joint animations (Translation, Rotation, Scale)
+- Node/ancestor xformOp animations
+- Play individual or all animations simultaneously
+- Per-animation enable/disable checkboxes
+- Timeline scrubbing with looping
+- Speed control
 
 ### Visualization
-- Real-time skeleton visualization with SkeletonHelper
-- Toggle skeleton display on/off
-- Interactive camera controls (orbit, pan, zoom)
-- FPS counter
-- Animation timeline scrubbing
+- Skeleton helper overlay (toggle per skeleton)
+- Joint spheres with raycasting selection
+- Per-mesh visibility toggles
+- Weight visualization (blended colors, intensity, influence count)
+- Bounding box display (per-mesh and scene-wide)
+- CPU skinning debug mode
+- Raw mesh (unskinned) display
 
-### Animation Controls
-- Play/Pause animation
-- Reset to beginning
-- Speed control (0x to 3x)
-- Animation selection dropdown
-- Timeline position display
-
-## How It Works
-
-### 1. Skeleton Extraction
-
-The demo extracts USD skeleton hierarchy and converts it to Three.js bones:
-
-```javascript
-// USD SkelNode hierarchy -> Three.js Bone hierarchy
-function buildSkeletonFromUSD(usdSkeleton, skeletonId) {
-  // Recursively build bone hierarchy from USD SkelNode
-  // Maps joint_id to THREE.Bone for animation targeting
-  // Applies rest transforms to bones
-}
-```
-
-### 2. Animation Conversion
-
-Skeletal animations are converted from USD channels/samplers to Three.js KeyframeTracks:
-
-```javascript
-// Filter for SkeletonJoint channels
-const skeletalChannels = channels.filter(ch =>
-  ch.target_type === 'SkeletonJoint'
-);
-
-// Map channels by joint_id
-// Create KeyframeTracks for each bone:
-//   - Translation -> VectorKeyframeTrack for bone.position
-//   - Rotation -> QuaternionKeyframeTrack for bone.quaternion
-//   - Scale -> VectorKeyframeTrack for bone.scale
-```
-
-### 3. Playback
-
-Animations are played using Three.js AnimationMixer:
-
-```javascript
-mixer = new THREE.AnimationMixer(skinnedMesh);
-animationAction = mixer.clipAction(clip);
-animationAction.play();
-
-// In animation loop:
-mixer.update(deltaTime);
-```
+### Interaction
+- Joint selection via click (raycasts skinned mesh geometry)
+- TransformControls for selected joints (translate/rotate/scale, world/local space)
+- Joint hierarchy tree in GUI
 
 ## Usage
 
-### Running the Demo
-
-**Option 1: Using a development server**
-```bash
-# If you have a local server
-cd web/js
-python -m http.server 8000
-# Open http://localhost:8000/skining-anim.html
-```
-
-**Option 2: Using vite**
 ```bash
 cd web/js
-npx vite
-# Open the displayed URL and navigate to skining-anim.html
+bun install   # or npm install
+bun run dev   # starts vite dev server
+# Open http://localhost:5173/skin-anim.html
 ```
 
-### Loading USD Files
+1. Click "Load USD File" or drag-and-drop a `.usdz`/`.usdc`/`.usda` file
+2. Skeleton and animations are extracted and played automatically
+3. Use the GUI panel on the right to control playback, visualization, and joint manipulation
 
-1. Click "Load USD File" button
-2. Select a USD file with skeletal animation (`.usd`, `.usda`, `.usdc`, `.usdz`)
-3. The skeleton and animations will be extracted automatically
-4. Animations will start playing automatically
+## Module API Reference
 
-### Supported USD Files
+### USDSkeletonData
 
-The demo requires USD files with:
-- **Skeleton** (`skel:skeleton` relationship on mesh)
-- **SkelAnimation** (animation source with `translations`, `rotations`, `scales`)
-- **Skinning data** (joint indices and weights on mesh)
+```javascript
+import { buildSkeletonDataFromUSD } from './src/tinyusdz/USDSkeletonData.js';
 
-Example USD structure:
-```
-/Root
-  /Character (Skeleton)
-    skel:joints = ["/Root/Character/Hips", "/Root/Character/Spine", ...]
-    skel:bindTransforms = [...]
-    skel:restTransforms = [...]
-    skel:animationSource = </Root/Character/Anim>
-  /CharacterMesh (Mesh)
-    skel:skeleton = </Root/Character>
-    primvars:skel:jointIndices = [...]
-    primvars:skel:jointWeights = [...]
-  /Anim (SkelAnimation)
-    joints = [...]
-    translations.timeSamples = { 0: [...], 1: [...], ... }
-    rotations.timeSamples = { 0: [...], 1: [...], ... }
-    scales.timeSamples = { 0: [...], 1: [...], ... }
+const skeletonBuild = buildSkeletonDataFromUSD(usdScene, {
+  logger, hasSkinnedMeshData, onSkeletonInfo
+});
+// Returns: { numSkeletons, totalJointCount, skeletonDataArray, boneMaps,
+//            firstBones, firstBoneMap, firstRootBone, firstSkeletonAbsPath }
 ```
 
-## Architecture Differences from animation.js
+### USDSkeletalHelper
 
-| Feature | animation.js | skining-anim.js |
-|---------|-------------|-----------------|
-| **Target** | SceneNode animations | SkeletonJoint animations |
-| **Filter** | `target_type === 'SceneNode'` | `target_type === 'SkeletonJoint'` |
-| **Mapping** | target_node → scene nodes | skeleton_id + joint_id → bones |
-| **Three.js** | Animates Object3D transforms | Animates Bone transforms |
-| **Structure** | Scene hierarchy | Skeleton hierarchy with SkinnedMesh |
-| **Helper** | None | SkeletonHelper for visualization |
+```javascript
+import { createThreeSkeletonFromUSD, resetSkeletonToRestPose } from './src/tinyusdz/USDSkeletalHelper.js';
 
-## Channel Structure
+const { bones, boneMap, rootBone, boneInverses } = createThreeSkeletonFromUSD(usdSkeleton, {
+  useBindTransforms: true, skelId: 0
+});
 
-The new animation architecture uses:
+resetSkeletonToRestPose(skeleton);
+```
+
+### USDSceneSkinningPipeline
+
+```javascript
+import { applyUSDSceneSkinningPipeline } from './src/tinyusdz/USDSceneSkinningPipeline.js';
+
+const skinningResult = applyUSDSceneSkinningPipeline({
+  logger, threeNode, characterGroup, helperScene,
+  skeletonDataArray, allSkinnedMeshUSDData, skinnedMeshDataByName,
+  usdScene, showMesh, showSkeleton, useWASMBoneTexture
+});
+// Returns: { allMeshes, skeletons (Map), skeletonHelpers, firstSkeleton,
+//            primaryMesh, processedSkinnedCount }
+```
+
+### USDSceneAnimationPipeline
+
+```javascript
+import {
+  extractUSDSceneAnimations,
+  createUSDSceneAnimationPlayback,
+  computeUSDSceneTimelineDuration
+} from './src/tinyusdz/USDSceneAnimationPipeline.js';
+
+const animResult = extractUSDSceneAnimations(usdScene, {
+  logger, boneMaps, nodeIndexMap, timeCodesPerSecond
+});
+// Returns: { usdAnimations, usdNodeAnimations, animationEnabled, hasAnyAnimation }
+
+const playback = createUSDSceneAnimationPlayback(rootObject, {
+  logger, usdAnimations, usdNodeAnimations, speed
+});
+// Methods: playAnimation(i), playAllAnimations(enabled), stopAllAnimations(),
+//          setTime(t, updatePose), setPaused(p), setSpeed(s), reset(), dispose()
+```
+
+### ExtendedSkinning
+
+```javascript
+import {
+  SkinningMode, getSkinningMode,
+  addExtendedSkinningAttributes,
+  applyExtendedSkinningIfNeeded,
+  createExtendedDepthMaterial
+} from './src/tinyusdz/ExtendedSkinning.js';
+
+// Automatically applied during skinning pipeline:
+applyExtendedSkinningIfNeeded(skinnedMesh, { useWASMBoneTexture });
+// Returns true if extended skinning was applied
+```
+
+## USD Channel Structure
+
+Skeletal animation channels from WASM:
 
 ```javascript
 {
-  target_type: 'SkeletonJoint',  // Identifies skeletal animation
-  skeleton_id: 0,                 // Index into USD skeletons array
-  joint_id: 5,                    // Index into skeleton's joints array
-  path: 'Rotation',               // Translation/Rotation/Scale
-  sampler: 2                      // Index into samplers array
+  target_type: 'SkeletonJoint',
+  skeleton_id: 0,          // Index into skeletons array
+  joint_id: 5,             // Index into skeleton's joints array
+  path: 'Rotation',        // Translation / Rotation / Scale
+  sampler: 2               // Index into samplers array
 }
 ```
 
-## API Reference
-
-### Key Functions
-
-**buildSkeletonFromUSD(usdSkeleton, skeletonId)**
-- Builds Three.js bone hierarchy from USD skeleton
-- Returns: `{ bones: Bone[], boneMap: Map, rootBone: Bone }`
-
-**convertUSDSkeletalAnimationsToThreeJS(usdLoader, boneMap)**
-- Extracts skeletal animations and creates AnimationClips
-- Filters for SkeletonJoint channels only
-- Returns: `AnimationClip[]`
-
-**playAnimation(index)**
-- Plays animation by index
-- Stops current animation and starts new one
-
-### USD Loader Methods
+Node animation channels (for ancestor xformOps):
 
 ```javascript
-// Get skeleton count
-const numSkeletons = usd_scene.numSkeletons();
-
-// Get skeleton by index
-const skeleton = usd_scene.getSkeleton(0);
-// Returns: { root_node, prim_name, abs_path, display_name, anim_id }
-
-// Get animations (same as animation.js)
-const animations = usd_scene.getAllAnimations();
-const animInfos = usd_scene.getAllAnimationInfos();
+{
+  target_type: 'SceneNode',
+  target_node: 3,          // DFS index into scene hierarchy
+  path: 'Translation',
+  sampler: 0
+}
 ```
 
 ## Troubleshooting
 
-### "No skeletons found in USD file"
-- File doesn't contain a Skeleton prim
-- Load a file with skeletal animation (character rigs, etc.)
+**Mesh doesn't deform**: Check that `skel:skeleton` relationship is authored on the mesh and that `primvars:skel:jointIndices` / `primvars:skel:jointWeights` exist.
 
-### Skeleton appears but doesn't animate
-- Check that SkelAnimation has time-sampled data
-- Verify joint names match between Skeleton and SkelAnimation
-- Check console for animation extraction errors
+**Stretched shadows at animated poses**: Extended skinning customDepthMaterial may not have been applied. Check console for skinning mode info.
 
-### Animation plays but mesh doesn't deform
-- Mesh may not have proper skinning data (joint indices/weights)
-- Verify `skel:skeleton` relationship points to correct Skeleton
-- Check that joint influences are properly authored
+**Wrong scale/rotation at bind**: Ensure `characterGroup.updateMatrixWorld(true)` is called before `mesh.bind(skeleton)`. The bind call must see correct world-space bone positions.
 
-### Bones in wrong positions
-- USD may use different coordinate system
-- Check rest transforms vs bind transforms
-- Try toggling skeleton visualization to debug
-
-## Performance Tips
-
-1. **Skeleton complexity**: More bones = more computation
-   - Typical character: 50-100 bones
-   - High-detail rig: 200+ bones
-
-2. **Animation data**: Large keyframe counts increase memory
-   - Consider resampling animations to lower frame rates
-   - Remove unnecessary channels
-
-3. **Multiple characters**: Each SkinnedMesh needs its own mixer
-   - Create separate AnimationMixer per character
-   - Reuse AnimationClip across multiple characters
-
-## Examples
-
-### Expected Console Output
-
-```
-USD scene loaded: { ... }
-Found 1 skeletons in USD file
-USD Skeleton: { root_node: {...}, prim_name: "Armature", ... }
-Built skeleton with 24 bones
-Found skinned mesh: CharacterMesh
-Found 1 animations in USD file
-Processing animation 0: Walk
-Animation 0: 24 skeletal channels (0 node channels skipped)
-Created skeletal clip: Walk, duration: 2.5s, tracks: 72
-Extracted 1 skeletal animations from USD file
-Animation 0: Walk, duration: 2.5s, tracks: 72 [skeletal]
-Playing animation: Walk
-```
-
-### UI Display
-
-```
-Skeleton Information:
-  Skeletons: 1
-  Total Joints: 24
-
-Skeletal Animations Found:
-  0: Walk - 2.50s, 72 tracks [Skeletal]
-```
-
-## See Also
-
-- **animation.js** - Node transform animation demo
-- **ANIMATION_INFO.md** - Animation extraction documentation
-- **TinyUSDZ docs** - USD file format specifications
+**Z-up model appears sideways**: The viewer auto-detects upAxis and applies a rotation. Toggle "Z-up -> Y-up" in the Visualization panel.

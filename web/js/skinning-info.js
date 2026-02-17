@@ -478,6 +478,172 @@ function printSkelAnimation(usd, detailed = false, dumpKeyframes = false) {
   }
 }
 
+// Format a 4x4 matrix (16 floats) as a compact string
+function formatMatrix4(mat) {
+  if (!mat || mat.length !== 16) return '(not available)';
+  // Check if identity
+  let isIdentity = true;
+  for (let i = 0; i < 16; i++) {
+    const expected = (i % 5 === 0) ? 1.0 : 0.0;
+    if (Math.abs(mat[i] - expected) > 1e-6) { isIdentity = false; break; }
+  }
+  if (isIdentity) return 'Identity';
+
+  const rows = [];
+  for (let r = 0; r < 4; r++) {
+    rows.push(`[${mat[r*4].toFixed(4)}, ${mat[r*4+1].toFixed(4)}, ${mat[r*4+2].toFixed(4)}, ${mat[r*4+3].toFixed(4)}]`);
+  }
+  return rows.join(', ');
+}
+
+// Print the USD scene node tree with local/global transforms
+function printNodeTree(usd) {
+  console.log('\n=== Node Tree (xform hierarchy) ===');
+
+  try {
+    // getRootNode(idx) requires an index; getDefaultRootNode() returns the default
+    const rootNode = usd.getDefaultRootNode ? usd.getDefaultRootNode() : usd.getRootNode(0);
+    if (!rootNode || !rootNode.primName) {
+      console.log('(no node tree available)\n');
+      return;
+    }
+
+    function printNode(node, indent) {
+      const prefix = '  '.repeat(indent);
+      const type = node.nodeType || '?';
+      const name = node.primName || '(unnamed)';
+      const contentId = node.contentId !== undefined ? ` [contentId=${node.contentId}]` : '';
+
+      console.log(`${prefix}${name} (${type})${contentId}`);
+
+      // Print local matrix if non-identity
+      if (node.localMatrix && node.localMatrix.length === 16) {
+        const localStr = formatMatrix4(Array.from(node.localMatrix));
+        if (localStr !== 'Identity') {
+          console.log(`${prefix}  localMatrix: ${localStr}`);
+        }
+      }
+
+      // Print global matrix if non-identity
+      if (node.globalMatrix && node.globalMatrix.length === 16) {
+        const globalStr = formatMatrix4(Array.from(node.globalMatrix));
+        if (globalStr !== 'Identity') {
+          console.log(`${prefix}  globalMatrix: ${globalStr}`);
+        }
+      }
+
+      // Recurse children
+      if (node.children) {
+        for (const child of node.children) {
+          printNode(child, indent + 1);
+        }
+      }
+    }
+
+    printNode(rootNode, 0);
+  } catch (e) {
+    console.log(`Error reading node tree: ${e.message}`);
+  }
+  console.log();
+}
+
+// Print skeleton joint hierarchy with bind/rest transforms
+function printSkeletonTransforms(usd) {
+  console.log('\n=== Skeleton Transforms (bindTransform / restTransform) ===');
+
+  try {
+    const numSkeletons = usd.numSkeletons();
+    if (numSkeletons === 0) {
+      console.log('No skeletons found.\n');
+      return;
+    }
+
+    for (let s = 0; s < numSkeletons; s++) {
+      const skel = usd.getSkeleton(s);
+      if (!skel || skel.error) {
+        console.log(`Skeleton ${s}: ${skel?.error || 'error'}`);
+        continue;
+      }
+
+      console.log(`\n--- Skeleton ${s}: ${skel.prim_name || '(unnamed)'} ---`);
+      console.log(`  Path: ${skel.abs_path || '?'}`);
+      console.log(`  Animation ID: ${skel.anim_id !== undefined ? skel.anim_id : 'none'}`);
+
+      if (!skel.root_node) {
+        console.log('  (no joint hierarchy)');
+        continue;
+      }
+
+      // Count total joints
+      let totalJoints = 0;
+      function countJoints(node) {
+        totalJoints++;
+        if (node.children) node.children.forEach(countJoints);
+      }
+      countJoints(skel.root_node);
+      console.log(`  Total Joints: ${totalJoints}`);
+
+      // Print joint hierarchy with transforms
+      function printJoint(node, indent) {
+        const prefix = '  '.repeat(indent + 1);
+        const id = node.joint_id !== undefined ? node.joint_id : '?';
+        console.log(`${prefix}[${id}] ${node.joint_name || node.joint_path || '?'}`);
+
+        if (node.bind_transform) {
+          const bindStr = formatMatrix4(node.bind_transform);
+          console.log(`${prefix}  bind: ${bindStr}`);
+        }
+        if (node.rest_transform) {
+          const restStr = formatMatrix4(node.rest_transform);
+          console.log(`${prefix}  rest: ${restStr}`);
+        }
+
+        if (node.children) {
+          for (const child of node.children) {
+            printJoint(child, indent + 1);
+          }
+        }
+      }
+
+      // For large skeletons, limit output
+      if (totalJoints > 30) {
+        console.log(`  (showing first 30 of ${totalJoints} joints)\n`);
+        let printed = 0;
+        function printJointLimited(node, indent) {
+          if (printed >= 30) return;
+          printed++;
+          const prefix = '  '.repeat(indent + 1);
+          const id = node.joint_id !== undefined ? node.joint_id : '?';
+          console.log(`${prefix}[${id}] ${node.joint_name || node.joint_path || '?'}`);
+
+          if (node.bind_transform) {
+            const bindStr = formatMatrix4(node.bind_transform);
+            console.log(`${prefix}  bind: ${bindStr}`);
+          }
+          if (node.rest_transform) {
+            const restStr = formatMatrix4(node.rest_transform);
+            console.log(`${prefix}  rest: ${restStr}`);
+          }
+
+          if (node.children) {
+            for (const child of node.children) {
+              printJointLimited(child, indent + 1);
+            }
+          }
+        }
+        printJointLimited(skel.root_node, 0);
+        if (printed >= 30) console.log(`  ... (${totalJoints - 30} more joints)`);
+      } else {
+        console.log();
+        printJoint(skel.root_node, 0);
+      }
+    }
+  } catch (e) {
+    console.log(`Error reading skeleton transforms: ${e.message}`);
+  }
+  console.log();
+}
+
 // Print scene/model info
 function printSceneInfo(usd) {
   console.log('=== Scene Information ===');
@@ -520,6 +686,7 @@ async function main() {
     console.log('  --round-bones           Round bone count up to standard values (4,8,16,32,48,64,80,96,128)');
     console.log('  --target-bones <N>      Target bone count per vertex (default: 4, used with --reduce-bones)');
     console.log('  --bone-texture          Test bone texture generation for GPU skinning');
+    console.log('  --transforms            Dump node tree xforms and skeleton bind/rest transforms');
     console.log('  --help                  Show this help message\n');
     console.log('Examples:');
     console.log('  npx vite-node skinning-info.js ../../models/character.usdc');
@@ -544,6 +711,7 @@ async function main() {
   const reduceBones = args.includes('--reduce-bones');
   const roundBones = args.includes('--round-bones');
   const testBoneTexture = args.includes('--bone-texture');
+  const dumpTransforms = args.includes('--transforms');
 
   // Parse --target-bones argument
   let targetBoneCount = 4; // Default value
@@ -619,6 +787,10 @@ async function main() {
 
     // Print information
     printSceneInfo(usd);
+    if (dumpTransforms) {
+      printNodeTree(usd);
+      printSkeletonTransforms(usd);
+    }
     printSkinningInfo(usd, detailed, boneReductionInfo, testBoneTexture);
     printSkeletonInfo(usd, detailed);
     printSkelAnimation(usd, detailed, dumpKeyframes);

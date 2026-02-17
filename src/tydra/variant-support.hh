@@ -141,7 +141,7 @@ struct VariantStatistics {
 class VariantManager {
  public:
   VariantManager() = default;
-  virtual ~VariantManager() = default;
+  virtual ~VariantManager();
 
   ///
   /// Get all available variant groups
@@ -264,7 +264,7 @@ class DefaultVariantManager : public VariantManager {
 
   void AddVariantGroup(const VariantGroup& group) {
     _variant_groups.push_back(group);
-    _variant_group_map[group.prim_path] = _variant_groups.size() - 1;
+    _variant_group_map[group.prim_path] = static_cast<int32_t>(_variant_groups.size() - 1);
   }
 
  private:
