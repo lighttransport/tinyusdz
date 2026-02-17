@@ -31,7 +31,8 @@
     "benchmark:exr": "vite-node benchmark-exr.js",
     "generate:exr": "vite-node generate-test-exr.js",
     "test:exr-decoder": "vite-node test-exr-decoder.js",
-    "test:progress": "node test-progress-cli.js"
+    "test:progress": "node test-progress-cli.js",
+    "test:usdskel": "vite-node tests/usdskel-animation-test.js"
   },
   "devDependencies": {
     "@types/bun": "latest",

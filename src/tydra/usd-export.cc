@@ -58,7 +58,9 @@ static bool FlattenSkelNode(const SkelNode &node,
 }
 
 
-static bool ExportSkeleton(const SkelHierarchy &skel, const std::string &animSourcePath, Skeleton *dst, std::string *err) {
+static bool ExportSkeleton(const SkelHierarchy &skel,
+                           const std::vector<std::string> &animSourcePaths,
+                           Skeleton *dst, std::string *err) {
 
   size_t num_joints{0};
   CountNodes(skel.root_node, num_joints);
@@ -91,11 +93,20 @@ static bool ExportSkeleton(const SkelHierarchy &skel, const std::string &animSou
   dst->bindTransforms.set_value(bindTransforms);
   dst->restTransforms.set_value(restTransforms);
 
-  if (animSourcePath.size()) {
-    Path animSourceTarget(animSourcePath, ""); 
+  if (animSourcePaths.size() == 1) {
+    Path animSourceTarget(animSourcePaths[0], "");
     Relationship animSourceRel;
     animSourceRel.set(animSourceTarget);
     // TODO: add `prepend` qualifier?
+    dst->animationSource = animSourceRel;
+  } else if (animSourcePaths.size() > 1) {
+    std::vector<Path> animSourceTargets;
+    animSourceTargets.reserve(animSourcePaths.size());
+    for (const auto &path : animSourcePaths) {
+      animSourceTargets.emplace_back(path, "");
+    }
+    Relationship animSourceRel;
+    animSourceRel.set(animSourceTargets);
     dst->animationSource = animSourceRel;
   }
 
@@ -889,13 +900,20 @@ bool export_to_usda(const RenderScene &scene,
       if (!skelMap.count(skel_id)) {
         const SkelHierarchy &src_skel = scene.skeletons[size_t(scene.meshes[i].skel_id)];
 
-        std::string src_animsource; // empty = no animationSource
-        if (src_skel.anim_id > -1) {
-          src_animsource = "/animations/" + scene.animations[size_t(src_skel.anim_id)].prim_name;
+        std::vector<std::string> src_animsources;
+        if (!src_skel.anim_ids.empty()) {
+          src_animsources.reserve(src_skel.anim_ids.size());
+          for (int anim_id : src_skel.anim_ids) {
+            if ((anim_id > -1) && (size_t(anim_id) < scene.animations.size())) {
+              src_animsources.push_back("/animations/" + scene.animations[size_t(anim_id)].prim_name);
+            }
+          }
+        } else if ((src_skel.anim_id > -1) && (size_t(src_skel.anim_id) < scene.animations.size())) {
+          src_animsources.push_back("/animations/" + scene.animations[size_t(src_skel.anim_id)].prim_name);
         }
 
         Skeleton skel;
-        if (!detail::ExportSkeleton(src_skel, src_animsource, &skel, err)) {
+        if (!detail::ExportSkeleton(src_skel, src_animsources, &skel, err)) {
           return false;
         }
         skel_name = skel.name;
@@ -1074,4 +1092,3 @@ bool export_to_usda(const RenderScene &scene,
 
 } // namespace tydra
 } // namespace tinyusdz
-

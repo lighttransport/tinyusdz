@@ -41,6 +41,8 @@
 #pragma once
 
 #include <map>
+#include <unordered_map>
+#include <vector>
 
 #include "prim-type-macros.inc"
 #include "prim-types.hh"
@@ -62,7 +64,7 @@ namespace tydra {
 /// Value = const pointer to prim of type T
 ///
 template <typename T>
-using PathPrimMap = std::map<std::string, const T *>;
+using PathPrimMap = std::unordered_map<std::string, const T *>;
 
 ///
 /// Map from shader path to shader data.
@@ -393,19 +395,6 @@ std::vector<std::pair<std::string, const tinyusdz::BlendShape *>>
 GetBlendShapes(const tinyusdz::Stage &stage, const tinyusdz::Prim &prim,
                 std::string *err = nullptr);
 
-#if 0  // TODO
-///
-/// Get list of GeomSubset PrimSpecs attached to the PrimSpec
-/// Prim path must point to GeomMesh PrimSpec.
-///
-/// The pointer address is valid until Layer's content is unchanged.
-///
-/// (TODO: Return PrimSpec index instead of the ponter address)
-///
-std::vector<const PrimSpec *> GetGeomSubsetPrimSpecs(const tinyusdz::Layer &layer, const tinyusdz::Path &prim_path);
-
-std::vector<const PrimSpec *> GetGeomSubsetChildren(const tinyusdz::Path &prim_path);
-#endif
 
 ///
 /// For composition. Convert Concrete Prim(Xform, GeomMesh, ...) to PrimSpec,
@@ -618,6 +607,7 @@ class SkelHierarchy {
   SkelNode root_node; 
 
   int anim_id{-1};                        // Default animation(SkelAnimation) attached to Skeleton
+  std::vector<int> anim_ids;              // All animations(SkelAnimation) attached to Skeleton
 
  private:
 

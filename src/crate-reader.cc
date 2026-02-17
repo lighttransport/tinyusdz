@@ -7008,6 +7008,62 @@ bool CrateReader::BuildLiveFieldSets() {
   return true;
 }
 
+bool CrateReader::DecodeFieldSet(crate::Index fieldset_index,
+                                 FieldValuePairVector *pairs) {
+  if (!pairs) {
+    PUSH_ERROR("`pairs` argument is nullptr.");
+    return false;
+  }
+
+  pairs->clear();
+
+  if (fieldset_index.value >= _fieldset_indices.size()) {
+    PUSH_ERROR("FieldSet id out of range: " +
+               std::to_string(fieldset_index.value));
+    return false;
+  }
+
+  // A fieldset must start at index 0 or immediately after a terminator.
+  if ((fieldset_index.value > 0) &&
+      (_fieldset_indices[fieldset_index.value - 1] != crate::Index())) {
+    PUSH_ERROR("FieldSet id does not point to a fieldset start: " +
+               std::to_string(fieldset_index.value));
+    return false;
+  }
+
+  auto fsBegin = _fieldset_indices.begin() +
+                 static_cast<std::ptrdiff_t>(fieldset_index.value);
+  auto fsEnd = std::find(fsBegin, _fieldset_indices.end(), crate::Index());
+  if (fsEnd == _fieldset_indices.end()) {
+    PUSH_ERROR("Corrupted fieldset data: missing terminator.");
+    return false;
+  }
+
+  pairs->resize(static_cast<size_t>(fsEnd - fsBegin));
+
+  for (size_t i = 0; fsBegin != fsEnd; ++fsBegin, ++i) {
+    if (fsBegin->value >= _fields.size()) {
+      PUSH_ERROR("Invalid field index in fieldset.");
+      return false;
+    }
+
+    const auto &field = _fields[fsBegin->value];
+    if (auto tokv = GetToken(field.token_index)) {
+      (*pairs)[i].first = tokv.value().str();
+      if (!UnpackValueRep(field.value_rep, &(*pairs)[i].second)) {
+        PUSH_ERROR("DecodeFieldSet: Failed to unpack ValueRep : "
+                   << field.value_rep.GetStringRepr());
+        return false;
+      }
+    } else {
+      PUSH_ERROR("Invalid token index.");
+      return false;
+    }
+  }
+
+  return true;
+}
+
 bool CrateReader::ReadSpecs() {
   // Report progress (60%)
   if (!ReportProgress(0.6f)) {
