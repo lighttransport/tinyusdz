@@ -229,43 +229,8 @@ bool CrateReader::ReadTimeSamples(value::TimeSamples *d) {
     }
   }
 
-  // Check if all samples have the same type (homogeneous)
-  // Allow VALUE_BLOCK (None) to be mixed with other types
-  // bool is_homogeneous = true;
-  auto first_type = value_reps[0].GetType();
-  bool first_is_array = value_reps[0].IsArray();
-
-  DCOUT("ReadTimeSamples: first_type=" << first_type
-        << " (" << crate::GetCrateDataTypeName(static_cast<crate::CrateDataTypeId>(first_type)) << ")"
-        << " is_array=" << first_is_array);
-
-  for (size_t i = 1; i < num_values; i++) {
-    auto curr_type = value_reps[i].GetType();
-    bool curr_is_array = value_reps[i].IsArray();
-
-    DCOUT("ReadTimeSamples: sample[" << i << "] type=" << curr_type
-          << " (" << crate::GetCrateDataTypeName(static_cast<crate::CrateDataTypeId>(curr_type)) << ")"
-          << " is_array=" << curr_is_array);
-
-    // Allow VALUE_BLOCK to mix with any type
-    bool is_value_block_first =
-        (static_cast<crate::CrateDataTypeId>(first_type) ==
-         crate::CrateDataTypeId::CRATE_DATA_TYPE_VALUE_BLOCK);
-    bool is_value_block_curr =
-        (static_cast<crate::CrateDataTypeId>(curr_type) ==
-         crate::CrateDataTypeId::CRATE_DATA_TYPE_VALUE_BLOCK);
-
-    if (!is_value_block_first && !is_value_block_curr) {
-      // Neither is VALUE_BLOCK, so they must match
-      if (curr_type != first_type || curr_is_array != first_is_array) {
-        DCOUT("ReadTimeSamples: TYPE MISMATCH! first=" << first_type
-              << " curr=" << curr_type);
-        PUSH_ERROR_AND_RETURN_TAG(
-            kTag, "Types in TimeSamples' ValueRep isn't the same.");
-        // is_homogeneous = false;
-      }
-    }
-  }
+  // Type consistency check is handled during unpacking.
+  // This avoids an additional pre-scan pass here.
 
 #if 0
   // Check if it's a common type that benefits from typed storage
@@ -561,8 +526,20 @@ bool add_sample_to_timesamples(value::TimeSamples *d, double time, const std::ve
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wexit-time-destructors"
 #endif
-static std::map<std::pair<void*, uint64_t>, size_t>& get_timesamples_dedup_map() {
-  static std::map<std::pair<void*, uint64_t>, size_t> map;
+struct TimeSamplesDedupKeyHash {
+  size_t operator()(const std::pair<void *, uint64_t> &key) const noexcept {
+    size_t h1 = std::hash<void *>{}(key.first);
+    size_t h2 = std::hash<uint64_t>{}(key.second);
+    return h1 ^ (h2 + 0x9e3779b9 + (h1 << 6) + (h1 >> 2));
+  }
+};
+
+static std::unordered_map<std::pair<void *, uint64_t>, size_t,
+                          TimeSamplesDedupKeyHash> &
+get_timesamples_dedup_map() {
+  static std::unordered_map<std::pair<void *, uint64_t>, size_t,
+                            TimeSamplesDedupKeyHash>
+      map;
   return map;
 }
 
@@ -3454,6 +3431,38 @@ bool CrateReader::UnpackValueRepsToTimeSamples(
     return false;
   }
 
+  // Clear array dedup maps before each property's TimeSamples.
+  // These maps store sample indices (ref_index) that are specific to a
+  // particular TimeSamples `dst` object. If reused across different properties
+  // that share the same ValueRep (same file offset), the cached index is
+  // invalid for the new dst (e.g., ref_index=0 but dst has 0 samples).
+  // Scalar dedup maps are safe to keep — they cache decoded values, not indices.
+  _dedup_bool_array.clear();
+  _dedup_int32_array.clear();
+  _dedup_uint32_array.clear();
+  _dedup_int64_array.clear();
+  _dedup_uint64_array.clear();
+  _dedup_half_array.clear();
+  _dedup_half2_array.clear();
+  _dedup_half3_array.clear();
+  _dedup_half4_array.clear();
+  _dedup_float_array.clear();
+  _dedup_float2_array.clear();
+  _dedup_float3_array.clear();
+  _dedup_float4_array.clear();
+  _dedup_double_array.clear();
+  _dedup_double2_array.clear();
+  _dedup_double3_array.clear();
+  _dedup_double4_array.clear();
+  _dedup_quath_array.clear();
+  _dedup_quatf_array.clear();
+  _dedup_quatd_array.clear();
+  _dedup_matrix2d_array.clear();
+  _dedup_matrix3d_array.clear();
+  _dedup_matrix4d_array.clear();
+  _dedup_string_array.clear();
+  _dedup_token_array.clear();
+
   // Find the first non-VALUE_BLOCK element to determine the actual type
   crate::CrateDataTypeId crate_type_id =
       static_cast<crate::CrateDataTypeId>(vreps[0].GetType());
@@ -3611,6 +3620,94 @@ bool CrateReader::UnpackValueRepsToTimeSamples(
   // Pre-allocate on the first sample for better performance
   size_t expected_total_samples = times.size();
 
+  using UnpackTimeSampleFn = bool (CrateReader::*)(
+      double, const crate::ValueRep &, value::TimeSamples &, size_t);
+  UnpackTimeSampleFn unpack_fn = nullptr;
+
+  switch (crate_type_id) {
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_BOOL:
+      unpack_fn = &CrateReader::UnpackTimeSampleValue_BOOL;
+      break;
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_INT:
+      unpack_fn = &CrateReader::UnpackTimeSampleValue_INT32;
+      break;
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_UINT:
+      unpack_fn = &CrateReader::UnpackTimeSampleValue_UINT32;
+      break;
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_INT64:
+      unpack_fn = &CrateReader::UnpackTimeSampleValue_INT64;
+      break;
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_UINT64:
+      unpack_fn = &CrateReader::UnpackTimeSampleValue_UINT64;
+      break;
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_HALF:
+      unpack_fn = &CrateReader::UnpackTimeSampleValue_HALF;
+      break;
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_FLOAT:
+      unpack_fn = &CrateReader::UnpackTimeSampleValue_FLOAT;
+      break;
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_DOUBLE:
+      unpack_fn = &CrateReader::UnpackTimeSampleValue_DOUBLE;
+      break;
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_VEC2H:
+      unpack_fn = &CrateReader::UnpackTimeSampleValue_HALF2;
+      break;
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_VEC3H:
+      unpack_fn = &CrateReader::UnpackTimeSampleValue_HALF3;
+      break;
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_VEC4H:
+      unpack_fn = &CrateReader::UnpackTimeSampleValue_HALF4;
+      break;
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_VEC2F:
+      unpack_fn = &CrateReader::UnpackTimeSampleValue_FLOAT2;
+      break;
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_VEC3F:
+      unpack_fn = &CrateReader::UnpackTimeSampleValue_FLOAT3;
+      break;
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_VEC4F:
+      unpack_fn = &CrateReader::UnpackTimeSampleValue_FLOAT4;
+      break;
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_VEC2D:
+      unpack_fn = &CrateReader::UnpackTimeSampleValue_DOUBLE2;
+      break;
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_VEC3D:
+      unpack_fn = &CrateReader::UnpackTimeSampleValue_DOUBLE3;
+      break;
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_VEC4D:
+      unpack_fn = &CrateReader::UnpackTimeSampleValue_DOUBLE4;
+      break;
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_QUATF:
+      unpack_fn = &CrateReader::UnpackTimeSampleValue_QUATF;
+      break;
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_QUATH:
+      unpack_fn = &CrateReader::UnpackTimeSampleValue_QUATH;
+      break;
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_QUATD:
+      unpack_fn = &CrateReader::UnpackTimeSampleValue_QUATD;
+      break;
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_MATRIX2D:
+      unpack_fn = &CrateReader::UnpackTimeSampleValue_MATRIX2D;
+      break;
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_MATRIX3D:
+      unpack_fn = &CrateReader::UnpackTimeSampleValue_MATRIX3D;
+      break;
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_MATRIX4D:
+      unpack_fn = &CrateReader::UnpackTimeSampleValue_MATRIX4D;
+      break;
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_ASSET_PATH:
+      unpack_fn = &CrateReader::UnpackTimeSampleValue_ASSET_PATH;
+      break;
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_STRING:
+      unpack_fn = &CrateReader::UnpackTimeSampleValue_STRING;
+      break;
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_TOKEN:
+      unpack_fn = &CrateReader::UnpackTimeSampleValue_TOKEN;
+      break;
+    default:
+      PUSH_ERROR_AND_RETURN(fmt::format("Unimplemented type in TimeSamples: {}",
+                                        GetCrateDataTypeName(crate_type_id)));
+  }
+
   for (size_t i = 0; i < vreps.size(); i++) {
     const crate::ValueRep &rep = vreps[i];
 
@@ -3630,133 +3727,12 @@ bool CrateReader::UnpackValueRepsToTimeSamples(
       }
     }
 
-    // Dispatch to type-specific unpacker
-    // Skip VALUE_BLOCK - it will be handled by the type-specific unpacker for
-    // the actual type
-    if (curr_type_id == crate::CrateDataTypeId::CRATE_DATA_TYPE_VALUE_BLOCK) {
-      // Call the appropriate unpacker for the base type to handle VALUE_BLOCK
-      // The UnpackTimeSampleValue_* functions handle VALUE_BLOCK internally
-    }
-
     // Pass expected_total_samples only on the first sample (i == 0) for
     // pre-allocation
     size_t prealloc_hint = (i == 0) ? expected_total_samples : 0;
 
-    if (crate_type_id == crate::CrateDataTypeId::CRATE_DATA_TYPE_BOOL) {
-      if (!UnpackTimeSampleValue_BOOL(curr_time, rep, *d, prealloc_hint)) {
-        return false;
-      }
-    } else if (crate_type_id == crate::CrateDataTypeId::CRATE_DATA_TYPE_INT) {
-      if (!UnpackTimeSampleValue_INT32(curr_time, rep, *d, prealloc_hint)) {
-        return false;
-      }
-    } else if (crate_type_id == crate::CrateDataTypeId::CRATE_DATA_TYPE_UINT) {
-      if (!UnpackTimeSampleValue_UINT32(curr_time, rep, *d, prealloc_hint)) {
-        return false;
-      }
-    } else if (crate_type_id == crate::CrateDataTypeId::CRATE_DATA_TYPE_INT64) {
-      if (!UnpackTimeSampleValue_INT64(curr_time, rep, *d, prealloc_hint)) {
-        return false;
-      }
-    } else if (crate_type_id ==
-               crate::CrateDataTypeId::CRATE_DATA_TYPE_UINT64) {
-      if (!UnpackTimeSampleValue_UINT64(curr_time, rep, *d, prealloc_hint)) {
-        return false;
-      }
-    } else if (crate_type_id == crate::CrateDataTypeId::CRATE_DATA_TYPE_HALF) {
-      if (!UnpackTimeSampleValue_HALF(curr_time, rep, *d, prealloc_hint)) {
-        return false;
-      }
-    } else if (crate_type_id == crate::CrateDataTypeId::CRATE_DATA_TYPE_FLOAT) {
-      if (!UnpackTimeSampleValue_FLOAT(curr_time, rep, *d, prealloc_hint)) {
-        return false;
-      }
-    } else if (crate_type_id ==
-               crate::CrateDataTypeId::CRATE_DATA_TYPE_DOUBLE) {
-      if (!UnpackTimeSampleValue_DOUBLE(curr_time, rep, *d, prealloc_hint)) {
-        return false;
-      }
-    } else if (crate_type_id == crate::CrateDataTypeId::CRATE_DATA_TYPE_VEC2H) {
-      if (!UnpackTimeSampleValue_HALF2(curr_time, rep, *d, prealloc_hint)) {
-        return false;
-      }
-    } else if (crate_type_id == crate::CrateDataTypeId::CRATE_DATA_TYPE_VEC3H) {
-      if (!UnpackTimeSampleValue_HALF3(curr_time, rep, *d, prealloc_hint)) {
-        return false;
-      }
-    } else if (crate_type_id == crate::CrateDataTypeId::CRATE_DATA_TYPE_VEC4H) {
-      if (!UnpackTimeSampleValue_HALF4(curr_time, rep, *d, prealloc_hint)) {
-        return false;
-      }
-    } else if (crate_type_id == crate::CrateDataTypeId::CRATE_DATA_TYPE_VEC2F) {
-      if (!UnpackTimeSampleValue_FLOAT2(curr_time, rep, *d, prealloc_hint)) {
-        return false;
-      }
-    } else if (crate_type_id == crate::CrateDataTypeId::CRATE_DATA_TYPE_VEC3F) {
-      if (!UnpackTimeSampleValue_FLOAT3(curr_time, rep, *d, prealloc_hint)) {
-        return false;
-      }
-    } else if (crate_type_id == crate::CrateDataTypeId::CRATE_DATA_TYPE_VEC4F) {
-      if (!UnpackTimeSampleValue_FLOAT4(curr_time, rep, *d, prealloc_hint)) {
-        return false;
-      }
-    } else if (crate_type_id == crate::CrateDataTypeId::CRATE_DATA_TYPE_VEC2D) {
-      if (!UnpackTimeSampleValue_DOUBLE2(curr_time, rep, *d, prealloc_hint)) {
-        return false;
-      }
-    } else if (crate_type_id == crate::CrateDataTypeId::CRATE_DATA_TYPE_VEC3D) {
-      if (!UnpackTimeSampleValue_DOUBLE3(curr_time, rep, *d, prealloc_hint)) {
-        return false;
-      }
-    } else if (crate_type_id == crate::CrateDataTypeId::CRATE_DATA_TYPE_VEC4D) {
-      if (!UnpackTimeSampleValue_DOUBLE4(curr_time, rep, *d, prealloc_hint)) {
-        return false;
-      }
-    } else if (crate_type_id == crate::CrateDataTypeId::CRATE_DATA_TYPE_QUATF) {
-      if (!UnpackTimeSampleValue_QUATF(curr_time, rep, *d, prealloc_hint)) {
-        return false;
-      }
-    } else if (crate_type_id == crate::CrateDataTypeId::CRATE_DATA_TYPE_QUATH) {
-      if (!UnpackTimeSampleValue_QUATH(curr_time, rep, *d, prealloc_hint)) {
-        return false;
-      }
-    } else if (crate_type_id == crate::CrateDataTypeId::CRATE_DATA_TYPE_QUATD) {
-      if (!UnpackTimeSampleValue_QUATD(curr_time, rep, *d, prealloc_hint)) {
-        return false;
-      }
-    } else if (crate_type_id ==
-               crate::CrateDataTypeId::CRATE_DATA_TYPE_MATRIX2D) {
-      if (!UnpackTimeSampleValue_MATRIX2D(curr_time, rep, *d, prealloc_hint)) {
-        return false;
-      }
-    } else if (crate_type_id ==
-               crate::CrateDataTypeId::CRATE_DATA_TYPE_MATRIX3D) {
-      if (!UnpackTimeSampleValue_MATRIX3D(curr_time, rep, *d, prealloc_hint)) {
-        return false;
-      }
-    } else if (crate_type_id ==
-               crate::CrateDataTypeId::CRATE_DATA_TYPE_MATRIX4D) {
-      if (!UnpackTimeSampleValue_MATRIX4D(curr_time, rep, *d, prealloc_hint)) {
-        return false;
-      }
-    } else if (crate_type_id ==
-               crate::CrateDataTypeId::CRATE_DATA_TYPE_ASSET_PATH) {
-      if (!UnpackTimeSampleValue_ASSET_PATH(curr_time, rep, *d,
-                                            prealloc_hint)) {
-        return false;
-      }
-    } else if (crate_type_id == crate::CrateDataTypeId::CRATE_DATA_TYPE_STRING) {
-      if (!UnpackTimeSampleValue_STRING(curr_time, rep, *d, prealloc_hint)) {
-        return false;
-      }
-    } else if (crate_type_id == crate::CrateDataTypeId::CRATE_DATA_TYPE_TOKEN) {
-      if (!UnpackTimeSampleValue_TOKEN(curr_time, rep, *d, prealloc_hint)) {
-        return false;
-      }
-    } else {
-      // TODO: Use generic value::Value as fallback for unimplemented types
-      PUSH_ERROR_AND_RETURN(fmt::format("Unimplemented type in TimeSamples: {}",
-                                        GetCrateDataTypeName(crate_type_id)));
+    if (!(this->*unpack_fn)(curr_time, rep, *d, prealloc_hint)) {
+      return false;
     }
   }
 

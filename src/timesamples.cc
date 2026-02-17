@@ -91,28 +91,6 @@ inline void insertion_sort_with_offsets(
     offsets[j] = key_offset;
   }
 
-  // After sorting, we need to remap dedup indices in offsets
-  // Build old_position -> new_position map by tracking where each original index ended up
-  // This is complex for in-place sort, so we do a second pass if needed
-
-  // Check if any offsets have dedup flags that need remapping
-  bool has_dedup = false;
-  for (size_t i = 0; i < n; ++i) {
-    if (offsets[i] & value::TimeSamples::OFFSET_DEDUP_FLAG) {
-      has_dedup = true;
-      break;
-    }
-  }
-
-  if (has_dedup) {
-    // For dedup remapping, we need to know the original positions
-    // Since we sorted in-place, we need to rebuild the mapping
-    // by finding where each time value ended up
-    // This is a limitation of in-place sort for this use case
-    // For now, dedup references remain valid as long as the referenced
-    // entry moved to the same relative position (which is usually the case
-    // for nearly-sorted data)
-  }
 }
 
 
@@ -240,7 +218,12 @@ void TimeSamples::update() const {
 
     // Sort using offset table strategy
     if (!_offsets.empty()) {
-      if (use_insertion_sort) {
+      const bool has_dedup = std::any_of(
+          _offsets.begin(), _offsets.end(), [](uint64_t offset) {
+            return (offset & value::TimeSamples::OFFSET_DEDUP_FLAG) != 0;
+          });
+
+      if (use_insertion_sort && !has_dedup) {
         insertion_sort_with_offsets(_times, _blocked, _offsets);
       } else {
         std::vector<size_t> indices = create_sort_indices(_times);
@@ -1074,4 +1057,3 @@ bool TimeSamples::cast_to_role_type(uint32_t role_type_id) {
 
 } // namespace value
 } // namespace tinyusdz
-

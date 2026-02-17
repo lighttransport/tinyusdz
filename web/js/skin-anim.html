@@ -81,18 +81,30 @@
 			}
 			#joint-hierarchy {
 				position: absolute;
-				top: 560px;
-				right: 10px;
+				top: 10px;
+				left: 420px;
 				color: white;
 				background: rgba(30, 30, 30, 0.95);
 				padding: 10px;
 				border-radius: 3px;
 				font-size: 11px;
-				width: 244px;
-				max-height: calc(100vh - 580px);
+				width: 200px;
+				max-height: calc(100vh - 40px);
 				overflow-y: auto;
 				display: none;
 				border: 1px solid #444;
+			}
+			#geombind-info {
+				margin-top: 10px;
+				padding-top: 10px;
+				border-top: 1px solid rgba(255, 255, 255, 0.2);
+				font-size: 10px;
+				color: #88ccff;
+			}
+			#geombind-info .matrix-row {
+				font-family: monospace;
+				margin: 2px 0;
+				color: #aaddff;
 			}
 			#joint-hierarchy h3 {
 				margin-top: 0;
@@ -126,6 +138,15 @@
 			#joint-hierarchy::-webkit-scrollbar-thumb:hover {
 				background: rgba(255, 255, 255, 0.5);
 			}
+			/* Make animation checkbox labels horizontally scrollable */
+			.lil-gui .controller.boolean {
+				overflow-x: auto;
+				overflow-y: hidden;
+			}
+			.lil-gui .controller.boolean .name {
+				white-space: nowrap;
+				overflow: visible;
+			}
 		</style>
 	</head>
 	<body>
@@ -136,7 +157,7 @@
 				Load a USD file with skeletal animations to see character rigs in action.
 			</p>
 			<p style="font-size: 11px; color: #999; margin-top: 5px;">
-				<strong>Shortcuts:</strong> G=Translate, R=Rotate, S=Scale, X=Toggle Space, ESC=Deselect
+				<strong>Shortcuts:</strong> G=Translate, R=Rotate, S=Scale, X=Toggle Space, Space=Play/Pause, ESC=Deselect
 			</p>
 			<p>
 				<strong>Current file:</strong> <span id="currentFile">No file loaded</span>
@@ -148,6 +169,10 @@
 			<div id="skeleton-info" style="display:none;">
 				<strong>Skeleton Information:</strong>
 				<div id="skeletonDetails"></div>
+			</div>
+			<div id="geombind-info" style="display:none;">
+				<strong>geomBindTransform:</strong>
+				<div id="geombindMatrix"></div>
 			</div>
 			<div id="animation-info" style="display:none;">
 				<strong>Skeletal Animations Found:</strong>
@@ -193,6 +218,31 @@
 				}
 			};
 
+			// Function to update geomBindTransform display
+			window.updateGeomBindTransform = function(matrix) {
+				const geomInfo = document.getElementById('geombind-info');
+				const geomMatrix = document.getElementById('geombindMatrix');
+
+				if (matrix && matrix.length === 16) {
+					geomInfo.style.display = 'block';
+					// Format matrix as 4x4 display (column-major to row-major for display)
+					const fmt = (v) => v.toFixed(3).padStart(7);
+					const m = matrix;
+					// Three.js stores in column-major, display as row-major
+					geomMatrix.innerHTML = `
+						<div class="matrix-row">[${fmt(m[0])} ${fmt(m[4])} ${fmt(m[8])} ${fmt(m[12])}]</div>
+						<div class="matrix-row">[${fmt(m[1])} ${fmt(m[5])} ${fmt(m[9])} ${fmt(m[13])}]</div>
+						<div class="matrix-row">[${fmt(m[2])} ${fmt(m[6])} ${fmt(m[10])} ${fmt(m[14])}]</div>
+						<div class="matrix-row">[${fmt(m[3])} ${fmt(m[7])} ${fmt(m[11])} ${fmt(m[15])}]</div>
+					`;
+				} else if (matrix === null) {
+					geomInfo.style.display = 'block';
+					geomMatrix.innerHTML = '<span style="color: #888;">Identity (not specified)</span>';
+				} else {
+					geomInfo.style.display = 'none';
+				}
+			};
+
 			// Function to update animation list display
 			window.updateAnimationList = function(animations, animationInfos) {
 				const animInfo = document.getElementById('animation-info');
@@ -224,43 +274,20 @@
 				}
 			};
 
-			// Function to update joint hierarchy display
+			// Function to update joint hierarchy display (deprecated - now using GUI)
+			// Kept for backward compatibility but panel is always hidden
 			window.updateJointHierarchy = function(hierarchyHTML) {
+				// Panel is now integrated into lil-gui, keep HTML panel hidden
 				const hierarchyPanel = document.getElementById('joint-hierarchy');
-				const hierarchyContent = document.getElementById('joint-hierarchy-content');
-
-				if (hierarchyHTML && hierarchyHTML.trim() !== '' && hierarchyHTML !== '<p>No skeleton loaded</p>') {
-					hierarchyPanel.style.display = 'block';
-					hierarchyContent.innerHTML = hierarchyHTML;
-
-					// Hook up click events for joint items
-					const jointItems = hierarchyContent.querySelectorAll('.joint-item');
-					jointItems.forEach(item => {
-						item.addEventListener('click', function() {
-							const boneName = this.getAttribute('data-bone-name');
-							if (window.selectJointByName) {
-								window.selectJointByName(boneName);
-							}
-						});
-					});
-				} else {
+				if (hierarchyPanel) {
 					hierarchyPanel.style.display = 'none';
-					hierarchyContent.innerHTML = '<p style="color: #888;">No skeleton loaded</p>';
 				}
 			};
 
-			// Function to update selected joint indicator
+			// Function to update selected joint indicator (deprecated - now using GUI)
+			// Kept for backward compatibility
 			window.updateSelectedJoint = function(jointName) {
-				const indicator = document.getElementById('selected-joint-indicator');
-				const nameSpan = document.getElementById('selected-joint-name');
-
-				if (jointName) {
-					indicator.style.display = 'block';
-					nameSpan.textContent = jointName;
-				} else {
-					indicator.style.display = 'none';
-					nameSpan.textContent = 'None';
-				}
+				// Now handled by GUI, no-op for HTML panel
 			};
 		</script>
 

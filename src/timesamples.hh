@@ -1206,7 +1206,7 @@ struct TimeSamples {
           (*dst) = *pv;
           return true;
         }
-        return true;
+        return false;
       }
 
       if (interp == TimeSampleInterpolationType::Linear) {

@@ -949,14 +949,12 @@ json ThreeJSSceneExporter::ConvertNode(const Node& node, const RenderScene& scen
   switch (node.nodeType) {
     case NodeType::Mesh:
       obj["type"] = "Mesh";
-      // Find associated mesh data
-      for (const auto& mesh : scene.meshes) {
-        if (mesh.prim_name == node.prim_name) {
-          obj["geometry"] = std::to_string(mesh.handle);
-          if (mesh.material_id != -1 && static_cast<size_t>(mesh.material_id) < scene.materials.size()) {
-            obj["material"] = std::to_string(scene.materials[static_cast<size_t>(mesh.material_id)].handle);
-          }
-          break;
+      // Use node.id to directly index mesh data (O(1) instead of O(N) scan)
+      if (node.id >= 0 && static_cast<size_t>(node.id) < scene.meshes.size()) {
+        const auto& mesh = scene.meshes[static_cast<size_t>(node.id)];
+        obj["geometry"] = std::to_string(mesh.handle);
+        if (mesh.material_id != -1 && static_cast<size_t>(mesh.material_id) < scene.materials.size()) {
+          obj["material"] = std::to_string(scene.materials[static_cast<size_t>(mesh.material_id)].handle);
         }
       }
       break;
@@ -965,6 +963,9 @@ json ThreeJSSceneExporter::ConvertNode(const Node& node, const RenderScene& scen
       break;
     case NodeType::Camera:
       obj["type"] = "Camera";
+      break;
+    case NodeType::SkelRoot:
+      obj["type"] = "SkelRoot";
       break;
     case NodeType::Skeleton:
       obj["type"] = "Skeleton";
@@ -1254,7 +1255,8 @@ json ThreeJSSceneExporter::ConvertAnimation(const AnimationClip& anim) {
     if (channel.target_type == ChannelTargetType::SceneNode) {
       target_name = "node_" + std::to_string(channel.target_node);
     } else {
-      target_name = "joint_" + std::to_string(channel.joint_id);
+      target_name = "skel_" + std::to_string(channel.skeleton_id) +
+                    "_joint_" + std::to_string(channel.joint_id);
     }
 
     // Create track based on animation path

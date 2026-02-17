@@ -51,7 +51,6 @@
 #include "shape-to-mesh.hh"
 #include "materialx-to-json.hh"
 
-//#include <iostream>
 
 // Helper macros for iterating over TypedTimeSamples in both AoS and SoA modes
 #ifdef TINYUSDZ_USE_TIMESAMPLES_SOA
@@ -663,102 +662,12 @@ static nonstd::expected<MtlxNodeGraphInfo, std::string> ExtractMtlxNodeGraphInfo
 // facevarying variability, by replicating uniform value per face over face
 // vertices.
 //
-#if 0  // unused atm
-template <typename T>
-nonstd::expected<std::vector<T>, std::string> UniformToFaceVarying(
-    const std::vector<T> &inputs,
-    const std::vector<uint32_t> &faceVertexCounts) {
-  std::vector<T> dst;
-
-  if (inputs.size() == faceVertexCounts.size()) {
-    return nonstd::make_unexpected(
-        fmt::format("The number of inputs {} must be the same with "
-                    "faceVertexCounts.size() {}",
-                    inputs.size(), faceVertexCounts.size()));
-  }
-
-  for (size_t i = 0; i < faceVertexCounts.size(); i++) {
-    size_t cnt = faceVertexCounts[i];
-
-    // repeat cnt times.
-    for (size_t k = 0; k < cnt; k++) {
-      dst.emplace_back(inputs[i]);
-    }
-  }
-
-  return dst;
-}
-#endif
 
 //
 // Convert vertex attribute with Uniform variability(interpolation) to vertex
 // variability, by replicating uniform value for vertices of a face. For shared
 // vertex, the value will be overwritten.
 //
-#if 0  // unused atm
-template <typename T>
-nonstd::expected<std::vector<T>, std::string> UniformToVertex(
-    const std::vector<T> &inputs, const size_t elementSize,
-    const std::vector<uint32_t> &faceVertexCounts,
-    const std::vector<uint32_t> &faceVertexIndices) {
-  std::vector<T> dst;
-
-  if (faceVertexIndices.size() < 3) {
-    return nonstd::make_unexpected(
-        fmt::format("faceVertexIndices.size must be 3 or greater, but got {}.",
-                    faceVertexCounts.size()));
-  }
-
-  if (faceVertexCounts.empty()) {
-    return nonstd::make_unexpected("faceVertexCounts.size is zero");
-  }
-
-  if (elementSize == 0) {
-    return nonstd::make_unexpected("`elementSize` is zero.");
-  }
-
-  if ((inputs.size() % elementSize) != 0) {
-    return nonstd::make_unexpected(
-        fmt::format("input bytes {} must be dividable by elementSize {}.",
-                    inputs.size(), elementSize));
-  }
-
-  size_t num_uniforms = faceVertexCounts.size();
-
-  dst.resize(num_uniforms * elementSize);
-
-  size_t fvIndexOffset{0};
-
-  for (size_t i = 0; i < faceVertexCounts.size(); i++) {
-    size_t cnt = faceVertexCounts[i];
-
-    if ((fvIndexOffset + cnt) > faceVertexIndices.size()) {
-      return nonstd::make_unexpected(
-          fmt::format("faceVertexCounts[{}] {} gives buffer-overrun to "
-                      "faceVertexIndices.size {}.",
-                      i, cnt, faceVertexIndices.size()));
-    }
-
-    for (size_t k = 0; k < cnt; k++) {
-      uint32_t v_idx = faceVertexIndices[fvIndexOffset + k];
-
-      if (v_idx >= inputs.size()) {
-        return nonstd::make_unexpected(
-            fmt::format("vertexIndex {} is out-of-range for inputs.size {}.",
-                        v_idx, inputs.size()));
-      }
-
-      // may overwrite the value
-      memcpy(&dst[v_idx * elementSize], &inputs[i * elementSize],
-             sizeof(T) * elementSize);
-    }
-
-    fvIndexOffset += cnt;
-  }
-
-  return dst;
-}
-#endif
 
 nonstd::expected<std::vector<uint8_t>, std::string> UniformToVertex(
     const std::vector<uint8_t> &inputs, const size_t stride_bytes,
@@ -869,42 +778,6 @@ nonstd::expected<std::vector<uint8_t>, std::string> UniformToFaceVarying(
 // Convert vertex attribute with Vertex variability(interpolation) to
 // facevarying attribute, by expanding(flatten) the value per vertex per face.
 //
-#if 0  // unsued atm
-template <typename T>
-nonstd::expected<std::vector<T>, std::string> VertexToFaceVarying(
-    const std::vector<T> &inputs, const std::vector<uint32_t> &faceVertexCounts,
-    const std::vector<uint32_t> &faceVertexIndices) {
-  std::vector<T> dst;
-
-  size_t face_offset{0};
-  for (size_t i = 0; i < faceVertexCounts.size(); i++) {
-    size_t cnt = faceVertexCounts[i];
-
-    for (size_t k = 0; k < cnt; k++) {
-      size_t idx = k + face_offset;
-
-      if (idx >= faceVertexIndices.size()) {
-        return nonstd::make_unexpected(fmt::format(
-            "faeVertexIndex out-of-range at faceVertexCount[{}]", i));
-      }
-
-      size_t v_idx = faceVertexIndices[idx];
-
-      if (v_idx >= inputs.size()) {
-        return nonstd::make_unexpected(
-            fmt::format("faeVertexIndices[{}] {} exceeds input array size {}",
-                        idx, v_idx, inputs.size()));
-      }
-
-      dst.emplace_back(inputs[v_idx]);
-    }
-
-    face_offset += cnt;
-  }
-
-  return dst;
-}
-#endif
 
 // Generic vertex to facevarying conversion
 nonstd::expected<std::vector<uint8_t>, std::string> VertexToFaceVarying(
@@ -969,24 +842,6 @@ nonstd::expected<std::vector<uint8_t>, std::string> VertexToFaceVarying(
   return dst;
 }
 
-#if 0  // unused a.t.m
-// Copy single value to facevarying vertices.
-template <typename T>
-static nonstd::expected<std::vector<T>, std::string> ConstantToFaceVarying(
-    const T &input, const std::vector<uint32_t> &faceVertexCounts) {
-  std::vector<T> dst;
-
-  for (size_t i = 0; i < faceVertexCounts.size(); i++) {
-    size_t cnt = faceVertexCounts[i];
-
-    for (size_t k = 0; k < cnt; k++) {
-      dst.emplace_back(input);
-    }
-  }
-
-  return dst;
-}
-#endif
 
 static nonstd::expected<std::vector<uint8_t>, std::string> ConstantToVertex(
     const std::vector<uint8_t> &src, const size_t stride_bytes,
@@ -1058,41 +913,6 @@ static nonstd::expected<std::vector<uint8_t>, std::string> ConstantToVertex(
   return dst;
 }
 
-#if 0
-static nonstd::expected<std::vector<uint8_t>, std::string>
-ConstantToFaceVarying(const std::vector<uint8_t> &src,
-                      const size_t stride_bytes,
-                      const std::vector<uint32_t> &faceVertexCounts) {
-  std::vector<uint8_t> dst;
-
-  if (src.empty()) {
-    return nonstd::make_unexpected("src data is empty.");
-  }
-
-  if (stride_bytes == 0) {
-    return nonstd::make_unexpected("stride_bytes must be non-zero.");
-  }
-
-  if ((src.size() != stride_bytes)) {
-    return nonstd::make_unexpected(
-        fmt::format("src size {} must be equal to stride_bytes {}", src.size(),
-                    stride_bytes));
-  }
-
-  std::vector<uint8_t> buf;
-  buf.resize(stride_bytes);
-
-  for (size_t i = 0; i < faceVertexCounts.size(); i++) {
-    size_t cnt = faceVertexCounts[i];
-
-    for (size_t k = 0; k < cnt; k++) {
-      dst.insert(dst.end(), buf.begin(), buf.end());
-    }
-  }
-
-  return dst;
-}
-#endif
 
 // T = int
 template <typename T>
@@ -1384,164 +1204,7 @@ static bool TryConvertFacevaryingToVertex(
   return false;
 }
 
-#if 0  // Not used atm.
-static bool ToFaceVaryingAttribute(const std::string &attr_name,
-  const VertexAttribute &src,
-  const std::vector<uint32_t> &faceVertexCounts,
-  const std::vector<uint32_t> &faceVertexIndices,
-  VertexAttribute *dst,
-  std::string *err) {
 
-#define PushError(msg) TYDRA_PUSH_ERROR(err, msg)
-
-  if (!dst) {
-    PUSH_ERROR_AND_RETURN("'dest' parameter is nullptr.");
-  }
-
-  if (src.variability == VertexVariability::Indexed) {
-    PUSH_ERROR_AND_RETURN(fmt::format("'indexed' variability for {} is not supported.", attr_name));
-  } else if (src.variability == VertexVariability::Constant) {
-
-    auto result = ConstantToFaceVarying(src.get_data(), src.stride_bytes(),
-            faceVertexCounts);
-
-    if (!result) {
-      PUSH_ERROR_AND_RETURN(fmt::format("Failed to convert vertex data with 'constant' variability to 'facevarying': name {}.", attr_name));
-    }
-
-    dst->data = result.value();
-    dst->elementSize = src.elementSize;
-    dst->format = src.format;
-    dst->stride = src.stride;
-    dst->variability = VertexVariability::FaceVarying;
-
-    return true;
-
-  } else if (src.variability == VertexVariability::Uniform) {
-
-    auto result = UniformToFaceVarying(src.get_data(), src.stride_bytes(),
-            faceVertexCounts);
-
-    if (!result) {
-      PUSH_ERROR_AND_RETURN(fmt::format("Failed to convert vertex data with 'uniform' variability to 'facevarying': name {}.", attr_name));
-    }
-
-    dst->data = result.value();
-    dst->elementSize = src.elementSize;
-    dst->format = src.format;
-    dst->stride = src.stride;
-    dst->variability = VertexVariability::FaceVarying;
-
-    return true;
-
-  } else if (src.variability == VertexVariability::Vertex) {
-
-    auto result = VertexToFaceVarying(src.get_data(), src.stride_bytes(),
-            faceVertexCounts, faceVertexIndices);
-
-    if (!result) {
-      PUSH_ERROR_AND_RETURN(fmt::format("Failed to convert vertex data with 'vertex' variability to 'facevarying': name {}.", attr_name));
-    }
-
-    dst->data = result.value();
-    dst->elementSize = src.elementSize;
-    dst->format = src.format;
-    dst->stride = src.stride;
-    dst->variability = VertexVariability::FaceVarying;
-
-    return true;
-  } else if (src.variability == VertexVariability::FaceVarying) {
-    (*dst) = src;
-    return true;
-  }
-
-#undef PushError
-
-  return false;
-}
-
-static bool ToVertexVaryingAttribute(
-  const std::string &attr_name,
-  const VertexAttribute &src,
-  const std::vector<uint32_t> &faceVertexCounts,
-  const std::vector<uint32_t> &faceVertexIndices,
-  VertexAttribute *dst,
-  std::string *err) {
-
-#define PushError(msg) TYDRA_PUSH_ERROR(err, msg)
-
-  if (!dst) {
-    PUSH_ERROR_AND_RETURN("'dest' parameter is nullptr.");
-  }
-
-  if (src.variability == VertexVariability::Indexed) {
-    PUSH_ERROR_AND_RETURN(fmt::format("'indexed' variability for {} is not supported.", attr_name));
-  } else if (src.variability == VertexVariability::Constant) {
-
-    auto result = ConstantToVertex(src.get_data(), src.stride_bytes(),
-            faceVertexCounts, faceVertexIndices);
-
-    if (!result) {
-      PUSH_ERROR_AND_RETURN(fmt::format("Failed to convert vertex data with 'constant' variability to 'facevarying': name {}.", attr_name));
-    }
-
-    dst->data = result.value();
-    dst->elementSize = src.elementSize;
-    dst->format = src.format;
-    dst->stride = src.stride;
-    dst->variability = VertexVariability::Vertex;
-
-    return true;
-
-  } else if (src.variability == VertexVariability::Uniform) {
-
-    auto result = UniformToVertex(src.get_data(), src.stride_bytes(),
-            faceVertexCounts, faceVertexIndices);
-
-    if (!result) {
-      PUSH_ERROR_AND_RETURN(fmt::format("Failed to convert vertex data with 'uniform' variability to 'facevarying': name {}.", attr_name));
-    }
-
-    dst->data = result.value();
-    dst->elementSize = src.elementSize;
-    dst->format = src.format;
-    dst->stride = src.stride;
-    dst->variability = VertexVariability::Vertex;
-
-    return true;
-
-  } else if (src.variability == VertexVariability::Vertex) {
-
-    (*dst) = src;
-    return true;
-  } else if (src.variability == VertexVariability::FaceVarying) {
-
-    PUSH_ERROR_AND_RETURN(fmt::format("'facevarying' variability cannot be converted to 'vertex' variability: name {}.", attr_name));
-
-  }
-
-#undef PushError
-
-  return false;
-
-}
-#endif
-
-#if 0
-static void DumpTriangle(
-  const std::vector<value::float3> &points,
-  const std::vector<uint32_t> &faces) {
-  std::cout << "# ntris = \n";
-  for (size_t v = 0; v < points.size(); v++) {
-    std::cout << "v " << points[v][0] << " " << points[v][1] << " " << points[v][2] << "\n";
-  }
-  std::cout << "f ";
-  for (size_t f = 0; f < faces.size(); f++) {
-    std::cout << " " << faces[f];
-  }
-  std::cout << "\n";
-}
-#endif
 
 
 ///
@@ -1737,25 +1400,6 @@ nonstd::expected<VertexAttribute, std::string> GetTextureCoordinate(
   return std::move(vattr);
 }
 
-#if 0  // not used at the moment.
-///
-/// For GeomSubset. Build offset table to corresponding array index in
-/// mesh.faceVertexIndices. No need to use this function for triangulated mesh,
-/// since the index can be easily computed as `3 * subset.indices[i]`
-///
-bool BuildFaceVertexIndexOffsets(const std::vector<uint32_t> &faceVertexCounts,
-                                 std::vector<size_t> &faceVertexIndexOffsets) {
-  size_t offset = 0;
-  for (size_t i = 0; i < faceVertexCounts.size(); i++) {
-    uint32_t npolys = faceVertexCounts[i];
-
-    faceVertexIndexOffsets.push_back(offset);
-    offset += npolys;
-  }
-
-  return true;
-}
-#endif
 
 namespace {
 
@@ -1893,7 +1537,7 @@ bool ArrayValueToVertexAttribute(
 //
 // Optimize RenderMesh indices using meshoptimizer
 //
-void OptimizeRenderMeshIndices(RenderMesh& mesh) {
+[[maybe_unused]] static void OptimizeRenderMeshIndices(RenderMesh& mesh) {
   // Only optimize triangulated meshes with valid indices
   if (!mesh.is_triangulated() || mesh.triangulatedFaceVertexIndices.empty() || mesh.points.empty()) {
     return;
@@ -2102,65 +1746,6 @@ bool ToVertexAttribute(const GeomPrimvar &primvar, const std::string &name,
 #undef TO_TYPED_VALUE
 }
 
-#if 0  // TODO: Remove. The following could be done using ToVertexAttribute +
-       // TriangulateVertexAttribute
-///
-/// Triangulate Geom primvar.
-///
-/// triangulatted indices are computed in `TriangulatePolygon` API.
-///
-/// @param[in] mesh Geom mesh
-/// @param[in] name Geom Primvar name.
-/// @param[in] triangulatedFaceVertexIndices Triangulated faceVertexIndices(len
-/// = 3 * triangles)
-/// @param[in] triangulatedToOrigFaceVertexIndexMap Triangulated faceVertexIndex
-/// to original faceVertexIndex remapping table. len = 3 * triangles.
-///
-nonstd::expected<VertexAttribute, std::string> TriangulateGeomPrimvar(
-    const GeomMesh &mesh, const std::string &name,
-    const std::vector<uint32_t> &faceVertexCounts,
-    const std::vector<uint32_t> &faceVertexIndices,
-    const std::vector<uint32_t> &triangulatedFaceVertexIndices,
-    const std::vector<size_t> &triangulatedToOrigFaceVertexIndexMap) {
-  GeomPrimvar primvar;
-
-  if (triangulatedFaceVertexIndices.size() % 3 != 0) {
-    return nonstd::make_unexpected(fmt::format(
-        "triangulatedFaceVertexIndices.size {} must be the multiple of 3.\n",
-        triangulatedFaceVertexIndices.size()));
-  }
-
-  if (!GetGeomPrimvar(name, &primvar)) {
-    return nonstd::make_unexpected(
-        fmt::format("No primvars:{} found in GeomMesh {}\n", name, mesh.name));
-  }
-
-  if (!primvar.has_value()) {
-    // TODO: Create empty VertexAttribute?
-    return nonstd::make_unexpected(
-        fmt::format("No value exist for primvars:{}\n", name));
-  }
-
-  //
-  // Flatten Indexed PrimVar(return raw primvar for non-Indexed PrimVar)
-  //
-  std::string err;
-  value::Value flattened;
-  if (!primvar.flatten_with_indices(t, &flattened, tinterp, &err)) {
-    return nonstd::make_unexpected(fmt::format(
-        "Failed to flatten Indexed PrimVar: {}. Error = {}\n", name, err));
-  }
-
-  VertexAttribute vattr;
-
-  if (!ToVertexAttributeData(primvar, &vattr, &err)) {
-    return nonstd::make_unexpected(fmt::format(
-        "Failed to convert Geom PrimVar to VertexAttribute for {}. Error = {}\n", name, err));
-  }
-
-  return vattr;
-}
-#endif
 
 #if 1
 ///
@@ -2463,25 +2048,6 @@ bool TriangulatePolygon(
 }
 #endif
 
-#if 0  // not used atm.
-// Building an Orthonormal Basis, Revisited
-// http://jcgt.org/published/0006/01/01/
-static void GenerateBasis(const vec3 &n, vec3 *tangent,
-                         vec3 *binormal)
-{
-  if (n[2] < 0.0f) {
-    const float a = 1.0f / (1.0f - n[2]);
-    const float b = n[0] * n[1] * a;
-    (*tangent) = vec3{1.0f - n[0] * n[0] * a, -b, n[0]};
-    (*binormal) = vec3{b, n[1] * n[1] * a - 1.0f, -n[1]};
-  } else {
-    const float a = 1.0f / (1.0f + n[2]);
-    const float b = -n[0] * n[1] * a;
-    (*tangent) = vec3{1.0f - n[0] * n[0] * a, b, -n[0]};
-    (*binormal) = vec3{b, 1.0f - n[1] * n[1] * a, -n[1]};
-  }
-}
-#endif
 
 struct ComputeTangentPackedVertexData {
   // value::float3 position;
@@ -3153,38 +2719,6 @@ static bool ComputeNormals(const std::vector<vec3> &vertices,
 
 }  // namespace
 
-#if 0
-// Currently float2 only
-std::vector<UsdPrimvarReader_float2> ExtractPrimvarReadersFromMaterialNode(
-    const Prim &node) {
-  std::vector<UsdPrimvarReader_float2> dst;
-
-  if (!node.is<Material>()) {
-    return dst;
-  }
-
-  for (const auto &child : node.children()) {
-    (void)child;
-  }
-
-  // Traverse and find PrimvarReader_float2 shader.
-  return dst;
-}
-
-nonstd::expected<Node, std::string> ConvertXform(const Stage &stage,
-                                            const Xform &xform) {
-  (void)stage;
-
-  // TODO: timeSamples
-
-  Node node;
-  if (auto m = xform.GetLocalMatrix()) {
-    node.local_matrix = m.value();
-  }
-
-  return std::move(node);
-}
-#endif
 
 namespace {
 
@@ -3311,67 +2845,156 @@ bool ListUVNames(const RenderMaterial &material,
 
 }  // namespace
 
-// Find skeleton for mesh by walking up ancestor hierarchy
-// Returns true if skeleton found, with path and skeleton pointer stored in output params
-static bool FindSkeletonByAncestor(
-    const Path &meshPath,
-    const PathPrimMap<Skeleton> &allSkeletons,
-    const PathPrimMap<SkelRoot> &allSkelRoots,
-    Path *outSkelPath,
-    const Skeleton **outSkelPtr)
-{
-  if (allSkeletons.empty()) {
-    return false;
+class SkelRootSkeletonResolver {
+ public:
+  using SkelRootToSkeletonMap =
+      std::unordered_map<std::string, std::pair<Path, const Skeleton *>>;
+
+  static void BuildMap(const PathPrimMap<Skeleton> &allSkeletons,
+                       const PathPrimMap<SkelRoot> &allSkelRoots,
+                       SkelRootToSkeletonMap *out_map) {
+    if (!out_map) {
+      return;
+    }
+
+    out_map->clear();
+    out_map->reserve(allSkelRoots.size());
+
+    for (const auto &kv : allSkeletons) {
+      const std::string &skel_path_str = kv.first;
+      const Skeleton *skel_ptr = kv.second;
+      Path current_path(skel_path_str, "");
+
+      while (current_path.is_valid() && !current_path.is_root_path()) {
+        Path parent_path = current_path.get_parent_prim_path();
+        const std::string parent_path_str = parent_path.prim_part();
+
+        if (allSkelRoots.find(parent_path_str) != allSkelRoots.end()) {
+          // Deterministic selection: if multiple Skeletons exist under one
+          // SkelRoot, keep lexicographically smallest absolute skeleton path.
+          auto it = out_map->find(parent_path_str);
+          if (it == out_map->end()) {
+            out_map->emplace(parent_path_str,
+                             std::make_pair(Path(skel_path_str, ""), skel_ptr));
+          } else if (skel_path_str < it->second.first.prim_part()) {
+            it->second = std::make_pair(Path(skel_path_str, ""), skel_ptr);
+          }
+          break;
+        }
+
+        current_path = parent_path;
+      }
+    }
   }
 
-  // Walk up ancestor chain
-  Path currentPath = meshPath;
-  while (currentPath.is_valid() && !currentPath.is_root_path()) {
-    Path parentPath = currentPath.get_parent_prim_path();
-    std::string parentPathStr = parentPath.prim_part();
+  // Find skeleton for mesh by walking up ancestor hierarchy.
+  // Returns true if skeleton found, with path and skeleton pointer stored.
+  static bool FindByAncestor(const Path &meshPath,
+                             const PathPrimMap<Skeleton> &allSkeletons,
+                             const PathPrimMap<SkelRoot> &allSkelRoots,
+                             const SkelRootToSkeletonMap *skelRootToSkeleton,
+                             Path *outSkelPath, const Skeleton **outSkelPtr) {
+    if (allSkeletons.empty()) {
+      return false;
+    }
 
-    DCOUT("FindSkeletonByAncestor: checking parent " << parentPathStr);
+    // Walk up ancestor chain
+    Path currentPath = meshPath;
+    while (currentPath.is_valid() && !currentPath.is_root_path()) {
+      Path parentPath = currentPath.get_parent_prim_path();
+      std::string parentPathStr = parentPath.prim_part();
 
-    // Check if parent is a SkelRoot
-    auto skelRootIt = allSkelRoots.find(parentPathStr);
-    if (skelRootIt != allSkelRoots.end()) {
-      DCOUT("Found SkelRoot ancestor: " << parentPathStr);
-      // Found SkelRoot ancestor - search its children for Skeleton
-      for (const auto &kv : allSkeletons) {
-        const std::string &skelPath = kv.first;
-        const Skeleton *skelPtr = kv.second;
-        // Check if skeleton is under this SkelRoot (path starts with parent)
-        if (skelPath.find(parentPathStr) == 0) {
-          *outSkelPath = Path(skelPath, "");
-          if (outSkelPtr) *outSkelPtr = skelPtr;
-          DCOUT("Found skeleton under SkelRoot: " << skelPath);
+      DCOUT("FindSkeletonByAncestor: checking parent " << parentPathStr);
+
+      // Check if parent is a SkelRoot
+      auto skelRootIt = allSkelRoots.find(parentPathStr);
+      if (skelRootIt != allSkelRoots.end()) {
+        DCOUT("Found SkelRoot ancestor: " << parentPathStr);
+
+        if (skelRootToSkeleton) {
+          auto mapped = skelRootToSkeleton->find(parentPathStr);
+          if (mapped != skelRootToSkeleton->end()) {
+            *outSkelPath = mapped->second.first;
+            if (outSkelPtr) *outSkelPtr = mapped->second.second;
+            DCOUT("Found skeleton under SkelRoot from cache: "
+                  << mapped->second.first.prim_part());
+            return true;
+          }
+        }
+
+        // Found SkelRoot ancestor - search its children for Skeleton
+        std::string bestSkelPath;
+        const Skeleton *bestSkelPtr{nullptr};
+        for (const auto &kv : allSkeletons) {
+          const std::string &skelPath = kv.first;
+          const Skeleton *skelPtr = kv.second;
+
+          if (IsStrictDescendantPath(skelPath, parentPathStr)) {
+            if (!bestSkelPtr || skelPath < bestSkelPath) {
+              bestSkelPath = skelPath;
+              bestSkelPtr = skelPtr;
+            }
+          }
+        }
+
+        if (bestSkelPtr) {
+          *outSkelPath = Path(bestSkelPath, "");
+          if (outSkelPtr) *outSkelPtr = bestSkelPtr;
+          DCOUT("Found skeleton under SkelRoot: " << bestSkelPath);
           return true;
         }
       }
+
+      // Also check if parent itself is a Skeleton
+      auto skelIt = allSkeletons.find(parentPathStr);
+      if (skelIt != allSkeletons.end()) {
+        *outSkelPath = Path(parentPathStr, "");
+        if (outSkelPtr) *outSkelPtr = skelIt->second;
+        DCOUT("Found skeleton as ancestor: " << parentPathStr);
+        return true;
+      }
+
+      currentPath = parentPath;
     }
 
-    // Also check if parent itself is a Skeleton
-    auto skelIt = allSkeletons.find(parentPathStr);
-    if (skelIt != allSkeletons.end()) {
-      *outSkelPath = Path(parentPathStr, "");
-      if (outSkelPtr) *outSkelPtr = skelIt->second;
-      DCOUT("Found skeleton as ancestor: " << parentPathStr);
+    // Fallback: if only one skeleton in scene, use it
+    if (allSkeletons.size() == 1) {
+      *outSkelPath = Path(allSkeletons.begin()->first, "");
+      if (outSkelPtr) *outSkelPtr = allSkeletons.begin()->second;
+      DCOUT("Fallback: using only skeleton in scene: "
+            << allSkeletons.begin()->first);
       return true;
     }
 
-    currentPath = parentPath;
+    return false;
   }
 
-  // Fallback: if only one skeleton in scene, use it
-  if (allSkeletons.size() == 1) {
-    *outSkelPath = Path(allSkeletons.begin()->first, "");
-    if (outSkelPtr) *outSkelPtr = allSkeletons.begin()->second;
-    DCOUT("Fallback: using only skeleton in scene: " << allSkeletons.begin()->first);
-    return true;
-  }
+ private:
+  static bool IsStrictDescendantPath(const std::string &descendantPath,
+                                     const std::string &ancestorPath) {
+    if (ancestorPath.empty() || descendantPath.empty()) {
+      return false;
+    }
 
-  return false;
-}
+    // All absolute prim paths are expected to start with '/'.
+    if (descendantPath[0] != '/' || ancestorPath[0] != '/') {
+      return false;
+    }
+
+    if (descendantPath.size() <= ancestorPath.size()) {
+      return false;
+    }
+
+    if (descendantPath.compare(0, ancestorPath.size(), ancestorPath) != 0) {
+      return false;
+    }
+
+    // Require a path-segment boundary:
+    // "/A/SkelRoot/Skel" is a descendant of "/A/SkelRoot", but
+    // "/A/SkelRootExtra/Skel" is not.
+    return descendantPath[ancestorPath.size()] == '/';
+  }
+};
 
 ///
 /// Convert vertex variability either 'vertex' or 'facevarying'
@@ -4540,11 +4163,17 @@ bool RenderSceneConverter::ConvertMesh(
       if ((rmaterial_id > -1) && (size_t(rmaterial_id) < materials.size())) {
         const RenderMaterial &material = materials[size_t(rmaterial_id)];
 
-        StringAndIdMap uvname_map;
-        if (!ListUVNames(material, textures, uvname_map)) {
-          DCOUT("Failed to list UV names");
-          return false;
+        // Cache ListUVNames per material_id to avoid redundant shader walks
+        auto uv_cache_it = _uvNameCache.find(rmaterial_id);
+        if (uv_cache_it == _uvNameCache.end()) {
+          StringAndIdMap tmp;
+          if (!ListUVNames(material, textures, tmp)) {
+            DCOUT("Failed to list UV names");
+            return false;
+          }
+          uv_cache_it = _uvNameCache.emplace(rmaterial_id, std::move(tmp)).first;
         }
+        const StringAndIdMap &uvname_map = uv_cache_it->second;
 
         for (auto it = uvname_map.i_begin(); it != uvname_map.i_end(); it++) {
           uint64_t slotId = it->first;
@@ -5317,7 +4946,9 @@ bool RenderSceneConverter::ConvertMesh(
         DCOUT("Mesh has skinning data but no skel:skeleton - trying ancestor discovery");
         if (_allSkeletons && _allSkelRoots) {
           Path meshPath(abs_prim_path.full_path_name(), "");
-          if (FindSkeletonByAncestor(meshPath, *_allSkeletons, *_allSkelRoots, &skelPath, &discoveredSkelPtr)) {
+          if (SkelRootSkeletonResolver::FindByAncestor(
+                  meshPath, *_allSkeletons, *_allSkelRoots,
+                  &_skelRootToSkeleton, &skelPath, &discoveredSkelPtr)) {
             hasSkelPath = true;
             DCOUT("Found skeleton by ancestor: " << skelPath.prim_part());
           } else {
@@ -5327,66 +4958,43 @@ bool RenderSceneConverter::ConvertMesh(
       }
 
       if (hasSkelPath && skelPath.is_valid()) {
-        // Check if skeleton already exists
+        // Check if skeleton already exists via O(1) hash lookup
         std::string skelPathStr = skelPath.prim_part();
-        auto skel_it = std::find_if(skeletons.begin(), skeletons.end(), [&skelPathStr](const SkelHierarchy &sk) {
-          DCOUT("sk.abs_path " << sk.abs_path << ", skel_path " << skelPathStr);
-          return sk.abs_path == skelPathStr;
-        });
+        auto skel_cache_it = _skelPathToIndex.find(skelPathStr);
 
-        // Determine skeleton_id before conversion
-        int32_t skel_id{0};
-        if (skel_it != skeletons.end()) {
-          skel_id = int32_t(std::distance(skeletons.begin(), skel_it));
+        if (skel_cache_it != _skelPathToIndex.end()) {
+          // Skeleton already converted, reuse it
+          dst.skel_id = skel_cache_it->second;
         } else {
-          skel_id = int32_t(skeletons.size());
-        }
+          int32_t skel_id = int32_t(skeletons.size());
 
-        SkelHierarchy skel;
-        nonstd::optional<AnimationClip> anim;
+          SkelHierarchy skel;
 
-        // Use ConvertSkeletonFromPtr if we have the skeleton pointer from discovery,
-        // otherwise use ConvertSkeletonImplWithPath for explicit relationship case
-        if (discoveredSkelPtr) {
-          // Extract prim name from path (last component)
-          std::string primName = skelPath.prim_part();
-          size_t lastSlash = primName.rfind('/');
-          if (lastSlash != std::string::npos) {
-            primName = primName.substr(lastSlash + 1);
-          }
-          if (!ConvertSkeletonFromPtr(env, skelPath, *discoveredSkelPtr, primName, skel_id, &skel, &anim)) {
-            return false;
-          }
-        } else {
-          if (!ConvertSkeletonImplWithPath(env, skelPath, skel_id, &skel, &anim)) {
-            return false;
-          }
-        }
-        DCOUT("Converted skeleton attached to : " << abs_prim_path);
-
-        if (anim) {
-
-          const auto &animAbsPath = anim.value().abs_path;
-          auto anim_it = std::find_if(animations.begin(), animations.end(), [&animAbsPath](const AnimationClip &a) {
-            DCOUT("a.abs_path " << a.abs_path << ", anim_path " << animAbsPath);
-            return a.abs_path == animAbsPath;
-          });
-
-          if (anim_it != animations.end()) {
-            skel.anim_id = int(std::distance(animations.begin(), anim_it));
+          // Use ConvertSkeletonFromPtr if we have the skeleton pointer from discovery,
+          // otherwise use ConvertSkeletonImplWithPath for explicit relationship case
+          if (discoveredSkelPtr) {
+            // Extract prim name from path (last component)
+            std::string primName = skelPath.prim_part();
+            size_t lastSlash = primName.rfind('/');
+            if (lastSlash != std::string::npos) {
+              primName = primName.substr(lastSlash + 1);
+            }
+            if (!ConvertSkeletonFromPtr(env, skelPath, *discoveredSkelPtr, primName, &skel)) {
+              return false;
+            }
           } else {
-            skel.anim_id = int(animations.size());
-            animations.emplace_back(anim.value());
+            if (!ConvertSkeletonImplWithPath(env, skelPath, &skel)) {
+              return false;
+            }
           }
-        }
+          DCOUT("Converted skeleton attached to : " << abs_prim_path);
 
-        // Add skeleton if it's new (skel_it was end())
-        if (skel_it == skeletons.end()) {
+          _skelPathToIndex[skelPathStr] = skel_id;
           skeletons.emplace_back(std::move(skel));
           DCOUT("add skeleton\n");
-        }
 
-        dst.skel_id = skel_id;
+          dst.skel_id = skel_id;
+        }
 
       }
     }
@@ -5400,30 +5008,31 @@ bool RenderSceneConverter::ConvertMesh(
 
         const auto &skel = skeletons[size_t(dst.skel_id)];
 
-        std::map<std::string, int> name_to_index_map = BuildSkelNameToIndexMap(skel);
+        // Cache BuildSkelNameToIndexMap per skeleton ID (avoids rebuilding per mesh)
+        auto cache_it = _skelNameToIndexCache.find(dst.skel_id);
+        if (cache_it == _skelNameToIndexCache.end()) {
+          cache_it = _skelNameToIndexCache.emplace(dst.skel_id, BuildSkelNameToIndexMap(skel)).first;
+        }
+        const auto &name_to_index_map = cache_it->second;
 
-        std::unordered_map<int, int> index_remap;
+        // Flat vector remap: index_remap[i] = skeleton joint index for mesh joint i
+        std::vector<int> index_remap(joints.size(), -1);
 
         for (size_t i = 0; i < joints.size(); i++) {
           std::string joint_name = joints[i].str();
 
-          if (!name_to_index_map.count(joint_name)) {
+          auto nit = name_to_index_map.find(joint_name);
+          if (nit == name_to_index_map.end()) {
             PUSH_ERROR_AND_RETURN(fmt::format("joint_name {} not found in Skeleton", joint_name));
           }
 
-          int dst_idx = name_to_index_map.at(joint_name);
-          index_remap[int(i)] = dst_idx;
-
-          //DCOUT("remap " << i << " to " << dst_idx);
+          index_remap[i] = nit->second;
         }
 
         for (size_t i = 0; i < dst.joint_and_weights.jointIndices.size(); i++) {
           int src_idx = dst.joint_and_weights.jointIndices[i];
-          if (index_remap.count(src_idx)) {
-            int dst_idx = index_remap[src_idx];
-
-            dst.joint_and_weights.jointIndices[i] = dst_idx;
-            //DCOUT("jointIndex modified: remap " << src_idx << " to " << dst_idx);
+          if (src_idx >= 0 && size_t(src_idx) < index_remap.size() && index_remap[size_t(src_idx)] >= 0) {
+            dst.joint_and_weights.jointIndices[i] = index_remap[size_t(src_idx)];
           }
         }
       }
@@ -5784,14 +5393,6 @@ bool RenderSceneConverter::ConvertMesh(
     }
   }
 
-#if 0 // TODO
-#if defined(TINYUSDZ_WITH_MESHOPT)
-  TUSDZ_LOG_I("Optimize indices");
-
-  // Optimize mesh indices for better rendering performance
-  OptimizeRenderMeshIndices(dst);
-#endif
-#endif
 
   (*dstMesh) = std::move(dst);
 
@@ -5799,6 +5400,42 @@ bool RenderSceneConverter::ConvertMesh(
 }
 
 namespace {
+
+struct UVConnectionResolveCacheEntry {
+  bool found{false};
+  Path tex_abs_path;
+  const UsdUVTexture *texture{nullptr};
+  const Shader *shader{nullptr};
+};
+
+struct MtlxConnectionResolveCacheEntry {
+  Path tex_abs_path;
+  const Shader *image_shader{nullptr};
+  std::string st_varname;
+  const AssetInfo *asset_info{nullptr};
+};
+
+struct ConnectionResolveCache {
+  const Stage *stage{nullptr};
+  std::unordered_map<std::string, UVConnectionResolveCacheEntry> uv_texture_by_connection;
+  std::unordered_map<std::string, MtlxConnectionResolveCacheEntry> mtlx_texture_by_connection;
+};
+
+static ConnectionResolveCache &GetConnectionResolveCache(const Stage &stage) {
+  static thread_local ConnectionResolveCache cache;
+  if (cache.stage != &stage) {
+    cache.stage = &stage;
+    cache.uv_texture_by_connection.clear();
+    cache.mtlx_texture_by_connection.clear();
+  }
+  return cache;
+}
+
+static void ResetConnectionResolveCache(const Stage &stage) {
+  ConnectionResolveCache &cache = GetConnectionResolveCache(stage);
+  cache.uv_texture_by_connection.clear();
+  cache.mtlx_texture_by_connection.clear();
+}
 
 // Convert UsdTransform2d -> PrimvarReader_float2 shader network.
 nonstd::expected<bool, std::string> ConvertTexTransform2d(
@@ -5883,15 +5520,6 @@ nonstd::expected<bool, std::string> ConvertTexTransform2d(
 
   // 'string' for inputs:varname preferred.
   std::string varname;
-#if 0
-  if (!tydra::EvaluateShaderAttribute(stage, *pshader, "inputs:varname",
-                                      &varname, &err)) {
-    return nonstd::make_unexpected(
-        fmt::format("Failed to evaluate UsdPrimvarReader_float2's "
-                    "inputs:varname: {}\n",
-                    err));
-  }
-#else
   TerminalAttributeValue attr;
   if (!tydra::EvaluateAttribute(stage, *pprim, "inputs:varname", &attr, &err)) {
     return nonstd::make_unexpected(
@@ -5912,7 +5540,6 @@ nonstd::expected<bool, std::string> ConvertTexTransform2d(
     return nonstd::make_unexpected("`inputs:varname` is empty token\n");
   }
   DCOUT("inputs:varname = " << varname);
-#endif
 
   // Build transform matrix.
   // https://github.com/KhronosGroup/glTF/tree/main/extensions/2.0/Khronos/KHR_texture_transform
@@ -5976,6 +5603,36 @@ nonstd::expected<bool, std::string> GetConnectedUVTexture(
 
   const std::string prim_part = path.prim_part();
   const std::string prop_part = path.prop_part();
+  const std::string cache_key = path.full_path_name();
+  ConnectionResolveCache &resolve_cache = GetConnectionResolveCache(stage);
+
+  if (shader_out) {
+    *shader_out = nullptr;
+  }
+  *dst = nullptr;
+
+  auto cache_it = resolve_cache.uv_texture_by_connection.find(cache_key);
+  if (cache_it != resolve_cache.uv_texture_by_connection.end()) {
+    if (tex_abs_path) {
+      *tex_abs_path = cache_it->second.tex_abs_path;
+    }
+    *dst = cache_it->second.texture;
+    if (shader_out) {
+      *shader_out = cache_it->second.shader;
+    }
+    return cache_it->second.found;
+  }
+
+  auto cache_result = [&](bool found, const Path &resolved_path,
+                          const UsdUVTexture *texture,
+                          const Shader *shader) {
+    UVConnectionResolveCacheEntry entry;
+    entry.found = found;
+    entry.tex_abs_path = resolved_path;
+    entry.texture = texture;
+    entry.shader = shader;
+    resolve_cache.uv_texture_by_connection[cache_key] = std::move(entry);
+  };
 
   // NOTE: no `outputs:rgba` in the spec.
   constexpr auto kOutputsRGB = "outputs:rgb";
@@ -6173,12 +5830,14 @@ nonstd::expected<bool, std::string> GetConnectedUVTexture(
           (*tex_abs_path) = ng_output_path;
         }
 
+        cache_result(true, ng_output_path, ptex, pshader);
         return true;
       }
       // Shader exists but it's not a UsdUVTexture - this is OK, NodeGraph might connect to other shader types
       // Return false (not found) rather than error
       DCOUT(fmt::format("NodeGraph {} output {} connects to Shader {} but it's not UsdUVTexture",
                         prim_part, prop_part, next_prim_part));
+      cache_result(false, ng_output_path, nullptr, pshader);
       return false;
     }
 
@@ -6186,6 +5845,7 @@ nonstd::expected<bool, std::string> GetConnectedUVTexture(
     // This is not necessarily an error - the connection might be to a MaterialX shader or other node type
     DCOUT(fmt::format("NodeGraph {} output {} connects to {} (type: {}), not a UsdUVTexture",
                       prim_part, prop_part, next_prim_part, next_prim->prim_type_name()));
+    cache_result(false, ng_output_path, nullptr, nullptr);
     return false;
   }
 
@@ -6210,6 +5870,7 @@ nonstd::expected<bool, std::string> GetConnectedUVTexture(
         (*shader_out) = pshader;
       }
 
+      cache_result(true, Path(prim_part, prop_part), ptex, pshader);
       return true;
     }
   }
@@ -6240,6 +5901,38 @@ nonstd::expected<bool, std::string> GetConnectedMtlxTexture(
   const Path &path = src.get_connections()[0];
   const std::string prim_part = path.prim_part();
   const std::string prop_part = path.prop_part();
+  const std::string cache_key =
+      path.full_path_name() + "|" + default_texcoords_primvar_name;
+  ConnectionResolveCache &resolve_cache = GetConnectionResolveCache(stage);
+
+  auto mtlx_cache_it =
+      resolve_cache.mtlx_texture_by_connection.find(cache_key);
+  if (mtlx_cache_it != resolve_cache.mtlx_texture_by_connection.end()) {
+    if (tex_abs_path) {
+      *tex_abs_path = mtlx_cache_it->second.tex_abs_path;
+    }
+    if (image_shader_out) {
+      *image_shader_out = mtlx_cache_it->second.image_shader;
+    }
+    if (st_varname_out) {
+      *st_varname_out = mtlx_cache_it->second.st_varname;
+    }
+    if (assetInfo_out) {
+      *assetInfo_out = mtlx_cache_it->second.asset_info;
+    }
+    return true;
+  }
+
+  auto cache_result = [&](const Path &resolved_path, const Shader *image_shader,
+                          const std::string &st_varname,
+                          const AssetInfo *asset_info) {
+    MtlxConnectionResolveCacheEntry entry;
+    entry.tex_abs_path = resolved_path;
+    entry.image_shader = image_shader;
+    entry.st_varname = st_varname;
+    entry.asset_info = asset_info;
+    resolve_cache.mtlx_texture_by_connection[cache_key] = std::move(entry);
+  };
 
   DCOUT("Checking MaterialX connection: " << path.full_path_name());
   DCOUT("  prim_part: " << prim_part);
@@ -6453,6 +6146,9 @@ nonstd::expected<bool, std::string> GetConnectedMtlxTexture(
         *st_varname_out = default_texcoords_primvar_name.empty() ? "st" : default_texcoords_primvar_name;
       }
 
+      cache_result(current_path, image_shader,
+                   default_texcoords_primvar_name.empty() ? "st" : default_texcoords_primvar_name,
+                   nullptr);
       return true;
     }
 
@@ -7026,12 +6722,6 @@ bool RenderSceneConverter::ConvertUVTexture(const RenderSceneConverterEnv &env,
     tex.authoredOutputChannels.insert(UVTexture::Channel::B);
   }
 
-#if 0 // TODO
-  if (tex.authoredOutputChannels.empty()) {
-    PUSH_WARN("No valid output channel attribute authored. Default to RGB");
-    tex.authoredOutputChannels.insert(UVTexture::Channel::RGB);
-  }
-#endif
 
   //
   // Convert other UVTexture parameters
@@ -8671,10 +8361,8 @@ bool MeshVisitor(const tinyusdz::Path &abs_path, const tinyusdz::Prim &prim,
       visitorEnv->converter->ReportMeshProgress(
           visitorEnv->meshes_processed, visitorEnv->meshes_total,
           abs_path.full_path_name(), msg);
-      // Log progress to console (visible in browser)
-      printf("[Tydra] Mesh %zu/%zu: %s\n",
-             visitorEnv->meshes_processed, visitorEnv->meshes_total,
-             abs_path.full_path_name().c_str());
+      DCOUT("[Tydra] Mesh " << visitorEnv->meshes_processed << "/" << visitorEnv->meshes_total
+            << ": " << abs_path.full_path_name());
     }
   }
 
@@ -8746,9 +8434,8 @@ bool MeshVisitor(const tinyusdz::Path &abs_path, const tinyusdz::Prim &prim,
     visitorEnv->converter->ReportMeshProgress(
         visitorEnv->meshes_processed, visitorEnv->meshes_total,
         abs_path.full_path_name(), msg);
-    printf("[Tydra] Mesh %zu/%zu (cube): %s\n",
-           visitorEnv->meshes_processed, visitorEnv->meshes_total,
-           abs_path.full_path_name().c_str());
+    DCOUT("[Tydra] Mesh " << visitorEnv->meshes_processed << "/" << visitorEnv->meshes_total
+          << " (cube): " << abs_path.full_path_name());
   }
 
   // Handle GeomSphere primitives by converting to mesh
@@ -8819,9 +8506,8 @@ bool MeshVisitor(const tinyusdz::Path &abs_path, const tinyusdz::Prim &prim,
     visitorEnv->converter->ReportMeshProgress(
         visitorEnv->meshes_processed, visitorEnv->meshes_total,
         abs_path.full_path_name(), msg);
-    printf("[Tydra] Mesh %zu/%zu (sphere): %s\n",
-           visitorEnv->meshes_processed, visitorEnv->meshes_total,
-           abs_path.full_path_name().c_str());
+    DCOUT("[Tydra] Mesh " << visitorEnv->meshes_processed << "/" << visitorEnv->meshes_total
+          << " (sphere): " << abs_path.full_path_name());
   }
 
   return true;  // continue traversal
@@ -8878,7 +8564,41 @@ bool RenderSceneConverter::ConvertSkelAnimation(const RenderSceneConverterEnv &e
   anim_out->duration = 0.0f;  // Will be computed below
 
   // Joint animations - convert to glTF-style flat arrays
+  // Strategy: Pre-allocate output samplers, then scatter data directly from
+  // TypedTimeSamples into per-joint samplers. Avoids copying all frame data
+  // into intermediate vectors.
   if (joints.size()) {
+    if (skeleton_id < 0 || skeleton_id >= int32_t(skeletons.size())) {
+      PUSH_ERROR_AND_RETURN(fmt::format(
+          "Invalid skeleton_id {} for SkelAnimation {}",
+          skeleton_id, abs_path.full_path_name()));
+    }
+
+    // SkelAnimation::joints ordering may differ from Skeleton::joints ordering.
+    // Build an explicit animation-joint -> skeleton-joint remap once, then use
+    // canonical skeleton joint IDs in all emitted channels.
+    auto cache_it = _skelNameToIndexCache.find(skeleton_id);
+    if (cache_it == _skelNameToIndexCache.end()) {
+      cache_it = _skelNameToIndexCache
+                     .emplace(skeleton_id,
+                              BuildSkelNameToIndexMap(skeletons[size_t(skeleton_id)]))
+                     .first;
+    }
+    const auto &token_to_index_map = cache_it->second;
+
+    auto normalize_joint_token = [](const std::string &token) {
+      if (!token.empty() && token[0] == '/') {
+        return token.substr(1);
+      }
+      return token;
+    };
+
+    std::unordered_map<std::string, int32_t> normalized_to_index;
+    normalized_to_index.reserve(token_to_index_map.size() * 2);
+    for (const auto &item : token_to_index_map) {
+      normalized_to_index[normalize_joint_token(item.first)] = int32_t(item.second);
+    }
+
     Animatable<std::vector<value::float3>> translations;
     if (!skelAnim.translations.get_value(&translations)) {
       PUSH_ERROR_AND_RETURN(fmt::format("Failed to get `translations` attribute of SkelAnimation: {}", abs_path));
@@ -8894,237 +8614,396 @@ bool RenderSceneConverter::ConvertSkelAnimation(const RenderSceneConverterEnv &e
       PUSH_ERROR_AND_RETURN(fmt::format("Failed to get `scales` attribute of SkelAnimation: {}", abs_path));
     }
 
-    // Extract timesamples for each animation type
-    std::vector<double> translation_times, rotation_times, scale_times;
-    std::vector<std::vector<value::float3>> translation_samples;
-    std::vector<std::vector<value::quatf>> rotation_samples;
-    std::vector<std::vector<value::half3>> scale_samples;
+    size_t nJoints = joints.size();
+    std::vector<int32_t> anim_joint_to_skel_joint(nJoints, -1);
+    for (size_t j = 0; j < nJoints; j++) {
+      const std::string joint_token = joints[j].str();
 
+      auto token_it = token_to_index_map.find(joint_token);
+      if (token_it != token_to_index_map.end()) {
+        anim_joint_to_skel_joint[j] = int32_t(token_it->second);
+        continue;
+      }
+
+      auto norm_it = normalized_to_index.find(normalize_joint_token(joint_token));
+      if (norm_it != normalized_to_index.end()) {
+        anim_joint_to_skel_joint[j] = norm_it->second;
+        continue;
+      }
+
+      PUSH_ERROR_AND_RETURN(fmt::format(
+          "SkelAnimation joint token '{}' is not found in Skeleton {} (id={})",
+          joint_token, skeletons[size_t(skeleton_id)].abs_path, skeleton_id));
+    }
+
+    // Count frames for each property (first pass - no data copy)
+    size_t nTransTimes = 0, nRotTimes = 0, nScaleTimes = 0;
     if (translations.has_timesamples()) {
-      const TypedTimeSamples<std::vector<value::float3>> &ts_txs = translations.get_timesamples();
-      FOREACH_TIMESAMPLES_BEGIN(ts_txs, sample_t, sample_value, sample_blocked)
-        if (sample_value.size() != joints.size()) {
-          PUSH_ERROR_AND_RETURN(fmt::format("Array length mismatch: translations[{}].size {} != joints.size {} at time {}",
-            translation_times.size(), sample_value.size(), joints.size(), sample_t));
-        }
-        translation_times.push_back(sample_t);
-        translation_samples.push_back(sample_value);
-        if (float(sample_t) > anim_out->duration) anim_out->duration = float(sample_t);
-      FOREACH_TIMESAMPLES_END()
+      nTransTimes = translations.get_timesamples().size();
     } else if (translations.has_value()) {
-      // Handle static (non-time-sampled) values as a single keyframe at time 0.0
-      std::vector<value::float3> default_value;
-      if (!translations.get_scalar(&default_value)) {
-        PUSH_ERROR_AND_RETURN(fmt::format("Failed to get default value for translations in SkelAnimation: {}", abs_path));
-      }
-      if (default_value.size() != joints.size()) {
-        PUSH_ERROR_AND_RETURN(fmt::format("Array length mismatch: translations.size {} != joints.size {}",
-          default_value.size(), joints.size()));
-      }
-      translation_times.push_back(0.0);
-      translation_samples.push_back(default_value);
+      nTransTimes = 1;
     }
-
     if (rotations.has_timesamples()) {
-      const TypedTimeSamples<std::vector<value::quatf>> &ts_rots = rotations.get_timesamples();
-      FOREACH_TIMESAMPLES_BEGIN(ts_rots, sample_t, sample_value, sample_blocked)
-        if (sample_value.size() != joints.size()) {
-          PUSH_ERROR_AND_RETURN(fmt::format("Array length mismatch: rotations[{}].size {} != joints.size {} at time {}",
-            rotation_times.size(), sample_value.size(), joints.size(), sample_t));
-        }
-        rotation_times.push_back(sample_t);
-        rotation_samples.push_back(sample_value);
-        if (float(sample_t) > anim_out->duration) anim_out->duration = float(sample_t);
-      FOREACH_TIMESAMPLES_END()
+      nRotTimes = rotations.get_timesamples().size();
     } else if (rotations.has_value()) {
-      // Handle static (non-time-sampled) values as a single keyframe at time 0.0
-      std::vector<value::quatf> default_value;
-      if (!rotations.get_scalar(&default_value)) {
-        PUSH_ERROR_AND_RETURN(fmt::format("Failed to get default value for rotations in SkelAnimation: {}", abs_path));
-      }
-      if (default_value.size() != joints.size()) {
-        PUSH_ERROR_AND_RETURN(fmt::format("Array length mismatch: rotations.size {} != joints.size {}",
-          default_value.size(), joints.size()));
-      }
-      rotation_times.push_back(0.0);
-      rotation_samples.push_back(default_value);
+      nRotTimes = 1;
     }
-
     if (scales.has_timesamples()) {
-      const TypedTimeSamples<std::vector<value::half3>> &ts_scales = scales.get_timesamples();
-      FOREACH_TIMESAMPLES_BEGIN(ts_scales, sample_t, sample_value, sample_blocked)
-        if (sample_value.size() != joints.size()) {
-          PUSH_ERROR_AND_RETURN(fmt::format("Array length mismatch: scales[{}].size {} != joints.size {} at time {}",
-            scale_times.size(), sample_value.size(), joints.size(), sample_t));
-        }
-        scale_times.push_back(sample_t);
-        scale_samples.push_back(sample_value);
-        if (float(sample_t) > anim_out->duration) anim_out->duration = float(sample_t);
-      FOREACH_TIMESAMPLES_END()
+      nScaleTimes = scales.get_timesamples().size();
     } else if (scales.has_value()) {
-      // Handle static (non-time-sampled) values as a single keyframe at time 0.0
-      std::vector<value::half3> default_value;
-      if (!scales.get_scalar(&default_value)) {
-        PUSH_ERROR_AND_RETURN(fmt::format("Failed to get default value for scales in SkelAnimation: {}", abs_path));
-      }
-      if (default_value.size() != joints.size()) {
-        PUSH_ERROR_AND_RETURN(fmt::format("Array length mismatch: scales.size {} != joints.size {}",
-          default_value.size(), joints.size()));
-      }
-      scale_times.push_back(0.0);
-      scale_samples.push_back(default_value);
+      nScaleTimes = 1;
     }
 
-    // Create glTF-style samplers and channels for each joint
-    // Note: This creates one sampler per joint per property (not optimal but simple)
-    // TODO: Optimize to share samplers when possible
+    // Pre-allocate all output samplers and channels
+    size_t nProps = (nTransTimes ? 1 : 0) + (nRotTimes ? 1 : 0) + (nScaleTimes ? 1 : 0);
+    size_t totalSamplers = nJoints * nProps;
+    size_t baseSamplerIdx = anim_out->samplers.size();
+    anim_out->samplers.resize(baseSamplerIdx + totalSamplers);
+    size_t baseChannelIdx = anim_out->channels.size();
+    anim_out->channels.resize(baseChannelIdx + totalSamplers);
 
-    for (size_t joint_idx = 0; joint_idx < joints.size(); joint_idx++) {
-      // Translation sampler and channel
-      if (!translation_times.empty()) {
-        KeyframeSampler trans_sampler;
-        trans_sampler.times.reserve(translation_times.size());
-        trans_sampler.values.reserve(translation_times.size() * 3);
-        trans_sampler.interpolation = AnimationInterpolation::Linear;
+    // Allocate flat bulk buffers for scatter writes (avoids per-sampler resize zero-fill).
+    // Layout: [joint0_frame0, joint0_frame1, ..., joint1_frame0, ...] (joint-major)
+    // Scatter writes in frame-major order; final copy to per-sampler vectors is joint-major memcpy.
+    size_t transBufTimesSize = nTransTimes ? nJoints * nTransTimes : 0;
+    size_t transBufValsSize  = nTransTimes ? nJoints * nTransTimes * 3 : 0;
+    size_t rotBufTimesSize   = nRotTimes   ? nJoints * nRotTimes : 0;
+    size_t rotBufValsSize    = nRotTimes   ? nJoints * nRotTimes * 4 : 0;
+    size_t scaleBufTimesSize = nScaleTimes ? nJoints * nScaleTimes : 0;
+    size_t scaleBufValsSize  = nScaleTimes ? nJoints * nScaleTimes * 3 : 0;
 
-        for (size_t t = 0; t < translation_times.size(); t++) {
-          trans_sampler.times.push_back(float(translation_times[t]));
-          const auto &v = translation_samples[t][joint_idx];
-          trans_sampler.values.push_back(v[0]);
-          trans_sampler.values.push_back(v[1]);
-          trans_sampler.values.push_back(v[2]);
-        }
+    // Single allocation for all bulk data
+    size_t totalFloats = transBufTimesSize + transBufValsSize
+                       + rotBufTimesSize + rotBufValsSize
+                       + scaleBufTimesSize + scaleBufValsSize;
+    std::unique_ptr<float[]> bulkBuf(new float[totalFloats]);
+    float *ptr = bulkBuf.get();
 
-        int32_t sampler_idx = int32_t(anim_out->samplers.size());
-        anim_out->samplers.push_back(trans_sampler);
+    float *transTimesBuf = ptr; ptr += transBufTimesSize;
+    float *transValsBuf  = ptr; ptr += transBufValsSize;
+    float *rotTimesBuf   = ptr; ptr += rotBufTimesSize;
+    float *rotValsBuf    = ptr; ptr += rotBufValsSize;
+    float *scaleTimesBuf = ptr; ptr += scaleBufTimesSize;
+    float *scaleValsBuf  = ptr; ptr += scaleBufValsSize;
 
-        AnimationChannel channel;
-        channel.target_type = ChannelTargetType::SkeletonJoint;
-        channel.path = AnimationPath::Translation;
-        channel.skeleton_id = skeleton_id;
-        channel.joint_id = int32_t(joint_idx);
-        channel.sampler = sampler_idx;
-        anim_out->channels.push_back(channel);
+    // Setup channels (no value arrays yet — will be assigned after scatter)
+    for (size_t j = 0; j < nJoints; j++) {
+      const int32_t resolved_joint_id = anim_joint_to_skel_joint[j];
+      size_t samplerOff = baseSamplerIdx + j * nProps;
+      size_t channelOff = baseChannelIdx + j * nProps;
+      size_t pi = 0;
+      if (nTransTimes) {
+        anim_out->samplers[samplerOff + pi].interpolation = AnimationInterpolation::Linear;
+        auto &ch = anim_out->channels[channelOff + pi];
+        ch.target_type = ChannelTargetType::SkeletonJoint;
+        ch.path = AnimationPath::Translation;
+        ch.skeleton_id = skeleton_id;
+        ch.joint_id = resolved_joint_id;
+        ch.sampler = int32_t(samplerOff + pi);
+        pi++;
       }
-
-      // Rotation sampler and channel
-      if (!rotation_times.empty()) {
-        KeyframeSampler rot_sampler;
-        rot_sampler.times.reserve(rotation_times.size());
-        rot_sampler.values.reserve(rotation_times.size() * 4);
-        rot_sampler.interpolation = AnimationInterpolation::Linear;
-
-        for (size_t t = 0; t < rotation_times.size(); t++) {
-          rot_sampler.times.push_back(float(rotation_times[t]));
-          const auto &q = rotation_samples[t][joint_idx];
-          rot_sampler.values.push_back(q[0]);
-          rot_sampler.values.push_back(q[1]);
-          rot_sampler.values.push_back(q[2]);
-          rot_sampler.values.push_back(q[3]);
-        }
-
-        int32_t sampler_idx = int32_t(anim_out->samplers.size());
-        anim_out->samplers.push_back(rot_sampler);
-
-        AnimationChannel channel;
-        channel.target_type = ChannelTargetType::SkeletonJoint;
-        channel.path = AnimationPath::Rotation;
-        channel.skeleton_id = skeleton_id;
-        channel.joint_id = int32_t(joint_idx);
-        channel.sampler = sampler_idx;
-        anim_out->channels.push_back(channel);
+      if (nRotTimes) {
+        anim_out->samplers[samplerOff + pi].interpolation = AnimationInterpolation::Linear;
+        auto &ch = anim_out->channels[channelOff + pi];
+        ch.target_type = ChannelTargetType::SkeletonJoint;
+        ch.path = AnimationPath::Rotation;
+        ch.skeleton_id = skeleton_id;
+        ch.joint_id = resolved_joint_id;
+        ch.sampler = int32_t(samplerOff + pi);
+        pi++;
       }
+      if (nScaleTimes) {
+        anim_out->samplers[samplerOff + pi].interpolation = AnimationInterpolation::Linear;
+        auto &ch = anim_out->channels[channelOff + pi];
+        ch.target_type = ChannelTargetType::SkeletonJoint;
+        ch.path = AnimationPath::Scale;
+        ch.skeleton_id = skeleton_id;
+        ch.joint_id = resolved_joint_id;
+        ch.sampler = int32_t(samplerOff + pi);
+        pi++;
+      }
+    }
 
-      // Scale sampler and channel
-      if (!scale_times.empty()) {
-        KeyframeSampler scale_sampler;
-        scale_sampler.times.reserve(scale_times.size());
-        scale_sampler.values.reserve(scale_times.size() * 3);
-        scale_sampler.interpolation = AnimationInterpolation::Linear;
+    // Scatter into bulk buffers (joint-major layout: [j0_f0, j0_f1, ..., j1_f0, ...])
+    // This avoids per-sampler vector::resize() zero-fill overhead.
 
-        for (size_t t = 0; t < scale_times.size(); t++) {
-          scale_sampler.times.push_back(float(scale_times[t]));
-          const auto &v = scale_samples[t][joint_idx];
-          scale_sampler.values.push_back(value::half_to_float(v[0]));
-          scale_sampler.values.push_back(value::half_to_float(v[1]));
-          scale_sampler.values.push_back(value::half_to_float(v[2]));
+    // Scatter translations into bulk buffer
+    if (nTransTimes) {
+      auto scatterTransFrame = [&](size_t frameIdx, float time, const std::vector<value::float3> &frameData) {
+        if (frameData.size() != nJoints) {
+          _err = fmt::format("Array length mismatch: translations.size {} != joints.size {} at frame {}",
+            frameData.size(), nJoints, frameIdx);
+          return false;
         }
+        if (time > anim_out->duration) anim_out->duration = time;
+        for (size_t j = 0; j < nJoints; j++) {
+          transTimesBuf[j * nTransTimes + frameIdx] = time;
+          memcpy(&transValsBuf[(j * nTransTimes + frameIdx) * 3], frameData[j].data(), 3 * sizeof(float));
+        }
+        return true;
+      };
 
-        int32_t sampler_idx = int32_t(anim_out->samplers.size());
-        anim_out->samplers.push_back(scale_sampler);
+      if (translations.has_timesamples()) {
+        const auto &ts = translations.get_timesamples();
+        size_t frameIdx = 0;
+        FOREACH_TIMESAMPLES_BEGIN(ts, sample_t, sample_value, sample_blocked)
+          if (sample_blocked) {
+            continue;
+          }
+          if (!scatterTransFrame(frameIdx, float(sample_t), sample_value)) {
+            PUSH_ERROR_AND_RETURN(_err);
+          }
+          frameIdx++;
+        FOREACH_TIMESAMPLES_END()
+      } else {
+        std::vector<value::float3> default_value;
+        if (!translations.get_scalar(&default_value)) {
+          PUSH_ERROR_AND_RETURN(fmt::format("Failed to get default translations: {}", abs_path));
+        }
+        if (!scatterTransFrame(0, 0.0f, default_value)) {
+          PUSH_ERROR_AND_RETURN(_err);
+        }
+      }
+    }
 
-        AnimationChannel channel;
-        channel.target_type = ChannelTargetType::SkeletonJoint;
-        channel.path = AnimationPath::Scale;
-        channel.skeleton_id = skeleton_id;
-        channel.joint_id = int32_t(joint_idx);
-        channel.sampler = sampler_idx;
-        anim_out->channels.push_back(channel);
+    // Scatter rotations into bulk buffer
+    // quatf layout: { float3 imag; float real; } = 4 contiguous floats
+    if (nRotTimes) {
+      auto scatterRotFrame = [&](size_t frameIdx, float time, const std::vector<value::quatf> &frameData) {
+        if (frameData.size() != nJoints) {
+          _err = fmt::format("Array length mismatch: rotations.size {} != joints.size {} at frame {}",
+            frameData.size(), nJoints, frameIdx);
+          return false;
+        }
+        if (time > anim_out->duration) anim_out->duration = time;
+        for (size_t j = 0; j < nJoints; j++) {
+          rotTimesBuf[j * nRotTimes + frameIdx] = time;
+          memcpy(&rotValsBuf[(j * nRotTimes + frameIdx) * 4], &frameData[j], 4 * sizeof(float));
+        }
+        return true;
+      };
+
+      if (rotations.has_timesamples()) {
+        const auto &ts = rotations.get_timesamples();
+        size_t frameIdx = 0;
+        FOREACH_TIMESAMPLES_BEGIN(ts, sample_t, sample_value, sample_blocked)
+          if (sample_blocked) {
+            continue;
+          }
+          if (!scatterRotFrame(frameIdx, float(sample_t), sample_value)) {
+            PUSH_ERROR_AND_RETURN(_err);
+          }
+          frameIdx++;
+        FOREACH_TIMESAMPLES_END()
+      } else {
+        std::vector<value::quatf> default_value;
+        if (!rotations.get_scalar(&default_value)) {
+          PUSH_ERROR_AND_RETURN(fmt::format("Failed to get default rotations: {}", abs_path));
+        }
+        if (!scatterRotFrame(0, 0.0f, default_value)) {
+          PUSH_ERROR_AND_RETURN(_err);
+        }
+      }
+    }
+
+    // Scatter scales into bulk buffer (with half->float conversion)
+    if (nScaleTimes) {
+      auto scatterScaleFrame = [&](size_t frameIdx, float time, const std::vector<value::half3> &frameData) {
+        if (frameData.size() != nJoints) {
+          _err = fmt::format("Array length mismatch: scales.size {} != joints.size {} at frame {}",
+            frameData.size(), nJoints, frameIdx);
+          return false;
+        }
+        if (time > anim_out->duration) anim_out->duration = time;
+        for (size_t j = 0; j < nJoints; j++) {
+          scaleTimesBuf[j * nScaleTimes + frameIdx] = time;
+          float *dst = &scaleValsBuf[(j * nScaleTimes + frameIdx) * 3];
+          const auto &v = frameData[j];
+          dst[0] = value::half_to_float(v[0]);
+          dst[1] = value::half_to_float(v[1]);
+          dst[2] = value::half_to_float(v[2]);
+        }
+        return true;
+      };
+
+      if (scales.has_timesamples()) {
+        const auto &ts = scales.get_timesamples();
+        size_t frameIdx = 0;
+        FOREACH_TIMESAMPLES_BEGIN(ts, sample_t, sample_value, sample_blocked)
+          if (sample_blocked) {
+            continue;
+          }
+          if (!scatterScaleFrame(frameIdx, float(sample_t), sample_value)) {
+            PUSH_ERROR_AND_RETURN(_err);
+          }
+          frameIdx++;
+        FOREACH_TIMESAMPLES_END()
+      } else {
+        std::vector<value::half3> default_value;
+        if (!scales.get_scalar(&default_value)) {
+          PUSH_ERROR_AND_RETURN(fmt::format("Failed to get default scales: {}", abs_path));
+        }
+        if (!scatterScaleFrame(0, 0.0f, default_value)) {
+          PUSH_ERROR_AND_RETURN(_err);
+        }
+      }
+    }
+
+    // Copy from bulk buffers into per-sampler vectors (single memcpy per sampler,
+    // using assign() which allocates + copies without zero-fill overhead)
+    for (size_t j = 0; j < nJoints; j++) {
+      size_t samplerOff = baseSamplerIdx + j * nProps;
+      size_t pi = 0;
+      if (nTransTimes) {
+        auto &s = anim_out->samplers[samplerOff + pi];
+        const float *tBase = &transTimesBuf[j * nTransTimes];
+        const float *vBase = &transValsBuf[j * nTransTimes * 3];
+        s.times.assign(tBase, tBase + nTransTimes);
+        s.values.assign(vBase, vBase + nTransTimes * 3);
+        pi++;
+      }
+      if (nRotTimes) {
+        auto &s = anim_out->samplers[samplerOff + pi];
+        const float *tBase = &rotTimesBuf[j * nRotTimes];
+        const float *vBase = &rotValsBuf[j * nRotTimes * 4];
+        s.times.assign(tBase, tBase + nRotTimes);
+        s.values.assign(vBase, vBase + nRotTimes * 4);
+        pi++;
+      }
+      if (nScaleTimes) {
+        auto &s = anim_out->samplers[samplerOff + pi];
+        const float *tBase = &scaleTimesBuf[j * nScaleTimes];
+        const float *vBase = &scaleValsBuf[j * nScaleTimes * 3];
+        s.times.assign(tBase, tBase + nScaleTimes);
+        s.values.assign(vBase, vBase + nScaleTimes * 3);
+        pi++;
       }
     }
   }
 
-  // BlendShape animations
+  // BlendShape animations currently need mesh-node target resolution.
+  // The current conversion stage does not have stable node indices yet, so
+  // emitting Weights channels here would produce invalid target_node values.
   if (blendShapes.size()) {
-    Animatable<std::vector<float>> weights;
-    if (!skelAnim.blendShapeWeights.get_value(&weights)) {
-      PUSH_ERROR_AND_RETURN(fmt::format("Failed to get `blendShapeWeights` attribute: {}", abs_path));
-    }
-
-    if (weights.has_timesamples()) {
-      const TypedTimeSamples<std::vector<float>> &ts_weights = weights.get_timesamples();
-
-      std::vector<double> weight_times;
-      std::vector<std::vector<float>> weight_samples;
-
-      FOREACH_TIMESAMPLES_BEGIN(ts_weights, sample_t, sample_value, sample_blocked)
-        if (sample_value.size() != blendShapes.size()) {
-          PUSH_ERROR_AND_RETURN(fmt::format("blendShapeWeights size mismatch at time {}: {} != {}",
-            sample_t, sample_value.size(), blendShapes.size()));
-        }
-        weight_times.push_back(sample_t);
-        weight_samples.push_back(sample_value);
-        if (float(sample_t) > anim_out->duration) anim_out->duration = float(sample_t);
-      FOREACH_TIMESAMPLES_END()
-
-      // Create one sampler with all weights (glTF morph targets style)
-      if (!weight_times.empty()) {
-        KeyframeSampler weight_sampler;
-        weight_sampler.times.reserve(weight_times.size());
-        weight_sampler.values.reserve(weight_times.size() * blendShapes.size());
-        weight_sampler.interpolation = AnimationInterpolation::Linear;
-
-        for (size_t t = 0; t < weight_times.size(); t++) {
-          weight_sampler.times.push_back(float(weight_times[t]));
-          for (size_t w = 0; w < blendShapes.size(); w++) {
-            weight_sampler.values.push_back(weight_samples[t][w]);
-          }
-        }
-
-        int32_t sampler_idx = int32_t(anim_out->samplers.size());
-        anim_out->samplers.push_back(weight_sampler);
-
-        AnimationChannel channel;
-        channel.path = AnimationPath::Weights;
-        channel.target_node = -1;  // Weights target the mesh, not a specific node
-        channel.sampler = sampler_idx;
-        anim_out->channels.push_back(channel);
-      }
-    }
+    PUSH_WARN(fmt::format(
+        "Skipping blendShapeWeights conversion for SkelAnimation {} "
+        "(mesh target resolution not implemented yet)",
+        abs_path.full_path_name()));
   }
 
   return true;
 }
 
-// Helper function: Quaternion multiplication
-// q1 * q2
-static value::quatf quat_mul(const value::quatf &q1, const value::quatf &q2) {
-  value::quatf result;
-  result[0] = q1[3] * q2[0] + q1[0] * q2[3] + q1[1] * q2[2] - q1[2] * q2[1];  // x
-  result[1] = q1[3] * q2[1] - q1[0] * q2[2] + q1[1] * q2[3] + q1[2] * q2[0];  // y
-  result[2] = q1[3] * q2[2] + q1[0] * q2[1] - q1[1] * q2[0] + q1[2] * q2[3];  // z
-  result[3] = q1[3] * q2[3] - q1[0] * q2[0] - q1[1] * q2[1] - q1[2] * q2[2];  // w
-  return result;
+// Helper function: Quaternion multiplication using direct member access
+// (avoids operator[] pointer arithmetic overhead)
+// q1 * q2, Hamilton convention
+[[maybe_unused]] static inline value::quatf quat_mul(const value::quatf &q1, const value::quatf &q2) {
+  const float x1 = q1.imag[0], y1 = q1.imag[1], z1 = q1.imag[2], w1 = q1.real;
+  const float x2 = q2.imag[0], y2 = q2.imag[1], z2 = q2.imag[2], w2 = q2.real;
+  value::quatf r;
+  r.imag[0] = w1*x2 + x1*w2 + y1*z2 - z1*y2;
+  r.imag[1] = w1*y2 - x1*z2 + y1*w2 + z1*x2;
+  r.imag[2] = w1*z2 + x1*y2 - y1*x2 + z1*w2;
+  r.real    = w1*w2 - x1*x2 - y1*y2 - z1*z2;
+  return r;
+}
+
+// Specialized single-axis angle-to-quaternion (avoids multiply-by-zero for the
+// two unused axis components). Keeps sin_pi/cos_pi for accuracy.
+static inline value::quatf to_quaternion_x(float angle) {
+  float s = float(math::sin_pi(double(angle) / 360.0));
+  float c = float(math::cos_pi(double(angle) / 360.0));
+  value::quatf q;
+  q.imag[0] = s;  q.imag[1] = 0.0f;  q.imag[2] = 0.0f;  q.real = c;
+  return q;
+}
+
+static inline value::quatf to_quaternion_y(float angle) {
+  float s = float(math::sin_pi(double(angle) / 360.0));
+  float c = float(math::cos_pi(double(angle) / 360.0));
+  value::quatf q;
+  q.imag[0] = 0.0f;  q.imag[1] = s;  q.imag[2] = 0.0f;  q.real = c;
+  return q;
+}
+
+static inline value::quatf to_quaternion_z(float angle) {
+  float s = float(math::sin_pi(double(angle) / 360.0));
+  float c = float(math::cos_pi(double(angle) / 360.0));
+  value::quatf q;
+  q.imag[0] = 0.0f;  q.imag[1] = 0.0f;  q.imag[2] = s;  q.real = c;
+  return q;
+}
+
+// Direct Euler-to-quaternion conversion using closed-form formulas.
+// Computes the combined quaternion from 3 axis-aligned rotations in one step,
+// avoiding intermediate quaternion objects and 2 quaternion multiplications.
+// All 6 rotation orders are supported.
+// angles[0] = X angle, angles[1] = Y angle, angles[2] = Z angle (degrees)
+static inline value::quatf euler_to_quatf(
+    const value::double3 &angles, XformOp::OpType rot_order) {
+  // Half-angle trig values (using sin_pi/cos_pi for accuracy)
+  const float sx = float(math::sin_pi(angles[0] / 360.0));
+  const float cx = float(math::cos_pi(angles[0] / 360.0));
+  const float sy = float(math::sin_pi(angles[1] / 360.0));
+  const float cy = float(math::cos_pi(angles[1] / 360.0));
+  const float sz = float(math::sin_pi(angles[2] / 360.0));
+  const float cz = float(math::cos_pi(angles[2] / 360.0));
+
+  value::quatf q;
+
+  switch (rot_order) {
+    case XformOp::OpType::RotateXYZ:
+      // Q = Qz * Qy * Qx
+      q.imag[0] = cz*cy*sx - sz*sy*cx;
+      q.imag[1] = cz*sy*cx + sz*cy*sx;
+      q.imag[2] = sz*cy*cx - cz*sy*sx;
+      q.real    = cz*cy*cx + sz*sy*sx;
+      break;
+    case XformOp::OpType::RotateXZY:
+      // Q = Qy * Qz * Qx
+      q.imag[0] = cy*cz*sx + sy*sz*cx;
+      q.imag[1] = cy*sz*sx + sy*cz*cx;
+      q.imag[2] = cy*sz*cx - sy*cz*sx;
+      q.real    = cy*cz*cx - sy*sz*sx;
+      break;
+    case XformOp::OpType::RotateYXZ:
+      // Q = Qz * Qx * Qy
+      q.imag[0] = cz*sx*cy - sz*cx*sy;
+      q.imag[1] = cz*cx*sy + sz*sx*cy;
+      q.imag[2] = cz*sx*sy + sz*cx*cy;
+      q.real    = cz*cx*cy - sz*sx*sy;
+      break;
+    case XformOp::OpType::RotateYZX:
+      // Q = Qx * Qz * Qy
+      q.imag[0] = sx*cz*cy - cx*sz*sy;
+      q.imag[1] = cx*cz*sy - sx*sz*cy;
+      q.imag[2] = cx*sz*cy + sx*cz*sy;
+      q.real    = cx*cz*cy + sx*sz*sy;
+      break;
+    case XformOp::OpType::RotateZXY:
+      // Q = Qy * Qx * Qz
+      q.imag[0] = cy*sx*cz + sy*cx*sz;
+      q.imag[1] = sy*cx*cz - cy*sx*sz;
+      q.imag[2] = cy*cx*sz - sy*sx*cz;
+      q.real    = cy*cx*cz + sy*sx*sz;
+      break;
+    case XformOp::OpType::RotateZYX:
+      // Q = Qx * Qy * Qz
+      q.imag[0] = cx*sy*sz + sx*cy*cz;
+      q.imag[1] = cx*sy*cz - sx*cy*sz;
+      q.imag[2] = cx*cy*sz + sx*sy*cz;
+      q.real    = cx*cy*cz - sx*sy*sz;
+      break;
+    default:
+      // Fallback: treat as XYZ
+      q.imag[0] = cz*cy*sx - sz*sy*cx;
+      q.imag[1] = cz*sy*cx + sz*cy*sx;
+      q.imag[2] = sz*cy*cx - cz*sy*sx;
+      q.real    = cz*cy*cx + sz*sy*sx;
+      break;
+  }
+
+  return q;
 }
 
 bool RenderSceneConverter::ExtractXformOpAnimation(
@@ -9311,10 +9190,10 @@ bool RenderSceneConverter::ExtractXformOpAnimation(
 
           for (size_t i = 0; i < times.size(); i++) {
             sampler.times.push_back(float(times[i]));
-            sampler.values.push_back(float(rotations[i][0]));
-            sampler.values.push_back(float(rotations[i][1]));
-            sampler.values.push_back(float(rotations[i][2]));
-            sampler.values.push_back(float(rotations[i][3]));
+            sampler.values.push_back(float(rotations[i].imag[0]));
+            sampler.values.push_back(float(rotations[i].imag[1]));
+            sampler.values.push_back(float(rotations[i].imag[2]));
+            sampler.values.push_back(float(rotations[i].real));
           }
 
           int32_t sampler_idx = int32_t(anim_out->samplers.size());
@@ -9433,16 +9312,16 @@ bool RenderSceneConverter::ExtractXformOpAnimation(
             quat = *v;
             got_value = true;
           } else if (auto vd = sample_value.as<value::quatd>()) {
-            quat[0] = float((*vd)[0]);
-            quat[1] = float((*vd)[1]);
-            quat[2] = float((*vd)[2]);
-            quat[3] = float((*vd)[3]);
+            quat.imag[0] = float(vd->imag[0]);
+            quat.imag[1] = float(vd->imag[1]);
+            quat.imag[2] = float(vd->imag[2]);
+            quat.real     = float(vd->real);
             got_value = true;
           } else if (auto vh = sample_value.as<value::quath>()) {
-            quat[0] = value::half_to_float((*vh)[0]);
-            quat[1] = value::half_to_float((*vh)[1]);
-            quat[2] = value::half_to_float((*vh)[2]);
-            quat[3] = value::half_to_float((*vh)[3]);
+            quat.imag[0] = value::half_to_float(vh->imag[0]);
+            quat.imag[1] = value::half_to_float(vh->imag[1]);
+            quat.imag[2] = value::half_to_float(vh->imag[2]);
+            quat.real     = value::half_to_float(vh->real);
             got_value = true;
           }
 
@@ -9490,20 +9369,16 @@ bool RenderSceneConverter::ExtractXformOpAnimation(
             }
           FOREACH_TIMESAMPLES_END()
 
-          // Convert angles to quaternions
-          value::double3 axis;
-          if (xformOp.op_type == XformOp::OpType::RotateX) {
-            axis = {1.0, 0.0, 0.0};
-          } else if (xformOp.op_type == XformOp::OpType::RotateY) {
-            axis = {0.0, 1.0, 0.0};
-          } else {  // RotateZ
-            axis = {0.0, 0.0, 1.0};
-          }
-
+          // Convert angles to quaternions using specialized single-axis functions
           for (size_t i = 0; i < angle_times.size(); i++) {
             times.push_back(angle_times[i]);
-            values.push_back(to_quaternion(value::float3{float(axis[0]), float(axis[1]), float(axis[2])},
-                                          float(angle_values[i])));
+            if (xformOp.op_type == XformOp::OpType::RotateX) {
+              values.push_back(to_quaternion_x(float(angle_values[i])));
+            } else if (xformOp.op_type == XformOp::OpType::RotateY) {
+              values.push_back(to_quaternion_y(float(angle_values[i])));
+            } else {  // RotateZ
+              values.push_back(to_quaternion_z(float(angle_values[i])));
+            }
           }
 
         } else {
@@ -9543,22 +9418,11 @@ bool RenderSceneConverter::ExtractXformOpAnimation(
             }
           FOREACH_TIMESAMPLES_END()
 
-          // Convert Euler angles to quaternions based on rotation order
-          // Note: This is a simplified conversion; proper implementation would use matrix composition
+          // Convert Euler angles to quaternions using direct closed-form formula
+          // (handles all rotation orders correctly)
           for (size_t i = 0; i < angle_times.size(); i++) {
             times.push_back(angle_times[i]);
-
-            // For now, convert XYZ order (most common)
-            // TODO: Support other rotation orders properly
-            const auto &angles = euler_angles[i];
-            value::quatf qx = to_quaternion(value::float3{1.0f, 0.0f, 0.0f}, float(angles[0]));
-            value::quatf qy = to_quaternion(value::float3{0.0f, 1.0f, 0.0f}, float(angles[1]));
-            value::quatf qz = to_quaternion(value::float3{0.0f, 0.0f, 1.0f}, float(angles[2]));
-
-            // Combine quaternions based on rotation order
-            // For XYZ: qz * qy * qx
-            value::quatf combined = quat_mul(quat_mul(qz, qy), qx);
-            values.push_back(combined);
+            values.push_back(euler_to_quatf(euler_angles[i], xformOp.op_type));
           }
         }
       }
@@ -9570,10 +9434,10 @@ bool RenderSceneConverter::ExtractXformOpAnimation(
 
         for (size_t i = 0; i < times.size(); i++) {
           sampler.times.push_back(float(times[i]));
-          sampler.values.push_back(values[i][0]);
-          sampler.values.push_back(values[i][1]);
-          sampler.values.push_back(values[i][2]);
-          sampler.values.push_back(values[i][3]);
+          sampler.values.push_back(values[i].imag[0]);
+          sampler.values.push_back(values[i].imag[1]);
+          sampler.values.push_back(values[i].imag[2]);
+          sampler.values.push_back(values[i].real);
         }
       }
     }
@@ -9605,6 +9469,7 @@ static NodeCategory GetNodeCategoryFromType(NodeType nodeType) {
       return NodeCategory::Geom;
     case NodeType::Camera:
       return NodeCategory::Camera;
+    case NodeType::SkelRoot:
     case NodeType::Skeleton:
       return NodeCategory::Skeleton;
     case NodeType::PointLight:
@@ -9801,6 +9666,22 @@ bool RenderSceneConverter::BuildNodeHierarchyImpl(
       } else {
         rnode.id = -1;
       }
+    } else if (prim->type_id() == value::TYPE_ID_SKEL_ROOT) {
+      // UsdSkelRoot: encapsulation prim for skinned subtree.
+      // SkelRoot is Xformable and its world transform (skelLocalToWorld)
+      // positions the skinned result in world space.
+      rnode.local_matrix = node.get_local_matrix();
+      rnode.global_matrix = node.get_world_matrix();
+      rnode.has_resetXform = node.has_resetXformStack();
+      rnode.nodeType = NodeType::SkelRoot;
+    } else if (prim->type_id() == value::TYPE_ID_SKELETON) {
+      // UsdSkeleton: joint hierarchy with bindTransforms and restTransforms.
+      // Skeleton is Xformable; its world transform contributes to
+      // skelLocalToWorld for positioning skinned results.
+      rnode.local_matrix = node.get_local_matrix();
+      rnode.global_matrix = node.get_world_matrix();
+      rnode.has_resetXform = node.has_resetXformStack();
+      rnode.nodeType = NodeType::Skeleton;
     } else {
       // ignore other node types.
       DCOUT("Unknown/Unsupported prim. " << prim->type_name());
@@ -10448,6 +10329,14 @@ bool RenderSceneConverter::ConvertToRenderScene(
   // Reset progress state
   _progress_info = DetailedProgressInfo{};
 
+  // Clear lookup caches from previous conversion
+  _skelPathToIndex.clear();
+  _animPathToIndex.clear();
+  _skelNameToIndexCache.clear();
+  _skelRootToSkeleton.clear();
+  _uvNameCache.clear();
+  ResetConnectionResolveCache(env.stage);
+
   // Report initial progress
   if (!CallProgressCallback(0.0f)) {
     PushError("Conversion cancelled by user.\n");
@@ -10455,31 +10344,102 @@ bool RenderSceneConverter::ConvertToRenderScene(
   }
 
   // Count meshes and materials before conversion for accurate progress reporting
-  printf("[Tydra] Counting primitives...\n");
+  // Single-pass traversal: walk the stage tree once and classify prims by type_id
+  DCOUT("[Tydra] Counting primitives...");
   PathPrimMap<GeomMesh> meshPrimMap;
   PathPrimMap<GeomCube> cubePrimMap;
   PathPrimMap<GeomSphere> spherePrimMap;
   PathPrimMap<Material> materialPrimMap;
-  ListPrims(env.stage, meshPrimMap);
-  ListPrims(env.stage, cubePrimMap);
-  ListPrims(env.stage, spherePrimMap);
-  ListPrims(env.stage, materialPrimMap);
-
-  // Pre-discover all Skeleton, SkelRoot, and SkelAnimation prims for ancestor-based discovery
   PathPrimMap<Skeleton> allSkeletons;
   PathPrimMap<SkelRoot> allSkelRoots;
   PathPrimMap<SkelAnimation> allAnimations;
-  ListPrims(env.stage, allSkeletons);
-  ListPrims(env.stage, allSkelRoots);
-  ListPrims(env.stage, allAnimations);
-  printf("[Tydra] Pre-discovered %zu skeletons, %zu skelroots, %zu animations\n",
-         allSkeletons.size(), allSkelRoots.size(), allAnimations.size());
+
+  {
+    // Iterative stack-based traversal visiting each prim exactly once
+    struct StackEntry {
+      const Prim *parent;
+      size_t child_idx;
+      size_t parent_path_len;
+    };
+    std::vector<StackEntry> stack;
+    stack.reserve(64);
+    std::string path_buf;
+    path_buf.reserve(256);
+
+    auto classifyPrim = [&](const Prim &prim) {
+      switch (prim.type_id()) {
+        case value::TYPE_ID_GEOM_MESH:
+          if (const auto *p = prim.as<GeomMesh>()) meshPrimMap[path_buf] = p;
+          break;
+        case value::TYPE_ID_GEOM_CUBE:
+          if (const auto *p = prim.as<GeomCube>()) cubePrimMap[path_buf] = p;
+          break;
+        case value::TYPE_ID_GEOM_SPHERE:
+          if (const auto *p = prim.as<GeomSphere>()) spherePrimMap[path_buf] = p;
+          break;
+        case value::TYPE_ID_MATERIAL:
+          if (const auto *p = prim.as<Material>()) materialPrimMap[path_buf] = p;
+          break;
+        case value::TYPE_ID_SKELETON:
+          if (const auto *p = prim.as<Skeleton>()) allSkeletons[path_buf] = p;
+          break;
+        case value::TYPE_ID_SKEL_ROOT:
+          if (const auto *p = prim.as<SkelRoot>()) allSkelRoots[path_buf] = p;
+          break;
+        case value::TYPE_ID_SKELANIMATION:
+          if (const auto *p = prim.as<SkelAnimation>()) allAnimations[path_buf] = p;
+          break;
+        default:
+          break;
+      }
+    };
+
+    for (const auto &root_prim : env.stage.root_prims()) {
+      path_buf = "/" + root_prim.local_path().full_path_name();
+      classifyPrim(root_prim);
+
+      if (!root_prim.children().empty()) {
+        stack.push_back({&root_prim, 0, 0});
+      }
+
+      while (!stack.empty()) {
+        auto &top = stack.back();
+        if (top.child_idx >= top.parent->children().size()) {
+          path_buf.resize(top.parent_path_len);
+          stack.pop_back();
+          continue;
+        }
+
+        const Prim &child = top.parent->children()[top.child_idx];
+        ++top.child_idx;
+
+        size_t cur_len = path_buf.size();
+        path_buf += "/";
+        path_buf += child.local_path().full_path_name();
+
+        classifyPrim(child);
+
+        if (!child.children().empty()) {
+          stack.push_back({&child, 0, cur_len});
+        } else {
+          path_buf.resize(cur_len);
+        }
+      }
+    }
+  }
+  DCOUT("[Tydra] Pre-discovered " << allSkeletons.size() << " skeletons, "
+        << allSkelRoots.size() << " skelroots, " << allAnimations.size() << " animations");
+
+  SkelRootSkeletonResolver::BuildMap(allSkeletons, allSkelRoots,
+                                     &_skelRootToSkeleton);
+  DCOUT("Precomputed SkelRoot->Skeleton entries: " << _skelRootToSkeleton.size());
 
   // Total meshes includes GeomMesh, GeomCube, and GeomSphere (all converted to meshes)
   const size_t total_meshes = meshPrimMap.size() + cubePrimMap.size() + spherePrimMap.size();
   const size_t total_materials = materialPrimMap.size();
-  printf("[Tydra] Found %zu meshes (%zu mesh, %zu cube, %zu sphere), %zu materials\n",
-         total_meshes, meshPrimMap.size(), cubePrimMap.size(), spherePrimMap.size(), total_materials);
+  DCOUT("[Tydra] Found " << total_meshes << " meshes ("
+        << meshPrimMap.size() << " mesh, " << cubePrimMap.size() << " cube, "
+        << spherePrimMap.size() << " sphere), " << total_materials << " materials");
 
   // Report counting complete via detailed progress
   _progress_info.stage = DetailedProgressInfo::Stage::CountingPrims;
@@ -10545,14 +10505,23 @@ bool RenderSceneConverter::ConvertToRenderScene(
 
   bool ret = tydra::VisitPrims(env.stage, MeshVisitor, &menv, &err);
 
+  if (!ret) {
+    PUSH_ERROR_AND_RETURN(err);
+  }
+
+  // Convert all SkelAnimation prims now that all skeletons have been discovered.
+  // This supports multiple animations per skeleton (when animationSource is a pathvector).
+  DCOUT("Converting all SkelAnimation prims...");
+  if (!ConvertAllSkelAnimations(env)) {
+    PUSH_ERROR_AND_RETURN("Failed to convert SkelAnimation prims");
+  }
+  DCOUT("SkelAnimation conversion complete");
+
   // Clear temporary pointers
   _allSkeletons = nullptr;
   _allSkelRoots = nullptr;
   _allAnimations = nullptr;
-
-  if (!ret) {
-    PUSH_ERROR_AND_RETURN(err);
-  }
+  _skelRootToSkeleton.clear();
 
   // Report progress after mesh/material conversion (70%)
   _progress_info.stage = DetailedProgressInfo::Stage::BuildingHierarchy;
@@ -10593,19 +10562,12 @@ bool RenderSceneConverter::ConvertToRenderScene(
   // 6. Extract xformOp animations from nodes with time-sampled transforms
   //
   {
-    // Helper to count nodes in subtree (defined first so it can be used in extractAnimationsFromNode)
-    std::function<size_t(const XformNode&)> CountNodesInSubtree;
-    CountNodesInSubtree = [&](const XformNode& node) -> size_t {
-      size_t count = 1;  // Count this node
-      for (const auto& child : node.children) {
-        count += CountNodesInSubtree(child);
-      }
-      return count;
-    };
+    // Single-pass depth-first traversal with stable node indices.
+    // This avoids repeatedly counting subtree sizes.
+    std::function<void(const XformNode&, int32_t&)> extractAnimationsFromNode;
+    extractAnimationsFromNode = [&](const XformNode& node, int32_t& next_node_index) {
+      const int32_t node_index = next_node_index++;
 
-    // Helper lambda to recursively extract xformOp animations from node hierarchy
-    std::function<void(const XformNode&, int32_t)> extractAnimationsFromNode;
-    extractAnimationsFromNode = [&](const XformNode& node, int32_t node_index) {
       // Check if this node has a prim with xformOps
       if (node.prim && IsXformablePrim(*node.prim)) {
         const Xformable *xformable = nullptr;
@@ -10619,16 +10581,11 @@ bool RenderSceneConverter::ConvertToRenderScene(
             // Extract xformOp animation
             if (ExtractXformOpAnimation(env, prim_path, node.element_name,
                                        *xformable, node_index, &anim)) {
-              // Check if animation with this path already exists
+              // Check if animation with this path already exists via O(1) lookup
               const auto &anim_abs_path = anim.abs_path;
-              auto anim_it = std::find_if(animations.begin(), animations.end(),
-                                         [&anim_abs_path](const AnimationClip &a) {
-                return a.abs_path == anim_abs_path;
-              });
-
-              // Add animation if it doesn't already exist
-              if (anim_it == animations.end()) {
+              if (_animPathToIndex.find(anim_abs_path) == _animPathToIndex.end()) {
                 DCOUT("Extracted xformOp animation from: " << anim_abs_path);
+                _animPathToIndex[anim_abs_path] = int32_t(animations.size());
                 animations.emplace_back(std::move(anim));
               }
             }
@@ -10636,22 +10593,14 @@ bool RenderSceneConverter::ConvertToRenderScene(
         }
       }
 
-      // Recursively process children
-      // Note: we increment node_index as we traverse depth-first
-      int32_t child_start_index = node_index + 1;
-      for (size_t i = 0; i < node.children.size(); i++) {
-        extractAnimationsFromNode(node.children[i], child_start_index);
-        // Approximate: each child subtree takes some nodes
-        // This is a simplified approach; proper implementation would track exact indices
-        child_start_index += int32_t(CountNodesInSubtree(node.children[i]));
+      for (const auto& child : node.children) {
+        extractAnimationsFromNode(child, next_node_index);
       }
     };
 
-    // Process each root node
     int32_t current_node_index = 0;
     for (const auto& root : xform_node.children) {
       extractAnimationsFromNode(root, current_node_index);
-      current_node_index += int32_t(CountNodesInSubtree(root));
     }
   }
 
@@ -10768,53 +10717,18 @@ bool RenderSceneConverter::ConvertToRenderScene(
   CallDetailedProgressCallback(_progress_info);
   CallProgressCallback(1.0f);
 
-  printf("[Tydra] Conversion complete: %zu meshes, %zu materials, %zu textures\n",
-         scene->meshes.size(), scene->materials.size(), scene->textures.size());
+  DCOUT("[Tydra] Conversion complete: " << scene->meshes.size() << " meshes, "
+        << scene->materials.size() << " materials, " << scene->textures.size() << " textures");
 
   return true;
 }
 
-bool RenderSceneConverter::ConvertSkeletonImpl(const RenderSceneConverterEnv &env, const tinyusdz::GeomMesh &mesh,
-                       int32_t skeleton_id,
-                       SkelHierarchy *out_skel, nonstd::optional<AnimationClip> *out_anim) {
-
-  if (!out_skel) {
-    return false;
-  }
-
-  Path skelPath;
-
-  // Get skeleton path from mesh.skeleton relationship if available
-  if (mesh.skeleton.has_value()) {
-    if (mesh.skeleton.value().is_path()) {
-      skelPath = mesh.skeleton.value().targetPath;
-    } else if (mesh.skeleton.value().is_pathvector()) {
-      // Use the first one
-      if (mesh.skeleton.value().targetPathVector.size()) {
-        skelPath = mesh.skeleton.value().targetPathVector[0];
-      } else {
-        PUSH_WARN("`skel:skeleton` has invalid definition.");
-      }
-    } else {
-      PUSH_WARN("`skel:skeleton` has invalid definition.");
-    }
-  }
-
-  // If no skeleton path from relationship, return false (caller should use overload with explicit path)
-  if (!skelPath.is_valid()) {
-    PUSH_ERROR_AND_RETURN("No valid skeleton path found. Use ConvertSkeletonImplWithPath for ancestor-discovered skeletons.");
-  }
-
-  return ConvertSkeletonImplWithPath(env, skelPath, skeleton_id, out_skel, out_anim);
-}
-
-// Helper function that takes skeleton pointer directly (used for ancestor-discovered skeletons)
 bool RenderSceneConverter::ConvertSkeletonFromPtr(const RenderSceneConverterEnv &env,
                        const Path &skelPath,
                        const Skeleton &skel,
                        const std::string &primName,
-                       int32_t skeleton_id,
-                       SkelHierarchy *out_skel, nonstd::optional<AnimationClip> *out_anim) {
+                       SkelHierarchy *out_skel) {
+  (void)env;
 
   if (!out_skel) {
     return false;
@@ -10830,53 +10744,12 @@ bool RenderSceneConverter::ConvertSkeletonFromPtr(const RenderSceneConverterEnv 
   dst.display_name = skel.metas().has_displayName() ? skel.metas().get_displayName() : "";
   dst.root_node = root;
 
-  // Handle animation source
-  if (skel.animationSource.has_value()) {
-    DCOUT("skel:animationSource (from ptr)");
-
-    const Relationship &animSourceRel = skel.animationSource.value();
-
-    Path animSourcePath;
-
-    if (animSourceRel.is_path()) {
-      animSourcePath = animSourceRel.targetPath;
-    } else if (animSourceRel.is_pathvector()) {
-      if (animSourceRel.targetPathVector.size()) {
-        animSourcePath = animSourceRel.targetPathVector[0];
-      } else {
-        PUSH_ERROR_AND_RETURN("`skel:animationSource` has invalid definition.");
-      }
-    } else {
-      PUSH_ERROR_AND_RETURN("`skel:animationSource` has invalid definition.");
-    }
-
-    const Prim *animSourcePrim{nullptr};
-    if (!env.stage.find_prim_at_path(animSourcePath, animSourcePrim, &_err)) {
-      return false;
-    }
-
-    if (const auto panim = animSourcePrim->as<SkelAnimation>()) {
-      DCOUT("Convert SkelAnimation (from ptr)");
-      AnimationClip anim;
-      if (!ConvertSkelAnimation(env, animSourcePath, *panim, skeleton_id, &anim)) {
-        return false;
-      }
-
-      DCOUT("Converted SkelAnimation (from ptr)");
-      (*out_anim) = anim;
-
-    } else {
-      PUSH_ERROR_AND_RETURN(fmt::format("Target Prim of `skel:animationSource` must be `SkelAnimation` Prim, but got `{}`.", animSourcePrim->prim_type_name()));
-    }
-  }
-
-  (*out_skel) = dst;
+  (*out_skel) = std::move(dst);
   return true;
 }
 
 bool RenderSceneConverter::ConvertSkeletonImplWithPath(const RenderSceneConverterEnv &env, const Path &skelPath,
-                       int32_t skeleton_id,
-                       SkelHierarchy *out_skel, nonstd::optional<AnimationClip> *out_anim) {
+                       SkelHierarchy *out_skel) {
 
   if (!out_skel) {
     return false;
@@ -10898,57 +10771,130 @@ bool RenderSceneConverter::ConvertSkeletonImplWithPath(const RenderSceneConverte
       dst.prim_name = skelPrim->element_name();
       dst.display_name = pskel->metas().has_displayName() ? pskel->metas().get_displayName() : "";
       dst.root_node = root;
-
-      if (pskel->animationSource.has_value()) {
-        DCOUT("skel:animationSource");
-
-        const Relationship &animSourceRel = pskel->animationSource.value();
-
-        Path animSourcePath;
-
-        if (animSourceRel.is_path()) {
-          animSourcePath = animSourceRel.targetPath;
-        } else if (animSourceRel.is_pathvector()) {
-          // Use the first one
-          if (animSourceRel.targetPathVector.size()) {
-            animSourcePath = animSourceRel.targetPathVector[0];
-          } else {
-            PUSH_ERROR_AND_RETURN("`skel:animationSource` has invalid definition.");
-          }
-        } else {
-          PUSH_ERROR_AND_RETURN("`skel:animationSource` has invalid definition.");
-        }
-
-        const Prim *animSourcePrim{nullptr};
-        if (!env.stage.find_prim_at_path(animSourcePath, animSourcePrim, &_err)) {
-          return false;
-        }
-
-        if (const auto panim = animSourcePrim->as<SkelAnimation>()) {
-          DCOUT("Convert SkelAnimation");
-          AnimationClip anim;
-          if (!ConvertSkelAnimation(env, animSourcePath, *panim, skeleton_id, &anim)) {
-            return false;
-          }
-
-          DCOUT("Converted SkelAnimation");
-          (*out_anim) = anim;
-
-        } else {
-          PUSH_ERROR_AND_RETURN(fmt::format("Target Prim of `skel:animationSource` must be `SkelAnimation` Prim, but got `{}`.", animSourcePrim->prim_type_name()));
-        }
-
-
-      }
     } else {
       PUSH_ERROR_AND_RETURN("Prim is not Skeleton.");
     }
 
-    (*out_skel) = dst;
+    (*out_skel) = std::move(dst);
     return true;
   }
 
   PUSH_ERROR_AND_RETURN("`skel:skeleton` path is invalid.");
+}
+
+bool RenderSceneConverter::ConvertAllSkelAnimations(const RenderSceneConverterEnv &env) {
+  // This method processes all SkelAnimation prims discovered during pre-processing.
+  // For each SkelAnimation, we find which Skeleton(s) reference it via their
+  // skel:animationSource relationship, then convert it with the correct skeleton_id.
+  // This supports multiple animations per skeleton (when animationSource is a pathvector).
+
+  if (!_allAnimations || _allAnimations->empty()) {
+    return true; // No animations to process
+  }
+
+  DCOUT("ConvertAllSkelAnimations: processing " << _allAnimations->size() << " SkelAnimation prims");
+
+  // Build reverse map: animationPath -> list of skeleton_ids that reference it
+  std::map<std::string, std::vector<int32_t>> animPathToSkelIds;
+
+  // Iterate through all converted skeletons to build the reverse map
+  for (const auto &skelEntry : _skelPathToIndex) {
+    const std::string &skelPathStr = skelEntry.first;
+    const int32_t skel_id = skelEntry.second;
+
+    // Find the Skeleton prim in the stage
+    Path skelPath(skelPathStr, "");
+    const Prim *skelPrim{nullptr};
+    if (!env.stage.find_prim_at_path(skelPath, skelPrim, &_err)) {
+      continue; // Skip if skeleton prim not found
+    }
+
+    const auto *pskel = skelPrim->as<Skeleton>();
+    if (!pskel || !pskel->animationSource.has_value()) {
+      continue; // No animation source relationship
+    }
+
+    const Relationship &animSourceRel = pskel->animationSource.value();
+    std::vector<Path> animPaths;
+
+    // Extract all animation paths from the relationship
+    if (animSourceRel.is_path()) {
+      animPaths.push_back(animSourceRel.targetPath);
+    } else if (animSourceRel.is_pathvector()) {
+      animPaths = animSourceRel.targetPathVector;
+    }
+
+    // Add this skeleton_id to all animation paths it references
+    for (const Path &animPath : animPaths) {
+      std::string animPathStr = animPath.prim_part();
+      animPathToSkelIds[animPathStr].push_back(skel_id);
+    }
+  }
+
+  DCOUT("Built reverse map: " << animPathToSkelIds.size() << " animations referenced by skeletons");
+
+  // Now convert each SkelAnimation prim
+  for (const auto &animEntry : *_allAnimations) {
+    const std::string &animPathStr = animEntry.first;
+    const SkelAnimation *panimPtr = animEntry.second;
+
+    if (!panimPtr) {
+      PUSH_WARN("Null SkelAnimation pointer for path: " + animPathStr);
+      continue;
+    }
+
+    // Find which skeleton(s) reference this animation
+    auto it = animPathToSkelIds.find(animPathStr);
+    if (it == animPathToSkelIds.end() || it->second.empty()) {
+      // Animation not referenced by any skeleton - this is valid (orphaned animation)
+      DCOUT("SkelAnimation " << animPathStr << " not referenced by any skeleton (skipping)");
+      continue;
+    }
+
+    // Convert the animation for each skeleton that references it
+    for (int32_t skeleton_id : it->second) {
+      // Check if this animation was already converted for this skeleton
+      // (to avoid duplicates if multiple meshes share the same skeleton)
+      std::string cacheKey = animPathStr + ":" + std::to_string(skeleton_id);
+      if (_animPathToIndex.find(cacheKey) != _animPathToIndex.end()) {
+        DCOUT("Animation " << animPathStr << " already converted for skeleton " << skeleton_id);
+        continue;
+      }
+
+      Path animPath(animPathStr, "");
+      AnimationClip anim;
+
+      if (!ConvertSkelAnimation(env, animPath, *panimPtr, skeleton_id, &anim)) {
+        PUSH_WARN("Failed to convert SkelAnimation: " + animPathStr + " for skeleton " + std::to_string(skeleton_id));
+        continue;
+      }
+
+      DCOUT("Converted SkelAnimation " << animPathStr << " for skeleton " << skeleton_id);
+
+      // Add to animations vector
+      int32_t anim_id = int32_t(animations.size());
+      _animPathToIndex[cacheKey] = anim_id;
+      animations.emplace_back(std::move(anim));
+
+      // Update skeleton's animation IDs.
+      if (skeleton_id >= 0 && skeleton_id < int32_t(skeletons.size())) {
+        auto &skel = skeletons[static_cast<size_t>(skeleton_id)];
+        if (std::find(skel.anim_ids.begin(), skel.anim_ids.end(), anim_id) ==
+            skel.anim_ids.end()) {
+          skel.anim_ids.push_back(anim_id);
+        }
+
+        // Keep legacy default animation field for backward compatibility.
+        if (skeletons[static_cast<size_t>(skeleton_id)].anim_id < 0) {
+          skeletons[static_cast<size_t>(skeleton_id)].anim_id = anim_id;
+          DCOUT("Set skeleton " << skeleton_id << " anim_id to " << anim_id);
+        }
+      }
+    }
+  }
+
+  DCOUT("ConvertAllSkelAnimations: converted " << animations.size() << " animation clips");
+  return true;
 }
 
 bool DefaultTextureImageLoaderFunction(
@@ -11126,721 +11072,6 @@ bool InferColorSpace(const value::token &tok, ColorSpace *cty) {
   return true;
 }
 
-#if 0  // Deprecated: Use implementation in render-scene-dump.cc instead
-
-namespace {
-
-template <typename T>
-std::string DumpVertexAttributeDataImpl(const T *data, const size_t nbytes,
-                                        const size_t stride_bytes,
-                                        uint32_t indent) {
-  size_t itemsize;
-
-  if (stride_bytes != 0) {
-    if ((nbytes % stride_bytes) != 0) {
-      return fmt::format(
-          "[Invalid VertexAttributeData. input bytes {} must be dividable by "
-          "stride_bytes {}(Type {})]",
-          nbytes, stride_bytes, value::TypeTraits<T>::type_name());
-    }
-    itemsize = stride_bytes;
-  } else {
-    if ((nbytes % sizeof(T)) != 0) {
-      return fmt::format(
-          "[Invalid VertexAttributeData. input bytes {} must be dividable by "
-          "size {}(Type {})]",
-          nbytes, sizeof(T), value::TypeTraits<T>::type_name());
-    }
-    itemsize = sizeof(T);
-  }
-
-  size_t nitems = nbytes / itemsize;
-  std::string s;
-  s += pprint::Indent(indent);
-  s += value::print_strided_array_snipped<T>(
-      reinterpret_cast<const uint8_t *>(data), stride_bytes, nitems);
-  return s;
-}
-
-std::string DumpVertexAttributeData(const VertexAttribute &vattr,
-                                    uint32_t indent) {
-  // Ignore elementSize
-#define APPLY_FUNC(__fmt, __basety)                            \
-  if (__fmt == vattr.format) {                                 \
-    return DumpVertexAttributeDataImpl(                        \
-        reinterpret_cast<const __basety *>(vattr.data.data()), \
-        vattr.data.size(), vattr.stride, indent);              \
-  }
-
-  APPLY_FUNC(VertexAttributeFormat::Bool, uint8_t)
-  APPLY_FUNC(VertexAttributeFormat::Char, char)
-  APPLY_FUNC(VertexAttributeFormat::Char2, value::char2)
-  APPLY_FUNC(VertexAttributeFormat::Char3, value::char3)
-  APPLY_FUNC(VertexAttributeFormat::Char4, value::char4)
-  APPLY_FUNC(VertexAttributeFormat::Byte, uint8_t)
-  APPLY_FUNC(VertexAttributeFormat::Byte2, value::uchar2)
-  APPLY_FUNC(VertexAttributeFormat::Byte3, value::uchar3)
-  APPLY_FUNC(VertexAttributeFormat::Byte4, value::uchar4)
-  APPLY_FUNC(VertexAttributeFormat::Short, int16_t)
-  APPLY_FUNC(VertexAttributeFormat::Short2, value::short2)
-  APPLY_FUNC(VertexAttributeFormat::Short3, value::short3)
-  APPLY_FUNC(VertexAttributeFormat::Short4, value::short4)
-  APPLY_FUNC(VertexAttributeFormat::Ushort, uint16_t)
-  APPLY_FUNC(VertexAttributeFormat::Ushort2, value::ushort2)
-  APPLY_FUNC(VertexAttributeFormat::Ushort3, value::ushort3)
-  APPLY_FUNC(VertexAttributeFormat::Ushort4, value::ushort4)
-  APPLY_FUNC(VertexAttributeFormat::Half, value::half)
-  APPLY_FUNC(VertexAttributeFormat::Half2, value::half2)
-  APPLY_FUNC(VertexAttributeFormat::Half3, value::half3)
-  APPLY_FUNC(VertexAttributeFormat::Half4, value::half4)
-  APPLY_FUNC(VertexAttributeFormat::Float, float)
-  APPLY_FUNC(VertexAttributeFormat::Vec2, value::float2)
-  APPLY_FUNC(VertexAttributeFormat::Vec3, value::float3)
-  APPLY_FUNC(VertexAttributeFormat::Vec4, value::float4)
-  APPLY_FUNC(VertexAttributeFormat::Int, int)
-  APPLY_FUNC(VertexAttributeFormat::Ivec2, value::int2)
-  APPLY_FUNC(VertexAttributeFormat::Ivec3, value::int3)
-  APPLY_FUNC(VertexAttributeFormat::Ivec4, value::int4)
-  APPLY_FUNC(VertexAttributeFormat::Uint, uint32_t)
-  APPLY_FUNC(VertexAttributeFormat::Uvec2, value::half)
-  APPLY_FUNC(VertexAttributeFormat::Uvec3, value::half)
-  APPLY_FUNC(VertexAttributeFormat::Uvec4, value::half)
-  APPLY_FUNC(VertexAttributeFormat::Double, double)
-  APPLY_FUNC(VertexAttributeFormat::Dvec2, value::double2)
-  APPLY_FUNC(VertexAttributeFormat::Dvec3, value::double2)
-  APPLY_FUNC(VertexAttributeFormat::Dvec4, value::double2)
-  APPLY_FUNC(VertexAttributeFormat::Mat2, value::matrix2f)
-  APPLY_FUNC(VertexAttributeFormat::Mat3, value::matrix3f)
-  APPLY_FUNC(VertexAttributeFormat::Mat4, value::matrix4f)
-  APPLY_FUNC(VertexAttributeFormat::Dmat2, value::matrix2d)
-  APPLY_FUNC(VertexAttributeFormat::Dmat3, value::matrix3d)
-  APPLY_FUNC(VertexAttributeFormat::Dmat4, value::matrix4d)
-  else {
-    return fmt::format("[InternalError. Invalid VertexAttributeFormat: Id{}]",
-                       int(vattr.format));
-  }
-
-#undef APPLY_FUNC
-}
-
-std::string DumpVertexAttribute(const VertexAttribute &vattr, uint32_t indent) {
-  std::stringstream ss;
-
-  ss << pprint::Indent(indent) << "count " << vattr.get_data().size() << "\n";
-  ss << pprint::Indent(indent) << "format " << quote(to_string(vattr.format))
-     << "\n";
-  ss << pprint::Indent(indent) << "variability "
-     << quote(to_string(vattr.variability)) << "\n";
-  ss << pprint::Indent(indent) << "elementSize " << vattr.elementSize << "\n";
-  ss << pprint::Indent(indent) << "value "
-     << quote(DumpVertexAttributeData(vattr, /* indent */ 0)) << "\n";
-  if (vattr.indices.size()) {
-    ss << pprint::Indent(indent) << "indices "
-       << quote(value::print_array_snipped(vattr.indices)) << "\n";
-  }
-
-  return ss.str();
-}
-
-
-std::string DumpNode(const Node &node, uint32_t indent) {
-  std::stringstream ss;
-
-  ss << pprint::Indent(indent) << "node {\n";
-
-  ss << pprint::Indent(indent + 1) << "category " << quote(to_string(node.category))
-     << "\n";
-  ss << pprint::Indent(indent + 1) << "type " << quote(to_string(node.nodeType))
-     << "\n";
-
-  ss << pprint::Indent(indent + 1) << "id " << node.id << "\n";
-
-  ss << pprint::Indent(indent + 1) << "prim_name " << quote(node.prim_name)
-     << "\n";
-  ss << pprint::Indent(indent + 1) << "abs_path " << quote(node.abs_path)
-     << "\n";
-  ss << pprint::Indent(indent + 1) << "display_name "
-     << quote(node.display_name) << "\n";
-  ss << pprint::Indent(indent + 1) << "local_matrix "
-     << quote(tinyusdz::to_string(node.local_matrix)) << "\n";
-  ss << pprint::Indent(indent + 1) << "global_matrix "
-     << quote(tinyusdz::to_string(node.global_matrix)) << "\n";
-
-  if (node.children.size()) {
-    ss << pprint::Indent(indent + 1) << "children {\n";
-    for (const auto &child : node.children) {
-      ss << DumpNode(child, indent + 1);
-    }
-    ss << pprint::Indent(indent + 1) << "}\n";
-  }
-
-  ss << pprint::Indent(indent) << "}\n";
-
-  return ss.str();
-}
-
-void DumpMaterialSubset(std::stringstream &ss, const MaterialSubset &msubset,
-                        uint32_t indent) {
-  ss << pprint::Indent(indent) << "material_subset {\n";
-  ss << pprint::Indent(indent + 1) << "material_id " << msubset.material_id
-     << "\n";
-  ss << pprint::Indent(indent + 1) << "indices "
-     << quote(value::print_array_snipped(msubset.indices())) << "\n";
-  ss << pprint::Indent(indent) << "}\n";
-}
-
-std::string DumpMesh(const RenderMesh &mesh, uint32_t indent) {
-  std::stringstream ss;
-
-  ss << pprint::Indent(indent) << "mesh {\n";
-
-  ss << pprint::Indent(indent + 1) << "prim_name " << quote(mesh.prim_name)
-     << "\n";
-  ss << pprint::Indent(indent + 1) << "abs_path " << quote(mesh.abs_path)
-     << "\n";
-  ss << pprint::Indent(indent + 1) << "display_name "
-     << quote(mesh.display_name) << "\n";
-  ss << pprint::Indent(indent + 1) << "num_points "
-     << std::to_string(mesh.points.size()) << "\n";
-  ss << pprint::Indent(indent + 1) << "points \""
-     << value::print_array_snipped(mesh.points) << "\"\n";
-  ss << pprint::Indent(indent + 1) << "num_faceVertexCounts "
-     << std::to_string(mesh.faceVertexCounts().size()) << "\n";
-  ss << pprint::Indent(indent + 1) << "faceVertexCounts \""
-     << value::print_array_snipped(mesh.faceVertexCounts()) << "\"\n";
-  ss << pprint::Indent(indent + 1) << "num_faceVertexIndices "
-     << std::to_string(mesh.faceVertexIndices().size()) << "\n";
-  ss << pprint::Indent(indent + 1) << "faceVertexIndices \""
-     << value::print_array_snipped(mesh.faceVertexIndices()) << "\"\n";
-  ss << pprint::Indent(indent + 1) << "materialId "
-     << std::to_string(mesh.material_id) << "\n";
-  ss << pprint::Indent(indent + 1) << "normals {\n"
-     << DumpVertexAttribute(mesh.normals, indent + 2) << "\n";
-  ss << pprint::Indent(indent + 1) << "}\n";
-  ss << pprint::Indent(indent + 1) << "num_texcoordSlots "
-     << std::to_string(mesh.texcoords.size()) << "\n";
-  for (const auto &uvs : mesh.texcoords) {
-    ss << pprint::Indent(indent + 1) << "texcoords_"
-       << std::to_string(uvs.first) << " {\n"
-       << DumpVertexAttribute(uvs.second, indent + 2) << "\n";
-    ss << pprint::Indent(indent + 1) << "}\n";
-  }
-  if (mesh.binormals.data.size()) {
-    ss << pprint::Indent(indent + 1) << "binormals {\n"
-       << DumpVertexAttribute(mesh.binormals, indent + 2) << "\n";
-    ss << pprint::Indent(indent + 1) << "}\n";
-  }
-  if (mesh.tangents.data.size()) {
-    ss << pprint::Indent(indent + 1) << "tangents {\n"
-       << DumpVertexAttribute(mesh.tangents, indent + 2) << "\n";
-    ss << pprint::Indent(indent + 1) << "}\n";
-  }
-
-  ss << pprint::Indent(indent + 1) << "skel_id " << mesh.skel_id << "\n";
-
-  if (mesh.joint_and_weights.jointIndices.size()) {
-    ss << pprint::Indent(indent + 1) << "skin {\n";
-    ss << pprint::Indent(indent + 2) << "geomBindTransform "
-       << quote(tinyusdz::to_string(mesh.joint_and_weights.geomBindTransform))
-       << "\n";
-    ss << pprint::Indent(indent + 2) << "elementSize "
-       << mesh.joint_and_weights.elementSize << "\n";
-    ss << pprint::Indent(indent + 2) << "jointIndices "
-       << quote(value::print_array_snipped(mesh.joint_and_weights.jointIndices))
-       << "\n";
-    ss << pprint::Indent(indent + 2) << "jointWeights "
-       << quote(value::print_array_snipped(mesh.joint_and_weights.jointWeights))
-       << "\n";
-    ss << pprint::Indent(indent + 1) << "}\n";
-  }
-  if (mesh.targets.size()) {
-    ss << pprint::Indent(indent + 1) << "shapeTargets {\n";
-
-    for (const auto &target : mesh.targets) {
-      ss << pprint::Indent(indent + 2) << target.first << " {\n";
-      ss << pprint::Indent(indent + 3) << "prim_name " << quote(target.second.prim_name) << "\n";
-      ss << pprint::Indent(indent + 3) << "abs_path " << quote(target.second.abs_path) << "\n";
-      ss << pprint::Indent(indent + 3) << "display_name " << quote(target.second.display_name) << "\n";
-      ss << pprint::Indent(indent + 3) << "pointIndices " << quote(value::print_array_snipped(target.second.pointIndices)) << "\n";
-      ss << pprint::Indent(indent + 3) << "pointOffsets " << quote(value::print_array_snipped(target.second.pointOffsets)) << "\n";
-      ss << pprint::Indent(indent + 3) << "normalOffsets " << quote(value::print_array_snipped(target.second.normalOffsets)) << "\n";
-      ss << pprint::Indent(indent + 2) << "}\n";
-    }
-
-    ss << pprint::Indent(indent + 1) << "}\n";
-
-  }
-  if (mesh.material_subsetMap.size()) {
-    ss << pprint::Indent(indent + 1) << "material_subsets {\n";
-    for (const auto &msubset : mesh.material_subsetMap) {
-      DumpMaterialSubset(ss, msubset.second, indent + 2);
-    }
-    ss << pprint::Indent(indent + 1) << "}\n";
-  }
-
-  // TODO: primvars
-
-  ss << "\n";
-
-  ss << pprint::Indent(indent) << "}\n";
-
-  return ss.str();
-}
-
-namespace detail {
-
-void DumpSkelNode(std::stringstream &ss, const SkelNode &node, uint32_t indent) {
-
-  ss << pprint::Indent(indent) << node.joint_name << " {\n";
-
-  ss << pprint::Indent(indent + 1) << "joint_path " << quote(node.joint_path) << "\n";
-  ss << pprint::Indent(indent + 1) << "joint_id " << node.joint_id << "\n";
-  ss << pprint::Indent(indent + 1) << "bind_transform " << quote(tinyusdz::to_string(node.bind_transform)) << "\n";
-  ss << pprint::Indent(indent + 1) << "rest_transform " << quote(tinyusdz::to_string(node.rest_transform)) << "\n";
-
-  if (node.children.size()) {
-    ss << pprint::Indent(indent + 1) << "children {\n";
-    for (const auto &child : node.children) {
-      DumpSkelNode(ss, child, indent + 2);
-    }
-    ss << pprint::Indent(indent + 1) << "}\n";
-  }
-
-  ss << pprint::Indent(indent) << "}\n";
-}
-
-
-} // namespace detail
-
-std::string DumpSkeleton(const SkelHierarchy &skel, uint32_t indent) {
-  std::stringstream ss;
-
-  ss << pprint::Indent(indent) << "skeleton {\n";
-
-  ss << pprint::Indent(indent + 1) << "name " << quote(skel.prim_name) << "\n";
-  ss << pprint::Indent(indent + 1) << "abs_path " << quote(skel.abs_path)
-     << "\n";
-  ss << pprint::Indent(indent + 1) << "anim_id " << skel.anim_id
-     << "\n";
-  ss << pprint::Indent(indent + 1) << "display_name "
-     << quote(skel.display_name) << "\n";
-
-  detail::DumpSkelNode(ss, skel.root_node, indent + 1);
-
-  ss << "\n";
-
-  ss << pprint::Indent(indent) << "}\n";
-
-  return ss.str();
-}
-
-namespace detail {
-
-#if 0 // unused
-template<typename T>
-std::string PrintAnimationSamples(const std::vector<AnimationSample<T>> &samples) {
-  std::stringstream ss;
-
-  ss << "[";
-  for (size_t i = 0; i < samples.size(); i++) {
-    if (i > 0) {
-      ss << ", ";
-    }
-
-    ss << "(" << samples[i].t << ", " << samples[i].value << ")";
-  }
-  ss << "]";
-
-  return ss.str();
-}
-#endif
-
-// void DumpAnimChannel(std::stringstream &ss, const std::string &name, const std::map<AnimationChannel::ChannelType, AnimationChannel> &channels, uint32_t indent) {
-//
-//   ss << pprint::Indent(indent) << name << " {\n";
-//
-//   for (const auto &channel : channels) {
-//     if (channel.first == AnimationChannel::ChannelType::Translation) {
-//       ss << pprint::Indent(indent + 1) << "translations " << quote(detail::PrintAnimationSamples(channel.second.translations.samples)) << "\n";
-//     } else if (channel.first == AnimationChannel::ChannelType::Rotation) {
-//       ss << pprint::Indent(indent + 1) << "rotations " << quote(detail::PrintAnimationSamples(channel.second.rotations.samples)) << "\n";
-//     } else if (channel.first == AnimationChannel::ChannelType::Scale) {
-//       ss << pprint::Indent(indent + 1) << "scales " << quote(detail::PrintAnimationSamples(channel.second.scales.samples)) << "\n";
-//     }
-//   }
-//
-//   ss << pprint::Indent(indent) << "}\n";
-// }
-
-
-} // namespace detail
-
-std::string DumpAnimation(const AnimationClip &anim, uint32_t indent) {
-  std::stringstream ss;
-
-  ss << pprint::Indent(indent) << "animation {\n";
-
-  ss << pprint::Indent(indent + 1) << "name " << quote(anim.name) << "\n";
-  ss << pprint::Indent(indent + 1) << "prim_name " << quote(anim.prim_name) << "\n";
-  ss << pprint::Indent(indent + 1) << "abs_path " << quote(anim.abs_path) << "\n";
-  ss << pprint::Indent(indent + 1) << "display_name " << quote(anim.display_name) << "\n";
-  ss << pprint::Indent(indent + 1) << "duration " << anim.duration << "\n";
-  ss << pprint::Indent(indent + 1) << "num_samplers " << anim.samplers.size() << "\n";
-  ss << pprint::Indent(indent + 1) << "num_channels " << anim.channels.size() << "\n";
-
-  // Dump channels
-  for (size_t i = 0; i < anim.channels.size(); i++) {
-    const auto &ch = anim.channels[i];
-    ss << pprint::Indent(indent + 1) << "channel[" << i << "] {\n";
-    ss << pprint::Indent(indent + 2) << "target_node: " << ch.target_node << "\n";
-    ss << pprint::Indent(indent + 2) << "sampler: " << ch.sampler << "\n";
-    ss << pprint::Indent(indent + 2) << "path: ";
-    switch (ch.path) {
-      case AnimationPath::Translation: ss << "Translation"; break;
-      case AnimationPath::Rotation: ss << "Rotation"; break;
-      case AnimationPath::Scale: ss << "Scale"; break;
-      case AnimationPath::Weights: ss << "Weights"; break;
-    }
-    ss << "\n";
-    ss << pprint::Indent(indent + 1) << "}\n";
-  }
-
-  ss << pprint::Indent(indent) << "}\n";
-
-  return ss.str();
-}
-
-
-std::string DumpCamera(const RenderCamera &camera, uint32_t indent) {
-  std::stringstream ss;
-
-  ss << pprint::Indent(indent) << "camera {\n";
-
-  ss << pprint::Indent(indent + 1) << "name " << quote(camera.name) << "\n";
-  ss << pprint::Indent(indent + 1) << "abs_path " << quote(camera.abs_path)
-     << "\n";
-  ss << pprint::Indent(indent + 1) << "display_name "
-     << quote(camera.display_name) << "\n";
-  ss << pprint::Indent(indent + 1) << "shutterOpen "
-     << std::to_string(camera.shutterOpen) << "\n";
-  ss << pprint::Indent(indent + 1) << "shutterClose "
-     << std::to_string(camera.shutterClose) << "\n";
-
-  ss << "\n";
-
-  ss << pprint::Indent(indent) << "}\n";
-
-  return ss.str();
-}
-
-std::string DumpPreviewSurface(const PreviewSurfaceShader &shader,
-                               uint32_t indent) {
-  std::stringstream ss;
-
-  ss << "PreviewSurfaceShader {\n";
-
-  ss << pprint::Indent(indent + 1)
-     << "useSpecularWorkflow = " << std::to_string(shader.useSpecularWorkflow)
-     << "\n";
-
-  ss << pprint::Indent(indent + 1) << "diffuseColor = ";
-  if (shader.diffuseColor.is_texture()) {
-    ss << "texture_id[" << shader.diffuseColor.texture_id << "]";
-  } else {
-    ss << shader.diffuseColor.value;
-  }
-  ss << "\n";
-
-  ss << pprint::Indent(indent + 1) << "metallic = ";
-  if (shader.metallic.is_texture()) {
-    ss << "texture_id[" << shader.metallic.texture_id << "]";
-  } else {
-    ss << shader.metallic.value;
-  }
-  ss << "\n";
-
-  ss << pprint::Indent(indent + 1) << "roughness = ";
-  if (shader.roughness.is_texture()) {
-    ss << "texture_id[" << shader.roughness.texture_id << "]";
-  } else {
-    ss << shader.roughness.value;
-  }
-  ss << "\n";
-
-  ss << pprint::Indent(indent + 1) << "ior = ";
-  if (shader.ior.is_texture()) {
-    ss << "texture_id[" << shader.ior.texture_id << "]";
-  } else {
-    ss << shader.ior.value;
-  }
-  ss << "\n";
-
-  ss << pprint::Indent(indent + 1) << "clearcoat = ";
-  if (shader.clearcoat.is_texture()) {
-    ss << "texture_id[" << shader.clearcoat.texture_id << "]";
-  } else {
-    ss << shader.clearcoat.value;
-  }
-  ss << "\n";
-
-  ss << pprint::Indent(indent + 1) << "clearcoatRoughness = ";
-  if (shader.clearcoatRoughness.is_texture()) {
-    ss << "texture_id[" << shader.clearcoatRoughness.texture_id << "]";
-  } else {
-    ss << shader.clearcoatRoughness.value;
-  }
-  ss << "\n";
-
-  ss << pprint::Indent(indent + 1) << "opacity = ";
-  if (shader.opacity.is_texture()) {
-    ss << "texture_id[" << shader.opacity.texture_id << "]";
-  } else {
-    ss << shader.opacity.value;
-  }
-  ss << "\n";
-
-  ss << pprint::Indent(indent + 1) << "opacityThreshold = ";
-  if (shader.opacityThreshold.is_texture()) {
-    ss << "texture_id[" << shader.opacityThreshold.texture_id << "]";
-  } else {
-    ss << shader.opacityThreshold.value;
-  }
-  ss << "\n";
-
-  ss << pprint::Indent(indent + 1) << "normal = ";
-  if (shader.normal.is_texture()) {
-    ss << "texture_id[" << shader.normal.texture_id << "]";
-  } else {
-    ss << shader.normal.value;
-  }
-  ss << "\n";
-
-  ss << pprint::Indent(indent + 1) << "displacement = ";
-  if (shader.displacement.is_texture()) {
-    ss << "texture_id[" << shader.displacement.texture_id << "]";
-  } else {
-    ss << shader.displacement.value;
-  }
-  ss << "\n";
-
-  ss << pprint::Indent(indent + 1) << "occlusion = ";
-  if (shader.occlusion.is_texture()) {
-    ss << "texture_id[" << shader.occlusion.texture_id << "]";
-  } else {
-    ss << shader.occlusion.value;
-  }
-  ss << "\n";
-
-  ss << pprint::Indent(indent) << "}\n";
-
-  return ss.str();
-}
-
-std::string DumpMaterial(const RenderMaterial &material, uint32_t indent) {
-  std::stringstream ss;
-
-  ss << pprint::Indent(indent) << "material {\n";
-
-  ss << pprint::Indent(indent + 1) << "name " << quote(material.name) << "\n";
-  ss << pprint::Indent(indent + 1) << "abs_path " << quote(material.abs_path)
-     << "\n";
-  ss << pprint::Indent(indent + 1) << "display_name "
-     << quote(material.display_name) << "\n";
-
-  ss << pprint::Indent(indent + 1) << "surfaceShader = ";
-  if (material.surfaceShader.has_value()) {
-    ss << DumpPreviewSurface(*material.surfaceShader, indent + 1);
-  } else {
-    ss << "null";
-  }
-  ss << "\n";
-
-  ss << pprint::Indent(indent) << "}\n";
-
-  return ss.str();
-}
-
-std::string DumpUVTexture(const UVTexture &texture, uint32_t indent) {
-  std::stringstream ss;
-
-  // TODO
-  ss << "UVTexture {\n";
-  ss << pprint::Indent(indent + 1) << "primvar_name " << texture.varname_uv
-     << "\n";
-  ss << pprint::Indent(indent + 1) << "connectedOutputChannel ";
-     ss << to_string(texture.connectedOutputChannel) << "\n";
-
-  ss << pprint::Indent(indent + 1) << "authoredOutputChannels ";
-
-  for (const auto &c : texture.authoredOutputChannels) {
-     ss << to_string(c) << " ";
-  }
-  ss << "\n";
-
-  ss << pprint::Indent(indent + 1) << "bias " << texture.bias << "\n";
-  ss << pprint::Indent(indent + 1) << "scale " << texture.scale << "\n";
-  ss << pprint::Indent(indent + 1) << "wrapS " << to_string(texture.wrapS)
-     << "\n";
-  ss << pprint::Indent(indent + 1) << "wrapT " << to_string(texture.wrapT)
-     << "\n";
-  ss << pprint::Indent(indent + 1) << "fallback_uv " << texture.fallback_uv
-     << "\n";
-  ss << pprint::Indent(indent + 1) << "textureImageID "
-     << std::to_string(texture.texture_image_id) << "\n";
-  ss << pprint::Indent(indent + 1) << "has UsdTransform2d "
-     << std::to_string(texture.has_transform2d) << "\n";
-  if (texture.has_transform2d) {
-    ss << pprint::Indent(indent + 2) << "rotation " << texture.tx_rotation
-       << "\n";
-    ss << pprint::Indent(indent + 2) << "scale " << texture.tx_scale << "\n";
-    ss << pprint::Indent(indent + 2) << "translation " << texture.tx_translation
-       << "\n";
-    ss << pprint::Indent(indent + 2) << "computed_transform "
-       << texture.transform << "\n";
-  }
-
-  ss << "\n";
-
-  ss << pprint::Indent(indent) << "}\n";
-
-  return ss.str();
-}
-
-std::string DumpImage(const TextureImage &image, uint32_t indent) {
-  std::stringstream ss;
-
-  ss << "TextureImage {\n";
-  ss << pprint::Indent(indent + 1) << "asset_identifier \""
-     << image.asset_identifier << "\"\n";
-  ss << pprint::Indent(indent + 1) << "decoded \""
-     << image.decoded << "\"\n";
-  ss << pprint::Indent(indent + 1) << "channels "
-     << std::to_string(image.channels) << "\n";
-  ss << pprint::Indent(indent + 1) << "width " << std::to_string(image.width)
-     << "\n";
-  ss << pprint::Indent(indent + 1) << "height " << std::to_string(image.height)
-     << "\n";
-  ss << pprint::Indent(indent + 1) << "miplevel "
-     << std::to_string(image.miplevel) << "\n";
-  ss << pprint::Indent(indent + 1) << "colorSpace "
-     << to_string(image.colorSpace) << "\n";
-  ss << pprint::Indent(indent + 1) << "usdColorSpace "
-     << to_string(image.usdColorSpace) << "\n";
-  ss << pprint::Indent(indent + 1) << "bufferID "
-     << std::to_string(image.buffer_id) << "\n";
-
-  ss << "\n";
-
-  ss << pprint::Indent(indent) << "}\n";
-
-  return ss.str();
-}
-
-std::string DumpBuffer(const BufferData &buffer, uint32_t indent) {
-  std::stringstream ss;
-
-  ss << "Buffer {\n";
-  ss << pprint::Indent(indent + 1) << "bytes " << buffer.data.size() << "\n";
-  ss << pprint::Indent(indent + 1) << "componentType "
-     << to_string(buffer.componentType) << "\n";
-
-  ss << "\n";
-
-  ss << pprint::Indent(indent) << "}\n";
-
-  return ss.str();
-}
-
-}  // namespace
-
-std::string DumpRenderScene(const RenderScene &scene,
-                            const std::string &format) {
-  std::stringstream ss;
-
-  if (format == "json") {
-    // TODO:
-    // Currently kdl only.
-    ss << "// `json` format is not supported yet. Use KDL format\n";
-  }
-
-  ss << "title " << quote(scene.usd_filename) << "\n";
-  ss << "default_root_node " << scene.default_root_node << "\n";
-  ss << "// # of Root Nodes : " << scene.nodes.size() << "\n";
-  ss << "// # of Meshes : " << scene.meshes.size() << "\n";
-  ss << "// # of Skeletons : " << scene.skeletons.size() << "\n";
-  ss << "// # of Animations : " << scene.animations.size() << "\n";
-  ss << "// # of Cameras : " << scene.cameras.size() << "\n";
-  ss << "// # of Materials : " << scene.materials.size() << "\n";
-  ss << "// # of UVTextures : " << scene.textures.size() << "\n";
-  ss << "// # of TextureImages : " << scene.images.size() << "\n";
-  ss << "// # of Buffers : " << scene.buffers.size() << "\n";
-
-  ss << "\n";
-
-  ss << "nodes {\n";
-  for (size_t i = 0; i < scene.nodes.size(); i++) {
-    ss << DumpNode(scene.nodes[i], 1);
-  }
-  ss << "}\n";
-
-  ss << "meshes {\n";
-  for (size_t i = 0; i < scene.meshes.size(); i++) {
-    ss << "[" << i << "] " << DumpMesh(scene.meshes[i], 1);
-  }
-  ss << "}\n";
-
-  ss << "skeletons {\n";
-  for (size_t i = 0; i < scene.skeletons.size(); i++) {
-    ss << "[" << i << "] " << DumpSkeleton(scene.skeletons[i], 1);
-  }
-  ss << "}\n";
-
-  ss << "animations {\n";
-  for (size_t i = 0; i < scene.animations.size(); i++) {
-    ss << "[" << i << "] " << DumpAnimation(scene.animations[i], 1);
-  }
-  ss << "}\n";
-
-  ss << "cameras {\n";
-  for (size_t i = 0; i < scene.cameras.size(); i++) {
-    ss << "[" << i << "] " << DumpCamera(scene.cameras[i], 1);
-  }
-  ss << "}\n";
-
-  ss << "\n";
-  ss << "materials {\n";
-  for (size_t i = 0; i < scene.materials.size(); i++) {
-    ss << "[" << i << "] " << DumpMaterial(scene.materials[i], 1);
-  }
-  ss << "}\n";
-
-  ss << "\n";
-  ss << "textures {\n";
-  for (size_t i = 0; i < scene.textures.size(); i++) {
-    ss << "[" << i << "] " << DumpUVTexture(scene.textures[i], 1);
-  }
-  ss << "}\n";
-
-  ss << "\n";
-  ss << "images {\n";
-  for (size_t i = 0; i < scene.images.size(); i++) {
-    ss << "[" << i << "] " << DumpImage(scene.images[i], 1);
-  }
-  ss << "}\n";
-
-  ss << "\n";
-  ss << "buffers {\n";
-  for (size_t i = 0; i < scene.buffers.size(); i++) {
-    ss << "[" << i << "] " << DumpBuffer(scene.buffers[i], 1);
-  }
-  ss << "}\n";
-
-  // ss << "TODO: AnimationChannel, ...\n";
-
-  return ss.str();
-}
-
-#endif  // Deprecated dump functions
 
 // Memory usage estimation implementations
 
@@ -12240,6 +11471,7 @@ bool RenderSceneConverter::MergeMeshesImpl(const RenderSceneConverterEnv &env) {
 
   std::vector<MeshNodeInfo> mesh_node_infos;
   mesh_node_infos.resize(meshes.size());
+  std::vector<std::vector<Node *>> mesh_nodes_by_id(meshes.size());
 
   // Helper to traverse nodes and collect mesh info
   std::function<void(Node &)> collectMeshNodes = [&](Node &node) {
@@ -12248,6 +11480,7 @@ bool RenderSceneConverter::MergeMeshesImpl(const RenderSceneConverterEnv &env) {
       mesh_node_infos[size_t(node.id)].node = &node;
       mesh_node_infos[size_t(node.id)].global_matrix = node.global_matrix;
       mesh_node_infos[size_t(node.id)].mesh_index = size_t(node.id);
+      mesh_nodes_by_id[size_t(node.id)].push_back(&node);
     }
     for (auto &child : node.children) {
       collectMeshNodes(child);
@@ -12278,8 +11511,8 @@ bool RenderSceneConverter::MergeMeshesImpl(const RenderSceneConverterEnv &env) {
 
   // For each material group with 2+ meshes, merge them
   std::vector<RenderMesh> merged_meshes;
-  std::map<size_t, int32_t> old_to_new_mesh_id;  // old mesh index -> new merged mesh index
-  std::set<size_t> meshes_to_remove;
+  std::vector<std::pair<int32_t, std::vector<size_t>>> merged_groups;
+  [[maybe_unused]] size_t merged_source_mesh_count{0};
 
   for (auto &kv : material_to_meshes) {
     int material_id = kv.first;
@@ -12336,6 +11569,9 @@ bool RenderSceneConverter::MergeMeshesImpl(const RenderSceneConverterEnv &env) {
     // If baking transforms, we transform all vertices to world space
     // The merged mesh will have identity transform
 
+    std::vector<size_t> merged_sources;
+    merged_sources.reserve(mesh_indices.size());
+
     for (size_t idx : mesh_indices) {
       const auto &src_mesh = meshes[idx];
       const auto &node_info = mesh_node_infos[idx];
@@ -12354,8 +11590,15 @@ bool RenderSceneConverter::MergeMeshesImpl(const RenderSceneConverterEnv &env) {
         continue;
       }
 
-      meshes_to_remove.insert(idx);
+      merged_sources.push_back(idx);
     }
+
+    if (merged_sources.size() < 2) {
+      // Nothing useful to merge for this material group.
+      continue;
+    }
+
+    merged_source_mesh_count += merged_sources.size();
 
     // The merged mesh is either in world space (if bake_transform) or
     // shares the transform of the first mesh
@@ -12365,10 +11608,8 @@ bool RenderSceneConverter::MergeMeshesImpl(const RenderSceneConverterEnv &env) {
     size_t new_mesh_index = meshes.size() + merged_meshes.size();
     merged_meshes.push_back(std::move(merged));
 
-    // Map old mesh indices to new merged mesh index
-    for (size_t idx : mesh_indices) {
-      old_to_new_mesh_id[idx] = static_cast<int32_t>(new_mesh_index);
-    }
+    merged_groups.emplace_back(static_cast<int32_t>(new_mesh_index),
+                               std::move(merged_sources));
   }
 
   if (merged_meshes.empty()) {
@@ -12376,48 +11617,45 @@ bool RenderSceneConverter::MergeMeshesImpl(const RenderSceneConverterEnv &env) {
     return true;
   }
 
-  DCOUT("Created " << merged_meshes.size() << " merged meshes from " << meshes_to_remove.size() << " source meshes");
+  DCOUT("Created " << merged_meshes.size() << " merged meshes from "
+                   << merged_source_mesh_count << " source meshes");
 
   // Add merged meshes to the mesh array
   for (auto &mm : merged_meshes) {
     meshes.push_back(std::move(mm));
   }
 
-  // Update node references
-  // For merged meshes, we keep only the first node pointing to the merged mesh
-  // and invalidate the other nodes (set id = -1)
-  std::set<int32_t> used_merged_ids;
+  // Update node references for merged sources only.
+  // Keep only one node per merged mesh and invalidate the rest.
+  for (const auto &group : merged_groups) {
+    int32_t new_id = group.first;
+    const auto &source_ids = group.second;
+    bool first_assigned = false;
 
-  std::function<void(Node &)> updateNodeMeshRefs = [&](Node &node) {
-    if (node.nodeType == NodeType::Mesh && node.id >= 0) {
-      size_t old_id = size_t(node.id);
-      auto it = old_to_new_mesh_id.find(old_id);
-      if (it != old_to_new_mesh_id.end()) {
-        int32_t new_id = it->second;
-        if (used_merged_ids.count(new_id) == 0) {
-          // First node for this merged mesh - update to point to merged mesh
-          node.id = new_id;
-          used_merged_ids.insert(new_id);
+    for (size_t old_id : source_ids) {
+      if (old_id >= mesh_nodes_by_id.size()) {
+        continue;
+      }
+
+      for (Node *node_ptr : mesh_nodes_by_id[old_id]) {
+        if (!node_ptr) {
+          continue;
+        }
+
+        if (!first_assigned) {
+          node_ptr->id = new_id;
+          first_assigned = true;
 
           // If we baked transforms, reset the node's transform to identity
           if (env.scene_config.merge_meshes_bake_transform) {
-            node.local_matrix = value::matrix4d::identity();
-            node.global_matrix = value::matrix4d::identity();
+            node_ptr->local_matrix = value::matrix4d::identity();
+            node_ptr->global_matrix = value::matrix4d::identity();
           }
         } else {
-          // This mesh was merged and this is not the first node
-          // Mark as invalid (mesh is now part of merged mesh)
-          node.id = -1;
+          node_ptr->id = -1;
         }
       }
     }
-    for (auto &child : node.children) {
-      updateNodeMeshRefs(child);
-    }
-  };
-
-  for (auto &root : root_nodes) {
-    updateNodeMeshRefs(root);
   }
 
   return true;

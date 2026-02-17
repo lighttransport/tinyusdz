@@ -12,6 +12,7 @@
  */
 
 import * as THREE from 'three';
+import { toOwnedFloat32Array } from './TypedArrayOwnership.js';
 
 /**
  * Skinning modes based on bone influence count
@@ -97,6 +98,9 @@ export function addExtendedSkinningAttributes(geometry, jointIndices, jointWeigh
         const textureData = addTextureBasedSkinning(geometry, jointIndices, jointWeights, influencesPerVertex, mode, normalize);
         config.boneDataTexture = textureData.texture;
         config.vertexBoneOffsets = textureData.offsets;
+        config.texelsPerVertex = textureData.texelsPerVertex;
+        config.texWidth = textureData.texWidth;
+        config.texHeight = textureData.texHeight;
     }
 
     // Store config in geometry userData
@@ -279,10 +283,21 @@ function addTextureBasedSkinning(geometry, jointIndices, jointWeights, influence
         }
 
         // Also fill standard 4-bone attributes (for compatibility and weight visualization)
+        // Re-normalize top-4 weights to sum to 1.0 so that if the texture-based shader
+        // fails to bind, the standard 4-bone skinning path still produces correct results.
+        let top4Weight = 0;
         for (let j = 0; j < 4; j++) {
             const inf = vertexInfluences[j] || { boneIdx: 0, weight: 0 };
             skinIndices[v * 4 + j] = inf.boneIdx >= 0 ? inf.boneIdx : 0;
-            skinWeights[v * 4 + j] = inf.boneIdx >= 0 ? inf.weight : (j === 0 && vertexInfluences.length === 0 ? 1 : 0);
+            const w = inf.boneIdx >= 0 ? inf.weight : (j === 0 && vertexInfluences.length === 0 ? 1 : 0);
+            skinWeights[v * 4 + j] = w;
+            top4Weight += w;
+        }
+        if (top4Weight > 0 && Math.abs(top4Weight - 1.0) > 0.001) {
+            const inv = 1.0 / top4Weight;
+            for (let j = 0; j < 4; j++) {
+                skinWeights[v * 4 + j] *= inv;
+            }
         }
     }
 
@@ -318,7 +333,7 @@ function addTextureBasedSkinning(geometry, jointIndices, jointWeights, influence
 /**
  * Create an extended skinning material that supports configurable bone counts
  *
- * @param {THREE.Material} baseMaterial - Base material to extend
+ * @param {THREE.Material|THREE.Material[]} baseMaterial - Base material to extend
  * @param {Object} [options] - Options
  * @param {number} [options.maxInfluences=4] - Maximum bone influences (4, 8, 16, 32, 64)
  * @param {THREE.DataTexture} [options.boneDataTexture] - Texture for 16+ bone mode
@@ -327,21 +342,40 @@ function addTextureBasedSkinning(geometry, jointIndices, jointWeights, influence
  * @returns {THREE.Material} Material with extended skinning support
  */
 export function createExtendedSkinningMaterial(baseMaterial, options = {}) {
+    if (Array.isArray(baseMaterial)) {
+        return baseMaterial.map((mat) => createExtendedSkinningMaterial(mat, options));
+    }
+    if (!baseMaterial || typeof baseMaterial.clone !== 'function') {
+        throw new Error('createExtendedSkinningMaterial expects a THREE.Material or material array');
+    }
+
     const maxInfluences = options.maxInfluences || 4;
     const mode = getSkinningMode(maxInfluences);
+    const texelsPerVertex = options.texelsPerVertex || Math.ceil(maxInfluences / 2);
 
     // Clone the base material
     const material = baseMaterial.clone();
 
     material.onBeforeCompile = (shader) => {
+        console.log(`[ExtSkin] onBeforeCompile: mode=${mode}, maxInf=${maxInfluences}, texels=${texelsPerVertex}`);
         if (mode === SkinningMode.EXTENDED_8) {
             // 8-bone attribute-based skinning
             apply8BoneShaderMod(shader);
         } else if (mode >= SkinningMode.TEXTURE_16) {
             // 16+ bone texture-based skinning
             applyTextureBoneShaderMod(shader, options);
+            // Verify replacement happened
+            const hasTextureSkinning = shader.vertexShader.includes('USE_TEXTURE_SKINNING');
+            console.log(`[ExtSkin] Shader replacement success: ${hasTextureSkinning}`);
         }
     };
+
+    // Critical: Three.js caches compiled shader programs by customProgramCacheKey().
+    material.customProgramCacheKey = function() {
+        return `ext-skinning-${mode}-${maxInfluences}-${texelsPerVertex}`;
+    };
+
+    material._extSkinMode = mode;
 
     material.needsUpdate = true;
     return material;
@@ -443,10 +477,12 @@ function applyTextureBoneShaderMod(shader, options) {
     const texelsPerVertex = options.texelsPerVertex || Math.ceil(maxInfluences / 2);
     const texWidth = options.boneDataTexWidth || 1024;
 
-    // Add uniforms
+    // Add uniforms (useTextureSkinning: 1.0 = texture path, 0.0 = 4-bone fallback)
     shader.uniforms.boneDataTexture = { value: options.boneDataTexture };
     shader.uniforms.boneDataTexWidth = { value: texWidth };
     shader.uniforms.texelsPerVertex = { value: texelsPerVertex };
+    // Use shared uniform object so all programs (render + shadow) can be toggled at once
+    shader.uniforms.useTextureSkinning = options._useTexSkinUniform || { value: 1.0 };
 
     // Add texture-based skinning declarations
     shader.vertexShader = shader.vertexShader.replace(
@@ -458,41 +494,41 @@ function applyTextureBoneShaderMod(shader, options) {
             #define MAX_TEXTURE_INFLUENCES ${maxInfluences}
             #define TEXELS_PER_VERTEX ${texelsPerVertex}
 
-            uniform sampler2D boneDataTexture;
+            uniform highp sampler2D boneDataTexture;
             uniform float boneDataTexWidth;
             uniform float texelsPerVertex;
+            uniform float useTextureSkinning;
 
             attribute float boneDataOffset;
 
-            // Read bone index and weight from texture
+            // Read bone index and weight from texture using texelFetch (integer coords)
             vec2 getBoneData(float texelIndex) {
-                float x = mod(texelIndex, boneDataTexWidth);
-                float y = floor(texelIndex / boneDataTexWidth);
-                vec2 uv = (vec2(x, y) + 0.5) / vec2(boneDataTexWidth, textureSize(boneDataTexture, 0).y);
-                return texture2D(boneDataTexture, uv).rg; // r=boneIndex, g=weight
+                int idx = int(texelIndex);
+                int w = int(boneDataTexWidth);
+                ivec2 coord = ivec2(idx % w, idx / w);
+                vec4 data = texelFetch(boneDataTexture, coord, 0);
+                return data.rg; // r=boneIndex, g=weight
             }
 
             vec2 getBoneData2(float texelIndex) {
-                float x = mod(texelIndex, boneDataTexWidth);
-                float y = floor(texelIndex / boneDataTexWidth);
-                vec2 uv = (vec2(x, y) + 0.5) / vec2(boneDataTexWidth, textureSize(boneDataTexture, 0).y);
-                return texture2D(boneDataTexture, uv).ba; // b=boneIndex, a=weight
+                int idx = int(texelIndex);
+                int w = int(boneDataTexWidth);
+                ivec2 coord = ivec2(idx % w, idx / w);
+                vec4 data = texelFetch(boneDataTexture, coord, 0);
+                return data.ba; // b=boneIndex, a=weight
             }
         #endif
         `
     );
 
-    // Replace entire skinning calculation with texture-based version
+    // Always compute standard 4-bone matrices (needed for fallback path)
     shader.vertexShader = shader.vertexShader.replace(
         '#include <skinbase_vertex>',
         `#ifdef USE_SKINNING
-            #ifndef USE_TEXTURE_SKINNING
-                // Standard 4-bone skinning
-                mat4 boneMatX = getBoneMatrix( skinIndex.x );
-                mat4 boneMatY = getBoneMatrix( skinIndex.y );
-                mat4 boneMatZ = getBoneMatrix( skinIndex.z );
-                mat4 boneMatW = getBoneMatrix( skinIndex.w );
-            #endif
+            mat4 boneMatX = getBoneMatrix( skinIndex.x );
+            mat4 boneMatY = getBoneMatrix( skinIndex.y );
+            mat4 boneMatZ = getBoneMatrix( skinIndex.z );
+            mat4 boneMatW = getBoneMatrix( skinIndex.w );
         #endif
         `
     );
@@ -504,6 +540,7 @@ function applyTextureBoneShaderMod(shader, options) {
             vec4 skinned = vec4( 0.0 );
 
             #ifdef USE_TEXTURE_SKINNING
+            if (useTextureSkinning > 0.5) {
                 // Texture-based skinning with ${maxInfluences} influences
                 for (int t = 0; t < TEXELS_PER_VERTEX; t++) {
                     float texelIdx = boneDataOffset + float(t);
@@ -511,19 +548,25 @@ function applyTextureBoneShaderMod(shader, options) {
                     // First influence in texel (RG)
                     vec2 data0 = getBoneData(texelIdx);
                     if (data0.x >= 0.0 && data0.y > 0.0) {
-                        mat4 boneMat = getBoneMatrix(data0.x);
+                        mat4 boneMat = getBoneMatrix(floor(data0.x + 0.5));
                         skinned += boneMat * skinVertex * data0.y;
                     }
 
                     // Second influence in texel (BA)
                     vec2 data1 = getBoneData2(texelIdx);
                     if (data1.x >= 0.0 && data1.y > 0.0) {
-                        mat4 boneMat = getBoneMatrix(data1.x);
+                        mat4 boneMat = getBoneMatrix(floor(data1.x + 0.5));
                         skinned += boneMat * skinVertex * data1.y;
                     }
                 }
+            } else {
+                // Standard 4-bone fallback (normalized weights)
+                skinned += boneMatX * skinVertex * skinWeight.x;
+                skinned += boneMatY * skinVertex * skinWeight.y;
+                skinned += boneMatZ * skinVertex * skinWeight.z;
+                skinned += boneMatW * skinVertex * skinWeight.w;
+            }
             #else
-                // Standard 4-bone skinning
                 skinned += boneMatX * skinVertex * skinWeight.x;
                 skinned += boneMatY * skinVertex * skinWeight.y;
                 skinned += boneMatZ * skinVertex * skinWeight.z;
@@ -541,22 +584,28 @@ function applyTextureBoneShaderMod(shader, options) {
             mat4 skinMatrix = mat4( 0.0 );
 
             #ifdef USE_TEXTURE_SKINNING
+            if (useTextureSkinning > 0.5) {
                 // Texture-based normal skinning
                 for (int t = 0; t < TEXELS_PER_VERTEX; t++) {
                     float texelIdx = boneDataOffset + float(t);
 
                     vec2 data0 = getBoneData(texelIdx);
                     if (data0.x >= 0.0 && data0.y > 0.0) {
-                        skinMatrix += getBoneMatrix(data0.x) * data0.y;
+                        skinMatrix += getBoneMatrix(floor(data0.x + 0.5)) * data0.y;
                     }
 
                     vec2 data1 = getBoneData2(texelIdx);
                     if (data1.x >= 0.0 && data1.y > 0.0) {
-                        skinMatrix += getBoneMatrix(data1.x) * data1.y;
+                        skinMatrix += getBoneMatrix(floor(data1.x + 0.5)) * data1.y;
                     }
                 }
+            } else {
+                skinMatrix += skinWeight.x * boneMatX;
+                skinMatrix += skinWeight.y * boneMatY;
+                skinMatrix += skinWeight.z * boneMatZ;
+                skinMatrix += skinWeight.w * boneMatW;
+            }
             #else
-                // Standard 4-bone normal skinning
                 skinMatrix += skinWeight.x * boneMatX;
                 skinMatrix += skinWeight.y * boneMatY;
                 skinMatrix += skinWeight.z * boneMatZ;
@@ -573,65 +622,6 @@ function applyTextureBoneShaderMod(shader, options) {
         #endif
         `
     );
-}
-
-/**
- * Create an ExtendedSkinnedMesh class that handles arbitrary bone counts
- */
-export class ExtendedSkinnedMesh extends THREE.SkinnedMesh {
-    constructor(geometry, material, maxInfluences = 4) {
-        super(geometry, material);
-
-        this.maxInfluences = maxInfluences;
-        this.skinningMode = getSkinningMode(maxInfluences);
-        this.boneDataTexture = null;
-        this.texelsPerVertex = 0;
-
-        // If geometry has extended skinning config, use it
-        if (geometry.userData.extendedSkinning) {
-            const config = geometry.userData.extendedSkinning;
-            this.maxInfluences = config.maxInfluences;
-            this.skinningMode = config.mode;
-            this.boneDataTexture = config.boneDataTexture;
-        }
-    }
-
-    /**
-     * Override bind to set up extended skinning material
-     */
-    bind(skeleton, bindMatrix) {
-        super.bind(skeleton, bindMatrix);
-
-        // Apply extended skinning material if needed
-        if (this.skinningMode > SkinningMode.STANDARD) {
-            this.material = createExtendedSkinningMaterial(this.material, {
-                maxInfluences: this.maxInfluences,
-                boneDataTexture: this.boneDataTexture,
-                texelsPerVertex: this.texelsPerVertex,
-                boneDataTexWidth: this.boneDataTexture ?
-                    Math.sqrt(this.boneDataTexture.image.width * this.boneDataTexture.image.height) : 1024
-            });
-        }
-    }
-
-    /**
-     * Set up skinning from USD data
-     */
-    setupFromUSD(jointIndices, jointWeights, influencesPerVertex, options = {}) {
-        const config = addExtendedSkinningAttributes(
-            this.geometry,
-            jointIndices,
-            jointWeights,
-            influencesPerVertex,
-            options
-        );
-
-        this.maxInfluences = config.maxInfluences;
-        this.skinningMode = config.mode;
-        this.boneDataTexture = config.boneDataTexture;
-
-        return config;
-    }
 }
 
 /**
@@ -661,14 +651,9 @@ export function createBoneTextureFromWASM(wasmBoneTexture) {
         vertexOffsets
     } = wasmBoneTexture;
 
-    // Convert to Float32Array if needed (WASM may return regular array)
-    const textureDataArray = textureData instanceof Float32Array
-        ? textureData
-        : new Float32Array(textureData);
-
-    const offsetsArray = vertexOffsets instanceof Float32Array
-        ? vertexOffsets
-        : new Float32Array(vertexOffsets);
+    // Always copy into JS-owned buffers.
+    const textureDataArray = toOwnedFloat32Array(textureData, 'wasmBoneTexture.textureData');
+    const offsetsArray = toOwnedFloat32Array(vertexOffsets, 'wasmBoneTexture.vertexOffsets');
 
     // Create Three.js DataTexture
     const texture = new THREE.DataTexture(
@@ -698,147 +683,6 @@ export function createBoneTextureFromWASM(wasmBoneTexture) {
 }
 
 /**
- * Apply WASM-generated bone texture to a geometry
- *
- * This sets up the geometry with bone texture data from WASM, including
- * the boneDataOffset attribute needed for the texture-based skinning shader.
- *
- * @param {THREE.BufferGeometry} geometry - Target geometry
- * @param {Object} wasmBoneTexture - Result from usd.generateBoneTexture(meshId)
- * @param {Object} [options] - Options
- * @param {Uint16Array|Int32Array} [options.jointIndices] - Joint indices for fallback 4-bone attributes
- * @param {Float32Array} [options.jointWeights] - Joint weights for fallback 4-bone attributes
- * @param {number} [options.influencesPerVertex] - Influences per vertex in source data
- * @returns {ExtendedSkinningConfig} Configuration object with skinning setup info
- */
-export function applyWASMBoneTextureToGeometry(geometry, wasmBoneTexture, options = {}) {
-    const boneTextureConfig = createBoneTextureFromWASM(wasmBoneTexture);
-    const vertexCount = geometry.attributes.position.count;
-
-    // Add boneDataOffset attribute
-    geometry.setAttribute('boneDataOffset', new THREE.Float32BufferAttribute(boneTextureConfig.offsets, 1));
-
-    // If fallback joint data is provided, add standard 4-bone attributes
-    if (options.jointIndices && options.jointWeights && options.influencesPerVertex) {
-        addFallback4BoneAttributes(
-            geometry,
-            options.jointIndices,
-            options.jointWeights,
-            options.influencesPerVertex
-        );
-    } else if (!geometry.attributes.skinIndex) {
-        // Create default skinIndex/skinWeight if not present
-        const skinIndices = new Uint16Array(vertexCount * 4);
-        const skinWeights = new Float32Array(vertexCount * 4);
-
-        for (let i = 0; i < vertexCount; i++) {
-            skinIndices[i * 4] = 0;
-            skinWeights[i * 4] = 1;
-        }
-
-        geometry.setAttribute('skinIndex', new THREE.Uint16BufferAttribute(skinIndices, 4));
-        geometry.setAttribute('skinWeight', new THREE.Float32BufferAttribute(skinWeights, 4));
-    }
-
-    // Create config
-    const config = new ExtendedSkinningConfig({
-        maxInfluences: boneTextureConfig.maxInfluences,
-        normalizeWeights: true,
-        fromWASM: true  // Mark as WASM-generated
-    });
-    config.boneDataTexture = boneTextureConfig.texture;
-    config.vertexBoneOffsets = boneTextureConfig.offsets;
-    config.texelsPerVertex = boneTextureConfig.texelsPerVertex;
-    config.texWidth = boneTextureConfig.texWidth;
-    config.texHeight = boneTextureConfig.texHeight;
-
-    // Store in geometry userData
-    geometry.userData.extendedSkinning = config;
-
-    console.log(`Applied WASM bone texture to geometry: ${boneTextureConfig.mode}-bone mode`);
-
-    return config;
-}
-
-/**
- * Add fallback 4-bone attributes from source joint data
- * Used for weight visualization and as fallback for unsupported shaders
- */
-function addFallback4BoneAttributes(geometry, jointIndices, jointWeights, influencesPerVertex) {
-    const vertexCount = geometry.attributes.position.count;
-    const skinIndices = new Uint16Array(vertexCount * 4);
-    const skinWeights = new Float32Array(vertexCount * 4);
-    const sourceVertexCount = Math.floor(jointIndices.length / influencesPerVertex);
-
-    for (let v = 0; v < vertexCount; v++) {
-        // Collect influences for this vertex and sort by weight
-        const influences = [];
-
-        if (v < sourceVertexCount) {
-            for (let j = 0; j < influencesPerVertex; j++) {
-                const srcIdx = v * influencesPerVertex + j;
-                if (srcIdx < jointIndices.length) {
-                    const weight = jointWeights[srcIdx];
-                    if (weight > 0) {
-                        influences.push({
-                            boneIdx: jointIndices[srcIdx],
-                            weight: weight
-                        });
-                    }
-                }
-            }
-            influences.sort((a, b) => b.weight - a.weight);
-        }
-
-        // Take top 4 influences
-        let totalWeight = 0;
-        for (let j = 0; j < 4; j++) {
-            if (j < influences.length) {
-                skinIndices[v * 4 + j] = influences[j].boneIdx;
-                skinWeights[v * 4 + j] = influences[j].weight;
-                totalWeight += influences[j].weight;
-            } else {
-                skinIndices[v * 4 + j] = 0;
-                skinWeights[v * 4 + j] = 0;
-            }
-        }
-
-        // Normalize to 1.0
-        if (totalWeight > 0 && Math.abs(totalWeight - 1.0) > 0.001) {
-            const invTotal = 1.0 / totalWeight;
-            for (let j = 0; j < 4; j++) {
-                skinWeights[v * 4 + j] *= invTotal;
-            }
-        } else if (totalWeight === 0) {
-            skinWeights[v * 4] = 1;
-        }
-    }
-
-    geometry.setAttribute('skinIndex', new THREE.Uint16BufferAttribute(skinIndices, 4));
-    geometry.setAttribute('skinWeight', new THREE.Float32BufferAttribute(skinWeights, 4));
-}
-
-/**
- * Create extended skinning material from WASM bone texture config
- *
- * Convenience function that combines createBoneTextureFromWASM and createExtendedSkinningMaterial
- *
- * @param {THREE.Material} baseMaterial - Base material to extend
- * @param {Object} wasmBoneTexture - Result from usd.generateBoneTexture(meshId)
- * @returns {THREE.Material} Material with extended skinning support
- */
-export function createMaterialFromWASMBoneTexture(baseMaterial, wasmBoneTexture) {
-    const boneTextureConfig = createBoneTextureFromWASM(wasmBoneTexture);
-
-    return createExtendedSkinningMaterial(baseMaterial, {
-        maxInfluences: boneTextureConfig.maxInfluences,
-        boneDataTexture: boneTextureConfig.texture,
-        texelsPerVertex: boneTextureConfig.texelsPerVertex,
-        boneDataTexWidth: boneTextureConfig.texWidth
-    });
-}
-
-/**
  * Check the skinning mode of a geometry
  */
 export function getGeometrySkinningMode(geometry) {
@@ -852,13 +696,6 @@ export function getGeometrySkinningMode(geometry) {
         return SkinningMode.STANDARD;
     }
     return 0; // No skinning
-}
-
-/**
- * Check if geometry has extended skinning attributes
- */
-export function hasExtendedSkinning(geometry) {
-    return getGeometrySkinningMode(geometry) > SkinningMode.STANDARD;
 }
 
 /**
@@ -880,13 +717,18 @@ export function applyExtendedSkinningIfNeeded(skinnedMesh, options = {}) {
                 new THREE.Float32BufferAttribute(boneTextureConfig.offsets, 1));
         }
 
-        skinnedMesh.material = createExtendedSkinningMaterial(skinnedMesh.material, {
+        const useTexSkinUniform = { value: 1.0 };
+        const matOptions = {
             maxInfluences: boneTextureConfig.maxInfluences,
             boneDataTexture: boneTextureConfig.texture,
             texelsPerVertex: boneTextureConfig.texelsPerVertex,
-            boneDataTexWidth: boneTextureConfig.texWidth
-        });
+            boneDataTexWidth: boneTextureConfig.texWidth,
+            _useTexSkinUniform: useTexSkinUniform
+        };
+        skinnedMesh.material = createExtendedSkinningMaterial(skinnedMesh.material, matOptions);
+        skinnedMesh.customDepthMaterial = createExtendedDepthMaterial(matOptions);
 
+        skinnedMesh._useTexSkinUniform = useTexSkinUniform;
         console.log(`Applied WASM ${boneTextureConfig.mode}-bone extended skinning material`);
         return true;
     }
@@ -905,12 +747,20 @@ export function applyExtendedSkinningIfNeeded(skinnedMesh, options = {}) {
                      config.boneDataTexture?.image?.width ||
                      1024;
 
-    skinnedMesh.material = createExtendedSkinningMaterial(skinnedMesh.material, {
+    // Shared uniform object so render + shadow pass can be toggled together
+    const useTexSkinUniform = { value: 1.0 };
+    const matOptions = {
         maxInfluences: config.maxInfluences || mode,
         boneDataTexture: config.boneDataTexture,
         texelsPerVertex: config.texelsPerVertex || Math.ceil((config.maxInfluences || mode) / 2),
-        boneDataTexWidth: texWidth
-    });
+        boneDataTexWidth: texWidth,
+        _useTexSkinUniform: useTexSkinUniform
+    };
+    skinnedMesh.material = createExtendedSkinningMaterial(skinnedMesh.material, matOptions);
+    skinnedMesh.customDepthMaterial = createExtendedDepthMaterial(matOptions);
+
+    // Store uniform ref on mesh for runtime toggle
+    skinnedMesh._useTexSkinUniform = useTexSkinUniform;
 
     console.log(`Applied ${mode}-bone extended skinning material`);
     return true;
@@ -1051,24 +901,39 @@ export function createExtendedWeightVisualizationMaterial(options = {}) {
         vertexShader,
         fragmentShader,
         uniforms,
-        skinning: true,
         side: THREE.DoubleSide
     });
 }
 
-export default {
-    SkinningMode,
-    getSkinningMode,
-    ExtendedSkinningConfig,
-    addExtendedSkinningAttributes,
-    createExtendedSkinningMaterial,
-    ExtendedSkinnedMesh,
-    getGeometrySkinningMode,
-    hasExtendedSkinning,
-    applyExtendedSkinningIfNeeded,
-    createExtendedWeightVisualizationMaterial,
-    // WASM bone texture functions
-    createBoneTextureFromWASM,
-    applyWASMBoneTextureToGeometry,
-    createMaterialFromWASMBoneTexture
-};
+/**
+ * Create a MeshDepthMaterial with the same extended skinning shader modifications.
+ * Three.js auto-generates shadow depth material that only supports 4 bones per vertex.
+ * Assign the returned material as mesh.customDepthMaterial for correct shadows.
+ *
+ * @param {Object} options - Same options as createExtendedSkinningMaterial
+ * @returns {THREE.MeshDepthMaterial}
+ */
+export function createExtendedDepthMaterial(options = {}) {
+    const maxInfluences = options.maxInfluences || 4;
+    const mode = getSkinningMode(maxInfluences);
+    const texelsPerVertex = options.texelsPerVertex || Math.ceil(maxInfluences / 2);
+
+    const depthMat = new THREE.MeshDepthMaterial({
+        depthPacking: THREE.RGBADepthPacking,
+    });
+
+    depthMat.onBeforeCompile = (shader) => {
+        if (mode === SkinningMode.EXTENDED_8) {
+            apply8BoneShaderMod(shader);
+        } else if (mode >= SkinningMode.TEXTURE_16) {
+            applyTextureBoneShaderMod(shader, options);
+        }
+    };
+
+    depthMat.customProgramCacheKey = function() {
+        return `ext-skinning-depth-${mode}-${maxInfluences}-${texelsPerVertex}`;
+    };
+
+    depthMat.needsUpdate = true;
+    return depthMat;
+}
