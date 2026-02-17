@@ -111,7 +111,7 @@ bool VariantApplier::ResetToDefaults(RenderScene *scene,
     for (const auto &vs : group.variant_sets) {
       if (vs.default_option_index >= 0 &&
           vs.default_option_index < static_cast<int32_t>(vs.options.size())) {
-        const auto &default_option = vs.options[vs.default_option_index];
+        const auto &default_option = vs.options[static_cast<size_t>(vs.default_option_index)];
 
         if (!ApplyVariantSelection(scene, group.prim_path, vs.name,
                                    default_option.name, err)) {
@@ -157,7 +157,7 @@ bool VariantApplier::ExtractVariantContent(RenderScene *scene,
     return false;
   }
 
-  const auto &group = scene->variant_groups[group_idx];
+  const auto &group = scene->variant_groups[static_cast<size_t>(group_idx)];
 
   // Find the variant set
   auto vs_it = std::find_if(
@@ -254,7 +254,7 @@ bool VariantApplier::SwapMeshMaterial(RenderScene *scene, int32_t mesh_id,
     return false;
   }
 
-  auto &mesh = scene->meshes[mesh_id];
+  auto &mesh = scene->meshes[static_cast<size_t>(mesh_id)];
 
   // Record the change
   VariantContentChange change;
@@ -329,6 +329,7 @@ bool VariantApplier::SetNodeVisibility(RenderScene *scene,
 int32_t VariantApplier::FindVariantMesh(RenderScene *scene,
                                          const std::string &prim_path,
                                          const std::string &variant_option_name) {
+  (void)scene;
   if (!enable_caching_) {
     // Without caching, would need to extract from variant definitions
     // Not implemented in this basic version
@@ -347,6 +348,7 @@ int32_t VariantApplier::FindVariantMesh(RenderScene *scene,
 int32_t VariantApplier::FindVariantMaterial(RenderScene *scene,
                                              const std::string &prim_path,
                                              const std::string &variant_option_name) {
+  (void)scene;
   if (!enable_caching_) {
     // Without caching, would need to extract from variant definitions
     // Not implemented in this basic version

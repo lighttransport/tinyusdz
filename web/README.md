@@ -48,6 +48,18 @@ wasm module(tinyusdz.js and tinyusdz.wasm) will be output to `js/src/tinyusdz` f
 
 See also: `bootstrap-examples.sh` for build configuration examples.
 
+## Known Issues
+
+### shared_ptr TimeSamples dedup breaks skeletal animation (2026-02)
+
+Commit `243928d9` ("Add shared_ptr TimeSamples dedup, move semantics, and half_to_float LUT") introduced a shared_ptr-based TimeSamples deduplication optimization in `primvar.hh` and `usdc-reader.cc`. This optimization causes SkelAnimation attributes (translations, rotations, scales) to lose their TimeSamples data during prim reconstruction, resulting in 0 animation channels/samplers.
+
+**Symptom**: Skeletal animations (e.g. CesiumMan.usdz) load as static meshes with no animation playback. Debug output shows `translations.has_timesamples()=0, has_value()=0, authored()=1`.
+
+**Root cause**: The mutable `ConvertToAnimatable` overload in `prim-reconstruct.cc` and the COW (copy-on-write) shared TimeSamples mechanism in `PrimVar` interact incorrectly during SkelAnimation property parsing. The branch was reset to `c62dc69a` (the last known good commit before the optimization).
+
+**Files involved**: `src/primvar.hh`, `src/prim-reconstruct.cc`, `src/usdc-reader.cc`, `src/crate-reader.hh`.
+
 ## Note
 
 * asyncify is disabled since it increases code size ~2.5x

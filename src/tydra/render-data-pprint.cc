@@ -123,6 +123,8 @@ std::string to_string(NodeType ntype) {
     return "pointLight";
   } else if (ntype == NodeType::DirectionalLight) {
     return "directionalLight";
+  } else if (ntype == NodeType::SkelRoot) {
+    return "skelroot";
   } else if (ntype == NodeType::Skeleton) {
     return "skeleton";
   } else if (ntype == NodeType::EnvmapLight) {
