@@ -13,6 +13,7 @@
 #include "prim-types.hh"
 #include "stage.hh"
 #include "usdShade.hh"  // For NodeGraph, Shader, ShaderNode
+#include "usdMtlx.hh"  // For MtlxOpenPBRSurface
 #include "value-pprint.hh"
 #include "color-space.hh"
 #include "render-data.hh"  // For SpectralData, SpectralIOR, SpectralEmission
@@ -450,30 +451,14 @@ bool ConvertShaderWithNodeGraphToJson(
   // Add shader connections (which inputs connect to NodeGraph outputs)
   ss << "  \"connections\": [\n";
   bool first_conn = true;
-  
-  const std::map<std::string, Property> *shader_props = &shader->props;
-  if (const ShaderNode *shader_node = shader->value.as<ShaderNode>()) {
-    shader_props = &shader_node->props;
-  }
-  
-  for (const auto &prop_pair : *shader_props) {
-    const std::string &prop_name = prop_pair.first;
-    if (prop_name.find("inputs:") != 0) continue;
-    
-    if (!prop_pair.second.is_attribute()) continue;
-    const Attribute &attr = prop_pair.second.get_attribute();
-    if (!attr.has_connections()) continue;
-    
-    const auto &conns = attr.connections();
-    if (conns.empty()) continue;
-    
-    std::string conn_path = conns[0].full_path_name();
+
+  // Helper: emit a connection entry from a connection path
+  std::string ng_elem_name = nodegraph_prim->element_name();
+  auto emitConnection = [&](const std::string &input_name, const std::string &conn_path) {
     // Check if connection points to our NodeGraph
-    if (conn_path.find(nodegraph_prim->element_name()) == std::string::npos) continue;
-    
-    std::string input_name = prop_name.substr(7);
-    
-    // Parse output name from connection
+    if (conn_path.find(ng_elem_name) == std::string::npos) return;
+
+    // Parse output name from connection path
     size_t dot_pos = conn_path.rfind('.');
     std::string output_name;
     if (dot_pos != std::string::npos) {
@@ -482,16 +467,72 @@ bool ConvertShaderWithNodeGraphToJson(
         output_name = output_name.substr(8);
       }
     }
-    
+
     if (!first_conn) ss << ",\n";
     first_conn = false;
-    
+
     ss << "    {\n";
     ss << "      \"input\": \"" << EscapeJsonString(input_name) << "\",\n";
-    ss << "      \"nodegraph\": \"" << EscapeJsonString(nodegraph_prim->element_name()) << "\",\n";
+    ss << "      \"nodegraph\": \"" << EscapeJsonString(ng_elem_name) << "\",\n";
     ss << "      \"output\": \"" << EscapeJsonString(output_name) << "\"\n";
     ss << "    }";
+  };
+
+  // Helper: check a typed attribute field for connections
+  auto checkTypedField = [&](const std::string &field_name, const auto &field) {
+    if (field.has_connections()) {
+      const auto &paths = field.get_connections();
+      if (!paths.empty()) {
+        emitConnection(field_name, paths[0].full_path_name());
+      }
+    }
+  };
+
+  // First: try generic props map (works for ShaderNode-based shaders)
+  const std::map<std::string, Property> *shader_props = &shader->props;
+  if (const ShaderNode *shader_node = shader->value.as<ShaderNode>()) {
+    shader_props = &shader_node->props;
   }
+
+  for (const auto &prop_pair : *shader_props) {
+    const std::string &prop_name = prop_pair.first;
+    if (prop_name.find("inputs:") != 0) continue;
+
+    if (!prop_pair.second.is_attribute()) continue;
+    const Attribute &attr = prop_pair.second.get_attribute();
+    if (!attr.has_connections()) continue;
+
+    const auto &conns = attr.connections();
+    if (conns.empty()) continue;
+
+    emitConnection(prop_name.substr(7), conns[0].full_path_name());
+  }
+
+  // Second: for MtlxOpenPBRSurface, check typed fields directly
+  // (props map is empty for typed shaders - connections stored in typed fields)
+  if (const MtlxOpenPBRSurface *opbr = shader->value.as<MtlxOpenPBRSurface>()) {
+    checkTypedField("base_weight", opbr->base_weight);
+    checkTypedField("base_color", opbr->base_color);
+    checkTypedField("base_metalness", opbr->base_metalness);
+    checkTypedField("base_diffuse_roughness", opbr->base_diffuse_roughness);
+    checkTypedField("specular_weight", opbr->specular_weight);
+    checkTypedField("specular_color", opbr->specular_color);
+    checkTypedField("specular_roughness", opbr->specular_roughness);
+    checkTypedField("specular_ior", opbr->specular_ior);
+    checkTypedField("specular_anisotropy", opbr->specular_anisotropy);
+    checkTypedField("specular_rotation", opbr->specular_rotation);
+    checkTypedField("transmission_weight", opbr->transmission_weight);
+    checkTypedField("transmission_color", opbr->transmission_color);
+    checkTypedField("transmission_depth", opbr->transmission_depth);
+    checkTypedField("subsurface_weight", opbr->subsurface_weight);
+    checkTypedField("subsurface_color", opbr->subsurface_color);
+    checkTypedField("coat_weight", opbr->coat_weight);
+    checkTypedField("coat_color", opbr->coat_color);
+    checkTypedField("coat_roughness", opbr->coat_roughness);
+    checkTypedField("emission_luminance", opbr->emission_luminance);
+    checkTypedField("emission_color", opbr->emission_color);
+  }
+
   ss << "\n  ]\n";
 
   ss << "}\n";
