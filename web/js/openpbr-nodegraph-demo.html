@@ -98,6 +98,7 @@
         .nodegraph-controls {
             display: flex;
             gap: 8px;
+            align-items: center;
         }
 
         .btn {
@@ -335,6 +336,129 @@
             font-size: 11px;
             padding: 5px 8px;
         }
+
+        /* Interactive toggle */
+        .toggle-container {
+            display: flex;
+            align-items: center;
+            gap: 5px;
+            font-size: 11px;
+            color: #aaa;
+            white-space: nowrap;
+        }
+
+        .toggle-switch {
+            position: relative;
+            width: 34px;
+            height: 18px;
+            cursor: pointer;
+        }
+
+        .toggle-switch input {
+            opacity: 0;
+            width: 0;
+            height: 0;
+        }
+
+        .toggle-slider {
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: #555;
+            border-radius: 9px;
+            transition: background 0.2s;
+        }
+
+        .toggle-slider::before {
+            content: '';
+            position: absolute;
+            width: 14px;
+            height: 14px;
+            left: 2px;
+            top: 2px;
+            background: #ccc;
+            border-radius: 50%;
+            transition: transform 0.2s;
+        }
+
+        .toggle-switch input:checked + .toggle-slider {
+            background: #4CAF50;
+        }
+
+        .toggle-switch input:checked + .toggle-slider::before {
+            transform: translateX(16px);
+        }
+
+        /* Separator line */
+        .controls-separator {
+            width: 1px;
+            height: 24px;
+            background: #555;
+            margin: 0 4px;
+        }
+
+        /* Fit button group */
+        .fit-group {
+            display: flex;
+            gap: 2px;
+            background: rgba(0, 0, 0, 0.3);
+            border-radius: 4px;
+            padding: 2px;
+        }
+
+        .fit-group .btn-fit {
+            background: #555;
+            color: #ccc;
+            border: none;
+            padding: 4px 8px;
+            border-radius: 3px;
+            cursor: pointer;
+            font-size: 11px;
+            font-weight: 500;
+            transition: all 0.15s;
+            display: flex;
+            align-items: center;
+            gap: 3px;
+            white-space: nowrap;
+        }
+
+        .fit-group .btn-fit:hover {
+            background: #FF9800;
+            color: white;
+        }
+
+        .fit-group .btn-fit svg {
+            width: 14px;
+            height: 14px;
+            fill: currentColor;
+        }
+
+        .fit-group .btn-fit .kbd {
+            font-size: 9px;
+            background: rgba(255, 255, 255, 0.15);
+            padding: 1px 4px;
+            border-radius: 2px;
+            font-family: monospace;
+        }
+
+        /* Edit mode indicator */
+        .edit-indicator {
+            position: absolute;
+            bottom: 10px;
+            left: 10px;
+            background: rgba(76, 175, 80, 0.85);
+            padding: 5px 10px;
+            border-radius: 4px;
+            font-size: 11px;
+            color: white;
+            display: none;
+        }
+
+        .edit-indicator.visible {
+            display: block;
+        }
     </style>
 </head>
 <body>
@@ -372,7 +496,28 @@
                     <button class="btn secondary" onclick="loadSample()">Sample</button>
                     <button class="btn" style="background:#9C27B0" onclick="loadBlenderSample()">Blender</button>
                     <button class="btn" style="background:#E91E63" id="btn-bridge" onclick="toggleBridge()">Connect</button>
-                    <button class="btn warning" onclick="fitGraph()">Fit View</button>
+                    <div class="fit-group">
+                        <button class="btn-fit" onclick="fitGraphWidth()" title="Fit Width (F)">
+                            <svg viewBox="0 0 24 24"><path d="M4 9h2V6h12v3h2V5a1 1 0 00-1-1H5a1 1 0 00-1 1v4zm0 6h2v3h12v-3h2v4a1 1 0 01-1 1H5a1 1 0 01-1-1v-4zm-3-3l3-3v6l-3-3zm22 0l-3 3V9l3 3z"/></svg>
+                            <span class="kbd">F</span>
+                        </button>
+                        <button class="btn-fit" onclick="fitGraphHeight()" title="Fit Height (A)">
+                            <svg viewBox="0 0 24 24"><path d="M9 4v2H6v12h3v2H5a1 1 0 01-1-1V5a1 1 0 011-1h4zm6 0v2h3v12h-3v2h4a1 1 0 001-1V5a1 1 0 00-1-1h-4zM12 1l-3 3h6l-3-3zm0 22l3-3H9l3 3z"/></svg>
+                            <span class="kbd">A</span>
+                        </button>
+                        <button class="btn-fit" onclick="fitGraphAll()" title="Fit All">
+                            <svg viewBox="0 0 24 24"><path d="M3 3h7V1H2a1 1 0 00-1 1v8h2V3zm0 18h7v2H2a1 1 0 01-1-1v-8h2v7zm18 0h-7v2h8a1 1 0 001-1v-8h-2v7zm0-18h-7V1h8a1 1 0 011 1v8h-2V3z"/></svg>
+                        </button>
+                    </div>
+                    <div class="controls-separator"></div>
+                    <button class="btn" id="btn-update" onclick="updateMaterialFromGraph()">Update</button>
+                    <label class="toggle-container">
+                        <span>Live</span>
+                        <label class="toggle-switch">
+                            <input type="checkbox" id="interactive-toggle" onchange="toggleInteractiveUpdate(this.checked)">
+                            <span class="toggle-slider"></span>
+                        </label>
+                    </label>
                 </div>
             </div>
             <canvas id="nodegraph-canvas"></canvas>
@@ -380,6 +525,7 @@
                 Nodes: <span id="node-count">0</span> |
                 Connections: <span id="connection-count">0</span>
             </div>
+            <div class="edit-indicator" id="edit-indicator">Graph modified - click Update or enable Live</div>
 
             <!-- Bridge connection panel -->
             <div class="bridge-panel" id="bridge-panel">
