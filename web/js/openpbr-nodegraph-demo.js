@@ -107,6 +107,7 @@ const state = {
     domeLightData: null,
     usdLights: [],          // Three.js lights created from USD
     defaultLights: [],      // Default directional lights
+    envEnabled: true,       // Whether envmap IBL is active
 };
 
 // ============================================================================
@@ -1219,20 +1220,24 @@ function setupDefaultLights() {
     state.defaultLights = [];
 
     const ambientLight = new THREE.AmbientLight(0xffffff, 0.4);
+    ambientLight.name = 'Ambient';
     state.scene.add(ambientLight);
     state.defaultLights.push(ambientLight);
 
     const mainLight = new THREE.DirectionalLight(0xffffff, 1.5);
+    mainLight.name = 'Key';
     mainLight.position.set(5, 10, 7);
     state.scene.add(mainLight);
     state.defaultLights.push(mainLight);
 
     const fillLight = new THREE.DirectionalLight(0x8888ff, 0.4);
+    fillLight.name = 'Fill';
     fillLight.position.set(-5, 3, -5);
     state.scene.add(fillLight);
     state.defaultLights.push(fillLight);
 
     const rimLight = new THREE.DirectionalLight(0xffaa88, 0.3);
+    rimLight.name = 'Rim';
     rimLight.position.set(0, -3, -5);
     state.scene.add(rimLight);
     state.defaultLights.push(rimLight);
@@ -1324,12 +1329,14 @@ async function loadEnvironment(preset) {
  * Apply the current envMap to the scene and all materials.
  */
 function applyEnvironment() {
-    state.scene.environment = state.envMap;
+    // Respect envEnabled toggle
+    const activeEnv = state.envEnabled ? state.envMap : null;
+    state.scene.environment = activeEnv;
     state.scene.background = state.showBackground ? state.envMap : new THREE.Color(0x1a1a2e);
 
     state.materials.forEach(mat => {
         mat.envMap = state.envMap;
-        mat.envMapIntensity = state.envIntensity;
+        mat.envMapIntensity = state.envEnabled ? state.envIntensity : 0;
         mat.needsUpdate = true;
     });
 
@@ -2417,6 +2424,8 @@ function updateEnvUI() {
 
     const showBg = document.getElementById('show-bg');
     if (showBg) showBg.checked = state.showBackground;
+
+    buildLightListUI();
 }
 
 window.changeEnvironment = function(preset) {
@@ -2452,6 +2461,125 @@ window.toggleBackground = function(show) {
 window.toggleLightingPanel = function() {
     const panel = document.getElementById('lighting-controls');
     panel.classList.toggle('collapsed');
+};
+
+// ============================================================================
+// Light List UI
+// ============================================================================
+
+/**
+ * Get a short type label for a Three.js light.
+ */
+function getLightTypeLabel(light) {
+    if (light.isAmbientLight) return 'Ambient';
+    if (light.isDirectionalLight) return 'Dir';
+    if (light.isPointLight) return 'Point';
+    if (light.isSpotLight) return 'Spot';
+    if (light.isRectAreaLight) return 'Rect';
+    if (light.isHemisphereLight) return 'Hemi';
+    // Groups (e.g. for distant/spot with target)
+    if (light.isGroup) {
+        const child = light.children.find(c => c.isLight);
+        if (child) return getLightTypeLabel(child);
+        return 'Group';
+    }
+    return 'Light';
+}
+
+/**
+ * Get a CSS color string from a Three.js light's color.
+ */
+function getLightColorCSS(light) {
+    let color = light.color;
+    if (!color && light.isGroup) {
+        const child = light.children.find(c => c.isLight);
+        if (child) color = child.color;
+    }
+    if (!color) return '#ffffff';
+    return `#${color.getHexString()}`;
+}
+
+/**
+ * Build the light list UI from current state.
+ * Called after scene loads or lights change.
+ */
+function buildLightListUI() {
+    const container = document.getElementById('light-list');
+    if (!container) return;
+    container.innerHTML = '';
+
+    // Envmap row
+    const envRow = document.createElement('div');
+    envRow.className = 'light-item';
+    envRow.innerHTML = `
+        <input type="checkbox" ${state.envEnabled ? 'checked' : ''}
+               onchange="toggleEnvMap(this.checked)" title="Toggle environment map">
+        <span class="light-swatch" style="background: linear-gradient(135deg, #fff, #999, #666)"></span>
+        <span class="light-label">Envmap</span>
+        <span class="light-type">IBL</span>
+    `;
+    container.appendChild(envRow);
+
+    // Default lights
+    for (let i = 0; i < state.defaultLights.length; i++) {
+        const light = state.defaultLights[i];
+        const row = createLightRow(light, 'default', i);
+        container.appendChild(row);
+    }
+
+    // USD lights
+    for (let i = 0; i < state.usdLights.length; i++) {
+        const light = state.usdLights[i];
+        const row = createLightRow(light, 'usd', i);
+        container.appendChild(row);
+    }
+}
+
+function createLightRow(light, source, index) {
+    const row = document.createElement('div');
+    row.className = 'light-item';
+
+    const name = light.name || `${source}_${index}`;
+    const typeLabel = getLightTypeLabel(light);
+    const colorCSS = getLightColorCSS(light);
+    const isOn = light.visible !== false;
+
+    row.innerHTML = `
+        <input type="checkbox" ${isOn ? 'checked' : ''}
+               onchange="toggleLight('${source}', ${index}, this.checked)" title="Toggle light">
+        <span class="light-swatch" style="background: ${colorCSS}"></span>
+        <span class="light-label">${name}</span>
+        <span class="light-type">${typeLabel}</span>
+    `;
+    return row;
+}
+
+window.toggleLight = function(source, index, enabled) {
+    let light;
+    if (source === 'default') {
+        light = state.defaultLights[index];
+    } else if (source === 'usd') {
+        light = state.usdLights[index];
+    }
+    if (!light) return;
+    light.visible = enabled;
+};
+
+window.toggleEnvMap = function(enabled) {
+    state.envEnabled = enabled;
+    if (enabled) {
+        state.scene.environment = state.envMap;
+        state.materials.forEach(mat => {
+            mat.envMapIntensity = state.envIntensity;
+            mat.needsUpdate = true;
+        });
+    } else {
+        state.scene.environment = null;
+        state.materials.forEach(mat => {
+            mat.envMapIntensity = 0;
+            mat.needsUpdate = true;
+        });
+    }
 };
 
 // ============================================================================
@@ -2716,6 +2844,7 @@ async function init() {
     // Load default studio environment (provides IBL reflections from the start)
     state.envMap = createStudioEnvironment();
     applyEnvironment();
+    buildLightListUI();
 
     // Init LiteGraph
     initLiteGraph();

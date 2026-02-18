@@ -539,6 +539,70 @@
         .lighting-controls input[type="checkbox"] {
             accent-color: #81D4FA;
         }
+
+        /* Light list */
+        .light-list-header {
+            color: #aaa;
+            font-size: 10px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            margin: 8px 0 4px 0;
+            padding-top: 6px;
+            border-top: 1px solid #444;
+        }
+
+        .light-list {
+            max-height: 160px;
+            overflow-y: auto;
+        }
+
+        .light-list::-webkit-scrollbar {
+            width: 4px;
+        }
+
+        .light-list::-webkit-scrollbar-thumb {
+            background: #555;
+            border-radius: 2px;
+        }
+
+        .light-item {
+            display: flex;
+            align-items: center;
+            gap: 5px;
+            padding: 2px 0;
+            font-size: 11px;
+        }
+
+        .light-item input[type="checkbox"] {
+            width: 13px;
+            height: 13px;
+            accent-color: #81D4FA;
+            cursor: pointer;
+            flex-shrink: 0;
+        }
+
+        .light-swatch {
+            width: 10px;
+            height: 10px;
+            border-radius: 2px;
+            border: 1px solid #666;
+            flex-shrink: 0;
+        }
+
+        .light-label {
+            color: #ccc;
+            flex: 1;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        .light-type {
+            color: #777;
+            font-size: 9px;
+            font-family: monospace;
+            flex-shrink: 0;
+        }
     </style>
 </head>
 <body>
@@ -603,6 +667,10 @@
                     <div class="control-row">
                         <label>Show BG:</label>
                         <input type="checkbox" id="show-bg" onchange="toggleBackground(this.checked)">
+                    </div>
+                    <div class="light-list-header">Lights</div>
+                    <div class="light-list" id="light-list">
+                        <!-- Populated dynamically by buildLightListUI() -->
                     </div>
                 </div>
             </div>
