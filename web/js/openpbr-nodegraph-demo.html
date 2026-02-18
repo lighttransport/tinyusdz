@@ -459,6 +459,86 @@
         .edit-indicator.visible {
             display: block;
         }
+
+        /* Lighting controls */
+        .lighting-controls {
+            position: absolute;
+            bottom: 40px;
+            right: 10px;
+            background: rgba(0, 0, 0, 0.85);
+            padding: 10px 12px;
+            border-radius: 8px;
+            z-index: 100;
+            min-width: 220px;
+            font-size: 12px;
+        }
+
+        .lighting-controls h4 {
+            margin: 0 0 8px 0;
+            color: #81D4FA;
+            font-size: 12px;
+            cursor: pointer;
+            user-select: none;
+        }
+
+        .lighting-controls h4::before {
+            content: '\25BC ';
+            font-size: 9px;
+        }
+
+        .lighting-controls.collapsed h4::before {
+            content: '\25B6 ';
+        }
+
+        .lighting-controls.collapsed .lighting-body {
+            display: none;
+        }
+
+        .lighting-controls .control-row {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            margin-bottom: 6px;
+        }
+
+        .lighting-controls .control-row:last-child {
+            margin-bottom: 0;
+        }
+
+        .lighting-controls label {
+            color: #aaa;
+            font-size: 11px;
+            min-width: 55px;
+            white-space: nowrap;
+        }
+
+        .lighting-controls select {
+            flex: 1;
+            background: #333;
+            color: #fff;
+            border: 1px solid #555;
+            padding: 3px 6px;
+            border-radius: 3px;
+            font-size: 11px;
+        }
+
+        .lighting-controls input[type="range"] {
+            flex: 1;
+            height: 4px;
+            accent-color: #81D4FA;
+        }
+
+        .lighting-controls .val-display {
+            color: #81D4FA;
+            font-size: 10px;
+            min-width: 28px;
+            text-align: right;
+            font-family: monospace;
+        }
+
+        .lighting-controls input[type="checkbox"] {
+            accent-color: #81D4FA;
+        }
     </style>
 </head>
 <body>
@@ -481,6 +561,50 @@
 
             <div class="help-text">
                 <kbd>Scroll</kbd> zoom | <kbd>Drag</kbd> orbit | <kbd>Right-drag</kbd> pan
+            </div>
+
+            <!-- Lighting Controls -->
+            <div class="lighting-controls" id="lighting-controls">
+                <h4 onclick="toggleLightingPanel()">Lighting</h4>
+                <div class="lighting-body">
+                    <div class="control-row">
+                        <label>Env:</label>
+                        <select id="env-select" onchange="changeEnvironment(this.value)">
+                            <option value="studio">Studio</option>
+                            <option value="usd_dome">USD DomeLight</option>
+                            <option value="constant_white">White</option>
+                            <option value="constant_warm">Warm</option>
+                            <option value="constant_cool">Cool</option>
+                        </select>
+                    </div>
+                    <div class="control-row">
+                        <label>Intensity:</label>
+                        <input type="range" id="env-intensity" min="0" max="5" step="0.1" value="1"
+                               oninput="changeEnvIntensity(parseFloat(this.value))">
+                        <span class="val-display" id="env-intensity-val">1.0</span>
+                    </div>
+                    <div class="control-row">
+                        <label>Exposure:</label>
+                        <input type="range" id="exposure" min="0" max="5" step="0.1" value="1"
+                               oninput="changeExposure(parseFloat(this.value))">
+                        <span class="val-display" id="exposure-val">1.0</span>
+                    </div>
+                    <div class="control-row">
+                        <label>Tonemap:</label>
+                        <select id="tonemap-select" onchange="changeToneMapping(this.value)">
+                            <option value="aces" selected>ACES</option>
+                            <option value="agx">AgX</option>
+                            <option value="neutral">Neutral</option>
+                            <option value="reinhard">Reinhard</option>
+                            <option value="linear">Linear</option>
+                            <option value="none">None</option>
+                        </select>
+                    </div>
+                    <div class="control-row">
+                        <label>Show BG:</label>
+                        <input type="checkbox" id="show-bg" onchange="toggleBackground(this.checked)">
+                    </div>
+                </div>
             </div>
         </div>
 

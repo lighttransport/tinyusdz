@@ -7,6 +7,8 @@
 
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
+// import { RGBELoader } from 'three/examples/jsm/loaders/RGBELoader.js';  // Available for HDR env presets
+// import { EXRLoader } from 'three/examples/jsm/loaders/EXRLoader.js';    // Available for EXR env presets
 import { TinyUSDZLoader } from 'tinyusdz/TinyUSDZLoader.js';
 import { TinyUSDZLoaderUtils } from 'tinyusdz/TinyUSDZLoaderUtils.js';
 import {
@@ -29,6 +31,27 @@ try {
 } catch (e) {
     console.warn('BridgeClient not available:', e.message);
 }
+
+// ============================================================================
+// Environment & Tone Mapping Configuration
+// ============================================================================
+
+const ENV_PRESETS = {
+    'studio': null,                     // Procedural gradient
+    'usd_dome': 'usd',                 // From loaded USD DomeLight
+    'constant_white': 'constant:#ffffff',
+    'constant_warm': 'constant:#fff5e0',
+    'constant_cool': 'constant:#e0f0ff',
+};
+
+const TONE_MAPPINGS = {
+    'aces': THREE.ACESFilmicToneMapping,
+    'agx': THREE.AgXToneMapping,
+    'neutral': THREE.NeutralToneMapping,
+    'reinhard': THREE.ReinhardToneMapping,
+    'linear': THREE.LinearToneMapping,
+    'none': THREE.NoToneMapping,
+};
 
 // ============================================================================
 // Global State
@@ -69,7 +92,21 @@ const state = {
 
     // Picking
     selectedObject: null,
-    selectionHelper: null
+    selectionHelper: null,
+
+    // Environment
+    pmremGenerator: null,
+    envMap: null,
+    envPreset: 'studio',
+    envIntensity: 1.0,
+    showBackground: false,
+    toneMapping: 'aces',
+    exposure: 1.0,
+
+    // USD lights
+    domeLightData: null,
+    usdLights: [],          // Three.js lights created from USD
+    defaultLights: [],      // Default directional lights
 };
 
 // ============================================================================
@@ -1163,8 +1200,12 @@ function initThreeJS() {
     // Object picking
     canvas.addEventListener('click', onCanvasClick);
 
-    // Add lights
-    setupLights();
+    // Initialize PMREMGenerator for environment maps
+    state.pmremGenerator = new THREE.PMREMGenerator(state.renderer);
+    state.pmremGenerator.compileEquirectangularShader();
+
+    // Add default lights (can be toggled when USD lights are loaded)
+    setupDefaultLights();
 
     // Add grid
     const gridHelper = new THREE.GridHelper(10, 10, 0x333355, 0x222244);
@@ -1174,21 +1215,268 @@ function initThreeJS() {
     window.addEventListener('resize', onWindowResize);
 }
 
-function setupLights() {
+function setupDefaultLights() {
+    state.defaultLights = [];
+
     const ambientLight = new THREE.AmbientLight(0xffffff, 0.4);
     state.scene.add(ambientLight);
+    state.defaultLights.push(ambientLight);
 
     const mainLight = new THREE.DirectionalLight(0xffffff, 1.5);
     mainLight.position.set(5, 10, 7);
     state.scene.add(mainLight);
+    state.defaultLights.push(mainLight);
 
     const fillLight = new THREE.DirectionalLight(0x8888ff, 0.4);
     fillLight.position.set(-5, 3, -5);
     state.scene.add(fillLight);
+    state.defaultLights.push(fillLight);
 
     const rimLight = new THREE.DirectionalLight(0xffaa88, 0.3);
     rimLight.position.set(0, -3, -5);
     state.scene.add(rimLight);
+    state.defaultLights.push(rimLight);
+}
+
+// ============================================================================
+// Environment Map Functions
+// ============================================================================
+
+/**
+ * Create a procedural studio environment (gradient: white top → gray middle → dark bottom).
+ */
+function createStudioEnvironment() {
+    const canvas = document.createElement('canvas');
+    canvas.width = 256;
+    canvas.height = 256;
+    const ctx = canvas.getContext('2d');
+
+    const gradient = ctx.createLinearGradient(0, 0, 0, 256);
+    gradient.addColorStop(0, '#ffffff');
+    gradient.addColorStop(0.5, '#cccccc');
+    gradient.addColorStop(1, '#666666');
+    ctx.fillStyle = gradient;
+    ctx.fillRect(0, 0, 256, 256);
+
+    const texture = new THREE.CanvasTexture(canvas);
+    texture.mapping = THREE.EquirectangularReflectionMapping;
+    return state.pmremGenerator.fromEquirectangular(texture).texture;
+}
+
+/**
+ * Create a solid-color constant environment map.
+ * @param {string} hexColor - CSS hex color (e.g. '#ffffff')
+ */
+function createConstantColorEnvironment(hexColor) {
+    const canvas = document.createElement('canvas');
+    canvas.width = 256;
+    canvas.height = 256;
+    const ctx = canvas.getContext('2d');
+
+    ctx.fillStyle = hexColor;
+    ctx.fillRect(0, 0, 256, 256);
+
+    const texture = new THREE.CanvasTexture(canvas);
+    texture.mapping = THREE.EquirectangularReflectionMapping;
+    texture.colorSpace = THREE.LinearSRGBColorSpace;
+
+    return state.pmremGenerator.fromEquirectangular(texture).texture;
+}
+
+/**
+ * Load an environment map from a preset key.
+ * Handles 'studio', 'usd_dome', and 'constant:*' presets.
+ */
+async function loadEnvironment(preset) {
+    state.envPreset = preset;
+    const path = ENV_PRESETS[preset];
+
+    if (!path) {
+        // Studio (procedural gradient)
+        state.envMap = createStudioEnvironment();
+        applyEnvironment();
+        return;
+    }
+
+    if (path === 'usd') {
+        // Use stored dome light env map
+        if (state.domeLightData && state.domeLightData.texture) {
+            state.envMap = state.domeLightData.texture;
+            state.envIntensity = state.domeLightData.intensity || 1.0;
+            applyEnvironment();
+        } else {
+            showToast('No USD DomeLight available, using studio');
+            state.envMap = createStudioEnvironment();
+            applyEnvironment();
+        }
+        return;
+    }
+
+    if (path.startsWith('constant:')) {
+        const hexColor = path.substring('constant:'.length);
+        state.envMap = createConstantColorEnvironment(hexColor);
+        applyEnvironment();
+        return;
+    }
+}
+
+/**
+ * Apply the current envMap to the scene and all materials.
+ */
+function applyEnvironment() {
+    state.scene.environment = state.envMap;
+    state.scene.background = state.showBackground ? state.envMap : new THREE.Color(0x1a1a2e);
+
+    state.materials.forEach(mat => {
+        mat.envMap = state.envMap;
+        mat.envMapIntensity = state.envIntensity;
+        mat.needsUpdate = true;
+    });
+
+    // Update renderer tone mapping
+    const tmValue = TONE_MAPPINGS[state.toneMapping];
+    if (tmValue !== undefined) {
+        state.renderer.toneMapping = tmValue;
+    }
+    state.renderer.toneMappingExposure = state.exposure;
+}
+
+// ============================================================================
+// USD Light Loading
+// ============================================================================
+
+/**
+ * Remove all USD-created lights from the scene.
+ */
+function clearUSDLights() {
+    for (const light of state.usdLights) {
+        state.scene.remove(light);
+        if (light.dispose) light.dispose();
+    }
+    state.usdLights = [];
+    state.domeLightData = null;
+}
+
+/**
+ * Load non-dome USD lights (point, distant, rect, spot) from the USD scene.
+ * Converts USD light types to Three.js light objects.
+ */
+async function loadUSDLights(usdLoader) {
+    if (!usdLoader || !usdLoader.numLights) return;
+
+    const numLights = usdLoader.numLights();
+    if (numLights === 0) return;
+
+    let loadedCount = 0;
+
+    for (let i = 0; i < numLights; i++) {
+        let lightData;
+        try {
+            lightData = usdLoader.getLight(i);
+        } catch (e) {
+            continue;
+        }
+        if (!lightData || lightData.error) continue;
+
+        const type = (lightData.type || '').toLowerCase();
+
+        // Skip dome lights (handled separately)
+        if (type === 'dome' || type === 'domelight') continue;
+
+        // Calculate intensity: intensity * 2^exposure
+        let intensity = lightData.intensity !== undefined ? lightData.intensity : 1.0;
+        if (lightData.exposure && lightData.exposure !== 0) {
+            intensity *= Math.pow(2, lightData.exposure);
+        }
+
+        const color = new THREE.Color(
+            lightData.color?.[0] || 1,
+            lightData.color?.[1] || 1,
+            lightData.color?.[2] || 1
+        );
+
+        // Extract transform
+        const position = new THREE.Vector3(
+            lightData.position?.[0] || 0,
+            lightData.position?.[1] || 0,
+            lightData.position?.[2] || 0
+        );
+        const quaternion = new THREE.Quaternion();
+
+        if (lightData.transform && lightData.transform.length === 16) {
+            const matrix = new THREE.Matrix4();
+            matrix.fromArray(lightData.transform);
+            const scale = new THREE.Vector3();
+            matrix.decompose(position, quaternion, scale);
+        }
+
+        let light = null;
+        let lightGroup = null;
+
+        switch (type) {
+            case 'point':
+            case 'sphere': {
+                if (lightData.shapingConeAngle && lightData.shapingConeAngle < 90) {
+                    light = new THREE.SpotLight(color, intensity);
+                    light.angle = THREE.MathUtils.degToRad(lightData.shapingConeAngle);
+                    light.penumbra = lightData.shapingConeSoftness || 0;
+                    light.decay = 2;
+                    lightGroup = new THREE.Group();
+                    lightGroup.add(light);
+                    light.target.position.set(0, 0, -5);
+                    lightGroup.add(light.target);
+                } else {
+                    light = new THREE.PointLight(color, intensity);
+                    light.decay = 2;
+                    light.position.copy(position);
+                }
+                break;
+            }
+            case 'distant': {
+                light = new THREE.DirectionalLight(color, intensity);
+                lightGroup = new THREE.Group();
+                light.position.set(0, 0, 0);
+                light.target.position.set(0, 0, -1);
+                lightGroup.add(light);
+                lightGroup.add(light.target);
+                lightGroup.quaternion.copy(quaternion);
+                const direction = new THREE.Vector3(0, 0, -1).applyQuaternion(quaternion);
+                lightGroup.position.copy(direction.multiplyScalar(-50));
+                break;
+            }
+            case 'rect': {
+                const width = lightData.width || 1;
+                const height = lightData.height || 1;
+                light = new THREE.RectAreaLight(color, intensity, width, height);
+                light.position.copy(position);
+                light.quaternion.copy(quaternion);
+                break;
+            }
+            default:
+                continue;
+        }
+
+        if (!light) continue;
+
+        const obj = lightGroup || light;
+        // For distant lights, position/quaternion are already set inside the case
+        if (lightGroup && type !== 'distant') {
+            lightGroup.position.copy(position);
+            lightGroup.quaternion.copy(quaternion);
+        } else if (!lightGroup && type !== 'point' && type !== 'sphere') {
+            // Non-group lights that haven't had position set yet
+            light.position.copy(position);
+        }
+
+        obj.name = lightData.name || `USDLight_${i}`;
+        state.scene.add(obj);
+        state.usdLights.push(obj);
+        loadedCount++;
+    }
+
+    if (loadedCount > 0) {
+        console.log(`Loaded ${loadedCount} USD lights`);
+    }
 }
 
 function onWindowResize() {
@@ -1681,6 +1969,35 @@ async function buildScene() {
     state.scene.add(root);
     fitCameraToObject(root);
 
+    // Load USD lights (DomeLight for environment, others for direct lighting)
+    clearUSDLights();
+
+    try {
+        const domeLightData = await TinyUSDZLoaderUtils.loadDomeLightFromUSD(usd, state.pmremGenerator);
+        if (domeLightData) {
+            state.domeLightData = domeLightData;
+            state.envMap = domeLightData.texture;
+            state.envIntensity = domeLightData.intensity || 1.0;
+            state.envPreset = 'usd_dome';
+            applyEnvironment();
+            updateEnvUI();
+            console.log('DomeLight loaded from USD');
+        }
+    } catch (e) {
+        console.warn('Failed to load DomeLight:', e);
+    }
+
+    // Load non-dome USD lights
+    await loadUSDLights(usd);
+
+    // If no DomeLight found, use studio environment
+    if (!state.domeLightData) {
+        state.envPreset = 'studio';
+        state.envMap = createStudioEnvironment();
+        applyEnvironment();
+        updateEnvUI();
+    }
+
     const numMeshes = usd.numMeshes();
     updateStatus(`Loaded: ${numMeshes} meshes, ${state.materials.length} materials`);
     document.getElementById('mesh-count').textContent = numMeshes;
@@ -1844,6 +2161,13 @@ function createSampleScene() {
     state.scene.add(state.currentModel);
 
     fitCameraToObject(state.currentModel);
+
+    // Apply studio environment to sample scene
+    clearUSDLights();
+    state.envPreset = 'studio';
+    state.envMap = createStudioEnvironment();
+    applyEnvironment();
+    updateEnvUI();
 
     // Update UI
     updateMaterialSelector();
@@ -2065,6 +2389,69 @@ window.toggleInteractiveUpdate = function(enabled) {
 // Expose markGraphDirty for node widget callbacks
 window._mtlxMarkDirty = function() {
     markGraphDirty();
+};
+
+// ============================================================================
+// Lighting Control Functions
+// ============================================================================
+
+/**
+ * Update the lighting UI controls to reflect current state.
+ */
+function updateEnvUI() {
+    const envSelect = document.getElementById('env-select');
+    if (envSelect) envSelect.value = state.envPreset;
+
+    const intensitySlider = document.getElementById('env-intensity');
+    const intensityVal = document.getElementById('env-intensity-val');
+    if (intensitySlider) intensitySlider.value = state.envIntensity;
+    if (intensityVal) intensityVal.textContent = state.envIntensity.toFixed(1);
+
+    const exposureSlider = document.getElementById('exposure');
+    const exposureVal = document.getElementById('exposure-val');
+    if (exposureSlider) exposureSlider.value = state.exposure;
+    if (exposureVal) exposureVal.textContent = state.exposure.toFixed(1);
+
+    const tonemapSelect = document.getElementById('tonemap-select');
+    if (tonemapSelect) tonemapSelect.value = state.toneMapping;
+
+    const showBg = document.getElementById('show-bg');
+    if (showBg) showBg.checked = state.showBackground;
+}
+
+window.changeEnvironment = function(preset) {
+    loadEnvironment(preset);
+    showToast(`Environment: ${preset}`);
+};
+
+window.changeEnvIntensity = function(val) {
+    state.envIntensity = val;
+    document.getElementById('env-intensity-val').textContent = val.toFixed(1);
+    applyEnvironment();
+};
+
+window.changeExposure = function(val) {
+    state.exposure = val;
+    document.getElementById('exposure-val').textContent = val.toFixed(1);
+    state.renderer.toneMappingExposure = val;
+};
+
+window.changeToneMapping = function(mode) {
+    state.toneMapping = mode;
+    const tmValue = TONE_MAPPINGS[mode];
+    if (tmValue !== undefined) {
+        state.renderer.toneMapping = tmValue;
+    }
+};
+
+window.toggleBackground = function(show) {
+    state.showBackground = show;
+    state.scene.background = show ? state.envMap : new THREE.Color(0x1a1a2e);
+};
+
+window.toggleLightingPanel = function() {
+    const panel = document.getElementById('lighting-controls');
+    panel.classList.toggle('collapsed');
 };
 
 // ============================================================================
@@ -2325,6 +2712,10 @@ async function init() {
 
     // Init Three.js
     initThreeJS();
+
+    // Load default studio environment (provides IBL reflections from the start)
+    state.envMap = createStudioEnvironment();
+    applyEnvironment();
 
     // Init LiteGraph
     initLiteGraph();
