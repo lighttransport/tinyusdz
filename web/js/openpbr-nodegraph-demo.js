@@ -96,7 +96,8 @@ const state = {
 
     // Environment
     pmremGenerator: null,
-    envMap: null,
+    envMap: null,          // PMREM-processed (for IBL reflections via scene.environment)
+    envMapSource: null,    // Original equirectangular texture (for scene.background)
     envPreset: 'studio',
     envIntensity: 1.0,
     showBackground: false,
@@ -1249,6 +1250,7 @@ function setupDefaultLights() {
 
 /**
  * Create a procedural studio environment (gradient: white top → gray middle → dark bottom).
+ * Returns { envMap, source } where envMap is PMREM-processed and source is equirectangular.
  */
 function createStudioEnvironment() {
     const canvas = document.createElement('canvas');
@@ -1263,13 +1265,15 @@ function createStudioEnvironment() {
     ctx.fillStyle = gradient;
     ctx.fillRect(0, 0, 256, 256);
 
-    const texture = new THREE.CanvasTexture(canvas);
-    texture.mapping = THREE.EquirectangularReflectionMapping;
-    return state.pmremGenerator.fromEquirectangular(texture).texture;
+    const source = new THREE.CanvasTexture(canvas);
+    source.mapping = THREE.EquirectangularReflectionMapping;
+    const envMap = state.pmremGenerator.fromEquirectangular(source).texture;
+    return { envMap, source };
 }
 
 /**
  * Create a solid-color constant environment map.
+ * Returns { envMap, source } where envMap is PMREM-processed and source is equirectangular.
  * @param {string} hexColor - CSS hex color (e.g. '#ffffff')
  */
 function createConstantColorEnvironment(hexColor) {
@@ -1281,24 +1285,33 @@ function createConstantColorEnvironment(hexColor) {
     ctx.fillStyle = hexColor;
     ctx.fillRect(0, 0, 256, 256);
 
-    const texture = new THREE.CanvasTexture(canvas);
-    texture.mapping = THREE.EquirectangularReflectionMapping;
-    texture.colorSpace = THREE.LinearSRGBColorSpace;
+    const source = new THREE.CanvasTexture(canvas);
+    source.mapping = THREE.EquirectangularReflectionMapping;
+    source.colorSpace = THREE.LinearSRGBColorSpace;
 
-    return state.pmremGenerator.fromEquirectangular(texture).texture;
+    const envMap = state.pmremGenerator.fromEquirectangular(source).texture;
+    return { envMap, source };
 }
 
 /**
  * Load an environment map from a preset key.
  * Handles 'studio', 'usd_dome', and 'constant:*' presets.
  */
+/**
+ * Set both envMap (PMREM) and envMapSource (equirectangular) from a result object.
+ */
+function setEnvFromResult(result) {
+    state.envMap = result.envMap;
+    state.envMapSource = result.source;
+}
+
 async function loadEnvironment(preset) {
     state.envPreset = preset;
     const path = ENV_PRESETS[preset];
 
     if (!path) {
         // Studio (procedural gradient)
-        state.envMap = createStudioEnvironment();
+        setEnvFromResult(createStudioEnvironment());
         applyEnvironment();
         return;
     }
@@ -1307,11 +1320,13 @@ async function loadEnvironment(preset) {
         // Use stored dome light env map
         if (state.domeLightData && state.domeLightData.texture) {
             state.envMap = state.domeLightData.texture;
+            // DomeLight source may not have a separate equirect; use PMREM for both
+            state.envMapSource = state.domeLightData.sourceTexture || state.domeLightData.texture;
             state.envIntensity = state.domeLightData.intensity || 1.0;
             applyEnvironment();
         } else {
             showToast('No USD DomeLight available, using studio');
-            state.envMap = createStudioEnvironment();
+            setEnvFromResult(createStudioEnvironment());
             applyEnvironment();
         }
         return;
@@ -1319,7 +1334,7 @@ async function loadEnvironment(preset) {
 
     if (path.startsWith('constant:')) {
         const hexColor = path.substring('constant:'.length);
-        state.envMap = createConstantColorEnvironment(hexColor);
+        setEnvFromResult(createConstantColorEnvironment(hexColor));
         applyEnvironment();
         return;
     }
@@ -1329,14 +1344,18 @@ async function loadEnvironment(preset) {
  * Apply the current envMap to the scene and all materials.
  */
 function applyEnvironment() {
-    // Respect envEnabled toggle
-    const activeEnv = state.envEnabled ? state.envMap : null;
-    state.scene.environment = activeEnv;
-    state.scene.background = state.showBackground ? state.envMap : new THREE.Color(0x1a1a2e);
+    // scene.environment drives IBL for all MeshStandardMaterial/MeshPhysicalMaterial
+    state.scene.environment = state.envEnabled ? state.envMap : null;
 
+    // Use the original equirectangular source for background (renders correctly)
+    // Fall back to PMREM texture if no source is available
+    const bgTexture = state.envMapSource || state.envMap;
+    state.scene.background = state.showBackground ? bgTexture : new THREE.Color(0x1a1a2e);
+
+    // Set envMapIntensity on all materials (don't set mat.envMap — let scene.environment handle it)
+    const intensity = state.envEnabled ? state.envIntensity : 0;
     state.materials.forEach(mat => {
-        mat.envMap = state.envMap;
-        mat.envMapIntensity = state.envEnabled ? state.envIntensity : 0;
+        mat.envMapIntensity = intensity;
         mat.needsUpdate = true;
     });
 
@@ -1984,6 +2003,7 @@ async function buildScene() {
         if (domeLightData) {
             state.domeLightData = domeLightData;
             state.envMap = domeLightData.texture;
+            state.envMapSource = domeLightData.sourceTexture || domeLightData.texture;
             state.envIntensity = domeLightData.intensity || 1.0;
             state.envPreset = 'usd_dome';
             applyEnvironment();
@@ -2000,7 +2020,7 @@ async function buildScene() {
     // If no DomeLight found, use studio environment
     if (!state.domeLightData) {
         state.envPreset = 'studio';
-        state.envMap = createStudioEnvironment();
+        setEnvFromResult(createStudioEnvironment());
         applyEnvironment();
         updateEnvUI();
     }
@@ -2172,7 +2192,7 @@ function createSampleScene() {
     // Apply studio environment to sample scene
     clearUSDLights();
     state.envPreset = 'studio';
-    state.envMap = createStudioEnvironment();
+    setEnvFromResult(createStudioEnvironment());
     applyEnvironment();
     updateEnvUI();
 
@@ -2455,7 +2475,8 @@ window.changeToneMapping = function(mode) {
 
 window.toggleBackground = function(show) {
     state.showBackground = show;
-    state.scene.background = show ? state.envMap : new THREE.Color(0x1a1a2e);
+    const bgTexture = state.envMapSource || state.envMap;
+    state.scene.background = show ? bgTexture : new THREE.Color(0x1a1a2e);
 };
 
 window.toggleLightingPanel = function() {
@@ -2567,19 +2588,7 @@ window.toggleLight = function(source, index, enabled) {
 
 window.toggleEnvMap = function(enabled) {
     state.envEnabled = enabled;
-    if (enabled) {
-        state.scene.environment = state.envMap;
-        state.materials.forEach(mat => {
-            mat.envMapIntensity = state.envIntensity;
-            mat.needsUpdate = true;
-        });
-    } else {
-        state.scene.environment = null;
-        state.materials.forEach(mat => {
-            mat.envMapIntensity = 0;
-            mat.needsUpdate = true;
-        });
-    }
+    applyEnvironment();
 };
 
 // ============================================================================
@@ -2842,7 +2851,7 @@ async function init() {
     initThreeJS();
 
     // Load default studio environment (provides IBL reflections from the start)
-    state.envMap = createStudioEnvironment();
+    setEnvFromResult(createStudioEnvironment());
     applyEnvironment();
     buildLightListUI();
 
