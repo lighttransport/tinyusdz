@@ -8,6 +8,7 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { TinyUSDZLoader } from 'tinyusdz/TinyUSDZLoader.js';
+import { TinyUSDZLoaderUtils } from 'tinyusdz/TinyUSDZLoaderUtils.js';
 import {
     MtlxNodeGraphProcessor,
     createOpenPBRMaterial,
@@ -55,7 +56,16 @@ const state = {
 
     // Blender Bridge
     bridgeClient: null,
-    bridgeConnected: false
+    bridgeConnected: false,
+
+    // Node graph editing
+    interactiveUpdate: false,
+    graphDirty: false,
+    updateDebounceTimer: null,
+
+    // Picking
+    selectedObject: null,
+    selectionHelper: null
 };
 
 // ============================================================================
@@ -68,20 +78,57 @@ function registerMtlxNodeTypes() {
         this.color = '#335544';
     }
 
-    // Constant node
+    // Constant node (with editable value widget)
     function ConstantNode() {
         this.addOutput('out', 'color3');
-        this.properties = { value: [0.8, 0.8, 0.8] };
+        this.properties = { value: [0.8, 0.8, 0.8], valueType: 'color3' };
         this.color = '#445566';
-        this.size = [160, 60];
+        this.size = [180, 90];
+        this._setupWidgets();
     }
     ConstantNode.title = 'Constant';
+    ConstantNode.prototype._setupWidgets = function() {
+        // Remove existing widgets
+        this.widgets = [];
+        const v = this.properties.value;
+        if (Array.isArray(v) && v.length >= 3) {
+            this.properties.valueType = 'color3';
+            this.size = [200, 120];
+            this.addWidget('slider', 'R', v[0], (val) => {
+                this.properties.value[0] = val;
+                this.setDirtyCanvas(true);
+                if (window._mtlxMarkDirty) window._mtlxMarkDirty();
+            }, { min: 0, max: 1 });
+            this.addWidget('slider', 'G', v[1], (val) => {
+                this.properties.value[1] = val;
+                this.setDirtyCanvas(true);
+                if (window._mtlxMarkDirty) window._mtlxMarkDirty();
+            }, { min: 0, max: 1 });
+            this.addWidget('slider', 'B', v[2], (val) => {
+                this.properties.value[2] = val;
+                this.setDirtyCanvas(true);
+                if (window._mtlxMarkDirty) window._mtlxMarkDirty();
+            }, { min: 0, max: 1 });
+        } else {
+            this.properties.valueType = 'float';
+            const numVal = (typeof v === 'number') ? v : 0;
+            this.size = [200, 65];
+            this.addWidget('slider', 'Value', numVal, (val) => {
+                this.properties.value = val;
+                this.setDirtyCanvas(true);
+                if (window._mtlxMarkDirty) window._mtlxMarkDirty();
+            }, { min: 0, max: 1 });
+        }
+    };
     ConstantNode.prototype.onDrawForeground = function(ctx) {
         const v = this.properties.value;
-        if (Array.isArray(v)) {
+        if (Array.isArray(v) && v.length >= 3) {
             ctx.fillStyle = `rgb(${Math.floor(v[0]*255)},${Math.floor(v[1]*255)},${Math.floor(v[2]*255)})`;
-            ctx.fillRect(10, 30, this.size[0] - 20, 20);
+            ctx.fillRect(10, this.size[1] - 25, this.size[0] - 20, 18);
         }
+    };
+    ConstantNode.prototype.onPropertyChanged = function() {
+        this._setupWidgets();
     };
     LiteGraph.registerNodeType('mtlx/constant', ConstantNode);
 
@@ -148,14 +195,20 @@ function registerMtlxNodeTypes() {
         LiteGraph.registerNodeType(`mtlx/${op.name}`, NodeClass);
     }
 
-    // Mix node
+    // Mix node (with editable mix factor)
     function MixNode() {
         this.addInput('bg', 'color3');
         this.addInput('fg', 'color3');
         this.addInput('mix', 'float');
         this.addOutput('out', 'color3');
+        this.properties = { mix: 0.5 };
         this.color = '#665555';
-        this.size = [120, 80];
+        this.size = [140, 90];
+
+        this.addWidget('number', 'Mix', 0.5, (v) => {
+            this.properties.mix = Math.max(0, Math.min(1, v));
+            if (window._mtlxMarkDirty) window._mtlxMarkDirty();
+        }, { min: 0, max: 1, step: 0.05 });
     }
     MixNode.title = 'Mix';
     LiteGraph.registerNodeType('mtlx/mix', MixNode);
@@ -212,13 +265,19 @@ function registerMtlxNodeTypes() {
     HsvAdjustNode.title = 'HSV Adjust';
     LiteGraph.registerNodeType('mtlx/hsvadjust', HsvAdjustNode);
 
-    // Invert node
+    // Invert node (with editable amount)
     function InvertNode() {
         this.addInput('in', 'color3');
         this.addInput('amount', 'float');
         this.addOutput('out', 'color3');
+        this.properties = { amount: 1.0 };
         this.color = '#554455';
-        this.size = [120, 60];
+        this.size = [140, 75];
+
+        this.addWidget('number', 'Amount', 1.0, (v) => {
+            this.properties.amount = Math.max(0, Math.min(1, v));
+            if (window._mtlxMarkDirty) window._mtlxMarkDirty();
+        }, { min: 0, max: 1, step: 0.05 });
     }
     InvertNode.title = 'Invert';
     LiteGraph.registerNodeType('mtlx/invert', InvertNode);
@@ -291,6 +350,53 @@ function registerMtlxNodeTypes() {
     OpenPBRSurfaceNode.title = 'OpenPBR Surface';
     LiteGraph.registerNodeType('mtlx/openpbr_surface', OpenPBRSurfaceNode);
 
+    // Convert node (type conversion pass-through, e.g. color4→color3, float→color3)
+    function ConvertNode() {
+        this.addInput('in', 'any');
+        this.addOutput('out', 'any');
+        this.color = '#555566';
+        this.size = [100, 50];
+    }
+    ConvertNode.title = 'Convert';
+    LiteGraph.registerNodeType('mtlx/convert', ConvertNode);
+
+    // Tangent node
+    function TangentNode() {
+        this.addOutput('out', 'vector3');
+        this.properties = { space: 'object' };
+        this.color = '#445566';
+        this.size = [110, 50];
+    }
+    TangentNode.title = 'Tangent';
+    TangentNode.prototype.onDrawForeground = function(ctx) {
+        ctx.fillStyle = '#888';
+        ctx.font = '10px sans-serif';
+        ctx.fillText(this.properties.space, 10, 35);
+    };
+    LiteGraph.registerNodeType('mtlx/tangent', TangentNode);
+
+    // Crossproduct node
+    function CrossProductNode() {
+        this.addInput('in1', 'vector3');
+        this.addInput('in2', 'vector3');
+        this.addOutput('out', 'vector3');
+        this.color = '#555566';
+        this.size = [120, 60];
+    }
+    CrossProductNode.title = 'Cross';
+    LiteGraph.registerNodeType('mtlx/crossproduct', CrossProductNode);
+
+    // Dot product node
+    function DotProductNode() {
+        this.addInput('in1', 'vector3');
+        this.addInput('in2', 'vector3');
+        this.addOutput('out', 'float');
+        this.color = '#555566';
+        this.size = [120, 60];
+    }
+    DotProductNode.title = 'Dot';
+    LiteGraph.registerNodeType('mtlx/dotproduct', DotProductNode);
+
     // Generic node for unknown types
     function GenericNode() {
         this.addInput('in', 'any');
@@ -335,6 +441,9 @@ function initLiteGraph() {
     // Handle resize
     resizeGraphCanvas();
     window.addEventListener('resize', resizeGraphCanvas);
+
+    // Hook change events for editing
+    hookGraphChangeEvents();
 }
 
 function resizeGraphCanvas() {
@@ -355,6 +464,8 @@ function resizeGraphCanvas() {
 // ============================================================================
 
 function buildLiteGraphFromMtlx(nodeGraphData, materialName) {
+    // Suppress dirty notifications during graph building
+    state._buildingGraph = true;
     state.graph.clear();
 
     if (!nodeGraphData || !nodeGraphData.nodegraph) {
@@ -362,6 +473,7 @@ function buildLiteGraphFromMtlx(nodeGraphData, materialName) {
         const constNode = LiteGraph.createNode('mtlx/constant');
         constNode.pos = [100, 200];
         constNode.properties.value = [0.8, 0.8, 0.8];
+        constNode._setupWidgets();
         state.graph.add(constNode);
 
         const surfaceNode = LiteGraph.createNode('mtlx/openpbr_surface');
@@ -371,6 +483,9 @@ function buildLiteGraphFromMtlx(nodeGraphData, materialName) {
 
         constNode.connect(0, surfaceNode, 0);
 
+        state._buildingGraph = false;
+        state.graphDirty = false;
+        document.getElementById('edit-indicator').classList.remove('visible');
         updateNodeStats();
         return;
     }
@@ -423,6 +538,10 @@ function buildLiteGraphFromMtlx(nodeGraphData, materialName) {
         if (node.value !== undefined) {
             lgNode.properties = lgNode.properties || {};
             lgNode.properties.value = node.value;
+            // Re-setup widgets if the node supports it (e.g., constant nodes)
+            if (typeof lgNode._setupWidgets === 'function') {
+                lgNode._setupWidgets();
+            }
         }
 
         if (node.inputs) {
@@ -445,6 +564,12 @@ function buildLiteGraphFromMtlx(nodeGraphData, materialName) {
             lgNode.properties = lgNode.properties || {};
             const fileInput = node.inputs?.find(i => i.name === 'file');
             lgNode.properties.file = fileInput?.value || '';
+        }
+
+        if (category === 'tangent' || category === 'normal' || category === 'position') {
+            lgNode.properties = lgNode.properties || {};
+            const spaceInput = node.inputs?.find(i => i.name === 'space');
+            lgNode.properties.space = spaceInput?.value || 'object';
         }
 
         state.graph.add(lgNode);
@@ -484,38 +609,48 @@ function buildLiteGraphFromMtlx(nodeGraphData, materialName) {
         }
     }
 
-    // Connect outputs to surface node
-    for (const output of outputs) {
-        if (output.nodename) {
-            const sourceEntry = nodeMap.get(output.nodename);
-            if (sourceEntry) {
-                // Map output name to surface input
-                const surfaceInputMap = {
-                    'base_color': 0,
-                    'baseColor': 0,
-                    'diffuseColor': 0,
-                    'base_metalness': 1,
-                    'metalness': 1,
-                    'specular_roughness': 2,
-                    'roughness': 2,
-                    'specular_ior': 3,
-                    'coat_weight': 4,
-                    'emission_color': 5,
-                    'geometry_opacity': 6,
-                    'opacity': 6
-                };
+    // Map NodeGraph output names to shader parameter names via connections
+    const surfaceInputMap = {
+        'base_color': 0,
+        'baseColor': 0,
+        'diffuseColor': 0,
+        'base_metalness': 1,
+        'metalness': 1,
+        'specular_roughness': 2,
+        'roughness': 2,
+        'specular_ior': 3,
+        'coat_weight': 4,
+        'emission_color': 5,
+        'geometry_opacity': 6,
+        'opacity': 6
+    };
 
-                const inputSlot = surfaceInputMap[output.name] ?? 0;
-                sourceEntry.node.connect(0, surfaceNode, inputSlot);
-            }
+    // Build outputName→shaderParam map from connections array
+    const outputToShaderParam = new Map();
+    for (const conn of connections) {
+        if (conn.input && conn.output) {
+            outputToShaderParam.set(conn.output, conn.input);
         }
     }
 
-    // Also handle connections from materialData
-    for (const conn of connections) {
-        // These are shader-level connections
-        // Could add visual indicators for these
+    // Connect outputs to surface node
+    for (const output of outputs) {
+        if (!output.nodename) continue;
+        const sourceEntry = nodeMap.get(output.nodename);
+        if (!sourceEntry) continue;
+
+        // Use connections to determine the shader parameter this output maps to
+        const shaderParam = outputToShaderParam.get(output.name) || output.name;
+        const inputSlot = surfaceInputMap[shaderParam];
+        if (inputSlot !== undefined) {
+            sourceEntry.node.connect(0, surfaceNode, inputSlot);
+        }
     }
+
+    // Clear building flag and reset dirty state
+    state._buildingGraph = false;
+    state.graphDirty = false;
+    document.getElementById('edit-indicator').classList.remove('visible');
 
     updateNodeStats();
 }
@@ -595,6 +730,295 @@ function updateNodeStats() {
 }
 
 // ============================================================================
+// Node Graph Editing → Material Update
+// ============================================================================
+
+/**
+ * Extract MaterialX-compatible node graph data from the current LiteGraph state.
+ * Reads back node properties, connections, and outputs to build a nodegraph
+ * structure that can be fed into MtlxNodeGraphProcessor.
+ */
+function extractGraphFromLiteGraph() {
+    if (!state.graph || !state.graph._nodes) return null;
+
+    const lgNodes = state.graph._nodes;
+    const mtlxNodes = [];
+    const mtlxOutputs = [];
+    let surfaceNode = null;
+
+    // Map LiteGraph node IDs to our names
+    const idToName = new Map();
+    for (const lgNode of lgNodes) {
+        const nodeType = lgNode.type || '';
+        if (nodeType === 'mtlx/openpbr_surface') {
+            surfaceNode = lgNode;
+        } else {
+            idToName.set(lgNode.id, lgNode.title || `node_${lgNode.id}`);
+        }
+    }
+
+    // Build nodes (skip surface node)
+    for (const lgNode of lgNodes) {
+        if (lgNode === surfaceNode) continue;
+
+        const nodeType = lgNode.type || '';
+        const category = nodeType.replace('mtlx/', '');
+        const nodeName = lgNode.title || `node_${lgNode.id}`;
+
+        const mtlxNode = {
+            name: nodeName,
+            category: category,
+            type: `ND_${category}`
+        };
+
+        // Extract value from properties
+        if (lgNode.properties) {
+            if (lgNode.properties.value !== undefined) {
+                mtlxNode.value = lgNode.properties.value;
+            }
+            if (lgNode.properties.file !== undefined) {
+                mtlxNode.file = lgNode.properties.file;
+            }
+            if (lgNode.properties.index !== undefined) {
+                mtlxNode.index = lgNode.properties.index;
+            }
+            if (lgNode.properties.space !== undefined) {
+                mtlxNode.space = lgNode.properties.space;
+            }
+        }
+
+        // Extract inputs with connections
+        const inputs = [];
+        if (lgNode.inputs) {
+            for (let i = 0; i < lgNode.inputs.length; i++) {
+                const inputSlot = lgNode.inputs[i];
+                const inputDef = { name: inputSlot.name };
+
+                // Check if connected
+                if (inputSlot.link != null) {
+                    const link = state.graph.links[inputSlot.link];
+                    if (link) {
+                        const sourceId = link.origin_id;
+                        const sourceName = idToName.get(sourceId);
+                        if (sourceName) {
+                            inputDef.nodename = sourceName;
+                        }
+                    }
+                }
+
+                // Check for property-based value
+                if (!inputDef.nodename && lgNode.properties && lgNode.properties[inputSlot.name] !== undefined) {
+                    inputDef.value = lgNode.properties[inputSlot.name];
+                }
+
+                inputs.push(inputDef);
+            }
+        }
+
+        if (inputs.length > 0) {
+            mtlxNode.inputs = inputs;
+        }
+
+        mtlxNodes.push(mtlxNode);
+    }
+
+    // Build outputs from surface node connections
+    if (surfaceNode && surfaceNode.inputs) {
+        const surfaceInputNames = [
+            'base_color', 'base_metalness', 'specular_roughness',
+            'specular_ior', 'coat_weight', 'emission_color', 'geometry_opacity'
+        ];
+
+        for (let i = 0; i < surfaceNode.inputs.length; i++) {
+            const inputSlot = surfaceNode.inputs[i];
+            if (inputSlot.link != null) {
+                const link = state.graph.links[inputSlot.link];
+                if (link) {
+                    const sourceId = link.origin_id;
+                    const sourceName = idToName.get(sourceId);
+                    if (sourceName) {
+                        mtlxOutputs.push({
+                            name: surfaceInputNames[i] || inputSlot.name,
+                            nodename: sourceName
+                        });
+                    }
+                }
+            }
+        }
+    }
+
+    return {
+        nodegraph: {
+            name: 'NG_edited',
+            nodes: mtlxNodes,
+            outputs: mtlxOutputs
+        }
+    };
+}
+
+/**
+ * Re-evaluate the node graph from the current LiteGraph state
+ * and apply the results to the 3D material.
+ */
+function evaluateAndApplyMaterial() {
+    const graphData = extractGraphFromLiteGraph();
+    if (!graphData) {
+        showToast('No graph to evaluate');
+        return;
+    }
+
+    const matIndex = state.currentMaterialIndex;
+    if (matIndex < 0 || matIndex >= state.materials.length) {
+        // No loaded material - create/update one on the sample sphere
+        if (state.materials.length === 0) return;
+    }
+
+    const material = state.materials[matIndex];
+    if (!material) return;
+
+    // Process the node graph
+    const processor = new MtlxNodeGraphProcessor();
+    const outputs = processor.processGraph(graphData);
+
+    // Build params from the current material data + overrides from graph
+    const matData = state.materialData[matIndex];
+    const openPBR = flattenOpenPBR(matData?.openPBR || {});
+    const params = {
+        base_color: extractOpenPBRValue(openPBR.base_color, DEFAULT_OPENPBR_PARAMS.base_color),
+        base_metalness: extractOpenPBRValue(openPBR.base_metalness, DEFAULT_OPENPBR_PARAMS.base_metalness),
+        specular_roughness: extractOpenPBRValue(openPBR.specular_roughness, DEFAULT_OPENPBR_PARAMS.specular_roughness),
+        specular_ior: extractOpenPBRValue(openPBR.specular_ior, DEFAULT_OPENPBR_PARAMS.specular_ior),
+        coat_weight: extractOpenPBRValue(openPBR.coat_weight, DEFAULT_OPENPBR_PARAMS.coat_weight),
+        emission_color: extractOpenPBRValue(openPBR.emission_color, DEFAULT_OPENPBR_PARAMS.emission_color),
+        geometry_opacity: extractOpenPBRValue(openPBR.geometry_opacity, DEFAULT_OPENPBR_PARAMS.geometry_opacity)
+    };
+
+    // Apply evaluated outputs
+    for (const [name, value] of Object.entries(outputs)) {
+        if (value === undefined) continue;
+        if (processor.needsShader(value)) continue; // skip texture-dependent values
+
+        const paramMap = {
+            'base_color': 'base_color',
+            'baseColor': 'base_color',
+            'diffuseColor': 'base_color',
+            'roughness': 'specular_roughness',
+            'specular_roughness': 'specular_roughness',
+            'metalness': 'base_metalness',
+            'base_metalness': 'base_metalness',
+            'specular_ior': 'specular_ior',
+            'coat_weight': 'coat_weight',
+            'emission_color': 'emission_color',
+            'geometry_opacity': 'geometry_opacity',
+            'opacity': 'geometry_opacity'
+        };
+        const paramName = paramMap[name] || name;
+        if (params.hasOwnProperty(paramName)) {
+            params[paramName] = value;
+        }
+    }
+
+    // Apply to material (skip color/scalar overrides if a texture map is bound)
+    if (!material.map) {
+        const baseColor = params.base_color;
+        if (Array.isArray(baseColor)) {
+            material.color.setRGB(baseColor[0], baseColor[1], baseColor[2]);
+        } else if (typeof baseColor === 'number') {
+            material.color.setRGB(baseColor, baseColor, baseColor);
+        }
+    }
+
+    if (!material.metalnessMap) material.metalness = params.base_metalness;
+    if (!material.roughnessMap) material.roughness = params.specular_roughness;
+    material.ior = params.specular_ior;
+    material.clearcoat = params.coat_weight;
+
+    if (!material.emissiveMap) {
+        const emissionColor = params.emission_color;
+        if (Array.isArray(emissionColor)) {
+            material.emissive.setRGB(emissionColor[0], emissionColor[1], emissionColor[2]);
+        }
+    }
+
+    if (params.geometry_opacity !== undefined) {
+        material.opacity = params.geometry_opacity;
+        material.transparent = params.geometry_opacity < 1.0;
+    }
+
+    material.needsUpdate = true;
+
+    // Clear dirty flag
+    state.graphDirty = false;
+    document.getElementById('edit-indicator').classList.remove('visible');
+
+    updateNodeStats();
+}
+
+/**
+ * Mark the graph as dirty (modified since last update).
+ */
+function markGraphDirty() {
+    if (state._buildingGraph) return; // Suppress during programmatic graph construction
+    state.graphDirty = true;
+
+    if (state.interactiveUpdate) {
+        // Debounce: wait a short time before evaluating
+        if (state.updateDebounceTimer) {
+            clearTimeout(state.updateDebounceTimer);
+        }
+        state.updateDebounceTimer = setTimeout(() => {
+            evaluateAndApplyMaterial();
+        }, 150);
+    } else {
+        document.getElementById('edit-indicator').classList.add('visible');
+    }
+}
+
+/**
+ * Hook LiteGraph events for change detection.
+ * Called after graph is initialized.
+ */
+function hookGraphChangeEvents() {
+    if (!state.graph) return;
+
+    // LGraph fires 'change' on structural changes (connections, node add/remove)
+    state.graph.onNodeConnectionChange = function() {
+        markGraphDirty();
+    };
+
+    state.graph.onNodeAdded = function(node) {
+        // Attach widget change listener to new nodes
+        if (node) {
+            node.onWidgetChanged = function() { markGraphDirty(); };
+        }
+        markGraphDirty();
+    };
+
+    state.graph.onNodeRemoved = function() {
+        markGraphDirty();
+    };
+
+    // Monitor widget interactions via canvas
+    if (state.graphCanvas) {
+        const origProcessNodeWidgets = state.graphCanvas.processNodeWidgets;
+        if (origProcessNodeWidgets) {
+            state.graphCanvas.processNodeWidgets = function(node, pos, event, active_widget) {
+                const result = origProcessNodeWidgets.call(this, node, pos, event, active_widget);
+                if (result) {
+                    markGraphDirty();
+                }
+                return result;
+            };
+        }
+    }
+
+    // Also hook into the graph's afterChange callback
+    state.graph.onAfterChange = function() {
+        markGraphDirty();
+    };
+}
+
+// ============================================================================
 // Three.js Setup
 // ============================================================================
 
@@ -631,6 +1055,9 @@ function initThreeJS() {
     state.controls = new OrbitControls(state.camera, canvas);
     state.controls.enableDamping = true;
     state.controls.dampingFactor = 0.05;
+
+    // Object picking
+    canvas.addEventListener('click', onCanvasClick);
 
     // Add lights
     setupLights();
@@ -704,25 +1131,13 @@ async function loadUSDFile(file) {
         }
 
         // Clear existing
+        clearSelection();
         if (state.currentModel) {
             state.scene.remove(state.currentModel);
             disposeObject(state.currentModel);
         }
 
-        state.materials = [];
-        state.materialData = [];
-
-        // Load materials
-        const numMaterials = state.usdData.numMaterials();
-        for (let i = 0; i < numMaterials; i++) {
-            const result = state.usdData.getMaterialWithFormat(i, 'json');
-            if (!result.error) {
-                const matData = JSON.parse(result.data);
-                state.materialData.push(matData);
-            }
-        }
-
-        // Build scene
+        // Build scene (material loading consolidated inside buildScene)
         await buildScene();
 
         // Update material selector
@@ -744,13 +1159,283 @@ async function loadUSDFile(file) {
     }
 }
 
+// ============================================================================
+// Texture Loading Helpers
+// ============================================================================
+
+function hasOpenPBRTexture(param) {
+    return param && typeof param === 'object' && param.textureId !== undefined && param.textureId >= 0;
+}
+
+function getOpenPBRTextureId(param) {
+    if (!param || typeof param !== 'object') return -1;
+    return param.textureId !== undefined ? param.textureId : -1;
+}
+
+function extractOpenPBRValue(param, defaultVal) {
+    if (param === undefined || param === null) return defaultVal;
+    if (typeof param === 'object' && param.value !== undefined) return param.value;
+    if (typeof param === 'number' || Array.isArray(param)) return param;
+    return defaultVal;
+}
+
+/**
+ * Flatten nested openPBR structure into flat param keys.
+ * The C++ serializer groups params by category (e.g. openPBR.base.base_color),
+ * but our code expects flat access (e.g. openPBR.base_color).
+ * This function returns a flat object with all params + nodeGraph.
+ */
+function flattenOpenPBR(openPBR) {
+    if (!openPBR) return {};
+    const flat = {};
+    const categoryKeys = ['base', 'specular', 'transmission', 'subsurface', 'sheen',
+                          'fuzz', 'thin_film', 'coat', 'emission', 'geometry'];
+    for (const cat of categoryKeys) {
+        const section = openPBR[cat];
+        if (section && typeof section === 'object') {
+            Object.assign(flat, section);
+        }
+    }
+    // Preserve nodeGraph at top level
+    if (openPBR.nodeGraph) flat.nodeGraph = openPBR.nodeGraph;
+    if (openPBR.type) flat.type = openPBR.type;
+    return flat;
+}
+
+function resolveTextureId(nativeLoader, textureId) {
+    if (textureId < 0) return textureId;
+    try {
+        const tex = nativeLoader.getTexture(textureId);
+        const texImage = nativeLoader.getImage(tex.textureImageId);
+        if (texImage.bufferId === -1 && texImage.uri) {
+            const filename = texImage.uri.replace(/^\.\//, '');
+            const numImages = nativeLoader.numImages();
+            for (let i = 0; i < numImages; i++) {
+                const altImage = nativeLoader.getImage(i);
+                if (altImage.bufferId >= 0 && altImage.uri === filename) {
+                    const numTextures = nativeLoader.numTextures();
+                    for (let t = 0; t < numTextures; t++) {
+                        const altTex = nativeLoader.getTexture(t);
+                        if (altTex.textureImageId === i) return t;
+                    }
+                    break;
+                }
+            }
+        }
+    } catch (e) { /* ignore */ }
+    return textureId;
+}
+
+/**
+ * Find a texture ID in the nativeLoader by matching a filename from a node graph image node.
+ * Returns the texture index, or -1 if not found.
+ */
+function findTextureIdByFilename(nativeLoader, filename) {
+    if (!filename || !nativeLoader) return -1;
+    const cleanName = filename.replace(/^[@.]\//, '').replace(/@$/, '');
+
+    const numImages = nativeLoader.numImages();
+    for (let i = 0; i < numImages; i++) {
+        const img = nativeLoader.getImage(i);
+        if (!img.uri) continue;
+        const imgName = img.uri.replace(/^\.\//, '');
+        if (imgName === cleanName || imgName.endsWith(cleanName) || cleanName.endsWith(imgName)) {
+            // Found matching image - find a texture that references it
+            const numTextures = nativeLoader.numTextures();
+            for (let t = 0; t < numTextures; t++) {
+                const tex = nativeLoader.getTexture(t);
+                if (tex.textureImageId === i) return t;
+            }
+            // Image found but no texture references it - try loading via any texture with data
+            if (img.bufferId >= 0) {
+                // Look for any texture pointing to this image
+                for (let t = 0; t < numTextures; t++) {
+                    const tex = nativeLoader.getTexture(t);
+                    const altImg = nativeLoader.getImage(tex.textureImageId);
+                    if (altImg.bufferId >= 0 && altImg.uri) {
+                        const altName = altImg.uri.replace(/^\.\//, '');
+                        if (altName === cleanName) return t;
+                    }
+                }
+            }
+        }
+    }
+    return -1;
+}
+
+/**
+ * Scan a node graph for image/tiledimage nodes and determine which shader
+ * parameters they connect to via the connections array.
+ * Returns a map: { shaderParamName: filename }
+ */
+function findNodeGraphTextures(nodeGraphData) {
+    const result = {};
+    if (!nodeGraphData) return result;
+
+    const ng = nodeGraphData.nodegraph || nodeGraphData;
+    const nodes = ng.nodes || [];
+    const outputs = ng.outputs || [];
+    const connections = nodeGraphData.connections || [];
+
+    // Find image/tiledimage nodes
+    const imageNodes = new Map(); // nodeName -> filename
+    for (const node of nodes) {
+        const cat = (node.category || '').replace(/_(color3|color4|float|vector2|vector3|vector4)$/, '');
+        if (cat === 'image' || cat === 'tiledimage') {
+            const fileInput = (node.inputs || []).find(i => i.name === 'file');
+            if (fileInput && fileInput.value) {
+                imageNodes.set(node.name, fileInput.value);
+            }
+        }
+    }
+
+    if (imageNodes.size === 0) return result;
+
+    // Build a reverse-dependency map: nodeName -> set of nodes that depend on it
+    // Then trace from image nodes to outputs
+    const dependsOn = new Map(); // nodeName -> [nodenames it takes input from]
+    for (const node of nodes) {
+        for (const input of (node.inputs || [])) {
+            if (input.nodename) {
+                if (!dependsOn.has(node.name)) dependsOn.set(node.name, []);
+                dependsOn.get(node.name).push(input.nodename);
+            }
+        }
+    }
+
+    // For each output, check if it transitively depends on an image node
+    function tracesToImageNode(nodeName, visited = new Set()) {
+        if (visited.has(nodeName)) return null;
+        visited.add(nodeName);
+        if (imageNodes.has(nodeName)) return nodeName;
+        const deps = dependsOn.get(nodeName) || [];
+        for (const dep of deps) {
+            const found = tracesToImageNode(dep, visited);
+            if (found) return found;
+        }
+        return null;
+    }
+
+    // Map outputs to shader params via connections
+    const outputToParam = new Map();
+    for (const conn of connections) {
+        if (conn.input && conn.output) {
+            outputToParam.set(conn.output, conn.input);
+        }
+    }
+
+    // For each output, trace to image node
+    for (const output of outputs) {
+        if (!output.nodename) continue;
+        const imageNodeName = tracesToImageNode(output.nodename);
+        if (!imageNodeName) continue;
+
+        const paramName = outputToParam.get(output.name);
+        if (paramName) {
+            result[paramName] = imageNodes.get(imageNodeName);
+        }
+    }
+
+    return result;
+}
+
+async function loadMaterialTextures(openPBR, nativeLoader) {
+    const textures = {};
+    if (!nativeLoader) return textures;
+
+    const textureParams = [
+        ['base_color', 'base_color'],
+        ['specular_roughness', 'specular_roughness'],
+        ['base_metalness', 'base_metalness'],
+        ['emission_color', 'emission_color'],
+        ['coat_weight', 'coat_weight'],
+    ];
+
+    // First: check direct texture references on shader params
+    for (const [openPBRKey, texKey] of textureParams) {
+        const param = openPBR[openPBRKey];
+        if (hasOpenPBRTexture(param)) {
+            try {
+                const texId = resolveTextureId(nativeLoader, getOpenPBRTextureId(param));
+                const texture = await TinyUSDZLoaderUtils.getTextureFromUSD(nativeLoader, texId);
+                if (texture) {
+                    texture.colorSpace = THREE.SRGBColorSpace;
+                    textures[texKey] = texture;
+                }
+            } catch (err) {
+                console.warn(`Failed to load ${openPBRKey} texture:`, err);
+            }
+        }
+    }
+
+    // Normal map (nested under geometry section)
+    const geometrySection = openPBR.geometry || {};
+    const normalParam = geometrySection.normal || openPBR.normal || openPBR.geometry_normal;
+    if (hasOpenPBRTexture(normalParam)) {
+        try {
+            const texId = resolveTextureId(nativeLoader, getOpenPBRTextureId(normalParam));
+            const texture = await TinyUSDZLoaderUtils.getTextureFromUSD(nativeLoader, texId);
+            if (texture) {
+                texture.colorSpace = THREE.LinearSRGBColorSpace;
+                textures['normal'] = texture;
+            }
+        } catch (err) {
+            console.warn('Failed to load normal map texture:', err);
+        }
+    }
+
+    // Second: scan node graph for image nodes (handles base_color connected via node graph)
+    if (openPBR.nodeGraph) {
+        const ngTextures = findNodeGraphTextures(openPBR.nodeGraph);
+        for (const [paramName, filename] of Object.entries(ngTextures)) {
+            // Map shader param names to texture keys
+            const paramToTexKey = {
+                'base_color': 'base_color',
+                'specular_roughness': 'specular_roughness',
+                'base_metalness': 'base_metalness',
+                'emission_color': 'emission_color',
+                'coat_weight': 'coat_weight',
+            };
+            const texKey = paramToTexKey[paramName];
+            if (!texKey || textures[texKey]) continue; // skip if already loaded
+
+            try {
+                const texId = findTextureIdByFilename(nativeLoader, filename);
+                if (texId >= 0) {
+                    const texture = await TinyUSDZLoaderUtils.getTextureFromUSD(nativeLoader, texId);
+                    if (texture) {
+                        texture.colorSpace = (paramName === 'normal' || paramName === 'geometry_normal')
+                            ? THREE.LinearSRGBColorSpace : THREE.SRGBColorSpace;
+                        textures[texKey] = texture;
+                    }
+                }
+            } catch (err) {
+                console.warn(`Failed to load node graph texture for ${paramName}:`, err);
+            }
+        }
+    }
+
+    return textures;
+}
+
 async function buildScene() {
     const usd = state.usdData;
-    const numMeshes = usd.numMeshes();
 
-    // Create materials
+    // Clear and load material data (consolidated from callers)
+    state.materials = [];
+    state.materialData = [];
+
+    const numMaterials = usd.numMaterials();
+    for (let i = 0; i < numMaterials; i++) {
+        const result = usd.getMaterialWithFormat(i, 'json');
+        if (!result.error) {
+            state.materialData.push(JSON.parse(result.data));
+        }
+    }
+
+    // Create OpenPBR materials from material data
     for (const matData of state.materialData) {
-        const openPBR = matData.openPBR || {};
+        const openPBR = flattenOpenPBR(matData.openPBR || {});
         let nodeGraph = openPBR.nodeGraph;
 
         // Optionally optimize
@@ -759,12 +1444,12 @@ async function buildScene() {
         }
 
         const params = {
-            base_color: openPBR.base_color || DEFAULT_OPENPBR_PARAMS.base_color,
-            base_metalness: openPBR.base_metalness ?? DEFAULT_OPENPBR_PARAMS.base_metalness,
-            specular_roughness: openPBR.specular_roughness ?? DEFAULT_OPENPBR_PARAMS.specular_roughness,
-            specular_ior: openPBR.specular_ior ?? DEFAULT_OPENPBR_PARAMS.specular_ior,
-            coat_weight: openPBR.coat_weight ?? DEFAULT_OPENPBR_PARAMS.coat_weight,
-            emission_color: openPBR.emission_color ?? DEFAULT_OPENPBR_PARAMS.emission_color
+            base_color: extractOpenPBRValue(openPBR.base_color, DEFAULT_OPENPBR_PARAMS.base_color),
+            base_metalness: extractOpenPBRValue(openPBR.base_metalness, DEFAULT_OPENPBR_PARAMS.base_metalness),
+            specular_roughness: extractOpenPBRValue(openPBR.specular_roughness, DEFAULT_OPENPBR_PARAMS.specular_roughness),
+            specular_ior: extractOpenPBRValue(openPBR.specular_ior, DEFAULT_OPENPBR_PARAMS.specular_ior),
+            coat_weight: extractOpenPBRValue(openPBR.coat_weight, DEFAULT_OPENPBR_PARAMS.coat_weight),
+            emission_color: extractOpenPBRValue(openPBR.emission_color, DEFAULT_OPENPBR_PARAMS.emission_color)
         };
 
         // Process node graph for constant values
@@ -788,61 +1473,107 @@ async function buildScene() {
             }
         }
 
-        const material = createOpenPBRMaterial(params);
+        // Load textures from USDZ
+        const textures = await loadMaterialTextures(openPBR, state.usdData);
+        const material = createOpenPBRMaterial(params, textures);
         material.name = matData.name || `Material_${state.materials.length}`;
         state.materials.push(material);
     }
 
-    // Build meshes
-    const root = new THREE.Group();
+    // Build scene hierarchy using TinyUSDZLoaderUtils
+    const rootNode = usd.getDefaultRootNode();
+    let root;
 
-    for (let i = 0; i < numMeshes; i++) {
-        const meshData = usd.getMesh(i);
-        if (!meshData || !meshData.vertices) continue;
+    if (rootNode) {
+        // Build with proper transforms and submeshes
+        const defaultMtl = new THREE.MeshStandardMaterial({ color: 0x888888 });
+        root = await TinyUSDZLoaderUtils.buildThreeNode(rootNode, defaultMtl, usd, {});
 
-        const geometry = createGeometry(meshData);
-        const materialId = meshData.materialId ?? 0;
-        const material = state.materials[materialId] || new THREE.MeshStandardMaterial({ color: 0x888888 });
+        // Replace materials with our OpenPBR materials
+        // Build name→index map for fast lookup
+        const matNameToIndex = new Map();
+        for (let i = 0; i < state.materialData.length; i++) {
+            const name = state.materialData[i].name;
+            if (name) matNameToIndex.set(name, i);
+        }
 
-        const mesh = new THREE.Mesh(geometry, material);
-        mesh.name = meshData.name || `Mesh_${i}`;
-        root.add(mesh);
+        root.traverse((obj) => {
+            if (!obj.isMesh) return;
+
+            // Get doubleSided from geometry userData (set by convertUsdMeshToThreeMesh)
+            const doubleSided = obj.geometry?.userData?.doubleSided;
+
+            if (Array.isArray(obj.material)) {
+                // Multi-material (GeomSubset) - replace each
+                obj.material = obj.material.map(mat => {
+                    const rawData = mat.userData?.rawData;
+                    const name = rawData?.name;
+                    const idx = name !== undefined ? matNameToIndex.get(name) : undefined;
+                    if (idx !== undefined) {
+                        const openPBRMat = state.materials[idx];
+                        if (doubleSided) openPBRMat.side = THREE.DoubleSide;
+                        return openPBRMat;
+                    }
+                    return mat;
+                });
+            } else {
+                const rawData = obj.material.userData?.rawData;
+                const name = rawData?.name;
+                const idx = name !== undefined ? matNameToIndex.get(name) : undefined;
+                if (idx !== undefined) {
+                    obj.material = state.materials[idx];
+                    if (doubleSided) obj.material.side = THREE.DoubleSide;
+                }
+            }
+        });
+    } else {
+        // Fallback: flat mesh loop using TinyUSDZLoaderUtils for geometry
+        root = new THREE.Group();
+        const numMeshes = usd.numMeshes();
+
+        for (let i = 0; i < numMeshes; i++) {
+            const meshData = usd.getMesh(i);
+            if (!meshData || !meshData.points || meshData.points.length === 0) continue;
+
+            const geometry = TinyUSDZLoaderUtils.convertUsdMeshToThreeMesh(meshData);
+            const materialId = meshData.materialId ?? 0;
+
+            // Handle submeshes (GeomSubset multi-material)
+            if (geometry.userData['submeshes'] && geometry.userData['submeshes'].length > 0) {
+                const submeshes = geometry.userData['submeshes'];
+                const materials = [];
+                const matIdToIdx = new Map();
+
+                for (const sub of submeshes) {
+                    if (!matIdToIdx.has(sub.materialId)) {
+                        matIdToIdx.set(sub.materialId, materials.length);
+                        const mat = state.materials[sub.materialId] || new THREE.MeshStandardMaterial({ color: 0x888888 });
+                        materials.push(mat);
+                    }
+                    geometry.addGroup(sub.start, sub.count, matIdToIdx.get(sub.materialId));
+                }
+
+                const mesh = new THREE.Mesh(geometry, materials);
+                mesh.name = meshData.primName || `Mesh_${i}`;
+                root.add(mesh);
+            } else {
+                const material = state.materials[materialId] || new THREE.MeshStandardMaterial({ color: 0x888888 });
+                const mesh = new THREE.Mesh(geometry, material);
+                mesh.name = meshData.primName || `Mesh_${i}`;
+                if (meshData.doubleSided) material.side = THREE.DoubleSide;
+                root.add(mesh);
+            }
+        }
     }
 
     state.currentModel = root;
     state.scene.add(root);
-
     fitCameraToObject(root);
-    updateStatus(`Loaded: ${numMeshes} meshes, ${state.materials.length} materials`);
 
+    const numMeshes = usd.numMeshes();
+    updateStatus(`Loaded: ${numMeshes} meshes, ${state.materials.length} materials`);
     document.getElementById('mesh-count').textContent = numMeshes;
     document.getElementById('material-count').textContent = state.materials.length;
-}
-
-function createGeometry(meshData) {
-    const geometry = new THREE.BufferGeometry();
-
-    const positions = new Float32Array(meshData.vertices);
-    geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-
-    if (meshData.indices) {
-        const indices = new Uint32Array(meshData.indices);
-        geometry.setIndex(new THREE.BufferAttribute(indices, 1));
-    }
-
-    if (meshData.normals && meshData.normals.length > 0) {
-        const normals = new Float32Array(meshData.normals);
-        geometry.setAttribute('normal', new THREE.BufferAttribute(normals, 3));
-    } else {
-        geometry.computeVertexNormals();
-    }
-
-    if (meshData.uvs && meshData.uvs.length > 0) {
-        const uvs = new Float32Array(meshData.uvs);
-        geometry.setAttribute('uv', new THREE.BufferAttribute(uvs, 2));
-    }
-
-    return geometry;
 }
 
 function fitCameraToObject(object) {
@@ -922,6 +1653,7 @@ function selectMaterial(index) {
 
 function createSampleScene() {
     // Clear existing
+    clearSelection();
     if (state.currentModel) {
         state.scene.remove(state.currentModel);
         disposeObject(state.currentModel);
@@ -1103,28 +1835,13 @@ window.loadBlenderSample = async function() {
         }
 
         // Clear existing
+        clearSelection();
         if (state.currentModel) {
             state.scene.remove(state.currentModel);
             disposeObject(state.currentModel);
         }
 
-        state.materials = [];
-        state.materialData = [];
-
-        // Load materials
-        const numMaterials = state.usdData.numMaterials();
-        console.log(`Found ${numMaterials} materials`);
-
-        for (let i = 0; i < numMaterials; i++) {
-            const result = state.usdData.getMaterialWithFormat(i, 'json');
-            if (!result.error) {
-                const matData = JSON.parse(result.data);
-                console.log(`Material ${i}:`, matData.name);
-                state.materialData.push(matData);
-            }
-        }
-
-        // Build scene
+        // Build scene (material loading consolidated inside buildScene)
         await buildScene();
 
         // Update material selector
@@ -1135,6 +1852,8 @@ window.loadBlenderSample = async function() {
             selectMaterial(0);
         }
 
+        const numMaterials = state.usdData.numMaterials();
+        console.log(`Found ${numMaterials} materials`);
         showToast(`Loaded Blender sample with ${numMaterials} materials`);
 
     } catch (error) {
@@ -1146,11 +1865,95 @@ window.loadBlenderSample = async function() {
     }
 };
 
+/**
+ * Compute the bounding box of all nodes in the graph.
+ * Returns { minX, minY, maxX, maxY } or null if no nodes.
+ */
+function getNodesBoundingBox() {
+    if (!state.graph || !state.graph._nodes || state.graph._nodes.length === 0) return null;
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    for (const n of state.graph._nodes) {
+        const w = n.size[0] || 100;
+        const h = n.size[1] || 60;
+        minX = Math.min(minX, n.pos[0]);
+        minY = Math.min(minY, n.pos[1]);
+        maxX = Math.max(maxX, n.pos[0] + w);
+        maxY = Math.max(maxY, n.pos[1] + h);
+    }
+    return { minX, minY, maxX, maxY };
+}
+
 window.fitGraph = function() {
     if (state.graphCanvas) {
         state.graphCanvas.ds.reset();
         state.graph.arrange();
     }
+};
+
+window.fitGraphWidth = function() {
+    if (!state.graphCanvas) return;
+    const bb = getNodesBoundingBox();
+    if (!bb) return;
+    const padding = 40;
+    const canvasW = state.graphCanvas.canvas.width;
+    const graphW = bb.maxX - bb.minX + padding * 2;
+    const scale = Math.min(canvasW / graphW, 2.0);
+    const centerY = (bb.minY + bb.maxY) / 2;
+    state.graphCanvas.ds.scale = scale;
+    state.graphCanvas.ds.offset[0] = -bb.minX * scale + padding * scale;
+    state.graphCanvas.ds.offset[1] = -centerY * scale + state.graphCanvas.canvas.height / 2;
+    state.graphCanvas.setDirty(true, true);
+};
+
+window.fitGraphHeight = function() {
+    if (!state.graphCanvas) return;
+    const bb = getNodesBoundingBox();
+    if (!bb) return;
+    const padding = 40;
+    const canvasH = state.graphCanvas.canvas.height;
+    const graphH = bb.maxY - bb.minY + padding * 2;
+    const scale = Math.min(canvasH / graphH, 2.0);
+    const centerX = (bb.minX + bb.maxX) / 2;
+    state.graphCanvas.ds.scale = scale;
+    state.graphCanvas.ds.offset[0] = -centerX * scale + state.graphCanvas.canvas.width / 2;
+    state.graphCanvas.ds.offset[1] = -bb.minY * scale + padding * scale;
+    state.graphCanvas.setDirty(true, true);
+};
+
+window.fitGraphAll = function() {
+    if (!state.graphCanvas) return;
+    const bb = getNodesBoundingBox();
+    if (!bb) return;
+    const padding = 40;
+    const canvasW = state.graphCanvas.canvas.width;
+    const canvasH = state.graphCanvas.canvas.height;
+    const graphW = bb.maxX - bb.minX + padding * 2;
+    const graphH = bb.maxY - bb.minY + padding * 2;
+    const scale = Math.min(canvasW / graphW, canvasH / graphH, 2.0);
+    const centerX = (bb.minX + bb.maxX) / 2;
+    const centerY = (bb.minY + bb.maxY) / 2;
+    state.graphCanvas.ds.scale = scale;
+    state.graphCanvas.ds.offset[0] = -centerX * scale + canvasW / 2;
+    state.graphCanvas.ds.offset[1] = -centerY * scale + canvasH / 2;
+    state.graphCanvas.setDirty(true, true);
+};
+
+window.updateMaterialFromGraph = function() {
+    evaluateAndApplyMaterial();
+    showToast('Material updated from graph');
+};
+
+window.toggleInteractiveUpdate = function(enabled) {
+    state.interactiveUpdate = enabled;
+    if (enabled && state.graphDirty) {
+        evaluateAndApplyMaterial();
+    }
+    showToast(enabled ? 'Live update enabled' : 'Live update disabled');
+};
+
+// Expose markGraphDirty for node widget callbacks
+window._mtlxMarkDirty = function() {
+    markGraphDirty();
 };
 
 // ============================================================================
@@ -1270,28 +2073,13 @@ async function handleBridgeScene(sceneData) {
         }
 
         // Clear existing
+        clearSelection();
         if (state.currentModel) {
             state.scene.remove(state.currentModel);
             disposeObject(state.currentModel);
         }
 
-        state.materials = [];
-        state.materialData = [];
-
-        // Load materials
-        const numMaterials = state.usdData.numMaterials();
-        console.log(`Found ${numMaterials} materials from Blender`);
-
-        for (let i = 0; i < numMaterials; i++) {
-            const result = state.usdData.getMaterialWithFormat(i, 'json');
-            if (!result.error) {
-                const matData = JSON.parse(result.data);
-                console.log(`Material ${i}:`, matData.name);
-                state.materialData.push(matData);
-            }
-        }
-
-        // Build scene
+        // Build scene (material loading consolidated inside buildScene)
         await buildScene();
 
         // Update material selector
@@ -1314,6 +2102,91 @@ async function handleBridgeScene(sceneData) {
     } finally {
         showLoading(false);
     }
+}
+
+// ============================================================================
+// Object Picking
+// ============================================================================
+
+function onCanvasClick(event) {
+    if (event.target !== state.renderer.domElement) return;
+
+    const rect = state.renderer.domElement.getBoundingClientRect();
+    const mouse = new THREE.Vector2(
+        ((event.clientX - rect.left) / rect.width) * 2 - 1,
+        -((event.clientY - rect.top) / rect.height) * 2 + 1
+    );
+
+    const raycaster = new THREE.Raycaster();
+    raycaster.setFromCamera(mouse, state.camera);
+
+    if (!state.currentModel) return;
+    const intersects = raycaster.intersectObjects(state.currentModel.children, true);
+
+    if (intersects.length > 0) {
+        const hit = intersects.find(i => i.object.isMesh);
+        if (hit) {
+            pickObject(hit);
+        } else {
+            clearSelection();
+        }
+    } else {
+        clearSelection();
+    }
+}
+
+function pickObject(hit) {
+    const mesh = hit.object;
+
+    // Determine which material was clicked
+    let clickedMaterial;
+    if (Array.isArray(mesh.material)) {
+        clickedMaterial = mesh.material[hit.materialIndex ?? 0];
+    } else {
+        clickedMaterial = mesh.material;
+    }
+
+    // Find matching index in state.materials
+    let matIndex = state.materials.indexOf(clickedMaterial);
+    if (matIndex < 0) {
+        matIndex = state.materials.findIndex(m => m.name === clickedMaterial?.name);
+    }
+
+    // Highlight the selected object
+    clearSelectionHighlight();
+    state.selectedObject = mesh;
+    const box = new THREE.Box3().setFromObject(mesh);
+    const helper = new THREE.Box3Helper(box, 0x00ff00);
+    helper.name = '__selectionHelper__';
+    state.scene.add(helper);
+    state.selectionHelper = helper;
+
+    // Select material and sync UI
+    if (matIndex >= 0) {
+        selectMaterial(matIndex);
+        const select = document.getElementById('material-select');
+        if (select) select.value = matIndex;
+        showToast(`Selected: ${mesh.name || 'Mesh'} → ${state.materialData[matIndex]?.name || 'Material'}`);
+    } else {
+        showToast(`Selected: ${mesh.name || 'Mesh'} (no editable material)`);
+    }
+
+    const absPath = mesh.userData?.['primMeta.absPath'] || '';
+    updateStatus(`Selected: ${mesh.name || 'Mesh'}${absPath ? ' (' + absPath + ')' : ''}`);
+}
+
+function clearSelectionHighlight() {
+    if (state.selectionHelper) {
+        state.scene.remove(state.selectionHelper);
+        state.selectionHelper.dispose();
+        state.selectionHelper = null;
+    }
+}
+
+function clearSelection() {
+    clearSelectionHighlight();
+    state.selectedObject = null;
+    updateStatus('Ready');
 }
 
 // ============================================================================
@@ -1357,11 +2230,29 @@ async function init() {
         if (file) loadUSDFile(file);
     });
 
+    // Keyboard shortcuts for node graph fitting
+    document.addEventListener('keydown', (e) => {
+        // Ignore if focus is in an input/select/textarea
+        const tag = e.target.tagName;
+        if (tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA') return;
+
+        if (e.key === 'f' || e.key === 'F') {
+            e.preventDefault();
+            window.fitGraphWidth();
+        } else if (e.key === 'a' || e.key === 'A') {
+            e.preventDefault();
+            window.fitGraphHeight();
+        }
+    });
+
     // Start render loop
     animate();
 
     // Initial resize
     onWindowResize();
+
+    // Load default asset
+    loadBlenderSample();
 }
 
 init().catch(console.error);
