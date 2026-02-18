@@ -2864,8 +2864,10 @@ function _applyPatternOptimizations(nodeGraph, patterns, identities) {
         }
     }
 
-    // Process identity operations
+    // Process identity operations (skip nodes already handled by pattern replacements)
     for (const identity of identities) {
+        if (replacements.has(identity.node)) continue;
+        if (nodesToRemove.has(identity.passthrough) && !replacements.has(identity.passthrough)) continue;
         passthroughMap.set(identity.node, { nodename: identity.passthrough, output: identity.output });
         nodesToRemove.add(identity.node);
     }
@@ -2918,6 +2920,92 @@ function _applyPatternOptimizations(nodeGraph, patterns, identities) {
             originalNodeCount: nodes.length,
             optimizedNodeCount: newNodes.length
         }
+    };
+}
+
+/**
+ * Dead-code elimination: mark nodes as active/inactive based on reachability from outputs.
+ * Walks backward from nodegraph outputs that are actually connected to material parameters.
+ * Outputs not referenced in the connections array are considered dead.
+ * Nodes not reachable from any connected output are marked inactive (dead code).
+ *
+ * @param {Object} nodeGraph - The nodeGraph JSON object
+ * @returns {Object} nodeGraph with _activeNodes Set and nodes annotated with _active flag
+ */
+function markActiveNodes(nodeGraph) {
+    if (!nodeGraph?.nodegraph) return nodeGraph;
+
+    const ng = nodeGraph.nodegraph;
+    const nodes = ng.nodes || [];
+    const outputs = ng.outputs || [];
+    const connections = nodeGraph.connections || [];
+
+    // Build name→node map for fast lookup
+    const nodeMap = new Map();
+    for (const node of nodes) {
+        nodeMap.set(node.name, node);
+    }
+
+    // Only seed from outputs that are actually connected to material parameters
+    const connectedOutputNames = new Set(connections.map(c => c.output));
+
+    // Walk backward from connected outputs to find all reachable nodes
+    const active = new Set();
+    const queue = [];
+
+    for (const output of outputs) {
+        if (output.nodename && nodeMap.has(output.nodename) && connectedOutputNames.has(output.name)) {
+            queue.push(output.nodename);
+        }
+    }
+
+    while (queue.length > 0) {
+        const name = queue.pop();
+        if (active.has(name)) continue;
+        active.add(name);
+
+        const node = nodeMap.get(name);
+        if (!node?.inputs) continue;
+
+        for (const input of node.inputs) {
+            if (input.nodename && nodeMap.has(input.nodename) && !active.has(input.nodename)) {
+                queue.push(input.nodename);
+            }
+        }
+    }
+
+    // Annotate nodes with _active flag
+    const annotatedNodes = nodes.map(node => ({
+        ...node,
+        _active: active.has(node.name)
+    }));
+
+    return {
+        ...nodeGraph,
+        nodegraph: { ...ng, nodes: annotatedNodes },
+        _activeNodes: active
+    };
+}
+
+/**
+ * Remove inactive (dead) nodes from a nodeGraph.
+ * Call markActiveNodes first, then this to strip dead code.
+ *
+ * @param {Object} nodeGraph - nodeGraph with _active annotations from markActiveNodes
+ * @returns {Object} nodeGraph with only active nodes
+ */
+function removeInactiveNodes(nodeGraph) {
+    if (!nodeGraph?.nodegraph) return nodeGraph;
+
+    const ng = nodeGraph.nodegraph;
+    const nodes = ng.nodes || [];
+    const activeNodes = nodes.filter(n => n._active !== false);
+    const removedCount = nodes.length - activeNodes.length;
+
+    return {
+        ...nodeGraph,
+        nodegraph: { ...ng, nodes: activeNodes },
+        _dceInfo: { removedCount, originalCount: nodes.length }
     };
 }
 
@@ -2991,6 +3079,9 @@ function optimizeNodeGraph(nodeGraph, level = NodeGraphOptimizationLevel.STANDAR
             };
         }
     }
+
+    // Always mark active/inactive nodes (DCE annotation)
+    result = markActiveNodes(result);
 
     return result;
 }
@@ -3212,5 +3303,8 @@ export {
     NodeGraphOptimizationLevel,
     optimizeNodeGraph,
     analyzeNodeGraph,
-    getOptimizationSummary
+    getOptimizationSummary,
+    // DCE (dead-code elimination)
+    markActiveNodes,
+    removeInactiveNodes
 };
