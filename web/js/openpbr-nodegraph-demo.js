@@ -16,7 +16,8 @@ import {
 } from 'tinyusdz/TinyUSDZOpenPBR_WebGL.js';
 import {
     optimizeNodeGraph,
-    NodeGraphOptimizationLevel
+    NodeGraphOptimizationLevel,
+    removeInactiveNodes
 } from 'tinyusdz/TinyUSDZMaterialX.js';
 
 // Import bridge client (uses relative path to blender-bridge)
@@ -62,6 +63,9 @@ const state = {
     interactiveUpdate: false,
     graphDirty: false,
     updateDebounceTimer: null,
+
+    // Node graph display
+    showAllNodes: false,    // false = active only (DCE), true = show all including dead nodes
 
     // Picking
     selectedObject: null,
@@ -491,9 +495,16 @@ function buildLiteGraphFromMtlx(nodeGraphData, materialName) {
     }
 
     const ng = nodeGraphData.nodegraph;
-    const nodes = ng.nodes || [];
+    const allNodes = ng.nodes || [];
     const outputs = ng.outputs || [];
     const connections = nodeGraphData.connections || [];
+
+    // Separate active and inactive nodes
+    const activeNodes = allNodes.filter(n => n._active !== false);
+    const inactiveNodes = allNodes.filter(n => n._active === false);
+
+    // Decide which nodes to display based on showAllNodes toggle
+    const displayNodes = state.showAllNodes ? allNodes : activeNodes;
 
     // Map to store created LiteGraph nodes by name
     const nodeMap = new Map();
@@ -501,16 +512,16 @@ function buildLiteGraphFromMtlx(nodeGraphData, materialName) {
     // Layout parameters
     const startX = 50;
     const startY = 50;
-    const nodeWidth = 140;
-    const nodeHeight = 70;
     const xSpacing = 200;
-    const ySpacing = 100;
+    const yGap = 20; // gap between nodes in same column
 
     // Build dependency levels for layout
-    const levels = computeNodeLevels(nodes);
+    const activeLevels = computeNodeLevels(activeNodes);
+    const levels = state.showAllNodes ? computeNodeLevels(displayNodes) : activeLevels;
 
-    // Create nodes
-    for (const node of nodes) {
+    // Pass 1: Create all LiteGraph nodes (no positioning yet)
+    for (const node of displayNodes) {
+        const isActive = node._active !== false;
         const category = getBaseCategory(node.category || node.type);
         const nodeType = `mtlx/${category}`;
 
@@ -524,21 +535,40 @@ function buildLiteGraphFromMtlx(nodeGraphData, materialName) {
 
         lgNode.title = node.name || category;
 
-        // Set position based on level
-        const level = levels.get(node.name) || 0;
-        const nodesAtLevel = [...levels.entries()].filter(([_, l]) => l === level);
-        const indexAtLevel = nodesAtLevel.findIndex(([n, _]) => n === node.name);
+        // Show shader node type as subtitle (e.g. "ND_combine3_color3")
+        const nodeTypeStr = node.type || node.category || '';
+        if (nodeTypeStr && nodeTypeStr !== lgNode.title) {
+            lgNode.properties = lgNode.properties || {};
+            lgNode.properties._nodeType = nodeTypeStr;
+        }
 
-        lgNode.pos = [
-            startX + level * xSpacing,
-            startY + indexAtLevel * ySpacing
-        ];
+        // Mark inactive nodes visually
+        lgNode.properties = lgNode.properties || {};
+        lgNode.properties._isActive = isActive;
 
-        // Set properties
+        // Custom draw: show node type + dim inactive nodes
+        const origDraw = lgNode.onDrawForeground;
+        lgNode.onDrawForeground = function(ctx) {
+            if (origDraw) origDraw.call(this, ctx);
+            if (this.properties._nodeType && this.properties._nodeType !== this.title) {
+                ctx.fillStyle = this.properties._isActive ? '#8899aa' : '#556666';
+                ctx.font = '9px monospace';
+                ctx.fillText(this.properties._nodeType, 6, this.size[1] - 4);
+            }
+            if (!this.properties._isActive) {
+                ctx.fillStyle = 'rgba(0, 0, 0, 0.35)';
+                ctx.fillRect(0, 0, this.size[0], this.size[1]);
+                ctx.fillStyle = '#aa6666';
+                ctx.font = 'bold 9px sans-serif';
+                ctx.fillText('unused', 6, 12);
+            }
+        };
+        lgNode.size[1] = Math.max(lgNode.size[1], 55) + 14;
+
+        // Set properties (may affect node size via widgets)
         if (node.value !== undefined) {
             lgNode.properties = lgNode.properties || {};
             lgNode.properties.value = node.value;
-            // Re-setup widgets if the node supports it (e.g., constant nodes)
             if (typeof lgNode._setupWidgets === 'function') {
                 lgNode._setupWidgets();
             }
@@ -553,7 +583,6 @@ function buildLiteGraphFromMtlx(nodeGraphData, materialName) {
             }
         }
 
-        // Handle specific node properties
         if (category === 'extract' || category === 'separate' || category === 'separate3') {
             lgNode.properties = lgNode.properties || {};
             const indexInput = node.inputs?.find(i => i.name === 'index');
@@ -576,14 +605,62 @@ function buildLiteGraphFromMtlx(nodeGraphData, materialName) {
         nodeMap.set(node.name, { node: lgNode, data: node });
     }
 
+    // Pass 2: Position nodes by level, using actual node heights to avoid overlap
+    // Group active and inactive nodes separately per level
+    const activeByLevel = new Map();  // level → [node entries]
+    const inactiveByLevel = new Map();
+    const inactiveLevelsMap = (state.showAllNodes && inactiveNodes.length > 0)
+        ? computeNodeLevels(inactiveNodes) : new Map();
+
+    for (const node of displayNodes) {
+        const isActive = node._active !== false;
+        const entry = nodeMap.get(node.name);
+        if (!entry) continue;
+
+        let level;
+        if (state.showAllNodes && !isActive) {
+            level = inactiveLevelsMap.get(node.name) || 0;
+            if (!inactiveByLevel.has(level)) inactiveByLevel.set(level, []);
+            inactiveByLevel.get(level).push(entry);
+        } else {
+            level = levels.get(node.name) || 0;
+            if (!activeByLevel.has(level)) activeByLevel.set(level, []);
+            activeByLevel.get(level).push(entry);
+        }
+    }
+
+    // Position active nodes (top section)
+    let maxActiveBottom = startY;
+    for (const [level, entries] of activeByLevel) {
+        let y = startY;
+        for (const entry of entries) {
+            entry.node.pos = [startX + level * xSpacing, y];
+            y += entry.node.size[1] + yGap;
+        }
+        maxActiveBottom = Math.max(maxActiveBottom, y);
+    }
+
+    // Position inactive nodes (below active, with separator gap)
+    if (state.showAllNodes && inactiveByLevel.size > 0) {
+        const inactiveTopY = maxActiveBottom + 40; // separator gap
+        for (const [level, entries] of inactiveByLevel) {
+            let y = inactiveTopY;
+            for (const entry of entries) {
+                entry.node.pos = [startX + level * xSpacing, y];
+                y += entry.node.size[1] + yGap;
+            }
+        }
+    }
+
     // Create output surface node
     const surfaceNode = LiteGraph.createNode('mtlx/openpbr_surface');
-    surfaceNode.pos = [startX + (Math.max(...levels.values()) + 1) * xSpacing, startY + 100];
+    const maxLevel = levels.size > 0 ? Math.max(...levels.values()) : 0;
+    surfaceNode.pos = [startX + (maxLevel + 1) * xSpacing, startY];
     surfaceNode.title = materialName || 'OpenPBR Surface';
     state.graph.add(surfaceNode);
 
     // Create connections between nodes
-    for (const node of nodes) {
+    for (const node of displayNodes) {
         const lgNodeEntry = nodeMap.get(node.name);
         if (!lgNodeEntry) continue;
 
@@ -609,7 +686,7 @@ function buildLiteGraphFromMtlx(nodeGraphData, materialName) {
         }
     }
 
-    // Map NodeGraph output names to shader parameter names via connections
+    // Map shader parameter names to surface node input slots
     const surfaceInputMap = {
         'base_color': 0,
         'baseColor': 0,
@@ -622,14 +699,19 @@ function buildLiteGraphFromMtlx(nodeGraphData, materialName) {
         'coat_weight': 4,
         'emission_color': 5,
         'geometry_opacity': 6,
-        'opacity': 6
+        'opacity': 6,
     };
+    const connectedSlots = new Set();
 
-    // Build outputName→shaderParam map from connections array
-    const outputToShaderParam = new Map();
+    // Build outputName→shaderParams map from connections array
+    // Multiple shader params can connect to the same NodeGraph output
+    const outputToShaderParams = new Map();
     for (const conn of connections) {
         if (conn.input && conn.output) {
-            outputToShaderParam.set(conn.output, conn.input);
+            if (!outputToShaderParams.has(conn.output)) {
+                outputToShaderParams.set(conn.output, []);
+            }
+            outputToShaderParams.get(conn.output).push(conn.input);
         }
     }
 
@@ -639,11 +721,18 @@ function buildLiteGraphFromMtlx(nodeGraphData, materialName) {
         const sourceEntry = nodeMap.get(output.nodename);
         if (!sourceEntry) continue;
 
-        // Use connections to determine the shader parameter this output maps to
-        const shaderParam = outputToShaderParam.get(output.name) || output.name;
-        const inputSlot = surfaceInputMap[shaderParam];
-        if (inputSlot !== undefined) {
-            sourceEntry.node.connect(0, surfaceNode, inputSlot);
+        // Get all shader parameters this output connects to
+        const shaderParams = outputToShaderParams.get(output.name) || [output.name];
+        for (const shaderParam of shaderParams) {
+            let inputSlot = surfaceInputMap[shaderParam];
+            if (inputSlot !== undefined && !connectedSlots.has(inputSlot)) {
+                sourceEntry.node.connect(0, surfaceNode, inputSlot);
+                connectedSlots.add(inputSlot);
+            } else if (inputSlot === undefined) {
+                // Unknown param — add a dynamic input on the surface node
+                const newSlot = surfaceNode.addInput(shaderParam, 'any');
+                sourceEntry.node.connect(0, surfaceNode, surfaceNode.inputs.length - 1);
+            }
         }
     }
 
@@ -728,6 +817,21 @@ function updateNodeStats() {
     document.getElementById('node-count').textContent = nodeCount;
     document.getElementById('connection-count').textContent = connectionCount;
 }
+
+function toggleShowAllNodes(checked) {
+    state.showAllNodes = checked;
+    // Rebuild the graph view with the current material
+    const matData = state.materialData[state.currentMaterialIndex];
+    if (matData?.openPBR?.nodeGraph) {
+        let nodeGraph = matData.openPBR.nodeGraph;
+        nodeGraph = optimizeNodeGraph(nodeGraph, NodeGraphOptimizationLevel.STANDARD);
+        const materialName = state.materials[state.currentMaterialIndex]?.name || 'Material';
+        buildLiteGraphFromMtlx(nodeGraph, materialName);
+    }
+}
+
+// Expose to HTML onclick
+window.toggleShowAllNodes = toggleShowAllNodes;
 
 // ============================================================================
 // Node Graph Editing → Material Update
@@ -1567,6 +1671,13 @@ async function buildScene() {
     }
 
     state.currentModel = root;
+
+    // Apply Z-up to Y-up conversion if needed
+    const metadata = usd.getSceneMetadata ? usd.getSceneMetadata() : {};
+    if ((metadata.upAxis || 'Y') === 'Z') {
+        root.rotation.x = -Math.PI / 2;
+    }
+
     state.scene.add(root);
     fitCameraToObject(root);
 
