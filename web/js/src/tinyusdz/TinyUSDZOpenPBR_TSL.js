@@ -125,6 +125,34 @@ export const MtlxNodes = {
     cross: (a, b) => cross(a, b),
     reflect: (i, n) => reflect(i, n),
 
+    // Rotation — Rodrigues' formula matching MaterialX GLSL mx_rotationMatrix
+    rotate3d: (v, amount, axis) => {
+        const rad = mul(amount, float(Math.PI / 180));
+        const s = sin(rad);
+        const c = cos(rad);
+        const oc = sub(float(1), c);
+        const a = normalize(axis);
+        const ax = a.x, ay = a.y, az = a.z;
+        // Row 0
+        const r00 = add(mul(oc, mul(ax, ax)), c);
+        const r01 = add(mul(oc, mul(ax, ay)), mul(az, s));
+        const r02 = sub(mul(oc, mul(az, ax)), mul(ay, s));
+        // Row 1
+        const r10 = sub(mul(oc, mul(ax, ay)), mul(az, s));
+        const r11 = add(mul(oc, mul(ay, ay)), c);
+        const r12 = add(mul(oc, mul(ay, az)), mul(ax, s));
+        // Row 2
+        const r20 = add(mul(oc, mul(az, ax)), mul(ay, s));
+        const r21 = sub(mul(oc, mul(ay, az)), mul(ax, s));
+        const r22 = add(mul(oc, mul(az, az)), c);
+
+        return vec3(
+            add(add(mul(r00, v.x), mul(r01, v.y)), mul(r02, v.z)),
+            add(add(mul(r10, v.x), mul(r11, v.y)), mul(r12, v.z)),
+            add(add(mul(r20, v.x), mul(r21, v.y)), mul(r22, v.z))
+        );
+    },
+
     // Color operations
     luminance: (c) => dot(c, vec3(0.2126, 0.7152, 0.0722)),
 
@@ -631,6 +659,13 @@ export class MtlxNodeGraphProcessor {
 
             case 'ifgreater':
                 return MtlxNodes.ifgreater(inputs.value1, inputs.value2, inputs.in1, inputs.in2);
+
+            case 'rotate3d':
+                return MtlxNodes.rotate3d(
+                    inputs.in || vec3(0, 0, 0),
+                    inputs.amount || float(0),
+                    inputs.axis || vec3(0, 1, 0)
+                );
 
             default:
                 console.warn(`Unknown MaterialX node type: ${nodeType}`);

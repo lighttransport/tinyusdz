@@ -247,6 +247,18 @@ export const MtlxNodeEval = {
         return { op: 'reflect', in1: i, in2: n };
     },
 
+    // Rotate a 3D vector about an arbitrary axis by an angle in degrees.
+    // Matches MaterialX GLSL mx_rotationMatrix (Rodrigues' formula, row-major convention).
+    // USD/MaterialX stores matrices row-major; Three.js uses column-major, so the
+    // constant-evaluated result is just an array — no matrix storage order issue.
+    rotate3d: (v, amount, axis) => {
+        if (isConstant(v) && isConstant(amount) && isConstant(axis)
+            && Array.isArray(v) && Array.isArray(axis)) {
+            return rotate3dVector(v, toScalar(amount), axis);
+        }
+        return { op: 'rotate3d', in: v, amount: amount, axis: axis };
+    },
+
     // ========== Color Operations ==========
     luminance: (c) => {
         if (isConstant(c) && Array.isArray(c)) {
@@ -536,6 +548,36 @@ function crossProduct(a, b) {
     ];
 }
 
+// Rotate vector v around unit axis by angleDeg degrees.
+// Matches MaterialX GLSL mx_rotationMatrix exactly:
+//   mat4 columns in GLSL → row-major rotation matrix in math.
+// USD stores matrices row-major; Three.js column-major — but here we
+// multiply explicitly so storage order doesn't matter.
+function rotate3dVector(v, angleDeg, axis) {
+    const ax = normalizeVector(axis);
+    const rad = angleDeg * Math.PI / 180;
+    const s = Math.sin(rad);
+    const c = Math.cos(rad);
+    const oc = 1 - c;
+
+    // Build the same 3×3 rotation as mx_rotationMatrix.
+    // GLSL column 0 = math row 0 when applied via M*v.
+    // Row i of the effective matrix (from MaterialX GLSL source):
+    //   row0: (oc*ax*ax+c,    oc*ax*ay+az*s,  oc*az*ax-ay*s)
+    //   row1: (oc*ax*ay-az*s, oc*ay*ay+c,     oc*ay*az+ax*s)
+    //   row2: (oc*az*ax+ay*s, oc*ay*az-ax*s,  oc*az*az+c)
+    const [x, y, z] = ax;
+    const r00 = oc * x * x + c,       r01 = oc * x * y + z * s, r02 = oc * z * x - y * s;
+    const r10 = oc * x * y - z * s,   r11 = oc * y * y + c,     r12 = oc * y * z + x * s;
+    const r20 = oc * z * x + y * s,   r21 = oc * y * z - x * s, r22 = oc * z * z + c;
+
+    return [
+        r00 * v[0] + r01 * v[1] + r02 * v[2],
+        r10 * v[0] + r11 * v[1] + r12 * v[2],
+        r20 * v[0] + r21 * v[1] + r22 * v[2]
+    ];
+}
+
 function rgbToHsv(rgb) {
     const [r, g, b] = rgb;
     const max = Math.max(r, g, b);
@@ -784,6 +826,13 @@ export class MtlxNodeGraphProcessor {
 
             case 'reflect':
                 return MtlxNodeEval.reflect(inputs.in, inputs.normal);
+
+            case 'rotate3d':
+                return MtlxNodeEval.rotate3d(
+                    inputs.in ?? [0, 0, 0],
+                    inputs.amount ?? 0,
+                    inputs.axis ?? [0, 1, 0]
+                );
 
             case 'luminance':
                 return MtlxNodeEval.luminance(inputs.in);
