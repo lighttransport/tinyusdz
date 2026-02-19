@@ -85,7 +85,7 @@ const state = {
     bridgeConnected: false,
 
     // Node graph editing
-    interactiveUpdate: false,
+    interactiveUpdate: true,
     graphDirty: false,
     updateDebounceTimer: null,
 
@@ -381,27 +381,125 @@ function registerMtlxNodeTypes() {
     LiteGraph.registerNodeType('mtlx/normal', NormalNode);
 
     // OpenPBR Surface output node
+
+    // Helper: convert [r,g,b] (0-1) to hex string
+    function rgbToHex(c) {
+        const r = Math.round(Math.max(0, Math.min(1, c[0])) * 255);
+        const g = Math.round(Math.max(0, Math.min(1, c[1])) * 255);
+        const b = Math.round(Math.max(0, Math.min(1, c[2])) * 255);
+        return '#' + ((1 << 24) + (r << 16) + (g << 8) + b).toString(16).slice(1);
+    }
+    // Helper: convert hex string to [r,g,b] (0-1)
+    function hexToRGB(hex) {
+        const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
+        if (!result) return [0, 0, 0];
+        return [parseInt(result[1], 16) / 255, parseInt(result[2], 16) / 255, parseInt(result[3], 16) / 255];
+    }
+    // Helper: check if a value matches its default
+    function isDefaultValue(val, def) {
+        if (Array.isArray(val) && Array.isArray(def)) {
+            return val.length === def.length && val.every((v, i) => Math.abs(v - def[i]) < 0.001);
+        }
+        if (typeof val === 'number' && typeof def === 'number') {
+            return Math.abs(val - def) < 0.001;
+        }
+        return val === def;
+    }
+
+    // Group boundaries for input slot labels
+    const OPENPBR_GROUPS = [
+        { name: 'BASE', startIdx: 0 },
+        { name: 'SPECULAR', startIdx: 3 },
+        { name: 'TRANSMISSION', startIdx: 9 },
+        { name: 'COAT', startIdx: 15 },
+        { name: 'FUZZ', startIdx: 23 },
+        { name: 'EMISSION', startIdx: 26 },
+        { name: 'GEOMETRY', startIdx: 28 },
+    ];
+
     // Parameter definitions: { type, default, min, max, step }
     const OPENPBR_PARAM_DEFS = {
-        'base_color':         { type: 'color3', default: [0.8, 0.8, 0.8] },
-        'base_metalness':     { type: 'float', default: 0.0, min: 0, max: 1, step: 0.01 },
-        'specular_roughness': { type: 'float', default: 0.3, min: 0, max: 1, step: 0.01 },
-        'specular_ior':       { type: 'float', default: 1.5, min: 1.0, max: 3.0, step: 0.01 },
-        'coat_weight':        { type: 'float', default: 0.0, min: 0, max: 1, step: 0.01 },
-        'emission_color':     { type: 'color3', default: [0, 0, 0] },
-        'geometry_opacity':   { type: 'float', default: 1.0, min: 0, max: 1, step: 0.01 },
+        // Base layer
+        'base_color':                    { type: 'color3', default: [0.8, 0.8, 0.8] },
+        'base_metalness':                { type: 'float', default: 0.0, min: 0, max: 1, step: 0.01 },
+        'base_diffuse_roughness':        { type: 'float', default: 0.0, min: 0, max: 1, step: 0.01 },
+        // Specular layer
+        'specular_weight':               { type: 'float', default: 1.0, min: 0, max: 1, step: 0.01 },
+        'specular_color':                { type: 'color3', default: [1, 1, 1] },
+        'specular_roughness':            { type: 'float', default: 0.3, min: 0, max: 1, step: 0.01 },
+        'specular_ior':                  { type: 'float', default: 1.5, min: 1.0, max: 3.0, step: 0.01 },
+        'specular_anisotropy':           { type: 'float', default: 0.0, min: 0, max: 1, step: 0.01 },
+        'specular_rotation':             { type: 'float', default: 0.0, min: 0, max: 1, step: 0.01 },
+        // Transmission layer
+        'transmission_weight':           { type: 'float', default: 0.0, min: 0, max: 1, step: 0.01 },
+        'transmission_color':            { type: 'color3', default: [1, 1, 1] },
+        'transmission_depth':            { type: 'float', default: 0.0, min: 0, max: 100, step: 0.1 },
+        'transmission_scatter':          { type: 'color3', default: [0, 0, 0] },
+        'transmission_scatter_anisotropy': { type: 'float', default: 0.0, min: -1, max: 1, step: 0.01 },
+        'transmission_dispersion':       { type: 'float', default: 0.0, min: 0, max: 100, step: 0.1 },
+        // Coat layer
+        'coat_weight':                   { type: 'float', default: 0.0, min: 0, max: 1, step: 0.01 },
+        'coat_color':                    { type: 'color3', default: [1, 1, 1] },
+        'coat_roughness':                { type: 'float', default: 0.0, min: 0, max: 1, step: 0.01 },
+        'coat_ior':                      { type: 'float', default: 1.5, min: 1.0, max: 3.0, step: 0.01 },
+        'coat_anisotropy':               { type: 'float', default: 0.0, min: 0, max: 1, step: 0.01 },
+        'coat_rotation':                 { type: 'float', default: 0.0, min: 0, max: 1, step: 0.01 },
+        'coat_affect_color':             { type: 'float', default: 0.0, min: 0, max: 1, step: 0.01 },
+        'coat_affect_roughness':         { type: 'float', default: 0.0, min: 0, max: 1, step: 0.01 },
+        // Fuzz layer
+        'fuzz_weight':                   { type: 'float', default: 0.0, min: 0, max: 1, step: 0.01 },
+        'fuzz_color':                    { type: 'color3', default: [1, 1, 1] },
+        'fuzz_roughness':                { type: 'float', default: 0.5, min: 0, max: 1, step: 0.01 },
+        // Emission
+        'emission_color':                { type: 'color3', default: [0, 0, 0] },
+        'emission_luminance':            { type: 'float', default: 0.0, min: 0, max: 10000, step: 1.0 },
+        // Geometry
+        'geometry_opacity':              { type: 'float', default: 1.0, min: 0, max: 1, step: 0.01 },
     };
 
     function OpenPBRSurfaceNode() {
+        // Base layer (0-2)
         this.addInput('base_color', 'color3');
         this.addInput('base_metalness', 'float');
+        this.addInput('base_diffuse_roughness', 'float');
+        // Specular layer (3-8)
+        this.addInput('specular_weight', 'float');
+        this.addInput('specular_color', 'color3');
         this.addInput('specular_roughness', 'float');
         this.addInput('specular_ior', 'float');
+        this.addInput('specular_anisotropy', 'float');
+        this.addInput('specular_rotation', 'float');
+        // Transmission layer (9-14)
+        this.addInput('transmission_weight', 'float');
+        this.addInput('transmission_color', 'color3');
+        this.addInput('transmission_depth', 'float');
+        this.addInput('transmission_scatter', 'color3');
+        this.addInput('transmission_scatter_anisotropy', 'float');
+        this.addInput('transmission_dispersion', 'float');
+        // Coat layer (15-22)
         this.addInput('coat_weight', 'float');
+        this.addInput('coat_color', 'color3');
+        this.addInput('coat_roughness', 'float');
+        this.addInput('coat_ior', 'float');
+        this.addInput('coat_anisotropy', 'float');
+        this.addInput('coat_rotation', 'float');
+        this.addInput('coat_affect_color', 'float');
+        this.addInput('coat_affect_roughness', 'float');
+        // Fuzz layer (23-25)
+        this.addInput('fuzz_weight', 'float');
+        this.addInput('fuzz_color', 'color3');
+        this.addInput('fuzz_roughness', 'float');
+        // Emission (26-27)
         this.addInput('emission_color', 'color3');
+        this.addInput('emission_luminance', 'float');
+        // Geometry (28-32)
         this.addInput('geometry_opacity', 'float');
+        this.addInput('geometry_normal', 'vector3');
+        this.addInput('geometry_tangent', 'vector3');
+        this.addInput('geometry_coat_normal', 'vector3');
+        this.addInput('geometry_coat_tangent', 'vector3');
         this.color = '#4CAF50';
-        this.size = [220, 150];
+        this.size = [240, 150];
         this.properties = {};
         // Track which input indices have inline widgets
         this._inlineSlots = new Set();
@@ -413,87 +511,274 @@ function registerMtlxNodeTypes() {
      * @param {Set} connectedSlots - Set of input slot indices that have node connections
      * @param {Object} materialValues - Current material values { base_color, base_metalness, ... }
      */
+    // All 33 input names in order matching addInput calls
+    const OPENPBR_INPUT_NAMES = [
+        // Base (0-2)
+        'base_color', 'base_metalness', 'base_diffuse_roughness',
+        // Specular (3-8)
+        'specular_weight', 'specular_color', 'specular_roughness',
+        'specular_ior', 'specular_anisotropy', 'specular_rotation',
+        // Transmission (9-14)
+        'transmission_weight', 'transmission_color', 'transmission_depth',
+        'transmission_scatter', 'transmission_scatter_anisotropy', 'transmission_dispersion',
+        // Coat (15-22)
+        'coat_weight', 'coat_color', 'coat_roughness', 'coat_ior',
+        'coat_anisotropy', 'coat_rotation', 'coat_affect_color', 'coat_affect_roughness',
+        // Fuzz (23-25)
+        'fuzz_weight', 'fuzz_color', 'fuzz_roughness',
+        // Emission (26-27)
+        'emission_color', 'emission_luminance',
+        // Geometry (28-32)
+        'geometry_opacity', 'geometry_normal', 'geometry_tangent',
+        'geometry_coat_normal', 'geometry_coat_tangent'
+    ];
+
+    // Short display names for widget labels
+    const OPENPBR_SHORT_NAMES = {
+        'base_color': 'color', 'base_metalness': 'metalness', 'base_diffuse_roughness': 'diff rough',
+        'specular_weight': 'spec wt', 'specular_color': 'spec color', 'specular_roughness': 'spec rough',
+        'specular_ior': 'spec ior', 'specular_anisotropy': 'spec aniso', 'specular_rotation': 'spec rot',
+        'transmission_weight': 'trans wt', 'transmission_color': 'trans color',
+        'transmission_depth': 'trans depth', 'transmission_scatter': 'trans scat',
+        'transmission_scatter_anisotropy': 'scat aniso', 'transmission_dispersion': 'dispersion',
+        'coat_weight': 'coat wt', 'coat_color': 'coat color', 'coat_roughness': 'coat rough',
+        'coat_ior': 'coat ior', 'coat_anisotropy': 'coat aniso', 'coat_rotation': 'coat rot',
+        'coat_affect_color': 'coat aff clr', 'coat_affect_roughness': 'coat aff rgh',
+        'fuzz_weight': 'fuzz wt', 'fuzz_color': 'fuzz color', 'fuzz_roughness': 'fuzz rough',
+        'emission_color': 'emit color', 'emission_luminance': 'emit lum',
+        'geometry_opacity': 'opacity',
+    };
+
+    // Inline control layout constants
+    // Empirical slot spacing that aligns with LiteGraph 0.7.18 rendering
+    const SLOT_H = 18;
+    const CTRL_W = 70;  // inline control width
+    const CTRL_H = 14;  // inline control height
+    const CTRL_PAD = 8; // right padding from node edge
+
     OpenPBRSurfaceNode.prototype._setupInlineWidgets = function(connectedSlots, materialValues) {
-        // Remove existing widgets
+        // No LiteGraph widgets — we render custom inline controls via onDrawForeground
         this.widgets = [];
         this._inlineSlots = new Set();
+        this._editableParams = new Map();
+        this._dragState = null;
 
-        const inputNames = [
-            'base_color', 'base_metalness', 'specular_roughness',
-            'specular_ior', 'coat_weight', 'emission_color', 'geometry_opacity'
-        ];
-
-        for (let i = 0; i < inputNames.length; i++) {
-            const name = inputNames[i];
-            if (connectedSlots.has(i)) continue; // Skip connected inputs
-
+        for (let i = 0; i < OPENPBR_INPUT_NAMES.length; i++) {
+            const name = OPENPBR_INPUT_NAMES[i];
             const def = OPENPBR_PARAM_DEFS[name];
-            if (!def) continue;
+            if (!def) continue; // Skip vector3 geometry inputs
 
-            this._inlineSlots.add(i);
             const currentVal = materialValues[name] !== undefined ? materialValues[name] : def.default;
-            this.properties[name] = currentVal;
 
             if (def.type === 'color3') {
                 const c = Array.isArray(currentVal) ? currentVal : def.default;
-                this.properties[name] = [c[0], c[1], c[2]]; // ensure copy
-                const shortName = name.replace('base_', '').replace('emission_', 'emit_').replace('geometry_', '');
-                this.addWidget('slider', `${shortName} R`, c[0], ((paramName) => (val) => {
-                    this.properties[paramName][0] = val;
-                    this.setDirtyCanvas(true);
-                    if (window._mtlxMarkDirty) window._mtlxMarkDirty();
-                })(name), { min: 0, max: 1, property: null });
-                this.addWidget('slider', `${shortName} G`, c[1], ((paramName) => (val) => {
-                    this.properties[paramName][1] = val;
-                    this.setDirtyCanvas(true);
-                    if (window._mtlxMarkDirty) window._mtlxMarkDirty();
-                })(name), { min: 0, max: 1, property: null });
-                this.addWidget('slider', `${shortName} B`, c[2], ((paramName) => (val) => {
-                    this.properties[paramName][2] = val;
-                    this.setDirtyCanvas(true);
-                    if (window._mtlxMarkDirty) window._mtlxMarkDirty();
-                })(name), { min: 0, max: 1, property: null });
+                this.properties[name] = [c[0], c[1], c[2]];
             } else {
-                // Float parameter
-                const v = typeof currentVal === 'number' ? currentVal : def.default;
-                this.properties[name] = v;
-                const shortName = name.replace('base_', '').replace('specular_', 'spec_').replace('geometry_', '').replace('coat_', 'coat ');
-                this.addWidget('slider', shortName, v, ((paramName) => (val) => {
-                    this.properties[paramName] = val;
-                    this.setDirtyCanvas(true);
-                    if (window._mtlxMarkDirty) window._mtlxMarkDirty();
-                })(name), { min: def.min, max: def.max, step: def.step, property: null });
+                this.properties[name] = typeof currentVal === 'number' ? currentVal : def.default;
+            }
+
+            // All unconnected params get inline controls
+            if (!connectedSlots.has(i)) {
+                this._inlineSlots.add(i);
+                this._editableParams.set(i, { name, def });
             }
         }
 
-        // Resize node to fit widgets + inputs
-        const widgetHeight = this.widgets.length * 22;
-        const inputHeight = inputNames.length * 18 + 30; // LiteGraph input slot spacing
-        this.size[0] = 220;
-        this.size[1] = Math.max(inputHeight + widgetHeight + 20, 150);
+        // Size based on input slots only (no widget area)
+        const inputHeight = OPENPBR_INPUT_NAMES.length * SLOT_H + 30;
+        this.size[0] = 240;
+        this.size[1] = Math.max(inputHeight + 10, 150);
+    };
+
+    /** Return the Y center of input slot idx in node-local coords. */
+    function _slotY(idx) {
+        // Empirical: matches LiteGraph 0.7.18 slot rendering in onDrawForeground context
+        return (idx + 1) * SLOT_H;
+    }
+
+    /** Return the bounding rect {x, y, w, h} for the inline control of slot idx. */
+    function _ctrlRect(nodeW, idx) {
+        const cy = _slotY(idx);
+        return {
+            x: nodeW - CTRL_W - CTRL_PAD,
+            y: cy - CTRL_H / 2,
+            w: CTRL_W,
+            h: CTRL_H
+        };
+    }
+
+    /**
+     * Draw inline value controls next to each unconnected input slot.
+     * - color3: small color swatch
+     * - float: mini progress bar with value text
+     * Also draws group separator lines.
+     */
+    OpenPBRSurfaceNode.prototype.onDrawForeground = function(ctx) {
+        if (!this._editableParams) return;
+
+        // Group separator lines
+        ctx.strokeStyle = 'rgba(100,130,160,0.25)';
+        ctx.lineWidth = 1;
+        for (let g = 1; g < OPENPBR_GROUPS.length; g++) {
+            const y = _slotY(OPENPBR_GROUPS[g].startIdx) - SLOT_H * 0.5;
+            ctx.beginPath();
+            ctx.moveTo(10, y);
+            ctx.lineTo(this.size[0] - 10, y);
+            ctx.stroke();
+        }
+
+        // Inline controls
+        for (const [idx, param] of this._editableParams) {
+            const r = _ctrlRect(this.size[0], idx);
+            const val = this.properties[param.name];
+            const isDef = isDefaultValue(val, param.def.default);
+
+            if (param.def.type === 'color3') {
+                const c = Array.isArray(val) ? val : [0, 0, 0];
+                const cr = Math.floor(Math.max(0, Math.min(1, c[0])) * 255);
+                const cg = Math.floor(Math.max(0, Math.min(1, c[1])) * 255);
+                const cb = Math.floor(Math.max(0, Math.min(1, c[2])) * 255);
+                ctx.fillStyle = `rgb(${cr},${cg},${cb})`;
+                ctx.fillRect(r.x, r.y, r.w, r.h);
+                ctx.strokeStyle = isDef ? '#556' : '#8af';
+                ctx.lineWidth = isDef ? 0.5 : 1;
+                ctx.strokeRect(r.x, r.y, r.w, r.h);
+            } else {
+                // Float: mini slider bar
+                const range = param.def.max - param.def.min;
+                const t = (range > 0 && typeof val === 'number')
+                    ? (val - param.def.min) / range : 0;
+                // Background
+                ctx.fillStyle = isDef ? 'rgba(30,30,50,0.4)' : 'rgba(40,40,65,0.7)';
+                ctx.fillRect(r.x, r.y, r.w, r.h);
+                // Fill bar
+                ctx.fillStyle = isDef ? 'rgba(80,100,130,0.3)' : 'rgba(90,140,200,0.55)';
+                ctx.fillRect(r.x, r.y, r.w * Math.max(0, Math.min(1, t)), r.h);
+                // Border
+                ctx.strokeStyle = isDef ? '#445' : '#68a';
+                ctx.lineWidth = isDef ? 0.5 : 1;
+                ctx.strokeRect(r.x, r.y, r.w, r.h);
+                // Value text
+                ctx.fillStyle = isDef ? '#889' : '#cde';
+                ctx.font = '9px monospace';
+                ctx.textAlign = 'center';
+                ctx.fillText(typeof val === 'number' ? val.toFixed(3) : '?',
+                             r.x + r.w / 2, r.y + r.h - 3);
+                ctx.textAlign = 'left';
+            }
+        }
     };
 
     /**
-     * Draw color swatches next to color inputs.
+     * Handle mouse clicks on inline controls.
+     * - color3 swatch: open native color picker
+     * - float bar: set value based on click position (drag to scrub)
      */
-    OpenPBRSurfaceNode.prototype.onDrawForeground = function(ctx) {
-        // Draw color swatches for inline color values
-        for (const name of ['base_color', 'emission_color']) {
-            const c = this.properties[name];
-            if (!c || !Array.isArray(c)) continue;
-            const idx = name === 'base_color' ? 0 : 5;
-            if (!this._inlineSlots || !this._inlineSlots.has(idx)) continue;
+    OpenPBRSurfaceNode.prototype.onMouseDown = function(event, localPos, graphCanvas) {
+        if (!this._editableParams) return false;
+        const x = localPos[0], y = localPos[1];
 
-            const r = Math.floor(Math.max(0, Math.min(1, c[0])) * 255);
-            const g = Math.floor(Math.max(0, Math.min(1, c[1])) * 255);
-            const b = Math.floor(Math.max(0, Math.min(1, c[2])) * 255);
-            ctx.fillStyle = `rgb(${r},${g},${b})`;
-            // Small swatch near the input slot
-            const slotY = idx * 18 + 18;
-            ctx.fillRect(this.size[0] - 25, slotY - 4, 18, 10);
-            ctx.strokeStyle = '#888';
-            ctx.strokeRect(this.size[0] - 25, slotY - 4, 18, 10);
+        for (const [idx, param] of this._editableParams) {
+            const r = _ctrlRect(this.size[0], idx);
+            if (x < r.x || x > r.x + r.w || y < r.y || y > r.y + r.h) continue;
+
+            if (param.def.type === 'color3') {
+                this._openColorPicker(param.name, event);
+                return true;
+            } else {
+                // Float: set value from click position
+                const t = Math.max(0, Math.min(1, (x - r.x) / r.w));
+                const raw = param.def.min + t * (param.def.max - param.def.min);
+                const step = param.def.step || 0.01;
+                this.properties[param.name] = Math.round(raw / step) * step;
+                this._dragState = { name: param.name, def: param.def, rx: r.x, rw: r.w };
+                this.setDirtyCanvas(true);
+                return true;
+            }
         }
+        return false;
+    };
+
+    OpenPBRSurfaceNode.prototype.onMouseMove = function(event, localPos, graphCanvas) {
+        if (!this._dragState) return false;
+        const { name, def, rx, rw } = this._dragState;
+        const t = Math.max(0, Math.min(1, (localPos[0] - rx) / rw));
+        const raw = def.min + t * (def.max - def.min);
+        const step = def.step || 0.01;
+        this.properties[name] = Math.round(raw / step) * step;
+        this.setDirtyCanvas(true);
+        return true;
+    };
+
+    OpenPBRSurfaceNode.prototype.onMouseUp = function(event, localPos, graphCanvas) {
+        if (this._dragState) {
+            this._dragState = null;
+            if (window._mtlxMarkDirty) window._mtlxMarkDirty();
+            return true;
+        }
+        return false;
+    };
+
+    /** Double-click on a float bar opens a prompt for precise value entry. */
+    OpenPBRSurfaceNode.prototype.onDblClick = function(event, localPos, graphCanvas) {
+        if (!this._editableParams) return false;
+        const x = localPos[0], y = localPos[1];
+
+        for (const [idx, param] of this._editableParams) {
+            const r = _ctrlRect(this.size[0], idx);
+            if (x < r.x || x > r.x + r.w || y < r.y || y > r.y + r.h) continue;
+
+            if (param.def.type === 'color3') {
+                this._openColorPicker(param.name, event);
+                return true;
+            } else {
+                const current = this.properties[param.name];
+                const input = prompt(param.name + ' (' + param.def.min + ' - ' + param.def.max + '):',
+                                     typeof current === 'number' ? current.toFixed(4) : '0');
+                if (input !== null) {
+                    const parsed = parseFloat(input);
+                    if (!isNaN(parsed)) {
+                        this.properties[param.name] = Math.max(param.def.min, Math.min(param.def.max, parsed));
+                        this.setDirtyCanvas(true);
+                        if (window._mtlxMarkDirty) window._mtlxMarkDirty();
+                    }
+                }
+                return true;
+            }
+        }
+        return false;
+    };
+
+    /** Open native color picker for a color3 property. */
+    OpenPBRSurfaceNode.prototype._openColorPicker = function(paramName, event) {
+        const self = this;
+        const currentColor = this.properties[paramName] || [0, 0, 0];
+        const input = document.createElement('input');
+        input.type = 'color';
+        input.value = rgbToHex(currentColor);
+        input.style.position = 'fixed';
+        input.style.left = ((event && event.clientX) || 200) + 'px';
+        input.style.top = ((event && event.clientY) || 200) + 'px';
+        input.style.opacity = '0';
+        input.style.width = '1px';
+        input.style.height = '1px';
+        input.style.pointerEvents = 'none';
+        document.body.appendChild(input);
+
+        input.addEventListener('input', function() {
+            self.properties[paramName] = hexToRGB(this.value);
+            self.setDirtyCanvas(true);
+        });
+        input.addEventListener('change', function() {
+            self.properties[paramName] = hexToRGB(this.value);
+            self.setDirtyCanvas(true);
+            if (window._mtlxMarkDirty) window._mtlxMarkDirty();
+            setTimeout(function() { if (input.parentNode) input.parentNode.removeChild(input); }, 100);
+        });
+        input.addEventListener('blur', function() {
+            setTimeout(function() { if (input.parentNode) input.parentNode.removeChild(input); }, 200);
+        });
+        setTimeout(function() { input.click(); }, 50);
     };
 
     LiteGraph.registerNodeType('mtlx/openpbr_surface', OpenPBRSurfaceNode);
@@ -626,18 +911,11 @@ function buildLiteGraphFromMtlx(nodeGraphData, materialName) {
         // No connections — all inputs are inline
         const matData = state.materialData[state.currentMaterialIndex];
         const openPBR = matData ? flattenOpenPBR(matData.openPBR || {}) : {};
-        const materialValues = {
-            base_color: extractOpenPBRValue(openPBR.base_color, DEFAULT_OPENPBR_PARAMS.base_color),
-            base_metalness: extractOpenPBRValue(openPBR.base_metalness, DEFAULT_OPENPBR_PARAMS.base_metalness),
-            specular_roughness: extractOpenPBRValue(openPBR.specular_roughness, DEFAULT_OPENPBR_PARAMS.specular_roughness),
-            specular_ior: extractOpenPBRValue(openPBR.specular_ior, DEFAULT_OPENPBR_PARAMS.specular_ior),
-            coat_weight: extractOpenPBRValue(openPBR.coat_weight, DEFAULT_OPENPBR_PARAMS.coat_weight),
-            emission_color: extractOpenPBRValue(openPBR.emission_color, DEFAULT_OPENPBR_PARAMS.emission_color),
-            geometry_opacity: extractOpenPBRValue(openPBR.geometry_opacity, DEFAULT_OPENPBR_PARAMS.geometry_opacity),
-        };
+        const materialValues = buildMaterialValues(openPBR);
         surfaceNode._setupInlineWidgets(new Set(), materialValues);
 
         state._buildingGraph = false;
+        state._hiddenNodeCount = 0;
         state.graphDirty = false;
         document.getElementById('edit-indicator').classList.remove('visible');
         updateNodeStats();
@@ -652,6 +930,7 @@ function buildLiteGraphFromMtlx(nodeGraphData, materialName) {
     // Separate active and inactive nodes
     const activeNodes = allNodes.filter(n => n._active !== false);
     const inactiveNodes = allNodes.filter(n => n._active === false);
+    state._hiddenNodeCount = state.showAllNodes ? 0 : inactiveNodes.length;
 
     // Decide which nodes to display based on showAllNodes toggle
     const displayNodes = state.showAllNodes ? allNodes : activeNodes;
@@ -681,6 +960,22 @@ function buildLiteGraphFromMtlx(nodeGraphData, materialName) {
         } else {
             lgNode = LiteGraph.createNode('mtlx/generic');
             lgNode.title = category;
+        }
+
+        // Set all input slot types to wildcard (0) for programmatic graph construction.
+        // MaterialX allows implicit type conversions (e.g. color4→color3) that
+        // LiteGraph's strict type checking would reject.
+        if (lgNode.inputs) {
+            for (const input of lgNode.inputs) input.type = 0;
+        }
+
+        // Adapt output type from the MaterialX type suffix (e.g. image_color4 → color4)
+        const rawCategory = node.category || node.type || '';
+        const typeSuffixMatch = rawCategory.match(/_(color[34]|float|vector[234]|integer|boolean|string)$/);
+        if (typeSuffixMatch && lgNode.outputs) {
+            for (const output of lgNode.outputs) {
+                output.type = typeSuffixMatch[1];
+            }
         }
 
         lgNode.title = node.name || category;
@@ -807,6 +1102,10 @@ function buildLiteGraphFromMtlx(nodeGraphData, materialName) {
     const maxLevel = levels.size > 0 ? Math.max(...levels.values()) : 0;
     surfaceNode.pos = [startX + (maxLevel + 1) * xSpacing, startY];
     surfaceNode.title = materialName || 'OpenPBR Surface';
+    // Set surface input types to wildcard for accepting any MaterialX type connection
+    if (surfaceNode.inputs) {
+        for (const input of surfaceNode.inputs) input.type = 0;
+    }
     state.graph.add(surfaceNode);
 
     // Create connections between nodes
@@ -836,20 +1135,48 @@ function buildLiteGraphFromMtlx(nodeGraphData, materialName) {
         }
     }
 
-    // Map shader parameter names to surface node input slots
+    // Map shader parameter names to surface node input slots (matches addInput order)
     const surfaceInputMap = {
-        'base_color': 0,
-        'baseColor': 0,
-        'diffuseColor': 0,
-        'base_metalness': 1,
-        'metalness': 1,
-        'specular_roughness': 2,
-        'roughness': 2,
-        'specular_ior': 3,
-        'coat_weight': 4,
-        'emission_color': 5,
-        'geometry_opacity': 6,
-        'opacity': 6,
+        // Base (0-2)
+        'base_color': 0, 'baseColor': 0, 'diffuseColor': 0,
+        'base_metalness': 1, 'metalness': 1,
+        'base_diffuse_roughness': 2,
+        // Specular (3-8)
+        'specular_weight': 3,
+        'specular_color': 4,
+        'specular_roughness': 5, 'roughness': 5,
+        'specular_ior': 6,
+        'specular_anisotropy': 7,
+        'specular_rotation': 8,
+        // Transmission (9-14)
+        'transmission_weight': 9,
+        'transmission_color': 10,
+        'transmission_depth': 11,
+        'transmission_scatter': 12,
+        'transmission_scatter_anisotropy': 13,
+        'transmission_dispersion': 14,
+        // Coat (15-22)
+        'coat_weight': 15,
+        'coat_color': 16,
+        'coat_roughness': 17,
+        'coat_ior': 18,
+        'coat_anisotropy': 19,
+        'coat_rotation': 20,
+        'coat_affect_color': 21,
+        'coat_affect_roughness': 22,
+        // Fuzz (23-25)
+        'fuzz_weight': 23,
+        'fuzz_color': 24,
+        'fuzz_roughness': 25,
+        // Emission (26-27)
+        'emission_color': 26,
+        'emission_luminance': 27,
+        // Geometry (28-32)
+        'geometry_opacity': 28, 'opacity': 28,
+        'geometry_normal': 29,
+        'geometry_tangent': 30,
+        'geometry_coat_normal': 31,
+        'geometry_coat_tangent': 32,
     };
     const connectedSlots = new Set();
 
@@ -891,15 +1218,7 @@ function buildLiteGraphFromMtlx(nodeGraphData, materialName) {
         // Get current material values from state
         const matData = state.materialData[state.currentMaterialIndex];
         const openPBR = matData ? flattenOpenPBR(matData.openPBR || {}) : {};
-        const materialValues = {
-            base_color: extractOpenPBRValue(openPBR.base_color, DEFAULT_OPENPBR_PARAMS.base_color),
-            base_metalness: extractOpenPBRValue(openPBR.base_metalness, DEFAULT_OPENPBR_PARAMS.base_metalness),
-            specular_roughness: extractOpenPBRValue(openPBR.specular_roughness, DEFAULT_OPENPBR_PARAMS.specular_roughness),
-            specular_ior: extractOpenPBRValue(openPBR.specular_ior, DEFAULT_OPENPBR_PARAMS.specular_ior),
-            coat_weight: extractOpenPBRValue(openPBR.coat_weight, DEFAULT_OPENPBR_PARAMS.coat_weight),
-            emission_color: extractOpenPBRValue(openPBR.emission_color, DEFAULT_OPENPBR_PARAMS.emission_color),
-            geometry_opacity: extractOpenPBRValue(openPBR.geometry_opacity, DEFAULT_OPENPBR_PARAMS.geometry_opacity),
-        };
+        const materialValues = buildMaterialValues(openPBR);
         surfaceNode._setupInlineWidgets(connectedSlots, materialValues);
     }
 
@@ -983,6 +1302,12 @@ function updateNodeStats() {
 
     document.getElementById('node-count').textContent = nodeCount;
     document.getElementById('connection-count').textContent = connectionCount;
+
+    const hiddenEl = document.getElementById('hidden-nodes-info');
+    if (hiddenEl) {
+        const hidden = state._hiddenNodeCount || 0;
+        hiddenEl.textContent = hidden > 0 ? '| Hidden: ' + hidden : '';
+    }
 }
 
 function toggleShowAllNodes(checked) {
@@ -1095,11 +1420,6 @@ function extractGraphFromLiteGraph() {
 
     // Build outputs from surface node connections
     if (surfaceNode && surfaceNode.inputs) {
-        const surfaceInputNames = [
-            'base_color', 'base_metalness', 'specular_roughness',
-            'specular_ior', 'coat_weight', 'emission_color', 'geometry_opacity'
-        ];
-
         for (let i = 0; i < surfaceNode.inputs.length; i++) {
             const inputSlot = surfaceNode.inputs[i];
             if (inputSlot.link != null) {
@@ -1109,7 +1429,7 @@ function extractGraphFromLiteGraph() {
                     const sourceName = idToName.get(sourceId);
                     if (sourceName) {
                         mtlxOutputs.push({
-                            name: surfaceInputNames[i] || inputSlot.name,
+                            name: inputSlot.name,
                             nodename: sourceName
                         });
                     }
@@ -1154,25 +1474,16 @@ function evaluateAndApplyMaterial() {
     // Build params from the current material data + overrides from graph
     const matData = state.materialData[matIndex];
     const openPBR = flattenOpenPBR(matData?.openPBR || {});
-    const params = {
-        base_color: extractOpenPBRValue(openPBR.base_color, DEFAULT_OPENPBR_PARAMS.base_color),
-        base_metalness: extractOpenPBRValue(openPBR.base_metalness, DEFAULT_OPENPBR_PARAMS.base_metalness),
-        specular_roughness: extractOpenPBRValue(openPBR.specular_roughness, DEFAULT_OPENPBR_PARAMS.specular_roughness),
-        specular_ior: extractOpenPBRValue(openPBR.specular_ior, DEFAULT_OPENPBR_PARAMS.specular_ior),
-        coat_weight: extractOpenPBRValue(openPBR.coat_weight, DEFAULT_OPENPBR_PARAMS.coat_weight),
-        emission_color: extractOpenPBRValue(openPBR.emission_color, DEFAULT_OPENPBR_PARAMS.emission_color),
-        geometry_opacity: extractOpenPBRValue(openPBR.geometry_opacity, DEFAULT_OPENPBR_PARAMS.geometry_opacity)
-    };
+    const params = buildMaterialValues(openPBR);
 
     // Override params with inline widget values from the surface node (for unconnected inputs)
     const surfaceNode = state.graph._nodes?.find(n => n.type === 'mtlx/openpbr_surface');
     if (surfaceNode && surfaceNode._inlineSlots) {
-        const inlineParamNames = [
-            'base_color', 'base_metalness', 'specular_roughness',
-            'specular_ior', 'coat_weight', 'emission_color', 'geometry_opacity'
-        ];
+        // Use input slot names directly from the node
         for (const idx of surfaceNode._inlineSlots) {
-            const name = inlineParamNames[idx];
+            const slot = surfaceNode.inputs[idx];
+            if (!slot) continue;
+            const name = slot.name;
             if (name && surfaceNode.properties[name] !== undefined) {
                 params[name] = surfaceNode.properties[name];
             }
@@ -1180,55 +1491,79 @@ function evaluateAndApplyMaterial() {
     }
 
     // Apply evaluated outputs
+    const paramMap = {
+        'base_color': 'base_color', 'baseColor': 'base_color', 'diffuseColor': 'base_color',
+        'roughness': 'specular_roughness', 'specular_roughness': 'specular_roughness',
+        'metalness': 'base_metalness', 'base_metalness': 'base_metalness',
+        'specular_ior': 'specular_ior', 'specular_weight': 'specular_weight',
+        'specular_color': 'specular_color', 'specular_anisotropy': 'specular_anisotropy',
+        'specular_rotation': 'specular_rotation',
+        'transmission_weight': 'transmission_weight', 'transmission_color': 'transmission_color',
+        'transmission_depth': 'transmission_depth', 'transmission_scatter': 'transmission_scatter',
+        'transmission_scatter_anisotropy': 'transmission_scatter_anisotropy',
+        'transmission_dispersion': 'transmission_dispersion',
+        'coat_weight': 'coat_weight', 'coat_color': 'coat_color', 'coat_roughness': 'coat_roughness',
+        'coat_ior': 'coat_ior', 'coat_anisotropy': 'coat_anisotropy', 'coat_rotation': 'coat_rotation',
+        'coat_affect_color': 'coat_affect_color', 'coat_affect_roughness': 'coat_affect_roughness',
+        'fuzz_weight': 'fuzz_weight', 'fuzz_color': 'fuzz_color', 'fuzz_roughness': 'fuzz_roughness',
+        'emission_color': 'emission_color', 'emission_luminance': 'emission_luminance',
+        'geometry_opacity': 'geometry_opacity', 'opacity': 'geometry_opacity',
+    };
     for (const [name, value] of Object.entries(outputs)) {
         if (value === undefined) continue;
         if (processor.needsShader(value)) continue; // skip texture-dependent values
 
-        const paramMap = {
-            'base_color': 'base_color',
-            'baseColor': 'base_color',
-            'diffuseColor': 'base_color',
-            'roughness': 'specular_roughness',
-            'specular_roughness': 'specular_roughness',
-            'metalness': 'base_metalness',
-            'base_metalness': 'base_metalness',
-            'specular_ior': 'specular_ior',
-            'coat_weight': 'coat_weight',
-            'emission_color': 'emission_color',
-            'geometry_opacity': 'geometry_opacity',
-            'opacity': 'geometry_opacity'
-        };
         const paramName = paramMap[name] || name;
         if (params.hasOwnProperty(paramName)) {
             params[paramName] = value;
         }
     }
 
-    // Apply to material (skip color/scalar overrides if a texture map is bound)
-    if (!material.map) {
-        const baseColor = params.base_color;
-        if (Array.isArray(baseColor)) {
-            material.color.setRGB(baseColor[0], baseColor[1], baseColor[2]);
-        } else if (typeof baseColor === 'number') {
-            material.color.setRGB(baseColor, baseColor, baseColor);
+    // Helper to apply a color3 param to a Three.js Color property
+    const applyColor3 = (threeColor, paramVal) => {
+        if (Array.isArray(paramVal)) {
+            threeColor.setRGB(paramVal[0], paramVal[1], paramVal[2]);
+        } else if (typeof paramVal === 'number') {
+            threeColor.setRGB(paramVal, paramVal, paramVal);
         }
-    }
+    };
 
+    // Apply to material (skip color/scalar overrides if a texture map is bound)
+    // --- Base ---
+    if (!material.map) applyColor3(material.color, params.base_color);
     if (!material.metalnessMap) material.metalness = params.base_metalness;
     if (!material.roughnessMap) material.roughness = params.specular_roughness;
+
+    // --- Specular ---
+    material.specularIntensity = params.specular_weight;
+    applyColor3(material.specularColor, params.specular_color);
     material.ior = params.specular_ior;
+    material.anisotropy = params.specular_anisotropy;
+    material.anisotropyRotation = params.specular_rotation * Math.PI * 2;
+
+    // --- Transmission ---
+    material.transmission = params.transmission_weight;
+    applyColor3(material.attenuationColor, params.transmission_color);
+    material.attenuationDistance = params.transmission_depth > 0 ? params.transmission_depth : Infinity;
+    material.dispersion = params.transmission_dispersion;
+
+    // --- Coat ---
     material.clearcoat = params.coat_weight;
+    material.clearcoatRoughness = params.coat_roughness;
 
-    if (!material.emissiveMap) {
-        const emissionColor = params.emission_color;
-        if (Array.isArray(emissionColor)) {
-            material.emissive.setRGB(emissionColor[0], emissionColor[1], emissionColor[2]);
-        }
-    }
+    // --- Emission ---
+    if (!material.emissiveMap) applyColor3(material.emissive, params.emission_color);
+    material.emissiveIntensity = params.emission_luminance;
 
+    // --- Geometry opacity ---
     if (params.geometry_opacity !== undefined) {
         material.opacity = params.geometry_opacity;
-        material.transparent = params.geometry_opacity < 1.0;
+        // When transmission is active, Three.js handles transparency internally
+        if (params.transmission_weight > 0) {
+            material.transparent = false;
+        } else {
+            material.transparent = params.geometry_opacity < 1.0;
+        }
     }
 
     material.needsUpdate = true;
@@ -1838,6 +2173,22 @@ function extractOpenPBRValue(param, defaultVal) {
 }
 
 /**
+ * Build a complete materialValues object from flattened openPBR data.
+ * Extracts all editable OpenPBR parameters with fallback to DEFAULT_OPENPBR_PARAMS.
+ * @param {Object} openPBR - Flattened openPBR object
+ * @returns {Object} materialValues keyed by parameter name
+ */
+function buildMaterialValues(openPBR) {
+    const vals = {};
+    for (const key of Object.keys(DEFAULT_OPENPBR_PARAMS)) {
+        const def = DEFAULT_OPENPBR_PARAMS[key];
+        if (typeof def === 'boolean') continue; // skip geometry_thin_walled
+        vals[key] = extractOpenPBRValue(openPBR[key], def);
+    }
+    return vals;
+}
+
+/**
  * Flatten nested openPBR structure into flat param keys.
  * The C++ serializer groups params by category (e.g. openPBR.base.base_color),
  * but our code expects flat access (e.g. openPBR.base_color).
@@ -2101,14 +2452,7 @@ async function buildScene() {
             nodeGraph = optimizeNodeGraph(nodeGraph, NodeGraphOptimizationLevel.STANDARD);
         }
 
-        const params = {
-            base_color: extractOpenPBRValue(openPBR.base_color, DEFAULT_OPENPBR_PARAMS.base_color),
-            base_metalness: extractOpenPBRValue(openPBR.base_metalness, DEFAULT_OPENPBR_PARAMS.base_metalness),
-            specular_roughness: extractOpenPBRValue(openPBR.specular_roughness, DEFAULT_OPENPBR_PARAMS.specular_roughness),
-            specular_ior: extractOpenPBRValue(openPBR.specular_ior, DEFAULT_OPENPBR_PARAMS.specular_ior),
-            coat_weight: extractOpenPBRValue(openPBR.coat_weight, DEFAULT_OPENPBR_PARAMS.coat_weight),
-            emission_color: extractOpenPBRValue(openPBR.emission_color, DEFAULT_OPENPBR_PARAMS.emission_color)
-        };
+        const params = buildMaterialValues(openPBR);
 
         // Process node graph for constant values
         if (nodeGraph) {
@@ -2118,10 +2462,9 @@ async function buildScene() {
             for (const [name, value] of Object.entries(outputs)) {
                 if (value !== undefined && !processor.needsShader(value)) {
                     const paramMap = {
-                        'base_color': 'base_color',
-                        'baseColor': 'base_color',
-                        'roughness': 'specular_roughness',
-                        'metalness': 'base_metalness'
+                        'base_color': 'base_color', 'baseColor': 'base_color', 'diffuseColor': 'base_color',
+                        'roughness': 'specular_roughness', 'metalness': 'base_metalness',
+                        'opacity': 'geometry_opacity',
                     };
                     const paramName = paramMap[name] || name;
                     if (params.hasOwnProperty(paramName)) {
