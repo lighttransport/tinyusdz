@@ -708,14 +708,7 @@
                     <label class="toggle-container">
                         <span>Live</span>
                         <label class="toggle-switch">
-                            <input type="checkbox" id="interactive-toggle" onchange="toggleInteractiveUpdate(this.checked)">
-                            <span class="toggle-slider"></span>
-                        </label>
-                    </label>
-                    <label class="toggle-container" title="Show all nodes including unused (dead) nodes">
-                        <span>All</span>
-                        <label class="toggle-switch">
-                            <input type="checkbox" id="show-all-toggle" onchange="toggleShowAllNodes(this.checked)">
+                            <input type="checkbox" id="interactive-toggle" onchange="toggleInteractiveUpdate(this.checked)" checked>
                             <span class="toggle-slider"></span>
                         </label>
                     </label>
@@ -725,6 +718,14 @@
             <div class="nodegraph-stats">
                 Nodes: <span id="node-count">0</span> |
                 Connections: <span id="connection-count">0</span>
+                <span id="hidden-nodes-info"></span>
+                <label class="toggle-container" style="margin-left:8px" title="Show all nodes including unused (dead) nodes">
+                    <span>Show all nodes</span>
+                    <label class="toggle-switch">
+                        <input type="checkbox" id="show-all-toggle" onchange="toggleShowAllNodes(this.checked)">
+                        <span class="toggle-slider"></span>
+                    </label>
+                </label>
             </div>
             <div class="edit-indicator" id="edit-indicator">Graph modified - click Update or enable Live</div>
 
