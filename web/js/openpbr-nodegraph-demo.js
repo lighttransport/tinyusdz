@@ -7,7 +7,7 @@
 
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
-// import { RGBELoader } from 'three/examples/jsm/loaders/RGBELoader.js';  // Available for HDR env presets
+import { HDRLoader } from 'three/examples/jsm/loaders/HDRLoader.js';
 // import { EXRLoader } from 'three/examples/jsm/loaders/EXRLoader.js';    // Available for EXR env presets
 import { TinyUSDZLoader } from 'tinyusdz/TinyUSDZLoader.js';
 import { TinyUSDZLoaderUtils } from 'tinyusdz/TinyUSDZLoaderUtils.js';
@@ -39,6 +39,8 @@ try {
 const ENV_PRESETS = {
     'studio': null,                     // Procedural gradient
     'usd_dome': 'usd',                 // From loaded USD DomeLight
+    'goegap': 'hdr:assets/textures/goegap_1k.hdr',
+    'pisa': 'cube:assets/textures/cube/pisa/',
     'constant_white': 'constant:#ffffff',
     'constant_warm': 'constant:#fff5e0',
     'constant_cool': 'constant:#e0f0ff',
@@ -100,7 +102,7 @@ const state = {
     envMapSource: null,    // Original equirectangular texture (for scene.background)
     envPreset: 'studio',
     envIntensity: 1.0,
-    showBackground: false,
+    showBackground: true,
     toneMapping: 'aces',
     exposure: 1.0,
 
@@ -379,6 +381,17 @@ function registerMtlxNodeTypes() {
     LiteGraph.registerNodeType('mtlx/normal', NormalNode);
 
     // OpenPBR Surface output node
+    // Parameter definitions: { type, default, min, max, step }
+    const OPENPBR_PARAM_DEFS = {
+        'base_color':         { type: 'color3', default: [0.8, 0.8, 0.8] },
+        'base_metalness':     { type: 'float', default: 0.0, min: 0, max: 1, step: 0.01 },
+        'specular_roughness': { type: 'float', default: 0.3, min: 0, max: 1, step: 0.01 },
+        'specular_ior':       { type: 'float', default: 1.5, min: 1.0, max: 3.0, step: 0.01 },
+        'coat_weight':        { type: 'float', default: 0.0, min: 0, max: 1, step: 0.01 },
+        'emission_color':     { type: 'color3', default: [0, 0, 0] },
+        'geometry_opacity':   { type: 'float', default: 1.0, min: 0, max: 1, step: 0.01 },
+    };
+
     function OpenPBRSurfaceNode() {
         this.addInput('base_color', 'color3');
         this.addInput('base_metalness', 'float');
@@ -388,9 +401,101 @@ function registerMtlxNodeTypes() {
         this.addInput('emission_color', 'color3');
         this.addInput('geometry_opacity', 'float');
         this.color = '#4CAF50';
-        this.size = [180, 150];
+        this.size = [220, 150];
+        this.properties = {};
+        // Track which input indices have inline widgets
+        this._inlineSlots = new Set();
     }
     OpenPBRSurfaceNode.title = 'OpenPBR Surface';
+
+    /**
+     * Set up inline value widgets for unconnected inputs.
+     * @param {Set} connectedSlots - Set of input slot indices that have node connections
+     * @param {Object} materialValues - Current material values { base_color, base_metalness, ... }
+     */
+    OpenPBRSurfaceNode.prototype._setupInlineWidgets = function(connectedSlots, materialValues) {
+        // Remove existing widgets
+        this.widgets = [];
+        this._inlineSlots = new Set();
+
+        const inputNames = [
+            'base_color', 'base_metalness', 'specular_roughness',
+            'specular_ior', 'coat_weight', 'emission_color', 'geometry_opacity'
+        ];
+
+        for (let i = 0; i < inputNames.length; i++) {
+            const name = inputNames[i];
+            if (connectedSlots.has(i)) continue; // Skip connected inputs
+
+            const def = OPENPBR_PARAM_DEFS[name];
+            if (!def) continue;
+
+            this._inlineSlots.add(i);
+            const currentVal = materialValues[name] !== undefined ? materialValues[name] : def.default;
+            this.properties[name] = currentVal;
+
+            if (def.type === 'color3') {
+                const c = Array.isArray(currentVal) ? currentVal : def.default;
+                this.properties[name] = [c[0], c[1], c[2]]; // ensure copy
+                const shortName = name.replace('base_', '').replace('emission_', 'emit_').replace('geometry_', '');
+                this.addWidget('slider', `${shortName} R`, c[0], ((paramName) => (val) => {
+                    this.properties[paramName][0] = val;
+                    this.setDirtyCanvas(true);
+                    if (window._mtlxMarkDirty) window._mtlxMarkDirty();
+                })(name), { min: 0, max: 1, property: null });
+                this.addWidget('slider', `${shortName} G`, c[1], ((paramName) => (val) => {
+                    this.properties[paramName][1] = val;
+                    this.setDirtyCanvas(true);
+                    if (window._mtlxMarkDirty) window._mtlxMarkDirty();
+                })(name), { min: 0, max: 1, property: null });
+                this.addWidget('slider', `${shortName} B`, c[2], ((paramName) => (val) => {
+                    this.properties[paramName][2] = val;
+                    this.setDirtyCanvas(true);
+                    if (window._mtlxMarkDirty) window._mtlxMarkDirty();
+                })(name), { min: 0, max: 1, property: null });
+            } else {
+                // Float parameter
+                const v = typeof currentVal === 'number' ? currentVal : def.default;
+                this.properties[name] = v;
+                const shortName = name.replace('base_', '').replace('specular_', 'spec_').replace('geometry_', '').replace('coat_', 'coat ');
+                this.addWidget('slider', shortName, v, ((paramName) => (val) => {
+                    this.properties[paramName] = val;
+                    this.setDirtyCanvas(true);
+                    if (window._mtlxMarkDirty) window._mtlxMarkDirty();
+                })(name), { min: def.min, max: def.max, step: def.step, property: null });
+            }
+        }
+
+        // Resize node to fit widgets + inputs
+        const widgetHeight = this.widgets.length * 22;
+        const inputHeight = inputNames.length * 18 + 30; // LiteGraph input slot spacing
+        this.size[0] = 220;
+        this.size[1] = Math.max(inputHeight + widgetHeight + 20, 150);
+    };
+
+    /**
+     * Draw color swatches next to color inputs.
+     */
+    OpenPBRSurfaceNode.prototype.onDrawForeground = function(ctx) {
+        // Draw color swatches for inline color values
+        for (const name of ['base_color', 'emission_color']) {
+            const c = this.properties[name];
+            if (!c || !Array.isArray(c)) continue;
+            const idx = name === 'base_color' ? 0 : 5;
+            if (!this._inlineSlots || !this._inlineSlots.has(idx)) continue;
+
+            const r = Math.floor(Math.max(0, Math.min(1, c[0])) * 255);
+            const g = Math.floor(Math.max(0, Math.min(1, c[1])) * 255);
+            const b = Math.floor(Math.max(0, Math.min(1, c[2])) * 255);
+            ctx.fillStyle = `rgb(${r},${g},${b})`;
+            // Small swatch near the input slot
+            const slotY = idx * 18 + 18;
+            ctx.fillRect(this.size[0] - 25, slotY - 4, 18, 10);
+            ctx.strokeStyle = '#888';
+            ctx.strokeRect(this.size[0] - 25, slotY - 4, 18, 10);
+        }
+    };
+
     LiteGraph.registerNodeType('mtlx/openpbr_surface', OpenPBRSurfaceNode);
 
     // Convert node (type conversion pass-through, e.g. color4→color3, float→color3)
@@ -512,19 +617,25 @@ function buildLiteGraphFromMtlx(nodeGraphData, materialName) {
     state.graph.clear();
 
     if (!nodeGraphData || !nodeGraphData.nodegraph) {
-        // Create a simple constant output for materials without node graphs
-        const constNode = LiteGraph.createNode('mtlx/constant');
-        constNode.pos = [100, 200];
-        constNode.properties.value = [0.8, 0.8, 0.8];
-        constNode._setupWidgets();
-        state.graph.add(constNode);
-
+        // Create a surface node with inline widgets for all parameters
         const surfaceNode = LiteGraph.createNode('mtlx/openpbr_surface');
-        surfaceNode.pos = [400, 150];
+        surfaceNode.pos = [200, 50];
         surfaceNode.title = materialName || 'OpenPBR Surface';
         state.graph.add(surfaceNode);
 
-        constNode.connect(0, surfaceNode, 0);
+        // No connections — all inputs are inline
+        const matData = state.materialData[state.currentMaterialIndex];
+        const openPBR = matData ? flattenOpenPBR(matData.openPBR || {}) : {};
+        const materialValues = {
+            base_color: extractOpenPBRValue(openPBR.base_color, DEFAULT_OPENPBR_PARAMS.base_color),
+            base_metalness: extractOpenPBRValue(openPBR.base_metalness, DEFAULT_OPENPBR_PARAMS.base_metalness),
+            specular_roughness: extractOpenPBRValue(openPBR.specular_roughness, DEFAULT_OPENPBR_PARAMS.specular_roughness),
+            specular_ior: extractOpenPBRValue(openPBR.specular_ior, DEFAULT_OPENPBR_PARAMS.specular_ior),
+            coat_weight: extractOpenPBRValue(openPBR.coat_weight, DEFAULT_OPENPBR_PARAMS.coat_weight),
+            emission_color: extractOpenPBRValue(openPBR.emission_color, DEFAULT_OPENPBR_PARAMS.emission_color),
+            geometry_opacity: extractOpenPBRValue(openPBR.geometry_opacity, DEFAULT_OPENPBR_PARAMS.geometry_opacity),
+        };
+        surfaceNode._setupInlineWidgets(new Set(), materialValues);
 
         state._buildingGraph = false;
         state.graphDirty = false;
@@ -773,6 +884,23 @@ function buildLiteGraphFromMtlx(nodeGraphData, materialName) {
                 sourceEntry.node.connect(0, surfaceNode, surfaceNode.inputs.length - 1);
             }
         }
+    }
+
+    // Set up inline value widgets for unconnected surface inputs
+    if (typeof surfaceNode._setupInlineWidgets === 'function') {
+        // Get current material values from state
+        const matData = state.materialData[state.currentMaterialIndex];
+        const openPBR = matData ? flattenOpenPBR(matData.openPBR || {}) : {};
+        const materialValues = {
+            base_color: extractOpenPBRValue(openPBR.base_color, DEFAULT_OPENPBR_PARAMS.base_color),
+            base_metalness: extractOpenPBRValue(openPBR.base_metalness, DEFAULT_OPENPBR_PARAMS.base_metalness),
+            specular_roughness: extractOpenPBRValue(openPBR.specular_roughness, DEFAULT_OPENPBR_PARAMS.specular_roughness),
+            specular_ior: extractOpenPBRValue(openPBR.specular_ior, DEFAULT_OPENPBR_PARAMS.specular_ior),
+            coat_weight: extractOpenPBRValue(openPBR.coat_weight, DEFAULT_OPENPBR_PARAMS.coat_weight),
+            emission_color: extractOpenPBRValue(openPBR.emission_color, DEFAULT_OPENPBR_PARAMS.emission_color),
+            geometry_opacity: extractOpenPBRValue(openPBR.geometry_opacity, DEFAULT_OPENPBR_PARAMS.geometry_opacity),
+        };
+        surfaceNode._setupInlineWidgets(connectedSlots, materialValues);
     }
 
     // Clear building flag and reset dirty state
@@ -1036,6 +1164,21 @@ function evaluateAndApplyMaterial() {
         geometry_opacity: extractOpenPBRValue(openPBR.geometry_opacity, DEFAULT_OPENPBR_PARAMS.geometry_opacity)
     };
 
+    // Override params with inline widget values from the surface node (for unconnected inputs)
+    const surfaceNode = state.graph._nodes?.find(n => n.type === 'mtlx/openpbr_surface');
+    if (surfaceNode && surfaceNode._inlineSlots) {
+        const inlineParamNames = [
+            'base_color', 'base_metalness', 'specular_roughness',
+            'specular_ior', 'coat_weight', 'emission_color', 'geometry_opacity'
+        ];
+        for (const idx of surfaceNode._inlineSlots) {
+            const name = inlineParamNames[idx];
+            if (name && surfaceNode.properties[name] !== undefined) {
+                params[name] = surfaceNode.properties[name];
+            }
+        }
+    }
+
     // Apply evaluated outputs
     for (const [name, value] of Object.entries(outputs)) {
         if (value === undefined) continue;
@@ -1294,15 +1437,54 @@ function createConstantColorEnvironment(hexColor) {
 }
 
 /**
- * Load an environment map from a preset key.
- * Handles 'studio', 'usd_dome', and 'constant:*' presets.
- */
-/**
  * Set both envMap (PMREM) and envMapSource (equirectangular) from a result object.
  */
 function setEnvFromResult(result) {
     state.envMap = result.envMap;
     state.envMapSource = result.source;
+}
+
+/**
+ * Generate a high-resolution PMREM from a texture using fromScene().
+ * The default fromEquirectangular() derives cube size from the input texture
+ * (e.g. 1024px HDR → cube 256), which causes visible LOD discontinuities
+ * at low roughness values due to the mip clamp at CUBEUV_MAX_MIP.
+ * Using fromScene() with a larger size (512) adds an extra LOD level,
+ * pushing the discontinuity from roughness ~0.054 to ~0.038.
+ *
+ * @param {THREE.Texture} texture - Source texture (equirectangular or cubemap)
+ * @param {number} [size=512] - PMREM cube face resolution
+ * @returns {THREE.Texture} PMREM-processed environment map texture
+ */
+function generateHighResPMREM(texture, minCubeSize = 512) {
+    // Override PMREMGenerator's internal _setSize to enforce a minimum cube size.
+    // By default, fromEquirectangular() sets cubeSize = texture.width / 4
+    // (e.g. 1024px HDR → cube 256). With cube 256, CUBEUV_MAX_MIP = 8,
+    // and the mip clamp at the max creates a visible LOD discontinuity
+    // at roughness ~0.054. Forcing cube 512 gives CUBEUV_MAX_MIP = 9,
+    // pushing the discontinuity down to roughness ~0.038.
+    const pmrem = state.pmremGenerator;
+
+    // Force recreation of internal GGX shader material. PMREMGenerator caches
+    // _ggxMaterial with CUBEUV_MAX_MIP baked into shader defines. When cube size
+    // changes, the stale material has wrong defines (Three.js _dispose() disposes
+    // but doesn't null the reference, so the null-check in _applyGGXFilter skips
+    // recreation). We must null it to force a fresh shader with correct defines.
+    if (pmrem._ggxMaterial) {
+        pmrem._ggxMaterial.dispose();
+        pmrem._ggxMaterial = null;
+    }
+
+    const origSetSize = pmrem._setSize.bind(pmrem);
+    pmrem._setSize = function(cubeSize) {
+        origSetSize(Math.max(cubeSize, minCubeSize));
+    };
+    const isCube = texture.isCubeTexture;
+    const envMap = isCube
+        ? pmrem.fromCubemap(texture).texture
+        : pmrem.fromEquirectangular(texture).texture;
+    pmrem._setSize = origSetSize;
+    return envMap;
 }
 
 async function loadEnvironment(preset) {
@@ -1320,7 +1502,6 @@ async function loadEnvironment(preset) {
         // Use stored dome light env map
         if (state.domeLightData && state.domeLightData.texture) {
             state.envMap = state.domeLightData.texture;
-            // DomeLight source may not have a separate equirect; use PMREM for both
             state.envMapSource = state.domeLightData.sourceTexture || state.domeLightData.texture;
             state.envIntensity = state.domeLightData.intensity || 1.0;
             applyEnvironment();
@@ -1338,25 +1519,84 @@ async function loadEnvironment(preset) {
         applyEnvironment();
         return;
     }
+
+    if (path.startsWith('hdr:')) {
+        const url = path.substring('hdr:'.length);
+        try {
+            const loader = new HDRLoader();
+            const texture = await loader.loadAsync(url);
+            texture.mapping = THREE.EquirectangularReflectionMapping;
+            // Use high-res PMREM (cube 512) to avoid LOD discontinuities at low roughness
+            const envMap = generateHighResPMREM(texture, 512);
+            state.envMap = envMap;
+            state.envMapSource = texture;
+            applyEnvironment();
+        } catch (e) {
+            console.error('Failed to load HDR:', url, e);
+            showToast('Failed to load HDR environment');
+            setEnvFromResult(createStudioEnvironment());
+            applyEnvironment();
+        }
+        return;
+    }
+
+    if (path.startsWith('cube:')) {
+        const dir = path.substring('cube:'.length);
+        try {
+            const loader = new THREE.CubeTextureLoader();
+            const faces = ['px.png', 'nx.png', 'py.png', 'ny.png', 'pz.png', 'nz.png'];
+            const cubeTexture = await loader.setPath(dir).loadAsync(faces);
+            // Use high-res PMREM (cube 512) to avoid LOD discontinuities at low roughness
+            const envMap = generateHighResPMREM(cubeTexture, 512);
+            state.envMap = envMap;
+            // CubeTexture can serve as background directly
+            state.envMapSource = cubeTexture;
+            applyEnvironment();
+        } catch (e) {
+            console.error('Failed to load cubemap:', dir, e);
+            showToast('Failed to load cubemap environment');
+            setEnvFromResult(createStudioEnvironment());
+            applyEnvironment();
+        }
+        return;
+    }
 }
 
 /**
  * Apply the current envMap to the scene and all materials.
+ * Uses PMREM texture for scene.environment (IBL reflections) and
+ * equirectangular source for scene.background (visible panorama).
  */
 function applyEnvironment() {
+    const activeEnvMap = state.envEnabled ? state.envMap : null;
+    const activeSource = state.envEnabled ? state.envMapSource : null;
+
     // scene.environment drives IBL for all MeshStandardMaterial/MeshPhysicalMaterial
-    state.scene.environment = state.envEnabled ? state.envMap : null;
+    state.scene.environment = activeEnvMap;
 
-    // Use the original equirectangular source for background (renders correctly)
-    // Fall back to PMREM texture if no source is available
-    const bgTexture = state.envMapSource || state.envMap;
-    state.scene.background = state.showBackground ? bgTexture : new THREE.Color(0x1a1a2e);
+    // Use equirectangular source texture for background (shows gradient/color clearly)
+    // PMREM (cubeUV) textures look flattened as backgrounds; source textures are better
+    if (state.showBackground && activeSource) {
+        state.scene.background = activeSource;
+    } else {
+        state.scene.background = new THREE.Color(0x1a1a2e);
+    }
 
-    // Set envMapIntensity on all materials (don't set mat.envMap — let scene.environment handle it)
+    // Set envMap explicitly on ALL materials (critical for reflections to update)
     const intensity = state.envEnabled ? state.envIntensity : 0;
     state.materials.forEach(mat => {
+        mat.envMap = activeEnvMap;
         mat.envMapIntensity = intensity;
         mat.needsUpdate = true;
+    });
+
+    // Also traverse scene for any materials not tracked in state.materials
+    state.scene.traverse(obj => {
+        if (obj.isMesh && obj.material && !state.materials.includes(obj.material)) {
+            obj.material.envMap = activeEnvMap;
+            obj.material.envMapIntensity = intensity;
+            obj.material.needsUpdate = true;
+        }
     });
 
     // Update renderer tone mapping
@@ -2462,21 +2702,17 @@ window.changeEnvIntensity = function(val) {
 window.changeExposure = function(val) {
     state.exposure = val;
     document.getElementById('exposure-val').textContent = val.toFixed(1);
-    state.renderer.toneMappingExposure = val;
+    applyEnvironment();
 };
 
 window.changeToneMapping = function(mode) {
     state.toneMapping = mode;
-    const tmValue = TONE_MAPPINGS[mode];
-    if (tmValue !== undefined) {
-        state.renderer.toneMapping = tmValue;
-    }
+    applyEnvironment();
 };
 
 window.toggleBackground = function(show) {
     state.showBackground = show;
-    const bgTexture = state.envMapSource || state.envMap;
-    state.scene.background = show ? bgTexture : new THREE.Color(0x1a1a2e);
+    applyEnvironment();
 };
 
 window.toggleLightingPanel = function() {
