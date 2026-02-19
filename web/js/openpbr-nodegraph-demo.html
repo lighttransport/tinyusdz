@@ -636,6 +636,8 @@
                         <select id="env-select" onchange="changeEnvironment(this.value)">
                             <option value="studio">Studio</option>
                             <option value="usd_dome">USD DomeLight</option>
+                            <option value="goegap">Goegap (HDR)</option>
+                            <option value="pisa">Pisa (Cube)</option>
                             <option value="constant_white">White</option>
                             <option value="constant_warm">Warm</option>
                             <option value="constant_cool">Cool</option>
@@ -666,7 +668,7 @@
                     </div>
                     <div class="control-row">
                         <label>Show BG:</label>
-                        <input type="checkbox" id="show-bg" onchange="toggleBackground(this.checked)">
+                        <input type="checkbox" id="show-bg" checked onchange="toggleBackground(this.checked)">
                     </div>
                     <div class="light-list-header">Lights</div>
                     <div class="light-list" id="light-list">
