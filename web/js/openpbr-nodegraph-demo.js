@@ -2286,23 +2286,29 @@ function findNodeGraphTextures(nodeGraphData) {
     const outputs = ng.outputs || [];
     const connections = nodeGraphData.connections || [];
 
+    // Build node lookup
+    const nodeMap = new Map();
+    for (const node of nodes) nodeMap.set(node.name, node);
+
     // Find image/tiledimage nodes
-    const imageNodes = new Map(); // nodeName -> filename
+    const imageNodes = new Map(); // nodeName -> { filename, colorspace }
     for (const node of nodes) {
         const cat = (node.category || '').replace(/_(color3|color4|float|vector2|vector3|vector4)$/, '');
         if (cat === 'image' || cat === 'tiledimage') {
             const fileInput = (node.inputs || []).find(i => i.name === 'file');
             if (fileInput && fileInput.value) {
-                imageNodes.set(node.name, fileInput.value);
+                imageNodes.set(node.name, {
+                    filename: fileInput.value,
+                    colorspace: fileInput.colorspace || '',
+                });
             }
         }
     }
 
     if (imageNodes.size === 0) return result;
 
-    // Build a reverse-dependency map: nodeName -> set of nodes that depend on it
-    // Then trace from image nodes to outputs
-    const dependsOn = new Map(); // nodeName -> [nodenames it takes input from]
+    // Build a reverse-dependency map: nodeName -> [nodenames it takes input from]
+    const dependsOn = new Map();
     for (const node of nodes) {
         for (const input of (node.inputs || [])) {
             if (input.nodename) {
@@ -2312,40 +2318,154 @@ function findNodeGraphTextures(nodeGraphData) {
         }
     }
 
-    // For each output, check if it transitively depends on an image node
-    function tracesToImageNode(nodeName, visited = new Set()) {
+    // Trace from a node back to the image node, collecting the chain of operations
+    function traceToImageNode(nodeName, chain = [], visited = new Set()) {
         if (visited.has(nodeName)) return null;
         visited.add(nodeName);
-        if (imageNodes.has(nodeName)) return nodeName;
+        if (imageNodes.has(nodeName)) return { imageNode: nodeName, ops: chain };
         const deps = dependsOn.get(nodeName) || [];
         for (const dep of deps) {
-            const found = tracesToImageNode(dep, visited);
+            const node = nodeMap.get(nodeName);
+            const cat = (node?.category || '').replace(/_(color3|color4|float|vector2|vector3|vector4)$/, '');
+            // Skip pass-through nodes (convert, texcoord) in the ops chain
+            const isPassthrough = (cat === 'convert' || cat === 'texcoord');
+            const newChain = isPassthrough ? chain : [...chain, { name: nodeName, category: cat, node }];
+            const found = traceToImageNode(dep, newChain, visited);
             if (found) return found;
         }
         return null;
     }
 
-    // Map outputs to shader params via connections
-    const outputToParam = new Map();
+    // Map outputs to shader params via connections (one output can connect to multiple params)
+    const outputToParams = new Map(); // outputName -> [paramName, ...]
     for (const conn of connections) {
         if (conn.input && conn.output) {
-            outputToParam.set(conn.output, conn.input);
+            if (!outputToParams.has(conn.output)) outputToParams.set(conn.output, []);
+            outputToParams.get(conn.output).push(conn.input);
         }
     }
 
-    // For each output, trace to image node
+    // For each output, trace to image node and collect operations
     for (const output of outputs) {
         if (!output.nodename) continue;
-        const imageNodeName = tracesToImageNode(output.nodename);
-        if (!imageNodeName) continue;
+        const trace = traceToImageNode(output.nodename);
+        if (!trace) continue;
 
-        const paramName = outputToParam.get(output.name);
-        if (paramName) {
-            result[paramName] = imageNodes.get(imageNodeName);
+        const paramNames = outputToParams.get(output.name) || [];
+        const imgInfo = imageNodes.get(trace.imageNode);
+        for (const paramName of paramNames) {
+            result[paramName] = {
+                filename: imgInfo.filename,
+                colorspace: imgInfo.colorspace,
+                ops: [...trace.ops],  // clone - chain of operations from output to image (reverse order)
+            };
         }
     }
 
     return result;
+}
+
+/**
+ * Colorspace classification helpers.
+ * Determines transfer function (linear vs sRGB gamma) and gamut (primaries).
+ */
+const LINEAR_COLORSPACES = new Set([
+    'lin_rec709', 'lin_displayp3', 'lin_rec2020', 'lin_ap1', 'lin_ap0',
+    'acescg',   // ACEScg = linear AP1
+    'aces2065-1', 'lin_adobergb',
+    'scene_linear', 'raw',
+]);
+
+function isLinearColorspace(cs) {
+    if (!cs) return false;
+    const lower = cs.toLowerCase();
+    return lower.startsWith('lin_') || LINEAR_COLORSPACES.has(lower);
+}
+
+
+/**
+ * Apply node graph operations to texture pixel data (CPU-side baking).
+ * Modifies the texture's image data in-place.
+ */
+function bakeTextureOps(texture, ops) {
+    if (!ops || ops.length === 0) return;
+
+    // Get image data from the texture
+    const image = texture.image;
+    if (!image) return;
+
+    const canvas = document.createElement('canvas');
+    canvas.width = image.width;
+    canvas.height = image.height;
+    const ctx = canvas.getContext('2d');
+    ctx.drawImage(image, 0, 0);
+    const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+    const data = imageData.data; // Uint8ClampedArray RGBA
+
+    // Process each operation in reverse order (ops are collected output→image,
+    // so reversed = image→output order)
+    for (const op of ops.reverse()) {
+        const cat = op.category;
+        if (cat === 'power') {
+            // Get the power exponent from in2 input
+            const in2Input = (op.node?.inputs || []).find(i => i.name === 'in2');
+            const exponent = in2Input?.value;
+            if (!exponent) continue;
+
+            const expR = Array.isArray(exponent) ? exponent[0] : exponent;
+            const expG = Array.isArray(exponent) ? exponent[1] : exponent;
+            const expB = Array.isArray(exponent) ? exponent[2] : exponent;
+
+            for (let i = 0; i < data.length; i += 4) {
+                // Convert to 0-1, apply power, convert back
+                data[i]     = Math.round(Math.pow(data[i] / 255, expR) * 255);
+                data[i + 1] = Math.round(Math.pow(data[i + 1] / 255, expG) * 255);
+                data[i + 2] = Math.round(Math.pow(data[i + 2] / 255, expB) * 255);
+                // Alpha unchanged
+            }
+        } else if (cat === 'multiply') {
+            const in2Input = (op.node?.inputs || []).find(i => i.name === 'in2');
+            const factor = in2Input?.value;
+            if (!factor) continue;
+
+            const fR = Array.isArray(factor) ? factor[0] : factor;
+            const fG = Array.isArray(factor) ? factor[1] : factor;
+            const fB = Array.isArray(factor) ? factor[2] : factor;
+
+            for (let i = 0; i < data.length; i += 4) {
+                data[i]     = Math.min(255, Math.round((data[i] / 255) * fR * 255));
+                data[i + 1] = Math.min(255, Math.round((data[i + 1] / 255) * fG * 255));
+                data[i + 2] = Math.min(255, Math.round((data[i + 2] / 255) * fB * 255));
+            }
+        } else if (cat === 'add') {
+            const in2Input = (op.node?.inputs || []).find(i => i.name === 'in2');
+            const offset = in2Input?.value;
+            if (!offset) continue;
+
+            const oR = Array.isArray(offset) ? offset[0] : offset;
+            const oG = Array.isArray(offset) ? offset[1] : offset;
+            const oB = Array.isArray(offset) ? offset[2] : offset;
+
+            for (let i = 0; i < data.length; i += 4) {
+                data[i]     = Math.min(255, Math.max(0, Math.round(data[i] + oR * 255)));
+                data[i + 1] = Math.min(255, Math.max(0, Math.round(data[i + 1] + oG * 255)));
+                data[i + 2] = Math.min(255, Math.max(0, Math.round(data[i + 2] + oB * 255)));
+            }
+        } else if (cat === 'invert') {
+            for (let i = 0; i < data.length; i += 4) {
+                data[i]     = 255 - data[i];
+                data[i + 1] = 255 - data[i + 1];
+                data[i + 2] = 255 - data[i + 2];
+            }
+        }
+        // Other ops: convert, texcoord etc. are pass-through, already filtered
+    }
+
+    ctx.putImageData(imageData, 0, 0);
+
+    // Replace texture image with the baked canvas
+    texture.image = canvas;
+    texture.needsUpdate = true;
 }
 
 async function loadMaterialTextures(openPBR, nativeLoader) {
@@ -2396,7 +2516,18 @@ async function loadMaterialTextures(openPBR, nativeLoader) {
     // Second: scan node graph for image nodes (handles base_color connected via node graph)
     if (openPBR.nodeGraph) {
         const ngTextures = findNodeGraphTextures(openPBR.nodeGraph);
-        for (const [paramName, filename] of Object.entries(ngTextures)) {
+        const bakedTexKeys = new Set(); // track which textures already had ops baked
+        const colorspaceApplied = new Set(); // track colorspace corrections
+        for (const [paramName, texInfo] of Object.entries(ngTextures)) {
+            const filename = typeof texInfo === 'string' ? texInfo : texInfo.filename;
+            const ops = typeof texInfo === 'object' ? texInfo.ops : [];
+            const colorspace = typeof texInfo === 'object' ? (texInfo.colorspace || '') : '';
+
+            // Determine Three.js colorSpace from MaterialX colorspace metadata
+            const isLinear = isLinearColorspace(colorspace)
+                || paramName === 'normal' || paramName === 'geometry_normal';
+            const threeColorSpace = isLinear ? THREE.LinearSRGBColorSpace : THREE.SRGBColorSpace;
+
             // Map shader param names to texture keys
             const paramToTexKey = {
                 'base_color': 'base_color',
@@ -2404,17 +2535,38 @@ async function loadMaterialTextures(openPBR, nativeLoader) {
                 'base_metalness': 'base_metalness',
                 'emission_color': 'emission_color',
                 'coat_weight': 'coat_weight',
+                'transmission_color': 'base_color',    // transmission color often shares base texture
+                'subsurface_color': 'base_color',      // subsurface color often shares base texture
             };
             const texKey = paramToTexKey[paramName];
-            if (!texKey || textures[texKey]) continue; // skip if already loaded
+            if (!texKey) continue;
+
+            // If texture already loaded, apply colorspace correction and ops
+            if (textures[texKey]) {
+                // Apply colorspace from node graph (overrides default sRGB assumption)
+                if (colorspace && !colorspaceApplied.has(texKey)) {
+                    textures[texKey].colorSpace = threeColorSpace;
+                    textures[texKey].needsUpdate = true;
+                    colorspaceApplied.add(texKey);
+                }
+                // Bake ops once per texKey
+                if (ops && ops.length > 0 && !bakedTexKeys.has(texKey)) {
+                    bakeTextureOps(textures[texKey], ops);
+                    bakedTexKeys.add(texKey);
+                }
+                continue;
+            }
 
             try {
                 const texId = findTextureIdByFilename(nativeLoader, filename);
                 if (texId >= 0) {
                     const texture = await TinyUSDZLoaderUtils.getTextureFromUSD(nativeLoader, texId);
                     if (texture) {
-                        texture.colorSpace = (paramName === 'normal' || paramName === 'geometry_normal')
-                            ? THREE.LinearSRGBColorSpace : THREE.SRGBColorSpace;
+                        texture.colorSpace = threeColorSpace;
+                        // Apply node graph operations (power, multiply, etc.) to texture
+                        if (ops && ops.length > 0) {
+                            bakeTextureOps(texture, ops);
+                        }
                         textures[texKey] = texture;
                     }
                 }
@@ -2860,11 +3012,13 @@ window.loadSample = function() {
 };
 
 window.loadBlenderSample = async function() {
+    const select = document.getElementById('blender-sample-select');
+    const filename = select ? select.value : 'texture_channel_blender.usdz';
     showLoading(true);
-    updateStatus('Loading Blender sample...');
+    updateStatus('Loading ' + filename + '...');
 
     try {
-        const response = await fetch('assets/texture_channel_blender.usdz');
+        const response = await fetch('assets/' + filename);
         if (!response.ok) {
             throw new Error(`Failed to fetch: ${response.status}`);
         }
@@ -2872,7 +3026,7 @@ window.loadBlenderSample = async function() {
         const arrayBuffer = await response.arrayBuffer();
 
         state.usdData = await new Promise((resolve, reject) => {
-            state.loader.parse(arrayBuffer, 'texture_channel_blender.usdz', resolve, reject);
+            state.loader.parse(arrayBuffer, filename, resolve, reject);
         });
 
         if (!state.usdData) {
@@ -2899,7 +3053,7 @@ window.loadBlenderSample = async function() {
 
         const numMaterials = state.usdData.numMaterials();
         console.log(`Found ${numMaterials} materials`);
-        showToast(`Loaded Blender sample with ${numMaterials} materials`);
+        showToast(`Loaded ${filename} (${numMaterials} materials)`);
 
     } catch (error) {
         console.error('Load error:', error);
