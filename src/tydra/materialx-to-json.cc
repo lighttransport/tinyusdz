@@ -394,6 +394,14 @@ bool ConvertShaderWithNodeGraphToJson(
           } else if (auto v = attr.get_value<value::AssetPath>()) {
             ss << ",\n            \"value\": \"" << EscapeJsonString(v.value().GetAssetPath()) << "\"";
           }
+
+          // Add colorSpace metadata if present on the attribute
+          if (attr.metas().has_colorSpace()) {
+            value::token cs_token = attr.metas().get_colorSpace();
+            if (!cs_token.str().empty()) {
+              ss << ",\n            \"colorspace\": \"" << EscapeJsonString(cs_token.str()) << "\"";
+            }
+          }
         }
       }
 
