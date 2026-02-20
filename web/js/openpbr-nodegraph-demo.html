@@ -688,7 +688,13 @@
                 <div class="nodegraph-controls">
                     <button class="btn" onclick="loadFile()">Load USD</button>
                     <button class="btn secondary" onclick="loadSample()">Sample</button>
-                    <button class="btn" style="background:#9C27B0" onclick="loadBlenderSample()">Blender</button>
+                    <select id="blender-sample-select" style="height:26px;font-size:11px;background:#2a2a3e;color:#ccc;border:1px solid #555;border-radius:3px;padding:0 4px;max-width:160px">
+                        <option value="texture_channel_blender.usdz">Texture channels</option>
+                        <option value="colorspace-constant-test.usdz">Colorspace (constant)</option>
+                        <option value="colorspace-texture-test.usdz">Colorspace (texture)</option>
+                        <option value="colorspace-gamut-test.usdz">Colorspace (gamut)</option>
+                    </select>
+                    <button class="btn" style="background:#9C27B0" onclick="loadBlenderSample()">Load</button>
                     <button class="btn" style="background:#E91E63" id="btn-bridge" onclick="toggleBridge()">Connect</button>
                     <div class="fit-group">
                         <button class="btn-fit" onclick="fitGraphWidth()" title="Fit Width (F)">
