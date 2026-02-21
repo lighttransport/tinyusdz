@@ -2698,156 +2698,30 @@ struct DefaultVertexOutput {
   }
 };
 
+// BuildIndices and BuildIndicesWithSpatialHash declarations.
+// Implementations are in render-data.cc with explicit instantiations.
+
 //
 // out_vertex_indices_remap: corresponding vertexIndex in input.
 //
 template <class VertexInput, class VertexOutput, class PackedVert,
           class PackedVertHasher, class PackedVertEqual>
 void BuildIndices(const VertexInput &input, VertexOutput &output,
-                  std::vector<uint32_t> &out_indices, std::vector<uint32_t> &out_point_indices)
-{
-  // Original implementation using unordered_map
-  // For better performance on large meshes, consider using BuildIndicesWithSpatialHash
-  std::unordered_map<PackedVert, uint32_t, PackedVertHasher, PackedVertEqual>
-      vertexToIndexMap;
-
-  auto GetSimilarVertex = [&](const PackedVert &v, uint32_t &out_idx) -> bool {
-    auto it = vertexToIndexMap.find(v);
-    if (it == vertexToIndexMap.end()) {
-      return false;
-    }
-
-    out_idx = it->second;
-    return true;
-  };
-
-  for (size_t i = 0; i < input.size(); i++) {
-    PackedVert v;
-    input.get(i, v);
-
-    uint32_t index{0};
-    bool found = GetSimilarVertex(v, index);
-    if (found) {
-      out_indices.push_back(index);
-    } else {
-      uint32_t new_index = uint32_t(output.size());
-      out_indices.push_back(new_index);
-      output.push_back(v);
-      vertexToIndexMap[v] = new_index;
-    }
-    out_point_indices.push_back(v.point_index);
-  }
-}
+                  std::vector<uint32_t> &out_indices, std::vector<uint32_t> &out_point_indices);
 
 //
 // BuildIndicesWithSpatialHash - Optimized version using spatial hashing
 // for efficient vertex similarity search
 //
-// Use this for large meshes where vertex deduplication is a bottleneck.
-// The spatial hash grid provides O(1) average-case lookup with better
-// cache locality than the standard hash map approach.
-//
 template <class VertexInput, class VertexOutput, class PackedVert>
 void BuildIndicesWithSpatialHash(
-    const VertexInput &input, 
+    const VertexInput &input,
     VertexOutput &output,
-    std::vector<uint32_t> &out_indices, 
+    std::vector<uint32_t> &out_indices,
     std::vector<uint32_t> &out_point_indices,
-    float cellSize = 0.01f,        // Grid cell size for spatial hashing
-    float positionEps = 1e-6f,      // Epsilon for position comparison
-    float attributeEps = 1e-3f)     // Epsilon for attribute comparison
-{
-  using namespace spatial;
-  
-  // Initialize spatial hash grid
-  VertexSpatialHashGrid<float> spatialGrid(cellSize, positionEps, attributeEps);
-  
-  // Reserve space for expected vertices
-  spatialGrid.reserveVertices(input.size());
-  output.reserve(input.size() / 4); // Assume roughly 25% unique vertices
-  
-  // Process each input vertex
-  for (size_t i = 0; i < input.size(); i++) {
-    PackedVert v;
-    input.get(i, v);
-    
-    // Convert PackedVert to spatial hash vertex format
-    typename VertexSpatialHashGrid<float>::Vertex spatialVertex;
-    
-    // Get position from points array if available
-    if (v.point_index < input.point_indices.size()) {
-      // Note: This assumes points are available elsewhere in the context
-      // For now, we'll use the point_index as a placeholder
-      spatialVertex.position = {0, 0, 0}; // Would be filled from actual points
-    }
-    
-#ifdef TYDRA_USE_INDEX
-    // Resolve indices to values for spatial search
-    if (v.normal_index != ~0u && v.normal_index < input.unique_normals.size()) {
-      spatialVertex.normal = input.unique_normals[v.normal_index];
-    }
-    if (v.uv0_index != ~0u && v.uv0_index < input.unique_uv0s.size()) {
-      spatialVertex.uv0 = input.unique_uv0s[v.uv0_index];
-    }
-    if (v.uv1_index != ~0u && v.uv1_index < input.unique_uv1s.size()) {
-      spatialVertex.uv1 = input.unique_uv1s[v.uv1_index];
-    }
-    if (v.tangent_index != ~0u && v.tangent_index < input.unique_tangents.size()) {
-      spatialVertex.tangent = input.unique_tangents[v.tangent_index];
-    }
-    if (v.binormal_index != ~0u && v.binormal_index < input.unique_binormals.size()) {
-      spatialVertex.binormal = input.unique_binormals[v.binormal_index];
-    }
-    if (v.color_index != ~0u && v.color_index < input.unique_colors.size()) {
-      spatialVertex.color = input.unique_colors[v.color_index];
-    }
-    if (v.opacity_index != ~0u && v.opacity_index < input.unique_opacities.size()) {
-      spatialVertex.opacity = input.unique_opacities[v.opacity_index];
-    }
-#else
-    // Direct value access
-    spatialVertex.normal = v.normal;
-    spatialVertex.uv0 = v.uv0;
-    spatialVertex.uv1 = v.uv1;
-    spatialVertex.tangent = v.tangent;
-    spatialVertex.binormal = v.binormal;
-    spatialVertex.color = v.color;
-    spatialVertex.opacity = v.opacity;
-#endif
-    
-    spatialVertex.id = static_cast<uint32_t>(i);
-    
-    // Check if similar vertex exists
-    uint32_t existingId;
-    bool found = spatialGrid.findExactVertex(spatialVertex, existingId);
-    
-    if (found && existingId < output.size()) {
-      // Use existing vertex
-      out_indices.push_back(existingId);
-    } else {
-      // Add new unique vertex
-      uint32_t new_index = static_cast<uint32_t>(output.size());
-      out_indices.push_back(new_index);
-      output.push_back(v);
-      
-      // Update spatial vertex id to match output index
-      spatialVertex.id = new_index;
-      spatialGrid.addVertex(spatialVertex);
-    }
-    
-    out_point_indices.push_back(v.point_index);
-  }
-  
-  // Build spatial grid after all vertices are added
-  spatialGrid.build();
-  
-  // Optional: Get statistics for debugging
-  if (false) { // Set to true for debugging
-    size_t totalCells, maxCellSize, avgCellSize, subdivisions;
-    spatialGrid.getStatistics(totalCells, maxCellSize, avgCellSize, subdivisions);
-    // Log statistics...
-  }
-}
+    float cellSize = 0.01f,
+    float positionEps = 1e-6f,
+    float attributeEps = 1e-3f);
 
 class RenderSceneConverterEnv {
  public:

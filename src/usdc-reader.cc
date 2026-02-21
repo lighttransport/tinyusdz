@@ -531,20 +531,20 @@ class USDCReader::Impl {
 
   // VariantSet Spec.
   // key = parent idx, value = (prim_id, (variantSetName, variantChildren names))
-  std::map<uint32_t, std::unordered_map<int32_t, std::pair<std::string, std::vector<value::token>>>> _variantChildren;
+  std::unordered_map<uint32_t, std::unordered_map<int32_t, std::pair<std::string, std::vector<value::token>>>> _variantChildren;
 
   std::unordered_map<int32_t, Prim> _prims; // For Stage
 
   // For Prim/Props defined as Variant(SpecType::VariantSet)
   // key = path index.
   std::unordered_map<int32_t, Prim> _variantPrims; // For Stage
-  std::map<int32_t, PrimSpec> _variantPrimSpecs; // For Layer
-  std::map<int32_t, std::pair<Path, Property>> _variantProps;
-  std::map<int32_t, Variant> _variants;
+  std::unordered_map<int32_t, PrimSpec> _variantPrimSpecs; // For Layer
+  std::unordered_map<int32_t, std::pair<Path, Property>> _variantProps;
+  std::unordered_map<int32_t, Variant> _variants;
 
   // key = parent path index, values = keys to `_variantPrims`, `_variantProps`
-  std::map<int32_t, std::vector<int32_t>> _variantPrimChildren;
-  std::map<int32_t, std::vector<int32_t>> _variantPropChildren;
+  std::unordered_map<int32_t, std::vector<int32_t>> _variantPrimChildren;
+  std::unordered_map<int32_t, std::vector<int32_t>> _variantPropChildren;
 
   // Fast lookup for variant prims by name: {variantSetName, variantName} -> path index
   // Enables O(1) lookup instead of O(n) linear search
@@ -956,7 +956,8 @@ Prim *USDCReader::Impl::ResolveVariantOwnerPrim(int32_t parent_node_id,
 
 bool USDCReader::Impl::AttachVariantPrimChildrenToOwner(int32_t owner_node_id,
                                                         Prim *owner_prim) {
-  if (!_variantPrimChildren.count(owner_node_id)) {
+  auto vpc_it = _variantPrimChildren.find(owner_node_id);
+  if (vpc_it == _variantPrimChildren.end()) {
     return true;
   }
 
@@ -966,7 +967,7 @@ bool USDCReader::Impl::AttachVariantPrimChildrenToOwner(int32_t owner_node_id,
 
   DCOUT(fmt::format("{} has variant Prim ", owner_prim->element_name()));
 
-  for (const auto &item : _variantPrimChildren.at(owner_node_id)) {
+  for (const auto &item : vpc_it->second) {
     auto vp_it = _variantPrims.find(item);
     if (vp_it == _variantPrims.end()) {
       PUSH_ERROR_AND_RETURN("Internal error: variant Prim children not found.");
