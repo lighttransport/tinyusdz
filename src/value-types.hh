@@ -190,8 +190,13 @@ struct StringData {
 
   StringData() = default;
   StringData(const std::string &v) : value(v) {}
+  StringData(std::string &&v) : value(std::move(v)) {}
   StringData &operator=(const std::string &v) {
     value = v;
+    return (*this);
+  }
+  StringData &operator=(std::string &&v) {
+    value = std::move(v);
     return (*this);
   }
 
@@ -213,8 +218,11 @@ class AssetPath {
  public:
   AssetPath() = default;
   AssetPath(const std::string &a) : asset_path_(a) {}
+  AssetPath(std::string &&a) : asset_path_(std::move(a)) {}
   AssetPath(const std::string &a, const std::string &r)
       : asset_path_(a), resolved_path_(r) {}
+  AssetPath(std::string &&a, std::string &&r)
+      : asset_path_(std::move(a)), resolved_path_(std::move(r)) {}
 
   bool Resolve() {
     // TODO;
@@ -223,7 +231,7 @@ class AssetPath {
 
   const std::string &GetAssetPath() const { return asset_path_; }
 
-  const std::string GetResolvedPath() const { return resolved_path_; }
+  const std::string &GetResolvedPath() const { return resolved_path_; }
 
  private:
   std::string asset_path_;
@@ -1029,56 +1037,21 @@ struct frame4d {
 //
 // node.world = parent.world * node.local
 //            = Mult(parent.world, node.local)
-template <typename MTy, typename STy, size_t N>
-MTy Mult(const MTy &m, const MTy &n) {
-  MTy ret;
-  //memset(ret.m, 0, sizeof(MTy));
+// Matrix multiply (implementations in value-types.cc)
+matrix2f Mult(const matrix2f &m, const matrix2f &n);
+matrix3f Mult(const matrix3f &m, const matrix3f &n);
+matrix4f Mult(const matrix4f &m, const matrix4f &n);
+matrix2d Mult(const matrix2d &m, const matrix2d &n);
+matrix3d Mult(const matrix3d &m, const matrix3d &n);
+matrix4d Mult(const matrix4d &m, const matrix4d &n);
 
-  for (size_t j = 0; j < N; j++) {
-    for (size_t i = 0; i < N; i++) {
-      STy value = static_cast<STy>(0);
-      for (size_t k = 0; k < N; k++) {
-        value += m.m[j][k] * n.m[k][i];
-      }
-      ret.m[j][i] = value;
-    }
-  }
-
-  return ret;
-}
-
-#if 0
-// Deprecated.
-// TODO: remove column-major functions.
-template <typename MTy, typename STy, size_t N>
-MTy MultColumnMajor(const MTy &m, const MTy &n) {
-  MTy ret;
-  memset(ret.m, 0, sizeof(MTy));
-
-  for (size_t j = 0; j < N; j++) {
-    for (size_t i = 0; i < N; i++) {
-      STy value = static_cast<STy>(0);
-      for (size_t k = 0; k < N; k++) {
-        value += m.m[j][k] * n.m[k][i];
-      }
-      ret.m[j][i] = value;
-    }
-  }
-
-  return ret;
-}
-#endif
-
-// ret = matrix x vector
-// Assume matrixN >= vecN
+// Matrix-vector multiply (implementations in value-types.cc)
+// Kept as template since it's used with many type combinations in xform.cc
 template <typename MTy, typename VTy, typename MBaseTy, typename VBaseTy, size_t N>
 VTy MultV(const MTy &m, const VTy &v) {
-  // MBaseTy must be float or double
-  // TODO: use std::enable_if?
   static_assert(std::is_same<MBaseTy, double>::value || std::is_same<MBaseTy, float>::value,
     "Matrix element type must be `float` or `double`");
 
-  // Intermediate type. Choose higher precision based on its size.
   typedef typename std::conditional<sizeof(MBaseTy) >= sizeof(VBaseTy), MBaseTy, VBaseTy>::type Ty;
 
   VTy ret;
@@ -1094,125 +1067,47 @@ VTy MultV(const MTy &m, const VTy &v) {
   return ret;
 }
 
-template <typename MTy, typename STy, size_t N>
-MTy MatAdd(const MTy &m, const MTy &n) {
-  MTy ret;
-  memset(ret.m, 0, sizeof(MTy));
+// Matrix add (implementations in value-types.cc)
+matrix2f MatAdd(const matrix2f &a, const matrix2f &b);
+matrix3f MatAdd(const matrix3f &a, const matrix3f &b);
+matrix4f MatAdd(const matrix4f &a, const matrix4f &b);
+matrix2d MatAdd(const matrix2d &a, const matrix2d &b);
+matrix3d MatAdd(const matrix3d &a, const matrix3d &b);
+matrix4d MatAdd(const matrix4d &a, const matrix4d &b);
 
-  for (size_t j = 0; j < N; j++) {
-    for (size_t i = 0; i < N; i++) {
-      ret.m[j][i] = m.m[j][i] + n.m[j][i];
-    }
-  }
-
-  return ret;
-}
-
-template <typename MTy, typename STy, size_t N>
-MTy MatSub(const MTy &m, const MTy &n) {
-  MTy ret;
-  memset(ret.m, 0, sizeof(MTy));
-
-  for (size_t j = 0; j < N; j++) {
-    for (size_t i = 0; i < N; i++) {
-      ret.m[j][i] = m.m[j][i] - n.m[j][i];
-    }
-  }
-
-  return ret;
-}
+// Matrix subtract (implementations in value-types.cc)
+matrix2f MatSub(const matrix2f &a, const matrix2f &b);
+matrix3f MatSub(const matrix3f &a, const matrix3f &b);
+matrix4f MatSub(const matrix4f &a, const matrix4f &b);
+matrix2d MatSub(const matrix2d &a, const matrix2d &b);
+matrix3d MatSub(const matrix3d &a, const matrix3d &b);
+matrix4d MatSub(const matrix4d &a, const matrix4d &b);
 
 // TODO: division
 
-inline matrix2f operator+(const matrix2f &a, const matrix2f &b) {
-  matrix2f ret = MatAdd<matrix2f, float, 2>(a, b);
-  return ret;
-}
+inline matrix2f operator+(const matrix2f &a, const matrix2f &b) { return MatAdd(a, b); }
+inline matrix2f operator-(const matrix2f &a, const matrix2f &b) { return MatSub(a, b); }
+inline matrix2f operator*(const matrix2f &a, const matrix2f &b) { return Mult(a, b); }
 
-inline matrix2f operator-(const matrix2f &a, const matrix2f &b) {
-  matrix2f ret = MatSub<matrix2f, float, 2>(a, b);
-  return ret;
-}
+inline matrix3f operator+(const matrix3f &a, const matrix3f &b) { return MatAdd(a, b); }
+inline matrix3f operator-(const matrix3f &a, const matrix3f &b) { return MatSub(a, b); }
+inline matrix3f operator*(const matrix3f &a, const matrix3f &b) { return Mult(a, b); }
 
-inline matrix2f operator*(const matrix2f &a, const matrix2f &b) {
-  matrix2f ret = Mult<matrix2f, float, 2>(a, b);
-  return ret;
-}
+inline matrix4f operator+(const matrix4f &a, const matrix4f &b) { return MatAdd(a, b); }
+inline matrix4f operator-(const matrix4f &a, const matrix4f &b) { return MatSub(a, b); }
+inline matrix4f operator*(const matrix4f &a, const matrix4f &b) { return Mult(a, b); }
 
-inline matrix3f operator+(const matrix3f &a, const matrix3f &b) {
-  matrix3f ret = MatAdd<matrix3f, float, 3>(a, b);
-  return ret;
-}
+inline matrix2d operator+(const matrix2d &a, const matrix2d &b) { return MatAdd(a, b); }
+inline matrix2d operator-(const matrix2d &a, const matrix2d &b) { return MatSub(a, b); }
+inline matrix2d operator*(const matrix2d &a, const matrix2d &b) { return Mult(a, b); }
 
-inline matrix3f operator-(const matrix3f &a, const matrix3f &b) {
-  matrix3f ret = MatSub<matrix3f, float, 3>(a, b);
-  return ret;
-}
+inline matrix3d operator+(const matrix3d &a, const matrix3d &b) { return MatAdd(a, b); }
+inline matrix3d operator-(const matrix3d &a, const matrix3d &b) { return MatSub(a, b); }
+inline matrix3d operator*(const matrix3d &a, const matrix3d &b) { return Mult(a, b); }
 
-inline matrix3f operator*(const matrix3f &a, const matrix3f &b) {
-  matrix3f ret = Mult<matrix3f, float, 3>(a, b);
-  return ret;
-}
-
-inline matrix4f operator+(const matrix4f &a, const matrix4f &b) {
-  matrix4f ret = MatAdd<matrix4f, float, 4>(a, b);
-  return ret;
-}
-
-inline matrix4f operator-(const matrix4f &a, const matrix4f &b) {
-  matrix4f ret = MatSub<matrix4f, float, 4>(a, b);
-  return ret;
-}
-
-inline matrix4f operator*(const matrix4f &a, const matrix4f &b) {
-  matrix4f ret = Mult<matrix4f, float, 4>(a, b);
-  return ret;
-}
-
-inline matrix2d operator+(const matrix2d &a, const matrix2d &b) {
-  matrix2d ret = MatAdd<matrix2d, double, 2>(a, b);
-  return ret;
-}
-
-inline matrix2d operator-(const matrix2d &a, const matrix2d &b) {
-  matrix2d ret = MatSub<matrix2d, double, 2>(a, b);
-  return ret;
-}
-
-inline matrix2d operator*(const matrix2d &a, const matrix2d &b) {
-  matrix2d ret = Mult<matrix2d, double, 2>(a, b);
-  return ret;
-}
-
-inline matrix3d operator+(const matrix3d &a, const matrix3d &b) {
-  matrix3d ret = MatAdd<matrix3d, double, 3>(a, b);
-  return ret;
-}
-
-inline matrix3d operator-(const matrix3d &a, const matrix3d &b) {
-  matrix3d ret = MatSub<matrix3d, double, 3>(a, b);
-  return ret;
-}
-
-inline matrix3d operator*(const matrix3d &a, const matrix3d &b) {
-  matrix3d ret = Mult<matrix3d, double, 3>(a, b);
-  return ret;
-}
-
-inline matrix4d operator+(const matrix4d &a, const matrix4d &b) {
-  matrix4d ret = MatAdd<matrix4d, double, 4>(a, b);
-  return ret;
-}
-
-inline matrix4d operator-(const matrix4d &a, const matrix4d &b) {
-  matrix4d ret = MatSub<matrix4d, double, 4>(a, b);
-  return ret;
-}
-
-inline matrix4d operator*(const matrix4d &a, const matrix4d &b) {
-  matrix4d ret = Mult<matrix4d, double, 4>(a, b);
-  return ret;
-}
+inline matrix4d operator+(const matrix4d &a, const matrix4d &b) { return MatAdd(a, b); }
+inline matrix4d operator-(const matrix4d &a, const matrix4d &b) { return MatSub(a, b); }
+inline matrix4d operator*(const matrix4d &a, const matrix4d &b) { return Mult(a, b); }
 
 // Equality operators for matrix types
 // Use floating-point aware comparison (suitable for dedup)
