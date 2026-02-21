@@ -22,6 +22,8 @@
 #include <map>
 #include <set>
 #include <sstream>
+#include <unordered_map>
+#include <unordered_set>
 #include <stack>
 #if defined(__wasi__)
 #else
@@ -398,7 +400,7 @@ extern template bool AsciiParser::ParseBasicTypeArray(
     std::vector<value::AssetPath> *result);
 
 static void RegisterStageMetas(
-    std::map<std::string, AsciiParser::VariableDef> &metas) {
+    std::unordered_map<std::string, AsciiParser::VariableDef> &metas) {
   metas.clear();
   metas["doc"] = AsciiParser::VariableDef(value::kString, "doc");
   metas["documentation"] =
@@ -440,7 +442,7 @@ static void RegisterStageMetas(
 }
 
 static void RegisterPrimMetas(
-    std::map<std::string, AsciiParser::VariableDef> &metas) {
+    std::unordered_map<std::string, AsciiParser::VariableDef> &metas) {
   metas.clear();
 
   metas["kind"] = AsciiParser::VariableDef(value::kToken, "kind");
@@ -500,7 +502,7 @@ static void RegisterPrimMetas(
 }
 
 static void RegisterPropMetas(
-    std::map<std::string, AsciiParser::VariableDef> &metas) {
+    std::unordered_map<std::string, AsciiParser::VariableDef> &metas) {
   metas.clear();
 
   metas["doc"] = AsciiParser::VariableDef(value::kString, "doc");
@@ -545,7 +547,7 @@ static void RegisterPropMetas(
       AsciiParser::VariableDef(value::kString, "displayGroup");
 }
 
-static void RegisterPrimAttrTypes(std::set<std::string> &d) {
+static void RegisterPrimAttrTypes(std::unordered_set<std::string> &d) {
   d.clear();
 
   d.insert(value::kBool);
@@ -627,7 +629,7 @@ static void RegisterPrimAttrTypes(std::set<std::string> &d) {
   // TODO: Add more types...
 }
 
-static void RegisterPrimTypes(std::set<std::string> &d) {
+static void RegisterPrimTypes(std::unordered_set<std::string> &d) {
   d.insert("Xform");
   d.insert("Sphere");
   d.insert("Cube");
@@ -661,7 +663,7 @@ static void RegisterPrimTypes(std::set<std::string> &d) {
 // TinyUSDZ does not allow user-defined API schema at the moment
 // (Primarily for security reason, secondary it requires re-design of Prim
 // classes to support user-defined API schema)
-static void RegisterAPISchemas(std::set<std::string> &d) {
+static void RegisterAPISchemas(std::unordered_set<std::string> &d) {
   d.insert("MaterialBindingAPI");
   d.insert("SkelBindingAPI");
 
@@ -1726,7 +1728,8 @@ bool AsciiParser::IsSupportedAPISchema(const std::string &ty) {
 }
 
 bool AsciiParser::ReadStringLiteral(std::string *literal) {
-  std::stringstream ss;
+  std::string buf;
+  buf.reserve(64);
 
   char c0;
   if (!Char1(&c0)) {
@@ -1771,7 +1774,7 @@ bool AsciiParser::ReadStringLiteral(std::string *literal) {
       break;
     }
 
-    ss << c;
+    buf += c;
   }
 
   if (!end_with_quotation) {
@@ -1780,7 +1783,7 @@ bool AsciiParser::ReadStringLiteral(std::string *literal) {
                     single_quote ? "'" : "\""));
   }
 
-  (*literal) = ss.str();
+  (*literal) = std::move(buf);
 
   _curr_cursor.col += int(literal->size() + 2);  // +2 for quotation chars
 
@@ -1788,7 +1791,8 @@ bool AsciiParser::ReadStringLiteral(std::string *literal) {
 }
 
 bool AsciiParser::MaybeString(value::StringData *str) {
-  std::stringstream ss;
+  std::string buf;
+  buf.reserve(64);
 
   if (!str) {
     return false;
@@ -1834,11 +1838,11 @@ bool AsciiParser::MaybeString(value::StringData *str) {
       }
 
       if (nc == '\'') {
-        ss << "'";
+        buf += '\'';
         _sr->seek_from_current(1);  // advance 1 char
         continue;
       } else if (nc == '"') {
-        ss << "\"";
+        buf += '"';
         _sr->seek_from_current(1);  // advance 1 char
         continue;
       }
@@ -1856,7 +1860,7 @@ bool AsciiParser::MaybeString(value::StringData *str) {
       }
     }
 
-    ss << c;
+    buf += c;
   }
 
   if (!end_with_quotation) {
@@ -1867,8 +1871,8 @@ bool AsciiParser::MaybeString(value::StringData *str) {
   DCOUT("Single quoted string found. col " << start_cursor.col << ", row "
                                            << start_cursor.row);
 
-  size_t displayed_string_len = ss.str().size();
-  str->value = unescapeControlSequence(ss.str());
+  size_t displayed_string_len = buf.size();
+  str->value = unescapeControlSequence(buf);
   str->line_col = start_cursor.col;
   str->line_row = start_cursor.row;
   str->is_triple_quoted = false;
@@ -1879,8 +1883,6 @@ bool AsciiParser::MaybeString(value::StringData *str) {
 }
 
 bool AsciiParser::MaybeTripleQuotedString(value::StringData *str) {
-  std::stringstream ss;
-
   auto loc = CurrLoc();
   auto start_cursor = _curr_cursor;
 
@@ -1910,7 +1912,8 @@ bool AsciiParser::MaybeTripleQuotedString(value::StringData *str) {
   }
 
   // Read until next triple-quote `"""` or "'''"
-  std::stringstream str_buf;
+  std::string str_buf;
+  str_buf.reserve(256);
 
   auto locinfo = _curr_cursor;
 
@@ -1937,13 +1940,13 @@ bool AsciiParser::MaybeTripleQuotedString(value::StringData *str) {
       }
 
       if (buf[0] == '\'' && buf[1] == '\'' && buf[2] == '\'') {
-        str_buf << "'''";
+        str_buf += "'''";
         // advance
         _sr->seek_from_current(3);
         locinfo.col += 3;
         continue;
       } else if (buf[0] == '"' && buf[1] == '"' && buf[2] == '"') {
-        str_buf << "\"\"\"";
+        str_buf += "\"\"\"";
         // advance
         _sr->seek_from_current(3);
         locinfo.col += 3;
@@ -1951,7 +1954,7 @@ bool AsciiParser::MaybeTripleQuotedString(value::StringData *str) {
       }
     }
 
-    str_buf << c;
+    str_buf += c;
 
     if (c == '"') {
       double_quote_count++;
@@ -1981,7 +1984,7 @@ bool AsciiParser::MaybeTripleQuotedString(value::StringData *str) {
 
         if (d == '\n') {
           // CRLF
-          str_buf << d;
+          str_buf += d;
         } else {
           // unwind 1 char
           if (!_sr->seek_from_current(-1)) {
@@ -2027,14 +2030,13 @@ bool AsciiParser::MaybeTripleQuotedString(value::StringData *str) {
 
   // remove last '"""' or '''
   str->single_quote = single_quote;
-  std::string s = str_buf.str();
-  if (s.size() > 3) {  // just in case
-    s.erase(s.size() - 3);
+  if (str_buf.size() > 3) {  // just in case
+    str_buf.erase(str_buf.size() - 3);
   }
 
-  DCOUT("str = " << s);
+  DCOUT("str = " << str_buf);
 
-  str->value = unescapeControlSequence(s);
+  str->value = unescapeControlSequence(str_buf);
 
   DCOUT("unescape str = " << str->value);
 
@@ -2052,7 +2054,8 @@ bool AsciiParser::ReadPrimAttrIdentifier(std::string *token) {
   // - xformOp:transform
   // - primvars:uvmap1
 
-  std::stringstream ss;
+  std::string buf;
+  buf.reserve(64);
   Cursor start_cursor;  // Will be set at the first character
   bool first_char = true;
 
@@ -2093,19 +2096,19 @@ bool AsciiParser::ReadPrimAttrIdentifier(std::string *token) {
       // ok
     } else if (c == ':') {  // namespace
       // ':' must lie in the middle of string literal
-      if (ss.str().size() == 0) {
+      if (buf.empty()) {
         calculate_cursor_from_stream_pos();
         PUSH_ERROR_AND_RETURN("PrimAttr name must not starts with `:`");
       }
     } else if (c == '.') {  // delimiter for `connect`
       // '.' must lie in the middle of string literal
-      if (ss.str().size() == 0) {
+      if (buf.empty()) {
         calculate_cursor_from_stream_pos();
         PUSH_ERROR_AND_RETURN("PrimAttr name must not starts with `.`");
       }
     } else if (std::isalnum(int(c))) {
       // number must not be allowed for the first char.
-      if (ss.str().size() == 0) {
+      if (buf.empty()) {
         if (!std::isalpha(int(c))) {
           calculate_cursor_from_stream_pos();
           PUSH_ERROR_AND_RETURN("PrimAttr name must not starts with number.");
@@ -2124,26 +2127,26 @@ bool AsciiParser::ReadPrimAttrIdentifier(std::string *token) {
       first_char = false;
     }
 
-    ss << c;
+    buf += c;
   }
 
   {
     std::string name_err;
-    if (!pathutil::ValidatePropPath(Path("", ss.str()), &name_err)) {
+    if (!pathutil::ValidatePropPath(Path("", buf), &name_err)) {
       calculate_cursor_from_stream_pos();
       PUSH_ERROR_AND_RETURN_TAG(
           kAscii,
-          fmt::format("Invalid Property name `{}`: {}", ss.str(), name_err));
+          fmt::format("Invalid Property name `{}`: {}", buf, name_err));
     }
   }
 
   // '.' must lie in the middle of string literal
-  if (ss.str().back() == '.') {
+  if (buf.back() == '.') {
     calculate_cursor_from_stream_pos();
     PUSH_ERROR_AND_RETURN("PrimAttr name must not ends with `.`\n");
   }
 
-  std::string tok = ss.str();
+  std::string tok = std::move(buf);
 
   if (contains(tok, '.')) {
     if (endsWith(tok, ".connect") || endsWith(tok, ".timeSamples")) {
@@ -2168,14 +2171,15 @@ bool AsciiParser::ReadPrimAttrIdentifier(std::string *token) {
     }
   }
 
-  (*token) = ss.str();
+  (*token) = std::move(tok);
   DCOUT("primAttr identifier = " << (*token));
   return true;
 }
 
 bool AsciiParser::ReadIdentifier(std::string *token) {
   // identifier = (`_` | [a-zA-Z]) (`_` | [a-zA-Z0-9]+)
-  std::stringstream ss;
+  std::string buf;
+  buf.reserve(64);
 
   // The first character.
   {
@@ -2195,7 +2199,7 @@ bool AsciiParser::ReadIdentifier(std::string *token) {
     }
     _curr_cursor.col++;
 
-    ss << c;
+    buf += c;
   }
 
   while (!Eof()) {
@@ -2214,16 +2218,17 @@ bool AsciiParser::ReadIdentifier(std::string *token) {
 
     _curr_cursor.col++;
 
-    ss << c;
+    buf += c;
   }
 
-  (*token) = ss.str();
+  (*token) = std::move(buf);
   return true;
 }
 
 bool AsciiParser::ReadPathIdentifier(std::string *path_identifier) {
   // path_identifier = `<` string `>`
-  std::stringstream ss;
+  std::string buf;
+  buf.reserve(64);
 
   if (!Expect('<')) {
     return false;
@@ -2250,21 +2255,22 @@ bool AsciiParser::ReadPathIdentifier(std::string *path_identifier) {
     }
 
     // TODO: Check if character is valid for path identifier
-    ss << c;
+    buf += c;
   }
 
   if (!ok) {
     return false;
   }
 
-  (*path_identifier) = TrimString(ss.str());
+  (*path_identifier) = TrimString(buf);
   // std::cout << "PathIdentifier: " << (*path_identifier) << "\n";
 
   return true;
 }
 
 bool AsciiParser::ReadUntilNewline(std::string *str) {
-  std::stringstream ss;
+  std::string buf;
+  buf.reserve(128);
 
   while (!Eof()) {
     char c;
@@ -2298,13 +2304,13 @@ bool AsciiParser::ReadUntilNewline(std::string *str) {
       }
     }
 
-    ss << c;
+    buf += c;
   }
 
   _curr_cursor.row++;
   _curr_cursor.col = 0;
 
-  (*str) = ss.str();
+  (*str) = std::move(buf);
 
   return true;
 }
@@ -5809,16 +5815,18 @@ bool AsciiParser::ParseBlock(const Specifier spec, const int64_t primIdx,
       pTy = "Model";
     }
 
-    if (!_prim_construct_fun_map.count(pTy)) {
+    auto it = _prim_construct_fun_map.find(pTy);
+    if (it == _prim_construct_fun_map.end()) {
       if (_option.allow_unknown_prim) {
         // Unknown Prim type specified. Treat it as Model
         // Prim's type name will be storead in Model::prim_type_name
         pTy = "Model";
+        it = _prim_construct_fun_map.find(pTy);
       }
     }
 
-    if (_prim_construct_fun_map.count(pTy)) {
-      auto construct_fun = _prim_construct_fun_map[pTy];
+    if (it != _prim_construct_fun_map.end()) {
+      auto construct_fun = it->second;
 
       Path fullpath(GetCurrentPrimPath(), "");
       Path pname(prim_name, "");

@@ -10,6 +10,8 @@
 #include <stdio.h>
 
 #include <stack>
+#include <unordered_map>
+#include <unordered_set>
 
 // #include "external/better-enums/enum.h"
 #include "composition.hh"
@@ -1102,20 +1104,20 @@ class AsciiParser {
   Cursor _curr_cursor;
 
   // Supported Prim types
-  std::set<std::string> _supported_prim_types;
-  std::set<std::string> _supported_prim_attr_types;
+  std::unordered_set<std::string> _supported_prim_types;
+  std::unordered_set<std::string> _supported_prim_attr_types;
 
   // Supported API schemas
-  std::set<std::string> _supported_api_schemas;
+  std::unordered_set<std::string> _supported_api_schemas;
 
   // Supported metadataum for Stage
-  std::map<std::string, VariableDef> _supported_stage_metas;
+  std::unordered_map<std::string, VariableDef> _supported_stage_metas;
 
   // Supported metadataum for Prim.
-  std::map<std::string, VariableDef> _supported_prim_metas;
+  std::unordered_map<std::string, VariableDef> _supported_prim_metas;
 
   // Supported metadataum for Property(Attribute and Relation).
-  std::map<std::string, VariableDef> _supported_prop_metas;
+  std::unordered_map<std::string, VariableDef> _supported_prop_metas;
 
   std::stack<ErrorDiagnostic> err_stack;
   std::stack<ErrorDiagnostic> warn_stack;
@@ -1146,8 +1148,8 @@ class AsciiParser {
   PrimIdxAssignFunctin _prim_idx_assign_fun;
   StageMetaProcessFunction _stage_meta_process_fun;
   // PrimMetaProcessFunction _prim_meta_process_fun;
-  std::map<std::string, PrimConstructFunction> _prim_construct_fun_map;
-  std::map<std::string, PostPrimConstructFunction> _post_prim_construct_fun_map;
+  std::unordered_map<std::string, PrimConstructFunction> _prim_construct_fun_map;
+  std::unordered_map<std::string, PostPrimConstructFunction> _post_prim_construct_fun_map;
 
   bool _primspec_mode{false};
 

@@ -4,6 +4,7 @@
 #include "value-types.hh"
 
 #include <type_traits>
+#include <unordered_set>
 
 #include "str-util.hh"
 #include "value-pprint.hh"
@@ -42,86 +43,70 @@ Value ValueView::value_placeholder_;
 // float2d, float3d, float4d
 // quath, quatf, quatd
 // (use slerp for quaternion type)
+
+static const std::unordered_set<uint32_t> &GetLerpSupportedTypeIds() {
+  static std::unordered_set<uint32_t> s = [] {
+    std::unordered_set<uint32_t> ids;
+    auto add = [&](uint32_t tid, uint32_t uid) {
+      ids.insert(tid);
+      ids.insert(uid);
+      ids.insert(tid | value::TYPE_ID_1D_ARRAY_BIT);
+      ids.insert(uid | value::TYPE_ID_1D_ARRAY_BIT);
+    };
+    add(TypeTraits<value::half>::type_id(), TypeTraits<value::half>::underlying_type_id());
+    add(TypeTraits<value::half2>::type_id(), TypeTraits<value::half2>::underlying_type_id());
+    add(TypeTraits<value::half3>::type_id(), TypeTraits<value::half3>::underlying_type_id());
+    add(TypeTraits<value::half4>::type_id(), TypeTraits<value::half4>::underlying_type_id());
+    add(TypeTraits<float>::type_id(), TypeTraits<float>::underlying_type_id());
+    add(TypeTraits<value::float2>::type_id(), TypeTraits<value::float2>::underlying_type_id());
+    add(TypeTraits<value::float3>::type_id(), TypeTraits<value::float3>::underlying_type_id());
+    add(TypeTraits<value::float4>::type_id(), TypeTraits<value::float4>::underlying_type_id());
+    add(TypeTraits<double>::type_id(), TypeTraits<double>::underlying_type_id());
+    add(TypeTraits<value::double2>::type_id(), TypeTraits<value::double2>::underlying_type_id());
+    add(TypeTraits<value::double3>::type_id(), TypeTraits<value::double3>::underlying_type_id());
+    add(TypeTraits<value::double4>::type_id(), TypeTraits<value::double4>::underlying_type_id());
+    add(TypeTraits<value::quath>::type_id(), TypeTraits<value::quath>::underlying_type_id());
+    add(TypeTraits<value::quatf>::type_id(), TypeTraits<value::quatf>::underlying_type_id());
+    add(TypeTraits<value::quatd>::type_id(), TypeTraits<value::quatd>::underlying_type_id());
+    add(TypeTraits<value::matrix2d>::type_id(), TypeTraits<value::matrix2d>::underlying_type_id());
+    add(TypeTraits<value::matrix3d>::type_id(), TypeTraits<value::matrix3d>::underlying_type_id());
+    add(TypeTraits<value::matrix4d>::type_id(), TypeTraits<value::matrix4d>::underlying_type_id());
+    return ids;
+  }();
+  return s;
+}
+
 bool IsLerpSupportedType(uint32_t tyid) {
+  const auto &ids = GetLerpSupportedTypeIds();
 
-  // TODO: Directly get underlying_typeid
-  bool has_underlying_tyid{false};
-  uint32_t underlying_tyid{TYPE_ID_INVALID};
+  // Check direct match
+  if (ids.count(tyid)) {
+    return true;
+  }
 
+  // Check array bit variants
+  if (tyid & value::TYPE_ID_1D_ARRAY_BIT) {
+    uint32_t base = tyid & (~value::TYPE_ID_1D_ARRAY_BIT);
+    if (ids.count(base)) {
+      return true;
+    }
+  }
+
+  // Check underlying type for role types (e.g. color3f -> float3)
   if (auto pv = TryGetUnderlyingTypeName(tyid)) {
-    underlying_tyid = GetTypeId(pv.value());
-    has_underlying_tyid = true;
-  } 
-
-  // See also for underlying_type_id to simplify check for Role types(e.g. color3f)
-#define IS_SUPPORTED_TYPE(__tyid, __ty) \
-  if (__tyid == value::TypeTraits<__ty>::type_id()) { \
-    return true; \
-  } else if (__tyid == value::TypeTraits<__ty>::underlying_type_id()) { \
-    return true; \
-  } else if (__tyid & value::TYPE_ID_1D_ARRAY_BIT) { \
-    if ((__tyid & (~value::TYPE_ID_1D_ARRAY_BIT)) == (value::TypeTraits<__ty>::type_id())) { \
-      return true; \
-    } else if ((__tyid & (~value::TYPE_ID_1D_ARRAY_BIT)) == (value::TypeTraits<__ty>::underlying_type_id())) { \
-      return true; \
-    } \
+    uint32_t underlying_tyid = GetTypeId(pv.value());
+    if (ids.count(underlying_tyid)) {
+      return true;
+    }
+    if (underlying_tyid & value::TYPE_ID_1D_ARRAY_BIT) {
+      uint32_t base = underlying_tyid & (~value::TYPE_ID_1D_ARRAY_BIT);
+      if (ids.count(base)) {
+        return true;
+      }
+    }
   }
-
-  // Assume __uty is underlying_type.
-#define IS_SUPPORTED_UNDERLYING_TYPE(__utyid, __uty) \
-  if (__utyid == value::TypeTraits<__uty>::type_id()) { \
-    return true; \
-  } else if (__utyid & value::TYPE_ID_1D_ARRAY_BIT) { \
-    if ((__utyid & (~value::TYPE_ID_1D_ARRAY_BIT)) == (value::TypeTraits<__uty>::type_id())) { \
-      return true; \
-    } \
-  }
-
-  IS_SUPPORTED_TYPE(tyid, value::half)
-  IS_SUPPORTED_TYPE(tyid, value::half2)
-  IS_SUPPORTED_TYPE(tyid, value::half3)
-  IS_SUPPORTED_TYPE(tyid, value::half4)
-  IS_SUPPORTED_TYPE(tyid, float)
-  IS_SUPPORTED_TYPE(tyid, value::float2)
-  IS_SUPPORTED_TYPE(tyid, value::float3)
-  IS_SUPPORTED_TYPE(tyid, value::float4)
-  IS_SUPPORTED_TYPE(tyid, double)
-  IS_SUPPORTED_TYPE(tyid, value::double2)
-  IS_SUPPORTED_TYPE(tyid, value::double3)
-  IS_SUPPORTED_TYPE(tyid, value::double4)
-  IS_SUPPORTED_TYPE(tyid, value::quath)
-  IS_SUPPORTED_TYPE(tyid, value::quatf)
-  IS_SUPPORTED_TYPE(tyid, value::quatd)
-  IS_SUPPORTED_TYPE(tyid, value::matrix2d)
-  IS_SUPPORTED_TYPE(tyid, value::matrix3d)
-  IS_SUPPORTED_TYPE(tyid, value::matrix4d)
-
-  if (has_underlying_tyid) {
-    IS_SUPPORTED_UNDERLYING_TYPE(underlying_tyid, value::half)
-    IS_SUPPORTED_UNDERLYING_TYPE(underlying_tyid, value::half2)
-    IS_SUPPORTED_UNDERLYING_TYPE(underlying_tyid, value::half3)
-    IS_SUPPORTED_UNDERLYING_TYPE(underlying_tyid, value::half4)
-    IS_SUPPORTED_UNDERLYING_TYPE(underlying_tyid, float)
-    IS_SUPPORTED_UNDERLYING_TYPE(underlying_tyid, value::float2)
-    IS_SUPPORTED_UNDERLYING_TYPE(underlying_tyid, value::float3)
-    IS_SUPPORTED_UNDERLYING_TYPE(underlying_tyid, value::float4)
-    IS_SUPPORTED_UNDERLYING_TYPE(underlying_tyid, double)
-    IS_SUPPORTED_UNDERLYING_TYPE(underlying_tyid, value::double2)
-    IS_SUPPORTED_UNDERLYING_TYPE(underlying_tyid, value::double3)
-    IS_SUPPORTED_UNDERLYING_TYPE(underlying_tyid, value::double4)
-    IS_SUPPORTED_UNDERLYING_TYPE(underlying_tyid, value::quath)
-    IS_SUPPORTED_UNDERLYING_TYPE(underlying_tyid, value::quatf)
-    IS_SUPPORTED_UNDERLYING_TYPE(underlying_tyid, value::quatd)
-    IS_SUPPORTED_UNDERLYING_TYPE(underlying_tyid, value::matrix2d)
-    IS_SUPPORTED_UNDERLYING_TYPE(underlying_tyid, value::matrix3d)
-    IS_SUPPORTED_UNDERLYING_TYPE(underlying_tyid, value::matrix4d)
-  }
-
-#undef IS_SUPPORTED_TYPE
-#undef IS_SUPPORTED_UNDERLYING_TYPE
 
   return false;
-
 }
 
 bool Lerp(const value::Value &a, const value::Value &b, double dt, value::Value *dst) {
@@ -1386,6 +1371,72 @@ bool operator==(const matrix4d &a, const matrix4d &b) {
          math::is_close(a.m[3][2], b.m[3][2]) &&
          math::is_close(a.m[3][3], b.m[3][3]);
 }
+
+// ---------------------------------------------------------------
+// Concrete matrix operation implementations (moved from header)
+// ---------------------------------------------------------------
+
+namespace {
+
+template <typename MTy, typename STy, size_t N>
+MTy MultImpl(const MTy &m, const MTy &n) {
+  MTy ret;
+  for (size_t j = 0; j < N; j++) {
+    for (size_t i = 0; i < N; i++) {
+      STy value = static_cast<STy>(0);
+      for (size_t k = 0; k < N; k++) {
+        value += m.m[j][k] * n.m[k][i];
+      }
+      ret.m[j][i] = value;
+    }
+  }
+  return ret;
+}
+
+template <typename MTy, size_t N>
+MTy MatAddImpl(const MTy &m, const MTy &n) {
+  MTy ret;
+  for (size_t j = 0; j < N; j++) {
+    for (size_t i = 0; i < N; i++) {
+      ret.m[j][i] = m.m[j][i] + n.m[j][i];
+    }
+  }
+  return ret;
+}
+
+template <typename MTy, size_t N>
+MTy MatSubImpl(const MTy &m, const MTy &n) {
+  MTy ret;
+  for (size_t j = 0; j < N; j++) {
+    for (size_t i = 0; i < N; i++) {
+      ret.m[j][i] = m.m[j][i] - n.m[j][i];
+    }
+  }
+  return ret;
+}
+
+}  // namespace
+
+matrix2f Mult(const matrix2f &m, const matrix2f &n) { return MultImpl<matrix2f, float, 2>(m, n); }
+matrix3f Mult(const matrix3f &m, const matrix3f &n) { return MultImpl<matrix3f, float, 3>(m, n); }
+matrix4f Mult(const matrix4f &m, const matrix4f &n) { return MultImpl<matrix4f, float, 4>(m, n); }
+matrix2d Mult(const matrix2d &m, const matrix2d &n) { return MultImpl<matrix2d, double, 2>(m, n); }
+matrix3d Mult(const matrix3d &m, const matrix3d &n) { return MultImpl<matrix3d, double, 3>(m, n); }
+matrix4d Mult(const matrix4d &m, const matrix4d &n) { return MultImpl<matrix4d, double, 4>(m, n); }
+
+matrix2f MatAdd(const matrix2f &a, const matrix2f &b) { return MatAddImpl<matrix2f, 2>(a, b); }
+matrix3f MatAdd(const matrix3f &a, const matrix3f &b) { return MatAddImpl<matrix3f, 3>(a, b); }
+matrix4f MatAdd(const matrix4f &a, const matrix4f &b) { return MatAddImpl<matrix4f, 4>(a, b); }
+matrix2d MatAdd(const matrix2d &a, const matrix2d &b) { return MatAddImpl<matrix2d, 2>(a, b); }
+matrix3d MatAdd(const matrix3d &a, const matrix3d &b) { return MatAddImpl<matrix3d, 3>(a, b); }
+matrix4d MatAdd(const matrix4d &a, const matrix4d &b) { return MatAddImpl<matrix4d, 4>(a, b); }
+
+matrix2f MatSub(const matrix2f &a, const matrix2f &b) { return MatSubImpl<matrix2f, 2>(a, b); }
+matrix3f MatSub(const matrix3f &a, const matrix3f &b) { return MatSubImpl<matrix3f, 3>(a, b); }
+matrix4f MatSub(const matrix4f &a, const matrix4f &b) { return MatSubImpl<matrix4f, 4>(a, b); }
+matrix2d MatSub(const matrix2d &a, const matrix2d &b) { return MatSubImpl<matrix2d, 2>(a, b); }
+matrix3d MatSub(const matrix3d &a, const matrix3d &b) { return MatSubImpl<matrix3d, 3>(a, b); }
+matrix4d MatSub(const matrix4d &a, const matrix4d &b) { return MatSubImpl<matrix4d, 4>(a, b); }
 
 }  // namespace value
 }  // namespace tinyusdz
