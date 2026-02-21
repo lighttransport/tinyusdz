@@ -2719,6 +2719,149 @@ static bool ComputeNormals(const std::vector<vec3> &vertices,
 
 }  // namespace
 
+// ---------------------------------------------------------------
+// BuildIndices and BuildIndicesWithSpatialHash implementations
+// (moved from render-data.hh to reduce header bloat)
+// ---------------------------------------------------------------
+
+template <class VertexInput, class VertexOutput, class PackedVert,
+          class PackedVertHasher, class PackedVertEqual>
+void BuildIndices(const VertexInput &input, VertexOutput &output,
+                  std::vector<uint32_t> &out_indices, std::vector<uint32_t> &out_point_indices)
+{
+  std::unordered_map<PackedVert, uint32_t, PackedVertHasher, PackedVertEqual>
+      vertexToIndexMap;
+
+  auto GetSimilarVertex = [&](const PackedVert &v, uint32_t &out_idx) -> bool {
+    auto it = vertexToIndexMap.find(v);
+    if (it == vertexToIndexMap.end()) {
+      return false;
+    }
+
+    out_idx = it->second;
+    return true;
+  };
+
+  for (size_t i = 0; i < input.size(); i++) {
+    PackedVert v;
+    input.get(i, v);
+
+    uint32_t index{0};
+    bool found = GetSimilarVertex(v, index);
+    if (found) {
+      out_indices.push_back(index);
+    } else {
+      uint32_t new_index = uint32_t(output.size());
+      out_indices.push_back(new_index);
+      output.push_back(v);
+      vertexToIndexMap[v] = new_index;
+    }
+    out_point_indices.push_back(v.point_index);
+  }
+}
+
+template <class VertexInput, class VertexOutput, class PackedVert>
+void BuildIndicesWithSpatialHash(
+    const VertexInput &input,
+    VertexOutput &output,
+    std::vector<uint32_t> &out_indices,
+    std::vector<uint32_t> &out_point_indices,
+    float cellSize,
+    float positionEps,
+    float attributeEps)
+{
+  using namespace spatial;
+
+  VertexSpatialHashGrid<float> spatialGrid(cellSize, positionEps, attributeEps);
+
+  spatialGrid.reserveVertices(input.size());
+  output.reserve(input.size() / 4);
+
+  for (size_t i = 0; i < input.size(); i++) {
+    PackedVert v;
+    input.get(i, v);
+
+    typename VertexSpatialHashGrid<float>::Vertex spatialVertex;
+
+    if (v.point_index < input.point_indices.size()) {
+      spatialVertex.position = {0, 0, 0};
+    }
+
+#ifdef TYDRA_USE_INDEX
+    if (v.normal_index != ~0u && v.normal_index < input.unique_normals.size()) {
+      spatialVertex.normal = input.unique_normals[v.normal_index];
+    }
+    if (v.uv0_index != ~0u && v.uv0_index < input.unique_uv0s.size()) {
+      spatialVertex.uv0 = input.unique_uv0s[v.uv0_index];
+    }
+    if (v.uv1_index != ~0u && v.uv1_index < input.unique_uv1s.size()) {
+      spatialVertex.uv1 = input.unique_uv1s[v.uv1_index];
+    }
+    if (v.tangent_index != ~0u && v.tangent_index < input.unique_tangents.size()) {
+      spatialVertex.tangent = input.unique_tangents[v.tangent_index];
+    }
+    if (v.binormal_index != ~0u && v.binormal_index < input.unique_binormals.size()) {
+      spatialVertex.binormal = input.unique_binormals[v.binormal_index];
+    }
+    if (v.color_index != ~0u && v.color_index < input.unique_colors.size()) {
+      spatialVertex.color = input.unique_colors[v.color_index];
+    }
+    if (v.opacity_index != ~0u && v.opacity_index < input.unique_opacities.size()) {
+      spatialVertex.opacity = input.unique_opacities[v.opacity_index];
+    }
+#else
+    spatialVertex.normal = v.normal;
+    spatialVertex.uv0 = v.uv0;
+    spatialVertex.uv1 = v.uv1;
+    spatialVertex.tangent = v.tangent;
+    spatialVertex.binormal = v.binormal;
+    spatialVertex.color = v.color;
+    spatialVertex.opacity = v.opacity;
+#endif
+
+    spatialVertex.id = static_cast<uint32_t>(i);
+
+    uint32_t existingId;
+    bool found = spatialGrid.findExactVertex(spatialVertex, existingId);
+
+    if (found && existingId < output.size()) {
+      out_indices.push_back(existingId);
+    } else {
+      uint32_t new_index = static_cast<uint32_t>(output.size());
+      out_indices.push_back(new_index);
+      output.push_back(v);
+
+      spatialVertex.id = new_index;
+      spatialGrid.addVertex(spatialVertex);
+    }
+
+    out_point_indices.push_back(v.point_index);
+  }
+
+  spatialGrid.build();
+}
+
+// Explicit instantiations for BuildIndices
+template void BuildIndices<
+    ComputeTangentVertexInput<ComputeTangentPackedVertexData>,
+    ComputeTangentVertexOutput<ComputeTangentPackedVertexData>,
+    ComputeTangentPackedVertexData,
+    ComputeTangentPackedVertexDataHasher,
+    ComputeTangentPackedVertexDataEqual>(
+    const ComputeTangentVertexInput<ComputeTangentPackedVertexData> &,
+    ComputeTangentVertexOutput<ComputeTangentPackedVertexData> &,
+    std::vector<uint32_t> &, std::vector<uint32_t> &);
+
+template void BuildIndices<
+    DefaultVertexInput<DefaultPackedVertexData>,
+    DefaultVertexOutput<DefaultPackedVertexData>,
+    DefaultPackedVertexData,
+    DefaultPackedVertexDataHasher,
+    DefaultPackedVertexDataEqual>(
+    const DefaultVertexInput<DefaultPackedVertexData> &,
+    DefaultVertexOutput<DefaultPackedVertexData> &,
+    std::vector<uint32_t> &, std::vector<uint32_t> &);
+
 
 namespace {
 

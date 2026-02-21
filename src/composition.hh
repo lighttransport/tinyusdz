@@ -31,6 +31,8 @@
 ///
 #pragma once
 
+#include <unordered_map>
+
 #include "asset-resolution.hh"
 #include "prim-types.hh"
 
@@ -70,7 +72,7 @@ struct SublayersCompositionOptions {
   bool error_when_unsupported_fileformat{false};
 
   // File formats
-  std::map<std::string, FileFormatHandler> fileformats;
+  std::unordered_map<std::string, FileFormatHandler> fileformats;
   
   // Memory optimization options
   bool enable_inplace_composition{false};  // Enable in-place memory management
@@ -88,7 +90,7 @@ struct ReferencesCompositionOptions {
   bool error_when_unsupported_fileformat{false};
 
   // File formats
-  std::map<std::string, FileFormatHandler> fileformats;
+  std::unordered_map<std::string, FileFormatHandler> fileformats;
   
   // Memory optimization options
   bool enable_inplace_composition{false};  // Enable in-place memory management
@@ -106,7 +108,7 @@ struct PayloadCompositionOptions {
   bool error_when_unsupported_fileformat{false};
 
   // File formats
-  std::map<std::string, FileFormatHandler> fileformats;
+  std::unordered_map<std::string, FileFormatHandler> fileformats;
   
   // Memory optimization options
   bool enable_inplace_composition{false};  // Enable in-place memory management

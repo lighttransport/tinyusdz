@@ -2050,10 +2050,7 @@ bool CrateReader::ReadCustomData(CustomDataType *d) {
       PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to unpack value of Dictionary element.");
     }
 
-    if (dict.count(key)) {
-      // Duplicated key. maybe ok?
-    }
-    // CrateValue -> MetaVariable
+    // CrateValue -> MetaVariable (duplicated key is ok, later value wins)
     MetaVariable var;
 
     var.set_value(key, value.get_raw());
