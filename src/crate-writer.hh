@@ -572,6 +572,17 @@ private:
   // Deduplication
   // ======================================================================
 
+  /// Generic get-or-create for deduplication tables
+  template<typename KeyType, typename IndexType, typename MapType, typename VecType>
+  IndexType GetOrCreateImpl(const KeyType& key, MapType& map, VecType& vec) {
+    auto it = map.find(key);
+    if (it != map.end()) return it->second;
+    IndexType idx(static_cast<uint32_t>(vec.size()));
+    vec.push_back(key);
+    map[key] = idx;
+    return idx;
+  }
+
   /// Get or create token index for a token
   crate::TokenIndex GetOrCreateToken(const std::string& token);
 
