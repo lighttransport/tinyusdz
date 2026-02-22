@@ -253,9 +253,6 @@ bool CrateWriter::Finalize(std::string* err) {
     }
   }
 
-  for (size_t i = 0; i < paths_.size(); ++i) {
-  }
-
   // Build field and fieldset tables
   for (auto& spec_data : spec_data_) {
     std::vector<crate::FieldIndex> field_indices;
@@ -431,8 +428,6 @@ bool CrateWriter::Finalize(std::string* err) {
     tokens_.push_back(";-)");
     token_to_index_[";-)"] = crate::TokenIndex(0);
   }
-
-  // Debug loops removed (original debug statements deleted)
 
   // Seek to the end of value data section before writing structural sections
   // (WriteValueData() seeks back after writing, so file position is not at the end)
@@ -957,9 +952,6 @@ bool CrateWriter::WritePathsSection(std::string* err) {
   std::vector<int32_t> remapped_element_token_indexes;
   remapped_element_token_indexes.reserve(tree.element_token_indexes.size());
 
-  for (size_t i = 0; i < tree.element_token_indexes.size(); ++i) {
-  }
-
   for (int32_t path_tree_idx : tree.element_token_indexes) {
     // Look up using the ORIGINAL signed index (map now stores with sign)
     auto it = path_tree_token_remap_.find(path_tree_idx);
@@ -1115,9 +1107,6 @@ bool CrateWriter::WriteSpecsSection(std::string* err) {
     current_offset += static_cast<uint32_t>(fieldsets_[i].size() + 1);
   }
 
-  for (size_t i = 0; i < fieldset_number_to_offset.size(); ++i) {
-  }
-
   // Separate pathIndexes, fieldSetIndexes, specTypes
   std::vector<uint32_t> path_indexes;
   std::vector<uint32_t> fieldset_indexes;
@@ -1202,8 +1191,6 @@ bool CrateWriter::WriteTableOfContents(std::string* err) {
     if (err) *err = "Failed to write section count";
     return false;
   }
-
-  // Debug loop removed (original debug statements deleted)
 
   // Write sections
   for (const auto& section : toc_.sections) {
@@ -1451,153 +1438,76 @@ int64_t CrateWriter::WriteValueData(const crate::CrateValue& value, std::string*
       return -1;
     }
   }
-  // Vec2f - 2 x 4 = 8 bytes
-  else if (auto* vec2f_val = value.as<value::float2>()) {
-    for (size_t i = 0; i < 2; ++i) {
-      if (!Write((*vec2f_val)[i])) {
-        if (err) *err = "Failed to write Vec2f component";
-        return -1;
-      }
-    }
+  // Scalar vector/matrix/quaternion macros
+  // A. Indexable vectors (float/double/int 2/3/4)
+#define WRITE_VEC_SCALAR(Type, N, TypeName) \
+  else if (auto* v = value.as<Type>()) { \
+    for (size_t i = 0; i < N; ++i) { \
+      if (!Write((*v)[i])) { \
+        if (err) *err = "Failed to write " TypeName " component"; \
+        return -1; \
+      } \
+    } \
   }
-  // Vec2d - 2 x 8 = 16 bytes
-  else if (auto* vec2d_val = value.as<value::double2>()) {
-    for (size_t i = 0; i < 2; ++i) {
-      if (!Write((*vec2d_val)[i])) {
-        if (err) *err = "Failed to write Vec2d component";
-        return -1;
-      }
-    }
+  // B. Half vector (needs .value suffix)
+#define WRITE_HALFVEC_SCALAR(Type, N, TypeName) \
+  else if (auto* v = value.as<Type>()) { \
+    for (size_t i = 0; i < N; ++i) { \
+      if (!Write((*v)[i].value)) { \
+        if (err) *err = "Failed to write " TypeName " component"; \
+        return -1; \
+      } \
+    } \
   }
-  // Vec2i - 2 x 4 = 8 bytes
-  else if (auto* vec2i_val = value.as<value::int2>()) {
-    for (size_t i = 0; i < 2; ++i) {
-      if (!Write((*vec2i_val)[i])) {
-        if (err) *err = "Failed to write Vec2i component";
-        return -1;
-      }
-    }
+  // C. Matrices (POD struct, write as contiguous bytes)
+#define WRITE_MATRIX_SCALAR(Type, TypeName) \
+  else if (auto* v = value.as<Type>()) { \
+    if (!WriteBytes(v, sizeof(Type))) { \
+      if (err) *err = "Failed to write " TypeName; \
+      return -1; \
+    } \
   }
-  // Vec3f - 3 x 4 = 12 bytes
-  else if (auto* vec3f_val = value.as<value::float3>()) {
-    for (size_t i = 0; i < 3; ++i) {
-      if (!Write((*vec3f_val)[i])) {
-        if (err) *err = "Failed to write Vec3f component";
-        return -1;
-      }
-    }
+  // D. Quaternions (real then imag[0..2], USD Crate format order)
+#define WRITE_QUAT_SCALAR(Type, TypeName) \
+  else if (auto* v = value.as<Type>()) { \
+    if (!Write(v->real) || !Write(v->imag[0]) || \
+        !Write(v->imag[1]) || !Write(v->imag[2])) { \
+      if (err) *err = "Failed to write " TypeName " components"; \
+      return -1; \
+    } \
   }
-  // Vec3d - 3 x 8 = 24 bytes
-  else if (auto* vec3d_val = value.as<value::double3>()) {
-    for (size_t i = 0; i < 3; ++i) {
-      if (!Write((*vec3d_val)[i])) {
-        if (err) *err = "Failed to write Vec3d component";
-        return -1;
-      }
-    }
+  // E. Half-precision quaternion (needs .value on each component)
+#define WRITE_QUATH_SCALAR(Type, TypeName) \
+  else if (auto* v = value.as<Type>()) { \
+    if (!Write(v->real.value) || !Write(v->imag[0].value) || \
+        !Write(v->imag[1].value) || !Write(v->imag[2].value)) { \
+      if (err) *err = "Failed to write " TypeName " components"; \
+      return -1; \
+    } \
   }
-  // Vec3i - 3 x 4 = 12 bytes
-  else if (auto* vec3i_val = value.as<value::int3>()) {
-    for (size_t i = 0; i < 3; ++i) {
-      if (!Write((*vec3i_val)[i])) {
-        if (err) *err = "Failed to write Vec3i component";
-        return -1;
-      }
-    }
-  }
-  // Vec4h - 4 x 2 = 8 bytes
-  else if (auto* vec4h_val = value.as<value::half4>()) {
-    for (size_t i = 0; i < 4; ++i) {
-      if (!Write((*vec4h_val)[i].value)) {
-        if (err) *err = "Failed to write Vec4h component";
-        return -1;
-      }
-    }
-  }
-  // Vec4f - 4 x 4 = 16 bytes
-  else if (auto* vec4f_val = value.as<value::float4>()) {
-    for (size_t i = 0; i < 4; ++i) {
-      if (!Write((*vec4f_val)[i])) {
-        if (err) *err = "Failed to write Vec4f component";
-        return -1;
-      }
-    }
-  }
-  // Vec4d - 4 x 8 = 32 bytes
-  else if (auto* vec4d_val = value.as<value::double4>()) {
-    for (size_t i = 0; i < 4; ++i) {
-      if (!Write((*vec4d_val)[i])) {
-        if (err) *err = "Failed to write Vec4d component";
-        return -1;
-      }
-    }
-  }
-  // Vec4i - 4 x 4 = 16 bytes
-  else if (auto* vec4i_val = value.as<value::int4>()) {
-    for (size_t i = 0; i < 4; ++i) {
-      if (!Write((*vec4i_val)[i])) {
-        if (err) *err = "Failed to write Vec4i component";
-        return -1;
-      }
-    }
-  }
-  // Matrix2d - 4 x 8 = 32 bytes
-  else if (auto* mat2d_val = value.as<value::matrix2d>()) {
-    // Write matrix elements in column-major order (USD convention)
-    for (size_t i = 0; i < 4; ++i) {
-      if (!Write(mat2d_val->m[i])) {
-        if (err) *err = "Failed to write Matrix2d element";
-        return -1;
-      }
-    }
-  }
-  // Matrix3d - 9 x 8 = 72 bytes
-  else if (auto* mat3d_val = value.as<value::matrix3d>()) {
-    // Write matrix elements in column-major order (USD convention)
-    for (size_t i = 0; i < 9; ++i) {
-      if (!Write(mat3d_val->m[i])) {
-        if (err) *err = "Failed to write Matrix3d element";
-        return -1;
-      }
-    }
-  }
-  // Matrix4d - 16 x 8 = 128 bytes
-  else if (auto* mat4d_val = value.as<value::matrix4d>()) {
-    // Write matrix elements in column-major order (USD convention)
-    for (size_t i = 0; i < 16; ++i) {
-      if (!Write(mat4d_val->m[i])) {
-        if (err) *err = "Failed to write Matrix4d element";
-        return -1;
-      }
-    }
-  }
-  // Quath - 4 x 2 = 8 bytes
-  else if (auto* quath_val = value.as<value::quath>()) {
-    // Write quaternion components: real, i, j, k
-    if (!Write(quath_val->real.value) || !Write(quath_val->imag[0].value) ||
-        !Write(quath_val->imag[1].value) || !Write(quath_val->imag[2].value)) {
-      if (err) *err = "Failed to write Quath components";
-      return -1;
-    }
-  }
-  // Quatf - 4 x 4 = 16 bytes
-  else if (auto* quatf_val = value.as<value::quatf>()) {
-    // Write quaternion components: real, i, j, k
-    if (!Write(quatf_val->real) || !Write(quatf_val->imag[0]) ||
-        !Write(quatf_val->imag[1]) || !Write(quatf_val->imag[2])) {
-      if (err) *err = "Failed to write Quatf components";
-      return -1;
-    }
-  }
-  // Quatd - 4 x 8 = 32 bytes
-  else if (auto* quatd_val = value.as<value::quatd>()) {
-    // Write quaternion components: real, i, j, k
-    if (!Write(quatd_val->real) || !Write(quatd_val->imag[0]) ||
-        !Write(quatd_val->imag[1]) || !Write(quatd_val->imag[2])) {
-      if (err) *err = "Failed to write Quatd components";
-      return -1;
-    }
-  }
+
+  WRITE_VEC_SCALAR(value::float2, 2, "Vec2f")
+  WRITE_VEC_SCALAR(value::double2, 2, "Vec2d")
+  WRITE_VEC_SCALAR(value::int2, 2, "Vec2i")
+  WRITE_VEC_SCALAR(value::float3, 3, "Vec3f")
+  WRITE_VEC_SCALAR(value::double3, 3, "Vec3d")
+  WRITE_VEC_SCALAR(value::int3, 3, "Vec3i")
+  WRITE_HALFVEC_SCALAR(value::half4, 4, "Vec4h")
+  WRITE_VEC_SCALAR(value::float4, 4, "Vec4f")
+  WRITE_VEC_SCALAR(value::double4, 4, "Vec4d")
+  WRITE_VEC_SCALAR(value::int4, 4, "Vec4i")
+  WRITE_MATRIX_SCALAR(value::matrix2d, "Matrix2d")
+  WRITE_MATRIX_SCALAR(value::matrix3d, "Matrix3d")
+  WRITE_MATRIX_SCALAR(value::matrix4d, "Matrix4d")
+  WRITE_QUATH_SCALAR(value::quath, "Quath")
+  WRITE_QUAT_SCALAR(value::quatf, "Quatf")
+  WRITE_QUAT_SCALAR(value::quatd, "Quatd")
+
+#undef WRITE_VEC_SCALAR
+#undef WRITE_HALFVEC_SCALAR
+#undef WRITE_MATRIX_SCALAR
+#undef WRITE_QUAT_SCALAR
+#undef WRITE_QUATH_SCALAR
   // Phase 1: Array serialization
   // Arrays are written as: uint64_t count + elements
   // For bool arrays, each bool is written as 1 byte
@@ -1980,150 +1890,49 @@ int64_t CrateWriter::WriteValueData(const crate::CrateValue& value, std::string*
       }
     }
   }
-  // Vec2f array
-  else if (auto* vec2f_array = value.as<std::vector<value::float2>>()) {
-    uint64_t count = vec2f_array->size();
-    if (!Write(count)) {
-      if (err) *err = "Failed to write Vec2f array count";
-      return -1;
-    }
-    for (const auto& vec : *vec2f_array) {
-      for (size_t i = 0; i < 2; ++i) {
-        if (!Write(vec[i])) {
-          if (err) *err = "Failed to write Vec2f array element";
-          return -1;
-        }
-      }
-    }
+  // Vector/Quaternion array macros
+#define WRITE_VEC_ARRAY(ElemType, N, TypeName) \
+  else if (auto* arr = value.as<std::vector<ElemType>>()) { \
+    uint64_t count = arr->size(); \
+    if (!Write(count)) { if (err) *err = "Failed to write " TypeName " array count"; return -1; } \
+    for (const auto& elem : *arr) { \
+      for (size_t i = 0; i < N; ++i) { \
+        if (!Write(elem[i])) { if (err) *err = "Failed to write " TypeName " array element"; return -1; } \
+      } \
+    } \
   }
-  // Vec3f array
-  else if (auto* vec3f_array = value.as<std::vector<value::float3>>()) {
-    uint64_t count = vec3f_array->size();
-    if (!Write(count)) {
-      if (err) *err = "Failed to write Vec3f array count";
-      return -1;
-    }
-    for (const auto& vec : *vec3f_array) {
-      for (size_t i = 0; i < 3; ++i) {
-        if (!Write(vec[i])) {
-          if (err) *err = "Failed to write Vec3f array element";
-          return -1;
-        }
-      }
-    }
+#define WRITE_QUAT_ARRAY(ElemType, TypeName) \
+  else if (auto* arr = value.as<std::vector<ElemType>>()) { \
+    uint64_t count = arr->size(); \
+    if (!Write(count)) { if (err) *err = "Failed to write " TypeName " array count"; return -1; } \
+    for (const auto& q : *arr) { \
+      bool qok = Write(q.real) && Write(q.imag[0]) && Write(q.imag[1]) && Write(q.imag[2]); \
+      if (!qok) { if (err) *err = "Failed to write " TypeName " array element"; return -1; } \
+    } \
   }
-  // Vec4f array
-  else if (auto* vec4f_array = value.as<std::vector<value::float4>>()) {
-    uint64_t count = vec4f_array->size();
-    if (!Write(count)) {
-      if (err) *err = "Failed to write Vec4f array count";
-      return -1;
-    }
-    for (const auto& vec : *vec4f_array) {
-      for (size_t i = 0; i < 4; ++i) {
-        if (!Write(vec[i])) {
-          if (err) *err = "Failed to write Vec4f array element";
-          return -1;
-        }
-      }
-    }
+#define WRITE_QUATH_ARRAY(ElemType, TypeName) \
+  else if (auto* arr = value.as<std::vector<ElemType>>()) { \
+    uint64_t count = arr->size(); \
+    if (!Write(count)) { if (err) *err = "Failed to write " TypeName " array count"; return -1; } \
+    for (const auto& q : *arr) { \
+      bool qok = Write(q.real.value) && Write(q.imag[0].value) && Write(q.imag[1].value) && Write(q.imag[2].value); \
+      if (!qok) { if (err) *err = "Failed to write " TypeName " array element"; return -1; } \
+    } \
   }
-  // Vec2d array (double2[])
-  else if (auto* vec2d_array = value.as<std::vector<value::double2>>()) {
-    uint64_t count = vec2d_array->size();
-    if (!Write(count)) {
-      if (err) *err = "Failed to write Vec2d array count";
-      return -1;
-    }
-    for (const auto& vec : *vec2d_array) {
-      for (size_t i = 0; i < 2; ++i) {
-        if (!Write(vec[i])) {
-          if (err) *err = "Failed to write Vec2d array element";
-          return -1;
-        }
-      }
-    }
-  }
-  // Vec3d array (double3[])
-  else if (auto* vec3d_array = value.as<std::vector<value::double3>>()) {
-    uint64_t count = vec3d_array->size();
-    if (!Write(count)) {
-      if (err) *err = "Failed to write Vec3d array count";
-      return -1;
-    }
-    for (const auto& vec : *vec3d_array) {
-      for (size_t i = 0; i < 3; ++i) {
-        if (!Write(vec[i])) {
-          if (err) *err = "Failed to write Vec3d array element";
-          return -1;
-        }
-      }
-    }
-  }
-  // Vec4d array (double4[])
-  else if (auto* vec4d_array = value.as<std::vector<value::double4>>()) {
-    uint64_t count = vec4d_array->size();
-    if (!Write(count)) {
-      if (err) *err = "Failed to write Vec4d array count";
-      return -1;
-    }
-    for (const auto& vec : *vec4d_array) {
-      for (size_t i = 0; i < 4; ++i) {
-        if (!Write(vec[i])) {
-          if (err) *err = "Failed to write Vec4d array element";
-          return -1;
-        }
-      }
-    }
-  }
-  // Quath array (half-precision quaternion array)
-  else if (auto* quath_array = value.as<std::vector<value::quath>>()) {
-    uint64_t count = quath_array->size();
-    if (!Write(count)) {
-      if (err) *err = "Failed to write Quath array count";
-      return -1;
-    }
-    // Each quath is: real (uint16_t) + imag[0,1,2] (3 x uint16_t) = 8 bytes
-    for (const auto& q : *quath_array) {
-      if (!Write(q.real.value) || !Write(q.imag[0].value) ||
-          !Write(q.imag[1].value) || !Write(q.imag[2].value)) {
-        if (err) *err = "Failed to write Quath array element";
-        return -1;
-      }
-    }
-  }
-  // Quatf array (single-precision quaternion array)
-  else if (auto* quatf_array = value.as<std::vector<value::quatf>>()) {
-    uint64_t count = quatf_array->size();
-    if (!Write(count)) {
-      if (err) *err = "Failed to write Quatf array count";
-      return -1;
-    }
-    // Each quatf is: real (float) + imag[0,1,2] (3 x float) = 16 bytes
-    for (const auto& q : *quatf_array) {
-      if (!Write(q.real) || !Write(q.imag[0]) ||
-          !Write(q.imag[1]) || !Write(q.imag[2])) {
-        if (err) *err = "Failed to write Quatf array element";
-        return -1;
-      }
-    }
-  }
-  // Quatd array (double-precision quaternion array)
-  else if (auto* quatd_array = value.as<std::vector<value::quatd>>()) {
-    uint64_t count = quatd_array->size();
-    if (!Write(count)) {
-      if (err) *err = "Failed to write Quatd array count";
-      return -1;
-    }
-    // Each quatd is: real (double) + imag[0,1,2] (3 x double) = 32 bytes
-    for (const auto& q : *quatd_array) {
-      if (!Write(q.real) || !Write(q.imag[0]) ||
-          !Write(q.imag[1]) || !Write(q.imag[2])) {
-        if (err) *err = "Failed to write Quatd array element";
-        return -1;
-      }
-    }
-  }
+
+  WRITE_VEC_ARRAY(value::float2, 2, "Vec2f")
+  WRITE_VEC_ARRAY(value::float3, 3, "Vec3f")
+  WRITE_VEC_ARRAY(value::float4, 4, "Vec4f")
+  WRITE_VEC_ARRAY(value::double2, 2, "Vec2d")
+  WRITE_VEC_ARRAY(value::double3, 3, "Vec3d")
+  WRITE_VEC_ARRAY(value::double4, 4, "Vec4d")
+  WRITE_QUATH_ARRAY(value::quath, "Quath")
+  WRITE_QUAT_ARRAY(value::quatf, "Quatf")
+  WRITE_QUAT_ARRAY(value::quatd, "Quatd")
+
+#undef WRITE_VEC_ARRAY
+#undef WRITE_QUAT_ARRAY
+#undef WRITE_QUATH_ARRAY
   // String array - special handling (strings are stored as indices)
   else if (auto* string_array = value.as<std::vector<std::string>>()) {
     uint64_t count = string_array->size();
@@ -2188,9 +1997,9 @@ int64_t CrateWriter::WriteValueData(const crate::CrateValue& value, std::string*
     int64_t dict_struct_start = Tell();
 
     // Reserve space by writing zeros
-    for (int64_t i = 0; i < dict_struct_size; i++) {
-      char zero = 0;
-      if (!WriteBytes(&zero, 1)) {
+    {
+      std::vector<char> zeros(static_cast<size_t>(dict_struct_size), 0);
+      if (!WriteBytes(zeros.data(), zeros.size())) {
         if (err) *err = "Failed to reserve dictionary space";
         return -1;
       }
@@ -2343,9 +2152,9 @@ int64_t CrateWriter::WriteValueData(const crate::CrateValue& value, std::string*
     int64_t dict_struct_start = Tell();
 
     // Reserve space by writing zeros
-    for (int64_t i = 0; i < dict_struct_size; i++) {
-      char zero = 0;
-      if (!WriteBytes(&zero, 1)) {
+    {
+      std::vector<char> zeros(static_cast<size_t>(dict_struct_size), 0);
+      if (!WriteBytes(zeros.data(), zeros.size())) {
         if (err) *err = "Failed to reserve CustomDataType space";
         return -1;
       }
@@ -3880,13 +3689,8 @@ bool CrateWriter::TryInlineValue(const crate::CrateValue& value, crate::ValueRep
     return true;
   }
 
-  // Try to get as double
-  if (auto* double_val = value.as<double>()) {
-    (void)double_val;  // Suppress unused variable warning
-    // Double cannot be inlined (64 bits > 48 bit payload)
-    // Falls through to out-of-line storage
-    return false;
-  }
+  // Double cannot be inlined (64 bits > 48 bit payload)
+  if (value.as<double>()) { return false; }
 
   // Try to get as half
   if (auto* half_val = value.as<value::half>()) {
@@ -3937,32 +3741,18 @@ bool CrateWriter::TryInlineValue(const crate::CrateValue& value, crate::ValueRep
     return true;
   }
 
-  // Vec2f - float2 (8 bytes, cannot inline)
-  if (auto* vec2f_val = value.as<value::float2>()) {
-    (void)vec2f_val;  // Suppress unused variable warning
-    // Cannot inline, need out-of-line storage
-    return false;
-  }
+  // Types that cannot be inlined (too large for 48-bit payload)
+#define CANNOT_INLINE(Type) \
+  if (value.as<Type>()) { return false; }
 
-  // Vec2d - double2 (16 bytes, cannot inline)
-  if (auto* vec2d_val = value.as<value::double2>()) {
-    (void)vec2d_val;  // Suppress unused variable warning
-    // Cannot inline, need out-of-line storage
-    return false;
-  }
-
-  // Vec2i - int2 (8 bytes, cannot inline)
-  if (auto* vec2i_val = value.as<value::int2>()) {
-    (void)vec2i_val;  // Suppress unused variable warning
-    // Cannot inline, need out-of-line storage
-    return false;
-  }
+  CANNOT_INLINE(value::float2)   // 8 bytes
+  CANNOT_INLINE(value::double2)  // 16 bytes
+  CANNOT_INLINE(value::int2)     // 8 bytes
 
   // Vec3h - half3 (6 bytes, can inline!)
   if (auto* vec3h_val = value.as<value::half3>()) {
     rep->SetType(static_cast<int32_t>(crate::CrateDataTypeId::CRATE_DATA_TYPE_VEC3H));
     rep->SetIsInlined();
-    // Pack three 16-bit halfs into 48 bits
     uint64_t packed = (uint64_t((*vec3h_val)[0].value) << 32) |
                       (uint64_t((*vec3h_val)[1].value) << 16) |
                        uint64_t((*vec3h_val)[2].value);
@@ -3970,97 +3760,21 @@ bool CrateWriter::TryInlineValue(const crate::CrateValue& value, crate::ValueRep
     return true;
   }
 
-  // Vec3f - float3 (12 bytes, cannot inline)
-  if (auto* vec3f_val = value.as<value::float3>()) {
-    (void)vec3f_val;  // Suppress unused variable warning
-    // Cannot inline, need out-of-line storage
-    return false;
-  }
+  CANNOT_INLINE(value::float3)   // 12 bytes
+  CANNOT_INLINE(value::double3)  // 24 bytes
+  CANNOT_INLINE(value::int3)     // 12 bytes
+  CANNOT_INLINE(value::half4)    // 8 bytes
+  CANNOT_INLINE(value::float4)   // 16 bytes
+  CANNOT_INLINE(value::double4)  // 32 bytes
+  CANNOT_INLINE(value::int4)     // 16 bytes
+  CANNOT_INLINE(value::matrix2d) // 32 bytes
+  CANNOT_INLINE(value::matrix3d) // 72 bytes
+  CANNOT_INLINE(value::matrix4d) // 128 bytes
+  CANNOT_INLINE(value::quath)    // 8 bytes
+  CANNOT_INLINE(value::quatf)    // 16 bytes
+  CANNOT_INLINE(value::quatd)    // 32 bytes
 
-  // Vec3d - double3 (24 bytes, cannot inline)
-  if (auto* vec3d_val = value.as<value::double3>()) {
-    (void)vec3d_val;  // Suppress unused variable warning
-    // Cannot inline, need out-of-line storage
-    return false;
-  }
-
-  // Vec3i - int3 (12 bytes, cannot inline)
-  if (auto* vec3i_val = value.as<value::int3>()) {
-    (void)vec3i_val;  // Suppress unused variable warning
-    // Cannot inline, need out-of-line storage
-    return false;
-  }
-
-  // Vec4h - half4 (8 bytes, cannot inline)
-  if (auto* vec4h_val = value.as<value::half4>()) {
-    (void)vec4h_val;  // Suppress unused variable warning
-    // Cannot inline, need out-of-line storage
-    return false;
-  }
-
-  // Vec4f - float4 (16 bytes, cannot inline)
-  if (auto* vec4f_val = value.as<value::float4>()) {
-    (void)vec4f_val;  // Suppress unused variable warning
-    // Cannot inline, need out-of-line storage
-    return false;
-  }
-
-  // Vec4d - double4 (32 bytes, cannot inline)
-  if (auto* vec4d_val = value.as<value::double4>()) {
-    (void)vec4d_val;  // Suppress unused variable warning
-    // Cannot inline, need out-of-line storage
-    return false;
-  }
-
-  // Vec4i - int4 (16 bytes, cannot inline)
-  if (auto* vec4i_val = value.as<value::int4>()) {
-    (void)vec4i_val;  // Suppress unused variable warning
-    // Cannot inline, need out-of-line storage
-    return false;
-  }
-
-  // Phase 1: Matrix types - all matrices are too large to inline
-  // Matrix2d (4x8 = 32 bytes), Matrix3d (9x8 = 72 bytes), Matrix4d (16x8 = 128 bytes)
-
-  if (auto* mat2d_val = value.as<value::matrix2d>()) {
-    (void)mat2d_val;  // Suppress unused variable warning
-    // Cannot inline, need out-of-line storage
-    return false;
-  }
-
-  if (auto* mat3d_val = value.as<value::matrix3d>()) {
-    (void)mat3d_val;  // Suppress unused variable warning
-    // Cannot inline, need out-of-line storage
-    return false;
-  }
-
-  if (auto* mat4d_val = value.as<value::matrix4d>()) {
-    (void)mat4d_val;  // Suppress unused variable warning
-    // Cannot inline, need out-of-line storage
-    return false;
-  }
-
-  // Phase 1: Quaternion types
-  // Quath (4x2 = 8 bytes), Quatf (4x4 = 16 bytes), Quatd (4x8 = 32 bytes)
-  // All too large to inline (> 6 bytes)
-
-  if (auto* quath_val = value.as<value::quath>()) {
-    (void)quath_val;  // Suppress unused variable warning
-    // Cannot inline, need out-of-line storage
-    return false;
-  }
-
-  if (auto* quatf_val = value.as<value::quatf>()) {
-    (void)quatf_val;  // Suppress unused variable warning
-    // Cannot inline, need out-of-line storage
-    return false;
-  }
-
-  if (auto* quatd_val = value.as<value::quatd>()) {
-    (void)quatd_val;  // Suppress unused variable warning
-    // Cannot inline, need out-of-line storage
-    return false;
-  }
+#undef CANNOT_INLINE
 
   // Phase 2: Dictionary, ListOps, Reference, and Payload are NEVER inlined - always out-of-line storage
   if (value.as<value::dict>()) {
@@ -4141,16 +3855,7 @@ bool CrateWriter::TryInlineValue(const crate::CrateValue& value, crate::ValueRep
 // ============================================================================
 
 crate::TokenIndex CrateWriter::GetOrCreateToken(const std::string& token) {
-  auto it = token_to_index_.find(token);
-  if (it != token_to_index_.end()) {
-    return it->second;
-  }
-
-  // Create new token
-  crate::TokenIndex idx(static_cast<uint32_t>(tokens_.size()));
-  tokens_.push_back(token);
-  token_to_index_[token] = idx;
-  return idx;
+  return GetOrCreateImpl<std::string, crate::TokenIndex>(token, token_to_index_, tokens_);
 }
 
 crate::StringIndex CrateWriter::GetOrCreateString(const std::string& str) {
@@ -4234,29 +3939,11 @@ crate::PathIndex CrateWriter::GetOrCreatePath(const Path& path) {
 }
 
 crate::FieldIndex CrateWriter::GetOrCreateField(const crate::Field& field) {
-  auto it = field_to_index_.find(field);
-  if (it != field_to_index_.end()) {
-    return it->second;
-  }
-
-  // Create new field
-  crate::FieldIndex idx(static_cast<uint32_t>(fields_.size()));
-  fields_.push_back(field);
-  field_to_index_[field] = idx;
-  return idx;
+  return GetOrCreateImpl<crate::Field, crate::FieldIndex>(field, field_to_index_, fields_);
 }
 
 crate::FieldSetIndex CrateWriter::GetOrCreateFieldSet(const std::vector<crate::FieldIndex>& fieldset) {
-  auto it = fieldset_to_index_.find(fieldset);
-  if (it != fieldset_to_index_.end()) {
-    return it->second;
-  }
-
-  // Create new fieldset
-  crate::FieldSetIndex idx(static_cast<uint32_t>(fieldsets_.size()));
-  fieldsets_.push_back(fieldset);
-  fieldset_to_index_[fieldset] = idx;
-  return idx;
+  return GetOrCreateImpl<std::vector<crate::FieldIndex>, crate::FieldSetIndex>(fieldset, fieldset_to_index_, fieldsets_);
 }
 
 // ============================================================================
