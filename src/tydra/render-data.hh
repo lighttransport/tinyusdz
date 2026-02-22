@@ -200,7 +200,8 @@ using dmat4 = value::matrix4d;
 ///
 struct StringAndIdMap {
   using IdToStringMap = std::unordered_map<uint64_t, std::string>;
-  using StringToIdMap = std::unordered_map<std::string, uint64_t>;
+  using StringToIdMap =
+      std::unordered_map<std::string, uint64_t, FNV1StringHash>;
   using id_const_iterator = IdToStringMap::const_iterator;
   using string_const_iterator = StringToIdMap::const_iterator;
 
@@ -3237,14 +3238,16 @@ class RenderSceneConverter {
   mutable std::vector<value::float3> _tmp_points_buffer;
 
   // Lookup caches for O(1) skeleton/animation dedup (populated during ConvertToRenderScene)
-  std::unordered_map<std::string, int32_t> _skelPathToIndex;
-  std::unordered_map<std::string, int32_t> _animPathToIndex;
+  std::unordered_map<std::string, int32_t, FNV1StringHash> _skelPathToIndex;
+  std::unordered_map<std::string, int32_t, FNV1StringHash> _animPathToIndex;
 
   // Cached BuildSkelNameToIndexMap results per skeleton ID
-  std::unordered_map<int32_t, std::map<std::string, int>> _skelNameToIndexCache;
+  std::unordered_map<int32_t, SkelNameToIndexMap> _skelNameToIndexCache;
 
   // Precomputed SkelRoot -> Skeleton mapping for fast ancestor discovery.
-  std::unordered_map<std::string, std::pair<Path, const Skeleton *>> _skelRootToSkeleton;
+  std::unordered_map<std::string, std::pair<Path, const Skeleton *>,
+                     FNV1StringHash>
+      _skelRootToSkeleton;
 
   // Cached ListUVNames results per material ID
   std::unordered_map<int64_t, StringAndIdMap> _uvNameCache;

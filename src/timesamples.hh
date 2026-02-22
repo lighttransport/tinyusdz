@@ -1721,11 +1721,16 @@ struct TimeSamples {
   /// @param t Time value to search for
   /// @return Index if found, or size_t(-1) if not found
   size_t find_time_index_in_unified(double t) const {
-    auto it = std::find_if(_times.begin(), _times.end(), [&t](double sample_t) {
-      return std::fabs(t - sample_t) < std::numeric_limits<double>::epsilon();
-    });
-    if (it != _times.end()) {
+    const double eps = std::numeric_limits<double>::epsilon();
+    auto it = std::lower_bound(_times.begin(), _times.end(), t - eps);
+    if ((it != _times.end()) && (std::fabs(*it - t) < eps)) {
       return static_cast<size_t>(std::distance(_times.begin(), it));
+    }
+    if (it != _times.begin()) {
+      auto prev = it - 1;
+      if (std::fabs(*prev - t) < eps) {
+        return static_cast<size_t>(std::distance(_times.begin(), prev));
+      }
     }
     return static_cast<size_t>(-1);  // Not found
   }
@@ -1734,11 +1739,18 @@ struct TimeSamples {
   /// @param t Time value to search for
   /// @return Index if found, or size_t(-1) if not found
   size_t find_time_index_in_samples(double t) const {
-    auto it = std::find_if(_samples.begin(), _samples.end(), [&t](const Sample& s) {
-      return std::fabs(t - s.t) < std::numeric_limits<double>::epsilon();
-    });
-    if (it != _samples.end()) {
+    const double eps = std::numeric_limits<double>::epsilon();
+    auto it = std::lower_bound(
+        _samples.begin(), _samples.end(), t - eps,
+        [](const Sample &s, double v) { return s.t < v; });
+    if ((it != _samples.end()) && (std::fabs(it->t - t) < eps)) {
       return static_cast<size_t>(std::distance(_samples.begin(), it));
+    }
+    if (it != _samples.begin()) {
+      auto prev = it - 1;
+      if (std::fabs(prev->t - t) < eps) {
+        return static_cast<size_t>(std::distance(_samples.begin(), prev));
+      }
     }
     return static_cast<size_t>(-1);  // Not found
   }
@@ -1894,17 +1906,19 @@ struct TypedTimeSamples {
       update();
     }
 
-    const auto it = std::find_if(_times.begin(), _times.end(), [&t](double sample_t) {
-      return std::fabs(t - sample_t) < std::numeric_limits<double>::epsilon();
-    });
-
-    if (it != _times.end()) {
-      size_t idx = static_cast<size_t>(std::distance(_times.begin(), it));
-      _values[idx] = v;
-      _blocked[idx] = 0;  // false = 0
-      return true;
+    const double eps = std::numeric_limits<double>::epsilon();
+    auto it = std::lower_bound(_times.begin(), _times.end(), t - eps);
+    if ((it == _times.end()) || (std::fabs(*it - t) >= eps)) {
+      if ((it == _times.begin()) || (std::fabs(*(it - 1) - t) >= eps)) {
+        return false;
+      }
+      it = it - 1;
     }
-    return false;
+
+    size_t idx = static_cast<size_t>(std::distance(_times.begin(), it));
+    _values[idx] = v;
+    _blocked[idx] = 0;  // false = 0
+    return true;
   }
 #endif
 
@@ -1914,17 +1928,29 @@ struct TypedTimeSamples {
     }
 
 #ifndef TINYUSDZ_USE_TIMESAMPLES_SOA
-    const auto it = std::find_if(_samples.begin(), _samples.end(), [&t](const Sample &s) {
-      return std::fabs(t - s.t) < std::numeric_limits<double>::epsilon();
-    });
+    const double eps = std::numeric_limits<double>::epsilon();
+    auto it = std::lower_bound(
+        _samples.begin(), _samples.end(), t - eps,
+        [](const Sample &s, double v) { return s.t < v; });
 
-    return (it != _samples.end());
+    if ((it != _samples.end()) && (std::fabs(it->t - t) < eps)) {
+      return true;
+    }
+    if (it != _samples.begin()) {
+      return std::fabs((it - 1)->t - t) < eps;
+    }
+    return false;
 #else
-    const auto it = std::find_if(_times.begin(), _times.end(), [&t](double sample_t) {
-      return std::fabs(t - sample_t) < std::numeric_limits<double>::epsilon();
-    });
+    const double eps = std::numeric_limits<double>::epsilon();
+    auto it = std::lower_bound(_times.begin(), _times.end(), t - eps);
 
-    return (it != _times.end());
+    if ((it != _times.end()) && (std::fabs(*it - t) < eps)) {
+      return true;
+    }
+    if (it != _times.begin()) {
+      return std::fabs(*(it - 1) - t) < eps;
+    }
+    return false;
 #endif
   }
 
@@ -1938,15 +1964,19 @@ struct TypedTimeSamples {
       update();
     }
 
-    const auto it = std::find_if(_samples.begin(), _samples.end(), [&t](const Sample &sample) {
-      return std::fabs(t - sample.t) < std::numeric_limits<double>::epsilon();
-    });
-
-    if (it != _samples.end()) {
-      (*dst) = &(*it);
-      return true;
+    const double eps = std::numeric_limits<double>::epsilon();
+    auto it = std::lower_bound(
+        _samples.begin(), _samples.end(), t - eps,
+        [](const Sample &sample, double v) { return sample.t < v; });
+    if ((it == _samples.end()) || (std::fabs(it->t - t) >= eps)) {
+      if ((it == _samples.begin()) || (std::fabs((it - 1)->t - t) >= eps)) {
+        return false;
+      }
+      it = it - 1;
     }
-    return false;
+
+    (*dst) = &(*it);
+    return true;
   }
 #else
   // SoA layout - return individual components instead of Sample struct
@@ -1959,19 +1989,21 @@ struct TypedTimeSamples {
       update();
     }
 
-    const auto it = std::find_if(_times.begin(), _times.end(), [&t](double sample_t) {
-      return std::fabs(t - sample_t) < std::numeric_limits<double>::epsilon();
-    });
-
-    if (it != _times.end()) {
-      size_t idx = static_cast<size_t>(std::distance(_times.begin(), it));
-      *value = _values[idx];
-      if (blocked) {
-        *blocked = _blocked[idx];
+    const double eps = std::numeric_limits<double>::epsilon();
+    auto it = std::lower_bound(_times.begin(), _times.end(), t - eps);
+    if ((it == _times.end()) || (std::fabs(*it - t) >= eps)) {
+      if ((it == _times.begin()) || (std::fabs(*(it - 1) - t) >= eps)) {
+        return false;
       }
-      return true;
+      it = it - 1;
     }
-    return false;
+
+    size_t idx = static_cast<size_t>(std::distance(_times.begin(), it));
+    *value = _values[idx];
+    if (blocked) {
+      *blocked = _blocked[idx];
+    }
+    return true;
   }
 #endif
 

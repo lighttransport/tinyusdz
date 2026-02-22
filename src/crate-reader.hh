@@ -6,6 +6,7 @@
 #include <functional>
 #include <memory>
 #include <string>
+#include <unordered_map>
 #include <unordered_set>
 
 //
@@ -108,6 +109,24 @@ void clear_all_timesamples_dedup_entries();
 
 /// Clear dedup entries for a specific TimeSamples pointer
 void clear_timesamples_dedup_entries(void* timesamples_ptr);
+
+struct CrateIndexFNV1Hash {
+  size_t operator()(const crate::Index &idx) const noexcept {
+    static constexpr uint64_t kFNV_Prime = 0x00000100000001B3ull;
+    static constexpr uint64_t kFNV_Offset_Basis = 0xcbf29ce484222325ull;
+
+    uint64_t hash = kFNV_Offset_Basis;
+    const uint8_t *ptr = reinterpret_cast<const uint8_t *>(&idx.value);
+    for (size_t i = 0; i < sizeof(idx.value); ++i) {
+      hash = (kFNV_Prime * hash) ^ ptr[i];
+    }
+    return static_cast<size_t>(hash);
+  }
+};
+
+using LiveFieldSetMap =
+    std::unordered_map<crate::Index, crate::FieldValuePairVector,
+                       CrateIndexFNV1Hash>;
 
 class CrateReader {
  public:
@@ -286,7 +305,7 @@ class CrateReader {
 
   const std::vector<crate::Spec> &GetSpecs() const { return _specs; }
 
-  const std::map<crate::Index, FieldValuePairVector> &GetLiveFieldSets() const {
+  const LiveFieldSetMap &GetLiveFieldSets() const {
     return _live_fieldsets;
   }
 
@@ -430,6 +449,9 @@ class CrateReader {
                                        // circular referencing
       size_t curIndex, int64_t parentNodeIndex);
 
+  // Build O(1) lookup table for fieldset start -> end(terminator) index.
+  bool BuildFieldSetBoundaryIndex();
+
   bool ReadCompressedPaths(const uint64_t ref_num_paths);
 
   template <class Int>
@@ -534,6 +556,8 @@ class CrateReader {
   std::vector<crate::Index> _string_indices;
   std::vector<crate::Field> _fields;
   std::vector<crate::Index> _fieldset_indices;
+  std::vector<uint32_t> _fieldset_end_indices;   // valid only at fieldset starts
+  std::vector<uint32_t> _fieldset_start_indices; // list of fieldset starts
   std::vector<crate::Spec> _specs;
   std::vector<Path> _paths;
   std::vector<Path> _elemPaths;
@@ -542,8 +566,7 @@ class CrateReader {
                              //
   // `_live_fieldsets` contains unpacked value keyed by fieldset index.
   // Used for reconstructing Scene object
-  // TODO(syoyo): Use unordered_map?
-  std::map<crate::Index, FieldValuePairVector>
+  LiveFieldSetMap
       _live_fieldsets;  // <fieldset index, List of field with unpacked Values>
 
   const StreamReader *_sr{};
