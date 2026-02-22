@@ -12,6 +12,7 @@
 #include "layer.hh"
 #include "pprinter.hh"  // For to_string(Specifier), to_string(Variability)
 #include "usdShade.hh"  // For Material and Shader
+#include "common-macros.inc"
 
 // Disable specific clang warnings for this file
 // - unused-parameter: functions have consistent signatures for API purposes
@@ -329,8 +330,8 @@ bool CrateWriter::ExtractPrimProperties(
   // Extract type-specific properties
   if (!ExtractTypeSpecificProperties(prim, prim_path, type_name, fields, err)) {
     // Log warning but don't fail - we still want to create the prim
-    std::cerr << "WARNING: Failed to extract type-specific properties for "
-              << type_name << ": " << (err ? *err : "unknown error") << "\n";
+    DCOUT("WARNING: Failed to extract type-specific properties for "
+              << type_name << ": " << (err ? *err : "unknown error"));
   }
 
   return true;
@@ -490,8 +491,6 @@ bool CrateWriter::ExtractMeshProperties(
       ts_crate_val.Set(ts);
       fields.push_back({"points.timeSamples", ts_crate_val});
 
-      std::cerr << "DEBUG: Successfully extracted animated mesh points with "
-                << ts.size() << " samples\n";
     }
   } else {
     // Try extracting from props map as fallback
@@ -2605,11 +2604,9 @@ bool CrateWriter::ExtractXformOpsFromXformable(
       crate::CrateValue crate_val;
       if (ConvertValue(val, crate_val, err)) {
         attr_fields.push_back({"default", crate_val});
-        std::cerr << "DEBUG: Successfully extracted xformOp default: " << op_name
-                  << " (type: " << val.type_name() << ")\n";
       } else {
-        std::cerr << "WARNING: Failed to convert xformOp value for " << op_name
-                  << ": " << (err ? *err : "unknown") << "\n";
+        DCOUT("WARNING: Failed to convert xformOp value for " << op_name
+                  << ": " << (err ? *err : "unknown"));
       }
     }
 
@@ -2621,13 +2618,13 @@ bool CrateWriter::ExtractXformOpsFromXformable(
       ts_crate_val.Set(ts);
       attr_fields.push_back({"timeSamples", ts_crate_val});
 
-      std::cerr << "DEBUG: Successfully extracted animated xformOp: " << op_name
-                << " with " << ts.size() << " samples\n";
+      DCOUT("Successfully extracted animated xformOp: " << op_name
+                << " with " << ts.size() << " samples");
     }
 
     // Create the Attribute spec
     if (!AddSpec(attr_path, SpecType::Attribute, attr_fields, err)) {
-      std::cerr << "WARNING: Failed to add spec for xformOp: " << op_name << "\n";
+      DCOUT("WARNING: Failed to add spec for xformOp: " << op_name);
     }
   }
 
@@ -2660,7 +2657,7 @@ bool CrateWriter::ExtractXformOpsFromXformable(
 
     // Create the Attribute spec
     if (!AddSpec(order_path, SpecType::Attribute, order_fields, err)) {
-      std::cerr << "WARNING: Failed to add spec for xformOpOrder\n";
+      DCOUT("WARNING: Failed to add spec for xformOpOrder");
     }
   }
 
@@ -2735,8 +2732,8 @@ bool CrateWriter::ExtractGPrimProperties(
       ts_crate_val.Set(ts);
       fields.push_back({"visibility.timeSamples", ts_crate_val});
 
-      std::cerr << "[ExtractGPrimProperties] Added animated visibility with "
-                << ts.size() << " samples\n";
+      DCOUT("[ExtractGPrimProperties] Added animated visibility with "
+                << ts.size() << " samples");
     }
   }
 
@@ -3699,8 +3696,8 @@ bool CrateWriter::AddUsdPrimvarReaderInputSpecs(
   const Path& prim_path,
   std::string* err
 ) {
-  std::cerr << "[AddUsdPrimvarReaderInputSpecs] prim_path: " << prim_path.full_path_name()
-            << ", type: " << reader_type << "\n";
+  DCOUT("[AddUsdPrimvarReaderInputSpecs] prim_path: " << prim_path.full_path_name()
+            << ", type: " << reader_type);
 
   // Helper lambda to add an input spec as a separate attribute
   auto add_input_spec = [&](const std::string& input_name, const std::string& type_name, const crate::CrateValue& value) -> bool {
@@ -4400,8 +4397,6 @@ bool CrateWriter::ConvertValue(
 // ============================================================================
 
 bool CrateWriter::ConvertLayerToSpecs(const Layer& layer, std::string* err) {
-  std::cout << "[ConvertLayerToSpecs] Starting Layer→Crate conversion\n";
-
   // 1. Add PseudoRoot spec with layer metadata
   // The PseudoRoot is a special prim at "/" that serves as the root of the scene
   // Layer metadata (upAxis, metersPerUnit, etc.) is stored as fields on PseudoRoot
@@ -4478,13 +4473,10 @@ bool CrateWriter::ConvertLayerToSpecs(const Layer& layer, std::string* err) {
     }
 
     // comment (string)
-    std::cerr << "DEBUG stage-converter: metas.comment.value = '" << metas.comment.value
-              << "' (empty=" << metas.comment.value.empty() << ")\n";
     if (!metas.comment.value.empty()) {
       crate::CrateValue comment_value;
       comment_value.Set(metas.comment.value);
       root_fields.push_back({"comment", comment_value});
-      std::cerr << "DEBUG stage-converter: Added comment field\n";
     }
 
     // kilogramsPerUnit (double) - UsdPhysics
@@ -4513,8 +4505,6 @@ bool CrateWriter::ConvertLayerToSpecs(const Layer& layer, std::string* err) {
   for (const auto& item : layer.primspecs()) {
     const auto& prim_name = item.first;
     const auto& primspec = item.second;
-    std::cout << "[ConvertLayerToSpecs] Converting primspec: " << prim_name << "\n";
-
     // Each top-level primspec is a direct child of root
     Path root_path = Path();  // Root path
 
@@ -4525,8 +4515,6 @@ bool CrateWriter::ConvertLayerToSpecs(const Layer& layer, std::string* err) {
 
     prim_count++;
   }
-
-  std::cout << "[ConvertLayerToSpecs] Successfully converted " << prim_count << " primspecs\n";
 
   // NOTE: Sublayers are exported via layer metadata (subLayers/subLayerOffsets fields)
   // We intentionally do NOT traverse and re-export sublayer content at write time because:
@@ -4546,8 +4534,6 @@ bool CrateWriter::ConvertPrimSpecRecursive(
 
   // 1. Build path for this prim
   Path prim_path = parent_path.AppendPrim(primspec.name());
-
-  std::cout << "[ConvertPrimSpecRecursive] Processing prim: " << prim_path.full_path_name() << "\n";
 
   // 2. Create fields for this prim spec
   crate::FieldValuePairVector fields;
@@ -4625,8 +4611,8 @@ bool CrateWriter::ConvertPrimSpecRecursive(
     variant_value.Set(variant_map);
     fields.push_back({"variants", variant_value});
 
-    std::cerr << "[ConvertPrimSpecRecursive] Added variants field with "
-              << variant_map.size() << " selections\n";
+    DCOUT("[ConvertPrimSpecRecursive] Added variants field with "
+              << variant_map.size() << " selections");
   }
 
   // Add variantSets list if present
@@ -4644,8 +4630,8 @@ bool CrateWriter::ConvertPrimSpecRecursive(
     variant_sets_value.Set(variant_sets_list);
     fields.push_back({"variantSets", variant_sets_value});
 
-    std::cerr << "[ConvertPrimSpecRecursive] Added variantSets field with "
-              << variant_sets_list.size() << " sets\n";
+    DCOUT("[ConvertPrimSpecRecursive] Added variantSets field with "
+              << variant_sets_list.size() << " sets");
   }
 
   // Add references if present
@@ -4689,8 +4675,8 @@ bool CrateWriter::ConvertPrimSpecRecursive(
     ref_value.Set(ref_listop);
     fields.push_back({"references", ref_value});
 
-    std::cerr << "[ConvertPrimSpecRecursive] Added references field with "
-              << total_refs << " references\n";
+    DCOUT("[ConvertPrimSpecRecursive] Added references field with "
+              << total_refs << " references");
   }
 
   // Add payload if present
@@ -4734,8 +4720,8 @@ bool CrateWriter::ConvertPrimSpecRecursive(
     payload_value.Set(payload_listop);
     fields.push_back({"payload", payload_value});
 
-    std::cerr << "[ConvertPrimSpecRecursive] Added payload field with "
-              << total_payloads << " payloads\n";
+    DCOUT("[ConvertPrimSpecRecursive] Added payload field with "
+              << total_payloads << " payloads");
   }
 
   // Add customData if present
@@ -4743,8 +4729,8 @@ bool CrateWriter::ConvertPrimSpecRecursive(
     crate::CrateValue custom_data_value;
     custom_data_value.Set(metas.get_customData());
     fields.push_back({"customData", custom_data_value});
-    std::cerr << "[ConvertPrimSpecRecursive] Added customData with "
-              << metas.get_customData().size() << " entries\n";
+    DCOUT("[ConvertPrimSpecRecursive] Added customData with "
+              << metas.get_customData().size() << " entries");
   }
 
   // Add apiSchemas if present
@@ -4798,8 +4784,8 @@ bool CrateWriter::ConvertPrimSpecRecursive(
     api_value.Set(api_listop);
     fields.push_back({"apiSchemas", api_value});
 
-    std::cerr << "[ConvertPrimSpecRecursive] Added apiSchemas with "
-              << api_tokens.size() << " schemas\n";
+    DCOUT("[ConvertPrimSpecRecursive] Added apiSchemas with "
+              << api_tokens.size() << " schemas");
   }
 
   // Add inherits if present
@@ -4843,8 +4829,8 @@ bool CrateWriter::ConvertPrimSpecRecursive(
     inherits_value.Set(inherits_listop);
     fields.push_back({"inherits", inherits_value});
 
-    std::cerr << "[ConvertPrimSpecRecursive] Added inherits with "
-              << total_inherits << " paths\n";
+    DCOUT("[ConvertPrimSpecRecursive] Added inherits with "
+              << total_inherits << " paths");
   }
 
   // Add specializes if present
@@ -4888,8 +4874,8 @@ bool CrateWriter::ConvertPrimSpecRecursive(
     specializes_value.Set(specializes_listop);
     fields.push_back({"specializes", specializes_value});
 
-    std::cerr << "[ConvertPrimSpecRecursive] Added specializes with "
-              << total_specializes << " paths\n";
+    DCOUT("[ConvertPrimSpecRecursive] Added specializes with "
+              << total_specializes << " paths");
   }
 
   // Add assetInfo if present
@@ -4897,8 +4883,8 @@ bool CrateWriter::ConvertPrimSpecRecursive(
     crate::CrateValue asset_info_value;
     asset_info_value.Set(metas.get_assetInfo());
     fields.push_back({"assetInfo", asset_info_value});
-    std::cerr << "[ConvertPrimSpecRecursive] Added assetInfo with "
-              << metas.get_assetInfo().size() << " entries\n";
+    DCOUT("[ConvertPrimSpecRecursive] Added assetInfo with "
+              << metas.get_assetInfo().size() << " entries");
   }
 
   // Add instanceable if present
@@ -4906,8 +4892,8 @@ bool CrateWriter::ConvertPrimSpecRecursive(
     crate::CrateValue instanceable_value;
     instanceable_value.Set(metas.get_instanceable());
     fields.push_back({"instanceable", instanceable_value});
-    std::cerr << "[ConvertPrimSpecRecursive] Added instanceable: "
-              << metas.get_instanceable() << "\n";
+    DCOUT("[ConvertPrimSpecRecursive] Added instanceable: "
+              << metas.get_instanceable());
   }
 
   // 5. Add spec to file
@@ -4968,8 +4954,8 @@ bool CrateWriter::ConvertAttributeToFields(
   // Create the attribute path
   Path attr_path = parent_path.AppendProperty(attr_name);
 
-  std::cerr << "[ConvertAttributeToFields] Creating separate spec for attribute: "
-            << attr_path.full_path_name() << "\n";
+  DCOUT("[ConvertAttributeToFields] Creating separate spec for attribute: "
+            << attr_path.full_path_name());
 
   // 1. Add type name - store as value::token, not as token index!
   if (!attr.type_name().empty()) {
@@ -5015,8 +5001,8 @@ bool CrateWriter::ConvertAttributeToFields(
     // Add the timeSamples field
     attr_fields.push_back({"timeSamples", ts_crate_val});
 
-    std::cerr << "[ConvertAttributeToFields] Added TimeSamples for " << attr_name
-              << " with " << ts.size() << " samples\n";
+    DCOUT("[ConvertAttributeToFields] Added TimeSamples for " << attr_name
+              << " with " << ts.size() << " samples");
   }
 
   // 3. Add variability if not default
@@ -5050,8 +5036,8 @@ bool CrateWriter::ConvertAttributeToFields(
     crate::CrateValue custom_data_value;
     custom_data_value.Set(metas.get_customData());
     attr_fields.push_back({"customData", custom_data_value});
-    std::cerr << "[ConvertAttributeToFields] Added customData for " << attr_name
-              << " with " << metas.get_customData().size() << " entries\n";
+    DCOUT("[ConvertAttributeToFields] Added customData for " << attr_name
+              << " with " << metas.get_customData().size() << " entries");
   }
 
   // Add custom flag if attribute is custom
@@ -5059,7 +5045,7 @@ bool CrateWriter::ConvertAttributeToFields(
     crate::CrateValue custom_value;
     custom_value.Set(true);  // The field name "custom" with value true indicates custom attribute
     attr_fields.push_back({"custom", custom_value});
-    std::cerr << "[ConvertAttributeToFields] Added custom flag for " << attr_name << "\n";
+    DCOUT("[ConvertAttributeToFields] Added custom flag for " << attr_name);
   }
 
   // Create the attribute spec
@@ -5068,8 +5054,8 @@ bool CrateWriter::ConvertAttributeToFields(
     return false;
   }
 
-  std::cerr << "[ConvertAttributeToFields] Successfully created attribute spec with "
-            << attr_fields.size() << " fields\n";
+  DCOUT("[ConvertAttributeToFields] Successfully created attribute spec with "
+            << attr_fields.size() << " fields");
 
   return true;
 }
@@ -5088,8 +5074,8 @@ bool CrateWriter::ConvertRelationshipToFields(
   // Create the relationship path
   Path rel_path = parent_path.AppendProperty(rel_name);
 
-  std::cerr << "[ConvertRelationshipToFields] Creating separate spec for relationship: "
-            << rel_path.full_path_name() << "\n";
+  DCOUT("[ConvertRelationshipToFields] Creating separate spec for relationship: "
+            << rel_path.full_path_name());
 
   // 1. Check relationship type and add targetPaths
   if (rel.is_blocked()) {
@@ -5179,8 +5165,8 @@ bool CrateWriter::ConvertRelationshipToFields(
     crate::CrateValue custom_data_value;
     custom_data_value.Set(metas.get_customData());
     rel_fields.push_back({"customData", custom_data_value});
-    std::cerr << "[ConvertRelationshipToFields] Added customData for " << rel_name
-              << " with " << metas.get_customData().size() << " entries\n";
+    DCOUT("[ConvertRelationshipToFields] Added customData for " << rel_name
+              << " with " << metas.get_customData().size() << " entries");
   }
 
   // Add displayName if present
@@ -5203,8 +5189,8 @@ bool CrateWriter::ConvertRelationshipToFields(
     return false;
   }
 
-  std::cerr << "[ConvertRelationshipToFields] Successfully created relationship spec with "
-            << rel_fields.size() << " fields\n";
+  DCOUT("[ConvertRelationshipToFields] Successfully created relationship spec with "
+            << rel_fields.size() << " fields");
 
   return true;
 }
@@ -5230,8 +5216,8 @@ bool CrateWriter::ConvertConnectionToFields(
   // Connection path is: /Prim.attribute.connect
   Path conn_path = parent_path.AppendProperty(conn_name).AppendProperty("connect");
 
-  std::cerr << "[ConvertConnectionToFields] Creating separate spec for connection: "
-            << conn_path.full_path_name() << "\n";
+  DCOUT("[ConvertConnectionToFields] Creating separate spec for connection: "
+            << conn_path.full_path_name());
 
   // 1. Add connection paths (targets)
   const std::vector<Path>& conn_paths = attr.connections();
@@ -5265,8 +5251,8 @@ bool CrateWriter::ConvertConnectionToFields(
     return false;
   }
 
-  std::cerr << "[ConvertConnectionToFields] Successfully created connection spec with "
-            << conn_fields.size() << " fields\n";
+  DCOUT("[ConvertConnectionToFields] Successfully created connection spec with "
+            << conn_fields.size() << " fields");
 
   return true;
 }
@@ -5285,8 +5271,8 @@ bool CrateWriter::ConvertVariantSetToFields(
   std::string variantset_path_str = parent_path.prim_part() + "{" + variantset_name + "}";
   Path vs_path(variantset_path_str, "");
 
-  std::cerr << "[ConvertVariantSetToFields] Creating VariantSet spec: "
-            << vs_path.full_path_name() << "\n";
+  DCOUT("[ConvertVariantSetToFields] Creating VariantSet spec: "
+            << vs_path.full_path_name());
 
   // VariantSet spec needs "variantChildren" field listing all variant names
   crate::FieldValuePairVector vs_fields;
@@ -5305,8 +5291,8 @@ bool CrateWriter::ConvertVariantSetToFields(
     return false;
   }
 
-  std::cerr << "[ConvertVariantSetToFields] Created VariantSet with "
-            << variantset.variantSet.size() << " variants\n";
+  DCOUT("[ConvertVariantSetToFields] Created VariantSet with "
+            << variantset.variantSet.size() << " variants");
 
   // For each variant, create a Variant spec
   // IMPORTANT: Pass parent_path (the Prim), not vs_path (the VariantSet)
@@ -5338,8 +5324,8 @@ bool CrateWriter::ConvertVariantToFields(
                                  variantset_name + "=" + variant_name + "}";
   Path v_path(variant_path_str, "");
 
-  std::cerr << "[ConvertVariantToFields] Creating Variant spec: "
-            << v_path.full_path_name() << "\n";
+  DCOUT("[ConvertVariantToFields] Creating Variant spec: "
+            << v_path.full_path_name());
 
   // Variant spec contains variant metadata and prim children
   crate::FieldValuePairVector v_fields;
@@ -5375,15 +5361,15 @@ bool CrateWriter::ConvertVariantToFields(
     return false;
   }
 
-  std::cerr << "[ConvertVariantToFields] Created Variant spec with "
-            << v_fields.size() << " fields\n";
+  DCOUT("[ConvertVariantToFields] Created Variant spec with "
+            << v_fields.size() << " fields");
 
   // Add variant prim children (recursively convert each child prim)
   // Variant prim children are full prims that exist only within this variant
   const auto& child_prims = variant.primChildren();
   if (!child_prims.empty()) {
-    std::cerr << "[ConvertVariantToFields] Processing " << child_prims.size()
-              << " prim children for variant: " << variant_name << "\n";
+    DCOUT("[ConvertVariantToFields] Processing " << child_prims.size()
+              << " prim children for variant: " << variant_name);
     for (const auto& child_prim : child_prims) {
       // Recursively convert each prim child (they inherit the variant path context)
       if (!ConvertPrimRecursive(child_prim, v_path, err)) {
