@@ -1449,10 +1449,20 @@ bool CrateWriter::ExtractNurbsCurvesProperties(
   }
 
   // Extract ranges (double2[]) - NURBS curve parameter ranges
-  // TODO: Requires crate reader support for VEC2D arrays. Skip for now.
   if (nurbs_curves->ranges.authored()) {
-    // Arrays of double2 need crate reader enhancements to properly unpack VEC2D arrays
-    // Skip this property for now
+    auto ranges_opt = nurbs_curves->ranges.get_value();
+    if (ranges_opt.has_value()) {
+      const Animatable<std::vector<value::double2>>& ranges_anim = ranges_opt.value();
+      if (ranges_anim.has_default()) {
+        std::vector<value::double2> ranges_val;
+        if (ranges_anim.get_default(&ranges_val) && !ranges_val.empty()) {
+          value::Value ranges_value(ranges_val);
+          if (!add_array_attribute("ranges", ranges_value)) {
+            return false;
+          }
+        }
+      }
+    }
   }
 
   // Extract pointWeights (double[]) - Weights for curve control points
@@ -4033,6 +4043,11 @@ bool CrateWriter::ConvertValue(
       out.Set(*v);
       return true;
     }
+  } else if (type_name == "half") {
+    if (auto v = val.get_value<value::half>()) {
+      out.Set(*v);
+      return true;
+    }
   }
 
   // Token and String types
@@ -4063,6 +4078,24 @@ bool CrateWriter::ConvertValue(
     }
   } else if (type_name == "float4") {
     if (auto v = val.get_value<value::float4>()) {
+      out.Set(*v);
+      return true;
+    }
+  }
+
+  // Vector types - half2/3/4
+  else if (type_name == "half2") {
+    if (auto v = val.get_value<value::half2>()) {
+      out.Set(*v);
+      return true;
+    }
+  } else if (type_name == "half3") {
+    if (auto v = val.get_value<value::half3>()) {
+      out.Set(*v);
+      return true;
+    }
+  } else if (type_name == "half4") {
+    if (auto v = val.get_value<value::half4>()) {
       out.Set(*v);
       return true;
     }
@@ -4280,11 +4313,8 @@ bool CrateWriter::ConvertValue(
     }
   } else if (type_name == "token[]") {
     if (auto v = val.get_value<std::vector<value::token>>()) {
-      // For now, skip token[] arrays as they require special handling
-      // They will be handled through the generic property system if needed
-      // Return false to indicate this type needs special handling
-      if (err) *err = "token[] arrays require special handling";
-      return false;
+      out.Set(*v);
+      return true;
     }
   } else if (type_name == "int64[]") {
     if (auto v = val.get_value<std::vector<int64_t>>()) {
@@ -4303,6 +4333,16 @@ bool CrateWriter::ConvertValue(
     }
   } else if (type_name == "quatd[]") {
     if (auto v = val.get_value<std::vector<value::quatd>>()) {
+      out.Set(*v);
+      return true;
+    }
+  } else if (type_name == "half[]") {
+    if (auto v = val.get_value<std::vector<value::half>>()) {
+      out.Set(*v);
+      return true;
+    }
+  } else if (type_name == "half2[]") {
+    if (auto v = val.get_value<std::vector<value::half2>>()) {
       out.Set(*v);
       return true;
     }

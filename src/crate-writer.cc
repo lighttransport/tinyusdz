@@ -44,6 +44,32 @@ namespace {
 // Magic identifier for USDC files
 constexpr char kMagicIdent[] = "PXR-USDC";
 
+/// FileOutputStream — writes to disk via std::fstream
+class FileOutputStream : public IOutputStream {
+public:
+  explicit FileOutputStream(const std::string& filepath) : filepath_(filepath) {}
+  bool Open(std::string* err) override {
+    file_.open(filepath_, std::ios::binary | std::ios::out | std::ios::trunc);
+    if (!file_.is_open()) {
+      if (err) *err = "Failed to open file: " + filepath_;
+      return false;
+    }
+    return true;
+  }
+  void Close() override { if (file_.is_open()) { file_.flush(); file_.close(); } }
+  bool IsOpen() const override { return file_.is_open(); }
+  int64_t Tell() override { return static_cast<int64_t>(file_.tellp()); }
+  bool Seek(int64_t pos) override { file_.seekp(pos, std::ios::beg); return file_.good(); }
+  bool Write(const void* data, size_t size) override {
+    file_.write(static_cast<const char*>(data), static_cast<std::streamsize>(size));
+    return file_.good();
+  }
+  bool Flush() override { file_.flush(); return file_.good(); }
+private:
+  std::string filepath_;
+  std::fstream file_;
+};
+
 // Section names
 constexpr char kTokensSection[] = "TOKENS";
 constexpr char kStringsSection[] = "STRINGS";
@@ -59,7 +85,12 @@ constexpr char kSpecsSection[] = "SPECS";
 // ============================================================================
 
 CrateWriter::CrateWriter(const std::string& filepath)
-    : filepath_(filepath) {
+    : filepath_(filepath),
+      stream_(std::unique_ptr<IOutputStream>(new FileOutputStream(filepath))) {
+}
+
+CrateWriter::CrateWriter(std::unique_ptr<IOutputStream> stream)
+    : stream_(std::move(stream)) {
 }
 
 CrateWriter::~CrateWriter() {
@@ -76,10 +107,12 @@ bool CrateWriter::Open(std::string* err) {
     return false;
   }
 
-  // Open file for binary write
-  file_.open(filepath_, std::ios::binary | std::ios::out | std::ios::trunc);
-  if (!file_.is_open()) {
-    if (err) *err = "Failed to open file: " + filepath_;
+  // Open the output stream
+  if (!stream_) {
+    if (err) *err = "No output stream configured";
+    return false;
+  }
+  if (!stream_->Open(err)) {
     return false;
   }
 
@@ -475,9 +508,9 @@ bool CrateWriter::Finalize(std::string* err) {
 }
 
 void CrateWriter::Close() {
-  if (file_.is_open()) {
-    file_.flush();  // Ensure all writes are flushed before closing
-    file_.close();
+  if (stream_ && stream_->IsOpen()) {
+    stream_->Flush();
+    stream_->Close();
   }
   is_open_ = false;
 }
@@ -798,13 +831,11 @@ bool CrateWriter::WriteTokensSection(std::string* err) {
   }
 
   // Write directly as bytes instead of using Write() template
-  file_.write(reinterpret_cast<const char*>(&token_count), sizeof(token_count));
-  file_.flush();
-
-  if (!file_.good()) {
+  if (!stream_->Write(reinterpret_cast<const char*>(&token_count), sizeof(token_count))) {
     if (err) *err = "Failed to write token count bytes";
     return false;
   }
+  stream_->Flush();
 
   // Build token blob (null-terminated strings)
   std::cerr << "DEBUG WriteTokensSection: tokens_.size()=" << tokens_.size() << std::endl;
@@ -1436,7 +1467,7 @@ bool CrateWriter::WriteTableOfContents(std::string* err) {
 
   // IMPORTANT: Flush before seeking to beginning
   // We need to flush all buffered writes before seeking backwards
-  file_.flush();
+  stream_->Flush();
 
   // Seek to beginning to write bootstrap (no need to close/reopen)
   if (!Seek(0)) {
@@ -1460,7 +1491,7 @@ bool CrateWriter::WriteTableOfContents(std::string* err) {
     return false;
   }
 
-  file_.flush();
+  stream_->Flush();
 
   return true;
 }
@@ -1568,6 +1599,54 @@ crate::ValueRep CrateWriter::PackValue(const crate::CrateValue& value, std::stri
     rep.SetIsArray();
   } else if (value.as<std::vector<value::float4>>()) {
     rep.SetType(static_cast<int32_t>(crate::CrateDataTypeId::CRATE_DATA_TYPE_VEC4F));
+    rep.SetIsArray();
+  } else if (value.as<std::vector<value::half2>>()) {
+    rep.SetType(static_cast<int32_t>(crate::CrateDataTypeId::CRATE_DATA_TYPE_VEC2H));
+    rep.SetIsArray();
+  } else if (value.as<std::vector<value::half3>>()) {
+    rep.SetType(static_cast<int32_t>(crate::CrateDataTypeId::CRATE_DATA_TYPE_VEC3H));
+    rep.SetIsArray();
+  } else if (value.as<std::vector<value::half4>>()) {
+    rep.SetType(static_cast<int32_t>(crate::CrateDataTypeId::CRATE_DATA_TYPE_VEC4H));
+    rep.SetIsArray();
+  } else if (value.as<std::vector<value::double2>>()) {
+    rep.SetType(static_cast<int32_t>(crate::CrateDataTypeId::CRATE_DATA_TYPE_VEC2D));
+    rep.SetIsArray();
+  } else if (value.as<std::vector<value::double3>>()) {
+    rep.SetType(static_cast<int32_t>(crate::CrateDataTypeId::CRATE_DATA_TYPE_VEC3D));
+    rep.SetIsArray();
+  } else if (value.as<std::vector<value::double4>>()) {
+    rep.SetType(static_cast<int32_t>(crate::CrateDataTypeId::CRATE_DATA_TYPE_VEC4D));
+    rep.SetIsArray();
+  } else if (value.as<std::vector<value::int2>>()) {
+    rep.SetType(static_cast<int32_t>(crate::CrateDataTypeId::CRATE_DATA_TYPE_VEC2I));
+    rep.SetIsArray();
+  } else if (value.as<std::vector<value::int3>>()) {
+    rep.SetType(static_cast<int32_t>(crate::CrateDataTypeId::CRATE_DATA_TYPE_VEC3I));
+    rep.SetIsArray();
+  } else if (value.as<std::vector<value::int4>>()) {
+    rep.SetType(static_cast<int32_t>(crate::CrateDataTypeId::CRATE_DATA_TYPE_VEC4I));
+    rep.SetIsArray();
+  } else if (value.as<std::vector<value::matrix2d>>()) {
+    rep.SetType(static_cast<int32_t>(crate::CrateDataTypeId::CRATE_DATA_TYPE_MATRIX2D));
+    rep.SetIsArray();
+  } else if (value.as<std::vector<value::matrix3d>>()) {
+    rep.SetType(static_cast<int32_t>(crate::CrateDataTypeId::CRATE_DATA_TYPE_MATRIX3D));
+    rep.SetIsArray();
+  } else if (value.as<std::vector<value::matrix4d>>()) {
+    rep.SetType(static_cast<int32_t>(crate::CrateDataTypeId::CRATE_DATA_TYPE_MATRIX4D));
+    rep.SetIsArray();
+  } else if (value.as<std::vector<value::quath>>()) {
+    rep.SetType(static_cast<int32_t>(crate::CrateDataTypeId::CRATE_DATA_TYPE_QUATH));
+    rep.SetIsArray();
+  } else if (value.as<std::vector<value::quatf>>()) {
+    rep.SetType(static_cast<int32_t>(crate::CrateDataTypeId::CRATE_DATA_TYPE_QUATF));
+    rep.SetIsArray();
+  } else if (value.as<std::vector<value::quatd>>()) {
+    rep.SetType(static_cast<int32_t>(crate::CrateDataTypeId::CRATE_DATA_TYPE_QUATD));
+    rep.SetIsArray();
+  } else if (value.as<std::vector<value::AssetPath>>()) {
+    rep.SetType(static_cast<int32_t>(crate::CrateDataTypeId::CRATE_DATA_TYPE_ASSET_PATH));
     rep.SetIsArray();
   } else if (value.as<std::vector<std::string>>()) {
     rep.SetType(static_cast<int32_t>(crate::CrateDataTypeId::CRATE_DATA_TYPE_STRING));
@@ -4535,12 +4614,11 @@ crate::FieldSetIndex CrateWriter::GetOrCreateFieldSet(const std::vector<crate::F
 // ============================================================================
 
 int64_t CrateWriter::Tell() {
-  return static_cast<int64_t>(file_.tellp());
+  return stream_->Tell();
 }
 
 bool CrateWriter::Seek(int64_t pos) {
-  file_.seekp(pos, std::ios::beg);
-  return file_.good();
+  return stream_->Seek(pos);
 }
 
 bool CrateWriter::WriteBytes(const void* data, size_t size) {
@@ -4553,8 +4631,7 @@ bool CrateWriter::WriteBytes(const void* data, size_t size) {
     return false;
   }
 
-  file_.write(static_cast<const char*>(data), size);
-  if (file_.good()) {
+  if (stream_->Write(data, size)) {
     bytes_written_ += static_cast<int64_t>(size);
     return true;
   }
