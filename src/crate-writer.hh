@@ -6,6 +6,7 @@
 #pragma once
 
 #include <cstdint>
+#include <cstring>
 #include <string>
 #include <vector>
 #include <unordered_map>
@@ -93,6 +94,57 @@ class ErrorContextStack {
 };
 
 ///
+/// IOutputStream - Abstract output stream for CrateWriter I/O
+///
+/// Allows CrateWriter to write to files or memory buffers interchangeably.
+///
+class IOutputStream {
+public:
+  virtual ~IOutputStream() = default;
+  virtual bool Open(std::string* err) = 0;
+  virtual void Close() = 0;
+  virtual bool IsOpen() const = 0;
+  virtual int64_t Tell() = 0;
+  virtual bool Seek(int64_t pos) = 0;
+  virtual bool Write(const void* data, size_t size) = 0;
+  virtual bool Flush() = 0;
+};
+
+///
+/// MemoryOutputStream - Writes to an in-memory buffer
+///
+/// Used by SaveAsUSDCToMemory to avoid temp-file round-trips.
+///
+class MemoryOutputStream : public IOutputStream {
+public:
+  MemoryOutputStream() = default;
+  bool Open(std::string*) override { pos_ = 0; buffer_.clear(); return true; }
+  void Close() override {}
+  bool IsOpen() const override { return true; }
+  int64_t Tell() override { return static_cast<int64_t>(pos_); }
+  bool Seek(int64_t pos) override {
+    if (pos < 0) return false;
+    size_t p = static_cast<size_t>(pos);
+    if (p > buffer_.size()) buffer_.resize(p, 0);
+    pos_ = p;
+    return true;
+  }
+  bool Write(const void* data, size_t size) override {
+    if (pos_ + size > buffer_.size()) buffer_.resize(pos_ + size);
+    std::memcpy(buffer_.data() + pos_, data, size);
+    pos_ += size;
+    return true;
+  }
+  bool Flush() override { return true; }
+
+  std::vector<uint8_t> TakeBuffer() { return std::move(buffer_); }
+  const std::vector<uint8_t>& GetBuffer() const { return buffer_; }
+private:
+  std::vector<uint8_t> buffer_;
+  size_t pos_ = 0;
+};
+
+///
 /// CrateWriter - Experimental framework for writing USDC binary files
 ///
 /// This is a bare-bones implementation focusing on core structure.
@@ -115,6 +167,9 @@ class CrateWriter {
 public:
   /// Create a new crate writer for the given file path
   explicit CrateWriter(const std::string& filepath);
+
+  /// Create a new crate writer with a custom output stream
+  explicit CrateWriter(std::unique_ptr<IOutputStream> stream);
 
   ~CrateWriter();
 
@@ -566,7 +621,7 @@ private:
   // ======================================================================
 
   std::string filepath_;
-  std::fstream file_;  // Changed from ofstream to support read+write for bootstrap
+  std::unique_ptr<IOutputStream> stream_;
   Options options_;
 
   bool is_open_ = false;
