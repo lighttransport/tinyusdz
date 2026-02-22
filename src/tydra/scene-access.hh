@@ -40,6 +40,7 @@
 ///
 #pragma once
 
+#include <cstdint>
 #include <map>
 #include <unordered_map>
 #include <vector>
@@ -58,13 +59,26 @@
 namespace tinyusdz {
 namespace tydra {
 
+struct FNV1StringHash {
+  size_t operator()(const std::string &s) const noexcept {
+    static constexpr uint64_t kFNV_Prime = 0x00000100000001B3ull;
+    static constexpr uint64_t kFNV_Offset_Basis = 0xcbf29ce484222325ull;
+
+    uint64_t hash = kFNV_Offset_Basis;
+    for (unsigned char c : s) {
+      hash = (kFNV_Prime * hash) ^ c;
+    }
+    return static_cast<size_t>(hash);
+  }
+};
+
 ///
 /// Map from absolute prim path to prim pointer of type T.
 /// Key = fully absolute Prim path string (e.g. "/xform/geom0")
 /// Value = const pointer to prim of type T
 ///
 template <typename T>
-using PathPrimMap = std::unordered_map<std::string, const T *>;
+using PathPrimMap = std::unordered_map<std::string, const T *, FNV1StringHash>;
 
 ///
 /// Map from shader path to shader data.
@@ -613,7 +627,9 @@ class SkelHierarchy {
 
 };
 
-std::map<std::string, int> BuildSkelNameToIndexMap(const SkelHierarchy &skel);
+using SkelNameToIndexMap = std::unordered_map<std::string, int, FNV1StringHash>;
+
+SkelNameToIndexMap BuildSkelNameToIndexMap(const SkelHierarchy &skel);
 
 ///
 /// Extract skeleleton info from Skeleton and build skeleton(bone) hierarchy.
