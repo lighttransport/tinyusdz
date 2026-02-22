@@ -78,6 +78,21 @@ constexpr char kFieldSetsSection[] = "FIELDSETS";
 constexpr char kPathsSection[] = "PATHS";
 constexpr char kSpecsSection[] = "SPECS";
 
+/// Build a ListOpHeader from any ListOp<T> (identical logic for all types)
+template<typename T>
+ListOpHeader BuildListOpHeader(const ListOp<T>& listop) {
+  ListOpHeader header;
+  header.bits = 0;
+  if (listop.IsExplicit()) header.bits |= ListOpHeader::IsExplicitBit;
+  if (listop.HasExplicitItems()) header.bits |= ListOpHeader::HasExplicitItemsBit;
+  if (listop.HasAddedItems()) header.bits |= ListOpHeader::HasAddedItemsBit;
+  if (listop.HasDeletedItems()) header.bits |= ListOpHeader::HasDeletedItemsBit;
+  if (listop.HasOrderedItems()) header.bits |= ListOpHeader::HasOrderedItemsBit;
+  if (listop.HasPrependedItems()) header.bits |= ListOpHeader::HasPrependedItemsBit;
+  if (listop.HasAppendedItems()) header.bits |= ListOpHeader::HasAppendedItemsBit;
+  return ListOpHeader(header.bits);
+}
+
 } // anonymous namespace
 
 // ============================================================================
@@ -1541,354 +1556,54 @@ int64_t CrateWriter::WriteValueData(const crate::CrateValue& value, std::string*
     }
   }
   // Int array
+  // Integer arrays — compressed via WriteCompressedArray32/64 helpers
   else if (auto* int_array = value.as<std::vector<int32_t>>()) {
     uint64_t count = int_array->size();
-    if (!Write(count)) {
-      if (err) *err = "Failed to write int array count";
-      return -1;
-    }
-
-    // Phase 5: Integer array compression (if >= 16 elements)
-    if (count >= 16 && options_.enable_compression) {
-      // Compress using Usd_IntegerCompression
-      size_t compressedBufferSize = Usd_IntegerCompression::GetCompressedBufferSize(count);
-      std::vector<char> compressed(compressedBufferSize);
-
-      std::string compress_err;
-      size_t compressedSize = Usd_IntegerCompression::CompressToBuffer(
-          int_array->data(), count, compressed.data(), &compress_err);
-
-      if (compressedSize == 0 || compressedSize == static_cast<size_t>(~0)) {
-        // Compression failed - write uncompressed
-        for (int32_t val : *int_array) {
-          if (!Write(val)) {
-            if (err) *err = "Failed to write int array element";
-            return -1;
-          }
-        }
-      } else {
-        // Write compressed data
-        // Format: compressed size + compressed data
-        uint64_t comp_size = static_cast<uint64_t>(compressedSize);
-        if (!Write(comp_size)) {
-          if (err) *err = "Failed to write compressed int array size";
-          return -1;
-        }
-        if (!WriteBytes(compressed.data(), compressedSize)) {
-          if (err) *err = "Failed to write compressed int array data";
-          return -1;
-        }
-      }
-    } else {
-      // Small array or compression disabled - write uncompressed
-      for (int32_t val : *int_array) {
-        if (!Write(val)) {
-          if (err) *err = "Failed to write int array element";
-          return -1;
-        }
-      }
-    }
+    if (!Write(count)) { if (err) *err = "Failed to write int array count"; return -1; }
+    // int32 data is bit-compatible with uint32 for compression
+    if (WriteCompressedArray32(reinterpret_cast<const uint32_t*>(int_array->data()), count, "int", err) < 0) return -1;
   }
-  // UInt array
   else if (auto* uint_array = value.as<std::vector<uint32_t>>()) {
     uint64_t count = uint_array->size();
-    if (!Write(count)) {
-      if (err) *err = "Failed to write uint array count";
-      return -1;
-    }
-
-    // Phase 5: Integer array compression (if >= 16 elements)
-    if (count >= 16 && options_.enable_compression) {
-      size_t compressedBufferSize = Usd_IntegerCompression::GetCompressedBufferSize(count);
-      std::vector<char> compressed(compressedBufferSize);
-
-      std::string compress_err;
-      size_t compressedSize = Usd_IntegerCompression::CompressToBuffer(
-          uint_array->data(), count, compressed.data(), &compress_err);
-
-      if (compressedSize == 0 || compressedSize == static_cast<size_t>(~0)) {
-        for (uint32_t val : *uint_array) {
-          if (!Write(val)) {
-            if (err) *err = "Failed to write uint array element";
-            return -1;
-          }
-        }
-      } else {
-        uint64_t comp_size = static_cast<uint64_t>(compressedSize);
-        if (!Write(comp_size)) {
-          if (err) *err = "Failed to write compressed uint array size";
-          return -1;
-        }
-        if (!WriteBytes(compressed.data(), compressedSize)) {
-          if (err) *err = "Failed to write compressed uint array data";
-          return -1;
-        }
-      }
-    } else {
-      for (uint32_t val : *uint_array) {
-        if (!Write(val)) {
-          if (err) *err = "Failed to write uint array element";
-          return -1;
-        }
-      }
-    }
+    if (!Write(count)) { if (err) *err = "Failed to write uint array count"; return -1; }
+    if (WriteCompressedArray32(uint_array->data(), count, "uint", err) < 0) return -1;
   }
-  // Int64 array
   else if (auto* int64_array = value.as<std::vector<int64_t>>()) {
     uint64_t count = int64_array->size();
-    if (!Write(count)) {
-      if (err) *err = "Failed to write int64 array count";
-      return -1;
-    }
-
-    // Phase 5: Integer array compression (if >= 16 elements)
-    if (count >= 16 && options_.enable_compression) {
-      size_t compressedBufferSize = Usd_IntegerCompression64::GetCompressedBufferSize(count);
-      std::vector<char> compressed(compressedBufferSize);
-
-      std::string compress_err;
-      size_t compressedSize = Usd_IntegerCompression64::CompressToBuffer(
-          int64_array->data(), count, compressed.data(), &compress_err);
-
-      if (compressedSize == 0 || compressedSize == static_cast<size_t>(~0)) {
-        for (int64_t val : *int64_array) {
-          if (!Write(val)) {
-            if (err) *err = "Failed to write int64 array element";
-            return -1;
-          }
-        }
-      } else {
-        uint64_t comp_size = static_cast<uint64_t>(compressedSize);
-        if (!Write(comp_size)) {
-          if (err) *err = "Failed to write compressed int64 array size";
-          return -1;
-        }
-        if (!WriteBytes(compressed.data(), compressedSize)) {
-          if (err) *err = "Failed to write compressed int64 array data";
-          return -1;
-        }
-      }
-    } else {
-      for (int64_t val : *int64_array) {
-        if (!Write(val)) {
-          if (err) *err = "Failed to write int64 array element";
-          return -1;
-        }
-      }
-    }
+    if (!Write(count)) { if (err) *err = "Failed to write int64 array count"; return -1; }
+    if (WriteCompressedArray64(reinterpret_cast<const uint64_t*>(int64_array->data()), count, "int64", err) < 0) return -1;
   }
-  // UInt64 array
   else if (auto* uint64_array = value.as<std::vector<uint64_t>>()) {
     uint64_t count = uint64_array->size();
-    if (!Write(count)) {
-      if (err) *err = "Failed to write uint64 array count";
-      return -1;
-    }
-
-    // Phase 5: Integer array compression (if >= 16 elements)
-    if (count >= 16 && options_.enable_compression) {
-      size_t compressedBufferSize = Usd_IntegerCompression64::GetCompressedBufferSize(count);
-      std::vector<char> compressed(compressedBufferSize);
-
-      std::string compress_err;
-      size_t compressedSize = Usd_IntegerCompression64::CompressToBuffer(
-          uint64_array->data(), count, compressed.data(), &compress_err);
-
-      if (compressedSize == 0 || compressedSize == static_cast<size_t>(~0)) {
-        for (uint64_t val : *uint64_array) {
-          if (!Write(val)) {
-            if (err) *err = "Failed to write uint64 array element";
-            return -1;
-          }
-        }
-      } else {
-        uint64_t comp_size = static_cast<uint64_t>(compressedSize);
-        if (!Write(comp_size)) {
-          if (err) *err = "Failed to write compressed uint64 array size";
-          return -1;
-        }
-        if (!WriteBytes(compressed.data(), compressedSize)) {
-          if (err) *err = "Failed to write compressed uint64 array data";
-          return -1;
-        }
-      }
-    } else {
-      for (uint64_t val : *uint64_array) {
-        if (!Write(val)) {
-          if (err) *err = "Failed to write uint64 array element";
-          return -1;
-        }
-      }
-    }
+    if (!Write(count)) { if (err) *err = "Failed to write uint64 array count"; return -1; }
+    if (WriteCompressedArray64(uint64_array->data(), count, "uint64", err) < 0) return -1;
   }
-  // Half array
+  // Half array — convert to uint32 for compression
   else if (auto* half_array = value.as<std::vector<value::half>>()) {
     uint64_t count = half_array->size();
-    if (!Write(count)) {
-      if (err) *err = "Failed to write half array count";
-      return -1;
-    }
-
-    // Phase 5: Integer array compression for half (16-bit float treated as uint16_t)
-    if (count >= 16 && options_.enable_compression) {
-      // Convert half values to uint16_t for compression
-      std::vector<uint32_t> uint_values;
-      uint_values.reserve(count);
-      for (const auto& val : *half_array) {
-        uint_values.push_back(static_cast<uint32_t>(val.value));
-      }
-
-      // Compress using Usd_IntegerCompression
-      size_t compressedBufferSize = Usd_IntegerCompression::GetCompressedBufferSize(count);
-      std::vector<char> compressed(compressedBufferSize);
-
-      std::string compress_err;
-      size_t compressedSize = Usd_IntegerCompression::CompressToBuffer(
-          uint_values.data(), count, compressed.data(), &compress_err);
-
-      if (compressedSize == 0 || compressedSize == static_cast<size_t>(~0)) {
-        // Compression failed - write uncompressed
-        for (const auto& val : *half_array) {
-          if (!Write(val.value)) {
-            if (err) *err = "Failed to write half array element";
-            return -1;
-          }
-        }
-      } else {
-        // Write compressed data
-        uint64_t comp_size = static_cast<uint64_t>(compressedSize);
-        if (!Write(comp_size)) {
-          if (err) *err = "Failed to write compressed half array size";
-          return -1;
-        }
-        if (!WriteBytes(compressed.data(), compressedSize)) {
-          if (err) *err = "Failed to write compressed half array data";
-          return -1;
-        }
-      }
-    } else {
-      // Small array or compression disabled - write uncompressed
-      for (const auto& val : *half_array) {
-        if (!Write(val.value)) {
-          if (err) *err = "Failed to write half array element";
-          return -1;
-        }
-      }
-    }
+    if (!Write(count)) { if (err) *err = "Failed to write half array count"; return -1; }
+    std::vector<uint32_t> uint_values;
+    uint_values.reserve(count);
+    for (const auto& val : *half_array) { uint_values.push_back(static_cast<uint32_t>(val.value)); }
+    if (WriteCompressedArray32(uint_values.data(), count, "half", err) < 0) return -1;
   }
-  // Float array
+  // Float array — reinterpret as uint32 for compression
   else if (auto* float_array = value.as<std::vector<float>>()) {
     uint64_t count = float_array->size();
-    if (!Write(count)) {
-      if (err) *err = "Failed to write float array count";
-      return -1;
-    }
-
-    // Phase 5: Integer array compression for float (reinterpret as uint32_t)
-    if (count >= 16 && options_.enable_compression) {
-      // Reinterpret float values as uint32_t for compression
-      std::vector<uint32_t> uint_values;
-      uint_values.reserve(count);
-      for (float val : *float_array) {
-        uint32_t uint_val;
-        std::memcpy(&uint_val, &val, sizeof(uint32_t));
-        uint_values.push_back(uint_val);
-      }
-
-      // Compress using Usd_IntegerCompression
-      size_t compressedBufferSize = Usd_IntegerCompression::GetCompressedBufferSize(count);
-      std::vector<char> compressed(compressedBufferSize);
-
-      std::string compress_err;
-      size_t compressedSize = Usd_IntegerCompression::CompressToBuffer(
-          uint_values.data(), count, compressed.data(), &compress_err);
-
-      if (compressedSize == 0 || compressedSize == static_cast<size_t>(~0)) {
-        // Compression failed - write uncompressed
-        for (float val : *float_array) {
-          if (!Write(val)) {
-            if (err) *err = "Failed to write float array element";
-            return -1;
-          }
-        }
-      } else {
-        // Write compressed data
-        uint64_t comp_size = static_cast<uint64_t>(compressedSize);
-        if (!Write(comp_size)) {
-          if (err) *err = "Failed to write compressed float array size";
-          return -1;
-        }
-        if (!WriteBytes(compressed.data(), compressedSize)) {
-          if (err) *err = "Failed to write compressed float array data";
-          return -1;
-        }
-      }
-    } else {
-      // Small array or compression disabled - write uncompressed
-      for (float val : *float_array) {
-        if (!Write(val)) {
-          if (err) *err = "Failed to write float array element";
-          return -1;
-        }
-      }
-    }
+    if (!Write(count)) { if (err) *err = "Failed to write float array count"; return -1; }
+    std::vector<uint32_t> uint_values;
+    uint_values.reserve(count);
+    for (float val : *float_array) { uint32_t u; std::memcpy(&u, &val, sizeof(u)); uint_values.push_back(u); }
+    if (WriteCompressedArray32(uint_values.data(), count, "float", err) < 0) return -1;
   }
-  // Double array
+  // Double array — reinterpret as uint64 for compression
   else if (auto* double_array = value.as<std::vector<double>>()) {
     uint64_t count = double_array->size();
-    if (!Write(count)) {
-      if (err) *err = "Failed to write double array count";
-      return -1;
-    }
-
-    // Phase 5: Integer array compression for double (reinterpret as uint64_t)
-    if (count >= 16 && options_.enable_compression) {
-      // Reinterpret double values as uint64_t for compression
-      std::vector<uint64_t> uint_values;
-      uint_values.reserve(count);
-      for (double val : *double_array) {
-        uint64_t uint_val;
-        std::memcpy(&uint_val, &val, sizeof(uint64_t));
-        uint_values.push_back(uint_val);
-      }
-
-      // Compress using Usd_IntegerCompression64
-      size_t compressedBufferSize = Usd_IntegerCompression64::GetCompressedBufferSize(count);
-      std::vector<char> compressed(compressedBufferSize);
-
-      std::string compress_err;
-      size_t compressedSize = Usd_IntegerCompression64::CompressToBuffer(
-          uint_values.data(), count, compressed.data(), &compress_err);
-
-      if (compressedSize == 0 || compressedSize == static_cast<size_t>(~0)) {
-        // Compression failed - write uncompressed
-        for (double val : *double_array) {
-          if (!Write(val)) {
-            if (err) *err = "Failed to write double array element";
-            return -1;
-          }
-        }
-      } else {
-        // Write compressed data
-        uint64_t comp_size = static_cast<uint64_t>(compressedSize);
-        if (!Write(comp_size)) {
-          if (err) *err = "Failed to write compressed double array size";
-          return -1;
-        }
-        if (!WriteBytes(compressed.data(), compressedSize)) {
-          if (err) *err = "Failed to write compressed double array data";
-          return -1;
-        }
-      }
-    } else {
-      // Small array or compression disabled - write uncompressed
-      for (double val : *double_array) {
-        if (!Write(val)) {
-          if (err) *err = "Failed to write double array element";
-          return -1;
-        }
-      }
-    }
+    if (!Write(count)) { if (err) *err = "Failed to write double array count"; return -1; }
+    std::vector<uint64_t> uint_values;
+    uint_values.reserve(count);
+    for (double val : *double_array) { uint64_t u; std::memcpy(&u, &val, sizeof(u)); uint_values.push_back(u); }
+    if (WriteCompressedArray64(uint_values.data(), count, "double", err) < 0) return -1;
   }
   // Vector/Quaternion array macros
 #define WRITE_VEC_ARRAY(ElemType, N, TypeName) \
@@ -2241,7 +1956,6 @@ int64_t CrateWriter::WriteValueData(const crate::CrateValue& value, std::string*
           cv.Set(*str_opt);
           value_rep = PackValue(cv, err);
           value_packed = true;
-        } else {
         }
       }
       // Try token
@@ -2306,7 +2020,6 @@ int64_t CrateWriter::WriteValueData(const crate::CrateValue& value, std::string*
             cv.Set(*str_array_opt);
             value_rep = PackValue(cv, err);
             value_packed = true;
-          } else {
           }
         }
       }
@@ -2396,140 +2109,47 @@ int64_t CrateWriter::WriteValueData(const crate::CrateValue& value, std::string*
       return -1;
     }
   }
-  // Phase 2: TokenListOp serialization
-  // ListOp format: ListOpHeader(uint8) + lists (each with uint64 count + elements)
+  // ListOp serialization macros
+  // Dispatches all 6 list categories (explicit, added, prepended, appended, deleted, ordered)
+#define WRITE_LISTOP_ITEMS(listop_ptr, writeListFn, TypeName) \
+    if (listop_ptr->HasExplicitItems() && !writeListFn(listop_ptr->GetExplicitItems())) { \
+      if (err) { *err = "Failed to write " TypeName " explicit items"; } \
+      return -1; } \
+    if (listop_ptr->HasAddedItems() && !writeListFn(listop_ptr->GetAddedItems())) { \
+      if (err) { *err = "Failed to write " TypeName " added items"; } \
+      return -1; } \
+    if (listop_ptr->HasPrependedItems() && !writeListFn(listop_ptr->GetPrependedItems())) { \
+      if (err) { *err = "Failed to write " TypeName " prepended items"; } \
+      return -1; } \
+    if (listop_ptr->HasAppendedItems() && !writeListFn(listop_ptr->GetAppendedItems())) { \
+      if (err) { *err = "Failed to write " TypeName " appended items"; } \
+      return -1; } \
+    if (listop_ptr->HasDeletedItems() && !writeListFn(listop_ptr->GetDeletedItems())) { \
+      if (err) { *err = "Failed to write " TypeName " deleted items"; } \
+      return -1; } \
+    if (listop_ptr->HasOrderedItems() && !writeListFn(listop_ptr->GetOrderedItems())) { \
+      if (err) { *err = "Failed to write " TypeName " ordered items"; } \
+      return -1; }
+
+  // TokenListOp
   else if (auto* token_listop = value.as<ListOp<value::token>>()) {
-    // Write ListOpHeader
-    ListOpHeader header;
-    header.bits = 0;
-    if (token_listop->IsExplicit()) header.bits |= ListOpHeader::IsExplicitBit;
-    if (token_listop->HasExplicitItems()) header.bits |= ListOpHeader::HasExplicitItemsBit;
-    if (token_listop->HasAddedItems()) header.bits |= ListOpHeader::HasAddedItemsBit;
-    if (token_listop->HasDeletedItems()) header.bits |= ListOpHeader::HasDeletedItemsBit;
-    if (token_listop->HasOrderedItems()) header.bits |= ListOpHeader::HasOrderedItemsBit;
-    if (token_listop->HasPrependedItems()) header.bits |= ListOpHeader::HasPrependedItemsBit;
-    if (token_listop->HasAppendedItems()) header.bits |= ListOpHeader::HasAppendedItemsBit;
-
-    if (!Write(header.bits)) {
-      if (err) *err = "Failed to write TokenListOp header";
-      return -1;
-    }
-
-    // Write explicit items if present
-    if (token_listop->HasExplicitItems()) {
-      uint64_t count = token_listop->GetExplicitItems().size();
-      if (!Write(count)) {
-        if (err) *err = "Failed to write TokenListOp explicit count";
-        return -1;
-      }
-      for (const auto& tok : token_listop->GetExplicitItems()) {
+    auto header = BuildListOpHeader(*token_listop);
+    if (!Write(header.bits)) { if (err) *err = "Failed to write TokenListOp header"; return -1; }
+    auto writeTokenList = [&](const std::vector<value::token>& list) -> bool {
+      uint64_t count = list.size();
+      if (!Write(count)) return false;
+      for (const auto& tok : list) {
         crate::TokenIndex idx = GetOrCreateToken(tok.str());
-        if (!Write(idx.value)) {
-          if (err) *err = "Failed to write TokenListOp explicit item";
-          return -1;
-        }
+        if (!Write(idx.value)) return false;
       }
-    }
-
-    // Write added items if present
-    if (token_listop->HasAddedItems()) {
-      uint64_t count = token_listop->GetAddedItems().size();
-      if (!Write(count)) {
-        if (err) *err = "Failed to write TokenListOp added count";
-        return -1;
-      }
-      for (const auto& tok : token_listop->GetAddedItems()) {
-        crate::TokenIndex idx = GetOrCreateToken(tok.str());
-        if (!Write(idx.value)) {
-          if (err) *err = "Failed to write TokenListOp added item";
-          return -1;
-        }
-      }
-    }
-
-    // Write prepended items if present
-    if (token_listop->HasPrependedItems()) {
-      uint64_t count = token_listop->GetPrependedItems().size();
-      if (!Write(count)) {
-        if (err) *err = "Failed to write TokenListOp prepended count";
-        return -1;
-      }
-      for (const auto& tok : token_listop->GetPrependedItems()) {
-        crate::TokenIndex idx = GetOrCreateToken(tok.str());
-        if (!Write(idx.value)) {
-          if (err) *err = "Failed to write TokenListOp prepended item";
-          return -1;
-        }
-      }
-    }
-
-    // Write appended items if present
-    if (token_listop->HasAppendedItems()) {
-      uint64_t count = token_listop->GetAppendedItems().size();
-      if (!Write(count)) {
-        if (err) *err = "Failed to write TokenListOp appended count";
-        return -1;
-      }
-      for (const auto& tok : token_listop->GetAppendedItems()) {
-        crate::TokenIndex idx = GetOrCreateToken(tok.str());
-        if (!Write(idx.value)) {
-          if (err) *err = "Failed to write TokenListOp appended item";
-          return -1;
-        }
-      }
-    }
-
-    // Write deleted items if present
-    if (token_listop->HasDeletedItems()) {
-      uint64_t count = token_listop->GetDeletedItems().size();
-      if (!Write(count)) {
-        if (err) *err = "Failed to write TokenListOp deleted count";
-        return -1;
-      }
-      for (const auto& tok : token_listop->GetDeletedItems()) {
-        crate::TokenIndex idx = GetOrCreateToken(tok.str());
-        if (!Write(idx.value)) {
-          if (err) *err = "Failed to write TokenListOp deleted item";
-          return -1;
-        }
-      }
-    }
-
-    // Write ordered items if present
-    if (token_listop->HasOrderedItems()) {
-      uint64_t count = token_listop->GetOrderedItems().size();
-      if (!Write(count)) {
-        if (err) *err = "Failed to write TokenListOp ordered count";
-        return -1;
-      }
-      for (const auto& tok : token_listop->GetOrderedItems()) {
-        crate::TokenIndex idx = GetOrCreateToken(tok.str());
-        if (!Write(idx.value)) {
-          if (err) *err = "Failed to write TokenListOp ordered item";
-          return -1;
-        }
-      }
-    }
+      return true;
+    };
+    WRITE_LISTOP_ITEMS(token_listop, writeTokenList, "TokenListOp")
   }
-  // StringListOp serialization
+  // StringListOp
   else if (auto* string_listop = value.as<ListOp<std::string>>()) {
-    // Similar to TokenListOp but with StringIndex
-    ListOpHeader header;
-    header.bits = 0;
-    if (string_listop->IsExplicit()) header.bits |= ListOpHeader::IsExplicitBit;
-    if (string_listop->HasExplicitItems()) header.bits |= ListOpHeader::HasExplicitItemsBit;
-    if (string_listop->HasAddedItems()) header.bits |= ListOpHeader::HasAddedItemsBit;
-    if (string_listop->HasDeletedItems()) header.bits |= ListOpHeader::HasDeletedItemsBit;
-    if (string_listop->HasOrderedItems()) header.bits |= ListOpHeader::HasOrderedItemsBit;
-    if (string_listop->HasPrependedItems()) header.bits |= ListOpHeader::HasPrependedItemsBit;
-    if (string_listop->HasAppendedItems()) header.bits |= ListOpHeader::HasAppendedItemsBit;
-
-    if (!Write(header.bits)) {
-      if (err) *err = "Failed to write StringListOp header";
-      return -1;
-    }
-
-    // Helper lambda to write a string list
+    auto header = BuildListOpHeader(*string_listop);
+    if (!Write(header.bits)) { if (err) *err = "Failed to write StringListOp header"; return -1; }
     auto writeStringList = [&](const std::vector<std::string>& list) -> bool {
       uint64_t count = list.size();
       if (!Write(count)) return false;
@@ -2539,51 +2159,12 @@ int64_t CrateWriter::WriteValueData(const crate::CrateValue& value, std::string*
       }
       return true;
     };
-
-    if (string_listop->HasExplicitItems() && !writeStringList(string_listop->GetExplicitItems())) {
-      if (err) *err = "Failed to write StringListOp explicit items";
-      return -1;
-    }
-    if (string_listop->HasAddedItems() && !writeStringList(string_listop->GetAddedItems())) {
-      if (err) *err = "Failed to write StringListOp added items";
-      return -1;
-    }
-    if (string_listop->HasPrependedItems() && !writeStringList(string_listop->GetPrependedItems())) {
-      if (err) *err = "Failed to write StringListOp prepended items";
-      return -1;
-    }
-    if (string_listop->HasAppendedItems() && !writeStringList(string_listop->GetAppendedItems())) {
-      if (err) *err = "Failed to write StringListOp appended items";
-      return -1;
-    }
-    if (string_listop->HasDeletedItems() && !writeStringList(string_listop->GetDeletedItems())) {
-      if (err) *err = "Failed to write StringListOp deleted items";
-      return -1;
-    }
-    if (string_listop->HasOrderedItems() && !writeStringList(string_listop->GetOrderedItems())) {
-      if (err) *err = "Failed to write StringListOp ordered items";
-      return -1;
-    }
+    WRITE_LISTOP_ITEMS(string_listop, writeStringList, "StringListOp")
   }
-  // PathListOp serialization
+  // PathListOp
   else if (auto* path_listop = value.as<ListOp<Path>>()) {
-    // Similar to StringListOp but with PathIndex
-    ListOpHeader header;
-    header.bits = 0;
-    if (path_listop->IsExplicit()) header.bits |= ListOpHeader::IsExplicitBit;
-    if (path_listop->HasExplicitItems()) header.bits |= ListOpHeader::HasExplicitItemsBit;
-    if (path_listop->HasAddedItems()) header.bits |= ListOpHeader::HasAddedItemsBit;
-    if (path_listop->HasDeletedItems()) header.bits |= ListOpHeader::HasDeletedItemsBit;
-    if (path_listop->HasOrderedItems()) header.bits |= ListOpHeader::HasOrderedItemsBit;
-    if (path_listop->HasPrependedItems()) header.bits |= ListOpHeader::HasPrependedItemsBit;
-    if (path_listop->HasAppendedItems()) header.bits |= ListOpHeader::HasAppendedItemsBit;
-
-    if (!Write(header.bits)) {
-      if (err) *err = "Failed to write PathListOp header";
-      return -1;
-    }
-
-    // Helper lambda to write a path list
+    auto header = BuildListOpHeader(*path_listop);
+    if (!Write(header.bits)) { if (err) *err = "Failed to write PathListOp header"; return -1; }
     auto writePathList = [&](const std::vector<Path>& list) -> bool {
       uint64_t count = list.size();
       if (!Write(count)) return false;
@@ -2593,31 +2174,7 @@ int64_t CrateWriter::WriteValueData(const crate::CrateValue& value, std::string*
       }
       return true;
     };
-
-    if (path_listop->HasExplicitItems() && !writePathList(path_listop->GetExplicitItems())) {
-      if (err) *err = "Failed to write PathListOp explicit items";
-      return -1;
-    }
-    if (path_listop->HasAddedItems() && !writePathList(path_listop->GetAddedItems())) {
-      if (err) *err = "Failed to write PathListOp added items";
-      return -1;
-    }
-    if (path_listop->HasPrependedItems() && !writePathList(path_listop->GetPrependedItems())) {
-      if (err) *err = "Failed to write PathListOp prepended items";
-      return -1;
-    }
-    if (path_listop->HasAppendedItems() && !writePathList(path_listop->GetAppendedItems())) {
-      if (err) *err = "Failed to write PathListOp appended items";
-      return -1;
-    }
-    if (path_listop->HasDeletedItems() && !writePathList(path_listop->GetDeletedItems())) {
-      if (err) *err = "Failed to write PathListOp deleted items";
-      return -1;
-    }
-    if (path_listop->HasOrderedItems() && !writePathList(path_listop->GetOrderedItems())) {
-      if (err) *err = "Failed to write PathListOp ordered items";
-      return -1;
-    }
+    WRITE_LISTOP_ITEMS(path_listop, writePathList, "PathListOp")
   }
   // Reference serialization
   else if (auto* ref_val = value.as<Reference>()) {
@@ -2727,23 +2284,9 @@ int64_t CrateWriter::WriteValueData(const crate::CrateValue& value, std::string*
   }
   // ReferenceListOp serialization
   else if (auto* ref_listop = value.as<ListOp<Reference>>()) {
-    // Write ListOpHeader
-    ListOpHeader header;
-    header.bits = 0;
-    if (ref_listop->IsExplicit()) header.bits |= ListOpHeader::IsExplicitBit;
-    if (ref_listop->HasExplicitItems()) header.bits |= ListOpHeader::HasExplicitItemsBit;
-    if (ref_listop->HasAddedItems()) header.bits |= ListOpHeader::HasAddedItemsBit;
-    if (ref_listop->HasDeletedItems()) header.bits |= ListOpHeader::HasDeletedItemsBit;
-    if (ref_listop->HasOrderedItems()) header.bits |= ListOpHeader::HasOrderedItemsBit;
-    if (ref_listop->HasPrependedItems()) header.bits |= ListOpHeader::HasPrependedItemsBit;
-    if (ref_listop->HasAppendedItems()) header.bits |= ListOpHeader::HasAppendedItemsBit;
+    auto header = BuildListOpHeader(*ref_listop);
+    if (!Write(header.bits)) { if (err) *err = "Failed to write ReferenceListOp header"; return -1; }
 
-    if (!Write(header.bits)) {
-      if (err) *err = "Failed to write ReferenceListOp header";
-      return -1;
-    }
-
-    // Helper lambda to write a Reference list (inline implementation for now)
     auto writeRefList = [&](const std::vector<Reference>& list) -> bool {
       uint64_t count = list.size();
       if (!Write(count)) return false;
@@ -2811,50 +2354,13 @@ int64_t CrateWriter::WriteValueData(const crate::CrateValue& value, std::string*
       return true;
     };
 
-    if (ref_listop->HasExplicitItems() && !writeRefList(ref_listop->GetExplicitItems())) {
-      if (err) *err = "Failed to write ReferenceListOp explicit items";
-      return -1;
-    }
-    if (ref_listop->HasAddedItems() && !writeRefList(ref_listop->GetAddedItems())) {
-      if (err) *err = "Failed to write ReferenceListOp added items";
-      return -1;
-    }
-    if (ref_listop->HasPrependedItems() && !writeRefList(ref_listop->GetPrependedItems())) {
-      if (err) *err = "Failed to write ReferenceListOp prepended items";
-      return -1;
-    }
-    if (ref_listop->HasAppendedItems() && !writeRefList(ref_listop->GetAppendedItems())) {
-      if (err) *err = "Failed to write ReferenceListOp appended items";
-      return -1;
-    }
-    if (ref_listop->HasDeletedItems() && !writeRefList(ref_listop->GetDeletedItems())) {
-      if (err) *err = "Failed to write ReferenceListOp deleted items";
-      return -1;
-    }
-    if (ref_listop->HasOrderedItems() && !writeRefList(ref_listop->GetOrderedItems())) {
-      if (err) *err = "Failed to write ReferenceListOp ordered items";
-      return -1;
-    }
+    WRITE_LISTOP_ITEMS(ref_listop, writeRefList, "ReferenceListOp")
   }
   // PayloadListOp serialization
   else if (auto* payload_listop = value.as<ListOp<Payload>>()) {
-    // Write ListOpHeader
-    ListOpHeader header;
-    header.bits = 0;
-    if (payload_listop->IsExplicit()) header.bits |= ListOpHeader::IsExplicitBit;
-    if (payload_listop->HasExplicitItems()) header.bits |= ListOpHeader::HasExplicitItemsBit;
-    if (payload_listop->HasAddedItems()) header.bits |= ListOpHeader::HasAddedItemsBit;
-    if (payload_listop->HasDeletedItems()) header.bits |= ListOpHeader::HasDeletedItemsBit;
-    if (payload_listop->HasOrderedItems()) header.bits |= ListOpHeader::HasOrderedItemsBit;
-    if (payload_listop->HasPrependedItems()) header.bits |= ListOpHeader::HasPrependedItemsBit;
-    if (payload_listop->HasAppendedItems()) header.bits |= ListOpHeader::HasAppendedItemsBit;
+    auto header = BuildListOpHeader(*payload_listop);
+    if (!Write(header.bits)) { if (err) *err = "Failed to write PayloadListOp header"; return -1; }
 
-    if (!Write(header.bits)) {
-      if (err) *err = "Failed to write PayloadListOp header";
-      return -1;
-    }
-
-    // Helper lambda to write a Payload list
     auto writePayloadList = [&](const std::vector<Payload>& list) -> bool {
       uint64_t count = list.size();
       if (!Write(count)) return false;
@@ -2871,236 +2377,29 @@ int64_t CrateWriter::WriteValueData(const crate::CrateValue& value, std::string*
       return true;
     };
 
-    if (payload_listop->HasExplicitItems() && !writePayloadList(payload_listop->GetExplicitItems())) {
-      if (err) *err = "Failed to write PayloadListOp explicit items";
-      return -1;
-    }
-    if (payload_listop->HasAddedItems() && !writePayloadList(payload_listop->GetAddedItems())) {
-      if (err) *err = "Failed to write PayloadListOp added items";
-      return -1;
-    }
-    if (payload_listop->HasPrependedItems() && !writePayloadList(payload_listop->GetPrependedItems())) {
-      if (err) *err = "Failed to write PayloadListOp prepended items";
-      return -1;
-    }
-    if (payload_listop->HasAppendedItems() && !writePayloadList(payload_listop->GetAppendedItems())) {
-      if (err) *err = "Failed to write PayloadListOp appended items";
-      return -1;
-    }
-    if (payload_listop->HasDeletedItems() && !writePayloadList(payload_listop->GetDeletedItems())) {
-      if (err) *err = "Failed to write PayloadListOp deleted items";
-      return -1;
-    }
-    if (payload_listop->HasOrderedItems() && !writePayloadList(payload_listop->GetOrderedItems())) {
-      if (err) *err = "Failed to write PayloadListOp ordered items";
-      return -1;
-    }
+    WRITE_LISTOP_ITEMS(payload_listop, writePayloadList, "PayloadListOp")
   }
-  // IntListOp (int32_t) serialization
-  else if (auto* int_listop = value.as<ListOp<int32_t>>()) {
-    ListOpHeader header;
-    header.bits = 0;
-    if (int_listop->IsExplicit()) header.bits |= ListOpHeader::IsExplicitBit;
-    if (int_listop->HasExplicitItems()) header.bits |= ListOpHeader::HasExplicitItemsBit;
-    if (int_listop->HasAddedItems()) header.bits |= ListOpHeader::HasAddedItemsBit;
-    if (int_listop->HasDeletedItems()) header.bits |= ListOpHeader::HasDeletedItemsBit;
-    if (int_listop->HasOrderedItems()) header.bits |= ListOpHeader::HasOrderedItemsBit;
-    if (int_listop->HasPrependedItems()) header.bits |= ListOpHeader::HasPrependedItemsBit;
-    if (int_listop->HasAppendedItems()) header.bits |= ListOpHeader::HasAppendedItemsBit;
-
-    if (!Write(header.bits)) {
-      if (err) *err = "Failed to write IntListOp header";
-      return -1;
-    }
-
-    // Helper lambda to write int32 list
-    auto writeIntList = [&](const std::vector<int32_t>& list) -> bool {
-      uint64_t count = list.size();
-      if (!Write(count)) return false;
-      for (const auto& val : list) {
-        if (!Write(val)) return false;
-      }
-      return true;
-    };
-
-    if (int_listop->HasExplicitItems() && !writeIntList(int_listop->GetExplicitItems())) {
-      if (err) *err = "Failed to write IntListOp explicit items";
-      return -1;
-    }
-    if (int_listop->HasAddedItems() && !writeIntList(int_listop->GetAddedItems())) {
-      if (err) *err = "Failed to write IntListOp added items";
-      return -1;
-    }
-    if (int_listop->HasPrependedItems() && !writeIntList(int_listop->GetPrependedItems())) {
-      if (err) *err = "Failed to write IntListOp prepended items";
-      return -1;
-    }
-    if (int_listop->HasAppendedItems() && !writeIntList(int_listop->GetAppendedItems())) {
-      if (err) *err = "Failed to write IntListOp appended items";
-      return -1;
-    }
-    if (int_listop->HasDeletedItems() && !writeIntList(int_listop->GetDeletedItems())) {
-      if (err) *err = "Failed to write IntListOp deleted items";
-      return -1;
-    }
-    if (int_listop->HasOrderedItems() && !writeIntList(int_listop->GetOrderedItems())) {
-      if (err) *err = "Failed to write IntListOp ordered items";
-      return -1;
-    }
+  // Simple value ListOps (int32, uint32, int64, uint64) — items written directly
+#define WRITE_VALUE_LISTOP(ItemType, TypeName) \
+  else if (auto* listop_##TypeName = value.as<ListOp<ItemType>>()) { \
+    auto header = BuildListOpHeader(*listop_##TypeName); \
+    if (!Write(header.bits)) { if (err) *err = "Failed to write " #TypeName "ListOp header"; return -1; } \
+    auto writeList = [&](const std::vector<ItemType>& list) -> bool { \
+      uint64_t cnt = list.size(); \
+      if (!Write(cnt)) return false; \
+      for (const auto& val : list) { if (!Write(val)) return false; } \
+      return true; \
+    }; \
+    WRITE_LISTOP_ITEMS(listop_##TypeName, writeList, #TypeName "ListOp") \
   }
-  // UIntListOp (uint32_t) serialization
-  else if (auto* uint_listop = value.as<ListOp<uint32_t>>()) {
-    ListOpHeader header;
-    header.bits = 0;
-    if (uint_listop->IsExplicit()) header.bits |= ListOpHeader::IsExplicitBit;
-    if (uint_listop->HasExplicitItems()) header.bits |= ListOpHeader::HasExplicitItemsBit;
-    if (uint_listop->HasAddedItems()) header.bits |= ListOpHeader::HasAddedItemsBit;
-    if (uint_listop->HasDeletedItems()) header.bits |= ListOpHeader::HasDeletedItemsBit;
-    if (uint_listop->HasOrderedItems()) header.bits |= ListOpHeader::HasOrderedItemsBit;
-    if (uint_listop->HasPrependedItems()) header.bits |= ListOpHeader::HasPrependedItemsBit;
-    if (uint_listop->HasAppendedItems()) header.bits |= ListOpHeader::HasAppendedItemsBit;
 
-    if (!Write(header.bits)) {
-      if (err) *err = "Failed to write UIntListOp header";
-      return -1;
-    }
+  WRITE_VALUE_LISTOP(int32_t, Int)
+  WRITE_VALUE_LISTOP(uint32_t, UInt)
+  WRITE_VALUE_LISTOP(int64_t, Int64)
+  WRITE_VALUE_LISTOP(uint64_t, UInt64)
 
-    auto writeUIntList = [&](const std::vector<uint32_t>& list) -> bool {
-      uint64_t count = list.size();
-      if (!Write(count)) return false;
-      for (const auto& val : list) {
-        if (!Write(val)) return false;
-      }
-      return true;
-    };
-
-    if (uint_listop->HasExplicitItems() && !writeUIntList(uint_listop->GetExplicitItems())) {
-      if (err) *err = "Failed to write UIntListOp explicit items";
-      return -1;
-    }
-    if (uint_listop->HasAddedItems() && !writeUIntList(uint_listop->GetAddedItems())) {
-      if (err) *err = "Failed to write UIntListOp added items";
-      return -1;
-    }
-    if (uint_listop->HasPrependedItems() && !writeUIntList(uint_listop->GetPrependedItems())) {
-      if (err) *err = "Failed to write UIntListOp prepended items";
-      return -1;
-    }
-    if (uint_listop->HasAppendedItems() && !writeUIntList(uint_listop->GetAppendedItems())) {
-      if (err) *err = "Failed to write UIntListOp appended items";
-      return -1;
-    }
-    if (uint_listop->HasDeletedItems() && !writeUIntList(uint_listop->GetDeletedItems())) {
-      if (err) *err = "Failed to write UIntListOp deleted items";
-      return -1;
-    }
-    if (uint_listop->HasOrderedItems() && !writeUIntList(uint_listop->GetOrderedItems())) {
-      if (err) *err = "Failed to write UIntListOp ordered items";
-      return -1;
-    }
-  }
-  // Int64ListOp serialization
-  else if (auto* int64_listop = value.as<ListOp<int64_t>>()) {
-    ListOpHeader header;
-    header.bits = 0;
-    if (int64_listop->IsExplicit()) header.bits |= ListOpHeader::IsExplicitBit;
-    if (int64_listop->HasExplicitItems()) header.bits |= ListOpHeader::HasExplicitItemsBit;
-    if (int64_listop->HasAddedItems()) header.bits |= ListOpHeader::HasAddedItemsBit;
-    if (int64_listop->HasDeletedItems()) header.bits |= ListOpHeader::HasDeletedItemsBit;
-    if (int64_listop->HasOrderedItems()) header.bits |= ListOpHeader::HasOrderedItemsBit;
-    if (int64_listop->HasPrependedItems()) header.bits |= ListOpHeader::HasPrependedItemsBit;
-    if (int64_listop->HasAppendedItems()) header.bits |= ListOpHeader::HasAppendedItemsBit;
-
-    if (!Write(header.bits)) {
-      if (err) *err = "Failed to write Int64ListOp header";
-      return -1;
-    }
-
-    auto writeInt64List = [&](const std::vector<int64_t>& list) -> bool {
-      uint64_t count = list.size();
-      if (!Write(count)) return false;
-      for (const auto& val : list) {
-        if (!Write(val)) return false;
-      }
-      return true;
-    };
-
-    if (int64_listop->HasExplicitItems() && !writeInt64List(int64_listop->GetExplicitItems())) {
-      if (err) *err = "Failed to write Int64ListOp explicit items";
-      return -1;
-    }
-    if (int64_listop->HasAddedItems() && !writeInt64List(int64_listop->GetAddedItems())) {
-      if (err) *err = "Failed to write Int64ListOp added items";
-      return -1;
-    }
-    if (int64_listop->HasPrependedItems() && !writeInt64List(int64_listop->GetPrependedItems())) {
-      if (err) *err = "Failed to write Int64ListOp prepended items";
-      return -1;
-    }
-    if (int64_listop->HasAppendedItems() && !writeInt64List(int64_listop->GetAppendedItems())) {
-      if (err) *err = "Failed to write Int64ListOp appended items";
-      return -1;
-    }
-    if (int64_listop->HasDeletedItems() && !writeInt64List(int64_listop->GetDeletedItems())) {
-      if (err) *err = "Failed to write Int64ListOp deleted items";
-      return -1;
-    }
-    if (int64_listop->HasOrderedItems() && !writeInt64List(int64_listop->GetOrderedItems())) {
-      if (err) *err = "Failed to write Int64ListOp ordered items";
-      return -1;
-    }
-  }
-  // UInt64ListOp serialization
-  else if (auto* uint64_listop = value.as<ListOp<uint64_t>>()) {
-    ListOpHeader header;
-    header.bits = 0;
-    if (uint64_listop->IsExplicit()) header.bits |= ListOpHeader::IsExplicitBit;
-    if (uint64_listop->HasExplicitItems()) header.bits |= ListOpHeader::HasExplicitItemsBit;
-    if (uint64_listop->HasAddedItems()) header.bits |= ListOpHeader::HasAddedItemsBit;
-    if (uint64_listop->HasDeletedItems()) header.bits |= ListOpHeader::HasDeletedItemsBit;
-    if (uint64_listop->HasOrderedItems()) header.bits |= ListOpHeader::HasOrderedItemsBit;
-    if (uint64_listop->HasPrependedItems()) header.bits |= ListOpHeader::HasPrependedItemsBit;
-    if (uint64_listop->HasAppendedItems()) header.bits |= ListOpHeader::HasAppendedItemsBit;
-
-    if (!Write(header.bits)) {
-      if (err) *err = "Failed to write UInt64ListOp header";
-      return -1;
-    }
-
-    auto writeUInt64List = [&](const std::vector<uint64_t>& list) -> bool {
-      uint64_t count = list.size();
-      if (!Write(count)) return false;
-      for (const auto& val : list) {
-        if (!Write(val)) return false;
-      }
-      return true;
-    };
-
-    if (uint64_listop->HasExplicitItems() && !writeUInt64List(uint64_listop->GetExplicitItems())) {
-      if (err) *err = "Failed to write UInt64ListOp explicit items";
-      return -1;
-    }
-    if (uint64_listop->HasAddedItems() && !writeUInt64List(uint64_listop->GetAddedItems())) {
-      if (err) *err = "Failed to write UInt64ListOp added items";
-      return -1;
-    }
-    if (uint64_listop->HasPrependedItems() && !writeUInt64List(uint64_listop->GetPrependedItems())) {
-      if (err) *err = "Failed to write UInt64ListOp prepended items";
-      return -1;
-    }
-    if (uint64_listop->HasAppendedItems() && !writeUInt64List(uint64_listop->GetAppendedItems())) {
-      if (err) *err = "Failed to write UInt64ListOp appended items";
-      return -1;
-    }
-    if (uint64_listop->HasDeletedItems() && !writeUInt64List(uint64_listop->GetDeletedItems())) {
-      if (err) *err = "Failed to write UInt64ListOp deleted items";
-      return -1;
-    }
-    if (uint64_listop->HasOrderedItems() && !writeUInt64List(uint64_listop->GetOrderedItems())) {
-      if (err) *err = "Failed to write UInt64ListOp ordered items";
-      return -1;
-    }
-  }
+#undef WRITE_VALUE_LISTOP
+#undef WRITE_LISTOP_ITEMS
   // VariantSelectionMap serialization
   else if (auto* variant_map = value.as<VariantSelectionMap>()) {
     // VariantSelectionMap format: uint64_t count + (StringIndex key, StringIndex value) pairs
@@ -3944,6 +3243,56 @@ crate::FieldIndex CrateWriter::GetOrCreateField(const crate::Field& field) {
 
 crate::FieldSetIndex CrateWriter::GetOrCreateFieldSet(const std::vector<crate::FieldIndex>& fieldset) {
   return GetOrCreateImpl<std::vector<crate::FieldIndex>, crate::FieldSetIndex>(fieldset, fieldset_to_index_, fieldsets_);
+}
+
+// ============================================================================
+// Compressed Array Helpers
+// ============================================================================
+
+int64_t CrateWriter::WriteCompressedArray32(
+    const uint32_t* data, uint64_t count,
+    const char* typeName, std::string* err) {
+  if (count >= 16 && options_.enable_compression) {
+    size_t compBufSize = Usd_IntegerCompression::GetCompressedBufferSize(count);
+    std::vector<char> compressed(compBufSize);
+    std::string compress_err;
+    size_t compSize = Usd_IntegerCompression::CompressToBuffer(
+        data, count, compressed.data(), &compress_err);
+    if (compSize != 0 && compSize != static_cast<size_t>(~0)) {
+      uint64_t cs = static_cast<uint64_t>(compSize);
+      if (!Write(cs)) { if (err) { *err = "Failed to write compressed "; *err += typeName; *err += " array size"; } return -1; }
+      if (!WriteBytes(compressed.data(), compSize)) { if (err) { *err = "Failed to write compressed "; *err += typeName; *err += " array data"; } return -1; }
+      return 0;
+    }
+  }
+  // Fallback: write uncompressed
+  for (uint64_t i = 0; i < count; ++i) {
+    if (!Write(data[i])) { if (err) { *err = "Failed to write "; *err += typeName; *err += " array element"; } return -1; }
+  }
+  return 0;
+}
+
+int64_t CrateWriter::WriteCompressedArray64(
+    const uint64_t* data, uint64_t count,
+    const char* typeName, std::string* err) {
+  if (count >= 16 && options_.enable_compression) {
+    size_t compBufSize = Usd_IntegerCompression64::GetCompressedBufferSize(count);
+    std::vector<char> compressed(compBufSize);
+    std::string compress_err;
+    size_t compSize = Usd_IntegerCompression64::CompressToBuffer(
+        data, count, compressed.data(), &compress_err);
+    if (compSize != 0 && compSize != static_cast<size_t>(~0)) {
+      uint64_t cs = static_cast<uint64_t>(compSize);
+      if (!Write(cs)) { if (err) { *err = "Failed to write compressed "; *err += typeName; *err += " array size"; } return -1; }
+      if (!WriteBytes(compressed.data(), compSize)) { if (err) { *err = "Failed to write compressed "; *err += typeName; *err += " array data"; } return -1; }
+      return 0;
+    }
+  }
+  // Fallback: write uncompressed
+  for (uint64_t i = 0; i < count; ++i) {
+    if (!Write(data[i])) { if (err) { *err = "Failed to write "; *err += typeName; *err += " array element"; } return -1; }
+  }
+  return 0;
 }
 
 // ============================================================================
