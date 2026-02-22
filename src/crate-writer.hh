@@ -608,6 +608,20 @@ private:
   bool CompressData(const char* input, size_t inputSize,
                     std::vector<char>* compressed, std::string* err);
 
+  /// Write a compressed integer array (32-bit) using Usd_IntegerCompression.
+  /// If compression fails or count < 16, writes uncompressed.
+  /// The data pointer must point to count uint32_t values.
+  /// Returns -1 on I/O error.
+  int64_t WriteCompressedArray32(const uint32_t* data, uint64_t count,
+                                 const char* typeName, std::string* err);
+
+  /// Write a compressed integer array (64-bit) using Usd_IntegerCompression64.
+  /// If compression fails or count < 16, writes uncompressed.
+  /// The data pointer must point to count uint64_t values.
+  /// Returns -1 on I/O error.
+  int64_t WriteCompressedArray64(const uint64_t* data, uint64_t count,
+                                 const char* typeName, std::string* err);
+
   // ======================================================================
   // I/O utilities
   // ======================================================================
