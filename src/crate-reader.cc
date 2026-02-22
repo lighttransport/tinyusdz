@@ -6941,6 +6941,49 @@ bool CrateReader::ReadFieldSets() {
   REDUCE_MEMORY_USAGE(workBufferSize);
   REDUCE_MEMORY_USAGE(compBufferSize);
 
+  if (!BuildFieldSetBoundaryIndex()) {
+    return false;
+  }
+
+  return true;
+}
+
+bool CrateReader::BuildFieldSetBoundaryIndex() {
+  static constexpr uint32_t kInvalidFieldSetEnd = ~0u;
+
+  _fieldset_end_indices.clear();
+  _fieldset_start_indices.clear();
+
+  _fieldset_end_indices.resize(_fieldset_indices.size(), kInvalidFieldSetEnd);
+  _fieldset_start_indices.reserve((_fieldset_indices.size() / 2) + 1);
+
+  size_t start = 0;
+  while (start < _fieldset_indices.size()) {
+    size_t end = start;
+    while ((end < _fieldset_indices.size()) &&
+           (_fieldset_indices[end] != crate::Index())) {
+      ++end;
+    }
+
+    if (end >= _fieldset_indices.size()) {
+      PUSH_ERROR("Corrupted fieldset data: missing terminator.");
+      return false;
+    }
+
+    if ((start > static_cast<size_t>(std::numeric_limits<uint32_t>::max())) ||
+        (end > static_cast<size_t>(std::numeric_limits<uint32_t>::max()))) {
+      PUSH_ERROR("Fieldset boundary index overflow.");
+      return false;
+    }
+
+    const uint32_t start_u32 = static_cast<uint32_t>(start);
+    const uint32_t end_u32 = static_cast<uint32_t>(end);
+    _fieldset_start_indices.push_back(start_u32);
+    _fieldset_end_indices[start_u32] = end_u32;
+
+    start = end + 1;
+  }
+
   return true;
 }
 
@@ -6950,28 +6993,33 @@ bool CrateReader::BuildLiveFieldSets() {
     PUSH_ERROR("Parsing cancelled by progress callback.");
     return false;
   }
-  
-  for (auto fsBegin = _fieldset_indices.begin(),
-            fsEnd = std::find(fsBegin, _fieldset_indices.end(), crate::Index());
-       fsBegin != _fieldset_indices.end();
-       fsBegin = fsEnd + 1, fsEnd = std::find(fsBegin, _fieldset_indices.end(),
-                                              crate::Index())) {
-    auto &pairs = _live_fieldsets[crate::Index(
-        uint32_t(fsBegin - _fieldset_indices.begin()))];
 
-    pairs.resize(size_t(fsEnd - fsBegin));
-    DCOUT("range size = " << (fsEnd - fsBegin));
+  if (_fieldset_end_indices.size() != _fieldset_indices.size()) {
+    if (!BuildFieldSetBoundaryIndex()) {
+      return false;
+    }
+  }
+
+  _live_fieldsets.clear();
+  _live_fieldsets.reserve(_fieldset_start_indices.size());
+
+  for (uint32_t start_idx : _fieldset_start_indices) {
+    const uint32_t end_idx = _fieldset_end_indices[start_idx];
+    auto emplaced =
+        _live_fieldsets.emplace(crate::Index(start_idx), FieldValuePairVector{});
+    auto &pairs = emplaced.first->second;
+
+    pairs.resize(static_cast<size_t>(end_idx - start_idx));
+    DCOUT("range size = " << (end_idx - start_idx));
     // TODO(syoyo): Parallelize.
-    for (size_t i = 0; fsBegin != fsEnd; ++fsBegin, ++i) {
-      if (fsBegin->value < _fields.size()) {
-        // ok
-      } else {
+    for (uint32_t idx = start_idx, i = 0; idx < end_idx; ++idx, ++i) {
+      if (_fieldset_indices[idx].value >= _fields.size()) {
         PUSH_ERROR("Invalid live field set data.");
         return false;
       }
 
-      DCOUT("fieldIndex = " << (fsBegin->value));
-      auto const &field = _fields[fsBegin->value];
+      DCOUT("fieldIndex = " << (_fieldset_indices[idx].value));
+      auto const &field = _fields[_fieldset_indices[idx].value];
       if (auto tokv = GetToken(field.token_index)) {
         pairs[i].first = tokv.value().str();
 
@@ -7007,6 +7055,8 @@ bool CrateReader::BuildLiveFieldSets() {
 
 bool CrateReader::DecodeFieldSet(crate::Index fieldset_index,
                                  FieldValuePairVector *pairs) {
+  static constexpr uint32_t kInvalidFieldSetEnd = ~0u;
+
   if (!pairs) {
     PUSH_ERROR("`pairs` argument is nullptr.");
     return false;
@@ -7014,37 +7064,38 @@ bool CrateReader::DecodeFieldSet(crate::Index fieldset_index,
 
   pairs->clear();
 
-  if (fieldset_index.value >= _fieldset_indices.size()) {
+  if (_fieldset_end_indices.size() != _fieldset_indices.size()) {
+    if (!BuildFieldSetBoundaryIndex()) {
+      return false;
+    }
+  }
+
+  if (fieldset_index.value >= _fieldset_end_indices.size()) {
     PUSH_ERROR("FieldSet id out of range: " +
                std::to_string(fieldset_index.value));
     return false;
   }
 
-  // A fieldset must start at index 0 or immediately after a terminator.
-  if ((fieldset_index.value > 0) &&
-      (_fieldset_indices[fieldset_index.value - 1] != crate::Index())) {
+  const uint32_t fs_end = _fieldset_end_indices[fieldset_index.value];
+  if (fs_end == kInvalidFieldSetEnd) {
     PUSH_ERROR("FieldSet id does not point to a fieldset start: " +
                std::to_string(fieldset_index.value));
     return false;
   }
-
-  auto fsBegin = _fieldset_indices.begin() +
-                 static_cast<std::ptrdiff_t>(fieldset_index.value);
-  auto fsEnd = std::find(fsBegin, _fieldset_indices.end(), crate::Index());
-  if (fsEnd == _fieldset_indices.end()) {
-    PUSH_ERROR("Corrupted fieldset data: missing terminator.");
+  if (fs_end < fieldset_index.value) {
+    PUSH_ERROR("Corrupted fieldset boundary.");
     return false;
   }
 
-  pairs->resize(static_cast<size_t>(fsEnd - fsBegin));
+  pairs->resize(static_cast<size_t>(fs_end - fieldset_index.value));
 
-  for (size_t i = 0; fsBegin != fsEnd; ++fsBegin, ++i) {
-    if (fsBegin->value >= _fields.size()) {
+  for (uint32_t idx = fieldset_index.value, i = 0; idx < fs_end; ++idx, ++i) {
+    if (_fieldset_indices[idx].value >= _fields.size()) {
       PUSH_ERROR("Invalid field index in fieldset.");
       return false;
     }
 
-    const auto &field = _fields[fsBegin->value];
+    const auto &field = _fields[_fieldset_indices[idx].value];
     if (auto tokv = GetToken(field.token_index)) {
       (*pairs)[i].first = tokv.value().str();
       if (!UnpackValueRep(field.value_rep, &(*pairs)[i].second)) {
