@@ -7,6 +7,8 @@
 #include "usdSkel.hh"
 
 #include <sstream>
+#include <cstdint>
+#include <unordered_map>
 
 #include "common-macros.inc"
 #include "tiny-format.hh"
@@ -14,7 +16,22 @@
 #include "path-util.hh"
 
 namespace tinyusdz {
-namespace {}  // namespace
+namespace {
+
+struct FNV1StringHash {
+  size_t operator()(const std::string &s) const noexcept {
+    static constexpr uint64_t kFNV_Prime = 0x00000100000001B3ull;
+    static constexpr uint64_t kFNV_Offset_Basis = 0xcbf29ce484222325ull;
+
+    uint64_t hash = kFNV_Offset_Basis;
+    for (unsigned char c : s) {
+      hash = (kFNV_Prime * hash) ^ c;
+    }
+    return static_cast<size_t>(hash);
+  }
+};
+
+}  // namespace
 
 constexpr auto kInbetweensNamespace = "inbetweens";
 
@@ -137,12 +154,14 @@ bool BuildSkelTopology(
   }
 
   // path name <-> index map
-  std::map<std::string, int> pathMap;
+  std::unordered_map<std::string, int, FNV1StringHash> pathMap;
+  pathMap.reserve(paths.size());
   for (size_t i = 0; i < paths.size(); i++) {
     pathMap[paths[i].prim_part()] = int(i); 
   }
 
-  auto GetParentIndex = [](const std::map<std::string, int> &_pathMap, const Path &path) -> int {
+  auto GetParentIndex = [](const std::unordered_map<std::string, int, FNV1StringHash> &_pathMap,
+                           const Path &path) -> int {
     if (path.is_root_path()) {
       return -1;
     }
@@ -160,8 +179,9 @@ bool BuildSkelTopology(
     uint32_t depth = 0;
     while (parentPath.is_valid() && !parentPath.is_root_path()) {
 
-      if (_pathMap.count(parentPath.prim_part())) {
-        return _pathMap.at(parentPath.prim_part());
+      auto it = _pathMap.find(parentPath.prim_part());
+      if (it != _pathMap.end()) {
+        return it->second;
       } else {
       }
 
@@ -186,4 +206,3 @@ bool BuildSkelTopology(
 }
 
 }  // namespace tinyusdz
-

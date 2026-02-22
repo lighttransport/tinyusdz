@@ -1,13 +1,100 @@
 #include "diff-and-compare.hh"
 #include "../layer.hh"
+#include "../value-pprint.hh"
 #include <sstream>
 #include <algorithm>
 #include <iostream>
+#include <cmath>
+#include <cstdint>
+#include <limits>
+#include <unordered_map>
+#include <unordered_set>
 
 namespace tinyusdz {
 namespace tydra {
 
 namespace detail {
+
+struct FNV1StringHash {
+  size_t operator()(const std::string &s) const noexcept {
+    static constexpr uint64_t kFNV_Prime = 0x00000100000001B3ull;
+    static constexpr uint64_t kFNV_Offset_Basis = 0xcbf29ce484222325ull;
+
+    uint64_t hash = kFNV_Offset_Basis;
+    for (unsigned char c : s) {
+      hash = (kFNV_Prime * hash) ^ c;
+    }
+    return static_cast<size_t>(hash);
+  }
+};
+
+static bool CompareAttributeValues(const Attribute &lhs, const Attribute &rhs) {
+  if (lhs.type_name() != rhs.type_name()) return false;
+  if (lhs.variability() != rhs.variability()) return false;
+  if (lhs.is_varying_authored() != rhs.is_varying_authored()) return false;
+  if (lhs.has_connections() != rhs.has_connections()) return false;
+  if (lhs.has_value() != rhs.has_value()) return false;
+  if (lhs.has_timesamples() != rhs.has_timesamples()) return false;
+  if (lhs.is_blocked() != rhs.is_blocked()) return false;
+
+  if (lhs.has_connections() && (lhs.connections() != rhs.connections())) return false;
+
+  const auto &lhsVar = lhs.get_var();
+  const auto &rhsVar = rhs.get_var();
+  if (lhsVar.type_id() != rhsVar.type_id()) return false;
+
+  if (lhs.has_value()) {
+    if (value::pprint_value(lhsVar.value_raw()) != value::pprint_value(rhsVar.value_raw())) {
+      return false;
+    }
+  }
+
+  if (lhs.has_timesamples()) {
+    const auto &lhsSamples = lhsVar.ts_raw().get_samples();
+    const auto &rhsSamples = rhsVar.ts_raw().get_samples();
+    if (lhsSamples.size() != rhsSamples.size()) return false;
+
+    const double eps = std::numeric_limits<double>::epsilon();
+    for (size_t i = 0; i < lhsSamples.size(); ++i) {
+      if (std::fabs(lhsSamples[i].t - rhsSamples[i].t) >= eps) return false;
+      if (lhsSamples[i].blocked != rhsSamples[i].blocked) return false;
+      if (!lhsSamples[i].blocked &&
+          (value::pprint_value(lhsSamples[i].value) != value::pprint_value(rhsSamples[i].value))) {
+        return false;
+      }
+    }
+  }
+
+  return true;
+}
+
+static bool CompareRelationshipValues(const Relationship &lhs, const Relationship &rhs) {
+  if (lhs.type != rhs.type) return false;
+  if (lhs.get_listedit_qual() != rhs.get_listedit_qual()) return false;
+  if (lhs.is_varying_authored() != rhs.is_varying_authored()) return false;
+  if (!(lhs.targetPath == rhs.targetPath)) return false;
+  if (lhs.targetPathVector != rhs.targetPathVector) return false;
+  return true;
+}
+
+static bool ArePropertiesEquivalent(const Property &lhs, const Property &rhs) {
+  if (lhs.has_custom() != rhs.has_custom()) return false;
+  if (lhs.get_listedit_qual() != rhs.get_listedit_qual()) return false;
+  if (lhs.get_property_type() != rhs.get_property_type()) return false;
+
+  if (lhs.is_attribute() != rhs.is_attribute()) return false;
+  if (lhs.is_relationship() != rhs.is_relationship()) return false;
+
+  if (lhs.is_attribute()) {
+    return CompareAttributeValues(lhs.get_attribute(), rhs.get_attribute());
+  }
+
+  if (lhs.is_relationship()) {
+    return CompareRelationshipValues(lhs.get_relationship(), rhs.get_relationship());
+  }
+
+  return lhs.is_empty() == rhs.is_empty();
+}
 
 static bool ComparePrimSpecs(const PrimSpec &lhs, const PrimSpec &rhs) {
   // Compare basic properties
@@ -57,9 +144,9 @@ static void ComputePropDiff(const std::string &path, const PrimSpec &lhs, const 
   for (const auto &prop : lhs_props) {
     auto it = rhs_props.find(prop.first);
     if (it != rhs_props.end()) {
-      // Basic comparison - could be enhanced for deeper value comparison
-      // For now, we assume properties with same name might be modified
-      // This is a placeholder for more sophisticated value comparison
+      if (!ArePropertiesEquivalent(prop.second, it->second)) {
+        diff.modifiedProps.push_back(prop.first);
+      }
     }
   }
   
@@ -93,8 +180,10 @@ static bool ComputeDiffImpl(
   const auto &rhs_children = rhs.children();
   
   // Build maps for easier lookup
-  std::map<std::string, const PrimSpec*> lhs_child_map;
-  std::map<std::string, const PrimSpec*> rhs_child_map;
+  std::unordered_map<std::string, const PrimSpec *, FNV1StringHash> lhs_child_map;
+  std::unordered_map<std::string, const PrimSpec *, FNV1StringHash> rhs_child_map;
+  lhs_child_map.reserve(lhs_children.size());
+  rhs_child_map.reserve(rhs_children.size());
   
   for (const auto &child : lhs_children) {
     lhs_child_map[child.name()] = &child;
@@ -211,15 +300,17 @@ std::string DiffToText(const Layer &lhs, const Layer &rhs,
   ss << "+++ " << rhs_name << std::endl;
   
   // Sort paths for consistent output
-  std::vector<std::string> sortedPaths;
+  std::unordered_set<std::string, detail::FNV1StringHash> uniquePaths;
+  uniquePaths.reserve(psDiffs.size() + propDiffs.size());
   for (const auto &entry : psDiffs) {
-    sortedPaths.push_back(entry.first);
+    uniquePaths.insert(entry.first);
   }
   for (const auto &entry : propDiffs) {
-    if (std::find(sortedPaths.begin(), sortedPaths.end(), entry.first) == sortedPaths.end()) {
-      sortedPaths.push_back(entry.first);
-    }
+    uniquePaths.insert(entry.first);
   }
+  std::vector<std::string> sortedPaths;
+  sortedPaths.reserve(uniquePaths.size());
+  sortedPaths.insert(sortedPaths.end(), uniquePaths.begin(), uniquePaths.end());
   std::sort(sortedPaths.begin(), sortedPaths.end());
   
   for (const std::string &path : sortedPaths) {

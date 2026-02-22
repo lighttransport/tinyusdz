@@ -22,6 +22,8 @@
 #include "attribute-eval.hh"
 #include "scene-access.hh"
 
+#include <unordered_set>
+
 namespace tinyusdz {
 namespace tydra {
 
@@ -427,7 +429,9 @@ bool VisitPrimsIterative(const tinyusdz::Path &start_abs_path,
 
     // If primChildren metadata matches children count, use it for ordering
     if (prim.metas().primChildren.size() == prim.children().size()) {
-      std::map<std::string, const tinyusdz::Prim *> primNameTable;
+      std::unordered_map<std::string, const tinyusdz::Prim *, FNV1StringHash>
+          primNameTable;
+      primNameTable.reserve(prim.children().size());
       for (size_t i = 0; i < prim.children().size(); i++) {
         primNameTable.emplace(prim.children()[i].element_name(),
                               &prim.children()[i]);
@@ -1766,7 +1770,8 @@ bool VisitPrims(const tinyusdz::Stage &stage, VisitPrimFunction visitor_fun,
                 void *userdata, std::string *err) {
   // if `primChildren` is available, use it
   if (stage.metas().primChildren.size() == stage.root_prims().size()) {
-    std::map<std::string, const Prim *> primNameTable;
+    std::unordered_map<std::string, const Prim *, FNV1StringHash> primNameTable;
+    primNameTable.reserve(stage.root_prims().size());
     for (size_t i = 0; i < stage.root_prims().size(); i++) {
       primNameTable.emplace(stage.root_prims()[i].element_name(),
                             &stage.root_prims()[i]);
@@ -2692,7 +2697,8 @@ bool GetTerminalAttributeImpl(const tinyusdz::Stage &stage,
                               const tinyusdz::Prim &prim,
                               const std::string &attr_name, Attribute *value,
                               std::string *err,
-                              std::set<std::string> &visited_paths) {
+                              std::unordered_set<std::string, FNV1StringHash>
+                                  &visited_paths) {
   DCOUT("Prim : " << prim.element_path().element_name() << "("
                   << prim.type_name() << ") attr_name " << attr_name);
 
@@ -2730,12 +2736,11 @@ bool GetTerminalAttributeImpl(const tinyusdz::Stage &stage,
 
       std::string abs_path = target.full_path_name();
 
-      if (visited_paths.count(abs_path)) {
+      if (!visited_paths.emplace(abs_path).second) {
         PUSH_ERROR_AND_RETURN(fmt::format(
             "Circular referencing detected. connectionTargetPath = {}",
             to_string(target)));
       }
-      visited_paths.insert(abs_path);
 
       return GetTerminalAttributeImpl(stage, *targetPrim, targetPrimPropName,
                                       value, err, visited_paths);
@@ -2772,7 +2777,8 @@ bool GetTerminalAttribute(const tinyusdz::Stage &stage,
     PUSH_ERROR_AND_RETURN("`value` arg is nullptr.");
   }
 
-  std::set<std::string> visited_paths;
+  std::unordered_set<std::string, FNV1StringHash> visited_paths;
+  visited_paths.reserve(16);
 
   if (attr.is_connection()) {
     std::vector<Path> pv = attr.connections();
@@ -2802,12 +2808,11 @@ bool GetTerminalAttribute(const tinyusdz::Stage &stage,
 
       std::string abs_path = target.full_path_name();
 
-      if (visited_paths.count(abs_path)) {
+      if (!visited_paths.emplace(abs_path).second) {
         PUSH_ERROR_AND_RETURN(fmt::format(
             "Circular referencing detected. connectionTargetPath = {}",
             to_string(target)));
       }
-      visited_paths.insert(abs_path);
 
       return GetTerminalAttributeImpl(stage, *targetPrim, targetPrimPropName,
                                       value, err, visited_paths);
@@ -3041,8 +3046,27 @@ bool BuildSkelHierarchy(const Skeleton &skel, SkelNode &dst, std::string *err) {
 
 namespace {
 
+size_t CountSkelNodesIterative(const SkelNode &root) {
+  size_t count = 0;
+  StackVector<const SkelNode *, 4> stack;
+  stack.reserve(64);
+  stack.emplace_back(&root);
+
+  while (!stack.empty()) {
+    const SkelNode *node = stack.back();
+    stack.pop_back();
+    ++count;
+    for (const auto &child : node->children) {
+      stack.emplace_back(&child);
+    }
+  }
+
+  return count;
+}
+
 // Iterative version of BuildSkelNameToIndexMap using explicit stack
-void BuildSkelNameToIndexMapIterative(const SkelNode &root, std::map<std::string, int> &m) {
+void BuildSkelNameToIndexMapIterative(const SkelNode &root,
+                                      SkelNameToIndexMap &m) {
   // Stack for DFS traversal
   StackVector<std::pair<const SkelNode *, size_t>, 4> stack;
   stack.reserve(64);
@@ -3060,9 +3084,8 @@ void BuildSkelNameToIndexMapIterative(const SkelNode &root, std::map<std::string
           if (key.empty()) {
             return;
           }
-          if (!m.count(key)) {
-            m[key] = node->joint_id;
-          }
+          // Keep the first authored mapping if duplicates appear.
+          m.emplace(key, node->joint_id);
         };
 
         add_key(node->joint_name);
@@ -3092,9 +3115,10 @@ void BuildSkelNameToIndexMapIterative(const SkelNode &root, std::map<std::string
 
 } // namespace
 
-std::map<std::string, int> BuildSkelNameToIndexMap(const SkelHierarchy &skel) {
+SkelNameToIndexMap BuildSkelNameToIndexMap(const SkelHierarchy &skel) {
 
-  std::map<std::string, int> m;
+  SkelNameToIndexMap m;
+  m.reserve(CountSkelNodesIterative(skel.root_node) * 3);
 
   BuildSkelNameToIndexMapIterative(skel.root_node, m);
 

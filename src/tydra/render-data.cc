@@ -934,18 +934,20 @@ bool TryConvertFacevaryingToVertexInt(
 
   // vidx, value
   std::unordered_map<uint32_t, T> vdata;
+  vdata.reserve(faceVertexIndices.size());
 
   uint32_t max_vidx = 0;
   for (size_t i = 0; i < faceVertexIndices.size(); i++) {
     uint32_t vidx = faceVertexIndices[i];
     max_vidx = (std::max)(vidx, max_vidx);
 
-    if (vdata.count(vidx)) {
-      if (!math::is_close(vdata[vidx], src[i])) {
+    auto it = vdata.find(vidx);
+    if (it != vdata.end()) {
+      if (!math::is_close(it->second, src[i])) {
         return false;
       }
     } else {
-      vdata[vidx] = src[i];
+      vdata.emplace(vidx, src[i]);
     }
   }
 
@@ -981,19 +983,21 @@ bool TryConvertFacevaryingToVertexFloat(
 
   // vidx, value
   std::unordered_map<uint32_t, T> vdata;
+  vdata.reserve(faceVertexIndices.size());
 
   uint32_t max_vidx = 0;
   for (size_t i = 0; i < faceVertexIndices.size(); i++) {
     uint32_t vidx = faceVertexIndices[i];
     max_vidx = (std::max)(vidx, max_vidx);
 
-    if (vdata.count(vidx)) {
-      if (!math::is_close(vdata[vidx], src[i], eps)) {
+    auto it = vdata.find(vidx);
+    if (it != vdata.end()) {
+      if (!math::is_close(it->second, src[i], eps)) {
         DCOUT("diff at faceVertexIndices[" << i << "]");
         return false;
       }
     } else {
-      vdata[vidx] = src[i];
+      vdata.emplace(vidx, src[i]);
     }
   }
 
@@ -1027,18 +1031,20 @@ bool TryConvertFacevaryingToVertexMat(
 
   // vidx, value
   std::unordered_map<uint32_t, T> vdata;
+  vdata.reserve(faceVertexIndices.size());
 
   uint32_t max_vidx = 0;
   for (size_t i = 0; i < faceVertexIndices.size(); i++) {
     uint32_t vidx = faceVertexIndices[i];
     max_vidx = (std::max)(vidx, max_vidx);
 
-    if (vdata.count(vidx)) {
-      if (!is_close(vdata[vidx], src[i])) {
+    auto it = vdata.find(vidx);
+    if (it != vdata.end()) {
+      if (!is_close(it->second, src[i])) {
         return false;
       }
     } else {
-      vdata[vidx] = src[i];
+      vdata.emplace(vidx, src[i]);
     }
   }
 
@@ -2364,9 +2370,9 @@ static bool ComputeTangentsAndBinormals(
 
   // tn, bn = facevarying
   std::vector<value::normal3f> tn(faceVertexIndices.size());
-  memset(&tn.at(0), 0, sizeof(value::normal3f) * tn.size());
+  memset(tn.data(), 0, sizeof(value::normal3f) * tn.size());
   std::vector<value::normal3f> bn(faceVertexIndices.size());
-  memset(&bn.at(0), 0, sizeof(value::normal3f) * bn.size());
+  memset(bn.data(), 0, sizeof(value::normal3f) * bn.size());
 
   //
   // 1. Compute facevarying tangent/binormal for each faceVertex.
@@ -2874,7 +2880,7 @@ bool ListUVNames(const RenderMaterial &material,
     if ((texId >= 0) && (size_t(texId) < textures.size())) {
       const UVTexture &tex = textures[size_t(texId)];
       if (tex.varname_uv.size()) {
-        if (!si_map.count(tex.varname_uv)) {
+        if (si_map.find(tex.varname_uv) == si_map.s_end()) {
           uint64_t slotId = si_map.size();
           DCOUT("Add textureSlot: " << tex.varname_uv << ", " << slotId);
           si_map.add(tex.varname_uv, slotId);
@@ -2888,7 +2894,7 @@ bool ListUVNames(const RenderMaterial &material,
     if ((texId >= 0) && (size_t(texId) < textures.size())) {
       const UVTexture &tex = textures[size_t(texId)];
       if (tex.varname_uv.size()) {
-        if (!si_map.count(tex.varname_uv)) {
+        if (si_map.find(tex.varname_uv) == si_map.s_end()) {
           uint64_t slotId = si_map.size();
           DCOUT("Add textureSlot: " << tex.varname_uv << ", " << slotId);
           si_map.add(tex.varname_uv, slotId);
@@ -2991,7 +2997,8 @@ bool ListUVNames(const RenderMaterial &material,
 class SkelRootSkeletonResolver {
  public:
   using SkelRootToSkeletonMap =
-      std::unordered_map<std::string, std::pair<Path, const Skeleton *>>;
+      std::unordered_map<std::string, std::pair<Path, const Skeleton *>,
+                         FNV1StringHash>;
 
   static void BuildMap(const PathPrimMap<Skeleton> &allSkeletons,
                        const PathPrimMap<SkelRoot> &allSkelRoots,
@@ -3529,6 +3536,7 @@ bool RenderSceneConverter::BuildVertexIndicesImpl(RenderMesh &mesh) {
 
       // org pointIdx -> List of pointIdx in reordered points.
       std::unordered_map<uint32_t, std::vector<uint32_t>> pointIdxRemap;
+      pointIdxRemap.reserve(vertex_output.size());
 
       for (size_t i = 0; i < vertex_output.size(); i++) {
         pointIdxRemap[vertex_output.point_indices[i]].push_back(uint32_t(i));
@@ -3543,10 +3551,11 @@ bool RenderSceneConverter::BuildVertexIndicesImpl(RenderMesh &mesh) {
         for (size_t i = 0; i < target.second.pointIndices.size(); i++) {
 
           uint32_t orgPointIdx = target.second.pointIndices[i];
-          if (!pointIdxRemap.count(orgPointIdx)) {
+          auto remap_it = pointIdxRemap.find(orgPointIdx);
+          if (remap_it == pointIdxRemap.end()) {
             PUSH_ERROR_AND_RETURN("Invalid pointIndices value.");
           }
-          const std::vector<uint32_t> &dstPointIndices = pointIdxRemap.at(orgPointIdx);
+          const std::vector<uint32_t> &dstPointIndices = remap_it->second;
 
           for (size_t k = 0; k < dstPointIndices.size(); k++) {
             if (target.second.pointOffsets.size()) {
@@ -3808,6 +3817,7 @@ bool RenderSceneConverter::BuildVertexIndicesFastImpl(RenderMesh &mesh) {
 
       // org pointIdx -> List of pointIdx in reordered points.
       std::unordered_map<uint32_t, std::vector<uint32_t>> pointIdxRemap;
+      pointIdxRemap.reserve(fvIndices.size());
 
       for (size_t i = 0; i < fvIndices.size(); i++) {
         pointIdxRemap[fvIndices[i]].push_back(uint32_t(i));
@@ -3822,10 +3832,11 @@ bool RenderSceneConverter::BuildVertexIndicesFastImpl(RenderMesh &mesh) {
         for (size_t i = 0; i < target.second.pointIndices.size(); i++) {
 
           uint32_t orgPointIdx = target.second.pointIndices[i];
-          if (!pointIdxRemap.count(orgPointIdx)) {
+          auto remap_it = pointIdxRemap.find(orgPointIdx);
+          if (remap_it == pointIdxRemap.end()) {
             PUSH_ERROR_AND_RETURN("Invalid pointIndices value.");
           }
-          const std::vector<uint32_t> &dstPointIndices = pointIdxRemap.at(orgPointIdx);
+          const std::vector<uint32_t> &dstPointIndices = remap_it->second;
 
           for (size_t k = 0; k < dstPointIndices.size(); k++) {
             if (target.second.pointOffsets.size()) {
@@ -4200,25 +4211,28 @@ bool RenderSceneConverter::ConvertMesh(
   //
 
   DCOUT("rmaterial_ap.size " << rmaterial_map.size());
-  if (rmaterial_map.count(material_path.material_path)) {
-    dst.material_id = int(rmaterial_map.at(material_path.material_path));
+  if (auto it = rmaterial_map.find(material_path.material_path);
+      it != rmaterial_map.s_end()) {
+    dst.material_id = int(it->second);
   }
 
-  if (rmaterial_map.count(material_path.backface_material_path)) {
-    dst.backface_material_id =
-        int(rmaterial_map.at(material_path.backface_material_path));
+  if (auto it = rmaterial_map.find(material_path.backface_material_path);
+      it != rmaterial_map.s_end()) {
+    dst.backface_material_id = int(it->second);
   }
 
   if (env.mesh_config.validate_geomsubset) {
     size_t elementCount = dst.usdFaceVertexCounts.size();
 
-    if (material_subsets.size() &&
-        mesh.subsetFamilyTypeMap.count(value::token("materialBind"))) {
-      const GeomSubset::FamilyType familyType =
-          mesh.subsetFamilyTypeMap.at(value::token("materialBind"));
-      if (!GeomSubset::ValidateSubsets(material_subsets, elementCount,
-                                       familyType, &_err)) {
-        PUSH_ERROR_AND_RETURN("GeomSubset validation failed.");
+    if (material_subsets.size()) {
+      auto family_it =
+          mesh.subsetFamilyTypeMap.find(value::token("materialBind"));
+      if (family_it != mesh.subsetFamilyTypeMap.end()) {
+        const GeomSubset::FamilyType familyType = family_it->second;
+        if (!GeomSubset::ValidateSubsets(material_subsets, elementCount,
+                                         familyType, &_err)) {
+          PUSH_ERROR_AND_RETURN("GeomSubset validation failed.");
+        }
       }
     }
   }
@@ -4243,16 +4257,18 @@ bool RenderSceneConverter::ConvertMesh(
       ms.usdIndices = indices;
     }
 
-    if (subset_material_path_map.count(psubset->name)) {
-      const auto &mp = subset_material_path_map.at(psubset->name);
-      if (rmaterial_map.count(mp.material_path)) {
-        ms.material_id = int(rmaterial_map.at(mp.material_path));
+    if (auto subset_it = subset_material_path_map.find(psubset->name);
+        subset_it != subset_material_path_map.end()) {
+      const auto &mp = subset_it->second;
+      if (auto mat_it = rmaterial_map.find(mp.material_path);
+          mat_it != rmaterial_map.s_end()) {
+        ms.material_id = int(mat_it->second);
         DCOUT("MaterialSubset " << psubset->name << " : material_id "
                                 << ms.material_id);
       }
-      if (rmaterial_map.count(mp.backface_material_path)) {
-        ms.backface_material_id =
-            int(rmaterial_map.at(mp.backface_material_path));
+      if (auto backface_it = rmaterial_map.find(mp.backface_material_path);
+          backface_it != rmaterial_map.s_end()) {
+        ms.backface_material_id = int(backface_it->second);
         DCOUT("MaterialSubset " << psubset->name << " : backface_material_id "
                                 << ms.backface_material_id);
       }
@@ -4322,7 +4338,7 @@ bool RenderSceneConverter::ConvertMesh(
           uint64_t slotId = it->first;
           std::string uvname = it->second;
 
-          if (!uvAttrs.count(uint32_t(slotId))) {
+          if (uvAttrs.find(uint32_t(slotId)) == uvAttrs.end()) {
             // FIXME: Use GetGeomPrimvar() & ToVertexAttribute()
             auto ret = GetTextureCoordinate(env.stage, mesh, uvname,
                                             env.timecode, env.tinterp);
@@ -4351,7 +4367,7 @@ bool RenderSceneConverter::ConvertMesh(
               }
 
               // Use move to avoid copy
-              uvAttrs[uint32_t(slotId)] = std::move(vattr);
+              uvAttrs.emplace(uint32_t(slotId), std::move(vattr));
             } else {
               PUSH_WARN("Failed to get texture coordinate for `"
                         << uvname << "` : " << ret.error());
@@ -5369,16 +5385,17 @@ bool RenderSceneConverter::ConvertMesh(
     std::vector<vec3> normals;
 
     // TODO: Support arbitrary slotID
-    if (!dst.texcoords.count(0)) {
+    auto texcoord0_it = dst.texcoords.find(0);
+    if (texcoord0_it == dst.texcoords.end()) {
       PUSH_ERROR_AND_RETURN(
           "texcoord is required to compute tangents/binormals.\n");
     }
 
-    texcoords.resize(dst.texcoords[0].vertex_count());
+    const auto &texcoord0 = texcoord0_it->second;
+    texcoords.resize(texcoord0.vertex_count());
     normals.resize(dst.normals.vertex_count());
 
-    memcpy(texcoords.data(), dst.texcoords[0].buffer(),
-           dst.texcoords[0].num_bytes());
+    memcpy(texcoords.data(), texcoord0.buffer(), texcoord0.num_bytes());
     memcpy(normals.data(), dst.normals.buffer(), dst.normals.num_bytes());
 
     std::vector<vec3> tangents;
@@ -5471,8 +5488,8 @@ bool RenderSceneConverter::ConvertMesh(
       // MeshLightAPI inherits from LightAPI, which uses "inputs:" prefix
 
       // color
-      if (mesh.props.count("inputs:color")) {
-        const Property &prop = mesh.props.at("inputs:color");
+      if (auto it = mesh.props.find("inputs:color"); it != mesh.props.end()) {
+        const Property &prop = it->second;
         const Attribute &attr = prop.get_attribute();
         const primvar::PrimVar &pvar = attr.get_var();
         if (auto val = pvar.get_value<value::color3f>()) {
@@ -5483,8 +5500,9 @@ bool RenderSceneConverter::ConvertMesh(
       }
 
       // intensity
-      if (mesh.props.count("inputs:intensity")) {
-        const Property &prop = mesh.props.at("inputs:intensity");
+      if (auto it = mesh.props.find("inputs:intensity");
+          it != mesh.props.end()) {
+        const Property &prop = it->second;
         const Attribute &attr = prop.get_attribute();
         const primvar::PrimVar &pvar = attr.get_var();
         if (auto val = pvar.get_value<float>()) {
@@ -5493,8 +5511,8 @@ bool RenderSceneConverter::ConvertMesh(
       }
 
       // exposure (optional)
-      if (mesh.props.count("inputs:exposure")) {
-        const Property &prop = mesh.props.at("inputs:exposure");
+      if (auto it = mesh.props.find("inputs:exposure"); it != mesh.props.end()) {
+        const Property &prop = it->second;
         const Attribute &attr = prop.get_attribute();
         const primvar::PrimVar &pvar = attr.get_var();
         if (auto val = pvar.get_value<float>()) {
@@ -5503,8 +5521,9 @@ bool RenderSceneConverter::ConvertMesh(
       }
 
       // normalize
-      if (mesh.props.count("inputs:normalize")) {
-        const Property &prop = mesh.props.at("inputs:normalize");
+      if (auto it = mesh.props.find("inputs:normalize");
+          it != mesh.props.end()) {
+        const Property &prop = it->second;
         const Attribute &attr = prop.get_attribute();
         const primvar::PrimVar &pvar = attr.get_var();
         if (auto val = pvar.get_value<bool>()) {
@@ -5513,8 +5532,9 @@ bool RenderSceneConverter::ConvertMesh(
       }
 
       // materialSyncMode
-      if (mesh.props.count("inputs:materialSyncMode")) {
-        const Property &prop = mesh.props.at("inputs:materialSyncMode");
+      if (auto it = mesh.props.find("inputs:materialSyncMode");
+          it != mesh.props.end()) {
+        const Property &prop = it->second;
         const Attribute &attr = prop.get_attribute();
         const primvar::PrimVar &pvar = attr.get_var();
         if (auto val = pvar.get_value<value::token>()) {
@@ -5560,8 +5580,12 @@ struct MtlxConnectionResolveCacheEntry {
 
 struct ConnectionResolveCache {
   const Stage *stage{nullptr};
-  std::unordered_map<std::string, UVConnectionResolveCacheEntry> uv_texture_by_connection;
-  std::unordered_map<std::string, MtlxConnectionResolveCacheEntry> mtlx_texture_by_connection;
+  std::unordered_map<std::string, UVConnectionResolveCacheEntry,
+                     FNV1StringHash>
+      uv_texture_by_connection;
+  std::unordered_map<std::string, MtlxConnectionResolveCacheEntry,
+                     FNV1StringHash>
+      mtlx_texture_by_connection;
 };
 
 static ConnectionResolveCache &GetConnectionResolveCache(const Stage &stage) {
@@ -8729,18 +8753,14 @@ bool RenderSceneConverter::ConvertSkelAnimation(const RenderSceneConverterEnv &e
     }
     const auto &token_to_index_map = cache_it->second;
 
-    auto normalize_joint_token = [](const std::string &token) {
+    auto normalize_joint_token = [](const std::string &token,
+                                    std::string *out) -> bool {
       if (!token.empty() && token[0] == '/') {
-        return token.substr(1);
+        *out = token.substr(1);
+        return true;
       }
-      return token;
+      return false;
     };
-
-    std::unordered_map<std::string, int32_t> normalized_to_index;
-    normalized_to_index.reserve(token_to_index_map.size() * 2);
-    for (const auto &item : token_to_index_map) {
-      normalized_to_index[normalize_joint_token(item.first)] = int32_t(item.second);
-    }
 
     Animatable<std::vector<value::float3>> translations;
     if (!skelAnim.translations.get_value(&translations)) {
@@ -8768,10 +8788,13 @@ bool RenderSceneConverter::ConvertSkelAnimation(const RenderSceneConverterEnv &e
         continue;
       }
 
-      auto norm_it = normalized_to_index.find(normalize_joint_token(joint_token));
-      if (norm_it != normalized_to_index.end()) {
-        anim_joint_to_skel_joint[j] = norm_it->second;
-        continue;
+      std::string normalized_joint_token;
+      if (normalize_joint_token(joint_token, &normalized_joint_token)) {
+        auto norm_it = token_to_index_map.find(normalized_joint_token);
+        if (norm_it != token_to_index_map.end()) {
+          anim_joint_to_skel_joint[j] = int32_t(norm_it->second);
+          continue;
+        }
       }
 
       PUSH_ERROR_AND_RETURN(fmt::format(
@@ -9659,8 +9682,8 @@ bool RenderSceneConverter::BuildNodeHierarchyImpl(
       rnode.nodeType = NodeType::Mesh;
       rnode.has_resetXform = node.has_resetXformStack();
 
-      if (meshMap.count(primPath)) {
-        rnode.id = int32_t(meshMap.at(primPath));
+      if (auto mesh_it = meshMap.find(primPath); mesh_it != meshMap.s_end()) {
+        rnode.id = int32_t(mesh_it->second);
       } else {
         rnode.id = -1;
       }
@@ -9699,8 +9722,8 @@ bool RenderSceneConverter::BuildNodeHierarchyImpl(
       rnode.nodeType = NodeType::Mesh;
       rnode.has_resetXform = node.has_resetXformStack();
 
-      if (meshMap.count(primPath)) {
-        rnode.id = int32_t(meshMap.at(primPath));
+      if (auto mesh_it = meshMap.find(primPath); mesh_it != meshMap.s_end()) {
+        rnode.id = int32_t(mesh_it->second);
       } else {
         rnode.id = -1;
       }
@@ -10938,7 +10961,9 @@ bool RenderSceneConverter::ConvertAllSkelAnimations(const RenderSceneConverterEn
   DCOUT("ConvertAllSkelAnimations: processing " << _allAnimations->size() << " SkelAnimation prims");
 
   // Build reverse map: animationPath -> list of skeleton_ids that reference it
-  std::map<std::string, std::vector<int32_t>> animPathToSkelIds;
+  std::unordered_map<std::string, std::vector<int32_t>, FNV1StringHash>
+      animPathToSkelIds;
+  animPathToSkelIds.reserve(_allAnimations->size());
 
   // Iterate through all converted skeletons to build the reverse map
   for (const auto &skelEntry : _skelPathToIndex) {
@@ -11022,10 +11047,8 @@ bool RenderSceneConverter::ConvertAllSkelAnimations(const RenderSceneConverterEn
       // Update skeleton's animation IDs.
       if (skeleton_id >= 0 && skeleton_id < int32_t(skeletons.size())) {
         auto &skel = skeletons[static_cast<size_t>(skeleton_id)];
-        if (std::find(skel.anim_ids.begin(), skel.anim_ids.end(), anim_id) ==
-            skel.anim_ids.end()) {
-          skel.anim_ids.push_back(anim_id);
-        }
+        // animPath+skeleton_id is deduplicated via _animPathToIndex cache.
+        skel.anim_ids.push_back(anim_id);
 
         // Keep legacy default animation field for backward compatibility.
         if (skeletons[static_cast<size_t>(skeleton_id)].anim_id < 0) {
@@ -11506,10 +11529,11 @@ bool RenderSceneConverter::MergeMeshData(const RenderMesh &src,
     uint32_t slot = src_tc.first;
     const auto &src_attr = src_tc.second;
 
-    if (dst.texcoords.count(slot) == 0) {
-      dst.texcoords[slot] = src_attr;
+    auto dst_tc_it = dst.texcoords.find(slot);
+    if (dst_tc_it == dst.texcoords.end()) {
+      dst.texcoords.emplace(slot, src_attr);
     } else {
-      auto &dst_attr = dst.texcoords[slot];
+      auto &dst_attr = dst_tc_it->second;
       size_t old_size = dst_attr.data.size();
       dst_attr.data.resize(old_size + src_attr.data.size());
       memcpy(dst_attr.data.data() + old_size, src_attr.data.data(), src_attr.data.size());
@@ -11636,7 +11660,8 @@ bool RenderSceneConverter::MergeMeshesImpl(const RenderSceneConverterEnv &env) {
 
   // Group meshes by material_id
   // Only include meshes that are mergeable
-  std::map<int, std::vector<size_t>> material_to_meshes;
+  std::unordered_map<int, std::vector<size_t>> material_to_meshes;
+  material_to_meshes.reserve(meshes.size());
 
   for (size_t i = 0; i < meshes.size(); i++) {
     const auto &mesh = meshes[i];
@@ -11657,9 +11682,20 @@ bool RenderSceneConverter::MergeMeshesImpl(const RenderSceneConverterEnv &env) {
   std::vector<std::pair<int32_t, std::vector<size_t>>> merged_groups;
   [[maybe_unused]] size_t merged_source_mesh_count{0};
 
-  for (auto &kv : material_to_meshes) {
-    int material_id = kv.first;
-    auto &mesh_indices = kv.second;
+  // Keep deterministic output order by processing material IDs in ascending order.
+  std::vector<int> sorted_material_ids;
+  sorted_material_ids.reserve(material_to_meshes.size());
+  for (const auto &kv : material_to_meshes) {
+    sorted_material_ids.push_back(kv.first);
+  }
+  std::sort(sorted_material_ids.begin(), sorted_material_ids.end());
+
+  for (int material_id : sorted_material_ids) {
+    auto group_it = material_to_meshes.find(material_id);
+    if (group_it == material_to_meshes.end()) {
+      continue;
+    }
+    auto &mesh_indices = group_it->second;
 
     if (mesh_indices.size() < 2) {
       // Only one mesh with this material, no merging needed
