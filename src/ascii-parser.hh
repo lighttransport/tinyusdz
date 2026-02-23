@@ -767,6 +767,22 @@ class AsciiParser {
   bool ParseIntArrayOptimized(std::vector<int32_t> *result);
 
   ///
+  /// Optimized compound-type array parsing using tiny-string
+  ///
+  bool ParseFloat2ArrayOptimized(std::vector<value::float2> *result);
+  bool ParseFloat3ArrayOptimized(std::vector<value::float3> *result);
+  bool ParseFloat4ArrayOptimized(std::vector<value::float4> *result);
+  bool ParseDouble2ArrayOptimized(std::vector<value::double2> *result);
+  bool ParseDouble3ArrayOptimized(std::vector<value::double3> *result);
+  bool ParseDouble4ArrayOptimized(std::vector<value::double4> *result);
+  bool ParseMatrix2fArrayOptimized(std::vector<value::matrix2f> *result);
+  bool ParseMatrix3fArrayOptimized(std::vector<value::matrix3f> *result);
+  bool ParseMatrix4fArrayOptimized(std::vector<value::matrix4f> *result);
+  bool ParseMatrix2dArrayOptimized(std::vector<value::matrix2d> *result);
+  bool ParseMatrix3dArrayOptimized(std::vector<value::matrix3d> *result);
+  bool ParseMatrix4dArrayOptimized(std::vector<value::matrix4d> *result);
+
+  ///
   /// Parses 1 or more occurences of value with basic type 'T', separated by
   /// `sep`
   ///
