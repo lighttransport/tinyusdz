@@ -877,7 +877,7 @@ bool RoleTypeCast(const uint32_t roleTyId, value::Value &inout) {
 
   DCOUT("input type = " << inout.type_name());
 
-  // Zero-copy role type cast: just change the vtable pointer.
+  // Zero-copy role type cast: just change the type_id.
   // This works because role types have identical memory layout to their base types.
   // The compile-time validation above ensures this is always safe.
 #define ROLE_TYPE_CAST(__roleTy, __srcBaseTy)                                  \

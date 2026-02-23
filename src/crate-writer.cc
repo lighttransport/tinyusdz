@@ -1730,9 +1730,9 @@ int64_t CrateWriter::WriteValueData(const crate::CrateValue& value, std::string*
     std::vector<crate::ValueRep> value_reps;
     value_reps.reserve(count);
 
-    // Dict value packing: linb::any_cast dispatch (value::dict uses linb::any)
+    // Dict value packing: any_value_cast dispatch (value::dict uses any_value)
 #define TRY_PACK_DICT(Type) \
-      else if (auto* typed = linb::any_cast<Type>(&kv.second)) { \
+      else if (auto* typed = value::any_value_cast<Type>(&kv.second)) { \
         crate::CrateValue cv; cv.Set(*typed); \
         value_rep = PackValue(cv, err); value_packed = true; }
 
@@ -1740,11 +1740,11 @@ int64_t CrateWriter::WriteValueData(const crate::CrateValue& value, std::string*
       crate::ValueRep value_rep;
       bool value_packed = false;
 
-      if (auto* v = linb::any_cast<int32_t>(&kv.second)) {
+      if (auto* v = value::any_value_cast<int32_t>(&kv.second)) {
         crate::CrateValue cv; cv.Set(*v);
         value_rep = PackValue(cv, err); value_packed = true;
       }
-      else if (auto* v = linb::any_cast<int>(&kv.second)) {
+      else if (auto* v = value::any_value_cast<int>(&kv.second)) {
         crate::CrateValue cv; cv.Set(static_cast<int32_t>(*v));
         value_rep = PackValue(cv, err); value_packed = true;
       }
