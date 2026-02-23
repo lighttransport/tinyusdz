@@ -719,14 +719,10 @@ bool parse_int_array(const tstring_view &sv, std::vector<int32_t> *result, const
       return false; // No number found
     }
     
-    // Parse the number  
+    // Parse the number
     int32_t value;
-    tstring_view num_view(num_start);
-    // Create a temporary view with the correct length
-    size_t num_len = size_t(p - num_start);
-    std::string num_str(num_start, num_len);
-    tstring_view temp_view(num_str.c_str());
-    if (!parse_int(temp_view, &value)) {
+    tstring_view num_view(num_start, size_t(p - num_start));
+    if (!parse_int(num_view, &value)) {
       return false;
     }
     
