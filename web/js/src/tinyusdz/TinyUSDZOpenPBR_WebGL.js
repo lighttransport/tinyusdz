@@ -927,6 +927,13 @@ export class MtlxNodeGraphProcessor {
             case 'swizzle':
                 return inputs.in; // Swizzle is handled via separate/combine chains
 
+            // Colorspace conversion nodes (standard MaterialX)
+            case 'srgb_to_linear':
+                return this._srgbToLinear(inputs.in);
+
+            case 'linear_to_srgb':
+                return this._linearToSrgb(inputs.in);
+
             default:
                 console.warn(`Unknown MaterialX node category: ${category}`);
                 return inputs.in ?? inputs.in1 ?? 0;
@@ -1079,6 +1086,18 @@ export class MtlxNodeGraphProcessor {
         }
         if (Array.isArray(color)) {
             return color.map(c => this._srgbToLinear(c));
+        }
+        return color;
+    }
+
+    _linearToSrgb(color) {
+        if (typeof color === 'number') {
+            return color <= 0.0031308
+                ? color * 12.92
+                : 1.055 * Math.pow(color, 1.0 / 2.4) - 0.055;
+        }
+        if (Array.isArray(color)) {
+            return color.map(c => this._linearToSrgb(c));
         }
         return color;
     }
