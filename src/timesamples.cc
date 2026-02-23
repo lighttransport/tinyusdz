@@ -958,6 +958,99 @@ void TimeSamples::clear() {
   _dirty_end = 0;
 }
 
+static bool IsPODType(uint32_t type_id) {
+  // Check if type_id corresponds to a POD type or array of POD type
+  // Arrays have the TYPE_ID_STL_ARRAY_BIT set (bit 20)
+  // We need to check both the scalar type and array type
+
+  // Extract the base type by masking off the array bit
+  // TYPE_ID_STL_ARRAY_BIT is already defined in value-types.hh
+  uint32_t base_type_id = type_id & (~TYPE_ID_STL_ARRAY_BIT);
+
+  // Check if the base type is a POD type
+  switch (base_type_id) {
+    // Basic types
+    case TYPE_ID_BOOL:
+    case TYPE_ID_INT32:
+    case TYPE_ID_UINT32:
+    case TYPE_ID_INT64:
+    case TYPE_ID_UINT64:
+
+    // Half precision types
+    case TYPE_ID_HALF:
+    case TYPE_ID_HALF2:
+    case TYPE_ID_HALF3:
+    case TYPE_ID_HALF4:
+
+    // Float types
+    case TYPE_ID_FLOAT:
+    case TYPE_ID_FLOAT2:
+    case TYPE_ID_FLOAT3:
+    case TYPE_ID_FLOAT4:
+
+    // Double types
+    case TYPE_ID_DOUBLE:
+    case TYPE_ID_DOUBLE2:
+    case TYPE_ID_DOUBLE3:
+    case TYPE_ID_DOUBLE4:
+
+    // Integer vector types
+    case TYPE_ID_INT2:
+    case TYPE_ID_INT3:
+    case TYPE_ID_INT4:
+
+    // Quaternion types
+    case TYPE_ID_QUATH:
+    case TYPE_ID_QUATF:
+    case TYPE_ID_QUATD:
+
+    // Color types
+    case TYPE_ID_COLOR3H:
+    case TYPE_ID_COLOR3F:
+    case TYPE_ID_COLOR3D:
+    case TYPE_ID_COLOR4H:
+    case TYPE_ID_COLOR4F:
+    case TYPE_ID_COLOR4D:
+
+    // Vector types
+    case TYPE_ID_VECTOR3H:
+    case TYPE_ID_VECTOR3F:
+    case TYPE_ID_VECTOR3D:
+
+    // Normal types
+    case TYPE_ID_NORMAL3H:
+    case TYPE_ID_NORMAL3F:
+    case TYPE_ID_NORMAL3D:
+
+    // Point types
+    case TYPE_ID_POINT3H:
+    case TYPE_ID_POINT3F:
+    case TYPE_ID_POINT3D:
+
+    // Texture coordinate types
+    case TYPE_ID_TEXCOORD2H:
+    case TYPE_ID_TEXCOORD2F:
+    case TYPE_ID_TEXCOORD2D:
+    case TYPE_ID_TEXCOORD3H:
+    case TYPE_ID_TEXCOORD3F:
+    case TYPE_ID_TEXCOORD3D:
+
+    // Frame type
+    case TYPE_ID_FRAME4D:
+
+    // Matrix types - now trivial with default constructors
+    case TYPE_ID_MATRIX2F:
+    case TYPE_ID_MATRIX3F:
+    case TYPE_ID_MATRIX4F:
+    case TYPE_ID_MATRIX2D:
+    case TYPE_ID_MATRIX3D:
+    case TYPE_ID_MATRIX4D:
+      return true;
+
+    default:
+      return false;
+  }
+}
 
 // init() method
 bool TimeSamples::init(uint32_t type_id) {

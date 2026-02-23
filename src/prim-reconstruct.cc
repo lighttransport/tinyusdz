@@ -24,6 +24,7 @@
 
 #include "common-macros.inc"
 #include "value-types.hh"
+#include "value-debug-trace.hh"
 
 // For PUSH_ERROR_AND_RETURN
 #define PushError(s) if (err) { (*err) = s + (*err); }
@@ -2047,6 +2048,7 @@ bool ParseUniformEnumProperty(
         return true;
       }
     } else {
+      DEBUG_TRACE_PRIMVAR("prim-reconstruct.cc:1665", "Type mismatch error (expected token)", attr.get_var());
       PUSH_ERROR_AND_RETURN_F("Internal error. Maybe type mismatch? Attribute `{}` must be type `token`, but got type `{}`", prop_name, attr.type_name());
     }
 
@@ -2073,6 +2075,7 @@ bool ParseUniformEnumProperty(
           return true;
         }
       } else {
+        DEBUG_TRACE_PRIMVAR("prim-reconstruct.cc:1692", "Type mismatch error (expected token, varying)", attr.get_var());
         PUSH_ERROR_AND_RETURN_F("Internal error. Maybe type mismatch? Attribute `{}` must be type `token`, but got type `{}`", prop_name, attr.type_name());
       }
     } else if (attr.get_var().is_timesamples()) {

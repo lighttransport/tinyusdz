@@ -52,6 +52,25 @@ bool Lerp(const Value &p0, const Value &p1, double dt, Value *result);
 // Forward declaration
 struct TimeSamples;
 
+#if 0 // not used anymore
+
+// Helper function to check if a type_id represents a POD type
+// POD types are numeric types that are trivial and standard layout
+inline bool is_pod_type_id(uint32_t type_id) {
+  // POD types: bool, numeric types (char, int, uint, float, double, half),
+  // and their vector variants (float2, float3, etc.)
+
+  // turn off 1D array flag
+  uint32_t tid = type_id & (~TYPE_ID_STL_ARRAY_BIT);
+
+  return (tid >= uint32_t(TYPE_ID_BOOL) && tid <= uint32_t(TYPE_ID_TIMECODE));
+}
+
+#endif
+
+} // namespace value
+
+
 ///
 /// Type-erased time samples container
 /// Each sample contains a time value and associated Value object.

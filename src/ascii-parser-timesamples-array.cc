@@ -134,7 +134,7 @@ __attribute__((unused))
 #endif
 static bool IsPODType(uint32_t type_id) {
   // Extract the base type by masking off the array bit
-  uint32_t base_type_id = type_id & (~value::TYPE_ID_1D_ARRAY_BIT);
+  uint32_t base_type_id = type_id & (~value::TYPE_ID_STL_ARRAY_BIT);
 
   switch (base_type_id) {
     case value::TYPE_ID_BOOL:
@@ -495,7 +495,7 @@ bool AsciiParser::ParseTimeSamplesOfArray(const std::string &type_name,
   nonstd::optional<uint32_t> array_type_id = value::TryGetTypeId(type_name);
   if (array_type_id) {
     // Add the array bit to the type_id
-    uint32_t full_type_id = array_type_id.value() | value::TYPE_ID_1D_ARRAY_BIT;
+    uint32_t full_type_id = array_type_id.value() | value::TYPE_ID_STL_ARRAY_BIT;
     ts.init(full_type_id);
     DCOUT("Initialized TimeSamples with array type_id: " << full_type_id << " for type: " << type_name << "[]");
   }
@@ -573,7 +573,7 @@ bool AsciiParser::ParseTimeSamplesOfArray(const std::string &type_name,
           if (ts.is_using_pod()) {
             // Get the array type ID to determine which typed dedup method to call
             uint32_t array_tid = value.type_id();
-            uint32_t elem_tid = array_tid & (~value::TYPE_ID_1D_ARRAY_BIT);
+            uint32_t elem_tid = array_tid & (~value::TYPE_ID_STL_ARRAY_BIT);
 
             std::string err;
             bool dedup_added = false;

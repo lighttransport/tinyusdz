@@ -40,7 +40,7 @@ namespace tinyusdz {
 namespace primvar {
 
 struct PrimVar {
-  value::Value _value{nullptr}; // For scalar(default) value
+  value::Value _value; // For scalar(default) value
   bool _blocked{false}; // ValueBlocked.
   value::TimeSamples _ts; // For TimeSamples value.
 
@@ -276,10 +276,15 @@ struct PrimVar {
   void set_value(T &&v, typename std::enable_if<!std::is_lvalue_reference<T>::value && !std::is_same<typename std::decay<T>::type, value::Value>::value>::type* = nullptr) {
     //TUSDZ_LOG_I("set_value move");
 
-    // Value's underlying linb::any does not provide templated move constructor.
+    // With NEW Value implementation, we can use templated move constructor
+#if defined(TUSDZ_NEW_32BYTE_VALUE) || defined(TUSDZ_NEW_VALUE_TYPE)
+    _value = value::Value(std::move(v));
+#else
+    // OLD implementation: linb::any does not provide templated move constructor.
     // so create Value object first, then call move ctor.
     value::Value src(std::move(v));
     _value = std::move(src);
+#endif
   }
 
   // Special overload for value::Value to avoid double-wrapping

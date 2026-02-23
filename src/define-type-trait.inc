@@ -15,7 +15,8 @@
     static std::string type_name() { return __name; }                 \
     static std::string underlying_type_name() { return __name; }      \
     static bool is_role_type() { return false; }      \
-    static bool is_array() { return type_id() & value::TYPE_ID_1D_ARRAY_BIT; }      \
+    static bool is_array() { return type_id() & value::TYPE_ID_ARRAY_BIT_MASK; }      \
+    static constexpr uint32_t array_bit() { return 0; }      \
   }
 
 // `role` type. Requies underlying type.
@@ -36,5 +37,6 @@
       return TypeTraits<__uty>::type_name();                                 \
     }                                                                        \
     static bool is_role_type() { return true; }      \
-    static bool is_array() { return type_id() & value::TYPE_ID_1D_ARRAY_BIT; }      \
+    static bool is_array() { return type_id() & value::TYPE_ID_ARRAY_BIT_MASK; }      \
+    static constexpr uint32_t array_bit() { return 0; }      \
   }

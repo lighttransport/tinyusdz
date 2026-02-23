@@ -664,6 +664,7 @@ static void RegisterPrimTypes(std::set<std::string> &d) {
 static void RegisterAPISchemas(std::set<std::string> &d) {
   d.insert("MaterialBindingAPI");
   d.insert("SkelBindingAPI");
+  d.insert("MaterialXConfigAPI");
 
   // TODO:
   // d.insert("PhysicsCollisionAPI");
