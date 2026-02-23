@@ -494,7 +494,6 @@ class CrateValue {
   template <class T>
   const T value() const {
     //return (*reinterpret_cast<const T *>(value_.value()));
-    //return linb::any_cast<const T>(value_);
     return value_.value<T>();
   }
 #endif
