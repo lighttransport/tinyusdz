@@ -791,6 +791,12 @@ static inline bool parse_single_double(const char **p, const char *end, double *
   return result.ec == std::errc{};
 }
 
+// Suppress unused-function warnings for parse helpers that will be wired up later
+#if defined(__GNUC__) || defined(__clang__)
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wunused-function"
+#endif
+
 // Parse float2 array: [(1, 2), (3, 4), ...]
 static bool parse_float2_arary(const tstring_view &sv, std::vector<tinyusdz::value::float2> *result) {
   if (!result) return false;
@@ -1396,6 +1402,10 @@ static bool parse_matrix4d_arary(const tstring_view &sv, std::vector<tinyusdz::v
 
   return true;
 }
+
+#if defined(__GNUC__) || defined(__clang__)
+#pragma GCC diagnostic pop
+#endif
 
 }
 
