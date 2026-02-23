@@ -1752,7 +1752,7 @@ bool CrateWriter::ExtractPointInstancerProperties(
     }
   }
 
-  // Note: prototypes (relationship) - handled separately in AddRelationshipSpecs
+  // Note: prototypes (relationship) - handled separately in AddPointInstancerPrototypesSpec
 
   return ExtractGPrimProperties(prim, prim_path, fields, err);
 }
@@ -2450,7 +2450,8 @@ bool CrateWriter::ExtractSkelRootProperties(
         Extent extent_val;
         if (extent_animatable.get_default(&extent_val)) {
           crate::CrateValue crate_val;
-          value::Value val(extent_val);
+          std::vector<value::float3> extent_vec = {extent_val.lower, extent_val.upper};
+          value::Value val(extent_vec);
           if (ConvertValue(val, crate_val, err)) {
             fields.push_back({"extent", crate_val});
           }
@@ -3129,6 +3130,31 @@ bool CrateWriter::AddLightFilterSpecs(
     const Relationship& filters = light_filters.value();
     if (!ConvertRelationshipToFields("light:filters", filters, prim_path, err)) {
       if (err) *err = "Failed to add light:filters relationship: " + *err;
+      return false;
+    }
+  }
+
+  return true;
+}
+
+// ============================================================================
+// PointInstancer prototypes relationship spec
+// ============================================================================
+
+bool CrateWriter::AddPointInstancerPrototypesSpec(
+  const Prim& prim,
+  const Path& prim_path,
+  std::string* err
+) {
+  const GeomPointInstancer* instancer = prim.data().as<GeomPointInstancer>();
+  if (!instancer) {
+    return true;
+  }
+
+  if (instancer->prototypes.has_value()) {
+    const Relationship& protos = instancer->prototypes.value();
+    if (!ConvertRelationshipToFields("prototypes", protos, prim_path, err)) {
+      if (err) *err = "Failed to add prototypes relationship: " + *err;
       return false;
     }
   }

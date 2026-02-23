@@ -100,6 +100,7 @@ RECONSTRUCT_PRIM_DECL(DiskLight);
 RECONSTRUCT_PRIM_DECL(DistantLight);
 RECONSTRUCT_PRIM_DECL(RectLight);
 RECONSTRUCT_PRIM_DECL(GeometryLight);
+RECONSTRUCT_PRIM_DECL(PortalLight);
 RECONSTRUCT_PRIM_DECL(GPrim);
 RECONSTRUCT_PRIM_DECL(GeomMesh);
 RECONSTRUCT_PRIM_DECL(GeomSubset);
@@ -199,6 +200,7 @@ DEFINE_PRIM_TYPE(DistantLight, kDistantLight, value::TYPE_ID_LUX_DISTANT);
 DEFINE_PRIM_TYPE(CylinderLight, kCylinderLight, value::TYPE_ID_LUX_CYLINDER);
 DEFINE_PRIM_TYPE(RectLight, kRectLight, value::TYPE_ID_LUX_RECT);
 DEFINE_PRIM_TYPE(GeometryLight, kGeometryLight, value::TYPE_ID_LUX_GEOMETRY);
+DEFINE_PRIM_TYPE(PortalLight, kPortalLight, value::TYPE_ID_LUX_PORTAL);
 DEFINE_PRIM_TYPE(Material, kMaterial, value::TYPE_ID_MATERIAL);
 DEFINE_PRIM_TYPE(Shader, kShader, value::TYPE_ID_SHADER);
 DEFINE_PRIM_TYPE(NodeGraph, kNodeGraph, value::TYPE_ID_NODEGRAPH);
@@ -1865,6 +1867,7 @@ bool USDAReader::Impl::Read(const uint32_t state_flags, bool as_primspec) {
   RegisterReconstructCallback<GeomBasisCurves>();
   RegisterReconstructCallback<GeomNurbsCurves>();
   RegisterReconstructCallback<GeomCamera>();
+  RegisterReconstructCallback<GeomPointInstancer>();
 
   RegisterReconstructCallback<Material>();
   RegisterReconstructCallback<Shader>();
@@ -1879,6 +1882,7 @@ bool USDAReader::Impl::Read(const uint32_t state_flags, bool as_primspec) {
   RegisterReconstructCallback<CylinderLight>();
   RegisterReconstructCallback<RectLight>();
   RegisterReconstructCallback<GeometryLight>();
+  RegisterReconstructCallback<PortalLight>();
 
   RegisterReconstructCallback<SkelRoot>();
   RegisterReconstructCallback<Skeleton>();

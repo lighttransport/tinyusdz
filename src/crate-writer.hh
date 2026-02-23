@@ -506,6 +506,9 @@ private:
   /// Handles light:filters relationships for SphereLight, RectLight, DiskLight, CylinderLight, DistantLight, DomeLight
   bool AddLightFilterSpecs(const Prim& prim, const Path& prim_path, std::string* err);
 
+  /// Add PointInstancer prototypes relationship as separate relationship spec
+  bool AddPointInstancerPrototypesSpec(const Prim& prim, const Path& prim_path, std::string* err);
+
   /// Extract xformOps from Xformable (GPrim or Xform)
   /// Creates separate Attribute specs for each xformOp property
   bool ExtractXformOpsFromXformable(const Prim& prim, const Path& prim_path, crate::FieldValuePairVector& fields, std::string* err);
