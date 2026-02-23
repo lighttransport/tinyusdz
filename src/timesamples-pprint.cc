@@ -335,7 +335,7 @@ void print_pod_value_dispatch(OutputAdapter& out, const uint8_t* data, uint32_t 
   using namespace value;
 
   // Strip array bit - we're printing a single element
-  type_id = type_id & (~TYPE_ID_1D_ARRAY_BIT);
+  type_id = type_id & (~TYPE_ID_STL_ARRAY_BIT);
 
   switch (type_id) {
     DISPATCH_POD_TYPE(TYPE_ID_BOOL, bool, print_type)
@@ -1257,7 +1257,7 @@ size_t get_pod_type_size(uint32_t type_id) {
     using namespace value;
 
     // Strip array bit - we want the element size
-    type_id = type_id & (~TYPE_ID_1D_ARRAY_BIT);
+    type_id = type_id & (~TYPE_ID_STL_ARRAY_BIT);
 
     switch (type_id) {
         case TYPE_ID_BOOL:

@@ -70,6 +70,7 @@ inline bool is_pod_type_id(uint32_t type_id) {
 
 } // namespace value
 
+namespace value {
 
 ///
 /// Type-erased time samples container
@@ -1194,8 +1195,8 @@ struct TimeSamples {
   // Linear. Returns false when samples is empty or some internal error.
   template<typename T, std::enable_if_t<value::LerpTraits<T>::supported(), std::nullptr_t> = nullptr>
   bool get(T *dst, double t = value::TimeCode::Default(),
-           TimeSampleInterpolationType interp =
-               TimeSampleInterpolationType::Linear) const {
+           value::TimeSampleInterpolationType interp =
+               value::TimeSampleInterpolationType::Linear) const {
     if (!dst) {
       return false;
     }
@@ -1228,7 +1229,7 @@ struct TimeSamples {
         return false;
       }
 
-      if (interp == TimeSampleInterpolationType::Linear) {
+      if (interp == value::TimeSampleInterpolationType::Linear) {
         auto it = std::lower_bound(
             _samples.begin(), _samples.end(), t,
             [](const Sample &a, double tval) { return a.t < tval; });

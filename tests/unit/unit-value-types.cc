@@ -249,7 +249,7 @@ void value_types_test(void) {
   // TypedArray<T> tests
   //
   {
-    TypedArray<float> tarr = CreateOwnedTypedArray<float>(5);
+    TypedArray<float> tarr = TypedArray<float>(5);
     for (size_t i = 0; i < 5; ++i) {
       tarr[i] = static_cast<float>(i + 1);
     }
@@ -292,7 +292,7 @@ void value_types_test(void) {
   // TypedArray<T> with role types
   //
   {
-    TypedArray<value::float3> tarr = CreateOwnedTypedArray<value::float3>(2);
+    TypedArray<value::float3> tarr = TypedArray<value::float3>(2);
     tarr[0] = value::float3{1.0f, 2.0f, 3.0f};
     tarr[1] = value::float3{4.0f, 5.0f, 6.0f};
     value::Value val(tarr);
@@ -393,7 +393,7 @@ void value_types_test(void) {
   // Empty TypedArray tests
   //
   {
-    TypedArray<float> empty_tarr = CreateOwnedTypedArray<float>(0);
+    TypedArray<float> empty_tarr = TypedArray<float>(0);
     value::Value val(empty_tarr);
 
     TEST_CHECK(val.is_array());
@@ -446,7 +446,7 @@ void value_types_test(void) {
   // Value copy/move semantics with TypedArray
   //
   {
-    TypedArray<float> tarr = CreateOwnedTypedArray<float>(3);
+    TypedArray<float> tarr = TypedArray<float>(3);
     tarr[0] = 1.0f; tarr[1] = 2.0f; tarr[2] = 3.0f;
     value::Value val1(std::move(tarr));
 
@@ -615,7 +615,7 @@ void value_types_test(void) {
   // as_view() tests for TypedArray
   //
   {
-    TypedArray<float> tarr = CreateOwnedTypedArray<float>(4);
+    TypedArray<float> tarr = TypedArray<float>(4);
     tarr[0] = 1.0f; tarr[1] = 2.0f; tarr[2] = 3.0f; tarr[3] = 4.0f;
     value::Value val(tarr);
 
@@ -643,7 +643,7 @@ void value_types_test(void) {
   // as_view() tests for TypedArray with role types
   //
   {
-    TypedArray<value::float3> tarr = CreateOwnedTypedArray<value::float3>(2);
+    TypedArray<value::float3> tarr = TypedArray<value::float3>(2);
     tarr[0] = value::float3{1.0f, 2.0f, 3.0f};
     tarr[1] = value::float3{4.0f, 5.0f, 6.0f};
     value::Value val(tarr);
@@ -673,7 +673,7 @@ void value_types_test(void) {
   // TypedArray element type mismatch tests
   //
   {
-    TypedArray<float> tarr = CreateOwnedTypedArray<float>(3);
+    TypedArray<float> tarr = TypedArray<float>(3);
     tarr[0] = 1.0f; tarr[1] = 2.0f; tarr[2] = 3.0f;
     value::Value val(tarr);
 
@@ -748,7 +748,7 @@ void value_types_test(void) {
   // Large TypedArray tests
   //
   {
-    TypedArray<float> large_tarr = CreateOwnedTypedArray<float>(10000);
+    TypedArray<float> large_tarr = TypedArray<float>(10000);
     for (size_t i = 0; i < large_tarr.size(); ++i) {
       large_tarr[i] = static_cast<float>(i);
     }
@@ -985,7 +985,7 @@ void value_types_test(void) {
   // Move assignment operator
   //
   {
-    TypedArray<int32_t> tarr = CreateOwnedTypedArray<int32_t>(100);
+    TypedArray<int32_t> tarr = TypedArray<int32_t>(100);
     for (size_t i = 0; i < 100; ++i) {
       tarr[i] = static_cast<int32_t>(i);
     }
@@ -1080,7 +1080,7 @@ void value_types_test(void) {
     TEST_CHECK(val_vec_copy.as<std::vector<float>>() != nullptr);
 
     // Copy from Value containing TypedArray
-    TypedArray<double> tarr = CreateOwnedTypedArray<double>(3);
+    TypedArray<double> tarr = TypedArray<double>(3);
     value::Value val_tarr(tarr);
     value::Value val_tarr_copy(val_tarr);
     TEST_CHECK(val_tarr_copy.as<TypedArray<double>>() != nullptr);

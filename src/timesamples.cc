@@ -958,6 +958,10 @@ void TimeSamples::clear() {
   _dirty_end = 0;
 }
 
+#if defined(__GNUC__) || defined(__clang__)
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wunused-function"
+#endif
 static bool IsPODType(uint32_t type_id) {
   // Check if type_id corresponds to a POD type or array of POD type
   // Arrays have the TYPE_ID_STL_ARRAY_BIT set (bit 20)
@@ -1051,6 +1055,9 @@ static bool IsPODType(uint32_t type_id) {
       return false;
   }
 }
+#if defined(__GNUC__) || defined(__clang__)
+#pragma GCC diagnostic pop
+#endif
 
 // init() method
 bool TimeSamples::init(uint32_t type_id) {
@@ -1074,13 +1081,13 @@ namespace {
 // For non-role types, returns the same type_id
 uint32_t GetUnderlyingTypeIdFromTypeId(uint32_t tyid) {
   // Strip array bit if present
-  bool is_array = (tyid & TYPE_ID_1D_ARRAY_BIT) != 0;
-  uint32_t base_tyid = tyid & (~TYPE_ID_1D_ARRAY_BIT);
+  bool is_array = (tyid & TYPE_ID_STL_ARRAY_BIT) != 0;
+  uint32_t base_tyid = tyid & (~TYPE_ID_STL_ARRAY_BIT);
 
   // Map role types to their underlying types
   // This is needed because we don't have TypeTraits access at runtime
 #define MAP_ROLE_TO_UNDERLYING(role_id, underlying_id) \
-  if (base_tyid == role_id) return is_array ? (underlying_id | TYPE_ID_1D_ARRAY_BIT) : underlying_id;
+  if (base_tyid == role_id) return is_array ? (underlying_id | TYPE_ID_STL_ARRAY_BIT) : underlying_id;
 
   // Texcoord types
   MAP_ROLE_TO_UNDERLYING(TYPE_ID_TEXCOORD2H, TYPE_ID_HALF2)

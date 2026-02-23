@@ -2446,56 +2446,56 @@ int64_t CrateWriter::WriteValueData(const crate::CrateValue& value, std::string*
       bool value_packed = false;
 
       // Try int32
-      if (auto* int_val = linb::any_cast<int32_t>(&kv.second)) {
+      if (auto* int_val = kv.second.as<int32_t>()) {
         crate::CrateValue cv;
         cv.Set(*int_val);
         value_rep = PackValue(cv, err);
         value_packed = true;
       }
       // Try int (convert to int32)
-      else if (auto* int_val = linb::any_cast<int>(&kv.second)) {
+      else if (auto* int_val = kv.second.as<int>()) {
         crate::CrateValue cv;
         cv.Set(static_cast<int32_t>(*int_val));
         value_rep = PackValue(cv, err);
         value_packed = true;
       }
       // Try uint32
-      else if (auto* uint_val = linb::any_cast<uint32_t>(&kv.second)) {
+      else if (auto* uint_val = kv.second.as<uint32_t>()) {
         crate::CrateValue cv;
         cv.Set(*uint_val);
         value_rep = PackValue(cv, err);
         value_packed = true;
       }
       // Try float
-      else if (auto* float_val = linb::any_cast<float>(&kv.second)) {
+      else if (auto* float_val = kv.second.as<float>()) {
         crate::CrateValue cv;
         cv.Set(*float_val);
         value_rep = PackValue(cv, err);
         value_packed = true;
       }
       // Try double
-      else if (auto* double_val = linb::any_cast<double>(&kv.second)) {
+      else if (auto* double_val = kv.second.as<double>()) {
         crate::CrateValue cv;
         cv.Set(*double_val);
         value_rep = PackValue(cv, err);
         value_packed = true;
       }
       // Try bool
-      else if (auto* bool_val = linb::any_cast<bool>(&kv.second)) {
+      else if (auto* bool_val = kv.second.as<bool>()) {
         crate::CrateValue cv;
         cv.Set(*bool_val);
         value_rep = PackValue(cv, err);
         value_packed = true;
       }
       // Try string
-      else if (auto* str_val = linb::any_cast<std::string>(&kv.second)) {
+      else if (auto* str_val = kv.second.as<std::string>()) {
         crate::CrateValue cv;
         cv.Set(*str_val);
         value_rep = PackValue(cv, err);
         value_packed = true;
       }
       // Try token
-      else if (auto* tok_val = linb::any_cast<value::token>(&kv.second)) {
+      else if (auto* tok_val = kv.second.as<value::token>()) {
         crate::CrateValue cv;
         cv.Set(*tok_val);
         value_rep = PackValue(cv, err);

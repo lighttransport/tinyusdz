@@ -4108,52 +4108,52 @@ bool CrateWriter::ConvertValue(
   // Role types are stored with their underlying type (float3, double3, etc.)
   // Use get_value with non-strict cast to get underlying type
   else if (type_name == "point3f") {
-    if (auto v = val.get_value<value::float3>(false)) {  // non-strict cast to underlying type
+    if (auto v = val.get_value<value::float3>()) {  // non-strict cast to underlying type
       out.Set(*v);
       return true;
     }
   } else if (type_name == "point3d") {
-    if (auto v = val.get_value<value::double3>(false)) {
+    if (auto v = val.get_value<value::double3>()) {
       out.Set(*v);
       return true;
     }
   } else if (type_name == "vector3f") {
-    if (auto v = val.get_value<value::float3>(false)) {
+    if (auto v = val.get_value<value::float3>()) {
       out.Set(*v);
       return true;
     }
   } else if (type_name == "vector3d") {
-    if (auto v = val.get_value<value::double3>(false)) {
+    if (auto v = val.get_value<value::double3>()) {
       out.Set(*v);
       return true;
     }
   } else if (type_name == "normal3f") {
-    if (auto v = val.get_value<value::float3>(false)) {
+    if (auto v = val.get_value<value::float3>()) {
       out.Set(*v);
       return true;
     }
   } else if (type_name == "normal3d") {
-    if (auto v = val.get_value<value::double3>(false)) {
+    if (auto v = val.get_value<value::double3>()) {
       out.Set(*v);
       return true;
     }
   } else if (type_name == "color3f") {
-    if (auto v = val.get_value<value::float3>(false)) {
+    if (auto v = val.get_value<value::float3>()) {
       out.Set(*v);
       return true;
     }
   } else if (type_name == "color3d") {
-    if (auto v = val.get_value<value::double3>(false)) {
+    if (auto v = val.get_value<value::double3>()) {
       out.Set(*v);
       return true;
     }
   } else if (type_name == "color4f") {
-    if (auto v = val.get_value<value::float4>(false)) {
+    if (auto v = val.get_value<value::float4>()) {
       out.Set(*v);
       return true;
     }
   } else if (type_name == "color4d") {
-    if (auto v = val.get_value<value::double4>(false)) {
+    if (auto v = val.get_value<value::double4>()) {
       out.Set(*v);
       return true;
     }
@@ -4229,52 +4229,52 @@ bool CrateWriter::ConvertValue(
   }
   // Role type arrays - convert to underlying type
   else if (type_name == "point3f[]") {
-    if (auto v = val.get_value<std::vector<value::float3>>(false)) {
+    if (auto v = val.get_value<std::vector<value::float3>>()) {
       out.Set(*v);
       return true;
     }
   } else if (type_name == "point3d[]") {
-    if (auto v = val.get_value<std::vector<value::double3>>(false)) {
+    if (auto v = val.get_value<std::vector<value::double3>>()) {
       out.Set(*v);
       return true;
     }
   } else if (type_name == "normal3f[]") {
-    if (auto v = val.get_value<std::vector<value::float3>>(false)) {
+    if (auto v = val.get_value<std::vector<value::float3>>()) {
       out.Set(*v);
       return true;
     }
   } else if (type_name == "normal3d[]") {
-    if (auto v = val.get_value<std::vector<value::double3>>(false)) {
+    if (auto v = val.get_value<std::vector<value::double3>>()) {
       out.Set(*v);
       return true;
     }
   } else if (type_name == "vector3f[]") {
-    if (auto v = val.get_value<std::vector<value::float3>>(false)) {
+    if (auto v = val.get_value<std::vector<value::float3>>()) {
       out.Set(*v);
       return true;
     }
   } else if (type_name == "vector3d[]") {
-    if (auto v = val.get_value<std::vector<value::double3>>(false)) {
+    if (auto v = val.get_value<std::vector<value::double3>>()) {
       out.Set(*v);
       return true;
     }
   } else if (type_name == "color3f[]") {
-    if (auto v = val.get_value<std::vector<value::float3>>(false)) {
+    if (auto v = val.get_value<std::vector<value::float3>>()) {
       out.Set(*v);
       return true;
     }
   } else if (type_name == "color3d[]") {
-    if (auto v = val.get_value<std::vector<value::double3>>(false)) {
+    if (auto v = val.get_value<std::vector<value::double3>>()) {
       out.Set(*v);
       return true;
     }
   } else if (type_name == "color4f[]") {
-    if (auto v = val.get_value<std::vector<value::float4>>(false)) {
+    if (auto v = val.get_value<std::vector<value::float4>>()) {
       out.Set(*v);
       return true;
     }
   } else if (type_name == "color4d[]") {
-    if (auto v = val.get_value<std::vector<value::double4>>(false)) {
+    if (auto v = val.get_value<std::vector<value::double4>>()) {
       out.Set(*v);
       return true;
     }
