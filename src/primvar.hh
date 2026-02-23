@@ -276,8 +276,7 @@ struct PrimVar {
   void set_value(T &&v, typename std::enable_if<!std::is_lvalue_reference<T>::value && !std::is_same<typename std::decay<T>::type, value::Value>::value>::type* = nullptr) {
     //TUSDZ_LOG_I("set_value move");
 
-    // Value's underlying linb::any does not provide templated move constructor.
-    // so create Value object first, then call move ctor.
+    // Create Value object first, then call move ctor.
     value::Value src(std::move(v));
     _value = std::move(src);
   }
