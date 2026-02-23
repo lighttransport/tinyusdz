@@ -117,7 +117,7 @@ def Xform "Instancers"
         int64[] invisibleIds = [1, 4]
 
         # Inactive instances (by ID) - excluded from traversal
-        int64[] inactiveIds = [2, 5]
+        uniform int64[] inactiveIds = [2, 5]
 
         rel prototypes = [
             </Instancers/VisibilityInstancer/Prototypes/Cylinder>

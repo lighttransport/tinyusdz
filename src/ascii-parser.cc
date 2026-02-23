@@ -650,7 +650,8 @@ static void RegisterPrimTypes(std::unordered_set<std::string> &d) {
   d.insert("DistantLight");
   d.insert("RectLight");
   d.insert("CylinderLight");
-  // d.insert("PortalLight");
+  d.insert("GeometryLight");
+  d.insert("PortalLight");
   d.insert("Camera");
   d.insert("SkelRoot");
   d.insert("Skeleton");

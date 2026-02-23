@@ -4410,6 +4410,31 @@ bool ReconstructPrim<GeometryLight>(
 }
 
 template <>
+bool ReconstructPrim<PortalLight>(
+    const Specifier &spec,
+    PropertyMap &properties,
+    const ReferenceList &references,
+    PortalLight *light,
+    std::string *warn,
+    std::string *err,
+    const PrimReconstructOptions &options) {
+#if defined(__clang__)
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wunused-macros"
+#endif
+#define PRIM_CLASS_ PortalLight
+#define PRIM_PTR_ light
+#if defined(__clang__)
+#pragma clang diagnostic pop
+#endif
+  RECONSTRUCT_LIGHT_PRIM_BODY(PortalLight, light, GEOMETRY_LIGHT_TYPED_ATTRS, LIGHT_COMMON_ATTRS_NO_SHAPING,
+                              /* no extent */,
+                              /* no special handling */)
+#undef PRIM_CLASS_
+#undef PRIM_PTR_
+}
+
+template <>
 bool ReconstructPrim<DomeLight>(
     const Specifier &spec,
     PropertyMap &properties,
@@ -5978,6 +6003,7 @@ RECONSTRUCT_PRIM_PRIMSPEC_IMPL(GeomCapsule)
 RECONSTRUCT_PRIM_PRIMSPEC_IMPL(GeomBasisCurves)
 RECONSTRUCT_PRIM_PRIMSPEC_IMPL(GeomCamera)
 RECONSTRUCT_PRIM_PRIMSPEC_IMPL(GeomSubset)
+RECONSTRUCT_PRIM_PRIMSPEC_IMPL(GeomPointInstancer)
 RECONSTRUCT_PRIM_PRIMSPEC_IMPL(SphereLight)
 RECONSTRUCT_PRIM_PRIMSPEC_IMPL(DomeLight)
 RECONSTRUCT_PRIM_PRIMSPEC_IMPL(CylinderLight)
@@ -5985,6 +6011,7 @@ RECONSTRUCT_PRIM_PRIMSPEC_IMPL(DiskLight)
 RECONSTRUCT_PRIM_PRIMSPEC_IMPL(DistantLight)
 RECONSTRUCT_PRIM_PRIMSPEC_IMPL(RectLight)
 RECONSTRUCT_PRIM_PRIMSPEC_IMPL(GeometryLight)
+RECONSTRUCT_PRIM_PRIMSPEC_IMPL(PortalLight)
 RECONSTRUCT_PRIM_PRIMSPEC_IMPL(SkelRoot)
 RECONSTRUCT_PRIM_PRIMSPEC_IMPL(Skeleton)
 RECONSTRUCT_PRIM_PRIMSPEC_IMPL(SkelAnimation)

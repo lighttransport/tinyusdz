@@ -4836,6 +4836,96 @@ std::string to_string(const RectLight &light, const uint32_t indent,
   return ss.str();
 }
 
+std::string to_string(const GeometryLight &light, const uint32_t indent,
+                      bool closing_brace) {
+  std::stringstream ss;
+
+  ss << pprint::Indent(indent) << to_string(light.spec) << " GeometryLight \""
+     << light.name << "\"\n";
+  if (light.meta.authored()) {
+    ss << pprint::Indent(indent) << "(\n";
+    ss << print_prim_metas(light.meta, indent + 1);
+    ss << pprint::Indent(indent) << ")\n";
+  }
+  ss << pprint::Indent(indent) << "{\n";
+
+  // members
+  ss << print_typed_attr(light.color, "inputs:color", indent + 1);
+  ss << print_typed_attr(light.colorTemperature, "inputs:colorTemperature",
+                         indent + 1);
+  ss << print_typed_attr(light.diffuse, "inputs:diffuse", indent + 1);
+  ss << print_typed_attr(light.enableColorTemperature,
+                         "inputs:enableColorTemperature", indent + 1);
+  ss << print_typed_attr(light.exposure, "inputs:exposure", indent + 1);
+  ss << print_typed_attr(light.intensity, "inputs:intensity", indent + 1);
+  ss << print_typed_attr(light.normalize, "inputs:normalize", indent + 1);
+  ss << print_typed_attr(light.specular, "inputs:specular", indent + 1);
+
+  // ShadowAPI attributes
+  ss << print_typed_attr(light.shadowColor, "inputs:shadow:color", indent + 1);
+  ss << print_typed_attr(light.shadowDistance, "inputs:shadow:distance", indent + 1);
+  ss << print_typed_attr(light.shadowEnable, "inputs:shadow:enable", indent + 1);
+  ss << print_typed_attr(light.shadowFalloff, "inputs:shadow:falloff", indent + 1);
+  ss << print_typed_attr(light.shadowFalloffGamma, "inputs:shadow:falloffGamma", indent + 1);
+
+  ss << print_typed_token_attr(light.visibility, "visibility", indent + 1);
+  ss << print_typed_token_attr(light.purpose, "purpose", indent + 1);
+
+  ss << print_xformOps(light.xformOps, indent + 1);
+  ss << print_props(light.props, indent + 1);
+
+  if (closing_brace) {
+    ss << pprint::Indent(indent) << "}\n";
+  }
+
+  return ss.str();
+}
+
+std::string to_string(const PortalLight &light, const uint32_t indent,
+                      bool closing_brace) {
+  std::stringstream ss;
+
+  ss << pprint::Indent(indent) << to_string(light.spec) << " PortalLight \""
+     << light.name << "\"\n";
+  if (light.meta.authored()) {
+    ss << pprint::Indent(indent) << "(\n";
+    ss << print_prim_metas(light.meta, indent + 1);
+    ss << pprint::Indent(indent) << ")\n";
+  }
+  ss << pprint::Indent(indent) << "{\n";
+
+  // members
+  ss << print_typed_attr(light.color, "inputs:color", indent + 1);
+  ss << print_typed_attr(light.colorTemperature, "inputs:colorTemperature",
+                         indent + 1);
+  ss << print_typed_attr(light.diffuse, "inputs:diffuse", indent + 1);
+  ss << print_typed_attr(light.enableColorTemperature,
+                         "inputs:enableColorTemperature", indent + 1);
+  ss << print_typed_attr(light.exposure, "inputs:exposure", indent + 1);
+  ss << print_typed_attr(light.intensity, "inputs:intensity", indent + 1);
+  ss << print_typed_attr(light.normalize, "inputs:normalize", indent + 1);
+  ss << print_typed_attr(light.specular, "inputs:specular", indent + 1);
+
+  // ShadowAPI attributes
+  ss << print_typed_attr(light.shadowColor, "inputs:shadow:color", indent + 1);
+  ss << print_typed_attr(light.shadowDistance, "inputs:shadow:distance", indent + 1);
+  ss << print_typed_attr(light.shadowEnable, "inputs:shadow:enable", indent + 1);
+  ss << print_typed_attr(light.shadowFalloff, "inputs:shadow:falloff", indent + 1);
+  ss << print_typed_attr(light.shadowFalloffGamma, "inputs:shadow:falloffGamma", indent + 1);
+
+  ss << print_typed_token_attr(light.visibility, "visibility", indent + 1);
+  ss << print_typed_token_attr(light.purpose, "purpose", indent + 1);
+
+  ss << print_xformOps(light.xformOps, indent + 1);
+  ss << print_props(light.props, indent + 1);
+
+  if (closing_brace) {
+    ss << pprint::Indent(indent) << "}\n";
+  }
+
+  return ss.str();
+}
+
 std::string to_string(const GeomCamera::Projection &proj) {
   if (proj == GeomCamera::Projection::Orthographic) {
     return "orthographic";

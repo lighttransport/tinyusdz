@@ -744,6 +744,8 @@ namespace value {
   __FUNC(DistantLight)          \
   __FUNC(CylinderLight)         \
   __FUNC(RectLight)             \
+  __FUNC(GeometryLight)         \
+  __FUNC(PortalLight)           \
   __FUNC(SkelRoot)              \
   __FUNC(Skeleton)              \
   __FUNC(SkelAnimation)         \
