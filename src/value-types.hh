@@ -61,10 +61,8 @@
 #include "typed-array.hh"
 #include "common-macros.inc"
 
-// forward decl
-namespace linb {
-class any;
-};
+// forward decl of any_value (defined below after TypeTraits)
+namespace tinyusdz { namespace value { class any_value; } }
 
 namespace tinyusdz {
 
@@ -1544,9 +1542,7 @@ using double2 = std::array<double, 2>;
 using double3 = std::array<double, 3>;
 using double4 = std::array<double, 4>;
 
-// struct any_value;
-// using dict = std::map<std::string, any_value>;
-using dict = std::map<std::string, linb::any>;
+using dict = std::map<std::string, any_value>;
 
 template <class dtype>
 struct TypeTraits;
@@ -1837,15 +1833,291 @@ bool IsRoleType(const uint32_t tyid);
 }  // namespace value
 }  // namespace tinyusdz
 
-#include "tiny-any.inc"
-
 namespace tinyusdz {
 namespace value {
 
 ///
-/// Generic Value class using any
-/// TODO: Type-check when casting with underlying_type(Need to modify linb::any
-/// class)
+/// any_value — Purpose-built type-erased container for USD value types.
+///
+/// Replaces linb::any with a design tailored for TinyUSDZ:
+/// - 48-byte SBO buffer (avoids heap for string, vector control blocks, most POD)
+/// - Direct type_id/underlying_type_id members (no vtable indirection for type queries)
+/// - 3-op dispatch (destroy, copy, move) instead of 9-entry vtable
+///
+class any_value {
+ public:
+  any_value() noexcept = default;
+  ~any_value() { destroy(); }
+
+  any_value(const any_value& other)
+      : ops_(other.ops_),
+        type_name_fn_(other.type_name_fn_),
+        underlying_type_name_fn_(other.underlying_type_name_fn_),
+        type_id_(other.type_id_),
+        underlying_type_id_(other.underlying_type_id_),
+        is_inline_(other.is_inline_) {
+    if (ops_) {
+      ops_->copy(&storage_, &other.storage_);
+    }
+  }
+
+  any_value(any_value&& other) noexcept
+      : ops_(other.ops_),
+        type_name_fn_(other.type_name_fn_),
+        underlying_type_name_fn_(other.underlying_type_name_fn_),
+        type_id_(other.type_id_),
+        underlying_type_id_(other.underlying_type_id_),
+        is_inline_(other.is_inline_) {
+    if (ops_) {
+      ops_->move(&storage_, &other.storage_);
+      other.ops_ = nullptr;
+      other.type_name_fn_ = nullptr;
+      other.underlying_type_name_fn_ = nullptr;
+      other.type_id_ = 0;
+      other.underlying_type_id_ = 0;
+      other.is_inline_ = true;
+    }
+  }
+
+  any_value& operator=(const any_value& other) {
+    if (this != &other) {
+      any_value tmp(other);
+      swap(tmp);
+    }
+    return *this;
+  }
+
+  any_value& operator=(any_value&& other) noexcept {
+    if (this != &other) {
+      destroy();
+      ops_ = other.ops_;
+      type_name_fn_ = other.type_name_fn_;
+      underlying_type_name_fn_ = other.underlying_type_name_fn_;
+      type_id_ = other.type_id_;
+      underlying_type_id_ = other.underlying_type_id_;
+      is_inline_ = other.is_inline_;
+      if (ops_) {
+        ops_->move(&storage_, &other.storage_);
+        other.ops_ = nullptr;
+        other.type_name_fn_ = nullptr;
+        other.underlying_type_name_fn_ = nullptr;
+        other.type_id_ = 0;
+        other.underlying_type_id_ = 0;
+        other.is_inline_ = true;
+      }
+    }
+    return *this;
+  }
+
+  // Typed constructor
+  template <typename T,
+            typename = typename std::enable_if<
+                !std::is_same<typename std::decay<T>::type, any_value>::value>::type>
+  any_value(T&& val) {
+    construct(std::forward<T>(val));
+  }
+
+  // Typed assignment
+  template <typename T,
+            typename = typename std::enable_if<
+                !std::is_same<typename std::decay<T>::type, any_value>::value>::type>
+  any_value& operator=(T&& val) {
+    any_value tmp(std::forward<T>(val));
+    swap(tmp);
+    return *this;
+  }
+
+  // Type queries
+  uint32_t type_id() const noexcept { return type_id_; }
+  uint32_t underlying_type_id() const noexcept { return underlying_type_id_; }
+  bool empty() const noexcept { return ops_ == nullptr; }
+
+  const std::string type_name() const noexcept {
+    if (!type_name_fn_) return TypeTraits<void>::type_name();
+    return type_name_fn_();
+  }
+
+  const std::string underlying_type_name() const noexcept {
+    if (!underlying_type_name_fn_) return TypeTraits<void>::underlying_type_name();
+    return underlying_type_name_fn_();
+  }
+
+  void clear() noexcept {
+    destroy();
+    ops_ = nullptr;
+    type_name_fn_ = nullptr;
+    underlying_type_name_fn_ = nullptr;
+    type_id_ = 0;
+    underlying_type_id_ = 0;
+    is_inline_ = true;
+  }
+
+  void swap(any_value& other) noexcept {
+    // Simple swap via moves through a temporary
+    any_value tmp(std::move(other));
+    other = std::move(*this);
+    *this = std::move(tmp);
+  }
+
+  /// Reinterpret as a different type without copying (for role type casting).
+  /// Caller must ensure NewType has identical memory layout to the current type.
+  template <typename NewType>
+  void unsafe_reinterpret_as() noexcept {
+    if (!empty()) {
+      type_id_ = TypeTraits<NewType>::type_id();
+      underlying_type_id_ = TypeTraits<NewType>::underlying_type_id();
+      type_name_fn_ = &TypeTraits<NewType>::type_name;
+      underlying_type_name_fn_ = &TypeTraits<NewType>::underlying_type_name;
+      // ops_ stays the same — layout-compatible types have identical destroy/copy/move
+    }
+  }
+
+  /// Raw pointer to stored value (no type check). Const version.
+  template <typename T>
+  const T* cast() const noexcept {
+    return is_inline_ ? reinterpret_cast<const T*>(&storage_)
+                      : *reinterpret_cast<T* const*>(&storage_);
+  }
+
+  /// Raw pointer to stored value (no type check). Mutable version.
+  template <typename T>
+  T* cast() noexcept {
+    return is_inline_ ? reinterpret_cast<T*>(&storage_)
+                      : *reinterpret_cast<T**>(&storage_);
+  }
+
+ private:
+  static constexpr size_t kBufferSize = 48;
+  static constexpr size_t kBufferAlign = 8;
+
+  struct Ops {
+    void (*destroy)(void* storage) noexcept;
+    void (*copy)(void* dst, const void* src);
+    void (*move)(void* dst, void* src) noexcept;
+  };
+
+  // Inline storage ops (T fits in buffer)
+  template <typename T>
+  struct InlineOps {
+    static void destroy(void* s) noexcept {
+      static_cast<T*>(s)->~T();
+    }
+    static void copy(void* d, const void* s) {
+      new (d) T(*static_cast<const T*>(s));
+    }
+    static void move(void* d, void* s) noexcept {
+      new (d) T(std::move(*static_cast<T*>(s)));
+      static_cast<T*>(s)->~T();
+    }
+  };
+
+  // Heap storage ops (T too large for buffer)
+  template <typename T>
+  struct HeapOps {
+    static void destroy(void* s) noexcept {
+      delete *static_cast<T**>(s);
+    }
+    static void copy(void* d, const void* s) {
+      *static_cast<T**>(d) = new T(**static_cast<T* const*>(s));
+    }
+    static void move(void* d, void* s) noexcept {
+      *static_cast<T**>(d) = *static_cast<T**>(s);
+      *static_cast<T**>(s) = nullptr;
+    }
+  };
+
+  template <typename T>
+  static constexpr bool fits_inline() {
+    return sizeof(T) <= kBufferSize &&
+           alignof(T) <= kBufferAlign &&
+           std::is_nothrow_move_constructible<T>::value;
+  }
+
+  template <typename T>
+  static const Ops* ops_for_type() {
+    using DecayT = typename std::decay<T>::type;
+    using OpsType = typename std::conditional<fits_inline<DecayT>(),
+                                               InlineOps<DecayT>,
+                                               HeapOps<DecayT>>::type;
+    static const Ops ops = {OpsType::destroy, OpsType::copy, OpsType::move};
+    return &ops;
+  }
+
+  template <typename ValueType, typename T>
+  typename std::enable_if<fits_inline<T>()>::type
+  do_construct(ValueType&& val) {
+    new (&storage_) T(std::forward<ValueType>(val));
+  }
+
+  template <typename ValueType, typename T>
+  typename std::enable_if<!fits_inline<T>()>::type
+  do_construct(ValueType&& val) {
+    *reinterpret_cast<T**>(&storage_) = new T(std::forward<ValueType>(val));
+  }
+
+  template <typename ValueType>
+  void construct(ValueType&& val) {
+    using T = typename std::decay<ValueType>::type;
+    static_assert(std::is_copy_constructible<T>::value,
+                  "T shall satisfy the CopyConstructible requirements.");
+    ops_ = ops_for_type<T>();
+    type_name_fn_ = &TypeTraits<T>::type_name;
+    underlying_type_name_fn_ = &TypeTraits<T>::underlying_type_name;
+    type_id_ = TypeTraits<T>::type_id();
+    underlying_type_id_ = TypeTraits<T>::underlying_type_id();
+    is_inline_ = fits_inline<T>();
+    do_construct<ValueType, T>(std::forward<ValueType>(val));
+  }
+
+  void destroy() noexcept {
+    if (ops_) {
+      ops_->destroy(&storage_);
+    }
+  }
+
+  using name_fn_t = std::string (*)();
+
+  typename std::aligned_storage<kBufferSize, kBufferAlign>::type storage_{};
+  const Ops* ops_ = nullptr;
+  name_fn_t type_name_fn_ = nullptr;
+  name_fn_t underlying_type_name_fn_ = nullptr;
+  uint32_t type_id_ = 0;
+  uint32_t underlying_type_id_ = 0;
+  bool is_inline_ = true;
+};
+
+// Type-checked cast (returns nullptr on type mismatch)
+template <typename T>
+inline const T* any_value_cast(const any_value* av) noexcept {
+  using DecayT = typename std::decay<T>::type;
+  if (av && av->type_id() == TypeTraits<DecayT>::type_id()) {
+    return av->cast<T>();
+  }
+  return nullptr;
+}
+
+template <typename T>
+inline T* any_value_cast(any_value* av) noexcept {
+  using DecayT = typename std::decay<T>::type;
+  if (av && av->type_id() == TypeTraits<DecayT>::type_id()) {
+    return av->cast<T>();
+  }
+  return nullptr;
+}
+
+// Force cast (no type check) — equivalent to linb::cast
+template <typename T>
+inline const T* any_value_raw_cast(const any_value* av) noexcept {
+  return av->cast<T>();
+}
+
+template <typename T>
+inline T* any_value_raw_cast(any_value* av) noexcept {
+  return av->cast<T>();
+}
+
+///
+/// Generic Value class using any_value
 ///
 class Value {
  public:
@@ -1894,16 +2166,15 @@ class Value {
   template <class T>
   const T *as(bool strict_cast = false) const {
     if (TypeTraits<T>::type_id() == v_.type_id()) {
-      return linb::any_cast<const T>(&v_);
+      return any_value_cast<const T>(&v_);
     } else if (!strict_cast) {
-      // NOTE: linb::any_cast does type_id check, so use linb::cast(~= reinterpret_cast) here
       if (TypeTraits<T>::is_array() && (v_.type_id() & value::TYPE_ID_1D_ARRAY_BIT)) { // both are array type
         if ((TypeTraits<T>::underlying_type_id() & (~value::TYPE_ID_1D_ARRAY_BIT)) == (v_.underlying_type_id() & (~value::TYPE_ID_1D_ARRAY_BIT))) {
-          return linb::cast<const T>(&v_);
+          return any_value_raw_cast<const T>(&v_);
         }
       } else if (!TypeTraits<T>::is_array() && !(v_.type_id() & value::TYPE_ID_1D_ARRAY_BIT)) { // both are scalar type.
         if (TypeTraits<T>::underlying_type_id() == v_.underlying_type_id()) {
-          return linb::cast<const T>(&v_);
+          return any_value_raw_cast<const T>(&v_);
         }
       }
     }
@@ -1917,15 +2188,15 @@ class Value {
   template <class T>
   T *as(bool strict_cast = false) {
     if (TypeTraits<T>::type_id() == v_.type_id()) {
-      return linb::any_cast<T>(&v_);
+      return any_value_cast<T>(&v_);
     } else if (!strict_cast) {
       if (TypeTraits<T>::is_array() && (v_.type_id() & value::TYPE_ID_1D_ARRAY_BIT)) { // both are array type
         if ((TypeTraits<T>::underlying_type_id() & (~value::TYPE_ID_1D_ARRAY_BIT)) == (v_.underlying_type_id() & (~value::TYPE_ID_1D_ARRAY_BIT))) {
-          return linb::cast<T>(&v_);
+          return any_value_raw_cast<T>(&v_);
         }
       } else if (!TypeTraits<T>::is_array() && !(v_.type_id() & value::TYPE_ID_1D_ARRAY_BIT)) { // both are scalar type.
         if (TypeTraits<T>::underlying_type_id() == v_.underlying_type_id()) {
-          return linb::cast<T>(&v_);
+          return any_value_raw_cast<T>(&v_);
         }
       }
     }
@@ -2006,16 +2277,6 @@ class Value {
   }
 
 
-#if 0
-  // Useful function to retrieve concrete value with type T.
-  // Undefined behavior(usually will triger segmentation fault) when
-  // type-mismatch. (We don't throw exception)
-  template <class T>
-  const T value() const {
-    //return (*reinterpret_cast<const T *>(v_.value()));
-    return linb::any_cast<const T>(v_);
-  }
-#endif
 
 #if 0
   // Helper to log vector size
@@ -2051,24 +2312,18 @@ class Value {
   template <class T>
   nonstd::optional<T> get_value(bool strict_cast = false) const {
     if (TypeTraits<T>::type_id() == v_.type_id()) {
-      const T *pv = linb::any_cast<const T>(&v_);
+      const T *pv = any_value_cast<const T>(&v_);
       if (!pv) {
-        // ???
         return nonstd::nullopt;
       }
 
-      //TUSDZ_LOG_I("get_value: about to move/copy value of type " << TypeTraits<T>::type_name());
-      //log_vector_size(*pv);
       return std::move(*pv);
     } else if (!strict_cast) {
 
       if (TypeTraits<T>::is_array() && (v_.type_id() & value::TYPE_ID_1D_ARRAY_BIT)) { // both are array type
         if ((TypeTraits<T>::underlying_type_id() & (~value::TYPE_ID_1D_ARRAY_BIT)) == (v_.underlying_type_id() & (~value::TYPE_ID_1D_ARRAY_BIT))) {
-          //TUSDZ_LOG_I("get_value: strict_cast=false, both are array types, about to cast for type " << TypeTraits<T>::type_name());
-          const T* pv = linb::cast<const T>(&v_);
-          //TUSDZ_LOG_I("get_value: cast successful, pv=" << (pv ? "valid" : "null"));
+          const T* pv = any_value_raw_cast<const T>(&v_);
           if (pv) {
-            //log_vector_size(*pv);
             if (!check_vector_size(*pv)) {
               return nonstd::nullopt;
             }
@@ -2077,7 +2332,7 @@ class Value {
         }
       } else if (!TypeTraits<T>::is_array() && !(v_.type_id() & value::TYPE_ID_1D_ARRAY_BIT)) { // both are scalar type.
         if (TypeTraits<T>::underlying_type_id() == v_.underlying_type_id()) {
-          return std::move(*linb::cast<const T>(&v_));
+          return std::move(*any_value_raw_cast<const T>(&v_));
         }
       }
     }
@@ -2119,8 +2374,8 @@ class Value {
   }
 #endif
 
-  const linb::any &get_raw() const { return v_; }
-  linb::any &get_raw_mutable() { return v_; }
+  const any_value &get_raw() const { return v_; }
+  any_value &get_raw_mutable() { return v_; }
 
   bool is_array() const { return (v_.type_id() & value::TYPE_ID_1D_ARRAY_BIT); }
 
@@ -2130,24 +2385,14 @@ class Value {
   // ...)
   size_t array_size() const;
 
-  bool is_empty() const { return v_.type_id() == value::TYPE_ID_NULL; }
+  bool is_empty() const { return v_.empty() || v_.type_id() == value::TYPE_ID_NULL; }
 
   bool is_none() const { return v_.type_id() == value::TYPE_ID_VALUEBLOCK; }
 
   size_t estimate_memory_usage() const;
 
-#if 0 // TODO
-  template <class T>
-  void set_value(T &&v) noexcept {
-      //TUSDZ_LOG_I("set_value move");
-      linb::any(v).swap(v_);
-      //v_.(v);
-  }
-#endif
-
  private:
-  // any_value v_;
-  linb::any v_{nullptr};
+  any_value v_;
 
   // Helper methods for as_view() implementation
   template <class T>
