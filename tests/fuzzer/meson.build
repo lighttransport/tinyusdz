@@ -130,6 +130,14 @@ executable('fuzz_wuffs_jpeg_decoding',
   cpp_args : ['-fsanitize=address,fuzzer', '-DTINYUSDZ_FUZZER_BUILD=1'],
   link_args : '-fsanitize=address,fuzzer' )
 
+executable('fuzz_ascii_value_parser',
+  'ascii_value_parser_fuzzmain.cc',
+  '../../src/tiny-string.cc',
+  install: true,
+  include_directories : incdirs,
+  cpp_args : ['-fsanitize=address,fuzzer', '-DTINYUSDZ_FUZZER_BUILD=1'],
+  link_args : '-fsanitize=address,fuzzer')
+
 executable('fuzz_alac_decoding',
   'alac_decoding_fuzzmain.cc',
   '../../src/external/alac/codec/EndianPortable.c',
