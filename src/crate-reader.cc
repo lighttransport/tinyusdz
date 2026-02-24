@@ -5377,10 +5377,10 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
 
             DCOUT("UNREGISTERED_VALUE.string = " << str);
 
-            // NOTE: string may contain double-quotes.
-            // We remove it at here, but it'd be better not to do it.
-            std::string unquoted = unwrap(str);
-            value->Set(unquoted);
+            // Preserve the string exactly as stored in the crate file.
+            // Quotes are part of the value for string-typed unregistered
+            // metadata and must roundtrip losslessly.
+            value->Set(str);
 
             if (!_sr->seek_set(saved_position)) {
               PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to set seek.");
