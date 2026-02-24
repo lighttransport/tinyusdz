@@ -757,8 +757,15 @@ bool print_float_array(std::vector<float> &v,
 
 // Helper function to skip whitespace
 static inline const char* skip_whitespace(const char *p, const char *end) {
-  while (p < end && (*p == ' ' || *p == '\t' || *p == '\n' || *p == '\r')) {
-    p++;
+  while (p < end) {
+    if (*p == ' ' || *p == '\t' || *p == '\n' || *p == '\r') {
+      p++;
+    } else if (*p == '#') {
+      // Skip comment to end of line
+      while (p < end && *p != '\n') p++;
+    } else {
+      break;
+    }
   }
   return p;
 }
