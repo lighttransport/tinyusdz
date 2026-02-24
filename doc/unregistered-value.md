@@ -132,16 +132,64 @@ if (val.IsHolding<SdfUnregisteredValueListOp>())
 
 Roundtrip is lossless — strings stay as strings, dictionaries stay as typed dictionaries.
 
+### Writing Back to USDA
+
+The USDA writer handles `SdfUnregisteredValue` in `Sdf_WriteSimpleField()` (`pxr/usd/sdf/fileIO_Common.h:259-280`):
+
+```cpp
+bool isUnregisteredValue = value.IsHolding<SdfUnregisteredValue>();
+
+if (isUnregisteredValue) {
+    const VtValue &boxedValue = value.Get<SdfUnregisteredValue>().GetValue();
+
+    if (boxedValue.IsHolding<SdfUnregisteredValueListOp>()) {
+        Sdf_FileIOUtility::WriteListOp(...);
+    }
+    else if (boxedValue.IsHolding<VtDictionary>()) {
+        Sdf_FileIOUtility::WriteDictionary(out, indent, true, boxedValue.Get<VtDictionary>());
+    }
+    else if (boxedValue.IsHolding<std::string>()) {
+        // Written verbatim — NO quoting, NO re-parsing
+        Sdf_FileIOUtility::Write(out, 0, "%s\n", boxedValue.Get<std::string>().c_str());
+    }
+} else {
+    // Regular values go through StringFromVtValue() which applies Quote()
+    Sdf_FileIOUtility::Write(out, 0, "%s\n",
+        Sdf_FileIOUtility::StringFromVtValue(value).c_str());
+}
+```
+
+The three cases:
+
+| Inner Type | Writer Action |
+|---|---|
+| `std::string` | Direct `%s` output — **unquoted, verbatim** |
+| `VtDictionary` | `WriteDictionary()` with type annotations |
+| `SdfUnregisteredValueListOp` | `WriteListOp()` (add/delete/prepend/append syntax) |
+
+**Key distinction from regular strings**: Normal string values go through `StringFromVtValue()` → `Quote()` (`pxr/usd/sdf/fileIO_Common.cpp:945-1030`) which adds quotes and escapes special characters. UnregisteredValue strings bypass this entirely — the raw text goes straight to output.
+
+**No type recovery**: The writer does NOT attempt to re-parse `"42"` back to int or `"(1, 2, 3)"` back to a vector. The exact text captured during parsing is emitted verbatim.
+
+**Roundtrip examples**:
+```
+USDA input:   custom_field = 42            → parse → SdfUnregisteredValue("42")            → write → custom_field = 42
+USDA input:   custom_vec = (1, 2, 3)       → parse → SdfUnregisteredValue("(1, 2, 3)")    → write → custom_vec = (1, 2, 3)
+USDA input:   custom_str = "hello"         → parse → SdfUnregisteredValue("\"hello\"")     → write → custom_str = "hello"
+```
+
+Note: quoted strings in the original USDA are stored with quotes as part of the recorded string, so the quotes survive the roundtrip.
+
 ### Summary Table (OpenUSD)
 
-| Value in USDA | Storage in SdfUnregisteredValue | Type Info |
+| Value in USDA | Storage in SdfUnregisteredValue | Written to USDA |
 |---|---|---|
-| `3.14` | `string("3.14")` | None |
-| `(1, 2, 3)` | `string("(1, 2, 3)")` | None |
-| `[1, 2, 3]` | `string("[1, 2, 3]")` | None |
-| `((1,0,0,0),...)` | `string("((1, 0, 0, 0), ...)")` | None |
-| `{ int x = 1 }` | `VtDictionary` | Full type info |
-| `prepend [...]` | `SdfUnregisteredValueListOp` | Operation preserved |
+| `3.14` | `string("3.14")` | `3.14` (verbatim) |
+| `(1, 2, 3)` | `string("(1, 2, 3)")` | `(1, 2, 3)` (verbatim) |
+| `[1, 2, 3]` | `string("[1, 2, 3]")` | `[1, 2, 3]` (verbatim) |
+| `((1,0,0,0),...)` | `string("((1, 0, 0, 0), ...)")` | `((1, 0, 0, 0), ...)` (verbatim) |
+| `{ int x = 1 }` | `VtDictionary` | `{ int x = 1 }` (typed dict) |
+| `prepend [...]` | `SdfUnregisteredValueListOp` | `prepend [...]` (list op) |
 
 ---
 

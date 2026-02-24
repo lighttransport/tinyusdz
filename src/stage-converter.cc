@@ -4759,6 +4759,13 @@ bool CrateWriter::ConvertPrimSpecRecursive(
               << metas.get_customData().size() << " entries");
   }
 
+  // Add unregistered metadata (OpenUSD-compatible: stored as strings)
+  for (const auto &item : metas.unregisteredMetas) {
+    crate::CrateValue unreg_value;
+    unreg_value.Set(item.second);  // Store as string in crate
+    fields.push_back({item.first, unreg_value});
+  }
+
   // Add apiSchemas if present
   if (metas.has_apiSchemas()) {
     const APISchemas& api_schemas = metas.get_apiSchemas();
