@@ -2141,6 +2141,11 @@ bool AsciiParser::ReadPrimAttrIdentifier(std::string *token) {
     }
   }
 
+  if (buf.empty()) {
+    calculate_cursor_from_stream_pos();
+    PUSH_ERROR_AND_RETURN("Empty PrimAttr identifier.");
+  }
+
   // '.' must lie in the middle of string literal
   if (buf.back() == '.') {
     calculate_cursor_from_stream_pos();
@@ -5297,8 +5302,8 @@ bool AsciiParser::ParseVariantSet(
     const int64_t primIdx, const int64_t parentPrimIdx, const uint32_t depth,
     VariantSetContent *variantSetContentOut) {
 
-  if (depth > 1024 * 1024) {
-    PUSH_ERROR_AND_RETURN_TAG(kAscii, "[InternalError] too deep nested call.");
+  if (depth > 512) {
+    PUSH_ERROR_AND_RETURN_TAG(kAscii, "[InternalError] VariantSet nesting too deep (> 512).");
   }
 
   if (!variantSetContentOut) {
@@ -5526,6 +5531,10 @@ bool AsciiParser::ParseBlock(const Specifier spec, const int64_t primIdx,
   (void)in_variantStaement;
 
   DCOUT("ParseBlock");
+
+  if (depth > 512) {
+    PUSH_ERROR_AND_RETURN_TAG(kAscii, "[InternalError] Prim definition nesting too deep (> 512).");
+  }
 
   // Report progress and check for cancellation
   if (!ReportProgress()) {
