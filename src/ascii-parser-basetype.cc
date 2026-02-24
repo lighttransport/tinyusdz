@@ -2239,6 +2239,11 @@ bool AsciiParser::SepBy1TupleType(
       return false;
     }
 
+    constexpr size_t kMaxArrayElements = 1024ull * 1024ull * 128ull;
+    if (result->size() >= kMaxArrayElements) {
+      PushError(fmt::format("Tuple array element count exceeds limit ({}).\n", kMaxArrayElements));
+      return false;
+    }
     if (MaybeNone()) {
       result->push_back(nonstd::nullopt);
     } else {
@@ -2308,6 +2313,11 @@ bool AsciiParser::SepBy1TupleType(const char sep,
       break;
     }
 
+    constexpr size_t kMaxArrayElements = 1024ull * 1024ull * 128ull;
+    if (result->size() >= kMaxArrayElements) {
+      PushError(fmt::format("Tuple array element count exceeds limit ({}).\n", kMaxArrayElements));
+      return false;
+    }
     CHECK_MEMORY_USAGE(sizeof(nonstd::optional<T>) + sizeof(T));
     result->push_back(value);
   }
