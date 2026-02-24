@@ -2063,6 +2063,8 @@ bool AsciiParser::SepBy1BasicType(const char sep, std::vector<T> *result) {
     result->push_back(value);
   }
 
+  constexpr size_t kMaxArrayElements = 1024ull * 1024ull * 128ull; // 128M elements max
+
   while (!Eof()) {
     // sep
     if (!SkipWhitespaceAndNewline()) {
@@ -2089,6 +2091,10 @@ bool AsciiParser::SepBy1BasicType(const char sep, std::vector<T> *result) {
       break;
     }
 
+    if (result->size() >= kMaxArrayElements) {
+      PushError(fmt::format("Array element count exceeds limit ({}).\n", kMaxArrayElements));
+      return false;
+    }
     CHECK_MEMORY_USAGE(sizeof(nonstd::optional<T>) + sizeof(T));
     result->push_back(value);
   }
@@ -2124,6 +2130,8 @@ bool AsciiParser::SepBy1BasicType(const char sep, const char end_symbol, std::ve
     CHECK_MEMORY_USAGE(sizeof(nonstd::optional<T>) + sizeof(T));
     result->push_back(value);
   }
+
+  constexpr size_t kMaxArrayElements = 1024ull * 1024ull * 128ull; // 128M elements max
 
   while (!Eof()) {
     if (!SkipCommentAndWhitespaceAndNewline()) {
@@ -2168,9 +2176,12 @@ bool AsciiParser::SepBy1BasicType(const char sep, const char end_symbol, std::ve
       break;
     }
 
+    if (result->size() >= kMaxArrayElements) {
+      PushError(fmt::format("Array element count exceeds limit ({}).\n", kMaxArrayElements));
+      return false;
+    }
     CHECK_MEMORY_USAGE(sizeof(nonstd::optional<T>) + sizeof(T));
     result->push_back(value);
-
 
   }
 
