@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "dev:offscreengl": "vite --open /offscreengl.html",
     "dev:anim": "vite --open /animation.html",
     "dev:skel": "vite --open /skin-anim.html",
     "dev:mtlx": "vite --open /materialx.html",
