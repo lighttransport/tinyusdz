@@ -590,7 +590,7 @@ std::vector<std::string> to_utf8_chars(const std::string &str) {
   std::vector<std::string> utf8_chars;
   size_t sz = str.size();
 
-  for (size_t i = 0; i <= sz;) {
+  for (size_t i = 0; i < sz;) {
     int len = 0;
     std::string s = detail::extract_utf8_char(str, uint32_t(i), len);
     if (len == 0) {
