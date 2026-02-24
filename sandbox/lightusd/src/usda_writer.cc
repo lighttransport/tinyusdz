@@ -380,6 +380,125 @@ std::string UsdaWriter::format_array(const Value& value) const {
         }
     }
 
+    // Double3 array (including role types like point3d, vector3d, normal3d)
+    {
+        Value::ArrayView view = value.as_double3_array();
+        if (view.data && view.count > 0) {
+            const double* data = static_cast<const double*>(view.data);
+            oss << std::setprecision(options_.double_precision);
+            oss << "[";
+            for (size_t i = 0; i < view.count; ++i) {
+                if (i > 0) oss << ", ";
+                oss << "(" << data[i*3] << ", " << data[i*3+1] << ", " << data[i*3+2] << ")";
+            }
+            oss << "]";
+            return oss.str();
+        }
+    }
+
+    // Double4 array
+    {
+        Value::ArrayView view = value.as_double4_array();
+        if (view.data && view.count > 0) {
+            const double* data = static_cast<const double*>(view.data);
+            oss << std::setprecision(options_.double_precision);
+            oss << "[";
+            for (size_t i = 0; i < view.count; ++i) {
+                if (i > 0) oss << ", ";
+                oss << "(" << data[i*4] << ", " << data[i*4+1] << ", " << data[i*4+2] << ", " << data[i*4+3] << ")";
+            }
+            oss << "]";
+            return oss.str();
+        }
+    }
+
+    // Matrix4d array
+    {
+        Value::ArrayView view = value.as_matrix4d_array();
+        if (view.data && view.count > 0) {
+            const double* data = static_cast<const double*>(view.data);
+            oss << std::setprecision(options_.double_precision);
+            oss << "[";
+            for (size_t i = 0; i < view.count; ++i) {
+                if (i > 0) oss << ", ";
+                const double* m = data + i * 16;
+                oss << "( ";
+                for (int row = 0; row < 4; ++row) {
+                    oss << "(";
+                    for (int col = 0; col < 4; ++col) {
+                        if (col > 0) oss << ", ";
+                        oss << m[row * 4 + col];
+                    }
+                    oss << ")";
+                    if (row < 3) oss << ", ";
+                }
+                oss << " )";
+            }
+            oss << "]";
+            return oss.str();
+        }
+    }
+
+    // Quatf array
+    {
+        Value::ArrayView view = value.as_quatf_array();
+        if (view.data && view.count > 0) {
+            const float* data = static_cast<const float*>(view.data);
+            oss << std::setprecision(options_.float_precision);
+            oss << "[";
+            for (size_t i = 0; i < view.count; ++i) {
+                if (i > 0) oss << ", ";
+                oss << "(" << data[i*4] << ", " << data[i*4+1] << ", " << data[i*4+2] << ", " << data[i*4+3] << ")";
+            }
+            oss << "]";
+            return oss.str();
+        }
+    }
+
+    // Quatd array
+    {
+        Value::ArrayView view = value.as_quatd_array();
+        if (view.data && view.count > 0) {
+            const double* data = static_cast<const double*>(view.data);
+            oss << std::setprecision(options_.double_precision);
+            oss << "[";
+            for (size_t i = 0; i < view.count; ++i) {
+                if (i > 0) oss << ", ";
+                oss << "(" << data[i*4] << ", " << data[i*4+1] << ", " << data[i*4+2] << ", " << data[i*4+3] << ")";
+            }
+            oss << "]";
+            return oss.str();
+        }
+    }
+
+    // String array
+    if (elem_type == TypeId::String && value.is_array()) {
+        const auto* typed_arr = static_cast<const TypedArray<std::string>*>(value.raw_data());
+        if (typed_arr && typed_arr->size() > 0) {
+            oss << "[";
+            for (size_t i = 0; i < typed_arr->size(); ++i) {
+                if (i > 0) oss << ", ";
+                oss << escape_string((*typed_arr)[i]);
+            }
+            oss << "]";
+            return oss.str();
+        }
+    }
+
+    // Token array
+    if (elem_type == TypeId::Token && value.is_array()) {
+        const auto* typed_arr = static_cast<const TypedArray<Token>*>(value.raw_data());
+        if (typed_arr && typed_arr->size() > 0) {
+            oss << "[";
+            for (size_t i = 0; i < typed_arr->size(); ++i) {
+                if (i > 0) oss << ", ";
+                oss << escape_string((*typed_arr)[i].str());
+            }
+            oss << "]";
+            return oss.str();
+        }
+    }
+
     // Empty array fallback
     return "[]";
 }
@@ -692,6 +811,19 @@ std::string UsdaWriter::format(const Prim& prim, int depth) const {
             oss << ind1 << "instanceable = true" << options_.newline;
         }
 
+        // apiSchemas (special USD format: prepend apiSchemas = ["..."])
+        {
+            auto api_schemas = prim.api_schemas();
+            if (!api_schemas.empty()) {
+                oss << ind1 << "prepend apiSchemas = [";
+                for (size_t i = 0; i < api_schemas.size(); ++i) {
+                    if (i > 0) oss << ", ";
+                    oss << "\"" << api_schemas[i] << "\"";
+                }
+                oss << "]" << options_.newline;
+            }
+        }
+
         // inherits
         const PathList& inherits_list = prim.inherits();
         format_path_list(oss, inherits_list.prepended_items(), ind1, "prepend ", "inherits", options_.newline);
@@ -758,6 +890,8 @@ std::string UsdaWriter::format(const Prim& prim, int depth) const {
         std::sort(meta_keys.begin(), meta_keys.end());
 
         for (const auto& key : meta_keys) {
+            if (key == "apiSchemas") continue;  // Already written above
+
             const Value* val = prim.get_metadata(key);
             if (!val) continue;
 

@@ -164,6 +164,12 @@ extern const char* const kMaterialSchema;
 /// Shader prim schema
 extern const char* const kShaderSchema;
 
+/// NodeGraph prim schema
+extern const char* const kNodeGraphSchema;
+
+/// MaterialXConfigAPI schema
+extern const char* const kMaterialXConfigAPISchema;
+
 /// Camera prim schema
 extern const char* const kCameraSchema;
 
@@ -175,6 +181,27 @@ extern const char* const kDistantLightSchema;
 
 /// DomeLight prim schema
 extern const char* const kDomeLightSchema;
+
+/// RectLight prim schema
+extern const char* const kRectLightSchema;
+
+/// CylinderLight prim schema (light)
+extern const char* const kCylinderLightSchema;
+
+/// DiskLight prim schema
+extern const char* const kDiskLightSchema;
+
+/// PortalLight prim schema
+extern const char* const kPortalLightSchema;
+
+/// MeshLight prim schema
+extern const char* const kMeshLightSchema;
+
+/// CollectionAPI schema
+extern const char* const kCollectionAPISchema;
+
+/// SkelBindingAPI schema
+extern const char* const kSkelBindingAPISchema;
 
 /// SkelRoot prim schema
 extern const char* const kSkelRootSchema;

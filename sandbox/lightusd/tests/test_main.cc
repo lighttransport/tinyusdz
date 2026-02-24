@@ -3225,6 +3225,371 @@ TEST(PrimSkeleton_Structure) {
 }
 
 // ============================================================================
+// NodeGraph and MaterialXConfigAPI Tests
+// ============================================================================
+
+TEST(Schema_NodeGraph_Registered) {
+    auto& registry = SchemaRegistry::instance();
+    EXPECT_TRUE(registry.has_schema("NodeGraph"));
+
+    const PrimSchema* schema = registry.get_schema("NodeGraph");
+    EXPECT_TRUE(schema != nullptr);
+    if (schema) {
+        EXPECT_EQ(schema->type_name, "NodeGraph");
+        EXPECT_TRUE(schema->allow_additional_properties);
+    }
+
+    // Check it appears in builtin types
+    auto types = SchemaRegistry::builtin_schema_types();
+    bool found = false;
+    for (const auto& t : types) {
+        if (t == "NodeGraph") { found = true; break; }
+    }
+    EXPECT_TRUE(found);
+
+    // Check JSON accessor
+    const char* json = SchemaRegistry::get_builtin_schema_json("NodeGraph");
+    EXPECT_TRUE(json != nullptr);
+}
+
+TEST(Schema_MaterialXConfigAPI_Registered) {
+    auto& registry = SchemaRegistry::instance();
+    EXPECT_TRUE(registry.has_schema("MaterialXConfigAPI"));
+
+    const PrimSchema* schema = registry.get_schema("MaterialXConfigAPI");
+    EXPECT_TRUE(schema != nullptr);
+    if (schema) {
+        EXPECT_EQ(schema->type_name, "MaterialXConfigAPI");
+        EXPECT_TRUE(schema->allow_additional_properties);
+    }
+
+    // Check JSON accessor
+    const char* json = SchemaRegistry::get_builtin_schema_json("MaterialXConfigAPI");
+    EXPECT_TRUE(json != nullptr);
+}
+
+TEST(NodeGraph_Prim_With_Children) {
+    // Create a NodeGraph prim with child Shader nodes
+    Prim nodegraph("MaterialXGraph", "NodeGraph");
+
+    Prim shader1("image_color", "Shader");
+    Attribute info_id1(TypeId::Token);
+    info_id1.set_default(Value::from_token(Token("ND_image_color3")));
+    shader1.set_attribute("info:id", std::move(info_id1));
+
+    Prim shader2("standard_surface", "Shader");
+    Attribute info_id2(TypeId::Token);
+    info_id2.set_default(Value::from_token(Token("ND_standard_surface_surfaceshader")));
+    shader2.set_attribute("info:id", std::move(info_id2));
+
+    EXPECT_TRUE(nodegraph.add_child(std::move(shader1)));
+    EXPECT_TRUE(nodegraph.add_child(std::move(shader2)));
+    EXPECT_EQ(nodegraph.child_count(), 2u);
+    EXPECT_EQ(nodegraph.type_name(), "NodeGraph");
+
+    // Verify children
+    const Prim* child1 = nodegraph.child("image_color");
+    EXPECT_TRUE(child1 != nullptr);
+    if (child1) {
+        EXPECT_EQ(child1->type_name(), "Shader");
+    }
+}
+
+TEST(ApiSchemas_SetAndGet) {
+    Prim mat("MyMaterial", "Material");
+    mat.set_api_schemas({"MaterialXConfigAPI"});
+
+    auto schemas = mat.api_schemas();
+    EXPECT_EQ(schemas.size(), 1u);
+    if (!schemas.empty()) {
+        EXPECT_EQ(schemas[0], "MaterialXConfigAPI");
+    }
+
+    // Add another
+    mat.add_api_schema("ShadowAPI");
+    schemas = mat.api_schemas();
+    EXPECT_EQ(schemas.size(), 2u);
+}
+
+TEST(ApiSchemas_USDA_Output) {
+    // Build Material > NodeGraph > Shader hierarchy
+    Stage stage = Stage::create();
+    stage.set_default_prim("Materials");
+
+    Prim materials("Materials", "Scope");
+
+    Prim mat("MyMaterial", "Material");
+    mat.set_api_schemas({"MaterialXConfigAPI"});
+
+    // Add a config property
+    Attribute mtlx_version(TypeId::String);
+    mtlx_version.set_default(Value::from_string("1.38"));
+    mat.set_attribute("config:mtlx:version", std::move(mtlx_version));
+
+    Attribute mtlx_colorspace(TypeId::String);
+    mtlx_colorspace.set_default(Value::from_string("lin_rec709"));
+    mat.set_attribute("config:mtlx:colorspace", std::move(mtlx_colorspace));
+
+    // NodeGraph child
+    Prim nodegraph("MaterialXGraph", "NodeGraph");
+
+    Prim shader("standard_surface", "Shader");
+    Attribute info_id(TypeId::Token);
+    info_id.set_default(Value::from_token(Token("ND_standard_surface_surfaceshader")));
+    shader.set_attribute("info:id", std::move(info_id));
+
+    nodegraph.add_child(std::move(shader));
+    mat.add_child(std::move(nodegraph));
+    materials.add_child(std::move(mat));
+    stage.add_root_prim(std::move(materials));
+
+    std::string usda = stage.to_usda();
+    printf("\nNodeGraph USDA output:\n%s\n", usda.c_str());
+
+    // Verify USDA contains expected patterns
+    EXPECT_TRUE(usda.find("def NodeGraph") != std::string::npos);
+    EXPECT_TRUE(usda.find("prepend apiSchemas = [\"MaterialXConfigAPI\"]") != std::string::npos);
+    EXPECT_TRUE(usda.find("def Material") != std::string::npos);
+    EXPECT_TRUE(usda.find("def Shader") != std::string::npos);
+    EXPECT_TRUE(usda.find("config:mtlx:version") != std::string::npos);
+    EXPECT_TRUE(usda.find("config:mtlx:colorspace") != std::string::npos);
+}
+
+// ============================================================================
+// New Light Schema Tests
+// ============================================================================
+
+TEST(Schema_RectLight_Registered) {
+    auto& registry = SchemaRegistry::instance();
+    EXPECT_TRUE(registry.has_schema("RectLight"));
+    const PrimSchema* schema = registry.get_schema("RectLight");
+    EXPECT_TRUE(schema != nullptr);
+    if (schema) {
+        EXPECT_EQ(schema->type_name, "RectLight");
+    }
+    const char* json = SchemaRegistry::get_builtin_schema_json("RectLight");
+    EXPECT_TRUE(json != nullptr);
+}
+
+TEST(Schema_CylinderLight_Registered) {
+    auto& registry = SchemaRegistry::instance();
+    EXPECT_TRUE(registry.has_schema("CylinderLight"));
+    const char* json = SchemaRegistry::get_builtin_schema_json("CylinderLight");
+    EXPECT_TRUE(json != nullptr);
+}
+
+TEST(Schema_DiskLight_Registered) {
+    auto& registry = SchemaRegistry::instance();
+    EXPECT_TRUE(registry.has_schema("DiskLight"));
+    const char* json = SchemaRegistry::get_builtin_schema_json("DiskLight");
+    EXPECT_TRUE(json != nullptr);
+}
+
+TEST(Schema_PortalLight_Registered) {
+    auto& registry = SchemaRegistry::instance();
+    EXPECT_TRUE(registry.has_schema("PortalLight"));
+    const char* json = SchemaRegistry::get_builtin_schema_json("PortalLight");
+    EXPECT_TRUE(json != nullptr);
+}
+
+TEST(Schema_MeshLight_Registered) {
+    auto& registry = SchemaRegistry::instance();
+    EXPECT_TRUE(registry.has_schema("MeshLight"));
+    const char* json = SchemaRegistry::get_builtin_schema_json("MeshLight");
+    EXPECT_TRUE(json != nullptr);
+}
+
+TEST(Schema_CollectionAPI_Registered) {
+    auto& registry = SchemaRegistry::instance();
+    EXPECT_TRUE(registry.has_schema("CollectionAPI"));
+    const PrimSchema* schema = registry.get_schema("CollectionAPI");
+    EXPECT_TRUE(schema != nullptr);
+    if (schema) {
+        EXPECT_TRUE(schema->allow_additional_properties);
+    }
+    const char* json = SchemaRegistry::get_builtin_schema_json("CollectionAPI");
+    EXPECT_TRUE(json != nullptr);
+}
+
+TEST(Schema_SkelBindingAPI_Registered) {
+    auto& registry = SchemaRegistry::instance();
+    EXPECT_TRUE(registry.has_schema("SkelBindingAPI"));
+    const PrimSchema* schema = registry.get_schema("SkelBindingAPI");
+    EXPECT_TRUE(schema != nullptr);
+    if (schema) {
+        EXPECT_TRUE(schema->allow_additional_properties);
+    }
+    const char* json = SchemaRegistry::get_builtin_schema_json("SkelBindingAPI");
+    EXPECT_TRUE(json != nullptr);
+}
+
+// ============================================================================
+// Value Array Type Tests
+// ============================================================================
+
+TEST(Value_Double3Array) {
+    double data[] = {1.0, 2.0, 3.0, 4.0, 5.0, 6.0};
+    Value v = Value::from_double3_array(data, 2);
+    EXPECT_TRUE(v.is_array());
+    EXPECT_EQ(v.array_size(), 2u);
+
+    Value::ArrayView view = v.as_double3_array();
+    EXPECT_TRUE(view.data != nullptr);
+    EXPECT_EQ(view.count, 2u);
+    if (view.data) {
+        const double* d = static_cast<const double*>(view.data);
+        EXPECT_EQ(d[0], 1.0);
+        EXPECT_EQ(d[1], 2.0);
+        EXPECT_EQ(d[2], 3.0);
+        EXPECT_EQ(d[3], 4.0);
+        EXPECT_EQ(d[4], 5.0);
+        EXPECT_EQ(d[5], 6.0);
+    }
+}
+
+TEST(Value_Matrix4dArray) {
+    // Identity matrix
+    double identity[16] = {
+        1, 0, 0, 0,
+        0, 1, 0, 0,
+        0, 0, 1, 0,
+        0, 0, 0, 1
+    };
+    // Translation matrix
+    double translate[16] = {
+        1, 0, 0, 0,
+        0, 1, 0, 0,
+        0, 0, 1, 0,
+        10, 20, 30, 1
+    };
+    double data[32];
+    std::memcpy(data, identity, sizeof(identity));
+    std::memcpy(data + 16, translate, sizeof(translate));
+
+    Value v = Value::from_matrix4d_array(data, 2);
+    EXPECT_TRUE(v.is_array());
+    EXPECT_EQ(v.array_size(), 2u);
+
+    Value::ArrayView view = v.as_matrix4d_array();
+    EXPECT_TRUE(view.data != nullptr);
+    EXPECT_EQ(view.count, 2u);
+    if (view.data) {
+        const double* d = static_cast<const double*>(view.data);
+        // First matrix: identity
+        EXPECT_EQ(d[0], 1.0);
+        EXPECT_EQ(d[5], 1.0);
+        EXPECT_EQ(d[15], 1.0);
+        // Second matrix: translation
+        EXPECT_EQ(d[16 + 12], 10.0);
+        EXPECT_EQ(d[16 + 13], 20.0);
+        EXPECT_EQ(d[16 + 14], 30.0);
+    }
+}
+
+TEST(Value_QuatfArray) {
+    float data[] = {0, 0, 0, 1, 0.707f, 0, 0, 0.707f};
+    Value v = Value::from_quatf_array(data, 2);
+    EXPECT_TRUE(v.is_array());
+    EXPECT_EQ(v.array_size(), 2u);
+
+    Value::ArrayView view = v.as_quatf_array();
+    EXPECT_TRUE(view.data != nullptr);
+    EXPECT_EQ(view.count, 2u);
+    if (view.data) {
+        const float* f = static_cast<const float*>(view.data);
+        EXPECT_EQ(f[0], 0.0f);
+        EXPECT_EQ(f[3], 1.0f);
+    }
+}
+
+TEST(Value_TokenArray) {
+    std::vector<std::string> tokens = {"joint1", "joint2", "joint3"};
+    Value v = Value::from_token_array(tokens);
+    EXPECT_TRUE(v.is_array());
+    EXPECT_EQ(v.array_size(), 3u);
+    // Verify it's a Token array type
+    TypeId expected = make_array_type(TypeId::Token);
+    EXPECT_EQ(v.type_id(), expected);
+}
+
+// ============================================================================
+// Writer Array Tests
+// ============================================================================
+
+TEST(Writer_Double3Array) {
+    double data[] = {1.5, 2.5, 3.5, 4.5, 5.5, 6.5};
+    Value v = Value::from_double3_array(data, 2);
+    std::string s = to_string(v);
+    EXPECT_TRUE(s.find("(") != std::string::npos);
+    EXPECT_TRUE(s.find("[") != std::string::npos);
+    EXPECT_TRUE(s.find("1.5") != std::string::npos);
+    EXPECT_TRUE(s.find("6.5") != std::string::npos);
+}
+
+TEST(Writer_Matrix4dArray) {
+    double identity[16] = {
+        1, 0, 0, 0,
+        0, 1, 0, 0,
+        0, 0, 1, 0,
+        0, 0, 0, 1
+    };
+    Value v = Value::from_matrix4d_array(identity, 1);
+    std::string s = to_string(v);
+    // Should contain matrix formatting with nested parens
+    EXPECT_TRUE(s.find("( (") != std::string::npos);
+    EXPECT_TRUE(s.find(") )") != std::string::npos);
+}
+
+TEST(Writer_QuatfArray) {
+    float data[] = {0, 0, 0, 1};
+    Value v = Value::from_quatf_array(data, 1);
+    std::string s = to_string(v);
+    EXPECT_TRUE(s.find("(0") != std::string::npos);
+    EXPECT_TRUE(s.find(", 1)") != std::string::npos);
+}
+
+// ============================================================================
+// SkelAnimation USDA Integration Test
+// ============================================================================
+
+TEST(SkelAnimation_USDA) {
+    Stage stage = Stage::create();
+    stage.set_default_prim("Anim");
+
+    Prim anim("Anim", "SkelAnimation");
+
+    // joints token[] - must use array type for Attribute
+    std::vector<std::string> joints = {"joint1", "joint2"};
+    Attribute joints_attr(make_array_type(TypeId::Token));
+    joints_attr.set_default(Value::from_token_array(joints));
+    anim.set_attribute("joints", std::move(joints_attr));
+
+    // translations float3[] - must use array type
+    float trans[] = {0, 0, 0, 1, 2, 3};
+    Attribute trans_attr(make_array_type(TypeId::Float3));
+    trans_attr.set_default(Value::from_float3_array(trans, 2));
+    anim.set_attribute("translations", std::move(trans_attr));
+
+    // rotations quatf[] - must use array type
+    float rots[] = {0, 0, 0, 1, 0.707f, 0, 0, 0.707f};
+    Attribute rots_attr(make_array_type(TypeId::Quatf));
+    rots_attr.set_default(Value::from_quatf_array(rots, 2));
+    anim.set_attribute("rotations", std::move(rots_attr));
+
+    stage.add_root_prim(std::move(anim));
+
+    std::string usda = stage.to_usda();
+    printf("\nSkelAnimation USDA output:\n%s\n", usda.c_str());
+
+    // Verify output
+    EXPECT_TRUE(usda.find("def SkelAnimation") != std::string::npos);
+    EXPECT_TRUE(usda.find("joints") != std::string::npos);
+    EXPECT_TRUE(usda.find("translations") != std::string::npos);
+    EXPECT_TRUE(usda.find("rotations") != std::string::npos);
+    EXPECT_TRUE(usda.find("0.707") != std::string::npos);
+}
+
+// ============================================================================
 // Main
 // ============================================================================
 

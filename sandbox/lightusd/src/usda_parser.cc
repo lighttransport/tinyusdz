@@ -1345,13 +1345,21 @@ Result<Value> Parser::parse_array_value(TypeId element_type) {
     }
 
     std::vector<float> float_values;
+    std::vector<double> double_values;
     std::vector<int32_t> int_values;
     std::vector<std::string> string_values;
 
-    bool is_float = (element_type == TypeId::Float || element_type == TypeId::Float2 ||
+    bool is_double = (element_type == TypeId::Double || element_type == TypeId::Double2 ||
+                      element_type == TypeId::Double3 || element_type == TypeId::Double4 ||
+                      element_type == TypeId::Matrix4d || element_type == TypeId::Matrix3d ||
+                      element_type == TypeId::Quatd ||
+                      element_type == TypeId::Point3d || element_type == TypeId::Vector3d ||
+                      element_type == TypeId::Normal3d || element_type == TypeId::Color3d ||
+                      element_type == TypeId::Color4d);
+    bool is_float = !is_double &&
+                    (element_type == TypeId::Float || element_type == TypeId::Float2 ||
                      element_type == TypeId::Float3 || element_type == TypeId::Float4 ||
-                     element_type == TypeId::Double || element_type == TypeId::Double2 ||
-                     element_type == TypeId::Double3 || element_type == TypeId::Double4 ||
+                     element_type == TypeId::Quatf ||
                      element_type == TypeId::Color3f || element_type == TypeId::Point3f ||
                      element_type == TypeId::Vector3f || element_type == TypeId::Normal3f ||
                      element_type == TypeId::TexCoord2f);
@@ -1362,6 +1370,7 @@ Result<Value> Parser::parse_array_value(TypeId element_type) {
 
     while (!check(TokenType::RBracket) && !check(TokenType::Eof)) {
         if (float_values.size() >= options_.max_array_size ||
+            double_values.size() >= options_.max_array_size ||
             int_values.size() >= options_.max_array_size ||
             string_values.size() >= options_.max_array_size) {
             return Error("Array too large");
@@ -1373,7 +1382,7 @@ Result<Value> Parser::parse_array_value(TypeId element_type) {
             if (!val.ok()) {
                 return val;
             }
-            // Extract float components
+            // Extract components based on element type
             if (element_type == TypeId::Float2 || element_type == TypeId::TexCoord2f) {
                 const float* f = val.value().as_float2();
                 if (f) {
@@ -1397,6 +1406,49 @@ Result<Value> Parser::parse_array_value(TypeId element_type) {
                     float_values.push_back(f[2]);
                     float_values.push_back(f[3]);
                 }
+            } else if (element_type == TypeId::Quatf) {
+                // Quatf is stored as float4 internally
+                const float* f = val.value().as_float4();
+                if (!f) f = val.value().as_quatf();
+                if (f) {
+                    float_values.push_back(f[0]);
+                    float_values.push_back(f[1]);
+                    float_values.push_back(f[2]);
+                    float_values.push_back(f[3]);
+                }
+            } else if (element_type == TypeId::Double3 || element_type == TypeId::Point3d ||
+                       element_type == TypeId::Vector3d || element_type == TypeId::Normal3d ||
+                       element_type == TypeId::Color3d) {
+                const double* d = val.value().as_double3();
+                if (d) {
+                    double_values.push_back(d[0]);
+                    double_values.push_back(d[1]);
+                    double_values.push_back(d[2]);
+                }
+            } else if (element_type == TypeId::Double4 || element_type == TypeId::Color4d) {
+                const double* d = val.value().as_double4();
+                if (d) {
+                    double_values.push_back(d[0]);
+                    double_values.push_back(d[1]);
+                    double_values.push_back(d[2]);
+                    double_values.push_back(d[3]);
+                }
+            } else if (element_type == TypeId::Quatd) {
+                const double* d = val.value().as_double4();
+                if (!d) d = val.value().as_quatd();
+                if (d) {
+                    double_values.push_back(d[0]);
+                    double_values.push_back(d[1]);
+                    double_values.push_back(d[2]);
+                    double_values.push_back(d[3]);
+                }
+            } else if (element_type == TypeId::Matrix4d) {
+                const double* m = val.value().as_matrix4d();
+                if (m) {
+                    for (int k = 0; k < 16; ++k) {
+                        double_values.push_back(m[k]);
+                    }
+                }
             } else if (element_type == TypeId::Int2) {
                 const int32_t* i = val.value().as_int2();
                 if (i) {
@@ -1414,25 +1466,39 @@ Result<Value> Parser::parse_array_value(TypeId element_type) {
         }
         // Scalar
         else if (check(TokenType::Integer)) {
-            if (is_float) {
+            if (is_double) {
+                double_values.push_back(static_cast<double>(current_.int_value));
+            } else if (is_float) {
                 float_values.push_back(static_cast<float>(current_.int_value));
             } else {
                 int_values.push_back(static_cast<int32_t>(current_.int_value));
             }
             advance();
         } else if (check(TokenType::Float)) {
-            float_values.push_back(static_cast<float>(current_.float_value));
+            if (is_double) {
+                double_values.push_back(current_.float_value);
+            } else {
+                float_values.push_back(static_cast<float>(current_.float_value));
+            }
             advance();
         } else if (check(TokenType::String)) {
             string_values.push_back(current_.str_value);
             advance();
         } else if (check(TokenType::Identifier)) {
             // Handle nan/inf as float values
-            if (is_float && (current_.str_value == "nan" || current_.str_value == "inf")) {
-                if (current_.str_value == "nan") {
-                    float_values.push_back(std::numeric_limits<float>::quiet_NaN());
+            if ((is_float || is_double) && (current_.str_value == "nan" || current_.str_value == "inf")) {
+                if (is_double) {
+                    if (current_.str_value == "nan") {
+                        double_values.push_back(std::numeric_limits<double>::quiet_NaN());
+                    } else {
+                        double_values.push_back(std::numeric_limits<double>::infinity());
+                    }
                 } else {
-                    float_values.push_back(std::numeric_limits<float>::infinity());
+                    if (current_.str_value == "nan") {
+                        float_values.push_back(std::numeric_limits<float>::quiet_NaN());
+                    } else {
+                        float_values.push_back(std::numeric_limits<float>::infinity());
+                    }
                 }
             } else {
                 string_values.push_back(current_.str_value);
@@ -1457,6 +1523,26 @@ Result<Value> Parser::parse_array_value(TypeId element_type) {
     }
 
     // Create appropriate array value
+    // Double-precision arrays
+    if (!double_values.empty()) {
+        if (element_type == TypeId::Double3 || element_type == TypeId::Point3d ||
+            element_type == TypeId::Vector3d || element_type == TypeId::Normal3d ||
+            element_type == TypeId::Color3d) {
+            return Value::from_double3_array(double_values.data(), double_values.size() / 3);
+        }
+        if (element_type == TypeId::Double4 || element_type == TypeId::Color4d ||
+            element_type == TypeId::Quatd) {
+            if (element_type == TypeId::Quatd) {
+                return Value::from_quatd_array(double_values.data(), double_values.size() / 4);
+            }
+            return Value::from_double4_array(double_values.data(), double_values.size() / 4);
+        }
+        if (element_type == TypeId::Matrix4d) {
+            return Value::from_matrix4d_array(double_values.data(), double_values.size() / 16);
+        }
+        return Value::from_double_array(double_values.data(), double_values.size());
+    }
+    // Float arrays
     if (!float_values.empty()) {
         if (element_type == TypeId::Float3 || element_type == TypeId::Color3f ||
             element_type == TypeId::Point3f || element_type == TypeId::Vector3f ||
@@ -1466,12 +1552,21 @@ Result<Value> Parser::parse_array_value(TypeId element_type) {
         if (element_type == TypeId::Float2 || element_type == TypeId::TexCoord2f) {
             return Value::from_float2_array(float_values.data(), float_values.size() / 2);
         }
+        if (element_type == TypeId::Float4) {
+            return Value::from_float4_array(float_values.data(), float_values.size() / 4);
+        }
+        if (element_type == TypeId::Quatf) {
+            return Value::from_quatf_array(float_values.data(), float_values.size() / 4);
+        }
         return Value::from_float_array(float_values.data(), float_values.size());
     }
     if (!int_values.empty()) {
         return Value::from_int32_array(int_values.data(), int_values.size());
     }
     if (!string_values.empty()) {
+        if (element_type == TypeId::Token) {
+            return Value::from_token_array(string_values);
+        }
         return Value::from_string_array(string_values);
     }
 

@@ -128,10 +128,23 @@ public:
     static Value from_float3_array(const float* data, size_t count);
     static Value from_float4_array(const float* data, size_t count);
 
+    /// Create array of double vectors (data contains count*N elements)
+    static Value from_double3_array(const double* data, size_t count);
+    static Value from_double4_array(const double* data, size_t count);
+
+    /// Create matrix4d array (data contains count*16 doubles)
+    static Value from_matrix4d_array(const double* data, size_t count);
+
+    /// Create quaternion arrays (data contains count*4 elements)
+    static Value from_quatf_array(const float* data, size_t count);
+    static Value from_quatd_array(const double* data, size_t count);
+
     /// Create array from vector (copies data)
     static Value from_int32_array(const std::vector<int32_t>& arr);
     static Value from_float_array(const std::vector<float>& arr);
+    static Value from_double_array(const std::vector<double>& arr);
     static Value from_string_array(const std::vector<std::string>& arr);
+    static Value from_token_array(const std::vector<std::string>& arr);
 
     // ========== Type Queries ==========
 
@@ -221,6 +234,11 @@ public:
     ArrayView as_float2_array() const;
     ArrayView as_float3_array() const;
     ArrayView as_float4_array() const;
+    ArrayView as_double3_array() const;
+    ArrayView as_double4_array() const;
+    ArrayView as_matrix4d_array() const;
+    ArrayView as_quatf_array() const;
+    ArrayView as_quatd_array() const;
 
     // ========== Chunked Array Access ==========
 

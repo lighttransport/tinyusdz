@@ -356,8 +356,13 @@ std::vector<std::string> Prim::api_schemas() const {
     std::vector<std::string> result;
     const Value* v = get_metadata("apiSchemas");
     if (v && v->is_array()) {
-        // For now, return empty - array of tokens needs special handling
-        // TODO: Implement proper token array support
+        // String arrays are stored as TypedArray<std::string> on the heap
+        const auto* typed_arr = static_cast<const TypedArray<std::string>*>(v->raw_data());
+        if (typed_arr) {
+            for (size_t i = 0; i < typed_arr->size(); ++i) {
+                result.push_back((*typed_arr)[i]);
+            }
+        }
     }
     return result;
 }

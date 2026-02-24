@@ -622,12 +622,90 @@ Value Value::from_float4_array(const float* data, size_t count) {
     return v;
 }
 
+Value Value::from_double3_array(const double* data, size_t count) {
+    Value v;
+    v.type_id_ = make_array_type(TypeId::Double3);
+    v.set_heap(true);
+    v.flags_ |= (count & kArraySizeMask);
+    size_t size = sizeof(double) * 3 * count;
+    auto* buf = new Buffer<32>(size, Buffer<32>::StorageMode::Contiguous);
+    buf->copy_from(reinterpret_cast<const uint8_t*>(data), 0, size);
+    v.storage_.heap_ = buf;
+    return v;
+}
+
+Value Value::from_double4_array(const double* data, size_t count) {
+    Value v;
+    v.type_id_ = make_array_type(TypeId::Double4);
+    v.set_heap(true);
+    v.flags_ |= (count & kArraySizeMask);
+    size_t size = sizeof(double) * 4 * count;
+    auto* buf = new Buffer<32>(size, Buffer<32>::StorageMode::Contiguous);
+    buf->copy_from(reinterpret_cast<const uint8_t*>(data), 0, size);
+    v.storage_.heap_ = buf;
+    return v;
+}
+
+Value Value::from_matrix4d_array(const double* data, size_t count) {
+    Value v;
+    v.type_id_ = make_array_type(TypeId::Matrix4d);
+    v.set_heap(true);
+    v.flags_ |= (count & kArraySizeMask);
+    size_t size = sizeof(double) * 16 * count;
+    auto* buf = new Buffer<32>(size, Buffer<32>::StorageMode::Contiguous);
+    buf->copy_from(reinterpret_cast<const uint8_t*>(data), 0, size);
+    v.storage_.heap_ = buf;
+    return v;
+}
+
+Value Value::from_quatf_array(const float* data, size_t count) {
+    Value v;
+    v.type_id_ = make_array_type(TypeId::Quatf);
+    v.set_heap(true);
+    v.flags_ |= (count & kArraySizeMask);
+    size_t size = sizeof(float) * 4 * count;
+    auto* buf = new Buffer<32>(size, Buffer<32>::StorageMode::Contiguous);
+    buf->copy_from(reinterpret_cast<const uint8_t*>(data), 0, size);
+    v.storage_.heap_ = buf;
+    return v;
+}
+
+Value Value::from_quatd_array(const double* data, size_t count) {
+    Value v;
+    v.type_id_ = make_array_type(TypeId::Quatd);
+    v.set_heap(true);
+    v.flags_ |= (count & kArraySizeMask);
+    size_t size = sizeof(double) * 4 * count;
+    auto* buf = new Buffer<32>(size, Buffer<32>::StorageMode::Contiguous);
+    buf->copy_from(reinterpret_cast<const uint8_t*>(data), 0, size);
+    v.storage_.heap_ = buf;
+    return v;
+}
+
 Value Value::from_int32_array(const std::vector<int32_t>& arr) {
     return from_int32_array(arr.data(), arr.size());
 }
 
 Value Value::from_float_array(const std::vector<float>& arr) {
     return from_float_array(arr.data(), arr.size());
+}
+
+Value Value::from_double_array(const std::vector<double>& arr) {
+    return from_double_array(arr.data(), arr.size());
+}
+
+Value Value::from_token_array(const std::vector<std::string>& arr) {
+    Value v;
+    v.type_id_ = make_array_type(TypeId::Token);
+    v.set_heap(true);
+    v.flags_ |= (arr.size() & kArraySizeMask);
+    auto* typed_arr = new TypedArray<Token>();
+    typed_arr->reserve(arr.size());
+    for (const auto& s : arr) {
+        typed_arr->push_back(Token(s));
+    }
+    v.storage_.heap_ = typed_arr;
+    return v;
 }
 
 Value Value::from_string_array(const std::vector<std::string>& arr) {
@@ -883,6 +961,45 @@ Value::ArrayView Value::as_float3_array() const {
 
 Value::ArrayView Value::as_float4_array() const {
     if (type_id_ != make_array_type(TypeId::Float4)) return ArrayView();
+    const auto* buf = static_cast<const Buffer<32>*>(storage_.heap_);
+    return ArrayView(buf->data(), flags_ & kArraySizeMask);
+}
+
+Value::ArrayView Value::as_double3_array() const {
+    TypeId expected = make_array_type(TypeId::Double3);
+    TypeId point3d_arr = make_array_type(TypeId::Point3d);
+    TypeId vector3d_arr = make_array_type(TypeId::Vector3d);
+    TypeId normal3d_arr = make_array_type(TypeId::Normal3d);
+    TypeId color3d_arr = make_array_type(TypeId::Color3d);
+    if (type_id_ != expected && type_id_ != point3d_arr &&
+        type_id_ != vector3d_arr && type_id_ != normal3d_arr &&
+        type_id_ != color3d_arr) return ArrayView();
+    const auto* buf = static_cast<const Buffer<32>*>(storage_.heap_);
+    return ArrayView(buf->data(), flags_ & kArraySizeMask);
+}
+
+Value::ArrayView Value::as_double4_array() const {
+    TypeId expected = make_array_type(TypeId::Double4);
+    TypeId color4d_arr = make_array_type(TypeId::Color4d);
+    if (type_id_ != expected && type_id_ != color4d_arr) return ArrayView();
+    const auto* buf = static_cast<const Buffer<32>*>(storage_.heap_);
+    return ArrayView(buf->data(), flags_ & kArraySizeMask);
+}
+
+Value::ArrayView Value::as_matrix4d_array() const {
+    if (type_id_ != make_array_type(TypeId::Matrix4d)) return ArrayView();
+    const auto* buf = static_cast<const Buffer<32>*>(storage_.heap_);
+    return ArrayView(buf->data(), flags_ & kArraySizeMask);
+}
+
+Value::ArrayView Value::as_quatf_array() const {
+    if (type_id_ != make_array_type(TypeId::Quatf)) return ArrayView();
+    const auto* buf = static_cast<const Buffer<32>*>(storage_.heap_);
+    return ArrayView(buf->data(), flags_ & kArraySizeMask);
+}
+
+Value::ArrayView Value::as_quatd_array() const {
+    if (type_id_ != make_array_type(TypeId::Quatd)) return ArrayView();
     const auto* buf = static_cast<const Buffer<32>*>(storage_.heap_);
     return ArrayView(buf->data(), flags_ & kArraySizeMask);
 }

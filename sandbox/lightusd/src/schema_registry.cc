@@ -90,6 +90,28 @@ const char* const kShaderSchema = R"JSON({
   "allowAdditionalProperties": true
 )JSON";
 
+const char* const kNodeGraphSchema = R"JSON({
+  "typeName": "NodeGraph",
+  "doc": "A container for organizing shader nodes and connections in a network",
+  "properties": [
+    {"name": "nodedef", "type": "string", "required": "optional", "doc": "Reference to a MaterialX NodeDef"},
+    {"name": "nodegraph_type", "type": "string", "required": "optional", "doc": "Type of the node graph (MaterialX)"}
+  ],
+  "allowAdditionalProperties": true
+})JSON";
+
+const char* const kMaterialXConfigAPISchema = R"JSON({
+  "typeName": "MaterialXConfigAPI",
+  "doc": "API schema providing MaterialX environment configuration on Material prims",
+  "properties": [
+    {"name": "config:mtlx:version", "type": "string", "required": "optional", "doc": "MaterialX version (default: 1.38)"},
+    {"name": "config:mtlx:namespace", "type": "string", "required": "optional", "doc": "MaterialX namespace"},
+    {"name": "config:mtlx:colorspace", "type": "string", "required": "optional", "doc": "Default colorspace (default: lin_rec709)"},
+    {"name": "config:mtlx:sourceUri", "type": "string", "required": "optional", "doc": "Source URI for MaterialX documents"}
+  ],
+  "allowAdditionalProperties": true
+})JSON";
+
 const char* const kCameraSchema = R"JSON({
   "typeName": "Camera",
   "doc": "A camera primitive",
@@ -305,6 +327,77 @@ const char* const kCapsuleSchema = R"JSON({
   "apiSchemas": ["MaterialBindingAPI"]
 )JSON";
 
+const char* const kRectLightSchema = R"JSON({
+  "typeName": "RectLight",
+  "doc": "A rectangular area light",
+  "inherits": "Light",
+  "properties": [
+    {"name": "width", "type": "float", "required": "optional", "doc": "Width of the rectangle", "minValue": 0},
+    {"name": "height", "type": "float", "required": "optional", "doc": "Height of the rectangle", "minValue": 0},
+    {"name": "texture:file", "type": "asset", "required": "optional", "doc": "Texture to project from the light"}
+  ]
+})JSON";
+
+const char* const kCylinderLightSchema = R"JSON({
+  "typeName": "CylinderLight",
+  "doc": "A cylindrical area light",
+  "inherits": "Light",
+  "properties": [
+    {"name": "radius", "type": "float", "required": "optional", "doc": "Radius of the cylinder", "minValue": 0},
+    {"name": "length", "type": "float", "required": "optional", "doc": "Length of the cylinder", "minValue": 0},
+    {"name": "treatAsLine", "type": "bool", "required": "optional", "doc": "Treat as a line light for efficiency"}
+  ]
+})JSON";
+
+const char* const kDiskLightSchema = R"JSON({
+  "typeName": "DiskLight",
+  "doc": "A disk-shaped area light",
+  "inherits": "Light",
+  "properties": [
+    {"name": "radius", "type": "float", "required": "optional", "doc": "Radius of the disk", "minValue": 0}
+  ]
+})JSON";
+
+const char* const kPortalLightSchema = R"JSON({
+  "typeName": "PortalLight",
+  "doc": "A portal light for guiding dome light importance sampling",
+  "inherits": "Light",
+  "properties": [
+    {"name": "width", "type": "float", "required": "optional", "doc": "Width of the portal", "minValue": 0},
+    {"name": "height", "type": "float", "required": "optional", "doc": "Height of the portal", "minValue": 0}
+  ]
+})JSON";
+
+const char* const kMeshLightSchema = R"JSON({
+  "typeName": "MeshLight",
+  "doc": "A mesh-shaped area light (geometry from child mesh)",
+  "inherits": "Light",
+  "properties": []
+})JSON";
+
+const char* const kCollectionAPISchema = R"JSON({
+  "typeName": "CollectionAPI",
+  "doc": "API schema for defining collections of prims",
+  "properties": [
+    {"name": "expansionRule", "type": "token", "required": "optional", "allowedValues": ["expandPrims", "explicitOnly", "expandPrimsAndProperties"]},
+    {"name": "includeRoot", "type": "bool", "required": "optional", "doc": "Whether to include the root prim in the collection"}
+  ],
+  "allowAdditionalProperties": true
+})JSON";
+
+const char* const kSkelBindingAPISchema = R"JSON({
+  "typeName": "SkelBindingAPI",
+  "doc": "API schema for binding skeletons to meshes",
+  "properties": [
+    {"name": "skel:skeleton", "type": "token", "required": "optional", "doc": "Path to Skeleton prim"},
+    {"name": "skel:animationSource", "type": "token", "required": "optional", "doc": "Path to SkelAnimation prim"},
+    {"name": "primvars:skel:jointIndices", "type": "int[]", "required": "optional", "doc": "Joint indices for each vertex"},
+    {"name": "primvars:skel:jointWeights", "type": "float[]", "required": "optional", "doc": "Joint weights for each vertex"},
+    {"name": "primvars:skel:geomBindTransform", "type": "matrix4d", "required": "optional", "doc": "Geometry bind-time transform"}
+  ],
+  "allowAdditionalProperties": true
+})JSON";
+
 // Base schemas (abstract, for inheritance)
 const char* const kGprimSchema = R"JSON({
   "typeName": "Gprim",
@@ -384,10 +477,19 @@ void SchemaRegistry::load_builtin_schemas() {
     register_schema(builtin_schemas::kScopeSchema, "builtin");
     register_schema(builtin_schemas::kMaterialSchema, "builtin");
     register_schema(builtin_schemas::kShaderSchema, "builtin");
+    register_schema(builtin_schemas::kNodeGraphSchema, "builtin");
+    register_schema(builtin_schemas::kMaterialXConfigAPISchema, "builtin");
     register_schema(builtin_schemas::kCameraSchema, "builtin");
     register_schema(builtin_schemas::kSphereLightSchema, "builtin");
     register_schema(builtin_schemas::kDistantLightSchema, "builtin");
     register_schema(builtin_schemas::kDomeLightSchema, "builtin");
+    register_schema(builtin_schemas::kRectLightSchema, "builtin");
+    register_schema(builtin_schemas::kCylinderLightSchema, "builtin");
+    register_schema(builtin_schemas::kDiskLightSchema, "builtin");
+    register_schema(builtin_schemas::kPortalLightSchema, "builtin");
+    register_schema(builtin_schemas::kMeshLightSchema, "builtin");
+    register_schema(builtin_schemas::kCollectionAPISchema, "builtin");
+    register_schema(builtin_schemas::kSkelBindingAPISchema, "builtin");
     register_schema(builtin_schemas::kSkelRootSchema, "builtin");
     register_schema(builtin_schemas::kSkeletonSchema, "builtin");
     register_schema(builtin_schemas::kSkelAnimationSchema, "builtin");
@@ -609,10 +711,19 @@ const char* SchemaRegistry::get_builtin_schema_json(std::string_view type_name) 
     if (type_name == "Scope") return builtin_schemas::kScopeSchema;
     if (type_name == "Material") return builtin_schemas::kMaterialSchema;
     if (type_name == "Shader") return builtin_schemas::kShaderSchema;
+    if (type_name == "NodeGraph") return builtin_schemas::kNodeGraphSchema;
+    if (type_name == "MaterialXConfigAPI") return builtin_schemas::kMaterialXConfigAPISchema;
     if (type_name == "Camera") return builtin_schemas::kCameraSchema;
     if (type_name == "SphereLight") return builtin_schemas::kSphereLightSchema;
     if (type_name == "DistantLight") return builtin_schemas::kDistantLightSchema;
     if (type_name == "DomeLight") return builtin_schemas::kDomeLightSchema;
+    if (type_name == "RectLight") return builtin_schemas::kRectLightSchema;
+    if (type_name == "CylinderLight") return builtin_schemas::kCylinderLightSchema;
+    if (type_name == "DiskLight") return builtin_schemas::kDiskLightSchema;
+    if (type_name == "PortalLight") return builtin_schemas::kPortalLightSchema;
+    if (type_name == "MeshLight") return builtin_schemas::kMeshLightSchema;
+    if (type_name == "CollectionAPI") return builtin_schemas::kCollectionAPISchema;
+    if (type_name == "SkelBindingAPI") return builtin_schemas::kSkelBindingAPISchema;
     if (type_name == "SkelRoot") return builtin_schemas::kSkelRootSchema;
     if (type_name == "Skeleton") return builtin_schemas::kSkeletonSchema;
     if (type_name == "SkelAnimation") return builtin_schemas::kSkelAnimationSchema;
@@ -634,8 +745,10 @@ const char* SchemaRegistry::get_builtin_schema_json(std::string_view type_name) 
 std::vector<std::string> SchemaRegistry::builtin_schema_types() {
     return {
         "Imageable", "Boundable", "Gprim", "Light",
-        "Mesh", "Xform", "Scope", "Material", "Shader", "Camera",
+        "Mesh", "Xform", "Scope", "Material", "Shader", "NodeGraph", "MaterialXConfigAPI", "Camera",
         "SphereLight", "DistantLight", "DomeLight",
+        "RectLight", "CylinderLight", "DiskLight", "PortalLight", "MeshLight",
+        "CollectionAPI", "SkelBindingAPI",
         "SkelRoot", "Skeleton", "SkelAnimation", "BlendShape",
         "Points", "BasisCurves",
         "Cube", "Sphere", "Cylinder", "Cone", "Capsule"
