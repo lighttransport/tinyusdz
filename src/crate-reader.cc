@@ -2074,7 +2074,10 @@ bool CrateReader::ReadCustomData(CustomDataType *d) {
       PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read the offset for value in Dictionary.");
     }
 
-    // -8 to compensate sizeof(offset)
+    // -8 to compensate sizeof(offset). Guard against int64 underflow.
+    if (offset < std::numeric_limits<int64_t>::min() + 8) {
+      PUSH_ERROR_AND_RETURN_TAG(kTag, fmt::format("Dictionary value offset {} would underflow int64.", offset));
+    }
     if (!_sr->seek_from_current(offset - 8)) {
       PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to seek. Invalid offset value: " + std::to_string(offset));
     }
@@ -5387,7 +5390,10 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
       DCOUT("UnregisteredValue  offset = " << local_offset);
       DCOUT("tell = " << _sr->tell());
 
-      // -8 to compensate sizeof(offset)
+      // -8 to compensate sizeof(offset). Guard against int64 underflow.
+      if (local_offset < std::numeric_limits<int64_t>::min() + 8) {
+        PUSH_ERROR_AND_RETURN_TAG(kTag, fmt::format("UNREGISTERED_VALUE offset {} would underflow int64.", local_offset));
+      }
       if (!_sr->seek_from_current(local_offset - 8)) {
         PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to seek to UNREGISTERD_VALUE content. Invalid offset value: " +
                 std::to_string(local_offset));
@@ -5562,6 +5568,11 @@ bool CrateReader::BuildDecompressedPathsImpl(
         int32_t _tokenIndex = elementTokenIndexes[thisIndex];
         DCOUT("elementTokenIndex = " << _tokenIndex);
         bool isPrimPropertyPath = _tokenIndex < 0;
+        // Guard against INT32_MIN: -INT32_MIN is UB (signed overflow).
+        if (isPrimPropertyPath && _tokenIndex == std::numeric_limits<int32_t>::min()) {
+          PUSH_ERROR("Invalid tokenIndex (INT32_MIN) in BuildDecompressedPathsImpl.");
+          return false;
+        }
         // ~0 returns -2147483648, so cast to uint32
         uint32_t tokenIndex = uint32_t(isPrimPropertyPath ? -_tokenIndex : _tokenIndex);
 
@@ -5780,6 +5791,11 @@ bool CrateReader::BuildDecompressedPathsImpl(
       int32_t _tokenIndex = elementTokenIndexes[thisIndex];
       DCOUT("elementTokenIndex = " << _tokenIndex);
       bool isPrimPropertyPath = _tokenIndex < 0;
+      // Guard against INT32_MIN: -INT32_MIN is UB (signed overflow).
+      if (isPrimPropertyPath && _tokenIndex == std::numeric_limits<int32_t>::min()) {
+        PUSH_ERROR("Invalid tokenIndex (INT32_MIN) in BuildDecompressedPathsImpl.");
+        return false;
+      }
       // ~0 returns -2147483648, so cast to uint32
       uint32_t tokenIndex = uint32_t(isPrimPropertyPath ? -_tokenIndex : _tokenIndex);
 
@@ -6681,6 +6697,9 @@ bool CrateReader::ReadTokens() {
       return false;
     }
 
+    if (len > _config.maxTokenLength) {
+      PUSH_ERROR_AND_RETURN_TAG(kTag, fmt::format("Token string length {} exceeds limit {}.", len, _config.maxTokenLength));
+    }
     std::string str;
     if (len > 0) {
       str = std::string(pcurr, len);
@@ -7076,6 +7095,9 @@ bool CrateReader::BuildLiveFieldSets() {
   _live_fieldsets.reserve(_fieldset_start_indices.size());
 
   for (uint32_t start_idx : _fieldset_start_indices) {
+    if (start_idx >= _fieldset_end_indices.size()) {
+      PUSH_ERROR_AND_RETURN_TAG(kTag, fmt::format("Fieldset start_idx {} out of range (end_indices.size = {}).", start_idx, _fieldset_end_indices.size()));
+    }
     const uint32_t end_idx = _fieldset_end_indices[start_idx];
 
     if (end_idx < start_idx) {
