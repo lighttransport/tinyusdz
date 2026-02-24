@@ -24,9 +24,9 @@ static void parse_usdc(const uint8_t *data, size_t size)
   // For fuzzer run
   config.kMaxAllowedMemoryInMB = 1024*4; // 4GB.
 
-  tinyusdz::usdc::USDCReader reader(&sr);
-  
-  bool ret = reader.ReadUSDC(); 
+  tinyusdz::usdc::USDCReader reader(&sr, config);
+
+  bool ret = reader.ReadUSDC();
   (void)ret;
 
   return;
