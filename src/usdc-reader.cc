@@ -2055,9 +2055,15 @@ bool USDCReader::Impl::ReconstrcutStageMeta(
         }
       } else if (auto vs = fv.second.get_value<std::string>()) {
         // unregisteredvalue uses string type.
-        if (vs.value() == "none") {
+        // Strip surrounding quotes if present (UnregisteredValue encoding
+        // preserves the literal quotes from the USDA source).
+        std::string val = vs.value();
+        if (val.size() >= 2 && val.front() == '"' && val.back() == '"') {
+          val = val.substr(1, val.size() - 2);
+        }
+        if (val == "none") {
           metas->playbackMode = StageMetas::PlaybackMode::PlaybackModeNone;
-        } else if (vs.value() == "loop") {
+        } else if (val == "loop") {
           metas->playbackMode = StageMetas::PlaybackMode::PlaybackModeLoop;
         } else {
           PUSH_ERROR_AND_RETURN(
