@@ -6456,6 +6456,10 @@ bool CrateReader::ReadCompressedPaths(const uint64_t maxNumPaths) {
   arg.elementTokenIndexes = &elementTokenIndexes;
   arg.jumps = &jumps;
   arg.visit_table = &visit_table;
+  if (pathIndexes.empty()) {
+    PUSH_ERROR("pathIndexes is empty.");
+    return false;
+  }
   arg.startIndex = 0;
   arg.endIndex = pathIndexes.size() - 1; // or numEncodedPaths - 1
   arg.parentPath = Path();
@@ -6597,15 +6601,7 @@ bool CrateReader::ReadTokens() {
 
   DCOUT("uncompressedSize = " << uncompressedSize);
 
-
-  // Must be larger than len(';-)') + all empty string case.
-  // 3 = ';-)'
-  // num_tokens = '\0' delimiter
-  if ((3 + num_tokens) > uncompressedSize) {
-    PUSH_ERROR_AND_RETURN_TAG(kTag, "`TOKENS` section corrupted.");
-  }
-
-  // At least min size should be 16 both for compress and uncompress.
+  // At least min size should be 4 both for compress and uncompress.
   if (uncompressedSize < 4) {
     PUSH_ERROR_AND_RETURN_TAG(kTag, "uncompressedSize too small or zero bytes.");
   }
@@ -6613,6 +6609,14 @@ bool CrateReader::ReadTokens() {
   // Guard against OOM: reject absurdly large uncompressed sizes before allocating.
   if (uncompressedSize > uint64_t(_config.maxMemoryBudget)) {
     PUSH_ERROR_AND_RETURN_TAG(kTag, fmt::format("uncompressedSize {} exceeds memory budget {}.", uncompressedSize, _config.maxMemoryBudget));
+  }
+
+  // Must be larger than len(';-)') + all empty string case.
+  // 3 = ';-)'
+  // num_tokens = '\0' delimiter
+  // Subtraction safe: uncompressedSize >= 4 checked above.
+  if (num_tokens > uncompressedSize - 3) {
+    PUSH_ERROR_AND_RETURN_TAG(kTag, "`TOKENS` section corrupted.");
   }
 
   uint64_t compressedSize;
@@ -6639,6 +6643,9 @@ bool CrateReader::ReadTokens() {
   // And further, extra 128 bytes for safety(LZ4_FAST_DEC_LOOP does 16 bytes stride memcpy)
 
   uint64_t bufSize = (std::max)(compressedSize, uncompressedSize);
+  if (bufSize > std::numeric_limits<uint64_t>::max() - 128) {
+    PUSH_ERROR_AND_RETURN_TAG(kTag, "bufSize overflow in addition.");
+  }
   CHECK_MEMORY_USAGE(bufSize+128);
   CHECK_MEMORY_USAGE(uncompressedSize);
 
@@ -7108,8 +7115,12 @@ bool CrateReader::BuildLiveFieldSets() {
         _live_fieldsets.emplace(crate::Index(start_idx), FieldValuePairVector{});
     auto &pairs = emplaced.first->second;
 
-    pairs.resize(static_cast<size_t>(end_idx - start_idx));
-    DCOUT("range size = " << (end_idx - start_idx));
+    size_t range_size = static_cast<size_t>(end_idx - start_idx);
+    if (range_size > _fields.size()) {
+      PUSH_ERROR_AND_RETURN_TAG(kTag, fmt::format("Fieldset range {} exceeds total fields count {}.", range_size, _fields.size()));
+    }
+    pairs.resize(range_size);
+    DCOUT("range size = " << range_size);
     // TODO(syoyo): Parallelize.
     for (uint32_t idx = start_idx, i = 0; idx < end_idx; ++idx, ++i) {
       if (_fieldset_indices[idx].value >= _fields.size()) {
@@ -7186,7 +7197,11 @@ bool CrateReader::DecodeFieldSet(crate::Index fieldset_index,
     return false;
   }
 
-  pairs->resize(static_cast<size_t>(fs_end - fieldset_index.value));
+  size_t fs_range_size = static_cast<size_t>(fs_end - fieldset_index.value);
+  if (fs_range_size > _fields.size()) {
+    PUSH_ERROR_AND_RETURN_TAG(kTag, fmt::format("FieldSet range {} exceeds total fields count {}.", fs_range_size, _fields.size()));
+  }
+  pairs->resize(fs_range_size);
 
   for (uint32_t idx = fieldset_index.value, i = 0; idx < fs_end; ++idx, ++i) {
     if (_fieldset_indices[idx].value >= _fields.size()) {
