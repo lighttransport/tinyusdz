@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.10)
-project(lightusd-c VERSION 0.1.0 LANGUAGES C)
+project(lightusd-c VERSION 0.1.0 LANGUAGES C CXX)
 
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
@@ -126,4 +126,67 @@ option(LUSD_BUILD_EXAMPLES "Build lightusd-c examples" ON)
 if(LUSD_BUILD_EXAMPLES)
   add_executable(lightusd_c_basic examples/basic.c)
   target_link_libraries(lightusd_c_basic PRIVATE lightusd-c)
+endif()
+
+# ============================================================================
+# Lydra — Minimal OpenGL/Vulkan-friendly data conversion utilities
+# ============================================================================
+
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_CXX_EXTENSIONS OFF)
+
+set(LYDRA_HEADERS
+  lydra/lydra.hh
+  lydra/lydra_mesh.hh
+  lydra/lydra_transform.hh
+  lydra/lydra_material.hh
+  lydra/lydra_scene.hh
+  lydra/lydra_c.h
+)
+
+set(LYDRA_SOURCES
+  lydra/lydra_mesh.cc
+  lydra/lydra_transform.cc
+  lydra/lydra_material.cc
+  lydra/lydra_scene.cc
+  lydra/lydra_c.cc
+)
+
+add_library(lydra STATIC ${LYDRA_SOURCES} ${LYDRA_HEADERS})
+target_include_directories(lydra
+  PUBLIC  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/lydra>
+)
+set_target_properties(lydra PROPERTIES
+  CXX_STANDARD 17
+  CXX_STANDARD_REQUIRED ON
+  CXX_EXTENSIONS OFF
+)
+if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+  target_compile_options(lydra PRIVATE -Wall -Wextra -Wpedantic -Wno-unused-parameter)
+elseif(MSVC)
+  target_compile_options(lydra PRIVATE /W4)
+endif()
+
+# Math library on Unix
+if(UNIX)
+  target_link_libraries(lydra PRIVATE m)
+endif()
+
+# Lydra tests
+option(LYDRA_BUILD_TESTS "Build lydra tests" ON)
+if(LYDRA_BUILD_TESTS)
+  # C++ tests
+  add_executable(test_lydra lydra/tests/test_lydra.cc)
+  target_link_libraries(test_lydra PRIVATE lydra)
+  set_target_properties(test_lydra PROPERTIES
+    CXX_STANDARD 17
+    CXX_STANDARD_REQUIRED ON
+  )
+
+  # C tests (links lydra which is C++ so needs CXX linker)
+  add_executable(test_lydra_c lydra/tests/test_lydra_c.c)
+  target_link_libraries(test_lydra_c PRIVATE lydra)
+  target_include_directories(test_lydra_c PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/lydra)
+  set_target_properties(test_lydra_c PROPERTIES LINKER_LANGUAGE CXX)
 endif()
