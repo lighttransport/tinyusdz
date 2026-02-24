@@ -563,6 +563,11 @@ bool CrateReader::ReadHalfArray(bool is_compressed,
         return false;
       }
 
+      if (lutSize > _config.maxArrayElements) {
+        _err += "LUT size too large in ReadHalfArray.\n";
+        return false;
+      }
+
       std::vector<value::half> lut;
       lut.resize(lutSize);
       if (!_sr->read(sizeof(value::half) * lutSize, sizeof(value::half) * lutSize,
@@ -580,6 +585,10 @@ bool CrateReader::ReadHalfArray(bool is_compressed,
 
       auto o = d->data();
       for (auto index : indexes) {
+        if (index >= lutSize) {
+          _err += "LUT index out of bounds in ReadHalfArray.\n";
+          return false;
+        }
         *o++ = lut[index];
       }
     } else {
@@ -679,6 +688,11 @@ bool CrateReader::ReadFloatArray(bool is_compressed, std::vector<float> *d) {
         return false;
       }
 
+      if (lutSize > _config.maxArrayElements) {
+        _err += "LUT size too large in ReadFloatArray.\n";
+        return false;
+      }
+
       std::vector<float> lut;
       lut.resize(lutSize);
       if (!_sr->read(sizeof(float) * lutSize, sizeof(float) * lutSize,
@@ -696,6 +710,10 @@ bool CrateReader::ReadFloatArray(bool is_compressed, std::vector<float> *d) {
 
       auto o = d->data();
       for (auto index : indexes) {
+        if (index >= lutSize) {
+          _err += "LUT index out of bounds in ReadFloatArray.\n";
+          return false;
+        }
         *o++ = lut[index];
       }
     } else {
@@ -800,6 +818,11 @@ bool CrateReader::ReadDoubleArray(bool is_compressed, std::vector<double> *d) {
         return false;
       }
 
+      if (lutSize > _config.maxArrayElements) {
+        _err += "LUT size too large in ReadDoubleArray.\n";
+        return false;
+      }
+
       std::vector<double> lut;
       lut.resize(lutSize);
       if (!_sr->read(sizeof(double) * lutSize, sizeof(double) * lutSize,
@@ -817,6 +840,10 @@ bool CrateReader::ReadDoubleArray(bool is_compressed, std::vector<double> *d) {
 
       auto o = d->data();
       for (auto index : indexes) {
+        if (index >= lutSize) {
+          _err += "LUT index out of bounds in ReadDoubleArray.\n";
+          return false;
+        }
         *o++ = lut[index];
       }
     } else {
@@ -902,6 +929,11 @@ bool CrateReader::ReadFloatArrayTyped(bool is_compressed, TypedArray<float> *d) 
         return false;
       }
 
+      if (lutSize > _config.maxArrayElements) {
+        _err += "LUT size too large in ReadFloatArrayTyped.\n";
+        return false;
+      }
+
       std::vector<float> lut;
       lut.resize(lutSize);
       if (!_sr->read(sizeof(float) * lutSize, sizeof(float) * lutSize,
@@ -919,6 +951,10 @@ bool CrateReader::ReadFloatArrayTyped(bool is_compressed, TypedArray<float> *d) 
 
       auto o = d->data();
       for (auto index : indexes) {
+        if (index >= lutSize) {
+          _err += "LUT index out of bounds in ReadFloatArrayTyped.\n";
+          return false;
+        }
         *o++ = lut[index];
       }
     } else {
@@ -1048,6 +1084,11 @@ bool CrateReader::ReadDoubleArrayTyped(bool is_compressed, TypedArray<double> *d
         return false;
       }
 
+      if (lutSize > _config.maxArrayElements) {
+        _err += "LUT size too large in ReadDoubleArrayTyped.\n";
+        return false;
+      }
+
       std::vector<double> lut;
       lut.resize(lutSize);
       if (!_sr->read(sizeof(double) * lutSize, sizeof(double) * lutSize,
@@ -1065,6 +1106,10 @@ bool CrateReader::ReadDoubleArrayTyped(bool is_compressed, TypedArray<double> *d
 
       auto o = d->data();
       for (auto index : indexes) {
+        if (index >= lutSize) {
+          _err += "LUT index out of bounds in ReadDoubleArrayTyped.\n";
+          return false;
+        }
         *o++ = lut[index];
       }
     } else {
@@ -5487,8 +5532,6 @@ bool CrateReader::BuildDecompressedPathsImpl(
       if (parentPath.is_empty()) {
         // root node.
         // Assume single root node in the scene.
-        DCOUT("paths[" << pathIndexes[thisIndex]
-                       << "] is parent. name = " << parentPath.full_path_name());
         parentPath = rootPath;
 
         if (thisIndex >= pathIndexes.size()) {
@@ -5497,6 +5540,7 @@ bool CrateReader::BuildDecompressedPathsImpl(
         }
 
         size_t idx = pathIndexes[thisIndex];
+        DCOUT("paths[" << idx << "] is parent. name = " << parentPath.full_path_name());
         if (idx >= _paths.size()) {
           PUSH_ERROR("Index is out-of-range");
           return false;
@@ -5528,9 +5572,15 @@ bool CrateReader::BuildDecompressedPathsImpl(
         }
         auto const &elemToken = _tokens[size_t(tokenIndex)];
         DCOUT("elemToken = " << elemToken);
-        DCOUT("[" << pathIndexes[thisIndex] << "].append = " << elemToken);
+
+        if (thisIndex >= pathIndexes.size()) {
+          PUSH_ERROR("thisIndex exceeds pathIndexes.size()");
+          return false;
+        }
 
         size_t idx = pathIndexes[thisIndex];
+        DCOUT("[" << idx << "].append = " << elemToken);
+
         if (idx >= _paths.size()) {
           PUSH_ERROR("Index is out-of-range");
           return false;
@@ -5616,6 +5666,10 @@ bool CrateReader::BuildDecompressedPathsImpl(
                 endIndexStack.push(siblingIndex-1); // endIndex is inclusive so subtract 1.
 
                 {
+                  if (thisIndex >= pathIndexes.size()) {
+                    PUSH_ERROR("thisIndex exceeds pathIndexes.size()");
+                    return false;
+                  }
                   size_t idx = pathIndexes[thisIndex];
                   if (idx >= _paths.size()) {
                     PUSH_ERROR("Index is out-of-range");
@@ -5640,6 +5694,10 @@ bool CrateReader::BuildDecompressedPathsImpl(
         }
 
         // [Cont.]
+        if (thisIndex >= pathIndexes.size()) {
+          PUSH_ERROR("thisIndex exceeds pathIndexes.size()");
+          return false;
+        }
         size_t idx = pathIndexes[thisIndex];
         if (idx >= _paths.size()) {
           PUSH_ERROR("Index is out-of-range");
@@ -5692,8 +5750,6 @@ bool CrateReader::BuildDecompressedPathsImpl(
     if (parentPath.is_empty()) {
       // root node.
       // Assume single root node in the scene.
-      DCOUT("paths[" << pathIndexes[thisIndex]
-                     << "] is parent. name = " << parentPath.full_path_name());
       parentPath = Path::make_root_path();
 
       if (thisIndex >= pathIndexes.size()) {
@@ -5702,6 +5758,7 @@ bool CrateReader::BuildDecompressedPathsImpl(
       }
 
       size_t idx = pathIndexes[thisIndex];
+      DCOUT("paths[" << idx << "] is parent. name = " << parentPath.full_path_name());
       if (idx >= _paths.size()) {
         PUSH_ERROR("Index is out-of-range");
         return false;
@@ -5733,9 +5790,15 @@ bool CrateReader::BuildDecompressedPathsImpl(
       }
       auto const &elemToken = _tokens[size_t(tokenIndex)];
       DCOUT("elemToken = " << elemToken);
-      DCOUT("[" << pathIndexes[thisIndex] << "].append = " << elemToken);
+
+      if (thisIndex >= pathIndexes.size()) {
+        PUSH_ERROR("thisIndex exceeds pathIndexes.size()");
+        return false;
+      }
 
       size_t idx = pathIndexes[thisIndex];
+      DCOUT("[" << idx << "].append = " << elemToken);
+
       if (idx >= _paths.size()) {
         PUSH_ERROR("Index is out-of-range");
         return false;
@@ -5790,6 +5853,10 @@ bool CrateReader::BuildDecompressedPathsImpl(
         }
       }
 
+      if (thisIndex >= pathIndexes.size()) {
+        PUSH_ERROR("thisIndex exceeds pathIndexes.size()");
+        return false;
+      }
       size_t idx = pathIndexes[thisIndex];
       if (idx >= _paths.size()) {
         PUSH_ERROR("Index is out-of-range");
@@ -6527,6 +6594,11 @@ bool CrateReader::ReadTokens() {
     PUSH_ERROR_AND_RETURN_TAG(kTag, "uncompressedSize too small or zero bytes.");
   }
 
+  // Guard against OOM: reject absurdly large uncompressed sizes before allocating.
+  if (uncompressedSize > uint64_t(_config.maxMemoryBudget)) {
+    PUSH_ERROR_AND_RETURN_TAG(kTag, fmt::format("uncompressedSize {} exceeds memory budget {}.", uncompressedSize, _config.maxMemoryBudget));
+  }
+
   uint64_t compressedSize;
   if (!_sr->read8(&compressedSize)) {
     PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read compressedSize at `TOKENS` section.");
@@ -7005,6 +7077,11 @@ bool CrateReader::BuildLiveFieldSets() {
 
   for (uint32_t start_idx : _fieldset_start_indices) {
     const uint32_t end_idx = _fieldset_end_indices[start_idx];
+
+    if (end_idx < start_idx) {
+      PUSH_ERROR_AND_RETURN_TAG(kTag, fmt::format("Invalid fieldset: end_idx {} < start_idx {}.", end_idx, start_idx));
+    }
+
     auto emplaced =
         _live_fieldsets.emplace(crate::Index(start_idx), FieldValuePairVector{});
     auto &pairs = emplaced.first->second;
@@ -7518,7 +7595,11 @@ bool CrateReader::ReadTOC() {
       PUSH_ERROR_AND_RETURN_TAG(kTag, fmt::format("Section start byte offset exceeds input USDC data size."));
     }
 
-    // TODO: handle integer overflow.
+    // Guard against signed integer overflow before casting to size_t.
+    if (_toc.sections[i].size > 0 &&
+        _toc.sections[i].start > std::numeric_limits<int64_t>::max() - _toc.sections[i].size) {
+      PUSH_ERROR_AND_RETURN_TAG(kTag, fmt::format("Section start + size overflows int64."));
+    }
     size_t end_offset = size_t(_toc.sections[i].start + _toc.sections[i].size);
     if (sizeof(void *) == 4) { // 32bit
       if (end_offset > size_t(std::numeric_limits<int32_t>::max())) {
