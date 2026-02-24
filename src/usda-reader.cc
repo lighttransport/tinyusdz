@@ -336,8 +336,8 @@ class USDAReader::Impl {
       T *out);
 
   bool ProcessVariantSetContent(const uint32_t depth, const std::map<std::string, ascii::AsciiParser::VariantSetContent> &in_variants, std::map<std::string, std::map<std::string, VariantNode>> &dst) {
-    if (depth > 1024 * 1024) {
-      PUSH_ERROR_AND_RETURN("Too deep.");
+    if (depth > 512) {
+      PUSH_ERROR_AND_RETURN("VariantSet nesting too deep (> 512).");
     }
 
     //
