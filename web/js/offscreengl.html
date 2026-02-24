@@ -1,0 +1,249 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>TinyUSDZ OffscreenCanvas Demo</title>
+    <style>
+        * {
+            box-sizing: border-box;
+        }
+
+        body {
+            margin: 0;
+            padding: 0;
+            overflow: hidden;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+            background: #1a1a1a;
+            color: #fff;
+        }
+
+        #gl {
+            display: block;
+            width: 100vw;
+            height: 100vh;
+            touch-action: none;
+        }
+
+        /* Info overlay - top left */
+        #info-panel {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            background: rgba(0, 0, 0, 0.8);
+            padding: 12px 15px;
+            border-radius: 8px;
+            min-width: 220px;
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            pointer-events: none;
+        }
+
+        #info-panel h2 {
+            margin: 0 0 8px 0;
+            font-size: 14px;
+            font-weight: 600;
+            color: #2196F3;
+        }
+
+        #status {
+            font-size: 12px;
+            color: #999;
+            margin-bottom: 8px;
+            padding-bottom: 8px;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+        }
+
+        #status.error {
+            color: #f44336;
+        }
+
+        #model-info {
+            display: none;
+            font-size: 11px;
+            line-height: 1.8;
+            color: #ccc;
+        }
+
+        #model-info span {
+            color: #4CAF50;
+            font-weight: 500;
+        }
+
+        /* Toolbar - top center */
+        #toolbar {
+            position: absolute;
+            top: 10px;
+            left: 50%;
+            transform: translateX(-50%);
+            display: flex;
+            gap: 10px;
+            background: rgba(0, 0, 0, 0.8);
+            padding: 8px 12px;
+            border-radius: 8px;
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            pointer-events: all;
+        }
+
+        .btn {
+            background: #2196F3;
+            color: white;
+            border: none;
+            padding: 7px 14px;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 13px;
+            font-weight: 500;
+            transition: background 0.2s;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .btn:hover {
+            background: #1976D2;
+        }
+
+        .btn:active {
+            background: #1565C0;
+        }
+
+        #file-input {
+            display: none;
+        }
+
+        /* Worker badge */
+        #worker-badge {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            background: rgba(0, 0, 0, 0.7);
+            border: 1px solid rgba(76, 175, 80, 0.5);
+            color: #4CAF50;
+            padding: 4px 10px;
+            border-radius: 12px;
+            font-size: 11px;
+            font-weight: 600;
+            pointer-events: none;
+        }
+
+        /* Help overlay - bottom */
+        #help-overlay {
+            position: absolute;
+            bottom: 10px;
+            left: 10px;
+            background: rgba(0, 0, 0, 0.7);
+            padding: 8px 12px;
+            border-radius: 5px;
+            font-size: 11px;
+            color: #888;
+            line-height: 1.6;
+            pointer-events: none;
+        }
+
+        #help-overlay kbd {
+            background: rgba(255, 255, 255, 0.1);
+            padding: 1px 5px;
+            border-radius: 3px;
+            font-family: monospace;
+            font-size: 10px;
+        }
+
+        /* Drag-over overlay */
+        body.drag-over::after {
+            content: 'Drop USD file here';
+            position: fixed;
+            top: 0; left: 0; right: 0; bottom: 0;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 28px;
+            font-weight: 600;
+            color: #2196F3;
+            background: rgba(0, 0, 0, 0.6);
+            border: 3px dashed #2196F3;
+            pointer-events: none;
+            z-index: 100;
+        }
+
+        /* Error overlay for unsupported browsers */
+        #unsupported-overlay {
+            display: none;
+            position: fixed;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: #1a1a1a;
+            align-items: center;
+            justify-content: center;
+            flex-direction: column;
+            gap: 12px;
+            z-index: 999;
+            text-align: center;
+            padding: 20px;
+        }
+
+        #unsupported-overlay.visible {
+            display: flex;
+        }
+
+        #unsupported-overlay h1 {
+            color: #f44336;
+            font-size: 20px;
+        }
+
+        #unsupported-overlay p {
+            color: #aaa;
+            font-size: 14px;
+            max-width: 480px;
+        }
+    </style>
+</head>
+<body>
+    <!-- Full-screen canvas — control transferred to worker after init -->
+    <canvas id="gl"></canvas>
+
+    <!-- Info panel (top-left) -->
+    <div id="info-panel">
+        <h2>TinyUSDZ OffscreenCanvas</h2>
+        <div id="status">Initializing...</div>
+        <div id="model-info">
+            <div>Meshes: <span id="mesh-count">0</span></div>
+            <div>Materials: <span id="material-count">0</span></div>
+            <div>Up-Axis: <span id="up-axis">Y</span></div>
+        </div>
+    </div>
+
+    <!-- Toolbar (top-center) -->
+    <div id="toolbar">
+        <button class="btn" id="load-btn">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                <polyline points="17 8 12 3 7 8"/>
+                <line x1="12" y1="3" x2="12" y2="15"/>
+            </svg>
+            Load USD
+        </button>
+        <input type="file" id="file-input" accept=".usd,.usda,.usdc,.usdz">
+    </div>
+
+    <!-- Worker badge (top-right) -->
+    <div id="worker-badge">⚙ WebWorker</div>
+
+    <!-- Help overlay (bottom) -->
+    <div id="help-overlay">
+        <kbd>Left-drag</kbd> orbit &nbsp;|&nbsp;
+        <kbd>Right-drag</kbd> pan &nbsp;|&nbsp;
+        <kbd>Scroll</kbd> zoom &nbsp;|&nbsp;
+        <kbd>Drag &amp; Drop</kbd> load USD file
+    </div>
+
+    <!-- Unsupported browser overlay -->
+    <div id="unsupported-overlay">
+        <h1>OffscreenCanvas Not Supported</h1>
+        <p>This demo requires <strong>OffscreenCanvas</strong> support (Chrome 69+, Firefox 105+, Safari 16.4+).</p>
+        <p>Please use a modern browser, or try the <a href="materialx.html" style="color:#2196F3">main-thread demo</a> instead.</p>
+    </div>
+
+    <script type="module" src="./offscreengl.js"></script>
+</body>
+</html>
