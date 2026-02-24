@@ -131,6 +131,12 @@ int parseInt(const std::string &s, int *out_result) {
   while (idx < n) {
     if ((c[idx] >= '0') && (c[idx] <= '9')) {
       int digit = int(c[idx] - '0');
+
+      // Check for overflow before multiplication
+      if (result > (std::numeric_limits<int>::max)() / 10) {
+        return negative ? -3 : -2;
+      }
+
       result = result * 10 + digit;
     } else {
       // bad input

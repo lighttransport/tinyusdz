@@ -105,7 +105,7 @@ struct tstring_n {
     if (_len > N) {
       p = reinterpret_cast<const char *>(_u._ptr);
     } else {
-      p = reinterpret_cast<const char *>(_u.buf);
+      p = reinterpret_cast<const char *>(_u._buf);
     }
     std::string s(p, _len);
     return s;
