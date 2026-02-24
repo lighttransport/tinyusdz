@@ -735,20 +735,11 @@ std::string print_prim_metas(const PrimMeta &meta, const uint32_t indent) {
   }
 
   for (const auto &item : meta.unregisteredMetas) {
-    // Quote string values, but keep non-string values as-is
-    std::string value_str = item.second;
-    // Check if the value looks like a non-string value
-    // Array values start with '[', numbers start with digit or '-'
-    bool is_array = !value_str.empty() && value_str.front() == '[';
-    bool is_number = !value_str.empty() && (std::isdigit(value_str.front()) || value_str.front() == '-');
-    bool is_none = (value_str == "None");
-    bool is_already_quoted = !value_str.empty() && (value_str.front() == '"' || value_str.front() == '\'');
-
-    // Quote string values (anything that isn't an array, number, None, or already quoted)
-    if (!is_array && !is_number && !is_none && !is_already_quoted) {
-      value_str = quote(value_str);
-    }
-    ss << pprint::Indent(indent) << item.first << " = " << value_str << "\n";
+    // Write verbatim — the stored string already contains quotes if the
+    // original value was a quoted string.  Non-string values (numbers,
+    // arrays, None, tuples, …) are stored without quotes and must be
+    // written back without quotes.  This matches OpenUSD behaviour.
+    ss << pprint::Indent(indent) << item.first << " = " << item.second << "\n";
   }
 
   // TODO: deprecate meta.meta and remove it.

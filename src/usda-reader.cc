@@ -1162,6 +1162,16 @@ class USDAReader::Impl {
               "Payload. got type `"
               << var.type_name() << "`");
         }
+      } else if (meta.first == "doc") {
+        if (auto pv = var.get_value<value::StringData>()) {
+          out->set_doc(pv.value());
+        } else if (auto spv = var.get_value<std::string>()) {
+          out->set_doc(spv.value());
+        } else {
+          PUSH_ERROR_AND_RETURN(
+              "(Internal error?) `doc` metadataum is not type `string`. got `"
+              << var.type_name() << "`.");
+        }
       } else if (meta.first == "comment") {
         if (auto pv = var.get_value<value::StringData>()) {
           // Preserve full StringData including has_comment_prefix flag
@@ -1172,14 +1182,14 @@ class USDAReader::Impl {
           out->set_comment(sdata);
         }
       } else {
-        // Must be string value for unregisteredMeta for now.
-        // TODO: infer int, string, token, int[], string[] and token[] type from the value for custom(unregisteredMeta) metadata.
+        // Store unregistered metadata as raw string (OpenUSD-compatible).
+        // The value is stored verbatim and written back unquoted to USDA.
         if (auto spv = var.get_value<std::string>()) {
           out->unregisteredMetas[meta.first] = spv.value();
         } else {
-          PUSH_WARN("(Internal) unregistered Metadata must be type string for now, but got type " + var.type_name());
+          // Convert non-string values to their string representation
+          out->unregisteredMetas[meta.first] = value::pprint_value(var.get_raw_value());
         }
-
       }
     }
 
