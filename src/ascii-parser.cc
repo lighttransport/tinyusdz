@@ -1871,6 +1871,12 @@ bool AsciiParser::MaybeString(value::StringData *str) {
       }
     }
 
+    constexpr size_t kMaxStringLen = 64 * 1024 * 1024; // 64MB
+    if (buf.size() >= kMaxStringLen) {
+      SeekTo(loc);
+      PushError(fmt::format("String literal too large (> {} bytes).", kMaxStringLen));
+      return false;
+    }
     buf += c;
   }
 
@@ -3848,6 +3854,11 @@ bool AsciiParser::ParsePrimMetas(PrimMetaMap *args) {
         PUSH_ERROR_AND_RETURN("[InternalError] Metadataum name is empty.");
       }
 
+      constexpr size_t kMaxMetaEntries = 100000; // 100K entries max
+      if (args->size() >= kMaxMetaEntries) {
+        PUSH_ERROR_AND_RETURN_TAG(kAscii, fmt::format("Metadata entry count exceeds limit ({}).", kMaxMetaEntries));
+      }
+
       // Use insert/emplace for multimap (supports multiple listops per arc)
       args->emplace(std::get<1>(m.value()).get_name(), m.value());
     } else {
@@ -3906,9 +3917,13 @@ bool AsciiParser::ParseAttrMeta(AttrMeta *out_meta) {
 
       // May be string only
       {
+        constexpr size_t kMaxStringDataEntries = 100000;
         value::StringData sdata;
         if (MaybeTripleQuotedString(&sdata)) {
           CHECK_MEMORY_USAGE(sizeof(value::StringData) + sdata.value.length());
+          if (out_meta->stringData.size() >= kMaxStringDataEntries) {
+            PUSH_ERROR_AND_RETURN_TAG(kAscii, fmt::format("Attribute meta string count exceeds limit ({}).", kMaxStringDataEntries));
+          }
           out_meta->stringData.push_back(sdata);
 
           DCOUT("Add triple-quoted string to attr meta:" << to_string(sdata));
@@ -3918,6 +3933,9 @@ bool AsciiParser::ParseAttrMeta(AttrMeta *out_meta) {
           continue;
         } else if (MaybeString(&sdata)) {
           CHECK_MEMORY_USAGE(sizeof(value::StringData) + sdata.value.length());
+          if (out_meta->stringData.size() >= kMaxStringDataEntries) {
+            PUSH_ERROR_AND_RETURN_TAG(kAscii, fmt::format("Attribute meta string count exceeds limit ({}).", kMaxStringDataEntries));
+          }
           out_meta->stringData.push_back(sdata);
 
           DCOUT("Add string to attr meta:" << to_string(sdata));
