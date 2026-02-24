@@ -47,10 +47,12 @@
 #endif
 
 /* Static assert */
-#if defined(__STDC_VERSION__) && __STDC_VERSION__ >= 201112L
-  #define LUSD_STATIC_ASSERT(cond, msg) _Static_assert(cond, msg)
+#if defined(__cplusplus) && (__cplusplus >= 201103L)
+  #define LUSD_STATIC_ASSERT(cond, msg) static_assert(cond, msg)
 #elif defined(_MSC_VER)
   #define LUSD_STATIC_ASSERT(cond, msg) static_assert(cond, msg)
+#elif defined(__STDC_VERSION__) && __STDC_VERSION__ >= 201112L
+  #define LUSD_STATIC_ASSERT(cond, msg) _Static_assert(cond, msg)
 #else
   #define LUSD_STATIC_ASSERT(cond, msg) \
     typedef char lusd_static_assert_##__LINE__[(cond) ? 1 : -1]

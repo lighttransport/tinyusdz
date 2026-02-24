@@ -100,7 +100,26 @@ set(LUSD_SOURCES
   src/lusd_arena.c
   src/lusd_diagnostics.c
   src/lusd_lz4.c
+  # Phase 5: Native USDC reader
+  src/lusd_usdc_reader.c
 )
+
+# Optional tinyusdz backend: replaces C stubs for stage/prim/attribute with
+# a C++ bridge that calls tinyusdz to actually parse USD files.
+# Set LUSD_TINYUSDZ_DIR to the tinyusdz source root before add_subdirectory.
+option(LUSD_TINYUSDZ_DIR
+  "Path to tinyusdz source directory (enables tinyusdz USD backend)" "")
+
+if(LUSD_TINYUSDZ_DIR)
+  # Remove the pure-C stubs that the C++ bridge replaces
+  list(REMOVE_ITEM LUSD_SOURCES
+    src/lusd_stage.c
+    src/lusd_prim.c
+    src/lusd_attribute.c
+  )
+  # Add the C++ bridge
+  list(APPEND LUSD_SOURCES src/lusd_stage_tinyusdz.cc)
+endif()
 
 # Static library
 add_library(lightusd-c STATIC ${LUSD_SOURCES} ${LUSD_PUBLIC_HEADERS})
@@ -112,6 +131,17 @@ target_include_directories(lightusd-c
 # Math library on Unix
 if(UNIX)
   target_link_libraries(lightusd-c PRIVATE m)
+endif()
+
+# tinyusdz backend: add includes and link
+if(LUSD_TINYUSDZ_DIR)
+  target_include_directories(lightusd-c PRIVATE
+    "${LUSD_TINYUSDZ_DIR}/src"
+    "${LUSD_TINYUSDZ_DIR}/src/external"
+  )
+  target_link_libraries(lightusd-c PRIVATE tinyusdz_static)
+  # The library now contains C++ translation units, ensure the linker knows
+  set_target_properties(lightusd-c PROPERTIES LINKER_LANGUAGE CXX)
 endif()
 
 # Tests
@@ -156,6 +186,9 @@ set(LYDRA_SOURCES
 add_library(lydra STATIC ${LYDRA_SOURCES} ${LYDRA_HEADERS})
 target_include_directories(lydra
   PUBLIC  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/lydra>
+  # Privileged access to lightusd-c internal headers for value materialization
+  PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src
+          ${CMAKE_CURRENT_SOURCE_DIR}/include
 )
 set_target_properties(lydra PROPERTIES
   CXX_STANDARD 17
