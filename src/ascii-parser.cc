@@ -62,12 +62,13 @@
 #include "common-macros.inc"
 
 #define CHECK_MEMORY_USAGE(__nbytes) do { \
-  _memory_usage += (__nbytes); \
-  if (_memory_usage > _max_memory_limit_bytes) { \
+  uint64_t _chk_nbytes = static_cast<uint64_t>(__nbytes); \
+  if (_chk_nbytes > (_max_memory_limit_bytes - _memory_usage)) { \
     PushError(fmt::format("Memory limit exceeded. Limit: {} MB, Current usage: {} MB", \
       _max_memory_limit_bytes / (1024*1024), _memory_usage / (1024*1024))); \
     return false; \
-  }  \
+  } \
+  _memory_usage += _chk_nbytes; \
   } while(0)
 
 #if 0
@@ -1470,6 +1471,15 @@ bool AsciiParser::MaybeCustom() {
 
 bool AsciiParser::ParseDict(std::map<std::string, MetaVariable> *out_dict) {
   // '{' comment | (type name '=' value)+ '}'
+  if (_dict_nesting_depth > 64) {
+    PUSH_ERROR_AND_RETURN_TAG(kAscii, "Dictionary nesting depth limit exceeded (> 64).");
+  }
+  _dict_nesting_depth++;
+  struct DictDepthGuard {
+    uint32_t &depth;
+    ~DictDepthGuard() { depth--; }
+  } dict_depth_guard{_dict_nesting_depth};
+
   if (!Expect('{')) {
     return false;
   }
@@ -1913,6 +1923,8 @@ bool AsciiParser::MaybeTripleQuotedString(value::StringData *str) {
   }
 
   // Read until next triple-quote `"""` or "'''"
+  // Limit to prevent OOM from unclosed/huge triple-quoted strings.
+  constexpr size_t kMaxTripleQuotedStringLen = 64 * 1024 * 1024; // 64MB
   std::string str_buf;
   str_buf.reserve(256);
 
@@ -1955,6 +1967,10 @@ bool AsciiParser::MaybeTripleQuotedString(value::StringData *str) {
       }
     }
 
+    if (str_buf.size() >= kMaxTripleQuotedStringLen) {
+      SeekTo(loc);
+      PUSH_ERROR_AND_RETURN_TAG(kAscii, fmt::format("Triple-quoted string literal too large (> {} bytes).", kMaxTripleQuotedStringLen));
+    }
     str_buf += c;
 
     if (c == '"') {
