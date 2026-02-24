@@ -948,6 +948,8 @@ nonstd::optional<std::string> GetPrimElementName(const value::Value &v) {
   EXTRACT_NAME_AND_RETURN_PATH(GeometryLight)
   EXTRACT_NAME_AND_RETURN_PATH(PortalLight)
   EXTRACT_NAME_AND_RETURN_PATH(Material)
+  EXTRACT_NAME_AND_RETURN_PATH(NodeGraph)
+  EXTRACT_NAME_AND_RETURN_PATH(ShaderNode)
   EXTRACT_NAME_AND_RETURN_PATH(Shader)
   // TODO: extract name must be handled in Shader class
   EXTRACT_NAME_AND_RETURN_PATH(UsdPreviewSurface)
@@ -1007,6 +1009,8 @@ bool SetPrimElementName(value::Value &v, const std::string &elementName) {
   SET_ELEMENT_NAME(elementName, GeometryLight)
   SET_ELEMENT_NAME(elementName, PortalLight)
   SET_ELEMENT_NAME(elementName, Material)
+  SET_ELEMENT_NAME(elementName, NodeGraph)
+  SET_ELEMENT_NAME(elementName, ShaderNode)
   SET_ELEMENT_NAME(elementName, Shader)
   // TODO: set element name must be handled in Shader class
   SET_ELEMENT_NAME(elementName, UsdPreviewSurface)

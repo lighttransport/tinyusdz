@@ -961,6 +961,19 @@ bool CrateWriter::WritePathsSection(std::string* err) {
   // Encode to compressed tree
   pathlib::CompressedPathTree tree = pathlib::EncodePaths(simple_paths);
 
+  // Replace UINT64_MAX sentinel values (intermediate tree nodes that don't
+  // correspond to any input path) with valid indices.  Actual paths occupy
+  // indices [0, simple_paths.size()), so intermediates get the next available
+  // indices.  This keeps path_count == tree.size() correct.
+  {
+    uint64_t next_idx = static_cast<uint64_t>(simple_paths.size());
+    for (auto& pi : tree.path_indexes) {
+      if (pi == UINT64_MAX) {
+        pi = next_idx++;
+      }
+    }
+  }
+
   // Remap the path tree token indices to our token indices
   // The path tree has its own token indices, but we need to use our global token indices
   // that were computed in Finalize() to preserve field name tokens
