@@ -111,6 +111,10 @@ const state = {
     usdLights: [],          // Three.js lights created from USD
     defaultLights: [],      // Default directional lights
     envEnabled: true,       // Whether envmap IBL is active
+
+    // Shading debug
+    shadingMode: 'solid',
+    originalMaterialsMap: new Map(),
 };
 
 // ============================================================================
@@ -138,7 +142,6 @@ function registerMtlxNodeTypes() {
         const v = this.properties.value;
         if (Array.isArray(v) && v.length >= 3) {
             this.properties.valueType = 'color3';
-            this.size = [200, 120];
             this.addWidget('slider', 'R', v[0], (val) => {
                 this.properties.value[0] = val;
                 this.setDirtyCanvas(true);
@@ -154,10 +157,20 @@ function registerMtlxNodeTypes() {
                 this.setDirtyCanvas(true);
                 if (window._mtlxMarkDirty) window._mtlxMarkDirty();
             }, { min: 0, max: 1 });
+            // Color swatch: drawn as a custom widget (type unknown → default case calls w.draw).
+            // This runs inside drawNodeWidgets after the sliders, so it is never overwritten by them.
+            // Reading node.properties.value at draw-time means it always reflects the current value.
+            const swatch = this.addWidget('color_swatch', 'color', null, () => {}, {});
+            swatch.draw = (ctx, node, widget_width, y, H) => {
+                const vv = node.properties.value;
+                if (Array.isArray(vv) && vv.length >= 3) {
+                    ctx.fillStyle = `rgb(${Math.round(vv[0]*255)},${Math.round(vv[1]*255)},${Math.round(vv[2]*255)})`;
+                    ctx.fillRect(15, y, widget_width - 30, H);
+                }
+            };
         } else {
             this.properties.valueType = 'float';
             const numVal = (typeof v === 'number') ? v : 0;
-            this.size = [200, 65];
             this.addWidget('slider', 'Value', numVal, (val) => {
                 this.properties.value = val;
                 this.setDirtyCanvas(true);
@@ -165,13 +178,8 @@ function registerMtlxNodeTypes() {
             }, { min: 0, max: 1 });
         }
     };
-    ConstantNode.prototype.onDrawForeground = function(ctx) {
-        const v = this.properties.value;
-        if (Array.isArray(v) && v.length >= 3) {
-            ctx.fillStyle = `rgb(${Math.floor(v[0]*255)},${Math.floor(v[1]*255)},${Math.floor(v[2]*255)})`;
-            ctx.fillRect(10, this.size[1] - 25, this.size[0] - 20, 18);
-        }
-    };
+    // Color preview for color3 constant nodes is handled by the 'color_swatch' custom widget
+    // added in _setupWidgets(). No onDrawForeground needed here for that purpose.
     ConstantNode.prototype.onPropertyChanged = function() {
         this._setupWidgets();
     };
@@ -830,6 +838,55 @@ function registerMtlxNodeTypes() {
     DotProductNode.title = 'Dot';
     LiteGraph.registerNodeType('mtlx/dotproduct', DotProductNode);
 
+    // Normal map node (ND_normalmap) — converts tangent-space sample to perturbed normal
+    function NormalMapNode() {
+        this.addInput('in', 'vector3');
+        this.addInput('scale', 'float');
+        this.addInput('space', 'string');
+        this.addOutput('out', 'vector3');
+        this.color = '#445577';
+        this.size = [130, 80];
+    }
+    NormalMapNode.title = 'NormalMap';
+    LiteGraph.registerNodeType('mtlx/normalmap', NormalMapNode);
+
+    // Height-to-normal node (ND_heighttonormal) — converts height/displacement to a normal vector
+    function HeightToNormalNode() {
+        this.addInput('in', 'float');
+        this.addInput('scale', 'float');
+        this.addOutput('out', 'vector3');
+        this.color = '#445577';
+        this.size = [130, 70];
+    }
+    HeightToNormalNode.title = 'HeightToNormal';
+    LiteGraph.registerNodeType('mtlx/heighttonormal', HeightToNormalNode);
+
+    // 3D fractal noise node (ND_fractal3d) — procedural noise in 3D space
+    function Fractal3DNode() {
+        this.addInput('amplitude', 'any');
+        this.addInput('octaves', 'any');
+        this.addInput('lacunarity', 'any');
+        this.addInput('diminish', 'any');
+        this.addInput('position', 'vector3');
+        this.addOutput('out', 'any');
+        this.color = '#446655';
+        this.size = [130, 110];
+    }
+    Fractal3DNode.title = 'Fractal3D';
+    LiteGraph.registerNodeType('mtlx/fractal3d', Fractal3DNode);
+
+    // Rotate3D node (ND_rotate3d) — rotates a vector3 around an axis
+    function Rotate3DNode() {
+        this.addInput('in', 'vector3');
+        this.addInput('amount', 'float');
+        this.addInput('axis', 'vector3');
+        this.addOutput('out', 'vector3');
+        this.color = '#556644';
+        this.size = [120, 80];
+    }
+    Rotate3DNode.title = 'Rotate3D';
+    LiteGraph.registerNodeType('mtlx/rotate3d', Rotate3DNode);
+
     // Generic node for unknown types
     function GenericNode() {
         this.addInput('in', 'any');
@@ -1008,8 +1065,6 @@ function buildLiteGraphFromMtlx(nodeGraphData, materialName) {
                 ctx.fillText('unused', 6, 12);
             }
         };
-        lgNode.size[1] = Math.max(lgNode.size[1], 55) + 14;
-
         // Set properties (may affect node size via widgets)
         if (node.value !== undefined) {
             lgNode.properties = lgNode.properties || {};
@@ -1018,6 +1073,8 @@ function buildLiteGraphFromMtlx(nodeGraphData, materialName) {
                 lgNode._setupWidgets();
             }
         }
+        // Apply minimum height AFTER _setupWidgets() so it isn't overridden by computeSize().
+        lgNode.size[1] = Math.max(lgNode.size[1], 55) + 14;
 
         if (node.inputs) {
             for (const input of node.inputs) {
@@ -1280,8 +1337,8 @@ function computeNodeLevels(nodes) {
 
 function getBaseCategory(category) {
     if (!category) return 'generic';
-    // Strip type suffixes
-    return category.replace(/_(color3|color4|float|vector2|vector3|vector4|integer|boolean|string)$/, '');
+    // Strip type suffixes including MaterialX variant tags (e.g. color3FA, vector3FA)
+    return category.replace(/_(color[34]\w*|float|vector[234]\w*|integer|boolean|string)$/, '');
 }
 
 function updateNodeStats() {
@@ -2327,8 +2384,9 @@ function findNodeGraphTextures(nodeGraphData) {
         for (const dep of deps) {
             const node = nodeMap.get(nodeName);
             const cat = (node?.category || '').replace(/_(color3|color4|float|vector2|vector3|vector4)$/, '');
-            // Skip pass-through nodes (convert, texcoord) in the ops chain
-            const isPassthrough = (cat === 'convert' || cat === 'texcoord');
+            // Skip pass-through nodes in the ops chain.
+            // normalmap/heighttonormal transform the channel but the underlying image file is still the one to load.
+            const isPassthrough = (cat === 'convert' || cat === 'texcoord' || cat === 'normalmap' || cat === 'heighttonormal');
             const newChain = isPassthrough ? chain : [...chain, { name: nodeName, category: cat, node }];
             const found = traceToImageNode(dep, newChain, visited);
             if (found) return found;
@@ -2537,6 +2595,8 @@ async function loadMaterialTextures(openPBR, nativeLoader) {
                 'coat_weight': 'coat_weight',
                 'transmission_color': 'base_color',    // transmission color often shares base texture
                 'subsurface_color': 'base_color',      // subsurface color often shares base texture
+                'geometry_normal': 'normal',            // normal map connected via node graph
+                'normal': 'normal',
             };
             const texKey = paramToTexKey[paramName];
             if (!texKey) continue;
@@ -2581,6 +2641,12 @@ async function loadMaterialTextures(openPBR, nativeLoader) {
 
 async function buildScene() {
     const usd = state.usdData;
+
+    // Reset shading mode when loading a new scene (old materials are being replaced)
+    state.originalMaterialsMap.clear();
+    state.shadingMode = 'solid';
+    const shadingSelect = document.getElementById('shading-mode-select');
+    if (shadingSelect) shadingSelect.value = 'solid';
 
     // Clear and load material data (consolidated from callers)
     state.materials = [];
@@ -2802,26 +2868,49 @@ function disposeObject(obj) {
 function updateMaterialSelector() {
     const selector = document.getElementById('material-selector');
     const select = document.getElementById('material-select');
+    const ngBar = document.getElementById('ng-material-bar');
+    const ngSelect = document.getElementById('ng-material-select');
+    const ngCount = document.getElementById('ng-material-count');
+
+    // Build options for both selects
+    const fragment = () => {
+        const frag = document.createDocumentFragment();
+        for (let i = 0; i < state.materialData.length; i++) {
+            const mat = state.materialData[i];
+            const option = document.createElement('option');
+            option.value = i;
+            option.textContent = mat.name || `Material ${i}`;
+            frag.appendChild(option);
+        }
+        return frag;
+    };
 
     select.innerHTML = '';
-
-    for (let i = 0; i < state.materialData.length; i++) {
-        const mat = state.materialData[i];
-        const option = document.createElement('option');
-        option.value = i;
-        option.textContent = mat.name || `Material ${i}`;
-        select.appendChild(option);
-    }
-
+    select.appendChild(fragment());
     select.onchange = (e) => selectMaterial(parseInt(e.target.value));
 
-    selector.style.display = state.materialData.length > 0 ? 'block' : 'none';
+    ngSelect.innerHTML = '';
+    ngSelect.appendChild(fragment());
+    // onchange is handled inline via HTML attribute
+
+    const count = state.materialData.length;
+    if (ngCount) ngCount.textContent = count > 0 ? `(${count})` : '';
+
+    selector.style.display = count > 0 ? 'block' : 'none';
+    if (ngBar) ngBar.classList.toggle('visible', count > 0);
 }
 
 function selectMaterial(index) {
     if (index < 0 || index >= state.materialData.length) return;
 
     state.currentMaterialIndex = index;
+
+    // Sync both selector UIs
+    const viewerSelect = document.getElementById('material-select');
+    if (viewerSelect && parseInt(viewerSelect.value) !== index) viewerSelect.value = index;
+    const ngSelect = document.getElementById('ng-material-select');
+    if (ngSelect && parseInt(ngSelect.value) !== index) ngSelect.value = index;
+
     const matData = state.materialData[index];
 
     // Get node graph
@@ -3218,6 +3307,168 @@ window.toggleLightingPanel = function() {
 };
 
 // ============================================================================
+// Shading Panel
+// ============================================================================
+
+/**
+ * Create a shader material that visualizes world-space normals as RGB colors.
+ * If normalMap is provided, the normal map is applied via TBN before coloring.
+ */
+function createAbsNormalMaterial(normalMap = null, normalScale = new THREE.Vector2(1, 1)) {
+    return new THREE.ShaderMaterial({
+        uniforms: {
+            normalMap: { value: normalMap },
+            normalScale: { value: normalScale },
+            useNormalMap: { value: normalMap !== null }
+        },
+        vertexShader: `
+            varying vec3 vWorldNormal;
+            varying vec2 vUv;
+            varying vec3 vTangent;
+            varying vec3 vBitangent;
+
+            #ifdef USE_TANGENT
+                attribute vec4 tangent;
+            #endif
+
+            void main() {
+                mat3 worldNormalMatrix = mat3(modelMatrix);
+                vWorldNormal = normalize(worldNormalMatrix * normal);
+                vUv = uv;
+
+                #ifdef USE_TANGENT
+                    vTangent = normalize(worldNormalMatrix * tangent.xyz);
+                    vBitangent = normalize(cross(vWorldNormal, vTangent) * tangent.w);
+                #else
+                    vTangent = normalize(worldNormalMatrix * vec3(1.0, 0.0, 0.0));
+                    vBitangent = normalize(cross(vWorldNormal, vTangent));
+                #endif
+
+                gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+            }
+        `,
+        fragmentShader: `
+            uniform sampler2D normalMap;
+            uniform vec2 normalScale;
+            uniform bool useNormalMap;
+
+            varying vec3 vWorldNormal;
+            varying vec2 vUv;
+            varying vec3 vTangent;
+            varying vec3 vBitangent;
+
+            void main() {
+                vec3 n = normalize(vWorldNormal);
+
+                if (useNormalMap) {
+                    vec3 mapN = texture2D(normalMap, vUv).xyz * 2.0 - 1.0;
+                    mapN.xy *= normalScale;
+                    mapN = normalize(mapN);
+                    vec3 T = normalize(vTangent);
+                    vec3 B = normalize(vBitangent);
+                    mat3 TBN = mat3(T, B, n);
+                    n = normalize(TBN * mapN);
+                }
+
+                gl_FragColor = vec4(n * 0.5 + 0.5, 1.0);
+            }
+        `,
+        side: THREE.DoubleSide
+    });
+}
+
+/**
+ * Extract normal map and scale from a Three.js material.
+ * Handles direct property, userData.textures, and array materials.
+ */
+function extractNormalMapFromMaterial(material) {
+    if (!material) return { normalMap: null, normalScale: new THREE.Vector2(1, 1) };
+
+    // Handle array of materials
+    if (Array.isArray(material)) {
+        for (const mat of material) {
+            const result = extractNormalMapFromMaterial(mat);
+            if (result.normalMap) return result;
+        }
+        return { normalMap: null, normalScale: new THREE.Vector2(1, 1) };
+    }
+
+    // Direct normalMap property (MeshPhysicalMaterial, MeshStandardMaterial)
+    if (material.normalMap) {
+        return {
+            normalMap: material.normalMap,
+            normalScale: material.normalScale ? material.normalScale.clone() : new THREE.Vector2(1, 1)
+        };
+    }
+
+    // userData.textures (async-loaded textures)
+    if (material.userData?.textures?.normalMap) {
+        return {
+            normalMap: material.userData.textures.normalMap,
+            normalScale: new THREE.Vector2(1, 1)
+        };
+    }
+
+    return { normalMap: null, normalScale: new THREE.Vector2(1, 1) };
+}
+
+/**
+ * Apply a shading debug mode to the current model.
+ * Modes: 'solid' | 'normal_mapped' | 'normal_geometry'
+ */
+function setShadingMode(mode) {
+    state.shadingMode = mode;
+
+    // Update the select element to match (for calls from JS)
+    const select = document.getElementById('shading-mode-select');
+    if (select && select.value !== mode) select.value = mode;
+
+    if (!state.currentModel) return;
+
+    if (mode === 'solid') {
+        // Restore original materials
+        state.currentModel.traverse((obj) => {
+            if (!obj.isMesh) return;
+            const orig = state.originalMaterialsMap.get(obj);
+            if (orig !== undefined) {
+                obj.material = orig;
+            }
+        });
+        state.originalMaterialsMap.clear();
+    } else {
+        // Save original materials before first non-solid switch
+        state.currentModel.traverse((obj) => {
+            if (!obj.isMesh) return;
+            if (!state.originalMaterialsMap.has(obj)) {
+                state.originalMaterialsMap.set(obj, obj.material);
+            }
+        });
+
+        state.currentModel.traverse((obj) => {
+            if (!obj.isMesh) return;
+            const origMat = state.originalMaterialsMap.get(obj) ?? obj.material;
+            let normalMap = null;
+            let normalScale = new THREE.Vector2(1, 1);
+
+            if (mode === 'normal_mapped') {
+                const extracted = extractNormalMapFromMaterial(origMat);
+                normalMap = extracted.normalMap;
+                normalScale = extracted.normalScale;
+            }
+
+            obj.material = createAbsNormalMaterial(normalMap, normalScale);
+        });
+    }
+}
+
+window.toggleShadingPanel = function() {
+    const panel = document.getElementById('shading-controls');
+    panel.classList.toggle('collapsed');
+};
+
+window.setShadingMode = setShadingMode;
+
+// ============================================================================
 // Light List UI
 // ============================================================================
 
@@ -3532,8 +3783,6 @@ function pickObject(hit) {
     // Select material and sync UI
     if (matIndex >= 0) {
         selectMaterial(matIndex);
-        const select = document.getElementById('material-select');
-        if (select) select.value = matIndex;
         showToast(`Selected: ${mesh.name || 'Mesh'} → ${state.materialData[matIndex]?.name || 'Material'}`);
     } else {
         showToast(`Selected: ${mesh.name || 'Mesh'} (no editable material)`);
