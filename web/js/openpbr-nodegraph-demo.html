@@ -266,6 +266,51 @@
             background: #4CAF50;
         }
 
+        /* NodeGraph material selector bar */
+        .ng-material-bar {
+            display: none;
+            align-items: center;
+            gap: 8px;
+            padding: 5px 12px;
+            background: #1e1e30;
+            border-top: 1px solid #2a2a44;
+            border-bottom: 1px solid #2a2a44;
+            font-size: 12px;
+            flex-shrink: 0;
+        }
+
+        .ng-material-bar.visible {
+            display: flex;
+        }
+
+        .ng-material-bar label {
+            color: #aaa;
+            font-size: 11px;
+            white-space: nowrap;
+        }
+
+        .ng-material-bar select {
+            flex: 1;
+            background: #2a2a42;
+            color: #eee;
+            border: 1px solid #444;
+            padding: 3px 8px;
+            border-radius: 4px;
+            font-size: 12px;
+            cursor: pointer;
+        }
+
+        .ng-material-bar select:focus {
+            outline: 1px solid #4CAF50;
+        }
+
+        .ng-material-bar .mat-count {
+            color: #666;
+            font-size: 10px;
+            font-family: monospace;
+            white-space: nowrap;
+        }
+
         /* Node graph stats */
         .nodegraph-stats {
             position: absolute;
@@ -603,6 +648,68 @@
             font-family: monospace;
             flex-shrink: 0;
         }
+
+        /* Shading controls */
+        .shading-controls {
+            position: absolute;
+            bottom: 40px;
+            left: 10px;
+            background: rgba(0, 0, 0, 0.85);
+            padding: 10px 12px;
+            border-radius: 8px;
+            z-index: 100;
+            min-width: 190px;
+            font-size: 12px;
+        }
+
+        .shading-controls h4 {
+            margin: 0 0 8px 0;
+            color: #CE93D8;
+            font-size: 12px;
+            cursor: pointer;
+            user-select: none;
+        }
+
+        .shading-controls h4::before {
+            content: '\25BC ';
+            font-size: 9px;
+        }
+
+        .shading-controls.collapsed h4::before {
+            content: '\25B6 ';
+        }
+
+        .shading-controls.collapsed .shading-body {
+            display: none;
+        }
+
+        .shading-controls .control-row {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            margin-bottom: 6px;
+        }
+
+        .shading-controls .control-row:last-child {
+            margin-bottom: 0;
+        }
+
+        .shading-controls label {
+            color: #aaa;
+            font-size: 11px;
+            min-width: 40px;
+            white-space: nowrap;
+        }
+
+        .shading-controls select {
+            flex: 1;
+            background: #333;
+            color: #fff;
+            border: 1px solid #555;
+            padding: 3px 6px;
+            border-radius: 3px;
+            font-size: 11px;
+        }
     </style>
 </head>
 <body>
@@ -625,6 +732,21 @@
 
             <div class="help-text">
                 <kbd>Scroll</kbd> zoom | <kbd>Drag</kbd> orbit | <kbd>Right-drag</kbd> pan
+            </div>
+
+            <!-- Shading Controls -->
+            <div class="shading-controls" id="shading-controls">
+                <h4 onclick="toggleShadingPanel()">Shading</h4>
+                <div class="shading-body">
+                    <div class="control-row">
+                        <label>Mode:</label>
+                        <select id="shading-mode-select" onchange="setShadingMode(this.value)">
+                            <option value="solid">Solid</option>
+                            <option value="normal_mapped">Normal Mapped</option>
+                            <option value="normal_geometry">Normal Geometry</option>
+                        </select>
+                    </div>
+                </div>
             </div>
 
             <!-- Lighting Controls -->
@@ -689,7 +811,8 @@
                     <button class="btn" onclick="loadFile()">Load USD</button>
                     <button class="btn secondary" onclick="loadSample()">Sample</button>
                     <select id="blender-sample-select" style="height:26px;font-size:11px;background:#2a2a3e;color:#ccc;border:1px solid #555;border-radius:3px;padding:0 4px;max-width:160px">
-                        <option value="texture_channel_blender.usdz">Texture channels</option>
+                        <!-- <option value="texture_channel_blender.usdz">Texture channels</option> -->
+                        <option value="test-nodegraph.usdz">Texture channels</option> 
                         <option value="colorspace-constant-test.usdz">Colorspace (constant)</option>
                         <option value="colorspace-texture-test.usdz">Colorspace (texture)</option>
                         <option value="colorspace-gamut-test.usdz">Colorspace (gamut)</option>
@@ -721,6 +844,14 @@
                 </div>
             </div>
             <canvas id="nodegraph-canvas"></canvas>
+
+            <!-- Material selector bar (above node/connection stats) -->
+            <div class="ng-material-bar" id="ng-material-bar">
+                <label>Material:</label>
+                <select id="ng-material-select" onchange="selectMaterial(parseInt(this.value))"></select>
+                <span class="mat-count" id="ng-material-count"></span>
+            </div>
+
             <div class="nodegraph-stats">
                 Nodes: <span id="node-count">0</span> |
                 Connections: <span id="connection-count">0</span>
