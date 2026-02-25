@@ -518,28 +518,64 @@ bool ConvertShaderWithNodeGraphToJson(
 
   // Second: for MtlxOpenPBRSurface, check typed fields directly
   // (props map is empty for typed shaders - connections stored in typed fields)
+  // All fields from MtlxOpenPBRSurface struct (usdMtlx.hh) must be listed here
+  // to ensure no NodeGraph connections are silently dropped.
   if (const MtlxOpenPBRSurface *opbr = shader->value.as<MtlxOpenPBRSurface>()) {
+    // Base
     checkTypedField("base_weight", opbr->base_weight);
     checkTypedField("base_color", opbr->base_color);
     checkTypedField("base_metalness", opbr->base_metalness);
     checkTypedField("base_diffuse_roughness", opbr->base_diffuse_roughness);
+    // Specular
     checkTypedField("specular_weight", opbr->specular_weight);
     checkTypedField("specular_color", opbr->specular_color);
     checkTypedField("specular_roughness", opbr->specular_roughness);
     checkTypedField("specular_ior", opbr->specular_ior);
     checkTypedField("specular_anisotropy", opbr->specular_anisotropy);
     checkTypedField("specular_rotation", opbr->specular_rotation);
+    checkTypedField("specular_roughness_anisotropy", opbr->specular_roughness_anisotropy);
+    // Transmission
     checkTypedField("transmission_weight", opbr->transmission_weight);
     checkTypedField("transmission_color", opbr->transmission_color);
     checkTypedField("transmission_depth", opbr->transmission_depth);
+    checkTypedField("transmission_scatter", opbr->transmission_scatter);
+    checkTypedField("transmission_scatter_anisotropy", opbr->transmission_scatter_anisotropy);
+    checkTypedField("transmission_dispersion", opbr->transmission_dispersion);
+    checkTypedField("transmission_dispersion_abbe_number", opbr->transmission_dispersion_abbe_number);
+    checkTypedField("transmission_dispersion_scale", opbr->transmission_dispersion_scale);
+    // Subsurface
     checkTypedField("subsurface_weight", opbr->subsurface_weight);
     checkTypedField("subsurface_color", opbr->subsurface_color);
+    checkTypedField("subsurface_radius", opbr->subsurface_radius);
+    checkTypedField("subsurface_radius_scale", opbr->subsurface_radius_scale);
+    checkTypedField("subsurface_scale", opbr->subsurface_scale);
+    checkTypedField("subsurface_anisotropy", opbr->subsurface_anisotropy);
+    checkTypedField("subsurface_scatter_anisotropy", opbr->subsurface_scatter_anisotropy);
+    // Coat
     checkTypedField("coat_weight", opbr->coat_weight);
     checkTypedField("coat_color", opbr->coat_color);
     checkTypedField("coat_roughness", opbr->coat_roughness);
+    checkTypedField("coat_anisotropy", opbr->coat_anisotropy);
+    checkTypedField("coat_rotation", opbr->coat_rotation);
+    checkTypedField("coat_roughness_anisotropy", opbr->coat_roughness_anisotropy);
+    checkTypedField("coat_ior", opbr->coat_ior);
+    checkTypedField("coat_darkening", opbr->coat_darkening);
+    checkTypedField("coat_affect_color", opbr->coat_affect_color);
+    checkTypedField("coat_affect_roughness", opbr->coat_affect_roughness);
+    // Fuzz
+    checkTypedField("fuzz_weight", opbr->fuzz_weight);
+    checkTypedField("fuzz_color", opbr->fuzz_color);
+    checkTypedField("fuzz_roughness", opbr->fuzz_roughness);
+    // Thin film
+    checkTypedField("thin_film_thickness", opbr->thin_film_thickness);
+    checkTypedField("thin_film_ior", opbr->thin_film_ior);
+    checkTypedField("thin_film_weight", opbr->thin_film_weight);
+    // Emission
     checkTypedField("emission_luminance", opbr->emission_luminance);
     checkTypedField("emission_color", opbr->emission_color);
+    // Geometry
     checkTypedField("geometry_opacity", opbr->geometry_opacity);
+    checkTypedField("geometry_thin_walled", opbr->geometry_thin_walled);
     checkTypedField("geometry_normal", opbr->geometry_normal);
     checkTypedField("geometry_tangent", opbr->geometry_tangent);
     checkTypedField("geometry_coat_normal", opbr->geometry_coat_normal);
