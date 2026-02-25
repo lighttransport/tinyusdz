@@ -119,6 +119,11 @@ const state = {
     // Demand rendering: only call renderer.render() when this is true
     // or when OrbitControls is still damping (controls.update() returns true).
     renderNeeded: true,
+
+    // Undo/redo history for node graph edits
+    undoStack: [],              // array of JSON-serialized graph snapshots (pre-change)
+    redoStack: [],
+    _pendingHistorySnapshot: null,  // snapshot taken on pointerdown, committed if graph changed
 };
 
 // ============================================================================
@@ -185,6 +190,11 @@ function registerMtlxNodeTypes() {
     // Color preview for color3 constant nodes is handled by the 'color_swatch' custom widget
     // added in _setupWidgets(). No onDrawForeground needed here for that purpose.
     ConstantNode.prototype.onPropertyChanged = function() {
+        this._setupWidgets();
+    };
+    // Re-setup widgets after graph.configure() restores a snapshot so slider
+    // values reflect the restored properties.value (not the constructor default).
+    ConstantNode.prototype.onConfigure = function() {
         this._setupWidgets();
     };
     LiteGraph.registerNodeType('mtlx/constant', ConstantNode);
@@ -936,6 +946,9 @@ function initLiteGraph() {
     resizeGraphCanvas();
     window.addEventListener('resize', resizeGraphCanvas);
 
+    // History: capture pre-action snapshot on every pointerdown over the canvas
+    canvas.addEventListener('pointerdown', historyCapturePre);
+
     // Hook change events for editing
     hookGraphChangeEvents();
 }
@@ -961,6 +974,12 @@ function buildLiteGraphFromMtlx(nodeGraphData, materialName) {
     // Suppress dirty notifications during graph building
     state._buildingGraph = true;
     state.graph.clear();
+
+    // Clear undo/redo history when a new graph is loaded
+    state.undoStack = [];
+    state.redoStack = [];
+    state._pendingHistorySnapshot = null;
+    updateHistoryUI();
 
     if (!nodeGraphData || !nodeGraphData.nodegraph) {
         // Create a surface node with inline widgets for all parameters
@@ -1666,6 +1685,7 @@ function hookGraphChangeEvents() {
 
     // LGraph fires 'change' on structural changes (connections, node add/remove)
     state.graph.onNodeConnectionChange = function() {
+        historyCommit();
         markGraphDirty();
     };
 
@@ -1688,6 +1708,7 @@ function hookGraphChangeEvents() {
             state.graphCanvas.processNodeWidgets = function(node, pos, event, active_widget) {
                 const result = origProcessNodeWidgets.call(this, node, pos, event, active_widget);
                 if (result) {
+                    historyCommit();
                     markGraphDirty();
                 }
                 return result;
@@ -1700,6 +1721,84 @@ function hookGraphChangeEvents() {
         markGraphDirty();
     };
 }
+
+// ============================================================================
+// Undo / Redo History
+// ============================================================================
+
+const HISTORY_MAX = 20;
+
+/**
+ * Take a pre-action snapshot. Called on pointerdown over the graph canvas so
+ * we always have the state just before the user's next change.
+ */
+function historyCapturePre() {
+    if (state._buildingGraph) return;
+    state._pendingHistorySnapshot = JSON.stringify(state.graph.serialize());
+}
+
+/**
+ * Commit the pending pre-action snapshot to the undo stack if the graph has
+ * actually changed since we captured it. Called from every change hook.
+ */
+function historyCommit() {
+    if (state._buildingGraph) return;
+    if (state._pendingHistorySnapshot === null) return;
+    const current = JSON.stringify(state.graph.serialize());
+    if (current !== state._pendingHistorySnapshot) {
+        state.undoStack.push(state._pendingHistorySnapshot);
+        if (state.undoStack.length > HISTORY_MAX) state.undoStack.shift();
+        state.redoStack = [];
+        state._pendingHistorySnapshot = null;
+        updateHistoryUI();
+    }
+}
+
+function historyUndo() {
+    if (!state.undoStack.length) return;
+    state.redoStack.push(JSON.stringify(state.graph.serialize()));
+    restoreHistorySnapshot(JSON.parse(state.undoStack.pop()));
+    updateHistoryUI();
+}
+
+function historyRedo() {
+    if (!state.redoStack.length) return;
+    state.undoStack.push(JSON.stringify(state.graph.serialize()));
+    restoreHistorySnapshot(JSON.parse(state.redoStack.pop()));
+    updateHistoryUI();
+}
+
+function restoreHistorySnapshot(snapshot) {
+    state._buildingGraph = true;
+    state.graph.configure(snapshot);
+    state._buildingGraph = false;
+    state._pendingHistorySnapshot = null;
+    state.graphDirty = false;
+    document.getElementById('edit-indicator').classList.remove('visible');
+    updateNodeStats();
+    updateHistoryUI();
+    if (state.interactiveUpdate) {
+        evaluateAndApplyMaterial();
+    }
+}
+
+function updateHistoryUI() {
+    const btnUndo = document.getElementById('btn-undo');
+    const btnRedo = document.getElementById('btn-redo');
+    const u = state.undoStack.length;
+    const r = state.redoStack.length;
+    if (btnUndo) {
+        btnUndo.disabled = u === 0;
+        btnUndo.title = u > 0 ? `Undo (${u}) – Ctrl+Z` : 'Nothing to undo';
+    }
+    if (btnRedo) {
+        btnRedo.disabled = r === 0;
+        btnRedo.title = r > 0 ? `Redo (${r}) – Ctrl+Y` : 'Nothing to redo';
+    }
+}
+
+window.historyUndo = historyUndo;
+window.historyRedo = historyRedo;
 
 // ============================================================================
 // Three.js Setup
@@ -3262,6 +3361,7 @@ window.toggleInteractiveUpdate = function(enabled) {
 
 // Expose markGraphDirty for node widget callbacks
 window._mtlxMarkDirty = function() {
+    historyCommit();
     markGraphDirty();
 };
 
@@ -3890,9 +3990,23 @@ async function init() {
         if (file) loadUSDFile(file);
     });
 
-    // Keyboard shortcuts for node graph fitting
+    // Keyboard shortcuts for node graph fitting and undo/redo
     document.addEventListener('keydown', (e) => {
-        // Ignore if focus is in an input/select/textarea
+        // Undo/redo: allow even when focus is on the canvas (Ctrl+Z / Ctrl+Y / Ctrl+Shift+Z)
+        if (e.ctrlKey || e.metaKey) {
+            if (e.key === 'z' && !e.shiftKey) {
+                e.preventDefault();
+                historyUndo();
+                return;
+            }
+            if (e.key === 'y' || (e.key === 'z' && e.shiftKey)) {
+                e.preventDefault();
+                historyRedo();
+                return;
+            }
+        }
+
+        // Ignore fitting shortcuts if focus is in an input/select/textarea
         const tag = e.target.tagName;
         if (tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA') return;
 
