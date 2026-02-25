@@ -718,8 +718,9 @@ export class MtlxNodeGraphProcessor {
      */
     processNode(nodeData, inputs = {}) {
         const rawCategory = nodeData.category || nodeData.type || nodeData.nodeType;
-        // Strip type suffixes like _color3, _float, _vector3 to get base category
-        const category = rawCategory?.replace(/_(color3|color4|float|vector2|vector3|vector4|integer|boolean|string)$/, '') || '';
+        // Strip type suffixes like _color3, _float, _vector3 to get base category.
+        // Also handle MaterialX variant tags like _color3FA (e.g. fractal3d_color3FA).
+        const category = rawCategory?.replace(/_(color[34]\w*|float|vector[234]\w*|integer|boolean|string)$/, '') || '';
 
         // Map category to MtlxNodeEval function
         switch (category) {
@@ -934,6 +935,18 @@ export class MtlxNodeGraphProcessor {
             case 'linear_to_srgb':
                 return this._linearToSrgb(inputs.in);
 
+            // Normal map nodes — pass through the input so shader dependency propagates upward
+            case 'normalmap':
+                return inputs.in ?? [0, 0, 1];
+
+            case 'heighttonormal':
+                return inputs.in ?? [0, 0, 1];
+
+            // Procedural noise — position-dependent, always needs a shader
+            // Return an op descriptor so needsShader() can detect the dependency chain
+            case 'fractal3d':
+                return { op: 'fractal3d', position: inputs.position };
+
             default:
                 console.warn(`Unknown MaterialX node category: ${category}`);
                 return inputs.in ?? inputs.in1 ?? 0;
@@ -1109,7 +1122,7 @@ export class MtlxNodeGraphProcessor {
     needsShader(value) {
         if (!value || typeof value !== 'object') return false;
         if (value.op) {
-            const shaderOps = ['image', 'tiledimage', 'texcoord', 'position', 'normal', 'tangent', 'colorspace'];
+            const shaderOps = ['image', 'tiledimage', 'texcoord', 'position', 'normal', 'tangent', 'colorspace', 'fractal3d'];
             if (shaderOps.includes(value.op)) return true;
             // Check nested operations
             for (const key of Object.keys(value)) {
