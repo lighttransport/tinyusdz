@@ -115,6 +115,10 @@ const state = {
     // Shading debug
     shadingMode: 'solid',
     originalMaterialsMap: new Map(),
+
+    // Demand rendering: only call renderer.render() when this is true
+    // or when OrbitControls is still damping (controls.update() returns true).
+    renderNeeded: true,
 };
 
 // ============================================================================
@@ -1624,6 +1628,7 @@ function evaluateAndApplyMaterial() {
     }
 
     material.needsUpdate = true;
+    requestRender();
 
     // Clear dirty flag
     state.graphDirty = false;
@@ -1997,6 +2002,7 @@ function applyEnvironment() {
         state.renderer.toneMapping = tmValue;
     }
     state.renderer.toneMappingExposure = state.exposure;
+    requestRender();
 }
 
 // ============================================================================
@@ -2149,6 +2155,7 @@ function onWindowResize() {
     state.renderer.setSize(canvas.width, canvas.height);
 
     resizeGraphCanvas();
+    requestRender();
 }
 
 // ============================================================================
@@ -2830,6 +2837,20 @@ async function buildScene() {
     updateStatus(`Loaded: ${numMeshes} meshes, ${state.materials.length} materials`);
     document.getElementById('mesh-count').textContent = numMeshes;
     document.getElementById('material-count').textContent = state.materials.length;
+
+    // Pre-compute bounding spheres so Three.js doesn't do it lazily on the
+    // first render frame (which would cause a visible spike).
+    state.scene.traverse(obj => {
+        if (obj.isMesh && obj.geometry && !obj.geometry.boundingSphere) {
+            obj.geometry.computeBoundingSphere();
+        }
+    });
+
+    // Pre-compile all WebGL shader programs upfront so the first rendered
+    // frame doesn't stall on shader compilation.
+    state.renderer.compile(state.scene, state.camera);
+
+    requestRender();
 }
 
 function fitCameraToObject(object) {
@@ -3459,6 +3480,7 @@ function setShadingMode(mode) {
             obj.material = createAbsNormalMaterial(normalMap, normalScale);
         });
     }
+    requestRender();
 }
 
 window.toggleShadingPanel = function() {
@@ -3779,6 +3801,7 @@ function pickObject(hit) {
     helper.name = '__selectionHelper__';
     state.scene.add(helper);
     state.selectionHelper = helper;
+    requestRender();
 
     // Select material and sync UI
     if (matIndex >= 0) {
@@ -3797,6 +3820,7 @@ function clearSelectionHighlight() {
         state.scene.remove(state.selectionHelper);
         state.selectionHelper.dispose();
         state.selectionHelper = null;
+        requestRender();
     }
 }
 
@@ -3810,15 +3834,29 @@ function clearSelection() {
 // Animation Loop
 // ============================================================================
 
+/**
+ * Mark the 3D view as needing a redraw (demand rendering).
+ * Call this whenever the scene, camera, or materials change.
+ */
+function requestRender() {
+    state.renderNeeded = true;
+}
+
 function animate() {
     requestAnimationFrame(animate);
 
-    state.controls.update();
-    state.renderer.render(state.scene, state.camera);
+    // OrbitControls.update() returns true while camera is still moving/damping.
+    // Only call renderer.render() when actually needed to save CPU/GPU.
+    const controlsActive = state.controls.update();
+    if (state.renderNeeded || controlsActive) {
+        state.renderer.render(state.scene, state.camera);
+        state.renderNeeded = false;
+    }
 
-    // LiteGraph update
+    // LiteGraph: respect dirty flags rather than forcing a full canvas redraw
+    // every frame. draw(false, false) only redraws when nodes/links have changed.
     if (state.graphCanvas) {
-        state.graphCanvas.draw(true);
+        state.graphCanvas.draw(false, false);
     }
 }
 
