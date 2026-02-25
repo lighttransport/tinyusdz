@@ -488,6 +488,49 @@
             font-family: monospace;
         }
 
+        /* Undo/Redo button group */
+        .undo-group {
+            display: flex;
+            gap: 2px;
+            background: rgba(0, 0, 0, 0.3);
+            border-radius: 4px;
+            padding: 2px;
+        }
+
+        .undo-group .btn-undo {
+            background: #555;
+            color: #ccc;
+            border: none;
+            padding: 4px 8px;
+            border-radius: 3px;
+            cursor: pointer;
+            font-size: 11px;
+            font-weight: 500;
+            transition: all 0.15s;
+            display: flex;
+            align-items: center;
+            gap: 3px;
+            white-space: nowrap;
+        }
+
+        .undo-group .btn-undo:hover:not(:disabled) {
+            background: #2196F3;
+            color: white;
+        }
+
+        .undo-group .btn-undo:disabled {
+            opacity: 0.3;
+            cursor: not-allowed;
+        }
+
+        .undo-group .btn-undo .kbd {
+            font-size: 9px;
+            background: rgba(255, 255, 255, 0.15);
+            padding: 1px 4px;
+            border-radius: 2px;
+            font-family: monospace;
+        }
+
         /* Edit mode indicator */
         .edit-indicator {
             position: absolute;
@@ -830,6 +873,14 @@
                         </button>
                         <button class="btn-fit" onclick="fitGraphAll()" title="Fit All">
                             <svg viewBox="0 0 24 24"><path d="M3 3h7V1H2a1 1 0 00-1 1v8h2V3zm0 18h7v2H2a1 1 0 01-1-1v-8h2v7zm18 0h-7v2h8a1 1 0 001-1v-8h-2v7zm0-18h-7V1h8a1 1 0 011 1v8h-2V3z"/></svg>
+                        </button>
+                    </div>
+                    <div class="undo-group">
+                        <button class="btn-undo" id="btn-undo" onclick="historyUndo()" title="Undo (Ctrl+Z)" disabled>
+                            ↩ <span class="kbd">Z</span>
+                        </button>
+                        <button class="btn-undo" id="btn-redo" onclick="historyRedo()" title="Redo (Ctrl+Y)" disabled>
+                            ↪ <span class="kbd">Y</span>
                         </button>
                     </div>
                     <div class="controls-separator"></div>
