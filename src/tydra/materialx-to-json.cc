@@ -539,6 +539,11 @@ bool ConvertShaderWithNodeGraphToJson(
     checkTypedField("coat_roughness", opbr->coat_roughness);
     checkTypedField("emission_luminance", opbr->emission_luminance);
     checkTypedField("emission_color", opbr->emission_color);
+    checkTypedField("geometry_opacity", opbr->geometry_opacity);
+    checkTypedField("geometry_normal", opbr->geometry_normal);
+    checkTypedField("geometry_tangent", opbr->geometry_tangent);
+    checkTypedField("geometry_coat_normal", opbr->geometry_coat_normal);
+    checkTypedField("geometry_coat_tangent", opbr->geometry_coat_tangent);
   }
 
   ss << "\n  ]\n";
