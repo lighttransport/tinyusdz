@@ -102,6 +102,8 @@ set(LUSD_SOURCES
   src/lusd_lz4.c
   # Phase 5: Native USDC reader
   src/lusd_usdc_reader.c
+  # Phase 6: Native USDA reader
+  src/lusd_usda_reader.c
 )
 
 # Optional tinyusdz backend: replaces C stubs for stage/prim/attribute with
@@ -111,13 +113,16 @@ option(LUSD_TINYUSDZ_DIR
   "Path to tinyusdz source directory (enables tinyusdz USD backend)" "")
 
 if(LUSD_TINYUSDZ_DIR)
-  # Remove the pure-C stubs that the C++ bridge replaces
+  # Remove the pure-C stubs that the C++ bridge replaces.
+  # lusd_write_usda.c is also replaced: the USDA serializer and writer API
+  # are compiled into lusd_stage_tinyusdz.cc so they can access C++ types.
   list(REMOVE_ITEM LUSD_SOURCES
     src/lusd_stage.c
     src/lusd_prim.c
     src/lusd_attribute.c
+    src/lusd_write_usda.c
   )
-  # Add the C++ bridge
+  # Add the C++ bridge (includes stage/prim/attribute + USDA writer)
   list(APPEND LUSD_SOURCES src/lusd_stage_tinyusdz.cc)
 endif()
 

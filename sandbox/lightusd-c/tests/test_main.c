@@ -651,26 +651,32 @@ TEST(handle_table_basic) {
  * =================================================================== */
 
 TEST(stub_stage_returns_not_present) {
+    /* Previously a stub test; lusdCreateStage is now implemented.
+     * Verify it succeeds and clean up properly. */
     LusdInstance inst = create_test_instance();
 
     LusdStageCreateInfo ci;
     memset(&ci, 0, sizeof(ci));
     ci.sType = LUSD_STRUCTURE_TYPE_STAGE_CREATE_INFO;
-    LusdStage stage;
-    ASSERT_EQ(lusdCreateStage(inst, &ci, &stage), LUSD_ERROR_FEATURE_NOT_PRESENT);
+    LusdStage stage = NULL;
+    ASSERT_EQ(lusdCreateStage(inst, &ci, &stage), LUSD_SUCCESS);
+    lusdDestroyStage(inst, stage);
 
     lusdDestroyInstance(inst, NULL);
     return 0;
 }
 
 TEST(stub_prim_returns_not_present) {
+    /* Previously a stub test; lusdCreatePrim is now implemented.
+     * A NULL pName must return INVALID_ARGUMENT. */
     LusdInstance inst = create_test_instance();
 
     LusdPrimCreateInfo ci;
     memset(&ci, 0, sizeof(ci));
     ci.sType = LUSD_STRUCTURE_TYPE_PRIM_CREATE_INFO;
-    LusdPrim prim;
-    ASSERT_EQ(lusdCreatePrim(inst, &ci, &prim), LUSD_ERROR_FEATURE_NOT_PRESENT);
+    /* ci.pName is NULL — must be rejected */
+    LusdPrim prim = NULL;
+    ASSERT_EQ(lusdCreatePrim(inst, &ci, &prim), LUSD_ERROR_INVALID_ARGUMENT);
 
     lusdDestroyInstance(inst, NULL);
     return 0;

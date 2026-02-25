@@ -15,6 +15,7 @@
 #include "lightusd/lusd_prim.h"
 #include "lightusd/lusd_attribute.h"
 #include "lightusd/lusd_value.h"
+#include "lightusd/lusd_write.h"
 
 /* Internal C header — wrap in extern "C" so all declared helper functions
  * (lusd_alloc, lusd_set_errorf, lusd_diag, …) get C linkage in C++ builds.
@@ -26,12 +27,119 @@ extern "C" {
 /* C++ standard library */
 #include <algorithm>
 #include <cstring>
+#include <cstdlib>
+#include <cstdio>
+#include <cstdarg>
+#include <cmath>
 #include <memory>
 #include <string>
 #include <vector>
 
 /* tinyusdz C++ API — single include pulls in Stage, Prim, GeomMesh, etc. */
 #include "tinyusdz.hh"
+
+/* ============================================================
+ * Write-mode prim / attribute types
+ *
+ * LusdWritePrim_T is returned by lusdCreatePrim as an opaque LusdPrim handle.
+ * The magic number at offset 0 lets all LusdPrim-receiving functions
+ * distinguish write prims from read prims (LusdPrim_T).
+ * ============================================================ */
+
+static const uint32_t WRITE_PRIM_MAGIC = 0x574C5554u;  /* 'WLUT' */
+
+struct LusdWriteAttr_T {
+    char*            name;          /* owned */
+    LusdValueType    type;
+    LusdVariability  variability;
+    bool             custom;
+    bool             has_default;
+    LusdValueData    default_value; /* deep-copy; heap buffer owned here */
+};
+
+/* Free only the heap storage inside a LusdValueData (does NOT free the struct). */
+static void write_value_data_free(LusdValueData& vd) {
+    if (vd.useHeap && vd.storage.heap.ptr) {
+        std::free(vd.storage.heap.ptr);
+        vd.storage.heap.ptr = nullptr;
+    } else if (!vd.useHeap && vd.type == LUSD_VALUE_TYPE_STRING) {
+        char* sp;
+        std::memcpy(&sp, vd.storage.inlineData, sizeof(char*));
+        if (sp) std::free(sp);
+        std::memset(vd.storage.inlineData, 0, sizeof(char*));
+    }
+}
+
+static void write_attr_free(LusdWriteAttr_T& a) {
+    std::free(a.name);
+    if (a.has_default)
+        write_value_data_free(a.default_value);
+}
+
+struct LusdWritePrim_T {
+    uint32_t           magic;        /* always WRITE_PRIM_MAGIC */
+    LusdSpecifier      specifier;
+    bool               active;
+    char*              name;         /* owned */
+    char*              type_name;    /* owned, or nullptr */
+    std::vector<LusdWritePrim_T*> children;  /* non-owning in stage context */
+    std::vector<LusdWriteAttr_T> attrs;
+};
+
+static void write_prim_destroy(LusdWritePrim_T* p) {
+    if (!p) return;
+    for (auto* c : p->children) write_prim_destroy(c);
+    for (auto& a : p->attrs)    write_attr_free(a);
+    std::free(p->name);
+    std::free(p->type_name);
+    delete p;
+}
+
+static bool is_write_prim(LusdPrim prim) {
+    if (!prim) return false;
+    uint32_t magic;
+    std::memcpy(&magic, prim, sizeof(uint32_t));
+    return magic == WRITE_PRIM_MAGIC;
+}
+
+static LusdWritePrim_T* to_write_prim(LusdPrim prim) {
+    return reinterpret_cast<LusdWritePrim_T*>(prim);
+}
+
+static LusdWriteAttr_T* find_attr(LusdWritePrim_T* p, const char* name) {
+    for (auto& a : p->attrs)
+        if (std::strcmp(a.name, name) == 0) return &a;
+    return nullptr;
+}
+
+static bool value_data_deep_copy(LusdValueData& dst, const LusdValueData& src) {
+    dst = src;
+    if (src.useHeap && src.storage.heap.ptr && src.storage.heap.size > 0) {
+        dst.storage.heap.ptr = std::malloc(src.storage.heap.size);
+        if (!dst.storage.heap.ptr) return false;
+        std::memcpy(dst.storage.heap.ptr, src.storage.heap.ptr,
+                    src.storage.heap.size);
+    } else if (!src.useHeap && src.type == LUSD_VALUE_TYPE_STRING) {
+        char* sp;
+        std::memcpy(&sp, src.storage.inlineData, sizeof(char*));
+        if (sp) {
+            auto len = std::strlen(sp);
+            char* dup = static_cast<char*>(std::malloc(len + 1));
+            if (!dup) return false;
+            std::memcpy(dup, sp, len + 1);
+            std::memcpy(dst.storage.inlineData, &dup, sizeof(char*));
+        }
+    }
+    return true;
+}
+
+/* ============================================================
+ * LusdWriter_T — file-write context
+ * ============================================================ */
+struct LusdWriter_T {
+    LusdFormat  format;
+    char*       file_path;   /* owned, null-terminated; NULL for to-string only */
+};
 
 /* ============================================================
  * Internal struct definitions
@@ -42,14 +150,21 @@ extern "C" {
 struct LusdPrim_T;  /* forward */
 
 struct LusdStage_T {
+    bool            is_write;  /* true = write-mode, false = tinyusdz read-mode */
+    LusdInstance    inst;      /* non-owning back-reference to parent instance */
+
+    /* Read-mode (tinyusdz): */
     tinyusdz::Stage stage;
-    LusdInstance    inst;  /* non-owning back-reference to parent instance */
-
-    /* Arena of prim handle objects — valid for the lifetime of this stage */
     std::vector<std::unique_ptr<LusdPrim_T>> primArena;
-
-    /* Allocate a prim handle in the arena and return it */
     LusdPrim primHandle(const tinyusdz::Prim* p);
+
+    /* Write-mode: */
+    std::vector<LusdWritePrim_T*> write_roots;
+    LusdUpAxis  write_up_axis           = LUSD_UP_AXIS_Y;
+    double      write_mpu               = 0.01;
+    double      write_start_tc          = 0.0;
+    double      write_end_tc            = 0.0;
+    double      write_fps               = 24.0;
 };
 
 struct LusdPrim_T {
@@ -106,9 +221,16 @@ LusdResult lusdCreateStage(LusdInstance instance,
                             const LusdStageCreateInfo* pCreateInfo,
                             LusdStage* pStage) {
     if (!instance || !pStage) return LUSD_ERROR_INVALID_ARGUMENT;
-    LUSD_UNUSED(pCreateInfo);
     auto* sd = new LusdStage_T();
-    sd->inst = instance;
+    sd->is_write = true;
+    sd->inst     = instance;
+    if (pCreateInfo) {
+        sd->write_up_axis  = pCreateInfo->upAxis;
+        sd->write_mpu      = pCreateInfo->metersPerUnit  != 0.0 ? pCreateInfo->metersPerUnit  : 0.01;
+        sd->write_start_tc = pCreateInfo->startTimeCode;
+        sd->write_end_tc   = pCreateInfo->endTimeCode;
+        sd->write_fps      = pCreateInfo->framesPerSecond != 0.0 ? pCreateInfo->framesPerSecond : 24.0;
+    }
     *pStage = sd;
     return LUSD_SUCCESS;
 }
@@ -116,6 +238,9 @@ LusdResult lusdCreateStage(LusdInstance instance,
 void lusdDestroyStage(LusdInstance instance, LusdStage stage) {
     LUSD_UNUSED(instance);
     if (!stage) return;
+    if (stage->is_write) {
+        for (auto* p : stage->write_roots) write_prim_destroy(p);
+    }
     delete stage;
 }
 
@@ -125,13 +250,23 @@ void lusdDestroyStage(LusdInstance instance, LusdStage stage) {
 
 LusdResult lusdStageGetRootPrimCount(LusdStage stage, uint32_t* pCount) {
     if (!stage || !pCount) return LUSD_ERROR_INVALID_ARGUMENT;
-    *pCount = static_cast<uint32_t>(stage->stage.root_prims().size());
+    if (stage->is_write) {
+        *pCount = static_cast<uint32_t>(stage->write_roots.size());
+    } else {
+        *pCount = static_cast<uint32_t>(stage->stage.root_prims().size());
+    }
     return LUSD_SUCCESS;
 }
 
 LusdResult lusdStageGetRootPrims(LusdStage stage, uint32_t count,
                                    LusdPrim* pPrims) {
     if (!stage || !pPrims) return LUSD_ERROR_INVALID_ARGUMENT;
+    if (stage->is_write) {
+        uint32_t n = std::min(count, static_cast<uint32_t>(stage->write_roots.size()));
+        for (uint32_t i = 0; i < n; i++)
+            pPrims[i] = reinterpret_cast<LusdPrim>(stage->write_roots[i]);
+        return LUSD_SUCCESS;
+    }
     const auto& roots = stage->stage.root_prims();
     uint32_t n = std::min(count, static_cast<uint32_t>(roots.size()));
     for (uint32_t i = 0; i < n; i++) {
@@ -194,6 +329,7 @@ LusdResult lusdStageTraverse(LusdStage stage,
 
 LusdResult lusdStageGetUpAxis(LusdStage stage, LusdUpAxis* pUpAxis) {
     if (!stage || !pUpAxis) return LUSD_ERROR_INVALID_ARGUMENT;
+    if (stage->is_write) { *pUpAxis = stage->write_up_axis; return LUSD_SUCCESS; }
     tinyusdz::Axis ax = stage->stage.metas().upAxis.get_value();
     switch (ax) {
         case tinyusdz::Axis::Y: *pUpAxis = LUSD_UP_AXIS_Y; break;
@@ -205,57 +341,68 @@ LusdResult lusdStageGetUpAxis(LusdStage stage, LusdUpAxis* pUpAxis) {
 }
 
 LusdResult lusdStageSetUpAxis(LusdStage stage, LusdUpAxis upAxis) {
-    LUSD_UNUSED(stage); LUSD_UNUSED(upAxis);
+    if (!stage) return LUSD_ERROR_INVALID_ARGUMENT;
+    if (stage->is_write) { stage->write_up_axis = upAxis; return LUSD_SUCCESS; }
     return LUSD_ERROR_FEATURE_NOT_PRESENT;
 }
 
 LusdResult lusdStageGetMetersPerUnit(LusdStage stage, double* pMetersPerUnit) {
     if (!stage || !pMetersPerUnit) return LUSD_ERROR_INVALID_ARGUMENT;
+    if (stage->is_write) { *pMetersPerUnit = stage->write_mpu; return LUSD_SUCCESS; }
     *pMetersPerUnit = stage->stage.metas().metersPerUnit.get_value();
     return LUSD_SUCCESS;
 }
 
 LusdResult lusdStageSetMetersPerUnit(LusdStage stage, double metersPerUnit) {
-    LUSD_UNUSED(stage); LUSD_UNUSED(metersPerUnit);
+    if (!stage) return LUSD_ERROR_INVALID_ARGUMENT;
+    if (stage->is_write) { stage->write_mpu = metersPerUnit; return LUSD_SUCCESS; }
     return LUSD_ERROR_FEATURE_NOT_PRESENT;
 }
 
 LusdResult lusdStageGetStartTimeCode(LusdStage stage, double* pTimeCode) {
     if (!stage || !pTimeCode) return LUSD_ERROR_INVALID_ARGUMENT;
+    if (stage->is_write) { *pTimeCode = stage->write_start_tc; return LUSD_SUCCESS; }
     *pTimeCode = stage->stage.metas().startTimeCode.get_value();
     return LUSD_SUCCESS;
 }
 
 LusdResult lusdStageSetStartTimeCode(LusdStage stage, double timeCode) {
-    LUSD_UNUSED(stage); LUSD_UNUSED(timeCode);
+    if (!stage) return LUSD_ERROR_INVALID_ARGUMENT;
+    if (stage->is_write) { stage->write_start_tc = timeCode; return LUSD_SUCCESS; }
     return LUSD_ERROR_FEATURE_NOT_PRESENT;
 }
 
 LusdResult lusdStageGetEndTimeCode(LusdStage stage, double* pTimeCode) {
     if (!stage || !pTimeCode) return LUSD_ERROR_INVALID_ARGUMENT;
+    if (stage->is_write) { *pTimeCode = stage->write_end_tc; return LUSD_SUCCESS; }
     *pTimeCode = stage->stage.metas().endTimeCode.get_value();
     return LUSD_SUCCESS;
 }
 
 LusdResult lusdStageSetEndTimeCode(LusdStage stage, double timeCode) {
-    LUSD_UNUSED(stage); LUSD_UNUSED(timeCode);
+    if (!stage) return LUSD_ERROR_INVALID_ARGUMENT;
+    if (stage->is_write) { stage->write_end_tc = timeCode; return LUSD_SUCCESS; }
     return LUSD_ERROR_FEATURE_NOT_PRESENT;
 }
 
 LusdResult lusdStageGetFramesPerSecond(LusdStage stage, double* pFPS) {
     if (!stage || !pFPS) return LUSD_ERROR_INVALID_ARGUMENT;
+    if (stage->is_write) { *pFPS = stage->write_fps; return LUSD_SUCCESS; }
     *pFPS = stage->stage.metas().framesPerSecond.get_value();
     return LUSD_SUCCESS;
 }
 
 LusdResult lusdStageSetFramesPerSecond(LusdStage stage, double fps) {
-    LUSD_UNUSED(stage); LUSD_UNUSED(fps);
+    if (!stage) return LUSD_ERROR_INVALID_ARGUMENT;
+    if (stage->is_write) { stage->write_fps = fps; return LUSD_SUCCESS; }
     return LUSD_ERROR_FEATURE_NOT_PRESENT;
 }
 
 LusdResult lusdStageAddRootPrim(LusdStage stage, LusdPrim prim) {
-    LUSD_UNUSED(stage); LUSD_UNUSED(prim);
-    return LUSD_ERROR_FEATURE_NOT_PRESENT;
+    if (!stage || !prim) return LUSD_ERROR_INVALID_ARGUMENT;
+    if (!stage->is_write || !is_write_prim(prim)) return LUSD_ERROR_INVALID_HANDLE;
+    stage->write_roots.push_back(to_write_prim(prim));
+    return LUSD_SUCCESS;
 }
 
 /* ============================================================
@@ -265,14 +412,28 @@ LusdResult lusdStageAddRootPrim(LusdStage stage, LusdPrim prim) {
 LusdResult lusdCreatePrim(LusdInstance instance,
                            const LusdPrimCreateInfo* pCreateInfo,
                            LusdPrim* pPrim) {
-    LUSD_UNUSED(instance); LUSD_UNUSED(pCreateInfo); LUSD_UNUSED(pPrim);
-    return LUSD_ERROR_FEATURE_NOT_PRESENT;
+    LUSD_UNUSED(instance);
+    if (!pCreateInfo || !pPrim || !pCreateInfo->pName) return LUSD_ERROR_INVALID_ARGUMENT;
+    auto* p = new LusdWritePrim_T();
+    p->magic     = WRITE_PRIM_MAGIC;
+    p->specifier = pCreateInfo->specifier;
+    p->active    = true;
+    p->name      = static_cast<char*>(std::malloc(std::strlen(pCreateInfo->pName) + 1));
+    if (!p->name) { delete p; return LUSD_ERROR_OUT_OF_MEMORY; }
+    std::strcpy(p->name, pCreateInfo->pName);
+    if (pCreateInfo->pTypeName && pCreateInfo->pTypeName[0]) {
+        p->type_name = static_cast<char*>(std::malloc(std::strlen(pCreateInfo->pTypeName) + 1));
+        if (!p->type_name) { std::free(p->name); delete p; return LUSD_ERROR_OUT_OF_MEMORY; }
+        std::strcpy(p->type_name, pCreateInfo->pTypeName);
+    }
+    *pPrim = reinterpret_cast<LusdPrim>(p);
+    return LUSD_SUCCESS;
 }
 
 void lusdDestroyPrim(LusdInstance instance, LusdPrim prim) {
-    /* Prims returned by stage traversal/query are owned by the stage arena;
-     * standalone destroy is a no-op. */
-    LUSD_UNUSED(instance); LUSD_UNUSED(prim);
+    LUSD_UNUSED(instance);
+    if (!prim || !is_write_prim(prim)) return;
+    write_prim_destroy(to_write_prim(prim));
 }
 
 /* ============================================================
@@ -280,12 +441,19 @@ void lusdDestroyPrim(LusdInstance instance, LusdPrim prim) {
  * ============================================================ */
 
 const char* lusdPrimGetName(LusdPrim prim) {
-    if (!prim || !prim->prim) return "";
+    if (!prim) return "";
+    if (is_write_prim(prim)) return to_write_prim(prim)->name;
+    if (!prim->prim) return "";
     return prim->prim->element_name().c_str();
 }
 
 const char* lusdPrimGetTypeName(LusdPrim prim) {
-    if (!prim || !prim->prim) return "";
+    if (!prim) return "";
+    if (is_write_prim(prim)) {
+        const char* tn = to_write_prim(prim)->type_name;
+        return tn ? tn : "";
+    }
+    if (!prim->prim) return "";
     return prim->prim->prim_type_name().c_str();
 }
 
@@ -295,30 +463,46 @@ LusdResult lusdPrimGetPath(LusdPrim prim, LusdPath* pPath) {
 }
 
 LusdResult lusdPrimGetSpecifier(LusdPrim prim, LusdSpecifier* pSpec) {
-    LUSD_UNUSED(prim); LUSD_UNUSED(pSpec);
+    if (!prim || !pSpec) return LUSD_ERROR_INVALID_ARGUMENT;
+    if (is_write_prim(prim)) { *pSpec = to_write_prim(prim)->specifier; return LUSD_SUCCESS; }
     return LUSD_ERROR_FEATURE_NOT_PRESENT;
 }
 
 LusdResult lusdPrimIsActive(LusdPrim prim, bool* pActive) {
-    LUSD_UNUSED(prim);
+    if (!prim || !pActive) return LUSD_ERROR_INVALID_ARGUMENT;
+    if (is_write_prim(prim)) { *pActive = to_write_prim(prim)->active; return LUSD_SUCCESS; }
     if (pActive) *pActive = true;
     return LUSD_SUCCESS;
 }
 
 LusdResult lusdPrimSetActive(LusdPrim prim, bool active) {
-    LUSD_UNUSED(prim); LUSD_UNUSED(active);
+    if (!prim) return LUSD_ERROR_INVALID_ARGUMENT;
+    if (is_write_prim(prim)) { to_write_prim(prim)->active = active; return LUSD_SUCCESS; }
     return LUSD_ERROR_FEATURE_NOT_PRESENT;
 }
 
 LusdResult lusdPrimGetChildCount(LusdPrim prim, uint32_t* pCount) {
-    if (!prim || !prim->prim || !pCount) return LUSD_ERROR_INVALID_ARGUMENT;
+    if (!prim || !pCount) return LUSD_ERROR_INVALID_ARGUMENT;
+    if (is_write_prim(prim)) {
+        *pCount = static_cast<uint32_t>(to_write_prim(prim)->children.size());
+        return LUSD_SUCCESS;
+    }
+    if (!prim->prim) return LUSD_ERROR_INVALID_HANDLE;
     *pCount = static_cast<uint32_t>(prim->prim->children().size());
     return LUSD_SUCCESS;
 }
 
 LusdResult lusdPrimGetChildren(LusdPrim prim, uint32_t count,
                                 LusdPrim* pChildren) {
-    if (!prim || !prim->prim || !pChildren) return LUSD_ERROR_INVALID_ARGUMENT;
+    if (!prim || !pChildren) return LUSD_ERROR_INVALID_ARGUMENT;
+    if (is_write_prim(prim)) {
+        auto& ch = to_write_prim(prim)->children;
+        uint32_t n = std::min(count, static_cast<uint32_t>(ch.size()));
+        for (uint32_t i = 0; i < n; i++)
+            pChildren[i] = reinterpret_cast<LusdPrim>(ch[i]);
+        return LUSD_SUCCESS;
+    }
+    if (!prim->prim) return LUSD_ERROR_INVALID_HANDLE;
     const auto& kids = prim->prim->children();
     uint32_t n = std::min(count, static_cast<uint32_t>(kids.size()));
     for (uint32_t i = 0; i < n; i++) {
@@ -328,20 +512,30 @@ LusdResult lusdPrimGetChildren(LusdPrim prim, uint32_t count,
 }
 
 LusdResult lusdPrimAddChild(LusdPrim parent, LusdPrim child) {
-    LUSD_UNUSED(parent); LUSD_UNUSED(child);
-    return LUSD_ERROR_FEATURE_NOT_PRESENT;
+    if (!parent || !child) return LUSD_ERROR_INVALID_ARGUMENT;
+    if (!is_write_prim(parent) || !is_write_prim(child)) return LUSD_ERROR_INVALID_HANDLE;
+    to_write_prim(parent)->children.push_back(to_write_prim(child));
+    return LUSD_SUCCESS;
 }
 
 LusdResult lusdPrimGetPropertyCount(LusdPrim prim, uint32_t* pCount) {
-    LUSD_UNUSED(prim);
-    if (pCount) *pCount = 0;
+    if (!prim || !pCount) return LUSD_ERROR_INVALID_ARGUMENT;
+    if (is_write_prim(prim)) {
+        *pCount = static_cast<uint32_t>(to_write_prim(prim)->attrs.size());
+        return LUSD_SUCCESS;
+    }
+    *pCount = 0;
     return LUSD_SUCCESS;
 }
 
 LusdResult lusdPrimGetPropertyNames(LusdPrim prim, uint32_t count,
                                      const char** pNames) {
-    LUSD_UNUSED(prim); LUSD_UNUSED(count); LUSD_UNUSED(pNames);
-    return LUSD_ERROR_FEATURE_NOT_PRESENT;
+    if (!prim || !pNames) return LUSD_ERROR_INVALID_ARGUMENT;
+    if (!is_write_prim(prim)) return LUSD_ERROR_FEATURE_NOT_PRESENT;
+    auto& attrs = to_write_prim(prim)->attrs;
+    uint32_t n = std::min(count, static_cast<uint32_t>(attrs.size()));
+    for (uint32_t i = 0; i < n; i++) pNames[i] = attrs[i].name;
+    return LUSD_SUCCESS;
 }
 
 LusdResult lusdPrimGetPropertyKind(LusdPrim prim, const char* pName,
@@ -368,8 +562,24 @@ LusdResult lusdPrimSetMetadata(LusdPrim prim, const char* pKey,
 
 LusdResult lusdPrimCreateAttribute(LusdPrim prim,
                                     const LusdAttributeCreateInfo* pCreateInfo) {
-    LUSD_UNUSED(prim); LUSD_UNUSED(pCreateInfo);
-    return LUSD_ERROR_FEATURE_NOT_PRESENT;
+    if (!prim || !pCreateInfo || !pCreateInfo->pName) return LUSD_ERROR_INVALID_ARGUMENT;
+    if (!is_write_prim(prim)) return LUSD_ERROR_INVALID_HANDLE;
+    LusdWritePrim_T* p = to_write_prim(prim);
+
+    /* Reject duplicate attribute names */
+    if (find_attr(p, pCreateInfo->pName)) return LUSD_ERROR_INVALID_ARGUMENT;
+
+    LusdWriteAttr_T a;
+    std::memset(&a, 0, sizeof(a));
+    a.name = static_cast<char*>(std::malloc(std::strlen(pCreateInfo->pName) + 1));
+    if (!a.name) return LUSD_ERROR_OUT_OF_MEMORY;
+    std::strcpy(a.name, pCreateInfo->pName);
+    a.type        = pCreateInfo->valueType;
+    a.variability = pCreateInfo->variability;
+    a.custom      = pCreateInfo->custom;
+    a.has_default = false;
+    p->attrs.push_back(a);
+    return LUSD_SUCCESS;
 }
 
 /*
@@ -386,7 +596,18 @@ LusdResult lusdPrimCreateAttribute(LusdPrim prim,
 LusdResult lusdPrimGetAttributeDefault(LusdPrim prim,
                                         const char* pAttrName,
                                         LusdValue* pValue) {
-    if (!prim || !prim->prim || !pAttrName || !pValue)
+    if (!prim || !pAttrName || !pValue) return LUSD_ERROR_INVALID_ARGUMENT;
+
+    /* Write-mode prim: return stored default */
+    if (is_write_prim(prim)) {
+        LusdWritePrim_T* p = to_write_prim(prim);
+        LusdWriteAttr_T* a = find_attr(p, pAttrName);
+        if (!a || !a->has_default) return LUSD_ERROR_NOT_FOUND;
+        *pValue = reinterpret_cast<LusdValue>(reinterpret_cast<uintptr_t>(&a->default_value));
+        return LUSD_SUCCESS;
+    }
+
+    if (!prim->prim)
         return LUSD_ERROR_INVALID_ARGUMENT;
 
     *pValue = LUSD_NULL_HANDLE;
@@ -439,8 +660,23 @@ LusdResult lusdPrimGetAttributeDefault(LusdPrim prim,
 LusdResult lusdPrimSetAttributeDefault(LusdPrim prim,
                                         const char* pAttrName,
                                         LusdValue value) {
-    LUSD_UNUSED(prim); LUSD_UNUSED(pAttrName); LUSD_UNUSED(value);
-    return LUSD_ERROR_FEATURE_NOT_PRESENT;
+    if (!prim || !pAttrName || !value) return LUSD_ERROR_INVALID_ARGUMENT;
+    if (!is_write_prim(prim)) return LUSD_ERROR_INVALID_HANDLE;
+    LusdWritePrim_T* p = to_write_prim(prim);
+    LusdWriteAttr_T* a = find_attr(p, pAttrName);
+    if (!a) return LUSD_ERROR_INVALID_ARGUMENT;
+
+    /* LusdValue handle is actually a LusdValueData* (see lusd_value.c) */
+    const LusdValueData* src =
+        reinterpret_cast<const LusdValueData*>(reinterpret_cast<uintptr_t>(value));
+
+    /* Free old default if any */
+    if (a->has_default) write_value_data_free(a->default_value);
+
+    if (!value_data_deep_copy(a->default_value, *src))
+        return LUSD_ERROR_OUT_OF_MEMORY;
+    a->has_default = true;
+    return LUSD_SUCCESS;
 }
 
 LusdResult lusdPrimGetAttributeTimeSamples(LusdPrim prim,
@@ -459,15 +695,23 @@ LusdResult lusdPrimSetAttributeTimeSamples(LusdPrim prim,
 
 LusdResult lusdPrimGetAttributeType(LusdPrim prim, const char* pAttrName,
                                      LusdValueType* pType) {
-    LUSD_UNUSED(prim); LUSD_UNUSED(pAttrName); LUSD_UNUSED(pType);
-    return LUSD_ERROR_FEATURE_NOT_PRESENT;
+    if (!prim || !pAttrName || !pType) return LUSD_ERROR_INVALID_ARGUMENT;
+    if (!is_write_prim(prim)) return LUSD_ERROR_FEATURE_NOT_PRESENT;
+    LusdWriteAttr_T* a = find_attr(to_write_prim(prim), pAttrName);
+    if (!a) return LUSD_ERROR_NOT_FOUND;
+    *pType = a->type;
+    return LUSD_SUCCESS;
 }
 
 LusdResult lusdPrimGetAttributeVariability(LusdPrim prim,
                                             const char* pAttrName,
                                             LusdVariability* pVar) {
-    LUSD_UNUSED(prim); LUSD_UNUSED(pAttrName); LUSD_UNUSED(pVar);
-    return LUSD_ERROR_FEATURE_NOT_PRESENT;
+    if (!prim || !pAttrName || !pVar) return LUSD_ERROR_INVALID_ARGUMENT;
+    if (!is_write_prim(prim)) return LUSD_ERROR_FEATURE_NOT_PRESENT;
+    LusdWriteAttr_T* a = find_attr(to_write_prim(prim), pAttrName);
+    if (!a) return LUSD_ERROR_NOT_FOUND;
+    *pVar = a->variability;
+    return LUSD_SUCCESS;
 }
 
 LusdResult lusdPrimIsAttributeBlocked(LusdPrim prim, const char* pAttrName,
@@ -506,4 +750,429 @@ LusdResult lusdPrimAddAttributeConnection(LusdPrim prim,
     LUSD_UNUSED(prim); LUSD_UNUSED(pAttrName);
     LUSD_UNUSED(targetPath); LUSD_UNUSED(op);
     return LUSD_ERROR_FEATURE_NOT_PRESENT;
+}
+
+/* ============================================================
+ * USDA serializer — write-mode stage export
+ * ============================================================ */
+
+/* ----------------------------------------------------------
+ * Growing string buffer
+ * ---------------------------------------------------------- */
+struct StrBuf {
+    char*  data;
+    size_t used;
+    size_t cap;
+};
+
+static bool sb_reserve(StrBuf* b, size_t extra) {
+    size_t need = b->used + extra + 1;
+    if (need <= b->cap) return true;
+    size_t new_cap = b->cap ? b->cap * 2 : 4096;
+    while (new_cap < need) new_cap *= 2;
+    char* np = static_cast<char*>(std::realloc(b->data, new_cap));
+    if (!np) return false;
+    b->data = np;
+    b->cap  = new_cap;
+    return true;
+}
+
+static bool sb_append(StrBuf* b, const char* s) {
+    size_t len = std::strlen(s);
+    if (!sb_reserve(b, len)) return false;
+    std::memcpy(b->data + b->used, s, len);
+    b->used += len;
+    b->data[b->used] = '\0';
+    return true;
+}
+
+static bool sb_appendf(StrBuf* b, const char* fmt, ...) {
+    char tmp[256];
+    va_list ap;
+    va_start(ap, fmt);
+    int n = std::vsnprintf(tmp, sizeof(tmp), fmt, ap);
+    va_end(ap);
+    if (n < 0) return false;
+    if (static_cast<size_t>(n) < sizeof(tmp)) return sb_append(b, tmp);
+    char* big = static_cast<char*>(std::malloc(static_cast<size_t>(n) + 1));
+    if (!big) return false;
+    va_start(ap, fmt);
+    std::vsnprintf(big, static_cast<size_t>(n) + 1, fmt, ap);
+    va_end(ap);
+    bool ok = sb_append(b, big);
+    std::free(big);
+    return ok;
+}
+
+static void sb_free(StrBuf* b) {
+    std::free(b->data);
+    b->data = nullptr;
+    b->used = b->cap = 0;
+}
+
+/* ----------------------------------------------------------
+ * Type keyword table
+ * ---------------------------------------------------------- */
+static const char* usda_type_keyword(uint32_t base_type) {
+    switch (base_type) {
+    case LUSD_VALUE_TYPE_BOOL:        return "bool";
+    case LUSD_VALUE_TYPE_INT32:       return "int";
+    case LUSD_VALUE_TYPE_UINT32:      return "uint";
+    case LUSD_VALUE_TYPE_INT64:       return "int64";
+    case LUSD_VALUE_TYPE_UINT64:      return "uint64";
+    case LUSD_VALUE_TYPE_HALF:        return "half";
+    case LUSD_VALUE_TYPE_FLOAT:       return "float";
+    case LUSD_VALUE_TYPE_DOUBLE:      return "double";
+    case LUSD_VALUE_TYPE_STRING:      return "string";
+    case LUSD_VALUE_TYPE_TOKEN:       return "token";
+    case LUSD_VALUE_TYPE_ASSET_PATH:  return "asset";
+    case LUSD_VALUE_TYPE_TIMECODE:    return "timecode";
+    case LUSD_VALUE_TYPE_INT2:        return "int2";
+    case LUSD_VALUE_TYPE_INT3:        return "int3";
+    case LUSD_VALUE_TYPE_INT4:        return "int4";
+    case LUSD_VALUE_TYPE_FLOAT2:      return "float2";
+    case LUSD_VALUE_TYPE_FLOAT3:      return "float3";
+    case LUSD_VALUE_TYPE_FLOAT4:      return "float4";
+    case LUSD_VALUE_TYPE_DOUBLE2:     return "double2";
+    case LUSD_VALUE_TYPE_DOUBLE3:     return "double3";
+    case LUSD_VALUE_TYPE_DOUBLE4:     return "double4";
+    case LUSD_VALUE_TYPE_QUATF:       return "quatf";
+    case LUSD_VALUE_TYPE_QUATD:       return "quatd";
+    case LUSD_VALUE_TYPE_MATRIX4F:    return "matrix4f";
+    case LUSD_VALUE_TYPE_MATRIX4D:    return "matrix4d";
+    case LUSD_VALUE_TYPE_COLOR3F:     return "color3f";
+    case LUSD_VALUE_TYPE_COLOR4F:     return "color4f";
+    case LUSD_VALUE_TYPE_POINT3F:     return "point3f";
+    case LUSD_VALUE_TYPE_POINT3D:     return "point3d";
+    case LUSD_VALUE_TYPE_VECTOR3F:    return "vector3f";
+    case LUSD_VALUE_TYPE_NORMAL3F:    return "normal3f";
+    case LUSD_VALUE_TYPE_TEXCOORD2F:  return "texCoord2f";
+    case LUSD_VALUE_TYPE_TEXCOORD2D:  return "texCoord2d";
+    default: return "unknown";
+    }
+}
+
+static size_t elem_byte_size(uint32_t base_type) {
+    switch (base_type) {
+    case LUSD_VALUE_TYPE_BOOL:   return sizeof(bool);
+    case LUSD_VALUE_TYPE_INT32:
+    case LUSD_VALUE_TYPE_UINT32:
+    case LUSD_VALUE_TYPE_FLOAT:  return 4;
+    case LUSD_VALUE_TYPE_INT64:
+    case LUSD_VALUE_TYPE_UINT64:
+    case LUSD_VALUE_TYPE_DOUBLE: return 8;
+    case LUSD_VALUE_TYPE_HALF:   return 2;
+    case LUSD_VALUE_TYPE_INT2:   return 2*4;
+    case LUSD_VALUE_TYPE_INT3:   return 3*4;
+    case LUSD_VALUE_TYPE_INT4:   return 4*4;
+    case LUSD_VALUE_TYPE_FLOAT2:
+    case LUSD_VALUE_TYPE_TEXCOORD2F: return 2*4;
+    case LUSD_VALUE_TYPE_FLOAT3:
+    case LUSD_VALUE_TYPE_POINT3F:
+    case LUSD_VALUE_TYPE_NORMAL3F:
+    case LUSD_VALUE_TYPE_VECTOR3F:
+    case LUSD_VALUE_TYPE_COLOR3F: return 3*4;
+    case LUSD_VALUE_TYPE_FLOAT4:
+    case LUSD_VALUE_TYPE_QUATF:
+    case LUSD_VALUE_TYPE_COLOR4F: return 4*4;
+    case LUSD_VALUE_TYPE_DOUBLE2:
+    case LUSD_VALUE_TYPE_TEXCOORD2D: return 2*8;
+    case LUSD_VALUE_TYPE_DOUBLE3:
+    case LUSD_VALUE_TYPE_POINT3D:
+    case LUSD_VALUE_TYPE_NORMAL3F + 0x1000: /* avoid dup */ return 3*8;
+    case LUSD_VALUE_TYPE_DOUBLE4:
+    case LUSD_VALUE_TYPE_QUATD:  return 4*8;
+    case LUSD_VALUE_TYPE_MATRIX4F: return 16*4;
+    case LUSD_VALUE_TYPE_MATRIX4D: return 16*8;
+    default: return 0;
+    }
+}
+
+/* Format a float compactly: e.g. "1" → "1.0", "1.5" → "1.5" */
+static bool append_float(StrBuf* b, float v) {
+    char tmp[64];
+    std::snprintf(tmp, sizeof(tmp), "%g", static_cast<double>(v));
+    bool has_dot = (std::strchr(tmp, '.') != nullptr) || (std::strchr(tmp, 'e') != nullptr);
+    if (!has_dot) {
+        size_t len = std::strlen(tmp);
+        if (len + 2 < sizeof(tmp)) { tmp[len] = '.'; tmp[len+1] = '0'; tmp[len+2] = '\0'; }
+    }
+    return sb_append(b, tmp);
+}
+
+static bool append_double(StrBuf* b, double v) {
+    char tmp[64];
+    std::snprintf(tmp, sizeof(tmp), "%g", v);
+    bool has_dot = (std::strchr(tmp, '.') != nullptr) || (std::strchr(tmp, 'e') != nullptr);
+    if (!has_dot) {
+        size_t len = std::strlen(tmp);
+        if (len + 2 < sizeof(tmp)) { tmp[len] = '.'; tmp[len+1] = '0'; tmp[len+2] = '\0'; }
+    }
+    return sb_append(b, tmp);
+}
+
+/* Write one element of base_type starting at ptr */
+static bool write_element(StrBuf* b, uint32_t base_type, const void* ptr) {
+    const float*   fp  = static_cast<const float*>(ptr);
+    const double*  dp  = static_cast<const double*>(ptr);
+    const int32_t* ip  = static_cast<const int32_t*>(ptr);
+    const int64_t* i64 = static_cast<const int64_t*>(ptr);
+
+    switch (base_type) {
+    case LUSD_VALUE_TYPE_BOOL: {
+        bool v; std::memcpy(&v, ptr, sizeof(bool));
+        return sb_appendf(b, "%d", static_cast<int>(v));
+    }
+    case LUSD_VALUE_TYPE_INT32:
+        return sb_appendf(b, "%d", ip[0]);
+    case LUSD_VALUE_TYPE_UINT32: {
+        uint32_t v; std::memcpy(&v, ptr, 4);
+        return sb_appendf(b, "%u", static_cast<unsigned>(v));
+    }
+    case LUSD_VALUE_TYPE_INT64:
+        return sb_appendf(b, "%lld", static_cast<long long>(i64[0]));
+    case LUSD_VALUE_TYPE_UINT64: {
+        uint64_t v; std::memcpy(&v, ptr, 8);
+        return sb_appendf(b, "%llu", static_cast<unsigned long long>(v));
+    }
+    case LUSD_VALUE_TYPE_FLOAT:
+        return append_float(b, fp[0]);
+    case LUSD_VALUE_TYPE_DOUBLE:
+        return append_double(b, dp[0]);
+    case LUSD_VALUE_TYPE_FLOAT2:
+    case LUSD_VALUE_TYPE_TEXCOORD2F:
+        return sb_append(b,"(") && append_float(b,fp[0]) &&
+               sb_append(b,", ") && append_float(b,fp[1]) && sb_append(b,")");
+    case LUSD_VALUE_TYPE_FLOAT3:
+    case LUSD_VALUE_TYPE_POINT3F:
+    case LUSD_VALUE_TYPE_NORMAL3F:
+    case LUSD_VALUE_TYPE_VECTOR3F:
+    case LUSD_VALUE_TYPE_COLOR3F:
+        return sb_append(b,"(") && append_float(b,fp[0]) &&
+               sb_append(b,", ") && append_float(b,fp[1]) &&
+               sb_append(b,", ") && append_float(b,fp[2]) && sb_append(b,")");
+    case LUSD_VALUE_TYPE_FLOAT4:
+    case LUSD_VALUE_TYPE_QUATF:
+    case LUSD_VALUE_TYPE_COLOR4F:
+        return sb_append(b,"(") && append_float(b,fp[0]) &&
+               sb_append(b,", ") && append_float(b,fp[1]) &&
+               sb_append(b,", ") && append_float(b,fp[2]) &&
+               sb_append(b,", ") && append_float(b,fp[3]) && sb_append(b,")");
+    case LUSD_VALUE_TYPE_DOUBLE2:
+    case LUSD_VALUE_TYPE_TEXCOORD2D:
+        return sb_append(b,"(") && append_double(b,dp[0]) &&
+               sb_append(b,", ") && append_double(b,dp[1]) && sb_append(b,")");
+    case LUSD_VALUE_TYPE_DOUBLE3:
+    case LUSD_VALUE_TYPE_POINT3D:
+        return sb_append(b,"(") && append_double(b,dp[0]) &&
+               sb_append(b,", ") && append_double(b,dp[1]) &&
+               sb_append(b,", ") && append_double(b,dp[2]) && sb_append(b,")");
+    case LUSD_VALUE_TYPE_DOUBLE4:
+    case LUSD_VALUE_TYPE_QUATD:
+        return sb_append(b,"(") && append_double(b,dp[0]) &&
+               sb_append(b,", ") && append_double(b,dp[1]) &&
+               sb_append(b,", ") && append_double(b,dp[2]) &&
+               sb_append(b,", ") && append_double(b,dp[3]) && sb_append(b,")");
+    case LUSD_VALUE_TYPE_INT2:
+        return sb_appendf(b,"(%d, %d)", ip[0], ip[1]);
+    case LUSD_VALUE_TYPE_INT3:
+        return sb_appendf(b,"(%d, %d, %d)", ip[0], ip[1], ip[2]);
+    case LUSD_VALUE_TYPE_INT4:
+        return sb_appendf(b,"(%d, %d, %d, %d)", ip[0], ip[1], ip[2], ip[3]);
+    case LUSD_VALUE_TYPE_MATRIX4D: {
+        if (!sb_append(b,"( ")) return false;
+        for (int r = 0; r < 4; r++) {
+            if (!sb_append(b,"(")) return false;
+            for (int c = 0; c < 4; c++) {
+                if (!append_double(b, dp[r*4+c])) return false;
+                if (c < 3 && !sb_append(b,", ")) return false;
+            }
+            if (!sb_append(b, r < 3 ? "), " : ")")) return false;
+        }
+        return sb_append(b," )");
+    }
+    case LUSD_VALUE_TYPE_STRING:
+    case LUSD_VALUE_TYPE_TOKEN: {
+        char* s;
+        std::memcpy(&s, ptr, sizeof(char*));
+        return sb_append(b,"\"") && (s ? sb_append(b,s) : true) && sb_append(b,"\"");
+    }
+    default:
+        return sb_appendf(b,"/* unsupported type %u */", base_type);
+    }
+}
+
+/* Write full value (scalar or array) */
+static bool write_value(StrBuf* b, const LusdValueData* vd) {
+    uint32_t base = static_cast<uint32_t>(vd->type) & ~LUSD_VALUE_TYPE_ARRAY_BIT;
+    bool is_array  = (static_cast<uint32_t>(vd->type) & LUSD_VALUE_TYPE_ARRAY_BIT) != 0;
+    size_t esz = elem_byte_size(base);
+
+    if (!is_array) {
+        const void* ptr = vd->useHeap ? vd->storage.heap.ptr
+                                       : static_cast<const void*>(vd->storage.inlineData);
+        return write_element(b, base, ptr);
+    }
+
+    if (!sb_append(b,"[")) return false;
+    if (esz > 0 && vd->arrayCount > 0 && vd->storage.heap.ptr) {
+        const uint8_t* data = static_cast<const uint8_t*>(vd->storage.heap.ptr);
+        for (uint64_t i = 0; i < vd->arrayCount; i++) {
+            if (i > 0 && !sb_append(b,", ")) return false;
+            if (!write_element(b, base, data + i * esz)) return false;
+        }
+    }
+    return sb_append(b,"]");
+}
+
+static bool write_indent(StrBuf* b, int depth) {
+    for (int i = 0; i < depth; i++)
+        if (!sb_append(b,"    ")) return false;
+    return true;
+}
+
+/* Serialize one attribute */
+static bool write_attr(StrBuf* b, const LusdWriteAttr_T& a, int depth) {
+    if (!write_indent(b, depth)) return false;
+    if (a.variability == LUSD_VARIABILITY_UNIFORM)
+        if (!sb_append(b,"uniform ")) return false;
+
+    uint32_t base     = static_cast<uint32_t>(a.type) & ~LUSD_VALUE_TYPE_ARRAY_BIT;
+    bool     is_array = (static_cast<uint32_t>(a.type) & LUSD_VALUE_TYPE_ARRAY_BIT) != 0;
+
+    if (!sb_append(b, usda_type_keyword(base))) return false;
+    if (is_array && !sb_append(b,"[]")) return false;
+    if (!sb_append(b," ")) return false;
+    if (!sb_append(b, a.name)) return false;
+    if (a.has_default) {
+        if (!sb_append(b," = ")) return false;
+        if (!write_value(b, &a.default_value)) return false;
+    }
+    return sb_append(b,"\n");
+}
+
+/* Serialize one prim (recursive) */
+static bool write_prim_usda(StrBuf* b, const LusdWritePrim_T* p, int depth) {
+    if (!write_indent(b, depth)) return false;
+    const char* spec_kw =
+        p->specifier == LUSD_SPECIFIER_OVER  ? "over"  :
+        p->specifier == LUSD_SPECIFIER_CLASS  ? "class" : "def";
+    if (!sb_append(b, spec_kw)) return false;
+    if (!sb_append(b," ")) return false;
+    if (p->type_name && p->type_name[0]) {
+        if (!sb_append(b, p->type_name)) return false;
+        if (!sb_append(b," ")) return false;
+    }
+    if (!sb_appendf(b,"\"%s\"", p->name)) return false;
+    if (!sb_append(b," {\n")) return false;
+
+    for (const auto& a : p->attrs)
+        if (!write_attr(b, a, depth + 1)) return false;
+
+    bool first_child = true;
+    for (const auto* c : p->children) {
+        if (first_child && !p->attrs.empty())
+            if (!sb_append(b,"\n")) return false;
+        first_child = false;
+        if (!write_prim_usda(b, c, depth + 1)) return false;
+    }
+
+    if (!write_indent(b, depth)) return false;
+    return sb_append(b,"}\n");
+}
+
+/* Layer metadata block */
+static bool write_layer_metas(StrBuf* b, const LusdStage_T* S) {
+    /* Always emit a metadata block so upAxis/metersPerUnit are present */
+    if (!sb_append(b,"(\n")) return false;
+
+    const char* axis_str =
+        S->write_up_axis == LUSD_UP_AXIS_Z ? "Z" :
+        S->write_up_axis == LUSD_UP_AXIS_X ? "X" : "Y";
+    if (!sb_appendf(b,"    upAxis = \"%s\"\n", axis_str)) return false;
+
+    if (S->write_mpu != 0.0)
+        if (!sb_appendf(b,"    metersPerUnit = %g\n", S->write_mpu)) return false;
+
+    if (S->write_start_tc != 0.0 || S->write_end_tc != 0.0) {
+        if (!sb_appendf(b,"    startTimeCode = %g\n", S->write_start_tc)) return false;
+        if (!sb_appendf(b,"    endTimeCode = %g\n",   S->write_end_tc))   return false;
+    }
+
+    if (S->write_fps != 0.0)
+        if (!sb_appendf(b,"    framesPerSecond = %g\n", S->write_fps)) return false;
+
+    return sb_append(b,")\n");
+}
+
+/* ============================================================
+ * Public writer API
+ * ============================================================ */
+
+LusdResult lusdCreateWriter(LusdInstance inst,
+                             const LusdWriterCreateInfo* pCI,
+                             LusdWriter* pWriter) {
+    LUSD_UNUSED(inst);
+    if (!pCI || !pWriter) return LUSD_ERROR_INVALID_ARGUMENT;
+    LusdWriter_T* w = static_cast<LusdWriter_T*>(std::calloc(1, sizeof(LusdWriter_T)));
+    if (!w) return LUSD_ERROR_OUT_OF_MEMORY;
+    w->format = pCI->format;
+    if (pCI->pFilePath && pCI->pFilePath[0]) {
+        w->file_path = static_cast<char*>(std::malloc(std::strlen(pCI->pFilePath) + 1));
+        if (!w->file_path) { std::free(w); return LUSD_ERROR_OUT_OF_MEMORY; }
+        std::strcpy(w->file_path, pCI->pFilePath);
+    }
+    *pWriter = w;
+    return LUSD_SUCCESS;
+}
+
+void lusdDestroyWriter(LusdInstance inst, LusdWriter writer) {
+    LUSD_UNUSED(inst);
+    if (!writer) return;
+    std::free(writer->file_path);
+    std::free(writer);  /* allocated with calloc */
+}
+
+LusdResult lusdStageExportToString(LusdInstance inst, LusdStage stage,
+                                    char** ppOutput, uint64_t* pLength) {
+    LUSD_UNUSED(inst);
+    if (!stage || !ppOutput || !pLength) return LUSD_ERROR_INVALID_ARGUMENT;
+    if (!stage->is_write) return LUSD_ERROR_FEATURE_NOT_PRESENT;
+
+    StrBuf buf{nullptr, 0, 0};
+
+    if (!sb_append(&buf,"#usda 1.0\n")) goto oom;
+    if (!write_layer_metas(&buf, stage)) goto oom;
+    if (!sb_append(&buf,"\n")) goto oom;
+
+    for (size_t i = 0; i < stage->write_roots.size(); i++) {
+        if (!write_prim_usda(&buf, stage->write_roots[i], 0)) goto oom;
+        if (i + 1 < stage->write_roots.size())
+            if (!sb_append(&buf,"\n")) goto oom;
+    }
+
+    *ppOutput = buf.data;
+    *pLength  = static_cast<uint64_t>(buf.used);
+    return LUSD_SUCCESS;
+
+oom:
+    sb_free(&buf);
+    return LUSD_ERROR_OUT_OF_MEMORY;
+}
+
+LusdResult lusdWriterWriteStage(LusdWriter writer, LusdStage stage) {
+    if (!writer || !stage) return LUSD_ERROR_INVALID_ARGUMENT;
+    if (!writer->file_path) return LUSD_ERROR_INVALID_ARGUMENT;
+
+    char* text = nullptr;
+    uint64_t length = 0;
+    LusdResult r = lusdStageExportToString(nullptr, stage, &text, &length);
+    if (r != LUSD_SUCCESS) return r;
+
+    std::FILE* f = std::fopen(writer->file_path, "wb");
+    if (!f) { std::free(text); return LUSD_ERROR_FILE_NOT_FOUND; }
+    std::fwrite(text, 1, static_cast<size_t>(length), f);
+    std::fclose(f);
+    std::free(text);
+    return LUSD_SUCCESS;
 }
