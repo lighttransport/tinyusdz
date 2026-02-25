@@ -1771,6 +1771,22 @@ function historyRedo() {
 function restoreHistorySnapshot(snapshot) {
     state._buildingGraph = true;
     state.graph.configure(snapshot);
+
+    // graph.configure() restores connections AFTER calling onConfigure on each
+    // node, so we must re-init OpenPBRSurfaceNode's inline widgets here, once
+    // connections are fully in place, to rebuild _editableParams / _inlineSlots.
+    const surfaceNode = state.graph._nodes?.find(n => n.type === 'mtlx/openpbr_surface');
+    if (surfaceNode && typeof surfaceNode._setupInlineWidgets === 'function') {
+        const connectedSlots = new Set();
+        if (surfaceNode.inputs) {
+            for (let i = 0; i < surfaceNode.inputs.length; i++) {
+                if (surfaceNode.inputs[i].link != null) connectedSlots.add(i);
+            }
+        }
+        // Pass current properties as materialValues so restored values are kept.
+        surfaceNode._setupInlineWidgets(connectedSlots, { ...surfaceNode.properties });
+    }
+
     state._buildingGraph = false;
     state._pendingHistorySnapshot = null;
     state.graphDirty = false;
