@@ -373,26 +373,26 @@ bool ConvertShaderWithNodeGraphToJson(
           ss << ",\n            \"type\": \"" << attr.type_name() << "\"";
           
           // Serialize value based on type
-          if (auto v = attr.get_value<float>()) {
-            ss << ",\n            \"value\": " << v.value();
-          } else if (auto v = attr.get_value<int>()) {
-            ss << ",\n            \"value\": " << v.value();
-          } else if (auto v = attr.get_value<bool>()) {
-            ss << ",\n            \"value\": " << (v.value() ? "true" : "false");
-          } else if (auto v = attr.get_value<std::string>()) {
-            ss << ",\n            \"value\": \"" << EscapeJsonString(v.value()) << "\"";
-          } else if (auto v = attr.get_value<value::float2>()) {
-            ss << ",\n            \"value\": [" << v.value()[0] << ", " << v.value()[1] << "]";
-          } else if (auto v = attr.get_value<value::float3>()) {
-            ss << ",\n            \"value\": [" << v.value()[0] << ", " << v.value()[1] << ", " << v.value()[2] << "]";
-          } else if (auto v = attr.get_value<value::float4>()) {
-            ss << ",\n            \"value\": [" << v.value()[0] << ", " << v.value()[1] << ", " << v.value()[2] << ", " << v.value()[3] << "]";
-          } else if (auto v = attr.get_value<value::color3f>()) {
-            ss << ",\n            \"value\": [" << v.value()[0] << ", " << v.value()[1] << ", " << v.value()[2] << "]";
-          } else if (auto v = attr.get_value<value::color4f>()) {
-            ss << ",\n            \"value\": [" << v.value()[0] << ", " << v.value()[1] << ", " << v.value()[2] << ", " << v.value()[3] << "]";
-          } else if (auto v = attr.get_value<value::AssetPath>()) {
-            ss << ",\n            \"value\": \"" << EscapeJsonString(v.value().GetAssetPath()) << "\"";
+          if (auto vf = attr.get_value<float>()) {
+            ss << ",\n            \"value\": " << vf.value();
+          } else if (auto vi = attr.get_value<int>()) {
+            ss << ",\n            \"value\": " << vi.value();
+          } else if (auto vb = attr.get_value<bool>()) {
+            ss << ",\n            \"value\": " << (vb.value() ? "true" : "false");
+          } else if (auto vs = attr.get_value<std::string>()) {
+            ss << ",\n            \"value\": \"" << EscapeJsonString(vs.value()) << "\"";
+          } else if (auto vf2 = attr.get_value<value::float2>()) {
+            ss << ",\n            \"value\": [" << vf2.value()[0] << ", " << vf2.value()[1] << "]";
+          } else if (auto vf3 = attr.get_value<value::float3>()) {
+            ss << ",\n            \"value\": [" << vf3.value()[0] << ", " << vf3.value()[1] << ", " << vf3.value()[2] << "]";
+          } else if (auto vf4 = attr.get_value<value::float4>()) {
+            ss << ",\n            \"value\": [" << vf4.value()[0] << ", " << vf4.value()[1] << ", " << vf4.value()[2] << ", " << vf4.value()[3] << "]";
+          } else if (auto vc3 = attr.get_value<value::color3f>()) {
+            ss << ",\n            \"value\": [" << vc3.value()[0] << ", " << vc3.value()[1] << ", " << vc3.value()[2] << "]";
+          } else if (auto vc4 = attr.get_value<value::color4f>()) {
+            ss << ",\n            \"value\": [" << vc4.value()[0] << ", " << vc4.value()[1] << ", " << vc4.value()[2] << ", " << vc4.value()[3] << "]";
+          } else if (auto va = attr.get_value<value::AssetPath>()) {
+            ss << ",\n            \"value\": \"" << EscapeJsonString(va.value().GetAssetPath()) << "\"";
           }
 
           // Add colorSpace metadata if present on the attribute
