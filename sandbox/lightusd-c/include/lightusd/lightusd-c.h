@@ -32,5 +32,6 @@
 #include "lusd_stream.h"
 #include "lusd_schema.h"
 #include "lusd_arena.h"
+#include "lusd_material.h"
 
 #endif /* LIGHTUSD_C_H */

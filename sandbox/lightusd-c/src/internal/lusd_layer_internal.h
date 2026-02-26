@@ -20,6 +20,8 @@
 #include <stdint.h>
 #include <stdbool.h>
 
+LUSD_EXTERN_C_BEGIN
+
 /*
  * Forward typedefs so LusdLayer_T and LusdPrim_T can reference each other
  * without requiring the 'struct' keyword everywhere.
@@ -53,6 +55,24 @@ typedef struct LusdSpecEntry {
 LUSD_STATIC_ASSERT(sizeof(LusdSpecEntry) == 12, "LusdSpecEntry must be 12 bytes");
 
 /* ------------------------------------------------------------------
+ * LusdTimeSample — one entry in a .timeSamples attribute dictionary.
+ *
+ * For USDA layers the value lives as ASCII text at [text_offset, text_offset+text_len)
+ * in L->file_data.  canonical_idx gives the index of the dedup-canonical entry so
+ * that Lydra can share materialized buffers across identical samples.
+ * ------------------------------------------------------------------ */
+typedef struct LusdTimeSample {
+    double   time;           /* time code (from the "{t: ...}" key)             */
+    uint64_t text_offset;    /* byte offset into L->file_data for value text    */
+    uint32_t text_len;       /* byte length of the value text (used for dedup)  */
+    uint32_t canonical_idx;  /* index of the dedup-canonical entry (self if unique) */
+    uint32_t text_hash;      /* FNV-32 hash of value text (for fast dedup check) */
+    uint8_t  type_id;        /* LusdCrateTypeId of element type (VEC3F, QUATF…) */
+    uint8_t  is_array;       /* non-zero when each sample is itself an array    */
+    uint8_t  _pad[2];
+} LusdTimeSample;            /* 32 bytes total */
+
+/* ------------------------------------------------------------------
  * Layer-level metadata (extracted from root prim fieldset on parse)
  * ------------------------------------------------------------------ */
 typedef struct LusdLayerMetas {
@@ -78,6 +98,7 @@ struct LusdLayer_T {
     const uint8_t*  file_data;         /* start of file bytes */
     uint64_t        file_size;
     bool            owns_file_data;    /* if true, free on destroy */
+    uint8_t         format;            /* LUSD_FORMAT_USDC=0, LUSD_FORMAT_USDA=1 */
 
     /* ---- TOKENS: null-terminated strings in file_data (zero-copy) - */
     char**          tokens;            /* tokens[i] → null-term string in decompressed buffer */
@@ -122,6 +143,14 @@ struct LusdLayer_T {
     /* ---- Root prims (spec indices of DEF/OVER/CLASS at root path) - */
     uint32_t*       root_spec_indices;
     uint32_t        root_spec_count;
+
+    /* ---- Time samples table (USDA only) --------------------------- */
+    /* All .timeSamples attribute entries stored in arrival order.     */
+    /* Each attribute's samples occupy a contiguous [start, start+n)   */
+    /* range; the corresponding field's ValueRep payload encodes       */
+    /*   bits 47-24 = start index   bits 23-0 = count                 */
+    LusdTimeSample* time_samples;
+    uint32_t        time_sample_count;
 };
 
 /* ------------------------------------------------------------------
@@ -145,6 +174,10 @@ struct LusdPrim_T {
  * Internal functions (called between lusd_layer.c and lusd_usdc_reader.c)
  * ------------------------------------------------------------------ */
 
+/* Format tag values */
+#define LUSD_FORMAT_USDC 0
+#define LUSD_FORMAT_USDA 1
+
 /*
  * lusd__layer_read_usdc - Parse a USDC binary buffer into layer->flat tables.
  * Called from lusd_read_usdc.c after the file is loaded into memory.
@@ -164,6 +197,14 @@ LusdResult lusd__layer_read_usdc(LusdLayer_T* layer,
 LusdResult lusd__layer_build_prims(LusdLayer_T* layer);
 
 /*
+ * lusd__layer_read_usda - Parse a USDA ASCII buffer into layer->flat tables.
+ * Called from lusd_read_usda.c after the file is loaded into memory.
+ */
+LusdResult lusd__layer_read_usda(LusdLayer_T* layer,
+                                  const uint8_t* data,
+                                  uint64_t size);
+
+/*
  * lusd__layer_free_tables - Release all dynamic allocations inside the layer
  * (tokens/strings/paths/fields/fieldsets/specs arrays, string arena, etc.).
  * Does NOT free the layer struct itself; that is done by lusdDestroyLayer.
@@ -177,5 +218,7 @@ void lusd__layer_free_tables(LusdLayer_T* layer);
 LusdValueRep lusd__layer_find_field(const LusdLayer_T* layer,
                                      const LusdPrim_T* prim,
                                      const char* field_name);
+
+LUSD_EXTERN_C_END
 
 #endif /* LUSD_LAYER_INTERNAL_H */

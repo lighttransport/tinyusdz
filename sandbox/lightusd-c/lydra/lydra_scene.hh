@@ -82,6 +82,32 @@ Result<std::vector<float>> materialize_float2_array(const LusdLayer_T* L,
                                                      LusdValueRep_t     rep);
 
 // ============================================================================
+// Time-samples helpers
+//
+// get_time_codes — returns all time codes for a LUSD_CRATE_TIME_SAMPLES field.
+// materialize_*_at — materialize the typed array at the requested time code.
+//   Uses hold-last semantics: if time_code < first sample, the first sample
+//   is returned; if time_code > last sample, the last sample is returned.
+//   Dedup-canonical entries are resolved transparently so that identical
+//   arrays at different time codes are parsed only once.
+// ============================================================================
+
+Result<std::vector<double>> get_time_codes(const LusdLayer_T* L,
+                                            LusdValueRep_t     rep);
+
+Result<std::vector<float>> materialize_float3_array_at(const LusdLayer_T* L,
+                                                        LusdValueRep_t     rep,
+                                                        double             time_code);
+
+Result<std::vector<float>> materialize_float4_array_at(const LusdLayer_T* L,
+                                                        LusdValueRep_t     rep,
+                                                        double             time_code);
+
+Result<std::vector<int32_t>> materialize_int_array_at(const LusdLayer_T* L,
+                                                       LusdValueRep_t     rep,
+                                                       double             time_code);
+
+// ============================================================================
 // High-level mesh extraction
 // ============================================================================
 Result<MeshData> extract_mesh(LusdLayer layer, LusdPrim prim);

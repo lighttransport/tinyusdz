@@ -13,6 +13,12 @@
 #include "internal/lusd_layer_internal.h"
 #include "internal/lusd_value_rep.h"
 
+// Format tag constants
+#ifndef LUSD_FORMAT_USDC
+#  define LUSD_FORMAT_USDC 0
+#  define LUSD_FORMAT_USDA 1
+#endif
+
 // LZ4 decompressor (vendored copy in lightusd-c/src/lz4/)
 #if defined(__GNUC__) || defined(__clang__)
 #  pragma GCC diagnostic push
@@ -31,6 +37,124 @@
 #include <string>
 
 namespace lydra {
+
+// ============================================================================
+// Format helpers
+// ============================================================================
+
+static bool is_usda_layer(const LusdLayer_T* L) {
+    return L && L->format == LUSD_FORMAT_USDA;
+}
+
+// ============================================================================
+// USDA text array parser
+//
+// Parses ASCII array text starting at file_data + text_offset.
+// Supports:
+//   "[int, int, ...]"                    element_size=4 (int32)
+//   "[float, float, ...]"                element_size=4 (float)
+//   "[(x,y), ...]"                       element_size=8 (float2)
+//   "[(x,y,z), ...]"                     element_size=12 (float3)
+//   "[(x,y,z,w), ...]"                   element_size=16 (float4)
+// Returns heap-allocated binary buffer; *count_out = element count.
+// *tmp_buf_out receives the same pointer (caller must free).
+// Returns nullptr on failure.
+// ============================================================================
+
+static const uint8_t* read_usda_array_bytes(
+        const LusdLayer_T* L,
+        uint64_t            text_offset,
+        size_t              element_size,
+        bool                as_int,        /* true → parse scalars with strtol */
+        uint64_t*           count_out,
+        uint8_t**           tmp_buf_out) {
+    *count_out   = 0;
+    *tmp_buf_out = nullptr;
+
+    if (!L || !L->file_data) return nullptr;
+    if (text_offset >= L->file_size) return nullptr;
+
+    const char* p   = reinterpret_cast<const char*>(L->file_data) + text_offset;
+    const char* end = reinterpret_cast<const char*>(L->file_data) + L->file_size;
+
+    // skip whitespace
+    while (p < end && (*p == ' ' || *p == '\t' || *p == '\n' || *p == '\r')) p++;
+    if (p >= end || *p != '[') return nullptr;
+    p++; // consume '['
+
+    // Check for empty array
+    {
+        const char* scan = p;
+        while (scan < end && (*scan == ' ' || *scan == '\t' || *scan == '\n' || *scan == '\r')) scan++;
+        if (scan >= end || *scan == ']') {
+            *count_out = 0;
+            return nullptr;
+        }
+    }
+
+    // First pass: count top-level commas → elements = commas_at_depth_0 + 1
+    uint64_t count = 1;
+    {
+        const char* scan = p;
+        int depth = 0;
+        while (scan < end) {
+            char c = *scan++;
+            if (c == '(' || c == '[') depth++;
+            else if (c == ')') { if (depth > 0) depth--; }
+            else if (c == ']') { if (depth == 0) break; depth--; }
+            else if (c == ',' && depth == 0) count++;
+        }
+    }
+
+    // Allocate output buffer
+    size_t total_bytes = static_cast<size_t>(count) * element_size;
+    uint8_t* buf = static_cast<uint8_t*>(malloc(total_bytes));
+    if (!buf) return nullptr;
+    memset(buf, 0, total_bytes);
+
+    // Second pass: parse values
+    uint64_t elem = 0;
+    while (p < end && elem < count) {
+        // skip whitespace and commas between elements
+        while (p < end && (*p == ' ' || *p == '\t' || *p == '\n' || *p == '\r' || *p == ',')) p++;
+        if (p >= end || *p == ']') break;
+
+        if (element_size == sizeof(int32_t) && as_int) {
+            // integer scalar: use strtol to get the proper binary int value
+            char* endp;
+            long v = strtol(p, &endp, 10);
+            int32_t iv = (int32_t)v;
+            memcpy(buf + elem * sizeof(int32_t), &iv, sizeof(int32_t));
+            p = endp;
+        } else if (element_size == sizeof(float)) {
+            // float scalar
+            char* endp;
+            float fv = strtof(p, &endp);
+            memcpy(buf + elem * sizeof(float), &fv, sizeof(float));
+            p = endp;
+        } else {
+            // tuple: expect '(' x, y [, z [, w]] ')'
+            if (*p == '(') p++;
+            uint32_t ncomp = (uint32_t)(element_size / sizeof(float));
+            for (uint32_t comp = 0; comp < ncomp; comp++) {
+                while (p < end && (*p == ' ' || *p == '\t' || *p == ',')) p++;
+                char* endp;
+                float fv = strtof(p, &endp);
+                size_t dst_off = elem * element_size + comp * sizeof(float);
+                memcpy(buf + dst_off, &fv, sizeof(float));
+                p = endp;
+            }
+            // consume closing ')'
+            while (p < end && *p != ')' && *p != ',' && *p != ']') p++;
+            if (p < end && *p == ')') p++;
+        }
+        elem++;
+    }
+
+    *count_out   = elem;
+    *tmp_buf_out = buf;
+    return buf;
+}
 
 // ============================================================================
 // find_field — thin wrapper around lusd__layer_find_field
@@ -137,6 +261,12 @@ Result<std::vector<float>> materialize_float3_array(const LusdLayer_T* L,
     if (!L || rep.data == 0)
         return R::err("null layer or null ValueRep");
 
+    // Transparent forward for time-sampled attributes: use time 0.0
+    if (static_cast<int>((rep.data & LUSD_VREP_TYPE_MASK) >> LUSD_VREP_TYPE_SHIFT)
+            == LUSD_CRATE_TIME_SAMPLES) {
+        return materialize_float3_array_at(L, rep, 0.0);
+    }
+
     if (!(rep.data & LUSD_VREP_IS_ARRAY_BIT))
         return R::err("ValueRep is not an array");
 
@@ -148,8 +278,12 @@ Result<std::vector<float>> materialize_float3_array(const LusdLayer_T* L,
 
     uint64_t count = 0;
     uint8_t* tmp   = nullptr;
-    const uint8_t* src = read_array_bytes(L, offset, compressed,
-                                           3 * sizeof(float), &count, &tmp);
+    const uint8_t* src;
+    if (is_usda_layer(L)) {
+        src = read_usda_array_bytes(L, offset, 3 * sizeof(float), false, &count, &tmp);
+    } else {
+        src = read_array_bytes(L, offset, compressed, 3 * sizeof(float), &count, &tmp);
+    }
     if (!src && count != 0)
         return R::err("failed to read float3 array from file");
 
@@ -183,8 +317,12 @@ Result<std::vector<float>> materialize_float2_array(const LusdLayer_T* L,
 
     uint64_t count = 0;
     uint8_t* tmp   = nullptr;
-    const uint8_t* src = read_array_bytes(L, offset, compressed,
-                                           2 * sizeof(float), &count, &tmp);
+    const uint8_t* src;
+    if (is_usda_layer(L)) {
+        src = read_usda_array_bytes(L, offset, 2 * sizeof(float), false, &count, &tmp);
+    } else {
+        src = read_array_bytes(L, offset, compressed, 2 * sizeof(float), &count, &tmp);
+    }
     if (!src && count != 0)
         return R::err("failed to read float2 array from file");
 
@@ -218,8 +356,12 @@ Result<std::vector<int32_t>> materialize_int_array(const LusdLayer_T* L,
 
     uint64_t count = 0;
     uint8_t* tmp   = nullptr;
-    const uint8_t* src = read_array_bytes(L, offset, compressed,
-                                           sizeof(int32_t), &count, &tmp);
+    const uint8_t* src;
+    if (is_usda_layer(L)) {
+        src = read_usda_array_bytes(L, offset, sizeof(int32_t), true, &count, &tmp);
+    } else {
+        src = read_array_bytes(L, offset, compressed, sizeof(int32_t), &count, &tmp);
+    }
     if (!src && count != 0)
         return R::err("failed to read int array from file");
 
@@ -234,6 +376,131 @@ Result<std::vector<int32_t>> materialize_int_array(const LusdLayer_T* L,
 // ============================================================================
 // extract_mesh
 // ============================================================================
+
+// ============================================================================
+// Time-samples helpers
+// ============================================================================
+
+// Decode start / count from a LUSD_CRATE_TIME_SAMPLES ValueRep payload.
+static inline uint32_t ts_start(uint64_t payload) {
+    return static_cast<uint32_t>(payload >> 24);
+}
+static inline uint32_t ts_count(uint64_t payload) {
+    return static_cast<uint32_t>(payload & 0xFFFFFFu);
+}
+
+// Find the canonical LusdTimeSample for a given time_code (hold-last semantics).
+// Returns nullptr if the attribute has no samples or the table is missing.
+static const LusdTimeSample* find_time_sample(const LusdLayer_T* L,
+                                               uint64_t           payload,
+                                               double             time_code) {
+    uint32_t start = ts_start(payload);
+    uint32_t count = ts_count(payload);
+    if (count == 0 || !L->time_samples) return nullptr;
+
+    // Hold-first: pick the last sample whose time <= time_code.
+    // Fall back to the earliest sample if time_code precedes all samples.
+    const LusdTimeSample* best = &L->time_samples[start];
+    for (uint32_t i = 0; i < count; i++) {
+        const LusdTimeSample* s = &L->time_samples[start + i];
+        if (s->time <= time_code)
+            best = s;
+        else if (i == 0)
+            best = s; // hold-first before all samples
+        else
+            break;
+    }
+    // Resolve dedup: use the canonical entry's data
+    uint32_t canon = best->canonical_idx;
+    // Safety: canonical_idx must be in [start, start+count)
+    if (canon < start || canon >= start + count)
+        canon = static_cast<uint32_t>(best - L->time_samples);
+    return &L->time_samples[canon];
+}
+
+Result<std::vector<double>> get_time_codes(const LusdLayer_T* L,
+                                            LusdValueRep_t     rep) {
+    using R = Result<std::vector<double>>;
+    if (!L || rep.data == 0) return R::err("null layer or ValueRep");
+    int tid = static_cast<int>((rep.data & LUSD_VREP_TYPE_MASK) >> LUSD_VREP_TYPE_SHIFT);
+    if (tid != LUSD_CRATE_TIME_SAMPLES)
+        return R::err("ValueRep is not a time-samples field");
+
+    uint64_t payload = rep.data & LUSD_VREP_PAYLOAD_MASK;
+    uint32_t start   = ts_start(payload);
+    uint32_t count   = ts_count(payload);
+
+    std::vector<double> result(count);
+    for (uint32_t i = 0; i < count; i++)
+        result[i] = L->time_samples[start + i].time;
+    return R::ok_value(std::move(result));
+}
+
+Result<std::vector<float>> materialize_float3_array_at(const LusdLayer_T* L,
+                                                        LusdValueRep_t     rep,
+                                                        double             time_code) {
+    using R = Result<std::vector<float>>;
+    if (!L || rep.data == 0) return R::err("null layer or ValueRep");
+
+    uint64_t payload = rep.data & LUSD_VREP_PAYLOAD_MASK;
+    const LusdTimeSample* s = find_time_sample(L, payload, time_code);
+    if (!s) return R::err("no time samples");
+
+    uint64_t count = 0;
+    uint8_t* tmp   = nullptr;
+    const uint8_t* src = read_usda_array_bytes(L, s->text_offset,
+                                                3 * sizeof(float), false,
+                                                &count, &tmp);
+    if (!src) return R::err("failed to parse float3[] at time");
+    std::vector<float> result(static_cast<size_t>(count) * 3);
+    if (count > 0) memcpy(result.data(), src, count * 3 * sizeof(float));
+    free(tmp);
+    return R::ok_value(std::move(result));
+}
+
+Result<std::vector<float>> materialize_float4_array_at(const LusdLayer_T* L,
+                                                        LusdValueRep_t     rep,
+                                                        double             time_code) {
+    using R = Result<std::vector<float>>;
+    if (!L || rep.data == 0) return R::err("null layer or ValueRep");
+
+    uint64_t payload = rep.data & LUSD_VREP_PAYLOAD_MASK;
+    const LusdTimeSample* s = find_time_sample(L, payload, time_code);
+    if (!s) return R::err("no time samples");
+
+    uint64_t count = 0;
+    uint8_t* tmp   = nullptr;
+    const uint8_t* src = read_usda_array_bytes(L, s->text_offset,
+                                                4 * sizeof(float), false,
+                                                &count, &tmp);
+    if (!src) return R::err("failed to parse float4[] at time");
+    std::vector<float> result(static_cast<size_t>(count) * 4);
+    if (count > 0) memcpy(result.data(), src, count * 4 * sizeof(float));
+    free(tmp);
+    return R::ok_value(std::move(result));
+}
+
+Result<std::vector<int32_t>> materialize_int_array_at(const LusdLayer_T* L,
+                                                       LusdValueRep_t     rep,
+                                                       double             time_code) {
+    using R = Result<std::vector<int32_t>>;
+    if (!L || rep.data == 0) return R::err("null layer or ValueRep");
+
+    uint64_t payload = rep.data & LUSD_VREP_PAYLOAD_MASK;
+    const LusdTimeSample* s = find_time_sample(L, payload, time_code);
+    if (!s) return R::err("no time samples");
+
+    uint64_t count = 0;
+    uint8_t* tmp   = nullptr;
+    const uint8_t* src = read_usda_array_bytes(L, s->text_offset,
+                                                sizeof(int32_t), true,
+                                                &count, &tmp);
+    if (!src) return R::err("failed to parse int[] at time");
+    std::vector<int32_t> result(static_cast<size_t>(count));
+    if (count > 0) memcpy(result.data(), src, count * sizeof(int32_t));
+    free(tmp);
+    return R::ok_value(std::move(result));
+}
 
 Result<MeshData> extract_mesh(LusdLayer layer, LusdPrim prim) {
     using R = Result<MeshData>;

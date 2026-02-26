@@ -16,8 +16,9 @@
 #include <stdlib.h>
 #include <string.h>
 
-/* Forward declaration — implemented in lusd_read_usdc.c */
+/* Forward declarations */
 LusdResult lusd__read_usdc_file(LusdLayer_T* layer, const char* path);
+LusdResult lusd__read_usda_file(LusdLayer_T* layer, const char* path);
 
 /* -----------------------------------------------------------------------
  * Helpers
@@ -70,8 +71,14 @@ LusdResult lusdCreateLayer(LusdInstance inst,
 
         res = lusd__layer_build_prims(L);
         if (res != LUSD_SUCCESS) goto fail;
+    } else if (str_ends_with(pCI->pIdentifier, ".usda")) {
+        res = lusd__read_usda_file(L, pCI->pIdentifier);
+        if (res != LUSD_SUCCESS) goto fail;
+
+        res = lusd__layer_build_prims(L);
+        if (res != LUSD_SUCCESS) goto fail;
     } else {
-        /* USDA, USDZ not yet supported in native path */
+        /* .usdz, .usd, etc. not yet supported */
         res = LUSD_ERROR_FEATURE_NOT_PRESENT;
         goto fail;
     }

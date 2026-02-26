@@ -914,12 +914,14 @@ void lusd__layer_free_tables(LusdLayer_T* layer) {
     free(layer->string_arena);layer->string_arena = NULL;
     free(layer->prim_nodes);  layer->prim_nodes = NULL;
     free(layer->root_spec_indices); layer->root_spec_indices = NULL;
+    free(layer->time_samples);      layer->time_samples = NULL;
 
     layer->token_count = layer->string_count = layer->path_count = 0;
     layer->field_count = layer->fieldset_entry_count = layer->spec_count = 0;
     layer->string_arena_size = layer->string_arena_used = 0;
     layer->prim_node_count   = layer->prim_node_capacity = 0;
     layer->root_spec_count   = 0;
+    layer->time_sample_count = 0;
 
     if (layer->owns_file_data) {
         free((void*)layer->file_data);
