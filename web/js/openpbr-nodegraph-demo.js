@@ -3578,8 +3578,135 @@ function extractNormalMapFromMaterial(material) {
 }
 
 /**
+ * Mapping from shading debug channel name to Three.js material property paths.
+ * Each entry: { texture: prop for texture map, color: prop for color3, scalar: prop for float }
+ */
+const CHANNEL_MAP = {
+    base_color:             { texture: 'map',                   color: 'color',         scalar: null },
+    base_metalness:         { texture: 'metalnessMap',          color: null,            scalar: 'metalness' },
+    base_diffuse_roughness: { texture: null,                    color: null,            scalar: '_openPBR.base_diffuse_roughness' },
+    specular_color:         { texture: null,                    color: 'specularColor', scalar: null },
+    specular_roughness:     { texture: 'roughnessMap',          color: null,            scalar: 'roughness' },
+    coat_color:             { texture: null,                    color: 'clearcoatColor',scalar: null },
+    fuzz_color:             { texture: null,                    color: 'sheenColor',    scalar: null },
+};
+
+/**
+ * Read a possibly dotted property path from an object (e.g. "_openPBR.base_diffuse_roughness").
+ */
+function readProp(obj, path) {
+    if (!obj || !path) return undefined;
+    const parts = path.split('.');
+    let cur = obj;
+    for (const p of parts) {
+        if (cur == null) return undefined;
+        cur = cur[p];
+    }
+    return cur;
+}
+
+/**
+ * Extract a texture or constant value for a given OpenPBR channel from a material.
+ * Returns { texture: THREE.Texture|null, constColor: [r,g,b] }
+ */
+function extractChannelFromMaterial(material, channel) {
+    const info = CHANNEL_MAP[channel];
+    if (!info) return { texture: null, constColor: [0, 0, 0] };
+
+    if (!material) return { texture: null, constColor: [0, 0, 0] };
+
+    // Handle array of materials – pick first that has data
+    if (Array.isArray(material)) {
+        for (const mat of material) {
+            const res = extractChannelFromMaterial(mat, channel);
+            if (res.texture) return res;
+        }
+        // No texture found – return constant from first material
+        if (material.length > 0) return extractChannelFromMaterial(material[0], channel);
+        return { texture: null, constColor: [0, 0, 0] };
+    }
+
+    // 1. Try texture from direct property
+    if (info.texture) {
+        const tex = material[info.texture];
+        if (tex && tex.isTexture) return { texture: tex, constColor: [1, 1, 1] };
+        // Also check userData.textures
+        const ud = material.userData?.textures?.[info.texture];
+        if (ud?.texture && ud.texture.isTexture) return { texture: ud.texture, constColor: [1, 1, 1] };
+    }
+
+    // 2. No texture – read constant value
+    if (info.color) {
+        const c = readProp(material, info.color);
+        if (c && c.isColor) return { texture: null, constColor: [c.r, c.g, c.b] };
+        if (Array.isArray(c)) return { texture: null, constColor: c };
+    }
+    if (info.scalar != null) {
+        const v = readProp(material, info.scalar);
+        if (v !== undefined && typeof v === 'number') return { texture: null, constColor: [v, v, v] };
+    }
+
+    return { texture: null, constColor: [0, 0, 0] };
+}
+
+/**
+ * Create a shader material that displays a single texture channel (or constant color).
+ * - If tex is provided, samples the texture at UV and outputs RGB (or grayscale→RGB for single-channel).
+ * - If tex is null, outputs the constant color.
+ * @param {THREE.Texture|null} tex
+ * @param {number[]} constColor  [r, g, b] in 0..1
+ * @param {boolean} isGrayscale  If true, replicate .r to RGB for single-channel textures
+ */
+function createChannelDebugMaterial(tex, constColor, isGrayscale = false) {
+    return new THREE.ShaderMaterial({
+        uniforms: {
+            channelTex:  { value: tex },
+            hasTex:      { value: tex !== null },
+            constColor:  { value: new THREE.Vector3(constColor[0], constColor[1], constColor[2]) },
+            isGrayscale: { value: isGrayscale },
+        },
+        vertexShader: `
+            varying vec2 vUv;
+            void main() {
+                vUv = uv;
+                gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+            }
+        `,
+        fragmentShader: `
+            uniform sampler2D channelTex;
+            uniform bool hasTex;
+            uniform vec3 constColor;
+            uniform bool isGrayscale;
+
+            varying vec2 vUv;
+
+            void main() {
+                if (hasTex) {
+                    vec4 texel = texture2D(channelTex, vUv);
+                    if (isGrayscale) {
+                        gl_FragColor = vec4(vec3(texel.r), 1.0);
+                    } else {
+                        gl_FragColor = vec4(texel.rgb, 1.0);
+                    }
+                } else {
+                    gl_FragColor = vec4(constColor, 1.0);
+                }
+            }
+        `,
+        side: THREE.DoubleSide
+    });
+}
+
+// Channels that are single-float values (displayed as grayscale)
+const GRAYSCALE_CHANNELS = new Set([
+    'base_metalness', 'base_diffuse_roughness', 'specular_roughness'
+]);
+
+/**
  * Apply a shading debug mode to the current model.
- * Modes: 'solid' | 'normal_mapped' | 'normal_geometry'
+ * Modes: 'solid' | 'normal_mapped' | 'normal_geometry' | 'tangent' | 'bitangent' | 'tangent_w'
+ *       | 'base_color' | 'base_metalness' | 'base_diffuse_roughness'
+ *       | 'specular_color' | 'specular_roughness' | 'coat_color' | 'fuzz_color'
  */
 function setShadingMode(mode) {
     state.shadingMode = mode;
@@ -3626,6 +3753,22 @@ function setShadingMode(mode) {
                 return;
             }
 
+            // Channel texture/value debug modes (base_color, base_metalness, etc.)
+            if (CHANNEL_MAP[mode]) {
+                const isGray = GRAYSCALE_CHANNELS.has(mode);
+                if (Array.isArray(origMat)) {
+                    obj.material = origMat.map((mat) => {
+                        const { texture, constColor } = extractChannelFromMaterial(mat, mode);
+                        return createChannelDebugMaterial(texture, constColor, isGray);
+                    });
+                } else {
+                    const { texture, constColor } = extractChannelFromMaterial(origMat, mode);
+                    obj.material = createChannelDebugMaterial(texture, constColor, isGray);
+                }
+                return;
+            }
+
+            // Normal debug modes (normal_mapped, normal_geometry)
             // Multi-material: create a per-sub-material debug material array
             // so that sub-materials without a normal map don't inherit one from
             // a sibling (e.g. Glass should have no normal map even if Body does).
