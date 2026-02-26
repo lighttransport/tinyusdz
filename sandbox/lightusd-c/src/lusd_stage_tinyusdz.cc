@@ -250,6 +250,28 @@ static void lusd__stage_build_material_cache(LusdStage_T* sd) {
                 l.position[1] = (float)rl.transform.m[3][1];
                 l.position[2] = (float)rl.transform.m[3][2];
                 l.radius = rl.radius;
+            } else if (rl.type == RenderLight::Type::Rect) {
+                l.type = LUSD_LIGHT_TYPE_RECT;
+                /* center position: row 3 */
+                l.position[0] = (float)rl.transform.m[3][0];
+                l.position[1] = (float)rl.transform.m[3][1];
+                l.position[2] = (float)rl.transform.m[3][2];
+                /* matrix4f is row-major (m[row][col]).
+                 * Local axis j = column j = (m[0][j], m[1][j], m[2][j]). */
+                /* local +X = col 0 → rect_axis_u */
+                l.rect_axis_u[0] = (float)rl.transform.m[0][0];
+                l.rect_axis_u[1] = (float)rl.transform.m[1][0];
+                l.rect_axis_u[2] = (float)rl.transform.m[2][0];
+                /* local +Y = col 1 → rect_axis_v */
+                l.rect_axis_v[0] = (float)rl.transform.m[0][1];
+                l.rect_axis_v[1] = (float)rl.transform.m[1][1];
+                l.rect_axis_v[2] = (float)rl.transform.m[2][1];
+                /* outward normal = local -Z = -(col 2) */
+                l.direction[0] = -(float)rl.transform.m[0][2];
+                l.direction[1] = -(float)rl.transform.m[1][2];
+                l.direction[2] = -(float)rl.transform.m[2][2];
+                l.rect_half_width  = rl.width  * 0.5f;
+                l.rect_half_height = rl.height * 0.5f;
             } else if (rl.type == RenderLight::Type::Dome) {
                 l.type = LUSD_LIGHT_TYPE_DOME;
             } else {

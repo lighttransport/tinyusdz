@@ -133,16 +133,23 @@ typedef enum LusdLightType {
     LUSD_LIGHT_TYPE_POINT    = 1,
     LUSD_LIGHT_TYPE_SPHERE   = 2,
     LUSD_LIGHT_TYPE_DOME     = 3,
+    LUSD_LIGHT_TYPE_RECT     = 4,   /* RectLight (area light) */
     LUSD_LIGHT_TYPE_OTHER    = 255
 } LusdLightType;
 
 typedef struct LusdLight {
     LusdLightType type;
-    float  color[3];        /* linear RGB */
-    float  intensity;       /* physical intensity (already multiplied by 2^exposure) */
-    float  position[3];     /* world-space position (Point/Sphere lights) */
-    float  direction[3];    /* world-space direction (Distant lights, normalized) */
+    float  color[3];        /* linear RGB (already multiplied by intensity * 2^exposure) */
+    float  intensity;       /* raw intensity * 2^exposure scalar */
+    float  position[3];     /* world-space center (Point/Sphere/Rect lights) */
+    float  direction[3];    /* world-space direction (Distant lights, normalized);
+                               for Rect: outward normal (local -Z in world space) */
     float  radius;          /* sphere radius (SphereLight) */
+    /* RectLight: axes and dimensions */
+    float  rect_axis_u[3];  /* world-space local +X axis (half-width direction) */
+    float  rect_axis_v[3];  /* world-space local +Y axis (half-height direction) */
+    float  rect_half_width; /* half width in world units */
+    float  rect_half_height;/* half height in world units */
     char   name[128];
 } LusdLight;
 
