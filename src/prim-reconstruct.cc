@@ -69,37 +69,43 @@ constexpr auto kInputsVarname = "inputs:varname";
 namespace mtlx_validation {
 
 // Known MaterialX node categories (from MaterialX spec)
-static const std::set<std::string> kKnownNodeCategories = {
-  // Math operations
-  "add", "subtract", "multiply", "divide", "power", "min", "max",
-  "absval", "floor", "ceil", "round", "sqrt", "sin", "cos", "tan",
-  "asin", "acos", "atan", "atan2", "exp", "log", "ln", "sign",
-  "clamp", "mix", "remap", "smoothstep", "modulo", "invert",
-  // Channel operations
-  "extract", "combine2", "combine3", "combine4", "separate2", "separate3", "separate4",
-  "swizzle", "convert", "luminance",
-  // Color operations
-  "hsvadjust", "saturate", "contrast", "range",
-  // Vector operations
-  "normalize", "magnitude", "dotproduct", "crossproduct", "rotate3d",
-  "transformpoint", "transformvector", "transformnormal",
-  // Geometry
-  "position", "normal", "tangent", "bitangent", "texcoord", "geomcolor",
-  // Texture
-  "image", "tiledimage", "constant", "noise2d", "noise3d",
-  "cellnoise2d", "cellnoise3d", "fractal3d", "worleynoise2d", "worleynoise3d",
-  // Procedural
-  "ramp4", "splitlr", "splittb", "checkerboard",
-  // Surface shaders
-  "open_pbr_surface", "standard_surface", "UsdPreviewSurface"
-};
+static const std::set<std::string> &GetKnownNodeCategories() {
+  static const std::set<std::string> s = {
+    // Math operations
+    "add", "subtract", "multiply", "divide", "power", "min", "max",
+    "absval", "floor", "ceil", "round", "sqrt", "sin", "cos", "tan",
+    "asin", "acos", "atan", "atan2", "exp", "log", "ln", "sign",
+    "clamp", "mix", "remap", "smoothstep", "modulo", "invert",
+    // Channel operations
+    "extract", "combine2", "combine3", "combine4", "separate2", "separate3", "separate4",
+    "swizzle", "convert", "luminance",
+    // Color operations
+    "hsvadjust", "saturate", "contrast", "range",
+    // Vector operations
+    "normalize", "magnitude", "dotproduct", "crossproduct", "rotate3d",
+    "transformpoint", "transformvector", "transformnormal",
+    // Geometry
+    "position", "normal", "tangent", "bitangent", "texcoord", "geomcolor",
+    // Texture
+    "image", "tiledimage", "constant", "noise2d", "noise3d",
+    "cellnoise2d", "cellnoise3d", "fractal3d", "worleynoise2d", "worleynoise3d",
+    // Procedural
+    "ramp4", "splitlr", "splittb", "checkerboard",
+    // Surface shaders
+    "open_pbr_surface", "standard_surface", "UsdPreviewSurface"
+  };
+  return s;
+}
 
 // Known MaterialX types
-static const std::set<std::string> kKnownTypes = {
-  "float", "color3", "color4", "vector2", "vector3", "vector4",
-  "matrix33", "matrix44", "string", "filename", "boolean", "integer",
-  "surfaceshader", "displacementshader", "volumeshader"
-};
+static const std::set<std::string> &GetKnownTypes() {
+  static const std::set<std::string> s = {
+    "float", "color3", "color4", "vector2", "vector3", "vector4",
+    "matrix33", "matrix44", "string", "filename", "boolean", "integer",
+    "surfaceshader", "displacementshader", "volumeshader"
+  };
+  return s;
+}
 
 // Check if info:id follows MaterialX naming convention: ND_<category>_<type>
 // Returns true if valid or if validation is disabled
@@ -141,9 +147,9 @@ static bool ValidateInfoId(const std::string &info_id,
                              ? category.substr(0, firstUnderscore)
                              : category;
 
-  if (kKnownNodeCategories.find(baseCategory) == kKnownNodeCategories.end()) {
+  if (GetKnownNodeCategories().find(baseCategory) == GetKnownNodeCategories().end()) {
     // Check full category name as well
-    if (kKnownNodeCategories.find(category) == kKnownNodeCategories.end()) {
+    if (GetKnownNodeCategories().find(category) == GetKnownNodeCategories().end()) {
       if (warn) {
         *warn += fmt::format("Unknown MaterialX node category '{}' in info:id '{}'\n",
                             category, info_id);
@@ -152,7 +158,7 @@ static bool ValidateInfoId(const std::string &info_id,
     }
   }
 
-  if (kKnownTypes.find(type) == kKnownTypes.end()) {
+  if (GetKnownTypes().find(type) == GetKnownTypes().end()) {
     if (warn) {
       *warn += fmt::format("Unknown MaterialX type '{}' in info:id '{}'\n", type, info_id);
     }
@@ -167,7 +173,7 @@ static bool ValidateInfoId(const std::string &info_id,
 static bool ValidateIndexBounds(const std::string &info_id,
                                 int index,
                                 const PrimReconstructOptions &options,
-                                std::string *warn,
+                                std::string * /* warn */,
                                 std::string *err) {
   if (!options.validate_mtlx_index_bounds && !options.strict_mtlx_check) {
     return true;

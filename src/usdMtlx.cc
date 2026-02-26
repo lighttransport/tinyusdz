@@ -853,7 +853,7 @@ static std::string ExtractNodeCategory(const std::string &info_id) {
     std::string rest = info_id.substr(3);
     size_t underscore = rest.rfind('_');
     if (underscore != std::string::npos) {
-      return rest.substr(0, underscore);
+      rest = rest.substr(0, underscore);
     }
     return rest;
   }
