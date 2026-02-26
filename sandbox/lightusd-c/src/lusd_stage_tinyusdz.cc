@@ -16,6 +16,7 @@
 #include "lightusd/lusd_attribute.h"
 #include "lightusd/lusd_value.h"
 #include "lightusd/lusd_write.h"
+#include "lightusd/lusd_material.h"
 
 /* Internal C header — wrap in extern "C" so all declared helper functions
  * (lusd_alloc, lusd_set_errorf, lusd_diag, …) get C linkage in C++ builds.
@@ -37,6 +38,9 @@ extern "C" {
 
 /* tinyusdz C++ API — single include pulls in Stage, Prim, GeomMesh, etc. */
 #include "tinyusdz.hh"
+#include "tydra/render-data.hh"
+#include "tydra/scene-access.hh"
+#include <unordered_map>
 
 /* ============================================================
  * Write-mode prim / attribute types
@@ -182,6 +186,184 @@ LusdPrim LusdStage_T::primHandle(const tinyusdz::Prim* p) {
 }
 
 /* ============================================================
+ * Material cache (lazy tydra conversion, keyed by stage pointer)
+ * ============================================================ */
+
+struct LusdMatEntry {
+    LusdOpenPBRMaterial mat;
+    char name[256];
+    char abs_path[512];
+};
+
+static std::unordered_map<uintptr_t, std::vector<LusdMatEntry>> g_mat_cache;
+static std::unordered_map<uintptr_t, std::vector<LusdLight>>    g_light_cache;
+
+static void lusd__stage_build_material_cache(LusdStage_T* sd) {
+    using namespace tinyusdz::tydra;
+
+    RenderSceneConverter converter;
+    RenderSceneConverterEnv env(sd->stage);
+    RenderScene render_scene;
+    std::string warn, err;
+    bool ok = converter.ConvertToRenderScene(env, &render_scene);
+    if (!ok) return; /* leave cache empty on error */
+
+    /* --- lights --- */
+    {
+        std::vector<LusdLight> lights;
+        lights.reserve(render_scene.lights.size());
+        for (const auto& rl : render_scene.lights) {
+            LusdLight l;
+            std::memset(&l, 0, sizeof(l));
+            float mult = rl.intensity * std::pow(2.0f, rl.exposure);
+            l.color[0] = rl.color[0] * mult;
+            l.color[1] = rl.color[1] * mult;
+            l.color[2] = rl.color[2] * mult;
+            l.intensity = mult;
+            std::snprintf(l.name, sizeof(l.name), "%s", rl.name.c_str());
+            if (rl.type == RenderLight::Type::Distant) {
+                l.type = LUSD_LIGHT_TYPE_DISTANT;
+                /* -Z in light-local space transformed by rotation matrix */
+                l.direction[0] = -(float)rl.transform.m[0][2];
+                l.direction[1] = -(float)rl.transform.m[1][2];
+                l.direction[2] = -(float)rl.transform.m[2][2];
+                float len = std::sqrt(l.direction[0]*l.direction[0] +
+                                      l.direction[1]*l.direction[1] +
+                                      l.direction[2]*l.direction[2]);
+                if (len < 1e-8f) {
+                    l.direction[0] = rl.direction[0];
+                    l.direction[1] = rl.direction[1];
+                    l.direction[2] = rl.direction[2];
+                } else {
+                    l.direction[0] /= len;
+                    l.direction[1] /= len;
+                    l.direction[2] /= len;
+                }
+            } else if (rl.type == RenderLight::Type::Point) {
+                l.type = LUSD_LIGHT_TYPE_POINT;
+                l.position[0] = (float)rl.transform.m[3][0];
+                l.position[1] = (float)rl.transform.m[3][1];
+                l.position[2] = (float)rl.transform.m[3][2];
+            } else if (rl.type == RenderLight::Type::Sphere) {
+                l.type = LUSD_LIGHT_TYPE_SPHERE;
+                l.position[0] = (float)rl.transform.m[3][0];
+                l.position[1] = (float)rl.transform.m[3][1];
+                l.position[2] = (float)rl.transform.m[3][2];
+                l.radius = rl.radius;
+            } else if (rl.type == RenderLight::Type::Dome) {
+                l.type = LUSD_LIGHT_TYPE_DOME;
+            } else {
+                l.type = LUSD_LIGHT_TYPE_OTHER;
+            }
+            lights.push_back(l);
+        }
+        g_light_cache[reinterpret_cast<uintptr_t>(sd)] = std::move(lights);
+    }
+
+    std::vector<LusdMatEntry> entries;
+    entries.reserve(render_scene.materials.size());
+
+    for (size_t i = 0; i < render_scene.materials.size(); i++) {
+        const RenderMaterial& rm = render_scene.materials[i];
+        LusdMatEntry e;
+        std::memset(&e, 0, sizeof(e));
+
+        /* copy name and path */
+        std::snprintf(e.name,     sizeof(e.name),     "%s", rm.name.c_str());
+        std::snprintf(e.abs_path, sizeof(e.abs_path), "%s", rm.abs_path.c_str());
+
+        auto v3 = [](float* dst, const tinyusdz::value::float3& src) {
+            dst[0] = src[0]; dst[1] = src[1]; dst[2] = src[2];
+        };
+
+        if (rm.hasOpenPBR()) {
+            const OpenPBRSurfaceShader& p = rm.openPBRShader.value();
+            e.mat.base_weight           = p.base_weight.value;
+            v3(e.mat.base_color,          p.base_color.value);
+            e.mat.base_roughness        = p.base_roughness.value;
+            e.mat.base_metalness        = p.base_metalness.value;
+            e.mat.base_diffuse_roughness= p.base_diffuse_roughness.value;
+
+            e.mat.specular_weight       = p.specular_weight.value;
+            v3(e.mat.specular_color,      p.specular_color.value);
+            e.mat.specular_roughness    = p.specular_roughness.value;
+            e.mat.specular_ior          = p.specular_ior.value;
+            e.mat.specular_ior_level    = p.specular_ior_level.value;
+            e.mat.specular_anisotropy   = p.specular_anisotropy.value;
+            e.mat.specular_rotation     = p.specular_rotation.value;
+
+            e.mat.transmission_weight   = p.transmission_weight.value;
+            v3(e.mat.transmission_color,  p.transmission_color.value);
+            e.mat.transmission_depth    = p.transmission_depth.value;
+            v3(e.mat.transmission_scatter, p.transmission_scatter.value);
+            e.mat.transmission_scatter_anisotropy = p.transmission_scatter_anisotropy.value;
+            e.mat.transmission_dispersion = p.transmission_dispersion.value;
+
+            e.mat.subsurface_weight     = p.subsurface_weight.value;
+            v3(e.mat.subsurface_color,    p.subsurface_color.value);
+            e.mat.subsurface_radius     = p.subsurface_radius.value;
+            v3(e.mat.subsurface_radius_scale, p.subsurface_radius_scale.value);
+            e.mat.subsurface_scale      = p.subsurface_scale.value;
+            e.mat.subsurface_anisotropy = p.subsurface_anisotropy.value;
+
+            e.mat.sheen_weight          = p.sheen_weight.value;
+            v3(e.mat.sheen_color,         p.sheen_color.value);
+            e.mat.sheen_roughness       = p.sheen_roughness.value;
+
+            e.mat.fuzz_weight           = p.fuzz_weight.value;
+            v3(e.mat.fuzz_color,          p.fuzz_color.value);
+            e.mat.fuzz_roughness        = p.fuzz_roughness.value;
+
+            e.mat.thin_film_weight      = p.thin_film_weight.value;
+            e.mat.thin_film_thickness   = p.thin_film_thickness.value;
+            e.mat.thin_film_ior         = p.thin_film_ior.value;
+
+            e.mat.coat_weight           = p.coat_weight.value;
+            v3(e.mat.coat_color,          p.coat_color.value);
+            e.mat.coat_roughness        = p.coat_roughness.value;
+            e.mat.coat_anisotropy       = p.coat_anisotropy.value;
+            e.mat.coat_rotation         = p.coat_rotation.value;
+            e.mat.coat_ior              = p.coat_ior.value;
+            v3(e.mat.coat_affect_color,   p.coat_affect_color.value);
+            e.mat.coat_affect_roughness  = p.coat_affect_roughness.value;
+
+            e.mat.emission_luminance    = p.emission_luminance.value;
+            v3(e.mat.emission_color,      p.emission_color.value);
+            e.mat.opacity               = p.opacity.value;
+        } else if (rm.hasUsdPreviewSurface()) {
+            const PreviewSurfaceShader& p = rm.surfaceShader.value();
+            /* map UsdPreviewSurface subset to base+specular */
+            e.mat.base_weight           = 1.0f;
+            v3(e.mat.base_color,          p.diffuseColor.value);
+            e.mat.base_metalness        = p.metallic.value;
+            e.mat.specular_weight       = 1.0f;
+            v3(e.mat.specular_color,      p.specularColor.value);
+            e.mat.specular_roughness    = p.roughness.value;
+            e.mat.specular_ior          = p.ior.value;
+            e.mat.coat_weight           = p.clearcoat.value;
+            e.mat.coat_roughness        = p.clearcoatRoughness.value;
+            v3(e.mat.emission_color,      p.emissiveColor.value);
+            float esum = p.emissiveColor.value[0] +
+                         p.emissiveColor.value[1] +
+                         p.emissiveColor.value[2];
+            e.mat.emission_luminance    = (esum > 0.0f) ? 1.0f : 0.0f;
+            e.mat.opacity               = p.opacity.value;
+        } else {
+            /* default OpenPBR material (grey dielectric) */
+            e.mat.base_weight    = 1.0f;
+            e.mat.base_color[0]  = e.mat.base_color[1] = e.mat.base_color[2] = 0.8f;
+            e.mat.specular_weight = 1.0f;
+            e.mat.specular_roughness = 0.3f;
+            e.mat.specular_ior   = 1.5f;
+            e.mat.opacity        = 1.0f;
+        }
+        entries.push_back(e);
+    }
+
+    g_mat_cache[reinterpret_cast<uintptr_t>(sd)] = std::move(entries);
+}
+
+/* ============================================================
  * lusdLoadStage / lusdLoadStageFromMemory / lusdCreateStage
  * ============================================================ */
 
@@ -241,6 +423,8 @@ void lusdDestroyStage(LusdInstance instance, LusdStage stage) {
     if (stage->is_write) {
         for (auto* p : stage->write_roots) write_prim_destroy(p);
     }
+    g_mat_cache.erase(reinterpret_cast<uintptr_t>(stage));
+    g_light_cache.erase(reinterpret_cast<uintptr_t>(stage));
     delete stage;
 }
 
@@ -1174,5 +1358,109 @@ LusdResult lusdWriterWriteStage(LusdWriter writer, LusdStage stage) {
     std::fwrite(text, 1, static_cast<size_t>(length), f);
     std::fclose(f);
     std::free(text);
+    return LUSD_SUCCESS;
+}
+
+/* ============================================================
+ * Material query API — lusd_material.h
+ * ============================================================ */
+
+static const std::vector<LusdMatEntry>* lusd__get_mat_entries(LusdStage stage) {
+    auto key = reinterpret_cast<uintptr_t>(stage);
+    auto it = g_mat_cache.find(key);
+    if (it != g_mat_cache.end()) return &it->second;
+    /* lazy build */
+    lusd__stage_build_material_cache(stage);
+    it = g_mat_cache.find(key);
+    if (it != g_mat_cache.end()) return &it->second;
+    return nullptr;
+}
+
+LusdResult lusdStageGetMaterialCount(LusdStage stage, uint32_t* pCount) {
+    if (!stage || !pCount) return LUSD_ERROR_INVALID_ARGUMENT;
+    if (stage->is_write) { *pCount = 0; return LUSD_SUCCESS; }
+    const auto* entries = lusd__get_mat_entries(stage);
+    *pCount = entries ? static_cast<uint32_t>(entries->size()) : 0u;
+    return LUSD_SUCCESS;
+}
+
+LusdResult lusdStageGetMaterials(LusdStage stage, uint32_t count,
+                                  LusdOpenPBRMaterial* pMaterials) {
+    if (!stage || !pMaterials) return LUSD_ERROR_INVALID_ARGUMENT;
+    if (stage->is_write) return LUSD_SUCCESS;
+    const auto* entries = lusd__get_mat_entries(stage);
+    if (!entries) return LUSD_SUCCESS;
+    uint32_t n = std::min(count, static_cast<uint32_t>(entries->size()));
+    for (uint32_t i = 0; i < n; i++)
+        pMaterials[i] = (*entries)[i].mat;
+    return LUSD_SUCCESS;
+}
+
+LusdResult lusdStageGetMaterialName(LusdStage stage, uint32_t index,
+                                     char* buf, uint32_t bufLen) {
+    if (!stage || !buf || bufLen == 0) return LUSD_ERROR_INVALID_ARGUMENT;
+    if (stage->is_write) return LUSD_ERROR_INVALID_ARGUMENT;
+    const auto* entries = lusd__get_mat_entries(stage);
+    if (!entries || index >= static_cast<uint32_t>(entries->size()))
+        return LUSD_ERROR_INVALID_ARGUMENT;
+    const char* src = (*entries)[index].name;
+    size_t src_len = std::strlen(src);
+    if (src_len + 1 <= bufLen) {
+        std::memcpy(buf, src, src_len + 1);
+        return LUSD_SUCCESS;
+    }
+    std::memcpy(buf, src, bufLen - 1);
+    buf[bufLen - 1] = '\0';
+    return LUSD_INCOMPLETE;
+}
+
+LusdResult lusdStageGetMaterialPath(LusdStage stage, uint32_t index,
+                                     char* buf, uint32_t bufLen) {
+    if (!stage || !buf || bufLen == 0) return LUSD_ERROR_INVALID_ARGUMENT;
+    if (stage->is_write) return LUSD_ERROR_INVALID_ARGUMENT;
+    const auto* entries = lusd__get_mat_entries(stage);
+    if (!entries || index >= static_cast<uint32_t>(entries->size()))
+        return LUSD_ERROR_INVALID_ARGUMENT;
+    const char* src = (*entries)[index].abs_path;
+    size_t src_len = std::strlen(src);
+    if (src_len + 1 <= bufLen) {
+        std::memcpy(buf, src, src_len + 1);
+        return LUSD_SUCCESS;
+    }
+    std::memcpy(buf, src, bufLen - 1);
+    buf[bufLen - 1] = '\0';
+    return LUSD_INCOMPLETE;
+}
+
+/* ============================================================
+ * Light query API
+ * ============================================================ */
+
+static const std::vector<LusdLight>* lusd__get_light_entries(LusdStage stage) {
+    auto key = reinterpret_cast<uintptr_t>(stage);
+    auto it = g_light_cache.find(key);
+    if (it != g_light_cache.end()) return &it->second;
+    /* lazy build (shares the ConvertToRenderScene call with materials) */
+    lusd__stage_build_material_cache(stage);
+    it = g_light_cache.find(key);
+    if (it != g_light_cache.end()) return &it->second;
+    return nullptr;
+}
+
+LusdResult lusdStageGetLightCount(LusdStage stage, uint32_t* pCount) {
+    if (!stage || !pCount) return LUSD_ERROR_INVALID_ARGUMENT;
+    if (stage->is_write) { *pCount = 0; return LUSD_SUCCESS; }
+    const auto* lights = lusd__get_light_entries(stage);
+    *pCount = lights ? static_cast<uint32_t>(lights->size()) : 0u;
+    return LUSD_SUCCESS;
+}
+
+LusdResult lusdStageGetLights(LusdStage stage, uint32_t count, LusdLight* pLights) {
+    if (!stage || !pLights) return LUSD_ERROR_INVALID_ARGUMENT;
+    if (stage->is_write) return LUSD_SUCCESS;
+    const auto* lights = lusd__get_light_entries(stage);
+    if (!lights) return LUSD_SUCCESS;
+    uint32_t n = std::min(count, static_cast<uint32_t>(lights->size()));
+    for (uint32_t i = 0; i < n; i++) pLights[i] = (*lights)[i];
     return LUSD_SUCCESS;
 }

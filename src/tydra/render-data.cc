@@ -7565,6 +7565,8 @@ static OpenPBRSurface ConvertMtlxOpenPBRSurfaceToOpenPBRSurface(
   // Copy subsurface properties
   dst.subsurface_weight = src.subsurface_weight;
   dst.subsurface_color = src.subsurface_color;
+  dst.subsurface_radius = src.subsurface_radius;
+  dst.subsurface_radius_scale = src.subsurface_radius_scale;
   dst.subsurface_scale = src.subsurface_scale;
   dst.subsurface_anisotropy = src.subsurface_anisotropy;
 
