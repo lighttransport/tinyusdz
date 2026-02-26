@@ -3448,38 +3448,66 @@ window.toggleLightingPanel = function() {
 // ============================================================================
 
 /**
+ * Create a debug shader material that visualizes tangent-space vectors.
+ * @param {'tangent'|'bitangent'|'tangent_w'} channel - Which vector to visualize
+ */
+function createTangentDebugMaterial(channel = 'tangent') {
+    return new THREE.ShaderMaterial({
+        defines: { USE_TANGENT: '' },
+        vertexShader: `
+            // tangent (vec4) is auto-injected by Three.js via USE_TANGENT define
+            varying vec3 vColor;
+
+            void main() {
+                mat3 worldNormalMatrix = mat3(modelMatrix);
+                vec3 T = normalize(worldNormalMatrix * tangent.xyz);
+                vec3 N = normalize(worldNormalMatrix * normal);
+                vec3 B = normalize(cross(N, T) * tangent.w);
+                float w = tangent.w;
+
+                ${channel === 'tangent' ? 'vColor = T * 0.5 + 0.5;' : ''}
+                ${channel === 'bitangent' ? 'vColor = B * 0.5 + 0.5;' : ''}
+                ${channel === 'tangent_w' ? 'vColor = w > 0.0 ? vec3(0.0, 1.0, 0.0) : (w < 0.0 ? vec3(1.0, 0.0, 0.0) : vec3(0.0, 0.0, 0.0));' : ''}
+
+                gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+            }
+        `,
+        fragmentShader: `
+            varying vec3 vColor;
+            void main() {
+                gl_FragColor = vec4(vColor, 1.0);
+            }
+        `,
+        side: THREE.DoubleSide
+    });
+}
+
+/**
  * Create a shader material that visualizes world-space normals as RGB colors.
  * If normalMap is provided, the normal map is applied via TBN before coloring.
  */
 function createAbsNormalMaterial(normalMap = null, normalScale = new THREE.Vector2(1, 1)) {
     return new THREE.ShaderMaterial({
+        defines: { USE_TANGENT: '' },
         uniforms: {
             normalMap: { value: normalMap },
             normalScale: { value: normalScale },
             useNormalMap: { value: normalMap !== null }
         },
         vertexShader: `
+            // tangent (vec4) is auto-injected by Three.js via USE_TANGENT define
             varying vec3 vWorldNormal;
             varying vec2 vUv;
             varying vec3 vTangent;
             varying vec3 vBitangent;
-
-            #ifdef USE_TANGENT
-                attribute vec4 tangent;
-            #endif
 
             void main() {
                 mat3 worldNormalMatrix = mat3(modelMatrix);
                 vWorldNormal = normalize(worldNormalMatrix * normal);
                 vUv = uv;
 
-                #ifdef USE_TANGENT
-                    vTangent = normalize(worldNormalMatrix * tangent.xyz);
-                    vBitangent = normalize(cross(vWorldNormal, vTangent) * tangent.w);
-                #else
-                    vTangent = normalize(worldNormalMatrix * vec3(1.0, 0.0, 0.0));
-                    vBitangent = normalize(cross(vWorldNormal, vTangent));
-                #endif
+                vTangent = normalize(worldNormalMatrix * tangent.xyz);
+                vBitangent = normalize(cross(vWorldNormal, vTangent) * tangent.w);
 
                 gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
             }
@@ -3581,19 +3609,47 @@ function setShadingMode(mode) {
             }
         });
 
+        const isTangentDebug = (mode === 'tangent' || mode === 'bitangent' || mode === 'tangent_w');
+
         state.currentModel.traverse((obj) => {
             if (!obj.isMesh) return;
             const origMat = state.originalMaterialsMap.get(obj) ?? obj.material;
-            let normalMap = null;
-            let normalScale = new THREE.Vector2(1, 1);
 
-            if (mode === 'normal_mapped') {
-                const extracted = extractNormalMapFromMaterial(origMat);
-                normalMap = extracted.normalMap;
-                normalScale = extracted.normalScale;
+            if (isTangentDebug) {
+                // Tangent debug modes: single material (same for all sub-materials)
+                const debugMat = createTangentDebugMaterial(mode);
+                if (Array.isArray(origMat)) {
+                    obj.material = origMat.map(() => debugMat.clone());
+                } else {
+                    obj.material = debugMat;
+                }
+                return;
             }
 
-            obj.material = createAbsNormalMaterial(normalMap, normalScale);
+            // Multi-material: create a per-sub-material debug material array
+            // so that sub-materials without a normal map don't inherit one from
+            // a sibling (e.g. Glass should have no normal map even if Body does).
+            if (Array.isArray(origMat)) {
+                obj.material = origMat.map((mat) => {
+                    let normalMap = null;
+                    let normalScale = new THREE.Vector2(1, 1);
+                    if (mode === 'normal_mapped') {
+                        const extracted = extractNormalMapFromMaterial(mat);
+                        normalMap = extracted.normalMap;
+                        normalScale = extracted.normalScale;
+                    }
+                    return createAbsNormalMaterial(normalMap, normalScale);
+                });
+            } else {
+                let normalMap = null;
+                let normalScale = new THREE.Vector2(1, 1);
+                if (mode === 'normal_mapped') {
+                    const extracted = extractNormalMapFromMaterial(origMat);
+                    normalMap = extracted.normalMap;
+                    normalScale = extracted.normalScale;
+                }
+                obj.material = createAbsNormalMaterial(normalMap, normalScale);
+            }
         });
     }
     requestRender();
@@ -3605,6 +3661,7 @@ window.toggleShadingPanel = function() {
 };
 
 window.setShadingMode = setShadingMode;
+window._debugState = state; // TEMP: debug access
 
 // ============================================================================
 // Light List UI

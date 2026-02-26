@@ -2362,6 +2362,51 @@ static bool ComputeTangentsAndBinormals(
     hasFaceVertexCounts = false;
   }
 
+  // Helper: check if a float is finite (not NaN, not Inf)
+  auto is_finite_f = [](float x) -> bool {
+    return std::isfinite(x);
+  };
+
+  // Helper: check if a vec3/normal3f has all-finite components
+  auto is_finite_v3 = [&is_finite_f](const value::normal3f &v) -> bool {
+    return is_finite_f(v[0]) && is_finite_f(v[1]) && is_finite_f(v[2]);
+  };
+
+  // Helper: safe length with NaN protection (returns 0 for NaN/Inf input)
+  auto safe_vlength = [&is_finite_v3](const value::normal3f &v) -> float {
+    if (!is_finite_v3(v)) return 0.0f;
+    return vlength(v);
+  };
+
+  // Helper: safe normalize - returns zero vector if input is degenerate/NaN/Inf
+  constexpr float kTangentLengthEps = 1.0e-7f;
+  auto safe_vnormalize = [&safe_vlength](
+                              const value::normal3f &v) -> value::normal3f {
+    float len = safe_vlength(v);
+    if (len < kTangentLengthEps) {
+      return {0.0f, 0.0f, 0.0f};
+    }
+    float inv = 1.0f / len;
+    return {v[0] * inv, v[1] * inv, v[2] * inv};
+  };
+
+  // Helper: generate a perpendicular tangent from a normal (fallback)
+  auto generate_fallback_tangent =
+      [&safe_vlength](
+          const value::normal3f &n) -> value::normal3f {
+    // Choose a reference axis not parallel to n
+    value::normal3f ref = (std::fabs(n[1]) < 0.9f)
+                              ? value::normal3f{0.0f, 1.0f, 0.0f}
+                              : value::normal3f{1.0f, 0.0f, 0.0f};
+    value::normal3f t = vcross(n, ref);
+    float len = safe_vlength(t);
+    if (len < kTangentLengthEps) {
+      return {1.0f, 0.0f, 0.0f};  // last resort
+    }
+    float inv = 1.0f / len;
+    return {t[0] * inv, t[1] * inv, t[2] * inv};
+  };
+
   // tn, bn = facevarying
   std::vector<value::normal3f> tn(faceVertexIndices.size());
   memset(&tn.at(0), 0, sizeof(value::normal3f) * tn.size());
@@ -2371,11 +2416,16 @@ static bool ComputeTangentsAndBinormals(
   //
   // 1. Compute facevarying tangent/binormal for each faceVertex.
   //
+  // UV determinant epsilon: use a float-appropriate threshold.
+  // Values below this produce unreliable tangent directions due to
+  // amplification of floating-point noise.
+  constexpr float kUVDetEps = 1.0e-6f;
+
   size_t faceVertexIndexOffset{0};
   for (size_t i = 0; i < faceVertexCounts.size(); i++) {
     size_t nv = hasFaceVertexCounts ? faceVertexCounts[i] : 3;
 
-    if ((faceVertexIndexOffset + nv) >= faceVertexIndices.size()) {
+    if ((faceVertexIndexOffset + nv) > faceVertexIndices.size()) {
       // Invalid faceVertexIndices
       PUSH_ERROR_AND_RETURN("Invalid value in faceVertexOffset.");
     }
@@ -2417,70 +2467,65 @@ static bool ComputeTangentsAndBinormals(
             "Invalid value in faceVertexIndices. some exceeds vertices.size()");
       }
 
-      vec3 v1 = vertices[vf0];
-      vec3 v2 = vertices[vf1];
-      vec3 v3 = vertices[vf2];
-
-      float v1x = v1[0];
-      float v1y = v1[1];
-      float v1z = v1[2];
-
-      float v2x = v2[0];
-      float v2y = v2[1];
-      float v2z = v2[2];
-
-      float v3x = v3[0];
-      float v3y = v3[1];
-      float v3z = v3[2];
-
-      float w1x = 0.0f;
-      float w1y = 0.0f;
-      float w2x = 0.0f;
-      float w2y = 0.0f;
-      float w3x = 0.0f;
-      float w3y = 0.0f;
-
       if ((vf0 >= texcoords.size()) || (vf1 >= texcoords.size()) ||
           (vf2 >= texcoords.size())) {
         // index out-of-range
         PUSH_ERROR_AND_RETURN("Invalid index. some exceeds texcoords.size()");
       }
 
-      {
-        vec2 uv1 = texcoords[vf0];
-        vec2 uv2 = texcoords[vf1];
-        vec2 uv3 = texcoords[vf2];
+      vec3 v1 = vertices[vf0];
+      vec3 v2 = vertices[vf1];
+      vec3 v3 = vertices[vf2];
 
-        w1x = uv1[0];
-        w1y = uv1[1];
-        w2x = uv2[0];
-        w2y = uv2[1];
-        w3x = uv3[0];
-        w3y = uv3[1];
+      vec2 uv1 = texcoords[vf0];
+      vec2 uv2 = texcoords[vf1];
+      vec2 uv3 = texcoords[vf2];
+
+      // Skip triangle if any position or UV contains NaN/Inf
+      if (!is_finite_f(v1[0]) || !is_finite_f(v1[1]) || !is_finite_f(v1[2]) ||
+          !is_finite_f(v2[0]) || !is_finite_f(v2[1]) || !is_finite_f(v2[2]) ||
+          !is_finite_f(v3[0]) || !is_finite_f(v3[1]) || !is_finite_f(v3[2]) ||
+          !is_finite_f(uv1[0]) || !is_finite_f(uv1[1]) ||
+          !is_finite_f(uv2[0]) || !is_finite_f(uv2[1]) ||
+          !is_finite_f(uv3[0]) || !is_finite_f(uv3[1])) {
+        // Leave tn/bn as zero for this face vertex - will get fallback later
+        continue;
       }
 
-      float x1 = v2x - v1x;
-      float x2 = v3x - v1x;
-      float y1 = v2y - v1y;
-      float y2 = v3y - v1y;
-      float z1 = v2z - v1z;
-      float z2 = v3z - v1z;
+      float x1 = v2[0] - v1[0];
+      float x2 = v3[0] - v1[0];
+      float y1 = v2[1] - v1[1];
+      float y2 = v3[1] - v1[1];
+      float z1 = v2[2] - v1[2];
+      float z2 = v3[2] - v1[2];
 
-      float s1 = w2x - w1x;
-      float s2 = w3x - w1x;
-      float t1 = w2y - w1y;
-      float t2 = w3y - w1y;
+      float s1 = uv2[0] - uv1[0];
+      float s2 = uv3[0] - uv1[0];
+      float t1 = uv2[1] - uv1[1];
+      float t2 = uv3[1] - uv1[1];
 
-      float r = 1.0;
+      float det = s1 * t2 - s2 * t1;
 
-      if (std::fabs(double(s1 * t2 - s2 * t1)) > 1.0e-20) {
-        r /= (s1 * t2 - s2 * t1);
+      // Skip degenerate UV triangle: determinant too small means all UV
+      // vertices are collinear (or coincident).  The tangent direction is
+      // undefined; leave tn/bn as zero to trigger fallback later.
+      if (std::fabs(det) < kUVDetEps) {
+        continue;
       }
+
+      float r = 1.0f / det;
 
       vec3 tdir{(t2 * x1 - t1 * x2) * r, (t2 * y1 - t1 * y2) * r,
                 (t2 * z1 - t1 * z2) * r};
       vec3 bdir{(s1 * x2 - s2 * x1) * r, (s1 * y2 - s2 * y1) * r,
                 (s1 * z2 - s2 * z1) * r};
+
+      // Guard against Inf/NaN from extreme edge/UV ratios
+      if (!is_finite_f(tdir[0]) || !is_finite_f(tdir[1]) ||
+          !is_finite_f(tdir[2]) || !is_finite_f(bdir[0]) ||
+          !is_finite_f(bdir[1]) || !is_finite_f(bdir[2])) {
+        continue;
+      }
 
       //
       // NOTE: for quad or polygon mesh, this overwrites previous 2 facevarying
@@ -2558,11 +2603,27 @@ static bool ComputeTangentsAndBinormals(
   }
 
   const uint32_t num_verts =
-      *std::max_element(vertex_indices.begin(), vertex_indices.end());
+      *std::max_element(vertex_indices.begin(), vertex_indices.end()) + 1;
 
   //
   // 3. normalize * orthogonalize;
   //
+
+  // Build facevarying normal lookup for the Gram-Schmidt step.
+  // normals[i] is facevarying when is_facevarying_input, otherwise indexed by
+  // original vertex id → expand to facevarying.
+  std::vector<value::normal3f> fv_normals(faceVertexIndices.size());
+  if (is_facevarying_input) {
+    for (size_t i = 0; i < faceVertexIndices.size(); i++) {
+      fv_normals[i] = {normals[i][0], normals[i][1], normals[i][2]};
+    }
+  } else {
+    for (size_t i = 0; i < faceVertexIndices.size(); i++) {
+      fv_normals[i] = {normals[faceVertexIndices[i]][0],
+                        normals[faceVertexIndices[i]][1],
+                        normals[faceVertexIndices[i]][2]};
+    }
+  }
 
   // per-vertex tangents/binormals
   std::vector<value::normal3f> v_tn;
@@ -2571,26 +2632,34 @@ static bool ComputeTangentsAndBinormals(
   std::vector<value::normal3f> v_bn;
   v_bn.assign(num_verts, {0.0f, 0.0f, 0.0f});
 
+  // Accumulate facevarying tangents into per-vertex.
+  // tn[i] is the facevarying tangent at position i; vertex_indices[i] maps
+  // facevarying position i to the unique vertex index.
+  // Skip NaN/Inf contributions to prevent poisoning the accumulator.
   for (size_t i = 0; i < vertex_indices.size(); i++) {
-    value::normal3f Tn = tn[vertex_indices[i]];
-    value::normal3f Bn = bn[vertex_indices[i]];
+    value::normal3f Tn = tn[i];
+    value::normal3f Bn = bn[i];
 
-    v_tn[vertex_indices[i]][0] += Tn[0];
-    v_tn[vertex_indices[i]][1] += Tn[1];
-    v_tn[vertex_indices[i]][2] += Tn[2];
+    if (is_finite_v3(Tn)) {
+      v_tn[vertex_indices[i]][0] += Tn[0];
+      v_tn[vertex_indices[i]][1] += Tn[1];
+      v_tn[vertex_indices[i]][2] += Tn[2];
+    }
 
-    v_bn[vertex_indices[i]][0] += Bn[0];
-    v_bn[vertex_indices[i]][1] += Bn[1];
-    v_bn[vertex_indices[i]][2] += Bn[2];
+    if (is_finite_v3(Bn)) {
+      v_bn[vertex_indices[i]][0] += Bn[0];
+      v_bn[vertex_indices[i]][1] += Bn[1];
+      v_bn[vertex_indices[i]][2] += Bn[2];
+    }
   }
 
+  // Normalize accumulated tangents/binormals with proper epsilon.
+  // After accumulation the sum could overflow to Inf for vertices shared by
+  // many triangles with large contributions.  safe_vnormalize handles this
+  // gracefully by returning zero for degenerate/NaN/Inf input.
   for (size_t i = 0; i < size_t(num_verts); i++) {
-    if (vlength(v_tn[i]) > 0.0f) {
-      v_tn[i] = vnormalize(v_tn[i]);
-    }
-    if (vlength(v_bn[i]) > 0.0f) {
-      v_bn[i] = vnormalize(v_bn[i]);
-    }
+    v_tn[i] = safe_vnormalize(v_tn[i]);
+    v_bn[i] = safe_vnormalize(v_bn[i]);
   }
 
   tangents->assign(num_verts, {0.0f, 0.0f, 0.0f});
@@ -2600,23 +2669,74 @@ static bool ComputeTangentsAndBinormals(
     value::normal3f n;
 
     // http://www.terathon.com/code/tangent.html
+    // Use facevarying normal at position i (not the unique vertex index)
+    n[0] = fv_normals[i][0];
+    n[1] = fv_normals[i][1];
+    n[2] = fv_normals[i][2];
 
-    n[0] = normals[vertex_indices[i]][0];
-    n[1] = normals[vertex_indices[i]][1];
-    n[2] = normals[vertex_indices[i]][2];
+    // Validate normal: must be finite and non-zero.
+    // If degenerate, generate a fallback normal so we can still produce a
+    // valid tangent frame.
+    float nlen = safe_vlength(n);
+    if (nlen < kTangentLengthEps) {
+      n = {0.0f, 1.0f, 0.0f};  // arbitrary up direction
+    } else {
+      float inv = 1.0f / nlen;
+      n = {n[0] * inv, n[1] * inv, n[2] * inv};
+    }
 
     value::normal3f Tn = v_tn[vertex_indices[i]];
     value::normal3f Bn = v_bn[vertex_indices[i]];
 
-    // Gram-Schmidt orthogonalize
-    Tn = (Tn - n * vdot(n, Tn));
-    if (vlength(Tn) > 0.0f) {
-      Tn = vnormalize(Tn);
+    // Gram-Schmidt orthogonalize: remove the component of Tn along n.
+    float d = vdot(n, Tn);
+    if (is_finite_f(d)) {
+      Tn = (Tn - n * d);
+    } else {
+      Tn = {0.0f, 0.0f, 0.0f};
     }
 
-    // Calculate handedness
-    if (vdot(vcross(n, Tn), Bn) < 0.0f) {
-      Tn = Tn * -1.0f;
+    // Normalize with a proper epsilon to avoid amplifying near-zero noise
+    Tn = safe_vnormalize(Tn);
+
+    if (safe_vlength(Tn) < kTangentLengthEps) {
+      // Degenerate tangent after Gram-Schmidt (e.g. tangent was parallel to
+      // normal, or all contributing triangles had degenerate UVs).
+      // Generate a fallback tangent perpendicular to the normal.
+      Tn = generate_fallback_tangent(n);
+    }
+
+    // Calculate handedness: flip tangent if the frame is left-handed.
+    // Guard against NaN in the dot product from degenerate binormals.
+    {
+      value::normal3f cross_n_t = vcross(n, Tn);
+      float hand = vdot(cross_n_t, Bn);
+      if (is_finite_f(hand) && hand < 0.0f) {
+        Tn = Tn * -1.0f;
+      }
+    }
+
+    // Binormal: recompute if degenerate, NaN, or too short.
+    float blen = safe_vlength(Bn);
+    if (blen < kTangentLengthEps) {
+      Bn = vcross(n, Tn);
+      Bn = safe_vnormalize(Bn);
+      // If still degenerate (n and Tn parallel - shouldn't happen but guard)
+      if (safe_vlength(Bn) < kTangentLengthEps) {
+        Bn = generate_fallback_tangent(Tn);
+      }
+    }
+
+    // Final validation: ensure output is finite.  If not, use fallbacks.
+    if (!is_finite_v3(Tn)) {
+      Tn = generate_fallback_tangent(n);
+    }
+    if (!is_finite_v3(Bn)) {
+      Bn = vcross(n, Tn);
+      Bn = safe_vnormalize(Bn);
+      if (safe_vlength(Bn) < kTangentLengthEps || !is_finite_v3(Bn)) {
+        Bn = generate_fallback_tangent(Tn);
+      }
     }
 
     ((*tangents)[vertex_indices[i]])[0] = Tn[0];
@@ -5158,8 +5278,7 @@ bool RenderSceneConverter::ConvertMesh(
   bool compute_normals =
       (env.mesh_config.compute_normals && dst.normals.empty());
   bool compute_tangents =
-      (env.mesh_config.compute_tangents_and_binormals &&
-       (dst.binormals.empty() == 0 && dst.tangents.empty() == 0));
+      (env.mesh_config.compute_tangents_and_binormals && dst.tangents.empty());
 
   if (compute_normals || (compute_tangents && dst.normals.empty())) {
     //TUSDZ_LOG_I("Build normals");
@@ -5202,7 +5321,12 @@ bool RenderSceneConverter::ConvertMesh(
   //
   // 8. Build indices
   //
-  if (env.mesh_config.build_vertex_indices && (!is_single_indexable)) {
+  // Skip fast index build when tangent computation will follow, because
+  // BuildVertexIndicesImpl (called after tangent computation) requires
+  // facevarying attributes, and BuildVertexIndicesFastImpl converts them
+  // to vertex variability.
+  if (env.mesh_config.build_vertex_indices && (!is_single_indexable) &&
+      !compute_tangents) {
     if (!env.mesh_config.prefer_non_indexed) {
       DCOUT("Build vertex indices");
       //TUSDZ_LOG_I("Build vertex indices");
@@ -5289,12 +5413,57 @@ bool RenderSceneConverter::ConvertMesh(
       dst.binormals.variability = VertexVariability::FaceVarying;
     }
 
-    // 2. Build single vertex indices if `build_vertex_indices` is true.
+    // 2. Convert tangents/binormals to vertex variability if needed.
     if (env.mesh_config.build_vertex_indices) {
-      if (!BuildVertexIndicesImpl(dst)) {
-        return false;
+      if (is_single_indexable) {
+        // Normals/texcoords are already vertex variability.
+        // Convert facevarying tangents to vertex using the face-vertex indices.
+        const std::vector<uint32_t> &fvIdx =
+            dst.triangulatedFaceVertexIndices.size()
+                ? dst.triangulatedFaceVertexIndices
+                : dst.usdFaceVertexIndices;
+
+        size_t numFvs = fvIdx.size();
+        uint32_t numPts = static_cast<uint32_t>(dst.points.size());
+
+        // tangents
+        if (dst.tangents.vertex_count() == numFvs) {
+          const value::float3 *fvT = reinterpret_cast<const value::float3 *>(
+              dst.tangents.data.data());
+          std::vector<value::float3> vtxT(numPts, {0.0f, 0.0f, 0.0f});
+          for (size_t i = 0; i < numFvs; i++) {
+            if (fvIdx[i] < numPts) {
+              vtxT[fvIdx[i]] = fvT[i];
+            }
+          }
+          dst.tangents.set_buffer(
+              reinterpret_cast<const uint8_t *>(vtxT.data()),
+              vtxT.size() * sizeof(value::float3));
+          dst.tangents.variability = VertexVariability::Vertex;
+        }
+
+        // binormals
+        if (dst.binormals.vertex_count() == numFvs) {
+          const value::float3 *fvB = reinterpret_cast<const value::float3 *>(
+              dst.binormals.data.data());
+          std::vector<value::float3> vtxB(numPts, {0.0f, 0.0f, 0.0f});
+          for (size_t i = 0; i < numFvs; i++) {
+            if (fvIdx[i] < numPts) {
+              vtxB[fvIdx[i]] = fvB[i];
+            }
+          }
+          dst.binormals.set_buffer(
+              reinterpret_cast<const uint8_t *>(vtxB.data()),
+              vtxB.size() * sizeof(value::float3));
+          dst.binormals.variability = VertexVariability::Vertex;
+        }
+      } else {
+        // All attributes are still facevarying - use full rebuild.
+        if (!BuildVertexIndicesImpl(dst)) {
+          return false;
+        }
+        is_single_indexable = true;
       }
-      is_single_indexable = true;
     }
   }
 
