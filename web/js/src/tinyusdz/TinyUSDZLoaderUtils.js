@@ -930,7 +930,7 @@ class TinyUSDZLoaderUtils extends LoaderUtils {
 
         // Only compute tangents if we have both UV coordinates and normals
         if (Object.prototype.hasOwnProperty.call(mesh, 'tangents')) {
-            geometry.setAttribute('tangent', new THREE.BufferAttribute(new Float32Array(mesh.tangents), 3));
+            geometry.setAttribute('tangent', new THREE.BufferAttribute(new Float32Array(mesh.tangents), 4));
         } else if (Object.prototype.hasOwnProperty.call(mesh, 'texcoords') && (Object.prototype.hasOwnProperty.call(mesh, 'normals') || geometry.attributes.normal)) {
             // TODO: try MikTSpace tangent algorithm: https://threejs.org/docs/#examples/en/utils/BufferGeometryUtils.computeMikkTSpaceTangents 
             geometry.computeTangents();
