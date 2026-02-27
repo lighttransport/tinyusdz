@@ -649,3 +649,83 @@ void lydra_c_free_mesh_data(LydraCMeshData* data) {
     free(data->uvs);
     memset(data, 0, sizeof(*data));
 }
+
+/* ================================================================
+ * GeomSubset extraction
+ * ================================================================ */
+
+uint32_t lydra_c_extract_geom_subsets(LusdLayer layer, LusdPrim mesh_prim,
+                                      LydraCGeomSubset** out_subsets) {
+    *out_subsets = NULL;
+    if (!layer || !mesh_prim) return 0;
+
+    const LusdLayer_T* L = (const LusdLayer_T*)layer;
+    const LusdPrim_T*  P = (const LusdPrim_T*)mesh_prim;
+
+    /* First pass: count GeomSubset children */
+    uint32_t subset_count = 0;
+    for (uint32_t i = 0; i < P->child_count; i++) {
+        uint32_t idx = P->child_spec_indices[i];
+        if (idx >= L->prim_node_count) continue;
+        const LusdPrim_T* child = &L->prim_nodes[idx];
+        if (child->type_name && strcmp(child->type_name, "GeomSubset") == 0)
+            subset_count++;
+    }
+    if (subset_count == 0) return 0;
+
+    LydraCGeomSubset* subsets = (LydraCGeomSubset*)calloc(subset_count, sizeof(LydraCGeomSubset));
+    if (!subsets) return 0;
+
+    /* Second pass: extract data */
+    uint32_t out_idx = 0;
+    for (uint32_t i = 0; i < P->child_count && out_idx < subset_count; i++) {
+        uint32_t idx = P->child_spec_indices[i];
+        if (idx >= L->prim_node_count) continue;
+        const LusdPrim_T* child = &L->prim_nodes[idx];
+        if (!child->type_name || strcmp(child->type_name, "GeomSubset") != 0)
+            continue;
+
+        /* Check elementType == "face" */
+        LusdValueRep et_rep = find_field(L, child, "elementType");
+        if (!lusd_vrep_is_null(et_rep)) {
+            const char* et = materialize_token(L, et_rep);
+            if (et && strcmp(et, "face") != 0)
+                continue; /* skip non-face subsets */
+        }
+
+        /* Read indices */
+        LusdValueRep idx_rep = find_field(L, child, "indices");
+        if (lusd_vrep_is_null(idx_rep)) continue;
+
+        int32_t* indices = NULL;
+        uint64_t count = 0;
+        if (materialize_int_array(L, idx_rep, &indices, &count) != 0 || count == 0) {
+            free(indices);
+            continue;
+        }
+
+        /* Resolve material:binding */
+        const char* mat_path = lusd__find_relationship_target(L, child, "material:binding");
+
+        subsets[out_idx].face_indices = indices;
+        subsets[out_idx].face_count = (uint32_t)count;
+        subsets[out_idx].material_path = mat_path;
+        out_idx++;
+    }
+
+    if (out_idx == 0) {
+        free(subsets);
+        return 0;
+    }
+
+    *out_subsets = subsets;
+    return out_idx;
+}
+
+void lydra_c_free_geom_subsets(LydraCGeomSubset* subsets, uint32_t count) {
+    if (!subsets) return;
+    for (uint32_t i = 0; i < count; i++) {
+        free(subsets[i].face_indices);
+    }
+    free(subsets);
+}

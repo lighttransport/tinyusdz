@@ -68,6 +68,28 @@ LusdResult lydra_c_extract_mesh(LusdLayer layer, LusdPrim prim,
 /* Free all malloc'd buffers inside a LydraCMeshData. */
 void lydra_c_free_mesh_data(LydraCMeshData* data);
 
+/* ================================================================
+ * GeomSubset (per-face material) support
+ * ================================================================ */
+
+typedef struct LydraCGeomSubset {
+    int32_t*    face_indices;    /* malloc'd face index array */
+    uint32_t    face_count;
+    const char* material_path;   /* target of material:binding (layer-lifetime) */
+} LydraCGeomSubset;
+
+/*
+ * Extract GeomSubset children from a Mesh prim.
+ * Returns the number of subsets found. On success, *out_subsets points
+ * to a malloc'd array of LydraCGeomSubset structs.
+ * Caller must call lydra_c_free_geom_subsets() when done.
+ */
+uint32_t lydra_c_extract_geom_subsets(LusdLayer layer, LusdPrim mesh_prim,
+                                      LydraCGeomSubset** out_subsets);
+
+/* Free a malloc'd array of LydraCGeomSubset structs. */
+void lydra_c_free_geom_subsets(LydraCGeomSubset* subsets, uint32_t count);
+
 #ifdef __cplusplus
 }
 #endif
