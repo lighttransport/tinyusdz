@@ -10,8 +10,10 @@
 #include "internal/lusd_layer_internal.h"
 #include "internal/lusd_value_rep.h"
 
+#include <math.h>
 #include <stdlib.h>
 #include <string.h>
+#include <stdio.h>
 
 /* Format tags */
 #ifndef LUSD_FORMAT_USDC
@@ -651,6 +653,542 @@ void lydra_c_free_mesh_data(LydraCMeshData* data) {
 }
 
 /* ================================================================
+ * matrix4d materialization
+ * ================================================================ */
+
+static int materialize_matrix4d(const LusdLayer_T* L, LusdValueRep rep,
+                                 double out[16]) {
+    if (!L || rep.data == 0) return -1;
+    if (lusd_vrep_is_inlined(rep)) return -1; /* 128 bytes can't be inlined */
+
+    uint64_t offset = rep.data & LUSD_VREP_PAYLOAD_MASK;
+
+    if (is_usda_layer(L)) {
+        /* USDA: parse ( (a,b,c,d), (e,f,g,h), (i,j,k,l), (m,n,o,p) ) */
+        if (offset >= L->file_size) return -1;
+        const char* p = (const char*)L->file_data + offset;
+        const char* end = (const char*)L->file_data + L->file_size;
+        int count = 0;
+        while (p < end && count < 16) {
+            while (p < end && (*p == ' ' || *p == '\t' || *p == '\n' || *p == '\r'
+                   || *p == '(' || *p == ')' || *p == ',')) p++;
+            if (p >= end) break;
+            if (*p == '-' || *p == '+' || *p == '.' || (*p >= '0' && *p <= '9')) {
+                char* endp;
+                out[count++] = strtod(p, &endp);
+                if (endp == p) return -1;
+                p = endp;
+            } else {
+                break;
+            }
+        }
+        return (count == 16) ? 0 : -1;
+    }
+
+    /* USDC: 16 doubles at file offset */
+    if (offset + 128 > L->file_size) return -1;
+    memcpy(out, L->file_data + offset, 128);
+    return 0;
+}
+
+static int materialize_float2(const LusdLayer_T* L, LusdValueRep rep,
+                               float out[2]) {
+    if (!L || rep.data == 0) return -1;
+    if (lusd_vrep_is_inlined(rep)) return -1; /* 8 bytes > 6 byte payload */
+
+    uint64_t offset = rep.data & LUSD_VREP_PAYLOAD_MASK;
+
+    if (is_usda_layer(L)) {
+        if (offset >= L->file_size) return -1;
+        const char* p = (const char*)L->file_data + offset;
+        const char* end = (const char*)L->file_data + L->file_size;
+        while (p < end && (*p == ' ' || *p == '\t' || *p == '(')) p++;
+        for (int i = 0; i < 2; i++) {
+            while (p < end && (*p == ' ' || *p == '\t' || *p == ',')) p++;
+            char* endp;
+            out[i] = strtof(p, &endp);
+            if (endp == p) return -1;
+            p = endp;
+        }
+        return 0;
+    }
+
+    int type_id = lusd_vrep_type(rep);
+    if (type_id == LUSD_CRATE_VEC2F) {
+        if (offset + 8 > L->file_size) return -1;
+        memcpy(out, L->file_data + offset, 8);
+        return 0;
+    }
+    if (type_id == LUSD_CRATE_VEC2D) {
+        if (offset + 16 > L->file_size) return -1;
+        double d[2];
+        memcpy(d, L->file_data + offset, 16);
+        out[0] = (float)d[0]; out[1] = (float)d[1];
+        return 0;
+    }
+    return -1;
+}
+
+/* ================================================================
+ * Xform extraction — xformOpOrder + individual ops
+ * ================================================================ */
+
+/* Read a double3 (vec3d or vec3f) into double[3] */
+static int materialize_double3(const LusdLayer_T* L, LusdValueRep rep, double out[3]) {
+    if (!L || rep.data == 0) return -1;
+    if (lusd_vrep_is_inlined(rep)) return -1;
+    uint64_t offset = rep.data & LUSD_VREP_PAYLOAD_MASK;
+
+    if (is_usda_layer(L)) {
+        if (offset >= L->file_size) return -1;
+        const char* p = (const char*)L->file_data + offset;
+        const char* end = (const char*)L->file_data + L->file_size;
+        while (p < end && (*p == ' ' || *p == '\t' || *p == '(')) p++;
+        for (int i = 0; i < 3; i++) {
+            while (p < end && (*p == ' ' || *p == '\t' || *p == ',')) p++;
+            char* endp;
+            out[i] = strtod(p, &endp);
+            if (endp == p) return -1;
+            p = endp;
+        }
+        return 0;
+    }
+
+    int type_id = lusd_vrep_type(rep);
+    if (type_id == LUSD_CRATE_VEC3D) {
+        if (offset + 24 > L->file_size) return -1;
+        memcpy(out, L->file_data + offset, 24);
+        return 0;
+    }
+    if (type_id == LUSD_CRATE_VEC3F || type_id == LUSD_CRATE_FLOAT) {
+        if (offset + 12 > L->file_size) return -1;
+        float f[3];
+        memcpy(f, L->file_data + offset, 12);
+        out[0] = f[0]; out[1] = f[1]; out[2] = f[2];
+        return 0;
+    }
+    return -1;
+}
+
+/* Read a quatf (w,x,y,z) or quatd into double[4] */
+static int materialize_quat(const LusdLayer_T* L, LusdValueRep rep, double out[4]) {
+    if (!L || rep.data == 0) return -1;
+    if (lusd_vrep_is_inlined(rep)) return -1;
+    uint64_t offset = rep.data & LUSD_VREP_PAYLOAD_MASK;
+
+    if (is_usda_layer(L)) {
+        if (offset >= L->file_size) return -1;
+        const char* p = (const char*)L->file_data + offset;
+        const char* end = (const char*)L->file_data + L->file_size;
+        while (p < end && (*p == ' ' || *p == '\t' || *p == '(')) p++;
+        for (int i = 0; i < 4; i++) {
+            while (p < end && (*p == ' ' || *p == '\t' || *p == ',')) p++;
+            char* endp;
+            out[i] = strtod(p, &endp);
+            if (endp == p) return -1;
+            p = endp;
+        }
+        return 0;
+    }
+
+    int type_id = lusd_vrep_type(rep);
+    if (type_id == LUSD_CRATE_QUATF) {
+        if (offset + 16 > L->file_size) return -1;
+        float f[4];
+        memcpy(f, L->file_data + offset, 16);
+        out[0] = f[0]; out[1] = f[1]; out[2] = f[2]; out[3] = f[3];
+        return 0;
+    }
+    if (type_id == LUSD_CRATE_QUATD) {
+        if (offset + 32 > L->file_size) return -1;
+        memcpy(out, L->file_data + offset, 32);
+        return 0;
+    }
+    return -1;
+}
+
+/* Read token array (xformOpOrder is token[] / TOKEN_VECTOR).
+ * Returns count of tokens. out_tokens[] are pointers into L->tokens[].
+ * Caller must free *out_tokens. */
+static int materialize_token_array(const LusdLayer_T* L, LusdValueRep rep,
+                                    const char*** out_tokens, uint32_t* out_count) {
+    *out_tokens = NULL;
+    *out_count = 0;
+    if (!L || rep.data == 0) return -1;
+
+    int type_id = lusd_vrep_type(rep);
+
+    if (is_usda_layer(L)) {
+        /* USDA: parse ["tok1", "tok2", ...] */
+        uint64_t offset = rep.data & LUSD_VREP_PAYLOAD_MASK;
+        if (offset >= L->file_size) return -1;
+        const char* p = (const char*)L->file_data + offset;
+        const char* end = (const char*)L->file_data + L->file_size;
+
+        while (p < end && (*p == ' ' || *p == '\t' || *p == '\n')) p++;
+        if (p >= end || *p != '[') return -1;
+        p++;
+
+        /* First pass: count tokens */
+        uint32_t count = 0;
+        {
+            const char* scan = p;
+            while (scan < end && *scan != ']') {
+                if (*scan == '"') { count++; scan++; while (scan < end && *scan != '"') scan++; if (scan < end) scan++; }
+                else scan++;
+            }
+        }
+        if (count == 0) return -1;
+
+        const char** tokens = (const char**)malloc(count * sizeof(const char*));
+        if (!tokens) return -1;
+
+        /* Second pass: extract. Match against L->tokens[] for stable pointers */
+        uint32_t idx = 0;
+        while (p < end && *p != ']' && idx < count) {
+            while (p < end && *p != '"' && *p != ']') p++;
+            if (p >= end || *p == ']') break;
+            p++; /* skip opening " */
+            const char* tok_start = p;
+            while (p < end && *p != '"') p++;
+            size_t tok_len = (size_t)(p - tok_start);
+            if (p < end) p++; /* skip closing " */
+
+            /* Try to find in token table for stable pointer */
+            const char* found = NULL;
+            for (uint32_t ti = 0; ti < L->token_count; ti++) {
+                if (strlen(L->tokens[ti]) == tok_len &&
+                    memcmp(L->tokens[ti], tok_start, tok_len) == 0) {
+                    found = L->tokens[ti];
+                    break;
+                }
+            }
+            tokens[idx++] = found; /* NULL if not found */
+        }
+        *out_tokens = tokens;
+        *out_count = idx;
+        return 0;
+    }
+
+    /* USDC: token[] array or TOKEN_VECTOR */
+    if (type_id == LUSD_CRATE_TOKEN_VECTOR ||
+        (type_id == LUSD_CRATE_TOKEN && lusd_vrep_is_array(rep))) {
+        uint64_t offset = rep.data & LUSD_VREP_PAYLOAD_MASK;
+        if (offset + 8 > L->file_size) return -1;
+
+        uint64_t numElements;
+        memcpy(&numElements, L->file_data + offset, 8);
+        offset += 8;
+        if (numElements == 0) return -1;
+
+        const char** tokens = (const char**)malloc((size_t)numElements * sizeof(const char*));
+        if (!tokens) return -1;
+
+        for (uint64_t i = 0; i < numElements; i++) {
+            if (offset + 4 > L->file_size) { free(tokens); return -1; }
+            uint32_t ti;
+            memcpy(&ti, L->file_data + offset, 4);
+            offset += 4;
+            tokens[i] = (ti < L->token_count) ? L->tokens[ti] : NULL;
+        }
+        *out_tokens = tokens;
+        *out_count = (uint32_t)numElements;
+        return 0;
+    }
+
+    return -1;
+}
+
+/* 4x4 identity matrix */
+static void mat4d_identity(double m[16]) {
+    memset(m, 0, 16 * sizeof(double));
+    m[0] = m[5] = m[10] = m[15] = 1.0;
+}
+
+/* 4x4 row-major matrix multiply: C = A * B */
+static void mat4d_multiply(const double A[16], const double B[16], double C[16]) {
+    double tmp[16];
+    for (int r = 0; r < 4; r++)
+        for (int c = 0; c < 4; c++) {
+            double s = 0.0;
+            for (int k = 0; k < 4; k++) s += A[r*4+k] * B[k*4+c];
+            tmp[r*4+c] = s;
+        }
+    memcpy(C, tmp, 16 * sizeof(double));
+}
+
+/* Build translation matrix */
+static void make_translate_matrix(const double t[3], double out[16]) {
+    mat4d_identity(out);
+    out[3] = t[0]; out[7] = t[1]; out[11] = t[2];
+}
+
+/* Build scale matrix */
+static void make_scale_matrix(const double s[3], double out[16]) {
+    mat4d_identity(out);
+    out[0] = s[0]; out[5] = s[1]; out[10] = s[2];
+}
+
+/* Build rotation matrix from euler angles (degrees) with specified axis order.
+ * Orders: 0=XYZ, 1=XZY, 2=YXZ, 3=YZX, 4=ZXY, 5=ZYX */
+static void make_rotate_matrix(const double angles_deg[3], int order, double out[16]) {
+    double a[3];
+    double Rx[16], Ry[16], Rz[16];
+    static const double DEG2RAD = 3.14159265358979323846 / 180.0;
+
+    for (int i = 0; i < 3; i++) a[i] = angles_deg[i] * DEG2RAD;
+
+    double cx = cos(a[0]), sx = sin(a[0]);
+    double cy = cos(a[1]), sy = sin(a[1]);
+    double cz = cos(a[2]), sz = sin(a[2]);
+
+    mat4d_identity(Rx);
+    Rx[5] = cx;  Rx[6] = -sx; Rx[9] = sx;  Rx[10] = cx;
+
+    mat4d_identity(Ry);
+    Ry[0] = cy;  Ry[2] = sy;  Ry[8] = -sy; Ry[10] = cy;
+
+    mat4d_identity(Rz);
+    Rz[0] = cz;  Rz[1] = -sz; Rz[4] = sz;  Rz[5] = cz;
+
+    double tmp[16];
+    switch (order) {
+        case 0: /* XYZ: Rx * Ry * Rz */
+            mat4d_multiply(Rx, Ry, tmp);
+            mat4d_multiply(tmp, Rz, out);
+            break;
+        case 1: /* XZY: Rx * Rz * Ry */
+            mat4d_multiply(Rx, Rz, tmp);
+            mat4d_multiply(tmp, Ry, out);
+            break;
+        case 2: /* YXZ: Ry * Rx * Rz */
+            mat4d_multiply(Ry, Rx, tmp);
+            mat4d_multiply(tmp, Rz, out);
+            break;
+        case 3: /* YZX: Ry * Rz * Rx */
+            mat4d_multiply(Ry, Rz, tmp);
+            mat4d_multiply(tmp, Rx, out);
+            break;
+        case 4: /* ZXY: Rz * Rx * Ry */
+            mat4d_multiply(Rz, Rx, tmp);
+            mat4d_multiply(tmp, Ry, out);
+            break;
+        case 5: /* ZYX: Rz * Ry * Rx */
+            mat4d_multiply(Rz, Ry, tmp);
+            mat4d_multiply(tmp, Rx, out);
+            break;
+        default:
+            mat4d_multiply(Rx, Ry, tmp);
+            mat4d_multiply(tmp, Rz, out);
+            break;
+    }
+}
+
+/* Build rotation matrix from quaternion (real, i, j, k) = (w, x, y, z) */
+static void make_quat_matrix(const double q[4], double out[16]) {
+    double w = q[0], x = q[1], y = q[2], z = q[3];
+    double n = w*w + x*x + y*y + z*z;
+    double s = (n > 0.0) ? 2.0 / n : 0.0;
+
+    double wx = s*w*x, wy = s*w*y, wz = s*w*z;
+    double xx = s*x*x, xy = s*x*y, xz = s*x*z;
+    double yy = s*y*y, yz = s*y*z, zz = s*z*z;
+
+    mat4d_identity(out);
+    out[0]  = 1.0 - (yy + zz);  out[1]  = xy - wz;            out[2]  = xz + wy;
+    out[4]  = xy + wz;           out[5]  = 1.0 - (xx + zz);    out[6]  = yz - wx;
+    out[8]  = xz - wy;           out[9]  = yz + wx;             out[10] = 1.0 - (xx + yy);
+}
+
+/* Build single-axis rotation matrix from angle in degrees */
+static void make_single_rotate_matrix(double angle_deg, int axis, double out[16]) {
+    double angles[3] = {0, 0, 0};
+    angles[axis] = angle_deg;
+    make_rotate_matrix(angles, 0, out); /* order irrelevant for single axis */
+}
+
+/* Determine rotation order from xformOp name suffix.
+ * Returns axis order enum (0=XYZ, etc.) or -1 for single-axis rotations. */
+static int parse_rotate_order(const char* op_name) {
+    /* Look for rotateXYZ, rotateXZY, etc. after "xformOp:rotate" prefix */
+    const char* suffix = op_name + strlen("xformOp:rotate");
+    if (strcmp(suffix, "XYZ") == 0) return 0;
+    if (strcmp(suffix, "XZY") == 0) return 1;
+    if (strcmp(suffix, "YXZ") == 0) return 2;
+    if (strcmp(suffix, "YZX") == 0) return 3;
+    if (strcmp(suffix, "ZXY") == 0) return 4;
+    if (strcmp(suffix, "ZYX") == 0) return 5;
+    if (strcmp(suffix, "X") == 0)   return -1; /* single X */
+    if (strcmp(suffix, "Y") == 0)   return -2; /* single Y */
+    if (strcmp(suffix, "Z") == 0)   return -3; /* single Z */
+    return 0; /* default XYZ */
+}
+
+/* Apply a single xformOp to the accumulator matrix.
+ * Returns 0 on success, -1 if op not found/supported. */
+static int apply_xform_op(const LusdLayer_T* L, const LusdPrim_T* P,
+                           const char* op_name, double accum[16]) {
+    if (!op_name) return -1;
+
+    /* Strip suffix for field lookup: "xformOp:translate:pivot" → field name as-is */
+    LusdValueRep rep = find_field(L, P, op_name);
+    if (lusd_vrep_is_null(rep)) return -1;
+
+    double op_mat[16];
+
+    if (strncmp(op_name, "xformOp:transform", 17) == 0) {
+        if (materialize_matrix4d(L, rep, op_mat) != 0) return -1;
+    } else if (strncmp(op_name, "xformOp:translate", 17) == 0) {
+        double t[3];
+        if (materialize_double3(L, rep, t) != 0) return -1;
+        make_translate_matrix(t, op_mat);
+    } else if (strncmp(op_name, "xformOp:scale", 13) == 0) {
+        double s[3];
+        if (materialize_double3(L, rep, s) != 0) return -1;
+        make_scale_matrix(s, op_mat);
+    } else if (strncmp(op_name, "xformOp:rotate", 14) == 0) {
+        /* Determine if it's a triple-axis or single-axis rotation */
+        /* Check for suffix after "xformOp:rotate" but before optional ":name" */
+        /* Extract the rotation type part (X, Y, Z, XYZ, etc.) */
+        const char* after_rotate = op_name + 14;
+        /* Find end of rotation type (before optional ":suffix") */
+        const char* colon = strchr(after_rotate, ':');
+        size_t type_len = colon ? (size_t)(colon - after_rotate) : strlen(after_rotate);
+
+        if (type_len == 1 && (after_rotate[0] == 'X' || after_rotate[0] == 'Y' || after_rotate[0] == 'Z')) {
+            /* Single-axis rotation: value is a single float/double */
+            float angle_f;
+            if (materialize_float(L, rep, &angle_f) != 0) return -1;
+            int axis = (after_rotate[0] == 'X') ? 0 : (after_rotate[0] == 'Y') ? 1 : 2;
+            make_single_rotate_matrix((double)angle_f, axis, op_mat);
+        } else {
+            /* Triple-axis rotation (XYZ, XZY, etc.) */
+            double angles[3];
+            if (materialize_double3(L, rep, angles) != 0) return -1;
+            /* Build a temporary name for parse_rotate_order */
+            char tmp_name[32];
+            snprintf(tmp_name, sizeof(tmp_name), "xformOp:rotate%.*s", (int)type_len, after_rotate);
+            int order = parse_rotate_order(tmp_name);
+            if (order < 0) return -1; /* shouldn't happen for triple-axis */
+            make_rotate_matrix(angles, order, op_mat);
+        }
+    } else if (strncmp(op_name, "xformOp:orient", 14) == 0) {
+        double q[4];
+        if (materialize_quat(L, rep, q) != 0) return -1;
+        make_quat_matrix(q, op_mat);
+    } else {
+        return -1; /* unsupported op */
+    }
+
+    mat4d_multiply(accum, op_mat, accum);
+    return 0;
+}
+
+int lydra_c_extract_xform(LusdLayer layer, LusdPrim prim, double out_matrix[16]) {
+    if (!layer || !prim || !out_matrix) return -1;
+    const LusdLayer_T* L = (const LusdLayer_T*)layer;
+    const LusdPrim_T*  P = (const LusdPrim_T*)prim;
+
+    /* Try xformOpOrder first */
+    LusdValueRep order_rep = find_field(L, P, "xformOpOrder");
+    if (!lusd_vrep_is_null(order_rep)) {
+        const char** tokens = NULL;
+        uint32_t count = 0;
+        if (materialize_token_array(L, order_rep, &tokens, &count) == 0 && count > 0) {
+            mat4d_identity(out_matrix);
+            int any_applied = 0;
+            for (uint32_t i = 0; i < count; i++) {
+                if (tokens[i] && apply_xform_op(L, P, tokens[i], out_matrix) == 0)
+                    any_applied = 1;
+            }
+            free(tokens);
+            return any_applied ? 0 : -1;
+        }
+        free(tokens);
+    }
+
+    /* Fallback: direct xformOp:transform lookup */
+    LusdValueRep rep = find_field(L, P, "xformOp:transform");
+    if (lusd_vrep_is_null(rep)) return -1;
+    return materialize_matrix4d(L, rep, out_matrix);
+}
+
+/* ================================================================
+ * Camera extraction
+ * ================================================================ */
+
+LusdResult lydra_c_extract_camera(LusdLayer layer, LusdPrim prim,
+                                   LydraCCameraData* out) {
+    if (!layer || !prim || !out) return LUSD_ERROR_INVALID_HANDLE;
+    const LusdLayer_T* L = (const LusdLayer_T*)layer;
+    const LusdPrim_T*  P = (const LusdPrim_T*)prim;
+
+    /* Defaults */
+    out->focal_length        = 50.0f;
+    out->vertical_aperture   = 15.2908f;
+    out->horizontal_aperture = 20.965f;
+    out->znear               = 0.1f;
+    out->zfar                = 1000000.0f;
+
+    read_shader_float(L, P, "focalLength", &out->focal_length);
+    read_shader_float(L, P, "verticalAperture", &out->vertical_aperture);
+    read_shader_float(L, P, "horizontalAperture", &out->horizontal_aperture);
+
+    /* clippingRange is a float2 → znear/zfar */
+    {
+        LusdValueRep rep = find_field(L, P, "clippingRange");
+        if (!lusd_vrep_is_null(rep)) {
+            float cr[2];
+            if (materialize_float2(L, rep, cr) == 0) {
+                out->znear = cr[0];
+                out->zfar  = cr[1];
+            }
+        }
+    }
+
+    return LUSD_SUCCESS;
+}
+
+/* ================================================================
+ * Light extraction
+ * ================================================================ */
+
+LusdResult lydra_c_extract_light(LusdLayer layer, LusdPrim prim,
+                                  LydraCLightData* out) {
+    if (!layer || !prim || !out) return LUSD_ERROR_INVALID_HANDLE;
+    const LusdLayer_T* L = (const LusdLayer_T*)layer;
+    const LusdPrim_T*  P = (const LusdPrim_T*)prim;
+
+    /* Defaults */
+    out->type      = LYDRA_C_LIGHT_DISTANT;
+    out->color[0]  = 1.0f; out->color[1] = 1.0f; out->color[2] = 1.0f;
+    out->intensity  = 1.0f;
+    out->exposure   = 0.0f;
+    out->radius     = 0.5f;
+    out->width      = 1.0f;
+    out->height     = 1.0f;
+
+    /* Determine type from prim type_name */
+    if (P->type_name) {
+        if (strcmp(P->type_name, "SphereLight") == 0)
+            out->type = LYDRA_C_LIGHT_SPHERE;
+        else if (strcmp(P->type_name, "RectLight") == 0)
+            out->type = LYDRA_C_LIGHT_RECT;
+        else if (strcmp(P->type_name, "DistantLight") == 0)
+            out->type = LYDRA_C_LIGHT_DISTANT;
+    }
+
+    read_shader_float(L, P, "inputs:intensity", &out->intensity);
+    read_shader_float(L, P, "inputs:exposure", &out->exposure);
+    read_shader_float3(L, P, "inputs:color", out->color);
+    read_shader_float(L, P, "inputs:radius", &out->radius);
+    read_shader_float(L, P, "inputs:width", &out->width);
+    read_shader_float(L, P, "inputs:height", &out->height);
+
+    return LUSD_SUCCESS;
+}
+
+/* ================================================================
  * GeomSubset extraction
  * ================================================================ */
 
@@ -728,4 +1266,265 @@ void lydra_c_free_geom_subsets(LydraCGeomSubset* subsets, uint32_t count) {
         free(subsets[i].face_indices);
     }
     free(subsets);
+}
+
+/* ================================================================
+ * DomeLight extraction
+ * ================================================================ */
+
+/* Materialize an asset path (@path@).
+ * For USDC: token index lookup. For USDA: text between @ delimiters.
+ * Returns pointer valid for layer lifetime, or NULL. */
+static const char* materialize_asset_path(const LusdLayer_T* L, LusdValueRep rep) {
+    if (!L || rep.data == 0) return NULL;
+
+    int type_id = lusd_vrep_type(rep);
+
+    /* Asset paths may be stored as tokens in USDC */
+    if (lusd_vrep_is_inlined(rep)) {
+        if (type_id == LUSD_CRATE_TOKEN || type_id == LUSD_CRATE_ASSET_PATH) {
+            uint32_t ti = (uint32_t)(rep.data & LUSD_VREP_PAYLOAD_MASK);
+            if (ti < L->token_count) return L->tokens[ti];
+        }
+        return NULL;
+    }
+
+    uint64_t offset = rep.data & LUSD_VREP_PAYLOAD_MASK;
+
+    if (is_usda_layer(L)) {
+        /* USDA: find text between @ delimiters */
+        if (offset >= L->file_size) return NULL;
+        const char* p = (const char*)L->file_data + offset;
+        const char* end = (const char*)L->file_data + L->file_size;
+        while (p < end && *p != '@') p++;
+        if (p >= end) return NULL;
+        p++; /* skip @ */
+        /* Find matching token in token table */
+        const char* start = p;
+        while (p < end && *p != '@') p++;
+        size_t len = (size_t)(p - start);
+        for (uint32_t ti = 0; ti < L->token_count; ti++) {
+            if (strlen(L->tokens[ti]) == len && memcmp(L->tokens[ti], start, len) == 0)
+                return L->tokens[ti];
+        }
+        return NULL;
+    }
+
+    /* USDC: token index at offset */
+    if (type_id == LUSD_CRATE_TOKEN || type_id == LUSD_CRATE_ASSET_PATH) {
+        if (offset + 4 > L->file_size) return NULL;
+        uint32_t ti;
+        memcpy(&ti, L->file_data + offset, sizeof(uint32_t));
+        if (ti < L->token_count) return L->tokens[ti];
+    }
+    return NULL;
+}
+
+LusdResult lydra_c_extract_dome_light(LusdLayer layer, LusdPrim prim,
+                                       LydraCDomeLightData* out) {
+    if (!layer || !prim || !out) return LUSD_ERROR_INVALID_HANDLE;
+    const LusdLayer_T* L = (const LusdLayer_T*)layer;
+    const LusdPrim_T*  P = (const LusdPrim_T*)prim;
+
+    /* Defaults */
+    out->intensity = 1.0f;
+    out->exposure = 0.0f;
+    out->color[0] = 1.0f; out->color[1] = 1.0f; out->color[2] = 1.0f;
+    out->texture_file = NULL;
+
+    read_shader_float(L, P, "inputs:intensity", &out->intensity);
+    read_shader_float(L, P, "inputs:exposure", &out->exposure);
+    read_shader_float3(L, P, "inputs:color", out->color);
+
+    /* Try inputs:texture:file directly on DomeLight prim */
+    {
+        LusdValueRep rep = find_field(L, P, "inputs:texture:file");
+        if (!lusd_vrep_is_null(rep)) {
+            const char* path = materialize_asset_path(L, rep);
+            if (path && path[0] != '\0') out->texture_file = path;
+        }
+    }
+
+    /* If no direct texture, look for connected UsdUVTexture child */
+    if (!out->texture_file) {
+        const LusdPrim_T* tex_shader = find_descendant_by_type(L, P, "Shader");
+        if (tex_shader) {
+            LusdValueRep id_rep = find_field(L, tex_shader, "info:id");
+            if (!lusd_vrep_is_null(id_rep)) {
+                const char* shader_id = materialize_token(L, id_rep);
+                if (shader_id && strcmp(shader_id, "UsdUVTexture") == 0) {
+                    LusdValueRep file_rep = find_field(L, tex_shader, "inputs:file");
+                    if (!lusd_vrep_is_null(file_rep)) {
+                        const char* path = materialize_asset_path(L, file_rep);
+                        if (path && path[0] != '\0') out->texture_file = path;
+                    }
+                }
+            }
+        }
+    }
+
+    return LUSD_SUCCESS;
+}
+
+/* ================================================================
+ * Time-sampled xform extraction (motion blur)
+ * ================================================================ */
+
+/* materialize_matrix4d at a specific time code */
+static int materialize_matrix4d_at(const LusdLayer_T* L, LusdValueRep rep,
+                                    double time_code, double out[16]) {
+    if (!L || rep.data == 0) return -1;
+    int type_id = lusd_vrep_type(rep);
+
+    if (type_id != LUSD_CRATE_TIME_SAMPLES)
+        return materialize_matrix4d(L, rep, out); /* non-time-sampled fallback */
+
+    uint64_t payload = rep.data & LUSD_VREP_PAYLOAD_MASK;
+    const LusdTimeSample* s = find_time_sample(L, payload, time_code);
+    if (!s) return -1;
+
+    /* Use text_offset as binary offset for USDC, text offset for USDA */
+    LusdValueRep sample_rep;
+    sample_rep.data = ((uint64_t)LUSD_CRATE_MATRIX4D << LUSD_VREP_TYPE_SHIFT)
+                      | (s->text_offset & LUSD_VREP_PAYLOAD_MASK);
+    return materialize_matrix4d(L, sample_rep, out);
+}
+
+/* materialize_double3 at a specific time code */
+static int materialize_double3_at(const LusdLayer_T* L, LusdValueRep rep,
+                                   double time_code, double out[3]) {
+    if (!L || rep.data == 0) return -1;
+    int type_id = lusd_vrep_type(rep);
+
+    if (type_id != LUSD_CRATE_TIME_SAMPLES)
+        return materialize_double3(L, rep, out);
+
+    uint64_t payload = rep.data & LUSD_VREP_PAYLOAD_MASK;
+    const LusdTimeSample* s = find_time_sample(L, payload, time_code);
+    if (!s) return -1;
+
+    LusdValueRep sample_rep;
+    sample_rep.data = ((uint64_t)LUSD_CRATE_VEC3D << LUSD_VREP_TYPE_SHIFT)
+                      | (s->text_offset & LUSD_VREP_PAYLOAD_MASK);
+    return materialize_double3(L, sample_rep, out);
+}
+
+/* materialize_float at a specific time code */
+static int materialize_float_at(const LusdLayer_T* L, LusdValueRep rep,
+                                 double time_code, float* out) {
+    if (!L || rep.data == 0) return -1;
+    int type_id = lusd_vrep_type(rep);
+
+    if (type_id != LUSD_CRATE_TIME_SAMPLES)
+        return materialize_float(L, rep, out);
+
+    uint64_t payload = rep.data & LUSD_VREP_PAYLOAD_MASK;
+    const LusdTimeSample* s = find_time_sample(L, payload, time_code);
+    if (!s) return -1;
+
+    LusdValueRep sample_rep;
+    sample_rep.data = ((uint64_t)LUSD_CRATE_FLOAT << LUSD_VREP_TYPE_SHIFT)
+                      | (s->text_offset & LUSD_VREP_PAYLOAD_MASK);
+    return materialize_float(L, sample_rep, out);
+}
+
+/* materialize_quat at a specific time code */
+static int materialize_quat_at(const LusdLayer_T* L, LusdValueRep rep,
+                                double time_code, double out[4]) {
+    if (!L || rep.data == 0) return -1;
+    int type_id = lusd_vrep_type(rep);
+
+    if (type_id != LUSD_CRATE_TIME_SAMPLES)
+        return materialize_quat(L, rep, out);
+
+    uint64_t payload = rep.data & LUSD_VREP_PAYLOAD_MASK;
+    const LusdTimeSample* s = find_time_sample(L, payload, time_code);
+    if (!s) return -1;
+
+    LusdValueRep sample_rep;
+    sample_rep.data = ((uint64_t)LUSD_CRATE_QUATF << LUSD_VREP_TYPE_SHIFT)
+                      | (s->text_offset & LUSD_VREP_PAYLOAD_MASK);
+    return materialize_quat(L, sample_rep, out);
+}
+
+/* Apply a single xformOp at a specific time code */
+static int apply_xform_op_at(const LusdLayer_T* L, const LusdPrim_T* P,
+                              const char* op_name, double time_code,
+                              double accum[16]) {
+    if (!op_name) return -1;
+
+    LusdValueRep rep = find_field(L, P, op_name);
+    if (lusd_vrep_is_null(rep)) return -1;
+
+    double op_mat[16];
+
+    if (strncmp(op_name, "xformOp:transform", 17) == 0) {
+        if (materialize_matrix4d_at(L, rep, time_code, op_mat) != 0) return -1;
+    } else if (strncmp(op_name, "xformOp:translate", 17) == 0) {
+        double t[3];
+        if (materialize_double3_at(L, rep, time_code, t) != 0) return -1;
+        make_translate_matrix(t, op_mat);
+    } else if (strncmp(op_name, "xformOp:scale", 13) == 0) {
+        double s[3];
+        if (materialize_double3_at(L, rep, time_code, s) != 0) return -1;
+        make_scale_matrix(s, op_mat);
+    } else if (strncmp(op_name, "xformOp:rotate", 14) == 0) {
+        const char* after_rotate = op_name + 14;
+        const char* colon = strchr(after_rotate, ':');
+        size_t type_len = colon ? (size_t)(colon - after_rotate) : strlen(after_rotate);
+
+        if (type_len == 1 && (after_rotate[0] == 'X' || after_rotate[0] == 'Y' || after_rotate[0] == 'Z')) {
+            float angle_f;
+            if (materialize_float_at(L, rep, time_code, &angle_f) != 0) return -1;
+            int axis = (after_rotate[0] == 'X') ? 0 : (after_rotate[0] == 'Y') ? 1 : 2;
+            make_single_rotate_matrix((double)angle_f, axis, op_mat);
+        } else {
+            double angles[3];
+            if (materialize_double3_at(L, rep, time_code, angles) != 0) return -1;
+            char tmp_name[32];
+            snprintf(tmp_name, sizeof(tmp_name), "xformOp:rotate%.*s", (int)type_len, after_rotate);
+            int order = parse_rotate_order(tmp_name);
+            if (order < 0) return -1;
+            make_rotate_matrix(angles, order, op_mat);
+        }
+    } else if (strncmp(op_name, "xformOp:orient", 14) == 0) {
+        double q[4];
+        if (materialize_quat_at(L, rep, time_code, q) != 0) return -1;
+        make_quat_matrix(q, op_mat);
+    } else {
+        return -1;
+    }
+
+    mat4d_multiply(accum, op_mat, accum);
+    return 0;
+}
+
+int lydra_c_extract_xform_at(LusdLayer layer, LusdPrim prim,
+                              double time_code, double out_matrix[16]) {
+    if (!layer || !prim || !out_matrix) return -1;
+    const LusdLayer_T* L = (const LusdLayer_T*)layer;
+    const LusdPrim_T*  P = (const LusdPrim_T*)prim;
+
+    /* Try xformOpOrder first */
+    LusdValueRep order_rep = find_field(L, P, "xformOpOrder");
+    if (!lusd_vrep_is_null(order_rep)) {
+        const char** tokens = NULL;
+        uint32_t count = 0;
+        if (materialize_token_array(L, order_rep, &tokens, &count) == 0 && count > 0) {
+            mat4d_identity(out_matrix);
+            int any_applied = 0;
+            for (uint32_t i = 0; i < count; i++) {
+                if (tokens[i] && apply_xform_op_at(L, P, tokens[i], time_code, out_matrix) == 0)
+                    any_applied = 1;
+            }
+            free(tokens);
+            return any_applied ? 0 : -1;
+        }
+        free(tokens);
+    }
+
+    /* Fallback: direct xformOp:transform lookup with time sample */
+    LusdValueRep rep = find_field(L, P, "xformOp:transform");
+    if (lusd_vrep_is_null(rep)) return -1;
+    return materialize_matrix4d_at(L, rep, time_code, out_matrix);
 }

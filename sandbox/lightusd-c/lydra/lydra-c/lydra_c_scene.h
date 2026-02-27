@@ -69,6 +69,79 @@ LusdResult lydra_c_extract_mesh(LusdLayer layer, LusdPrim prim,
 void lydra_c_free_mesh_data(LydraCMeshData* data);
 
 /* ================================================================
+ * Xform extraction
+ * ================================================================ */
+
+/*
+ * Extract xformOp:transform (matrix4d) from a prim.
+ * Output is row-major double[16]: out[row*4+col]. Translation at [12..14].
+ * Returns 0 on success, -1 if no xformOp:transform found (caller uses identity).
+ */
+int lydra_c_extract_xform(LusdLayer layer, LusdPrim prim, double out_matrix[16]);
+
+/* ================================================================
+ * Camera extraction
+ * ================================================================ */
+
+typedef struct LydraCCameraData {
+    float focal_length;        /* mm, default 50 */
+    float vertical_aperture;   /* mm, default 15.2908 */
+    float horizontal_aperture; /* mm, default 20.965 */
+    float znear;               /* default 0.1 */
+    float zfar;                /* default 1000000 */
+} LydraCCameraData;
+
+LusdResult lydra_c_extract_camera(LusdLayer layer, LusdPrim prim,
+                                   LydraCCameraData* out);
+
+/* ================================================================
+ * Light extraction
+ * ================================================================ */
+
+typedef struct LydraCLightData {
+    int type;           /* 0=Distant, 1=Sphere, 2=Rect */
+    float color[3];     /* default (1,1,1) */
+    float intensity;    /* default 1 */
+    float exposure;     /* default 0 */
+    float radius;       /* SphereLight, default 0.5 */
+    float width;        /* RectLight, default 1 */
+    float height;       /* RectLight, default 1 */
+} LydraCLightData;
+
+#define LYDRA_C_LIGHT_DISTANT  0
+#define LYDRA_C_LIGHT_SPHERE   1
+#define LYDRA_C_LIGHT_RECT     2
+
+LusdResult lydra_c_extract_light(LusdLayer layer, LusdPrim prim,
+                                  LydraCLightData* out);
+
+/* ================================================================
+ * DomeLight / Envmap extraction
+ * ================================================================ */
+
+typedef struct LydraCDomeLightData {
+    float intensity;
+    float exposure;
+    float color[3];
+    const char* texture_file;  /* asset path string, or NULL */
+} LydraCDomeLightData;
+
+LusdResult lydra_c_extract_dome_light(LusdLayer layer, LusdPrim prim,
+                                       LydraCDomeLightData* out);
+
+/* ================================================================
+ * Time-sampled xform (motion blur)
+ * ================================================================ */
+
+/*
+ * Extract composed xform at a specific time code.
+ * Falls back to non-time-sampled values when time samples not found.
+ * Returns 0 on success, -1 if no xform found.
+ */
+int lydra_c_extract_xform_at(LusdLayer layer, LusdPrim prim,
+                              double time_code, double out_matrix[16]);
+
+/* ================================================================
  * GeomSubset (per-face material) support
  * ================================================================ */
 
