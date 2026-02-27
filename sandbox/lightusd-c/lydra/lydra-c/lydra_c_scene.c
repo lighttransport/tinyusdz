@@ -1299,15 +1299,21 @@ static const char* materialize_asset_path(const LusdLayer_T* L, LusdValueRep rep
         while (p < end && *p != '@') p++;
         if (p >= end) return NULL;
         p++; /* skip @ */
-        /* Find matching token in token table */
         const char* start = p;
         while (p < end && *p != '@') p++;
         size_t len = (size_t)(p - start);
+        if (len == 0) return NULL;
+        /* Try matching token table first for stable pointer */
         for (uint32_t ti = 0; ti < L->token_count; ti++) {
             if (strlen(L->tokens[ti]) == len && memcmp(L->tokens[ti], start, len) == 0)
                 return L->tokens[ti];
         }
-        return NULL;
+        /* Fallback: return a copy in a static buffer (single-threaded use) */
+        static char s_asset_buf[1024];
+        if (len >= sizeof(s_asset_buf)) len = sizeof(s_asset_buf) - 1;
+        memcpy(s_asset_buf, start, len);
+        s_asset_buf[len] = '\0';
+        return s_asset_buf;
     }
 
     /* USDC: token index at offset */
