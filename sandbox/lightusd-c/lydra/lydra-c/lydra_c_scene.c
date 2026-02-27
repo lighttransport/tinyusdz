@@ -568,6 +568,177 @@ LusdResult lydra_c_extract_material(LusdLayer layer, LusdPrim material_prim,
 }
 
 /* ================================================================
+ * OpenPBR material extraction
+ * ================================================================ */
+
+static void init_openpbr_defaults(LydraCOpenPBRData* m) {
+    /* Base */
+    m->base_weight = 1.0f;
+    m->base_color[0] = 0.8f; m->base_color[1] = 0.8f; m->base_color[2] = 0.8f;
+    m->base_roughness = 0.0f;
+    m->base_metalness = 0.0f;
+    m->base_diffuse_roughness = 0.0f;
+    /* Specular */
+    m->specular_weight = 1.0f;
+    m->specular_color[0] = 1.0f; m->specular_color[1] = 1.0f; m->specular_color[2] = 1.0f;
+    m->specular_roughness = 0.3f;
+    m->specular_ior = 1.5f;
+    m->specular_ior_level = 0.5f;
+    m->specular_anisotropy = 0.0f;
+    m->specular_rotation = 0.0f;
+    /* Transmission */
+    m->transmission_weight = 0.0f;
+    m->transmission_color[0] = 1.0f; m->transmission_color[1] = 1.0f; m->transmission_color[2] = 1.0f;
+    m->transmission_depth = 0.0f;
+    m->transmission_scatter[0] = 0.0f; m->transmission_scatter[1] = 0.0f; m->transmission_scatter[2] = 0.0f;
+    m->transmission_scatter_anisotropy = 0.0f;
+    m->transmission_dispersion = 0.0f;
+    /* Subsurface */
+    m->subsurface_weight = 0.0f;
+    m->subsurface_color[0] = 0.8f; m->subsurface_color[1] = 0.8f; m->subsurface_color[2] = 0.8f;
+    m->subsurface_radius = 1.0f;
+    m->subsurface_radius_scale[0] = 1.0f; m->subsurface_radius_scale[1] = 1.0f; m->subsurface_radius_scale[2] = 1.0f;
+    m->subsurface_scale = 1.0f;
+    m->subsurface_anisotropy = 0.0f;
+    /* Sheen */
+    m->sheen_weight = 0.0f;
+    m->sheen_color[0] = 1.0f; m->sheen_color[1] = 1.0f; m->sheen_color[2] = 1.0f;
+    m->sheen_roughness = 0.3f;
+    /* Fuzz */
+    m->fuzz_weight = 0.0f;
+    m->fuzz_color[0] = 1.0f; m->fuzz_color[1] = 1.0f; m->fuzz_color[2] = 1.0f;
+    m->fuzz_roughness = 0.5f;
+    /* Thin Film */
+    m->thin_film_weight = 0.0f;
+    m->thin_film_thickness = 0.5f;
+    m->thin_film_ior = 1.5f;
+    /* Coat */
+    m->coat_weight = 0.0f;
+    m->coat_color[0] = 1.0f; m->coat_color[1] = 1.0f; m->coat_color[2] = 1.0f;
+    m->coat_roughness = 0.1f;
+    m->coat_anisotropy = 0.0f;
+    m->coat_rotation = 0.0f;
+    m->coat_ior = 1.6f;
+    m->coat_affect_color[0] = 0.0f; m->coat_affect_color[1] = 0.0f; m->coat_affect_color[2] = 0.0f;
+    m->coat_affect_roughness = 0.0f;
+    /* Emission */
+    m->emission_luminance = 0.0f;
+    m->emission_color[0] = 1.0f; m->emission_color[1] = 1.0f; m->emission_color[2] = 1.0f;
+    /* Geometry */
+    m->opacity = 1.0f;
+    m->is_openpbr = 0;
+}
+
+static void read_openpbr_inputs(const LusdLayer_T* L, const LusdPrim_T* shader,
+                                 LydraCOpenPBRData* out) {
+    /* Base */
+    read_shader_float(L, shader, "inputs:base_weight", &out->base_weight);
+    read_shader_float3(L, shader, "inputs:base_color", out->base_color);
+    read_shader_float(L, shader, "inputs:base_roughness", &out->base_roughness);
+    read_shader_float(L, shader, "inputs:base_metalness", &out->base_metalness);
+    read_shader_float(L, shader, "inputs:base_diffuse_roughness", &out->base_diffuse_roughness);
+    /* Specular */
+    read_shader_float(L, shader, "inputs:specular_weight", &out->specular_weight);
+    read_shader_float3(L, shader, "inputs:specular_color", out->specular_color);
+    read_shader_float(L, shader, "inputs:specular_roughness", &out->specular_roughness);
+    read_shader_float(L, shader, "inputs:specular_ior", &out->specular_ior);
+    read_shader_float(L, shader, "inputs:specular_ior_level", &out->specular_ior_level);
+    read_shader_float(L, shader, "inputs:specular_anisotropy", &out->specular_anisotropy);
+    read_shader_float(L, shader, "inputs:specular_rotation", &out->specular_rotation);
+    /* Transmission */
+    read_shader_float(L, shader, "inputs:transmission_weight", &out->transmission_weight);
+    read_shader_float3(L, shader, "inputs:transmission_color", out->transmission_color);
+    read_shader_float(L, shader, "inputs:transmission_depth", &out->transmission_depth);
+    read_shader_float3(L, shader, "inputs:transmission_scatter", out->transmission_scatter);
+    read_shader_float(L, shader, "inputs:transmission_scatter_anisotropy", &out->transmission_scatter_anisotropy);
+    read_shader_float(L, shader, "inputs:transmission_dispersion", &out->transmission_dispersion);
+    /* Subsurface */
+    read_shader_float(L, shader, "inputs:subsurface_weight", &out->subsurface_weight);
+    read_shader_float3(L, shader, "inputs:subsurface_color", out->subsurface_color);
+    read_shader_float(L, shader, "inputs:subsurface_radius", &out->subsurface_radius);
+    read_shader_float3(L, shader, "inputs:subsurface_radius_scale", out->subsurface_radius_scale);
+    read_shader_float(L, shader, "inputs:subsurface_scale", &out->subsurface_scale);
+    read_shader_float(L, shader, "inputs:subsurface_anisotropy", &out->subsurface_anisotropy);
+    /* Sheen */
+    read_shader_float(L, shader, "inputs:sheen_weight", &out->sheen_weight);
+    read_shader_float3(L, shader, "inputs:sheen_color", out->sheen_color);
+    read_shader_float(L, shader, "inputs:sheen_roughness", &out->sheen_roughness);
+    /* Fuzz */
+    read_shader_float(L, shader, "inputs:fuzz_weight", &out->fuzz_weight);
+    read_shader_float3(L, shader, "inputs:fuzz_color", out->fuzz_color);
+    read_shader_float(L, shader, "inputs:fuzz_roughness", &out->fuzz_roughness);
+    /* Thin Film */
+    read_shader_float(L, shader, "inputs:thin_film_weight", &out->thin_film_weight);
+    read_shader_float(L, shader, "inputs:thin_film_thickness", &out->thin_film_thickness);
+    read_shader_float(L, shader, "inputs:thin_film_ior", &out->thin_film_ior);
+    /* Coat */
+    read_shader_float(L, shader, "inputs:coat_weight", &out->coat_weight);
+    read_shader_float3(L, shader, "inputs:coat_color", out->coat_color);
+    read_shader_float(L, shader, "inputs:coat_roughness", &out->coat_roughness);
+    read_shader_float(L, shader, "inputs:coat_anisotropy", &out->coat_anisotropy);
+    read_shader_float(L, shader, "inputs:coat_rotation", &out->coat_rotation);
+    read_shader_float(L, shader, "inputs:coat_ior", &out->coat_ior);
+    read_shader_float3(L, shader, "inputs:coat_affect_color", out->coat_affect_color);
+    read_shader_float(L, shader, "inputs:coat_affect_roughness", &out->coat_affect_roughness);
+    /* Emission */
+    read_shader_float(L, shader, "inputs:emission_luminance", &out->emission_luminance);
+    read_shader_float3(L, shader, "inputs:emission_color", out->emission_color);
+    /* Geometry */
+    read_shader_float(L, shader, "inputs:opacity", &out->opacity);
+}
+
+static void read_usdpreview_as_openpbr(const LusdLayer_T* L, const LusdPrim_T* shader,
+                                        LydraCOpenPBRData* out) {
+    read_shader_float3(L, shader, "inputs:diffuseColor", out->base_color);
+    read_shader_float(L, shader, "inputs:metallic", &out->base_metalness);
+    read_shader_float(L, shader, "inputs:roughness", &out->specular_roughness);
+    read_shader_float3(L, shader, "inputs:specularColor", out->specular_color);
+    read_shader_float(L, shader, "inputs:ior", &out->specular_ior);
+    read_shader_float(L, shader, "inputs:clearcoat", &out->coat_weight);
+    read_shader_float(L, shader, "inputs:clearcoatRoughness", &out->coat_roughness);
+    read_shader_float3(L, shader, "inputs:emissiveColor", out->emission_color);
+    read_shader_float(L, shader, "inputs:opacity", &out->opacity);
+    /* Set emission_luminance if emissive color is non-zero */
+    if (out->emission_color[0] + out->emission_color[1] + out->emission_color[2] > 0.0f)
+        out->emission_luminance = 1.0f;
+}
+
+LusdResult lydra_c_extract_openpbr(LusdLayer layer, LusdPrim material_prim,
+                                    LydraCOpenPBRData* out) {
+    if (!layer || !material_prim || !out)
+        return LUSD_ERROR_INVALID_HANDLE;
+
+    const LusdLayer_T* L = (const LusdLayer_T*)layer;
+    const LusdPrim_T*  P = (const LusdPrim_T*)material_prim;
+
+    init_openpbr_defaults(out);
+
+    const LusdPrim_T* shader = find_descendant_by_type(L, P, "Shader");
+    if (!shader)
+        return LUSD_SUCCESS;
+
+    /* Check info:id */
+    LusdValueRep id_rep = find_field(L, shader, "info:id");
+    if (lusd_vrep_is_null(id_rep))
+        return LUSD_SUCCESS;
+
+    const char* shader_id = materialize_token(L, id_rep);
+    if (!shader_id)
+        return LUSD_SUCCESS;
+
+    if (strcmp(shader_id, "OpenPBR_Surface") == 0) {
+        out->is_openpbr = 1;
+        read_openpbr_inputs(L, shader, out);
+    } else if (strcmp(shader_id, "UsdPreviewSurface") == 0) {
+        out->is_openpbr = 0;
+        read_usdpreview_as_openpbr(L, shader, out);
+    }
+    /* Other shader types: return defaults */
+
+    return LUSD_SUCCESS;
+}
+
+/* ================================================================
  * extract_mesh
  * ================================================================ */
 
@@ -1129,6 +1300,8 @@ LusdResult lydra_c_extract_camera(LusdLayer layer, LusdPrim prim,
     out->horizontal_aperture = 20.965f;
     out->znear               = 0.1f;
     out->zfar                = 1000000.0f;
+    out->shutter_open        = 0.0;
+    out->shutter_close       = 0.0;
 
     read_shader_float(L, P, "focalLength", &out->focal_length);
     read_shader_float(L, P, "verticalAperture", &out->vertical_aperture);
@@ -1144,6 +1317,18 @@ LusdResult lydra_c_extract_camera(LusdLayer layer, LusdPrim prim,
                 out->zfar  = cr[1];
             }
         }
+    }
+
+    /* shutter:open and shutter:close */
+    {
+        float so = 0.0f;
+        read_shader_float(L, P, "shutter:open", &so);
+        out->shutter_open = (double)so;
+    }
+    {
+        float sc = 0.0f;
+        read_shader_float(L, P, "shutter:close", &sc);
+        out->shutter_close = (double)sc;
     }
 
     return LUSD_SUCCESS;

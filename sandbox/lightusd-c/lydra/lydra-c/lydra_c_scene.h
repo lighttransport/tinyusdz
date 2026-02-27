@@ -89,6 +89,8 @@ typedef struct LydraCCameraData {
     float horizontal_aperture; /* mm, default 20.965 */
     float znear;               /* default 0.1 */
     float zfar;                /* default 1000000 */
+    double shutter_open;       /* default 0.0 */
+    double shutter_close;      /* default 0.0 */
 } LydraCCameraData;
 
 LusdResult lydra_c_extract_camera(LusdLayer layer, LusdPrim prim,
@@ -162,6 +164,78 @@ uint32_t lydra_c_extract_geom_subsets(LusdLayer layer, LusdPrim mesh_prim,
 
 /* Free a malloc'd array of LydraCGeomSubset structs. */
 void lydra_c_free_geom_subsets(LydraCGeomSubset* subsets, uint32_t count);
+
+/* ================================================================
+ * OpenPBR material extraction
+ * ================================================================ */
+
+typedef struct LydraCOpenPBRData {
+    /* Base */
+    float base_weight;              /* default 1.0 */
+    float base_color[3];            /* default (0.8, 0.8, 0.8) */
+    float base_roughness;           /* default 0.0 */
+    float base_metalness;           /* default 0.0 */
+    float base_diffuse_roughness;   /* default 0.0 */
+    /* Specular */
+    float specular_weight;          /* default 1.0 */
+    float specular_color[3];        /* default (1,1,1) */
+    float specular_roughness;       /* default 0.3 */
+    float specular_ior;             /* default 1.5 */
+    float specular_ior_level;       /* default 0.5 */
+    float specular_anisotropy;      /* default 0.0 */
+    float specular_rotation;        /* default 0.0 */
+    /* Transmission */
+    float transmission_weight;      /* default 0.0 */
+    float transmission_color[3];    /* default (1,1,1) */
+    float transmission_depth;       /* default 0.0 */
+    float transmission_scatter[3];  /* default (0,0,0) */
+    float transmission_scatter_anisotropy; /* default 0.0 */
+    float transmission_dispersion;  /* default 0.0 */
+    /* Subsurface */
+    float subsurface_weight;        /* default 0.0 */
+    float subsurface_color[3];      /* default (0.8,0.8,0.8) */
+    float subsurface_radius;        /* default 1.0 */
+    float subsurface_radius_scale[3]; /* default (1,1,1) */
+    float subsurface_scale;         /* default 1.0 */
+    float subsurface_anisotropy;    /* default 0.0 */
+    /* Sheen */
+    float sheen_weight;             /* default 0.0 */
+    float sheen_color[3];           /* default (1,1,1) */
+    float sheen_roughness;          /* default 0.3 */
+    /* Fuzz */
+    float fuzz_weight;              /* default 0.0 */
+    float fuzz_color[3];            /* default (1,1,1) */
+    float fuzz_roughness;           /* default 0.5 */
+    /* Thin Film */
+    float thin_film_weight;         /* default 0.0 */
+    float thin_film_thickness;      /* default 0.5 */
+    float thin_film_ior;            /* default 1.5 */
+    /* Coat */
+    float coat_weight;              /* default 0.0 */
+    float coat_color[3];            /* default (1,1,1) */
+    float coat_roughness;           /* default 0.1 */
+    float coat_anisotropy;          /* default 0.0 */
+    float coat_rotation;            /* default 0.0 */
+    float coat_ior;                 /* default 1.6 */
+    float coat_affect_color[3];     /* default (0,0,0) */
+    float coat_affect_roughness;    /* default 0.0 */
+    /* Emission */
+    float emission_luminance;       /* default 0.0 */
+    float emission_color[3];        /* default (1,1,1) */
+    /* Geometry */
+    float opacity;                  /* default 1.0 */
+
+    int is_openpbr;  /* 1 if OpenPBR_Surface found, 0 if UsdPreviewSurface */
+} LydraCOpenPBRData;
+
+/*
+ * Extract material data as OpenPBR fields.
+ * If shader is OpenPBR_Surface, reads native fields.
+ * If shader is UsdPreviewSurface, maps to OpenPBR equivalents.
+ * On success, *out is filled with material properties.
+ */
+LusdResult lydra_c_extract_openpbr(LusdLayer layer, LusdPrim material_prim,
+                                    LydraCOpenPBRData* out);
 
 #ifdef __cplusplus
 }
