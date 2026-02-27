@@ -8345,6 +8345,8 @@ bool RenderSceneConverter::ConvertSkelAnimation(const RenderSceneConverterEnv &e
   anim_out->name = skelAnim.name;
   anim_out->display_name = skelAnim.metas().has_displayName() ? skelAnim.metas().get_displayName() : "";
   anim_out->duration = 0.0f;  // Will be computed below
+  anim_out->source_type = AnimationSourceType::SkelAnimation;
+  anim_out->num_animated_joints = int32_t(joints.size());
 
   // Joint animations - convert to glTF-style flat arrays
   // Strategy: Pre-allocate output samplers, then scatter data directly from
@@ -8813,6 +8815,8 @@ bool RenderSceneConverter::ExtractXformOpAnimation(
   anim_out->prim_name = prim_name;
   anim_out->name = prim_name + "_xform";
   anim_out->duration = 0.0f;  // Will be computed below
+  anim_out->source_type = AnimationSourceType::XformOp;
+  anim_out->num_animated_nodes = 1;
 
   // Process each xformOp that has time samples
   for (size_t xform_idx = 0; xform_idx < xformable.xformOps.size(); xform_idx++) {

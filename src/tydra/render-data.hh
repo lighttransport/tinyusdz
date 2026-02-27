@@ -820,6 +820,14 @@ enum class AnimationInterpolation {
   CubicSpline  ///< CUBICSPLINE - cubic spline with in/out tangents
 };
 
+/// Tracks the USD origin of an AnimationClip.
+enum class AnimationSourceType {
+  Unknown,
+  XformOp,          ///< From xformOp timeSamples
+  SkelAnimation,    ///< From UsdSkelAnimation prim
+  BlendShape,       ///< From BlendShape weight animation (future)
+};
+
 ///
 /// Animation channel target type - distinguishes what the channel animates
 ///
@@ -964,6 +972,10 @@ struct AnimationClip {
   std::string display_name;       ///< USD `displayName` prim meta
 
   float duration{0.0f};           ///< Animation duration in seconds
+
+  AnimationSourceType source_type{AnimationSourceType::Unknown};
+  int32_t num_animated_joints{0};   ///< Count of unique joints animated
+  int32_t num_animated_nodes{0};    ///< Count of unique scene nodes animated
 
   std::vector<KeyframeSampler> samplers;  ///< Keyframe data
   std::vector<AnimationChannel> channels;  ///< Property bindings
