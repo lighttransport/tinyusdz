@@ -470,6 +470,14 @@ extern const char* lusd__find_relationship_target(const LusdLayer_T* layer,
                                                    const LusdPrim_T* prim,
                                                    const char* rel_name);
 
+/* Forward declaration (defined later in this file) */
+static const char* materialize_asset_path(const LusdLayer_T* L, LusdValueRep rep);
+
+/* Forward declaration (implemented in lusd_usdc_reader.c) */
+extern const char* lusd__find_connection_target(const LusdLayer_T* layer,
+                                                 const LusdPrim_T* prim,
+                                                 const char* attr_name);
+
 const char* lydra_c_resolve_material_binding(LusdLayer layer, LusdPrim prim) {
     if (!layer || !prim) return NULL;
     const LusdLayer_T* L = (const LusdLayer_T*)layer;
@@ -627,6 +635,13 @@ static void init_openpbr_defaults(LydraCOpenPBRData* m) {
     /* Geometry */
     m->opacity = 1.0f;
     m->is_openpbr = 0;
+    /* Texture paths */
+    m->base_color_tex = NULL;
+    m->metalness_tex = NULL;
+    m->roughness_tex = NULL;
+    m->normal_tex = NULL;
+    m->emissive_tex = NULL;
+    m->opacity_tex = NULL;
 }
 
 static void read_openpbr_inputs(const LusdLayer_T* L, const LusdPrim_T* shader,
@@ -713,17 +728,42 @@ LusdResult lydra_c_extract_openpbr(LusdLayer layer, LusdPrim material_prim,
 
     init_openpbr_defaults(out);
 
-    const LusdPrim_T* shader = find_descendant_by_type(L, P, "Shader");
-    if (!shader)
-        return LUSD_SUCCESS;
-
-    /* Check info:id */
-    LusdValueRep id_rep = find_field(L, shader, "info:id");
-    if (lusd_vrep_is_null(id_rep))
-        return LUSD_SUCCESS;
-
-    const char* shader_id = materialize_token(L, id_rep);
-    if (!shader_id)
+    /* Find the surface shader (UsdPreviewSurface or OpenPBR_Surface)
+     * among all Shader descendants. find_descendant_by_type returns the first
+     * Shader, which may be a UsdUVTexture or other non-surface shader. */
+    const LusdPrim_T* shader = NULL;
+    const char* shader_id = NULL;
+    {
+        /* DFS stack to find all Shader prims */
+        const LusdPrim_T* stack[64];
+        int sp = 0;
+        for (uint32_t ci = 0; ci < P->child_count && sp < 64; ci++) {
+            uint32_t idx = P->child_spec_indices[ci];
+            if (idx < L->prim_node_count)
+                stack[sp++] = &L->prim_nodes[idx];
+        }
+        while (sp > 0 && !shader) {
+            const LusdPrim_T* node = stack[--sp];
+            if (node->type_name && strcmp(node->type_name, "Shader") == 0) {
+                LusdValueRep id_rep = find_field(L, node, "info:id");
+                if (!lusd_vrep_is_null(id_rep)) {
+                    const char* sid = materialize_token(L, id_rep);
+                    if (sid && (strcmp(sid, "UsdPreviewSurface") == 0 ||
+                                strcmp(sid, "OpenPBR_Surface") == 0)) {
+                        shader = node;
+                        shader_id = sid;
+                    }
+                }
+            }
+            /* Push children */
+            for (uint32_t j = 0; j < node->child_count && sp < 63; j++) {
+                uint32_t cidx = node->child_spec_indices[j];
+                if (cidx < L->prim_node_count)
+                    stack[sp++] = &L->prim_nodes[cidx];
+            }
+        }
+    }
+    if (!shader || !shader_id)
         return LUSD_SUCCESS;
 
     if (strcmp(shader_id, "OpenPBR_Surface") == 0) {
@@ -734,6 +774,105 @@ LusdResult lydra_c_extract_openpbr(LusdLayer layer, LusdPrim material_prim,
         read_usdpreview_as_openpbr(L, shader, out);
     }
     /* Other shader types: return defaults */
+
+    /* ── Texture connection walking ──
+     * For each known input, check if the surface shader has a connection
+     * (inputs:X.connect) pointing to a UsdUVTexture prim. If so, read
+     * inputs:file from that texture prim. */
+    {
+        /* Input names for UsdPreviewSurface and OpenPBR */
+        static const char* const tex_input_names[][2] = {
+            {"inputs:diffuseColor", "inputs:base_color"},       /* base_color_tex */
+            {"inputs:metallic",     "inputs:base_metalness"},   /* metalness_tex */
+            {"inputs:roughness",    "inputs:specular_roughness"},/* roughness_tex */
+            {"inputs:normal",       "inputs:geometry_normal"},  /* normal_tex */
+            {"inputs:emissiveColor","inputs:emission_color"},   /* emissive_tex */
+            {"inputs:opacity",      "inputs:opacity"},          /* opacity_tex */
+        };
+        const char** tex_slots[] = {
+            &out->base_color_tex, &out->metalness_tex, &out->roughness_tex,
+            &out->normal_tex, &out->emissive_tex, &out->opacity_tex
+        };
+
+        for (int ti = 0; ti < 6; ti++) {
+            /* Try both naming conventions */
+            const char* conn_target = NULL;
+            for (int ni = 0; ni < 2 && !conn_target; ni++) {
+                /* Build connection field name: "inputs:X.connect" */
+                char conn_name[128];
+                int len = snprintf(conn_name, sizeof(conn_name), "%s.connect",
+                                   tex_input_names[ti][ni]);
+                if (len <= 0 || len >= (int)sizeof(conn_name)) continue;
+
+                /* Read the connection on the surface shader */
+                conn_target = lusd__find_connection_target(L, shader, conn_name);
+            }
+            if (!conn_target) continue;
+
+            /* conn_target is like "</Mat/Tex.outputs:rgb>" or "</Mat/Tex>"
+             * Find the referenced prim among Material descendants */
+            /* Extract prim path: strip leading < and trailing .outputs:...> */
+            const char* path_start = conn_target;
+            if (*path_start == '<') path_start++;
+            /* Find end: either '.' or '>' */
+            char prim_path[256];
+            {
+                const char* dot = path_start;
+                while (*dot && *dot != '.' && *dot != '>') dot++;
+                size_t plen = (size_t)(dot - path_start);
+                if (plen == 0 || plen >= sizeof(prim_path)) continue;
+                memcpy(prim_path, path_start, plen);
+                prim_path[plen] = '\0';
+            }
+
+            /* Search all Shader descendants of the Material for matching path */
+            for (uint32_t ci = 0; ci < P->child_count; ci++) {
+                uint32_t idx = P->child_spec_indices[ci];
+                if (idx >= L->prim_node_count) continue;
+                const LusdPrim_T* child = &L->prim_nodes[idx];
+
+                /* Check this child and its descendants for UsdUVTexture shaders */
+                /* We do a simple recursive search for any Shader with matching path */
+                const LusdPrim_T* stack[32];
+                int sp = 0;
+                stack[sp++] = child;
+                while (sp > 0) {
+                    const LusdPrim_T* node = stack[--sp];
+                    /* Check if this prim's path matches */
+                    int path_match = 0;
+                    if (node->spec_index < L->spec_count) {
+                        uint32_t pi = L->specs[node->spec_index].path_index;
+                        if (pi < L->path_count && L->paths[pi]) {
+                            if (strcmp(L->paths[pi], prim_path) == 0)
+                                path_match = 1;
+                        }
+                    }
+                    if (path_match) {
+                        /* Verify it's a UsdUVTexture shader */
+                        LusdValueRep tex_id_rep = find_field(L, node, "info:id");
+                        if (!lusd_vrep_is_null(tex_id_rep)) {
+                            const char* tex_shader_id = materialize_token(L, tex_id_rep);
+                            if (tex_shader_id && strcmp(tex_shader_id, "UsdUVTexture") == 0) {
+                                LusdValueRep file_rep = find_field(L, node, "inputs:file");
+                                if (!lusd_vrep_is_null(file_rep)) {
+                                    const char* path = materialize_asset_path(L, file_rep);
+                                    if (path && path[0] != '\0')
+                                        *tex_slots[ti] = path;
+                                }
+                            }
+                        }
+                        break;
+                    }
+                    /* Push children */
+                    for (uint32_t j = 0; j < node->child_count && sp < 31; j++) {
+                        uint32_t cidx = node->child_spec_indices[j];
+                        if (cidx < L->prim_node_count)
+                            stack[sp++] = &L->prim_nodes[cidx];
+                    }
+                }
+            }
+        }
+    }
 
     return LUSD_SUCCESS;
 }
@@ -1718,4 +1857,42 @@ int lydra_c_extract_xform_at(LusdLayer layer, LusdPrim prim,
     LusdValueRep rep = find_field(L, P, "xformOp:transform");
     if (lusd_vrep_is_null(rep)) return -1;
     return materialize_matrix4d_at(L, rep, time_code, out_matrix);
+}
+
+/* ================================================================
+ * Asset path resolution utility
+ * ================================================================ */
+
+const char* lydra_c_resolve_asset_path(const char* base_dir,
+                                        const char* asset_path,
+                                        char* out_buf, uint32_t buf_size) {
+    if (!asset_path || !out_buf || buf_size == 0) return NULL;
+
+    /* Skip "./" prefix */
+    if (asset_path[0] == '.' && (asset_path[1] == '/' || asset_path[1] == '\\'))
+        asset_path += 2;
+
+    /* Absolute path: copy as-is */
+    if (asset_path[0] == '/') {
+        size_t len = strlen(asset_path);
+        if (len >= buf_size) return NULL;
+        memcpy(out_buf, asset_path, len + 1);
+    } else if (!base_dir || base_dir[0] == '\0') {
+        size_t len = strlen(asset_path);
+        if (len >= buf_size) return NULL;
+        memcpy(out_buf, asset_path, len + 1);
+    } else {
+        size_t blen = strlen(base_dir);
+        size_t alen = strlen(asset_path);
+        if (blen + 1 + alen >= buf_size) return NULL;
+        memcpy(out_buf, base_dir, blen);
+        out_buf[blen] = '/';
+        memcpy(out_buf + blen + 1, asset_path, alen + 1);
+    }
+
+    /* Normalize backslashes */
+    for (char* p = out_buf; *p; p++) {
+        if (*p == '\\') *p = '/';
+    }
+    return out_buf;
 }

@@ -226,6 +226,15 @@ typedef struct LydraCOpenPBRData {
     float opacity;                  /* default 1.0 */
 
     int is_openpbr;  /* 1 if OpenPBR_Surface found, 0 if UsdPreviewSurface */
+
+    /* Texture asset paths (NULL if no texture connected).
+     * Pointers are valid for the lifetime of the layer. */
+    const char* base_color_tex;
+    const char* metalness_tex;
+    const char* roughness_tex;
+    const char* normal_tex;
+    const char* emissive_tex;
+    const char* opacity_tex;
 } LydraCOpenPBRData;
 
 /*
@@ -236,6 +245,20 @@ typedef struct LydraCOpenPBRData {
  */
 LusdResult lydra_c_extract_openpbr(LusdLayer layer, LusdPrim material_prim,
                                     LydraCOpenPBRData* out);
+
+/* ================================================================
+ * Asset path resolution utility
+ * ================================================================ */
+
+/*
+ * Join base_dir and asset_path into out_buf.
+ * If asset_path is absolute, copies as-is.
+ * Otherwise: base_dir + "/" + asset_path (with "./" and "\" normalization).
+ * Returns out_buf on success, NULL if buffer too small.
+ */
+const char* lydra_c_resolve_asset_path(const char* base_dir,
+                                        const char* asset_path,
+                                        char* out_buf, uint32_t buf_size);
 
 #ifdef __cplusplus
 }

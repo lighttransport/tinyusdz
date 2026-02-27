@@ -1163,6 +1163,79 @@ const char* lusd__find_relationship_target(const LusdLayer_T* L,
 }
 
 /* ====================================================================
+ * lusd__find_connection_target — find a CONNECTION spec for a prim
+ * attribute and return its first target path.
+ * Used for shader input connections (e.g. inputs:diffuseColor.connect).
+ * ==================================================================== */
+
+const char* lusd__find_connection_target(const LusdLayer_T* L,
+                                          const LusdPrim_T* prim,
+                                          const char* attr_name) {
+    if (!L || !prim || !attr_name) return NULL;
+
+    /* USDA: connection stored as field "inputs:X.connect" in prim fieldset */
+    if (L->format == LUSD_FORMAT_USDA) {
+        LusdValueRep r = find_field_in_fieldset(L, prim->fieldset_index, attr_name);
+        if (!lusd_vrep_is_null(r)) {
+            const char* tok = layer_find_token(L, r);
+            return tok;
+        }
+        return NULL;
+    }
+
+    /* USDC: connections are stored as a "connectionPaths" field on the
+     * ATTRIBUTE spec for the input. The attribute spec path is
+     * "<prim_path>.<input_name>" (without ".connect" suffix).
+     * The attr_name passed in has ".connect" suffix — strip it. */
+    const char* prim_path = NULL;
+    if (prim->spec_index < L->spec_count) {
+        uint32_t pi = L->specs[prim->spec_index].path_index;
+        if (pi < L->path_count) prim_path = L->paths[pi];
+    }
+    if (!prim_path) return NULL;
+
+    /* Strip ".connect" suffix from attr_name to get the input name */
+    char input_name[128];
+    {
+        size_t alen = strlen(attr_name);
+        const char* suffix = ".connect";
+        size_t slen = strlen(suffix);
+        if (alen > slen && strcmp(attr_name + alen - slen, suffix) == 0) {
+            memcpy(input_name, attr_name, alen - slen);
+            input_name[alen - slen] = '\0';
+        } else {
+            if (alen >= sizeof(input_name)) return NULL;
+            memcpy(input_name, attr_name, alen + 1);
+        }
+    }
+
+    size_t prim_path_len = strlen(prim_path);
+
+    for (uint32_t si = 0; si < L->spec_count; si++) {
+        const LusdSpecEntry* se = &L->specs[si];
+        if (se->spec_type != LUSD_SPEC_TYPE_ATTRIBUTE) continue;
+        if (se->path_index >= L->path_count) continue;
+
+        const char* sp = L->paths[se->path_index];
+        if (!sp) continue;
+
+        /* Match "<prim_path>.<input_name>" */
+        if (strncmp(sp, prim_path, prim_path_len) != 0) continue;
+        if (sp[prim_path_len] != '.') continue;
+        if (strcmp(sp + prim_path_len + 1, input_name) != 0) continue;
+
+        /* Found — get "connectionPaths" field from this spec's fieldset */
+        LusdValueRep r = find_field_in_fieldset(L, se->fieldset_index, "connectionPaths");
+        if (!lusd_vrep_is_null(r))
+            return lusd__resolve_path_target(L, r);
+
+        break;
+    }
+
+    return NULL;
+}
+
+/* ====================================================================
  * PrimSpec tree construction (lusd__layer_build_prims)
  * ==================================================================== */
 
