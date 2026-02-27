@@ -12,6 +12,7 @@
  */
 #include "lightusd/lusd_prim.h"
 #include "internal/lusd_internal.h"
+#include "internal/lusd_layer_internal.h"
 #include "internal/lusd_write_internal.h"
 #include <stdlib.h>
 #include <string.h>
@@ -69,7 +70,9 @@ const char* lusdPrimGetTypeName(LusdPrim prim) {
         const char* tn = lusd_to_write_prim(prim)->type_name;
         return tn ? tn : "";
     }
-    return "";
+    /* Read prim: LusdPrim_T* — second field is type_name */
+    const LusdPrim_T* P = (const LusdPrim_T*)prim;
+    return P->type_name ? P->type_name : "";
 }
 
 LusdResult lusdPrimGetPath(LusdPrim prim, LusdPath* pPath) {

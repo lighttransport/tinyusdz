@@ -164,6 +164,36 @@ if(LUSD_BUILD_EXAMPLES)
 endif()
 
 # ============================================================================
+# Lydra-C — Pure C11 mesh/scene extraction (no C++ dependencies)
+# ============================================================================
+
+set(LYDRA_C_SOURCES
+  lydra/lydra-c/lydra_c_mesh.c
+  lydra/lydra-c/lydra_c_transform.c
+  lydra/lydra-c/lydra_c_scene.c
+)
+
+add_library(lydra-c STATIC ${LYDRA_C_SOURCES})
+target_include_directories(lydra-c
+  PUBLIC  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/lydra/lydra-c>
+  PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src
+          ${CMAKE_CURRENT_SOURCE_DIR}/include
+)
+set_target_properties(lydra-c PROPERTIES
+  C_STANDARD 11
+  C_STANDARD_REQUIRED ON
+  C_EXTENSIONS OFF
+)
+if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
+  target_compile_options(lydra-c PRIVATE -Wall -Wextra -Wpedantic -Wno-unused-parameter)
+elseif(MSVC)
+  target_compile_options(lydra-c PRIVATE /W4)
+endif()
+if(UNIX)
+  target_link_libraries(lydra-c PRIVATE m)
+endif()
+
+# ============================================================================
 # Lydra — Minimal OpenGL/Vulkan-friendly data conversion utilities
 # ============================================================================
 

@@ -253,6 +253,52 @@ static LusdResult decode_compressed_ints(ByteStream* s, uint32_t* out,
     return LUSD_SUCCESS;
 }
 
+/*
+ * lusd__decode_compressed_int_array — public helper for Lydra.
+ * Reads a USDC compressed int array at `offset` in `data`:
+ *   [uint64_t numElements] [uint64_t compSize] [LZ4(IntegerCompression)]
+ * Returns 0 on success, -1 on failure.  Caller must free *out_data.
+ */
+int lusd__decode_compressed_int_array(const uint8_t* data, uint64_t data_size,
+                                       uint64_t offset,
+                                       int32_t** out_data, uint64_t* out_count) {
+    *out_data = NULL; *out_count = 0;
+    if (offset + 8 > data_size) return -1;
+
+    uint64_t numElements;
+    memcpy(&numElements, data + offset, 8);
+    offset += 8;
+    if (numElements == 0) return 0;
+
+    if (offset + 8 > data_size) return -1;
+    uint64_t compSize;
+    memcpy(&compSize, data + offset, 8);
+    offset += 8;
+
+    if (compSize == 0 || offset + compSize > data_size) return -1;
+
+    /* LZ4 decompress into working buffer */
+    uint64_t wsz = usdc_int_working_size((uint32_t)numElements);
+    uint8_t* work = (uint8_t*)malloc((size_t)wsz);
+    if (!work) return -1;
+
+    uint64_t actual = lusd__lz4_decompress(data + offset, compSize, work, wsz);
+    if (actual == 0) { free(work); return -1; }
+
+    /* Integer decode */
+    int32_t* result = (int32_t*)malloc((size_t)numElements * sizeof(int32_t));
+    if (!result) { free(work); return -1; }
+
+    if (!decode_int_buf(work, actual, (uint32_t*)result, (uint32_t)numElements)) {
+        free(work); free(result); return -1;
+    }
+    free(work);
+
+    *out_data = result;
+    *out_count = numElements;
+    return 0;
+}
+
 /* ====================================================================
  * Section lookup helpers
  * ==================================================================== */
@@ -687,35 +733,30 @@ cleanup_paths:
  * Layer metadata extraction helpers
  * ==================================================================== */
 
-/* Get a token string from an inlined token ValueRep */
+/* Get a token string from a token ValueRep (inlined or non-inlined) */
 static const char* layer_find_token(const LusdLayer_T* L, LusdValueRep rep) {
-    if (!lusd_vrep_is_inlined(rep)) return NULL;
-    uint64_t payload = lusd_vrep_payload(rep);
-    if (payload >= L->token_count) return NULL;
-    return L->tokens[(uint32_t)payload];
+    uint32_t token_idx;
+    if (lusd_vrep_is_inlined(rep)) {
+        token_idx = (uint32_t)lusd_vrep_payload(rep);
+    } else {
+        uint64_t offset = lusd_vrep_payload(rep);
+        if (offset + 4 > L->file_size) return NULL;
+        memcpy(&token_idx, L->file_data + offset, sizeof(uint32_t));
+    }
+    if (token_idx >= L->token_count) return NULL;
+    return L->tokens[token_idx];
 }
 
-/* Extract a double from an inlined double ValueRep */
+/* Extract a double from a double ValueRep (inlined or non-inlined) */
 static bool layer_vrep_double(const LusdLayer_T* L, LusdValueRep rep, double* out) {
-    (void)L;
-    if (!lusd_vrep_is_inlined(rep)) return false;
-    /* Inlined double: payload bits 47-0 hold the low 48 bits of the double.
-     * For full doubles, tinyusdz stores them inline if they fit;
-     * the payload IS the double reinterpreted as uint64_t with upper 16 bits cleared.
-     * We reconstruct by shifting the payload back. */
-    uint64_t pay = lusd_vrep_payload(rep);
-    /* The actual double is stored as the raw uint64 with upper type+flag bits removed */
-    /* upper 16 bits of the original uint64 are type/flags; payload is lower 48 bits.
-     * For a double, the full 64-bit representation is reconstructed differently.
-     * tinyusdz inlines doubles by storing the bit pattern directly in the 48-bit payload
-     * only for special values (0, 1, etc.).  For the general case the payload IS the
-     * file offset, not an inlined value.  We handle only the most common cases here. */
-    double d;
-    /* Attempt: treat lower 48 bits of the stored 64-bit data as the double payload.
-     * Many USD writers store the raw bits with the upper 16 bits zeroed. */
-    uint64_t raw = pay; /* 48-bit payload */
-    memcpy(&d, &raw, sizeof(d)); /* safe-reinterpret */
-    *out = d;
+    if (lusd_vrep_is_inlined(rep)) {
+        uint64_t pay = lusd_vrep_payload(rep);
+        memcpy(out, &pay, sizeof(double));
+        return true;
+    }
+    uint64_t offset = lusd_vrep_payload(rep);
+    if (offset + 8 > L->file_size) return false;
+    memcpy(out, L->file_data + offset, sizeof(double));
     return true;
 }
 
@@ -937,7 +978,54 @@ LusdValueRep lusd__layer_find_field(const LusdLayer_T* layer,
                                      const LusdPrim_T*  prim,
                                      const char*        name) {
     if (!layer || !prim || !name) return LUSD_NULL_VREP;
-    return find_field_in_fieldset(layer, prim->fieldset_index, name);
+
+    /* First try: look for the field directly in the prim's fieldset.
+     * This works for USDA (where attributes are stored as fields) and
+     * for prim-level fields like "typeName", "specifier", etc. */
+    LusdValueRep r = find_field_in_fieldset(layer, prim->fieldset_index, name);
+    if (!lusd_vrep_is_null(r)) return r;
+
+    /* For USDC: attributes like "points" are stored as separate ATTRIBUTE
+     * specs with path "<prim_path>.<attr_name>".  Find the attribute spec
+     * and return its "default" field's ValueRep. */
+    if (layer->format != LUSD_FORMAT_USDC) return LUSD_NULL_VREP;
+
+    const char* prim_path = NULL;
+    if (prim->spec_index < layer->spec_count) {
+        uint32_t pi = layer->specs[prim->spec_index].path_index;
+        if (pi < layer->path_count) prim_path = layer->paths[pi];
+    }
+    if (!prim_path) return LUSD_NULL_VREP;
+
+    size_t prim_path_len = strlen(prim_path);
+    size_t name_len = strlen(name);
+
+    /* Search specs for an ATTRIBUTE spec whose path == "<prim_path>.<name>" */
+    for (uint32_t si = 0; si < layer->spec_count; si++) {
+        const LusdSpecEntry* se = &layer->specs[si];
+        if (se->spec_type != LUSD_SPEC_TYPE_ATTRIBUTE) continue;
+        if (se->path_index >= layer->path_count) continue;
+
+        const char* sp = layer->paths[se->path_index];
+        if (!sp) continue;
+
+        /* Check for "<prim_path>.<name>" match */
+        if (strncmp(sp, prim_path, prim_path_len) != 0) continue;
+        if (sp[prim_path_len] != '.') continue;
+        if (strcmp(sp + prim_path_len + 1, name) != 0) continue;
+
+        /* Found matching attribute spec — return its "default" field value */
+        r = find_field_in_fieldset(layer, se->fieldset_index, "default");
+        if (!lusd_vrep_is_null(r)) return r;
+
+        /* Also try "timeSamples" for animated attributes */
+        r = find_field_in_fieldset(layer, se->fieldset_index, "timeSamples");
+        if (!lusd_vrep_is_null(r)) return r;
+
+        break;
+    }
+
+    return LUSD_NULL_VREP;
 }
 
 /* ====================================================================
