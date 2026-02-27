@@ -342,6 +342,230 @@ static int materialize_int_array(const LusdLayer_T* L, LusdValueRep rep,
 }
 
 /* ================================================================
+ * Scalar value materialization (for UsdPreviewSurface attrs)
+ * ================================================================ */
+
+static int materialize_float(const LusdLayer_T* L, LusdValueRep rep, float* out) {
+    if (!L || rep.data == 0) return -1;
+    int type_id = lusd_vrep_type(rep);
+
+    if (lusd_vrep_is_inlined(rep)) {
+        if (type_id == LUSD_CRATE_FLOAT) {
+            uint32_t bits = (uint32_t)(rep.data & LUSD_VREP_PAYLOAD_MASK);
+            memcpy(out, &bits, sizeof(float));
+            return 0;
+        }
+        if (type_id == LUSD_CRATE_DOUBLE) {
+            uint64_t bits = rep.data & LUSD_VREP_PAYLOAD_MASK;
+            double d;
+            memcpy(&d, &bits, sizeof(double));
+            *out = (float)d;
+            return 0;
+        }
+        if (type_id == LUSD_CRATE_INT) {
+            int32_t iv = (int32_t)(rep.data & LUSD_VREP_PAYLOAD_MASK);
+            *out = (float)iv;
+            return 0;
+        }
+        return -1;
+    }
+
+    /* Non-inlined: read from file offset */
+    uint64_t offset = rep.data & LUSD_VREP_PAYLOAD_MASK;
+
+    if (is_usda_layer(L)) {
+        /* USDA: parse text at offset */
+        if (offset >= L->file_size) return -1;
+        const char* p = (const char*)L->file_data + offset;
+        char* endp;
+        *out = strtof(p, &endp);
+        return (endp != p) ? 0 : -1;
+    }
+
+    if (type_id == LUSD_CRATE_FLOAT) {
+        if (offset + 4 > L->file_size) return -1;
+        memcpy(out, L->file_data + offset, sizeof(float));
+        return 0;
+    }
+    if (type_id == LUSD_CRATE_DOUBLE) {
+        if (offset + 8 > L->file_size) return -1;
+        double d;
+        memcpy(&d, L->file_data + offset, sizeof(double));
+        *out = (float)d;
+        return 0;
+    }
+    return -1;
+}
+
+static int materialize_float3(const LusdLayer_T* L, LusdValueRep rep, float out[3]) {
+    if (!L || rep.data == 0) return -1;
+
+    /* float3 is never inlined (12 bytes > 6 byte payload) */
+    if (lusd_vrep_is_inlined(rep)) return -1;
+
+    uint64_t offset = rep.data & LUSD_VREP_PAYLOAD_MASK;
+
+    if (is_usda_layer(L)) {
+        /* USDA: parse (x, y, z) text at offset */
+        if (offset >= L->file_size) return -1;
+        const char* p = (const char*)L->file_data + offset;
+        const char* end = (const char*)L->file_data + L->file_size;
+        while (p < end && (*p == ' ' || *p == '\t' || *p == '(')) p++;
+        for (int i = 0; i < 3; i++) {
+            while (p < end && (*p == ' ' || *p == '\t' || *p == ',')) p++;
+            char* endp;
+            out[i] = strtof(p, &endp);
+            if (endp == p) return -1;
+            p = endp;
+        }
+        return 0;
+    }
+
+    int type_id = lusd_vrep_type(rep);
+    if (type_id == LUSD_CRATE_VEC3F || type_id == LUSD_CRATE_FLOAT) {
+        if (offset + 12 > L->file_size) return -1;
+        memcpy(out, L->file_data + offset, 12);
+        return 0;
+    }
+    if (type_id == LUSD_CRATE_VEC3D) {
+        if (offset + 24 > L->file_size) return -1;
+        double d[3];
+        memcpy(d, L->file_data + offset, 24);
+        out[0] = (float)d[0]; out[1] = (float)d[1]; out[2] = (float)d[2];
+        return 0;
+    }
+    return -1;
+}
+
+static const char* materialize_token(const LusdLayer_T* L, LusdValueRep rep) {
+    if (!L || rep.data == 0) return NULL;
+    if (lusd_vrep_is_inlined(rep)) {
+        uint32_t ti = (uint32_t)(rep.data & LUSD_VREP_PAYLOAD_MASK);
+        if (ti < L->token_count) return L->tokens[ti];
+        return NULL;
+    }
+    /* Non-inlined token: read token index from file */
+    uint64_t offset = rep.data & LUSD_VREP_PAYLOAD_MASK;
+
+    if (is_usda_layer(L)) {
+        /* For USDA, non-inlined tokens aren't common, but handle gracefully */
+        return NULL;
+    }
+
+    if (offset + 4 > L->file_size) return NULL;
+    uint32_t ti;
+    memcpy(&ti, L->file_data + offset, sizeof(uint32_t));
+    if (ti < L->token_count) return L->tokens[ti];
+    return NULL;
+}
+
+/* ================================================================
+ * material:binding resolution
+ * ================================================================ */
+
+/* Forward declaration (implemented in lusd_usdc_reader.c) */
+extern const char* lusd__find_relationship_target(const LusdLayer_T* layer,
+                                                   const LusdPrim_T* prim,
+                                                   const char* rel_name);
+
+const char* lydra_c_resolve_material_binding(LusdLayer layer, LusdPrim prim) {
+    if (!layer || !prim) return NULL;
+    const LusdLayer_T* L = (const LusdLayer_T*)layer;
+    const LusdPrim_T*  P = (const LusdPrim_T*)prim;
+
+    return lusd__find_relationship_target(L, P, "material:binding");
+}
+
+/* ================================================================
+ * UsdPreviewSurface extraction
+ * ================================================================ */
+
+static void init_material_defaults(LydraCMaterialData* m) {
+    m->diffuse_color[0] = 0.18f; m->diffuse_color[1] = 0.18f; m->diffuse_color[2] = 0.18f;
+    m->metallic = 0.0f;
+    m->roughness = 0.5f;
+    m->ior = 1.5f;
+    m->opacity = 1.0f;
+    m->specular_color[0] = 0.0f; m->specular_color[1] = 0.0f; m->specular_color[2] = 0.0f;
+    m->clearcoat = 0.0f;
+    m->clearcoat_roughness = 0.01f;
+    m->emissive_color[0] = 0.0f; m->emissive_color[1] = 0.0f; m->emissive_color[2] = 0.0f;
+}
+
+/* Find a descendant prim by type (recursive DFS) */
+static const LusdPrim_T* find_descendant_by_type(const LusdLayer_T* L,
+                                                   const LusdPrim_T* parent,
+                                                   const char* type_name) {
+    for (uint32_t i = 0; i < parent->child_count; i++) {
+        uint32_t idx = parent->child_spec_indices[i];
+        if (idx >= L->prim_node_count) continue;
+        const LusdPrim_T* child = &L->prim_nodes[idx];
+        if (child->type_name && strcmp(child->type_name, type_name) == 0)
+            return child;
+        /* Recurse into children (e.g. Material → Scope → Shader) */
+        const LusdPrim_T* found = find_descendant_by_type(L, child, type_name);
+        if (found) return found;
+    }
+    return NULL;
+}
+
+/* Try to read a shader attribute: first as scalar, then as "inputs:name" */
+static void read_shader_float(const LusdLayer_T* L, const LusdPrim_T* shader,
+                               const char* name, float* out) {
+    LusdValueRep rep = find_field(L, shader, name);
+    if (!lusd_vrep_is_null(rep)) materialize_float(L, rep, out);
+}
+
+static void read_shader_float3(const LusdLayer_T* L, const LusdPrim_T* shader,
+                                const char* name, float out[3]) {
+    LusdValueRep rep = find_field(L, shader, name);
+    if (!lusd_vrep_is_null(rep)) materialize_float3(L, rep, out);
+}
+
+LusdResult lydra_c_extract_material(LusdLayer layer, LusdPrim material_prim,
+                                     LydraCMaterialData* out) {
+    if (!layer || !material_prim || !out)
+        return LUSD_ERROR_INVALID_HANDLE;
+
+    const LusdLayer_T* L = (const LusdLayer_T*)layer;
+    const LusdPrim_T*  P = (const LusdPrim_T*)material_prim;
+
+    init_material_defaults(out);
+
+    /* Find Shader descendant prim (may be nested under Scope etc.) */
+    const LusdPrim_T* shader = find_descendant_by_type(L, P, "Shader");
+    if (!shader) {
+        /* No Shader child — return defaults (still success, just default mat) */
+        return LUSD_SUCCESS;
+    }
+
+    /* Check info:id == "UsdPreviewSurface" */
+    {
+        LusdValueRep id_rep = find_field(L, shader, "info:id");
+        if (!lusd_vrep_is_null(id_rep)) {
+            const char* shader_id = materialize_token(L, id_rep);
+            if (!shader_id || strcmp(shader_id, "UsdPreviewSurface") != 0) {
+                /* Not UsdPreviewSurface — return defaults */
+                return LUSD_SUCCESS;
+            }
+        }
+    }
+
+    /* Read UsdPreviewSurface inputs */
+    read_shader_float3(L, shader, "inputs:diffuseColor", out->diffuse_color);
+    read_shader_float(L, shader, "inputs:metallic", &out->metallic);
+    read_shader_float(L, shader, "inputs:roughness", &out->roughness);
+    read_shader_float(L, shader, "inputs:ior", &out->ior);
+    read_shader_float(L, shader, "inputs:opacity", &out->opacity);
+    read_shader_float3(L, shader, "inputs:specularColor", out->specular_color);
+    read_shader_float(L, shader, "inputs:clearcoat", &out->clearcoat);
+    read_shader_float(L, shader, "inputs:clearcoatRoughness", &out->clearcoat_roughness);
+    read_shader_float3(L, shader, "inputs:emissiveColor", out->emissive_color);
+
+    return LUSD_SUCCESS;
+}
+
+/* ================================================================
  * extract_mesh
  * ================================================================ */
 

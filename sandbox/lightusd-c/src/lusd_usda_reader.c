@@ -818,21 +818,63 @@ static bool parse_attribute(UsdaP* p, ParseCtx* ctx,
         kw = type_kw;
     }
 
-    /* Handle relationships — skip silently */
+    /* Handle relationships */
     if (strcmp(kw, "rel") == 0) {
-        /* rel attrname [= ...] */
+        /* rel attrname [= <target_path>] [(metadata)] */
         usda_skip_ws(p);
         char rbuf[256]; usda_read_ident(p, rbuf, sizeof(rbuf));
+
+        /* Also read colon-separated parts (e.g. "material:binding") */
+        while (!usda_at_end(p) && usda_peek(p) == ':') {
+            size_t len = strlen(rbuf);
+            if (len + 1 < sizeof(rbuf)) { rbuf[len] = ':'; rbuf[len+1] = '\0'; }
+            usda_next(p); /* consume ':' */
+            char tmp_id[128];
+            usda_read_ident(p, tmp_id, sizeof(tmp_id));
+            size_t tlen = strlen(tmp_id);
+            len = strlen(rbuf);
+            if (len + tlen < sizeof(rbuf)) {
+                memcpy(rbuf + len, tmp_id, tlen + 1);
+            }
+        }
+
         usda_skip_ws(p);
         if (usda_peek(p) == '=') {
             usda_next(p);
-            usda_skip_value(p);
+            usda_skip_ws(p);
+
+            /* Try to parse <path> target for material:binding */
+            if (usda_peek(p) == '<') {
+                usda_next(p); /* consume '<' */
+                char path_buf[512];
+                size_t pi = 0;
+                while (!usda_at_end(p) && usda_peek(p) != '>') {
+                    if (pi + 1 < sizeof(path_buf))
+                        path_buf[pi++] = usda_next(p);
+                    else
+                        usda_next(p);
+                }
+                path_buf[pi] = '\0';
+                if (!usda_at_end(p)) usda_next(p); /* consume '>' */
+
+                /* Store as a token field named after the relationship */
+                if (pi > 0) {
+                    uint32_t rel_tok = intern_cstr(ctx, rbuf);
+                    uint32_t path_tok = intern_cstr(ctx, path_buf);
+                    if (rel_tok != TOKENSET_EMPTY && path_tok != TOKENSET_EMPTY) {
+                        LusdValueRep vrep = make_vrep_inlined(LUSD_CRATE_TOKEN, path_tok);
+                        emit_field(ctx, rel_tok, vrep);
+                    }
+                }
+            } else {
+                usda_skip_value(p);
+            }
         }
         if (usda_peek(p) == '(') {
             usda_next(p);
             usda_skip_balanced(p, '(', ')');
         }
-        return true; /* silently skip */
+        return true;
     }
 
     /* Check for [] suffix on type keyword */

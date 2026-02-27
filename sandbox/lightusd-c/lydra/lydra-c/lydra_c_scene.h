@@ -29,6 +29,33 @@ typedef struct LydraCMeshData {
     uint32_t  uv_count;
 } LydraCMeshData;
 
+typedef struct LydraCMaterialData {
+    float diffuse_color[3];      /* default (0.18, 0.18, 0.18) */
+    float metallic;              /* default 0.0 */
+    float roughness;             /* default 0.5 */
+    float ior;                   /* default 1.5 */
+    float opacity;               /* default 1.0 */
+    float specular_color[3];     /* default (0,0,0) */
+    float clearcoat;             /* default 0.0 */
+    float clearcoat_roughness;   /* default 0.01 */
+    float emissive_color[3];     /* default (0,0,0) */
+} LydraCMaterialData;
+
+/*
+ * Extract UsdPreviewSurface material data from a Material prim.
+ * Walks children to find Shader with info:id == "UsdPreviewSurface".
+ * On success, *out is filled with material properties.
+ */
+LusdResult lydra_c_extract_material(LusdLayer layer, LusdPrim material_prim,
+                                     LydraCMaterialData* out);
+
+/*
+ * Resolve material:binding relationship on a prim.
+ * Returns the target path string (e.g. "/Root/Material") or NULL if none.
+ * The returned pointer is valid for the lifetime of the layer.
+ */
+const char* lydra_c_resolve_material_binding(LusdLayer layer, LusdPrim prim);
+
 /*
  * Extract mesh data from a Mesh prim.
  * On success, all non-NULL pointer fields in *out are malloc'd; caller

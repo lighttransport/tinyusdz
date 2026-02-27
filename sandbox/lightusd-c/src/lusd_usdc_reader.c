@@ -1029,6 +1029,140 @@ LusdValueRep lusd__layer_find_field(const LusdLayer_T* layer,
 }
 
 /* ====================================================================
+ * lusd__resolve_path_target — decode PathListOp / PathVector ValueRep
+ *
+ * PathListOp binary layout at file offset:
+ *   [1 byte: ListOp header flags]
+ *   For each set bit (explicit=0x02, added=0x04, prepended=0x08, ...):
+ *     [uint64_t count] [uint32_t path_indices[count]]
+ *
+ * Most material:binding uses explicit list (flag bit 1) with 1 path.
+ * ==================================================================== */
+
+const char* lusd__resolve_path_target(const LusdLayer_T* L, LusdValueRep rep) {
+    if (!L || lusd_vrep_is_null(rep)) return NULL;
+
+    int type_id = lusd_vrep_type(rep);
+    uint64_t offset = lusd_vrep_payload(rep);
+
+    if (type_id == LUSD_CRATE_PATH_LIST_OP) {
+        /* PathListOp: starts with 1-byte header flags */
+        if (lusd_vrep_is_inlined(rep)) return NULL;
+        if (offset + 1 > L->file_size) return NULL;
+
+        uint8_t flags = L->file_data[offset];
+        offset += 1;
+
+        /* Iterate through flag bits to find the first non-empty list.
+         * Bit 0 = IsExplicit (presence flag, no data)
+         * Bit 1 = explicit items list
+         * Bit 2 = added items
+         * Bit 3 = prepended items
+         * Bit 4 = deleted items
+         * Bit 5 = ordered items (append)
+         */
+        for (int bit = 1; bit <= 5; bit++) {
+            if (!(flags & (1u << bit))) continue;
+
+            if (offset + 8 > L->file_size) return NULL;
+            uint64_t count;
+            memcpy(&count, L->file_data + offset, 8);
+            offset += 8;
+
+            if (count == 0) continue;
+
+            /* Read first path index */
+            if (offset + 4 > L->file_size) return NULL;
+            uint32_t path_idx;
+            memcpy(&path_idx, L->file_data + offset, 4);
+            offset += (uint64_t)count * 4; /* skip rest */
+
+            if (path_idx < L->path_count && L->paths[path_idx])
+                return L->paths[path_idx];
+        }
+        return NULL;
+    }
+
+    if (type_id == LUSD_CRATE_PATH_VECTOR) {
+        /* PathVector: [uint64_t count][uint32_t indices[count]] */
+        if (lusd_vrep_is_inlined(rep)) return NULL;
+        if (offset + 8 > L->file_size) return NULL;
+
+        uint64_t count;
+        memcpy(&count, L->file_data + offset, 8);
+        offset += 8;
+        if (count == 0) return NULL;
+
+        if (offset + 4 > L->file_size) return NULL;
+        uint32_t path_idx;
+        memcpy(&path_idx, L->file_data + offset, 4);
+
+        if (path_idx < L->path_count && L->paths[path_idx])
+            return L->paths[path_idx];
+        return NULL;
+    }
+
+    return NULL;
+}
+
+/* ====================================================================
+ * lusd__find_relationship_target — find a RELATIONSHIP spec for a prim
+ * and return its first target path.
+ * ==================================================================== */
+
+const char* lusd__find_relationship_target(const LusdLayer_T* L,
+                                            const LusdPrim_T* prim,
+                                            const char* rel_name) {
+    if (!L || !prim || !rel_name) return NULL;
+
+    /* USDA: relationship stored as a field in the prim's fieldset
+     * with the path string as value */
+    if (L->format == LUSD_FORMAT_USDA) {
+        LusdValueRep r = find_field_in_fieldset(L, prim->fieldset_index, rel_name);
+        if (!lusd_vrep_is_null(r)) {
+            /* For USDA, the rel target is stored as a token (path string) */
+            const char* tok = layer_find_token(L, r);
+            return tok;
+        }
+        return NULL;
+    }
+
+    /* USDC: relationships are stored as separate RELATIONSHIP specs
+     * with path "<prim_path>.rel_name" */
+    const char* prim_path = NULL;
+    if (prim->spec_index < L->spec_count) {
+        uint32_t pi = L->specs[prim->spec_index].path_index;
+        if (pi < L->path_count) prim_path = L->paths[pi];
+    }
+    if (!prim_path) return NULL;
+
+    size_t prim_path_len = strlen(prim_path);
+
+    for (uint32_t si = 0; si < L->spec_count; si++) {
+        const LusdSpecEntry* se = &L->specs[si];
+        if (se->spec_type != LUSD_SPEC_TYPE_RELATIONSHIP) continue;
+        if (se->path_index >= L->path_count) continue;
+
+        const char* sp = L->paths[se->path_index];
+        if (!sp) continue;
+
+        /* Match "<prim_path>.<rel_name>" */
+        if (strncmp(sp, prim_path, prim_path_len) != 0) continue;
+        if (sp[prim_path_len] != '.') continue;
+        if (strcmp(sp + prim_path_len + 1, rel_name) != 0) continue;
+
+        /* Found — get "targetPaths" field from this spec's fieldset */
+        LusdValueRep r = find_field_in_fieldset(L, se->fieldset_index, "targetPaths");
+        if (!lusd_vrep_is_null(r))
+            return lusd__resolve_path_target(L, r);
+
+        break;
+    }
+
+    return NULL;
+}
+
+/* ====================================================================
  * PrimSpec tree construction (lusd__layer_build_prims)
  * ==================================================================== */
 

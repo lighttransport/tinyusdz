@@ -219,6 +219,25 @@ LusdValueRep lusd__layer_find_field(const LusdLayer_T* layer,
                                      const LusdPrim_T* prim,
                                      const char* field_name);
 
+/*
+ * lusd__resolve_path_target - Decode a PathListOp ValueRep and return
+ * the first target path string.  Used for material:binding relationships.
+ * Returns NULL if the ValueRep is not a PathListOp or has no targets.
+ */
+const char* lusd__resolve_path_target(const LusdLayer_T* layer,
+                                       LusdValueRep rep);
+
+/*
+ * lusd__find_relationship_target - Find a RELATIONSHIP spec for the given
+ * prim and relationship name, and return its first target path.
+ * E.g. lusd__find_relationship_target(L, P, "material:binding") returns
+ * "/Root/Material" if the prim has that binding.
+ * Returns NULL if not found.
+ */
+const char* lusd__find_relationship_target(const LusdLayer_T* layer,
+                                            const LusdPrim_T* prim,
+                                            const char* rel_name);
+
 LUSD_EXTERN_C_END
 
 #endif /* LUSD_LAYER_INTERNAL_H */
