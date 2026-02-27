@@ -2922,6 +2922,20 @@ class TinyUSDZLoaderNative {
     anim.set("displayName", clip.display_name);
     anim.set("duration", clip.duration);
 
+    // Source type metadata
+    {
+      std::string sourceTypeStr = "Unknown";
+      switch (clip.source_type) {
+        case tinyusdz::tydra::AnimationSourceType::XformOp: sourceTypeStr = "XformOp"; break;
+        case tinyusdz::tydra::AnimationSourceType::SkelAnimation: sourceTypeStr = "SkelAnimation"; break;
+        case tinyusdz::tydra::AnimationSourceType::BlendShape: sourceTypeStr = "BlendShape"; break;
+        default: break;
+      }
+      anim.set("sourceType", sourceTypeStr);
+      anim.set("numAnimatedJoints", clip.num_animated_joints);
+      anim.set("numAnimatedNodes", clip.num_animated_nodes);
+    }
+
     // Convert samplers to Three.js KeyframeTrack format
     emscripten::val tracks = emscripten::val::array();
 
@@ -3114,6 +3128,20 @@ class TinyUSDZLoaderNative {
       }
     }
     info.set("numTargetNodes", int(targetNodes.size()));
+
+    // Source type metadata
+    {
+      std::string sourceTypeStr = "Unknown";
+      switch (clip.source_type) {
+        case tinyusdz::tydra::AnimationSourceType::XformOp: sourceTypeStr = "XformOp"; break;
+        case tinyusdz::tydra::AnimationSourceType::SkelAnimation: sourceTypeStr = "SkelAnimation"; break;
+        case tinyusdz::tydra::AnimationSourceType::BlendShape: sourceTypeStr = "BlendShape"; break;
+        default: break;
+      }
+      info.set("sourceType", sourceTypeStr);
+      info.set("numAnimatedJoints", clip.num_animated_joints);
+      info.set("numAnimatedNodes", clip.num_animated_nodes);
+    }
 
     return info;
   }
