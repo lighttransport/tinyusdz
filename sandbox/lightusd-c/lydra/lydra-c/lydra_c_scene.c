@@ -750,7 +750,8 @@ LusdResult lydra_c_extract_openpbr(LusdLayer layer, LusdPrim material_prim,
                     const char* sid = materialize_token(L, id_rep);
                     if (sid && (strcmp(sid, "UsdPreviewSurface") == 0 ||
                                 strcmp(sid, "OpenPBR_Surface") == 0 ||
-                                strcmp(sid, "OpenPBRSurface") == 0)) {
+                                strcmp(sid, "OpenPBRSurface") == 0 ||
+                                strcmp(sid, "ND_standard_surface_surfaceshader") == 0)) {
                         shader = node;
                         shader_id = sid;
                     }
@@ -768,9 +769,21 @@ LusdResult lydra_c_extract_openpbr(LusdLayer layer, LusdPrim material_prim,
         return LUSD_SUCCESS;
 
     if (strcmp(shader_id, "OpenPBR_Surface") == 0 ||
-        strcmp(shader_id, "OpenPBRSurface") == 0) {
+        strcmp(shader_id, "OpenPBRSurface") == 0 ||
+        strcmp(shader_id, "ND_standard_surface_surfaceshader") == 0) {
         out->is_openpbr = 1;
         read_openpbr_inputs(L, shader, out);
+        /* MaterialX standard_surface: base_color is often authored in sRGB.
+         * Apply sRGB->linear unless a texture is connected (handled at sample time). */
+        if (strcmp(shader_id, "ND_standard_surface_surfaceshader") == 0) {
+            for (int ch = 0; ch < 3; ch++) {
+                float c = out->base_color[ch];
+                /* sRGB -> linear (piecewise) */
+                out->base_color[ch] = (c <= 0.04045f)
+                    ? c / 12.92f
+                    : powf((c + 0.055f) / 1.055f, 2.4f);
+            }
+        }
     } else if (strcmp(shader_id, "UsdPreviewSurface") == 0) {
         out->is_openpbr = 0;
         read_usdpreview_as_openpbr(L, shader, out);
