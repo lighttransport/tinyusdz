@@ -1134,16 +1134,90 @@ static bool parse_prim_def(UsdaP* p, ParseCtx* ctx, const char* parent_path) {
         if (!dyn_u32_push(ctx->root_specs, spec_idx)) return false;
     }
 
-    /* Parse body */
+    /* Parse body — two-pass approach to keep the fieldset layout correct.
+     *
+     * Problem: if child prims are parsed inside the body loop, their fields
+     * get appended to the fieldsets array before the parent's sentinel, making
+     * the parent's fieldset inadvertently include child fields (e.g. typeName).
+     *
+     * Solution: defer child prim positions, process all attributes first,
+     * emit the parent sentinel, then recurse into child prims.
+     */
+
+    /* Deferred child prim positions: up to 64 children */
+#define MAX_DEFERRED_CHILDREN 64
+    const char* deferred_pos[MAX_DEFERRED_CHILDREN];
+    uint32_t    deferred_line[MAX_DEFERRED_CHILDREN];
+    uint32_t    deferred_count = 0;
+
+    /* --- Single pass: process attributes inline, defer child prims -- */
     for (;;) {
         usda_skip_ws(p);
-        if (usda_at_end(p)) break;
-        if (usda_peek(p) == '}') { usda_next(p); break; }
-        if (!parse_prim_body_item(p, ctx, full_path)) return false;
+        if (usda_at_end(p) || usda_peek(p) == '}') {
+            if (!usda_at_end(p)) usda_next(p); /* consume '}' */
+            break;
+        }
+        /* Peek at the next keyword */
+        const char* saved_p    = p->p;
+        uint32_t    saved_line = p->line;
+        char kw[16];
+        usda_read_ident(p, kw, sizeof(kw));
+
+        if (strcmp(kw, "def") == 0 || strcmp(kw, "over") == 0 ||
+            strcmp(kw, "class") == 0) {
+            /* Defer child prim — record position BEFORE keyword */
+            if (deferred_count < MAX_DEFERRED_CHILDREN) {
+                deferred_pos[deferred_count]  = saved_p;
+                deferred_line[deferred_count] = saved_line;
+                deferred_count++;
+            }
+            /* Skip the child prim block: find '{' then skip balanced */
+            bool in_str = false, in_asset = false;
+            while (!usda_at_end(p)) {
+                char c = usda_peek(p);
+                if (in_str) {
+                    usda_next(p);
+                    if (c == '"') in_str = false;
+                } else if (in_asset) {
+                    usda_next(p);
+                    if (c == '@') in_asset = false;
+                } else {
+                    if (c == '"') { in_str = true; usda_next(p); }
+                    else if (c == '@') { in_asset = true; usda_next(p); }
+                    else if (c == '(') { usda_next(p); usda_skip_balanced(p, '(', ')'); }
+                    else if (c == '{') {
+                        usda_next(p); /* consume '{' */
+                        usda_skip_balanced(p, '{', '}');
+                        break; /* done skipping this child */
+                    } else usda_next(p);
+                }
+            }
+        } else {
+            /* Attribute: restore pos and parse normally */
+            p->p    = saved_p;
+            p->line = saved_line;
+            if (!parse_prim_body_item(p, ctx, full_path)) return false;
+        }
     }
 
-    /* Append fieldset sentinel */
+    /* Emit parent sentinel — closes this prim's own fieldset */
     if (!dyn_u32_push(ctx->fieldsets, 0xFFFFFFFFu)) return false;
+
+    /* --- Process deferred child prims ----------------------------- */
+    for (uint32_t di = 0; di < deferred_count; di++) {
+        /* Reconstruct a local parser cursor at the saved position */
+        UsdaP cp;
+        cp.p    = deferred_pos[di];
+        cp.end  = p->end;
+        cp.base = p->base;
+        cp.line = deferred_line[di];
+        /* Read the keyword (def/over/class) again and dispatch */
+        char kw2[16];
+        usda_read_ident(&cp, kw2, sizeof(kw2));
+        if (!parse_prim_def(&cp, ctx, full_path)) return false;
+        /* Advance main parser cursor past this child (already skipped above) */
+    }
+#undef MAX_DEFERRED_CHILDREN
 
     return true;
 }

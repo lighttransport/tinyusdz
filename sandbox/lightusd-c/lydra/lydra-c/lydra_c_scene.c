@@ -940,19 +940,55 @@ LusdResult lydra_c_extract_mesh(LusdLayer layer, LusdPrim prim,
         out->fvi_count = (uint32_t)count;
     }
 
-    /* normals (optional) */
+    /* normals (optional) — also check primvars:normals and handle indices */
     {
-        LusdValueRep rep = find_field(L, P, "normals");
-        if (rep.data != 0) {
-            float* data = NULL; uint64_t count = 0;
-            if (materialize_float3_array(L, rep, &data, &count) == 0) {
-                out->normals = data;
-                out->normal_count = (uint32_t)count;
+        static const char* const nrm_names[] = {
+            "normals", "primvars:normals", NULL
+        };
+        for (int ni = 0; nrm_names[ni] && !out->normals; ni++) {
+            LusdValueRep rep = find_field(L, P, nrm_names[ni]);
+            if (lusd_vrep_is_null(rep)) continue;
+            float* nrm_data = NULL; uint64_t nrm_cnt = 0;
+            if (materialize_float3_array(L, rep, &nrm_data, &nrm_cnt) != 0) continue;
+
+            /* Check for index array */
+            char idx_name[128];
+            snprintf(idx_name, sizeof(idx_name), "%s:indices", nrm_names[ni]);
+            LusdValueRep idx_rep = find_field(L, P, idx_name);
+            if (!lusd_vrep_is_null(idx_rep)) {
+                int32_t* indices = NULL; uint64_t idx_cnt = 0;
+                if (materialize_int_array(L, idx_rep, &indices, &idx_cnt) == 0 &&
+                    idx_cnt > 0) {
+                    float* expanded = (float*)malloc(idx_cnt * 3 * sizeof(float));
+                    if (expanded) {
+                        for (uint64_t ii = 0; ii < idx_cnt; ii++) {
+                            int32_t idx = indices[ii];
+                            if (idx >= 0 && (uint64_t)idx < nrm_cnt) {
+                                expanded[ii*3+0] = nrm_data[idx*3+0];
+                                expanded[ii*3+1] = nrm_data[idx*3+1];
+                                expanded[ii*3+2] = nrm_data[idx*3+2];
+                            } else {
+                                expanded[ii*3+0] = 0.0f;
+                                expanded[ii*3+1] = 1.0f;
+                                expanded[ii*3+2] = 0.0f;
+                            }
+                        }
+                        free(nrm_data);
+                        free(indices);
+                        out->normals = expanded;
+                        out->normal_count = (uint32_t)idx_cnt;
+                        continue;
+                    }
+                }
+                free(indices);
             }
+            out->normals = nrm_data;
+            out->normal_count = (uint32_t)nrm_cnt;
         }
     }
 
-    /* UV primvars — try several common names in priority order */
+    /* UV primvars — try several common names in priority order.
+     * Also handle indexed primvars (primvars:X:indices array). */
     {
         static const char* const uv_names[] = {
             "primvars:st", "primvars:UVMap", "primvars:uv",
@@ -960,13 +996,43 @@ LusdResult lydra_c_extract_mesh(LusdLayer layer, LusdPrim prim,
         };
         for (int ui = 0; uv_names[ui] && !out->uvs; ui++) {
             LusdValueRep rep = find_field(L, P, uv_names[ui]);
-            if (rep.data != 0) {
-                float* data = NULL; uint64_t count = 0;
-                if (materialize_float2_array(L, rep, &data, &count) == 0) {
-                    out->uvs = data;
-                    out->uv_count = (uint32_t)count;
+            if (lusd_vrep_is_null(rep)) continue;
+            float* uv_data = NULL; uint64_t uv_cnt = 0;
+            if (materialize_float2_array(L, rep, &uv_data, &uv_cnt) != 0) continue;
+
+            /* Check for index array: primvars:X:indices */
+            char idx_name[128];
+            snprintf(idx_name, sizeof(idx_name), "%s:indices", uv_names[ui]);
+            LusdValueRep idx_rep = find_field(L, P, idx_name);
+            if (!lusd_vrep_is_null(idx_rep)) {
+                int32_t* indices = NULL; uint64_t idx_cnt = 0;
+                if (materialize_int_array(L, idx_rep, &indices, &idx_cnt) == 0 &&
+                    idx_cnt > 0) {
+                    /* Expand indexed UVs: result has idx_cnt UV pairs */
+                    float* expanded = (float*)malloc(idx_cnt * 2 * sizeof(float));
+                    if (expanded) {
+                        for (uint64_t ii = 0; ii < idx_cnt; ii++) {
+                            int32_t idx = indices[ii];
+                            if (idx >= 0 && (uint64_t)idx < uv_cnt) {
+                                expanded[ii*2+0] = uv_data[idx*2+0];
+                                expanded[ii*2+1] = uv_data[idx*2+1];
+                            } else {
+                                expanded[ii*2+0] = 0.0f;
+                                expanded[ii*2+1] = 0.0f;
+                            }
+                        }
+                        free(uv_data);
+                        free(indices);
+                        out->uvs = expanded;
+                        out->uv_count = (uint32_t)idx_cnt;
+                        continue; /* outer for loop: break (uvs is set) */
+                    }
                 }
+                free(indices);
             }
+            /* No index array or expansion failed — use raw UVs as-is */
+            out->uvs = uv_data;
+            out->uv_count = (uint32_t)uv_cnt;
         }
     }
 
