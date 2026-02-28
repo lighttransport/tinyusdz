@@ -631,7 +631,7 @@ static void init_openpbr_defaults(LydraCOpenPBRData* m) {
     m->coat_affect_roughness = 0.0f;
     /* Emission */
     m->emission_luminance = 0.0f;
-    m->emission_color[0] = 1.0f; m->emission_color[1] = 1.0f; m->emission_color[2] = 1.0f;
+    m->emission_color[0] = 0.0f; m->emission_color[1] = 0.0f; m->emission_color[2] = 0.0f;
     /* Geometry */
     m->opacity = 1.0f;
     m->is_openpbr = 0;
@@ -751,7 +751,8 @@ LusdResult lydra_c_extract_openpbr(LusdLayer layer, LusdPrim material_prim,
                     if (sid && (strcmp(sid, "UsdPreviewSurface") == 0 ||
                                 strcmp(sid, "OpenPBR_Surface") == 0 ||
                                 strcmp(sid, "OpenPBRSurface") == 0 ||
-                                strcmp(sid, "ND_standard_surface_surfaceshader") == 0)) {
+                                strcmp(sid, "ND_standard_surface_surfaceshader") == 0 ||
+                                strcmp(sid, "ND_open_pbr_surface_surfaceshader") == 0)) {
                         shader = node;
                         shader_id = sid;
                     }
@@ -770,12 +771,20 @@ LusdResult lydra_c_extract_openpbr(LusdLayer layer, LusdPrim material_prim,
 
     if (strcmp(shader_id, "OpenPBR_Surface") == 0 ||
         strcmp(shader_id, "OpenPBRSurface") == 0 ||
-        strcmp(shader_id, "ND_standard_surface_surfaceshader") == 0) {
+        strcmp(shader_id, "ND_standard_surface_surfaceshader") == 0 ||
+        strcmp(shader_id, "ND_open_pbr_surface_surfaceshader") == 0) {
         out->is_openpbr = 1;
         read_openpbr_inputs(L, shader, out);
         /* MaterialX standard_surface: base_color is often authored in sRGB.
          * Apply sRGB->linear unless a texture is connected (handled at sample time). */
         if (strcmp(shader_id, "ND_standard_surface_surfaceshader") == 0) {
+            /* standard_surface uses 'metalness' not 'base_metalness' */
+            read_shader_float(L, shader, "inputs:metalness", &out->base_metalness);
+            /* standard_surface uses 'emission' (weight) + 'emission_color' */
+            float emission_weight = 0.0f;
+            read_shader_float(L, shader, "inputs:emission", &emission_weight);
+            if (emission_weight > 0.0f && out->emission_luminance <= 0.0f)
+                out->emission_luminance = emission_weight;
             for (int ch = 0; ch < 3; ch++) {
                 float c = out->base_color[ch];
                 /* sRGB -> linear (piecewise) */
@@ -863,16 +872,55 @@ LusdResult lydra_c_extract_openpbr(LusdLayer layer, LusdPrim material_prim,
                         }
                     }
                     if (path_match) {
-                        /* Verify it's a UsdUVTexture shader */
+                        /* Check if it's a UsdUVTexture shader */
+                        int found_file = 0;
                         LusdValueRep tex_id_rep = find_field(L, node, "info:id");
                         if (!lusd_vrep_is_null(tex_id_rep)) {
                             const char* tex_shader_id = materialize_token(L, tex_id_rep);
                             if (tex_shader_id && strcmp(tex_shader_id, "UsdUVTexture") == 0) {
                                 LusdValueRep file_rep = find_field(L, node, "inputs:file");
                                 if (!lusd_vrep_is_null(file_rep)) {
-                                    const char* path = materialize_asset_path(L, file_rep);
-                                    if (path && path[0] != '\0')
-                                        *tex_slots[ti] = path;
+                                    const char* fpath = materialize_asset_path(L, file_rep);
+                                    if (fpath && fpath[0] != '\0') {
+                                        *tex_slots[ti] = fpath;
+                                        found_file = 1;
+                                    }
+                                }
+                            }
+                        }
+                        if (!found_file) {
+                            /* Not a direct UsdUVTexture (e.g. NodeGraph) —
+                             * search descendants for the first UsdUVTexture with inputs:file */
+                            const LusdPrim_T* inner_stack[32];
+                            int isp = 0;
+                            for (uint32_t j = 0; j < node->child_count && isp < 32; j++) {
+                                uint32_t cidx2 = node->child_spec_indices[j];
+                                if (cidx2 < L->prim_node_count)
+                                    inner_stack[isp++] = &L->prim_nodes[cidx2];
+                            }
+                            while (isp > 0 && !found_file) {
+                                const LusdPrim_T* inode = inner_stack[--isp];
+                                LusdValueRep iid = find_field(L, inode, "info:id");
+                                if (!lusd_vrep_is_null(iid)) {
+                                    const char* isid = materialize_token(L, iid);
+                                    if (isid && (strcmp(isid, "UsdUVTexture") == 0 ||
+                                             strncmp(isid, "ND_image_", 9) == 0)) {
+                                        LusdValueRep fr = find_field(L, inode, "inputs:file");
+                                        if (!lusd_vrep_is_null(fr)) {
+                                            const char* fp = materialize_asset_path(L, fr);
+                                            if (fp && fp[0] != '\0') {
+                                                *tex_slots[ti] = fp;
+                                                found_file = 1;
+                                            }
+                                        }
+                                    }
+                                }
+                                if (!found_file) {
+                                    for (uint32_t j = 0; j < inode->child_count && isp < 31; j++) {
+                                        uint32_t cidx2 = inode->child_spec_indices[j];
+                                        if (cidx2 < L->prim_node_count)
+                                            inner_stack[isp++] = &L->prim_nodes[cidx2];
+                                    }
                                 }
                             }
                         }
