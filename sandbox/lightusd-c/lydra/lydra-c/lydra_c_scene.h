@@ -247,6 +247,18 @@ LusdResult lydra_c_extract_openpbr(LusdLayer layer, LusdPrim material_prim,
                                     LydraCOpenPBRData* out);
 
 /* ================================================================
+ * Attribute scalar read utility
+ * ================================================================ */
+
+/*
+ * Read a named float or double attribute from a prim.
+ * Works for both USDA (text) and USDC (binary) layers.
+ * Returns 0 on success, -1 if attribute not found.
+ */
+int lydra_c_read_float_attr(LusdLayer layer, LusdPrim prim,
+                             const char* attr_name, float* out);
+
+/* ================================================================
  * Asset path resolution utility
  * ================================================================ */
 

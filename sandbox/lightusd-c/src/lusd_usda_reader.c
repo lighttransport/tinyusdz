@@ -925,6 +925,47 @@ static bool parse_attribute(UsdaP* p, ParseCtx* ctx,
         }
     }
 
+    /* Detect ".connect" suffix: e.g. "inputs:diffuseColor.connect = <path>"
+     * Store the connection target as a TOKEN field named "inputs:X.connect". */
+    {
+        char* dot = strrchr(attr_name, '.');
+        if (dot && strcmp(dot + 1, "connect") == 0) {
+            usda_skip_ws(p);
+            if (usda_peek(p) != '=') {
+                /* declared without value — skip metadata */
+                if (usda_peek(p) == '(') { usda_next(p); usda_skip_balanced(p, '(', ')'); }
+                return true;
+            }
+            usda_next(p); /* consume '=' */
+            usda_skip_ws(p);
+            if (usda_peek(p) == '<') {
+                usda_next(p); /* consume '<' */
+                char path_buf[512];
+                size_t pi2 = 0;
+                while (!usda_at_end(p) && usda_peek(p) != '>') {
+                    if (pi2 + 1 < sizeof(path_buf))
+                        path_buf[pi2++] = usda_next(p);
+                    else
+                        usda_next(p);
+                }
+                path_buf[pi2] = '\0';
+                if (!usda_at_end(p)) usda_next(p); /* consume '>' */
+                if (pi2 > 0) {
+                    uint32_t conn_tok  = intern_cstr(ctx, attr_name);
+                    uint32_t path_tok2 = intern_cstr(ctx, path_buf);
+                    if (conn_tok != TOKENSET_EMPTY && path_tok2 != TOKENSET_EMPTY) {
+                        LusdValueRep vrep2 = make_vrep_inlined(LUSD_CRATE_TOKEN, path_tok2);
+                        emit_field(ctx, conn_tok, vrep2);
+                    }
+                }
+            } else {
+                usda_skip_value(p);
+            }
+            if (usda_peek(p) == '(') { usda_next(p); usda_skip_balanced(p, '(', ')'); }
+            return true;
+        }
+    }
+
     uint32_t attr_tok = intern_cstr(ctx, attr_name);
     if (attr_tok == TOKENSET_EMPTY) return false;
 

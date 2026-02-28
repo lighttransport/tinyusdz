@@ -749,7 +749,8 @@ LusdResult lydra_c_extract_openpbr(LusdLayer layer, LusdPrim material_prim,
                 if (!lusd_vrep_is_null(id_rep)) {
                     const char* sid = materialize_token(L, id_rep);
                     if (sid && (strcmp(sid, "UsdPreviewSurface") == 0 ||
-                                strcmp(sid, "OpenPBR_Surface") == 0)) {
+                                strcmp(sid, "OpenPBR_Surface") == 0 ||
+                                strcmp(sid, "OpenPBRSurface") == 0)) {
                         shader = node;
                         shader_id = sid;
                     }
@@ -766,7 +767,8 @@ LusdResult lydra_c_extract_openpbr(LusdLayer layer, LusdPrim material_prim,
     if (!shader || !shader_id)
         return LUSD_SUCCESS;
 
-    if (strcmp(shader_id, "OpenPBR_Surface") == 0) {
+    if (strcmp(shader_id, "OpenPBR_Surface") == 0 ||
+        strcmp(shader_id, "OpenPBRSurface") == 0) {
         out->is_openpbr = 1;
         read_openpbr_inputs(L, shader, out);
     } else if (strcmp(shader_id, "UsdPreviewSurface") == 0) {
@@ -937,14 +939,20 @@ LusdResult lydra_c_extract_mesh(LusdLayer layer, LusdPrim prim,
         }
     }
 
-    /* primvars:st (optional UV) */
+    /* UV primvars — try several common names in priority order */
     {
-        LusdValueRep rep = find_field(L, P, "primvars:st");
-        if (rep.data != 0) {
-            float* data = NULL; uint64_t count = 0;
-            if (materialize_float2_array(L, rep, &data, &count) == 0) {
-                out->uvs = data;
-                out->uv_count = (uint32_t)count;
+        static const char* const uv_names[] = {
+            "primvars:st", "primvars:UVMap", "primvars:uv",
+            "primvars:UV", "primvars:map1", NULL
+        };
+        for (int ui = 0; uv_names[ui] && !out->uvs; ui++) {
+            LusdValueRep rep = find_field(L, P, uv_names[ui]);
+            if (rep.data != 0) {
+                float* data = NULL; uint64_t count = 0;
+                if (materialize_float2_array(L, rep, &data, &count) == 0) {
+                    out->uvs = data;
+                    out->uv_count = (uint32_t)count;
+                }
             }
         }
     }
@@ -1857,6 +1865,21 @@ int lydra_c_extract_xform_at(LusdLayer layer, LusdPrim prim,
     LusdValueRep rep = find_field(L, P, "xformOp:transform");
     if (lusd_vrep_is_null(rep)) return -1;
     return materialize_matrix4d_at(L, rep, time_code, out_matrix);
+}
+
+/* ================================================================
+ * Attribute scalar read utility
+ * ================================================================ */
+
+int lydra_c_read_float_attr(LusdLayer layer, LusdPrim prim,
+                             const char* attr_name, float* out) {
+    if (!layer || !prim || !attr_name || !out) return -1;
+    const LusdLayer_T* L = (const LusdLayer_T*)layer;
+    const LusdPrim_T*  P = (const LusdPrim_T*)prim;
+    LusdValueRep rep = find_field(L, P, attr_name);
+    if (lusd_vrep_is_null(rep)) return -1;
+    materialize_float(L, rep, out);
+    return 0;
 }
 
 /* ================================================================
