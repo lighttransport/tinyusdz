@@ -19,6 +19,7 @@
 /* Forward declarations */
 LusdResult lusd__read_usdc_file(LusdLayer_T* layer, const char* path);
 LusdResult lusd__read_usda_file(LusdLayer_T* layer, const char* path);
+LusdResult lusd__read_usdz_file(LusdLayer_T* layer, const char* path);
 
 /* -----------------------------------------------------------------------
  * Helpers
@@ -77,8 +78,14 @@ LusdResult lusdCreateLayer(LusdInstance inst,
 
         res = lusd__layer_build_prims(L);
         if (res != LUSD_SUCCESS) goto fail;
+    } else if (str_ends_with(pCI->pIdentifier, ".usdz")) {
+        res = lusd__read_usdz_file(L, pCI->pIdentifier);
+        if (res != LUSD_SUCCESS) goto fail;
+
+        res = lusd__layer_build_prims(L);
+        if (res != LUSD_SUCCESS) goto fail;
     } else {
-        /* .usdz, .usd, etc. not yet supported */
+        /* .usd, etc. not yet supported */
         res = LUSD_ERROR_FEATURE_NOT_PRESENT;
         goto fail;
     }
