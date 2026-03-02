@@ -216,8 +216,11 @@ struct SkelRoot : Xformable {
   nonstd::optional<Relationship> proxyPrim;  // rel proxyPrim
   //std::vector<XformOp> xformOps;
 
-  // TODO: Add function to check if SkelRoot contains `Skeleton` and `GeomMesh`
-  // node?;
+  // SkelBindingAPI
+  nonstd::optional<Relationship>
+      animationSource;  // rel skel:animationSource = </path/...>
+  nonstd::optional<Relationship>
+      skeleton;          // rel skel:skeleton = </path/...>
 
 
   std::pair<ListEditQual, std::vector<Reference>> references;

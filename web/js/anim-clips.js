@@ -89,6 +89,7 @@ let blendMode = 'solo'; // 'solo' | 'blend'
 let crossfadeDuration = 0.5;
 let isPlaying = true;
 let playbackSpeed = 1.0;
+let sceneTimeCodesPerSecond = 24; // USD timeCodesPerSecond (tracks store frame numbers)
 
 const characterGroup = new THREE.Group();
 characterGroup.name = 'characterGroup';
@@ -177,6 +178,8 @@ async function processUSDScene(usdScene, filename) {
 		timeCodesPerSecond
 	} = getUSDSceneMetadata(usdScene);
 
+	sceneTimeCodesPerSecond = timeCodesPerSecond || 24;
+
 	const {
 		hasSkinnedMeshData,
 		allSkinnedMeshUSDData,
@@ -261,6 +264,9 @@ async function processUSDScene(usdScene, filename) {
 	// Create mixer and prepare actions
 	if (allClips.length > 0) {
 		mixer = new THREE.AnimationMixer(characterGroup);
+		// Track times are in USD timecodes (frame numbers), not seconds.
+		// Set mixer timeScale to convert frame-time deltas to real-time.
+		mixer.timeScale = sceneTimeCodesPerSecond * playbackSpeed;
 		allActions.push(...prepareClipsForBlending(mixer, allClips));
 
 		// Build per-object clip mapping
@@ -623,7 +629,7 @@ function renderClipPanel() {
 
 			html += `<div class="clip-item${isActiveClip ? ' active' : ''}">`;
 			html += `<div class="clip-name">${clip.name || 'Unnamed'}</div>`;
-			html += `<div class="clip-meta">${clip.duration.toFixed(2)}s | ${clip.tracks.length} tracks`;
+			html += `<div class="clip-meta">${(clip.duration / sceneTimeCodesPerSecond).toFixed(2)}s | ${clip.tracks.length} tracks`;
 			if (srcType) html += ` | ${srcType}`;
 			html += '</div>';
 			html += '<div class="clip-buttons">';
@@ -742,7 +748,8 @@ window._crossfadeForObject = function(objectId, localIndex) {
 	const state = objectAnimMap.get(objectId);
 	if (!state) return;
 	if (localIndex === state.activeClipIndex) return;
-	crossfadeActions(state.actions[state.activeClipIndex], state.actions[localIndex], crossfadeDuration);
+	// crossfadeDuration is in real seconds; mixer time is in frame-time, so scale it
+	crossfadeActions(state.actions[state.activeClipIndex], state.actions[localIndex], crossfadeDuration * sceneTimeCodesPerSecond);
 	state.activeClipIndex = localIndex;
 	state.blendMode = 'solo';
 	renderClipPanel();
@@ -768,7 +775,7 @@ window._playAll = function() {
 		}
 	}
 	isPlaying = true;
-	if (mixer) mixer.timeScale = playbackSpeed;
+	if (mixer) mixer.timeScale = sceneTimeCodesPerSecond * playbackSpeed;
 	renderClipPanel();
 };
 
@@ -786,7 +793,7 @@ window._pauseAll = function() {
 window._setSpeed = function(value) {
 	playbackSpeed = parseFloat(value);
 	if (mixer) {
-		mixer.timeScale = playbackSpeed;
+		mixer.timeScale = sceneTimeCodesPerSecond * playbackSpeed;
 	}
 	const valEl = document.getElementById('speed-val');
 	if (valEl) valEl.textContent = playbackSpeed.toFixed(1) + 'x';

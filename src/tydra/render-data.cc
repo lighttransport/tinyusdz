@@ -10571,9 +10571,10 @@ bool RenderSceneConverter::ConvertSkeletonImplWithPath(const RenderSceneConverte
 
 bool RenderSceneConverter::ConvertAllSkelAnimations(const RenderSceneConverterEnv &env) {
   // This method processes all SkelAnimation prims discovered during pre-processing.
-  // For each SkelAnimation, we find which Skeleton(s) reference it via their
-  // skel:animationSource relationship, then convert it with the correct skeleton_id.
-  // This supports multiple animations per skeleton (when animationSource is a pathvector).
+  // For each SkelAnimation, we find which Skeleton it belongs to via:
+  //   1. Skeleton's skel:animationSource relationship
+  //   2. SkelRoot's skel:animationSource relationship (inherited per USD spec)
+  //   3. Parent path hierarchy (SkelAnimation as child of Skeleton)
 
   if (!_allAnimations || _allAnimations->empty()) {
     return true; // No animations to process
@@ -10584,41 +10585,106 @@ bool RenderSceneConverter::ConvertAllSkelAnimations(const RenderSceneConverterEn
   // Build reverse map: animationPath -> list of skeleton_ids that reference it
   std::map<std::string, std::vector<int32_t>> animPathToSkelIds;
 
-  // Iterate through all converted skeletons to build the reverse map
+  // Helper: extract animation paths from a Relationship
+  auto extractAnimPaths = [](const Relationship &rel, std::vector<Path> &out) {
+    if (rel.is_path()) {
+      out.push_back(rel.targetPath);
+    } else if (rel.is_pathvector()) {
+      out.insert(out.end(), rel.targetPathVector.begin(), rel.targetPathVector.end());
+    }
+  };
+
+  // 1. Check Skeleton prims for skel:animationSource
   for (const auto &skelEntry : _skelPathToIndex) {
     const std::string &skelPathStr = skelEntry.first;
     const int32_t skel_id = skelEntry.second;
 
-    // Find the Skeleton prim in the stage
     Path skelPath(skelPathStr, "");
     const Prim *skelPrim{nullptr};
     if (!env.stage.find_prim_at_path(skelPath, skelPrim, &_err)) {
-      continue; // Skip if skeleton prim not found
+      continue;
     }
 
     const auto *pskel = skelPrim->as<Skeleton>();
-    if (!pskel || !pskel->animationSource.has_value()) {
-      continue; // No animation source relationship
-    }
+    if (!pskel) continue;
 
-    const Relationship &animSourceRel = pskel->animationSource.value();
     std::vector<Path> animPaths;
 
-    // Extract all animation paths from the relationship
-    if (animSourceRel.is_path()) {
-      animPaths.push_back(animSourceRel.targetPath);
-    } else if (animSourceRel.is_pathvector()) {
-      animPaths = animSourceRel.targetPathVector;
+    if (pskel->animationSource.has_value()) {
+      extractAnimPaths(pskel->animationSource.value(), animPaths);
     }
 
-    // Add this skeleton_id to all animation paths it references
+    // 2. If Skeleton has no animationSource, check ancestor SkelRoot prims
+    //    (implements USD SkelBindingAPI inheritance)
+    if (animPaths.empty() && _allSkelRoots) {
+      // Walk up the path hierarchy to find a SkelRoot with animationSource
+      std::string parentPath = skelPathStr;
+      while (!parentPath.empty()) {
+        size_t lastSlash = parentPath.rfind('/');
+        if (lastSlash == 0 || lastSlash == std::string::npos) {
+          parentPath = "/";  // root
+        } else {
+          parentPath = parentPath.substr(0, lastSlash);
+        }
+
+        auto rootIt = _allSkelRoots->find(parentPath);
+        if (rootIt != _allSkelRoots->end() && rootIt->second) {
+          const SkelRoot *pskelRoot = rootIt->second;
+          if (pskelRoot->animationSource.has_value()) {
+            extractAnimPaths(pskelRoot->animationSource.value(), animPaths);
+            DCOUT("Inherited animationSource from SkelRoot " << parentPath
+                  << " for Skeleton " << skelPathStr);
+            break;
+          }
+        }
+        if (parentPath == "/") break;
+      }
+    }
+
     for (const Path &animPath : animPaths) {
-      std::string animPathStr = animPath.prim_part();
-      animPathToSkelIds[animPathStr].push_back(skel_id);
+      std::string ap = animPath.prim_part();
+      animPathToSkelIds[ap].push_back(skel_id);
     }
   }
 
   DCOUT("Built reverse map: " << animPathToSkelIds.size() << " animations referenced by skeletons");
+
+  // 3. For SkelAnimation prims not referenced by any animationSource,
+  //    associate them with a parent Skeleton by path hierarchy.
+  //    This enables multi-clip workflows where SkelAnimation prims are children
+  //    of a Skeleton but not all are the active animationSource.
+  for (const auto &animEntry : *_allAnimations) {
+    const std::string &animPathStr = animEntry.first;
+
+    // Skip if already referenced
+    if (animPathToSkelIds.find(animPathStr) != animPathToSkelIds.end()) {
+      continue;
+    }
+
+    // Walk up parent path to find a Skeleton
+    std::string parentPath = animPathStr;
+    while (!parentPath.empty()) {
+      size_t lastSlash = parentPath.rfind('/');
+      if (lastSlash == 0 || lastSlash == std::string::npos) {
+        parentPath.clear();
+        break;
+      }
+      parentPath = parentPath.substr(0, lastSlash);
+
+      auto skelIt = _skelPathToIndex.find(parentPath);
+      if (skelIt != _skelPathToIndex.end()) {
+        animPathToSkelIds[animPathStr].push_back(skelIt->second);
+        DCOUT("Associated SkelAnimation " << animPathStr
+              << " with parent Skeleton " << parentPath
+              << " (skeleton_id=" << skelIt->second << ")");
+        break;
+      }
+    }
+
+    if (animPathToSkelIds.find(animPathStr) == animPathToSkelIds.end()) {
+      DCOUT("SkelAnimation " << animPathStr << " has no associated skeleton (skipping)");
+    }
+  }
 
   // Now convert each SkelAnimation prim
   for (const auto &animEntry : *_allAnimations) {
@@ -10630,18 +10696,14 @@ bool RenderSceneConverter::ConvertAllSkelAnimations(const RenderSceneConverterEn
       continue;
     }
 
-    // Find which skeleton(s) reference this animation
     auto it = animPathToSkelIds.find(animPathStr);
     if (it == animPathToSkelIds.end() || it->second.empty()) {
-      // Animation not referenced by any skeleton - this is valid (orphaned animation)
-      DCOUT("SkelAnimation " << animPathStr << " not referenced by any skeleton (skipping)");
+      DCOUT("SkelAnimation " << animPathStr << " not associated with any skeleton (skipping)");
       continue;
     }
 
     // Convert the animation for each skeleton that references it
     for (int32_t skeleton_id : it->second) {
-      // Check if this animation was already converted for this skeleton
-      // (to avoid duplicates if multiple meshes share the same skeleton)
       std::string cacheKey = animPathStr + ":" + std::to_string(skeleton_id);
       if (_animPathToIndex.find(cacheKey) != _animPathToIndex.end()) {
         DCOUT("Animation " << animPathStr << " already converted for skeleton " << skeleton_id);
