@@ -1,0 +1,9 @@
+#usda 1.0
+def Scope "Test" {
+    custom int[] indices = [
+        # first group
+        0, 1, 2, 3,
+        # second group
+        4, 5, 6, 7
+    ]
+}
