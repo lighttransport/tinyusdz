@@ -3744,12 +3744,39 @@ bool ReconstructPrim<SkelRoot>(
     return false;
   }
 
-  // SkelRoot is something like a grouping node, having 1 Skeleton and possibly?
+  // SkelRoot is something like a grouping node, having 1 Skeleton and possibly
   // multiple Prim hierarchy containing GeomMesh.
-  // No specific properties for SkelRoot(AFAIK)
+  // SkelBindingAPI properties (skel:animationSource, skel:skeleton) can be
+  // authored on SkelRoot and inherited by child prims per the USD spec.
 
-  // custom props only
   for (auto &prop : properties) {  // Non-const to allow move from property metadata
+
+    // SkelBindingAPI: animationSource relationship
+    if (prop.first == kSkelAnimationSource) {
+      if (prop.second.is_relationship()) {
+        const Relationship &rel = prop.second.get_relationship();
+        if (rel.is_path() || rel.is_pathvector()) {
+          root->animationSource = rel;
+          table.insert(kSkelAnimationSource);
+        } else {
+          PUSH_WARN("`" << kSkelAnimationSource << "` target must be Path.");
+        }
+      }
+    }
+
+    // SkelBindingAPI: skeleton relationship
+    if (prop.first == kSkelSkeleton) {
+      if (prop.second.is_relationship()) {
+        const Relationship &rel = prop.second.get_relationship();
+        if (rel.is_path() || rel.is_pathvector()) {
+          root->skeleton = rel;
+          table.insert(kSkelSkeleton);
+        } else {
+          PUSH_WARN("`" << kSkelSkeleton << "` target must be Path.");
+        }
+      }
+    }
+
     PARSE_TIMESAMPLED_ENUM_PROPERTY(table, prop, kVisibility, Visibility, VisibilityEnumHandler, SkelRoot,
                    root->visibility, options.strict_allowedToken_check)
     PARSE_UNIFORM_ENUM_PROPERTY(table, prop, kPurpose, Purpose, PurposeEnumHandler, SkelRoot,
