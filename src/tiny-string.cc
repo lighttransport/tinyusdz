@@ -518,55 +518,74 @@ bool parse_float_arary(const tstring_view &sv, std::vector<float> *result, const
     return false;
   }
   p++; // skip '['
-  
-  // Skip whitespace after '['
-  while (p < end && (*p == ' ' || *p == '\t' || *p == '\n' || *p == '\r')) {
-    p++;
+
+  // Skip whitespace and comments after '['
+  while (p < end) {
+    if (*p == ' ' || *p == '\t' || *p == '\n' || *p == '\r') {
+      p++;
+    } else if (*p == '#') {
+      // Skip comment to end of line
+      while (p < end && *p != '\n') p++;
+    } else {
+      break;
+    }
   }
-  
+
   // Handle empty array
   if (p < end && *p == ']') {
     return true;
   }
-  
+
   while (p < end) {
-    // Skip whitespace
-    while (p < end && (*p == ' ' || *p == '\t' || *p == '\n' || *p == '\r')) {
-      p++;
+    // Skip whitespace and comments
+    while (p < end) {
+      if (*p == ' ' || *p == '\t' || *p == '\n' || *p == '\r') {
+        p++;
+      } else if (*p == '#') {
+        while (p < end && *p != '\n') p++;
+      } else {
+        break;
+      }
     }
-    
+
     if (p >= end) break;
-    
+
     // Check for closing bracket
     if (*p == ']') {
       break;
     }
-    
+
     // Find the end of the number
     const char *num_start = p;
-    while (p < end && *p != delimiter && *p != ']' && 
+    while (p < end && *p != delimiter && *p != ']' && *p != '#' &&
            *p != ' ' && *p != '\t' && *p != '\n' && *p != '\r') {
       p++;
     }
-    
+
     if (p == num_start) {
       return false; // No number found
     }
-    
+
     // Parse the number
     float value;
     auto parse_result = fast_float::from_chars(num_start, p, value);
     if (parse_result.ec != std::errc{}) {
       return false;
     }
-    
+
     result->push_back(value);
-    
-    // Skip whitespace after number
-    while (p < end && (*p == ' ' || *p == '\t' || *p == '\n' || *p == '\r')) {
-      p++;
+
+    // Skip whitespace and comments after number
+    while (p < end) {
+      if (*p == ' ' || *p == '\t' || *p == '\n' || *p == '\r') {
+        p++;
+      } else if (*p == '#') {
+        while (p < end && *p != '\n') p++;
+      } else {
+        break;
+      }
     }
-    
+
     // Handle delimiter or end
     if (p < end && *p == delimiter) {
       p++; // skip delimiter
@@ -574,7 +593,7 @@ bool parse_float_arary(const tstring_view &sv, std::vector<float> *result, const
       break; // end of array
     }
   }
-  
+
   return true;
 }
 
@@ -601,55 +620,73 @@ bool parse_double_arary(const tstring_view &sv, std::vector<double> *result, con
     return false;
   }
   p++; // skip '['
-  
-  // Skip whitespace after '['
-  while (p < end && (*p == ' ' || *p == '\t' || *p == '\n' || *p == '\r')) {
-    p++;
+
+  // Skip whitespace and comments after '['
+  while (p < end) {
+    if (*p == ' ' || *p == '\t' || *p == '\n' || *p == '\r') {
+      p++;
+    } else if (*p == '#') {
+      while (p < end && *p != '\n') p++;
+    } else {
+      break;
+    }
   }
-  
+
   // Handle empty array
   if (p < end && *p == ']') {
     return true;
   }
-  
+
   while (p < end) {
-    // Skip whitespace
-    while (p < end && (*p == ' ' || *p == '\t' || *p == '\n' || *p == '\r')) {
-      p++;
+    // Skip whitespace and comments
+    while (p < end) {
+      if (*p == ' ' || *p == '\t' || *p == '\n' || *p == '\r') {
+        p++;
+      } else if (*p == '#') {
+        while (p < end && *p != '\n') p++;
+      } else {
+        break;
+      }
     }
-    
+
     if (p >= end) break;
-    
+
     // Check for closing bracket
     if (*p == ']') {
       break;
     }
-    
+
     // Find the end of the number
     const char *num_start = p;
-    while (p < end && *p != delimiter && *p != ']' && 
+    while (p < end && *p != delimiter && *p != ']' && *p != '#' &&
            *p != ' ' && *p != '\t' && *p != '\n' && *p != '\r') {
       p++;
     }
-    
+
     if (p == num_start) {
       return false; // No number found
     }
-    
+
     // Parse the number
     double value;
     auto parse_result = fast_float::from_chars(num_start, p, value);
     if (parse_result.ec != std::errc{}) {
       return false;
     }
-    
+
     result->push_back(value);
-    
-    // Skip whitespace after number
-    while (p < end && (*p == ' ' || *p == '\t' || *p == '\n' || *p == '\r')) {
-      p++;
+
+    // Skip whitespace and comments after number
+    while (p < end) {
+      if (*p == ' ' || *p == '\t' || *p == '\n' || *p == '\r') {
+        p++;
+      } else if (*p == '#') {
+        while (p < end && *p != '\n') p++;
+      } else {
+        break;
+      }
     }
-    
+
     // Handle delimiter or end
     if (p < end && *p == delimiter) {
       p++; // skip delimiter
@@ -657,7 +694,7 @@ bool parse_double_arary(const tstring_view &sv, std::vector<double> *result, con
       break; // end of array
     }
   }
-  
+
   return true;
 }
 
@@ -684,59 +721,75 @@ bool parse_int_arary(const tstring_view &sv, std::vector<int32_t> *result, const
     return false;
   }
   p++; // skip '['
-  
-  // Skip whitespace after '['
-  while (p < end && (*p == ' ' || *p == '\t' || *p == '\n' || *p == '\r')) {
-    p++;
+
+  // Skip whitespace and comments after '['
+  while (p < end) {
+    if (*p == ' ' || *p == '\t' || *p == '\n' || *p == '\r') {
+      p++;
+    } else if (*p == '#') {
+      while (p < end && *p != '\n') p++;
+    } else {
+      break;
+    }
   }
-  
+
   // Handle empty array
   if (p < end && *p == ']') {
     return true;
   }
-  
+
   while (p < end) {
-    // Skip whitespace
-    while (p < end && (*p == ' ' || *p == '\t' || *p == '\n' || *p == '\r')) {
-      p++;
+    // Skip whitespace and comments
+    while (p < end) {
+      if (*p == ' ' || *p == '\t' || *p == '\n' || *p == '\r') {
+        p++;
+      } else if (*p == '#') {
+        while (p < end && *p != '\n') p++;
+      } else {
+        break;
+      }
     }
-    
+
     if (p >= end) break;
-    
+
     // Check for closing bracket
     if (*p == ']') {
       break;
     }
-    
+
     // Find the end of the number
     const char *num_start = p;
-    while (p < end && *p != delimiter && *p != ']' && 
+    while (p < end && *p != delimiter && *p != ']' && *p != '#' &&
            *p != ' ' && *p != '\t' && *p != '\n' && *p != '\r') {
       p++;
     }
-    
+
     if (p <= num_start) {
       return false; // No number found
     }
-    
-    // Parse the number  
+
+    // Parse the number
     int32_t value;
-    tstring_view num_view(num_start);
-    // Create a temporary view with the correct length
     size_t num_len = size_t(p - num_start);
     std::string num_str(num_start, num_len);
     tstring_view temp_view(num_str.c_str());
     if (!parse_int(temp_view, &value)) {
       return false;
     }
-    
+
     result->push_back(value);
-    
-    // Skip whitespace after number
-    while (p < end && (*p == ' ' || *p == '\t' || *p == '\n' || *p == '\r')) {
-      p++;
+
+    // Skip whitespace and comments after number
+    while (p < end) {
+      if (*p == ' ' || *p == '\t' || *p == '\n' || *p == '\r') {
+        p++;
+      } else if (*p == '#') {
+        while (p < end && *p != '\n') p++;
+      } else {
+        break;
+      }
     }
-    
+
     // Handle delimiter or end
     if (p < end && *p == delimiter) {
       p++; // skip delimiter
@@ -744,7 +797,7 @@ bool parse_int_arary(const tstring_view &sv, std::vector<int32_t> *result, const
       break; // end of array
     }
   }
-  
+
   return true;
 }
 

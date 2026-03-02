@@ -1,0 +1,10 @@
+#usda 1.0
+def Scope "Test" {
+    custom token[] joints = [
+        # root joint
+        "Root",
+        # spine chain
+        "Root/Spine",
+        "Root/Spine/Head"
+    ]
+}
