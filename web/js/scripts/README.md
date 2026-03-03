@@ -8,12 +8,12 @@ Two export workflows are provided:
 
 | Workflow | Description |
 |----------|-------------|
-| **Option C** (USD Hook) | Blender's normal USD export runs; the hook appends metadata to the same file |
+| **Single asset** (via USD Hook) | Blender's normal USD export runs; the hook appends metadata to the same file |
 | **Separate files** (Operator) | One USD file per Action, following the Pixar HumanFemale pattern |
 
 ### Requirements
 
-- Blender 4.0 or later (tested on 5.0.1)
+- Blender 5.0 or later (tested on 5.0.1)
 - Blender's built-in USD I/O module (ships the `pxr` Python package)
 
 ---
@@ -24,7 +24,7 @@ Two export workflows are provided:
 
 1. Open Blender.
 2. **Edit > Preferences > Add-ons**.
-3. Click **Install from File** (top-right drop-down in Blender 4.x, or the gear icon > Install from Disk in 5.x).
+3. Click the gear icon > **Install from Disk**.
 4. Browse to `tinyusdz_anim_clips.py` and select it.
 5. Blender copies the file into its per-user addons directory (`~/.config/blender/<ver>/scripts/addons/` on Linux).
 6. Tick the checkbox next to **"TinyUSDZ Animation Clips Exporter"** to enable it.
@@ -33,13 +33,13 @@ Two export workflows are provided:
 
 ```bash
 # Linux
-cp tinyusdz_anim_clips.py ~/.config/blender/4.0/scripts/addons/
+cp tinyusdz_anim_clips.py ~/.config/blender/5.0/scripts/addons/
 
 # macOS
-cp tinyusdz_anim_clips.py ~/Library/Application\ Support/Blender/4.0/scripts/addons/
+cp tinyusdz_anim_clips.py ~/Library/Application\ Support/Blender/5.0/scripts/addons/
 
 # Windows
-copy tinyusdz_anim_clips.py %APPDATA%\Blender Foundation\Blender\4.0\scripts\addons\
+copy tinyusdz_anim_clips.py %APPDATA%\Blender Foundation\Blender\5.0\scripts\addons\
 ```
 
 Then enable in **Edit > Preferences > Add-ons** (search for "TinyUSDZ").
@@ -58,7 +58,7 @@ You should also see a **TinyUSDZ** tab in the 3D Viewport sidebar (press **N**).
 
 ### 2. How the USDHook Mechanism Works
 
-Blender 4.0+ exposes a `bpy.types.USDHook` base class.  Addons subclass it and register it via `bpy.utils.register_class()`.  Once registered, the hook is **automatically called** on every USD export — no manual checkbox is needed.
+Blender 5.0+ exposes a `bpy.types.USDHook` base class.  Addons subclass it and register it via `bpy.utils.register_class()`.  Once registered, the hook is **automatically called** on every USD export — no manual checkbox is needed.
 
 #### Lifecycle
 
@@ -127,7 +127,7 @@ Actions are **deduplicated per object** — if the same Action appears as both t
 
 ---
 
-### 4. Workflow 1 — Option C: Concatenated Timeline + Metadata (USD Hook)
+### 4. Workflow 1 — Single Asset: Concatenated Timeline + Metadata (via USD Hook)
 
 This is the simplest workflow.  Blender's standard USD export runs, and the hook appends clip metadata to the exported file.
 
@@ -295,7 +295,7 @@ This is **not yet implemented**.
 
 | Symptom | Cause | Fix |
 |---------|-------|-----|
-| `[TinyUSDZ] pxr modules not available` | Running outside Blender, or Blender build without USD | Use official Blender 4.0+ build |
+| `[TinyUSDZ] pxr modules not available` | Running outside Blender, or Blender build without USD | Use official Blender 5.0+ build |
 | Hook does not fire | Addon not enabled | Edit > Preferences > Add-ons, search "TinyUSDZ", enable |
 | "Only 1 clip — no multi-clip metadata needed" | Only one Action exists across all objects | Push additional Actions to NLA tracks |
 | Metadata missing after re-import | Imported with `property_import_mode='NONE'` | Use `'USER'` or `'ALL'` |
