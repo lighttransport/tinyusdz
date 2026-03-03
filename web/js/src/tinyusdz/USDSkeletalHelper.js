@@ -175,6 +175,26 @@ export function createThreeSkeletonFromUSD(usdSkeleton, options = {}) {
     }
   });
 
+  // Add tip bones for leaf joints (visualization only).
+  // SkeletonHelper draws lines from each bone to its parent, so the last
+  // bone's rotation is invisible without a child. Tip bones fix this.
+  for (const bone of allBones) {
+    const hasBoneChild = bone.children.some(c => c.isBone);
+    if (!hasBoneChild) {
+      const tipBone = new THREE.Bone();
+      tipBone.name = bone.name + '_tip';
+      tipBone.userData.isTipBone = true;
+      // Extend in the same direction as the bone's offset from its parent
+      const len = bone.position.length();
+      if (len > 0) {
+        tipBone.position.copy(bone.position).normalize().multiplyScalar(len);
+      } else {
+        tipBone.position.set(0, 0.1, 0);
+      }
+      bone.add(tipBone);
+    }
+  }
+
   // Compute inverse bind matrices from USD bind transforms
   const boneInverses = [];
   for (const boneData of boneBindMatrices) {
