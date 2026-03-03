@@ -34,7 +34,11 @@ bool HasPrimSpecWithCondition(const PrimSpec &root, Predicate pred) {
     stack.emplace_back(&root, 0);
   }
 
+  size_t iter = 0;
   while (!stack.empty()) {
+    if (iter++ >= kMaxDefaultTraversalLimit) {
+      break;
+    }
     auto &top = stack.back();
     const PrimSpec *current = top.first;
     size_t &child_idx = top.second;

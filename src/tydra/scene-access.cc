@@ -113,7 +113,8 @@ value::TimeSamples EnumTimeSamplesToTypelessTimeSamples(
 // Optimized iterative traversal using explicit stack
 // Avoids recursion and reuses path buffer to minimize string allocations
 template <typename T>
-bool TraverseIterative(const tinyusdz::Prim &root_prim, PathPrimMap<T> &itemmap) {
+bool TraverseIterative(const tinyusdz::Prim &root_prim, PathPrimMap<T> &itemmap,
+                       size_t max_iter = kMaxDefaultTraversalLimit) {
   // Stack stores: (prim pointer, child index, path length before this prim)
   StackVector<std::tuple<const tinyusdz::Prim *, size_t, size_t>, 4> stack;
   stack.reserve(64);
@@ -136,7 +137,9 @@ bool TraverseIterative(const tinyusdz::Prim &root_prim, PathPrimMap<T> &itemmap)
     stack.emplace_back(&root_prim, 0, 0);  // path_len=0 since "/" is implicit
   }
 
+  size_t iter = 0;
   while (!stack.empty()) {
+    if (iter++ >= max_iter) break;
     auto &top = stack.back();
     const tinyusdz::Prim *parent = std::get<0>(top);
     size_t &child_idx = std::get<1>(top);
@@ -182,7 +185,8 @@ bool TraverseIterative(const tinyusdz::Prim &root_prim, PathPrimMap<T> &itemmap)
 // Avoids recursion and reuses path buffer to minimize string allocations
 template <typename ShaderTy>
 bool TraverseShaderIterative(const tinyusdz::Prim &root_prim,
-                             PathShaderMap<ShaderTy> &itemmap) {
+                             PathShaderMap<ShaderTy> &itemmap,
+                             size_t max_iter = kMaxDefaultTraversalLimit) {
   // Stack stores: (prim pointer, child index, path length before this prim)
   StackVector<std::tuple<const tinyusdz::Prim *, size_t, size_t>, 4> stack;
   stack.reserve(64);
@@ -205,7 +209,9 @@ bool TraverseShaderIterative(const tinyusdz::Prim &root_prim,
     stack.emplace_back(&root_prim, 0, 0);
   }
 
+  size_t iter = 0;
   while (!stack.empty()) {
+    if (iter++ >= max_iter) break;
     auto &top = stack.back();
     const tinyusdz::Prim *parent = std::get<0>(top);
     size_t &child_idx = std::get<1>(top);
@@ -251,7 +257,7 @@ bool ListSceneNamesRec(const tinyusdz::Prim &root, uint32_t depth,
     return false;
   }
 
-  if (depth > 1024 * 128) {
+  if (depth > kMaxDefaultTraversalLimit) {
     // Too deep
     return false;
   }
@@ -400,7 +406,8 @@ namespace {
 bool VisitPrimsIterative(const tinyusdz::Path &start_abs_path,
                          const tinyusdz::Prim &start_prim, int32_t start_level,
                          VisitPrimFunction visitor_fun, void *userdata,
-                         std::string *err) {
+                         std::string *err,
+                         size_t max_iter = kMaxDefaultTraversalLimit) {
   // Stack entry: (prim pointer, ordered children to visit, current child index, level, parent path)
   struct StackEntry {
     const tinyusdz::Prim *prim;
@@ -490,7 +497,14 @@ bool VisitPrimsIterative(const tinyusdz::Path &start_abs_path,
   }
 
   // Iterative traversal
+  size_t iter = 0;
   while (!stack.empty()) {
+    if (iter++ >= max_iter) {
+      if (err) {
+        (*err) += "VisitPrims exceeded max iteration limit.\n";
+      }
+      return false;
+    }
     auto &top = stack.back();
 
     if (top.child_idx >= top.ordered_children.size()) {
@@ -2032,7 +2046,8 @@ bool BuildXformNodeFromStageIterative(
     const tinyusdz::Stage &stage, const Path &initial_parent_path, const Prim *root_prim,
     XformNode *nodeOut, /* out */
     value::matrix4d rootMat, const double t,
-    const tinyusdz::value::TimeSampleInterpolationType tinterp) {
+    const tinyusdz::value::TimeSampleInterpolationType tinterp,
+    size_t max_iter = kMaxDefaultTraversalLimit) {
 
   (void)stage;  // Currently unused
 
@@ -2062,7 +2077,9 @@ bool BuildXformNodeFromStageIterative(
   ComputeXformNodeProperties(root_prim, initial_parent_path, rootMat, t, tinterp,
                              stack.back().node);
 
+  size_t iter = 0;
   while (!stack.empty()) {
+    if (iter++ >= max_iter) break;
     StackEntry &curr = stack.back();
     const auto &children = curr.prim->children();
 
@@ -2100,7 +2117,8 @@ bool BuildXformNodeFromStageIterative(
 }
 
 // Iterative version of DumpXformNode using explicit stack
-std::string DumpXformNodeIterative(const XformNode &root) {
+std::string DumpXformNodeIterative(const XformNode &root,
+                                   size_t max_iter = kMaxDefaultTraversalLimit) {
   std::stringstream ss;
 
   // Stack entry: (node pointer, indent, child index, closing_brace_pending)
@@ -2117,7 +2135,9 @@ std::string DumpXformNodeIterative(const XformNode &root) {
   stack.reserve(64);
   stack.emplace_back(&root, 0);
 
+  size_t iter = 0;
   while (!stack.empty()) {
+    if (iter++ >= max_iter) break;
     StackEntry &entry = stack.back();
 
     if (entry.child_idx == SIZE_MAX) {
@@ -3042,13 +3062,16 @@ bool BuildSkelHierarchy(const Skeleton &skel, SkelNode &dst, std::string *err) {
 namespace {
 
 // Iterative version of BuildSkelNameToIndexMap using explicit stack
-void BuildSkelNameToIndexMapIterative(const SkelNode &root, std::map<std::string, int> &m) {
+void BuildSkelNameToIndexMapIterative(const SkelNode &root, std::map<std::string, int> &m,
+                                      size_t max_iter = kMaxDefaultTraversalLimit) {
   // Stack for DFS traversal
   StackVector<std::pair<const SkelNode *, size_t>, 4> stack;
   stack.reserve(64);
   stack.emplace_back(&root, 0);
 
+  size_t iter = 0;
   while (!stack.empty()) {
+    if (iter++ >= max_iter) break;
     std::pair<const SkelNode *, size_t> &entry = stack.back();
     const SkelNode *node = entry.first;
     size_t &child_idx = entry.second;
