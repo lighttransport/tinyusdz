@@ -217,7 +217,7 @@ export function applyUSDSceneSkinningPipeline(options = {}) {
     }
     logger.log('=== End Binding Summary ===');
 
-    if (firstSkinnedMesh && helperScene) {
+    if (helperScene) {
       for (const skelData of skeletonDataArray) {
         const { skelId, rootBone: skelRootBone } = skelData;
         const helper = new THREE.SkeletonHelper(skelRootBone);
