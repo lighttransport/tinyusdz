@@ -819,7 +819,8 @@ async function loadUSDModel() {
 	const loader = await createConfiguredLoader();
 
 	// Default USD file to load
-	const usd_filename = "./assets/skintest-animated.usda";
+	//const usd_filename = "./assets/skintest-animated.usda";
+	const usd_filename = "./assets/CesiumMan.usdz";
 
 	console.log(`Loading USD file: ${usd_filename}`);
 
@@ -1429,7 +1430,20 @@ animationParams = {
 	playPause: function() {
 		this.isPlaying = !this.isPlaying;
 		if (animationPlayback) {
-			syncPlaybackState(animationPlayback.setPaused(!this.isPlaying));
+			// If resuming but no active actions (e.g. after Reset to Rest Pose),
+			// re-create the animation actions instead of just unpausing.
+			if (this.isPlaying && !animationAction && animationActions.length === 0 &&
+				(usdAnimations.length > 0 || usdNodeAnimations.length > 0)) {
+				if (this.playAllAnimations) {
+					playAllAnimations();
+				} else if (usdAnimations.length > 0) {
+					playAnimation(this.currentAnimation);
+				} else {
+					playNodeAnimations();
+				}
+			} else {
+				syncPlaybackState(animationPlayback.setPaused(!this.isPlaying));
+			}
 		}
 		if (this.isPlaying && this.playAllAnimations && window.updateTimelineRange) {
 			const maxDuration = computeUSDSceneTimelineDuration(
@@ -1446,7 +1460,21 @@ animationParams = {
 	},
 	reset: function() {
 		if (animationPlayback) {
-			syncPlaybackState(animationPlayback.reset());
+			// If no active actions (e.g. after Reset to Rest Pose),
+			// re-create the animation actions instead of just resetting.
+			if (!animationAction && animationActions.length === 0 &&
+				(usdAnimations.length > 0 || usdNodeAnimations.length > 0)) {
+				if (this.playAllAnimations) {
+					playAllAnimations();
+				} else if (usdAnimations.length > 0) {
+					playAnimation(this.currentAnimation);
+				} else {
+					playNodeAnimations();
+				}
+				this.isPlaying = true;
+			} else {
+				syncPlaybackState(animationPlayback.reset());
+			}
 		}
 	},
 	resetToRestPose: function() {
