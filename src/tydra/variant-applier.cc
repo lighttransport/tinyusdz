@@ -11,6 +11,7 @@
 
 #include "render-data.hh"
 #include "variant-support.hh"
+#include "common-macros.inc"
 
 namespace tinyusdz {
 namespace tydra {
@@ -200,15 +201,17 @@ bool VariantApplier::SwapNodeMesh(RenderScene *scene,
   }
 
   // Find the node with matching absolute path
-  std::function<Node *(std::vector<Node> &, const std::string &)>
+  std::function<Node *(std::vector<Node> &, const std::string &, int32_t)>
       find_node_recursive = [&](std::vector<Node> &nodes,
-                                 const std::string &target_path) -> Node * {
+                                 const std::string &target_path,
+                                 int32_t depth) -> Node * {
+    if (size_t(depth) >= kMaxDefaultTraversalLimit) return nullptr;
     for (auto &node : nodes) {
       if (node.abs_path == target_path) {
         return &node;
       }
       if (!node.children.empty()) {
-        auto *result = find_node_recursive(node.children, target_path);
+        auto *result = find_node_recursive(node.children, target_path, depth + 1);
         if (result) {
           return result;
         }
@@ -217,7 +220,7 @@ bool VariantApplier::SwapNodeMesh(RenderScene *scene,
     return nullptr;
   };
 
-  Node *target_node = find_node_recursive(scene->nodes, node_abs_path);
+  Node *target_node = find_node_recursive(scene->nodes, node_abs_path, 0);
   if (!target_node) {
     if (err) {
       (*err) += "Node not found: " + node_abs_path + "\n";
@@ -281,15 +284,17 @@ bool VariantApplier::SetNodeVisibility(RenderScene *scene,
   // This would require extending RenderScene or the Node structure.
   // For now, we can use mesh_id = -1 to indicate "hidden"
 
-  std::function<Node *(std::vector<Node> &, const std::string &)>
+  std::function<Node *(std::vector<Node> &, const std::string &, int32_t)>
       find_node_recursive = [&](std::vector<Node> &nodes,
-                                 const std::string &target_path) -> Node * {
+                                 const std::string &target_path,
+                                 int32_t depth) -> Node * {
+    if (size_t(depth) >= kMaxDefaultTraversalLimit) return nullptr;
     for (auto &node : nodes) {
       if (node.abs_path == target_path) {
         return &node;
       }
       if (!node.children.empty()) {
-        auto *result = find_node_recursive(node.children, target_path);
+        auto *result = find_node_recursive(node.children, target_path, depth + 1);
         if (result) {
           return result;
         }
@@ -298,7 +303,7 @@ bool VariantApplier::SetNodeVisibility(RenderScene *scene,
     return nullptr;
   };
 
-  Node *target_node = find_node_recursive(scene->nodes, node_abs_path);
+  Node *target_node = find_node_recursive(scene->nodes, node_abs_path, 0);
   if (!target_node) {
     if (err) {
       (*err) += "Node not found: " + node_abs_path + "\n";

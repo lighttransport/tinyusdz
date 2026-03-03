@@ -10,6 +10,7 @@
 #include <functional>
 #include <sstream>
 #include "nonstd/expected.hpp"
+#include "common-macros.inc"
 
 namespace tinyusdz {
 namespace tydra {
@@ -138,13 +139,14 @@ VariantStatistics DefaultVariantManager::GetStatistics() const {
     stats.num_variant_sets += static_cast<uint32_t>(group.variant_sets.size());
 
     // Calculate nesting depth for this group
-    std::function<uint32_t(const VariantSet&)> calc_depth =
-        [&](const VariantSet& vs) -> uint32_t {
+    std::function<uint32_t(const VariantSet&, uint32_t)> calc_depth =
+        [&](const VariantSet& vs, uint32_t rec_depth) -> uint32_t {
+      if (size_t(rec_depth) >= kMaxDefaultTraversalLimit) return 1;
       uint32_t depth = 1;
       for (const auto& opt : vs.options) {
         if (!opt.nested_variant_sets.empty()) {
           for (const auto& nested_vs : opt.nested_variant_sets) {
-            depth = std::max(depth, 1 + calc_depth(*nested_vs));
+            depth = std::max(depth, 1 + calc_depth(*nested_vs, rec_depth + 1));
           }
         }
       }
@@ -153,7 +155,7 @@ VariantStatistics DefaultVariantManager::GetStatistics() const {
 
     for (const auto& vs : group.variant_sets) {
       stats.num_variant_options += static_cast<uint32_t>(vs.options.size());
-      max_depth = std::max(max_depth, calc_depth(vs));
+      max_depth = std::max(max_depth, calc_depth(vs, 0));
     }
   }
 
