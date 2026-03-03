@@ -1262,6 +1262,9 @@ class TinyUSDZLoaderUtils extends LoaderUtils {
         node.name = usdNode.primName;
         node.userData['primMeta.displayName'] = usdNode.displayName;
         node.userData['primMeta.absPath'] = usdNode.absPath;
+        if (usdNode.nodeCategory) node.userData['nodeCategory'] = usdNode.nodeCategory;
+        if (usdNode.nodeType) node.userData['nodeType'] = usdNode.nodeType;
+        if (usdNode.contentId !== undefined) node.userData['contentId'] = usdNode.contentId;
 
         // Update progress after processing this node
         if (options._progressState) {
