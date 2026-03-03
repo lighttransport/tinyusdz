@@ -138,7 +138,32 @@
 			#joint-hierarchy::-webkit-scrollbar-thumb:hover {
 				background: rgba(255, 255, 255, 0.5);
 			}
-			/* Make animation checkbox labels horizontally scrollable */
+			#gui-toggle {
+			position: fixed;
+			top: 10px;
+			right: 10px;
+			width: 32px;
+			height: 32px;
+			border-radius: 50%;
+			border: none;
+			background: rgba(255, 255, 255, 0.15);
+			color: white;
+			font-size: 18px;
+			cursor: pointer;
+			z-index: 10000;
+			display: flex;
+			align-items: center;
+			justify-content: center;
+			line-height: 1;
+		}
+		#gui-toggle:hover {
+			background: rgba(255, 255, 255, 0.3);
+		}
+		/* Push lil-gui panel below the toggle button */
+		.lil-gui.root {
+			margin-top: 48px !important;
+		}
+		/* Make animation checkbox labels horizontally scrollable */
 			.lil-gui .controller.boolean {
 				overflow-x: auto;
 				overflow-y: hidden;
@@ -150,6 +175,7 @@
 		</style>
 	</head>
 	<body>
+		<button id="gui-toggle" title="Show GUI (H)">⚙</button>
 		<div id="info">
 			<h3>TinyUSDZ Skeletal Animation Demo</h3>
 			<p>
@@ -157,7 +183,7 @@
 				Load a USD file with skeletal animations to see character rigs in action.
 			</p>
 			<p style="font-size: 11px; color: #999; margin-top: 5px;">
-				<strong>Shortcuts:</strong> G=Translate, R=Rotate, S=Scale, X=Toggle Space, Space=Play/Pause, ESC=Deselect
+				<strong>Shortcuts:</strong> G=Translate, R=Rotate, S=Scale, X=Toggle Space, Space=Play/Pause, ESC=Deselect, H=Hide GUI
 			</p>
 			<p>
 				<strong>Current file:</strong> <span id="currentFile">No file loaded</span>
