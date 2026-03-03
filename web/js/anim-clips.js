@@ -27,6 +27,7 @@ import {
 	setActionWeights
 } from 'tinyusdz/AnimClipUtils.js';
 import { raycastSkinnedMeshes, expandBoxByMeshBones } from 'tinyusdz/SkinnedMeshUtils.js';
+import { attachSceneHelpers } from 'tinyusdz/SceneHelpers.js';
 
 // =====================================================
 // Three.js Scene Setup
@@ -63,17 +64,21 @@ dirLight.shadow.camera.left = -5;
 dirLight.shadow.camera.right = 5;
 dirLight.shadow.camera.top = 5;
 dirLight.shadow.camera.bottom = -5;
+dirLight.shadow.bias = -0.001;
 scene.add(dirLight);
 
-// Ground plane
+// Ground plane — polygonOffset pushes it behind co-planar grid lines
 const groundGeo = new THREE.PlaneGeometry(20, 20);
-const groundMat = new THREE.MeshStandardMaterial({ color: 0x222233, roughness: 0.9 });
+const groundMat = new THREE.MeshStandardMaterial({
+	color: 0x222233, roughness: 0.9,
+	polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1,
+});
 const ground = new THREE.Mesh(groundGeo, groundMat);
 ground.rotation.x = -Math.PI / 2;
 ground.receiveShadow = true;
 scene.add(ground);
 
-// Grid
+// Grid — normal depth test so scene meshes correctly occlude it
 const gridHelper = new THREE.GridHelper(10, 20, 0x444466, 0x333355);
 scene.add(gridHelper);
 
@@ -227,6 +232,12 @@ async function processUSDScene(usdScene, filename) {
 	skeletons = skinningResult.skeletons;
 	skeletonHelpers = skinningResult.skeletonHelpers;
 	allSceneMeshes = skinningResult.allSceneMeshes;
+
+	// Attach Blender-style visual helpers for lights and cameras
+	const box = new THREE.Box3().setFromObject(characterGroup);
+	const maxDim = box.getSize(new THREE.Vector3()).length();
+	const helperScale = Math.max(maxDim * 0.15, 0.2);
+	attachSceneHelpers(threeNode, usdScene, { scale: helperScale });
 
 	// Extract animations
 	try {
@@ -720,11 +731,10 @@ window._setObjectMode = function(objectId, mode) {
 			if (i === state.activeClipIndex) state.actions[i].play();
 		}
 	} else {
-		// Blend mode — equal weights
-		const w = 1.0 / state.actions.length;
+		// Blend mode — all clips at full weight (additive blend)
 		for (const action of state.actions) {
 			action.enabled = true;
-			action.setEffectiveWeight(w);
+			action.setEffectiveWeight(1.0);
 			action.play();
 		}
 	}
@@ -875,5 +885,7 @@ animate();
 
 // Load default test asset
 (async () => {
-	await loadFromURL('./assets/multi-clip-skeleton.usda');
+	const USD_URL = './assets/multi-clip-skeleton.usda';
+	//const USD_URL = './assets/anim-clips.usdc';
+	await loadFromURL(USD_URL);
 })();
