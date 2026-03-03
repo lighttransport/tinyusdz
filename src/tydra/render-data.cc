@@ -2599,7 +2599,10 @@ class SkelRootSkeletonResolver {
       const Skeleton *skel_ptr = kv.second;
       Path current_path(skel_path_str, "");
 
-      while (current_path.is_valid() && !current_path.is_root_path()) {
+      size_t iter = 0;
+      while (current_path.is_valid() && !current_path.is_root_path()
+             && !current_path.is_root_prim()) {
+        if (iter++ >= kMaxDefaultTraversalLimit) break;
         Path parent_path = current_path.get_parent_prim_path();
         const std::string parent_path_str = parent_path.prim_part();
 
@@ -2633,8 +2636,11 @@ class SkelRootSkeletonResolver {
     }
 
     // Walk up ancestor chain
+    size_t iter = 0;
     Path currentPath = meshPath;
-    while (currentPath.is_valid() && !currentPath.is_root_path()) {
+    while (currentPath.is_valid() && !currentPath.is_root_path()
+           && !currentPath.is_root_prim()) {
+      if (iter++ >= kMaxDefaultTraversalLimit) break;
       Path parentPath = currentPath.get_parent_prim_path();
       std::string parentPathStr = parentPath.prim_part();
 
@@ -7856,7 +7862,7 @@ bool MeshVisitor(const tinyusdz::Path &abs_path, const tinyusdz::Prim &prim,
 
   MeshVisitorEnv *visitorEnv = reinterpret_cast<MeshVisitorEnv *>(userdata);
 
-  if (level > 1024 * 1024) {
+  if (size_t(level) > kMaxDefaultTraversalLimit) {
     if (err) {
       (*err) += "Scene graph is too deep.\n";
     }
@@ -9314,10 +9320,46 @@ bool RenderSceneConverter::BuildNodeHierarchyImpl(
     } else if (prim->type_id() == value::TYPE_ID_GEOM_CAMERA) {
       rnode.local_matrix = node.get_local_matrix();
       rnode.global_matrix = node.get_world_matrix();
-      rnode.nodeType = NodeType::Mesh;
       rnode.has_resetXform = node.has_resetXformStack();
       rnode.nodeType = NodeType::Camera;
-      rnode.id = -1;  // TODO: Assign index to cameras
+
+      const GeomCamera *geomCamera = prim->as<GeomCamera>();
+      if (geomCamera) {
+        RenderCamera rcam;
+        rcam.name = prim->element_name();
+        rcam.abs_path = primPath;
+        rcam.display_name = prim->metas().has_displayName() ? prim->metas().get_displayName() : "";
+
+        // Extract lens properties
+        float val_f;
+        if (geomCamera->focalLength.get_value().get_scalar(&val_f)) {
+          rcam.focalLength = val_f;
+        }
+        if (geomCamera->verticalAperture.get_value().get_scalar(&val_f)) {
+          rcam.verticalAperture = val_f;
+        }
+        if (geomCamera->horizontalAperture.get_value().get_scalar(&val_f)) {
+          rcam.horizontalAperture = val_f;
+        }
+
+        value::float2 range_val;
+        if (geomCamera->clippingRange.get_value().get_scalar(&range_val)) {
+          rcam.znear = range_val[0];
+          rcam.zfar = range_val[1];
+        }
+
+        GeomCamera::Projection proj_val;
+        if (geomCamera->projection.get_value().get_scalar(&proj_val)) {
+          rcam.projection = proj_val;
+        }
+
+        size_t cam_id = cameras.size();
+        cameraMap.add(primPath, cam_id);
+        cameras.push_back(std::move(rcam));
+        rnode.id = int32_t(cam_id);
+      } else {
+        rnode.id = -1;
+      }
     } else if (prim->type_id() == value::TYPE_ID_GEOM_XFORM) {
       rnode.local_matrix = node.get_local_matrix();
       rnode.global_matrix = node.get_world_matrix();
@@ -10189,7 +10231,12 @@ bool RenderSceneConverter::ConvertToRenderScene(
         stack.push_back({&root_prim, 0, 0});
       }
 
+      size_t iter = 0;
       while (!stack.empty()) {
+        if (iter++ >= kMaxDefaultTraversalLimit) {
+          PUSH_WARN("Prim traversal exceeded max iteration limit during pre-processing.");
+          break;
+        }
         auto &top = stack.back();
         if (top.child_idx >= top.parent->children().size()) {
           path_buf.resize(top.parent_path_len);
@@ -10296,6 +10343,35 @@ bool RenderSceneConverter::ConvertToRenderScene(
     PUSH_ERROR_AND_RETURN(err);
   }
 
+  // Add standalone skeletons (not referenced by any mesh) to the render scene.
+  // This ensures skeletons with SkelAnimations but no bound meshes are still
+  // available for visualization (e.g. bone hierarchy display).
+  for (const auto &skelEntry : allSkeletons) {
+    const std::string &skelPathStr = skelEntry.first;
+    if (_skelPathToIndex.find(skelPathStr) != _skelPathToIndex.end()) {
+      continue;  // Already added by a mesh binding
+    }
+    const Skeleton *skelPtr = skelEntry.second;
+    if (!skelPtr) continue;
+
+    int32_t skel_id = int32_t(skeletons.size());
+    SkelHierarchy skel;
+
+    std::string primName = skelPathStr;
+    size_t lastSlash = primName.rfind('/');
+    if (lastSlash != std::string::npos) {
+      primName = primName.substr(lastSlash + 1);
+    }
+    if (!ConvertSkeletonFromPtr(env, Path(skelPathStr, ""), *skelPtr, primName, &skel)) {
+      PUSH_WARN("Failed to convert standalone skeleton: " + skelPathStr);
+      continue;
+    }
+
+    _skelPathToIndex[skelPathStr] = skel_id;
+    skeletons.emplace_back(std::move(skel));
+    DCOUT("Added standalone skeleton: " << skelPathStr);
+  }
+
   // Convert all SkelAnimation prims now that all skeletons have been discovered.
   // This supports multiple animations per skeleton (when animationSource is a pathvector).
   DCOUT("Converting all SkelAnimation prims...");
@@ -10351,8 +10427,9 @@ bool RenderSceneConverter::ConvertToRenderScene(
   {
     // Single-pass depth-first traversal with stable node indices.
     // This avoids repeatedly counting subtree sizes.
-    std::function<void(const XformNode&, int32_t&)> extractAnimationsFromNode;
-    extractAnimationsFromNode = [&](const XformNode& node, int32_t& next_node_index) {
+    std::function<void(const XformNode&, int32_t&, int32_t)> extractAnimationsFromNode;
+    extractAnimationsFromNode = [&](const XformNode& node, int32_t& next_node_index, int32_t depth) {
+      if (size_t(depth) >= kMaxDefaultTraversalLimit) return;
       const int32_t node_index = next_node_index++;
 
       // Check if this node has a prim with xformOps
@@ -10381,13 +10458,13 @@ bool RenderSceneConverter::ConvertToRenderScene(
       }
 
       for (const auto& child : node.children) {
-        extractAnimationsFromNode(child, next_node_index);
+        extractAnimationsFromNode(child, next_node_index, depth + 1);
       }
     };
 
     int32_t current_node_index = 0;
     for (const auto& root : xform_node.children) {
-      extractAnimationsFromNode(root, current_node_index);
+      extractAnimationsFromNode(root, current_node_index, 0);
     }
   }
 
@@ -10618,8 +10695,10 @@ bool RenderSceneConverter::ConvertAllSkelAnimations(const RenderSceneConverterEn
     //    (implements USD SkelBindingAPI inheritance)
     if (animPaths.empty() && _allSkelRoots) {
       // Walk up the path hierarchy to find a SkelRoot with animationSource
+      size_t iter = 0;
       std::string parentPath = skelPathStr;
       while (!parentPath.empty()) {
+        if (iter++ >= kMaxDefaultTraversalLimit) break;
         size_t lastSlash = parentPath.rfind('/');
         if (lastSlash == 0 || lastSlash == std::string::npos) {
           parentPath = "/";  // root
@@ -10662,8 +10741,10 @@ bool RenderSceneConverter::ConvertAllSkelAnimations(const RenderSceneConverterEn
     }
 
     // Walk up parent path to find a Skeleton
+    size_t iter = 0;
     std::string parentPath = animPathStr;
     while (!parentPath.empty()) {
+      if (iter++ >= kMaxDefaultTraversalLimit) break;
       size_t lastSlash = parentPath.rfind('/');
       if (lastSlash == 0 || lastSlash == std::string::npos) {
         parentPath.clear();
@@ -11323,7 +11404,8 @@ bool RenderSceneConverter::MergeMeshesImpl(const RenderSceneConverterEnv &env) {
   std::vector<std::vector<Node *>> mesh_nodes_by_id(meshes.size());
 
   // Helper to traverse nodes and collect mesh info
-  std::function<void(Node &)> collectMeshNodes = [&](Node &node) {
+  std::function<void(Node &, int32_t)> collectMeshNodes = [&](Node &node, int32_t depth) {
+    if (size_t(depth) >= kMaxDefaultTraversalLimit) return;
     if (node.nodeType == NodeType::Mesh && node.id >= 0 &&
         size_t(node.id) < meshes.size()) {
       mesh_node_infos[size_t(node.id)].node = &node;
@@ -11332,12 +11414,12 @@ bool RenderSceneConverter::MergeMeshesImpl(const RenderSceneConverterEnv &env) {
       mesh_nodes_by_id[size_t(node.id)].push_back(&node);
     }
     for (auto &child : node.children) {
-      collectMeshNodes(child);
+      collectMeshNodes(child, depth + 1);
     }
   };
 
   for (auto &root : root_nodes) {
-    collectMeshNodes(root);
+    collectMeshNodes(root, 0);
   }
 
   // Group meshes by material_id
