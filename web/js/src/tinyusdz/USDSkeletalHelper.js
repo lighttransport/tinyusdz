@@ -184,10 +184,14 @@ export function createThreeSkeletonFromUSD(usdSkeleton, options = {}) {
       const tipBone = new THREE.Bone();
       tipBone.name = bone.name + '_tip';
       tipBone.userData.isTipBone = true;
-      // Extend in the same direction as the bone's offset from its parent
+      // Extend in the same world direction as the parent→bone line.
+      // bone.position is in parent space; convert to bone-local space so the
+      // tip visually continues the skeleton line through rotated joints.
       const len = bone.position.length();
       if (len > 0) {
-        tipBone.position.copy(bone.position).normalize().multiplyScalar(len);
+        const dir = bone.position.clone().normalize();
+        dir.applyQuaternion(bone.quaternion.clone().invert());
+        tipBone.position.copy(dir).multiplyScalar(len);
       } else {
         tipBone.position.set(0, 0.1, 0);
       }
