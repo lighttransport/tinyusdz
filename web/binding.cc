@@ -2436,6 +2436,48 @@ class TinyUSDZLoaderNative {
     return lights;
   }
 
+  int numCameras() const { return static_cast<int>(render_scene_.cameras.size()); }
+
+  emscripten::val getCamera(int camera_id) const {
+    emscripten::val cam = emscripten::val::object();
+
+    if (!loaded_) {
+      cam.set("error", "Scene not loaded");
+      return cam;
+    }
+
+    if (camera_id < 0 || camera_id >= static_cast<int>(render_scene_.cameras.size())) {
+      cam.set("error", "Invalid camera ID");
+      return cam;
+    }
+
+    const auto &c = render_scene_.cameras[static_cast<size_t>(camera_id)];
+
+    cam.set("name", c.name);
+    cam.set("absPath", c.abs_path);
+    cam.set("displayName", c.display_name);
+    cam.set("focalLength", c.focalLength);
+    cam.set("verticalAperture", c.verticalAperture);
+    cam.set("horizontalAperture", c.horizontalAperture);
+    cam.set("znear", c.znear);
+    cam.set("zfar", c.zfar);
+
+    // Compute FOV in radians
+    cam.set("yfov", 2.0f * std::atan(0.5f * c.verticalAperture / c.focalLength));
+    cam.set("xfov", 2.0f * std::atan(0.5f * c.horizontalAperture / c.focalLength));
+    cam.set("aspectRatio", c.horizontalAperture / c.verticalAperture);
+
+    // Projection type
+    std::string projStr;
+    switch (c.projection) {
+      case tinyusdz::GeomCamera::Projection::Perspective: projStr = "perspective"; break;
+      case tinyusdz::GeomCamera::Projection::Orthographic: projStr = "orthographic"; break;
+    }
+    cam.set("projection", projStr);
+
+    return cam;
+  }
+
   emscripten::val getTexture(int tex_id) const {
     emscripten::val tex = emscripten::val::object();
 
@@ -5000,6 +5042,8 @@ EMSCRIPTEN_BINDINGS(tinyusdz_module) {
       .function("getLightWithFormat", &TinyUSDZLoaderNative::getLightWithFormat)
       .function("getAllLights", &TinyUSDZLoaderNative::getAllLights)
       .function("numLights", &TinyUSDZLoaderNative::numLights)
+      .function("getCamera", &TinyUSDZLoaderNative::getCamera)
+      .function("numCameras", &TinyUSDZLoaderNative::numCameras)
       .function("getTexture", &TinyUSDZLoaderNative::getTexture)
       .function("numTextures", &TinyUSDZLoaderNative::numTextures)
       .function("getImage", &TinyUSDZLoaderNative::getImage)
