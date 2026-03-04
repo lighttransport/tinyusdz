@@ -7,7 +7,7 @@
 
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
-import { HDRLoader } from 'three/examples/jsm/loaders/HDRLoader.js';
+import { RGBELoader } from 'three/examples/jsm/loaders/RGBELoader.js';
 // import { EXRLoader } from 'three/examples/jsm/loaders/EXRLoader.js';    // Available for EXR env presets
 import { TinyUSDZLoader } from 'tinyusdz/TinyUSDZLoader.js';
 import { TinyUSDZLoaderUtils } from 'tinyusdz/TinyUSDZLoaderUtils.js';
@@ -91,6 +91,7 @@ const state = {
 
     // Node graph display
     showAllNodes: false,    // false = active only (DCE), true = show all including dead nodes
+    graphCollapsed: false,  // true = panel collapsed, skip LiteGraph draw loop for performance
 
     // Picking
     selectedObject: null,
@@ -2035,7 +2036,7 @@ async function loadEnvironment(preset) {
     if (path.startsWith('hdr:')) {
         const url = path.substring('hdr:'.length);
         try {
-            const loader = new HDRLoader();
+            const loader = new RGBELoader();
             const texture = await loader.loadAsync(url);
             texture.mapping = THREE.EquirectangularReflectionMapping;
             // Use high-res PMREM (cube 512) to avoid LOD discontinuities at low roughness
@@ -4169,12 +4170,55 @@ function animate() {
         state.renderNeeded = false;
     }
 
-    // LiteGraph: respect dirty flags rather than forcing a full canvas redraw
-    // every frame. draw(false, false) only redraws when nodes/links have changed.
-    if (state.graphCanvas) {
+    // LiteGraph: skip drawing entirely when the panel is collapsed for performance.
+    // draw(false, false) only redraws when nodes/links have changed.
+    if (state.graphCanvas && !state.graphCollapsed) {
         state.graphCanvas.draw(false, false);
     }
 }
+
+// ============================================================================
+// Node Graph Collapse/Expand (Performance Toggle)
+// ============================================================================
+
+/**
+ * Toggle the node graph panel between collapsed (header-only) and expanded states.
+ * When collapsed, the LiteGraph canvas draw loop is skipped entirely for performance.
+ */
+function toggleNodeGraphCollapse() {
+    const panel = document.getElementById('nodegraph-panel');
+    const btn = document.getElementById('nodegraph-collapse-btn');
+    if (!panel || !btn) return;
+
+    const isCollapsing = !panel.classList.contains('collapsed');
+
+    if (isCollapsing) {
+        panel.classList.add('collapsed');
+        btn.classList.add('collapsed');
+        btn.textContent = '<';
+        btn.title = 'Show node graph';
+        state.graphCollapsed = true;
+    } else {
+        panel.classList.remove('collapsed');
+        btn.classList.remove('collapsed');
+        btn.textContent = '>';
+        btn.title = 'Hide node graph';
+        state.graphCollapsed = false;
+
+        // Resize canvas to fit the re-expanded panel
+        setTimeout(() => {
+            resizeGraphCanvas();
+            if (state.graphCanvas) {
+                state.graphCanvas.setDirty(true, true);
+            }
+        }, 50);
+    }
+
+    // Resize the 3D viewport to fill available space
+    onWindowResize();
+}
+
+window.toggleNodeGraphCollapse = toggleNodeGraphCollapse;
 
 // ============================================================================
 // Initialization

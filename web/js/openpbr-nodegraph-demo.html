@@ -93,6 +93,47 @@
             font-weight: 500;
             color: #4CAF50;
             margin: 0;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        #nodegraph-collapse-btn {
+            background: rgba(255, 255, 255, 0.15);
+            border: none;
+            color: #4CAF50;
+            width: 22px;
+            height: 22px;
+            border-radius: 3px;
+            cursor: pointer;
+            font-size: 12px;
+            line-height: 22px;
+            text-align: center;
+            padding: 0;
+            transition: background 0.2s, transform 0.2s;
+            flex-shrink: 0;
+        }
+
+        #nodegraph-collapse-btn:hover {
+            background: rgba(255, 255, 255, 0.25);
+        }
+
+        #nodegraph-collapse-btn.collapsed {
+        }
+
+        .nodegraph-panel.collapsed {
+            flex: 0 0 auto;
+            min-width: 0;
+        }
+
+        .nodegraph-panel.collapsed #nodegraph-canvas,
+        .nodegraph-panel.collapsed .ng-material-bar,
+        .nodegraph-panel.collapsed .node-stats {
+            display: none;
+        }
+
+        .nodegraph-panel.collapsed .nodegraph-controls {
+            display: none;
         }
 
         .nodegraph-controls {
@@ -859,16 +900,30 @@
         <!-- Node Graph Panel -->
         <div class="nodegraph-panel" id="nodegraph-panel">
             <div class="nodegraph-header">
-                <h2>MaterialX NodeGraph</h2>
+                <h2><button id="nodegraph-collapse-btn" onclick="toggleNodeGraphCollapse()" title="Hide node graph">&gt;</button>MaterialX NodeGraph</h2>
                 <div class="nodegraph-controls">
                     <button class="btn" onclick="loadFile()">Load USD</button>
                     <button class="btn secondary" onclick="loadSample()">Sample</button>
                     <select id="blender-sample-select" style="height:26px;font-size:11px;background:#2a2a3e;color:#ccc;border:1px solid #555;border-radius:3px;padding:0 4px;max-width:160px">
                         <!-- <option value="texture_channel_blender.usdz">Texture channels</option> -->
-                        <option value="test-nodegraph.usdz">Texture channels</option> 
+                        <option value="test-nodegraph.usdz">Texture channels</option>
                         <option value="colorspace-constant-test.usdz">Colorspace (constant)</option>
                         <option value="colorspace-texture-test.usdz">Colorspace (texture)</option>
                         <option value="colorspace-gamut-test.usdz">Colorspace (gamut)</option>
+                        <optgroup label="Node Tests">
+                            <option value="mtlx/test-invert.usdz">Invert</option>
+                            <option value="mtlx/test-combine.usdz">Combine RGB</option>
+                            <option value="mtlx/test-mix.usdz">Mix</option>
+                            <option value="mtlx/test-multiply.usdz">Multiply</option>
+                            <option value="mtlx/test-separate.usdz">Separate RGB</option>
+                            <option value="mtlx/test-clamp.usdz">Clamp</option>
+                            <option value="mtlx/test-remap.usdz">Remap (MapRange)</option>
+                            <option value="mtlx/test-hsv.usdz">HSV Adjust</option>
+                            <option value="mtlx/test-normalmap.usdz">Normal Map</option>
+                            <option value="mtlx/test-add.usdz">Math Add/Sub</option>
+                            <option value="mtlx/test-math-ops.usdz">Math Pow/Div/Min/Max</option>
+                            <option value="mtlx/test-complex-chain.usdz">Complex Chain</option>
+                        </optgroup>
                     </select>
                     <button class="btn" style="background:#9C27B0" onclick="loadBlenderSample()">Load</button>
                     <button class="btn" style="background:#E91E63" id="btn-bridge" onclick="toggleBridge()">Connect</button>
