@@ -1590,6 +1590,7 @@ class OpenPBRSurfaceShader {
   ShaderParam<float> specular_ior_level{0.5f};
   ShaderParam<float> specular_anisotropy{0.0f};
   ShaderParam<float> specular_rotation{0.0f};
+  ShaderParam<float> specular_roughness_anisotropy{0.0f};
   
   // Transmission - transparency and refraction
   ShaderParam<float> transmission_weight{0.0f};
@@ -1598,6 +1599,8 @@ class OpenPBRSurfaceShader {
   ShaderParam<vec3> transmission_scatter{{0.0f, 0.0f, 0.0f}};
   ShaderParam<float> transmission_scatter_anisotropy{0.0f};
   ShaderParam<float> transmission_dispersion{0.0f};
+  ShaderParam<float> transmission_dispersion_abbe_number{0.0f};
+  ShaderParam<float> transmission_dispersion_scale{0.0f};
   
   // Subsurface scattering
   ShaderParam<float> subsurface_weight{0.0f};
@@ -1606,6 +1609,7 @@ class OpenPBRSurfaceShader {
   ShaderParam<vec3> subsurface_radius_scale{{1.0f, 1.0f, 1.0f}};
   ShaderParam<float> subsurface_scale{1.0f};
   ShaderParam<float> subsurface_anisotropy{0.0f};
+  ShaderParam<float> subsurface_scatter_anisotropy{0.0f};
   
   // Sheen - fabric-like reflection
   ShaderParam<float> sheen_weight{0.0f};
@@ -1631,6 +1635,8 @@ class OpenPBRSurfaceShader {
   ShaderParam<float> coat_ior{1.5f};
   ShaderParam<vec3> coat_affect_color{{1.0f, 1.0f, 1.0f}};
   ShaderParam<float> coat_affect_roughness{0.0f};
+  ShaderParam<float> coat_roughness_anisotropy{0.0f};
+  ShaderParam<float> coat_darkening{0.0f};
   
   // Emission - light emission
   ShaderParam<float> emission_luminance{0.0f};
@@ -1697,6 +1703,14 @@ class OpenPBRSurfaceShader {
 #pragma GCC diagnostic pop
 #endif
 
+// Material tag for render pass classification.
+// Matches OpenUSD hdSt's material tag computation logic.
+enum class MaterialTag {
+  Opaque,       // Default opaque rendering
+  Translucent,  // Alpha blending / transmission (sorted back-to-front)
+  Masked,       // Alpha cutout (opacityThreshold > 0, UsdPreviewSurface only)
+};
+
 // Material + Shader
 // Supports dual material representation: UsdPreviewSurface and/or MaterialX OpenPBR
 struct RenderMaterial {
@@ -1709,15 +1723,56 @@ struct RenderMaterial {
   // Use nonstd::optional to allow either/both/none
   nonstd::optional<PreviewSurfaceShader> surfaceShader;  // UsdPreviewSurface
   nonstd::optional<OpenPBRSurfaceShader> openPBRShader;  // MaterialX OpenPBR
-  
-  // TODO: displacement, volume.
+
+  // Displacement shader output.
+  // For UsdPreviewSurface, displacement is part of surfaceShader.
+  // For MaterialX, a separate displacement shader may be connected.
+  bool has_displacement{false};
+  std::string displacement_shader_path;  // Prim path of displacement shader
+
+  // Volume shader output.
+  bool has_volume{false};
+  std::string volume_shader_path;  // Prim path of volume shader
+
+  // Material tag for render pass sorting (opaque vs transparent).
+  // Computed by computeMaterialTag() after shader conversion.
+  MaterialTag materialTag{MaterialTag::Opaque};
 
   uint64_t handle{0};  // Handle ID for Graphics API. 0 = invalid
-  
+
   // Helper methods to check which materials are available
   bool hasUsdPreviewSurface() const { return surfaceShader.has_value(); }
   bool hasOpenPBR() const { return openPBRShader.has_value(); }
   bool hasBothMaterials() const { return hasUsdPreviewSurface() && hasOpenPBR(); }
+
+  // Compute material tag from shader parameters.
+  // Follows OpenUSD hdSt logic:
+  //   UsdPreviewSurface: opacityThreshold > 0 → Masked, opacity < 1 → Translucent
+  //   OpenPBR: transmission_weight != 0 or opacity != 1 → Translucent
+  void computeMaterialTag() {
+    // Prefer OpenPBR if available (MaterialX path)
+    if (openPBRShader.has_value()) {
+      const auto &s = *openPBRShader;
+      if (s.transmission_weight.value > 0.0f || s.opacity.value < 1.0f) {
+        materialTag = MaterialTag::Translucent;
+      } else {
+        materialTag = MaterialTag::Opaque;
+      }
+      return;
+    }
+    // UsdPreviewSurface
+    if (surfaceShader.has_value()) {
+      const auto &s = *surfaceShader;
+      if (s.opacityThreshold.value > 0.0f) {
+        materialTag = MaterialTag::Masked;
+      } else if (s.opacity.value < 1.0f) {
+        materialTag = MaterialTag::Translucent;
+      } else {
+        materialTag = MaterialTag::Opaque;
+      }
+      return;
+    }
+  }
 };
 
 // Simple Camera

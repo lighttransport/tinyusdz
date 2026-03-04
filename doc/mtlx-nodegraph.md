@@ -496,9 +496,136 @@ There is no `defaultgeomprop` mechanism for normals in MaterialX (unlike UV0 for
 | **Normal auto-compute** | Render delegate dependent | `ComputeNormals()` — smooth normals for shared vertices |
 | **Normal map** | Connected via nodegraph → `inputs:normal` | Extracted via `ExtractMtlxNodeGraphInfo()` → `geometry_normal` |
 
+## Tydra MaterialX Conversion Pipeline
+
+This section documents how Tydra's `ConvertMaterial()` converts MaterialX shaders to renderer-friendly `RenderMaterial` structures, and how it aligns with OpenUSD's hdSt MaterialX pipeline.
+
+### Supported Shader Types
+
+| Shader NodeDef ID | Source | Conversion Path |
+|---|---|---|
+| `ND_open_pbr_surface_surfaceshader` | USD `OpenPBRSurface` prim | Direct → `OpenPBRSurfaceShader` |
+| `ND_open_pbr_surface_surfaceshader` | MaterialX `MtlxOpenPBRSurface` | `MtlxOpenPBRSurface` → `OpenPBRSurface` → `OpenPBRSurfaceShader` |
+| `ND_standard_surface_surfaceshader` | MaterialX `MtlxAutodeskStandardSurface` | `MtlxAutodeskStandardSurface` → `OpenPBRSurface` → `OpenPBRSurfaceShader` |
+| `UsdPreviewSurface` | USD native | Direct → `PreviewSurfaceShader` |
+
+**StandardSurface → OpenPBR mapping** converts all Autodesk StandardSurface parameters to their OpenPBR equivalents. Key differences handled:
+- `coat_affect_color`: float in StandardSurface → color3f in OpenPBR (broadcast scalar to uniform color)
+- `opacity`: color3f in StandardSurface → float in OpenPBR (luminance extraction)
+- `normal`/`tangent`: `TypedAttribute` (optional) in StandardSurface → `TypedAttributeWithFallback` in OpenPBR
+
+### OpenPBR Surface Fields
+
+All OpenPBR fields are converted through `ConvertOpenPBRSurfaceShader()`:
+
+| Category | Fields |
+|---|---|
+| **Base** | `base_weight`, `base_color`, `base_roughness`, `base_metalness`, `base_diffuse_roughness` |
+| **Specular** | `specular_weight`, `specular_color`, `specular_roughness`, `specular_ior`, `specular_ior_level`, `specular_anisotropy`, `specular_rotation`, `specular_roughness_anisotropy` |
+| **Transmission** | `transmission_weight`, `transmission_color`, `transmission_depth`, `transmission_scatter`, `transmission_scatter_anisotropy`, `transmission_dispersion`, `transmission_dispersion_abbe_number`, `transmission_dispersion_scale` |
+| **Subsurface** | `subsurface_weight`, `subsurface_color`, `subsurface_radius`, `subsurface_radius_scale`, `subsurface_scale`, `subsurface_anisotropy`, `subsurface_scatter_anisotropy` |
+| **Sheen** | `sheen_weight`, `sheen_color`, `sheen_roughness` |
+| **Fuzz** | `fuzz_weight`, `fuzz_color`, `fuzz_roughness` |
+| **Thin film** | `thin_film_weight`, `thin_film_thickness`, `thin_film_ior` |
+| **Coat** | `coat_weight`, `coat_color`, `coat_roughness`, `coat_anisotropy`, `coat_rotation`, `coat_ior`, `coat_affect_color`, `coat_affect_roughness`, `coat_roughness_anisotropy`, `coat_darkening` |
+| **Emission** | `emission_luminance`, `emission_color` |
+| **Geometry** | `opacity`, `normal`, `tangent`, `coat_normal`, `coat_tangent` |
+
+### Material Tag Classification
+
+`RenderMaterial::computeMaterialTag()` classifies materials for render pass sorting, matching OpenUSD hdSt's logic:
+
+| Shader | Opaque | Translucent | Masked |
+|---|---|---|---|
+| **OpenPBR** | Default | `transmission_weight > 0` or `opacity < 1` | — |
+| **UsdPreviewSurface** | Default | `opacity < 1` | `opacityThreshold > 0` |
+
+### Material Output Connections
+
+`ConvertMaterial()` processes three material output connections:
+
+| Output | Status | Description |
+|---|---|---|
+| `outputs:surface` | Fully converted | Surface shader → `RenderMaterial.surfaceShader` or `.openPBRShader` |
+| `outputs:displacement` | Connection tracked | `RenderMaterial.has_displacement` + `displacement_shader_path` |
+| `outputs:volume` | Connection tracked | `RenderMaterial.has_volume` + `volume_shader_path` |
+
+### NodeGraph Traversal (`ExtractMtlxNodeGraphInfo`)
+
+The `ExtractMtlxNodeGraphInfo()` function traverses MaterialX NodeGraph connections to extract metadata. It follows `inputs:in` connections through a chain of nodes (max depth 15).
+
+#### Supported Node Types
+
+| Node Type | Action | Extracted Info |
+|---|---|---|
+| `ND_normalmap_float/ND_normalmap` | Follow `inputs:in` | `normal_map_scale`, `has_normal_map` |
+| `ND_rotate3d_vector3` | Follow `inputs:in` | `tangent_rotation` (degrees) |
+| `ND_image_*` | Terminal | `normal_map_texture` (asset path) |
+| `ND_tiledimage_*` | Terminal | `normal_map_texture`, `uvtiling`, `uvoffset` |
+| `ND_texcoord_vector2/3` | Terminal | `texcoord_index` |
+| `ND_geompropvalue_*` | Terminal | `geomprop_name` (primvar name) |
+| `ND_separate2/3/4_*` | Follow `inputs:in` | Multi-output node (outr/outg/outb) |
+| `ND_extract_*` | Follow `inputs:in` | Channel extraction |
+| `ND_combine2/3/4_*` | Terminal | Vector composition |
+| `ND_convert_*` | Follow `inputs:in` | Type conversion |
+| `ND_constant_*` | Terminal | Constant value |
+| Math/color ops | Follow `inputs:in` | Pass-through traversal |
+
+#### Geometry Normal/Tangent Extraction
+
+`ApplyMtlxGeometryNodeGraphInfoToOpenPBRShader()` processes both base and coat geometry connections:
+
+```
+MtlxOpenPBRSurface.geometry_normal    → ExtractMtlxNodeGraphInfo() → normal map texture + scale
+MtlxOpenPBRSurface.geometry_tangent   → ExtractMtlxNodeGraphInfo() → tangent rotation
+MtlxOpenPBRSurface.geometry_coat_normal  → ExtractMtlxNodeGraphInfo() → coat normal map + scale
+MtlxOpenPBRSurface.geometry_coat_tangent → ExtractMtlxNodeGraphInfo() → coat tangent rotation
+```
+
+### Texture Colorspace Handling
+
+When Tydra creates synthetic `UsdUVTexture` objects from MaterialX `ND_image` nodes, it sets `sourceColorSpace` based on the parameter being connected:
+
+| Parameter Type | sourceColorSpace | Rationale |
+|---|---|---|
+| Color params (`base_color`, `emission_color`, `specular_color`, `coat_color`, `sheen_color`, `subsurface_color`, `transmission_color`, `fuzz_color`) | `sRGB` | Color data typically authored in sRGB |
+| Non-color params (roughness, metalness, normal, weight, IOR, etc.) | `Raw` | Physical quantities, no gamma correction |
+
+This prevents double-linearization of non-color textures and matches hdSt's behavior where colorspace is inferred from the MaterialX nodedef's type.
+
+### Texture Wrap Modes
+
+MaterialX wrap mode tokens are mapped to USD equivalents:
+
+| MaterialX | USD `UsdUVTexture::Wrap` |
+|---|---|
+| `periodic` | `Repeat` |
+| `clamp` | `Clamp` |
+| `mirror` | `Mirror` |
+| `constant` | `Black` |
+
+### Comparison with OpenUSD hdSt
+
+| Feature | OpenUSD hdSt | TinyUSDZ Tydra |
+|---|---|---|
+| **StandardSurface** | Converted via `UsdMtlxRead()` + hdMtlx | `ConvertMtlxStandardSurfaceToOpenPBRSurface()` |
+| **OpenPBR** | Direct support in MaterialX 1.39+ | `ConvertOpenPBRSurfaceShader()` |
+| **Material tag** | `_ComputeMaterialTag()` in hdSt | `RenderMaterial::computeMaterialTag()` |
+| **Texture colorspace** | Inferred from nodedef type in `materialXFilter` | `sourceColorSpace` set from parameter semantics |
+| **Displacement** | Full displacement shader support | Connection path tracked, shader not evaluated |
+| **Volume** | Full volume shader support | Connection path tracked, shader not evaluated |
+| **ND_geompropvalue** | Reads arbitrary mesh primvars | `geomprop_name` extracted, primvar lookup by name |
+| **ND_texcoord index** | Multi-UV set support | `texcoord_index` extracted from node |
+| **ND_separate (multi-output)** | Full support with output channel selection | Traversal follows `inputs:in` through separate nodes |
+| **ND_tiledimage** | Full support with tiling/offset | `uvtiling` and `uvoffset` extracted |
+| **Coat normal/tangent** | Separate coat normal map support | Extracted via `geometry_coat_normal`/`geometry_coat_tangent` |
+
 ## Future Improvements
 
 - Constant folding for compile-time evaluation
 - Dead code elimination for unused node outputs
 - Common subexpression elimination
 - GPU-specific optimizations (swizzle instructions)
+- Full displacement shader evaluation (currently only connection is tracked)
+- Full volume shader evaluation (currently only connection is tracked)
+- Math node evaluation in NodeGraph traversal (currently breaks traversal)
