@@ -4337,6 +4337,27 @@ bool RenderSceneConverter::ConvertMesh(
         }
       }
     }
+
+    // Fallback: If no UV names were found via shader connections (e.g.
+    // MaterialX materials without explicit texture nodes), try the default
+    // texcoord primvar (usually "st") — similar to OpenUSD's implicit
+    // defaultgeomprop="UV0" -> primvars:st mapping.
+    if (uvAttrs.empty() &&
+        mesh.has_primvar(env.mesh_config.default_texcoords_primvar_name)) {
+      DCOUT("No UV names from material shader connections. "
+            "Falling back to default texcoord primvar `"
+            << env.mesh_config.default_texcoords_primvar_name << "`.");
+      auto ret = GetTextureCoordinate(
+          env.stage, mesh, env.mesh_config.default_texcoords_primvar_name,
+          env.timecode, env.tinterp);
+      if (ret) {
+        uvAttrs[0] = std::move(ret.value());
+      } else {
+        PUSH_WARN("Failed to get default texture coordinate `"
+                  << env.mesh_config.default_texcoords_primvar_name
+                  << "` : " << ret.error());
+      }
+    }
   }
 
   //TUSDZ_LOG_I("done uvAttr");
@@ -5351,9 +5372,8 @@ bool RenderSceneConverter::ConvertMesh(
 
     // TODO: Support arbitrary slotID
     if (!dst.texcoords.count(0)) {
-      PUSH_ERROR_AND_RETURN(
-          "texcoord is required to compute tangents/binormals.\n");
-    }
+      PUSH_WARN("texcoord is not assigned to the mesh. Skipping tangent/binormal computation.\n");
+    } else {
 
     texcoords.resize(dst.texcoords[0].vertex_count());
     normals.resize(dst.normals.vertex_count());
@@ -5465,7 +5485,8 @@ bool RenderSceneConverter::ConvertMesh(
         is_single_indexable = true;
       }
     }
-  }
+  } // else (texcoords available)
+  } // if (compute_tangents)
 
   dst.is_single_indexable = is_single_indexable;
 
