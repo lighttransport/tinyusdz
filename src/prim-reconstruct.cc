@@ -5531,6 +5531,8 @@ bool ReconstructShader<OpenPBRSurface>(
                          surface->specular_anisotropy)
     PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:specular_rotation", OpenPBRSurface,
                          surface->specular_rotation)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:specular_roughness_anisotropy", OpenPBRSurface,
+                         surface->specular_roughness_anisotropy)
 
     // Transmission properties
     PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:transmission_weight", OpenPBRSurface,
@@ -5545,6 +5547,10 @@ bool ReconstructShader<OpenPBRSurface>(
                          surface->transmission_scatter_anisotropy)
     PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:transmission_dispersion", OpenPBRSurface,
                          surface->transmission_dispersion)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:transmission_dispersion_abbe_number", OpenPBRSurface,
+                         surface->transmission_dispersion_abbe_number)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:transmission_dispersion_scale", OpenPBRSurface,
+                         surface->transmission_dispersion_scale)
 
     // Subsurface properties
     PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:subsurface_weight", OpenPBRSurface,
@@ -5557,6 +5563,8 @@ bool ReconstructShader<OpenPBRSurface>(
                          surface->subsurface_scale)
     PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:subsurface_anisotropy", OpenPBRSurface,
                          surface->subsurface_anisotropy)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:subsurface_scatter_anisotropy", OpenPBRSurface,
+                         surface->subsurface_scatter_anisotropy)
 
     // Sheen properties
     PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:sheen_weight", OpenPBRSurface,
@@ -5599,6 +5607,10 @@ bool ReconstructShader<OpenPBRSurface>(
                          surface->coat_affect_color)
     PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:coat_affect_roughness", OpenPBRSurface,
                          surface->coat_affect_roughness)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:coat_roughness_anisotropy", OpenPBRSurface,
+                         surface->coat_roughness_anisotropy)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:coat_darkening", OpenPBRSurface,
+                         surface->coat_darkening)
 
     // Emission properties
     PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:emission_luminance", OpenPBRSurface,
@@ -5837,6 +5849,15 @@ bool ReconstructPrim<Shader>(
       PUSH_ERROR_AND_RETURN("Failed to Reconstruct " << kMtlxAutodeskStandardSurface);
     }
     shader->info_id = kMtlxAutodeskStandardSurface;
+    shader->value = surface;
+  } else if (shader_type.compare(kNdStandardSurfaceSurfaceshader) == 0) {
+    // MaterialX Standard Surface via ND_standard_surface_surfaceshader info:id
+    MtlxAutodeskStandardSurface surface;
+    if (!ReconstructShader<MtlxAutodeskStandardSurface>(spec, properties, references,
+                                                         &surface, warn, err, options)) {
+      PUSH_ERROR_AND_RETURN("Failed to Reconstruct " << kNdStandardSurfaceSurfaceshader);
+    }
+    shader->info_id = kNdStandardSurfaceSurfaceshader;
     shader->value = surface;
   } else if (shader_type.compare(kNdOpenPbrSurfaceSurfaceshader) == 0) {
     // Blender v4.5 MaterialX OpenPBR Surface export
