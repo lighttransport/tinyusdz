@@ -372,6 +372,7 @@ struct OpenPBRSurface : ShaderNode {
   TypedAttributeWithFallback<Animatable<float>> specular_ior_level{0.5f}; // "inputs:specular_ior_level"
   TypedAttributeWithFallback<Animatable<float>> specular_anisotropy{0.0f}; // "inputs:specular_anisotropy"
   TypedAttributeWithFallback<Animatable<float>> specular_rotation{0.0f}; // "inputs:specular_rotation"
+  TypedAttributeWithFallback<Animatable<float>> specular_roughness_anisotropy{0.0f}; // "inputs:specular_roughness_anisotropy"
 
   // Transmission properties
   TypedAttributeWithFallback<Animatable<float>> transmission_weight{0.0f}; // "inputs:transmission_weight"
@@ -380,6 +381,8 @@ struct OpenPBRSurface : ShaderNode {
   TypedAttributeWithFallback<Animatable<value::color3f>> transmission_scatter{value::color3f{0.0f, 0.0f, 0.0f}}; // "inputs:transmission_scatter"
   TypedAttributeWithFallback<Animatable<float>> transmission_scatter_anisotropy{0.0f}; // "inputs:transmission_scatter_anisotropy"
   TypedAttributeWithFallback<Animatable<float>> transmission_dispersion{0.0f}; // "inputs:transmission_dispersion"
+  TypedAttributeWithFallback<Animatable<float>> transmission_dispersion_abbe_number{0.0f}; // "inputs:transmission_dispersion_abbe_number"
+  TypedAttributeWithFallback<Animatable<float>> transmission_dispersion_scale{0.0f}; // "inputs:transmission_dispersion_scale"
 
   // Subsurface properties
   TypedAttributeWithFallback<Animatable<float>> subsurface_weight{0.0f}; // "inputs:subsurface_weight"
@@ -388,6 +391,7 @@ struct OpenPBRSurface : ShaderNode {
   TypedAttributeWithFallback<Animatable<value::color3f>> subsurface_radius_scale{value::color3f{1.0f, 1.0f, 1.0f}}; // "inputs:subsurface_radius_scale"
   TypedAttributeWithFallback<Animatable<float>> subsurface_scale{1.0f}; // "inputs:subsurface_scale"
   TypedAttributeWithFallback<Animatable<float>> subsurface_anisotropy{0.0f}; // "inputs:subsurface_anisotropy"
+  TypedAttributeWithFallback<Animatable<float>> subsurface_scatter_anisotropy{0.0f}; // "inputs:subsurface_scatter_anisotropy"
 
   // Sheen properties
   TypedAttributeWithFallback<Animatable<float>> sheen_weight{0.0f}; // "inputs:sheen_weight"
@@ -413,6 +417,8 @@ struct OpenPBRSurface : ShaderNode {
   TypedAttributeWithFallback<Animatable<float>> coat_ior{1.5f}; // "inputs:coat_ior"
   TypedAttributeWithFallback<Animatable<value::color3f>> coat_affect_color{value::color3f{1.0f, 1.0f, 1.0f}}; // "inputs:coat_affect_color"
   TypedAttributeWithFallback<Animatable<float>> coat_affect_roughness{0.0f}; // "inputs:coat_affect_roughness"
+  TypedAttributeWithFallback<Animatable<float>> coat_roughness_anisotropy{0.0f}; // "inputs:coat_roughness_anisotropy"
+  TypedAttributeWithFallback<Animatable<float>> coat_darkening{0.0f}; // "inputs:coat_darkening"
 
   // Emission properties
   TypedAttributeWithFallback<Animatable<float>> emission_luminance{0.0f}; // "inputs:emission_luminance"
