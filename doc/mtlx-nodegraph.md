@@ -414,6 +414,88 @@ When exporting from Blender with MaterialX:
 3. Some conversions create verbose node chains (e.g., Invert → subtract + mix)
 4. The optimizer simplifies these back to semantic equivalents
 
+## Mesh Attribute Resolution (UVs and Normals)
+
+This section describes how TinyUSDZ's Tydra resolves UV coordinates and normals from USD meshes during `ConvertMesh()`, and how this aligns with OpenUSD's MaterialX integration.
+
+### UV Coordinates (Texcoords)
+
+**Primvar lookup:** `primvars:st` (configurable via `MeshConverterConfig::default_texcoords_primvar_name`, default `"st"`)
+
+Tydra resolves texcoords through two paths depending on whether materials are bound:
+
+#### Path 1: No materials bound
+
+When no materials are assigned to the mesh, Tydra directly checks for the default texcoord primvar:
+
+```
+mesh.has_primvar("st") → GetTextureCoordinate() → dst.texcoords[0]
+```
+
+#### Path 2: Materials bound
+
+When materials ARE assigned, Tydra first tries to extract UV names from shader connections via `ListUVNames()`, which walks through shader parameters and finds UV primvar names referenced by texture nodes.
+
+**Implicit fallback:** If no UV names are found via shader connections (e.g. MaterialX materials with procedural nodes but no explicit texture connections), Tydra falls back to checking the default texcoord primvar on the mesh:
+
+```
+ListUVNames(material) → uvname_map
+  ├─ (has UV names) → GetTextureCoordinate(uvname) → dst.texcoords[slotId]
+  └─ (empty)        → mesh.has_primvar("st") → dst.texcoords[0]  (fallback)
+```
+
+This fallback mirrors OpenUSD's implicit `defaultgeomprop="UV0"` → `primvars:st` mapping, where MaterialX's `UV0` is replaced with `UsdUtilsGetPrimaryUVSetName()` (returns `"st"` by default).
+
+**Reference:** `src/tydra/render-data.cc` lines ~4255-4360
+
+#### Tangent/Binormal computation
+
+Tangent computation requires texcoords. If `dst.texcoords[0]` is not available, the computation is skipped with a warning instead of failing the entire mesh conversion:
+
+```cpp
+if (!dst.texcoords.count(0)) {
+    PUSH_WARN("texcoord is not assigned to the mesh. "
+              "Skipping tangent/binormal computation.");
+}
+```
+
+### Normals
+
+**Primvar lookup order:**
+1. `primvars:normals` — checked first via `mesh.has_primvar("normals")`
+2. `normals` (legacy attribute) — checked second via `mesh.normals.authored()`
+3. Auto-compute — smooth normals computed if neither source exists
+
+```
+mesh.has_primvar("normals")     → GetGeomPrimvar() → dst.normals   (1. primvar)
+  └─ mesh.normals.authored()    → EvaluateTyped..() → dst.normals  (2. legacy)
+       └─ (neither)             → ComputeNormals()  → dst.normals  (3. auto)
+```
+
+**Key difference from UVs:** Normals are loaded **unconditionally** from mesh geometry — they do not depend on material bindings. This matches OpenUSD's behavior where mesh geometric normals are implicitly available to all MaterialX shaders through the rendering backend (via `HdGet_normal()` in Hydra).
+
+There is no `defaultgeomprop` mechanism for normals in MaterialX (unlike UV0 for texcoords). Normal maps are explicitly connected to shader inputs (e.g. `inputs:normal` or `geometry_normal` in OpenPBR), while the underlying mesh normals are always available automatically.
+
+**Interpolation:** The interpolation mode from USD (Varying, Constant, Uniform, Vertex, FaceVarying) is preserved. For single-indexable meshes with facevarying normals, Tydra attempts to convert to vertex variability via `TryConvertFacevaryingToVertex()`.
+
+**Auto-computation** is triggered when:
+- `MeshConverterConfig::compute_normals` is true (default) AND normals are missing
+- OR `compute_tangents_and_binormals` is true AND normals are missing (tangent computation needs normals)
+
+**Reference:** `src/tydra/render-data.cc` lines ~4480-4558 (loading), ~5299-5339 (auto-compute)
+
+### Comparison with OpenUSD
+
+| Attribute | OpenUSD | TinyUSDZ Tydra |
+|-----------|---------|----------------|
+| **UV primvar** | `defaultgeomprop="UV0"` → `UsdUtilsGetPrimaryUVSetName()` → `"st"` | `default_texcoords_primvar_name` → `"st"` (configurable) |
+| **UV env override** | `USDMTLX_PRIMARY_UV_NAME` | `MeshConverterConfig::default_texcoords_primvar_name` |
+| **UV implicit binding** | Via `defaultgeomprop` in MaterialX node definitions | Fallback when no UV names from shader connections |
+| **Normal primvar** | `primvars:normals`, then `normals` attribute | Same: `primvars:normals`, then `normals` (legacy) |
+| **Normal binding** | Implicit — `HdGet_normal()` in Hydra shaders | Implicit — loaded unconditionally from mesh geometry |
+| **Normal auto-compute** | Render delegate dependent | `ComputeNormals()` — smooth normals for shared vertices |
+| **Normal map** | Connected via nodegraph → `inputs:normal` | Extracted via `ExtractMtlxNodeGraphInfo()` → `geometry_normal` |
+
 ## Future Improvements
 
 - Constant folding for compile-time evaluation
