@@ -104,60 +104,10 @@ class GeomPrimvar {
     _has_value = true;
   }
 
-  GeomPrimvar(const GeomPrimvar &rhs) {
-    //TUSDZ_LOG_I("GeomPrimvar copy constructor called");
-    _name = rhs._name;
-    _attr = rhs._attr;
-    _indices = rhs._indices;
-    _ts_indices = rhs._ts_indices;
-    _has_value = rhs._has_value;
-    _elementSize = rhs._elementSize;
-    _interpolation = rhs._interpolation;
-    _unauthoredValuesIndex = rhs._unauthoredValuesIndex;
-  }
-
-  GeomPrimvar &operator=(const GeomPrimvar &rhs) {
-    //TUSDZ_LOG_I("GeomPrimvar copy assignment operator called");
-    _name = rhs._name;
-    _attr = rhs._attr;
-    _indices = rhs._indices;
-    _ts_indices = rhs._ts_indices;
-    _has_value = rhs._has_value;
-    _elementSize = rhs._elementSize;
-    _interpolation = rhs._interpolation;
-    _unauthoredValuesIndex = rhs._unauthoredValuesIndex;
-
-    return *this;
-  }
-
-  // Move constructor
-  GeomPrimvar(GeomPrimvar&& rhs) noexcept
-      : _name(std::move(rhs._name)),
-        _has_value(rhs._has_value),
-        _attr(std::move(rhs._attr)),
-        _indices(std::move(rhs._indices)),
-        _ts_indices(std::move(rhs._ts_indices)),
-        _unauthoredValuesIndex(rhs._unauthoredValuesIndex),
-        _elementSize(rhs._elementSize),
-        _interpolation(rhs._interpolation) {
-    //TUSDZ_LOG_I("GeomPrimvar move constructor called");
-  }
-
-  // Move assignment operator
-  GeomPrimvar& operator=(GeomPrimvar&& rhs) noexcept {
-    //TUSDZ_LOG_I("GeomPrimvar move assignment operator called");
-    if (this != &rhs) {
-      _name = std::move(rhs._name);
-      _attr = std::move(rhs._attr);
-      _indices = std::move(rhs._indices);
-      _ts_indices = std::move(rhs._ts_indices);
-      _has_value = rhs._has_value;
-      _elementSize = rhs._elementSize;
-      _interpolation = rhs._interpolation;
-      _unauthoredValuesIndex = rhs._unauthoredValuesIndex;
-    }
-    return *this;
-  }
+  GeomPrimvar(const GeomPrimvar &) = default;
+  GeomPrimvar &operator=(const GeomPrimvar &) = default;
+  GeomPrimvar(GeomPrimvar &&) noexcept = default;
+  GeomPrimvar &operator=(GeomPrimvar &&) noexcept = default;
 
   ///
   /// For Indexed Primvar(array value + indices)
@@ -332,6 +282,12 @@ class GeomPrimvar {
   }
 
  private:
+
+  // Resolve indices at time `t`. Returns a const ref — either to `_indices`
+  // directly (zero-copy) or to `buf` when fetched from timesamples.
+  const std::vector<int32_t> &resolve_indices_at(
+      double t, value::TimeSampleInterpolationType tinterp,
+      std::vector<int32_t> &buf) const;
 
   std::string _name;
   bool _has_value{false};
