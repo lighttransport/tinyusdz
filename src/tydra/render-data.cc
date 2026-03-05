@@ -5006,81 +5006,6 @@ bool RenderSceneConverter::ConvertMesh(
       return 128; // Max supported
     };
 
-    // Apply bone reduction if enabled
-    if (env.mesh_config.enable_bone_reduction &&
-        (env.mesh_config.target_bone_count < jointIndicesElementSize)) {
-      uint32_t numVertices = uint32_t(jointIndicesArray.size() / jointIndicesElementSize);
-
-      DCOUT("Reducing bone influences from " << jointIndicesElementSize
-            << " to " << env.mesh_config.target_bone_count
-            << " per vertex (" << numVertices << " vertices)");
-
-      // Configure bone reduction with advanced settings
-      BoneReductionConfig bone_config;
-      bone_config.target_bone_count = env.mesh_config.target_bone_count;
-      bone_config.strategy = BoneReductionStrategy::ErrorMetric; // Use error-aware reduction
-      bone_config.min_weight_threshold = 0.001f; // Ignore very small weights
-      bone_config.error_tolerance = 0.5f;
-      bone_config.normalize_weights = true;
-
-      // TODO: Pass skeleton hierarchy info if available for better reduction quality
-      // For now, use nullptr (hierarchy-agnostic reduction)
-      BoneHierarchyInfo *hierarchy_info = nullptr;
-      BoneReductionStats reduction_stats;
-
-      if (!ReduceBoneInfluences(
-              dst.joint_and_weights.jointIndices,
-              dst.joint_and_weights.jointWeights,
-              jointIndicesElementSize,
-              numVertices,
-              bone_config,
-              hierarchy_info,
-              &reduction_stats)) {
-        PUSH_WARN("Bone reduction failed, using original bone influences.");
-      } else {
-        // Update elementSize to reflect reduced bone count
-        dst.joint_and_weights.elementSize = int(env.mesh_config.target_bone_count);
-        DCOUT("Bone reduction complete. New elementSize: " << dst.joint_and_weights.elementSize);
-        DCOUT("  Modified vertices: " << reduction_stats.num_vertices_modified << " / " << numVertices);
-        DCOUT("  Avg weight error: " << reduction_stats.avg_weight_error);
-        DCOUT("  Max weight error: " << reduction_stats.max_weight_error);
-      }
-    }
-    // Round bone count without reduction (pad with zeros)
-    else if (env.mesh_config.round_bone_count && !env.mesh_config.enable_bone_reduction) {
-      uint32_t currentElementSize = jointIndicesElementSize;
-      uint32_t roundedElementSize = roundBoneCountUp(currentElementSize);
-
-      if (roundedElementSize > currentElementSize) {
-        uint32_t numVertices = uint32_t(jointIndicesArray.size() / jointIndicesElementSize);
-
-        DCOUT("Rounding bone count from " << currentElementSize
-              << " to " << roundedElementSize
-              << " per vertex (" << numVertices << " vertices)");
-
-        // Create new arrays with padded size
-        std::vector<int32_t> paddedIndices(numVertices * roundedElementSize, 0);
-        std::vector<float> paddedWeights(numVertices * roundedElementSize, 0.0f);
-
-        // Copy existing data and pad with zeros
-        for (uint32_t v = 0; v < numVertices; v++) {
-          for (uint32_t j = 0; j < currentElementSize; j++) {
-            uint32_t srcIdx = v * currentElementSize + j;
-            uint32_t dstIdx = v * roundedElementSize + j;
-            paddedIndices[dstIdx] = dst.joint_and_weights.jointIndices[srcIdx];
-            paddedWeights[dstIdx] = dst.joint_and_weights.jointWeights[srcIdx];
-          }
-          // Remaining slots are already zero-initialized
-        }
-
-        dst.joint_and_weights.jointIndices = std::move(paddedIndices);
-        dst.joint_and_weights.jointWeights = std::move(paddedWeights);
-        dst.joint_and_weights.elementSize = int(roundedElementSize);
-
-        DCOUT("Bone count rounded. New elementSize: " << dst.joint_and_weights.elementSize);
-      }
-    }
-
     // Skeleton binding: first try explicit relationship, then fallback to ancestor discovery
     {
       Path skelPath;
@@ -5162,6 +5087,90 @@ bool RenderSceneConverter::ConvertMesh(
           dst.skel_id = skel_id;
         }
 
+      }
+    }
+
+    // Apply bone reduction if enabled (after skeleton binding so hierarchy info is available)
+    if (env.mesh_config.enable_bone_reduction &&
+        (env.mesh_config.target_bone_count < jointIndicesElementSize)) {
+      uint32_t numVertices = uint32_t(jointIndicesArray.size() / jointIndicesElementSize);
+
+      DCOUT("Reducing bone influences from " << jointIndicesElementSize
+            << " to " << env.mesh_config.target_bone_count
+            << " per vertex (" << numVertices << " vertices)");
+
+      // Configure bone reduction with advanced settings
+      BoneReductionConfig bone_config;
+      bone_config.target_bone_count = env.mesh_config.target_bone_count;
+      bone_config.strategy = BoneReductionStrategy::ErrorMetric;
+      bone_config.min_weight_threshold = 0.001f;
+      bone_config.error_tolerance = 0.5f;
+      bone_config.normalize_weights = true;
+
+      // Use pre-computed flat topology from SkelHierarchy if available
+      BoneHierarchyInfo hierarchy_storage;
+      BoneHierarchyInfo *hierarchy_info = nullptr;
+
+      if (dst.skel_id >= 0 && dst.skel_id < int(skeletons.size())) {
+        const auto &skelH = skeletons[size_t(dst.skel_id)];
+        if (!skelH.parent_joint_indices.empty()) {
+          hierarchy_storage.parent_indices = skelH.parent_joint_indices;
+          hierarchy_info = &hierarchy_storage;
+        }
+      }
+
+      BoneReductionStats reduction_stats;
+
+      if (!ReduceBoneInfluences(
+              dst.joint_and_weights.jointIndices,
+              dst.joint_and_weights.jointWeights,
+              jointIndicesElementSize,
+              numVertices,
+              bone_config,
+              hierarchy_info,
+              &reduction_stats)) {
+        PUSH_WARN("Bone reduction failed, using original bone influences.");
+      } else {
+        // Update elementSize to reflect reduced bone count
+        dst.joint_and_weights.elementSize = int(env.mesh_config.target_bone_count);
+        DCOUT("Bone reduction complete. New elementSize: " << dst.joint_and_weights.elementSize);
+        DCOUT("  Modified vertices: " << reduction_stats.num_vertices_modified << " / " << numVertices);
+        DCOUT("  Avg weight error: " << reduction_stats.avg_weight_error);
+        DCOUT("  Max weight error: " << reduction_stats.max_weight_error);
+      }
+    }
+    // Round bone count without reduction (pad with zeros)
+    else if (env.mesh_config.round_bone_count && !env.mesh_config.enable_bone_reduction) {
+      uint32_t currentElementSize = jointIndicesElementSize;
+      uint32_t roundedElementSize = roundBoneCountUp(currentElementSize);
+
+      if (roundedElementSize > currentElementSize) {
+        uint32_t numVertices = uint32_t(jointIndicesArray.size() / jointIndicesElementSize);
+
+        DCOUT("Rounding bone count from " << currentElementSize
+              << " to " << roundedElementSize
+              << " per vertex (" << numVertices << " vertices)");
+
+        // Create new arrays with padded size
+        std::vector<int32_t> paddedIndices(numVertices * roundedElementSize, 0);
+        std::vector<float> paddedWeights(numVertices * roundedElementSize, 0.0f);
+
+        // Copy existing data and pad with zeros
+        for (uint32_t v = 0; v < numVertices; v++) {
+          for (uint32_t j = 0; j < currentElementSize; j++) {
+            uint32_t srcIdx = v * currentElementSize + j;
+            uint32_t dstIdx = v * roundedElementSize + j;
+            paddedIndices[dstIdx] = dst.joint_and_weights.jointIndices[srcIdx];
+            paddedWeights[dstIdx] = dst.joint_and_weights.jointWeights[srcIdx];
+          }
+          // Remaining slots are already zero-initialized
+        }
+
+        dst.joint_and_weights.jointIndices = std::move(paddedIndices);
+        dst.joint_and_weights.jointWeights = std::move(paddedWeights);
+        dst.joint_and_weights.elementSize = int(roundedElementSize);
+
+        DCOUT("Bone count rounded. New elementSize: " << dst.joint_and_weights.elementSize);
       }
     }
 
@@ -11308,6 +11317,39 @@ bool RenderSceneConverter::ConvertToRenderScene(
   return true;
 }
 
+// Helper: populate flat topology/transform arrays on SkelHierarchy from a Skeleton prim.
+static bool PopulateSkelFlatArrays(const Skeleton &skel, SkelHierarchy &dst, std::string *err) {
+  std::vector<value::token> joints;
+  if (!skel.joints.get_value(&joints) || joints.empty()) {
+    return true;  // No joints authored; leave flat arrays empty
+  }
+
+  // Build topology
+  if (!BuildSkelTopology(joints, dst.parent_joint_indices, err)) {
+    return false;
+  }
+
+  // Bind transforms
+  if (skel.bindTransforms.authored()) {
+    if (!skel.bindTransforms.get_value(&dst.bind_transforms)) {
+      dst.bind_transforms.assign(joints.size(), value::matrix4d::identity());
+    }
+  } else {
+    dst.bind_transforms.assign(joints.size(), value::matrix4d::identity());
+  }
+
+  // Rest transforms
+  if (skel.restTransforms.authored()) {
+    if (!skel.restTransforms.get_value(&dst.rest_transforms)) {
+      dst.rest_transforms.assign(joints.size(), value::matrix4d::identity());
+    }
+  } else {
+    dst.rest_transforms.assign(joints.size(), value::matrix4d::identity());
+  }
+
+  return true;
+}
+
 bool RenderSceneConverter::ConvertSkeletonFromPtr(const RenderSceneConverterEnv &env,
                        const Path &skelPath,
                        const Skeleton &skel,
@@ -11328,6 +11370,8 @@ bool RenderSceneConverter::ConvertSkeletonFromPtr(const RenderSceneConverterEnv 
   dst.prim_name = primName;
   dst.display_name = skel.metas().has_displayName() ? skel.metas().get_displayName() : "";
   dst.root_node = root;
+
+  PopulateSkelFlatArrays(skel, dst, &_err);
 
   (*out_skel) = std::move(dst);
   return true;
@@ -11356,6 +11400,8 @@ bool RenderSceneConverter::ConvertSkeletonImplWithPath(const RenderSceneConverte
       dst.prim_name = skelPrim->element_name();
       dst.display_name = pskel->metas().has_displayName() ? pskel->metas().get_displayName() : "";
       dst.root_node = root;
+
+      PopulateSkelFlatArrays(*pskel, dst, &_err);
     } else {
       PUSH_ERROR_AND_RETURN("Prim is not Skeleton.");
     }
