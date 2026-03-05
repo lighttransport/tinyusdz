@@ -339,12 +339,31 @@ bool GPrim::get_primvar(const std::string &varname, GeomPrimvar *out_primvar,
   return true;
 }
 
+const std::vector<int32_t> &GeomPrimvar::resolve_indices_at(
+    double t, value::TimeSampleInterpolationType tinterp,
+    std::vector<int32_t> &buf) const {
+  if (value::TimeCode(t).is_default()) {
+    if (has_default_indices()) {
+      return _indices;  // zero-copy
+    }
+    if (has_timesampled_indices()) {
+      _ts_indices.get(&buf, t, tinterp);
+      return buf;
+    }
+  } else {
+    if (has_timesampled_indices()) {
+      _ts_indices.get(&buf, t, tinterp);
+      return buf;
+    }
+  }
+  static const std::vector<int32_t> empty;
+  return empty;
+}
+
 template <typename T>
 bool GeomPrimvar::flatten_with_indices(const double t, std::vector<T> *dest, const value::TimeSampleInterpolationType tinterp, std::string *err) const {
   if (!dest) {
-    if (err) {
-      (*err) += "Output value is nullptr.";
-    }
+    if (err) { (*err) += "Output value is nullptr."; }
     return false;
   }
 
@@ -364,76 +383,32 @@ bool GeomPrimvar::flatten_with_indices(const double t, std::vector<T> *dest, con
     return false;
   }
 
-  uint32_t elementSize = _attr.metas().has_elementSize() ? _attr.metas().get_elementSize() : 1;
+  const uint32_t elementSize = get_elementSize();
+  std::vector<int32_t> indices_buf;
+  const auto &indices = resolve_indices_at(t, tinterp, indices_buf);
 
-  // Resolve indices (by const reference when possible to avoid copy)
-  const std::vector<int32_t> *indices_ptr = nullptr;
-  std::vector<int32_t> ts_indices_buf;  // Only used when fetching from timesamples
-  if (value::TimeCode(t).is_default()) {
-    if (has_default_indices()) {
-      indices_ptr = &_indices;
-    } else if (has_timesampled_indices()) {
-      _ts_indices.get(&ts_indices_buf, t, tinterp);
-      indices_ptr = &ts_indices_buf;
-    }
-  } else {
-    _ts_indices.get(&ts_indices_buf, t, tinterp);
-    indices_ptr = &ts_indices_buf;
-  }
-  // Empty ref for no-indices case
-  static const std::vector<int32_t> empty_indices;
-  const std::vector<int32_t> &indices = indices_ptr ? *indices_ptr : empty_indices;
-
-  // === Fast path: default time, no timesamples → use zero-copy TypedArrayView ===
+  // === Fast path: default time, no timesamples → zero-copy TypedArrayView ===
   if constexpr (std::is_trivially_copyable<T>::value && !std::is_same<T, bool>::value) {
     if (value::TimeCode(t).is_default() && !_attr.has_timesamples()) {
       TypedArrayView<const T> view = _attr.get_value_view<T>();
       if (!view.empty()) {
-        if (view.size() > 1000000000) {
-          if (err) {
-            (*err) += fmt::format(
-                "[Internal Error] Array has invalid size: {} for attribute type `{}`",
-                view.size(), _attr.type_name());
-          }
-          return false;
-        }
-        if (view.size() == 0) {
-          return false;  // Empty authored array (OpenUSD compat)
-        }
-        // Expand directly from view pointer into *dest — no source copy
         auto ret = ExpandWithIndicesFromPtr(view.data(), view.size(), elementSize, indices, dest);
-        if (ret) {
-          return true;
-        } else {
-          if (err) {
-            (*err) += fmt::format(
-                "[Internal Error] Failed to expand for GeomPrimvar type = `{}`",
-                _attr.type_name());
-            (*err) += "\n" + ret.error();
-          }
-          return false;
+        if (ret) { return true; }
+        if (err) {
+          (*err) += fmt::format("[Internal Error] Failed to expand for GeomPrimvar type = `{}`", _attr.type_name());
+          (*err) += "\n" + ret.error();
         }
+        return false;
       }
-      // View was empty — fall through to get_value path
     }
   }
 
-  // === Standard path: get_value (copies data out of attribute storage) ===
+  // === Standard path: get_value (copies from attribute storage) ===
   std::vector<T> value;
   if (!_attr.get_value<std::vector<T>>(t, &value, tinterp)) {
     if (err) {
-      (*err) += fmt::format(
-          "`{}[]` type requested, but Attribute is type `{}`",
-          value::TypeTraits<T>::type_name(), _attr.type_name());
-    }
-    return false;
-  }
-
-  if (value.size() > 1000000000) {
-    if (err) {
-      (*err) += fmt::format(
-          "[Internal Error] Array has invalid size: {} for attribute type `{}`",
-          value.size(), _attr.type_name());
+      (*err) += fmt::format("`{}[]` type requested, but Attribute is type `{}`",
+                            value::TypeTraits<T>::type_name(), _attr.type_name());
     }
     return false;
   }
@@ -443,20 +418,14 @@ bool GeomPrimvar::flatten_with_indices(const double t, std::vector<T> *dest, con
   }
 
   if (indices.empty()) {
-    // No indices: move value directly to dest (avoid copy)
     (*dest) = std::move(value);
     return true;
   }
 
-  // Expand directly into *dest from the local value vector
   auto ret = ExpandWithIndices(value, elementSize, indices, dest);
-  if (ret) {
-    return true;
-  }
+  if (ret) { return true; }
   if (err) {
-    (*err) += fmt::format(
-        "[Internal Error] Failed to expand for GeomPrimvar type = `{}`",
-        _attr.type_name());
+    (*err) += fmt::format("[Internal Error] Failed to expand for GeomPrimvar type = `{}`", _attr.type_name());
     (*err) += "\n" + ret.error();
   }
   return false;
@@ -523,11 +492,8 @@ APPLY_GEOMPRIVAR_TYPE(INSTANCIATE_FLATTEN_WITH_INDICES)
 #undef INSTANCIATE_FLATTEN_WITH_INDICES
 
 bool GeomPrimvar::flatten_with_indices(const double t, value::Value *dest, const value::TimeSampleInterpolationType tinterp, std::string *err) const {
-
   if (!dest) {
-    if (err) {
-      (*err) += "Output value is nullptr.";
-    }
+    if (err) { (*err) += "Output value is nullptr."; }
     return false;
   }
 
@@ -543,66 +509,26 @@ bool GeomPrimvar::flatten_with_indices(const double t, value::Value *dest, const
     return false;
   }
 
+  // Scalar type: pass through (matches OpenUSD ComputeFlattened).
   if (!(_attr.type_id() & value::TYPE_ID_1D_ARRAY_BIT)) {
-    // Scalar type: evaluate value at specified time and return it as-is.
-    // Matches OpenUSD ComputeFlattened which passes non-array values through.
     value::Value v;
     if (!_attr.get_var().get_interpolated_value(t, tinterp, &v)) {
-      if (err) {
-        (*err) += fmt::format("Failed to evaluate Attribute value.");
-      }
+      if (err) { (*err) += "Failed to evaluate Attribute value."; }
       return false;
     }
     (*dest) = std::move(v);
     return true;
   }
 
-  // Array type: resolve indices and expand
-  uint32_t elementSize = _attr.metas().has_elementSize() ? _attr.metas().get_elementSize() : 1;
-
-  // Resolve indices by const reference when possible
-  const std::vector<int32_t> *indices_ptr = nullptr;
-  std::vector<int32_t> ts_indices_buf;
-  if (value::TimeCode(t).is_default()) {
-    if (has_default_indices()) {
-      indices_ptr = &_indices;
-    } else if (has_timesampled_indices()) {
-      _ts_indices.get(&ts_indices_buf, t, tinterp);
-      indices_ptr = &ts_indices_buf;
-    }
-  } else {
-    _ts_indices.get(&ts_indices_buf, t, tinterp);
-    indices_ptr = &ts_indices_buf;
-  }
-  static const std::vector<int32_t> empty_indices;
-  const std::vector<int32_t> &indices = indices_ptr ? *indices_ptr : empty_indices;
-
-  bool processed = false;
-  std::string err_msg;
-
-  // Expand each supported type — writes directly into dest via move
+  // Array type: delegate to typed flatten_with_indices, then wrap in Value.
 #define APPLY_FUN(__ty)                                                    \
   case value::TypeTraits<__ty>::type_id() | value::TYPE_ID_1D_ARRAY_BIT: { \
-    std::vector<__ty> value;                                               \
-    if (_attr.get_value(t, &value, tinterp)) {                             \
-      if (value.empty()) {                                                 \
-        break; /* Empty authored array (OpenUSD compat) */                 \
-      }                                                                    \
-      if (indices.empty()) {                                               \
-        (*dest) = std::move(value);                                        \
-        processed = true;                                                  \
-      } else {                                                             \
-        std::vector<__ty> expanded;                                        \
-        auto ret = ExpandWithIndices(value, elementSize, indices, &expanded); \
-        if (ret) {                                                         \
-          (*dest) = std::move(expanded);                                   \
-          processed = true;                                                \
-        } else {                                                           \
-          err_msg = ret.error();                                           \
-        }                                                                  \
-      }                                                                    \
+    std::vector<__ty> result;                                              \
+    if (flatten_with_indices<__ty>(t, &result, tinterp, err)) {            \
+      (*dest) = std::move(result);                                         \
+      return true;                                                         \
     }                                                                      \
-    break;                                                                 \
+    return false;                                                          \
   }
 
   switch (_attr.type_id()) {
@@ -612,16 +538,11 @@ bool GeomPrimvar::flatten_with_indices(const double t, value::Value *dest, const
 
 #undef APPLY_FUN
 
-  if (!processed && err) {
-    (*err) += fmt::format(
-        "[Internal Error] Failed to expand for GeomPrimvar type = `{}`",
-        _attr.type_name());
-    if (!err_msg.empty()) {
-      (*err) += "\n" + err_msg;
-    }
+  if (err) {
+    (*err) += fmt::format("Unsupported array type for GeomPrimvar. type = `{}`",
+                          _attr.type_name());
   }
-
-  return processed;
+  return false;
 }
 
 bool GeomPrimvar::flatten_with_indices(value::Value *dest, std::string *err) const {
