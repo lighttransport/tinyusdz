@@ -946,159 +946,71 @@ const std::vector<int32_t> GeomMesh::get_faceVertexIndices(double time) const {
   return dst;
 }
 
+// --- Convenience getter helper ---
+// Extracts a typed array value from an animated attribute, handling
+// authored/blocked/connection guards uniformly.
+template <typename T, typename AttrT>
+static std::vector<T> GetAnimatedArrayValue(
+    const AttrT &attr, double time,
+    value::TimeSampleInterpolationType interp) {
+  std::vector<T> dst;
+  if (!attr.authored() || attr.is_blocked() || attr.is_connection()) return dst;
+  if (auto pv = attr.get_value()) {
+    std::vector<T> val;
+    if (pv.value().get(time, &val, interp)) dst = std::move(val);
+  }
+  return dst;
+}
+
 // --- GeomBasisCurves convenience getters ---
 
-const std::vector<value::point3f> GeomBasisCurves::get_points(
-    double time, value::TimeSampleInterpolationType interp) const {
-  std::vector<value::point3f> dst;
-  if (!points.authored() || points.is_blocked() || points.is_connection()) return dst;
-  if (auto pv = points.get_value()) {
-    std::vector<value::point3f> val;
-    if (pv.value().get(time, &val, interp)) dst = std::move(val);
-  }
-  return dst;
+const std::vector<value::point3f> GeomBasisCurves::get_points(double time, value::TimeSampleInterpolationType interp) const {
+  return GetAnimatedArrayValue<value::point3f>(points, time, interp);
 }
-
-const std::vector<value::normal3f> GeomBasisCurves::get_normals(
-    double time, value::TimeSampleInterpolationType interp) const {
-  std::vector<value::normal3f> dst;
-  if (!normals.authored() || normals.is_blocked() || normals.is_connection()) return dst;
-  if (auto pv = normals.get_value()) {
-    std::vector<value::normal3f> val;
-    if (pv.value().get(time, &val, interp)) dst = std::move(val);
-  }
-  return dst;
+const std::vector<value::normal3f> GeomBasisCurves::get_normals(double time, value::TimeSampleInterpolationType interp) const {
+  return GetAnimatedArrayValue<value::normal3f>(normals, time, interp);
 }
-
 const std::vector<int> GeomBasisCurves::get_curveVertexCounts(double time) const {
-  std::vector<int> dst;
-  if (!curveVertexCounts.authored() || curveVertexCounts.is_blocked() || curveVertexCounts.is_connection()) return dst;
-  if (auto pv = curveVertexCounts.get_value()) {
-    std::vector<int> val;
-    if (pv.value().get(time, &val, value::TimeSampleInterpolationType::Held)) dst = std::move(val);
-  }
-  return dst;
+  return GetAnimatedArrayValue<int>(curveVertexCounts, time, value::TimeSampleInterpolationType::Held);
 }
-
-const std::vector<float> GeomBasisCurves::get_widths(
-    double time, value::TimeSampleInterpolationType interp) const {
-  std::vector<float> dst;
-  if (!widths.authored() || widths.is_blocked() || widths.is_connection()) return dst;
-  if (auto pv = widths.get_value()) {
-    std::vector<float> val;
-    if (pv.value().get(time, &val, interp)) dst = std::move(val);
-  }
-  return dst;
+const std::vector<float> GeomBasisCurves::get_widths(double time, value::TimeSampleInterpolationType interp) const {
+  return GetAnimatedArrayValue<float>(widths, time, interp);
 }
 
 // --- GeomNurbsCurves convenience getters ---
 
-const std::vector<value::point3f> GeomNurbsCurves::get_points(
-    double time, value::TimeSampleInterpolationType interp) const {
-  std::vector<value::point3f> dst;
-  if (!points.authored() || points.is_blocked() || points.is_connection()) return dst;
-  if (auto pv = points.get_value()) {
-    std::vector<value::point3f> val;
-    if (pv.value().get(time, &val, interp)) dst = std::move(val);
-  }
-  return dst;
+const std::vector<value::point3f> GeomNurbsCurves::get_points(double time, value::TimeSampleInterpolationType interp) const {
+  return GetAnimatedArrayValue<value::point3f>(points, time, interp);
 }
-
-const std::vector<value::normal3f> GeomNurbsCurves::get_normals(
-    double time, value::TimeSampleInterpolationType interp) const {
-  std::vector<value::normal3f> dst;
-  if (!normals.authored() || normals.is_blocked() || normals.is_connection()) return dst;
-  if (auto pv = normals.get_value()) {
-    std::vector<value::normal3f> val;
-    if (pv.value().get(time, &val, interp)) dst = std::move(val);
-  }
-  return dst;
+const std::vector<value::normal3f> GeomNurbsCurves::get_normals(double time, value::TimeSampleInterpolationType interp) const {
+  return GetAnimatedArrayValue<value::normal3f>(normals, time, interp);
 }
-
 const std::vector<int> GeomNurbsCurves::get_curveVertexCounts(double time) const {
-  std::vector<int> dst;
-  if (!curveVertexCounts.authored() || curveVertexCounts.is_blocked() || curveVertexCounts.is_connection()) return dst;
-  if (auto pv = curveVertexCounts.get_value()) {
-    std::vector<int> val;
-    if (pv.value().get(time, &val, value::TimeSampleInterpolationType::Held)) dst = std::move(val);
-  }
-  return dst;
+  return GetAnimatedArrayValue<int>(curveVertexCounts, time, value::TimeSampleInterpolationType::Held);
 }
-
-const std::vector<float> GeomNurbsCurves::get_widths(
-    double time, value::TimeSampleInterpolationType interp) const {
-  std::vector<float> dst;
-  if (!widths.authored() || widths.is_blocked() || widths.is_connection()) return dst;
-  if (auto pv = widths.get_value()) {
-    std::vector<float> val;
-    if (pv.value().get(time, &val, interp)) dst = std::move(val);
-  }
-  return dst;
+const std::vector<float> GeomNurbsCurves::get_widths(double time, value::TimeSampleInterpolationType interp) const {
+  return GetAnimatedArrayValue<float>(widths, time, interp);
 }
-
 const std::vector<int> GeomNurbsCurves::get_order(double time) const {
-  std::vector<int> dst;
-  if (!order.authored() || order.is_blocked() || order.is_connection()) return dst;
-  if (auto pv = order.get_value()) {
-    std::vector<int> val;
-    if (pv.value().get(time, &val, value::TimeSampleInterpolationType::Held)) dst = std::move(val);
-  }
-  return dst;
+  return GetAnimatedArrayValue<int>(order, time, value::TimeSampleInterpolationType::Held);
 }
-
 const std::vector<double> GeomNurbsCurves::get_knots(double time) const {
-  std::vector<double> dst;
-  if (!knots.authored() || knots.is_blocked() || knots.is_connection()) return dst;
-  if (auto pv = knots.get_value()) {
-    std::vector<double> val;
-    if (pv.value().get(time, &val, value::TimeSampleInterpolationType::Held)) dst = std::move(val);
-  }
-  return dst;
+  return GetAnimatedArrayValue<double>(knots, time, value::TimeSampleInterpolationType::Held);
 }
 
 // --- GeomPoints convenience getters ---
 
-const std::vector<value::point3f> GeomPoints::get_points(
-    double time, value::TimeSampleInterpolationType interp) const {
-  std::vector<value::point3f> dst;
-  if (!points.authored() || points.is_blocked() || points.is_connection()) return dst;
-  if (auto pv = points.get_value()) {
-    std::vector<value::point3f> val;
-    if (pv.value().get(time, &val, interp)) dst = std::move(val);
-  }
-  return dst;
+const std::vector<value::point3f> GeomPoints::get_points(double time, value::TimeSampleInterpolationType interp) const {
+  return GetAnimatedArrayValue<value::point3f>(points, time, interp);
 }
-
-const std::vector<value::normal3f> GeomPoints::get_normals(
-    double time, value::TimeSampleInterpolationType interp) const {
-  std::vector<value::normal3f> dst;
-  if (!normals.authored() || normals.is_blocked() || normals.is_connection()) return dst;
-  if (auto pv = normals.get_value()) {
-    std::vector<value::normal3f> val;
-    if (pv.value().get(time, &val, interp)) dst = std::move(val);
-  }
-  return dst;
+const std::vector<value::normal3f> GeomPoints::get_normals(double time, value::TimeSampleInterpolationType interp) const {
+  return GetAnimatedArrayValue<value::normal3f>(normals, time, interp);
 }
-
-const std::vector<float> GeomPoints::get_widths(
-    double time, value::TimeSampleInterpolationType interp) const {
-  std::vector<float> dst;
-  if (!widths.authored() || widths.is_blocked() || widths.is_connection()) return dst;
-  if (auto pv = widths.get_value()) {
-    std::vector<float> val;
-    if (pv.value().get(time, &val, interp)) dst = std::move(val);
-  }
-  return dst;
+const std::vector<float> GeomPoints::get_widths(double time, value::TimeSampleInterpolationType interp) const {
+  return GetAnimatedArrayValue<float>(widths, time, interp);
 }
-
 const std::vector<int64_t> GeomPoints::get_ids(double time) const {
-  std::vector<int64_t> dst;
-  if (!ids.authored() || ids.is_blocked() || ids.is_connection()) return dst;
-  if (auto pv = ids.get_value()) {
-    std::vector<int64_t> val;
-    if (pv.value().get(time, &val, value::TimeSampleInterpolationType::Held)) dst = std::move(val);
-  }
-  return dst;
+  return GetAnimatedArrayValue<int64_t>(ids, time, value::TimeSampleInterpolationType::Held);
 }
 
 std::vector<value::token> GeomMesh::get_joints() const {
@@ -1260,6 +1172,35 @@ bool GeomMesh::ValidateTopology(std::string *err, double time) const {
 
 // --- H1: ComputeExtent ---
 
+// Helper: set axis-aligned extent for Cone/Cylinder/Capsule
+static void SetAxisAlignedExtent(Axis axis, float radial, float axial_lo, float axial_hi, Extent *extent) {
+  if (axis == Axis::X) {
+    *extent = Extent(value::float3{{axial_lo, -radial, -radial}}, value::float3{{axial_hi, radial, radial}});
+  } else if (axis == Axis::Y) {
+    *extent = Extent(value::float3{{-radial, axial_lo, -radial}}, value::float3{{radial, axial_hi, radial}});
+  } else {
+    *extent = Extent(value::float3{{-radial, -radial, axial_lo}}, value::float3{{radial, radial, axial_hi}});
+  }
+}
+
+// Helper: compute extent from points expanded by max half-width (for curves)
+static void ComputeExtentFromPointsWithWidths(
+    const std::vector<value::point3f> &pts,
+    const std::vector<float> &widths,
+    Extent *extent) {
+  float maxHalfW = 0.0f;
+  for (float w : widths) {
+    float hw = w * 0.5f;
+    if (hw > maxHalfW) maxHalfW = hw;
+  }
+  Extent e;
+  for (const auto &p : pts) {
+    e.union_with(value::float3{{p.x - maxHalfW, p.y - maxHalfW, p.z - maxHalfW}});
+    e.union_with(value::float3{{p.x + maxHalfW, p.y + maxHalfW, p.z + maxHalfW}});
+  }
+  *extent = e;
+}
+
 bool ComputeExtent(const GeomMesh &mesh, Extent *extent,
     double time, std::string *err) {
   if (!extent) return false;
@@ -1324,16 +1265,7 @@ bool ComputeExtent(const GeomCone &cone, Extent *extent,
   double h = 2.0, r = 1.0;
   cone.height.get_value().get(time, &h);
   cone.radius.get_value().get(time, &r);
-  Axis axis = cone.axis.get_value();
-  float rf = static_cast<float>(r);
-  float hf = static_cast<float>(h);
-  if (axis == Axis::X) {
-    *extent = Extent(value::float3{{0.0f, -rf, -rf}}, value::float3{{hf, rf, rf}});
-  } else if (axis == Axis::Y) {
-    *extent = Extent(value::float3{{-rf, 0.0f, -rf}}, value::float3{{rf, hf, rf}});
-  } else {
-    *extent = Extent(value::float3{{-rf, -rf, 0.0f}}, value::float3{{rf, rf, hf}});
-  }
+  SetAxisAlignedExtent(cone.axis.get_value(), static_cast<float>(r), 0.0f, static_cast<float>(h), extent);
   return true;
 }
 
@@ -1344,16 +1276,8 @@ bool ComputeExtent(const GeomCylinder &cylinder, Extent *extent,
   double h = 2.0, r = 1.0;
   cylinder.height.get_value().get(time, &h);
   cylinder.radius.get_value().get(time, &r);
-  Axis axis = cylinder.axis.get_value();
-  float rf = static_cast<float>(r);
   float hh = static_cast<float>(h) * 0.5f;
-  if (axis == Axis::X) {
-    *extent = Extent(value::float3{{-hh, -rf, -rf}}, value::float3{{hh, rf, rf}});
-  } else if (axis == Axis::Y) {
-    *extent = Extent(value::float3{{-rf, -hh, -rf}}, value::float3{{rf, hh, rf}});
-  } else {
-    *extent = Extent(value::float3{{-rf, -rf, -hh}}, value::float3{{rf, rf, hh}});
-  }
+  SetAxisAlignedExtent(cylinder.axis.get_value(), static_cast<float>(r), -hh, hh, extent);
   return true;
 }
 
@@ -1364,16 +1288,9 @@ bool ComputeExtent(const GeomCapsule &capsule, Extent *extent,
   double h = 2.0, r = 0.5;
   capsule.height.get_value().get(time, &h);
   capsule.radius.get_value().get(time, &r);
-  Axis axis = capsule.axis.get_value();
   float rf = static_cast<float>(r);
   float hh = static_cast<float>(h) * 0.5f + rf;  // extend by radius for hemicaps
-  if (axis == Axis::X) {
-    *extent = Extent(value::float3{{-hh, -rf, -rf}}, value::float3{{hh, rf, rf}});
-  } else if (axis == Axis::Y) {
-    *extent = Extent(value::float3{{-rf, -hh, -rf}}, value::float3{{rf, hh, rf}});
-  } else {
-    *extent = Extent(value::float3{{-rf, -rf, -hh}}, value::float3{{rf, rf, hh}});
-  }
+  SetAxisAlignedExtent(capsule.axis.get_value(), rf, -hh, hh, extent);
   return true;
 }
 
@@ -1381,22 +1298,8 @@ bool ComputeExtent(const GeomBasisCurves &curves, Extent *extent,
     double time, std::string *err) {
   if (!extent) return false;
   auto pts = curves.get_points(time);
-  if (pts.empty()) {
-    if (err) (*err) = "No points in curves.\n";
-    return false;
-  }
-  auto ws = curves.get_widths(time);
-  float maxHalfW = 0.0f;
-  for (const auto &w : ws) {
-    float hw = w * 0.5f;
-    if (hw > maxHalfW) maxHalfW = hw;
-  }
-  Extent e;
-  for (const auto &p : pts) {
-    e.union_with(value::float3{{p.x - maxHalfW, p.y - maxHalfW, p.z - maxHalfW}});
-    e.union_with(value::float3{{p.x + maxHalfW, p.y + maxHalfW, p.z + maxHalfW}});
-  }
-  *extent = e;
+  if (pts.empty()) { if (err) (*err) = "No points in curves.\n"; return false; }
+  ComputeExtentFromPointsWithWidths(pts, curves.get_widths(time), extent);
   return true;
 }
 
@@ -1404,22 +1307,8 @@ bool ComputeExtent(const GeomNurbsCurves &curves, Extent *extent,
     double time, std::string *err) {
   if (!extent) return false;
   auto pts = curves.get_points(time);
-  if (pts.empty()) {
-    if (err) (*err) = "No points in NURBS curves.\n";
-    return false;
-  }
-  auto ws = curves.get_widths(time);
-  float maxHalfW = 0.0f;
-  for (const auto &w : ws) {
-    float hw = w * 0.5f;
-    if (hw > maxHalfW) maxHalfW = hw;
-  }
-  Extent e;
-  for (const auto &p : pts) {
-    e.union_with(value::float3{{p.x - maxHalfW, p.y - maxHalfW, p.z - maxHalfW}});
-    e.union_with(value::float3{{p.x + maxHalfW, p.y + maxHalfW, p.z + maxHalfW}});
-  }
-  *extent = e;
+  if (pts.empty()) { if (err) (*err) = "No points in NURBS curves.\n"; return false; }
+  ComputeExtentFromPointsWithWidths(pts, curves.get_widths(time), extent);
   return true;
 }
 
