@@ -557,6 +557,21 @@ bool GetGeomPrimvar(const Stage &stage, const GPrim *prim,
 std::vector<GeomPrimvar> GetGeomPrimvars(const Stage &stage, const GPrim &prim);
 
 ///
+/// Find a primvar on the given prim or its nearest ancestor that defines it.
+/// Walks up the prim hierarchy from `prim_path` to the root.
+///
+/// @param[in] stage The USD Stage.
+/// @param[in] prim_path Absolute path to the starting prim.
+/// @param[in] primvar_name The primvar name (without "primvars:" prefix).
+/// @param[out] out The found GeomPrimvar.
+/// @param[out] err Optional error string.
+/// @return true if found.
+///
+bool FindPrimvarWithInheritance(const Stage &stage, const Path &prim_path,
+    const std::string &primvar_name, GeomPrimvar *out,
+    std::string *err = nullptr);
+
+///
 /// Build Collection Membership
 ///
 /// It traverse collection paths starting from `seedCollectionInstance` in the
@@ -637,6 +652,83 @@ bool BuildSkelHierarchy(const Skeleton &skel,
 bool ListSceneNames(const tinyusdz::Prim &root,
                     std::vector<std::pair<bool, std::string>> *sceneNames);
 
+//
+// Skeletal mesh extent computation
+// (Follows OpenUSD's pivot-based approach from pxr/usd/usdSkel)
+//
+
+///
+/// Compute bounding box from joint transform translation components (pivots).
+/// Optionally applies a root transform and padding.
+///
+/// @param[in] jointXforms Joint transforms (e.g. posed world-space transforms)
+/// @param[out] extent Computed bounding box
+/// @param[in] padding Amount to expand the extent in all directions
+/// @param[in] rootXform Optional root transform applied to each pivot
+/// @return true on success
+///
+bool ComputeJointsExtent(
+    const std::vector<value::matrix4d> &jointXforms,
+    Extent *extent,
+    float padding = 0.0f,
+    const value::matrix4d *rootXform = nullptr);
+
+///
+/// Compute padding that accounts for mesh geometry extending beyond joint
+/// pivot positions. Used with ComputeJointsExtent for fast skeletal extent.
+///
+/// @param[in] restJointXforms Rest-pose joint transforms
+/// @param[in] meshRestExtent Rest-pose mesh bounding box
+/// @param[in] geomBindTransform Geometry bind transform
+/// @return padding value (>= 0)
+///
+float ComputeSkinnedExtentPadding(
+    const std::vector<value::matrix4d> &restJointXforms,
+    const Extent &meshRestExtent,
+    const value::matrix4d &geomBindTransform);
+
+///
+/// Linear Blend Skinning of points.
+///
+/// @param[in] restPoints Rest-pose point positions
+/// @param[in] geomBindTransform Transforms rest points into skeleton space
+/// @param[in] jointXforms Per-joint transforms (skeleton-space)
+/// @param[in] jointIndices Flat array of joint indices per point
+/// @param[in] jointWeights Flat array of joint weights per point
+/// @param[in] numInfluencesPerPoint Number of influences per point
+/// @param[out] skinnedPoints Output skinned positions
+/// @param[out] err Optional error message
+/// @return true on success
+///
+bool SkinPointsLBS(
+    const std::vector<value::point3f> &restPoints,
+    const value::matrix4d &geomBindTransform,
+    const std::vector<value::matrix4d> &jointXforms,
+    const std::vector<int> &jointIndices,
+    const std::vector<float> &jointWeights,
+    int numInfluencesPerPoint,
+    std::vector<value::point3f> *skinnedPoints,
+    std::string *err = nullptr);
+
+///
+/// Compute skinned mesh extent using the fast pivot-based approach.
+/// Combines ComputeSkinnedExtentPadding + ComputeJointsExtent.
+///
+/// @param[in] jointXforms Current posed joint transforms
+/// @param[in] restJointXforms Rest-pose joint transforms
+/// @param[in] meshRestExtent Rest-pose mesh bounding box
+/// @param[in] geomBindTransform Geometry bind transform
+/// @param[out] extent Computed bounding box
+/// @param[in] rootXform Optional root transform
+/// @return true on success
+///
+bool ComputeSkinnedMeshExtent(
+    const std::vector<value::matrix4d> &jointXforms,
+    const std::vector<value::matrix4d> &restJointXforms,
+    const Extent &meshRestExtent,
+    const value::matrix4d &geomBindTransform,
+    Extent *extent,
+    const value::matrix4d *rootXform = nullptr);
 
 }  // namespace tydra
 }  // namespace tinyusdz
