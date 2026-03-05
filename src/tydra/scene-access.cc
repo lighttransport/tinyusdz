@@ -2892,20 +2892,49 @@ bool GetTerminalAttribute(const tinyusdz::Stage &stage,
 namespace detail {
 
 static bool BuildSkelHierarchyImpl(
-    /* inout */ SkelNode &parentNode,
+    /* inout */ SkelNode &rootNode,
     const std::vector<std::vector<size_t>> &childrenMap,
     const std::vector<value::token> &joints,
     const std::vector<value::token> &jointNames,
     const std::vector<value::matrix4d> &bindTransforms,
     const std::vector<value::matrix4d> &restTransforms,
     std::string *err = nullptr) {
-  size_t parentIdx = size_t(parentNode.joint_id);
-  if (parentIdx >= childrenMap.size()) {
-    return true;
-  }
+  // Iterative traversal using explicit stack to avoid stack overflow on deep hierarchies
+  struct StackEntry {
+    SkelNode *parent;
+    size_t child_list_idx;  // index into childrenMap[parentIdx]
+  };
 
-  for (size_t i : childrenMap[parentIdx]) {
-    DCOUT("add joint " << i << "(parent = " << parentNode.joint_id << ")");
+  // Guard: max iterations = total number of joints (each joint is visited exactly once)
+  // plus one pop per stack frame. A reasonable upper bound is 2 * joints.size() + 1.
+  const size_t kMaxIter = joints.size() * 2 + 1;
+  size_t iter = 0;
+
+  std::vector<StackEntry> stack;
+  stack.push_back({&rootNode, 0});
+
+  while (!stack.empty()) {
+    if (iter++ >= kMaxIter) {
+      if (err) {
+        (*err) += "BuildSkelHierarchyImpl: exceeded maximum iteration count. "
+                  "Possible cycle in skeleton hierarchy.";
+      }
+      return false;
+    }
+
+    auto &top = stack.back();
+    size_t parentIdx = size_t(top.parent->joint_id);
+
+    if (parentIdx >= childrenMap.size() ||
+        top.child_list_idx >= childrenMap[parentIdx].size()) {
+      stack.pop_back();
+      continue;
+    }
+
+    size_t i = childrenMap[parentIdx][top.child_list_idx];
+    top.child_list_idx++;
+
+    DCOUT("add joint " << i << "(parent = " << top.parent->joint_id << ")");
     SkelNode node;
     node.joint_id = int(i);
     node.joint_path = joints[i].str();
@@ -2913,14 +2942,11 @@ static bool BuildSkelHierarchyImpl(
     node.bind_transform = bindTransforms[i];
     node.rest_transform = restTransforms[i];
 
-    // Recursively traverse children
-    if (!BuildSkelHierarchyImpl(node,
-                                childrenMap, joints, jointNames, bindTransforms,
-                                restTransforms, err)) {
-      return false;
-    }
+    top.parent->children.emplace_back(std::move(node));
 
-    parentNode.children.emplace_back(std::move(node));
+    // Push newly added child to process its children
+    SkelNode *childPtr = &top.parent->children.back();
+    stack.push_back({childPtr, 0});
   }
 
   return true;
@@ -2931,18 +2957,18 @@ static bool BuildSkelHierarchyImpl(
 bool BuildSkelHierarchy(const Skeleton &skel, SkelNode &dst, std::string *err) {
   if (!skel.joints.authored()) {
     PUSH_ERROR_AND_RETURN(fmt::format(
-        "Skeleton.joints attrbitue is not authored: {}", skel.name));
+        "Skeleton.joints attribute is not authored: {}", skel.name));
   }
 
   std::vector<value::token> joints;
   if (!skel.joints.get_value(&joints)) {
     PUSH_ERROR_AND_RETURN(
-        fmt::format("Failed to get Skeleton.joints attrbitue: {}", skel.name));
+        fmt::format("Failed to get Skeleton.joints attribute: {}", skel.name));
   }
 
   if (joints.empty()) {
     PUSH_ERROR_AND_RETURN(
-        fmt::format("Skeleton.joints attrbitue is empty: {}", skel.name));
+        fmt::format("Skeleton.joints attribute is empty: {}", skel.name));
   }
 
   std::vector<value::token> jointNames;
@@ -2950,7 +2976,7 @@ bool BuildSkelHierarchy(const Skeleton &skel, SkelNode &dst, std::string *err) {
   if (skel.jointNames.authored()) {
     if (!skel.jointNames.get_value(&jointNames)) {
       PUSH_ERROR_AND_RETURN(fmt::format(
-          "Failed to get Skeleton.jointNames attrbitue: {}", skel.name));
+          "Failed to get Skeleton.jointNames attribute: {}", skel.name));
     }
 
     if (joints.size() != jointNames.size()) {
@@ -2978,7 +3004,7 @@ bool BuildSkelHierarchy(const Skeleton &skel, SkelNode &dst, std::string *err) {
     DCOUT("bindTransforms is authored");
     if (!skel.bindTransforms.get_value(&bindTransforms)) {
       PUSH_ERROR_AND_RETURN(fmt::format(
-          "Failed to get Skeleton.bindTransforms attrbitue: {}", skel.name));
+          "Failed to get Skeleton.bindTransforms attribute: {}", skel.name));
     }
     DCOUT("bindTransforms.size() = " << bindTransforms.size());
     if (bindTransforms.size() > 0) {
@@ -3002,7 +3028,7 @@ bool BuildSkelHierarchy(const Skeleton &skel, SkelNode &dst, std::string *err) {
     DCOUT("restTransforms is authored");
     if (!skel.restTransforms.get_value(&restTransforms)) {
       PUSH_ERROR_AND_RETURN(fmt::format(
-          "Failed to get Skeleton.restTransforms attrbitue: {}", skel.name));
+          "Failed to get Skeleton.restTransforms attribute: {}", skel.name));
     }
     DCOUT("restTransforms.size() = " << restTransforms.size());
     if (restTransforms.size() > 0) {
@@ -3408,6 +3434,250 @@ bool ComputeSkinnedMeshExtent(
       restJointXforms, meshRestExtent, geomBindTransform);
 
   return ComputeJointsExtent(jointXforms, extent, padding, rootXform);
+}
+
+//
+// Skeleton transform utilities (ported from OpenUSD UsdSkelUtils)
+//
+
+bool ConcatJointTransforms(
+    const std::vector<int> &topology,
+    const std::vector<value::matrix4d> &localXforms,
+    std::vector<value::matrix4d> *worldXforms,
+    const value::matrix4d *rootXform) {
+
+  if (!worldXforms) {
+    return false;
+  }
+
+  size_t numJoints = topology.size();
+  if (localXforms.size() != numJoints) {
+    return false;
+  }
+
+  worldXforms->resize(numJoints);
+
+  // Topology guarantees parent index < child index, so a single forward pass
+  // computes all world-space transforms.
+  for (size_t i = 0; i < numJoints; i++) {
+    int parent = topology[i];
+    if (parent < 0) {
+      // Root joint
+      if (rootXform) {
+        (*worldXforms)[i] = localXforms[i] * (*rootXform);
+      } else {
+        (*worldXforms)[i] = localXforms[i];
+      }
+    } else if (size_t(parent) < numJoints) {
+      (*worldXforms)[i] = localXforms[i] * (*worldXforms)[size_t(parent)];
+    } else {
+      // Invalid parent - treat as root
+      (*worldXforms)[i] = localXforms[i];
+    }
+  }
+
+  return true;
+}
+
+bool ComputeJointLocalTransforms(
+    const std::vector<int> &topology,
+    const std::vector<value::matrix4d> &worldXforms,
+    std::vector<value::matrix4d> *localXforms,
+    const value::matrix4d *inverseRootXform) {
+
+  if (!localXforms) {
+    return false;
+  }
+
+  size_t numJoints = topology.size();
+  if (worldXforms.size() != numJoints) {
+    return false;
+  }
+
+  localXforms->resize(numJoints);
+
+  for (size_t i = 0; i < numJoints; i++) {
+    int parent = topology[i];
+    if (parent < 0) {
+      // Root joint
+      if (inverseRootXform) {
+        (*localXforms)[i] = worldXforms[i] * (*inverseRootXform);
+      } else {
+        (*localXforms)[i] = worldXforms[i];
+      }
+    } else if (size_t(parent) < numJoints) {
+      value::matrix4d parentInv = inverse(worldXforms[size_t(parent)]);
+      (*localXforms)[i] = worldXforms[i] * parentInv;
+    } else {
+      (*localXforms)[i] = worldXforms[i];
+    }
+  }
+
+  return true;
+}
+
+value::matrix4d SkelMakeTransform(
+    const value::float3 &translation,
+    const value::quatf &rotation,
+    const value::half3 &scale) {
+
+  // Build rotation matrix from quaternion
+  value::matrix4d rotMat = to_matrix(rotation);
+
+  // Apply scale to the rotation matrix (upper-left 3x3)
+  double sx = double(half_to_float(scale[0]));
+  double sy = double(half_to_float(scale[1]));
+  double sz = double(half_to_float(scale[2]));
+
+  rotMat.m[0][0] *= sx; rotMat.m[0][1] *= sx; rotMat.m[0][2] *= sx;
+  rotMat.m[1][0] *= sy; rotMat.m[1][1] *= sy; rotMat.m[1][2] *= sy;
+  rotMat.m[2][0] *= sz; rotMat.m[2][1] *= sz; rotMat.m[2][2] *= sz;
+
+  // Set translation
+  rotMat.m[3][0] = double(translation[0]);
+  rotMat.m[3][1] = double(translation[1]);
+  rotMat.m[3][2] = double(translation[2]);
+
+  return rotMat;
+}
+
+bool SkinNormalsLBS(
+    const std::vector<value::normal3f> &restNormals,
+    const value::matrix4d &geomBindTransform,
+    const std::vector<value::matrix4d> &jointXforms,
+    const std::vector<int> &jointIndices,
+    const std::vector<float> &jointWeights,
+    int numInfluencesPerPoint,
+    std::vector<value::normal3f> *skinnedNormals,
+    std::string *err) {
+
+  if (!skinnedNormals) {
+    if (err) { *err = "skinnedNormals is null."; }
+    return false;
+  }
+
+  if (numInfluencesPerPoint < 1) {
+    if (err) { *err = "numInfluencesPerPoint must be >= 1."; }
+    return false;
+  }
+
+  size_t numPoints = restNormals.size();
+  size_t expectedSize = numPoints * size_t(numInfluencesPerPoint);
+
+  if (jointIndices.size() != expectedSize) {
+    if (err) {
+      *err = "jointIndices size mismatch: expected " +
+             std::to_string(expectedSize) + ", got " +
+             std::to_string(jointIndices.size()) + ".";
+    }
+    return false;
+  }
+
+  if (jointWeights.size() != expectedSize) {
+    if (err) {
+      *err = "jointWeights size mismatch: expected " +
+             std::to_string(expectedSize) + ", got " +
+             std::to_string(jointWeights.size()) + ".";
+    }
+    return false;
+  }
+
+  int numJoints = int(jointXforms.size());
+
+  skinnedNormals->resize(numPoints);
+
+  // For normals, we use inverse-transpose of the skinning matrix.
+  // Since we accumulate the weighted skinning matrix per vertex first,
+  // we can compute its inverse-transpose at the end. But for LBS where
+  // weights sum to 1, we can skin normals with the upper-left 3x3
+  // (direction only, no translation) and then renormalize.
+
+  for (size_t pi = 0; pi < numPoints; pi++) {
+    const value::normal3f &rn = restNormals[pi];
+    double nx = double(rn[0]);
+    double ny = double(rn[1]);
+    double nz = double(rn[2]);
+
+    // Transform normal into skeleton space via geomBindTransform (direction only)
+    double snx = nx * geomBindTransform.m[0][0] + ny * geomBindTransform.m[1][0] + nz * geomBindTransform.m[2][0];
+    double sny = nx * geomBindTransform.m[0][1] + ny * geomBindTransform.m[1][1] + nz * geomBindTransform.m[2][1];
+    double snz = nx * geomBindTransform.m[0][2] + ny * geomBindTransform.m[1][2] + nz * geomBindTransform.m[2][2];
+
+    // Accumulate weighted joint transforms (direction only)
+    double outx = 0.0, outy = 0.0, outz = 0.0;
+
+    size_t base = pi * size_t(numInfluencesPerPoint);
+    for (int ji = 0; ji < numInfluencesPerPoint; ji++) {
+      int idx = jointIndices[base + size_t(ji)];
+      float w = jointWeights[base + size_t(ji)];
+
+      if (w == 0.0f || idx < 0 || idx >= numJoints) {
+        continue;
+      }
+
+      const value::matrix4d &jx = jointXforms[size_t(idx)];
+
+      // skelNormal * jointXform (3x3 only for directions)
+      double tx = snx * jx.m[0][0] + sny * jx.m[1][0] + snz * jx.m[2][0];
+      double ty = snx * jx.m[0][1] + sny * jx.m[1][1] + snz * jx.m[2][1];
+      double tz = snx * jx.m[0][2] + sny * jx.m[1][2] + snz * jx.m[2][2];
+
+      outx += double(w) * tx;
+      outy += double(w) * ty;
+      outz += double(w) * tz;
+    }
+
+    // Renormalize
+    double len = std::sqrt(outx * outx + outy * outy + outz * outz);
+    if (len > 1e-10) {
+      outx /= len;
+      outy /= len;
+      outz /= len;
+    }
+
+    (*skinnedNormals)[pi][0] = float(outx);
+    (*skinnedNormals)[pi][1] = float(outy);
+    (*skinnedNormals)[pi][2] = float(outz);
+  }
+
+  return true;
+}
+
+bool ExpandConstantInfluencesToVarying(
+    const std::vector<int> &indices,
+    const std::vector<float> &weights,
+    size_t numVertices,
+    std::vector<int> *expandedIndices,
+    std::vector<float> *expandedWeights) {
+
+  if (!expandedIndices || !expandedWeights) {
+    return false;
+  }
+
+  if (indices.size() != weights.size()) {
+    return false;
+  }
+
+  size_t numInfluences = indices.size();
+  if (numInfluences == 0 || numVertices == 0) {
+    expandedIndices->clear();
+    expandedWeights->clear();
+    return true;
+  }
+
+  size_t totalSize = numVertices * numInfluences;
+  expandedIndices->resize(totalSize);
+  expandedWeights->resize(totalSize);
+
+  for (size_t v = 0; v < numVertices; v++) {
+    size_t offset = v * numInfluences;
+    for (size_t i = 0; i < numInfluences; i++) {
+      (*expandedIndices)[offset + i] = indices[i];
+      (*expandedWeights)[offset + i] = weights[i];
+    }
+  }
+
+  return true;
 }
 
 }  // namespace tydra
