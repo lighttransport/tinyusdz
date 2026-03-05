@@ -1,0 +1,10 @@
+<?xml version="1.0"?>
+<materialx version="1.39" colorspace="acescg" cms="ocio" cmsconfig="studio_config.ocio" namespace="mylib">
+  <open_pbr_surface name="AttrTestShader" type="surfaceshader">
+    <input name="base_weight" type="float" value="1.0" />
+    <input name="base_color" type="color3" value="0.5, 0.5, 0.5" />
+  </open_pbr_surface>
+  <surfacematerial name="AttrTestMaterial" type="material">
+    <input name="surfaceshader" type="surfaceshader" nodename="AttrTestShader" />
+  </surfacematerial>
+</materialx>
