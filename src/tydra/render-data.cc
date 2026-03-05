@@ -7543,337 +7543,93 @@ bool RenderSceneConverter::ConvertOpenPBRSurfaceShader(
 
   OpenPBRSurfaceShader rshader;
 
-  // Convert base layer parameters
-  if (!ConvertPreviewSurfaceShaderParam(
-          env, shader_abs_path, shader.base_weight, "base_weight",
-          rshader.base_weight, true)) {
-    PushWarn(fmt::format("Failed to convert base_weight parameter for shader: {}", shader_abs_path.prim_part()));
-    return false;
+  // Macros to reduce repetitive ConvertPreviewSurfaceShaderParam calls.
+#define CONVERT_OPENPBR_PARAM(field, name) \
+  if (!ConvertPreviewSurfaceShaderParam( \
+          env, shader_abs_path, shader.field, name, rshader.field)) { \
+    PushWarn(fmt::format("Failed to convert " name " parameter for shader: {}", shader_abs_path.prim_part())); \
+    return false; \
   }
-  if (!ConvertPreviewSurfaceShaderParam(
-          env, shader_abs_path, shader.base_color, "base_color",
-          rshader.base_color, true)) {
-    PushWarn(fmt::format("Failed to convert base_color parameter for shader: {}", shader_abs_path.prim_part()));
-    return false;
-  }
-  if (!ConvertPreviewSurfaceShaderParam(
-          env, shader_abs_path, shader.base_roughness, "base_roughness",
-          rshader.base_roughness, true)) {
-    PushWarn(fmt::format("Failed to convert base_roughness parameter for shader: {}", shader_abs_path.prim_part()));
-    return false;
-  }
-  if (!ConvertPreviewSurfaceShaderParam(
-          env, shader_abs_path, shader.base_metalness, "base_metalness",
-          rshader.base_metalness, true)) {
-    PushWarn(fmt::format("Failed to convert base_metalness parameter for shader: {}", shader_abs_path.prim_part()));
-    return false;
-  }
-  if (!ConvertPreviewSurfaceShaderParam(
-          env, shader_abs_path, shader.base_diffuse_roughness, "base_diffuse_roughness",
-          rshader.base_diffuse_roughness, true)) {
-    PushWarn(fmt::format("Failed to convert base_diffuse_roughness parameter for shader: {}", shader_abs_path.prim_part()));
-    return false;
+#define CONVERT_OPENPBR_PARAM_MTLX(field, name) \
+  if (!ConvertPreviewSurfaceShaderParam( \
+          env, shader_abs_path, shader.field, name, rshader.field, true)) { \
+    PushWarn(fmt::format("Failed to convert " name " parameter for shader: {}", shader_abs_path.prim_part())); \
+    return false; \
   }
 
-  // Convert specular layer parameters
-  if (!ConvertPreviewSurfaceShaderParam(
-          env, shader_abs_path, shader.specular_weight, "specular_weight",
-          rshader.specular_weight, true)) {
-    PushWarn(fmt::format("Failed to convert specular_weight parameter for shader: {}", shader_abs_path.prim_part()));
-    return false;
-  }
-  if (!ConvertPreviewSurfaceShaderParam(
-          env, shader_abs_path, shader.specular_color, "specular_color",
-          rshader.specular_color, true)) {
-    PushWarn(fmt::format("Failed to convert specular_color parameter for shader: {}", shader_abs_path.prim_part()));
-    return false;
-  }
-  if (!ConvertPreviewSurfaceShaderParam(
-          env, shader_abs_path, shader.specular_roughness, "specular_roughness",
-          rshader.specular_roughness, true)) {
-    PushWarn(fmt::format("Failed to convert specular_roughness parameter for shader: {}", shader_abs_path.prim_part()));
-    return false;
-  }
-  if (!ConvertPreviewSurfaceShaderParam(
-          env, shader_abs_path, shader.specular_ior, "specular_ior",
-          rshader.specular_ior, true)) {
-    PushWarn(fmt::format("Failed to convert specular_ior parameter for shader: {}", shader_abs_path.prim_part()));
-    return false;
-  }
-  if (!ConvertPreviewSurfaceShaderParam(
-          env, shader_abs_path, shader.specular_ior_level, "specular_ior_level",
-          rshader.specular_ior_level)) {
-    PushWarn(fmt::format("Failed to convert specular_ior_level parameter for shader: {}", shader_abs_path.prim_part()));
-    return false;
-  }
-  if (!ConvertPreviewSurfaceShaderParam(
-          env, shader_abs_path, shader.specular_anisotropy, "specular_anisotropy",
-          rshader.specular_anisotropy)) {
-    PushWarn(fmt::format("Failed to convert specular_anisotropy parameter for shader: {}", shader_abs_path.prim_part()));
-    return false;
-  }
-  if (!ConvertPreviewSurfaceShaderParam(
-          env, shader_abs_path, shader.specular_rotation, "specular_rotation",
-          rshader.specular_rotation)) {
-    PushWarn(fmt::format("Failed to convert specular_rotation parameter for shader: {}", shader_abs_path.prim_part()));
-    return false;
-  }
-  if (!ConvertPreviewSurfaceShaderParam(
-          env, shader_abs_path, shader.specular_roughness_anisotropy,
-          "specular_roughness_anisotropy", rshader.specular_roughness_anisotropy)) {
-    PushWarn(fmt::format("Failed to convert specular_roughness_anisotropy parameter for shader: {}", shader_abs_path.prim_part()));
-    return false;
-  }
+  // Base layer
+  CONVERT_OPENPBR_PARAM_MTLX(base_weight, "base_weight")
+  CONVERT_OPENPBR_PARAM_MTLX(base_color, "base_color")
+  CONVERT_OPENPBR_PARAM_MTLX(base_roughness, "base_roughness")
+  CONVERT_OPENPBR_PARAM_MTLX(base_metalness, "base_metalness")
+  CONVERT_OPENPBR_PARAM_MTLX(base_diffuse_roughness, "base_diffuse_roughness")
 
-  // Convert transmission parameters
-  if (!ConvertPreviewSurfaceShaderParam(
-          env, shader_abs_path, shader.transmission_weight, "transmission_weight",
-          rshader.transmission_weight, true)) {
-    PushWarn(fmt::format("Failed to convert transmission_weight parameter for shader: {}", shader_abs_path.prim_part()));
-    return false;
-  }
-  if (!ConvertPreviewSurfaceShaderParam(
-          env, shader_abs_path, shader.transmission_color, "transmission_color",
-          rshader.transmission_color, true)) {
-    PushWarn(fmt::format("Failed to convert transmission_color parameter for shader: {}", shader_abs_path.prim_part()));
-    return false;
-  }
-  if (!ConvertPreviewSurfaceShaderParam(
-          env, shader_abs_path, shader.transmission_depth, "transmission_depth",
-          rshader.transmission_depth)) {
-    PushWarn(fmt::format("Failed to convert transmission_depth parameter for shader: {}", shader_abs_path.prim_part()));
-    return false;
-  }
-  if (!ConvertPreviewSurfaceShaderParam(
-          env, shader_abs_path, shader.transmission_scatter, "transmission_scatter",
-          rshader.transmission_scatter)) {
-    PushWarn(fmt::format("Failed to convert transmission_scatter parameter for shader: {}", shader_abs_path.prim_part()));
-    return false;
-  }
-  if (!ConvertPreviewSurfaceShaderParam(
-          env, shader_abs_path, shader.transmission_scatter_anisotropy,
-          "transmission_scatter_anisotropy", rshader.transmission_scatter_anisotropy)) {
-    PushWarn(fmt::format("Failed to convert transmission_scatter_anisotropy parameter for shader: {}", shader_abs_path.prim_part()));
-    return false;
-  }
-  if (!ConvertPreviewSurfaceShaderParam(
-          env, shader_abs_path, shader.transmission_dispersion,
-          "transmission_dispersion", rshader.transmission_dispersion)) {
-    PushWarn(fmt::format("Failed to convert transmission_dispersion parameter for shader: {}", shader_abs_path.prim_part()));
-    return false;
-  }
-  if (!ConvertPreviewSurfaceShaderParam(
-          env, shader_abs_path, shader.transmission_dispersion_abbe_number,
-          "transmission_dispersion_abbe_number", rshader.transmission_dispersion_abbe_number)) {
-    PushWarn(fmt::format("Failed to convert transmission_dispersion_abbe_number parameter for shader: {}", shader_abs_path.prim_part()));
-    return false;
-  }
-  if (!ConvertPreviewSurfaceShaderParam(
-          env, shader_abs_path, shader.transmission_dispersion_scale,
-          "transmission_dispersion_scale", rshader.transmission_dispersion_scale)) {
-    PushWarn(fmt::format("Failed to convert transmission_dispersion_scale parameter for shader: {}", shader_abs_path.prim_part()));
-    return false;
-  }
+  // Specular layer
+  CONVERT_OPENPBR_PARAM_MTLX(specular_weight, "specular_weight")
+  CONVERT_OPENPBR_PARAM_MTLX(specular_color, "specular_color")
+  CONVERT_OPENPBR_PARAM_MTLX(specular_roughness, "specular_roughness")
+  CONVERT_OPENPBR_PARAM_MTLX(specular_ior, "specular_ior")
+  CONVERT_OPENPBR_PARAM(specular_ior_level, "specular_ior_level")
+  CONVERT_OPENPBR_PARAM(specular_anisotropy, "specular_anisotropy")
+  CONVERT_OPENPBR_PARAM(specular_rotation, "specular_rotation")
+  CONVERT_OPENPBR_PARAM(specular_roughness_anisotropy, "specular_roughness_anisotropy")
 
-  // Convert subsurface parameters
-  if (!ConvertPreviewSurfaceShaderParam(
-          env, shader_abs_path, shader.subsurface_weight, "subsurface_weight",
-          rshader.subsurface_weight, true)) {
-    PushWarn(fmt::format("Failed to convert subsurface_weight parameter for shader: {}", shader_abs_path.prim_part()));
-    return false;
-  }
-  if (!ConvertPreviewSurfaceShaderParam(
-          env, shader_abs_path, shader.subsurface_color, "subsurface_color",
-          rshader.subsurface_color, true)) {
-    PushWarn(fmt::format("Failed to convert subsurface_color parameter for shader: {}", shader_abs_path.prim_part()));
-    return false;
-  }
-  if (!ConvertPreviewSurfaceShaderParam(
-          env, shader_abs_path, shader.subsurface_radius, "subsurface_radius",
-          rshader.subsurface_radius, true)) {
-    PushWarn(fmt::format("Failed to convert subsurface_radius parameter for shader: {}", shader_abs_path.prim_part()));
-    return false;
-  }
-  if (!ConvertPreviewSurfaceShaderParam(
-          env, shader_abs_path, shader.subsurface_radius_scale, "subsurface_radius_scale",
-          rshader.subsurface_radius_scale, true)) {
-    PushWarn(fmt::format("Failed to convert subsurface_radius_scale parameter for shader: {}", shader_abs_path.prim_part()));
-    return false;
-  }
-  if (!ConvertPreviewSurfaceShaderParam(
-          env, shader_abs_path, shader.subsurface_scale, "subsurface_scale",
-          rshader.subsurface_scale, true)) {
-    PushWarn(fmt::format("Failed to convert subsurface_scale parameter for shader: {}", shader_abs_path.prim_part()));
-    return false;
-  }
-  if (!ConvertPreviewSurfaceShaderParam(
-          env, shader_abs_path, shader.subsurface_anisotropy,
-          "subsurface_anisotropy", rshader.subsurface_anisotropy, true)) {
-    PushWarn(fmt::format("Failed to convert subsurface_anisotropy parameter for shader: {}", shader_abs_path.prim_part()));
-    return false;
-  }
-  if (!ConvertPreviewSurfaceShaderParam(
-          env, shader_abs_path, shader.subsurface_scatter_anisotropy,
-          "subsurface_scatter_anisotropy", rshader.subsurface_scatter_anisotropy)) {
-    PushWarn(fmt::format("Failed to convert subsurface_scatter_anisotropy parameter for shader: {}", shader_abs_path.prim_part()));
-    return false;
-  }
+  // Transmission
+  CONVERT_OPENPBR_PARAM_MTLX(transmission_weight, "transmission_weight")
+  CONVERT_OPENPBR_PARAM_MTLX(transmission_color, "transmission_color")
+  CONVERT_OPENPBR_PARAM(transmission_depth, "transmission_depth")
+  CONVERT_OPENPBR_PARAM(transmission_scatter, "transmission_scatter")
+  CONVERT_OPENPBR_PARAM(transmission_scatter_anisotropy, "transmission_scatter_anisotropy")
+  CONVERT_OPENPBR_PARAM(transmission_dispersion, "transmission_dispersion")
+  CONVERT_OPENPBR_PARAM(transmission_dispersion_abbe_number, "transmission_dispersion_abbe_number")
+  CONVERT_OPENPBR_PARAM(transmission_dispersion_scale, "transmission_dispersion_scale")
 
-  // Convert sheen parameters
-  if (!ConvertPreviewSurfaceShaderParam(
-          env, shader_abs_path, shader.sheen_weight, "sheen_weight",
-          rshader.sheen_weight, true)) {
-    PushWarn(fmt::format("Failed to convert sheen_weight parameter for shader: {}", shader_abs_path.prim_part()));
-    return false;
-  }
-  if (!ConvertPreviewSurfaceShaderParam(
-          env, shader_abs_path, shader.sheen_color, "sheen_color",
-          rshader.sheen_color, true)) {
-    PushWarn(fmt::format("Failed to convert sheen_color parameter for shader: {}", shader_abs_path.prim_part()));
-    return false;
-  }
-  if (!ConvertPreviewSurfaceShaderParam(
-          env, shader_abs_path, shader.sheen_roughness, "sheen_roughness",
-          rshader.sheen_roughness, true)) {
-    PushWarn(fmt::format("Failed to convert sheen_roughness parameter for shader: {}", shader_abs_path.prim_part()));
-    return false;
-  }
+  // Subsurface
+  CONVERT_OPENPBR_PARAM_MTLX(subsurface_weight, "subsurface_weight")
+  CONVERT_OPENPBR_PARAM_MTLX(subsurface_color, "subsurface_color")
+  CONVERT_OPENPBR_PARAM_MTLX(subsurface_radius, "subsurface_radius")
+  CONVERT_OPENPBR_PARAM_MTLX(subsurface_radius_scale, "subsurface_radius_scale")
+  CONVERT_OPENPBR_PARAM_MTLX(subsurface_scale, "subsurface_scale")
+  CONVERT_OPENPBR_PARAM_MTLX(subsurface_anisotropy, "subsurface_anisotropy")
+  CONVERT_OPENPBR_PARAM(subsurface_scatter_anisotropy, "subsurface_scatter_anisotropy")
 
-  // Convert fuzz parameters (velvet/fabric-like appearance)
-  if (!ConvertPreviewSurfaceShaderParam(
-          env, shader_abs_path, shader.fuzz_weight, "fuzz_weight",
-          rshader.fuzz_weight, true)) {
-    PushWarn(fmt::format("Failed to convert fuzz_weight parameter for shader: {}", shader_abs_path.prim_part()));
-    return false;
-  }
-  if (!ConvertPreviewSurfaceShaderParam(
-          env, shader_abs_path, shader.fuzz_color, "fuzz_color",
-          rshader.fuzz_color, true)) {
-    PushWarn(fmt::format("Failed to convert fuzz_color parameter for shader: {}", shader_abs_path.prim_part()));
-    return false;
-  }
-  if (!ConvertPreviewSurfaceShaderParam(
-          env, shader_abs_path, shader.fuzz_roughness, "fuzz_roughness",
-          rshader.fuzz_roughness, true)) {
-    PushWarn(fmt::format("Failed to convert fuzz_roughness parameter for shader: {}", shader_abs_path.prim_part()));
-    return false;
-  }
+  // Sheen
+  CONVERT_OPENPBR_PARAM_MTLX(sheen_weight, "sheen_weight")
+  CONVERT_OPENPBR_PARAM_MTLX(sheen_color, "sheen_color")
+  CONVERT_OPENPBR_PARAM_MTLX(sheen_roughness, "sheen_roughness")
 
-  // Convert thin film parameters (iridescence from thin film interference)
-  if (!ConvertPreviewSurfaceShaderParam(
-          env, shader_abs_path, shader.thin_film_weight, "thin_film_weight",
-          rshader.thin_film_weight, true)) {
-    PushWarn(fmt::format("Failed to convert thin_film_weight parameter for shader: {}", shader_abs_path.prim_part()));
-    return false;
-  }
-  if (!ConvertPreviewSurfaceShaderParam(
-          env, shader_abs_path, shader.thin_film_thickness, "thin_film_thickness",
-          rshader.thin_film_thickness, true)) {
-    PushWarn(fmt::format("Failed to convert thin_film_thickness parameter for shader: {}", shader_abs_path.prim_part()));
-    return false;
-  }
-  if (!ConvertPreviewSurfaceShaderParam(
-          env, shader_abs_path, shader.thin_film_ior, "thin_film_ior",
-          rshader.thin_film_ior, true)) {
-    PushWarn(fmt::format("Failed to convert thin_film_ior parameter for shader: {}", shader_abs_path.prim_part()));
-    return false;
-  }
+  // Fuzz
+  CONVERT_OPENPBR_PARAM_MTLX(fuzz_weight, "fuzz_weight")
+  CONVERT_OPENPBR_PARAM_MTLX(fuzz_color, "fuzz_color")
+  CONVERT_OPENPBR_PARAM_MTLX(fuzz_roughness, "fuzz_roughness")
 
-  // Convert coat layer parameters
-  if (!ConvertPreviewSurfaceShaderParam(
-          env, shader_abs_path, shader.coat_weight, "coat_weight",
-          rshader.coat_weight, true)) {
-    PushWarn(fmt::format("Failed to convert coat_weight parameter for shader: {}", shader_abs_path.prim_part()));
-    return false;
-  }
-  if (!ConvertPreviewSurfaceShaderParam(
-          env, shader_abs_path, shader.coat_color, "coat_color",
-          rshader.coat_color, true)) {
-    PushWarn(fmt::format("Failed to convert coat_color parameter for shader: {}", shader_abs_path.prim_part()));
-    return false;
-  }
-  if (!ConvertPreviewSurfaceShaderParam(
-          env, shader_abs_path, shader.coat_roughness, "coat_roughness",
-          rshader.coat_roughness, true)) {
-    PushWarn(fmt::format("Failed to convert coat_roughness parameter for shader: {}", shader_abs_path.prim_part()));
-    return false;
-  }
-  if (!ConvertPreviewSurfaceShaderParam(
-          env, shader_abs_path, shader.coat_anisotropy, "coat_anisotropy",
-          rshader.coat_anisotropy, true)) {
-    PushWarn(fmt::format("Failed to convert coat_anisotropy parameter for shader: {}", shader_abs_path.prim_part()));
-    return false;
-  }
-  if (!ConvertPreviewSurfaceShaderParam(
-          env, shader_abs_path, shader.coat_rotation, "coat_rotation",
-          rshader.coat_rotation, true)) {
-    PushWarn(fmt::format("Failed to convert coat_rotation parameter for shader: {}", shader_abs_path.prim_part()));
-    return false;
-  }
-  if (!ConvertPreviewSurfaceShaderParam(
-          env, shader_abs_path, shader.coat_ior, "coat_ior",
-          rshader.coat_ior, true)) {
-    PushWarn(fmt::format("Failed to convert coat_ior parameter for shader: {}", shader_abs_path.prim_part()));
-    return false;
-  }
-  if (!ConvertPreviewSurfaceShaderParam(
-          env, shader_abs_path, shader.coat_affect_color, "coat_affect_color",
-          rshader.coat_affect_color, true)) {
-    PushWarn(fmt::format("Failed to convert coat_affect_color parameter for shader: {}", shader_abs_path.prim_part()));
-    return false;
-  }
-  if (!ConvertPreviewSurfaceShaderParam(
-          env, shader_abs_path, shader.coat_affect_roughness, "coat_affect_roughness",
-          rshader.coat_affect_roughness, true)) {
-    PushWarn(fmt::format("Failed to convert coat_affect_roughness parameter for shader: {}", shader_abs_path.prim_part()));
-    return false;
-  }
-  if (!ConvertPreviewSurfaceShaderParam(
-          env, shader_abs_path, shader.coat_roughness_anisotropy,
-          "coat_roughness_anisotropy", rshader.coat_roughness_anisotropy)) {
-    PushWarn(fmt::format("Failed to convert coat_roughness_anisotropy parameter for shader: {}", shader_abs_path.prim_part()));
-    return false;
-  }
-  if (!ConvertPreviewSurfaceShaderParam(
-          env, shader_abs_path, shader.coat_darkening, "coat_darkening",
-          rshader.coat_darkening)) {
-    PushWarn(fmt::format("Failed to convert coat_darkening parameter for shader: {}", shader_abs_path.prim_part()));
-    return false;
-  }
+  // Thin film
+  CONVERT_OPENPBR_PARAM_MTLX(thin_film_weight, "thin_film_weight")
+  CONVERT_OPENPBR_PARAM_MTLX(thin_film_thickness, "thin_film_thickness")
+  CONVERT_OPENPBR_PARAM_MTLX(thin_film_ior, "thin_film_ior")
 
-  // Convert emission parameters
-  if (!ConvertPreviewSurfaceShaderParam(
-          env, shader_abs_path, shader.emission_luminance, "emission_luminance",
-          rshader.emission_luminance, true)) {
-    PushWarn(fmt::format("Failed to convert emission_luminance parameter for shader: {}", shader_abs_path.prim_part()));
-    return false;
-  }
-  if (!ConvertPreviewSurfaceShaderParam(
-          env, shader_abs_path, shader.emission_color, "emission_color",
-          rshader.emission_color, true)) {
-    PushWarn(fmt::format("Failed to convert emission_color parameter for shader: {}", shader_abs_path.prim_part()));
-    return false;
-  }
+  // Coat layer
+  CONVERT_OPENPBR_PARAM_MTLX(coat_weight, "coat_weight")
+  CONVERT_OPENPBR_PARAM_MTLX(coat_color, "coat_color")
+  CONVERT_OPENPBR_PARAM_MTLX(coat_roughness, "coat_roughness")
+  CONVERT_OPENPBR_PARAM_MTLX(coat_anisotropy, "coat_anisotropy")
+  CONVERT_OPENPBR_PARAM_MTLX(coat_rotation, "coat_rotation")
+  CONVERT_OPENPBR_PARAM_MTLX(coat_ior, "coat_ior")
+  CONVERT_OPENPBR_PARAM_MTLX(coat_affect_color, "coat_affect_color")
+  CONVERT_OPENPBR_PARAM_MTLX(coat_affect_roughness, "coat_affect_roughness")
+  CONVERT_OPENPBR_PARAM(coat_roughness_anisotropy, "coat_roughness_anisotropy")
+  CONVERT_OPENPBR_PARAM(coat_darkening, "coat_darkening")
 
-  // Convert geometry parameters
-  if (!ConvertPreviewSurfaceShaderParam(
-          env, shader_abs_path, shader.opacity, "opacity",
-          rshader.opacity, true)) {
-    PushWarn(fmt::format("Failed to convert opacity parameter for shader: {}", shader_abs_path.prim_part()));
-    return false;
-  }
-  if (!ConvertPreviewSurfaceShaderParam(
-          env, shader_abs_path, shader.normal, "normal",
-          rshader.normal, true)) {
-    PushWarn(fmt::format("Failed to convert normal parameter for shader: {}", shader_abs_path.prim_part()));
-    return false;
-  }
-  if (!ConvertPreviewSurfaceShaderParam(
-          env, shader_abs_path, shader.tangent, "tangent",
-          rshader.tangent, true)) {
-    PushWarn(fmt::format("Failed to convert tangent parameter for shader: {}", shader_abs_path.prim_part()));
-    return false;
-  }
+  // Emission
+  CONVERT_OPENPBR_PARAM_MTLX(emission_luminance, "emission_luminance")
+  CONVERT_OPENPBR_PARAM_MTLX(emission_color, "emission_color")
+
+  // Geometry
+  CONVERT_OPENPBR_PARAM_MTLX(opacity, "opacity")
+  CONVERT_OPENPBR_PARAM_MTLX(normal, "normal")
+  CONVERT_OPENPBR_PARAM_MTLX(tangent, "tangent")
+
+#undef CONVERT_OPENPBR_PARAM
 
   // Convert MaterialX NodeGraph connections to JSON if present
   // This allows reconstruction of node-based shading in JavaScript/WASM
