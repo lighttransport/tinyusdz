@@ -628,4 +628,8 @@ MaterialX wrap mode tokens are mapped to USD equivalents:
 - GPU-specific optimizations (swizzle instructions)
 - Full displacement shader evaluation (currently only connection is tracked)
 - Full volume shader evaluation (currently only connection is tracked)
-- Math node evaluation in NodeGraph traversal (currently breaks traversal)
+
+### Recently Resolved
+
+- Constant nodes (`ND_constant_*`) are now properly handled: values are extracted during C++ traversal and JS `_processConstant` correctly reads from resolved inputs
+- Binary math ops (`ND_add`, `ND_multiply`, etc.) no longer break traversal — they follow connected inputs to reach textures
