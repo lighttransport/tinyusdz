@@ -105,9 +105,8 @@
 // NOTE: HalfEdge is not used atm.
 #include "external/half-edge.hh"
 
-#ifdef TYDRA_ROBUST_TANGENT
-#include "robust-tangent.hh"
-#endif
+// MikkTSpace tangent computation
+#include "mikktspace-tangent.hh"
 
 // For triangulation.
 // TODO: Use tinyobjloader's triangulation
@@ -152,6 +151,9 @@ struct MtlxNodeGraphInfo {
   std::array<float, 2> uvtiling{{1.0f, 1.0f}};  // From ND_tiledimage's "uvtiling" input
   std::array<float, 2> uvoffset{{0.0f, 0.0f}};  // From ND_tiledimage's "uvoffset" input
   bool has_uvtransform{false};       // True if non-default tiling/offset was found
+  std::array<float, 4> constant_value{{0.0f, 0.0f, 0.0f, 0.0f}};  // From ND_constant terminal node
+  int constant_components{0};       // Number of components: 1=float, 2=float2, 3=color3f/float3, 4=color4f/float4
+  bool has_constant{false};         // True if ND_constant node was found
 };
 
 // Extract MaterialX NodeGraph info by traversing connections
@@ -462,7 +464,8 @@ static nonstd::expected<MtlxNodeGraphInfo, std::string> ExtractMtlxNodeGraphInfo
                node_type.find("ND_atan2_") == 0 ||
                node_type.find("ND_dotproduct_") == 0 ||
                node_type.find("ND_crossproduct_") == 0) {
-      // Binary operations - follow inputs:in1 (typically the texture/value chain)
+      // Binary operations - prefer following the input with a connection (likely leads to texture).
+      // Try in1 first, fall back to in2. If neither has connections, break normally.
       auto in1_it = shader_props->find("inputs:in1");
       if (in1_it != shader_props->end() && in1_it->second.is_attribute()) {
         const Attribute &in1_attr = in1_it->second.get_attribute();
@@ -607,7 +610,40 @@ static nonstd::expected<MtlxNodeGraphInfo, std::string> ExtractMtlxNodeGraphInfo
     // Constant nodes - terminal (provide constant values)
     //
     } else if (node_type.find("ND_constant_") == 0) {
-      // Constant nodes - terminal, no connections to follow
+      // Constant nodes - terminal, extract the constant value
+      auto val_it = shader_props->find("inputs:value");
+      if (val_it != shader_props->end() && val_it->second.is_attribute()) {
+        const Attribute &val_attr = val_it->second.get_attribute();
+        std::array<float, 4> cv = {{0.0f, 0.0f, 0.0f, 0.0f}};
+        if (auto vf = val_attr.get_value<float>()) {
+          cv[0] = *vf;
+          info.constant_components = 1;
+          info.has_constant = true;
+        } else if (auto vf3 = val_attr.get_value<value::float3>()) {
+          cv[0] = (*vf3)[0]; cv[1] = (*vf3)[1]; cv[2] = (*vf3)[2];
+          info.constant_components = 3;
+          info.has_constant = true;
+        } else if (auto vc3 = val_attr.get_value<value::color3f>()) {
+          cv[0] = (*vc3)[0]; cv[1] = (*vc3)[1]; cv[2] = (*vc3)[2];
+          info.constant_components = 3;
+          info.has_constant = true;
+        } else if (auto vf2 = val_attr.get_value<value::float2>()) {
+          cv[0] = (*vf2)[0]; cv[1] = (*vf2)[1];
+          info.constant_components = 2;
+          info.has_constant = true;
+        } else if (auto vc4 = val_attr.get_value<value::color4f>()) {
+          cv[0] = (*vc4)[0]; cv[1] = (*vc4)[1]; cv[2] = (*vc4)[2]; cv[3] = (*vc4)[3];
+          info.constant_components = 4;
+          info.has_constant = true;
+        } else if (auto vf4 = val_attr.get_value<value::float4>()) {
+          cv[0] = (*vf4)[0]; cv[1] = (*vf4)[1]; cv[2] = (*vf4)[2]; cv[3] = (*vf4)[3];
+          info.constant_components = 4;
+          info.has_constant = true;
+        }
+        if (info.has_constant) {
+          info.constant_value = cv;
+        }
+      }
       break;
     //
     // Tiledimage/image nodes (texture sampling)
@@ -2118,94 +2154,6 @@ bool TriangulatePolygon(
 #endif
 
 
-struct ComputeTangentPackedVertexData {
-  // value::float3 position;
-  uint32_t point_index;
-  value::float3 normal;
-  value::float2 uv;
-
-  // comparator for std::map
-  bool operator<(const DefaultPackedVertexData &rhs) const {
-    return memcmp(reinterpret_cast<const void *>(this),
-                  reinterpret_cast<const void *>(&rhs),
-                  sizeof(DefaultPackedVertexData)) > 0;
-  }
-};
-
-struct ComputeTangentPackedVertexDataHasher {
-  inline size_t operator()(const ComputeTangentPackedVertexData &v) const {
-    // Simple hasher using FNV1 32bit
-    // TODO: Use 64bit FNV1?
-    // TODO: Use spatial hash or LSH(LocallySensitiveHash) for position value.
-    static constexpr uint32_t kFNV_Prime = 0x01000193;
-    static constexpr uint32_t kFNV_Offset_Basis = 0x811c9dc5;
-
-    const uint8_t *ptr = reinterpret_cast<const uint8_t *>(&v);
-    size_t n = sizeof(DefaultPackedVertexData);
-
-    uint32_t hash = kFNV_Offset_Basis;
-    for (size_t i = 0; i < n; i++) {
-      hash = (kFNV_Prime * hash) ^ (ptr[i]);
-    }
-
-    return size_t(hash);
-  }
-};
-
-struct ComputeTangentPackedVertexDataEqual {
-  bool operator()(const ComputeTangentPackedVertexData &lhs,
-                  const ComputeTangentPackedVertexData &rhs) const {
-    return memcmp(reinterpret_cast<const void *>(&lhs),
-                  reinterpret_cast<const void *>(&rhs),
-                  sizeof(ComputeTangentPackedVertexData)) == 0;
-  }
-};
-
-template <class PackedVert>
-struct ComputeTangentVertexInput {
-  // std::vector<value::float3> positions;
-  std::vector<uint32_t> point_indices;
-  std::vector<value::float3> normals;
-  std::vector<value::float2> uvs;
-
-  size_t size() const { return point_indices.size(); }
-
-  void get(size_t idx, PackedVert &output) const {
-    if (idx < point_indices.size()) {
-      output.point_index = point_indices[idx];
-    } else {
-      output.point_index = ~0u;  // never should reach here though.
-    }
-    if (idx < normals.size()) {
-      output.normal = normals[idx];
-    } else {
-      output.normal = {0.0f, 0.0f, 0.0f};
-    }
-    if (idx < uvs.size()) {
-      output.uv = uvs[idx];
-    } else {
-      output.uv = {0.0f, 0.0f};
-    }
-  }
-};
-
-template <class PackedVert>
-struct ComputeTangentVertexOutput {
-  // std::vector<value::float3> positions;
-  std::vector<uint32_t> point_indices;
-  std::vector<value::float3> normals;
-  std::vector<value::float2> uvs;
-
-  size_t size() const { return point_indices.size(); }
-
-  void push_back(const PackedVert &v) {
-    // positions.push_back(v.position);
-    point_indices.push_back(v.point_index);
-    normals.push_back(v.normal);
-    uvs.push_back(v.uv);
-  }
-};
-
 ///
 /// Compute facevarying tangent and facevarying binormal.
 ///
@@ -2247,118 +2195,6 @@ struct ComputeTangentVertexOutput {
 /// @param[out] out_vertex_indices Vertex indices.
 /// @param[out] err Error message.
 ///
-#ifdef TYDRA_ROBUST_TANGENT
-/// Wrapper function to use robust tangent computation
-static bool ComputeTangentsAndBinormalsRobust(
-    const std::vector<vec3> &vertices,
-    const std::vector<uint32_t> &faceVertexCounts,
-    const std::vector<uint32_t> &faceVertexIndices,
-    const std::vector<vec2> &texcoords, const std::vector<vec3> &normals,
-    bool is_facevarying_input,  // false: 'vertex' varying
-    std::vector<vec3> *tangents, std::vector<vec3> *binormals,
-    std::vector<uint32_t> *out_vertex_indices, std::string *err) {
-
-  if (!tangents || !binormals || !out_vertex_indices) {
-    PUSH_ERROR_AND_RETURN("Output arguments are nullptr.");
-  }
-
-  if (vertices.empty()) {
-    PUSH_ERROR_AND_RETURN("vertices is empty.");
-  }
-
-  if (faceVertexIndices.size() < 3) {
-    PUSH_ERROR_AND_RETURN("faceVertexIndices.size < 3");
-  }
-
-  // Convert tydra data structures to robust tangent computation format
-  MeshData mesh;
-
-  // Copy vertices
-  for (const auto& v : vertices) {
-    mesh.positions.emplace_back(v[0], v[1], v[2]);
-  }
-
-  // Copy normals (if available)
-  if (!normals.empty()) {
-    for (const auto& n : normals) {
-      mesh.normals.emplace_back(n[0], n[1], n[2]);
-    }
-  }
-
-  // Copy texcoords (if available)
-  if (!texcoords.empty()) {
-    for (const auto& uv : texcoords) {
-      mesh.texcoords.emplace_back(uv[0], uv[1]);
-    }
-  }
-
-  // Convert face indices to triangles
-  // Handle both triangle and polygon cases
-  size_t faceVertexIndexOffset = 0;
-  bool hasFaceVertexCounts = !faceVertexCounts.empty();
-
-  if (hasFaceVertexCounts) {
-    for (size_t i = 0; i < faceVertexCounts.size(); i++) {
-      size_t nv = faceVertexCounts[i];
-      if (nv < 3) continue;
-
-      // Triangulate polygon faces (simple fan triangulation)
-      for (size_t f = 0; f < nv - 2; f++) {
-        uint32_t i0 = faceVertexIndices[faceVertexIndexOffset];
-        uint32_t i1 = faceVertexIndices[faceVertexIndexOffset + f + 1];
-        uint32_t i2 = faceVertexIndices[faceVertexIndexOffset + f + 2];
-        mesh.triangles.emplace_back(i0, i1, i2);
-      }
-      faceVertexIndexOffset += nv;
-    }
-  } else {
-    // All triangles
-    for (size_t i = 0; i < faceVertexIndices.size(); i += 3) {
-      mesh.triangles.emplace_back(
-        faceVertexIndices[i],
-        faceVertexIndices[i + 1],
-        faceVertexIndices[i + 2]
-      );
-    }
-  }
-
-  // Configure robust tangent computation options
-  TangentComputeOptions options;
-  options.useLengyelMethod = true;
-  options.weightByArea = true;
-  options.weightByAngle = true;
-  options.orthogonalize = true;
-  options.normalize = true;
-
-  // Compute tangent spaces
-  auto tangentSpaces = TangentComputer::ComputeTangentSpaces(mesh, options);
-
-  if (tangentSpaces.empty()) {
-    PUSH_ERROR_AND_RETURN("Failed to compute tangent spaces.");
-  }
-
-  // Convert back to tydra format
-  tangents->clear();
-  binormals->clear();
-  tangents->resize(tangentSpaces.size());
-  binormals->resize(tangentSpaces.size());
-
-  for (size_t i = 0; i < tangentSpaces.size(); i++) {
-    const auto& ts = tangentSpaces[i];
-    (*tangents)[i] = vec3{ts.tangent.x, ts.tangent.y, ts.tangent.z};
-    (*binormals)[i] = vec3{ts.binormal.x, ts.binormal.y, ts.binormal.z};
-  }
-
-  // Create identity vertex indices for now (robust computation already handles vertex sharing)
-  out_vertex_indices->clear();
-  for (size_t i = 0; i < faceVertexIndices.size(); i++) {
-    out_vertex_indices->push_back(static_cast<uint32_t>(i));
-  }
-
-  return true;
-}
-#endif
-
 static bool ComputeTangentsAndBinormals(
     const std::vector<vec3> &vertices,
     const std::vector<uint32_t> &faceVertexCounts,
@@ -2366,7 +2202,8 @@ static bool ComputeTangentsAndBinormals(
     const std::vector<vec2> &texcoords, const std::vector<vec3> &normals,
     bool is_facevarying_input,  // false: 'vertex' varying
     std::vector<vec3> *tangents, std::vector<vec3> *binormals,
-    std::vector<uint32_t> *out_vertex_indices, std::string *err) {
+    std::vector<uint32_t> *out_vertex_indices, std::string *err,
+    uint32_t max_vertex_valence = 16, float dedup_eps = 0.0f) {
   if (!tangents) {
     PUSH_ERROR_AND_RETURN("tangents arg is nullptr.");
   }
@@ -2398,25 +2235,25 @@ static bool ComputeTangentsAndBinormals(
 
   if (is_facevarying_input) {
     if (vertices.size() != faceVertexIndices.size()) {
-      PUSH_ERROR_AND_RETURN("Invalid vertices.size.");
+      PUSH_ERROR_AND_RETURN("vertices.size (" << vertices.size() << ") != faceVertexIndices.size (" << faceVertexIndices.size() << ")");
     }
     if (texcoords.size() != faceVertexIndices.size()) {
-      PUSH_ERROR_AND_RETURN("Invalid texcoords.size.");
+      PUSH_ERROR_AND_RETURN("texcoords.size (" << texcoords.size() << ") != faceVertexIndices.size (" << faceVertexIndices.size() << ")");
     }
     if (normals.size() != faceVertexIndices.size()) {
-      PUSH_ERROR_AND_RETURN("Invalid normals.size.");
+      PUSH_ERROR_AND_RETURN("normals.size (" << normals.size() << ") != faceVertexIndices.size (" << faceVertexIndices.size() << ")");
     }
   } else {
     uint32_t max_vert_index =
         *std::max_element(faceVertexIndices.begin(), faceVertexIndices.end());
     if (max_vert_index >= vertices.size()) {
-      PUSH_ERROR_AND_RETURN("Invalid vertices.size.");
+      PUSH_ERROR_AND_RETURN("max vertex index (" << max_vert_index << ") >= vertices.size (" << vertices.size() << ")");
     }
     if (max_vert_index >= texcoords.size()) {
-      PUSH_ERROR_AND_RETURN("Invalid texcoords.size.");
+      PUSH_ERROR_AND_RETURN("max vertex index (" << max_vert_index << ") >= texcoords.size (" << texcoords.size() << ")");
     }
     if (max_vert_index >= normals.size()) {
-      PUSH_ERROR_AND_RETURN("Invalid normals.size.");
+      PUSH_ERROR_AND_RETURN("max vertex index (" << max_vert_index << ") >= normals.size (" << normals.size() << ")");
     }
   }
 
@@ -2596,36 +2433,32 @@ static bool ComputeTangentsAndBinormals(
         continue;
       }
 
-      //
-      // NOTE: for quad or polygon mesh, this overwrites previous 2 facevarying
-      // points for each face.
-      //       And this would not be a good way to compute tangents for
-      //       quad/polygon.
-      //
+      // Accumulate tangent/binormal contributions.
+      // For triangles, += on zero-init is equivalent to =.
+      // For quads/polygons, shared facevarying vertices get correct accumulation.
+      tn[fid0][0] += tdir[0];
+      tn[fid0][1] += tdir[1];
+      tn[fid0][2] += tdir[2];
 
-      tn[fid0][0] = tdir[0];
-      tn[fid0][1] = tdir[1];
-      tn[fid0][2] = tdir[2];
+      tn[fid1][0] += tdir[0];
+      tn[fid1][1] += tdir[1];
+      tn[fid1][2] += tdir[2];
 
-      tn[fid1][0] = tdir[0];
-      tn[fid1][1] = tdir[1];
-      tn[fid1][2] = tdir[2];
+      tn[fid2][0] += tdir[0];
+      tn[fid2][1] += tdir[1];
+      tn[fid2][2] += tdir[2];
 
-      tn[fid2][0] = tdir[0];
-      tn[fid2][1] = tdir[1];
-      tn[fid2][2] = tdir[2];
+      bn[fid0][0] += bdir[0];
+      bn[fid0][1] += bdir[1];
+      bn[fid0][2] += bdir[2];
 
-      bn[fid0][0] = bdir[0];
-      bn[fid0][1] = bdir[1];
-      bn[fid0][2] = bdir[2];
+      bn[fid1][0] += bdir[0];
+      bn[fid1][1] += bdir[1];
+      bn[fid1][2] += bdir[2];
 
-      bn[fid1][0] = bdir[0];
-      bn[fid1][1] = bdir[1];
-      bn[fid1][2] = bdir[2];
-
-      bn[fid2][0] = bdir[0];
-      bn[fid2][1] = bdir[1];
-      bn[fid2][2] = bdir[2];
+      bn[fid2][0] += bdir[0];
+      bn[fid2][1] += bdir[1];
+      bn[fid2][2] += bdir[2];
     }
 
     faceVertexIndexOffset += nv;
@@ -2633,42 +2466,98 @@ static bool ComputeTangentsAndBinormals(
 
   //
   // 2. Build indices(use same index for shared-vertex)
+  //    Position-bucketed dedup: bucket by position index, linear scan within
+  //    each bucket comparing only normal + uv (typical valence 4-8).
   //
-  std::vector<uint32_t> vertex_indices;  // len = faceVertexIndices.size()
+  std::vector<uint32_t> vertex_indices(faceVertexIndices.size());
   {
-    ComputeTangentVertexInput<ComputeTangentPackedVertexData> vertex_input;
-    ComputeTangentVertexOutput<ComputeTangentPackedVertexData> vertex_output;
+    // Expand normals/texcoords to facevarying if needed.
+    const vec3 *nrm_ptr = nullptr;
+    const vec2 *uv_ptr = nullptr;
+    std::vector<vec3> fv_normals_expanded;
+    std::vector<vec2> fv_uvs_expanded;
 
     if (is_facevarying_input) {
-      // input position is still in 'vertex' variability.
-      for (size_t i = 0; i < faceVertexIndices.size(); i++) {
-        vertex_input.point_indices.push_back(faceVertexIndices[i]);
-      }
-      vertex_input.normals = normals;
-      vertex_input.uvs = texcoords;
+      nrm_ptr = normals.data();
+      uv_ptr = texcoords.data();
     } else {
-      // expand to facevarying.
+      fv_normals_expanded.resize(faceVertexIndices.size());
+      fv_uvs_expanded.resize(faceVertexIndices.size());
       for (size_t i = 0; i < faceVertexIndices.size(); i++) {
-        vertex_input.point_indices.push_back(faceVertexIndices[i]);
-        vertex_input.normals.push_back(normals[faceVertexIndices[i]]);
-        vertex_input.uvs.push_back(texcoords[faceVertexIndices[i]]);
+        fv_normals_expanded[i] = normals[faceVertexIndices[i]];
+        fv_uvs_expanded[i] = texcoords[faceVertexIndices[i]];
+      }
+      nrm_ptr = fv_normals_expanded.data();
+      uv_ptr = fv_uvs_expanded.data();
+    }
+
+    uint32_t numPoints = *std::max_element(faceVertexIndices.begin(),
+                                           faceVertexIndices.end()) + 1;
+    uint32_t next_vertex_id = 0;
+
+    // Pre-count per-position degree to detect high-valence vertices.
+    bool t_flatten = false;
+    if (max_vertex_valence > 0) {
+      std::vector<uint32_t> degree(numPoints, 0);
+      for (size_t i = 0; i < faceVertexIndices.size(); i++) {
+        degree[faceVertexIndices[i]]++;
+      }
+      uint32_t max_deg = *std::max_element(degree.begin(), degree.end());
+      if (max_deg > max_vertex_valence) {
+        DCOUT("tangent dedup: max vertex degree " << max_deg
+              << " exceeds threshold " << max_vertex_valence
+              << ", falling back to flatten.");
+        t_flatten = true;
       }
     }
 
-    std::vector<uint32_t> vertex_point_indices;
+    if (t_flatten) {
+      // Flatten: each face-vertex is its own unique vertex.
+      for (size_t i = 0; i < faceVertexIndices.size(); i++) {
+        vertex_indices[i] = uint32_t(i);
+      }
+      next_vertex_id = uint32_t(faceVertexIndices.size());
+    } else {
+      auto attribs_match = [&](size_t a, size_t b) -> bool {
+        if (dedup_eps > 0.0f) {
+          if (!math::is_close(nrm_ptr[a], nrm_ptr[b], dedup_eps)) return false;
+          if (!math::is_close(uv_ptr[a], uv_ptr[b], dedup_eps)) return false;
+        } else {
+          if (memcmp(&nrm_ptr[a], &nrm_ptr[b], sizeof(vec3)) != 0) return false;
+          if (memcmp(&uv_ptr[a], &uv_ptr[b], sizeof(vec2)) != 0) return false;
+        }
+        return true;
+      };
 
-    BuildIndices<ComputeTangentVertexInput<ComputeTangentPackedVertexData>,
-                 ComputeTangentVertexOutput<ComputeTangentPackedVertexData>,
-                 ComputeTangentPackedVertexData,
-                 ComputeTangentPackedVertexDataHasher,
-                 ComputeTangentPackedVertexDataEqual>(
-        vertex_input, vertex_output, vertex_indices, vertex_point_indices);
+      struct BucketEntry {
+        uint32_t fv_index;
+        uint32_t out_vertex_id;
+      };
+
+      std::vector<std::vector<BucketEntry>> buckets(numPoints);
+
+      for (size_t i = 0; i < faceVertexIndices.size(); i++) {
+        uint32_t pid = faceVertexIndices[i];
+        auto &bucket = buckets[pid];
+        uint32_t matched_id = ~0u;
+        for (const auto &entry : bucket) {
+          if (attribs_match(i, entry.fv_index)) {
+            matched_id = entry.out_vertex_id;
+            break;
+          }
+        }
+        if (matched_id == ~0u) {
+          matched_id = next_vertex_id++;
+          bucket.push_back({uint32_t(i), matched_id});
+        }
+        vertex_indices[i] = matched_id;
+      }
+    }
 
     DCOUT("faceVertexIndices.size : " << faceVertexIndices.size());
-    DCOUT("# of indices after the build: "
-          << vertex_indices.size() << ", reduced "
-          << (faceVertexIndices.size() - vertex_indices.size()) << " indices.");
-    // We only need indices. Discard vertex_output and vertrex_point_indices
+    DCOUT("tangent dedup: " << next_vertex_id << " unique vertices from "
+          << faceVertexIndices.size() << " face-vertices."
+          << (t_flatten ? " (flattened)" : ""));
   }
 
   const uint32_t num_verts =
@@ -3285,7 +3174,7 @@ bool RenderSceneConverter::ConvertVertexVariabilityImpl(
   return true;
 }
 
-bool RenderSceneConverter::BuildVertexIndicesImpl(RenderMesh &mesh) {
+bool RenderSceneConverter::BuildVertexIndicesImpl(RenderMesh &mesh, uint32_t max_vertex_valence, float dedup_eps) {
   //
   // - If mesh is triangulated, use triangulatedFaceVertexIndices, otherwise use
   // faceVertxIndices.
@@ -3306,11 +3195,8 @@ bool RenderSceneConverter::BuildVertexIndicesImpl(RenderMesh &mesh) {
   //std::cout << "usdFaceVertexIndices.min_value: " << *std::min_element(mesh.usdFaceVertexIndices.begin(), mesh.usdFaceVertexIndices.end() << "\n");
   //std::cout << "usdFaceVertexIndices.max_value: " << *std::max_element(mesh.usdFaceVertexIndices.begin(), mesh.usdFaceVertexIndices.end() << "\n");
 
-  DefaultVertexInput<DefaultPackedVertexData> vertex_input;
-
   size_t num_verts = mesh.points.size();
   size_t num_fvs = fvIndices.size();
-  vertex_input.point_indices = fvIndices;
 
   if (mesh.normals.vertex_count()) {
     if (!mesh.normals.is_facevarying()) {
@@ -3426,89 +3312,141 @@ bool RenderSceneConverter::BuildVertexIndicesImpl(RenderMesh &mesh) {
                 mesh.vertex_opacities.get_data().data())
           : nullptr;
 
+  //
+  // Position-bucketed vertex deduplication.
+  // Bucket by position index (faceVertexIndices[i]), then linear-scan within
+  // each bucket comparing only the attributes that are present.
+  // Typical vertex valence is 4-8, so each scan is very short.
+  //
+  // Safeguard: if any vertex's degree (number of face-vertex references)
+  // exceeds max_vertex_valence, skip dedup entirely (flatten).
+  //
 
-  if (texcoord0_ptr) {
-    vertex_input.uv0s.assign(num_fvs, {0.0f, 0.0f});
-  }
+  std::vector<uint32_t> out_indices(num_fvs);
+  std::vector<uint32_t> out_point_indices(num_fvs);
+  uint32_t next_vertex_id = 0;
 
-  if (texcoord1_ptr) {
-    vertex_input.uv1s.assign(num_fvs, {0.0f, 0.0f});
-  }
-
-  if (normals_ptr) {
-    vertex_input.normals.assign(num_fvs, {0.0f, 0.0f, 0.0f});
-  }
-
-  if (tangents_ptr) {
-    vertex_input.tangents.assign(num_fvs, {0.0f, 0.0f, 0.0f});
-  }
-
-  if (binormals_ptr) {
-    vertex_input.binormals.assign(num_fvs, {0.0f, 0.0f, 0.0f});
-  }
-
-  if (colors_ptr) {
-    vertex_input.colors.assign(num_fvs, {0.0f, 0.0f, 0.0f});
-  }
-
-  if (opacities_ptr) {
-    vertex_input.opacities.assign(num_fvs, 0.0f);
-  }
-
-  for (size_t i = 0; i < num_fvs; i++) {
-    size_t fvi = fvIndices[i];
-    if (fvi >= num_verts) {
-      PUSH_ERROR("usdFaceVertexIndices.min_value: " << *std::min_element(mesh.usdFaceVertexIndices.begin(), mesh.usdFaceVertexIndices.end()) << "\n");
-      PUSH_ERROR("usdFaceVertexIndices.max_value: " << *std::max_element(mesh.usdFaceVertexIndices.begin(), mesh.usdFaceVertexIndices.end()) << "\n");
-      PUSH_ERROR("triangulatedFaceVertexIndices.min_value: " << *std::min_element(mesh.triangulatedFaceVertexIndices.begin(), mesh.triangulatedFaceVertexIndices.end()) << "\n");
-      PUSH_ERROR("triangulatedFaceVertexIndices.max_value: " << *std::max_element(mesh.triangulatedFaceVertexIndices.begin(), mesh.triangulatedFaceVertexIndices.end()) << "\n");
-      PUSH_ERROR_AND_RETURN(fmt::format(
-          "Invalid faceVertexIndex {}. Must be less than {}(triangulated = {})", fvi, num_fvs, mesh.triangulatedFaceVertexIndices.size() ? "true" : "faise"));
+  // Pre-count per-position degree to detect high-valence vertices.
+  bool flatten = false;
+  if (max_vertex_valence > 0) {
+    std::vector<uint32_t> degree(num_verts, 0);
+    for (size_t i = 0; i < num_fvs; i++) {
+      uint32_t pid = fvIndices[i];
+      if (pid < num_verts) {
+        degree[pid]++;
+      }
     }
-
-    if (normals_ptr) {
-      vertex_input.normals[i] = normals_ptr[i];
-    }
-    if (texcoord0_ptr) {
-      vertex_input.uv0s[i] = texcoord0_ptr[i];
-    }
-    if (texcoord1_ptr) {
-      vertex_input.uv1s[i] = texcoord1_ptr[i];
-    }
-    if (tangents_ptr) {
-      vertex_input.tangents[i] = tangents_ptr[i];
-    }
-    if (binormals_ptr) {
-      vertex_input.binormals[i] = binormals_ptr[i];
-    }
-    if (colors_ptr) {
-      vertex_input.colors[i] = colors_ptr[i];
-    }
-    if (opacities_ptr) {
-      vertex_input.opacities[i] = opacities_ptr[i];
+    uint32_t max_deg = *std::max_element(degree.begin(), degree.end());
+    if (max_deg > max_vertex_valence) {
+      DCOUT("Max vertex degree " << max_deg << " exceeds threshold "
+            << max_vertex_valence << ", falling back to flatten (no dedup).");
+      flatten = true;
     }
   }
 
-  std::vector<uint32_t> out_indices;
-  std::vector<uint32_t> out_point_indices;  // to reorder position data
-  DefaultVertexOutput<DefaultPackedVertexData> vertex_output;
+  if (flatten) {
+    // Flatten: each face-vertex becomes its own unique vertex (no dedup).
+    for (size_t i = 0; i < num_fvs; i++) {
+      uint32_t pid = fvIndices[i];
+      if (pid >= num_verts) {
+        PUSH_ERROR_AND_RETURN(fmt::format(
+            "Invalid faceVertexIndex {}. Must be less than {}(triangulated = {})", pid, num_verts, mesh.triangulatedFaceVertexIndices.size() ? "true" : "false"));
+      }
+      out_indices[i] = uint32_t(i);
+      out_point_indices[i] = pid;
+    }
+    next_vertex_id = uint32_t(num_fvs);
+  } else {
+    // Normal position-bucketed dedup.
+    struct BucketEntry {
+      uint32_t fv_index;       // source face-vertex index (for attribute comparison)
+      uint32_t out_vertex_id;  // assigned output vertex index
+    };
 
+    // When dedup_eps > 0, use is_close() for approximate matching (handles
+    // DCC rounding, interpolation artifacts). Otherwise use exact memcmp.
+    auto attribs_match = [&](size_t a, size_t b) -> bool {
+      if (dedup_eps > 0.0f) {
+        if (normals_ptr   && !math::is_close(normals_ptr[a],   normals_ptr[b],   dedup_eps)) return false;
+        if (texcoord0_ptr && !math::is_close(texcoord0_ptr[a],  texcoord0_ptr[b], dedup_eps)) return false;
+        if (texcoord1_ptr && !math::is_close(texcoord1_ptr[a],  texcoord1_ptr[b], dedup_eps)) return false;
+        if (tangents_ptr  && !math::is_close(tangents_ptr[a],   tangents_ptr[b],  dedup_eps)) return false;
+        if (binormals_ptr && !math::is_close(binormals_ptr[a],  binormals_ptr[b], dedup_eps)) return false;
+        if (colors_ptr    && !math::is_close(colors_ptr[a],     colors_ptr[b],    dedup_eps)) return false;
+        if (opacities_ptr && !math::is_close(opacities_ptr[a],  opacities_ptr[b], dedup_eps)) return false;
+      } else {
+        if (normals_ptr   && memcmp(&normals_ptr[a],   &normals_ptr[b],   sizeof(value::float3)) != 0) return false;
+        if (texcoord0_ptr && memcmp(&texcoord0_ptr[a],  &texcoord0_ptr[b], sizeof(value::float2)) != 0) return false;
+        if (texcoord1_ptr && memcmp(&texcoord1_ptr[a],  &texcoord1_ptr[b], sizeof(value::float2)) != 0) return false;
+        if (tangents_ptr  && memcmp(&tangents_ptr[a],   &tangents_ptr[b],  sizeof(value::float3)) != 0) return false;
+        if (binormals_ptr && memcmp(&binormals_ptr[a],  &binormals_ptr[b], sizeof(value::float3)) != 0) return false;
+        if (colors_ptr    && memcmp(&colors_ptr[a],     &colors_ptr[b],    sizeof(value::float3)) != 0) return false;
+        if (opacities_ptr && memcmp(&opacities_ptr[a],  &opacities_ptr[b], sizeof(float))         != 0) return false;
+      }
+      return true;
+    };
 
-  BuildIndices<DefaultVertexInput<DefaultPackedVertexData>,
-               DefaultVertexOutput<DefaultPackedVertexData>,
-               DefaultPackedVertexData, DefaultPackedVertexDataHasher,
-               DefaultPackedVertexDataEqual>(vertex_input, vertex_output,
-                                             out_indices, out_point_indices);
+    std::vector<std::vector<BucketEntry>> buckets(num_verts);
 
-  if (out_indices.size() != out_point_indices.size()) {
-    PUSH_ERROR_AND_RETURN(
-        "Internal error. out_indices.size != out_point_indices.");
+    for (size_t i = 0; i < num_fvs; i++) {
+      uint32_t pid = fvIndices[i];
+      if (pid >= num_verts) {
+        PUSH_ERROR("usdFaceVertexIndices.min_value: " << *std::min_element(mesh.usdFaceVertexIndices.begin(), mesh.usdFaceVertexIndices.end()) << "\n");
+        PUSH_ERROR("usdFaceVertexIndices.max_value: " << *std::max_element(mesh.usdFaceVertexIndices.begin(), mesh.usdFaceVertexIndices.end()) << "\n");
+        PUSH_ERROR("triangulatedFaceVertexIndices.min_value: " << *std::min_element(mesh.triangulatedFaceVertexIndices.begin(), mesh.triangulatedFaceVertexIndices.end()) << "\n");
+        PUSH_ERROR("triangulatedFaceVertexIndices.max_value: " << *std::max_element(mesh.triangulatedFaceVertexIndices.begin(), mesh.triangulatedFaceVertexIndices.end()) << "\n");
+        PUSH_ERROR_AND_RETURN(fmt::format(
+            "Invalid faceVertexIndex {}. Must be less than {}(triangulated = {})", pid, num_verts, mesh.triangulatedFaceVertexIndices.size() ? "true" : "false"));
+      }
+
+      auto &bucket = buckets[pid];
+      uint32_t matched_id = ~0u;
+      for (const auto &entry : bucket) {
+        if (attribs_match(i, entry.fv_index)) {
+          matched_id = entry.out_vertex_id;
+          break;
+        }
+      }
+      if (matched_id == ~0u) {
+        matched_id = next_vertex_id++;
+        bucket.push_back({uint32_t(i), matched_id});
+      }
+      out_indices[i] = matched_id;
+      out_point_indices[i] = pid;
+    }
   }
 
   DCOUT("faceVertexIndices.size : " << fvIndices.size());
-  DCOUT("# of indices after the build: "
-        << out_indices.size() << ", reduced "
-        << (fvIndices.size() - out_indices.size()) << " indices.");
+  DCOUT("vertex dedup: " << next_vertex_id << " unique vertices from "
+        << num_fvs << " face-vertices." << (flatten ? " (flattened)" : ""));
+
+  // Build reordered attribute arrays from dedup results.
+  // Each unique vertex is represented by its canonical face-vertex index.
+  uint32_t numUniqueVerts = next_vertex_id;
+  DefaultVertexOutput<DefaultPackedVertexData> vertex_output;
+  vertex_output.point_indices.resize(numUniqueVerts);
+  if (normals_ptr)   vertex_output.normals.resize(numUniqueVerts);
+  if (texcoord0_ptr) vertex_output.uv0s.resize(numUniqueVerts);
+  if (texcoord1_ptr) vertex_output.uv1s.resize(numUniqueVerts);
+  if (tangents_ptr)  vertex_output.tangents.resize(numUniqueVerts);
+  if (binormals_ptr) vertex_output.binormals.resize(numUniqueVerts);
+  if (colors_ptr)    vertex_output.colors.resize(numUniqueVerts);
+  if (opacities_ptr) vertex_output.opacities.resize(numUniqueVerts);
+
+  // Populate vertex_output from dedup results.
+  // In flatten mode, out_indices[i] == i so this is a direct copy.
+  // In dedup mode, each unique vertex appears once via out_indices mapping.
+  for (size_t i = 0; i < num_fvs; i++) {
+    uint32_t vid = out_indices[i];
+    vertex_output.point_indices[vid] = fvIndices[i];
+    if (normals_ptr)   vertex_output.normals[vid]   = normals_ptr[i];
+    if (texcoord0_ptr) vertex_output.uv0s[vid]      = texcoord0_ptr[i];
+    if (texcoord1_ptr) vertex_output.uv1s[vid]      = texcoord1_ptr[i];
+    if (tangents_ptr)  vertex_output.tangents[vid]   = tangents_ptr[i];
+    if (binormals_ptr) vertex_output.binormals[vid]  = binormals_ptr[i];
+    if (colors_ptr)    vertex_output.colors[vid]     = colors_ptr[i];
+    if (opacities_ptr) vertex_output.opacities[vid]  = opacities_ptr[i];
+  }
 
 
 
@@ -5455,32 +5393,88 @@ bool RenderSceneConverter::ConvertMesh(
     std::vector<vec3> binormals;
     std::vector<uint32_t> vertex_indices;
 
-#ifdef TYDRA_ROBUST_TANGENT
-    if (!ComputeTangentsAndBinormalsRobust(dst.points, dst.faceVertexCounts(),
-                                          dst.faceVertexIndices(), texcoords,
-                                          normals, !is_single_indexable, &tangents,
-                                          &binormals, &vertex_indices, &_err)) {
-      PUSH_ERROR_AND_RETURN("Failed to compute tangents/binormals with robust method.");
+    // When facevarying, expand per-vertex points to per-face-vertex so all
+    // arrays (vertices, texcoords, normals) have the same size.
+    std::vector<vec3> facevarying_points;
+    const std::vector<vec3> *points_ptr = &dst.points;
+    if (!is_single_indexable) {
+      const auto &fvi = dst.faceVertexIndices();
+      facevarying_points.resize(fvi.size());
+      for (size_t i = 0; i < fvi.size(); i++) {
+        if (fvi[i] < dst.points.size()) {
+          facevarying_points[i] = dst.points[fvi[i]];
+        }
+      }
+      points_ptr = &facevarying_points;
     }
-#else
-    if (!ComputeTangentsAndBinormals(dst.points, dst.faceVertexCounts(),
-                                     dst.faceVertexIndices(), texcoords,
-                                     normals, !is_single_indexable, &tangents,
-                                     &binormals, &vertex_indices, &_err)) {
-      PUSH_ERROR_AND_RETURN("Failed to compute tangents/binormals.");
-    }
-#endif
 
-    // 1. Firstly, always convert tangents/binormals to 'facevarying'
-    // variability
+    // Try MikkTSpace first (industry standard), fall back to Lengyel if it fails.
+    // MikkTSpace operates on facevarying data and outputs facevarying tangents directly.
+    bool mikktspace_ok = false;
+    {
+      std::string mikk_err;
+      std::vector<vec3> mikk_tangents;
+      std::vector<vec3> mikk_binormals;
+      if (!is_single_indexable) {
+        // Already facevarying — use directly
+        mikktspace_ok = ComputeTangentsMikkTSpace(
+            *points_ptr, normals, texcoords, dst.faceVertexCounts(),
+            &mikk_tangents, &mikk_binormals, &mikk_err);
+      } else {
+        // Expand vertex-varying data to facevarying for MikkTSpace
+        const auto &fvi = dst.faceVertexIndices();
+        std::vector<value::float3> fv_positions(fvi.size());
+        std::vector<value::float3> fv_normals(fvi.size());
+        std::vector<value::float2> fv_texcoords(fvi.size());
+        for (size_t i = 0; i < fvi.size(); i++) {
+          if (fvi[i] < dst.points.size()) fv_positions[i] = dst.points[fvi[i]];
+          if (fvi[i] < normals.size()) fv_normals[i] = normals[fvi[i]];
+          if (fvi[i] < texcoords.size()) fv_texcoords[i] = texcoords[fvi[i]];
+        }
+        mikktspace_ok = ComputeTangentsMikkTSpace(
+            fv_positions, fv_normals, fv_texcoords, dst.faceVertexCounts(),
+            &mikk_tangents, &mikk_binormals, &mikk_err);
+      }
+
+      if (mikktspace_ok) {
+        // MikkTSpace output is already facevarying — store directly
+        tangents = std::move(mikk_tangents);
+        binormals = std::move(mikk_binormals);
+      } else {
+        DCOUT("MikkTSpace tangent computation failed: " << mikk_err
+              << ". Falling back to Lengyel method.");
+      }
+    }
+
+    if (!mikktspace_ok) {
+      // Lengyel fallback
+      if (!ComputeTangentsAndBinormals(*points_ptr, dst.faceVertexCounts(),
+                                       dst.faceVertexIndices(), texcoords,
+                                       normals, !is_single_indexable, &tangents,
+                                       &binormals, &vertex_indices, &_err,
+                                       env.mesh_config.max_vertex_valence,
+                                       env.mesh_config.facevarying_to_vertex_eps)) {
+        PUSH_ERROR_AND_RETURN("Failed to compute tangents/binormals.");
+      }
+    }
+
+    // Convert tangents/binormals to 'facevarying' variability
     {
       std::vector<vec3> facevarying_tangents;
       std::vector<vec3> facevarying_binormals;
-      facevarying_tangents.assign(vertex_indices.size(), {0.0f, 0.0f, 0.0f});
-      facevarying_binormals.assign(vertex_indices.size(), {0.0f, 0.0f, 0.0f});
-      for (size_t i = 0; i < vertex_indices.size(); i++) {
-        facevarying_tangents[i] = tangents[vertex_indices[i]];
-        facevarying_binormals[i] = binormals[vertex_indices[i]];
+
+      if (mikktspace_ok) {
+        // MikkTSpace output is already facevarying
+        facevarying_tangents = std::move(tangents);
+        facevarying_binormals = std::move(binormals);
+      } else {
+        // Lengyel output needs index expansion
+        facevarying_tangents.assign(vertex_indices.size(), {0.0f, 0.0f, 0.0f});
+        facevarying_binormals.assign(vertex_indices.size(), {0.0f, 0.0f, 0.0f});
+        for (size_t i = 0; i < vertex_indices.size(); i++) {
+          facevarying_tangents[i] = tangents[vertex_indices[i]];
+          facevarying_binormals[i] = binormals[vertex_indices[i]];
+        }
       }
 
       dst.tangents.data.resize(facevarying_tangents.size() * sizeof(vec3));
@@ -5515,14 +5509,26 @@ bool RenderSceneConverter::ConvertMesh(
         size_t numFvs = fvIdx.size();
         uint32_t numPts = static_cast<uint32_t>(dst.points.size());
 
-        // tangents
+        // tangents — accumulate then normalize
         if (dst.tangents.vertex_count() == numFvs) {
           const value::float3 *fvT = reinterpret_cast<const value::float3 *>(
               dst.tangents.data.data());
           std::vector<value::float3> vtxT(numPts, {0.0f, 0.0f, 0.0f});
           for (size_t i = 0; i < numFvs; i++) {
             if (fvIdx[i] < numPts) {
-              vtxT[fvIdx[i]] = fvT[i];
+              vtxT[fvIdx[i]][0] += fvT[i][0];
+              vtxT[fvIdx[i]][1] += fvT[i][1];
+              vtxT[fvIdx[i]][2] += fvT[i][2];
+            }
+          }
+          for (uint32_t vi = 0; vi < numPts; vi++) {
+            float len = std::sqrt(vtxT[vi][0] * vtxT[vi][0] +
+                                  vtxT[vi][1] * vtxT[vi][1] +
+                                  vtxT[vi][2] * vtxT[vi][2]);
+            if (len > 1e-8f) {
+              vtxT[vi][0] /= len;
+              vtxT[vi][1] /= len;
+              vtxT[vi][2] /= len;
             }
           }
           dst.tangents.set_buffer(
@@ -5531,14 +5537,26 @@ bool RenderSceneConverter::ConvertMesh(
           dst.tangents.variability = VertexVariability::Vertex;
         }
 
-        // binormals
+        // binormals — accumulate then normalize
         if (dst.binormals.vertex_count() == numFvs) {
           const value::float3 *fvB = reinterpret_cast<const value::float3 *>(
               dst.binormals.data.data());
           std::vector<value::float3> vtxB(numPts, {0.0f, 0.0f, 0.0f});
           for (size_t i = 0; i < numFvs; i++) {
             if (fvIdx[i] < numPts) {
-              vtxB[fvIdx[i]] = fvB[i];
+              vtxB[fvIdx[i]][0] += fvB[i][0];
+              vtxB[fvIdx[i]][1] += fvB[i][1];
+              vtxB[fvIdx[i]][2] += fvB[i][2];
+            }
+          }
+          for (uint32_t vi = 0; vi < numPts; vi++) {
+            float len = std::sqrt(vtxB[vi][0] * vtxB[vi][0] +
+                                  vtxB[vi][1] * vtxB[vi][1] +
+                                  vtxB[vi][2] * vtxB[vi][2]);
+            if (len > 1e-8f) {
+              vtxB[vi][0] /= len;
+              vtxB[vi][1] /= len;
+              vtxB[vi][2] /= len;
             }
           }
           dst.binormals.set_buffer(
@@ -5548,7 +5566,8 @@ bool RenderSceneConverter::ConvertMesh(
         }
       } else {
         // All attributes are still facevarying - use full rebuild.
-        if (!BuildVertexIndicesImpl(dst)) {
+        if (!BuildVertexIndicesImpl(dst, env.mesh_config.max_vertex_valence,
+                                     env.mesh_config.facevarying_to_vertex_eps)) {
           return false;
         }
         is_single_indexable = true;
