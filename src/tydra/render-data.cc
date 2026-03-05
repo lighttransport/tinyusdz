@@ -1317,7 +1317,7 @@ static bool TryConvertFacevaryingToVertex(
 ///
 static bool TriangulateVertexAttribute(
     VertexAttribute &vattr, const std::vector<uint32_t> &faceVertexCounts,
-    const std::vector<size_t> &triangulatedToOrigFaceVertexIndexMap,
+    const std::vector<uint32_t> &triangulatedToOrigFaceVertexIndexMap,
     const std::vector<uint32_t> &triangulatedFaceCounts,
     const std::vector<uint32_t> &triangulatedFaceVertexIndices,
     std::string *err) {
@@ -1358,7 +1358,7 @@ static bool TriangulateVertexAttribute(
 
     for (uint32_t f = 0; f < triangulatedFaceVertexIndices.size(); f++) {
       // Array index to faceVertexIndices(before triangulation).
-      size_t src_fvIdx = triangulatedToOrigFaceVertexIndexMap[f];
+      uint32_t src_fvIdx = triangulatedToOrigFaceVertexIndexMap[f];
 
       if (src_fvIdx >= num_vs) {
         PUSH_ERROR_AND_RETURN(
@@ -1885,7 +1885,7 @@ bool TriangulatePolygon(
     const std::vector<uint32_t> &faceVertexIndices,
     std::vector<uint32_t> &triangulatedFaceVertexCounts,
     std::vector<uint32_t> &triangulatedFaceVertexIndices,
-    std::vector<size_t> &triangulatedToOrigFaceVertexIndexMap,
+    std::vector<uint32_t> &triangulatedToOrigFaceVertexIndexMap,
     std::vector<uint32_t> &triangulatedFaceCounts,
     MeshConverterConfig::TriangulationMethod triangulation_method,
     std::string &warn, std::string &err) {
@@ -1911,6 +1911,12 @@ bool TriangulatePolygon(
   triangulatedFaceCounts.reserve(numFaces);
 
   size_t faceIndexOffset = 0;
+
+  // Reusable temporaries for earcut (avoid per-face heap allocation).
+  using Point3D = std::array<BaseTy, 3>;
+  using Point2D = std::array<BaseTy, 2>;
+  std::vector<Point2D> polyline;
+  std::vector<std::vector<Point2D>> polygon_2d(1);  // single ring, no holes
 
   // For each polygon(face)
   for (size_t i = 0; i < faceVertexCounts.size(); i++) {
@@ -1941,39 +1947,63 @@ bool TriangulatePolygon(
           faceVertexIndices[faceIndexOffset + 1]);
       triangulatedFaceVertexIndices.push_back(
           faceVertexIndices[faceIndexOffset + 2]);
-      triangulatedToOrigFaceVertexIndexMap.push_back(faceIndexOffset + 0);
-      triangulatedToOrigFaceVertexIndexMap.push_back(faceIndexOffset + 1);
-      triangulatedToOrigFaceVertexIndexMap.push_back(faceIndexOffset + 2);
+      triangulatedToOrigFaceVertexIndexMap.push_back(uint32_t(faceIndexOffset + 0));
+      triangulatedToOrigFaceVertexIndexMap.push_back(uint32_t(faceIndexOffset + 1));
+      triangulatedToOrigFaceVertexIndexMap.push_back(uint32_t(faceIndexOffset + 2));
       triangulatedFaceCounts.push_back(1);
-#if 1
     } else if (npolys == 4) {
-      // Use simple split
-      // TODO: Split at shortest edge for better triangulation.
+      // Split quad along the shorter diagonal for better triangle quality.
+      // Diagonal 0-2 vs diagonal 1-3: compare squared lengths.
+      uint32_t idx0 = faceVertexIndices[faceIndexOffset + 0];
+      uint32_t idx1 = faceVertexIndices[faceIndexOffset + 1];
+      uint32_t idx2 = faceVertexIndices[faceIndexOffset + 2];
+      uint32_t idx3 = faceVertexIndices[faceIndexOffset + 3];
+
+      const T &p0 = points[idx0];
+      const T &p1 = points[idx1];
+      const T &p2 = points[idx2];
+      const T &p3 = points[idx3];
+
+      BaseTy d02_sq = (p0[0]-p2[0])*(p0[0]-p2[0]) + (p0[1]-p2[1])*(p0[1]-p2[1]) + (p0[2]-p2[2])*(p0[2]-p2[2]);
+      BaseTy d13_sq = (p1[0]-p3[0])*(p1[0]-p3[0]) + (p1[1]-p3[1])*(p1[1]-p3[1]) + (p1[2]-p3[2])*(p1[2]-p3[2]);
+
       triangulatedFaceVertexCounts.push_back(3);
       triangulatedFaceVertexCounts.push_back(3);
 
-      triangulatedFaceVertexIndices.push_back(
-          faceVertexIndices[faceIndexOffset + 0]);
-      triangulatedFaceVertexIndices.push_back(
-          faceVertexIndices[faceIndexOffset + 1]);
-      triangulatedFaceVertexIndices.push_back(
-          faceVertexIndices[faceIndexOffset + 2]);
+      if (d13_sq < d02_sq) {
+        // Split along diagonal 1-3: triangles (0,1,3) and (1,2,3)
+        triangulatedFaceVertexIndices.push_back(idx0);
+        triangulatedFaceVertexIndices.push_back(idx1);
+        triangulatedFaceVertexIndices.push_back(idx3);
 
-      triangulatedFaceVertexIndices.push_back(
-          faceVertexIndices[faceIndexOffset + 0]);
-      triangulatedFaceVertexIndices.push_back(
-          faceVertexIndices[faceIndexOffset + 2]);
-      triangulatedFaceVertexIndices.push_back(
-          faceVertexIndices[faceIndexOffset + 3]);
+        triangulatedFaceVertexIndices.push_back(idx1);
+        triangulatedFaceVertexIndices.push_back(idx2);
+        triangulatedFaceVertexIndices.push_back(idx3);
 
-      triangulatedToOrigFaceVertexIndexMap.push_back(faceIndexOffset + 0);
-      triangulatedToOrigFaceVertexIndexMap.push_back(faceIndexOffset + 1);
-      triangulatedToOrigFaceVertexIndexMap.push_back(faceIndexOffset + 2);
-      triangulatedToOrigFaceVertexIndexMap.push_back(faceIndexOffset + 0);
-      triangulatedToOrigFaceVertexIndexMap.push_back(faceIndexOffset + 2);
-      triangulatedToOrigFaceVertexIndexMap.push_back(faceIndexOffset + 3);
+        triangulatedToOrigFaceVertexIndexMap.push_back(uint32_t(faceIndexOffset + 0));
+        triangulatedToOrigFaceVertexIndexMap.push_back(uint32_t(faceIndexOffset + 1));
+        triangulatedToOrigFaceVertexIndexMap.push_back(uint32_t(faceIndexOffset + 3));
+        triangulatedToOrigFaceVertexIndexMap.push_back(uint32_t(faceIndexOffset + 1));
+        triangulatedToOrigFaceVertexIndexMap.push_back(uint32_t(faceIndexOffset + 2));
+        triangulatedToOrigFaceVertexIndexMap.push_back(uint32_t(faceIndexOffset + 3));
+      } else {
+        // Split along diagonal 0-2: triangles (0,1,2) and (0,2,3)
+        triangulatedFaceVertexIndices.push_back(idx0);
+        triangulatedFaceVertexIndices.push_back(idx1);
+        triangulatedFaceVertexIndices.push_back(idx2);
+
+        triangulatedFaceVertexIndices.push_back(idx0);
+        triangulatedFaceVertexIndices.push_back(idx2);
+        triangulatedFaceVertexIndices.push_back(idx3);
+
+        triangulatedToOrigFaceVertexIndexMap.push_back(uint32_t(faceIndexOffset + 0));
+        triangulatedToOrigFaceVertexIndexMap.push_back(uint32_t(faceIndexOffset + 1));
+        triangulatedToOrigFaceVertexIndexMap.push_back(uint32_t(faceIndexOffset + 2));
+        triangulatedToOrigFaceVertexIndexMap.push_back(uint32_t(faceIndexOffset + 0));
+        triangulatedToOrigFaceVertexIndexMap.push_back(uint32_t(faceIndexOffset + 2));
+        triangulatedToOrigFaceVertexIndexMap.push_back(uint32_t(faceIndexOffset + 3));
+      }
       triangulatedFaceCounts.push_back(2);
-#endif
     } else {
       // Polygon with 5+ vertices
       if (triangulation_method == MeshConverterConfig::TriangulationMethod::TriangleFan) {
@@ -1994,9 +2024,9 @@ bool TriangulatePolygon(
           triangulatedFaceVertexIndices.push_back(
               faceVertexIndices[faceIndexOffset + k + 2]);
 
-          triangulatedToOrigFaceVertexIndexMap.push_back(faceIndexOffset + 0);
-          triangulatedToOrigFaceVertexIndexMap.push_back(faceIndexOffset + k + 1);
-          triangulatedToOrigFaceVertexIndexMap.push_back(faceIndexOffset + k + 2);
+          triangulatedToOrigFaceVertexIndexMap.push_back(uint32_t(faceIndexOffset + 0));
+          triangulatedToOrigFaceVertexIndexMap.push_back(uint32_t(faceIndexOffset + k + 1));
+          triangulatedToOrigFaceVertexIndexMap.push_back(uint32_t(faceIndexOffset + k + 2));
         }
 
         triangulatedFaceCounts.push_back(uint32_t(ntris));
@@ -2007,53 +2037,40 @@ bool TriangulatePolygon(
         // Find the normal axis of the polygon using Newell's method
         value::double3 n = {0, 0, 0};
 
-        size_t vi0;
-        size_t vi0_2;
-
-        //std::cout << "npoly " << npolys << "\n";
-
         for (size_t k = 0; k < npolys; ++k) {
-          vi0 = faceVertexIndices[faceIndexOffset + k];
+          size_t vi0 = faceVertexIndices[faceIndexOffset + k];
+          size_t vi0_2 = faceVertexIndices[faceIndexOffset + (k + 1) % npolys];
 
-          size_t j = (k + 1) % npolys;
-          vi0_2 = faceVertexIndices[faceIndexOffset + j];
-
-          if (vi0 >= points.size()) {
-            err = fmt::format("Invalid vertex index.\n");
+          if (vi0 >= points.size() || vi0_2 >= points.size()) {
+            err = fmt::format("Invalid vertex index at face {}.\n", i);
             return false;
           }
 
-          if (vi0_2 >= points.size()) {
-            err = fmt::format("Invalid vertex index.\n");
-            return false;
-          }
+          // Newell's method: compute entirely in double to avoid
+          // float cancellation in (p1 - p2) for nearly-coplanar vertices.
+          const T &p0 = points[vi0];
+          const T &p1 = points[vi0_2];
+          double d0x = double(p0[0]), d0y = double(p0[1]), d0z = double(p0[2]);
+          double d1x = double(p1[0]), d1y = double(p1[1]), d1z = double(p1[2]);
 
-          T v0 = points[vi0];
-          T v1 = points[vi0_2];
-
-          const T point1 = {v0[0], v0[1], v0[2]};
-          const T point2 = {v1[0], v1[1], v1[2]};
-
-          T a = {point1[0] - point2[0], point1[1] - point2[1],
-                 point1[2] - point2[2]};
-          T b = {point1[0] + point2[0], point1[1] + point2[1],
-                 point1[2] + point2[2]};
-
-          n[0] += double(a[1] * b[2]);
-          n[1] += double(a[2] * b[0]);
-          n[2] += double(a[0] * b[1]);
-          DCOUT("v0 " << v0);
-          DCOUT("v1 " << v1);
+          n[0] += (d0y - d1y) * (d0z + d1z);
+          n[1] += (d0z - d1z) * (d0x + d1x);
+          n[2] += (d0x - d1x) * (d0y + d1y);
+          DCOUT("p0 " << p0);
+          DCOUT("p1 " << p1);
           DCOUT("n " << n);
         }
         //BaseTy length_n = vlength(n);
         double length_n = vlength(n);
 
-        // Check if zero length normal
+        // Skip degenerate polygon (zero-area) instead of aborting the
+        // entire mesh.  Production meshes often have a few collapsed faces.
         if (std::fabs(length_n) < std::numeric_limits<double>::epsilon()) {
           DCOUT("length_n " << length_n);
-          err = "Degenerated polygon found.\n";
-          return false;
+          warn += fmt::format("Skipping degenerate polygon at face {}.\n", i);
+          triangulatedFaceCounts.push_back(0);
+          faceIndexOffset += npolys;
+          continue;
         }
 
         // Negative is to flip the normal to the correct direction
@@ -2072,49 +2089,34 @@ bool TriangulatePolygon(
         axis_v = vnormalize(vcross(axis_w, a));
         axis_u = vcross(axis_w, axis_v);
 
-        using Point3D = std::array<BaseTy, 3>;
-        using Point2D = std::array<BaseTy, 2>;
-        std::vector<Point2D> polyline;
-
-        // TMW change: Find best normal and project v0x and v0y to those
-        // coordinates, instead of picking a plane aligned with an axis (which
-        // can flip polygons).
-
-        // Fill polygon data.
+        // Project polygon vertices to 2D via the computed normal frame.
+        // Reuse polyline/polygon_2d across faces to avoid per-face allocation.
+        polyline.clear();
         for (size_t k = 0; k < npolys; k++) {
           size_t vidx = faceVertexIndices[faceIndexOffset + k];
-
-          value::float3 v = points[vidx];
-          // Point3 polypoint = {v0[0],v0[1],v0[2]};
+          const T &v = points[vidx];
 
           // world to local
           Point3D loc = {vdot(v, axis_u), vdot(v, axis_v), vdot(v, axis_w)};
-
           polyline.push_back({loc[0], loc[1]});
         }
 
-        std::vector<std::vector<Point2D>> polygon_2d;
-        polygon_2d.push_back(polyline);
-        // Single polygon only(no holes)
+        polygon_2d[0] = polyline;  // single ring, no holes
 
         std::vector<uint32_t> indices = mapbox::earcut<uint32_t>(polygon_2d);
         //  => result = 3 * faces, clockwise
 
-        if (indices.empty()) {
-          warn += "Failed to triangualte a polygon. input is not CCW, have holes or invalid topology.\n";
-
-          //DumpTriangle(points, indices);
-        }
-
-        if ((indices.size() % 3) != 0) {
-          // This should not be happen, though.
-          err = "Failed to triangulate.\n";
-          return false;
+        if (indices.empty() || (indices.size() % 3) != 0) {
+          // Earcut failed — skip this face gracefully.
+          warn += fmt::format(
+              "Failed to triangulate polygon at face {} "
+              "(not CCW, has holes, or invalid topology).\n", i);
+          triangulatedFaceCounts.push_back(0);
+          faceIndexOffset += npolys;
+          continue;
         }
 
         size_t ntris = indices.size() / 3;
-        //std::cout << "ntris " << ntris << "\n";
-
 
         // Up to 2GB tris.
         if (ntris > size_t((std::numeric_limits<int32_t>::max)())) {
@@ -2122,27 +2124,25 @@ bool TriangulatePolygon(
           return false;
         }
 
-        if (ntris > 0) {
-          for (size_t k = 0; k < ntris; k++) {
-            triangulatedFaceVertexCounts.push_back(3);
-            // earcut returns clockwise triangles, but USD expects CCW
-            // so we reverse the winding order by swapping indices 1 and 2
-            triangulatedFaceVertexIndices.push_back(
-                faceVertexIndices[faceIndexOffset + indices[3 * k + 0]]);
-            triangulatedFaceVertexIndices.push_back(
-                faceVertexIndices[faceIndexOffset + indices[3 * k + 2]]);
-            triangulatedFaceVertexIndices.push_back(
-                faceVertexIndices[faceIndexOffset + indices[3 * k + 1]]);
+        for (size_t k = 0; k < ntris; k++) {
+          triangulatedFaceVertexCounts.push_back(3);
+          // earcut returns clockwise triangles, but USD expects CCW
+          // so we reverse the winding order by swapping indices 1 and 2
+          triangulatedFaceVertexIndices.push_back(
+              faceVertexIndices[faceIndexOffset + indices[3 * k + 0]]);
+          triangulatedFaceVertexIndices.push_back(
+              faceVertexIndices[faceIndexOffset + indices[3 * k + 2]]);
+          triangulatedFaceVertexIndices.push_back(
+              faceVertexIndices[faceIndexOffset + indices[3 * k + 1]]);
 
-            triangulatedToOrigFaceVertexIndexMap.push_back(faceIndexOffset +
-                                                           indices[3 * k + 0]);
-            triangulatedToOrigFaceVertexIndexMap.push_back(faceIndexOffset +
-                                                           indices[3 * k + 2]);
-            triangulatedToOrigFaceVertexIndexMap.push_back(faceIndexOffset +
-                                                           indices[3 * k + 1]);
-          }
-          triangulatedFaceCounts.push_back(uint32_t(ntris));
+          triangulatedToOrigFaceVertexIndexMap.push_back(
+              uint32_t(faceIndexOffset + indices[3 * k + 0]));
+          triangulatedToOrigFaceVertexIndexMap.push_back(
+              uint32_t(faceIndexOffset + indices[3 * k + 2]));
+          triangulatedToOrigFaceVertexIndexMap.push_back(
+              uint32_t(faceIndexOffset + indices[3 * k + 1]));
         }
+        triangulatedFaceCounts.push_back(uint32_t(ntris));
       }
     }
 
@@ -2313,11 +2313,9 @@ static bool ComputeTangentsAndBinormals(
     return {t[0] * inv, t[1] * inv, t[2] * inv};
   };
 
-  // tn, bn = facevarying
-  std::vector<value::normal3f> tn(faceVertexIndices.size());
-  memset(&tn.at(0), 0, sizeof(value::normal3f) * tn.size());
-  std::vector<value::normal3f> bn(faceVertexIndices.size());
-  memset(&bn.at(0), 0, sizeof(value::normal3f) * bn.size());
+  // tn, bn = facevarying (value-initialized to zero by constructor)
+  std::vector<value::normal3f> tn(faceVertexIndices.size(), {0.0f, 0.0f, 0.0f});
+  std::vector<value::normal3f> bn(faceVertexIndices.size(), {0.0f, 0.0f, 0.0f});
 
   //
   // 1. Compute facevarying tangent/binormal for each faceVertex.
@@ -2469,25 +2467,36 @@ static bool ComputeTangentsAndBinormals(
   //    Position-bucketed dedup: bucket by position index, linear scan within
   //    each bucket comparing only normal + uv (typical valence 4-8).
   //
+  // Build facevarying normal lookup (used by both dedup and Gram-Schmidt).
+  // normals[i] is facevarying when is_facevarying_input, otherwise indexed by
+  // original vertex id → expand to facevarying.
+  std::vector<value::normal3f> fv_normals(faceVertexIndices.size());
+  if (is_facevarying_input) {
+    for (size_t i = 0; i < faceVertexIndices.size(); i++) {
+      fv_normals[i] = {normals[i][0], normals[i][1], normals[i][2]};
+    }
+  } else {
+    for (size_t i = 0; i < faceVertexIndices.size(); i++) {
+      const auto &n = normals[faceVertexIndices[i]];
+      fv_normals[i] = {n[0], n[1], n[2]};
+    }
+  }
+
   std::vector<uint32_t> vertex_indices(faceVertexIndices.size());
   {
-    // Expand normals/texcoords to facevarying if needed.
-    const vec3 *nrm_ptr = nullptr;
+    // Expand texcoords to facevarying if needed (normals already expanded above).
+    // Use fv_normals as vec3* for the dedup comparison — same memory layout.
+    const vec3 *nrm_ptr = reinterpret_cast<const vec3 *>(fv_normals.data());
     const vec2 *uv_ptr = nullptr;
-    std::vector<vec3> fv_normals_expanded;
     std::vector<vec2> fv_uvs_expanded;
 
     if (is_facevarying_input) {
-      nrm_ptr = normals.data();
       uv_ptr = texcoords.data();
     } else {
-      fv_normals_expanded.resize(faceVertexIndices.size());
       fv_uvs_expanded.resize(faceVertexIndices.size());
       for (size_t i = 0; i < faceVertexIndices.size(); i++) {
-        fv_normals_expanded[i] = normals[faceVertexIndices[i]];
         fv_uvs_expanded[i] = texcoords[faceVertexIndices[i]];
       }
-      nrm_ptr = fv_normals_expanded.data();
       uv_ptr = fv_uvs_expanded.data();
     }
 
@@ -2566,22 +2575,7 @@ static bool ComputeTangentsAndBinormals(
   //
   // 3. normalize * orthogonalize;
   //
-
-  // Build facevarying normal lookup for the Gram-Schmidt step.
-  // normals[i] is facevarying when is_facevarying_input, otherwise indexed by
-  // original vertex id → expand to facevarying.
-  std::vector<value::normal3f> fv_normals(faceVertexIndices.size());
-  if (is_facevarying_input) {
-    for (size_t i = 0; i < faceVertexIndices.size(); i++) {
-      fv_normals[i] = {normals[i][0], normals[i][1], normals[i][2]};
-    }
-  } else {
-    for (size_t i = 0; i < faceVertexIndices.size(); i++) {
-      fv_normals[i] = {normals[faceVertexIndices[i]][0],
-                        normals[faceVertexIndices[i]][1],
-                        normals[faceVertexIndices[i]][2]};
-    }
-  }
+  // fv_normals was already built above (before dedup block).
 
   // per-vertex tangents/binormals
   std::vector<value::normal3f> v_tn;
@@ -2723,10 +2717,17 @@ inline static value::float3 GeometricNormal(const value::float3 v0,
   const value::float3 v20 = v2 - v0;
 
   value::float3 Nf = vcross(v10, v20);  // CCW
-  area = 0.5f * vlength(Nf);
-  Nf = vnormalize(Nf);
+  float len = vlength(Nf);
+  area = 0.5f * len;
 
-  return Nf;
+  // Guard against degenerate triangles (collinear/coincident vertices).
+  // Return zero normal; caller should check area before using.
+  if (len < 1.0e-30f) {
+    return {0.0f, 0.0f, 0.0f};
+  }
+
+  float inv = 1.0f / len;
+  return {Nf[0] * inv, Nf[1] * inv, Nf[2] * inv};
 }
 
 //
@@ -2776,6 +2777,12 @@ static bool ComputeNormals(const std::vector<vec3> &vertices,
     value::float3 Nf = GeometricNormal(vertices[vidx0], vertices[vidx1],
                                        vertices[vidx2], area);
 
+    // Skip degenerate faces (zero-area) to prevent NaN propagation.
+    if (area < 1.0e-20f) {
+      faceVertexIndexOffset += nv;
+      continue;
+    }
+
     for (size_t v = 0; v < nv; v++) {
       uint32_t vidx = faceVertexIndices[faceVertexIndexOffset + v];
       if (vidx >= vertices.size()) {
@@ -2788,8 +2795,14 @@ static bool ComputeNormals(const std::vector<vec3> &vertices,
     faceVertexIndexOffset += nv;
   }
 
+  // Normalize accumulated normals.  Vertices with no valid face
+  // contribution keep a zero vector (no arbitrary fallback).
   for (size_t v = 0; v < normals.size(); v++) {
-    normals[v] = vnormalize(normals[v]);
+    float len = vlength(normals[v]);
+    if (len > 1.0e-20f) {
+      float inv = 1.0f / len;
+      normals[v] = {normals[v][0] * inv, normals[v][1] * inv, normals[v][2] * inv};
+    }
   }
 
   return true;
@@ -3328,7 +3341,7 @@ bool RenderSceneConverter::BuildVertexIndicesImpl(RenderMesh &mesh, uint32_t max
 
   // Pre-count per-position degree to detect high-valence vertices.
   bool flatten = false;
-  if (max_vertex_valence > 0) {
+  if (max_vertex_valence > 0 && num_verts > 0) {
     std::vector<uint32_t> degree(num_verts, 0);
     for (size_t i = 0; i < num_fvs; i++) {
       uint32_t pid = fvIndices[i];
@@ -3455,6 +3468,9 @@ bool RenderSceneConverter::BuildVertexIndicesImpl(RenderMesh &mesh, uint32_t max
   // BlendShape points, ...)
   // TODO: Preserve input order as much as possible.
   //
+  if (out_indices.empty()) {
+    PUSH_ERROR_AND_RETURN("Internal error. out_indices is empty after vertex dedup.");
+  }
   {
     uint32_t numPoints =
         *std::max_element(out_indices.begin(), out_indices.end()) + 1;
@@ -4710,7 +4726,7 @@ bool RenderSceneConverter::ConvertMesh(
     DCOUT("Triangulate mesh");
     std::vector<uint32_t> triangulatedFaceVertexCounts;  // should be all 3's
     std::vector<uint32_t> triangulatedFaceVertexIndices;
-    std::vector<size_t>
+    std::vector<uint32_t>
         triangulatedToOrigFaceVertexIndexMap;  // used for rearrange facevertex
                                                // attrib
     std::vector<uint32_t>
@@ -5251,26 +5267,23 @@ bool RenderSceneConverter::ConvertMesh(
                       bs->name));
     }
 
-    // Check if index is valid.
-    std::vector<uint32_t> indices;
-    indices.resize(vertex_indices.size());
-
+    // Validate and convert indices in-place.
+    shapeTarget.pointIndices.reserve(vertex_indices.size());
     for (size_t i = 0; i < vertex_indices.size(); i++) {
       if (vertex_indices[i] < 0) {
         PUSH_ERROR_AND_RETURN(fmt::format(
             "negative index in `pointIndices`. Prim path: `{}`", bs_path));
       }
 
-      if (uint32_t(vertex_indices[i]) > dst.points.size()) {
+      if (uint32_t(vertex_indices[i]) >= dst.points.size()) {
         PUSH_ERROR_AND_RETURN(
             fmt::format("pointIndices[{}] {} exceeds the number of points in "
                         "GeomMesh {}. Prim path: `{}`",
                         i, vertex_indices[i], dst.points.size(), bs_path));
       }
 
-      indices[i] = uint32_t(vertex_indices[i]);
+      shapeTarget.pointIndices.push_back(uint32_t(vertex_indices[i]));
     }
-    shapeTarget.pointIndices = indices;
 
     if (vertex_offsets.size() &&
         (vertex_offsets.size() == vertex_indices.size())) {
@@ -11628,7 +11641,7 @@ size_t RenderMesh::estimate_memory_usage() const {
   total += usdFaceVertexCounts.capacity() * sizeof(uint32_t);
   total += triangulatedFaceVertexIndices.capacity() * sizeof(uint32_t);
   total += triangulatedFaceVertexCounts.capacity() * sizeof(uint32_t);
-  total += triangulatedToOrigFaceVertexIndexMap.capacity() * sizeof(size_t);
+  total += triangulatedToOrigFaceVertexIndexMap.capacity() * sizeof(uint32_t);
   total += triangulatedFaceCounts.capacity() * sizeof(uint32_t);
 
   // Vertex attributes helper

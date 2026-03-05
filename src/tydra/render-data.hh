@@ -1160,7 +1160,7 @@ struct RenderMesh {
   std::vector<uint32_t> triangulatedFaceVertexIndices;
   std::vector<uint32_t> triangulatedFaceVertexCounts;
 
-  std::vector<size_t>
+  std::vector<uint32_t>
       triangulatedToOrigFaceVertexIndexMap;  // used for rearrange facevertex
                                              // attrib
   std::vector<uint32_t>
