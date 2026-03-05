@@ -65,27 +65,29 @@ CopyBlockElements(T* dest, const T* src, size_t count) {
 }
 
 ///
-/// Computes
+/// Core expand-by-indices implementation working on raw pointers.
+/// Avoids copies from the source data.
 ///
 ///  for i in len(indices):
 ///    for k in elementSize:
-///      dest[i*elementSize + k] = values[indices[i]*elementSize + k]
+///      dest[i*elementSize + k] = srcData[indices[i]*elementSize + k]
 ///
-/// `dest` is set to `values` when `indices` is empty
+/// When `indices` is empty, copies srcData to dest directly.
 ///
 /// Optimized version for types that support data() (not std::vector<bool>)
 ///
 template <typename T>
 typename std::enable_if<can_use_data_ptr<T>::value, nonstd::expected<bool, std::string>>::type
-ExpandWithIndices(
-    const std::vector<T> &values, uint32_t elementSize, const std::vector<int32_t> &indices,
+ExpandWithIndicesFromPtr(
+    const T *srcData, size_t srcSize, uint32_t elementSize,
+    const std::vector<int32_t> &indices,
     std::vector<T> *dest) {
   if (!dest) {
     return nonstd::make_unexpected("`dest` is nullptr.");
   }
 
   if (indices.empty()) {
-    (*dest) = values;
+    dest->assign(srcData, srcData + srcSize);
     return true;
   }
 
@@ -93,23 +95,21 @@ ExpandWithIndices(
     return false;
   }
 
-  if ((values.size() % elementSize) != 0) {
+  if ((srcSize % elementSize) != 0) {
     return false;
   }
 
   dest->resize(indices.size() * elementSize);
 
   std::vector<size_t> invalidIndices;
-  const size_t numValues = values.size();
   const size_t numIndices = indices.size();
   T* destData = dest->data();
-  const T* srcData = values.data();
 
   // Fast path for elementSize == 1 (most common case)
   if (elementSize == 1) {
     for (size_t i = 0; i < numIndices; i++) {
       int32_t idx = indices[i];
-      if ((idx >= 0) && (size_t(idx) < numValues)) {
+      if ((idx >= 0) && (size_t(idx) < srcSize)) {
         destData[i] = srcData[idx];
       } else {
         invalidIndices.push_back(i);
@@ -120,7 +120,7 @@ ExpandWithIndices(
   else {
     for (size_t i = 0; i < numIndices; i++) {
       int32_t idx = indices[i];
-      if ((idx >= 0) && ((size_t(idx+1) * size_t(elementSize)) <= numValues)) {
+      if ((idx >= 0) && ((size_t(idx+1) * size_t(elementSize)) <= srcSize)) {
         CopyBlockElements(destData + i * elementSize, srcData + size_t(idx) * elementSize, elementSize);
       } else {
         invalidIndices.push_back(i);
@@ -138,56 +138,60 @@ ExpandWithIndices(
   return true;
 }
 
-///
-/// Fallback for std::vector<bool> (no data() method available)
-///
+/// Vector convenience wrapper — delegates to pointer-based version for
+/// types with data(), falls back to element-by-element for std::vector<bool>.
 template <typename T>
-typename std::enable_if<!can_use_data_ptr<T>::value, nonstd::expected<bool, std::string>>::type
+nonstd::expected<bool, std::string>
 ExpandWithIndices(
     const std::vector<T> &values, uint32_t elementSize, const std::vector<int32_t> &indices,
     std::vector<T> *dest) {
-  if (!dest) {
-    return nonstd::make_unexpected("`dest` is nullptr.");
-  }
+  if constexpr (can_use_data_ptr<T>::value) {
+    return ExpandWithIndicesFromPtr(values.data(), values.size(), elementSize, indices, dest);
+  } else {
+    // std::vector<bool> fallback: element-by-element (no data() pointer)
+    if (!dest) {
+      return nonstd::make_unexpected("`dest` is nullptr.");
+    }
 
-  if (indices.empty()) {
-    (*dest) = values;
+    if (indices.empty()) {
+      (*dest) = values;
+      return true;
+    }
+
+    if (elementSize == 0) {
+      return false;
+    }
+
+    if ((values.size() % elementSize) != 0) {
+      return false;
+    }
+
+    dest->resize(indices.size() * elementSize);
+
+    std::vector<size_t> invalidIndices;
+    const size_t numValues = values.size();
+    const size_t numIndices = indices.size();
+
+    for (size_t i = 0; i < numIndices; i++) {
+      int32_t idx = indices[i];
+      if ((idx >= 0) && ((size_t(idx+1) * size_t(elementSize)) <= numValues)) {
+        for (size_t k = 0; k < elementSize; k++) {
+          (*dest)[i*elementSize + k] = values[size_t(idx)*elementSize + k];
+        }
+      } else {
+        invalidIndices.push_back(i);
+      }
+    }
+
+    if (invalidIndices.size()) {
+      return nonstd::make_unexpected(
+          "Invalid indices found: " +
+          value::print_array_snipped(invalidIndices,
+                                     /* N to display */ 5));
+    }
+
     return true;
   }
-
-  if (elementSize == 0) {
-    return false;
-  }
-
-  if ((values.size() % elementSize) != 0) {
-    return false;
-  }
-
-  dest->resize(indices.size() * elementSize);
-
-  std::vector<size_t> invalidIndices;
-  const size_t numValues = values.size();
-  const size_t numIndices = indices.size();
-
-  for (size_t i = 0; i < numIndices; i++) {
-    int32_t idx = indices[i];
-    if ((idx >= 0) && ((size_t(idx+1) * size_t(elementSize)) <= numValues)) {
-      for (size_t k = 0; k < elementSize; k++) {
-        (*dest)[i*elementSize + k] = values[size_t(idx)*elementSize + k];
-      }
-    } else {
-      invalidIndices.push_back(i);
-    }
-  }
-
-  if (invalidIndices.size()) {
-    return nonstd::make_unexpected(
-        "Invalid indices found: " +
-        value::print_array_snipped(invalidIndices,
-                                   /* N to display */ 5));
-  }
-
-  return true;
 }
 
 }  // namespace
@@ -335,68 +339,6 @@ bool GPrim::get_primvar(const std::string &varname, GeomPrimvar *out_primvar,
   return true;
 }
 
-// Helper function to try zero-copy path using TypedArrayView (enabled only for trivially copyable types)
-template <typename T>
-typename std::enable_if<std::is_trivially_copyable<T>::value && !std::is_same<T, bool>::value, bool>::type
-try_zero_copy_flatten(const Attribute &attr, const double t, const std::vector<int32_t> &default_indices,
-                      std::vector<T> *dest, std::string *err) {
-  if (!value::TimeCode(t).is_default() || attr.has_timesamples()) {
-    return false;  // Can't use zero-copy for timesampled values
-  }
-
-  //TUSDZ_LOG_I("Using TypedArrayView (zero-copy)");
-  TypedArrayView<const T> value_view = attr.get_value_view<T>();
-
-  if (value_view.empty()) {
-    //TUSDZ_LOG_I("TypedArrayView is empty, falling back to get_value");
-    return false;
-  }
-
-  uint32_t elementSize = attr.metas().has_elementSize() ? attr.metas().get_elementSize() : 1;
-  //TUSDZ_LOG_I("elementSize " << elementSize << ", view size " << value_view.size());
-
-  // Sanity check: if view size is unreasonably large, data is corrupted
-  constexpr size_t MAX_REASONABLE_SIZE = 100000000;
-  if (value_view.size() > MAX_REASONABLE_SIZE) {
-    TUSDZ_LOG_E("ERROR: TypedArrayView size " << value_view.size() << " exceeds reasonable limit (" << MAX_REASONABLE_SIZE << "). Data is likely corrupted!");
-    if (err) {
-      (*err) += fmt::format("TypedArrayView size {} exceeds reasonable limit. Data is corrupted.", value_view.size());
-    }
-    return false;
-  }
-
-  //TUSDZ_LOG_I("indices.size " << default_indices.size());
-
-  // Convert view to vector for ExpandWithIndices
-  std::vector<T> value(value_view.begin(), value_view.end());
-  std::vector<T> expanded_val;
-  auto ret = ExpandWithIndices(value, elementSize, default_indices, &expanded_val);
-  //TUSDZ_LOG_I("ExpandWithIndices done");
-  if (ret) {
-    (*dest) = expanded_val;
-    return true;
-  } else {
-    const std::string &err_msg = ret.error();
-    if (err) {
-      (*err) += fmt::format(
-          "[Internal Error] Failed to expand for GeomPrimvar type = `{}`",
-          attr.type_name());
-      if (err_msg.size()) {
-        (*err) += "\n" + err_msg;
-      }
-    }
-    return false;
-  }
-}
-
-// Fallback for non-trivially-copyable types (always returns false to skip zero-copy path)
-template <typename T>
-typename std::enable_if<!(std::is_trivially_copyable<T>::value && !std::is_same<T, bool>::value), bool>::type
-try_zero_copy_flatten(const Attribute &, const double, const std::vector<int32_t> &,
-                      std::vector<T> *, std::string *) {
-  return false;  // Zero-copy not supported for this type
-}
-
 template <typename T>
 bool GeomPrimvar::flatten_with_indices(const double t, std::vector<T> *dest, const value::TimeSampleInterpolationType tinterp, std::string *err) const {
   if (!dest) {
@@ -405,84 +347,118 @@ bool GeomPrimvar::flatten_with_indices(const double t, std::vector<T> *dest, con
     }
     return false;
   }
-  //TUSDZ_LOG_I("flatten_with_indices. has_timesamples " << _attr.has_timesamples() << ", has_value " << _attr.has_value());
 
-  if (_attr.has_timesamples() || _attr.has_value()) {
-
-    if (!IsSupportedGeomPrimvarType(_attr.type_id())) {
-      if (err) {
-        (*err) += fmt::format("Unsupported type for GeomPrimvar. type = `{}`",
-                              _attr.type_name());
-      }
-      return false;
-    }
-
-    //TUSDZ_LOG_I("get_value");
-
-    // Use std::vector instead of TypedArray to avoid potential corruption issues
-    std::vector<T> value;
-    if (_attr.get_value<std::vector<T>>(t, &value, tinterp)) {
-
-      //TUSDZ_LOG_I("vsize " << value.size());
-
-      // Sanity check for corrupted size
-      if (value.size() > 1000000000) {  // 1 billion elements is unreasonable
-        if (err) {
-          (*err) += fmt::format(
-              "[Internal Error] Array has invalid size: {} for attribute type `{}`",
-              value.size(), _attr.type_name());
-        }
-        return false;
-      }
-      
-      uint32_t elementSize = _attr.metas().has_elementSize() ? _attr.metas().get_elementSize() : 1;
-      //TUSDZ_LOG_I("elementSize" << elementSize);
-
-      // Get indices at specified time
-      std::vector<int32_t> indices;
-      if (value::TimeCode(t).is_default()) {
-        if (has_default_indices()) {
-          indices = _indices;
-        } else if (has_timesampled_indices()) {
-          _ts_indices.get(&indices, t, tinterp);
-        }
-      } else {
-        _ts_indices.get(&indices, t, tinterp);
-      }
-      //TUSDZ_LOG_I("indices.size " << indices.size());
-
-      std::vector<T> expanded_val;
-      auto ret = ExpandWithIndices(value, elementSize, indices, &expanded_val);
-      //TUSDZ_LOG_I("ExpandWithIndices done");
-      if (ret) {
-        (*dest) = expanded_val;
-        // Currently we ignore ret.value()
-        return true;
-      } else {
-        const std::string &err_msg = ret.error();
-        if (err) {
-          (*err) += fmt::format(
-              "[Internal Error] Failed to expand for GeomPrimvar type = `{}`",
-              _attr.type_name());
-          if (err_msg.size()) {
-            (*err) += "\n" + err_msg;
-          }
-        }
-      }
-    } else {
-      if (err) {
-        (*err) += fmt::format(
-            "`{}[]` type requested, but Attribute is type `{}`",
-            value::TypeTraits<T>::type_name(), _attr.type_name());
-      }
-    }
-  } else {
+  if (!(_attr.has_timesamples() || _attr.has_value())) {
     if (err) {
       (*err) += fmt::format("Attribute `{}` has no value or timesamples.",
                             _attr.type_name());
     }
+    return false;
   }
 
+  if (!IsSupportedGeomPrimvarType(_attr.type_id())) {
+    if (err) {
+      (*err) += fmt::format("Unsupported type for GeomPrimvar. type = `{}`",
+                            _attr.type_name());
+    }
+    return false;
+  }
+
+  uint32_t elementSize = _attr.metas().has_elementSize() ? _attr.metas().get_elementSize() : 1;
+
+  // Resolve indices (by const reference when possible to avoid copy)
+  const std::vector<int32_t> *indices_ptr = nullptr;
+  std::vector<int32_t> ts_indices_buf;  // Only used when fetching from timesamples
+  if (value::TimeCode(t).is_default()) {
+    if (has_default_indices()) {
+      indices_ptr = &_indices;
+    } else if (has_timesampled_indices()) {
+      _ts_indices.get(&ts_indices_buf, t, tinterp);
+      indices_ptr = &ts_indices_buf;
+    }
+  } else {
+    _ts_indices.get(&ts_indices_buf, t, tinterp);
+    indices_ptr = &ts_indices_buf;
+  }
+  // Empty ref for no-indices case
+  static const std::vector<int32_t> empty_indices;
+  const std::vector<int32_t> &indices = indices_ptr ? *indices_ptr : empty_indices;
+
+  // === Fast path: default time, no timesamples → use zero-copy TypedArrayView ===
+  if constexpr (std::is_trivially_copyable<T>::value && !std::is_same<T, bool>::value) {
+    if (value::TimeCode(t).is_default() && !_attr.has_timesamples()) {
+      TypedArrayView<const T> view = _attr.get_value_view<T>();
+      if (!view.empty()) {
+        if (view.size() > 1000000000) {
+          if (err) {
+            (*err) += fmt::format(
+                "[Internal Error] Array has invalid size: {} for attribute type `{}`",
+                view.size(), _attr.type_name());
+          }
+          return false;
+        }
+        if (view.size() == 0) {
+          return false;  // Empty authored array (OpenUSD compat)
+        }
+        // Expand directly from view pointer into *dest — no source copy
+        auto ret = ExpandWithIndicesFromPtr(view.data(), view.size(), elementSize, indices, dest);
+        if (ret) {
+          return true;
+        } else {
+          if (err) {
+            (*err) += fmt::format(
+                "[Internal Error] Failed to expand for GeomPrimvar type = `{}`",
+                _attr.type_name());
+            (*err) += "\n" + ret.error();
+          }
+          return false;
+        }
+      }
+      // View was empty — fall through to get_value path
+    }
+  }
+
+  // === Standard path: get_value (copies data out of attribute storage) ===
+  std::vector<T> value;
+  if (!_attr.get_value<std::vector<T>>(t, &value, tinterp)) {
+    if (err) {
+      (*err) += fmt::format(
+          "`{}[]` type requested, but Attribute is type `{}`",
+          value::TypeTraits<T>::type_name(), _attr.type_name());
+    }
+    return false;
+  }
+
+  if (value.size() > 1000000000) {
+    if (err) {
+      (*err) += fmt::format(
+          "[Internal Error] Array has invalid size: {} for attribute type `{}`",
+          value.size(), _attr.type_name());
+    }
+    return false;
+  }
+
+  if (value.empty()) {
+    return false;  // Empty authored array (OpenUSD compat)
+  }
+
+  if (indices.empty()) {
+    // No indices: move value directly to dest (avoid copy)
+    (*dest) = std::move(value);
+    return true;
+  }
+
+  // Expand directly into *dest from the local value vector
+  auto ret = ExpandWithIndices(value, elementSize, indices, dest);
+  if (ret) {
+    return true;
+  }
+  if (err) {
+    (*err) += fmt::format(
+        "[Internal Error] Failed to expand for GeomPrimvar type = `{}`",
+        _attr.type_name());
+    (*err) += "\n" + ret.error();
+  }
   return false;
 }
 
@@ -555,82 +531,93 @@ bool GeomPrimvar::flatten_with_indices(const double t, value::Value *dest, const
     return false;
   }
 
-  bool processed = false;
+  if (!(_attr.has_value() || _attr.has_timesamples())) {
+    return false;
+  }
 
-  if (_attr.has_value() || _attr.has_timesamples()) {
-    if (!IsSupportedGeomPrimvarType(_attr.type_id())) {
+  if (!IsSupportedGeomPrimvarType(_attr.type_id())) {
+    if (err) {
+      (*err) += fmt::format("Unsupported type for GeomPrimvar. type = `{}`",
+                            _attr.type_name());
+    }
+    return false;
+  }
+
+  if (!(_attr.type_id() & value::TYPE_ID_1D_ARRAY_BIT)) {
+    // Scalar type: evaluate value at specified time and return it as-is.
+    // Matches OpenUSD ComputeFlattened which passes non-array values through.
+    value::Value v;
+    if (!_attr.get_var().get_interpolated_value(t, tinterp, &v)) {
       if (err) {
-        (*err) += fmt::format("Unsupported type for GeomPrimvar. type = `{}`",
-                              _attr.type_name());
+        (*err) += fmt::format("Failed to evaluate Attribute value.");
       }
       return false;
     }
-
-    value::Value val;
-
-    if (!(_attr.type_id() & value::TYPE_ID_1D_ARRAY_BIT)) {
-
-      // evaluate value at specified time and return it for scalar type.
-      value::Value v;
-      if (!_attr.get_var().get_interpolated_value(t, tinterp, &v)) {
-        if (err) {
-          (*err) += fmt::format("Failed to evaluate Attribute value.");
-        }
-        return false;
-      }
-      (*dest) = v;
-    } else {
-      std::string err_msg;
-
-      uint32_t elementSize = _attr.metas().has_elementSize() ? _attr.metas().get_elementSize() : 1;
-
-      std::vector<int32_t> indices;
-      // Get indices at specified time
-      if (value::TimeCode(t).is_default()) {
-        indices = _indices;
-      } else {
-        _ts_indices.get(&indices, t, tinterp);
-      }
-
-#define APPLY_FUN(__ty)                                                  \
-  case value::TypeTraits<__ty>::type_id() | value::TYPE_ID_1D_ARRAY_BIT: { \
-    std::vector<__ty> value; \
-    std::vector<__ty> expanded_val;                                      \
-    if (_attr.get_value(t, &value, tinterp)) {                \
-      auto ret = ExpandWithIndices(value, elementSize, indices, &expanded_val); \
-      if (ret) {                                                         \
-        processed = ret.value();                                         \
-        if (processed) {                                                 \
-          val = expanded_val;                                            \
-        }                                                                \
-      } else {                                                           \
-        err_msg = ret.error();                                           \
-      }                                                                  \
-    }                                                                    \
-    break;                                                               \
+    (*dest) = std::move(v);
+    return true;
   }
 
-      switch (_attr.type_id()) {
-        APPLY_GEOMPRIVAR_TYPE(APPLY_FUN)
-        default: {
-          processed = false;
-        }
-      }
+  // Array type: resolve indices and expand
+  uint32_t elementSize = _attr.metas().has_elementSize() ? _attr.metas().get_elementSize() : 1;
+
+  // Resolve indices by const reference when possible
+  const std::vector<int32_t> *indices_ptr = nullptr;
+  std::vector<int32_t> ts_indices_buf;
+  if (value::TimeCode(t).is_default()) {
+    if (has_default_indices()) {
+      indices_ptr = &_indices;
+    } else if (has_timesampled_indices()) {
+      _ts_indices.get(&ts_indices_buf, t, tinterp);
+      indices_ptr = &ts_indices_buf;
+    }
+  } else {
+    _ts_indices.get(&ts_indices_buf, t, tinterp);
+    indices_ptr = &ts_indices_buf;
+  }
+  static const std::vector<int32_t> empty_indices;
+  const std::vector<int32_t> &indices = indices_ptr ? *indices_ptr : empty_indices;
+
+  bool processed = false;
+  std::string err_msg;
+
+  // Expand each supported type — writes directly into dest via move
+#define APPLY_FUN(__ty)                                                    \
+  case value::TypeTraits<__ty>::type_id() | value::TYPE_ID_1D_ARRAY_BIT: { \
+    std::vector<__ty> value;                                               \
+    if (_attr.get_value(t, &value, tinterp)) {                             \
+      if (value.empty()) {                                                 \
+        break; /* Empty authored array (OpenUSD compat) */                 \
+      }                                                                    \
+      if (indices.empty()) {                                               \
+        (*dest) = std::move(value);                                        \
+        processed = true;                                                  \
+      } else {                                                             \
+        std::vector<__ty> expanded;                                        \
+        auto ret = ExpandWithIndices(value, elementSize, indices, &expanded); \
+        if (ret) {                                                         \
+          (*dest) = std::move(expanded);                                   \
+          processed = true;                                                \
+        } else {                                                           \
+          err_msg = ret.error();                                           \
+        }                                                                  \
+      }                                                                    \
+    }                                                                      \
+    break;                                                                 \
+  }
+
+  switch (_attr.type_id()) {
+    APPLY_GEOMPRIVAR_TYPE(APPLY_FUN)
+    default: break;
+  }
 
 #undef APPLY_FUN
 
-      if (processed) {
-        (*dest) = std::move(val);
-      } else {
-        if (err) {
-          (*err) += fmt::format(
-              "[Internal Error] Failed to expand for GeomPrimvar type = `{}`",
-              _attr.type_name());
-          if (err_msg.size()) {
-            (*err) += "\n" + err_msg;
-          }
-        }
-      }
+  if (!processed && err) {
+    (*err) += fmt::format(
+        "[Internal Error] Failed to expand for GeomPrimvar type = `{}`",
+        _attr.type_name());
+    if (!err_msg.empty()) {
+      (*err) += "\n" + err_msg;
     }
   }
 
