@@ -1446,7 +1446,7 @@ bool USDCReader::Impl::ParseProperty(const SpecType spec_type,
         auto p = pv.value();
         DCOUT("bindMaterialAs = " << to_string(p));
 
-        if ((p.str() == kWeaderThanDescendants) || (p.str() == kStrongerThanDescendants)) {
+        if ((p.str() == kWeakerThanDescendants) || (p.str() == kStrongerThanDescendants)) {
           // ok
         } else {
           // still any token is valid(for future usecase)
