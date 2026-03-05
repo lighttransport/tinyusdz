@@ -155,18 +155,6 @@ struct NodeGraph : UsdShadePrim {
   // These are stored in the inherited props map from UsdShadePrim
   // Child nodes are stored as children in the USD hierarchy, not directly here
 
-  // Optional properties for shader network node management
-  // Child shaders and their connections are managed through the standard prim children mechanism
-  // Interface inputs/outputs can be defined through typed attributes
-  // Note: Uses inherited `props` from UsdShadePrim for additional properties
-  std::vector<value::token> _primChildren;  // Child prim names
-  std::vector<value::token> _properties;    // Property names
-
-  const std::vector<value::token> &primChildrenNames() const { return _primChildren; }
-  const std::vector<value::token> &propertyNames() const { return _properties; }
-  std::vector<value::token> &primChildrenNames() { return _primChildren; }
-  std::vector<value::token> &propertyNames() { return _properties; }
-
   // Optional MaterialX-specific attributes
   TypedAttribute<std::string> nodedef;  // Reference to a nodedef
   TypedAttribute<std::string> nodegraph_type;  // Type of the nodegraph
@@ -311,14 +299,14 @@ struct UsdPreviewSurface : ShaderNode {
   TypedAttributeWithFallback<Animatable<float>> roughness{0.5f};  // "inputs:roughness"
   TypedAttributeWithFallback<Animatable<float>> opacity{1.0f};  // "inputs:opacity"
 
-  TypedAttributeWithFallback<Animatable<OpacityMode>> opacityMode{OpacityMode::Transparent};  // "inputs:opacityMode"
+  TypedAttributeWithFallback<Animatable<OpacityMode>> opacityMode{OpacityMode::Opacity};  // "inputs:opacityMode"
 
   TypedAttributeWithFallback<Animatable<float>> opacityThreshold{0.0f};  // "inputs:opacityThreshold"
   TypedAttributeWithFallback<Animatable<float>> ior{1.5f};  // "inputs:ior"
 
   TypedAttributeWithFallback<Animatable<value::normal3f>> normal{value::normal3f{0.0f, 0.0f, 1.0f}}; // "inputs:normal"
   TypedAttributeWithFallback<Animatable<float>> displacement{0.0f}; // "inputs:displacement"
-  TypedAttributeWithFallback<Animatable<float>> occlusion{0.0f}; // "inputs:occlusion"
+  TypedAttributeWithFallback<Animatable<float>> occlusion{1.0f}; // "inputs:occlusion"
 
   ///
   /// Outputs
@@ -514,7 +502,7 @@ DEFINE_TYPE_TRAIT(MaterialXConfigAPI, kMaterialXConfigAPI,
 template <>
 struct TypeTraits<UsdUVTexture::SourceColorSpace> {
   static constexpr uint32_t type_id() {
-    return TYPE_ID_SHADER + 100; // Use an arbitrary offset from shader type ID
+    return TYPE_ID_IMAGING_SOURCE_COLORSPACE;
   }
   static constexpr bool is_a_pod_type() { return true; }
   static constexpr bool is_a_container() { return false; }

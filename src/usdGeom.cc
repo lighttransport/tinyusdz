@@ -419,21 +419,6 @@ bool GeomPrimvar::flatten_with_indices(const double t, std::vector<T> *dest, con
 
     //TUSDZ_LOG_I("get_value");
 
-#if 0 // FIXME: seems not work in emscripten build
-    // Try to use TypedArrayView for zero-copy access when possible (default values only)
-    // Only for trivially copyable types (excluding bool due to std::vector<bool> specialization)
-    // Using SFINAE helper function for C++14 compatibility (avoids 'if constexpr' requirement)
-    {
-      std::vector<int32_t> indices;
-      if (has_default_indices()) {
-        indices = _indices;
-      }
-      if (try_zero_copy_flatten(_attr, t, indices, dest, err)) {
-        return true;  // Zero-copy path succeeded
-      }
-    }
-#endif
-
     // Use std::vector instead of TypedArray to avoid potential corruption issues
     std::vector<T> value;
     if (_attr.get_value<std::vector<T>>(t, &value, tinterp)) {
@@ -744,43 +729,6 @@ bool GeomPrimvar::get_value(double timecode, T *dest, value::TimeSampleInterpola
     return false;
   }
 
-#if 0
-  if (value::TimeCode(timecode).is_default()) {
-
-    if (_attr.has_value()) {
-      if (auto pv = _attr.get_value<T>()) {
-
-        // copy
-        (*dest) = pv.value();
-        return true;
-
-      } else {
-        if (err) {
-          (*err) += fmt::format("Attribute value type mismatch. Requested type `{}` but Attribute has type `{}`", value::TypeTraits<T>::type_id(), _attr.type_name());
-        }
-        return false;
-      }
-    }
-
-  }
-
-  if (_attr.has_timesamples()) {
-    T value;
-
-    if (!_attr.get_value(timecode, &value, interp)) {
-      if (err) {
-        (*err) += fmt::format("Get Attribute value at time {} failed. Maybe type mismatch?. Requested type `{}` but Attribute has type `{}`", timecode, value::TypeTraits<T>::type_id(), _attr.type_name());
-      }
-      return false;
-    }
-
-    // copy
-    (*dest) = value;
-    return true;
-  }
-
-  return false;
-#else
   T value{};
 
   if (!_attr.get_value(timecode, &value, interp)) {
@@ -793,7 +741,6 @@ bool GeomPrimvar::get_value(double timecode, T *dest, value::TimeSampleInterpola
   // copy
   (*dest) = value;
   return true;
-#endif
 
 }
 
@@ -899,34 +846,24 @@ bool GPrim::set_primvar(const GeomPrimvar &primvar,
 
 bool GPrim::get_displayColor(value::color3f *dst, double t, const value::TimeSampleInterpolationType tinterp) const
 {
-  // TODO: timeSamples
-  (void)t;
-  (void)tinterp;
-
   GeomPrimvar primvar;
   std::string err;
   if (!get_primvar("displayColor", &primvar, &err)) {
-    // TODO: report err
     return false;
   }
 
-  return primvar.get_value(dst);
+  return primvar.get_value(t, dst, tinterp);
 }
 
 bool GPrim::get_displayOpacity(float *dst, double t, const value::TimeSampleInterpolationType tinterp) const
 {
-  // TODO: timeSamples
-  (void)t;
-  (void)tinterp;
-
   GeomPrimvar primvar;
   std::string err;
   if (!get_primvar("displayOpacity", &primvar, &err)) {
-    // TODO: report err
     return false;
   }
 
-  return primvar.get_value(dst);
+  return primvar.get_value(t, dst, tinterp);
 }
 
 const std::vector<value::point3f> GeomMesh::get_points(
@@ -989,8 +926,10 @@ const std::vector<value::normal3f> GeomMesh::get_normals(
 
     }
 
+    auto pv = normals.get_value();
+    if (!pv) return dst;
     std::vector<value::normal3f> value;
-    if (!normals.get_value().value().get(time, &value, interp)) {
+    if (!pv.value().get(time, &value, interp)) {
       return dst;
     }
 
@@ -1033,10 +972,8 @@ const std::vector<value::color3f> GPrim::get_displayColors(
 Interpolation GeomMesh::get_normalsInterpolation() const {
   if (props.count("primvars:normals")) {
     const auto &prop = props.at("primvars:normals");
-    if (prop.get_attribute().type_name() == "normal3f[]") {
-      if (prop.get_attribute().metas().has_interpolation()) {
-        return prop.get_attribute().metas().get_interpolation_enum();
-      }
+    if (prop.get_attribute().metas().has_interpolation()) {
+      return prop.get_attribute().metas().get_interpolation_enum();
     }
   } else if (normals.metas().has_interpolation()) {
     return normals.metas().get_interpolation_enum();
@@ -1048,10 +985,8 @@ Interpolation GeomMesh::get_normalsInterpolation() const {
 Interpolation GPrim::get_displayColorsInterpolation() const {
   if (props.count("primvars:displayColor")) {
     const auto &prop = props.at("primvars:displayColor");
-    if (prop.get_attribute().type_name() == "color3f[]") {
-      if (prop.get_attribute().metas().has_interpolation()) {
-        return prop.get_attribute().metas().get_interpolation_enum();
-      }
+    if (prop.get_attribute().metas().has_interpolation()) {
+      return prop.get_attribute().metas().get_interpolation_enum();
     }
   }
 
@@ -1100,37 +1035,165 @@ const std::vector<int32_t> GeomMesh::get_faceVertexIndices(double time) const {
   return dst;
 }
 
+// --- GeomBasisCurves convenience getters ---
+
+const std::vector<value::point3f> GeomBasisCurves::get_points(
+    double time, value::TimeSampleInterpolationType interp) const {
+  std::vector<value::point3f> dst;
+  if (!points.authored() || points.is_blocked() || points.is_connection()) return dst;
+  if (auto pv = points.get_value()) {
+    std::vector<value::point3f> val;
+    if (pv.value().get(time, &val, interp)) dst = std::move(val);
+  }
+  return dst;
+}
+
+const std::vector<value::normal3f> GeomBasisCurves::get_normals(
+    double time, value::TimeSampleInterpolationType interp) const {
+  std::vector<value::normal3f> dst;
+  if (!normals.authored() || normals.is_blocked() || normals.is_connection()) return dst;
+  if (auto pv = normals.get_value()) {
+    std::vector<value::normal3f> val;
+    if (pv.value().get(time, &val, interp)) dst = std::move(val);
+  }
+  return dst;
+}
+
+const std::vector<int> GeomBasisCurves::get_curveVertexCounts(double time) const {
+  std::vector<int> dst;
+  if (!curveVertexCounts.authored() || curveVertexCounts.is_blocked() || curveVertexCounts.is_connection()) return dst;
+  if (auto pv = curveVertexCounts.get_value()) {
+    std::vector<int> val;
+    if (pv.value().get(time, &val, value::TimeSampleInterpolationType::Held)) dst = std::move(val);
+  }
+  return dst;
+}
+
+const std::vector<float> GeomBasisCurves::get_widths(
+    double time, value::TimeSampleInterpolationType interp) const {
+  std::vector<float> dst;
+  if (!widths.authored() || widths.is_blocked() || widths.is_connection()) return dst;
+  if (auto pv = widths.get_value()) {
+    std::vector<float> val;
+    if (pv.value().get(time, &val, interp)) dst = std::move(val);
+  }
+  return dst;
+}
+
+// --- GeomNurbsCurves convenience getters ---
+
+const std::vector<value::point3f> GeomNurbsCurves::get_points(
+    double time, value::TimeSampleInterpolationType interp) const {
+  std::vector<value::point3f> dst;
+  if (!points.authored() || points.is_blocked() || points.is_connection()) return dst;
+  if (auto pv = points.get_value()) {
+    std::vector<value::point3f> val;
+    if (pv.value().get(time, &val, interp)) dst = std::move(val);
+  }
+  return dst;
+}
+
+const std::vector<value::normal3f> GeomNurbsCurves::get_normals(
+    double time, value::TimeSampleInterpolationType interp) const {
+  std::vector<value::normal3f> dst;
+  if (!normals.authored() || normals.is_blocked() || normals.is_connection()) return dst;
+  if (auto pv = normals.get_value()) {
+    std::vector<value::normal3f> val;
+    if (pv.value().get(time, &val, interp)) dst = std::move(val);
+  }
+  return dst;
+}
+
+const std::vector<int> GeomNurbsCurves::get_curveVertexCounts(double time) const {
+  std::vector<int> dst;
+  if (!curveVertexCounts.authored() || curveVertexCounts.is_blocked() || curveVertexCounts.is_connection()) return dst;
+  if (auto pv = curveVertexCounts.get_value()) {
+    std::vector<int> val;
+    if (pv.value().get(time, &val, value::TimeSampleInterpolationType::Held)) dst = std::move(val);
+  }
+  return dst;
+}
+
+const std::vector<float> GeomNurbsCurves::get_widths(
+    double time, value::TimeSampleInterpolationType interp) const {
+  std::vector<float> dst;
+  if (!widths.authored() || widths.is_blocked() || widths.is_connection()) return dst;
+  if (auto pv = widths.get_value()) {
+    std::vector<float> val;
+    if (pv.value().get(time, &val, interp)) dst = std::move(val);
+  }
+  return dst;
+}
+
+const std::vector<int> GeomNurbsCurves::get_order(double time) const {
+  std::vector<int> dst;
+  if (!order.authored() || order.is_blocked() || order.is_connection()) return dst;
+  if (auto pv = order.get_value()) {
+    std::vector<int> val;
+    if (pv.value().get(time, &val, value::TimeSampleInterpolationType::Held)) dst = std::move(val);
+  }
+  return dst;
+}
+
+const std::vector<double> GeomNurbsCurves::get_knots(double time) const {
+  std::vector<double> dst;
+  if (!knots.authored() || knots.is_blocked() || knots.is_connection()) return dst;
+  if (auto pv = knots.get_value()) {
+    std::vector<double> val;
+    if (pv.value().get(time, &val, value::TimeSampleInterpolationType::Held)) dst = std::move(val);
+  }
+  return dst;
+}
+
+// --- GeomPoints convenience getters ---
+
+const std::vector<value::point3f> GeomPoints::get_points(
+    double time, value::TimeSampleInterpolationType interp) const {
+  std::vector<value::point3f> dst;
+  if (!points.authored() || points.is_blocked() || points.is_connection()) return dst;
+  if (auto pv = points.get_value()) {
+    std::vector<value::point3f> val;
+    if (pv.value().get(time, &val, interp)) dst = std::move(val);
+  }
+  return dst;
+}
+
+const std::vector<value::normal3f> GeomPoints::get_normals(
+    double time, value::TimeSampleInterpolationType interp) const {
+  std::vector<value::normal3f> dst;
+  if (!normals.authored() || normals.is_blocked() || normals.is_connection()) return dst;
+  if (auto pv = normals.get_value()) {
+    std::vector<value::normal3f> val;
+    if (pv.value().get(time, &val, interp)) dst = std::move(val);
+  }
+  return dst;
+}
+
+const std::vector<float> GeomPoints::get_widths(
+    double time, value::TimeSampleInterpolationType interp) const {
+  std::vector<float> dst;
+  if (!widths.authored() || widths.is_blocked() || widths.is_connection()) return dst;
+  if (auto pv = widths.get_value()) {
+    std::vector<float> val;
+    if (pv.value().get(time, &val, interp)) dst = std::move(val);
+  }
+  return dst;
+}
+
+const std::vector<int64_t> GeomPoints::get_ids(double time) const {
+  std::vector<int64_t> dst;
+  if (!ids.authored() || ids.is_blocked() || ids.is_connection()) return dst;
+  if (auto pv = ids.get_value()) {
+    std::vector<int64_t> val;
+    if (pv.value().get(time, &val, value::TimeSampleInterpolationType::Held)) dst = std::move(val);
+  }
+  return dst;
+}
+
 std::vector<value::token> GeomMesh::get_joints() const {
   constexpr auto kSkelJoints = "skel:joints";
   std::vector<value::token> dst;
   
-#if 0
-  if (has_primvar(kSkelJoints)) {
-    // 'primvars:skel:joints'
-    std::string err;
-    GeomPrimvar primvar;
-    if (!get_primvar(kSkelJoints, &primvar, &err)) {
-      DCOUT("Invalid `skel:joints` primvar. err = " << err);
-      return dst;
-    }
-
-    if (primvar.has_indices()) {
-      // indexed primvar for skel:joint is not supported
-      DCOUT("Indexed primvar is not supported for `skel:joints`");
-      return dst;
-    }
-
-    const Attribute &attr = primvar.get_attribute();
-    if (!attr.is_uniform()) {
-      DCOUT("`skel:joints` must be uniform attribute");
-      return dst;
-    }
-
-    if (!primvar.get_value(&dst)) {
-      DCOUT("`skel:joints` must be token[] type, but got " << primvar.type_name());
-    }
-  } else {
-#endif
   {
     // lookup `skel:joints` prop
     if (!props.count(kSkelJoints)) {
@@ -1150,6 +1213,280 @@ std::vector<value::token> GeomMesh::get_joints() const {
     DCOUT("`skel:joints` must be uniform token[] attribute, but got " << prop.value_type_name() << " (or Relationship))");
   }
   return dst;
+}
+
+// --- H2: ValidateTopology ---
+
+bool GeomMesh::ValidateTopology(std::string *err, double time) const {
+  auto fvc = get_faceVertexCounts(time);
+  auto fvi = get_faceVertexIndices(time);
+  auto pts = get_points(time);
+
+  if (fvc.empty() && fvi.empty()) {
+    // No topology authored
+    return true;
+  }
+
+  // 1. sum(faceVertexCounts) == faceVertexIndices.size()
+  size_t totalVerts = 0;
+  for (size_t i = 0; i < fvc.size(); i++) {
+    if (fvc[i] < 3) {
+      if (err) {
+        (*err) += fmt::format("faceVertexCounts[{}] = {} is less than 3.\n", i, fvc[i]);
+      }
+      return false;
+    }
+    totalVerts += static_cast<size_t>(fvc[i]);
+  }
+
+  if (totalVerts != fvi.size()) {
+    if (err) {
+      (*err) += fmt::format("sum(faceVertexCounts) = {} != faceVertexIndices.size() = {}.\n",
+        totalVerts, fvi.size());
+    }
+    return false;
+  }
+
+  // 2. All faceVertexIndices in range [0, points.size())
+  if (!pts.empty()) {
+    for (size_t i = 0; i < fvi.size(); i++) {
+      if (fvi[i] < 0 || static_cast<size_t>(fvi[i]) >= pts.size()) {
+        if (err) {
+          (*err) += fmt::format("faceVertexIndices[{}] = {} is out of range [0, {}).\n",
+            i, fvi[i], pts.size());
+        }
+        return false;
+      }
+    }
+  }
+
+  // 3. Subdivision surface validation
+  size_t numFaces = fvc.size();
+
+  // cornerIndices validation
+  if (props.count("cornerIndices") && props.count("cornerSharpnesses")) {
+    const auto &ciProp = props.at("cornerIndices");
+    const auto &csProp = props.at("cornerSharpnesses");
+    std::vector<int32_t> ci_vals;
+    std::vector<float> cs_vals;
+    if (ciProp.get_attribute().get_value(&ci_vals) &&
+        csProp.get_attribute().get_value(&cs_vals)) {
+      if (ci_vals.size() != cs_vals.size()) {
+        if (err) {
+          (*err) += fmt::format("cornerIndices.size() = {} != cornerSharpnesses.size() = {}.\n",
+            ci_vals.size(), cs_vals.size());
+        }
+        return false;
+      }
+      if (!pts.empty()) {
+        for (size_t i = 0; i < ci_vals.size(); i++) {
+          if (ci_vals[i] < 0 || static_cast<size_t>(ci_vals[i]) >= pts.size()) {
+            if (err) {
+              (*err) += fmt::format("cornerIndices[{}] = {} is out of range [0, {}).\n",
+                i, ci_vals[i], pts.size());
+            }
+            return false;
+          }
+        }
+      }
+    }
+  }
+
+  // creaseIndices/creaseLengths/creaseSharpnesses validation
+  if (props.count("creaseIndices") && props.count("creaseLengths")) {
+    const auto &crIdxProp = props.at("creaseIndices");
+    const auto &crLenProp = props.at("creaseLengths");
+    std::vector<int32_t> cr_idx;
+    std::vector<int32_t> cr_len;
+    if (crIdxProp.get_attribute().get_value(&cr_idx) &&
+        crLenProp.get_attribute().get_value(&cr_len)) {
+      size_t totalCreaseVerts = 0;
+      for (const auto &cl : cr_len) {
+        totalCreaseVerts += static_cast<size_t>(cl);
+      }
+      if (totalCreaseVerts != cr_idx.size()) {
+        if (err) {
+          (*err) += fmt::format("sum(creaseLengths) = {} != creaseIndices.size() = {}.\n",
+            totalCreaseVerts, cr_idx.size());
+        }
+        return false;
+      }
+      if (props.count("creaseSharpnesses")) {
+        const auto &crShProp = props.at("creaseSharpnesses");
+        std::vector<float> cr_sharp;
+        if (crShProp.get_attribute().get_value(&cr_sharp)) {
+          if (cr_len.size() != cr_sharp.size()) {
+            if (err) {
+              (*err) += fmt::format("creaseLengths.size() = {} != creaseSharpnesses.size() = {}.\n",
+                cr_len.size(), cr_sharp.size());
+            }
+            return false;
+          }
+        }
+      }
+    }
+  }
+
+  // holeIndices validation
+  if (props.count("holeIndices")) {
+    const auto &hiProp = props.at("holeIndices");
+    std::vector<int32_t> hi_vals;
+    if (hiProp.get_attribute().get_value(&hi_vals)) {
+      for (size_t i = 0; i < hi_vals.size(); i++) {
+        if (hi_vals[i] < 0 || static_cast<size_t>(hi_vals[i]) >= numFaces) {
+          if (err) {
+            (*err) += fmt::format("holeIndices[{}] = {} is out of range [0, {}).\n",
+              i, hi_vals[i], numFaces);
+          }
+          return false;
+        }
+      }
+    }
+  }
+
+  return true;
+}
+
+// --- H1: ComputeExtent ---
+
+bool ComputeExtent(const GeomMesh &mesh, Extent *extent,
+    double time, std::string *err) {
+  if (!extent) return false;
+  auto pts = mesh.get_points(time);
+  if (pts.empty()) {
+    if (err) (*err) = "No points in mesh.\n";
+    return false;
+  }
+  Extent e;
+  for (const auto &p : pts) {
+    e.union_with(p);
+  }
+  *extent = e;
+  return true;
+}
+
+bool ComputeExtent(const GeomPoints &geom, Extent *extent,
+    double time, std::string *err) {
+  if (!extent) return false;
+  auto pts = geom.get_points(time);
+  if (pts.empty()) {
+    if (err) (*err) = "No points.\n";
+    return false;
+  }
+  auto ws = geom.get_widths(time);
+  Extent e;
+  for (size_t i = 0; i < pts.size(); i++) {
+    float halfW = (i < ws.size()) ? ws[i] * 0.5f : 0.0f;
+    e.union_with(value::float3{{pts[i].x - halfW, pts[i].y - halfW, pts[i].z - halfW}});
+    e.union_with(value::float3{{pts[i].x + halfW, pts[i].y + halfW, pts[i].z + halfW}});
+  }
+  *extent = e;
+  return true;
+}
+
+bool ComputeExtent(const GeomSphere &sphere, Extent *extent,
+    double time, std::string *err) {
+  if (!extent) return false;
+  (void)err;
+  double r = 2.0;
+  sphere.radius.get_value().get(time, &r);
+  float rf = static_cast<float>(r);
+  *extent = Extent(value::float3{{-rf, -rf, -rf}}, value::float3{{rf, rf, rf}});
+  return true;
+}
+
+bool ComputeExtent(const GeomCube &cube, Extent *extent,
+    double time, std::string *err) {
+  if (!extent) return false;
+  (void)err;
+  double s = 2.0;
+  cube.size.get_value().get(time, &s);
+  float h = static_cast<float>(s) * 0.5f;
+  *extent = Extent(value::float3{{-h, -h, -h}}, value::float3{{h, h, h}});
+  return true;
+}
+
+bool ComputeExtent(const GeomCone &cone, Extent *extent,
+    double time, std::string *err) {
+  if (!extent) return false;
+  (void)err;
+  double h = 2.0, r = 1.0;
+  cone.height.get_value().get(time, &h);
+  cone.radius.get_value().get(time, &r);
+  Axis axis = cone.axis.get_value();
+  float rf = static_cast<float>(r);
+  float hf = static_cast<float>(h);
+  if (axis == Axis::X) {
+    *extent = Extent(value::float3{{0.0f, -rf, -rf}}, value::float3{{hf, rf, rf}});
+  } else if (axis == Axis::Y) {
+    *extent = Extent(value::float3{{-rf, 0.0f, -rf}}, value::float3{{rf, hf, rf}});
+  } else {
+    *extent = Extent(value::float3{{-rf, -rf, 0.0f}}, value::float3{{rf, rf, hf}});
+  }
+  return true;
+}
+
+bool ComputeExtent(const GeomCylinder &cylinder, Extent *extent,
+    double time, std::string *err) {
+  if (!extent) return false;
+  (void)err;
+  double h = 2.0, r = 1.0;
+  cylinder.height.get_value().get(time, &h);
+  cylinder.radius.get_value().get(time, &r);
+  Axis axis = cylinder.axis.get_value();
+  float rf = static_cast<float>(r);
+  float hh = static_cast<float>(h) * 0.5f;
+  if (axis == Axis::X) {
+    *extent = Extent(value::float3{{-hh, -rf, -rf}}, value::float3{{hh, rf, rf}});
+  } else if (axis == Axis::Y) {
+    *extent = Extent(value::float3{{-rf, -hh, -rf}}, value::float3{{rf, hh, rf}});
+  } else {
+    *extent = Extent(value::float3{{-rf, -rf, -hh}}, value::float3{{rf, rf, hh}});
+  }
+  return true;
+}
+
+bool ComputeExtent(const GeomCapsule &capsule, Extent *extent,
+    double time, std::string *err) {
+  if (!extent) return false;
+  (void)err;
+  double h = 2.0, r = 0.5;
+  capsule.height.get_value().get(time, &h);
+  capsule.radius.get_value().get(time, &r);
+  Axis axis = capsule.axis.get_value();
+  float rf = static_cast<float>(r);
+  float hh = static_cast<float>(h) * 0.5f + rf;  // extend by radius for hemicaps
+  if (axis == Axis::X) {
+    *extent = Extent(value::float3{{-hh, -rf, -rf}}, value::float3{{hh, rf, rf}});
+  } else if (axis == Axis::Y) {
+    *extent = Extent(value::float3{{-rf, -hh, -rf}}, value::float3{{rf, hh, rf}});
+  } else {
+    *extent = Extent(value::float3{{-rf, -rf, -hh}}, value::float3{{rf, rf, hh}});
+  }
+  return true;
+}
+
+bool ComputeExtent(const GeomBasisCurves &curves, Extent *extent,
+    double time, std::string *err) {
+  if (!extent) return false;
+  auto pts = curves.get_points(time);
+  if (pts.empty()) {
+    if (err) (*err) = "No points in curves.\n";
+    return false;
+  }
+  auto ws = curves.get_widths(time);
+  float maxHalfW = 0.0f;
+  for (const auto &w : ws) {
+    float hw = w * 0.5f;
+    if (hw > maxHalfW) maxHalfW = hw;
+  }
+  Extent e;
+  for (const auto &p : pts) {
+    e.union_with(value::float3{{p.x - maxHalfW, p.y - maxHalfW, p.z - maxHalfW}});
+    e.union_with(value::float3{{p.x + maxHalfW, p.y + maxHalfW, p.z + maxHalfW}});
+  }
+  *extent = e;
+  return true;
 }
 
 // static
@@ -1243,7 +1580,7 @@ bool GeomSubset::ValidateSubsets(
     }
   }
 
-  return true;
+  return valid;
 
 }
 
