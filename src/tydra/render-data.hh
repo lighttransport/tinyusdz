@@ -2908,6 +2908,13 @@ class RenderSceneConverter {
                             const GeometryLight &light,
                             RenderLight *rlight_out);
 
+  // Wrapper around GetBoundMaterial with caching.
+  // Avoids repeated ancestor walks for sibling prims.
+  bool GetBoundMaterialCached(
+      const Stage &stage, const Path &abs_path,
+      const std::string &purpose, Path *materialPath,
+      const Material **material, std::string *err);
+
  private:
   ///
   /// Convert variability of vertex data to 'vertex' or 'facevarying'.
@@ -3062,6 +3069,16 @@ class RenderSceneConverter {
 
   // Cached ListUVNames results per material ID
   std::unordered_map<int64_t, StringAndIdMap> _uvNameCache;
+
+  // Cached material binding results: key = "prim_path\0purpose" → (found, materialPath, material_ptr).
+  // Avoids repeated ancestor walks for sibling prims.
+  struct MaterialBindingCacheEntry {
+    bool found{false};
+    Path materialPath;
+    const Material *material{nullptr};
+  };
+  std::unordered_map<std::string, MaterialBindingCacheEntry> _materialBindingCache;
+
 };
 
 ///

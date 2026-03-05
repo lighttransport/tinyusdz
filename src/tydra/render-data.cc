@@ -4792,8 +4792,10 @@ bool RenderSceneConverter::ConvertMesh(
 
         for (size_t i = 0; i < it.second.usdIndices.size(); i++) {
           int32_t srcIndex = it.second.usdIndices[i];
-          if (srcIndex < 0) {
-            PUSH_ERROR_AND_RETURN("Invalid index value in GeomSubset.");
+          if (srcIndex < 0 || size_t(srcIndex) >= faceIndexOffsets.size()) {
+            PUSH_ERROR_AND_RETURN(fmt::format(
+                "GeomSubset '{}': index {} out of range [0, {}).",
+                it.first, srcIndex, faceIndexOffsets.size()));
           }
 
           uint32_t baseFaceIndex = faceIndexOffsets[size_t(srcIndex)];
@@ -8734,7 +8736,7 @@ bool MeshVisitor(const tinyusdz::Path &abs_path, const tinyusdz::Prim &prim,
         {
           tinyusdz::Path bound_material_path;
           const tinyusdz::Material *bound_material{nullptr};
-          bool ret = tinyusdz::tydra::GetBoundMaterial(
+          bool ret = visitorEnv->converter->GetBoundMaterialCached(
               visitorEnv->env->stage,
               /* GeomSubset prim path */ subset_abs_path,
               /* purpose */ "", &bound_material_path, &bound_material, err);
@@ -8767,7 +8769,7 @@ bool MeshVisitor(const tinyusdz::Path &abs_path, const tinyusdz::Prim &prim,
                        .default_backface_material_purpose_name);
           tinyusdz::Path bound_material_path;
           const tinyusdz::Material *bound_material{nullptr};
-          bool ret = tinyusdz::tydra::GetBoundMaterial(
+          bool ret = visitorEnv->converter->GetBoundMaterialCached(
               visitorEnv->env->stage,
               /* GeomSubset prim path */ subset_abs_path,
               /* purpose */
@@ -8810,7 +8812,7 @@ bool MeshVisitor(const tinyusdz::Path &abs_path, const tinyusdz::Prim &prim,
       {
         tinyusdz::Path bound_material_path;
         const tinyusdz::Material *bound_material{nullptr};
-        bool ret = tinyusdz::tydra::GetBoundMaterial(
+        bool ret = visitorEnv->converter->GetBoundMaterialCached(
             visitorEnv->env->stage, /* GeomMesh prim path */ abs_path,
             /* purpose */ "", &bound_material_path, &bound_material, err);
 
@@ -8839,7 +8841,7 @@ bool MeshVisitor(const tinyusdz::Path &abs_path, const tinyusdz::Prim &prim,
           pmesh->has_materialBinding(value::token(backface_purpose))) {
         tinyusdz::Path bound_material_path;
         const tinyusdz::Material *bound_material{nullptr};
-        bool ret = tinyusdz::tydra::GetBoundMaterial(
+        bool ret = visitorEnv->converter->GetBoundMaterialCached(
             visitorEnv->env->stage, /* GeomMesh prim path */ abs_path,
             /* purpose */
             visitorEnv->env->material_config
@@ -8928,7 +8930,7 @@ bool MeshVisitor(const tinyusdz::Path &abs_path, const tinyusdz::Prim &prim,
       const Material *bound_material{nullptr};
       Path bound_material_path;
 
-      bool ret = GetBoundMaterial(
+      bool ret = visitorEnv->converter->GetBoundMaterialCached(
           visitorEnv->env->stage, abs_path,
           /* purpose */ "",
           &bound_material_path, &bound_material, err);
@@ -9000,7 +9002,7 @@ bool MeshVisitor(const tinyusdz::Path &abs_path, const tinyusdz::Prim &prim,
       const Material *bound_material{nullptr};
       Path bound_material_path;
 
-      bool ret = GetBoundMaterial(
+      bool ret = visitorEnv->converter->GetBoundMaterialCached(
           visitorEnv->env->stage, abs_path,
           /* purpose */ "",
           &bound_material_path, &bound_material, err);
@@ -10870,6 +10872,37 @@ bool RenderSceneConverter::BuildNodeHierarchy(
   return true;
 }
 
+bool RenderSceneConverter::GetBoundMaterialCached(
+    const Stage &stage, const Path &abs_path,
+    const std::string &purpose, Path *materialPath,
+    const Material **material, std::string *err) {
+  // Build cache key: "prim_path\0purpose"
+  std::string key = abs_path.full_path_name();
+  key.push_back('\0');
+  key += purpose;
+
+  auto it = _materialBindingCache.find(key);
+  if (it != _materialBindingCache.end()) {
+    if (it->second.found) {
+      *materialPath = it->second.materialPath;
+      *material = it->second.material;
+    }
+    return it->second.found;
+  }
+
+  bool found = GetBoundMaterial(stage, abs_path, purpose,
+                                materialPath, material, err);
+
+  MaterialBindingCacheEntry entry;
+  entry.found = found;
+  if (found) {
+    entry.materialPath = *materialPath;
+    entry.material = *material;
+  }
+  _materialBindingCache[key] = entry;
+  return found;
+}
+
 bool RenderSceneConverter::ConvertToRenderScene(
     const RenderSceneConverterEnv &env, RenderScene *scene) {
   if (!scene) {
@@ -10885,6 +10918,7 @@ bool RenderSceneConverter::ConvertToRenderScene(
   _skelNameToIndexCache.clear();
   _skelRootToSkeleton.clear();
   _uvNameCache.clear();
+  _materialBindingCache.clear();
   ResetConnectionResolveCache(env.stage);
 
   // Report initial progress
@@ -11072,6 +11106,7 @@ bool RenderSceneConverter::ConvertToRenderScene(
   _allSkelRoots = nullptr;
   _allAnimations = nullptr;
   _skelRootToSkeleton.clear();
+  _materialBindingCache.clear();
 
   // Report progress after mesh/material conversion (70%)
   _progress_info.stage = DetailedProgressInfo::Stage::BuildingHierarchy;
@@ -11892,6 +11927,11 @@ bool RenderSceneConverter::MergeMeshData(const RenderMesh &src,
         }
       }
     } else {
+      if (dst.normals.format != src.normals.format ||
+          dst.normals.stride_bytes() != src.normals.stride_bytes()) {
+        PUSH_ERROR("Cannot merge normals: incompatible format or stride.");
+        return false;
+      }
       // Append normals
       size_t old_size = dst.normals.data.size();
       dst.normals.data.resize(old_size + src.normals.data.size());
@@ -11917,6 +11957,12 @@ bool RenderSceneConverter::MergeMeshData(const RenderMesh &src,
       dst.texcoords[slot] = src_attr;
     } else {
       auto &dst_attr = dst.texcoords[slot];
+      if (dst_attr.format != src_attr.format ||
+          dst_attr.stride_bytes() != src_attr.stride_bytes()) {
+        PUSH_ERROR("Cannot merge texcoords slot " + std::to_string(slot) +
+                   ": incompatible format or stride.");
+        return false;
+      }
       size_t old_size = dst_attr.data.size();
       dst_attr.data.resize(old_size + src_attr.data.size());
       memcpy(dst_attr.data.data() + old_size, src_attr.data.data(), src_attr.data.size());
@@ -11935,6 +11981,11 @@ bool RenderSceneConverter::MergeMeshData(const RenderMesh &src,
         }
       }
     } else {
+      if (dst.tangents.format != src.tangents.format ||
+          dst.tangents.stride_bytes() != src.tangents.stride_bytes()) {
+        PUSH_ERROR("Cannot merge tangents: incompatible format or stride.");
+        return false;
+      }
       size_t old_size = dst.tangents.data.size();
       size_t src_count = src.tangents.vertex_count();
       dst.tangents.data.resize(old_size + src.tangents.data.size());
@@ -11963,6 +12014,11 @@ bool RenderSceneConverter::MergeMeshData(const RenderMesh &src,
         }
       }
     } else {
+      if (dst.binormals.format != src.binormals.format ||
+          dst.binormals.stride_bytes() != src.binormals.stride_bytes()) {
+        PUSH_ERROR("Cannot merge binormals: incompatible format or stride.");
+        return false;
+      }
       size_t old_size = dst.binormals.data.size();
       size_t src_count = src.binormals.vertex_count();
       dst.binormals.data.resize(old_size + src.binormals.data.size());
@@ -11984,6 +12040,11 @@ bool RenderSceneConverter::MergeMeshData(const RenderMesh &src,
     if (dst.vertex_colors.empty()) {
       dst.vertex_colors = src.vertex_colors;
     } else {
+      if (dst.vertex_colors.format != src.vertex_colors.format ||
+          dst.vertex_colors.stride_bytes() != src.vertex_colors.stride_bytes()) {
+        PUSH_ERROR("Cannot merge vertex_colors: incompatible format or stride.");
+        return false;
+      }
       size_t old_size = dst.vertex_colors.data.size();
       dst.vertex_colors.data.resize(old_size + src.vertex_colors.data.size());
       memcpy(dst.vertex_colors.data.data() + old_size, src.vertex_colors.data.data(), src.vertex_colors.data.size());
@@ -11995,6 +12056,11 @@ bool RenderSceneConverter::MergeMeshData(const RenderMesh &src,
     if (dst.vertex_opacities.empty()) {
       dst.vertex_opacities = src.vertex_opacities;
     } else {
+      if (dst.vertex_opacities.format != src.vertex_opacities.format ||
+          dst.vertex_opacities.stride_bytes() != src.vertex_opacities.stride_bytes()) {
+        PUSH_ERROR("Cannot merge vertex_opacities: incompatible format or stride.");
+        return false;
+      }
       size_t old_size = dst.vertex_opacities.data.size();
       dst.vertex_opacities.data.resize(old_size + src.vertex_opacities.data.size());
       memcpy(dst.vertex_opacities.data.data() + old_size, src.vertex_opacities.data.data(), src.vertex_opacities.data.size());
