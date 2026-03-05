@@ -1241,13 +1241,6 @@ static bool ConvertTiledImage(const tinyusdz::mtlx::pugi::xml_node &node, PrimSp
   return true;
 }
 
-// Convert MaterialX image node to USD UsdUVTexture
-static bool ConvertImage(const tinyusdz::mtlx::pugi::xml_node &node, PrimSpec &ps,
-                         std::string *warn, std::string *err) {
-  // Image node is similar to tiledimage but without tiling parameters
-  return ConvertTiledImage(node, ps, warn, err);
-}
-
 // Convert MaterialX texcoord node to USD UsdPrimvarReader_float2
 static bool ConvertTexCoord(const tinyusdz::mtlx::pugi::xml_node &node, PrimSpec &ps,
                             const MtlxConfig &config,
@@ -1343,154 +1336,8 @@ static bool ConvertConstant(const tinyusdz::mtlx::pugi::xml_node &node, PrimSpec
   return true;
 }
 
-// Convert MaterialX multiply node
-static bool ConvertMultiply(const tinyusdz::mtlx::pugi::xml_node &node, PrimSpec &ps,
-                            std::string *warn, std::string *err) {
-  (void)warn;
-
-  tinyusdz::mtlx::pugi::xml_attribute name_attr = node.attribute("name");
-  if (name_attr) {
-    ps.name() = name_attr.as_string();
-  }
-
-  // Parse inputs (in1, in2)
-  for (auto inp : node.children("input")) {
-    std::string input_name;
-    std::string input_value;
-
-    tinyusdz::mtlx::pugi::xml_attribute inp_name_attr = inp.attribute("name");
-    if (inp_name_attr) {
-      input_name = inp_name_attr.as_string();
-    }
-
-    tinyusdz::mtlx::pugi::xml_attribute value_attr = inp.attribute("value");
-    if (value_attr) {
-      input_value = value_attr.as_string();
-
-      // Store as shader input
-      std::string prop_name = "inputs:" + input_name;
-
-      tinyusdz::mtlx::pugi::xml_attribute type_attr = inp.attribute("type");
-      if (type_attr) {
-        std::string type_str = type_attr.as_string();
-        if (type_str == "float") {
-          float val;
-          if (ParseMaterialXValue(input_value, &val, err)) {
-            ps.props()[prop_name] = Property(Attribute::Uniform(val));
-          }
-        } else if (type_str == "color3") {
-          value::color3f val;
-          if (ParseMaterialXValue(input_value, &val, err)) {
-            ps.props()[prop_name] = Property(Attribute::Uniform(val));
-          }
-        }
-      }
-    }
-  }
-
-  ps.specifier() = Specifier::Def;
-  ps.typeName() = kShader;
-  ps.props()[kShaderInfoId] = Property(Attribute::Uniform(value::token("MaterialXMultiply")));
-
-  return true;
-}
-
-// Convert MaterialX add node
-static bool ConvertAdd(const tinyusdz::mtlx::pugi::xml_node &node, PrimSpec &ps,
-                       std::string *warn, std::string *err) {
-  // Same pattern as multiply
-  return ConvertMultiply(node, ps, warn, err);  // Reuse multiply logic
-}
-
-// Convert MaterialX mix node (linear blend)
-static bool ConvertMix(const tinyusdz::mtlx::pugi::xml_node &node, PrimSpec &ps,
-                       std::string *warn, std::string *err) {
-  (void)warn;
-
-  tinyusdz::mtlx::pugi::xml_attribute name_attr = node.attribute("name");
-  if (name_attr) {
-    ps.name() = name_attr.as_string();
-  }
-
-  // Parse inputs (fg, bg, mix)
-  for (auto inp : node.children("input")) {
-    std::string input_name;
-    std::string input_value;
-
-    tinyusdz::mtlx::pugi::xml_attribute inp_name_attr = inp.attribute("name");
-    if (inp_name_attr) {
-      input_name = inp_name_attr.as_string();
-    }
-
-    tinyusdz::mtlx::pugi::xml_attribute value_attr = inp.attribute("value");
-    if (value_attr) {
-      input_value = value_attr.as_string();
-      std::string prop_name = "inputs:" + input_name;
-
-      tinyusdz::mtlx::pugi::xml_attribute type_attr = inp.attribute("type");
-      if (type_attr) {
-        std::string type_str = type_attr.as_string();
-        if (type_str == "float") {
-          float val;
-          if (ParseMaterialXValue(input_value, &val, err)) {
-            ps.props()[prop_name] = Property(Attribute::Uniform(val));
-          }
-        } else if (type_str == "color3") {
-          value::color3f val;
-          if (ParseMaterialXValue(input_value, &val, err)) {
-            ps.props()[prop_name] = Property(Attribute::Uniform(val));
-          }
-        }
-      }
-    }
-  }
-
-  ps.specifier() = Specifier::Def;
-  ps.typeName() = kShader;
-  ps.props()[kShaderInfoId] = Property(Attribute::Uniform(value::token("MaterialXMix")));
-
-  return true;
-}
-
-// Convert MaterialX noise2d/noise3d nodes - simple procedural noise
-static bool ConvertNoise(const tinyusdz::mtlx::pugi::xml_node &node, PrimSpec &ps,
-                         std::string *warn, std::string *err) {
-  (void)warn;
-
-  tinyusdz::mtlx::pugi::xml_attribute name_attr = node.attribute("name");
-  if (name_attr) {
-    ps.name() = name_attr.as_string();
-  }
-
-  // Parse noise parameters
-  for (auto inp : node.children("input")) {
-    std::string input_name;
-    std::string input_value;
-
-    tinyusdz::mtlx::pugi::xml_attribute inp_name_attr = inp.attribute("name");
-    if (inp_name_attr) {
-      input_name = inp_name_attr.as_string();
-    }
-
-    tinyusdz::mtlx::pugi::xml_attribute value_attr = inp.attribute("value");
-    if (value_attr) {
-      input_value = value_attr.as_string();
-      std::string prop_name = "inputs:" + input_name;
-
-      // Common noise params: amplitude, pivot, lacunarity, octaves, etc.
-      float val;
-      if (ParseMaterialXValue(input_value, &val, err)) {
-        ps.props()[prop_name] = Property(Attribute::Uniform(val));
-      }
-    }
-  }
-
-  ps.specifier() = Specifier::Def;
-  ps.typeName() = kShader;
-  ps.props()[kShaderInfoId] = Property(Attribute::Uniform(value::token("MaterialXNoise")));
-
-  return true;
-}
+// ConvertMultiply/ConvertAdd/ConvertMix/ConvertNoise are now handled by
+// ConvertGenericNode via the dispatch table in ConvertSingleNode.
 
 // ============================================================================
 // Generic Node Converters
@@ -1631,155 +1478,127 @@ static bool ConvertGenericNode(const tinyusdz::mtlx::pugi::xml_node &node, PrimS
   return true;
 }
 
-// Convert binary operations (divide, power, min, max, modulo, atan2, dotproduct, crossproduct)
-static bool ConvertBinaryOp(const tinyusdz::mtlx::pugi::xml_node &node, PrimSpec &ps,
-                            const std::string &op_name,
-                            std::string *warn, std::string *err) {
-  // Get output type from node's type attribute
-  tinyusdz::mtlx::pugi::xml_attribute type_attr = node.attribute("type");
-  std::string type_str = type_attr ? type_attr.as_string() : "float";
-  std::string info_id = "ND_" + op_name + "_" + type_str;
-  return ConvertGenericNode(node, ps, info_id, warn, err);
+// ============================================================================
+// Node dispatch table — maps MaterialX node names to info:id generation.
+// Most nodes use "ND_<op_name>_<type>" where type comes from the node's
+// "type" attribute. A few use a fixed info:id string.
+// ============================================================================
+
+// Helper: get the node's "type" attribute or a default
+static std::string GetNodeTypeAttr(const tinyusdz::mtlx::pugi::xml_node &node,
+                                   const char *default_type) {
+  tinyusdz::mtlx::pugi::xml_attribute ta = node.attribute("type");
+  return ta ? ta.as_string() : default_type;
 }
 
-// Convert unary operations (sqrt, absval, sin, cos, tan, floor, ceil, round, normalize, magnitude, luminance, invert, saturate)
-static bool ConvertUnaryOp(const tinyusdz::mtlx::pugi::xml_node &node, PrimSpec &ps,
-                           const std::string &op_name,
-                           std::string *warn, std::string *err) {
-  tinyusdz::mtlx::pugi::xml_attribute type_attr = node.attribute("type");
-  std::string type_str = type_attr ? type_attr.as_string() : "float";
-  std::string info_id = "ND_" + op_name + "_" + type_str;
-  return ConvertGenericNode(node, ps, info_id, warn, err);
-}
-
-// Convert clamp operation (in, low, high)
-static bool ConvertClamp(const tinyusdz::mtlx::pugi::xml_node &node, PrimSpec &ps,
-                         std::string *warn, std::string *err) {
-  tinyusdz::mtlx::pugi::xml_attribute type_attr = node.attribute("type");
-  std::string type_str = type_attr ? type_attr.as_string() : "float";
-  std::string info_id = "ND_clamp_" + type_str;
-  return ConvertGenericNode(node, ps, info_id, warn, err);
-}
-
-// Convert remap operation (in, inlow, inhigh, outlow, outhigh)
-static bool ConvertRemap(const tinyusdz::mtlx::pugi::xml_node &node, PrimSpec &ps,
-                         std::string *warn, std::string *err) {
-  tinyusdz::mtlx::pugi::xml_attribute type_attr = node.attribute("type");
-  std::string type_str = type_attr ? type_attr.as_string() : "float";
-  std::string info_id = "ND_remap_" + type_str;
-  return ConvertGenericNode(node, ps, info_id, warn, err);
-}
-
-// Convert extract operation (extracts single channel from color3/vector3)
-static bool ConvertExtract(const tinyusdz::mtlx::pugi::xml_node &node, PrimSpec &ps,
-                           std::string *warn, std::string *err) {
-  // Input type determines the info:id (e.g., ND_extract_color3)
-  // Find the 'in' input to determine source type
-  std::string source_type = "color3";
+// Helper: find the "type" attribute of the named input child
+static std::string GetInputTypeAttr(const tinyusdz::mtlx::pugi::xml_node &node,
+                                    const char *input_name, const char *default_type) {
   for (auto inp : node.children("input")) {
-    tinyusdz::mtlx::pugi::xml_attribute inp_name = inp.attribute("name");
-    if (inp_name && std::string(inp_name.as_string()) == "in") {
-      tinyusdz::mtlx::pugi::xml_attribute type_attr = inp.attribute("type");
-      if (type_attr) {
-        source_type = type_attr.as_string();
-      }
+    tinyusdz::mtlx::pugi::xml_attribute n = inp.attribute("name");
+    if (n && std::string(n.as_string()) == input_name) {
+      tinyusdz::mtlx::pugi::xml_attribute t = inp.attribute("type");
+      if (t) return t.as_string();
       break;
     }
   }
-  std::string info_id = "ND_extract_" + source_type;
-  return ConvertGenericNode(node, ps, info_id, warn, err);
+  return default_type;
 }
 
-// Convert combine operations (combine2, combine3, combine4)
-static bool ConvertCombine(const tinyusdz::mtlx::pugi::xml_node &node, PrimSpec &ps,
-                           const std::string &combine_type,  // "combine2", "combine3", "combine4"
-                           std::string *warn, std::string *err) {
-  tinyusdz::mtlx::pugi::xml_attribute type_attr = node.attribute("type");
-  std::string type_str = type_attr ? type_attr.as_string() : "color3";
-  std::string info_id = "ND_" + combine_type + "_" + type_str;
-  return ConvertGenericNode(node, ps, info_id, warn, err);
-}
+// Dispatch entry: how to build info:id for a generic node
+struct NodeDispatchEntry {
+  const char *op_name;       // prefix for "ND_<op_name>_<type>" (nullptr → use fixed_id)
+  const char *default_type;  // default type if node has no "type" attribute
+  const char *fixed_id;      // if non-null, use this as the full info:id (ignores op_name)
+};
 
-// Convert HSV adjust operation
-static bool ConvertHsvAdjust(const tinyusdz::mtlx::pugi::xml_node &node, PrimSpec &ps,
-                             std::string *warn, std::string *err) {
-  return ConvertGenericNode(node, ps, "ND_hsvadjust_color3", warn, err);
-}
+// Table of nodes handled by ConvertGenericNode with computed info:id.
+// Nodes NOT in this table are handled as special cases (place2d, tiledimage, etc.)
+static const std::pair<const char*, NodeDispatchEntry> kNodeDispatchPairs[] = {
+  // Arithmetic with custom info:id (preserving existing behavior)
+  {"multiply",        {nullptr, nullptr, "MaterialXMultiply"}},
+  {"add",             {nullptr, nullptr, "MaterialXMultiply"}},  // same as multiply
+  {"subtract",        {nullptr, nullptr, "MaterialXMultiply"}},  // same as multiply
+  {"mix",             {nullptr, nullptr, "MaterialXMix"}},
+  {"noise2d",         {nullptr, nullptr, "MaterialXNoise"}},
+  {"noise3d",         {nullptr, nullptr, "MaterialXNoise"}},
+  {"cellnoise2d",     {nullptr, nullptr, "MaterialXNoise"}},
+  {"cellnoise3d",     {nullptr, nullptr, "MaterialXNoise"}},
+  {"worleynoise2d",   {nullptr, nullptr, "MaterialXNoise"}},
+  {"worleynoise3d",   {nullptr, nullptr, "MaterialXNoise"}},
+  {"fractal3d",       {nullptr, nullptr, "MaterialXNoise"}},
+  // Binary ops: ND_<name>_<type>
+  {"divide",       {"divide",       "float", nullptr}},
+  {"power",        {"power",        "float", nullptr}},
+  {"min",          {"min",          "float", nullptr}},
+  {"max",          {"max",          "float", nullptr}},
+  {"modulo",       {"modulo",       "float", nullptr}},
+  {"atan2",        {"atan2",        "float", nullptr}},
+  {"dotproduct",   {"dotproduct",   "float", nullptr}},
+  {"crossproduct", {"crossproduct", "float", nullptr}},
+  // Unary ops: ND_<name>_<type>
+  {"sqrt",       {"sqrt",       "float", nullptr}},
+  {"absval",     {"absval",     "float", nullptr}},
+  {"sign",       {"sign",       "float", nullptr}},
+  {"floor",      {"floor",      "float", nullptr}},
+  {"ceil",       {"ceil",       "float", nullptr}},
+  {"round",      {"round",      "float", nullptr}},
+  {"sin",        {"sin",        "float", nullptr}},
+  {"cos",        {"cos",        "float", nullptr}},
+  {"tan",        {"tan",        "float", nullptr}},
+  {"asin",       {"asin",       "float", nullptr}},
+  {"acos",       {"acos",       "float", nullptr}},
+  {"atan",       {"atan",       "float", nullptr}},
+  {"exp",        {"exp",        "float", nullptr}},
+  {"ln",         {"ln",         "float", nullptr}},
+  {"log2",       {"log2",       "float", nullptr}},
+  {"normalize",  {"normalize",  "float", nullptr}},
+  {"magnitude",  {"magnitude",  "float", nullptr}},
+  {"luminance",  {"luminance",  "float", nullptr}},
+  {"invert",     {"invert",     "float", nullptr}},
+  {"saturate",   {"saturate",   "float", nullptr}},
+  {"hueshift",   {"hueshift",   "float", nullptr}},
+  {"rgbtohsv",   {"rgbtohsv",   "float", nullptr}},
+  {"hsvtorgb",   {"hsvtorgb",   "float", nullptr}},
+  // Clamp/remap
+  {"clamp",      {"clamp",      "float", nullptr}},
+  {"remap",      {"remap",      "float", nullptr}},
+  {"range",      {"remap",      "float", nullptr}},  // alias
+  {"smoothstep", {"smoothstep", "float", nullptr}},
+  // Channel ops
+  {"combine2",   {"combine2",   "color3", nullptr}},
+  {"combine3",   {"combine3",   "color3", nullptr}},
+  {"combine4",   {"combine4",   "color3", nullptr}},
+  {"swizzle",    {"swizzle",    "color3", nullptr}},
+  // Color ops
+  {"hsvadjust",  {nullptr, nullptr, "ND_hsvadjust_color3"}},
+  // Geometry nodes: ND_<geom_type>_<type>
+  {"position",      {"position",      "vector3", nullptr}},
+  {"normal",        {"normal",        "vector3", nullptr}},
+  {"tangent",       {"tangent",       "vector3", nullptr}},
+  {"bitangent",     {"bitangent",     "vector3", nullptr}},
+  {"geomcolor",     {"geomcolor",     "vector3", nullptr}},
+  {"geompropvalue", {"geompropvalue", "vector3", nullptr}},
+  // Rotation
+  {"rotate3d",  {nullptr, nullptr, "ND_rotate3d_vector3"}},
+  // Conditional ops: ND_<cond>_<type>
+  {"ifgreater",   {"ifgreater",   "float", nullptr}},
+  {"ifgreatereq", {"ifgreatereq", "float", nullptr}},
+  {"ifless",      {"ifless",      "float", nullptr}},
+  {"iflesseq",    {"iflesseq",    "float", nullptr}},
+  {"ifequal",     {"ifequal",     "float", nullptr}},
+  {"switch",      {"switch",      "float", nullptr}},
+};
 
-// Convert type conversion operations (e.g., color3 to vector3)
-static bool ConvertConvert(const tinyusdz::mtlx::pugi::xml_node &node, PrimSpec &ps,
-                           std::string *warn, std::string *err) {
-  // Determine from/to types
-  std::string from_type = "color3";
-  std::string to_type = "vector3";
-
-  for (auto inp : node.children("input")) {
-    tinyusdz::mtlx::pugi::xml_attribute inp_name = inp.attribute("name");
-    if (inp_name && std::string(inp_name.as_string()) == "in") {
-      tinyusdz::mtlx::pugi::xml_attribute type_attr = inp.attribute("type");
-      if (type_attr) {
-        from_type = type_attr.as_string();
-      }
-      break;
-    }
-  }
-
-  tinyusdz::mtlx::pugi::xml_attribute type_attr = node.attribute("type");
-  if (type_attr) {
-    to_type = type_attr.as_string();
-  }
-
-  std::string info_id = "ND_convert_" + from_type + "_" + to_type;
-  return ConvertGenericNode(node, ps, info_id, warn, err);
-}
-
-// Convert geometry nodes (position, normal, tangent, bitangent, texcoord with space param)
-static bool ConvertGeometryNode(const tinyusdz::mtlx::pugi::xml_node &node, PrimSpec &ps,
-                                const std::string &geom_type,
-                                std::string *warn, std::string *err) {
-  tinyusdz::mtlx::pugi::xml_attribute type_attr = node.attribute("type");
-  std::string type_str = type_attr ? type_attr.as_string() : "vector3";
-  std::string info_id = "ND_" + geom_type + "_" + type_str;
-  return ConvertGenericNode(node, ps, info_id, warn, err);
-}
-
-// Convert rotate3d operation
-static bool ConvertRotate3d(const tinyusdz::mtlx::pugi::xml_node &node, PrimSpec &ps,
-                            std::string *warn, std::string *err) {
-  return ConvertGenericNode(node, ps, "ND_rotate3d_vector3", warn, err);
-}
-
-// Convert swizzle operation
-static bool ConvertSwizzle(const tinyusdz::mtlx::pugi::xml_node &node, PrimSpec &ps,
-                           std::string *warn, std::string *err) {
-  tinyusdz::mtlx::pugi::xml_attribute type_attr = node.attribute("type");
-  std::string type_str = type_attr ? type_attr.as_string() : "color3";
-  std::string info_id = "ND_swizzle_" + type_str;
-  return ConvertGenericNode(node, ps, info_id, warn, err);
-}
-
-// Convert conditional nodes (ifgreater, ifless, ifequal, etc.)
-static bool ConvertConditional(const tinyusdz::mtlx::pugi::xml_node &node, PrimSpec &ps,
-                               const std::string &cond_type,
-                               std::string *warn, std::string *err) {
-  tinyusdz::mtlx::pugi::xml_attribute type_attr = node.attribute("type");
-  std::string type_str = type_attr ? type_attr.as_string() : "float";
-  std::string info_id = "ND_" + cond_type + "_" + type_str;
-  return ConvertGenericNode(node, ps, info_id, warn, err);
-}
-
-// Convert smoothstep operation
-static bool ConvertSmoothstep(const tinyusdz::mtlx::pugi::xml_node &node, PrimSpec &ps,
-                              std::string *warn, std::string *err) {
-  tinyusdz::mtlx::pugi::xml_attribute type_attr = node.attribute("type");
-  std::string type_str = type_attr ? type_attr.as_string() : "float";
-  std::string info_id = "ND_smoothstep_" + type_str;
-  return ConvertGenericNode(node, ps, info_id, warn, err);
+static const std::unordered_map<std::string, NodeDispatchEntry> &GetNodeDispatchTable() {
+  static const std::unordered_map<std::string, NodeDispatchEntry> table(
+      std::begin(kNodeDispatchPairs), std::end(kNodeDispatchPairs));
+  return table;
 }
 
 // Helper to convert a single MaterialX node to PrimSpec
 // Returns true if successful (including skip case), false on error
-// Sets is_skip to true if the node should be skipped (input/output/unknown)
+// Sets is_skip to true if the node should be skipped (input/output)
 static bool ConvertSingleNode(const tinyusdz::mtlx::pugi::xml_node &node,
                               PrimSpec &ps, bool &is_skip,
                               const MtlxConfig &config,
@@ -1787,202 +1606,58 @@ static bool ConvertSingleNode(const tinyusdz::mtlx::pugi::xml_node &node,
   is_skip = false;
   std::string node_name = node.name();
 
-  // Convert MaterialX nodes to USD shader nodes
-  if (node_name == "place2d") {
-    if (!ConvertPlace2d(node, ps, warn, err)) {
-      return false;
-    }
-  } else if (node_name == "tiledimage") {
-    if (!ConvertTiledImage(node, ps, warn, err)) {
-      return false;
-    }
-  } else if (node_name == "image") {
-    if (!ConvertImage(node, ps, warn, err)) {
-      return false;
-    }
-  } else if (node_name == "texcoord") {
-    if (!ConvertTexCoord(node, ps, config, warn, err)) {
-      return false;
-    }
-  } else if (node_name == "constant") {
-    if (!ConvertConstant(node, ps, warn, err)) {
-      return false;
-    }
-  } else if (node_name == "multiply") {
-    if (!ConvertMultiply(node, ps, warn, err)) {
-      return false;
-    }
-  } else if (node_name == "add") {
-    if (!ConvertAdd(node, ps, warn, err)) {
-      return false;
-    }
-  } else if (node_name == "subtract") {
-    // Subtract uses same logic as add
-    if (!ConvertAdd(node, ps, warn, err)) {
-      return false;
-    }
-  } else if (node_name == "mix") {
-    if (!ConvertMix(node, ps, warn, err)) {
-      return false;
-    }
-  } else if (node_name == "noise2d" || node_name == "noise3d" ||
-             node_name == "cellnoise2d" || node_name == "cellnoise3d" ||
-             node_name == "worleynoise2d" || node_name == "worleynoise3d" ||
-             node_name == "fractal3d") {
-    if (!ConvertNoise(node, ps, warn, err)) {
-      return false;
-    }
-  //
-  // Binary operations (two inputs: in1, in2)
-  //
-  } else if (node_name == "divide") {
-    if (!ConvertBinaryOp(node, ps, "divide", warn, err)) return false;
-  } else if (node_name == "power") {
-    if (!ConvertBinaryOp(node, ps, "power", warn, err)) return false;
-  } else if (node_name == "min") {
-    if (!ConvertBinaryOp(node, ps, "min", warn, err)) return false;
-  } else if (node_name == "max") {
-    if (!ConvertBinaryOp(node, ps, "max", warn, err)) return false;
-  } else if (node_name == "modulo") {
-    if (!ConvertBinaryOp(node, ps, "modulo", warn, err)) return false;
-  } else if (node_name == "atan2") {
-    if (!ConvertBinaryOp(node, ps, "atan2", warn, err)) return false;
-  } else if (node_name == "dotproduct") {
-    if (!ConvertBinaryOp(node, ps, "dotproduct", warn, err)) return false;
-  } else if (node_name == "crossproduct") {
-    if (!ConvertBinaryOp(node, ps, "crossproduct", warn, err)) return false;
-  //
-  // Unary operations (single input: in)
-  //
-  } else if (node_name == "sqrt") {
-    if (!ConvertUnaryOp(node, ps, "sqrt", warn, err)) return false;
-  } else if (node_name == "absval") {
-    if (!ConvertUnaryOp(node, ps, "absval", warn, err)) return false;
-  } else if (node_name == "sign") {
-    if (!ConvertUnaryOp(node, ps, "sign", warn, err)) return false;
-  } else if (node_name == "floor") {
-    if (!ConvertUnaryOp(node, ps, "floor", warn, err)) return false;
-  } else if (node_name == "ceil") {
-    if (!ConvertUnaryOp(node, ps, "ceil", warn, err)) return false;
-  } else if (node_name == "round") {
-    if (!ConvertUnaryOp(node, ps, "round", warn, err)) return false;
-  } else if (node_name == "sin") {
-    if (!ConvertUnaryOp(node, ps, "sin", warn, err)) return false;
-  } else if (node_name == "cos") {
-    if (!ConvertUnaryOp(node, ps, "cos", warn, err)) return false;
-  } else if (node_name == "tan") {
-    if (!ConvertUnaryOp(node, ps, "tan", warn, err)) return false;
-  } else if (node_name == "asin") {
-    if (!ConvertUnaryOp(node, ps, "asin", warn, err)) return false;
-  } else if (node_name == "acos") {
-    if (!ConvertUnaryOp(node, ps, "acos", warn, err)) return false;
-  } else if (node_name == "atan") {
-    if (!ConvertUnaryOp(node, ps, "atan", warn, err)) return false;
-  } else if (node_name == "exp") {
-    if (!ConvertUnaryOp(node, ps, "exp", warn, err)) return false;
-  } else if (node_name == "ln") {
-    if (!ConvertUnaryOp(node, ps, "ln", warn, err)) return false;
-  } else if (node_name == "log2") {
-    if (!ConvertUnaryOp(node, ps, "log2", warn, err)) return false;
-  } else if (node_name == "normalize") {
-    if (!ConvertUnaryOp(node, ps, "normalize", warn, err)) return false;
-  } else if (node_name == "magnitude") {
-    if (!ConvertUnaryOp(node, ps, "magnitude", warn, err)) return false;
-  } else if (node_name == "luminance") {
-    if (!ConvertUnaryOp(node, ps, "luminance", warn, err)) return false;
-  } else if (node_name == "invert") {
-    if (!ConvertUnaryOp(node, ps, "invert", warn, err)) return false;
-  } else if (node_name == "saturate") {
-    if (!ConvertUnaryOp(node, ps, "saturate", warn, err)) return false;
-  } else if (node_name == "hueshift") {
-    if (!ConvertUnaryOp(node, ps, "hueshift", warn, err)) return false;
-  //
-  // Clamp and remap operations
-  //
-  } else if (node_name == "clamp") {
-    if (!ConvertClamp(node, ps, warn, err)) return false;
-  } else if (node_name == "remap" || node_name == "range") {
-    if (!ConvertRemap(node, ps, warn, err)) return false;
-  } else if (node_name == "smoothstep") {
-    if (!ConvertSmoothstep(node, ps, warn, err)) return false;
-  //
-  // Channel operations (extract, combine)
-  //
-  } else if (node_name == "extract") {
-    if (!ConvertExtract(node, ps, warn, err)) return false;
-  } else if (node_name == "combine2") {
-    if (!ConvertCombine(node, ps, "combine2", warn, err)) return false;
-  } else if (node_name == "combine3") {
-    if (!ConvertCombine(node, ps, "combine3", warn, err)) return false;
-  } else if (node_name == "combine4") {
-    if (!ConvertCombine(node, ps, "combine4", warn, err)) return false;
-  } else if (node_name == "swizzle") {
-    if (!ConvertSwizzle(node, ps, warn, err)) return false;
-  //
-  // Color/HSV operations
-  //
-  } else if (node_name == "hsvadjust") {
-    if (!ConvertHsvAdjust(node, ps, warn, err)) return false;
-  } else if (node_name == "rgbtohsv") {
-    if (!ConvertUnaryOp(node, ps, "rgbtohsv", warn, err)) return false;
-  } else if (node_name == "hsvtorgb") {
-    if (!ConvertUnaryOp(node, ps, "hsvtorgb", warn, err)) return false;
-  //
-  // Type conversion
-  //
-  } else if (node_name == "convert") {
-    if (!ConvertConvert(node, ps, warn, err)) return false;
-  //
-  // Geometry nodes
-  //
-  } else if (node_name == "position") {
-    if (!ConvertGeometryNode(node, ps, "position", warn, err)) return false;
-  } else if (node_name == "normal") {
-    if (!ConvertGeometryNode(node, ps, "normal", warn, err)) return false;
-  } else if (node_name == "tangent") {
-    if (!ConvertGeometryNode(node, ps, "tangent", warn, err)) return false;
-  } else if (node_name == "bitangent") {
-    if (!ConvertGeometryNode(node, ps, "bitangent", warn, err)) return false;
-  } else if (node_name == "geomcolor") {
-    if (!ConvertGeometryNode(node, ps, "geomcolor", warn, err)) return false;
-  } else if (node_name == "geompropvalue") {
-    if (!ConvertGeometryNode(node, ps, "geompropvalue", warn, err)) return false;
-  //
-  // Rotation
-  //
-  } else if (node_name == "rotate3d") {
-    if (!ConvertRotate3d(node, ps, warn, err)) return false;
-  //
-  // Conditional operations
-  //
-  } else if (node_name == "ifgreater") {
-    if (!ConvertConditional(node, ps, "ifgreater", warn, err)) return false;
-  } else if (node_name == "ifgreatereq") {
-    if (!ConvertConditional(node, ps, "ifgreatereq", warn, err)) return false;
-  } else if (node_name == "ifless") {
-    if (!ConvertConditional(node, ps, "ifless", warn, err)) return false;
-  } else if (node_name == "iflesseq") {
-    if (!ConvertConditional(node, ps, "iflesseq", warn, err)) return false;
-  } else if (node_name == "ifequal") {
-    if (!ConvertConditional(node, ps, "ifequal", warn, err)) return false;
-  } else if (node_name == "switch") {
-    if (!ConvertConditional(node, ps, "switch", warn, err)) return false;
-  //
-  // Skip input/output nodes - they are handled separately
-  //
-  } else if (node_name == "input" || node_name == "output") {
+  // Skip input/output nodes — handled separately
+  if (node_name == "input" || node_name == "output") {
     is_skip = true;
     return true;
-  } else {
-    // Unknown node - try generic conversion instead of skipping
-    tinyusdz::mtlx::pugi::xml_attribute type_attr = node.attribute("type");
-    std::string type_str = type_attr ? type_attr.as_string() : "float";
-    std::string info_id = "ND_" + node_name + "_" + type_str;
-    PUSH_WARN(fmt::format("Unknown node type '{}', using generic conversion with info:id='{}'.\n", node_name, info_id));
-    if (!ConvertGenericNode(node, ps, info_id, warn, err)) return false;
   }
 
-  return true;
+  // Special-case nodes with custom conversion logic
+  if (node_name == "place2d") {
+    return ConvertPlace2d(node, ps, warn, err);
+  }
+  if (node_name == "tiledimage" || node_name == "image") {
+    return ConvertTiledImage(node, ps, warn, err);
+  }
+  if (node_name == "texcoord") {
+    return ConvertTexCoord(node, ps, config, warn, err);
+  }
+  if (node_name == "constant") {
+    return ConvertConstant(node, ps, warn, err);
+  }
+
+  // "extract" needs the input "in" type, not the node type
+  if (node_name == "extract") {
+    std::string info_id = "ND_extract_" + GetInputTypeAttr(node, "in", "color3");
+    return ConvertGenericNode(node, ps, info_id, warn, err);
+  }
+
+  // "convert" needs from-type (input "in") and to-type (node type)
+  if (node_name == "convert") {
+    std::string from = GetInputTypeAttr(node, "in", "color3");
+    std::string to = GetNodeTypeAttr(node, "vector3");
+    return ConvertGenericNode(node, ps, "ND_convert_" + from + "_" + to, warn, err);
+  }
+
+  // Table-driven dispatch for all standard nodes
+  const auto &table = GetNodeDispatchTable();
+  auto it = table.find(node_name);
+  if (it != table.end()) {
+    const auto &e = it->second;
+    std::string info_id;
+    if (e.fixed_id) {
+      info_id = e.fixed_id;
+    } else {
+      info_id = "ND_" + std::string(e.op_name) + "_" + GetNodeTypeAttr(node, e.default_type);
+    }
+    return ConvertGenericNode(node, ps, info_id, warn, err);
+  }
+
+  // Unknown node — use generic conversion with warning
+  std::string type_str = GetNodeTypeAttr(node, "float");
+  std::string info_id = "ND_" + node_name + "_" + type_str;
+  PUSH_WARN(fmt::format("Unknown node type '{}', using generic conversion with info:id='{}'.\n", node_name, info_id));
+  return ConvertGenericNode(node, ps, info_id, warn, err);
 }
 
 // Iterative version of ConvertNodeGraph using explicit stack
