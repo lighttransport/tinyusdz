@@ -22,11 +22,10 @@
 /// - UsdTransform2d: 2D transformations
 /// - UsdPrimvarReader_*: Primitive variable readers
 ///
-/// TODO:
-/// - [ ] Consider `interfaceOnly` connection
-/// - [ ] Strict usdShade interpretation https://graphics.pixar.com/usd/release/api/usd_shade_page_front.html
-/// - [ ] MaterialX support (in usdMtlx.hh)
-/// - [ ] NodeGraph support
+/// Notes:
+/// - `interfaceOnly` connections are partially supported (wrapS/wrapT etc.)
+/// - MaterialX support is in usdMtlx.{hh,cc}
+/// - NodeGraph is defined below with child shader management via prim hierarchy
 ///
 #pragma once
 
@@ -58,14 +57,15 @@ constexpr auto kUsdPrimvarReader_matrix = "UsdPrimvarReader_matrix";
 
 constexpr auto kOpenPBRSurface = "OpenPBRSurface";
 
-// TODO: Inherit from Prim?
+// In OpenUSD, UsdShadeShader/Material/NodeGraph inherit from UsdTyped (not Prim).
+// TinyUSDZ uses a separate UsdShadePrim base to hold common fields (name, meta, props).
 struct UsdShadePrim {
   std::string name;
   Specifier spec{Specifier::Def};
 
   int64_t parent_id{-1};
 
-  PrimMeta meta; // TODO: move to private
+  PrimMeta meta;
 
   const PrimMeta &metas() const { return meta; }
   PrimMeta &metas() { return meta; }
@@ -197,13 +197,6 @@ using UsdPrimvarReader_point  = UsdPrimvarReader<value::point3f>;
 // The underlying type is matrix4d
 using UsdPrimvarReader_matrix  = UsdPrimvarReader<value::matrix4d>;
 
-// TODO: Remove
-//using UsdPrimvarReaderType =
-//    tinyusdz::variant<UsdPrimvarReader_float, UsdPrimvarReader_float2,
-//                      UsdPrimvarReader_float3, UsdPrimvarReader_float4,
-//                      UsdPrimvarReader_int>;
-
-
 // UV Set specification for multiple UV coordinate support
 struct UVSetInfo {
   std::string name;  // UV set name (e.g., "st", "st0", "st1", "uv0", "uv1")
@@ -244,7 +237,7 @@ struct UsdUVTexture : ShaderNode {
   TypedAttributeWithFallback<Animatable<Wrap>> wrapS{Wrap::UseMetadata}; // "token inputs:wrapS" interfaceOnly
   TypedAttributeWithFallback<Animatable<Wrap>> wrapT{Wrap::UseMetadata}; // "token inputs:wrapT" interfaceOnly
 
-  TypedAttributeWithFallback<value::color4f> fallback{{0.0f, 0.0f, 0.0f, 1.0f}}; // "inputs:fallback" Fallback value when no texture is connected(TODO: Disallow Relation?(i.e, `fallback.connect = </Path/To/FallbackColor>`)
+  TypedAttributeWithFallback<value::color4f> fallback{{0.0f, 0.0f, 0.0f, 1.0f}}; // "inputs:fallback" Fallback value when no texture is connected
 
   TypedAttributeWithFallback<Animatable<SourceColorSpace>> sourceColorSpace{SourceColorSpace::Auto}; // "token inputs:sourceColorSpace" interfaceOnly
 
@@ -262,8 +255,8 @@ struct UsdUVTexture : ShaderNode {
   TypedTerminalAttribute<float> outputsA; // "float outputs:a"
   TypedTerminalAttribute<value::float3> outputsRGB; // "float outputs:rgb" in schema. Allow color3f as well(please use TypedTerminalAttribute::get_actual_type_name() to get a actual type name in USDA/USDC).
 
-  // TODO: orientation?
-  // https://graphics.pixar.com/usd/docs/UsdPreviewSurface-Proposal.html#UsdPreviewSurfaceProposal-TextureCoordinateOrientationinUSD
+  // Note: Texture coordinate orientation follows USD convention (origin at bottom-left).
+  // See: https://openusd.org/release/spec_usdpreviewsurface.html
 };
 
 // UsdPreviewSurface
@@ -429,16 +422,10 @@ struct Shader : UsdShadePrim {
 
   std::string info_id;  // ShaderNode type.
 
-  // ShaderNode, UsdPreviewSurface, UsdUVTexture, UsdPrimvarReader_float2, ...
-  // TODO: Use ShaderNode *?
+  // Holds the concrete ShaderNode (UsdPreviewSurface, UsdUVTexture,
+  // UsdPrimvarReader_*, OpenPBRSurface, MaterialX nodes, etc.)
+  // stored as value::Value for type-erased polymorphism.
   value::Value value;
-#if 0
-  // Currently we only support PreviewSurface, UVTexture and
-  // PrimvarReader_float2
-  tinyusdz::variant<tinyusdz::monostate, PreviewSurface, UVTexture,
-                    PrimvarReader_float2>
-      value;
-#endif
 
 };
 
@@ -497,8 +484,7 @@ DEFINE_TYPE_TRAIT(MaterialBinding, "MaterialBindingAPI",
 DEFINE_TYPE_TRAIT(MaterialXConfigAPI, kMaterialXConfigAPI,
                   TYPE_ID_MATERIALX_CONFIG_API, 1);
 
-// FIXME: assign unique id
-// Add TypeTraits for SourceColorSpace enum
+// TypeTraits for SourceColorSpace enum
 template <>
 struct TypeTraits<UsdUVTexture::SourceColorSpace> {
   static constexpr uint32_t type_id() {
