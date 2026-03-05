@@ -323,7 +323,9 @@ bool ParseMaterialXValue(const std::string &typeName, const std::string &str,
 
 bool ParseMaterialXValue(const std::string &typeName, const std::string &str,
                          value::Value *value, std::string *err) {
-  (void)value;
+  if (!value) {
+    PUSH_ERROR_AND_RETURN("value is nullptr");
+  }
 
   if (!is_supported_type(typeName)) {
     PUSH_ERROR_AND_RETURN(
@@ -339,32 +341,57 @@ bool ParseMaterialXValue(const std::string &typeName, const std::string &str,
     if (!ParseValue(parser, val, err)) {
       return false;
     }
+    (*value) = val;
   } else if (typeName.compare("boolean") == 0) {
     bool val;
     if (!ParseValue(parser, val, err)) {
       return false;
     }
+    (*value) = val;
+  } else if (typeName.compare("float") == 0) {
+    float val;
+    if (!ParseValue(parser, val, err)) {
+      return false;
+    }
+    (*value) = val;
+  } else if (typeName.compare("string") == 0 || typeName.compare("filename") == 0) {
+    // Strings are already unquoted from XML attribute parsing
+    (*value) = str;
   } else if (typeName.compare("vector2") == 0) {
     value::float2 val;
     if (!ParseValue(parser, val, err)) {
       return false;
     }
+    (*value) = val;
+  } else if (typeName.compare("color3") == 0) {
+    value::color3f val;
+    if (!ParseValue(parser, val, err)) {
+      return false;
+    }
+    (*value) = val;
   } else if (typeName.compare("vector3") == 0) {
     value::float3 val;
     if (!ParseValue(parser, val, err)) {
       return false;
     }
+    (*value) = val;
+  } else if (typeName.compare("color4") == 0) {
+    value::float4 val;
+    if (!ParseValue(parser, val, err)) {
+      return false;
+    }
+    (*value) = val;
   } else if (typeName.compare("vector4") == 0) {
     value::float4 val;
     if (!ParseValue(parser, val, err)) {
       return false;
     }
+    (*value) = val;
   } else {
     PUSH_ERROR_AND_RETURN("TODO: " + typeName);
   }
 
-  // TODO
-  return false;
+  return true;
 }
 
 template <typename T>
@@ -1159,10 +1186,19 @@ static bool ConvertTiledImage(const tinyusdz::mtlx::pugi::xml_node &node, PrimSp
       input_value = value_attr.as_string();
     }
 
+    // Check for per-input colorspace attribute
+    tinyusdz::mtlx::pugi::xml_attribute colorspace_attr = inp.attribute("colorspace");
+    std::string input_colorspace;
+    if (colorspace_attr) {
+      input_colorspace = colorspace_attr.as_string();
+    }
+
     // Map MaterialX inputs to USD inputs
+    std::string prop_key;  // Track which property was set for colorspace propagation
     if (input_name == "file" && input_type == "filename") {
       // Convert filename to asset path
-      ps.props()["inputs:file"] = Property(Attribute::Uniform(value::AssetPath(input_value)));
+      prop_key = "inputs:file";
+      ps.props()[prop_key] = Property(Attribute::Uniform(value::AssetPath(input_value)));
     } else if (input_name == "uvtiling" && input_type == "vector2") {
       value::float2 tiling;
       if (ParseMaterialXValue(input_value, &tiling, err)) {
@@ -1186,6 +1222,14 @@ static bool ConvertTiledImage(const tinyusdz::mtlx::pugi::xml_node &node, PrimSp
         if (ParseMaterialXValue(input_value, &fallback, err)) {
           ps.props()["inputs:fallback"] = Property(Attribute::Uniform(value::color4f{fallback, fallback, fallback, 1.0f}));
         }
+      }
+    }
+
+    // Propagate per-input colorspace to the property's attribute metadata
+    if (!input_colorspace.empty() && !prop_key.empty()) {
+      Attribute *attr_ptr = ps.props()[prop_key].get_attribute_or_null();
+      if (attr_ptr) {
+        attr_ptr->metas().set_colorSpace(input_colorspace);
       }
     }
   }
@@ -1464,6 +1508,13 @@ static bool ParseInputElement(const tinyusdz::mtlx::pugi::xml_node &inp, PrimSpe
 
   std::string prop_name = "inputs:" + input_name;
 
+  // Check for per-input colorspace attribute (MaterialX allows per-input colorspace override)
+  tinyusdz::mtlx::pugi::xml_attribute colorspace_attr = inp.attribute("colorspace");
+  std::string input_colorspace;
+  if (colorspace_attr) {
+    input_colorspace = colorspace_attr.as_string();
+  }
+
   // Check for connection first (nodename or nodegraph)
   tinyusdz::mtlx::pugi::xml_attribute nodename_attr = inp.attribute("nodename");
   tinyusdz::mtlx::pugi::xml_attribute nodegraph_attr = inp.attribute("nodegraph");
@@ -1481,6 +1532,12 @@ static bool ParseInputElement(const tinyusdz::mtlx::pugi::xml_node &inp, PrimSpe
       attr.set_connections({Path(target, "")});
     }
     ps.props()[prop_name] = Property(attr);
+    if (!input_colorspace.empty()) {
+      Attribute *attr_ptr = ps.props()[prop_name].get_attribute_or_null();
+      if (attr_ptr) {
+        attr_ptr->metas().set_colorSpace(input_colorspace);
+      }
+    }
     return true;
   }
 
@@ -1531,6 +1588,19 @@ static bool ParseInputElement(const tinyusdz::mtlx::pugi::xml_node &inp, PrimSpe
     }
   } else if (type_str == "string") {
     ps.props()[prop_name] = Property(Attribute::Uniform(input_value));
+  } else if (type_str == "filename") {
+    ps.props()[prop_name] = Property(Attribute::Uniform(value::AssetPath(input_value)));
+  }
+
+  // Apply per-input colorspace if present
+  if (!input_colorspace.empty()) {
+    auto it = ps.props().find(prop_name);
+    if (it != ps.props().end() && it->second.is_attribute()) {
+      Attribute *attr_ptr = it->second.get_attribute_or_null();
+      if (attr_ptr) {
+        attr_ptr->metas().set_colorSpace(input_colorspace);
+      }
+    }
   }
 
   return true;
@@ -2005,70 +2075,143 @@ static bool ConvertNodeGraphRec(const uint32_t depth,
   return ConvertNodeGraphIterative(node, ps_out, config, warn, err);
 }
 
-#if 0  // TODO
-static bool ConvertPlace2d(const tinyusdz::mtlx::pugi::xml_node &node, UsdTransform2d &tx, std::string *warn, std::string *err) {
-  // texcoord(vector2). default index=0 uv coordinate
-  // pivot(vector2). default (0, 0)
-  // scale(vector2). default (1, 1)
-  // rotate(float). in degrees, Conter-clockwise
-  // offset(vector2)
-  if (tinyusdz::mtlx::pugi::xml_attribute texcoord_attr = node.attribute("texcoord")) {
-    PUSH_WARN("TODO: `texcoord` attribute.\n");
-  }
-
-  if (tinyusdz::mtlx::pugi::xml_attribute pivot_attr = node.attribute("pivot")) {
-    PUSH_WARN("TODO: `pivot` attribute.\n");
-  }
-
-  if (tinyusdz::mtlx::pugi::xml_attribute scale_attr = node.attribute("scale")) {
-    value::float2 value;
-    if (!ParseMaterialXValue(scale_attr.as_string(), &value, err)) {
-      PUSH_ERROR_AND_RETURN("Failed to parse `rotate` attribute of `place2d`.\n");
+// Process <include filename="..."/> elements by reading and merging included files.
+// Replaces each <include .../> with the children of the included document's <materialx> root.
+// @param[in] base_dir Base directory for resolving relative include paths.
+// @param[in,out] xml_str The XML string to process. Modified in-place.
+// @param[out] err Error message.
+// @param[in] max_depth Maximum include recursion depth.
+// @return true on success.
+static bool ProcessIncludes(const std::string &base_dir, std::string &xml_str,
+                            std::string *warn, std::string *err,
+                            uint32_t max_depth = 8) {
+  // Simple iterative approach: find and replace <include filename="..."/> tags
+  // We iterate because included files may themselves contain includes.
+  for (uint32_t depth = 0; depth < max_depth; depth++) {
+    // Find <include
+    size_t pos = xml_str.find("<include");
+    if (pos == std::string::npos) {
+      return true;  // No more includes
     }
-    tx.scale = value;
-  }
 
-  if (tinyusdz::mtlx::pugi::xml_attribute rotate_attr = node.attribute("rotate")) {
-    float value;
-    if (!ParseMaterialXValue(rotate_attr.as_string(), &value, err)) {
-      PUSH_ERROR_AND_RETURN("Failed to parse `rotate` attribute of `place2d`.\n");
+    // Find the closing /> or >
+    size_t end = xml_str.find("/>", pos);
+    size_t end2 = xml_str.find(">", pos);
+    if (end == std::string::npos && end2 == std::string::npos) {
+      PUSH_ERROR_AND_RETURN("Unterminated <include> element");
     }
-    tx.rotation = value;
+
+    size_t tag_end;
+    size_t replace_end;
+    if (end != std::string::npos && (end2 == std::string::npos || end <= end2)) {
+      tag_end = end;
+      replace_end = end + 2; // past "/>"
+    } else {
+      tag_end = end2;
+      replace_end = end2 + 1; // past ">"
+    }
+
+    // Extract the tag content to find filename attribute
+    std::string tag = xml_str.substr(pos, tag_end - pos);
+
+    // Find filename="..." or filename='...'
+    size_t fn_pos = tag.find("filename=");
+    if (fn_pos == std::string::npos) {
+      PUSH_ERROR_AND_RETURN("<include> element missing 'filename' attribute");
+    }
+
+    fn_pos += 9; // past "filename="
+    if (fn_pos >= tag.size()) {
+      PUSH_ERROR_AND_RETURN("<include> element has empty filename");
+    }
+
+    char quote = tag[fn_pos];
+    if (quote != '"' && quote != '\'') {
+      PUSH_ERROR_AND_RETURN("<include> filename must be quoted");
+    }
+
+    size_t fn_start = fn_pos + 1;
+    size_t fn_end_q = tag.find(quote, fn_start);
+    if (fn_end_q == std::string::npos) {
+      PUSH_ERROR_AND_RETURN("<include> filename has unterminated quote");
+    }
+
+    std::string include_filename = tag.substr(fn_start, fn_end_q - fn_start);
+    if (include_filename.empty()) {
+      PUSH_ERROR_AND_RETURN("<include> filename is empty");
+    }
+
+    // Resolve include path relative to base directory
+    std::string include_path;
+    if (include_filename[0] == '/' || include_filename[0] == '\\') {
+      include_path = include_filename; // Absolute path
+    } else {
+      include_path = base_dir;
+      if (!include_path.empty() && include_path.back() != '/' && include_path.back() != '\\') {
+        include_path += '/';
+      }
+      include_path += include_filename;
+    }
+
+    // Read the included file
+    size_t inc_max_bytes = 1024 * 1024 * 16;
+    std::vector<uint8_t> inc_data;
+    if (!io::ReadWholeFile(&inc_data, err, include_path, inc_max_bytes, nullptr)) {
+      PUSH_ERROR_AND_RETURN("Failed to read included file: " + include_path);
+    }
+
+    if (inc_data.empty()) {
+      PushWarn("Included file is empty: " + include_path + "\n")
+      // Just remove the <include> tag
+      xml_str.erase(pos, replace_end - pos);
+      continue;
+    }
+
+    std::string inc_str(reinterpret_cast<const char *>(inc_data.data()), inc_data.size());
+
+    // Extract the content between <materialx ...> and </materialx> from the included file
+    size_t mtlx_start = inc_str.find("<materialx");
+    if (mtlx_start == std::string::npos) {
+      PushWarn("Included file has no <materialx> root: " + include_path + "\n")
+      xml_str.erase(pos, replace_end - pos);
+      continue;
+    }
+
+    // Find the closing > of <materialx ...>
+    size_t mtlx_open_end = inc_str.find(">", mtlx_start);
+    if (mtlx_open_end == std::string::npos) {
+      PUSH_ERROR_AND_RETURN("Unterminated <materialx> in included file: " + include_path);
+    }
+
+    // Check for self-closing <materialx/>
+    if (inc_str[mtlx_open_end - 1] == '/') {
+      // Empty document, just remove the include tag
+      xml_str.erase(pos, replace_end - pos);
+      continue;
+    }
+
+    size_t content_start = mtlx_open_end + 1;
+
+    // Find </materialx>
+    size_t mtlx_close = inc_str.find("</materialx>", content_start);
+    if (mtlx_close == std::string::npos) {
+      PUSH_ERROR_AND_RETURN("Missing </materialx> in included file: " + include_path);
+    }
+
+    // Extract the inner content
+    std::string inner_content = inc_str.substr(content_start, mtlx_close - content_start);
+
+    // Replace the <include .../> tag with the inner content
+    xml_str.replace(pos, replace_end - pos, inner_content);
   }
 
-  tinyusdz::mtlx::pugi::xml_attribute offset_attr = node.attribute("offset");
-  if (offset_attr) {
-    PUSH_WARN("TODO: `offset` attribute.\n");
+  // If we exhausted max_depth, warn about possible circular includes
+  if (xml_str.find("<include") != std::string::npos) {
+    PushWarn("Maximum include depth reached. Possible circular includes.\n")
   }
 
   return true;
 }
-
-static bool ConvertTiledImage(const tinyusdz::mtlx::pugi::xml_node &node, UsdUVTexture &tex, std::string *err) {
-  (void)tex;
-  // file: uniform filename
-  // default: float or colorN or vectorN
-  // texcoord: vector2
-  // uvtiling: vector2(default 1.0, 1.0)
-  // uvoffset: vector2(default 0.0, 0.0)
-  // realworldimagesize: vector2
-  // realworldtilesize: vector2
-  // filtertype: string: "closest", "linear" or "cubic"
-  if (tinyusdz::mtlx::pugi::xml_attribute file_attr = node.attribute("file")) {
-    std::string filename;
-    if (!ParseMaterialXValue(file_attr.as_string(), &filename, err)) {
-      PUSH_ERROR_AND_RETURN("Failed to parse `file` attribute in `tiledimage`.\n");
-    }
-  } else {
-    PUSH_ERROR_AND_RETURN("`file` attribute not found.");
-  }
-
-  // TODO...
-
-  return true;
-
-}
-#endif
 
 }  // namespace detail
 
@@ -2104,6 +2247,14 @@ bool ReadMaterialXFromString(const std::string &str,
     }                                                                    \
     __attr.set_value(v);                                                 \
   } else
+
+  if (!mtlx) {
+    PUSH_ERROR_AND_RETURN("mtlx output pointer is nullptr.");
+  }
+
+  if (str.empty()) {
+    PUSH_ERROR_AND_RETURN("Input MaterialX string is empty.");
+  }
 
   tinyusdz::mtlx::pugi::xml_document doc;
   tinyusdz::mtlx::pugi::xml_parse_result result = doc.load_string(str.c_str());
@@ -2154,7 +2305,7 @@ bool ReadMaterialXFromString(const std::string &str,
     mtlx->cms = cms_attr.as_string();
   }
 
-  tinyusdz::mtlx::pugi::xml_attribute cmsconfig_attr = root.attribute("cms");
+  tinyusdz::mtlx::pugi::xml_attribute cmsconfig_attr = root.attribute("cmsconfig");
   if (cmsconfig_attr) {
     mtlx->cmsconfig = cmsconfig_attr.as_string();
   }
@@ -2814,6 +2965,10 @@ bool ReadMaterialXFromFile(const AssetResolutionResolver &resolver,
                            const std::string &asset_path, MtlxModel *mtlx,
                            std::string *warn, std::string *err,
                            const MtlxConfig &config) {
+  if (!mtlx) {
+    PUSH_ERROR_AND_RETURN("mtlx output pointer is nullptr.");
+  }
+
   std::string filepath = resolver.resolve(asset_path);
   if (filepath.empty()) {
     PUSH_ERROR_AND_RETURN("Asset not found: " + asset_path);
@@ -2825,10 +2980,31 @@ bool ReadMaterialXFromFile(const AssetResolutionResolver &resolver,
   std::vector<uint8_t> data;
   if (!io::ReadWholeFile(&data, err, filepath, max_bytes,
                          /* userdata */ nullptr)) {
-    PUSH_ERROR_AND_RETURN("Read file failed.");
+    PUSH_ERROR_AND_RETURN("Read file failed: " + filepath);
   }
 
-  std::string str(reinterpret_cast<const char *>(&data[0]), data.size());
+  if (data.empty()) {
+    PUSH_ERROR_AND_RETURN("File is empty: " + filepath);
+  }
+
+  std::string str(reinterpret_cast<const char *>(data.data()), data.size());
+
+  // Process <include filename="..."/> elements
+  // Compute base directory from the resolved file path
+  std::string base_dir;
+  {
+    size_t last_sep = filepath.find_last_of("/\\");
+    if (last_sep != std::string::npos) {
+      base_dir = filepath.substr(0, last_sep);
+    } else {
+      base_dir = ".";
+    }
+  }
+
+  if (!detail::ProcessIncludes(base_dir, str, warn, err)) {
+    return false;
+  }
+
   return ReadMaterialXFromString(str, asset_path, mtlx, warn, err, config);
 }
 
@@ -2959,9 +3135,9 @@ bool LoadMaterialXFromAsset(const Asset &asset, const std::string &asset_path,
   (void)asset_path;
   (void)warn;
 
-  if (asset.size() < 32) {
+  if (!asset.data() || asset.size() < 32) {
     if (err) {
-      (*err) += "MateiralX: Asset size too small.\n";
+      (*err) += "MaterialX: Asset data is null or too small.\n";
     }
     return false;
   }
@@ -3130,6 +3306,22 @@ bool ConvertMtlxLightToUsdLux(const MtlxLight &mtlx_light,
 
 namespace tinyusdz {
 
+bool ReadMaterialXFromString(const std::string &str,
+                             const std::string &asset_name, MtlxModel *mtlx,
+                             std::string *warn, std::string *err,
+                             const MtlxConfig &config) {
+  (void)str;
+  (void)asset_name;
+  (void)mtlx;
+  (void)warn;
+  (void)config;
+
+  if (err) {
+    (*err) += "MaterialX support is disabled in this build.\n";
+  }
+  return false;
+}
+
 bool ReadMaterialXFromFile(const AssetResolutionResolver &resolver,
                            const std::string &asset_path, MtlxModel *mtlx,
                            std::string *warn, std::string *err,
@@ -3158,6 +3350,16 @@ bool WriteMaterialXToString(const MtlxModel &mtlx, std::string &xml_str,
   return false;
 }
 
+bool ToPrimSpec(const MtlxModel &model, PrimSpec &ps, std::string *err) {
+  (void)model;
+  (void)ps;
+
+  if (err) {
+    (*err) += "MaterialX support is disabled in this build.\n";
+  }
+  return false;
+}
+
 bool LoadMaterialXFromAsset(const Asset &asset, const std::string &asset_path,
                             PrimSpec &ps /* inout */, std::string *warn,
                             std::string *err) {
@@ -3173,18 +3375,20 @@ bool LoadMaterialXFromAsset(const Asset &asset, const std::string &asset_path,
   return false;
 }
 
-#if 0
-bool ToPrimSpec(const MtlxModel &model, PrimSpec &ps, std::string *err)
-  (void)model;
-  (void)ps;
+bool ConvertMtlxLightToUsdLux(const MtlxLight &mtlx_light,
+                               const std::map<std::string, value::Value> &light_shaders,
+                               value::Value *usd_light,
+                               std::string *warn, std::string *err) {
+  (void)mtlx_light;
+  (void)light_shaders;
+  (void)usd_light;
+  (void)warn;
 
   if (err) {
     (*err) += "MaterialX support is disabled in this build.\n";
   }
   return false;
-
 }
-#endif
 
 }  // namespace tinyusdz
 
