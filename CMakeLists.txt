@@ -568,6 +568,11 @@ set(TINYUSDZ_DEP_SOURCES
     #${PROJECT_SOURCE_DIR}/src/external/pystring.cpp
 )
 
+# MikkTSpace tangent computation (public domain, by Morten S. Mikkelsen)
+if(TINYUSDZ_WITH_TYDRA)
+  list(APPEND TINYUSDZ_DEP_SOURCES ${PROJECT_SOURCE_DIR}/src/external/mikktspace/mikktspace.c)
+endif()
+
 if (TINYUSDZ_WITH_BUILTIN_IMAGE_LOADER)
   list(APPEND TINYUSDZ_DEP_SOURCES  ${PROJECT_SOURCE_DIR}/src/external/fpng.cpp)
   # Disable SSE for a while, since -mpclmul required to use SSE feature of fpng.
