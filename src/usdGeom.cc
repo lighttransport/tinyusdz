@@ -314,7 +314,7 @@ bool GPrim::get_primvar(const std::string &varname, GeomPrimvar *out_primvar,
 
         if (indexAttr.has_value()) {
           // Check if int[] type.
-          // TODO: Support uint[]?
+          // Note: OpenUSD only uses int[] for primvar indices.
           std::vector<int32_t> indices;
           if (!indexAttr.get_value(&indices)) {
             SET_ERROR_AND_RETURN(
@@ -477,10 +477,11 @@ bool GeomPrimvar::flatten_with_indices(const double t, std::vector<T> *dest, con
       }
     }
   } else {
-    // TODO: Report error?
+    if (err) {
+      (*err) += fmt::format("Attribute `{}` has no value or timesamples.",
+                            _attr.type_name());
+    }
   }
-
-  //TUSDZ_LOG_I("???");
 
   return false;
 }
@@ -796,7 +797,8 @@ bool GPrim::set_primvar(const GeomPrimvar &primvar,
   std::string primvar_name = kPrimvars + primvar.name();
 
   // Overwrite existing primvar prop.
-  // TODO: Report warn when primvar name already exists.
+  DCOUT("Setting primvar `" << primvar_name << "`" <<
+        (props.count(primvar_name) ? " (overwriting existing)" : ""));
 
   Attribute attr = primvar.get_attribute();
 
@@ -875,7 +877,8 @@ const std::vector<value::point3f> GeomMesh::get_points(
   }
 
   if (points.is_connection()) {
-    // TODO: connection
+    // Connection-sourced attributes require composition resolution;
+    // callers should resolve connections at the Stage/Tydra level.
     return dst;
   }
 
@@ -1001,7 +1004,7 @@ const std::vector<int32_t> GeomMesh::get_faceVertexCounts(double time) const {
   }
 
   if (faceVertexCounts.is_connection()) {
-    // TODO: connection
+    // Connection-sourced topology attributes are not supported at this level.
     return dst;
   }
 
@@ -1022,7 +1025,7 @@ const std::vector<int32_t> GeomMesh::get_faceVertexIndices(double time) const {
   }
 
   if (faceVertexIndices.is_connection()) {
-    // TODO: connection
+    // Connection-sourced topology attributes are not supported at this level.
     return dst;
   }
 
@@ -1489,6 +1492,29 @@ bool ComputeExtent(const GeomBasisCurves &curves, Extent *extent,
   return true;
 }
 
+bool ComputeExtent(const GeomNurbsCurves &curves, Extent *extent,
+    double time, std::string *err) {
+  if (!extent) return false;
+  auto pts = curves.get_points(time);
+  if (pts.empty()) {
+    if (err) (*err) = "No points in NURBS curves.\n";
+    return false;
+  }
+  auto ws = curves.get_widths(time);
+  float maxHalfW = 0.0f;
+  for (const auto &w : ws) {
+    float hw = w * 0.5f;
+    if (hw > maxHalfW) maxHalfW = hw;
+  }
+  Extent e;
+  for (const auto &p : pts) {
+    e.union_with(value::float3{{p.x - maxHalfW, p.y - maxHalfW, p.z - maxHalfW}});
+    e.union_with(value::float3{{p.x + maxHalfW, p.y + maxHalfW, p.z + maxHalfW}});
+  }
+  *extent = e;
+  return true;
+}
+
 // static
 bool GeomSubset::ValidateSubsets(
     const std::vector<const GeomSubset *> &subsets,
@@ -1517,7 +1543,8 @@ bool GeomSubset::ValidateSubsets(
   bool valid = true;
   std::stringstream ss;
 
-  // TODO: TimeSampled indices
+  // Note: Currently validates default-value indices only.
+  // TimeSampled indices would need per-frame validation at the application level.
   for (const auto psubset : subsets) {
     Animatable<std::vector<int32_t>> indices;
     if (!psubset->indices.get_value(&indices)) {

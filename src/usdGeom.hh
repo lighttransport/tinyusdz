@@ -17,8 +17,6 @@
 /// - Mesh, Cube, Sphere, etc.: Specific geometry types
 /// - Xform: Transformation primitive
 ///
-/// TODO:
-/// - [ ] Replace nonstd::optional<T> member to RelationshipProperty or TypedAttribute***<T>
 ///
 #pragma once
 
@@ -189,8 +187,7 @@ class GeomPrimvar {
   bool flatten_with_indices(double t, std::vector<T> *dst, value::TimeSampleInterpolationType tinerp = value::TimeSampleInterpolationType::Linear, std::string *err = nullptr) const;
 
 
-  // Generic Value version.
-  // TODO: return Attribute?
+  // Generic Value version (returns flattened value::Value, not raw Attribute).
   bool flatten_with_indices(value::Value *dst, std::string *err = nullptr) const;
   bool flatten_with_indices(double t, value::Value *dst, value::TimeSampleInterpolationType tinterp = value::TimeSampleInterpolationType::Linear, std::string *err = nullptr) const;
 
@@ -352,7 +349,9 @@ class GeomPrimvar {
 // Geometric Prim. Encapsulates Imagable + Boundable in pxrUSD schema.
 // <pxrUSD>/pxr/usd/usdGeom/schema.udsa
 //
-// TODO: inherit UsdShagePrim?
+// Note: In OpenUSD, UsdGeomGprim inherits UsdGeomBoundable -> UsdGeomImageable
+// -> UsdTyped. It does NOT inherit from UsdShadePrim; shading is accessed via
+// MaterialBinding API schema (which TinyUSDZ already mixes in).
 
 struct GPrim : Xformable, MaterialBinding, Collection {
   std::string name;
@@ -705,10 +704,10 @@ struct GeomMesh : GPrim {
   TypedAttribute<std::vector<value::token>> blendShapes; // uniform token[] skel:blendShapes
   nonstd::optional<Relationship> blendShapeTargets; // rel skel:blendShapeTargets (Path[])
 
-  //
-  // TODO: Make these primvars first citizen?
-  // - int[] primvars:skel:jointIndices
-  // - float[] primvars:skel:jointWeights
+  // Note: In OpenUSD, skel:jointIndices and skel:jointWeights are primvars
+  // accessed via UsdGeomPrimvarsAPI (a NonAppliedAPI schema), not first-class
+  // struct members. TinyUSDZ follows the same approach: these are stored in
+  // the `props` map and accessed via get_primvar()/GeomPrimvar.
 
 
   ///
@@ -998,9 +997,12 @@ struct GeomPoints : public GPrim {
       double time = value::TimeCode::Default()) const;
 };
 
-//
-// Point instancer(TODO).
-//
+// Point instancer.
+// In OpenUSD, UsdGeomPointInstancer provides ComputeExtentAtTime() which
+// evaluates instance transforms at a given time and computes a union of
+// transformed prototype extents. TinyUSDZ stores the raw attributes;
+// extent computation requires resolving prototype prims and is handled
+// at the Tydra/application level.
 struct GeomPointInstancer : public GPrim {
   nonstd::optional<Relationship> prototypes;  // rel prototypes
 
@@ -1050,6 +1052,9 @@ bool ComputeExtent(const GeomCapsule &capsule, Extent *extent,
     double time = value::TimeCode::Default(), std::string *err = nullptr);
 
 bool ComputeExtent(const GeomBasisCurves &curves, Extent *extent,
+    double time = value::TimeCode::Default(), std::string *err = nullptr);
+
+bool ComputeExtent(const GeomNurbsCurves &curves, Extent *extent,
     double time = value::TimeCode::Default(), std::string *err = nullptr);
 
 // import DEFINE_TYPE_TRAIT and DEFINE_ROLE_TYPE_TRAIT
