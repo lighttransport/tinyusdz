@@ -2683,6 +2683,71 @@ bool GetGeomPrimvar(const Stage &stage, const GPrim *gprim,
   return true;
 }
 
+bool FindPrimvarWithInheritance(const Stage &stage, const Path &prim_path,
+    const std::string &primvar_name, GeomPrimvar *out,
+    std::string *err) {
+  if (!out) {
+    if (err) (*err) = "Output GeomPrimvar is nullptr.\n";
+    return false;
+  }
+
+  if (!prim_path.is_valid() || !prim_path.is_absolute_path()) {
+    if (err) (*err) = "Input path must be a valid absolute path.\n";
+    return false;
+  }
+
+  Path current = prim_path;
+
+  while (true) {
+    auto ret = stage.GetPrimAtPath(current);
+    if (!ret) {
+      break;
+    }
+
+    const Prim *prim = ret.value();
+    const GPrim *gprim = nullptr;
+
+    // Try to get GPrim from prim. Use value::TypeTraits approach.
+    // GPrim is the base for geometry types, so we need to check the actual type.
+    if (auto p = prim->as<GeomMesh>()) {
+      gprim = p;
+    } else if (auto p2 = prim->as<GeomPoints>()) {
+      gprim = p2;
+    } else if (auto p3 = prim->as<GeomBasisCurves>()) {
+      gprim = p3;
+    } else if (auto p4 = prim->as<GeomNurbsCurves>()) {
+      gprim = p4;
+    } else if (auto p5 = prim->as<GeomSphere>()) {
+      gprim = p5;
+    } else if (auto p6 = prim->as<GeomCube>()) {
+      gprim = p6;
+    } else if (auto p7 = prim->as<GeomCone>()) {
+      gprim = p7;
+    } else if (auto p8 = prim->as<GeomCylinder>()) {
+      gprim = p8;
+    } else if (auto p9 = prim->as<GeomCapsule>()) {
+      gprim = p9;
+    } else if (auto p10 = prim->as<Xform>()) {
+      gprim = p10;
+    }
+
+    if (gprim) {
+      GeomPrimvar primvar;
+      if (GetGeomPrimvar(stage, gprim, primvar_name, &primvar)) {
+        *out = primvar;
+        return true;
+      }
+    }
+
+    if (current.is_root_prim() || current.is_root_path()) {
+      break;
+    }
+    current = current.get_parent_prim_path();
+  }
+
+  return false;
+}
+
 namespace {
 
 //
@@ -3099,6 +3164,250 @@ std::map<std::string, int> BuildSkelNameToIndexMap(const SkelHierarchy &skel) {
   BuildSkelNameToIndexMapIterative(skel.root_node, m);
 
   return m;
+}
+
+//
+// Skeletal mesh extent computation
+//
+
+bool ComputeJointsExtent(
+    const std::vector<value::matrix4d> &jointXforms,
+    Extent *extent,
+    float padding,
+    const value::matrix4d *rootXform) {
+
+  if (!extent) {
+    return false;
+  }
+
+  if (jointXforms.empty()) {
+    return false;
+  }
+
+  Extent e;  // initialized to +inf/-inf
+
+  for (const auto &xf : jointXforms) {
+    // Extract translation (pivot) from joint transform.
+    // Row-major layout: translation is in row 3.
+    value::float3 pivot;
+    pivot[0] = float(xf.m[3][0]);
+    pivot[1] = float(xf.m[3][1]);
+    pivot[2] = float(xf.m[3][2]);
+
+    if (rootXform) {
+      // Transform pivot through rootXform: pivot * rootXform
+      double px = double(pivot[0]);
+      double py = double(pivot[1]);
+      double pz = double(pivot[2]);
+
+      double rx = px * rootXform->m[0][0] + py * rootXform->m[1][0] + pz * rootXform->m[2][0] + rootXform->m[3][0];
+      double ry = px * rootXform->m[0][1] + py * rootXform->m[1][1] + pz * rootXform->m[2][1] + rootXform->m[3][1];
+      double rz = px * rootXform->m[0][2] + py * rootXform->m[1][2] + pz * rootXform->m[2][2] + rootXform->m[3][2];
+      double rw = px * rootXform->m[0][3] + py * rootXform->m[1][3] + pz * rootXform->m[2][3] + rootXform->m[3][3];
+
+      if (std::abs(rw) > 1e-10) {
+        rx /= rw;
+        ry /= rw;
+        rz /= rw;
+      }
+
+      pivot[0] = float(rx);
+      pivot[1] = float(ry);
+      pivot[2] = float(rz);
+    }
+
+    e.union_with(pivot);
+  }
+
+  if (padding > 0.0f) {
+    e.lower[0] -= padding;
+    e.lower[1] -= padding;
+    e.lower[2] -= padding;
+    e.upper[0] += padding;
+    e.upper[1] += padding;
+    e.upper[2] += padding;
+  }
+
+  *extent = e;
+  return true;
+}
+
+float ComputeSkinnedExtentPadding(
+    const std::vector<value::matrix4d> &restJointXforms,
+    const Extent &meshRestExtent,
+    const value::matrix4d &geomBindTransform) {
+
+  if (restJointXforms.empty() || !meshRestExtent.is_valid()) {
+    return 0.0f;
+  }
+
+  // Compute pivot extent from rest-pose joints
+  Extent jointExtent;
+  if (!ComputeJointsExtent(restJointXforms, &jointExtent)) {
+    return 0.0f;
+  }
+
+  // Transform mesh rest extent corners by geomBindTransform
+  // We need the 8 corners of the AABB transformed, then compute the new AABB
+  const value::float3 &lo = meshRestExtent.lower;
+  const value::float3 &hi = meshRestExtent.upper;
+
+  Extent transformedMeshExtent;
+
+  for (int i = 0; i < 8; i++) {
+    float cx = (i & 1) ? hi[0] : lo[0];
+    float cy = (i & 2) ? hi[1] : lo[1];
+    float cz = (i & 4) ? hi[2] : lo[2];
+
+    double px = double(cx);
+    double py = double(cy);
+    double pz = double(cz);
+
+    // point * matrix (row-major, row-vector convention)
+    double rx = px * geomBindTransform.m[0][0] + py * geomBindTransform.m[1][0] + pz * geomBindTransform.m[2][0] + geomBindTransform.m[3][0];
+    double ry = px * geomBindTransform.m[0][1] + py * geomBindTransform.m[1][1] + pz * geomBindTransform.m[2][1] + geomBindTransform.m[3][1];
+    double rz = px * geomBindTransform.m[0][2] + py * geomBindTransform.m[1][2] + pz * geomBindTransform.m[2][2] + geomBindTransform.m[3][2];
+    double rw = px * geomBindTransform.m[0][3] + py * geomBindTransform.m[1][3] + pz * geomBindTransform.m[2][3] + geomBindTransform.m[3][3];
+
+    if (std::abs(rw) > 1e-10) {
+      rx /= rw;
+      ry /= rw;
+      rz /= rw;
+    }
+
+    value::float3 tp;
+    tp[0] = float(rx);
+    tp[1] = float(ry);
+    tp[2] = float(rz);
+    transformedMeshExtent.union_with(tp);
+  }
+
+  // Padding = max distance that the mesh extent exceeds the joint extent
+  // on any axis in any direction
+  float padding = 0.0f;
+
+  for (size_t i = 0; i < 3; i++) {
+    float diffLo = jointExtent.lower[i] - transformedMeshExtent.lower[i];
+    float diffHi = transformedMeshExtent.upper[i] - jointExtent.upper[i];
+
+    padding = (std::max)(padding, (std::max)(diffLo, 0.0f));
+    padding = (std::max)(padding, (std::max)(diffHi, 0.0f));
+  }
+
+  return padding;
+}
+
+bool SkinPointsLBS(
+    const std::vector<value::point3f> &restPoints,
+    const value::matrix4d &geomBindTransform,
+    const std::vector<value::matrix4d> &jointXforms,
+    const std::vector<int> &jointIndices,
+    const std::vector<float> &jointWeights,
+    int numInfluencesPerPoint,
+    std::vector<value::point3f> *skinnedPoints,
+    std::string *err) {
+
+  if (!skinnedPoints) {
+    if (err) { *err = "skinnedPoints is null."; }
+    return false;
+  }
+
+  if (numInfluencesPerPoint < 1) {
+    if (err) { *err = "numInfluencesPerPoint must be >= 1."; }
+    return false;
+  }
+
+  size_t numPoints = restPoints.size();
+  size_t expectedSize = numPoints * size_t(numInfluencesPerPoint);
+
+  if (jointIndices.size() != expectedSize) {
+    if (err) {
+      *err = "jointIndices size mismatch: expected " +
+             std::to_string(expectedSize) + ", got " +
+             std::to_string(jointIndices.size()) + ".";
+    }
+    return false;
+  }
+
+  if (jointWeights.size() != expectedSize) {
+    if (err) {
+      *err = "jointWeights size mismatch: expected " +
+             std::to_string(expectedSize) + ", got " +
+             std::to_string(jointWeights.size()) + ".";
+    }
+    return false;
+  }
+
+  int numJoints = int(jointXforms.size());
+
+  skinnedPoints->resize(numPoints);
+
+  for (size_t pi = 0; pi < numPoints; pi++) {
+    // Transform rest point into skeleton space via geomBindTransform
+    const value::point3f &rp = restPoints[pi];
+    double px = double(rp.x);
+    double py = double(rp.y);
+    double pz = double(rp.z);
+
+    double sx = px * geomBindTransform.m[0][0] + py * geomBindTransform.m[1][0] + pz * geomBindTransform.m[2][0] + geomBindTransform.m[3][0];
+    double sy = px * geomBindTransform.m[0][1] + py * geomBindTransform.m[1][1] + pz * geomBindTransform.m[2][1] + geomBindTransform.m[3][1];
+    double sz = px * geomBindTransform.m[0][2] + py * geomBindTransform.m[1][2] + pz * geomBindTransform.m[2][2] + geomBindTransform.m[3][2];
+    double sw = px * geomBindTransform.m[0][3] + py * geomBindTransform.m[1][3] + pz * geomBindTransform.m[2][3] + geomBindTransform.m[3][3];
+
+    if (std::abs(sw) > 1e-10) {
+      sx /= sw;
+      sy /= sw;
+      sz /= sw;
+    }
+
+    // Accumulate weighted joint transforms
+    double outx = 0.0, outy = 0.0, outz = 0.0;
+
+    size_t base = pi * size_t(numInfluencesPerPoint);
+    for (int ji = 0; ji < numInfluencesPerPoint; ji++) {
+      int idx = jointIndices[base + size_t(ji)];
+      float w = jointWeights[base + size_t(ji)];
+
+      if (w == 0.0f || idx < 0 || idx >= numJoints) {
+        continue;
+      }
+
+      const value::matrix4d &jx = jointXforms[size_t(idx)];
+
+      // skelPoint * jointXform
+      double tx = sx * jx.m[0][0] + sy * jx.m[1][0] + sz * jx.m[2][0] + jx.m[3][0];
+      double ty = sx * jx.m[0][1] + sy * jx.m[1][1] + sz * jx.m[2][1] + jx.m[3][1];
+      double tz = sx * jx.m[0][2] + sy * jx.m[1][2] + sz * jx.m[2][2] + jx.m[3][2];
+
+      outx += double(w) * tx;
+      outy += double(w) * ty;
+      outz += double(w) * tz;
+    }
+
+    (*skinnedPoints)[pi].x = float(outx);
+    (*skinnedPoints)[pi].y = float(outy);
+    (*skinnedPoints)[pi].z = float(outz);
+  }
+
+  return true;
+}
+
+bool ComputeSkinnedMeshExtent(
+    const std::vector<value::matrix4d> &jointXforms,
+    const std::vector<value::matrix4d> &restJointXforms,
+    const Extent &meshRestExtent,
+    const value::matrix4d &geomBindTransform,
+    Extent *extent,
+    const value::matrix4d *rootXform) {
+
+  if (!extent) {
+    return false;
+  }
+
+  float padding = ComputeSkinnedExtentPadding(
+      restJointXforms, meshRestExtent, geomBindTransform);
+
+  return ComputeJointsExtent(jointXforms, extent, padding, rootXform);
 }
 
 }  // namespace tydra
