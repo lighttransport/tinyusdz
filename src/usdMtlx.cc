@@ -1093,6 +1093,13 @@ static bool SerializeNodeGraphs(const std::map<std::string, PrimSpec> &nodegraph
 // Used for importing Blender MaterialX NodeGraphs.
 // ============================================================================
 
+// Initialize a PrimSpec as a Shader with the given info:id
+static void InitializeShader(PrimSpec &ps, const std::string &info_id) {
+  ps.specifier() = Specifier::Def;
+  ps.typeName() = kShader;
+  ps.props()[kShaderInfoId] = Property(Attribute::Uniform(value::token(info_id)));
+}
+
 static bool ConvertPlace2d(const tinyusdz::mtlx::pugi::xml_node &node, PrimSpec &ps,
                            std::string *warn, std::string *err) {
   // texcoord(vector2). default index=0 uv coordinate
@@ -1146,10 +1153,7 @@ static bool ConvertPlace2d(const tinyusdz::mtlx::pugi::xml_node &node, PrimSpec 
     ps.props()["inputs:translation"] = Property(Attribute::Uniform(value));
   }
 
-  ps.specifier() = Specifier::Def;
-  ps.typeName() = kShader;
-  ps.props()[kShaderInfoId] =
-      Property(Attribute::Uniform(value::token(kUsdTransform2d)));
+  InitializeShader(ps, kUsdTransform2d);
 
   return true;
 }
@@ -1234,9 +1238,7 @@ static bool ConvertTiledImage(const tinyusdz::mtlx::pugi::xml_node &node, PrimSp
     }
   }
 
-  ps.specifier() = Specifier::Def;
-  ps.typeName() = kShader;
-  ps.props()[kShaderInfoId] = Property(Attribute::Uniform(value::token(kUsdUVTexture)));
+  InitializeShader(ps, kUsdUVTexture);
 
   return true;
 }
@@ -1279,65 +1281,13 @@ static bool ConvertTexCoord(const tinyusdz::mtlx::pugi::xml_node &node, PrimSpec
   // Set fallback to (0, 0)
   ps.props()["inputs:fallback"] = Property(Attribute::Uniform(value::float2{0.0f, 0.0f}));
 
-  ps.specifier() = Specifier::Def;
-  ps.typeName() = kShader;
-  ps.props()[kShaderInfoId] = Property(Attribute::Uniform(value::token(kUsdPrimvarReader_float2)));
+  InitializeShader(ps, kUsdPrimvarReader_float2);
 
   return true;
 }
 
-// Convert MaterialX constant node - stores a constant value
-static bool ConvertConstant(const tinyusdz::mtlx::pugi::xml_node &node, PrimSpec &ps,
-                            std::string *warn, std::string *err) {
-  (void)warn;
-
-  tinyusdz::mtlx::pugi::xml_attribute name_attr = node.attribute("name");
-  if (name_attr) {
-    ps.name() = name_attr.as_string();
-  }
-
-  // Get the type attribute to determine what kind of constant
-  tinyusdz::mtlx::pugi::xml_attribute type_attr = node.attribute("type");
-  std::string node_type = type_attr ? type_attr.as_string() : "float";
-
-  // Parse value from input child or value attribute
-  for (auto inp : node.children("input")) {
-    tinyusdz::mtlx::pugi::xml_attribute inp_name_attr = inp.attribute("name");
-    if (!inp_name_attr || std::string(inp_name_attr.as_string()) != "value") continue;
-
-    tinyusdz::mtlx::pugi::xml_attribute value_attr = inp.attribute("value");
-    if (!value_attr) continue;
-
-    std::string value_str = value_attr.as_string();
-
-    if (node_type == "float") {
-      float val;
-      if (ParseMaterialXValue(value_str, &val, err)) {
-        ps.props()["inputs:value"] = Property(Attribute::Uniform(val));
-      }
-    } else if (node_type == "color3") {
-      value::color3f val;
-      if (ParseMaterialXValue(value_str, &val, err)) {
-        ps.props()["inputs:value"] = Property(Attribute::Uniform(val));
-      }
-    } else if (node_type == "vector3") {
-      value::float3 val;
-      if (ParseMaterialXValue(value_str, &val, err)) {
-        ps.props()["inputs:value"] = Property(Attribute::Uniform(val));
-      }
-    }
-  }
-
-  ps.specifier() = Specifier::Def;
-  ps.typeName() = kShader;
-  // Use a generic shader ID for constant nodes
-  ps.props()[kShaderInfoId] = Property(Attribute::Uniform(value::token("MaterialXConstant")));
-
-  return true;
-}
-
-// ConvertMultiply/ConvertAdd/ConvertMix/ConvertNoise are now handled by
-// ConvertGenericNode via the dispatch table in ConvertSingleNode.
+// ConvertConstant/ConvertMultiply/ConvertAdd/ConvertMix/ConvertNoise are now
+// handled by ConvertGenericNode via the dispatch table in ConvertSingleNode.
 
 // ============================================================================
 // Generic Node Converters
@@ -1471,9 +1421,7 @@ static bool ConvertGenericNode(const tinyusdz::mtlx::pugi::xml_node &node, PrimS
     }
   }
 
-  ps.specifier() = Specifier::Def;
-  ps.typeName() = kShader;
-  ps.props()[kShaderInfoId] = Property(Attribute::Uniform(value::token(info_id)));
+  InitializeShader(ps, info_id);
 
   return true;
 }
@@ -1588,6 +1536,8 @@ static const std::pair<const char*, NodeDispatchEntry> kNodeDispatchPairs[] = {
   {"iflesseq",    {"iflesseq",    "float", nullptr}},
   {"ifequal",     {"ifequal",     "float", nullptr}},
   {"switch",      {"switch",      "float", nullptr}},
+  // Constant node
+  {"constant",    {nullptr, nullptr, "MaterialXConstant"}},
 };
 
 static const std::unordered_map<std::string, NodeDispatchEntry> &GetNodeDispatchTable() {
@@ -1622,10 +1572,6 @@ static bool ConvertSingleNode(const tinyusdz::mtlx::pugi::xml_node &node,
   if (node_name == "texcoord") {
     return ConvertTexCoord(node, ps, config, warn, err);
   }
-  if (node_name == "constant") {
-    return ConvertConstant(node, ps, warn, err);
-  }
-
   // "extract" needs the input "in" type, not the node type
   if (node_name == "extract") {
     std::string info_id = "ND_extract_" + GetInputTypeAttr(node, "in", "color3");
