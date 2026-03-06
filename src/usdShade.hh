@@ -503,127 +503,65 @@ struct TypeTraits<UsdUVTexture::SourceColorSpace> {
 
 }  // namespace value
 
-// Provide inline implementations for UsdUVTexture enum types
-// These enum types require special handling and cannot use extern templates
+// Provide inline implementations for UsdUVTexture enum types.
+// These enum types require special handling and cannot use extern templates.
+// The held-interpolation logic is identical for all enum TimeSamples types,
+// so we share it via a helper and generate the thin specializations below.
 
-// Implementation for UsdUVTexture::SourceColorSpace
+namespace detail {
+
+template <typename EnumT>
+inline bool GetHeldEnumTimeSample(const TypedTimeSamples<EnumT> &ts,
+                                  EnumT *dst, double t) {
+  if (!dst) return false;
+  if (ts.empty()) return false;
+
+#ifndef TINYUSDZ_USE_TIMESAMPLES_SOA
+  const auto &samples = ts.get_samples();
+  if (value::TimeCode(t).is_default() || samples.size() == 1) {
+    (*dst) = samples[0].value;
+    return true;
+  }
+  auto it = std::upper_bound(
+    samples.begin(), samples.end(), t,
+    [](double tval, const typename TypedTimeSamples<EnumT>::Sample &a) { return tval < a.t; });
+  const auto it_minus_1 = (it == samples.begin()) ? samples.begin() : (it - 1);
+  (*dst) = it_minus_1->value;
+  return true;
+#else
+  const auto &times = ts.get_times();
+  const auto &values = ts.get_values();
+  if (value::TimeCode(t).is_default() || times.size() == 1) {
+    (*dst) = values[0];
+    return true;
+  }
+  auto it = std::upper_bound(times.begin(), times.end(), t);
+  size_t idx = (it == times.begin()) ? 0 : static_cast<size_t>(std::distance(times.begin(), it) - 1);
+  (*dst) = values[idx];
+  return true;
+#endif
+}
+
+}  // namespace detail
+
 template<>
 template<>
 inline bool TypedTimeSamples<UsdUVTexture::SourceColorSpace>::get<UsdUVTexture::SourceColorSpace>(
     UsdUVTexture::SourceColorSpace *dst, double t,
     value::TimeSampleInterpolationType interp) const {
-
-  (void)interp;  // Enums are not interpolatable
-
-  if (!dst) {
-    return false;
-  }
-
-  if (empty()) {
-    return false;
-  }
-
-  if (_dirty) {
-    update();
-  }
-
-#ifndef TINYUSDZ_USE_TIMESAMPLES_SOA
-  // AoS layout
-  if (value::TimeCode(t).is_default()) {
-    (*dst) = _samples[0].value;
-    return true;
-  } else {
-    if (_samples.size() == 1) {
-      (*dst) = _samples[0].value;
-      return true;
-    }
-
-    // Held = nearest preceding value for a given time
-    auto it = std::upper_bound(
-      _samples.begin(), _samples.end(), t,
-      [](double tval, const Sample &a) { return tval < a.t; });
-
-    const auto it_minus_1 = (it == _samples.begin()) ? _samples.begin() : (it - 1);
-    (*dst) = it_minus_1->value;
-    return true;
-  }
-#else
-  // SoA layout
-  if (value::TimeCode(t).is_default()) {
-    (*dst) = _values[0];
-    return true;
-  } else {
-    if (_times.size() == 1) {
-      (*dst) = _values[0];
-      return true;
-    }
-
-    auto it = std::upper_bound(_times.begin(), _times.end(), t);
-    size_t idx = (it == _times.begin()) ? 0 : static_cast<size_t>(std::distance(_times.begin(), it) - 1);
-    (*dst) = _values[idx];
-    return true;
-  }
-#endif
+  (void)interp;
+  if (_dirty) update();
+  return detail::GetHeldEnumTimeSample(*this, dst, t);
 }
 
-// Implementation for UsdUVTexture::Wrap
 template<>
 template<>
 inline bool TypedTimeSamples<UsdUVTexture::Wrap>::get<UsdUVTexture::Wrap>(
     UsdUVTexture::Wrap *dst, double t,
     value::TimeSampleInterpolationType interp) const {
-
-  (void)interp;  // Enums are not interpolatable
-
-  if (!dst) {
-    return false;
-  }
-
-  if (empty()) {
-    return false;
-  }
-
-  if (_dirty) {
-    update();
-  }
-
-#ifndef TINYUSDZ_USE_TIMESAMPLES_SOA
-  // AoS layout
-  if (value::TimeCode(t).is_default()) {
-    (*dst) = _samples[0].value;
-    return true;
-  } else {
-    if (_samples.size() == 1) {
-      (*dst) = _samples[0].value;
-      return true;
-    }
-
-    // Held = nearest preceding value for a given time
-    auto it = std::upper_bound(
-      _samples.begin(), _samples.end(), t,
-      [](double tval, const Sample &a) { return tval < a.t; });
-
-    const auto it_minus_1 = (it == _samples.begin()) ? _samples.begin() : (it - 1);
-    (*dst) = it_minus_1->value;
-    return true;
-  }
-#else
-  // SoA layout
-  if (value::TimeCode(t).is_default()) {
-    (*dst) = _values[0];
-    return true;
-  } else {
-    if (_times.size() == 1) {
-      (*dst) = _values[0];
-      return true;
-    }
-
-    auto it = std::upper_bound(_times.begin(), _times.end(), t);
-    size_t idx = (it == _times.begin()) ? 0 : static_cast<size_t>(std::distance(_times.begin(), it) - 1);
-    (*dst) = _values[idx];
-    return true;
-  }
-#endif
+  (void)interp;
+  if (_dirty) update();
+  return detail::GetHeldEnumTimeSample(*this, dst, t);
 }
 
 }  // namespace tinyusdz
