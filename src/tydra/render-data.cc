@@ -3211,17 +3211,21 @@ bool RenderSceneConverter::BuildVertexIndicesImpl(RenderMesh &mesh, uint32_t max
   size_t num_verts = mesh.points.size();
   size_t num_fvs = fvIndices.size();
 
-  if (mesh.normals.vertex_count()) {
-    if (!mesh.normals.is_facevarying()) {
-      PUSH_ERROR_AND_RETURN(
-          "Internal error. normals must be 'facevarying' variability.");
-    }
-    if (mesh.normals.vertex_count() != num_fvs) {
-      PUSH_ERROR_AND_RETURN(
-          "Internal error. The number of normal items does not match with "
-          "the number of facevarying items.");
-    }
+  // Validate that a vertex attribute is facevarying with the expected count.
+#define VALIDATE_FACEVARYING_ATTR(attr, name) \
+  if (attr.vertex_count()) { \
+    if (!attr.is_facevarying()) { \
+      PUSH_ERROR_AND_RETURN( \
+          "Internal error. " name " must be 'facevarying' variability."); \
+    } \
+    if (attr.vertex_count() != num_fvs) { \
+      PUSH_ERROR_AND_RETURN( \
+          "Internal error. The number of " name " items does not match " \
+          "with the number of facevarying items."); \
+    } \
   }
+
+  VALIDATE_FACEVARYING_ATTR(mesh.normals, "normals")
 
   const value::float2 *texcoord0_ptr = nullptr;
   const value::float2 *texcoord1_ptr = nullptr;
@@ -3254,60 +3258,21 @@ bool RenderSceneConverter::BuildVertexIndicesImpl(RenderMesh &mesh, uint32_t max
   const value::float3 *binormals_ptr = nullptr;
 
   if (texcoord0_ptr) {
+    VALIDATE_FACEVARYING_ATTR(mesh.tangents, "tangents")
     if (mesh.tangents.vertex_count()) {
-      if (!mesh.tangents.is_facevarying()) {
-        PUSH_ERROR_AND_RETURN(
-            "Internal error. tangents must be 'facevarying' variability.");
-      }
-      if (mesh.tangents.vertex_count() != num_fvs) {
-        PUSH_ERROR_AND_RETURN(
-            "Internal error. The number of tangents items does not match "
-            "with the number of facevarying items.");
-      }
-
       tangents_ptr = reinterpret_cast<const value::float3 *>(
           mesh.tangents.get_data().data());
     }
 
+    VALIDATE_FACEVARYING_ATTR(mesh.binormals, "binormals")
     if (mesh.binormals.vertex_count()) {
-      if (!mesh.binormals.is_facevarying()) {
-        PUSH_ERROR_AND_RETURN(
-            "Internal error. binormals must be 'facevarying' variability.");
-      }
-      if (mesh.binormals.vertex_count() != num_fvs) {
-        PUSH_ERROR_AND_RETURN(
-            "Internal error. The number of binormals items does not match "
-            "with the number of facevarying items.");
-      }
       binormals_ptr = reinterpret_cast<const value::float3 *>(
           mesh.binormals.get_data().data());
     }
   }
 
-  if (mesh.vertex_colors.vertex_count()) {
-    if (!mesh.vertex_colors.is_facevarying()) {
-      PUSH_ERROR_AND_RETURN(
-          "Internal error. vertex_colors must be 'facevarying' variability.");
-    }
-    if (mesh.vertex_colors.vertex_count() != num_fvs) {
-      PUSH_ERROR_AND_RETURN(
-          "Internal error. The number of vertex_color items does not match "
-          "with the number of facevarying items.");
-    }
-  }
-
-  if (mesh.vertex_opacities.vertex_count()) {
-    if (!mesh.vertex_opacities.is_facevarying()) {
-      PUSH_ERROR_AND_RETURN(
-          "Internal error. vertex_opacities must be 'facevarying' "
-          "variability.");
-    }
-    if (mesh.vertex_colors.vertex_count() != num_fvs) {
-      PUSH_ERROR_AND_RETURN(
-          "Internal error. The number of vertex_opacity items does not match "
-          "with the number of facevarying items.");
-    }
-  }
+  VALIDATE_FACEVARYING_ATTR(mesh.vertex_colors, "vertex_colors")
+  VALIDATE_FACEVARYING_ATTR(mesh.vertex_opacities, "vertex_opacities")
 
   const value::float3 *normals_ptr =
       (mesh.normals.vertex_count() > 0)
@@ -3657,17 +3622,7 @@ bool RenderSceneConverter::BuildVertexIndicesFastImpl(RenderMesh &mesh) {
   size_t num_verts = mesh.points.size();
   size_t num_fvs = fvIndices.size();
 
-  if (mesh.normals.vertex_count()) {
-    if (!mesh.normals.is_facevarying()) {
-      PUSH_ERROR_AND_RETURN(
-          "Internal error. normals must be 'facevarying' variability.");
-    }
-    if (mesh.normals.vertex_count() != num_fvs) {
-      PUSH_ERROR_AND_RETURN(fmt::format(
-          "Internal error. The number of normal items {} does not match with "
-          "the number of facevarying items {}.", mesh.normals.vertex_count(), num_fvs));
-    }
-  }
+  VALIDATE_FACEVARYING_ATTR(mesh.normals, "normals")
 
   for (const auto &it : mesh.texcoords) {
     if (it.second.vertex_count() > 0) {
@@ -3683,54 +3638,10 @@ bool RenderSceneConverter::BuildVertexIndicesFastImpl(RenderMesh &mesh) {
     }
   }
 
-  if (mesh.tangents.vertex_count()) {
-    if (!mesh.tangents.is_facevarying()) {
-      PUSH_ERROR_AND_RETURN(
-          "Internal error. tangents must be 'facevarying' variability.");
-    }
-    if (mesh.tangents.vertex_count() != num_fvs) {
-      PUSH_ERROR_AND_RETURN(
-          "Internal error. The number of tangents items does not match "
-          "with the number of facevarying items.");
-    }
-  }
-
-  if (mesh.binormals.vertex_count()) {
-    if (!mesh.binormals.is_facevarying()) {
-      PUSH_ERROR_AND_RETURN(
-          "Internal error. binormals must be 'facevarying' variability.");
-    }
-    if (mesh.binormals.vertex_count() != num_fvs) {
-      PUSH_ERROR_AND_RETURN(
-          "Internal error. The number of binormals items does not match "
-          "with the number of facevarying items.");
-    }
-  }
-
-  if (mesh.vertex_colors.vertex_count()) {
-    if (!mesh.vertex_colors.is_facevarying()) {
-      PUSH_ERROR_AND_RETURN(
-          "Internal error. vertex_colors must be 'facevarying' variability.");
-    }
-    if (mesh.vertex_colors.vertex_count() != num_fvs) {
-      PUSH_ERROR_AND_RETURN(
-          "Internal error. The number of vertex_color items does not match "
-          "with the number of facevarying items.");
-    }
-  }
-
-  if (mesh.vertex_opacities.vertex_count()) {
-    if (!mesh.vertex_opacities.is_facevarying()) {
-      PUSH_ERROR_AND_RETURN(
-          "Internal error. vertex_opacities must be 'facevarying' "
-          "variability.");
-    }
-    if (mesh.vertex_colors.vertex_count() != num_fvs) {
-      PUSH_ERROR_AND_RETURN(
-          "Internal error. The number of vertex_opacity items does not match "
-          "with the number of facevarying items.");
-    }
-  }
+  VALIDATE_FACEVARYING_ATTR(mesh.tangents, "tangents")
+  VALIDATE_FACEVARYING_ATTR(mesh.binormals, "binormals")
+  VALIDATE_FACEVARYING_ATTR(mesh.vertex_colors, "vertex_colors")
+  VALIDATE_FACEVARYING_ATTR(mesh.vertex_opacities, "vertex_opacities")
 
   // range check
   for (size_t i = 0; i < num_fvs; i++) {
@@ -7461,74 +7372,30 @@ bool RenderSceneConverter::ConvertPreviewSurfaceShader(
     }
   }
 
-  if (!ConvertPreviewSurfaceShaderParam(env, shader_abs_path,
-                                        shader.diffuseColor, "diffuseColor",
-                                        rshader.diffuseColor)) {
-    return false;
+  // Macro to reduce repetitive ConvertPreviewSurfaceShaderParam calls.
+#define CONVERT_PREVIEW_PARAM(field, name) \
+  if (!ConvertPreviewSurfaceShaderParam( \
+          env, shader_abs_path, shader.field, name, rshader.field)) { \
+    PushWarn(fmt::format("Failed to convert " name " parameter for shader: {}", \
+                         shader_abs_path.prim_part())); \
+    return false; \
   }
 
-  if (!ConvertPreviewSurfaceShaderParam(env, shader_abs_path,
-                                        shader.emissiveColor, "emissiveColor",
-                                        rshader.emissiveColor)) {
-    return false;
-  }
+  CONVERT_PREVIEW_PARAM(diffuseColor, "diffuseColor")
+  CONVERT_PREVIEW_PARAM(emissiveColor, "emissiveColor")
+  CONVERT_PREVIEW_PARAM(specularColor, "specularColor")
+  CONVERT_PREVIEW_PARAM(normal, "normal")
+  CONVERT_PREVIEW_PARAM(roughness, "roughness")
+  CONVERT_PREVIEW_PARAM(metallic, "metallic")
+  CONVERT_PREVIEW_PARAM(clearcoat, "clearcoat")
+  CONVERT_PREVIEW_PARAM(clearcoatRoughness, "clearcoatRoughness")
+  CONVERT_PREVIEW_PARAM(opacity, "opacity")
+  CONVERT_PREVIEW_PARAM(opacityThreshold, "opacityThreshold")
+  CONVERT_PREVIEW_PARAM(ior, "ior")
+  CONVERT_PREVIEW_PARAM(occlusion, "occlusion")
+  CONVERT_PREVIEW_PARAM(displacement, "displacement")
 
-  if (!ConvertPreviewSurfaceShaderParam(env, shader_abs_path,
-                                        shader.specularColor, "specularColor",
-                                        rshader.specularColor)) {
-    return false;
-  }
-
-  if (!ConvertPreviewSurfaceShaderParam(env, shader_abs_path, shader.normal,
-                                        "normal", rshader.normal)) {
-    return false;
-  }
-
-  if (!ConvertPreviewSurfaceShaderParam(env, shader_abs_path, shader.roughness,
-                                        "roughness", rshader.roughness)) {
-    return false;
-  }
-
-  if (!ConvertPreviewSurfaceShaderParam(env, shader_abs_path, shader.metallic,
-                                        "metallic", rshader.metallic)) {
-    return false;
-  }
-
-  if (!ConvertPreviewSurfaceShaderParam(env, shader_abs_path, shader.clearcoat,
-                                        "clearcoat", rshader.clearcoat)) {
-    return false;
-  }
-
-  if (!ConvertPreviewSurfaceShaderParam(
-          env, shader_abs_path, shader.clearcoatRoughness, "clearcoatRoughness",
-          rshader.clearcoatRoughness)) {
-    return false;
-  }
-  if (!ConvertPreviewSurfaceShaderParam(env, shader_abs_path, shader.opacity,
-                                        "opacity", rshader.opacity)) {
-    return false;
-  }
-  if (!ConvertPreviewSurfaceShaderParam(
-          env, shader_abs_path, shader.opacityThreshold, "opacityThreshold",
-          rshader.opacityThreshold)) {
-    return false;
-  }
-
-  if (!ConvertPreviewSurfaceShaderParam(env, shader_abs_path, shader.ior, "ior",
-                                        rshader.ior)) {
-    return false;
-  }
-
-  if (!ConvertPreviewSurfaceShaderParam(env, shader_abs_path, shader.occlusion,
-                                        "occlusion", rshader.occlusion)) {
-    return false;
-  }
-
-  if (!ConvertPreviewSurfaceShaderParam(env, shader_abs_path,
-                                        shader.displacement, "displacement",
-                                        rshader.displacement)) {
-    return false;
-  }
+#undef CONVERT_PREVIEW_PARAM
 
   (*rshader_out) = rshader;
   return true;
