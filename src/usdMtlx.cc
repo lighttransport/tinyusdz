@@ -387,8 +387,103 @@ bool ParseMaterialXValue(const std::string &typeName, const std::string &str,
       return false;
     }
     (*value) = val;
+  } else if (typeName.compare("matrix33") == 0) {
+    std::vector<float> values;
+    if (!parser.SepBy1BasicType(',', &values)) {
+      PUSH_ERROR_AND_RETURN("Failed to parse a value of type `matrix33`");
+    }
+    if (values.size() != 9) {
+      PUSH_ERROR_AND_RETURN(fmt::format(
+          "type `matrix33` expects 9 elements, but got {}", values.size()));
+    }
+    value::matrix3f val;
+    memcpy(&val.m[0][0], values.data(), sizeof(float) * 9);
+    (*value) = val;
+  } else if (typeName.compare("matrix44") == 0) {
+    std::vector<float> values;
+    if (!parser.SepBy1BasicType(',', &values)) {
+      PUSH_ERROR_AND_RETURN("Failed to parse a value of type `matrix44`");
+    }
+    if (values.size() != 16) {
+      PUSH_ERROR_AND_RETURN(fmt::format(
+          "type `matrix44` expects 16 elements, but got {}", values.size()));
+    }
+    value::matrix4f val;
+    memcpy(&val.m[0][0], values.data(), sizeof(float) * 16);
+    (*value) = val;
+  } else if (typeName.compare("integerarray") == 0) {
+    // Parse comma-separated integers via float parser then convert
+    std::vector<float> fvalues;
+    if (!parser.SepBy1BasicType(',', &fvalues)) {
+      PUSH_ERROR_AND_RETURN("Failed to parse a value of type `integerarray`");
+    }
+    std::vector<int> values(fvalues.size());
+    for (size_t i = 0; i < fvalues.size(); i++) {
+      values[i] = int(fvalues[i]);
+    }
+    (*value) = values;
+  } else if (typeName.compare("floatarray") == 0) {
+    std::vector<float> values;
+    if (!parser.SepBy1BasicType(',', &values)) {
+      PUSH_ERROR_AND_RETURN("Failed to parse a value of type `floatarray`");
+    }
+    (*value) = values;
+  } else if (typeName.compare("color3array") == 0 ||
+             typeName.compare("vector3array") == 0) {
+    std::vector<float> values;
+    if (!parser.SepBy1BasicType(',', &values)) {
+      PUSH_ERROR_AND_RETURN(fmt::format("Failed to parse a value of type `{}`", typeName));
+    }
+    if (values.size() % 3 != 0) {
+      PUSH_ERROR_AND_RETURN(fmt::format(
+          "type `{}` expects element count divisible by 3, but got {}", typeName, values.size()));
+    }
+    if (typeName.compare("color3array") == 0) {
+      std::vector<value::color3f> arr(values.size() / 3);
+      memcpy(arr.data(), values.data(), sizeof(float) * values.size());
+      (*value) = arr;
+    } else {
+      std::vector<value::float3> arr(values.size() / 3);
+      memcpy(arr.data(), values.data(), sizeof(float) * values.size());
+      (*value) = arr;
+    }
+  } else if (typeName.compare("color4array") == 0 ||
+             typeName.compare("vector4array") == 0) {
+    std::vector<float> values;
+    if (!parser.SepBy1BasicType(',', &values)) {
+      PUSH_ERROR_AND_RETURN(fmt::format("Failed to parse a value of type `{}`", typeName));
+    }
+    if (values.size() % 4 != 0) {
+      PUSH_ERROR_AND_RETURN(fmt::format(
+          "type `{}` expects element count divisible by 4, but got {}", typeName, values.size()));
+    }
+    if (typeName.compare("color4array") == 0) {
+      std::vector<value::color4f> arr(values.size() / 4);
+      memcpy(arr.data(), values.data(), sizeof(float) * values.size());
+      (*value) = arr;
+    } else {
+      std::vector<value::float4> arr(values.size() / 4);
+      memcpy(arr.data(), values.data(), sizeof(float) * values.size());
+      (*value) = arr;
+    }
+  } else if (typeName.compare("vector2array") == 0) {
+    std::vector<float> values;
+    if (!parser.SepBy1BasicType(',', &values)) {
+      PUSH_ERROR_AND_RETURN("Failed to parse a value of type `vector2array`");
+    }
+    if (values.size() % 2 != 0) {
+      PUSH_ERROR_AND_RETURN(fmt::format(
+          "type `vector2array` expects element count divisible by 2, but got {}", values.size()));
+    }
+    std::vector<value::float2> arr(values.size() / 2);
+    memcpy(arr.data(), values.data(), sizeof(float) * values.size());
+    (*value) = arr;
+  } else if (typeName.compare("stringarray") == 0) {
+    // MaterialX string arrays are comma-separated strings
+    // For now, store as a single string (arrays in XML attributes are rare)
+    (*value) = str;
   } else {
-    PUSH_ERROR_AND_RETURN("TODO: " + typeName);
+    PUSH_ERROR_AND_RETURN("Unsupported type: " + typeName);
   }
 
   return true;
@@ -1101,7 +1196,7 @@ static void InitializeShader(PrimSpec &ps, const std::string &info_id) {
 }
 
 static bool ConvertPlace2d(const tinyusdz::mtlx::pugi::xml_node &node, PrimSpec &ps,
-                           std::string *warn, std::string *err) {
+                           std::string * /* warn */, std::string *err) {
   // texcoord(vector2). default index=0 uv coordinate
   // pivot(vector2). default (0, 0)
   // scale(vector2). default (1, 1)
@@ -1115,7 +1210,12 @@ static bool ConvertPlace2d(const tinyusdz::mtlx::pugi::xml_node &node, PrimSpec 
   }
 
   if (tinyusdz::mtlx::pugi::xml_attribute texcoord_attr = node.attribute("texcoord")) {
-    PUSH_WARN("TODO: `texcoord` attribute.\n");
+    // MaterialX texcoord attribute specifies the UV set name (e.g., "UV0", "st")
+    // Map to USD's inputs:varname for UsdPrimvarReader
+    std::string texcoord_name = texcoord_attr.as_string();
+    if (!texcoord_name.empty()) {
+      ps.props()["inputs:varname"] = Property(Attribute::Uniform(value::token(texcoord_name)));
+    }
   }
 
   if (tinyusdz::mtlx::pugi::xml_attribute pivot_attr = node.attribute("pivot")) {
@@ -2506,7 +2606,7 @@ bool ReadMaterialXFromString(const std::string &str,
       GET_SHADER_PARAM(name, typeName, "coat_anisotropy", "float", float, valueStr, surface.coat_anisotropy)
       GET_SHADER_PARAM(name, typeName, "coat_rotation", "float", float, valueStr, surface.coat_rotation)
       GET_SHADER_PARAM(name, typeName, "coat_ior", "float", float, valueStr, surface.coat_ior)
-      GET_SHADER_PARAM(name, typeName, "coat_affect_color", "color3", value::color3f, valueStr, surface.coat_affect_color)
+      GET_SHADER_PARAM(name, typeName, "coat_affect_color", "float", float, valueStr, surface.coat_affect_color)
       GET_SHADER_PARAM(name, typeName, "coat_affect_roughness", "float", float, valueStr, surface.coat_affect_roughness)
       GET_SHADER_PARAM(name, typeName, "emission_luminance", "float", float, valueStr, surface.emission_luminance)
       GET_SHADER_PARAM(name, typeName, "emission_color", "color3", value::color3f, valueStr, surface.emission_color)
@@ -2719,10 +2819,27 @@ bool ToPrimSpec(const MtlxModel &model, PrimSpec &ps, std::string *err) {
   shaders.name() = "Shaders";
   shaders.specifier() = Specifier::Def;
 
-  // Add shader nodes (e.g., UsdPreviewSurface, OpenPBRSurface)
-  // TODO: Convert shader value to PrimSpec
-  // For now, we skip this as shaders are typically referenced in materials
-  (void)model.shaders;  // Avoid unused variable warning
+  // Serialize shader values as child PrimSpecs
+  for (const auto &shader_item : model.shaders) {
+    PrimSpec shader_ps;
+    shader_ps.name() = shader_item.first;
+    shader_ps.specifier() = Specifier::Def;
+    shader_ps.typeName() = kShader;
+
+    // Set info:id based on shader type
+    if (shader_item.second.as<MtlxOpenPBRSurface>()) {
+      shader_ps.props()[kShaderInfoId] =
+          detail::MakeProperty(value::token(kMtlxOpenPBRSurface));
+    } else if (shader_item.second.as<MtlxAutodeskStandardSurface>()) {
+      shader_ps.props()[kShaderInfoId] =
+          detail::MakeProperty(value::token("AutodeskStandardSurface"));
+    } else if (shader_item.second.as<MtlxUsdPreviewSurface>()) {
+      shader_ps.props()[kShaderInfoId] =
+          detail::MakeProperty(value::token(kUsdPreviewSurface));
+    }
+
+    shaders.children().push_back(std::move(shader_ps));
+  }
 
   // Add NodeGraphs container
   PrimSpec nodegraphs;
