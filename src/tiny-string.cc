@@ -512,19 +512,9 @@ static inline const char* skip_whitespace(const char *p, const char *end) {
   return p;
 }
 
-// Helper: parse a single float from pointer, advancing past the number
-static inline bool parse_single_float(const char **p, const char *end, float *value) {
-  const char *start = *p;
-  while (*p < end && (**p != ',' && **p != ')' && **p != ']' &&
-         **p != ' ' && **p != '\t' && **p != '\n' && **p != '\r' && **p != '#')) {
-    (*p)++;
-  }
-  auto result = fast_float::from_chars(start, *p, *value);
-  return result.ec == std::errc{};
-}
-
-// Helper: parse a single double from pointer, advancing past the number
-static inline bool parse_single_double(const char **p, const char *end, double *value) {
+// Helper: parse a single float/double from pointer, advancing past the number
+template<typename T>
+static inline bool parse_single(const char **p, const char *end, T *value) {
   const char *start = *p;
   while (*p < end && (**p != ',' && **p != ')' && **p != ']' &&
          **p != ' ' && **p != '\t' && **p != '\n' && **p != '\r' && **p != '#')) {
@@ -603,19 +593,11 @@ bool parse_int_array(const tstring_view &sv, std::vector<int32_t> *result) {
     });
 }
 
-bool print_float_array(std::vector<float> &v,
-  std::string &dst) {
-  // TODO
-  (void)v;
-  (void)dst;
-  return false;
-}
-
 // Tuple array parser: [(v0, v1, ...), (v0, v1, ...), ...]
 // VecT must support operator[] for element access.
-template<typename VecT, typename ScalarT, size_t N>
+template<typename VecT, size_t N, typename ParseFn>
 static bool parse_tuple_array_impl(const tstring_view &sv, std::vector<VecT> *result,
-                                   bool (*parse_fn)(const char**, const char*, ScalarT*)) {
+                                   ParseFn parse_fn) {
   if (!result) return false;
   result->clear();
   if (sv.size() == 0) return false;
@@ -638,7 +620,7 @@ static bool parse_tuple_array_impl(const tstring_view &sv, std::vector<VecT> *re
     if (*p != '(') return false;
     p++;
 
-    VecT vec;
+    VecT vec{};
     for (size_t i = 0; i < N; i++) {
       p = skip_whitespace(p, end);
       if (!parse_fn(&p, end, &vec[i])) return false;
@@ -662,29 +644,29 @@ static bool parse_tuple_array_impl(const tstring_view &sv, std::vector<VecT> *re
 }
 
 bool parse_float2_array(const tstring_view &sv, std::vector<tinyusdz::value::float2> *result) {
-  return parse_tuple_array_impl<tinyusdz::value::float2, float, 2>(sv, result, parse_single_float);
+  return parse_tuple_array_impl<tinyusdz::value::float2, 2>(sv, result, parse_single<float>);
 }
 bool parse_float3_array(const tstring_view &sv, std::vector<tinyusdz::value::float3> *result) {
-  return parse_tuple_array_impl<tinyusdz::value::float3, float, 3>(sv, result, parse_single_float);
+  return parse_tuple_array_impl<tinyusdz::value::float3, 3>(sv, result, parse_single<float>);
 }
 bool parse_float4_array(const tstring_view &sv, std::vector<tinyusdz::value::float4> *result) {
-  return parse_tuple_array_impl<tinyusdz::value::float4, float, 4>(sv, result, parse_single_float);
+  return parse_tuple_array_impl<tinyusdz::value::float4, 4>(sv, result, parse_single<float>);
 }
 bool parse_double2_array(const tstring_view &sv, std::vector<tinyusdz::value::double2> *result) {
-  return parse_tuple_array_impl<tinyusdz::value::double2, double, 2>(sv, result, parse_single_double);
+  return parse_tuple_array_impl<tinyusdz::value::double2, 2>(sv, result, parse_single<double>);
 }
 bool parse_double3_array(const tstring_view &sv, std::vector<tinyusdz::value::double3> *result) {
-  return parse_tuple_array_impl<tinyusdz::value::double3, double, 3>(sv, result, parse_single_double);
+  return parse_tuple_array_impl<tinyusdz::value::double3, 3>(sv, result, parse_single<double>);
 }
 bool parse_double4_array(const tstring_view &sv, std::vector<tinyusdz::value::double4> *result) {
-  return parse_tuple_array_impl<tinyusdz::value::double4, double, 4>(sv, result, parse_single_double);
+  return parse_tuple_array_impl<tinyusdz::value::double4, 4>(sv, result, parse_single<double>);
 }
 
 // Matrix array parser: [((r00, r01, ...), (r10, r11, ...), ...), ...]
 // MatT must have mat.m[row][col] access.
-template<typename MatT, typename ScalarT, size_t N>
+template<typename MatT, size_t N, typename ParseFn>
 static bool parse_matrix_array_impl(const tstring_view &sv, std::vector<MatT> *result,
-                                    bool (*parse_fn)(const char**, const char*, ScalarT*)) {
+                                    ParseFn parse_fn) {
   if (!result) return false;
   result->clear();
   if (sv.size() == 0) return false;
@@ -707,7 +689,7 @@ static bool parse_matrix_array_impl(const tstring_view &sv, std::vector<MatT> *r
     if (*p != '(') return false;
     p++;
 
-    MatT mat;
+    MatT mat{};
     for (size_t i = 0; i < N; i++) {
       p = skip_whitespace(p, end);
       if (p >= end || *p != '(') return false;
@@ -744,22 +726,22 @@ static bool parse_matrix_array_impl(const tstring_view &sv, std::vector<MatT> *r
 }
 
 bool parse_matrix2f_array(const tstring_view &sv, std::vector<tinyusdz::value::matrix2f> *result) {
-  return parse_matrix_array_impl<tinyusdz::value::matrix2f, float, 2>(sv, result, parse_single_float);
+  return parse_matrix_array_impl<tinyusdz::value::matrix2f, 2>(sv, result, parse_single<float>);
 }
 bool parse_matrix3f_array(const tstring_view &sv, std::vector<tinyusdz::value::matrix3f> *result) {
-  return parse_matrix_array_impl<tinyusdz::value::matrix3f, float, 3>(sv, result, parse_single_float);
+  return parse_matrix_array_impl<tinyusdz::value::matrix3f, 3>(sv, result, parse_single<float>);
 }
 bool parse_matrix4f_array(const tstring_view &sv, std::vector<tinyusdz::value::matrix4f> *result) {
-  return parse_matrix_array_impl<tinyusdz::value::matrix4f, float, 4>(sv, result, parse_single_float);
+  return parse_matrix_array_impl<tinyusdz::value::matrix4f, 4>(sv, result, parse_single<float>);
 }
 bool parse_matrix2d_array(const tstring_view &sv, std::vector<tinyusdz::value::matrix2d> *result) {
-  return parse_matrix_array_impl<tinyusdz::value::matrix2d, double, 2>(sv, result, parse_single_double);
+  return parse_matrix_array_impl<tinyusdz::value::matrix2d, 2>(sv, result, parse_single<double>);
 }
 bool parse_matrix3d_array(const tstring_view &sv, std::vector<tinyusdz::value::matrix3d> *result) {
-  return parse_matrix_array_impl<tinyusdz::value::matrix3d, double, 3>(sv, result, parse_single_double);
+  return parse_matrix_array_impl<tinyusdz::value::matrix3d, 3>(sv, result, parse_single<double>);
 }
 bool parse_matrix4d_array(const tstring_view &sv, std::vector<tinyusdz::value::matrix4d> *result) {
-  return parse_matrix_array_impl<tinyusdz::value::matrix4d, double, 4>(sv, result, parse_single_double);
+  return parse_matrix_array_impl<tinyusdz::value::matrix4d, 4>(sv, result, parse_single<double>);
 }
 
 }
