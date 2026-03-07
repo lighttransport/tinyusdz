@@ -765,6 +765,13 @@ bool LoadUSDAFromMemory(const uint8_t *addr, const size_t length,
   config.strict_allowedToken_check = options.strict_allowedToken_check;
   config.allow_unknown_apiSchema = !options.strict_apiSchema_check;
   config.max_memory_limit_in_mb = size_t(options.max_memory_limit_in_mb);
+  // MaterialX validation options
+  config.strict_mtlx_check = options.strict_mtlx_check;
+  config.validate_mtlx_info_id = options.validate_mtlx_info_id;
+  config.validate_mtlx_connection_types = options.validate_mtlx_connection_types;
+  config.validate_mtlx_connection_targets = options.validate_mtlx_connection_targets;
+  config.validate_mtlx_duplicate_names = options.validate_mtlx_duplicate_names;
+  config.validate_mtlx_index_bounds = options.validate_mtlx_index_bounds;
   reader.set_reader_config(config);
 
   if (options.progress_callback) {
@@ -1313,6 +1320,13 @@ bool LoadUSDALayerFromMemory(const uint8_t *addr, const size_t length,
 
   tinyusdz::usda::USDAReaderConfig config;
   config.strict_allowedToken_check = options.strict_allowedToken_check;
+  // MaterialX validation options
+  config.strict_mtlx_check = options.strict_mtlx_check;
+  config.validate_mtlx_info_id = options.validate_mtlx_info_id;
+  config.validate_mtlx_connection_types = options.validate_mtlx_connection_types;
+  config.validate_mtlx_connection_targets = options.validate_mtlx_connection_targets;
+  config.validate_mtlx_duplicate_names = options.validate_mtlx_duplicate_names;
+  config.validate_mtlx_index_bounds = options.validate_mtlx_index_bounds;
   reader.set_reader_config(config);
 
   uint32_t load_states = static_cast<uint32_t>(tinyusdz::LoadState::Toplevel);

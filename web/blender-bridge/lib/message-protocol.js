@@ -15,6 +15,13 @@ export const MessageType = {
   ACK: 'ack',
   STATUS: 'status',
   ERROR: 'error',
+  EXPORT_REQUEST: 'export_request',      // Browser requests scene export
+  EXECUTE_CODE: 'execute_code',          // Browser requests code execution
+
+  // Blender -> Browser (responses)
+  EXPORT_STARTED: 'export_started',
+  EXPORT_PROGRESS: 'export_progress',
+  CODE_RESULT: 'code_result',
 
   // Bidirectional
   PING: 'ping',
@@ -233,6 +240,41 @@ export function createPingMessage() {
 
 export function createPongMessage(refMessageId) {
   return encodeMessage({ type: MessageType.PONG, refMessageId });
+}
+
+/**
+ * Create an export request message (Browser -> Blender)
+ *
+ * @param {Object} options - Export options
+ * @returns {ArrayBuffer} Encoded message
+ */
+export function createExportRequestMessage(options = {}) {
+  const header = {
+    type: MessageType.EXPORT_REQUEST,
+    exportOptions: {
+      materialx: options.materialx !== false,
+      animation: options.animation || false,
+      selectedOnly: options.selectedOnly || false,
+      rootPrimPath: options.rootPrimPath || '/World'
+    }
+  };
+
+  return encodeMessage(header);
+}
+
+/**
+ * Create a code execution request message (Browser -> Blender)
+ *
+ * @param {string} code - Python code to execute
+ * @returns {ArrayBuffer} Encoded message
+ */
+export function createExecuteCodeMessage(code) {
+  const header = {
+    type: MessageType.EXECUTE_CODE,
+    code: code
+  };
+
+  return encodeMessage(header);
 }
 
 // Export utility for browser compatibility

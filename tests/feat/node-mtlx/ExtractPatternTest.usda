@@ -1,0 +1,1454 @@
+#usda 1.0
+(
+    defaultPrim = "root"
+    doc = "Blender v5.0.0"
+    metersPerUnit = 1
+    upAxis = "Z"
+)
+
+def Xform "root" (
+    customData = {
+        dictionary Blender = {
+            bool generated = 1
+        }
+    }
+)
+{
+    def Xform "Test_Swizzle_BGR"
+    {
+        custom string userProperties:blender:object_name = "Test_Swizzle_BGR"
+
+        def Mesh "Cube_009" (
+            active = true
+            prepend apiSchemas = ["MaterialBindingAPI"]
+        )
+        {
+            uniform bool doubleSided = 1
+            float3[] extent = [(-1, -1, -1), (1, 1, 1)]
+            int[] faceVertexCounts = [4, 4, 4, 4, 4, 4]
+            int[] faceVertexIndices = [0, 1, 3, 2, 2, 3, 7, 6, 6, 7, 5, 4, 4, 5, 1, 0, 2, 6, 4, 0, 7, 3, 1, 5]
+            rel material:binding = </root/_materials/Test_Swizzle_BGR>
+            normal3f[] normals = [(-1, 0, 0), (-1, 0, 0), (-1, 0, 0), (-1, 0, 0), (0, 1, 0), (0, 1, 0), (0, 1, 0), (0, 1, 0), (1, 0, 0), (1, 0, 0), (1, 0, 0), (1, 0, 0), (0, -1, 0), (0, -1, 0), (0, -1, 0), (0, -1, 0), (0, 0, -1), (0, 0, -1), (0, 0, -1), (0, 0, -1), (0, 0, 1), (0, 0, 1), (0, 0, 1), (0, 0, 1)] (
+                interpolation = "faceVarying"
+            )
+            point3f[] points = [(-1, -1, -1), (-1, -1, 1), (-1, 1, -1), (-1, 1, 1), (1, -1, -1), (1, -1, 1), (1, 1, -1), (1, 1, 1)]
+            texCoord2f[] primvars:st = [(0.375, 0), (0.625, 0), (0.625, 0.25), (0.375, 0.25), (0.375, 0.25), (0.625, 0.25), (0.625, 0.5), (0.375, 0.5), (0.375, 0.5), (0.625, 0.5), (0.625, 0.75), (0.375, 0.75), (0.375, 0.75), (0.625, 0.75), (0.625, 1), (0.375, 1), (0.125, 0.5), (0.375, 0.5), (0.375, 0.75), (0.125, 0.75), (0.625, 0.5), (0.875, 0.5), (0.875, 0.75), (0.625, 0.75)] (
+                interpolation = "faceVarying"
+            )
+            uniform token subdivisionScheme = "none"
+            custom string userProperties:blender:data_name = "Cube.009"
+        }
+    }
+
+    def Scope "_materials"
+    {
+        def Material "Test_Swizzle_BGR" (
+            prepend apiSchemas = ["MaterialXConfigAPI"]
+        )
+        {
+            string config:mtlx:version = "1.39"
+            token outputs:mtlx:surface.connect = </root/_materials/Test_Swizzle_BGR/bnode__Principled_BSDF.outputs:surface>
+            token outputs:surface.connect = </root/_materials/Test_Swizzle_BGR/Principled_BSDF.outputs:surface>
+            custom string userProperties:blender:data_name = "Test_Swizzle_BGR"
+
+            def Shader "Principled_BSDF"
+            {
+                uniform token info:id = "UsdPreviewSurface"
+                float inputs:clearcoat = 0
+                float inputs:clearcoatRoughness = 0.03
+                color3f inputs:diffuseColor = (0.8, 0.8, 0.8)
+                float inputs:ior = 1.5
+                float inputs:metallic = 0
+                float inputs:opacity = 1
+                float inputs:roughness = 0.5
+                float inputs:specular = 0.5
+                token outputs:surface
+            }
+
+            def Shader "bnode__Principled_BSDF"
+            {
+                uniform token info:id = "ND_open_pbr_surface_surfaceshader"
+                color3f inputs:base_color.connect = </root/_materials/Test_Swizzle_BGR/NodeGraphs.outputs:bnode__Combine_Color_out>
+                float inputs:base_diffuse_roughness = 0
+                float inputs:base_metalness = 0
+                float inputs:base_weight = 1
+                color3f inputs:coat_color = (1, 1, 1)
+                float inputs:coat_darkening
+                float inputs:coat_ior = 1.5
+                float inputs:coat_roughness = 0.03
+                float inputs:coat_roughness_anisotropy
+                float inputs:coat_weight = 0
+                color3f inputs:emission_color = (1, 1, 1)
+                float inputs:emission_luminance = 0
+                color3f inputs:fuzz_color = (1, 1, 1)
+                float inputs:fuzz_roughness = 0.5
+                float inputs:fuzz_weight = 0
+                float3 inputs:geometry_coat_normal
+                float3 inputs:geometry_coat_tangent
+                float3 inputs:geometry_normal
+                float inputs:geometry_opacity = 1
+                float3 inputs:geometry_tangent.connect = </root/_materials/Test_Swizzle_BGR/NodeGraphs.outputs:node_003_out>
+                bool inputs:geometry_thin_walled
+                color3f inputs:specular_color = (1, 1, 1)
+                float inputs:specular_ior = 1.5
+                float inputs:specular_roughness = 0.5
+                float inputs:specular_roughness_anisotropy = 0
+                float inputs:specular_weight = 1
+                color3f inputs:subsurface_color.connect = </root/_materials/Test_Swizzle_BGR/NodeGraphs.outputs:bnode__Combine_Color_out>
+                float inputs:subsurface_radius = 0.05
+                color3f inputs:subsurface_radius_scale = (1, 0.2, 0.1)
+                float inputs:subsurface_scatter_anisotropy = 0
+                float inputs:subsurface_weight = 0
+                float inputs:thin_film_ior = 1.33
+                float inputs:thin_film_thickness = 0
+                float inputs:thin_film_weight = 0
+                color3f inputs:transmission_color.connect = </root/_materials/Test_Swizzle_BGR/NodeGraphs.outputs:bnode__Combine_Color_out>
+                float inputs:transmission_depth
+                float inputs:transmission_dispersion_abbe_number
+                float inputs:transmission_dispersion_scale
+                color3f inputs:transmission_scatter
+                float inputs:transmission_scatter_anisotropy
+                float inputs:transmission_weight = 0
+                token outputs:surface
+            }
+
+            def NodeGraph "NodeGraphs"
+            {
+                color3f outputs:bnode__Combine_Color_out.connect = </root/_materials/Test_Swizzle_BGR/NodeGraphs/bnode__Combine_Color.outputs:out>
+                float3 outputs:node_003_out.connect = </root/_materials/Test_Swizzle_BGR/NodeGraphs/node_003.outputs:out>
+
+                def Shader "bnode__Color"
+                {
+                    uniform token info:id = "ND_constant_color3"
+                    color3f inputs:value = (1, 0.5, 0.2)
+                    color3f outputs:out
+                }
+
+                def Shader "bnode__Separate_Color_Blue"
+                {
+                    uniform token info:id = "ND_extract_color3"
+                    color3f inputs:in.connect = </root/_materials/Test_Swizzle_BGR/NodeGraphs/bnode__Color.outputs:out>
+                    int inputs:index = 2
+                    float outputs:out
+                }
+
+                def Shader "bnode__Separate_Color_Green"
+                {
+                    uniform token info:id = "ND_extract_color3"
+                    color3f inputs:in.connect = </root/_materials/Test_Swizzle_BGR/NodeGraphs/bnode__Color.outputs:out>
+                    int inputs:index = 1
+                    float outputs:out
+                }
+
+                def Shader "bnode__Separate_Color_Red"
+                {
+                    uniform token info:id = "ND_extract_color3"
+                    color3f inputs:in.connect = </root/_materials/Test_Swizzle_BGR/NodeGraphs/bnode__Color.outputs:out>
+                    int inputs:index = 0
+                    float outputs:out
+                }
+
+                def Shader "bnode__Combine_Color"
+                {
+                    uniform token info:id = "ND_combine3_color3"
+                    float inputs:in1.connect = </root/_materials/Test_Swizzle_BGR/NodeGraphs/bnode__Separate_Color_Blue.outputs:out>
+                    float inputs:in2.connect = </root/_materials/Test_Swizzle_BGR/NodeGraphs/bnode__Separate_Color_Green.outputs:out>
+                    float inputs:in3.connect = </root/_materials/Test_Swizzle_BGR/NodeGraphs/bnode__Separate_Color_Red.outputs:out>
+                    color3f outputs:out
+                }
+
+                def Shader "node"
+                {
+                    uniform token info:id = "ND_normal_vector3"
+                    string inputs:space = "world"
+                    float3 outputs:out
+                }
+
+                def Shader "node_001"
+                {
+                    uniform token info:id = "ND_normalize_vector3"
+                    float3 inputs:in.connect = </root/_materials/Test_Swizzle_BGR/NodeGraphs/node.outputs:out>
+                    float3 outputs:out
+                }
+
+                def Shader "node_002"
+                {
+                    uniform token info:id = "ND_tangent_vector3"
+                    string inputs:space = "world"
+                    float3 outputs:out
+                }
+
+                def Shader "node_003"
+                {
+                    uniform token info:id = "ND_normalize_vector3"
+                    float3 inputs:in.connect = </root/_materials/Test_Swizzle_BGR/NodeGraphs/node_002.outputs:out>
+                    float3 outputs:out
+                }
+
+                def Shader "node_004"
+                {
+                    uniform token info:id = "ND_rotate3d_vector3"
+                    float inputs:amount = -90
+                    float3 inputs:axis.connect = </root/_materials/Test_Swizzle_BGR/NodeGraphs/node_001.outputs:out>
+                    float3 inputs:in.connect = </root/_materials/Test_Swizzle_BGR/NodeGraphs/node_003.outputs:out>
+                    float3 outputs:out
+                }
+
+                def Shader "node_005"
+                {
+                    uniform token info:id = "ND_normalize_vector3"
+                    float3 inputs:in.connect = </root/_materials/Test_Swizzle_BGR/NodeGraphs/node_004.outputs:out>
+                    float3 outputs:out
+                }
+            }
+        }
+
+        def Material "Test_ChannelGrayscale" (
+            prepend apiSchemas = ["MaterialXConfigAPI"]
+        )
+        {
+            string config:mtlx:version = "1.39"
+            token outputs:mtlx:surface.connect = </root/_materials/Test_ChannelGrayscale/bnode__Principled_BSDF.outputs:surface>
+            token outputs:surface.connect = </root/_materials/Test_ChannelGrayscale/Principled_BSDF.outputs:surface>
+            custom string userProperties:blender:data_name = "Test_ChannelGrayscale"
+
+            def Shader "Principled_BSDF"
+            {
+                uniform token info:id = "UsdPreviewSurface"
+                float inputs:clearcoat = 0
+                float inputs:clearcoatRoughness = 0.03
+                color3f inputs:diffuseColor = (0.8, 0.8, 0.8)
+                float inputs:ior = 1.5
+                float inputs:metallic = 0
+                float inputs:opacity = 1
+                float inputs:roughness = 0.5
+                float inputs:specular = 0.5
+                token outputs:surface
+            }
+
+            def Shader "bnode__Principled_BSDF"
+            {
+                uniform token info:id = "ND_open_pbr_surface_surfaceshader"
+                color3f inputs:base_color.connect = </root/_materials/Test_ChannelGrayscale/NodeGraphs.outputs:bnode__Combine_Color_out>
+                float inputs:base_diffuse_roughness = 0
+                float inputs:base_metalness = 0
+                float inputs:base_weight = 1
+                color3f inputs:coat_color = (1, 1, 1)
+                float inputs:coat_darkening
+                float inputs:coat_ior = 1.5
+                float inputs:coat_roughness = 0.03
+                float inputs:coat_roughness_anisotropy
+                float inputs:coat_weight = 0
+                color3f inputs:emission_color = (1, 1, 1)
+                float inputs:emission_luminance = 0
+                color3f inputs:fuzz_color = (1, 1, 1)
+                float inputs:fuzz_roughness = 0.5
+                float inputs:fuzz_weight = 0
+                float3 inputs:geometry_coat_normal
+                float3 inputs:geometry_coat_tangent
+                float3 inputs:geometry_normal
+                float inputs:geometry_opacity = 1
+                float3 inputs:geometry_tangent.connect = </root/_materials/Test_ChannelGrayscale/NodeGraphs.outputs:node_003_out>
+                bool inputs:geometry_thin_walled
+                color3f inputs:specular_color = (1, 1, 1)
+                float inputs:specular_ior = 1.5
+                float inputs:specular_roughness = 0.5
+                float inputs:specular_roughness_anisotropy = 0
+                float inputs:specular_weight = 1
+                color3f inputs:subsurface_color.connect = </root/_materials/Test_ChannelGrayscale/NodeGraphs.outputs:bnode__Combine_Color_out>
+                float inputs:subsurface_radius = 0.05
+                color3f inputs:subsurface_radius_scale = (1, 0.2, 0.1)
+                float inputs:subsurface_scatter_anisotropy = 0
+                float inputs:subsurface_weight = 0
+                float inputs:thin_film_ior = 1.33
+                float inputs:thin_film_thickness = 0
+                float inputs:thin_film_weight = 0
+                color3f inputs:transmission_color.connect = </root/_materials/Test_ChannelGrayscale/NodeGraphs.outputs:bnode__Combine_Color_out>
+                float inputs:transmission_depth
+                float inputs:transmission_dispersion_abbe_number
+                float inputs:transmission_dispersion_scale
+                color3f inputs:transmission_scatter
+                float inputs:transmission_scatter_anisotropy
+                float inputs:transmission_weight = 0
+                token outputs:surface
+            }
+
+            def NodeGraph "NodeGraphs"
+            {
+                color3f outputs:bnode__Combine_Color_out.connect = </root/_materials/Test_ChannelGrayscale/NodeGraphs/bnode__Combine_Color.outputs:out>
+                float3 outputs:node_003_out.connect = </root/_materials/Test_ChannelGrayscale/NodeGraphs/node_003.outputs:out>
+
+                def Shader "bnode__Color"
+                {
+                    uniform token info:id = "ND_constant_color3"
+                    color3f inputs:value = (0.8, 0.4, 0.2)
+                    color3f outputs:out
+                }
+
+                def Shader "bnode__Separate_Color_Red"
+                {
+                    uniform token info:id = "ND_extract_color3"
+                    color3f inputs:in.connect = </root/_materials/Test_ChannelGrayscale/NodeGraphs/bnode__Color.outputs:out>
+                    int inputs:index = 0
+                    float outputs:out
+                }
+
+                def Shader "bnode__Combine_Color"
+                {
+                    uniform token info:id = "ND_combine3_color3"
+                    float inputs:in1.connect = </root/_materials/Test_ChannelGrayscale/NodeGraphs/bnode__Separate_Color_Red.outputs:out>
+                    float inputs:in2.connect = </root/_materials/Test_ChannelGrayscale/NodeGraphs/bnode__Separate_Color_Red.outputs:out>
+                    float inputs:in3.connect = </root/_materials/Test_ChannelGrayscale/NodeGraphs/bnode__Separate_Color_Red.outputs:out>
+                    color3f outputs:out
+                }
+
+                def Shader "node"
+                {
+                    uniform token info:id = "ND_normal_vector3"
+                    string inputs:space = "world"
+                    float3 outputs:out
+                }
+
+                def Shader "node_001"
+                {
+                    uniform token info:id = "ND_normalize_vector3"
+                    float3 inputs:in.connect = </root/_materials/Test_ChannelGrayscale/NodeGraphs/node.outputs:out>
+                    float3 outputs:out
+                }
+
+                def Shader "node_002"
+                {
+                    uniform token info:id = "ND_tangent_vector3"
+                    string inputs:space = "world"
+                    float3 outputs:out
+                }
+
+                def Shader "node_003"
+                {
+                    uniform token info:id = "ND_normalize_vector3"
+                    float3 inputs:in.connect = </root/_materials/Test_ChannelGrayscale/NodeGraphs/node_002.outputs:out>
+                    float3 outputs:out
+                }
+
+                def Shader "node_004"
+                {
+                    uniform token info:id = "ND_rotate3d_vector3"
+                    float inputs:amount = -90
+                    float3 inputs:axis.connect = </root/_materials/Test_ChannelGrayscale/NodeGraphs/node_001.outputs:out>
+                    float3 inputs:in.connect = </root/_materials/Test_ChannelGrayscale/NodeGraphs/node_003.outputs:out>
+                    float3 outputs:out
+                }
+
+                def Shader "node_005"
+                {
+                    uniform token info:id = "ND_normalize_vector3"
+                    float3 inputs:in.connect = </root/_materials/Test_ChannelGrayscale/NodeGraphs/node_004.outputs:out>
+                    float3 outputs:out
+                }
+            }
+        }
+
+        def Material "Test_ClampChain" (
+            prepend apiSchemas = ["MaterialXConfigAPI"]
+        )
+        {
+            string config:mtlx:version = "1.39"
+            token outputs:mtlx:surface.connect = </root/_materials/Test_ClampChain/bnode__Principled_BSDF.outputs:surface>
+            token outputs:surface.connect = </root/_materials/Test_ClampChain/Principled_BSDF.outputs:surface>
+            custom string userProperties:blender:data_name = "Test_ClampChain"
+
+            def Shader "Principled_BSDF"
+            {
+                uniform token info:id = "UsdPreviewSurface"
+                float inputs:clearcoat = 0
+                float inputs:clearcoatRoughness = 0.03
+                color3f inputs:diffuseColor = (0.8, 0.8, 0.8)
+                float inputs:ior = 1.5
+                float inputs:metallic = 0
+                float inputs:opacity = 1
+                float inputs:roughness = 0.5
+                float inputs:specular = 0.5
+                token outputs:surface
+            }
+
+            def Shader "bnode__Principled_BSDF"
+            {
+                uniform token info:id = "ND_open_pbr_surface_surfaceshader"
+                color3f inputs:base_color.connect = </root/_materials/Test_ClampChain/NodeGraphs.outputs:bnode__Combine_Color_out>
+                float inputs:base_diffuse_roughness = 0
+                float inputs:base_metalness = 0
+                float inputs:base_weight = 1
+                color3f inputs:coat_color = (1, 1, 1)
+                float inputs:coat_darkening
+                float inputs:coat_ior = 1.5
+                float inputs:coat_roughness = 0.03
+                float inputs:coat_roughness_anisotropy
+                float inputs:coat_weight = 0
+                color3f inputs:emission_color = (1, 1, 1)
+                float inputs:emission_luminance = 0
+                color3f inputs:fuzz_color = (1, 1, 1)
+                float inputs:fuzz_roughness = 0.5
+                float inputs:fuzz_weight = 0
+                float3 inputs:geometry_coat_normal
+                float3 inputs:geometry_coat_tangent
+                float3 inputs:geometry_normal
+                float inputs:geometry_opacity = 1
+                float3 inputs:geometry_tangent.connect = </root/_materials/Test_ClampChain/NodeGraphs.outputs:node_004_out>
+                bool inputs:geometry_thin_walled
+                color3f inputs:specular_color = (1, 1, 1)
+                float inputs:specular_ior = 1.5
+                float inputs:specular_roughness = 0.5
+                float inputs:specular_roughness_anisotropy = 0
+                float inputs:specular_weight = 1
+                color3f inputs:subsurface_color.connect = </root/_materials/Test_ClampChain/NodeGraphs.outputs:bnode__Combine_Color_out>
+                float inputs:subsurface_radius = 0.05
+                color3f inputs:subsurface_radius_scale = (1, 0.2, 0.1)
+                float inputs:subsurface_scatter_anisotropy = 0
+                float inputs:subsurface_weight = 0
+                float inputs:thin_film_ior = 1.33
+                float inputs:thin_film_thickness = 0
+                float inputs:thin_film_weight = 0
+                color3f inputs:transmission_color.connect = </root/_materials/Test_ClampChain/NodeGraphs.outputs:bnode__Combine_Color_out>
+                float inputs:transmission_depth
+                float inputs:transmission_dispersion_abbe_number
+                float inputs:transmission_dispersion_scale
+                color3f inputs:transmission_scatter
+                float inputs:transmission_scatter_anisotropy
+                float inputs:transmission_weight = 0
+                token outputs:surface
+            }
+
+            def NodeGraph "NodeGraphs"
+            {
+                color3f outputs:bnode__Combine_Color_out.connect = </root/_materials/Test_ClampChain/NodeGraphs/bnode__Combine_Color.outputs:out>
+                float3 outputs:node_004_out.connect = </root/_materials/Test_ClampChain/NodeGraphs/node_004.outputs:out>
+
+                def Shader "bnode__Color"
+                {
+                    uniform token info:id = "ND_constant_color3"
+                    color3f inputs:value = (1.5, 0, 0.5)
+                    color3f outputs:out
+                }
+
+                def Shader "node"
+                {
+                    uniform token info:id = "ND_extract_color3"
+                    color3f inputs:in.connect = </root/_materials/Test_ClampChain/NodeGraphs/bnode__Color.outputs:out>
+                    int inputs:index = 0
+                    float outputs:out
+                }
+
+                def Shader "bnode__Clamp"
+                {
+                    uniform token info:id = "ND_clamp_float"
+                    float inputs:high = 1
+                    float inputs:in.connect = </root/_materials/Test_ClampChain/NodeGraphs/node.outputs:out>
+                    float inputs:low = 0
+                    float outputs:out
+                }
+
+                def Shader "bnode__Clamp_001"
+                {
+                    uniform token info:id = "ND_clamp_float"
+                    float inputs:high = 1
+                    float inputs:in.connect = </root/_materials/Test_ClampChain/NodeGraphs/bnode__Clamp.outputs:out>
+                    float inputs:low = 0
+                    float outputs:out
+                }
+
+                def Shader "bnode__Combine_Color"
+                {
+                    uniform token info:id = "ND_combine3_color3"
+                    float inputs:in1.connect = </root/_materials/Test_ClampChain/NodeGraphs/bnode__Clamp_001.outputs:out>
+                    float inputs:in2.connect = </root/_materials/Test_ClampChain/NodeGraphs/bnode__Clamp_001.outputs:out>
+                    float inputs:in3.connect = </root/_materials/Test_ClampChain/NodeGraphs/bnode__Clamp_001.outputs:out>
+                    color3f outputs:out
+                }
+
+                def Shader "node_001"
+                {
+                    uniform token info:id = "ND_normal_vector3"
+                    string inputs:space = "world"
+                    float3 outputs:out
+                }
+
+                def Shader "node_002"
+                {
+                    uniform token info:id = "ND_normalize_vector3"
+                    float3 inputs:in.connect = </root/_materials/Test_ClampChain/NodeGraphs/node_001.outputs:out>
+                    float3 outputs:out
+                }
+
+                def Shader "node_003"
+                {
+                    uniform token info:id = "ND_tangent_vector3"
+                    string inputs:space = "world"
+                    float3 outputs:out
+                }
+
+                def Shader "node_004"
+                {
+                    uniform token info:id = "ND_normalize_vector3"
+                    float3 inputs:in.connect = </root/_materials/Test_ClampChain/NodeGraphs/node_003.outputs:out>
+                    float3 outputs:out
+                }
+
+                def Shader "node_005"
+                {
+                    uniform token info:id = "ND_rotate3d_vector3"
+                    float inputs:amount = -90
+                    float3 inputs:axis.connect = </root/_materials/Test_ClampChain/NodeGraphs/node_002.outputs:out>
+                    float3 inputs:in.connect = </root/_materials/Test_ClampChain/NodeGraphs/node_004.outputs:out>
+                    float3 outputs:out
+                }
+
+                def Shader "node_006"
+                {
+                    uniform token info:id = "ND_normalize_vector3"
+                    float3 inputs:in.connect = </root/_materials/Test_ClampChain/NodeGraphs/node_005.outputs:out>
+                    float3 outputs:out
+                }
+            }
+        }
+
+        def Material "Test_DeepExtract" (
+            prepend apiSchemas = ["MaterialXConfigAPI"]
+        )
+        {
+            string config:mtlx:version = "1.39"
+            token outputs:mtlx:surface.connect = </root/_materials/Test_DeepExtract/bnode__Principled_BSDF.outputs:surface>
+            token outputs:surface.connect = </root/_materials/Test_DeepExtract/Principled_BSDF.outputs:surface>
+            custom string userProperties:blender:data_name = "Test_DeepExtract"
+
+            def Shader "Principled_BSDF"
+            {
+                uniform token info:id = "UsdPreviewSurface"
+                float inputs:clearcoat = 0
+                float inputs:clearcoatRoughness = 0.03
+                color3f inputs:diffuseColor = (0.8, 0.8, 0.8)
+                float inputs:ior = 1.5
+                float inputs:metallic = 0
+                float inputs:opacity = 1
+                float inputs:roughness = 0.5
+                float inputs:specular = 0.5
+                token outputs:surface
+            }
+
+            def Shader "bnode__Principled_BSDF"
+            {
+                uniform token info:id = "ND_open_pbr_surface_surfaceshader"
+                color3f inputs:base_color.connect = </root/_materials/Test_DeepExtract/NodeGraphs.outputs:bnode__Combine2_out>
+                float inputs:base_diffuse_roughness = 0
+                float inputs:base_metalness = 0
+                float inputs:base_weight = 1
+                color3f inputs:coat_color = (1, 1, 1)
+                float inputs:coat_darkening
+                float inputs:coat_ior = 1.5
+                float inputs:coat_roughness = 0.03
+                float inputs:coat_roughness_anisotropy
+                float inputs:coat_weight = 0
+                color3f inputs:emission_color = (1, 1, 1)
+                float inputs:emission_luminance = 0
+                color3f inputs:fuzz_color = (1, 1, 1)
+                float inputs:fuzz_roughness = 0.5
+                float inputs:fuzz_weight = 0
+                float3 inputs:geometry_coat_normal
+                float3 inputs:geometry_coat_tangent
+                float3 inputs:geometry_normal
+                float inputs:geometry_opacity = 1
+                float3 inputs:geometry_tangent.connect = </root/_materials/Test_DeepExtract/NodeGraphs.outputs:node_003_out>
+                bool inputs:geometry_thin_walled
+                color3f inputs:specular_color = (1, 1, 1)
+                float inputs:specular_ior = 1.5
+                float inputs:specular_roughness = 0.5
+                float inputs:specular_roughness_anisotropy = 0
+                float inputs:specular_weight = 1
+                color3f inputs:subsurface_color.connect = </root/_materials/Test_DeepExtract/NodeGraphs.outputs:bnode__Combine2_out>
+                float inputs:subsurface_radius = 0.05
+                color3f inputs:subsurface_radius_scale = (1, 0.2, 0.1)
+                float inputs:subsurface_scatter_anisotropy = 0
+                float inputs:subsurface_weight = 0
+                float inputs:thin_film_ior = 1.33
+                float inputs:thin_film_thickness = 0
+                float inputs:thin_film_weight = 0
+                color3f inputs:transmission_color.connect = </root/_materials/Test_DeepExtract/NodeGraphs.outputs:bnode__Combine2_out>
+                float inputs:transmission_depth
+                float inputs:transmission_dispersion_abbe_number
+                float inputs:transmission_dispersion_scale
+                color3f inputs:transmission_scatter
+                float inputs:transmission_scatter_anisotropy
+                float inputs:transmission_weight = 0
+                token outputs:surface
+            }
+
+            def NodeGraph "NodeGraphs"
+            {
+                color3f outputs:bnode__Combine2_out.connect = </root/_materials/Test_DeepExtract/NodeGraphs/bnode__Combine2.outputs:out>
+                float3 outputs:node_003_out.connect = </root/_materials/Test_DeepExtract/NodeGraphs/node_003.outputs:out>
+
+                def Shader "bnode__Color"
+                {
+                    uniform token info:id = "ND_constant_color3"
+                    color3f inputs:value = (0.7, 0.3, 0.5)
+                    color3f outputs:out
+                }
+
+                def Shader "bnode__Separate1_Red"
+                {
+                    uniform token info:id = "ND_extract_color3"
+                    color3f inputs:in.connect = </root/_materials/Test_DeepExtract/NodeGraphs/bnode__Color.outputs:out>
+                    int inputs:index = 0
+                    float outputs:out
+                }
+
+                def Shader "bnode__Separate1_Green"
+                {
+                    uniform token info:id = "ND_extract_color3"
+                    color3f inputs:in.connect = </root/_materials/Test_DeepExtract/NodeGraphs/bnode__Color.outputs:out>
+                    int inputs:index = 1
+                    float outputs:out
+                }
+
+                def Shader "bnode__Separate1_Blue"
+                {
+                    uniform token info:id = "ND_extract_color3"
+                    color3f inputs:in.connect = </root/_materials/Test_DeepExtract/NodeGraphs/bnode__Color.outputs:out>
+                    int inputs:index = 2
+                    float outputs:out
+                }
+
+                def Shader "bnode__Combine1"
+                {
+                    uniform token info:id = "ND_combine3_color3"
+                    float inputs:in1.connect = </root/_materials/Test_DeepExtract/NodeGraphs/bnode__Separate1_Red.outputs:out>
+                    float inputs:in2.connect = </root/_materials/Test_DeepExtract/NodeGraphs/bnode__Separate1_Green.outputs:out>
+                    float inputs:in3.connect = </root/_materials/Test_DeepExtract/NodeGraphs/bnode__Separate1_Blue.outputs:out>
+                    color3f outputs:out
+                }
+
+                def Shader "bnode__Separate2_Red"
+                {
+                    uniform token info:id = "ND_extract_color3"
+                    color3f inputs:in.connect = </root/_materials/Test_DeepExtract/NodeGraphs/bnode__Combine1.outputs:out>
+                    int inputs:index = 0
+                    float outputs:out
+                }
+
+                def Shader "bnode__Separate2_Green"
+                {
+                    uniform token info:id = "ND_extract_color3"
+                    color3f inputs:in.connect = </root/_materials/Test_DeepExtract/NodeGraphs/bnode__Combine1.outputs:out>
+                    int inputs:index = 1
+                    float outputs:out
+                }
+
+                def Shader "bnode__Separate2_Blue"
+                {
+                    uniform token info:id = "ND_extract_color3"
+                    color3f inputs:in.connect = </root/_materials/Test_DeepExtract/NodeGraphs/bnode__Combine1.outputs:out>
+                    int inputs:index = 2
+                    float outputs:out
+                }
+
+                def Shader "bnode__Combine2"
+                {
+                    uniform token info:id = "ND_combine3_color3"
+                    float inputs:in1.connect = </root/_materials/Test_DeepExtract/NodeGraphs/bnode__Separate2_Red.outputs:out>
+                    float inputs:in2.connect = </root/_materials/Test_DeepExtract/NodeGraphs/bnode__Separate2_Green.outputs:out>
+                    float inputs:in3.connect = </root/_materials/Test_DeepExtract/NodeGraphs/bnode__Separate2_Blue.outputs:out>
+                    color3f outputs:out
+                }
+
+                def Shader "node"
+                {
+                    uniform token info:id = "ND_normal_vector3"
+                    string inputs:space = "world"
+                    float3 outputs:out
+                }
+
+                def Shader "node_001"
+                {
+                    uniform token info:id = "ND_normalize_vector3"
+                    float3 inputs:in.connect = </root/_materials/Test_DeepExtract/NodeGraphs/node.outputs:out>
+                    float3 outputs:out
+                }
+
+                def Shader "node_002"
+                {
+                    uniform token info:id = "ND_tangent_vector3"
+                    string inputs:space = "world"
+                    float3 outputs:out
+                }
+
+                def Shader "node_003"
+                {
+                    uniform token info:id = "ND_normalize_vector3"
+                    float3 inputs:in.connect = </root/_materials/Test_DeepExtract/NodeGraphs/node_002.outputs:out>
+                    float3 outputs:out
+                }
+
+                def Shader "node_004"
+                {
+                    uniform token info:id = "ND_rotate3d_vector3"
+                    float inputs:amount = -90
+                    float3 inputs:axis.connect = </root/_materials/Test_DeepExtract/NodeGraphs/node_001.outputs:out>
+                    float3 inputs:in.connect = </root/_materials/Test_DeepExtract/NodeGraphs/node_003.outputs:out>
+                    float3 outputs:out
+                }
+
+                def Shader "node_005"
+                {
+                    uniform token info:id = "ND_normalize_vector3"
+                    float3 inputs:in.connect = </root/_materials/Test_DeepExtract/NodeGraphs/node_004.outputs:out>
+                    float3 outputs:out
+                }
+            }
+        }
+
+        def Material "Test_MulDiv" (
+            prepend apiSchemas = ["MaterialXConfigAPI"]
+        )
+        {
+            string config:mtlx:version = "1.39"
+            token outputs:mtlx:surface.connect = </root/_materials/Test_MulDiv/bnode__Principled_BSDF.outputs:surface>
+            token outputs:surface.connect = </root/_materials/Test_MulDiv/Principled_BSDF.outputs:surface>
+            custom string userProperties:blender:data_name = "Test_MulDiv"
+
+            def Shader "Principled_BSDF"
+            {
+                uniform token info:id = "UsdPreviewSurface"
+                float inputs:clearcoat = 0
+                float inputs:clearcoatRoughness = 0.03
+                color3f inputs:diffuseColor = (0.8, 0.8, 0.8)
+                float inputs:ior = 1.5
+                float inputs:metallic = 0
+                float inputs:opacity = 1
+                float inputs:roughness = 0.5
+                float inputs:specular = 0.5
+                token outputs:surface
+            }
+
+            def Shader "bnode__Principled_BSDF"
+            {
+                uniform token info:id = "ND_open_pbr_surface_surfaceshader"
+                color3f inputs:base_color = (0.8, 0.8, 0.8)
+                float inputs:base_diffuse_roughness = 0
+                float inputs:base_metalness = 0
+                float inputs:base_weight = 1
+                color3f inputs:coat_color = (1, 1, 1)
+                float inputs:coat_darkening
+                float inputs:coat_ior = 1.5
+                float inputs:coat_roughness = 0.03
+                float inputs:coat_roughness_anisotropy
+                float inputs:coat_weight = 0
+                color3f inputs:emission_color = (1, 1, 1)
+                float inputs:emission_luminance = 0
+                color3f inputs:fuzz_color = (1, 1, 1)
+                float inputs:fuzz_roughness = 0.5
+                float inputs:fuzz_weight = 0
+                float3 inputs:geometry_coat_normal
+                float3 inputs:geometry_coat_tangent
+                float3 inputs:geometry_normal
+                float inputs:geometry_opacity = 1
+                float3 inputs:geometry_tangent.connect = </root/_materials/Test_MulDiv/NodeGraphs.outputs:node_003_out>
+                bool inputs:geometry_thin_walled
+                color3f inputs:specular_color = (1, 1, 1)
+                float inputs:specular_ior = 1.5
+                float inputs:specular_roughness = 0.5
+                float inputs:specular_roughness_anisotropy = 0
+                float inputs:specular_weight = 1
+                color3f inputs:subsurface_color = (0.8, 0.8, 0.8)
+                float inputs:subsurface_radius = 0.05
+                color3f inputs:subsurface_radius_scale = (1, 0.2, 0.1)
+                float inputs:subsurface_scatter_anisotropy = 0
+                float inputs:subsurface_weight = 0
+                float inputs:thin_film_ior = 1.33
+                float inputs:thin_film_thickness = 0
+                float inputs:thin_film_weight = 0
+                color3f inputs:transmission_color = (0.8, 0.8, 0.8)
+                float inputs:transmission_depth
+                float inputs:transmission_dispersion_abbe_number
+                float inputs:transmission_dispersion_scale
+                color3f inputs:transmission_scatter
+                float inputs:transmission_scatter_anisotropy
+                float inputs:transmission_weight = 0
+                token outputs:surface
+            }
+
+            def NodeGraph "NodeGraphs"
+            {
+                float3 outputs:node_003_out.connect = </root/_materials/Test_MulDiv/NodeGraphs/node_003.outputs:out>
+
+                def Shader "node"
+                {
+                    uniform token info:id = "ND_normal_vector3"
+                    string inputs:space = "world"
+                    float3 outputs:out
+                }
+
+                def Shader "node_001"
+                {
+                    uniform token info:id = "ND_normalize_vector3"
+                    float3 inputs:in.connect = </root/_materials/Test_MulDiv/NodeGraphs/node.outputs:out>
+                    float3 outputs:out
+                }
+
+                def Shader "node_002"
+                {
+                    uniform token info:id = "ND_tangent_vector3"
+                    string inputs:space = "world"
+                    float3 outputs:out
+                }
+
+                def Shader "node_003"
+                {
+                    uniform token info:id = "ND_normalize_vector3"
+                    float3 inputs:in.connect = </root/_materials/Test_MulDiv/NodeGraphs/node_002.outputs:out>
+                    float3 outputs:out
+                }
+
+                def Shader "node_004"
+                {
+                    uniform token info:id = "ND_rotate3d_vector3"
+                    float inputs:amount = -90
+                    float3 inputs:axis.connect = </root/_materials/Test_MulDiv/NodeGraphs/node_001.outputs:out>
+                    float3 inputs:in.connect = </root/_materials/Test_MulDiv/NodeGraphs/node_003.outputs:out>
+                    float3 outputs:out
+                }
+
+                def Shader "node_005"
+                {
+                    uniform token info:id = "ND_normalize_vector3"
+                    float3 inputs:in.connect = </root/_materials/Test_MulDiv/NodeGraphs/node_004.outputs:out>
+                    float3 outputs:out
+                }
+            }
+        }
+
+        def Material "Test_AddSubtract" (
+            prepend apiSchemas = ["MaterialXConfigAPI"]
+        )
+        {
+            string config:mtlx:version = "1.39"
+            token outputs:mtlx:surface.connect = </root/_materials/Test_AddSubtract/bnode__Principled_BSDF.outputs:surface>
+            token outputs:surface.connect = </root/_materials/Test_AddSubtract/Principled_BSDF.outputs:surface>
+            custom string userProperties:blender:data_name = "Test_AddSubtract"
+
+            def Shader "Principled_BSDF"
+            {
+                uniform token info:id = "UsdPreviewSurface"
+                float inputs:clearcoat = 0
+                float inputs:clearcoatRoughness = 0.03
+                color3f inputs:diffuseColor = (0.8, 0.8, 0.8)
+                float inputs:ior = 1.5
+                float inputs:metallic = 0
+                float inputs:opacity = 1
+                float inputs:roughness = 0.5
+                float inputs:specular = 0.5
+                token outputs:surface
+            }
+
+            def Shader "bnode__Principled_BSDF"
+            {
+                uniform token info:id = "ND_open_pbr_surface_surfaceshader"
+                color3f inputs:base_color = (0.8, 0.8, 0.8)
+                float inputs:base_diffuse_roughness = 0
+                float inputs:base_metalness = 0
+                float inputs:base_weight = 1
+                color3f inputs:coat_color = (1, 1, 1)
+                float inputs:coat_darkening
+                float inputs:coat_ior = 1.5
+                float inputs:coat_roughness = 0.03
+                float inputs:coat_roughness_anisotropy
+                float inputs:coat_weight = 0
+                color3f inputs:emission_color = (1, 1, 1)
+                float inputs:emission_luminance = 0
+                color3f inputs:fuzz_color = (1, 1, 1)
+                float inputs:fuzz_roughness = 0.5
+                float inputs:fuzz_weight = 0
+                float3 inputs:geometry_coat_normal
+                float3 inputs:geometry_coat_tangent
+                float3 inputs:geometry_normal
+                float inputs:geometry_opacity = 1
+                float3 inputs:geometry_tangent.connect = </root/_materials/Test_AddSubtract/NodeGraphs.outputs:node_003_out>
+                bool inputs:geometry_thin_walled
+                color3f inputs:specular_color = (1, 1, 1)
+                float inputs:specular_ior = 1.5
+                float inputs:specular_roughness = 0.5
+                float inputs:specular_roughness_anisotropy = 0
+                float inputs:specular_weight = 1
+                color3f inputs:subsurface_color = (0.8, 0.8, 0.8)
+                float inputs:subsurface_radius = 0.05
+                color3f inputs:subsurface_radius_scale = (1, 0.2, 0.1)
+                float inputs:subsurface_scatter_anisotropy = 0
+                float inputs:subsurface_weight = 0
+                float inputs:thin_film_ior = 1.33
+                float inputs:thin_film_thickness = 0
+                float inputs:thin_film_weight = 0
+                color3f inputs:transmission_color = (0.8, 0.8, 0.8)
+                float inputs:transmission_depth
+                float inputs:transmission_dispersion_abbe_number
+                float inputs:transmission_dispersion_scale
+                color3f inputs:transmission_scatter
+                float inputs:transmission_scatter_anisotropy
+                float inputs:transmission_weight = 0
+                token outputs:surface
+            }
+
+            def NodeGraph "NodeGraphs"
+            {
+                float3 outputs:node_003_out.connect = </root/_materials/Test_AddSubtract/NodeGraphs/node_003.outputs:out>
+
+                def Shader "node"
+                {
+                    uniform token info:id = "ND_normal_vector3"
+                    string inputs:space = "world"
+                    float3 outputs:out
+                }
+
+                def Shader "node_001"
+                {
+                    uniform token info:id = "ND_normalize_vector3"
+                    float3 inputs:in.connect = </root/_materials/Test_AddSubtract/NodeGraphs/node.outputs:out>
+                    float3 outputs:out
+                }
+
+                def Shader "node_002"
+                {
+                    uniform token info:id = "ND_tangent_vector3"
+                    string inputs:space = "world"
+                    float3 outputs:out
+                }
+
+                def Shader "node_003"
+                {
+                    uniform token info:id = "ND_normalize_vector3"
+                    float3 inputs:in.connect = </root/_materials/Test_AddSubtract/NodeGraphs/node_002.outputs:out>
+                    float3 outputs:out
+                }
+
+                def Shader "node_004"
+                {
+                    uniform token info:id = "ND_rotate3d_vector3"
+                    float inputs:amount = -90
+                    float3 inputs:axis.connect = </root/_materials/Test_AddSubtract/NodeGraphs/node_001.outputs:out>
+                    float3 inputs:in.connect = </root/_materials/Test_AddSubtract/NodeGraphs/node_003.outputs:out>
+                    float3 outputs:out
+                }
+
+                def Shader "node_005"
+                {
+                    uniform token info:id = "ND_normalize_vector3"
+                    float3 inputs:in.connect = </root/_materials/Test_AddSubtract/NodeGraphs/node_004.outputs:out>
+                    float3 outputs:out
+                }
+            }
+        }
+
+        def Material "Test_MixSame" (
+            prepend apiSchemas = ["MaterialXConfigAPI"]
+        )
+        {
+            string config:mtlx:version = "1.39"
+            token outputs:mtlx:surface.connect = </root/_materials/Test_MixSame/bnode__Principled_BSDF.outputs:surface>
+            token outputs:surface.connect = </root/_materials/Test_MixSame/Principled_BSDF.outputs:surface>
+            custom string userProperties:blender:data_name = "Test_MixSame"
+
+            def Shader "Principled_BSDF"
+            {
+                uniform token info:id = "UsdPreviewSurface"
+                float inputs:clearcoat = 0
+                float inputs:clearcoatRoughness = 0.03
+                color3f inputs:diffuseColor = (0.8, 0.8, 0.8)
+                float inputs:ior = 1.5
+                float inputs:metallic = 0
+                float inputs:opacity = 1
+                float inputs:roughness = 0.5
+                float inputs:specular = 0.5
+                token outputs:surface
+            }
+
+            def Shader "bnode__Principled_BSDF"
+            {
+                uniform token info:id = "ND_open_pbr_surface_surfaceshader"
+                color3f inputs:base_color = (0.8, 0.8, 0.8)
+                float inputs:base_diffuse_roughness = 0
+                float inputs:base_metalness = 0
+                float inputs:base_weight = 1
+                color3f inputs:coat_color = (1, 1, 1)
+                float inputs:coat_darkening
+                float inputs:coat_ior = 1.5
+                float inputs:coat_roughness = 0.03
+                float inputs:coat_roughness_anisotropy
+                float inputs:coat_weight = 0
+                color3f inputs:emission_color = (1, 1, 1)
+                float inputs:emission_luminance = 0
+                color3f inputs:fuzz_color = (1, 1, 1)
+                float inputs:fuzz_roughness = 0.5
+                float inputs:fuzz_weight = 0
+                float3 inputs:geometry_coat_normal
+                float3 inputs:geometry_coat_tangent
+                float3 inputs:geometry_normal
+                float inputs:geometry_opacity = 1
+                float3 inputs:geometry_tangent.connect = </root/_materials/Test_MixSame/NodeGraphs.outputs:node_003_out>
+                bool inputs:geometry_thin_walled
+                color3f inputs:specular_color = (1, 1, 1)
+                float inputs:specular_ior = 1.5
+                float inputs:specular_roughness = 0.5
+                float inputs:specular_roughness_anisotropy = 0
+                float inputs:specular_weight = 1
+                color3f inputs:subsurface_color = (0.8, 0.8, 0.8)
+                float inputs:subsurface_radius = 0.05
+                color3f inputs:subsurface_radius_scale = (1, 0.2, 0.1)
+                float inputs:subsurface_scatter_anisotropy = 0
+                float inputs:subsurface_weight = 0
+                float inputs:thin_film_ior = 1.33
+                float inputs:thin_film_thickness = 0
+                float inputs:thin_film_weight = 0
+                color3f inputs:transmission_color = (0.8, 0.8, 0.8)
+                float inputs:transmission_depth
+                float inputs:transmission_dispersion_abbe_number
+                float inputs:transmission_dispersion_scale
+                color3f inputs:transmission_scatter
+                float inputs:transmission_scatter_anisotropy
+                float inputs:transmission_weight = 0
+                token outputs:surface
+            }
+
+            def NodeGraph "NodeGraphs"
+            {
+                float3 outputs:node_003_out.connect = </root/_materials/Test_MixSame/NodeGraphs/node_003.outputs:out>
+
+                def Shader "node"
+                {
+                    uniform token info:id = "ND_normal_vector3"
+                    string inputs:space = "world"
+                    float3 outputs:out
+                }
+
+                def Shader "node_001"
+                {
+                    uniform token info:id = "ND_normalize_vector3"
+                    float3 inputs:in.connect = </root/_materials/Test_MixSame/NodeGraphs/node.outputs:out>
+                    float3 outputs:out
+                }
+
+                def Shader "node_002"
+                {
+                    uniform token info:id = "ND_tangent_vector3"
+                    string inputs:space = "world"
+                    float3 outputs:out
+                }
+
+                def Shader "node_003"
+                {
+                    uniform token info:id = "ND_normalize_vector3"
+                    float3 inputs:in.connect = </root/_materials/Test_MixSame/NodeGraphs/node_002.outputs:out>
+                    float3 outputs:out
+                }
+
+                def Shader "node_004"
+                {
+                    uniform token info:id = "ND_rotate3d_vector3"
+                    float inputs:amount = -90
+                    float3 inputs:axis.connect = </root/_materials/Test_MixSame/NodeGraphs/node_001.outputs:out>
+                    float3 inputs:in.connect = </root/_materials/Test_MixSame/NodeGraphs/node_003.outputs:out>
+                    float3 outputs:out
+                }
+
+                def Shader "node_005"
+                {
+                    uniform token info:id = "ND_normalize_vector3"
+                    float3 inputs:in.connect = </root/_materials/Test_MixSame/NodeGraphs/node_004.outputs:out>
+                    float3 outputs:out
+                }
+            }
+        }
+
+        def Material "Test_SingleChannelMod" (
+            prepend apiSchemas = ["MaterialXConfigAPI"]
+        )
+        {
+            string config:mtlx:version = "1.39"
+            token outputs:mtlx:surface.connect = </root/_materials/Test_SingleChannelMod/bnode__Principled_BSDF.outputs:surface>
+            token outputs:surface.connect = </root/_materials/Test_SingleChannelMod/Principled_BSDF.outputs:surface>
+            custom string userProperties:blender:data_name = "Test_SingleChannelMod"
+
+            def Shader "Principled_BSDF"
+            {
+                uniform token info:id = "UsdPreviewSurface"
+                float inputs:clearcoat = 0
+                float inputs:clearcoatRoughness = 0.03
+                color3f inputs:diffuseColor = (0.8, 0.8, 0.8)
+                float inputs:ior = 1.5
+                float inputs:metallic = 0
+                float inputs:opacity = 1
+                float inputs:roughness = 0.5
+                float inputs:specular = 0.5
+                token outputs:surface
+            }
+
+            def Shader "bnode__Principled_BSDF"
+            {
+                uniform token info:id = "ND_open_pbr_surface_surfaceshader"
+                color3f inputs:base_color.connect = </root/_materials/Test_SingleChannelMod/NodeGraphs.outputs:bnode__Combine_Color_out>
+                float inputs:base_diffuse_roughness = 0
+                float inputs:base_metalness = 0
+                float inputs:base_weight = 1
+                color3f inputs:coat_color = (1, 1, 1)
+                float inputs:coat_darkening
+                float inputs:coat_ior = 1.5
+                float inputs:coat_roughness = 0.03
+                float inputs:coat_roughness_anisotropy
+                float inputs:coat_weight = 0
+                color3f inputs:emission_color = (1, 1, 1)
+                float inputs:emission_luminance = 0
+                color3f inputs:fuzz_color = (1, 1, 1)
+                float inputs:fuzz_roughness = 0.5
+                float inputs:fuzz_weight = 0
+                float3 inputs:geometry_coat_normal
+                float3 inputs:geometry_coat_tangent
+                float3 inputs:geometry_normal
+                float inputs:geometry_opacity = 1
+                float3 inputs:geometry_tangent.connect = </root/_materials/Test_SingleChannelMod/NodeGraphs.outputs:node_003_out>
+                bool inputs:geometry_thin_walled
+                color3f inputs:specular_color = (1, 1, 1)
+                float inputs:specular_ior = 1.5
+                float inputs:specular_roughness = 0.5
+                float inputs:specular_roughness_anisotropy = 0
+                float inputs:specular_weight = 1
+                color3f inputs:subsurface_color.connect = </root/_materials/Test_SingleChannelMod/NodeGraphs.outputs:bnode__Combine_Color_out>
+                float inputs:subsurface_radius = 0.05
+                color3f inputs:subsurface_radius_scale = (1, 0.2, 0.1)
+                float inputs:subsurface_scatter_anisotropy = 0
+                float inputs:subsurface_weight = 0
+                float inputs:thin_film_ior = 1.33
+                float inputs:thin_film_thickness = 0
+                float inputs:thin_film_weight = 0
+                color3f inputs:transmission_color.connect = </root/_materials/Test_SingleChannelMod/NodeGraphs.outputs:bnode__Combine_Color_out>
+                float inputs:transmission_depth
+                float inputs:transmission_dispersion_abbe_number
+                float inputs:transmission_dispersion_scale
+                color3f inputs:transmission_scatter
+                float inputs:transmission_scatter_anisotropy
+                float inputs:transmission_weight = 0
+                token outputs:surface
+            }
+
+            def NodeGraph "NodeGraphs"
+            {
+                color3f outputs:bnode__Combine_Color_out.connect = </root/_materials/Test_SingleChannelMod/NodeGraphs/bnode__Combine_Color.outputs:out>
+                float3 outputs:node_003_out.connect = </root/_materials/Test_SingleChannelMod/NodeGraphs/node_003.outputs:out>
+
+                def Shader "bnode__Color"
+                {
+                    uniform token info:id = "ND_constant_color3"
+                    color3f inputs:value = (0.5, 0.6, 0.7)
+                    color3f outputs:out
+                }
+
+                def Shader "bnode__Separate_Color_Red"
+                {
+                    uniform token info:id = "ND_extract_color3"
+                    color3f inputs:in.connect = </root/_materials/Test_SingleChannelMod/NodeGraphs/bnode__Color.outputs:out>
+                    int inputs:index = 0
+                    float outputs:out
+                }
+
+                def Shader "bnode__Math"
+                {
+                    uniform token info:id = "ND_multiply_float"
+                    float inputs:in1.connect = </root/_materials/Test_SingleChannelMod/NodeGraphs/bnode__Separate_Color_Red.outputs:out>
+                    float inputs:in2 = 2
+                    float outputs:out
+                }
+
+                def Shader "bnode__Separate_Color_Green"
+                {
+                    uniform token info:id = "ND_extract_color3"
+                    color3f inputs:in.connect = </root/_materials/Test_SingleChannelMod/NodeGraphs/bnode__Color.outputs:out>
+                    int inputs:index = 1
+                    float outputs:out
+                }
+
+                def Shader "bnode__Separate_Color_Blue"
+                {
+                    uniform token info:id = "ND_extract_color3"
+                    color3f inputs:in.connect = </root/_materials/Test_SingleChannelMod/NodeGraphs/bnode__Color.outputs:out>
+                    int inputs:index = 2
+                    float outputs:out
+                }
+
+                def Shader "bnode__Combine_Color"
+                {
+                    uniform token info:id = "ND_combine3_color3"
+                    float inputs:in1.connect = </root/_materials/Test_SingleChannelMod/NodeGraphs/bnode__Math.outputs:out>
+                    float inputs:in2.connect = </root/_materials/Test_SingleChannelMod/NodeGraphs/bnode__Separate_Color_Green.outputs:out>
+                    float inputs:in3.connect = </root/_materials/Test_SingleChannelMod/NodeGraphs/bnode__Separate_Color_Blue.outputs:out>
+                    color3f outputs:out
+                }
+
+                def Shader "node"
+                {
+                    uniform token info:id = "ND_normal_vector3"
+                    string inputs:space = "world"
+                    float3 outputs:out
+                }
+
+                def Shader "node_001"
+                {
+                    uniform token info:id = "ND_normalize_vector3"
+                    float3 inputs:in.connect = </root/_materials/Test_SingleChannelMod/NodeGraphs/node.outputs:out>
+                    float3 outputs:out
+                }
+
+                def Shader "node_002"
+                {
+                    uniform token info:id = "ND_tangent_vector3"
+                    string inputs:space = "world"
+                    float3 outputs:out
+                }
+
+                def Shader "node_003"
+                {
+                    uniform token info:id = "ND_normalize_vector3"
+                    float3 inputs:in.connect = </root/_materials/Test_SingleChannelMod/NodeGraphs/node_002.outputs:out>
+                    float3 outputs:out
+                }
+
+                def Shader "node_004"
+                {
+                    uniform token info:id = "ND_rotate3d_vector3"
+                    float inputs:amount = -90
+                    float3 inputs:axis.connect = </root/_materials/Test_SingleChannelMod/NodeGraphs/node_001.outputs:out>
+                    float3 inputs:in.connect = </root/_materials/Test_SingleChannelMod/NodeGraphs/node_003.outputs:out>
+                    float3 outputs:out
+                }
+
+                def Shader "node_005"
+                {
+                    uniform token info:id = "ND_normalize_vector3"
+                    float3 inputs:in.connect = </root/_materials/Test_SingleChannelMod/NodeGraphs/node_004.outputs:out>
+                    float3 outputs:out
+                }
+            }
+        }
+    }
+
+    def Xform "Test_ChannelGrayscale"
+    {
+        custom string userProperties:blender:object_name = "Test_ChannelGrayscale"
+        float3 xformOp:rotateXYZ = (0, -0, 0)
+        float3 xformOp:scale = (1, 1, 1)
+        double3 xformOp:translate = (3, 0, 0)
+        uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:rotateXYZ", "xformOp:scale"]
+
+        def Mesh "Cube_010" (
+            active = true
+            prepend apiSchemas = ["MaterialBindingAPI"]
+        )
+        {
+            uniform bool doubleSided = 1
+            float3[] extent = [(-1, -1, -1), (1, 1, 1)]
+            int[] faceVertexCounts = [4, 4, 4, 4, 4, 4]
+            int[] faceVertexIndices = [0, 1, 3, 2, 2, 3, 7, 6, 6, 7, 5, 4, 4, 5, 1, 0, 2, 6, 4, 0, 7, 3, 1, 5]
+            rel material:binding = </root/_materials/Test_ChannelGrayscale>
+            normal3f[] normals = [(-1, 0, 0), (-1, 0, 0), (-1, 0, 0), (-1, 0, 0), (0, 1, 0), (0, 1, 0), (0, 1, 0), (0, 1, 0), (1, 0, 0), (1, 0, 0), (1, 0, 0), (1, 0, 0), (0, -1, 0), (0, -1, 0), (0, -1, 0), (0, -1, 0), (0, 0, -1), (0, 0, -1), (0, 0, -1), (0, 0, -1), (0, 0, 1), (0, 0, 1), (0, 0, 1), (0, 0, 1)] (
+                interpolation = "faceVarying"
+            )
+            point3f[] points = [(-1, -1, -1), (-1, -1, 1), (-1, 1, -1), (-1, 1, 1), (1, -1, -1), (1, -1, 1), (1, 1, -1), (1, 1, 1)]
+            texCoord2f[] primvars:st = [(0.375, 0), (0.625, 0), (0.625, 0.25), (0.375, 0.25), (0.375, 0.25), (0.625, 0.25), (0.625, 0.5), (0.375, 0.5), (0.375, 0.5), (0.625, 0.5), (0.625, 0.75), (0.375, 0.75), (0.375, 0.75), (0.625, 0.75), (0.625, 1), (0.375, 1), (0.125, 0.5), (0.375, 0.5), (0.375, 0.75), (0.125, 0.75), (0.625, 0.5), (0.875, 0.5), (0.875, 0.75), (0.625, 0.75)] (
+                interpolation = "faceVarying"
+            )
+            uniform token subdivisionScheme = "none"
+            custom string userProperties:blender:data_name = "Cube.010"
+        }
+    }
+
+    def Xform "Test_ClampChain"
+    {
+        custom string userProperties:blender:object_name = "Test_ClampChain"
+        float3 xformOp:rotateXYZ = (0, -0, 0)
+        float3 xformOp:scale = (1, 1, 1)
+        double3 xformOp:translate = (9, 3, 0)
+        uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:rotateXYZ", "xformOp:scale"]
+
+        def Mesh "Cube_016" (
+            active = true
+            prepend apiSchemas = ["MaterialBindingAPI"]
+        )
+        {
+            uniform bool doubleSided = 1
+            float3[] extent = [(-1, -1, -1), (1, 1, 1)]
+            int[] faceVertexCounts = [4, 4, 4, 4, 4, 4]
+            int[] faceVertexIndices = [0, 1, 3, 2, 2, 3, 7, 6, 6, 7, 5, 4, 4, 5, 1, 0, 2, 6, 4, 0, 7, 3, 1, 5]
+            rel material:binding = </root/_materials/Test_ClampChain>
+            normal3f[] normals = [(-1, 0, 0), (-1, 0, 0), (-1, 0, 0), (-1, 0, 0), (0, 1, 0), (0, 1, 0), (0, 1, 0), (0, 1, 0), (1, 0, 0), (1, 0, 0), (1, 0, 0), (1, 0, 0), (0, -1, 0), (0, -1, 0), (0, -1, 0), (0, -1, 0), (0, 0, -1), (0, 0, -1), (0, 0, -1), (0, 0, -1), (0, 0, 1), (0, 0, 1), (0, 0, 1), (0, 0, 1)] (
+                interpolation = "faceVarying"
+            )
+            point3f[] points = [(-1, -1, -1), (-1, -1, 1), (-1, 1, -1), (-1, 1, 1), (1, -1, -1), (1, -1, 1), (1, 1, -1), (1, 1, 1)]
+            texCoord2f[] primvars:st = [(0.375, 0), (0.625, 0), (0.625, 0.25), (0.375, 0.25), (0.375, 0.25), (0.625, 0.25), (0.625, 0.5), (0.375, 0.5), (0.375, 0.5), (0.625, 0.5), (0.625, 0.75), (0.375, 0.75), (0.375, 0.75), (0.625, 0.75), (0.625, 1), (0.375, 1), (0.125, 0.5), (0.375, 0.5), (0.375, 0.75), (0.125, 0.75), (0.625, 0.5), (0.875, 0.5), (0.875, 0.75), (0.625, 0.75)] (
+                interpolation = "faceVarying"
+            )
+            uniform token subdivisionScheme = "none"
+            custom string userProperties:blender:data_name = "Cube.016"
+        }
+    }
+
+    def Xform "Test_DeepExtract"
+    {
+        custom string userProperties:blender:object_name = "Test_DeepExtract"
+        float3 xformOp:rotateXYZ = (0, -0, 0)
+        float3 xformOp:scale = (1, 1, 1)
+        double3 xformOp:translate = (3, 3, 0)
+        uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:rotateXYZ", "xformOp:scale"]
+
+        def Mesh "Cube_014" (
+            active = true
+            prepend apiSchemas = ["MaterialBindingAPI"]
+        )
+        {
+            uniform bool doubleSided = 1
+            float3[] extent = [(-1, -1, -1), (1, 1, 1)]
+            int[] faceVertexCounts = [4, 4, 4, 4, 4, 4]
+            int[] faceVertexIndices = [0, 1, 3, 2, 2, 3, 7, 6, 6, 7, 5, 4, 4, 5, 1, 0, 2, 6, 4, 0, 7, 3, 1, 5]
+            rel material:binding = </root/_materials/Test_DeepExtract>
+            normal3f[] normals = [(-1, 0, 0), (-1, 0, 0), (-1, 0, 0), (-1, 0, 0), (0, 1, 0), (0, 1, 0), (0, 1, 0), (0, 1, 0), (1, 0, 0), (1, 0, 0), (1, 0, 0), (1, 0, 0), (0, -1, 0), (0, -1, 0), (0, -1, 0), (0, -1, 0), (0, 0, -1), (0, 0, -1), (0, 0, -1), (0, 0, -1), (0, 0, 1), (0, 0, 1), (0, 0, 1), (0, 0, 1)] (
+                interpolation = "faceVarying"
+            )
+            point3f[] points = [(-1, -1, -1), (-1, -1, 1), (-1, 1, -1), (-1, 1, 1), (1, -1, -1), (1, -1, 1), (1, 1, -1), (1, 1, 1)]
+            texCoord2f[] primvars:st = [(0.375, 0), (0.625, 0), (0.625, 0.25), (0.375, 0.25), (0.375, 0.25), (0.625, 0.25), (0.625, 0.5), (0.375, 0.5), (0.375, 0.5), (0.625, 0.5), (0.625, 0.75), (0.375, 0.75), (0.375, 0.75), (0.625, 0.75), (0.625, 1), (0.375, 1), (0.125, 0.5), (0.375, 0.5), (0.375, 0.75), (0.125, 0.75), (0.625, 0.5), (0.875, 0.5), (0.875, 0.75), (0.625, 0.75)] (
+                interpolation = "faceVarying"
+            )
+            uniform token subdivisionScheme = "none"
+            custom string userProperties:blender:data_name = "Cube.014"
+        }
+    }
+
+    def Xform "Test_MulDiv"
+    {
+        custom string userProperties:blender:object_name = "Test_MulDiv"
+        float3 xformOp:rotateXYZ = (0, -0, 0)
+        float3 xformOp:scale = (1, 1, 1)
+        double3 xformOp:translate = (9, 0, 0)
+        uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:rotateXYZ", "xformOp:scale"]
+
+        def Mesh "Cube_012" (
+            active = true
+            prepend apiSchemas = ["MaterialBindingAPI"]
+        )
+        {
+            uniform bool doubleSided = 1
+            float3[] extent = [(-1, -1, -1), (1, 1, 1)]
+            int[] faceVertexCounts = [4, 4, 4, 4, 4, 4]
+            int[] faceVertexIndices = [0, 1, 3, 2, 2, 3, 7, 6, 6, 7, 5, 4, 4, 5, 1, 0, 2, 6, 4, 0, 7, 3, 1, 5]
+            rel material:binding = </root/_materials/Test_MulDiv>
+            normal3f[] normals = [(-1, 0, 0), (-1, 0, 0), (-1, 0, 0), (-1, 0, 0), (0, 1, 0), (0, 1, 0), (0, 1, 0), (0, 1, 0), (1, 0, 0), (1, 0, 0), (1, 0, 0), (1, 0, 0), (0, -1, 0), (0, -1, 0), (0, -1, 0), (0, -1, 0), (0, 0, -1), (0, 0, -1), (0, 0, -1), (0, 0, -1), (0, 0, 1), (0, 0, 1), (0, 0, 1), (0, 0, 1)] (
+                interpolation = "faceVarying"
+            )
+            point3f[] points = [(-1, -1, -1), (-1, -1, 1), (-1, 1, -1), (-1, 1, 1), (1, -1, -1), (1, -1, 1), (1, 1, -1), (1, 1, 1)]
+            texCoord2f[] primvars:st = [(0.375, 0), (0.625, 0), (0.625, 0.25), (0.375, 0.25), (0.375, 0.25), (0.625, 0.25), (0.625, 0.5), (0.375, 0.5), (0.375, 0.5), (0.625, 0.5), (0.625, 0.75), (0.375, 0.75), (0.375, 0.75), (0.625, 0.75), (0.625, 1), (0.375, 1), (0.125, 0.5), (0.375, 0.5), (0.375, 0.75), (0.125, 0.75), (0.625, 0.5), (0.875, 0.5), (0.875, 0.75), (0.625, 0.75)] (
+                interpolation = "faceVarying"
+            )
+            uniform token subdivisionScheme = "none"
+            custom string userProperties:blender:data_name = "Cube.012"
+        }
+    }
+
+    def Xform "Test_AddSubtract"
+    {
+        custom string userProperties:blender:object_name = "Test_AddSubtract"
+        float3 xformOp:rotateXYZ = (0, -0, 0)
+        float3 xformOp:scale = (1, 1, 1)
+        double3 xformOp:translate = (6, 0, 0)
+        uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:rotateXYZ", "xformOp:scale"]
+
+        def Mesh "Cube_011" (
+            active = true
+            prepend apiSchemas = ["MaterialBindingAPI"]
+        )
+        {
+            uniform bool doubleSided = 1
+            float3[] extent = [(-1, -1, -1), (1, 1, 1)]
+            int[] faceVertexCounts = [4, 4, 4, 4, 4, 4]
+            int[] faceVertexIndices = [0, 1, 3, 2, 2, 3, 7, 6, 6, 7, 5, 4, 4, 5, 1, 0, 2, 6, 4, 0, 7, 3, 1, 5]
+            rel material:binding = </root/_materials/Test_AddSubtract>
+            normal3f[] normals = [(-1, 0, 0), (-1, 0, 0), (-1, 0, 0), (-1, 0, 0), (0, 1, 0), (0, 1, 0), (0, 1, 0), (0, 1, 0), (1, 0, 0), (1, 0, 0), (1, 0, 0), (1, 0, 0), (0, -1, 0), (0, -1, 0), (0, -1, 0), (0, -1, 0), (0, 0, -1), (0, 0, -1), (0, 0, -1), (0, 0, -1), (0, 0, 1), (0, 0, 1), (0, 0, 1), (0, 0, 1)] (
+                interpolation = "faceVarying"
+            )
+            point3f[] points = [(-1, -1, -1), (-1, -1, 1), (-1, 1, -1), (-1, 1, 1), (1, -1, -1), (1, -1, 1), (1, 1, -1), (1, 1, 1)]
+            texCoord2f[] primvars:st = [(0.375, 0), (0.625, 0), (0.625, 0.25), (0.375, 0.25), (0.375, 0.25), (0.625, 0.25), (0.625, 0.5), (0.375, 0.5), (0.375, 0.5), (0.625, 0.5), (0.625, 0.75), (0.375, 0.75), (0.375, 0.75), (0.625, 0.75), (0.625, 1), (0.375, 1), (0.125, 0.5), (0.375, 0.5), (0.375, 0.75), (0.125, 0.75), (0.625, 0.5), (0.875, 0.5), (0.875, 0.75), (0.625, 0.75)] (
+                interpolation = "faceVarying"
+            )
+            uniform token subdivisionScheme = "none"
+            custom string userProperties:blender:data_name = "Cube.011"
+        }
+    }
+
+    def Xform "Test_MixSame"
+    {
+        custom string userProperties:blender:object_name = "Test_MixSame"
+        float3 xformOp:rotateXYZ = (0, -0, 0)
+        float3 xformOp:scale = (1, 1, 1)
+        double3 xformOp:translate = (6, 3, 0)
+        uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:rotateXYZ", "xformOp:scale"]
+
+        def Mesh "Cube_015" (
+            active = true
+            prepend apiSchemas = ["MaterialBindingAPI"]
+        )
+        {
+            uniform bool doubleSided = 1
+            float3[] extent = [(-1, -1, -1), (1, 1, 1)]
+            int[] faceVertexCounts = [4, 4, 4, 4, 4, 4]
+            int[] faceVertexIndices = [0, 1, 3, 2, 2, 3, 7, 6, 6, 7, 5, 4, 4, 5, 1, 0, 2, 6, 4, 0, 7, 3, 1, 5]
+            rel material:binding = </root/_materials/Test_MixSame>
+            normal3f[] normals = [(-1, 0, 0), (-1, 0, 0), (-1, 0, 0), (-1, 0, 0), (0, 1, 0), (0, 1, 0), (0, 1, 0), (0, 1, 0), (1, 0, 0), (1, 0, 0), (1, 0, 0), (1, 0, 0), (0, -1, 0), (0, -1, 0), (0, -1, 0), (0, -1, 0), (0, 0, -1), (0, 0, -1), (0, 0, -1), (0, 0, -1), (0, 0, 1), (0, 0, 1), (0, 0, 1), (0, 0, 1)] (
+                interpolation = "faceVarying"
+            )
+            point3f[] points = [(-1, -1, -1), (-1, -1, 1), (-1, 1, -1), (-1, 1, 1), (1, -1, -1), (1, -1, 1), (1, 1, -1), (1, 1, 1)]
+            texCoord2f[] primvars:st = [(0.375, 0), (0.625, 0), (0.625, 0.25), (0.375, 0.25), (0.375, 0.25), (0.625, 0.25), (0.625, 0.5), (0.375, 0.5), (0.375, 0.5), (0.625, 0.5), (0.625, 0.75), (0.375, 0.75), (0.375, 0.75), (0.625, 0.75), (0.625, 1), (0.375, 1), (0.125, 0.5), (0.375, 0.5), (0.375, 0.75), (0.125, 0.75), (0.625, 0.5), (0.875, 0.5), (0.875, 0.75), (0.625, 0.75)] (
+                interpolation = "faceVarying"
+            )
+            uniform token subdivisionScheme = "none"
+            custom string userProperties:blender:data_name = "Cube.015"
+        }
+    }
+
+    def Xform "Test_SingleChannelMod"
+    {
+        custom string userProperties:blender:object_name = "Test_SingleChannelMod"
+        float3 xformOp:rotateXYZ = (0, -0, 0)
+        float3 xformOp:scale = (1, 1, 1)
+        double3 xformOp:translate = (0, 3, 0)
+        uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:rotateXYZ", "xformOp:scale"]
+
+        def Mesh "Cube_013" (
+            active = true
+            prepend apiSchemas = ["MaterialBindingAPI"]
+        )
+        {
+            uniform bool doubleSided = 1
+            float3[] extent = [(-1, -1, -1), (1, 1, 1)]
+            int[] faceVertexCounts = [4, 4, 4, 4, 4, 4]
+            int[] faceVertexIndices = [0, 1, 3, 2, 2, 3, 7, 6, 6, 7, 5, 4, 4, 5, 1, 0, 2, 6, 4, 0, 7, 3, 1, 5]
+            rel material:binding = </root/_materials/Test_SingleChannelMod>
+            normal3f[] normals = [(-1, 0, 0), (-1, 0, 0), (-1, 0, 0), (-1, 0, 0), (0, 1, 0), (0, 1, 0), (0, 1, 0), (0, 1, 0), (1, 0, 0), (1, 0, 0), (1, 0, 0), (1, 0, 0), (0, -1, 0), (0, -1, 0), (0, -1, 0), (0, -1, 0), (0, 0, -1), (0, 0, -1), (0, 0, -1), (0, 0, -1), (0, 0, 1), (0, 0, 1), (0, 0, 1), (0, 0, 1)] (
+                interpolation = "faceVarying"
+            )
+            point3f[] points = [(-1, -1, -1), (-1, -1, 1), (-1, 1, -1), (-1, 1, 1), (1, -1, -1), (1, -1, 1), (1, 1, -1), (1, 1, 1)]
+            texCoord2f[] primvars:st = [(0.375, 0), (0.625, 0), (0.625, 0.25), (0.375, 0.25), (0.375, 0.25), (0.625, 0.25), (0.625, 0.5), (0.375, 0.5), (0.375, 0.5), (0.625, 0.5), (0.625, 0.75), (0.375, 0.75), (0.375, 0.75), (0.625, 0.75), (0.625, 1), (0.375, 1), (0.125, 0.5), (0.375, 0.5), (0.375, 0.75), (0.125, 0.75), (0.625, 0.5), (0.875, 0.5), (0.875, 0.75), (0.625, 0.75)] (
+                interpolation = "faceVarying"
+            )
+            uniform token subdivisionScheme = "none"
+            custom string userProperties:blender:data_name = "Cube.013"
+        }
+    }
+
+    def DomeLight "env_light"
+    {
+        float inputs:intensity = 1
+        asset inputs:texture:file = @./textures/color_0C0C0C.exr@
+    }
+}
+

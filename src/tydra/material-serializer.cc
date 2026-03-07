@@ -215,7 +215,7 @@ std::string serializeOpenPBRToJson(const OpenPBRSurfaceShader& shader, const Ren
   serializeFloatParam("coat_anisotropy", shader.coat_anisotropy); json << ",";
   serializeFloatParam("coat_rotation", shader.coat_rotation); json << ",";
   serializeFloatParam("coat_ior", shader.coat_ior); json << ",";
-  serializeVec3Param("coat_affect_color", shader.coat_affect_color); json << ",";
+  serializeFloatParam("coat_affect_color", shader.coat_affect_color); json << ",";
   serializeFloatParam("coat_affect_roughness", shader.coat_affect_roughness);
   json << "},";
 
@@ -241,6 +241,11 @@ std::string serializeOpenPBRToJson(const OpenPBRSurfaceShader& shader, const Ren
   json << "\"coat_tangent_rotation\": " << shader.coat_tangent_rotation << ",";
   json << "\"coat_normal_map_scale\": " << shader.coat_normal_map_scale;
   json << "}";
+
+  // Include NodeGraph JSON if available (for shader network reconstruction in JS/WASM)
+  if (!shader.nodeGraphJson.empty()) {
+    json << ",\"nodeGraph\": " << shader.nodeGraphJson;
+  }
 
   json << "}";
   return json.str();

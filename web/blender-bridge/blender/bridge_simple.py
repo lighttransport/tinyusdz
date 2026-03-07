@@ -41,6 +41,7 @@ _bridge_state = {
     'connected': False,
     'send_queue': queue.Queue(),
     'send_thread': None,
+    'recv_thread': None,
     'msgbus_owners': [],
     'depsgraph_handler': None,
     'camera_timer_running': False,
@@ -189,6 +190,10 @@ def bridge_connect(server=BRIDGE_SERVER, port=BRIDGE_PORT):
         _bridge_state['send_thread'] = threading.Thread(target=_send_loop, daemon=True)
         _bridge_state['send_thread'].start()
 
+        # Start receive thread (for browser requests)
+        _bridge_state['recv_thread'] = threading.Thread(target=_recv_loop, daemon=True)
+        _bridge_state['recv_thread'].start()
+
         # Start monitors
         _setup_msgbus_subscriptions()
         _setup_depsgraph_handler()
@@ -285,6 +290,158 @@ def _send_loop():
             print(f"Send error: {e}")
             _bridge_state['connected'] = False
             break
+
+def _recv_loop():
+    """Background thread for receiving messages from server"""
+    while _bridge_state['connected']:
+        try:
+            sock = _bridge_state['socket']
+            if not sock:
+                break
+
+            frame = _recv_websocket_frame(sock)
+            if frame and frame['opcode'] in [0x01, 0x02]:  # text or binary
+                msg = _decode_bridge_message(frame['data'])
+                if msg:
+                    _handle_incoming_message(msg)
+        except socket.timeout:
+            continue
+        except Exception as e:
+            if _bridge_state['connected']:
+                print(f"Recv error: {e}")
+            break
+
+def _handle_incoming_message(msg):
+    """Handle incoming message from server (browser request)"""
+    msg_type = msg.get('type')
+    msg_id = msg.get('messageId')
+
+    if msg_type == 'export_request':
+        # Browser is requesting a scene export
+        print("Export requested by browser")
+        options = msg.get('exportOptions', {})
+        # Schedule export on main thread
+        bpy.app.timers.register(
+            lambda: _do_export_for_browser(msg_id, options),
+            first_interval=0.01
+        )
+
+    elif msg_type == 'execute_code':
+        # Browser is requesting code execution
+        code = msg.get('code', '')
+        print(f"Code execution requested: {code[:50]}...")
+        bpy.app.timers.register(
+            lambda: _do_execute_code(msg_id, code),
+            first_interval=0.01
+        )
+
+def _do_export_for_browser(msg_id, options):
+    """Execute export on main thread and send result"""
+    import tempfile
+    import os
+    import uuid
+
+    try:
+        # Notify export started
+        _queue_send({
+            'type': 'export_started',
+            'refMessageId': msg_id,
+            'timestamp': 0
+        })
+
+        # Export to temp file
+        filepath = os.path.join(tempfile.gettempdir(), 'bridge_export.usdz')
+
+        export_options = {
+            'filepath': filepath,
+            'export_materials': True,
+            'generate_materialx_network': options.get('materialx', True),
+            'export_animation': options.get('animation', False),
+        }
+
+        # Handle Blender version differences
+        try:
+            # Blender 5.0+
+            export_options['export_textures_mode'] = 'NEW'
+        except:
+            pass
+
+        bpy.ops.wm.usd_export(**export_options)
+
+        # Read the file
+        with open(filepath, 'rb') as f:
+            scene_data = f.read()
+
+        # Send scene upload message
+        header = {
+            'type': 'scene_upload',
+            'messageId': str(uuid.uuid4()),
+            'refMessageId': msg_id,
+            'timestamp': 0,
+            'scene': {
+                'name': bpy.context.scene.name,
+                'format': 'usdz',
+                'byteLength': len(scene_data),
+                'hasAnimation': options.get('animation', False),
+                'exportOptions': {
+                    'materialx': options.get('materialx', True)
+                }
+            },
+            'metadata': {
+                'blenderVersion': bpy.app.version_string,
+                'upAxis': 'Z'
+            }
+        }
+
+        # Send directly (too large for queue)
+        encoded = _encode_bridge_message(header, scene_data)
+        _send_websocket_frame(_bridge_state['socket'], encoded)
+
+        print(f"Scene exported and sent ({len(scene_data)} bytes)")
+
+    except Exception as e:
+        print(f"Export failed: {e}")
+        _queue_send({
+            'type': 'error',
+            'refMessageId': msg_id,
+            'error': {'code': 'EXPORT_FAILED', 'message': str(e)}
+        })
+
+    return None  # Don't repeat timer
+
+def _do_execute_code(msg_id, code):
+    """Execute Python code and send result"""
+    import io
+    import sys
+
+    try:
+        # Capture stdout
+        old_stdout = sys.stdout
+        sys.stdout = captured = io.StringIO()
+
+        # Execute code
+        exec(code, {'bpy': bpy, '__name__': '__main__'})
+
+        output = captured.getvalue()
+        sys.stdout = old_stdout
+
+        _queue_send({
+            'type': 'code_result',
+            'refMessageId': msg_id,
+            'success': True,
+            'output': output
+        })
+
+    except Exception as e:
+        sys.stdout = old_stdout
+        _queue_send({
+            'type': 'code_result',
+            'refMessageId': msg_id,
+            'success': False,
+            'error': str(e)
+        })
+
+    return None  # Don't repeat timer
 
 def _queue_send(message):
     """Queue message for sending"""

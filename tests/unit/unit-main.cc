@@ -78,6 +78,7 @@ TEST_LIST = {
   { "fp_roundtrip_buffer_test", fp_roundtrip_buffer_test },
   { "fp_shortest_representation_test", fp_shortest_representation_test },
   { "fp_format_range_test", fp_format_range_test },
+  { "parse_array_test", parse_array_test },
   { "materialx_config_api_struct_test", materialx_config_api_struct_test },
   { "materialx_config_api_parsing_test", materialx_config_api_parsing_test },
   { "openpbr_surface_reconstruction_test", openpbr_surface_reconstruction_test },
