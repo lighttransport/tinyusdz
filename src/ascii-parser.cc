@@ -3994,7 +3994,7 @@ bool AsciiParser::ParseAttrMeta(AttrMeta *out_meta) {
         if (!ReadBasicType(&tok)) {
           PUSH_ERROR_AND_RETURN("Failed to parse `bindMaterialAs`");
         }
-        if ((tok.str() == kWeaderThanDescendants) ||
+        if ((tok.str() == kWeakerThanDescendants) ||
             (tok.str() == kStrongerThanDescendants)) {
           // ok
         } else {

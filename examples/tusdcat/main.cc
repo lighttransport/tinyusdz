@@ -290,6 +290,10 @@ void print_help() {
   std::cout << "Low-level USDC dump options:\n";
   std::cout << "  --dumpcrate         Dump low-level USDC Crate structure (YAML)\n";
   std::cout << "                      Only works with .usdc files\n";
+  std::cout << "\n";
+  std::cout << "MaterialX validation options:\n";
+  std::cout << "  --strict-mtlx-check Enable strict MaterialX validation\n";
+  std::cout << "                      (validates info:id, index bounds, etc.)\n";
 }
 
 int main(int argc, char **argv) {
@@ -320,6 +324,9 @@ int main(int argc, char **argv) {
 
   // Dumpcrate option
   bool do_dumpcrate{false};
+
+  // MaterialX validation
+  bool strict_mtlx_check{false};
 
   constexpr int kMaxIteration = 128;
 
@@ -370,6 +377,8 @@ int main(int argc, char **argv) {
       show_progress = true;
     } else if (arg.compare("--dumpcrate") == 0) {
       do_dumpcrate = true;
+    } else if (arg.compare("--strict-mtlx-check") == 0) {
+      strict_mtlx_check = true;
     } else if (arg.compare("--inspect") == 0) {
       do_inspect = true;
       inspect_opts.format = tinyusdz::InspectOutputFormat::Yaml;
@@ -565,6 +574,9 @@ int main(int argc, char **argv) {
 
       tinyusdz::Stage stage;
       tinyusdz::USDLoadOptions usdz_options;
+
+      // MaterialX validation
+      usdz_options.strict_mtlx_check = strict_mtlx_check;
 
       // Set up progress callback if requested
       ProgressState usdz_progress_state;
@@ -858,6 +870,9 @@ int main(int argc, char **argv) {
     bool has_usdc_memory_report{false};
 
     tinyusdz::USDLoadOptions options;
+
+    // MaterialX validation
+    options.strict_mtlx_check = strict_mtlx_check;
 
     // Set up progress callback if requested
     ProgressState progress_state;

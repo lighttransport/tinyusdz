@@ -495,7 +495,7 @@ bool parse_double(const tstring_view &sv, double *ret) {
   return result.ec == std::errc{};
 }
 
-bool parse_float_arary(const tstring_view &sv, std::vector<float> *result, const char delimiter) {
+bool parse_float_array(const tstring_view &sv, std::vector<float> *result, const char delimiter) {
   if (!result) {
     return false;
   }
@@ -597,7 +597,7 @@ bool parse_float_arary(const tstring_view &sv, std::vector<float> *result, const
   return true;
 }
 
-bool parse_double_arary(const tstring_view &sv, std::vector<double> *result, const char delimiter) {
+bool parse_double_array(const tstring_view &sv, std::vector<double> *result, const char delimiter) {
   if (!result) {
     return false;
   }
@@ -698,7 +698,7 @@ bool parse_double_arary(const tstring_view &sv, std::vector<double> *result, con
   return true;
 }
 
-bool parse_int_arary(const tstring_view &sv, std::vector<int32_t> *result, const char delimiter) {
+bool parse_int_array(const tstring_view &sv, std::vector<int32_t> *result, const char delimiter) {
   if (!result) {
     return false;
   }
@@ -770,10 +770,8 @@ bool parse_int_arary(const tstring_view &sv, std::vector<int32_t> *result, const
 
     // Parse the number
     int32_t value;
-    size_t num_len = size_t(p - num_start);
-    std::string num_str(num_start, num_len);
-    tstring_view temp_view(num_str.c_str());
-    if (!parse_int(temp_view, &value)) {
+    tstring_view num_view(num_start, size_t(p - num_start));
+    if (!parse_int(num_view, &value)) {
       return false;
     }
 
@@ -845,7 +843,7 @@ static inline bool parse_single_double(const char **p, const char *end, double *
 }
 
 // Parse float2 array: [(1, 2), (3, 4), ...]
-__attribute__((unused)) static bool parse_float2_arary(const tstring_view &sv, std::vector<tinyusdz::value::float2> *result) {
+bool parse_float2_array(const tstring_view &sv, std::vector<tinyusdz::value::float2> *result) {
   if (!result) return false;
   result->clear();
   if (sv.size() == 0) return false;
@@ -894,7 +892,7 @@ __attribute__((unused)) static bool parse_float2_arary(const tstring_view &sv, s
 }
 
 // Parse float3 array: [(1, 2, 3), (4, 5, 6), ...]
-__attribute__((unused)) static bool parse_float3_arary(const tstring_view &sv, std::vector<tinyusdz::value::float3> *result) {
+bool parse_float3_array(const tstring_view &sv, std::vector<tinyusdz::value::float3> *result) {
   if (!result) return false;
   result->clear();
   if (sv.size() == 0) return false;
@@ -943,7 +941,7 @@ __attribute__((unused)) static bool parse_float3_arary(const tstring_view &sv, s
 }
 
 // Parse float4 array: [(1, 2, 3, 4), (5, 6, 7, 8), ...]
-__attribute__((unused)) static bool parse_float4_arary(const tstring_view &sv, std::vector<tinyusdz::value::float4> *result) {
+bool parse_float4_array(const tstring_view &sv, std::vector<tinyusdz::value::float4> *result) {
   if (!result) return false;
   result->clear();
   if (sv.size() == 0) return false;
@@ -992,7 +990,7 @@ __attribute__((unused)) static bool parse_float4_arary(const tstring_view &sv, s
 }
 
 // Parse double2 array: [(1, 2), (3, 4), ...]
-__attribute__((unused)) static bool parse_double2_arary(const tstring_view &sv, std::vector<tinyusdz::value::double2> *result) {
+bool parse_double2_array(const tstring_view &sv, std::vector<tinyusdz::value::double2> *result) {
   if (!result) return false;
   result->clear();
   if (sv.size() == 0) return false;
@@ -1041,7 +1039,7 @@ __attribute__((unused)) static bool parse_double2_arary(const tstring_view &sv, 
 }
 
 // Parse double3 array: [(1, 2, 3), (4, 5, 6), ...]
-__attribute__((unused)) static bool parse_double3_arary(const tstring_view &sv, std::vector<tinyusdz::value::double3> *result) {
+bool parse_double3_array(const tstring_view &sv, std::vector<tinyusdz::value::double3> *result) {
   if (!result) return false;
   result->clear();
   if (sv.size() == 0) return false;
@@ -1090,7 +1088,7 @@ __attribute__((unused)) static bool parse_double3_arary(const tstring_view &sv, 
 }
 
 // Parse double4 array: [(1, 2, 3, 4), (5, 6, 7, 8), ...]
-__attribute__((unused)) static bool parse_double4_arary(const tstring_view &sv, std::vector<tinyusdz::value::double4> *result) {
+bool parse_double4_array(const tstring_view &sv, std::vector<tinyusdz::value::double4> *result) {
   if (!result) return false;
   result->clear();
   if (sv.size() == 0) return false;
@@ -1138,8 +1136,8 @@ __attribute__((unused)) static bool parse_double4_arary(const tstring_view &sv, 
   return true;
 }
 
-// Parse matrix2f array: [( e0, e1, e2, e3 ), ...]
-__attribute__((unused)) static bool parse_matrix2f_arary(const tstring_view &sv, std::vector<tinyusdz::value::matrix2f> *result) {
+// Parse matrix2f array: [((r00, r01), (r10, r11)), ...]
+bool parse_matrix2f_array(const tstring_view &sv, std::vector<tinyusdz::value::matrix2f> *result) {
   if (!result) return false;
   result->clear();
   if (sv.size() == 0) return false;
@@ -1159,27 +1157,38 @@ __attribute__((unused)) static bool parse_matrix2f_arary(const tstring_view &sv,
     if (p >= end) break;
     if (*p == ']') break;
 
-    // Expect '('
+    // Expect outer '('
     if (*p != '(') return false;
     p++;
 
     tinyusdz::value::matrix2f mat;
-    // Parse 4 elements in row-major order
     for (size_t i = 0; i < 2; i++) {
+      p = skip_whitespace(p, end);
+      // Expect row '('
+      if (p >= end || *p != '(') return false;
+      p++;
+
       for (size_t j = 0; j < 2; j++) {
         p = skip_whitespace(p, end);
         if (!parse_single_float(&p, end, &mat.m[i][j])) return false;
         p = skip_whitespace(p, end);
-        if (i * 2 + j < 3) {  // Need comma after first 3 elements
+        if (j < 1) {
           if (p >= end || *p != ',') return false;
-          p++; // skip ','
+          p++;
         }
       }
+
+      p = skip_whitespace(p, end);
+      if (p >= end || *p != ')') return false;
+      p++; // skip row ')'
+
+      p = skip_whitespace(p, end);
+      if (i < 1 && p < end && *p == ',') p++; // skip comma between rows
     }
 
     p = skip_whitespace(p, end);
     if (p >= end || *p != ')') return false;
-    p++; // skip ')'
+    p++; // skip outer ')'
 
     result->push_back(mat);
 
@@ -1190,8 +1199,8 @@ __attribute__((unused)) static bool parse_matrix2f_arary(const tstring_view &sv,
   return true;
 }
 
-// Parse matrix3f array: [( e0, e1, ..., e8 ), ...]
-__attribute__((unused)) static bool parse_matrix3f_arary(const tstring_view &sv, std::vector<tinyusdz::value::matrix3f> *result) {
+// Parse matrix3f array: [((r00, r01, r02), (r10, r11, r12), (r20, r21, r22)), ...]
+bool parse_matrix3f_array(const tstring_view &sv, std::vector<tinyusdz::value::matrix3f> *result) {
   if (!result) return false;
   result->clear();
   if (sv.size() == 0) return false;
@@ -1211,39 +1220,49 @@ __attribute__((unused)) static bool parse_matrix3f_arary(const tstring_view &sv,
     if (p >= end) break;
     if (*p == ']') break;
 
-    // Expect '('
+    // Expect outer '('
     if (*p != '(') return false;
     p++;
 
     tinyusdz::value::matrix3f mat;
-    // Parse 9 elements in row-major order
     for (size_t i = 0; i < 3; i++) {
+      p = skip_whitespace(p, end);
+      if (p >= end || *p != '(') return false;
+      p++;
+
       for (size_t j = 0; j < 3; j++) {
         p = skip_whitespace(p, end);
         if (!parse_single_float(&p, end, &mat.m[i][j])) return false;
         p = skip_whitespace(p, end);
-        if (i * 3 + j < 8) {  // Need comma after first 8 elements
+        if (j < 2) {
           if (p >= end || *p != ',') return false;
-          p++; // skip ','
+          p++;
         }
       }
+
+      p = skip_whitespace(p, end);
+      if (p >= end || *p != ')') return false;
+      p++;
+
+      p = skip_whitespace(p, end);
+      if (i < 2 && p < end && *p == ',') p++;
     }
 
     p = skip_whitespace(p, end);
     if (p >= end || *p != ')') return false;
-    p++; // skip ')'
+    p++;
 
     result->push_back(mat);
 
     p = skip_whitespace(p, end);
-    if (p < end && *p == ',') p++; // skip optional delimiter
+    if (p < end && *p == ',') p++;
   }
 
   return true;
 }
 
-// Parse matrix4f array: [( e0, e1, ..., e15 ), ...]
-__attribute__((unused)) static bool parse_matrix4f_arary(const tstring_view &sv, std::vector<tinyusdz::value::matrix4f> *result) {
+// Parse matrix4f array: [((r00,..,r03), (r10,..,r13), (r20,..,r23), (r30,..,r33)), ...]
+bool parse_matrix4f_array(const tstring_view &sv, std::vector<tinyusdz::value::matrix4f> *result) {
   if (!result) return false;
   result->clear();
   if (sv.size() == 0) return false;
@@ -1263,39 +1282,49 @@ __attribute__((unused)) static bool parse_matrix4f_arary(const tstring_view &sv,
     if (p >= end) break;
     if (*p == ']') break;
 
-    // Expect '('
+    // Expect outer '('
     if (*p != '(') return false;
     p++;
 
     tinyusdz::value::matrix4f mat;
-    // Parse 16 elements in row-major order
     for (size_t i = 0; i < 4; i++) {
+      p = skip_whitespace(p, end);
+      if (p >= end || *p != '(') return false;
+      p++;
+
       for (size_t j = 0; j < 4; j++) {
         p = skip_whitespace(p, end);
         if (!parse_single_float(&p, end, &mat.m[i][j])) return false;
         p = skip_whitespace(p, end);
-        if (i * 4 + j < 15) {  // Need comma after first 15 elements
+        if (j < 3) {
           if (p >= end || *p != ',') return false;
-          p++; // skip ','
+          p++;
         }
       }
+
+      p = skip_whitespace(p, end);
+      if (p >= end || *p != ')') return false;
+      p++;
+
+      p = skip_whitespace(p, end);
+      if (i < 3 && p < end && *p == ',') p++;
     }
 
     p = skip_whitespace(p, end);
     if (p >= end || *p != ')') return false;
-    p++; // skip ')'
+    p++;
 
     result->push_back(mat);
 
     p = skip_whitespace(p, end);
-    if (p < end && *p == ',') p++; // skip optional delimiter
+    if (p < end && *p == ',') p++;
   }
 
   return true;
 }
 
-// Parse matrix2d array: [( e0, e1, e2, e3 ), ...]
-__attribute__((unused)) static bool parse_matrix2d_arary(const tstring_view &sv, std::vector<tinyusdz::value::matrix2d> *result) {
+// Parse matrix2d array: [((r00, r01), (r10, r11)), ...]
+bool parse_matrix2d_array(const tstring_view &sv, std::vector<tinyusdz::value::matrix2d> *result) {
   if (!result) return false;
   result->clear();
   if (sv.size() == 0) return false;
@@ -1315,39 +1344,49 @@ __attribute__((unused)) static bool parse_matrix2d_arary(const tstring_view &sv,
     if (p >= end) break;
     if (*p == ']') break;
 
-    // Expect '('
+    // Expect outer '('
     if (*p != '(') return false;
     p++;
 
     tinyusdz::value::matrix2d mat;
-    // Parse 4 elements in row-major order
     for (size_t i = 0; i < 2; i++) {
+      p = skip_whitespace(p, end);
+      if (p >= end || *p != '(') return false;
+      p++;
+
       for (size_t j = 0; j < 2; j++) {
         p = skip_whitespace(p, end);
         if (!parse_single_double(&p, end, &mat.m[i][j])) return false;
         p = skip_whitespace(p, end);
-        if (i * 2 + j < 3) {  // Need comma after first 3 elements
+        if (j < 1) {
           if (p >= end || *p != ',') return false;
-          p++; // skip ','
+          p++;
         }
       }
+
+      p = skip_whitespace(p, end);
+      if (p >= end || *p != ')') return false;
+      p++;
+
+      p = skip_whitespace(p, end);
+      if (i < 1 && p < end && *p == ',') p++;
     }
 
     p = skip_whitespace(p, end);
     if (p >= end || *p != ')') return false;
-    p++; // skip ')'
+    p++;
 
     result->push_back(mat);
 
     p = skip_whitespace(p, end);
-    if (p < end && *p == ',') p++; // skip optional delimiter
+    if (p < end && *p == ',') p++;
   }
 
   return true;
 }
 
-// Parse matrix3d array: [( e0, e1, ..., e8 ), ...]
-__attribute__((unused)) static bool parse_matrix3d_arary(const tstring_view &sv, std::vector<tinyusdz::value::matrix3d> *result) {
+// Parse matrix3d array: [((r00, r01, r02), (r10, r11, r12), (r20, r21, r22)), ...]
+bool parse_matrix3d_array(const tstring_view &sv, std::vector<tinyusdz::value::matrix3d> *result) {
   if (!result) return false;
   result->clear();
   if (sv.size() == 0) return false;
@@ -1367,39 +1406,49 @@ __attribute__((unused)) static bool parse_matrix3d_arary(const tstring_view &sv,
     if (p >= end) break;
     if (*p == ']') break;
 
-    // Expect '('
+    // Expect outer '('
     if (*p != '(') return false;
     p++;
 
     tinyusdz::value::matrix3d mat;
-    // Parse 9 elements in row-major order
     for (size_t i = 0; i < 3; i++) {
+      p = skip_whitespace(p, end);
+      if (p >= end || *p != '(') return false;
+      p++;
+
       for (size_t j = 0; j < 3; j++) {
         p = skip_whitespace(p, end);
         if (!parse_single_double(&p, end, &mat.m[i][j])) return false;
         p = skip_whitespace(p, end);
-        if (i * 3 + j < 8) {  // Need comma after first 8 elements
+        if (j < 2) {
           if (p >= end || *p != ',') return false;
-          p++; // skip ','
+          p++;
         }
       }
+
+      p = skip_whitespace(p, end);
+      if (p >= end || *p != ')') return false;
+      p++;
+
+      p = skip_whitespace(p, end);
+      if (i < 2 && p < end && *p == ',') p++;
     }
 
     p = skip_whitespace(p, end);
     if (p >= end || *p != ')') return false;
-    p++; // skip ')'
+    p++;
 
     result->push_back(mat);
 
     p = skip_whitespace(p, end);
-    if (p < end && *p == ',') p++; // skip optional delimiter
+    if (p < end && *p == ',') p++;
   }
 
   return true;
 }
 
-// Parse matrix4d array: [( e0, e1, ..., e15 ), ...]
-__attribute__((unused)) static bool parse_matrix4d_arary(const tstring_view &sv, std::vector<tinyusdz::value::matrix4d> *result) {
+// Parse matrix4d array: [((r00,..,r03), (r10,..,r13), (r20,..,r23), (r30,..,r33)), ...]
+bool parse_matrix4d_array(const tstring_view &sv, std::vector<tinyusdz::value::matrix4d> *result) {
   if (!result) return false;
   result->clear();
   if (sv.size() == 0) return false;
@@ -1419,32 +1468,42 @@ __attribute__((unused)) static bool parse_matrix4d_arary(const tstring_view &sv,
     if (p >= end) break;
     if (*p == ']') break;
 
-    // Expect '('
+    // Expect outer '('
     if (*p != '(') return false;
     p++;
 
     tinyusdz::value::matrix4d mat;
-    // Parse 16 elements in row-major order
     for (size_t i = 0; i < 4; i++) {
+      p = skip_whitespace(p, end);
+      if (p >= end || *p != '(') return false;
+      p++;
+
       for (size_t j = 0; j < 4; j++) {
         p = skip_whitespace(p, end);
         if (!parse_single_double(&p, end, &mat.m[i][j])) return false;
         p = skip_whitespace(p, end);
-        if (i * 4 + j < 15) {  // Need comma after first 15 elements
+        if (j < 3) {
           if (p >= end || *p != ',') return false;
-          p++; // skip ','
+          p++;
         }
       }
+
+      p = skip_whitespace(p, end);
+      if (p >= end || *p != ')') return false;
+      p++;
+
+      p = skip_whitespace(p, end);
+      if (i < 3 && p < end && *p == ',') p++;
     }
 
     p = skip_whitespace(p, end);
     if (p >= end || *p != ')') return false;
-    p++; // skip ')'
+    p++;
 
     result->push_back(mat);
 
     p = skip_whitespace(p, end);
-    if (p < end && *p == ',') p++; // skip optional delimiter
+    if (p < end && *p == ',') p++;
   }
 
   return true;
