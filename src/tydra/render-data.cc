@@ -7,8 +7,8 @@
 //     - [ ] Correctly handle primvar with 'vertex' interpolation(Use the basis
 //     function of subd surface)
 //   - [x] Support time-varying shader attribute(timeSamples)
-//   - [ ] Wide gamut colorspace conversion support
-//     - [ ] linear sRGB <-> linear DisplayP3
+//   - [x] Wide gamut colorspace conversion support
+//     - [x] linear sRGB <-> linear DisplayP3, ACEScg, ACES2065-1, Rec.2020
 //   - [x] Compute tangentes and binormals
 //   - [x] displayColor, displayOpacity primvar(vertex color)
 //   - [x] Support Skeleton
@@ -2916,7 +2916,7 @@ bool ListUVNames(const RenderMaterial &material,
     fun_float(material.openPBRShader->coat_anisotropy);
     fun_float(material.openPBRShader->coat_rotation);
     fun_float(material.openPBRShader->coat_ior);
-    fun_vec3(material.openPBRShader->coat_affect_color);
+    fun_float(material.openPBRShader->coat_affect_color);
     fun_float(material.openPBRShader->coat_affect_roughness);
 
     // Emission
@@ -6711,115 +6711,206 @@ bool RenderSceneConverter::ConvertUVTexture(const RenderSceneConverterEnv &env,
                           "supported(yet)."));
         }
 
-        if (assetImageBuffer.componentType == tydra::ComponentType::UInt8) {
-          if (texImage.usdColorSpace == tydra::ColorSpace::sRGB) {
-            if (env.material_config.preserve_texel_bitdepth) {
-              // u8 sRGB -> u8 Linear
-              imageBuffer.componentType = tydra::ComponentType::UInt8;
+        // Helper: convert u8 image data to f32 buffer
+        auto u8_data_to_f32_buf = [&](std::vector<float> &buf) -> bool {
+          bool ret = u8_to_f32_image(assetImageBuffer.data, width, height,
+                                     channels, &buf, &_err);
+          if (!ret) {
+            PUSH_ERROR_AND_RETURN("Failed to convert u8 image to f32 image.");
+          }
+          return true;
+        };
 
+        // Helper: store f32 buffer into imageBuffer
+        auto store_f32_buf = [&](const std::vector<float> &buf) {
+          imageBuffer.componentType = tydra::ComponentType::Float;
+          imageBuffer.data.resize(buf.size() * sizeof(float));
+          memcpy(imageBuffer.data.data(), buf.data(), sizeof(float) * buf.size());
+        };
+
+        // Helper: extract f32 buffer from assetImageBuffer
+        auto asset_data_to_f32_buf = [&](std::vector<float> &buf) {
+          buf.resize(assetImageBuffer.data.size() / sizeof(float));
+          memcpy(buf.data(), assetImageBuffer.data.data(), buf.size() * sizeof(float));
+        };
+
+        if (assetImageBuffer.componentType == tydra::ComponentType::UInt8) {
+          if (texImage.usdColorSpace == tydra::ColorSpace::sRGB ||
+              texImage.usdColorSpace == tydra::ColorSpace::sRGB_Texture) {
+            if (env.material_config.preserve_texel_bitdepth) {
+              imageBuffer.componentType = tydra::ComponentType::UInt8;
               bool ret = srgb_8bit_to_linear_8bit(
                   assetImageBuffer.data, width, height, channels,
-                  /* channel stride */ channels, &imageBuffer.data, &_err);
+                  channels, &imageBuffer.data, &_err);
               if (!ret) {
-                PUSH_ERROR_AND_RETURN(
-                    "Failed to convert sRGB u8 image to Linear u8 image.");
+                PUSH_ERROR_AND_RETURN("Failed to convert sRGB u8 image to Linear u8 image.");
               }
-
             } else {
-              DCOUT("u8 sRGB -> fp32 linear.");
-              // u8 sRGB -> fp32 Linear
-              imageBuffer.componentType = tydra::ComponentType::Float;
-
               std::vector<float> buf;
               bool ret = srgb_8bit_to_linear_f32(
                   assetImageBuffer.data, width, height, channels,
-                  /* channel stride */ channels, &buf, &_err);
+                  channels, &buf, &_err);
               if (!ret) {
-                PUSH_ERROR_AND_RETURN(
-                    "Failed to convert sRGB u8 image to Linear f32 image.");
+                PUSH_ERROR_AND_RETURN("Failed to convert sRGB u8 image to Linear f32 image.");
               }
-
-              DCOUT("sz = " << buf.size());
-              imageBuffer.data.resize(buf.size() * sizeof(float));
-              memcpy(imageBuffer.data.data(), buf.data(),
-                     sizeof(float) * buf.size());
+              store_f32_buf(buf);
             }
-
             texImage.colorSpace = tydra::ColorSpace::Lin_sRGB;
 
-          } else if (texImage.usdColorSpace == tydra::ColorSpace::Lin_sRGB) {
+          } else if (texImage.usdColorSpace == tydra::ColorSpace::Lin_sRGB ||
+                     texImage.usdColorSpace == tydra::ColorSpace::Lin_Rec709) {
             if (env.material_config.preserve_texel_bitdepth) {
-              // no op.
               imageBuffer = std::move(assetImageBuffer);
-
             } else {
-              // u8 -> fp32
-              imageBuffer.componentType = tydra::ComponentType::Float;
-
               std::vector<float> buf;
-              bool ret = u8_to_f32_image(assetImageBuffer.data, width, height,
-                                         channels, &buf, &_err);
-              if (!ret) {
-                PUSH_ERROR_AND_RETURN("Failed to convert u8 image to f32 image.");
-              }
-
-              imageBuffer.data.resize(buf.size() * sizeof(float));
-              memcpy(imageBuffer.data.data(), buf.data(),
-                     sizeof(float) * buf.size());
+              if (!u8_data_to_f32_buf(buf)) return false;
+              store_f32_buf(buf);
             }
+            texImage.colorSpace = tydra::ColorSpace::Lin_sRGB;
 
+          } else if (texImage.usdColorSpace == tydra::ColorSpace::Raw) {
+            // Raw data — no color conversion, just optional bit depth change
+            if (env.material_config.preserve_texel_bitdepth) {
+              imageBuffer = std::move(assetImageBuffer);
+            } else {
+              std::vector<float> buf;
+              if (!u8_data_to_f32_buf(buf)) return false;
+              store_f32_buf(buf);
+            }
+            texImage.colorSpace = tydra::ColorSpace::Raw;
+
+          } else if (texImage.usdColorSpace == tydra::ColorSpace::g22_Rec709) {
+            // Gamma 2.2 u8 -> linear f32 (via gamma removal)
+            std::vector<float> buf;
+            if (!u8_data_to_f32_buf(buf)) return false;
+            std::vector<float> out_buf;
+            if (!gamma22_f32_to_linear_f32(buf, width, height, channels, channels, &out_buf, &_err)) {
+              PUSH_ERROR_AND_RETURN("Failed to convert gamma 2.2 image to linear.");
+            }
+            store_f32_buf(out_buf);
+            texImage.colorSpace = tydra::ColorSpace::Lin_sRGB;
+
+          } else if (texImage.usdColorSpace == tydra::ColorSpace::g18_Rec709) {
+            std::vector<float> buf;
+            if (!u8_data_to_f32_buf(buf)) return false;
+            std::vector<float> out_buf;
+            if (!gamma18_f32_to_linear_f32(buf, width, height, channels, channels, &out_buf, &_err)) {
+              PUSH_ERROR_AND_RETURN("Failed to convert gamma 1.8 image to linear.");
+            }
+            store_f32_buf(out_buf);
             texImage.colorSpace = tydra::ColorSpace::Lin_sRGB;
 
           } else {
-            PUSH_ERROR(fmt::format("TODO: Color space {}",
+            PUSH_ERROR(fmt::format("Unsupported color space for u8 textures: {}",
                                    to_string(texImage.usdColorSpace)));
           }
 
-        } else if (assetImageBuffer.componentType ==
-                   tydra::ComponentType::Float) {
-          // ignore preserve_texel_bitdepth
+        } else if (assetImageBuffer.componentType == tydra::ComponentType::Float) {
+          std::vector<float> in_buf;
+          asset_data_to_f32_buf(in_buf);
 
-          if (texImage.usdColorSpace == tydra::ColorSpace::sRGB) {
-            // srgb f32 -> linear f32
-            std::vector<float> in_buf;
-            std::vector<float> out_buf;
-            in_buf.resize(assetImageBuffer.data.size() / sizeof(float));
-            memcpy(in_buf.data(), assetImageBuffer.data.data(),
-                   in_buf.size() * sizeof(float));
-
-            out_buf.resize(assetImageBuffer.data.size() / sizeof(float));
-
-            // TODO: scale factor & bias
-            float scale_factor = 1.0f;
-            float bias = 0.0f;
-            float alpha_scale_factor = 1.0f;
-            float alpha_bias = 0.0f;
-
-            bool ret =
-                srgb_f32_to_linear_f32(in_buf, width, height, channels,
-                                       /* channel stride */ channels, &out_buf, scale_factor, bias, alpha_scale_factor, alpha_bias, &_err);
-
-            if (!ret) {
-              PUSH_ERROR_AND_RETURN(
-                  "Failed to convert sRGB f32 image to Linear f32 image.");
+          if (texImage.usdColorSpace == tydra::ColorSpace::sRGB ||
+              texImage.usdColorSpace == tydra::ColorSpace::sRGB_Texture) {
+            std::vector<float> out_buf(in_buf.size());
+            float scale_factor = 1.0f, bias = 0.0f;
+            float alpha_scale_factor = 1.0f, alpha_bias = 0.0f;
+            if (!srgb_f32_to_linear_f32(in_buf, width, height, channels, channels,
+                                        &out_buf, scale_factor, bias,
+                                        alpha_scale_factor, alpha_bias, &_err)) {
+              PUSH_ERROR_AND_RETURN("Failed to convert sRGB f32 image to Linear f32 image.");
             }
+            store_f32_buf(out_buf);
+            texImage.colorSpace = tydra::ColorSpace::Lin_sRGB;
 
-            imageBuffer.data.resize(assetImageBuffer.data.size());
-            memcpy(imageBuffer.data.data(), out_buf.data(),
-                   imageBuffer.data.size());
-
-
-          } else if (texImage.usdColorSpace == tydra::ColorSpace::Lin_sRGB) {
-            // no op
+          } else if (texImage.usdColorSpace == tydra::ColorSpace::Lin_sRGB ||
+                     texImage.usdColorSpace == tydra::ColorSpace::Lin_Rec709) {
             imageBuffer = std::move(assetImageBuffer);
+            texImage.colorSpace = tydra::ColorSpace::Lin_sRGB;
+
+          } else if (texImage.usdColorSpace == tydra::ColorSpace::Raw) {
+            imageBuffer = std::move(assetImageBuffer);
+            texImage.colorSpace = tydra::ColorSpace::Raw;
+
+          } else if (texImage.usdColorSpace == tydra::ColorSpace::Lin_ACEScg) {
+            // ACEScg (AP1 linear) -> linear sRGB
+            std::vector<float> out_buf;
+            if (!ACEScg_to_linear_sRGB(in_buf, width, height, channels,
+                                       &out_buf, &_err)) {
+              PUSH_ERROR_AND_RETURN("Failed to convert ACEScg to linear sRGB.");
+            }
+            store_f32_buf(out_buf);
+            texImage.colorSpace = tydra::ColorSpace::Lin_sRGB;
+
+          } else if (texImage.usdColorSpace == tydra::ColorSpace::ACES2065_1) {
+            // ACES 2065-1 (AP0 linear) -> linear sRGB
+            std::vector<float> out_buf;
+            if (!ACES2065_1_to_linear_sRGB(in_buf, width, height, channels,
+                                           &out_buf, &_err)) {
+              PUSH_ERROR_AND_RETURN("Failed to convert ACES 2065-1 to linear sRGB.");
+            }
+            store_f32_buf(out_buf);
+            texImage.colorSpace = tydra::ColorSpace::Lin_sRGB;
+
+          } else if (texImage.usdColorSpace == tydra::ColorSpace::Lin_DisplayP3) {
+            // Linear Display P3 -> linear sRGB
+            std::vector<float> out_buf;
+            if (!linear_displayp3_to_linear_sRGB(in_buf, width, height, channels,
+                                                 &out_buf, &_err)) {
+              PUSH_ERROR_AND_RETURN("Failed to convert Linear DisplayP3 to linear sRGB.");
+            }
+            store_f32_buf(out_buf);
+            texImage.colorSpace = tydra::ColorSpace::Lin_sRGB;
+
+          } else if (texImage.usdColorSpace == tydra::ColorSpace::sRGB_DisplayP3) {
+            // sRGB DisplayP3: first sRGB EOTF, then DisplayP3 -> sRGB gamut
+            std::vector<float> linear_p3(in_buf.size());
+            float sf = 1.0f, b = 0.0f, asf = 1.0f, ab = 0.0f;
+            if (!srgb_f32_to_linear_f32(in_buf, width, height, channels, channels,
+                                        &linear_p3, sf, b, asf, ab, &_err)) {
+              PUSH_ERROR_AND_RETURN("Failed to linearize sRGB DisplayP3.");
+            }
+            std::vector<float> out_buf;
+            if (!linear_displayp3_to_linear_sRGB(linear_p3, width, height, channels,
+                                                 &out_buf, &_err)) {
+              PUSH_ERROR_AND_RETURN("Failed to convert DisplayP3 to linear sRGB.");
+            }
+            store_f32_buf(out_buf);
+            texImage.colorSpace = tydra::ColorSpace::Lin_sRGB;
+
+          } else if (texImage.usdColorSpace == tydra::ColorSpace::Lin_Rec2020) {
+            std::vector<float> out_buf;
+            if (!linear_rec2020_to_linear_sRGB(in_buf, width, height, channels,
+                                               &out_buf, &_err)) {
+              PUSH_ERROR_AND_RETURN("Failed to convert Linear Rec.2020 to linear sRGB.");
+            }
+            store_f32_buf(out_buf);
+            texImage.colorSpace = tydra::ColorSpace::Lin_sRGB;
+
+          } else if (texImage.usdColorSpace == tydra::ColorSpace::g22_Rec709) {
+            std::vector<float> out_buf;
+            if (!gamma22_f32_to_linear_f32(in_buf, width, height, channels, channels,
+                                           &out_buf, &_err)) {
+              PUSH_ERROR_AND_RETURN("Failed to convert gamma 2.2 f32 to linear.");
+            }
+            store_f32_buf(out_buf);
+            texImage.colorSpace = tydra::ColorSpace::Lin_sRGB;
+
+          } else if (texImage.usdColorSpace == tydra::ColorSpace::g18_Rec709) {
+            std::vector<float> out_buf;
+            if (!gamma18_f32_to_linear_f32(in_buf, width, height, channels, channels,
+                                           &out_buf, &_err)) {
+              PUSH_ERROR_AND_RETURN("Failed to convert gamma 1.8 f32 to linear.");
+            }
+            store_f32_buf(out_buf);
+            texImage.colorSpace = tydra::ColorSpace::Lin_sRGB;
 
           } else {
-            PUSH_ERROR(fmt::format("TODO: Color space {}",
+            PUSH_ERROR(fmt::format("Unsupported color space for f32 textures: {}",
                                    to_string(texImage.usdColorSpace)));
           }
 
         } else {
-          PUSH_ERROR(fmt::format("TODO: asset texture texel format {}",
+          PUSH_ERROR(fmt::format("Unsupported asset texture texel format: {}",
                                  to_string(assetImageBuffer.componentType)));
         }
 
@@ -7525,7 +7616,7 @@ bool RenderSceneConverter::ConvertOpenPBRSurfaceShader(
 // Convert MtlxAutodeskStandardSurface → OpenPBRSurface.
 // Maps StandardSurface parameters to their OpenPBR equivalents.
 // Key differences: naming (base vs base_weight), opacity type (color3f vs float),
-// coat_affect_color type (float vs color3f), no fuzz layer in StandardSurface.
+// no fuzz layer in StandardSurface.
 static OpenPBRSurface ConvertMtlxStandardSurfaceToOpenPBRSurface(
     const MtlxAutodeskStandardSurface &src) {
   OpenPBRSurface dst;
@@ -7572,13 +7663,7 @@ static OpenPBRSurface ConvertMtlxStandardSurfaceToOpenPBRSurface(
   dst.coat_rotation = src.coat_rotation;
   dst.coat_ior = src.coat_IOR;
   dst.coat_affect_roughness = src.coat_affect_roughness;
-  // coat_affect_color: StandardSurface is float, OpenPBR is color3f — broadcast scalar
-  {
-    float cac_val{0.0f};
-    src.coat_affect_color.get_value().get_scalar(&cac_val);
-    dst.coat_affect_color.set_value(
-        Animatable<value::color3f>(value::color3f{cac_val, cac_val, cac_val}));
-  }
+  dst.coat_affect_color = src.coat_affect_color;
 
   // Thin film
   dst.thin_film_thickness = src.thin_film_thickness;
@@ -7654,14 +7739,7 @@ static OpenPBRSurface ConvertMtlxOpenPBRSurfaceToOpenPBRSurface(
   dst.coat_anisotropy = src.coat_anisotropy;
   dst.coat_rotation = src.coat_rotation;
   dst.coat_ior = src.coat_ior;
-  // coat_affect_color: MtlxOpenPBRSurface is float, OpenPBRSurface is color3f.
-  // Broadcast scalar to uniform color3f.
-  {
-    float cac_val{0.0f};
-    src.coat_affect_color.get_value().get_scalar(&cac_val);
-    dst.coat_affect_color.set_value(
-        Animatable<value::color3f>(value::color3f{cac_val, cac_val, cac_val}));
-  }
+  dst.coat_affect_color = src.coat_affect_color;
   dst.coat_affect_roughness = src.coat_affect_roughness;
   dst.coat_roughness_anisotropy = src.coat_roughness_anisotropy;
   dst.coat_darkening = src.coat_darkening;
@@ -7993,14 +8071,10 @@ bool RenderSceneConverter::ConvertMaterial(const RenderSceneConverterEnv &env,
       }
 
       // Extract tangent rotation, normal map scale, and normal map texture from NodeGraph connections
-      // First, get the material prim from the stage
-      PUSH_WARN("DEBUG: Attempting to extract normal map texture from MtlxOpenPBRSurface");
       const Prim *material_prim{nullptr};
       bool found_prim = env.stage.find_prim_at_path(
               Path(mat_abs_path.prim_part(), /* prop part */ ""), material_prim,
               &err);
-      PUSH_WARN(fmt::format("DEBUG: find_prim_at_path({}) returned {}, material_prim={}",
-                            mat_abs_path.prim_part(), found_prim, (material_prim ? "valid" : "null")));
       if (found_prim && material_prim) {
         ApplyMtlxGeometryNodeGraphInfoToOpenPBRShader(
             env.stage, material_prim, *mtlx_openpbr,
@@ -8025,14 +8099,33 @@ bool RenderSceneConverter::ConvertMaterial(const RenderSceneConverterEnv &env,
       }
 
       // Extract normal map and tangent info from NodeGraph connections
+      // StandardSurface uses `normal` and `tangent` fields (not geometry_normal/geometry_tangent)
       const Prim *material_prim{nullptr};
       bool found_prim = env.stage.find_prim_at_path(
               Path(mat_abs_path.prim_part(), ""), material_prim, &err);
       if (found_prim && material_prim) {
-        // StandardSurface uses the same geometry normal/tangent pattern
-        // Check for normal and tangent connections in the shader's properties
-        // For now, normal map extraction uses the same MtlxOpenPBR path
-        // since the NodeGraph structure is identical
+        // Normal map extraction
+        const auto &normal_conns = mtlx_standard->normal.get_connections();
+        if (!normal_conns.empty()) {
+          auto normal_info_result = ExtractMtlxNodeGraphInfo(
+              env.stage, material_prim, normal_conns, &err);
+          if (normal_info_result) {
+            ApplyMtlxNormalMapInfoToOpenPBRShader(
+                normal_info_result.value(),
+                env.mesh_config.default_texcoords_primvar_name,
+                &images, &textures, &openpbr_shader);
+          }
+        }
+        // Tangent rotation extraction
+        const auto &tangent_conns = mtlx_standard->tangent.get_connections();
+        if (!tangent_conns.empty()) {
+          auto tangent_info_result = ExtractMtlxNodeGraphInfo(
+              env.stage, material_prim, tangent_conns, &err);
+          if (tangent_info_result) {
+            ApplyMtlxTangentInfoToOpenPBRShader(
+                tangent_info_result.value(), &openpbr_shader);
+          }
+        }
       }
 
       rmat.openPBRShader = openpbr_shader;
@@ -8055,12 +8148,8 @@ bool RenderSceneConverter::ConvertMaterial(const RenderSceneConverterEnv &env,
     // proper MaterialXConfigAPI enum support in APISchemas::APIName
     bool has_materialx_api = material.materialXConfig.has_value();
 
-    PUSH_WARN(fmt::format("Material {}: materialXConfig.has_value = {}",
-                          mat_abs_path.full_path_name(), has_materialx_api));
-
     if (has_materialx_api) {
       DCOUT("Material has MaterialXConfigAPI, looking for MaterialX shaders");
-      PUSH_WARN("Material has MaterialXConfigAPI, looking for MaterialX shaders");
 
       // First try to parse outputs:mtlx:surface connection
       Path mtlxSurfacePath;
@@ -8106,7 +8195,6 @@ bool RenderSceneConverter::ConvertMaterial(const RenderSceneConverterEnv &env,
       // If direct connection parsing failed, look for child Shader prims with OpenPBR info:id
       if (!has_mtlx_surface) {
         DCOUT("Direct connection not found, searching for child shaders with OpenPBR info:id");
-        PUSH_WARN("Direct connection not found, searching for child shaders with OpenPBR info:id");
 
         // Get the material prim from the stage to access its children
         const Prim* mat_prim = nullptr;
@@ -8124,7 +8212,6 @@ bool RenderSceneConverter::ConvertMaterial(const RenderSceneConverterEnv &env,
                   mtlxSurfacePath = child_path;
                   has_mtlx_surface = true;
                   DCOUT("Found OpenPBR shader child: " << child_path);
-                  PUSH_WARN(fmt::format("Found OpenPBR shader child: {}", child_path.full_path_name()));
                   break;
                 }
               }
@@ -8162,12 +8249,9 @@ bool RenderSceneConverter::ConvertMaterial(const RenderSceneConverterEnv &env,
                     "Failed to convert MtlxOpenPBRSurface : {}", mtlxSurfacePath.prim_part()));
               } else {
                 // Extract normal map texture from NodeGraph connections
-                PUSH_WARN("DEBUG: MaterialXConfigAPI path - extracting normal map texture");
-
-                // Get the material prim to access NodeGraph children
                 const Prim* material_prim_for_ng = nullptr;
                 if (!env.stage.find_prim_at_path(mat_abs_path, material_prim_for_ng, &err)) {
-                  PUSH_WARN(fmt::format("DEBUG: Could not find material prim at {}", mat_abs_path.full_path_name()));
+                  DCOUT("Could not find material prim at " << mat_abs_path.full_path_name());
                   material_prim_for_ng = nullptr;
                 }
 
@@ -8175,12 +8259,10 @@ bool RenderSceneConverter::ConvertMaterial(const RenderSceneConverterEnv &env,
                     env.stage, material_prim_for_ng, *mtlx_openpbr,
                     env.mesh_config.default_texcoords_primvar_name, &images,
                     &textures, &openpbr_shader, &err,
-                    /*emit_extract_debug_trace*/ true);
+                    /*emit_extract_debug_trace*/ false);
 
                 rmat.openPBRShader = openpbr_shader;
-                DCOUT("Successfully attached MaterialX OpenPBR shader to RenderMaterial");
-                PUSH_WARN(fmt::format("Successfully attached MaterialX OpenPBR shader to RenderMaterial: {}",
-                                      mtlxSurfacePath.full_path_name()));
+                DCOUT("Successfully attached MaterialX OpenPBR shader to RenderMaterial: " << mtlxSurfacePath.full_path_name());
               }
             } else {
               PUSH_WARN(fmt::format(
