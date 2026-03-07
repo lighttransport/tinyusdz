@@ -3735,7 +3735,7 @@ bool AsciiParser::ParseFloatArrayOptimized(std::vector<float> *result) {
   size_t array_len = static_cast<size_t>(end_loc - start_loc);
   tstring_view sv(array_start, array_len);
 
-  if (!str::parse_float_arary(sv, result)) {
+  if (!str::parse_float_array(sv, result)) {
     PushError("Failed to parse float array with tiny-string");
     return false;
   }
@@ -3785,7 +3785,7 @@ bool AsciiParser::ParseDoubleArrayOptimized(std::vector<double> *result) {
   size_t array_len = static_cast<size_t>(end_loc - start_loc);
   tstring_view sv(array_start, array_len);
 
-  if (!str::parse_double_arary(sv, result)) {
+  if (!str::parse_double_array(sv, result)) {
     PushError("Failed to parse double array with tiny-string");
     return false;
   }
@@ -3830,13 +3830,89 @@ bool AsciiParser::ParseIntArrayOptimized(std::vector<int32_t> *result) {
   
   // Use tiny-string optimized parsing
   tstring_view sv(array_str.c_str());
-  if (!str::parse_int_arary(sv, result)) {
+  if (!str::parse_int_array(sv, result)) {
     PushError("Failed to parse int array with tiny-string");
     return false;
   }
-  
+
   return true;
 }
+
+//
+// Optimized compound-type array parsing methods
+// These use zero-copy tstring_view into the input buffer + str::parse_*_array()
+//
+
+#define DEFINE_COMPOUND_ARRAY_OPTIMIZED(MethodName, TypeName, parse_func, err_msg) \
+bool AsciiParser::Parse##MethodName##ArrayOptimized(std::vector<value::TypeName> *result) { \
+  if (!result) { return false; } \
+  uint64_t start_loc = CurrLoc(); \
+  if (!Expect('[')) { return false; } \
+  int bracket_depth = 1; \
+  while (bracket_depth > 0) { \
+    char c; \
+    if (!Char1(&c)) { \
+      PushError("Unexpected end of input while parsing " err_msg " array"); \
+      return false; \
+    } \
+    if (c == '[') { bracket_depth++; } \
+    else if (c == ']') { bracket_depth--; } \
+  } \
+  uint64_t end_loc = CurrLoc(); \
+  const char *array_start = reinterpret_cast<const char *>(_sr->data() + start_loc); \
+  size_t array_len = static_cast<size_t>(end_loc - start_loc); \
+  tstring_view sv(array_start, array_len); \
+  if (!str::parse_func(sv, result)) { \
+    PushError("Failed to parse " err_msg " array with tiny-string"); \
+    return false; \
+  } \
+  return true; \
+}
+
+DEFINE_COMPOUND_ARRAY_OPTIMIZED(Float2, float2, parse_float2_array, "float2")
+DEFINE_COMPOUND_ARRAY_OPTIMIZED(Float3, float3, parse_float3_array, "float3")
+DEFINE_COMPOUND_ARRAY_OPTIMIZED(Float4, float4, parse_float4_array, "float4")
+DEFINE_COMPOUND_ARRAY_OPTIMIZED(Double2, double2, parse_double2_array, "double2")
+DEFINE_COMPOUND_ARRAY_OPTIMIZED(Double3, double3, parse_double3_array, "double3")
+DEFINE_COMPOUND_ARRAY_OPTIMIZED(Double4, double4, parse_double4_array, "double4")
+
+#undef DEFINE_COMPOUND_ARRAY_OPTIMIZED
+
+// Matrix types: method name (Matrix2f) differs from value type (matrix2f)
+#define DEFINE_MATRIX_ARRAY_OPTIMIZED(MethodName, TypeName, parse_func, err_msg) \
+bool AsciiParser::Parse##MethodName##ArrayOptimized(std::vector<value::TypeName> *result) { \
+  if (!result) { return false; } \
+  uint64_t start_loc = CurrLoc(); \
+  if (!Expect('[')) { return false; } \
+  int bracket_depth = 1; \
+  while (bracket_depth > 0) { \
+    char c; \
+    if (!Char1(&c)) { \
+      PushError("Unexpected end of input while parsing " err_msg " array"); \
+      return false; \
+    } \
+    if (c == '[') { bracket_depth++; } \
+    else if (c == ']') { bracket_depth--; } \
+  } \
+  uint64_t end_loc = CurrLoc(); \
+  const char *array_start = reinterpret_cast<const char *>(_sr->data() + start_loc); \
+  size_t array_len = static_cast<size_t>(end_loc - start_loc); \
+  tstring_view sv(array_start, array_len); \
+  if (!str::parse_func(sv, result)) { \
+    PushError("Failed to parse " err_msg " array with tiny-string"); \
+    return false; \
+  } \
+  return true; \
+}
+
+DEFINE_MATRIX_ARRAY_OPTIMIZED(Matrix2f, matrix2f, parse_matrix2f_array, "matrix2f")
+DEFINE_MATRIX_ARRAY_OPTIMIZED(Matrix3f, matrix3f, parse_matrix3f_array, "matrix3f")
+DEFINE_MATRIX_ARRAY_OPTIMIZED(Matrix4f, matrix4f, parse_matrix4f_array, "matrix4f")
+DEFINE_MATRIX_ARRAY_OPTIMIZED(Matrix2d, matrix2d, parse_matrix2d_array, "matrix2d")
+DEFINE_MATRIX_ARRAY_OPTIMIZED(Matrix3d, matrix3d, parse_matrix3d_array, "matrix3d")
+DEFINE_MATRIX_ARRAY_OPTIMIZED(Matrix4d, matrix4d, parse_matrix4d_array, "matrix4d")
+
+#undef DEFINE_MATRIX_ARRAY_OPTIMIZED
 
 //
 // Template specializations for optimized parsing
@@ -3850,6 +3926,66 @@ bool AsciiParser::ParseBasicTypeArray(std::vector<float> *result) {
 template <>
 bool AsciiParser::ParseBasicTypeArray(std::vector<double> *result) {
   return ParseDoubleArrayOptimized(result);
+}
+
+template <>
+bool AsciiParser::ParseBasicTypeArray(std::vector<value::float2> *result) {
+  return ParseFloat2ArrayOptimized(result);
+}
+
+template <>
+bool AsciiParser::ParseBasicTypeArray(std::vector<value::float3> *result) {
+  return ParseFloat3ArrayOptimized(result);
+}
+
+template <>
+bool AsciiParser::ParseBasicTypeArray(std::vector<value::float4> *result) {
+  return ParseFloat4ArrayOptimized(result);
+}
+
+template <>
+bool AsciiParser::ParseBasicTypeArray(std::vector<value::double2> *result) {
+  return ParseDouble2ArrayOptimized(result);
+}
+
+template <>
+bool AsciiParser::ParseBasicTypeArray(std::vector<value::double3> *result) {
+  return ParseDouble3ArrayOptimized(result);
+}
+
+template <>
+bool AsciiParser::ParseBasicTypeArray(std::vector<value::double4> *result) {
+  return ParseDouble4ArrayOptimized(result);
+}
+
+template <>
+bool AsciiParser::ParseBasicTypeArray(std::vector<value::matrix2f> *result) {
+  return ParseMatrix2fArrayOptimized(result);
+}
+
+template <>
+bool AsciiParser::ParseBasicTypeArray(std::vector<value::matrix3f> *result) {
+  return ParseMatrix3fArrayOptimized(result);
+}
+
+template <>
+bool AsciiParser::ParseBasicTypeArray(std::vector<value::matrix4f> *result) {
+  return ParseMatrix4fArrayOptimized(result);
+}
+
+template <>
+bool AsciiParser::ParseBasicTypeArray(std::vector<value::matrix2d> *result) {
+  return ParseMatrix2dArrayOptimized(result);
+}
+
+template <>
+bool AsciiParser::ParseBasicTypeArray(std::vector<value::matrix3d> *result) {
+  return ParseMatrix3dArrayOptimized(result);
+}
+
+template <>
+bool AsciiParser::ParseBasicTypeArray(std::vector<value::matrix4d> *result) {
+  return ParseMatrix4dArrayOptimized(result);
 }
 
 //
@@ -3963,15 +4099,15 @@ template bool AsciiParser::ParseBasicTypeArray(std::vector<value::half> *result)
 template bool AsciiParser::ParseBasicTypeArray(std::vector<value::half2> *result);
 template bool AsciiParser::ParseBasicTypeArray(std::vector<value::half3> *result);
 template bool AsciiParser::ParseBasicTypeArray(std::vector<value::half4> *result);
-// Note: float and double arrays now use optimized implementations
+// Note: float, double, float2/3/4, double2/3/4 arrays now use optimized implementations
 // template bool AsciiParser::ParseBasicTypeArray(std::vector<float> *result);
-template bool AsciiParser::ParseBasicTypeArray(std::vector<value::float2> *result);
-template bool AsciiParser::ParseBasicTypeArray(std::vector<value::float3> *result);
-template bool AsciiParser::ParseBasicTypeArray(std::vector<value::float4> *result);
+// template bool AsciiParser::ParseBasicTypeArray(std::vector<value::float2> *result);
+// template bool AsciiParser::ParseBasicTypeArray(std::vector<value::float3> *result);
+// template bool AsciiParser::ParseBasicTypeArray(std::vector<value::float4> *result);
 // template bool AsciiParser::ParseBasicTypeArray(std::vector<double> *result);
-template bool AsciiParser::ParseBasicTypeArray(std::vector<value::double2> *result);
-template bool AsciiParser::ParseBasicTypeArray(std::vector<value::double3> *result);
-template bool AsciiParser::ParseBasicTypeArray(std::vector<value::double4> *result);
+// template bool AsciiParser::ParseBasicTypeArray(std::vector<value::double2> *result);
+// template bool AsciiParser::ParseBasicTypeArray(std::vector<value::double3> *result);
+// template bool AsciiParser::ParseBasicTypeArray(std::vector<value::double4> *result);
 template bool AsciiParser::ParseBasicTypeArray(std::vector<value::texcoord2h> *result);
 template bool AsciiParser::ParseBasicTypeArray(std::vector<value::texcoord2f> *result);
 template bool AsciiParser::ParseBasicTypeArray(std::vector<value::texcoord2d> *result);
@@ -3993,12 +4129,13 @@ template bool AsciiParser::ParseBasicTypeArray(std::vector<value::color3d> *resu
 template bool AsciiParser::ParseBasicTypeArray(std::vector<value::color4h> *result);
 template bool AsciiParser::ParseBasicTypeArray(std::vector<value::color4f> *result);
 template bool AsciiParser::ParseBasicTypeArray(std::vector<value::color4d> *result);
-template bool AsciiParser::ParseBasicTypeArray(std::vector<value::matrix2f> *result);
-template bool AsciiParser::ParseBasicTypeArray(std::vector<value::matrix3f> *result);
-template bool AsciiParser::ParseBasicTypeArray(std::vector<value::matrix4f> *result);
-template bool AsciiParser::ParseBasicTypeArray(std::vector<value::matrix2d> *result);
-template bool AsciiParser::ParseBasicTypeArray(std::vector<value::matrix3d> *result);
-template bool AsciiParser::ParseBasicTypeArray(std::vector<value::matrix4d> *result);
+// Note: matrix arrays now use optimized implementations
+// template bool AsciiParser::ParseBasicTypeArray(std::vector<value::matrix2f> *result);
+// template bool AsciiParser::ParseBasicTypeArray(std::vector<value::matrix3f> *result);
+// template bool AsciiParser::ParseBasicTypeArray(std::vector<value::matrix4f> *result);
+// template bool AsciiParser::ParseBasicTypeArray(std::vector<value::matrix2d> *result);
+// template bool AsciiParser::ParseBasicTypeArray(std::vector<value::matrix3d> *result);
+// template bool AsciiParser::ParseBasicTypeArray(std::vector<value::matrix4d> *result);
 template bool AsciiParser::ParseBasicTypeArray(std::vector<value::frame4d> *result);
 template bool AsciiParser::ParseBasicTypeArray(std::vector<value::quath> *result);
 template bool AsciiParser::ParseBasicTypeArray(std::vector<value::quatf> *result);

@@ -356,6 +356,7 @@ export function showNodeGraph(materialData) {
     title.textContent = `MaterialX Node Graph - ${materialData.name || 'Material'}`;
 
     // Show wrapper
+    wrapper.style.display = '';
     wrapper.classList.add('visible');
 
     // Create or recreate graph
@@ -368,6 +369,7 @@ export function showNodeGraph(materialData) {
 
     // Create or update canvas
     if (nodeGraphCanvas) {
+        nodeGraphCanvas.pause_rendering = false;
         nodeGraphCanvas.setGraph(nodeGraph);
     } else {
         nodeGraphCanvas = new LGraphCanvas(canvas, nodeGraph);
@@ -416,19 +418,26 @@ export function showNodeGraph(materialData) {
     console.log('Node graph displayed');
 }
 
-// Hide node graph panel
+// Hide node graph panel and stop rendering for performance
 export function hideNodeGraph() {
     const wrapper = document.getElementById('node-graph-wrapper');
     if (wrapper) {
         wrapper.classList.remove('visible');
+        wrapper.style.display = 'none'; // Remove from layout to stop rendering
     }
 
     if (nodeGraph) {
         nodeGraph.stop();
     }
+
+    // Stop canvas rendering loop
+    if (nodeGraphCanvas) {
+        nodeGraphCanvas.pause_rendering = true;
+        nodeGraphCanvas.setDirty(false, false);
+    }
 }
 
-// Toggle node graph visibility
+// Toggle node graph visibility (hide/unhide without re-creating the graph)
 export function toggleNodeGraphVisibility() {
     const wrapper = document.getElementById('node-graph-wrapper');
     if (!wrapper) return;
@@ -436,13 +445,22 @@ export function toggleNodeGraphVisibility() {
     if (wrapper.classList.contains('visible')) {
         hideNodeGraph();
     } else {
-        // Show graph for currently selected material
-        // Get selected material from global scope
-        const selectedMaterial = window.selectedMaterialForExport;
-        if (selectedMaterial && selectedMaterial.data) {
-            showNodeGraph(selectedMaterial.data);
+        // If we already have a graph, just resume it (fast unhide)
+        if (nodeGraph && nodeGraphCanvas && currentMaterialForGraph) {
+            wrapper.style.display = '';
+            wrapper.classList.add('visible');
+            nodeGraphCanvas.pause_rendering = false;
+            nodeGraph.start();
+            nodeGraphCanvas.setDirty(true, true);
+            setTimeout(() => updateNodeGraphInfo(), 50);
         } else {
-            alert('Please select a material from the Materials panel first');
+            // No existing graph — create from selected material
+            const selectedMaterial = window.selectedMaterialForExport;
+            if (selectedMaterial && selectedMaterial.data) {
+                showNodeGraph(selectedMaterial.data);
+            } else {
+                alert('Please select a material from the Materials panel first');
+            }
         }
     }
 }
@@ -525,9 +543,50 @@ export function exportNodeGraphAsJSON() {
     console.log('Node graph exported as JSON');
 }
 
+// Collapse/expand the node graph view (hides canvas, keeps header bar visible)
+export function toggleNodeGraphCollapse() {
+    const wrapper = document.getElementById('node-graph-wrapper');
+    const btn = document.getElementById('node-graph-collapse-btn');
+    if (!wrapper || !btn) return;
+
+    const isCollapsing = !wrapper.classList.contains('collapsed');
+
+    if (isCollapsing) {
+        // Collapse: hide canvas, stop rendering
+        wrapper.classList.add('collapsed');
+        btn.classList.add('collapsed');
+        btn.textContent = '<';
+        btn.title = 'Show graph view';
+
+        if (nodeGraph) nodeGraph.stop();
+        if (nodeGraphCanvas) {
+            nodeGraphCanvas.pause_rendering = true;
+            nodeGraphCanvas.setDirty(false, false);
+        }
+    } else {
+        // Expand: show canvas, resume rendering
+        wrapper.classList.remove('collapsed');
+        btn.classList.remove('collapsed');
+        btn.textContent = '>';
+        btn.title = 'Hide graph view';
+
+        if (nodeGraphCanvas) {
+            nodeGraphCanvas.pause_rendering = false;
+            nodeGraphCanvas.setDirty(true, true);
+        }
+        if (nodeGraph) nodeGraph.start();
+
+        setTimeout(() => {
+            centerNodeGraph();
+            updateNodeGraphInfo();
+        }, 50);
+    }
+}
+
 // Make functions globally accessible
 if (typeof window !== 'undefined') {
     window.toggleNodeGraph = toggleNodeGraphVisibility;
     window.centerNodeGraph = centerNodeGraph;
     window.exportNodeGraphJSON = exportNodeGraphAsJSON;
+    window.toggleNodeGraphCollapse = toggleNodeGraphCollapse;
 }
