@@ -1,0 +1,539 @@
+{
+  "metadata": {
+    "blender_version": "5.0",
+    "materialx_version": "1.39",
+    "surface_shader": "ND_open_pbr_surface_surfaceshader",
+    "description": "Blender to MaterialX node translation mapping"
+  },
+  "node_mappings": {
+    "ShaderNodeInvert": {
+      "blender_label": "Invert",
+      "category": "Color",
+      "inputs": [
+        {"name": "Fac", "type": "VALUE", "default": 1.0},
+        {"name": "Color", "type": "RGBA", "default": [0.0, 0.0, 0.0, 1.0]}
+      ],
+      "outputs": [
+        {"name": "Color", "type": "RGBA"}
+      ],
+      "materialx_nodes": [
+        {
+          "id": "ND_constant_color3",
+          "purpose": "Input color value"
+        },
+        {
+          "id": "ND_subtract_color3",
+          "purpose": "Compute (1,1,1) - color",
+          "inputs": {
+            "in1": "(1, 1, 1)",
+            "in2": "input_color"
+          }
+        },
+        {
+          "id": "ND_mix_color3",
+          "purpose": "Blend original and inverted by Fac",
+          "inputs": {
+            "bg": "input_color",
+            "fg": "subtracted_color",
+            "mix": "Fac"
+          }
+        }
+      ],
+      "formula": "mix(color, (1,1,1) - color, fac)"
+    },
+    "ShaderNodeHueSaturation": {
+      "blender_label": "Hue/Saturation/Value",
+      "category": "Color",
+      "inputs": [
+        {"name": "Hue", "type": "VALUE", "default": 0.5},
+        {"name": "Saturation", "type": "VALUE", "default": 1.0},
+        {"name": "Value", "type": "VALUE", "default": 1.0},
+        {"name": "Fac", "type": "VALUE", "default": 1.0},
+        {"name": "Color", "type": "RGBA"}
+      ],
+      "outputs": [
+        {"name": "Color", "type": "RGBA"}
+      ],
+      "materialx_nodes": [
+        {
+          "id": "ND_combine3_vector3",
+          "purpose": "Combine H, S, V adjustments into vector3",
+          "inputs": {
+            "in1": "hue_offset",
+            "in2": "saturation_scale",
+            "in3": "value_scale"
+          }
+        },
+        {
+          "id": "ND_hsvadjust_color3",
+          "purpose": "Apply HSV adjustment to color",
+          "inputs": {
+            "in": "input_color",
+            "amount": "hsv_vector"
+          }
+        },
+        {
+          "id": "ND_mix_color3",
+          "purpose": "Blend with Fac",
+          "inputs": {
+            "bg": "input_color",
+            "fg": "adjusted_color",
+            "mix": "Fac"
+          }
+        }
+      ]
+    },
+    "ShaderNodeBrightContrast": {
+      "blender_label": "Brightness/Contrast",
+      "category": "Color",
+      "inputs": [
+        {"name": "Color", "type": "RGBA"},
+        {"name": "Bright", "type": "VALUE", "default": 0.0},
+        {"name": "Contrast", "type": "VALUE", "default": 0.0}
+      ],
+      "outputs": [
+        {"name": "Color", "type": "RGBA"}
+      ],
+      "materialx_nodes": [
+        {
+          "id": "ND_multiply_color3",
+          "purpose": "Apply contrast scaling"
+        },
+        {
+          "id": "ND_add_color3",
+          "purpose": "Add brightness offset"
+        },
+        {
+          "id": "ND_subtract_color3",
+          "purpose": "Adjust contrast center point"
+        },
+        {
+          "id": "ND_max_color3",
+          "purpose": "Clamp result to non-negative"
+        }
+      ],
+      "formula": "max((color * (1 + contrast) + brightness - contrast * 0.5), 0)"
+    },
+    "ShaderNodeGamma": {
+      "blender_label": "Gamma",
+      "category": "Color",
+      "inputs": [
+        {"name": "Color", "type": "RGBA"},
+        {"name": "Gamma", "type": "VALUE", "default": 1.0}
+      ],
+      "outputs": [
+        {"name": "Color", "type": "RGBA"}
+      ],
+      "materialx_nodes": [
+        {
+          "id": "ND_power_color3",
+          "purpose": "Apply gamma correction",
+          "inputs": {
+            "in1": "input_color",
+            "in2": "(gamma, gamma, gamma)"
+          }
+        }
+      ],
+      "formula": "color ^ gamma"
+    },
+    "ShaderNodeRGBToBW": {
+      "blender_label": "RGB to BW",
+      "category": "Color",
+      "inputs": [
+        {"name": "Color", "type": "RGBA"}
+      ],
+      "outputs": [
+        {"name": "Val", "type": "VALUE"}
+      ],
+      "materialx_nodes": [
+        {
+          "id": "ND_luminance_color3",
+          "purpose": "Convert RGB to luminance"
+        },
+        {
+          "id": "ND_extract_color3",
+          "purpose": "Extract single channel",
+          "inputs": {
+            "index": 0
+          }
+        }
+      ],
+      "formula": "luminance(color)"
+    },
+    "ShaderNodeMixRGB": {
+      "blender_label": "Mix RGB",
+      "category": "Color",
+      "inputs": [
+        {"name": "Fac", "type": "VALUE", "default": 0.5},
+        {"name": "Color1", "type": "RGBA"},
+        {"name": "Color2", "type": "RGBA"}
+      ],
+      "outputs": [
+        {"name": "Color", "type": "RGBA"}
+      ],
+      "materialx_nodes": [
+        {
+          "id": "ND_mix_color3",
+          "purpose": "Linear interpolation",
+          "inputs": {
+            "bg": "Color1",
+            "fg": "Color2",
+            "mix": "Fac"
+          }
+        }
+      ],
+      "formula": "mix(Color1, Color2, Fac)",
+      "notes": "With constant inputs, result may be pre-computed"
+    },
+    "ShaderNodeMix": {
+      "blender_label": "Mix",
+      "category": "Color",
+      "inputs": [
+        {"name": "Factor", "type": "VALUE", "default": 0.5},
+        {"name": "A", "type": "varies"},
+        {"name": "B", "type": "varies"}
+      ],
+      "outputs": [
+        {"name": "Result", "type": "varies"}
+      ],
+      "materialx_nodes": [
+        {
+          "id": "ND_mix_color3",
+          "purpose": "Mix colors (when data_type=RGBA)"
+        },
+        {
+          "id": "ND_mix_float",
+          "purpose": "Mix floats (when data_type=FLOAT)"
+        },
+        {
+          "id": "ND_mix_vector3",
+          "purpose": "Mix vectors (when data_type=VECTOR)"
+        }
+      ],
+      "formula": "mix(A, B, Factor)"
+    },
+    "ShaderNodeSeparateColor": {
+      "blender_label": "Separate Color",
+      "category": "Color",
+      "inputs": [
+        {"name": "Color", "type": "RGBA"}
+      ],
+      "outputs": [
+        {"name": "Red", "type": "VALUE"},
+        {"name": "Green", "type": "VALUE"},
+        {"name": "Blue", "type": "VALUE"}
+      ],
+      "materialx_nodes": [
+        {
+          "id": "ND_extract_color3",
+          "purpose": "Extract R channel",
+          "inputs": {"index": 0}
+        },
+        {
+          "id": "ND_extract_color3",
+          "purpose": "Extract G channel",
+          "inputs": {"index": 1}
+        },
+        {
+          "id": "ND_extract_color3",
+          "purpose": "Extract B channel",
+          "inputs": {"index": 2}
+        }
+      ]
+    },
+    "ShaderNodeCombineColor": {
+      "blender_label": "Combine Color",
+      "category": "Color",
+      "inputs": [
+        {"name": "Red", "type": "VALUE", "default": 0.0},
+        {"name": "Green", "type": "VALUE", "default": 0.0},
+        {"name": "Blue", "type": "VALUE", "default": 0.0}
+      ],
+      "outputs": [
+        {"name": "Color", "type": "RGBA"}
+      ],
+      "materialx_nodes": [
+        {
+          "id": "ND_combine3_color3",
+          "purpose": "Combine 3 floats into color3",
+          "inputs": {
+            "in1": "Red",
+            "in2": "Green",
+            "in3": "Blue"
+          }
+        }
+      ]
+    },
+    "ShaderNodeValToRGB": {
+      "blender_label": "ColorRamp",
+      "category": "Color",
+      "inputs": [
+        {"name": "Fac", "type": "VALUE", "default": 0.5}
+      ],
+      "outputs": [
+        {"name": "Color", "type": "RGBA"},
+        {"name": "Alpha", "type": "VALUE"}
+      ],
+      "materialx_nodes": [],
+      "notes": "Pre-computed at export time. Gradient is sampled and baked."
+    },
+    "ShaderNodeRGBCurve": {
+      "blender_label": "RGB Curves",
+      "category": "Color",
+      "inputs": [
+        {"name": "Fac", "type": "VALUE", "default": 1.0},
+        {"name": "Color", "type": "RGBA"}
+      ],
+      "outputs": [
+        {"name": "Color", "type": "RGBA"}
+      ],
+      "materialx_nodes": [],
+      "notes": "Pre-computed at export time with constant inputs."
+    },
+    "ShaderNodeSeparateXYZ": {
+      "blender_label": "Separate XYZ",
+      "category": "Vector",
+      "inputs": [
+        {"name": "Vector", "type": "VECTOR"}
+      ],
+      "outputs": [
+        {"name": "X", "type": "VALUE"},
+        {"name": "Y", "type": "VALUE"},
+        {"name": "Z", "type": "VALUE"}
+      ],
+      "materialx_nodes": [
+        {
+          "id": "ND_convert_color3_vector3",
+          "purpose": "Convert color to vector if needed"
+        },
+        {
+          "id": "ND_extract_vector3",
+          "purpose": "Extract X component",
+          "inputs": {"index": 0}
+        },
+        {
+          "id": "ND_extract_vector3",
+          "purpose": "Extract Y component",
+          "inputs": {"index": 1}
+        },
+        {
+          "id": "ND_extract_vector3",
+          "purpose": "Extract Z component",
+          "inputs": {"index": 2}
+        }
+      ]
+    },
+    "ShaderNodeCombineXYZ": {
+      "blender_label": "Combine XYZ",
+      "category": "Vector",
+      "inputs": [
+        {"name": "X", "type": "VALUE", "default": 0.0},
+        {"name": "Y", "type": "VALUE", "default": 0.0},
+        {"name": "Z", "type": "VALUE", "default": 0.0}
+      ],
+      "outputs": [
+        {"name": "Vector", "type": "VECTOR"}
+      ],
+      "materialx_nodes": [
+        {
+          "id": "ND_combine3_vector3",
+          "purpose": "Combine 3 floats into vector3",
+          "inputs": {
+            "in1": "X",
+            "in2": "Y",
+            "in3": "Z"
+          }
+        }
+      ]
+    },
+    "ShaderNodeVectorMath": {
+      "blender_label": "Vector Math",
+      "category": "Vector",
+      "inputs": [
+        {"name": "Vector", "type": "VECTOR"},
+        {"name": "Vector", "type": "VECTOR"},
+        {"name": "Scale", "type": "VALUE"}
+      ],
+      "outputs": [
+        {"name": "Vector", "type": "VECTOR"},
+        {"name": "Value", "type": "VALUE"}
+      ],
+      "operation_mappings": {
+        "ADD": "ND_add_vector3",
+        "SUBTRACT": "ND_subtract_vector3",
+        "MULTIPLY": "ND_multiply_vector3",
+        "DIVIDE": "ND_divide_vector3",
+        "CROSS_PRODUCT": "ND_crossproduct_vector3",
+        "DOT_PRODUCT": "ND_dotproduct_vector3",
+        "NORMALIZE": "ND_normalize_vector3",
+        "LENGTH": "ND_magnitude_vector3",
+        "SCALE": "ND_multiply_vector3"
+      },
+      "notes": "Type conversion nodes (ND_convert_*) added as needed"
+    },
+    "ShaderNodeMath": {
+      "blender_label": "Math",
+      "category": "Converter",
+      "inputs": [
+        {"name": "Value", "type": "VALUE"},
+        {"name": "Value", "type": "VALUE"},
+        {"name": "Value", "type": "VALUE"}
+      ],
+      "outputs": [
+        {"name": "Value", "type": "VALUE"}
+      ],
+      "operation_mappings": {
+        "ADD": "ND_add_float",
+        "SUBTRACT": "ND_subtract_float",
+        "MULTIPLY": "ND_multiply_float",
+        "DIVIDE": "ND_divide_float",
+        "POWER": "ND_power_float",
+        "LOGARITHM": "ND_log_float",
+        "SQRT": "ND_sqrt_float",
+        "INVERSE_SQRT": "ND_invsqrt_float",
+        "ABSOLUTE": "ND_absval_float",
+        "EXPONENT": "ND_exp_float",
+        "MINIMUM": "ND_min_float",
+        "MAXIMUM": "ND_max_float",
+        "LESS_THAN": "ND_ifgreater_float",
+        "GREATER_THAN": "ND_ifgreater_float",
+        "SIGN": "ND_sign_float",
+        "ROUND": "ND_round_float",
+        "FLOOR": "ND_floor_float",
+        "CEIL": "ND_ceil_float",
+        "FRACT": "ND_fract_float",
+        "MODULO": "ND_modulo_float",
+        "SINE": "ND_sin_float",
+        "COSINE": "ND_cos_float",
+        "TANGENT": "ND_tan_float",
+        "ARCSINE": "ND_asin_float",
+        "ARCCOSINE": "ND_acos_float",
+        "ARCTANGENT": "ND_atan2_float"
+      },
+      "notes": "With constant inputs, result may be pre-computed"
+    },
+    "ShaderNodeClamp": {
+      "blender_label": "Clamp",
+      "category": "Converter",
+      "inputs": [
+        {"name": "Value", "type": "VALUE"},
+        {"name": "Min", "type": "VALUE", "default": 0.0},
+        {"name": "Max", "type": "VALUE", "default": 1.0}
+      ],
+      "outputs": [
+        {"name": "Result", "type": "VALUE"}
+      ],
+      "materialx_nodes": [
+        {
+          "id": "ND_clamp_float",
+          "purpose": "Clamp value between min and max",
+          "inputs": {
+            "in": "Value",
+            "low": "Min",
+            "high": "Max"
+          }
+        }
+      ],
+      "formula": "clamp(value, min, max)"
+    },
+    "ShaderNodeMapRange": {
+      "blender_label": "Map Range",
+      "category": "Converter",
+      "inputs": [
+        {"name": "Value", "type": "VALUE"},
+        {"name": "From Min", "type": "VALUE", "default": 0.0},
+        {"name": "From Max", "type": "VALUE", "default": 1.0},
+        {"name": "To Min", "type": "VALUE", "default": 0.0},
+        {"name": "To Max", "type": "VALUE", "default": 1.0}
+      ],
+      "outputs": [
+        {"name": "Result", "type": "VALUE"}
+      ],
+      "materialx_nodes": [
+        {
+          "id": "ND_remap_float",
+          "purpose": "Remap value from one range to another",
+          "inputs": {
+            "in": "Value",
+            "inlow": "From Min",
+            "inhigh": "From Max",
+            "outlow": "To Min",
+            "outhigh": "To Max"
+          }
+        }
+      ],
+      "formula": "remap(value, fromMin, fromMax, toMin, toMax)"
+    }
+  },
+  "materialx_node_library": {
+    "color_nodes": [
+      {"id": "ND_constant_color3", "description": "Constant color value"},
+      {"id": "ND_add_color3", "description": "Add two colors"},
+      {"id": "ND_subtract_color3", "description": "Subtract colors"},
+      {"id": "ND_multiply_color3", "description": "Multiply colors"},
+      {"id": "ND_divide_color3", "description": "Divide colors"},
+      {"id": "ND_power_color3", "description": "Power (gamma)"},
+      {"id": "ND_max_color3", "description": "Maximum (clamp)"},
+      {"id": "ND_min_color3", "description": "Minimum"},
+      {"id": "ND_mix_color3", "description": "Linear interpolation"},
+      {"id": "ND_luminance_color3", "description": "RGB to luminance"},
+      {"id": "ND_extract_color3", "description": "Extract channel by index"},
+      {"id": "ND_combine3_color3", "description": "Combine floats to color"},
+      {"id": "ND_hsvadjust_color3", "description": "HSV adjustment"}
+    ],
+    "vector_nodes": [
+      {"id": "ND_constant_vector3", "description": "Constant vector value"},
+      {"id": "ND_add_vector3", "description": "Add vectors"},
+      {"id": "ND_subtract_vector3", "description": "Subtract vectors"},
+      {"id": "ND_multiply_vector3", "description": "Multiply vectors"},
+      {"id": "ND_divide_vector3", "description": "Divide vectors"},
+      {"id": "ND_normalize_vector3", "description": "Normalize vector"},
+      {"id": "ND_magnitude_vector3", "description": "Vector length"},
+      {"id": "ND_dotproduct_vector3", "description": "Dot product"},
+      {"id": "ND_crossproduct_vector3", "description": "Cross product"},
+      {"id": "ND_extract_vector3", "description": "Extract component"},
+      {"id": "ND_combine3_vector3", "description": "Combine to vector"},
+      {"id": "ND_rotate3d_vector3", "description": "Rotate vector"}
+    ],
+    "float_nodes": [
+      {"id": "ND_constant_float", "description": "Constant float value"},
+      {"id": "ND_add_float", "description": "Add floats"},
+      {"id": "ND_subtract_float", "description": "Subtract floats"},
+      {"id": "ND_multiply_float", "description": "Multiply floats"},
+      {"id": "ND_divide_float", "description": "Divide floats"},
+      {"id": "ND_power_float", "description": "Power"},
+      {"id": "ND_sqrt_float", "description": "Square root"},
+      {"id": "ND_absval_float", "description": "Absolute value"},
+      {"id": "ND_sign_float", "description": "Sign"},
+      {"id": "ND_floor_float", "description": "Floor"},
+      {"id": "ND_ceil_float", "description": "Ceiling"},
+      {"id": "ND_round_float", "description": "Round"},
+      {"id": "ND_fract_float", "description": "Fractional part"},
+      {"id": "ND_modulo_float", "description": "Modulo"},
+      {"id": "ND_min_float", "description": "Minimum"},
+      {"id": "ND_max_float", "description": "Maximum"},
+      {"id": "ND_clamp_float", "description": "Clamp"},
+      {"id": "ND_remap_float", "description": "Remap range"},
+      {"id": "ND_sin_float", "description": "Sine"},
+      {"id": "ND_cos_float", "description": "Cosine"},
+      {"id": "ND_tan_float", "description": "Tangent"},
+      {"id": "ND_asin_float", "description": "Arcsine"},
+      {"id": "ND_acos_float", "description": "Arccosine"},
+      {"id": "ND_atan2_float", "description": "Arctangent2"},
+      {"id": "ND_exp_float", "description": "Exponential"},
+      {"id": "ND_log_float", "description": "Logarithm"}
+    ],
+    "conversion_nodes": [
+      {"id": "ND_convert_color3_vector3", "description": "Color to vector"},
+      {"id": "ND_convert_vector3_color3", "description": "Vector to color"},
+      {"id": "ND_convert_float_color3", "description": "Float to color"},
+      {"id": "ND_convert_color3_float", "description": "Color to float"}
+    ],
+    "geometry_nodes": [
+      {"id": "ND_normal_vector3", "description": "Surface normal"},
+      {"id": "ND_tangent_vector3", "description": "Surface tangent"},
+      {"id": "ND_position_vector3", "description": "World position"},
+      {"id": "ND_texcoord_vector2", "description": "Texture coordinates"}
+    ]
+  }
+}

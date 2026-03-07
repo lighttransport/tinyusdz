@@ -293,7 +293,7 @@ bool DirectBindingStrongerThanDescendants(
       return false;
     }
 
-    const value::token strength = mat_rel.metas().has_bindMaterialAs() ? mat_rel.metas().get_bindMaterialAs() : value::token(kWeaderThanDescendants);
+    const value::token strength = mat_rel.metas().has_bindMaterialAs() ? mat_rel.metas().get_bindMaterialAs() : value::token(kWeakerThanDescendants);
     return strength.str() == kStrongerThanDescendants;
 
   };

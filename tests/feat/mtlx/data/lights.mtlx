@@ -1,0 +1,20 @@
+<?xml version="1.0"?>
+<materialx version="1.38">
+  <uniform_edf name="env_light_edf" type="EDF">
+    <input name="color" type="color3" value="1.0, 0.95, 0.9" />
+  </uniform_edf>
+  <conical_edf name="spot_edf" type="EDF">
+    <input name="color" type="color3" value="1.0, 1.0, 1.0" />
+    <input name="inner_angle" type="float" value="30.0" />
+    <input name="outer_angle" type="float" value="45.0" />
+  </conical_edf>
+  <light name="my_env_light" type="lightshader">
+    <input name="edf" type="EDF" nodename="env_light_edf" />
+    <input name="intensity" type="color3" value="2.0, 2.0, 2.0" />
+    <input name="exposure" type="float" value="0.0" />
+  </light>
+  <light name="my_spot_light" type="lightshader">
+    <input name="edf" type="EDF" nodename="spot_edf" />
+    <input name="intensity" type="color3" value="5.0, 5.0, 5.0" />
+  </light>
+</materialx>

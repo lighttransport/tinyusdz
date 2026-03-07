@@ -1803,6 +1803,13 @@ bool USDAReader::Impl::ReconstructPrim(
 
   prim::PrimReconstructOptions options;
   options.strict_allowedToken_check = _config.strict_allowedToken_check;
+  // MaterialX validation options
+  options.validate_mtlx_connection_types = _config.validate_mtlx_connection_types || _config.strict_mtlx_check;
+  options.validate_mtlx_info_id = _config.validate_mtlx_info_id || _config.strict_mtlx_check;
+  options.validate_mtlx_connection_targets = _config.validate_mtlx_connection_targets || _config.strict_mtlx_check;
+  options.validate_mtlx_duplicate_names = _config.validate_mtlx_duplicate_names || _config.strict_mtlx_check;
+  options.validate_mtlx_index_bounds = _config.validate_mtlx_index_bounds || _config.strict_mtlx_check;
+  options.strict_mtlx_check = _config.strict_mtlx_check;
   DCOUT("strict_allowedToken_check " << options.strict_allowedToken_check);
 
   std::string err;
