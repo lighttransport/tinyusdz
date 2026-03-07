@@ -1633,7 +1633,7 @@ class OpenPBRSurfaceShader {
   ShaderParam<float> coat_anisotropy{0.0f};
   ShaderParam<float> coat_rotation{0.0f};
   ShaderParam<float> coat_ior{1.5f};
-  ShaderParam<vec3> coat_affect_color{{1.0f, 1.0f, 1.0f}};
+  ShaderParam<float> coat_affect_color{0.0f};
   ShaderParam<float> coat_affect_roughness{0.0f};
   ShaderParam<float> coat_roughness_anisotropy{0.0f};
   ShaderParam<float> coat_darkening{0.0f};

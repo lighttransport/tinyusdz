@@ -396,7 +396,7 @@ struct OpenPBRSurface : ShaderNode {
   TypedAttributeWithFallback<Animatable<float>> coat_anisotropy{0.0f}; // "inputs:coat_anisotropy"
   TypedAttributeWithFallback<Animatable<float>> coat_rotation{0.0f}; // "inputs:coat_rotation"
   TypedAttributeWithFallback<Animatable<float>> coat_ior{1.5f}; // "inputs:coat_ior"
-  TypedAttributeWithFallback<Animatable<value::color3f>> coat_affect_color{value::color3f{1.0f, 1.0f, 1.0f}}; // "inputs:coat_affect_color"
+  TypedAttributeWithFallback<Animatable<float>> coat_affect_color{0.0f}; // "inputs:coat_affect_color"
   TypedAttributeWithFallback<Animatable<float>> coat_affect_roughness{0.0f}; // "inputs:coat_affect_roughness"
   TypedAttributeWithFallback<Animatable<float>> coat_roughness_anisotropy{0.0f}; // "inputs:coat_roughness_anisotropy"
   TypedAttributeWithFallback<Animatable<float>> coat_darkening{0.0f}; // "inputs:coat_darkening"
