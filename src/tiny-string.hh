@@ -368,9 +368,6 @@ bool parse_matrix2d_array(const tstring_view &sv, std::vector<tinyusdz::value::m
 bool parse_matrix3d_array(const tstring_view &sv, std::vector<tinyusdz::value::matrix3d> *result);
 bool parse_matrix4d_array(const tstring_view &sv, std::vector<tinyusdz::value::matrix4d> *result);
 
-bool print_float_array(std::vector<float> &v,
-  std::string &dst);
-
 }
 
 } // namespace tinyusdz
