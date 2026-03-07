@@ -495,600 +495,196 @@ bool parse_double(const tstring_view &sv, double *ret) {
   return result.ec == std::errc{};
 }
 
-bool parse_float_array(const tstring_view &sv, std::vector<float> *result, const char delimiter) {
-  if (!result) {
-    return false;
-  }
 
-  result->clear();
-
-  if (sv.size() == 0) {
-    return false;
-  }
-
-  const char *p = sv.c_str();
-  const char *end = p + sv.size();
-  
-  // Skip leading whitespace and '['
-  while (p < end && (*p == ' ' || *p == '\t' || *p == '\n' || *p == '\r')) {
-    p++;
-  }
-  
-  if (p >= end || *p != '[') {
-    return false;
-  }
-  p++; // skip '['
-
-  // Skip whitespace and comments after '['
-  while (p < end) {
-    if (*p == ' ' || *p == '\t' || *p == '\n' || *p == '\r') {
-      p++;
-    } else if (*p == '#') {
-      // Skip comment to end of line
-      while (p < end && *p != '\n') p++;
-    } else {
-      break;
-    }
-  }
-
-  // Handle empty array
-  if (p < end && *p == ']') {
-    return true;
-  }
-
-  while (p < end) {
-    // Skip whitespace and comments
-    while (p < end) {
-      if (*p == ' ' || *p == '\t' || *p == '\n' || *p == '\r') {
-        p++;
-      } else if (*p == '#') {
-        while (p < end && *p != '\n') p++;
-      } else {
-        break;
-      }
-    }
-
-    if (p >= end) break;
-
-    // Check for closing bracket
-    if (*p == ']') {
-      break;
-    }
-
-    // Find the end of the number
-    const char *num_start = p;
-    while (p < end && *p != delimiter && *p != ']' && *p != '#' &&
-           *p != ' ' && *p != '\t' && *p != '\n' && *p != '\r') {
-      p++;
-    }
-
-    if (p == num_start) {
-      return false; // No number found
-    }
-
-    // Parse the number
-    float value;
-    auto parse_result = fast_float::from_chars(num_start, p, value);
-    if (parse_result.ec != std::errc{}) {
-      return false;
-    }
-
-    result->push_back(value);
-
-    // Skip whitespace and comments after number
-    while (p < end) {
-      if (*p == ' ' || *p == '\t' || *p == '\n' || *p == '\r') {
-        p++;
-      } else if (*p == '#') {
-        while (p < end && *p != '\n') p++;
-      } else {
-        break;
-      }
-    }
-
-    // Handle delimiter or end
-    if (p < end && *p == delimiter) {
-      p++; // skip delimiter
-    } else if (p < end && *p == ']') {
-      break; // end of array
-    }
-  }
-
-  return true;
-}
-
-bool parse_double_array(const tstring_view &sv, std::vector<double> *result, const char delimiter) {
-  if (!result) {
-    return false;
-  }
-
-  result->clear();
-
-  if (sv.size() == 0) {
-    return false;
-  }
-
-  const char *p = sv.c_str();
-  const char *end = p + sv.size();
-  
-  // Skip leading whitespace and '['
-  while (p < end && (*p == ' ' || *p == '\t' || *p == '\n' || *p == '\r')) {
-    p++;
-  }
-  
-  if (p >= end || *p != '[') {
-    return false;
-  }
-  p++; // skip '['
-
-  // Skip whitespace and comments after '['
-  while (p < end) {
-    if (*p == ' ' || *p == '\t' || *p == '\n' || *p == '\r') {
-      p++;
-    } else if (*p == '#') {
-      while (p < end && *p != '\n') p++;
-    } else {
-      break;
-    }
-  }
-
-  // Handle empty array
-  if (p < end && *p == ']') {
-    return true;
-  }
-
-  while (p < end) {
-    // Skip whitespace and comments
-    while (p < end) {
-      if (*p == ' ' || *p == '\t' || *p == '\n' || *p == '\r') {
-        p++;
-      } else if (*p == '#') {
-        while (p < end && *p != '\n') p++;
-      } else {
-        break;
-      }
-    }
-
-    if (p >= end) break;
-
-    // Check for closing bracket
-    if (*p == ']') {
-      break;
-    }
-
-    // Find the end of the number
-    const char *num_start = p;
-    while (p < end && *p != delimiter && *p != ']' && *p != '#' &&
-           *p != ' ' && *p != '\t' && *p != '\n' && *p != '\r') {
-      p++;
-    }
-
-    if (p == num_start) {
-      return false; // No number found
-    }
-
-    // Parse the number
-    double value;
-    auto parse_result = fast_float::from_chars(num_start, p, value);
-    if (parse_result.ec != std::errc{}) {
-      return false;
-    }
-
-    result->push_back(value);
-
-    // Skip whitespace and comments after number
-    while (p < end) {
-      if (*p == ' ' || *p == '\t' || *p == '\n' || *p == '\r') {
-        p++;
-      } else if (*p == '#') {
-        while (p < end && *p != '\n') p++;
-      } else {
-        break;
-      }
-    }
-
-    // Handle delimiter or end
-    if (p < end && *p == delimiter) {
-      p++; // skip delimiter
-    } else if (p < end && *p == ']') {
-      break; // end of array
-    }
-  }
-
-  return true;
-}
-
-bool parse_int_array(const tstring_view &sv, std::vector<int32_t> *result, const char delimiter) {
-  if (!result) {
-    return false;
-  }
-
-  result->clear();
-
-  if (sv.size() == 0) {
-    return false;
-  }
-
-  const char *p = sv.c_str();
-  const char *end = p + sv.size();
-  
-  // Skip leading whitespace and '['
-  while (p < end && (*p == ' ' || *p == '\t' || *p == '\n' || *p == '\r')) {
-    p++;
-  }
-  
-  if (p >= end || *p != '[') {
-    return false;
-  }
-  p++; // skip '['
-
-  // Skip whitespace and comments after '['
-  while (p < end) {
-    if (*p == ' ' || *p == '\t' || *p == '\n' || *p == '\r') {
-      p++;
-    } else if (*p == '#') {
-      while (p < end && *p != '\n') p++;
-    } else {
-      break;
-    }
-  }
-
-  // Handle empty array
-  if (p < end && *p == ']') {
-    return true;
-  }
-
-  while (p < end) {
-    // Skip whitespace and comments
-    while (p < end) {
-      if (*p == ' ' || *p == '\t' || *p == '\n' || *p == '\r') {
-        p++;
-      } else if (*p == '#') {
-        while (p < end && *p != '\n') p++;
-      } else {
-        break;
-      }
-    }
-
-    if (p >= end) break;
-
-    // Check for closing bracket
-    if (*p == ']') {
-      break;
-    }
-
-    // Find the end of the number
-    const char *num_start = p;
-    while (p < end && *p != delimiter && *p != ']' && *p != '#' &&
-           *p != ' ' && *p != '\t' && *p != '\n' && *p != '\r') {
-      p++;
-    }
-
-    if (p <= num_start) {
-      return false; // No number found
-    }
-
-    // Parse the number
-    int32_t value;
-    tstring_view num_view(num_start, size_t(p - num_start));
-    if (!parse_int(num_view, &value)) {
-      return false;
-    }
-
-    result->push_back(value);
-
-    // Skip whitespace and comments after number
-    while (p < end) {
-      if (*p == ' ' || *p == '\t' || *p == '\n' || *p == '\r') {
-        p++;
-      } else if (*p == '#') {
-        while (p < end && *p != '\n') p++;
-      } else {
-        break;
-      }
-    }
-
-    // Handle delimiter or end
-    if (p < end && *p == delimiter) {
-      p++; // skip delimiter
-    } else if (p < end && *p == ']') {
-      break; // end of array
-    }
-  }
-
-  return true;
-}
-
-bool print_float_array(std::vector<float> &v,
-  std::string &dst, const char delimiter) {
-
-  // TODO
-  (void)v;
-  (void)dst;
-  (void)delimiter;
-
-  return false;
-}
-
-// Helper function to skip whitespace
+// Skip whitespace and '#' line comments
 static inline const char* skip_whitespace(const char *p, const char *end) {
-  while (p < end && (*p == ' ' || *p == '\t' || *p == '\n' || *p == '\r')) {
-    p++;
+  while (p < end) {
+    if (*p == ' ' || *p == '\t' || *p == '\n' || *p == '\r') {
+      p++;
+    } else if (*p == '#') {
+      while (p < end && *p != '\n' && *p != '\r') {
+        p++;
+      }
+    } else {
+      break;
+    }
   }
   return p;
 }
 
-// Helper function to parse a single float from a pointer, advancing the pointer
+// Helper: parse a single float from pointer, advancing past the number
 static inline bool parse_single_float(const char **p, const char *end, float *value) {
   const char *start = *p;
-  // Find end of number
   while (*p < end && (**p != ',' && **p != ')' && **p != ']' &&
-         **p != ' ' && **p != '\t' && **p != '\n' && **p != '\r')) {
+         **p != ' ' && **p != '\t' && **p != '\n' && **p != '\r' && **p != '#')) {
     (*p)++;
   }
   auto result = fast_float::from_chars(start, *p, *value);
   return result.ec == std::errc{};
 }
 
-// Helper function to parse a single double from a pointer, advancing the pointer
+// Helper: parse a single double from pointer, advancing past the number
 static inline bool parse_single_double(const char **p, const char *end, double *value) {
   const char *start = *p;
-  // Find end of number
   while (*p < end && (**p != ',' && **p != ')' && **p != ']' &&
-         **p != ' ' && **p != '\t' && **p != '\n' && **p != '\r')) {
+         **p != ' ' && **p != '\t' && **p != '\n' && **p != '\r' && **p != '#')) {
     (*p)++;
   }
   auto result = fast_float::from_chars(start, *p, *value);
   return result.ec == std::errc{};
 }
 
-// Parse float2 array: [(1, 2), (3, 4), ...]
+// Scalar array parser: [val, val, ...]
+// Works for float, double (via fast_float) and int (via parse_int).
+template<typename T, typename ParseFn>
+static bool parse_scalar_array_impl(const tstring_view &sv, std::vector<T> *result,
+                                    ParseFn parse_fn) {
+  if (!result) return false;
+  result->clear();
+  if (sv.size() == 0) return false;
+
+  const char *p = sv.c_str();
+  const char *end = p + sv.size();
+
+  p = skip_whitespace(p, end);
+  if (p >= end || *p != '[') return false;
+  p++;
+
+  p = skip_whitespace(p, end);
+  if (p < end && *p == ']') return true;
+
+  while (p < end) {
+    p = skip_whitespace(p, end);
+    if (p >= end) break;
+    if (*p == ']') break;
+
+    const char *num_start = p;
+    while (p < end && *p != ',' && *p != ']' && *p != '#' &&
+           *p != ' ' && *p != '\t' && *p != '\n' && *p != '\r') {
+      p++;
+    }
+    if (p <= num_start) return false;
+
+    T value;
+    if (!parse_fn(num_start, p, &value)) return false;
+    result->push_back(value);
+
+    p = skip_whitespace(p, end);
+    if (p < end && *p == ',') {
+      p++;
+    } else if (p < end && *p == ']') {
+      break;
+    }
+  }
+  return true;
+}
+
+bool parse_float_array(const tstring_view &sv, std::vector<float> *result) {
+  return parse_scalar_array_impl<float>(sv, result,
+    [](const char *start, const char *end, float *val) -> bool {
+      auto r = fast_float::from_chars(start, end, *val);
+      return r.ec == std::errc{};
+    });
+}
+
+bool parse_double_array(const tstring_view &sv, std::vector<double> *result) {
+  return parse_scalar_array_impl<double>(sv, result,
+    [](const char *start, const char *end, double *val) -> bool {
+      auto r = fast_float::from_chars(start, end, *val);
+      return r.ec == std::errc{};
+    });
+}
+
+bool parse_int_array(const tstring_view &sv, std::vector<int32_t> *result) {
+  return parse_scalar_array_impl<int32_t>(sv, result,
+    [](const char *start, const char *end, int32_t *val) -> bool {
+      tstring_view num_view(start, size_t(end - start));
+      return parse_int(num_view, val);
+    });
+}
+
+bool print_float_array(std::vector<float> &v,
+  std::string &dst) {
+  // TODO
+  (void)v;
+  (void)dst;
+  return false;
+}
+
+// Tuple array parser: [(v0, v1, ...), (v0, v1, ...), ...]
+// VecT must support operator[] for element access.
+template<typename VecT, typename ScalarT, size_t N>
+static bool parse_tuple_array_impl(const tstring_view &sv, std::vector<VecT> *result,
+                                   bool (*parse_fn)(const char**, const char*, ScalarT*)) {
+  if (!result) return false;
+  result->clear();
+  if (sv.size() == 0) return false;
+
+  const char *p = sv.c_str();
+  const char *end = p + sv.size();
+
+  p = skip_whitespace(p, end);
+  if (p >= end || *p != '[') return false;
+  p++;
+
+  p = skip_whitespace(p, end);
+  if (p < end && *p == ']') return true;
+
+  while (p < end) {
+    p = skip_whitespace(p, end);
+    if (p >= end) break;
+    if (*p == ']') break;
+
+    if (*p != '(') return false;
+    p++;
+
+    VecT vec;
+    for (size_t i = 0; i < N; i++) {
+      p = skip_whitespace(p, end);
+      if (!parse_fn(&p, end, &vec[i])) return false;
+      p = skip_whitespace(p, end);
+      if (i < N - 1) {
+        if (p >= end || *p != ',') return false;
+        p++;
+      }
+    }
+
+    p = skip_whitespace(p, end);
+    if (p >= end || *p != ')') return false;
+    p++;
+
+    result->push_back(vec);
+
+    p = skip_whitespace(p, end);
+    if (p < end && *p == ',') p++;
+  }
+  return true;
+}
+
 bool parse_float2_array(const tstring_view &sv, std::vector<tinyusdz::value::float2> *result) {
-  if (!result) return false;
-  result->clear();
-  if (sv.size() == 0) return false;
-
-  const char *p = sv.c_str();
-  const char *end = p + sv.size();
-
-  p = skip_whitespace(p, end);
-  if (p >= end || *p != '[') return false;
-  p++; // skip '['
-
-  p = skip_whitespace(p, end);
-  if (p < end && *p == ']') return true; // empty array
-
-  while (p < end) {
-    p = skip_whitespace(p, end);
-    if (p >= end) break;
-    if (*p == ']') break;
-
-    // Expect '('
-    if (*p != '(') return false;
-    p++;
-
-    tinyusdz::value::float2 vec;
-    for (size_t i = 0; i < 2; i++) {
-      p = skip_whitespace(p, end);
-      if (!parse_single_float(&p, end, &vec[i])) return false;
-      p = skip_whitespace(p, end);
-      if (i == 0) {
-        if (p >= end || *p != ',') return false;
-        p++; // skip ','
-      }
-    }
-
-    p = skip_whitespace(p, end);
-    if (p >= end || *p != ')') return false;
-    p++; // skip ')'
-
-    result->push_back(vec);
-
-    p = skip_whitespace(p, end);
-    if (p < end && *p == ',') p++; // skip optional delimiter
-  }
-
-  return true;
+  return parse_tuple_array_impl<tinyusdz::value::float2, float, 2>(sv, result, parse_single_float);
 }
-
-// Parse float3 array: [(1, 2, 3), (4, 5, 6), ...]
 bool parse_float3_array(const tstring_view &sv, std::vector<tinyusdz::value::float3> *result) {
-  if (!result) return false;
-  result->clear();
-  if (sv.size() == 0) return false;
-
-  const char *p = sv.c_str();
-  const char *end = p + sv.size();
-
-  p = skip_whitespace(p, end);
-  if (p >= end || *p != '[') return false;
-  p++; // skip '['
-
-  p = skip_whitespace(p, end);
-  if (p < end && *p == ']') return true; // empty array
-
-  while (p < end) {
-    p = skip_whitespace(p, end);
-    if (p >= end) break;
-    if (*p == ']') break;
-
-    // Expect '('
-    if (*p != '(') return false;
-    p++;
-
-    tinyusdz::value::float3 vec;
-    for (size_t i = 0; i < 3; i++) {
-      p = skip_whitespace(p, end);
-      if (!parse_single_float(&p, end, &vec[i])) return false;
-      p = skip_whitespace(p, end);
-      if (i < 2) {
-        if (p >= end || *p != ',') return false;
-        p++; // skip ','
-      }
-    }
-
-    p = skip_whitespace(p, end);
-    if (p >= end || *p != ')') return false;
-    p++; // skip ')'
-
-    result->push_back(vec);
-
-    p = skip_whitespace(p, end);
-    if (p < end && *p == ',') p++; // skip optional delimiter
-  }
-
-  return true;
+  return parse_tuple_array_impl<tinyusdz::value::float3, float, 3>(sv, result, parse_single_float);
 }
-
-// Parse float4 array: [(1, 2, 3, 4), (5, 6, 7, 8), ...]
 bool parse_float4_array(const tstring_view &sv, std::vector<tinyusdz::value::float4> *result) {
-  if (!result) return false;
-  result->clear();
-  if (sv.size() == 0) return false;
-
-  const char *p = sv.c_str();
-  const char *end = p + sv.size();
-
-  p = skip_whitespace(p, end);
-  if (p >= end || *p != '[') return false;
-  p++; // skip '['
-
-  p = skip_whitespace(p, end);
-  if (p < end && *p == ']') return true; // empty array
-
-  while (p < end) {
-    p = skip_whitespace(p, end);
-    if (p >= end) break;
-    if (*p == ']') break;
-
-    // Expect '('
-    if (*p != '(') return false;
-    p++;
-
-    tinyusdz::value::float4 vec;
-    for (size_t i = 0; i < 4; i++) {
-      p = skip_whitespace(p, end);
-      if (!parse_single_float(&p, end, &vec[i])) return false;
-      p = skip_whitespace(p, end);
-      if (i < 3) {
-        if (p >= end || *p != ',') return false;
-        p++; // skip ','
-      }
-    }
-
-    p = skip_whitespace(p, end);
-    if (p >= end || *p != ')') return false;
-    p++; // skip ')'
-
-    result->push_back(vec);
-
-    p = skip_whitespace(p, end);
-    if (p < end && *p == ',') p++; // skip optional delimiter
-  }
-
-  return true;
+  return parse_tuple_array_impl<tinyusdz::value::float4, float, 4>(sv, result, parse_single_float);
 }
-
-// Parse double2 array: [(1, 2), (3, 4), ...]
 bool parse_double2_array(const tstring_view &sv, std::vector<tinyusdz::value::double2> *result) {
-  if (!result) return false;
-  result->clear();
-  if (sv.size() == 0) return false;
-
-  const char *p = sv.c_str();
-  const char *end = p + sv.size();
-
-  p = skip_whitespace(p, end);
-  if (p >= end || *p != '[') return false;
-  p++; // skip '['
-
-  p = skip_whitespace(p, end);
-  if (p < end && *p == ']') return true; // empty array
-
-  while (p < end) {
-    p = skip_whitespace(p, end);
-    if (p >= end) break;
-    if (*p == ']') break;
-
-    // Expect '('
-    if (*p != '(') return false;
-    p++;
-
-    tinyusdz::value::double2 vec;
-    for (size_t i = 0; i < 2; i++) {
-      p = skip_whitespace(p, end);
-      if (!parse_single_double(&p, end, &vec[i])) return false;
-      p = skip_whitespace(p, end);
-      if (i == 0) {
-        if (p >= end || *p != ',') return false;
-        p++; // skip ','
-      }
-    }
-
-    p = skip_whitespace(p, end);
-    if (p >= end || *p != ')') return false;
-    p++; // skip ')'
-
-    result->push_back(vec);
-
-    p = skip_whitespace(p, end);
-    if (p < end && *p == ',') p++; // skip optional delimiter
-  }
-
-  return true;
+  return parse_tuple_array_impl<tinyusdz::value::double2, double, 2>(sv, result, parse_single_double);
 }
-
-// Parse double3 array: [(1, 2, 3), (4, 5, 6), ...]
 bool parse_double3_array(const tstring_view &sv, std::vector<tinyusdz::value::double3> *result) {
-  if (!result) return false;
-  result->clear();
-  if (sv.size() == 0) return false;
-
-  const char *p = sv.c_str();
-  const char *end = p + sv.size();
-
-  p = skip_whitespace(p, end);
-  if (p >= end || *p != '[') return false;
-  p++; // skip '['
-
-  p = skip_whitespace(p, end);
-  if (p < end && *p == ']') return true; // empty array
-
-  while (p < end) {
-    p = skip_whitespace(p, end);
-    if (p >= end) break;
-    if (*p == ']') break;
-
-    // Expect '('
-    if (*p != '(') return false;
-    p++;
-
-    tinyusdz::value::double3 vec;
-    for (size_t i = 0; i < 3; i++) {
-      p = skip_whitespace(p, end);
-      if (!parse_single_double(&p, end, &vec[i])) return false;
-      p = skip_whitespace(p, end);
-      if (i < 2) {
-        if (p >= end || *p != ',') return false;
-        p++; // skip ','
-      }
-    }
-
-    p = skip_whitespace(p, end);
-    if (p >= end || *p != ')') return false;
-    p++; // skip ')'
-
-    result->push_back(vec);
-
-    p = skip_whitespace(p, end);
-    if (p < end && *p == ',') p++; // skip optional delimiter
-  }
-
-  return true;
+  return parse_tuple_array_impl<tinyusdz::value::double3, double, 3>(sv, result, parse_single_double);
 }
-
-// Parse double4 array: [(1, 2, 3, 4), (5, 6, 7, 8), ...]
 bool parse_double4_array(const tstring_view &sv, std::vector<tinyusdz::value::double4> *result) {
+  return parse_tuple_array_impl<tinyusdz::value::double4, double, 4>(sv, result, parse_single_double);
+}
+
+// Matrix array parser: [((r00, r01, ...), (r10, r11, ...), ...), ...]
+// MatT must have mat.m[row][col] access.
+template<typename MatT, typename ScalarT, size_t N>
+static bool parse_matrix_array_impl(const tstring_view &sv, std::vector<MatT> *result,
+                                    bool (*parse_fn)(const char**, const char*, ScalarT*)) {
   if (!result) return false;
   result->clear();
   if (sv.size() == 0) return false;
@@ -1098,415 +694,72 @@ bool parse_double4_array(const tstring_view &sv, std::vector<tinyusdz::value::do
 
   p = skip_whitespace(p, end);
   if (p >= end || *p != '[') return false;
-  p++; // skip '['
+  p++;
 
   p = skip_whitespace(p, end);
-  if (p < end && *p == ']') return true; // empty array
+  if (p < end && *p == ']') return true;
 
   while (p < end) {
     p = skip_whitespace(p, end);
     if (p >= end) break;
     if (*p == ']') break;
 
-    // Expect '('
     if (*p != '(') return false;
     p++;
 
-    tinyusdz::value::double4 vec;
-    for (size_t i = 0; i < 4; i++) {
+    MatT mat;
+    for (size_t i = 0; i < N; i++) {
       p = skip_whitespace(p, end);
-      if (!parse_single_double(&p, end, &vec[i])) return false;
-      p = skip_whitespace(p, end);
-      if (i < 3) {
-        if (p >= end || *p != ',') return false;
-        p++; // skip ','
+      if (p >= end || *p != '(') return false;
+      p++;
+
+      for (size_t j = 0; j < N; j++) {
+        p = skip_whitespace(p, end);
+        if (!parse_fn(&p, end, &mat.m[i][j])) return false;
+        p = skip_whitespace(p, end);
+        if (j < N - 1) {
+          if (p >= end || *p != ',') return false;
+          p++;
+        }
       }
+
+      p = skip_whitespace(p, end);
+      if (p >= end || *p != ')') return false;
+      p++;
+
+      p = skip_whitespace(p, end);
+      if (i < N - 1 && p < end && *p == ',') p++;
     }
 
     p = skip_whitespace(p, end);
     if (p >= end || *p != ')') return false;
-    p++; // skip ')'
+    p++;
 
-    result->push_back(vec);
+    result->push_back(mat);
 
     p = skip_whitespace(p, end);
-    if (p < end && *p == ',') p++; // skip optional delimiter
+    if (p < end && *p == ',') p++;
   }
-
   return true;
 }
 
-// Parse matrix2f array: [((r00, r01), (r10, r11)), ...]
 bool parse_matrix2f_array(const tstring_view &sv, std::vector<tinyusdz::value::matrix2f> *result) {
-  if (!result) return false;
-  result->clear();
-  if (sv.size() == 0) return false;
-
-  const char *p = sv.c_str();
-  const char *end = p + sv.size();
-
-  p = skip_whitespace(p, end);
-  if (p >= end || *p != '[') return false;
-  p++; // skip '['
-
-  p = skip_whitespace(p, end);
-  if (p < end && *p == ']') return true; // empty array
-
-  while (p < end) {
-    p = skip_whitespace(p, end);
-    if (p >= end) break;
-    if (*p == ']') break;
-
-    // Expect outer '('
-    if (*p != '(') return false;
-    p++;
-
-    tinyusdz::value::matrix2f mat;
-    for (size_t i = 0; i < 2; i++) {
-      p = skip_whitespace(p, end);
-      // Expect row '('
-      if (p >= end || *p != '(') return false;
-      p++;
-
-      for (size_t j = 0; j < 2; j++) {
-        p = skip_whitespace(p, end);
-        if (!parse_single_float(&p, end, &mat.m[i][j])) return false;
-        p = skip_whitespace(p, end);
-        if (j < 1) {
-          if (p >= end || *p != ',') return false;
-          p++;
-        }
-      }
-
-      p = skip_whitespace(p, end);
-      if (p >= end || *p != ')') return false;
-      p++; // skip row ')'
-
-      p = skip_whitespace(p, end);
-      if (i < 1 && p < end && *p == ',') p++; // skip comma between rows
-    }
-
-    p = skip_whitespace(p, end);
-    if (p >= end || *p != ')') return false;
-    p++; // skip outer ')'
-
-    result->push_back(mat);
-
-    p = skip_whitespace(p, end);
-    if (p < end && *p == ',') p++; // skip optional delimiter
-  }
-
-  return true;
+  return parse_matrix_array_impl<tinyusdz::value::matrix2f, float, 2>(sv, result, parse_single_float);
 }
-
-// Parse matrix3f array: [((r00, r01, r02), (r10, r11, r12), (r20, r21, r22)), ...]
 bool parse_matrix3f_array(const tstring_view &sv, std::vector<tinyusdz::value::matrix3f> *result) {
-  if (!result) return false;
-  result->clear();
-  if (sv.size() == 0) return false;
-
-  const char *p = sv.c_str();
-  const char *end = p + sv.size();
-
-  p = skip_whitespace(p, end);
-  if (p >= end || *p != '[') return false;
-  p++; // skip '['
-
-  p = skip_whitespace(p, end);
-  if (p < end && *p == ']') return true; // empty array
-
-  while (p < end) {
-    p = skip_whitespace(p, end);
-    if (p >= end) break;
-    if (*p == ']') break;
-
-    // Expect outer '('
-    if (*p != '(') return false;
-    p++;
-
-    tinyusdz::value::matrix3f mat;
-    for (size_t i = 0; i < 3; i++) {
-      p = skip_whitespace(p, end);
-      if (p >= end || *p != '(') return false;
-      p++;
-
-      for (size_t j = 0; j < 3; j++) {
-        p = skip_whitespace(p, end);
-        if (!parse_single_float(&p, end, &mat.m[i][j])) return false;
-        p = skip_whitespace(p, end);
-        if (j < 2) {
-          if (p >= end || *p != ',') return false;
-          p++;
-        }
-      }
-
-      p = skip_whitespace(p, end);
-      if (p >= end || *p != ')') return false;
-      p++;
-
-      p = skip_whitespace(p, end);
-      if (i < 2 && p < end && *p == ',') p++;
-    }
-
-    p = skip_whitespace(p, end);
-    if (p >= end || *p != ')') return false;
-    p++;
-
-    result->push_back(mat);
-
-    p = skip_whitespace(p, end);
-    if (p < end && *p == ',') p++;
-  }
-
-  return true;
+  return parse_matrix_array_impl<tinyusdz::value::matrix3f, float, 3>(sv, result, parse_single_float);
 }
-
-// Parse matrix4f array: [((r00,..,r03), (r10,..,r13), (r20,..,r23), (r30,..,r33)), ...]
 bool parse_matrix4f_array(const tstring_view &sv, std::vector<tinyusdz::value::matrix4f> *result) {
-  if (!result) return false;
-  result->clear();
-  if (sv.size() == 0) return false;
-
-  const char *p = sv.c_str();
-  const char *end = p + sv.size();
-
-  p = skip_whitespace(p, end);
-  if (p >= end || *p != '[') return false;
-  p++; // skip '['
-
-  p = skip_whitespace(p, end);
-  if (p < end && *p == ']') return true; // empty array
-
-  while (p < end) {
-    p = skip_whitespace(p, end);
-    if (p >= end) break;
-    if (*p == ']') break;
-
-    // Expect outer '('
-    if (*p != '(') return false;
-    p++;
-
-    tinyusdz::value::matrix4f mat;
-    for (size_t i = 0; i < 4; i++) {
-      p = skip_whitespace(p, end);
-      if (p >= end || *p != '(') return false;
-      p++;
-
-      for (size_t j = 0; j < 4; j++) {
-        p = skip_whitespace(p, end);
-        if (!parse_single_float(&p, end, &mat.m[i][j])) return false;
-        p = skip_whitespace(p, end);
-        if (j < 3) {
-          if (p >= end || *p != ',') return false;
-          p++;
-        }
-      }
-
-      p = skip_whitespace(p, end);
-      if (p >= end || *p != ')') return false;
-      p++;
-
-      p = skip_whitespace(p, end);
-      if (i < 3 && p < end && *p == ',') p++;
-    }
-
-    p = skip_whitespace(p, end);
-    if (p >= end || *p != ')') return false;
-    p++;
-
-    result->push_back(mat);
-
-    p = skip_whitespace(p, end);
-    if (p < end && *p == ',') p++;
-  }
-
-  return true;
+  return parse_matrix_array_impl<tinyusdz::value::matrix4f, float, 4>(sv, result, parse_single_float);
 }
-
-// Parse matrix2d array: [((r00, r01), (r10, r11)), ...]
 bool parse_matrix2d_array(const tstring_view &sv, std::vector<tinyusdz::value::matrix2d> *result) {
-  if (!result) return false;
-  result->clear();
-  if (sv.size() == 0) return false;
-
-  const char *p = sv.c_str();
-  const char *end = p + sv.size();
-
-  p = skip_whitespace(p, end);
-  if (p >= end || *p != '[') return false;
-  p++; // skip '['
-
-  p = skip_whitespace(p, end);
-  if (p < end && *p == ']') return true; // empty array
-
-  while (p < end) {
-    p = skip_whitespace(p, end);
-    if (p >= end) break;
-    if (*p == ']') break;
-
-    // Expect outer '('
-    if (*p != '(') return false;
-    p++;
-
-    tinyusdz::value::matrix2d mat;
-    for (size_t i = 0; i < 2; i++) {
-      p = skip_whitespace(p, end);
-      if (p >= end || *p != '(') return false;
-      p++;
-
-      for (size_t j = 0; j < 2; j++) {
-        p = skip_whitespace(p, end);
-        if (!parse_single_double(&p, end, &mat.m[i][j])) return false;
-        p = skip_whitespace(p, end);
-        if (j < 1) {
-          if (p >= end || *p != ',') return false;
-          p++;
-        }
-      }
-
-      p = skip_whitespace(p, end);
-      if (p >= end || *p != ')') return false;
-      p++;
-
-      p = skip_whitespace(p, end);
-      if (i < 1 && p < end && *p == ',') p++;
-    }
-
-    p = skip_whitespace(p, end);
-    if (p >= end || *p != ')') return false;
-    p++;
-
-    result->push_back(mat);
-
-    p = skip_whitespace(p, end);
-    if (p < end && *p == ',') p++;
-  }
-
-  return true;
+  return parse_matrix_array_impl<tinyusdz::value::matrix2d, double, 2>(sv, result, parse_single_double);
 }
-
-// Parse matrix3d array: [((r00, r01, r02), (r10, r11, r12), (r20, r21, r22)), ...]
 bool parse_matrix3d_array(const tstring_view &sv, std::vector<tinyusdz::value::matrix3d> *result) {
-  if (!result) return false;
-  result->clear();
-  if (sv.size() == 0) return false;
-
-  const char *p = sv.c_str();
-  const char *end = p + sv.size();
-
-  p = skip_whitespace(p, end);
-  if (p >= end || *p != '[') return false;
-  p++; // skip '['
-
-  p = skip_whitespace(p, end);
-  if (p < end && *p == ']') return true; // empty array
-
-  while (p < end) {
-    p = skip_whitespace(p, end);
-    if (p >= end) break;
-    if (*p == ']') break;
-
-    // Expect outer '('
-    if (*p != '(') return false;
-    p++;
-
-    tinyusdz::value::matrix3d mat;
-    for (size_t i = 0; i < 3; i++) {
-      p = skip_whitespace(p, end);
-      if (p >= end || *p != '(') return false;
-      p++;
-
-      for (size_t j = 0; j < 3; j++) {
-        p = skip_whitespace(p, end);
-        if (!parse_single_double(&p, end, &mat.m[i][j])) return false;
-        p = skip_whitespace(p, end);
-        if (j < 2) {
-          if (p >= end || *p != ',') return false;
-          p++;
-        }
-      }
-
-      p = skip_whitespace(p, end);
-      if (p >= end || *p != ')') return false;
-      p++;
-
-      p = skip_whitespace(p, end);
-      if (i < 2 && p < end && *p == ',') p++;
-    }
-
-    p = skip_whitespace(p, end);
-    if (p >= end || *p != ')') return false;
-    p++;
-
-    result->push_back(mat);
-
-    p = skip_whitespace(p, end);
-    if (p < end && *p == ',') p++;
-  }
-
-  return true;
+  return parse_matrix_array_impl<tinyusdz::value::matrix3d, double, 3>(sv, result, parse_single_double);
 }
-
-// Parse matrix4d array: [((r00,..,r03), (r10,..,r13), (r20,..,r23), (r30,..,r33)), ...]
 bool parse_matrix4d_array(const tstring_view &sv, std::vector<tinyusdz::value::matrix4d> *result) {
-  if (!result) return false;
-  result->clear();
-  if (sv.size() == 0) return false;
-
-  const char *p = sv.c_str();
-  const char *end = p + sv.size();
-
-  p = skip_whitespace(p, end);
-  if (p >= end || *p != '[') return false;
-  p++; // skip '['
-
-  p = skip_whitespace(p, end);
-  if (p < end && *p == ']') return true; // empty array
-
-  while (p < end) {
-    p = skip_whitespace(p, end);
-    if (p >= end) break;
-    if (*p == ']') break;
-
-    // Expect outer '('
-    if (*p != '(') return false;
-    p++;
-
-    tinyusdz::value::matrix4d mat;
-    for (size_t i = 0; i < 4; i++) {
-      p = skip_whitespace(p, end);
-      if (p >= end || *p != '(') return false;
-      p++;
-
-      for (size_t j = 0; j < 4; j++) {
-        p = skip_whitespace(p, end);
-        if (!parse_single_double(&p, end, &mat.m[i][j])) return false;
-        p = skip_whitespace(p, end);
-        if (j < 3) {
-          if (p >= end || *p != ',') return false;
-          p++;
-        }
-      }
-
-      p = skip_whitespace(p, end);
-      if (p >= end || *p != ')') return false;
-      p++;
-
-      p = skip_whitespace(p, end);
-      if (i < 3 && p < end && *p == ',') p++;
-    }
-
-    p = skip_whitespace(p, end);
-    if (p >= end || *p != ')') return false;
-    p++;
-
-    result->push_back(mat);
-
-    p = skip_whitespace(p, end);
-    if (p < end && *p == ',') p++;
-  }
-
-  return true;
+  return parse_matrix_array_impl<tinyusdz::value::matrix4d, double, 4>(sv, result, parse_single_double);
 }
 
 }
