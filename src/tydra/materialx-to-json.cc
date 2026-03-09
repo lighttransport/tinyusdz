@@ -373,26 +373,26 @@ bool ConvertShaderWithNodeGraphToJson(
           ss << ",\n            \"type\": \"" << attr.type_name() << "\"";
           
           // Serialize value based on type
-          if (auto v = attr.get_value<float>()) {
-            ss << ",\n            \"value\": " << v.value();
-          } else if (auto v = attr.get_value<int>()) {
-            ss << ",\n            \"value\": " << v.value();
-          } else if (auto v = attr.get_value<bool>()) {
-            ss << ",\n            \"value\": " << (v.value() ? "true" : "false");
-          } else if (auto v = attr.get_value<std::string>()) {
-            ss << ",\n            \"value\": \"" << EscapeJsonString(v.value()) << "\"";
-          } else if (auto v = attr.get_value<value::float2>()) {
-            ss << ",\n            \"value\": [" << v.value()[0] << ", " << v.value()[1] << "]";
-          } else if (auto v = attr.get_value<value::float3>()) {
-            ss << ",\n            \"value\": [" << v.value()[0] << ", " << v.value()[1] << ", " << v.value()[2] << "]";
-          } else if (auto v = attr.get_value<value::float4>()) {
-            ss << ",\n            \"value\": [" << v.value()[0] << ", " << v.value()[1] << ", " << v.value()[2] << ", " << v.value()[3] << "]";
-          } else if (auto v = attr.get_value<value::color3f>()) {
-            ss << ",\n            \"value\": [" << v.value()[0] << ", " << v.value()[1] << ", " << v.value()[2] << "]";
-          } else if (auto v = attr.get_value<value::color4f>()) {
-            ss << ",\n            \"value\": [" << v.value()[0] << ", " << v.value()[1] << ", " << v.value()[2] << ", " << v.value()[3] << "]";
-          } else if (auto v = attr.get_value<value::AssetPath>()) {
-            ss << ",\n            \"value\": \"" << EscapeJsonString(v.value().GetAssetPath()) << "\"";
+          if (auto vf = attr.get_value<float>()) {
+            ss << ",\n            \"value\": " << vf.value();
+          } else if (auto vi = attr.get_value<int>()) {
+            ss << ",\n            \"value\": " << vi.value();
+          } else if (auto vb = attr.get_value<bool>()) {
+            ss << ",\n            \"value\": " << (vb.value() ? "true" : "false");
+          } else if (auto vs = attr.get_value<std::string>()) {
+            ss << ",\n            \"value\": \"" << EscapeJsonString(vs.value()) << "\"";
+          } else if (auto vf2 = attr.get_value<value::float2>()) {
+            ss << ",\n            \"value\": [" << vf2.value()[0] << ", " << vf2.value()[1] << "]";
+          } else if (auto vf3 = attr.get_value<value::float3>()) {
+            ss << ",\n            \"value\": [" << vf3.value()[0] << ", " << vf3.value()[1] << ", " << vf3.value()[2] << "]";
+          } else if (auto vf4 = attr.get_value<value::float4>()) {
+            ss << ",\n            \"value\": [" << vf4.value()[0] << ", " << vf4.value()[1] << ", " << vf4.value()[2] << ", " << vf4.value()[3] << "]";
+          } else if (auto vc3 = attr.get_value<value::color3f>()) {
+            ss << ",\n            \"value\": [" << vc3.value()[0] << ", " << vc3.value()[1] << ", " << vc3.value()[2] << "]";
+          } else if (auto vc4 = attr.get_value<value::color4f>()) {
+            ss << ",\n            \"value\": [" << vc4.value()[0] << ", " << vc4.value()[1] << ", " << vc4.value()[2] << ", " << vc4.value()[3] << "]";
+          } else if (auto va = attr.get_value<value::AssetPath>()) {
+            ss << ",\n            \"value\": \"" << EscapeJsonString(va.value().GetAssetPath()) << "\"";
           }
 
           // Add colorSpace metadata if present on the attribute
@@ -518,27 +518,68 @@ bool ConvertShaderWithNodeGraphToJson(
 
   // Second: for MtlxOpenPBRSurface, check typed fields directly
   // (props map is empty for typed shaders - connections stored in typed fields)
+  // All fields from MtlxOpenPBRSurface struct (usdMtlx.hh) must be listed here
+  // to ensure no NodeGraph connections are silently dropped.
   if (const MtlxOpenPBRSurface *opbr = shader->value.as<MtlxOpenPBRSurface>()) {
+    // Base
     checkTypedField("base_weight", opbr->base_weight);
     checkTypedField("base_color", opbr->base_color);
     checkTypedField("base_metalness", opbr->base_metalness);
     checkTypedField("base_diffuse_roughness", opbr->base_diffuse_roughness);
+    // Specular
     checkTypedField("specular_weight", opbr->specular_weight);
     checkTypedField("specular_color", opbr->specular_color);
     checkTypedField("specular_roughness", opbr->specular_roughness);
     checkTypedField("specular_ior", opbr->specular_ior);
     checkTypedField("specular_anisotropy", opbr->specular_anisotropy);
     checkTypedField("specular_rotation", opbr->specular_rotation);
+    checkTypedField("specular_roughness_anisotropy", opbr->specular_roughness_anisotropy);
+    // Transmission
     checkTypedField("transmission_weight", opbr->transmission_weight);
     checkTypedField("transmission_color", opbr->transmission_color);
     checkTypedField("transmission_depth", opbr->transmission_depth);
+    checkTypedField("transmission_scatter", opbr->transmission_scatter);
+    checkTypedField("transmission_scatter_anisotropy", opbr->transmission_scatter_anisotropy);
+    checkTypedField("transmission_dispersion", opbr->transmission_dispersion);
+    checkTypedField("transmission_dispersion_abbe_number", opbr->transmission_dispersion_abbe_number);
+    checkTypedField("transmission_dispersion_scale", opbr->transmission_dispersion_scale);
+    // Subsurface
     checkTypedField("subsurface_weight", opbr->subsurface_weight);
     checkTypedField("subsurface_color", opbr->subsurface_color);
+    checkTypedField("subsurface_radius", opbr->subsurface_radius);
+    checkTypedField("subsurface_radius_scale", opbr->subsurface_radius_scale);
+    checkTypedField("subsurface_scale", opbr->subsurface_scale);
+    checkTypedField("subsurface_anisotropy", opbr->subsurface_anisotropy);
+    checkTypedField("subsurface_scatter_anisotropy", opbr->subsurface_scatter_anisotropy);
+    // Coat
     checkTypedField("coat_weight", opbr->coat_weight);
     checkTypedField("coat_color", opbr->coat_color);
     checkTypedField("coat_roughness", opbr->coat_roughness);
+    checkTypedField("coat_anisotropy", opbr->coat_anisotropy);
+    checkTypedField("coat_rotation", opbr->coat_rotation);
+    checkTypedField("coat_roughness_anisotropy", opbr->coat_roughness_anisotropy);
+    checkTypedField("coat_ior", opbr->coat_ior);
+    checkTypedField("coat_darkening", opbr->coat_darkening);
+    checkTypedField("coat_affect_color", opbr->coat_affect_color);
+    checkTypedField("coat_affect_roughness", opbr->coat_affect_roughness);
+    // Fuzz
+    checkTypedField("fuzz_weight", opbr->fuzz_weight);
+    checkTypedField("fuzz_color", opbr->fuzz_color);
+    checkTypedField("fuzz_roughness", opbr->fuzz_roughness);
+    // Thin film
+    checkTypedField("thin_film_thickness", opbr->thin_film_thickness);
+    checkTypedField("thin_film_ior", opbr->thin_film_ior);
+    checkTypedField("thin_film_weight", opbr->thin_film_weight);
+    // Emission
     checkTypedField("emission_luminance", opbr->emission_luminance);
     checkTypedField("emission_color", opbr->emission_color);
+    // Geometry
+    checkTypedField("geometry_opacity", opbr->geometry_opacity);
+    checkTypedField("geometry_thin_walled", opbr->geometry_thin_walled);
+    checkTypedField("geometry_normal", opbr->geometry_normal);
+    checkTypedField("geometry_tangent", opbr->geometry_tangent);
+    checkTypedField("geometry_coat_normal", opbr->geometry_coat_normal);
+    checkTypedField("geometry_coat_tangent", opbr->geometry_coat_tangent);
   }
 
   ss << "\n  ]\n";

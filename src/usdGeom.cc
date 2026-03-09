@@ -65,27 +65,29 @@ CopyBlockElements(T* dest, const T* src, size_t count) {
 }
 
 ///
-/// Computes
+/// Core expand-by-indices implementation working on raw pointers.
+/// Avoids copies from the source data.
 ///
 ///  for i in len(indices):
 ///    for k in elementSize:
-///      dest[i*elementSize + k] = values[indices[i]*elementSize + k]
+///      dest[i*elementSize + k] = srcData[indices[i]*elementSize + k]
 ///
-/// `dest` is set to `values` when `indices` is empty
+/// When `indices` is empty, copies srcData to dest directly.
 ///
 /// Optimized version for types that support data() (not std::vector<bool>)
 ///
 template <typename T>
 typename std::enable_if<can_use_data_ptr<T>::value, nonstd::expected<bool, std::string>>::type
-ExpandWithIndices(
-    const std::vector<T> &values, uint32_t elementSize, const std::vector<int32_t> &indices,
+ExpandWithIndicesFromPtr(
+    const T *srcData, size_t srcSize, uint32_t elementSize,
+    const std::vector<int32_t> &indices,
     std::vector<T> *dest) {
   if (!dest) {
     return nonstd::make_unexpected("`dest` is nullptr.");
   }
 
   if (indices.empty()) {
-    (*dest) = values;
+    dest->assign(srcData, srcData + srcSize);
     return true;
   }
 
@@ -93,23 +95,21 @@ ExpandWithIndices(
     return false;
   }
 
-  if ((values.size() % elementSize) != 0) {
+  if ((srcSize % elementSize) != 0) {
     return false;
   }
 
   dest->resize(indices.size() * elementSize);
 
   std::vector<size_t> invalidIndices;
-  const size_t numValues = values.size();
   const size_t numIndices = indices.size();
   T* destData = dest->data();
-  const T* srcData = values.data();
 
   // Fast path for elementSize == 1 (most common case)
   if (elementSize == 1) {
     for (size_t i = 0; i < numIndices; i++) {
       int32_t idx = indices[i];
-      if ((idx >= 0) && (size_t(idx) < numValues)) {
+      if ((idx >= 0) && (size_t(idx) < srcSize)) {
         destData[i] = srcData[idx];
       } else {
         invalidIndices.push_back(i);
@@ -120,7 +120,7 @@ ExpandWithIndices(
   else {
     for (size_t i = 0; i < numIndices; i++) {
       int32_t idx = indices[i];
-      if ((idx >= 0) && ((size_t(idx+1) * size_t(elementSize)) <= numValues)) {
+      if ((idx >= 0) && ((size_t(idx+1) * size_t(elementSize)) <= srcSize)) {
         CopyBlockElements(destData + i * elementSize, srcData + size_t(idx) * elementSize, elementSize);
       } else {
         invalidIndices.push_back(i);
@@ -138,56 +138,60 @@ ExpandWithIndices(
   return true;
 }
 
-///
-/// Fallback for std::vector<bool> (no data() method available)
-///
+/// Vector convenience wrapper — delegates to pointer-based version for
+/// types with data(), falls back to element-by-element for std::vector<bool>.
 template <typename T>
-typename std::enable_if<!can_use_data_ptr<T>::value, nonstd::expected<bool, std::string>>::type
+nonstd::expected<bool, std::string>
 ExpandWithIndices(
     const std::vector<T> &values, uint32_t elementSize, const std::vector<int32_t> &indices,
     std::vector<T> *dest) {
-  if (!dest) {
-    return nonstd::make_unexpected("`dest` is nullptr.");
-  }
+  if constexpr (can_use_data_ptr<T>::value) {
+    return ExpandWithIndicesFromPtr(values.data(), values.size(), elementSize, indices, dest);
+  } else {
+    // std::vector<bool> fallback: element-by-element (no data() pointer)
+    if (!dest) {
+      return nonstd::make_unexpected("`dest` is nullptr.");
+    }
 
-  if (indices.empty()) {
-    (*dest) = values;
+    if (indices.empty()) {
+      (*dest) = values;
+      return true;
+    }
+
+    if (elementSize == 0) {
+      return false;
+    }
+
+    if ((values.size() % elementSize) != 0) {
+      return false;
+    }
+
+    dest->resize(indices.size() * elementSize);
+
+    std::vector<size_t> invalidIndices;
+    const size_t numValues = values.size();
+    const size_t numIndices = indices.size();
+
+    for (size_t i = 0; i < numIndices; i++) {
+      int32_t idx = indices[i];
+      if ((idx >= 0) && ((size_t(idx+1) * size_t(elementSize)) <= numValues)) {
+        for (size_t k = 0; k < elementSize; k++) {
+          (*dest)[i*elementSize + k] = values[size_t(idx)*elementSize + k];
+        }
+      } else {
+        invalidIndices.push_back(i);
+      }
+    }
+
+    if (invalidIndices.size()) {
+      return nonstd::make_unexpected(
+          "Invalid indices found: " +
+          value::print_array_snipped(invalidIndices,
+                                     /* N to display */ 5));
+    }
+
     return true;
   }
-
-  if (elementSize == 0) {
-    return false;
-  }
-
-  if ((values.size() % elementSize) != 0) {
-    return false;
-  }
-
-  dest->resize(indices.size() * elementSize);
-
-  std::vector<size_t> invalidIndices;
-  const size_t numValues = values.size();
-  const size_t numIndices = indices.size();
-
-  for (size_t i = 0; i < numIndices; i++) {
-    int32_t idx = indices[i];
-    if ((idx >= 0) && ((size_t(idx+1) * size_t(elementSize)) <= numValues)) {
-      for (size_t k = 0; k < elementSize; k++) {
-        (*dest)[i*elementSize + k] = values[size_t(idx)*elementSize + k];
-      }
-    } else {
-      invalidIndices.push_back(i);
-    }
-  }
-
-  if (invalidIndices.size()) {
-    return nonstd::make_unexpected(
-        "Invalid indices found: " +
-        value::print_array_snipped(invalidIndices,
-                                   /* N to display */ 5));
-  }
-
-  return true;
 }
 
 }  // namespace
@@ -314,7 +318,7 @@ bool GPrim::get_primvar(const std::string &varname, GeomPrimvar *out_primvar,
 
         if (indexAttr.has_value()) {
           // Check if int[] type.
-          // TODO: Support uint[]?
+          // Note: OpenUSD only uses int[] for primvar indices.
           std::vector<int32_t> indices;
           if (!indexAttr.get_value(&indices)) {
             SET_ERROR_AND_RETURN(
@@ -335,168 +339,95 @@ bool GPrim::get_primvar(const std::string &varname, GeomPrimvar *out_primvar,
   return true;
 }
 
-// Helper function to try zero-copy path using TypedArrayView (enabled only for trivially copyable types)
-template <typename T>
-typename std::enable_if<std::is_trivially_copyable<T>::value && !std::is_same<T, bool>::value, bool>::type
-try_zero_copy_flatten(const Attribute &attr, const double t, const std::vector<int32_t> &default_indices,
-                      std::vector<T> *dest, std::string *err) {
-  if (!value::TimeCode(t).is_default() || attr.has_timesamples()) {
-    return false;  // Can't use zero-copy for timesampled values
-  }
-
-  //TUSDZ_LOG_I("Using TypedArrayView (zero-copy)");
-  TypedArrayView<const T> value_view = attr.get_value_view<T>();
-
-  if (value_view.empty()) {
-    //TUSDZ_LOG_I("TypedArrayView is empty, falling back to get_value");
-    return false;
-  }
-
-  uint32_t elementSize = attr.metas().has_elementSize() ? attr.metas().get_elementSize() : 1;
-  //TUSDZ_LOG_I("elementSize " << elementSize << ", view size " << value_view.size());
-
-  // Sanity check: if view size is unreasonably large, data is corrupted
-  constexpr size_t MAX_REASONABLE_SIZE = 100000000;
-  if (value_view.size() > MAX_REASONABLE_SIZE) {
-    TUSDZ_LOG_E("ERROR: TypedArrayView size " << value_view.size() << " exceeds reasonable limit (" << MAX_REASONABLE_SIZE << "). Data is likely corrupted!");
-    if (err) {
-      (*err) += fmt::format("TypedArrayView size {} exceeds reasonable limit. Data is corrupted.", value_view.size());
+const std::vector<int32_t> &GeomPrimvar::resolve_indices_at(
+    double t, value::TimeSampleInterpolationType tinterp,
+    std::vector<int32_t> &buf) const {
+  if (value::TimeCode(t).is_default()) {
+    if (has_default_indices()) {
+      return _indices;  // zero-copy
     }
-    return false;
-  }
-
-  //TUSDZ_LOG_I("indices.size " << default_indices.size());
-
-  // Convert view to vector for ExpandWithIndices
-  std::vector<T> value(value_view.begin(), value_view.end());
-  std::vector<T> expanded_val;
-  auto ret = ExpandWithIndices(value, elementSize, default_indices, &expanded_val);
-  //TUSDZ_LOG_I("ExpandWithIndices done");
-  if (ret) {
-    (*dest) = expanded_val;
-    return true;
+    if (has_timesampled_indices()) {
+      _ts_indices.get(&buf, t, tinterp);
+      return buf;
+    }
   } else {
-    const std::string &err_msg = ret.error();
-    if (err) {
-      (*err) += fmt::format(
-          "[Internal Error] Failed to expand for GeomPrimvar type = `{}`",
-          attr.type_name());
-      if (err_msg.size()) {
-        (*err) += "\n" + err_msg;
-      }
+    if (has_timesampled_indices()) {
+      _ts_indices.get(&buf, t, tinterp);
+      return buf;
     }
-    return false;
   }
-}
-
-// Fallback for non-trivially-copyable types (always returns false to skip zero-copy path)
-template <typename T>
-typename std::enable_if<!(std::is_trivially_copyable<T>::value && !std::is_same<T, bool>::value), bool>::type
-try_zero_copy_flatten(const Attribute &, const double, const std::vector<int32_t> &,
-                      std::vector<T> *, std::string *) {
-  return false;  // Zero-copy not supported for this type
+  static const std::vector<int32_t> empty;
+  return empty;
 }
 
 template <typename T>
 bool GeomPrimvar::flatten_with_indices(const double t, std::vector<T> *dest, const value::TimeSampleInterpolationType tinterp, std::string *err) const {
   if (!dest) {
+    if (err) { (*err) += "Output value is nullptr."; }
+    return false;
+  }
+
+  if (!(_attr.has_timesamples() || _attr.has_value())) {
     if (err) {
-      (*err) += "Output value is nullptr.";
+      (*err) += fmt::format("Attribute `{}` has no value or timesamples.",
+                            _attr.type_name());
     }
     return false;
   }
-  //TUSDZ_LOG_I("flatten_with_indices. has_timesamples " << _attr.has_timesamples() << ", has_value " << _attr.has_value());
 
-  if (_attr.has_timesamples() || _attr.has_value()) {
-
-    if (!IsSupportedGeomPrimvarType(_attr.type_id())) {
-      if (err) {
-        (*err) += fmt::format("Unsupported type for GeomPrimvar. type = `{}`",
-                              _attr.type_name());
-      }
-      return false;
+  if (!IsSupportedGeomPrimvarType(_attr.type_id())) {
+    if (err) {
+      (*err) += fmt::format("Unsupported type for GeomPrimvar. type = `{}`",
+                            _attr.type_name());
     }
+    return false;
+  }
 
-    //TUSDZ_LOG_I("get_value");
+  const uint32_t elementSize = get_elementSize();
+  std::vector<int32_t> indices_buf;
+  const auto &indices = resolve_indices_at(t, tinterp, indices_buf);
 
-#if 0 // FIXME: seems not work in emscripten build
-    // Try to use TypedArrayView for zero-copy access when possible (default values only)
-    // Only for trivially copyable types (excluding bool due to std::vector<bool> specialization)
-    // Using SFINAE helper function for C++14 compatibility (avoids 'if constexpr' requirement)
-    {
-      std::vector<int32_t> indices;
-      if (has_default_indices()) {
-        indices = _indices;
-      }
-      if (try_zero_copy_flatten(_attr, t, indices, dest, err)) {
-        return true;  // Zero-copy path succeeded
-      }
-    }
-#endif
-
-    // Use std::vector instead of TypedArray to avoid potential corruption issues
-    std::vector<T> value;
-    if (_attr.get_value<std::vector<T>>(t, &value, tinterp)) {
-
-      //TUSDZ_LOG_I("vsize " << value.size());
-
-      // Sanity check for corrupted size
-      if (value.size() > 1000000000) {  // 1 billion elements is unreasonable
+  // === Fast path: default time, no timesamples → zero-copy TypedArrayView ===
+  if constexpr (std::is_trivially_copyable<T>::value && !std::is_same<T, bool>::value) {
+    if (value::TimeCode(t).is_default() && !_attr.has_timesamples()) {
+      TypedArrayView<const T> view = _attr.get_value_view<T>();
+      if (!view.empty()) {
+        auto ret = ExpandWithIndicesFromPtr(view.data(), view.size(), elementSize, indices, dest);
+        if (ret) { return true; }
         if (err) {
-          (*err) += fmt::format(
-              "[Internal Error] Array has invalid size: {} for attribute type `{}`",
-              value.size(), _attr.type_name());
+          (*err) += fmt::format("[Internal Error] Failed to expand for GeomPrimvar type = `{}`", _attr.type_name());
+          (*err) += "\n" + ret.error();
         }
         return false;
       }
-      
-      uint32_t elementSize = _attr.metas().has_elementSize() ? _attr.metas().get_elementSize() : 1;
-      //TUSDZ_LOG_I("elementSize" << elementSize);
-
-      // Get indices at specified time
-      std::vector<int32_t> indices;
-      if (value::TimeCode(t).is_default()) {
-        if (has_default_indices()) {
-          indices = _indices;
-        } else if (has_timesampled_indices()) {
-          _ts_indices.get(&indices, t, tinterp);
-        }
-      } else {
-        _ts_indices.get(&indices, t, tinterp);
-      }
-      //TUSDZ_LOG_I("indices.size " << indices.size());
-
-      std::vector<T> expanded_val;
-      auto ret = ExpandWithIndices(value, elementSize, indices, &expanded_val);
-      //TUSDZ_LOG_I("ExpandWithIndices done");
-      if (ret) {
-        (*dest) = expanded_val;
-        // Currently we ignore ret.value()
-        return true;
-      } else {
-        const std::string &err_msg = ret.error();
-        if (err) {
-          (*err) += fmt::format(
-              "[Internal Error] Failed to expand for GeomPrimvar type = `{}`",
-              _attr.type_name());
-          if (err_msg.size()) {
-            (*err) += "\n" + err_msg;
-          }
-        }
-      }
-    } else {
-      if (err) {
-        (*err) += fmt::format(
-            "`{}[]` type requested, but Attribute is type `{}`",
-            value::TypeTraits<T>::type_name(), _attr.type_name());
-      }
     }
-  } else {
-    // TODO: Report error?
   }
 
-  //TUSDZ_LOG_I("???");
+  // === Standard path: get_value (copies from attribute storage) ===
+  std::vector<T> value;
+  if (!_attr.get_value<std::vector<T>>(t, &value, tinterp)) {
+    if (err) {
+      (*err) += fmt::format("`{}[]` type requested, but Attribute is type `{}`",
+                            value::TypeTraits<T>::type_name(), _attr.type_name());
+    }
+    return false;
+  }
 
+  if (value.empty()) {
+    return false;  // Empty authored array (OpenUSD compat)
+  }
+
+  if (indices.empty()) {
+    (*dest) = std::move(value);
+    return true;
+  }
+
+  auto ret = ExpandWithIndices(value, elementSize, indices, dest);
+  if (ret) { return true; }
+  if (err) {
+    (*err) += fmt::format("[Internal Error] Failed to expand for GeomPrimvar type = `{}`", _attr.type_name());
+    (*err) += "\n" + ret.error();
+  }
   return false;
 }
 
@@ -561,94 +492,57 @@ APPLY_GEOMPRIVAR_TYPE(INSTANCIATE_FLATTEN_WITH_INDICES)
 #undef INSTANCIATE_FLATTEN_WITH_INDICES
 
 bool GeomPrimvar::flatten_with_indices(const double t, value::Value *dest, const value::TimeSampleInterpolationType tinterp, std::string *err) const {
-
   if (!dest) {
+    if (err) { (*err) += "Output value is nullptr."; }
+    return false;
+  }
+
+  if (!(_attr.has_value() || _attr.has_timesamples())) {
+    return false;
+  }
+
+  if (!IsSupportedGeomPrimvarType(_attr.type_id())) {
     if (err) {
-      (*err) += "Output value is nullptr.";
+      (*err) += fmt::format("Unsupported type for GeomPrimvar. type = `{}`",
+                            _attr.type_name());
     }
     return false;
   }
 
-  bool processed = false;
-
-  if (_attr.has_value() || _attr.has_timesamples()) {
-    if (!IsSupportedGeomPrimvarType(_attr.type_id())) {
-      if (err) {
-        (*err) += fmt::format("Unsupported type for GeomPrimvar. type = `{}`",
-                              _attr.type_name());
-      }
+  // Scalar type: pass through (matches OpenUSD ComputeFlattened).
+  if (!(_attr.type_id() & value::TYPE_ID_1D_ARRAY_BIT)) {
+    value::Value v;
+    if (!_attr.get_var().get_interpolated_value(t, tinterp, &v)) {
+      if (err) { (*err) += "Failed to evaluate Attribute value."; }
       return false;
     }
-
-    value::Value val;
-
-    if (!(_attr.type_id() & value::TYPE_ID_1D_ARRAY_BIT)) {
-
-      // evaluate value at specified time and return it for scalar type.
-      value::Value v;
-      if (!_attr.get_var().get_interpolated_value(t, tinterp, &v)) {
-        if (err) {
-          (*err) += fmt::format("Failed to evaluate Attribute value.");
-        }
-        return false;
-      }
-      (*dest) = v;
-    } else {
-      std::string err_msg;
-
-      uint32_t elementSize = _attr.metas().has_elementSize() ? _attr.metas().get_elementSize() : 1;
-
-      std::vector<int32_t> indices;
-      // Get indices at specified time
-      if (value::TimeCode(t).is_default()) {
-        indices = _indices;
-      } else {
-        _ts_indices.get(&indices, t, tinterp);
-      }
-
-#define APPLY_FUN(__ty)                                                  \
-  case value::TypeTraits<__ty>::type_id() | value::TYPE_ID_1D_ARRAY_BIT: { \
-    std::vector<__ty> value; \
-    std::vector<__ty> expanded_val;                                      \
-    if (_attr.get_value(t, &value, tinterp)) {                \
-      auto ret = ExpandWithIndices(value, elementSize, indices, &expanded_val); \
-      if (ret) {                                                         \
-        processed = ret.value();                                         \
-        if (processed) {                                                 \
-          val = expanded_val;                                            \
-        }                                                                \
-      } else {                                                           \
-        err_msg = ret.error();                                           \
-      }                                                                  \
-    }                                                                    \
-    break;                                                               \
+    (*dest) = std::move(v);
+    return true;
   }
 
-      switch (_attr.type_id()) {
-        APPLY_GEOMPRIVAR_TYPE(APPLY_FUN)
-        default: {
-          processed = false;
-        }
-      }
+  // Array type: delegate to typed flatten_with_indices, then wrap in Value.
+#define APPLY_FUN(__ty)                                                    \
+  case value::TypeTraits<__ty>::type_id() | value::TYPE_ID_1D_ARRAY_BIT: { \
+    std::vector<__ty> result;                                              \
+    if (flatten_with_indices<__ty>(t, &result, tinterp, err)) {            \
+      (*dest) = std::move(result);                                         \
+      return true;                                                         \
+    }                                                                      \
+    return false;                                                          \
+  }
+
+  switch (_attr.type_id()) {
+    APPLY_GEOMPRIVAR_TYPE(APPLY_FUN)
+    default: break;
+  }
 
 #undef APPLY_FUN
 
-      if (processed) {
-        (*dest) = std::move(val);
-      } else {
-        if (err) {
-          (*err) += fmt::format(
-              "[Internal Error] Failed to expand for GeomPrimvar type = `{}`",
-              _attr.type_name());
-          if (err_msg.size()) {
-            (*err) += "\n" + err_msg;
-          }
-        }
-      }
-    }
+  if (err) {
+    (*err) += fmt::format("Unsupported array type for GeomPrimvar. type = `{}`",
+                          _attr.type_name());
   }
-
-  return processed;
+  return false;
 }
 
 bool GeomPrimvar::flatten_with_indices(value::Value *dest, std::string *err) const {
@@ -744,43 +638,6 @@ bool GeomPrimvar::get_value(double timecode, T *dest, value::TimeSampleInterpola
     return false;
   }
 
-#if 0
-  if (value::TimeCode(timecode).is_default()) {
-
-    if (_attr.has_value()) {
-      if (auto pv = _attr.get_value<T>()) {
-
-        // copy
-        (*dest) = pv.value();
-        return true;
-
-      } else {
-        if (err) {
-          (*err) += fmt::format("Attribute value type mismatch. Requested type `{}` but Attribute has type `{}`", value::TypeTraits<T>::type_id(), _attr.type_name());
-        }
-        return false;
-      }
-    }
-
-  }
-
-  if (_attr.has_timesamples()) {
-    T value;
-
-    if (!_attr.get_value(timecode, &value, interp)) {
-      if (err) {
-        (*err) += fmt::format("Get Attribute value at time {} failed. Maybe type mismatch?. Requested type `{}` but Attribute has type `{}`", timecode, value::TypeTraits<T>::type_id(), _attr.type_name());
-      }
-      return false;
-    }
-
-    // copy
-    (*dest) = value;
-    return true;
-  }
-
-  return false;
-#else
   T value{};
 
   if (!_attr.get_value(timecode, &value, interp)) {
@@ -793,7 +650,6 @@ bool GeomPrimvar::get_value(double timecode, T *dest, value::TimeSampleInterpola
   // copy
   (*dest) = value;
   return true;
-#endif
 
 }
 
@@ -849,7 +705,8 @@ bool GPrim::set_primvar(const GeomPrimvar &primvar,
   std::string primvar_name = kPrimvars + primvar.name();
 
   // Overwrite existing primvar prop.
-  // TODO: Report warn when primvar name already exists.
+  DCOUT("Setting primvar `" << primvar_name << "`" <<
+        (props.count(primvar_name) ? " (overwriting existing)" : ""));
 
   Attribute attr = primvar.get_attribute();
 
@@ -899,34 +756,24 @@ bool GPrim::set_primvar(const GeomPrimvar &primvar,
 
 bool GPrim::get_displayColor(value::color3f *dst, double t, const value::TimeSampleInterpolationType tinterp) const
 {
-  // TODO: timeSamples
-  (void)t;
-  (void)tinterp;
-
   GeomPrimvar primvar;
   std::string err;
   if (!get_primvar("displayColor", &primvar, &err)) {
-    // TODO: report err
     return false;
   }
 
-  return primvar.get_value(dst);
+  return primvar.get_value(t, dst, tinterp);
 }
 
 bool GPrim::get_displayOpacity(float *dst, double t, const value::TimeSampleInterpolationType tinterp) const
 {
-  // TODO: timeSamples
-  (void)t;
-  (void)tinterp;
-
   GeomPrimvar primvar;
   std::string err;
   if (!get_primvar("displayOpacity", &primvar, &err)) {
-    // TODO: report err
     return false;
   }
 
-  return primvar.get_value(dst);
+  return primvar.get_value(t, dst, tinterp);
 }
 
 const std::vector<value::point3f> GeomMesh::get_points(
@@ -938,7 +785,8 @@ const std::vector<value::point3f> GeomMesh::get_points(
   }
 
   if (points.is_connection()) {
-    // TODO: connection
+    // Connection-sourced attributes require composition resolution;
+    // callers should resolve connections at the Stage/Tydra level.
     return dst;
   }
 
@@ -989,8 +837,10 @@ const std::vector<value::normal3f> GeomMesh::get_normals(
 
     }
 
+    auto pv = normals.get_value();
+    if (!pv) return dst;
     std::vector<value::normal3f> value;
-    if (!normals.get_value().value().get(time, &value, interp)) {
+    if (!pv.value().get(time, &value, interp)) {
       return dst;
     }
 
@@ -1033,10 +883,8 @@ const std::vector<value::color3f> GPrim::get_displayColors(
 Interpolation GeomMesh::get_normalsInterpolation() const {
   if (props.count("primvars:normals")) {
     const auto &prop = props.at("primvars:normals");
-    if (prop.get_attribute().type_name() == "normal3f[]") {
-      if (prop.get_attribute().metas().has_interpolation()) {
-        return prop.get_attribute().metas().get_interpolation_enum();
-      }
+    if (prop.get_attribute().metas().has_interpolation()) {
+      return prop.get_attribute().metas().get_interpolation_enum();
     }
   } else if (normals.metas().has_interpolation()) {
     return normals.metas().get_interpolation_enum();
@@ -1048,10 +896,8 @@ Interpolation GeomMesh::get_normalsInterpolation() const {
 Interpolation GPrim::get_displayColorsInterpolation() const {
   if (props.count("primvars:displayColor")) {
     const auto &prop = props.at("primvars:displayColor");
-    if (prop.get_attribute().type_name() == "color3f[]") {
-      if (prop.get_attribute().metas().has_interpolation()) {
-        return prop.get_attribute().metas().get_interpolation_enum();
-      }
+    if (prop.get_attribute().metas().has_interpolation()) {
+      return prop.get_attribute().metas().get_interpolation_enum();
     }
   }
 
@@ -1066,7 +912,7 @@ const std::vector<int32_t> GeomMesh::get_faceVertexCounts(double time) const {
   }
 
   if (faceVertexCounts.is_connection()) {
-    // TODO: connection
+    // Connection-sourced topology attributes are not supported at this level.
     return dst;
   }
 
@@ -1087,7 +933,7 @@ const std::vector<int32_t> GeomMesh::get_faceVertexIndices(double time) const {
   }
 
   if (faceVertexIndices.is_connection()) {
-    // TODO: connection
+    // Connection-sourced topology attributes are not supported at this level.
     return dst;
   }
 
@@ -1100,37 +946,77 @@ const std::vector<int32_t> GeomMesh::get_faceVertexIndices(double time) const {
   return dst;
 }
 
+// --- Convenience getter helper ---
+// Extracts a typed array value from an animated attribute, handling
+// authored/blocked/connection guards uniformly.
+template <typename T, typename AttrT>
+static std::vector<T> GetAnimatedArrayValue(
+    const AttrT &attr, double time,
+    value::TimeSampleInterpolationType interp) {
+  std::vector<T> dst;
+  if (!attr.authored() || attr.is_blocked() || attr.is_connection()) return dst;
+  if (auto pv = attr.get_value()) {
+    std::vector<T> val;
+    if (pv.value().get(time, &val, interp)) dst = std::move(val);
+  }
+  return dst;
+}
+
+// --- GeomBasisCurves convenience getters ---
+
+const std::vector<value::point3f> GeomBasisCurves::get_points(double time, value::TimeSampleInterpolationType interp) const {
+  return GetAnimatedArrayValue<value::point3f>(points, time, interp);
+}
+const std::vector<value::normal3f> GeomBasisCurves::get_normals(double time, value::TimeSampleInterpolationType interp) const {
+  return GetAnimatedArrayValue<value::normal3f>(normals, time, interp);
+}
+const std::vector<int> GeomBasisCurves::get_curveVertexCounts(double time) const {
+  return GetAnimatedArrayValue<int>(curveVertexCounts, time, value::TimeSampleInterpolationType::Held);
+}
+const std::vector<float> GeomBasisCurves::get_widths(double time, value::TimeSampleInterpolationType interp) const {
+  return GetAnimatedArrayValue<float>(widths, time, interp);
+}
+
+// --- GeomNurbsCurves convenience getters ---
+
+const std::vector<value::point3f> GeomNurbsCurves::get_points(double time, value::TimeSampleInterpolationType interp) const {
+  return GetAnimatedArrayValue<value::point3f>(points, time, interp);
+}
+const std::vector<value::normal3f> GeomNurbsCurves::get_normals(double time, value::TimeSampleInterpolationType interp) const {
+  return GetAnimatedArrayValue<value::normal3f>(normals, time, interp);
+}
+const std::vector<int> GeomNurbsCurves::get_curveVertexCounts(double time) const {
+  return GetAnimatedArrayValue<int>(curveVertexCounts, time, value::TimeSampleInterpolationType::Held);
+}
+const std::vector<float> GeomNurbsCurves::get_widths(double time, value::TimeSampleInterpolationType interp) const {
+  return GetAnimatedArrayValue<float>(widths, time, interp);
+}
+const std::vector<int> GeomNurbsCurves::get_order(double time) const {
+  return GetAnimatedArrayValue<int>(order, time, value::TimeSampleInterpolationType::Held);
+}
+const std::vector<double> GeomNurbsCurves::get_knots(double time) const {
+  return GetAnimatedArrayValue<double>(knots, time, value::TimeSampleInterpolationType::Held);
+}
+
+// --- GeomPoints convenience getters ---
+
+const std::vector<value::point3f> GeomPoints::get_points(double time, value::TimeSampleInterpolationType interp) const {
+  return GetAnimatedArrayValue<value::point3f>(points, time, interp);
+}
+const std::vector<value::normal3f> GeomPoints::get_normals(double time, value::TimeSampleInterpolationType interp) const {
+  return GetAnimatedArrayValue<value::normal3f>(normals, time, interp);
+}
+const std::vector<float> GeomPoints::get_widths(double time, value::TimeSampleInterpolationType interp) const {
+  return GetAnimatedArrayValue<float>(widths, time, interp);
+}
+const std::vector<int64_t> GeomPoints::get_ids(double time) const {
+  return GetAnimatedArrayValue<int64_t>(ids, time, value::TimeSampleInterpolationType::Held);
+}
+
 std::vector<value::token> GeomMesh::get_joints() const {
   constexpr auto kSkelJoints = "skel:joints";
   std::vector<value::token> dst;
   
-#if 0
-  if (has_primvar(kSkelJoints)) {
-    // 'primvars:skel:joints'
-    std::string err;
-    GeomPrimvar primvar;
-    if (!get_primvar(kSkelJoints, &primvar, &err)) {
-      DCOUT("Invalid `skel:joints` primvar. err = " << err);
-      return dst;
-    }
-
-    if (primvar.has_indices()) {
-      // indexed primvar for skel:joint is not supported
-      DCOUT("Indexed primvar is not supported for `skel:joints`");
-      return dst;
-    }
-
-    const Attribute &attr = primvar.get_attribute();
-    if (!attr.is_uniform()) {
-      DCOUT("`skel:joints` must be uniform attribute");
-      return dst;
-    }
-
-    if (!primvar.get_value(&dst)) {
-      DCOUT("`skel:joints` must be token[] type, but got " << primvar.type_name());
-    }
-  } else {
-#endif
   {
     // lookup `skel:joints` prop
     if (!props.count(kSkelJoints)) {
@@ -1150,6 +1036,280 @@ std::vector<value::token> GeomMesh::get_joints() const {
     DCOUT("`skel:joints` must be uniform token[] attribute, but got " << prop.value_type_name() << " (or Relationship))");
   }
   return dst;
+}
+
+// --- H2: ValidateTopology ---
+
+bool GeomMesh::ValidateTopology(std::string *err, double time) const {
+  auto fvc = get_faceVertexCounts(time);
+  auto fvi = get_faceVertexIndices(time);
+  auto pts = get_points(time);
+
+  if (fvc.empty() && fvi.empty()) {
+    // No topology authored
+    return true;
+  }
+
+  // 1. sum(faceVertexCounts) == faceVertexIndices.size()
+  size_t totalVerts = 0;
+  for (size_t i = 0; i < fvc.size(); i++) {
+    if (fvc[i] < 3) {
+      if (err) {
+        (*err) += fmt::format("faceVertexCounts[{}] = {} is less than 3.\n", i, fvc[i]);
+      }
+      return false;
+    }
+    totalVerts += static_cast<size_t>(fvc[i]);
+  }
+
+  if (totalVerts != fvi.size()) {
+    if (err) {
+      (*err) += fmt::format("sum(faceVertexCounts) = {} != faceVertexIndices.size() = {}.\n",
+        totalVerts, fvi.size());
+    }
+    return false;
+  }
+
+  // 2. All faceVertexIndices in range [0, points.size())
+  if (!pts.empty()) {
+    for (size_t i = 0; i < fvi.size(); i++) {
+      if (fvi[i] < 0 || static_cast<size_t>(fvi[i]) >= pts.size()) {
+        if (err) {
+          (*err) += fmt::format("faceVertexIndices[{}] = {} is out of range [0, {}).\n",
+            i, fvi[i], pts.size());
+        }
+        return false;
+      }
+    }
+  }
+
+  // 3. Subdivision surface validation
+  size_t numFaces = fvc.size();
+
+  // cornerIndices validation
+  if (props.count("cornerIndices") && props.count("cornerSharpnesses")) {
+    const auto &ciProp = props.at("cornerIndices");
+    const auto &csProp = props.at("cornerSharpnesses");
+    std::vector<int32_t> ci_vals;
+    std::vector<float> cs_vals;
+    if (ciProp.get_attribute().get_value(&ci_vals) &&
+        csProp.get_attribute().get_value(&cs_vals)) {
+      if (ci_vals.size() != cs_vals.size()) {
+        if (err) {
+          (*err) += fmt::format("cornerIndices.size() = {} != cornerSharpnesses.size() = {}.\n",
+            ci_vals.size(), cs_vals.size());
+        }
+        return false;
+      }
+      if (!pts.empty()) {
+        for (size_t i = 0; i < ci_vals.size(); i++) {
+          if (ci_vals[i] < 0 || static_cast<size_t>(ci_vals[i]) >= pts.size()) {
+            if (err) {
+              (*err) += fmt::format("cornerIndices[{}] = {} is out of range [0, {}).\n",
+                i, ci_vals[i], pts.size());
+            }
+            return false;
+          }
+        }
+      }
+    }
+  }
+
+  // creaseIndices/creaseLengths/creaseSharpnesses validation
+  if (props.count("creaseIndices") && props.count("creaseLengths")) {
+    const auto &crIdxProp = props.at("creaseIndices");
+    const auto &crLenProp = props.at("creaseLengths");
+    std::vector<int32_t> cr_idx;
+    std::vector<int32_t> cr_len;
+    if (crIdxProp.get_attribute().get_value(&cr_idx) &&
+        crLenProp.get_attribute().get_value(&cr_len)) {
+      size_t totalCreaseVerts = 0;
+      for (const auto &cl : cr_len) {
+        totalCreaseVerts += static_cast<size_t>(cl);
+      }
+      if (totalCreaseVerts != cr_idx.size()) {
+        if (err) {
+          (*err) += fmt::format("sum(creaseLengths) = {} != creaseIndices.size() = {}.\n",
+            totalCreaseVerts, cr_idx.size());
+        }
+        return false;
+      }
+      if (props.count("creaseSharpnesses")) {
+        const auto &crShProp = props.at("creaseSharpnesses");
+        std::vector<float> cr_sharp;
+        if (crShProp.get_attribute().get_value(&cr_sharp)) {
+          if (cr_len.size() != cr_sharp.size()) {
+            if (err) {
+              (*err) += fmt::format("creaseLengths.size() = {} != creaseSharpnesses.size() = {}.\n",
+                cr_len.size(), cr_sharp.size());
+            }
+            return false;
+          }
+        }
+      }
+    }
+  }
+
+  // holeIndices validation
+  if (props.count("holeIndices")) {
+    const auto &hiProp = props.at("holeIndices");
+    std::vector<int32_t> hi_vals;
+    if (hiProp.get_attribute().get_value(&hi_vals)) {
+      for (size_t i = 0; i < hi_vals.size(); i++) {
+        if (hi_vals[i] < 0 || static_cast<size_t>(hi_vals[i]) >= numFaces) {
+          if (err) {
+            (*err) += fmt::format("holeIndices[{}] = {} is out of range [0, {}).\n",
+              i, hi_vals[i], numFaces);
+          }
+          return false;
+        }
+      }
+    }
+  }
+
+  return true;
+}
+
+// --- H1: ComputeExtent ---
+
+// Helper: set axis-aligned extent for Cone/Cylinder/Capsule
+static void SetAxisAlignedExtent(Axis axis, float radial, float axial_lo, float axial_hi, Extent *extent) {
+  if (axis == Axis::X) {
+    *extent = Extent(value::float3{{axial_lo, -radial, -radial}}, value::float3{{axial_hi, radial, radial}});
+  } else if (axis == Axis::Y) {
+    *extent = Extent(value::float3{{-radial, axial_lo, -radial}}, value::float3{{radial, axial_hi, radial}});
+  } else {
+    *extent = Extent(value::float3{{-radial, -radial, axial_lo}}, value::float3{{radial, radial, axial_hi}});
+  }
+}
+
+// Helper: compute extent from points expanded by max half-width (for curves)
+static void ComputeExtentFromPointsWithWidths(
+    const std::vector<value::point3f> &pts,
+    const std::vector<float> &widths,
+    Extent *extent) {
+  float maxHalfW = 0.0f;
+  for (float w : widths) {
+    float hw = w * 0.5f;
+    if (hw > maxHalfW) maxHalfW = hw;
+  }
+  Extent e;
+  for (const auto &p : pts) {
+    e.union_with(value::float3{{p.x - maxHalfW, p.y - maxHalfW, p.z - maxHalfW}});
+    e.union_with(value::float3{{p.x + maxHalfW, p.y + maxHalfW, p.z + maxHalfW}});
+  }
+  *extent = e;
+}
+
+bool ComputeExtent(const GeomMesh &mesh, Extent *extent,
+    double time, std::string *err) {
+  if (!extent) return false;
+  auto pts = mesh.get_points(time);
+  if (pts.empty()) {
+    if (err) (*err) = "No points in mesh.\n";
+    return false;
+  }
+  Extent e;
+  for (const auto &p : pts) {
+    e.union_with(p);
+  }
+  *extent = e;
+  return true;
+}
+
+bool ComputeExtent(const GeomPoints &geom, Extent *extent,
+    double time, std::string *err) {
+  if (!extent) return false;
+  auto pts = geom.get_points(time);
+  if (pts.empty()) {
+    if (err) (*err) = "No points.\n";
+    return false;
+  }
+  auto ws = geom.get_widths(time);
+  Extent e;
+  for (size_t i = 0; i < pts.size(); i++) {
+    float halfW = (i < ws.size()) ? ws[i] * 0.5f : 0.0f;
+    e.union_with(value::float3{{pts[i].x - halfW, pts[i].y - halfW, pts[i].z - halfW}});
+    e.union_with(value::float3{{pts[i].x + halfW, pts[i].y + halfW, pts[i].z + halfW}});
+  }
+  *extent = e;
+  return true;
+}
+
+bool ComputeExtent(const GeomSphere &sphere, Extent *extent,
+    double time, std::string *err) {
+  if (!extent) return false;
+  (void)err;
+  double r = 2.0;
+  sphere.radius.get_value().get(time, &r);
+  float rf = static_cast<float>(r);
+  *extent = Extent(value::float3{{-rf, -rf, -rf}}, value::float3{{rf, rf, rf}});
+  return true;
+}
+
+bool ComputeExtent(const GeomCube &cube, Extent *extent,
+    double time, std::string *err) {
+  if (!extent) return false;
+  (void)err;
+  double s = 2.0;
+  cube.size.get_value().get(time, &s);
+  float h = static_cast<float>(s) * 0.5f;
+  *extent = Extent(value::float3{{-h, -h, -h}}, value::float3{{h, h, h}});
+  return true;
+}
+
+bool ComputeExtent(const GeomCone &cone, Extent *extent,
+    double time, std::string *err) {
+  if (!extent) return false;
+  (void)err;
+  double h = 2.0, r = 1.0;
+  cone.height.get_value().get(time, &h);
+  cone.radius.get_value().get(time, &r);
+  SetAxisAlignedExtent(cone.axis.get_value(), static_cast<float>(r), 0.0f, static_cast<float>(h), extent);
+  return true;
+}
+
+bool ComputeExtent(const GeomCylinder &cylinder, Extent *extent,
+    double time, std::string *err) {
+  if (!extent) return false;
+  (void)err;
+  double h = 2.0, r = 1.0;
+  cylinder.height.get_value().get(time, &h);
+  cylinder.radius.get_value().get(time, &r);
+  float hh = static_cast<float>(h) * 0.5f;
+  SetAxisAlignedExtent(cylinder.axis.get_value(), static_cast<float>(r), -hh, hh, extent);
+  return true;
+}
+
+bool ComputeExtent(const GeomCapsule &capsule, Extent *extent,
+    double time, std::string *err) {
+  if (!extent) return false;
+  (void)err;
+  double h = 2.0, r = 0.5;
+  capsule.height.get_value().get(time, &h);
+  capsule.radius.get_value().get(time, &r);
+  float rf = static_cast<float>(r);
+  float hh = static_cast<float>(h) * 0.5f + rf;  // extend by radius for hemicaps
+  SetAxisAlignedExtent(capsule.axis.get_value(), rf, -hh, hh, extent);
+  return true;
+}
+
+bool ComputeExtent(const GeomBasisCurves &curves, Extent *extent,
+    double time, std::string *err) {
+  if (!extent) return false;
+  auto pts = curves.get_points(time);
+  if (pts.empty()) { if (err) (*err) = "No points in curves.\n"; return false; }
+  ComputeExtentFromPointsWithWidths(pts, curves.get_widths(time), extent);
+  return true;
+}
+
+bool ComputeExtent(const GeomNurbsCurves &curves, Extent *extent,
+    double time, std::string *err) {
+  if (!extent) return false;
+  auto pts = curves.get_points(time);
+  if (pts.empty()) { if (err) (*err) = "No points in NURBS curves.\n"; return false; }
+  ComputeExtentFromPointsWithWidths(pts, curves.get_widths(time), extent);
+  return true;
 }
 
 // static
@@ -1180,7 +1340,8 @@ bool GeomSubset::ValidateSubsets(
   bool valid = true;
   std::stringstream ss;
 
-  // TODO: TimeSampled indices
+  // Note: Currently validates default-value indices only.
+  // TimeSampled indices would need per-frame validation at the application level.
   for (const auto psubset : subsets) {
     Animatable<std::vector<int32_t>> indices;
     if (!psubset->indices.get_value(&indices)) {
@@ -1243,7 +1404,7 @@ bool GeomSubset::ValidateSubsets(
     }
   }
 
-  return true;
+  return valid;
 
 }
 
