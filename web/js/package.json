@@ -8,6 +8,7 @@
     "dev:offscreengl": "vite --open /offscreengl.html",
     "dev:anim": "vite --open /animation.html",
     "dev:skel": "vite --open /skin-anim.html",
+    "dev:clips": "vite --open /anim-clips.html",
     "dev:mtlx": "vite --open /materialx.html",
     "dev:lux": "vite --open /usdlux.html",
     "dev:webgpu": "vite --open /materialx-webgpu.html",

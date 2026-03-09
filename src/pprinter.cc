@@ -3782,9 +3782,18 @@ std::string to_string(const SkelRoot &root, const uint32_t indent,
                              /* custom */ false, "proxyPrim", indent + 1);
   }
 
-  // TODO
-  // Skeleton id
-  // ss << pprint::Indent(indent) << "skelroot.skeleton_id << "\n"
+  if (root.animationSource) {
+    ss << print_relationship(root.animationSource.value(),
+                             root.animationSource.value().get_listedit_qual(),
+                             /* custom */ false, "skel:animationSource",
+                             indent + 1);
+  }
+
+  if (root.skeleton) {
+    ss << print_relationship(root.skeleton.value(),
+                             root.skeleton.value().get_listedit_qual(),
+                             /* custom */ false, "skel:skeleton", indent + 1);
+  }
 
   ss << print_xformOps(root.xformOps, indent + 1);
 

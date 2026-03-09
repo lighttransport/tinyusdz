@@ -7,7 +7,7 @@
 
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
-import { HDRLoader } from 'three/examples/jsm/loaders/HDRLoader.js';
+import { RGBELoader } from 'three/examples/jsm/loaders/RGBELoader.js';
 // import { EXRLoader } from 'three/examples/jsm/loaders/EXRLoader.js';    // Available for EXR env presets
 import { TinyUSDZLoader } from 'tinyusdz/TinyUSDZLoader.js';
 import { TinyUSDZLoaderUtils } from 'tinyusdz/TinyUSDZLoaderUtils.js';
@@ -91,6 +91,7 @@ const state = {
 
     // Node graph display
     showAllNodes: false,    // false = active only (DCE), true = show all including dead nodes
+    graphCollapsed: false,  // true = panel collapsed, skip LiteGraph draw loop for performance
 
     // Picking
     selectedObject: null,
@@ -111,6 +112,19 @@ const state = {
     usdLights: [],          // Three.js lights created from USD
     defaultLights: [],      // Default directional lights
     envEnabled: true,       // Whether envmap IBL is active
+
+    // Shading debug
+    shadingMode: 'solid',
+    originalMaterialsMap: new Map(),
+
+    // Demand rendering: only call renderer.render() when this is true
+    // or when OrbitControls is still damping (controls.update() returns true).
+    renderNeeded: true,
+
+    // Undo/redo history for node graph edits
+    undoStack: [],              // array of JSON-serialized graph snapshots (pre-change)
+    redoStack: [],
+    _pendingHistorySnapshot: null,  // snapshot taken on pointerdown, committed if graph changed
 };
 
 // ============================================================================
@@ -138,7 +152,6 @@ function registerMtlxNodeTypes() {
         const v = this.properties.value;
         if (Array.isArray(v) && v.length >= 3) {
             this.properties.valueType = 'color3';
-            this.size = [200, 120];
             this.addWidget('slider', 'R', v[0], (val) => {
                 this.properties.value[0] = val;
                 this.setDirtyCanvas(true);
@@ -154,10 +167,20 @@ function registerMtlxNodeTypes() {
                 this.setDirtyCanvas(true);
                 if (window._mtlxMarkDirty) window._mtlxMarkDirty();
             }, { min: 0, max: 1 });
+            // Color swatch: drawn as a custom widget (type unknown → default case calls w.draw).
+            // This runs inside drawNodeWidgets after the sliders, so it is never overwritten by them.
+            // Reading node.properties.value at draw-time means it always reflects the current value.
+            const swatch = this.addWidget('color_swatch', 'color', null, () => {}, {});
+            swatch.draw = (ctx, node, widget_width, y, H) => {
+                const vv = node.properties.value;
+                if (Array.isArray(vv) && vv.length >= 3) {
+                    ctx.fillStyle = `rgb(${Math.round(vv[0]*255)},${Math.round(vv[1]*255)},${Math.round(vv[2]*255)})`;
+                    ctx.fillRect(15, y, widget_width - 30, H);
+                }
+            };
         } else {
             this.properties.valueType = 'float';
             const numVal = (typeof v === 'number') ? v : 0;
-            this.size = [200, 65];
             this.addWidget('slider', 'Value', numVal, (val) => {
                 this.properties.value = val;
                 this.setDirtyCanvas(true);
@@ -165,14 +188,14 @@ function registerMtlxNodeTypes() {
             }, { min: 0, max: 1 });
         }
     };
-    ConstantNode.prototype.onDrawForeground = function(ctx) {
-        const v = this.properties.value;
-        if (Array.isArray(v) && v.length >= 3) {
-            ctx.fillStyle = `rgb(${Math.floor(v[0]*255)},${Math.floor(v[1]*255)},${Math.floor(v[2]*255)})`;
-            ctx.fillRect(10, this.size[1] - 25, this.size[0] - 20, 18);
-        }
-    };
+    // Color preview for color3 constant nodes is handled by the 'color_swatch' custom widget
+    // added in _setupWidgets(). No onDrawForeground needed here for that purpose.
     ConstantNode.prototype.onPropertyChanged = function() {
+        this._setupWidgets();
+    };
+    // Re-setup widgets after graph.configure() restores a snapshot so slider
+    // values reflect the restored properties.value (not the constructor default).
+    ConstantNode.prototype.onConfigure = function() {
         this._setupWidgets();
     };
     LiteGraph.registerNodeType('mtlx/constant', ConstantNode);
@@ -830,6 +853,55 @@ function registerMtlxNodeTypes() {
     DotProductNode.title = 'Dot';
     LiteGraph.registerNodeType('mtlx/dotproduct', DotProductNode);
 
+    // Normal map node (ND_normalmap) — converts tangent-space sample to perturbed normal
+    function NormalMapNode() {
+        this.addInput('in', 'vector3');
+        this.addInput('scale', 'float');
+        this.addInput('space', 'string');
+        this.addOutput('out', 'vector3');
+        this.color = '#445577';
+        this.size = [130, 80];
+    }
+    NormalMapNode.title = 'NormalMap';
+    LiteGraph.registerNodeType('mtlx/normalmap', NormalMapNode);
+
+    // Height-to-normal node (ND_heighttonormal) — converts height/displacement to a normal vector
+    function HeightToNormalNode() {
+        this.addInput('in', 'float');
+        this.addInput('scale', 'float');
+        this.addOutput('out', 'vector3');
+        this.color = '#445577';
+        this.size = [130, 70];
+    }
+    HeightToNormalNode.title = 'HeightToNormal';
+    LiteGraph.registerNodeType('mtlx/heighttonormal', HeightToNormalNode);
+
+    // 3D fractal noise node (ND_fractal3d) — procedural noise in 3D space
+    function Fractal3DNode() {
+        this.addInput('amplitude', 'any');
+        this.addInput('octaves', 'any');
+        this.addInput('lacunarity', 'any');
+        this.addInput('diminish', 'any');
+        this.addInput('position', 'vector3');
+        this.addOutput('out', 'any');
+        this.color = '#446655';
+        this.size = [130, 110];
+    }
+    Fractal3DNode.title = 'Fractal3D';
+    LiteGraph.registerNodeType('mtlx/fractal3d', Fractal3DNode);
+
+    // Rotate3D node (ND_rotate3d) — rotates a vector3 around an axis
+    function Rotate3DNode() {
+        this.addInput('in', 'vector3');
+        this.addInput('amount', 'float');
+        this.addInput('axis', 'vector3');
+        this.addOutput('out', 'vector3');
+        this.color = '#556644';
+        this.size = [120, 80];
+    }
+    Rotate3DNode.title = 'Rotate3D';
+    LiteGraph.registerNodeType('mtlx/rotate3d', Rotate3DNode);
+
     // Generic node for unknown types
     function GenericNode() {
         this.addInput('in', 'any');
@@ -875,6 +947,9 @@ function initLiteGraph() {
     resizeGraphCanvas();
     window.addEventListener('resize', resizeGraphCanvas);
 
+    // History: capture pre-action snapshot on every pointerdown over the canvas
+    canvas.addEventListener('pointerdown', historyCapturePre);
+
     // Hook change events for editing
     hookGraphChangeEvents();
 }
@@ -900,6 +975,12 @@ function buildLiteGraphFromMtlx(nodeGraphData, materialName) {
     // Suppress dirty notifications during graph building
     state._buildingGraph = true;
     state.graph.clear();
+
+    // Clear undo/redo history when a new graph is loaded
+    state.undoStack = [];
+    state.redoStack = [];
+    state._pendingHistorySnapshot = null;
+    updateHistoryUI();
 
     if (!nodeGraphData || !nodeGraphData.nodegraph) {
         // Create a surface node with inline widgets for all parameters
@@ -1008,8 +1089,6 @@ function buildLiteGraphFromMtlx(nodeGraphData, materialName) {
                 ctx.fillText('unused', 6, 12);
             }
         };
-        lgNode.size[1] = Math.max(lgNode.size[1], 55) + 14;
-
         // Set properties (may affect node size via widgets)
         if (node.value !== undefined) {
             lgNode.properties = lgNode.properties || {};
@@ -1018,6 +1097,8 @@ function buildLiteGraphFromMtlx(nodeGraphData, materialName) {
                 lgNode._setupWidgets();
             }
         }
+        // Apply minimum height AFTER _setupWidgets() so it isn't overridden by computeSize().
+        lgNode.size[1] = Math.max(lgNode.size[1], 55) + 14;
 
         if (node.inputs) {
             for (const input of node.inputs) {
@@ -1280,8 +1361,8 @@ function computeNodeLevels(nodes) {
 
 function getBaseCategory(category) {
     if (!category) return 'generic';
-    // Strip type suffixes
-    return category.replace(/_(color3|color4|float|vector2|vector3|vector4|integer|boolean|string)$/, '');
+    // Strip type suffixes including MaterialX variant tags (e.g. color3FA, vector3FA)
+    return category.replace(/_(color[34]\w*|float|vector[234]\w*|integer|boolean|string)$/, '');
 }
 
 function updateNodeStats() {
@@ -1567,6 +1648,7 @@ function evaluateAndApplyMaterial() {
     }
 
     material.needsUpdate = true;
+    requestRender();
 
     // Clear dirty flag
     state.graphDirty = false;
@@ -1604,6 +1686,7 @@ function hookGraphChangeEvents() {
 
     // LGraph fires 'change' on structural changes (connections, node add/remove)
     state.graph.onNodeConnectionChange = function() {
+        historyCommit();
         markGraphDirty();
     };
 
@@ -1626,6 +1709,7 @@ function hookGraphChangeEvents() {
             state.graphCanvas.processNodeWidgets = function(node, pos, event, active_widget) {
                 const result = origProcessNodeWidgets.call(this, node, pos, event, active_widget);
                 if (result) {
+                    historyCommit();
                     markGraphDirty();
                 }
                 return result;
@@ -1638,6 +1722,100 @@ function hookGraphChangeEvents() {
         markGraphDirty();
     };
 }
+
+// ============================================================================
+// Undo / Redo History
+// ============================================================================
+
+const HISTORY_MAX = 20;
+
+/**
+ * Take a pre-action snapshot. Called on pointerdown over the graph canvas so
+ * we always have the state just before the user's next change.
+ */
+function historyCapturePre() {
+    if (state._buildingGraph) return;
+    state._pendingHistorySnapshot = JSON.stringify(state.graph.serialize());
+}
+
+/**
+ * Commit the pending pre-action snapshot to the undo stack if the graph has
+ * actually changed since we captured it. Called from every change hook.
+ */
+function historyCommit() {
+    if (state._buildingGraph) return;
+    if (state._pendingHistorySnapshot === null) return;
+    const current = JSON.stringify(state.graph.serialize());
+    if (current !== state._pendingHistorySnapshot) {
+        state.undoStack.push(state._pendingHistorySnapshot);
+        if (state.undoStack.length > HISTORY_MAX) state.undoStack.shift();
+        state.redoStack = [];
+        state._pendingHistorySnapshot = null;
+        updateHistoryUI();
+    }
+}
+
+function historyUndo() {
+    if (!state.undoStack.length) return;
+    state.redoStack.push(JSON.stringify(state.graph.serialize()));
+    restoreHistorySnapshot(JSON.parse(state.undoStack.pop()));
+    updateHistoryUI();
+}
+
+function historyRedo() {
+    if (!state.redoStack.length) return;
+    state.undoStack.push(JSON.stringify(state.graph.serialize()));
+    restoreHistorySnapshot(JSON.parse(state.redoStack.pop()));
+    updateHistoryUI();
+}
+
+function restoreHistorySnapshot(snapshot) {
+    state._buildingGraph = true;
+    state.graph.configure(snapshot);
+
+    // graph.configure() restores connections AFTER calling onConfigure on each
+    // node, so we must re-init OpenPBRSurfaceNode's inline widgets here, once
+    // connections are fully in place, to rebuild _editableParams / _inlineSlots.
+    const surfaceNode = state.graph._nodes?.find(n => n.type === 'mtlx/openpbr_surface');
+    if (surfaceNode && typeof surfaceNode._setupInlineWidgets === 'function') {
+        const connectedSlots = new Set();
+        if (surfaceNode.inputs) {
+            for (let i = 0; i < surfaceNode.inputs.length; i++) {
+                if (surfaceNode.inputs[i].link != null) connectedSlots.add(i);
+            }
+        }
+        // Pass current properties as materialValues so restored values are kept.
+        surfaceNode._setupInlineWidgets(connectedSlots, { ...surfaceNode.properties });
+    }
+
+    state._buildingGraph = false;
+    state._pendingHistorySnapshot = null;
+    state.graphDirty = false;
+    document.getElementById('edit-indicator').classList.remove('visible');
+    updateNodeStats();
+    updateHistoryUI();
+    if (state.interactiveUpdate) {
+        evaluateAndApplyMaterial();
+    }
+}
+
+function updateHistoryUI() {
+    const btnUndo = document.getElementById('btn-undo');
+    const btnRedo = document.getElementById('btn-redo');
+    const u = state.undoStack.length;
+    const r = state.redoStack.length;
+    if (btnUndo) {
+        btnUndo.disabled = u === 0;
+        btnUndo.title = u > 0 ? `Undo (${u}) – Ctrl+Z` : 'Nothing to undo';
+    }
+    if (btnRedo) {
+        btnRedo.disabled = r === 0;
+        btnRedo.title = r > 0 ? `Redo (${r}) – Ctrl+Y` : 'Nothing to redo';
+    }
+}
+
+window.historyUndo = historyUndo;
+window.historyRedo = historyRedo;
 
 // ============================================================================
 // Three.js Setup
@@ -1858,7 +2036,7 @@ async function loadEnvironment(preset) {
     if (path.startsWith('hdr:')) {
         const url = path.substring('hdr:'.length);
         try {
-            const loader = new HDRLoader();
+            const loader = new RGBELoader();
             const texture = await loader.loadAsync(url);
             texture.mapping = THREE.EquirectangularReflectionMapping;
             // Use high-res PMREM (cube 512) to avoid LOD discontinuities at low roughness
@@ -1940,6 +2118,7 @@ function applyEnvironment() {
         state.renderer.toneMapping = tmValue;
     }
     state.renderer.toneMappingExposure = state.exposure;
+    requestRender();
 }
 
 // ============================================================================
@@ -2092,6 +2271,7 @@ function onWindowResize() {
     state.renderer.setSize(canvas.width, canvas.height);
 
     resizeGraphCanvas();
+    requestRender();
 }
 
 // ============================================================================
@@ -2327,8 +2507,9 @@ function findNodeGraphTextures(nodeGraphData) {
         for (const dep of deps) {
             const node = nodeMap.get(nodeName);
             const cat = (node?.category || '').replace(/_(color3|color4|float|vector2|vector3|vector4)$/, '');
-            // Skip pass-through nodes (convert, texcoord) in the ops chain
-            const isPassthrough = (cat === 'convert' || cat === 'texcoord');
+            // Skip pass-through nodes in the ops chain.
+            // normalmap/heighttonormal transform the channel but the underlying image file is still the one to load.
+            const isPassthrough = (cat === 'convert' || cat === 'texcoord' || cat === 'normalmap' || cat === 'heighttonormal');
             const newChain = isPassthrough ? chain : [...chain, { name: nodeName, category: cat, node }];
             const found = traceToImageNode(dep, newChain, visited);
             if (found) return found;
@@ -2537,6 +2718,8 @@ async function loadMaterialTextures(openPBR, nativeLoader) {
                 'coat_weight': 'coat_weight',
                 'transmission_color': 'base_color',    // transmission color often shares base texture
                 'subsurface_color': 'base_color',      // subsurface color often shares base texture
+                'geometry_normal': 'normal',            // normal map connected via node graph
+                'normal': 'normal',
             };
             const texKey = paramToTexKey[paramName];
             if (!texKey) continue;
@@ -2581,6 +2764,12 @@ async function loadMaterialTextures(openPBR, nativeLoader) {
 
 async function buildScene() {
     const usd = state.usdData;
+
+    // Reset shading mode when loading a new scene (old materials are being replaced)
+    state.originalMaterialsMap.clear();
+    state.shadingMode = 'solid';
+    const shadingSelect = document.getElementById('shading-mode-select');
+    if (shadingSelect) shadingSelect.value = 'solid';
 
     // Clear and load material data (consolidated from callers)
     state.materials = [];
@@ -2764,6 +2953,20 @@ async function buildScene() {
     updateStatus(`Loaded: ${numMeshes} meshes, ${state.materials.length} materials`);
     document.getElementById('mesh-count').textContent = numMeshes;
     document.getElementById('material-count').textContent = state.materials.length;
+
+    // Pre-compute bounding spheres so Three.js doesn't do it lazily on the
+    // first render frame (which would cause a visible spike).
+    state.scene.traverse(obj => {
+        if (obj.isMesh && obj.geometry && !obj.geometry.boundingSphere) {
+            obj.geometry.computeBoundingSphere();
+        }
+    });
+
+    // Pre-compile all WebGL shader programs upfront so the first rendered
+    // frame doesn't stall on shader compilation.
+    state.renderer.compile(state.scene, state.camera);
+
+    requestRender();
 }
 
 function fitCameraToObject(object) {
@@ -2802,26 +3005,49 @@ function disposeObject(obj) {
 function updateMaterialSelector() {
     const selector = document.getElementById('material-selector');
     const select = document.getElementById('material-select');
+    const ngBar = document.getElementById('ng-material-bar');
+    const ngSelect = document.getElementById('ng-material-select');
+    const ngCount = document.getElementById('ng-material-count');
+
+    // Build options for both selects
+    const fragment = () => {
+        const frag = document.createDocumentFragment();
+        for (let i = 0; i < state.materialData.length; i++) {
+            const mat = state.materialData[i];
+            const option = document.createElement('option');
+            option.value = i;
+            option.textContent = mat.name || `Material ${i}`;
+            frag.appendChild(option);
+        }
+        return frag;
+    };
 
     select.innerHTML = '';
-
-    for (let i = 0; i < state.materialData.length; i++) {
-        const mat = state.materialData[i];
-        const option = document.createElement('option');
-        option.value = i;
-        option.textContent = mat.name || `Material ${i}`;
-        select.appendChild(option);
-    }
-
+    select.appendChild(fragment());
     select.onchange = (e) => selectMaterial(parseInt(e.target.value));
 
-    selector.style.display = state.materialData.length > 0 ? 'block' : 'none';
+    ngSelect.innerHTML = '';
+    ngSelect.appendChild(fragment());
+    // onchange is handled inline via HTML attribute
+
+    const count = state.materialData.length;
+    if (ngCount) ngCount.textContent = count > 0 ? `(${count})` : '';
+
+    selector.style.display = count > 0 ? 'block' : 'none';
+    if (ngBar) ngBar.classList.toggle('visible', count > 0);
 }
 
 function selectMaterial(index) {
     if (index < 0 || index >= state.materialData.length) return;
 
     state.currentMaterialIndex = index;
+
+    // Sync both selector UIs
+    const viewerSelect = document.getElementById('material-select');
+    if (viewerSelect && parseInt(viewerSelect.value) !== index) viewerSelect.value = index;
+    const ngSelect = document.getElementById('ng-material-select');
+    if (ngSelect && parseInt(ngSelect.value) !== index) ngSelect.value = index;
+
     const matData = state.materialData[index];
 
     // Get node graph
@@ -3152,6 +3378,7 @@ window.toggleInteractiveUpdate = function(enabled) {
 
 // Expose markGraphDirty for node widget callbacks
 window._mtlxMarkDirty = function() {
+    historyCommit();
     markGraphDirty();
 };
 
@@ -3216,6 +3443,369 @@ window.toggleLightingPanel = function() {
     const panel = document.getElementById('lighting-controls');
     panel.classList.toggle('collapsed');
 };
+
+// ============================================================================
+// Shading Panel
+// ============================================================================
+
+/**
+ * Create a debug shader material that visualizes tangent-space vectors.
+ * @param {'tangent'|'bitangent'|'tangent_w'} channel - Which vector to visualize
+ */
+function createTangentDebugMaterial(channel = 'tangent') {
+    return new THREE.ShaderMaterial({
+        defines: { USE_TANGENT: '' },
+        vertexShader: `
+            // tangent (vec4) is auto-injected by Three.js via USE_TANGENT define
+            varying vec3 vColor;
+
+            void main() {
+                mat3 worldNormalMatrix = mat3(modelMatrix);
+                vec3 T = normalize(worldNormalMatrix * tangent.xyz);
+                vec3 N = normalize(worldNormalMatrix * normal);
+                vec3 B = normalize(cross(N, T) * tangent.w);
+                float w = tangent.w;
+
+                ${channel === 'tangent' ? 'vColor = T * 0.5 + 0.5;' : ''}
+                ${channel === 'bitangent' ? 'vColor = B * 0.5 + 0.5;' : ''}
+                ${channel === 'tangent_w' ? 'vColor = w > 0.0 ? vec3(0.0, 1.0, 0.0) : (w < 0.0 ? vec3(1.0, 0.0, 0.0) : vec3(0.0, 0.0, 0.0));' : ''}
+
+                gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+            }
+        `,
+        fragmentShader: `
+            varying vec3 vColor;
+            void main() {
+                gl_FragColor = vec4(vColor, 1.0);
+            }
+        `,
+        side: THREE.DoubleSide
+    });
+}
+
+/**
+ * Create a shader material that visualizes world-space normals as RGB colors.
+ * If normalMap is provided, the normal map is applied via TBN before coloring.
+ */
+function createAbsNormalMaterial(normalMap = null, normalScale = new THREE.Vector2(1, 1)) {
+    return new THREE.ShaderMaterial({
+        defines: { USE_TANGENT: '' },
+        uniforms: {
+            normalMap: { value: normalMap },
+            normalScale: { value: normalScale },
+            useNormalMap: { value: normalMap !== null }
+        },
+        vertexShader: `
+            // tangent (vec4) is auto-injected by Three.js via USE_TANGENT define
+            varying vec3 vWorldNormal;
+            varying vec2 vUv;
+            varying vec3 vTangent;
+            varying vec3 vBitangent;
+
+            void main() {
+                mat3 worldNormalMatrix = mat3(modelMatrix);
+                vWorldNormal = normalize(worldNormalMatrix * normal);
+                vUv = uv;
+
+                vTangent = normalize(worldNormalMatrix * tangent.xyz);
+                vBitangent = normalize(cross(vWorldNormal, vTangent) * tangent.w);
+
+                gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+            }
+        `,
+        fragmentShader: `
+            uniform sampler2D normalMap;
+            uniform vec2 normalScale;
+            uniform bool useNormalMap;
+
+            varying vec3 vWorldNormal;
+            varying vec2 vUv;
+            varying vec3 vTangent;
+            varying vec3 vBitangent;
+
+            void main() {
+                vec3 n = normalize(vWorldNormal);
+
+                if (useNormalMap) {
+                    vec3 mapN = texture2D(normalMap, vUv).xyz * 2.0 - 1.0;
+                    mapN.xy *= normalScale;
+                    mapN = normalize(mapN);
+                    vec3 T = normalize(vTangent);
+                    vec3 B = normalize(vBitangent);
+                    mat3 TBN = mat3(T, B, n);
+                    n = normalize(TBN * mapN);
+                }
+
+                gl_FragColor = vec4(n * 0.5 + 0.5, 1.0);
+            }
+        `,
+        side: THREE.DoubleSide
+    });
+}
+
+/**
+ * Extract normal map and scale from a Three.js material.
+ * Handles direct property, userData.textures, and array materials.
+ */
+function extractNormalMapFromMaterial(material) {
+    if (!material) return { normalMap: null, normalScale: new THREE.Vector2(1, 1) };
+
+    // Handle array of materials
+    if (Array.isArray(material)) {
+        for (const mat of material) {
+            const result = extractNormalMapFromMaterial(mat);
+            if (result.normalMap) return result;
+        }
+        return { normalMap: null, normalScale: new THREE.Vector2(1, 1) };
+    }
+
+    // Direct normalMap property (MeshPhysicalMaterial, MeshStandardMaterial)
+    if (material.normalMap) {
+        return {
+            normalMap: material.normalMap,
+            normalScale: material.normalScale ? material.normalScale.clone() : new THREE.Vector2(1, 1)
+        };
+    }
+
+    // userData.textures (async-loaded textures)
+    if (material.userData?.textures?.normalMap) {
+        return {
+            normalMap: material.userData.textures.normalMap,
+            normalScale: new THREE.Vector2(1, 1)
+        };
+    }
+
+    return { normalMap: null, normalScale: new THREE.Vector2(1, 1) };
+}
+
+/**
+ * Mapping from shading debug channel name to Three.js material property paths.
+ * Each entry: { texture: prop for texture map, color: prop for color3, scalar: prop for float }
+ */
+const CHANNEL_MAP = {
+    base_color:             { texture: 'map',                   color: 'color',         scalar: null },
+    base_metalness:         { texture: 'metalnessMap',          color: null,            scalar: 'metalness' },
+    base_diffuse_roughness: { texture: null,                    color: null,            scalar: '_openPBR.base_diffuse_roughness' },
+    specular_color:         { texture: null,                    color: 'specularColor', scalar: null },
+    specular_roughness:     { texture: 'roughnessMap',          color: null,            scalar: 'roughness' },
+    coat_color:             { texture: null,                    color: 'clearcoatColor',scalar: null },
+    fuzz_color:             { texture: null,                    color: 'sheenColor',    scalar: null },
+};
+
+/**
+ * Read a possibly dotted property path from an object (e.g. "_openPBR.base_diffuse_roughness").
+ */
+function readProp(obj, path) {
+    if (!obj || !path) return undefined;
+    const parts = path.split('.');
+    let cur = obj;
+    for (const p of parts) {
+        if (cur == null) return undefined;
+        cur = cur[p];
+    }
+    return cur;
+}
+
+/**
+ * Extract a texture or constant value for a given OpenPBR channel from a material.
+ * Returns { texture: THREE.Texture|null, constColor: [r,g,b] }
+ */
+function extractChannelFromMaterial(material, channel) {
+    const info = CHANNEL_MAP[channel];
+    if (!info) return { texture: null, constColor: [0, 0, 0] };
+
+    if (!material) return { texture: null, constColor: [0, 0, 0] };
+
+    // Handle array of materials – pick first that has data
+    if (Array.isArray(material)) {
+        for (const mat of material) {
+            const res = extractChannelFromMaterial(mat, channel);
+            if (res.texture) return res;
+        }
+        // No texture found – return constant from first material
+        if (material.length > 0) return extractChannelFromMaterial(material[0], channel);
+        return { texture: null, constColor: [0, 0, 0] };
+    }
+
+    // 1. Try texture from direct property
+    if (info.texture) {
+        const tex = material[info.texture];
+        if (tex && tex.isTexture) return { texture: tex, constColor: [1, 1, 1] };
+        // Also check userData.textures
+        const ud = material.userData?.textures?.[info.texture];
+        if (ud?.texture && ud.texture.isTexture) return { texture: ud.texture, constColor: [1, 1, 1] };
+    }
+
+    // 2. No texture – read constant value
+    if (info.color) {
+        const c = readProp(material, info.color);
+        if (c && c.isColor) return { texture: null, constColor: [c.r, c.g, c.b] };
+        if (Array.isArray(c)) return { texture: null, constColor: c };
+    }
+    if (info.scalar != null) {
+        const v = readProp(material, info.scalar);
+        if (v !== undefined && typeof v === 'number') return { texture: null, constColor: [v, v, v] };
+    }
+
+    return { texture: null, constColor: [0, 0, 0] };
+}
+
+/**
+ * Create a shader material that displays a single texture channel (or constant color).
+ * - If tex is provided, samples the texture at UV and outputs RGB (or grayscale→RGB for single-channel).
+ * - If tex is null, outputs the constant color.
+ * @param {THREE.Texture|null} tex
+ * @param {number[]} constColor  [r, g, b] in 0..1
+ * @param {boolean} isGrayscale  If true, replicate .r to RGB for single-channel textures
+ */
+function createChannelDebugMaterial(tex, constColor, isGrayscale = false) {
+    return new THREE.ShaderMaterial({
+        uniforms: {
+            channelTex:  { value: tex },
+            hasTex:      { value: tex !== null },
+            constColor:  { value: new THREE.Vector3(constColor[0], constColor[1], constColor[2]) },
+            isGrayscale: { value: isGrayscale },
+        },
+        vertexShader: `
+            varying vec2 vUv;
+            void main() {
+                vUv = uv;
+                gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+            }
+        `,
+        fragmentShader: `
+            uniform sampler2D channelTex;
+            uniform bool hasTex;
+            uniform vec3 constColor;
+            uniform bool isGrayscale;
+
+            varying vec2 vUv;
+
+            void main() {
+                if (hasTex) {
+                    vec4 texel = texture2D(channelTex, vUv);
+                    if (isGrayscale) {
+                        gl_FragColor = vec4(vec3(texel.r), 1.0);
+                    } else {
+                        gl_FragColor = vec4(texel.rgb, 1.0);
+                    }
+                } else {
+                    gl_FragColor = vec4(constColor, 1.0);
+                }
+            }
+        `,
+        side: THREE.DoubleSide
+    });
+}
+
+// Channels that are single-float values (displayed as grayscale)
+const GRAYSCALE_CHANNELS = new Set([
+    'base_metalness', 'base_diffuse_roughness', 'specular_roughness'
+]);
+
+/**
+ * Apply a shading debug mode to the current model.
+ * Modes: 'solid' | 'normal_mapped' | 'normal_geometry' | 'tangent' | 'bitangent' | 'tangent_w'
+ *       | 'base_color' | 'base_metalness' | 'base_diffuse_roughness'
+ *       | 'specular_color' | 'specular_roughness' | 'coat_color' | 'fuzz_color'
+ */
+function setShadingMode(mode) {
+    state.shadingMode = mode;
+
+    // Update the select element to match (for calls from JS)
+    const select = document.getElementById('shading-mode-select');
+    if (select && select.value !== mode) select.value = mode;
+
+    if (!state.currentModel) return;
+
+    if (mode === 'solid') {
+        // Restore original materials
+        state.currentModel.traverse((obj) => {
+            if (!obj.isMesh) return;
+            const orig = state.originalMaterialsMap.get(obj);
+            if (orig !== undefined) {
+                obj.material = orig;
+            }
+        });
+        state.originalMaterialsMap.clear();
+    } else {
+        // Save original materials before first non-solid switch
+        state.currentModel.traverse((obj) => {
+            if (!obj.isMesh) return;
+            if (!state.originalMaterialsMap.has(obj)) {
+                state.originalMaterialsMap.set(obj, obj.material);
+            }
+        });
+
+        const isTangentDebug = (mode === 'tangent' || mode === 'bitangent' || mode === 'tangent_w');
+
+        state.currentModel.traverse((obj) => {
+            if (!obj.isMesh) return;
+            const origMat = state.originalMaterialsMap.get(obj) ?? obj.material;
+
+            if (isTangentDebug) {
+                // Tangent debug modes: single material (same for all sub-materials)
+                const debugMat = createTangentDebugMaterial(mode);
+                if (Array.isArray(origMat)) {
+                    obj.material = origMat.map(() => debugMat.clone());
+                } else {
+                    obj.material = debugMat;
+                }
+                return;
+            }
+
+            // Channel texture/value debug modes (base_color, base_metalness, etc.)
+            if (CHANNEL_MAP[mode]) {
+                const isGray = GRAYSCALE_CHANNELS.has(mode);
+                if (Array.isArray(origMat)) {
+                    obj.material = origMat.map((mat) => {
+                        const { texture, constColor } = extractChannelFromMaterial(mat, mode);
+                        return createChannelDebugMaterial(texture, constColor, isGray);
+                    });
+                } else {
+                    const { texture, constColor } = extractChannelFromMaterial(origMat, mode);
+                    obj.material = createChannelDebugMaterial(texture, constColor, isGray);
+                }
+                return;
+            }
+
+            // Normal debug modes (normal_mapped, normal_geometry)
+            // Multi-material: create a per-sub-material debug material array
+            // so that sub-materials without a normal map don't inherit one from
+            // a sibling (e.g. Glass should have no normal map even if Body does).
+            if (Array.isArray(origMat)) {
+                obj.material = origMat.map((mat) => {
+                    let normalMap = null;
+                    let normalScale = new THREE.Vector2(1, 1);
+                    if (mode === 'normal_mapped') {
+                        const extracted = extractNormalMapFromMaterial(mat);
+                        normalMap = extracted.normalMap;
+                        normalScale = extracted.normalScale;
+                    }
+                    return createAbsNormalMaterial(normalMap, normalScale);
+                });
+            } else {
+                let normalMap = null;
+                let normalScale = new THREE.Vector2(1, 1);
+                if (mode === 'normal_mapped') {
+                    const extracted = extractNormalMapFromMaterial(origMat);
+                    normalMap = extracted.normalMap;
+                    normalScale = extracted.normalScale;
+                }
+                obj.material = createAbsNormalMaterial(normalMap, normalScale);
+            }
+        });
+    }
+    requestRender();
+}
+
+window.toggleShadingPanel = function() {
+    const panel = document.getElementById('shading-controls');
+    panel.classList.toggle('collapsed');
+};
+
+window.setShadingMode = setShadingMode;
+window._debugState = state; // TEMP: debug access
 
 // ============================================================================
 // Light List UI
@@ -3528,12 +4118,11 @@ function pickObject(hit) {
     helper.name = '__selectionHelper__';
     state.scene.add(helper);
     state.selectionHelper = helper;
+    requestRender();
 
     // Select material and sync UI
     if (matIndex >= 0) {
         selectMaterial(matIndex);
-        const select = document.getElementById('material-select');
-        if (select) select.value = matIndex;
         showToast(`Selected: ${mesh.name || 'Mesh'} → ${state.materialData[matIndex]?.name || 'Material'}`);
     } else {
         showToast(`Selected: ${mesh.name || 'Mesh'} (no editable material)`);
@@ -3548,6 +4137,7 @@ function clearSelectionHighlight() {
         state.scene.remove(state.selectionHelper);
         state.selectionHelper.dispose();
         state.selectionHelper = null;
+        requestRender();
     }
 }
 
@@ -3561,17 +4151,74 @@ function clearSelection() {
 // Animation Loop
 // ============================================================================
 
+/**
+ * Mark the 3D view as needing a redraw (demand rendering).
+ * Call this whenever the scene, camera, or materials change.
+ */
+function requestRender() {
+    state.renderNeeded = true;
+}
+
 function animate() {
     requestAnimationFrame(animate);
 
-    state.controls.update();
-    state.renderer.render(state.scene, state.camera);
+    // OrbitControls.update() returns true while camera is still moving/damping.
+    // Only call renderer.render() when actually needed to save CPU/GPU.
+    const controlsActive = state.controls.update();
+    if (state.renderNeeded || controlsActive) {
+        state.renderer.render(state.scene, state.camera);
+        state.renderNeeded = false;
+    }
 
-    // LiteGraph update
-    if (state.graphCanvas) {
-        state.graphCanvas.draw(true);
+    // LiteGraph: skip drawing entirely when the panel is collapsed for performance.
+    // draw(false, false) only redraws when nodes/links have changed.
+    if (state.graphCanvas && !state.graphCollapsed) {
+        state.graphCanvas.draw(false, false);
     }
 }
+
+// ============================================================================
+// Node Graph Collapse/Expand (Performance Toggle)
+// ============================================================================
+
+/**
+ * Toggle the node graph panel between collapsed (header-only) and expanded states.
+ * When collapsed, the LiteGraph canvas draw loop is skipped entirely for performance.
+ */
+function toggleNodeGraphCollapse() {
+    const panel = document.getElementById('nodegraph-panel');
+    const btn = document.getElementById('nodegraph-collapse-btn');
+    if (!panel || !btn) return;
+
+    const isCollapsing = !panel.classList.contains('collapsed');
+
+    if (isCollapsing) {
+        panel.classList.add('collapsed');
+        btn.classList.add('collapsed');
+        btn.textContent = '<';
+        btn.title = 'Show node graph';
+        state.graphCollapsed = true;
+    } else {
+        panel.classList.remove('collapsed');
+        btn.classList.remove('collapsed');
+        btn.textContent = '>';
+        btn.title = 'Hide node graph';
+        state.graphCollapsed = false;
+
+        // Resize canvas to fit the re-expanded panel
+        setTimeout(() => {
+            resizeGraphCanvas();
+            if (state.graphCanvas) {
+                state.graphCanvas.setDirty(true, true);
+            }
+        }, 50);
+    }
+
+    // Resize the 3D viewport to fill available space
+    onWindowResize();
+}
+
+window.toggleNodeGraphCollapse = toggleNodeGraphCollapse;
 
 // ============================================================================
 // Initialization
@@ -3603,9 +4250,23 @@ async function init() {
         if (file) loadUSDFile(file);
     });
 
-    // Keyboard shortcuts for node graph fitting
+    // Keyboard shortcuts for node graph fitting and undo/redo
     document.addEventListener('keydown', (e) => {
-        // Ignore if focus is in an input/select/textarea
+        // Undo/redo: allow even when focus is on the canvas (Ctrl+Z / Ctrl+Y / Ctrl+Shift+Z)
+        if (e.ctrlKey || e.metaKey) {
+            if (e.key === 'z' && !e.shiftKey) {
+                e.preventDefault();
+                historyUndo();
+                return;
+            }
+            if (e.key === 'y' || (e.key === 'z' && e.shiftKey)) {
+                e.preventDefault();
+                historyRedo();
+                return;
+            }
+        }
+
+        // Ignore fitting shortcuts if focus is in an input/select/textarea
         const tag = e.target.tagName;
         if (tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA') return;
 

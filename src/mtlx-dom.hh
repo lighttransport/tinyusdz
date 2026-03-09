@@ -6,7 +6,6 @@
 #include "mtlx-xml-parser.hh"
 #include <vector>
 #include <map>
-#include <variant>
 
 namespace tinyusdz {
 namespace mtlx {

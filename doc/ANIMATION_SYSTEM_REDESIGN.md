@@ -1,3 +1,6 @@
+> **DEPRECATED** — This document has been superseded by `doc/tydra-animation-spec-en.md`.
+> Retained for historical reference only.
+
 # Animation System Redesign for Three.js Compatibility
 
 ## Overview

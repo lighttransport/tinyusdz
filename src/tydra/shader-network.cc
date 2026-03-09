@@ -293,7 +293,7 @@ bool DirectBindingStrongerThanDescendants(
       return false;
     }
 
-    const value::token strength = mat_rel.metas().has_bindMaterialAs() ? mat_rel.metas().get_bindMaterialAs() : value::token(kWeaderThanDescendants);
+    const value::token strength = mat_rel.metas().has_bindMaterialAs() ? mat_rel.metas().get_bindMaterialAs() : value::token(kWeakerThanDescendants);
     return strength.str() == kStrongerThanDescendants;
 
   };
@@ -395,7 +395,7 @@ bool GetBoundMaterial(
     // We need to climb up to the root in any case.
     // TODO: Cache result.
     uint32_t depth = 0;
-    while (depth < 1024*128) { // to avoid infinite loop.
+    while (size_t(depth) < kMaxDefaultTraversalLimit) { // to avoid infinite loop.
 
       if (!currentPath.is_valid() || currentPath.is_root_path()) {
         break;

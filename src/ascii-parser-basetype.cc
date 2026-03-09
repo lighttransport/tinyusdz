@@ -3715,7 +3715,12 @@ bool AsciiParser::ParseFloatArrayOptimized(std::vector<float> *result) {
       return false;
     }
 
-    if (c == '[') {
+    if (c == '#') {
+      // Skip comment to end of line
+      while (Char1(&c)) {
+        if (c == '\n') break;
+      }
+    } else if (c == '[') {
       bracket_depth++;
     } else if (c == ']') {
       bracket_depth--;
@@ -3760,7 +3765,12 @@ bool AsciiParser::ParseDoubleArrayOptimized(std::vector<double> *result) {
       return false;
     }
 
-    if (c == '[') {
+    if (c == '#') {
+      // Skip comment to end of line
+      while (Char1(&c)) {
+        if (c == '\n') break;
+      }
+    } else if (c == '[') {
       bracket_depth++;
     } else if (c == ']') {
       bracket_depth--;
@@ -3795,17 +3805,23 @@ bool AsciiParser::ParseIntArrayOptimized(std::vector<int32_t> *result) {
   
   int bracket_depth = 1;
   std::string array_str = "[";
-  
+
   while (bracket_depth > 0) {
     char c;
     if (!Char1(&c)) {
       PushError("Unexpected end of input while parsing int array");
       return false;
     }
-    
+
     array_str += c;
-    
-    if (c == '[') {
+
+    if (c == '#') {
+      // Skip comment to end of line
+      while (Char1(&c)) {
+        array_str += c;
+        if (c == '\n') break;
+      }
+    } else if (c == '[') {
       bracket_depth++;
     } else if (c == ']') {
       bracket_depth--;

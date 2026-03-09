@@ -70,6 +70,53 @@
 
 using namespace emscripten;
 
+// Fix degenerate tangent: when a tangent vector is zero, near-zero, NaN, or
+// Inf, generate a fallback perpendicular to the normal.  Also handles
+// degenerate/NaN normals.  Modifies tx/ty/tz in place.
+static inline void FixupZeroTangent(float &tx, float &ty, float &tz,
+                                     float nx, float ny, float nz) {
+  // Check if tangent is valid (finite and non-trivially long)
+  if (std::isfinite(tx) && std::isfinite(ty) && std::isfinite(tz)) {
+    float len2 = tx * tx + ty * ty + tz * tz;
+    if (std::isfinite(len2) && len2 > 1.0e-12f) {
+      return;  // tangent is fine
+    }
+  }
+
+  // Ensure normal is usable (finite and non-zero)
+  if (!std::isfinite(nx) || !std::isfinite(ny) || !std::isfinite(nz)) {
+    nx = 0.0f; ny = 1.0f; nz = 0.0f;  // arbitrary up
+  } else {
+    float nlen2 = nx * nx + ny * ny + nz * nz;
+    if (!std::isfinite(nlen2) || nlen2 < 1.0e-12f) {
+      nx = 0.0f; ny = 1.0f; nz = 0.0f;
+    } else {
+      float inv = 1.0f / std::sqrt(nlen2);
+      nx *= inv; ny *= inv; nz *= inv;
+    }
+  }
+
+  // Generate perpendicular to normal via cross with a reference axis
+  float rx, ry, rz;
+  if (std::fabs(ny) < 0.9f) {
+    rx = 0.0f; ry = 1.0f; rz = 0.0f;
+  } else {
+    rx = 1.0f; ry = 0.0f; rz = 0.0f;
+  }
+  // cross(N, ref)
+  tx = ny * rz - nz * ry;
+  ty = nz * rx - nx * rz;
+  tz = nx * ry - ny * rx;
+  float len2 = tx * tx + ty * ty + tz * tz;
+  if (std::isfinite(len2) && len2 > 1.0e-20f) {
+    float inv = 1.0f / std::sqrt(len2);
+    tx *= inv; ty *= inv; tz *= inv;
+  } else {
+    // Last resort: normal was along both reference axes (shouldn't happen)
+    tx = 1.0f; ty = 0.0f; tz = 0.0f;
+  }
+}
+
 // ============================================================================
 // EM_JS: Synchronous JavaScript callbacks for progress reporting
 // These functions are called from C++ during Tydra conversion to report
@@ -2436,6 +2483,48 @@ class TinyUSDZLoaderNative {
     return lights;
   }
 
+  int numCameras() const { return static_cast<int>(render_scene_.cameras.size()); }
+
+  emscripten::val getCamera(int camera_id) const {
+    emscripten::val cam = emscripten::val::object();
+
+    if (!loaded_) {
+      cam.set("error", "Scene not loaded");
+      return cam;
+    }
+
+    if (camera_id < 0 || camera_id >= static_cast<int>(render_scene_.cameras.size())) {
+      cam.set("error", "Invalid camera ID");
+      return cam;
+    }
+
+    const auto &c = render_scene_.cameras[static_cast<size_t>(camera_id)];
+
+    cam.set("name", c.name);
+    cam.set("absPath", c.abs_path);
+    cam.set("displayName", c.display_name);
+    cam.set("focalLength", c.focalLength);
+    cam.set("verticalAperture", c.verticalAperture);
+    cam.set("horizontalAperture", c.horizontalAperture);
+    cam.set("znear", c.znear);
+    cam.set("zfar", c.zfar);
+
+    // Compute FOV in radians
+    cam.set("yfov", 2.0f * std::atan(0.5f * c.verticalAperture / c.focalLength));
+    cam.set("xfov", 2.0f * std::atan(0.5f * c.horizontalAperture / c.focalLength));
+    cam.set("aspectRatio", c.horizontalAperture / c.verticalAperture);
+
+    // Projection type
+    std::string projStr;
+    switch (c.projection) {
+      case tinyusdz::GeomCamera::Projection::Perspective: projStr = "perspective"; break;
+      case tinyusdz::GeomCamera::Projection::Orthographic: projStr = "orthographic"; break;
+    }
+    cam.set("projection", projStr);
+
+    return cam;
+  }
+
   emscripten::val getTexture(int tex_id) const {
     emscripten::val tex = emscripten::val::object();
 
@@ -2577,12 +2666,58 @@ class TinyUSDZLoaderNative {
       }
     }
 
-    if (!rmesh.tangents.empty()) {
-      const float *tangents_ptr =
-          reinterpret_cast<const float *>(rmesh.tangents.data.data());
-
-      mesh.set("tangents", emscripten::typed_memory_view(
-                              rmesh.tangents.vertex_count() * 3, tangents_ptr));
+    // Compute vec4 tangents (xyz=tangent direction, w=handedness sign)
+    // Three.js expects vec4 tangent where w = sign(dot(cross(N, T), B))
+    if (!rmesh.tangents.empty() && !rmesh.normals.empty() && !rmesh.binormals.empty()) {
+      size_t nv = rmesh.tangents.vertex_count();
+      auto &cache = tangents4_cache_[mesh_id];
+      cache.resize(nv * 4);
+      const float *T = reinterpret_cast<const float *>(rmesh.tangents.data.data());
+      const float *N = reinterpret_cast<const float *>(rmesh.normals.data.data());
+      const float *B = reinterpret_cast<const float *>(rmesh.binormals.data.data());
+      for (size_t i = 0; i < nv; i++) {
+        float tx = T[i*3+0], ty = T[i*3+1], tz = T[i*3+2];
+        FixupZeroTangent(tx, ty, tz, N[i*3+0], N[i*3+1], N[i*3+2]);
+        cache[i * 4 + 0] = tx;
+        cache[i * 4 + 1] = ty;
+        cache[i * 4 + 2] = tz;
+        // w = sign(dot(cross(N, T), B))
+        float cx = N[i*3+1]*tz - N[i*3+2]*ty;
+        float cy = N[i*3+2]*tx - N[i*3+0]*tz;
+        float cz = N[i*3+0]*ty - N[i*3+1]*tx;
+        float d = cx*B[i*3+0] + cy*B[i*3+1] + cz*B[i*3+2];
+        cache[i * 4 + 3] = (std::isfinite(d) && d < 0.0f) ? -1.0f : 1.0f;
+      }
+      mesh.set("tangents", emscripten::typed_memory_view(cache.size(), cache.data()));
+    } else if (!rmesh.tangents.empty() && !rmesh.normals.empty()) {
+      // No binormals available - fix zero tangents using normals, assume w=1
+      size_t nv = rmesh.tangents.vertex_count();
+      auto &cache = tangents4_cache_[mesh_id];
+      cache.resize(nv * 4);
+      const float *T = reinterpret_cast<const float *>(rmesh.tangents.data.data());
+      const float *N = reinterpret_cast<const float *>(rmesh.normals.data.data());
+      for (size_t i = 0; i < nv; i++) {
+        float tx = T[i*3+0], ty = T[i*3+1], tz = T[i*3+2];
+        FixupZeroTangent(tx, ty, tz, N[i*3+0], N[i*3+1], N[i*3+2]);
+        cache[i * 4 + 0] = tx;
+        cache[i * 4 + 1] = ty;
+        cache[i * 4 + 2] = tz;
+        cache[i * 4 + 3] = 1.0f;
+      }
+      mesh.set("tangents", emscripten::typed_memory_view(cache.size(), cache.data()));
+    } else if (!rmesh.tangents.empty()) {
+      // No normals or binormals - pass through as-is with w=1
+      size_t nv = rmesh.tangents.vertex_count();
+      auto &cache = tangents4_cache_[mesh_id];
+      cache.resize(nv * 4);
+      const float *T = reinterpret_cast<const float *>(rmesh.tangents.data.data());
+      for (size_t i = 0; i < nv; i++) {
+        cache[i * 4 + 0] = T[i * 3 + 0];
+        cache[i * 4 + 1] = T[i * 3 + 1];
+        cache[i * 4 + 2] = T[i * 3 + 2];
+        cache[i * 4 + 3] = 1.0f;
+      }
+      mesh.set("tangents", emscripten::typed_memory_view(cache.size(), cache.data()));
     }
 
     mesh.set("materialId", rmesh.material_id);
@@ -2793,31 +2928,54 @@ class TinyUSDZLoaderNative {
         mesh.set("texcoords", emscripten::typed_memory_view(cache.texcoords.size(), cache.texcoords.data()));
       }
 
-      // Reorder tangents (vec3) - per-vertex if single_indexable
+      // Reorder tangents as vec4 (xyz=tangent, w=handedness) - per-vertex if single_indexable
       if (!rmesh.tangents.empty()) {
-        const float* tangentsData = reinterpret_cast<const float*>(rmesh.tangents.data.data());
-        std::vector<float> reorderedTangents(numNewTriangles * 3 * 3);
+        const float* tData = reinterpret_cast<const float*>(rmesh.tangents.data.data());
+        const float* nData = rmesh.normals.empty() ? nullptr : reinterpret_cast<const float*>(rmesh.normals.data.data());
+        const float* bData = rmesh.binormals.empty() ? nullptr : reinterpret_cast<const float*>(rmesh.binormals.data.data());
+        std::vector<float> reorderedTangents(numNewTriangles * 3 * 4);  // vec4
         for (size_t newTriIdx = 0; newTriIdx < numNewTriangles; newTriIdx++) {
           int oldTriIdx = reorderMap[newTriIdx];
           for (int v = 0; v < 3; v++) {
             size_t oldFaceVertIdx = static_cast<size_t>(oldTriIdx) * 3 + static_cast<size_t>(v);
             size_t newVertIdx = newTriIdx * 3 + static_cast<size_t>(v);
+            float tx = 0, ty = 0, tz = 0, tw = 1.0f;
             if (singleIndexable) {
               if (oldFaceVertIdx < fvIndices.size()) {
-                uint32_t vertIdx = fvIndices[oldFaceVertIdx];
-                if (vertIdx < rmesh.tangents.vertex_count()) {
-                  reorderedTangents[newVertIdx * 3 + 0] = tangentsData[vertIdx * 3 + 0];
-                  reorderedTangents[newVertIdx * 3 + 1] = tangentsData[vertIdx * 3 + 1];
-                  reorderedTangents[newVertIdx * 3 + 2] = tangentsData[vertIdx * 3 + 2];
+                uint32_t vi = fvIndices[oldFaceVertIdx];
+                if (vi < rmesh.tangents.vertex_count()) {
+                  tx = tData[vi * 3 + 0]; ty = tData[vi * 3 + 1]; tz = tData[vi * 3 + 2];
+                  if (nData && vi < rmesh.normals.vertex_count()) {
+                    FixupZeroTangent(tx, ty, tz, nData[vi*3+0], nData[vi*3+1], nData[vi*3+2]);
+                  }
+                  if (nData && bData && vi < rmesh.normals.vertex_count() && vi < rmesh.binormals.vertex_count()) {
+                    float cx = nData[vi*3+1]*tz - nData[vi*3+2]*ty;
+                    float cy = nData[vi*3+2]*tx - nData[vi*3+0]*tz;
+                    float cz = nData[vi*3+0]*ty - nData[vi*3+1]*tx;
+                    float d = cx*bData[vi*3+0] + cy*bData[vi*3+1] + cz*bData[vi*3+2];
+                    tw = (std::isfinite(d) && d < 0.0f) ? -1.0f : 1.0f;
+                  }
                 }
               }
             } else {
               if (oldFaceVertIdx < rmesh.tangents.vertex_count()) {
-                reorderedTangents[newVertIdx * 3 + 0] = tangentsData[oldFaceVertIdx * 3 + 0];
-                reorderedTangents[newVertIdx * 3 + 1] = tangentsData[oldFaceVertIdx * 3 + 1];
-                reorderedTangents[newVertIdx * 3 + 2] = tangentsData[oldFaceVertIdx * 3 + 2];
+                tx = tData[oldFaceVertIdx * 3 + 0]; ty = tData[oldFaceVertIdx * 3 + 1]; tz = tData[oldFaceVertIdx * 3 + 2];
+                if (nData && oldFaceVertIdx < rmesh.normals.vertex_count()) {
+                  FixupZeroTangent(tx, ty, tz, nData[oldFaceVertIdx*3+0], nData[oldFaceVertIdx*3+1], nData[oldFaceVertIdx*3+2]);
+                }
+                if (nData && bData && oldFaceVertIdx < rmesh.normals.vertex_count() && oldFaceVertIdx < rmesh.binormals.vertex_count()) {
+                  float cx = nData[oldFaceVertIdx*3+1]*tz - nData[oldFaceVertIdx*3+2]*ty;
+                  float cy = nData[oldFaceVertIdx*3+2]*tx - nData[oldFaceVertIdx*3+0]*tz;
+                  float cz = nData[oldFaceVertIdx*3+0]*ty - nData[oldFaceVertIdx*3+1]*tx;
+                  float d = cx*bData[oldFaceVertIdx*3+0] + cy*bData[oldFaceVertIdx*3+1] + cz*bData[oldFaceVertIdx*3+2];
+                  tw = (std::isfinite(d) && d < 0.0f) ? -1.0f : 1.0f;
+                }
               }
             }
+            reorderedTangents[newVertIdx * 4 + 0] = tx;
+            reorderedTangents[newVertIdx * 4 + 1] = ty;
+            reorderedTangents[newVertIdx * 4 + 2] = tz;
+            reorderedTangents[newVertIdx * 4 + 3] = tw;
           }
         }
         auto& cache = reordered_mesh_cache_[mesh_id];
@@ -2921,6 +3079,20 @@ class TinyUSDZLoaderNative {
     anim.set("absPath", clip.abs_path);
     anim.set("displayName", clip.display_name);
     anim.set("duration", clip.duration);
+
+    // Source type metadata
+    {
+      std::string sourceTypeStr = "Unknown";
+      switch (clip.source_type) {
+        case tinyusdz::tydra::AnimationSourceType::XformOp: sourceTypeStr = "XformOp"; break;
+        case tinyusdz::tydra::AnimationSourceType::SkelAnimation: sourceTypeStr = "SkelAnimation"; break;
+        case tinyusdz::tydra::AnimationSourceType::BlendShape: sourceTypeStr = "BlendShape"; break;
+        default: break;
+      }
+      anim.set("sourceType", sourceTypeStr);
+      anim.set("numAnimatedJoints", clip.num_animated_joints);
+      anim.set("numAnimatedNodes", clip.num_animated_nodes);
+    }
 
     // Convert samplers to Three.js KeyframeTrack format
     emscripten::val tracks = emscripten::val::array();
@@ -3114,6 +3286,20 @@ class TinyUSDZLoaderNative {
       }
     }
     info.set("numTargetNodes", int(targetNodes.size()));
+
+    // Source type metadata
+    {
+      std::string sourceTypeStr = "Unknown";
+      switch (clip.source_type) {
+        case tinyusdz::tydra::AnimationSourceType::XformOp: sourceTypeStr = "XformOp"; break;
+        case tinyusdz::tydra::AnimationSourceType::SkelAnimation: sourceTypeStr = "SkelAnimation"; break;
+        case tinyusdz::tydra::AnimationSourceType::BlendShape: sourceTypeStr = "BlendShape"; break;
+        default: break;
+      }
+      info.set("sourceType", sourceTypeStr);
+      info.set("numAnimatedJoints", clip.num_animated_joints);
+      info.set("numAnimatedNodes", clip.num_animated_nodes);
+    }
 
     return info;
   }
@@ -4279,6 +4465,9 @@ class TinyUSDZLoaderNative {
   };
   mutable std::unordered_map<int, ReorderedMeshCache> reordered_mesh_cache_;
 
+  // Cache for vec4 tangents (xyz=tangent, w=handedness) in the non-reordered path
+  mutable std::unordered_map<int, std::vector<float>> tangents4_cache_;
+
   // key = session_id
   std::unordered_map<std::string, tinyusdz::tydra::mcp::Context> mcp_ctx_;
   std::string mcp_session_id_;
@@ -4972,6 +5161,8 @@ EMSCRIPTEN_BINDINGS(tinyusdz_module) {
       .function("getLightWithFormat", &TinyUSDZLoaderNative::getLightWithFormat)
       .function("getAllLights", &TinyUSDZLoaderNative::getAllLights)
       .function("numLights", &TinyUSDZLoaderNative::numLights)
+      .function("getCamera", &TinyUSDZLoaderNative::getCamera)
+      .function("numCameras", &TinyUSDZLoaderNative::numCameras)
       .function("getTexture", &TinyUSDZLoaderNative::getTexture)
       .function("numTextures", &TinyUSDZLoaderNative::numTextures)
       .function("getImage", &TinyUSDZLoaderNative::getImage)

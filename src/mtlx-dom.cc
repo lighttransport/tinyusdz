@@ -178,19 +178,8 @@ bool MtlxNodeGraph::ParseFromXML(XMLNodePtr xml_node) {
   // Parse children
   for (const auto& child : xml_node->GetChildren()) {
     const std::string& child_name = child->GetName();
-    
-    if (child_name == "node" || 
-        // Typed nodes (e.g., <image>, <tiledimage>, etc.)
-        child_name == "image" || child_name == "tiledimage" ||
-        child_name == "place2d" || child_name == "constant" ||
-        child_name == "multiply" || child_name == "add" ||
-        child_name == "subtract" || child_name == "divide") {
-      
-      auto node = std::make_shared<MtlxNode>();
-      if (node->ParseFromXML(child)) {
-        nodes_.push_back(node);
-      }
-    } else if (child_name == "input") {
+
+    if (child_name == "input") {
       auto input = std::make_shared<MtlxInput>();
       if (input->ParseFromXML(child)) {
         inputs_.push_back(input);
@@ -199,6 +188,13 @@ bool MtlxNodeGraph::ParseFromXML(XMLNodePtr xml_node) {
       auto output = std::make_shared<MtlxOutput>();
       if (output->ParseFromXML(child)) {
         outputs_.push_back(output);
+      }
+    } else {
+      // Any other child element is treated as a node
+      // (image, tiledimage, place2d, constant, multiply, add, etc.)
+      auto node = std::make_shared<MtlxNode>();
+      if (node->ParseFromXML(child)) {
+        nodes_.push_back(node);
       }
     }
   }
@@ -292,18 +288,7 @@ bool MtlxDocument::ParseElement(XMLNodePtr xml_node) {
   
   const std::string& element_name = xml_node->GetName();
   
-  if (element_name == "node" || 
-      // Typed nodes
-      element_name == "standard_surface" ||
-      element_name == "UsdPreviewSurface" ||
-      element_name == "image" || element_name == "tiledimage" ||
-      element_name == "place2d" || element_name == "constant") {
-    
-    auto node = std::make_shared<MtlxNode>();
-    if (node->ParseFromXML(xml_node)) {
-      nodes_.push_back(node);
-    }
-  } else if (element_name == "nodegraph") {
+  if (element_name == "nodegraph") {
     auto nodegraph = std::make_shared<MtlxNodeGraph>();
     if (nodegraph->ParseFromXML(xml_node)) {
       nodegraphs_.push_back(nodegraph);
@@ -313,11 +298,14 @@ bool MtlxDocument::ParseElement(XMLNodePtr xml_node) {
     if (material->ParseFromXML(xml_node)) {
       materials_.push_back(material);
     }
-  }
-  
-  // Recursively parse any nested nodegraphs or other elements
-  for (const auto& child : xml_node->GetChildren()) {
-    ParseElement(child);
+  } else if (element_name != "look" && element_name != "typedef" &&
+             element_name != "geominfo" && element_name != "collection") {
+    // Treat as a node (standard_surface, UsdPreviewSurface, open_pbr_surface,
+    // image, tiledimage, place2d, constant, etc.)
+    auto node = std::make_shared<MtlxNode>();
+    if (node->ParseFromXML(xml_node)) {
+      nodes_.push_back(node);
+    }
   }
   
   return true;
