@@ -158,6 +158,10 @@ struct Skeleton : Xformable {
       return false;
     }
 
+    if (!animationSource.has_value()) {
+      return false;
+    }
+
     const Relationship &rel = animationSource.value();
     if (qual) {
       (*qual) = rel.get_listedit_qual();
@@ -168,13 +172,14 @@ struct Skeleton : Xformable {
     } else if (rel.is_pathvector()) {
       if (rel.targetPathVector.size()) {
         (*path) = rel.targetPathVector[0];
+      } else {
+        return false;
       }
     } else {
       return false;
     }
 
-
-    return false;
+    return true;
   }
 
   const std::vector<value::token> &primChildrenNames() const { return _primChildren; }
@@ -216,8 +221,11 @@ struct SkelRoot : Xformable {
   nonstd::optional<Relationship> proxyPrim;  // rel proxyPrim
   //std::vector<XformOp> xformOps;
 
-  // TODO: Add function to check if SkelRoot contains `Skeleton` and `GeomMesh`
-  // node?;
+  // SkelBindingAPI
+  nonstd::optional<Relationship>
+      animationSource;  // rel skel:animationSource = </path/...>
+  nonstd::optional<Relationship>
+      skeleton;          // rel skel:skeleton = </path/...>
 
 
   std::pair<ListEditQual, std::vector<Reference>> references;
@@ -326,22 +334,14 @@ struct SkelAnimation {
 // Some usdSkel utility functions
 //
 
-// Equivalent to pxrUSd's UsdSkelNormalizeWeights
-bool SkelNormalizeWeights(const std::vector<float> &weights, int numInfluencesPerComponent, const float eps = std::numeric_limits<float>::epsilon());
-bool SkelSortInfluences(const std::vector<int> indices, const std::vector<float> &weights, int numInfluencesPerComponent);
+// Equivalent to pxrUSD's UsdSkelNormalizeWeights
+// Normalizes weight values in-place so that each group of numInfluencesPerComponent
+// weights sums to 1.0 (or 0.0 if all weights in a group are below eps).
+bool SkelNormalizeWeights(std::vector<float> &weights, int numInfluencesPerComponent, const float eps = std::numeric_limits<float>::epsilon());
 
-#if 0 // move to Tydra
-struct SkelNode
-{
-  std::string joint;
-  std::string jointName;
-  int32_t parentIndex{-1}; // Index of parent SkelNode.
-  int32_t index; // Index of this SkelNode.
-  
-  value::matrix4d bindTransform{value::matrix4d::identity()};
-  value::matrix4d restTransform{value::matrix4d::identity()};
-};
-#endif
+// Equivalent to pxrUSD's UsdSkelSortInfluences
+// Sorts joint indices and weights per component group by weight (descending).
+bool SkelSortInfluences(std::vector<int> &indices, std::vector<float> &weights, int numInfluencesPerComponent);
 
 //
 // Build Skeleleton Topology(hierarchy) from Skeleton's joints.
@@ -358,6 +358,22 @@ struct SkelNode
 bool BuildSkelTopology(
   const std::vector<value::token> &joints,
   std::vector<int> &dst,
+  std::string *err);
+
+///
+/// Validate a skeleton topology (parent indices array).
+///
+/// Checks for: single root, no cycles, valid parent indices,
+/// parent ordering (parent index < child index).
+///
+/// Equivalent to pxrUSD's UsdSkelTopology::Validate.
+///
+/// @param[in] topology Parent indices (-1 for root)
+/// @param[out] err Error message when invalid
+/// @return true if topology is valid
+///
+bool SkelValidateTopology(
+  const std::vector<int> &topology,
   std::string *err);
 
 // import DEFINE_TYPE_TRAIT and DEFINE_ROLE_TYPE_TRAIT

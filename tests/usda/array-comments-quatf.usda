@@ -1,0 +1,11 @@
+#usda 1.0
+def Scope "Test" {
+    custom quatf[] rotations = [
+        # identity
+        (1, 0, 0, 0),
+        # 30 deg around Y
+        (0.9659, 0, 0.2588, 0),
+        # back to identity
+        (1, 0, 0, 0)
+    ]
+}

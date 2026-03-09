@@ -1013,7 +1013,11 @@ bool PrimToJSONIterative(json &root, const tinyusdz::Prim& root_prim) {
   // Initialize with root prim
   stack.emplace_back(&root_prim);
 
+  size_t iter = 0;
   while (!stack.empty()) {
+    if (iter++ >= kMaxDefaultTraversalLimit) {
+      break;
+    }
     StackEntry &curr = stack.back();
     const auto &children = curr.prim->children();
 

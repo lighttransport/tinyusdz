@@ -820,6 +820,14 @@ enum class AnimationInterpolation {
   CubicSpline  ///< CUBICSPLINE - cubic spline with in/out tangents
 };
 
+/// Tracks the USD origin of an AnimationClip.
+enum class AnimationSourceType {
+  Unknown,
+  XformOp,          ///< From xformOp timeSamples
+  SkelAnimation,    ///< From UsdSkelAnimation prim
+  BlendShape,       ///< From BlendShape weight animation (future)
+};
+
 ///
 /// Animation channel target type - distinguishes what the channel animates
 ///
@@ -964,6 +972,10 @@ struct AnimationClip {
   std::string display_name;       ///< USD `displayName` prim meta
 
   float duration{0.0f};           ///< Animation duration in seconds
+
+  AnimationSourceType source_type{AnimationSourceType::Unknown};
+  int32_t num_animated_joints{0};   ///< Count of unique joints animated
+  int32_t num_animated_nodes{0};    ///< Count of unique scene nodes animated
 
   std::vector<KeyframeSampler> samplers;  ///< Keyframe data
   std::vector<AnimationChannel> channels;  ///< Property bindings
@@ -1160,7 +1172,7 @@ struct RenderMesh {
   std::vector<uint32_t> triangulatedFaceVertexIndices;
   std::vector<uint32_t> triangulatedFaceVertexCounts;
 
-  std::vector<size_t>
+  std::vector<uint32_t>
       triangulatedToOrigFaceVertexIndexMap;  // used for rearrange facevertex
                                              // attrib
   std::vector<uint32_t>
@@ -1590,6 +1602,7 @@ class OpenPBRSurfaceShader {
   ShaderParam<float> specular_ior_level{0.5f};
   ShaderParam<float> specular_anisotropy{0.0f};
   ShaderParam<float> specular_rotation{0.0f};
+  ShaderParam<float> specular_roughness_anisotropy{0.0f};
   
   // Transmission - transparency and refraction
   ShaderParam<float> transmission_weight{0.0f};
@@ -1598,6 +1611,8 @@ class OpenPBRSurfaceShader {
   ShaderParam<vec3> transmission_scatter{{0.0f, 0.0f, 0.0f}};
   ShaderParam<float> transmission_scatter_anisotropy{0.0f};
   ShaderParam<float> transmission_dispersion{0.0f};
+  ShaderParam<float> transmission_dispersion_abbe_number{0.0f};
+  ShaderParam<float> transmission_dispersion_scale{0.0f};
   
   // Subsurface scattering
   ShaderParam<float> subsurface_weight{0.0f};
@@ -1606,6 +1621,7 @@ class OpenPBRSurfaceShader {
   ShaderParam<vec3> subsurface_radius_scale{{1.0f, 1.0f, 1.0f}};
   ShaderParam<float> subsurface_scale{1.0f};
   ShaderParam<float> subsurface_anisotropy{0.0f};
+  ShaderParam<float> subsurface_scatter_anisotropy{0.0f};
   
   // Sheen - fabric-like reflection
   ShaderParam<float> sheen_weight{0.0f};
@@ -1629,8 +1645,10 @@ class OpenPBRSurfaceShader {
   ShaderParam<float> coat_anisotropy{0.0f};
   ShaderParam<float> coat_rotation{0.0f};
   ShaderParam<float> coat_ior{1.5f};
-  ShaderParam<vec3> coat_affect_color{{1.0f, 1.0f, 1.0f}};
+  ShaderParam<float> coat_affect_color{0.0f};
   ShaderParam<float> coat_affect_roughness{0.0f};
+  ShaderParam<float> coat_roughness_anisotropy{0.0f};
+  ShaderParam<float> coat_darkening{0.0f};
   
   // Emission - light emission
   ShaderParam<float> emission_luminance{0.0f};
@@ -1697,6 +1715,14 @@ class OpenPBRSurfaceShader {
 #pragma GCC diagnostic pop
 #endif
 
+// Material tag for render pass classification.
+// Matches OpenUSD hdSt's material tag computation logic.
+enum class MaterialTag {
+  Opaque,       // Default opaque rendering
+  Translucent,  // Alpha blending / transmission (sorted back-to-front)
+  Masked,       // Alpha cutout (opacityThreshold > 0, UsdPreviewSurface only)
+};
+
 // Material + Shader
 // Supports dual material representation: UsdPreviewSurface and/or MaterialX OpenPBR
 struct RenderMaterial {
@@ -1709,15 +1735,56 @@ struct RenderMaterial {
   // Use nonstd::optional to allow either/both/none
   nonstd::optional<PreviewSurfaceShader> surfaceShader;  // UsdPreviewSurface
   nonstd::optional<OpenPBRSurfaceShader> openPBRShader;  // MaterialX OpenPBR
-  
-  // TODO: displacement, volume.
+
+  // Displacement shader output.
+  // For UsdPreviewSurface, displacement is part of surfaceShader.
+  // For MaterialX, a separate displacement shader may be connected.
+  bool has_displacement{false};
+  std::string displacement_shader_path;  // Prim path of displacement shader
+
+  // Volume shader output.
+  bool has_volume{false};
+  std::string volume_shader_path;  // Prim path of volume shader
+
+  // Material tag for render pass sorting (opaque vs transparent).
+  // Computed by computeMaterialTag() after shader conversion.
+  MaterialTag materialTag{MaterialTag::Opaque};
 
   uint64_t handle{0};  // Handle ID for Graphics API. 0 = invalid
-  
+
   // Helper methods to check which materials are available
   bool hasUsdPreviewSurface() const { return surfaceShader.has_value(); }
   bool hasOpenPBR() const { return openPBRShader.has_value(); }
   bool hasBothMaterials() const { return hasUsdPreviewSurface() && hasOpenPBR(); }
+
+  // Compute material tag from shader parameters.
+  // Follows OpenUSD hdSt logic:
+  //   UsdPreviewSurface: opacityThreshold > 0 → Masked, opacity < 1 → Translucent
+  //   OpenPBR: transmission_weight != 0 or opacity != 1 → Translucent
+  void computeMaterialTag() {
+    // Prefer OpenPBR if available (MaterialX path)
+    if (openPBRShader.has_value()) {
+      const auto &s = *openPBRShader;
+      if (s.transmission_weight.value > 0.0f || s.opacity.value < 1.0f) {
+        materialTag = MaterialTag::Translucent;
+      } else {
+        materialTag = MaterialTag::Opaque;
+      }
+      return;
+    }
+    // UsdPreviewSurface
+    if (surfaceShader.has_value()) {
+      const auto &s = *surfaceShader;
+      if (s.opacityThreshold.value > 0.0f) {
+        materialTag = MaterialTag::Masked;
+      } else if (s.opacity.value < 1.0f) {
+        materialTag = MaterialTag::Translucent;
+      } else {
+        materialTag = MaterialTag::Opaque;
+      }
+      return;
+    }
+  }
 };
 
 // Simple Camera
@@ -2070,6 +2137,16 @@ struct MeshConverterConfig {
   //
   float facevarying_to_vertex_eps = std::numeric_limits<float>::epsilon();
 
+  //
+  // Maximum vertex valence (number of face-vertices sharing a position) before
+  // the position-bucketed vertex dedup falls back to flatten mode (no dedup).
+  // This prevents O(N^2) worst case when a single position is referenced by
+  // many faces. When any vertex's degree exceeds this threshold, dedup is
+  // skipped entirely and each face-vertex becomes its own unique vertex.
+  // Set to 0 to disable the safeguard (always dedup).
+  //
+  uint32_t max_vertex_valence{16};
+
   // When true, free GeomMesh data after converting it to save memory usage.
   // For emscripten.
   bool lowmem{false};
@@ -2190,46 +2267,10 @@ struct RenderSceneConverterConfig {
 // to save memory. Index value of -1 (or ~0u for uint32_t) means no attribute.
 //
 
-// Forward declaration for attribute arrays
-template <class PackedVert>
-struct DefaultVertexInput;
-
-// Epsilon values for floating point comparison
-constexpr float kPositionEps = 1e-6f;
-constexpr float kAttributeEps = 1e-3f;
-
-// Helper functions for epsilon-based comparison
-inline bool float_equal(float a, float b, float eps) {
-  return std::abs(a - b) <= eps;
-}
-
-inline bool float2_equal(const value::float2& a, const value::float2& b, float eps) {
-  return float_equal(a[0], b[0], eps) && float_equal(a[1], b[1], eps);
-}
-
-inline bool float3_equal(const value::float3& a, const value::float3& b, float eps) {
-  return float_equal(a[0], b[0], eps) && float_equal(a[1], b[1], eps) && float_equal(a[2], b[2], eps);
-}
-
-inline int float_compare(float a, float b, float eps) {
-  if (float_equal(a, b, eps)) return 0;
-  return (a < b) ? -1 : 1;
-}
-
-inline int float2_compare(const value::float2& a, const value::float2& b, float eps) {
-  int cmp = float_compare(a[0], b[0], eps);
-  if (cmp != 0) return cmp;
-  return float_compare(a[1], b[1], eps);
-}
-
-inline int float3_compare(const value::float3& a, const value::float3& b, float eps) {
-  int cmp = float_compare(a[0], b[0], eps);
-  if (cmp != 0) return cmp;
-  cmp = float_compare(a[1], b[1], eps);
-  if (cmp != 0) return cmp;
-  return float_compare(a[2], b[2], eps);
-}
-
+// DEPRECATED: DefaultPackedVertexData, DefaultPackedVertexDataHasher,
+// DefaultPackedVertexDataEqual, DefaultVertexInput, DefaultVertexOutput, and
+// BuildIndices are kept for external code compatibility but are no longer used
+// internally. Internal vertex dedup now uses position-bucketed linear scan.
 struct DefaultPackedVertexData {
   //value::float3 position;
   uint32_t point_index;
@@ -2289,238 +2330,6 @@ struct DefaultPackedVertexDataEqual {
     return memcmp(reinterpret_cast<const void *>(&lhs),
                   reinterpret_cast<const void *>(&rhs),
                   sizeof(DefaultPackedVertexData)) == 0;
-  }
-};
-
-// Epsilon-based comparison with access to attribute arrays
-template <class VertexInput>
-struct DefaultPackedVertexDataCompare {
-  const VertexInput* vertex_input;
-  
-  DefaultPackedVertexDataCompare(const VertexInput* input) : vertex_input(input) {}
-  
-  bool operator()(const DefaultPackedVertexData &lhs,
-                  const DefaultPackedVertexData &rhs) const {
-    // Compare point indices first
-    if (lhs.point_index != rhs.point_index) {
-      return lhs.point_index < rhs.point_index;
-    }
-    
-#ifdef TYDRA_USE_INDEX
-    // In index mode, resolve indices to values and compare with epsilon
-    if (!vertex_input) {
-      // Fallback to index comparison if no vertex input available
-      return memcmp(&lhs, &rhs, sizeof(DefaultPackedVertexData)) < 0;
-    }
-    
-    // Compare normals
-    if (lhs.normal_index != rhs.normal_index) {
-      if (lhs.normal_index == ~0u) return true;  // lhs has no normal, rhs has normal
-      if (rhs.normal_index == ~0u) return false; // rhs has no normal, lhs has normal
-      
-      const auto& lhs_normal = vertex_input->unique_normals[lhs.normal_index];
-      const auto& rhs_normal = vertex_input->unique_normals[rhs.normal_index];
-      int cmp = float3_compare(lhs_normal, rhs_normal, kAttributeEps);
-      if (cmp != 0) return cmp < 0;
-    }
-    
-    // Compare uv0
-    if (lhs.uv0_index != rhs.uv0_index) {
-      if (lhs.uv0_index == ~0u) return true;
-      if (rhs.uv0_index == ~0u) return false;
-      
-      const auto& lhs_uv0 = vertex_input->unique_uv0s[lhs.uv0_index];
-      const auto& rhs_uv0 = vertex_input->unique_uv0s[rhs.uv0_index];
-      int cmp = float2_compare(lhs_uv0, rhs_uv0, kAttributeEps);
-      if (cmp != 0) return cmp < 0;
-    }
-    
-    // Compare uv1
-    if (lhs.uv1_index != rhs.uv1_index) {
-      if (lhs.uv1_index == ~0u) return true;
-      if (rhs.uv1_index == ~0u) return false;
-      
-      const auto& lhs_uv1 = vertex_input->unique_uv1s[lhs.uv1_index];
-      const auto& rhs_uv1 = vertex_input->unique_uv1s[rhs.uv1_index];
-      int cmp = float2_compare(lhs_uv1, rhs_uv1, kAttributeEps);
-      if (cmp != 0) return cmp < 0;
-    }
-    
-    // Compare tangents
-    if (lhs.tangent_index != rhs.tangent_index) {
-      if (lhs.tangent_index == ~0u) return true;
-      if (rhs.tangent_index == ~0u) return false;
-      
-      const auto& lhs_tangent = vertex_input->unique_tangents[lhs.tangent_index];
-      const auto& rhs_tangent = vertex_input->unique_tangents[rhs.tangent_index];
-      int cmp = float3_compare(lhs_tangent, rhs_tangent, kAttributeEps);
-      if (cmp != 0) return cmp < 0;
-    }
-    
-    // Compare binormals
-    if (lhs.binormal_index != rhs.binormal_index) {
-      if (lhs.binormal_index == ~0u) return true;
-      if (rhs.binormal_index == ~0u) return false;
-      
-      const auto& lhs_binormal = vertex_input->unique_binormals[lhs.binormal_index];
-      const auto& rhs_binormal = vertex_input->unique_binormals[rhs.binormal_index];
-      int cmp = float3_compare(lhs_binormal, rhs_binormal, kAttributeEps);
-      if (cmp != 0) return cmp < 0;
-    }
-    
-    // Compare colors
-    if (lhs.color_index != rhs.color_index) {
-      if (lhs.color_index == ~0u) return true;
-      if (rhs.color_index == ~0u) return false;
-      
-      const auto& lhs_color = vertex_input->unique_colors[lhs.color_index];
-      const auto& rhs_color = vertex_input->unique_colors[rhs.color_index];
-      int cmp = float3_compare(lhs_color, rhs_color, kAttributeEps);
-      if (cmp != 0) return cmp < 0;
-    }
-    
-    // Compare opacity
-    if (lhs.opacity_index != rhs.opacity_index) {
-      if (lhs.opacity_index == ~0u) return true;
-      if (rhs.opacity_index == ~0u) return false;
-      
-      const float lhs_opacity = vertex_input->unique_opacities[lhs.opacity_index];
-      const float rhs_opacity = vertex_input->unique_opacities[rhs.opacity_index];
-      int cmp = float_compare(lhs_opacity, rhs_opacity, kAttributeEps);
-      if (cmp != 0) return cmp < 0;
-    }
-    
-#else
-    // Direct value comparison with epsilon
-    int cmp = float3_compare(lhs.normal, rhs.normal, kAttributeEps);
-    if (cmp != 0) return cmp < 0;
-    
-    cmp = float2_compare(lhs.uv0, rhs.uv0, kAttributeEps);
-    if (cmp != 0) return cmp < 0;
-    
-    cmp = float2_compare(lhs.uv1, rhs.uv1, kAttributeEps);
-    if (cmp != 0) return cmp < 0;
-    
-    cmp = float3_compare(lhs.tangent, rhs.tangent, kAttributeEps);
-    if (cmp != 0) return cmp < 0;
-    
-    cmp = float3_compare(lhs.binormal, rhs.binormal, kAttributeEps);
-    if (cmp != 0) return cmp < 0;
-    
-    cmp = float3_compare(lhs.color, rhs.color, kAttributeEps);
-    if (cmp != 0) return cmp < 0;
-    
-    cmp = float_compare(lhs.opacity, rhs.opacity, kAttributeEps);
-    if (cmp != 0) return cmp < 0;
-#endif
-    
-    return false; // All values are equal within epsilon
-  }
-};
-
-// Epsilon-based equality comparison with access to attribute arrays
-template <class VertexInput>
-struct DefaultPackedVertexDataEqualEps {
-  const VertexInput* vertex_input;
-  
-  DefaultPackedVertexDataEqualEps(const VertexInput* input) : vertex_input(input) {}
-  
-  bool operator()(const DefaultPackedVertexData &lhs,
-                  const DefaultPackedVertexData &rhs) const {
-    // Compare point indices first
-    if (lhs.point_index != rhs.point_index) {
-      return false;
-    }
-    
-#ifdef TYDRA_USE_INDEX
-    // In index mode, resolve indices to values and compare with epsilon
-    if (!vertex_input) {
-      // Fallback to exact comparison if no vertex input available
-      return memcmp(&lhs, &rhs, sizeof(DefaultPackedVertexData)) == 0;
-    }
-    
-    // Compare normals
-    if (lhs.normal_index != rhs.normal_index) {
-      if (lhs.normal_index == ~0u || rhs.normal_index == ~0u) {
-        return lhs.normal_index == rhs.normal_index; // Both must be missing
-      }
-      const auto& lhs_normal = vertex_input->unique_normals[lhs.normal_index];
-      const auto& rhs_normal = vertex_input->unique_normals[rhs.normal_index];
-      if (!float3_equal(lhs_normal, rhs_normal, kAttributeEps)) return false;
-    }
-    
-    // Compare uv0
-    if (lhs.uv0_index != rhs.uv0_index) {
-      if (lhs.uv0_index == ~0u || rhs.uv0_index == ~0u) {
-        return lhs.uv0_index == rhs.uv0_index;
-      }
-      const auto& lhs_uv0 = vertex_input->unique_uv0s[lhs.uv0_index];
-      const auto& rhs_uv0 = vertex_input->unique_uv0s[rhs.uv0_index];
-      if (!float2_equal(lhs_uv0, rhs_uv0, kAttributeEps)) return false;
-    }
-    
-    // Compare uv1
-    if (lhs.uv1_index != rhs.uv1_index) {
-      if (lhs.uv1_index == ~0u || rhs.uv1_index == ~0u) {
-        return lhs.uv1_index == rhs.uv1_index;
-      }
-      const auto& lhs_uv1 = vertex_input->unique_uv1s[lhs.uv1_index];
-      const auto& rhs_uv1 = vertex_input->unique_uv1s[rhs.uv1_index];
-      if (!float2_equal(lhs_uv1, rhs_uv1, kAttributeEps)) return false;
-    }
-    
-    // Compare tangents
-    if (lhs.tangent_index != rhs.tangent_index) {
-      if (lhs.tangent_index == ~0u || rhs.tangent_index == ~0u) {
-        return lhs.tangent_index == rhs.tangent_index;
-      }
-      const auto& lhs_tangent = vertex_input->unique_tangents[lhs.tangent_index];
-      const auto& rhs_tangent = vertex_input->unique_tangents[rhs.tangent_index];
-      if (!float3_equal(lhs_tangent, rhs_tangent, kAttributeEps)) return false;
-    }
-    
-    // Compare binormals
-    if (lhs.binormal_index != rhs.binormal_index) {
-      if (lhs.binormal_index == ~0u || rhs.binormal_index == ~0u) {
-        return lhs.binormal_index == rhs.binormal_index;
-      }
-      const auto& lhs_binormal = vertex_input->unique_binormals[lhs.binormal_index];
-      const auto& rhs_binormal = vertex_input->unique_binormals[rhs.binormal_index];
-      if (!float3_equal(lhs_binormal, rhs_binormal, kAttributeEps)) return false;
-    }
-    
-    // Compare colors
-    if (lhs.color_index != rhs.color_index) {
-      if (lhs.color_index == ~0u || rhs.color_index == ~0u) {
-        return lhs.color_index == rhs.color_index;
-      }
-      const auto& lhs_color = vertex_input->unique_colors[lhs.color_index];
-      const auto& rhs_color = vertex_input->unique_colors[rhs.color_index];
-      if (!float3_equal(lhs_color, rhs_color, kAttributeEps)) return false;
-    }
-    
-    // Compare opacity
-    if (lhs.opacity_index != rhs.opacity_index) {
-      if (lhs.opacity_index == ~0u || rhs.opacity_index == ~0u) {
-        return lhs.opacity_index == rhs.opacity_index;
-      }
-      const float lhs_opacity = vertex_input->unique_opacities[lhs.opacity_index];
-      const float rhs_opacity = vertex_input->unique_opacities[rhs.opacity_index];
-      if (!float_equal(lhs_opacity, rhs_opacity, kAttributeEps)) return false;
-    }
-    
-#else
-    // Direct value comparison with epsilon
-    if (!float3_equal(lhs.normal, rhs.normal, kAttributeEps)) return false;
-    if (!float2_equal(lhs.uv0, rhs.uv0, kAttributeEps)) return false;
-    if (!float2_equal(lhs.uv1, rhs.uv1, kAttributeEps)) return false;
-    if (!float3_equal(lhs.tangent, rhs.tangent, kAttributeEps)) return false;
-    if (!float3_equal(lhs.binormal, rhs.binormal, kAttributeEps)) return false;
-    if (!float3_equal(lhs.color, rhs.color, kAttributeEps)) return false;
-    if (!float_equal(lhs.opacity, rhs.opacity, kAttributeEps)) return false;
-#endif
-    
-    return true; // All values are equal within epsilon
   }
 };
 
@@ -2736,116 +2545,6 @@ void BuildIndices(const VertexInput &input, VertexOutput &output,
       vertexToIndexMap[v] = new_index;
     }
     out_point_indices.push_back(v.point_index);
-  }
-}
-
-//
-// BuildIndicesWithSpatialHash - Optimized version using spatial hashing
-// for efficient vertex similarity search
-//
-// Use this for large meshes where vertex deduplication is a bottleneck.
-// The spatial hash grid provides O(1) average-case lookup with better
-// cache locality than the standard hash map approach.
-//
-template <class VertexInput, class VertexOutput, class PackedVert>
-void BuildIndicesWithSpatialHash(
-    const VertexInput &input, 
-    VertexOutput &output,
-    std::vector<uint32_t> &out_indices, 
-    std::vector<uint32_t> &out_point_indices,
-    float cellSize = 0.01f,        // Grid cell size for spatial hashing
-    float positionEps = 1e-6f,      // Epsilon for position comparison
-    float attributeEps = 1e-3f)     // Epsilon for attribute comparison
-{
-  using namespace spatial;
-  
-  // Initialize spatial hash grid
-  VertexSpatialHashGrid<float> spatialGrid(cellSize, positionEps, attributeEps);
-  
-  // Reserve space for expected vertices
-  spatialGrid.reserveVertices(input.size());
-  output.reserve(input.size() / 4); // Assume roughly 25% unique vertices
-  
-  // Process each input vertex
-  for (size_t i = 0; i < input.size(); i++) {
-    PackedVert v;
-    input.get(i, v);
-    
-    // Convert PackedVert to spatial hash vertex format
-    typename VertexSpatialHashGrid<float>::Vertex spatialVertex;
-    
-    // Get position from points array if available
-    if (v.point_index < input.point_indices.size()) {
-      // Note: This assumes points are available elsewhere in the context
-      // For now, we'll use the point_index as a placeholder
-      spatialVertex.position = {0, 0, 0}; // Would be filled from actual points
-    }
-    
-#ifdef TYDRA_USE_INDEX
-    // Resolve indices to values for spatial search
-    if (v.normal_index != ~0u && v.normal_index < input.unique_normals.size()) {
-      spatialVertex.normal = input.unique_normals[v.normal_index];
-    }
-    if (v.uv0_index != ~0u && v.uv0_index < input.unique_uv0s.size()) {
-      spatialVertex.uv0 = input.unique_uv0s[v.uv0_index];
-    }
-    if (v.uv1_index != ~0u && v.uv1_index < input.unique_uv1s.size()) {
-      spatialVertex.uv1 = input.unique_uv1s[v.uv1_index];
-    }
-    if (v.tangent_index != ~0u && v.tangent_index < input.unique_tangents.size()) {
-      spatialVertex.tangent = input.unique_tangents[v.tangent_index];
-    }
-    if (v.binormal_index != ~0u && v.binormal_index < input.unique_binormals.size()) {
-      spatialVertex.binormal = input.unique_binormals[v.binormal_index];
-    }
-    if (v.color_index != ~0u && v.color_index < input.unique_colors.size()) {
-      spatialVertex.color = input.unique_colors[v.color_index];
-    }
-    if (v.opacity_index != ~0u && v.opacity_index < input.unique_opacities.size()) {
-      spatialVertex.opacity = input.unique_opacities[v.opacity_index];
-    }
-#else
-    // Direct value access
-    spatialVertex.normal = v.normal;
-    spatialVertex.uv0 = v.uv0;
-    spatialVertex.uv1 = v.uv1;
-    spatialVertex.tangent = v.tangent;
-    spatialVertex.binormal = v.binormal;
-    spatialVertex.color = v.color;
-    spatialVertex.opacity = v.opacity;
-#endif
-    
-    spatialVertex.id = static_cast<uint32_t>(i);
-    
-    // Check if similar vertex exists
-    uint32_t existingId;
-    bool found = spatialGrid.findExactVertex(spatialVertex, existingId);
-    
-    if (found && existingId < output.size()) {
-      // Use existing vertex
-      out_indices.push_back(existingId);
-    } else {
-      // Add new unique vertex
-      uint32_t new_index = static_cast<uint32_t>(output.size());
-      out_indices.push_back(new_index);
-      output.push_back(v);
-      
-      // Update spatial vertex id to match output index
-      spatialVertex.id = new_index;
-      spatialGrid.addVertex(spatialVertex);
-    }
-    
-    out_point_indices.push_back(v.point_index);
-  }
-  
-  // Build spatial grid after all vertices are added
-  spatialGrid.build();
-  
-  // Optional: Get statistics for debugging
-  if (false) { // Set to true for debugging
-    size_t totalCells, maxCellSize, avgCellSize, subdivisions;
-    spatialGrid.getStatistics(totalCells, maxCellSize, avgCellSize, subdivisions);
-    // Log statistics...
   }
 }
 
@@ -3221,6 +2920,13 @@ class RenderSceneConverter {
                             const GeometryLight &light,
                             RenderLight *rlight_out);
 
+  // Wrapper around GetBoundMaterial with caching.
+  // Avoids repeated ancestor walks for sibling prims.
+  bool GetBoundMaterialCached(
+      const Stage &stage, const Path &abs_path,
+      const std::string &purpose, Path *materialPath,
+      const Material **material, std::string *err);
+
  private:
   ///
   /// Convert variability of vertex data to 'vertex' or 'facevarying'.
@@ -3254,7 +2960,8 @@ class RenderSceneConverter {
   ///
   /// @param[inout] mesh
   ///
-  bool BuildVertexIndicesImpl(RenderMesh &mesh);
+  bool BuildVertexIndicesImpl(RenderMesh &mesh, uint32_t max_vertex_valence = 16,
+                               float dedup_eps = 0.0f);
 
   ///
   /// Build (single) vertex indices for RenderMesh.
@@ -3374,6 +3081,16 @@ class RenderSceneConverter {
 
   // Cached ListUVNames results per material ID
   std::unordered_map<int64_t, StringAndIdMap> _uvNameCache;
+
+  // Cached material binding results: key = "prim_path\0purpose" → (found, materialPath, material_ptr).
+  // Avoids repeated ancestor walks for sibling prims.
+  struct MaterialBindingCacheEntry {
+    bool found{false};
+    Path materialPath;
+    const Material *material{nullptr};
+  };
+  std::unordered_map<std::string, MaterialBindingCacheEntry> _materialBindingCache;
+
 };
 
 ///

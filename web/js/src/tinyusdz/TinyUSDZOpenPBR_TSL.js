@@ -584,7 +584,7 @@ export class MtlxNodeGraphProcessor {
 
         switch (nodeType) {
             case 'constant':
-                return this._processConstant(nodeData);
+                return this._processConstant(nodeData, inputs);
 
             case 'add':
                 return MtlxNodes.add(inputs.in1, inputs.in2);
@@ -673,8 +673,9 @@ export class MtlxNodeGraphProcessor {
         }
     }
 
-    _processConstant(nodeData) {
-        const value = nodeData.value;
+    _processConstant(nodeData, inputs = {}) {
+        // Prefer resolved inputs (from processGraph), fall back to nodeData.value
+        const value = (inputs && inputs.value !== undefined) ? inputs.value : nodeData.value;
         const valueType = nodeData.valueType || 'float';
 
         switch (valueType) {

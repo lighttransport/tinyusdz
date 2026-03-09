@@ -350,9 +350,9 @@ bool parse_uint64(const tstring_view &sv, uint64_t *ret);
 bool parse_float(const tstring_view &sv, float *ret);
 bool parse_double(const tstring_view &sv, double *ret);
 
-bool parse_int_array(const tstring_view &sv, std::vector<int32_t> *result, const char delimiter = ',');
-bool parse_float_array(const tstring_view &sv, std::vector<float> *result, const char delimiter = ',');
-bool parse_double_array(const tstring_view &sv, std::vector<double> *result, const char delimiter = ',');
+bool parse_int_array(const tstring_view &sv, std::vector<int32_t> *result);
+bool parse_float_array(const tstring_view &sv, std::vector<float> *result);
+bool parse_double_array(const tstring_view &sv, std::vector<double> *result);
 
 // Compound-type array parsers
 bool parse_float2_array(const tstring_view &sv, std::vector<tinyusdz::value::float2> *result);
@@ -367,9 +367,6 @@ bool parse_matrix4f_array(const tstring_view &sv, std::vector<tinyusdz::value::m
 bool parse_matrix2d_array(const tstring_view &sv, std::vector<tinyusdz::value::matrix2d> *result);
 bool parse_matrix3d_array(const tstring_view &sv, std::vector<tinyusdz::value::matrix3d> *result);
 bool parse_matrix4d_array(const tstring_view &sv, std::vector<tinyusdz::value::matrix4d> *result);
-
-bool print_float_array(std::vector<float> &v,
-  std::string &dst, const char delimiter = ',');
 
 }
 

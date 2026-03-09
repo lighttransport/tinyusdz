@@ -1,0 +1,9 @@
+#usda 1.0
+def Scope "Test" {
+    custom double[] values = [
+        # positive values
+        1.0, 2.5, 3.14159,
+        # negative values
+        -1.0, -2.5, -0.001
+    ]
+}
