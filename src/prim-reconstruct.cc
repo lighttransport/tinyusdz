@@ -69,37 +69,43 @@ constexpr auto kInputsVarname = "inputs:varname";
 namespace mtlx_validation {
 
 // Known MaterialX node categories (from MaterialX spec)
-static const std::set<std::string> kKnownNodeCategories = {
-  // Math operations
-  "add", "subtract", "multiply", "divide", "power", "min", "max",
-  "absval", "floor", "ceil", "round", "sqrt", "sin", "cos", "tan",
-  "asin", "acos", "atan", "atan2", "exp", "log", "ln", "sign",
-  "clamp", "mix", "remap", "smoothstep", "modulo", "invert",
-  // Channel operations
-  "extract", "combine2", "combine3", "combine4", "separate2", "separate3", "separate4",
-  "swizzle", "convert", "luminance",
-  // Color operations
-  "hsvadjust", "saturate", "contrast", "range",
-  // Vector operations
-  "normalize", "magnitude", "dotproduct", "crossproduct", "rotate3d",
-  "transformpoint", "transformvector", "transformnormal",
-  // Geometry
-  "position", "normal", "tangent", "bitangent", "texcoord", "geomcolor",
-  // Texture
-  "image", "tiledimage", "constant", "noise2d", "noise3d",
-  "cellnoise2d", "cellnoise3d", "fractal3d", "worleynoise2d", "worleynoise3d",
-  // Procedural
-  "ramp4", "splitlr", "splittb", "checkerboard",
-  // Surface shaders
-  "open_pbr_surface", "standard_surface", "UsdPreviewSurface"
-};
+static const std::set<std::string> &GetKnownNodeCategories() {
+  static const std::set<std::string> s = {
+    // Math operations
+    "add", "subtract", "multiply", "divide", "power", "min", "max",
+    "absval", "floor", "ceil", "round", "sqrt", "sin", "cos", "tan",
+    "asin", "acos", "atan", "atan2", "exp", "log", "ln", "sign",
+    "clamp", "mix", "remap", "smoothstep", "modulo", "invert",
+    // Channel operations
+    "extract", "combine2", "combine3", "combine4", "separate2", "separate3", "separate4",
+    "swizzle", "convert", "luminance",
+    // Color operations
+    "hsvadjust", "saturate", "contrast", "range",
+    // Vector operations
+    "normalize", "magnitude", "dotproduct", "crossproduct", "rotate3d",
+    "transformpoint", "transformvector", "transformnormal",
+    // Geometry
+    "position", "normal", "tangent", "bitangent", "texcoord", "geomcolor",
+    // Texture
+    "image", "tiledimage", "constant", "noise2d", "noise3d",
+    "cellnoise2d", "cellnoise3d", "fractal3d", "worleynoise2d", "worleynoise3d",
+    // Procedural
+    "ramp4", "splitlr", "splittb", "checkerboard",
+    // Surface shaders
+    "open_pbr_surface", "standard_surface", "UsdPreviewSurface"
+  };
+  return s;
+}
 
 // Known MaterialX types
-static const std::set<std::string> kKnownTypes = {
-  "float", "color3", "color4", "vector2", "vector3", "vector4",
-  "matrix33", "matrix44", "string", "filename", "boolean", "integer",
-  "surfaceshader", "displacementshader", "volumeshader"
-};
+static const std::set<std::string> &GetKnownTypes() {
+  static const std::set<std::string> s = {
+    "float", "color3", "color4", "vector2", "vector3", "vector4",
+    "matrix33", "matrix44", "string", "filename", "boolean", "integer",
+    "surfaceshader", "displacementshader", "volumeshader"
+  };
+  return s;
+}
 
 // Check if info:id follows MaterialX naming convention: ND_<category>_<type>
 // Returns true if valid or if validation is disabled
@@ -141,9 +147,9 @@ static bool ValidateInfoId(const std::string &info_id,
                              ? category.substr(0, firstUnderscore)
                              : category;
 
-  if (kKnownNodeCategories.find(baseCategory) == kKnownNodeCategories.end()) {
+  if (GetKnownNodeCategories().find(baseCategory) == GetKnownNodeCategories().end()) {
     // Check full category name as well
-    if (kKnownNodeCategories.find(category) == kKnownNodeCategories.end()) {
+    if (GetKnownNodeCategories().find(category) == GetKnownNodeCategories().end()) {
       if (warn) {
         *warn += fmt::format("Unknown MaterialX node category '{}' in info:id '{}'\n",
                             category, info_id);
@@ -152,7 +158,7 @@ static bool ValidateInfoId(const std::string &info_id,
     }
   }
 
-  if (kKnownTypes.find(type) == kKnownTypes.end()) {
+  if (GetKnownTypes().find(type) == GetKnownTypes().end()) {
     if (warn) {
       *warn += fmt::format("Unknown MaterialX type '{}' in info:id '{}'\n", type, info_id);
     }
@@ -167,7 +173,7 @@ static bool ValidateInfoId(const std::string &info_id,
 static bool ValidateIndexBounds(const std::string &info_id,
                                 int index,
                                 const PrimReconstructOptions &options,
-                                std::string *warn,
+                                std::string * /* warn */,
                                 std::string *err) {
   if (!options.validate_mtlx_index_bounds && !options.strict_mtlx_check) {
     return true;
@@ -3901,12 +3907,39 @@ bool ReconstructPrim<SkelRoot>(
     return false;
   }
 
-  // SkelRoot is something like a grouping node, having 1 Skeleton and possibly?
+  // SkelRoot is something like a grouping node, having 1 Skeleton and possibly
   // multiple Prim hierarchy containing GeomMesh.
-  // No specific properties for SkelRoot(AFAIK)
+  // SkelBindingAPI properties (skel:animationSource, skel:skeleton) can be
+  // authored on SkelRoot and inherited by child prims per the USD spec.
 
-  // custom props only
   for (auto &prop : properties) {  // Non-const to allow move from property metadata
+
+    // SkelBindingAPI: animationSource relationship
+    if (prop.first == kSkelAnimationSource) {
+      if (prop.second.is_relationship()) {
+        const Relationship &rel = prop.second.get_relationship();
+        if (rel.is_path() || rel.is_pathvector()) {
+          root->animationSource = rel;
+          table.insert(kSkelAnimationSource);
+        } else {
+          PUSH_WARN("`" << kSkelAnimationSource << "` target must be Path.");
+        }
+      }
+    }
+
+    // SkelBindingAPI: skeleton relationship
+    if (prop.first == kSkelSkeleton) {
+      if (prop.second.is_relationship()) {
+        const Relationship &rel = prop.second.get_relationship();
+        if (rel.is_path() || rel.is_pathvector()) {
+          root->skeleton = rel;
+          table.insert(kSkelSkeleton);
+        } else {
+          PUSH_WARN("`" << kSkelSkeleton << "` target must be Path.");
+        }
+      }
+    }
+
     PARSE_TIMESAMPLED_ENUM_PROPERTY(table, prop, kVisibility, Visibility, VisibilityEnumHandler, SkelRoot,
                    root->visibility, options.strict_allowedToken_check)
     PARSE_UNIFORM_ENUM_PROPERTY(table, prop, kPurpose, Purpose, PurposeEnumHandler, SkelRoot,
@@ -5525,6 +5558,8 @@ bool ReconstructShader<OpenPBRSurface>(
                          surface->specular_anisotropy)
     PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:specular_rotation", OpenPBRSurface,
                          surface->specular_rotation)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:specular_roughness_anisotropy", OpenPBRSurface,
+                         surface->specular_roughness_anisotropy)
 
     // Transmission properties
     PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:transmission_weight", OpenPBRSurface,
@@ -5539,6 +5574,10 @@ bool ReconstructShader<OpenPBRSurface>(
                          surface->transmission_scatter_anisotropy)
     PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:transmission_dispersion", OpenPBRSurface,
                          surface->transmission_dispersion)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:transmission_dispersion_abbe_number", OpenPBRSurface,
+                         surface->transmission_dispersion_abbe_number)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:transmission_dispersion_scale", OpenPBRSurface,
+                         surface->transmission_dispersion_scale)
 
     // Subsurface properties
     PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:subsurface_weight", OpenPBRSurface,
@@ -5551,6 +5590,8 @@ bool ReconstructShader<OpenPBRSurface>(
                          surface->subsurface_scale)
     PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:subsurface_anisotropy", OpenPBRSurface,
                          surface->subsurface_anisotropy)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:subsurface_scatter_anisotropy", OpenPBRSurface,
+                         surface->subsurface_scatter_anisotropy)
 
     // Sheen properties
     PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:sheen_weight", OpenPBRSurface,
@@ -5593,6 +5634,10 @@ bool ReconstructShader<OpenPBRSurface>(
                          surface->coat_affect_color)
     PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:coat_affect_roughness", OpenPBRSurface,
                          surface->coat_affect_roughness)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:coat_roughness_anisotropy", OpenPBRSurface,
+                         surface->coat_roughness_anisotropy)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:coat_darkening", OpenPBRSurface,
+                         surface->coat_darkening)
 
     // Emission properties
     PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:emission_luminance", OpenPBRSurface,
@@ -5831,6 +5876,15 @@ bool ReconstructPrim<Shader>(
       PUSH_ERROR_AND_RETURN("Failed to Reconstruct " << kMtlxAutodeskStandardSurface);
     }
     shader->info_id = kMtlxAutodeskStandardSurface;
+    shader->value = surface;
+  } else if (shader_type.compare(kNdStandardSurfaceSurfaceshader) == 0) {
+    // MaterialX Standard Surface via ND_standard_surface_surfaceshader info:id
+    MtlxAutodeskStandardSurface surface;
+    if (!ReconstructShader<MtlxAutodeskStandardSurface>(spec, properties, references,
+                                                         &surface, warn, err, options)) {
+      PUSH_ERROR_AND_RETURN("Failed to Reconstruct " << kNdStandardSurfaceSurfaceshader);
+    }
+    shader->info_id = kNdStandardSurfaceSurfaceshader;
     shader->value = surface;
   } else if (shader_type.compare(kNdOpenPbrSurfaceSurfaceshader) == 0) {
     // Blender v4.5 MaterialX OpenPBR Surface export

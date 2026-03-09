@@ -10,6 +10,7 @@
 #include "crate-writer.hh"
 #include <iostream>
 #include "layer.hh"
+#include "common-macros.inc"
 #include "pprinter.hh"  // For to_string(Specifier), to_string(Variability)
 #include "usdShade.hh"  // For Material and Shader
 
@@ -175,8 +176,14 @@ bool CrateWriter::ConvertStageToSpecs(const Stage& stage, std::string* err) {
 bool CrateWriter::ConvertPrimRecursive(
   const Prim& prim,
   const Path& parent_path,
-  std::string* err
+  std::string* err,
+  uint32_t depth
 ) {
+  if (size_t(depth) > kMaxDefaultTraversalLimit) {
+    if (err) *err = "ConvertPrimRecursive: recursion too deep.";
+    return false;
+  }
+
   // Build absolute path for this prim
   std::string prim_name = prim.element_name();
   std::string parent_str = parent_path.prim_part();
@@ -287,7 +294,7 @@ bool CrateWriter::ConvertPrimRecursive(
 
   // Recursively process children
   for (const auto& child : prim.children()) {
-    if (!ConvertPrimRecursive(child, prim_path, err)) {
+    if (!ConvertPrimRecursive(child, prim_path, err, depth + 1)) {
       return false;
     }
   }
@@ -4502,7 +4509,13 @@ bool CrateWriter::ConvertLayerToSpecs(const Layer& layer, std::string* err) {
 bool CrateWriter::ConvertPrimSpecRecursive(
     const PrimSpec& primspec,
     const Path& parent_path,
-    std::string* err) {
+    std::string* err,
+    uint32_t depth) {
+
+  if (size_t(depth) > kMaxDefaultTraversalLimit) {
+    if (err) *err = "ConvertPrimSpecRecursive: recursion too deep.";
+    return false;
+  }
 
   // 1. Build path for this prim
   Path prim_path = parent_path.AppendPrim(primspec.name());
@@ -4878,7 +4891,7 @@ bool CrateWriter::ConvertPrimSpecRecursive(
 
   // 6. Recursively process children
   for (const PrimSpec& child : primspec.children()) {
-    if (!ConvertPrimSpecRecursive(child, prim_path, err)) {
+    if (!ConvertPrimSpecRecursive(child, prim_path, err, depth + 1)) {
       return false;
     }
   }

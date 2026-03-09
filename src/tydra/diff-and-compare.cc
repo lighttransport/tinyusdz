@@ -1,5 +1,6 @@
 #include "diff-and-compare.hh"
 #include "../layer.hh"
+#include "../common-macros.inc"
 #include <sstream>
 #include <algorithm>
 #include <iostream>
@@ -74,7 +75,7 @@ static bool ComputeDiffImpl(
   std::unordered_map<std::string, PrimSpecDiff> &psDiffs,
   std::unordered_map<std::string, PropDiff> &propDiffs) {
 
-  if (depth > (1024*1024)) {
+  if (size_t(depth) > kMaxDefaultTraversalLimit) {
     return false;
   }
 
