@@ -51,6 +51,61 @@ THREE.ImageLoader.prototype.load = function (url, onLoad, _onProgress, onError) 
 // ============================================================================
 
 const USE_MEMORY64    = false;
+
+// ============================================================================
+// Coroutine pause & debug delay support
+// ============================================================================
+// Wraps requestAnimationFrame so that:
+//   - When paused, the coroutine's co_await yieldToEventLoop() stays suspended
+//   - When DEBUG_PARSE_DELAY_MS > 0, each yield point sleeps that long
+// The EM_JS yieldToEventLoop_impl uses requestAnimationFrame(resolve), so
+// intercepting RAF controls the coroutine timing. No C++ changes needed.
+
+// Artificial delay (ms) at each coroutine yield point.
+// Controlled by the Debug toggle in the progress dialog.
+// Set from main thread via 'setDebugDelay' message.
+let DEBUG_PARSE_DELAY_MS = 500;
+
+const _origRAF = self.requestAnimationFrame?.bind(self);
+let _coroutinePaused = false;
+let _pausedCallbacks = [];   // queued RAF callbacks while paused
+let _isLoadingPhase = false; // only delay during USD loading, not render loop
+
+if (_origRAF) {
+    self.requestAnimationFrame = (cb) => {
+        if (_coroutinePaused) {
+            _pausedCallbacks.push(cb);
+            return -1;  // dummy handle
+        }
+        if (_isLoadingPhase && DEBUG_PARSE_DELAY_MS > 0) {
+            // Delay this yield point — the coroutine stays suspended
+            setTimeout(() => _origRAF(cb), DEBUG_PARSE_DELAY_MS);
+            return -1;
+        }
+        return _origRAF(cb);
+    };
+}
+
+function pauseCoroutine() {
+    _coroutinePaused = true;
+    console.log('[Worker] Coroutine paused');
+    self.postMessage({ type: 'paused' });
+}
+
+function resumeCoroutine() {
+    _coroutinePaused = false;
+    console.log('[Worker] Coroutine resumed');
+    // Flush queued callbacks — each one resumes a co_await
+    const cbs = _pausedCallbacks.splice(0);
+    for (const cb of cbs) {
+        if (_isLoadingPhase && DEBUG_PARSE_DELAY_MS > 0) {
+            setTimeout(() => _origRAF(cb), DEBUG_PARSE_DELAY_MS);
+        } else {
+            _origRAF(cb);
+        }
+    }
+    self.postMessage({ type: 'resumed' });
+}
 const CAMERA_FOV      = 45;
 const CAMERA_NEAR     = 0.1;
 const CAMERA_FAR      = 1000;
@@ -135,6 +190,16 @@ self.addEventListener('message', async (e) => {
         case 'fitCamera':
             fitCameraToScene();
             break;
+        case 'pause':
+            pauseCoroutine();
+            break;
+        case 'resume':
+            resumeCoroutine();
+            break;
+        case 'setDebugDelay':
+            DEBUG_PARSE_DELAY_MS = msg.delayMs;
+            console.log(`[Worker] Debug delay set to ${DEBUG_PARSE_DELAY_MS}ms`);
+            break;
         default:
             console.warn('[Worker] Unknown message type:', msg.type);
     }
@@ -216,12 +281,17 @@ async function initLoader() {
                 ? `${info.meshCurrent}/${info.meshTotal}`
                 : '';
             const meshName = info.meshName ? info.meshName.split('/').pop() : '';
+            const detail = meshProgress
+                ? `Converting: ${meshProgress} ${meshName}`
+                : `Converting: ${info.stage}`;
 
-            sendProgress('parsing', 30 + (info.progress * 50),
-                meshProgress
-                    ? `Converting: ${meshProgress} ${meshName}`
-                    : `Converting: ${info.stage}`
-            );
+            if (_isLoadingPhase) {
+                // Coroutine path: Tydra runs inside the 'meshes' phase (60-80%)
+                sendProgress('building', 60 + (info.progress * 20), detail);
+            } else {
+                // Sync path: Tydra runs during parse (30-80%)
+                sendProgress('parsing', 30 + (info.progress * 50), detail);
+            }
         },
         onTydraComplete: (info) => {
             console.log(`[Worker Tydra] Complete: ${info.meshCount} meshes, ${info.materialCount} materials, ${info.textureCount} textures`);
@@ -289,25 +359,63 @@ async function handleLoadFile({ data, filename }) {
     } catch (err) {
         sendError(`Failed to load ${filename}: ${err.message}`);
         console.error('[Worker] loadFile error:', err);
+    } finally {
+        // Always clear pause state when loading ends (success or error)
+        // so the render loop is never left stalled
+        if (_coroutinePaused) {
+            _coroutinePaused = false;
+            const cbs = _pausedCallbacks.splice(0);
+            for (const cb of cbs) _origRAF(cb);
+            self.postMessage({ type: 'resumed' });
+        }
     }
 }
+
+// Map C++ coroutine phase names to progress stage/percentage
+const COROUTINE_PHASE_MAP = {
+    detecting: { stage: 'parsing', pct: 30, label: 'Detecting format...' },
+    parsing:   { stage: 'parsing', pct: 35, label: 'Parsing USD data...' },
+    setup:     { stage: 'parsing', pct: 50, label: 'Setting up scene...' },
+    assets:    { stage: 'building', pct: 55, label: 'Processing assets...' },
+    meshes:    { stage: 'building', pct: 60, label: 'Converting meshes...' },
+    complete:  { stage: 'building', pct: 80, label: 'Parse complete' },
+};
 
 async function loadUSDFromData(data, filename) {
     clearScene();
 
     sendProgress('parsing', 30, `Parsing: ${filename}...`);
 
-    // Parse USD — wrap in try/catch to detect WASM OOM
+    const useAsync = loaderState.loader.hasAsyncSupport();
+    console.log(`[Worker] Coroutine async: ${useAsync ? 'ON' : 'OFF'}` +
+        (useAsync && DEBUG_PARSE_DELAY_MS > 0 ? `, debug delay: ${DEBUG_PARSE_DELAY_MS}ms/phase` : ''));
+
+    // Tell main thread the expected total delay so it can adjust the watchdog
+    if (useAsync && DEBUG_PARSE_DELAY_MS > 0) {
+        self.postMessage({ type: 'debugDelay', delayMs: DEBUG_PARSE_DELAY_MS, phases: 10 });
+    }
+
+    // Parse USD — use coroutine async path if available for smooth progress
+    _isLoadingPhase = true;
     let usd;
     try {
-        usd = await new Promise((resolve, reject) => {
-            loaderState.loader.parse(
-                data,
-                filename,
-                resolve,
-                reject
-            );
-        });
+        if (useAsync) {
+            usd = await loaderState.loader.parseAsync(data, filename, {
+                onPhaseStart: (info) => {
+                    const mapped = COROUTINE_PHASE_MAP[info.phase];
+                    if (mapped) {
+                        sendProgress(mapped.stage, mapped.pct, mapped.label);
+                    } else {
+                        sendProgress('parsing', 30 + info.progress * 50,
+                            `Phase: ${info.phase}`);
+                    }
+                }
+            });
+        } else {
+            usd = await new Promise((resolve, reject) => {
+                loaderState.loader.parse(data, filename, resolve, reject);
+            });
+        }
     } catch (err) {
         const msg = err?.message || String(err);
         if (msg.includes('resize_heap') || msg.includes('enlarge memory') ||
@@ -321,6 +429,8 @@ async function loadUSDFromData(data, filename) {
             );
         }
         throw err;
+    } finally {
+        _isLoadingPhase = false;
     }
 
     loaderState.nativeLoader = usd;
@@ -329,8 +439,8 @@ async function loadUSDFromData(data, filename) {
     const metadata = usd.getSceneMetadata ? usd.getSceneMetadata() : {};
     sceneState.upAxis = metadata.upAxis || 'Y';
 
-    // Build scene with progress
-    sendProgress('building', 50, 'Building Three.js scene...');
+    // Build scene with progress (coroutine ended at ~80%, JS building starts at 80%)
+    sendProgress('building', 80, 'Building Three.js scene...');
     await buildSceneWithProgress(usd);
 
     // Try to load DomeLight environment
@@ -392,11 +502,26 @@ async function loadUSDFromData(data, filename) {
         sceneState.textureCount,
         sceneState.upAxis
     );
+
+    // Clear pause state so the render loop resumes after loading completes
+    if (_coroutinePaused) {
+        _coroutinePaused = false;
+        const cbs = _pausedCallbacks.splice(0);
+        for (const cb of cbs) _origRAF(cb);
+        self.postMessage({ type: 'resumed' });
+    }
 }
 
 // ============================================================================
 // Scene building with progress
 // ============================================================================
+
+function debugDelay() {
+    if (DEBUG_PARSE_DELAY_MS > 0) {
+        return new Promise(resolve => setTimeout(resolve, DEBUG_PARSE_DELAY_MS));
+    }
+    return Promise.resolve();
+}
 
 async function buildSceneWithProgress(usd) {
     const rootNode = usd.getDefaultRootNode();
@@ -410,7 +535,8 @@ async function buildSceneWithProgress(usd) {
 
     const totalMeshes = usd.numMeshes ? usd.numMeshes() : 0;
 
-    sendProgress('building', 50, `Building Three.js meshes (0/${totalMeshes})...`);
+    sendProgress('building', 80, `Building Three.js meshes (0/${totalMeshes})...`);
+    await debugDelay();
 
     const defaultMtl = new THREE.MeshPhysicalMaterial({
         color: 0x888888,
@@ -432,8 +558,9 @@ async function buildSceneWithProgress(usd) {
                 textureCache: sceneState.textureCache,
                 textureLoadingManager: sceneState.textureLoadingManager,
                 onProgress: (info) => {
-                    const mappedPercentage = 50 + (info.percentage * 0.3);
-                    sendProgress('building', Math.min(80, mappedPercentage), info.message);
+                    // Map buildThreeNode progress to 80-88%
+                    const mappedPercentage = 80 + (info.percentage * 0.08);
+                    sendProgress('building', Math.min(88, mappedPercentage), info.message);
                 }
             }
         );
@@ -444,7 +571,8 @@ async function buildSceneWithProgress(usd) {
     three.scene.add(sceneState.root);
 
     // Count meshes & collect materials
-    sendProgress('materials', 80, 'Counting materials...');
+    sendProgress('materials', 88, 'Converting materials...');
+    await debugDelay();
     const matSet = new Set();
     sceneState.root.traverse(obj => {
         if (obj.isMesh) {
@@ -458,7 +586,8 @@ async function buildSceneWithProgress(usd) {
     sceneState.materials = Array.from(matSet);
 
     // Count textures
-    sendProgress('textures', 85, `Counting textures from ${sceneState.materials.length} materials...`);
+    sendProgress('textures', 94, `Decoding textures from ${sceneState.materials.length} materials...`);
+    await debugDelay();
     const textureProps = ['map', 'normalMap', 'roughnessMap', 'metalnessMap', 'emissiveMap', 'aoMap', 'alphaMap'];
     for (const mat of sceneState.materials) {
         textureProps.forEach(prop => {

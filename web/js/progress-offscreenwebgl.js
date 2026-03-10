@@ -37,6 +37,9 @@ const textureProgressCountEl = document.getElementById('texture-progress-count')
 const textureProgressDetailsEl = document.getElementById('texture-progress-details');
 const toastEl = document.getElementById('toast');
 const progressStopBtn = document.getElementById('progress-stop-btn');
+const progressPauseBtn = document.getElementById('progress-pause-btn');
+const progressDebugToggle = document.getElementById('progress-debug-toggle');
+const progressDebugDelay = document.getElementById('progress-debug-delay');
 
 // Memory panel DOM elements
 const memUsedEl = document.getElementById('mem-used');
@@ -50,7 +53,7 @@ let debugLoadOnInit = true;
 
 // Sample models
 const SAMPLE_MODELS = [
-    'assets/suzanne-subd-lv6.usdc'
+    'assets/fancy-teapot-mtlx.usdz'
 ];
 
 // Scene state (tracked on main thread for UI)
@@ -154,6 +157,11 @@ function spawnWorker() {
 
     worker.addEventListener('message', onWorkerMessage);
     worker.addEventListener('error', onWorkerError);
+
+    // Sync debug delay setting to the new worker
+    const debugEnabled = progressDebugToggle.checked;
+    const debugMs = debugEnabled ? parseInt(progressDebugDelay.value, 10) || 0 : 0;
+    worker.postMessage({ type: 'setDebugDelay', delayMs: debugMs });
 }
 
 /**
@@ -211,11 +219,17 @@ STAGE_ORDER.forEach(stage => {
 
 function showProgress() {
     progressContainer.classList.add('visible');
+    progressPauseBtn.textContent = 'Pause';
+    progressPauseBtn.classList.remove('paused');
+    progressBar.classList.remove('paused');
     resetProgressStages();
 }
 
 function hideProgress() {
     progressContainer.classList.remove('visible');
+    progressPauseBtn.textContent = 'Pause';
+    progressPauseBtn.classList.remove('paused');
+    progressBar.classList.remove('paused');
 }
 
 function resetProgressStages() {
@@ -625,6 +639,26 @@ function onWorkerMessage(e) {
             showToast(`Failed to load: ${msg.message}`);
             console.error('[Worker error]', msg.message);
             break;
+
+        case 'paused':
+            clearLoadingWatchdog();  // Don't timeout while paused
+            progressStageEl.textContent = 'Paused';
+            progressBar.classList.add('paused');
+            break;
+
+        case 'resumed':
+            startLoadingWatchdog();  // Restart watchdog
+            progressBar.classList.remove('paused');
+            break;
+
+        case 'debugDelay': {
+            // Worker has debug delay enabled — extend watchdog to avoid false timeouts
+            const totalDelay = msg.delayMs * msg.phases + LOADING_WATCHDOG_TIMEOUT_MS;
+            console.log(`[main] Debug delay active: ${msg.delayMs}ms × ${msg.phases} phases, watchdog extended to ${totalDelay}ms`);
+            clearLoadingWatchdog();
+            loadingWatchdogTimer = setTimeout(onWatchdogTimeout, totalDelay);
+            break;
+        }
     }
 }
 
@@ -805,6 +839,34 @@ progressStopBtn.addEventListener('click', () => {
     showToast('Loading stopped — worker restarted');
     respawnWorker();
 });
+
+progressPauseBtn.addEventListener('click', () => {
+    if (progressPauseBtn.classList.contains('paused')) {
+        // Resume
+        worker.postMessage({ type: 'resume' });
+        progressPauseBtn.textContent = 'Pause';
+        progressPauseBtn.classList.remove('paused');
+    } else {
+        // Pause
+        worker.postMessage({ type: 'pause' });
+        progressPauseBtn.textContent = 'Resume';
+        progressPauseBtn.classList.add('paused');
+    }
+});
+
+// ============================================================================
+// Debug delay controls
+// ============================================================================
+
+function syncDebugDelay() {
+    const enabled = progressDebugToggle.checked;
+    const ms = enabled ? parseInt(progressDebugDelay.value, 10) || 0 : 0;
+    progressDebugDelay.disabled = !enabled;
+    worker.postMessage({ type: 'setDebugDelay', delayMs: ms });
+}
+
+progressDebugToggle.addEventListener('change', syncDebugDelay);
+progressDebugDelay.addEventListener('change', syncDebugDelay);
 
 // ============================================================================
 // Drag-and-drop
