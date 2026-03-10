@@ -16,6 +16,7 @@
     "dev:webgl2": "vite --open /materialx-webgl2.html",
     "dev:nodegraph": "vite --open /openpbr-nodegraph-demo.html",
     "dev:progress": "vite --open /progress-demo.html",
+    "dev:progress-offscreen": "vite --open /progress-offscreenwebgl.html",
     "build": "vite build",
     "preview": "vite preview",
     "cli": "vite-node load-test-node.js",
