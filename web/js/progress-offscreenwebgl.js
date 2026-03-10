@@ -9,10 +9,10 @@
 //   6. Display progress bar, memory graph, and stage indicators.
 
 // ============================================================================
-// DOM references
+// DOM references (mutable: canvas is replaced on worker respawn)
 // ============================================================================
 
-const canvas = document.getElementById('gl');
+let canvas = document.getElementById('gl');
 const statusEl = document.getElementById('status');
 const modelInfoEl = document.getElementById('model-info');
 const meshCountEl = document.getElementById('mesh-count');
@@ -25,9 +25,32 @@ const fitBtn = document.getElementById('fit-btn');
 const fileInput = document.getElementById('file-input');
 const unsupportedOverlay = document.getElementById('unsupported-overlay');
 
+// Progress UI DOM elements (cached to avoid repeated lookups)
+const progressContainer = document.getElementById('progress-container');
+const progressBar = document.getElementById('progress-bar');
+const progressPercentageEl = document.getElementById('progress-percentage');
+const progressStageEl = document.getElementById('progress-stage');
+const progressDetailsEl = document.getElementById('progress-details');
+const textureProgressContainer = document.getElementById('texture-progress-container');
+const textureProgressBar = document.getElementById('texture-progress-bar');
+const textureProgressCountEl = document.getElementById('texture-progress-count');
+const textureProgressDetailsEl = document.getElementById('texture-progress-details');
+const toastEl = document.getElementById('toast');
+const progressStopBtn = document.getElementById('progress-stop-btn');
+
+// Memory panel DOM elements
+const memUsedEl = document.getElementById('mem-used');
+const memTotalEl = document.getElementById('mem-total');
+const memLimitEl = document.getElementById('mem-limit');
+const memPointsEl = document.getElementById('mem-points');
+const memWarningEl = document.getElementById('memory-warning');
+
+// Set to true to auto-load a sample model on page load (for development)
+let debugLoadOnInit = true;
+
 // Sample models
 const SAMPLE_MODELS = [
-    'assets/WesternDesertTown2-mtlx.usdz'
+    'assets/suzanne-subd-lv6.usdc'
 ];
 
 // Scene state (tracked on main thread for UI)
@@ -36,6 +59,48 @@ const sceneState = {
     upAxis: 'Y',
     applyUpAxisConversion: false
 };
+
+// ============================================================================
+// Worker lifecycle (mutable — replaced on respawn after OOM)
+// ============================================================================
+
+let worker = null;
+let preserveStatus = false;  // When true, ignore worker 'status' messages (keep error visible)
+const WORKER_URL = new URL('./progress-offscreenwebgl.worker.js', import.meta.url);
+
+// Loading watchdog: detects worker stuck (e.g. WASM OOM blocking event loop)
+const LOADING_WATCHDOG_TIMEOUT_MS = 10000;
+let loadingWatchdogTimer = null;
+
+function onWatchdogTimeout() {
+    loadingWatchdogTimer = null;
+    console.warn('[main] Loading watchdog timeout — worker stuck, respawning...');
+    statusEl.textContent = 'Error: Loading timed out — WASM out of memory. Worker restarted.';
+    statusEl.className = 'error';
+    preserveStatus = true;
+    hideProgress();
+    showToast('WASM out of memory — worker restarted. Try a smaller file.', 5000);
+    respawnWorker();
+}
+
+function startLoadingWatchdog() {
+    clearLoadingWatchdog();
+    loadingWatchdogTimer = setTimeout(onWatchdogTimeout, LOADING_WATCHDOG_TIMEOUT_MS);
+}
+
+function resetLoadingWatchdog() {
+    if (loadingWatchdogTimer !== null) {
+        clearTimeout(loadingWatchdogTimer);
+        loadingWatchdogTimer = setTimeout(onWatchdogTimeout, LOADING_WATCHDOG_TIMEOUT_MS);
+    }
+}
+
+function clearLoadingWatchdog() {
+    if (loadingWatchdogTimer !== null) {
+        clearTimeout(loadingWatchdogTimer);
+        loadingWatchdogTimer = null;
+    }
+}
 
 // ============================================================================
 // Browser capability check
@@ -47,30 +112,75 @@ if (typeof canvas.transferControlToOffscreen !== 'function') {
 }
 
 // ============================================================================
-// Spawn the worker
+// Worker spawn / respawn
 // ============================================================================
 
-const worker = new Worker(
-    new URL('./progress-offscreenwebgl.worker.js', import.meta.url),
-    { type: 'module' }
-);
+/**
+ * Replace the <canvas> element (transferControlToOffscreen is one-shot per element).
+ * Returns the new canvas.
+ */
+function replaceCanvas() {
+    const parent = canvas.parentElement;
+    const newCanvas = document.createElement('canvas');
+    newCanvas.id = 'gl';
+    // Copy CSS classes if any
+    newCanvas.className = canvas.className;
+    parent.replaceChild(newCanvas, canvas);
+    canvas = newCanvas;
+    attachCanvasEvents(canvas);
+    resizeObserver.observe(canvas);
+    return canvas;
+}
 
-// ============================================================================
-// Transfer canvas control
-// ============================================================================
+/**
+ * Spawn a new worker, transfer offscreen canvas, and wire up listeners.
+ * Called once on startup and again after respawn.
+ */
+function spawnWorker() {
+    worker = new Worker(WORKER_URL, { type: 'module' });
 
-const offscreen = canvas.transferControlToOffscreen();
+    const offscreen = canvas.transferControlToOffscreen();
 
-worker.postMessage(
-    {
-        type: 'init',
-        canvas: offscreen,
-        width: canvas.clientWidth,
-        height: canvas.clientHeight,
-        pixelRatio: window.devicePixelRatio || 1,
-    },
-    [offscreen]
-);
+    worker.postMessage(
+        {
+            type: 'init',
+            canvas: offscreen,
+            width: canvas.clientWidth,
+            height: canvas.clientHeight,
+            pixelRatio: window.devicePixelRatio || 1,
+        },
+        [offscreen]
+    );
+
+    worker.addEventListener('message', onWorkerMessage);
+    worker.addEventListener('error', onWorkerError);
+}
+
+/**
+ * Terminate the stuck worker, replace the canvas, and spawn a fresh worker.
+ * This fully resets the WASM VM — the new worker loads a fresh WASM instance.
+ */
+function respawnWorker() {
+    clearLoadingWatchdog();
+
+    // Terminate the stuck worker (kills its event loop, frees WASM memory)
+    if (worker) {
+        worker.terminate();
+        worker = null;
+    }
+
+    // Reset UI state
+    sceneState.hasModel = false;
+    modelInfoEl.style.display = 'none';
+    updateUpAxisButton();
+    updateFitButton();
+
+    // Replace canvas (transferControlToOffscreen is one-shot)
+    replaceCanvas();
+
+    // Spawn fresh worker (caller sets status text before calling respawnWorker)
+    spawnWorker();
+}
 
 // ============================================================================
 // Progress UI Functions
@@ -79,94 +189,97 @@ worker.postMessage(
 let lastProgressUpdate = 0;
 const PROGRESS_UPDATE_INTERVAL = 50;
 
+const STAGE_ORDER = ['downloading', 'parsing', 'building', 'textures', 'materials', 'complete'];
+
+const STAGE_LABELS = {
+    'downloading': 'Downloading file...',
+    'parsing': 'Parsing USD (Worker)...',
+    'building': 'Building Three.js scene...',
+    'textures': 'Processing textures...',
+    'materials': 'Converting materials...',
+    'complete': 'Complete!'
+};
+
+// Cache stage item DOM elements
+const stageElements = {};
+STAGE_ORDER.forEach(stage => {
+    const item = document.querySelector(`.progress-stage-item[data-stage="${stage}"]`);
+    if (item) {
+        stageElements[stage] = { item, icon: item.querySelector('.stage-icon') };
+    }
+});
+
 function showProgress() {
-    const container = document.getElementById('progress-container');
-    container.classList.add('visible');
+    progressContainer.classList.add('visible');
     resetProgressStages();
 }
 
 function hideProgress() {
-    const container = document.getElementById('progress-container');
-    container.classList.remove('visible');
+    progressContainer.classList.remove('visible');
 }
 
 function resetProgressStages() {
-    const stageItems = document.querySelectorAll('.progress-stage-item');
-    stageItems.forEach(item => {
-        item.classList.remove('active', 'completed');
-        const icon = item.querySelector('.stage-icon');
-        icon.classList.remove('active', 'completed');
-        icon.classList.add('pending');
-    });
+    for (const stage of STAGE_ORDER) {
+        const el = stageElements[stage];
+        if (!el) continue;
+        el.item.classList.remove('active', 'completed');
+        el.icon.classList.remove('active', 'completed');
+        el.icon.classList.add('pending');
+    }
 
-    const progressBar = document.getElementById('progress-bar');
     progressBar.style.transform = 'scaleX(0)';
     progressBar.classList.remove('complete');
-    document.getElementById('progress-percentage').textContent = '0%';
+    progressPercentageEl.textContent = '0%';
     lastProgressUpdate = 0;
 }
 
 function updateProgressUI({ stage, percentage, message }) {
     const pct = Math.round(percentage);
 
-    // Throttle updates
+    // Throttle updates — only record data point when throttled
     const now = performance.now();
     if (now - lastProgressUpdate < PROGRESS_UPDATE_INTERVAL && pct < 100) {
-        recordMemoryPoint(stage, pct);
+        recordMemoryPoint(stage, pct, false);
         return;
     }
     lastProgressUpdate = now;
 
     // Update progress bar
-    const progressBar = document.getElementById('progress-bar');
     progressBar.style.transform = `scaleX(${pct / 100})`;
 
     if (pct >= 100 || stage === 'complete') {
         progressBar.classList.add('complete');
     }
 
-    document.getElementById('progress-percentage').textContent = `${pct}%`;
-
-    const stageLabels = {
-        'downloading': 'Downloading file...',
-        'parsing': 'Parsing USD (Worker)...',
-        'building': 'Building Three.js scene...',
-        'textures': 'Processing textures...',
-        'materials': 'Converting materials...',
-        'complete': 'Complete!'
-    };
-    document.getElementById('progress-stage').textContent = stageLabels[stage] || stage;
-    document.getElementById('progress-details').textContent = message || '';
+    progressPercentageEl.textContent = `${pct}%`;
+    progressStageEl.textContent = STAGE_LABELS[stage] || stage;
+    progressDetailsEl.textContent = message || '';
 
     updateStageIcons(stage);
-    recordMemoryPoint(stage, pct);
-
-    console.log(`[Progress] ${stage}: ${pct}% - ${message || ''}`);
+    recordMemoryPoint(stage, pct, true);
 }
 
 function updateStageIcons(currentStage) {
-    const stageOrder = ['downloading', 'parsing', 'building', 'textures', 'materials', 'complete'];
-    const currentIndex = stageOrder.indexOf(currentStage);
+    const currentIndex = STAGE_ORDER.indexOf(currentStage);
 
-    stageOrder.forEach((stage, index) => {
-        const item = document.querySelector(`.progress-stage-item[data-stage="${stage}"]`);
-        if (!item) return;
+    STAGE_ORDER.forEach((stage, index) => {
+        const el = stageElements[stage];
+        if (!el) return;
 
-        const icon = item.querySelector('.stage-icon');
-        item.classList.remove('active', 'completed');
-        icon.classList.remove('active', 'completed', 'pending');
+        el.item.classList.remove('active', 'completed');
+        el.icon.classList.remove('active', 'completed', 'pending');
 
         if (index < currentIndex) {
-            item.classList.add('completed');
-            icon.classList.add('completed');
-            icon.textContent = '\u2713';
+            el.item.classList.add('completed');
+            el.icon.classList.add('completed');
+            el.icon.textContent = '\u2713';
         } else if (index === currentIndex) {
-            item.classList.add('active');
-            icon.classList.add('active');
-            icon.textContent = String(index + 1);
+            el.item.classList.add('active');
+            el.icon.classList.add('active');
+            el.icon.textContent = String(index + 1);
         } else {
-            icon.classList.add('pending');
-            icon.textContent = String(index + 1);
+            el.icon.classList.add('pending');
+            el.icon.textContent = String(index + 1);
         }
     });
 }
@@ -176,43 +289,37 @@ function updateStageIcons(currentStage) {
 // ============================================================================
 
 function showTextureProgress() {
-    const container = document.getElementById('texture-progress-container');
-    if (container) {
-        container.classList.add('visible');
-        const bar = document.getElementById('texture-progress-bar');
-        if (bar) bar.style.transform = 'scaleX(0)';
+    if (textureProgressContainer) {
+        textureProgressContainer.classList.add('visible');
+        if (textureProgressBar) textureProgressBar.style.transform = 'scaleX(0)';
     }
 }
 
 function hideTextureProgress() {
-    const container = document.getElementById('texture-progress-container');
-    if (container) container.classList.remove('visible');
+    if (textureProgressContainer) textureProgressContainer.classList.remove('visible');
 }
 
 function updateTextureProgressUI(info) {
     const { loaded, total, failed, percentage, currentTexture, isComplete } = info;
 
-    const countEl = document.getElementById('texture-progress-count');
-    if (countEl) {
+    if (textureProgressCountEl) {
         const failedText = failed > 0 ? ` (${failed} failed)` : '';
-        countEl.textContent = `${loaded}/${total}${failedText}`;
+        textureProgressCountEl.textContent = `${loaded}/${total}${failedText}`;
     }
 
-    const bar = document.getElementById('texture-progress-bar');
-    if (bar) {
-        bar.style.transform = `scaleX(${percentage / 100})`;
+    if (textureProgressBar) {
+        textureProgressBar.style.transform = `scaleX(${percentage / 100})`;
     }
 
-    const detailsEl = document.getElementById('texture-progress-details');
-    if (detailsEl) {
+    if (textureProgressDetailsEl) {
         if (isComplete) {
-            detailsEl.textContent = failed > 0
+            textureProgressDetailsEl.textContent = failed > 0
                 ? `Complete with ${failed} failures`
                 : 'All textures loaded';
         } else if (currentTexture) {
-            detailsEl.textContent = `Loading: ${currentTexture}`;
+            textureProgressDetailsEl.textContent = `Loading: ${currentTexture}`;
         } else {
-            detailsEl.textContent = 'Starting texture loading...';
+            textureProgressDetailsEl.textContent = 'Starting texture loading...';
         }
     }
 
@@ -257,8 +364,8 @@ function initMemoryGraph() {
     memoryState.ctx.scale(dpr, dpr);
 
     memoryState.available = !!(performance && performance.memory);
-    if (!memoryState.available) {
-        document.getElementById('memory-warning').classList.add('visible');
+    if (!memoryState.available && memWarningEl) {
+        memWarningEl.classList.add('visible');
     }
 }
 
@@ -276,7 +383,7 @@ function getMemoryUsage() {
     return { used: mem.usedJSHeapSize, total: mem.totalJSHeapSize, limit: mem.jsHeapSizeLimit };
 }
 
-function recordMemoryPoint(stage, percentage) {
+function recordMemoryPoint(stage, percentage, drawGraph = true) {
     const mem = getMemoryUsage();
     const time = performance.now() - memoryState.startTime;
 
@@ -287,25 +394,20 @@ function recordMemoryPoint(stage, percentage) {
     }
 
     updateMemoryStats(mem);
-    drawMemoryGraph();
+    if (drawGraph) drawMemoryGraph();
 }
 
 function updateMemoryStats(mem) {
-    const usedEl = document.getElementById('mem-used');
-    const totalEl = document.getElementById('mem-total');
-    const limitEl = document.getElementById('mem-limit');
-    const pointsEl = document.getElementById('mem-points');
+    if (memUsedEl) memUsedEl.textContent = formatBytes(mem.used);
+    if (memTotalEl) memTotalEl.textContent = formatBytes(mem.total);
+    if (memLimitEl) memLimitEl.textContent = formatBytes(mem.limit);
+    if (memPointsEl) memPointsEl.textContent = memoryState.dataPoints.length;
 
-    if (usedEl) usedEl.textContent = formatBytes(mem.used);
-    if (totalEl) totalEl.textContent = formatBytes(mem.total);
-    if (limitEl) limitEl.textContent = formatBytes(mem.limit);
-    if (pointsEl) pointsEl.textContent = memoryState.dataPoints.length;
-
-    if (usedEl) {
+    if (memUsedEl) {
         const usageRatio = mem.used / mem.limit;
-        usedEl.classList.remove('warning', 'critical');
-        if (usageRatio > 0.8) usedEl.classList.add('critical');
-        else if (usageRatio > 0.6) usedEl.classList.add('warning');
+        memUsedEl.classList.remove('warning', 'critical');
+        if (usageRatio > 0.8) memUsedEl.classList.add('critical');
+        else if (usageRatio > 0.6) memUsedEl.classList.add('warning');
     }
 }
 
@@ -326,7 +428,7 @@ function drawMemoryGraph() {
     if (memoryState.dataPoints.length < 2) return;
 
     const points = memoryState.dataPoints;
-    const maxMem = Math.max(...points.map(p => Math.max(p.used, p.total)));
+    const maxMem = points.reduce((max, p) => Math.max(max, p.used, p.total), 0);
     const limitMem = points[0].limit || maxMem * 1.2;
     const yMax = Math.max(maxMem * 1.1, limitMem);
     const timeRange = points[points.length - 1].time - points[0].time;
@@ -412,14 +514,10 @@ function resetMemoryTracking() {
     memoryState.dataPoints = [];
     memoryState.startTime = performance.now();
 
-    const usedEl = document.getElementById('mem-used');
-    const totalEl = document.getElementById('mem-total');
-    const limitEl = document.getElementById('mem-limit');
-    const pointsEl = document.getElementById('mem-points');
-    if (usedEl) usedEl.textContent = '--';
-    if (totalEl) totalEl.textContent = '--';
-    if (limitEl) limitEl.textContent = '--';
-    if (pointsEl) pointsEl.textContent = '0';
+    if (memUsedEl) memUsedEl.textContent = '--';
+    if (memTotalEl) memTotalEl.textContent = '--';
+    if (memLimitEl) memLimitEl.textContent = '--';
+    if (memPointsEl) memPointsEl.textContent = '0';
 
     if (memoryState.ctx && memoryState.canvas) {
         const width = memoryState.canvas.width / (window.devicePixelRatio || 1);
@@ -434,10 +532,9 @@ function resetMemoryTracking() {
 // ============================================================================
 
 function showToast(message, duration = 3000) {
-    const toast = document.getElementById('toast');
-    toast.textContent = message;
-    toast.classList.add('visible');
-    setTimeout(() => toast.classList.remove('visible'), duration);
+    toastEl.textContent = message;
+    toastEl.classList.add('visible');
+    setTimeout(() => toastEl.classList.remove('visible'), duration);
 }
 
 // ============================================================================
@@ -464,19 +561,27 @@ function updateFitButton() {
 }
 
 // ============================================================================
-// Worker -> DOM message handler
+// Worker message handlers (shared by initial spawn and respawns)
 // ============================================================================
 
-worker.addEventListener('message', (e) => {
+function onWorkerMessage(e) {
     const msg = e.data;
 
     switch (msg.type) {
         case 'status':
-            statusEl.textContent = msg.message;
-            statusEl.className = '';
+            if (!preserveStatus) {
+                statusEl.textContent = msg.message;
+                statusEl.className = '';
+            }
+            // Worker signals ready after WASM init + env load
+            if (debugLoadOnInit && msg.message.startsWith('Ready')) {
+                debugLoadOnInit = false;  // Only auto-load once (not on respawn)
+                loadSampleModel();
+            }
             break;
 
         case 'progress':
+            resetLoadingWatchdog();
             updateProgressUI({
                 stage: msg.stage,
                 percentage: msg.percentage,
@@ -485,6 +590,7 @@ worker.addEventListener('message', (e) => {
             break;
 
         case 'loaded':
+            clearLoadingWatchdog();
             statusEl.textContent = `Loaded: ${msg.meshCount} meshes, ${msg.materialCount} materials`;
             statusEl.className = '';
             meshCountEl.textContent = msg.meshCount;
@@ -512,6 +618,7 @@ worker.addEventListener('message', (e) => {
             break;
 
         case 'error':
+            clearLoadingWatchdog();
             statusEl.textContent = `Error: ${msg.message}`;
             statusEl.className = 'error';
             hideProgress();
@@ -519,44 +626,44 @@ worker.addEventListener('message', (e) => {
             console.error('[Worker error]', msg.message);
             break;
     }
-});
+}
 
-worker.addEventListener('error', (e) => {
+function onWorkerError(e) {
+    clearLoadingWatchdog();
     statusEl.textContent = `Worker error: ${e.message}`;
     statusEl.className = 'error';
     hideProgress();
     console.error('[Worker uncaught error]', e);
-});
+}
 
 // ============================================================================
-// Pointer events (forwarded to worker)
+// Canvas events (forwarded to worker via closure over `worker` variable)
 // ============================================================================
 
-canvas.addEventListener('pointerdown', (e) => {
-    canvas.setPointerCapture(e.pointerId);
-    worker.postMessage({ type: 'pointerdown', x: e.clientX, y: e.clientY, button: e.button });
-});
+function attachCanvasEvents(cvs) {
+    cvs.addEventListener('pointerdown', (e) => {
+        cvs.setPointerCapture(e.pointerId);
+        worker.postMessage({ type: 'pointerdown', x: e.clientX, y: e.clientY, button: e.button });
+    });
 
-canvas.addEventListener('pointermove', (e) => {
-    worker.postMessage({ type: 'pointermove', x: e.clientX, y: e.clientY, buttons: e.buttons });
-});
+    cvs.addEventListener('pointermove', (e) => {
+        if (e.buttons === 0) return;  // Skip no-op messages when not dragging
+        worker.postMessage({ type: 'pointermove', x: e.clientX, y: e.clientY, buttons: e.buttons });
+    });
 
-canvas.addEventListener('pointerup', (e) => {
-    worker.postMessage({ type: 'pointerup', x: e.clientX, y: e.clientY });
-});
+    cvs.addEventListener('pointerup', (e) => {
+        worker.postMessage({ type: 'pointerup', x: e.clientX, y: e.clientY });
+    });
 
-canvas.addEventListener('pointercancel', (e) => {
-    worker.postMessage({ type: 'pointerup', x: e.clientX, y: e.clientY });
-});
+    cvs.addEventListener('pointercancel', (e) => {
+        worker.postMessage({ type: 'pointerup', x: e.clientX, y: e.clientY });
+    });
 
-// ============================================================================
-// Wheel (zoom)
-// ============================================================================
-
-canvas.addEventListener('wheel', (e) => {
-    e.preventDefault();
-    worker.postMessage({ type: 'wheel', deltaY: e.deltaY });
-}, { passive: false });
+    cvs.addEventListener('wheel', (e) => {
+        e.preventDefault();
+        worker.postMessage({ type: 'wheel', deltaY: e.deltaY });
+    }, { passive: false });
+}
 
 // ============================================================================
 // Resize
@@ -574,14 +681,13 @@ const resizeObserver = new ResizeObserver((entries) => {
     }
 });
 
-resizeObserver.observe(canvas);
-
 // ============================================================================
 // File loading helpers
 // ============================================================================
 
 async function sendFileToWorker(file) {
     try {
+        preserveStatus = false;
         showProgress();
         resetMemoryTracking();
         updateProgressUI({ stage: 'downloading', percentage: 0, message: `Reading: ${file.name}...` });
@@ -590,11 +696,13 @@ async function sendFileToWorker(file) {
 
         updateProgressUI({ stage: 'downloading', percentage: 30, message: `Sending to worker...` });
 
+        startLoadingWatchdog();
         worker.postMessage(
             { type: 'loadFile', data: arrayBuffer, filename: file.name },
             [arrayBuffer]
         );
     } catch (err) {
+        clearLoadingWatchdog();
         statusEl.textContent = `Failed to read file: ${err.message}`;
         statusEl.className = 'error';
         hideProgress();
@@ -605,6 +713,7 @@ async function sendFileToWorker(file) {
 async function loadSampleModel() {
     const url = SAMPLE_MODELS[Math.floor(Math.random() * SAMPLE_MODELS.length)];
 
+    preserveStatus = false;
     showProgress();
     resetMemoryTracking();
     updateProgressUI({ stage: 'downloading', percentage: 0, message: `Downloading ${url}...` });
@@ -644,11 +753,13 @@ async function loadSampleModel() {
 
         updateProgressUI({ stage: 'downloading', percentage: 30, message: 'Sending to worker...' });
 
+        startLoadingWatchdog();
         worker.postMessage(
             { type: 'loadFile', data: binary.buffer, filename: url },
             [binary.buffer]
         );
     } catch (err) {
+        clearLoadingWatchdog();
         statusEl.textContent = `Failed to download: ${err.message}`;
         statusEl.className = 'error';
         hideProgress();
@@ -685,6 +796,16 @@ fitBtn.addEventListener('click', () => {
     showToast('Camera fitted to scene');
 });
 
+progressStopBtn.addEventListener('click', () => {
+    console.log('[main] User stopped loading — respawning worker...');
+    statusEl.textContent = 'Loading stopped by user. Worker restarted.';
+    statusEl.className = 'error';
+    preserveStatus = true;
+    hideProgress();
+    showToast('Loading stopped — worker restarted');
+    respawnWorker();
+});
+
 // ============================================================================
 // Drag-and-drop
 // ============================================================================
@@ -718,3 +839,6 @@ document.body.addEventListener('drop', async (e) => {
 // ============================================================================
 
 initMemoryGraph();
+attachCanvasEvents(canvas);
+resizeObserver.observe(canvas);
+spawnWorker();

@@ -84,6 +84,11 @@ const sceneState = {
     upAxis: 'Y',
 };
 
+// Pre-allocated scratch vectors for hot-path (pointer move)
+const _scratchRight = new THREE.Vector3();
+const _scratchUp = new THREE.Vector3();
+const _scratchDir = new THREE.Vector3();
+
 // Manual orbit camera
 const orbitState = {
     theta: 0.3,
@@ -258,7 +263,9 @@ function createGradientEnv() {
 
     const texture = new THREE.CanvasTexture(oc);
     texture.mapping = THREE.EquirectangularReflectionMapping;
-    return three.pmremGenerator.fromEquirectangular(texture).texture;
+    const envTexture = three.pmremGenerator.fromEquirectangular(texture).texture;
+    texture.dispose();
+    return envTexture;
 }
 
 function applyEnv() {
@@ -276,7 +283,6 @@ function applyEnv() {
 
 async function handleLoadFile({ data, filename }) {
     sendStatus(`Loading: ${filename}...`);
-    sendProgress('parsing', 30, `Parsing: ${filename}...`);
 
     try {
         await loadUSDFromData(new Uint8Array(data), filename);
@@ -291,15 +297,31 @@ async function loadUSDFromData(data, filename) {
 
     sendProgress('parsing', 30, `Parsing: ${filename}...`);
 
-    // Parse USD
-    const usd = await new Promise((resolve, reject) => {
-        loaderState.loader.parse(
-            data,
-            filename,
-            resolve,
-            reject
-        );
-    });
+    // Parse USD — wrap in try/catch to detect WASM OOM
+    let usd;
+    try {
+        usd = await new Promise((resolve, reject) => {
+            loaderState.loader.parse(
+                data,
+                filename,
+                resolve,
+                reject
+            );
+        });
+    } catch (err) {
+        const msg = err?.message || String(err);
+        if (msg.includes('resize_heap') || msg.includes('enlarge memory') ||
+            msg.includes('Cannot enlarge') || msg.includes('OOM') ||
+            msg.includes('out of memory') || msg.includes('the limit is')) {
+            const sizeMB = Math.round(data.byteLength / (1024 * 1024));
+            throw new Error(
+                `Out of WASM memory loading ${filename} (${sizeMB} MB). ` +
+                `The 32-bit WASM build is limited to ~2 GB heap. ` +
+                `Try a smaller file, or rebuild with USE_MEMORY64=true for 64-bit WASM.`
+            );
+        }
+        throw err;
+    }
 
     loaderState.nativeLoader = usd;
 
@@ -564,17 +586,12 @@ function handlePointerMove({ x, y, buttons }) {
         orbitState.phi    = Math.max(0.01, Math.min(Math.PI - 0.01, orbitState.phi + dy * 0.01));
     } else if (orbitState.isPanning && buttons & 2) {
         const panSpeed = orbitState.radius * 0.001;
-        const right = new THREE.Vector3();
-        const up    = new THREE.Vector3();
-        three.camera.getWorldDirection(new THREE.Vector3());
-        right.crossVectors(
-            three.camera.getWorldDirection(new THREE.Vector3()).negate(),
-            three.camera.up
-        ).normalize();
-        up.copy(three.camera.up).normalize();
+        three.camera.getWorldDirection(_scratchDir);
+        _scratchRight.crossVectors(_scratchDir.negate(), three.camera.up).normalize();
+        _scratchUp.copy(three.camera.up).normalize();
 
-        orbitState.target.addScaledVector(right, -dx * panSpeed);
-        orbitState.target.addScaledVector(up,     dy * panSpeed);
+        orbitState.target.addScaledVector(_scratchRight, -dx * panSpeed);
+        orbitState.target.addScaledVector(_scratchUp,     dy * panSpeed);
     }
 
     updateCamera();
@@ -658,3 +675,19 @@ function sendLoaded(meshCount, materialCount, textureCount, upAxis) {
     console.log(`[Worker] Loaded: ${meshCount} meshes, ${materialCount} materials, ${textureCount} textures, upAxis=${upAxis}`);
     self.postMessage({ type: 'loaded', meshCount, materialCount, textureCount, upAxis });
 }
+
+// ============================================================================
+// Global error handlers (safety net for uncaught errors, e.g. Emscripten abort)
+// ============================================================================
+
+self.addEventListener('error', (e) => {
+    const msg = e.message || 'Unknown worker error';
+    console.error('[Worker] Uncaught error:', msg);
+    self.postMessage({ type: 'error', message: msg });
+});
+
+self.addEventListener('unhandledrejection', (e) => {
+    const msg = e.reason?.message || String(e.reason) || 'Unhandled rejection in worker';
+    console.error('[Worker] Unhandled rejection:', msg);
+    self.postMessage({ type: 'error', message: msg });
+});
