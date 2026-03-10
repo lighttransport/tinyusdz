@@ -106,6 +106,20 @@ function resumeCoroutine() {
     }
     self.postMessage({ type: 'resumed' });
 }
+
+/**
+ * Clear pause state and flush queued RAF callbacks.
+ * Called when loading finishes (success or error) to ensure the render loop
+ * is never left stalled.
+ */
+function clearPauseState() {
+    if (!_coroutinePaused) return;
+    _coroutinePaused = false;
+    const cbs = _pausedCallbacks.splice(0);
+    for (const cb of cbs) _origRAF(cb);
+    self.postMessage({ type: 'resumed' });
+}
+
 const CAMERA_FOV      = 45;
 const CAMERA_NEAR     = 0.1;
 const CAMERA_FAR      = 1000;
@@ -360,14 +374,7 @@ async function handleLoadFile({ data, filename }) {
         sendError(`Failed to load ${filename}: ${err.message}`);
         console.error('[Worker] loadFile error:', err);
     } finally {
-        // Always clear pause state when loading ends (success or error)
-        // so the render loop is never left stalled
-        if (_coroutinePaused) {
-            _coroutinePaused = false;
-            const cbs = _pausedCallbacks.splice(0);
-            for (const cb of cbs) _origRAF(cb);
-            self.postMessage({ type: 'resumed' });
-        }
+        clearPauseState();
     }
 }
 
@@ -503,13 +510,7 @@ async function loadUSDFromData(data, filename) {
         sceneState.upAxis
     );
 
-    // Clear pause state so the render loop resumes after loading completes
-    if (_coroutinePaused) {
-        _coroutinePaused = false;
-        const cbs = _pausedCallbacks.splice(0);
-        for (const cb of cbs) _origRAF(cb);
-        self.postMessage({ type: 'resumed' });
-    }
+    clearPauseState();
 }
 
 // ============================================================================
@@ -770,8 +771,10 @@ function handleToggleUpAxis({ apply }) {
 // ============================================================================
 
 function animate() {
-    if (typeof requestAnimationFrame === 'function') {
-        requestAnimationFrame(animate);
+    // Use _origRAF directly — the wrapped requestAnimationFrame is only for
+    // coroutine yield points (pause/delay). The render loop must always run.
+    if (_origRAF) {
+        _origRAF(animate);
     } else {
         setTimeout(animate, 16);
     }
