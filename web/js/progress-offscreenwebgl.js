@@ -197,14 +197,14 @@ function respawnWorker() {
 let lastProgressUpdate = 0;
 const PROGRESS_UPDATE_INTERVAL = 50;
 
-const STAGE_ORDER = ['downloading', 'parsing', 'building', 'textures', 'materials', 'complete'];
+const STAGE_ORDER = ['downloading', 'parsing', 'building', 'materials', 'textures', 'complete'];
 
 const STAGE_LABELS = {
     'downloading': 'Downloading file...',
     'parsing': 'Parsing USD (Worker)...',
     'building': 'Building Three.js scene...',
-    'textures': 'Processing textures...',
     'materials': 'Converting materials...',
+    'textures': 'Decoding textures...',
     'complete': 'Complete!'
 };
 
@@ -862,7 +862,7 @@ function syncDebugDelay() {
     const enabled = progressDebugToggle.checked;
     const ms = enabled ? parseInt(progressDebugDelay.value, 10) || 0 : 0;
     progressDebugDelay.disabled = !enabled;
-    worker.postMessage({ type: 'setDebugDelay', delayMs: ms });
+    if (worker) worker.postMessage({ type: 'setDebugDelay', delayMs: ms });
 }
 
 progressDebugToggle.addEventListener('change', syncDebugDelay);
