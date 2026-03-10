@@ -290,6 +290,24 @@
             50% { opacity: 0.5; }
         }
 
+        #progress-stop-btn {
+            display: block;
+            margin: 16px auto 0;
+            padding: 8px 24px;
+            background: rgba(244, 67, 54, 0.15);
+            color: #ef5350;
+            border: 1px solid rgba(244, 67, 54, 0.4);
+            border-radius: 6px;
+            font-size: 13px;
+            cursor: pointer;
+            transition: background 0.2s, border-color 0.2s;
+        }
+
+        #progress-stop-btn:hover {
+            background: rgba(244, 67, 54, 0.3);
+            border-color: #ef5350;
+        }
+
         /* Texture Loading Progress Bar */
         #texture-progress-container {
             position: fixed;
@@ -696,6 +714,7 @@
                 <span>Complete</span>
             </div>
         </div>
+        <button id="progress-stop-btn">Stop Loading</button>
     </div>
 
     <!-- Texture Loading Progress -->
