@@ -1,8 +1,11 @@
 # OffscreenCanvas + Web Worker + TinyUSDZ WASM
 
-`offscreengl.*` — a USD viewer that runs all WebGL rendering and WASM
-processing inside a dedicated Web Worker, leaving the main thread entirely
-free for UI interactions.
+`offscreengl.*` and `progress-offscreenwebgl.*` — USD viewers that run all
+WebGL rendering and WASM processing inside a dedicated Web Worker, leaving
+the main thread entirely free for UI interactions.
+
+`progress-offscreenwebgl.*` extends the base demo with a full progress UI
+(progress bar, stage indicators, memory graph, texture loading progress).
 
 ---
 
@@ -24,6 +27,8 @@ this work touches the main-thread task queue.
 ---
 
 ## Architecture
+
+### Base demo (`offscreengl.*`)
 
 ```
 ┌──────────────────────────────────────────┐
@@ -57,7 +62,59 @@ this work touches the main-thread task queue.
 └──────────────────────────────────────────┘
 ```
 
-### Message protocol
+### Progress demo (`progress-offscreenwebgl.*`)
+
+Extends the base architecture with real-time progress reporting:
+
+```
+┌───────────────────────────────────────────────────┐
+│  Main Thread  (progress-offscreenwebgl.js)        │
+│                                                   │
+│  <canvas id="gl">                                 │
+│   └─ transferControlToOffscreen() ──►──┐          │
+│                                         │          │
+│  DOM: info panel, toolbar, help text   │          │
+│  Progress: bar, stage icons, %         │          │
+│  Texture progress: bar, count          │          │
+│  Memory graph: canvas 2D, stats        │          │
+│  Events: pointer / wheel / resize ──►──┤          │
+│  File drop/pick → ArrayBuffer    ──►──┤          │
+│                                         │          │
+│  Worker messages ◄──┐                  │          │
+│    status           │                  │          │
+│    progress ────► updateProgressUI()   │          │
+│    texture_progress ► updateTextureUI()│          │
+│    loaded           │                  │          │
+│    error            │                  │          │
+└───────────────────────────────────────────────────┘
+                         │ postMessage (structured-clone / transferable)
+                         ▼
+┌───────────────────────────────────────────────────┐
+│  Web Worker  (progress-offscreenwebgl.worker.js)  │
+│                                                   │
+│  THREE.WebGLRenderer({ canvas: offscreen })       │
+│  PMREMGenerator  ──►  IBL env map                 │
+│                                                   │
+│  TinyUSDZLoader.init({                            │
+│    onTydraProgress: ──► sendProgress()            │
+│    onTydraComplete: ──► sendProgress()            │
+│  })                                               │
+│                                                   │
+│  C++ WASM (Tydra conversion)                      │
+│   └─ DetailedProgressCallback                     │
+│       └─ EM_JS reportTydraProgress()              │
+│           └─ Module.onTydraProgress()             │
+│               └─ self.postMessage({progress})     │
+│                                                   │
+│  TextureLoadingManager (delayed, async)           │
+│   └─ onProgress ──► sendTextureProgress()         │
+│                                                   │
+│  Manual orbit camera                              │
+│  requestAnimationFrame render loop                │
+└───────────────────────────────────────────────────┘
+```
+
+### Message protocol (base demo)
 
 | Direction       | `type`        | Key payload fields                          |
 |-----------------|---------------|---------------------------------------------|
@@ -71,6 +128,16 @@ this work touches the main-thread task queue.
 | Worker → Main   | `status`      | `message`                                   |
 | Worker → Main   | `loaded`      | `meshCount, materialCount, upAxis`          |
 | Worker → Main   | `error`       | `message`                                   |
+
+### Additional messages (progress demo)
+
+| Direction       | `type`             | Key payload fields                          |
+|-----------------|--------------------|---------------------------------------------|
+| Main → Worker   | `toggleUpAxis`     | `apply: boolean`                            |
+| Main → Worker   | `fitCamera`        | *(none)*                                    |
+| Worker → Main   | `progress`         | `stage, percentage, message`                |
+| Worker → Main   | `texture_progress` | `loaded, total, failed, percentage, isStart, isComplete` |
+| Worker → Main   | `loaded`           | `meshCount, materialCount, textureCount, upAxis` |
 
 The `OffscreenCanvas` and file `ArrayBuffer` are sent as **transferables**
 (zero-copy), not cloned.
@@ -121,6 +188,71 @@ Two issues arise from moving Three.js into a Worker:
      createImageBitmap(blob, { imageOrientation:'flipY' })  →  pixels bottom→top
      +  UNPACK_FLIP_Y=true (ignored)  →  GPU bottom→top  ✓
    ```
+
+### WASM progress callback: coroutine vs. WebWorker
+
+The TinyUSDZ WASM build has two mechanisms for reporting progress during
+Tydra scene conversion:
+
+**1. Synchronous EM_JS callbacks** (`binding.cc`)
+
+```
+C++ ConvertToRenderScene()
+  → DetailedProgressCallback (per-mesh, synchronous)
+    → EM_JS reportTydraProgress()
+      → Module.onTydraProgress() in JS
+```
+
+These fire synchronously inside the WASM call stack. In JS they call
+`self.postMessage()` which **queues** the message — the main thread
+receives it only when the worker's event loop ticks.
+
+**2. C++20 coroutine yields** (`co_await yieldToEventLoop()`)
+
+Optional (`-DTINYUSDZ_WASM_COROUTINE=ON`, default OFF). Suspends the C++
+coroutine between phases (format detection → parsing → setup → conversion →
+complete), returning a Promise that resolves on `requestAnimationFrame`.
+This lets the worker's event loop flush queued `postMessage` calls and
+continue its render loop.
+
+**Why coroutines are not required in the WebWorker configuration:**
+
+On the **main thread** (e.g. `progress-demo.js`), the synchronous WASM call
+blocks the event loop — `postMessage` from `reportTydraProgress` never
+reaches the UI because the same thread is blocked. Coroutine `co_await`
+yields were the only way to get intermediate progress updates.
+
+In the **WebWorker + OffscreenCanvas** configuration, this problem disappears:
+
+```
+Worker thread (blocked by WASM):
+  C++ Tydra → reportTydraProgress → Module.onTydraProgress
+    → self.postMessage({type:'progress',...})       ← queued
+
+Main thread (free, not blocked):
+  worker.onmessage → updateProgressUI()             ← processes immediately
+  → DOM updates: progress bar, stage icons, memory graph
+```
+
+The main thread is **never blocked by WASM** — it processes progress
+messages as fast as the browser delivers them. Progress updates appear
+smooth and responsive even without coroutine yields.
+
+**When coroutines are still useful in a worker:**
+
+If `TINYUSDZ_WASM_COROUTINE=ON`, the worker's own `requestAnimationFrame`
+render loop can continue running between `co_await` suspension points. This
+means the 3D viewport keeps rendering (e.g. showing a spinning grid) while
+USD parsing is in progress. Without coroutines, the viewport freezes during
+the synchronous `loadFromBinary` call since the worker's event loop is
+blocked.
+
+| | Without coroutines | With coroutines |
+|---|---|---|
+| Progress to main thread UI | Smooth | Smooth |
+| Worker render loop during parse | **Frozen** | Keeps running |
+| Build requirement | Default build | `TINYUSDZ_WASM_COROUTINE=ON` |
+| API used | `loadFromBinary` (sync) | `loadFromBinaryAsync` (Promise) |
 
 ### WASM loading
 
@@ -295,17 +427,27 @@ if (typeof canvas.transferControlToOffscreen !== 'function') {
 
 ```
 web/js/
-├── offscreengl.html          HTML entry point (no importmap needed)
-├── offscreengl.js            Main thread: canvas transfer + event forwarding
-├── offscreengl.worker.js     Worker: Three.js + TinyUSDZ WASM + orbit camera
+├── offscreengl.html                    Base demo: HTML entry point
+├── offscreengl.js                      Base demo: main thread (canvas transfer + events)
+├── offscreengl.worker.js               Base demo: worker (Three.js + WASM + orbit camera)
+├── progress-offscreenwebgl.html        Progress demo: HTML with progress UI + memory panel
+├── progress-offscreenwebgl.js          Progress demo: main thread (progress bar + memory graph)
+├── progress-offscreenwebgl.worker.js   Progress demo: worker (+ Tydra progress + texture loading)
+├── src/tinyusdz/
+│   ├── TinyUSDZLoader.js               WASM loader (sync + coroutine async)
+│   ├── TinyUSDZLoaderUtils.js          Scene graph builder
+│   ├── TinyUSDZMaterialX.js            MaterialX / OpenPBR material converter
+│   ├── TinyUSDZWorker.js               Parse-only worker (for progress-demo.js worker mode)
+│   └── TinyUSDZWorkerLoader.js         Worker loader bridge (main-thread API)
 └── docs/
-    └── offscreenwebgl.md     This document
+    └── offscreenwebgl.md               This document
 ```
 
 ## Related
 
 - `materialx.html` / `materialx.js` — equivalent demo on the main thread
+- `progress-demo.html` / `progress-demo.js` — main-thread progress demo (with worker toggle)
 - `vite.config.ts` — COOP/COEP headers (required for other demos, not this one)
-- `src/tinyusdz/TinyUSDZLoader.js` — WASM loader (`USE_MEMORY64` flag)
-- `src/tinyusdz/TinyUSDZLoaderUtils.js` — scene graph builder
-- `src/tinyusdz/TinyUSDZMaterialX.js` — MaterialX / OpenPBR material converter
+- `web/binding.cc` — C++ WASM bindings (EM_JS progress callbacks, coroutine yields)
+- `src/tydra/render-data.hh` — `DetailedProgressCallback` type definitions
+- `web/CMakeLists.txt` — `TINYUSDZ_WASM_COROUTINE` build option
