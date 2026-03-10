@@ -212,6 +212,14 @@
             display: none;
         }
 
+        #progress-bar.paused {
+            background: linear-gradient(90deg, #FF9800, #FFB74D);
+        }
+
+        #progress-bar.paused::after {
+            animation: none;
+        }
+
         #progress-percentage {
             font-size: 24px;
             font-weight: 700;
@@ -290,17 +298,92 @@
             50% { opacity: 0.5; }
         }
 
-        #progress-stop-btn {
-            display: block;
-            margin: 16px auto 0;
+        #progress-debug-row {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+            margin-top: 14px;
+            padding: 8px 12px;
+            background: rgba(255, 255, 255, 0.05);
+            border-radius: 6px;
+            font-size: 12px;
+            color: #888;
+        }
+
+        #progress-debug-label {
+            display: flex;
+            align-items: center;
+            gap: 5px;
+            cursor: pointer;
+            color: #aaa;
+            user-select: none;
+        }
+
+        #progress-debug-toggle {
+            accent-color: #FF9800;
+        }
+
+        #progress-debug-delay {
+            width: 64px;
+            padding: 3px 6px;
+            background: rgba(0, 0, 0, 0.4);
+            border: 1px solid rgba(255, 255, 255, 0.15);
+            border-radius: 4px;
+            color: #ccc;
+            font-size: 12px;
+            text-align: center;
+        }
+
+        #progress-debug-delay:disabled {
+            opacity: 0.3;
+        }
+
+        #progress-debug-unit {
+            color: #666;
+        }
+
+        #progress-btn-row {
+            display: flex;
+            justify-content: center;
+            gap: 10px;
+            margin-top: 10px;
+        }
+
+        #progress-pause-btn, #progress-stop-btn {
             padding: 8px 24px;
-            background: rgba(244, 67, 54, 0.15);
-            color: #ef5350;
-            border: 1px solid rgba(244, 67, 54, 0.4);
             border-radius: 6px;
             font-size: 13px;
             cursor: pointer;
             transition: background 0.2s, border-color 0.2s;
+        }
+
+        #progress-pause-btn {
+            background: rgba(255, 152, 0, 0.15);
+            color: #FFB74D;
+            border: 1px solid rgba(255, 152, 0, 0.4);
+        }
+
+        #progress-pause-btn:hover {
+            background: rgba(255, 152, 0, 0.3);
+            border-color: #FFB74D;
+        }
+
+        #progress-pause-btn.paused {
+            background: rgba(76, 175, 80, 0.15);
+            color: #81C784;
+            border-color: rgba(76, 175, 80, 0.4);
+        }
+
+        #progress-pause-btn.paused:hover {
+            background: rgba(76, 175, 80, 0.3);
+            border-color: #81C784;
+        }
+
+        #progress-stop-btn {
+            background: rgba(244, 67, 54, 0.15);
+            color: #ef5350;
+            border: 1px solid rgba(244, 67, 54, 0.4);
         }
 
         #progress-stop-btn:hover {
@@ -714,7 +797,18 @@
                 <span>Complete</span>
             </div>
         </div>
-        <button id="progress-stop-btn">Stop Loading</button>
+        <div id="progress-debug-row">
+            <label id="progress-debug-label">
+                <input type="checkbox" id="progress-debug-toggle" checked>
+                Debug delay
+            </label>
+            <input type="number" id="progress-debug-delay" value="500" min="0" max="30000" step="100">
+            <span id="progress-debug-unit">ms</span>
+        </div>
+        <div id="progress-btn-row">
+            <button id="progress-pause-btn">Pause</button>
+            <button id="progress-stop-btn">Stop Loading</button>
+        </div>
     </div>
 
     <!-- Texture Loading Progress -->
