@@ -571,6 +571,21 @@ bool GetGeomPrimvar(const Stage &stage, const GPrim *prim,
 std::vector<GeomPrimvar> GetGeomPrimvars(const Stage &stage, const GPrim &prim);
 
 ///
+/// Find a primvar on the given prim or its nearest ancestor that defines it.
+/// Walks up the prim hierarchy from `prim_path` to the root.
+///
+/// @param[in] stage The USD Stage.
+/// @param[in] prim_path Absolute path to the starting prim.
+/// @param[in] primvar_name The primvar name (without "primvars:" prefix).
+/// @param[out] out The found GeomPrimvar.
+/// @param[out] err Optional error string.
+/// @return true if found.
+///
+bool FindPrimvarWithInheritance(const Stage &stage, const Path &prim_path,
+    const std::string &primvar_name, GeomPrimvar *out,
+    std::string *err = nullptr);
+
+///
 /// Build Collection Membership
 ///
 /// It traverse collection paths starting from `seedCollectionInstance` in the
@@ -614,14 +629,26 @@ class SkelHierarchy {
  public:
   SkelHierarchy() = default;
 
-  std::string prim_name;                  // Skeleleton Prim name
-  std::string abs_path;                   // Absolute path to Skeleleton Prim
+  std::string prim_name;                  // Skeleton Prim name
+  std::string abs_path;                   // Absolute path to Skeleton Prim
   std::string display_name;               // `displayName` Prim meta
 
-  SkelNode root_node; 
+  SkelNode root_node;
 
   int anim_id{-1};                        // Default animation(SkelAnimation) attached to Skeleton
   std::vector<int> anim_ids;              // All animations(SkelAnimation) attached to Skeleton
+
+  // Flat topology arrays (built alongside tree for efficient lookups).
+  // parent_joint_indices[i] = parent joint index for joint i, -1 for root.
+  std::vector<int> parent_joint_indices;
+
+  // World-space bind transforms per joint (same order as Skeleton.joints).
+  std::vector<value::matrix4d> bind_transforms;
+
+  // Local rest transforms per joint (same order as Skeleton.joints).
+  std::vector<value::matrix4d> rest_transforms;
+
+  size_t num_joints() const { return parent_joint_indices.size(); }
 
  private:
 
@@ -653,6 +680,185 @@ bool BuildSkelHierarchy(const Skeleton &skel,
 bool ListSceneNames(const tinyusdz::Prim &root,
                     std::vector<std::pair<bool, std::string>> *sceneNames);
 
+//
+// Skeletal mesh extent computation
+// (Follows OpenUSD's pivot-based approach from pxr/usd/usdSkel)
+//
+
+///
+/// Compute bounding box from joint transform translation components (pivots).
+/// Optionally applies a root transform and padding.
+///
+/// @param[in] jointXforms Joint transforms (e.g. posed world-space transforms)
+/// @param[out] extent Computed bounding box
+/// @param[in] padding Amount to expand the extent in all directions
+/// @param[in] rootXform Optional root transform applied to each pivot
+/// @return true on success
+///
+bool ComputeJointsExtent(
+    const std::vector<value::matrix4d> &jointXforms,
+    Extent *extent,
+    float padding = 0.0f,
+    const value::matrix4d *rootXform = nullptr);
+
+///
+/// Compute padding that accounts for mesh geometry extending beyond joint
+/// pivot positions. Used with ComputeJointsExtent for fast skeletal extent.
+///
+/// @param[in] restJointXforms Rest-pose joint transforms
+/// @param[in] meshRestExtent Rest-pose mesh bounding box
+/// @param[in] geomBindTransform Geometry bind transform
+/// @return padding value (>= 0)
+///
+float ComputeSkinnedExtentPadding(
+    const std::vector<value::matrix4d> &restJointXforms,
+    const Extent &meshRestExtent,
+    const value::matrix4d &geomBindTransform);
+
+///
+/// Linear Blend Skinning of points.
+///
+/// @param[in] restPoints Rest-pose point positions
+/// @param[in] geomBindTransform Transforms rest points into skeleton space
+/// @param[in] jointXforms Per-joint transforms (skeleton-space)
+/// @param[in] jointIndices Flat array of joint indices per point
+/// @param[in] jointWeights Flat array of joint weights per point
+/// @param[in] numInfluencesPerPoint Number of influences per point
+/// @param[out] skinnedPoints Output skinned positions
+/// @param[out] err Optional error message
+/// @return true on success
+///
+bool SkinPointsLBS(
+    const std::vector<value::point3f> &restPoints,
+    const value::matrix4d &geomBindTransform,
+    const std::vector<value::matrix4d> &jointXforms,
+    const std::vector<int> &jointIndices,
+    const std::vector<float> &jointWeights,
+    int numInfluencesPerPoint,
+    std::vector<value::point3f> *skinnedPoints,
+    std::string *err = nullptr);
+
+///
+/// Compute skinned mesh extent using the fast pivot-based approach.
+/// Combines ComputeSkinnedExtentPadding + ComputeJointsExtent.
+///
+/// @param[in] jointXforms Current posed joint transforms
+/// @param[in] restJointXforms Rest-pose joint transforms
+/// @param[in] meshRestExtent Rest-pose mesh bounding box
+/// @param[in] geomBindTransform Geometry bind transform
+/// @param[out] extent Computed bounding box
+/// @param[in] rootXform Optional root transform
+/// @return true on success
+///
+bool ComputeSkinnedMeshExtent(
+    const std::vector<value::matrix4d> &jointXforms,
+    const std::vector<value::matrix4d> &restJointXforms,
+    const Extent &meshRestExtent,
+    const value::matrix4d &geomBindTransform,
+    Extent *extent,
+    const value::matrix4d *rootXform = nullptr);
+
+//
+// Additional skeleton utilities (ported from OpenUSD's UsdSkelUtils)
+//
+
+///
+/// Concatenate joint transforms: compute world-space transforms from
+/// local joint transforms and topology.
+///
+/// Equivalent to pxrUSD's UsdSkelConcatJointTransforms.
+///
+/// @param[in] topology Parent joint indices (-1 for root)
+/// @param[in] localXforms Per-joint local transforms
+/// @param[out] worldXforms Output world-space transforms
+/// @param[in] rootXform Optional root transform prepended to roots
+/// @return true on success
+///
+bool ConcatJointTransforms(
+    const std::vector<int> &topology,
+    const std::vector<value::matrix4d> &localXforms,
+    std::vector<value::matrix4d> *worldXforms,
+    const value::matrix4d *rootXform = nullptr);
+
+///
+/// Compute joint-local transforms from world-space transforms and topology.
+///
+/// Equivalent to pxrUSD's UsdSkelComputeJointLocalTransforms.
+///
+/// @param[in] topology Parent joint indices (-1 for root)
+/// @param[in] worldXforms Per-joint world-space transforms
+/// @param[out] localXforms Output local transforms
+/// @param[in] rootXform Optional inverse root transform for roots
+/// @return true on success
+///
+bool ComputeJointLocalTransforms(
+    const std::vector<int> &topology,
+    const std::vector<value::matrix4d> &worldXforms,
+    std::vector<value::matrix4d> *localXforms,
+    const value::matrix4d *inverseRootXform = nullptr);
+
+///
+/// Build a transform matrix from translation, rotation (quaternion), and scale.
+/// This is the transform composition used by SkelAnimation data
+/// (translations, rotations, scales).
+///
+/// Equivalent to pxrUSD's UsdSkelMakeTransform.
+///
+/// @param[in] translation Translation component
+/// @param[in] rotation Rotation quaternion (w, x, y, z order in value::quatf)
+/// @param[in] scale Scale component (half3 from SkelAnimation)
+/// @return Composed 4x4 transform matrix
+///
+value::matrix4d SkelMakeTransform(
+    const value::float3 &translation,
+    const value::quatf &rotation,
+    const value::half3 &scale);
+
+///
+/// Skin normals using Linear Blend Skinning (LBS).
+/// Normals are transformed using the inverse-transpose of the skinning matrix
+/// (direction-only, no translation).
+///
+/// @param[in] restNormals Rest-pose normals
+/// @param[in] geomBindTransform Transforms rest normals into skeleton space
+/// @param[in] jointXforms Per-joint transforms (skeleton-space)
+/// @param[in] jointIndices Flat array of joint indices per point
+/// @param[in] jointWeights Flat array of joint weights per point
+/// @param[in] numInfluencesPerPoint Number of influences per point
+/// @param[out] skinnedNormals Output skinned normals (renormalized)
+/// @param[out] err Optional error message
+/// @return true on success
+///
+bool SkinNormalsLBS(
+    const std::vector<value::normal3f> &restNormals,
+    const value::matrix4d &geomBindTransform,
+    const std::vector<value::matrix4d> &jointXforms,
+    const std::vector<int> &jointIndices,
+    const std::vector<float> &jointWeights,
+    int numInfluencesPerPoint,
+    std::vector<value::normal3f> *skinnedNormals,
+    std::string *err = nullptr);
+
+///
+/// Expand constant (per-prim) skinning influences to per-vertex.
+///
+/// When jointIndices/jointWeights interpolation is "constant", we have a single
+/// set of numInfluencesPerComponent indices+weights that applies to every vertex.
+/// This expands them to a per-vertex flat array.
+///
+/// @param[in] indices Constant joint indices (size = numInfluencesPerComponent)
+/// @param[in] weights Constant joint weights (size = numInfluencesPerComponent)
+/// @param[in] numVertices Number of vertices
+/// @param[out] expandedIndices Output per-vertex indices (size = numVertices * numInfluencesPerComponent)
+/// @param[out] expandedWeights Output per-vertex weights (size = numVertices * numInfluencesPerComponent)
+/// @return true on success
+///
+bool ExpandConstantInfluencesToVarying(
+    const std::vector<int> &indices,
+    const std::vector<float> &weights,
+    size_t numVertices,
+    std::vector<int> *expandedIndices,
+    std::vector<float> *expandedWeights);
 
 }  // namespace tydra
 }  // namespace tinyusdz

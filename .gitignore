@@ -368,3 +368,5 @@ aousd/OpenUSD/
 
 # OpenUSD build outputs
 aousd/dist*/
+.env
+.mcp.json

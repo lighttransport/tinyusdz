@@ -16,7 +16,7 @@
 namespace tinyusdz {
 
 // for bindMaterialAs
-constexpr auto kWeaderThanDescendants = "weakerThanDescendants";
+constexpr auto kWeakerThanDescendants = "weakerThanDescendants";
 constexpr auto kStrongerThanDescendants = "strongerThanDescendants";
 
 enum class MaterialBindingStrength
@@ -135,7 +135,7 @@ class MaterialBinding {
     } else if (mat_purpose.str() == "full") {
       return set_materialBindingFull(rel);
     } else if (mat_purpose.str() == "preview") {
-      return set_materialBindingFull(rel);
+      return set_materialBindingPreview(rel);
     } else {
       _materialBindingMap[mat_purpose.str()] = rel;
     }
@@ -149,7 +149,7 @@ class MaterialBinding {
     } else if (mat_purpose.str() == "full") {
       return set_materialBindingFull(rel, strength);
     } else if (mat_purpose.str() == "preview") {
-      return set_materialBindingFull(rel, strength);
+      return set_materialBindingPreview(rel, strength);
     } else {
       _materialBindingMap[mat_purpose.str()] = rel;
       _materialBindingMap[mat_purpose.str()].metas().set_bindMaterialAs(strength_tok);

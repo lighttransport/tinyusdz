@@ -93,6 +93,47 @@
             font-weight: 500;
             color: #4CAF50;
             margin: 0;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        #nodegraph-collapse-btn {
+            background: rgba(255, 255, 255, 0.15);
+            border: none;
+            color: #4CAF50;
+            width: 22px;
+            height: 22px;
+            border-radius: 3px;
+            cursor: pointer;
+            font-size: 12px;
+            line-height: 22px;
+            text-align: center;
+            padding: 0;
+            transition: background 0.2s, transform 0.2s;
+            flex-shrink: 0;
+        }
+
+        #nodegraph-collapse-btn:hover {
+            background: rgba(255, 255, 255, 0.25);
+        }
+
+        #nodegraph-collapse-btn.collapsed {
+        }
+
+        .nodegraph-panel.collapsed {
+            flex: 0 0 auto;
+            min-width: 0;
+        }
+
+        .nodegraph-panel.collapsed #nodegraph-canvas,
+        .nodegraph-panel.collapsed .ng-material-bar,
+        .nodegraph-panel.collapsed .node-stats {
+            display: none;
+        }
+
+        .nodegraph-panel.collapsed .nodegraph-controls {
+            display: none;
         }
 
         .nodegraph-controls {
@@ -264,6 +305,51 @@
 
         .resizer:hover {
             background: #4CAF50;
+        }
+
+        /* NodeGraph material selector bar */
+        .ng-material-bar {
+            display: none;
+            align-items: center;
+            gap: 8px;
+            padding: 5px 12px;
+            background: #1e1e30;
+            border-top: 1px solid #2a2a44;
+            border-bottom: 1px solid #2a2a44;
+            font-size: 12px;
+            flex-shrink: 0;
+        }
+
+        .ng-material-bar.visible {
+            display: flex;
+        }
+
+        .ng-material-bar label {
+            color: #aaa;
+            font-size: 11px;
+            white-space: nowrap;
+        }
+
+        .ng-material-bar select {
+            flex: 1;
+            background: #2a2a42;
+            color: #eee;
+            border: 1px solid #444;
+            padding: 3px 8px;
+            border-radius: 4px;
+            font-size: 12px;
+            cursor: pointer;
+        }
+
+        .ng-material-bar select:focus {
+            outline: 1px solid #4CAF50;
+        }
+
+        .ng-material-bar .mat-count {
+            color: #666;
+            font-size: 10px;
+            font-family: monospace;
+            white-space: nowrap;
         }
 
         /* Node graph stats */
@@ -443,6 +529,49 @@
             font-family: monospace;
         }
 
+        /* Undo/Redo button group */
+        .undo-group {
+            display: flex;
+            gap: 2px;
+            background: rgba(0, 0, 0, 0.3);
+            border-radius: 4px;
+            padding: 2px;
+        }
+
+        .undo-group .btn-undo {
+            background: #555;
+            color: #ccc;
+            border: none;
+            padding: 4px 8px;
+            border-radius: 3px;
+            cursor: pointer;
+            font-size: 11px;
+            font-weight: 500;
+            transition: all 0.15s;
+            display: flex;
+            align-items: center;
+            gap: 3px;
+            white-space: nowrap;
+        }
+
+        .undo-group .btn-undo:hover:not(:disabled) {
+            background: #2196F3;
+            color: white;
+        }
+
+        .undo-group .btn-undo:disabled {
+            opacity: 0.3;
+            cursor: not-allowed;
+        }
+
+        .undo-group .btn-undo .kbd {
+            font-size: 9px;
+            background: rgba(255, 255, 255, 0.15);
+            padding: 1px 4px;
+            border-radius: 2px;
+            font-family: monospace;
+        }
+
         /* Edit mode indicator */
         .edit-indicator {
             position: absolute;
@@ -603,6 +732,68 @@
             font-family: monospace;
             flex-shrink: 0;
         }
+
+        /* Shading controls */
+        .shading-controls {
+            position: absolute;
+            bottom: 40px;
+            left: 10px;
+            background: rgba(0, 0, 0, 0.85);
+            padding: 10px 12px;
+            border-radius: 8px;
+            z-index: 100;
+            min-width: 190px;
+            font-size: 12px;
+        }
+
+        .shading-controls h4 {
+            margin: 0 0 8px 0;
+            color: #CE93D8;
+            font-size: 12px;
+            cursor: pointer;
+            user-select: none;
+        }
+
+        .shading-controls h4::before {
+            content: '\25BC ';
+            font-size: 9px;
+        }
+
+        .shading-controls.collapsed h4::before {
+            content: '\25B6 ';
+        }
+
+        .shading-controls.collapsed .shading-body {
+            display: none;
+        }
+
+        .shading-controls .control-row {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            margin-bottom: 6px;
+        }
+
+        .shading-controls .control-row:last-child {
+            margin-bottom: 0;
+        }
+
+        .shading-controls label {
+            color: #aaa;
+            font-size: 11px;
+            min-width: 40px;
+            white-space: nowrap;
+        }
+
+        .shading-controls select {
+            flex: 1;
+            background: #333;
+            color: #fff;
+            border: 1px solid #555;
+            padding: 3px 6px;
+            border-radius: 3px;
+            font-size: 11px;
+        }
     </style>
 </head>
 <body>
@@ -625,6 +816,31 @@
 
             <div class="help-text">
                 <kbd>Scroll</kbd> zoom | <kbd>Drag</kbd> orbit | <kbd>Right-drag</kbd> pan
+            </div>
+
+            <!-- Shading Controls -->
+            <div class="shading-controls" id="shading-controls">
+                <h4 onclick="toggleShadingPanel()">Shading</h4>
+                <div class="shading-body">
+                    <div class="control-row">
+                        <label>Mode:</label>
+                        <select id="shading-mode-select" onchange="setShadingMode(this.value)">
+                            <option value="solid">Beauty</option>
+                            <option value="normal_mapped">Normal Mapped</option>
+                            <option value="normal_geometry">Normal Geometry</option>
+                            <option value="tangent">Tangent</option>
+                            <option value="bitangent">Bitangent</option>
+                            <option value="tangent_w">Tangent W (handedness)</option>
+                            <option value="base_color">Base Color</option>
+                            <option value="base_metalness">Base Metalness</option>
+                            <option value="base_diffuse_roughness">Base Diffuse Roughness</option>
+                            <option value="specular_color">Specular Color</option>
+                            <option value="specular_roughness">Specular Roughness</option>
+                            <option value="coat_color">Coat Color</option>
+                            <option value="fuzz_color">Fuzz Color</option>
+                        </select>
+                    </div>
+                </div>
             </div>
 
             <!-- Lighting Controls -->
@@ -684,15 +900,30 @@
         <!-- Node Graph Panel -->
         <div class="nodegraph-panel" id="nodegraph-panel">
             <div class="nodegraph-header">
-                <h2>MaterialX NodeGraph</h2>
+                <h2><button id="nodegraph-collapse-btn" onclick="toggleNodeGraphCollapse()" title="Hide node graph">&gt;</button>MaterialX NodeGraph</h2>
                 <div class="nodegraph-controls">
                     <button class="btn" onclick="loadFile()">Load USD</button>
                     <button class="btn secondary" onclick="loadSample()">Sample</button>
                     <select id="blender-sample-select" style="height:26px;font-size:11px;background:#2a2a3e;color:#ccc;border:1px solid #555;border-radius:3px;padding:0 4px;max-width:160px">
-                        <option value="texture_channel_blender.usdz">Texture channels</option>
+                        <!-- <option value="texture_channel_blender.usdz">Texture channels</option> -->
+                        <option value="test-nodegraph.usdz">Texture channels</option>
                         <option value="colorspace-constant-test.usdz">Colorspace (constant)</option>
                         <option value="colorspace-texture-test.usdz">Colorspace (texture)</option>
                         <option value="colorspace-gamut-test.usdz">Colorspace (gamut)</option>
+                        <optgroup label="Node Tests">
+                            <option value="mtlx/test-invert.usdz">Invert</option>
+                            <option value="mtlx/test-combine.usdz">Combine RGB</option>
+                            <option value="mtlx/test-mix.usdz">Mix</option>
+                            <option value="mtlx/test-multiply.usdz">Multiply</option>
+                            <option value="mtlx/test-separate.usdz">Separate RGB</option>
+                            <option value="mtlx/test-clamp.usdz">Clamp</option>
+                            <option value="mtlx/test-remap.usdz">Remap (MapRange)</option>
+                            <option value="mtlx/test-hsv.usdz">HSV Adjust</option>
+                            <option value="mtlx/test-normalmap.usdz">Normal Map</option>
+                            <option value="mtlx/test-add.usdz">Math Add/Sub</option>
+                            <option value="mtlx/test-math-ops.usdz">Math Pow/Div/Min/Max</option>
+                            <option value="mtlx/test-complex-chain.usdz">Complex Chain</option>
+                        </optgroup>
                     </select>
                     <button class="btn" style="background:#9C27B0" onclick="loadBlenderSample()">Load</button>
                     <button class="btn" style="background:#E91E63" id="btn-bridge" onclick="toggleBridge()">Connect</button>
@@ -709,6 +940,14 @@
                             <svg viewBox="0 0 24 24"><path d="M3 3h7V1H2a1 1 0 00-1 1v8h2V3zm0 18h7v2H2a1 1 0 01-1-1v-8h2v7zm18 0h-7v2h8a1 1 0 001-1v-8h-2v7zm0-18h-7V1h8a1 1 0 011 1v8h-2V3z"/></svg>
                         </button>
                     </div>
+                    <div class="undo-group">
+                        <button class="btn-undo" id="btn-undo" onclick="historyUndo()" title="Undo (Ctrl+Z)" disabled>
+                            ↩ <span class="kbd">Z</span>
+                        </button>
+                        <button class="btn-undo" id="btn-redo" onclick="historyRedo()" title="Redo (Ctrl+Y)" disabled>
+                            ↪ <span class="kbd">Y</span>
+                        </button>
+                    </div>
                     <div class="controls-separator"></div>
                     <button class="btn" id="btn-update" onclick="updateMaterialFromGraph()">Update</button>
                     <label class="toggle-container">
@@ -721,6 +960,14 @@
                 </div>
             </div>
             <canvas id="nodegraph-canvas"></canvas>
+
+            <!-- Material selector bar (above node/connection stats) -->
+            <div class="ng-material-bar" id="ng-material-bar">
+                <label>Material:</label>
+                <select id="ng-material-select" onchange="selectMaterial(parseInt(this.value))"></select>
+                <span class="mat-count" id="ng-material-count"></span>
+            </div>
+
             <div class="nodegraph-stats">
                 Nodes: <span id="node-count">0</span> |
                 Connections: <span id="connection-count">0</span>

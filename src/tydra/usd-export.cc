@@ -21,19 +21,29 @@ namespace tydra {
 
 namespace detail {
 
-static void CountNodes(const SkelNode &node, size_t &count) {
+static void CountNodes(const SkelNode &node, size_t &count, int32_t depth = 0) {
+  if (size_t(depth) >= kMaxDefaultTraversalLimit) return;
+
   count++;
 
   for (const auto &child : node.children) {
-    CountNodes(child, count);
-  } 
+    CountNodes(child, count, depth + 1);
+  }
 }
 
 static bool FlattenSkelNode(const SkelNode &node,
   std::vector<value::token> &joints,
   std::vector<value::token> &jointNames,
   std::vector<value::matrix4d> &bindTransforms,
-  std::vector<value::matrix4d> &restTransforms, std::string *err) {
+  std::vector<value::matrix4d> &restTransforms, std::string *err,
+  int32_t depth = 0) {
+
+  if (size_t(depth) >= kMaxDefaultTraversalLimit) {
+    if (err) {
+      (*err) += "FlattenSkelNode: recursion too deep.\n";
+    }
+    return false;
+  }
 
   size_t idx = size_t(node.joint_id);
   if (idx >= joints.size()) {
@@ -49,7 +59,7 @@ static bool FlattenSkelNode(const SkelNode &node,
   restTransforms[idx] = node.rest_transform;
 
   for (const auto &child : node.children) {
-    if (!FlattenSkelNode(child, joints, jointNames, bindTransforms, restTransforms, err)) {
+    if (!FlattenSkelNode(child, joints, jointNames, bindTransforms, restTransforms, err, depth + 1)) {
       return false;
     }
   }

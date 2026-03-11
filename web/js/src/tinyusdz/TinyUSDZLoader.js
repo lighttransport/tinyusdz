@@ -631,7 +631,14 @@ class TinyUSDZLoader extends Loader {
 
         this._applySkinningLoadOptions(usd);
 
-        const ok = usd.loadFromBinary(binary, filePath);
+        let ok;
+        try {
+            ok = usd.loadFromBinary(binary, filePath);
+        } catch (e) {
+            // Catch WASM traps (e.g. Emscripten OOM abort, unreachable instruction)
+            _onError(e instanceof Error ? e : new Error(String(e)));
+            return;
+        }
         if (!ok) {
             const fileInfo = filePath ? ` (file: ${filePath})` : '';
             _onError(new Error(`TinyUSDZLoader: Failed to load USD from binary data${fileInfo}.`, {cause: usd.error()}));

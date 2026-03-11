@@ -65,36 +65,37 @@ public:
   // Iterator support
   class iterator {
   public:
-    iterator(const std::vector<SimpleXMLNodePtr>& children, size_t pos = 0) 
+    iterator() : children_(nullptr), pos_(0) {}
+    iterator(const std::vector<SimpleXMLNodePtr>* children, size_t pos = 0)
       : children_(children), pos_(pos) {}
-    
+
     iterator& operator++() {
       ++pos_;
       return *this;
     }
-    
+
     bool operator!=(const iterator& other) const {
       return pos_ != other.pos_;
     }
-    
+
     XMLNode operator*() const {
-      if (pos_ < children_.size()) {
-        return XMLNode(children_[pos_]);
+      if (children_ && pos_ < children_->size()) {
+        return XMLNode((*children_)[pos_]);
       }
       return XMLNode();
     }
-    
+
   private:
-    const std::vector<SimpleXMLNodePtr>& children_;
+    const std::vector<SimpleXMLNodePtr>* children_;
     size_t pos_;
   };
-  
+
   iterator begin() const {
-    return node_ ? iterator(node_->children) : iterator({});
+    return node_ ? iterator(&node_->children) : iterator();
   }
-  
+
   iterator end() const {
-    return node_ ? iterator(node_->children, node_->children.size()) : iterator({});
+    return node_ ? iterator(&node_->children, node_->children.size()) : iterator();
   }
   
   // Get children with specific name

@@ -17,8 +17,6 @@
 /// - Mesh, Cube, Sphere, etc.: Specific geometry types
 /// - Xform: Transformation primitive
 ///
-/// TODO:
-/// - [ ] Replace nonstd::optional<T> member to RelationshipProperty or TypedAttribute***<T>
 ///
 #pragma once
 
@@ -106,70 +104,10 @@ class GeomPrimvar {
     _has_value = true;
   }
 
-  GeomPrimvar(const GeomPrimvar &rhs) {
-    //TUSDZ_LOG_I("GeomPrimvar copy constructor called");
-    _name = rhs._name;
-    _attr = rhs._attr;
-    _indices = rhs._indices;
-    _ts_indices = rhs._ts_indices;
-    _has_value = rhs._has_value;
-    if (rhs._elementSize) {
-      _elementSize = rhs._elementSize;
-    }
-
-    if (rhs._interpolation) {
-      _interpolation = rhs._interpolation;
-    }
-    _unauthoredValuesIndex = rhs._unauthoredValuesIndex;
-  }
-
-  GeomPrimvar &operator=(const GeomPrimvar &rhs) {
-    //TUSDZ_LOG_I("GeomPrimvar copy assignment operator called");
-    _name = rhs._name;
-    _attr = rhs._attr;
-    _indices = rhs._indices;
-    _ts_indices = rhs._ts_indices;
-    _has_value = rhs._has_value;
-    if (rhs._elementSize) {
-      _elementSize = rhs._elementSize;
-    }
-
-    if (rhs._interpolation) {
-      _interpolation = rhs._interpolation;
-    }
-    _unauthoredValuesIndex = rhs._unauthoredValuesIndex;
-
-    return *this;
-  }
-
-  // Move constructor
-  GeomPrimvar(GeomPrimvar&& rhs) noexcept
-      : _name(std::move(rhs._name)),
-        _has_value(rhs._has_value),
-        _attr(std::move(rhs._attr)),
-        _indices(std::move(rhs._indices)),
-        _ts_indices(std::move(rhs._ts_indices)),
-        _unauthoredValuesIndex(rhs._unauthoredValuesIndex),
-        _elementSize(rhs._elementSize),
-        _interpolation(rhs._interpolation) {
-    //TUSDZ_LOG_I("GeomPrimvar move constructor called");
-  }
-
-  // Move assignment operator
-  GeomPrimvar& operator=(GeomPrimvar&& rhs) noexcept {
-    //TUSDZ_LOG_I("GeomPrimvar move assignment operator called");
-    if (this != &rhs) {
-      _name = std::move(rhs._name);
-      _attr = std::move(rhs._attr);
-      _indices = std::move(rhs._indices);
-      _ts_indices = std::move(rhs._ts_indices);
-      _has_value = rhs._has_value;
-      _elementSize = rhs._elementSize;
-      _interpolation = rhs._interpolation;
-      _unauthoredValuesIndex = rhs._unauthoredValuesIndex;
-    }
-    return *this;
-  }
+  GeomPrimvar(const GeomPrimvar &) = default;
+  GeomPrimvar &operator=(const GeomPrimvar &) = default;
+  GeomPrimvar(GeomPrimvar &&) noexcept = default;
+  GeomPrimvar &operator=(GeomPrimvar &&) noexcept = default;
 
   ///
   /// For Indexed Primvar(array value + indices)
@@ -199,8 +137,7 @@ class GeomPrimvar {
   bool flatten_with_indices(double t, std::vector<T> *dst, value::TimeSampleInterpolationType tinerp = value::TimeSampleInterpolationType::Linear, std::string *err = nullptr) const;
 
 
-  // Generic Value version.
-  // TODO: return Attribute?
+  // Generic Value version (returns flattened value::Value, not raw Attribute).
   bool flatten_with_indices(value::Value *dst, std::string *err = nullptr) const;
   bool flatten_with_indices(double t, value::Value *dst, value::TimeSampleInterpolationType tinterp = value::TimeSampleInterpolationType::Linear, std::string *err = nullptr) const;
 
@@ -346,6 +283,12 @@ class GeomPrimvar {
 
  private:
 
+  // Resolve indices at time `t`. Returns a const ref — either to `_indices`
+  // directly (zero-copy) or to `buf` when fetched from timesamples.
+  const std::vector<int32_t> &resolve_indices_at(
+      double t, value::TimeSampleInterpolationType tinterp,
+      std::vector<int32_t> &buf) const;
+
   std::string _name;
   bool _has_value{false};
   Attribute _attr;
@@ -357,19 +300,14 @@ class GeomPrimvar {
   nonstd::optional<uint32_t> _elementSize;
   nonstd::optional<Interpolation> _interpolation;
 
-#if 0 // TODO
-  bool get_value(const value::Value *value,
-                 const double t = value::TimeCode::Default(),
-                 const value::TimeSampleInterpolationType tinterp =
-                     value::TimeSampleInterpolationType::Held);
-#endif
-
 };
 
 // Geometric Prim. Encapsulates Imagable + Boundable in pxrUSD schema.
 // <pxrUSD>/pxr/usd/usdGeom/schema.udsa
 //
-// TODO: inherit UsdShagePrim?
+// Note: In OpenUSD, UsdGeomGprim inherits UsdGeomBoundable -> UsdGeomImageable
+// -> UsdTyped. It does NOT inherit from UsdShadePrim; shading is accessed via
+// MaterialBinding API schema (which TinyUSDZ already mixes in).
 
 struct GPrim : Xformable, MaterialBinding, Collection {
   std::string name;
@@ -419,14 +357,6 @@ struct GPrim : Xformable, MaterialBinding, Collection {
   Interpolation get_displayColorsInterpolation() const;
 
   RelationshipProperty proxyPrim;
-
-#if 0
-  // Some frequently used materialBindings
-  nonstd::optional<Relationship> materialBinding; // material:binding
-  nonstd::optional<Relationship> materialBindingCollection; // material:binding:collection  TODO: deprecate?(seems `material:binding:collection` without leaf NAME seems ignored in pxrUSD.
-  nonstd::optional<Relationship> materialBindingPreview; // material:binding:preview
-  nonstd::optional<Relationship> materialBindingFull; // material:binding:full
-#endif
 
   std::map<std::string, Property> props;
 
@@ -512,153 +442,6 @@ struct GPrim : Xformable, MaterialBinding, Collection {
     return meta;
   }
 
-#if 0
-  //
-  // NOTE on material binding.
-  // https://openusd.org/release/wp_usdshade.html
-  //
-  //  - "all purpose", direct binding, material:binding. single relationship target only
-  //  - a purpose-restricted, direct, fallback binding, e.g. material:binding:preview
-  //  - an all-purpose, collection-based binding, e.g. material:binding:collection:metalBits
-  //  - a purpose-restricted, collection-based binding, e.g. material:binding:collection:full:metalBits
-  //
-  // In TinyUSDZ, treat empty purpose token as "all purpose"
-  //
-
-  bool has_materialBinding() const {
-    return materialBinding.has_value();
-  }
-
-  bool has_materialBindingPreview() const {
-    return materialBindingPreview.has_value();
-  }
-
-  bool has_materialBindingFull() const {
-    return materialBindingFull.has_value();
-  }
-
-  bool has_materialBinding(const value::token &mat_purpose) const {
-    if (mat_purpose.str() == "full") {
-      return has_materialBindingFull();
-    } else if (mat_purpose.str() == "preview") {
-      return has_materialBindingPreview();
-    } else {
-      return _materialBindingMap.count(mat_purpose.str());
-    }
-  }
-
-  void clear_materialBinding() {
-    materialBinding.reset();
-  }
-
-  void clear_materialBindingPreview() {
-    materialBindingPreview.reset();
-  }
-
-  void clear_materialBindingFull() {
-    materialBindingFull.reset();
-  }
-
-  void set_materialBinding(const Relationship &rel) {
-    materialBinding = rel;
-  }
-
-  void set_materialBinding(const Relationship &rel, const MaterialBindingStrength strength) {
-    value::token strength_tok(to_string(strength));
-    materialBinding = rel;
-    materialBinding.value().metas().bindMaterialAs = strength_tok;
-  }
-
-  void set_materialBindingPreview(const Relationship &rel) {
-    materialBindingPreview = rel;
-  }
-
-  void set_materialBindingPreview(const Relationship &rel, const MaterialBindingStrength strength) {
-    value::token strength_tok(to_string(strength));
-    materialBindingPreview = rel;
-    materialBindingPreview.value().metas().bindMaterialAs = strength_tok;
-  }
-
-  void set_materialBindingFull(const Relationship &rel) {
-    materialBindingFull = rel;
-  }
-
-  void set_materialBindingFull(const Relationship &rel, const MaterialBindingStrength strength) {
-    value::token strength_tok(to_string(strength));
-    materialBindingFull = rel;
-    materialBindingFull.value().metas().bindMaterialAs = strength_tok;
-  }
-
-  void set_materialBinding(const Relationship &rel, const value::token &mat_purpose) {
-
-    if (mat_purpose.str().empty()) {
-      return set_materialBinding(rel);
-    } else if (mat_purpose.str() == "full") {
-      return set_materialBindingFull(rel);
-    } else if (mat_purpose.str() == "preview") {
-      return set_materialBindingFull(rel);
-    } else {
-      _materialBindingMap[mat_purpose.str()] = rel;
-    }
-  }
-
-  void set_materialBinding(const Relationship &rel, const value::token &mat_purpose, const MaterialBindingStrength strength) {
-    value::token strength_tok(to_string(strength));
-
-    if (mat_purpose.str().empty()) {
-      return set_materialBinding(rel, strength);
-    } else if (mat_purpose.str() == "full") {
-      return set_materialBindingFull(rel, strength);
-    } else if (mat_purpose.str() == "preview") {
-      return set_materialBindingFull(rel, strength);
-    } else {
-      _materialBindingMap[mat_purpose.str()] = rel;
-      _materialBindingMap[mat_purpose.str()].metas().bindMaterialAs = strength_tok;
-    }
-  }
-
-  bool has_materialBindingCollection(const std::string &tok) {
-
-    if (!_materialBindingCollectionMap.count(tok)) {
-      return false;
-    }
-
-    return _materialBindingCollectionMap.count(tok);
-  }
-
-  void set_materialBindingCollection(const value::token &tok, const value::token &mat_purpose, const Relationship &rel) {
-
-    // NOTE:
-    // https://openusd.org/release/wp_usdshade.html#basic-proposal-for-collection-based-assignment
-    // says: material:binding:collection defines a namespace of binding relationships to be applied in namespace order, with the earliest ordered binding relationship the strongest
-    //
-    // so the app is better first check if `tok` element alreasy exists(using has_materialBindingCollection)
-
-    auto &m = _materialBindingCollectionMap[tok.str()];
-
-    m[mat_purpose.str()] = rel;
-  }
-
-  void clear_materialBindingCollection(const value::token &tok, const value::token &mat_purpose) {
-    if (_materialBindingCollectionMap.count(tok.str())) {
-      _materialBindingCollectionMap[tok.str()].erase(mat_purpose.str());
-    }
-  }
-
-  void set_materialBindingCollection(const value::token &tok, const value::token &mat_purpose, const Relationship &rel, MaterialBindingStrength strength) {
-    value::token strength_tok(to_string(strength));
-
-    _materialBindingCollectionMap[tok.str()][mat_purpose.str()] = rel;
-    _materialBindingCollectionMap[tok.str()][mat_purpose.str()].metas().bindMaterialAs = strength_tok;
-
-  }
-
-  const std::map<std::string, std::map<std::string, Relationship>> materialBindingCollectionMap() const {
-    return _materialBindingCollectionMap;
-  }
-#endif
-
-
  private:
 
   //bool _valid{true};  // default behavior is valid(allow empty GPrim)
@@ -668,17 +451,6 @@ struct GPrim : Xformable, MaterialBinding, Collection {
 
   // For Variants
   std::map<std::string, VariantSet> _variantSetMap;
-
-#if 0
-  // For material:binding(excludes frequently used `material:binding`, `material:binding:full` and `material:binding:preview`)
-  // key = PURPOSE, value = rel
-  std::map<std::string, Relationship> _materialBindingMap;
-
-  // For material:binding:collection
-  // key = NAME, value = map<PURPOSE, Rel>
-  // TODO: Use multi-index map
-  std::map<std::string, std::map<std::string, Relationship>> _materialBindingCollectionMap;
-#endif
 
 };
 
@@ -726,13 +498,6 @@ struct GeomSubset : public MaterialBinding, Collection {
         "`face`, `point`, `edge` or `tetrahedron` is supported for `elementType`, but `" + str +
         "` specified");
   }
-
-#if 0
-  // Some frequently used materialBindings
-  nonstd::optional<Relationship> materialBinding; // rel material:binding
-  nonstd::optional<Relationship> materialBindingCollection; // rel material:binding:collection
-  nonstd::optional<Relationship> materialBindingPreview; // rel material:binding:preview
-#endif
 
   TypedAttribute<Animatable<std::vector<int32_t>>> indices; // int[] indices
 
@@ -895,10 +660,10 @@ struct GeomMesh : GPrim {
   TypedAttribute<std::vector<value::token>> blendShapes; // uniform token[] skel:blendShapes
   nonstd::optional<Relationship> blendShapeTargets; // rel skel:blendShapeTargets (Path[])
 
-  //
-  // TODO: Make these primvars first citizen?
-  // - int[] primvars:skel:jointIndices
-  // - float[] primvars:skel:jointWeights
+  // Note: In OpenUSD, skel:jointIndices and skel:jointWeights are primvars
+  // accessed via UsdGeomPrimvarsAPI (a NonAppliedAPI schema), not first-class
+  // struct members. TinyUSDZ follows the same approach: these are stored in
+  // the `props` map and accessed via get_primvar()/GeomPrimvar.
 
 
   ///
@@ -945,31 +710,16 @@ struct GeomMesh : GPrim {
   // familyName -> familyType map
   std::map<value::token, GeomSubset::FamilyType> subsetFamilyTypeMap;
 
-#if 0 // GeomSubset Prim is now managed as a child Prim
-  //
-  // GeomSubset
-  //
-  // uniform token `subsetFamily:materialBind:familyType`
-  GeomSubset::FamilyType materialBindFamilyType{
-      GeomSubset::FamilyType::Partition};
-
-  std::vector<GeomSubset> geom_subset_children;
-
-#endif
-
   // Get Explicit Joint orders: `uniform token[] skel:joints`
   std::vector<value::token> get_joints() const;
 
-#if 0 // Deprecated: Use tydra::GetGeomSubsets() instead.
   ///
-  /// Get GeomSubset list assgied to this GeomMesh(child Prim).
+  /// Validate mesh topology.
+  /// Checks faceVertexCounts/faceVertexIndices consistency, index bounds,
+  /// and subdivision surface attributes (corners, creases, holes).
   ///
-  /// The pointer points to the address of child Prim,
-  /// so should not free it and this GeomMesh object must be valid during using the pointer to GeomSubset.
-  ///
-  std::vector<const GeomSubset *> GetGeomSubsets();
-#endif
-
+  bool ValidateTopology(std::string *err = nullptr,
+      double time = value::TimeCode::Default()) const;
 };
 
 struct GeomCamera : public GPrim {
@@ -1094,6 +844,25 @@ struct GeomBasisCurves : public GPrim {
       velocities;  // vector3f
   TypedAttribute<Animatable<std::vector<value::vector3f>>>
       accelerations;  // vector3f
+
+  // Convenience getters
+  const std::vector<value::point3f> get_points(
+      double time = value::TimeCode::Default(),
+      value::TimeSampleInterpolationType interp =
+          value::TimeSampleInterpolationType::Linear) const;
+
+  const std::vector<value::normal3f> get_normals(
+      double time = value::TimeCode::Default(),
+      value::TimeSampleInterpolationType interp =
+          value::TimeSampleInterpolationType::Linear) const;
+
+  const std::vector<int> get_curveVertexCounts(
+      double time = value::TimeCode::Default()) const;
+
+  const std::vector<float> get_widths(
+      double time = value::TimeCode::Default(),
+      value::TimeSampleInterpolationType interp =
+          value::TimeSampleInterpolationType::Linear) const;
 };
 
 struct GeomNurbsCurves : public GPrim {
@@ -1119,6 +888,31 @@ struct GeomNurbsCurves : public GPrim {
   TypedAttribute<Animatable<std::vector<double>>> knots;
   TypedAttribute<Animatable<std::vector<value::double2>>> ranges;
   TypedAttribute<Animatable<std::vector<double>>> pointWeights;
+
+  // Convenience getters
+  const std::vector<value::point3f> get_points(
+      double time = value::TimeCode::Default(),
+      value::TimeSampleInterpolationType interp =
+          value::TimeSampleInterpolationType::Linear) const;
+
+  const std::vector<value::normal3f> get_normals(
+      double time = value::TimeCode::Default(),
+      value::TimeSampleInterpolationType interp =
+          value::TimeSampleInterpolationType::Linear) const;
+
+  const std::vector<int> get_curveVertexCounts(
+      double time = value::TimeCode::Default()) const;
+
+  const std::vector<float> get_widths(
+      double time = value::TimeCode::Default(),
+      value::TimeSampleInterpolationType interp =
+          value::TimeSampleInterpolationType::Linear) const;
+
+  const std::vector<int> get_order(
+      double time = value::TimeCode::Default()) const;
+
+  const std::vector<double> get_knots(
+      double time = value::TimeCode::Default()) const;
 };
 
 //
@@ -1138,11 +932,33 @@ struct GeomPoints : public GPrim {
       velocities;  // vector3f[]
   TypedAttribute<Animatable<std::vector<value::vector3f>>>
       accelerations;  // vector3f[]
+
+  // Convenience getters
+  const std::vector<value::point3f> get_points(
+      double time = value::TimeCode::Default(),
+      value::TimeSampleInterpolationType interp =
+          value::TimeSampleInterpolationType::Linear) const;
+
+  const std::vector<value::normal3f> get_normals(
+      double time = value::TimeCode::Default(),
+      value::TimeSampleInterpolationType interp =
+          value::TimeSampleInterpolationType::Linear) const;
+
+  const std::vector<float> get_widths(
+      double time = value::TimeCode::Default(),
+      value::TimeSampleInterpolationType interp =
+          value::TimeSampleInterpolationType::Linear) const;
+
+  const std::vector<int64_t> get_ids(
+      double time = value::TimeCode::Default()) const;
 };
 
-//
-// Point instancer(TODO).
-//
+// Point instancer.
+// In OpenUSD, UsdGeomPointInstancer provides ComputeExtentAtTime() which
+// evaluates instance transforms at a given time and computes a union of
+// transformed prototype extents. TinyUSDZ stores the raw attributes;
+// extent computation requires resolving prototype prims and is handled
+// at the Tydra/application level.
 struct GeomPointInstancer : public GPrim {
   nonstd::optional<Relationship> prototypes;  // rel prototypes
 
@@ -1167,6 +983,35 @@ struct GeomPointInstancer : public GPrim {
       inactiveIds;  // int64[] inactiveIds
 };
 
+
+// --- ComputeExtent helpers ---
+
+bool ComputeExtent(const GeomMesh &mesh, Extent *extent,
+    double time = value::TimeCode::Default(), std::string *err = nullptr);
+
+bool ComputeExtent(const GeomPoints &pts, Extent *extent,
+    double time = value::TimeCode::Default(), std::string *err = nullptr);
+
+bool ComputeExtent(const GeomSphere &sphere, Extent *extent,
+    double time = value::TimeCode::Default(), std::string *err = nullptr);
+
+bool ComputeExtent(const GeomCube &cube, Extent *extent,
+    double time = value::TimeCode::Default(), std::string *err = nullptr);
+
+bool ComputeExtent(const GeomCone &cone, Extent *extent,
+    double time = value::TimeCode::Default(), std::string *err = nullptr);
+
+bool ComputeExtent(const GeomCylinder &cylinder, Extent *extent,
+    double time = value::TimeCode::Default(), std::string *err = nullptr);
+
+bool ComputeExtent(const GeomCapsule &capsule, Extent *extent,
+    double time = value::TimeCode::Default(), std::string *err = nullptr);
+
+bool ComputeExtent(const GeomBasisCurves &curves, Extent *extent,
+    double time = value::TimeCode::Default(), std::string *err = nullptr);
+
+bool ComputeExtent(const GeomNurbsCurves &curves, Extent *extent,
+    double time = value::TimeCode::Default(), std::string *err = nullptr);
 
 // import DEFINE_TYPE_TRAIT and DEFINE_ROLE_TYPE_TRAIT
 #include "define-type-trait.inc"
@@ -1254,12 +1099,6 @@ DEFINE_TYPE_TRAIT(GeomPointInstancer, kPointInstancer, TYPE_ID_GEOM_POINT_INSTAN
   __FUNC(value::texcoord3h)           \
   __FUNC(value::texcoord3f)           \
   __FUNC(value::texcoord3d)
-
-// TODO: 64bit int/uint seems not supported on pxrUSD. Enable it in TinyUSDZ?
-#if 0
-  __FUNC(int64_t) \
-  __FUNC(uint64_t)
-#endif
 
 #define EXTERN_TEMPLATE_GET_VALUE(__ty) \
   extern template bool GeomPrimvar::get_value(__ty *dest, std::string *err) const; \
