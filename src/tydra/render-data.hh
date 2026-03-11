@@ -55,6 +55,7 @@
 /// ```
 ///
 #pragma once
+#define TINYUSDZ_TYDRA_RENDER_DATA_HH_
 
 #include <algorithm>
 #include <cmath>
@@ -2157,12 +2158,34 @@ struct MeshConverterConfig {
   // Tangent computation method selection.
   //
   enum class TangentComputationMethod {
-    Lengyel,    // Fast, lightweight (default). Good enough for most use cases.
-    MikkTSpace, // Industry standard, higher quality but significantly slower
-                // and more memory-hungry for large meshes.
+    Lengyel,        // Fast, lightweight (default). Good enough for most use cases.
+    MikkTSpace,     // Industry standard (original C impl), higher quality but
+                    // significantly slower and more memory-hungry for large meshes.
+    FastMikkTSpace, // Optimized MikkTSpace reimplementation (~2x faster than
+                    // original, same algorithm semantics at default 180° threshold).
   };
 
   TangentComputationMethod tangent_method{TangentComputationMethod::Lengyel};
+
+  //
+  // Tangent storage format selection.
+  // Controls how computed tangents are stored in RenderMesh.
+  // Packed formats store tangent direction + handedness sign in a single
+  // attribute, eliminating separate binormal storage. Bitangent is
+  // reconstructed in the shader: B = cross(N, T.xyz) * T.w
+  //
+  enum class TangentStorageFormat {
+    Float3,        // float3 tangent + float3 binormal (24 bytes/vertex, baseline)
+    Packed1010102, // INT_2_10_10_10_REV vec4 (4 bytes/vertex, WebGL2 native)
+    PackedSNorm8,  // SNORM8x4 vec4 (4 bytes/vertex, widest compat)
+    PackedFp16,    // FP16x4 vec4 (8 bytes/vertex, highest packed precision)
+  };
+
+#ifdef __EMSCRIPTEN__
+  TangentStorageFormat tangent_storage{TangentStorageFormat::Packed1010102};
+#else
+  TangentStorageFormat tangent_storage{TangentStorageFormat::PackedFp16};
+#endif
 
   //
   // Allowed relative error to check if vertex data is the same.
@@ -2835,6 +2858,12 @@ class RenderSceneConverter {
       RenderMesh *mesh,
       MeshConverterConfig::TangentComputationMethod method =
           MeshConverterConfig::TangentComputationMethod::Lengyel,
+      MeshConverterConfig::TangentStorageFormat storage =
+#ifdef __EMSCRIPTEN__
+          MeshConverterConfig::TangentStorageFormat::Packed1010102,
+#else
+          MeshConverterConfig::TangentStorageFormat::PackedFp16,
+#endif
       std::string *err = nullptr);
 
   ///

@@ -107,6 +107,8 @@
 
 // MikkTSpace tangent computation
 #include "mikktspace-tangent.hh"
+// Optimized MikkTSpace reimplementation
+#include "fast-mikktspace.hh"
 
 // For triangulation.
 // TODO: Use tinyobjloader's triangulation
@@ -126,6 +128,7 @@
 //
 #include "tydra/attribute-eval.hh"
 #include "tydra/render-data.hh"
+#include "tydra/tangent-quantize.hh"  // must be after render-data.hh
 #include "tydra/scene-access.hh"
 #include "tydra/shader-network.hh"
 
@@ -3971,6 +3974,108 @@ bool RenderSceneConverter::ConvertSphere(
                      material_subsets, blendshapes, dstMesh);
 }
 
+// ---------------------------------------------------------------------------
+// Quantize tangents in a RenderMesh from Vec3 float to a packed format.
+// Replaces tangent VertexAttribute with packed data and clears binormals.
+// Returns true on success (or if no quantization is needed).
+// ---------------------------------------------------------------------------
+static bool QuantizeMeshTangents(
+    RenderMesh &mesh,
+    MeshConverterConfig::TangentStorageFormat format) {
+  using namespace tangent_quantize;
+
+  if (format == MeshConverterConfig::TangentStorageFormat::Float3) {
+    return true;  // no quantization
+  }
+
+  // Only quantize from Vec3 float format
+  if (mesh.tangents.format != VertexAttributeFormat::Vec3 ||
+      mesh.binormals.format != VertexAttributeFormat::Vec3 ||
+      mesh.normals.format != VertexAttributeFormat::Vec3) {
+    return true;
+  }
+
+  size_t nT = mesh.tangents.vertex_count();
+  size_t nB = mesh.binormals.vertex_count();
+  size_t nN = mesh.normals.vertex_count();
+
+  if (nT == 0 || nT != nB) return true;
+
+  const value::float3 *T =
+      reinterpret_cast<const value::float3 *>(mesh.tangents.data.data());
+  const value::float3 *B =
+      reinterpret_cast<const value::float3 *>(mesh.binormals.data.data());
+  const value::float3 *N =
+      reinterpret_cast<const value::float3 *>(mesh.normals.data.data());
+
+  std::vector<value::float3> tangents_v(T, T + nT);
+  std::vector<value::float3> binormals_v(B, B + nT);
+  std::vector<value::float3> normals_v;
+
+  if (nN == nT) {
+    normals_v.assign(N, N + nT);
+  } else if (nN > 0 &&
+             mesh.tangents.variability == VertexVariability::FaceVarying &&
+             mesh.normals.variability == VertexVariability::Vertex) {
+    // Expand vertex normals to facevarying
+    const auto &fvi = mesh.triangulatedFaceVertexIndices.size()
+                          ? mesh.triangulatedFaceVertexIndices
+                          : mesh.usdFaceVertexIndices;
+    if (fvi.size() == nT) {
+      normals_v.resize(nT);
+      for (size_t i = 0; i < nT; i++) {
+        normals_v[i] = (fvi[i] < nN) ? N[fvi[i]] : value::float3{0, 1, 0};
+      }
+    } else {
+      return true;  // cannot match, skip
+    }
+  } else {
+    return true;  // mismatched counts, skip
+  }
+
+  VertexVariability var = mesh.tangents.variability;
+  std::string err;
+
+  switch (format) {
+    case MeshConverterConfig::TangentStorageFormat::Packed1010102: {
+      std::vector<PackedTangent1010102> packed;
+      if (!QuantizeTangents1010102(tangents_v, binormals_v, normals_v, &packed,
+                                   &err))
+        return false;
+      mesh.tangents = PackToVertexAttribute(packed);
+      break;
+    }
+    case MeshConverterConfig::TangentStorageFormat::PackedSNorm8: {
+      std::vector<PackedTangentSNorm8x4> packed;
+      if (!QuantizeTangentsSNorm8(tangents_v, binormals_v, normals_v, &packed,
+                                  &err))
+        return false;
+      mesh.tangents = PackToVertexAttribute(packed);
+      break;
+    }
+    case MeshConverterConfig::TangentStorageFormat::PackedFp16: {
+      std::vector<PackedTangentFp16x4> packed;
+      if (!QuantizeTangentsFp16(tangents_v, binormals_v, normals_v, &packed,
+                                &err))
+        return false;
+      mesh.tangents = PackToVertexAttribute(packed);
+      break;
+    }
+    default:
+      return true;
+  }
+
+  mesh.tangents.variability = var;
+  mesh.tangents.stride = 0;
+  mesh.tangents.elementSize = 1;
+
+  // Clear binormals — reconstructed in shader as cross(N, T.xyz) * T.w
+  mesh.binormals.data.clear();
+  mesh.binormals.data.shrink_to_fit();
+
+  return true;
+}
+
 bool RenderSceneConverter::ConvertMesh(
     const RenderSceneConverterEnv &env, const Path &abs_prim_path,
     const GeomMesh &mesh, const MaterialPath &material_path,
@@ -5394,16 +5499,25 @@ bool RenderSceneConverter::ConvertMesh(
     // (industry standard but slow and memory-heavy for large meshes).
     bool used_mikktspace = false;
 
-    if (env.mesh_config.tangent_method == MeshConverterConfig::TangentComputationMethod::MikkTSpace) {
-      // MikkTSpace path (explicitly requested)
+    if (env.mesh_config.tangent_method == MeshConverterConfig::TangentComputationMethod::MikkTSpace ||
+        env.mesh_config.tangent_method == MeshConverterConfig::TangentComputationMethod::FastMikkTSpace) {
+      // MikkTSpace path (original or optimized, explicitly requested)
       std::string mikk_err;
       bool mikktspace_ok = false;
+      bool use_fast = (env.mesh_config.tangent_method == MeshConverterConfig::TangentComputationMethod::FastMikkTSpace);
+
       if (!is_single_indexable) {
         std::vector<value::float3> fv_normals(normals_ptr, normals_ptr + normals_count);
         std::vector<value::float2> fv_texcoords(texcoords_ptr, texcoords_ptr + texcoords_count);
-        mikktspace_ok = ComputeTangentsMikkTSpace(
-            *points_ptr, fv_normals, fv_texcoords, dst.faceVertexCounts(),
-            &tangents, &binormals, &mikk_err);
+        if (use_fast) {
+          mikktspace_ok = fast_mikkt::ComputeTangentsFastMikkTSpace(
+              *points_ptr, fv_normals, fv_texcoords, dst.faceVertexCounts(),
+              &tangents, &binormals, &mikk_err);
+        } else {
+          mikktspace_ok = ComputeTangentsMikkTSpace(
+              *points_ptr, fv_normals, fv_texcoords, dst.faceVertexCounts(),
+              &tangents, &binormals, &mikk_err);
+        }
       } else {
         const auto &fvi = dst.faceVertexIndices();
         std::vector<value::float3> fv_positions(fvi.size());
@@ -5414,9 +5528,15 @@ bool RenderSceneConverter::ConvertMesh(
           if (fvi[i] < normals_count) fv_normals[i] = normals_ptr[fvi[i]];
           if (fvi[i] < texcoords_count) fv_texcoords[i] = texcoords_ptr[fvi[i]];
         }
-        mikktspace_ok = ComputeTangentsMikkTSpace(
-            fv_positions, fv_normals, fv_texcoords, dst.faceVertexCounts(),
-            &tangents, &binormals, &mikk_err);
+        if (use_fast) {
+          mikktspace_ok = fast_mikkt::ComputeTangentsFastMikkTSpace(
+              fv_positions, fv_normals, fv_texcoords, dst.faceVertexCounts(),
+              &tangents, &binormals, &mikk_err);
+        } else {
+          mikktspace_ok = ComputeTangentsMikkTSpace(
+              fv_positions, fv_normals, fv_texcoords, dst.faceVertexCounts(),
+              &tangents, &binormals, &mikk_err);
+        }
       }
 
       if (mikktspace_ok) {
@@ -5552,6 +5672,11 @@ bool RenderSceneConverter::ConvertMesh(
     }
   } // else (texcoords available)
   } // if (compute_tangents)
+
+  // Quantize tangents if a packed format is configured.
+  if (!dst.tangents.empty() && !dst.binormals.empty()) {
+    QuantizeMeshTangents(dst, env.mesh_config.tangent_storage);
+  }
 
   dst.is_single_indexable = is_single_indexable;
 
@@ -8000,6 +8125,7 @@ static void ApplyMtlxGeometryNodeGraphInfoToOpenPBRShader(
 bool RenderSceneConverter::ComputeDeferredTangents(
     RenderMesh *mesh,
     MeshConverterConfig::TangentComputationMethod method,
+    MeshConverterConfig::TangentStorageFormat storage,
     std::string *err) {
   if (!mesh) {
     if (err) *err = "mesh is nullptr.";
@@ -8043,7 +8169,9 @@ bool RenderSceneConverter::ComputeDeferredTangents(
 
   bool used_mikktspace = false;
 
-  if (method == MeshConverterConfig::TangentComputationMethod::MikkTSpace) {
+  if (method == MeshConverterConfig::TangentComputationMethod::MikkTSpace ||
+      method == MeshConverterConfig::TangentComputationMethod::FastMikkTSpace) {
+    bool use_fast = (method == MeshConverterConfig::TangentComputationMethod::FastMikkTSpace);
     std::string mikk_err;
     bool mikktspace_ok = false;
 
@@ -8054,9 +8182,15 @@ bool RenderSceneConverter::ComputeDeferredTangents(
       }
       std::vector<value::float3> fv_normals(normals_ptr, normals_ptr + normals_count);
       std::vector<value::float2> fv_texcoords(texcoords_ptr, texcoords_ptr + texcoords_count);
-      mikktspace_ok = ComputeTangentsMikkTSpace(
-          fv_positions, fv_normals, fv_texcoords, fvc,
-          &tangents, &binormals, &mikk_err);
+      if (use_fast) {
+        mikktspace_ok = fast_mikkt::ComputeTangentsFastMikkTSpace(
+            fv_positions, fv_normals, fv_texcoords, fvc,
+            &tangents, &binormals, &mikk_err);
+      } else {
+        mikktspace_ok = ComputeTangentsMikkTSpace(
+            fv_positions, fv_normals, fv_texcoords, fvc,
+            &tangents, &binormals, &mikk_err);
+      }
     } else {
       std::vector<value::float3> fv_positions(fvi.size());
       std::vector<value::float3> fv_normals(fvi.size());
@@ -8066,9 +8200,15 @@ bool RenderSceneConverter::ComputeDeferredTangents(
         if (fvi[i] < normals_count) fv_normals[i] = normals_ptr[fvi[i]];
         if (fvi[i] < texcoords_count) fv_texcoords[i] = texcoords_ptr[fvi[i]];
       }
-      mikktspace_ok = ComputeTangentsMikkTSpace(
-          fv_positions, fv_normals, fv_texcoords, fvc,
-          &tangents, &binormals, &mikk_err);
+      if (use_fast) {
+        mikktspace_ok = fast_mikkt::ComputeTangentsFastMikkTSpace(
+            fv_positions, fv_normals, fv_texcoords, fvc,
+            &tangents, &binormals, &mikk_err);
+      } else {
+        mikktspace_ok = ComputeTangentsMikkTSpace(
+            fv_positions, fv_normals, fv_texcoords, fvc,
+            &tangents, &binormals, &mikk_err);
+      }
     }
 
     if (mikktspace_ok) {
@@ -8134,6 +8274,11 @@ bool RenderSceneConverter::ComputeDeferredTangents(
   mesh->binormals.stride = 0;
   mesh->binormals.elementSize = 1;
   mesh->binormals.variability = VertexVariability::FaceVarying;
+
+  // Quantize tangents if a packed format is requested.
+  if (!mesh->tangents.empty() && !mesh->binormals.empty()) {
+    QuantizeMeshTangents(*mesh, storage);
+  }
 
   mesh->tangent_computation_deferred = false;
   return true;
