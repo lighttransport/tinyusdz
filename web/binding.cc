@@ -22,6 +22,7 @@
 #include "typed-array.hh"
 #include "value-types.hh"
 #include "tydra/render-data.hh"
+#include "tydra/tangent-quantize.hh"
 #include "tydra/scene-access.hh"
 #include "tydra/material-serializer.hh"
 
@@ -2675,58 +2676,85 @@ class TinyUSDZLoaderNative {
       }
     }
 
-    // Compute vec4 tangents (xyz=tangent direction, w=handedness sign)
-    // Three.js expects vec4 tangent where w = sign(dot(cross(N, T), B))
-    if (!rmesh.tangents.empty() && !rmesh.normals.empty() && !rmesh.binormals.empty()) {
+    // Expose tangents as vec4 float (xyz=tangent direction, w=handedness sign).
+    // Three.js expects vec4 tangent where w = sign(dot(cross(N, T), B)).
+    // Supports both packed formats (10_10_10_2, SNorm8, Fp16) and legacy Vec3.
+    if (!rmesh.tangents.empty()) {
+      using namespace tinyusdz::tydra;
       size_t nv = rmesh.tangents.vertex_count();
       auto &cache = tangents4_cache_[mesh_id];
       cache.resize(nv * 4);
-      const float *T = reinterpret_cast<const float *>(rmesh.tangents.data.data());
-      const float *N = reinterpret_cast<const float *>(rmesh.normals.data.data());
-      const float *B = reinterpret_cast<const float *>(rmesh.binormals.data.data());
-      for (size_t i = 0; i < nv; i++) {
-        float tx = T[i*3+0], ty = T[i*3+1], tz = T[i*3+2];
-        FixupZeroTangent(tx, ty, tz, N[i*3+0], N[i*3+1], N[i*3+2]);
-        cache[i * 4 + 0] = tx;
-        cache[i * 4 + 1] = ty;
-        cache[i * 4 + 2] = tz;
-        // w = sign(dot(cross(N, T), B))
-        float cx = N[i*3+1]*tz - N[i*3+2]*ty;
-        float cy = N[i*3+2]*tx - N[i*3+0]*tz;
-        float cz = N[i*3+0]*ty - N[i*3+1]*tx;
-        float d = cx*B[i*3+0] + cy*B[i*3+1] + cz*B[i*3+2];
-        cache[i * 4 + 3] = (std::isfinite(d) && d < 0.0f) ? -1.0f : 1.0f;
+
+      if (rmesh.tangents.format == VertexAttributeFormat::Uint) {
+        // Packed INT_2_10_10_10_REV — unpack to vec4 float
+        const tangent_quantize::PackedTangent1010102 *P =
+            reinterpret_cast<const tangent_quantize::PackedTangent1010102 *>(
+                rmesh.tangents.data.data());
+        for (size_t i = 0; i < nv; i++) {
+          tangent_quantize::unpack_tangent_1010102(
+              P[i], cache[i*4+0], cache[i*4+1], cache[i*4+2], cache[i*4+3]);
+        }
+      } else if (rmesh.tangents.format == VertexAttributeFormat::Char4) {
+        // Packed SNorm8x4 — unpack to vec4 float
+        const tangent_quantize::PackedTangentSNorm8x4 *P =
+            reinterpret_cast<const tangent_quantize::PackedTangentSNorm8x4 *>(
+                rmesh.tangents.data.data());
+        for (size_t i = 0; i < nv; i++) {
+          tangent_quantize::unpack_tangent_snorm8(
+              P[i], cache[i*4+0], cache[i*4+1], cache[i*4+2], cache[i*4+3]);
+        }
+      } else if (rmesh.tangents.format == VertexAttributeFormat::Half4) {
+        // Packed FP16x4 — unpack to vec4 float
+        const tangent_quantize::PackedTangentFp16x4 *P =
+            reinterpret_cast<const tangent_quantize::PackedTangentFp16x4 *>(
+                rmesh.tangents.data.data());
+        for (size_t i = 0; i < nv; i++) {
+          tangent_quantize::unpack_tangent_fp16(
+              P[i], cache[i*4+0], cache[i*4+1], cache[i*4+2], cache[i*4+3]);
+        }
+      } else if (rmesh.tangents.format == VertexAttributeFormat::Vec3 &&
+                 !rmesh.normals.empty() && !rmesh.binormals.empty()) {
+        // Legacy Vec3 float tangent + binormal — compute sign from cross product
+        const float *T = reinterpret_cast<const float *>(rmesh.tangents.data.data());
+        const float *N = reinterpret_cast<const float *>(rmesh.normals.data.data());
+        const float *B = reinterpret_cast<const float *>(rmesh.binormals.data.data());
+        for (size_t i = 0; i < nv; i++) {
+          float tx = T[i*3+0], ty = T[i*3+1], tz = T[i*3+2];
+          FixupZeroTangent(tx, ty, tz, N[i*3+0], N[i*3+1], N[i*3+2]);
+          cache[i*4+0] = tx;
+          cache[i*4+1] = ty;
+          cache[i*4+2] = tz;
+          float cx = N[i*3+1]*tz - N[i*3+2]*ty;
+          float cy = N[i*3+2]*tx - N[i*3+0]*tz;
+          float cz = N[i*3+0]*ty - N[i*3+1]*tx;
+          float d = cx*B[i*3+0] + cy*B[i*3+1] + cz*B[i*3+2];
+          cache[i*4+3] = (std::isfinite(d) && d < 0.0f) ? -1.0f : 1.0f;
+        }
+      } else if (rmesh.tangents.format == VertexAttributeFormat::Vec3) {
+        // Vec3 float tangent, no binormals — assume w=1
+        const float *T = reinterpret_cast<const float *>(rmesh.tangents.data.data());
+        const float *N = !rmesh.normals.empty()
+            ? reinterpret_cast<const float *>(rmesh.normals.data.data())
+            : nullptr;
+        for (size_t i = 0; i < nv; i++) {
+          float tx = T[i*3+0], ty = T[i*3+1], tz = T[i*3+2];
+          if (N) FixupZeroTangent(tx, ty, tz, N[i*3+0], N[i*3+1], N[i*3+2]);
+          cache[i*4+0] = tx;
+          cache[i*4+1] = ty;
+          cache[i*4+2] = tz;
+          cache[i*4+3] = 1.0f;
+        }
       }
       mesh.set("tangents", emscripten::typed_memory_view(cache.size(), cache.data()));
-    } else if (!rmesh.tangents.empty() && !rmesh.normals.empty()) {
-      // No binormals available - fix zero tangents using normals, assume w=1
-      size_t nv = rmesh.tangents.vertex_count();
-      auto &cache = tangents4_cache_[mesh_id];
-      cache.resize(nv * 4);
-      const float *T = reinterpret_cast<const float *>(rmesh.tangents.data.data());
-      const float *N = reinterpret_cast<const float *>(rmesh.normals.data.data());
-      for (size_t i = 0; i < nv; i++) {
-        float tx = T[i*3+0], ty = T[i*3+1], tz = T[i*3+2];
-        FixupZeroTangent(tx, ty, tz, N[i*3+0], N[i*3+1], N[i*3+2]);
-        cache[i * 4 + 0] = tx;
-        cache[i * 4 + 1] = ty;
-        cache[i * 4 + 2] = tz;
-        cache[i * 4 + 3] = 1.0f;
+
+      // Also expose raw packed tangent buffer for direct WebGL2 upload
+      if (rmesh.tangents.format == VertexAttributeFormat::Uint) {
+        // Uint32Array for GL_INT_2_10_10_10_REV
+        const uint32_t *raw = reinterpret_cast<const uint32_t *>(
+            rmesh.tangents.data.data());
+        mesh.set("tangentsPacked", emscripten::typed_memory_view(nv, raw));
+        mesh.set("tangentsPackedFormat", emscripten::val("INT_2_10_10_10_REV"));
       }
-      mesh.set("tangents", emscripten::typed_memory_view(cache.size(), cache.data()));
-    } else if (!rmesh.tangents.empty()) {
-      // No normals or binormals - pass through as-is with w=1
-      size_t nv = rmesh.tangents.vertex_count();
-      auto &cache = tangents4_cache_[mesh_id];
-      cache.resize(nv * 4);
-      const float *T = reinterpret_cast<const float *>(rmesh.tangents.data.data());
-      for (size_t i = 0; i < nv; i++) {
-        cache[i * 4 + 0] = T[i * 3 + 0];
-        cache[i * 4 + 1] = T[i * 3 + 1];
-        cache[i * 4 + 2] = T[i * 3 + 2];
-        cache[i * 4 + 3] = 1.0f;
-      }
-      mesh.set("tangents", emscripten::typed_memory_view(cache.size(), cache.data()));
     }
 
     mesh.set("materialId", rmesh.material_id);
@@ -3556,9 +3584,11 @@ class TinyUSDZLoaderNative {
 
     std::string err;
     // Use Lengyel (default) for deferred computation — fast and lightweight for WASM.
+    // Use Packed1010102 for WASM (WebGL2 native, 4 bytes/vertex).
     bool ok = tinyusdz::tydra::RenderSceneConverter::ComputeDeferredTangents(
         &mesh,
         tinyusdz::tydra::MeshConverterConfig::TangentComputationMethod::Lengyel,
+        tinyusdz::tydra::MeshConverterConfig::TangentStorageFormat::Packed1010102,
         &err);
     if (!ok) {
       std::cerr << "computeMeshTangents failed for mesh " << mesh_index << ": " << err << "\n";
