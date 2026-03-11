@@ -414,9 +414,222 @@ When exporting from Blender with MaterialX:
 3. Some conversions create verbose node chains (e.g., Invert → subtract + mix)
 4. The optimizer simplifies these back to semantic equivalents
 
+## Mesh Attribute Resolution (UVs and Normals)
+
+This section describes how TinyUSDZ's Tydra resolves UV coordinates and normals from USD meshes during `ConvertMesh()`, and how this aligns with OpenUSD's MaterialX integration.
+
+### UV Coordinates (Texcoords)
+
+**Primvar lookup:** `primvars:st` (configurable via `MeshConverterConfig::default_texcoords_primvar_name`, default `"st"`)
+
+Tydra resolves texcoords through two paths depending on whether materials are bound:
+
+#### Path 1: No materials bound
+
+When no materials are assigned to the mesh, Tydra directly checks for the default texcoord primvar:
+
+```
+mesh.has_primvar("st") → GetTextureCoordinate() → dst.texcoords[0]
+```
+
+#### Path 2: Materials bound
+
+When materials ARE assigned, Tydra first tries to extract UV names from shader connections via `ListUVNames()`, which walks through shader parameters and finds UV primvar names referenced by texture nodes.
+
+**Implicit fallback:** If no UV names are found via shader connections (e.g. MaterialX materials with procedural nodes but no explicit texture connections), Tydra falls back to checking the default texcoord primvar on the mesh:
+
+```
+ListUVNames(material) → uvname_map
+  ├─ (has UV names) → GetTextureCoordinate(uvname) → dst.texcoords[slotId]
+  └─ (empty)        → mesh.has_primvar("st") → dst.texcoords[0]  (fallback)
+```
+
+This fallback mirrors OpenUSD's implicit `defaultgeomprop="UV0"` → `primvars:st` mapping, where MaterialX's `UV0` is replaced with `UsdUtilsGetPrimaryUVSetName()` (returns `"st"` by default).
+
+**Reference:** `src/tydra/render-data.cc` lines ~4255-4360
+
+#### Tangent/Binormal computation
+
+Tangent computation requires texcoords. If `dst.texcoords[0]` is not available, the computation is skipped with a warning instead of failing the entire mesh conversion:
+
+```cpp
+if (!dst.texcoords.count(0)) {
+    PUSH_WARN("texcoord is not assigned to the mesh. "
+              "Skipping tangent/binormal computation.");
+}
+```
+
+### Normals
+
+**Primvar lookup order:**
+1. `primvars:normals` — checked first via `mesh.has_primvar("normals")`
+2. `normals` (legacy attribute) — checked second via `mesh.normals.authored()`
+3. Auto-compute — smooth normals computed if neither source exists
+
+```
+mesh.has_primvar("normals")     → GetGeomPrimvar() → dst.normals   (1. primvar)
+  └─ mesh.normals.authored()    → EvaluateTyped..() → dst.normals  (2. legacy)
+       └─ (neither)             → ComputeNormals()  → dst.normals  (3. auto)
+```
+
+**Key difference from UVs:** Normals are loaded **unconditionally** from mesh geometry — they do not depend on material bindings. This matches OpenUSD's behavior where mesh geometric normals are implicitly available to all MaterialX shaders through the rendering backend (via `HdGet_normal()` in Hydra).
+
+There is no `defaultgeomprop` mechanism for normals in MaterialX (unlike UV0 for texcoords). Normal maps are explicitly connected to shader inputs (e.g. `inputs:normal` or `geometry_normal` in OpenPBR), while the underlying mesh normals are always available automatically.
+
+**Interpolation:** The interpolation mode from USD (Varying, Constant, Uniform, Vertex, FaceVarying) is preserved. For single-indexable meshes with facevarying normals, Tydra attempts to convert to vertex variability via `TryConvertFacevaryingToVertex()`.
+
+**Auto-computation** is triggered when:
+- `MeshConverterConfig::compute_normals` is true (default) AND normals are missing
+- OR `compute_tangents_and_binormals` is true AND normals are missing (tangent computation needs normals)
+
+**Reference:** `src/tydra/render-data.cc` lines ~4480-4558 (loading), ~5299-5339 (auto-compute)
+
+### Comparison with OpenUSD
+
+| Attribute | OpenUSD | TinyUSDZ Tydra |
+|-----------|---------|----------------|
+| **UV primvar** | `defaultgeomprop="UV0"` → `UsdUtilsGetPrimaryUVSetName()` → `"st"` | `default_texcoords_primvar_name` → `"st"` (configurable) |
+| **UV env override** | `USDMTLX_PRIMARY_UV_NAME` | `MeshConverterConfig::default_texcoords_primvar_name` |
+| **UV implicit binding** | Via `defaultgeomprop` in MaterialX node definitions | Fallback when no UV names from shader connections |
+| **Normal primvar** | `primvars:normals`, then `normals` attribute | Same: `primvars:normals`, then `normals` (legacy) |
+| **Normal binding** | Implicit — `HdGet_normal()` in Hydra shaders | Implicit — loaded unconditionally from mesh geometry |
+| **Normal auto-compute** | Render delegate dependent | `ComputeNormals()` — smooth normals for shared vertices |
+| **Normal map** | Connected via nodegraph → `inputs:normal` | Extracted via `ExtractMtlxNodeGraphInfo()` → `geometry_normal` |
+
+## Tydra MaterialX Conversion Pipeline
+
+This section documents how Tydra's `ConvertMaterial()` converts MaterialX shaders to renderer-friendly `RenderMaterial` structures, and how it aligns with OpenUSD's hdSt MaterialX pipeline.
+
+### Supported Shader Types
+
+| Shader NodeDef ID | Source | Conversion Path |
+|---|---|---|
+| `ND_open_pbr_surface_surfaceshader` | USD `OpenPBRSurface` prim | Direct → `OpenPBRSurfaceShader` |
+| `ND_open_pbr_surface_surfaceshader` | MaterialX `MtlxOpenPBRSurface` | `MtlxOpenPBRSurface` → `OpenPBRSurface` → `OpenPBRSurfaceShader` |
+| `ND_standard_surface_surfaceshader` | MaterialX `MtlxAutodeskStandardSurface` | `MtlxAutodeskStandardSurface` → `OpenPBRSurface` → `OpenPBRSurfaceShader` |
+| `UsdPreviewSurface` | USD native | Direct → `PreviewSurfaceShader` |
+
+**StandardSurface → OpenPBR mapping** converts all Autodesk StandardSurface parameters to their OpenPBR equivalents. Key differences handled:
+- `coat_affect_color`: float in StandardSurface → color3f in OpenPBR (broadcast scalar to uniform color)
+- `opacity`: color3f in StandardSurface → float in OpenPBR (luminance extraction)
+- `normal`/`tangent`: `TypedAttribute` (optional) in StandardSurface → `TypedAttributeWithFallback` in OpenPBR
+
+### OpenPBR Surface Fields
+
+All OpenPBR fields are converted through `ConvertOpenPBRSurfaceShader()`:
+
+| Category | Fields |
+|---|---|
+| **Base** | `base_weight`, `base_color`, `base_roughness`, `base_metalness`, `base_diffuse_roughness` |
+| **Specular** | `specular_weight`, `specular_color`, `specular_roughness`, `specular_ior`, `specular_ior_level`, `specular_anisotropy`, `specular_rotation`, `specular_roughness_anisotropy` |
+| **Transmission** | `transmission_weight`, `transmission_color`, `transmission_depth`, `transmission_scatter`, `transmission_scatter_anisotropy`, `transmission_dispersion`, `transmission_dispersion_abbe_number`, `transmission_dispersion_scale` |
+| **Subsurface** | `subsurface_weight`, `subsurface_color`, `subsurface_radius`, `subsurface_radius_scale`, `subsurface_scale`, `subsurface_anisotropy`, `subsurface_scatter_anisotropy` |
+| **Sheen** | `sheen_weight`, `sheen_color`, `sheen_roughness` |
+| **Fuzz** | `fuzz_weight`, `fuzz_color`, `fuzz_roughness` |
+| **Thin film** | `thin_film_weight`, `thin_film_thickness`, `thin_film_ior` |
+| **Coat** | `coat_weight`, `coat_color`, `coat_roughness`, `coat_anisotropy`, `coat_rotation`, `coat_ior`, `coat_affect_color`, `coat_affect_roughness`, `coat_roughness_anisotropy`, `coat_darkening` |
+| **Emission** | `emission_luminance`, `emission_color` |
+| **Geometry** | `opacity`, `normal`, `tangent`, `coat_normal`, `coat_tangent` |
+
+### Material Tag Classification
+
+`RenderMaterial::computeMaterialTag()` classifies materials for render pass sorting, matching OpenUSD hdSt's logic:
+
+| Shader | Opaque | Translucent | Masked |
+|---|---|---|---|
+| **OpenPBR** | Default | `transmission_weight > 0` or `opacity < 1` | — |
+| **UsdPreviewSurface** | Default | `opacity < 1` | `opacityThreshold > 0` |
+
+### Material Output Connections
+
+`ConvertMaterial()` processes three material output connections:
+
+| Output | Status | Description |
+|---|---|---|
+| `outputs:surface` | Fully converted | Surface shader → `RenderMaterial.surfaceShader` or `.openPBRShader` |
+| `outputs:displacement` | Connection tracked | `RenderMaterial.has_displacement` + `displacement_shader_path` |
+| `outputs:volume` | Connection tracked | `RenderMaterial.has_volume` + `volume_shader_path` |
+
+### NodeGraph Traversal (`ExtractMtlxNodeGraphInfo`)
+
+The `ExtractMtlxNodeGraphInfo()` function traverses MaterialX NodeGraph connections to extract metadata. It follows `inputs:in` connections through a chain of nodes (max depth 15).
+
+#### Supported Node Types
+
+| Node Type | Action | Extracted Info |
+|---|---|---|
+| `ND_normalmap_float/ND_normalmap` | Follow `inputs:in` | `normal_map_scale`, `has_normal_map` |
+| `ND_rotate3d_vector3` | Follow `inputs:in` | `tangent_rotation` (degrees) |
+| `ND_image_*` | Terminal | `normal_map_texture` (asset path) |
+| `ND_tiledimage_*` | Terminal | `normal_map_texture`, `uvtiling`, `uvoffset` |
+| `ND_texcoord_vector2/3` | Terminal | `texcoord_index` |
+| `ND_geompropvalue_*` | Terminal | `geomprop_name` (primvar name) |
+| `ND_separate2/3/4_*` | Follow `inputs:in` | Multi-output node (outr/outg/outb) |
+| `ND_extract_*` | Follow `inputs:in` | Channel extraction |
+| `ND_combine2/3/4_*` | Terminal | Vector composition |
+| `ND_convert_*` | Follow `inputs:in` | Type conversion |
+| `ND_constant_*` | Terminal | Constant value |
+| Math/color ops | Follow `inputs:in` | Pass-through traversal |
+
+#### Geometry Normal/Tangent Extraction
+
+`ApplyMtlxGeometryNodeGraphInfoToOpenPBRShader()` processes both base and coat geometry connections:
+
+```
+MtlxOpenPBRSurface.geometry_normal    → ExtractMtlxNodeGraphInfo() → normal map texture + scale
+MtlxOpenPBRSurface.geometry_tangent   → ExtractMtlxNodeGraphInfo() → tangent rotation
+MtlxOpenPBRSurface.geometry_coat_normal  → ExtractMtlxNodeGraphInfo() → coat normal map + scale
+MtlxOpenPBRSurface.geometry_coat_tangent → ExtractMtlxNodeGraphInfo() → coat tangent rotation
+```
+
+### Texture Colorspace Handling
+
+When Tydra creates synthetic `UsdUVTexture` objects from MaterialX `ND_image` nodes, it sets `sourceColorSpace` based on the parameter being connected:
+
+| Parameter Type | sourceColorSpace | Rationale |
+|---|---|---|
+| Color params (`base_color`, `emission_color`, `specular_color`, `coat_color`, `sheen_color`, `subsurface_color`, `transmission_color`, `fuzz_color`) | `sRGB` | Color data typically authored in sRGB |
+| Non-color params (roughness, metalness, normal, weight, IOR, etc.) | `Raw` | Physical quantities, no gamma correction |
+
+This prevents double-linearization of non-color textures and matches hdSt's behavior where colorspace is inferred from the MaterialX nodedef's type.
+
+### Texture Wrap Modes
+
+MaterialX wrap mode tokens are mapped to USD equivalents:
+
+| MaterialX | USD `UsdUVTexture::Wrap` |
+|---|---|
+| `periodic` | `Repeat` |
+| `clamp` | `Clamp` |
+| `mirror` | `Mirror` |
+| `constant` | `Black` |
+
+### Comparison with OpenUSD hdSt
+
+| Feature | OpenUSD hdSt | TinyUSDZ Tydra |
+|---|---|---|
+| **StandardSurface** | Converted via `UsdMtlxRead()` + hdMtlx | `ConvertMtlxStandardSurfaceToOpenPBRSurface()` |
+| **OpenPBR** | Direct support in MaterialX 1.39+ | `ConvertOpenPBRSurfaceShader()` |
+| **Material tag** | `_ComputeMaterialTag()` in hdSt | `RenderMaterial::computeMaterialTag()` |
+| **Texture colorspace** | Inferred from nodedef type in `materialXFilter` | `sourceColorSpace` set from parameter semantics |
+| **Displacement** | Full displacement shader support | Connection path tracked, shader not evaluated |
+| **Volume** | Full volume shader support | Connection path tracked, shader not evaluated |
+| **ND_geompropvalue** | Reads arbitrary mesh primvars | `geomprop_name` extracted, primvar lookup by name |
+| **ND_texcoord index** | Multi-UV set support | `texcoord_index` extracted from node |
+| **ND_separate (multi-output)** | Full support with output channel selection | Traversal follows `inputs:in` through separate nodes |
+| **ND_tiledimage** | Full support with tiling/offset | `uvtiling` and `uvoffset` extracted |
+| **Coat normal/tangent** | Separate coat normal map support | Extracted via `geometry_coat_normal`/`geometry_coat_tangent` |
+
 ## Future Improvements
 
 - Constant folding for compile-time evaluation
 - Dead code elimination for unused node outputs
 - Common subexpression elimination
 - GPU-specific optimizations (swizzle instructions)
+- Full displacement shader evaluation (currently only connection is tracked)
+- Full volume shader evaluation (currently only connection is tracked)
+
+### Recently Resolved
+
+- Constant nodes (`ND_constant_*`) are now properly handled: values are extracted during C++ traversal and JS `_processConstant` correctly reads from resolved inputs
+- Binary math ops (`ND_add`, `ND_multiply`, etc.) no longer break traversal — they follow connected inputs to reach textures

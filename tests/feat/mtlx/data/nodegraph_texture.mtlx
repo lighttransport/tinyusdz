@@ -1,0 +1,30 @@
+<?xml version="1.0"?>
+<materialx version="1.38" colorspace="lin_rec709">
+  <nodegraph name="NG_textures">
+    <texcoord name="uv_reader" type="vector2">
+      <input name="index" type="integer" value="0" />
+    </texcoord>
+    <tiledimage name="diffuse_tex" type="color3">
+      <input name="file" type="filename" value="textures/diffuse.png" />
+      <input name="uvtiling" type="vector2" value="1.0, 1.0" />
+      <input name="uvoffset" type="vector2" value="0.0, 0.0" />
+    </tiledimage>
+    <image name="normal_tex" type="vector3">
+      <input name="file" type="filename" value="textures/normal.png" />
+    </image>
+    <multiply name="color_adjust" type="color3">
+      <input name="in1" type="color3" nodename="diffuse_tex" />
+      <input name="in2" type="color3" value="1.2, 1.2, 1.2" />
+    </multiply>
+    <output name="out_color" type="color3" nodename="color_adjust" />
+    <output name="out_normal" type="vector3" nodename="normal_tex" />
+  </nodegraph>
+  <open_pbr_surface name="TexturedShader" type="surfaceshader">
+    <input name="base_color" type="color3" nodegraph="NG_textures" output="out_color" />
+    <input name="base_weight" type="float" value="1.0" />
+    <input name="specular_roughness" type="float" value="0.4" />
+  </open_pbr_surface>
+  <surfacematerial name="TexturedMaterial" type="material">
+    <input name="surfaceshader" type="surfaceshader" nodename="TexturedShader" />
+  </surfacematerial>
+</materialx>

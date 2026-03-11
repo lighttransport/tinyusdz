@@ -381,7 +381,7 @@ json ThreeJSMaterialExporter::ConvertOpenPBRToNodeMaterial(const OpenPBRSurfaceS
   add_param("coat_anisotropy", shader.coat_anisotropy);
   add_param("coat_rotation", shader.coat_rotation);
   add_param("coat_ior", shader.coat_ior);
-  setJsonParameter(surface_node["inputs"], "coat_affect_color", vec3ToJson(shader.coat_affect_color.value), use_grouped);
+  add_param("coat_affect_color", shader.coat_affect_color);
   add_param("coat_affect_roughness", shader.coat_affect_roughness);
 
   // Emission
@@ -713,7 +713,7 @@ bool ThreeJSMaterialExporter::ExportMaterialX(const RenderMaterial& material,
     export_float("coat_anisotropy", shader.coat_anisotropy);
     export_float("coat_rotation", shader.coat_rotation);
     export_float("coat_ior", shader.coat_ior);
-    export_color3("coat_affect_color", shader.coat_affect_color);
+    export_float("coat_affect_color", shader.coat_affect_color);
     export_float("coat_affect_roughness", shader.coat_affect_roughness);
 
     // Emission parameters
@@ -784,7 +784,7 @@ bool ThreeJSMaterialExporter::ExportMaterialX(const RenderMaterial& material,
     export_texture_node("coat_anisotropy", shader.coat_anisotropy, "float");
     export_texture_node("coat_rotation", shader.coat_rotation, "float");
     export_texture_node("coat_ior", shader.coat_ior, "float");
-    export_texture_node_vec3("coat_affect_color", shader.coat_affect_color, "color3");
+    export_texture_node("coat_affect_color", shader.coat_affect_color, "float");
     export_texture_node("coat_affect_roughness", shader.coat_affect_roughness, "float");
 
     export_texture_node("emission_luminance", shader.emission_luminance, "float");

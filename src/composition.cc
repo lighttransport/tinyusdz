@@ -1394,13 +1394,21 @@ static nonstd::optional<Prim> ReconstructPrimFromPrimSpec(
 }
 
 static nonstd::optional<Prim> ReconstructPrimFromPrimSpecRec(
-    PrimSpec &primspec, std::string *warn, std::string *err) {
+    PrimSpec &primspec, std::string *warn, std::string *err,
+    uint32_t depth = 0) {
+
+  if (size_t(depth) > kMaxDefaultTraversalLimit) {
+    if (err) {
+      (*err) += "ReconstructPrimFromPrimSpecRec: recursion too deep.\n";
+    }
+    return nonstd::nullopt;
+  }
 
   auto pprim = ReconstructPrimFromPrimSpec(primspec, warn, err);
 
   if (pprim) {
     for (size_t i = 0; i < primspec.children().size(); i++) {
-      if (auto pv = ReconstructPrimFromPrimSpecRec(primspec.children()[i], warn, err)) {
+      if (auto pv = ReconstructPrimFromPrimSpecRec(primspec.children()[i], warn, err, depth + 1)) {
         pprim.value().children().emplace_back(std::move(pv.value()));
       }
     }

@@ -386,7 +386,7 @@ private:
   // ======================================================================
 
   /// Convert a Prim and its children recursively
-  bool ConvertPrimRecursive(const Prim& prim, const Path& parent_path, std::string* err);
+  bool ConvertPrimRecursive(const Prim& prim, const Path& parent_path, std::string* err, uint32_t depth = 0);
 
   /// Extract properties from a Prim and add as fields
   bool ExtractPrimProperties(const Prim& prim, const Path& prim_path, crate::FieldValuePairVector& fields, std::string* err);
@@ -521,7 +521,7 @@ private:
   // ======================================================================
 
   /// Convert a PrimSpec and its children recursively
-  bool ConvertPrimSpecRecursive(const PrimSpec& primspec, const Path& parent_path, std::string* err);
+  bool ConvertPrimSpecRecursive(const PrimSpec& primspec, const Path& parent_path, std::string* err, uint32_t depth = 0);
 
   /// Convert a Property to Fields (handles Attribute, Relationship, Connection)
   bool ConvertPropertyToFields(const std::string& prop_name, const Property& prop,

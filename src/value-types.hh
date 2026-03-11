@@ -518,6 +518,7 @@ enum TypeId {
   TYPE_ID_IMAGING_MTLX_MEASUREDEDF,
   TYPE_ID_IMAGING_MTLX_LIGHT,
   TYPE_ID_IMAGING_OPENPBR_SURFACE,
+  TYPE_ID_IMAGING_SOURCE_COLORSPACE,
 
   TYPE_ID_IMAGING_END,
 
@@ -2308,7 +2309,7 @@ class Value {
     return true;
   }
 
-  // Type-safe way to get concrete value.
+  // Type-safe way to get concrete value (const version — copies).
   template <class T>
   nonstd::optional<T> get_value(bool strict_cast = false) const {
     if (TypeTraits<T>::type_id() == v_.type_id()) {
@@ -2316,8 +2317,7 @@ class Value {
       if (!pv) {
         return nonstd::nullopt;
       }
-
-      return std::move(*pv);
+      return *pv;
     } else if (!strict_cast) {
 
       if (TypeTraits<T>::is_array() && (v_.type_id() & value::TYPE_ID_1D_ARRAY_BIT)) { // both are array type
@@ -2328,11 +2328,41 @@ class Value {
               return nonstd::nullopt;
             }
           }
+          return *pv;
+        }
+      } else if (!TypeTraits<T>::is_array() && !(v_.type_id() & value::TYPE_ID_1D_ARRAY_BIT)) { // both are scalar type.
+        if (TypeTraits<T>::underlying_type_id() == v_.underlying_type_id()) {
+          return *any_value_raw_cast<const T>(&v_);
+        }
+      }
+    }
+    return nonstd::nullopt;
+  }
+
+  // Type-safe way to extract concrete value (mutable version — moves, leaves Value empty).
+  template <class T>
+  nonstd::optional<T> take_value(bool strict_cast = false) {
+    if (TypeTraits<T>::type_id() == v_.type_id()) {
+      T *pv = any_value_cast<T>(&v_);
+      if (!pv) {
+        return nonstd::nullopt;
+      }
+      return std::move(*pv);
+    } else if (!strict_cast) {
+
+      if (TypeTraits<T>::is_array() && (v_.type_id() & value::TYPE_ID_1D_ARRAY_BIT)) { // both are array type
+        if ((TypeTraits<T>::underlying_type_id() & (~value::TYPE_ID_1D_ARRAY_BIT)) == (v_.underlying_type_id() & (~value::TYPE_ID_1D_ARRAY_BIT))) {
+          T* pv = any_value_raw_cast<T>(&v_);
+          if (pv) {
+            if (!check_vector_size(*pv)) {
+              return nonstd::nullopt;
+            }
+          }
           return std::move(*pv);
         }
       } else if (!TypeTraits<T>::is_array() && !(v_.type_id() & value::TYPE_ID_1D_ARRAY_BIT)) { // both are scalar type.
         if (TypeTraits<T>::underlying_type_id() == v_.underlying_type_id()) {
-          return std::move(*any_value_raw_cast<const T>(&v_));
+          return std::move(*any_value_raw_cast<T>(&v_));
         }
       }
     }
