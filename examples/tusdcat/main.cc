@@ -161,16 +161,34 @@ static bool LoadUSDCWithMemoryReport(
     return false;
   }
 
+  // Use mmap when available to avoid 188MB+ heap allocation for file data
+  tinyusdz::io::MMapFileHandle mmap_handle;
   std::vector<uint8_t> data;
+  const uint8_t *file_data = nullptr;
+  size_t file_size = 0;
   std::string local_err;
-  if (!tinyusdz::io::ReadWholeFile(&data, &local_err, filepath)) {
-    if (err) {
-      (*err) = local_err;
+
+  if (tinyusdz::io::IsMMapSupported()) {
+    if (!tinyusdz::io::MMapFile(filepath, &mmap_handle, /* writable */ false, &local_err)) {
+      if (err) {
+        (*err) = "Failed to mmap file: " + local_err;
+      }
+      return false;
     }
-    return false;
+    file_data = mmap_handle.addr;
+    file_size = static_cast<size_t>(mmap_handle.size);
+  } else {
+    if (!tinyusdz::io::ReadWholeFile(&data, &local_err, filepath)) {
+      if (err) {
+        (*err) = local_err;
+      }
+      return false;
+    }
+    file_data = data.data();
+    file_size = data.size();
   }
 
-  tinyusdz::StreamReader sr(data.data(), data.size(), /* swap_endian */ false);
+  tinyusdz::StreamReader sr(file_data, file_size, /* swap_endian */ false);
   tinyusdz::usdc::USDCReaderConfig config;
   if (const char *lazy_env = std::getenv("TINYUSDZ_USDC_LAZY")) {
     std::string v = str_tolower(std::string(lazy_env));
@@ -195,6 +213,9 @@ static bool LoadUSDCWithMemoryReport(
     if (err) {
       (*err) = reader.GetError();
     }
+    if (mmap_handle.addr) {
+      tinyusdz::io::UnmapFile(mmap_handle, &local_err);
+    }
     return false;
   }
 
@@ -209,6 +230,9 @@ static bool LoadUSDCWithMemoryReport(
     if (err) {
       (*err) = reader.GetError();
     }
+    if (mmap_handle.addr) {
+      tinyusdz::io::UnmapFile(mmap_handle, &local_err);
+    }
     return false;
   }
 
@@ -217,6 +241,10 @@ static bool LoadUSDCWithMemoryReport(
   }
   if (err) {
     (*err) = reader.GetError();
+  }
+
+  if (mmap_handle.addr) {
+    tinyusdz::io::UnmapFile(mmap_handle, &local_err);
   }
 
   return true;
