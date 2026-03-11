@@ -18,9 +18,13 @@ static void parse_usda(const uint8_t *data, size_t size)
 
   tinyusdz::StreamReader sr(buf.data(), total_size, /* endianswap */false);
 
+  tinyusdz::usda::USDAReaderConfig config;
+  config.max_memory_limit_in_mb = 1024 * 4; // 4GB for fuzzer
+
   tinyusdz::usda::USDAReader reader(&sr);
-  
-  bool ret = reader.Read(); 
+  reader.set_reader_config(config);
+
+  bool ret = reader.Read();
   (void)ret;
 
   return;

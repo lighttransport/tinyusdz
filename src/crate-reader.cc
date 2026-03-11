@@ -563,6 +563,11 @@ bool CrateReader::ReadHalfArray(bool is_compressed,
         return false;
       }
 
+      if (lutSize > _config.maxArrayElements) {
+        _err += "LUT size too large in ReadHalfArray.\n";
+        return false;
+      }
+
       std::vector<value::half> lut;
       lut.resize(lutSize);
       if (!_sr->read(sizeof(value::half) * lutSize, sizeof(value::half) * lutSize,
@@ -580,6 +585,10 @@ bool CrateReader::ReadHalfArray(bool is_compressed,
 
       auto o = d->data();
       for (auto index : indexes) {
+        if (index >= lutSize) {
+          _err += "LUT index out of bounds in ReadHalfArray.\n";
+          return false;
+        }
         *o++ = lut[index];
       }
     } else {
@@ -679,6 +688,11 @@ bool CrateReader::ReadFloatArray(bool is_compressed, std::vector<float> *d) {
         return false;
       }
 
+      if (lutSize > _config.maxArrayElements) {
+        _err += "LUT size too large in ReadFloatArray.\n";
+        return false;
+      }
+
       std::vector<float> lut;
       lut.resize(lutSize);
       if (!_sr->read(sizeof(float) * lutSize, sizeof(float) * lutSize,
@@ -696,6 +710,10 @@ bool CrateReader::ReadFloatArray(bool is_compressed, std::vector<float> *d) {
 
       auto o = d->data();
       for (auto index : indexes) {
+        if (index >= lutSize) {
+          _err += "LUT index out of bounds in ReadFloatArray.\n";
+          return false;
+        }
         *o++ = lut[index];
       }
     } else {
@@ -800,6 +818,11 @@ bool CrateReader::ReadDoubleArray(bool is_compressed, std::vector<double> *d) {
         return false;
       }
 
+      if (lutSize > _config.maxArrayElements) {
+        _err += "LUT size too large in ReadDoubleArray.\n";
+        return false;
+      }
+
       std::vector<double> lut;
       lut.resize(lutSize);
       if (!_sr->read(sizeof(double) * lutSize, sizeof(double) * lutSize,
@@ -817,6 +840,10 @@ bool CrateReader::ReadDoubleArray(bool is_compressed, std::vector<double> *d) {
 
       auto o = d->data();
       for (auto index : indexes) {
+        if (index >= lutSize) {
+          _err += "LUT index out of bounds in ReadDoubleArray.\n";
+          return false;
+        }
         *o++ = lut[index];
       }
     } else {
@@ -902,6 +929,11 @@ bool CrateReader::ReadFloatArrayTyped(bool is_compressed, TypedArray<float> *d) 
         return false;
       }
 
+      if (lutSize > _config.maxArrayElements) {
+        _err += "LUT size too large in ReadFloatArrayTyped.\n";
+        return false;
+      }
+
       std::vector<float> lut;
       lut.resize(lutSize);
       if (!_sr->read(sizeof(float) * lutSize, sizeof(float) * lutSize,
@@ -919,6 +951,10 @@ bool CrateReader::ReadFloatArrayTyped(bool is_compressed, TypedArray<float> *d) 
 
       auto o = d->data();
       for (auto index : indexes) {
+        if (index >= lutSize) {
+          _err += "LUT index out of bounds in ReadFloatArrayTyped.\n";
+          return false;
+        }
         *o++ = lut[index];
       }
     } else {
@@ -1048,6 +1084,11 @@ bool CrateReader::ReadDoubleArrayTyped(bool is_compressed, TypedArray<double> *d
         return false;
       }
 
+      if (lutSize > _config.maxArrayElements) {
+        _err += "LUT size too large in ReadDoubleArrayTyped.\n";
+        return false;
+      }
+
       std::vector<double> lut;
       lut.resize(lutSize);
       if (!_sr->read(sizeof(double) * lutSize, sizeof(double) * lutSize,
@@ -1065,6 +1106,10 @@ bool CrateReader::ReadDoubleArrayTyped(bool is_compressed, TypedArray<double> *d
 
       auto o = d->data();
       for (auto index : indexes) {
+        if (index >= lutSize) {
+          _err += "LUT index out of bounds in ReadDoubleArrayTyped.\n";
+          return false;
+        }
         *o++ = lut[index];
       }
     } else {
@@ -2029,7 +2074,10 @@ bool CrateReader::ReadCustomData(CustomDataType *d) {
       PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read the offset for value in Dictionary.");
     }
 
-    // -8 to compensate sizeof(offset)
+    // -8 to compensate sizeof(offset). Guard against int64 underflow.
+    if (offset < std::numeric_limits<int64_t>::min() + 8) {
+      PUSH_ERROR_AND_RETURN_TAG(kTag, fmt::format("Dictionary value offset {} would underflow int64.", offset));
+    }
     if (!_sr->seek_from_current(offset - 8)) {
       PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to seek. Invalid offset value: " + std::to_string(offset));
     }
@@ -5342,7 +5390,10 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
       DCOUT("UnregisteredValue  offset = " << local_offset);
       DCOUT("tell = " << _sr->tell());
 
-      // -8 to compensate sizeof(offset)
+      // -8 to compensate sizeof(offset). Guard against int64 underflow.
+      if (local_offset < std::numeric_limits<int64_t>::min() + 8) {
+        PUSH_ERROR_AND_RETURN_TAG(kTag, fmt::format("UNREGISTERED_VALUE offset {} would underflow int64.", local_offset));
+      }
       if (!_sr->seek_from_current(local_offset - 8)) {
         PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to seek to UNREGISTERD_VALUE content. Invalid offset value: " +
                 std::to_string(local_offset));
@@ -5487,8 +5538,6 @@ bool CrateReader::BuildDecompressedPathsImpl(
       if (parentPath.is_empty()) {
         // root node.
         // Assume single root node in the scene.
-        DCOUT("paths[" << pathIndexes[thisIndex]
-                       << "] is parent. name = " << parentPath.full_path_name());
         parentPath = rootPath;
 
         if (thisIndex >= pathIndexes.size()) {
@@ -5497,6 +5546,7 @@ bool CrateReader::BuildDecompressedPathsImpl(
         }
 
         size_t idx = pathIndexes[thisIndex];
+        DCOUT("paths[" << idx << "] is parent. name = " << parentPath.full_path_name());
         if (idx >= _paths.size()) {
           PUSH_ERROR("Index is out-of-range");
           return false;
@@ -5518,6 +5568,11 @@ bool CrateReader::BuildDecompressedPathsImpl(
         int32_t _tokenIndex = elementTokenIndexes[thisIndex];
         DCOUT("elementTokenIndex = " << _tokenIndex);
         bool isPrimPropertyPath = _tokenIndex < 0;
+        // Guard against INT32_MIN: -INT32_MIN is UB (signed overflow).
+        if (isPrimPropertyPath && _tokenIndex == std::numeric_limits<int32_t>::min()) {
+          PUSH_ERROR("Invalid tokenIndex (INT32_MIN) in BuildDecompressedPathsImpl.");
+          return false;
+        }
         // ~0 returns -2147483648, so cast to uint32
         uint32_t tokenIndex = uint32_t(isPrimPropertyPath ? -_tokenIndex : _tokenIndex);
 
@@ -5528,9 +5583,15 @@ bool CrateReader::BuildDecompressedPathsImpl(
         }
         auto const &elemToken = _tokens[size_t(tokenIndex)];
         DCOUT("elemToken = " << elemToken);
-        DCOUT("[" << pathIndexes[thisIndex] << "].append = " << elemToken);
+
+        if (thisIndex >= pathIndexes.size()) {
+          PUSH_ERROR("thisIndex exceeds pathIndexes.size()");
+          return false;
+        }
 
         size_t idx = pathIndexes[thisIndex];
+        DCOUT("[" << idx << "].append = " << elemToken);
+
         if (idx >= _paths.size()) {
           PUSH_ERROR("Index is out-of-range");
           return false;
@@ -5616,6 +5677,10 @@ bool CrateReader::BuildDecompressedPathsImpl(
                 endIndexStack.push(siblingIndex-1); // endIndex is inclusive so subtract 1.
 
                 {
+                  if (thisIndex >= pathIndexes.size()) {
+                    PUSH_ERROR("thisIndex exceeds pathIndexes.size()");
+                    return false;
+                  }
                   size_t idx = pathIndexes[thisIndex];
                   if (idx >= _paths.size()) {
                     PUSH_ERROR("Index is out-of-range");
@@ -5640,6 +5705,10 @@ bool CrateReader::BuildDecompressedPathsImpl(
         }
 
         // [Cont.]
+        if (thisIndex >= pathIndexes.size()) {
+          PUSH_ERROR("thisIndex exceeds pathIndexes.size()");
+          return false;
+        }
         size_t idx = pathIndexes[thisIndex];
         if (idx >= _paths.size()) {
           PUSH_ERROR("Index is out-of-range");
@@ -5692,8 +5761,6 @@ bool CrateReader::BuildDecompressedPathsImpl(
     if (parentPath.is_empty()) {
       // root node.
       // Assume single root node in the scene.
-      DCOUT("paths[" << pathIndexes[thisIndex]
-                     << "] is parent. name = " << parentPath.full_path_name());
       parentPath = Path::make_root_path();
 
       if (thisIndex >= pathIndexes.size()) {
@@ -5702,6 +5769,7 @@ bool CrateReader::BuildDecompressedPathsImpl(
       }
 
       size_t idx = pathIndexes[thisIndex];
+      DCOUT("paths[" << idx << "] is parent. name = " << parentPath.full_path_name());
       if (idx >= _paths.size()) {
         PUSH_ERROR("Index is out-of-range");
         return false;
@@ -5723,6 +5791,11 @@ bool CrateReader::BuildDecompressedPathsImpl(
       int32_t _tokenIndex = elementTokenIndexes[thisIndex];
       DCOUT("elementTokenIndex = " << _tokenIndex);
       bool isPrimPropertyPath = _tokenIndex < 0;
+      // Guard against INT32_MIN: -INT32_MIN is UB (signed overflow).
+      if (isPrimPropertyPath && _tokenIndex == std::numeric_limits<int32_t>::min()) {
+        PUSH_ERROR("Invalid tokenIndex (INT32_MIN) in BuildDecompressedPathsImpl.");
+        return false;
+      }
       // ~0 returns -2147483648, so cast to uint32
       uint32_t tokenIndex = uint32_t(isPrimPropertyPath ? -_tokenIndex : _tokenIndex);
 
@@ -5733,9 +5806,15 @@ bool CrateReader::BuildDecompressedPathsImpl(
       }
       auto const &elemToken = _tokens[size_t(tokenIndex)];
       DCOUT("elemToken = " << elemToken);
-      DCOUT("[" << pathIndexes[thisIndex] << "].append = " << elemToken);
+
+      if (thisIndex >= pathIndexes.size()) {
+        PUSH_ERROR("thisIndex exceeds pathIndexes.size()");
+        return false;
+      }
 
       size_t idx = pathIndexes[thisIndex];
+      DCOUT("[" << idx << "].append = " << elemToken);
+
       if (idx >= _paths.size()) {
         PUSH_ERROR("Index is out-of-range");
         return false;
@@ -5790,6 +5869,10 @@ bool CrateReader::BuildDecompressedPathsImpl(
         }
       }
 
+      if (thisIndex >= pathIndexes.size()) {
+        PUSH_ERROR("thisIndex exceeds pathIndexes.size()");
+        return false;
+      }
       size_t idx = pathIndexes[thisIndex];
       if (idx >= _paths.size()) {
         PUSH_ERROR("Index is out-of-range");
@@ -6373,6 +6456,10 @@ bool CrateReader::ReadCompressedPaths(const uint64_t maxNumPaths) {
   arg.elementTokenIndexes = &elementTokenIndexes;
   arg.jumps = &jumps;
   arg.visit_table = &visit_table;
+  if (pathIndexes.empty()) {
+    PUSH_ERROR("pathIndexes is empty.");
+    return false;
+  }
   arg.startIndex = 0;
   arg.endIndex = pathIndexes.size() - 1; // or numEncodedPaths - 1
   arg.parentPath = Path();
@@ -6514,17 +6601,22 @@ bool CrateReader::ReadTokens() {
 
   DCOUT("uncompressedSize = " << uncompressedSize);
 
+  // At least min size should be 4 both for compress and uncompress.
+  if (uncompressedSize < 4) {
+    PUSH_ERROR_AND_RETURN_TAG(kTag, "uncompressedSize too small or zero bytes.");
+  }
+
+  // Guard against OOM: reject absurdly large uncompressed sizes before allocating.
+  if (uncompressedSize > uint64_t(_config.maxMemoryBudget)) {
+    PUSH_ERROR_AND_RETURN_TAG(kTag, fmt::format("uncompressedSize {} exceeds memory budget {}.", uncompressedSize, _config.maxMemoryBudget));
+  }
 
   // Must be larger than len(';-)') + all empty string case.
   // 3 = ';-)'
   // num_tokens = '\0' delimiter
-  if ((3 + num_tokens) > uncompressedSize) {
+  // Subtraction safe: uncompressedSize >= 4 checked above.
+  if (num_tokens > uncompressedSize - 3) {
     PUSH_ERROR_AND_RETURN_TAG(kTag, "`TOKENS` section corrupted.");
-  }
-
-  // At least min size should be 16 both for compress and uncompress.
-  if (uncompressedSize < 4) {
-    PUSH_ERROR_AND_RETURN_TAG(kTag, "uncompressedSize too small or zero bytes.");
   }
 
   uint64_t compressedSize;
@@ -6551,6 +6643,9 @@ bool CrateReader::ReadTokens() {
   // And further, extra 128 bytes for safety(LZ4_FAST_DEC_LOOP does 16 bytes stride memcpy)
 
   uint64_t bufSize = (std::max)(compressedSize, uncompressedSize);
+  if (bufSize > std::numeric_limits<uint64_t>::max() - 128) {
+    PUSH_ERROR_AND_RETURN_TAG(kTag, "bufSize overflow in addition.");
+  }
   CHECK_MEMORY_USAGE(bufSize+128);
   CHECK_MEMORY_USAGE(uncompressedSize);
 
@@ -6609,6 +6704,9 @@ bool CrateReader::ReadTokens() {
       return false;
     }
 
+    if (len > _config.maxTokenLength) {
+      PUSH_ERROR_AND_RETURN_TAG(kTag, fmt::format("Token string length {} exceeds limit {}.", len, _config.maxTokenLength));
+    }
     std::string str;
     if (len > 0) {
       str = std::string(pcurr, len);
@@ -7004,13 +7102,25 @@ bool CrateReader::BuildLiveFieldSets() {
   _live_fieldsets.reserve(_fieldset_start_indices.size());
 
   for (uint32_t start_idx : _fieldset_start_indices) {
+    if (start_idx >= _fieldset_end_indices.size()) {
+      PUSH_ERROR_AND_RETURN_TAG(kTag, fmt::format("Fieldset start_idx {} out of range (end_indices.size = {}).", start_idx, _fieldset_end_indices.size()));
+    }
     const uint32_t end_idx = _fieldset_end_indices[start_idx];
+
+    if (end_idx < start_idx) {
+      PUSH_ERROR_AND_RETURN_TAG(kTag, fmt::format("Invalid fieldset: end_idx {} < start_idx {}.", end_idx, start_idx));
+    }
+
     auto emplaced =
         _live_fieldsets.emplace(crate::Index(start_idx), FieldValuePairVector{});
     auto &pairs = emplaced.first->second;
 
-    pairs.resize(static_cast<size_t>(end_idx - start_idx));
-    DCOUT("range size = " << (end_idx - start_idx));
+    size_t range_size = static_cast<size_t>(end_idx - start_idx);
+    if (range_size > _fields.size()) {
+      PUSH_ERROR_AND_RETURN_TAG(kTag, fmt::format("Fieldset range {} exceeds total fields count {}.", range_size, _fields.size()));
+    }
+    pairs.resize(range_size);
+    DCOUT("range size = " << range_size);
     // TODO(syoyo): Parallelize.
     for (uint32_t idx = start_idx, i = 0; idx < end_idx; ++idx, ++i) {
       if (_fieldset_indices[idx].value >= _fields.size()) {
@@ -7087,7 +7197,11 @@ bool CrateReader::DecodeFieldSet(crate::Index fieldset_index,
     return false;
   }
 
-  pairs->resize(static_cast<size_t>(fs_end - fieldset_index.value));
+  size_t fs_range_size = static_cast<size_t>(fs_end - fieldset_index.value);
+  if (fs_range_size > _fields.size()) {
+    PUSH_ERROR_AND_RETURN_TAG(kTag, fmt::format("FieldSet range {} exceeds total fields count {}.", fs_range_size, _fields.size()));
+  }
+  pairs->resize(fs_range_size);
 
   for (uint32_t idx = fieldset_index.value, i = 0; idx < fs_end; ++idx, ++i) {
     if (_fieldset_indices[idx].value >= _fields.size()) {
@@ -7518,7 +7632,11 @@ bool CrateReader::ReadTOC() {
       PUSH_ERROR_AND_RETURN_TAG(kTag, fmt::format("Section start byte offset exceeds input USDC data size."));
     }
 
-    // TODO: handle integer overflow.
+    // Guard against signed integer overflow before casting to size_t.
+    if (_toc.sections[i].size > 0 &&
+        _toc.sections[i].start > std::numeric_limits<int64_t>::max() - _toc.sections[i].size) {
+      PUSH_ERROR_AND_RETURN_TAG(kTag, fmt::format("Section start + size overflows int64."));
+    }
     size_t end_offset = size_t(_toc.sections[i].start + _toc.sections[i].size);
     if (sizeof(void *) == 4) { // 32bit
       if (end_offset > size_t(std::numeric_limits<int32_t>::max())) {
