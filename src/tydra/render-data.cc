@@ -5249,6 +5249,42 @@ bool RenderSceneConverter::ConvertMesh(
   bool compute_tangents =
       (env.mesh_config.compute_tangents_and_binormals && dst.tangents.empty());
 
+  // When compute_tangents_only_with_normal_map is set, skip tangent
+  // computation for meshes without a normal map texture connection.
+  if (compute_tangents && env.mesh_config.compute_tangents_only_with_normal_map) {
+    bool has_normal_map = false;
+    // Check mesh-level material
+    if (dst.material_id >= 0 &&
+        dst.material_id < int(materials.size())) {
+      const auto &rmat = materials[size_t(dst.material_id)];
+      if (rmat.surfaceShader && rmat.surfaceShader->normal.is_texture()) {
+        has_normal_map = true;
+      }
+      if (!has_normal_map && rmat.openPBRShader &&
+          rmat.openPBRShader->normal.is_texture()) {
+        has_normal_map = true;
+      }
+    }
+    // Check per-subset materials
+    if (!has_normal_map) {
+      for (const auto &kv : dst.material_subsetMap) {
+        int mid = kv.second.material_id;
+        if (mid >= 0 && mid < int(materials.size())) {
+          const auto &rmat = materials[size_t(mid)];
+          if ((rmat.surfaceShader && rmat.surfaceShader->normal.is_texture()) ||
+              (rmat.openPBRShader && rmat.openPBRShader->normal.is_texture())) {
+            has_normal_map = true;
+            break;
+          }
+        }
+      }
+    }
+    if (!has_normal_map) {
+      DCOUT("No normal map texture assigned — skipping tangent computation.");
+      compute_tangents = false;
+    }
+  }
+
   if (compute_normals || (compute_tangents && dst.normals.empty())) {
     //TUSDZ_LOG_I("Build normals");
     DCOUT("Compute normals");
@@ -5311,24 +5347,28 @@ bool RenderSceneConverter::ConvertMesh(
   //
   // 8. Compute tangents.
   //
+  if (compute_tangents && env.mesh_config.defer_tangent_computation) {
+    // Mark for lazy computation — actual MikkTSpace work deferred until
+    // ComputeDeferredTangents() is called.
+    dst.tangent_computation_deferred = true;
+    compute_tangents = false;
+    DCOUT("Tangent computation deferred.");
+  }
+
   if (compute_tangents) {
     DCOUT("Compute tangents.");
-    //TUSDZ_LOG_I("Build tangents");
-
-    std::vector<vec2> texcoords;
-    std::vector<vec3> normals;
 
     // TODO: Support arbitrary slotID
     if (!dst.texcoords.count(0)) {
       PUSH_WARN("texcoord is not assigned to the mesh. Skipping tangent/binormal computation.\n");
     } else {
 
-    texcoords.resize(dst.texcoords[0].vertex_count());
-    normals.resize(dst.normals.vertex_count());
-
-    memcpy(texcoords.data(), dst.texcoords[0].buffer(),
-           dst.texcoords[0].num_bytes());
-    memcpy(normals.data(), dst.normals.buffer(), dst.normals.num_bytes());
+    // Access existing normals/texcoords from RenderMesh via pointer cast
+    // instead of copying into separate vectors (saves ~200MB for large meshes).
+    const vec3 *normals_ptr = reinterpret_cast<const vec3 *>(dst.normals.buffer());
+    size_t normals_count = dst.normals.vertex_count();
+    const vec2 *texcoords_ptr = reinterpret_cast<const vec2 *>(dst.texcoords[0].buffer());
+    size_t texcoords_count = dst.texcoords[0].vertex_count();
 
     std::vector<vec3> tangents;
     std::vector<vec3> binormals;
@@ -5349,49 +5389,51 @@ bool RenderSceneConverter::ConvertMesh(
       points_ptr = &facevarying_points;
     }
 
-    // Try MikkTSpace first (industry standard), fall back to Lengyel if it fails.
-    // MikkTSpace operates on facevarying data and outputs facevarying tangents directly.
-    bool mikktspace_ok = false;
-    {
+    // Dispatch tangent computation based on configured method.
+    // Default is Lengyel (fast, lightweight). MikkTSpace is optional
+    // (industry standard but slow and memory-heavy for large meshes).
+    bool used_mikktspace = false;
+
+    if (env.mesh_config.tangent_method == MeshConverterConfig::TangentComputationMethod::MikkTSpace) {
+      // MikkTSpace path (explicitly requested)
       std::string mikk_err;
-      std::vector<vec3> mikk_tangents;
-      std::vector<vec3> mikk_binormals;
+      bool mikktspace_ok = false;
       if (!is_single_indexable) {
-        // Already facevarying — use directly
+        std::vector<value::float3> fv_normals(normals_ptr, normals_ptr + normals_count);
+        std::vector<value::float2> fv_texcoords(texcoords_ptr, texcoords_ptr + texcoords_count);
         mikktspace_ok = ComputeTangentsMikkTSpace(
-            *points_ptr, normals, texcoords, dst.faceVertexCounts(),
-            &mikk_tangents, &mikk_binormals, &mikk_err);
+            *points_ptr, fv_normals, fv_texcoords, dst.faceVertexCounts(),
+            &tangents, &binormals, &mikk_err);
       } else {
-        // Expand vertex-varying data to facevarying for MikkTSpace
         const auto &fvi = dst.faceVertexIndices();
         std::vector<value::float3> fv_positions(fvi.size());
         std::vector<value::float3> fv_normals(fvi.size());
         std::vector<value::float2> fv_texcoords(fvi.size());
         for (size_t i = 0; i < fvi.size(); i++) {
           if (fvi[i] < dst.points.size()) fv_positions[i] = dst.points[fvi[i]];
-          if (fvi[i] < normals.size()) fv_normals[i] = normals[fvi[i]];
-          if (fvi[i] < texcoords.size()) fv_texcoords[i] = texcoords[fvi[i]];
+          if (fvi[i] < normals_count) fv_normals[i] = normals_ptr[fvi[i]];
+          if (fvi[i] < texcoords_count) fv_texcoords[i] = texcoords_ptr[fvi[i]];
         }
         mikktspace_ok = ComputeTangentsMikkTSpace(
             fv_positions, fv_normals, fv_texcoords, dst.faceVertexCounts(),
-            &mikk_tangents, &mikk_binormals, &mikk_err);
+            &tangents, &binormals, &mikk_err);
       }
 
       if (mikktspace_ok) {
-        // MikkTSpace output is already facevarying — store directly
-        tangents = std::move(mikk_tangents);
-        binormals = std::move(mikk_binormals);
+        used_mikktspace = true;
       } else {
         DCOUT("MikkTSpace tangent computation failed: " << mikk_err
               << ". Falling back to Lengyel method.");
       }
     }
 
-    if (!mikktspace_ok) {
-      // Lengyel fallback
+    if (!used_mikktspace) {
+      // Lengyel method (default, or fallback if MikkTSpace failed)
+      std::vector<vec2> tc_vec(texcoords_ptr, texcoords_ptr + texcoords_count);
+      std::vector<vec3> nm_vec(normals_ptr, normals_ptr + normals_count);
       if (!ComputeTangentsAndBinormals(*points_ptr, dst.faceVertexCounts(),
-                                       dst.faceVertexIndices(), texcoords,
-                                       normals, !is_single_indexable, &tangents,
+                                       dst.faceVertexIndices(), tc_vec,
+                                       nm_vec, !is_single_indexable, &tangents,
                                        &binormals, &vertex_indices, &_err,
                                        env.mesh_config.max_vertex_valence,
                                        env.mesh_config.facevarying_to_vertex_eps)) {
@@ -5399,43 +5441,37 @@ bool RenderSceneConverter::ConvertMesh(
       }
     }
 
-    // Convert tangents/binormals to 'facevarying' variability
-    {
-      std::vector<vec3> facevarying_tangents;
-      std::vector<vec3> facevarying_binormals;
+    // Store tangents/binormals into dst with facevarying variability.
+    if (used_mikktspace) {
+      // MikkTSpace output is already facevarying
+      dst.tangents.data.resize(tangents.size() * sizeof(vec3));
+      memcpy(dst.tangents.data.data(), tangents.data(),
+             tangents.size() * sizeof(vec3));
 
-      if (mikktspace_ok) {
-        // MikkTSpace output is already facevarying
-        facevarying_tangents = std::move(tangents);
-        facevarying_binormals = std::move(binormals);
-      } else {
-        // Lengyel output needs index expansion
-        facevarying_tangents.assign(vertex_indices.size(), {0.0f, 0.0f, 0.0f});
-        facevarying_binormals.assign(vertex_indices.size(), {0.0f, 0.0f, 0.0f});
-        for (size_t i = 0; i < vertex_indices.size(); i++) {
-          facevarying_tangents[i] = tangents[vertex_indices[i]];
-          facevarying_binormals[i] = binormals[vertex_indices[i]];
-        }
+      dst.binormals.data.resize(binormals.size() * sizeof(vec3));
+      memcpy(dst.binormals.data.data(), binormals.data(),
+             binormals.size() * sizeof(vec3));
+    } else {
+      // Lengyel output needs index expansion
+      dst.tangents.data.resize(vertex_indices.size() * sizeof(vec3));
+      dst.binormals.data.resize(vertex_indices.size() * sizeof(vec3));
+      vec3 *dst_tangents = reinterpret_cast<vec3 *>(dst.tangents.data.data());
+      vec3 *dst_binormals = reinterpret_cast<vec3 *>(dst.binormals.data.data());
+      for (size_t i = 0; i < vertex_indices.size(); i++) {
+        dst_tangents[i] = tangents[vertex_indices[i]];
+        dst_binormals[i] = binormals[vertex_indices[i]];
       }
-
-      dst.tangents.data.resize(facevarying_tangents.size() * sizeof(vec3));
-      memcpy(dst.tangents.data.data(), facevarying_tangents.data(),
-             facevarying_tangents.size() * sizeof(vec3));
-
-      dst.tangents.format = VertexAttributeFormat::Vec3;
-      dst.tangents.stride = 0;
-      dst.tangents.elementSize = 1;
-      dst.tangents.variability = VertexVariability::FaceVarying;
-
-      dst.binormals.data.resize(facevarying_binormals.size() * sizeof(vec3));
-      memcpy(dst.binormals.data.data(), facevarying_binormals.data(),
-             facevarying_binormals.size() * sizeof(vec3));
-
-      dst.binormals.format = VertexAttributeFormat::Vec3;
-      dst.binormals.stride = 0;
-      dst.binormals.elementSize = 1;
-      dst.binormals.variability = VertexVariability::FaceVarying;
     }
+
+    dst.tangents.format = VertexAttributeFormat::Vec3;
+    dst.tangents.stride = 0;
+    dst.tangents.elementSize = 1;
+    dst.tangents.variability = VertexVariability::FaceVarying;
+
+    dst.binormals.format = VertexAttributeFormat::Vec3;
+    dst.binormals.stride = 0;
+    dst.binormals.elementSize = 1;
+    dst.binormals.variability = VertexVariability::FaceVarying;
 
     // 2. Convert tangents/binormals to vertex variability if needed.
     if (env.mesh_config.build_vertex_indices) {
@@ -7958,6 +7994,149 @@ static void ApplyMtlxGeometryNodeGraphInfoToOpenPBRShader(
       }
     }
   }
+}
+
+// static
+bool RenderSceneConverter::ComputeDeferredTangents(
+    RenderMesh *mesh,
+    MeshConverterConfig::TangentComputationMethod method,
+    std::string *err) {
+  if (!mesh) {
+    if (err) *err = "mesh is nullptr.";
+    return false;
+  }
+
+  if (!mesh->tangent_computation_deferred) {
+    // Already computed or not deferred — nothing to do.
+    return true;
+  }
+
+  if (mesh->normals.empty()) {
+    if (err) *err = "Cannot compute tangents: normals not available.";
+    return false;
+  }
+
+  if (!mesh->texcoords.count(0)) {
+    if (err) *err = "Cannot compute tangents: texcoord slot 0 not available.";
+    return false;
+  }
+
+  // Use existing data from RenderMesh (no redundant copies).
+  const vec3 *normals_ptr = reinterpret_cast<const vec3 *>(mesh->normals.buffer());
+  size_t normals_count = mesh->normals.vertex_count();
+  const vec2 *texcoords_ptr = reinterpret_cast<const vec2 *>(mesh->texcoords[0].buffer());
+  size_t texcoords_count = mesh->texcoords[0].vertex_count();
+
+  // Determine if data is already facevarying or vertex-varying.
+  const auto &fvi = mesh->triangulatedFaceVertexIndices.size()
+                        ? mesh->triangulatedFaceVertexIndices
+                        : mesh->usdFaceVertexIndices;
+  const auto &fvc = mesh->triangulatedFaceVertexCounts.size()
+                        ? mesh->triangulatedFaceVertexCounts
+                        : mesh->usdFaceVertexCounts;
+
+  bool is_facevarying = (normals_count == fvi.size());
+
+  std::vector<vec3> tangents;
+  std::vector<vec3> binormals;
+  std::vector<uint32_t> vertex_indices;
+
+  bool used_mikktspace = false;
+
+  if (method == MeshConverterConfig::TangentComputationMethod::MikkTSpace) {
+    std::string mikk_err;
+    bool mikktspace_ok = false;
+
+    if (is_facevarying) {
+      std::vector<value::float3> fv_positions(fvi.size());
+      for (size_t i = 0; i < fvi.size(); i++) {
+        if (fvi[i] < mesh->points.size()) fv_positions[i] = mesh->points[fvi[i]];
+      }
+      std::vector<value::float3> fv_normals(normals_ptr, normals_ptr + normals_count);
+      std::vector<value::float2> fv_texcoords(texcoords_ptr, texcoords_ptr + texcoords_count);
+      mikktspace_ok = ComputeTangentsMikkTSpace(
+          fv_positions, fv_normals, fv_texcoords, fvc,
+          &tangents, &binormals, &mikk_err);
+    } else {
+      std::vector<value::float3> fv_positions(fvi.size());
+      std::vector<value::float3> fv_normals(fvi.size());
+      std::vector<value::float2> fv_texcoords(fvi.size());
+      for (size_t i = 0; i < fvi.size(); i++) {
+        if (fvi[i] < mesh->points.size()) fv_positions[i] = mesh->points[fvi[i]];
+        if (fvi[i] < normals_count) fv_normals[i] = normals_ptr[fvi[i]];
+        if (fvi[i] < texcoords_count) fv_texcoords[i] = texcoords_ptr[fvi[i]];
+      }
+      mikktspace_ok = ComputeTangentsMikkTSpace(
+          fv_positions, fv_normals, fv_texcoords, fvc,
+          &tangents, &binormals, &mikk_err);
+    }
+
+    if (mikktspace_ok) {
+      used_mikktspace = true;
+    } else {
+      if (err) *err = "MikkTSpace tangent computation failed: " + mikk_err + ". Falling back to Lengyel.";
+      // Fall through to Lengyel
+    }
+  }
+
+  if (!used_mikktspace) {
+    // Lengyel method (default)
+    // Build facevarying points if needed
+    std::vector<vec3> fv_points;
+    const std::vector<vec3> *points_ptr = &mesh->points;
+    if (is_facevarying) {
+      fv_points.resize(fvi.size());
+      for (size_t i = 0; i < fvi.size(); i++) {
+        if (fvi[i] < mesh->points.size()) fv_points[i] = mesh->points[fvi[i]];
+      }
+      points_ptr = &fv_points;
+    }
+
+    std::vector<vec2> tc_vec(texcoords_ptr, texcoords_ptr + texcoords_count);
+    std::vector<vec3> nm_vec(normals_ptr, normals_ptr + normals_count);
+    std::string lengyel_err;
+    if (!ComputeTangentsAndBinormals(*points_ptr, fvc,
+                                     fvi, tc_vec,
+                                     nm_vec, is_facevarying, &tangents,
+                                     &binormals, &vertex_indices, &lengyel_err)) {
+      if (err) *err = "Lengyel tangent computation failed: " + lengyel_err;
+      return false;
+    }
+  }
+
+  // Store results
+  if (used_mikktspace) {
+    mesh->tangents.data.resize(tangents.size() * sizeof(vec3));
+    memcpy(mesh->tangents.data.data(), tangents.data(),
+           tangents.size() * sizeof(vec3));
+
+    mesh->binormals.data.resize(binormals.size() * sizeof(vec3));
+    memcpy(mesh->binormals.data.data(), binormals.data(),
+           binormals.size() * sizeof(vec3));
+  } else {
+    // Lengyel output needs index expansion
+    mesh->tangents.data.resize(vertex_indices.size() * sizeof(vec3));
+    mesh->binormals.data.resize(vertex_indices.size() * sizeof(vec3));
+    vec3 *dst_tangents = reinterpret_cast<vec3 *>(mesh->tangents.data.data());
+    vec3 *dst_binormals = reinterpret_cast<vec3 *>(mesh->binormals.data.data());
+    for (size_t i = 0; i < vertex_indices.size(); i++) {
+      dst_tangents[i] = tangents[vertex_indices[i]];
+      dst_binormals[i] = binormals[vertex_indices[i]];
+    }
+  }
+
+  mesh->tangents.format = VertexAttributeFormat::Vec3;
+  mesh->tangents.stride = 0;
+  mesh->tangents.elementSize = 1;
+  mesh->tangents.variability = VertexVariability::FaceVarying;
+
+  mesh->binormals.format = VertexAttributeFormat::Vec3;
+  mesh->binormals.stride = 0;
+  mesh->binormals.elementSize = 1;
+  mesh->binormals.variability = VertexVariability::FaceVarying;
+
+  mesh->tangent_computation_deferred = false;
+  return true;
 }
 
 bool RenderSceneConverter::ConvertMaterial(const RenderSceneConverterEnv &env,

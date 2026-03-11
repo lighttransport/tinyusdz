@@ -269,8 +269,11 @@ class USDCReader::Impl {
   /// Construct Property(Attribute, Relationship/Connection) from
   /// FieldValuePairs
   ///
+  // allow_move_from_fvs: When true, ParseProperty may move large values
+  // out of fvs (used in lazy mode where fvs is a local scratch buffer).
   bool ParseProperty(const SpecType specType,
-                     const crate::FieldValuePairVector &fvs, Property *prop);
+                     crate::FieldValuePairVector &fvs, Property *prop,
+                     bool allow_move_from_fvs = false);
 
   ///
   /// Parse Prim spec from FieldValuePairs
@@ -1096,7 +1099,10 @@ bool USDCReader::Impl::BuildPropertyMap(const std::vector<size_t> &pathIndices,
       }
 
       Property prop;
-      if (!ParseProperty(spec.spec_type, (*child_fvs), &prop)) {
+      // In lazy mode, child_fvs points to local decoded_fvs — safe to move from.
+      if (!ParseProperty(spec.spec_type,
+                         const_cast<crate::FieldValuePairVector &>(*child_fvs),
+                         &prop, _config.use_lazy_property_construction)) {
         PUSH_ERROR_AND_RETURN_TAG(
             kTag,
             fmt::format(
@@ -1127,8 +1133,9 @@ bool USDCReader::Impl::BuildPropertyMap(const std::vector<size_t> &pathIndices,
 ///       - (Empty) : Define only(Neiher connection nor value assigned. e.g.
 ///       "float outputs:rgb")
 bool USDCReader::Impl::ParseProperty(const SpecType spec_type,
-                                     const crate::FieldValuePairVector &fvs,
-                                     Property *prop) {
+                                     crate::FieldValuePairVector &fvs,
+                                     Property *prop,
+                                     bool allow_move_from_fvs) {
   if (fvs.size() > _config.kMaxFieldValuePairs) {
     PUSH_ERROR_AND_RETURN_TAG(kTag, "Too much FieldValue pairs.");
   }
@@ -1227,10 +1234,15 @@ bool USDCReader::Impl::ParseProperty(const SpecType spec_type,
       // Set scalar(non-timesampled) value
       //TUSDZ_LOG_I("defaultValue");
 
-      // TODO: Use move
-      // FYI: This doesn't work 
-      //defaultValue = std::move(*const_cast<value::Value *>(fv.second.get_raw_ptr()));
-      defaultValue = fv.second.get_raw();
+      // In lazy mode (allow_move_from_fvs=true), fvs is a local scratch
+      // buffer so we can move large arrays directly. Otherwise copy
+      // because shared fieldsets may be referenced by other specs.
+      if (allow_move_from_fvs) {
+        defaultValue = std::move(fv.second.get_raw());
+      } else {
+        const value::Value &raw = fv.second.get_raw();
+        defaultValue = raw;
+      }
       //TUSDZ_LOG_I("defaultValue end");
       hasDefault = true;
 
@@ -1624,9 +1636,11 @@ bool USDCReader::Impl::ParseProperty(const SpecType spec_type,
         }
       }
     }
-    var.set_value(defaultValue.value());
+    // Check type before moving
+    bool is_value_block = (defaultValue.value().type_id() == value::TypeTraits<value::ValueBlock>::type_id());
+    var.set_value(std::move(defaultValue.value()));
 
-    if (defaultValue.value().type_id() == value::TypeTraits<value::ValueBlock>::type_id()) {
+    if (is_value_block) {
       isValueBlock = true;
     }
   }
@@ -2977,7 +2991,9 @@ bool USDCReader::Impl::ReconstructPrimNode(int parent, int current, int level,
         }
 
         Property prop;
-        if (!ParseProperty(spec.spec_type, fvs, &prop)) {
+        if (!ParseProperty(spec.spec_type,
+                           const_cast<crate::FieldValuePairVector &>(fvs),
+                           &prop, _config.use_lazy_property_construction)) {
           PUSH_ERROR_AND_RETURN_TAG(kTag,
                                     fmt::format("Failed to parse Attribute: {}.",
                                                 path.prop_part()));
@@ -3408,7 +3424,9 @@ bool USDCReader::Impl::ReconstructPrimSpecNode(int parent, int current, int leve
         }
 
         Property prop;
-        if (!ParseProperty(spec.spec_type, fvs, &prop)) {
+        if (!ParseProperty(spec.spec_type,
+                           const_cast<crate::FieldValuePairVector &>(fvs),
+                           &prop, _config.use_lazy_property_construction)) {
           PUSH_ERROR_AND_RETURN_TAG(kTag,
                                     fmt::format("Failed to parse Attribute: {}.",
                                                 path.prop_part()));

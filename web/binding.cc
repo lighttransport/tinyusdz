@@ -1064,6 +1064,13 @@ class TinyUSDZLoaderNative {
     // Free GeomMesh data in stage after using it to save memory.
     env.mesh_config.lowmem = true;
 
+    // Defer tangent computation to save memory and time during initial load.
+    // Tangents will be computed on demand via computeMeshTangents().
+    env.mesh_config.defer_tangent_computation = defer_tangent_computation_;
+
+    // Only compute tangents for meshes with normal map textures.
+    env.mesh_config.compute_tangents_only_with_normal_map = true;
+
     // Do not try to build indices(avoid temp memory consumption of vertex similarity search)
     //env.mesh_config.prefer_non_indexed = true;
 
@@ -1377,6 +1384,8 @@ class TinyUSDZLoaderNative {
     env.scene_config.load_texture_assets = loadTextureInNative_;
     env.material_config.preserve_texel_bitdepth = true;
     env.mesh_config.lowmem = true;
+    env.mesh_config.defer_tangent_computation = defer_tangent_computation_;
+    env.mesh_config.compute_tangents_only_with_normal_map = true;
     env.mesh_config.enable_bone_reduction = enable_bone_reduction_;
     env.mesh_config.target_bone_count = target_bone_count_;
     env.mesh_config.round_bone_count = round_bone_count_;
@@ -3522,6 +3531,46 @@ class TinyUSDZLoaderNative {
     return round_bone_count_;
   }
 
+  // Deferred tangent computation
+  void setDeferTangentComputation(bool enabled) {
+    defer_tangent_computation_ = enabled;
+  }
+
+  bool getDeferTangentComputation() const {
+    return defer_tangent_computation_;
+  }
+
+  // Compute tangents for a specific mesh on demand (lazy tangent computation).
+  // Returns true on success. Call this before accessing tangent data for meshes
+  // that had tangent computation deferred.
+  bool computeMeshTangents(int mesh_index) {
+    if (mesh_index < 0 || mesh_index >= static_cast<int>(render_scene_.meshes.size())) {
+      return false;
+    }
+
+    auto &mesh = render_scene_.meshes[size_t(mesh_index)];
+    if (!mesh.tangent_computation_deferred) {
+      // Already computed or not deferred
+      return true;
+    }
+
+    std::string err;
+    // Use Lengyel (default) for deferred computation — fast and lightweight for WASM.
+    bool ok = tinyusdz::tydra::RenderSceneConverter::ComputeDeferredTangents(
+        &mesh,
+        tinyusdz::tydra::MeshConverterConfig::TangentComputationMethod::Lengyel,
+        &err);
+    if (!ok) {
+      std::cerr << "computeMeshTangents failed for mesh " << mesh_index << ": " << err << "\n";
+    }
+
+    // Invalidate tangent cache for this mesh since we just computed new data
+    tangents4_cache_.erase(mesh_index);
+    reordered_mesh_cache_.erase(mesh_index);
+
+    return ok;
+  }
+
   emscripten::val getAssetSearchPaths() const {
     emscripten::val arr = emscripten::val::array();
     for (size_t i = 0; i < search_paths_.size(); i++) {
@@ -4432,6 +4481,9 @@ class TinyUSDZLoaderNative {
   int32_t max_memory_limit_mb_{2048}; // 2GB for 32-bit WASM
 #endif
 
+  // Defer tangent computation until explicitly requested via computeMeshTangents()
+  bool defer_tangent_computation_{true};  // default true for WASM to save memory
+
   // Bone reduction configuration (disabled by default for backward compatibility)
   bool enable_bone_reduction_{false};
   uint32_t target_bone_count_{4};  // Default to 4 bones (standard for WebGL/Three.js)
@@ -5211,6 +5263,14 @@ EMSCRIPTEN_BINDINGS(tinyusdz_module) {
                 &TinyUSDZLoaderNative::setRoundBoneCount)
       .function("getRoundBoneCount",
                 &TinyUSDZLoaderNative::getRoundBoneCount)
+
+      // Deferred tangent computation
+      .function("setDeferTangentComputation",
+                &TinyUSDZLoaderNative::setDeferTangentComputation)
+      .function("getDeferTangentComputation",
+                &TinyUSDZLoaderNative::getDeferTangentComputation)
+      .function("computeMeshTangents",
+                &TinyUSDZLoaderNative::computeMeshTangents)
 
       .function("setEnableComposition",
                 &TinyUSDZLoaderNative::setEnableComposition)
