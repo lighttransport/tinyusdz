@@ -107,7 +107,10 @@ bool CrateReader::ReadTimeSamples(value::TimeSamples *d) {
   DCOUT("TimeSample times value offset = " << offset);
   DCOUT("TimeSample tell = " << _sr->tell());
 
-  // -8 to compensate sizeof(offset)
+  // -8 to compensate sizeof(offset). Guard against int64 underflow.
+  if (offset < std::numeric_limits<int64_t>::min() + 8) {
+    PUSH_ERROR_AND_RETURN_TAG(kTag, "TimeSample times offset would underflow int64.");
+  }
   if (!_sr->seek_from_current(offset - 8)) {
     PUSH_ERROR_AND_RETURN_TAG(
         kTag, "Failed to seek to TimeSample times. Invalid offset value: " +
@@ -184,7 +187,10 @@ bool CrateReader::ReadTimeSamples(value::TimeSamples *d) {
   DCOUT("TimeSample value offset = " << offset);
   DCOUT("TimeSample tell = " << _sr->tell());
 
-  // -8 to compensate sizeof(offset)
+  // -8 to compensate sizeof(offset). Guard against int64 underflow.
+  if (offset < std::numeric_limits<int64_t>::min() + 8) {
+    PUSH_ERROR_AND_RETURN_TAG(kTag, "TimeSample values offset would underflow int64.");
+  }
   if (!_sr->seek_from_current(offset - 8)) {
     PUSH_ERROR_AND_RETURN_TAG(
         kTag, "Failed to seek to TimeSample values. Invalid offset value: " +
