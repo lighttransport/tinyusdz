@@ -1494,7 +1494,7 @@ function convertUsdMeshToThreeMesh(mesh) {
     }
 
     if (mesh.tangents) {
-        geometry.setAttribute('tangent', new THREE.BufferAttribute(mesh.tangents, 3));
+        geometry.setAttribute('tangent', new THREE.BufferAttribute(mesh.tangents, 4));
     } else if (mesh.texcoords && (mesh.normals || geometry.attributes.normal)) {
         geometry.computeTangents();
     }

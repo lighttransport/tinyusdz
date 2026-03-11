@@ -215,7 +215,7 @@ std::string serializeOpenPBRToJson(const OpenPBRSurfaceShader& shader, const Ren
   serializeFloatParam("coat_anisotropy", shader.coat_anisotropy); json << ",";
   serializeFloatParam("coat_rotation", shader.coat_rotation); json << ",";
   serializeFloatParam("coat_ior", shader.coat_ior); json << ",";
-  serializeVec3Param("coat_affect_color", shader.coat_affect_color); json << ",";
+  serializeFloatParam("coat_affect_color", shader.coat_affect_color); json << ",";
   serializeFloatParam("coat_affect_roughness", shader.coat_affect_roughness);
   json << "},";
 

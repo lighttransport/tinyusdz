@@ -5,6 +5,9 @@ builddir=${curdir}/build
 rm -rf ${builddir}
 mkdir ${builddir}
 
+CC=clang-21
+CXX=clang++-21
+
 # with lld linker
 #  -DCMAKE_TOOLCHAIN_FILE=cmake/lld-linux.toolchain.cmake
 

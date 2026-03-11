@@ -1,0 +1,21 @@
+<?xml version="1.0"?>
+<materialx version="1.38" colorspace="lin_rec709">
+  <nodegraph name="NG_colorspace_test">
+    <tiledimage name="srgb_texture" type="color3">
+      <input name="file" type="filename" value="textures/albedo.png" colorspace="srgb_texture" />
+    </tiledimage>
+    <tiledimage name="linear_texture" type="color3">
+      <input name="file" type="filename" value="textures/roughness.png" colorspace="lin_rec709" />
+    </tiledimage>
+    <output name="out_srgb" type="color3" nodename="srgb_texture" />
+    <output name="out_linear" type="color3" nodename="linear_texture" />
+  </nodegraph>
+  <open_pbr_surface name="ColorspaceShader" type="surfaceshader">
+    <input name="base_weight" type="float" value="1.0" />
+    <input name="base_color" type="color3" nodegraph="NG_colorspace_test" output="out_srgb" />
+    <input name="specular_roughness" type="float" value="0.3" />
+  </open_pbr_surface>
+  <surfacematerial name="ColorspaceMaterial" type="material">
+    <input name="surfaceshader" type="surfaceshader" nodename="ColorspaceShader" />
+  </surfacematerial>
+</materialx>

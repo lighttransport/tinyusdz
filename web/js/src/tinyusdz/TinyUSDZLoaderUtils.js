@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { HDRLoader } from 'three/examples/jsm/loaders/HDRLoader.js';
+import { RGBELoader as HDRLoader } from 'three/examples/jsm/loaders/RGBELoader.js';
 import { EXRLoader } from 'three/examples/jsm/loaders/EXRLoader.js';
 
 import { LoaderUtils } from "three"
@@ -930,7 +930,7 @@ class TinyUSDZLoaderUtils extends LoaderUtils {
 
         // Only compute tangents if we have both UV coordinates and normals
         if (Object.prototype.hasOwnProperty.call(mesh, 'tangents')) {
-            geometry.setAttribute('tangent', new THREE.BufferAttribute(new Float32Array(mesh.tangents), 3));
+            geometry.setAttribute('tangent', new THREE.BufferAttribute(new Float32Array(mesh.tangents), 4));
         } else if (Object.prototype.hasOwnProperty.call(mesh, 'texcoords') && (Object.prototype.hasOwnProperty.call(mesh, 'normals') || geometry.attributes.normal)) {
             // TODO: try MikTSpace tangent algorithm: https://threejs.org/docs/#examples/en/utils/BufferGeometryUtils.computeMikkTSpaceTangents 
             geometry.computeTangents();
@@ -1262,6 +1262,9 @@ class TinyUSDZLoaderUtils extends LoaderUtils {
         node.name = usdNode.primName;
         node.userData['primMeta.displayName'] = usdNode.displayName;
         node.userData['primMeta.absPath'] = usdNode.absPath;
+        if (usdNode.nodeCategory) node.userData['nodeCategory'] = usdNode.nodeCategory;
+        if (usdNode.nodeType) node.userData['nodeType'] = usdNode.nodeType;
+        if (usdNode.contentId !== undefined) node.userData['contentId'] = usdNode.contentId;
 
         // Update progress after processing this node
         if (options._progressState) {
