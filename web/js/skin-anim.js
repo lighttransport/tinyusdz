@@ -254,6 +254,93 @@ let meshVisibility = new Map(); // Per-mesh visibility state: Map<THREE.Mesh, bo
 let selectedMeshObj = null; // Currently selected mesh
 let bboxHelper = null; // Bounding box visualization helper
 
+// =====================================================================
+// Sub-frame Bone Interpolation
+//
+// mixer.update() at 60fps causes ~67MB/s of transient allocations from
+// Three.js interpolants, ballooning the JS heap to ~2.5GB before GC.
+// Keeping the mixer at 30fps halves the allocation rate, but makes
+// animation visibly choppy (every other rendered frame shows the same
+// skeletal pose).
+//
+// Solution: run the mixer at 30fps and on intermediate frames lerp/slerp
+// bone local transforms between the two most recent mixer snapshots.
+// All buffers are pre-allocated Float32Arrays — zero per-frame allocation.
+// =====================================================================
+
+const _BONE_STRIDE = 10; // px,py,pz, qx,qy,qz,qw, sx,sy,sz
+const _boneInterpData = new Map(); // Map<skel_id, {prev,curr,count,ready}>
+const _slerpTmp = new Float32Array(4); // Temp for quaternion slerpFlat output
+
+/** Ensure pre-allocated interp buffers exist for the given skeleton. */
+function _ensureBoneInterpBuffers(skelId, boneCount) {
+	let data = _boneInterpData.get(skelId);
+	if (!data || data.count !== boneCount) {
+		data = {
+			prev: new Float32Array(boneCount * _BONE_STRIDE),
+			curr: new Float32Array(boneCount * _BONE_STRIDE),
+			count: boneCount,
+			ready: false
+		};
+		_boneInterpData.set(skelId, data);
+	}
+	return data;
+}
+
+/** Snapshot current bone transforms into the interp buffer (swap prev←curr first). */
+function _snapshotBones(skelId, bones) {
+	const data = _ensureBoneInterpBuffers(skelId, bones.length);
+	// Swap: prev ← curr
+	const tmp = data.prev;
+	data.prev = data.curr;
+	data.curr = tmp;
+	// Write current transforms
+	for (let i = 0; i < bones.length; i++) {
+		const off = i * _BONE_STRIDE;
+		const p = bones[i].position, q = bones[i].quaternion, s = bones[i].scale;
+		data.curr[off]   = p.x; data.curr[off+1] = p.y; data.curr[off+2] = p.z;
+		data.curr[off+3] = q.x; data.curr[off+4] = q.y; data.curr[off+5] = q.z; data.curr[off+6] = q.w;
+		data.curr[off+7] = s.x; data.curr[off+8] = s.y; data.curr[off+9] = s.z;
+	}
+	if (!data.ready) {
+		// First snapshot: copy curr→prev so interpolation works immediately
+		data.prev.set(data.curr);
+		data.ready = true;
+	}
+}
+
+/** Lerp/slerp bone transforms between prev and curr snapshots. Zero allocation. */
+function _lerpBones(skelId, bones, t) {
+	const data = _boneInterpData.get(skelId);
+	if (!data || !data.ready) return;
+	const prev = data.prev, curr = data.curr;
+	const omt = 1 - t;
+	for (let i = 0; i < bones.length; i++) {
+		const off = i * _BONE_STRIDE;
+		const bone = bones[i];
+		// Lerp position
+		bone.position.set(
+			prev[off]   * omt + curr[off]   * t,
+			prev[off+1] * omt + curr[off+1] * t,
+			prev[off+2] * omt + curr[off+2] * t
+		);
+		// Slerp quaternion (zero-alloc via flat arrays)
+		THREE.Quaternion.slerpFlat(_slerpTmp, 0, prev, off + 3, curr, off + 3, t);
+		bone.quaternion.set(_slerpTmp[0], _slerpTmp[1], _slerpTmp[2], _slerpTmp[3]);
+		// Lerp scale
+		bone.scale.set(
+			prev[off+7] * omt + curr[off+7] * t,
+			prev[off+8] * omt + curr[off+8] * t,
+			prev[off+9] * omt + curr[off+9] * t
+		);
+	}
+}
+
+/** Clear interpolation state (call on scene reload or rest pose reset). */
+function _clearBoneInterpData() {
+	_boneInterpData.clear();
+}
+
 // ===========================================
 // App-specific Functions
 // ===========================================
@@ -899,6 +986,7 @@ async function processUSDScene(usd_scene, filename) {
 	}
 	skinnedMesh = null;
 	skeletons.clear();
+	_clearBoneInterpData();
 
 	// Dispose skeleton helpers
 	for (const helper of skeletonHelpers) {
@@ -1365,6 +1453,9 @@ window.addEventListener('keydown', (event) => {
 			animationParams.playPause();
 			console.log(`Animation ${animationParams.isPlaying ? 'playing' : 'paused'}`);
 			break;
+		case 'h': // Hide/Show GUI
+			animationParams.toggleGUI();
+			break;
 	}
 });
 
@@ -1429,7 +1520,20 @@ animationParams = {
 	playPause: function() {
 		this.isPlaying = !this.isPlaying;
 		if (animationPlayback) {
-			syncPlaybackState(animationPlayback.setPaused(!this.isPlaying));
+			// If resuming but no active actions (e.g. after Reset to Rest Pose),
+			// re-create the animation actions instead of just unpausing.
+			if (this.isPlaying && !animationAction && animationActions.length === 0 &&
+				(usdAnimations.length > 0 || usdNodeAnimations.length > 0)) {
+				if (this.playAllAnimations) {
+					playAllAnimations();
+				} else if (usdAnimations.length > 0) {
+					playAnimation(this.currentAnimation);
+				} else {
+					playNodeAnimations();
+				}
+			} else {
+				syncPlaybackState(animationPlayback.setPaused(!this.isPlaying));
+			}
 		}
 		if (this.isPlaying && this.playAllAnimations && window.updateTimelineRange) {
 			const maxDuration = computeUSDSceneTimelineDuration(
@@ -1446,7 +1550,21 @@ animationParams = {
 	},
 	reset: function() {
 		if (animationPlayback) {
-			syncPlaybackState(animationPlayback.reset());
+			// If no active actions (e.g. after Reset to Rest Pose),
+			// re-create the animation actions instead of just resetting.
+			if (!animationAction && animationActions.length === 0 &&
+				(usdAnimations.length > 0 || usdNodeAnimations.length > 0)) {
+				if (this.playAllAnimations) {
+					playAllAnimations();
+				} else if (usdAnimations.length > 0) {
+					playAnimation(this.currentAnimation);
+				} else {
+					playNodeAnimations();
+				}
+				this.isPlaying = true;
+			} else {
+				syncPlaybackState(animationPlayback.reset());
+			}
 		}
 	},
 	resetToRestPose: function() {
@@ -1459,6 +1577,7 @@ animationParams = {
 			resetSkeletonToRestPose(skel);
 		}
 		_mixerAccumDelta = 0;
+		_clearBoneInterpData();
 		hintGC();
 	},
 	speed: 24,  // Default to timeCodesPerSecond (updated on file load)
@@ -1716,11 +1835,29 @@ animationParams = {
 		deselectMesh();
 	},
 
+	guiVisible: true,
+	toggleGUI: function() {
+		this.guiVisible = !this.guiVisible;
+		const infoEl = document.getElementById('info');
+		if (this.guiVisible) {
+			gui.domElement.style.display = '';
+			if (infoEl) infoEl.style.display = '';
+		} else {
+			gui.domElement.style.display = 'none';
+			if (infoEl) infoEl.style.display = 'none';
+		}
+	},
+
 };
 
 // GUI setup
 const gui = new GUI();
 gui.title('Skeletal Animation Controls');
+
+// Wire up the GUI toggle button
+document.getElementById('gui-toggle')?.addEventListener('click', () => {
+	animationParams.toggleGUI();
+});
 
 // Playback controls
 const playbackFolder = gui.addFolder('Playback');
@@ -1733,7 +1870,7 @@ playbackFolder.add(animationParams, 'speed', 1, 120, 1).name('Speed').onChange((
 	}
 });
 timelineController = playbackFolder.add(animationParams, 'time', 0, 30, 0.01)
-	.name('Timeline').listen().onChange(() => {
+	.name('Timeline').onChange(() => {
 		if (animationPlayback) {
 			syncPlaybackState(animationPlayback.setTime(
 				animationParams.time,
@@ -1743,14 +1880,12 @@ timelineController = playbackFolder.add(animationParams, 'time', 0, 30, 0.01)
 	});
 timelineStartController = playbackFolder.add(animationParams, 'timelineStart', -100000, 100000, 1)
 	.name('Timeline Start')
-	.listen()
-	.onFinishChange((value) => {
+		.onFinishChange((value) => {
 		applyTimelineRange(value, animationParams.timelineEnd, { updateBaseRange: true });
 	});
 timelineEndController = playbackFolder.add(animationParams, 'timelineEnd', -100000, 100000, 1)
 	.name('Timeline End')
-	.listen()
-	.onFinishChange((value) => {
+		.onFinishChange((value) => {
 		applyTimelineRange(animationParams.timelineStart, value, { updateBaseRange: true });
 	});
 applyTimelineRange(animationParams.timelineStart, animationParams.timelineEnd, {
@@ -1776,16 +1911,14 @@ animationFolder.add(animationParams, 'hasUSDAnimations').name('Has Animations').
 animationFolder.add(animationParams, 'usdAnimationCount').name('Animation Count').listen().disable();
 animationFolder.add(animationParams, 'playAllAnimations')
 	.name('Play All Animations')
-	.listen()
-	.onChange(() => animationParams.togglePlayAllAnimations());
+		.onChange(() => animationParams.togglePlayAllAnimations());
 
 // Container for individual animation checkboxes (dynamically populated)
 let animationCheckboxControllers = [];
 
 selectAnimationController = animationFolder.add(animationParams, 'currentAnimation', 0, 10, 1)
 	.name('Select Animation')
-	.listen()
-	.onChange(() => animationParams.selectAnimation());
+		.onChange(() => animationParams.selectAnimation());
 animationFolder.open();
 updateSelectAnimationControllerState();
 
@@ -1822,8 +1955,7 @@ function updateAnimationCheckboxes() {
 		};
 		const controller = animationFolder.add(obj, 'enabled')
 			.name(`  ☐ ${i}: ${clip.name} (${Math.round(clip.duration)} frames)`)
-			.listen()
-			.onChange((value) => {
+						.onChange((value) => {
 				animationEnabled[i] = value;
 				// If in play all mode, restart to apply changes
 				if (animationParams.playAllAnimations) {
@@ -1971,12 +2103,10 @@ debugFolder.add(animationParams, 'weightVisualizationMode', {
 	.onChange(() => animationParams.updateWeightMode());
 debugFolder.add(animationParams, 'cpuSkinning')
 	.name('CPU Skinning')
-	.listen()
-	.onChange(() => animationParams.toggleCPUSkinning());
+		.onChange(() => animationParams.toggleCPUSkinning());
 debugFolder.add(animationParams, 'rawMesh')
 	.name('Raw Mesh (No Skin)')
-	.listen()
-	.onChange(() => animationParams.toggleRawMesh());
+		.onChange(() => animationParams.toggleRawMesh());
 debugFolder.open();
 
 // Gizmo controls
@@ -2104,10 +2234,10 @@ const info = {
 	objects: scene.children.length || 0,
 	heapMB: 0
 };
-infoFolder.add(info, 'fps').name('FPS').listen().disable();
-infoFolder.add(info, 'objects').name('Objects').listen().disable();
+infoFolder.add(info, 'fps').name('FPS').disable();
+infoFolder.add(info, 'objects').name('Objects').disable();
 if (performance.memory) {
-	infoFolder.add(info, 'heapMB').name('Heap (MB)').listen().disable();
+	infoFolder.add(info, 'heapMB').name('Heap (MB)').disable();
 }
 infoFolder.open();
 
@@ -2147,42 +2277,60 @@ function animate() {
 		info.objects = scene.children.length || 0;
 		frames = 0;
 		fpsUpdateTime = 0;
+
+		// Batch-update all lil-gui controllers at low rate (replaces per-frame
+		// .listen() polling which triggered expensive DOM reflows every frame).
+		// Skip entirely when GUI is hidden to avoid unnecessary DOM work.
+		if (animationParams.guiVisible) {
+			for (const c of gui.controllersRecursive()) {
+				c.updateDisplay();
+			}
+		}
 	}
 
-	// Update animation mixer
-	// Speed represents playback FPS (timeCodes per second)
-	// Animation times are in timeCodes, so speed directly controls how many timeCodes advance per second
+	// Animation update: timeline advances every frame by real time (smooth
+	// timeline display), mixer evaluates at throttled rate to limit Three.js
+	// interpolant allocations, bone interpolation fills intermediate frames.
 	if (mixer && animationParams.isPlaying) {
-		// Throttle mixer updates to ~30fps for ALL animated skeletons to reduce GC pressure.
-		// mixer.update() allocates transient objects per call (proportional to track count);
-		// at 60fps the allocation churn triggers frequent minor GC pauses even for small skeletons.
-		// 30fps mixer updates are visually indistinguishable but halve the allocation rate.
 		const mixerInterval = 1 / 30;
 		_mixerAccumDelta += deltaTime;
 
+		// Advance timeline by real time every frame
+		const start = Number.isFinite(animationParams.timelineStart) ? animationParams.timelineStart : 0;
+		const end = Number.isFinite(animationParams.timelineEnd) ? animationParams.timelineEnd : (start + 1);
+		const span = Math.max(end - start, 1e-6);
+		const prevTimeValue = animationParams.time;
+		const advancedTime = animationParams.time + (deltaTime * animationParams.speed);
+		animationParams.time = start + (((advancedTime - start) % span) + span) % span;
+
+		// Detect timeline loop-wrap (time jumped backwards by more than half the span).
+		// Clear bone interpolation data to prevent lerping between end-of-loop and
+		// start-of-loop poses, and force an immediate mixer tick so the correct
+		// post-wrap pose is displayed without a glitch frame.
+		if (animationParams.time < prevTimeValue - span * 0.5) {
+			_clearBoneInterpData();
+			_mixerAccumDelta = mixerInterval; // force mixer tick below
+		}
+
 		if (_mixerAccumDelta >= mixerInterval) {
-			const stepDelta = _mixerAccumDelta;
-			_mixerAccumDelta = 0;
+			_mixerAccumDelta -= mixerInterval;
+			// Clamp remainder to avoid spiral-of-death if frame rate drops
+			if (_mixerAccumDelta > mixerInterval) _mixerAccumDelta = mixerInterval;
 
-			if (animationParams.playAllAnimations && animationPlayback) {
-				const start = Number.isFinite(animationParams.timelineStart) ? animationParams.timelineStart : 0;
-				const end = Number.isFinite(animationParams.timelineEnd) ? animationParams.timelineEnd : (start + 1);
-				const span = Math.max(end - start, 1e-6);
-				const advancedTime = animationParams.time + (stepDelta * animationParams.speed);
-				const wrapped = ((advancedTime - start) % span + span) % span;
-				const globalTime = start + wrapped;
-				animationParams.time = globalTime;
+			// Evaluate pose at current timeline time
+			if (animationPlayback) {
+				syncPlaybackState(animationPlayback.setTime(animationParams.time, true));
+			}
 
-				syncPlaybackState(animationPlayback.setTime(globalTime, true));
-			} else {
-				mixer.update(stepDelta);
-
-				// Update time display (from single animation or first of all animations)
-				if (animationAction && isFinite(animationAction.time)) {
-					animationParams.time = animationAction.time;
-				} else if (animationActions.length > 0 && isFinite(animationActions[0].time)) {
-					animationParams.time = animationActions[0].time;
-				}
+			// Snapshot bone transforms after mixer evaluation
+			for (const [skelId, skel] of skeletons) {
+				_snapshotBones(skelId, skel.bones);
+			}
+		} else if (skeletons.size > 0) {
+			// Intermediate frame: lerp/slerp between prev and curr snapshots
+			const alpha = _mixerAccumDelta / mixerInterval;
+			for (const [skelId, skel] of skeletons) {
+				_lerpBones(skelId, skel.bones, alpha);
 			}
 		}
 	}

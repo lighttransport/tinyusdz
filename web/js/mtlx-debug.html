@@ -414,6 +414,46 @@
             gap: 10px;
         }
 
+        #node-graph-collapse-btn {
+            background: rgba(255, 255, 255, 0.2);
+            border: none;
+            color: white;
+            width: 24px;
+            height: 24px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+            line-height: 24px;
+            text-align: center;
+            padding: 0;
+            transition: background 0.2s, transform 0.2s;
+            flex-shrink: 0;
+        }
+
+        #node-graph-collapse-btn:hover {
+            background: rgba(255, 255, 255, 0.35);
+        }
+
+        #node-graph-collapse-btn.collapsed {
+        }
+
+        #node-graph-wrapper.collapsed {
+            width: auto;
+            height: auto;
+            top: auto;
+            left: 10px;
+            bottom: 60px;
+            transform: none;
+        }
+
+        #node-graph-wrapper.collapsed #node-graph-container {
+            display: none;
+        }
+
+        #node-graph-wrapper.collapsed #node-graph-header {
+            border-radius: 8px;
+        }
+
         #node-graph-buttons {
             display: flex;
             gap: 8px;
@@ -1129,6 +1169,7 @@
     <div id="node-graph-wrapper">
         <div id="node-graph-header">
             <h3>
+                <button id="node-graph-collapse-btn" onclick="toggleNodeGraphCollapse()" title="Hide graph view">&gt;</button>
                 <span>🔗</span>
                 <span id="node-graph-title">MaterialX Node Graph</span>
             </h3>

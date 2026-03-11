@@ -46,7 +46,10 @@ SOURCE_EXPORT_NEW = test_mtlx_export.cc
 TARGET_NODEGRAPH = test_nodegraph_export
 SOURCE_NODEGRAPH = test_nodegraph_export.cc
 
-TARGETS = $(TARGET_EXPORT) $(TARGET_IMPORT) $(TARGET_EXPORT_NEW) $(TARGET_NODEGRAPH)
+TARGET_PARSE = test_mtlx_parse
+SOURCE_PARSE = test_mtlx_parse.cc
+
+TARGETS = $(TARGET_EXPORT) $(TARGET_IMPORT) $(TARGET_EXPORT_NEW) $(TARGET_NODEGRAPH) $(TARGET_PARSE)
 
 # Build rules
 .PHONY: all clean run run-import run-export check-library
@@ -69,6 +72,10 @@ $(TARGET_NODEGRAPH): $(SOURCE_NODEGRAPH)
 	$(CXX) $(CXXFLAGS) $(INCLUDES) -DTINYUSDZ_USE_USDMTLX -o $@ $< $(LDFLAGS) $(LIBS)
 	@echo "Built $(TARGET_NODEGRAPH)"
 
+$(TARGET_PARSE): $(SOURCE_PARSE)
+	$(CXX) $(CXXFLAGS) $(INCLUDES) -DTINYUSDZ_USE_USDMTLX -o $@ $< $(LDFLAGS) $(LIBS)
+	@echo "Built $(TARGET_PARSE)"
+
 run-export: $(TARGET_EXPORT)
 	@echo "Running MaterialX export test..."
 	@./$(TARGET_EXPORT)
@@ -85,7 +92,11 @@ run-nodegraph: $(TARGET_NODEGRAPH)
 	@echo "Running MaterialX nodegraph export test..."
 	@./$(TARGET_NODEGRAPH)
 
-run: run-export run-import run-export-new run-nodegraph
+run-parse: $(TARGET_PARSE)
+	@echo "Running MaterialX parse tests..."
+	@./$(TARGET_PARSE)
+
+run: run-export run-import run-export-new run-nodegraph run-parse
 
 check-library:
 	@if [ ! -f "$(BUILD_DIR)/libtinyusdz_static.a" ]; then \
