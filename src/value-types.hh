@@ -2153,28 +2153,51 @@ class Value {
     return true;
   }
 
-  // Type-safe way to get concrete value.
+  // Type-safe way to get concrete value (const version — copies).
   template <class T>
   nonstd::optional<T> get_value(bool strict_cast = false) const {
     if (TypeTraits<T>::type_id() == v_.type_id()) {
       const T *pv = linb::any_cast<const T>(&v_);
       if (!pv) {
-        // ???
         return nonstd::nullopt;
       }
+      return *pv;
+    } else if (!strict_cast) {
 
-      //TUSDZ_LOG_I("get_value: about to move/copy value of type " << TypeTraits<T>::type_name());
-      //log_vector_size(*pv);
+      if (TypeTraits<T>::is_array() && (v_.type_id() & value::TYPE_ID_1D_ARRAY_BIT)) { // both are array type
+        if ((TypeTraits<T>::underlying_type_id() & (~value::TYPE_ID_1D_ARRAY_BIT)) == (v_.underlying_type_id() & (~value::TYPE_ID_1D_ARRAY_BIT))) {
+          const T* pv = linb::cast<const T>(&v_);
+          if (pv) {
+            if (!check_vector_size(*pv)) {
+              return nonstd::nullopt;
+            }
+          }
+          return *pv;
+        }
+      } else if (!TypeTraits<T>::is_array() && !(v_.type_id() & value::TYPE_ID_1D_ARRAY_BIT)) { // both are scalar type.
+        if (TypeTraits<T>::underlying_type_id() == v_.underlying_type_id()) {
+          return *linb::cast<const T>(&v_);
+        }
+      }
+    }
+    return nonstd::nullopt;
+  }
+
+  // Type-safe way to extract concrete value (mutable version — moves, leaves Value empty).
+  template <class T>
+  nonstd::optional<T> take_value(bool strict_cast = false) {
+    if (TypeTraits<T>::type_id() == v_.type_id()) {
+      T *pv = linb::any_cast<T>(&v_);
+      if (!pv) {
+        return nonstd::nullopt;
+      }
       return std::move(*pv);
     } else if (!strict_cast) {
 
       if (TypeTraits<T>::is_array() && (v_.type_id() & value::TYPE_ID_1D_ARRAY_BIT)) { // both are array type
         if ((TypeTraits<T>::underlying_type_id() & (~value::TYPE_ID_1D_ARRAY_BIT)) == (v_.underlying_type_id() & (~value::TYPE_ID_1D_ARRAY_BIT))) {
-          //TUSDZ_LOG_I("get_value: strict_cast=false, both are array types, about to cast for type " << TypeTraits<T>::type_name());
-          const T* pv = linb::cast<const T>(&v_);
-          //TUSDZ_LOG_I("get_value: cast successful, pv=" << (pv ? "valid" : "null"));
+          T* pv = linb::cast<T>(&v_);
           if (pv) {
-            //log_vector_size(*pv);
             if (!check_vector_size(*pv)) {
               return nonstd::nullopt;
             }
@@ -2183,7 +2206,7 @@ class Value {
         }
       } else if (!TypeTraits<T>::is_array() && !(v_.type_id() & value::TYPE_ID_1D_ARRAY_BIT)) { // both are scalar type.
         if (TypeTraits<T>::underlying_type_id() == v_.underlying_type_id()) {
-          return std::move(*linb::cast<const T>(&v_));
+          return std::move(*linb::cast<T>(&v_));
         }
       }
     }

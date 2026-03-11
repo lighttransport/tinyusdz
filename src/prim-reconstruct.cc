@@ -584,7 +584,7 @@ static ParseResult ParseTypedAttributeUnified(
     return ret;
   }
 
-  const Attribute &attr = prop.get_attribute();
+  Attribute &attr = prop.attribute();
   std::string attr_type_name = attr.type_name();
 
   // Check type match
@@ -666,7 +666,7 @@ static ParseResult ParseTypedAttributeUnified(
               return ret;
             }
 
-            if (auto pv = attr.get_value<T>()) {
+            if (auto pv = attr.get_var().take_value<T>()) {
               target.set_value(std::move(pv.value()));
               target.metas() = std::move(prop.attribute().metas());
               table.insert(name);
@@ -693,14 +693,14 @@ static ParseResult ParseTypedAttributeUnified(
           }
         }
 
-        // Parse default value
+        // Parse default value (move to avoid copying large arrays)
         if (attr.get_var().has_default()) {
-          if (auto pv = attr.get_var().get_value<T>()) {
+          if (auto pv = attr.get_var().take_value<T>()) {
             animatable_value.set(std::move(pv.value()));
             has_default = true;
           } else {
             ret.code = ParseResult::ResultCode::InternalError;
-            ret.err = fmt::format("get_value<{}> failed. Attribute has type {}",
+            ret.err = fmt::format("take_value<{}> failed. Attribute has type {}",
                                   value::TypeTraits<T>::type_name(), attr.get_var().type_name());
             return ret;
           }
@@ -714,9 +714,9 @@ static ParseResult ParseTypedAttributeUnified(
         }
 
       } else {
-        // Uniform: only default value
+        // Uniform: only default value (move to avoid copying large arrays)
         if (attr.get_var().has_default()) {
-          if (auto pv = attr.get_value<T>()) {
+          if (auto pv = attr.get_var().take_value<T>()) {
             target.set_value(std::move(pv.value()));
             has_default = true;
           } else {

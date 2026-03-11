@@ -1218,6 +1218,14 @@ struct RenderMesh {
   VertexAttribute tangents;
   VertexAttribute binormals;
 
+  //
+  // Lazy tangent computation support.
+  // When tangent_computation_deferred is true, tangents/binormals were NOT
+  // computed during ConvertMesh. Call ComputeDeferredTangents() to compute
+  // them on demand (e.g. at first getTangents() in WASM bindings).
+  //
+  bool tangent_computation_deferred{false};
+
   bool doubleSided{false};  // false = backface-cull.
   value::color3f displayColor{
       0.18f, 0.18f,
@@ -2131,6 +2139,32 @@ struct MeshConverterConfig {
   bool compute_tangents_and_binormals{true};
 
   //
+  // When true, only compute tangents/binormals for meshes that have a bound
+  // material with a normal map texture connected. Saves significant memory
+  // and CPU for meshes that don't need tangent-space normal mapping.
+  //
+  bool compute_tangents_only_with_normal_map{true};
+
+  //
+  // When true, defer tangent computation — don't compute during ConvertMesh.
+  // Instead, mark meshes with tangent_computation_deferred=true.
+  // Call RenderSceneConverter::ComputeDeferredTangents() to compute on demand
+  // (e.g. at first getTangents() call in WASM bindings).
+  //
+  bool defer_tangent_computation{false};
+
+  //
+  // Tangent computation method selection.
+  //
+  enum class TangentComputationMethod {
+    Lengyel,    // Fast, lightweight (default). Good enough for most use cases.
+    MikkTSpace, // Industry standard, higher quality but significantly slower
+                // and more memory-hungry for large meshes.
+  };
+
+  TangentComputationMethod tangent_method{TangentComputationMethod::Lengyel};
+
+  //
   // Allowed relative error to check if vertex data is the same.
   // Used for 'facevarying' variability to `vertex` variability conversion in
   // ConvertMesh. Only effective to floating-point vertex data.
@@ -2788,6 +2822,20 @@ class RenderSceneConverter {
       const std::vector<std::pair<std::string, const tinyusdz::BlendShape *>>
           &blendshapes,
       RenderMesh *dst);
+
+  ///
+  /// Compute tangents/binormals for a RenderMesh that had deferred tangent
+  /// computation (tangent_computation_deferred == true).
+  /// Call this on demand, e.g. from WASM getTangents() binding.
+  /// After successful computation, tangent_computation_deferred is set to false.
+  ///
+  /// @return true on success, false if normals or texcoords are missing.
+  ///
+  static bool ComputeDeferredTangents(
+      RenderMesh *mesh,
+      MeshConverterConfig::TangentComputationMethod method =
+          MeshConverterConfig::TangentComputationMethod::Lengyel,
+      std::string *err = nullptr);
 
   ///
   /// Convert USD Material/Shader to renderer-friendly Material

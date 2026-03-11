@@ -196,6 +196,9 @@ static void print_help(const char* prog_name) {
   std::cout << "  --dumpobj             Dump mesh as wavefront .obj (for visual debugging)\n";
   std::cout << "  --dumpusd             Dump scene as USD (USDA Ascii)\n";
   std::cout << "  --dump-timesamples    Dump animation channel timesamples values\n";
+  std::cout << "  --nodump              Do not dump RenderScene output\n";
+  std::cout << "  --notangent           Do not compute tangents/binormals\n";
+  std::cout << "  --calctangent         Force tangent computation even without normal map\n";
   std::cout << "  --yaml                Output RenderScene as YAML (human-readable)\n";
   std::cout << "  --json                Output RenderScene as JSON (machine-readable)\n";
 }
@@ -220,6 +223,9 @@ int main(int argc, char **argv) {
   bool texload = false;
   bool no_assetresolver = false;
   bool dump_timesamples = false;
+  bool no_dump = false;
+  bool no_tangent = false;
+  bool force_tangent = false;
   std::string output_format = "yaml";  // "yaml" (human-readable), "json" (machine-readable)
 
   std::string filepath;
@@ -245,6 +251,12 @@ int main(int argc, char **argv) {
       export_usd = true;
     } else if (strcmp(argv[i], "--dump-timesamples") == 0) {
       dump_timesamples = true;
+    } else if (strcmp(argv[i], "--nodump") == 0) {
+      no_dump = true;
+    } else if (strcmp(argv[i], "--notangent") == 0) {
+      no_tangent = true;
+    } else if (strcmp(argv[i], "--calctangent") == 0) {
+      force_tangent = true;
     } else if (strcmp(argv[i], "--timecode") == 0) {
       if ((i + 1) >= argc) {
         std::cerr << "arg is missing for --timecode flag.\n";
@@ -340,6 +352,21 @@ int main(int argc, char **argv) {
   }
   config_info.push_back({"build_vertex_indices", build_indices ? "true" : "false"});
   env.mesh_config.build_vertex_indices = build_indices;
+
+  if (no_tangent) {
+    env.mesh_config.compute_tangents_and_binormals = false;
+    config_info.push_back({"compute_tangents", "false"});
+  } else {
+    config_info.push_back({"compute_tangents", "true"});
+  }
+
+  if (force_tangent) {
+    // Force tangent computation even without a normal map texture.
+    env.mesh_config.compute_tangents_only_with_normal_map = false;
+    config_info.push_back({"force_tangent", "true"});
+  } else {
+    config_info.push_back({"force_tangent", "false"});
+  }
 
   config_info.push_back({"load_texture_data", texload ? "true" : "false"});
   env.scene_config.load_texture_assets = texload;
@@ -445,33 +472,35 @@ int main(int argc, char **argv) {
     return result;
   };
 
-  // Output config info in appropriate format
-  if (output_format == "yaml") {
-    // YAML: Output as comments
-    std::cout << "# TinyUSDZ tydra_to_renderscene Configuration\n";
-    std::cout << "# ==========================================\n";
-    for (const auto &kv : config_info) {
-      std::cout << "# " << kv.first << ": " << escape_for_comment(kv.second) << "\n";
+  if (!no_dump) {
+    // Output config info in appropriate format
+    if (output_format == "yaml") {
+      // YAML: Output as comments
+      std::cout << "# TinyUSDZ tydra_to_renderscene Configuration\n";
+      std::cout << "# ==========================================\n";
+      for (const auto &kv : config_info) {
+        std::cout << "# " << kv.first << ": " << escape_for_comment(kv.second) << "\n";
+      }
+      std::cout << "#\n";
+    } else if (output_format == "json") {
+      // JSON: Output config as a separate JSON object before main output
+      std::cout << "// TinyUSDZ tydra_to_renderscene Configuration\n";
+      std::cout << "// config: {\n";
+      for (size_t i = 0; i < config_info.size(); i++) {
+        std::cout << "//   \"" << config_info[i].first << "\": \"" << escape_for_comment(config_info[i].second) << "\"";
+        if (i < config_info.size() - 1) std::cout << ",";
+        std::cout << "\n";
+      }
+      std::cout << "// }\n";
+    } else {
+      // KDL or other: output as comments
+      for (const auto &kv : config_info) {
+        std::cout << "// " << kv.first << ": " << escape_for_comment(kv.second) << "\n";
+      }
     }
-    std::cout << "#\n";
-  } else if (output_format == "json") {
-    // JSON: Output config as a separate JSON object before main output
-    std::cout << "// TinyUSDZ tydra_to_renderscene Configuration\n";
-    std::cout << "// config: {\n";
-    for (size_t i = 0; i < config_info.size(); i++) {
-      std::cout << "//   \"" << config_info[i].first << "\": \"" << escape_for_comment(config_info[i].second) << "\"";
-      if (i < config_info.size() - 1) std::cout << ",";
-      std::cout << "\n";
-    }
-    std::cout << "// }\n";
-  } else {
-    // KDL or other: output as comments
-    for (const auto &kv : config_info) {
-      std::cout << "// " << kv.first << ": " << escape_for_comment(kv.second) << "\n";
-    }
-  }
 
-  std::cout << DumpRenderScene(render_scene, output_format) << "\n";
+    std::cout << DumpRenderScene(render_scene, output_format) << "\n";
+  }
 
   if (export_obj) {
     std::cout << "Dump RenderMesh as wavefront .obj\n";
