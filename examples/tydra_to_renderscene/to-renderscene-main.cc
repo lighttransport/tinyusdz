@@ -199,6 +199,7 @@ static void print_help(const char* prog_name) {
   std::cout << "  --nodump              Do not dump RenderScene output\n";
   std::cout << "  --notangent           Do not compute tangents/binormals\n";
   std::cout << "  --calctangent         Force tangent computation even without normal map\n";
+  std::cout << "  --tangent-method M    Tangent method: lengyel (default), mikktspace, fast-mikktspace\n";
   std::cout << "  --yaml                Output RenderScene as YAML (human-readable)\n";
   std::cout << "  --json                Output RenderScene as JSON (machine-readable)\n";
 }
@@ -226,6 +227,7 @@ int main(int argc, char **argv) {
   bool no_dump = false;
   bool no_tangent = false;
   bool force_tangent = false;
+  auto tangent_method = tinyusdz::tydra::MeshConverterConfig::TangentComputationMethod::Lengyel;
   std::string output_format = "yaml";  // "yaml" (human-readable), "json" (machine-readable)
 
   std::string filepath;
@@ -257,6 +259,23 @@ int main(int argc, char **argv) {
       no_tangent = true;
     } else if (strcmp(argv[i], "--calctangent") == 0) {
       force_tangent = true;
+    } else if (strcmp(argv[i], "--tangent-method") == 0) {
+      if ((i + 1) >= argc) {
+        std::cerr << "arg is missing for --tangent-method flag.\n";
+        return -1;
+      }
+      std::string tm = argv[i + 1];
+      if (tm == "lengyel") {
+        tangent_method = tinyusdz::tydra::MeshConverterConfig::TangentComputationMethod::Lengyel;
+      } else if (tm == "mikktspace") {
+        tangent_method = tinyusdz::tydra::MeshConverterConfig::TangentComputationMethod::MikkTSpace;
+      } else if (tm == "fast-mikktspace") {
+        tangent_method = tinyusdz::tydra::MeshConverterConfig::TangentComputationMethod::FastMikkTSpace;
+      } else {
+        std::cerr << "Unknown tangent method: " << tm << ". Use lengyel, mikktspace, or fast-mikktspace.\n";
+        return -1;
+      }
+      i++;
     } else if (strcmp(argv[i], "--timecode") == 0) {
       if ((i + 1) >= argc) {
         std::cerr << "arg is missing for --timecode flag.\n";
@@ -366,6 +385,12 @@ int main(int argc, char **argv) {
     config_info.push_back({"force_tangent", "true"});
   } else {
     config_info.push_back({"force_tangent", "false"});
+  }
+
+  env.mesh_config.tangent_method = tangent_method;
+  {
+    const char *method_names[] = {"lengyel", "mikktspace", "fast-mikktspace"};
+    config_info.push_back({"tangent_method", method_names[int(tangent_method)]});
   }
 
   config_info.push_back({"load_texture_data", texload ? "true" : "false"});
