@@ -5429,7 +5429,21 @@ bool RenderSceneConverter::ConvertMesh(
 
 
   //
-  // 8. Build indices
+  // 8. Deferred tangent check — must happen BEFORE index build decision,
+  //    because the index build is skipped when compute_tangents is true
+  //    (expecting the tangent block to handle it). If we defer tangents,
+  //    compute_tangents becomes false and the index build must run now.
+  //
+  if (compute_tangents && env.mesh_config.defer_tangent_computation) {
+    // Mark for lazy computation — actual tangent work deferred until
+    // ComputeDeferredTangents() is called.
+    dst.tangent_computation_deferred = true;
+    compute_tangents = false;
+    DCOUT("Tangent computation deferred.");
+  }
+
+  //
+  // 8a. Build indices
   //
   // Skip fast index build when tangent computation will follow, because
   // BuildVertexIndicesImpl (called after tangent computation) requires
@@ -5450,16 +5464,8 @@ bool RenderSceneConverter::ConvertMesh(
   }
 
   //
-  // 8. Compute tangents.
+  // 8b. Compute tangents (immediate, not deferred).
   //
-  if (compute_tangents && env.mesh_config.defer_tangent_computation) {
-    // Mark for lazy computation — actual MikkTSpace work deferred until
-    // ComputeDeferredTangents() is called.
-    dst.tangent_computation_deferred = true;
-    compute_tangents = false;
-    DCOUT("Tangent computation deferred.");
-  }
-
   if (compute_tangents) {
     DCOUT("Compute tangents.");
 
