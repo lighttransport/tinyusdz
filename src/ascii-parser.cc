@@ -62,12 +62,13 @@
 #include "common-macros.inc"
 
 #define CHECK_MEMORY_USAGE(__nbytes) do { \
-  _memory_usage += (__nbytes); \
-  if (_memory_usage > _max_memory_limit_bytes) { \
+  uint64_t _chk_nbytes = static_cast<uint64_t>(__nbytes); \
+  if (_chk_nbytes > (_max_memory_limit_bytes - _memory_usage)) { \
     PushError(fmt::format("Memory limit exceeded. Limit: {} MB, Current usage: {} MB", \
       _max_memory_limit_bytes / (1024*1024), _memory_usage / (1024*1024))); \
     return false; \
-  }  \
+  } \
+  _memory_usage += _chk_nbytes; \
   } while(0)
 
 #if 0
@@ -1470,6 +1471,15 @@ bool AsciiParser::MaybeCustom() {
 
 bool AsciiParser::ParseDict(std::map<std::string, MetaVariable> *out_dict) {
   // '{' comment | (type name '=' value)+ '}'
+  if (_dict_nesting_depth > 64) {
+    PUSH_ERROR_AND_RETURN_TAG(kAscii, "Dictionary nesting depth limit exceeded (> 64).");
+  }
+  _dict_nesting_depth++;
+  struct DictDepthGuard {
+    uint32_t &depth;
+    ~DictDepthGuard() { depth--; }
+  } dict_depth_guard{_dict_nesting_depth};
+
   if (!Expect('{')) {
     return false;
   }
@@ -1861,6 +1871,12 @@ bool AsciiParser::MaybeString(value::StringData *str) {
       }
     }
 
+    constexpr size_t kMaxStringLen = 64 * 1024 * 1024; // 64MB
+    if (buf.size() >= kMaxStringLen) {
+      SeekTo(loc);
+      PushError(fmt::format("String literal too large (> {} bytes).", kMaxStringLen));
+      return false;
+    }
     buf += c;
   }
 
@@ -1913,6 +1929,8 @@ bool AsciiParser::MaybeTripleQuotedString(value::StringData *str) {
   }
 
   // Read until next triple-quote `"""` or "'''"
+  // Limit to prevent OOM from unclosed/huge triple-quoted strings.
+  constexpr size_t kMaxTripleQuotedStringLen = 64 * 1024 * 1024; // 64MB
   std::string str_buf;
   str_buf.reserve(256);
 
@@ -1955,6 +1973,10 @@ bool AsciiParser::MaybeTripleQuotedString(value::StringData *str) {
       }
     }
 
+    if (str_buf.size() >= kMaxTripleQuotedStringLen) {
+      SeekTo(loc);
+      PUSH_ERROR_AND_RETURN_TAG(kAscii, fmt::format("Triple-quoted string literal too large (> {} bytes).", kMaxTripleQuotedStringLen));
+    }
     str_buf += c;
 
     if (c == '"') {
@@ -3832,6 +3854,11 @@ bool AsciiParser::ParsePrimMetas(PrimMetaMap *args) {
         PUSH_ERROR_AND_RETURN("[InternalError] Metadataum name is empty.");
       }
 
+      constexpr size_t kMaxMetaEntries = 100000; // 100K entries max
+      if (args->size() >= kMaxMetaEntries) {
+        PUSH_ERROR_AND_RETURN_TAG(kAscii, fmt::format("Metadata entry count exceeds limit ({}).", kMaxMetaEntries));
+      }
+
       // Use insert/emplace for multimap (supports multiple listops per arc)
       args->emplace(std::get<1>(m.value()).get_name(), m.value());
     } else {
@@ -3890,9 +3917,13 @@ bool AsciiParser::ParseAttrMeta(AttrMeta *out_meta) {
 
       // May be string only
       {
+        constexpr size_t kMaxStringDataEntries = 100000;
         value::StringData sdata;
         if (MaybeTripleQuotedString(&sdata)) {
           CHECK_MEMORY_USAGE(sizeof(value::StringData) + sdata.value.length());
+          if (out_meta->stringData.size() >= kMaxStringDataEntries) {
+            PUSH_ERROR_AND_RETURN_TAG(kAscii, fmt::format("Attribute meta string count exceeds limit ({}).", kMaxStringDataEntries));
+          }
           out_meta->stringData.push_back(sdata);
 
           DCOUT("Add triple-quoted string to attr meta:" << to_string(sdata));
@@ -3902,6 +3933,9 @@ bool AsciiParser::ParseAttrMeta(AttrMeta *out_meta) {
           continue;
         } else if (MaybeString(&sdata)) {
           CHECK_MEMORY_USAGE(sizeof(value::StringData) + sdata.value.length());
+          if (out_meta->stringData.size() >= kMaxStringDataEntries) {
+            PUSH_ERROR_AND_RETURN_TAG(kAscii, fmt::format("Attribute meta string count exceeds limit ({}).", kMaxStringDataEntries));
+          }
           out_meta->stringData.push_back(sdata);
 
           DCOUT("Add string to attr meta:" << to_string(sdata));
