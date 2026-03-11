@@ -49,8 +49,8 @@ struct USDCReaderConfig {
   bool use_mmap = false;
 
   // Memory optimization: decode fieldsets/properties on demand instead of
-  // prebuilding all live fieldsets.
-  bool use_lazy_property_construction = false;
+  // prebuilding all live fieldsets. Reduces peak memory for large files.
+  bool use_lazy_property_construction = true;
 };
 
 class USDCReader {

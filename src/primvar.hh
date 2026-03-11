@@ -201,6 +201,21 @@ struct PrimVar {
     return get_value<T>();
   }
 
+  // Mutable version — moves value out, leaving internal storage empty.
+  template <class T>
+  nonstd::optional<T> take_value() {
+
+    if (is_blocked()) {
+      return nonstd::nullopt;
+    }
+
+    if (!has_default()) {
+      return nonstd::nullopt;
+    }
+
+    return _value.take_value<T>();
+  }
+
   nonstd::optional<double> get_ts_time(size_t idx) const {
 
     if (!has_timesamples()) {
