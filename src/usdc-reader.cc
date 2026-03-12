@@ -2326,7 +2326,9 @@ bool USDCReader::Impl::ParsePrimSpec(const crate::FieldValuePairVector &fvs,
     } else if (fv.first == "documentation") {
       if (auto pv = fv.second.as<std::string>()) {
         value::StringData s;
-        s.value = (*pv);
+        // Crate UNREGISTERED_VALUE strings may contain literal quotes;
+        // strip them so pprinter doesn't double-quote.
+        s.value = unwrap(*pv);
         s.is_triple_quoted = hasNewline(s.value);
         primMeta.set_doc(s);
       } else {
@@ -2337,7 +2339,7 @@ bool USDCReader::Impl::ParsePrimSpec(const crate::FieldValuePairVector &fvs,
     } else if (fv.first == "comment") {
       if (auto pv = fv.second.as<std::string>()) {
         value::StringData s;
-        s.value = (*pv);
+        s.value = unwrap(*pv);
         s.is_triple_quoted = hasNewline(s.value);
         primMeta.set_comment(s);
       } else {
@@ -2410,7 +2412,9 @@ bool USDCReader::Impl::ParsePrimSpec(const crate::FieldValuePairVector &fvs,
       }
     } else if (fv.first == "sceneName") {  // USDZ extension
       if (auto pv = fv.second.as<std::string>()) {
-        primMeta.set_sceneName(*pv);
+        // Crate UNREGISTERED_VALUE strings may contain literal quotes;
+        // strip them so pprinter's quote() doesn't double-quote.
+        primMeta.set_sceneName(unwrap(*pv));
       } else {
         PUSH_ERROR_AND_RETURN_TAG(
             kTag, "`sceneName` must be type `string`, but got type `"
@@ -2418,7 +2422,7 @@ bool USDCReader::Impl::ParsePrimSpec(const crate::FieldValuePairVector &fvs,
       }
     } else if (fv.first == "displayName") {  // USD supported since 23.xx?
       if (auto pv = fv.second.as<std::string>()) {
-        primMeta.set_displayName(*pv);
+        primMeta.set_displayName(unwrap(*pv));
       } else {
         PUSH_ERROR_AND_RETURN_TAG(
             kTag, "`displayName` must be type `string`, but got type `"
