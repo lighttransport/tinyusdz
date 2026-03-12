@@ -864,8 +864,8 @@ bool CrateReader::UnpackTimeSampleValue_BOOL(double t,
     }
 
     // Check deduplication cache for bool array
-    auto it = _dedup_bool_array.find(rep);
-    if (it != _dedup_bool_array.end()) {
+    auto it = _dedup_array_cache.find(rep);
+    if (it != _dedup_array_cache.end()) {
       // Reuse cached array via ref_index
       size_t ref_index = it->second;
       DCOUT("Reusing cached BOOL array at sample index " << ref_index);
@@ -888,7 +888,7 @@ bool CrateReader::UnpackTimeSampleValue_BOOL(double t,
 
       // Store current index before adding
       size_t current_index = dst.size();
-      _dedup_bool_array[rep] = current_index;
+      _dedup_array_cache[rep] = current_index;
       DCOUT("Caching BOOL array at sample index " << current_index);
 
       // Use value::Value array storage with dedup support (move, no copy)
@@ -1052,8 +1052,8 @@ bool CrateReader::UnpackTimeSampleValue_HALF(double t,
     }
 
     // Check deduplication cache for array
-    auto it = _dedup_half_array.find(rep);
-    if (it != _dedup_half_array.end()) {
+    auto it = _dedup_array_cache.find(rep);
+    if (it != _dedup_array_cache.end()) {
       // Deduplicated array - reuse value from first occurrence (no copy)
       size_t ref_index = it->second;
       DCOUT("Reusing cached HALF array at sample index " << ref_index);
@@ -1076,7 +1076,7 @@ bool CrateReader::UnpackTimeSampleValue_HALF(double t,
       }
 
       size_t current_index = dst.size();
-      _dedup_half_array[rep] = current_index;
+      _dedup_array_cache[rep] = current_index;
 
       // Use value::Value array storage with dedup support (move, no copy)
       if (!dst.add_value_array_sample(t, value::Value(std::move(temp_v)), &_err)) {
@@ -1157,8 +1157,8 @@ bool CrateReader::UnpackTimeSampleValue_HALF2(double t,
     }
 
     // Check deduplication cache for array
-    auto it = _dedup_half2_array.find(rep);
-    if (it != _dedup_half2_array.end()) {
+    auto it = _dedup_array_cache.find(rep);
+    if (it != _dedup_array_cache.end()) {
       // Deduplicated array - reuse value from first occurrence (no copy)
       size_t ref_index = it->second;
       DCOUT("Reusing cached HALF2 array at sample index " << ref_index);
@@ -1175,7 +1175,7 @@ bool CrateReader::UnpackTimeSampleValue_HALF2(double t,
       DCOUT("timeSamples.VEC2H " << value::print_array_snipped(v));
 
       size_t current_index = dst.size();
-      _dedup_half2_array[rep] = current_index;
+      _dedup_array_cache[rep] = current_index;
 
       // Use value::Value array storage with dedup support (move, no copy)
       if (!dst.add_value_array_sample(t, value::Value(std::move(v)), &_err)) {
@@ -1272,8 +1272,8 @@ bool CrateReader::UnpackTimeSampleValue_HALF3(double t,
     }
 
     // Check deduplication cache for array
-    auto it = _dedup_half3_array.find(rep);
-    if (it != _dedup_half3_array.end()) {
+    auto it = _dedup_array_cache.find(rep);
+    if (it != _dedup_array_cache.end()) {
       // Deduplicated array - reuse value from first occurrence (no copy)
       size_t ref_index = it->second;
       DCOUT("Reusing cached HALF3 array at sample index " << ref_index);
@@ -1289,7 +1289,7 @@ bool CrateReader::UnpackTimeSampleValue_HALF3(double t,
       DCOUT("timeSamples.VEC3H " << value::print_array_snipped(v));
 
       size_t current_index = dst.size();
-      _dedup_half3_array[rep] = current_index;
+      _dedup_array_cache[rep] = current_index;
 
       // Use value::Value array storage with dedup support (move, no copy)
       if (!dst.add_value_array_sample(t, value::Value(std::move(v)), &_err)) {
@@ -1389,8 +1389,8 @@ bool CrateReader::UnpackTimeSampleValue_HALF4(double t,
     }
 
     // Check deduplication cache for array
-    auto it = _dedup_half4_array.find(rep);
-    if (it != _dedup_half4_array.end()) {
+    auto it = _dedup_array_cache.find(rep);
+    if (it != _dedup_array_cache.end()) {
       // Deduplicated array - reuse value from first occurrence (no copy)
       size_t ref_index = it->second;
       DCOUT("Reusing cached HALF4 array at sample index " << ref_index);
@@ -1406,7 +1406,7 @@ bool CrateReader::UnpackTimeSampleValue_HALF4(double t,
       DCOUT("timeSamples.VEC4H " << value::print_array_snipped(v));
 
       size_t current_index = dst.size();
-      _dedup_half4_array[rep] = current_index;
+      _dedup_array_cache[rep] = current_index;
 
       // Use value::Value array storage with dedup support (move, no copy)
       if (!dst.add_value_array_sample(t, value::Value(std::move(v)), &_err)) {
@@ -1710,8 +1710,8 @@ bool CrateReader::UnpackTimeSampleValue_QUATF(double t,
     }
 
     // Check deduplication cache for array
-    auto it = _dedup_quatf_array.find(rep);
-    if (it != _dedup_quatf_array.end()) {
+    auto it = _dedup_array_cache.find(rep);
+    if (it != _dedup_array_cache.end()) {
       // Deduplicated array - reuse value from first occurrence (no copy)
       size_t ref_index = it->second;
       DCOUT("Reusing cached QUATF array at sample index " << ref_index);
@@ -1728,7 +1728,7 @@ bool CrateReader::UnpackTimeSampleValue_QUATF(double t,
       DCOUT("timeSamples.QUATF " << value::print_array_snipped(v));
 
       size_t current_index = dst.size();
-      _dedup_quatf_array[rep] = current_index;
+      _dedup_array_cache[rep] = current_index;
 
       // Use value::Value array storage with dedup support (move, no copy)
       if (!dst.add_value_array_sample(t, value::Value(std::move(v)), &_err)) {
@@ -2086,8 +2086,8 @@ bool CrateReader::UnpackTimeSampleValue_FLOAT3(double t,
     }
 
     // Check deduplication cache for array
-    auto it = _dedup_float3_array.find(rep);
-    if (it != _dedup_float3_array.end()) {
+    auto it = _dedup_array_cache.find(rep);
+    if (it != _dedup_array_cache.end()) {
       // Deduplicated array - reuse value from first occurrence (no copy)
       size_t ref_index = it->second;
       DCOUT("Reusing cached FLOAT3 array at sample index " << ref_index);
@@ -2104,7 +2104,7 @@ bool CrateReader::UnpackTimeSampleValue_FLOAT3(double t,
       DCOUT("timeSamples.FLOAT3 " << value::print_array_snipped(v));
 
       size_t current_index = dst.size();
-      _dedup_float3_array[rep] = current_index;
+      _dedup_array_cache[rep] = current_index;
 
       // Use value::Value array storage with dedup support (move, no copy)
       if (!dst.add_value_array_sample(t, value::Value(std::move(v)), &_err)) {
@@ -2199,8 +2199,8 @@ bool CrateReader::UnpackTimeSampleValue_FLOAT4(double t,
     }
 
     // Check deduplication cache for array
-    auto it = _dedup_float4_array.find(rep);
-    if (it != _dedup_float4_array.end()) {
+    auto it = _dedup_array_cache.find(rep);
+    if (it != _dedup_array_cache.end()) {
       // Deduplicated array - reuse value from first occurrence (no copy)
       size_t ref_index = it->second;
       DCOUT("Reusing cached FLOAT4 array at sample index " << ref_index);
@@ -2217,7 +2217,7 @@ bool CrateReader::UnpackTimeSampleValue_FLOAT4(double t,
       DCOUT("timeSamples.FLOAT4 " << value::print_array_snipped(v));
 
       size_t current_index = dst.size();
-      _dedup_float4_array[rep] = current_index;
+      _dedup_array_cache[rep] = current_index;
 
       // Use value::Value array storage with dedup support (move, no copy)
       if (!dst.add_value_array_sample(t, value::Value(std::move(v)), &_err)) {
@@ -2308,8 +2308,8 @@ bool CrateReader::UnpackTimeSampleValue_DOUBLE2(double t,
     }
 
     // Check deduplication cache for array
-    auto it = _dedup_double2_array.find(rep);
-    if (it != _dedup_double2_array.end()) {
+    auto it = _dedup_array_cache.find(rep);
+    if (it != _dedup_array_cache.end()) {
       // Deduplicated array - reuse value from first occurrence (no copy)
       size_t ref_index = it->second;
       DCOUT("Reusing cached DOUBLE2 array at sample index " << ref_index);
@@ -2324,7 +2324,7 @@ bool CrateReader::UnpackTimeSampleValue_DOUBLE2(double t,
       }
 
       size_t current_index = dst.size();
-      _dedup_double2_array[rep] = current_index;
+      _dedup_array_cache[rep] = current_index;
 
       // Use value::Value array storage with dedup support (move, no copy)
       if (!dst.add_value_array_sample(t, value::Value(std::move(v)), &_err)) {
@@ -2416,8 +2416,8 @@ bool CrateReader::UnpackTimeSampleValue_DOUBLE3(double t,
     }
 
     // Check deduplication cache for array
-    auto it = _dedup_double3_array.find(rep);
-    if (it != _dedup_double3_array.end()) {
+    auto it = _dedup_array_cache.find(rep);
+    if (it != _dedup_array_cache.end()) {
       // Deduplicated array - reuse value from first occurrence (no copy)
       size_t ref_index = it->second;
       DCOUT("Reusing cached DOUBLE3 array at sample index " << ref_index);
@@ -2432,7 +2432,7 @@ bool CrateReader::UnpackTimeSampleValue_DOUBLE3(double t,
       }
 
       size_t current_index = dst.size();
-      _dedup_double3_array[rep] = current_index;
+      _dedup_array_cache[rep] = current_index;
 
       // Use value::Value array storage with dedup support (move, no copy)
       if (!dst.add_value_array_sample(t, value::Value(std::move(v)), &_err)) {
@@ -2525,8 +2525,8 @@ bool CrateReader::UnpackTimeSampleValue_DOUBLE4(double t,
     }
 
     // Check deduplication cache for array
-    auto it = _dedup_double4_array.find(rep);
-    if (it != _dedup_double4_array.end()) {
+    auto it = _dedup_array_cache.find(rep);
+    if (it != _dedup_array_cache.end()) {
       // Deduplicated array - reuse value from first occurrence (no copy)
       size_t ref_index = it->second;
       DCOUT("Reusing cached DOUBLE4 array at sample index " << ref_index);
@@ -2541,7 +2541,7 @@ bool CrateReader::UnpackTimeSampleValue_DOUBLE4(double t,
       }
 
       size_t current_index = dst.size();
-      _dedup_double4_array[rep] = current_index;
+      _dedup_array_cache[rep] = current_index;
 
       // Use value::Value array storage with dedup support (move, no copy)
       if (!dst.add_value_array_sample(t, value::Value(std::move(v)), &_err)) {
@@ -2614,8 +2614,8 @@ bool CrateReader::UnpackTimeSampleValue_QUATH(double t,
     }
 
     // Check deduplication cache for array
-    auto it = _dedup_quath_array.find(rep);
-    if (it != _dedup_quath_array.end()) {
+    auto it = _dedup_array_cache.find(rep);
+    if (it != _dedup_array_cache.end()) {
       // Deduplicated array - reuse value from first occurrence (no copy)
       size_t ref_index = it->second;
       DCOUT("Reusing cached QUATH array at sample index " << ref_index);
@@ -2632,7 +2632,7 @@ bool CrateReader::UnpackTimeSampleValue_QUATH(double t,
       DCOUT("timeSamples.QUATH " << value::print_array_snipped(v));
 
       size_t current_index = dst.size();
-      _dedup_quath_array[rep] = current_index;
+      _dedup_array_cache[rep] = current_index;
 
       // Use value::Value array storage with dedup support (move, no copy)
       if (!dst.add_value_array_sample(t, value::Value(std::move(v)), &_err)) {
@@ -2705,8 +2705,8 @@ bool CrateReader::UnpackTimeSampleValue_QUATD(double t,
     }
 
     // Check deduplication cache for array
-    auto it = _dedup_quatd_array.find(rep);
-    if (it != _dedup_quatd_array.end()) {
+    auto it = _dedup_array_cache.find(rep);
+    if (it != _dedup_array_cache.end()) {
       // Deduplicated array - reuse value from first occurrence (no copy)
       size_t ref_index = it->second;
       DCOUT("Reusing cached QUATD array at sample index " << ref_index);
@@ -2723,7 +2723,7 @@ bool CrateReader::UnpackTimeSampleValue_QUATD(double t,
       DCOUT("timeSamples.QUATD " << value::print_array_snipped(v));
 
       size_t current_index = dst.size();
-      _dedup_quatd_array[rep] = current_index;
+      _dedup_array_cache[rep] = current_index;
 
       // Use value::Value array storage with dedup support (move, no copy)
       if (!dst.add_value_array_sample(t, value::Value(std::move(v)), &_err)) {
@@ -2816,8 +2816,8 @@ bool CrateReader::UnpackTimeSampleValue_MATRIX2D(
     }
 
     // Check deduplication cache for array
-    auto it = _dedup_matrix2d_array.find(rep);
-    if (it != _dedup_matrix2d_array.end()) {
+    auto it = _dedup_array_cache.find(rep);
+    if (it != _dedup_array_cache.end()) {
       // Deduplicated array - reuse value from first occurrence (no copy)
       size_t ref_index = it->second;
       DCOUT("Reusing cached MATRIX2D array at sample index " << ref_index);
@@ -2832,7 +2832,7 @@ bool CrateReader::UnpackTimeSampleValue_MATRIX2D(
       }
 
       size_t current_index = dst.size();
-      _dedup_matrix2d_array[rep] = current_index;
+      _dedup_array_cache[rep] = current_index;
 
       // Use value::Value array storage with dedup support (move, no copy)
       if (!dst.add_value_array_sample(t, value::Value(std::move(v)), &_err)) {
@@ -2906,8 +2906,8 @@ bool CrateReader::UnpackTimeSampleValue_MATRIX3D(
     }
 
     // Check deduplication cache for array
-    auto it = _dedup_matrix3d_array.find(rep);
-    if (it != _dedup_matrix3d_array.end()) {
+    auto it = _dedup_array_cache.find(rep);
+    if (it != _dedup_array_cache.end()) {
       // Deduplicated array - reuse value from first occurrence (no copy)
       size_t ref_index = it->second;
       DCOUT("Reusing cached MATRIX3D array at sample index " << ref_index);
@@ -2922,7 +2922,7 @@ bool CrateReader::UnpackTimeSampleValue_MATRIX3D(
       }
 
       size_t current_index = dst.size();
-      _dedup_matrix3d_array[rep] = current_index;
+      _dedup_array_cache[rep] = current_index;
 
       // Use value::Value array storage with dedup support (move, no copy)
       if (!dst.add_value_array_sample(t, value::Value(std::move(v)), &_err)) {
@@ -2997,8 +2997,8 @@ bool CrateReader::UnpackTimeSampleValue_MATRIX4D(
     }
 
     // Check deduplication cache for array
-    auto it = _dedup_matrix4d_array.find(rep);
-    if (it != _dedup_matrix4d_array.end()) {
+    auto it = _dedup_array_cache.find(rep);
+    if (it != _dedup_array_cache.end()) {
       // Deduplicated array - reuse value from first occurrence (no copy)
       size_t ref_index = it->second;
       DCOUT("Reusing cached MATRIX4D array at sample index " << ref_index);
@@ -3013,7 +3013,7 @@ bool CrateReader::UnpackTimeSampleValue_MATRIX4D(
       }
 
       size_t current_index = dst.size();
-      _dedup_matrix4d_array[rep] = current_index;
+      _dedup_array_cache[rep] = current_index;
 
       // Use value::Value array storage with dedup support (move, no copy)
       if (!dst.add_value_array_sample(t, value::Value(std::move(v)), &_err)) {
@@ -3075,8 +3075,8 @@ bool CrateReader::UnpackTimeSampleValue_UINT32(double t,
     }
 
     // Check deduplication cache for array
-    auto it = _dedup_uint32_array.find(rep);
-    if (it != _dedup_uint32_array.end()) {
+    auto it = _dedup_array_cache.find(rep);
+    if (it != _dedup_array_cache.end()) {
       // Deduplicated array - reuse value from first occurrence (no copy)
       size_t ref_index = it->second;
       DCOUT("Reusing cached UINT32 array at sample index " << ref_index);
@@ -3093,7 +3093,7 @@ bool CrateReader::UnpackTimeSampleValue_UINT32(double t,
       DCOUT("timeSamples.UINT32 " << value::print_array_snipped(v));
 
       size_t current_index = dst.size();
-      _dedup_uint32_array[rep] = current_index;
+      _dedup_array_cache[rep] = current_index;
 
       // Use value::Value array storage with dedup support (move, no copy)
       std::vector<uint32_t> vec(v.data(), v.data() + v.size());
@@ -3160,8 +3160,8 @@ bool CrateReader::UnpackTimeSampleValue_INT64(double t,
     }
 
     // Check deduplication cache for array
-    auto it = _dedup_int64_array.find(rep);
-    if (it != _dedup_int64_array.end()) {
+    auto it = _dedup_array_cache.find(rep);
+    if (it != _dedup_array_cache.end()) {
       // Deduplicated array - reuse value from first occurrence (no copy)
       size_t ref_index = it->second;
       DCOUT("Reusing cached INT64 array at sample index " << ref_index);
@@ -3178,7 +3178,7 @@ bool CrateReader::UnpackTimeSampleValue_INT64(double t,
       DCOUT("timeSamples.INT64 " << value::print_array_snipped(v));
 
       size_t current_index = dst.size();
-      _dedup_int64_array[rep] = current_index;
+      _dedup_array_cache[rep] = current_index;
 
       // Use value::Value array storage with dedup support (move, no copy)
       std::vector<int64_t> vec(v.data(), v.data() + v.size());
@@ -3263,8 +3263,8 @@ bool CrateReader::UnpackTimeSampleValue_UINT64(double t,
     }
 
     // Check deduplication cache for array
-    auto it = _dedup_uint64_array.find(rep);
-    if (it != _dedup_uint64_array.end()) {
+    auto it = _dedup_array_cache.find(rep);
+    if (it != _dedup_array_cache.end()) {
       // Deduplicated array - reuse value from first occurrence (no copy)
       size_t ref_index = it->second;
       DCOUT("Reusing cached UINT64 array at sample index " << ref_index);
@@ -3281,7 +3281,7 @@ bool CrateReader::UnpackTimeSampleValue_UINT64(double t,
       DCOUT("timeSamples.UINT64 " << value::print_array_snipped(v));
 
       size_t current_index = dst.size();
-      _dedup_uint64_array[rep] = current_index;
+      _dedup_array_cache[rep] = current_index;
 
       // Use value::Value array storage with dedup support (move, no copy)
       std::vector<uint64_t> vec(v.data(), v.data() + v.size());
@@ -3368,8 +3368,8 @@ bool CrateReader::UnpackTimeSampleValue_DOUBLE(double t,
     }
 
     // Check deduplication cache for array
-    auto it = _dedup_double_array.find(rep);
-    if (it != _dedup_double_array.end()) {
+    auto it = _dedup_array_cache.find(rep);
+    if (it != _dedup_array_cache.end()) {
       // Deduplicated array - reuse value from first occurrence (no copy)
       size_t ref_index = it->second;
       DCOUT("Reusing cached DOUBLE array at sample index " << ref_index);
@@ -3391,7 +3391,7 @@ bool CrateReader::UnpackTimeSampleValue_DOUBLE(double t,
       }
 
       size_t current_index = dst.size();
-      _dedup_double_array[rep] = current_index;
+      _dedup_array_cache[rep] = current_index;
 
       // Use value::Value array storage with dedup support (move, no copy)
       std::vector<double> vec(v.data(), v.data() + v.size());
@@ -3443,31 +3443,7 @@ bool CrateReader::UnpackValueRepsToTimeSamples(
   // that share the same ValueRep (same file offset), the cached index is
   // invalid for the new dst (e.g., ref_index=0 but dst has 0 samples).
   // Scalar dedup maps are safe to keep — they cache decoded values, not indices.
-  _dedup_bool_array.clear();
-  _dedup_int32_array.clear();
-  _dedup_uint32_array.clear();
-  _dedup_int64_array.clear();
-  _dedup_uint64_array.clear();
-  _dedup_half_array.clear();
-  _dedup_half2_array.clear();
-  _dedup_half3_array.clear();
-  _dedup_half4_array.clear();
-  _dedup_float_array.clear();
-  _dedup_float2_array.clear();
-  _dedup_float3_array.clear();
-  _dedup_float4_array.clear();
-  _dedup_double_array.clear();
-  _dedup_double2_array.clear();
-  _dedup_double3_array.clear();
-  _dedup_double4_array.clear();
-  _dedup_quath_array.clear();
-  _dedup_quatf_array.clear();
-  _dedup_quatd_array.clear();
-  _dedup_matrix2d_array.clear();
-  _dedup_matrix3d_array.clear();
-  _dedup_matrix4d_array.clear();
-  _dedup_string_array.clear();
-  _dedup_token_array.clear();
+  _dedup_array_cache.clear();
 
   // Find the first non-VALUE_BLOCK element to determine the actual type
   crate::CrateDataTypeId crate_type_id =

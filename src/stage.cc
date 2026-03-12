@@ -934,35 +934,241 @@ std::string Stage::dump_prim_tree() const {
   return DumpPrimTreeIterative(_root_nodes);
 }
 
+namespace {
+
+// Helper: estimate deep memory for TypedTimeSamples<std::vector<E>>
+// Counts heap data inside each sample's vector
+template <typename E>
+static size_t EstimateTypedTimeSamplesVectorMemory(const TypedTimeSamples<std::vector<E>> &ts) {
+  size_t total = 0;
+  if (!ts.empty()) {
+    const auto &samples = ts.get_samples();
+    total += samples.capacity() * sizeof(typename TypedTimeSamples<std::vector<E>>::Sample);
+    for (const auto &sample : samples) {
+      total += sample.value.capacity() * sizeof(E);
+    }
+  }
+  return total;
+}
+
+// Helper: estimate deep memory of TypedAttribute<Animatable<std::vector<E>>>
+// Uses get_value_ref() to avoid copying large data.
+template <typename E>
+static size_t EstimateTypedAttributeVectorMemory(const TypedAttribute<Animatable<std::vector<E>>> &attr) {
+  const auto &opt_val = attr.get_value_ref();
+  if (!opt_val) {
+    return 0;
+  }
+  size_t total = 0;
+  const Animatable<std::vector<E>> &anim = *opt_val;
+  if (anim.has_timesamples()) {
+    total += EstimateTypedTimeSamplesVectorMemory(anim.get_timesamples());
+  } else if (anim.has_default()) {
+    // Use const reference to avoid copying large arrays
+    const std::vector<E> &val = anim.get_scalar_ref();
+    total += val.capacity() * sizeof(E);
+  }
+  return total;
+}
+
+// Estimate deep memory for GeomMesh predefined attributes
+static size_t EstimateGeomMeshDeepMemory(const GeomMesh &mesh) {
+  size_t total = 0;
+  total += EstimateTypedAttributeVectorMemory(mesh.points);
+  total += EstimateTypedAttributeVectorMemory(mesh.normals);
+  total += EstimateTypedAttributeVectorMemory(mesh.velocities);
+  total += EstimateTypedAttributeVectorMemory(mesh.faceVertexCounts);
+  total += EstimateTypedAttributeVectorMemory(mesh.faceVertexIndices);
+  return total;
+}
+
+// Estimate deep memory for GeomBasisCurves predefined attributes
+static size_t EstimateGeomBasisCurvesDeepMemory(const GeomBasisCurves &curves) {
+  size_t total = 0;
+  total += EstimateTypedAttributeVectorMemory(curves.points);
+  total += EstimateTypedAttributeVectorMemory(curves.normals);
+  total += EstimateTypedAttributeVectorMemory(curves.velocities);
+  total += EstimateTypedAttributeVectorMemory(curves.curveVertexCounts);
+  total += EstimateTypedAttributeVectorMemory(curves.widths);
+  return total;
+}
+
+// Estimate deep memory for GeomPoints predefined attributes
+static size_t EstimateGeomPointsDeepMemory(const GeomPoints &pts) {
+  size_t total = 0;
+  total += EstimateTypedAttributeVectorMemory(pts.points);
+  total += EstimateTypedAttributeVectorMemory(pts.normals);
+  total += EstimateTypedAttributeVectorMemory(pts.velocities);
+  total += EstimateTypedAttributeVectorMemory(pts.widths);
+  total += EstimateTypedAttributeVectorMemory(pts.ids);
+  return total;
+}
+
+// Dispatch to estimate deep memory (heap-allocated data inside typed attributes)
+// for known concrete prim types. Returns 0 for unknown types.
+static size_t EstimatePrimDataDeepMemory(const Prim &prim) {
+  if (auto p = prim.as<GeomMesh>()) {
+    return EstimateGeomMeshDeepMemory(*p);
+  }
+  if (auto p = prim.as<GeomBasisCurves>()) {
+    return EstimateGeomBasisCurvesDeepMemory(*p);
+  }
+  if (auto p = prim.as<GeomPoints>()) {
+    return EstimateGeomPointsDeepMemory(*p);
+  }
+  // Other types have smaller predefined attributes; props map handles extras
+  return 0;
+}
+
+// Helper: estimate memory for a Property map
+static size_t EstimatePropertyMapMemory(const std::map<std::string, Property> &props) {
+  size_t total = 0;
+  // std::map node overhead: ~48 bytes per node (key+value+pointers+color)
+  for (const auto &kv : props) {
+    total += 48; // map node overhead
+    total += kv.first.capacity();
+    total += kv.second.estimate_memory_usage();
+  }
+  return total;
+}
+
+// Helper: try to get the props map from a Prim by dispatching on its concrete type.
+// Returns the estimated memory of the props map, or 0 if the type doesn't have props.
+static size_t EstimatePrimPropsMemory(const Prim &prim) {
+  // Macro to try casting to a concrete type and estimating its props
+#define TRY_PROPS(__ty)                                         \
+  if (auto pv = prim.as<__ty>()) {                              \
+    return EstimatePropertyMapMemory(pv->props);                \
+  }
+
+  // GPrim-derived types (usdGeom)
+  TRY_PROPS(GPrim)
+  TRY_PROPS(Xform)
+  TRY_PROPS(GeomMesh)
+  TRY_PROPS(GeomBasisCurves)
+  TRY_PROPS(GeomNurbsCurves)
+  TRY_PROPS(GeomSphere)
+  TRY_PROPS(GeomCube)
+  TRY_PROPS(GeomCylinder)
+  TRY_PROPS(GeomCone)
+  TRY_PROPS(GeomCapsule)
+  TRY_PROPS(GeomPoints)
+  TRY_PROPS(GeomPointInstancer)
+  TRY_PROPS(GeomCamera)
+  TRY_PROPS(GeomSubset)
+
+  // usdShade types (Material, Shader, NodeGraph share UsdShadePrim::props)
+  TRY_PROPS(Material)
+  TRY_PROPS(Shader)
+  TRY_PROPS(NodeGraph)
+
+  // usdSkel types
+  TRY_PROPS(SkelRoot)
+  TRY_PROPS(Skeleton)
+  TRY_PROPS(SkelAnimation)
+  TRY_PROPS(BlendShape)
+
+  // usdLux light types
+  TRY_PROPS(SphereLight)
+  TRY_PROPS(DomeLight)
+  TRY_PROPS(CylinderLight)
+  TRY_PROPS(DiskLight)
+  TRY_PROPS(RectLight)
+  TRY_PROPS(DistantLight)
+  TRY_PROPS(GeometryLight)
+  TRY_PROPS(PortalLight)
+
+  // Model and Scope (generic/unknown prim types)
+  TRY_PROPS(Model)
+  TRY_PROPS(Scope)
+
+#undef TRY_PROPS
+
+  return 0;
+}
+
+// Helper: estimate memory for a single Prim (not including children)
+static size_t EstimateSinglePrimMemory(const Prim &prim) {
+  size_t total = sizeof(Prim);
+
+  // Concrete prim data stored in _data (value::Value)
+  // This now uses sizeof_stored() for MODEL types to get the correct struct size
+  total += prim.data().estimate_memory_usage();
+
+  // String members
+  total += prim.element_name().capacity();
+  total += prim.element_path().full_path_name().capacity();
+  total += prim.prim_type_name().capacity();
+  total += prim.absolute_path().full_path_name().capacity();
+  total += prim.local_path().full_path_name().capacity();
+
+  // Properties stored in the concrete prim type's props map
+  total += EstimatePrimPropsMemory(prim);
+
+  // Deep memory for predefined typed attributes (points, normals, etc.)
+  total += EstimatePrimDataDeepMemory(prim);
+
+  // Variant sets
+  for (const auto &vs : prim.variantSets()) {
+    total += 48; // map node overhead
+    total += vs.first.capacity();
+    total += sizeof(VariantSet);
+  }
+
+  return total;
+}
+
+}  // namespace
+
 size_t Stage::estimate_memory_usage() const {
   size_t total = sizeof(Stage);
-  
+
   // Stage metadata
-  // TODO: Add detailed StageMetas memory estimation
   total += sizeof(StageMetas);
-  
-  // Estimate memory for root prims
-  // Since Prim doesn't have estimate_memory_usage yet, we do a basic estimate
-  total += _root_nodes.capacity() * sizeof(Prim);
-  
-  // For each Prim, estimate string storage
-  for (const auto& prim : _root_nodes) {
-    // Basic string estimates
-    total += prim.element_name().capacity();
-    total += prim.element_path().full_path_name().capacity();
-    
-    // TODO: Add more detailed Prim memory estimation when Prim::estimate_memory_usage is implemented
-    // This would include properties, children, metadata, etc.
+
+  // Iteratively walk the entire Prim tree using a stack (avoid recursion for deep trees)
+  struct StackEntry {
+    const std::vector<Prim> *siblings;
+    size_t index;
+  };
+
+  std::vector<StackEntry> stack;
+  if (!_root_nodes.empty()) {
+    // Account for root vector capacity
+    total += _root_nodes.capacity() * sizeof(Prim);
+    stack.push_back({&_root_nodes, 0});
   }
-  
+
+  while (!stack.empty()) {
+    StackEntry &entry = stack.back();
+    if (entry.index >= entry.siblings->size()) {
+      stack.pop_back();
+      continue;
+    }
+
+    const Prim &prim = (*entry.siblings)[entry.index];
+    entry.index++;
+
+    // Estimate this prim's memory (excluding children, which we'll traverse)
+    total += EstimateSinglePrimMemory(prim);
+
+    // Push children onto the stack
+    const auto &children = prim.children();
+    if (!children.empty()) {
+      // Account for children vector capacity (the Prim objects themselves
+      // are accounted for when we visit each child)
+      total += children.capacity() * sizeof(Prim);
+      stack.push_back({&children, 0});
+    }
+  }
+
   // Internal string storage
   total += _warn.capacity();
   total += _err.capacity();
-  
+
   // Prim ID management
-  total += _prim_id_cache.size() * (sizeof(uint64_t) + sizeof(const Prim*)) * 2; // Rough estimate for map overhead
-  // Note: _prim_id_allocator internal memory is harder to estimate without its implementation details
-  
+  total += _prim_id_cache.size() * (sizeof(uint64_t) + sizeof(const Prim*)) * 2;
+
   return total;
 }
 

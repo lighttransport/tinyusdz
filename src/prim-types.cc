@@ -1935,11 +1935,8 @@ size_t Attribute::estimate_memory_usage() const {
   total += _name.capacity();
   total += _type_name.capacity();
 
-  // PrimVar memory - basic estimate
-  // TODO: For more accurate estimation, PrimVar should have its own estimate_memory_usage method
-  total += sizeof(primvar::PrimVar);
-  // The PrimVar contains value::Value and value::TimeSamples which can be large
-  // This is a basic estimate - actual size depends on the stored data type and time samples
+  // PrimVar memory - includes value::Value and value::TimeSamples
+  total += _var.estimate_memory_usage();
 
   // Connection paths
   total += _paths.capacity() * sizeof(Path);
@@ -1950,7 +1947,6 @@ size_t Attribute::estimate_memory_usage() const {
 
   // Attribute metadata
   total += sizeof(AttrMeta); // Basic size of metadata structure
-  // TODO: Add detailed AttrMeta internal memory estimation if needed
 
   return total;
 }
