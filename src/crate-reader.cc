@@ -3340,6 +3340,18 @@ bool CrateReader::DescribeValueRep(const crate::ValueRep &rep,
     case crate::CrateDataTypeId::CRATE_DATA_TYPE_VEC4D:
       elem_size = sizeof(value::double4);
       break;
+    // Matrix types are never compressed in USDC (fall through to uncompressed
+    // path in OpenUSD's _WritePossiblyCompressedArray).  Scalar matrices can
+    // be inlined when diagonal with int8 elements, but arrays are always raw.
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_MATRIX2D:
+      elem_size = sizeof(value::matrix2d);  // 32 bytes (2x2 double)
+      break;
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_MATRIX3D:
+      elem_size = sizeof(value::matrix3d);  // 72 bytes (3x3 double)
+      break;
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_MATRIX4D:
+      elem_size = sizeof(value::matrix4d);  // 128 bytes (4x4 double)
+      break;
     default:
       return false;  // Not eligible (int types use compression, etc.)
   }
@@ -3422,6 +3434,15 @@ bool CrateReader::DescribeValueRep(const crate::ValueRep &rep,
       break;
     case crate::CrateDataTypeId::CRATE_DATA_TYPE_VEC4D:
       value->Set(std::vector<value::double4>());
+      break;
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_MATRIX2D:
+      value->Set(std::vector<value::matrix2d>());
+      break;
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_MATRIX3D:
+      value->Set(std::vector<value::matrix3d>());
+      break;
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_MATRIX4D:
+      value->Set(std::vector<value::matrix4d>());
       break;
     default:
       return false;

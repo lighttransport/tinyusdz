@@ -385,15 +385,16 @@ When loading USDC files via mmap, large uncompressed float/double arrays (points
 
 3. **Stage** (`stage.hh/cc`): Holds optional `MMapArrayTable` (offset metadata) and `MMapDataSource` (pointer to mmap'd buffer). Both are `unique_ptr` to avoid header coupling. Not copied on Stage copy (mmap data is not transferable).
 
-4. **Tydra** (`render-data.cc`): `TryReadMMapArray<T>()` checks `stage.has_mmap_zero_copy()`, looks up the prim path + attr name in the table, validates bounds/alignment via `MMapDataSource::get_ptr<T>()`, then does a single `memcpy` from mmap to output vector. Falls back to `EvaluateTypedAnimatableAttribute` if mmap path is unavailable. Currently used for `points` and authored `normals` (not `primvars:normals` which needs index expansion).
+4. **Tydra** (`render-data.cc`): `TryReadMMapArray<T>()` checks `stage.has_mmap_zero_copy()`, looks up the prim path + attr name in the table, validates bounds/alignment via `MMapDataSource::get_ptr<T>()`, then does a single `memcpy` from mmap to output vector. Falls back to `EvaluateTypedAnimatableAttribute` if mmap path is unavailable. Used for `points`, authored `normals`, and `texcoord2f` primvars (when not indexed — indexed primvars fall through to `flatten_with_indices`).
 
 ### Eligible Array Types
 
-Only types that are NEVER compressed in USDC:
+Only types that are NEVER compressed in USDC (verified against OpenUSD `crateFile.cpp`):
 - `VEC2F`, `VEC3F`, `VEC4F` (float2/3/4, point3f, normal3f, color3f, texcoord2f)
 - `VEC2D`, `VEC3D`, `VEC4D` (double2/3/4)
 - `VEC2H`, `VEC3H`, `VEC4H` (half2/3/4)
 - `FLOAT`, `DOUBLE`, `HALF` (scalar arrays)
+- `MATRIX2D`, `MATRIX3D`, `MATRIX4D` (matrix arrays — always uncompressed; scalars can be inlined when diagonal with int8 elements)
 
 NOT eligible: `INT`, `UINT`, `INT64`, `UINT64` (use LZ4+integer compression in USDC).
 
@@ -413,6 +414,7 @@ The mmap'd buffer (or input memory buffer in WASM) must stay alive while the Sta
 |-------|----------------|--------|--------|
 | suzanne-subd-lv5.usdc (3M verts) | 3 | OBJ identical to baseline | Pass |
 | suzanne-subd-lv6.usdc (12M verts) | 3 | OBJ identical to baseline | Pass |
+| CesiumMan.usdz (skinned, has UVs) | 4 | OBJ identical to baseline | Pass |
 | timesamples-array-dedup-001.usdc | — | Correct parse + conversion | Pass |
 | timesamples-array-dedup-002.usdc | — | Correct parse + conversion | Pass |
 | timesamples-array-dedup-004.usdc | — | Correct parse + conversion | Pass |
@@ -474,8 +476,9 @@ V1 hybrid records offsets but still fully unpacks data into Stage (no Stage memo
 ### Low Priority
 
 - [ ] **MMap zero-copy V2: deferred reads** — Store sentinel `MMapArrayRef` instead of full data in Stage for large uncompressed arrays. Requires selective deferral (skip face-varying primvars with indices), lazy materialization on Stage access, and TimeSamples path support. See "V2 Plan" section above.
-- [ ] **MMap zero-copy: USDZ offset adjustment** — Adjust `MMapArrayRef::byte_offset` by the ZIP local file header offset so USDZ files get full zero-copy (V1 records offsets but they're relative to the USDC payload start, not the USDZ file start; works because `LoadUSDFromMemory` receives the full USDZ buffer).
-- [ ] **MMap zero-copy: texcoord mmap path** — Add `TryReadMMapArray` for `primvars:st` (texcoord2f) in ConvertMesh. Requires care: only applicable when texcoords are vertex-interpolated or when index expansion is not needed.
+- [x] **MMap zero-copy: USDZ offset adjustment** — DONE (no code change needed). `LoadUSDZFromMemory` already passes a pointer to the USDC payload start within the ZIP (`addr + byte_begin`), and `LoadUSDCFromMemory` sets `MMapDataSource` with that pointer. All `MMapArrayRef::byte_offset` values are relative to this USDC payload start, so USDZ works correctly. Verified with outpost_19.usdz (233 deferred arrays, OBJ identical).
+- [x] **MMap zero-copy: texcoord mmap path** — DONE. `GetTextureCoordinate` now tries `TryReadMMapArray<texcoord2f>` with key `"primvars:" + name` when the primvar has no indices (`!primvar.has_indices()`). Indexed primvars fall through to `flatten_with_indices`. Verified with CesiumMan.usdz (4 deferred arrays, OBJ identical).
+- [x] **MMap zero-copy: matrix array types** — DONE. Added `MATRIX2D`, `MATRIX3D`, `MATRIX4D` to `DescribeValueRep` eligible types. Matrix arrays are never compressed in USDC (verified against OpenUSD `crateFile.cpp` — they fall through to `_WriteUncompressedArray`). Scalar matrices can be inlined when diagonal with int8 elements, but arrays are always raw.
 - [ ] **Three.js packed tangent `BufferAttribute`** — Three.js doesn't natively support `GL_INT_2_10_10_10_REV`. Investigate `InterleavedBufferAttribute` or custom WebGL calls to avoid unpack-to-float in binding.
 - [ ] **Memory-based CrateWriter** — `usdc-writer.cc` TODO for in-memory USDC writing (currently uses temp file).
 - [ ] **Multi-threaded tangent computation** — Hybrid and FastMikkTSpace are single-threaded. Parallelize per-face derivative phase.
