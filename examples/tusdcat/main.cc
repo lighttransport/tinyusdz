@@ -219,10 +219,6 @@ static bool LoadUSDCWithMemoryReport(
     return false;
   }
 
-  if (memory_report) {
-    (*memory_report) = reader.GetMemoryUsageReport();
-  }
-
   if (!reader.ReconstructStage(stage)) {
     if (warn) {
       (*warn) = reader.GetWarning();
@@ -234,6 +230,12 @@ static bool LoadUSDCWithMemoryReport(
       tinyusdz::io::UnmapFile(mmap_handle, &local_err);
     }
     return false;
+  }
+
+  // Capture memory report AFTER ReconstructStage so peak includes
+  // all DecodeFieldSet → UnpackValueRep allocations during property parsing.
+  if (memory_report) {
+    (*memory_report) = reader.GetMemoryUsageReport();
   }
 
   if (warn) {

@@ -530,6 +530,10 @@ class USDCReader::Impl {
   const crate::LiveFieldSetMap
       *_live_fieldsets = nullptr;  // <fieldset index, List of field with unpacked Values>
 
+  // Budget reserved by the last lazy DecodeFieldSet scratch buffer.
+  // Released when scratch is reused or at end of reconstruction.
+  uint64_t _scratch_budget_reserved{0};
+
   // std::vector<PrimNode> _prim_nodes;
 
   // VariantSet Spec.
@@ -891,12 +895,23 @@ bool USDCReader::Impl::ResolveFieldValuePairs(
                                 "Internal error: crate reader is nullptr.");
     }
 
+    // Release budget reserved by the previous DecodeFieldSet call before
+    // clearing the scratch buffer (scratch->clear() frees the actual memory).
+    if (_scratch_budget_reserved > 0) {
+      crate_reader->ReleaseMemoryBudget(_scratch_budget_reserved);
+      _scratch_budget_reserved = 0;
+    }
+
     scratch->clear();
+
+    uint64_t budget_before = crate_reader->GetMemoryUsageInBytes();
     if (!crate_reader->DecodeFieldSet(spec.fieldset_index, scratch)) {
       PUSH_ERROR_AND_RETURN_TAG(
           kTag, "Failed to decode fieldset id: " +
                     std::to_string(spec.fieldset_index.value));
     }
+    _scratch_budget_reserved =
+        crate_reader->GetMemoryUsageInBytes() - budget_before;
 
     (*fvs) = scratch;
     return true;
