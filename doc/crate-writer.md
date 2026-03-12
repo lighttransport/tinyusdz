@@ -7,7 +7,7 @@ The TinyUSDZ USDC Crate Writer (`src/crate-writer.{cc,hh}`) writes USD Stage dat
 - Core: `src/crate-writer.cc` (3,470+ lines)
 - Stage converter: `src/stage-converter.cc`
 - CLI: `examples/tusdcat` with `-o/--output` option
-- Unit tests: 68 tests (all passing)
+- Unit tests: 61 tests (all passing)
 
 ## Usage
 
@@ -24,24 +24,26 @@ The TinyUSDZ USDC Crate Writer (`src/crate-writer.{cc,hh}`) writes USD Stage dat
 
 **Core**: Binary v0.8.0 writing, file header, TOC, LZ4 compression, value deduplication, path tree encoding.
 
-**Data Types**: Basic types (int, float, double, bool, string, token), vectors, matrices, paths, TimeSamples with ValueRep format, ListOp<T> for references/payloads/inherits, TokenListOp.
+**Data Types**: Basic types (int, float, double, bool, string, token), vectors, matrices, paths, TimeSamples with ValueRep format, ListOp<T> for references/payloads/inherits, TokenListOp, StringListOp, PathListOp, Dictionary values, VariantSelectionMap.
 
-**Geometry**: Basic shapes, GeomMesh with animated points, GPrim properties (visibility, purpose, extent).
+**Geometry**: Mesh (with animated points, normals, advanced features, blend shapes), Cone, Cylinder, Capsule, GeomPoints, GeomCamera, GeomBasisCurves, GeomNurbsCurves, GeomSubset, GeomPointInstancer (with instance offsets), Model, Scope, GPrim properties (visibility, purpose, extent, normal interpolation).
 
-**Metadata**: Prim/attribute/relationship metadata, CustomData, AssetInfo.
+**Materials**: Material, Shader, NodeGraph, UsdPreviewSurface, UsdUVTexture, UsdPrimvarReader, UsdTransform2d, material binding.
 
-**Composition**: References with customData, payloads, inherits, sublayers with LayerOffset.
+**Lighting**: SphereLight, RectLight, DistantLight, DomeLight, multiple lights, light filters.
+
+**Skeletal**: Skeleton, SkelAnimation, SkelRoot, skeletal binding.
+
+**Metadata**: Prim/attribute/relationship metadata, CustomData, AssetInfo, layer metadata (framesPerSecond, startTimeCode, endTimeCode, upAxis, metersPerUnit).
+
+**Composition**: References with customData, payloads, inherits, sublayers with LayerOffset, specializes arc.
+
+**Safety**: Error context reporting, memory limits, filesize limits, validation (enable/disable), compression.
 
 ## Not Yet Implemented
 
 - Separate attribute/connection specs (currently embedded in parent prim)
 - Variant/VariantSet specs
-- Material/shader writing (structure only)
-- StringListOp, PathListOp, Dictionary values
-- GeomCamera, GeomBasisCurves, GeomNurbsCurves, GeomPoints, GeomPointInstancer
-- UsdLux light types
-- UsdSkel (skeletal animation writing)
-- Layer metadata (startTimeCode, endTimeCode, upAxis, etc.)
 
 ## Resolved Issues
 
@@ -132,8 +134,5 @@ Arrays can be both deduplicated and compressed:
 
 Priority order:
 1. Separate attribute/connection specs (correctness)
-2. Layer metadata support
-3. Material & shader networks
-4. Complete geometry types
-5. Variant support
-6. Performance optimizations (incremental writing, parallelism)
+2. Variant/VariantSet support
+3. Performance optimizations (incremental writing, parallelism)
