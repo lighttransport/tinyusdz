@@ -2189,6 +2189,22 @@ struct MeshConverterConfig {
 #endif
 
   //
+  // Normal storage format selection.
+  // Packed1010102 reduces normal storage from 12 to 4 bytes/vertex (67% savings).
+  // ~0.1° angular resolution, sufficient for rendering.
+  //
+  enum class NormalStorageFormat {
+    Float3,        // float3 normals (12 bytes/vertex, baseline)
+    Packed1010102, // INT_2_10_10_10_REV xyz (4 bytes/vertex)
+  };
+
+#ifdef __EMSCRIPTEN__
+  NormalStorageFormat normal_storage{NormalStorageFormat::Packed1010102};
+#else
+  NormalStorageFormat normal_storage{NormalStorageFormat::Float3};
+#endif
+
+  //
   // Allowed relative error to check if vertex data is the same.
   // Used for 'facevarying' variability to `vertex` variability conversion in
   // ConvertMesh. Only effective to floating-point vertex data.
