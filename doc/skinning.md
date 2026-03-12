@@ -4,160 +4,181 @@ Reference: https://openusd.org/dev/api/_usd_skel__intro.html
 
 ## Core Components
 
-* **SkelRoot** : Encapsulation prim. Signals that a subtree contains skinned prims. Any `SkelBindingAPI` bindings without a `UsdSkelRoot` ancestor are invalid.
-* **Skeleton** : Encodes joint hierarchy via `joints` (ordered token array of `SdfPath` strings). Stores `bindTransforms` (world-space) and `restTransforms` (joint-local-space).
-* **SkelAnimation** : Stores per-joint animation as TRS components in joint-local space. Transform construction order: Scale-Rotate-Translate.
-* **UsdSkelBindingAPI** : Connects meshes to skeletons. Defines `skel:skeleton`, `skel:animationSource`, `primvars:skel:jointIndices/jointWeights`, `primvars:skel:geomBindTransform`.
+* **SkelRoot**: Encapsulation prim. Signals that a subtree contains skinned prims. Any `SkelBindingAPI` bindings without a `UsdSkelRoot` ancestor are invalid.
+* **Skeleton**: Encodes joint hierarchy via `joints` (ordered token array of `SdfPath` strings). Stores `bindTransforms` (world-space) and `restTransforms` (joint-local-space).
+* **SkelAnimation**: Stores per-joint animation as TRS components in joint-local space. Transform construction order: Scale-Rotate-Translate.
+* **UsdSkelBindingAPI**: Connects meshes to skeletons. Defines `skel:skeleton`, `skel:animationSource`, `primvars:skel:jointIndices/jointWeights`, `primvars:skel:geomBindTransform`.
 
 ## Terminology
 
-* `bindTransforms` : **World-space** matrices of each joint at bind time (from `Skeleton.bindTransforms`)
-* `restTransforms` : **Joint-local-space** matrices of each joint at rest pose (from `Skeleton.restTransforms`). Used as fallback when `SkelAnimation` does not supply a transform for a joint.
-* `geomBindTransform` : **World-space** transform of the skinned mesh primitive at bind time (from `primvars:skel:geomBindTransform`). Defaults to identity if not authored.
-* `SkelAnimation` : Per-joint animation in joint-local space (TRS components)
-* Sparse : When `SkelAnimation` maps animation to a subset of joints (others fall back to `restTransforms`)
-* Non-Sparse : When `SkelAnimation` maps animation to all joints
+* `bindTransforms`: **World-space** matrices of each joint at bind time (from `Skeleton.bindTransforms`)
+* `restTransforms`: **Joint-local-space** matrices of each joint at rest pose (from `Skeleton.restTransforms`). Fallback when `SkelAnimation` does not supply a transform.
+* `geomBindTransform`: **World-space** transform of the skinned mesh at bind time (from `primvars:skel:geomBindTransform`). Defaults to identity.
+* Sparse: When `SkelAnimation` maps animation to a subset of joints (others fall back to `restTransforms`)
 
-Both `bindTransforms` and `restTransforms` must exist in USD for correct skinning. Neither is automatically computed from the other by most implementations (usdview, Houdini, TinyUSDZ).
+Both `bindTransforms` and `restTransforms` must exist for correct skinning. Neither is automatically computed from the other.
 
 ## Transform Spaces
 
 | Space | Description |
 |-------|-------------|
 | **Joint Local** | Individual joint transforms (animation TRS). Used for blending. |
-| **Skeleton Space** | "Object space" of the Skeleton. Output space of the skinning equation. Does NOT include the Skeleton prim's world positioning. |
+| **Skeleton Space** | "Object space" of the Skeleton. Does NOT include the Skeleton prim's world positioning. |
 | **World Space** | Global scene space. `bindTransforms` and `geomBindTransform` are both in this space. |
 
 ## Transform Computations
 
 ```
-# Joint local → skeleton space (concatenate parent chain)
+# Joint local -> skeleton space (concatenate parent chain)
 jointSkelTransform = jointLocalTransform * parentJointSkelTransform
-  (identity for root joints)
 
-# Skeleton space → world space
-jointWorldTransform = jointSkelTransform * skelLocalToWorldTransform
-
-# Animation TRS → local transform
+# Animation TRS -> local transform
 jointLocalTransform = MakeTransform(scale, rotation, translation)
   (order: Scale-Rotate-Translate)
 ```
 
 ## Skinning Transform
 
-The per-joint skinning transform describes the change from bind pose to animated pose:
+Per-joint skinning transform (change from bind to animated pose):
 
 ```
 skinningTransform[i] = inv(bindTransforms[i]) * jointSkelTransform[i]
 ```
 
-Where:
-- `bindTransforms[i]` = world-space bind pose of joint `i` (from `Skeleton.bindTransforms`)
-- `jointSkelTransform[i]` = current animated skeleton-space transform of joint `i`
-
-This is what `UsdSkelSkeletonQuery::ComputeSkinningTransforms()` computes.
-
-**Key insight**: `bindTransforms` are in **world space** while animated transforms are in **skeleton space**. The inverse-bind operation correctly bridges these spaces.
-
-## Skinning a Point (Linear Blend Skinning)
+## Linear Blend Skinning (LBS)
 
 ```
-# Step 1: Transform mesh-local point into bind space (world-aligned at bind time)
+# Step 1: Transform mesh-local point into bind space
 skelSpacePoint = geomBindTransform.Transform(localSpacePoint)
 
 # Step 2: Apply weighted skinning transforms
-skinnedPoint = (0, 0, 0)
-for jointIndex, jointWeight in jointInfluencesForPoint:
-    skinnedPoint += skinningTransforms[jointIndex].Transform(skelSpacePoint) * jointWeight
+skinnedPoint = sum_i( w_i * skinningTransform[i].Transform(skelSpacePoint) )
 
-# Result is in skeleton space
-```
-
-Expanding the skinning transform:
-```
-skinnedPoint = Σ(w_i * inv(bindTransforms[i]) * jointSkelTransform[i] * geomBindTransform * localPoint)
-```
-
-To get final world-space position (rendering):
-```
+# Result is in skeleton space. For world space:
 worldPoint = skinnedPoint * skelLocalToWorldTransform
+```
+
+Expanded:
+```
+skinnedPoint = sum_i( w_i * inv(B_i) * J_i(t) * G * p_local )
 ```
 
 ## xformOps on Skinned Primitives: IGNORED
 
-Per the UsdSkel specification:
+Per the UsdSkel spec, mesh prim xformOps have **no effect** on skinned rendering. The `geomBindTransform` replaces the mesh's xformable transform. The Skeleton prim's world transform positions the result.
 
-> "When a primitive is skinned, any transform on the prim authored by way of the
-> typical UsdGeomXformable schema has **no effect** on the rendered results.
-> Skinned geometry primitives are rendered in skeleton space, rather than
-> being transformed back into local gprim space."
-
-This means:
-- **Mesh prim's xformOps** (translate, rotate, scale on the mesh or its parent Xforms below SkelRoot) have **no effect** on the final skinned rendering
-- The **geomBindTransform** replaces the mesh's xformable transform for skinning purposes
-- The **Skeleton prim's world transform** (`skelLocalToWorldTransform`) positions the skinned result in the world
-
-### For baking skinned results to gprim-local space
-
-When baking (as in OpenUSD's `bakeSkinning.cpp`), the mesh's world transform IS used to convert the skeleton-space result back to gprim-local space:
+For baking to gprim-local space:
 ```
 localSkinnedPoint = skelSkinnedPoint * skelLocalToWorld * inv(gprimLocalToWorld)
 ```
 
 ## Dual Quaternion Skinning (DQS)
 
-Supported via `primvars:skel:skinningMethod = "DualQuaternion"`. Same transform pipeline as LBS but uses dual quaternion interpolation (preserves volume better around joints).
+Supported via `primvars:skel:skinningMethod = "DualQuaternion"`. Same pipeline as LBS but uses dual quaternion interpolation (preserves volume better).
 
 ## Blend Shapes
 
-Applied BEFORE joint skinning: blend shape offsets are added to input positions, then standard skinning (LBS or DQS) is applied.
+Applied BEFORE joint skinning: offsets added to input positions, then standard skinning applied.
+
+---
 
 ## TinyUSDZ Tydra Data Export
 
-TinyUSDZ Tydra does NOT compute skinning transforms or apply geomBindTransform to vertices. It exports raw USD data for the renderer to process:
+Tydra does NOT compute skinning transforms. It exports raw USD data:
 
 **Per-mesh** (`RenderMesh::joint_and_weights`):
-- `geomBindTransform` : matrix4d (as-is from USD, or identity)
-- `hasGeomBindTransform` : bool (true if explicitly authored)
-- `jointIndices` : int[] (vertexCount × elementSize)
-- `jointWeights` : float[] (vertexCount × elementSize)
-- `elementSize` : influences per vertex
-- `skel_id` : index into `RenderScene::skeletons`
+- `geomBindTransform`: matrix4d (as-is from USD, or identity)
+- `jointIndices`: int[] (vertexCount x elementSize)
+- `jointWeights`: float[] (vertexCount x elementSize)
+- `elementSize`: influences per vertex
+- `skel_id`: index into `RenderScene::skeletons`
 
-**Per-skeleton** (`SkelHierarchy` → `SkelNode` tree):
-- `bind_transform` : world-space bind pose (from `Skeleton.bindTransforms`)
-- `rest_transform` : joint-local rest pose (from `Skeleton.restTransforms`, or computed from bindTransforms if missing)
-- `joint_id` : index in skeleton's joints array
+**Per-skeleton** (`SkelHierarchy` -> `SkelNode` tree):
+- `bind_transform`: world-space bind pose
+- `rest_transform`: joint-local rest pose
+- `joint_id`: index in skeleton's joints array
 
 **Animation** (`AnimationClip`):
-- Per-joint TRS animation channels with samplers (time/value arrays)
+- Per-joint TRS channels with samplers (time/value arrays)
 
-**Scene graph nodes** (`Node`):
-- `local_matrix` : the prim's xformOps (set for ALL node types including skinned meshes)
-- `global_matrix` : local_matrix × parent global_matrix
-- `nodeType` : Xform, Mesh, Skeleton, etc.
+Tydra does **not** strip mesh xformOps for skinned prims.
 
-Tydra does **not** strip mesh xformOps for skinned prims.  The full scene graph
-hierarchy is exported as-is.
+---
 
-## Three.js Skinning (TinyUSDZ Viewer)
+## Skinning Evaluation Equations
 
-The TinyUSDZ JavaScript viewer does **not** follow the USD spec literally.
-Instead of ignoring mesh xformOps and passing `geomBindTransform` / `bindTransforms`
-directly, it preserves the full USD scene graph in Three.js and uses `bind()` without
-custom arguments.  Three.js computes all skinning matrices in world space from its
-own scene graph, producing results equivalent to the USD spec.
+### Notation
 
-**Key points:**
-- `mesh.bind(skeleton)` is called without custom `bindMatrix` or `boneInverses`
-- Three.js internally sets `bindMatrix = mesh.matrixWorld` and
-  `boneInverses[i] = inv(bone.matrixWorld)` — both in world space
-- USD `geomBindTransform` and `bindTransforms` are **not** passed to `bind()`
-- Mesh xformOps are preserved in the scene graph; they cancel through the
-  `inv(W_mesh) * ... * W_mesh_bind` mechanism rather than being ignored
+- `p_local`: mesh point in mesh-local space
+- `G`: `primvars:skel:geomBindTransform` (world-space)
+- `w_i`: skin weight for joint `i`
+- `J_i(t)`: joint skeleton-space transform at time `t`
+- `B_i`: `bindTransforms[i]` (world-space bind pose)
+- `S(t)`: Skeleton prim world transform at time `t`
 
-See **[skin-eval.md](skin-eval.md)** for the full derivation, including:
-- The Three.js skinning formula and proof of ancestor-cancellation
-- Equivalence mapping between USD spec and Three.js quantities
-- Comparison with Blender and Maya-USD import approaches
-- Why this world-space approach is preferred over literal USD spec for Three.js
+### USD-Spec Evaluation
+
+```
+K_i(t)     = inv(B_i) * J_i(t)
+p_skel(t)  = sum_i[ w_i * K_i(t) * G * p_local ]
+p_world(t) = S(t) * p_skel(t)
+```
+
+Mesh xformOps and parent transforms below SkelRoot are **ignored**.
+
+### Blender Import Evaluation
+
+```
+p_world_blender(t) = M_parentAboveSkel(t) * M_parentBelowSkel(t) * M_meshLocal
+                      * sum_i[ w_i * inv(B_i) * J_i(t) * G * p_local ]
+```
+
+**Key difference**: Blender applies mesh and parent xformOps, which deviates from the USD spec.
+
+### TinyUSDZ / Three.js Evaluation
+
+TinyUSDZ exports the **full USD scene graph** and lets Three.js's world-space `bind()` produce the correct result.
+
+```
+W_mesh_bind   = A * M_mesh
+W_bone_i_bind = A * M_skel * L_i_bind
+
+p_clip(t) = P * V * sum_i[ w_i * W_bone_i(t) * inv(W_bone_i_bind) * W_mesh_bind * p_local ]
+```
+
+Where `A` = shared ancestor chain (scene root -> SkelRoot).
+
+**Why mesh xformOps don't cause double transforms**: Both mesh and bones share the `/SkelRoot` ancestor. The shared prefix cancels in the `bone * inv(bone_bind) * mesh_bind` product.
+
+At bind pose (`L_i(t) = L_i_bind`):
+```
+p_clip = P * V * W_mesh_bind * p_local
+```
+
+### Equivalence to USD spec
+
+| USD spec quantity | Three.js equivalent |
+|---|---|
+| `G` (geomBindTransform) | `W_mesh_bind` (mesh.matrixWorld at bind) |
+| `inv(B_i)` | `inv(W_bone_i_bind)` (calculateInverses) |
+| `J_i(t)` | Encoded in `W_bone_i(t)` via scene graph |
+| `S(t)` | Implicit in `W_bone_i(t)` ancestor chain |
+| Mesh xformOps ignored | Cancel via `inv(W_mesh)` |
+
+### Why this approach works for Three.js
+
+1. **Natural scene graph**: SkinnedMesh/Skeleton designed around world-space `bind()`
+2. **AnimationMixer**: Node animations target scene graph nodes by name
+3. **AttachedBindMode**: Post-bind ancestor changes handled automatically
+4. **No geomBindTransform pass-through**: `W_mesh_bind` serves the same role as `G`
+
+### Maya-USD Import
+
+Maya avoids double transforms by setting `inheritsTransform = false` on skinned mesh transform nodes and applying `geomBindTransform` as the mesh transform.
+
+---
+
+## Practice Notes
+
+- `S(t)` must be evaluated as the Skeleton prim's full local-to-world transform at time `t`, including all ancestor xformOps.
+- A transform above a skinned mesh affects final output only if it is part of the Skeleton prim's ancestor chain.
