@@ -369,6 +369,73 @@ The `_lazy_fieldset_cache` in usdc-reader caused invalid cache reuse when differ
 | Complete RenderMesh memory estimation | JointAndWeight, ShapeTarget, MaterialSubset internals | `render-data.cc` |
 | Complete RenderScene memory estimation | Node tree, RenderMaterial, AnimationClip, SkelHierarchy, TextureImage | `render-data.cc` |
 | Complete Layer memory estimation | VariantSetSpec internals (recursive PrimSpec trees) | `layer.cc` |
+| MMap zero-copy V1 (hybrid) | Avoids EvaluateTypedAnimatableAttribute copy for points/normals | `mmap-array-ref.hh`, `crate-reader.cc`, `usdc-reader.cc`, `stage.cc`, `render-data.cc` |
+
+## MMap Zero-Copy Pipeline (V1 — Hybrid)
+
+### Overview
+
+When loading USDC files via mmap, large uncompressed float/double arrays (points, normals, texcoords) can be read directly from the mmap'd buffer by Tydra's `ConvertMesh`, bypassing the intermediate `EvaluateTypedAnimatableAttribute` copy. This is the "V1 hybrid" approach — data is fully unpacked into Stage as usual, but mmap byte offsets are *also* recorded alongside so Tydra can optionally use them for direct reads.
+
+### How It Works
+
+1. **CrateReader** (`crate-reader.cc`): When `config.use_mmap` is set, `UnpackValueRep` calls `DescribeValueRep` before normal unpacking. For eligible uncompressed arrays (≥1024 elements, float/double/half vector types), it records byte offset, element count, element size, and type ID in an `MMapArrayRef` (24 bytes). The ref is attached to the `CrateValue` via `set_mmap_ref()`. Normal unpacking proceeds — data is still fully materialized in Stage.
+
+2. **USDC Reader** (`usdc-reader.cc`): During property reconstruction, if a `CrateValue` has an mmap ref, it's collected into an `MMapArrayTable` keyed by `"prim_path\0attr_name"`. After `ReconstructStage`, the table is attached to the Stage.
+
+3. **Stage** (`stage.hh/cc`): Holds optional `MMapArrayTable` (offset metadata) and `MMapDataSource` (pointer to mmap'd buffer). Both are `unique_ptr` to avoid header coupling. Not copied on Stage copy (mmap data is not transferable).
+
+4. **Tydra** (`render-data.cc`): `TryReadMMapArray<T>()` checks `stage.has_mmap_zero_copy()`, looks up the prim path + attr name in the table, validates bounds/alignment via `MMapDataSource::get_ptr<T>()`, then does a single `memcpy` from mmap to output vector. Falls back to `EvaluateTypedAnimatableAttribute` if mmap path is unavailable. Currently used for `points` and authored `normals` (not `primvars:normals` which needs index expansion).
+
+### Eligible Array Types
+
+Only types that are NEVER compressed in USDC:
+- `VEC2F`, `VEC3F`, `VEC4F` (float2/3/4, point3f, normal3f, color3f, texcoord2f)
+- `VEC2D`, `VEC3D`, `VEC4D` (double2/3/4)
+- `VEC2H`, `VEC3H`, `VEC4H` (half2/3/4)
+- `FLOAT`, `DOUBLE`, `HALF` (scalar arrays)
+
+NOT eligible: `INT`, `UINT`, `INT64`, `UINT64` (use LZ4+integer compression in USDC).
+
+Minimum threshold: 1024 elements (avoids breaking small arrays like `extent` with 2 elements).
+
+### Activation
+
+- **CLI** (`tydra_to_renderscene`): `--mmap-lowmem` flag sets `USDLoadOptions::mmap_zero_copy = true`
+- **WASM** (`binding.cc`): `setMMapZeroCopy(true)` — default off, to be enabled after more testing
+- **C++ API**: `USDLoadOptions::mmap_zero_copy = true` when calling `LoadUSDFromMemory()` / `LoadUSDCFromMemory()`
+
+The mmap'd buffer (or input memory buffer in WASM) must stay alive while the Stage is in use.
+
+### Test Results
+
+| Model | Deferred Arrays | Output | Status |
+|-------|----------------|--------|--------|
+| suzanne-subd-lv5.usdc (3M verts) | 3 | OBJ identical to baseline | Pass |
+| suzanne-subd-lv6.usdc (12M verts) | 3 | OBJ identical to baseline | Pass |
+| timesamples-array-dedup-001.usdc | — | Correct parse + conversion | Pass |
+| timesamples-array-dedup-002.usdc | — | Correct parse + conversion | Pass |
+| timesamples-array-dedup-004.usdc | — | Correct parse + conversion | Pass |
+| outpost_19.usdz (dedup UV timeSamples) | 233 | Correct conversion, 116.35 MB RenderScene | Pass |
+
+### V2 Plan — Full Deferred Read
+
+V1 hybrid records offsets but still fully unpacks data into Stage (no Stage memory savings). A future V2 would:
+
+1. **Defer reads for large arrays**: Instead of unpacking, store only the 24-byte `MMapArrayRef` in Stage as a sentinel value. Stage memory would drop from ~288 MB to ~0 for float arrays on suzanne-lv6.
+2. **Selective deferral**: Only defer arrays above a size threshold AND that don't need index expansion (i.e., vertex-interpolated, not face-varying with separate indices). Face-varying primvars with indices must still be fully read for `flatten_with_indices()`.
+3. **TimeSamples support**: V1 only handles `default` values. V2 would extend to timeSampled arrays by hooking into `UnpackTimeSampleValue_*` / `ReadArray` paths in `crate-reader-timesamples.cc`.
+4. **USDZ offset adjustment**: USDC payload within USDZ sits at a ZIP local file header offset. V2 would adjust `MMapArrayRef::byte_offset` to account for this, enabling full zero-copy for USDZ files.
+5. **Lazy materialization**: On-demand unpacking when Stage data is accessed (not just via Tydra), with cache to avoid re-reading.
+
+**Expected V2 savings** (suzanne-subd-lv6.usdc, 12M verts):
+
+| Component | V1 (current) | V2 (planned) |
+|-----------|-------------|-------------|
+| Stage float arrays | ~288 MB | ~0 (sentinels) |
+| Tydra local copy | saved by mmap read | saved by mmap read |
+| RenderMesh (final) | ~400 MB | ~400 MB |
+| **Estimated peak** | ~600-700 MB | ~400-450 MB |
 
 ## TODO Tasks
 
@@ -406,6 +473,9 @@ The `_lazy_fieldset_cache` in usdc-reader caused invalid cache reuse when differ
 
 ### Low Priority
 
+- [ ] **MMap zero-copy V2: deferred reads** — Store sentinel `MMapArrayRef` instead of full data in Stage for large uncompressed arrays. Requires selective deferral (skip face-varying primvars with indices), lazy materialization on Stage access, and TimeSamples path support. See "V2 Plan" section above.
+- [ ] **MMap zero-copy: USDZ offset adjustment** — Adjust `MMapArrayRef::byte_offset` by the ZIP local file header offset so USDZ files get full zero-copy (V1 records offsets but they're relative to the USDC payload start, not the USDZ file start; works because `LoadUSDFromMemory` receives the full USDZ buffer).
+- [ ] **MMap zero-copy: texcoord mmap path** — Add `TryReadMMapArray` for `primvars:st` (texcoord2f) in ConvertMesh. Requires care: only applicable when texcoords are vertex-interpolated or when index expansion is not needed.
 - [ ] **Three.js packed tangent `BufferAttribute`** — Three.js doesn't natively support `GL_INT_2_10_10_10_REV`. Investigate `InterleavedBufferAttribute` or custom WebGL calls to avoid unpack-to-float in binding.
 - [ ] **Memory-based CrateWriter** — `usdc-writer.cc` TODO for in-memory USDC writing (currently uses temp file).
 - [ ] **Multi-threaded tangent computation** — Hybrid and FastMikkTSpace are single-threaded. Parallelize per-face derivative phase.
@@ -434,5 +504,7 @@ The `_lazy_fieldset_cache` in usdc-reader caused invalid cache reuse when differ
 | `examples/tusdcat/main.cc` | mmap loading, `--memstat` reporting |
 | `examples/tydra_to_renderscene/to-renderscene-main.cc` | Conversion example with `--memstat` reporting |
 | `tests/feat/tangent/bench_tangent.cc` | Tangent memory/quality benchmark |
+| `src/mmap-array-ref.hh` | MMapArrayRef, MMapArrayTable, MMapDataSource types |
+| `src/crate-format.hh` | CrateValue mmap_ref attachment |
 | `doc/TYPED_ARRAY_REVIEW_2025.md` | Removed (TypedArrayPtr ownership issues resolved) |
 | `doc/tydra-tangent.md` | Tangent computation and quantization docs |

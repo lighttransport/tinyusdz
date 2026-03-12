@@ -51,6 +51,7 @@
 #include "bone-util.hh"
 #include "shape-to-mesh.hh"
 #include "materialx-to-json.hh"
+#include "mmap-array-ref.hh"
 
 
 // Helper macros for iterating over TypedTimeSamples in both AoS and SoA modes
@@ -4258,6 +4259,23 @@ static bool QuantizeMeshNormals(
   return true;
 }
 
+/// Try to read array attribute directly from mmap. Returns true if successful.
+template <typename T>
+static bool TryReadMMapArray(
+    const Stage &stage,
+    const std::string &prim_path,
+    const std::string &attr_name,
+    std::vector<T> *out) {
+  if (!stage.has_mmap_zero_copy()) return false;
+  const MMapArrayRef *ref = stage.mmap_table()->find(prim_path, attr_name);
+  if (!ref) return false;
+  const T *ptr = stage.mmap_source()->get_ptr<T>(*ref);
+  if (!ptr) return false;
+  out->resize(static_cast<size_t>(ref->element_count));
+  memcpy(out->data(), ptr, ref->element_count * sizeof(T));
+  return true;
+}
+
 bool RenderSceneConverter::ConvertMesh(
     const RenderSceneConverterEnv &env, const Path &abs_prim_path,
     const GeomMesh &mesh, const MaterialPath &material_path,
@@ -4304,13 +4322,20 @@ bool RenderSceneConverter::ConvertMesh(
   // TODO: Make error when Mesh's indices is empty?
   //
 
+  // Prim path string for mmap zero-copy lookups
+  const std::string prim_path_str = abs_prim_path.prim_part();
+
   {
     std::vector<value::point3f> points;
-    bool ret = EvaluateTypedAnimatableAttribute(
-        env.stage, mesh.points, "points", &points, &_err, env.timecode,
-        value::TimeSampleInterpolationType::Linear);
-    if (!ret) {
-      return false;
+    bool got_points = TryReadMMapArray<value::point3f>(
+        env.stage, prim_path_str, "points", &points);
+    if (!got_points) {
+      bool ret = EvaluateTypedAnimatableAttribute(
+          env.stage, mesh.points, "points", &points, &_err, env.timecode,
+          value::TimeSampleInterpolationType::Linear);
+      if (!ret) {
+        return false;
+      }
     }
 
     if (points.empty()) {
@@ -4323,13 +4348,6 @@ bool RenderSceneConverter::ConvertMesh(
       //    fmt::format("`points` is empty. Prim {}", abs_prim_path));
 
     } else {
-
-      //if (env.mesh_config.lowmem) {
-      //  auto *pmesh = const_cast<GeomMesh *>(&mesh);
-      //  std::vector<value::point3f> empty;
-      //  pmesh->points = empty;
-      //}
-
       dst.points.resize(points.size());
       memcpy(dst.points.data(), points.data(),
              sizeof(value::float3) * points.size());
@@ -4720,6 +4738,8 @@ bool RenderSceneConverter::ConvertMesh(
     std::vector<value::normal3f> normals;
 
     if (mesh.has_primvar("normals")) {  // primvars:normals
+      // Primvar path: may have separate indices, must use flatten_with_indices.
+      // Do NOT use mmap zero-copy here since primvar expansion is needed.
       GeomPrimvar pvar;
       if (!GetGeomPrimvar(env.stage, &mesh, "normals", &pvar, &_err)) {
         return false;
@@ -4746,9 +4766,14 @@ bool RenderSceneConverter::ConvertMesh(
       }
 
     } else if (mesh.normals.authored()) {  // look 'normals'
-      if (!EvaluateTypedAnimatableAttribute(env.stage, mesh.normals, "normals",
-                                            &normals, &_err, env.timecode,
-                                            env.tinterp)) {
+      // Try mmap zero-copy for direct normals attribute
+      bool got_normals = TryReadMMapArray<value::normal3f>(
+          env.stage, prim_path_str, "normals", &normals);
+      if (!got_normals) {
+        if (!EvaluateTypedAnimatableAttribute(env.stage, mesh.normals, "normals",
+                                              &normals, &_err, env.timecode,
+                                              env.tinterp)) {
+        }
       }
     }
 
@@ -5714,21 +5739,26 @@ bool RenderSceneConverter::ConvertMesh(
     }
 
     // Dispatch tangent computation based on configured method.
-    // Default is Lengyel (fast, lightweight). MikkTSpace is optional
-    // (industry standard but slow and memory-heavy for large meshes).
+    // Default is Lengyel (fast, lightweight). MikkTSpace/FastMikkTSpace/Hybrid
+    // are optional higher-quality methods.
     bool used_mikktspace = false;
 
     if (env.mesh_config.tangent_method == MeshConverterConfig::TangentComputationMethod::MikkTSpace ||
-        env.mesh_config.tangent_method == MeshConverterConfig::TangentComputationMethod::FastMikkTSpace) {
-      // MikkTSpace path (original or optimized, explicitly requested)
+        env.mesh_config.tangent_method == MeshConverterConfig::TangentComputationMethod::FastMikkTSpace ||
+        env.mesh_config.tangent_method == MeshConverterConfig::TangentComputationMethod::Hybrid) {
       std::string mikk_err;
       bool mikktspace_ok = false;
       bool use_fast = (env.mesh_config.tangent_method == MeshConverterConfig::TangentComputationMethod::FastMikkTSpace);
+      bool use_hybrid = (env.mesh_config.tangent_method == MeshConverterConfig::TangentComputationMethod::Hybrid);
 
       if (!is_single_indexable) {
         std::vector<value::float3> fv_normals(normals_ptr, normals_ptr + normals_count);
         std::vector<value::float2> fv_texcoords(texcoords_ptr, texcoords_ptr + texcoords_count);
-        if (use_fast) {
+        if (use_hybrid) {
+          mikktspace_ok = fast_mikkt::ComputeTangentsHybrid(
+              *points_ptr, fv_normals, fv_texcoords, dst.faceVertexCounts(),
+              &tangents, &binormals, nullptr, &mikk_err);
+        } else if (use_fast) {
           mikktspace_ok = fast_mikkt::ComputeTangentsFastMikkTSpace(
               *points_ptr, fv_normals, fv_texcoords, dst.faceVertexCounts(),
               &tangents, &binormals, &mikk_err);
@@ -5747,7 +5777,11 @@ bool RenderSceneConverter::ConvertMesh(
           if (fvi[i] < normals_count) fv_normals[i] = normals_ptr[fvi[i]];
           if (fvi[i] < texcoords_count) fv_texcoords[i] = texcoords_ptr[fvi[i]];
         }
-        if (use_fast) {
+        if (use_hybrid) {
+          mikktspace_ok = fast_mikkt::ComputeTangentsHybrid(
+              fv_positions, fv_normals, fv_texcoords, dst.faceVertexCounts(),
+              &tangents, &binormals, nullptr, &mikk_err);
+        } else if (use_fast) {
           mikktspace_ok = fast_mikkt::ComputeTangentsFastMikkTSpace(
               fv_positions, fv_normals, fv_texcoords, dst.faceVertexCounts(),
               &tangents, &binormals, &mikk_err);
@@ -5761,7 +5795,7 @@ bool RenderSceneConverter::ConvertMesh(
       if (mikktspace_ok) {
         used_mikktspace = true;
       } else {
-        DCOUT("MikkTSpace tangent computation failed: " << mikk_err
+        DCOUT("MikkTSpace/Hybrid tangent computation failed: " << mikk_err
               << ". Falling back to Lengyel method.");
       }
     }
@@ -8412,8 +8446,10 @@ bool RenderSceneConverter::ComputeDeferredTangents(
   bool used_mikktspace = false;
 
   if (method == MeshConverterConfig::TangentComputationMethod::MikkTSpace ||
-      method == MeshConverterConfig::TangentComputationMethod::FastMikkTSpace) {
+      method == MeshConverterConfig::TangentComputationMethod::FastMikkTSpace ||
+      method == MeshConverterConfig::TangentComputationMethod::Hybrid) {
     bool use_fast = (method == MeshConverterConfig::TangentComputationMethod::FastMikkTSpace);
+    bool use_hybrid = (method == MeshConverterConfig::TangentComputationMethod::Hybrid);
     std::string mikk_err;
     bool mikktspace_ok = false;
 
@@ -8424,7 +8460,11 @@ bool RenderSceneConverter::ComputeDeferredTangents(
       }
       std::vector<value::float3> fv_normals(normals_ptr, normals_ptr + normals_count);
       std::vector<value::float2> fv_texcoords(texcoords_ptr, texcoords_ptr + texcoords_count);
-      if (use_fast) {
+      if (use_hybrid) {
+        mikktspace_ok = fast_mikkt::ComputeTangentsHybrid(
+            fv_positions, fv_normals, fv_texcoords, fvc,
+            &tangents, &binormals, nullptr, &mikk_err);
+      } else if (use_fast) {
         mikktspace_ok = fast_mikkt::ComputeTangentsFastMikkTSpace(
             fv_positions, fv_normals, fv_texcoords, fvc,
             &tangents, &binormals, &mikk_err);
@@ -8442,7 +8482,11 @@ bool RenderSceneConverter::ComputeDeferredTangents(
         if (fvi[i] < normals_count) fv_normals[i] = normals_ptr[fvi[i]];
         if (fvi[i] < texcoords_count) fv_texcoords[i] = texcoords_ptr[fvi[i]];
       }
-      if (use_fast) {
+      if (use_hybrid) {
+        mikktspace_ok = fast_mikkt::ComputeTangentsHybrid(
+            fv_positions, fv_normals, fv_texcoords, fvc,
+            &tangents, &binormals, nullptr, &mikk_err);
+      } else if (use_fast) {
         mikktspace_ok = fast_mikkt::ComputeTangentsFastMikkTSpace(
             fv_positions, fv_normals, fv_texcoords, fvc,
             &tangents, &binormals, &mikk_err);
@@ -8456,7 +8500,7 @@ bool RenderSceneConverter::ComputeDeferredTangents(
     if (mikktspace_ok) {
       used_mikktspace = true;
     } else {
-      if (err) *err = "MikkTSpace tangent computation failed: " + mikk_err + ". Falling back to Lengyel.";
+      if (err) *err = "MikkTSpace/Hybrid tangent computation failed: " + mikk_err + ". Falling back to Lengyel.";
       // Fall through to Lengyel
     }
   }

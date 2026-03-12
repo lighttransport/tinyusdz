@@ -15,6 +15,7 @@
 #include "prim-pprint.hh"
 #include "str-util.hh"
 #include "tinyusdz.hh"
+#include "mmap-array-ref.hh"
 #include "tydra/obj-export.hh"
 #include "tydra/render-data.hh"
 #include "tydra/scene-access.hh"
@@ -216,6 +217,8 @@ static void print_help(const char* prog_name) {
   std::cout << "  --tangent-method M    Tangent method: lengyel (default), mikktspace, fast-mikktspace\n";
   std::cout << "  --yaml                Output RenderScene as YAML (human-readable)\n";
   std::cout << "  --json                Output RenderScene as JSON (machine-readable)\n";
+  std::cout << "  --mmap-lowmem         Enable mmap zero-copy for uncompressed USDC arrays\n";
+  std::cout << "  --lowmem              Free GeomMesh data after conversion (reduces peak memory)\n";
 }
 
 int main(int argc, char **argv) {
@@ -242,6 +245,8 @@ int main(int argc, char **argv) {
   bool memstat = false;
   bool no_tangent = false;
   bool force_tangent = false;
+  bool mmap_lowmem = false;
+  bool lowmem = false;
   auto tangent_method = tinyusdz::tydra::MeshConverterConfig::TangentComputationMethod::Lengyel;
   std::string output_format = "yaml";  // "yaml" (human-readable), "json" (machine-readable)
 
@@ -305,6 +310,10 @@ int main(int argc, char **argv) {
       output_format = "yaml";
     } else if (strcmp(argv[i], "--json") == 0) {
       output_format = "json";
+    } else if (strcmp(argv[i], "--mmap-lowmem") == 0) {
+      mmap_lowmem = true;
+    } else if (strcmp(argv[i], "--lowmem") == 0) {
+      lowmem = true;
     } else {
       filepath = argv[i];
     }
@@ -329,6 +338,12 @@ int main(int argc, char **argv) {
   bool using_mmap = false;
   bool ret = false;
 
+  tinyusdz::USDLoadOptions load_options;
+  if (mmap_lowmem) {
+    load_options.mmap_zero_copy = true;
+    config_info.push_back({"mmap_zero_copy", "true"});
+  }
+
   if (tinyusdz::io::IsMMapSupported()) {
     config_info.push_back({"loading_method", "mmap"});
     if (!tinyusdz::io::MMapFile(filepath, &mmap_handle, /* writable */false, &err)) {
@@ -339,10 +354,14 @@ int main(int argc, char **argv) {
 
     // Load USD from mmap'd memory
     ret = tinyusdz::LoadUSDFromMemory(mmap_handle.addr, mmap_handle.size,
-                                       filepath, &stage, &warn, &err);
+                                       filepath, &stage, &warn, &err,
+                                       load_options);
   } else {
     // Fallback to file-based loading
     config_info.push_back({"loading_method", "file"});
+    if (mmap_lowmem) {
+      std::cerr << "WARN: --mmap-lowmem requested but mmap is not supported on this platform.\n";
+    }
     ret = tinyusdz::LoadUSDFromFile(filepath, &stage, &warn, &err);
   }
 
@@ -366,7 +385,12 @@ int main(int argc, char **argv) {
     size_t stage_mem = stage.estimate_memory_usage();
     std::cout << "# Memory Statistics (Stage)\n";
     std::cout << "  Stage memory usage: " << format_memory_size(stage_mem)
-              << " (" << stage_mem << " bytes)\n\n";
+              << " (" << stage_mem << " bytes)\n";
+    if (stage.has_mmap_zero_copy()) {
+      std::cout << "  mmap zero-copy: " << stage.mmap_table()->size()
+                << " deferred arrays\n";
+    }
+    std::cout << "\n";
   }
 
   if (usdprint) {
@@ -409,6 +433,11 @@ int main(int argc, char **argv) {
     config_info.push_back({"force_tangent", "true"});
   } else {
     config_info.push_back({"force_tangent", "false"});
+  }
+
+  if (lowmem) {
+    env.mesh_config.lowmem = true;
+    config_info.push_back({"lowmem", "true"});
   }
 
   env.mesh_config.tangent_method = tangent_method;

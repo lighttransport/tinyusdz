@@ -3282,6 +3282,154 @@ bool CrateReader::UnpackValueRepForTimeSamples(const crate::ValueRep &rep, uint6
 }
 #endif
 
+bool CrateReader::DescribeValueRep(const crate::ValueRep &rep,
+                                   MMapArrayRef *ref,
+                                   crate::CrateValue *value) {
+  // Only eligible for non-inlined, non-compressed arrays
+  if (!rep.IsArray() || rep.IsInlined() || rep.IsCompressed()) {
+    return false;
+  }
+
+  // Empty array (payload == 0)
+  if (rep.GetPayload() == 0) {
+    return false;
+  }
+
+  auto tyRet = crate::GetCrateDataType(rep.GetType());
+  if (!tyRet) {
+    return false;
+  }
+  const auto dty = tyRet.value();
+
+  // Only float/double/half vector types (never compressed in USDC)
+  uint32_t elem_size = 0;
+  switch (dty.dtype_id) {
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_HALF:
+      elem_size = sizeof(value::half);
+      break;
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_FLOAT:
+      elem_size = sizeof(float);
+      break;
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_DOUBLE:
+      elem_size = sizeof(double);
+      break;
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_VEC2H:
+      elem_size = sizeof(value::half2);
+      break;
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_VEC2F:
+      elem_size = sizeof(value::float2);
+      break;
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_VEC2D:
+      elem_size = sizeof(value::double2);
+      break;
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_VEC3H:
+      elem_size = sizeof(value::half3);
+      break;
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_VEC3F:
+      elem_size = sizeof(value::float3);
+      break;
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_VEC3D:
+      elem_size = sizeof(value::double3);
+      break;
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_VEC4H:
+      elem_size = sizeof(value::half4);
+      break;
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_VEC4F:
+      elem_size = sizeof(value::float4);
+      break;
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_VEC4D:
+      elem_size = sizeof(value::double4);
+      break;
+    default:
+      return false;  // Not eligible (int types use compression, etc.)
+  }
+
+  // Seek to the payload offset
+  uint64_t offset = rep.GetPayload();
+  if (!_sr->seek_set(offset)) {
+    return false;
+  }
+
+  // Read element count
+  uint64_t n = 0;
+  if (VERSION_LESS_THAN_0_8_0(_version)) {
+    uint32_t shapesize;
+    if (!_sr->read4(&shapesize)) return false;
+    uint32_t n32;
+    if (!_sr->read4(&n32)) return false;
+    n = n32;
+  } else {
+    if (!_sr->read8(&n)) return false;
+  }
+
+  if (n > _config.maxArrayElements) {
+    return false;
+  }
+
+  // Only defer large arrays — small arrays like `extent` (2 elements)
+  // must be fully materialized for reconstruction to work correctly.
+  static constexpr uint64_t kMinDeferElements = 1024;
+  if (n < kMinDeferElements) {
+    return false;
+  }
+
+  // Record the byte offset where data starts (right after the count)
+  ref->byte_offset = _sr->tell();
+  ref->element_count = n;
+  ref->element_size = elem_size;
+  ref->type_id = uint32_t(dty.dtype_id);
+
+  // Skip past the data
+  uint64_t data_size = n * elem_size;
+  if (!_sr->seek_set(ref->byte_offset + data_size)) {
+    return false;
+  }
+
+  // Set value to an empty typed vector for correct type propagation
+  switch (dty.dtype_id) {
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_HALF:
+      value->Set(std::vector<value::half>());
+      break;
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_FLOAT:
+      value->Set(std::vector<float>());
+      break;
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_DOUBLE:
+      value->Set(std::vector<double>());
+      break;
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_VEC2H:
+      value->Set(std::vector<value::half2>());
+      break;
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_VEC2F:
+      value->Set(std::vector<value::float2>());
+      break;
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_VEC2D:
+      value->Set(std::vector<value::double2>());
+      break;
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_VEC3H:
+      value->Set(std::vector<value::half3>());
+      break;
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_VEC3F:
+      value->Set(std::vector<value::float3>());
+      break;
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_VEC3D:
+      value->Set(std::vector<value::double3>());
+      break;
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_VEC4H:
+      value->Set(std::vector<value::half4>());
+      break;
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_VEC4F:
+      value->Set(std::vector<value::float4>());
+      break;
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_VEC4D:
+      value->Set(std::vector<value::double4>());
+      break;
+    default:
+      return false;
+  }
+
+  return true;
+}
+
 bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
                                  crate::CrateValue *value) {
 
@@ -3289,6 +3437,23 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
 
   if (rep.IsInlined()) {
     return UnpackInlinedValueRep(rep, value);
+  }
+
+  // mmap zero-copy: record offset for direct reads by Tydra,
+  // but still fully unpack the data for reconstruction compatibility.
+  if (_config.use_mmap && rep.IsArray() && !rep.IsCompressed()) {
+    MMapArrayRef mmap_ref;
+    crate::CrateValue dummy;
+    if (DescribeValueRep(rep, &mmap_ref, &dummy)) {
+      // Re-seek to the start so normal unpacking can proceed
+      if (!_sr->seek_set(rep.GetPayload())) {
+        PUSH_ERROR("Invalid offset.");
+        return false;
+      }
+      // Will be set on value after normal unpacking below
+      value->set_mmap_ref(mmap_ref);
+    }
+    // Fall through to normal unpacking
   }
 
   DCOUT("ValueRep type value = " << rep.GetType());
