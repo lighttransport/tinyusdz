@@ -1309,27 +1309,28 @@ bool USDCReader::Impl::ParseProperty(const SpecType spec_type,
 
         DCOUT("set_timesamples");
 
-        // Don't use std::move here! Multiple attributes might reference the
-        // same TimeSamples from the fieldset. Using std::move would leave the
-        // CrateValue empty after the first use, causing subsequent attributes
-        // to get an empty TimeSamples.
-        //
-        // We make a copy and apply role type casting to the copy if needed.
-        value::TimeSamples ts_copy = ts;
+        // In lazy mode, fvs is a local scratch buffer (decoded_fvs) — safe to move.
+        // In non-lazy mode, fvs points into shared _live_fieldsets — must copy.
+        value::TimeSamples ts_final;
+        if (allow_move_from_fvs) {
+          ts_final = std::move(ts);
+        } else {
+          ts_final = ts;  // deep copy
+        }
 
         // Apply role type casting if typeName specifies a role type
         // (e.g., cast float3 to color3f, point3f, etc.)
         if (typeName) {
           uint32_t role_type_id = value::GetTypeId(typeName.value().str());
           if (role_type_id != value::TYPE_ID_INVALID) {
-            if (ts_copy.cast_to_role_type(role_type_id)) {
+            if (ts_final.cast_to_role_type(role_type_id)) {
               DCOUT(fmt::format("Cast TimeSamples to role type {}", typeName.value().str()));
             }
             // It's ok if casting fails - the base type is still valid
           }
         }
 
-        var.set_timesamples(ts_copy);
+        var.set_timesamples(std::move(ts_final));
       } else {
         PUSH_ERROR_AND_RETURN_TAG(kTag,
                                   "`timeSamples` is not TimeSamples data.");
