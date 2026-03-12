@@ -153,7 +153,7 @@ Default limit: 128 GB (in `usda-reader.hh`).
 
 `Stage::estimate_memory_usage()` (`stage.cc`): Now performs full recursive traversal of the Prim tree using an iterative stack-based walk. For each Prim, estimates `_data` via `Value::estimate_memory_usage()`, string members, all properties via concrete type dispatch (GeomMesh, Xform, Material, etc.), and deep attribute memory for large typed attributes (points, normals, faceVertexIndices, etc.). Reports **217 MB** for `suzanne-subd-lv6.usdc` (was 4 KB before the fix).
 
-`Layer::estimate_memory_usage()` (`layer.cc:577`): counts PrimSpecs (recursive), metadata strings, sublayers. **Incomplete** — misses nested Property values and complex PrimMeta.
+`Layer::estimate_memory_usage()` (`layer.cc:577`): counts PrimSpecs (recursive), metadata strings, sublayers, VariantSetSpec internals (recursive). Property values are estimated via `Property::estimate_memory_usage()`.
 
 ## Stage 3: Tydra RenderScene Conversion
 
@@ -209,13 +209,11 @@ Key config: `preserve_texel_bitdepth = true` keeps 8-bit textures as uint8 inste
 
 ### RenderScene Memory Estimation
 
-`RenderMesh::estimate_memory_usage()` (`render-data.cc:11891`):
-- Counts: points, indices, normals, tangents, binormals, texcoords, colors, opacities
-- **Missing:** JointAndWeight internals, ShapeTarget data, MaterialSubset indices
+`RenderMesh::estimate_memory_usage()` (`render-data.cc`):
+- Counts: points, indices, normals, tangents, binormals, texcoords, colors, opacities, JointAndWeight (jointIndices, jointWeights), ShapeTarget (pointIndices, pointOffsets, normalOffsets, inbetweens), MaterialSubset (usdIndices, triangulatedIndices, strings)
 
-`RenderScene::estimate_memory_usage()` (`render-data.cc:11955`):
-- Counts: mesh details (via `RenderMesh::estimate_memory_usage()`), buffer data (textures)
-- **Missing:** RenderMaterial internals, AnimationClip keyframes, SkelHierarchy internals
+`RenderScene::estimate_memory_usage()` (`render-data.cc`):
+- Counts: mesh details (via `RenderMesh::estimate_memory_usage()`), buffer data (textures), Node tree (recursive children, strings), RenderMaterial (strings, spectral data), AnimationClip (strings, KeyframeSampler times/values, channels), SkelHierarchy (strings, SkelNode tree, parent_joint_indices, bind_transforms, rest_transforms), TextureImage (asset_identifier)
 
 ### Memory Config Options (MeshConverterConfig)
 
@@ -364,12 +362,19 @@ The `_lazy_fieldset_cache` in usdc-reader caused invalid cache reuse when differ
 | TimeSamples move in lazy mode | Eliminates deep copy of TimeSamples in lazy property construction | `usdc-reader.cc` |
 | Fix Stage `estimate_memory_usage()` | 4 KB → 217 MB (full recursive Prim tree walk) | `stage.cc`, `prim-types.cc`, `value-types.cc` |
 | TimeSamples `estimate_memory_usage()` | Covers `_array_values`, `_value_array_storage`, `_value_array_refs` | `timesamples.hh` |
+| CrateReader decompression buffer shrink | ~68 MB reclaimed after parsing | `crate-reader.hh`, `usdc-reader.cc` |
+| Free triangulation intermediates | ~161 MB unconditional + ~112 MB with lowmem | `render-data.cc` |
+| Free vertex_output fields after set_buffer | Reduces peak overlap in BuildVertexIndicesImpl | `render-data.cc` |
+| Free dedup buckets after vertex dedup | Reduces peak in BuildVertexIndicesImpl | `render-data.cc` |
+| Complete RenderMesh memory estimation | JointAndWeight, ShapeTarget, MaterialSubset internals | `render-data.cc` |
+| Complete RenderScene memory estimation | Node tree, RenderMaterial, AnimationClip, SkelHierarchy, TextureImage | `render-data.cc` |
+| Complete Layer memory estimation | VariantSetSpec internals (recursive PrimSpec trees) | `layer.cc` |
 
 ## TODO Tasks
 
 ### Critical (profiling-validated, highest impact)
 
-- [ ] **Streaming triangulation to eliminate 530 MB peak** — `TriangulateVertexAttribute` and `BuildVertexIndicesFastImpl` together allocate 4 massive temporary vectors (normals ×2, texcoords, index buffers) that dominate 65% of the 808 MB peak. Process faces in chunks and write directly to the output RenderMesh, freeing each chunk's working set before the next. Estimated savings: ~400 MB on the 12M-vertex test case.
+- [x] **Free triangulation and vertex-build intermediates** — DONE. Triangulation intermediates (`triangulatedToOrigFaceVertexIndexMap`, `triangulatedFaceCounts`) freed unconditionally after step 4 attribute triangulation. Pre-triangulation topology (`usdFaceVertexCounts`, `usdFaceVertexIndices`) freed under `lowmem` guard when mesh is triangulated. In `BuildVertexIndicesImpl`, dedup buckets freed after dedup loop, and each `vertex_output` field freed immediately after `set_buffer()` copies it to avoid source+destination peak overlap.
 - [x] **Fix MemoryBudgetManager blind spots** — DONE. Reported 49 KB when actual heap was 281 MB. Fixed: report timing, lazy budget release, decompression buffer tracking, temp vector tracking. Now reports 282.7 MB non-lazy (matches massif) / 92.3 MB lazy (concurrent high-water mark).
 - [x] **Implement `lowmem` GeomMesh freeing** — DONE. The `lowmem` config flag now frees source GeomMesh arrays (points, normals, faceVertexIndices, faceVertexCounts) after Tydra conversion via `set_value({})`. Enabled by default in WASM binding.
 - [x] **Fix TypedArray ownership model** — DONE. `TypedArrayPtr<T>` dead code removed entirely. Dedup caches already use `size_t` indices. 22 array caches consolidated into 1 unified map. ~18 dead scalar caches removed.
@@ -379,12 +384,12 @@ The `_lazy_fieldset_cache` in usdc-reader caused invalid cache reuse when differ
 - [x] **Deduplicate normals before triangulation** — DONE. Added `TryQuantizedNormalDedup` fallback: when exact-epsilon `TryConvertFacevaryingToVertex` fails, quantizes normals to 10-bit SNORM (pack_normal_1010102) and compares packed uint32 values. This catches subdivision surface limit normals where the same logical normal differs by floating-point noise. On success, converts face-varying→vertex, eliminating the 138 MB triangulation buffer entirely for smooth-shaded meshes.
 - [x] **Pre-size triangulation output vectors** — DONE (was stale). `TriangulatePolygon` already reserves exact sizes: `estimatedTriangles = numFaceVertexIndices - 2 * numFaces`.
 - [x] **Add `--memstat` to `tydra_to_renderscene`** — DONE. Reports Stage estimate after load and RenderScene estimate after Tydra conversion.
-- [ ] **Complete `estimate_memory_usage()` for JointAndWeight** (`render-data.cc:11938`) — skinning data not counted.
-- [ ] **Complete `estimate_memory_usage()` for ShapeTarget** (`render-data.cc:11943`) — blend shape data not counted.
-- [ ] **Complete `estimate_memory_usage()` for MaterialSubset** (`render-data.cc:11949`) — material subset indices not counted.
-- [ ] **Add RenderMaterial detailed estimation** — `RenderScene::estimate_memory_usage()` only counts `sizeof(RenderMaterial)`, not internal shader parameters, texture references, or string data.
-- [ ] **Add AnimationClip detailed estimation** — keyframe data and channel storage not counted.
-- [ ] **Add SkelHierarchy detailed estimation** — bone hierarchy, bind poses, inverse bind matrices not counted.
+- [x] **Complete `estimate_memory_usage()` for JointAndWeight** — DONE. Now counts `jointIndices` and `jointWeights` vector capacities.
+- [x] **Complete `estimate_memory_usage()` for ShapeTarget** — DONE. Now counts `pointIndices`, `pointOffsets`, `normalOffsets`, strings, and `InbetweenShapeTarget` inbetweens.
+- [x] **Complete `estimate_memory_usage()` for MaterialSubset** — DONE. Now counts `usdIndices`, `triangulatedIndices`, and strings.
+- [x] **Add RenderMaterial detailed estimation** — DONE. Now counts strings, spectral data vectors. ShaderParam fields are POD (no heap allocs).
+- [x] **Add AnimationClip detailed estimation** — DONE. Now counts strings, KeyframeSampler times/values vectors, AnimationChannel array.
+- [x] **Add SkelHierarchy detailed estimation** — DONE. Now counts strings, recursive SkelNode tree, `parent_joint_indices`, `bind_transforms`, `rest_transforms`, `anim_ids`.
 - [ ] **Measure end-to-end WASM memory** on real-world models (skinned character USDZ) with browser DevTools. Compare before/after tangent quantization and deferred loading.
 - [ ] **Add Hybrid to `TangentComputationMethod` enum** — implemented in `fast-mikktspace.hh` but not wired into config enum or dispatch.
 
@@ -393,7 +398,7 @@ The `_lazy_fieldset_cache` in usdc-reader caused invalid cache reuse when differ
 - [x] **Move-from CrateValue during Property reconstruction** — DONE. `ParseProperty` now moves TimeSamples in lazy mode (scratch buffer is local, safe to move) and copies in non-lazy mode (shared `_live_fieldsets`).
 - [x] **Complete Stage memory estimation** — DONE. `Stage::estimate_memory_usage()` now recursively walks entire Prim tree, estimating `_data`, string members, all properties via concrete type dispatch, and deep attribute memory. Reports 217 MB (was 4 KB).
 - [x] **Add PrimVar `estimate_memory_usage()` to Attribute** — DONE. `Attribute::estimate_memory_usage()` now delegates to `_var.estimate_memory_usage()` which calls `Value::estimate_memory_usage()` + `TimeSamples::estimate_memory_usage()`.
-- [ ] **Complete Layer memory estimation** — `Layer::estimate_memory_usage()` misses nested Property values.
+- [x] **Complete Layer memory estimation** — DONE. `EstimatePrimSpecMemory` now recursively estimates `VariantSetSpec` internals (variant name strings, nested PrimSpec trees). Property values were already covered.
 - [ ] **Profile texture memory separately** — textures dominate total memory. Add per-texture size reporting to `estimate_memory_usage()` output.
 - [ ] **Benchmark deferred vs immediate tangent on WASM** — measure initial load time and peak memory difference.
 - [ ] **Reduce WASM default memory limit** — 8 GB for 64-bit WASM may be too permissive for web deployment. Profile real workloads to set tighter defaults.
@@ -405,7 +410,7 @@ The `_lazy_fieldset_cache` in usdc-reader caused invalid cache reuse when differ
 - [ ] **Memory-based CrateWriter** — `usdc-writer.cc` TODO for in-memory USDC writing (currently uses temp file).
 - [ ] **Multi-threaded tangent computation** — Hybrid and FastMikkTSpace are single-threaded. Parallelize per-face derivative phase.
 - [ ] **Composition memory tracking** — `composition.hh` has `max_memory_limit_mb` but no usage reporting for reference/payload resolution overhead.
-- [ ] **CrateReader decompression buffer shrink** — decompression buffers grow but never shrink. Add `shrink_to_fit()` after large decompression sequences.
+- [x] **CrateReader decompression buffer shrink** — DONE. Added `ShrinkDecompressionBuffers()` to CrateReader that swap-with-empty frees both decompression buffers and releases their budget. Called after `BuildLiveFieldSets()` in non-lazy mode and after `ReconstructStage()` in lazy mode. USDC parser current usage drops to 0 bytes after parsing.
 
 ## Key Files
 
