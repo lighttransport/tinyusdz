@@ -40,6 +40,7 @@
 #include "crate-format.hh"
 #include "crate-pprint.hh"
 #include "crate-reader.hh"
+#include "mmap-array-ref.hh"
 #include "tiny-container.hh"
 #include "integerCoding.h"
 #include "lz4-compression.hh"
@@ -561,6 +562,12 @@ class USDCReader::Impl {
   std::set<int32_t> _prim_table;
 
   std::set<std::string> _supported_prim_attr_types;
+
+  // mmap zero-copy support
+  MMapArrayTable _mmap_table;
+  std::string _current_prim_path;  // Set during reconstruction for mmap table key building
+  MMapArrayRef _pending_mmap_ref{};
+  bool _has_pending_mmap_ref{false};
 };
 
 //
@@ -1127,6 +1134,13 @@ bool USDCReader::Impl::BuildPropertyMap(const std::vector<size_t> &pathIndices,
 
       (*props)[prop_name] = std::move(prop);
       DCOUT("Add property : " << prop_name);
+
+      // Record mmap ref with full path key
+      if (_has_pending_mmap_ref) {
+        std::string prim_path = path.value().prim_part();
+        _mmap_table.add(prim_path, prop_name, _pending_mmap_ref);
+        _has_pending_mmap_ref = false;
+      }
     }
   }
 
@@ -1248,6 +1262,12 @@ bool USDCReader::Impl::ParseProperty(const SpecType spec_type,
 
       // Set scalar(non-timesampled) value
       //TUSDZ_LOG_I("defaultValue");
+
+      // Check for mmap ref before move
+      if (_config.mmap_zero_copy && fv.second.has_mmap_ref()) {
+        _pending_mmap_ref = fv.second.mmap_ref();
+        _has_pending_mmap_ref = true;
+      }
 
       // In lazy mode (allow_move_from_fvs=true), fvs is a local scratch
       // buffer so we can move large arrays directly. Otherwise copy
@@ -4005,6 +4025,11 @@ bool USDCReader::Impl::ReconstructStage(Stage *stage) {
 
   stage->compute_absolute_prim_path_and_assign_prim_id();
 
+  // Attach mmap array table to Stage for zero-copy access
+  if (_config.mmap_zero_copy && !_mmap_table.empty()) {
+    stage->set_mmap_table(std::move(_mmap_table));
+  }
+
   // Free decompression buffers after reconstruction completes.
   // In lazy mode, decompression happens during reconstruction, so this is
   // the earliest safe point.
@@ -4291,7 +4316,7 @@ bool USDCReader::Impl::ReadUSDC() {
 
   // Transfer settings
   config.numThreads = _config.numThreads;
-  config.use_mmap = _config.use_mmap;  // Enable mmap for memory optimization
+  config.use_mmap = _config.use_mmap || _config.mmap_zero_copy;  // Enable mmap for memory optimization
 
   size_t sz_mb = _config.kMaxAllowedMemoryInMB;
   if (sizeof(size_t) == 4) {

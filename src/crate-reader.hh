@@ -422,6 +422,12 @@ class CrateReader {
   bool UnpackInlinedValueRep(const crate::ValueRep &rep,
                              crate::CrateValue *value);
 
+  /// Describe an uncompressed array ValueRep without reading data.
+  /// Records offset/count in *ref, sets *value to empty typed array.
+  /// Returns false if the ValueRep is not eligible (compressed, inlined, scalar).
+  bool DescribeValueRep(const crate::ValueRep &rep,
+                        MMapArrayRef *ref, crate::CrateValue *value);
+
   // TODO: deprecated
   //bool UnpackValueRepForTimeSamples(const crate::ValueRep &rep, uint64_t offset, crate::CrateValue *value);
 

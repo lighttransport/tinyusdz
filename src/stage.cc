@@ -23,6 +23,7 @@
 #include <vector>
 
 #include "io-util.hh"
+#include "mmap-array-ref.hh"
 #include "pprinter.hh"
 #include "prim-pprint.hh"
 #include "prim-pprint-parallel.hh"
@@ -117,6 +118,44 @@ nonstd::optional<const Prim *> GetPrimAtPathIterative(
 //
 // -- Stage
 //
+
+Stage::Stage() = default;
+Stage::~Stage() = default;
+
+Stage::Stage(const Stage &other)
+    : _root_nodes(other._root_nodes),
+      _root_node_nameSet(other._root_node_nameSet),
+      name(other.name),
+      default_root_node(other.default_root_node),
+      stage_metas(other.stage_metas),
+      _err(other._err),
+      _warn(other._warn),
+      _dirty(other._dirty),
+      _prim_id_dirty(other._prim_id_dirty) {
+  // unique_ptr members (_mmap_table, _mmap_source) are not copied.
+  // mmap data is only valid for the original Stage loaded from USDC.
+}
+
+Stage &Stage::operator=(const Stage &other) {
+  if (this != &other) {
+    _root_nodes = other._root_nodes;
+    _root_node_nameSet = other._root_node_nameSet;
+    name = other.name;
+    default_root_node = other.default_root_node;
+    stage_metas = other.stage_metas;
+    _err = other._err;
+    _warn = other._warn;
+    _dirty = other._dirty;
+    _prim_id_dirty = other._prim_id_dirty;
+    // unique_ptr members are not copied (mmap data is not transferable)
+    _mmap_table.reset();
+    _mmap_source.reset();
+  }
+  return *this;
+}
+
+Stage::Stage(Stage &&) noexcept = default;
+Stage &Stage::operator=(Stage &&) noexcept = default;
 
 nonstd::expected<const Prim *, std::string> Stage::GetPrimAtPath(
     const Path &path) const {
@@ -1170,6 +1209,18 @@ size_t Stage::estimate_memory_usage() const {
   total += _prim_id_cache.size() * (sizeof(uint64_t) + sizeof(const Prim*)) * 2;
 
   return total;
+}
+
+void Stage::set_mmap_table(MMapArrayTable &&table) {
+  _mmap_table.reset(new MMapArrayTable(std::move(table)));
+}
+
+void Stage::set_mmap_source(const MMapDataSource &src) {
+  _mmap_source.reset(new MMapDataSource(src));
+}
+
+bool Stage::has_mmap_zero_copy() const {
+  return _mmap_table && _mmap_source && _mmap_source->is_valid() && !_mmap_table->empty();
 }
 
 }  // namespace tinyusdz
