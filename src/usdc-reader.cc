@@ -4005,6 +4005,11 @@ bool USDCReader::Impl::ReconstructStage(Stage *stage) {
 
   stage->compute_absolute_prim_path_and_assign_prim_id();
 
+  // Free decompression buffers after reconstruction completes.
+  // In lazy mode, decompression happens during reconstruction, so this is
+  // the earliest safe point.
+  crate_reader->ShrinkDecompressionBuffers();
+
   return true;
 }
 
@@ -4386,6 +4391,14 @@ bool USDCReader::Impl::ReadUSDC() {
 
       return false;
     }
+  }
+
+  // Free decompression buffers — no longer needed after all sections are read
+  // and fieldsets are materialized (non-lazy) or will be decoded during
+  // ReconstructStage (lazy). In lazy mode, decompression still happens during
+  // reconstruction, so we only shrink here in non-lazy mode.
+  if (!_config.use_lazy_property_construction) {
+    crate_reader->ShrinkDecompressionBuffers();
   }
 
   _warn += crate_reader->GetWarning();

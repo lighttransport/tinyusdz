@@ -3460,6 +3460,9 @@ bool RenderSceneConverter::BuildVertexIndicesImpl(RenderMesh &mesh, uint32_t max
       out_indices[i] = matched_id;
       out_point_indices[i] = pid;
     }
+
+    // Free dedup buckets — no longer needed after vertex dedup.
+    { std::vector<std::vector<BucketEntry>> tmp; buckets.swap(tmp); }
   }
 
   DCOUT("faceVertexIndices.size : " << fvIndices.size());
@@ -3613,12 +3616,15 @@ bool RenderSceneConverter::BuildVertexIndicesImpl(RenderMesh &mesh, uint32_t max
 
   }
 
-  // Other 'facevarying' attributes are now 'vertex' variability
+  // Other 'facevarying' attributes are now 'vertex' variability.
+  // Free each vertex_output field immediately after set_buffer() copies it,
+  // to avoid simultaneous peak overlap of source + destination.
   if (normals_ptr) {
     mesh.normals.set_buffer(
         reinterpret_cast<const uint8_t *>(vertex_output.normals.data()),
         vertex_output.normals.size() * sizeof(value::float3));
     mesh.normals.variability = VertexVariability::Vertex;
+    { std::vector<value::float3> tmp; vertex_output.normals.swap(tmp); }
   }
 
   if (texcoord0_ptr) {
@@ -3626,6 +3632,7 @@ bool RenderSceneConverter::BuildVertexIndicesImpl(RenderMesh &mesh, uint32_t max
         reinterpret_cast<const uint8_t *>(vertex_output.uv0s.data()),
         vertex_output.uv0s.size() * sizeof(value::float2));
     mesh.texcoords[0].variability = VertexVariability::Vertex;
+    { std::vector<value::float2> tmp; vertex_output.uv0s.swap(tmp); }
   }
 
   if (texcoord1_ptr) {
@@ -3633,6 +3640,7 @@ bool RenderSceneConverter::BuildVertexIndicesImpl(RenderMesh &mesh, uint32_t max
         reinterpret_cast<const uint8_t *>(vertex_output.uv1s.data()),
         vertex_output.uv1s.size() * sizeof(value::float2));
     mesh.texcoords[1].variability = VertexVariability::Vertex;
+    { std::vector<value::float2> tmp; vertex_output.uv1s.swap(tmp); }
   }
 
   if (tangents_ptr) {
@@ -3640,6 +3648,7 @@ bool RenderSceneConverter::BuildVertexIndicesImpl(RenderMesh &mesh, uint32_t max
         reinterpret_cast<const uint8_t *>(vertex_output.tangents.data()),
         vertex_output.tangents.size() * sizeof(value::float3));
     mesh.tangents.variability = VertexVariability::Vertex;
+    { std::vector<value::float3> tmp; vertex_output.tangents.swap(tmp); }
   }
 
   if (binormals_ptr) {
@@ -3647,6 +3656,7 @@ bool RenderSceneConverter::BuildVertexIndicesImpl(RenderMesh &mesh, uint32_t max
         reinterpret_cast<const uint8_t *>(vertex_output.binormals.data()),
         vertex_output.binormals.size() * sizeof(value::float3));
     mesh.binormals.variability = VertexVariability::Vertex;
+    { std::vector<value::float3> tmp; vertex_output.binormals.swap(tmp); }
   }
 
   if (colors_ptr) {
@@ -3654,6 +3664,7 @@ bool RenderSceneConverter::BuildVertexIndicesImpl(RenderMesh &mesh, uint32_t max
         reinterpret_cast<const uint8_t *>(vertex_output.colors.data()),
         vertex_output.colors.size() * sizeof(value::float3));
     mesh.vertex_colors.variability = VertexVariability::Vertex;
+    { std::vector<value::float3> tmp; vertex_output.colors.swap(tmp); }
   }
 
   if (opacities_ptr) {
@@ -3661,6 +3672,7 @@ bool RenderSceneConverter::BuildVertexIndicesImpl(RenderMesh &mesh, uint32_t max
         reinterpret_cast<const uint8_t *>(vertex_output.opacities.data()),
         vertex_output.opacities.size() * sizeof(float));
     mesh.vertex_opacities.variability = VertexVariability::Vertex;
+    { std::vector<float> tmp; vertex_output.opacities.swap(tmp); }
   }
 
   if (mesh.is_triangulated()) {
@@ -5086,6 +5098,19 @@ bool RenderSceneConverter::ConvertMesh(
     dst.triangulatedFaceCounts = std::move(triangulatedFaceCounts);
   }
 
+  // Free triangulation intermediates — only needed during attribute
+  // triangulation above. Safe to free unconditionally since nothing
+  // downstream reads these vectors.
+  { std::vector<uint32_t> tmp; dst.triangulatedToOrigFaceVertexIndexMap.swap(tmp); }
+  { std::vector<uint32_t> tmp; dst.triangulatedFaceCounts.swap(tmp); }
+
+  // Free pre-triangulation topology under lowmem guard.
+  // faceVertexIndices()/faceVertexCounts() accessors return the triangulated
+  // versions when is_triangulated() is true.
+  if (env.mesh_config.lowmem && dst.is_triangulated()) {
+    { std::vector<uint32_t> tmp; dst.usdFaceVertexCounts.swap(tmp); }
+    { std::vector<uint32_t> tmp; dst.usdFaceVertexIndices.swap(tmp); }
+  }
 
   //
   // 5. Vertex skin weights(jointIndex and jointWeights)
@@ -12143,22 +12168,64 @@ size_t RenderMesh::estimate_memory_usage() const {
     total += it->first.capacity();
   }
 
-  // Joint and weights (basic estimate)
+  // Joint and weights
   total += sizeof(JointAndWeight);
-  // TODO: Add detailed JointAndWeight internal memory estimation
+  total += joint_and_weights.jointIndices.capacity() * sizeof(int);
+  total += joint_and_weights.jointWeights.capacity() * sizeof(float);
 
   // Blend shapes
   for (const auto& blend_shape_pair : targets) {
     total += blend_shape_pair.first.capacity() + sizeof(ShapeTarget);
-    // TODO: Add detailed ShapeTarget internal memory estimation
+    const auto& st = blend_shape_pair.second;
+    total += st.prim_name.capacity();
+    total += st.abs_path.capacity();
+    total += st.display_name.capacity();
+    total += st.pointIndices.capacity() * sizeof(uint32_t);
+    total += st.pointOffsets.capacity() * sizeof(vec3);
+    total += st.normalOffsets.capacity() * sizeof(vec3);
+    for (const auto& ib_pair : st.inbetweens) {
+      total += sizeof(float) + sizeof(InbetweenShapeTarget);
+      total += ib_pair.second.pointOffsets.capacity() * sizeof(vec3);
+      total += ib_pair.second.normalOffsets.capacity() * sizeof(vec3);
+    }
   }
 
   // Material subset map
   for (const auto& subset_pair : material_subsetMap) {
     total += subset_pair.first.capacity() + sizeof(MaterialSubset);
-    // TODO: Add detailed MaterialSubset internal memory estimation
+    const auto& ms = subset_pair.second;
+    total += ms.prim_name.capacity();
+    total += ms.abs_path.capacity();
+    total += ms.display_name.capacity();
+    total += ms.usdIndices.capacity() * sizeof(int);
+    total += ms.triangulatedIndices.capacity() * sizeof(int);
   }
 
+  return total;
+}
+
+// Helper to estimate Node tree memory recursively.
+static size_t EstimateNodeMemory(const Node& node) {
+  size_t total = sizeof(Node);
+  total += node.prim_name.capacity();
+  total += node.abs_path.capacity();
+  total += node.display_name.capacity();
+  total += node.children.capacity() * sizeof(Node);
+  for (const auto& child : node.children) {
+    total += EstimateNodeMemory(child) - sizeof(Node); // avoid double-counting
+  }
+  return total;
+}
+
+// Helper to estimate SkelNode tree memory recursively.
+static size_t EstimateSkelNodeMemory(const SkelNode& node) {
+  size_t total = sizeof(SkelNode);
+  total += node.joint_path.capacity();
+  total += node.joint_name.capacity();
+  total += node.children.capacity() * sizeof(SkelNode);
+  for (const auto& child : node.children) {
+    total += EstimateSkelNodeMemory(child) - sizeof(SkelNode);
+  }
   return total;
 }
 
@@ -12167,18 +12234,39 @@ size_t RenderScene::estimate_memory_usage() const {
 
   // Scene metadata and filename
   total += usd_filename.capacity();
-  // Note: SceneMetadata memory would need detailed estimation
   total += sizeof(SceneMetadata);
 
-  // Estimate containers
+  // Nodes (recursive tree)
   total += nodes.capacity() * sizeof(Node);
-  (void)nodes; // Suppress unused variable warning
+  for (const auto& node : nodes) {
+    total += EstimateNodeMemory(node) - sizeof(Node);
+  }
 
+  // Texture images
   total += images.capacity() * sizeof(TextureImage);
-  (void)images; // Suppress unused variable warning
+  for (const auto& img : images) {
+    total += img.asset_identifier.capacity();
+  }
 
+  // Materials
   total += materials.capacity() * sizeof(RenderMaterial);
-  (void)materials; // Suppress unused variable warning
+  for (const auto& mat : materials) {
+    total += mat.name.capacity();
+    total += mat.abs_path.capacity();
+    total += mat.display_name.capacity();
+    total += mat.displacement_shader_path.capacity();
+    total += mat.volume_shader_path.capacity();
+    // Spectral data vectors (if present)
+    if (mat.surfaceShader.has_value()) {
+      const auto& s = *mat.surfaceShader;
+      if (s.spd_reflectance.has_value()) {
+        total += s.spd_reflectance->samples.capacity() * sizeof(vec2);
+      }
+      if (s.spd_ior.has_value()) {
+        total += s.spd_ior->samples.capacity() * sizeof(vec2);
+      }
+    }
+  }
 
   total += cameras.capacity() * sizeof(RenderCamera);
   total += lights.capacity() * sizeof(RenderLight);
@@ -12193,14 +12281,36 @@ size_t RenderScene::estimate_memory_usage() const {
   // Meshes - use the detailed estimation
   total += meshes.capacity() * sizeof(RenderMesh);
   for (const auto& mesh : meshes) {
-    total += mesh.estimate_memory_usage() - sizeof(RenderMesh); // Avoid double-counting base size
+    total += mesh.estimate_memory_usage() - sizeof(RenderMesh);
   }
 
+  // Animations
   total += animations.capacity() * sizeof(AnimationClip);
-  (void)animations; // Suppress unused variable warning
+  for (const auto& clip : animations) {
+    total += clip.name.capacity();
+    total += clip.prim_name.capacity();
+    total += clip.abs_path.capacity();
+    total += clip.display_name.capacity();
+    total += clip.samplers.capacity() * sizeof(KeyframeSampler);
+    for (const auto& sampler : clip.samplers) {
+      total += sampler.times.capacity() * sizeof(float);
+      total += sampler.values.capacity() * sizeof(float);
+    }
+    total += clip.channels.capacity() * sizeof(AnimationChannel);
+  }
 
+  // Skeletons
   total += skeletons.capacity() * sizeof(SkelHierarchy);
-  (void)skeletons; // Suppress unused variable warning
+  for (const auto& skel : skeletons) {
+    total += skel.prim_name.capacity();
+    total += skel.abs_path.capacity();
+    total += skel.display_name.capacity();
+    total += EstimateSkelNodeMemory(skel.root_node) - sizeof(SkelNode);
+    total += skel.anim_ids.capacity() * sizeof(int);
+    total += skel.parent_joint_indices.capacity() * sizeof(int);
+    total += skel.bind_transforms.capacity() * sizeof(value::matrix4d);
+    total += skel.rest_transforms.capacity() * sizeof(value::matrix4d);
+  }
 
   total += buffers.capacity() * sizeof(BufferData);
   for (const auto& buffer : buffers) {

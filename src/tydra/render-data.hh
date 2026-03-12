@@ -1193,6 +1193,14 @@ struct RenderMesh {
     return triangulatedFaceVertexIndices.size() && triangulatedFaceVertexCounts.size();
   }
 
+  /// Free triangulation intermediate data that is only needed during
+  /// ConvertMesh. After calling this, triangulatedToOrigFaceVertexIndexMap
+  /// and triangulatedFaceCounts will be empty.
+  void free_triangulation_intermediates() {
+    { std::vector<uint32_t> tmp; triangulatedToOrigFaceVertexIndexMap.swap(tmp); }
+    { std::vector<uint32_t> tmp; triangulatedFaceCounts.swap(tmp); }
+  }
+
   // `normals` or `primvar:normals`. Empty when no normals exist in the
   // GeomMesh.
   VertexAttribute normals;
