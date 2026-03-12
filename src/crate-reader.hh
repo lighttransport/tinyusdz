@@ -280,6 +280,12 @@ class CrateReader {
     return memory_manager_.GetRemainingBudget();
   }
 
+  // Release memory budget externally (e.g., when scratch buffers are freed
+  // after lazy DecodeFieldSet)
+  void ReleaseMemoryBudget(uint64_t bytes) {
+    memory_manager_.Release(bytes);
+  }
+
   /// -------------------------------------
   /// Following Methods are valid after successfull parsing of Crate data.
   ///
@@ -668,6 +674,9 @@ class CrateReader {
   // These are mutable because they're used as internal working buffers in const-like operations
   mutable std::vector<char> _decomp_comp_buffer;      // Buffer for compressed data
   mutable std::vector<char> _decomp_working_buffer;   // Buffer for decompression working space
+  // Budget already reserved for the persistent decompression buffers above
+  mutable size_t _decomp_comp_buffer_budget{0};
+  mutable size_t _decomp_working_buffer_budget{0};
 
   class Impl;
   Impl *_impl;
