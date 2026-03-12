@@ -1209,6 +1209,7 @@ class TinyUSDZLoaderNative {
 
     tinyusdz::USDLoadOptions options;
     options.max_memory_limit_in_mb = max_memory_limit_mb_;
+    options.mmap_zero_copy = mmap_zero_copy_;
 
     tinyusdz::Stage stage;
     loaded_ = tinyusdz::LoadUSDFromMemory(
@@ -1359,6 +1360,7 @@ class TinyUSDZLoaderNative {
 
     tinyusdz::USDLoadOptions options;
     options.max_memory_limit_in_mb = max_memory_limit_mb_;
+    options.mmap_zero_copy = mmap_zero_copy_;
 
     tinyusdz::Stage stage;
     loaded_ = tinyusdz::LoadUSDFromMemory(
@@ -3568,6 +3570,15 @@ class TinyUSDZLoaderNative {
     return defer_tangent_computation_;
   }
 
+  // MMap zero-copy configuration
+  void setMMapZeroCopy(bool enabled) {
+    mmap_zero_copy_ = enabled;
+  }
+
+  bool getMMapZeroCopy() const {
+    return mmap_zero_copy_;
+  }
+
   // Compute tangents for a specific mesh on demand (lazy tangent computation).
   // Returns true on success. Call this before accessing tangent data for meshes
   // that had tangent computation deferred.
@@ -4357,6 +4368,7 @@ class TinyUSDZLoaderNative {
 
     tinyusdz::USDLoadOptions options;
     options.max_memory_limit_in_mb = max_memory_limit_mb_;
+    options.mmap_zero_copy = mmap_zero_copy_;
 
     // Set up progress callback
     options.progress_callback = [](float progress, void *userptr) -> bool {
@@ -4513,6 +4525,13 @@ class TinyUSDZLoaderNative {
 
   // Defer tangent computation until explicitly requested via computeMeshTangents()
   bool defer_tangent_computation_{true};  // default true for WASM to save memory
+
+  // MMap zero-copy: record mmap offsets during USDC parsing so Tydra can read
+  // large float/double arrays directly from the input buffer, skipping the
+  // EvaluateTypedAnimatableAttribute copy.  Default off; will be enabled after
+  // more testing.  The input binary buffer must stay alive while the Stage is
+  // in use (guaranteed by loadFromBinary / loadFromBinaryAsync call flow).
+  bool mmap_zero_copy_{false};
 
   // Bone reduction configuration (disabled by default for backward compatibility)
   bool enable_bone_reduction_{false};
@@ -5301,6 +5320,12 @@ EMSCRIPTEN_BINDINGS(tinyusdz_module) {
                 &TinyUSDZLoaderNative::getDeferTangentComputation)
       .function("computeMeshTangents",
                 &TinyUSDZLoaderNative::computeMeshTangents)
+
+      // MMap zero-copy (experimental, default off)
+      .function("setMMapZeroCopy",
+                &TinyUSDZLoaderNative::setMMapZeroCopy)
+      .function("getMMapZeroCopy",
+                &TinyUSDZLoaderNative::getMMapZeroCopy)
 
       .function("setEnableComposition",
                 &TinyUSDZLoaderNative::setEnableComposition)

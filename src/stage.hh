@@ -4,12 +4,17 @@
 // Stage: Similar to Scene or Scene graph
 #pragma once
 
+#include <memory>
 #include <unordered_map>
 
 #include "composition.hh"
 #include "prim-types.hh"
 
 namespace tinyusdz {
+
+// Forward declarations for mmap zero-copy support
+class MMapArrayTable;
+class MMapDataSource;
 
 // TODO: Use LayerMetas?
 using StageMetas = LayerMetas;
@@ -23,12 +28,12 @@ class Stage {
   static Stage CreateInMemory() { return Stage(); }
 
   // Special member functions
-  Stage() = default;
-  Stage(const Stage&) = default;
-  Stage& operator=(const Stage&) = default;
-  Stage(Stage&&) = default;
-  Stage& operator=(Stage&&) = default;
-  ~Stage() = default;
+  Stage();
+  ~Stage();
+  Stage(const Stage&);
+  Stage& operator=(const Stage&);
+  Stage(Stage&&) noexcept;
+  Stage& operator=(Stage&&) noexcept;
 
   ///
   /// Traverse by depth-first order.
@@ -318,6 +323,17 @@ class Stage {
   mutable bool _prim_id_dirty{true}; // True when Prim Id assignent changed(TODO: Unify with `_dirty` flag)
 
   mutable HandleAllocator<uint64_t> _prim_id_allocator;
+
+  // mmap zero-copy support (optional, set by USDC reader)
+  std::unique_ptr<MMapArrayTable> _mmap_table;
+  std::unique_ptr<MMapDataSource> _mmap_source;
+
+ public:
+  void set_mmap_table(MMapArrayTable &&table);
+  void set_mmap_source(const MMapDataSource &src);
+  const MMapArrayTable *mmap_table() const { return _mmap_table.get(); }
+  const MMapDataSource *mmap_source() const { return _mmap_source.get(); }
+  bool has_mmap_zero_copy() const;
 };
 
 inline std::string to_string(const Stage &stage, bool relative_path = false) {

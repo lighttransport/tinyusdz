@@ -27,6 +27,10 @@
 #include <algorithm>
 #include <numeric>
 
+#ifdef TINYUSDZ_ENABLE_THREAD
+#include <thread>
+#endif
+
 #include "value-types.hh"
 #include "fast-math.hh"
 
@@ -67,6 +71,41 @@ static inline bool veq(Vec3 a, Vec3 b) {
 }
 static inline bool notzero(float f) {
   return std::fabs(f) > 1e-20f;
+}
+
+// ---------------------------------------------------------------------------
+// Parallel for: splits [begin, end) across std::threads when threading is on.
+// Falls back to serial loop when TINYUSDZ_ENABLE_THREAD is not defined or
+// the workload is too small to justify thread overhead.
+// ---------------------------------------------------------------------------
+template <typename Func>
+static inline void tangent_parallel_for(size_t begin, size_t end, const Func &func) {
+#ifdef TINYUSDZ_ENABLE_THREAD
+  size_t n = end - begin;
+  if (n > 8192) {
+    unsigned hw = std::thread::hardware_concurrency();
+    unsigned nThreads = (hw > 1) ? std::min(hw, 16u) : 1;
+    if (nThreads > 1) {
+      size_t chunk = (n + nThreads - 1) / nThreads;
+      std::vector<std::thread> threads;
+      threads.reserve(nThreads - 1);
+      for (unsigned t = 1; t < nThreads; t++) {
+        size_t lo = begin + t * chunk;
+        size_t hi = std::min(lo + chunk, end);
+        if (lo < hi) {
+          threads.emplace_back([lo, hi, &func]() {
+            for (size_t i = lo; i < hi; i++) func(i);
+          });
+        }
+      }
+      size_t hi0 = std::min(begin + chunk, end);
+      for (size_t i = begin; i < hi0; i++) func(i);
+      for (auto &t : threads) t.join();
+      return;
+    }
+  }
+#endif
+  for (size_t i = begin; i < end; i++) func(i);
 }
 
 // ---------------------------------------------------------------------------
@@ -403,9 +442,10 @@ inline bool ComputeTangentsFastMikkTSpace(
   int nrGoodTris = nrTriangles - nrDegen;
 
   // =========================================================================
-  // Phase 5: Compute per-triangle tangent derivatives
+  // Phase 5: Compute per-triangle tangent derivatives (threaded)
   // =========================================================================
-  for (int t = 0; t < nrGoodTris; t++) {
+  tangent_parallel_for(size_t(0), size_t(nrGoodTris), [&](size_t ti) {
+    int t = int(ti);
     int fi0 = origTriList[t*3+0], fi1 = origTriList[t*3+1], fi2 = origTriList[t*3+2];
 
     Vec3 v1{positions[fi0][0], positions[fi0][1], positions[fi0][2]};
@@ -430,7 +470,6 @@ inline bool ComputeTangentsFastMikkTSpace(
 
     if (notzero(signedAreax2)) {
       float absArea = std::fabs(signedAreax2);
-      // Use rsqrt for normalization: len = 1/rsqrt(len2), scale = fS*rsqrt(len2)
       float lenOs2 = vlength2(vOs), lenOt2 = vlength2(vOt);
       float fS = (triInfos[t].flags & ORIENT_PRESERVING) ? 1.0f : -1.0f;
 
@@ -448,7 +487,7 @@ inline bool ComputeTangentsFastMikkTSpace(
       if (notzero(triInfos[t].fMagS) && notzero(triInfos[t].fMagT))
         triInfos[t].flags &= ~GROUP_WITH_ANY;
     }
-  }
+  });
 
   // Force quad orientation consistency
   for (int t = 0; t < nrGoodTris - 1; t++) {
@@ -755,30 +794,23 @@ inline bool ComputeTangentsFastMikkTSpace(
   }
 
   // =========================================================================
-  // Phase 10: Output
+  // Phase 10: Output (threaded)
   // =========================================================================
   out_tangents->resize(totalFaceVerts);
   out_binormals->resize(totalFaceVerts);
 
-  size_t fvIdx = 0;
-  for (size_t f = 0; f < numFaces; f++) {
-    uint32_t nv = faceVertexCounts[f];
-    for (uint32_t v = 0; v < nv; v++) {
-      const TSpace &ts = tspaces[fvIdx];
-      (*out_tangents)[fvIdx] = {ts.vOs.x, ts.vOs.y, ts.vOs.z};
+  tangent_parallel_for(size_t(0), totalFaceVerts, [&](size_t fvIdx) {
+    const TSpace &ts = tspaces[fvIdx];
+    (*out_tangents)[fvIdx] = {ts.vOs.x, ts.vOs.y, ts.vOs.z};
 
-      // binormal = cross(normal, tangent) * sign
-      const auto &n = normals[fvIdx];
-      float sign = ts.orient ? 1.0f : -1.0f;
-      (*out_binormals)[fvIdx] = {
-        (n[1] * ts.vOs.z - n[2] * ts.vOs.y) * sign,
-        (n[2] * ts.vOs.x - n[0] * ts.vOs.z) * sign,
-        (n[0] * ts.vOs.y - n[1] * ts.vOs.x) * sign
-      };
-
-      fvIdx++;
-    }
-  }
+    const auto &n = normals[fvIdx];
+    float sign = ts.orient ? 1.0f : -1.0f;
+    (*out_binormals)[fvIdx] = {
+      (n[1] * ts.vOs.z - n[2] * ts.vOs.y) * sign,
+      (n[2] * ts.vOs.x - n[0] * ts.vOs.z) * sign,
+      (n[0] * ts.vOs.y - n[1] * ts.vOs.x) * sign
+    };
+  });
 
   return true;
 }
@@ -853,8 +885,18 @@ inline bool ComputeTangentsHybrid(
 
   size_t memTrack = 0;
 
+  // Precompute face offsets for parallel access
+  std::vector<uint32_t> earlyFaceOffsets(numFaces);
+  {
+    uint32_t off = 0;
+    for (size_t f = 0; f < numFaces; f++) {
+      earlyFaceOffsets[f] = off;
+      off += faceVertexCounts[f];
+    }
+  }
+
   // =========================================================================
-  // Phase 1: Per-face tangent derivatives (matching MikkTSpace exactly)
+  // Phase 1: Per-face tangent derivatives (threaded)
   // =========================================================================
   // For each face, compute the normalized tangent/bitangent direction
   // (vOs, vOt) exactly as MikkTSpace does: without dividing by UV area,
@@ -864,71 +906,53 @@ inline bool ComputeTangentsHybrid(
   std::vector<Vec3> fvOt(totalFaceVerts, {0,0,0});
   memTrack += totalFaceVerts * sizeof(Vec3) * 2;
 
-  {
-    size_t fvOff = 0;
-    for (size_t f = 0; f < numFaces; f++) {
-      uint32_t nv = faceVertexCounts[f];
-      if (nv < 3) { fvOff += nv; continue; }
-
-      // Use the first triangle of the face for tangent derivatives
-      size_t i0 = fvOff, i1 = fvOff + 1, i2 = fvOff + 2;
-
-      Vec3 p0{positions[i0][0], positions[i0][1], positions[i0][2]};
-      Vec3 p1{positions[i1][0], positions[i1][1], positions[i1][2]};
-      Vec3 p2{positions[i2][0], positions[i2][1], positions[i2][2]};
-
-      float t21x = texcoords[i1][0] - texcoords[i0][0];
-      float t21y = texcoords[i1][1] - texcoords[i0][1];
-      float t31x = texcoords[i2][0] - texcoords[i0][0];
-      float t31y = texcoords[i2][1] - texcoords[i0][1];
-
-      Vec3 d1 = vsub(p1, p0), d2 = vsub(p2, p0);
-      float signedAreax2 = t21x * t31y - t21y * t31x;
-
-      Vec3 vOs = vsub(vscale(t31y, d1), vscale(t21y, d2));
-      Vec3 vOt = vadd(vscale(-t31x, d1), vscale(t21x, d2));
-
-      float fS = signedAreax2 > 0.0f ? 1.0f : -1.0f;
-
-      // Normalize (same as MikkTSpace InitTriInfo)
-      float lenOs2 = vlength2(vOs);
-      float lenOt2 = vlength2(vOt);
-      if (lenOs2 > 1e-20f) vOs = vscale(fS * fast_math::fast_rsqrt(lenOs2), vOs);
-      else vOs = {0,0,0};
-      if (lenOt2 > 1e-20f) vOt = vscale(fS * fast_math::fast_rsqrt(lenOt2), vOt);
-      else vOt = {0,0,0};
-
-      // Assign to all face-vertices of this face
-      for (uint32_t v = 0; v < nv; v++) {
-        fvOs[fvOff + v] = vOs;
-        fvOt[fvOff + v] = vOt;
-      }
-      fvOff += nv;
-    }
-  }
-
   // =========================================================================
-  // Phase 2: Compute per-face-vertex UV orientation
+  // Phase 2: Compute per-face-vertex UV orientation (merged with Phase 1)
   // =========================================================================
   std::vector<int8_t> orientSign(totalFaceVerts, 0);
   memTrack += totalFaceVerts * sizeof(int8_t);
 
-  {
-    size_t fvOff = 0;
-    for (size_t f = 0; f < numFaces; f++) {
-      uint32_t nv = faceVertexCounts[f];
-      if (nv < 3) { fvOff += nv; continue; }
-      float s1 = texcoords[fvOff+1][0] - texcoords[fvOff][0];
-      float t1_v = texcoords[fvOff+1][1] - texcoords[fvOff][1];
-      float s2 = texcoords[fvOff+2][0] - texcoords[fvOff][0];
-      float t2_v = texcoords[fvOff+2][1] - texcoords[fvOff][1];
-      int8_t sign = (s1 * t2_v - s2 * t1_v) > 0.0f ? 1 : -1;
-      for (uint32_t v = 0; v < nv; v++) {
-        orientSign[fvOff + v] = sign;
-      }
-      fvOff += nv;
+  tangent_parallel_for(size_t(0), numFaces, [&](size_t f) {
+    uint32_t nv = faceVertexCounts[f];
+    if (nv < 3) return;
+    size_t fvOff = earlyFaceOffsets[f];
+
+    // Phase 1: tangent derivatives
+    size_t i0 = fvOff, i1 = fvOff + 1, i2 = fvOff + 2;
+
+    Vec3 p0{positions[i0][0], positions[i0][1], positions[i0][2]};
+    Vec3 p1{positions[i1][0], positions[i1][1], positions[i1][2]};
+    Vec3 p2{positions[i2][0], positions[i2][1], positions[i2][2]};
+
+    float t21x = texcoords[i1][0] - texcoords[i0][0];
+    float t21y = texcoords[i1][1] - texcoords[i0][1];
+    float t31x = texcoords[i2][0] - texcoords[i0][0];
+    float t31y = texcoords[i2][1] - texcoords[i0][1];
+
+    Vec3 d1 = vsub(p1, p0), d2 = vsub(p2, p0);
+    float signedAreax2 = t21x * t31y - t21y * t31x;
+
+    Vec3 vOs = vsub(vscale(t31y, d1), vscale(t21y, d2));
+    Vec3 vOt = vadd(vscale(-t31x, d1), vscale(t21x, d2));
+
+    float fS = signedAreax2 > 0.0f ? 1.0f : -1.0f;
+
+    float lenOs2 = vlength2(vOs);
+    float lenOt2 = vlength2(vOt);
+    if (lenOs2 > 1e-20f) vOs = vscale(fS * fast_math::fast_rsqrt(lenOs2), vOs);
+    else vOs = {0,0,0};
+    if (lenOt2 > 1e-20f) vOt = vscale(fS * fast_math::fast_rsqrt(lenOt2), vOt);
+    else vOt = {0,0,0};
+
+    // Phase 2: UV orientation
+    int8_t sign = signedAreax2 > 0.0f ? int8_t(1) : int8_t(-1);
+
+    for (uint32_t v = 0; v < nv; v++) {
+      fvOs[fvOff + v] = vOs;
+      fvOt[fvOff + v] = vOt;
+      orientSign[fvOff + v] = sign;
     }
-  }
+  });
 
   // =========================================================================
   // Phase 3: Welding (pos3+norm3+uv2+orient) — same grouping as MikkTSpace
@@ -1055,19 +1079,17 @@ inline bool ComputeTangentsHybrid(
   }
 
   // =========================================================================
-  // Phase 5: Output tangent/binormal per face-vertex
+  // Phase 5: Output tangent/binormal per face-vertex (threaded)
   // =========================================================================
   out_tangents->resize(totalFaceVerts);
   out_binormals->resize(totalFaceVerts);
   memTrack += totalFaceVerts * sizeof(value::float3) * 2;
 
-  for (size_t i = 0; i < totalFaceVerts; i++) {
+  tangent_parallel_for(size_t(0), totalFaceVerts, [&](size_t i) {
     int g = weldGroup[i];
     Vec3 accOs = grpOs[size_t(g)];
     Vec3 accOt = grpOt[size_t(g)];
 
-    // Normalize the accumulated tangent direction
-    // Use exact vnormalize for final output (not fast_rsqrt) to ensure unit-length
     if (vnotzero(accOs)) accOs = vnormalize(accOs);
     if (vnotzero(accOt)) accOt = vnormalize(accOt);
 
@@ -1076,14 +1098,13 @@ inline bool ComputeTangentsHybrid(
 
     (*out_tangents)[i] = {accOs.x, accOs.y, accOs.z};
 
-    // Binormal = cross(normal, tangent) * sign
     const auto &n = normals[i];
     (*out_binormals)[i] = {
       (n[1] * accOs.z - n[2] * accOs.y) * sign,
       (n[2] * accOs.x - n[0] * accOs.z) * sign,
       (n[0] * accOs.y - n[1] * accOs.x) * sign
     };
-  }
+  });
 
   if (stats) {
     stats->working_memory_bytes = memTrack;
