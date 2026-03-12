@@ -286,6 +286,22 @@ class CrateReader {
     memory_manager_.Release(bytes);
   }
 
+  /// Release decompression buffers and return their budget.
+  /// Call after parsing is complete to reclaim memory.
+  void ShrinkDecompressionBuffers() {
+    if (_decomp_comp_buffer_budget > 0) {
+      memory_manager_.Release(_decomp_comp_buffer_budget);
+      _decomp_comp_buffer_budget = 0;
+    }
+    { std::vector<char> tmp; _decomp_comp_buffer.swap(tmp); }
+
+    if (_decomp_working_buffer_budget > 0) {
+      memory_manager_.Release(_decomp_working_buffer_budget);
+      _decomp_working_buffer_budget = 0;
+    }
+    { std::vector<char> tmp; _decomp_working_buffer.swap(tmp); }
+  }
+
   /// -------------------------------------
   /// Following Methods are valid after successfull parsing of Crate data.
   ///
