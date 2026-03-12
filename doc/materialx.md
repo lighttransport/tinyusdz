@@ -47,16 +47,24 @@ Applied to `Material` prims via `config:mtlx:version`, `config:mtlx:colorspace`,
 
 | Token | Enum | Description |
 |-------|------|-------------|
-| `lin_rec709` | `LinRec709Scene` | Linear Rec.709/sRGB (default) |
-| `srgb` | `SrgbRec709Scene` | sRGB with transfer function |
-| `lin_ap1` / `acescg` | `LinAp1Scene` | ACES CG (AP1 primaries) |
-| `aces2065-1` | `LinAp0Scene` | ACES 2065-1 (AP0) |
-| `lin_rec2020` | `LinRec2020Scene` | Linear Rec.2020 |
-| `lin_displayp3` | `LinP3D65Scene` | Linear Display P3 |
-| `srgb_displayp3` | `SrgbP3D65Scene` | Display P3 with sRGB transfer |
-| `g22_rec709` | `G22Rec709Scene` | Rec.709 with gamma 2.2 |
-| `g18_rec709` | `G18Rec709Scene` | Rec.709 with gamma 1.8 |
-| `data` / `raw` | `Data` | No conversion (normal maps, etc.) |
+| `lin_rec709_scene` | `LinRec709Scene` | Linear Rec.709/sRGB (default) |
+| `lin_ap0_scene` | `LinAp0Scene` | ACES 2065-1 (AP0) |
+| `lin_ap1_scene` | `LinAp1Scene` | ACES CG (AP1) |
+| `lin_p3d65_scene` | `LinP3D65Scene` | Linear P3-D65 |
+| `lin_rec2020_scene` | `LinRec2020Scene` | Linear Rec.2020 |
+| `lin_adobergb_scene` | `LinAdobeRGBScene` | Linear Adobe RGB |
+| `lin_ciexyzd65_scene` | `LinCieXyzD65Scene` | CIE XYZ-D65 |
+| `srgb_rec709_scene` | `SrgbRec709Scene` | sRGB Rec.709 |
+| `srgb_ap1_scene` | `SrgbAp1Scene` | sRGB AP1 |
+| `srgb_p3d65_scene` | `SrgbP3D65Scene` | sRGB P3-D65 |
+| `g22_rec709_scene` | `G22Rec709Scene` | Gamma 2.2 Rec.709 |
+| `g22_ap1_scene` | `G22Ap1Scene` | Gamma 2.2 AP1 |
+| `g22_adobergb_scene` | `G22AdobeRGBScene` | Gamma 2.2 Adobe RGB |
+| `g18_rec709_scene` | `G18Rec709Scene` | Gamma 1.8 Rec.709 |
+| `data` | `Data` | Non-color data (normals, displacement) |
+| `raw` | *(alias)* | Legacy alias for `data` |
+| `unknown` | `Unknown` | Unspecified |
+| `identity` | *(alias)* | Legacy alias for `unknown` |
 
 Utility functions: `to_token()`, `from_token()`, `is_linear()`, `is_data()`.
 

@@ -427,12 +427,20 @@ The following demo pages are available:
 
 | Demo | File | Description |
 |------|------|-------------|
+| **Basic Viewer** | `index.html` | Basic USD viewer with main.js |
 | **MaterialX Demo** | `materialx.html` | Simple MaterialX/OpenPBR viewer with drag-and-drop USD loading, material parameter UI, and preset environment lighting |
 | **MaterialX Debug Demo** | `mtlx-debug.html` | Advanced debugging demo with AOV visualization, node graph viewer, texture inspector, and comprehensive PBR debugging tools |
+| **MaterialX WebGL2** | `materialx-webgl2.html` | Blender MaterialX with WebGL2 node graph |
+| **MaterialX WebGPU** | `materialx-webgpu.html` | MaterialX with WebGPU + TSL |
+| **MaterialX WebGPU (raw)** | `mtlx-webgpu.html` | Standalone WebGPU MaterialX |
 | **Animation Demo** | `animation.html` | USD animation playback demo |
-| **Skinning Demo** | `skining-anim.html` | Skeletal animation and skinning demo |
+| **Animation Clips** | `anim-clips.html` | Per-object animation clip mixing |
+| **Skinning Demo** | `skin-anim.html` | Skeletal animation and skinning demo |
 | **UsdLux Demo** | `usdlux.html` | USD Lighting demo |
-| **Basic Viewer** | `index.html` | Basic USD viewer with main.js |
+| **OffscreenGL** | `offscreengl.html` | WebWorker + OffscreenCanvas rendering |
+| **Progress Demo** | `progress-demo.html` | Loading progress visualization |
+| **Progress OffscreenGL** | `progress-offscreenwebgl.html` | OffscreenCanvas with progress + OOM recovery |
+| **OpenPBR NodeGraph** | `openpbr-nodegraph-demo.html` | LiteGraph node graph editor |
 
 ### Running Demos
 
