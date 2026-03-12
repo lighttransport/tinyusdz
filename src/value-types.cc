@@ -1228,8 +1228,19 @@ size_t Value::estimate_memory_usage() const {
   } else {
     // For scalar types
     size_t type_size = GetTypeSize(tid);
+
+    // For MODEL types (concrete Prim types like GeomMesh, Xform, etc.),
+    // GetTypeSize returns sizeof(void*) which is wrong.
+    // Use sizeof_stored() which records the actual sizeof(T) at construction time.
+    if (tid >= TYPE_ID_MODEL_BEGIN && tid < TYPE_ID_MODEL_END) {
+      size_t stored_size = sizeof_stored();
+      if (stored_size > 0) {
+        type_size = stored_size;
+      }
+    }
+
     total_size += type_size;
-    
+
     // Handle dynamic string types specially
     if (tid == TYPE_ID_STRING || tid == TYPE_ID_STRING_DATA) {
       if (auto* str = as<std::string>()) {

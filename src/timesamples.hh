@@ -657,53 +657,6 @@ struct TimeSamples {
     return add_pod_blocked_sample<T>(t, err);
   }
 
-  /// Add TypedArray sample using unified storage
-  /// Stores data in _array_values buffer for efficient array access
-  template<typename T>
-  bool add_typed_array_sample(double t, const TypedArrayPtr<T>& typed_array, std::string *err = nullptr,
-                              size_t expected_total_samples = 0) {
-    (void)expected_total_samples;  // Reserved for future optimization
-
-    // Initialize for TypedArray storage
-    if (empty()) {
-      _type_id = value::TypeTraits<T>::type_id();
-      _is_typed_array = true;
-    } else if (_type_id != value::TypeTraits<T>::type_id()) {
-      if (err) {
-        (*err) += "Type mismatch: TimeSamples already initialized with different type.\n";
-      }
-      return false;
-    }
-
-    // Use unified storage with _array_values
-    _times.push_back(t);
-    _blocked.push_back(0);  // Not blocked
-
-    // Allocate new buffer for this array sample
-    auto array_buffer = std::make_unique<Buffer<16>>();
-    size_t data_size = sizeof(T) * typed_array.size();
-    array_buffer->resize(data_size);
-    if (typed_array.data() && typed_array.size() > 0) {
-      std::memcpy(array_buffer->data(), typed_array.data(), data_size);
-    }
-
-    // Store the index of the newly allocated buffer
-    size_t array_index = _array_values.size();
-    _array_values.push_back(std::move(array_buffer));
-
-    // Create encoded offset with array buffer flag and index
-    uint64_t encoded_offset = make_array_buffer_offset(array_index);
-    _offsets.push_back(encoded_offset);
-
-    // Update array metadata
-    _is_array = true;
-    _array_size = typed_array.size();
-    _element_size = sizeof(T);
-
-    _dirty = true;
-    return true;
-  }
-
   /// Get TypedArray sample at specific time
   template<typename T>
   bool get_typed_array_at_time(double t, TypedArray<T>* typed_array, bool* blocked = nullptr) const {
@@ -1285,15 +1238,28 @@ struct TimeSamples {
     total += _values.capacity();
     total += _offsets.capacity() * sizeof(uint64_t);
     total += _small_values.capacity() * sizeof(uint64_t);
+
+    // _array_values vector overhead + each buffer
+    total += _array_values.capacity() * sizeof(std::unique_ptr<Buffer<16>>);
     for (const auto& buf : _array_values) {
       if (buf) {
-        total += buf->capacity();
+        total += sizeof(Buffer<16>) + buf->capacity();
       }
     }
 
-    // Account for generic Value storage
+    // value::Value array storage (for non-POD array types)
+    total += _value_array_storage.capacity() * sizeof(value::Value);
+    for (const auto& val : _value_array_storage) {
+      total += val.estimate_memory_usage();
+    }
+    total += _value_array_refs.capacity() * sizeof(uint64_t);
+
+    // Per-sample array counts
+    total += _array_counts.capacity() * sizeof(size_t);
+
+    // Account for generic Value storage (_samples)
+    total += _samples.capacity() * sizeof(Sample);
     for (const auto &sample : _samples) {
-      total += sizeof(Sample);
       total += sample.value.estimate_memory_usage();
     }
 

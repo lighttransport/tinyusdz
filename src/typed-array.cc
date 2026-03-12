@@ -28,16 +28,6 @@ template class TypedArray<int32_t>;
 template class TypedArray<float>;
 template class TypedArray<double>;
 
-// TypedArrayPtr (packed pointer wrapper) instantiations
-template class TypedArrayPtr<uint8_t>;
-template class TypedArrayPtr<uint16_t>;
-template class TypedArrayPtr<uint32_t>;
-template class TypedArrayPtr<int8_t>;
-template class TypedArrayPtr<int16_t>;
-template class TypedArrayPtr<int32_t>;
-template class TypedArrayPtr<float>;
-template class TypedArrayPtr<double>;
-
 // TypedArrayView instantiations
 template class TypedArrayView<uint8_t>;
 template class TypedArrayView<const uint8_t>;

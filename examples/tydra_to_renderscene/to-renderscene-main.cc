@@ -24,6 +24,19 @@
 #include "value-pprint.hh"
 #include "value-types.hh"
 
+static std::string format_memory_size(size_t bytes) {
+  const char* units[] = {"B", "KB", "MB", "GB", "TB"};
+  int unit_index = 0;
+  double size = static_cast<double>(bytes);
+  while (size >= 1024.0 && unit_index < 4) {
+    size /= 1024.0;
+    unit_index++;
+  }
+  char buf[64];
+  snprintf(buf, sizeof(buf), "%.2f %s", size, units[unit_index]);
+  return std::string(buf);
+}
+
 static int NullARResolve(const char *asset_name,
                        const std::vector<std::string> &search_paths,
                        std::string *resolved_asset_name, std::string *err,
@@ -197,6 +210,7 @@ static void print_help(const char* prog_name) {
   std::cout << "  --dumpusd             Dump scene as USD (USDA Ascii)\n";
   std::cout << "  --dump-timesamples    Dump animation channel timesamples values\n";
   std::cout << "  --nodump              Do not dump RenderScene output\n";
+  std::cout << "  --memstat             Print memory usage statistics\n";
   std::cout << "  --notangent           Do not compute tangents/binormals\n";
   std::cout << "  --calctangent         Force tangent computation even without normal map\n";
   std::cout << "  --tangent-method M    Tangent method: lengyel (default), mikktspace, fast-mikktspace\n";
@@ -225,6 +239,7 @@ int main(int argc, char **argv) {
   bool no_assetresolver = false;
   bool dump_timesamples = false;
   bool no_dump = false;
+  bool memstat = false;
   bool no_tangent = false;
   bool force_tangent = false;
   auto tangent_method = tinyusdz::tydra::MeshConverterConfig::TangentComputationMethod::Lengyel;
@@ -255,6 +270,8 @@ int main(int argc, char **argv) {
       dump_timesamples = true;
     } else if (strcmp(argv[i], "--nodump") == 0) {
       no_dump = true;
+    } else if (strcmp(argv[i], "--memstat") == 0) {
+      memstat = true;
     } else if (strcmp(argv[i], "--notangent") == 0) {
       no_tangent = true;
     } else if (strcmp(argv[i], "--calctangent") == 0) {
@@ -343,6 +360,13 @@ int main(int argc, char **argv) {
       tinyusdz::io::UnmapFile(mmap_handle, &err);
     }
     return EXIT_FAILURE;
+  }
+
+  if (memstat) {
+    size_t stage_mem = stage.estimate_memory_usage();
+    std::cout << "# Memory Statistics (Stage)\n";
+    std::cout << "  Stage memory usage: " << format_memory_size(stage_mem)
+              << " (" << stage_mem << " bytes)\n\n";
   }
 
   if (usdprint) {
@@ -472,6 +496,13 @@ int main(int argc, char **argv) {
   std::string converter_warn = converter.GetWarning();
   if (!converter_warn.empty()) {
     config_info.push_back({"converter_warning", converter_warn});
+  }
+
+  if (memstat) {
+    size_t render_mem = render_scene.estimate_memory_usage();
+    std::cout << "# Memory Statistics (RenderScene)\n";
+    std::cout << "  RenderScene memory usage: " << format_memory_size(render_mem)
+              << " (" << render_mem << " bytes)\n\n";
   }
 
   // Dump animation timesamples if requested
