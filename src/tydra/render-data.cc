@@ -4139,6 +4139,113 @@ static bool QuantizeMeshTangents(
   return true;
 }
 
+///
+/// Try to convert face-varying normals to vertex by quantizing to 10-bit
+/// SNORM and comparing packed uint32 values.  This succeeds when normals at
+/// a shared vertex differ only by floating-point noise (< ~0.1 degree),
+/// as is typical for subdivision surface limit normals.
+///
+/// On success the VertexAttribute is replaced with vertex-varying float3
+/// normals (one per vertex).  Returns false if any vertex has mismatching
+/// packed normals across its face-vertices.
+///
+static bool TryQuantizedNormalDedup(
+    VertexAttribute &normals,
+    const std::vector<uint32_t> &faceVertexIndices) {
+  using namespace tangent_quantize;
+
+  if (!normals.is_facevarying()) return false;
+  if (normals.format != VertexAttributeFormat::Vec3) return false;
+
+  size_t nFV = normals.vertex_count();
+  if (nFV == 0) return false;
+  if (nFV != faceVertexIndices.size()) return false;
+
+  const value::float3 *src =
+      reinterpret_cast<const value::float3 *>(normals.data.data());
+
+  // Find max vertex index to size the output.
+  uint32_t maxIdx = 0;
+  for (size_t i = 0; i < faceVertexIndices.size(); i++) {
+    maxIdx = (std::max)(maxIdx, faceVertexIndices[i]);
+  }
+  uint32_t numVerts = maxIdx + 1;
+
+  // Per-vertex: packed normal (set on first visit) and a flag.
+  std::vector<uint32_t> vertPacked(numVerts, 0);
+  std::vector<uint8_t>  vertVisited(numVerts, 0);
+  // Keep one representative float3 per vertex (avoids unquantize round-trip).
+  std::vector<value::float3> vertNormal(numVerts, {0.0f, 0.0f, 0.0f});
+
+  for (size_t i = 0; i < nFV; i++) {
+    uint32_t vi = faceVertexIndices[i];
+    uint32_t packed = pack_normal_1010102(src[i][0], src[i][1], src[i][2]);
+
+    if (vertVisited[vi]) {
+      if (vertPacked[vi] != packed) {
+        return false;  // mismatch — normals are truly face-varying
+      }
+    } else {
+      vertPacked[vi] = packed;
+      vertNormal[vi] = src[i];
+      vertVisited[vi] = 1;
+    }
+  }
+
+  // All face-vertices agree at 10-bit resolution.  Replace with vertex data.
+  VertexAttribute attr;
+  attr.format = VertexAttributeFormat::Vec3;
+  attr.variability = VertexVariability::Vertex;
+  attr.data.resize(numVerts * sizeof(value::float3));
+  std::memcpy(attr.data.data(), vertNormal.data(),
+              numVerts * sizeof(value::float3));
+  attr.stride = 0;
+  attr.elementSize = 1;
+  attr.name = normals.name;
+
+  normals = std::move(attr);
+  return true;
+}
+
+static bool QuantizeMeshNormals(
+    RenderMesh &mesh,
+    MeshConverterConfig::NormalStorageFormat format) {
+  using namespace tangent_quantize;
+
+  if (format == MeshConverterConfig::NormalStorageFormat::Float3) {
+    return true;  // no quantization
+  }
+
+  if (mesh.normals.format != VertexAttributeFormat::Vec3) {
+    return true;  // already quantized or not float3
+  }
+
+  size_t nN = mesh.normals.vertex_count();
+  if (nN == 0) return true;
+
+  const value::float3 *N =
+      reinterpret_cast<const value::float3 *>(mesh.normals.data.data());
+
+  VertexVariability var = mesh.normals.variability;
+
+  std::vector<uint32_t> packed;
+  QuantizeNormals1010102(N, nN, &packed);
+
+  VertexAttribute attr;
+  attr.format = VertexAttributeFormat::Uint;
+  attr.data.resize(packed.size() * sizeof(uint32_t));
+  std::memcpy(attr.data.data(), packed.data(),
+              packed.size() * sizeof(uint32_t));
+
+  mesh.normals = std::move(attr);
+  mesh.normals.variability = var;
+  mesh.normals.stride = 0;
+  mesh.normals.elementSize = 1;
+  mesh.normals.name = "normals";
+
+  return true;
+}
+
 bool RenderSceneConverter::ConvertMesh(
     const RenderSceneConverterEnv &env, const Path &abs_prim_path,
     const GeomMesh &mesh, const MaterialPath &material_path,
@@ -4303,9 +4410,14 @@ bool RenderSceneConverter::ConvertMesh(
           mesh.subsetFamilyTypeMap.find(value::token("materialBind"));
       if (family_it != mesh.subsetFamilyTypeMap.end()) {
         const GeomSubset::FamilyType familyType = family_it->second;
+        std::string subset_err;
         if (!GeomSubset::ValidateSubsets(material_subsets, elementCount,
-                                         familyType, &_err)) {
-          PUSH_ERROR_AND_RETURN("GeomSubset validation failed.");
+                                         familyType, &subset_err)) {
+          // Warn but don't fail — many DCC tools (Blender, Maya) export
+          // incomplete partitions where only some faces are assigned to
+          // subsets.  pxrUSD also warns without failing here.
+          // Unassigned faces inherit the parent mesh's material binding.
+          PUSH_WARN("GeomSubset validation: " + subset_err);
         }
       }
     }
@@ -4661,11 +4773,19 @@ bool RenderSceneConverter::ConvertMesh(
         DCOUT("normals is converted to 'vertex' varying.");
         dst.normals = std::move(va_normals);
       } else {
-        DCOUT(
-            "normals cannot be converted to 'vertex' varying. Staying "
-            "'facevarying'");
-        DCOUT("warn = " << _warn);
-        is_single_indexable = false;
+        // Exact-eps dedup failed.  Try quantized dedup: normals that agree
+        // at 10-bit SNORM resolution (~0.1°) are treated as identical.
+        // This catches subdivision surface limit normals where the same
+        // logical normal differs by floating-point noise across face-vertices.
+        if (TryQuantizedNormalDedup(dst.normals, dst.usdFaceVertexIndices)) {
+          DCOUT("normals converted to 'vertex' via quantized dedup.");
+        } else {
+          DCOUT(
+              "normals cannot be converted to 'vertex' varying. Staying "
+              "'facevarying'");
+          DCOUT("warn = " << _warn);
+          is_single_indexable = false;
+        }
       }
     }
   }
@@ -5752,6 +5872,11 @@ bool RenderSceneConverter::ConvertMesh(
     QuantizeMeshTangents(dst, env.mesh_config.tangent_storage);
   }
 
+  // Quantize normals if a packed format is configured.
+  if (!dst.normals.empty()) {
+    QuantizeMeshNormals(dst, env.mesh_config.normal_storage);
+  }
+
   dst.is_single_indexable = is_single_indexable;
 
   dst.prim_name = mesh.name;
@@ -5850,6 +5975,17 @@ bool RenderSceneConverter::ConvertMesh(
     }
   }
 
+
+  // Free source GeomMesh large arrays to reduce peak memory.
+  // The const_cast is safe here: ConvertMesh has finished reading all mesh
+  // data, and the GeomMesh attribute data is no longer needed.
+  if (env.mesh_config.lowmem) {
+    auto *pmesh = const_cast<GeomMesh *>(&mesh);
+    pmesh->points.set_value({});
+    pmesh->normals.set_value({});
+    pmesh->faceVertexIndices.set_value({});
+    pmesh->faceVertexCounts.set_value({});
+  }
 
   (*dstMesh) = std::move(dst);
 

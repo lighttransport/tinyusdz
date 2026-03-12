@@ -349,6 +349,39 @@ inline bool QuantizeTangentsFp16(
   return true;
 }
 
+// ============================================================================
+// Normal quantization (3-component, no handedness sign)
+// ============================================================================
+
+/// Pack a unit normal vec3 into INT_2_10_10_10_REV (4 bytes, w=0).
+inline uint32_t pack_normal_1010102(float nx, float ny, float nz) {
+  int32_t ix = float_to_snorm10(nx) & 0x3FF;
+  int32_t iy = float_to_snorm10(ny) & 0x3FF;
+  int32_t iz = float_to_snorm10(nz) & 0x3FF;
+  return uint32_t(ix) | (uint32_t(iy) << 10) | (uint32_t(iz) << 20);
+}
+
+/// Unpack INT_2_10_10_10_REV to normal vec3.
+inline void unpack_normal_1010102(uint32_t p, float &nx, float &ny, float &nz) {
+  int32_t ix = int32_t(p << 22) >> 22;
+  int32_t iy = int32_t(p << 12) >> 22;
+  int32_t iz = int32_t(p << 2) >> 22;
+  nx = snorm10_to_float(ix);
+  ny = snorm10_to_float(iy);
+  nz = snorm10_to_float(iz);
+}
+
+/// Batch quantize normals to INT_2_10_10_10_REV (4 bytes per vertex).
+inline bool QuantizeNormals1010102(
+    const value::float3 *normals, size_t count,
+    std::vector<uint32_t> *out) {
+  out->resize(count);
+  for (size_t i = 0; i < count; i++) {
+    (*out)[i] = pack_normal_1010102(normals[i][0], normals[i][1], normals[i][2]);
+  }
+  return true;
+}
+
 // PackToVertexAttribute helpers — only available when render-data.hh is included.
 // Guard with the VertexAttribute struct existence.
 #ifdef TINYUSDZ_TYDRA_RENDER_DATA_HH_
