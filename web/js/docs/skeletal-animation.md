@@ -109,7 +109,10 @@ npx vite-node skinning-info.js <usd-file> [options]
   --keyframes       Dump skeletal animation keyframe data
   --memory          Print memory usage statistics
   --reduce-bones    Enable bone reduction during loading
+  --round-bones     Round bone count to standard values (4,8,16,32,48,64,80,96,128)
   --target-bones N  Target bone count per vertex (default: 4)
+  --bone-texture    Test bone texture generation for GPU skinning
+  --transforms      Dump node tree xforms and skeleton bind/rest transforms
 ```
 
 ## Z-up to Y-up Conversion
