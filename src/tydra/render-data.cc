@@ -1447,18 +1447,31 @@ std::vector<const tinyusdz::GeomSubset *> GetMaterialBindGeomSubsets(
   return dst;
 }
 
+/// Try to read array attribute directly from mmap. Returns true if successful.
+template <typename T>
+static bool TryReadMMapArray(
+    const Stage &stage,
+    const std::string &prim_path,
+    const std::string &attr_name,
+    std::vector<T> *out) {
+  if (!stage.has_mmap_zero_copy()) return false;
+  const MMapArrayRef *ref = stage.mmap_table()->find(prim_path, attr_name);
+  if (!ref) return false;
+  const T *ptr = stage.mmap_source()->get_ptr<T>(*ref);
+  if (!ptr) return false;
+  out->resize(static_cast<size_t>(ref->element_count));
+  memcpy(out->data(), ptr, ref->element_count * sizeof(T));
+  return true;
+}
+
 //
 // name does not include "primvars:" prefix.
 //
 nonstd::expected<VertexAttribute, std::string> GetTextureCoordinate(
     const Stage &stage, const GeomMesh &mesh, const std::string &name,
-    const double t, const value::TimeSampleInterpolationType tinterp) {
+    const double t, const value::TimeSampleInterpolationType tinterp,
+    const std::string &prim_path = std::string()) {
   VertexAttribute vattr;
-
-  (void)stage;
-
-  // HACK
-  //return nonstd::make_unexpected("Disabled");
 
   std::string err;
   GeomPrimvar primvar;
@@ -1471,7 +1484,6 @@ nonstd::expected<VertexAttribute, std::string> GetTextureCoordinate(
                                    "\n");
   }
 
-  //TUSDZ_LOG_I("get tex\n");
   // TODO: allow float2?
   if (primvar.get_type_id() !=
       value::TypeTraits<std::vector<value::texcoord2f>>::type_id()) {
@@ -1480,12 +1492,22 @@ nonstd::expected<VertexAttribute, std::string> GetTextureCoordinate(
         primvar.get_type_name() + "\n");
   }
 
-  //TUSDZ_LOG_I("flatten_with_indices\n");
   std::vector<value::texcoord2f> uvs;
-  if (!primvar.flatten_with_indices(t, &uvs, tinterp)) {
-    //TUSDZ_LOG_I("flatten_with_indices failed\n");
-    return nonstd::make_unexpected(
-        "Failed to retrieve texture coordinate primvar with concrete type.\n");
+
+  // mmap zero-copy path: read texcoords directly from mmap when the primvar
+  // has no indices (no index expansion needed).  The mmap table key uses the
+  // full property name "primvars:<name>".
+  bool got_from_mmap = false;
+  if (!prim_path.empty() && !primvar.has_indices()) {
+    got_from_mmap = TryReadMMapArray<value::texcoord2f>(
+        stage, prim_path, "primvars:" + name, &uvs);
+  }
+
+  if (!got_from_mmap) {
+    if (!primvar.flatten_with_indices(t, &uvs, tinterp)) {
+      return nonstd::make_unexpected(
+          "Failed to retrieve texture coordinate primvar with concrete type.\n");
+    }
   }
 
   if (primvar.get_interpolation() == Interpolation::Varying) {
@@ -4259,23 +4281,6 @@ static bool QuantizeMeshNormals(
   return true;
 }
 
-/// Try to read array attribute directly from mmap. Returns true if successful.
-template <typename T>
-static bool TryReadMMapArray(
-    const Stage &stage,
-    const std::string &prim_path,
-    const std::string &attr_name,
-    std::vector<T> *out) {
-  if (!stage.has_mmap_zero_copy()) return false;
-  const MMapArrayRef *ref = stage.mmap_table()->find(prim_path, attr_name);
-  if (!ref) return false;
-  const T *ptr = stage.mmap_source()->get_ptr<T>(*ref);
-  if (!ptr) return false;
-  out->resize(static_cast<size_t>(ref->element_count));
-  memcpy(out->data(), ptr, ref->element_count * sizeof(T));
-  return true;
-}
-
 bool RenderSceneConverter::ConvertMesh(
     const RenderSceneConverterEnv &env, const Path &abs_prim_path,
     const GeomMesh &mesh, const MaterialPath &material_path,
@@ -4518,7 +4523,7 @@ bool RenderSceneConverter::ConvertMesh(
       DCOUT("uv primvar  with default_texcoords_primvar_name found.");
       auto ret = GetTextureCoordinate(
           env.stage, mesh, env.mesh_config.default_texcoords_primvar_name,
-          env.timecode, env.tinterp);
+          env.timecode, env.tinterp, prim_path_str);
       if (ret) {
         //TUSDZ_LOG_I("uv attr");
 
@@ -4557,7 +4562,8 @@ bool RenderSceneConverter::ConvertMesh(
           if (uvAttrs.find(uint32_t(slotId)) == uvAttrs.end()) {
             // FIXME: Use GetGeomPrimvar() & ToVertexAttribute()
             auto ret = GetTextureCoordinate(env.stage, mesh, uvname,
-                                            env.timecode, env.tinterp);
+                                            env.timecode, env.tinterp,
+                                            prim_path_str);
             if (ret) {
               VertexAttribute &vattr = ret.value();
 
@@ -4604,7 +4610,7 @@ bool RenderSceneConverter::ConvertMesh(
             << env.mesh_config.default_texcoords_primvar_name << "`.");
       auto ret = GetTextureCoordinate(
           env.stage, mesh, env.mesh_config.default_texcoords_primvar_name,
-          env.timecode, env.tinterp);
+          env.timecode, env.tinterp, prim_path_str);
       if (ret) {
         uvAttrs[0] = std::move(ret.value());
       } else {
