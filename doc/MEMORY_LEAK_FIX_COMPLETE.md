@@ -178,30 +178,14 @@ _dedup_cache[rep] = v;
 
 ## Related Documentation
 
-- **doc/TYPED_ARRAY_REVIEW_2025.md** - Comprehensive TypedArray architecture review
+- **doc/TYPED_ARRAY_REVIEW_2025.md** - Removed (TypedArrayPtr dead code has been deleted; dedup caches now use `size_t` indices in a single unified map)
 - **doc/TYPED_ARRAY_API_SUMMARY.md** - Factory function API reference
 - **doc/FACTORY_FUNCTIONS_INTEGRATION.md** - Factory function integration details
 - **doc/TYPED_ARRAY_ARCHITECTURE.md** - Deep dive into architecture
 
-## Future Improvements
+## Status (2026-03)
 
-While the current fix is complete and correct, the review document identifies long-term improvements:
-
-1. **Option 1 (Recommended)**: Migrate to `std::shared_ptr<TypedArrayImpl>`
-   - Automatic reference counting
-   - No manual cleanup needed
-   - Type-safe ownership
-
-2. **Option 2**: Implement proper move semantics
-   - Fix asymmetric copy constructor
-   - Add reference counting to TypedArrayImpl
-
-3. **Option 3**: Store owning TypedArrays in cache
-   - Cache stores owned arrays
-   - Return dedup references
-   - Simpler than current approach
-
-See **doc/TYPED_ARRAY_REVIEW_2025.md** Section 4 for detailed analysis of all options.
+The TypedArrayPtr class and all 22 type-specific dedup caches have been removed. Dedup caches were previously refactored to store `size_t` indices, and the 22 separate maps consolidated into a single `_dedup_array_cache`. The ownership issues described in this document and `TYPED_ARRAY_REVIEW_2025.md` no longer apply.
 
 ## Statistics
 
