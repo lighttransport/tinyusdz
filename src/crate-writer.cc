@@ -39,6 +39,10 @@ namespace pathlib = ::crate;
 namespace tinyusdz {
 namespace experimental {
 
+// Out-of-line virtual destructors to anchor vtables in this TU.
+IOutputStream::~IOutputStream() = default;
+MemoryOutputStream::~MemoryOutputStream() = default;
+
 namespace {
 
 // Magic identifier for USDC files

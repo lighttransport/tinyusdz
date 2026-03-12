@@ -4534,7 +4534,6 @@ bool CrateWriter::ConvertLayerToSpecs(const Layer& layer, std::string* err) {
   }
 
   // 2. Convert all primspecs in the layer
-  size_t prim_count = 0;
   for (const auto& item : layer.primspecs()) {
     const auto& prim_name = item.first;
     const auto& primspec = item.second;
@@ -4545,8 +4544,6 @@ bool CrateWriter::ConvertLayerToSpecs(const Layer& layer, std::string* err) {
       if (err) *err = "Failed to convert primspec: " + prim_name + ". Error: " + (*err);
       return false;
     }
-
-    prim_count++;
   }
 
   // NOTE: Sublayers are exported via layer metadata (subLayers/subLayerOffsets fields)
@@ -4716,6 +4713,7 @@ bool CrateWriter::ConvertPrimSpecRecursive(
 
     DCOUT("[ConvertPrimSpecRecursive] Added references field with "
               << total_refs << " references");
+    (void)total_refs;
   }
 
   // Add payload if present
@@ -4761,6 +4759,7 @@ bool CrateWriter::ConvertPrimSpecRecursive(
 
     DCOUT("[ConvertPrimSpecRecursive] Added payload field with "
               << total_payloads << " payloads");
+    (void)total_payloads;
   }
 
   // Add customData if present
@@ -4877,6 +4876,7 @@ bool CrateWriter::ConvertPrimSpecRecursive(
 
     DCOUT("[ConvertPrimSpecRecursive] Added inherits with "
               << total_inherits << " paths");
+    (void)total_inherits;
   }
 
   // Add specializes if present
@@ -4922,6 +4922,7 @@ bool CrateWriter::ConvertPrimSpecRecursive(
 
     DCOUT("[ConvertPrimSpecRecursive] Added specializes with "
               << total_specializes << " paths");
+    (void)total_specializes;
   }
 
   // Add assetInfo if present
