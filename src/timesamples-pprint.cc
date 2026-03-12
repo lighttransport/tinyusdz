@@ -445,11 +445,8 @@ std::string try_print_typed_array(const uint8_t* packed_ptr_data) {
     // Cast to TypedArray<T>*
     auto* impl = reinterpret_cast<TypedArray<T>*>(ptr_bits);
 
-    // Create TypedArray with dedup flag to prevent deletion
-    TypedArrayPtr<T> typed_array(impl, true);
-
-    // Create a view to access the data
-    TypedArrayView<const T> view(typed_array);
+    // Create a view to access the data directly
+    TypedArrayView<const T> view(*impl);
 
     if (view.size() == 0) {
         return "[]";
@@ -879,13 +876,8 @@ std::string print_typed_array(const uint8_t* packed_ptr_data) {
 
     TUSDZ_LOG_I("impl->size : " << impl->size());
 
-    // Create TypedArray with dedup flag to prevent deletion
-    TypedArrayPtr<T> typed_array(impl, true);
-
-    TUSDZ_LOG_I("typed_array.size = " << typed_array.size());
-
-    // Create a view to access the data
-    TypedArrayView<const T> view(typed_array);
+    // Create a view to access the data directly
+    TypedArrayView<const T> view(*impl);
 
     if (view.size() == 0) {
         return "[]";

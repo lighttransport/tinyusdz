@@ -1856,7 +1856,8 @@ class any_value {
         underlying_type_name_fn_(other.underlying_type_name_fn_),
         type_id_(other.type_id_),
         underlying_type_id_(other.underlying_type_id_),
-        is_inline_(other.is_inline_) {
+        is_inline_(other.is_inline_),
+        sizeof_stored_type_(other.sizeof_stored_type_) {
     if (ops_) {
       ops_->copy(&storage_, &other.storage_);
     }
@@ -1868,7 +1869,8 @@ class any_value {
         underlying_type_name_fn_(other.underlying_type_name_fn_),
         type_id_(other.type_id_),
         underlying_type_id_(other.underlying_type_id_),
-        is_inline_(other.is_inline_) {
+        is_inline_(other.is_inline_),
+        sizeof_stored_type_(other.sizeof_stored_type_) {
     if (ops_) {
       ops_->move(&storage_, &other.storage_);
       other.ops_ = nullptr;
@@ -1877,6 +1879,7 @@ class any_value {
       other.type_id_ = 0;
       other.underlying_type_id_ = 0;
       other.is_inline_ = true;
+      other.sizeof_stored_type_ = 0;
     }
   }
 
@@ -1897,6 +1900,7 @@ class any_value {
       type_id_ = other.type_id_;
       underlying_type_id_ = other.underlying_type_id_;
       is_inline_ = other.is_inline_;
+      sizeof_stored_type_ = other.sizeof_stored_type_;
       if (ops_) {
         ops_->move(&storage_, &other.storage_);
         other.ops_ = nullptr;
@@ -1905,6 +1909,7 @@ class any_value {
         other.type_id_ = 0;
         other.underlying_type_id_ = 0;
         other.is_inline_ = true;
+        other.sizeof_stored_type_ = 0;
       }
     }
     return *this;
@@ -1951,6 +1956,7 @@ class any_value {
     type_id_ = 0;
     underlying_type_id_ = 0;
     is_inline_ = true;
+    sizeof_stored_type_ = 0;
   }
 
   void swap(any_value& other) noexcept {
@@ -2067,6 +2073,7 @@ class any_value {
     type_id_ = TypeTraits<T>::type_id();
     underlying_type_id_ = TypeTraits<T>::underlying_type_id();
     is_inline_ = fits_inline<T>();
+    sizeof_stored_type_ = sizeof(T);
     do_construct<ValueType, T>(std::forward<ValueType>(val));
   }
 
@@ -2085,6 +2092,12 @@ class any_value {
   uint32_t type_id_ = 0;
   uint32_t underlying_type_id_ = 0;
   bool is_inline_ = true;
+  size_t sizeof_stored_type_ = 0;  // sizeof(T) of the stored type, set at construct time
+
+ public:
+  /// Return sizeof(T) of the stored type.
+  /// This is the shallow size of the concrete object, not including heap allocations.
+  size_t sizeof_stored() const { return sizeof_stored_type_; }
 };
 
 // Type-checked cast (returns nullptr on type mismatch)
@@ -2420,6 +2433,10 @@ class Value {
   bool is_none() const { return v_.type_id() == value::TYPE_ID_VALUEBLOCK; }
 
   size_t estimate_memory_usage() const;
+
+  /// Return sizeof(T) of the stored concrete type.
+  /// This is the shallow struct size, not including heap allocations.
+  size_t sizeof_stored() const { return v_.sizeof_stored(); }
 
  private:
   any_value v_;
