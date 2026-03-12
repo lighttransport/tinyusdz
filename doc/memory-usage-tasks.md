@@ -14,7 +14,7 @@ End-to-end memory analysis of TinyUSDZ: from USD file loading through Tydra Rend
 | Peak heap (with USDA print) | **2.46 GB** |
 | USDC parser peak (self-reported, lazy mode) | **92.3 MB** |
 | USDC parser peak (self-reported, non-lazy) | **282.7 MB** |
-| Stage `estimate_memory_usage()` | 4 KB |
+| Stage `estimate_memory_usage()` | **217 MB** (was 4 KB before recursive fix) |
 
 After fixing MemoryBudgetManager (report timing, balanced budget release in lazy mode, decompression buffer tracking, temp vector tracking), the self-reported peak now matches actual heap within 1 MB in non-lazy mode (282.7 MB reported vs 281 MB massif). In lazy mode (default), the reported peak of 92.3 MB reflects the per-spec concurrent high-water mark — lower than the cumulative massif peak because the scratch buffer releases between specs.
 
@@ -132,7 +132,7 @@ CLI: `tusdcat --memstat model.usdc`
 | Spec/Fieldset array | up to 256M specs | Unpacked property values |
 | Decompression buffers | variable | Reused across calls (never shrunk) |
 | Live fieldsets map | large | Unpacked field/value pairs; high with lazy loading disabled |
-| TimeSamples dedup caches | variable | 22 type-specific caches (int32, half, float, double, quat, matrix, etc.) |
+| TimeSamples dedup cache | variable | Unified `_dedup_array_cache` (single map, ValueRep encodes type in bits 48-55) |
 
 ### Lazy Property Construction
 
@@ -149,9 +149,9 @@ if (_memory_usage > _max_memory_limit_bytes) { return false; }
 
 Default limit: 128 GB (in `usda-reader.hh`).
 
-### Stage Memory Estimation
+### Stage Memory Estimation (FIXED)
 
-`Stage::estimate_memory_usage()` (`stage.cc:937`): counts `sizeof(Stage)`, `StageMetas`, root node names/paths, prim ID cache. **Incomplete** — does not recurse into Prim properties, children, or metadata.
+`Stage::estimate_memory_usage()` (`stage.cc`): Now performs full recursive traversal of the Prim tree using an iterative stack-based walk. For each Prim, estimates `_data` via `Value::estimate_memory_usage()`, string members, all properties via concrete type dispatch (GeomMesh, Xform, Material, etc.), and deep attribute memory for large typed attributes (points, normals, faceVertexIndices, etc.). Reports **217 MB** for `suzanne-subd-lv6.usdc` (was 4 KB before the fix).
 
 `Layer::estimate_memory_usage()` (`layer.cc:577`): counts PrimSpecs (recursive), metadata strings, sublayers. **Incomplete** — misses nested Property values and complex PrimMeta.
 
@@ -261,10 +261,10 @@ Reports USDC parser current/peak/budget memory. Shows Stage `estimate_memory_usa
 ### 2. tydra_to_renderscene
 
 ```bash
-./build/examples/tydra_to_renderscene/tydra_to_renderscene model.usdc
+./build/examples/tydra_to_renderscene/tydra_to_renderscene --memstat model.usdc
 ```
 
-Currently does NOT report memory. **TODO:** Add `--memstat` flag that prints `RenderScene::estimate_memory_usage()` breakdown.
+Reports Stage `estimate_memory_usage()` after loading and `RenderScene::estimate_memory_usage()` after Tydra conversion. Use `--nodump` to suppress USDA output.
 
 ### 3. Tangent Benchmark
 
@@ -321,15 +321,11 @@ Previously the self-reported USDC parser memory was 49 KB for a 180 MB file prod
 
 Now reports 282.7 MB in non-lazy mode (matches massif within 1 MB) and 92.3 MB in lazy mode (per-spec concurrent high-water mark).
 
-### TypedArray Ownership (CRITICAL)
+### TypedArray Ownership (RESOLVED)
 
-**Docs:** `doc/TYPED_ARRAY_REVIEW_2025.md`, `doc/MEMORY_LEAK_FIX_COMPLETE.md`
+**Docs:** `doc/TYPED_ARRAY_REVIEW_2025.md` removed (described issues that have been fixed)
 
-`TypedArray<T>` has broken copy semantics: copies are marked as dedup references to prevent double-free, creating use-after-free vulnerability. Interim fix: manual cleanup in `CrateReader::~CrateReader()` destructor.
-
-- **Memory impact:** ~75 MB leak per load (typical animated model), ~10 GB for large production scenes
-- **Affected:** 22 dedup caches in `crate-reader-timesamples.cc`
-- **Long-term fix:** Migrate to `std::shared_ptr<TypedArrayImpl<T>>`
+The `TypedArrayPtr<T>` class (packed 64-bit smart pointer with dedup flag in bit 63) has been **removed** as dead code. The dedup caches were previously refactored to store `size_t` indices instead of `TypedArrayPtr` objects, so the ownership/copy-semantics bugs documented in `TYPED_ARRAY_REVIEW_2025.md` no longer apply. The 22 separate type-specific dedup caches have been consolidated into a single unified `_dedup_array_cache` map (ValueRep encodes type in bits 48-55, so keys from different types never collide). ~18 dead scalar dedup caches were also removed.
 
 ### lowmem Flag (IMPLEMENTED)
 
@@ -362,6 +358,12 @@ The `_lazy_fieldset_cache` in usdc-reader caused invalid cache reuse when differ
 | Normal quantization (10_10_10_2) | 67% normal storage | `render-data.cc`, `tangent-quantize.hh` |
 | Quantized normal dedup before triangulation | Eliminates 138 MB triangulation buffer for smooth meshes | `render-data.cc` |
 | `lowmem` GeomMesh freeing | ~115 MB source data freed post-conversion | `render-data.cc` |
+| Consolidate 22 dedup caches → 1 | Reduced hash map overhead, simpler code | `crate-reader.hh`, `crate-reader-timesamples.cc` |
+| Remove TypedArrayPtr dead code | ~290 lines removed, eliminates ownership confusion | `typed-array.hh`, `timesamples.hh`, `timesamples-pprint.cc` |
+| Remove ~18 dead scalar dedup caches | Reduces CrateReader struct size | `crate-reader.hh` |
+| TimeSamples move in lazy mode | Eliminates deep copy of TimeSamples in lazy property construction | `usdc-reader.cc` |
+| Fix Stage `estimate_memory_usage()` | 4 KB → 217 MB (full recursive Prim tree walk) | `stage.cc`, `prim-types.cc`, `value-types.cc` |
+| TimeSamples `estimate_memory_usage()` | Covers `_array_values`, `_value_array_storage`, `_value_array_refs` | `timesamples.hh` |
 
 ## TODO Tasks
 
@@ -370,13 +372,13 @@ The `_lazy_fieldset_cache` in usdc-reader caused invalid cache reuse when differ
 - [ ] **Streaming triangulation to eliminate 530 MB peak** — `TriangulateVertexAttribute` and `BuildVertexIndicesFastImpl` together allocate 4 massive temporary vectors (normals ×2, texcoords, index buffers) that dominate 65% of the 808 MB peak. Process faces in chunks and write directly to the output RenderMesh, freeing each chunk's working set before the next. Estimated savings: ~400 MB on the 12M-vertex test case.
 - [x] **Fix MemoryBudgetManager blind spots** — DONE. Reported 49 KB when actual heap was 281 MB. Fixed: report timing, lazy budget release, decompression buffer tracking, temp vector tracking. Now reports 282.7 MB non-lazy (matches massif) / 92.3 MB lazy (concurrent high-water mark).
 - [x] **Implement `lowmem` GeomMesh freeing** — DONE. The `lowmem` config flag now frees source GeomMesh arrays (points, normals, faceVertexIndices, faceVertexCounts) after Tydra conversion via `set_value({})`. Enabled by default in WASM binding.
-- [ ] **Fix TypedArray ownership model** — migrate from manual cleanup to `std::shared_ptr<TypedArrayImpl<T>>`. Affects 22 dedup caches. Fixes ~75 MB leak per load. See `doc/TYPED_ARRAY_REVIEW_2025.md`.
+- [x] **Fix TypedArray ownership model** — DONE. `TypedArrayPtr<T>` dead code removed entirely. Dedup caches already use `size_t` indices. 22 array caches consolidated into 1 unified map. ~18 dead scalar caches removed.
 
 ### High Priority
 
 - [x] **Deduplicate normals before triangulation** — DONE. Added `TryQuantizedNormalDedup` fallback: when exact-epsilon `TryConvertFacevaryingToVertex` fails, quantizes normals to 10-bit SNORM (pack_normal_1010102) and compares packed uint32 values. This catches subdivision surface limit normals where the same logical normal differs by floating-point noise. On success, converts face-varying→vertex, eliminating the 138 MB triangulation buffer entirely for smooth-shaded meshes.
 - [x] **Pre-size triangulation output vectors** — DONE (was stale). `TriangulatePolygon` already reserves exact sizes: `estimatedTriangles = numFaceVertexIndices - 2 * numFaces`.
-- [ ] **Add `--memstat` to `tydra_to_renderscene`** — call `RenderScene::estimate_memory_usage()` with per-mesh and per-texture breakdown. Currently no memory reporting at all.
+- [x] **Add `--memstat` to `tydra_to_renderscene`** — DONE. Reports Stage estimate after load and RenderScene estimate after Tydra conversion.
 - [ ] **Complete `estimate_memory_usage()` for JointAndWeight** (`render-data.cc:11938`) — skinning data not counted.
 - [ ] **Complete `estimate_memory_usage()` for ShapeTarget** (`render-data.cc:11943`) — blend shape data not counted.
 - [ ] **Complete `estimate_memory_usage()` for MaterialSubset** (`render-data.cc:11949`) — material subset indices not counted.
@@ -388,9 +390,10 @@ The `_lazy_fieldset_cache` in usdc-reader caused invalid cache reuse when differ
 
 ### Medium Priority
 
-- [ ] **Move-from CrateValue during Property reconstruction** — `ParseProperty` now accepts `allow_move_from_fvs` but many call sites still copy large arrays. Audit all `BuildPropertyMap` → `ParseProperty` paths to ensure large `vector<float3>` etc. are moved, not copied.
-- [ ] **Complete Stage/Layer memory estimation** — `Stage::estimate_memory_usage()` doesn't recurse into Prim properties, children, or metadata. `Layer::estimate_memory_usage()` misses nested Property values.
-- [ ] **Add PrimVar `estimate_memory_usage()` to Attribute** — PrimVar has the method (`primvar.hh:503`) but Attribute doesn't fully utilize it.
+- [x] **Move-from CrateValue during Property reconstruction** — DONE. `ParseProperty` now moves TimeSamples in lazy mode (scratch buffer is local, safe to move) and copies in non-lazy mode (shared `_live_fieldsets`).
+- [x] **Complete Stage memory estimation** — DONE. `Stage::estimate_memory_usage()` now recursively walks entire Prim tree, estimating `_data`, string members, all properties via concrete type dispatch, and deep attribute memory. Reports 217 MB (was 4 KB).
+- [x] **Add PrimVar `estimate_memory_usage()` to Attribute** — DONE. `Attribute::estimate_memory_usage()` now delegates to `_var.estimate_memory_usage()` which calls `Value::estimate_memory_usage()` + `TimeSamples::estimate_memory_usage()`.
+- [ ] **Complete Layer memory estimation** — `Layer::estimate_memory_usage()` misses nested Property values.
 - [ ] **Profile texture memory separately** — textures dominate total memory. Add per-texture size reporting to `estimate_memory_usage()` output.
 - [ ] **Benchmark deferred vs immediate tangent on WASM** — measure initial load time and peak memory difference.
 - [ ] **Reduce WASM default memory limit** — 8 GB for 64-bit WASM may be too permissive for web deployment. Profile real workloads to set tighter defaults.
@@ -422,8 +425,9 @@ The `_lazy_fieldset_cache` in usdc-reader caused invalid cache reuse when differ
 | `src/tydra/tangent-quantize.hh` | Packed tangent formats |
 | `src/tydra/common-types.hh` | `MemoryConfig` struct |
 | `web/binding.cc` | WASM memory config, tangent cache, deferred computation |
+| `src/timesamples.hh` | `TimeSamples::estimate_memory_usage()`, sample storage |
 | `examples/tusdcat/main.cc` | mmap loading, `--memstat` reporting |
-| `examples/tydra_to_renderscene/to-renderscene-main.cc` | Conversion example (needs `--memstat`) |
+| `examples/tydra_to_renderscene/to-renderscene-main.cc` | Conversion example with `--memstat` reporting |
 | `tests/feat/tangent/bench_tangent.cc` | Tangent memory/quality benchmark |
-| `doc/TYPED_ARRAY_REVIEW_2025.md` | TypedArray memory safety issues |
+| `doc/TYPED_ARRAY_REVIEW_2025.md` | Removed (TypedArrayPtr ownership issues resolved) |
 | `doc/tydra-tangent.md` | Tangent computation and quantization docs |
