@@ -35,6 +35,7 @@
 #include "layer.hh"
 #include "usda-reader.hh"
 #include "usdc-reader.hh"
+#include "mmap-array-ref.hh"
 #include "value-pprint.hh"
 
 #if 0
@@ -157,6 +158,7 @@ bool LoadUSDCFromMemory(const uint8_t *addr, const size_t length,
   config.numThreads = options.num_threads;
   config.strict_allowedToken_check = options.strict_allowedToken_check;
   config.kMaxAllowedMemoryInMB = size_t(options.max_memory_limit_in_mb);
+  config.mmap_zero_copy = options.mmap_zero_copy;
   usdc::USDCReader reader(&sr, config);
 
   if (options.progress_callback) {
@@ -188,6 +190,11 @@ bool LoadUSDCFromMemory(const uint8_t *addr, const size_t length,
         (*err) = reader.GetError();
       }
       return false;
+    }
+
+    // Set mmap data source on Stage for zero-copy array access
+    if (options.mmap_zero_copy) {
+      stage->set_mmap_source(MMapDataSource(addr, length));
     }
   }
 

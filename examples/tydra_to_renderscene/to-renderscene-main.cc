@@ -15,6 +15,7 @@
 #include "prim-pprint.hh"
 #include "str-util.hh"
 #include "tinyusdz.hh"
+#include "mmap-array-ref.hh"
 #include "tydra/obj-export.hh"
 #include "tydra/render-data.hh"
 #include "tydra/scene-access.hh"
@@ -216,6 +217,9 @@ static void print_help(const char* prog_name) {
   std::cout << "  --tangent-method M    Tangent method: lengyel (default), mikktspace, fast-mikktspace\n";
   std::cout << "  --yaml                Output RenderScene as YAML (human-readable)\n";
   std::cout << "  --json                Output RenderScene as JSON (machine-readable)\n";
+  std::cout << "  --mmap-lowmem         Enable mmap zero-copy for uncompressed USDC arrays\n";
+  std::cout << "  --lowmem              Free GeomMesh data after conversion (reduces peak memory)\n";
+  std::cout << "  --snorm8              Use SNorm8x3 normals (3 bytes) and SNorm8x4 tangents (4 bytes)\n";
 }
 
 int main(int argc, char **argv) {
@@ -242,6 +246,9 @@ int main(int argc, char **argv) {
   bool memstat = false;
   bool no_tangent = false;
   bool force_tangent = false;
+  bool mmap_lowmem = false;
+  bool lowmem = false;
+  bool snorm8 = false;
   auto tangent_method = tinyusdz::tydra::MeshConverterConfig::TangentComputationMethod::Lengyel;
   std::string output_format = "yaml";  // "yaml" (human-readable), "json" (machine-readable)
 
@@ -305,6 +312,12 @@ int main(int argc, char **argv) {
       output_format = "yaml";
     } else if (strcmp(argv[i], "--json") == 0) {
       output_format = "json";
+    } else if (strcmp(argv[i], "--mmap-lowmem") == 0) {
+      mmap_lowmem = true;
+    } else if (strcmp(argv[i], "--lowmem") == 0) {
+      lowmem = true;
+    } else if (strcmp(argv[i], "--snorm8") == 0) {
+      snorm8 = true;
     } else {
       filepath = argv[i];
     }
@@ -329,6 +342,12 @@ int main(int argc, char **argv) {
   bool using_mmap = false;
   bool ret = false;
 
+  tinyusdz::USDLoadOptions load_options;
+  if (mmap_lowmem) {
+    load_options.mmap_zero_copy = true;
+    config_info.push_back({"mmap_zero_copy", "true"});
+  }
+
   if (tinyusdz::io::IsMMapSupported()) {
     config_info.push_back({"loading_method", "mmap"});
     if (!tinyusdz::io::MMapFile(filepath, &mmap_handle, /* writable */false, &err)) {
@@ -339,10 +358,14 @@ int main(int argc, char **argv) {
 
     // Load USD from mmap'd memory
     ret = tinyusdz::LoadUSDFromMemory(mmap_handle.addr, mmap_handle.size,
-                                       filepath, &stage, &warn, &err);
+                                       filepath, &stage, &warn, &err,
+                                       load_options);
   } else {
     // Fallback to file-based loading
     config_info.push_back({"loading_method", "file"});
+    if (mmap_lowmem) {
+      std::cerr << "WARN: --mmap-lowmem requested but mmap is not supported on this platform.\n";
+    }
     ret = tinyusdz::LoadUSDFromFile(filepath, &stage, &warn, &err);
   }
 
@@ -366,7 +389,14 @@ int main(int argc, char **argv) {
     size_t stage_mem = stage.estimate_memory_usage();
     std::cout << "# Memory Statistics (Stage)\n";
     std::cout << "  Stage memory usage: " << format_memory_size(stage_mem)
-              << " (" << stage_mem << " bytes)\n\n";
+              << " (" << stage_mem << " bytes)\n";
+    if (stage.has_mmap_zero_copy()) {
+      uint64_t deferred = stage.mmap_table()->total_deferred_bytes();
+      std::cout << "  mmap zero-copy: " << stage.mmap_table()->size()
+                << " deferred arrays, " << format_memory_size(deferred)
+                << " deferred to mmap (not in Stage heap)\n";
+    }
+    std::cout << "\n";
   }
 
   if (usdprint) {
@@ -409,6 +439,20 @@ int main(int argc, char **argv) {
     config_info.push_back({"force_tangent", "true"});
   } else {
     config_info.push_back({"force_tangent", "false"});
+  }
+
+  if (lowmem) {
+    env.mesh_config.lowmem = true;
+    config_info.push_back({"lowmem", "true"});
+  }
+
+  if (snorm8) {
+    env.mesh_config.normal_storage =
+        tinyusdz::tydra::MeshConverterConfig::NormalStorageFormat::PackedSNorm8;
+    env.mesh_config.tangent_storage =
+        tinyusdz::tydra::MeshConverterConfig::TangentStorageFormat::PackedSNorm8;
+    config_info.push_back({"normal_storage", "snorm8"});
+    config_info.push_back({"tangent_storage", "snorm8"});
   }
 
   env.mesh_config.tangent_method = tangent_method;
@@ -502,7 +546,45 @@ int main(int argc, char **argv) {
     size_t render_mem = render_scene.estimate_memory_usage();
     std::cout << "# Memory Statistics (RenderScene)\n";
     std::cout << "  RenderScene memory usage: " << format_memory_size(render_mem)
-              << " (" << render_mem << " bytes)\n\n";
+              << " (" << render_mem << " bytes)\n";
+
+    // Per-mesh breakdown
+    if (!render_scene.meshes.empty()) {
+      std::cout << "\n  ## Meshes (" << render_scene.meshes.size() << ")\n";
+      for (size_t i = 0; i < render_scene.meshes.size(); i++) {
+        const auto &mesh = render_scene.meshes[i];
+        size_t mesh_mem = mesh.estimate_memory_usage();
+        std::cout << "    [" << i << "] " << mesh.prim_name
+                  << ": " << format_memory_size(mesh_mem)
+                  << " (" << mesh.points.size() << " verts, "
+                  << mesh.triangulatedFaceVertexIndices.size() << " tri-indices)\n";
+      }
+    }
+
+    // Per-buffer (texture) breakdown
+    if (!render_scene.buffers.empty()) {
+      size_t total_buf = 0;
+      std::cout << "\n  ## Buffers/Textures (" << render_scene.buffers.size() << ")\n";
+      for (size_t i = 0; i < render_scene.buffers.size(); i++) {
+        const auto &buf = render_scene.buffers[i];
+        size_t buf_bytes = buf.data.capacity();
+        total_buf += buf_bytes;
+        // Show image name from matching TextureImage if available
+        std::string label;
+        for (const auto &img : render_scene.images) {
+          if (img.buffer_id == static_cast<int64_t>(i)) {
+            label = img.asset_identifier;
+            break;
+          }
+        }
+        if (label.empty()) label = "(buffer " + std::to_string(i) + ")";
+        std::cout << "    [" << i << "] " << label
+                  << ": " << format_memory_size(buf_bytes) << "\n";
+      }
+      std::cout << "    Total buffer memory: " << format_memory_size(total_buf) << "\n";
+    }
+
+    std::cout << "\n";
   }
 
   // Dump animation timesamples if requested
