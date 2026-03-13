@@ -180,6 +180,17 @@ inline float snorm8_to_float(int8_t v) {
   return float(v) / 127.0f;
 }
 
+/// Encode float [-1,1] to 16-bit signed integer [-32767,32767].
+inline int16_t float_to_snorm16(float f) {
+  f = f < -1.0f ? -1.0f : (f > 1.0f ? 1.0f : f);
+  return int16_t(std::round(f * 32767.0f));
+}
+
+/// Decode 16-bit SNORM to float.
+inline float snorm16_to_float(int16_t v) {
+  return float(v) / 32767.0f;
+}
+
 // ============================================================================
 // Pack / Unpack: INT_2_10_10_10_REV
 // ============================================================================
@@ -382,6 +393,69 @@ inline bool QuantizeNormals1010102(
   return true;
 }
 
+/// Normal SNorm8x3: 3 bytes per vertex (int8 xyz).
+/// Compatible with Three.js `new BufferAttribute(Int8Array, 3, true)` and
+/// glTF KHR_mesh_quantization BYTE normalized normals.
+struct PackedNormalSNorm8x3 {
+  int8_t x, y, z;
+};
+
+/// Pack unit normal to SNorm8x3 (3 bytes).
+inline PackedNormalSNorm8x3 pack_normal_snorm8(float nx, float ny, float nz) {
+  return {float_to_snorm8(nx), float_to_snorm8(ny), float_to_snorm8(nz)};
+}
+
+/// Unpack SNorm8x3 to normal vec3.
+inline void unpack_normal_snorm8(PackedNormalSNorm8x3 p, float &nx, float &ny,
+                                  float &nz) {
+  nx = snorm8_to_float(p.x);
+  ny = snorm8_to_float(p.y);
+  nz = snorm8_to_float(p.z);
+}
+
+/// Batch quantize normals to SNorm8x3 (3 bytes per vertex).
+inline bool QuantizeNormalsSNorm8x3(
+    const value::float3 *normals, size_t count,
+    std::vector<PackedNormalSNorm8x3> *out) {
+  out->resize(count);
+  for (size_t i = 0; i < count; i++) {
+    (*out)[i] = pack_normal_snorm8(normals[i][0], normals[i][1], normals[i][2]);
+  }
+  return true;
+}
+
+/// Normal SNorm16x3: 6 bytes per vertex (int16 xyz).
+/// Compatible with Three.js `new BufferAttribute(Int16Array, 3, true)` and
+/// glTF KHR_mesh_quantization SHORT normalized normals.
+/// Higher precision than SNorm8x3 (~0.003° vs ~1°) at 2x size.
+struct PackedNormalSNorm16x3 {
+  int16_t x, y, z;
+};
+
+/// Pack unit normal to SNorm16x3 (6 bytes).
+inline PackedNormalSNorm16x3 pack_normal_snorm16(float nx, float ny, float nz) {
+  return {float_to_snorm16(nx), float_to_snorm16(ny), float_to_snorm16(nz)};
+}
+
+/// Unpack SNorm16x3 to normal vec3.
+inline void unpack_normal_snorm16(PackedNormalSNorm16x3 p, float &nx, float &ny,
+                                   float &nz) {
+  nx = snorm16_to_float(p.x);
+  ny = snorm16_to_float(p.y);
+  nz = snorm16_to_float(p.z);
+}
+
+/// Batch quantize normals to SNorm16x3 (6 bytes per vertex).
+inline bool QuantizeNormalsSNorm16x3(
+    const value::float3 *normals, size_t count,
+    std::vector<PackedNormalSNorm16x3> *out) {
+  out->resize(count);
+  for (size_t i = 0; i < count; i++) {
+    (*out)[i] = pack_normal_snorm16(normals[i][0], normals[i][1], normals[i][2]);
+  }
+  return true;
+}
+
 // PackToVertexAttribute helpers — only available when render-data.hh is included.
 // Guard with the VertexAttribute struct existence.
 #ifdef TINYUSDZ_TYDRA_RENDER_DATA_HH_
@@ -418,6 +492,29 @@ inline VertexAttribute PackToVertexAttribute(
   attr.data.resize(packed.size() * sizeof(PackedTangentFp16x4));
   std::memcpy(attr.data.data(), packed.data(),
               packed.size() * sizeof(PackedTangentFp16x4));
+  return attr;
+}
+
+/// Store packed SNorm8x3 normals into a VertexAttribute.
+/// Format: Char3 (3 × int8) for SNorm8x3.
+inline VertexAttribute PackNormalsToVertexAttribute(
+    const std::vector<PackedNormalSNorm8x3> &packed) {
+  VertexAttribute attr;
+  attr.format = VertexAttributeFormat::Char3;
+  attr.data.resize(packed.size() * 3);
+  std::memcpy(attr.data.data(), packed.data(), packed.size() * 3);
+  return attr;
+}
+
+/// Store packed SNorm16x3 normals into a VertexAttribute.
+/// Format: Short3 (3 × int16) for SNorm16x3.
+inline VertexAttribute PackNormalsToVertexAttribute(
+    const std::vector<PackedNormalSNorm16x3> &packed) {
+  VertexAttribute attr;
+  attr.format = VertexAttributeFormat::Short3;
+  attr.data.resize(packed.size() * sizeof(PackedNormalSNorm16x3));
+  std::memcpy(attr.data.data(), packed.data(),
+              packed.size() * sizeof(PackedNormalSNorm16x3));
   return attr;
 }
 
