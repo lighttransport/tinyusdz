@@ -2,7 +2,7 @@
 // UsdLux Parsing and Conversion Test Suite
 // Tests Node.js WASM bindings for UsdLux light parsing
 
-import { TinyUSDZLoader } from './src/tinyusdz/TinyUSDZLoader.js';
+import { TinyUSDZLoader } from '../src/tinyusdz/TinyUSDZLoader.js';
 import fs from 'node:fs';
 import path from 'node:path';
 
