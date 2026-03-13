@@ -1,0 +1,62 @@
+#usda 1.0
+(
+    doc = "Hand-written test: ND_power_float node for specular_roughness"
+    metersPerUnit = 1
+    upAxis = "Z"
+    defaultPrim = "root"
+)
+
+def Xform "root"
+{
+    def Sphere "PowerTest"
+    (
+        prepend apiSchemas = ["MaterialBindingAPI"]
+    )
+    {
+        double radius = 1.0
+        rel material:binding = </root/_materials/PowerTest>
+    }
+
+    def Scope "_materials"
+    {
+        def Material "PowerTest"
+        (
+            prepend apiSchemas = ["MaterialBindingAPI"]
+        )
+        {
+            token outputs:surface.connect = </root/_materials/PowerTest/shader.outputs:surface>
+            string config:mtlx:version = "1.39"
+            token outputs:mtlx:surface.connect = </root/_materials/PowerTest/shader.outputs:surface>
+
+            def Shader "shader"
+            {
+                uniform token info:id = "ND_open_pbr_surface_surfaceshader"
+                float inputs:base_weight = 1
+                color3f inputs:base_color = (0.8, 0.3, 0.1)
+                float inputs:base_metalness = 0.5
+                float inputs:base_diffuse_roughness = 0
+                float inputs:specular_weight = 1
+                color3f inputs:specular_color = (1, 1, 1)
+                float inputs:specular_roughness.connect = </root/_materials/PowerTest/NodeGraphs.outputs:power_roughness_out>
+                float inputs:specular_ior = 1.5
+                float inputs:coat_weight = 0
+                float inputs:emission_luminance = 0
+                color3f inputs:emission_color = (1, 1, 1)
+                token outputs:surface
+            }
+
+            def NodeGraph "NodeGraphs"
+            {
+                float outputs:power_roughness_out.connect = </root/_materials/PowerTest/NodeGraphs/power_roughness.outputs:out>
+
+                def Shader "power_roughness"
+                {
+                    uniform token info:id = "ND_power_float"
+                    float inputs:in1 = 0.5
+                    float inputs:in2 = 2.0
+                    float outputs:out
+                }
+            }
+        }
+    }
+}

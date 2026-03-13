@@ -91,6 +91,7 @@ const state = {
 
     // Node graph display
     showAllNodes: false,    // false = active only (DCE), true = show all including dead nodes
+    optimizeGraph: true,    // true = run NodeGraph optimizer (STANDARD), false = show raw graph
     graphCollapsed: false,  // true = panel collapsed, skip LiteGraph draw loop for performance
 
     // Picking
@@ -229,6 +230,44 @@ function registerMtlxNodeTypes() {
         { name: 'max', title: 'Max', color: '#664466' }
     ];
 
+    // Shared method: add editable widgets for unconnected constant inputs.
+    // Called after graph connections are established.
+    // inputNames: array of input slot names for this node type (e.g. ['in1','in2'])
+    function _setupConstantInputWidgets(connectedInputNames) {
+        this.widgets = [];
+        const connected = connectedInputNames || new Set();
+        const inputNames = (this.inputs || []).map(i => i.name);
+        let hasWidget = false;
+        for (const name of inputNames) {
+            if (connected.has(name)) continue;
+            const val = this.properties?.[name];
+            if (val === undefined) continue;
+            if (typeof val === 'number') {
+                this.addWidget('number', name, val, (v) => {
+                    this.properties[name] = v;
+                    this.setDirtyCanvas(true);
+                    if (window._mtlxMarkDirty) window._mtlxMarkDirty();
+                }, { min: -10, max: 10, step: 0.01, precision: 4 });
+                hasWidget = true;
+            } else if (Array.isArray(val) && val.length >= 3) {
+                for (let ci = 0; ci < 3; ci++) {
+                    const ch = ['R','G','B'][ci];
+                    const idx = ci;
+                    this.addWidget('slider', `${name}.${ch}`, val[ci], (v) => {
+                        this.properties[name][idx] = v;
+                        this.setDirtyCanvas(true);
+                        if (window._mtlxMarkDirty) window._mtlxMarkDirty();
+                    }, { min: 0, max: 1 });
+                }
+                hasWidget = true;
+            }
+        }
+        if (hasWidget) {
+            this.size[0] = Math.max(this.size[0], 180);
+            this.size[1] = Math.max(this.size[1], this.computeSize()[1]);
+        }
+    }
+
     for (const op of mathOps) {
         const NodeClass = function() {
             this.addInput('in1', 'any');
@@ -238,6 +277,7 @@ function registerMtlxNodeTypes() {
             this.size = [120, 60];
         };
         NodeClass.title = op.title;
+        NodeClass.prototype._setupConstantInputWidgets = _setupConstantInputWidgets;
         LiteGraph.registerNodeType(`mtlx/${op.name}`, NodeClass);
     }
 
@@ -260,6 +300,7 @@ function registerMtlxNodeTypes() {
             this.size = [100, 50];
         };
         NodeClass.title = op.title;
+        NodeClass.prototype._setupConstantInputWidgets = _setupConstantInputWidgets;
         LiteGraph.registerNodeType(`mtlx/${op.name}`, NodeClass);
     }
 
@@ -291,6 +332,7 @@ function registerMtlxNodeTypes() {
         this.size = [120, 80];
     }
     ClampNode.title = 'Clamp';
+    ClampNode.prototype._setupConstantInputWidgets = _setupConstantInputWidgets;
     LiteGraph.registerNodeType('mtlx/clamp', ClampNode);
 
     // Extract (separate) node
@@ -320,6 +362,7 @@ function registerMtlxNodeTypes() {
         this.size = [120, 80];
     }
     CombineNode.title = 'Combine3';
+    CombineNode.prototype._setupConstantInputWidgets = _setupConstantInputWidgets;
     LiteGraph.registerNodeType('mtlx/combine3', CombineNode);
 
     // HSV Adjust node
@@ -331,19 +374,50 @@ function registerMtlxNodeTypes() {
         this.size = [130, 60];
     }
     HsvAdjustNode.title = 'HSV Adjust';
+    HsvAdjustNode.prototype._setupConstantInputWidgets = _setupConstantInputWidgets;
     LiteGraph.registerNodeType('mtlx/hsvadjust', HsvAdjustNode);
 
-    // HSV Adjust (Blender variant with separate H/S/V inputs)
+    // HSV Adjust (Blender variant with separate H/S/V/Fac inputs)
     function HsvAdjustBlenderNode() {
         this.addInput('in', 'color3');
         this.addInput('hue', 'float');
         this.addInput('saturation', 'float');
         this.addInput('value', 'float');
+        this.addInput('fac', 'float');
         this.addOutput('out', 'color3');
         this.color = '#664455';
-        this.size = [140, 90];
+        this.size = [180, 120];
     }
     HsvAdjustBlenderNode.title = 'HSV Adjust';
+    HsvAdjustBlenderNode.prototype._setupConstantInputWidgets = function(connectedInputNames) {
+        this.widgets = [];
+        const connected = connectedInputNames || new Set();
+        const widgetDefs = [
+            { name: 'hue', type: 'slider', min: 0, max: 1, defVal: 0.5 },
+            { name: 'saturation', type: 'slider', min: 0, max: 2, defVal: 1 },
+            { name: 'value', type: 'slider', min: 0, max: 2, defVal: 1 },
+            { name: 'fac', type: 'number', min: 0, max: 1, step: 0.01, precision: 3, defVal: 1 },
+        ];
+        let hasWidget = false;
+        for (const def of widgetDefs) {
+            if (connected.has(def.name)) continue;
+            const val = this.properties?.[def.name] ?? def.defVal;
+            if (this.properties) this.properties[def.name] = val;
+            const opts = { min: def.min, max: def.max };
+            if (def.step !== undefined) opts.step = def.step;
+            if (def.precision !== undefined) opts.precision = def.precision;
+            this.addWidget(def.type, def.name, val, (v) => {
+                this.properties[def.name] = v;
+                this.setDirtyCanvas(true);
+                if (window._mtlxMarkDirty) window._mtlxMarkDirty();
+            }, opts);
+            hasWidget = true;
+        }
+        if (hasWidget) {
+            this.size[0] = Math.max(this.size[0], 180);
+            this.size[1] = Math.max(this.size[1], this.computeSize()[1]);
+        }
+    };
     LiteGraph.registerNodeType('mtlx/hsv_adjust', HsvAdjustBlenderNode);
 
     // Brightness/Contrast (Blender node)
@@ -356,6 +430,7 @@ function registerMtlxNodeTypes() {
         this.size = [150, 80];
     }
     BrightnessContrastNode.title = 'Brightness/Contrast';
+    BrightnessContrastNode.prototype._setupConstantInputWidgets = _setupConstantInputWidgets;
     LiteGraph.registerNodeType('mtlx/brightness_contrast', BrightnessContrastNode);
 
     // Invert node (with editable amount)
@@ -387,6 +462,7 @@ function registerMtlxNodeTypes() {
         this.size = [130, 110];
     }
     RemapNode.title = 'Remap';
+    RemapNode.prototype._setupConstantInputWidgets = _setupConstantInputWidgets;
     LiteGraph.registerNodeType('mtlx/remap', RemapNode);
 
     // TexCoord node
@@ -598,8 +674,7 @@ function registerMtlxNodeTypes() {
     };
 
     // Inline control layout constants
-    // Empirical slot spacing that aligns with LiteGraph 0.7.18 rendering
-    const SLOT_H = 18;
+    const SLOT_H = LiteGraph.NODE_SLOT_HEIGHT || 20;
     const CTRL_W = 70;  // inline control width
     const CTRL_H = 14;  // inline control height
     const CTRL_PAD = 8; // right padding from node edge
@@ -632,16 +707,19 @@ function registerMtlxNodeTypes() {
             }
         }
 
-        // Size based on input slots only (no widget area)
-        const inputHeight = OPENPBR_INPUT_NAMES.length * SLOT_H + 30;
+        // Size based on number of input slots
+        const inputHeight = OPENPBR_INPUT_NAMES.length * SLOT_H + SLOT_H;
         this.size[0] = 240;
-        this.size[1] = Math.max(inputHeight + 10, 150);
+        this.size[1] = Math.max(inputHeight, 150);
     };
 
-    /** Return the Y center of input slot idx in node-local coords. */
+    /**
+     * Return the Y center of input slot idx in onDrawForeground local coords.
+     * LiteGraph 0.7.18 positions slots at: (slot_number + 0.7) * NODE_SLOT_HEIGHT
+     * The ctx origin is at node.pos (top-left of node body, title drawn above at negative Y).
+     */
     function _slotY(idx) {
-        // Empirical: matches LiteGraph 0.7.18 slot rendering in onDrawForeground context
-        return (idx + 1) * SLOT_H;
+        return (idx + 0.7) * SLOT_H;
     }
 
     /** Return the bounding rect {x, y, w, h} for the inline control of slot idx. */
@@ -913,6 +991,7 @@ function registerMtlxNodeTypes() {
         this.size = [130, 110];
     }
     Fractal3DNode.title = 'Fractal3D';
+    Fractal3DNode.prototype._setupConstantInputWidgets = _setupConstantInputWidgets;
     LiteGraph.registerNodeType('mtlx/fractal3d', Fractal3DNode);
 
     // Rotate3D node (ND_rotate3d) — rotates a vector3 around an axis
@@ -925,6 +1004,7 @@ function registerMtlxNodeTypes() {
         this.size = [120, 80];
     }
     Rotate3DNode.title = 'Rotate3D';
+    Rotate3DNode.prototype._setupConstantInputWidgets = _setupConstantInputWidgets;
     LiteGraph.registerNodeType('mtlx/rotate3d', Rotate3DNode);
 
     // Generic node for unknown types
@@ -935,6 +1015,7 @@ function registerMtlxNodeTypes() {
         this.size = [100, 50];
     }
     GenericNode.title = 'Node';
+    GenericNode.prototype._setupConstantInputWidgets = _setupConstantInputWidgets;
     LiteGraph.registerNodeType('mtlx/generic', GenericNode);
 }
 
@@ -1245,6 +1326,23 @@ function buildLiteGraphFromMtlx(nodeGraphData, materialName) {
         }
     }
 
+    // Setup editable widgets for unconnected constant inputs on math/unary nodes
+    for (const node of displayNodes) {
+        const lgNodeEntry = nodeMap.get(node.name);
+        if (!lgNodeEntry) continue;
+        const lgNode = lgNodeEntry.node;
+        if (typeof lgNode._setupConstantInputWidgets !== 'function') continue;
+
+        // Collect names of inputs that have connections
+        const connectedInputs = new Set();
+        if (node.inputs) {
+            for (const input of node.inputs) {
+                if (input.nodename) connectedInputs.add(input.name);
+            }
+        }
+        lgNode._setupConstantInputWidgets(connectedInputs);
+    }
+
     // Map shader parameter names to surface node input slots (matches addInput order)
     const surfaceInputMap = {
         // Base (0-2)
@@ -1420,13 +1518,36 @@ function updateNodeStats() {
     }
 }
 
+function maybeOptimize(nodeGraph) {
+    if (!nodeGraph) return nodeGraph;
+    return state.optimizeGraph
+        ? optimizeNodeGraph(nodeGraph, NodeGraphOptimizationLevel.STANDARD)
+        : nodeGraph;
+}
+
+function toggleOptimizeGraph(checked) {
+    state.optimizeGraph = checked;
+    // Rebuild the graph view with the current material
+    const matData = state.materialData[state.currentMaterialIndex];
+    if (matData?.openPBR?.nodeGraph) {
+        let nodeGraph = matData.openPBR.nodeGraph;
+        nodeGraph = maybeOptimize(nodeGraph);
+        const materialName = state.materials[state.currentMaterialIndex]?.name || 'Material';
+        buildLiteGraphFromMtlx(nodeGraph, materialName);
+    }
+    setTimeout(() => fitGraph(), 100);
+}
+
+// Expose to HTML onclick
+window.toggleOptimizeGraph = toggleOptimizeGraph;
+
 function toggleShowAllNodes(checked) {
     state.showAllNodes = checked;
     // Rebuild the graph view with the current material
     const matData = state.materialData[state.currentMaterialIndex];
     if (matData?.openPBR?.nodeGraph) {
         let nodeGraph = matData.openPBR.nodeGraph;
-        nodeGraph = optimizeNodeGraph(nodeGraph, NodeGraphOptimizationLevel.STANDARD);
+        nodeGraph = maybeOptimize(nodeGraph);
         const materialName = state.materials[state.currentMaterialIndex]?.name || 'Material';
         buildLiteGraphFromMtlx(nodeGraph, materialName);
     }
@@ -2818,9 +2939,7 @@ async function buildScene() {
         let nodeGraph = openPBR.nodeGraph;
 
         // Optionally optimize
-        if (nodeGraph) {
-            nodeGraph = optimizeNodeGraph(nodeGraph, NodeGraphOptimizationLevel.STANDARD);
-        }
+        nodeGraph = maybeOptimize(nodeGraph);
 
         const params = buildMaterialValues(openPBR);
 
@@ -3095,9 +3214,7 @@ function selectMaterial(index) {
 
     // Get node graph
     let nodeGraph = matData.openPBR?.nodeGraph;
-    if (nodeGraph) {
-        nodeGraph = optimizeNodeGraph(nodeGraph, NodeGraphOptimizationLevel.STANDARD);
-    }
+    nodeGraph = maybeOptimize(nodeGraph);
 
     // Build LiteGraph visualization
     buildLiteGraphFromMtlx(nodeGraph, matData.name);
