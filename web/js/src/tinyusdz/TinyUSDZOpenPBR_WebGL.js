@@ -847,11 +847,27 @@ export class MtlxNodeGraphProcessor {
             case 'hsvadjust':
                 return MtlxNodeEval.hsvadjust(inputs.in, inputs.amount);
 
+            // Blender ND_hsv_adjust_color3: separate hue/saturation/value inputs
+            case 'hsv_adjust':
+                return MtlxNodeEval.hsvadjust(inputs.in, [
+                    inputs.hue ?? 0,
+                    inputs.saturation ?? 1,
+                    inputs.value ?? 1
+                ]);
+
             case 'contrast':
                 return MtlxNodeEval.contrast(
                     inputs.in,
                     inputs.amount ?? 1,
                     inputs.pivot ?? 0.5
+                );
+
+            // Blender ND_brightness_contrast_color3: brightness (add) + contrast (scale around 0.5)
+            case 'brightness_contrast':
+                return MtlxNodeEval.contrast(
+                    MtlxNodeEval.add(inputs.in, inputs.brightness ?? 0),
+                    inputs.contrast ?? 1,
+                    0.5
                 );
 
             case 'invert':

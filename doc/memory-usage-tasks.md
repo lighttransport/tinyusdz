@@ -353,7 +353,7 @@ The `_lazy_fieldset_cache` in usdc-reader caused invalid cache reuse when differ
 | Bone count reduction | Reduced joint/weight arrays | `render-data.cc` |
 | Remove lazy fieldset cache | Eliminates unbounded cache growth, fixes correctness | `usdc-reader.cc` |
 | Fix MemoryBudgetManager tracking | 49 KB → 282.7 MB reported (matches massif) | `crate-reader.cc`, `usdc-reader.cc`, `tusdcat/main.cc` |
-| Normal quantization (10_10_10_2) | 67% normal storage | `render-data.cc`, `tangent-quantize.hh` |
+| Normal quantization (SNorm8x3 default, also SNorm16x3 / 10_10_10_2) | 75% normal storage (SNorm8) | `render-data.cc`, `tangent-quantize.hh` |
 | Quantized normal dedup before triangulation | Eliminates 138 MB triangulation buffer for smooth meshes | `render-data.cc` |
 | `lowmem` GeomMesh freeing | ~115 MB source data freed post-conversion | `render-data.cc` |
 | Consolidate 22 dedup caches → 1 | Reduced hash map overhead, simpler code | `crate-reader.hh`, `crate-reader-timesamples.cc` |

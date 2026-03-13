@@ -1484,7 +1484,16 @@ function convertUsdMeshToThreeMesh(mesh) {
     }
 
     if (mesh.normals) {
-        geometry.setAttribute('normal', new THREE.BufferAttribute(mesh.normals, 3));
+        if (mesh.normalsFormat === 'snorm8') {
+            geometry.setAttribute('normal',
+                new THREE.BufferAttribute(new Int8Array(mesh.normals), 3, true));
+        } else if (mesh.normalsFormat === 'snorm16') {
+            geometry.setAttribute('normal',
+                new THREE.BufferAttribute(new Int16Array(mesh.normals), 3, true));
+        } else {
+            geometry.setAttribute('normal',
+                new THREE.BufferAttribute(new Float32Array(mesh.normals), 3));
+        }
     } else {
         geometry.computeVertexNormals();
     }
