@@ -7,7 +7,7 @@ TinyUSDZ provides pre-built Python binding of TinyUSDZ for Windows, Linux and ma
 * Python 3.8+
 * Pip 19.3+
 
-TinyUSDZ uses C++14, so on Linux, minimal supported `manylinux` version is `manylinux2014`.
+TinyUSDZ uses C++17, so on Linux, minimal supported `manylinux` version is `manylinux2014`.
 (`manylinux2010` and `manylinux1` are not supported).
 
 ## Install
