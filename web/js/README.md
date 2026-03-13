@@ -2,12 +2,13 @@
 
 ## Requrements
 
-* bun
+* npm or bun
 
 ## Setup
 
 ```
-$ bun install
+$ npm install
+# or bun install
 ```
 
 ### Assets
@@ -17,6 +18,8 @@ Copy assets folder from demo directory by running `setup-assets.sh`
 ### Run
 
 ```
+$ npm run dev
+# or if you use bun
 $ bun run dev
 ```
 
@@ -174,252 +177,28 @@ const result = await loader.loadWithFullProgressAsync(url, onProgress, options);
 
 ## Material Conversion
 
-TinyUSDZ supports both UsdPreviewSurface and OpenPBR (MaterialX) materials. The library provides utilities to convert these materials to Three.js `MeshPhysicalMaterial`.
+TinyUSDZ supports both UsdPreviewSurface and OpenPBR (MaterialX) materials, with conversion to Three.js `MeshPhysicalMaterial`.
 
-### Checking Material Type
+For detailed MaterialX documentation (OpenPBR parameter mappings, color space support, Blender export mapping, NodeGraph traversal, etc.), see [doc/materialx.md](../../doc/materialx.md).
 
-```javascript
-import { TinyUSDZLoaderUtils } from 'tinyusdz/TinyUSDZLoaderUtils.js';
-
-// Get material data as JSON
-const materialData = usdScene.getMaterial(materialId, 'json');
-
-// Check what material types are available
-const typeInfo = TinyUSDZLoaderUtils.getMaterialType(materialData);
-console.log(`Has OpenPBR: ${typeInfo.hasOpenPBR}`);
-console.log(`Has UsdPreviewSurface: ${typeInfo.hasUsdPreviewSurface}`);
-console.log(`Has both: ${typeInfo.hasBoth}`);
-console.log(`Recommended: ${typeInfo.recommended}`);
-
-// Or get a simple string representation
-const typeString = TinyUSDZLoaderUtils.getMaterialTypeString(materialData);
-// Returns: 'OpenPBR', 'UsdPreviewSurface', 'Both', or 'None'
-```
-
-### Converting Materials
+### Quick Start
 
 ```javascript
 import { TinyUSDZLoaderUtils } from 'tinyusdz/TinyUSDZLoaderUtils.js';
 
-// Get material data as JSON
 const materialData = usdScene.getMaterial(materialId, 'json');
 
 // Smart conversion (auto-selects best material type)
-// Prefers OpenPBR when both types are available
 const material = await TinyUSDZLoaderUtils.convertMaterial(materialData, usdScene, {
     preferredMaterialType: 'auto',  // 'auto' | 'openpbr' | 'usdpreviewsurface'
     envMap: myEnvironmentMap,
     envMapIntensity: 1.0
 });
-
-// Force OpenPBR conversion
-const openPBRMaterial = await TinyUSDZLoaderUtils.convertOpenPBRMaterialToMeshPhysicalMaterial(
-    materialData, usdScene, { envMap: myEnvMap }
-);
-
-// Force UsdPreviewSurface conversion
-const usdMaterial = TinyUSDZLoaderUtils.convertUsdMaterialToMeshPhysicalMaterial(
-    materialData, usdScene
-);
-```
-
-### Material Type Preference Options
-
-| Option | Behavior |
-|--------|----------|
-| `'auto'` | Prefer OpenPBR when both are available (default) |
-| `'openpbr'` | Force OpenPBR, fallback to UsdPreviewSurface if unavailable |
-| `'usdpreviewsurface'` | Force UsdPreviewSurface, fallback to OpenPBR if unavailable |
-
-### Supported OpenPBR Parameters
-
-The OpenPBR to Three.js conversion supports the following parameter mappings:
-
-| OpenPBR Layer | Parameters | Three.js Property |
-|---------------|------------|-------------------|
-| **Base** | `base_color` | `color`, `map` |
-| | `base_metalness` | `metalness`, `metalnessMap` |
-| **Specular** | `specular_roughness` | `roughness`, `roughnessMap` |
-| | `specular_ior` | `ior` |
-| | `specular_color` | `specularColor` |
-| | `specular_anisotropy` | `anisotropy` |
-| **Transmission** | `transmission_weight` | `transmission` |
-| | `transmission_color` | `attenuationColor` |
-| **Coat** | `coat_weight` | `clearcoat` |
-| | `coat_roughness` | `clearcoatRoughness` |
-| **Sheen/Fuzz** | `sheen_weight`, `fuzz_weight` | `sheen` |
-| | `sheen_color`, `fuzz_color` | `sheenColor` |
-| | `sheen_roughness`, `fuzz_roughness` | `sheenRoughness` |
-| **Thin Film** | `thin_film_weight` | `iridescence` |
-| | `thin_film_thickness` | `iridescenceThicknessRange` |
-| | `thin_film_ior` | `iridescenceIOR` |
-| **Emission** | `emission_color` | `emissive`, `emissiveMap` |
-| | `emission_luminance` | `emissiveIntensity` |
-| **Geometry** | `opacity`, `geometry_opacity` | `opacity`, `alphaMap` |
-| | `normal`, `geometry_normal` | `normalMap` |
-
-### Direct OpenPBR Class Usage
-
-For manual material creation:
-
-```javascript
-import { TinyUSDZOpenPBR } from 'tinyusdz/TinyUSDZMaterialX.js';
-
-// Create OpenPBR material manually
-const openPBR = new TinyUSDZOpenPBR({
-    baseColor: 0xff8844,
-    metallic: 0.2,
-    roughness: 0.6,
-    emissive: 0x000000,
-    emissiveIntensity: 0.0,
-    opacity: 1.0,
-    name: 'MyMaterial'
-});
-
-// Convert to Three.js MeshPhysicalMaterial
-const threeMaterial = openPBR.toMeshPhysicalMaterial();
 ```
 
 ## UsdLux Light Support
 
-TinyUSDZ supports USD lighting (UsdLux) with conversion to Three.js lights. The library handles various light types and environment maps.
-
-### Supported Light Types
-
-| USD Light Type | Three.js Equivalent | Notes |
-|----------------|---------------------|-------|
-| `SphereLight` | `PointLight` / `SpotLight` | SpotLight when shaping cone is defined |
-| `DistantLight` | `DirectionalLight` | Infinite distance directional light |
-| `RectLight` | `RectAreaLight` | Area light with width/height |
-| `DiskLight` | `PointLight` | Approximated (no native Three.js equivalent) |
-| `CylinderLight` | `PointLight` | Approximated (no native Three.js equivalent) |
-| `DomeLight` | `HemisphereLight` + Environment | IBL/environment lighting |
-
-### Accessing Light Data
-
-```javascript
-// Get number of lights
-const numLights = usdScene.numLights();
-
-// Get light data as JavaScript object
-const light = usdScene.getLight(lightId);
-console.log(light.type);      // 'point', 'sphere', 'distant', 'rect', 'disk', 'cylinder', 'dome'
-console.log(light.color);     // [r, g, b] - linear RGB
-console.log(light.intensity); // intensity multiplier
-console.log(light.exposure);  // exposure value (EV)
-
-// Get light data as JSON string (for serialization)
-const lightJson = usdScene.getLightWithFormat(lightId, 'json');
-
-// Get all lights at once
-const allLights = usdScene.getAllLights();
-```
-
-### DomeLight Environment Maps
-
-DomeLights can have HDR environment textures for image-based lighting (IBL):
-
-```javascript
-const light = usdScene.getLight(lightId);
-
-if (light.type === 'dome') {
-    console.log(light.textureFile);        // Asset path: "./textures/env.exr"
-    console.log(light.envmapTextureId);    // Image ID: 0, or -1 if not loaded
-    console.log(light.domeTextureFormat);  // 'automatic', 'latlong', 'mirroredBall', 'angular'
-    console.log(light.guideRadius);        // Visualization radius
-
-    // If envmapTextureId >= 0, the texture is loaded and available
-    if (light.envmapTextureId >= 0) {
-        const imageData = usdScene.getImage(light.envmapTextureId);
-        console.log(`Envmap: ${imageData.width}x${imageData.height}`);
-        console.log(`Channels: ${imageData.channels}`);
-        console.log(`Decoded: ${imageData.decoded}`);
-        // imageData.data contains raw pixel data (Uint8Array or Float32Array for HDR)
-    }
-}
-```
-
-### Three.js Environment Lighting Integration
-
-The `usdlux.js` demo shows how to apply DomeLight envmaps to Three.js scenes:
-
-```javascript
-// Create Three.js texture from loaded image data
-function createEnvMapFromUSD(usdScene, envmapTextureId) {
-    const imageData = usdScene.getImage(envmapTextureId);
-    if (!imageData || !imageData.decoded) return null;
-
-    const { width, height, channels, data } = imageData;
-
-    // Create float texture for HDR
-    const floatData = new Float32Array(width * height * 4);
-    // ... convert data to RGBA float ...
-
-    const texture = new THREE.DataTexture(
-        floatData, width, height,
-        THREE.RGBAFormat, THREE.FloatType
-    );
-    texture.mapping = THREE.EquirectangularReflectionMapping;
-    texture.colorSpace = THREE.LinearSRGBColorSpace;
-    texture.needsUpdate = true;
-
-    return texture;
-}
-
-// Apply to scene using PMREMGenerator
-const pmremGenerator = new THREE.PMREMGenerator(renderer);
-const envMap = pmremGenerator.fromEquirectangular(texture).texture;
-scene.environment = envMap;  // PBR environment lighting
-scene.background = envMap;   // Optional: use as background
-pmremGenerator.dispose();
-```
-
-### Light Properties Reference
-
-| Property | Type | Description |
-|----------|------|-------------|
-| `name` | string | Light prim name |
-| `absPath` | string | Absolute USD prim path |
-| `type` | string | Light type identifier |
-| `color` | [r,g,b] | Linear RGB color |
-| `intensity` | number | Intensity multiplier |
-| `exposure` | number | Exposure value (EV stops) |
-| `diffuse` | number | Diffuse contribution (0-1) |
-| `specular` | number | Specular contribution (0-1) |
-| `normalize` | boolean | Normalize by surface area |
-| `enableColorTemperature` | boolean | Use color temperature |
-| `colorTemperature` | number | Color temperature in Kelvin |
-| `transform` | number[16] | World transformation matrix |
-| `position` | [x,y,z] | World position |
-| `direction` | [x,y,z] | Light direction (distant/spot) |
-| `radius` | number | Sphere/Disk radius |
-| `width` | number | RectLight width |
-| `height` | number | RectLight height |
-| `length` | number | CylinderLight length |
-| `angle` | number | DistantLight angle (degrees) |
-| `textureFile` | string | Texture asset path |
-| `shapingConeAngle` | number | Spotlight cone angle |
-| `shapingConeSoftness` | number | Cone edge softness |
-| `shadowEnable` | boolean | Enable shadows |
-| `shadowColor` | [r,g,b] | Shadow color |
-| `domeTextureFormat` | string | Envmap format |
-| `guideRadius` | number | DomeLight visualization radius |
-| `envmapTextureId` | number | Index to images array (-1 if none) |
-
-### CLI Light Dump Tool
-
-Use `dump-usdlux-cli.js` to inspect USD lights:
-
-```bash
-# Dump all lights as summary
-node dump-usdlux-cli.js scene.usda -f summary
-
-# Dump as JSON with node hierarchy
-node dump-usdlux-cli.js scene.usda -f json --show-nodes
-
-# Show all details including transforms
-node dump-usdlux-cli.js scene.usda -f summary --all
-```
+TinyUSDZ supports USD lighting (UsdLux) with conversion to Three.js lights (SphereLight, DistantLight, RectLight, DiskLight, CylinderLight, DomeLight). See the `usdlux.html` demo and `cli/dump-usdlux-cli.js` for usage examples.
 
 ## Demo Pages
 
@@ -441,16 +220,32 @@ The following demo pages are available:
 | **Progress Demo** | `progress-demo.html` | Loading progress visualization |
 | **Progress OffscreenGL** | `progress-offscreenwebgl.html` | OffscreenCanvas with progress + OOM recovery |
 | **OpenPBR NodeGraph** | `openpbr-nodegraph-demo.html` | LiteGraph node graph editor |
+| **MtlX Node Tester** | `mtlx-node-tester.html` | MaterialX node graph compile & run tester |
 
 ### Running Demos
 
 ```bash
 # Start development server
-bun run dev
+npm run dev        # or: bun run dev
 
-# Open in browser
-# http://localhost:5173/materialx.html      # Simple MaterialX demo
-# http://localhost:5173/mtlx-debug.html     # Advanced debug demo
+# Open a specific demo directly
+npm run dev:mtlx               # materialx.html
+npm run dev:anim               # animation.html
+npm run dev:skel               # skin-anim.html
+npm run dev:clips              # anim-clips.html
+npm run dev:lux                # usdlux.html
+npm run dev:nodegraph          # openpbr-nodegraph-demo.html
+npm run dev:offscreengl        # offscreengl.html
+npm run dev:progress           # progress-demo.html
+npm run dev:progress-offscreen # progress-offscreenwebgl.html
+```
+
+Experimental (WebGPU/WebGL2):
+
+```bash
+npm run dev:webgpu       # materialx-webgpu.html
+npm run dev:webgpu-raw   # mtlx-webgpu.html
+npm run dev:webgl2       # materialx-webgl2.html
 ```
 
 ## NPM packaging
