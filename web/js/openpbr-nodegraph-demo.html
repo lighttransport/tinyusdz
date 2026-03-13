@@ -905,6 +905,7 @@
                     <button class="btn" onclick="loadFile()">Load USD</button>
                     <button class="btn secondary" onclick="loadSample()">Sample</button>
                     <select id="blender-sample-select" style="height:26px;font-size:11px;background:#2a2a3e;color:#ccc;border:1px solid #555;border-radius:3px;padding:0 4px;max-width:160px">
+                        <option value="mtlx/test-add-sub-nodes.usda">Math Add/Sub</option>
                         <option value="texture_channel_blender.usdz">Texture channels</option>
                         <option value="colorspace-gamut-test.usdz">Colorspace (gamut)</option>
                         <option value="colorspace-constant-test.usdz">Colorspace (constant)</option>
@@ -912,15 +913,17 @@
                         <optgroup label="Node Tests">
                             <option value="mtlx/test-invert.usdz">Invert</option>
                             <option value="mtlx/test-combine.usdz">Combine RGB</option>
-                            <option value="mtlx/test-mix.usdz">Mix</option>
-                            <option value="mtlx/test-multiply.usdz">Multiply</option>
+                            <option value="mtlx/test-mix-nodes.usda">Mix</option>
+                            <option value="mtlx/test-multiply-nodes.usda">Multiply</option>
                             <option value="mtlx/test-separate.usdz">Separate RGB</option>
-                            <option value="mtlx/test-clamp.usdz">Clamp</option>
-                            <option value="mtlx/test-remap.usdz">Remap (MapRange)</option>
-                            <option value="mtlx/test-hsv.usdz">HSV Adjust</option>
+                            <option value="mtlx/test-clamp-nodes.usda">Clamp</option>
+                            <option value="mtlx/test-remap-nodes.usda">Remap (MapRange)</option>
+                            <option value="mtlx/test-hsv-adjust-nodes.usda">HSV Adjust</option>
                             <option value="mtlx/test-normalmap.usdz">Normal Map</option>
-                            <option value="mtlx/test-add.usdz">Math Add/Sub</option>
-                            <option value="mtlx/test-math-ops.usdz">Math Pow/Div/Min/Max</option>
+                            <option value="mtlx/test-power-nodes.usda">Power</option>
+                            <option value="mtlx/test-divide-nodes.usda">Divide</option>
+                            <option value="mtlx/test-min-nodes.usda">Min</option>
+                            <option value="mtlx/test-max-nodes.usda">Max</option>
                             <option value="mtlx/test-complex-chain.usdz">Complex Chain</option>
                         </optgroup>
                     </select>
@@ -975,6 +978,13 @@
                     <span>Show all nodes</span>
                     <label class="toggle-switch">
                         <input type="checkbox" id="show-all-toggle" onchange="toggleShowAllNodes(this.checked)">
+                        <span class="toggle-slider"></span>
+                    </label>
+                </label>
+                <label class="toggle-container" style="margin-left:8px" title="Run NodeGraph optimizer (simplifies constant-foldable and identity nodes)">
+                    <span>Optimize</span>
+                    <label class="toggle-switch">
+                        <input type="checkbox" id="optimize-toggle" checked onchange="toggleOptimizeGraph(this.checked)">
                         <span class="toggle-slider"></span>
                     </label>
                 </label>

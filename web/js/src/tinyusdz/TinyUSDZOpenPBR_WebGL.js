@@ -502,7 +502,15 @@ function maxValues(a, b) {
 }
 
 function clampValue(val, minVal, maxVal) {
-    return mapSingle(val, x => Math.max(toScalar(minVal), Math.min(toScalar(maxVal), x)));
+    if (typeof val === 'number') {
+        return Math.max(toScalar(minVal), Math.min(toScalar(maxVal), val));
+    }
+    if (Array.isArray(val)) {
+        const lo = toArray(minVal, val.length);
+        const hi = toArray(maxVal, val.length);
+        return val.map((x, i) => Math.max(lo[i], Math.min(hi[i], x)));
+    }
+    return 0;
 }
 
 function mixValues(a, b, t) {
@@ -847,13 +855,20 @@ export class MtlxNodeGraphProcessor {
             case 'hsvadjust':
                 return MtlxNodeEval.hsvadjust(inputs.in, inputs.amount);
 
-            // Blender ND_hsv_adjust_color3: separate hue/saturation/value inputs
-            case 'hsv_adjust':
-                return MtlxNodeEval.hsvadjust(inputs.in, [
-                    inputs.hue ?? 0,
+            // Blender ND_hsv_adjust_color3: separate hue/saturation/value/fac inputs
+            // Blender convention: hue=0.5 means no shift, so offset = hue - 0.5
+            case 'hsv_adjust': {
+                const hueOffset = (inputs.hue ?? 0.5) - 0.5;
+                const adjusted = MtlxNodeEval.hsvadjust(inputs.in, [
+                    hueOffset,
                     inputs.saturation ?? 1,
                     inputs.value ?? 1
                 ]);
+                const fac = inputs.fac ?? 1;
+                if (fac >= 1) return adjusted;
+                if (fac <= 0) return inputs.in;
+                return MtlxNodeEval.mix(inputs.in, adjusted, fac);
+            }
 
             case 'contrast':
                 return MtlxNodeEval.contrast(
