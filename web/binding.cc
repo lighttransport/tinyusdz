@@ -2635,11 +2635,42 @@ class TinyUSDZLoaderNative {
                                                      points_ptr));
 
     if (!rmesh.normals.empty()) {
-      const float *normals_ptr =
-          reinterpret_cast<const float *>(rmesh.normals.data.data());
-
-      mesh.set("normals", emscripten::typed_memory_view(
-                              rmesh.normals.vertex_count() * 3, normals_ptr));
+      using tinyusdz::tydra::VertexAttributeFormat;
+      if (rmesh.normals.format == VertexAttributeFormat::Char3) {
+        // SNorm8x3 — pass as Int8Array; Three.js uses normalized=true
+        const int8_t *normals_ptr =
+            reinterpret_cast<const int8_t *>(rmesh.normals.data.data());
+        mesh.set("normals", emscripten::typed_memory_view(
+                                rmesh.normals.vertex_count() * 3, normals_ptr));
+        mesh.set("normalsFormat", std::string("snorm8"));
+      } else if (rmesh.normals.format == VertexAttributeFormat::Short3) {
+        // SNorm16x3 — pass as Int16Array; Three.js uses normalized=true
+        const int16_t *normals_ptr =
+            reinterpret_cast<const int16_t *>(rmesh.normals.data.data());
+        mesh.set("normals", emscripten::typed_memory_view(
+                                rmesh.normals.vertex_count() * 3, normals_ptr));
+        mesh.set("normalsFormat", std::string("snorm16"));
+      } else if (rmesh.normals.format == VertexAttributeFormat::Uint) {
+        // Packed 1010102 — Three.js can't use this; unpack to float3 cache
+        using namespace tinyusdz::tydra::tangent_quantize;
+        size_t nv = rmesh.normals.vertex_count();
+        auto &cache = normals_cache_[mesh_id];
+        cache.resize(nv * 3);
+        const uint32_t *P =
+            reinterpret_cast<const uint32_t *>(rmesh.normals.data.data());
+        for (size_t i = 0; i < nv; i++) {
+          unpack_normal_1010102(P[i], cache[i*3+0], cache[i*3+1], cache[i*3+2]);
+        }
+        mesh.set("normals", emscripten::typed_memory_view(nv * 3, cache.data()));
+        mesh.set("normalsFormat", std::string("float32"));
+      } else {
+        // Float3 (Vec3) — pass as Float32Array
+        const float *normals_ptr =
+            reinterpret_cast<const float *>(rmesh.normals.data.data());
+        mesh.set("normals", emscripten::typed_memory_view(
+                                rmesh.normals.vertex_count() * 3, normals_ptr));
+        mesh.set("normalsFormat", std::string("float32"));
+      }
     }
 
     {
@@ -2900,38 +2931,97 @@ class TinyUSDZLoaderNative {
         mesh.set("points", emscripten::typed_memory_view(cache.points.size(), cache.points.data()));
       }
 
-      // Reorder normals (vec3) - per-vertex if single_indexable, facevarying otherwise
+      // Reorder normals - per-vertex if single_indexable, facevarying otherwise
+      // Handles SNorm8x3 (Char3), SNorm16x3 (Short3), and float3 (Vec3) formats.
       if (!rmesh.normals.empty()) {
-        const float* normalsData = reinterpret_cast<const float*>(rmesh.normals.data.data());
-        std::vector<float> reorderedNormals(numNewTriangles * 3 * 3);
-        for (size_t newTriIdx = 0; newTriIdx < numNewTriangles; newTriIdx++) {
-          int oldTriIdx = reorderMap[newTriIdx];
-          for (int v = 0; v < 3; v++) {
-            size_t oldFaceVertIdx = static_cast<size_t>(oldTriIdx) * 3 + static_cast<size_t>(v);
-            size_t newVertIdx = newTriIdx * 3 + static_cast<size_t>(v);
-            if (singleIndexable) {
-              // Per-vertex: look up through index buffer
-              if (oldFaceVertIdx < fvIndices.size()) {
-                uint32_t vertIdx = fvIndices[oldFaceVertIdx];
-                if (vertIdx < rmesh.normals.vertex_count()) {
-                  reorderedNormals[newVertIdx * 3 + 0] = normalsData[vertIdx * 3 + 0];
-                  reorderedNormals[newVertIdx * 3 + 1] = normalsData[vertIdx * 3 + 1];
-                  reorderedNormals[newVertIdx * 3 + 2] = normalsData[vertIdx * 3 + 2];
-                }
-              }
-            } else {
-              // Facevarying: direct access by face-vertex offset
-              if (oldFaceVertIdx < rmesh.normals.vertex_count()) {
-                reorderedNormals[newVertIdx * 3 + 0] = normalsData[oldFaceVertIdx * 3 + 0];
-                reorderedNormals[newVertIdx * 3 + 1] = normalsData[oldFaceVertIdx * 3 + 1];
-                reorderedNormals[newVertIdx * 3 + 2] = normalsData[oldFaceVertIdx * 3 + 2];
+        using tinyusdz::tydra::VertexAttributeFormat;
+        const bool isSnorm8 = (rmesh.normals.format == VertexAttributeFormat::Char3);
+        const bool isSnorm16 = (rmesh.normals.format == VertexAttributeFormat::Short3);
+        const size_t totalVerts = numNewTriangles * 3;
+
+        if (isSnorm16) {
+          const int16_t* src = reinterpret_cast<const int16_t*>(rmesh.normals.data.data());
+          std::vector<int16_t> reordered(totalVerts * 3, 0);
+          for (size_t newTriIdx = 0; newTriIdx < numNewTriangles; newTriIdx++) {
+            int oldTriIdx = reorderMap[newTriIdx];
+            for (int v = 0; v < 3; v++) {
+              size_t oldFV = size_t(oldTriIdx) * 3 + size_t(v);
+              size_t newV = newTriIdx * 3 + size_t(v);
+              uint32_t vi = singleIndexable
+                  ? (oldFV < fvIndices.size() ? fvIndices[oldFV] : 0)
+                  : uint32_t(oldFV);
+              if (vi < rmesh.normals.vertex_count()) {
+                reordered[newV*3+0] = src[vi*3+0];
+                reordered[newV*3+1] = src[vi*3+1];
+                reordered[newV*3+2] = src[vi*3+2];
               }
             }
           }
+          auto& cache = reordered_mesh_cache_[mesh_id];
+          cache.normals_i16 = std::move(reordered);
+          mesh.set("normals", emscripten::typed_memory_view(
+              cache.normals_i16.size(), cache.normals_i16.data()));
+          mesh.set("normalsFormat", std::string("snorm16"));
+        } else if (isSnorm8) {
+          const int8_t* src = reinterpret_cast<const int8_t*>(rmesh.normals.data.data());
+          std::vector<int8_t> reordered(totalVerts * 3, 0);
+          for (size_t newTriIdx = 0; newTriIdx < numNewTriangles; newTriIdx++) {
+            int oldTriIdx = reorderMap[newTriIdx];
+            for (int v = 0; v < 3; v++) {
+              size_t oldFV = size_t(oldTriIdx) * 3 + size_t(v);
+              size_t newV = newTriIdx * 3 + size_t(v);
+              uint32_t vi = singleIndexable
+                  ? (oldFV < fvIndices.size() ? fvIndices[oldFV] : 0)
+                  : uint32_t(oldFV);
+              if (vi < rmesh.normals.vertex_count()) {
+                reordered[newV*3+0] = src[vi*3+0];
+                reordered[newV*3+1] = src[vi*3+1];
+                reordered[newV*3+2] = src[vi*3+2];
+              }
+            }
+          }
+          auto& cache = reordered_mesh_cache_[mesh_id];
+          cache.normals_i8 = std::move(reordered);
+          mesh.set("normals", emscripten::typed_memory_view(
+              cache.normals_i8.size(), cache.normals_i8.data()));
+          mesh.set("normalsFormat", std::string("snorm8"));
+        } else {
+          // Float3 (Vec3) or unpacked from 1010102
+          const float* src;
+          bool useCache = false;
+          if (rmesh.normals.format == VertexAttributeFormat::Uint) {
+            // 1010102 was already unpacked to normals_cache_ by the primary export above
+            if (normals_cache_.count(mesh_id)) {
+              src = normals_cache_[mesh_id].data();
+              useCache = true;
+            } else {
+              src = reinterpret_cast<const float*>(rmesh.normals.data.data());
+            }
+          } else {
+            src = reinterpret_cast<const float*>(rmesh.normals.data.data());
+          }
+          std::vector<float> reordered(totalVerts * 3, 0.0f);
+          for (size_t newTriIdx = 0; newTriIdx < numNewTriangles; newTriIdx++) {
+            int oldTriIdx = reorderMap[newTriIdx];
+            for (int v = 0; v < 3; v++) {
+              size_t oldFV = size_t(oldTriIdx) * 3 + size_t(v);
+              size_t newV = newTriIdx * 3 + size_t(v);
+              uint32_t vi = singleIndexable
+                  ? (oldFV < fvIndices.size() ? fvIndices[oldFV] : 0)
+                  : uint32_t(oldFV);
+              if (vi < rmesh.normals.vertex_count()) {
+                reordered[newV*3+0] = src[vi*3+0];
+                reordered[newV*3+1] = src[vi*3+1];
+                reordered[newV*3+2] = src[vi*3+2];
+              }
+            }
+          }
+          auto& cache = reordered_mesh_cache_[mesh_id];
+          cache.normals = std::move(reordered);
+          mesh.set("normals", emscripten::typed_memory_view(
+              cache.normals.size(), cache.normals.data()));
+          mesh.set("normalsFormat", std::string("float32"));
         }
-        auto& cache = reordered_mesh_cache_[mesh_id];
-        cache.normals = std::move(reorderedNormals);
-        mesh.set("normals", emscripten::typed_memory_view(cache.normals.size(), cache.normals.data()));
       }
 
       // Reorder texcoords (vec2) - slot 0; per-vertex if single_indexable
@@ -2965,54 +3055,28 @@ class TinyUSDZLoaderNative {
         mesh.set("texcoords", emscripten::typed_memory_view(cache.texcoords.size(), cache.texcoords.data()));
       }
 
-      // Reorder tangents as vec4 (xyz=tangent, w=handedness) - per-vertex if single_indexable
-      if (!rmesh.tangents.empty()) {
-        const float* tData = reinterpret_cast<const float*>(rmesh.tangents.data.data());
-        const float* nData = rmesh.normals.empty() ? nullptr : reinterpret_cast<const float*>(rmesh.normals.data.data());
-        const float* bData = rmesh.binormals.empty() ? nullptr : reinterpret_cast<const float*>(rmesh.binormals.data.data());
-        std::vector<float> reorderedTangents(numNewTriangles * 3 * 4);  // vec4
+      // Reorder tangents as vec4 — use tangents4_cache_ (already unpacked from any
+      // packed format by the non-reorder tangent export path above).
+      if (tangents4_cache_.count(mesh_id) && !tangents4_cache_[mesh_id].empty()) {
+        const float* t4 = tangents4_cache_[mesh_id].data();
+        size_t tangentVertCount = tangents4_cache_[mesh_id].size() / 4;
+        std::vector<float> reorderedTangents(numNewTriangles * 3 * 4);
         for (size_t newTriIdx = 0; newTriIdx < numNewTriangles; newTriIdx++) {
           int oldTriIdx = reorderMap[newTriIdx];
           for (int v = 0; v < 3; v++) {
-            size_t oldFaceVertIdx = static_cast<size_t>(oldTriIdx) * 3 + static_cast<size_t>(v);
-            size_t newVertIdx = newTriIdx * 3 + static_cast<size_t>(v);
-            float tx = 0, ty = 0, tz = 0, tw = 1.0f;
-            if (singleIndexable) {
-              if (oldFaceVertIdx < fvIndices.size()) {
-                uint32_t vi = fvIndices[oldFaceVertIdx];
-                if (vi < rmesh.tangents.vertex_count()) {
-                  tx = tData[vi * 3 + 0]; ty = tData[vi * 3 + 1]; tz = tData[vi * 3 + 2];
-                  if (nData && vi < rmesh.normals.vertex_count()) {
-                    FixupZeroTangent(tx, ty, tz, nData[vi*3+0], nData[vi*3+1], nData[vi*3+2]);
-                  }
-                  if (nData && bData && vi < rmesh.normals.vertex_count() && vi < rmesh.binormals.vertex_count()) {
-                    float cx = nData[vi*3+1]*tz - nData[vi*3+2]*ty;
-                    float cy = nData[vi*3+2]*tx - nData[vi*3+0]*tz;
-                    float cz = nData[vi*3+0]*ty - nData[vi*3+1]*tx;
-                    float d = cx*bData[vi*3+0] + cy*bData[vi*3+1] + cz*bData[vi*3+2];
-                    tw = (std::isfinite(d) && d < 0.0f) ? -1.0f : 1.0f;
-                  }
-                }
-              }
+            size_t oldFV = size_t(oldTriIdx) * 3 + size_t(v);
+            size_t newV = newTriIdx * 3 + size_t(v);
+            uint32_t vi = singleIndexable
+                ? (oldFV < fvIndices.size() ? fvIndices[oldFV] : 0)
+                : uint32_t(oldFV);
+            if (vi < tangentVertCount) {
+              reorderedTangents[newV*4+0] = t4[vi*4+0];
+              reorderedTangents[newV*4+1] = t4[vi*4+1];
+              reorderedTangents[newV*4+2] = t4[vi*4+2];
+              reorderedTangents[newV*4+3] = t4[vi*4+3];
             } else {
-              if (oldFaceVertIdx < rmesh.tangents.vertex_count()) {
-                tx = tData[oldFaceVertIdx * 3 + 0]; ty = tData[oldFaceVertIdx * 3 + 1]; tz = tData[oldFaceVertIdx * 3 + 2];
-                if (nData && oldFaceVertIdx < rmesh.normals.vertex_count()) {
-                  FixupZeroTangent(tx, ty, tz, nData[oldFaceVertIdx*3+0], nData[oldFaceVertIdx*3+1], nData[oldFaceVertIdx*3+2]);
-                }
-                if (nData && bData && oldFaceVertIdx < rmesh.normals.vertex_count() && oldFaceVertIdx < rmesh.binormals.vertex_count()) {
-                  float cx = nData[oldFaceVertIdx*3+1]*tz - nData[oldFaceVertIdx*3+2]*ty;
-                  float cy = nData[oldFaceVertIdx*3+2]*tx - nData[oldFaceVertIdx*3+0]*tz;
-                  float cz = nData[oldFaceVertIdx*3+0]*ty - nData[oldFaceVertIdx*3+1]*tx;
-                  float d = cx*bData[oldFaceVertIdx*3+0] + cy*bData[oldFaceVertIdx*3+1] + cz*bData[oldFaceVertIdx*3+2];
-                  tw = (std::isfinite(d) && d < 0.0f) ? -1.0f : 1.0f;
-                }
-              }
+              reorderedTangents[newV*4+3] = 1.0f;  // default w=1
             }
-            reorderedTangents[newVertIdx * 4 + 0] = tx;
-            reorderedTangents[newVertIdx * 4 + 1] = ty;
-            reorderedTangents[newVertIdx * 4 + 2] = tz;
-            reorderedTangents[newVertIdx * 4 + 3] = tw;
           }
         }
         auto& cache = reordered_mesh_cache_[mesh_id];
@@ -3594,8 +3658,9 @@ class TinyUSDZLoaderNative {
       std::cerr << "computeMeshTangents failed for mesh " << mesh_index << ": " << err << "\n";
     }
 
-    // Invalidate tangent cache for this mesh since we just computed new data
+    // Invalidate caches for this mesh since we just computed new data
     tangents4_cache_.erase(mesh_index);
+    normals_cache_.erase(mesh_index);
     reordered_mesh_cache_.erase(mesh_index);
 
     return ok;
@@ -3891,6 +3956,7 @@ class TinyUSDZLoaderNative {
 
     // Clear reordered mesh cache
     reordered_mesh_cache_.clear();
+    normals_cache_.clear();
 
     // Reset parsing progress
     parsing_progress_.reset();
@@ -4540,12 +4606,17 @@ class TinyUSDZLoaderNative {
   // Cache for reordered mesh data (triangles sorted by material for optimal submesh grouping)
   struct ReorderedMeshCache {
     std::vector<float> points;
-    std::vector<float> normals;
+    std::vector<float> normals;        // float3 normals
+    std::vector<int8_t> normals_i8;    // SNorm8x3 normals
+    std::vector<int16_t> normals_i16;  // SNorm16x3 normals
     std::vector<float> texcoords;
     std::vector<float> tangents;
     std::vector<uint32_t> faceVertexIndices;
   };
   mutable std::unordered_map<int, ReorderedMeshCache> reordered_mesh_cache_;
+
+  // Cache for unpacked float3 normals (used when format is Uint/1010102)
+  mutable std::unordered_map<int, std::vector<float>> normals_cache_;
 
   // Cache for vec4 tangents (xyz=tangent, w=handedness) in the non-reordered path
   mutable std::unordered_map<int, std::vector<float>> tangents4_cache_;

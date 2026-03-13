@@ -1,17 +1,18 @@
-# Tydra Tangent Computation and Quantization
+# Tydra Tangent/Normal Computation and Quantization
 
-Tydra provides multiple tangent-space computation methods and GPU-friendly quantized storage formats for tangent vectors. This document covers the algorithms, API, quality/performance characteristics, and WebGL2 integration.
+Tydra provides multiple tangent-space computation methods and GPU-friendly quantized storage formats for tangent and normal vectors. This document covers the algorithms, API, quality/performance characteristics, and WebGL2/Three.js integration.
 
 ## Overview
 
-Tangent-space normal mapping requires per-vertex tangent and bitangent (binormal) vectors. Tydra computes these from mesh geometry and UV coordinates, then optionally packs them into compact formats for GPU upload.
+Tangent-space normal mapping requires per-vertex tangent and bitangent (binormal) vectors. Tydra computes these from mesh geometry and UV coordinates, then optionally packs them into compact formats for GPU upload. Normal vectors can also be quantized to reduce memory usage.
 
 **Source files:**
 
 | File | Purpose |
 |------|---------|
-| `src/tydra/render-data.hh` | `MeshConverterConfig::TangentComputationMethod` enum |
-| `src/tydra/render-data.cc` | `ComputeDeferredTangents()` dispatch |
+| `src/tydra/render-data.hh` | `MeshConverterConfig` — tangent/normal storage format enums |
+| `src/tydra/render-data.cc` | `ComputeDeferredTangents()`, `QuantizeMeshNormals()` |
+| `src/tydra/tangent-quantize.hh` | Pack/unpack for tangent and normal quantized formats |
 | `src/tydra/fast-mikktspace.hh` | FastMikkTSpace and Hybrid implementations |
 | `src/tydra/fast-math.hh` | Fast math (rsqrt, acos) for fp16-level precision |
 | `src/tydra/mikktspace-tangent.hh` | Reference MikkTSpace wrapper |
@@ -225,9 +226,11 @@ Handles all edge cases: NaN, infinity, denormals, zero, overflow, underflow.
 
 ## WebGL2 Integration
 
-### Recommended Format: INT_2_10_10_10_REV
+### WebGL2 Tangent Formats
 
-The `GL_INT_2_10_10_10_REV` format provides the best balance of precision (0.08 deg max error) and size (4 bytes) for WebGL2. It is natively supported by `vertexAttribPointer`:
+**WASM default**: `PackedSNorm8` (SNorm8x4, 4 bytes/vertex). This is the widest-compatibility option — works with both WebGL1 (`GL_BYTE` normalized) and WebGL2.
+
+For WebGL2, `GL_INT_2_10_10_10_REV` provides better precision (0.08 deg vs 0.34 deg) at the same 4 bytes, and is natively supported by `vertexAttribPointer`:
 
 ```javascript
 // Upload packed tangent buffer
@@ -280,6 +283,71 @@ gl.vertexAttribPointer(tangentLocation, 4, gl.BYTE, true, 4, 0);
 ```
 
 Max quantization error is 0.34 deg, well within visual acceptability for normal mapping.
+
+## Normal Quantization
+
+`src/tydra/tangent-quantize.hh` also provides packed formats for normal vectors (3-component, no handedness sign). These reduce normal storage from 12 bytes/vertex (float3) while remaining compatible with Three.js and glTF `KHR_mesh_quantization`.
+
+### Normal Packed Formats
+
+| Format | Struct | Bytes | Precision | Three.js Usage | glTF Equivalent |
+|--------|--------|-------|-----------|---------------|-----------------|
+| SNorm8x3 | `PackedNormalSNorm8x3` | 3 | ~1° (7-bit) | `BufferAttribute(Int8Array, 3, true)` | BYTE normalized |
+| SNorm16x3 | `PackedNormalSNorm16x3` | 6 | ~0.003° (15-bit) | `BufferAttribute(Int16Array, 3, true)` | SHORT normalized |
+| INT_2_10_10_10_REV | `uint32_t` | 4 | ~0.1° (10-bit) | Not supported natively | N/A |
+| Float3 (baseline) | `value::float3` | 12 | full | `BufferAttribute(Float32Array, 3)` | FLOAT |
+
+**WASM default**: `PackedSNorm8` (3 bytes/vertex, 75% savings). Can be changed via `MeshConverterConfig::normal_storage`.
+
+### Normal Pack / Unpack API
+
+```cpp
+#include "tydra/tangent-quantize.hh"
+using namespace tinyusdz::tydra::tangent_quantize;
+
+// SNorm8
+PackedNormalSNorm8x3 p8 = pack_normal_snorm8(nx, ny, nz);
+float nx, ny, nz;
+unpack_normal_snorm8(p8, nx, ny, nz);
+
+// SNorm16 (higher precision)
+PackedNormalSNorm16x3 p16 = pack_normal_snorm16(nx, ny, nz);
+unpack_normal_snorm16(p16, nx, ny, nz);
+
+// Batch
+std::vector<PackedNormalSNorm8x3> packed8;
+QuantizeNormalsSNorm8x3(normals, count, &packed8);
+
+std::vector<PackedNormalSNorm16x3> packed16;
+QuantizeNormalsSNorm16x3(normals, count, &packed16);
+```
+
+### MeshConverterConfig
+
+```cpp
+MeshConverterConfig config;
+// Options: Float3, Packed1010102, PackedSNorm8 (WASM default), PackedSNorm16
+config.normal_storage = MeshConverterConfig::NormalStorageFormat::PackedSNorm16;
+```
+
+### Three.js Integration
+
+The WASM binding exports normals with a `normalsFormat` property (`"snorm8"`, `"snorm16"`, or `"float32"`). JS code creates the appropriate normalized `BufferAttribute`:
+
+```javascript
+if (mesh.normalsFormat === 'snorm8') {
+    geometry.setAttribute('normal',
+        new THREE.BufferAttribute(new Int8Array(mesh.normals), 3, true));
+} else if (mesh.normalsFormat === 'snorm16') {
+    geometry.setAttribute('normal',
+        new THREE.BufferAttribute(new Int16Array(mesh.normals), 3, true));
+} else {
+    geometry.setAttribute('normal',
+        new THREE.BufferAttribute(new Float32Array(mesh.normals), 3));
+}
+```
+
+The `true` (normalized) flag tells the GPU to denormalize integer values to [-1, 1] float range via `vertexAttribPointer`. Three.js standard materials re-normalize in the fragment shader, so slight quantization-induced length changes are handled automatically.
 
 ## Benchmark Tool
 
