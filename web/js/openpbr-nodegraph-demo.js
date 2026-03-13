@@ -75,6 +75,7 @@ const state = {
     materials: [],
     materialData: [],
     currentMaterialIndex: 0,
+    assetBaseUrl: '',  // base URL for resolving relative texture paths in USDA files
 
     // LiteGraph
     graph: null,
@@ -2434,6 +2435,7 @@ async function initLoader() {
     state.loader = new TinyUSDZLoader();
     await state.loader.init({ useMemory64: false });
     state.loader.setMaxMemoryLimitMB(500);
+    state.loader.setSphereSubdivisions(4);
 
     updateStatus('Ready');
 }
@@ -2788,6 +2790,24 @@ function bakeTextureOps(texture, ops) {
                 data[i + 1] = 255 - data[i + 1];
                 data[i + 2] = 255 - data[i + 2];
             }
+        } else if (cat === 'extract') {
+            // Extract a single channel and spread to grayscale — but only when the
+            // extract feeds a scalar output (e.g. roughness/metalness).  When part
+            // of a Separate→Combine pair the original color channels are just being
+            // routed, so the texture should stay intact.
+            const hasCombine = ops.some(o =>
+                (o.category || '').startsWith('combine'));
+            if (!hasCombine) {
+                const indexInput = (op.node?.inputs || []).find(i => i.name === 'index');
+                const channelIndex = indexInput?.value ?? 0; // 0=R, 1=G, 2=B, 3=A
+                for (let i = 0; i < data.length; i += 4) {
+                    const v = data[i + channelIndex];
+                    data[i] = v;
+                    data[i + 1] = v;
+                    data[i + 2] = v;
+                    data[i + 3] = 255; // fully opaque grayscale
+                }
+            }
         }
         // Other ops: convert, texcoord etc. are pass-through, already filtered
     }
@@ -2809,7 +2829,13 @@ async function loadMaterialTextures(openPBR, nativeLoader) {
         ['base_metalness', 'base_metalness'],
         ['emission_color', 'emission_color'],
         ['coat_weight', 'coat_weight'],
+        ['geometry_opacity', 'geometry_opacity'],
     ];
+
+    // Data (non-color) params that should use linear colorspace
+    const linearParams = new Set([
+        'specular_roughness', 'base_metalness', 'coat_weight', 'geometry_opacity',
+    ]);
 
     // First: check direct texture references on shader params
     for (const [openPBRKey, texKey] of textureParams) {
@@ -2819,7 +2845,8 @@ async function loadMaterialTextures(openPBR, nativeLoader) {
                 const texId = resolveTextureId(nativeLoader, getOpenPBRTextureId(param));
                 const texture = await TinyUSDZLoaderUtils.getTextureFromUSD(nativeLoader, texId);
                 if (texture) {
-                    texture.colorSpace = THREE.SRGBColorSpace;
+                    texture.colorSpace = linearParams.has(openPBRKey)
+                        ? THREE.LinearSRGBColorSpace : THREE.SRGBColorSpace;
                     textures[texKey] = texture;
                 }
             } catch (err) {
@@ -2855,8 +2882,13 @@ async function loadMaterialTextures(openPBR, nativeLoader) {
             const colorspace = typeof texInfo === 'object' ? (texInfo.colorspace || '') : '';
 
             // Determine Three.js colorSpace from MaterialX colorspace metadata
-            const isLinear = isLinearColorspace(colorspace)
-                || paramName === 'normal' || paramName === 'geometry_normal';
+            // Data (non-color) params should use linear colorspace
+            const dataParams = new Set([
+                'normal', 'geometry_normal',
+                'specular_roughness', 'base_metalness',
+                'coat_weight', 'geometry_opacity',
+            ]);
+            const isLinear = isLinearColorspace(colorspace) || dataParams.has(paramName);
             const threeColorSpace = isLinear ? THREE.LinearSRGBColorSpace : THREE.SRGBColorSpace;
 
             // Map shader param names to texture keys
@@ -2870,6 +2902,7 @@ async function loadMaterialTextures(openPBR, nativeLoader) {
                 'subsurface_color': 'base_color',      // subsurface color often shares base texture
                 'geometry_normal': 'normal',            // normal map connected via node graph
                 'normal': 'normal',
+                'geometry_opacity': 'geometry_opacity',
             };
             const texKey = paramToTexKey[paramName];
             if (!texKey) continue;
@@ -2896,12 +2929,23 @@ async function loadMaterialTextures(openPBR, nativeLoader) {
                     const texture = await TinyUSDZLoaderUtils.getTextureFromUSD(nativeLoader, texId);
                     if (texture) {
                         texture.colorSpace = threeColorSpace;
-                        // Apply node graph operations (power, multiply, etc.) to texture
                         if (ops && ops.length > 0) {
                             bakeTextureOps(texture, ops);
                         }
                         textures[texKey] = texture;
                     }
+                } else if (state.assetBaseUrl && filename) {
+                    // Fallback: load external texture relative to the USDA file
+                    const cleanName = filename.replace(/^[@.]\//, '').replace(/@$/, '');
+                    const texUrl = state.assetBaseUrl + cleanName;
+                    const texture = await new Promise((resolve, reject) => {
+                        new THREE.TextureLoader().load(texUrl, resolve, undefined, reject);
+                    });
+                    texture.colorSpace = threeColorSpace;
+                    if (ops && ops.length > 0) {
+                        bakeTextureOps(texture, ops);
+                    }
+                    textures[texKey] = texture;
                 }
             } catch (err) {
                 console.warn(`Failed to load node graph texture for ${paramName}:`, err);
@@ -3400,11 +3444,15 @@ window.loadSample = function() {
 window.loadBlenderSample = async function() {
     const select = document.getElementById('blender-sample-select');
     const filename = select ? select.value : 'texture_channel_blender.usdz';
+    // Store base URL for resolving relative texture paths in USDA files
+    const assetPath = 'assets/' + filename;
+    const lastSlash = assetPath.lastIndexOf('/');
+    state.assetBaseUrl = lastSlash >= 0 ? assetPath.substring(0, lastSlash + 1) : '';
     showLoading(true);
     updateStatus('Loading ' + filename + '...');
 
     try {
-        const response = await fetch('assets/' + filename);
+        const response = await fetch(assetPath);
         if (!response.ok) {
             throw new Error(`Failed to fetch: ${response.status}`);
         }

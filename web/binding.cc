@@ -1146,6 +1146,9 @@ class TinyUSDZLoaderNative {
 
     //env.mesh_config.build_index_method = 0; // simple
 
+    // Sphere tessellation
+    env.mesh_config.sphere_subdivisions = sphere_subdivisions_;
+
     // Bone reduction configuration
     env.mesh_config.enable_bone_reduction = enable_bone_reduction_;
     env.mesh_config.target_bone_count = target_bone_count_;
@@ -1458,6 +1461,7 @@ class TinyUSDZLoaderNative {
     env.mesh_config.lowmem = true;
     env.mesh_config.defer_tangent_computation = defer_tangent_computation_;
     env.mesh_config.compute_tangents_only_with_normal_map = true;
+    env.mesh_config.sphere_subdivisions = sphere_subdivisions_;
     env.mesh_config.enable_bone_reduction = enable_bone_reduction_;
     env.mesh_config.target_bone_count = target_bone_count_;
     env.mesh_config.round_bone_count = round_bone_count_;
@@ -3699,6 +3703,17 @@ class TinyUSDZLoaderNative {
     return max_memory_limit_mb_;
   }
 
+  // Sphere tessellation
+  void setSphereSubdivisions(int subdivisions) {
+    if (subdivisions >= 0 && subdivisions <= 6) {
+      sphere_subdivisions_ = subdivisions;
+    }
+  }
+
+  int getSphereSubdivisions() const {
+    return sphere_subdivisions_;
+  }
+
   // Bone reduction configuration
   void setEnableBoneReduction(bool enabled) {
     enable_bone_reduction_ = enabled;
@@ -4715,6 +4730,9 @@ class TinyUSDZLoaderNative {
   // in use (guaranteed by loadFromBinary / loadFromBinaryAsync call flow).
   bool mmap_zero_copy_{false};
 
+  // Sphere tessellation
+  int sphere_subdivisions_{4};  // Default to 4 subdivisions
+
   // Bone reduction configuration (disabled by default for backward compatibility)
   bool enable_bone_reduction_{false};
   uint32_t target_bone_count_{4};  // Default to 4 bones (standard for WebGL/Three.js)
@@ -5488,6 +5506,12 @@ EMSCRIPTEN_BINDINGS(tinyusdz_module) {
                 &TinyUSDZLoaderNative::getMaxMemoryLimitMB)
 
       // Bone reduction configuration
+      // Sphere tessellation
+      .function("setSphereSubdivisions",
+                &TinyUSDZLoaderNative::setSphereSubdivisions)
+      .function("getSphereSubdivisions",
+                &TinyUSDZLoaderNative::getSphereSubdivisions)
+
       .function("setEnableBoneReduction",
                 &TinyUSDZLoaderNative::setEnableBoneReduction)
       .function("getEnableBoneReduction",
