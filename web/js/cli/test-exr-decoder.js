@@ -4,8 +4,8 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
-import { decodeEXR, checkEXRSupport } from './src/tinyusdz/EXRDecoder.js';
-import createTinyUSDZ from './src/tinyusdz/tinyusdz.js';
+import { decodeEXR, checkEXRSupport } from '../src/tinyusdz/EXRDecoder.js';
+import createTinyUSDZ from '../src/tinyusdz/tinyusdz.js';
 
 async function main() {
   console.log('=== EXR Decoder Test ===\n');

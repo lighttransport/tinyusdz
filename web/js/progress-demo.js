@@ -8,7 +8,7 @@ import { TinyUSDZLoader } from 'tinyusdz/TinyUSDZLoader.js';
 import { TinyUSDZWorkerLoader } from 'tinyusdz/TinyUSDZWorkerLoader.js';
 import { TinyUSDZLoaderUtils, TextureLoadingManager } from 'tinyusdz/TinyUSDZLoaderUtils.js';
 import { setTinyUSDZ as setMaterialXTinyUSDZ } from 'tinyusdz/TinyUSDZMaterialX.js';
-import { OpenPBRMaterial } from './OpenPBRMaterial.js';
+import { OpenPBRMaterial } from 'tinyusdz/TinyUSDZOpenPBRSimple.js';
 
 // ============================================================================
 // Constants
