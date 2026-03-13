@@ -80,6 +80,7 @@ tinyusdz_sources=[
   '../../src/tydra/bone-util.cc',
   '../../src/tydra/render-scene-dump.cc',
   # deps
+  '../../src/external/mikktspace/mikktspace.c',
   '../../src/external/fpng.cpp',
   '../../src/external/pystring.cpp',
   #'../../src/external/string_id/string_id.cpp',
