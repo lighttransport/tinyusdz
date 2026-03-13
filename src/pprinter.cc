@@ -2937,6 +2937,34 @@ std::string to_string(const tinyusdz::Klass &klass, uint32_t indent, bool closin
 }
 #endif
 
+// Forward declarations
+std::string print_variantSetStmt(
+    const std::map<std::string, VariantSet> &vslist, const uint32_t indent);
+static std::string print_prim_recurse(const Prim &prim, const uint32_t indent);
+
+// Print a Prim's own data (type/name/properties) and recursively print
+// its children, but NOT its variantSets (those are handled at the Variant level).
+static std::string print_prim_recurse(const Prim &prim, const uint32_t indent) {
+  std::stringstream ss;
+
+  // Print prim header + properties, without closing brace
+  std::string s = pprint_value(prim.data(), indent, /* closing_brace */ false);
+  ss << s;
+
+  // Recursively print child prims
+  for (const auto &child : prim.children()) {
+    ss << print_prim_recurse(child, indent + 1);
+  }
+
+  // Print variantSets owned by the child prim itself
+  if (prim.variantSets().size()) {
+    ss << print_variantSetStmt(prim.variantSets(), indent + 1);
+  }
+
+  ss << pprint::Indent(indent) << "}\n";
+  return ss.str();
+}
+
 std::string print_variantSetStmt(
     const std::map<std::string, VariantSet> &vslist, const uint32_t indent) {
   std::stringstream ss;
@@ -2982,16 +3010,14 @@ std::string print_variantSetStmt(
                             nameTok.str()));
           const auto it = primNameTable.find(nameTok.str());
           if (it != primNameTable.end()) {
-            ss << pprint_value(it->second->data(), indent + 2,
-                               /* closing_brace */ true);
+            ss << print_prim_recurse(*(it->second), indent + 2);
           } else {
             // TODO: Report warning?
           }
         }
       } else {
         for (const auto &child : variantPrimChildren) {
-          ss << pprint_value(child.data(), indent + 2,
-                             /* closing_brace */ true);
+          ss << print_prim_recurse(child, indent + 2);
         }
       }
 
