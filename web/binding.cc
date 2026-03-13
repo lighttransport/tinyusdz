@@ -15,6 +15,7 @@
 #include <sstream>
 #include <iomanip>
 #include <set>
+#include <unordered_set>
 
 //#include "external/fast_float/include/fast_float/bigint.h"
 #include "tinyusdz.hh"
@@ -2952,6 +2953,9 @@ class TinyUSDZLoaderNative {
       std::map<int, std::vector<int>> materialToFaces;
       size_t totalFaces = 0;
 
+      // Track which faces are covered by GeomSubsets
+      std::unordered_set<int> coveredFaces;
+
       for (const auto& subset_pair : rmesh.material_subsetMap) {
         const tinyusdz::tydra::MaterialSubset& subset = subset_pair.second;
         const std::vector<int>& faceIndices = subset.indices();
@@ -2965,6 +2969,27 @@ class TinyUSDZLoaderNative {
         materialToFaces[matId].insert(materialToFaces[matId].end(),
                                       faceIndices.begin(), faceIndices.end());
         totalFaces += faceIndices.size();
+
+        for (int fi : faceIndices) {
+          coveredFaces.insert(fi);
+        }
+      }
+
+      // Include faces not covered by any GeomSubset — assign mesh-level material_id
+      {
+        size_t numMeshFaces = rmesh.faceVertexCounts().size();
+        std::vector<int> uncoveredFaces;
+        for (size_t i = 0; i < numMeshFaces; i++) {
+          if (coveredFaces.find(static_cast<int>(i)) == coveredFaces.end()) {
+            uncoveredFaces.push_back(static_cast<int>(i));
+          }
+        }
+        if (!uncoveredFaces.empty()) {
+          int fallbackMatId = rmesh.material_id;
+          materialToFaces[fallbackMatId].insert(materialToFaces[fallbackMatId].end(),
+                                                uncoveredFaces.begin(), uncoveredFaces.end());
+          totalFaces += uncoveredFaces.size();
+        }
       }
 
       // Step 2: Build reordering map - new triangle index -> old triangle index
