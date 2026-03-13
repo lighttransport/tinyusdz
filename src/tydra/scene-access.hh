@@ -65,8 +65,8 @@ struct FNV1StringHash {
     static constexpr uint64_t kFNV_Offset_Basis = 0xcbf29ce484222325ull;
 
     uint64_t hash = kFNV_Offset_Basis;
-    for (unsigned char c : s) {
-      hash = (kFNV_Prime * hash) ^ c;
+    for (char ch : s) {
+      hash = (kFNV_Prime * hash) ^ static_cast<unsigned char>(ch);
     }
     return static_cast<size_t>(hash);
   }
