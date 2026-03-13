@@ -323,8 +323,12 @@ function buildDirectAnimationData(usdLoader, sceneRoot) {
 			}
 		}
 
-		// Handle track-based animation (legacy format)
-		if (usdAnimation.tracks && usdAnimation.tracks.length > 0) {
+		// Handle track-based animation (legacy fallback only when channels are absent).
+		// Skip if channel-based data was already processed above — the track-based
+		// path finds targets by name, which selects the wrong node (Mesh instead of
+		// Group) when both share the same name (common in Blender USD exports).
+		if (!(usdAnimation.channels && usdAnimation.channels.length > 0) &&
+			usdAnimation.tracks && usdAnimation.tracks.length > 0) {
 			let targetObject = null;
 			if (usdAnimation.name) {
 				let searchName = usdAnimation.name.replace(/_xform$/, '').replace(/_anim$/, '');
@@ -399,8 +403,14 @@ function convertUSDAnimationsToThreeJS(usdLoader, sceneRoot) {
 	for (let i = 0; i < numAnimations; i++) {
 		const usdAnimation = usdLoader.getAnimation(i);
 
-		// Check if this is a track-based animation (legacy format)
-		if (usdAnimation.tracks && usdAnimation.tracks.length > 0) {
+		// Prefer channel-based format (uses correct target_node indices).
+		// The WASM binding always provides both tracks AND channels/samplers,
+		// but the tracks format finds targets by name which breaks when
+		// Group and Mesh share the same name (common in Blender exports).
+		// The channel-based path uses nodeIndexMap for reliable targeting.
+		if (usdAnimation.channels && usdAnimation.samplers && usdAnimation.channels.length > 0) {
+			// Skip to channel-based processing below
+		} else if (usdAnimation.tracks && usdAnimation.tracks.length > 0) {
 
 			// Process track-based animation
 			const keyframeTracks = [];
@@ -1883,7 +1893,8 @@ const animationParams = {
 	},
 	reset: function() {
 		animationParams.time = animationParams.beginTime;
-		animationParams.speed = 24.0;
+		animationParams.playbackSpeed = 1.0;
+		animationParams.speed = currentSceneMetadata.timeCodesPerSecond;
 
 		// Reset mixer throttle state
 		mixerFrameCounter = 0;
@@ -1909,12 +1920,19 @@ const animationParams = {
 		if (animationAction) {
 			animationAction.time = animationParams.beginTime;
 		}
+
+		// Update GUI controllers (defined after this object, but available at call time)
+		if (typeof speedController !== 'undefined') speedController.updateDisplay();
+		if (timelineController) timelineController.updateDisplay();
 	},
 	time: 0,
 	beginTime: 0,
 	endTime: 10,
 	duration: 10, // timecodes
-	speed: 24.0, // FPS (frames per second)
+	// Realtime playback: effective speed = timeCodesPerSecond * playbackSpeed
+	// timeCodesPerSecond comes from USD metadata (set at load time)
+	speed: 24.0, // effective FPS (= timeCodesPerSecond * playbackSpeed), read-only display
+	playbackSpeed: 1.0, // user-controlled multiplier (1.0 = realtime)
 
 	// Rendering options
 	shadowsEnabled: true,
@@ -2213,9 +2231,10 @@ let envPresetController = null;
 
 // Playback controls
 const playbackFolder = gui.addFolder('Playback');
-playbackFolder.add(animationParams, 'playPause').name('Play / Pause');
+playbackFolder.add(animationParams, 'playPause').name('Play / Pause [Space]');
 playbackFolder.add(animationParams, 'reset').name('Reset');
-playbackFolder.add(animationParams, 'speed', 0.1, 100, 0.1).name('Speed (FPS)');
+const speedController = playbackFolder.add(animationParams, 'playbackSpeed', 0.1, 5.0, 0.1).name('Speed');
+playbackFolder.add(animationParams, 'speed').name('Speed (FPS)').disable();
 timelineController = playbackFolder.add(animationParams, 'time', 0, 30, 0.01)
 	.name('Timeline')
 	.onChange((value) => {
@@ -3066,8 +3085,11 @@ function animate() {
 	}
 
 	// Update animation time with begin/end range
+	// Effective speed = timeCodesPerSecond * playbackSpeed (realtime at 1.0x)
 	if (animationParams.isPlaying) {
-		animationParams.time += deltaTime * animationParams.speed;
+		const effectiveSpeed = currentSceneMetadata.timeCodesPerSecond * animationParams.playbackSpeed;
+		animationParams.speed = effectiveSpeed; // keep display value in sync
+		animationParams.time += deltaTime * effectiveSpeed;
 
 		// Loop within begin/end range
 		if (animationParams.time > animationParams.endTime) {
@@ -3112,7 +3134,7 @@ function animate() {
 			updateDirectAnimations(animationParams.time);
 		} else if (mixer && animationAction) {
 			// Fallback to Three.js AnimationMixer (has GC overhead)
-			accumulatedMixerTime += deltaTime * animationParams.speed;
+			accumulatedMixerTime += deltaTime * (currentSceneMetadata.timeCodesPerSecond * animationParams.playbackSpeed);
 			mixerFrameCounter++;
 
 			if (mixerFrameCounter >= animationParams.mixerUpdateInterval) {
@@ -3153,6 +3175,22 @@ function animate() {
 
 // Start animation
 animate();
+
+// ===========================================
+// Keyboard Shortcuts
+// ===========================================
+
+window.addEventListener('keydown', (event) => {
+	// Ignore if typing in an input field
+	if (event.target.tagName === 'INPUT' || event.target.tagName === 'TEXTAREA') return;
+
+	switch (event.code) {
+		case 'Space':
+			event.preventDefault();
+			animationParams.playPause();
+			break;
+	}
+});
 
 // ===========================================
 // Debug: Expose key objects globally for performance profiling
