@@ -126,13 +126,16 @@ static inline void FixupZeroTangent(float &tx, float &ty, float &tz,
 
 // Report mesh conversion progress
 // Called for each mesh during Tydra conversion
+// NOTE: const char* params are BigInt in MEMORY64 mode, but UTF8ToString
+// expects Number. Using Number() is a no-op for regular numbers (32-bit)
+// and converts BigInt→Number (64-bit), so it works for both modes.
 EM_JS(void, reportTydraProgress, (int current, int total, const char* stage, const char* meshName, float progress), {
   if (typeof Module.onTydraProgress === 'function') {
     Module.onTydraProgress({
       meshCurrent: current,
       meshTotal: total,
-      stage: UTF8ToString(stage),
-      meshName: UTF8ToString(meshName),
+      stage: UTF8ToString(Number(stage)),
+      meshName: UTF8ToString(Number(meshName)),
       progress: progress
     });
   }
@@ -142,8 +145,8 @@ EM_JS(void, reportTydraProgress, (int current, int total, const char* stage, con
 EM_JS(void, reportTydraStage, (const char* stage, const char* message), {
   if (typeof Module.onTydraStage === 'function') {
     Module.onTydraStage({
-      stage: UTF8ToString(stage),
-      message: UTF8ToString(message)
+      stage: UTF8ToString(Number(stage)),
+      message: UTF8ToString(Number(message))
     });
   }
 });
@@ -170,18 +173,30 @@ EM_JS(void, reportTydraComplete, (int meshCount, int materialCount, int textureC
 
 #if defined(TINYUSDZ_USE_COROUTINE)
 
+// NOTE: EM_VAL is a pointer type (struct _EM_VAL*). In MEMORY64 mode,
+// pointers are i64 and must be returned as BigInt from JS→WASM imports.
+// Emval.toHandle() returns a Number, so we wrap with BigInt() for MEMORY64.
+#if defined(TINYUSDZ_WASM_MEMORY64)
 EM_JS(emscripten::EM_VAL, yieldToEventLoop_impl, (), {
-  // Return a Promise that resolves on next animation frame
-  // This gives the browser a chance to repaint
+  return BigInt(Emval.toHandle(new Promise(resolve => {
+    if (typeof requestAnimationFrame === 'function') {
+      requestAnimationFrame(() => resolve());
+    } else {
+      setTimeout(resolve, 0);
+    }
+  })));
+});
+#else
+EM_JS(emscripten::EM_VAL, yieldToEventLoop_impl, (), {
   return Emval.toHandle(new Promise(resolve => {
     if (typeof requestAnimationFrame === 'function') {
       requestAnimationFrame(() => resolve());
     } else {
-      // Fallback for non-browser environments (Node.js)
       setTimeout(resolve, 0);
     }
   }));
 });
+#endif
 
 // Wrapper for co_await usage
 inline emscripten::val yieldToEventLoop() {
@@ -189,11 +204,19 @@ inline emscripten::val yieldToEventLoop() {
 }
 
 // Helper to yield with a custom delay (milliseconds)
+#if defined(TINYUSDZ_WASM_MEMORY64)
+EM_JS(emscripten::EM_VAL, yieldWithDelay_impl, (int delayMs), {
+  return BigInt(Emval.toHandle(new Promise(resolve => {
+    setTimeout(resolve, delayMs);
+  })));
+});
+#else
 EM_JS(emscripten::EM_VAL, yieldWithDelay_impl, (int delayMs), {
   return Emval.toHandle(new Promise(resolve => {
     setTimeout(resolve, delayMs);
   }));
 });
+#endif
 
 inline emscripten::val yieldWithDelay(int delayMs) {
   return emscripten::val::take_ownership(yieldWithDelay_impl(delayMs));
@@ -203,7 +226,7 @@ inline emscripten::val yieldWithDelay(int delayMs) {
 EM_JS(void, reportAsyncPhaseStart, (const char* phase, float progress), {
   if (typeof Module.onAsyncPhaseStart === 'function') {
     Module.onAsyncPhaseStart({
-      phase: UTF8ToString(phase),
+      phase: UTF8ToString(Number(phase)),
       progress: progress
     });
   }
