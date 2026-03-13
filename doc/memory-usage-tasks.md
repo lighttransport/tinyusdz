@@ -369,7 +369,12 @@ The `_lazy_fieldset_cache` in usdc-reader caused invalid cache reuse when differ
 | Complete RenderMesh memory estimation | JointAndWeight, ShapeTarget, MaterialSubset internals | `render-data.cc` |
 | Complete RenderScene memory estimation | Node tree, RenderMaterial, AnimationClip, SkelHierarchy, TextureImage | `render-data.cc` |
 | Complete Layer memory estimation | VariantSetSpec internals (recursive PrimSpec trees) | `layer.cc` |
-| MMap zero-copy V1 (hybrid) | Avoids EvaluateTypedAnimatableAttribute copy for points/normals | `mmap-array-ref.hh`, `crate-reader.cc`, `usdc-reader.cc`, `stage.cc`, `render-data.cc` |
+| MMap zero-copy V1 (hybrid) | Avoids EvaluateTypedAnimatableAttribute copy for points/normals/texcoords | `mmap-array-ref.hh`, `crate-reader.cc`, `usdc-reader.cc`, `stage.cc`, `render-data.cc` |
+| Extended `lowmem` (velocities, SubD, props) | Frees all source mesh data after conversion, not just 4 core arrays | `render-data.cc` |
+| Fix packed normals exposure in WASM | Correct unpacking + raw packed export for WebGL2 | `binding.cc` |
+| Per-mesh/texture memstat breakdown | Detailed memory reporting per mesh and per buffer | `to-renderscene-main.cc` |
+| WASM asset cache size limit + eviction | Prevents unbounded cache growth; `setAssetCacheMaxSizeBytes()` API | `binding.cc` |
+| Connection resolve cache shrink_to_fit | Swap-with-empty on reset to release hash bucket memory | `render-data.cc` |
 
 ## MMap Zero-Copy Pipeline (V1 — Hybrid)
 
@@ -445,7 +450,7 @@ V1 hybrid records offsets but still fully unpacks data into Stage (no Stage memo
 
 - [x] **Free triangulation and vertex-build intermediates** — DONE. Triangulation intermediates (`triangulatedToOrigFaceVertexIndexMap`, `triangulatedFaceCounts`) freed unconditionally after step 4 attribute triangulation. Pre-triangulation topology (`usdFaceVertexCounts`, `usdFaceVertexIndices`) freed under `lowmem` guard when mesh is triangulated. In `BuildVertexIndicesImpl`, dedup buckets freed after dedup loop, and each `vertex_output` field freed immediately after `set_buffer()` copies it to avoid source+destination peak overlap.
 - [x] **Fix MemoryBudgetManager blind spots** — DONE. Reported 49 KB when actual heap was 281 MB. Fixed: report timing, lazy budget release, decompression buffer tracking, temp vector tracking. Now reports 282.7 MB non-lazy (matches massif) / 92.3 MB lazy (concurrent high-water mark).
-- [x] **Implement `lowmem` GeomMesh freeing** — DONE. The `lowmem` config flag now frees source GeomMesh arrays (points, normals, faceVertexIndices, faceVertexCounts) after Tydra conversion via `set_value({})`. Enabled by default in WASM binding.
+- [x] **Implement `lowmem` GeomMesh freeing** — DONE. The `lowmem` config flag now frees source GeomMesh data after Tydra conversion: core geometry (points, normals, faceVertexIndices, faceVertexCounts, velocities), all SubD attributes (cornerIndices, cornerSharpnesses, creaseIndices, creaseLengths, creaseSharpnesses, holeIndices), and the entire `props` map (all primvar data: texcoords, displayColor, displayOpacity, skel:jointIndices, skel:jointWeights, etc.). Enabled by default in WASM binding.
 - [x] **Fix TypedArray ownership model** — DONE. `TypedArrayPtr<T>` dead code removed entirely. Dedup caches already use `size_t` indices. 22 array caches consolidated into 1 unified map. ~18 dead scalar caches removed.
 
 ### High Priority
@@ -460,7 +465,7 @@ V1 hybrid records offsets but still fully unpacks data into Stage (no Stage memo
 - [x] **Add AnimationClip detailed estimation** — DONE. Now counts strings, KeyframeSampler times/values vectors, AnimationChannel array.
 - [x] **Add SkelHierarchy detailed estimation** — DONE. Now counts strings, recursive SkelNode tree, `parent_joint_indices`, `bind_transforms`, `rest_transforms`, `anim_ids`.
 - [ ] **Measure end-to-end WASM memory** on real-world models (skinned character USDZ) with browser DevTools. Compare before/after tangent quantization and deferred loading.
-- [ ] **Add Hybrid to `TangentComputationMethod` enum** — implemented in `fast-mikktspace.hh` but not wired into config enum or dispatch.
+- [x] **Hybrid `TangentComputationMethod`** — DONE. Already fully implemented: enum in `render-data.hh` (Lengyel, MikkTSpace, FastMikkTSpace, Hybrid), dispatched in `ConvertMesh` (line 5747+) and `ComputeDeferredTangents` (line 8422+), with `ComputeTangentsHybrid` in `fast-mikktspace.hh` (lines 865-875, 1119-1137).
 
 ### Medium Priority
 
@@ -468,7 +473,7 @@ V1 hybrid records offsets but still fully unpacks data into Stage (no Stage memo
 - [x] **Complete Stage memory estimation** — DONE. `Stage::estimate_memory_usage()` now recursively walks entire Prim tree, estimating `_data`, string members, all properties via concrete type dispatch, and deep attribute memory. Reports 217 MB (was 4 KB).
 - [x] **Add PrimVar `estimate_memory_usage()` to Attribute** — DONE. `Attribute::estimate_memory_usage()` now delegates to `_var.estimate_memory_usage()` which calls `Value::estimate_memory_usage()` + `TimeSamples::estimate_memory_usage()`.
 - [x] **Complete Layer memory estimation** — DONE. `EstimatePrimSpecMemory` now recursively estimates `VariantSetSpec` internals (variant name strings, nested PrimSpec trees). Property values were already covered.
-- [ ] **Profile texture memory separately** — textures dominate total memory. Add per-texture size reporting to `estimate_memory_usage()` output.
+- [x] **Profile texture memory separately** — DONE. `tydra_to_renderscene --memstat` now reports per-mesh memory breakdown (vertex count, tri-index count, estimated bytes) and per-buffer/texture breakdown (buffer size, matching TextureImage asset identifier). Total buffer memory is summed separately.
 - [ ] **Benchmark deferred vs immediate tangent on WASM** — measure initial load time and peak memory difference.
 - [ ] **Reduce WASM default memory limit** — 8 GB for 64-bit WASM may be too permissive for web deployment. Profile real workloads to set tighter defaults.
 - [x] **Normal quantization** — DONE. Packs normals to INT_2_10_10_10_REV (4 bytes/vertex, 67% savings). Default on WASM, opt-in on native via `MeshConverterConfig::normal_storage`.
@@ -479,11 +484,13 @@ V1 hybrid records offsets but still fully unpacks data into Stage (no Stage memo
 - [x] **MMap zero-copy: USDZ offset adjustment** — DONE (no code change needed). `LoadUSDZFromMemory` already passes a pointer to the USDC payload start within the ZIP (`addr + byte_begin`), and `LoadUSDCFromMemory` sets `MMapDataSource` with that pointer. All `MMapArrayRef::byte_offset` values are relative to this USDC payload start, so USDZ works correctly. Verified with outpost_19.usdz (233 deferred arrays, OBJ identical).
 - [x] **MMap zero-copy: texcoord mmap path** — DONE. `GetTextureCoordinate` now tries `TryReadMMapArray<texcoord2f>` with key `"primvars:" + name` when the primvar has no indices (`!primvar.has_indices()`). Indexed primvars fall through to `flatten_with_indices`. Verified with CesiumMan.usdz (4 deferred arrays, OBJ identical).
 - [x] **MMap zero-copy: matrix array types** — DONE. Added `MATRIX2D`, `MATRIX3D`, `MATRIX4D` to `DescribeValueRep` eligible types. Matrix arrays are never compressed in USDC (verified against OpenUSD `crateFile.cpp` — they fall through to `_WriteUncompressedArray`). Scalar matrices can be inlined when diagonal with int8 elements, but arrays are always raw.
-- [ ] **Three.js packed tangent `BufferAttribute`** — Three.js doesn't natively support `GL_INT_2_10_10_10_REV`. Investigate `InterleavedBufferAttribute` or custom WebGL calls to avoid unpack-to-float in binding.
-- [ ] **Memory-based CrateWriter** — `usdc-writer.cc` TODO for in-memory USDC writing (currently uses temp file).
+- [x] **Three.js packed normal/tangent exposure** — DONE. Fixed normals exposure bug: EMSCRIPTEN defaults to Packed1010102 normals but `getMesh()` was casting raw uint32 data to `float*`. Now properly unpacks packed normals to vec3 float cache for Three.js, and exposes raw packed data as `normalsPacked` (Uint32Array) + `normalsPackedFormat` ("INT_2_10_10_10_REV") for direct WebGL2 upload via `gl.vertexAttribPointer(loc, 4, gl.INT_2_10_10_10_REV, true, ...)`. Same pattern already existed for tangents (`tangentsPacked`). Also fixed legacy Vec3 tangent code paths to use unpacked normals cache when normals are packed.
+- [x] **Memory-based CrateWriter** — DONE. Already implemented: `MemoryOutputStream` in `crate-writer.hh` (lines 114-145) uses `std::vector<uint8_t>` buffer with no temp files. `SaveAsUSDCToMemory` in `usdc-writer.cc` (lines 591-646) uses it; `SaveAsUSDCToFile` calls `SaveAsUSDCToMemory` then writes to disk.
 - [ ] **Multi-threaded tangent computation** — Hybrid and FastMikkTSpace are single-threaded. Parallelize per-face derivative phase.
 - [ ] **Composition memory tracking** — `composition.hh` has `max_memory_limit_mb` but no usage reporting for reference/payload resolution overhead.
 - [x] **CrateReader decompression buffer shrink** — DONE. Added `ShrinkDecompressionBuffers()` to CrateReader that swap-with-empty frees both decompression buffers and releases their budget. Called after `BuildLiveFieldSets()` in non-lazy mode and after `ReconstructStage()` in lazy mode. USDC parser current usage drops to 0 bytes after parsing.
+- [x] **WASM asset cache size limits** — DONE. `EMAssetResolutionResolver` now has `setMaxCacheSizeBytes()`/`getMaxCacheSizeBytes()` (0 = unlimited, default). When limit is set, oldest finalized cache entries are evicted before adding new assets. `getStats()` reports `assetCacheSizeBytes` and `assetCacheMaxBytes`. Exposed to JS via `setAssetCacheMaxSizeBytes()`, `getAssetCacheSizeBytes()`, `getAssetCacheMaxSizeBytes()`.
+- [x] **Connection resolve cache memory release** — DONE. `ResetConnectionResolveCache()` now uses swap-with-empty instead of `clear()` to release hash bucket memory. `clear()` retains bucket allocation; swap reclaims it. Called at start of every `ConvertToRenderScene()`.
 
 ## Key Files
 

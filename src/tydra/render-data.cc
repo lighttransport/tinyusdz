@@ -6046,10 +6046,25 @@ bool RenderSceneConverter::ConvertMesh(
   // data, and the GeomMesh attribute data is no longer needed.
   if (env.mesh_config.lowmem) {
     auto *pmesh = const_cast<GeomMesh *>(&mesh);
+
+    // Core geometry
     pmesh->points.set_value({});
     pmesh->normals.set_value({});
     pmesh->faceVertexIndices.set_value({});
     pmesh->faceVertexCounts.set_value({});
+    pmesh->velocities.set_value({});
+
+    // SubD attributes (not used in ConvertMesh, but may be large)
+    pmesh->cornerIndices.set_value({});
+    pmesh->cornerSharpnesses.set_value({});
+    pmesh->creaseIndices.set_value({});
+    pmesh->creaseLengths.set_value({});
+    pmesh->creaseSharpnesses.set_value({});
+    pmesh->holeIndices.set_value({});
+
+    // All primvar data (primvars:normals, primvars:st, primvars:displayColor,
+    // skel:jointIndices, skel:jointWeights, etc.) — already copied to RenderMesh.
+    { std::map<std::string, Property> tmp; pmesh->props.swap(tmp); }
   }
 
   (*dstMesh) = std::move(dst);
@@ -6095,8 +6110,15 @@ static ConnectionResolveCache &GetConnectionResolveCache(const Stage &stage) {
 
 static void ResetConnectionResolveCache(const Stage &stage) {
   ConnectionResolveCache &cache = GetConnectionResolveCache(stage);
-  cache.uv_texture_by_connection.clear();
-  cache.mtlx_texture_by_connection.clear();
+  // Swap with empty maps to release bucket memory (clear() keeps capacity)
+  {
+    std::unordered_map<std::string, UVConnectionResolveCacheEntry, FNV1StringHash> tmp;
+    cache.uv_texture_by_connection.swap(tmp);
+  }
+  {
+    std::unordered_map<std::string, MtlxConnectionResolveCacheEntry, FNV1StringHash> tmp;
+    cache.mtlx_texture_by_connection.swap(tmp);
+  }
 }
 
 // Convert UsdTransform2d -> PrimvarReader_float2 shader network.
