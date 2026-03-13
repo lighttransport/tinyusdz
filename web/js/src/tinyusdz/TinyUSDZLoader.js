@@ -443,6 +443,18 @@ class TinyUSDZLoader extends Loader {
     }
 
     /**
+     * Set sphere tessellation subdivision level (0-6, default 4)
+     * @param {number} subdivisions - Icosphere subdivision level
+     */
+    setSphereSubdivisions(subdivisions) {
+        this.sphereSubdivisions_ = subdivisions;
+    }
+
+    getSphereSubdivisions() {
+        return this.sphereSubdivisions_ ?? 4;
+    }
+
+    /**
      * Apply configured skinning options to a native USD loader instance.
      * @param {Object} usd - TinyUSDZLoaderNative instance
      * @private
@@ -454,6 +466,9 @@ class TinyUSDZLoader extends Loader {
             usd.setTargetBoneCount(this.targetBoneCount_ || 4);
         } else if (this.roundBoneCount_) {
             usd.setRoundBoneCount(true);
+        }
+        if (this.sphereSubdivisions_ !== undefined) {
+            usd.setSphereSubdivisions(this.sphereSubdivisions_);
         }
     }
 
