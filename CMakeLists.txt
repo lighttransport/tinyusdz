@@ -78,6 +78,7 @@ option(TINYUSDZ_BUILD_BENCHMARKS
 option(TINYUSDZ_BUILD_EXAMPLES
        "Build examples(but not all examples in `examples` folder are being built)"
        ${TINYUSDZ_DEFAULT_BUILD_EXAMPLES})
+option(TINYUSDZ_BUILD_TOOLS "Build tools (tusddumpcrate, etc.)" OFF)
 option(TINYUSDZ_WITH_BUILTIN_IMAGE_LOADER
        "Build with built-in image loader(stb_image and fpng). When disabled, app need to provide image loader callback to load images."
        ${TINYUSDZ_DEFAULT_WITH_BUILTIN_IMAGE_LOADER})
@@ -1693,7 +1694,9 @@ if(TINYUSDZ_BUILD_EXAMPLES)
 endif(TINYUSDZ_BUILD_EXAMPLES)
 
 # Tools
-add_subdirectory(tools/tusddumpcrate)
+if(TINYUSDZ_BUILD_TOOLS)
+  add_subdirectory(tools/tusddumpcrate)
+endif()
 
 if(TINYUSDZ_BUILD_BENCHMARKS)
 
