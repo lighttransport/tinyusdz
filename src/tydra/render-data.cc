@@ -1464,6 +1464,45 @@ static bool TryReadMMapArray(
   return true;
 }
 
+/// Try to read an indexed primvar from mmap: read raw data, then expand with indices.
+/// Returns false if mmap read fails or primvar has no indices (caller should use other path).
+template <typename T>
+static bool TryReadMMapArrayWithIndices(
+    const Stage &stage,
+    const std::string &prim_path,
+    const std::string &attr_name,
+    const GeomPrimvar &primvar,
+    double timecode,
+    std::vector<T> *out) {
+  if (!stage.has_mmap_zero_copy()) return false;
+  if (!primvar.has_indices()) return false;
+
+  // Read raw (un-expanded) data from mmap
+  std::vector<T> raw_data;
+  if (!TryReadMMapArray<T>(stage, prim_path, attr_name, &raw_data)) {
+    return false;
+  }
+
+  // Get indices (int arrays are NOT deferred — they use LZ4 compression)
+  std::vector<int32_t> indices = primvar.get_indices(timecode);
+  if (indices.empty()) {
+    // No indices at this timecode — use raw data directly
+    *out = std::move(raw_data);
+    return true;
+  }
+
+  // Expand: out[i] = raw_data[indices[i]]
+  out->resize(indices.size());
+  for (size_t i = 0; i < indices.size(); i++) {
+    int32_t idx = indices[i];
+    if (idx >= 0 && size_t(idx) < raw_data.size()) {
+      (*out)[i] = raw_data[size_t(idx)];
+    }
+    // Out-of-bounds indices get zero-initialized (default T{})
+  }
+  return true;
+}
+
 //
 // name does not include "primvars:" prefix.
 //
@@ -1494,13 +1533,17 @@ nonstd::expected<VertexAttribute, std::string> GetTextureCoordinate(
 
   std::vector<value::texcoord2f> uvs;
 
-  // mmap zero-copy path: read texcoords directly from mmap when the primvar
-  // has no indices (no index expansion needed).  The mmap table key uses the
-  // full property name "primvars:<name>".
+  // mmap zero-copy path: read texcoords directly from mmap.
+  // V2: also handles indexed primvars via TryReadMMapArrayWithIndices.
   bool got_from_mmap = false;
-  if (!prim_path.empty() && !primvar.has_indices()) {
-    got_from_mmap = TryReadMMapArray<value::texcoord2f>(
-        stage, prim_path, "primvars:" + name, &uvs);
+  if (!prim_path.empty()) {
+    if (primvar.has_indices()) {
+      got_from_mmap = TryReadMMapArrayWithIndices<value::texcoord2f>(
+          stage, prim_path, "primvars:" + name, primvar, t, &uvs);
+    } else {
+      got_from_mmap = TryReadMMapArray<value::texcoord2f>(
+          stage, prim_path, "primvars:" + name, &uvs);
+    }
   }
 
   if (!got_from_mmap) {
@@ -4368,6 +4411,17 @@ bool RenderSceneConverter::ConvertMesh(
       }
     }
 
+    // V2 safety: deferred array but both mmap and Stage reads produced empty
+    if (points.empty() && env.stage.has_mmap_zero_copy()) {
+      const MMapArrayRef *ref = env.stage.mmap_table()->find(
+          prim_path_str, "points");
+      if (ref && ref->element_count > 0) {
+        PUSH_ERROR_AND_RETURN(fmt::format(
+            "mmap deferred 'points' for {} ({} elements) could not be read. "
+            "mmap buffer may be invalid.", abs_prim_path, ref->element_count));
+      }
+    }
+
     if (points.empty()) {
 
       // maybe points is explicitly authored, but empty.
@@ -4769,8 +4823,6 @@ bool RenderSceneConverter::ConvertMesh(
     std::vector<value::normal3f> normals;
 
     if (mesh.has_primvar("normals")) {  // primvars:normals
-      // Primvar path: may have separate indices, must use flatten_with_indices.
-      // Do NOT use mmap zero-copy here since primvar expansion is needed.
       GeomPrimvar pvar;
       if (!GetGeomPrimvar(env.stage, &mesh, "normals", &pvar, &_err)) {
         return false;
@@ -4791,9 +4843,21 @@ bool RenderSceneConverter::ConvertMesh(
         DCOUT("WARN: " << msg);
       }
 
-      if (!pvar.flatten_with_indices(env.timecode, &normals, env.tinterp,
-                                     &_err)) {
-        PUSH_ERROR_AND_RETURN("Failed to expand `normals` primvar.");
+      // V2: try mmap path for primvar normals (handles indexed + non-indexed)
+      bool got_normals_pv = false;
+      if (pvar.has_indices()) {
+        got_normals_pv = TryReadMMapArrayWithIndices<value::normal3f>(
+            env.stage, prim_path_str, "primvars:normals", pvar,
+            env.timecode, &normals);
+      } else {
+        got_normals_pv = TryReadMMapArray<value::normal3f>(
+            env.stage, prim_path_str, "primvars:normals", &normals);
+      }
+      if (!got_normals_pv) {
+        if (!pvar.flatten_with_indices(env.timecode, &normals, env.tinterp,
+                                       &_err)) {
+          PUSH_ERROR_AND_RETURN("Failed to expand `normals` primvar.");
+        }
       }
 
     } else if (mesh.normals.authored()) {  // look 'normals'
@@ -4804,6 +4868,16 @@ bool RenderSceneConverter::ConvertMesh(
         if (!EvaluateTypedAnimatableAttribute(env.stage, mesh.normals, "normals",
                                               &normals, &_err, env.timecode,
                                               env.tinterp)) {
+        }
+      }
+      // V2 safety: deferred array but both mmap and Stage reads produced empty
+      if (normals.empty() && env.stage.has_mmap_zero_copy()) {
+        const MMapArrayRef *ref = env.stage.mmap_table()->find(
+            prim_path_str, "normals");
+        if (ref && ref->element_count > 0) {
+          PUSH_ERROR_AND_RETURN(fmt::format(
+              "mmap deferred 'normals' for {} ({} elements) could not be read. "
+              "mmap buffer may be invalid.", abs_prim_path, ref->element_count));
         }
       }
     }
@@ -5261,11 +5335,24 @@ bool RenderSceneConverter::ConvertMesh(
     }
 
     std::vector<float> jointWeightsArray;
-    if (!jointWeights.flatten_with_indices(env.timecode, &jointWeightsArray,
-                                           env.tinterp)) {
-      PUSH_ERROR_AND_RETURN(
-          fmt::format("Failed to flatten Indexed Primvar `skel:jointWeights`. "
-                      "Ensure `skel:jointWeights` is type `float[]`"));
+    // V2: try mmap path for jointWeights (float array, may be deferred)
+    bool got_jw = false;
+    if (jointWeights.has_indices()) {
+      got_jw = TryReadMMapArrayWithIndices<float>(
+          env.stage, prim_path_str, "primvars:skel:jointWeights", jointWeights,
+          env.timecode, &jointWeightsArray);
+    } else {
+      got_jw = TryReadMMapArray<float>(
+          env.stage, prim_path_str, "primvars:skel:jointWeights",
+          &jointWeightsArray);
+    }
+    if (!got_jw) {
+      if (!jointWeights.flatten_with_indices(env.timecode, &jointWeightsArray,
+                                             env.tinterp)) {
+        PUSH_ERROR_AND_RETURN(
+            fmt::format("Failed to flatten Indexed Primvar `skel:jointWeights`. "
+                        "Ensure `skel:jointWeights` is type `float[]`"));
+      }
     }
 
     if (jointIndicesArray.size() != jointWeightsArray.size()) {
