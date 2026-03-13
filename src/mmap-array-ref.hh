@@ -40,6 +40,15 @@ class MMapArrayTable {
   bool empty() const { return _entries.empty(); }
   size_t size() const { return _entries.size(); }
 
+  /// Total bytes of data deferred to mmap (not in Stage heap).
+  uint64_t total_deferred_bytes() const {
+    uint64_t total = 0;
+    for (const auto &kv : _entries) {
+      total += uint64_t(kv.second.element_count) * kv.second.element_size;
+    }
+    return total;
+  }
+
  private:
   static std::string make_key(const std::string &p, const std::string &a) {
     // \0 can't appear in USD paths, so this produces a unique key
