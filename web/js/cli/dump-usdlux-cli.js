@@ -2,7 +2,7 @@
 // UsdLux Light Dump CLI Tool
 // Usage: node dump-usdlux-cli.js <usd-file> [options]
 
-import { TinyUSDZLoader } from './src/tinyusdz/TinyUSDZLoader.js';
+import { TinyUSDZLoader } from '../src/tinyusdz/TinyUSDZLoader.js';
 import fs from 'node:fs';
 import path from 'node:path';
 import YAML from 'yaml';

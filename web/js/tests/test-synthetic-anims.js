@@ -1,4 +1,4 @@
-import { TinyUSDZLoader } from './src/tinyusdz/TinyUSDZLoader.js';
+import { TinyUSDZLoader } from '../src/tinyusdz/TinyUSDZLoader.js';
 
 async function testFile(filename) {
   console.log(`\n${'='.repeat(60)}`);
