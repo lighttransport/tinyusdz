@@ -100,7 +100,7 @@ class ErrorContextStack {
 ///
 class IOutputStream {
 public:
-  virtual ~IOutputStream() = default;
+  virtual ~IOutputStream();
   virtual bool Open(std::string* err) = 0;
   virtual void Close() = 0;
   virtual bool IsOpen() const = 0;
@@ -118,6 +118,7 @@ public:
 class MemoryOutputStream : public IOutputStream {
 public:
   MemoryOutputStream() = default;
+  ~MemoryOutputStream() override;
   bool Open(std::string*) override { pos_ = 0; buffer_.clear(); return true; }
   void Close() override {}
   bool IsOpen() const override { return true; }

@@ -4263,16 +4263,41 @@ static bool QuantizeMeshNormals(
 
   VertexVariability var = mesh.normals.variability;
 
-  std::vector<uint32_t> packed;
-  QuantizeNormals1010102(N, nN, &packed);
+  if (format == MeshConverterConfig::NormalStorageFormat::PackedSNorm8) {
+    std::vector<PackedNormalSNorm8x3> packed;
+    QuantizeNormalsSNorm8x3(N, nN, &packed);
 
-  VertexAttribute attr;
-  attr.format = VertexAttributeFormat::Uint;
-  attr.data.resize(packed.size() * sizeof(uint32_t));
-  std::memcpy(attr.data.data(), packed.data(),
-              packed.size() * sizeof(uint32_t));
+    VertexAttribute attr;
+    attr.format = VertexAttributeFormat::Char3;
+    attr.data.resize(packed.size() * 3);
+    std::memcpy(attr.data.data(), packed.data(), packed.size() * 3);
 
-  mesh.normals = std::move(attr);
+    mesh.normals = std::move(attr);
+  } else if (format == MeshConverterConfig::NormalStorageFormat::PackedSNorm16) {
+    std::vector<PackedNormalSNorm16x3> packed;
+    QuantizeNormalsSNorm16x3(N, nN, &packed);
+
+    VertexAttribute attr;
+    attr.format = VertexAttributeFormat::Short3;
+    attr.data.resize(packed.size() * sizeof(PackedNormalSNorm16x3));
+    std::memcpy(attr.data.data(), packed.data(),
+                packed.size() * sizeof(PackedNormalSNorm16x3));
+
+    mesh.normals = std::move(attr);
+  } else {
+    // Packed1010102
+    std::vector<uint32_t> packed;
+    QuantizeNormals1010102(N, nN, &packed);
+
+    VertexAttribute attr;
+    attr.format = VertexAttributeFormat::Uint;
+    attr.data.resize(packed.size() * sizeof(uint32_t));
+    std::memcpy(attr.data.data(), packed.data(),
+                packed.size() * sizeof(uint32_t));
+
+    mesh.normals = std::move(attr);
+  }
+
   mesh.normals.variability = var;
   mesh.normals.stride = 0;
   mesh.normals.elementSize = 1;
