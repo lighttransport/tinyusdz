@@ -9,8 +9,8 @@ import GUI from 'three/examples/jsm/libs/lil-gui.module.min.js';
 import { TinyUSDZLoader } from 'tinyusdz/TinyUSDZLoader.js';
 import { TinyUSDZLoaderUtils } from 'tinyusdz/TinyUSDZLoaderUtils.js';
 import { setTinyUSDZ as setMaterialXTinyUSDZ } from 'tinyusdz/TinyUSDZMaterialX.js';
-import { OpenPBRMaterial } from './OpenPBRMaterial.js';
-import { OpenPBRValidator, OpenPBRGroundTruth } from './OpenPBRValidation.js';
+import { OpenPBRMaterial } from 'tinyusdz/TinyUSDZOpenPBRSimple.js';
+import { OpenPBRValidator, OpenPBRGroundTruth } from './tests/OpenPBRValidation.js';
 
 // ============================================================================
 // Constants

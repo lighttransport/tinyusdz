@@ -5,7 +5,7 @@
 //
 // Usage: node dump-geomsubset.js <input.usdz|usda|usdc>
 
-import { TinyUSDZLoader } from './src/tinyusdz/TinyUSDZLoader.js';
+import { TinyUSDZLoader } from '../src/tinyusdz/TinyUSDZLoader.js';
 import { createRequire } from 'module';
 const require = createRequire(import.meta.url);
 const fs = require('fs');
