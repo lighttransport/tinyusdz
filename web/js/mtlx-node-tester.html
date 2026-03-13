@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MaterialX Node Graph Tester</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body {
+            font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace;
+            background: #1a1a2e;
+            color: #eee;
+            padding: 20px;
+        }
+        h1 { font-size: 1.4em; margin-bottom: 12px; }
+        .toolbar {
+            display: flex; gap: 10px; align-items: center;
+            margin-bottom: 16px; flex-wrap: wrap;
+        }
+        button {
+            background: #4CAF50; color: #fff; border: none;
+            padding: 8px 18px; border-radius: 4px; cursor: pointer;
+            font-family: inherit; font-size: 0.9em;
+        }
+        button:hover { background: #45a049; }
+        button:disabled { background: #555; cursor: default; }
+        .filter-input {
+            background: #2a2a4e; border: 1px solid #444; color: #eee;
+            padding: 7px 12px; border-radius: 4px; font-family: inherit;
+            font-size: 0.9em; width: 220px;
+        }
+        .summary {
+            background: #222244; padding: 12px 16px; border-radius: 6px;
+            margin-bottom: 16px; display: flex; gap: 20px; align-items: center;
+            flex-wrap: wrap;
+        }
+        .summary .stat { font-size: 0.95em; }
+        .summary .pass { color: #4CAF50; }
+        .summary .fail { color: #f44336; }
+        .summary .skip { color: #aaa; }
+        .progress-bar {
+            flex: 1; min-width: 200px; height: 8px;
+            background: #333; border-radius: 4px; overflow: hidden;
+        }
+        .progress-fill {
+            height: 100%; background: #4CAF50; transition: width 0.15s;
+        }
+        .progress-fill.has-fail { background: linear-gradient(90deg, #4CAF50 var(--pass-pct), #f44336 var(--pass-pct)); }
+        .time { color: #aaa; font-size: 0.85em; }
+
+        .category {
+            background: #222244; border-radius: 6px;
+            margin-bottom: 8px; overflow: hidden;
+        }
+        .cat-header {
+            padding: 10px 14px; cursor: pointer; user-select: none;
+            display: flex; justify-content: space-between; align-items: center;
+        }
+        .cat-header:hover { background: #2a2a5e; }
+        .cat-header .arrow { transition: transform 0.2s; display: inline-block; margin-right: 8px; }
+        .cat-header.collapsed .arrow { transform: rotate(-90deg); }
+        .cat-header .cat-stats { font-size: 0.85em; color: #aaa; }
+        .cat-body { display: block; }
+        .cat-header.collapsed + .cat-body { display: none; }
+
+        .test-row {
+            padding: 4px 14px 4px 30px;
+            font-size: 0.85em;
+            display: flex; justify-content: space-between; align-items: flex-start;
+            cursor: pointer; border-top: 1px solid #2a2a4e;
+        }
+        .test-row:hover { background: #2a2a5e; }
+        .test-row .icon { margin-right: 6px; }
+        .test-row.pass .icon { color: #4CAF50; }
+        .test-row.fail .icon { color: #f44336; }
+        .test-row.pending .icon { color: #777; }
+        .test-row .test-time { color: #666; font-size: 0.8em; min-width: 50px; text-align: right; }
+
+        .test-detail {
+            display: none; padding: 6px 14px 10px 48px;
+            font-size: 0.8em; color: #bbb; background: #1e1e3e;
+            border-top: 1px solid #2a2a4e; white-space: pre-wrap;
+            font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace;
+        }
+        .test-detail.open { display: block; }
+        .test-detail .err { color: #f44336; }
+
+        #log {
+            margin-top: 20px; padding: 12px; background: #111;
+            border-radius: 6px; font-size: 0.8em; color: #888;
+            max-height: 150px; overflow-y: auto; display: none;
+        }
+        #log.visible { display: block; }
+    </style>
+</head>
+<body>
+    <h1>MaterialX Node Graph Tester</h1>
+
+    <div class="toolbar">
+        <button id="btn-run">Run All</button>
+        <button id="btn-stop" disabled>Stop</button>
+        <input class="filter-input" id="filter" placeholder="Filter tests..." />
+        <label style="font-size:0.85em; color:#aaa;">
+            <input type="checkbox" id="show-log" /> Show log
+        </label>
+    </div>
+
+    <div class="summary" id="summary" style="display:none;">
+        <span class="stat">Total: <span id="s-total">0</span></span>
+        <span class="stat pass">Pass: <span id="s-pass">0</span></span>
+        <span class="stat fail">Fail: <span id="s-fail">0</span></span>
+        <span class="stat skip">Skip: <span id="s-skip">0</span></span>
+        <span class="time" id="s-time"></span>
+        <div class="progress-bar"><div class="progress-fill" id="s-bar"></div></div>
+    </div>
+
+    <div id="results"></div>
+    <div id="log"></div>
+
+    <script type="importmap">
+        {
+            "imports": {
+                "three": "https://cdn.jsdelivr.net/npm/three@0.161.0/build/three.module.js",
+                "three/examples/jsm/": "https://cdn.jsdelivr.net/npm/three@0.161.0/examples/jsm/",
+                "tinyusdz/": "./src/tinyusdz/"
+            }
+        }
+    </script>
+    <script type="module" src="mtlx-node-tester.js"></script>
+</body>
+</html>
