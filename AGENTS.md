@@ -4,7 +4,7 @@ Guidance for AI coding agents (Claude Code, Copilot, Cursor, etc.) working in th
 
 ## Project Overview
 
-TinyUSDZ is a secure, portable, dependency-free C++14 library for parsing and writing USD (Universal Scene Description) files in USDA (ASCII), USDC (binary/Crate), and USDZ (zip archive) formats. Security-focused alternative to Pixar's pxrUSD with minimal dependencies. No C++ exceptions; error handling via `nonstd::expected`.
+TinyUSDZ is a secure, portable, dependency-free C++17 library for parsing and writing USD (Universal Scene Description) files in USDA (ASCII), USDC (binary/Crate), and USDZ (zip archive) formats. Security-focused alternative to Pixar's pxrUSD with minimal dependencies. No C++ exceptions; error handling via `nonstd::expected`.
 
 ## Repository Layout
 
@@ -79,11 +79,22 @@ Build folder: `build/` (native), `web/build/` (WASM).
 
 ## Testing
 
+See `doc/testing-cpp.md` for full details on the C++ test infrastructure.
+
 ```bash
-# Run unit tests via ctest (from build/)
+# Run all ctest-registered tests (from build/)
 ctest --output-on-failure
 
-# Run roundtrip comparison (tusdcat output vs pxrUSD usdcat)
+# Run only unit tests
+ctest -R unit-test-tinyusdz --output-on-failure
+
+# Run only roundtrip tests
+ctest -R roundtrip --output-on-failure
+
+# Run a single Acutest unit test by name
+./build/unit-test-tinyusdz crate_writer_cone_test
+
+# Roundtrip comparison: tusdcat vs pxrUSD usdcat
 USDCAT_PATH=~/local/USD/dist/bin/usdcat TUSDCAT_PATH=./build/tusdcat \
   bash tests/run-usdcat-compare.sh
 
@@ -91,10 +102,24 @@ USDCAT_PATH=~/local/USD/dist/bin/usdcat TUSDCAT_PATH=./build/tusdcat \
 node tests/compare-usda.js --detailed-diff \
   --tusdcat ./build/tusdcat --usdcat ~/local/USD/dist/bin/usdcat \
   tests/usda/somefile.usda
-
-# Python parse test runner
-cd tests/parse_usd && python runner.py --path ../../models
 ```
+
+### ctest targets
+
+| Name | What It Tests |
+|------|---------------|
+| `unit-test-tinyusdz` | 140+ Acutest unit tests (parser, writer, math, materials, etc.) |
+| `usda-parser-unit-test` | Load all `tests/usda/*.usda` + expected-failure cases |
+| `usdc-parser-unit-test` | Load all `tests/usdc/*.usdc` files |
+| `usda-roundtrip-test` | USDA parse -> export -> reparse -> compare |
+| `usdc-roundtrip-test` | USDA -> USDC -> reparse -> compare |
+
+### Adding a new unit test
+
+1. Declare in `tests/unit/unit-<module>.h`
+2. Implement in `tests/unit/unit-<module>.cc`
+3. Register in `tests/unit/unit-main.cc` (`TEST_LIST` array)
+4. Rebuild and verify: `make -j16 && ctest -R unit-test-tinyusdz --output-on-failure`
 
 ## Key Data Flow
 
@@ -105,7 +130,7 @@ cd tests/parse_usd && python runner.py --path ../../models
 
 ## Coding Conventions
 
-- C++14 baseline (C++17 allowed in build system)
+- C++17 baseline (C++20 for coroutine support)
 - `.cc`/`.hh` extensions
 - No C++ exceptions (`nonstd::expected` for errors)
 - Build with `-Weverything -Werror` (clang); suppress specific warnings via pragmas

@@ -54,7 +54,7 @@ Good enough when tangent precision is not critical (e.g., no normal map, or low-
 
 ### MikkTSpace (Reference)
 
-The industry-standard algorithm by Morten S. Mikkelsen. Uses the original C implementation (`mikktspace.c`) via a callback wrapper.
+The industry-standard algorithm by Morten S. Mikkelsen. Uses the original C implementation (`mikktspace.c`, mikktspace license(zlib-like), https://github.com/mmikk/MikkTSpace) via a callback wrapper.
 
 Algorithm phases:
 1. Vertex welding on pos+norm+uv (8 floats)
