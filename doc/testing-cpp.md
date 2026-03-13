@@ -24,6 +24,7 @@ ctest --output-on-failure
 | `usdc_roundtrip` | `tests/usdc-roundtrip.cc` | USDA -> USDC -> reparse -> compare |
 | `test-decompress-int` | `tests/decompress-int/` | Integer decompression tests |
 | `pprint_benchmark` | `tests/pprint/` | Pretty-printer benchmark |
+| `tydra_to_renderscene` | `examples/tydra_to_renderscene/` | Tydra Stage-to-RenderScene conversion (used by integration runner) |
 
 ## ctest-Registered Tests
 
@@ -183,6 +184,34 @@ python3 tests/usda/usdc-roundtrip-runner.py \
   --app ./build/usdc_roundtrip \
   --basedir tests/usda
 ```
+
+## Integration Test Runners
+
+These standalone Python runners exercise parsing and Tydra conversion on real USD files. They are **not** registered with ctest — run them manually.
+
+### Parse test (`tests/parse_usd/runner.py`)
+
+Runs `test_tinyusdz` on all USD/USDA/USDC/USDZ files under a directory. Requires the `test_tinyusdz` binary (or symlink) in the same directory as the runner.
+
+```bash
+cd tests/parse_usd
+ln -sf ../../build/test_tinyusdz .
+python3 runner.py ../../models
+```
+
+Reports success/failure per file. Exit code 0 even if some files fail — check the "Failure cases" section in output.
+
+### Tydra conversion test (`tests/tydra_to_renderscene/runner.py`)
+
+Runs `tydra_to_renderscene` on all USD files under `../models/`. Verifies that Stage-to-RenderScene conversion succeeds. Requires the `tydra_to_renderscene` binary (or symlink) in the same directory.
+
+```bash
+cd tests/tydra_to_renderscene
+ln -sf ../../build/tydra_to_renderscene .
+python3 runner.py
+```
+
+Uses case-insensitive glob matching for file extensions. Test data is in `tests/models/` (symlink or copy of `models/`).
 
 ## Test Data
 

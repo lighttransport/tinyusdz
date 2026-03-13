@@ -219,6 +219,7 @@ static void print_help(const char* prog_name) {
   std::cout << "  --json                Output RenderScene as JSON (machine-readable)\n";
   std::cout << "  --mmap-lowmem         Enable mmap zero-copy for uncompressed USDC arrays\n";
   std::cout << "  --lowmem              Free GeomMesh data after conversion (reduces peak memory)\n";
+  std::cout << "  --snorm8              Use SNorm8x3 normals (3 bytes) and SNorm8x4 tangents (4 bytes)\n";
 }
 
 int main(int argc, char **argv) {
@@ -247,6 +248,7 @@ int main(int argc, char **argv) {
   bool force_tangent = false;
   bool mmap_lowmem = false;
   bool lowmem = false;
+  bool snorm8 = false;
   auto tangent_method = tinyusdz::tydra::MeshConverterConfig::TangentComputationMethod::Lengyel;
   std::string output_format = "yaml";  // "yaml" (human-readable), "json" (machine-readable)
 
@@ -314,6 +316,8 @@ int main(int argc, char **argv) {
       mmap_lowmem = true;
     } else if (strcmp(argv[i], "--lowmem") == 0) {
       lowmem = true;
+    } else if (strcmp(argv[i], "--snorm8") == 0) {
+      snorm8 = true;
     } else {
       filepath = argv[i];
     }
@@ -387,8 +391,10 @@ int main(int argc, char **argv) {
     std::cout << "  Stage memory usage: " << format_memory_size(stage_mem)
               << " (" << stage_mem << " bytes)\n";
     if (stage.has_mmap_zero_copy()) {
+      uint64_t deferred = stage.mmap_table()->total_deferred_bytes();
       std::cout << "  mmap zero-copy: " << stage.mmap_table()->size()
-                << " deferred arrays\n";
+                << " deferred arrays, " << format_memory_size(deferred)
+                << " deferred to mmap (not in Stage heap)\n";
     }
     std::cout << "\n";
   }
@@ -438,6 +444,15 @@ int main(int argc, char **argv) {
   if (lowmem) {
     env.mesh_config.lowmem = true;
     config_info.push_back({"lowmem", "true"});
+  }
+
+  if (snorm8) {
+    env.mesh_config.normal_storage =
+        tinyusdz::tydra::MeshConverterConfig::NormalStorageFormat::PackedSNorm8;
+    env.mesh_config.tangent_storage =
+        tinyusdz::tydra::MeshConverterConfig::TangentStorageFormat::PackedSNorm8;
+    config_info.push_back({"normal_storage", "snorm8"});
+    config_info.push_back({"tangent_storage", "snorm8"});
   }
 
   env.mesh_config.tangent_method = tangent_method;
