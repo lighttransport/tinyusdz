@@ -1,0 +1,79 @@
+#usda 1.0
+(
+    doc = "Hand-written test: ND_add_float and ND_subtract_float nodes for metalness/roughness"
+    metersPerUnit = 1
+    upAxis = "Z"
+    defaultPrim = "root"
+)
+
+def Xform "root"
+{
+    def Sphere "AddSubTest"
+    (
+        prepend apiSchemas = ["MaterialBindingAPI"]
+    )
+    {
+        double radius = 1.0
+        rel material:binding = </root/_materials/AddSubTest>
+    }
+
+    def Scope "_materials"
+    {
+        def Material "AddSubTest"
+        (
+            prepend apiSchemas = ["MaterialBindingAPI"]
+        )
+        {
+            token outputs:surface.connect = </root/_materials/AddSubTest/shader.outputs:surface>
+            string config:mtlx:version = "1.39"
+            token outputs:mtlx:surface.connect = </root/_materials/AddSubTest/shader.outputs:surface>
+
+            def Shader "shader"
+            {
+                uniform token info:id = "ND_open_pbr_surface_surfaceshader"
+                float inputs:base_weight = 1
+                color3f inputs:base_color = (0.9, 0.9, 0.95)
+                float inputs:base_metalness.connect = </root/_materials/AddSubTest/NodeGraphs.outputs:add_metalness_out>
+                float inputs:base_diffuse_roughness = 0
+                float inputs:specular_weight = 1
+                color3f inputs:specular_color = (1, 1, 1)
+                float inputs:specular_roughness.connect = </root/_materials/AddSubTest/NodeGraphs.outputs:sub_roughness_out>
+                float inputs:specular_ior = 1.5
+                float inputs:specular_roughness_anisotropy = 0
+                float inputs:transmission_weight = 0
+                color3f inputs:transmission_color = (0.9, 0.9, 0.95)
+                float inputs:transmission_depth = 0
+                color3f inputs:transmission_scatter = (0, 0, 0)
+                float inputs:transmission_scatter_anisotropy = 0
+                float inputs:transmission_dispersion_abbe_number = 0
+                float inputs:coat_weight = 0
+                float inputs:coat_ior = 1.6
+                float inputs:emission_luminance = 0
+                color3f inputs:emission_color = (1, 1, 1)
+                token outputs:surface
+            }
+
+            def NodeGraph "NodeGraphs"
+            {
+                float outputs:add_metalness_out.connect = </root/_materials/AddSubTest/NodeGraphs/add_metalness.outputs:out>
+                float outputs:sub_roughness_out.connect = </root/_materials/AddSubTest/NodeGraphs/sub_roughness.outputs:out>
+
+                def Shader "add_metalness"
+                {
+                    uniform token info:id = "ND_add_float"
+                    float inputs:in1 = 0.5
+                    float inputs:in2 = 0.2
+                    float outputs:out
+                }
+
+                def Shader "sub_roughness"
+                {
+                    uniform token info:id = "ND_subtract_float"
+                    float inputs:in1 = 0.8
+                    float inputs:in2 = 0.4
+                    float outputs:out
+                }
+            }
+        }
+    }
+}
