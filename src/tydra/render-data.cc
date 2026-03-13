@@ -51,6 +51,7 @@
 #include "bone-util.hh"
 #include "shape-to-mesh.hh"
 #include "materialx-to-json.hh"
+#include "mmap-array-ref.hh"
 
 
 // Helper macros for iterating over TypedTimeSamples in both AoS and SoA modes
@@ -1446,18 +1447,70 @@ std::vector<const tinyusdz::GeomSubset *> GetMaterialBindGeomSubsets(
   return dst;
 }
 
+/// Try to read array attribute directly from mmap. Returns true if successful.
+template <typename T>
+static bool TryReadMMapArray(
+    const Stage &stage,
+    const std::string &prim_path,
+    const std::string &attr_name,
+    std::vector<T> *out) {
+  if (!stage.has_mmap_zero_copy()) return false;
+  const MMapArrayRef *ref = stage.mmap_table()->find(prim_path, attr_name);
+  if (!ref) return false;
+  const T *ptr = stage.mmap_source()->get_ptr<T>(*ref);
+  if (!ptr) return false;
+  out->resize(static_cast<size_t>(ref->element_count));
+  memcpy(out->data(), ptr, ref->element_count * sizeof(T));
+  return true;
+}
+
+/// Try to read an indexed primvar from mmap: read raw data, then expand with indices.
+/// Returns false if mmap read fails or primvar has no indices (caller should use other path).
+template <typename T>
+static bool TryReadMMapArrayWithIndices(
+    const Stage &stage,
+    const std::string &prim_path,
+    const std::string &attr_name,
+    const GeomPrimvar &primvar,
+    double timecode,
+    std::vector<T> *out) {
+  if (!stage.has_mmap_zero_copy()) return false;
+  if (!primvar.has_indices()) return false;
+
+  // Read raw (un-expanded) data from mmap
+  std::vector<T> raw_data;
+  if (!TryReadMMapArray<T>(stage, prim_path, attr_name, &raw_data)) {
+    return false;
+  }
+
+  // Get indices (int arrays are NOT deferred — they use LZ4 compression)
+  std::vector<int32_t> indices = primvar.get_indices(timecode);
+  if (indices.empty()) {
+    // No indices at this timecode — use raw data directly
+    *out = std::move(raw_data);
+    return true;
+  }
+
+  // Expand: out[i] = raw_data[indices[i]]
+  out->resize(indices.size());
+  for (size_t i = 0; i < indices.size(); i++) {
+    int32_t idx = indices[i];
+    if (idx >= 0 && size_t(idx) < raw_data.size()) {
+      (*out)[i] = raw_data[size_t(idx)];
+    }
+    // Out-of-bounds indices get zero-initialized (default T{})
+  }
+  return true;
+}
+
 //
 // name does not include "primvars:" prefix.
 //
 nonstd::expected<VertexAttribute, std::string> GetTextureCoordinate(
     const Stage &stage, const GeomMesh &mesh, const std::string &name,
-    const double t, const value::TimeSampleInterpolationType tinterp) {
+    const double t, const value::TimeSampleInterpolationType tinterp,
+    const std::string &prim_path = std::string()) {
   VertexAttribute vattr;
-
-  (void)stage;
-
-  // HACK
-  //return nonstd::make_unexpected("Disabled");
 
   std::string err;
   GeomPrimvar primvar;
@@ -1470,7 +1523,6 @@ nonstd::expected<VertexAttribute, std::string> GetTextureCoordinate(
                                    "\n");
   }
 
-  //TUSDZ_LOG_I("get tex\n");
   // TODO: allow float2?
   if (primvar.get_type_id() !=
       value::TypeTraits<std::vector<value::texcoord2f>>::type_id()) {
@@ -1479,12 +1531,26 @@ nonstd::expected<VertexAttribute, std::string> GetTextureCoordinate(
         primvar.get_type_name() + "\n");
   }
 
-  //TUSDZ_LOG_I("flatten_with_indices\n");
   std::vector<value::texcoord2f> uvs;
-  if (!primvar.flatten_with_indices(t, &uvs, tinterp)) {
-    //TUSDZ_LOG_I("flatten_with_indices failed\n");
-    return nonstd::make_unexpected(
-        "Failed to retrieve texture coordinate primvar with concrete type.\n");
+
+  // mmap zero-copy path: read texcoords directly from mmap.
+  // V2: also handles indexed primvars via TryReadMMapArrayWithIndices.
+  bool got_from_mmap = false;
+  if (!prim_path.empty()) {
+    if (primvar.has_indices()) {
+      got_from_mmap = TryReadMMapArrayWithIndices<value::texcoord2f>(
+          stage, prim_path, "primvars:" + name, primvar, t, &uvs);
+    } else {
+      got_from_mmap = TryReadMMapArray<value::texcoord2f>(
+          stage, prim_path, "primvars:" + name, &uvs);
+    }
+  }
+
+  if (!got_from_mmap) {
+    if (!primvar.flatten_with_indices(t, &uvs, tinterp)) {
+      return nonstd::make_unexpected(
+          "Failed to retrieve texture coordinate primvar with concrete type.\n");
+    }
   }
 
   if (primvar.get_interpolation() == Interpolation::Varying) {
@@ -4329,13 +4395,31 @@ bool RenderSceneConverter::ConvertMesh(
   // TODO: Make error when Mesh's indices is empty?
   //
 
+  // Prim path string for mmap zero-copy lookups
+  const std::string prim_path_str = abs_prim_path.prim_part();
+
   {
     std::vector<value::point3f> points;
-    bool ret = EvaluateTypedAnimatableAttribute(
-        env.stage, mesh.points, "points", &points, &_err, env.timecode,
-        value::TimeSampleInterpolationType::Linear);
-    if (!ret) {
-      return false;
+    bool got_points = TryReadMMapArray<value::point3f>(
+        env.stage, prim_path_str, "points", &points);
+    if (!got_points) {
+      bool ret = EvaluateTypedAnimatableAttribute(
+          env.stage, mesh.points, "points", &points, &_err, env.timecode,
+          value::TimeSampleInterpolationType::Linear);
+      if (!ret) {
+        return false;
+      }
+    }
+
+    // V2 safety: deferred array but both mmap and Stage reads produced empty
+    if (points.empty() && env.stage.has_mmap_zero_copy()) {
+      const MMapArrayRef *ref = env.stage.mmap_table()->find(
+          prim_path_str, "points");
+      if (ref && ref->element_count > 0) {
+        PUSH_ERROR_AND_RETURN(fmt::format(
+            "mmap deferred 'points' for {} ({} elements) could not be read. "
+            "mmap buffer may be invalid.", abs_prim_path, ref->element_count));
+      }
     }
 
     if (points.empty()) {
@@ -4348,13 +4432,6 @@ bool RenderSceneConverter::ConvertMesh(
       //    fmt::format("`points` is empty. Prim {}", abs_prim_path));
 
     } else {
-
-      //if (env.mesh_config.lowmem) {
-      //  auto *pmesh = const_cast<GeomMesh *>(&mesh);
-      //  std::vector<value::point3f> empty;
-      //  pmesh->points = empty;
-      //}
-
       dst.points.resize(points.size());
       memcpy(dst.points.data(), points.data(),
              sizeof(value::float3) * points.size());
@@ -4525,7 +4602,7 @@ bool RenderSceneConverter::ConvertMesh(
       DCOUT("uv primvar  with default_texcoords_primvar_name found.");
       auto ret = GetTextureCoordinate(
           env.stage, mesh, env.mesh_config.default_texcoords_primvar_name,
-          env.timecode, env.tinterp);
+          env.timecode, env.tinterp, prim_path_str);
       if (ret) {
         //TUSDZ_LOG_I("uv attr");
 
@@ -4564,7 +4641,8 @@ bool RenderSceneConverter::ConvertMesh(
           if (uvAttrs.find(uint32_t(slotId)) == uvAttrs.end()) {
             // FIXME: Use GetGeomPrimvar() & ToVertexAttribute()
             auto ret = GetTextureCoordinate(env.stage, mesh, uvname,
-                                            env.timecode, env.tinterp);
+                                            env.timecode, env.tinterp,
+                                            prim_path_str);
             if (ret) {
               VertexAttribute &vattr = ret.value();
 
@@ -4611,7 +4689,7 @@ bool RenderSceneConverter::ConvertMesh(
             << env.mesh_config.default_texcoords_primvar_name << "`.");
       auto ret = GetTextureCoordinate(
           env.stage, mesh, env.mesh_config.default_texcoords_primvar_name,
-          env.timecode, env.tinterp);
+          env.timecode, env.tinterp, prim_path_str);
       if (ret) {
         uvAttrs[0] = std::move(ret.value());
       } else {
@@ -4765,15 +4843,42 @@ bool RenderSceneConverter::ConvertMesh(
         DCOUT("WARN: " << msg);
       }
 
-      if (!pvar.flatten_with_indices(env.timecode, &normals, env.tinterp,
-                                     &_err)) {
-        PUSH_ERROR_AND_RETURN("Failed to expand `normals` primvar.");
+      // V2: try mmap path for primvar normals (handles indexed + non-indexed)
+      bool got_normals_pv = false;
+      if (pvar.has_indices()) {
+        got_normals_pv = TryReadMMapArrayWithIndices<value::normal3f>(
+            env.stage, prim_path_str, "primvars:normals", pvar,
+            env.timecode, &normals);
+      } else {
+        got_normals_pv = TryReadMMapArray<value::normal3f>(
+            env.stage, prim_path_str, "primvars:normals", &normals);
+      }
+      if (!got_normals_pv) {
+        if (!pvar.flatten_with_indices(env.timecode, &normals, env.tinterp,
+                                       &_err)) {
+          PUSH_ERROR_AND_RETURN("Failed to expand `normals` primvar.");
+        }
       }
 
     } else if (mesh.normals.authored()) {  // look 'normals'
-      if (!EvaluateTypedAnimatableAttribute(env.stage, mesh.normals, "normals",
-                                            &normals, &_err, env.timecode,
-                                            env.tinterp)) {
+      // Try mmap zero-copy for direct normals attribute
+      bool got_normals = TryReadMMapArray<value::normal3f>(
+          env.stage, prim_path_str, "normals", &normals);
+      if (!got_normals) {
+        if (!EvaluateTypedAnimatableAttribute(env.stage, mesh.normals, "normals",
+                                              &normals, &_err, env.timecode,
+                                              env.tinterp)) {
+        }
+      }
+      // V2 safety: deferred array but both mmap and Stage reads produced empty
+      if (normals.empty() && env.stage.has_mmap_zero_copy()) {
+        const MMapArrayRef *ref = env.stage.mmap_table()->find(
+            prim_path_str, "normals");
+        if (ref && ref->element_count > 0) {
+          PUSH_ERROR_AND_RETURN(fmt::format(
+              "mmap deferred 'normals' for {} ({} elements) could not be read. "
+              "mmap buffer may be invalid.", abs_prim_path, ref->element_count));
+        }
       }
     }
 
@@ -5230,11 +5335,24 @@ bool RenderSceneConverter::ConvertMesh(
     }
 
     std::vector<float> jointWeightsArray;
-    if (!jointWeights.flatten_with_indices(env.timecode, &jointWeightsArray,
-                                           env.tinterp)) {
-      PUSH_ERROR_AND_RETURN(
-          fmt::format("Failed to flatten Indexed Primvar `skel:jointWeights`. "
-                      "Ensure `skel:jointWeights` is type `float[]`"));
+    // V2: try mmap path for jointWeights (float array, may be deferred)
+    bool got_jw = false;
+    if (jointWeights.has_indices()) {
+      got_jw = TryReadMMapArrayWithIndices<float>(
+          env.stage, prim_path_str, "primvars:skel:jointWeights", jointWeights,
+          env.timecode, &jointWeightsArray);
+    } else {
+      got_jw = TryReadMMapArray<float>(
+          env.stage, prim_path_str, "primvars:skel:jointWeights",
+          &jointWeightsArray);
+    }
+    if (!got_jw) {
+      if (!jointWeights.flatten_with_indices(env.timecode, &jointWeightsArray,
+                                             env.tinterp)) {
+        PUSH_ERROR_AND_RETURN(
+            fmt::format("Failed to flatten Indexed Primvar `skel:jointWeights`. "
+                        "Ensure `skel:jointWeights` is type `float[]`"));
+      }
     }
 
     if (jointIndicesArray.size() != jointWeightsArray.size()) {
@@ -5739,21 +5857,26 @@ bool RenderSceneConverter::ConvertMesh(
     }
 
     // Dispatch tangent computation based on configured method.
-    // Default is Lengyel (fast, lightweight). MikkTSpace is optional
-    // (industry standard but slow and memory-heavy for large meshes).
+    // Default is Lengyel (fast, lightweight). MikkTSpace/FastMikkTSpace/Hybrid
+    // are optional higher-quality methods.
     bool used_mikktspace = false;
 
     if (env.mesh_config.tangent_method == MeshConverterConfig::TangentComputationMethod::MikkTSpace ||
-        env.mesh_config.tangent_method == MeshConverterConfig::TangentComputationMethod::FastMikkTSpace) {
-      // MikkTSpace path (original or optimized, explicitly requested)
+        env.mesh_config.tangent_method == MeshConverterConfig::TangentComputationMethod::FastMikkTSpace ||
+        env.mesh_config.tangent_method == MeshConverterConfig::TangentComputationMethod::Hybrid) {
       std::string mikk_err;
       bool mikktspace_ok = false;
       bool use_fast = (env.mesh_config.tangent_method == MeshConverterConfig::TangentComputationMethod::FastMikkTSpace);
+      bool use_hybrid = (env.mesh_config.tangent_method == MeshConverterConfig::TangentComputationMethod::Hybrid);
 
       if (!is_single_indexable) {
         std::vector<value::float3> fv_normals(normals_ptr, normals_ptr + normals_count);
         std::vector<value::float2> fv_texcoords(texcoords_ptr, texcoords_ptr + texcoords_count);
-        if (use_fast) {
+        if (use_hybrid) {
+          mikktspace_ok = fast_mikkt::ComputeTangentsHybrid(
+              *points_ptr, fv_normals, fv_texcoords, dst.faceVertexCounts(),
+              &tangents, &binormals, nullptr, &mikk_err);
+        } else if (use_fast) {
           mikktspace_ok = fast_mikkt::ComputeTangentsFastMikkTSpace(
               *points_ptr, fv_normals, fv_texcoords, dst.faceVertexCounts(),
               &tangents, &binormals, &mikk_err);
@@ -5772,7 +5895,11 @@ bool RenderSceneConverter::ConvertMesh(
           if (fvi[i] < normals_count) fv_normals[i] = normals_ptr[fvi[i]];
           if (fvi[i] < texcoords_count) fv_texcoords[i] = texcoords_ptr[fvi[i]];
         }
-        if (use_fast) {
+        if (use_hybrid) {
+          mikktspace_ok = fast_mikkt::ComputeTangentsHybrid(
+              fv_positions, fv_normals, fv_texcoords, dst.faceVertexCounts(),
+              &tangents, &binormals, nullptr, &mikk_err);
+        } else if (use_fast) {
           mikktspace_ok = fast_mikkt::ComputeTangentsFastMikkTSpace(
               fv_positions, fv_normals, fv_texcoords, dst.faceVertexCounts(),
               &tangents, &binormals, &mikk_err);
@@ -5786,7 +5913,7 @@ bool RenderSceneConverter::ConvertMesh(
       if (mikktspace_ok) {
         used_mikktspace = true;
       } else {
-        DCOUT("MikkTSpace tangent computation failed: " << mikk_err
+        DCOUT("MikkTSpace/Hybrid tangent computation failed: " << mikk_err
               << ". Falling back to Lengyel method.");
       }
     }
@@ -6031,10 +6158,25 @@ bool RenderSceneConverter::ConvertMesh(
   // data, and the GeomMesh attribute data is no longer needed.
   if (env.mesh_config.lowmem) {
     auto *pmesh = const_cast<GeomMesh *>(&mesh);
+
+    // Core geometry
     pmesh->points.set_value({});
     pmesh->normals.set_value({});
     pmesh->faceVertexIndices.set_value({});
     pmesh->faceVertexCounts.set_value({});
+    pmesh->velocities.set_value({});
+
+    // SubD attributes (not used in ConvertMesh, but may be large)
+    pmesh->cornerIndices.set_value({});
+    pmesh->cornerSharpnesses.set_value({});
+    pmesh->creaseIndices.set_value({});
+    pmesh->creaseLengths.set_value({});
+    pmesh->creaseSharpnesses.set_value({});
+    pmesh->holeIndices.set_value({});
+
+    // All primvar data (primvars:normals, primvars:st, primvars:displayColor,
+    // skel:jointIndices, skel:jointWeights, etc.) — already copied to RenderMesh.
+    { std::map<std::string, Property> tmp; pmesh->props.swap(tmp); }
   }
 
   (*dstMesh) = std::move(dst);
@@ -6080,8 +6222,15 @@ static ConnectionResolveCache &GetConnectionResolveCache(const Stage &stage) {
 
 static void ResetConnectionResolveCache(const Stage &stage) {
   ConnectionResolveCache &cache = GetConnectionResolveCache(stage);
-  cache.uv_texture_by_connection.clear();
-  cache.mtlx_texture_by_connection.clear();
+  // Swap with empty maps to release bucket memory (clear() keeps capacity)
+  {
+    std::unordered_map<std::string, UVConnectionResolveCacheEntry, FNV1StringHash> tmp;
+    cache.uv_texture_by_connection.swap(tmp);
+  }
+  {
+    std::unordered_map<std::string, MtlxConnectionResolveCacheEntry, FNV1StringHash> tmp;
+    cache.mtlx_texture_by_connection.swap(tmp);
+  }
 }
 
 // Convert UsdTransform2d -> PrimvarReader_float2 shader network.
@@ -8437,8 +8586,10 @@ bool RenderSceneConverter::ComputeDeferredTangents(
   bool used_mikktspace = false;
 
   if (method == MeshConverterConfig::TangentComputationMethod::MikkTSpace ||
-      method == MeshConverterConfig::TangentComputationMethod::FastMikkTSpace) {
+      method == MeshConverterConfig::TangentComputationMethod::FastMikkTSpace ||
+      method == MeshConverterConfig::TangentComputationMethod::Hybrid) {
     bool use_fast = (method == MeshConverterConfig::TangentComputationMethod::FastMikkTSpace);
+    bool use_hybrid = (method == MeshConverterConfig::TangentComputationMethod::Hybrid);
     std::string mikk_err;
     bool mikktspace_ok = false;
 
@@ -8449,7 +8600,11 @@ bool RenderSceneConverter::ComputeDeferredTangents(
       }
       std::vector<value::float3> fv_normals(normals_ptr, normals_ptr + normals_count);
       std::vector<value::float2> fv_texcoords(texcoords_ptr, texcoords_ptr + texcoords_count);
-      if (use_fast) {
+      if (use_hybrid) {
+        mikktspace_ok = fast_mikkt::ComputeTangentsHybrid(
+            fv_positions, fv_normals, fv_texcoords, fvc,
+            &tangents, &binormals, nullptr, &mikk_err);
+      } else if (use_fast) {
         mikktspace_ok = fast_mikkt::ComputeTangentsFastMikkTSpace(
             fv_positions, fv_normals, fv_texcoords, fvc,
             &tangents, &binormals, &mikk_err);
@@ -8467,7 +8622,11 @@ bool RenderSceneConverter::ComputeDeferredTangents(
         if (fvi[i] < normals_count) fv_normals[i] = normals_ptr[fvi[i]];
         if (fvi[i] < texcoords_count) fv_texcoords[i] = texcoords_ptr[fvi[i]];
       }
-      if (use_fast) {
+      if (use_hybrid) {
+        mikktspace_ok = fast_mikkt::ComputeTangentsHybrid(
+            fv_positions, fv_normals, fv_texcoords, fvc,
+            &tangents, &binormals, nullptr, &mikk_err);
+      } else if (use_fast) {
         mikktspace_ok = fast_mikkt::ComputeTangentsFastMikkTSpace(
             fv_positions, fv_normals, fv_texcoords, fvc,
             &tangents, &binormals, &mikk_err);
@@ -8481,7 +8640,7 @@ bool RenderSceneConverter::ComputeDeferredTangents(
     if (mikktspace_ok) {
       used_mikktspace = true;
     } else {
-      if (err) *err = "MikkTSpace tangent computation failed: " + mikk_err + ". Falling back to Lengyel.";
+      if (err) *err = "MikkTSpace/Hybrid tangent computation failed: " + mikk_err + ". Falling back to Lengyel.";
       // Fall through to Lengyel
     }
   }
