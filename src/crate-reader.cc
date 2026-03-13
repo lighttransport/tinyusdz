@@ -3460,21 +3460,21 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
     return UnpackInlinedValueRep(rep, value);
   }
 
-  // mmap zero-copy: record offset for direct reads by Tydra,
-  // but still fully unpack the data for reconstruction compatibility.
+  // mmap zero-copy V2: for eligible large arrays, store only the 24-byte
+  // MMapArrayRef and an empty typed array. Data is read on demand by
+  // Tydra's TryReadMMapArray from the mmap'd buffer.
   if (_config.use_mmap && rep.IsArray() && !rep.IsCompressed()) {
     MMapArrayRef mmap_ref;
     crate::CrateValue dummy;
     if (DescribeValueRep(rep, &mmap_ref, &dummy)) {
-      // Re-seek to the start so normal unpacking can proceed
-      if (!_sr->seek_set(rep.GetPayload())) {
-        PUSH_ERROR("Invalid offset.");
-        return false;
-      }
-      // Will be set on value after normal unpacking below
+      // Use the empty typed array from DescribeValueRep as the value.
+      // DescribeValueRep has already seeked past the data bytes.
+      *value = std::move(dummy);
       value->set_mmap_ref(mmap_ref);
+      return true;  // Skip full data unpacking
     }
-    // Fall through to normal unpacking
+    // DescribeValueRep returned false (too small, wrong type, etc.)
+    // Fall through to normal unpacking.
   }
 
   DCOUT("ValueRep type value = " << rep.GetType());

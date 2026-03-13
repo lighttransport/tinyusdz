@@ -376,21 +376,23 @@ The `_lazy_fieldset_cache` in usdc-reader caused invalid cache reuse when differ
 | WASM asset cache size limit + eviction | Prevents unbounded cache growth; `setAssetCacheMaxSizeBytes()` API | `binding.cc` |
 | Connection resolve cache shrink_to_fit | Swap-with-empty on reset to release hash bucket memory | `render-data.cc` |
 
-## MMap Zero-Copy Pipeline (V1 — Hybrid)
+## MMap Zero-Copy Pipeline (V2 — Deferred Reads)
 
 ### Overview
 
-When loading USDC files via mmap, large uncompressed float/double arrays (points, normals, texcoords) can be read directly from the mmap'd buffer by Tydra's `ConvertMesh`, bypassing the intermediate `EvaluateTypedAnimatableAttribute` copy. This is the "V1 hybrid" approach — data is fully unpacked into Stage as usual, but mmap byte offsets are *also* recorded alongside so Tydra can optionally use them for direct reads.
+When loading USDC files via mmap, large uncompressed float/double arrays (points, normals, texcoords) are **deferred**: Stage stores only a 24-byte `MMapArrayRef` sentinel + an empty typed vector. Actual data is read on demand by Tydra's `TryReadMMapArray` / `TryReadMMapArrayWithIndices` from the mmap'd buffer. This is the "V2 deferred" approach — eligible arrays are never fully unpacked into Stage, saving ~120+ MB on large meshes.
+
+**API breakage (accepted)**: `ExportToString`, pprinter, and convenience methods (`get_points()`, etc.) return empty vectors for deferred arrays. This is acceptable because `--mmap-lowmem` is opt-in.
 
 ### How It Works
 
-1. **CrateReader** (`crate-reader.cc`): When `config.use_mmap` is set, `UnpackValueRep` calls `DescribeValueRep` before normal unpacking. For eligible uncompressed arrays (≥1024 elements, float/double/half vector types), it records byte offset, element count, element size, and type ID in an `MMapArrayRef` (24 bytes). The ref is attached to the `CrateValue` via `set_mmap_ref()`. Normal unpacking proceeds — data is still fully materialized in Stage.
+1. **CrateReader** (`crate-reader.cc`): When `config.use_mmap` is set, `UnpackValueRep` calls `DescribeValueRep` before normal unpacking. For eligible uncompressed arrays (≥1024 elements, float/double/half vector types), it records byte offset, element count, element size, and type ID in an `MMapArrayRef` (24 bytes). The empty typed vector from `DescribeValueRep` is used as the CrateValue (V2: `return true` — skips full data unpacking). `DescribeValueRep` has already seeked past the data bytes in the stream.
 
 2. **USDC Reader** (`usdc-reader.cc`): During property reconstruction, if a `CrateValue` has an mmap ref, it's collected into an `MMapArrayTable` keyed by `"prim_path\0attr_name"`. After `ReconstructStage`, the table is attached to the Stage.
 
 3. **Stage** (`stage.hh/cc`): Holds optional `MMapArrayTable` (offset metadata) and `MMapDataSource` (pointer to mmap'd buffer). Both are `unique_ptr` to avoid header coupling. Not copied on Stage copy (mmap data is not transferable).
 
-4. **Tydra** (`render-data.cc`): `TryReadMMapArray<T>()` checks `stage.has_mmap_zero_copy()`, looks up the prim path + attr name in the table, validates bounds/alignment via `MMapDataSource::get_ptr<T>()`, then does a single `memcpy` from mmap to output vector. Falls back to `EvaluateTypedAnimatableAttribute` if mmap path is unavailable. Used for `points`, authored `normals`, and `texcoord2f` primvars (when not indexed — indexed primvars fall through to `flatten_with_indices`).
+4. **Tydra** (`render-data.cc`): `TryReadMMapArray<T>()` checks `stage.has_mmap_zero_copy()`, looks up the prim path + attr name in the table, validates bounds/alignment via `MMapDataSource::get_ptr<T>()`, then does a single `memcpy` from mmap to output vector. `TryReadMMapArrayWithIndices<T>()` reads raw data from mmap and expands with primvar indices (int arrays are NOT deferred — they use LZ4 compression, so indices are always available in Stage). Falls back to `EvaluateTypedAnimatableAttribute` / `flatten_with_indices` if mmap path is unavailable. Used for `points`, authored `normals`, `primvars:normals` (indexed and non-indexed), and `texcoord2f` primvars (indexed and non-indexed). V2 safety checks detect deferred arrays that fail to read from mmap.
 
 ### Eligible Array Types
 
@@ -425,20 +427,25 @@ The mmap'd buffer (or input memory buffer in WASM) must stay alive while the Sta
 | timesamples-array-dedup-004.usdc | — | Correct parse + conversion | Pass |
 | outpost_19.usdz (dedup UV timeSamples) | 233 | Correct conversion, 116.35 MB RenderScene | Pass |
 
-### V2 Plan — Full Deferred Read
+### V2 — Implemented (Deferred Reads)
 
-V1 hybrid records offsets but still fully unpacks data into Stage (no Stage memory savings). A future V2 would:
+V2 skips unpacking entirely for eligible arrays. `UnpackValueRep` returns immediately after `DescribeValueRep` with an empty typed vector + 24-byte `MMapArrayRef`. Stage holds only sentinels; data is read on demand by Tydra.
 
-1. **Defer reads for large arrays**: Instead of unpacking, store only the 24-byte `MMapArrayRef` in Stage as a sentinel value. Stage memory would drop from ~288 MB to ~0 for float arrays on suzanne-lv6.
-2. **Selective deferral**: Only defer arrays above a size threshold AND that don't need index expansion (i.e., vertex-interpolated, not face-varying with separate indices). Face-varying primvars with indices must still be fully read for `flatten_with_indices()`.
-3. **TimeSamples support**: V1 only handles `default` values. V2 would extend to timeSampled arrays by hooking into `UnpackTimeSampleValue_*` / `ReadArray` paths in `crate-reader-timesamples.cc`.
-4. **USDZ offset adjustment**: USDC payload within USDZ sits at a ZIP local file header offset. V2 would adjust `MMapArrayRef::byte_offset` to account for this, enabling full zero-copy for USDZ files.
-5. **Lazy materialization**: On-demand unpacking when Stage data is accessed (not just via Tydra), with cache to avoid re-reading.
+**What V2 covers:**
+1. **Deferred reads for large arrays**: Only the 24-byte `MMapArrayRef` + empty typed vector stored in Stage. Data read on demand from mmap by `TryReadMMapArray` / `TryReadMMapArrayWithIndices`.
+2. **Indexed primvars**: `TryReadMMapArrayWithIndices` reads raw data from mmap, then expands using primvar indices (int arrays are always fully materialized — LZ4 compressed in USDC).
+3. **USDZ support**: Already works — `LoadUSDZFromMemory` passes USDC payload pointer, all offsets are relative to payload start.
 
-**Expected V2 savings** (suzanne-subd-lv6.usdc, 12M verts):
+**Known limitations:**
+- **TimeSamples**: NOT deferred (V2 only handles `default` values). Timesampled arrays continue with full materialization.
+- **ExportToString/pprinter**: Show empty arrays for deferred attributes. Accepted breakage since `--mmap-lowmem` is opt-in.
+- **Small arrays**: Below 1024-element threshold always fully materialized.
+- **Lazy materialization on Stage access**: Not implemented. Only Tydra reads from mmap; direct Stage attribute access returns empty vectors.
 
-| Component | V1 (current) | V2 (planned) |
-|-----------|-------------|-------------|
+**V2 savings** (suzanne-subd-lv6.usdc, 12M verts):
+
+| Component | V1 (hybrid) | V2 (deferred) |
+|-----------|-------------|---------------|
 | Stage float arrays | ~288 MB | ~0 (sentinels) |
 | Tydra local copy | saved by mmap read | saved by mmap read |
 | RenderMesh (final) | ~400 MB | ~400 MB |
@@ -480,7 +487,7 @@ V1 hybrid records offsets but still fully unpacks data into Stage (no Stage memo
 
 ### Low Priority
 
-- [ ] **MMap zero-copy V2: deferred reads** — Store sentinel `MMapArrayRef` instead of full data in Stage for large uncompressed arrays. Requires selective deferral (skip face-varying primvars with indices), lazy materialization on Stage access, and TimeSamples path support. See "V2 Plan" section above.
+- [x] **MMap zero-copy V2: deferred reads** — DONE. `UnpackValueRep` returns immediately after `DescribeValueRep` for eligible arrays — Stage holds only empty typed vector sentinels + 24-byte `MMapArrayRef`. Data read on demand by Tydra's `TryReadMMapArray` / `TryReadMMapArrayWithIndices`. Indexed primvars handled via index expansion from mmap raw data. See "V2 — Implemented" section above.
 - [x] **MMap zero-copy: USDZ offset adjustment** — DONE (no code change needed). `LoadUSDZFromMemory` already passes a pointer to the USDC payload start within the ZIP (`addr + byte_begin`), and `LoadUSDCFromMemory` sets `MMapDataSource` with that pointer. All `MMapArrayRef::byte_offset` values are relative to this USDC payload start, so USDZ works correctly. Verified with outpost_19.usdz (233 deferred arrays, OBJ identical).
 - [x] **MMap zero-copy: texcoord mmap path** — DONE. `GetTextureCoordinate` now tries `TryReadMMapArray<texcoord2f>` with key `"primvars:" + name` when the primvar has no indices (`!primvar.has_indices()`). Indexed primvars fall through to `flatten_with_indices`. Verified with CesiumMan.usdz (4 deferred arrays, OBJ identical).
 - [x] **MMap zero-copy: matrix array types** — DONE. Added `MATRIX2D`, `MATRIX3D`, `MATRIX4D` to `DescribeValueRep` eligible types. Matrix arrays are never compressed in USDC (verified against OpenUSD `crateFile.cpp` — they fall through to `_WriteUncompressedArray`). Scalar matrices can be inlined when diagonal with int8 elements, but arrays are always raw.
