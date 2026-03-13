@@ -1,0 +1,97 @@
+#usda 1.0
+(
+    doc = "Hand-written test: RGBA texture -> extract channels to material params"
+    metersPerUnit = 1
+    upAxis = "Z"
+    defaultPrim = "root"
+)
+
+def Xform "root"
+{
+    def Sphere "TextureExtractTest"
+    (
+        prepend apiSchemas = ["MaterialBindingAPI"]
+    )
+    {
+        double radius = 1.0
+        rel material:binding = </root/_materials/TextureExtractTest>
+    }
+
+    def Scope "_materials"
+    {
+        def Material "TextureExtractTest"
+        (
+            prepend apiSchemas = ["MaterialBindingAPI"]
+        )
+        {
+            token outputs:surface.connect = </root/_materials/TextureExtractTest/shader.outputs:surface>
+            string config:mtlx:version = "1.39"
+            token outputs:mtlx:surface.connect = </root/_materials/TextureExtractTest/shader.outputs:surface>
+
+            def Shader "shader"
+            {
+                uniform token info:id = "ND_open_pbr_surface_surfaceshader"
+                float inputs:base_weight = 1
+                color3f inputs:base_color = (0.7, 0.7, 0.7)
+                float inputs:base_metalness.connect = </root/_materials/TextureExtractTest/NodeGraphs.outputs:green_out>
+                float inputs:base_diffuse_roughness = 0
+                float inputs:specular_weight = 1
+                color3f inputs:specular_color = (1, 1, 1)
+                float inputs:specular_roughness.connect = </root/_materials/TextureExtractTest/NodeGraphs.outputs:blue_out>
+                float inputs:specular_ior = 1.5
+                float inputs:coat_weight.connect = </root/_materials/TextureExtractTest/NodeGraphs.outputs:red_out>
+                float inputs:emission_luminance = 0
+                color3f inputs:emission_color = (1, 1, 1)
+                float inputs:geometry_opacity.connect = </root/_materials/TextureExtractTest/NodeGraphs.outputs:alpha_out>
+                token outputs:surface
+            }
+
+            def NodeGraph "NodeGraphs"
+            {
+                float outputs:red_out.connect = </root/_materials/TextureExtractTest/NodeGraphs/extract_red.outputs:out>
+                float outputs:green_out.connect = </root/_materials/TextureExtractTest/NodeGraphs/extract_green.outputs:out>
+                float outputs:blue_out.connect = </root/_materials/TextureExtractTest/NodeGraphs/extract_blue.outputs:out>
+                float outputs:alpha_out.connect = </root/_materials/TextureExtractTest/NodeGraphs/extract_alpha.outputs:out>
+
+                def Shader "tex_rgba"
+                {
+                    uniform token info:id = "ND_image_color4"
+                    asset inputs:file = @test-rgba-channels.png@
+                    color4f outputs:out
+                }
+
+                def Shader "extract_red"
+                {
+                    uniform token info:id = "ND_extract_color4"
+                    color4f inputs:in.connect = </root/_materials/TextureExtractTest/NodeGraphs/tex_rgba.outputs:out>
+                    int inputs:index = 0
+                    float outputs:out
+                }
+
+                def Shader "extract_green"
+                {
+                    uniform token info:id = "ND_extract_color4"
+                    color4f inputs:in.connect = </root/_materials/TextureExtractTest/NodeGraphs/tex_rgba.outputs:out>
+                    int inputs:index = 1
+                    float outputs:out
+                }
+
+                def Shader "extract_blue"
+                {
+                    uniform token info:id = "ND_extract_color4"
+                    color4f inputs:in.connect = </root/_materials/TextureExtractTest/NodeGraphs/tex_rgba.outputs:out>
+                    int inputs:index = 2
+                    float outputs:out
+                }
+
+                def Shader "extract_alpha"
+                {
+                    uniform token info:id = "ND_extract_color4"
+                    color4f inputs:in.connect = </root/_materials/TextureExtractTest/NodeGraphs/tex_rgba.outputs:out>
+                    int inputs:index = 3
+                    float outputs:out
+                }
+            }
+        }
+    }
+}
