@@ -333,6 +333,31 @@ function registerMtlxNodeTypes() {
     HsvAdjustNode.title = 'HSV Adjust';
     LiteGraph.registerNodeType('mtlx/hsvadjust', HsvAdjustNode);
 
+    // HSV Adjust (Blender variant with separate H/S/V inputs)
+    function HsvAdjustBlenderNode() {
+        this.addInput('in', 'color3');
+        this.addInput('hue', 'float');
+        this.addInput('saturation', 'float');
+        this.addInput('value', 'float');
+        this.addOutput('out', 'color3');
+        this.color = '#664455';
+        this.size = [140, 90];
+    }
+    HsvAdjustBlenderNode.title = 'HSV Adjust';
+    LiteGraph.registerNodeType('mtlx/hsv_adjust', HsvAdjustBlenderNode);
+
+    // Brightness/Contrast (Blender node)
+    function BrightnessContrastNode() {
+        this.addInput('in', 'color3');
+        this.addInput('brightness', 'color3');
+        this.addInput('contrast', 'color3');
+        this.addOutput('out', 'color3');
+        this.color = '#556644';
+        this.size = [150, 80];
+    }
+    BrightnessContrastNode.title = 'Brightness/Contrast';
+    LiteGraph.registerNodeType('mtlx/brightness_contrast', BrightnessContrastNode);
+
     // Invert node (with editable amount)
     function InvertNode() {
         this.addInput('in', 'color3');
@@ -1089,16 +1114,11 @@ function buildLiteGraphFromMtlx(nodeGraphData, materialName) {
                 ctx.fillText('unused', 6, 12);
             }
         };
-        // Set properties (may affect node size via widgets)
+        // Set properties from top-level value and inputs
         if (node.value !== undefined) {
             lgNode.properties = lgNode.properties || {};
             lgNode.properties.value = node.value;
-            if (typeof lgNode._setupWidgets === 'function') {
-                lgNode._setupWidgets();
-            }
         }
-        // Apply minimum height AFTER _setupWidgets() so it isn't overridden by computeSize().
-        lgNode.size[1] = Math.max(lgNode.size[1], 55) + 14;
 
         if (node.inputs) {
             for (const input of node.inputs) {
@@ -1108,6 +1128,15 @@ function buildLiteGraphFromMtlx(nodeGraphData, materialName) {
                 }
             }
         }
+
+        // Re-setup widgets after all properties are set (constant nodes need
+        // this to pick up inputs:value from the USD data)
+        if (typeof lgNode._setupWidgets === 'function') {
+            lgNode._setupWidgets();
+        }
+
+        // Apply minimum height AFTER _setupWidgets() so it isn't overridden by computeSize().
+        lgNode.size[1] = Math.max(lgNode.size[1], 55) + 14;
 
         if (category === 'extract' || category === 'separate' || category === 'separate3') {
             lgNode.properties = lgNode.properties || {};
@@ -2798,9 +2827,23 @@ async function buildScene() {
         // Process node graph for constant values
         if (nodeGraph) {
             const processor = new MtlxNodeGraphProcessor();
-            const outputs = processor.processGraph(nodeGraph);
+            const graphOutputs = processor.processGraph(nodeGraph);
 
-            for (const [name, value] of Object.entries(outputs)) {
+            // Use the connections array to map node graph outputs → shader params.
+            // connections: [{ input: "base_color", output: "bnode__Color_out" }, ...]
+            const connections = nodeGraph.connections || [];
+            for (const conn of connections) {
+                const value = graphOutputs[conn.output];
+                if (value !== undefined && !processor.needsShader(value)) {
+                    const shaderParam = conn.input; // e.g. "base_color"
+                    if (params.hasOwnProperty(shaderParam)) {
+                        params[shaderParam] = value;
+                    }
+                }
+            }
+
+            // Also try direct output name matching as fallback
+            for (const [name, value] of Object.entries(graphOutputs)) {
                 if (value !== undefined && !processor.needsShader(value)) {
                     const paramMap = {
                         'base_color': 'base_color', 'baseColor': 'base_color', 'diffuseColor': 'base_color',
