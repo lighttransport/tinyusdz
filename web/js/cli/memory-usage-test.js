@@ -2,7 +2,7 @@
 // Tests the estimate_memory_usage() function exposed from web/binding.cc
 // Usage: bun run cli memory-usage-test.js or npm run cli memory-usage-test.js
 
-import { TinyUSDZLoader } from './src/tinyusdz/TinyUSDZLoader.js';
+import { TinyUSDZLoader } from '../src/tinyusdz/TinyUSDZLoader.js';
 
 async function testMemoryUsage() {
     console.log('TinyUSDZ Memory Usage Test');

@@ -1,4 +1,4 @@
-import { TinyUSDZLoader } from './src/tinyusdz/TinyUSDZLoader.js';
+import { TinyUSDZLoader } from '../src/tinyusdz/TinyUSDZLoader.js';
 import fs from 'node:fs';
 
 async function main() {
