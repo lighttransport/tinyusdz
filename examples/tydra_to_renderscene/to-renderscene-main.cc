@@ -531,7 +531,45 @@ int main(int argc, char **argv) {
     size_t render_mem = render_scene.estimate_memory_usage();
     std::cout << "# Memory Statistics (RenderScene)\n";
     std::cout << "  RenderScene memory usage: " << format_memory_size(render_mem)
-              << " (" << render_mem << " bytes)\n\n";
+              << " (" << render_mem << " bytes)\n";
+
+    // Per-mesh breakdown
+    if (!render_scene.meshes.empty()) {
+      std::cout << "\n  ## Meshes (" << render_scene.meshes.size() << ")\n";
+      for (size_t i = 0; i < render_scene.meshes.size(); i++) {
+        const auto &mesh = render_scene.meshes[i];
+        size_t mesh_mem = mesh.estimate_memory_usage();
+        std::cout << "    [" << i << "] " << mesh.prim_name
+                  << ": " << format_memory_size(mesh_mem)
+                  << " (" << mesh.points.size() << " verts, "
+                  << mesh.triangulatedFaceVertexIndices.size() << " tri-indices)\n";
+      }
+    }
+
+    // Per-buffer (texture) breakdown
+    if (!render_scene.buffers.empty()) {
+      size_t total_buf = 0;
+      std::cout << "\n  ## Buffers/Textures (" << render_scene.buffers.size() << ")\n";
+      for (size_t i = 0; i < render_scene.buffers.size(); i++) {
+        const auto &buf = render_scene.buffers[i];
+        size_t buf_bytes = buf.data.capacity();
+        total_buf += buf_bytes;
+        // Show image name from matching TextureImage if available
+        std::string label;
+        for (const auto &img : render_scene.images) {
+          if (img.buffer_id == static_cast<int64_t>(i)) {
+            label = img.asset_identifier;
+            break;
+          }
+        }
+        if (label.empty()) label = "(buffer " + std::to_string(i) + ")";
+        std::cout << "    [" << i << "] " << label
+                  << ": " << format_memory_size(buf_bytes) << "\n";
+      }
+      std::cout << "    Total buffer memory: " << format_memory_size(total_buf) << "\n";
+    }
+
+    std::cout << "\n";
   }
 
   // Dump animation timesamples if requested
