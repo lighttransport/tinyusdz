@@ -4067,10 +4067,12 @@ bool RenderSceneConverter::ConvertSphere(
   std::vector<value::float3> normals_f3;
   std::vector<value::float2> uvs_f2;
 
-  // TODO: Make tessellation mode and subdivisions configurable via RenderSceneConverterEnv
-  // For now, use icosphere with 2 subdivisions as default
-  int subdivisions = 2;
-  GenerateIcosphereMesh(radius, subdivisions, points_f3, faceVertexCounts, faceVertexIndices, normals_f3, uvs_f2);
+  int subdivisions = env.mesh_config.sphere_subdivisions;
+  if (env.mesh_config.sphere_tessellation == SphereTessellation::UV) {
+    GenerateUVSphereMesh(radius, subdivisions, points_f3, faceVertexCounts, faceVertexIndices, normals_f3, uvs_f2);
+  } else {
+    GenerateIcosphereMesh(radius, subdivisions, points_f3, faceVertexCounts, faceVertexIndices, normals_f3, uvs_f2);
+  }
 
   // Create temporary GeomMesh with generated data
   GeomMesh temp_mesh;
