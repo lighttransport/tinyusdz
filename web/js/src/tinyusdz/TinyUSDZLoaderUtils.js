@@ -917,9 +917,18 @@ class TinyUSDZLoaderUtils extends LoaderUtils {
 
         // TODO: uv1
 
-        // faceVarying normals
+        // faceVarying normals — SNorm8/SNorm16 (normalized int) or Float32
         if (Object.prototype.hasOwnProperty.call(mesh, 'normals')) {
-            geometry.setAttribute('normal', new THREE.BufferAttribute(new Float32Array(mesh.normals), 3));
+            if (mesh.normalsFormat === 'snorm8') {
+                geometry.setAttribute('normal',
+                    new THREE.BufferAttribute(new Int8Array(mesh.normals), 3, true));
+            } else if (mesh.normalsFormat === 'snorm16') {
+                geometry.setAttribute('normal',
+                    new THREE.BufferAttribute(new Int16Array(mesh.normals), 3, true));
+            } else {
+                geometry.setAttribute('normal',
+                    new THREE.BufferAttribute(new Float32Array(mesh.normals), 3));
+            }
         } else {
             geometry.computeVertexNormals();
         }

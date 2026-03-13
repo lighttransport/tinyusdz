@@ -5442,10 +5442,18 @@ function loadMeshes() {
                 geometry.setAttribute('position', new THREE.BufferAttribute(vertices, 3));
             }
 
-            // Add normals
+            // Add normals — SNorm8/SNorm16 (normalized int) or Float32
             if (meshData.normals && meshData.normals.length > 0) {
-                const normals = new Float32Array(meshData.normals);
-                geometry.setAttribute('normal', new THREE.BufferAttribute(normals, 3));
+                if (meshData.normalsFormat === 'snorm8') {
+                    geometry.setAttribute('normal',
+                        new THREE.BufferAttribute(new Int8Array(meshData.normals), 3, true));
+                } else if (meshData.normalsFormat === 'snorm16') {
+                    geometry.setAttribute('normal',
+                        new THREE.BufferAttribute(new Int16Array(meshData.normals), 3, true));
+                } else {
+                    geometry.setAttribute('normal',
+                        new THREE.BufferAttribute(new Float32Array(meshData.normals), 3));
+                }
             } else {
                 geometry.computeVertexNormals();
             }
