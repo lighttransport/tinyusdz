@@ -1878,18 +1878,35 @@ class TinyUSDZLoaderUtils extends LoaderUtils {
             if (result) return result;
         }
 
+        // Check for Blender-convention constant-color filename (color_RRGGBB.exr)
+        // before attempting a network fetch that will fail for embedded USDZ assets
+        if (textureFile) {
+            const colorMatch = textureFile.match(/color_([0-9A-Fa-f]{6})\.\w+$/);
+            if (colorMatch) {
+                const hex = '#' + colorMatch[1];
+                const envMap = this.createConstantColorEnvironment(hex, 'linear', pmremGenerator);
+                const intensity = this.calculateDomeLightIntensity(light);
+                console.log(`DomeLight: Using constant color ${hex} from filename '${textureFile}'`);
+                return {
+                    texture: envMap,
+                    intensity,
+                    colorHex: hex,
+                    name: light.name,
+                    textureFile,
+                    color: light.color,
+                    exposure: light.exposure
+                };
+            }
+        }
+
         // Fallback: direct file load
         if (textureFile) {
             const result = await this.loadDomeLightFromFile(light, textureFile, pmremGenerator);
             if (result) return result;
         }
 
-        // Final fallback: constant color
-        if (!textureFile && (envmapTextureId === undefined || envmapTextureId < 0)) {
-            return this.loadDomeLightAsConstantColor(light, pmremGenerator);
-        }
-
-        return null;
+        // Final fallback: constant color from light.color
+        return this.loadDomeLightAsConstantColor(light, pmremGenerator);
     }
 
     /**
