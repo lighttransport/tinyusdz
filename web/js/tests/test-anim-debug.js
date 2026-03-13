@@ -1,4 +1,4 @@
-import { TinyUSDZLoader } from './src/tinyusdz/TinyUSDZLoader.js';
+import { TinyUSDZLoader } from '../src/tinyusdz/TinyUSDZLoader.js';
 
 async function main() {
   const loader = new TinyUSDZLoader();
