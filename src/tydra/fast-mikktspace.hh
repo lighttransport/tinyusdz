@@ -2,8 +2,31 @@
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
 // Optimized MikkTSpace-compatible tangent computation.
+// This is an altered version based on the MikkTSpace algorithm.
 //
-// This is a reimplementation of the MikkTSpace algorithm with key optimizations:
+// Original MikkTSpace by Morten S. Mikkelsen:
+// https://github.com/mmikk/MikkTSpace
+//
+//  Copyright (C) 2011 by Morten S. Mikkelsen
+//
+//  This software is provided 'as-is', without any express or implied
+//  warranty.  In no event will the authors be held liable for any damages
+//  arising from the use of this software.
+//
+//  Permission is granted to anyone to use this software for any purpose,
+//  including commercial applications, and to alter it and redistribute it
+//  freely, subject to the following restrictions:
+//
+//  1. The origin of this software must not be misrepresented; you must not
+//     claim that you wrote the original software. If you use this software
+//     in a product, an acknowledgment in the product documentation would be
+//     appreciated but is not required.
+//  2. Altered source versions must be plainly marked as such, and must not be
+//     misrepresented as being the original software.
+//  3. This notice may not be removed or altered from any source distribution.
+//
+// This is an altered source version: a reimplementation of the MikkTSpace
+// algorithm with the following optimizations:
 //
 // 1. Direct array access (no callback overhead)
 // 2. Hash-based vertex welding using all 8 floats (pos3+norm3+uv2)
