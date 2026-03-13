@@ -76,6 +76,7 @@
 #include "variant-support.hh"
 #include "spatial-hashes.hh"
 #include "render-data-pprint.hh"
+#include "shape-to-mesh.hh"
 
 namespace tinyusdz {
 
@@ -2232,6 +2233,13 @@ struct MeshConverterConfig {
   // Set to 0 to disable the safeguard (always dedup).
   //
   uint32_t max_vertex_valence{16};
+
+  //
+  // Sphere tessellation settings.
+  // Controls how GeomSphere primitives are tessellated into triangle meshes.
+  //
+  SphereTessellation sphere_tessellation{SphereTessellation::Icosphere};
+  int sphere_subdivisions{4};  // Icosphere subdivision level (0-6, default 4)
 
   // When true, free GeomMesh data after converting it to save memory usage.
   // For emscripten.
