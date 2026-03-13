@@ -15,7 +15,7 @@ import {
   writeEXR,
   DEFAULT_WIDTH,
   DEFAULT_HEIGHT
-} from './light-hdri-projection.js';
+} from '../light-hdri-projection.js';
 
 import fs from 'fs';
 import path from 'path';
