@@ -369,6 +369,87 @@ The `_lazy_fieldset_cache` in usdc-reader caused invalid cache reuse when differ
 | Complete RenderMesh memory estimation | JointAndWeight, ShapeTarget, MaterialSubset internals | `render-data.cc` |
 | Complete RenderScene memory estimation | Node tree, RenderMaterial, AnimationClip, SkelHierarchy, TextureImage | `render-data.cc` |
 | Complete Layer memory estimation | VariantSetSpec internals (recursive PrimSpec trees) | `layer.cc` |
+| MMap zero-copy V1 (hybrid) | Avoids EvaluateTypedAnimatableAttribute copy for points/normals/texcoords | `mmap-array-ref.hh`, `crate-reader.cc`, `usdc-reader.cc`, `stage.cc`, `render-data.cc` |
+| Extended `lowmem` (velocities, SubD, props) | Frees all source mesh data after conversion, not just 4 core arrays | `render-data.cc` |
+| Fix packed normals exposure in WASM | Correct unpacking + raw packed export for WebGL2 | `binding.cc` |
+| Per-mesh/texture memstat breakdown | Detailed memory reporting per mesh and per buffer | `to-renderscene-main.cc` |
+| WASM asset cache size limit + eviction | Prevents unbounded cache growth; `setAssetCacheMaxSizeBytes()` API | `binding.cc` |
+| Connection resolve cache shrink_to_fit | Swap-with-empty on reset to release hash bucket memory | `render-data.cc` |
+
+## MMap Zero-Copy Pipeline (V2 — Deferred Reads)
+
+### Overview
+
+When loading USDC files via mmap, large uncompressed float/double arrays (points, normals, texcoords) are **deferred**: Stage stores only a 24-byte `MMapArrayRef` sentinel + an empty typed vector. Actual data is read on demand by Tydra's `TryReadMMapArray` / `TryReadMMapArrayWithIndices` from the mmap'd buffer. This is the "V2 deferred" approach — eligible arrays are never fully unpacked into Stage, saving ~120+ MB on large meshes.
+
+**API breakage (accepted)**: `ExportToString`, pprinter, and convenience methods (`get_points()`, etc.) return empty vectors for deferred arrays. This is acceptable because `--mmap-lowmem` is opt-in.
+
+### How It Works
+
+1. **CrateReader** (`crate-reader.cc`): When `config.use_mmap` is set, `UnpackValueRep` calls `DescribeValueRep` before normal unpacking. For eligible uncompressed arrays (≥1024 elements, float/double/half vector types), it records byte offset, element count, element size, and type ID in an `MMapArrayRef` (24 bytes). The empty typed vector from `DescribeValueRep` is used as the CrateValue (V2: `return true` — skips full data unpacking). `DescribeValueRep` has already seeked past the data bytes in the stream.
+
+2. **USDC Reader** (`usdc-reader.cc`): During property reconstruction, if a `CrateValue` has an mmap ref, it's collected into an `MMapArrayTable` keyed by `"prim_path\0attr_name"`. After `ReconstructStage`, the table is attached to the Stage.
+
+3. **Stage** (`stage.hh/cc`): Holds optional `MMapArrayTable` (offset metadata) and `MMapDataSource` (pointer to mmap'd buffer). Both are `unique_ptr` to avoid header coupling. Not copied on Stage copy (mmap data is not transferable).
+
+4. **Tydra** (`render-data.cc`): `TryReadMMapArray<T>()` checks `stage.has_mmap_zero_copy()`, looks up the prim path + attr name in the table, validates bounds/alignment via `MMapDataSource::get_ptr<T>()`, then does a single `memcpy` from mmap to output vector. `TryReadMMapArrayWithIndices<T>()` reads raw data from mmap and expands with primvar indices (int arrays are NOT deferred — they use LZ4 compression, so indices are always available in Stage). Falls back to `EvaluateTypedAnimatableAttribute` / `flatten_with_indices` if mmap path is unavailable. Used for `points`, authored `normals`, `primvars:normals` (indexed and non-indexed), and `texcoord2f` primvars (indexed and non-indexed). V2 safety checks detect deferred arrays that fail to read from mmap.
+
+### Eligible Array Types
+
+Only types that are NEVER compressed in USDC (verified against OpenUSD `crateFile.cpp`):
+- `VEC2F`, `VEC3F`, `VEC4F` (float2/3/4, point3f, normal3f, color3f, texcoord2f)
+- `VEC2D`, `VEC3D`, `VEC4D` (double2/3/4)
+- `VEC2H`, `VEC3H`, `VEC4H` (half2/3/4)
+- `FLOAT`, `DOUBLE`, `HALF` (scalar arrays)
+- `MATRIX2D`, `MATRIX3D`, `MATRIX4D` (matrix arrays — always uncompressed; scalars can be inlined when diagonal with int8 elements)
+
+NOT eligible: `INT`, `UINT`, `INT64`, `UINT64` (use LZ4+integer compression in USDC).
+
+Minimum threshold: 1024 elements (avoids breaking small arrays like `extent` with 2 elements).
+
+### Activation
+
+- **CLI** (`tydra_to_renderscene`): `--mmap-lowmem` flag sets `USDLoadOptions::mmap_zero_copy = true`
+- **WASM** (`binding.cc`): `setMMapZeroCopy(true)` — default off, to be enabled after more testing
+- **C++ API**: `USDLoadOptions::mmap_zero_copy = true` when calling `LoadUSDFromMemory()` / `LoadUSDCFromMemory()`
+
+The mmap'd buffer (or input memory buffer in WASM) must stay alive while the Stage is in use.
+
+### Test Results
+
+| Model | Deferred Arrays | Output | Status |
+|-------|----------------|--------|--------|
+| suzanne-subd-lv5.usdc (3M verts) | 3 | OBJ identical to baseline | Pass |
+| suzanne-subd-lv6.usdc (12M verts) | 3 | OBJ identical to baseline | Pass |
+| CesiumMan.usdz (skinned, has UVs) | 4 | OBJ identical to baseline | Pass |
+| timesamples-array-dedup-001.usdc | — | Correct parse + conversion | Pass |
+| timesamples-array-dedup-002.usdc | — | Correct parse + conversion | Pass |
+| timesamples-array-dedup-004.usdc | — | Correct parse + conversion | Pass |
+| outpost_19.usdz (dedup UV timeSamples) | 233 | Correct conversion, 116.35 MB RenderScene | Pass |
+
+### V2 — Implemented (Deferred Reads)
+
+V2 skips unpacking entirely for eligible arrays. `UnpackValueRep` returns immediately after `DescribeValueRep` with an empty typed vector + 24-byte `MMapArrayRef`. Stage holds only sentinels; data is read on demand by Tydra.
+
+**What V2 covers:**
+1. **Deferred reads for large arrays**: Only the 24-byte `MMapArrayRef` + empty typed vector stored in Stage. Data read on demand from mmap by `TryReadMMapArray` / `TryReadMMapArrayWithIndices`.
+2. **Indexed primvars**: `TryReadMMapArrayWithIndices` reads raw data from mmap, then expands using primvar indices (int arrays are always fully materialized — LZ4 compressed in USDC).
+3. **USDZ support**: Already works — `LoadUSDZFromMemory` passes USDC payload pointer, all offsets are relative to payload start.
+
+**Known limitations:**
+- **TimeSamples**: NOT deferred (V2 only handles `default` values). Timesampled arrays continue with full materialization.
+- **ExportToString/pprinter**: Show empty arrays for deferred attributes. Accepted breakage since `--mmap-lowmem` is opt-in.
+- **Small arrays**: Below 1024-element threshold always fully materialized.
+- **Lazy materialization on Stage access**: Not implemented. Only Tydra reads from mmap; direct Stage attribute access returns empty vectors.
+
+**V2 savings** (suzanne-subd-lv6.usdc, 12M verts):
+
+| Component | V1 (hybrid) | V2 (deferred) |
+|-----------|-------------|---------------|
+| Stage float arrays | ~288 MB | ~0 (sentinels) |
+| Tydra local copy | saved by mmap read | saved by mmap read |
+| RenderMesh (final) | ~400 MB | ~400 MB |
+| **Estimated peak** | ~600-700 MB | ~400-450 MB |
 
 ## TODO Tasks
 
@@ -376,7 +457,7 @@ The `_lazy_fieldset_cache` in usdc-reader caused invalid cache reuse when differ
 
 - [x] **Free triangulation and vertex-build intermediates** — DONE. Triangulation intermediates (`triangulatedToOrigFaceVertexIndexMap`, `triangulatedFaceCounts`) freed unconditionally after step 4 attribute triangulation. Pre-triangulation topology (`usdFaceVertexCounts`, `usdFaceVertexIndices`) freed under `lowmem` guard when mesh is triangulated. In `BuildVertexIndicesImpl`, dedup buckets freed after dedup loop, and each `vertex_output` field freed immediately after `set_buffer()` copies it to avoid source+destination peak overlap.
 - [x] **Fix MemoryBudgetManager blind spots** — DONE. Reported 49 KB when actual heap was 281 MB. Fixed: report timing, lazy budget release, decompression buffer tracking, temp vector tracking. Now reports 282.7 MB non-lazy (matches massif) / 92.3 MB lazy (concurrent high-water mark).
-- [x] **Implement `lowmem` GeomMesh freeing** — DONE. The `lowmem` config flag now frees source GeomMesh arrays (points, normals, faceVertexIndices, faceVertexCounts) after Tydra conversion via `set_value({})`. Enabled by default in WASM binding.
+- [x] **Implement `lowmem` GeomMesh freeing** — DONE. The `lowmem` config flag now frees source GeomMesh data after Tydra conversion: core geometry (points, normals, faceVertexIndices, faceVertexCounts, velocities), all SubD attributes (cornerIndices, cornerSharpnesses, creaseIndices, creaseLengths, creaseSharpnesses, holeIndices), and the entire `props` map (all primvar data: texcoords, displayColor, displayOpacity, skel:jointIndices, skel:jointWeights, etc.). Enabled by default in WASM binding.
 - [x] **Fix TypedArray ownership model** — DONE. `TypedArrayPtr<T>` dead code removed entirely. Dedup caches already use `size_t` indices. 22 array caches consolidated into 1 unified map. ~18 dead scalar caches removed.
 
 ### High Priority
@@ -391,7 +472,7 @@ The `_lazy_fieldset_cache` in usdc-reader caused invalid cache reuse when differ
 - [x] **Add AnimationClip detailed estimation** — DONE. Now counts strings, KeyframeSampler times/values vectors, AnimationChannel array.
 - [x] **Add SkelHierarchy detailed estimation** — DONE. Now counts strings, recursive SkelNode tree, `parent_joint_indices`, `bind_transforms`, `rest_transforms`, `anim_ids`.
 - [ ] **Measure end-to-end WASM memory** on real-world models (skinned character USDZ) with browser DevTools. Compare before/after tangent quantization and deferred loading.
-- [ ] **Add Hybrid to `TangentComputationMethod` enum** — implemented in `fast-mikktspace.hh` but not wired into config enum or dispatch.
+- [x] **Hybrid `TangentComputationMethod`** — DONE. Already fully implemented: enum in `render-data.hh` (Lengyel, MikkTSpace, FastMikkTSpace, Hybrid), dispatched in `ConvertMesh` (line 5747+) and `ComputeDeferredTangents` (line 8422+), with `ComputeTangentsHybrid` in `fast-mikktspace.hh` (lines 865-875, 1119-1137).
 
 ### Medium Priority
 
@@ -399,18 +480,24 @@ The `_lazy_fieldset_cache` in usdc-reader caused invalid cache reuse when differ
 - [x] **Complete Stage memory estimation** — DONE. `Stage::estimate_memory_usage()` now recursively walks entire Prim tree, estimating `_data`, string members, all properties via concrete type dispatch, and deep attribute memory. Reports 217 MB (was 4 KB).
 - [x] **Add PrimVar `estimate_memory_usage()` to Attribute** — DONE. `Attribute::estimate_memory_usage()` now delegates to `_var.estimate_memory_usage()` which calls `Value::estimate_memory_usage()` + `TimeSamples::estimate_memory_usage()`.
 - [x] **Complete Layer memory estimation** — DONE. `EstimatePrimSpecMemory` now recursively estimates `VariantSetSpec` internals (variant name strings, nested PrimSpec trees). Property values were already covered.
-- [ ] **Profile texture memory separately** — textures dominate total memory. Add per-texture size reporting to `estimate_memory_usage()` output.
+- [x] **Profile texture memory separately** — DONE. `tydra_to_renderscene --memstat` now reports per-mesh memory breakdown (vertex count, tri-index count, estimated bytes) and per-buffer/texture breakdown (buffer size, matching TextureImage asset identifier). Total buffer memory is summed separately.
 - [ ] **Benchmark deferred vs immediate tangent on WASM** — measure initial load time and peak memory difference.
 - [ ] **Reduce WASM default memory limit** — 8 GB for 64-bit WASM may be too permissive for web deployment. Profile real workloads to set tighter defaults.
 - [x] **Normal quantization** — DONE. Packs normals to INT_2_10_10_10_REV (4 bytes/vertex, 67% savings). Default on WASM, opt-in on native via `MeshConverterConfig::normal_storage`.
 
 ### Low Priority
 
-- [ ] **Three.js packed tangent `BufferAttribute`** — Three.js doesn't natively support `GL_INT_2_10_10_10_REV`. Investigate `InterleavedBufferAttribute` or custom WebGL calls to avoid unpack-to-float in binding.
-- [ ] **Memory-based CrateWriter** — `usdc-writer.cc` TODO for in-memory USDC writing (currently uses temp file).
+- [x] **MMap zero-copy V2: deferred reads** — DONE. `UnpackValueRep` returns immediately after `DescribeValueRep` for eligible arrays — Stage holds only empty typed vector sentinels + 24-byte `MMapArrayRef`. Data read on demand by Tydra's `TryReadMMapArray` / `TryReadMMapArrayWithIndices`. Indexed primvars handled via index expansion from mmap raw data. See "V2 — Implemented" section above.
+- [x] **MMap zero-copy: USDZ offset adjustment** — DONE (no code change needed). `LoadUSDZFromMemory` already passes a pointer to the USDC payload start within the ZIP (`addr + byte_begin`), and `LoadUSDCFromMemory` sets `MMapDataSource` with that pointer. All `MMapArrayRef::byte_offset` values are relative to this USDC payload start, so USDZ works correctly. Verified with outpost_19.usdz (233 deferred arrays, OBJ identical).
+- [x] **MMap zero-copy: texcoord mmap path** — DONE. `GetTextureCoordinate` now tries `TryReadMMapArray<texcoord2f>` with key `"primvars:" + name` when the primvar has no indices (`!primvar.has_indices()`). Indexed primvars fall through to `flatten_with_indices`. Verified with CesiumMan.usdz (4 deferred arrays, OBJ identical).
+- [x] **MMap zero-copy: matrix array types** — DONE. Added `MATRIX2D`, `MATRIX3D`, `MATRIX4D` to `DescribeValueRep` eligible types. Matrix arrays are never compressed in USDC (verified against OpenUSD `crateFile.cpp` — they fall through to `_WriteUncompressedArray`). Scalar matrices can be inlined when diagonal with int8 elements, but arrays are always raw.
+- [x] **Three.js packed normal/tangent exposure** — DONE. Fixed normals exposure bug: EMSCRIPTEN defaults to Packed1010102 normals but `getMesh()` was casting raw uint32 data to `float*`. Now properly unpacks packed normals to vec3 float cache for Three.js, and exposes raw packed data as `normalsPacked` (Uint32Array) + `normalsPackedFormat` ("INT_2_10_10_10_REV") for direct WebGL2 upload via `gl.vertexAttribPointer(loc, 4, gl.INT_2_10_10_10_REV, true, ...)`. Same pattern already existed for tangents (`tangentsPacked`). Also fixed legacy Vec3 tangent code paths to use unpacked normals cache when normals are packed.
+- [x] **Memory-based CrateWriter** — DONE. Already implemented: `MemoryOutputStream` in `crate-writer.hh` (lines 114-145) uses `std::vector<uint8_t>` buffer with no temp files. `SaveAsUSDCToMemory` in `usdc-writer.cc` (lines 591-646) uses it; `SaveAsUSDCToFile` calls `SaveAsUSDCToMemory` then writes to disk.
 - [ ] **Multi-threaded tangent computation** — Hybrid and FastMikkTSpace are single-threaded. Parallelize per-face derivative phase.
 - [ ] **Composition memory tracking** — `composition.hh` has `max_memory_limit_mb` but no usage reporting for reference/payload resolution overhead.
 - [x] **CrateReader decompression buffer shrink** — DONE. Added `ShrinkDecompressionBuffers()` to CrateReader that swap-with-empty frees both decompression buffers and releases their budget. Called after `BuildLiveFieldSets()` in non-lazy mode and after `ReconstructStage()` in lazy mode. USDC parser current usage drops to 0 bytes after parsing.
+- [x] **WASM asset cache size limits** — DONE. `EMAssetResolutionResolver` now has `setMaxCacheSizeBytes()`/`getMaxCacheSizeBytes()` (0 = unlimited, default). When limit is set, oldest finalized cache entries are evicted before adding new assets. `getStats()` reports `assetCacheSizeBytes` and `assetCacheMaxBytes`. Exposed to JS via `setAssetCacheMaxSizeBytes()`, `getAssetCacheSizeBytes()`, `getAssetCacheMaxSizeBytes()`.
+- [x] **Connection resolve cache memory release** — DONE. `ResetConnectionResolveCache()` now uses swap-with-empty instead of `clear()` to release hash bucket memory. `clear()` retains bucket allocation; swap reclaims it. Called at start of every `ConvertToRenderScene()`.
 
 ## Key Files
 
@@ -434,5 +521,7 @@ The `_lazy_fieldset_cache` in usdc-reader caused invalid cache reuse when differ
 | `examples/tusdcat/main.cc` | mmap loading, `--memstat` reporting |
 | `examples/tydra_to_renderscene/to-renderscene-main.cc` | Conversion example with `--memstat` reporting |
 | `tests/feat/tangent/bench_tangent.cc` | Tangent memory/quality benchmark |
+| `src/mmap-array-ref.hh` | MMapArrayRef, MMapArrayTable, MMapDataSource types |
+| `src/crate-format.hh` | CrateValue mmap_ref attachment |
 | `doc/TYPED_ARRAY_REVIEW_2025.md` | Removed (TypedArrayPtr ownership issues resolved) |
 | `doc/tydra-tangent.md` | Tangent computation and quantization docs |

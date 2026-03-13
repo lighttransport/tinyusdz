@@ -48,6 +48,10 @@ struct USDCReaderConfig {
   // Memory optimization: use mmap for uncompressed arrays
   bool use_mmap = false;
 
+  // Memory optimization: mmap zero-copy for uncompressed USDC arrays.
+  // When true + mmap, defer uncompressed array reads and record mmap offsets.
+  bool mmap_zero_copy = false;
+
   // Memory optimization: decode fieldsets/properties on demand instead of
   // prebuilding all live fieldsets. Reduces peak memory for large files.
   bool use_lazy_property_construction = true;

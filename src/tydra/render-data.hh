@@ -2172,6 +2172,8 @@ struct MeshConverterConfig {
                     // significantly slower and more memory-hungry for large meshes.
     FastMikkTSpace, // Optimized MikkTSpace reimplementation (~2x faster than
                     // original, same algorithm semantics at default 180° threshold).
+    Hybrid,         // Lengyel base + MikkTSpace-quality welding/averaging.
+                    // Near-MikkTSpace quality, ~5-10x faster than MikkTSpace.
   };
 
   TangentComputationMethod tangent_method{TangentComputationMethod::Lengyel};

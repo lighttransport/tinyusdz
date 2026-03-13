@@ -599,9 +599,18 @@ struct EMAssetResolutionResolver {
   // Assume content is loaded in JS layer.
   bool add(const std::string &asset_name, const std::string &binary) {
     bool overwritten = has(asset_name);
-      
+
+    // Enforce cache size limit before adding
+    if (max_cache_size_bytes_ > 0 && !overwritten) {
+      size_t new_size = getCacheSizeBytes() + asset_name.size() + binary.size();
+      if (new_size > max_cache_size_bytes_) {
+        evictToFitBytes(max_cache_size_bytes_ - std::min(max_cache_size_bytes_,
+                        asset_name.size() + binary.size()));
+      }
+    }
+
     cache[asset_name] = AssetCacheEntry(binary);
-    
+
     return overwritten;
   }
 
@@ -926,6 +935,42 @@ struct EMAssetResolutionResolver {
     return result;
   }
 
+  /// Get total cache memory usage in bytes (all caches combined).
+  size_t getCacheSizeBytes() const {
+    size_t total = 0;
+    for (const auto &pair : cache) {
+      total += pair.first.size() + pair.second.binary.size();
+    }
+    for (const auto &pair : streaming_cache) {
+      total += pair.first.size() + pair.second.current_size;
+    }
+    for (const auto &pair : zerocopy_buffers) {
+      total += pair.first.size() + pair.second.total_size;
+    }
+    return total;
+  }
+
+  /// Set maximum cache size in bytes. 0 = unlimited (default).
+  /// When adding assets that would exceed this limit, the oldest
+  /// finalized assets are evicted first.
+  void setMaxCacheSizeBytes(size_t max_bytes) {
+    max_cache_size_bytes_ = max_bytes;
+  }
+
+  size_t getMaxCacheSizeBytes() const { return max_cache_size_bytes_; }
+
+  /// Evict oldest finalized cache entries until total size <= target.
+  /// Returns number of entries evicted.
+  size_t evictToFitBytes(size_t target_bytes) {
+    size_t evicted = 0;
+    while (getCacheSizeBytes() > target_bytes && !cache.empty()) {
+      // std::map is sorted by key; evict first entry as simple policy
+      cache.erase(cache.begin());
+      evicted++;
+    }
+    return evicted;
+  }
+
   // TODO: Use IndexDB?
   //
   // <uri, AssetCacheEntry>
@@ -933,6 +978,7 @@ struct EMAssetResolutionResolver {
   std::map<std::string, StreamingAssetEntry> streaming_cache;
   std::map<std::string, ZeroCopyStreamingBuffer> zerocopy_buffers;
   AssetCacheEntry empty_entry_;
+  size_t max_cache_size_bytes_{0};  // 0 = unlimited
 };
 
 ///
@@ -1232,6 +1278,7 @@ class TinyUSDZLoaderNative {
 
     tinyusdz::USDLoadOptions options;
     options.max_memory_limit_in_mb = max_memory_limit_mb_;
+    options.mmap_zero_copy = mmap_zero_copy_;
 
     tinyusdz::Stage stage;
     loaded_ = tinyusdz::LoadUSDFromMemory(
@@ -1382,6 +1429,7 @@ class TinyUSDZLoaderNative {
 
     tinyusdz::USDLoadOptions options;
     options.max_memory_limit_in_mb = max_memory_limit_mb_;
+    options.mmap_zero_copy = mmap_zero_copy_;
 
     tinyusdz::Stage stage;
     loaded_ = tinyusdz::LoadUSDFromMemory(
@@ -2768,9 +2816,26 @@ class TinyUSDZLoaderNative {
         }
       } else if (rmesh.tangents.format == VertexAttributeFormat::Vec3 &&
                  !rmesh.normals.empty() && !rmesh.binormals.empty()) {
-        // Legacy Vec3 float tangent + binormal — compute sign from cross product
+        // Legacy Vec3 float tangent + binormal — compute sign from cross product.
+        // Normals may be packed; use unpacked cache if available.
         const float *T = reinterpret_cast<const float *>(rmesh.tangents.data.data());
-        const float *N = reinterpret_cast<const float *>(rmesh.normals.data.data());
+        const float *N = nullptr;
+        if (rmesh.normals.format == VertexAttributeFormat::Uint) {
+          // Packed normals — ensure cache is populated
+          auto &nc = normals3_cache_[mesh_id];
+          if (nc.empty()) {
+            nc.resize(nv * 3);
+            const uint32_t *packed = reinterpret_cast<const uint32_t *>(
+                rmesh.normals.data.data());
+            for (size_t j = 0; j < nv; j++) {
+              tangent_quantize::unpack_normal_1010102(
+                  packed[j], nc[j*3+0], nc[j*3+1], nc[j*3+2]);
+            }
+          }
+          N = nc.data();
+        } else {
+          N = reinterpret_cast<const float *>(rmesh.normals.data.data());
+        }
         const float *B = reinterpret_cast<const float *>(rmesh.binormals.data.data());
         for (size_t i = 0; i < nv; i++) {
           float tx = T[i*3+0], ty = T[i*3+1], tz = T[i*3+2];
@@ -2787,9 +2852,24 @@ class TinyUSDZLoaderNative {
       } else if (rmesh.tangents.format == VertexAttributeFormat::Vec3) {
         // Vec3 float tangent, no binormals — assume w=1
         const float *T = reinterpret_cast<const float *>(rmesh.tangents.data.data());
-        const float *N = !rmesh.normals.empty()
-            ? reinterpret_cast<const float *>(rmesh.normals.data.data())
-            : nullptr;
+        const float *N = nullptr;
+        if (!rmesh.normals.empty()) {
+          if (rmesh.normals.format == VertexAttributeFormat::Uint) {
+            auto &nc = normals3_cache_[mesh_id];
+            if (nc.empty()) {
+              nc.resize(nv * 3);
+              const uint32_t *packed = reinterpret_cast<const uint32_t *>(
+                  rmesh.normals.data.data());
+              for (size_t j = 0; j < nv; j++) {
+                tangent_quantize::unpack_normal_1010102(
+                    packed[j], nc[j*3+0], nc[j*3+1], nc[j*3+2]);
+              }
+            }
+            N = nc.data();
+          } else {
+            N = reinterpret_cast<const float *>(rmesh.normals.data.data());
+          }
+        }
         for (size_t i = 0; i < nv; i++) {
           float tx = T[i*3+0], ty = T[i*3+1], tz = T[i*3+2];
           if (N) FixupZeroTangent(tx, ty, tz, N[i*3+0], N[i*3+1], N[i*3+2]);
@@ -3655,6 +3735,15 @@ class TinyUSDZLoaderNative {
     return defer_tangent_computation_;
   }
 
+  // MMap zero-copy configuration
+  void setMMapZeroCopy(bool enabled) {
+    mmap_zero_copy_ = enabled;
+  }
+
+  bool getMMapZeroCopy() const {
+    return mmap_zero_copy_;
+  }
+
   // Compute tangents for a specific mesh on demand (lazy tangent computation).
   // Returns true on success. Call this before accessing tangent data for meshes
   // that had tangent computation deferred.
@@ -4006,8 +4095,10 @@ class TinyUSDZLoaderNative {
     stats.set("bufferMemoryBytes", static_cast<double>(bufferMemory));
     stats.set("bufferMemoryMB", static_cast<double>(bufferMemory) / (1024.0 * 1024.0));
 
-    // Asset cache count
+    // Asset cache
     stats.set("assetCacheCount", static_cast<int>(em_resolver_.cache.size()));
+    stats.set("assetCacheSizeBytes", static_cast<double>(em_resolver_.getCacheSizeBytes()));
+    stats.set("assetCacheMaxBytes", static_cast<double>(em_resolver_.getMaxCacheSizeBytes()));
 
     // Reordered mesh cache count
     stats.set("reorderedMeshCacheCount", static_cast<int>(reordered_mesh_cache_.size()));
@@ -4170,6 +4261,19 @@ class TinyUSDZLoaderNative {
   // Get number of cached assets
   size_t getAssetCount() const {
     return em_resolver_.cache.size();
+  }
+
+  // Cache size management
+  size_t getAssetCacheSizeBytes() const {
+    return em_resolver_.getCacheSizeBytes();
+  }
+
+  void setAssetCacheMaxSizeBytes(size_t max_bytes) {
+    em_resolver_.setMaxCacheSizeBytes(max_bytes);
+  }
+
+  size_t getAssetCacheMaxSizeBytes() const {
+    return em_resolver_.getMaxCacheSizeBytes();
   }
 
   // Check if asset exists (by name or UUID)
@@ -4446,6 +4550,7 @@ class TinyUSDZLoaderNative {
 
     tinyusdz::USDLoadOptions options;
     options.max_memory_limit_in_mb = max_memory_limit_mb_;
+    options.mmap_zero_copy = mmap_zero_copy_;
 
     // Set up progress callback
     options.progress_callback = [](float progress, void *userptr) -> bool {
@@ -4603,6 +4708,13 @@ class TinyUSDZLoaderNative {
   // Defer tangent computation until explicitly requested via computeMeshTangents()
   bool defer_tangent_computation_{true};  // default true for WASM to save memory
 
+  // MMap zero-copy: record mmap offsets during USDC parsing so Tydra can read
+  // large float/double arrays directly from the input buffer, skipping the
+  // EvaluateTypedAnimatableAttribute copy.  Default off; will be enabled after
+  // more testing.  The input binary buffer must stay alive while the Stage is
+  // in use (guaranteed by loadFromBinary / loadFromBinaryAsync call flow).
+  bool mmap_zero_copy_{false};
+
   // Bone reduction configuration (disabled by default for backward compatibility)
   bool enable_bone_reduction_{false};
   uint32_t target_bone_count_{4};  // Default to 4 bones (standard for WebGL/Three.js)
@@ -4643,6 +4755,7 @@ class TinyUSDZLoaderNative {
 
   // Cache for vec4 tangents (xyz=tangent, w=handedness) in the non-reordered path
   mutable std::unordered_map<int, std::vector<float>> tangents4_cache_;
+  mutable std::unordered_map<int, std::vector<float>> normals3_cache_;
 
   // key = session_id
   std::unordered_map<std::string, tinyusdz::tydra::mcp::Context> mcp_ctx_;
@@ -5396,6 +5509,12 @@ EMSCRIPTEN_BINDINGS(tinyusdz_module) {
       .function("computeMeshTangents",
                 &TinyUSDZLoaderNative::computeMeshTangents)
 
+      // MMap zero-copy (experimental, default off)
+      .function("setMMapZeroCopy",
+                &TinyUSDZLoaderNative::setMMapZeroCopy)
+      .function("getMMapZeroCopy",
+                &TinyUSDZLoaderNative::getMMapZeroCopy)
+
       .function("setEnableComposition",
                 &TinyUSDZLoaderNative::setEnableComposition)
       .function("extractSublayerAssetPaths",
@@ -5498,6 +5617,12 @@ EMSCRIPTEN_BINDINGS(tinyusdz_module) {
                 &TinyUSDZLoaderNative::deleteAssetByName)
       .function("getAssetCount",
                 &TinyUSDZLoaderNative::getAssetCount)
+      .function("getAssetCacheSizeBytes",
+                &TinyUSDZLoaderNative::getAssetCacheSizeBytes)
+      .function("setAssetCacheMaxSizeBytes",
+                &TinyUSDZLoaderNative::setAssetCacheMaxSizeBytes)
+      .function("getAssetCacheMaxSizeBytes",
+                &TinyUSDZLoaderNative::getAssetCacheMaxSizeBytes)
       .function("assetExists",
                 &TinyUSDZLoaderNative::assetExists)
       .function("clearAssets",
