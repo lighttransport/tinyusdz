@@ -4019,6 +4019,7 @@ bool RenderSceneConverter::ConvertCube(
       normal3f_data.push_back(value::normal3f{n[0], n[1], n[2]});
     }
     temp_mesh.normals.set_value(normal3f_data);
+    temp_mesh.normals.metas().set_interpolation_enum(Interpolation::FaceVarying);
   }
 
   // Set UVs as st primvar (face-varying)
@@ -4094,6 +4095,7 @@ bool RenderSceneConverter::ConvertSphere(
       normal3f_data.push_back(value::normal3f{n[0], n[1], n[2]});
     }
     temp_mesh.normals.set_value(normal3f_data);
+    temp_mesh.normals.metas().set_interpolation_enum(Interpolation::FaceVarying);
   }
 
   // Set UVs as st primvar (face-varying)
