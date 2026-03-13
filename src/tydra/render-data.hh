@@ -2191,23 +2191,25 @@ struct MeshConverterConfig {
   };
 
 #ifdef __EMSCRIPTEN__
-  TangentStorageFormat tangent_storage{TangentStorageFormat::Packed1010102};
+  TangentStorageFormat tangent_storage{TangentStorageFormat::PackedSNorm8};
 #else
   TangentStorageFormat tangent_storage{TangentStorageFormat::PackedFp16};
 #endif
 
   //
   // Normal storage format selection.
-  // Packed1010102 reduces normal storage from 12 to 4 bytes/vertex (67% savings).
-  // ~0.1° angular resolution, sufficient for rendering.
+  // PackedSNorm8 reduces normal storage from 12 to 3 bytes/vertex (75% savings).
+  // ~1° angular resolution, sufficient for rendering.
   //
   enum class NormalStorageFormat {
-    Float3,        // float3 normals (12 bytes/vertex, baseline)
-    Packed1010102, // INT_2_10_10_10_REV xyz (4 bytes/vertex)
+    Float3,         // float3 normals (12 bytes/vertex, baseline)
+    Packed1010102,  // INT_2_10_10_10_REV xyz (4 bytes/vertex)
+    PackedSNorm8,   // SNorm8x3 (3 bytes/vertex, Three.js/glTF compatible)
+    PackedSNorm16,  // SNorm16x3 (6 bytes/vertex, higher precision)
   };
 
 #ifdef __EMSCRIPTEN__
-  NormalStorageFormat normal_storage{NormalStorageFormat::Packed1010102};
+  NormalStorageFormat normal_storage{NormalStorageFormat::PackedSNorm8};
 #else
   NormalStorageFormat normal_storage{NormalStorageFormat::Float3};
 #endif
