@@ -1,0 +1,70 @@
+#usda 1.0
+(
+    doc = "Hand-written test: ND_combine3_color3 with ND_constant_float on Red channel"
+    metersPerUnit = 1
+    upAxis = "Z"
+    defaultPrim = "root"
+)
+
+def Xform "root"
+{
+    def Sphere "CombineTest"
+    (
+        prepend apiSchemas = ["MaterialBindingAPI"]
+    )
+    {
+        double radius = 1.0
+        rel material:binding = </root/_materials/CombineTest>
+    }
+
+    def Scope "_materials"
+    {
+        def Material "CombineTest"
+        (
+            prepend apiSchemas = ["MaterialBindingAPI"]
+        )
+        {
+            token outputs:surface.connect = </root/_materials/CombineTest/shader.outputs:surface>
+            string config:mtlx:version = "1.39"
+            token outputs:mtlx:surface.connect = </root/_materials/CombineTest/shader.outputs:surface>
+
+            def Shader "shader"
+            {
+                uniform token info:id = "ND_open_pbr_surface_surfaceshader"
+                float inputs:base_weight = 1
+                color3f inputs:base_color.connect = </root/_materials/CombineTest/NodeGraphs.outputs:combine_color_out>
+                float inputs:base_metalness = 0
+                float inputs:base_diffuse_roughness = 0
+                float inputs:specular_weight = 1
+                color3f inputs:specular_color = (1, 1, 1)
+                float inputs:specular_roughness = 0.3
+                float inputs:specular_ior = 1.5
+                float inputs:coat_weight = 0
+                float inputs:emission_luminance = 0
+                color3f inputs:emission_color = (1, 1, 1)
+                token outputs:surface
+            }
+
+            def NodeGraph "NodeGraphs"
+            {
+                color3f outputs:combine_color_out.connect = </root/_materials/CombineTest/NodeGraphs/combine_color.outputs:out>
+
+                def Shader "red_value"
+                {
+                    uniform token info:id = "ND_constant_float"
+                    float inputs:value = 0.9
+                    float outputs:out
+                }
+
+                def Shader "combine_color"
+                {
+                    uniform token info:id = "ND_combine3_color3"
+                    float inputs:in1.connect = </root/_materials/CombineTest/NodeGraphs/red_value.outputs:out>
+                    float inputs:in2 = 0.4
+                    float inputs:in3 = 0.1
+                    color3f outputs:out
+                }
+            }
+        }
+    }
+}
