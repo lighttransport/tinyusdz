@@ -340,14 +340,14 @@ void timesamples_test(void) {
     }
   }
 
-  // Unified small-POD storage should keep values aligned with sorted times.
+  // Unified small-binary storage should keep values aligned with sorted times.
   {
     value::TimeSamples ts;
 
-    TEST_CHECK(ts.add_sample_pod<float>(5.0, 50.0f));
-    TEST_CHECK(ts.add_pod_blocked_sample<float>(3.0));
-    TEST_CHECK(ts.add_sample_pod<float>(1.0, 10.0f));
-    TEST_CHECK(ts.add_sample_pod<float>(4.0, 40.0f));
+    TEST_CHECK(ts.add_sample<float>(5.0, 50.0f));
+    TEST_CHECK(ts.add_blocked_sample<float>(3.0));
+    TEST_CHECK(ts.add_sample<float>(1.0, 10.0f));
+    TEST_CHECK(ts.add_sample<float>(4.0, 40.0f));
 
     const auto& samples = ts.get_samples();
     TEST_CHECK(samples.size() == 4);
@@ -386,7 +386,7 @@ void timesamples_test(void) {
     }
 
     // Reconstruct once, append again, and verify the cache is invalidated.
-    TEST_CHECK(ts.add_sample_pod<float>(2.0, 20.0f));
+    TEST_CHECK(ts.add_sample<float>(2.0, 20.0f));
     const auto& updated = ts.get_samples();
     TEST_CHECK(updated.size() == 5);
     TEST_CHECK(math::is_close(updated[0].t, 1.0));
@@ -422,8 +422,8 @@ void timesamples_test(void) {
     value::TimeSamples ts;
     std::string err;
 
-    TEST_CHECK(ts.add_sample_pod<float>(0.0, 1.0f, &err));
-    TEST_CHECK(!ts.add_array_sample_pod<float>(1.0, std::vector<float>{1.0f, 2.0f}, &err));
+    TEST_CHECK(ts.add_sample<float>(0.0, 1.0f, &err));
+    TEST_CHECK(!ts.add_array_sample<float>(1.0, std::vector<float>{1.0f, 2.0f}, &err));
     TEST_CHECK(!err.empty());
   }
 
@@ -432,9 +432,9 @@ void timesamples_test(void) {
     value::TimeSamples ts;
     std::string err;
 
-    TEST_CHECK(ts.add_array_sample_pod<float>(0.0, std::vector<float>{1.0f, 2.0f}, &err));
+    TEST_CHECK(ts.add_array_sample<float>(0.0, std::vector<float>{1.0f, 2.0f}, &err));
     TypedArray<float> typed = {3.0f, 4.0f};
-    TEST_CHECK(!ts.add_array_sample_pod<float>(1.0, typed, &err));
+    TEST_CHECK(!ts.add_array_sample<float>(1.0, typed, &err));
     TEST_CHECK(!err.empty());
   }
 
@@ -442,9 +442,9 @@ void timesamples_test(void) {
   {
     value::TimeSamples ts;
 
-    TEST_CHECK(ts.add_array_sample_pod<float>(5.0, std::vector<float>{5.0f, 6.0f, 7.0f, 8.0f}));
-    TEST_CHECK(ts.add_array_sample_pod<float>(1.0, std::vector<float>{1.0f, 2.0f}));
-    TEST_CHECK(ts.add_array_sample_pod<float>(3.0, std::vector<float>{3.0f, 4.0f, 5.0f}));
+    TEST_CHECK(ts.add_array_sample<float>(5.0, std::vector<float>{5.0f, 6.0f, 7.0f, 8.0f}));
+    TEST_CHECK(ts.add_array_sample<float>(1.0, std::vector<float>{1.0f, 2.0f}));
+    TEST_CHECK(ts.add_array_sample<float>(3.0, std::vector<float>{3.0f, 4.0f, 5.0f}));
 
     (void)ts.get_time(0);
 
@@ -517,9 +517,9 @@ void timesamples_test(void) {
   {
     value::TimeSamples ts;
 
-    TEST_CHECK(ts.add_array_sample_pod<float>(5.0, std::vector<float>{5.0f, 6.0f, 7.0f}));
-    TEST_CHECK(ts.add_array_sample_pod<float>(1.0, std::vector<float>{1.0f}));
-    TEST_CHECK(ts.add_dedup_array_sample_pod<float>(3.0, 0));
+    TEST_CHECK(ts.add_array_sample<float>(5.0, std::vector<float>{5.0f, 6.0f, 7.0f}));
+    TEST_CHECK(ts.add_array_sample<float>(1.0, std::vector<float>{1.0f}));
+    TEST_CHECK(ts.add_dedup_array_sample<float>(3.0, 0));
 
     const auto &samples = ts.get_samples();
     TEST_CHECK(samples.size() == 3);
@@ -569,8 +569,8 @@ void timesamples_test(void) {
     TypedArray<float> late = {7.0f, 8.0f};
     TypedArray<float> early = {1.0f, 2.0f, 3.0f};
 
-    TEST_CHECK(ts.add_array_sample_pod<float>(5.0, late));
-    TEST_CHECK(ts.add_array_sample_pod<float>(1.0, early));
+    TEST_CHECK(ts.add_array_sample<float>(5.0, late));
+    TEST_CHECK(ts.add_array_sample<float>(1.0, early));
 
     TEST_CHECK(ts.is_typed_array());
     TEST_CHECK(!ts.is_stl_array());
@@ -630,7 +630,7 @@ void timesamples_test(void) {
     value::TimeSamples ts;
 
     TypedArray<float> empty;
-    TEST_CHECK(ts.add_array_sample_pod<float>(2.0, empty));
+    TEST_CHECK(ts.add_array_sample<float>(2.0, empty));
     TEST_CHECK(ts.is_typed_array());
     TEST_CHECK(ts.size() == 1);
     TEST_CHECK(ts.get_array_count(0) == 0);

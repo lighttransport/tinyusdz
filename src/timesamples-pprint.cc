@@ -159,7 +159,7 @@ print_type(OutputAdapter& out, const uint8_t* data) {
   out.write(ss.str());
 }
 
-// Unified print function for simple POD types
+// Unified print function for simple binary-serializable types
 template<typename T>
 typename std::enable_if<std::is_arithmetic<T>::value && !is_value_type<T>::value, void>::type
 print_type(OutputAdapter& out, const uint8_t* data) {
@@ -314,8 +314,8 @@ void print_vector<uint8_t, 4>(OutputAdapter& out, const uint8_t* data) {
 // ============================================================================
 
 // Macro to reduce repetition in switch statements
-// Handles both POD types and value types uniformly
-#define DISPATCH_POD_TYPE(TYPE_ID_NAME, CPP_TYPE, PRINT_FUNC) \
+// Handles both binary-serializable types and value types uniformly
+#define DISPATCH_BINARY_SERIALIZABLE_TYPE(TYPE_ID_NAME, CPP_TYPE, PRINT_FUNC) \
   case value::TYPE_ID_NAME: \
     PRINT_FUNC<CPP_TYPE>(out, data); \
     break;
@@ -331,49 +331,49 @@ void print_vector<uint8_t, 4>(OutputAdapter& out, const uint8_t* data) {
     break;
 
 // Centralized print dispatch using OutputAdapter
-void print_pod_value_dispatch(OutputAdapter& out, const uint8_t* data, uint32_t type_id) {
+void print_binary_serializable_value_dispatch(OutputAdapter& out, const uint8_t* data, uint32_t type_id) {
   using namespace value;
 
   // Strip array bit - we're printing a single element
   type_id = type_id & (~TYPE_ID_1D_ARRAY_BIT);
 
   switch (type_id) {
-    DISPATCH_POD_TYPE(TYPE_ID_BOOL, bool, print_type)
-    DISPATCH_POD_TYPE(TYPE_ID_CHAR, char, print_type)
+    DISPATCH_BINARY_SERIALIZABLE_TYPE(TYPE_ID_BOOL, bool, print_type)
+    DISPATCH_BINARY_SERIALIZABLE_TYPE(TYPE_ID_CHAR, char, print_type)
     DISPATCH_VECTOR_TYPE(TYPE_ID_CHAR2, char, 2)
     DISPATCH_VECTOR_TYPE(TYPE_ID_CHAR3, char, 3)
     DISPATCH_VECTOR_TYPE(TYPE_ID_CHAR4, char, 4)
-    DISPATCH_POD_TYPE(TYPE_ID_UCHAR, uint8_t, print_type)
+    DISPATCH_BINARY_SERIALIZABLE_TYPE(TYPE_ID_UCHAR, uint8_t, print_type)
     DISPATCH_VECTOR_TYPE(TYPE_ID_UCHAR2, uint8_t, 2)
     DISPATCH_VECTOR_TYPE(TYPE_ID_UCHAR3, uint8_t, 3)
     DISPATCH_VECTOR_TYPE(TYPE_ID_UCHAR4, uint8_t, 4)
-    DISPATCH_POD_TYPE(TYPE_ID_SHORT, int16_t, print_type)
+    DISPATCH_BINARY_SERIALIZABLE_TYPE(TYPE_ID_SHORT, int16_t, print_type)
     DISPATCH_VECTOR_TYPE(TYPE_ID_SHORT2, int16_t, 2)
     DISPATCH_VECTOR_TYPE(TYPE_ID_SHORT3, int16_t, 3)
     DISPATCH_VECTOR_TYPE(TYPE_ID_SHORT4, int16_t, 4)
-    DISPATCH_POD_TYPE(TYPE_ID_USHORT, uint16_t, print_type)
+    DISPATCH_BINARY_SERIALIZABLE_TYPE(TYPE_ID_USHORT, uint16_t, print_type)
     DISPATCH_VECTOR_TYPE(TYPE_ID_USHORT2, uint16_t, 2)
     DISPATCH_VECTOR_TYPE(TYPE_ID_USHORT3, uint16_t, 3)
     DISPATCH_VECTOR_TYPE(TYPE_ID_USHORT4, uint16_t, 4)
-    DISPATCH_POD_TYPE(TYPE_ID_INT32, int32_t, print_type)
+    DISPATCH_BINARY_SERIALIZABLE_TYPE(TYPE_ID_INT32, int32_t, print_type)
     DISPATCH_VECTOR_TYPE(TYPE_ID_INT2, int32_t, 2)
     DISPATCH_VECTOR_TYPE(TYPE_ID_INT3, int32_t, 3)
     DISPATCH_VECTOR_TYPE(TYPE_ID_INT4, int32_t, 4)
-    DISPATCH_POD_TYPE(TYPE_ID_UINT32, uint32_t, print_type)
+    DISPATCH_BINARY_SERIALIZABLE_TYPE(TYPE_ID_UINT32, uint32_t, print_type)
     DISPATCH_VECTOR_TYPE(TYPE_ID_UINT2, uint32_t, 2)
     DISPATCH_VECTOR_TYPE(TYPE_ID_UINT3, uint32_t, 3)
     DISPATCH_VECTOR_TYPE(TYPE_ID_UINT4, uint32_t, 4)
-    DISPATCH_POD_TYPE(TYPE_ID_INT64, int64_t, print_type)
-    DISPATCH_POD_TYPE(TYPE_ID_UINT64, uint64_t, print_type)
+    DISPATCH_BINARY_SERIALIZABLE_TYPE(TYPE_ID_INT64, int64_t, print_type)
+    DISPATCH_BINARY_SERIALIZABLE_TYPE(TYPE_ID_UINT64, uint64_t, print_type)
     DISPATCH_VALUE_TYPE(TYPE_ID_HALF, half)
     DISPATCH_VALUE_TYPE(TYPE_ID_HALF2, half2)
     DISPATCH_VALUE_TYPE(TYPE_ID_HALF3, half3)
     DISPATCH_VALUE_TYPE(TYPE_ID_HALF4, half4)
-    DISPATCH_POD_TYPE(TYPE_ID_FLOAT, float, print_type)
+    DISPATCH_BINARY_SERIALIZABLE_TYPE(TYPE_ID_FLOAT, float, print_type)
     DISPATCH_VALUE_TYPE(TYPE_ID_FLOAT2, float2)
     DISPATCH_VALUE_TYPE(TYPE_ID_FLOAT3, float3)
     DISPATCH_VALUE_TYPE(TYPE_ID_FLOAT4, float4)
-    DISPATCH_POD_TYPE(TYPE_ID_DOUBLE, double, print_type)
+    DISPATCH_BINARY_SERIALIZABLE_TYPE(TYPE_ID_DOUBLE, double, print_type)
     DISPATCH_VALUE_TYPE(TYPE_ID_DOUBLE2, double2)
     DISPATCH_VALUE_TYPE(TYPE_ID_DOUBLE3, double3)
     DISPATCH_VALUE_TYPE(TYPE_ID_DOUBLE4, double4)
@@ -409,14 +409,14 @@ void print_pod_value_dispatch(OutputAdapter& out, const uint8_t* data, uint32_t 
     DISPATCH_VALUE_TYPE(TYPE_ID_TEXCOORD3F, texcoord3f)
     DISPATCH_VALUE_TYPE(TYPE_ID_TEXCOORD3D, texcoord3d)
     default:
-      out.write("[Unknown POD type: ");
+      out.write("[Unknown binary-serializable type: ");
       out.write(static_cast<int>(type_id));
       out.write("]");
       break;
   }
 }
 
-#undef DISPATCH_POD_TYPE
+#undef DISPATCH_BINARY_SERIALIZABLE_TYPE
 #undef DISPATCH_VALUE_TYPE
 #undef DISPATCH_VECTOR_TYPE
 
@@ -483,7 +483,7 @@ std::string try_print_typed_array(const uint8_t* packed_ptr_data) {
 
 // Helper function to convert raw bytes to typed value and print
 template<typename T>
-std::string print_pod_value(const uint8_t* data) {
+std::string print_binary_serializable_value(const uint8_t* data) {
     T value;
     std::memcpy(&value, data, sizeof(T));
 
@@ -989,7 +989,7 @@ std::string print_frame4d(const uint8_t* data) {
 
 // StreamWriter versions of print functions
 template<typename T>
-void print_pod_value(StreamWriter& writer, const uint8_t* data) {
+void print_binary_serializable_value(StreamWriter& writer, const uint8_t* data) {
     //TUSDZ_LOG_I("pod_value\n");
     T value;
     std::memcpy(&value, data, sizeof(T));
@@ -1204,16 +1204,16 @@ std::string print_typed_array(const uint8_t* data) {
 }
 
 // Forward declarations
-void pprint_pod_value_by_type(StreamWriter& writer, const uint8_t* data, uint32_t type_id);
-size_t get_pod_type_size(uint32_t type_id);
+void pprint_binary_serializable_value_by_type(StreamWriter& writer, const uint8_t* data, uint32_t type_id);
+size_t get_binary_serializable_type_size(uint32_t type_id);
 
-/// Helper function to print an array of POD values
+/// Helper function to print an array of binary-serializable values
 /// @param writer Output writer
 /// @param data Pointer to the first array element
 /// @param type_id Type ID of the array elements
 /// @param array_size Number of elements in the array
-static void pprint_pod_array_by_type(StreamWriter& writer, const uint8_t* data, uint32_t type_id, size_t array_size) {
-    size_t element_size = get_pod_type_size(type_id);
+static void pprint_binary_serializable_array_by_type(StreamWriter& writer, const uint8_t* data, uint32_t type_id, size_t array_size) {
+    size_t element_size = get_binary_serializable_type_size(type_id);
     if (element_size == 0) {
         writer.write("/* Unknown type_id: ");
         writer.write(type_id);
@@ -1227,25 +1227,25 @@ static void pprint_pod_array_by_type(StreamWriter& writer, const uint8_t* data, 
             writer.write(", ");
         }
         const uint8_t* element_ptr = data + (i * element_size);
-        pprint_pod_value_by_type(writer, element_ptr, type_id);
+        pprint_binary_serializable_value_by_type(writer, element_ptr, type_id);
     }
     writer.write("]");
 }
 
-std::string pprint_pod_value_by_type(const uint8_t* data, uint32_t type_id) {
+std::string pprint_binary_serializable_value_by_type(const uint8_t* data, uint32_t type_id) {
     // Use unified dispatch system with string output adapter
     StringOutputAdapter adapter;
-    print_pod_value_dispatch(adapter, data, type_id);
+    print_binary_serializable_value_dispatch(adapter, data, type_id);
     return adapter.str();
 }
 
-void pprint_pod_value_by_type(StreamWriter& writer, const uint8_t* data, uint32_t type_id) {
+void pprint_binary_serializable_value_by_type(StreamWriter& writer, const uint8_t* data, uint32_t type_id) {
     // Use unified dispatch system with StreamWriter adapter
     StreamWriterAdapter adapter(writer);
-    print_pod_value_dispatch(adapter, data, type_id);
+    print_binary_serializable_value_dispatch(adapter, data, type_id);
 }
 
-size_t get_pod_type_size(uint32_t type_id) {
+size_t get_binary_serializable_type_size(uint32_t type_id) {
     using namespace value;
 
     // Strip array bit - we want the element size
@@ -1430,7 +1430,7 @@ void pprint_timesamples(StreamWriter& writer, const value::TimeSamples& samples,
 
         // Get type information
         uint32_t type_id = samples.type_id();
-        size_t element_size = get_pod_type_size(type_id);
+        size_t element_size = get_binary_serializable_type_size(type_id);
 
         if (element_size == 0) {
             writer.write(pprint::Indent(indent + 1));
@@ -1442,7 +1442,7 @@ void pprint_timesamples(StreamWriter& writer, const value::TimeSamples& samples,
             return;
         }
 
-        // Get array size from TimeSamples directly (works for both POD storage and unified storage)
+        // Get array size from TimeSamples directly (works for both binary storage and unified storage)
         size_t array_size = samples.get_array_size();
 
         // Get arrays from unified storage
@@ -1457,7 +1457,7 @@ void pprint_timesamples(StreamWriter& writer, const value::TimeSamples& samples,
         if (!offsets.empty()) {
 
             // Phase 3: TypedArray path removed (not supported in unified storage)
-            // Use regular printing for all POD types
+            // Use regular printing for all binary-serializable types
             for (size_t i = 0; i < times.size(); ++i) {
                 writer.write(pprint::Indent(indent + 1));
                 writer.write(times[i]);
@@ -1486,10 +1486,10 @@ void pprint_timesamples(StreamWriter& writer, const value::TimeSamples& samples,
                             // Get per-sample array count (with fallback to global array_size)
                             size_t per_sample_count = (resolved_idx < array_counts.size()) ? array_counts[resolved_idx] : array_size;
                             // Print all elements in the array
-                            pprint_pod_array_by_type(writer, value_ptr, type_id, per_sample_count);
+                            pprint_binary_serializable_array_by_type(writer, value_ptr, type_id, per_sample_count);
                         } else {
                             // Print single value
-                            pprint_pod_value_by_type(writer, value_ptr, type_id);
+                            pprint_binary_serializable_value_by_type(writer, value_ptr, type_id);
                         }
                     }
                 }
@@ -1532,7 +1532,7 @@ void pprint_timesamples(StreamWriter& writer, const value::TimeSamples& samples,
                             uint64_t stored_value = small_values[i];
                             // Cast to typed pointer and print
                             const uint8_t* value_ptr = reinterpret_cast<const uint8_t*>(&stored_value);
-                            pprint_pod_value_by_type(writer, value_ptr, type_id);
+                            pprint_binary_serializable_value_by_type(writer, value_ptr, type_id);
                         } else {
                             writer.write("/* ERROR: small_values index out of bounds */");
                         }
@@ -1567,10 +1567,10 @@ void pprint_timesamples(StreamWriter& writer, const value::TimeSamples& samples,
                         // Get per-sample array count (with fallback to global array_size)
                         size_t per_sample_count = (i < array_counts.size()) ? array_counts[i] : array_size;
                         // Print all elements in the array
-                        pprint_pod_array_by_type(writer, value_ptr, type_id, per_sample_count);
+                        pprint_binary_serializable_array_by_type(writer, value_ptr, type_id, per_sample_count);
                     } else {
                         // Print single value
-                        pprint_pod_value_by_type(writer, value_ptr, type_id);
+                        pprint_binary_serializable_value_by_type(writer, value_ptr, type_id);
                     }
                     value_offset += element_size;
                 }
@@ -1583,7 +1583,7 @@ void pprint_timesamples(StreamWriter& writer, const value::TimeSamples& samples,
             } // end else for using_small_values check
         } // end else for offsets.empty() check
     } else {
-        // Non-POD path: use regular samples
+        // Non-binary-storage path: use regular samples
         const auto& samples_vec = samples.get_samples();
 
         for (size_t i = 0; i < samples_vec.size(); ++i) {

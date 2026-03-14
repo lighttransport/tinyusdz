@@ -371,5 +371,12 @@ aousd/dist*/
 .env
 .mcp.json
 
+# wasm
+web/build
+web/build_64
+
 # js assets
 web/js/assets/
+
+# fuzzer
+tests/fuzzer/corpus/

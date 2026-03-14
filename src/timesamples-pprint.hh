@@ -23,22 +23,22 @@ struct TimeSamples;
 } // namespace value
 
 ///
-/// Pretty print a single POD value based on type_id
+/// Pretty print a single binary-serializable value based on type_id
 ///
 /// @param data Pointer to the raw data
 /// @param type_id Type ID of the data
 /// @return String representation of the value
 ///
-std::string pprint_pod_value_by_type(const uint8_t* data, uint32_t type_id);
+std::string pprint_binary_serializable_value_by_type(const uint8_t* data, uint32_t type_id);
 
 ///
-/// Pretty print a single POD value to a StreamWriter
+/// Pretty print a single binary-serializable value to a StreamWriter
 ///
 /// @param writer StreamWriter to write to
 /// @param data Pointer to the raw data
 /// @param type_id Type ID of the data
 ///
-void pprint_pod_value_by_type(StreamWriter& writer,
+void pprint_binary_serializable_value_by_type(StreamWriter& writer,
                               const uint8_t* data,
                               uint32_t type_id);
 
@@ -48,7 +48,7 @@ void pprint_pod_value_by_type(StreamWriter& writer,
 /// @param type_id Type ID
 /// @return Size in bytes, or 0 if unknown type
 ///
-size_t get_pod_type_size(uint32_t type_id);
+size_t get_binary_serializable_type_size(uint32_t type_id);
 
 ///
 /// Pretty print a TypedArray stored as a packed pointer
@@ -59,7 +59,7 @@ size_t get_pod_type_size(uint32_t type_id);
 std::string print_typed_array(const uint8_t* data);
 
 ///
-/// Pretty print non-POD TimeSamples with indentation support
+/// Pretty print generic Value TimeSamples with indentation support
 ///
 /// @param samples value::TimeSamples to print
 /// @param indent Indentation level (number of spaces)
@@ -69,7 +69,7 @@ std::string pprint_timesamples(const value::TimeSamples& samples,
                                uint32_t indent = 0);
 
 ///
-/// Pretty print non-POD TimeSamples to a StreamWriter
+/// Pretty print generic Value TimeSamples to a StreamWriter
 ///
 /// @param writer StreamWriter to write to
 /// @param samples value::TimeSamples to print
