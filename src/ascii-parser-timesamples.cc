@@ -83,10 +83,10 @@ namespace tinyusdz {
 
 namespace ascii {
 
-// Templated function to parse typed TimeSamples for binary-serializable types.
+// Templated function to parse typed TimeSamples for types that use binary storage.
 template<typename T>
 bool AsciiParser::ParseTypedTimeSamples(value::TimeSamples *ts_out) {
-  if (!value::IsBinarySerializableType(value::TypeTraits<T>::type_id())) {
+  if (!value::UsesBinaryTimesampleStorageType(value::TypeTraits<T>::type_id())) {
     return false;
   }
   if (!ts_out) {
