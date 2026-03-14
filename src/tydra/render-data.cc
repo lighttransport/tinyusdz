@@ -9171,6 +9171,31 @@ bool MeshVisitor(const tinyusdz::Path &abs_path, const tinyusdz::Prim &prim,
     return true;
   };
 
+  auto ResolveBoundMaterial = [&](const Path &query_path,
+                                  const std::string &purpose,
+                                  Path *bound_material_path,
+                                  const Material **bound_material,
+                                  bool *found) -> bool {
+    if (!found) {
+      return false;
+    }
+
+    std::string local_err;
+    bool local_found = visitorEnv->converter->GetBoundMaterialCached(
+        visitorEnv->env->stage, query_path, purpose, bound_material_path,
+        bound_material, &local_err);
+
+    if (!local_err.empty()) {
+      if (err) {
+        (*err) += local_err;
+      }
+      return false;
+    }
+
+    (*found) = local_found;
+    return true;
+  };
+
   if (const tinyusdz::GeomMesh *pmesh = prim.as<tinyusdz::GeomMesh>()) {
     // Collect GeomSubsets
     // std::vector<const tinyusdz::GeomSubset *> subsets = GetGeomSubsets(;
@@ -9210,10 +9235,13 @@ bool MeshVisitor(const tinyusdz::Path &abs_path, const tinyusdz::Prim &prim,
         {
           tinyusdz::Path bound_material_path;
           const tinyusdz::Material *bound_material{nullptr};
-          bool ret = visitorEnv->converter->GetBoundMaterialCached(
-              visitorEnv->env->stage,
-              /* GeomSubset prim path */ subset_abs_path,
-              /* purpose */ "", &bound_material_path, &bound_material, err);
+          bool ret{false};
+          if (!ResolveBoundMaterial(
+                  /* GeomSubset prim path */ subset_abs_path,
+                  /* purpose */ "", &bound_material_path, &bound_material,
+                  &ret)) {
+            return false;
+          }
 
           if (ret && bound_material) {
             int64_t rmaterial_id = -1;  // not used.
@@ -9243,13 +9271,15 @@ bool MeshVisitor(const tinyusdz::Path &abs_path, const tinyusdz::Prim &prim,
                        .default_backface_material_purpose_name);
           tinyusdz::Path bound_material_path;
           const tinyusdz::Material *bound_material{nullptr};
-          bool ret = visitorEnv->converter->GetBoundMaterialCached(
-              visitorEnv->env->stage,
-              /* GeomSubset prim path */ subset_abs_path,
-              /* purpose */
-              visitorEnv->env->material_config
-                  .default_backface_material_purpose_name,
-              &bound_material_path, &bound_material, err);
+          bool ret{false};
+          if (!ResolveBoundMaterial(
+                  /* GeomSubset prim path */ subset_abs_path,
+                  /* purpose */
+                  visitorEnv->env->material_config
+                      .default_backface_material_purpose_name,
+                  &bound_material_path, &bound_material, &ret)) {
+            return false;
+          }
 
           if (ret && bound_material) {
             int64_t rmaterial_id = -1;  // not used
@@ -9286,9 +9316,13 @@ bool MeshVisitor(const tinyusdz::Path &abs_path, const tinyusdz::Prim &prim,
       {
         tinyusdz::Path bound_material_path;
         const tinyusdz::Material *bound_material{nullptr};
-        bool ret = visitorEnv->converter->GetBoundMaterialCached(
-            visitorEnv->env->stage, /* GeomMesh prim path */ abs_path,
-            /* purpose */ "", &bound_material_path, &bound_material, err);
+        bool ret{false};
+        if (!ResolveBoundMaterial(
+                /* GeomMesh prim path */ abs_path,
+                /* purpose */ "", &bound_material_path, &bound_material,
+                &ret)) {
+          return false;
+        }
 
         DCOUT("Bound material found: " << ret);
         if (ret && bound_material) {
@@ -9315,12 +9349,15 @@ bool MeshVisitor(const tinyusdz::Path &abs_path, const tinyusdz::Prim &prim,
           pmesh->has_materialBinding(value::token(backface_purpose))) {
         tinyusdz::Path bound_material_path;
         const tinyusdz::Material *bound_material{nullptr};
-        bool ret = visitorEnv->converter->GetBoundMaterialCached(
-            visitorEnv->env->stage, /* GeomMesh prim path */ abs_path,
-            /* purpose */
-            visitorEnv->env->material_config
-                .default_backface_material_purpose_name,
-            &bound_material_path, &bound_material, err);
+        bool ret{false};
+        if (!ResolveBoundMaterial(
+                /* GeomMesh prim path */ abs_path,
+                /* purpose */
+                visitorEnv->env->material_config
+                    .default_backface_material_purpose_name,
+                &bound_material_path, &bound_material, &ret)) {
+          return false;
+        }
 
         if (ret && bound_material) {
           int64_t rmaterial_id = -1;  // not used
@@ -9385,9 +9422,14 @@ bool MeshVisitor(const tinyusdz::Path &abs_path, const tinyusdz::Prim &prim,
       std::string msg = "Converting mesh " +
           std::to_string(visitorEnv->meshes_processed) + "/" +
           std::to_string(visitorEnv->meshes_total);
-      visitorEnv->converter->ReportMeshProgress(
-          visitorEnv->meshes_processed, visitorEnv->meshes_total,
-          abs_path.full_path_name(), msg);
+      if (!visitorEnv->converter->ReportMeshProgress(
+              visitorEnv->meshes_processed, visitorEnv->meshes_total,
+              abs_path.full_path_name(), msg)) {
+        if (err) {
+          (*err) += "Conversion cancelled by user.\n";
+        }
+        return false;
+      }
       DCOUT("[Tydra] Mesh " << visitorEnv->meshes_processed << "/" << visitorEnv->meshes_total
             << ": " << abs_path.full_path_name());
     }
@@ -9405,10 +9447,13 @@ bool MeshVisitor(const tinyusdz::Path &abs_path, const tinyusdz::Prim &prim,
       const Material *bound_material{nullptr};
       Path bound_material_path;
 
-      bool ret = visitorEnv->converter->GetBoundMaterialCached(
-          visitorEnv->env->stage, abs_path,
-          /* purpose */ "",
-          &bound_material_path, &bound_material, err);
+      bool ret{false};
+      if (!ResolveBoundMaterial(abs_path,
+                                /* purpose */ "",
+                                &bound_material_path, &bound_material,
+                                &ret)) {
+        return false;
+      }
 
       if (ret && bound_material) {
         int64_t rmaterial_id = -1;
@@ -9458,9 +9503,14 @@ bool MeshVisitor(const tinyusdz::Path &abs_path, const tinyusdz::Prim &prim,
     std::string msg = "Converting cube " +
         std::to_string(visitorEnv->meshes_processed) + "/" +
         std::to_string(visitorEnv->meshes_total);
-    visitorEnv->converter->ReportMeshProgress(
-        visitorEnv->meshes_processed, visitorEnv->meshes_total,
-        abs_path.full_path_name(), msg);
+    if (!visitorEnv->converter->ReportMeshProgress(
+            visitorEnv->meshes_processed, visitorEnv->meshes_total,
+            abs_path.full_path_name(), msg)) {
+      if (err) {
+        (*err) += "Conversion cancelled by user.\n";
+      }
+      return false;
+    }
     DCOUT("[Tydra] Mesh " << visitorEnv->meshes_processed << "/" << visitorEnv->meshes_total
           << " (cube): " << abs_path.full_path_name());
   }
@@ -9477,10 +9527,13 @@ bool MeshVisitor(const tinyusdz::Path &abs_path, const tinyusdz::Prim &prim,
       const Material *bound_material{nullptr};
       Path bound_material_path;
 
-      bool ret = visitorEnv->converter->GetBoundMaterialCached(
-          visitorEnv->env->stage, abs_path,
-          /* purpose */ "",
-          &bound_material_path, &bound_material, err);
+      bool ret{false};
+      if (!ResolveBoundMaterial(abs_path,
+                                /* purpose */ "",
+                                &bound_material_path, &bound_material,
+                                &ret)) {
+        return false;
+      }
 
       if (ret && bound_material) {
         int64_t rmaterial_id = -1;
@@ -9530,9 +9583,14 @@ bool MeshVisitor(const tinyusdz::Path &abs_path, const tinyusdz::Prim &prim,
     std::string msg = "Converting sphere " +
         std::to_string(visitorEnv->meshes_processed) + "/" +
         std::to_string(visitorEnv->meshes_total);
-    visitorEnv->converter->ReportMeshProgress(
-        visitorEnv->meshes_processed, visitorEnv->meshes_total,
-        abs_path.full_path_name(), msg);
+    if (!visitorEnv->converter->ReportMeshProgress(
+            visitorEnv->meshes_processed, visitorEnv->meshes_total,
+            abs_path.full_path_name(), msg)) {
+      if (err) {
+        (*err) += "Conversion cancelled by user.\n";
+      }
+      return false;
+    }
     DCOUT("[Tydra] Mesh " << visitorEnv->meshes_processed << "/" << visitorEnv->meshes_total
           << " (sphere): " << abs_path.full_path_name());
   }
@@ -11397,6 +11455,13 @@ bool RenderSceneConverter::GetBoundMaterialCached(
 
   auto it = _materialBindingCache.find(key);
   if (it != _materialBindingCache.end()) {
+    if (!it->second.error.empty()) {
+      if (err) {
+        (*err) += it->second.error;
+      }
+      return false;
+    }
+
     if (it->second.found) {
       *materialPath = it->second.materialPath;
       *material = it->second.material;
@@ -11404,8 +11469,9 @@ bool RenderSceneConverter::GetBoundMaterialCached(
     return it->second.found;
   }
 
+  std::string local_err;
   bool found = GetBoundMaterial(stage, abs_path, purpose,
-                                materialPath, material, err);
+                                materialPath, material, &local_err);
 
   MaterialBindingCacheEntry entry;
   entry.found = found;
@@ -11413,7 +11479,13 @@ bool RenderSceneConverter::GetBoundMaterialCached(
     entry.materialPath = *materialPath;
     entry.material = *material;
   }
+  entry.error = local_err;
   _materialBindingCache[key] = entry;
+
+  if (!local_err.empty() && err) {
+    (*err) += local_err;
+  }
+
   return found;
 }
 
@@ -11550,7 +11622,10 @@ bool RenderSceneConverter::ConvertToRenderScene(
   _progress_info.materials_total = total_materials;
   _progress_info.message = "Counted " + std::to_string(total_meshes) + " meshes, " +
                            std::to_string(total_materials) + " materials";
-  CallDetailedProgressCallback(_progress_info);
+  if (!CallDetailedProgressCallback(_progress_info)) {
+    PushError("Conversion cancelled by user.\n");
+    return false;
+  }
 
   // 1. Convert Xform
   // 2. Convert Material/Texture
@@ -11565,7 +11640,10 @@ bool RenderSceneConverter::ConvertToRenderScene(
   _progress_info.stage = DetailedProgressInfo::Stage::ConvertingXforms;
   _progress_info.progress = 0.1f;
   _progress_info.message = "Building xform hierarchy";
-  CallDetailedProgressCallback(_progress_info);
+  if (!CallDetailedProgressCallback(_progress_info)) {
+    PushError("Conversion cancelled by user.\n");
+    return false;
+  }
 
   XformNode xform_node;
   if (!BuildXformNodeFromStage(env.stage, &xform_node, env.timecode)) {
@@ -11590,7 +11668,10 @@ bool RenderSceneConverter::ConvertToRenderScene(
   _progress_info.stage = DetailedProgressInfo::Stage::ConvertingMeshes;
   _progress_info.progress = 0.2f;
   _progress_info.message = "Converting meshes and materials";
-  CallDetailedProgressCallback(_progress_info);
+  if (!CallDetailedProgressCallback(_progress_info)) {
+    PushError("Conversion cancelled by user.\n");
+    return false;
+  }
 
   MeshVisitorEnv menv;
   menv.env = &env;
@@ -11662,7 +11743,10 @@ bool RenderSceneConverter::ConvertToRenderScene(
   _progress_info.meshes_processed = menv.meshes_processed;
   _progress_info.message = "Mesh conversion complete (" +
       std::to_string(menv.meshes_processed) + " meshes)";
-  CallDetailedProgressCallback(_progress_info);
+  if (!CallDetailedProgressCallback(_progress_info)) {
+    PushError("Conversion cancelled by user.\n");
+    return false;
+  }
 
   if (!CallProgressCallback(0.7f)) {
     PushError("Conversion cancelled by user.\n");
@@ -11674,7 +11758,10 @@ bool RenderSceneConverter::ConvertToRenderScene(
   // etc.
   //
   _progress_info.message = "Building node hierarchy";
-  CallDetailedProgressCallback(_progress_info);
+  if (!CallDetailedProgressCallback(_progress_info)) {
+    PushError("Conversion cancelled by user.\n");
+    return false;
+  }
 
   if (!BuildNodeHierarchy(env, xform_node)) {
     return false;
@@ -11684,7 +11771,10 @@ bool RenderSceneConverter::ConvertToRenderScene(
   _progress_info.stage = DetailedProgressInfo::Stage::ExtractingAnimations;
   _progress_info.progress = 0.85f;
   _progress_info.message = "Hierarchy complete, extracting animations";
-  CallDetailedProgressCallback(_progress_info);
+  if (!CallDetailedProgressCallback(_progress_info)) {
+    PushError("Conversion cancelled by user.\n");
+    return false;
+  }
 
   if (!CallProgressCallback(0.85f)) {
     PushError("Conversion cancelled by user.\n");
@@ -11848,7 +11938,10 @@ bool RenderSceneConverter::ConvertToRenderScene(
   _progress_info.stage = DetailedProgressInfo::Stage::Complete;
   _progress_info.progress = 1.0f;
   _progress_info.message = "Conversion complete";
-  CallDetailedProgressCallback(_progress_info);
+  if (!CallDetailedProgressCallback(_progress_info)) {
+    PushError("Conversion cancelled by user.\n");
+    return false;
+  }
   CallProgressCallback(1.0f);
 
   DCOUT("[Tydra] Conversion complete: " << scene->meshes.size() << " meshes, "

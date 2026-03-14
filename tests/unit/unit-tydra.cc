@@ -35,6 +35,25 @@ size_t CountName(const std::vector<std::string> &names,
   return size_t(std::count(names.begin(), names.end(), name));
 }
 
+struct CancelOnMeshProgressState {
+  size_t mesh_progress_calls{0};
+};
+
+bool CancelOnFirstMeshProgress(const tydra::DetailedProgressInfo &info,
+                               void *userptr) {
+  auto *state = reinterpret_cast<CancelOnMeshProgressState *>(userptr);
+  if (!state) {
+    return false;
+  }
+
+  if (info.stage == tydra::DetailedProgressInfo::Stage::ConvertingMeshes) {
+    state->mesh_progress_calls++;
+    return false;
+  }
+
+  return true;
+}
+
 }  // namespace
 
 void tydra_connection_validation_test(void) {
@@ -719,4 +738,85 @@ void tydra_blendshape_resolution_test(void) {
     TEST_CHECK(converter.GetError().find("/MissingBlendShape") !=
                std::string::npos);
   }
+}
+
+void tydra_material_binding_validation_test(void) {
+  Stage stage;
+
+  Xform not_material;
+  Prim not_material_prim("NotMaterial", not_material);
+
+  GeomMesh mesh;
+  mesh.points = Animatable<std::vector<value::point3f>>(
+      std::vector<value::point3f>{{0.0f, 0.0f, 0.0f},
+                                  {1.0f, 0.0f, 0.0f},
+                                  {0.0f, 1.0f, 0.0f}});
+  mesh.faceVertexCounts = Animatable<std::vector<int32_t>>(
+      std::vector<int32_t>{3});
+  mesh.faceVertexIndices = Animatable<std::vector<int32_t>>(
+      std::vector<int32_t>{0, 1, 2});
+
+  Relationship invalid_material_rel;
+  invalid_material_rel.set(Path("/NotMaterial", ""));
+  mesh.set_materialBinding(invalid_material_rel);
+
+  Prim mesh_prim("MeshPrim", mesh);
+
+  TEST_CHECK(stage.add_root_prim(std::move(mesh_prim)));
+  TEST_CHECK(stage.add_root_prim(std::move(not_material_prim)));
+
+  tydra::RenderSceneConverter converter;
+  Path material_path;
+  const Material *material{nullptr};
+  std::string err;
+
+  TEST_CHECK(!converter.GetBoundMaterialCached(stage, Path("/MeshPrim", ""), "",
+                                               &material_path, &material, &err));
+  TEST_CHECK(err.find("/NotMaterial") != std::string::npos);
+  TEST_CHECK(err.find("not a Material Prim") != std::string::npos);
+
+  std::string cached_err;
+  material_path = Path();
+  material = nullptr;
+  TEST_CHECK(!converter.GetBoundMaterialCached(stage, Path("/MeshPrim", ""), "",
+                                               &material_path, &material,
+                                               &cached_err));
+  TEST_CHECK(cached_err.find("/NotMaterial") != std::string::npos);
+  TEST_CHECK(cached_err.find("not a Material Prim") != std::string::npos);
+
+  tydra::RenderSceneConverterEnv env(stage);
+  tydra::RenderScene scene;
+  TEST_CHECK(!converter.ConvertToRenderScene(env, &scene));
+  TEST_CHECK(converter.GetError().find("/NotMaterial") != std::string::npos);
+  TEST_CHECK(converter.GetError().find("not a Material Prim") !=
+             std::string::npos);
+}
+
+void tydra_progress_cancellation_test(void) {
+  Stage stage;
+
+  GeomMesh mesh;
+  mesh.points = Animatable<std::vector<value::point3f>>(
+      std::vector<value::point3f>{{0.0f, 0.0f, 0.0f},
+                                  {1.0f, 0.0f, 0.0f},
+                                  {0.0f, 1.0f, 0.0f}});
+  mesh.faceVertexCounts = Animatable<std::vector<int32_t>>(
+      std::vector<int32_t>{3});
+  mesh.faceVertexIndices = Animatable<std::vector<int32_t>>(
+      std::vector<int32_t>{0, 1, 2});
+
+  Prim mesh_prim("MeshPrim", mesh);
+  TEST_CHECK(stage.add_root_prim(std::move(mesh_prim)));
+
+  tydra::RenderSceneConverterEnv env(stage);
+  tydra::RenderScene scene;
+  tydra::RenderSceneConverter converter;
+  CancelOnMeshProgressState state;
+
+  converter.SetDetailedProgressCallback(CancelOnFirstMeshProgress, &state);
+
+  TEST_CHECK(!converter.ConvertToRenderScene(env, &scene));
+  TEST_CHECK(state.mesh_progress_calls == 1);
+  TEST_CHECK(converter.GetError().find("Conversion cancelled by user") !=
+             std::string::npos);
 }
