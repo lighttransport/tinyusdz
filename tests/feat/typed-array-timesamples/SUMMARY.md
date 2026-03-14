@@ -8,7 +8,7 @@ Successfully implemented `TypedArray<T>` support for TimeSamples array values wi
 
 ### 1. Updated Deduplication Cache (`src/crate-reader.hh`)
 
-Replaced `std::vector<T>` with `TypedArray<T>` for binary-serializable array dedup maps:
+Replaced `std::vector<T>` with `TypedArray<T>` for binary-storage array dedup maps:
 
 ```cpp
 // Before:
@@ -42,7 +42,7 @@ Added TypedArray overloads for array sample helpers:
 
 ```cpp
 template <typename T>
-typename std::enable_if<is_pod_type<T>::value, bool>::type
+typename std::enable_if<value::uses_binary_timesample_array_storage_v<T>, bool>::type
 add_array_sample_to_timesamples(value::TimeSamples *d, double time,
                                 const TypedArray<T> &arrval, std::string *err,
                                 size_t expected_total_samples = 0);
@@ -76,7 +76,7 @@ Modified array unpacking to use TypedArray:
 
 ### 3. Code Quality
 - **Backward compatible**: All existing `std::vector<T>` overloads continue to work
-- **Type safe**: Template specialization ensures binary-serializable types only
+- **Type safe**: Template specialization ensures binary-storage element types only
 - **Future ready**: TypedArray supports mmap views for zero-copy access
 
 ## Test Coverage
@@ -89,7 +89,7 @@ make test
 ```
 
 **Test Cases:**
-1. TypedArray deduplication for binary-serializable array types
+1. TypedArray deduplication for binary-storage array types
 2. std::vector backward compatibility
 3. Scalar value storage
 4. Multiple type support (int, uint, int64, uint64, float, double)
