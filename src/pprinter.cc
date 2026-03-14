@@ -1436,8 +1436,8 @@ std::string print_typed_token_attr(const TypedAttributeWithFallback<T> &attr,
 
 std::string print_timesamples(const value::TimeSamples &v,
                               const uint32_t indent) {
-  // Use the new pprint_timesamples function from timesamples-pprint
-  // which handles both POD and non-POD cases efficiently
+  // Use the new pprint_timesamples function from timesamples-pprint,
+  // which handles both binary and generic value-backed cases efficiently.
   std::string result = pprint_timesamples(v, indent);
 
   // Add a trailing newline if not present (for consistency with other pprinter functions)

@@ -60,4 +60,4 @@ Key features:
 - Zero-copy access to array data
 - Returns const-qualified views for safety
 - Handles blocked values (ValueBlock) by returning empty views
-- Works with multiple storage types (TypedArray, std::vector, raw POD arrays)
+- Works with multiple storage types (TypedArray, std::vector, raw binary-serializable arrays)
