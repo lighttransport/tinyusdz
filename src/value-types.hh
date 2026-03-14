@@ -1934,7 +1934,7 @@ namespace value {
 /// any_value — Purpose-built type-erased container for USD value types.
 ///
 /// Replaces linb::any with a design tailored for TinyUSDZ:
-/// - 48-byte SBO buffer (avoids heap for string, vector control blocks, most POD)
+/// - 48-byte SBO buffer (avoids heap for string, vector control blocks, most binary-serializable values)
 /// - Direct type_id/underlying_type_id members (no vtable indirection for type queries)
 /// - 3-op dispatch (destroy, copy, move) instead of 9-entry vtable
 ///
