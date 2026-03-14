@@ -2362,15 +2362,15 @@ int64_t CrateWriter::WriteValueData(const crate::CrateValue& value, std::string*
         bool is_dedup_candidate = false;
         std::vector<char> value_bytes;
 
-        // Byte-packing macros for deduplication candidate detection
-#define DEDUP_POD_ARRAY(Type) \
+        // Byte-packing macros for binary-storage deduplication candidate detection
+#define DEDUP_BINARY_ARRAY(Type) \
         else if (auto* arr = crate_value.as<std::vector<Type>>()) { \
           is_dedup_candidate = true; \
           size_t bsz = arr->size() * sizeof(Type); \
           value_bytes.resize(bsz); \
           std::memcpy(value_bytes.data(), arr->data(), bsz); }
 
-#define DEDUP_POD_SCALAR(Type) \
+#define DEDUP_BINARY_SCALAR(Type) \
         else if (auto* ptr = crate_value.as<Type>()) { \
           is_dedup_candidate = true; \
           value_bytes.resize(sizeof(Type)); \
@@ -2382,11 +2382,11 @@ int64_t CrateWriter::WriteValueData(const crate::CrateValue& value, std::string*
           value_bytes.resize(bsz);
           std::memcpy(value_bytes.data(), arr->data(), bsz);
         }
-        DEDUP_POD_ARRAY(double)
-        DEDUP_POD_ARRAY(int32_t)
-        DEDUP_POD_ARRAY(uint32_t)
-        DEDUP_POD_ARRAY(int64_t)
-        DEDUP_POD_ARRAY(uint64_t)
+        DEDUP_BINARY_ARRAY(double)
+        DEDUP_BINARY_ARRAY(int32_t)
+        DEDUP_BINARY_ARRAY(uint32_t)
+        DEDUP_BINARY_ARRAY(int64_t)
+        DEDUP_BINARY_ARRAY(uint64_t)
         // String/token arrays: variable-length serialization (not macroable)
         else if (auto* string_arr = crate_value.as<std::vector<std::string>>()) {
           is_dedup_candidate = true;
@@ -2414,25 +2414,25 @@ int64_t CrateWriter::WriteValueData(const crate::CrateValue& value, std::string*
           }
         }
         // Vector arrays
-        DEDUP_POD_ARRAY(value::float3)
-        DEDUP_POD_ARRAY(value::double3)
-        DEDUP_POD_ARRAY(value::float2)
-        DEDUP_POD_ARRAY(value::float4)
+        DEDUP_BINARY_ARRAY(value::float3)
+        DEDUP_BINARY_ARRAY(value::double3)
+        DEDUP_BINARY_ARRAY(value::float2)
+        DEDUP_BINARY_ARRAY(value::float4)
         // Scalar types (matrix, quaternion, vector)
-        DEDUP_POD_SCALAR(value::matrix2d)
-        DEDUP_POD_SCALAR(value::matrix3d)
-        DEDUP_POD_SCALAR(value::matrix4d)
-        DEDUP_POD_SCALAR(value::quatf)
-        DEDUP_POD_SCALAR(value::quatd)
-        DEDUP_POD_SCALAR(value::quath)
-        DEDUP_POD_SCALAR(value::float3)
-        DEDUP_POD_SCALAR(value::double3)
-        DEDUP_POD_SCALAR(value::float2)
-        DEDUP_POD_SCALAR(value::float4)
-        DEDUP_POD_SCALAR(value::double2)
-        DEDUP_POD_SCALAR(value::double4)
-#undef DEDUP_POD_ARRAY
-#undef DEDUP_POD_SCALAR
+        DEDUP_BINARY_SCALAR(value::matrix2d)
+        DEDUP_BINARY_SCALAR(value::matrix3d)
+        DEDUP_BINARY_SCALAR(value::matrix4d)
+        DEDUP_BINARY_SCALAR(value::quatf)
+        DEDUP_BINARY_SCALAR(value::quatd)
+        DEDUP_BINARY_SCALAR(value::quath)
+        DEDUP_BINARY_SCALAR(value::float3)
+        DEDUP_BINARY_SCALAR(value::double3)
+        DEDUP_BINARY_SCALAR(value::float2)
+        DEDUP_BINARY_SCALAR(value::float4)
+        DEDUP_BINARY_SCALAR(value::double2)
+        DEDUP_BINARY_SCALAR(value::double4)
+#undef DEDUP_BINARY_ARRAY
+#undef DEDUP_BINARY_SCALAR
 
         if (is_dedup_candidate && !value_bytes.empty()) {
           auto it = array_dedup_map_.find(value_bytes);
