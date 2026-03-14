@@ -98,6 +98,7 @@ TEST_LIST = {
   { "tydra_memory_tracking_test", tydra_memory_tracking_test },
   { "tydra_scene_access_helper_test", tydra_scene_access_helper_test },
   { "tydra_shader_scene_access_test", tydra_shader_scene_access_test },
+  { "tydra_skel_scene_access_test", tydra_skel_scene_access_test },
   // Temporarily disabled - unit-dedup needs API updates
   //{ "dedup_float_array_test", dedup_float_array_test },
   //{ "dedup_double_array_test", dedup_double_array_test },
