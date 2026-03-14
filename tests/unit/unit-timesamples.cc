@@ -340,6 +340,247 @@ void timesamples_test(void) {
     }
   }
 
+  // Unified small-POD storage should keep values aligned with sorted times.
+  {
+    value::TimeSamples ts;
+
+    TEST_CHECK(ts.add_sample_pod<float>(5.0, 50.0f));
+    TEST_CHECK(ts.add_pod_blocked_sample<float>(3.0));
+    TEST_CHECK(ts.add_sample_pod<float>(1.0, 10.0f));
+    TEST_CHECK(ts.add_sample_pod<float>(4.0, 40.0f));
+
+    const auto& samples = ts.get_samples();
+    TEST_CHECK(samples.size() == 4);
+    TEST_CHECK(math::is_close(samples[0].t, 1.0));
+    TEST_CHECK(math::is_close(samples[1].t, 3.0));
+    TEST_CHECK(math::is_close(samples[2].t, 4.0));
+    TEST_CHECK(math::is_close(samples[3].t, 5.0));
+    TEST_CHECK(samples[1].blocked == true);
+
+    const float* v0 = samples[0].value.as<float>();
+    const float* v2 = samples[2].value.as<float>();
+    const float* v3 = samples[3].value.as<float>();
+    TEST_CHECK(v0 != nullptr);
+    TEST_CHECK(v2 != nullptr);
+    TEST_CHECK(v3 != nullptr);
+    if (v0) TEST_CHECK(math::is_close(*v0, 10.0f));
+    if (v2) TEST_CHECK(math::is_close(*v2, 40.0f));
+    if (v3) TEST_CHECK(math::is_close(*v3, 50.0f));
+
+    TEST_CHECK(ts.has_sample_at(4.0));
+    value::TimeSamples::Sample* sample = nullptr;
+    TEST_CHECK(ts.get_sample_at(4.0, &sample));
+    TEST_CHECK(sample != nullptr);
+    if (sample) {
+      const float* sample_value = sample->value.as<float>();
+      TEST_CHECK(sample_value != nullptr);
+      if (sample_value) TEST_CHECK(math::is_close(*sample_value, 40.0f));
+    }
+
+    auto value_opt = ts.get_value(2);
+    TEST_CHECK(value_opt.has_value());
+    if (value_opt.has_value()) {
+      const float* sample_value = value_opt.value().as<float>();
+      TEST_CHECK(sample_value != nullptr);
+      if (sample_value) TEST_CHECK(math::is_close(*sample_value, 40.0f));
+    }
+
+    // Reconstruct once, append again, and verify the cache is invalidated.
+    TEST_CHECK(ts.add_sample_pod<float>(2.0, 20.0f));
+    const auto& updated = ts.get_samples();
+    TEST_CHECK(updated.size() == 5);
+    TEST_CHECK(math::is_close(updated[0].t, 1.0));
+    TEST_CHECK(math::is_close(updated[1].t, 2.0));
+    const float* v1 = updated[1].value.as<float>();
+    TEST_CHECK(v1 != nullptr);
+    if (v1) TEST_CHECK(math::is_close(*v1, 20.0f));
+  }
+
+  // Variable-sized unified arrays should preserve per-sample element counts.
+  {
+    value::TimeSamples ts;
+
+    TEST_CHECK(ts.add_array_sample_pod<float>(5.0, std::vector<float>{5.0f, 6.0f, 7.0f, 8.0f}));
+    TEST_CHECK(ts.add_array_sample_pod<float>(1.0, std::vector<float>{1.0f, 2.0f}));
+    TEST_CHECK(ts.add_array_sample_pod<float>(3.0, std::vector<float>{3.0f, 4.0f, 5.0f}));
+
+    (void)ts.get_time(0);
+
+    TEST_CHECK(ts.get_array_size() == 0);
+    TEST_CHECK(ts.get_array_count(0) == 2);
+    TEST_CHECK(ts.get_array_count(1) == 3);
+    TEST_CHECK(ts.get_array_count(2) == 4);
+
+    std::vector<float> out;
+    TEST_CHECK(ts.get_vector_at_time<float>(1.0, &out));
+    TEST_CHECK(out.size() == 2);
+    if (out.size() == 2) {
+      TEST_CHECK(math::is_close(out[0], 1.0f));
+      TEST_CHECK(math::is_close(out[1], 2.0f));
+    }
+
+    TEST_CHECK(ts.get_vector_at_time<float>(3.0, &out));
+    TEST_CHECK(out.size() == 3);
+    if (out.size() == 3) {
+      TEST_CHECK(math::is_close(out[0], 3.0f));
+      TEST_CHECK(math::is_close(out[2], 5.0f));
+    }
+
+    TEST_CHECK(ts.get_vector_at_time<float>(5.0, &out));
+    TEST_CHECK(out.size() == 4);
+    if (out.size() == 4) {
+      TEST_CHECK(math::is_close(out[0], 5.0f));
+      TEST_CHECK(math::is_close(out[3], 8.0f));
+    }
+
+    const auto& samples = ts.get_samples();
+    TEST_CHECK(samples.size() == 3);
+    if (samples.size() == 3) {
+      const auto* first = samples[0].value.as<std::vector<float>>();
+      const auto* last = samples[2].value.as<std::vector<float>>();
+      TEST_CHECK(first != nullptr);
+      TEST_CHECK(last != nullptr);
+      if (first) {
+        TEST_CHECK(first->size() == 2);
+        if (first->size() == 2) {
+          TEST_CHECK(math::is_close((*first)[0], 1.0f));
+          TEST_CHECK(math::is_close((*first)[1], 2.0f));
+        }
+      }
+      if (last) {
+        TEST_CHECK(last->size() == 4);
+        if (last->size() == 4) {
+          TEST_CHECK(math::is_close((*last)[0], 5.0f));
+          TEST_CHECK(math::is_close((*last)[3], 8.0f));
+        }
+      }
+    }
+
+    auto value_opt = ts.get_value(1);
+    TEST_CHECK(value_opt.has_value());
+    if (value_opt.has_value()) {
+      const auto* middle = value_opt.value().as<std::vector<float>>();
+      TEST_CHECK(middle != nullptr);
+      if (middle) {
+        TEST_CHECK(middle->size() == 3);
+        if (middle->size() == 3) {
+          TEST_CHECK(math::is_close((*middle)[0], 3.0f));
+          TEST_CHECK(math::is_close((*middle)[2], 5.0f));
+        }
+      }
+    }
+  }
+
+  // TypedArray-backed unified storage should keep the TypedArray type id and counts.
+  {
+    value::TimeSamples ts;
+
+    TypedArray<float> late = {7.0f, 8.0f};
+    TypedArray<float> early = {1.0f, 2.0f, 3.0f};
+
+    TEST_CHECK(ts.add_array_sample_pod<float>(5.0, late));
+    TEST_CHECK(ts.add_array_sample_pod<float>(1.0, early));
+
+    TEST_CHECK(ts.is_typed_array());
+    TEST_CHECK(!ts.is_stl_array());
+    TEST_CHECK(ts.type_id() == value::TypeTraits<TypedArray<float>>::type_id());
+
+    TypedArray<float> out;
+    TEST_CHECK(ts.get_typed_array_at_time<float>(1.0, &out));
+    TEST_CHECK(out.size() == 3);
+    if (out.size() == 3) {
+      TEST_CHECK(math::is_close(out[0], 1.0f));
+      TEST_CHECK(math::is_close(out[2], 3.0f));
+    }
+
+    auto view = ts.get_typed_array_view_at<float>(1);
+    TEST_CHECK(view.size() == 2);
+    if (view.size() == 2) {
+      TEST_CHECK(math::is_close(view[0], 7.0f));
+      TEST_CHECK(math::is_close(view[1], 8.0f));
+    }
+
+    const auto& samples = ts.get_samples();
+    TEST_CHECK(samples.size() == 2);
+    if (samples.size() == 2) {
+      const auto* first = samples[0].value.as<TypedArray<float>>();
+      const auto* second = samples[1].value.as<TypedArray<float>>();
+      TEST_CHECK(first != nullptr);
+      TEST_CHECK(second != nullptr);
+      if (first) {
+        TEST_CHECK(first->size() == 3);
+        if (first->size() == 3) {
+          TEST_CHECK(math::is_close((*first)[0], 1.0f));
+          TEST_CHECK(math::is_close((*first)[2], 3.0f));
+        }
+      }
+      if (second) {
+        TEST_CHECK(second->size() == 2);
+        if (second->size() == 2) {
+          TEST_CHECK(math::is_close((*second)[0], 7.0f));
+          TEST_CHECK(math::is_close((*second)[1], 8.0f));
+        }
+      }
+    }
+
+    auto value_opt = ts.get_value(0);
+    TEST_CHECK(value_opt.has_value());
+    if (value_opt.has_value()) {
+      const auto* first = value_opt.value().as<TypedArray<float>>();
+      TEST_CHECK(first != nullptr);
+      if (first) {
+        TEST_CHECK(first->size() == 3);
+      }
+    }
+  }
+
+  // Value-array storage should sort times and keep per-sample array sizes aligned.
+  {
+    value::TimeSamples ts;
+
+    TEST_CHECK(ts.add_value_array_sample(5.0, value::Value(std::vector<float>{5.0f, 6.0f, 7.0f, 8.0f})));
+    TEST_CHECK(ts.add_value_array_sample(1.0, value::Value(std::vector<float>{1.0f, 2.0f})));
+    TEST_CHECK(ts.add_dedup_sample(3.0, 1));
+
+    (void)ts.get_samples();
+
+    TEST_CHECK(ts.get_array_count(0) == 2);
+    TEST_CHECK(ts.get_array_count(1) == 2);
+    TEST_CHECK(ts.get_array_count(2) == 4);
+
+    std::vector<float> out;
+    TEST_CHECK(ts.get_vector_at_time<float>(1.0, &out));
+    TEST_CHECK(out.size() == 2);
+    TEST_CHECK(ts.get_vector_at_time<float>(3.0, &out));
+    TEST_CHECK(out.size() == 2);
+    if (out.size() == 2) {
+      TEST_CHECK(math::is_close(out[0], 1.0f));
+      TEST_CHECK(math::is_close(out[1], 2.0f));
+    }
+    TEST_CHECK(ts.get_vector_at_time<float>(5.0, &out));
+    TEST_CHECK(out.size() == 4);
+
+    const auto& samples = ts.get_samples();
+    TEST_CHECK(samples.size() == 3);
+    TEST_CHECK(math::is_close(samples[0].t, 1.0));
+    TEST_CHECK(math::is_close(samples[1].t, 3.0));
+    TEST_CHECK(math::is_close(samples[2].t, 5.0));
+  }
+
+  // Direct TypedTimeSamples held lookup should return the previous sample and hold after the end.
+  {
+    TypedTimeSamples<float> ts;
+    ts.add_sample(10.0, 3.0f);
+    ts.add_sample(0.0, 1.0f);
+
+    float out = 0.0f;
+    TEST_CHECK(ts.get(&out, 5.0, value::TimeSampleInterpolationType::Held));
+    TEST_CHECK(math::is_close(out, 1.0f));
+
+    TEST_CHECK(ts.get(&out, 50.0, value::TimeSampleInterpolationType::Held));
+    TEST_CHECK(math::is_close(out, 3.0f));
+  }
+
   // Test empty TimeSamples
   {
     value::TimeSamples ts;

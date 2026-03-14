@@ -1274,15 +1274,13 @@ size_t Value::estimate_memory_usage() const {
 }
 
 bool TimeSamples::has_sample_at(const double t) const {
-  if (_dirty) {
-    update();
-  }
+  const auto &samples = get_samples();
 
-  const auto it = std::find_if(_samples.begin(), _samples.end(), [&t](const Sample &s) {
+  const auto it = std::find_if(samples.begin(), samples.end(), [&t](const Sample &s) {
     return math::is_close(t, s.t);
   });
 
-  return (it != _samples.end());
+  return (it != samples.end());
 }
 
 bool TimeSamples::get_sample_at(const double t, Sample **dst) {
@@ -1290,15 +1288,13 @@ bool TimeSamples::get_sample_at(const double t, Sample **dst) {
     return false;
   }
 
-  if (_dirty) {
-    update();
-  }
+  auto &sample_vec = samples();
 
-  const auto it = std::find_if(_samples.begin(), _samples.end(), [&t](const Sample &sample) {
+  const auto it = std::find_if(sample_vec.begin(), sample_vec.end(), [&t](const Sample &sample) {
     return math::is_close(t, sample.t);
   });
 
-  if (it != _samples.end()) {
+  if (it != sample_vec.end()) {
     (*dst) = const_cast<Sample*>(&(*it));
     return true;  // Found the sample!
   }
