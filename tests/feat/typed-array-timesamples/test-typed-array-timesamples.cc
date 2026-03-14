@@ -29,19 +29,19 @@ bool test_typed_array_dedup() {
 
     // Add the same array at different times
     std::string err;
-    bool ret = ts.add_array_sample_pod<T>(0.0, arr, &err);
+    bool ret = ts.add_array_sample<T>(0.0, arr, &err);
     if (!ret) {
         std::cerr << "Failed to add array sample at t=0.0: " << err << std::endl;
         return false;
     }
 
-    ret = ts.add_array_sample_pod<T>(1.0, arr, &err);
+    ret = ts.add_array_sample<T>(1.0, arr, &err);
     if (!ret) {
         std::cerr << "Failed to add array sample at t=1.0: " << err << std::endl;
         return false;
     }
 
-    ret = ts.add_array_sample_pod<T>(2.0, arr, &err);
+    ret = ts.add_array_sample<T>(2.0, arr, &err);
     if (!ret) {
         std::cerr << "Failed to add array sample at t=2.0: " << err << std::endl;
         return false;
@@ -70,7 +70,7 @@ bool test_vector_compatibility() {
     }
 
     std::string err;
-    bool ret = ts.add_array_sample_pod<T>(0.0, vec, &err);
+    bool ret = ts.add_array_sample<T>(0.0, vec, &err);
     if (!ret) {
         std::cerr << "Failed to add vector sample: " << err << std::endl;
         return false;
@@ -96,13 +96,13 @@ bool test_scalar_values() {
     T val1 = static_cast<T>(42);
     T val2 = static_cast<T>(84);
 
-    bool ret = ts.add_sample_pod<T>(0.0, val1, &err);
+    bool ret = ts.add_sample<T>(0.0, val1, &err);
     if (!ret) {
         std::cerr << "Failed to add scalar sample at t=0.0: " << err << std::endl;
         return false;
     }
 
-    ret = ts.add_sample_pod<T>(1.0, val2, &err);
+    ret = ts.add_sample<T>(1.0, val2, &err);
     if (!ret) {
         std::cerr << "Failed to add scalar sample at t=1.0: " << err << std::endl;
         return false;
