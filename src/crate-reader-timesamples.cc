@@ -558,20 +558,18 @@ add_array_sample_to_timesamples(value::TimeSamples *d, double time,
                                 size_t expected_total_samples = 0,
                                 const crate::ValueRep *vrep = nullptr) {
   if constexpr (std::is_same<T, bool>::value) {
-    if (d->is_using_binary_storage()) {
-      if (vrep) {
-        auto key = std::make_pair(static_cast<void*>(d), vrep->GetPayload());
-        auto& dedup_map = get_timesamples_dedup_map();
-        auto it = dedup_map.find(key);
-        if (it != dedup_map.end()) {
-          return d->add_dedup_bool_array_sample(time, it->second, err);
-        }
-
-        dedup_map[key] = d->size();
+    if (vrep) {
+      auto key = std::make_pair(static_cast<void*>(d), vrep->GetPayload());
+      auto& dedup_map = get_timesamples_dedup_map();
+      auto it = dedup_map.find(key);
+      if (it != dedup_map.end()) {
+        return d->add_dedup_sample(time, it->second, err);
       }
+
+      dedup_map[key] = d->size();
     }
 
-    return d->add_array_sample<bool>(time, arrval, err, expected_total_samples);
+    return d->add_sample(time, value::Value(arrval), err);
   } else if constexpr (value::is_binary_serializable_v<T>) {
     if (d->is_using_binary_storage()) {
     // Check if this array valueRep has been seen before in this TimeSamples
@@ -858,8 +856,8 @@ bool CrateReader::UnpackTimeSampleValue_BOOL(double t,
       _dedup_array_cache[rep] = current_index;
       DCOUT("Caching BOOL array at sample index " << current_index);
 
-      // Use value::Value array storage with dedup support (move, no copy)
-      if (!dst.add_value_array_sample(t, value::Value(std::move(v_bool)), &_err)) {
+      // Bool arrays stay on the generic Value path even in unified TimeSamples.
+      if (!dst.add_sample(t, value::Value(std::move(v_bool)), &_err)) {
         PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add sample to TimeSamples.");
       }
     }
