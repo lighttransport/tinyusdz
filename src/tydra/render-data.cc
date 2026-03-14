@@ -5401,14 +5401,14 @@ bool RenderSceneConverter::ConvertMesh(
           skelPath = mesh.skeleton.value().targetPath;
           hasSkelPath = true;
         } else if (mesh.skeleton.value().is_pathvector()) {
-          // Use the first one
-          if (mesh.skeleton.value().targetPathVector.size()) {
+          const size_t target_count = mesh.skeleton.value().targetPathVector.size();
+          if (target_count == 1) {
             skelPath = mesh.skeleton.value().targetPathVector[0];
             hasSkelPath = true;
           } else {
             PUSH_ERROR_AND_RETURN(fmt::format(
-                "`skel:skeleton` has invalid definition for {}.",
-                abs_prim_path.full_path_name()));
+                "`skel:skeleton` must have exactly one target for {}, but got {}.",
+                abs_prim_path.full_path_name(), target_count));
           }
         } else {
           PUSH_ERROR_AND_RETURN(fmt::format(
@@ -8752,16 +8752,6 @@ bool RenderSceneConverter::ConvertMaterial(const RenderSceneConverterEnv &env,
       }
       surfacePath = paths[0];
     } else {
-      // May be PhysicsMaterial?
-      // Create dummy material
-
-      PUSH_WARN(fmt::format("{}'s outputs:surface isn't authored, so not a valid Material/Shader. Create a default Material\n",
-                      mat_abs_path.full_path_name()));
-
-
-      (*rmat_out) = rmat;
-      return true;
-
       PUSH_ERROR_AND_RETURN(
           fmt::format("{}'s outputs:surface isn't authored.\n",
                       mat_abs_path.full_path_name()));
