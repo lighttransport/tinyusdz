@@ -655,6 +655,65 @@ void timesamples_test(void) {
     }
   }
 
+  // Bool scalars should stay on the generic Value path instead of binary storage.
+  {
+    value::TimeSamples ts;
+    std::string err;
+
+    TEST_CHECK(ts.add_sample<bool>(3.0, true, &err));
+    TEST_CHECK(ts.add_blocked_sample<bool>(1.0, &err));
+    TEST_CHECK(!ts.is_using_binary_storage());
+    TEST_CHECK(ts.type_id() == value::TypeTraits<bool>::type_id());
+
+    bool out = false;
+    TEST_CHECK(ts.get(&out, 3.0, value::TimeSampleInterpolationType::Held));
+    TEST_CHECK(out == true);
+
+    const auto& samples = ts.get_samples();
+    TEST_CHECK(samples.size() == 2);
+    if (samples.size() == 2) {
+      TEST_CHECK(samples[0].blocked == true);
+      TEST_CHECK(samples[1].blocked == false);
+      const bool* bool_value = samples[1].value.as<bool>();
+      TEST_CHECK(bool_value != nullptr);
+      if (bool_value) {
+        TEST_CHECK(*bool_value == true);
+      }
+    }
+  }
+
+  // Bool arrays should use the generic Value path and generic dedup.
+  {
+    value::TimeSamples ts;
+    std::string err;
+    std::vector<bool> authored = {true, false, true};
+
+    TEST_CHECK(ts.add_array_sample<bool>(1.0, authored, &err));
+    TEST_CHECK(ts.add_dedup_sample(3.0, 0, &err));
+    TEST_CHECK(!ts.is_using_binary_storage());
+    TEST_CHECK(ts.type_id() == value::TypeTraits<std::vector<bool>>::type_id());
+
+    std::vector<bool> out;
+    bool blocked = true;
+    TEST_CHECK(ts.get_vector_at_time<bool>(1.0, &out, &blocked));
+    TEST_CHECK(blocked == false);
+    TEST_CHECK(out.size() == 3);
+    if (out.size() == 3) {
+      TEST_CHECK(out[0] == true);
+      TEST_CHECK(out[1] == false);
+      TEST_CHECK(out[2] == true);
+    }
+
+    TEST_CHECK(ts.get_vector_at_time<bool>(3.0, &out, &blocked));
+    TEST_CHECK(blocked == false);
+    TEST_CHECK(out.size() == 3);
+    if (out.size() == 3) {
+      TEST_CHECK(out[0] == true);
+      TEST_CHECK(out[1] == false);
+      TEST_CHECK(out[2] == true);
+    }
+  }
+
   // Value-array storage should sort times and keep per-sample array sizes aligned.
   {
     value::TimeSamples ts;
