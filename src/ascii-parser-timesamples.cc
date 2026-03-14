@@ -75,7 +75,7 @@
 #include "tinyusdz.hh"
 #include "value-pprint.hh"
 #include "value-types.hh"
-#include "timesamples.hh"  // For PODTimeSamples
+#include "timesamples.hh"  // For unified binary storage
 //
 #include "common-macros.inc"
 
@@ -83,19 +83,17 @@ namespace tinyusdz {
 
 namespace ascii {
 
-// Templated function to parse typed TimeSamples for POD types
+// Templated function to parse typed TimeSamples for binary-serializable types.
 template<typename T>
 bool AsciiParser::ParseTypedTimeSamples(value::TimeSamples *ts_out) {
-  // Check if T is POD
-  if (!(std::is_trivial<T>::value && std::is_standard_layout<T>::value)) {
-    // Non-POD type - return false to use fallback
+  if (!value::IsBinarySerializableType(value::TypeTraits<T>::type_id())) {
     return false;
   }
   if (!ts_out) {
     return false;
   }
 
-  // Try to initialize with POD storage
+  // Try to initialize with unified binary storage.
   if (!ts_out->init(value::TypeTraits<T>::type_id())) {
     // Already initialized with different type
     return false;
@@ -145,7 +143,7 @@ bool AsciiParser::ParseTypedTimeSamples(value::TimeSamples *ts_out) {
     // Check for None/ValueBlock
     if (MaybeNone()) {
       std::string err;
-      if (!ts_out->add_pod_blocked_sample<T>(timeVal, &err)) {
+      if (!ts_out->add_blocked_sample<T>(timeVal, &err)) {
         if (!err.empty()) {
           PushError(err);
         }
@@ -160,7 +158,7 @@ bool AsciiParser::ParseTypedTimeSamples(value::TimeSamples *ts_out) {
       }
 
       std::string err;
-      if (!ts_out->add_pod_sample(timeVal, typed_val, &err)) {
+      if (!ts_out->add_sample(timeVal, typed_val, &err)) {
         if (!err.empty()) {
           PushError(err);
         }
@@ -353,7 +351,7 @@ bool AsciiParser::ParseTimeSampleValue(const std::string &type_name, value::Valu
 bool AsciiParser::ParseTimeSamples(const std::string &type_name,
                                    value::TimeSamples *ts_out) {
 
-  // Get type_id to check if it's a POD type
+  // Get type_id to check whether unified binary storage can be used.
   nonstd::optional<uint32_t> type_id = value::TryGetTypeId(type_name);
   if (!type_id) {
     PUSH_ERROR_AND_RETURN("Unknown type for timeSamples: " + type_name);
@@ -365,66 +363,63 @@ bool AsciiParser::ParseTimeSamples(const std::string &type_name,
     ts_out->clear();
   }
 
-  // Try optimized path for POD types first
-  // IMPORTANT: Save cursor position BEFORE attempting POD path
-  // The POD path will consume the '{' if it tries to parse,
+  // Try optimized binary-serializable parsing first.
+  // IMPORTANT: Save cursor position BEFORE attempting binary-storage path
+  // The typed path will consume the '{' if it tries to parse,
   // but we need to restore position for the generic fallback path
   uint64_t saved_cursor = CurrLoc();
-#define TRY_POD_TYPE(__type)                                        \
+#define TRY_BINARY_TYPE(__type)                                     \
   if (type_id.value() == value::TypeTraits<__type>::type_id()) {   \
     if (ParseTypedTimeSamples<__type>(ts_out)) {                    \
       return true;                                                  \
     }                                                                \
-    /* POD path failed - restore cursor to original position */ \
+    /* typed path failed - restore cursor to original position */    \
     /* so the generic fallback can parse from the beginning */ \
     SeekTo(saved_cursor);                                           \
   }
 
-  // Try POD types with optimized parsing
-  // Note: only truly POD types - those that are trivial and standard layout
-  TRY_POD_TYPE(bool)
-  TRY_POD_TYPE(int32_t)
-  TRY_POD_TYPE(uint32_t)
-  TRY_POD_TYPE(int64_t)
-  TRY_POD_TYPE(uint64_t)
-  TRY_POD_TYPE(value::half)
-  TRY_POD_TYPE(value::half2)
-  TRY_POD_TYPE(value::half3)
-  TRY_POD_TYPE(value::half4)
-  TRY_POD_TYPE(float)
-  TRY_POD_TYPE(value::float2)
-  TRY_POD_TYPE(value::float3)
-  TRY_POD_TYPE(value::float4)
-  TRY_POD_TYPE(double)
-  TRY_POD_TYPE(value::double2)
-  TRY_POD_TYPE(value::double3)
-  TRY_POD_TYPE(value::double4)
-  TRY_POD_TYPE(value::int2)
-  TRY_POD_TYPE(value::int3)
-  TRY_POD_TYPE(value::int4)
-  TRY_POD_TYPE(value::quath)
-  TRY_POD_TYPE(value::quatf)
-  TRY_POD_TYPE(value::quatd)
-  TRY_POD_TYPE(value::color3f)
-  TRY_POD_TYPE(value::color4f)
-  TRY_POD_TYPE(value::color3d)
-  TRY_POD_TYPE(value::color4d)
-  TRY_POD_TYPE(value::vector3f)
-  TRY_POD_TYPE(value::normal3f)
-  TRY_POD_TYPE(value::point3f)
-  TRY_POD_TYPE(value::texcoord2f)
-  TRY_POD_TYPE(value::texcoord3f)
-  // Matrix types - now trivial with default constructors
-  TRY_POD_TYPE(value::matrix2f)
-  TRY_POD_TYPE(value::matrix3f)
-  TRY_POD_TYPE(value::matrix4f)
-  TRY_POD_TYPE(value::matrix2d)
-  TRY_POD_TYPE(value::matrix3d)
-  TRY_POD_TYPE(value::matrix4d)
+  // Try binary-serializable numeric, role, quaternion, and matrix types.
+  TRY_BINARY_TYPE(int32_t)
+  TRY_BINARY_TYPE(uint32_t)
+  TRY_BINARY_TYPE(int64_t)
+  TRY_BINARY_TYPE(uint64_t)
+  TRY_BINARY_TYPE(value::half)
+  TRY_BINARY_TYPE(value::half2)
+  TRY_BINARY_TYPE(value::half3)
+  TRY_BINARY_TYPE(value::half4)
+  TRY_BINARY_TYPE(float)
+  TRY_BINARY_TYPE(value::float2)
+  TRY_BINARY_TYPE(value::float3)
+  TRY_BINARY_TYPE(value::float4)
+  TRY_BINARY_TYPE(double)
+  TRY_BINARY_TYPE(value::double2)
+  TRY_BINARY_TYPE(value::double3)
+  TRY_BINARY_TYPE(value::double4)
+  TRY_BINARY_TYPE(value::int2)
+  TRY_BINARY_TYPE(value::int3)
+  TRY_BINARY_TYPE(value::int4)
+  TRY_BINARY_TYPE(value::quath)
+  TRY_BINARY_TYPE(value::quatf)
+  TRY_BINARY_TYPE(value::quatd)
+  TRY_BINARY_TYPE(value::color3f)
+  TRY_BINARY_TYPE(value::color4f)
+  TRY_BINARY_TYPE(value::color3d)
+  TRY_BINARY_TYPE(value::color4d)
+  TRY_BINARY_TYPE(value::vector3f)
+  TRY_BINARY_TYPE(value::normal3f)
+  TRY_BINARY_TYPE(value::point3f)
+  TRY_BINARY_TYPE(value::texcoord2f)
+  TRY_BINARY_TYPE(value::texcoord3f)
+  TRY_BINARY_TYPE(value::matrix2f)
+  TRY_BINARY_TYPE(value::matrix3f)
+  TRY_BINARY_TYPE(value::matrix4f)
+  TRY_BINARY_TYPE(value::matrix2d)
+  TRY_BINARY_TYPE(value::matrix3d)
+  TRY_BINARY_TYPE(value::matrix4d)
 
-#undef TRY_POD_TYPE
+#undef TRY_BINARY_TYPE
 
-  // Fall back to generic value::Value-based parsing for non-POD types
+  // Fall back to generic value::Value-based parsing for other types.
   // (strings, tokens, paths, arrays, etc.)
   value::TimeSamples ts;
 
@@ -532,7 +527,7 @@ bool AsciiParser::ParseTimeSamples(const std::string &type_name,
   return true;
 }
 
-// Explicit template instantiations for POD types
+// Explicit template instantiations for binary-serializable types
 template bool AsciiParser::ParseTypedTimeSamples<bool>(value::TimeSamples*);
 template bool AsciiParser::ParseTypedTimeSamples<int32_t>(value::TimeSamples*);
 template bool AsciiParser::ParseTypedTimeSamples<uint32_t>(value::TimeSamples*);

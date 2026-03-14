@@ -124,76 +124,6 @@ namespace ascii {
 // -- Deduplication support for array timesamples
 //
 
-// Compare two array values for exact equality
-// Returns true if both values represent the same array content
-// Helper function to check if a type is POD
-// This is a local copy of the function from timesamples.cc
-// TODO: Use this when we can properly dispatch to typed dedup methods
-#ifdef __GNUC__
-__attribute__((unused))
-#endif
-static bool IsPODType(uint32_t type_id) {
-  // Extract the base type by masking off the array bit
-  uint32_t base_type_id = type_id & (~value::TYPE_ID_1D_ARRAY_BIT);
-
-  switch (base_type_id) {
-    case value::TYPE_ID_BOOL:
-    case value::TYPE_ID_INT32:
-    case value::TYPE_ID_UINT32:
-    case value::TYPE_ID_INT64:
-    case value::TYPE_ID_UINT64:
-    case value::TYPE_ID_HALF:
-    case value::TYPE_ID_FLOAT:
-    case value::TYPE_ID_DOUBLE:
-    case value::TYPE_ID_INT2:
-    case value::TYPE_ID_UINT2:
-    case value::TYPE_ID_HALF2:
-    case value::TYPE_ID_FLOAT2:
-    case value::TYPE_ID_DOUBLE2:
-    case value::TYPE_ID_INT3:
-    case value::TYPE_ID_UINT3:
-    case value::TYPE_ID_HALF3:
-    case value::TYPE_ID_FLOAT3:
-    case value::TYPE_ID_DOUBLE3:
-    case value::TYPE_ID_INT4:
-    case value::TYPE_ID_UINT4:
-    case value::TYPE_ID_HALF4:
-    case value::TYPE_ID_FLOAT4:
-    case value::TYPE_ID_DOUBLE4:
-    case value::TYPE_ID_QUATH:
-    case value::TYPE_ID_QUATF:
-    case value::TYPE_ID_QUATD:
-    case value::TYPE_ID_COLOR3F:
-    case value::TYPE_ID_COLOR3D:
-    case value::TYPE_ID_COLOR4F:
-    case value::TYPE_ID_COLOR4D:
-    case value::TYPE_ID_POINT3H:
-    case value::TYPE_ID_POINT3F:
-    case value::TYPE_ID_POINT3D:
-    case value::TYPE_ID_NORMAL3H:
-    case value::TYPE_ID_NORMAL3F:
-    case value::TYPE_ID_NORMAL3D:
-    case value::TYPE_ID_VECTOR3H:
-    case value::TYPE_ID_VECTOR3F:
-    case value::TYPE_ID_VECTOR3D:
-    case value::TYPE_ID_TEXCOORD2H:
-    case value::TYPE_ID_TEXCOORD2F:
-    case value::TYPE_ID_TEXCOORD2D:
-    case value::TYPE_ID_TEXCOORD3H:
-    case value::TYPE_ID_TEXCOORD3F:
-    case value::TYPE_ID_TEXCOORD3D:
-    case value::TYPE_ID_MATRIX2F:
-    case value::TYPE_ID_MATRIX2D:
-    case value::TYPE_ID_MATRIX3F:
-    case value::TYPE_ID_MATRIX3D:
-    case value::TYPE_ID_MATRIX4F:
-    case value::TYPE_ID_MATRIX4D:
-      return true;
-    default:
-      return false;
-  }
-}
-
 // Compare two value::Value objects for array equality
 // Used for deduplication detection in timesample arrays
 static bool arrays_equal(const value::Value &a, const value::Value &b) {
@@ -213,7 +143,7 @@ static bool arrays_equal(const value::Value &a, const value::Value &b) {
     if (vec_a && vec_b) return *vec_a == *vec_b;              \
   }
 
-  // Basic POD types with operator==
+  // Binary-serializable scalar and vector types with operator==
   COMPARE_ARRAY_TYPE(bool)
   // int8_t type is not directly supported in Value type system
   // COMPARE_ARRAY_TYPE(int8_t)
@@ -276,7 +206,7 @@ static bool arrays_equal(const value::Value &a, const value::Value &b) {
   // COMPARE_ARRAY_TYPE(value::texcoord3f)
   // COMPARE_ARRAY_TYPE(value::texcoord3d)
 
-  // Matrix types - now trivial and support POD path with dedup
+  // Matrix types - now trivial and support binary-storage path with dedup
   COMPARE_ARRAY_TYPE(value::matrix2f)
   COMPARE_ARRAY_TYPE(value::matrix2d)
   COMPARE_ARRAY_TYPE(value::matrix3f)
@@ -491,7 +421,7 @@ bool AsciiParser::ParseTimeSamplesOfArray(const std::string &type_name,
 
   value::TimeSamples ts;
 
-  // Initialize TimeSamples with the array type_id early to enable POD storage
+  // Initialize TimeSamples with the array type_id early to enable binary storage
   nonstd::optional<uint32_t> array_type_id = value::TryGetTypeId(type_name);
   if (array_type_id) {
     // Add the array bit to the type_id
@@ -569,8 +499,9 @@ bool AsciiParser::ParseTimeSamplesOfArray(const std::string &type_name,
         if (ref_index != std::numeric_limits<size_t>::max()) {
           DCOUT("Array dedup (ASCII): detected duplicate at index " << ref_index << " for time " << timeVal);
 
-          // Use dedup storage optimization if TimeSamples is using POD storage
-          if (ts.is_using_pod()) {
+          // Reuse unified binary storage when the array element type supports it.
+          if (ts.is_using_binary_storage() &&
+              value::IsBinarySerializableType(value.type_id())) {
             // Get the array type ID to determine which typed dedup method to call
             uint32_t array_tid = value.type_id();
             uint32_t elem_tid = array_tid & (~value::TYPE_ID_1D_ARRAY_BIT);
@@ -581,64 +512,64 @@ bool AsciiParser::ParseTimeSamplesOfArray(const std::string &type_name,
             // Call the appropriate typed dedup method based on element type
             switch (elem_tid) {
               case value::TYPE_ID_INT32:
-                dedup_added = ts.add_dedup_array_sample_pod<int32_t>(timeVal, ref_index, &err);
+                dedup_added = ts.add_dedup_array_sample<int32_t>(timeVal, ref_index, &err);
                 break;
               case value::TYPE_ID_UINT32:
-                dedup_added = ts.add_dedup_array_sample_pod<uint32_t>(timeVal, ref_index, &err);
+                dedup_added = ts.add_dedup_array_sample<uint32_t>(timeVal, ref_index, &err);
                 break;
               case value::TYPE_ID_INT64:
-                dedup_added = ts.add_dedup_array_sample_pod<int64_t>(timeVal, ref_index, &err);
+                dedup_added = ts.add_dedup_array_sample<int64_t>(timeVal, ref_index, &err);
                 break;
               case value::TYPE_ID_UINT64:
-                dedup_added = ts.add_dedup_array_sample_pod<uint64_t>(timeVal, ref_index, &err);
+                dedup_added = ts.add_dedup_array_sample<uint64_t>(timeVal, ref_index, &err);
                 break;
               case value::TYPE_ID_FLOAT:
-                dedup_added = ts.add_dedup_array_sample_pod<float>(timeVal, ref_index, &err);
+                dedup_added = ts.add_dedup_array_sample<float>(timeVal, ref_index, &err);
                 break;
               case value::TYPE_ID_DOUBLE:
-                dedup_added = ts.add_dedup_array_sample_pod<double>(timeVal, ref_index, &err);
+                dedup_added = ts.add_dedup_array_sample<double>(timeVal, ref_index, &err);
                 break;
               case value::TYPE_ID_FLOAT2:
-                dedup_added = ts.add_dedup_array_sample_pod<value::float2>(timeVal, ref_index, &err);
+                dedup_added = ts.add_dedup_array_sample<value::float2>(timeVal, ref_index, &err);
                 break;
               case value::TYPE_ID_FLOAT3:
-                dedup_added = ts.add_dedup_array_sample_pod<value::float3>(timeVal, ref_index, &err);
+                dedup_added = ts.add_dedup_array_sample<value::float3>(timeVal, ref_index, &err);
                 break;
               case value::TYPE_ID_FLOAT4:
-                dedup_added = ts.add_dedup_array_sample_pod<value::float4>(timeVal, ref_index, &err);
+                dedup_added = ts.add_dedup_array_sample<value::float4>(timeVal, ref_index, &err);
                 break;
               case value::TYPE_ID_DOUBLE2:
-                dedup_added = ts.add_dedup_array_sample_pod<value::double2>(timeVal, ref_index, &err);
+                dedup_added = ts.add_dedup_array_sample<value::double2>(timeVal, ref_index, &err);
                 break;
               case value::TYPE_ID_DOUBLE3:
-                dedup_added = ts.add_dedup_array_sample_pod<value::double3>(timeVal, ref_index, &err);
+                dedup_added = ts.add_dedup_array_sample<value::double3>(timeVal, ref_index, &err);
                 break;
               case value::TYPE_ID_DOUBLE4:
-                dedup_added = ts.add_dedup_array_sample_pod<value::double4>(timeVal, ref_index, &err);
+                dedup_added = ts.add_dedup_array_sample<value::double4>(timeVal, ref_index, &err);
                 break;
               // Matrix types - now trivial with default constructors and have operator==
               case value::TYPE_ID_MATRIX2F:
-                dedup_added = ts.add_dedup_array_sample_pod<value::matrix2f>(timeVal, ref_index, &err);
+                dedup_added = ts.add_dedup_array_sample<value::matrix2f>(timeVal, ref_index, &err);
                 break;
               case value::TYPE_ID_MATRIX3F:
-                dedup_added = ts.add_dedup_array_sample_pod<value::matrix3f>(timeVal, ref_index, &err);
+                dedup_added = ts.add_dedup_array_sample<value::matrix3f>(timeVal, ref_index, &err);
                 break;
               case value::TYPE_ID_MATRIX4F:
-                dedup_added = ts.add_dedup_array_sample_pod<value::matrix4f>(timeVal, ref_index, &err);
+                dedup_added = ts.add_dedup_array_sample<value::matrix4f>(timeVal, ref_index, &err);
                 break;
               case value::TYPE_ID_MATRIX2D:
-                dedup_added = ts.add_dedup_array_sample_pod<value::matrix2d>(timeVal, ref_index, &err);
+                dedup_added = ts.add_dedup_array_sample<value::matrix2d>(timeVal, ref_index, &err);
                 break;
               case value::TYPE_ID_MATRIX3D:
-                dedup_added = ts.add_dedup_array_sample_pod<value::matrix3d>(timeVal, ref_index, &err);
+                dedup_added = ts.add_dedup_array_sample<value::matrix3d>(timeVal, ref_index, &err);
                 break;
               case value::TYPE_ID_MATRIX4D:
-                dedup_added = ts.add_dedup_array_sample_pod<value::matrix4d>(timeVal, ref_index, &err);
+                dedup_added = ts.add_dedup_array_sample<value::matrix4d>(timeVal, ref_index, &err);
                 break;
               // Note: Other types like half, quaternions, colors etc. would need operator==
               // to be properly supported in arrays_equal comparison first
               default:
-                DCOUT("Array dedup (ASCII): unsupported type for POD dedup optimization, falling back to regular sample");
+                DCOUT("Array dedup (ASCII): unsupported binary storage type, falling back to regular sample");
                 ts.add_sample(timeVal, value, &err);
                 break;
             }
@@ -651,8 +582,7 @@ bool AsciiParser::ParseTimeSamplesOfArray(const std::string &type_name,
               ts.add_sample(timeVal, value, &err);
             }
           } else {
-            // Non-POD storage or POD storage gets disabled by add_sample
-            DCOUT("Array dedup (ASCII): falling back to regular sample (POD storage limitation)");
+            DCOUT("Array dedup (ASCII): falling back to regular sample");
             std::string err;
             ts.add_sample(timeVal, value, &err);
           }
@@ -660,8 +590,7 @@ bool AsciiParser::ParseTimeSamplesOfArray(const std::string &type_name,
           // No duplicate found, add as a regular sample
           DCOUT("Array dedup (ASCII): no duplicate found, adding new sample at index " << ts.size());
           std::string err;
-          // Note: This will disable POD storage if it was enabled
-          // TODO: Extract typed array data and use add_array_sample_pod directly
+          // TODO: Extract typed array data and use typed add_array_sample directly.
           ts.add_sample(timeVal, value, &err);
         }
       } else {

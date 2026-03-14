@@ -64,7 +64,7 @@ struct TimeSamples {
     bool blocked{false};
   };
 
-  // Offset encoding constants (moved from PODTimeSamples)
+  // Offset encoding constants (moved from unified binary storage)
   static constexpr uint64_t OFFSET_DEDUP_FLAG = 0x8000000000000000ULL;        // Bit 63: dedup flag
   static constexpr uint64_t OFFSET_ARRAY_FLAG = 0x4000000000000000ULL;        // Bit 62: array data flag
   static constexpr uint64_t OFFSET_ARRAY_BUFFER_FLAG = 0x2000000000000000ULL; // Bit 61: array data in _array_values buffer
@@ -180,8 +180,8 @@ struct TimeSamples {
   TimeSamples() = default;
 
   /// type_id = TypeId
-  /// Initialize TimeSamples with a specific type_id
-  /// This determines whether to use POD optimization or regular storage
+  /// Initialize TimeSamples with a specific type_id.
+  /// This determines whether to use unified binary storage or generic Value storage.
   bool init(uint32_t type_id);
 
   /// Cast the TimeSamples' type to a role type if the underlying types are compatible.
@@ -190,10 +190,9 @@ struct TimeSamples {
   /// @return true if the cast was successful, false if the underlying types don't match
   bool cast_to_role_type(uint32_t role_type_id);
 
-  /// Check if unified storage has samples (i.e., _times is not empty)
+  /// Check if unified binary storage has samples (i.e., _times is not empty)
   /// Returns true if any samples have been added to unified storage path.
-  /// Note: After PODTimeSamples removal, this checks unified storage, not a separate POD type.
-  bool is_using_pod() const { return !_times.empty(); }
+  bool is_using_binary_storage() const { return !_times.empty(); }
 
   /// Check if storing std::vector-based array data
   /// @return true if using unified storage with STL arrays, false otherwise
@@ -715,7 +714,7 @@ struct TimeSamples {
     return true;
   }
 
-  bool reconstruct_pod_sample(size_t idx, Sample* sample) const {
+  bool reconstruct_binary_sample(size_t idx, Sample* sample) const {
     if (!sample || idx >= _times.size() || idx >= _blocked.size()) {
       return false;
     }
@@ -926,7 +925,7 @@ struct TimeSamples {
       return reconstruct_value_array_sample(idx, sample);
     }
 
-    return reconstruct_pod_sample(idx, sample);
+    return reconstruct_binary_sample(idx, sample);
   }
 
  public:
@@ -1217,199 +1216,91 @@ struct TimeSamples {
     return true;
   }
 
-  /// Typed add sample for POD types (optimization path)
-  template<typename T>
-  bool add_sample_pod(double t, const T& value, std::string *err = nullptr, size_t expected_total_samples = 0) {
-    static_assert(std::is_trivial<T>::value && std::is_standard_layout<T>::value,
-                  "add_sample_pod requires POD types");
-    (void)expected_total_samples;  // Reserved for future optimization
-
-    // Auto-initialize on first sample
-    if (!is_initialized()) {
-      init(value::TypeTraits<T>::type_id());
-    }
-
-    // Use unified storage directly via add_pod_sample
-    return add_pod_sample<T>(t, value, err);
-  }
-
-  template<typename T>
-  typename std::enable_if<!std::is_same<T, bool>::value, bool>::type
-  add_array_sample_pod(double t, const std::vector<T>& value, std::string *err = nullptr, size_t expected_total_samples = 0) {
-    static_assert(std::is_trivial<T>::value && std::is_standard_layout<T>::value,
-                  "add_sample_pod requires POD types");
-    (void)expected_total_samples;  // Reserved for future optimization
-
-    // Auto-initialize on first sample
-    if (!ensure_initialized_type(value::TypeTraits<std::vector<T>>::type_id(), err,
-                                 "add_array_sample_pod")) {
-      return false;
-    }
-
-    if (!ensure_array_storage_backend(UnifiedStorageBackend::ArrayOffset,
-                                      ArrayLayoutKind::StdVector, sizeof(T),
-                                      err, "add_array_sample_pod")) {
-      return false;
-    }
-
-    // Use unified storage directly via add_array_sample
-    return add_array_sample<T>(t, value.data(), value.size(), err);
-  }
-
-  // Specialization for std::vector<bool> since it doesn't have data() member
-  template<typename T>
-  typename std::enable_if<std::is_same<T, bool>::value, bool>::type
-  add_array_sample_pod(double t, const std::vector<T>& value, std::string *err = nullptr, size_t expected_total_samples = 0) {
+  template <typename T,
+            typename std::enable_if<
+                !std::is_same<typename std::decay<T>::type, value::Value>::value &&
+                !std::is_same<typename std::decay<T>::type, Sample>::value,
+                int>::type = 0>
+  bool add_sample(double t, const T& value, std::string *err = nullptr,
+                  size_t expected_total_samples = 0) {
     (void)expected_total_samples;
-    // Auto-initialize on first sample
-    if (!ensure_initialized_type(value::TypeTraits<std::vector<T>>::type_id(), err,
-                                 "add_array_sample_pod<bool>")) {
-      return false;
+
+    if constexpr (value::is_binary_serializable_v<T> &&
+                  !std::is_same<typename std::decay<T>::type, bool>::value) {
+      if (!is_initialized()) {
+        init(value::TypeTraits<T>::type_id());
+      }
+      return add_binary_sample<T>(t, value, err);
+    } else {
+      return add_sample(t, value::Value(value), err);
     }
-
-    if (!ensure_array_storage_backend(UnifiedStorageBackend::ArrayOffset,
-                                      ArrayLayoutKind::StdVector,
-                                      sizeof(uint8_t), err,
-                                      "add_array_sample_pod<bool>")) {
-      return false;
-    }
-
-    // Convert std::vector<bool> to std::vector<uint8_t> for storage
-    std::vector<uint8_t> byte_array;
-    byte_array.reserve(value.size());
-    for (bool b : value) {
-      byte_array.push_back(b ? 1 : 0);
-    }
-
-    // Use unified storage directly
-    _times.push_back(t);
-    _blocked.push_back(0);  // false = 0
-    _array_counts.push_back(value.size());  // Store per-sample array size
-
-    // Store offset with array flag and append array data
-    size_t byte_offset = _values.size();
-    uint64_t encoded_offset = make_offset(byte_offset, true);  // is_array=true
-    _offsets.push_back(encoded_offset);
-
-    size_t byte_size = sizeof(uint8_t) * byte_array.size();
-    _values.resize(_values.size() + byte_size);
-    std::memcpy(_values.data() + byte_offset, byte_array.data(), byte_size);
-
-    update_array_metadata(value.size(), sizeof(uint8_t),
-                          ArrayLayoutKind::StdVector);
-    invalidate_reconstructed_samples_cache();
-    _dirty = true;
-    return true;
   }
 
-  // TypedArray overload for add_array_sample_pod
-  template<typename T>
-  bool add_array_sample_pod(double t, const TypedArray<T>& value, std::string *err = nullptr, size_t expected_total_samples = 0) {
-    static_assert(std::is_trivial<T>::value && std::is_standard_layout<T>::value,
-                  "add_sample_pod requires POD types");
-    (void)expected_total_samples;  // Reserved for future optimization
-
-    // Auto-initialize on first sample
-    if (!ensure_initialized_type(value::TypeTraits<TypedArray<T>>::type_id(), err,
-                                 "add_array_sample_pod<TypedArray>")) {
-      return false;
-    }
-
-    DCOUT("is dedup? " << value.is_dedup());
-
-    if (!ensure_array_storage_backend(UnifiedStorageBackend::ArrayOffset,
-                                      ArrayLayoutKind::TypedArray, sizeof(T),
-                                      err,
-                                      "add_array_sample_pod<TypedArray>")) {
-      return false;
-    }
-    // Use unified storage directly
-    return add_array_sample<T>(t, value.data(), value.size(), err);
-  }
-
-  template<typename T>
-  bool add_matrix_array_sample_pod(double t, const std::vector<T>& value, std::string *err = nullptr, size_t expected_total_samples = 0) {
+  template <typename T>
+  bool add_array_sample(double t, const std::vector<T>& value,
+                        std::string *err = nullptr,
+                        size_t expected_total_samples = 0) {
     (void)expected_total_samples;
-    // Auto-initialize on first sample
-    if (!ensure_initialized_type(value::TypeTraits<std::vector<T>>::type_id(), err,
-                                 "add_matrix_array_sample_pod")) {
-      return false;
-    }
 
-    if (!ensure_array_storage_backend(UnifiedStorageBackend::ArrayOffset,
-                                      ArrayLayoutKind::StdVector, sizeof(T),
-                                      err, "add_matrix_array_sample_pod")) {
-      return false;
+    if constexpr (std::is_same<T, bool>::value) {
+      return add_sample(t, value::Value(value), err);
+    } else if constexpr (value::is_binary_serializable_v<T>) {
+      if (!ensure_initialized_type(value::TypeTraits<std::vector<T>>::type_id(),
+                                   err, "add_array_sample<std::vector>")) {
+        return false;
+      }
+
+      if (!ensure_array_storage_backend(UnifiedStorageBackend::ArrayOffset,
+                                        ArrayLayoutKind::StdVector, sizeof(T),
+                                        err,
+                                        "add_array_sample<std::vector>")) {
+        return false;
+      }
+
+      return add_array_sample<T>(t, value.data(), value.size(), err);
+    } else {
+      return add_sample(t, value::Value(value), err);
     }
-    // Use unified storage directly (matrix types are stored like regular arrays)
-    return add_array_sample<T>(t, value.data(), value.size(), err);
   }
 
-  // TypedArray overload for add_matrix_array_sample_pod
-  template<typename T>
-  bool add_matrix_array_sample_pod(double t, const TypedArray<T>& value, std::string *err = nullptr, size_t expected_total_samples = 0) {
+  template <typename T>
+  bool add_array_sample(double t, const TypedArray<T>& value,
+                        std::string *err = nullptr,
+                        size_t expected_total_samples = 0) {
     (void)expected_total_samples;
-    // Auto-initialize on first sample
-    if (!ensure_initialized_type(value::TypeTraits<TypedArray<T>>::type_id(), err,
-                                 "add_matrix_array_sample_pod<TypedArray>")) {
-      return false;
-    }
 
-    if (!ensure_array_storage_backend(UnifiedStorageBackend::ArrayOffset,
-                                      ArrayLayoutKind::TypedArray, sizeof(T),
-                                      err,
-                                      "add_matrix_array_sample_pod<TypedArray>")) {
-      return false;
+    if constexpr (value::is_binary_serializable_v<T> &&
+                  !std::is_same<T, bool>::value) {
+      if (!ensure_initialized_type(value::TypeTraits<TypedArray<T>>::type_id(),
+                                   err, "add_array_sample<TypedArray>")) {
+        return false;
+      }
+
+      if (!ensure_array_storage_backend(UnifiedStorageBackend::ArrayOffset,
+                                        ArrayLayoutKind::TypedArray,
+                                        sizeof(T), err,
+                                        "add_array_sample<TypedArray>")) {
+        return false;
+      }
+
+      return add_array_sample<T>(t, value.data(), value.size(), err);
+    } else {
+      std::vector<T> vec(value.data(), value.data() + value.size());
+      return add_sample(t, value::Value(vec), err);
     }
-    // Use unified storage directly (matrix types are stored like regular arrays)
-    return add_array_sample<T>(t, value.data(), value.size(), err);
   }
 
-  /// Add a deduplicated array sample - reuses data from an existing sample
-  /// This is a memory-efficient way to handle deduplicated arrays: store the array data once
-  /// and have multiple time samples point to the same offset in the _values buffer.
+  /// Add a deduplicated bool array sample - reuses data from an existing sample.
   /// @param t Time value for this sample
   /// @param ref_index Index of the existing sample whose data/offset to reuse
   /// @param err Optional error string
-  template<typename T>
-  bool add_dedup_array_sample_pod(double t, size_t ref_index, std::string *err = nullptr) {
-    static_assert(std::is_trivial<T>::value && std::is_standard_layout<T>::value,
-                  "add_dedup_array_sample_pod requires POD types");
-
-    // Use unified storage directly
-    return add_dedup_array_sample<T>(t, ref_index, err);
-  }
-
-  /// Add a deduplicated matrix array sample - reuses data from an existing sample
-  /// For matrix types that don't satisfy POD requirements
-  /// @param t Time value for this sample
-  /// @param ref_index Index of the existing sample whose data/offset to reuse
-  /// @param err Optional error string
-  template<typename T>
-  bool add_dedup_matrix_array_sample_pod(double t, size_t ref_index, std::string *err = nullptr) {
-    static_assert((value::TypeTraits<T>::type_id() == value::TYPE_ID_MATRIX2D) ||
-                  (value::TypeTraits<T>::type_id() == value::TYPE_ID_MATRIX3D) ||
-                  (value::TypeTraits<T>::type_id() == value::TYPE_ID_MATRIX4D),
-                  "requires matrix type");
-
-    // Use unified storage directly (same as regular dedup array)
-    return add_dedup_array_sample<T>(t, ref_index, err);
-  }
-
-  /// Add a deduplicated bool array sample - reuses data from an existing sample
-  /// Special handling for bool since std::vector<bool> doesn't satisfy POD requirements
-  /// @param t Time value for this sample
-  /// @param ref_index Index of the existing sample whose data/offset to reuse
-  /// @param err Optional error string
-  bool add_dedup_bool_array_sample_pod(double t, size_t ref_index, std::string *err = nullptr) {
-    // Bool arrays are stored internally as uint8_t, but with bool type_id
-    // The dedup mechanism works the same way - just reference the existing sample
+  bool add_dedup_bool_array_sample(double t, size_t ref_index, std::string *err = nullptr) {
     size_t new_idx = _times.size();
 
     // Validate reference
     if (ref_index >= new_idx) {
       if (err) {
-        (*err) += "Invalid ref_index in add_dedup_bool_array_sample_pod: " +
+        (*err) += "Invalid ref_index in add_dedup_bool_array_sample: " +
                   std::to_string(ref_index) + " >= " + std::to_string(new_idx) + ".\n";
       }
       return false;
@@ -1442,20 +1333,20 @@ struct TimeSamples {
     return true;
   }
 
-  /// Typed add blocked sample for POD types (optimization path)
   template<typename T>
-  bool add_blocked_sample_pod(double t, std::string *err = nullptr, size_t expected_total_samples = 0) {
-    static_assert(std::is_trivial<T>::value && std::is_standard_layout<T>::value,
-                  "add_blocked_sample_pod requires POD types");
-    (void)expected_total_samples;  // Reserved for future optimization
+  bool add_blocked_sample(double t, std::string *err = nullptr,
+                          size_t expected_total_samples = 0) {
+    (void)expected_total_samples;
 
-    // Auto-initialize on first sample
-    if (!is_initialized()) {
-      init(value::TypeTraits<T>::type_id());
+    if constexpr (value::is_binary_serializable_v<T> &&
+                  !std::is_same<typename std::decay<T>::type, bool>::value) {
+      if (!is_initialized()) {
+        init(value::TypeTraits<T>::type_id());
+      }
+      return add_binary_blocked_sample<T>(t, err);
+    } else {
+      return add_blocked_sample(t, value::Value(T{}), err);
     }
-
-    // Use unified storage for blocked sample
-    return add_pod_blocked_sample<T>(t, err);
   }
 
   /// Get TypedArray sample at specific time
@@ -1829,7 +1720,7 @@ struct TimeSamples {
       }
     }
 
-    // value::Value array storage (for non-POD array types)
+    // value::Value array storage (for generic Value array types)
     total += _value_array_storage.capacity() * sizeof(value::Value);
     for (const auto& val : _value_array_storage) {
       total += val.estimate_memory_usage();
@@ -1856,8 +1747,8 @@ struct TimeSamples {
   /// Array data is stored in _array_values using unique_ptr for proper ownership semantics
   template<typename T>
   bool add_array_sample(double t, const T* values, size_t count, std::string* err = nullptr) {
-    static_assert(std::is_trivial<T>::value && std::is_standard_layout<T>::value,
-                  "add_array_sample requires POD types");
+    static_assert(value::is_binary_serializable_v<T>,
+                  "add_array_sample requires binary-serializable element types");
 
     // Auto-initialize on first sample
     if (!ensure_initialized_type(_type_id != 0 ? _type_id : value::TypeTraits<std::vector<T>>::type_id(),
@@ -1905,8 +1796,8 @@ struct TimeSamples {
   /// Add deduplicated array sample (Phase 2 path)
   template<typename T>
   bool add_dedup_array_sample(double t, size_t ref_index, std::string* err = nullptr) {
-    static_assert(std::is_trivial<T>::value && std::is_standard_layout<T>::value,
-                  "add_dedup_array_sample requires POD types");
+    static_assert(value::is_binary_serializable_v<T>,
+                  "add_dedup_array_sample requires binary-serializable element types");
 
     const ArrayLayoutKind layout =
         (_storage.array.layout == ArrayLayoutKind::None)
@@ -1970,31 +1861,68 @@ struct TimeSamples {
     return add_dedup_array_sample<T>(t, ref_index, err);
   }
 
+  bool add_bool_array_sample(double t, const std::vector<bool>& value,
+                             std::string *err = nullptr) {
+    if (!ensure_initialized_type(value::TypeTraits<std::vector<bool>>::type_id(),
+                                 err, "add_bool_array_sample")) {
+      return false;
+    }
+
+    if (!ensure_array_storage_backend(UnifiedStorageBackend::ArrayOffset,
+                                      ArrayLayoutKind::StdVector,
+                                      sizeof(uint8_t), err,
+                                      "add_bool_array_sample")) {
+      return false;
+    }
+
+    std::vector<uint8_t> byte_array;
+    byte_array.reserve(value.size());
+    for (bool b : value) {
+      byte_array.push_back(b ? 1 : 0);
+    }
+
+    _times.push_back(t);
+    _blocked.push_back(0);
+    _array_counts.push_back(value.size());
+
+    size_t byte_offset = _values.size();
+    uint64_t encoded_offset = make_offset(byte_offset, true);
+    _offsets.push_back(encoded_offset);
+
+    size_t byte_size = sizeof(uint8_t) * byte_array.size();
+    _values.resize(_values.size() + byte_size);
+    std::memcpy(_values.data() + byte_offset, byte_array.data(), byte_size);
+
+    update_array_metadata(value.size(), sizeof(uint8_t),
+                          ArrayLayoutKind::StdVector);
+    invalidate_reconstructed_samples_cache();
+    _dirty = true;
+    return true;
+  }
+
   //
-  // Phase 3: POD scalar sample methods
+  // Unified binary scalar sample methods
   //
 
-  /// Add POD scalar sample using unified storage (Phase 3 path)
-  /// This is for single POD values (not arrays)
-  /// Small types (sizeof(T) <= 8) - stored directly in _small_values
+  /// Add a binary-serializable scalar sample using unified storage.
+  /// Small types (sizeof(T) <= 8) are stored directly in _small_values.
   template<typename T>
   typename std::enable_if<(sizeof(T) <= 8), bool>::type
-  add_pod_sample(double t, const T& value, std::string* err = nullptr) {
-    static_assert(std::is_trivial<T>::value && std::is_standard_layout<T>::value,
-                  "add_pod_sample requires POD types");
+  add_binary_sample(double t, const T& value, std::string* err = nullptr) {
+    static_assert(value::is_binary_serializable_v<T>,
+                  "add_binary_sample requires binary-serializable types");
 
     // Auto-initialize on first sample
     if (!ensure_initialized_type(value::TypeTraits<T>::type_id(), err,
-                                 "add_pod_sample")) {
+                                 "add_binary_sample")) {
       return false;
     }
 
     if (!ensure_scalar_storage_backend(UnifiedStorageBackend::SmallScalar,
-                                       sizeof(T), err, "add_pod_sample")) {
+                                       sizeof(T), err, "add_binary_sample")) {
       return false;
     }
 
-    // Use unified storage for scalar POD
     _times.push_back(t);
     _blocked.push_back(0);  // Not blocked
 
@@ -2011,26 +1939,25 @@ struct TimeSamples {
     return true;
   }
 
-  /// Add POD scalar sample using unified storage (Phase 3 path)
-  /// Large types (sizeof(T) > 8) - stored in _values with offset table
+  /// Add a binary-serializable scalar sample using unified storage.
+  /// Large types (sizeof(T) > 8) are stored in _values with an offset table.
   template<typename T>
   typename std::enable_if<(sizeof(T) > 8), bool>::type
-  add_pod_sample(double t, const T& value, std::string* err = nullptr) {
-    static_assert(std::is_trivial<T>::value && std::is_standard_layout<T>::value,
-                  "add_pod_sample requires POD types");
+  add_binary_sample(double t, const T& value, std::string* err = nullptr) {
+    static_assert(value::is_binary_serializable_v<T>,
+                  "add_binary_sample requires binary-serializable types");
 
     // Auto-initialize on first sample
     if (!ensure_initialized_type(value::TypeTraits<T>::type_id(), err,
-                                 "add_pod_sample")) {
+                                 "add_binary_sample")) {
       return false;
     }
 
     if (!ensure_scalar_storage_backend(UnifiedStorageBackend::OffsetScalar,
-                                       sizeof(T), err, "add_pod_sample")) {
+                                       sizeof(T), err, "add_binary_sample")) {
       return false;
     }
 
-    // Use unified storage for scalar POD
     _times.push_back(t);
     _blocked.push_back(0);  // Not blocked
 
@@ -2051,22 +1978,22 @@ struct TimeSamples {
     return true;
   }
 
-  /// Add blocked POD sample using unified storage
+  /// Add a blocked binary-serializable scalar sample using unified storage.
   template<typename T>
-  bool add_pod_blocked_sample(double t, std::string* err = nullptr) {
-    static_assert(std::is_trivial<T>::value && std::is_standard_layout<T>::value,
-                  "add_pod_blocked_sample requires POD types");
+  bool add_binary_blocked_sample(double t, std::string* err = nullptr) {
+    static_assert(value::is_binary_serializable_v<T>,
+                  "add_binary_blocked_sample requires binary-serializable types");
 
     // Auto-initialize on first sample
     if (!ensure_initialized_type(value::TypeTraits<T>::type_id(), err,
-                                 "add_pod_blocked_sample")) {
+                                 "add_binary_blocked_sample")) {
       return false;
     }
 
     if (!ensure_scalar_storage_backend(
             (sizeof(T) > 8) ? UnifiedStorageBackend::OffsetScalar
                             : UnifiedStorageBackend::SmallScalar,
-            sizeof(T), err, "add_pod_blocked_sample")) {
+            sizeof(T), err, "add_binary_blocked_sample")) {
       return false;
     }
 
@@ -2098,7 +2025,7 @@ struct TimeSamples {
   // We only provide convenience getters below.
 
   /// Get sample as std::vector<T> - retrieves array data into a vector
-  /// Works with both unified POD storage and generic Value storage
+  /// Works with both unified binary storage and generic Value storage
   /// @param idx Sample index
   /// @param out_vec Output vector to fill with data
   /// @param out_blocked Optional: set to true if sample is blocked
@@ -2177,7 +2104,7 @@ struct TimeSamples {
       update();
     }
 
-    // Check unified POD storage
+    // Check unified binary storage
     if (!_times.empty()) {
       size_t idx = find_time_index_in_unified(t);
       if (idx != kNotFound) {
@@ -2197,7 +2124,7 @@ struct TimeSamples {
 
   //
   // Accessor methods for unified storage
-  // These provide read-only access to internal POD storage for utilities like pprint
+  // These provide read-only access to internal binary storage for utilities like pprint
   //
 
   const std::vector<double>& get_times() const {
@@ -2271,18 +2198,18 @@ struct TimeSamples {
   }
 
  private:
-  // Generic path storage (for non-POD types: string, token, dict, etc.)
+  // Generic path storage (for generic Value types: string, token, dict, etc.)
   mutable std::vector<Sample> _samples;
 
-  // POD path storage (moved from PODTimeSamples for Phase 2 unification)
+  // binary-storage path storage (moved from unified binary storage for Phase 2 unification)
   mutable std::vector<double> _times;
   mutable Buffer<16> _blocked;
-  mutable std::vector<uint64_t> _small_values;                       // Direct storage for small scalar POD types (sizeof(T) <= 8 bytes), stored as uint64
-  mutable Buffer<16> _values;                                        // Raw byte storage for large scalar POD types and arrays
+  mutable std::vector<uint64_t> _small_values;                       // Direct storage for small scalar binary-serializable types (sizeof(T) <= 8 bytes), stored as uint64
+  mutable Buffer<16> _values;                                        // Raw byte storage for large scalar binary-serializable types and arrays
   mutable std::vector<std::unique_ptr<Buffer<16>>> _array_values;    // Array data storage: each entry is a separate allocated buffer for one array sample
   mutable std::vector<uint64_t> _offsets;                            // Offset table for large types and arrays with dedup/array/buffer flags
 
-  // value::Value array storage with dedup support (for non-POD array types)
+  // value::Value array storage with dedup support (for generic Value array types)
   // Stores unique value::Value objects; _value_array_refs contains indices or dedup references
   mutable std::vector<value::Value> _value_array_storage;  // Stores unique array values
   mutable std::vector<uint64_t> _value_array_refs;         // bit 63 = dedup flag, bits 0-62 = storage index or ref index

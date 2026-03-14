@@ -1548,6 +1548,10 @@ using dict = std::map<std::string, any_value>;
 template <class dtype>
 struct TypeTraits;
 
+template <typename T>
+inline constexpr bool is_binary_serializable_v =
+    std::is_standard_layout_v<T> && std::is_trivially_copyable_v<T>;
+
 // import DEFINE_TYPE_TRAIT and DEFINE_ROLE_TYPE_TRAIT
 #include "define-type-trait.inc"
 
@@ -1819,7 +1823,96 @@ std::string GetUnderlyingTypeName(uint32_t tyid);
 nonstd::optional<uint32_t> TryGetUnderlyingTypeId(const std::string &tyname);
 uint32_t GetUnderlyingTypeId(const std::string &tyname);
 
-// TODO: uint32_t GetUnderlyingTypeId(const uint32_t tyid)
+constexpr inline uint32_t GetUnderlyingTypeId(const uint32_t tyid) {
+  const bool is_array = (tyid & TYPE_ID_1D_ARRAY_BIT) != 0;
+  const uint32_t base_type_id = tyid & (~TYPE_ID_1D_ARRAY_BIT);
+
+  uint32_t underlying = base_type_id;
+  switch (base_type_id) {
+    case TYPE_ID_POINT3H: underlying = TYPE_ID_HALF3; break;
+    case TYPE_ID_POINT3F: underlying = TYPE_ID_FLOAT3; break;
+    case TYPE_ID_POINT3D: underlying = TYPE_ID_DOUBLE3; break;
+    case TYPE_ID_VECTOR3H: underlying = TYPE_ID_HALF3; break;
+    case TYPE_ID_VECTOR3F: underlying = TYPE_ID_FLOAT3; break;
+    case TYPE_ID_VECTOR3D: underlying = TYPE_ID_DOUBLE3; break;
+    case TYPE_ID_NORMAL3H: underlying = TYPE_ID_HALF3; break;
+    case TYPE_ID_NORMAL3F: underlying = TYPE_ID_FLOAT3; break;
+    case TYPE_ID_NORMAL3D: underlying = TYPE_ID_DOUBLE3; break;
+    case TYPE_ID_COLOR3H: underlying = TYPE_ID_HALF3; break;
+    case TYPE_ID_COLOR3F: underlying = TYPE_ID_FLOAT3; break;
+    case TYPE_ID_COLOR3D: underlying = TYPE_ID_DOUBLE3; break;
+    case TYPE_ID_COLOR4H: underlying = TYPE_ID_HALF4; break;
+    case TYPE_ID_COLOR4F: underlying = TYPE_ID_FLOAT4; break;
+    case TYPE_ID_COLOR4D: underlying = TYPE_ID_DOUBLE4; break;
+    case TYPE_ID_TEXCOORD2H: underlying = TYPE_ID_HALF2; break;
+    case TYPE_ID_TEXCOORD2F: underlying = TYPE_ID_FLOAT2; break;
+    case TYPE_ID_TEXCOORD2D: underlying = TYPE_ID_DOUBLE2; break;
+    case TYPE_ID_TEXCOORD3H: underlying = TYPE_ID_HALF3; break;
+    case TYPE_ID_TEXCOORD3F: underlying = TYPE_ID_FLOAT3; break;
+    case TYPE_ID_TEXCOORD3D: underlying = TYPE_ID_DOUBLE3; break;
+    case TYPE_ID_FRAME4D: underlying = TYPE_ID_MATRIX4D; break;
+    default: break;
+  }
+
+  return is_array ? (underlying | TYPE_ID_1D_ARRAY_BIT) : underlying;
+}
+
+constexpr inline bool IsBinarySerializableType(const uint32_t tyid) {
+  switch (GetUnderlyingTypeId(tyid) & (~TYPE_ID_1D_ARRAY_BIT)) {
+    case TYPE_ID_BOOL:
+      return false;
+    case TYPE_ID_CHAR:
+    case TYPE_ID_CHAR2:
+    case TYPE_ID_CHAR3:
+    case TYPE_ID_CHAR4:
+    case TYPE_ID_UCHAR:
+    case TYPE_ID_UCHAR2:
+    case TYPE_ID_UCHAR3:
+    case TYPE_ID_UCHAR4:
+    case TYPE_ID_SHORT:
+    case TYPE_ID_SHORT2:
+    case TYPE_ID_SHORT3:
+    case TYPE_ID_SHORT4:
+    case TYPE_ID_USHORT:
+    case TYPE_ID_USHORT2:
+    case TYPE_ID_USHORT3:
+    case TYPE_ID_USHORT4:
+    case TYPE_ID_INT32:
+    case TYPE_ID_INT2:
+    case TYPE_ID_INT3:
+    case TYPE_ID_INT4:
+    case TYPE_ID_UINT32:
+    case TYPE_ID_UINT2:
+    case TYPE_ID_UINT3:
+    case TYPE_ID_UINT4:
+    case TYPE_ID_INT64:
+    case TYPE_ID_UINT64:
+    case TYPE_ID_HALF:
+    case TYPE_ID_HALF2:
+    case TYPE_ID_HALF3:
+    case TYPE_ID_HALF4:
+    case TYPE_ID_FLOAT:
+    case TYPE_ID_FLOAT2:
+    case TYPE_ID_FLOAT3:
+    case TYPE_ID_FLOAT4:
+    case TYPE_ID_DOUBLE:
+    case TYPE_ID_DOUBLE2:
+    case TYPE_ID_DOUBLE3:
+    case TYPE_ID_DOUBLE4:
+    case TYPE_ID_QUATH:
+    case TYPE_ID_QUATF:
+    case TYPE_ID_QUATD:
+    case TYPE_ID_MATRIX2F:
+    case TYPE_ID_MATRIX3F:
+    case TYPE_ID_MATRIX4F:
+    case TYPE_ID_MATRIX2D:
+    case TYPE_ID_MATRIX3D:
+    case TYPE_ID_MATRIX4D:
+      return true;
+    default:
+      return false;
+  }
+}
 
 /// @brief Check if given typeName string is a role-type(e.g. "vector3f")
 /// @param[in] tyname typeName string
