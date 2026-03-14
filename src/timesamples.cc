@@ -317,7 +317,7 @@ void TimeSamples::update() const {
 
     std::vector<size_t> indices = create_sort_indices(_times);
 
-    if (_use_value_array) {
+    if (_storage.uses_value_array()) {
       sort_with_value_array_refs(indices, _times, _blocked, _value_array_refs,
                                  &_array_counts);
     } else if (!_offsets.empty()) {
@@ -901,12 +901,7 @@ TimeSamples::TimeSamples(TimeSamples&& other) noexcept
       _value_array_storage(std::move(other._value_array_storage)),
       _value_array_refs(std::move(other._value_array_refs)),
       _type_id(other._type_id),
-      _use_value_array(other._use_value_array),
-      _is_array(other._is_array),
-      _is_stl_array(other._is_stl_array),
-      _is_typed_array(other._is_typed_array),
-      _array_size(other._array_size),
-      _element_size(other._element_size),
+      _storage(other._storage),
       _blocked_count(other._blocked_count),
       _array_counts(std::move(other._array_counts)),
       _dirty(other._dirty),
@@ -914,12 +909,7 @@ TimeSamples::TimeSamples(TimeSamples&& other) noexcept
       _dirty_end(other._dirty_end) {
   // Reset moved-from object to valid empty state
   other._type_id = 0;
-  other._use_value_array = false;
-  other._is_array = false;
-  other._is_stl_array = false;
-  other._is_typed_array = false;
-  other._array_size = 0;
-  other._element_size = 0;
+  other._storage.clear();
   other._blocked_count = 0;
   other._dirty = false;
   other._dirty_start = 0;
@@ -940,12 +930,7 @@ TimeSamples& TimeSamples::operator=(TimeSamples&& other) noexcept {
     _value_array_storage = std::move(other._value_array_storage);
     _value_array_refs = std::move(other._value_array_refs);
     _type_id = other._type_id;
-    _use_value_array = other._use_value_array;
-    _is_array = other._is_array;
-    _is_stl_array = other._is_stl_array;
-    _is_typed_array = other._is_typed_array;
-    _array_size = other._array_size;
-    _element_size = other._element_size;
+    _storage = other._storage;
     _blocked_count = other._blocked_count;
     _array_counts = std::move(other._array_counts);
     _dirty = other._dirty;
@@ -954,12 +939,7 @@ TimeSamples& TimeSamples::operator=(TimeSamples&& other) noexcept {
 
     // Reset moved-from object to valid empty state
     other._type_id = 0;
-    other._use_value_array = false;
-    other._is_array = false;
-    other._is_stl_array = false;
-    other._is_typed_array = false;
-    other._array_size = 0;
-    other._element_size = 0;
+    other._storage.clear();
     other._blocked_count = 0;
     other._dirty = false;
     other._dirty_start = 0;
@@ -979,12 +959,7 @@ TimeSamples::TimeSamples(const TimeSamples& other)
       // _value_array_storage is copied in body to avoid TypeTraits issues
       _value_array_refs(other._value_array_refs),
       _type_id(other._type_id),
-      _use_value_array(other._use_value_array),
-      _is_array(other._is_array),
-      _is_stl_array(other._is_stl_array),
-      _is_typed_array(other._is_typed_array),
-      _array_size(other._array_size),
-      _element_size(other._element_size),
+      _storage(other._storage),
       _blocked_count(other._blocked_count),
       _array_counts(other._array_counts),
       _dirty(other._dirty),
@@ -1018,12 +993,7 @@ TimeSamples& TimeSamples::operator=(const TimeSamples& other) {
     _values = other._values;
     _offsets = other._offsets;
     _type_id = other._type_id;
-    _use_value_array = other._use_value_array;
-    _is_array = other._is_array;
-    _is_stl_array = other._is_stl_array;
-    _is_typed_array = other._is_typed_array;
-    _array_size = other._array_size;
-    _element_size = other._element_size;
+    _storage = other._storage;
     _blocked_count = other._blocked_count;
     _array_counts = other._array_counts;
     _dirty = other._dirty;
@@ -1067,12 +1037,7 @@ void TimeSamples::clear() {
   _value_array_refs.clear();
   _array_counts.clear();
   _type_id = 0;
-  _use_value_array = false;
-  _is_array = false;
-  _is_stl_array = false;
-  _is_typed_array = false;
-  _array_size = 0;
-  _element_size = 0;
+  _storage.clear();
   _blocked_count = 0;
   _dirty = true;
   _dirty_start = 0;
