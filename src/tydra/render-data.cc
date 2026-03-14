@@ -5517,7 +5517,7 @@ bool RenderSceneConverter::ConvertMesh(
               bone_config,
               hierarchy_info,
               &reduction_stats)) {
-        PUSH_WARN("Bone reduction failed, using original bone influences.");
+        PushInfo("Bone reduction failed, using original bone influences.");
       } else {
         // Update elementSize to reflect reduced bone count
         dst.joint_and_weights.elementSize = int(env.mesh_config.target_bone_count);
@@ -11440,26 +11440,40 @@ bool RenderSceneConverter::ConvertGeometryLight(
 
   // Extract geometry relationship to find the target mesh
   // GeometryLight uses a relationship to point to the mesh geometry
-  if (light.geometry.authored() && !light.geometry.is_blocked()) {
-    const std::vector<Path> targets = light.geometry.get_targetPaths();
-    if (!targets.empty()) {
-      // Use the first target path
-      const Path &target_path = targets[0];
-      std::string geometry_path = target_path.full_path_name();
-
-      // Try to find the mesh in the meshMap
-      // Note: The actual mesh_id will be resolved during scene building
-      // For now, we store the path and mark geometry_mesh_id as unresolved (-1)
-      // The renderer should resolve this later by looking up the mesh by path
-      rlight.geometry_mesh_id = -1;  // Will be resolved during BuildNodeHierarchy
-
-      DCOUT("GeometryLight " << rlight.abs_path << " references geometry: " << geometry_path);
-    } else {
-      PUSH_WARN("GeometryLight " << rlight.abs_path << " has no geometry targets");
-    }
-  } else {
-    PUSH_WARN("GeometryLight " << rlight.abs_path << " missing geometry relationship");
+  if (!light.geometry.authored() || light.geometry.is_blocked()) {
+    PUSH_ERROR_AND_RETURN("GeometryLight " << rlight.abs_path
+                           << " missing geometry relationship");
   }
+
+  const std::vector<Path> targets = light.geometry.get_targetPaths();
+  if (targets.size() != 1) {
+    PUSH_ERROR_AND_RETURN("GeometryLight " << rlight.abs_path
+                           << " must have exactly one geometry target");
+  }
+
+  const Path &target_path = targets[0];
+  const std::string geometry_path = target_path.full_path_name();
+
+  const Prim *geometry_prim{nullptr};
+  std::string err;
+  if (!env.stage.find_prim_at_path(Path(target_path.prim_part(), ""),
+                                   geometry_prim, &err)) {
+    PUSH_ERROR_AND_RETURN(fmt::format(
+        "GeometryLight {} references missing geometry target {}: {}",
+        rlight.abs_path, geometry_path, err));
+  }
+
+  if (!geometry_prim) {
+    PUSH_ERROR_AND_RETURN(fmt::format(
+        "GeometryLight {} references invalid geometry target {}",
+        rlight.abs_path, geometry_path));
+  }
+
+  // The actual mesh_id will be resolved during scene building.
+  rlight.geometry_mesh_id = -1;
+
+  DCOUT("GeometryLight " << rlight.abs_path
+        << " references geometry: " << geometry_path);
 
   // Default material sync mode for GeometryLight
   rlight.material_sync_mode = "materialGlowTintsLight";
@@ -12755,8 +12769,15 @@ static vec3 TransformNormal(const value::matrix4d &m, const vec3 &n) {
 }
 
 bool RenderSceneConverter::MergeMeshData(const RenderMesh &src,
-                                          const value::matrix4d &src_transform,
-                                          RenderMesh &dst) {
+                                         const value::matrix4d &src_transform,
+                                         RenderMesh &dst,
+                                         std::string *err) {
+  auto set_merge_error = [&](const std::string &msg) {
+    if (err) {
+      *err = msg;
+    }
+  };
+
   // Check if transform is identity using tinyusdz::is_identity function
   bool transform_is_identity = tinyusdz::is_identity(src_transform);
 
@@ -12809,7 +12830,7 @@ bool RenderSceneConverter::MergeMeshData(const RenderMesh &src,
     } else {
       if (dst.normals.format != src.normals.format ||
           dst.normals.stride_bytes() != src.normals.stride_bytes()) {
-        PUSH_ERROR("Cannot merge normals: incompatible format or stride.");
+        set_merge_error("Cannot merge normals: incompatible format or stride.");
         return false;
       }
       // Append normals
@@ -12840,8 +12861,8 @@ bool RenderSceneConverter::MergeMeshData(const RenderMesh &src,
       auto &dst_attr = dst_tc_it->second;
       if (dst_attr.format != src_attr.format ||
           dst_attr.stride_bytes() != src_attr.stride_bytes()) {
-        PUSH_ERROR("Cannot merge texcoords slot " + std::to_string(slot) +
-                   ": incompatible format or stride.");
+        set_merge_error("Cannot merge texcoords slot " + std::to_string(slot) +
+                        ": incompatible format or stride.");
         return false;
       }
       size_t old_size = dst_attr.data.size();
@@ -12864,7 +12885,8 @@ bool RenderSceneConverter::MergeMeshData(const RenderMesh &src,
     } else {
       if (dst.tangents.format != src.tangents.format ||
           dst.tangents.stride_bytes() != src.tangents.stride_bytes()) {
-        PUSH_ERROR("Cannot merge tangents: incompatible format or stride.");
+        set_merge_error(
+            "Cannot merge tangents: incompatible format or stride.");
         return false;
       }
       size_t old_size = dst.tangents.data.size();
@@ -12897,7 +12919,8 @@ bool RenderSceneConverter::MergeMeshData(const RenderMesh &src,
     } else {
       if (dst.binormals.format != src.binormals.format ||
           dst.binormals.stride_bytes() != src.binormals.stride_bytes()) {
-        PUSH_ERROR("Cannot merge binormals: incompatible format or stride.");
+        set_merge_error(
+            "Cannot merge binormals: incompatible format or stride.");
         return false;
       }
       size_t old_size = dst.binormals.data.size();
@@ -12923,7 +12946,8 @@ bool RenderSceneConverter::MergeMeshData(const RenderMesh &src,
     } else {
       if (dst.vertex_colors.format != src.vertex_colors.format ||
           dst.vertex_colors.stride_bytes() != src.vertex_colors.stride_bytes()) {
-        PUSH_ERROR("Cannot merge vertex_colors: incompatible format or stride.");
+        set_merge_error(
+            "Cannot merge vertex_colors: incompatible format or stride.");
         return false;
       }
       size_t old_size = dst.vertex_colors.data.size();
@@ -12939,7 +12963,8 @@ bool RenderSceneConverter::MergeMeshData(const RenderMesh &src,
     } else {
       if (dst.vertex_opacities.format != src.vertex_opacities.format ||
           dst.vertex_opacities.stride_bytes() != src.vertex_opacities.stride_bytes()) {
-        PUSH_ERROR("Cannot merge vertex_opacities: incompatible format or stride.");
+        set_merge_error(
+            "Cannot merge vertex_opacities: incompatible format or stride.");
         return false;
       }
       size_t old_size = dst.vertex_opacities.data.size();
@@ -13095,8 +13120,11 @@ bool RenderSceneConverter::MergeMeshesImpl(const RenderSceneConverterEnv &env) {
         relative_transform = value::matrix4d::identity();
       }
 
-      if (!MergeMeshData(src_mesh, relative_transform, merged)) {
-        PUSH_WARN("Failed to merge mesh " + src_mesh.abs_path);
+      std::string merge_err;
+      if (!MergeMeshData(src_mesh, relative_transform, merged, &merge_err)) {
+        PushInfo("Skipping mesh merge for " + src_mesh.abs_path +
+                 (merge_err.empty() ? std::string()
+                                    : std::string(": ") + merge_err));
         continue;
       }
 
