@@ -35,16 +35,11 @@ bool EvaluateTypedAttributeImpl(
   } else if (attr.has_connection()) {
     // Follow connection target Path(singple targetPath only).
     std::vector<Path> pv = attr.connections();
-    if (pv.empty()) {
-      PUSH_ERROR_AND_RETURN(fmt::format("Connection targetPath is empty for Attribute {}.", attr_name));
+    Path target;
+    if (!detail::ResolveSingleConnectionTargetPath(pv, attr_name, &target,
+                                                   err)) {
+      return false;
     }
-
-    if (pv.size() > 1) {
-      PUSH_ERROR_AND_RETURN(
-          fmt::format("Multiple targetPaths assigned to .connection for Attribute {}.", attr_name));
-    }
-
-    auto target = pv[0];
 
     std::string targetPrimPath = target.prim_part();
     std::string targetPrimPropName = target.prop_part();
@@ -57,8 +52,6 @@ bool EvaluateTypedAttributeImpl(
     if (targetPrimRet) {
       // Follow the connetion
       const Prim *targetPrim = targetPrimRet.value();
-
-      std::string abs_path = target.full_path_name();
 
       TerminalAttributeValue attr_value;
 
@@ -80,6 +73,7 @@ bool EvaluateTypedAttributeImpl(
 
     } else {
       PUSH_ERROR_AND_RETURN(targetPrimRet.error());
+      return false;
     }
   } else if (attr.is_blocked()) {
       PUSH_ERROR_AND_RETURN(
