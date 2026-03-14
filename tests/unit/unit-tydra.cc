@@ -8,6 +8,7 @@
 #include "unit-tydra.h"
 
 #include <algorithm>
+#include <array>
 
 #include "layer.hh"
 #include "prim-types.hh"
@@ -35,6 +36,14 @@ size_t CountName(const std::vector<std::string> &names,
                  const std::string &name) {
   return size_t(std::count(names.begin(), names.end(), name));
 }
+
+const std::array<value::texcoord2f, 3> kTexcoordsVec2 = {
+    value::texcoord2f{0.0f, 0.0f}, value::texcoord2f{1.0f, 0.0f},
+    value::texcoord2f{0.0f, 1.0f}};
+
+const std::array<value::float3, 3> kTexcoordsVec3 = {
+    value::float3{0.0f, 0.0f, 0.0f}, value::float3{1.0f, 0.0f, 0.0f},
+    value::float3{0.0f, 1.0f, 0.0f}};
 
 struct CancelOnMeshProgressState {
   size_t mesh_progress_calls{0};
@@ -1405,6 +1414,224 @@ void tydra_envmap_loader_policy_test(void) {
                std::string::npos);
     TEST_CHECK(converter.GetError().find(
                    "synthetic texture loader failure") !=
+               std::string::npos);
+  }
+}
+
+void tydra_geometry_light_validation_test(void) {
+  auto make_mesh = []() {
+    GeomMesh mesh;
+    mesh.points = Animatable<std::vector<value::point3f>>(
+        std::vector<value::point3f>{{0.0f, 0.0f, 0.0f},
+                                    {1.0f, 0.0f, 0.0f},
+                                    {0.0f, 1.0f, 0.0f}});
+    mesh.faceVertexCounts = Animatable<std::vector<int32_t>>(
+        std::vector<int32_t>{3});
+    mesh.faceVertexIndices = Animatable<std::vector<int32_t>>(
+        std::vector<int32_t>{0, 1, 2});
+    return mesh;
+  };
+
+  {
+    Stage stage;
+    GeometryLight light;
+    light.name = "GeomLight";
+
+    TEST_CHECK(stage.add_root_prim(Prim("GeomLight", light)));
+
+    tydra::RenderSceneConverterEnv env(stage);
+    tydra::RenderScene scene;
+    tydra::RenderSceneConverter converter;
+
+    TEST_CHECK(!converter.ConvertToRenderScene(env, &scene));
+    TEST_CHECK(converter.GetError().find("missing geometry relationship") !=
+               std::string::npos);
+    TEST_CHECK(converter.GetError().find("/GeomLight") != std::string::npos);
+  }
+
+  {
+    Stage stage;
+    GeometryLight light;
+    light.name = "GeomLight";
+
+    Relationship empty_geometry_rel;
+    empty_geometry_rel.set(std::vector<Path>{});
+    light.geometry = empty_geometry_rel;
+
+    TEST_CHECK(stage.add_root_prim(Prim("GeomLight", light)));
+
+    tydra::RenderSceneConverterEnv env(stage);
+    tydra::RenderScene scene;
+    tydra::RenderSceneConverter converter;
+
+    TEST_CHECK(!converter.ConvertToRenderScene(env, &scene));
+    TEST_CHECK(converter.GetError().find(
+                   "must have exactly one geometry target") !=
+               std::string::npos);
+    TEST_CHECK(converter.GetError().find("/GeomLight") != std::string::npos);
+  }
+
+  {
+    Stage stage;
+    GeometryLight light;
+    light.name = "GeomLight";
+
+    Relationship multi_geometry_rel;
+    multi_geometry_rel.set(
+        std::vector<Path>{Path("/MeshA", ""), Path("/MeshB", "")});
+    light.geometry = multi_geometry_rel;
+
+    TEST_CHECK(stage.add_root_prim(Prim("GeomLight", light)));
+
+    tydra::RenderSceneConverterEnv env(stage);
+    tydra::RenderScene scene;
+    tydra::RenderSceneConverter converter;
+
+    TEST_CHECK(!converter.ConvertToRenderScene(env, &scene));
+    TEST_CHECK(converter.GetError().find(
+                   "must have exactly one geometry target") !=
+               std::string::npos);
+    TEST_CHECK(converter.GetError().find("/GeomLight") != std::string::npos);
+  }
+
+  {
+    Stage stage;
+    GeometryLight light;
+    light.name = "GeomLight";
+
+    Relationship missing_geometry_rel;
+    missing_geometry_rel.set(Path("/MissingMesh", ""));
+    light.geometry = missing_geometry_rel;
+
+    TEST_CHECK(stage.add_root_prim(Prim("GeomLight", light)));
+
+    tydra::RenderSceneConverterEnv env(stage);
+    tydra::RenderScene scene;
+    tydra::RenderSceneConverter converter;
+
+    TEST_CHECK(!converter.ConvertToRenderScene(env, &scene));
+    TEST_CHECK(converter.GetError().find("references missing geometry target") !=
+               std::string::npos);
+    TEST_CHECK(converter.GetError().find("/MissingMesh") !=
+               std::string::npos);
+  }
+
+  {
+    Stage stage;
+    GeometryLight light;
+    light.name = "GeomLight";
+
+    Relationship geometry_rel;
+    geometry_rel.set(Path("/MeshPrim", ""));
+    light.geometry = geometry_rel;
+
+    TEST_CHECK(stage.add_root_prim(Prim("GeomLight", light)));
+    TEST_CHECK(stage.add_root_prim(Prim("MeshPrim", make_mesh())));
+
+    tydra::RenderSceneConverterEnv env(stage);
+    tydra::RenderScene scene;
+    tydra::RenderSceneConverter converter;
+
+    TEST_CHECK(converter.ConvertToRenderScene(env, &scene));
+    TEST_CHECK(scene.lights.size() == 1);
+    if (scene.lights.size() == 1) {
+      TEST_CHECK(scene.lights[0].type == tydra::RenderLight::Type::Geometry);
+      TEST_CHECK(scene.lights[0].geometry_mesh_id == -1);
+    }
+  }
+}
+
+void tydra_mesh_fallback_policy_test(void) {
+  {
+    tydra::RenderSceneConverter converter;
+
+    tydra::RenderMesh dst;
+    dst.abs_path = "/MeshA";
+    dst.points = std::vector<tydra::vec3>{{0.0f, 0.0f, 0.0f}};
+    dst.usdFaceVertexIndices = std::vector<uint32_t>{0};
+    dst.usdFaceVertexCounts = std::vector<uint32_t>{1};
+
+    tydra::VertexAttribute dst_tc;
+    dst_tc.format = tydra::VertexAttributeFormat::Vec2;
+    dst_tc.data.resize(sizeof(float) * 2);
+    dst.texcoords.emplace(0, dst_tc);
+
+    tydra::RenderMesh src;
+    src.abs_path = "/MeshB";
+    src.points = std::vector<tydra::vec3>{{1.0f, 0.0f, 0.0f}};
+    src.usdFaceVertexIndices = std::vector<uint32_t>{0};
+    src.usdFaceVertexCounts = std::vector<uint32_t>{1};
+
+    tydra::VertexAttribute src_tc;
+    src_tc.format = tydra::VertexAttributeFormat::Vec3;
+    src_tc.data.resize(sizeof(float) * 3);
+    src.texcoords.emplace(0, src_tc);
+
+    std::string merge_err;
+    TEST_CHECK(!converter.MergeMeshData(
+        src, value::matrix4d::identity(), dst, &merge_err));
+    TEST_CHECK(merge_err.find("Cannot merge texcoords slot 0") !=
+               std::string::npos);
+    TEST_CHECK(converter.GetError().empty());
+  }
+
+  {
+    Stage stage;
+    tydra::RenderSceneConverterEnv env(stage);
+    env.scene_config.merge_meshes = true;
+    env.scene_config.merge_meshes_bake_transform = true;
+
+    tydra::RenderSceneConverter converter;
+
+    tydra::RenderMesh mesh_a;
+    mesh_a.prim_name = "MeshA";
+    mesh_a.abs_path = "/MeshA";
+    mesh_a.material_id = 7;
+    mesh_a.points = {{0.0f, 0.0f, 0.0f},
+                     {1.0f, 0.0f, 0.0f},
+                     {0.0f, 1.0f, 0.0f}};
+    mesh_a.usdFaceVertexIndices = {0, 1, 2};
+    mesh_a.usdFaceVertexCounts = {3};
+    mesh_a.texcoords[0].format = tydra::VertexAttributeFormat::Vec2;
+    mesh_a.texcoords[0].set_buffer(
+        reinterpret_cast<const uint8_t *>(kTexcoordsVec2.data()),
+        kTexcoordsVec2.size() * sizeof(value::texcoord2f));
+    mesh_a.texcoords[0].variability = tydra::VertexVariability::Vertex;
+
+    tydra::RenderMesh mesh_b = mesh_a;
+    mesh_b.prim_name = "MeshB";
+    mesh_b.abs_path = "/MeshB";
+    mesh_b.texcoords[0].format = tydra::VertexAttributeFormat::Vec3;
+    mesh_b.texcoords[0].set_buffer(
+        reinterpret_cast<const uint8_t *>(kTexcoordsVec3.data()),
+        kTexcoordsVec3.size() * sizeof(value::float3));
+    mesh_b.texcoords[0].variability = tydra::VertexVariability::Vertex;
+
+    converter.meshes.push_back(mesh_a);
+    converter.meshes.push_back(mesh_b);
+
+    tydra::Node node_a;
+    node_a.prim_name = "MeshA";
+    node_a.abs_path = "/MeshA";
+    node_a.category = tydra::NodeCategory::Geom;
+    node_a.nodeType = tydra::NodeType::Mesh;
+    node_a.id = 0;
+    node_a.local_matrix = value::matrix4d::identity();
+    node_a.global_matrix = value::matrix4d::identity();
+
+    tydra::Node node_b = node_a;
+    node_b.prim_name = "MeshB";
+    node_b.abs_path = "/MeshB";
+    node_b.id = 1;
+
+    converter.root_nodes.push_back(node_a);
+    converter.root_nodes.push_back(node_b);
+
+    TEST_CHECK(converter.MergeMeshesImpl(env));
+    TEST_CHECK(converter.GetError().empty());
+    TEST_CHECK(converter.GetInfo().find("Skipping mesh merge for /MeshB") !=
+               std::string::npos);
+    TEST_CHECK(converter.GetInfo().find("Cannot merge texcoords slot 0") !=
                std::string::npos);
   }
 }
