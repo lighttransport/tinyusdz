@@ -3,6 +3,7 @@
 #include "common-types.hh"
 
 #include <algorithm>
+#include <limits>
 #include <unordered_map>
 #include <cstring>
 #include <vector>
@@ -103,6 +104,51 @@ void ExtractAndClearAnimatable(Animatable<T>& src, T* default_val, TypedTimeSamp
 // }
 
 }  // anonymous namespace
+
+namespace detail {
+
+namespace {
+
+size_t SaturatingAdd(const size_t lhs, const size_t rhs) {
+  if (rhs > (std::numeric_limits<size_t>::max() - lhs)) {
+    return std::numeric_limits<size_t>::max();
+  }
+  return lhs + rhs;
+}
+
+}  // namespace
+
+void ApplyMemoryUsageDelta(
+    const size_t bytes_allocated,
+    const size_t bytes_freed,
+    const size_t max_memory_limit_mb,
+    MemoryUsageState* state,
+    const std::function<void(const std::string&)>& progress_callback,
+    const std::function<void(size_t)>& memory_freed_callback) {
+  if (!state) {
+    return;
+  }
+
+  const size_t current_after_alloc =
+      SaturatingAdd(state->current_memory_usage, bytes_allocated);
+  state->peak_memory_usage =
+      std::max(state->peak_memory_usage, current_after_alloc);
+
+  const size_t actual_bytes_freed = std::min(bytes_freed, current_after_alloc);
+  state->current_memory_usage = current_after_alloc - actual_bytes_freed;
+
+  if (actual_bytes_freed > 0 && memory_freed_callback) {
+    memory_freed_callback(actual_bytes_freed);
+  }
+
+  if (state->current_memory_usage > max_memory_limit_mb * 1024 * 1024) {
+    if (progress_callback) {
+      progress_callback("Warning: Memory limit exceeded");
+    }
+  }
+}
+
+}  // namespace detail
 
 struct LayerToRenderSceneConverter::Impl {
   std::unordered_map<std::string, int> material_path_to_id;
@@ -469,18 +515,13 @@ bool LayerToRenderSceneConverter::ConvertXformPrimSpec(
 }
 
 void LayerToRenderSceneConverter::TrackMemoryUsage(size_t bytes_allocated, size_t bytes_freed) {
-  current_memory_usage_ += bytes_allocated;
-  current_memory_usage_ -= bytes_freed;
-  
-  if (current_memory_usage_ > peak_memory_usage_) {
-    peak_memory_usage_ = current_memory_usage_;
-  }
-  
-  if (current_memory_usage_ > config_.max_memory_limit_mb * 1024 * 1024) {
-    if (config_.progress_callback) {
-      config_.progress_callback("Warning: Memory limit exceeded");
-    }
-  }
+  detail::MemoryUsageState state{peak_memory_usage_, current_memory_usage_};
+  detail::ApplyMemoryUsageDelta(bytes_allocated, bytes_freed,
+                                config_.max_memory_limit_mb, &state,
+                                config_.progress_callback,
+                                config_.memory_freed_callback);
+  peak_memory_usage_ = state.peak_memory_usage;
+  current_memory_usage_ = state.current_memory_usage;
 }
 
 }  // namespace tydra
