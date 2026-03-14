@@ -634,140 +634,6 @@ add_array_sample_to_timesamples(value::TimeSamples *d, double time,
   }
 }
 
-// Matrix arrays use the same binary-serializable path as other numeric arrays.
-inline bool add_matrix2d_array_sample_to_timesamples(
-    value::TimeSamples *d, double time,
-    const std::vector<value::matrix2d> &arrval, std::string *err,
-    size_t expected_total_samples = 0,
-    const crate::ValueRep *vrep = nullptr) {
-  if (d->is_using_binary_storage()) {
-    // Check if this array valueRep has been seen before
-    if (vrep) {
-      auto key = std::make_pair(static_cast<void*>(d), vrep->GetPayload());
-      auto& dedup_map = get_timesamples_dedup_map();
-      auto it = dedup_map.find(key);
-      if (it != dedup_map.end()) {
-        size_t ref_index = it->second;
-        DCOUT("Matrix2d array dedup: reusing sample index " << ref_index);
-        return d->add_dedup_matrix_array_sample<value::matrix2d>(time, ref_index, err);
-      } else {
-        size_t current_index = d->size();
-        dedup_map[key] = current_index;
-        DCOUT("Matrix2d array dedup: storing new sample at index " << current_index);
-        return d->add_array_sample<value::matrix2d>(
-            time, arrval, err, expected_total_samples);
-      }
-    } else {
-      return d->add_array_sample<value::matrix2d>(
-          time, arrval, err, expected_total_samples);
-    }
-  } else {
-    return d->add_sample(time, value::Value(arrval), err);
-  }
-}
-
-inline bool add_matrix3d_array_sample_to_timesamples(
-    value::TimeSamples *d, double time,
-    const std::vector<value::matrix3d> &arrval, std::string *err,
-    size_t expected_total_samples = 0,
-    const crate::ValueRep *vrep = nullptr) {
-  if (d->is_using_binary_storage()) {
-    // Check if this array valueRep has been seen before
-    if (vrep) {
-      auto key = std::make_pair(static_cast<void*>(d), vrep->GetPayload());
-      auto& dedup_map = get_timesamples_dedup_map();
-      auto it = dedup_map.find(key);
-      if (it != dedup_map.end()) {
-        size_t ref_index = it->second;
-        DCOUT("Matrix3d array dedup: reusing sample index " << ref_index);
-        return d->add_dedup_matrix_array_sample<value::matrix3d>(time, ref_index, err);
-      } else {
-        size_t current_index = d->size();
-        dedup_map[key] = current_index;
-        DCOUT("Matrix3d array dedup: storing new sample at index " << current_index);
-        return d->add_array_sample<value::matrix3d>(
-            time, arrval, err, expected_total_samples);
-      }
-    } else {
-      return d->add_array_sample<value::matrix3d>(
-          time, arrval, err, expected_total_samples);
-    }
-  } else {
-    return d->add_sample(time, value::Value(arrval), err);
-  }
-}
-
-inline bool add_matrix4d_array_sample_to_timesamples(
-    value::TimeSamples *d, double time,
-    const std::vector<value::matrix4d> &arrval, std::string *err,
-    size_t expected_total_samples = 0,
-    const crate::ValueRep *vrep = nullptr) {
-  if (d->is_using_binary_storage()) {
-    // Check if this array valueRep has been seen before
-    if (vrep) {
-      auto key = std::make_pair(static_cast<void*>(d), vrep->GetPayload());
-      auto& dedup_map = get_timesamples_dedup_map();
-      auto it = dedup_map.find(key);
-      if (it != dedup_map.end()) {
-        size_t ref_index = it->second;
-        DCOUT("Matrix4d array dedup: reusing sample index " << ref_index);
-        return d->add_dedup_matrix_array_sample<value::matrix4d>(time, ref_index, err);
-      } else {
-        size_t current_index = d->size();
-        dedup_map[key] = current_index;
-        DCOUT("Matrix4d array dedup: storing new sample at index " << current_index);
-        return d->add_array_sample<value::matrix4d>(
-            time, arrval, err, expected_total_samples);
-      }
-    } else {
-      return d->add_array_sample<value::matrix4d>(
-          time, arrval, err, expected_total_samples);
-    }
-  } else {
-    return d->add_sample(time, value::Value(arrval), err);
-  }
-}
-
-// TypedArray overloads for matrix types
-inline bool add_matrix2d_array_sample_to_timesamples(
-    value::TimeSamples *d, double time,
-    const TypedArray<value::matrix2d> &arrval, std::string *err,
-    size_t expected_total_samples = 0) {
-  if (d->is_using_binary_storage()) {
-    return d->add_array_sample<value::matrix2d>(
-        time, arrval, err, expected_total_samples);
-  } else {
-    std::vector<value::matrix2d> vec(arrval.data(), arrval.data() + arrval.size());
-    return d->add_sample(time, value::Value(vec), err);
-  }
-}
-
-inline bool add_matrix3d_array_sample_to_timesamples(
-    value::TimeSamples *d, double time,
-    const TypedArray<value::matrix3d> &arrval, std::string *err,
-    size_t expected_total_samples = 0) {
-  if (d->is_using_binary_storage()) {
-    return d->add_array_sample<value::matrix3d>(
-        time, arrval, err, expected_total_samples);
-  } else {
-    std::vector<value::matrix3d> vec(arrval.data(), arrval.data() + arrval.size());
-    return d->add_sample(time, value::Value(vec), err);
-  }
-}
-
-inline bool add_matrix4d_array_sample_to_timesamples(
-    value::TimeSamples *d, double time,
-    const TypedArray<value::matrix4d> &arrval, std::string *err,
-    size_t expected_total_samples = 0) {
-  if (d->is_using_binary_storage()) {
-    return d->add_array_sample<value::matrix4d>(
-        time, arrval, err, expected_total_samples);
-  } else {
-    std::vector<value::matrix4d> vec(arrval.data(), arrval.data() + arrval.size());
-    return d->add_sample(time, value::Value(vec), err);
-  }
-}
-
 #endif
 
 template <typename T>
@@ -2771,37 +2637,16 @@ bool CrateReader::UnpackTimeSampleValue_MATRIX2D(
     }
 
     std::vector<value::matrix2d> v;
-    if (rep.GetPayload() == 0) {
-      if (!add_matrix2d_array_sample_to_timesamples(&dst, t, v, &_err,
-                                                    expected_total_samples)) {
-        PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add sample to TimeSamples.");
-      }
-      return true;
-    }
-
-    // Check deduplication cache for array
-    auto it = _dedup_array_cache.find(rep);
-    if (it != _dedup_array_cache.end()) {
-      // Deduplicated array - reuse value from first occurrence (no copy)
-      size_t ref_index = it->second;
-      DCOUT("Reusing cached MATRIX2D array at sample index " << ref_index);
-
-      if (!dst.add_dedup_sample(t, ref_index, &_err)) {
-        PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add dedup sample to TimeSamples.");
-      }
-    } else {
-      // Read and cache array
+    if (rep.GetPayload() != 0) {
       if (!ReadArray(&v)) {
         PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read matrix2d array.");
       }
+    }
 
-      size_t current_index = dst.size();
-      _dedup_array_cache[rep] = current_index;
-
-      // Use value::Value array storage with dedup support (move, no copy)
-      if (!dst.add_value_array_sample(t, value::Value(std::move(v)), &_err)) {
-        PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add sample to TimeSamples.");
-      }
+    const crate::ValueRep *vrep = (rep.GetPayload() != 0) ? &rep : nullptr;
+    if (!add_array_sample_to_timesamples<value::matrix2d>(
+            &dst, t, v, &_err, expected_total_samples, vrep)) {
+      PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add sample to TimeSamples.");
     }
   } else {
     PUSH_ERROR_AND_RETURN_TAG(kTag, "Non-array value for matrix2d is invalid.");
@@ -2861,37 +2706,16 @@ bool CrateReader::UnpackTimeSampleValue_MATRIX3D(
     }
 
     std::vector<value::matrix3d> v;
-    if (rep.GetPayload() == 0) {
-      if (!add_matrix3d_array_sample_to_timesamples(&dst, t, v, &_err,
-                                                    expected_total_samples)) {
-        PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add sample to TimeSamples.");
-      }
-      return true;
-    }
-
-    // Check deduplication cache for array
-    auto it = _dedup_array_cache.find(rep);
-    if (it != _dedup_array_cache.end()) {
-      // Deduplicated array - reuse value from first occurrence (no copy)
-      size_t ref_index = it->second;
-      DCOUT("Reusing cached MATRIX3D array at sample index " << ref_index);
-
-      if (!dst.add_dedup_sample(t, ref_index, &_err)) {
-        PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add dedup sample to TimeSamples.");
-      }
-    } else {
-      // Read and cache array
+    if (rep.GetPayload() != 0) {
       if (!ReadArray(&v)) {
         PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read matrix3d array.");
       }
+    }
 
-      size_t current_index = dst.size();
-      _dedup_array_cache[rep] = current_index;
-
-      // Use value::Value array storage with dedup support (move, no copy)
-      if (!dst.add_value_array_sample(t, value::Value(std::move(v)), &_err)) {
-        PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add sample to TimeSamples.");
-      }
+    const crate::ValueRep *vrep = (rep.GetPayload() != 0) ? &rep : nullptr;
+    if (!add_array_sample_to_timesamples<value::matrix3d>(
+            &dst, t, v, &_err, expected_total_samples, vrep)) {
+      PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add sample to TimeSamples.");
     }
   } else {
     PUSH_ERROR_AND_RETURN_TAG(kTag, "Non-array value for matrix3d is invalid.");
@@ -2952,37 +2776,16 @@ bool CrateReader::UnpackTimeSampleValue_MATRIX4D(
     }
 
     std::vector<value::matrix4d> v;
-    if (rep.GetPayload() == 0) {
-      if (!add_matrix4d_array_sample_to_timesamples(&dst, t, v, &_err,
-                                                    expected_total_samples)) {
-        PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add sample to TimeSamples.");
-      }
-      return true;
-    }
-
-    // Check deduplication cache for array
-    auto it = _dedup_array_cache.find(rep);
-    if (it != _dedup_array_cache.end()) {
-      // Deduplicated array - reuse value from first occurrence (no copy)
-      size_t ref_index = it->second;
-      DCOUT("Reusing cached MATRIX4D array at sample index " << ref_index);
-
-      if (!dst.add_dedup_sample(t, ref_index, &_err)) {
-        PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add dedup sample to TimeSamples.");
-      }
-    } else {
-      // Read and cache array
+    if (rep.GetPayload() != 0) {
       if (!ReadArray(&v)) {
         PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read matrix4d array.");
       }
+    }
 
-      size_t current_index = dst.size();
-      _dedup_array_cache[rep] = current_index;
-
-      // Use value::Value array storage with dedup support (move, no copy)
-      if (!dst.add_value_array_sample(t, value::Value(std::move(v)), &_err)) {
-        PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add sample to TimeSamples.");
-      }
+    const crate::ValueRep *vrep = (rep.GetPayload() != 0) ? &rep : nullptr;
+    if (!add_array_sample_to_timesamples<value::matrix4d>(
+            &dst, t, v, &_err, expected_total_samples, vrep)) {
+      PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add sample to TimeSamples.");
     }
   } else {
     PUSH_ERROR_AND_RETURN_TAG(kTag, "Non-array value for matrix4d is invalid.");
