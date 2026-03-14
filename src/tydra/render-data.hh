@@ -3004,6 +3004,26 @@ class RenderSceneConverter {
                             const GeometryLight &light,
                             RenderLight *rlight_out);
 
+  ///
+  /// Merge two RenderMesh instances into a single mesh.
+  /// The source mesh data is appended to the destination mesh.
+  /// Returns false with `err` filled when the meshes are not merge-compatible.
+  ///
+  bool MergeMeshData(const RenderMesh &src, const value::matrix4d &src_transform,
+                     RenderMesh &dst, std::string *err = nullptr);
+
+  ///
+  /// Merge meshes with the same material for performant rendering.
+  ///
+  /// This function merges meshes that share the same material and have
+  /// compatible properties into a single mesh. It reduces draw calls
+  /// for GPU-based renderers.
+  ///
+  /// @param[in] env Converter environment containing configuration
+  /// @return true upon success
+  ///
+  bool MergeMeshesImpl(const RenderSceneConverterEnv &env);
+
   // Wrapper around GetBoundMaterial with caching.
   // Avoids repeated ancestor walks for sibling prims.
   bool GetBoundMaterialCached(
@@ -3083,39 +3103,11 @@ class RenderSceneConverter {
     Node &out_rnode);
 
   ///
-  /// Merge meshes with the same material for performant rendering.
-  ///
-  /// This function merges meshes that share the same material and have
-  /// compatible properties into a single mesh. It reduces draw calls
-  /// for GPU-based renderers.
-  ///
-  /// @param[in] env Converter environment containing configuration
-  /// @param[inout] nodes Node hierarchy (mesh node IDs will be updated)
-  /// @param[inout] meshes Mesh array (merged meshes will be added, originals marked)
-  ///
-  /// @return true upon success
-  ///
-  bool MergeMeshesImpl(const RenderSceneConverterEnv &env);
-
-  ///
   /// Helper to check if a mesh can be merged with others.
   /// Returns true if the mesh has no skeletal animation, no blend shapes,
   /// and no per-face materials.
   ///
   bool IsMeshMergeable(const RenderMesh &mesh) const;
-
-  ///
-  /// Merge two RenderMesh instances into a single mesh.
-  /// The source mesh data is appended to the destination mesh.
-  ///
-  /// @param[in] src Source mesh to merge from
-  /// @param[in] src_transform Transform to apply to source vertices (identity if no transform baking)
-  /// @param[inout] dst Destination mesh to merge into
-  ///
-  /// @return true upon success
-  ///
-  bool MergeMeshData(const RenderMesh &src, const value::matrix4d &src_transform,
-                     RenderMesh &dst);
 
   void PushInfo(const std::string &msg) { _info += msg + "\n"; }
   void PushWarn(const std::string &msg) { _warn += msg + "\n"; }
