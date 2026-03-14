@@ -7838,8 +7838,9 @@ bool RenderSceneConverter::ConvertPreviewSurfaceShaderParam(
           }
 
           if (!found_file) {
-            PUSH_WARN(fmt::format("MaterialX image node {} has no file input", texPath.prim_part()));
-            return true;
+            PUSH_ERROR_AND_RETURN(fmt::format(
+                "MaterialX image node {} has no file input",
+                texPath.prim_part()));
           }
 
           // Create a synthetic UsdUVTexture to pass to ConvertUVTexture
@@ -7942,8 +7943,9 @@ bool RenderSceneConverter::ConvertPreviewSurfaceShaderParam(
 
           return true;
         } else {
-          PUSH_WARN(fmt::format("Failed to find MaterialX texture for {}: {}",
-                                param_name, mtlx_result.error()));
+          PUSH_ERROR_AND_RETURN(fmt::format(
+              "Failed to find MaterialX texture for {}: {}",
+              param_name, mtlx_result.error()));
         }
       }
     }
@@ -7960,18 +7962,16 @@ bool RenderSceneConverter::ConvertPreviewSurfaceShaderParam(
     }
 
     if (!ptex) {
-      PUSH_WARN(fmt::format("[InternalError] ptex is nullptr for parameter '{}' in shader '{}'. Texture not assigned.",
-                            param_name, shader_abs_path.full_path_name()));
-      // Treat as no texture assigned (e.g., if nullptr for normal map, treat as no normal map)
-      return true;
+      PUSH_ERROR_AND_RETURN(fmt::format(
+          "[InternalError] ptex is nullptr for parameter '{}' in shader '{}'.",
+          param_name, shader_abs_path.full_path_name()));
     }
     DCOUT("ptex = " << ptex->name);
 
     if (!pshader) {
-      PUSH_WARN(fmt::format("[InternalError] pshader is nullptr for parameter '{}' in shader '{}'. Texture not assigned.",
-                            param_name, shader_abs_path.full_path_name()));
-      // Treat as no texture assigned (e.g., if nullptr for normal map, treat as no normal map)
-      return true;
+      PUSH_ERROR_AND_RETURN(fmt::format(
+          "[InternalError] pshader is nullptr for parameter '{}' in shader '{}'.",
+          param_name, shader_abs_path.full_path_name()));
     }
 
     DCOUT("Get connected UsdUVTexture Prim: " << texPath);
