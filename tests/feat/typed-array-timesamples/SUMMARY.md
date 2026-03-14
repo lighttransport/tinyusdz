@@ -37,7 +37,7 @@ bool add_array_sample_pod(double t, const TypedArray<T>& value,
                           size_t expected_total_samples = 0);
 
 template<typename T>
-bool add_matrix_array_sample_pod(double t, const TypedArray<T>& value,
+bool add_array_sample(double t, const TypedArray<T>& value,
                                   std::string *err = nullptr,
                                   size_t expected_total_samples = 0);
 ```
@@ -132,7 +132,7 @@ When POD optimization is disabled, TypedArray is converted to std::vector:
 
 ```cpp
 if (d->is_using_pod()) {
-    return d->add_array_sample_pod<T>(time, arrval, err, expected_total_samples);
+    return d->add_array_sample<T>(time, arrval, err, expected_total_samples);
 } else {
     // Convert TypedArray to std::vector for non-POD path
     std::vector<T> vec(arrval.data(), arrval.data() + arrval.size());

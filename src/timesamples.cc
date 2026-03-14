@@ -308,7 +308,7 @@ inline void insertion_sort_samples(std::vector<TimeSamples::Sample>& samples) {
 void TimeSamples::update() const {
   // Check which storage is in use
   if (!_times.empty()) {
-    // Unified POD storage (new approach)
+    // Unified binary storage (new approach)
     // Fast path: check if already sorted to avoid unnecessary work
     if (_times.size() < 2 || std::is_sorted(_times.begin(), _times.end())) {
       _dirty = false;

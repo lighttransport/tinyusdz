@@ -255,17 +255,17 @@ bool CrateReader::ReadTimeSamples(value::TimeSamples *d) {
       case crate::CrateDataTypeId::CRATE_DATA_TYPE_FLOAT:
       case crate::CrateDataTypeId::CRATE_DATA_TYPE_DOUBLE:
       case crate::CrateDataTypeId::CRATE_DATA_TYPE_HALF:
-        // POD scalar and array types - use typed/POD path
+        // binary-serializable scalar and array types - use typed/binary-storage path
         use_typed_path = true;
         break;
       case crate::CrateDataTypeId::CRATE_DATA_TYPE_MATRIX2D:
       case crate::CrateDataTypeId::CRATE_DATA_TYPE_MATRIX3D:
       case crate::CrateDataTypeId::CRATE_DATA_TYPE_MATRIX4D:
-        // POD matrix types
+        // binary-serializable matrix types
         use_typed_path = true;
         break;
       case crate::CrateDataTypeId::CRATE_DATA_TYPE_STRING:
-        // Non-POD but use typed path for arrays
+        // Non-binary-serializable but use typed path for arrays
         use_typed_path = first_is_array;
         break;
       default:
@@ -482,34 +482,10 @@ bool CrateReader::UnpackTimeSampleTimes(const crate::ValueRep &rep,
   return true;
 }
 
-// Helper template to check if a type is POD (trivial and standard layout)
 template <typename T>
-struct is_pod_type
-    : std::integral_constant<bool, std::is_trivial<T>::value &&
-                                       std::is_standard_layout<T>::value> {};
-
-// Helper to add sample - POD version
-template <typename T>
-typename std::enable_if<is_pod_type<T>::value, bool>::type
-add_sample_to_timesamples(value::TimeSamples *d, double time, const T &val,
+bool add_sample_to_timesamples(value::TimeSamples *d, double time, const T &val,
                           std::string *err, size_t expected_total_samples = 0) {
-  // TUSDZ_LOG_I("pod_ty: " << value::TypeTraits<T>::type_name() << ",
-  // is_use_pod " << d->is_using_pod());
-  if (d->is_using_pod()) {
-    return d->add_sample_pod<T>(time, val, err, expected_total_samples);
-  } else {
-    return d->add_sample(time, value::Value(val), err);
-  }
-}
-
-// Helper to add sample - non-POD version
-template <typename T>
-typename std::enable_if<!is_pod_type<T>::value, bool>::type
-add_sample_to_timesamples(value::TimeSamples *d, double time, const T &val,
-                          std::string *err, size_t expected_total_samples = 0) {
-  // TUSDZ_LOG_I("non pod_ty: " << value::TypeTraits<T>::type_name());
-  (void)expected_total_samples;  // unused for non-POD
-  return d->add_sample(time, value::Value(val), err);
+  return d->add_sample<T>(time, val, err, expected_total_samples);
 }
 
 #if 0
@@ -576,37 +552,46 @@ void clear_all_timesamples_dedup_entries() {
 #endif
 
 template <typename T>
-typename std::enable_if<is_pod_type<T>::value, bool>::type
+bool
 add_array_sample_to_timesamples(value::TimeSamples *d, double time,
                                 const std::vector<T> &arrval, std::string *err,
                                 size_t expected_total_samples = 0,
                                 const crate::ValueRep *vrep = nullptr) {
-  // TUSDZ_LOG_I("arr pod_ty: " << value::TypeTraits<T>::type_name() << ",
-  // is_use_pod " << d->is_using_pod());
-  if (d->is_using_pod()) {
+  if constexpr (std::is_same<T, bool>::value) {
+    if (d->is_using_binary_storage()) {
+      if (vrep) {
+        auto key = std::make_pair(static_cast<void*>(d), vrep->GetPayload());
+        auto& dedup_map = get_timesamples_dedup_map();
+        auto it = dedup_map.find(key);
+        if (it != dedup_map.end()) {
+          return d->add_dedup_bool_array_sample(time, it->second, err);
+        }
+
+        dedup_map[key] = d->size();
+      }
+    }
+
+    return d->add_array_sample<bool>(time, arrval, err, expected_total_samples);
+  } else if constexpr (value::is_binary_serializable_v<T>) {
+    if (d->is_using_binary_storage()) {
     // Check if this array valueRep has been seen before in this TimeSamples
-    if (vrep) {
-      auto key = std::make_pair(static_cast<void*>(d), vrep->GetPayload());
-      auto& dedup_map = get_timesamples_dedup_map();
-      auto it = dedup_map.find(key);
-      if (it != dedup_map.end()) {
-        // Deduplicated array - reuse offset from first occurrence
-        size_t ref_index = it->second;
-        DCOUT("Array dedup: reusing sample index " << ref_index);
-        return d->add_dedup_array_sample_pod<T>(time, ref_index, err);
-      } else {
-        // First occurrence - store normally and remember the index
+      if (vrep) {
+        auto key = std::make_pair(static_cast<void*>(d), vrep->GetPayload());
+        auto& dedup_map = get_timesamples_dedup_map();
+        auto it = dedup_map.find(key);
+        if (it != dedup_map.end()) {
+          size_t ref_index = it->second;
+          DCOUT("Array dedup: reusing sample index " << ref_index);
+          return d->add_dedup_array_sample<T>(time, ref_index, err);
+        }
+
         size_t current_index = d->size();
         dedup_map[key] = current_index;
         DCOUT("Array dedup: storing new sample at index " << current_index);
-        return d->add_array_sample_pod<T>(time, arrval, err,
-                                          expected_total_samples);
       }
-    } else {
-      // No ValueRep provided - store normally without dedup tracking
-      return d->add_array_sample_pod<T>(time, arrval, err,
-                                        expected_total_samples);
     }
+
+    return d->add_array_sample<T>(time, arrval, err, expected_total_samples);
   } else {
     return d->add_sample(time, value::Value(arrval), err);
   }
@@ -619,11 +604,11 @@ add_array_sample_to_timesamples(value::TimeSamples *d, double time,
                                 const TypedArray<T> &arrval, std::string *err,
                                 size_t expected_total_samples = 0,
                                 const crate::ValueRep *vrep = nullptr) {
-  // Store actual array data inline in PODTimeSamples, not packed pointers.
+  // Store actual array data inline in TimeSamples, not packed pointers.
   // The packed-pointer approach (add_typed_array_sample) has lifetime issues:
-  // The TypedArrayImpl object may be destroyed before PODTimeSamples is printed,
-  // leaving dangling pointers. Storing the data inline ensures it outlives PODTimeSamples.
-  if (d->is_using_pod()) {
+  // The TypedArrayImpl object may be destroyed before unified binary storage is printed,
+  // leaving dangling pointers. Storing the data inline ensures it outlives unified binary storage.
+  if (d->is_using_binary_storage()) {
     // Check if this array valueRep has been seen before in this TimeSamples
     if (vrep) {
       auto key = std::make_pair(static_cast<void*>(d), vrep->GetPayload());
@@ -633,34 +618,34 @@ add_array_sample_to_timesamples(value::TimeSamples *d, double time,
         // Deduplicated array - reuse offset from first occurrence
         size_t ref_index = it->second;
         DCOUT("Array dedup: reusing sample index " << ref_index);
-        return d->add_dedup_array_sample_pod<T>(time, ref_index, err);
+        return d->add_dedup_array_sample<T>(time, ref_index, err);
       } else {
         // First occurrence - store normally and remember the index
         size_t current_index = d->size();
         dedup_map[key] = current_index;
         DCOUT("Array dedup: storing new sample at index " << current_index);
-        return d->add_array_sample_pod<T>(time, arrval, err,
-                                          expected_total_samples);
+        return d->add_array_sample<T>(time, arrval, err,
+                                      expected_total_samples);
       }
     } else {
       // No ValueRep provided - store normally without dedup tracking
-      return d->add_array_sample_pod<T>(time, arrval, err,
-                                        expected_total_samples);
+      return d->add_array_sample<T>(time, arrval, err,
+                                    expected_total_samples);
     }
   } else {
-    // Convert TypedArray to std::vector for non-POD path
+    // Convert TypedArray to std::vector for generic Value storage.
     std::vector<T> vec(arrval.data(), arrval.data() + arrval.size());
     return d->add_sample(time, value::Value(vec), err);
   }
 }
 
-// Specialization for matrix(treat it as pod)
+// Matrix arrays use the same binary-serializable path as other numeric arrays.
 inline bool add_matrix2d_array_sample_to_timesamples(
     value::TimeSamples *d, double time,
     const std::vector<value::matrix2d> &arrval, std::string *err,
     size_t expected_total_samples = 0,
     const crate::ValueRep *vrep = nullptr) {
-  if (d->is_using_pod()) {
+  if (d->is_using_binary_storage()) {
     // Check if this array valueRep has been seen before
     if (vrep) {
       auto key = std::make_pair(static_cast<void*>(d), vrep->GetPayload());
@@ -669,16 +654,16 @@ inline bool add_matrix2d_array_sample_to_timesamples(
       if (it != dedup_map.end()) {
         size_t ref_index = it->second;
         DCOUT("Matrix2d array dedup: reusing sample index " << ref_index);
-        return d->add_dedup_matrix_array_sample_pod<value::matrix2d>(time, ref_index, err);
+        return d->add_dedup_matrix_array_sample<value::matrix2d>(time, ref_index, err);
       } else {
         size_t current_index = d->size();
         dedup_map[key] = current_index;
         DCOUT("Matrix2d array dedup: storing new sample at index " << current_index);
-        return d->add_matrix_array_sample_pod<value::matrix2d>(
+        return d->add_array_sample<value::matrix2d>(
             time, arrval, err, expected_total_samples);
       }
     } else {
-      return d->add_matrix_array_sample_pod<value::matrix2d>(
+      return d->add_array_sample<value::matrix2d>(
           time, arrval, err, expected_total_samples);
     }
   } else {
@@ -691,7 +676,7 @@ inline bool add_matrix3d_array_sample_to_timesamples(
     const std::vector<value::matrix3d> &arrval, std::string *err,
     size_t expected_total_samples = 0,
     const crate::ValueRep *vrep = nullptr) {
-  if (d->is_using_pod()) {
+  if (d->is_using_binary_storage()) {
     // Check if this array valueRep has been seen before
     if (vrep) {
       auto key = std::make_pair(static_cast<void*>(d), vrep->GetPayload());
@@ -700,16 +685,16 @@ inline bool add_matrix3d_array_sample_to_timesamples(
       if (it != dedup_map.end()) {
         size_t ref_index = it->second;
         DCOUT("Matrix3d array dedup: reusing sample index " << ref_index);
-        return d->add_dedup_matrix_array_sample_pod<value::matrix3d>(time, ref_index, err);
+        return d->add_dedup_matrix_array_sample<value::matrix3d>(time, ref_index, err);
       } else {
         size_t current_index = d->size();
         dedup_map[key] = current_index;
         DCOUT("Matrix3d array dedup: storing new sample at index " << current_index);
-        return d->add_matrix_array_sample_pod<value::matrix3d>(
+        return d->add_array_sample<value::matrix3d>(
             time, arrval, err, expected_total_samples);
       }
     } else {
-      return d->add_matrix_array_sample_pod<value::matrix3d>(
+      return d->add_array_sample<value::matrix3d>(
           time, arrval, err, expected_total_samples);
     }
   } else {
@@ -722,7 +707,7 @@ inline bool add_matrix4d_array_sample_to_timesamples(
     const std::vector<value::matrix4d> &arrval, std::string *err,
     size_t expected_total_samples = 0,
     const crate::ValueRep *vrep = nullptr) {
-  if (d->is_using_pod()) {
+  if (d->is_using_binary_storage()) {
     // Check if this array valueRep has been seen before
     if (vrep) {
       auto key = std::make_pair(static_cast<void*>(d), vrep->GetPayload());
@@ -731,16 +716,16 @@ inline bool add_matrix4d_array_sample_to_timesamples(
       if (it != dedup_map.end()) {
         size_t ref_index = it->second;
         DCOUT("Matrix4d array dedup: reusing sample index " << ref_index);
-        return d->add_dedup_matrix_array_sample_pod<value::matrix4d>(time, ref_index, err);
+        return d->add_dedup_matrix_array_sample<value::matrix4d>(time, ref_index, err);
       } else {
         size_t current_index = d->size();
         dedup_map[key] = current_index;
         DCOUT("Matrix4d array dedup: storing new sample at index " << current_index);
-        return d->add_matrix_array_sample_pod<value::matrix4d>(
+        return d->add_array_sample<value::matrix4d>(
             time, arrval, err, expected_total_samples);
       }
     } else {
-      return d->add_matrix_array_sample_pod<value::matrix4d>(
+      return d->add_array_sample<value::matrix4d>(
           time, arrval, err, expected_total_samples);
     }
   } else {
@@ -753,8 +738,8 @@ inline bool add_matrix2d_array_sample_to_timesamples(
     value::TimeSamples *d, double time,
     const TypedArray<value::matrix2d> &arrval, std::string *err,
     size_t expected_total_samples = 0) {
-  if (d->is_using_pod()) {
-    return d->add_matrix_array_sample_pod<value::matrix2d>(
+  if (d->is_using_binary_storage()) {
+    return d->add_array_sample<value::matrix2d>(
         time, arrval, err, expected_total_samples);
   } else {
     std::vector<value::matrix2d> vec(arrval.data(), arrval.data() + arrval.size());
@@ -766,8 +751,8 @@ inline bool add_matrix3d_array_sample_to_timesamples(
     value::TimeSamples *d, double time,
     const TypedArray<value::matrix3d> &arrval, std::string *err,
     size_t expected_total_samples = 0) {
-  if (d->is_using_pod()) {
-    return d->add_matrix_array_sample_pod<value::matrix3d>(
+  if (d->is_using_binary_storage()) {
+    return d->add_array_sample<value::matrix3d>(
         time, arrval, err, expected_total_samples);
   } else {
     std::vector<value::matrix3d> vec(arrval.data(), arrval.data() + arrval.size());
@@ -779,8 +764,8 @@ inline bool add_matrix4d_array_sample_to_timesamples(
     value::TimeSamples *d, double time,
     const TypedArray<value::matrix4d> &arrval, std::string *err,
     size_t expected_total_samples = 0) {
-  if (d->is_using_pod()) {
-    return d->add_matrix_array_sample_pod<value::matrix4d>(
+  if (d->is_using_binary_storage()) {
+    return d->add_array_sample<value::matrix4d>(
         time, arrval, err, expected_total_samples);
   } else {
     std::vector<value::matrix4d> vec(arrval.data(), arrval.data() + arrval.size());
@@ -790,27 +775,11 @@ inline bool add_matrix4d_array_sample_to_timesamples(
 
 #endif
 
-// Helper to add blocked sample - POD version
 template <typename T>
-typename std::enable_if<is_pod_type<T>::value, bool>::type
-add_blocked_sample_to_timesamples(value::TimeSamples *d, double time,
+bool add_blocked_sample_to_timesamples(value::TimeSamples *d, double time,
                                   std::string *err,
                                   size_t expected_total_samples = 0) {
-  if (d->is_using_pod()) {
-    return d->add_blocked_sample_pod<T>(time, err, expected_total_samples);
-  } else {
-    return d->add_blocked_sample(time, value::Value(T{}), err);
-  }
-}
-
-// Helper to add blocked sample - non-POD version
-template <typename T>
-typename std::enable_if<!is_pod_type<T>::value, bool>::type
-add_blocked_sample_to_timesamples(value::TimeSamples *d, double time,
-                                  std::string *err,
-                                  size_t expected_total_samples = 0) {
-  (void)expected_total_samples;  // unused for non-POD
-  return d->add_blocked_sample(time, value::Value(T{}), err);
+  return d->add_blocked_sample<T>(time, err, expected_total_samples);
 }
 
 bool CrateReader::UnpackTimeSampleValue_BOOL(double t,
@@ -3719,7 +3688,7 @@ bool CrateReader::UnpackValueRepsToTimeSamples(
   }
 
 #if 0
-  // Use POD-aware TimeSamples directly for POD types
+  // Use binary-aware TimeSamples directly for binary-serializable types
   // Initialize TimeSamples with the type_id for this type
   if (!d->init(value::TypeTraits<T>::type_id())) {
     // Already initialized with different type - fall back to standard path
@@ -3777,7 +3746,7 @@ bool CrateReader::CrateTypedTimeSamples(const std::vector<double> &times,
                                          const std::vector<crate::ValueRep> &,  // value_reps unused
                                          uint64_t vrep_start_offset,
                                          value::TimeSamples *d) {
-  // Use POD-aware TimeSamples directly for POD types
+  // Use binary-aware TimeSamples directly for binary-serializable types
   // Initialize TimeSamples with the type_id for this type
   if (!d->init(value::TypeTraits<T>::type_id())) {
     // Already initialized with different type - fall back to standard path
@@ -3842,7 +3811,7 @@ template bool CrateReader::CrateTypedTimeSamples<std::vector<value::matrix2d>>(c
 template bool CrateReader::CrateTypedTimeSamples<std::vector<value::matrix3d>>(const std::vector<double>&, const std::vector<crate::ValueRep>&, uint64_t, value::TimeSamples*);
 template bool CrateReader::CrateTypedTimeSamples<std::vector<value::matrix4d>>(const std::vector<double>&, const std::vector<crate::ValueRep>&, uint64_t, value::TimeSamples*);
 
-// Scalar POD types (use PODTimeSamples optimization)
+// scalar binary-serializable types (use unified binary storage optimization)
 template bool CrateReader::CrateTypedTimeSamples<int32_t>(const std::vector<double>&, const std::vector<crate::ValueRep>&, uint64_t, value::TimeSamples*);
 template bool CrateReader::CrateTypedTimeSamples<uint32_t>(const std::vector<double>&, const std::vector<crate::ValueRep>&, uint64_t, value::TimeSamples*);
 template bool CrateReader::CrateTypedTimeSamples<int64_t>(const std::vector<double>&, const std::vector<crate::ValueRep>&, uint64_t, value::TimeSamples*);
