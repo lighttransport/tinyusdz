@@ -10720,43 +10720,64 @@ bool RenderSceneConverter::BuildNodeHierarchyImpl(
 
       if (prim->type_id() == value::TYPE_ID_LUX_SPHERE) {
         const SphereLight *sphereLight = prim->as<SphereLight>();
-        if (sphereLight && ConvertSphereLight(env, lightPath, *sphereLight, &rlight)) {
+        if (sphereLight) {
+          if (!ConvertSphereLight(env, lightPath, *sphereLight, &rlight)) {
+            return false;
+          }
           rnode.nodeType = NodeType::PointLight;
           light_converted = true;
         }
       } else if (prim->type_id() == value::TYPE_ID_LUX_DISTANT) {
         const DistantLight *distantLight = prim->as<DistantLight>();
-        if (distantLight && ConvertDistantLight(env, lightPath, *distantLight, &rlight)) {
+        if (distantLight) {
+          if (!ConvertDistantLight(env, lightPath, *distantLight, &rlight)) {
+            return false;
+          }
           rnode.nodeType = NodeType::DirectionalLight;
           light_converted = true;
         }
       } else if (prim->type_id() == value::TYPE_ID_LUX_DOME) {
         const DomeLight *domeLight = prim->as<DomeLight>();
-        if (domeLight && ConvertDomeLight(env, lightPath, *domeLight, &rlight)) {
+        if (domeLight) {
+          if (!ConvertDomeLight(env, lightPath, *domeLight, &rlight)) {
+            return false;
+          }
           rnode.nodeType = NodeType::EnvmapLight;
           light_converted = true;
         }
       } else if (prim->type_id() == value::TYPE_ID_LUX_RECT) {
         const RectLight *rectLight = prim->as<RectLight>();
-        if (rectLight && ConvertRectLight(env, lightPath, *rectLight, &rlight)) {
+        if (rectLight) {
+          if (!ConvertRectLight(env, lightPath, *rectLight, &rlight)) {
+            return false;
+          }
           rnode.nodeType = NodeType::RectLight;
           light_converted = true;
         }
       } else if (prim->type_id() == value::TYPE_ID_LUX_DISK) {
         const DiskLight *diskLight = prim->as<DiskLight>();
-        if (diskLight && ConvertDiskLight(env, lightPath, *diskLight, &rlight)) {
+        if (diskLight) {
+          if (!ConvertDiskLight(env, lightPath, *diskLight, &rlight)) {
+            return false;
+          }
           rnode.nodeType = NodeType::DiskLight;
           light_converted = true;
         }
       } else if (prim->type_id() == value::TYPE_ID_LUX_CYLINDER) {
         const CylinderLight *cylinderLight = prim->as<CylinderLight>();
-        if (cylinderLight && ConvertCylinderLight(env, lightPath, *cylinderLight, &rlight)) {
+        if (cylinderLight) {
+          if (!ConvertCylinderLight(env, lightPath, *cylinderLight, &rlight)) {
+            return false;
+          }
           rnode.nodeType = NodeType::CylinderLight;
           light_converted = true;
         }
       } else if (prim->type_id() == value::TYPE_ID_LUX_GEOMETRY) {
         const GeometryLight *geometryLight = prim->as<GeometryLight>();
-        if (geometryLight && ConvertGeometryLight(env, lightPath, *geometryLight, &rlight)) {
+        if (geometryLight) {
+          if (!ConvertGeometryLight(env, lightPath, *geometryLight, &rlight)) {
+            return false;
+          }
           rnode.nodeType = NodeType::GeometryLight;
           light_converted = true;
         }
@@ -11128,6 +11149,21 @@ bool RenderSceneConverter::ConvertDomeLight(
           PushWarn(warn);
         }
 
+        if (!tex_loaded) {
+          if (!env.material_config.allow_texture_load_failure) {
+            PUSH_ERROR_AND_RETURN(fmt::format(
+                "Failed to load envmap texture: `{}` err = {}",
+                assetPath.GetAssetPath(), err));
+          }
+
+          const std::string load_err =
+              err.empty() ? std::string("loader returned failure") : err;
+          PushWarn(fmt::format(
+              "Failed to decode envmap texture: `{}`. reason = {}. "
+              "Falling back to raw asset storage.",
+              assetPath.GetAssetPath(), load_err));
+        }
+
         if (tex_loaded) {
           texImage.asset_identifier = assetPath.GetAssetPath();
           texImage.decoded = true;
@@ -11151,11 +11187,6 @@ bool RenderSceneConverter::ConvertDomeLight(
                 << " channels=" << texImage.channels);
         } else {
           // Fallback: store raw asset when decoding fails (e.g., EXR/HDR not supported)
-          if (err.size()) {
-            PushWarn(fmt::format("Failed to decode envmap texture: `{}`. reason = {}. Falling back to raw asset storage.",
-                                 assetPath.GetAssetPath(), err));
-          }
-
           // Try to store the raw asset for later decoding (e.g., in JS layer)
           Asset asset;
           std::string resolvedPath;
