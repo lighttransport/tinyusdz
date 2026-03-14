@@ -18,7 +18,7 @@ using namespace tinyusdz;
 template<typename T>
 bool test_typed_array_dedup() {
     value::TimeSamples ts;
-    // POD optimization is enabled automatically via init() or first add_sample_pod call
+    // binary storage is selected automatically via init() or the first typed add_sample call
 
     // Create a TypedArray
     TypedArrayImpl<T> arr_impl(100);
@@ -62,7 +62,7 @@ bool test_typed_array_dedup() {
 template<typename T>
 bool test_vector_compatibility() {
     value::TimeSamples ts;
-    // POD optimization is enabled automatically
+    // binary storage is selected automatically
 
     std::vector<T> vec(50);
     for (size_t i = 0; i < 50; i++) {
@@ -90,7 +90,7 @@ bool test_vector_compatibility() {
 template<typename T>
 bool test_scalar_values() {
     value::TimeSamples ts;
-    // POD optimization is enabled automatically
+    // binary storage is selected automatically
 
     std::string err;
     T val1 = static_cast<T>(42);

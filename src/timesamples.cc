@@ -379,19 +379,19 @@ void TimeSamples::update() const {
 // This reduces compilation time by instantiating templates only once
 //
 
-// Integer types (POD, non-lerp'able)
+// Integer types (binary-serializable, non-lerp'able)
 template struct TypedTimeSamples<bool>;
 template struct TypedTimeSamples<int32_t>;
 template struct TypedTimeSamples<uint32_t>;
 template struct TypedTimeSamples<int64_t>;
 template struct TypedTimeSamples<uint64_t>;
 
-// Floating point scalar types (POD, lerp'able)
+// Floating point scalar types (binary-serializable, lerp'able)
 template struct TypedTimeSamples<value::half>;
 template struct TypedTimeSamples<float>;
 template struct TypedTimeSamples<double>;
 
-// Vector types (POD, lerp'able)
+// Vector types (binary-serializable, lerp'able)
 template struct TypedTimeSamples<value::half2>;
 template struct TypedTimeSamples<value::half3>;
 template struct TypedTimeSamples<value::half4>;
@@ -402,12 +402,12 @@ template struct TypedTimeSamples<value::double2>;
 template struct TypedTimeSamples<value::double3>;
 template struct TypedTimeSamples<value::double4>;
 
-// Integer vector types (POD, non-lerp'able)
+// Integer vector types (binary-serializable, non-lerp'able)
 template struct TypedTimeSamples<value::int2>;
 template struct TypedTimeSamples<value::int3>;
 template struct TypedTimeSamples<value::int4>;
 
-// Quaternion types (POD, lerp'able)
+// Quaternion types (binary-serializable, lerp'able)
 template struct TypedTimeSamples<value::quath>;
 template struct TypedTimeSamples<value::quatf>;
 template struct TypedTimeSamples<value::quatd>;
@@ -420,7 +420,7 @@ template struct TypedTimeSamples<value::matrix2d>;
 template struct TypedTimeSamples<value::matrix3d>;
 template struct TypedTimeSamples<value::matrix4d>;
 
-// Role types (POD, lerp'able)
+// Role types (binary-serializable, lerp'able)
 template struct TypedTimeSamples<value::normal3h>;
 template struct TypedTimeSamples<value::normal3f>;
 template struct TypedTimeSamples<value::normal3d>;

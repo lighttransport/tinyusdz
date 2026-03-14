@@ -2201,7 +2201,7 @@ struct TimeSamples {
   // Generic path storage (for generic Value types: string, token, dict, etc.)
   mutable std::vector<Sample> _samples;
 
-  // binary-storage path storage (moved from unified binary storage for Phase 2 unification)
+  // Unified binary-storage path (Phase 2 unification)
   mutable std::vector<double> _times;
   mutable Buffer<16> _blocked;
   mutable std::vector<uint64_t> _small_values;                       // Direct storage for small scalar binary-serializable types (sizeof(T) <= 8 bytes), stored as uint64
@@ -2633,19 +2633,19 @@ struct TypedTimeSamples {
 // These are instantiated in timesamples.cc
 //
 
-// Integer types (POD, non-lerp'able)
+// Integer types (binary-serializable, non-lerp'able)
 extern template struct TypedTimeSamples<bool>;
 extern template struct TypedTimeSamples<int32_t>;
 extern template struct TypedTimeSamples<uint32_t>;
 extern template struct TypedTimeSamples<int64_t>;
 extern template struct TypedTimeSamples<uint64_t>;
 
-// Floating point scalar types (POD, lerp'able)
+// Floating point scalar types (binary-serializable, lerp'able)
 extern template struct TypedTimeSamples<value::half>;
 extern template struct TypedTimeSamples<float>;
 extern template struct TypedTimeSamples<double>;
 
-// Vector types (POD, lerp'able)
+// Vector types (binary-serializable, lerp'able)
 extern template struct TypedTimeSamples<value::half2>;
 extern template struct TypedTimeSamples<value::half3>;
 extern template struct TypedTimeSamples<value::half4>;
@@ -2656,12 +2656,12 @@ extern template struct TypedTimeSamples<value::double2>;
 extern template struct TypedTimeSamples<value::double3>;
 extern template struct TypedTimeSamples<value::double4>;
 
-// Integer vector types (POD, non-lerp'able)
+// Integer vector types (binary-serializable, non-lerp'able)
 extern template struct TypedTimeSamples<value::int2>;
 extern template struct TypedTimeSamples<value::int3>;
 extern template struct TypedTimeSamples<value::int4>;
 
-// Quaternion types (POD, lerp'able)
+// Quaternion types (binary-serializable, lerp'able)
 extern template struct TypedTimeSamples<value::quath>;
 extern template struct TypedTimeSamples<value::quatf>;
 extern template struct TypedTimeSamples<value::quatd>;
@@ -2674,7 +2674,7 @@ extern template struct TypedTimeSamples<value::matrix2d>;
 extern template struct TypedTimeSamples<value::matrix3d>;
 extern template struct TypedTimeSamples<value::matrix4d>;
 
-// Role types (POD, lerp'able)
+// Role types (binary-serializable, lerp'able)
 extern template struct TypedTimeSamples<value::normal3h>;
 extern template struct TypedTimeSamples<value::normal3f>;
 extern template struct TypedTimeSamples<value::normal3d>;

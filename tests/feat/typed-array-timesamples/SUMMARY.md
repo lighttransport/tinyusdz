@@ -8,7 +8,7 @@ Successfully implemented `TypedArray<T>` support for TimeSamples array values wi
 
 ### 1. Updated Deduplication Cache (`src/crate-reader.hh`)
 
-Replaced `std::vector<T>` with `TypedArray<T>` for POD array dedup maps:
+Replaced `std::vector<T>` with `TypedArray<T>` for binary-serializable array dedup maps:
 
 ```cpp
 // Before:
@@ -31,12 +31,6 @@ std::unordered_map<crate::ValueRep, TypedArray<int32_t>, crate::ValueRep::Hash> 
 Added new template overloads to accept `TypedArray<T>`:
 
 ```cpp
-template<typename T>
-bool add_array_sample_pod(double t, const TypedArray<T>& value,
-                          std::string *err = nullptr,
-                          size_t expected_total_samples = 0);
-
-template<typename T>
 bool add_array_sample(double t, const TypedArray<T>& value,
                                   std::string *err = nullptr,
                                   size_t expected_total_samples = 0);
@@ -78,11 +72,11 @@ Modified array unpacking to use TypedArray:
 ### 2. Performance
 - **Faster parsing**: Cached arrays avoid redundant file I/O operations
 - **No decompression overhead**: Repeated compressed arrays are decompressed once
-- **Cache-friendly**: POD TimeSamples storage is contiguous in memory
+- **Cache-friendly**: TimeSamples binary storage is contiguous in memory
 
 ### 3. Code Quality
 - **Backward compatible**: All existing `std::vector<T>` overloads continue to work
-- **Type safe**: Template specialization ensures POD types only
+- **Type safe**: Template specialization ensures binary-serializable types only
 - **Future ready**: TypedArray supports mmap views for zero-copy access
 
 ## Test Coverage
@@ -95,7 +89,7 @@ make test
 ```
 
 **Test Cases:**
-1. TypedArray deduplication for POD array types
+1. TypedArray deduplication for binary-serializable array types
 2. std::vector backward compatibility
 3. Scalar value storage
 4. Multiple type support (int, uint, int64, uint64, float, double)
@@ -120,21 +114,21 @@ if (it != _dedup_int32_array.end()) {
     v = it->second;  // No file I/O!
 }
 
-// Add to TimeSamples (uses POD optimization)
+// Add to TimeSamples (uses binary storage)
 add_array_sample_to_timesamples<int32_t>(&dst, time, v, &err);
 ```
 
 ## Implementation Notes
 
-### Non-POD Path Fallback
+### Generic Value Fallback
 
-When POD optimization is disabled, TypedArray is converted to std::vector:
+When binary storage is not selected, TypedArray is converted to std::vector:
 
 ```cpp
-if (d->is_using_pod()) {
+if (d->is_using_binary_storage()) {
     return d->add_array_sample<T>(time, arrval, err, expected_total_samples);
 } else {
-    // Convert TypedArray to std::vector for non-POD path
+    // Convert TypedArray to std::vector for generic Value path
     std::vector<T> vec(arrval.data(), arrval.data() + arrval.size());
     return d->add_sample(time, value::Value(vec), err);
 }
@@ -192,6 +186,6 @@ Potential improvements:
 ## References
 
 - TypedArray implementation: `src/typed-array.hh`
-- POD TimeSamples: `src/timesamples.hh`
+- TimeSamples binary storage: `src/timesamples.hh`
 - Crate format reader: `src/crate-reader-timesamples.cc`
 - ValueRep deduplication: Recent commit `8afae37e`
