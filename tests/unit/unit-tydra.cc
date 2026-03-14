@@ -741,55 +741,86 @@ void tydra_blendshape_resolution_test(void) {
 }
 
 void tydra_material_binding_validation_test(void) {
-  Stage stage;
+  auto make_mesh = []() {
+    GeomMesh mesh;
+    mesh.points = Animatable<std::vector<value::point3f>>(
+        std::vector<value::point3f>{{0.0f, 0.0f, 0.0f},
+                                    {1.0f, 0.0f, 0.0f},
+                                    {0.0f, 1.0f, 0.0f}});
+    mesh.faceVertexCounts = Animatable<std::vector<int32_t>>(
+        std::vector<int32_t>{3});
+    mesh.faceVertexIndices = Animatable<std::vector<int32_t>>(
+        std::vector<int32_t>{0, 1, 2});
+    return mesh;
+  };
 
-  Xform not_material;
-  Prim not_material_prim("NotMaterial", not_material);
+  {
+    Stage stage;
 
-  GeomMesh mesh;
-  mesh.points = Animatable<std::vector<value::point3f>>(
-      std::vector<value::point3f>{{0.0f, 0.0f, 0.0f},
-                                  {1.0f, 0.0f, 0.0f},
-                                  {0.0f, 1.0f, 0.0f}});
-  mesh.faceVertexCounts = Animatable<std::vector<int32_t>>(
-      std::vector<int32_t>{3});
-  mesh.faceVertexIndices = Animatable<std::vector<int32_t>>(
-      std::vector<int32_t>{0, 1, 2});
+    Xform not_material;
+    Prim not_material_prim("NotMaterial", not_material);
 
-  Relationship invalid_material_rel;
-  invalid_material_rel.set(Path("/NotMaterial", ""));
-  mesh.set_materialBinding(invalid_material_rel);
+    GeomMesh mesh = make_mesh();
 
-  Prim mesh_prim("MeshPrim", mesh);
+    Relationship invalid_material_rel;
+    invalid_material_rel.set(Path("/NotMaterial", ""));
+    mesh.set_materialBinding(invalid_material_rel);
 
-  TEST_CHECK(stage.add_root_prim(std::move(mesh_prim)));
-  TEST_CHECK(stage.add_root_prim(std::move(not_material_prim)));
+    TEST_CHECK(stage.add_root_prim(Prim("MeshPrim", mesh)));
+    TEST_CHECK(stage.add_root_prim(std::move(not_material_prim)));
 
-  tydra::RenderSceneConverter converter;
-  Path material_path;
-  const Material *material{nullptr};
-  std::string err;
+    tydra::RenderSceneConverter converter;
+    Path material_path;
+    const Material *material{nullptr};
+    std::string err;
 
-  TEST_CHECK(!converter.GetBoundMaterialCached(stage, Path("/MeshPrim", ""), "",
-                                               &material_path, &material, &err));
-  TEST_CHECK(err.find("/NotMaterial") != std::string::npos);
-  TEST_CHECK(err.find("not a Material Prim") != std::string::npos);
+    TEST_CHECK(!converter.GetBoundMaterialCached(stage, Path("/MeshPrim", ""), "",
+                                                 &material_path, &material,
+                                                 &err));
+    TEST_CHECK(err.find("/NotMaterial") != std::string::npos);
+    TEST_CHECK(err.find("not a Material Prim") != std::string::npos);
 
-  std::string cached_err;
-  material_path = Path();
-  material = nullptr;
-  TEST_CHECK(!converter.GetBoundMaterialCached(stage, Path("/MeshPrim", ""), "",
-                                               &material_path, &material,
-                                               &cached_err));
-  TEST_CHECK(cached_err.find("/NotMaterial") != std::string::npos);
-  TEST_CHECK(cached_err.find("not a Material Prim") != std::string::npos);
+    std::string cached_err;
+    material_path = Path();
+    material = nullptr;
+    TEST_CHECK(!converter.GetBoundMaterialCached(stage, Path("/MeshPrim", ""), "",
+                                                 &material_path, &material,
+                                                 &cached_err));
+    TEST_CHECK(cached_err.find("/NotMaterial") != std::string::npos);
+    TEST_CHECK(cached_err.find("not a Material Prim") != std::string::npos);
 
-  tydra::RenderSceneConverterEnv env(stage);
-  tydra::RenderScene scene;
-  TEST_CHECK(!converter.ConvertToRenderScene(env, &scene));
-  TEST_CHECK(converter.GetError().find("/NotMaterial") != std::string::npos);
-  TEST_CHECK(converter.GetError().find("not a Material Prim") !=
-             std::string::npos);
+    tydra::RenderSceneConverterEnv env(stage);
+    tydra::RenderScene scene;
+    TEST_CHECK(!converter.ConvertToRenderScene(env, &scene));
+    TEST_CHECK(converter.GetError().find("/NotMaterial") != std::string::npos);
+    TEST_CHECK(converter.GetError().find("not a Material Prim") !=
+               std::string::npos);
+  }
+
+  {
+    Stage stage;
+
+    Material invalid_material;
+    Prim material_prim("MaterialPrim", invalid_material);
+
+    GeomMesh mesh = make_mesh();
+    Relationship material_rel;
+    material_rel.set(Path("/MaterialPrim", ""));
+    mesh.set_materialBinding(material_rel);
+
+    TEST_CHECK(stage.add_root_prim(Prim("MeshPrim", mesh)));
+    TEST_CHECK(stage.add_root_prim(std::move(material_prim)));
+
+    tydra::RenderSceneConverterEnv env(stage);
+    tydra::RenderScene scene;
+    tydra::RenderSceneConverter converter;
+
+    TEST_CHECK(!converter.ConvertToRenderScene(env, &scene));
+    TEST_CHECK(converter.GetError().find("/MaterialPrim") !=
+               std::string::npos);
+    TEST_CHECK(converter.GetError().find("outputs:surface isn't authored") !=
+               std::string::npos);
+  }
 }
 
 void tydra_progress_cancellation_test(void) {
@@ -922,7 +953,30 @@ void tydra_skin_binding_validation_test(void) {
     tydra::RenderSceneConverter converter;
 
     TEST_CHECK(!converter.ConvertToRenderScene(env, &scene));
-    TEST_CHECK(converter.GetError().find("`skel:skeleton` has invalid definition") !=
+    TEST_CHECK(converter.GetError().find(
+                   "`skel:skeleton` must have exactly one target") !=
+               std::string::npos);
+    TEST_CHECK(converter.GetError().find("/MeshPrim") != std::string::npos);
+  }
+
+  {
+    Stage stage;
+    GeomMesh mesh = make_skinned_mesh();
+
+    Relationship invalid_skeleton_rel;
+    invalid_skeleton_rel.set(
+        std::vector<Path>{Path("/SkeletonA", ""), Path("/SkeletonB", "")});
+    mesh.skeleton = invalid_skeleton_rel;
+
+    TEST_CHECK(stage.add_root_prim(Prim("MeshPrim", mesh)));
+
+    tydra::RenderSceneConverterEnv env(stage);
+    tydra::RenderScene scene;
+    tydra::RenderSceneConverter converter;
+
+    TEST_CHECK(!converter.ConvertToRenderScene(env, &scene));
+    TEST_CHECK(converter.GetError().find(
+                   "`skel:skeleton` must have exactly one target") !=
                std::string::npos);
     TEST_CHECK(converter.GetError().find("/MeshPrim") != std::string::npos);
   }
