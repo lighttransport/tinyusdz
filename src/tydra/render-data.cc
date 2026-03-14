@@ -5429,7 +5429,9 @@ bool RenderSceneConverter::ConvertMesh(
             hasSkelPath = true;
             DCOUT("Found skeleton by ancestor: " << skelPath.prim_part());
           } else {
-            PUSH_WARN("Mesh has skinning data but no skeleton found: " + abs_prim_path.full_path_name());
+            PUSH_ERROR_AND_RETURN(
+                "Mesh has skinning data but no skeleton found: " +
+                abs_prim_path.full_path_name());
           }
         }
       }
