@@ -100,6 +100,9 @@ TEST_LIST = {
   { "tydra_shader_scene_access_test", tydra_shader_scene_access_test },
   { "tydra_skel_scene_access_test", tydra_skel_scene_access_test },
   { "tydra_blendshape_resolution_test", tydra_blendshape_resolution_test },
+  { "tydra_material_binding_validation_test",
+    tydra_material_binding_validation_test },
+  { "tydra_progress_cancellation_test", tydra_progress_cancellation_test },
   // Temporarily disabled - unit-dedup needs API updates
   //{ "dedup_float_array_test", dedup_float_array_test },
   //{ "dedup_double_array_test", dedup_double_array_test },
