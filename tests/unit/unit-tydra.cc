@@ -754,6 +754,49 @@ void tydra_material_binding_validation_test(void) {
     return mesh;
   };
 
+  auto make_mtlx_openpbr_stage = [&](const Path &nodegraph_output_target) {
+    Stage stage;
+
+    Material material;
+    material.surface.set(Path("/MaterialPrim/OpenPBRShader",
+                              "outputs:surface"));
+
+    OpenPBRSurface openpbr_surface;
+    openpbr_surface.surface.set_authored(true);
+    openpbr_surface.base_color.set_connection(
+        Path("/MaterialPrim/NodeGraphs", "outputs:out"));
+    openpbr_surface.base_color.set_value_empty();
+
+    Shader openpbr_shader;
+    openpbr_shader.info_id = kOpenPBRSurface;
+    openpbr_shader.value = openpbr_surface;
+
+    NodeGraph nodegraph;
+    nodegraph.props["outputs:out.connect"] = Property(
+        nodegraph_output_target, value::TypeTraits<value::color3f>::type_name());
+
+    Shader image_shader;
+    image_shader.info_id = "ND_image_color3";
+    image_shader.value = ShaderNode{};
+
+    Prim nodegraph_prim("NodeGraphs", nodegraph);
+    TEST_CHECK(nodegraph_prim.add_child(Prim("Image", image_shader)));
+
+    Prim material_prim("MaterialPrim", material);
+    TEST_CHECK(material_prim.add_child(Prim("OpenPBRShader", openpbr_shader)));
+    TEST_CHECK(material_prim.add_child(std::move(nodegraph_prim)));
+
+    GeomMesh mesh = make_mesh();
+    Relationship material_rel;
+    material_rel.set(Path("/MaterialPrim", ""));
+    mesh.set_materialBinding(material_rel);
+
+    TEST_CHECK(stage.add_root_prim(Prim("MeshPrim", mesh)));
+    TEST_CHECK(stage.add_root_prim(std::move(material_prim)));
+
+    return stage;
+  };
+
   {
     Stage stage;
 
@@ -861,6 +904,39 @@ void tydra_material_binding_validation_test(void) {
     TEST_CHECK(!converter.ConvertToRenderScene(env, &scene));
     TEST_CHECK(converter.GetError().find("/Tex") != std::string::npos);
     TEST_CHECK(converter.GetError().find("`asset:file` is not authored") !=
+               std::string::npos);
+  }
+
+  {
+    Stage stage = make_mtlx_openpbr_stage(
+        Path("/MaterialPrim/NodeGraphs/Image", "outputs:out"));
+
+    tydra::RenderSceneConverterEnv env(stage);
+    tydra::RenderScene scene;
+    tydra::RenderSceneConverter converter;
+
+    TEST_CHECK(!converter.ConvertToRenderScene(env, &scene));
+    TEST_CHECK(converter.GetError().find("MaterialX image node") !=
+               std::string::npos);
+    TEST_CHECK(converter.GetError().find("/MaterialPrim/NodeGraphs/Image") !=
+               std::string::npos);
+    TEST_CHECK(converter.GetError().find("has no file input") !=
+               std::string::npos);
+  }
+
+  {
+    Stage stage = make_mtlx_openpbr_stage(
+        Path("/MaterialPrim/NodeGraphs/Missing", "outputs:out"));
+
+    tydra::RenderSceneConverterEnv env(stage);
+    tydra::RenderScene scene;
+    tydra::RenderSceneConverter converter;
+
+    TEST_CHECK(!converter.ConvertToRenderScene(env, &scene));
+    TEST_CHECK(converter.GetError().find(
+                   "Failed to find MaterialX texture for base_color") !=
+               std::string::npos);
+    TEST_CHECK(converter.GetError().find("/MaterialPrim/NodeGraphs/Missing") !=
                std::string::npos);
   }
 }
