@@ -7721,8 +7721,10 @@ bool RenderSceneConverter::ConvertUVTexture(const RenderSceneConverterEnv &env,
         tex.fallback_uv[0] = uv[0];
         tex.fallback_uv[1] = uv[1];
       } else {
-        // TODO: report warning.
-        PUSH_WARN("Failed to get fallback `st` texcoord attribute.");
+        PUSH_ERROR_AND_RETURN(fmt::format(
+            "Failed to get fallback `st` texcoord attribute for "
+            "UsdUVTexture at {}.",
+            tex_abs_path.prim_part()));
       }
       //TUSDZ_LOG_I("uv done");
     }
@@ -8980,49 +8982,66 @@ bool RenderSceneConverter::ConvertMaterial(const RenderSceneConverterEnv &env,
         if (!env.stage.find_prim_at_path(
                 Path(mtlxSurfacePath.prim_part(), /* prop part */ ""), mtlxShaderPrim,
                 &err)) {
-          PUSH_WARN(fmt::format(
+          PUSH_ERROR_AND_RETURN(fmt::format(
               "MaterialX shader path {} not found in stage",
               mtlxSurfacePath.full_path_name()));
-        } else if (mtlxShaderPrim) {
+        } else if (!mtlxShaderPrim) {
+          PUSH_ERROR_AND_RETURN(fmt::format(
+              "[InternalError] MaterialX shader path {} resolved to nullptr",
+              mtlxSurfacePath.full_path_name()));
+        } else {
           const Shader *mtlxShader = mtlxShaderPrim->as<Shader>();
 
-          if (mtlxShader) {
-            // Check if it's an OpenPBR shader
-            const MtlxOpenPBRSurface *mtlx_openpbr = mtlxShader->value.as<MtlxOpenPBRSurface>();
+          if (!mtlxShader) {
+            PUSH_ERROR_AND_RETURN(fmt::format(
+                "MaterialX surface path {} must point to a Shader Prim",
+                mtlxSurfacePath.full_path_name()));
+          }
 
-            if (mtlx_openpbr) {
-              DCOUT("Converting MtlxOpenPBRSurface to RenderMaterial");
+          // Check if it's an OpenPBR shader
+          const MtlxOpenPBRSurface *mtlx_openpbr =
+              mtlxShader->value.as<MtlxOpenPBRSurface>();
 
-              OpenPBRSurface converted_openpbr =
-                  ConvertMtlxOpenPBRSurfaceToOpenPBRSurface(*mtlx_openpbr);
+          if (mtlx_openpbr) {
+            DCOUT("Converting MtlxOpenPBRSurface to RenderMaterial");
 
-              // Convert to OpenPBRSurfaceShader
-              OpenPBRSurfaceShader openpbr_shader;
-              if (!ConvertOpenPBRSurfaceShader(env, mtlxSurfacePath, converted_openpbr, &openpbr_shader)) {
-                PUSH_WARN(fmt::format(
-                    "Failed to convert MtlxOpenPBRSurface : {}", mtlxSurfacePath.prim_part()));
-              } else {
-                // Extract normal map texture from NodeGraph connections
-                const Prim* material_prim_for_ng = nullptr;
-                if (!env.stage.find_prim_at_path(mat_abs_path, material_prim_for_ng, &err)) {
-                  DCOUT("Could not find material prim at " << mat_abs_path.full_path_name());
-                  material_prim_for_ng = nullptr;
-                }
+            OpenPBRSurface converted_openpbr =
+                ConvertMtlxOpenPBRSurfaceToOpenPBRSurface(*mtlx_openpbr);
 
-                ApplyMtlxGeometryNodeGraphInfoToOpenPBRShader(
-                    env.stage, material_prim_for_ng, *mtlx_openpbr,
-                    env.mesh_config.default_texcoords_primvar_name, &images,
-                    &textures, &openpbr_shader, &err,
-                    /*emit_extract_debug_trace*/ false);
-
-                rmat.openPBRShader = openpbr_shader;
-                DCOUT("Successfully attached MaterialX OpenPBR shader to RenderMaterial: " << mtlxSurfacePath.full_path_name());
-              }
+            // Convert to OpenPBRSurfaceShader
+            OpenPBRSurfaceShader openpbr_shader;
+            if (!ConvertOpenPBRSurfaceShader(env, mtlxSurfacePath,
+                                             converted_openpbr,
+                                             &openpbr_shader)) {
+              PUSH_ERROR_AND_RETURN(fmt::format(
+                  "Failed to convert MtlxOpenPBRSurface : {}",
+                  mtlxSurfacePath.prim_part()));
             } else {
-              PUSH_WARN(fmt::format(
-                  "Found shader {} but it's not ND_open_pbr_surface_surfaceshader (got {})",
-                  mtlxSurfacePath.prim_part(), mtlxShader->info_id));
+              // Extract normal map texture from NodeGraph connections
+              const Prim *material_prim_for_ng = nullptr;
+              if (!env.stage.find_prim_at_path(mat_abs_path, material_prim_for_ng,
+                                               &err)) {
+                DCOUT("Could not find material prim at "
+                      << mat_abs_path.full_path_name());
+                material_prim_for_ng = nullptr;
+              }
+
+              ApplyMtlxGeometryNodeGraphInfoToOpenPBRShader(
+                  env.stage, material_prim_for_ng, *mtlx_openpbr,
+                  env.mesh_config.default_texcoords_primvar_name, &images,
+                  &textures, &openpbr_shader, &err,
+                  /*emit_extract_debug_trace*/ false);
+
+              rmat.openPBRShader = openpbr_shader;
+              DCOUT("Successfully attached MaterialX OpenPBR shader to "
+                    "RenderMaterial: "
+                    << mtlxSurfacePath.full_path_name());
             }
+          } else {
+            PUSH_ERROR_AND_RETURN(fmt::format(
+                "Found shader {} but it's not "
+                "ND_open_pbr_surface_surfaceshader (got {})",
+                mtlxSurfacePath.prim_part(), mtlxShader->info_id));
           }
         }
       } else {

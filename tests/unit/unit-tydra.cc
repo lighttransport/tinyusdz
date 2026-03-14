@@ -16,6 +16,7 @@
 #include "tydra/render-data.hh"
 #include "tydra/scene-access.hh"
 #include "usdGeom.hh"
+#include "usdMtlx.hh"
 
 using namespace tinyusdz;
 
@@ -908,6 +909,53 @@ void tydra_material_binding_validation_test(void) {
   }
 
   {
+    Stage stage;
+
+    Material material;
+    material.surface.set(Path("/PreviewSurface", "outputs:surface"));
+
+    UsdPreviewSurface preview_surface;
+    preview_surface.outputsSurface.set_authored(true);
+    preview_surface.diffuseColor.set_connection(Path("/Tex", "outputs:rgb"));
+    preview_surface.diffuseColor.set_value_empty();
+
+    Shader preview_shader;
+    preview_shader.info_id = kUsdPreviewSurface;
+    preview_shader.value = preview_surface;
+
+    UsdUVTexture uv_texture;
+    uv_texture.outputsRGB.set_authored(true);
+    uv_texture.file.set_value(
+        Animatable<value::AssetPath>(value::AssetPath("dummy.png")));
+    uv_texture.st.set_value(Animatable<value::texcoord2f>());
+
+    Shader tex_shader;
+    tex_shader.info_id = kUsdUVTexture;
+    tex_shader.value = uv_texture;
+
+    GeomMesh mesh = make_mesh();
+    Relationship material_rel;
+    material_rel.set(Path("/MaterialPrim", ""));
+    mesh.set_materialBinding(material_rel);
+
+    TEST_CHECK(stage.add_root_prim(Prim("MeshPrim", mesh)));
+    TEST_CHECK(stage.add_root_prim(Prim("MaterialPrim", material)));
+    TEST_CHECK(stage.add_root_prim(Prim("PreviewSurface", preview_shader)));
+    TEST_CHECK(stage.add_root_prim(Prim("Tex", tex_shader)));
+
+    tydra::RenderSceneConverterEnv env(stage);
+    env.scene_config.load_texture_assets = false;
+    tydra::RenderScene scene;
+    tydra::RenderSceneConverter converter;
+
+    TEST_CHECK(!converter.ConvertToRenderScene(env, &scene));
+    TEST_CHECK(converter.GetError().find(
+                   "Failed to get fallback `st` texcoord attribute") !=
+               std::string::npos);
+    TEST_CHECK(converter.GetError().find("/Tex") != std::string::npos);
+  }
+
+  {
     Stage stage = make_mtlx_openpbr_stage(
         Path("/MaterialPrim/NodeGraphs/Image", "outputs:out"));
 
@@ -937,6 +985,164 @@ void tydra_material_binding_validation_test(void) {
                    "Failed to find MaterialX texture for base_color") !=
                std::string::npos);
     TEST_CHECK(converter.GetError().find("/MaterialPrim/NodeGraphs/Missing") !=
+               std::string::npos);
+  }
+
+  {
+    Stage stage;
+
+    Material material;
+    material.surface.set(Path("/MaterialPrim/PreviewSurface",
+                              "outputs:surface"));
+    material.materialXConfig = MaterialXConfigAPI{};
+
+    Relationship mtlx_surface_rel;
+    mtlx_surface_rel.set(Path("/MaterialPrim/MissingMtlx", ""));
+    material.props["outputs:mtlx:surface.connect"] = Property(
+        mtlx_surface_rel);
+
+    UsdPreviewSurface preview_surface;
+    preview_surface.outputsSurface.set_authored(true);
+
+    Shader preview_shader;
+    preview_shader.info_id = kUsdPreviewSurface;
+    preview_shader.value = preview_surface;
+
+    Prim material_prim("MaterialPrim", material);
+    TEST_CHECK(material_prim.add_child(Prim("PreviewSurface", preview_shader)));
+
+    GeomMesh mesh = make_mesh();
+    Relationship material_rel;
+    material_rel.set(Path("/MaterialPrim", ""));
+    mesh.set_materialBinding(material_rel);
+
+    TEST_CHECK(stage.add_root_prim(Prim("MeshPrim", mesh)));
+    TEST_CHECK(stage.add_root_prim(std::move(material_prim)));
+
+    tydra::RenderSceneConverterEnv env(stage);
+    tydra::RenderScene scene;
+    tydra::RenderSceneConverter converter;
+
+    TEST_CHECK(!converter.ConvertToRenderScene(env, &scene));
+    TEST_CHECK(converter.GetError().find("MaterialX shader path") !=
+               std::string::npos);
+    TEST_CHECK(converter.GetError().find("/MaterialPrim/MissingMtlx") !=
+               std::string::npos);
+  }
+
+  {
+    Stage stage;
+
+    Material material;
+    material.surface.set(Path("/MaterialPrim/PreviewSurface",
+                              "outputs:surface"));
+    material.materialXConfig = MaterialXConfigAPI{};
+
+    Relationship mtlx_surface_rel;
+    mtlx_surface_rel.set(Path("/MaterialPrim/BadMtlx", ""));
+    material.props["outputs:mtlx:surface.connect"] = Property(
+        mtlx_surface_rel);
+
+    UsdPreviewSurface preview_surface;
+    preview_surface.outputsSurface.set_authored(true);
+
+    Shader preview_shader;
+    preview_shader.info_id = kUsdPreviewSurface;
+    preview_shader.value = preview_surface;
+
+    Shader bad_mtlx_shader;
+    bad_mtlx_shader.info_id = kUsdPreviewSurface;
+    bad_mtlx_shader.value = preview_surface;
+
+    Prim material_prim("MaterialPrim", material);
+    TEST_CHECK(material_prim.add_child(Prim("PreviewSurface", preview_shader)));
+    TEST_CHECK(material_prim.add_child(Prim("BadMtlx", bad_mtlx_shader)));
+
+    GeomMesh mesh = make_mesh();
+    Relationship material_rel;
+    material_rel.set(Path("/MaterialPrim", ""));
+    mesh.set_materialBinding(material_rel);
+
+    TEST_CHECK(stage.add_root_prim(Prim("MeshPrim", mesh)));
+    TEST_CHECK(stage.add_root_prim(std::move(material_prim)));
+
+    tydra::RenderSceneConverterEnv env(stage);
+    tydra::RenderScene scene;
+    tydra::RenderSceneConverter converter;
+
+    TEST_CHECK(!converter.ConvertToRenderScene(env, &scene));
+    TEST_CHECK(converter.GetError().find(
+                   "ND_open_pbr_surface_surfaceshader") !=
+               std::string::npos);
+    TEST_CHECK(converter.GetError().find("/MaterialPrim/BadMtlx") !=
+               std::string::npos);
+  }
+
+  {
+    Stage stage;
+
+    Material material;
+    material.surface.set(Path("/MaterialPrim/PreviewSurface",
+                              "outputs:surface"));
+    material.materialXConfig = MaterialXConfigAPI{};
+
+    Relationship mtlx_surface_rel;
+    mtlx_surface_rel.set(Path("/MaterialPrim/MtlxSurface", ""));
+    material.props["outputs:mtlx:surface.connect"] = Property(
+        mtlx_surface_rel);
+
+    UsdPreviewSurface preview_surface;
+    preview_surface.outputsSurface.set_authored(true);
+
+    Shader preview_shader;
+    preview_shader.info_id = kUsdPreviewSurface;
+    preview_shader.value = preview_surface;
+
+    MtlxOpenPBRSurface mtlx_surface;
+    mtlx_surface.surface.set_authored(true);
+    mtlx_surface.base_color.set_connection(
+        Path("/MaterialPrim/NodeGraphs", "outputs:out"));
+    mtlx_surface.base_color.set_value_empty();
+
+    Shader mtlx_surface_shader;
+    mtlx_surface_shader.info_id = kNdOpenPbrSurfaceSurfaceshader;
+    mtlx_surface_shader.value = mtlx_surface;
+
+    NodeGraph nodegraph;
+    nodegraph.props["outputs:out.connect"] = Property(
+        Path("/MaterialPrim/NodeGraphs/Image", "outputs:out"),
+        value::TypeTraits<value::color3f>::type_name());
+
+    Shader image_shader;
+    image_shader.info_id = "ND_image_color3";
+    image_shader.value = ShaderNode{};
+
+    Prim nodegraph_prim("NodeGraphs", nodegraph);
+    TEST_CHECK(nodegraph_prim.add_child(Prim("Image", image_shader)));
+
+    Prim material_prim("MaterialPrim", material);
+    TEST_CHECK(material_prim.add_child(Prim("PreviewSurface", preview_shader)));
+    TEST_CHECK(
+        material_prim.add_child(Prim("MtlxSurface", mtlx_surface_shader)));
+    TEST_CHECK(material_prim.add_child(std::move(nodegraph_prim)));
+
+    GeomMesh mesh = make_mesh();
+    Relationship material_rel;
+    material_rel.set(Path("/MaterialPrim", ""));
+    mesh.set_materialBinding(material_rel);
+
+    TEST_CHECK(stage.add_root_prim(Prim("MeshPrim", mesh)));
+    TEST_CHECK(stage.add_root_prim(std::move(material_prim)));
+
+    tydra::RenderSceneConverterEnv env(stage);
+    tydra::RenderScene scene;
+    tydra::RenderSceneConverter converter;
+
+    TEST_CHECK(!converter.ConvertToRenderScene(env, &scene));
+    TEST_CHECK(converter.GetError().find(
+                   "Failed to convert MtlxOpenPBRSurface") !=
+               std::string::npos);
+    TEST_CHECK(converter.GetError().find("/MaterialPrim/MtlxSurface") !=
                std::string::npos);
   }
 }
