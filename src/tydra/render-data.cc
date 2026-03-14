@@ -9349,6 +9349,7 @@ bool MeshVisitor(const tinyusdz::Path &abs_path, const tinyusdz::Prim &prim,
           if (err) {
             (*err) += fmt::format("Failed to get BlendShapes prims. err = {}", local_err);
           }
+          return false;
         }
       }
       DCOUT("# of blendshapes : " << blendshapes.size());
