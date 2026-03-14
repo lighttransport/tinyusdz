@@ -396,6 +396,48 @@ void timesamples_test(void) {
     if (v1) TEST_CHECK(math::is_close(*v1, 20.0f));
   }
 
+  // Blocked-only generic samples should allow deferred type initialization.
+  {
+    value::TimeSamples ts;
+    std::string err;
+
+    TEST_CHECK(ts.add_blocked_sample(5.0, value::Value(), &err));
+    TEST_CHECK(ts.type_id() == 0);
+    TEST_CHECK(ts.add_sample(10.0, value::Value(42.0f), &err));
+    TEST_CHECK(ts.type_id() == value::TypeTraits<float>::type_id());
+
+    const auto &samples = ts.get_samples();
+    TEST_CHECK(samples.size() == 2);
+    if (samples.size() == 2) {
+      TEST_CHECK(samples[0].blocked == true);
+      TEST_CHECK(samples[1].blocked == false);
+      const float *v = samples[1].value.as<float>();
+      TEST_CHECK(v != nullptr);
+      if (v) TEST_CHECK(math::is_close(*v, 42.0f));
+    }
+  }
+
+  // Scalar and array unified backends must not be mixed.
+  {
+    value::TimeSamples ts;
+    std::string err;
+
+    TEST_CHECK(ts.add_sample_pod<float>(0.0, 1.0f, &err));
+    TEST_CHECK(!ts.add_array_sample_pod<float>(1.0, std::vector<float>{1.0f, 2.0f}, &err));
+    TEST_CHECK(!err.empty());
+  }
+
+  // Array layout mismatches must fail instead of silently reinterpreting storage.
+  {
+    value::TimeSamples ts;
+    std::string err;
+
+    TEST_CHECK(ts.add_array_sample_pod<float>(0.0, std::vector<float>{1.0f, 2.0f}, &err));
+    TypedArray<float> typed = {3.0f, 4.0f};
+    TEST_CHECK(!ts.add_array_sample_pod<float>(1.0, typed, &err));
+    TEST_CHECK(!err.empty());
+  }
+
   // Variable-sized unified arrays should preserve per-sample element counts.
   {
     value::TimeSamples ts;
@@ -471,6 +513,55 @@ void timesamples_test(void) {
     }
   }
 
+  // Out-of-order deduplicated arrays must preserve remapped counts after sorting.
+  {
+    value::TimeSamples ts;
+
+    TEST_CHECK(ts.add_array_sample_pod<float>(5.0, std::vector<float>{5.0f, 6.0f, 7.0f}));
+    TEST_CHECK(ts.add_array_sample_pod<float>(1.0, std::vector<float>{1.0f}));
+    TEST_CHECK(ts.add_dedup_array_sample_pod<float>(3.0, 0));
+
+    const auto &samples = ts.get_samples();
+    TEST_CHECK(samples.size() == 3);
+    TEST_CHECK(ts.get_array_count(0) == 1);
+    TEST_CHECK(ts.get_array_count(1) == 3);
+    TEST_CHECK(ts.get_array_count(2) == 3);
+
+    std::vector<float> out;
+    TEST_CHECK(ts.get_vector_at_time<float>(3.0, &out));
+    TEST_CHECK(out.size() == 3);
+    if (out.size() == 3) {
+      TEST_CHECK(math::is_close(out[0], 5.0f));
+      TEST_CHECK(math::is_close(out[2], 7.0f));
+    }
+  }
+
+  // Generic blocked and non-blocked array samples should preserve array values and block state.
+  {
+    value::TimeSamples ts;
+    std::string err;
+
+    TEST_CHECK(ts.add_sample(3.0, value::Value(std::vector<float>{3.0f, 4.0f}), &err));
+    TEST_CHECK(ts.add_blocked_sample(1.0, value::Value(std::vector<float>{}), &err));
+    TEST_CHECK(ts.add_sample(5.0, value::Value(std::vector<float>{5.0f, 6.0f, 7.0f}), &err));
+
+    const auto &samples = ts.get_samples();
+    TEST_CHECK(samples.size() == 3);
+    if (samples.size() == 3) {
+      TEST_CHECK(samples[0].blocked == true);
+      TEST_CHECK(samples[1].blocked == false);
+      TEST_CHECK(samples[2].blocked == false);
+    }
+
+    std::vector<float> out;
+    bool blocked = false;
+    TEST_CHECK(!ts.get_vector_at<float>(0, &out, &blocked));
+    TEST_CHECK(blocked == true);
+    TEST_CHECK(ts.get_vector_at<float>(1, &out, &blocked));
+    TEST_CHECK(blocked == false);
+    TEST_CHECK(out.size() == 2);
+  }
+
   // TypedArray-backed unified storage should keep the TypedArray type id and counts.
   {
     value::TimeSamples ts;
@@ -530,6 +621,36 @@ void timesamples_test(void) {
       TEST_CHECK(first != nullptr);
       if (first) {
         TEST_CHECK(first->size() == 3);
+      }
+    }
+  }
+
+  // Empty TypedArray samples should round-trip through unified reconstruction.
+  {
+    value::TimeSamples ts;
+
+    TypedArray<float> empty;
+    TEST_CHECK(ts.add_array_sample_pod<float>(2.0, empty));
+    TEST_CHECK(ts.is_typed_array());
+    TEST_CHECK(ts.size() == 1);
+    TEST_CHECK(ts.get_array_count(0) == 0);
+
+    TypedArray<float> out;
+    bool blocked = true;
+    TEST_CHECK(ts.get_typed_array_at_time<float>(2.0, &out, &blocked));
+    TEST_CHECK(blocked == false);
+    TEST_CHECK(out.size() == 0);
+
+    auto view = ts.get_typed_array_view_at<float>(0);
+    TEST_CHECK(view.size() == 0);
+
+    auto value_opt = ts.get_value(0);
+    TEST_CHECK(value_opt.has_value());
+    if (value_opt.has_value()) {
+      const auto *typed = value_opt.value().as<TypedArray<float>>();
+      TEST_CHECK(typed != nullptr);
+      if (typed) {
+        TEST_CHECK(typed->size() == 0);
       }
     }
   }
