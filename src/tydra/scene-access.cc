@@ -1716,7 +1716,15 @@ bool GetPrimPropertyNamesImpl(const Xform &xform,
     return false;
   }
 
-  return GetGPrimPropertyNamesImpl(&xform, prop_names, attr_prop, rel_prop);
+  if (!GetGPrimPropertyNamesImpl(&xform, prop_names, attr_prop, rel_prop)) {
+    return false;
+  }
+
+  if (attr_prop && !xform.xformOps.empty()) {
+    prop_names->push_back("xformOpOrder");
+  }
+
+  return true;
 }
 
 template <>
@@ -1736,11 +1744,57 @@ bool GetPrimPropertyNamesImpl(const GeomMesh &mesh,
       prop_names->push_back("points");
     }
 
+    if (mesh.faceVertexCounts.authored()) {
+      prop_names->push_back("faceVertexCounts");
+    }
+
+    if (mesh.faceVertexIndices.authored()) {
+      prop_names->push_back("faceVertexIndices");
+    }
+
     if (mesh.normals.authored()) {
       prop_names->push_back("normals");
     }
 
-    DCOUT("TODO: more attrs...");
+    if (mesh.velocities.authored()) {
+      prop_names->push_back("velocities");
+    }
+
+    if (mesh.cornerIndices.authored()) {
+      prop_names->push_back("cornerIndices");
+    }
+
+    if (mesh.cornerSharpnesses.authored()) {
+      prop_names->push_back("cornerSharpnesses");
+    }
+
+    if (mesh.creaseIndices.authored()) {
+      prop_names->push_back("creaseIndices");
+    }
+
+    if (mesh.creaseSharpnesses.authored()) {
+      prop_names->push_back("creaseSharpnesses");
+    }
+
+    if (mesh.holeIndices.authored()) {
+      prop_names->push_back("holeIndices");
+    }
+
+    if (mesh.interpolateBoundary.authored()) {
+      prop_names->push_back("interpolateBoundary");
+    }
+
+    if (mesh.subdivisionScheme.authored()) {
+      prop_names->push_back("subdivisionScheme");
+    }
+
+    if (mesh.faceVaryingLinearInterpolation.authored()) {
+      prop_names->push_back("faceVaryingLinearInterpolation");
+    }
+  }
+
+  if (rel_prop && mesh.skeleton) {
+    prop_names->push_back("skeleton");
   }
 
   return true;
@@ -1770,6 +1824,10 @@ bool GetPrimPropertyNamesImpl(const GeomSubset &subset,
     }
 
     DCOUT("TODO: more attrs...");
+  }
+
+  if (rel_prop && subset.materialBinding) {
+    prop_names->push_back("material:binding");
   }
 
   return true;
@@ -1895,6 +1953,33 @@ bool GetPropertyNames(const tinyusdz::Prim &prim,
   return true;
 }
 
+bool GetAttributeNames(const tinyusdz::Prim &prim,
+                       std::vector<std::string> *out_attr_names,
+                       std::string *err) {
+#define GET_PRIM_ATTRIBUTE_NAMES(__ty)                                       \
+  if (prim.is<__ty>()) {                                                     \
+    auto ret = GetPrimPropertyNamesImpl(*prim.as<__ty>(), out_attr_names,    \
+                                        true, false);                        \
+    if (!ret) {                                                              \
+      PUSH_ERROR_AND_RETURN(                                                 \
+          fmt::format("Failed to list up Attribute names of Prim type {}",   \
+                      value::TypeTraits<__ty>::type_name()));                \
+    }                                                                        \
+  } else
+
+  GET_PRIM_ATTRIBUTE_NAMES(Model)
+  GET_PRIM_ATTRIBUTE_NAMES(Xform)
+  GET_PRIM_ATTRIBUTE_NAMES(Scope)
+  GET_PRIM_ATTRIBUTE_NAMES(GeomMesh)
+  GET_PRIM_ATTRIBUTE_NAMES(GeomSubset) {
+    PUSH_ERROR_AND_RETURN("TODO: Prim type " << prim.type_name());
+  }
+
+#undef GET_PRIM_ATTRIBUTE_NAMES
+
+  return true;
+}
+
 bool GetRelationshipNames(const tinyusdz::Prim &prim,
                           std::vector<std::string> *out_rel_names,
                           std::string *err) {
@@ -1913,7 +1998,7 @@ bool GetRelationshipNames(const tinyusdz::Prim &prim,
   GET_PRIM_RELATIONSHIP_NAMES(Xform)
   GET_PRIM_RELATIONSHIP_NAMES(Scope)
   GET_PRIM_RELATIONSHIP_NAMES(GeomMesh)
-  // GET_PRIM_RELATIONSHIP_NAMES(GeomSubset)
+  GET_PRIM_RELATIONSHIP_NAMES(GeomSubset)
   // GET_PRIM_RELATIONSHIP_NAMES(Shader)
   // GET_PRIM_RELATIONSHIP_NAMES(Material)
   // GET_PRIM_RELATIONSHIP_NAMES(SkelRoot)
@@ -1963,6 +2048,7 @@ bool GetRelationship(const tinyusdz::Prim &prim, const std::string &rel_name,
 
   if (prop.is_relationship()) {
     (*out_rel) = std::move(prop.get_relationship());
+    return true;
   }
 
   PUSH_ERROR_AND_RETURN(fmt::format("{} is not a Relationship.", rel_name));
