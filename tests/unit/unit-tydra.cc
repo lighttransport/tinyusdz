@@ -7,6 +7,8 @@
 
 #include "unit-tydra.h"
 
+#include <algorithm>
+
 #include "layer.hh"
 #include "prim-types.hh"
 #include "tydra/attribute-eval.hh"
@@ -228,4 +230,57 @@ void tydra_memory_tracking_test(void) {
   TEST_CHECK(progress_messages.size() == 1);
   TEST_CHECK(progress_messages[0].find("Memory limit exceeded") !=
              std::string::npos);
+}
+
+void tydra_scene_access_helper_test(void) {
+  GeomMesh mesh;
+  mesh.points = Animatable<std::vector<value::point3f>>(
+      std::vector<value::point3f>{{0.0f, 0.0f, 0.0f},
+                                  {1.0f, 0.0f, 0.0f},
+                                  {0.0f, 1.0f, 0.0f}});
+  mesh.faceVertexCounts = Animatable<std::vector<int32_t>>(
+      std::vector<int32_t>{3});
+  mesh.faceVertexIndices = Animatable<std::vector<int32_t>>(
+      std::vector<int32_t>{0, 1, 2});
+
+  Relationship skeleton_rel;
+  skeleton_rel.set(Path("/Skeleton", ""));
+  mesh.skeleton = skeleton_rel;
+
+  Prim prim("MeshPrim", mesh);
+  std::string err;
+
+  {
+    std::vector<std::string> attr_names;
+    TEST_CHECK(tydra::GetAttributeNames(prim, &attr_names, &err));
+    TEST_CHECK(err.empty());
+    TEST_CHECK(std::find(attr_names.begin(), attr_names.end(), "points") !=
+               attr_names.end());
+    TEST_CHECK(std::find(attr_names.begin(), attr_names.end(),
+                         "faceVertexCounts") != attr_names.end());
+    TEST_CHECK(std::find(attr_names.begin(), attr_names.end(),
+                         "faceVertexIndices") != attr_names.end());
+    TEST_CHECK(std::find(attr_names.begin(), attr_names.end(), "skeleton") ==
+               attr_names.end());
+  }
+
+  {
+    std::vector<std::string> rel_names;
+    err.clear();
+    TEST_CHECK(tydra::GetRelationshipNames(prim, &rel_names, &err));
+    TEST_CHECK(err.empty());
+    TEST_CHECK(std::find(rel_names.begin(), rel_names.end(), "skeleton") !=
+               rel_names.end());
+    TEST_CHECK(std::find(rel_names.begin(), rel_names.end(),
+                         "faceVertexCounts") == rel_names.end());
+  }
+
+  {
+    Relationship rel;
+    err.clear();
+    TEST_CHECK(tydra::GetRelationship(prim, "skeleton", &rel, &err));
+    TEST_CHECK(err.empty());
+    TEST_CHECK(rel.is_path());
+    TEST_CHECK(rel.targetPath.prim_part() == "/Skeleton");
+  }
 }
