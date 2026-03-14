@@ -672,6 +672,35 @@ bool ToProperty(const TypedAttribute<Animatable<T>> &input, Property &output, st
   return true;
 }
 
+template <typename T>
+bool ToProperty(const TypedAttributeWithFallback<T> &input, Property &output,
+                std::string *err) {
+
+  Attribute attr;
+  attr.variability() = Variability::Uniform;
+  attr.set_type_name(value::TypeTraits<T>::type_name());
+
+  if (input.is_blocked()) {
+    attr.set_blocked(input.is_blocked());
+  }
+
+  if (input.has_connections()) {
+    attr.set_connections(input.get_connections());
+  }
+
+  if (!input.is_value_empty()) {
+    primvar::PrimVar pvar;
+    pvar.set_value(value::Value(input.get_value()));
+    attr.set_var(std::move(pvar));
+  }
+
+  attr.metas() = input.metas();
+  output = Property(std::move(attr), /* custom */ false);
+
+  (void)err;
+  return true;
+}
+
 // Scalar or TimeSample-valued attribute.
 // TypedAttribute* => Attribute defined in USD schema, so not a custom attr.
 //
@@ -912,6 +941,14 @@ bool XformOpToProperty(const XformOp &x, Property &prop) {
     }                                                                         \
   } else
 
+#define TO_COMPAT_PROPERTY(__canonical_name, __legacy_name, __v)              \
+  if ((prop_name == __canonical_name) || (prop_name == __legacy_name)) {      \
+    if (!ToProperty(__v, *out_prop, &err)) {                                  \
+      return nonstd::make_unexpected(fmt::format(                             \
+          "Convert Property {} failed: {}\n", __canonical_name, err));        \
+    }                                                                         \
+  } else
+
 // Return false: something went wrong
 // `attr_prop` true: Include Attribute property.
 // `rel_prop` true: Include Relationship property.
@@ -926,6 +963,91 @@ bool GetPrimPropertyNamesImpl(const T &prim,
 template <typename T>
 nonstd::expected<bool, std::string> GetPrimProperty(
     const T &prim, const std::string &prop_name, Property *out_prop);
+
+template <typename T>
+void AppendPropertyNameIfAuthored(const T &prop, const std::string &name,
+                                  std::vector<std::string> *prop_names) {
+  if (!prop_names) {
+    return;
+  }
+
+  if (prop.authored()) {
+    prop_names->push_back(name);
+  }
+}
+
+template <typename T>
+void AppendPropertyNamesFromCustomProps(const std::map<std::string, T> &props,
+                                        std::vector<std::string> *prop_names,
+                                        bool attr_prop, bool rel_prop) {
+  if (!prop_names) {
+    return;
+  }
+
+  for (const auto &prop : props) {
+    if (prop.second.is_relationship()) {
+      if (rel_prop) {
+        prop_names->push_back(prop.first);
+      }
+    } else if (attr_prop) {
+      prop_names->push_back(prop.first);
+    }
+  }
+}
+
+template <typename T>
+nonstd::expected<bool, std::string> GetPrimvarReaderPropertyImpl(
+    const UsdPrimvarReader<T> &preader, const std::string &prop_name,
+    Property *out_prop) {
+  if (!out_prop) {
+    return nonstd::make_unexpected(
+        "[InternalError] nullptr in output Property is not allowed.");
+  }
+
+  DCOUT("prop_name = " << prop_name);
+  std::string err;
+
+  TO_PROPERTY("inputs:fallback", preader.fallback)
+  TO_PROPERTY("inputs:varname", preader.varname)
+
+  if (prop_name == "outputs:result") {
+    if (auto pv = TypedTerminalAttributeToProperty(preader.result)) {
+      (*out_prop) = pv.value();
+    } else {
+      return false;
+    }
+  } else {
+    const auto it = preader.props.find(prop_name);
+    if (it == preader.props.end()) {
+      return false;
+    }
+
+    (*out_prop) = it->second;
+  }
+
+  return true;
+}
+
+template <typename T>
+bool GetPrimvarReaderPropertyNamesImpl(const UsdPrimvarReader<T> &preader,
+                                       std::vector<std::string> *prop_names,
+                                       bool attr_prop, bool rel_prop) {
+  if (!prop_names) {
+    return false;
+  }
+
+  if (attr_prop) {
+    AppendPropertyNameIfAuthored(preader.fallback, "inputs:fallback",
+                                 prop_names);
+    AppendPropertyNameIfAuthored(preader.varname, "inputs:varname", prop_names);
+    AppendPropertyNameIfAuthored(preader.result, "outputs:result", prop_names);
+  }
+
+  AppendPropertyNamesFromCustomProps(preader.props, prop_names, attr_prop,
+                                     rel_prop);
+
+  return true;
+}
 
 template <>
 nonstd::expected<bool, std::string> GetPrimProperty(
@@ -1115,8 +1237,47 @@ nonstd::expected<bool, std::string> GetPrimProperty(
   std::string err;
 
   TO_PROPERTY("inputs:file", tex.file)
+  TO_PROPERTY("inputs:st", tex.st)
+  TO_PROPERTY("inputs:uv_set", tex.uv_set)
+  TO_PROPERTY("inputs:uv_set_name", tex.uv_set_name)
+  TO_TOKEN_PROPERTY("inputs:wrapS", tex.wrapS)
+  TO_TOKEN_PROPERTY("inputs:wrapT", tex.wrapT)
+  TO_PROPERTY("inputs:fallback", tex.fallback)
+  TO_TOKEN_PROPERTY("inputs:sourceColorSpace", tex.sourceColorSpace)
+  TO_PROPERTY("inputs:scale", tex.scale)
+  TO_PROPERTY("inputs:bias", tex.bias)
 
-  {
+  if (prop_name == "outputs:r") {
+    if (auto pv = TypedTerminalAttributeToProperty(tex.outputsR)) {
+      (*out_prop) = pv.value();
+    } else {
+      return false;
+    }
+  } else if (prop_name == "outputs:g") {
+    if (auto pv = TypedTerminalAttributeToProperty(tex.outputsG)) {
+      (*out_prop) = pv.value();
+    } else {
+      return false;
+    }
+  } else if (prop_name == "outputs:b") {
+    if (auto pv = TypedTerminalAttributeToProperty(tex.outputsB)) {
+      (*out_prop) = pv.value();
+    } else {
+      return false;
+    }
+  } else if (prop_name == "outputs:a") {
+    if (auto pv = TypedTerminalAttributeToProperty(tex.outputsA)) {
+      (*out_prop) = pv.value();
+    } else {
+      return false;
+    }
+  } else if (prop_name == "outputs:rgb") {
+    if (auto pv = TypedTerminalAttributeToProperty(tex.outputsRGB)) {
+      (*out_prop) = pv.value();
+    } else {
+      return false;
+    }
+  } else {
     const auto it = tex.props.find(prop_name);
     if (it == tex.props.end()) {
       // Attribute not found.
@@ -1133,108 +1294,70 @@ template <>
 nonstd::expected<bool, std::string> GetPrimProperty(
     const UsdPrimvarReader_float2 &preader, const std::string &prop_name,
     Property *out_prop) {
-  if (!out_prop) {
-    return nonstd::make_unexpected(
-        "[InternalError] nullptr in output Property is not allowed.");
-  }
-
-  DCOUT("prop_name = " << prop_name);
-  std::string err;
-
-  TO_PROPERTY("inputs:varname", preader.varname) {
-    const auto it = preader.props.find(prop_name);
-    if (it == preader.props.end()) {
-      // Attribute not found.
-      return false;
-    }
-
-    (*out_prop) = it->second;
-  }
-  DCOUT("prop_name found = " << prop_name);
-
-  return true;
+  return GetPrimvarReaderPropertyImpl(preader, prop_name, out_prop);
 }
 
 template <>
 nonstd::expected<bool, std::string> GetPrimProperty(
     const UsdPrimvarReader_float3 &preader, const std::string &prop_name,
     Property *out_prop) {
-  if (!out_prop) {
-    return nonstd::make_unexpected(
-        "[InternalError] nullptr in output Property is not allowed.");
-  }
-
-  DCOUT("prop_name = " << prop_name);
-  std::string err;
-
-  TO_PROPERTY("inputs:varname", preader.varname)
-
-  {
-    const auto it = preader.props.find(prop_name);
-    if (it == preader.props.end()) {
-      // Attribute not found.
-      return false;
-    }
-
-    (*out_prop) = it->second;
-  }
-
-  return true;
+  return GetPrimvarReaderPropertyImpl(preader, prop_name, out_prop);
 }
 
 template <>
 nonstd::expected<bool, std::string> GetPrimProperty(
     const UsdPrimvarReader_float4 &preader, const std::string &prop_name,
     Property *out_prop) {
-  if (!out_prop) {
-    return nonstd::make_unexpected(
-        "[InternalError] nullptr in output Property is not allowed.");
-  }
-
-  DCOUT("prop_name = " << prop_name);
-  std::string err;
-
-  TO_PROPERTY("inputs:varname", preader.varname)
-
-  {
-    const auto it = preader.props.find(prop_name);
-    if (it == preader.props.end()) {
-      // Attribute not found.
-      return false;
-    }
-
-    (*out_prop) = it->second;
-  }
-
-  return true;
+  return GetPrimvarReaderPropertyImpl(preader, prop_name, out_prop);
 }
 
 template <>
 nonstd::expected<bool, std::string> GetPrimProperty(
     const UsdPrimvarReader_float &preader, const std::string &prop_name,
     Property *out_prop) {
-  if (!out_prop) {
-    return nonstd::make_unexpected(
-        "[InternalError] nullptr in output Property is not allowed.");
-  }
+  return GetPrimvarReaderPropertyImpl(preader, prop_name, out_prop);
+}
 
-  DCOUT("prop_name = " << prop_name);
+template <>
+nonstd::expected<bool, std::string> GetPrimProperty(
+    const UsdPrimvarReader_int &preader, const std::string &prop_name,
+    Property *out_prop) {
+  return GetPrimvarReaderPropertyImpl(preader, prop_name, out_prop);
+}
 
-  std::string err;
+template <>
+nonstd::expected<bool, std::string> GetPrimProperty(
+    const UsdPrimvarReader_string &preader, const std::string &prop_name,
+    Property *out_prop) {
+  return GetPrimvarReaderPropertyImpl(preader, prop_name, out_prop);
+}
 
-  TO_PROPERTY("inputs:varname", preader.varname)
+template <>
+nonstd::expected<bool, std::string> GetPrimProperty(
+    const UsdPrimvarReader_vector &preader, const std::string &prop_name,
+    Property *out_prop) {
+  return GetPrimvarReaderPropertyImpl(preader, prop_name, out_prop);
+}
 
-  {
-    const auto it = preader.props.find(prop_name);
-    if (it == preader.props.end()) {
-      // Attribute not found.
-      return false;
-    }
+template <>
+nonstd::expected<bool, std::string> GetPrimProperty(
+    const UsdPrimvarReader_normal &preader, const std::string &prop_name,
+    Property *out_prop) {
+  return GetPrimvarReaderPropertyImpl(preader, prop_name, out_prop);
+}
 
-    (*out_prop) = it->second;
-  }
+template <>
+nonstd::expected<bool, std::string> GetPrimProperty(
+    const UsdPrimvarReader_point &preader, const std::string &prop_name,
+    Property *out_prop) {
+  return GetPrimvarReaderPropertyImpl(preader, prop_name, out_prop);
+}
 
-  return true;
+template <>
+nonstd::expected<bool, std::string> GetPrimProperty(
+    const UsdPrimvarReader_matrix &preader, const std::string &prop_name,
+    Property *out_prop) {
+  return GetPrimvarReaderPropertyImpl(preader, prop_name, out_prop);
 }
 
 template <>
@@ -1249,9 +1372,10 @@ nonstd::expected<bool, std::string> GetPrimProperty(
   DCOUT("prop_name = " << prop_name);
   std::string err;
 
-  TO_PROPERTY("rotation", tx.rotation)
-  TO_PROPERTY("scale", tx.scale)
-  TO_PROPERTY("translation", tx.translation)
+  TO_COMPAT_PROPERTY("inputs:in", "in", tx.in)
+  TO_COMPAT_PROPERTY("inputs:rotation", "rotation", tx.rotation)
+  TO_COMPAT_PROPERTY("inputs:scale", "scale", tx.scale)
+  TO_COMPAT_PROPERTY("inputs:translation", "translation", tx.translation)
 
   if (prop_name == "outputs:result") {
     // Terminal attribute
@@ -1290,20 +1414,24 @@ nonstd::expected<bool, std::string> GetPrimProperty(
   DCOUT("prop_name = " << prop_name);
   std::string err;
 
-  TO_PROPERTY("diffuseColor", surface.diffuseColor)
-  TO_PROPERTY("emissiveColor", surface.emissiveColor)
-  TO_PROPERTY("specularColor", surface.specularColor)
-  TO_PROPERTY("useSpecularWorkflow", surface.useSpecularWorkflow)
-  TO_PROPERTY("metallic", surface.metallic)
-  TO_PROPERTY("clearcoat", surface.clearcoat)
-  TO_PROPERTY("clearcoatRoughness", surface.clearcoatRoughness)
-  TO_PROPERTY("roughness", surface.roughness)
-  TO_PROPERTY("opacity", surface.opacity)
-  TO_PROPERTY("opacityThreshold", surface.opacityThreshold)
-  TO_PROPERTY("ior", surface.ior)
-  TO_PROPERTY("normal", surface.normal)
-  TO_PROPERTY("displacement", surface.displacement)
-  TO_PROPERTY("occlusion", surface.occlusion)
+  TO_COMPAT_PROPERTY("inputs:diffuseColor", "diffuseColor", surface.diffuseColor)
+  TO_COMPAT_PROPERTY("inputs:emissiveColor", "emissiveColor", surface.emissiveColor)
+  TO_COMPAT_PROPERTY("inputs:specularColor", "specularColor", surface.specularColor)
+  TO_COMPAT_PROPERTY("inputs:useSpecularWorkflow", "useSpecularWorkflow",
+                     surface.useSpecularWorkflow)
+  TO_COMPAT_PROPERTY("inputs:metallic", "metallic", surface.metallic)
+  TO_COMPAT_PROPERTY("inputs:clearcoat", "clearcoat", surface.clearcoat)
+  TO_COMPAT_PROPERTY("inputs:clearcoatRoughness", "clearcoatRoughness",
+                     surface.clearcoatRoughness)
+  TO_COMPAT_PROPERTY("inputs:roughness", "roughness", surface.roughness)
+  TO_COMPAT_PROPERTY("inputs:opacity", "opacity", surface.opacity)
+  TO_COMPAT_PROPERTY("inputs:opacityThreshold", "opacityThreshold",
+                     surface.opacityThreshold)
+  TO_COMPAT_PROPERTY("inputs:ior", "ior", surface.ior)
+  TO_COMPAT_PROPERTY("inputs:normal", "normal", surface.normal)
+  TO_COMPAT_PROPERTY("inputs:displacement", "displacement",
+                     surface.displacement)
+  TO_COMPAT_PROPERTY("inputs:occlusion", "occlusion", surface.occlusion)
 
   if (prop_name == "outputs:surface") {
     if (surface.outputsSurface.authored()) {
@@ -1534,6 +1662,17 @@ nonstd::expected<bool, std::string> GetPrimProperty(
         "[InternalError] nullptr in output Property is not allowed.");
   }
 
+  if (prop_name == kInfoId) {
+    if (shader.info_id.empty()) {
+      return false;
+    }
+
+    (*out_prop) =
+        Property(Attribute::Uniform(value::token(shader.info_id)),
+                 /* custom */ false);
+    return true;
+  }
+
   if (const auto preader_f = shader.value.as<UsdPrimvarReader_float>()) {
     return GetPrimProperty(*preader_f, prop_name, out_prop);
   } else if (const auto preader_f2 =
@@ -1545,6 +1684,23 @@ nonstd::expected<bool, std::string> GetPrimProperty(
   } else if (const auto preader_f4 =
                  shader.value.as<UsdPrimvarReader_float4>()) {
     return GetPrimProperty(*preader_f4, prop_name, out_prop);
+  } else if (const auto preader_i = shader.value.as<UsdPrimvarReader_int>()) {
+    return GetPrimProperty(*preader_i, prop_name, out_prop);
+  } else if (const auto preader_s =
+                 shader.value.as<UsdPrimvarReader_string>()) {
+    return GetPrimProperty(*preader_s, prop_name, out_prop);
+  } else if (const auto preader_v =
+                 shader.value.as<UsdPrimvarReader_vector>()) {
+    return GetPrimProperty(*preader_v, prop_name, out_prop);
+  } else if (const auto preader_n =
+                 shader.value.as<UsdPrimvarReader_normal>()) {
+    return GetPrimProperty(*preader_n, prop_name, out_prop);
+  } else if (const auto preader_p =
+                 shader.value.as<UsdPrimvarReader_point>()) {
+    return GetPrimProperty(*preader_p, prop_name, out_prop);
+  } else if (const auto preader_m =
+                 shader.value.as<UsdPrimvarReader_matrix>()) {
+    return GetPrimProperty(*preader_m, prop_name, out_prop);
   } else if (const auto ptx2d = shader.value.as<UsdTransform2d>()) {
     return GetPrimProperty(*ptx2d, prop_name, out_prop);
   } else if (const auto ptex = shader.value.as<UsdUVTexture>()) {
@@ -1833,8 +1989,279 @@ bool GetPrimPropertyNamesImpl(const GeomSubset &subset,
   return true;
 }
 
+template <>
+bool GetPrimPropertyNamesImpl(const UsdUVTexture &tex,
+                              std::vector<std::string> *prop_names,
+                              bool attr_prop, bool rel_prop) {
+  if (!prop_names) {
+    return false;
+  }
+
+  if (attr_prop) {
+    AppendPropertyNameIfAuthored(tex.file, "inputs:file", prop_names);
+    AppendPropertyNameIfAuthored(tex.st, "inputs:st", prop_names);
+    AppendPropertyNameIfAuthored(tex.uv_set, "inputs:uv_set", prop_names);
+    AppendPropertyNameIfAuthored(tex.uv_set_name, "inputs:uv_set_name",
+                                 prop_names);
+    AppendPropertyNameIfAuthored(tex.wrapS, "inputs:wrapS", prop_names);
+    AppendPropertyNameIfAuthored(tex.wrapT, "inputs:wrapT", prop_names);
+    AppendPropertyNameIfAuthored(tex.fallback, "inputs:fallback", prop_names);
+    AppendPropertyNameIfAuthored(tex.sourceColorSpace,
+                                 "inputs:sourceColorSpace", prop_names);
+    AppendPropertyNameIfAuthored(tex.scale, "inputs:scale", prop_names);
+    AppendPropertyNameIfAuthored(tex.bias, "inputs:bias", prop_names);
+    AppendPropertyNameIfAuthored(tex.outputsR, "outputs:r", prop_names);
+    AppendPropertyNameIfAuthored(tex.outputsG, "outputs:g", prop_names);
+    AppendPropertyNameIfAuthored(tex.outputsB, "outputs:b", prop_names);
+    AppendPropertyNameIfAuthored(tex.outputsA, "outputs:a", prop_names);
+    AppendPropertyNameIfAuthored(tex.outputsRGB, "outputs:rgb", prop_names);
+  }
+
+  AppendPropertyNamesFromCustomProps(tex.props, prop_names, attr_prop,
+                                     rel_prop);
+
+  return true;
+}
+
+template <>
+bool GetPrimPropertyNamesImpl(const UsdPrimvarReader_float &preader,
+                              std::vector<std::string> *prop_names,
+                              bool attr_prop, bool rel_prop) {
+  return GetPrimvarReaderPropertyNamesImpl(preader, prop_names, attr_prop,
+                                           rel_prop);
+}
+
+template <>
+bool GetPrimPropertyNamesImpl(const UsdPrimvarReader_float2 &preader,
+                              std::vector<std::string> *prop_names,
+                              bool attr_prop, bool rel_prop) {
+  return GetPrimvarReaderPropertyNamesImpl(preader, prop_names, attr_prop,
+                                           rel_prop);
+}
+
+template <>
+bool GetPrimPropertyNamesImpl(const UsdPrimvarReader_float3 &preader,
+                              std::vector<std::string> *prop_names,
+                              bool attr_prop, bool rel_prop) {
+  return GetPrimvarReaderPropertyNamesImpl(preader, prop_names, attr_prop,
+                                           rel_prop);
+}
+
+template <>
+bool GetPrimPropertyNamesImpl(const UsdPrimvarReader_float4 &preader,
+                              std::vector<std::string> *prop_names,
+                              bool attr_prop, bool rel_prop) {
+  return GetPrimvarReaderPropertyNamesImpl(preader, prop_names, attr_prop,
+                                           rel_prop);
+}
+
+template <>
+bool GetPrimPropertyNamesImpl(const UsdPrimvarReader_int &preader,
+                              std::vector<std::string> *prop_names,
+                              bool attr_prop, bool rel_prop) {
+  return GetPrimvarReaderPropertyNamesImpl(preader, prop_names, attr_prop,
+                                           rel_prop);
+}
+
+template <>
+bool GetPrimPropertyNamesImpl(const UsdPrimvarReader_string &preader,
+                              std::vector<std::string> *prop_names,
+                              bool attr_prop, bool rel_prop) {
+  return GetPrimvarReaderPropertyNamesImpl(preader, prop_names, attr_prop,
+                                           rel_prop);
+}
+
+template <>
+bool GetPrimPropertyNamesImpl(const UsdPrimvarReader_vector &preader,
+                              std::vector<std::string> *prop_names,
+                              bool attr_prop, bool rel_prop) {
+  return GetPrimvarReaderPropertyNamesImpl(preader, prop_names, attr_prop,
+                                           rel_prop);
+}
+
+template <>
+bool GetPrimPropertyNamesImpl(const UsdPrimvarReader_normal &preader,
+                              std::vector<std::string> *prop_names,
+                              bool attr_prop, bool rel_prop) {
+  return GetPrimvarReaderPropertyNamesImpl(preader, prop_names, attr_prop,
+                                           rel_prop);
+}
+
+template <>
+bool GetPrimPropertyNamesImpl(const UsdPrimvarReader_point &preader,
+                              std::vector<std::string> *prop_names,
+                              bool attr_prop, bool rel_prop) {
+  return GetPrimvarReaderPropertyNamesImpl(preader, prop_names, attr_prop,
+                                           rel_prop);
+}
+
+template <>
+bool GetPrimPropertyNamesImpl(const UsdPrimvarReader_matrix &preader,
+                              std::vector<std::string> *prop_names,
+                              bool attr_prop, bool rel_prop) {
+  return GetPrimvarReaderPropertyNamesImpl(preader, prop_names, attr_prop,
+                                           rel_prop);
+}
+
+template <>
+bool GetPrimPropertyNamesImpl(const UsdTransform2d &tx,
+                              std::vector<std::string> *prop_names,
+                              bool attr_prop, bool rel_prop) {
+  if (!prop_names) {
+    return false;
+  }
+
+  if (attr_prop) {
+    AppendPropertyNameIfAuthored(tx.in, "inputs:in", prop_names);
+    AppendPropertyNameIfAuthored(tx.rotation, "inputs:rotation", prop_names);
+    AppendPropertyNameIfAuthored(tx.scale, "inputs:scale", prop_names);
+    AppendPropertyNameIfAuthored(tx.translation, "inputs:translation",
+                                 prop_names);
+    AppendPropertyNameIfAuthored(tx.result, "outputs:result", prop_names);
+  }
+
+  AppendPropertyNamesFromCustomProps(tx.props, prop_names, attr_prop,
+                                     rel_prop);
+
+  return true;
+}
+
+template <>
+bool GetPrimPropertyNamesImpl(const UsdPreviewSurface &surface,
+                              std::vector<std::string> *prop_names,
+                              bool attr_prop, bool rel_prop) {
+  if (!prop_names) {
+    return false;
+  }
+
+  if (attr_prop) {
+    AppendPropertyNameIfAuthored(surface.diffuseColor, "inputs:diffuseColor",
+                                 prop_names);
+    AppendPropertyNameIfAuthored(surface.emissiveColor,
+                                 "inputs:emissiveColor", prop_names);
+    AppendPropertyNameIfAuthored(surface.specularColor,
+                                 "inputs:specularColor", prop_names);
+    AppendPropertyNameIfAuthored(surface.useSpecularWorkflow,
+                                 "inputs:useSpecularWorkflow", prop_names);
+    AppendPropertyNameIfAuthored(surface.metallic, "inputs:metallic",
+                                 prop_names);
+    AppendPropertyNameIfAuthored(surface.clearcoat, "inputs:clearcoat",
+                                 prop_names);
+    AppendPropertyNameIfAuthored(surface.clearcoatRoughness,
+                                 "inputs:clearcoatRoughness", prop_names);
+    AppendPropertyNameIfAuthored(surface.roughness, "inputs:roughness",
+                                 prop_names);
+    AppendPropertyNameIfAuthored(surface.opacity, "inputs:opacity",
+                                 prop_names);
+    AppendPropertyNameIfAuthored(surface.opacityThreshold,
+                                 "inputs:opacityThreshold", prop_names);
+    AppendPropertyNameIfAuthored(surface.ior, "inputs:ior", prop_names);
+    AppendPropertyNameIfAuthored(surface.normal, "inputs:normal", prop_names);
+    AppendPropertyNameIfAuthored(surface.displacement,
+                                 "inputs:displacement", prop_names);
+    AppendPropertyNameIfAuthored(surface.occlusion, "inputs:occlusion",
+                                 prop_names);
+    AppendPropertyNameIfAuthored(surface.outputsSurface, "outputs:surface",
+                                 prop_names);
+    AppendPropertyNameIfAuthored(surface.outputsDisplacement,
+                                 "outputs:displacement", prop_names);
+  }
+
+  AppendPropertyNamesFromCustomProps(surface.props, prop_names, attr_prop,
+                                     rel_prop);
+
+  return true;
+}
+
+template <>
+bool GetPrimPropertyNamesImpl(const Material &material,
+                              std::vector<std::string> *prop_names,
+                              bool attr_prop, bool rel_prop) {
+  if (!prop_names) {
+    return false;
+  }
+
+  if (attr_prop) {
+    AppendPropertyNameIfAuthored(material.surface, "outputs:surface",
+                                 prop_names);
+    AppendPropertyNameIfAuthored(material.displacement,
+                                 "outputs:displacement", prop_names);
+    AppendPropertyNameIfAuthored(material.volume, "outputs:volume",
+                                 prop_names);
+  }
+
+  AppendPropertyNamesFromCustomProps(material.props, prop_names, attr_prop,
+                                     rel_prop);
+
+  return true;
+}
+
+template <>
+bool GetPrimPropertyNamesImpl(const Shader &shader,
+                              std::vector<std::string> *prop_names,
+                              bool attr_prop, bool rel_prop) {
+  if (!prop_names) {
+    return false;
+  }
+
+  if (attr_prop && !shader.info_id.empty()) {
+    prop_names->push_back(kInfoId);
+  }
+
+  if (const auto preader_f = shader.value.as<UsdPrimvarReader_float>()) {
+    return GetPrimPropertyNamesImpl(*preader_f, prop_names, attr_prop,
+                                    rel_prop);
+  } else if (const auto preader_f2 =
+                 shader.value.as<UsdPrimvarReader_float2>()) {
+    return GetPrimPropertyNamesImpl(*preader_f2, prop_names, attr_prop,
+                                    rel_prop);
+  } else if (const auto preader_f3 =
+                 shader.value.as<UsdPrimvarReader_float3>()) {
+    return GetPrimPropertyNamesImpl(*preader_f3, prop_names, attr_prop,
+                                    rel_prop);
+  } else if (const auto preader_f4 =
+                 shader.value.as<UsdPrimvarReader_float4>()) {
+    return GetPrimPropertyNamesImpl(*preader_f4, prop_names, attr_prop,
+                                    rel_prop);
+  } else if (const auto preader_i = shader.value.as<UsdPrimvarReader_int>()) {
+    return GetPrimPropertyNamesImpl(*preader_i, prop_names, attr_prop,
+                                    rel_prop);
+  } else if (const auto preader_s =
+                 shader.value.as<UsdPrimvarReader_string>()) {
+    return GetPrimPropertyNamesImpl(*preader_s, prop_names, attr_prop,
+                                    rel_prop);
+  } else if (const auto preader_v =
+                 shader.value.as<UsdPrimvarReader_vector>()) {
+    return GetPrimPropertyNamesImpl(*preader_v, prop_names, attr_prop,
+                                    rel_prop);
+  } else if (const auto preader_n =
+                 shader.value.as<UsdPrimvarReader_normal>()) {
+    return GetPrimPropertyNamesImpl(*preader_n, prop_names, attr_prop,
+                                    rel_prop);
+  } else if (const auto preader_p =
+                 shader.value.as<UsdPrimvarReader_point>()) {
+    return GetPrimPropertyNamesImpl(*preader_p, prop_names, attr_prop,
+                                    rel_prop);
+  } else if (const auto preader_m =
+                 shader.value.as<UsdPrimvarReader_matrix>()) {
+    return GetPrimPropertyNamesImpl(*preader_m, prop_names, attr_prop,
+                                    rel_prop);
+  } else if (const auto ptx2d = shader.value.as<UsdTransform2d>()) {
+    return GetPrimPropertyNamesImpl(*ptx2d, prop_names, attr_prop, rel_prop);
+  } else if (const auto ptex = shader.value.as<UsdUVTexture>()) {
+    return GetPrimPropertyNamesImpl(*ptex, prop_names, attr_prop, rel_prop);
+  } else if (const auto psurf = shader.value.as<UsdPreviewSurface>()) {
+    return GetPrimPropertyNamesImpl(*psurf, prop_names, attr_prop, rel_prop);
+  }
+
+  AppendPropertyNamesFromCustomProps(shader.props, prop_names, attr_prop,
+                                     rel_prop);
+  return true;
+}
+
 #undef TO_PROPERTY
 #undef TO_TOKEN_PROPERTY
+#undef TO_COMPAT_PROPERTY
 
 }  // namespace
 
@@ -1937,9 +2364,8 @@ bool GetPropertyNames(const tinyusdz::Prim &prim,
   GET_PRIM_PROPERTY_NAMES(Scope)
   GET_PRIM_PROPERTY_NAMES(GeomMesh)
   GET_PRIM_PROPERTY_NAMES(GeomSubset)
-  // TODO
-  // GET_PRIM_PROPERTY_NAMES(Shader)
-  // GET_PRIM_PROPERTY_NAMES(Material)
+  GET_PRIM_PROPERTY_NAMES(Shader)
+  GET_PRIM_PROPERTY_NAMES(Material)
   // GET_PRIM_PROPERTY_NAMES(SkelRoot)
   // GET_PRIM_PROPERTY_NAMES(BlendShape)
   // GET_PRIM_PROPERTY_NAMES(Skeleton)
@@ -1971,7 +2397,9 @@ bool GetAttributeNames(const tinyusdz::Prim &prim,
   GET_PRIM_ATTRIBUTE_NAMES(Xform)
   GET_PRIM_ATTRIBUTE_NAMES(Scope)
   GET_PRIM_ATTRIBUTE_NAMES(GeomMesh)
-  GET_PRIM_ATTRIBUTE_NAMES(GeomSubset) {
+  GET_PRIM_ATTRIBUTE_NAMES(GeomSubset)
+  GET_PRIM_ATTRIBUTE_NAMES(Shader)
+  GET_PRIM_ATTRIBUTE_NAMES(Material) {
     PUSH_ERROR_AND_RETURN("TODO: Prim type " << prim.type_name());
   }
 
@@ -1999,8 +2427,8 @@ bool GetRelationshipNames(const tinyusdz::Prim &prim,
   GET_PRIM_RELATIONSHIP_NAMES(Scope)
   GET_PRIM_RELATIONSHIP_NAMES(GeomMesh)
   GET_PRIM_RELATIONSHIP_NAMES(GeomSubset)
-  // GET_PRIM_RELATIONSHIP_NAMES(Shader)
-  // GET_PRIM_RELATIONSHIP_NAMES(Material)
+  GET_PRIM_RELATIONSHIP_NAMES(Shader)
+  GET_PRIM_RELATIONSHIP_NAMES(Material)
   // GET_PRIM_RELATIONSHIP_NAMES(SkelRoot)
   // GET_PRIM_RELATIONSHIP_NAMES(BlendShape)
   // GET_PRIM_RELATIONSHIP_NAMES(Skeleton)
