@@ -615,11 +615,6 @@ class CrateReader {
   // RAII Memory budget manager
   mutable MemoryBudgetManager memory_manager_;
 
-  // Unified array dedup cache: ValueRep -> sample index in TimeSamples.
-  // ValueRep encodes type in bits 48-55, so different types never collide.
-  // Cleared before each property's TimeSamples to avoid stale cross-property refs.
-  std::unordered_map<crate::ValueRep, size_t, crate::ValueRep::Hash> _dedup_array_cache;
-
   // Reusable buffers for integer decompression to avoid repeated allocation
   // These are mutable because they're used as internal working buffers in const-like operations
   mutable std::vector<char> _decomp_comp_buffer;      // Buffer for compressed data
