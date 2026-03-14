@@ -2,11 +2,12 @@
 
 CXX = g++
 CXXFLAGS = -std=c++17 -Wall -Wextra -I../../../ -I../../../src
-LDFLAGS =
+LDFLAGS = ../../../build/libtinyusdz_static.a \
+	  ../../../build/path-sort-and-encode-crate/libcrate-encoding.a \
+	  -ldl
 
 # Source files
 TEST_SRC = test_typed_array_view.cc
-TINYUSDZ_SRC = ../../../src/timesamples.cc
 
 # Output binary
 TARGET = test_typed_array_view
@@ -15,7 +16,7 @@ TARGET = test_typed_array_view
 
 all: $(TARGET)
 
-$(TARGET): $(TEST_SRC) $(TINYUSDZ_SRC)
+$(TARGET): $(TEST_SRC)
 	$(CXX) $(CXXFLAGS) -o $@ $^ $(LDFLAGS)
 
 test: run
