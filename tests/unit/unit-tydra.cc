@@ -40,6 +40,52 @@ struct CancelOnMeshProgressState {
   size_t mesh_progress_calls{0};
 };
 
+bool FailingTextureImageLoader(
+    const value::AssetPath &assetPath, const AssetInfo &assetInfo,
+    const AssetResolutionResolver &assetResolver, tydra::TextureImage *imageOut,
+    std::vector<uint8_t> *imageData, void *userdata, std::string *warn,
+    std::string *err) {
+  (void)assetPath;
+  (void)assetInfo;
+  (void)assetResolver;
+  (void)imageOut;
+  (void)imageData;
+  (void)userdata;
+  (void)warn;
+
+  if (err) {
+    *err = "synthetic texture loader failure";
+  }
+  return false;
+}
+
+bool SingleChannelTextureImageLoader(
+    const value::AssetPath &assetPath, const AssetInfo &assetInfo,
+    const AssetResolutionResolver &assetResolver, tydra::TextureImage *imageOut,
+    std::vector<uint8_t> *imageData, void *userdata, std::string *warn,
+    std::string *err) {
+  (void)assetInfo;
+  (void)assetResolver;
+  (void)userdata;
+  (void)warn;
+
+  if (!imageOut || !imageData) {
+    if (err) {
+      *err = "output buffer is null";
+    }
+    return false;
+  }
+
+  imageOut->asset_identifier = assetPath.GetAssetPath();
+  imageOut->width = 1;
+  imageOut->height = 1;
+  imageOut->channels = 1;
+  imageOut->assetTexelComponentType = tydra::ComponentType::UInt8;
+
+  imageData->assign(1, uint8_t(128));
+  return true;
+}
+
 bool CancelOnFirstMeshProgress(const tydra::DetailedProgressInfo &info,
                                void *userptr) {
   auto *state = reinterpret_cast<CancelOnMeshProgressState *>(userptr);
@@ -1174,6 +1220,134 @@ void tydra_progress_cancellation_test(void) {
   TEST_CHECK(state.mesh_progress_calls == 1);
   TEST_CHECK(converter.GetError().find("Conversion cancelled by user") !=
              std::string::npos);
+}
+
+void tydra_texture_loader_policy_test(void) {
+  auto make_mesh = []() {
+    GeomMesh mesh;
+    mesh.points = Animatable<std::vector<value::point3f>>(
+        std::vector<value::point3f>{{0.0f, 0.0f, 0.0f},
+                                    {1.0f, 0.0f, 0.0f},
+                                    {0.0f, 1.0f, 0.0f}});
+    mesh.faceVertexCounts = Animatable<std::vector<int32_t>>(
+        std::vector<int32_t>{3});
+    mesh.faceVertexIndices = Animatable<std::vector<int32_t>>(
+        std::vector<int32_t>{0, 1, 2});
+    return mesh;
+  };
+
+  auto make_stage_with_texture = [&](const UsdUVTexture &uv_texture) {
+    Stage stage;
+
+    Material material;
+    material.surface.set(Path("/PreviewSurface", "outputs:surface"));
+
+    UsdPreviewSurface preview_surface;
+    preview_surface.outputsSurface.set_authored(true);
+    preview_surface.diffuseColor.set_connection(Path("/Tex", "outputs:rgb"));
+    preview_surface.diffuseColor.set_value_empty();
+
+    Shader preview_shader;
+    preview_shader.info_id = kUsdPreviewSurface;
+    preview_shader.value = preview_surface;
+
+    Shader tex_shader;
+    tex_shader.info_id = kUsdUVTexture;
+    tex_shader.value = uv_texture;
+
+    GeomMesh mesh = make_mesh();
+    Relationship material_rel;
+    material_rel.set(Path("/MaterialPrim", ""));
+    mesh.set_materialBinding(material_rel);
+
+    TEST_CHECK(stage.add_root_prim(Prim("MeshPrim", mesh)));
+    TEST_CHECK(stage.add_root_prim(Prim("MaterialPrim", material)));
+    TEST_CHECK(stage.add_root_prim(Prim("PreviewSurface", preview_shader)));
+    TEST_CHECK(stage.add_root_prim(Prim("Tex", tex_shader)));
+
+    return stage;
+  };
+
+  {
+    UsdUVTexture uv_texture;
+    uv_texture.outputsRGB.set_authored(true);
+    uv_texture.file.set_value(
+        Animatable<value::AssetPath>(value::AssetPath("missing.png")));
+
+    Stage stage = make_stage_with_texture(uv_texture);
+
+    tydra::RenderSceneConverterEnv env(stage);
+    env.material_config.texture_image_loader_function =
+        FailingTextureImageLoader;
+    env.material_config.allow_texture_load_failure = true;
+
+    tydra::RenderScene scene;
+    tydra::RenderSceneConverter converter;
+
+    TEST_CHECK(converter.ConvertToRenderScene(env, &scene));
+    TEST_CHECK(scene.images.size() == 1);
+    if (scene.images.size() == 1) {
+      TEST_CHECK(scene.images[0].asset_identifier == "missing.png");
+      TEST_CHECK(!scene.images[0].decoded);
+    }
+    TEST_CHECK(converter.GetWarning().find("missing.png") !=
+               std::string::npos);
+    TEST_CHECK(converter.GetWarning().find("synthetic texture loader failure") !=
+               std::string::npos);
+  }
+
+  {
+    UsdUVTexture uv_texture;
+    uv_texture.outputsRGB.set_authored(true);
+    uv_texture.file.set_value(
+        Animatable<value::AssetPath>(value::AssetPath("missing.png")));
+
+    Stage stage = make_stage_with_texture(uv_texture);
+
+    tydra::RenderSceneConverterEnv env(stage);
+    env.material_config.texture_image_loader_function =
+        FailingTextureImageLoader;
+    env.material_config.allow_texture_load_failure = false;
+
+    tydra::RenderScene scene;
+    tydra::RenderSceneConverter converter;
+
+    TEST_CHECK(!converter.ConvertToRenderScene(env, &scene));
+    TEST_CHECK(converter.GetError().find("missing.png") !=
+               std::string::npos);
+    TEST_CHECK(converter.GetError().find("synthetic texture loader failure") !=
+               std::string::npos);
+  }
+
+  {
+    UsdUVTexture uv_texture;
+    uv_texture.outputsRGB.set_authored(true);
+    uv_texture.file.set_value(
+        Animatable<value::AssetPath>(value::AssetPath("mask.png")));
+    uv_texture.sourceColorSpace.set_value(
+        Animatable<UsdUVTexture::SourceColorSpace>(
+            UsdUVTexture::SourceColorSpace::Auto));
+
+    Stage stage = make_stage_with_texture(uv_texture);
+
+    tydra::RenderSceneConverterEnv env(stage);
+    env.material_config.texture_image_loader_function =
+        SingleChannelTextureImageLoader;
+    env.material_config.allow_texture_load_failure = false;
+
+    tydra::RenderScene scene;
+    tydra::RenderSceneConverter converter;
+
+    TEST_CHECK(converter.ConvertToRenderScene(env, &scene));
+    TEST_CHECK(scene.images.size() == 1);
+    if (scene.images.size() == 1) {
+      TEST_CHECK(scene.images[0].decoded);
+      TEST_CHECK(scene.images[0].usdColorSpace == tydra::ColorSpace::Raw);
+      TEST_CHECK(scene.images[0].asset_identifier == "mask.png");
+    }
+    TEST_CHECK(converter.GetWarning().find("Infer colorSpace failed") ==
+               std::string::npos);
+  }
 }
 
 void tydra_skel_animation_validation_test(void) {

@@ -102,6 +102,7 @@ TEST_LIST = {
   { "tydra_blendshape_resolution_test", tydra_blendshape_resolution_test },
   { "tydra_material_binding_validation_test",
     tydra_material_binding_validation_test },
+  { "tydra_texture_loader_policy_test", tydra_texture_loader_policy_test },
   { "tydra_progress_cancellation_test", tydra_progress_cancellation_test },
   { "tydra_skel_animation_validation_test",
     tydra_skel_animation_validation_test },
