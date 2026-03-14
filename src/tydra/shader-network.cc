@@ -206,6 +206,9 @@ bool GetDirectlyBoundMaterial(
         return true;
       } else {
         (*material) = nullptr;
+        PUSH_ERROR_AND_RETURN(
+            fmt::format("{} is not a Material Prim.",
+                        materialPath->full_path_name()));
       }
     }
 
