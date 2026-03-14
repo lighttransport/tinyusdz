@@ -501,7 +501,7 @@ bool AsciiParser::ParseTimeSamplesOfArray(const std::string &type_name,
 
           // Reuse unified binary storage when the array element type supports it.
           if (ts.is_using_binary_storage() &&
-              value::IsBinarySerializableType(value.type_id())) {
+              value::UsesBinaryTimesampleStorageType(value.type_id())) {
             // Get the array type ID to determine which typed dedup method to call
             uint32_t array_tid = value.type_id();
             uint32_t elem_tid = array_tid & (~value::TYPE_ID_1D_ARRAY_BIT);

@@ -1869,7 +1869,7 @@ constexpr inline uint32_t GetUnderlyingTypeId(const uint32_t tyid) {
   return is_array ? (underlying | TYPE_ID_1D_ARRAY_BIT) : underlying;
 }
 
-constexpr inline bool IsBinarySerializableType(const uint32_t tyid) {
+constexpr inline bool UsesBinaryTimesampleStorageType(const uint32_t tyid) {
   switch (GetUnderlyingTypeId(tyid) & (~TYPE_ID_1D_ARRAY_BIT)) {
     case TYPE_ID_BOOL:
       return false;
@@ -1924,6 +1924,10 @@ constexpr inline bool IsBinarySerializableType(const uint32_t tyid) {
     default:
       return false;
   }
+}
+
+constexpr inline bool IsBinarySerializableType(const uint32_t tyid) {
+  return UsesBinaryTimesampleStorageType(tyid);
 }
 
 /// @brief Check if given typeName string is a role-type(e.g. "vector3f")
