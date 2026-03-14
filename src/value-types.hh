@@ -1552,6 +1552,18 @@ template <typename T>
 inline constexpr bool is_binary_serializable_v =
     std::is_standard_layout_v<T> && std::is_trivially_copyable_v<T>;
 
+template <typename T>
+using timesample_storage_type_t = typename std::decay<T>::type;
+
+template <typename T>
+inline constexpr bool uses_binary_timesample_scalar_storage_v =
+    is_binary_serializable_v<timesample_storage_type_t<T>> &&
+    !std::is_same_v<timesample_storage_type_t<T>, bool>;
+
+template <typename T>
+inline constexpr bool uses_binary_timesample_array_storage_v =
+    uses_binary_timesample_scalar_storage_v<T>;
+
 // import DEFINE_TYPE_TRAIT and DEFINE_ROLE_TYPE_TRAIT
 #include "define-type-trait.inc"
 
