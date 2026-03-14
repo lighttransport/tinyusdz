@@ -158,6 +158,10 @@ struct TimeSamples {
     return !_times.empty() ? _times.size() : _samples.size();
   }
 
+  bool is_initialized() const {
+    return _type_id != 0;
+  }
+
   void clear();
 
   /// Move constructor
@@ -203,6 +207,371 @@ struct TimeSamples {
     return _is_typed_array;
   }
 
+ private:
+  template<typename T>
+  struct UnifiedArrayRef {
+    const T* data{nullptr};
+    size_t count{0};
+    bool blocked{false};
+    bool available{false};
+  };
+
+  template<typename T>
+  bool resolve_unified_array_ref(size_t idx, uint32_t expected_type_id,
+                                 UnifiedArrayRef<T>* ref) const {
+    if (!ref) {
+      return false;
+    }
+
+    *ref = {};
+
+    if (_dirty) {
+      update();
+    }
+
+    if (_times.empty() || !_is_array) {
+      return false;
+    }
+
+    if (idx >= _times.size() || idx >= _blocked.size()) {
+      return false;
+    }
+
+    if (_type_id != expected_type_id) {
+      return false;
+    }
+
+    ref->available = true;
+    ref->blocked = (_blocked[idx] != 0);
+    if (ref->blocked) {
+      return true;
+    }
+
+    if (_use_value_array) {
+      if (idx >= _value_array_refs.size()) {
+        return false;
+      }
+
+      const size_t storage_idx = get_value_array_index(_value_array_refs[idx]);
+      if (storage_idx >= _value_array_storage.size()) {
+        return false;
+      }
+
+      if (const auto *typed = _value_array_storage[storage_idx].as<TypedArray<T>>()) {
+        ref->data = typed->data();
+        ref->count = typed->size();
+        return true;
+      }
+
+      if (const auto *vec = _value_array_storage[storage_idx].as<std::vector<T>>()) {
+        ref->data = vec->data();
+        ref->count = vec->size();
+        return true;
+      }
+
+      return false;
+    }
+
+    size_t byte_offset = 0;
+    bool use_array_buffer = false;
+    if (!resolve_offset_static(_offsets, idx, &byte_offset, nullptr, &use_array_buffer)) {
+      return false;
+    }
+
+    ref->count = get_array_count(idx);
+    if (ref->count == 0) {
+      ref->data = nullptr;
+      return true;
+    }
+
+    if (use_array_buffer) {
+      if (byte_offset >= _array_values.size() || !_array_values[byte_offset]) {
+        return false;
+      }
+      ref->data = reinterpret_cast<const T*>(_array_values[byte_offset]->data());
+      return true;
+    }
+
+    ref->data = reinterpret_cast<const T*>(_values.data() + byte_offset);
+    return true;
+  }
+
+  template<typename T>
+  bool reconstruct_unified_array_value(size_t idx, uint32_t expected_type_id,
+                                       value::Value* dst) const {
+    if (!dst) {
+      return false;
+    }
+
+    UnifiedArrayRef<T> ref;
+    if (!resolve_unified_array_ref<T>(idx, expected_type_id, &ref) || ref.blocked) {
+      return false;
+    }
+
+    if (expected_type_id == value::TypeTraits<std::vector<T>>::type_id()) {
+      std::vector<T> vec;
+      if (ref.count > 0) {
+        vec.assign(ref.data, ref.data + ref.count);
+      }
+      *dst = value::Value(std::move(vec));
+      return true;
+    }
+
+    if (expected_type_id == value::TypeTraits<TypedArray<T>>::type_id()) {
+      TypedArray<T> typed;
+      typed.resize(ref.count);
+      if (ref.count > 0) {
+        std::memcpy(typed.data(), ref.data, sizeof(T) * ref.count);
+      }
+      *dst = value::Value(std::move(typed));
+      return true;
+    }
+
+    return false;
+  }
+
+  bool reconstruct_value_array_sample(size_t idx, Sample* sample) const {
+    if (!sample || idx >= _times.size()) {
+      return false;
+    }
+
+    sample->t = _times[idx];
+    sample->value = value::Value();
+    sample->blocked = true;
+
+    if (idx < _blocked.size() && (_blocked[idx] != 0)) {
+      return true;
+    }
+
+    if (idx >= _value_array_refs.size()) {
+      return true;
+    }
+
+    const size_t storage_idx = get_value_array_index(_value_array_refs[idx]);
+    if (storage_idx >= _value_array_storage.size()) {
+      return true;
+    }
+
+    sample->value = _value_array_storage[storage_idx];
+    sample->blocked = false;
+    return true;
+  }
+
+  bool reconstruct_pod_sample(size_t idx, Sample* sample) const {
+    if (!sample || idx >= _times.size() || idx >= _blocked.size()) {
+      return false;
+    }
+
+    sample->t = _times[idx];
+    sample->blocked = (_blocked[idx] != 0);
+    sample->value = value::Value();
+
+    if (sample->blocked) {
+      return true;
+    }
+
+    if (_is_array) {
+      if (_type_id == value::TypeTraits<std::vector<bool>>::type_id()) {
+        UnifiedArrayRef<uint8_t> ref;
+        if (resolve_unified_array_ref<uint8_t>(
+                idx, value::TypeTraits<std::vector<bool>>::type_id(), &ref) &&
+            !ref.blocked) {
+          std::vector<bool> vec;
+          vec.reserve(ref.count);
+          for (size_t i = 0; i < ref.count; ++i) {
+            vec.push_back(ref.data[i] != 0);
+          }
+          sample->value = value::Value(std::move(vec));
+        }
+        return true;
+      }
+
+#define RECONSTRUCT_ARRAY_SAMPLE(TYPE)                                            \
+      if (reconstruct_unified_array_value<TYPE>(                                  \
+              idx, value::TypeTraits<std::vector<TYPE>>::type_id(),               \
+              &sample->value)) {                                                  \
+        return true;                                                              \
+      }                                                                           \
+      if (reconstruct_unified_array_value<TYPE>(                                  \
+              idx, value::TypeTraits<TypedArray<TYPE>>::type_id(),                \
+              &sample->value)) {                                                  \
+        return true;                                                              \
+      }
+
+      RECONSTRUCT_ARRAY_SAMPLE(float)
+      RECONSTRUCT_ARRAY_SAMPLE(double)
+      RECONSTRUCT_ARRAY_SAMPLE(int32_t)
+      RECONSTRUCT_ARRAY_SAMPLE(uint32_t)
+      RECONSTRUCT_ARRAY_SAMPLE(int64_t)
+      RECONSTRUCT_ARRAY_SAMPLE(uint64_t)
+      RECONSTRUCT_ARRAY_SAMPLE(value::half)
+      RECONSTRUCT_ARRAY_SAMPLE(value::half2)
+      RECONSTRUCT_ARRAY_SAMPLE(value::half3)
+      RECONSTRUCT_ARRAY_SAMPLE(value::half4)
+      RECONSTRUCT_ARRAY_SAMPLE(value::float2)
+      RECONSTRUCT_ARRAY_SAMPLE(value::float3)
+      RECONSTRUCT_ARRAY_SAMPLE(value::float4)
+      RECONSTRUCT_ARRAY_SAMPLE(value::double2)
+      RECONSTRUCT_ARRAY_SAMPLE(value::double3)
+      RECONSTRUCT_ARRAY_SAMPLE(value::double4)
+      RECONSTRUCT_ARRAY_SAMPLE(value::int2)
+      RECONSTRUCT_ARRAY_SAMPLE(value::int3)
+      RECONSTRUCT_ARRAY_SAMPLE(value::int4)
+      RECONSTRUCT_ARRAY_SAMPLE(value::quath)
+      RECONSTRUCT_ARRAY_SAMPLE(value::quatf)
+      RECONSTRUCT_ARRAY_SAMPLE(value::quatd)
+      RECONSTRUCT_ARRAY_SAMPLE(value::point3f)
+      RECONSTRUCT_ARRAY_SAMPLE(value::point3d)
+      RECONSTRUCT_ARRAY_SAMPLE(value::normal3f)
+      RECONSTRUCT_ARRAY_SAMPLE(value::normal3d)
+      RECONSTRUCT_ARRAY_SAMPLE(value::vector3f)
+      RECONSTRUCT_ARRAY_SAMPLE(value::vector3d)
+      RECONSTRUCT_ARRAY_SAMPLE(value::color3f)
+      RECONSTRUCT_ARRAY_SAMPLE(value::color3d)
+      RECONSTRUCT_ARRAY_SAMPLE(value::color4f)
+      RECONSTRUCT_ARRAY_SAMPLE(value::color4d)
+      RECONSTRUCT_ARRAY_SAMPLE(value::texcoord2f)
+      RECONSTRUCT_ARRAY_SAMPLE(value::texcoord2d)
+      RECONSTRUCT_ARRAY_SAMPLE(value::texcoord3f)
+      RECONSTRUCT_ARRAY_SAMPLE(value::texcoord3d)
+      RECONSTRUCT_ARRAY_SAMPLE(value::matrix2f)
+      RECONSTRUCT_ARRAY_SAMPLE(value::matrix2d)
+      RECONSTRUCT_ARRAY_SAMPLE(value::matrix3f)
+      RECONSTRUCT_ARRAY_SAMPLE(value::matrix3d)
+      RECONSTRUCT_ARRAY_SAMPLE(value::matrix4f)
+      RECONSTRUCT_ARRAY_SAMPLE(value::matrix4d)
+
+#undef RECONSTRUCT_ARRAY_SAMPLE
+      return true;
+    }
+
+    const uint32_t type_id = _type_id;
+    if (idx < _small_values.size()) {
+      uint64_t stored = _small_values[idx];
+      switch (type_id) {
+        case value::TypeTraits<value::half>::type_id(): {
+          value::half hval;
+          std::memcpy(&hval, &stored, sizeof(value::half));
+          sample->value = value::Value(hval);
+          break;
+        }
+        case value::TypeTraits<float>::type_id(): {
+          float fval = 0.0f;
+          std::memcpy(&fval, &stored, sizeof(float));
+          sample->value = value::Value(fval);
+          break;
+        }
+        case value::TypeTraits<double>::type_id(): {
+          double dval = 0.0;
+          std::memcpy(&dval, &stored, sizeof(double));
+          sample->value = value::Value(dval);
+          break;
+        }
+        case value::TypeTraits<int32_t>::type_id(): {
+          int32_t ival = 0;
+          std::memcpy(&ival, &stored, sizeof(int32_t));
+          sample->value = value::Value(ival);
+          break;
+        }
+        case value::TypeTraits<uint32_t>::type_id(): {
+          uint32_t uval = 0;
+          std::memcpy(&uval, &stored, sizeof(uint32_t));
+          sample->value = value::Value(uval);
+          break;
+        }
+        case value::TypeTraits<int64_t>::type_id(): {
+          int64_t lval = 0;
+          std::memcpy(&lval, &stored, sizeof(int64_t));
+          sample->value = value::Value(lval);
+          break;
+        }
+        case value::TypeTraits<uint64_t>::type_id(): {
+          uint64_t ulval = 0;
+          std::memcpy(&ulval, &stored, sizeof(uint64_t));
+          sample->value = value::Value(ulval);
+          break;
+        }
+        case value::TypeTraits<bool>::type_id(): {
+          const bool bval = (stored != 0);
+          sample->value = value::Value(bval);
+          break;
+        }
+        default:
+          break;
+      }
+      return true;
+    }
+
+    if (idx >= _offsets.size()) {
+      return true;
+    }
+
+    const uint64_t encoded_offset = _offsets[idx];
+    const size_t byte_offset = static_cast<size_t>(encoded_offset & OFFSET_VALUE_MASK);
+
+#define RECONSTRUCT_VALUE(TYPE) \
+    case value::TypeTraits<TYPE>::type_id(): { \
+      if (byte_offset + sizeof(TYPE) <= _values.size()) { \
+        TYPE val; \
+        std::memcpy(&val, _values.data() + byte_offset, sizeof(TYPE)); \
+        sample->value = value::Value(val); \
+      } \
+      break; \
+    }
+
+    switch (type_id) {
+      RECONSTRUCT_VALUE(value::float2)
+      RECONSTRUCT_VALUE(value::float3)
+      RECONSTRUCT_VALUE(value::float4)
+      RECONSTRUCT_VALUE(value::double2)
+      RECONSTRUCT_VALUE(value::double3)
+      RECONSTRUCT_VALUE(value::double4)
+      RECONSTRUCT_VALUE(value::int2)
+      RECONSTRUCT_VALUE(value::int3)
+      RECONSTRUCT_VALUE(value::int4)
+      RECONSTRUCT_VALUE(value::half2)
+      RECONSTRUCT_VALUE(value::half3)
+      RECONSTRUCT_VALUE(value::half4)
+      RECONSTRUCT_VALUE(value::quath)
+      RECONSTRUCT_VALUE(value::quatf)
+      RECONSTRUCT_VALUE(value::quatd)
+      RECONSTRUCT_VALUE(value::point3f)
+      RECONSTRUCT_VALUE(value::point3d)
+      RECONSTRUCT_VALUE(value::normal3f)
+      RECONSTRUCT_VALUE(value::normal3d)
+      RECONSTRUCT_VALUE(value::vector3f)
+      RECONSTRUCT_VALUE(value::vector3d)
+      RECONSTRUCT_VALUE(value::color3f)
+      RECONSTRUCT_VALUE(value::color3d)
+      RECONSTRUCT_VALUE(value::color4f)
+      RECONSTRUCT_VALUE(value::color4d)
+      RECONSTRUCT_VALUE(value::texcoord2f)
+      RECONSTRUCT_VALUE(value::texcoord2d)
+      RECONSTRUCT_VALUE(value::texcoord3f)
+      RECONSTRUCT_VALUE(value::texcoord3d)
+      RECONSTRUCT_VALUE(value::matrix2f)
+      RECONSTRUCT_VALUE(value::matrix2d)
+      RECONSTRUCT_VALUE(value::matrix3f)
+      RECONSTRUCT_VALUE(value::matrix3d)
+      RECONSTRUCT_VALUE(value::matrix4f)
+      RECONSTRUCT_VALUE(value::matrix4d)
+      default:
+        break;
+    }
+
+#undef RECONSTRUCT_VALUE
+    return true;
+  }
+
+  bool reconstruct_unified_sample(size_t idx, Sample* sample) const {
+    if (_use_value_array) {
+      return reconstruct_value_array_sample(idx, sample);
+    }
+
+    return reconstruct_pod_sample(idx, sample);
+  }
+
+ public:
   void update() const;
 
   bool has_sample_at(const double t) const;
@@ -231,21 +600,11 @@ struct TimeSamples {
   }
 
   nonstd::optional<value::Value> get_value(size_t idx) const {
-    // For unified storage, cannot return Value without type reconstruction
-    if (!_times.empty()) {
-      // User should use typed access methods instead
+    const auto &samples = get_samples();
+    if (idx >= samples.size()) {
       return nonstd::nullopt;
     }
-
-    if (idx >= _samples.size()) {
-      return nonstd::nullopt;
-    }
-
-    if (_dirty) {
-      update();
-    }
-
-    return _samples[idx].value;
+    return samples[idx].value;
   }
 
   uint32_t type_id() const {
@@ -294,9 +653,9 @@ struct TimeSamples {
 
   bool add_sample(const Sample &s, std::string *err = nullptr) {
     // Auto-initialize on first sample
-    if (empty() && !s.value.is_none()) {
+    if (!is_initialized() && !s.value.is_none()) {
       init(s.value.type_id());
-    } else if (!empty() && !s.value.is_none() && _type_id != 0) {
+    } else if (!s.value.is_none() && is_initialized()) {
       // Validate type_id matches on subsequent samples
       if (s.value.type_id() != _type_id) {
         if (err) {
@@ -318,9 +677,9 @@ struct TimeSamples {
   // Value may be None(ValueBlock)
   bool add_sample(double t, const value::Value &v, std::string *err = nullptr) {
     // Auto-initialize on first sample
-    if (empty() && !v.is_none()) {
+    if (!is_initialized() && !v.is_none()) {
       init(v.type_id());
-    } else if (!empty() && !v.is_none() && _type_id != 0) {
+    } else if (!v.is_none() && is_initialized()) {
       // Validate type_id matches on subsequent samples
       if (v.type_id() != _type_id) {
         if (err) {
@@ -348,9 +707,9 @@ struct TimeSamples {
     // Auto-initialize on first sample, but NOT if the value is uninitialized (type_id == 1)
     // This allows deferred initialization for all-blocked TimeSamples
     // Type ID 1 indicates an uninitialized/invalid Value
-    if (empty() && !v.is_none() && v.type_id() != 1) {
+    if (!is_initialized() && !v.is_none() && v.type_id() != 1) {
       init(v.type_id());
-    } else if (!empty() && !v.is_none() && _type_id != 0 && v.type_id() != 1) {
+    } else if (!v.is_none() && is_initialized() && v.type_id() != 1) {
       // Validate type_id matches on subsequent samples
       if (v.type_id() != _type_id) {
         if (err) {
@@ -385,6 +744,8 @@ struct TimeSamples {
       _type_id = v.type_id();
       _use_value_array = true;
       _is_array = true;
+      _is_stl_array = false;
+      _is_typed_array = false;
     }
 
     // Store in value array storage
@@ -393,8 +754,11 @@ struct TimeSamples {
 
     // Record time and reference
     _times.push_back(t);
+    _blocked.push_back(0);
     _value_array_refs.push_back(make_value_array_ref(storage_index, false));
+    _array_counts.push_back(_value_array_storage.back().array_size());
 
+    invalidate_reconstructed_samples_cache();
     _dirty = true;
     return true;
   }
@@ -431,8 +795,13 @@ struct TimeSamples {
 
       // Add time and dedup reference
       _times.push_back(t);
+      _blocked.push_back(0);
       _value_array_refs.push_back(make_value_array_ref(storage_index, true));
+      const size_t ref_array_count =
+          (ref_index < _array_counts.size()) ? _array_counts[ref_index] : 0;
+      _array_counts.push_back(ref_array_count);
 
+      invalidate_reconstructed_samples_cache();
       _dirty = true;
       return true;
     }
@@ -464,7 +833,7 @@ struct TimeSamples {
     (void)expected_total_samples;  // Reserved for future optimization
 
     // Auto-initialize on first sample
-    if (empty()) {
+    if (!is_initialized()) {
       init(value::TypeTraits<T>::type_id());
     }
 
@@ -480,10 +849,12 @@ struct TimeSamples {
     (void)expected_total_samples;  // Reserved for future optimization
 
     // Auto-initialize on first sample
-    if (empty()) {
-      init(value::TypeTraits<T>::type_id());
+    if (!is_initialized()) {
+      init(value::TypeTraits<std::vector<T>>::type_id());
     }
 
+    _is_stl_array = true;
+    _is_typed_array = false;
     // Use unified storage directly via add_array_sample
     return add_array_sample<T>(t, value.data(), value.size(), err);
   }
@@ -495,9 +866,12 @@ struct TimeSamples {
     (void)expected_total_samples;
     (void)err;
     // Auto-initialize on first sample
-    if (empty()) {
+    if (!is_initialized()) {
       init(value::TypeTraits<std::vector<T>>::type_id());
     }
+
+    _is_stl_array = true;
+    _is_typed_array = false;
 
     // Convert std::vector<bool> to std::vector<uint8_t> for storage
     std::vector<uint8_t> byte_array;
@@ -520,6 +894,10 @@ struct TimeSamples {
     _values.resize(_values.size() + byte_size);
     std::memcpy(_values.data() + byte_offset, byte_array.data(), byte_size);
 
+    _is_array = true;
+    _array_size = value.size();
+    _element_size = sizeof(uint8_t);
+    invalidate_reconstructed_samples_cache();
     _dirty = true;
     return true;
   }
@@ -532,12 +910,14 @@ struct TimeSamples {
     (void)expected_total_samples;  // Reserved for future optimization
 
     // Auto-initialize on first sample
-    if (empty()) {
-      init(value::TypeTraits<T>::type_id());
+    if (!is_initialized()) {
+      init(value::TypeTraits<TypedArray<T>>::type_id());
     }
 
     DCOUT("is dedup? " << value.is_dedup());
 
+    _is_stl_array = false;
+    _is_typed_array = true;
     // Use unified storage directly
     return add_array_sample<T>(t, value.data(), value.size(), err);
   }
@@ -546,10 +926,12 @@ struct TimeSamples {
   bool add_matrix_array_sample_pod(double t, const std::vector<T>& value, std::string *err = nullptr, size_t expected_total_samples = 0) {
     (void)expected_total_samples;
     // Auto-initialize on first sample
-    if (empty()) {
-      init(value::TypeTraits<T>::type_id());
+    if (!is_initialized()) {
+      init(value::TypeTraits<std::vector<T>>::type_id());
     }
 
+    _is_stl_array = true;
+    _is_typed_array = false;
     // Use unified storage directly (matrix types are stored like regular arrays)
     return add_array_sample<T>(t, value.data(), value.size(), err);
   }
@@ -559,10 +941,12 @@ struct TimeSamples {
   bool add_matrix_array_sample_pod(double t, const TypedArray<T>& value, std::string *err = nullptr, size_t expected_total_samples = 0) {
     (void)expected_total_samples;
     // Auto-initialize on first sample
-    if (empty()) {
-      init(value::TypeTraits<T>::type_id());
+    if (!is_initialized()) {
+      init(value::TypeTraits<TypedArray<T>>::type_id());
     }
 
+    _is_stl_array = false;
+    _is_typed_array = true;
     // Use unified storage directly (matrix types are stored like regular arrays)
     return add_array_sample<T>(t, value.data(), value.size(), err);
   }
@@ -637,6 +1021,10 @@ struct TimeSamples {
     uint64_t dedup_offset = make_dedup_offset(ref_index, true);
     _offsets.push_back(dedup_offset);
 
+    _is_array = true;
+    _array_size = ref_array_count;
+    _element_size = sizeof(uint8_t);
+    invalidate_reconstructed_samples_cache();
     _dirty = true;
     return true;
   }
@@ -649,7 +1037,7 @@ struct TimeSamples {
     (void)expected_total_samples;  // Reserved for future optimization
 
     // Auto-initialize on first sample
-    if (empty()) {
+    if (!is_initialized()) {
       init(value::TypeTraits<T>::type_id());
     }
 
@@ -664,8 +1052,12 @@ struct TimeSamples {
       return false;
     }
 
+    if (_dirty) {
+      update();
+    }
+
     // Check if storing TypedArray data
-    if (_type_id != value::TypeTraits<T>::type_id()) {
+    if (_type_id != value::TypeTraits<TypedArray<T>>::type_id()) {
       return false;
     }
 
@@ -687,47 +1079,21 @@ struct TimeSamples {
       return false;
     }
 
-    // Check if storing TypedArray data
-    if (_type_id != value::TypeTraits<T>::type_id()) {
-      return false;
+    if (_dirty) {
+      update();
     }
 
-    // Use unified storage
-    if (!_times.empty() && _is_array) {
-      if (idx >= _times.size()) {
-        return false;
-      }
-
-      // Check if blocked
-      if (_blocked[idx]) {
+    UnifiedArrayRef<T> ref;
+    if (resolve_unified_array_ref<T>(idx, value::TypeTraits<TypedArray<T>>::type_id(), &ref)) {
+      if (ref.blocked) {
         if (blocked) *blocked = true;
         return false;
       }
 
-      // Resolve offset
-      size_t byte_offset = 0;
-      bool use_array_buffer = false;
-      if (!resolve_offset_static(_offsets, idx, &byte_offset, nullptr, &use_array_buffer)) {
-        return false;
+      typed_array->resize(ref.count);
+      if (ref.count > 0) {
+        std::memcpy(typed_array->data(), ref.data, sizeof(T) * ref.count);
       }
-
-      const T* data;
-      size_t count = _array_size;
-
-      if (use_array_buffer) {
-        // Array data is in _array_values (unique_ptr vector)
-        if (byte_offset >= _array_values.size() || !_array_values[byte_offset]) {
-          return false;
-        }
-        data = reinterpret_cast<const T*>(_array_values[byte_offset]->data());
-      } else {
-        // Scalar array data is in _values buffer
-        data = reinterpret_cast<const T*>(_values.data() + byte_offset);
-      }
-
-      // Copy data to output TypedArray
-      typed_array->resize(count);
-      std::memcpy(typed_array->data(), data, sizeof(T) * count);
       if (blocked) *blocked = false;
       return true;
     }
@@ -744,36 +1110,12 @@ struct TimeSamples {
       update();
     }
 
-    // Use unified storage directly
-    if (!_times.empty() && _is_array) {
-      if (idx >= _times.size()) {
-        return TypedArrayView<const T>(nullptr, 0);
+    UnifiedArrayRef<T> ref;
+    if (resolve_unified_array_ref<T>(idx, value::TypeTraits<TypedArray<T>>::type_id(), &ref)) {
+      if (ref.blocked || ref.count == 0) {
+        return TypedArrayView<const T>();
       }
-
-      // Check if blocked
-      if (_blocked[idx]) {
-        return TypedArrayView<const T>(nullptr, 0);
-      }
-
-      // Resolve offset - now checks both _values and _array_values buffers
-      size_t byte_offset = 0;
-      bool use_array_buffer = false;
-      if (!resolve_offset_static(_offsets, idx, &byte_offset, nullptr, &use_array_buffer)) {
-        return TypedArrayView<const T>(nullptr, 0);
-      }
-
-      const T* data;
-      if (use_array_buffer) {
-        // Array data is in _array_values (unique_ptr vector)
-        if (byte_offset >= _array_values.size() || !_array_values[byte_offset]) {
-          return TypedArrayView<const T>(nullptr, 0);
-        }
-        data = reinterpret_cast<const T*>(_array_values[byte_offset]->data());
-      } else {
-        // Scalar array data is in _values buffer
-        data = reinterpret_cast<const T*>(_values.data() + byte_offset);
-      }
-      return TypedArrayView<const T>(data, _array_size);
+      return TypedArrayView<const T>(ref.data, ref.count);
     }
 
     // For regular Value storage (generic path)
@@ -842,169 +1184,8 @@ struct TimeSamples {
 #pragma clang diagnostic pop
 #endif
 
-    // If unified storage has data, convert to generic samples on demand
-    // Skip if using value array storage - that's handled below
-    if (!_use_value_array && !_times.empty() && _samples.empty()) {
-      if (_dirty) {
-        update();
-      }
-
-      // Convert unified POD storage to generic samples
-      // This handles the case where ParseTypedTimeSamples stored data in unified storage
-      _samples.clear();
-      _samples.reserve(_times.size());
-
-      uint32_t type_id = _type_id;
-      // IMPORTANT: Index handling differs between small and large types:
-      // - Small types (<=8 bytes): blocked samples DON'T add to _small_values, so use separate index
-      // - Large types (>8 bytes): blocked samples DO add SIZE_MAX to _offsets, so index matches _times
-      size_t small_value_idx = 0;  // Only for small types (<= 8 bytes)
-
-      for (size_t i = 0; i < _times.size(); ++i) {
-        Sample s;
-        s.t = _times[i];
-        s.blocked = (_blocked[i] != 0);
-
-        if (s.blocked) {
-          // Blocked sample
-          s.value = value::Value();  // None value
-          // For small types, don't increment small_value_idx (blocked samples not in _small_values)
-          // For large types, _offsets[i] will be SIZE_MAX (blocked marker), handled below
-        } else {
-          // Reconstruct value from storage based on type_id
-          // For POD types, values are stored in _small_values (up to 8 bytes) or _values (larger)
-          // First check if this is a small value (<= 8 bytes) stored in _small_values
-          if (small_value_idx < _small_values.size()) {
-            uint64_t stored = _small_values[small_value_idx];
-            ++small_value_idx;  // Increment for next non-blocked sample (small types only)
-            // Reconstruct typed value based on type_id
-            switch (type_id) {
-              case value::TypeTraits<float>::type_id(): {
-                float fval = 0.0f;
-                std::memcpy(&fval, &stored, sizeof(float));
-                s.value = value::Value(fval);
-                break;
-              }
-              case value::TypeTraits<double>::type_id(): {
-                double dval = 0.0;
-                std::memcpy(&dval, &stored, sizeof(double));
-                s.value = value::Value(dval);
-                break;
-              }
-              case value::TypeTraits<int32_t>::type_id(): {
-                int32_t ival = 0;
-                std::memcpy(&ival, &stored, sizeof(int32_t));
-                s.value = value::Value(ival);
-                break;
-              }
-              case value::TypeTraits<uint32_t>::type_id(): {
-                uint32_t uval = 0;
-                std::memcpy(&uval, &stored, sizeof(uint32_t));
-                s.value = value::Value(uval);
-                break;
-              }
-              case value::TypeTraits<int64_t>::type_id(): {
-                int64_t lval = 0;
-                std::memcpy(&lval, &stored, sizeof(int64_t));
-                s.value = value::Value(lval);
-                break;
-              }
-              case value::TypeTraits<uint64_t>::type_id(): {
-                uint64_t ulval = 0;
-                std::memcpy(&ulval, &stored, sizeof(uint64_t));
-                s.value = value::Value(ulval);
-                break;
-              }
-              case value::TypeTraits<bool>::type_id(): {
-                bool bval = (stored != 0);
-                s.value = value::Value(bval);
-                break;
-              }
-              default:
-                s.value = value::Value();  // Fallback for types not yet supported
-                break;
-            }
-          } else if (i < _offsets.size()) {
-            // Larger types (> 8 bytes) are stored in _values with offsets
-            // Note: For large types, _offsets has 1:1 correspondence with _times
-            // (blocked samples add SIZE_MAX marker to _offsets)
-            uint64_t encoded_offset = _offsets[i];
-            size_t byte_offset = static_cast<size_t>(encoded_offset & OFFSET_VALUE_MASK);
-
-            // Reconstruct value based on type_id
-            // Helper macro to reduce repetition
-#define RECONSTRUCT_VALUE(TYPE) \
-            case value::TypeTraits<TYPE>::type_id(): { \
-              if (byte_offset + sizeof(TYPE) <= _values.size()) { \
-                TYPE val; \
-                std::memcpy(&val, _values.data() + byte_offset, sizeof(TYPE)); \
-                s.value = value::Value(val); \
-              } else { \
-                s.value = value::Value(); \
-              } \
-              break; \
-            }
-
-            switch (type_id) {
-              // Float vector types
-              RECONSTRUCT_VALUE(value::float2)
-              RECONSTRUCT_VALUE(value::float3)
-              RECONSTRUCT_VALUE(value::float4)
-              // Double vector types
-              RECONSTRUCT_VALUE(value::double2)
-              RECONSTRUCT_VALUE(value::double3)
-              RECONSTRUCT_VALUE(value::double4)
-              // Int vector types
-              RECONSTRUCT_VALUE(value::int2)
-              RECONSTRUCT_VALUE(value::int3)
-              RECONSTRUCT_VALUE(value::int4)
-              // Half vector types
-              RECONSTRUCT_VALUE(value::half2)
-              RECONSTRUCT_VALUE(value::half3)
-              RECONSTRUCT_VALUE(value::half4)
-              // Quaternion types
-              RECONSTRUCT_VALUE(value::quath)
-              RECONSTRUCT_VALUE(value::quatf)
-              RECONSTRUCT_VALUE(value::quatd)
-              // Semantic types (point, normal, color, texcoord, vector)
-              RECONSTRUCT_VALUE(value::point3f)
-              RECONSTRUCT_VALUE(value::point3d)
-              RECONSTRUCT_VALUE(value::normal3f)
-              RECONSTRUCT_VALUE(value::normal3d)
-              RECONSTRUCT_VALUE(value::vector3f)
-              RECONSTRUCT_VALUE(value::vector3d)
-              RECONSTRUCT_VALUE(value::color3f)
-              RECONSTRUCT_VALUE(value::color3d)
-              RECONSTRUCT_VALUE(value::color4f)
-              RECONSTRUCT_VALUE(value::color4d)
-              RECONSTRUCT_VALUE(value::texcoord2f)
-              RECONSTRUCT_VALUE(value::texcoord2d)
-              RECONSTRUCT_VALUE(value::texcoord3f)
-              RECONSTRUCT_VALUE(value::texcoord3d)
-              // Matrix types
-              RECONSTRUCT_VALUE(value::matrix2f)
-              RECONSTRUCT_VALUE(value::matrix2d)
-              RECONSTRUCT_VALUE(value::matrix3f)
-              RECONSTRUCT_VALUE(value::matrix3d)
-              RECONSTRUCT_VALUE(value::matrix4f)
-              RECONSTRUCT_VALUE(value::matrix4d)
-              default:
-                s.value = value::Value();  // Fallback for types not yet supported
-                break;
-            }
-#undef RECONSTRUCT_VALUE
-          } else {
-            s.value = value::Value();  // Fallback
-          }
-        }
-
-        _samples.push_back(s);
-      }
-      return _samples;
-    }
-
-    // Handle value array storage (from add_value_array_sample)
-    if (_use_value_array && !_times.empty() && _samples.empty()) {
+    // If unified storage has data, convert to generic samples on demand.
+    if (!_times.empty() && _samples.empty()) {
       if (_dirty) {
         update();
       }
@@ -1014,23 +1195,11 @@ struct TimeSamples {
 
       for (size_t i = 0; i < _times.size(); ++i) {
         Sample s;
-        s.t = _times[i];
-
-        // Check dedup flag from _value_array_refs
-        if (i < _value_array_refs.size()) {
-          size_t storage_idx = get_value_array_index(_value_array_refs[i]);
-          if (storage_idx < _value_array_storage.size()) {
-            s.value = _value_array_storage[storage_idx];
-            s.blocked = false;
-          } else {
-            s.value = value::Value();  // Invalid index
-            s.blocked = true;
-          }
-        } else {
+        if (!reconstruct_unified_sample(i, &s)) {
+          s.t = (i < _times.size()) ? _times[i] : 0.0;
           s.value = value::Value();
           s.blocked = true;
         }
-
         _samples.push_back(s);
       }
       return _samples;
@@ -1054,10 +1223,8 @@ struct TimeSamples {
 #pragma clang diagnostic pop
 #endif
 
-    // For unified storage, samples vector may not be populated
     if (!_times.empty() && _samples.empty()) {
-      // Cannot return samples from POD storage without reconstruction
-      return empty;
+      (void)get_samples();
     }
 
     if (_dirty) {
@@ -1086,21 +1253,22 @@ struct TimeSamples {
       return false;
     }
 
-    if (_dirty) {
-      update();
+    const auto &samples = get_samples();
+    if (samples.empty()) {
+      return false;
     }
 
     if (value::TimeCode(t).is_default()) {
       // TODO: Handle blocked
-        if (const auto pv = _samples[0].value.as<T>()) {
+        if (const auto pv = samples[0].value.as<T>()) {
           (*dst) = *pv;
           return true;
         }
         return false;
       } else {
 
-        if (_samples.size() == 1) {
-          if (const auto pv = _samples[0].value.as<T>()) {
+        if (samples.size() == 1) {
+          if (const auto pv = samples[0].value.as<T>()) {
             (*dst) = *pv;
             return true;
           }
@@ -1108,10 +1276,10 @@ struct TimeSamples {
         }
 
         auto it = std::upper_bound(
-          _samples.begin(), _samples.end(), t,
+          samples.begin(), samples.end(), t,
           [](double tval, const Sample &a) { return tval < a.t; });
 
-        const auto it_minus_1 = (it == _samples.begin()) ? _samples.begin() : (it - 1);
+        const auto it_minus_1 = (it == samples.begin()) ? samples.begin() : (it - 1);
 
         const value::Value &v = it_minus_1->value;
 
@@ -1138,15 +1306,16 @@ struct TimeSamples {
       return false;
     }
 
-    if (_dirty) {
-      update();
+    const auto &samples = get_samples();
+    if (samples.empty()) {
+      return false;
     }
 
     if (value::TimeCode(t).is_default()) {
       // FIXME: Use the first item for now.
       // TODO: Handle blocked
-      if (!_samples.empty()) {
-        if (const auto pv = _samples[0].value.as<T>()) {
+      if (!samples.empty()) {
+        if (const auto pv = samples[0].value.as<T>()) {
           (*dst) = *pv;
           return true;
         }
@@ -1154,8 +1323,8 @@ struct TimeSamples {
       return false;
     } else {
 
-      if (_samples.size() == 1) {
-        if (const auto pv = _samples[0].value.as<T>()) {
+      if (samples.size() == 1) {
+        if (const auto pv = samples[0].value.as<T>()) {
           (*dst) = *pv;
           return true;
         }
@@ -1164,24 +1333,24 @@ struct TimeSamples {
 
       if (interp == TimeSampleInterpolationType::Linear) {
         auto it = std::lower_bound(
-            _samples.begin(), _samples.end(), t,
+            samples.begin(), samples.end(), t,
             [](const Sample &a, double tval) { return a.t < tval; });
 
 
         // MS STL does not allow seek vector iterator before begin
         // Issue #110
-        const auto it_minus_1 = (it == _samples.begin()) ? _samples.begin() : (it - 1);
+        const auto it_minus_1 = (it == samples.begin()) ? samples.begin() : (it - 1);
 
         size_t idx0 = size_t(std::max(
             int64_t(0),
-            std::min(int64_t(_samples.size() - 1),
-                     int64_t(std::distance(_samples.begin(), it_minus_1)))));
+            std::min(int64_t(samples.size() - 1),
+                     int64_t(std::distance(samples.begin(), it_minus_1)))));
         size_t idx1 =
-            size_t(std::max(int64_t(0), std::min(int64_t(_samples.size() - 1),
+            size_t(std::max(int64_t(0), std::min(int64_t(samples.size() - 1),
                                                  int64_t(idx0) + 1)));
 
-        double tl = _samples[idx0].t;
-        double tu = _samples[idx1].t;
+        double tl = samples[idx0].t;
+        double tu = samples[idx1].t;
 
         double dt = (t - tl);
         if (std::fabs(tu - tl) < std::numeric_limits<double>::epsilon()) {
@@ -1194,8 +1363,8 @@ struct TimeSamples {
         // Just in case.
         dt = std::max(0.0, std::min(1.0, dt));
 
-        const value::Value &p0 = _samples[idx0].value;
-        const value::Value &p1 = _samples[idx1].value;
+        const value::Value &p0 = samples[idx0].value;
+        const value::Value &p1 = samples[idx1].value;
 
         value::Value p;
         if (!Lerp(p0, p1, dt, &p)) {
@@ -1210,10 +1379,10 @@ struct TimeSamples {
       } else {
         // Held
         auto it = std::upper_bound(
-          _samples.begin(), _samples.end(), t,
+          samples.begin(), samples.end(), t,
           [](double tval, const Sample &a) { return tval < a.t; });
 
-        const auto it_minus_1 = (it == _samples.begin()) ? _samples.begin() : (it - 1);
+        const auto it_minus_1 = (it == samples.begin()) ? samples.begin() : (it - 1);
 
         const value::Value &v = it_minus_1->value;
 
@@ -1278,8 +1447,8 @@ struct TimeSamples {
                   "add_array_sample requires POD types");
 
     // Auto-initialize on first sample
-    if (empty()) {
-      if (!init(value::TypeTraits<T>::type_id())) {
+    if (!is_initialized()) {
+      if (!init(value::TypeTraits<std::vector<T>>::type_id())) {
         if (err) *err = "Failed to initialize TimeSamples";
         return false;
       }
@@ -1302,12 +1471,14 @@ struct TimeSamples {
     // Create encoded offset with array buffer flag and index
     uint64_t encoded_offset = make_array_buffer_offset(array_index);
     _offsets.push_back(encoded_offset);
+    _array_counts.push_back(count);
 
     // Update array metadata
     _is_array = true;
     _array_size = count;
     _element_size = sizeof(T);
 
+    invalidate_reconstructed_samples_cache();
     _dirty = true;
     return true;
   }
@@ -1342,10 +1513,16 @@ struct TimeSamples {
     // Add dedup sample
     _times.push_back(t);
     _blocked.push_back(0);
+    const size_t ref_array_count =
+        (ref_index < _array_counts.size()) ? _array_counts[ref_index] : _array_size;
+    _array_counts.push_back(ref_array_count);
 
     uint64_t dedup_offset = make_dedup_offset(ref_index, true);
     _offsets.push_back(dedup_offset);
 
+    _is_array = true;
+    _array_size = ref_array_count;
+    invalidate_reconstructed_samples_cache();
     _dirty = true;
     return true;
   }
@@ -1378,7 +1555,7 @@ struct TimeSamples {
                   "add_pod_sample requires POD types");
 
     // Auto-initialize on first sample
-    if (empty()) {
+    if (!is_initialized()) {
       if (!init(value::TypeTraits<T>::type_id())) {
         if (err) *err = "Failed to initialize TimeSamples";
         return false;
@@ -1395,10 +1572,13 @@ struct TimeSamples {
     _small_values.push_back(small_value);
 
     // Update metadata (scalar, not array)
+    _is_stl_array = false;
+    _is_typed_array = false;
     _is_array = false;
     _array_size = 1;
     _element_size = sizeof(T);
 
+    invalidate_reconstructed_samples_cache();
     _dirty = true;
     return true;
   }
@@ -1412,7 +1592,7 @@ struct TimeSamples {
                   "add_pod_sample requires POD types");
 
     // Auto-initialize on first sample
-    if (empty()) {
+    if (!is_initialized()) {
       if (!init(value::TypeTraits<T>::type_id())) {
         if (err) *err = "Failed to initialize TimeSamples";
         return false;
@@ -1433,10 +1613,13 @@ struct TimeSamples {
     _offsets.push_back(encoded_offset);
 
     // Update metadata (scalar, not array)
+    _is_stl_array = false;
+    _is_typed_array = false;
     _is_array = false;
     _array_size = 1;
     _element_size = sizeof(T);
 
+    invalidate_reconstructed_samples_cache();
     _dirty = true;
     return true;
   }
@@ -1448,7 +1631,7 @@ struct TimeSamples {
                   "add_pod_blocked_sample requires POD types");
 
     // Auto-initialize on first sample
-    if (empty()) {
+    if (!is_initialized()) {
       if (!init(value::TypeTraits<T>::type_id())) {
         if (err) *err = "Failed to initialize TimeSamples";
         return false;
@@ -1463,9 +1646,17 @@ struct TimeSamples {
     // For large types (sizeof > 8), need offset table entry
     if (sizeof(T) > 8) {
       _offsets.push_back(SIZE_MAX);  // Special marker for blocked
+    } else {
+      _small_values.push_back(0);
     }
-    // Note: No entry in _small_values for blocked samples (for small types)
 
+    _is_stl_array = false;
+    _is_typed_array = false;
+    _is_array = false;
+    _array_size = 1;
+    _element_size = sizeof(T);
+
+    invalidate_reconstructed_samples_cache();
     _dirty = true;
     return true;
   }
@@ -1494,37 +1685,18 @@ struct TimeSamples {
       update();
     }
 
-    // Check unified POD storage
-    if (!_times.empty() && _is_array) {
-      if (idx >= _times.size()) {
-        return false;
-      }
-
-      // Check if blocked
-      if (_blocked[idx]) {
+    UnifiedArrayRef<T> ref;
+    if (resolve_unified_array_ref<T>(idx, value::TypeTraits<std::vector<T>>::type_id(), &ref)) {
+      if (ref.blocked) {
         if (out_blocked) *out_blocked = true;
         return false;
       }
 
-      // Resolve offset - now checks both _values and _array_values buffers
-      size_t byte_offset = 0;
-      bool use_array_buffer = false;
-      if (!resolve_offset_static(_offsets, idx, &byte_offset, nullptr, &use_array_buffer)) {
-        return false;
-      }
-
-      const T* data;
-      if (use_array_buffer) {
-        // Array data is in _array_values (unique_ptr vector)
-        if (byte_offset >= _array_values.size() || !_array_values[byte_offset]) {
-          return false;
-        }
-        data = reinterpret_cast<const T*>(_array_values[byte_offset]->data());
+      if (ref.count == 0) {
+        out_vec->clear();
       } else {
-        // Scalar array data is in _values buffer
-        data = reinterpret_cast<const T*>(_values.data() + byte_offset);
+        out_vec->assign(ref.data, ref.data + ref.count);
       }
-      out_vec->assign(data, data + _array_size);
       if (out_blocked) *out_blocked = false;
       return true;
     }
@@ -1640,7 +1812,30 @@ struct TimeSamples {
   }
 
   size_t get_array_size() const {
-    return _array_size;
+    if (_array_counts.empty()) {
+      return _array_size;
+    }
+
+    const size_t first = _array_counts.front();
+    for (size_t count : _array_counts) {
+      if (count != first) {
+        return 0;
+      }
+    }
+
+    return first;
+  }
+
+  size_t get_array_count(size_t idx) const {
+    if (_array_counts.empty()) {
+      return _array_size;
+    }
+
+    if (idx >= _array_counts.size()) {
+      return 0;
+    }
+
+    return _array_counts[idx];
   }
 
   const std::vector<size_t>& get_array_counts() const {
@@ -1682,6 +1877,10 @@ struct TimeSamples {
   mutable size_t _dirty_end{0};
 
   // _pod_samples removed - using unified storage directly
+
+  void invalidate_reconstructed_samples_cache() {
+    _samples.clear();
+  }
 
   /// Find index for time value in _times vector using epsilon comparison
   /// @param t Time value to search for
