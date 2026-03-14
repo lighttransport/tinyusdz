@@ -19,6 +19,7 @@ set(TEST_SOURCES
 	unit-fp-parse-print.cc
 	unit-materialx.cc
 	unit-task-queue.cc
+	unit-tydra.cc
 	# unit-dedup.cc  # Temporarily disabled - needs API updates
 	unit-crate-writer.cc
 	unit-stage.cc
@@ -62,5 +63,4 @@ if (TINYUSDZ_WITH_PXR_COMPAT_API)
   # FIXME: support dll build
   target_compile_definitions(${TEST_TARGET_NAME} PRIVATE "PXR_STATIC")
 endif ()
-
 
