@@ -1516,9 +1516,7 @@ void pprint_timesamples(StreamWriter& writer, const value::TimeSamples& samples,
                     writer.write("\n");
                 }
             } else if (using_small_values) {
-                // Print small values (stored as uint64_t, need to extract typed value)
-                // NOTE: small_values only contains non-blocked samples, so we need a separate index
-                size_t small_values_index = 0;
+                // Print small values (stored as uint64_t, one entry per sample)
                 for (size_t i = 0; i < times.size(); ++i) {
                     writer.write(pprint::Indent(indent + 1));
                     writer.write(times[i]);
@@ -1530,12 +1528,11 @@ void pprint_timesamples(StreamWriter& writer, const value::TimeSamples& samples,
                         writer.write("None");
                     } else {
                         // Get value from small_values and print it
-                        if (small_values_index < small_values.size()) {
-                            uint64_t stored_value = small_values[small_values_index];
+                        if (i < small_values.size()) {
+                            uint64_t stored_value = small_values[i];
                             // Cast to typed pointer and print
                             const uint8_t* value_ptr = reinterpret_cast<const uint8_t*>(&stored_value);
                             pprint_pod_value_by_type(writer, value_ptr, type_id);
-                            small_values_index++;  // Only increment for non-blocked samples
                         } else {
                             writer.write("/* ERROR: small_values index out of bounds */");
                         }

@@ -55,7 +55,8 @@ inline size_t count_inversions(const std::vector<double>& times, size_t max_scan
 inline void insertion_sort_with_offsets(
     std::vector<double>& times,
     Buffer<16>& blocked,
-    std::vector<uint64_t>& offsets) {
+    std::vector<uint64_t>& offsets,
+    std::vector<size_t>* array_counts = nullptr) {
 
   const size_t n = times.size();
   if (n < 2) return;
@@ -75,6 +76,10 @@ inline void insertion_sort_with_offsets(
     double key_time = times[i];
     uint8_t key_blocked = blocked[i];
     uint64_t key_offset = offsets[i];
+    size_t key_array_count = 0;
+    if (array_counts && i < array_counts->size()) {
+      key_array_count = (*array_counts)[i];
+    }
 
     // Find insertion position and shift elements
     size_t j = i;
@@ -82,6 +87,9 @@ inline void insertion_sort_with_offsets(
       times[j] = times[j - 1];
       blocked[j] = blocked[j - 1];
       offsets[j] = offsets[j - 1];
+      if (array_counts && j < array_counts->size()) {
+        (*array_counts)[j] = (*array_counts)[j - 1];
+      }
       --j;
     }
 
@@ -89,6 +97,9 @@ inline void insertion_sort_with_offsets(
     times[j] = key_time;
     blocked[j] = key_blocked;
     offsets[j] = key_offset;
+    if (array_counts && j < array_counts->size()) {
+      (*array_counts)[j] = key_array_count;
+    }
   }
 
 }
@@ -113,7 +124,8 @@ inline void sort_with_offsets(
     const std::vector<size_t>& indices,
     std::vector<double>& times,
     Buffer<16>& blocked,
-    std::vector<uint64_t>& offsets) {
+    std::vector<uint64_t>& offsets,
+    std::vector<size_t>* array_counts = nullptr) {
 
   // Verify all arrays have consistent sizes
   if (times.size() != offsets.size() || times.size() != blocked.size()) {
@@ -133,6 +145,10 @@ inline void sort_with_offsets(
   Buffer<16> sorted_blocked;
   sorted_blocked.resize(blocked.size());
   std::vector<uint64_t> sorted_offsets(offsets.size());
+  std::vector<size_t> sorted_array_counts;
+  if (array_counts && array_counts->size() == times.size()) {
+    sorted_array_counts.resize(array_counts->size());
+  }
 
   // Create index mapping: old_idx -> new_idx
   std::vector<size_t> index_map(times.size());
@@ -164,12 +180,100 @@ inline void sort_with_offsets(
     }
 
     sorted_offsets[i] = offset_val;
+    if (!sorted_array_counts.empty()) {
+      sorted_array_counts[i] = (*array_counts)[indices[i]];
+    }
   }
 
   times = std::move(sorted_times);
   blocked = std::move(sorted_blocked);
   offsets = std::move(sorted_offsets);
+  if (!sorted_array_counts.empty()) {
+    (*array_counts) = std::move(sorted_array_counts);
+  }
   // Note: values array doesn't need reordering as offsets handle the mapping
+}
+
+inline void sort_with_small_values(
+    const std::vector<size_t>& indices,
+    std::vector<double>& times,
+    Buffer<16>& blocked,
+    std::vector<uint64_t>& small_values) {
+  if (times.size() != blocked.size() || times.size() != small_values.size()) {
+    return;
+  }
+
+  std::vector<double> sorted_times(times.size());
+  Buffer<16> sorted_blocked;
+  sorted_blocked.resize(blocked.size());
+  std::vector<uint64_t> sorted_small_values(small_values.size());
+
+  for (size_t i = 0; i < indices.size(); ++i) {
+    sorted_times[i] = times[indices[i]];
+    sorted_blocked[i] = blocked[indices[i]];
+    sorted_small_values[i] = small_values[indices[i]];
+  }
+
+  times = std::move(sorted_times);
+  blocked = std::move(sorted_blocked);
+  small_values = std::move(sorted_small_values);
+}
+
+inline void sort_with_value_array_refs(
+    const std::vector<size_t>& indices,
+    std::vector<double>& times,
+    Buffer<16>& blocked,
+    std::vector<uint64_t>& refs,
+    std::vector<size_t>* array_counts = nullptr) {
+  if (times.size() != refs.size() || times.size() != blocked.size()) {
+    return;
+  }
+
+  std::vector<double> sorted_times(times.size());
+  Buffer<16> sorted_blocked;
+  sorted_blocked.resize(blocked.size());
+  std::vector<uint64_t> sorted_refs(refs.size());
+  std::vector<size_t> sorted_array_counts;
+  if (array_counts && array_counts->size() == times.size()) {
+    sorted_array_counts.resize(array_counts->size());
+  }
+
+  for (size_t i = 0; i < indices.size(); ++i) {
+    sorted_times[i] = times[indices[i]];
+    sorted_blocked[i] = blocked[indices[i]];
+    sorted_refs[i] = refs[indices[i]];
+    if (!sorted_array_counts.empty()) {
+      sorted_array_counts[i] = (*array_counts)[indices[i]];
+    }
+  }
+
+  times = std::move(sorted_times);
+  blocked = std::move(sorted_blocked);
+  refs = std::move(sorted_refs);
+  if (!sorted_array_counts.empty()) {
+    (*array_counts) = std::move(sorted_array_counts);
+  }
+}
+
+inline void sort_times_and_blocked(
+    const std::vector<size_t>& indices,
+    std::vector<double>& times,
+    Buffer<16>& blocked) {
+  if (times.size() != blocked.size()) {
+    return;
+  }
+
+  std::vector<double> sorted_times(times.size());
+  Buffer<16> sorted_blocked;
+  sorted_blocked.resize(blocked.size());
+
+  for (size_t i = 0; i < indices.size(); ++i) {
+    sorted_times[i] = times[indices[i]];
+    sorted_blocked[i] = blocked[indices[i]];
+  }
+
+  times = std::move(sorted_times);
+  blocked = std::move(sorted_blocked);
 }
 
 
@@ -206,41 +310,33 @@ void TimeSamples::update() const {
   if (!_times.empty()) {
     // Unified POD storage (new approach)
     // Fast path: check if already sorted to avoid unnecessary work
-    if (std::is_sorted(_times.begin(), _times.end())) {
+    if (_times.size() < 2 || std::is_sorted(_times.begin(), _times.end())) {
       _dirty = false;
       return;
     }
 
-    // Check if nearly sorted to choose optimal algorithm
-    const size_t n = _times.size();
-    size_t inversions = count_inversions(_times);
-    const bool use_insertion_sort = (inversions * 20 < n);
+    std::vector<size_t> indices = create_sort_indices(_times);
 
-    // Sort using offset table strategy
-    if (!_offsets.empty()) {
+    if (_use_value_array) {
+      sort_with_value_array_refs(indices, _times, _blocked, _value_array_refs,
+                                 &_array_counts);
+    } else if (!_offsets.empty()) {
       const bool has_dedup = std::any_of(
           _offsets.begin(), _offsets.end(), [](uint64_t offset) {
             return (offset & value::TimeSamples::OFFSET_DEDUP_FLAG) != 0;
           });
+      const bool use_insertion_sort =
+          (!has_dedup && count_inversions(_times) * 20 < _times.size());
 
       if (use_insertion_sort && !has_dedup) {
-        insertion_sort_with_offsets(_times, _blocked, _offsets);
+        insertion_sort_with_offsets(_times, _blocked, _offsets, &_array_counts);
       } else {
-        std::vector<size_t> indices = create_sort_indices(_times);
-        sort_with_offsets(indices, _times, _blocked, _offsets);
+        sort_with_offsets(indices, _times, _blocked, _offsets, &_array_counts);
       }
+    } else if (!_small_values.empty()) {
+      sort_with_small_values(indices, _times, _blocked, _small_values);
     } else {
-      // Handle case without offsets
-      std::vector<std::pair<size_t, double>> temp;
-      temp.reserve(_times.size());
-      for (size_t i = 0; i < _times.size(); ++i) {
-        temp.emplace_back(i, _times[i]);
-      }
-      std::stable_sort(temp.begin(), temp.end(),
-                      [](const auto& a, const auto& b) { return a.second < b.second; });
-      for (size_t i = 0; i < temp.size(); ++i) {
-        _times[i] = temp[i].second;
-      }
+      sort_times_and_blocked(indices, _times, _blocked);
     }
   } else if (!_samples.empty()) {
     // Legacy Sample-based storage
@@ -563,12 +659,14 @@ bool TypedTimeSamples<T>::get(T *dst, double t,
       (*dst) = std::move(p);
       return true;
     } else {
-      if (it == _samples.end()) {
-        // ???
-        return false;
-      }
+      auto held_it = std::upper_bound(
+          _samples.begin(), _samples.end(), t,
+          [](double tval, const Sample &a) { return tval < a.t; });
 
-      (*dst) = it->value;
+      const auto it_minus_1 =
+          (held_it == _samples.begin()) ? _samples.begin() : (held_it - 1);
+
+      (*dst) = it_minus_1->value;
       return true;
     }
   }
@@ -624,12 +722,11 @@ bool TypedTimeSamples<T>::get(T *dst, double t,
       (*dst) = std::move(p);
       return true;
     } else {
-      if (it == _times.end()) {
-        // ???
-        return false;
-      }
-
-      size_t idx = static_cast<size_t>(std::distance(_times.begin(), it));
+      auto held_it = std::upper_bound(_times.begin(), _times.end(), t);
+      size_t idx =
+          (held_it == _times.begin())
+              ? 0
+              : static_cast<size_t>(std::distance(_times.begin(), held_it) - 1);
       (*dst) = _values[idx];
       return true;
     }
@@ -799,15 +896,19 @@ TimeSamples::TimeSamples(TimeSamples&& other) noexcept
       _blocked(std::move(other._blocked)),
       _small_values(std::move(other._small_values)),
       _values(std::move(other._values)),
+      _array_values(std::move(other._array_values)),
       _offsets(std::move(other._offsets)),
       _value_array_storage(std::move(other._value_array_storage)),
       _value_array_refs(std::move(other._value_array_refs)),
       _type_id(other._type_id),
       _use_value_array(other._use_value_array),
       _is_array(other._is_array),
+      _is_stl_array(other._is_stl_array),
+      _is_typed_array(other._is_typed_array),
       _array_size(other._array_size),
       _element_size(other._element_size),
       _blocked_count(other._blocked_count),
+      _array_counts(std::move(other._array_counts)),
       _dirty(other._dirty),
       _dirty_start(other._dirty_start),
       _dirty_end(other._dirty_end) {
@@ -815,6 +916,8 @@ TimeSamples::TimeSamples(TimeSamples&& other) noexcept
   other._type_id = 0;
   other._use_value_array = false;
   other._is_array = false;
+  other._is_stl_array = false;
+  other._is_typed_array = false;
   other._array_size = 0;
   other._element_size = 0;
   other._blocked_count = 0;
@@ -839,9 +942,12 @@ TimeSamples& TimeSamples::operator=(TimeSamples&& other) noexcept {
     _type_id = other._type_id;
     _use_value_array = other._use_value_array;
     _is_array = other._is_array;
+    _is_stl_array = other._is_stl_array;
+    _is_typed_array = other._is_typed_array;
     _array_size = other._array_size;
     _element_size = other._element_size;
     _blocked_count = other._blocked_count;
+    _array_counts = std::move(other._array_counts);
     _dirty = other._dirty;
     _dirty_start = other._dirty_start;
     _dirty_end = other._dirty_end;
@@ -850,6 +956,8 @@ TimeSamples& TimeSamples::operator=(TimeSamples&& other) noexcept {
     other._type_id = 0;
     other._use_value_array = false;
     other._is_array = false;
+    other._is_stl_array = false;
+    other._is_typed_array = false;
     other._array_size = 0;
     other._element_size = 0;
     other._blocked_count = 0;
@@ -873,9 +981,12 @@ TimeSamples::TimeSamples(const TimeSamples& other)
       _type_id(other._type_id),
       _use_value_array(other._use_value_array),
       _is_array(other._is_array),
+      _is_stl_array(other._is_stl_array),
+      _is_typed_array(other._is_typed_array),
       _array_size(other._array_size),
       _element_size(other._element_size),
       _blocked_count(other._blocked_count),
+      _array_counts(other._array_counts),
       _dirty(other._dirty),
       _dirty_start(other._dirty_start),
       _dirty_end(other._dirty_end) {
@@ -909,9 +1020,12 @@ TimeSamples& TimeSamples::operator=(const TimeSamples& other) {
     _type_id = other._type_id;
     _use_value_array = other._use_value_array;
     _is_array = other._is_array;
+    _is_stl_array = other._is_stl_array;
+    _is_typed_array = other._is_typed_array;
     _array_size = other._array_size;
     _element_size = other._element_size;
     _blocked_count = other._blocked_count;
+    _array_counts = other._array_counts;
     _dirty = other._dirty;
     _dirty_start = other._dirty_start;
     _dirty_end = other._dirty_end;
@@ -946,10 +1060,17 @@ void TimeSamples::clear() {
   _times.clear();
   _blocked.clear();
   _values.clear();
+  _array_values.clear();
   _offsets.clear();
   _small_values.clear();
+  _value_array_storage.clear();
+  _value_array_refs.clear();
+  _array_counts.clear();
   _type_id = 0;
+  _use_value_array = false;
   _is_array = false;
+  _is_stl_array = false;
+  _is_typed_array = false;
   _array_size = 0;
   _element_size = 0;
   _blocked_count = 0;
@@ -961,14 +1082,14 @@ void TimeSamples::clear() {
 
 // init() method
 bool TimeSamples::init(uint32_t type_id) {
-  //DCOUT("init" << type_id);
-
-  // Allow initialization if empty OR if it contains only uninitialized blocked samples
-  if (!empty() && _type_id != 0) {
-    DCOUT("initialized" << type_id);
-    return false; // Already initialized with a different type
+  if (type_id == 0) {
+    return false;
   }
-  DCOUT("init" << type_id);
+
+  if (_type_id != 0) {
+    return _type_id == type_id;
+  }
+
   _type_id = type_id;
 
   return true;
