@@ -1026,7 +1026,7 @@ nonstd::expected<bool, std::string> GetPrimProperty(
 
   TO_PROPERTY("points", mesh.points)
   TO_PROPERTY("faceVertexCounts", mesh.faceVertexCounts)
-  TO_PROPERTY("faceVertexIndices", mesh.faceVertexCounts)
+  TO_PROPERTY("faceVertexIndices", mesh.faceVertexIndices)
   TO_PROPERTY("normals", mesh.normals)
   TO_PROPERTY("velocities", mesh.velocities)
   TO_PROPERTY("cornerIndices", mesh.cornerIndices)
