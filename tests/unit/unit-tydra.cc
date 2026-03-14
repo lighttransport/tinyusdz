@@ -193,3 +193,39 @@ void tydra_geommesh_property_accessor_test(void) {
     TEST_CHECK(value.value() != std::vector<int32_t>({4, 4}));
   }
 }
+
+void tydra_memory_tracking_test(void) {
+  tydra::detail::MemoryUsageState state;
+  std::vector<std::string> progress_messages;
+  std::vector<size_t> freed_bytes;
+
+  state.current_memory_usage = 128;
+  state.peak_memory_usage = 128;
+
+  tydra::detail::ApplyMemoryUsageDelta(
+      0, 256, 1024, &state,
+      [&progress_messages](const std::string &message) {
+        progress_messages.push_back(message);
+      },
+      [&freed_bytes](size_t bytes_freed) { freed_bytes.push_back(bytes_freed); });
+
+  TEST_CHECK(state.current_memory_usage == 0);
+  TEST_CHECK(state.peak_memory_usage == 128);
+  TEST_CHECK(freed_bytes.size() == 1);
+  TEST_CHECK(freed_bytes[0] == 128);
+  TEST_CHECK(progress_messages.empty());
+
+  tydra::detail::ApplyMemoryUsageDelta(
+      2 * 1024 * 1024, 0, 1, &state,
+      [&progress_messages](const std::string &message) {
+        progress_messages.push_back(message);
+      },
+      [&freed_bytes](size_t bytes_freed) { freed_bytes.push_back(bytes_freed); });
+
+  TEST_CHECK(state.current_memory_usage == 2 * 1024 * 1024);
+  TEST_CHECK(state.peak_memory_usage == 2 * 1024 * 1024);
+  TEST_CHECK(freed_bytes.size() == 1);
+  TEST_CHECK(progress_messages.size() == 1);
+  TEST_CHECK(progress_messages[0].find("Memory limit exceeded") !=
+             std::string::npos);
+}
