@@ -1,13 +1,12 @@
 # TypedArrayView TimeSamples Test
 
-This test verifies the functionality of `TypedArrayView` methods in the `TimeSamples` and `PODTimeSamples` classes.
+This test verifies the functionality of `TypedArrayView` methods in `TimeSamples` for both binary array storage and `std::vector` storage.
 
 ## What It Tests
 
-### PODTimeSamples
+### TimeSamples with binary array storage
 - `get_typed_array_view_at<T>(size_t idx)` - Returns a view of array data at a specific index
 - `get_typed_array_view_at_time<T>(double t)` - Returns a view of array data at a specific time
-- Proper handling of blocked samples (returns empty view)
 - Proper handling of non-existent times (returns empty view)
 
 ### TimeSamples
@@ -35,13 +34,12 @@ When successful, you should see:
 ```
 Testing TypedArrayView methods in TimeSamples...
 
-Testing PODTimeSamples TypedArrayView for float arrays...
+Testing TimeSamples TypedArrayView for binary float arrays...
   ✓ get_typed_array_view_at(0) works
   ✓ get_typed_array_view_at(1) works
-  ✓ get_typed_array_view_at(2) returns empty for blocked
   ✓ get_typed_array_view_at_time(1.0) works
   ✓ get_typed_array_view_at_time(2.0) works
-  ✓ get_typed_array_view_at_time(3.0) returns empty for blocked
+  ✓ get_typed_array_view_at_time(3.0) returns empty for non-existent
   ✓ get_typed_array_view_at_time(5.0) returns empty for non-existent
 
 Testing TimeSamples TypedArrayView with std::vector storage...
@@ -60,4 +58,4 @@ Key features:
 - Zero-copy access to array data
 - Returns const-qualified views for safety
 - Handles blocked values (ValueBlock) by returning empty views
-- Works with multiple storage types (TypedArray, std::vector, raw binary-serializable arrays)
+- Works with multiple storage types (`TypedArray`, `std::vector`, raw binary-storage arrays)
