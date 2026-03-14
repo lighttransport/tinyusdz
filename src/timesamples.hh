@@ -198,16 +198,205 @@ struct TimeSamples {
   /// Check if storing std::vector-based array data
   /// @return true if using unified storage with STL arrays, false otherwise
   bool is_stl_array() const {
-    return _is_stl_array;
+    return _storage.is_stl_array();
   }
 
   /// Check if storing TypedArray data
   /// @return true if using unified storage with TypedArray, false otherwise
   bool is_typed_array() const {
-    return _is_typed_array;
+    return _storage.is_typed_array();
   }
 
  private:
+  enum class UnifiedStorageBackend : uint8_t {
+    None,
+    SmallScalar,
+    OffsetScalar,
+    ArrayOffset,
+    ValueArray,
+  };
+
+  enum class ArrayLayoutKind : uint8_t {
+    None,
+    StdVector,
+    TypedArray,
+  };
+
+  struct StorageDescriptor {
+    UnifiedStorageBackend backend{UnifiedStorageBackend::None};
+    ArrayLayoutKind array_layout{ArrayLayoutKind::None};
+    size_t uniform_array_count{0};
+    size_t element_size{0};
+
+    bool is_array_backend() const {
+      return (backend == UnifiedStorageBackend::ArrayOffset) ||
+             (backend == UnifiedStorageBackend::ValueArray);
+    }
+
+    bool uses_value_array() const {
+      return backend == UnifiedStorageBackend::ValueArray;
+    }
+
+    bool uses_offsets() const {
+      return (backend == UnifiedStorageBackend::OffsetScalar) ||
+             (backend == UnifiedStorageBackend::ArrayOffset);
+    }
+
+    bool uses_small_scalars() const {
+      return backend == UnifiedStorageBackend::SmallScalar;
+    }
+
+    bool is_stl_array() const {
+      return array_layout == ArrayLayoutKind::StdVector;
+    }
+
+    bool is_typed_array() const {
+      return array_layout == ArrayLayoutKind::TypedArray;
+    }
+
+    void clear() {
+      backend = UnifiedStorageBackend::None;
+      array_layout = ArrayLayoutKind::None;
+      uniform_array_count = 0;
+      element_size = 0;
+    }
+  };
+
+  static const char* backend_name(UnifiedStorageBackend backend) {
+    switch (backend) {
+      case UnifiedStorageBackend::None:
+        return "none";
+      case UnifiedStorageBackend::SmallScalar:
+        return "small-scalar";
+      case UnifiedStorageBackend::OffsetScalar:
+        return "offset-scalar";
+      case UnifiedStorageBackend::ArrayOffset:
+        return "array-offset";
+      case UnifiedStorageBackend::ValueArray:
+        return "value-array";
+    }
+
+    return "unknown";
+  }
+
+  static const char* array_layout_name(ArrayLayoutKind layout) {
+    switch (layout) {
+      case ArrayLayoutKind::None:
+        return "none";
+      case ArrayLayoutKind::StdVector:
+        return "std::vector";
+      case ArrayLayoutKind::TypedArray:
+        return "TypedArray";
+    }
+
+    return "unknown";
+  }
+
+  bool has_unified_samples() const {
+    return !_times.empty();
+  }
+
+  bool has_generic_samples() const {
+    return !_samples.empty() && !has_unified_samples();
+  }
+
+  bool ensure_initialized_type(uint32_t expected_type_id, std::string* err,
+                               const char* op_name) {
+    if (!is_initialized()) {
+      if (!init(expected_type_id)) {
+        if (err) {
+          (*err) += std::string(op_name) + " failed to initialize TimeSamples.\n";
+        }
+        return false;
+      }
+      return true;
+    }
+
+    if (_type_id != expected_type_id) {
+      if (err) {
+        (*err) += std::string(op_name) + " type mismatch: expected type_id " +
+                  std::to_string(_type_id) + " but got " +
+                  std::to_string(expected_type_id) + ".\n";
+      }
+      return false;
+    }
+
+    return true;
+  }
+
+  bool ensure_unified_backend(UnifiedStorageBackend backend,
+                              ArrayLayoutKind array_layout,
+                              size_t element_size,
+                              std::string* err,
+                              const char* op_name) {
+    if (has_generic_samples()) {
+      if (err) {
+        (*err) += std::string(op_name) +
+                  " cannot mix unified storage with existing generic Value samples.\n";
+      }
+      return false;
+    }
+
+    if (_storage.backend == UnifiedStorageBackend::None) {
+      _storage.backend = backend;
+      _storage.array_layout = array_layout;
+      _storage.element_size = element_size;
+      return true;
+    }
+
+    if (_storage.backend != backend) {
+      if (err) {
+        (*err) += std::string(op_name) + " backend mismatch: existing backend is `" +
+                  backend_name(_storage.backend) + "`, requested backend is `" +
+                  backend_name(backend) + "`.\n";
+      }
+      return false;
+    }
+
+    if ((array_layout != ArrayLayoutKind::None) &&
+        (_storage.array_layout != ArrayLayoutKind::None) &&
+        (_storage.array_layout != array_layout)) {
+      if (err) {
+        (*err) += std::string(op_name) + " array layout mismatch: existing layout is `" +
+                  array_layout_name(_storage.array_layout) +
+                  "`, requested layout is `" + array_layout_name(array_layout) + "`.\n";
+      }
+      return false;
+    }
+
+    if ((_storage.array_layout == ArrayLayoutKind::None) &&
+        (array_layout != ArrayLayoutKind::None)) {
+      _storage.array_layout = array_layout;
+    }
+
+    if ((element_size != 0) && (_storage.element_size != 0) &&
+        (_storage.element_size != element_size)) {
+      if (err) {
+        (*err) += std::string(op_name) + " element size mismatch: existing element size is " +
+                  std::to_string(_storage.element_size) +
+                  ", requested element size is " + std::to_string(element_size) + ".\n";
+      }
+      return false;
+    }
+
+    if ((_storage.element_size == 0) && (element_size != 0)) {
+      _storage.element_size = element_size;
+    }
+
+    return true;
+  }
+
+  void update_array_metadata(size_t count, size_t element_size,
+                             ArrayLayoutKind layout) {
+    _storage.uniform_array_count = count;
+    if (element_size != 0) {
+      _storage.element_size = element_size;
+    }
+    if (layout != ArrayLayoutKind::None) {
+      _storage.array_layout = layout;
+    }
+  }
+
   template<typename T>
   struct UnifiedArrayRef {
     const T* data{nullptr};
@@ -229,7 +418,7 @@ struct TimeSamples {
       update();
     }
 
-    if (_times.empty() || !_is_array) {
+    if (_times.empty() || !_storage.is_array_backend()) {
       return false;
     }
 
@@ -247,7 +436,7 @@ struct TimeSamples {
       return true;
     }
 
-    if (_use_value_array) {
+    if (_storage.uses_value_array()) {
       if (idx >= _value_array_refs.size()) {
         return false;
       }
@@ -370,7 +559,7 @@ struct TimeSamples {
       return true;
     }
 
-    if (_is_array) {
+    if (_storage.is_array_backend()) {
       if (_type_id == value::TypeTraits<std::vector<bool>>::type_id()) {
         UnifiedArrayRef<uint8_t> ref;
         if (resolve_unified_array_ref<uint8_t>(
@@ -564,7 +753,7 @@ struct TimeSamples {
   }
 
   bool reconstruct_unified_sample(size_t idx, Sample* sample) const {
-    if (_use_value_array) {
+    if (_storage.uses_value_array()) {
       return reconstruct_value_array_sample(idx, sample);
     }
 
@@ -652,6 +841,13 @@ struct TimeSamples {
   }
 
   bool add_sample(const Sample &s, std::string *err = nullptr) {
+    if (has_unified_samples()) {
+      if (err) {
+        (*err) += "add_sample cannot append generic Value samples after unified storage samples.\n";
+      }
+      return false;
+    }
+
     // Auto-initialize on first sample
     if (!is_initialized() && !s.value.is_none()) {
       init(s.value.type_id());
@@ -676,6 +872,13 @@ struct TimeSamples {
 
   // Value may be None(ValueBlock)
   bool add_sample(double t, const value::Value &v, std::string *err = nullptr) {
+    if (has_unified_samples()) {
+      if (err) {
+        (*err) += "add_sample cannot append generic Value samples after unified storage samples.\n";
+      }
+      return false;
+    }
+
     // Auto-initialize on first sample
     if (!is_initialized() && !v.is_none()) {
       init(v.type_id());
@@ -704,6 +907,13 @@ struct TimeSamples {
 
   // We still need "dummy" value for type_name() and type_id()
   bool add_blocked_sample(double t, const value::Value &v, std::string *err = nullptr) {
+    if (has_unified_samples()) {
+      if (err) {
+        (*err) += "add_blocked_sample cannot append generic Value samples after unified storage samples.\n";
+      }
+      return false;
+    }
+
     // Auto-initialize on first sample, but NOT if the value is uninitialized (type_id == 1)
     // This allows deferred initialization for all-blocked TimeSamples
     // Type ID 1 indicates an uninitialized/invalid Value
@@ -738,14 +948,21 @@ struct TimeSamples {
   /// @param v The array value to add (will be moved)
   /// @param err Optional error string
   bool add_value_array_sample(double t, value::Value &&v, std::string *err = nullptr) {
-    (void)err;  // Currently unused, reserved for future error reporting
-    // Auto-initialize on first sample
-    if (_times.empty() && !_use_value_array) {
-      _type_id = v.type_id();
-      _use_value_array = true;
-      _is_array = true;
-      _is_stl_array = false;
-      _is_typed_array = false;
+    if (!v.is_array() || v.is_none()) {
+      if (err) {
+        (*err) += "add_value_array_sample requires a non-blocked array value.\n";
+      }
+      return false;
+    }
+
+    if (!ensure_initialized_type(v.type_id(), err, "add_value_array_sample")) {
+      return false;
+    }
+
+    if (!ensure_unified_backend(UnifiedStorageBackend::ValueArray,
+                                ArrayLayoutKind::None, 0, err,
+                                "add_value_array_sample")) {
+      return false;
     }
 
     // Store in value array storage
@@ -770,7 +987,7 @@ struct TimeSamples {
   /// @param err Optional error string
   bool add_dedup_sample(double t, size_t ref_index, std::string *err = nullptr) {
     // Check if using value array storage
-    if (_use_value_array) {
+    if (_storage.uses_value_array()) {
       // Validate reference
       if (ref_index >= _times.size()) {
         if (err) {
@@ -807,6 +1024,12 @@ struct TimeSamples {
     }
 
     // Fallback to old _samples based storage
+    if (has_unified_samples()) {
+      if (err) {
+        (*err) += "add_dedup_sample cannot fall back to generic Value storage once unified storage is active.\n";
+      }
+      return false;
+    }
     if (ref_index >= _samples.size()) {
       if (err) {
         (*err) += "Invalid ref_index in add_dedup_sample: " +
@@ -849,12 +1072,17 @@ struct TimeSamples {
     (void)expected_total_samples;  // Reserved for future optimization
 
     // Auto-initialize on first sample
-    if (!is_initialized()) {
-      init(value::TypeTraits<std::vector<T>>::type_id());
+    if (!ensure_initialized_type(value::TypeTraits<std::vector<T>>::type_id(), err,
+                                 "add_array_sample_pod")) {
+      return false;
     }
 
-    _is_stl_array = true;
-    _is_typed_array = false;
+    if (!ensure_unified_backend(UnifiedStorageBackend::ArrayOffset,
+                                ArrayLayoutKind::StdVector, sizeof(T), err,
+                                "add_array_sample_pod")) {
+      return false;
+    }
+
     // Use unified storage directly via add_array_sample
     return add_array_sample<T>(t, value.data(), value.size(), err);
   }
@@ -864,14 +1092,17 @@ struct TimeSamples {
   typename std::enable_if<std::is_same<T, bool>::value, bool>::type
   add_array_sample_pod(double t, const std::vector<T>& value, std::string *err = nullptr, size_t expected_total_samples = 0) {
     (void)expected_total_samples;
-    (void)err;
     // Auto-initialize on first sample
-    if (!is_initialized()) {
-      init(value::TypeTraits<std::vector<T>>::type_id());
+    if (!ensure_initialized_type(value::TypeTraits<std::vector<T>>::type_id(), err,
+                                 "add_array_sample_pod<bool>")) {
+      return false;
     }
 
-    _is_stl_array = true;
-    _is_typed_array = false;
+    if (!ensure_unified_backend(UnifiedStorageBackend::ArrayOffset,
+                                ArrayLayoutKind::StdVector, sizeof(uint8_t), err,
+                                "add_array_sample_pod<bool>")) {
+      return false;
+    }
 
     // Convert std::vector<bool> to std::vector<uint8_t> for storage
     std::vector<uint8_t> byte_array;
@@ -894,9 +1125,8 @@ struct TimeSamples {
     _values.resize(_values.size() + byte_size);
     std::memcpy(_values.data() + byte_offset, byte_array.data(), byte_size);
 
-    _is_array = true;
-    _array_size = value.size();
-    _element_size = sizeof(uint8_t);
+    update_array_metadata(value.size(), sizeof(uint8_t),
+                          ArrayLayoutKind::StdVector);
     invalidate_reconstructed_samples_cache();
     _dirty = true;
     return true;
@@ -910,14 +1140,18 @@ struct TimeSamples {
     (void)expected_total_samples;  // Reserved for future optimization
 
     // Auto-initialize on first sample
-    if (!is_initialized()) {
-      init(value::TypeTraits<TypedArray<T>>::type_id());
+    if (!ensure_initialized_type(value::TypeTraits<TypedArray<T>>::type_id(), err,
+                                 "add_array_sample_pod<TypedArray>")) {
+      return false;
     }
 
     DCOUT("is dedup? " << value.is_dedup());
 
-    _is_stl_array = false;
-    _is_typed_array = true;
+    if (!ensure_unified_backend(UnifiedStorageBackend::ArrayOffset,
+                                ArrayLayoutKind::TypedArray, sizeof(T), err,
+                                "add_array_sample_pod<TypedArray>")) {
+      return false;
+    }
     // Use unified storage directly
     return add_array_sample<T>(t, value.data(), value.size(), err);
   }
@@ -926,12 +1160,16 @@ struct TimeSamples {
   bool add_matrix_array_sample_pod(double t, const std::vector<T>& value, std::string *err = nullptr, size_t expected_total_samples = 0) {
     (void)expected_total_samples;
     // Auto-initialize on first sample
-    if (!is_initialized()) {
-      init(value::TypeTraits<std::vector<T>>::type_id());
+    if (!ensure_initialized_type(value::TypeTraits<std::vector<T>>::type_id(), err,
+                                 "add_matrix_array_sample_pod")) {
+      return false;
     }
 
-    _is_stl_array = true;
-    _is_typed_array = false;
+    if (!ensure_unified_backend(UnifiedStorageBackend::ArrayOffset,
+                                ArrayLayoutKind::StdVector, sizeof(T), err,
+                                "add_matrix_array_sample_pod")) {
+      return false;
+    }
     // Use unified storage directly (matrix types are stored like regular arrays)
     return add_array_sample<T>(t, value.data(), value.size(), err);
   }
@@ -941,12 +1179,16 @@ struct TimeSamples {
   bool add_matrix_array_sample_pod(double t, const TypedArray<T>& value, std::string *err = nullptr, size_t expected_total_samples = 0) {
     (void)expected_total_samples;
     // Auto-initialize on first sample
-    if (!is_initialized()) {
-      init(value::TypeTraits<TypedArray<T>>::type_id());
+    if (!ensure_initialized_type(value::TypeTraits<TypedArray<T>>::type_id(), err,
+                                 "add_matrix_array_sample_pod<TypedArray>")) {
+      return false;
     }
 
-    _is_stl_array = false;
-    _is_typed_array = true;
+    if (!ensure_unified_backend(UnifiedStorageBackend::ArrayOffset,
+                                ArrayLayoutKind::TypedArray, sizeof(T), err,
+                                "add_matrix_array_sample_pod<TypedArray>")) {
+      return false;
+    }
     // Use unified storage directly (matrix types are stored like regular arrays)
     return add_array_sample<T>(t, value.data(), value.size(), err);
   }
@@ -1014,16 +1256,15 @@ struct TimeSamples {
     // Copy array count from the referenced sample
     size_t ref_array_count = (ref_index < _array_counts.size())
                                  ? _array_counts[ref_index]
-                                 : _array_size;
+                                 : _storage.uniform_array_count;
     _array_counts.push_back(ref_array_count);
 
     // Create dedup offset: bit 63=1 (dedup), bit 62=1 (array), bits 61-0=ref_index
     uint64_t dedup_offset = make_dedup_offset(ref_index, true);
     _offsets.push_back(dedup_offset);
 
-    _is_array = true;
-    _array_size = ref_array_count;
-    _element_size = sizeof(uint8_t);
+    update_array_metadata(ref_array_count, sizeof(uint8_t),
+                          ArrayLayoutKind::StdVector);
     invalidate_reconstructed_samples_cache();
     _dirty = true;
     return true;
@@ -1447,11 +1688,19 @@ struct TimeSamples {
                   "add_array_sample requires POD types");
 
     // Auto-initialize on first sample
-    if (!is_initialized()) {
-      if (!init(value::TypeTraits<std::vector<T>>::type_id())) {
-        if (err) *err = "Failed to initialize TimeSamples";
-        return false;
-      }
+    if (!ensure_initialized_type(_type_id != 0 ? _type_id : value::TypeTraits<std::vector<T>>::type_id(),
+                                 err, "add_array_sample")) {
+      return false;
+    }
+
+    const ArrayLayoutKind layout =
+        (_storage.array_layout == ArrayLayoutKind::None)
+            ? ArrayLayoutKind::StdVector
+            : _storage.array_layout;
+    if (!ensure_unified_backend(UnifiedStorageBackend::ArrayOffset,
+                                layout, sizeof(T), err,
+                                "add_array_sample")) {
+      return false;
     }
 
     // Use unified storage
@@ -1474,9 +1723,7 @@ struct TimeSamples {
     _array_counts.push_back(count);
 
     // Update array metadata
-    _is_array = true;
-    _array_size = count;
-    _element_size = sizeof(T);
+    update_array_metadata(count, sizeof(T), layout);
 
     invalidate_reconstructed_samples_cache();
     _dirty = true;
@@ -1488,6 +1735,16 @@ struct TimeSamples {
   bool add_dedup_array_sample(double t, size_t ref_index, std::string* err = nullptr) {
     static_assert(std::is_trivial<T>::value && std::is_standard_layout<T>::value,
                   "add_dedup_array_sample requires POD types");
+
+    const ArrayLayoutKind layout =
+        (_storage.array_layout == ArrayLayoutKind::None)
+            ? ArrayLayoutKind::StdVector
+            : _storage.array_layout;
+    if (!ensure_unified_backend(UnifiedStorageBackend::ArrayOffset,
+                                layout, sizeof(T), err,
+                                "add_dedup_array_sample")) {
+      return false;
+    }
 
     // Validate reference
     if (ref_index >= _times.size()) {
@@ -1514,14 +1771,13 @@ struct TimeSamples {
     _times.push_back(t);
     _blocked.push_back(0);
     const size_t ref_array_count =
-        (ref_index < _array_counts.size()) ? _array_counts[ref_index] : _array_size;
+        (ref_index < _array_counts.size()) ? _array_counts[ref_index] : _storage.uniform_array_count;
     _array_counts.push_back(ref_array_count);
 
     uint64_t dedup_offset = make_dedup_offset(ref_index, true);
     _offsets.push_back(dedup_offset);
 
-    _is_array = true;
-    _array_size = ref_array_count;
+    update_array_metadata(ref_array_count, sizeof(T), layout);
     invalidate_reconstructed_samples_cache();
     _dirty = true;
     return true;
@@ -1555,11 +1811,15 @@ struct TimeSamples {
                   "add_pod_sample requires POD types");
 
     // Auto-initialize on first sample
-    if (!is_initialized()) {
-      if (!init(value::TypeTraits<T>::type_id())) {
-        if (err) *err = "Failed to initialize TimeSamples";
-        return false;
-      }
+    if (!ensure_initialized_type(value::TypeTraits<T>::type_id(), err,
+                                 "add_pod_sample")) {
+      return false;
+    }
+
+    if (!ensure_unified_backend(UnifiedStorageBackend::SmallScalar,
+                                ArrayLayoutKind::None, sizeof(T), err,
+                                "add_pod_sample")) {
+      return false;
     }
 
     // Use unified storage for scalar POD
@@ -1572,11 +1832,8 @@ struct TimeSamples {
     _small_values.push_back(small_value);
 
     // Update metadata (scalar, not array)
-    _is_stl_array = false;
-    _is_typed_array = false;
-    _is_array = false;
-    _array_size = 1;
-    _element_size = sizeof(T);
+    _storage.uniform_array_count = 1;
+    _storage.element_size = sizeof(T);
 
     invalidate_reconstructed_samples_cache();
     _dirty = true;
@@ -1592,11 +1849,15 @@ struct TimeSamples {
                   "add_pod_sample requires POD types");
 
     // Auto-initialize on first sample
-    if (!is_initialized()) {
-      if (!init(value::TypeTraits<T>::type_id())) {
-        if (err) *err = "Failed to initialize TimeSamples";
-        return false;
-      }
+    if (!ensure_initialized_type(value::TypeTraits<T>::type_id(), err,
+                                 "add_pod_sample")) {
+      return false;
+    }
+
+    if (!ensure_unified_backend(UnifiedStorageBackend::OffsetScalar,
+                                ArrayLayoutKind::None, sizeof(T), err,
+                                "add_pod_sample")) {
+      return false;
     }
 
     // Use unified storage for scalar POD
@@ -1613,11 +1874,8 @@ struct TimeSamples {
     _offsets.push_back(encoded_offset);
 
     // Update metadata (scalar, not array)
-    _is_stl_array = false;
-    _is_typed_array = false;
-    _is_array = false;
-    _array_size = 1;
-    _element_size = sizeof(T);
+    _storage.uniform_array_count = 1;
+    _storage.element_size = sizeof(T);
 
     invalidate_reconstructed_samples_cache();
     _dirty = true;
@@ -1631,11 +1889,17 @@ struct TimeSamples {
                   "add_pod_blocked_sample requires POD types");
 
     // Auto-initialize on first sample
-    if (!is_initialized()) {
-      if (!init(value::TypeTraits<T>::type_id())) {
-        if (err) *err = "Failed to initialize TimeSamples";
-        return false;
-      }
+    if (!ensure_initialized_type(value::TypeTraits<T>::type_id(), err,
+                                 "add_pod_blocked_sample")) {
+      return false;
+    }
+
+    if (!ensure_unified_backend((sizeof(T) > 8)
+                                    ? UnifiedStorageBackend::OffsetScalar
+                                    : UnifiedStorageBackend::SmallScalar,
+                                ArrayLayoutKind::None, sizeof(T), err,
+                                "add_pod_blocked_sample")) {
+      return false;
     }
 
     // Add blocked sample to unified storage
@@ -1650,11 +1914,8 @@ struct TimeSamples {
       _small_values.push_back(0);
     }
 
-    _is_stl_array = false;
-    _is_typed_array = false;
-    _is_array = false;
-    _array_size = 1;
-    _element_size = sizeof(T);
+    _storage.uniform_array_count = 1;
+    _storage.element_size = sizeof(T);
 
     invalidate_reconstructed_samples_cache();
     _dirty = true;
@@ -1808,12 +2069,12 @@ struct TimeSamples {
   }
 
   bool is_array() const {
-    return _is_array;
+    return _storage.is_array_backend();
   }
 
   size_t get_array_size() const {
     if (_array_counts.empty()) {
-      return _array_size;
+      return _storage.uniform_array_count;
     }
 
     const size_t first = _array_counts.front();
@@ -1828,7 +2089,7 @@ struct TimeSamples {
 
   size_t get_array_count(size_t idx) const {
     if (_array_counts.empty()) {
-      return _array_size;
+      return _storage.uniform_array_count;
     }
 
     if (idx >= _array_counts.size()) {
@@ -1861,14 +2122,7 @@ struct TimeSamples {
 
   // Type information
   uint32_t _type_id{0};
-  bool _use_value_array{false};  // True = use _value_array_storage for array samples
-
-  // Array type information (for POD arrays)
-  bool _is_array{false};
-  bool _is_stl_array{false};     // Whether storing std::vector<T> array data
-  bool _is_typed_array{false};   // Whether storing TypedArray<T> data
-  size_t _array_size{0};
-  size_t _element_size{0};
+  StorageDescriptor _storage{};
   mutable size_t _blocked_count{0};
   mutable std::vector<size_t> _array_counts; // Per-sample array element counts (for variable-sized arrays)
 
