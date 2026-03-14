@@ -20,6 +20,7 @@
 #include "unit-pprint.h"
 #include "unit-materialx.h"
 #include "unit-task-queue.h"
+#include "unit-tydra.h"
 //#include "unit-dedup.h"  // Temporarily disabled - needs API updates
 #include "unit-crate-writer.h"
 #include "unit-stage.h"
@@ -91,6 +92,7 @@ TEST_LIST = {
   { "task_queue_full_test", task_queue_full_test },
   { "task_queue_multithreaded_test", task_queue_multithreaded_test },
   { "task_queue_clear_test", task_queue_clear_test },
+  { "tydra_connection_validation_test", tydra_connection_validation_test },
   // Temporarily disabled - unit-dedup needs API updates
   //{ "dedup_float_array_test", dedup_float_array_test },
   //{ "dedup_double_array_test", dedup_double_array_test },

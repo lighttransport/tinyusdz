@@ -149,6 +149,51 @@ class TerminalAttributeValue {
   AttrMeta _meta;
 };
 
+namespace detail {
+
+inline void AppendAttributeEvalError(const std::string &msg,
+                                     std::string *err) {
+  if (err) {
+    (*err) += msg;
+  }
+}
+
+inline bool ResolveSingleConnectionTargetPath(const std::vector<Path> &paths,
+                                              const std::string &attr_name,
+                                              Path *target_path,
+                                              std::string *err) {
+  if (!target_path) {
+    AppendAttributeEvalError(
+        "[InternalError] ResolveSingleConnectionTargetPath requires a valid "
+        "target_path.\n",
+        err);
+    return false;
+  }
+
+  if (paths.empty()) {
+    AppendAttributeEvalError(
+        fmt::format("Connection targetPath is empty for Attribute {}.",
+                    attr_name),
+        err);
+    return false;
+  }
+
+  if (paths.size() != 1) {
+    AppendAttributeEvalError(
+        fmt::format(
+            "Multiple targetPaths assigned to .connection for Attribute {} "
+            "({} targets).",
+            attr_name, paths.size()),
+        err);
+    return false;
+  }
+
+  *target_path = paths.front();
+  return true;
+}
+
+}  // namespace detail
+
 ///
 /// Evaluate Attribute of the specied Prim and retrieve terminal Attribute
 /// value.

@@ -222,46 +222,6 @@ struct TimeSamples {
     TypedArray,
   };
 
-  struct StorageDescriptor {
-    UnifiedStorageBackend backend{UnifiedStorageBackend::None};
-    ArrayLayoutKind array_layout{ArrayLayoutKind::None};
-    size_t uniform_array_count{0};
-    size_t element_size{0};
-
-    bool is_array_backend() const {
-      return (backend == UnifiedStorageBackend::ArrayOffset) ||
-             (backend == UnifiedStorageBackend::ValueArray);
-    }
-
-    bool uses_value_array() const {
-      return backend == UnifiedStorageBackend::ValueArray;
-    }
-
-    bool uses_offsets() const {
-      return (backend == UnifiedStorageBackend::OffsetScalar) ||
-             (backend == UnifiedStorageBackend::ArrayOffset);
-    }
-
-    bool uses_small_scalars() const {
-      return backend == UnifiedStorageBackend::SmallScalar;
-    }
-
-    bool is_stl_array() const {
-      return array_layout == ArrayLayoutKind::StdVector;
-    }
-
-    bool is_typed_array() const {
-      return array_layout == ArrayLayoutKind::TypedArray;
-    }
-
-    void clear() {
-      backend = UnifiedStorageBackend::None;
-      array_layout = ArrayLayoutKind::None;
-      uniform_array_count = 0;
-      element_size = 0;
-    }
-  };
-
   static const char* backend_name(UnifiedStorageBackend backend) {
     switch (backend) {
       case UnifiedStorageBackend::None:
@@ -291,6 +251,228 @@ struct TimeSamples {
 
     return "unknown";
   }
+
+  struct ScalarStorageDescriptor {
+    UnifiedStorageBackend backend{UnifiedStorageBackend::None};
+    size_t element_size{0};
+
+    bool active() const { return backend != UnifiedStorageBackend::None; }
+
+    bool uses_offsets() const {
+      return backend == UnifiedStorageBackend::OffsetScalar;
+    }
+
+    bool uses_small_scalars() const {
+      return backend == UnifiedStorageBackend::SmallScalar;
+    }
+
+    bool validate_or_init(UnifiedStorageBackend requested_backend,
+                          size_t requested_element_size, std::string* err,
+                          const char* op_name) {
+      if ((requested_backend != UnifiedStorageBackend::SmallScalar) &&
+          (requested_backend != UnifiedStorageBackend::OffsetScalar)) {
+        if (err) {
+          (*err) += std::string(op_name) +
+                    " requested a non-scalar unified storage backend.\n";
+        }
+        return false;
+      }
+
+      if (backend == UnifiedStorageBackend::None) {
+        backend = requested_backend;
+        element_size = requested_element_size;
+        return true;
+      }
+
+      if (backend != requested_backend) {
+        if (err) {
+          (*err) += std::string(op_name) +
+                    " backend mismatch: existing backend is `" +
+                    backend_name(backend) + "`, requested backend is `" +
+                    backend_name(requested_backend) + "`.\n";
+        }
+        return false;
+      }
+
+      if ((requested_element_size != 0) && (element_size != 0) &&
+          (element_size != requested_element_size)) {
+        if (err) {
+          (*err) += std::string(op_name) +
+                    " element size mismatch: existing element size is " +
+                    std::to_string(element_size) +
+                    ", requested element size is " +
+                    std::to_string(requested_element_size) + ".\n";
+        }
+        return false;
+      }
+
+      if ((element_size == 0) && (requested_element_size != 0)) {
+        element_size = requested_element_size;
+      }
+
+      return true;
+    }
+
+    void clear() {
+      backend = UnifiedStorageBackend::None;
+      element_size = 0;
+    }
+  };
+
+  struct ArrayStorageDescriptor {
+    UnifiedStorageBackend backend{UnifiedStorageBackend::None};
+    ArrayLayoutKind layout{ArrayLayoutKind::None};
+    size_t uniform_array_count{0};
+    size_t element_size{0};
+
+    bool active() const { return backend != UnifiedStorageBackend::None; }
+
+    bool uses_value_array() const {
+      return backend == UnifiedStorageBackend::ValueArray;
+    }
+
+    bool uses_offsets() const {
+      return backend == UnifiedStorageBackend::ArrayOffset;
+    }
+
+    bool is_stl_array() const { return layout == ArrayLayoutKind::StdVector; }
+
+    bool is_typed_array() const {
+      return layout == ArrayLayoutKind::TypedArray;
+    }
+
+    bool validate_or_init(UnifiedStorageBackend requested_backend,
+                          ArrayLayoutKind requested_layout,
+                          size_t requested_element_size, std::string* err,
+                          const char* op_name) {
+      if ((requested_backend != UnifiedStorageBackend::ArrayOffset) &&
+          (requested_backend != UnifiedStorageBackend::ValueArray)) {
+        if (err) {
+          (*err) += std::string(op_name) +
+                    " requested a non-array unified storage backend.\n";
+        }
+        return false;
+      }
+
+      if (backend == UnifiedStorageBackend::None) {
+        backend = requested_backend;
+        layout = requested_layout;
+        element_size = requested_element_size;
+        return true;
+      }
+
+      if (backend != requested_backend) {
+        if (err) {
+          (*err) += std::string(op_name) +
+                    " backend mismatch: existing backend is `" +
+                    backend_name(backend) + "`, requested backend is `" +
+                    backend_name(requested_backend) + "`.\n";
+        }
+        return false;
+      }
+
+      if ((requested_layout != ArrayLayoutKind::None) &&
+          (layout != ArrayLayoutKind::None) &&
+          (layout != requested_layout)) {
+        if (err) {
+          (*err) += std::string(op_name) +
+                    " array layout mismatch: existing layout is `" +
+                    array_layout_name(layout) + "`, requested layout is `" +
+                    array_layout_name(requested_layout) + "`.\n";
+        }
+        return false;
+      }
+
+      if ((layout == ArrayLayoutKind::None) &&
+          (requested_layout != ArrayLayoutKind::None)) {
+        layout = requested_layout;
+      }
+
+      if ((requested_element_size != 0) && (element_size != 0) &&
+          (element_size != requested_element_size)) {
+        if (err) {
+          (*err) += std::string(op_name) +
+                    " element size mismatch: existing element size is " +
+                    std::to_string(element_size) +
+                    ", requested element size is " +
+                    std::to_string(requested_element_size) + ".\n";
+        }
+        return false;
+      }
+
+      if ((element_size == 0) && (requested_element_size != 0)) {
+        element_size = requested_element_size;
+      }
+
+      return true;
+    }
+
+    void update_metadata(size_t count, size_t requested_element_size,
+                         ArrayLayoutKind requested_layout) {
+      uniform_array_count = count;
+      if (requested_element_size != 0) {
+        element_size = requested_element_size;
+      }
+      if (requested_layout != ArrayLayoutKind::None) {
+        layout = requested_layout;
+      }
+    }
+
+    void clear() {
+      backend = UnifiedStorageBackend::None;
+      layout = ArrayLayoutKind::None;
+      uniform_array_count = 0;
+      element_size = 0;
+    }
+  };
+
+  struct StorageDescriptor {
+    ScalarStorageDescriptor scalar;
+    ArrayStorageDescriptor array;
+
+    bool is_array_backend() const { return array.active(); }
+
+    bool is_scalar_backend() const { return scalar.active(); }
+
+    bool uses_value_array() const { return array.uses_value_array(); }
+
+    bool uses_offsets() const {
+      return scalar.uses_offsets() || array.uses_offsets();
+    }
+
+    bool uses_small_scalars() const {
+      return scalar.uses_small_scalars();
+    }
+
+    bool is_stl_array() const { return array.is_stl_array(); }
+
+    bool is_typed_array() const { return array.is_typed_array(); }
+
+    const char* active_backend_name() const {
+      if (array.active()) {
+        return backend_name(array.backend);
+      }
+      if (scalar.active()) {
+        return backend_name(scalar.backend);
+      }
+      return backend_name(UnifiedStorageBackend::None);
+    }
+
+    size_t uniform_count() const {
+      if (array.active()) {
+        return array.uniform_array_count;
+      }
+      if (scalar.active()) {
+        return 1;
+      }
+      return 0;
+    }
+
+    void clear() {
+      scalar.clear();
+      array.clear();
+    }
+  };
 
   bool has_unified_samples() const {
     return !_times.empty();
@@ -324,11 +506,10 @@ struct TimeSamples {
     return true;
   }
 
-  bool ensure_unified_backend(UnifiedStorageBackend backend,
-                              ArrayLayoutKind array_layout,
-                              size_t element_size,
-                              std::string* err,
-                              const char* op_name) {
+  bool ensure_array_storage_backend(UnifiedStorageBackend backend,
+                                    ArrayLayoutKind array_layout,
+                                    size_t element_size, std::string* err,
+                                    const char* op_name) {
     if (has_generic_samples()) {
       if (err) {
         (*err) += std::string(op_name) +
@@ -337,63 +518,51 @@ struct TimeSamples {
       return false;
     }
 
-    if (_storage.backend == UnifiedStorageBackend::None) {
-      _storage.backend = backend;
-      _storage.array_layout = array_layout;
-      _storage.element_size = element_size;
-      return true;
-    }
-
-    if (_storage.backend != backend) {
+    if (_storage.is_scalar_backend()) {
       if (err) {
-        (*err) += std::string(op_name) + " backend mismatch: existing backend is `" +
-                  backend_name(_storage.backend) + "`, requested backend is `" +
-                  backend_name(backend) + "`.\n";
+        (*err) += std::string(op_name) +
+                  " cannot mix array unified storage with existing `" +
+                  _storage.active_backend_name() + "` scalar samples.\n";
       }
       return false;
     }
 
-    if ((array_layout != ArrayLayoutKind::None) &&
-        (_storage.array_layout != ArrayLayoutKind::None) &&
-        (_storage.array_layout != array_layout)) {
+    return _storage.array.validate_or_init(backend, array_layout, element_size,
+                                           err, op_name);
+  }
+
+  bool ensure_scalar_storage_backend(UnifiedStorageBackend backend,
+                                     size_t element_size, std::string* err,
+                                     const char* op_name) {
+    if (has_generic_samples()) {
       if (err) {
-        (*err) += std::string(op_name) + " array layout mismatch: existing layout is `" +
-                  array_layout_name(_storage.array_layout) +
-                  "`, requested layout is `" + array_layout_name(array_layout) + "`.\n";
+        (*err) += std::string(op_name) +
+                  " cannot mix unified storage with existing generic Value samples.\n";
       }
       return false;
     }
 
-    if ((_storage.array_layout == ArrayLayoutKind::None) &&
-        (array_layout != ArrayLayoutKind::None)) {
-      _storage.array_layout = array_layout;
-    }
-
-    if ((element_size != 0) && (_storage.element_size != 0) &&
-        (_storage.element_size != element_size)) {
+    if (_storage.is_array_backend()) {
       if (err) {
-        (*err) += std::string(op_name) + " element size mismatch: existing element size is " +
-                  std::to_string(_storage.element_size) +
-                  ", requested element size is " + std::to_string(element_size) + ".\n";
+        (*err) += std::string(op_name) +
+                  " cannot mix scalar unified storage with existing `" +
+                  _storage.active_backend_name() + "` array samples.\n";
       }
       return false;
     }
 
-    if ((_storage.element_size == 0) && (element_size != 0)) {
-      _storage.element_size = element_size;
-    }
-
-    return true;
+    return _storage.scalar.validate_or_init(backend, element_size, err,
+                                            op_name);
   }
 
   void update_array_metadata(size_t count, size_t element_size,
                              ArrayLayoutKind layout) {
-    _storage.uniform_array_count = count;
+    _storage.array.update_metadata(count, element_size, layout);
+  }
+
+  void update_scalar_metadata(size_t element_size) {
     if (element_size != 0) {
-      _storage.element_size = element_size;
-    }
-    if (layout != ArrayLayoutKind::None) {
-      _storage.array_layout = layout;
+      _storage.scalar.element_size = element_size;
     }
   }
 
@@ -959,9 +1128,9 @@ struct TimeSamples {
       return false;
     }
 
-    if (!ensure_unified_backend(UnifiedStorageBackend::ValueArray,
-                                ArrayLayoutKind::None, 0, err,
-                                "add_value_array_sample")) {
+    if (!ensure_array_storage_backend(UnifiedStorageBackend::ValueArray,
+                                      ArrayLayoutKind::None, 0, err,
+                                      "add_value_array_sample")) {
       return false;
     }
 
@@ -1077,9 +1246,9 @@ struct TimeSamples {
       return false;
     }
 
-    if (!ensure_unified_backend(UnifiedStorageBackend::ArrayOffset,
-                                ArrayLayoutKind::StdVector, sizeof(T), err,
-                                "add_array_sample_pod")) {
+    if (!ensure_array_storage_backend(UnifiedStorageBackend::ArrayOffset,
+                                      ArrayLayoutKind::StdVector, sizeof(T),
+                                      err, "add_array_sample_pod")) {
       return false;
     }
 
@@ -1098,9 +1267,10 @@ struct TimeSamples {
       return false;
     }
 
-    if (!ensure_unified_backend(UnifiedStorageBackend::ArrayOffset,
-                                ArrayLayoutKind::StdVector, sizeof(uint8_t), err,
-                                "add_array_sample_pod<bool>")) {
+    if (!ensure_array_storage_backend(UnifiedStorageBackend::ArrayOffset,
+                                      ArrayLayoutKind::StdVector,
+                                      sizeof(uint8_t), err,
+                                      "add_array_sample_pod<bool>")) {
       return false;
     }
 
@@ -1147,9 +1317,10 @@ struct TimeSamples {
 
     DCOUT("is dedup? " << value.is_dedup());
 
-    if (!ensure_unified_backend(UnifiedStorageBackend::ArrayOffset,
-                                ArrayLayoutKind::TypedArray, sizeof(T), err,
-                                "add_array_sample_pod<TypedArray>")) {
+    if (!ensure_array_storage_backend(UnifiedStorageBackend::ArrayOffset,
+                                      ArrayLayoutKind::TypedArray, sizeof(T),
+                                      err,
+                                      "add_array_sample_pod<TypedArray>")) {
       return false;
     }
     // Use unified storage directly
@@ -1165,9 +1336,9 @@ struct TimeSamples {
       return false;
     }
 
-    if (!ensure_unified_backend(UnifiedStorageBackend::ArrayOffset,
-                                ArrayLayoutKind::StdVector, sizeof(T), err,
-                                "add_matrix_array_sample_pod")) {
+    if (!ensure_array_storage_backend(UnifiedStorageBackend::ArrayOffset,
+                                      ArrayLayoutKind::StdVector, sizeof(T),
+                                      err, "add_matrix_array_sample_pod")) {
       return false;
     }
     // Use unified storage directly (matrix types are stored like regular arrays)
@@ -1184,9 +1355,10 @@ struct TimeSamples {
       return false;
     }
 
-    if (!ensure_unified_backend(UnifiedStorageBackend::ArrayOffset,
-                                ArrayLayoutKind::TypedArray, sizeof(T), err,
-                                "add_matrix_array_sample_pod<TypedArray>")) {
+    if (!ensure_array_storage_backend(UnifiedStorageBackend::ArrayOffset,
+                                      ArrayLayoutKind::TypedArray, sizeof(T),
+                                      err,
+                                      "add_matrix_array_sample_pod<TypedArray>")) {
       return false;
     }
     // Use unified storage directly (matrix types are stored like regular arrays)
@@ -1256,7 +1428,7 @@ struct TimeSamples {
     // Copy array count from the referenced sample
     size_t ref_array_count = (ref_index < _array_counts.size())
                                  ? _array_counts[ref_index]
-                                 : _storage.uniform_array_count;
+                                 : _storage.uniform_count();
     _array_counts.push_back(ref_array_count);
 
     // Create dedup offset: bit 63=1 (dedup), bit 62=1 (array), bits 61-0=ref_index
@@ -1694,12 +1866,12 @@ struct TimeSamples {
     }
 
     const ArrayLayoutKind layout =
-        (_storage.array_layout == ArrayLayoutKind::None)
+        (_storage.array.layout == ArrayLayoutKind::None)
             ? ArrayLayoutKind::StdVector
-            : _storage.array_layout;
-    if (!ensure_unified_backend(UnifiedStorageBackend::ArrayOffset,
-                                layout, sizeof(T), err,
-                                "add_array_sample")) {
+            : _storage.array.layout;
+    if (!ensure_array_storage_backend(UnifiedStorageBackend::ArrayOffset,
+                                      layout, sizeof(T), err,
+                                      "add_array_sample")) {
       return false;
     }
 
@@ -1737,12 +1909,12 @@ struct TimeSamples {
                   "add_dedup_array_sample requires POD types");
 
     const ArrayLayoutKind layout =
-        (_storage.array_layout == ArrayLayoutKind::None)
+        (_storage.array.layout == ArrayLayoutKind::None)
             ? ArrayLayoutKind::StdVector
-            : _storage.array_layout;
-    if (!ensure_unified_backend(UnifiedStorageBackend::ArrayOffset,
-                                layout, sizeof(T), err,
-                                "add_dedup_array_sample")) {
+            : _storage.array.layout;
+    if (!ensure_array_storage_backend(UnifiedStorageBackend::ArrayOffset,
+                                      layout, sizeof(T), err,
+                                      "add_dedup_array_sample")) {
       return false;
     }
 
@@ -1771,7 +1943,8 @@ struct TimeSamples {
     _times.push_back(t);
     _blocked.push_back(0);
     const size_t ref_array_count =
-        (ref_index < _array_counts.size()) ? _array_counts[ref_index] : _storage.uniform_array_count;
+        (ref_index < _array_counts.size()) ? _array_counts[ref_index]
+                                           : _storage.uniform_count();
     _array_counts.push_back(ref_array_count);
 
     uint64_t dedup_offset = make_dedup_offset(ref_index, true);
@@ -1816,9 +1989,8 @@ struct TimeSamples {
       return false;
     }
 
-    if (!ensure_unified_backend(UnifiedStorageBackend::SmallScalar,
-                                ArrayLayoutKind::None, sizeof(T), err,
-                                "add_pod_sample")) {
+    if (!ensure_scalar_storage_backend(UnifiedStorageBackend::SmallScalar,
+                                       sizeof(T), err, "add_pod_sample")) {
       return false;
     }
 
@@ -1832,8 +2004,7 @@ struct TimeSamples {
     _small_values.push_back(small_value);
 
     // Update metadata (scalar, not array)
-    _storage.uniform_array_count = 1;
-    _storage.element_size = sizeof(T);
+    update_scalar_metadata(sizeof(T));
 
     invalidate_reconstructed_samples_cache();
     _dirty = true;
@@ -1854,9 +2025,8 @@ struct TimeSamples {
       return false;
     }
 
-    if (!ensure_unified_backend(UnifiedStorageBackend::OffsetScalar,
-                                ArrayLayoutKind::None, sizeof(T), err,
-                                "add_pod_sample")) {
+    if (!ensure_scalar_storage_backend(UnifiedStorageBackend::OffsetScalar,
+                                       sizeof(T), err, "add_pod_sample")) {
       return false;
     }
 
@@ -1874,8 +2044,7 @@ struct TimeSamples {
     _offsets.push_back(encoded_offset);
 
     // Update metadata (scalar, not array)
-    _storage.uniform_array_count = 1;
-    _storage.element_size = sizeof(T);
+    update_scalar_metadata(sizeof(T));
 
     invalidate_reconstructed_samples_cache();
     _dirty = true;
@@ -1894,11 +2063,10 @@ struct TimeSamples {
       return false;
     }
 
-    if (!ensure_unified_backend((sizeof(T) > 8)
-                                    ? UnifiedStorageBackend::OffsetScalar
-                                    : UnifiedStorageBackend::SmallScalar,
-                                ArrayLayoutKind::None, sizeof(T), err,
-                                "add_pod_blocked_sample")) {
+    if (!ensure_scalar_storage_backend(
+            (sizeof(T) > 8) ? UnifiedStorageBackend::OffsetScalar
+                            : UnifiedStorageBackend::SmallScalar,
+            sizeof(T), err, "add_pod_blocked_sample")) {
       return false;
     }
 
@@ -1914,8 +2082,7 @@ struct TimeSamples {
       _small_values.push_back(0);
     }
 
-    _storage.uniform_array_count = 1;
-    _storage.element_size = sizeof(T);
+    update_scalar_metadata(sizeof(T));
 
     invalidate_reconstructed_samples_cache();
     _dirty = true;
@@ -2074,7 +2241,7 @@ struct TimeSamples {
 
   size_t get_array_size() const {
     if (_array_counts.empty()) {
-      return _storage.uniform_array_count;
+      return _storage.uniform_count();
     }
 
     const size_t first = _array_counts.front();
@@ -2089,7 +2256,7 @@ struct TimeSamples {
 
   size_t get_array_count(size_t idx) const {
     if (_array_counts.empty()) {
-      return _storage.uniform_array_count;
+      return _storage.uniform_count();
     }
 
     if (idx >= _array_counts.size()) {

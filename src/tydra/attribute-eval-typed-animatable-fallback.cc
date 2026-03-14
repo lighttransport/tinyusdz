@@ -33,16 +33,11 @@ bool EvaluateTypedAttributeImpl(
   } if (attr.has_connections()) {
     // Follow connection target Path(singple targetPath only).
     std::vector<Path> pv = attr.connections();
-    if (pv.empty()) {
-      PUSH_ERROR_AND_RETURN(fmt::format("Connection targetPath is empty for Attribute {}.", attr_name));
+    Path target;
+    if (!detail::ResolveSingleConnectionTargetPath(pv, attr_name, &target,
+                                                   err)) {
+      return false;
     }
-
-    if (pv.size() > 1) {
-      PUSH_ERROR_AND_RETURN(
-          fmt::format("Multiple targetPaths assigned to .connection for Attribute {}.", attr_name));
-    }
-
-    auto target = pv[0];
 
     std::string targetPrimPath = target.prim_part();
     std::string targetPrimPropName = target.prop_part();
@@ -55,8 +50,6 @@ bool EvaluateTypedAttributeImpl(
     if (targetPrimRet) {
       // Follow the connetion
       const Prim *targetPrim = targetPrimRet.value();
-
-      std::string abs_path = target.full_path_name();
 
       TerminalAttributeValue attr_value;
 
@@ -78,6 +71,7 @@ bool EvaluateTypedAttributeImpl(
 
     } else {
       PUSH_ERROR_AND_RETURN(targetPrimRet.error());
+      return false;
     }
   } else if (attr.is_blocked()) {
       PUSH_ERROR_AND_RETURN(
@@ -105,14 +99,12 @@ Attribute ToAttributeConnection(
   if (input.is_blocked()) {
     attr.set_blocked(true);
     attr.variability() = Variability::Varying;
+  } else if (input.is_connection()) {
+    attr.set_connections(input.connections());
   } else if (input.is_value_empty()) {
     // empty = set type info only
     attr.set_type_name(value::TypeTraits<T>::type_name());
     attr.variability() = Variability::Varying;
-
-  } else if (input.is_connection()) {
-
-    attr.set_connections(input.connections());
 
   } else{
     attr.set_type_name(value::TypeTraits<T>::type_name());
@@ -153,11 +145,6 @@ bool EvaluateTypedAnimatableAttribute(
       }
       return false;
     }
-  } else if (tattr.is_value_empty()) {
-    if (err) {
-      (*err) += "Attribute value is empty.\n";
-    }
-    return false;
   } else if (tattr.has_connections()) {
 
     // Follow targetPath
@@ -182,6 +169,11 @@ bool EvaluateTypedAnimatableAttribute(
       (*err) += fmt::format("Type mismatch. Value producing attribute has type {}, but requested type is {}[]. Attribute: {}", value.type_name(), value::TypeTraits<T>::type_name(), attr_name);
     }
 
+  } else if (tattr.is_value_empty()) {
+    if (err) {
+      (*err) += "Attribute value is empty.\n";
+    }
+    return false;
   } else {
     if (err) {
       (*err) += fmt::format("Unsupported/Invalid TypedAnimatableAttribute value: {}", attr_name);
@@ -206,11 +198,6 @@ bool EvaluateTypedAnimatableAttribute(
   if (tattr.is_blocked()) {
     if (err) {
       (*err) += "Attribute is Blocked.\n";
-    }
-    return false;
-  } else if (tattr.is_value_empty()) {
-    if (err) {
-      (*err) += "Attribute value is empty.\n";
     }
     return false;
   } else if (tattr.has_value()) {
@@ -256,6 +243,11 @@ bool EvaluateTypedAnimatableAttribute(
       (*err) += fmt::format("Type mismatch. Value producing attribute has type {}, but requested type is {}[]. Attribute: {}", value.type_name(), value::TypeTraits<std::string>::type_name(), attr_name);
     }
 
+  } else if (tattr.is_value_empty()) {
+    if (err) {
+      (*err) += "Attribute value is empty.\n";
+    }
+    return false;
   } else {
     if (err) {
       (*err) += fmt::format("Unsupported/Invalid TypedAnimatableAttribute value: {}", attr_name);
