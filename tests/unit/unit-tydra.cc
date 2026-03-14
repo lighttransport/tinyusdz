@@ -24,6 +24,11 @@ std::vector<Path> MakeMultiTargetConnections() {
   return {Path("/ShaderA", "outputs:out"), Path("/ShaderB", "outputs:out")};
 }
 
+bool ContainsName(const std::vector<std::string> &names,
+                  const std::string &name) {
+  return std::find(names.begin(), names.end(), name) != names.end();
+}
+
 }  // namespace
 
 void tydra_connection_validation_test(void) {
@@ -398,5 +403,214 @@ void tydra_shader_scene_access_test(void) {
     TEST_CHECK(err.empty());
     TEST_CHECK(std::find(attr_names.begin(), attr_names.end(),
                          "outputs:surface") != attr_names.end());
+  }
+}
+
+void tydra_skel_scene_access_test(void) {
+  std::string err;
+
+  {
+    SkelRoot skelroot;
+    skelroot.purpose = Purpose::Render;
+    skelroot.visibility = Animatable<Visibility>(Visibility::Invisible);
+
+    Relationship proxy_rel;
+    proxy_rel.set(Path("/Proxy", ""));
+    skelroot.proxyPrim = proxy_rel;
+
+    Relationship anim_rel;
+    anim_rel.set(Path("/Anim", ""));
+    skelroot.animationSource = anim_rel;
+
+    Relationship skeleton_rel;
+    skeleton_rel.set(Path("/Skeleton", ""));
+    skelroot.skeleton = skeleton_rel;
+
+    XformOp translate_op;
+    translate_op.op_type = XformOp::OpType::Translate;
+    translate_op.set_value(value::double3{1.0, 2.0, 3.0});
+    skelroot.xformOps.push_back(translate_op);
+
+    Prim prim("SkelRootPrim", skelroot);
+
+    std::vector<std::string> prop_names;
+    TEST_CHECK(tydra::GetPropertyNames(prim, &prop_names, &err));
+    TEST_CHECK(err.empty());
+    TEST_CHECK(ContainsName(prop_names, "purpose"));
+    TEST_CHECK(ContainsName(prop_names, "visibility"));
+    TEST_CHECK(ContainsName(prop_names, "proxyPrim"));
+    TEST_CHECK(ContainsName(prop_names, "animationSource"));
+    TEST_CHECK(ContainsName(prop_names, "skeleton"));
+    TEST_CHECK(ContainsName(prop_names, "xformOp:translate"));
+    TEST_CHECK(ContainsName(prop_names, "xformOpOrder"));
+
+    std::vector<std::string> attr_names;
+    err.clear();
+    TEST_CHECK(tydra::GetAttributeNames(prim, &attr_names, &err));
+    TEST_CHECK(err.empty());
+    TEST_CHECK(ContainsName(attr_names, "purpose"));
+    TEST_CHECK(ContainsName(attr_names, "visibility"));
+    TEST_CHECK(ContainsName(attr_names, "xformOp:translate"));
+    TEST_CHECK(ContainsName(attr_names, "xformOpOrder"));
+    TEST_CHECK(!ContainsName(attr_names, "skeleton"));
+
+    std::vector<std::string> rel_names;
+    err.clear();
+    TEST_CHECK(tydra::GetRelationshipNames(prim, &rel_names, &err));
+    TEST_CHECK(err.empty());
+    TEST_CHECK(ContainsName(rel_names, "proxyPrim"));
+    TEST_CHECK(ContainsName(rel_names, "animationSource"));
+    TEST_CHECK(ContainsName(rel_names, "skeleton"));
+    TEST_CHECK(!ContainsName(rel_names, "purpose"));
+
+    Property prop;
+    err.clear();
+    TEST_CHECK(tydra::GetProperty(prim, "purpose", &prop, &err));
+    TEST_CHECK(err.empty());
+    {
+      const Attribute *attr = prop.get_attribute_or_null();
+      TEST_CHECK(attr != nullptr);
+      auto purpose = attr->get_value<value::token>();
+      TEST_CHECK(purpose.has_value());
+      TEST_CHECK(purpose.value().str() == "render");
+    }
+
+    err.clear();
+    TEST_CHECK(tydra::GetProperty(prim, "xformOpOrder", &prop, &err));
+    TEST_CHECK(err.empty());
+    {
+      const Attribute *attr = prop.get_attribute_or_null();
+      TEST_CHECK(attr != nullptr);
+      auto xform_op_order = attr->get_value<std::vector<value::token>>();
+      TEST_CHECK(xform_op_order.has_value());
+      TEST_CHECK(xform_op_order.value().size() == 1);
+      TEST_CHECK(xform_op_order.value()[0].str() == "xformOp:translate");
+    }
+
+    Relationship rel;
+    err.clear();
+    TEST_CHECK(tydra::GetRelationship(prim, "skeleton", &rel, &err));
+    TEST_CHECK(err.empty());
+    TEST_CHECK(rel.is_path());
+    TEST_CHECK(rel.targetPath.prim_part() == "/Skeleton");
+  }
+
+  {
+    Skeleton skeleton;
+    skeleton.bindTransforms = std::vector<value::matrix4d>{
+        value::matrix4d::identity()};
+    skeleton.jointNames = std::vector<value::token>{value::token("Root")};
+    skeleton.joints = std::vector<value::token>{value::token("Root")};
+    skeleton.restTransforms = std::vector<value::matrix4d>{
+        value::matrix4d::identity()};
+    skeleton.purpose = Purpose::Guide;
+
+    Relationship proxy_rel;
+    proxy_rel.set(Path("/Proxy", ""));
+    skeleton.proxyPrim = proxy_rel;
+
+    Relationship anim_rel;
+    anim_rel.set(Path("/Anim", ""));
+    skeleton.animationSource = anim_rel;
+
+    XformOp scale_op;
+    scale_op.op_type = XformOp::OpType::Scale;
+    scale_op.set_value(value::double3{2.0, 2.0, 2.0});
+    skeleton.xformOps.push_back(scale_op);
+
+    Prim prim("SkeletonPrim", skeleton);
+
+    std::vector<std::string> prop_names;
+    err.clear();
+    TEST_CHECK(tydra::GetPropertyNames(prim, &prop_names, &err));
+    TEST_CHECK(err.empty());
+    TEST_CHECK(ContainsName(prop_names, "bindTransforms"));
+    TEST_CHECK(ContainsName(prop_names, "jointNames"));
+    TEST_CHECK(ContainsName(prop_names, "joints"));
+    TEST_CHECK(ContainsName(prop_names, "restTransforms"));
+    TEST_CHECK(ContainsName(prop_names, "purpose"));
+    TEST_CHECK(ContainsName(prop_names, "proxyPrim"));
+    TEST_CHECK(ContainsName(prop_names, "animationSource"));
+    TEST_CHECK(ContainsName(prop_names, "xformOp:scale"));
+    TEST_CHECK(ContainsName(prop_names, "xformOpOrder"));
+
+    std::vector<std::string> rel_names;
+    err.clear();
+    TEST_CHECK(tydra::GetRelationshipNames(prim, &rel_names, &err));
+    TEST_CHECK(err.empty());
+    TEST_CHECK(ContainsName(rel_names, "proxyPrim"));
+    TEST_CHECK(ContainsName(rel_names, "animationSource"));
+    TEST_CHECK(!ContainsName(rel_names, "bindTransforms"));
+
+    Property prop;
+    err.clear();
+    TEST_CHECK(tydra::GetProperty(prim, "purpose", &prop, &err));
+    TEST_CHECK(err.empty());
+    {
+      const Attribute *attr = prop.get_attribute_or_null();
+      TEST_CHECK(attr != nullptr);
+      auto purpose = attr->get_value<value::token>();
+      TEST_CHECK(purpose.has_value());
+      TEST_CHECK(purpose.value().str() == "guide");
+    }
+  }
+
+  {
+    BlendShape blendshape;
+    blendshape.offsets = std::vector<value::vector3f>{
+        value::vector3f{0.1f, 0.0f, 0.0f}};
+    blendshape.normalOffsets = std::vector<value::vector3f>{
+        value::vector3f{0.0f, 0.1f, 0.0f}};
+    blendshape.pointIndices = std::vector<int>{0};
+
+    Prim prim("BlendShapePrim", blendshape);
+
+    std::vector<std::string> attr_names;
+    err.clear();
+    TEST_CHECK(tydra::GetAttributeNames(prim, &attr_names, &err));
+    TEST_CHECK(err.empty());
+    TEST_CHECK(ContainsName(attr_names, "offsets"));
+    TEST_CHECK(ContainsName(attr_names, "normalOffsets"));
+    TEST_CHECK(ContainsName(attr_names, "pointIndices"));
+
+    std::vector<std::string> rel_names;
+    err.clear();
+    TEST_CHECK(tydra::GetRelationshipNames(prim, &rel_names, &err));
+    TEST_CHECK(err.empty());
+    TEST_CHECK(rel_names.empty());
+  }
+
+  {
+    SkelAnimation anim;
+    anim.blendShapes = std::vector<value::token>{value::token("shapeA")};
+    anim.blendShapeWeights = Animatable<std::vector<float>>(
+        std::vector<float>{0.5f});
+    anim.joints = std::vector<value::token>{value::token("Root")};
+    anim.translations = Animatable<std::vector<value::float3>>(
+        std::vector<value::float3>{value::float3{1.0f, 2.0f, 3.0f}});
+
+    Prim prim("SkelAnimPrim", anim);
+
+    std::vector<std::string> prop_names;
+    err.clear();
+    TEST_CHECK(tydra::GetPropertyNames(prim, &prop_names, &err));
+    TEST_CHECK(err.empty());
+    TEST_CHECK(ContainsName(prop_names, "blendShapes"));
+    TEST_CHECK(ContainsName(prop_names, "blendShapeWeights"));
+    TEST_CHECK(ContainsName(prop_names, "joints"));
+    TEST_CHECK(ContainsName(prop_names, "translations"));
+
+    Property prop;
+    err.clear();
+    TEST_CHECK(tydra::GetProperty(prim, "blendShapeWeights", &prop, &err));
+    TEST_CHECK(err.empty());
+    {
+      const Attribute *attr = prop.get_attribute_or_null();
+      TEST_CHECK(attr != nullptr);
+      auto weights = attr->get_value<std::vector<float>>();
+      TEST_CHECK(weights.has_value());
+      TEST_CHECK(weights.value().size() == 1);
+      TEST_CHECK(weights.value()[0] == 0.5f);
+    }
   }
 }
