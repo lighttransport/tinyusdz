@@ -1350,6 +1350,65 @@ void tydra_texture_loader_policy_test(void) {
   }
 }
 
+void tydra_envmap_loader_policy_test(void) {
+  auto make_stage_with_dome = []() {
+    Stage stage;
+    DomeLight light;
+    light.name = "DomeLightPrim";
+    light.file.set_value(
+        Animatable<value::AssetPath>(value::AssetPath("missing.exr")));
+    TEST_CHECK(stage.add_root_prim(Prim("DomeLightPrim", light)));
+    return stage;
+  };
+
+  {
+    Stage stage = make_stage_with_dome();
+
+    tydra::RenderSceneConverterEnv env(stage);
+    env.material_config.texture_image_loader_function =
+        FailingTextureImageLoader;
+    env.material_config.allow_texture_load_failure = true;
+
+    tydra::RenderScene scene;
+    tydra::RenderSceneConverter converter;
+
+    TEST_CHECK(converter.ConvertToRenderScene(env, &scene));
+    TEST_CHECK(scene.lights.size() == 1);
+    if (scene.lights.size() == 1) {
+      TEST_CHECK(scene.lights[0].type == tydra::RenderLight::Type::Dome);
+      TEST_CHECK(scene.lights[0].envmap_texture_id == -1);
+      TEST_CHECK(scene.lights[0].textureFile == "missing.exr");
+    }
+    TEST_CHECK(converter.GetWarning().find("missing.exr") !=
+               std::string::npos);
+    TEST_CHECK(converter.GetWarning().find(
+                   "synthetic texture loader failure") !=
+               std::string::npos);
+  }
+
+  {
+    Stage stage = make_stage_with_dome();
+
+    tydra::RenderSceneConverterEnv env(stage);
+    env.material_config.texture_image_loader_function =
+        FailingTextureImageLoader;
+    env.material_config.allow_texture_load_failure = false;
+
+    tydra::RenderScene scene;
+    tydra::RenderSceneConverter converter;
+
+    TEST_CHECK(!converter.ConvertToRenderScene(env, &scene));
+    TEST_CHECK(converter.GetError().find("missing.exr") !=
+               std::string::npos);
+    TEST_CHECK(converter.GetError().find(
+                   "Failed to load envmap texture") !=
+               std::string::npos);
+    TEST_CHECK(converter.GetError().find(
+                   "synthetic texture loader failure") !=
+               std::string::npos);
+  }
+}
+
 void tydra_skel_animation_validation_test(void) {
   {
     SkelAnimation anim;
