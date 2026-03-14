@@ -820,3 +820,103 @@ void tydra_progress_cancellation_test(void) {
   TEST_CHECK(converter.GetError().find("Conversion cancelled by user") !=
              std::string::npos);
 }
+
+void tydra_skel_animation_validation_test(void) {
+  {
+    SkelAnimation anim;
+    anim.name = "Anim";
+    anim.joints = std::vector<value::token>{value::token("Root")};
+    anim.translations = Animatable<std::vector<value::float3>>(
+        std::vector<value::float3>{value::float3{1.0f, 2.0f, 3.0f}});
+    // Invalid per USD skel rules: translation is authored, rotation/scale are not.
+
+    Stage stage;
+    tydra::RenderSceneConverterEnv env(stage);
+    tydra::RenderSceneConverter converter;
+    tydra::SkelHierarchy hierarchy;
+    hierarchy.root_node.joint_name = "Root";
+    hierarchy.root_node.joint_path = "Root";
+    hierarchy.root_node.joint_id = 0;
+    converter.skeletons.push_back(hierarchy);
+    tydra::AnimationClip clip;
+
+    TEST_CHECK(!converter.ConvertSkelAnimation(env, Path("/Anim", ""), anim, 0,
+                                               &clip));
+    TEST_CHECK(converter.GetError().find("must be all authored") !=
+               std::string::npos);
+    TEST_CHECK(converter.GetError().find("/Anim") != std::string::npos);
+  }
+
+  {
+    Stage stage;
+
+    Skeleton invalid_skeleton;
+    invalid_skeleton.name = "BrokenSkeleton";
+    invalid_skeleton.joints = std::vector<value::token>{value::token("Root")};
+    invalid_skeleton.jointNames =
+        std::vector<value::token>{value::token("Root")};
+    invalid_skeleton.bindTransforms =
+        std::vector<value::matrix4d>{};  // Authored but invalid size.
+    invalid_skeleton.restTransforms = std::vector<value::matrix4d>{
+        value::matrix4d::identity()};
+
+    TEST_CHECK(stage.add_root_prim(Prim("BrokenSkeleton", invalid_skeleton)));
+
+    tydra::RenderSceneConverterEnv env(stage);
+    tydra::RenderScene scene;
+    tydra::RenderSceneConverter converter;
+
+    TEST_CHECK(!converter.ConvertToRenderScene(env, &scene));
+    TEST_CHECK(converter.GetError().find("Failed to convert standalone skeleton") !=
+               std::string::npos);
+    TEST_CHECK(converter.GetError().find("bindTransforms.size") !=
+               std::string::npos);
+  }
+}
+
+void tydra_skin_binding_validation_test(void) {
+  Stage stage;
+
+  GeomMesh mesh;
+  mesh.points = Animatable<std::vector<value::point3f>>(
+      std::vector<value::point3f>{{0.0f, 0.0f, 0.0f},
+                                  {1.0f, 0.0f, 0.0f},
+                                  {0.0f, 1.0f, 0.0f}});
+  mesh.faceVertexCounts = Animatable<std::vector<int32_t>>(
+      std::vector<int32_t>{3});
+  mesh.faceVertexIndices = Animatable<std::vector<int32_t>>(
+      std::vector<int32_t>{0, 1, 2});
+
+  GeomPrimvar joint_indices;
+  joint_indices.set_name("skel:jointIndices");
+  joint_indices.set_value(std::vector<int>{0, 0, 0});
+  joint_indices.set_interpolation(Interpolation::Vertex);
+  joint_indices.set_elementSize(1);
+
+  GeomPrimvar joint_weights;
+  joint_weights.set_name("skel:jointWeights");
+  joint_weights.set_value(std::vector<float>{1.0f, 1.0f, 1.0f});
+  joint_weights.set_interpolation(Interpolation::Vertex);
+  joint_weights.set_elementSize(1);
+
+  std::string err;
+  TEST_CHECK(mesh.set_primvar(joint_indices, &err));
+  TEST_CHECK(err.empty());
+  TEST_CHECK(mesh.set_primvar(joint_weights, &err));
+  TEST_CHECK(err.empty());
+
+  Relationship invalid_skeleton_rel;
+  invalid_skeleton_rel.set(std::vector<Path>{});
+  mesh.skeleton = invalid_skeleton_rel;
+
+  TEST_CHECK(stage.add_root_prim(Prim("MeshPrim", mesh)));
+
+  tydra::RenderSceneConverterEnv env(stage);
+  tydra::RenderScene scene;
+  tydra::RenderSceneConverter converter;
+
+  TEST_CHECK(!converter.ConvertToRenderScene(env, &scene));
+  TEST_CHECK(converter.GetError().find("`skel:skeleton` has invalid definition") !=
+             std::string::npos);
+  TEST_CHECK(converter.GetError().find("/MeshPrim") != std::string::npos);
+}

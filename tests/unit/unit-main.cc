@@ -103,6 +103,10 @@ TEST_LIST = {
   { "tydra_material_binding_validation_test",
     tydra_material_binding_validation_test },
   { "tydra_progress_cancellation_test", tydra_progress_cancellation_test },
+  { "tydra_skel_animation_validation_test",
+    tydra_skel_animation_validation_test },
+  { "tydra_skin_binding_validation_test",
+    tydra_skin_binding_validation_test },
   // Temporarily disabled - unit-dedup needs API updates
   //{ "dedup_float_array_test", dedup_float_array_test },
   //{ "dedup_double_array_test", dedup_double_array_test },
