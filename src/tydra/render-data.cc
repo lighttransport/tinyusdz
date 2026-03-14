@@ -7168,19 +7168,23 @@ bool RenderSceneConverter::ConvertUVTexture(const RenderSceneConverterEnv &env,
         PushWarn(warn);
       }
 
-      if (!tex_loaded && !env.material_config.allow_texture_load_failure) {
-        PUSH_ERROR_AND_RETURN(fmt::format("Failed to load texture image: `{}` err = {}", assetPath.GetAssetPath(), err));
-      }
+      if (!tex_loaded) {
+        if (!env.material_config.allow_texture_load_failure) {
+          PUSH_ERROR_AND_RETURN(fmt::format(
+              "Failed to load texture image: `{}` err = {}",
+              assetPath.GetAssetPath(), err));
+        }
 
-
-      if (err.size()) {
-        // report as warn.
-        PUSH_WARN(fmt::format("Failed to load texture image: `{}`. Skip loading. reason = {} ", assetPath.GetAssetPath(), err));
+        const std::string load_err =
+            err.empty() ? std::string("loader returned failure") : err;
+        PUSH_WARN(fmt::format(
+            "Failed to load texture image: `{}`. Skip loading. reason = {}",
+            assetPath.GetAssetPath(), load_err));
       }
 
       // store unresolved asset path.
       texImage.asset_identifier = assetPath.GetAssetPath();
-      texImage.decoded = true;
+      texImage.decoded = tex_loaded;
 
     } else {
 
@@ -7262,9 +7266,8 @@ bool RenderSceneConverter::ConvertUVTexture(const RenderSceneConverterEnv &env,
                 texImage.usdColorSpace = tydra::ColorSpace::sRGB;
                 sourceColorSpaceSet = true;
               } else {
-                PUSH_WARN(fmt::format("Infer colorSpace failed for {}. Set to Raw for now. Results may be wrong.", assetPath.GetAssetPath()));
-                // At least 'not' sRGB. For now set to Raw.
-
+                // For auto mode, non-8bit RGB(A) textures should be used as
+                // read rather than warned about as ambiguous sRGB candidates.
                 texImage.usdColorSpace = tydra::ColorSpace::Raw;
                 sourceColorSpaceSet = true;
               }
