@@ -1931,8 +1931,8 @@ bool GetPrimPropertyNamesImpl(const Xform &xform,
     return false;
   }
 
-  if (attr_prop) {
-    AppendXformablePropertyNames(xform, prop_names);
+  if (attr_prop && !xform.xformOps.empty()) {
+    prop_names->push_back("xformOpOrder");
   }
 
   return true;
@@ -3208,7 +3208,7 @@ GetBlendShapes(const tinyusdz::Stage &stage, const tinyusdz::Prim &prim,
       }
 
       if (const auto *bs = bsprim->as<BlendShape>()) {
-        dst.push_back(std::make_pair(blendShapeNames[0].str(), bs));
+        dst.push_back(std::make_pair(blendShapeNames[i].str(), bs));
       } else {
         if (err) {
           (*err) += fmt::format("{} is not BlendShape Prim.",
