@@ -7120,11 +7120,9 @@ bool RenderSceneConverter::ConvertUVTexture(const RenderSceneConverterEnv &env,
                       tex_abs_path.prim_part()));
     }
   } else {
-    // Blender export bug workaround: create placeholder texture
-    PUSH_WARN(fmt::format("`asset:file` is not authored for UsdUVTexture at {}. "
-                         "This is likely a Blender export bug. Creating placeholder texture.",
-                         tex_abs_path.prim_part()));
-    assetPath = value::AssetPath("");  // empty path
+    PUSH_ERROR_AND_RETURN(fmt::format(
+        "`asset:file` is not authored for UsdUVTexture at {}.",
+        tex_abs_path.prim_part()));
   }
 
   // TextureImage and BufferData
