@@ -875,48 +875,72 @@ void tydra_skel_animation_validation_test(void) {
 }
 
 void tydra_skin_binding_validation_test(void) {
-  Stage stage;
+  auto make_skinned_mesh = []() {
+    GeomMesh mesh;
+    mesh.points = Animatable<std::vector<value::point3f>>(
+        std::vector<value::point3f>{{0.0f, 0.0f, 0.0f},
+                                    {1.0f, 0.0f, 0.0f},
+                                    {0.0f, 1.0f, 0.0f}});
+    mesh.faceVertexCounts = Animatable<std::vector<int32_t>>(
+        std::vector<int32_t>{3});
+    mesh.faceVertexIndices = Animatable<std::vector<int32_t>>(
+        std::vector<int32_t>{0, 1, 2});
 
-  GeomMesh mesh;
-  mesh.points = Animatable<std::vector<value::point3f>>(
-      std::vector<value::point3f>{{0.0f, 0.0f, 0.0f},
-                                  {1.0f, 0.0f, 0.0f},
-                                  {0.0f, 1.0f, 0.0f}});
-  mesh.faceVertexCounts = Animatable<std::vector<int32_t>>(
-      std::vector<int32_t>{3});
-  mesh.faceVertexIndices = Animatable<std::vector<int32_t>>(
-      std::vector<int32_t>{0, 1, 2});
+    GeomPrimvar joint_indices;
+    joint_indices.set_name("skel:jointIndices");
+    joint_indices.set_value(std::vector<int>{0, 0, 0});
+    joint_indices.set_interpolation(Interpolation::Vertex);
+    joint_indices.set_elementSize(1);
 
-  GeomPrimvar joint_indices;
-  joint_indices.set_name("skel:jointIndices");
-  joint_indices.set_value(std::vector<int>{0, 0, 0});
-  joint_indices.set_interpolation(Interpolation::Vertex);
-  joint_indices.set_elementSize(1);
+    GeomPrimvar joint_weights;
+    joint_weights.set_name("skel:jointWeights");
+    joint_weights.set_value(std::vector<float>{1.0f, 1.0f, 1.0f});
+    joint_weights.set_interpolation(Interpolation::Vertex);
+    joint_weights.set_elementSize(1);
 
-  GeomPrimvar joint_weights;
-  joint_weights.set_name("skel:jointWeights");
-  joint_weights.set_value(std::vector<float>{1.0f, 1.0f, 1.0f});
-  joint_weights.set_interpolation(Interpolation::Vertex);
-  joint_weights.set_elementSize(1);
+    std::string err;
+    TEST_CHECK(mesh.set_primvar(joint_indices, &err));
+    TEST_CHECK(err.empty());
+    TEST_CHECK(mesh.set_primvar(joint_weights, &err));
+    TEST_CHECK(err.empty());
 
-  std::string err;
-  TEST_CHECK(mesh.set_primvar(joint_indices, &err));
-  TEST_CHECK(err.empty());
-  TEST_CHECK(mesh.set_primvar(joint_weights, &err));
-  TEST_CHECK(err.empty());
+    return mesh;
+  };
 
-  Relationship invalid_skeleton_rel;
-  invalid_skeleton_rel.set(std::vector<Path>{});
-  mesh.skeleton = invalid_skeleton_rel;
+  {
+    Stage stage;
+    GeomMesh mesh = make_skinned_mesh();
 
-  TEST_CHECK(stage.add_root_prim(Prim("MeshPrim", mesh)));
+    Relationship invalid_skeleton_rel;
+    invalid_skeleton_rel.set(std::vector<Path>{});
+    mesh.skeleton = invalid_skeleton_rel;
 
-  tydra::RenderSceneConverterEnv env(stage);
-  tydra::RenderScene scene;
-  tydra::RenderSceneConverter converter;
+    TEST_CHECK(stage.add_root_prim(Prim("MeshPrim", mesh)));
 
-  TEST_CHECK(!converter.ConvertToRenderScene(env, &scene));
-  TEST_CHECK(converter.GetError().find("`skel:skeleton` has invalid definition") !=
-             std::string::npos);
-  TEST_CHECK(converter.GetError().find("/MeshPrim") != std::string::npos);
+    tydra::RenderSceneConverterEnv env(stage);
+    tydra::RenderScene scene;
+    tydra::RenderSceneConverter converter;
+
+    TEST_CHECK(!converter.ConvertToRenderScene(env, &scene));
+    TEST_CHECK(converter.GetError().find("`skel:skeleton` has invalid definition") !=
+               std::string::npos);
+    TEST_CHECK(converter.GetError().find("/MeshPrim") != std::string::npos);
+  }
+
+  {
+    Stage stage;
+    GeomMesh mesh = make_skinned_mesh();
+
+    TEST_CHECK(stage.add_root_prim(Prim("MeshPrim", mesh)));
+
+    tydra::RenderSceneConverterEnv env(stage);
+    tydra::RenderScene scene;
+    tydra::RenderSceneConverter converter;
+
+    TEST_CHECK(!converter.ConvertToRenderScene(env, &scene));
+    TEST_CHECK(converter.GetError().find(
+                   "Mesh has skinning data but no skeleton found") !=
+               std::string::npos);
+    TEST_CHECK(converter.GetError().find("/MeshPrim") != std::string::npos);
+  }
 }
