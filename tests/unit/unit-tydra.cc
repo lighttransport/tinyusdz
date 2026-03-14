@@ -7,8 +7,10 @@
 
 #include "unit-tydra.h"
 
+#include "layer.hh"
 #include "prim-types.hh"
 #include "tydra/attribute-eval.hh"
+#include "tydra/layer-to-renderscene.hh"
 
 using namespace tinyusdz;
 
@@ -93,5 +95,57 @@ void tydra_connection_validation_test(void) {
         stage, attr, "inputs:test", &value, &err, 1.0,
         value::TimeSampleInterpolationType::Held));
     TEST_CHECK(err.find("Multiple targetPaths") != std::string::npos);
+  }
+}
+
+void tydra_inplace_conversion_guard_test(void) {
+  tydra::LayerToRenderSceneConverter converter;
+  tydra::RenderScene render_scene;
+  std::string warn;
+  std::string err;
+
+  {
+    auto layer = std::make_unique<Layer>();
+    PrimSpec xform_ps;
+    xform_ps.specifier() = Specifier::Def;
+    xform_ps.typeName() = "Xform";
+    xform_ps.name() = "Root";
+    TEST_CHECK(layer->add_primspec("Root", xform_ps));
+
+    TEST_CHECK(!converter.ConvertLayerInPlace(std::move(layer), &render_scene,
+                                              &warn, &err));
+    TEST_CHECK(err.find("temporarily disabled") != std::string::npos);
+    TEST_CHECK(render_scene.nodes.empty());
+    TEST_CHECK(render_scene.meshes.empty());
+    TEST_CHECK(render_scene.materials.empty());
+  }
+
+  {
+    Layer layer;
+    PrimSpec xform_ps;
+    xform_ps.specifier() = Specifier::Def;
+    xform_ps.typeName() = "Xform";
+    xform_ps.name() = "Root";
+    TEST_CHECK(layer.add_primspec("Root", xform_ps));
+
+    tydra::RenderScene normal_scene;
+    warn.clear();
+    err.clear();
+    TEST_CHECK(converter.ConvertLayer(&layer, &normal_scene, &warn, &err));
+    TEST_CHECK(normal_scene.nodes.size() == 1);
+  }
+
+  {
+    auto prim_spec = std::make_unique<PrimSpec>();
+    prim_spec->specifier() = Specifier::Def;
+    prim_spec->typeName() = "Mesh";
+    prim_spec->name() = "MeshPrim";
+
+    tydra::RenderMesh mesh;
+    warn.clear();
+    err.clear();
+    TEST_CHECK(!converter.ConvertPrimSpecInPlace(std::move(prim_spec), &mesh,
+                                                 &warn, &err));
+    TEST_CHECK(err.find("temporarily disabled") != std::string::npos);
   }
 }

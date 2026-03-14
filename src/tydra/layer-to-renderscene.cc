@@ -21,6 +21,11 @@ namespace tydra {
 
 namespace {
 
+constexpr const char* kInPlaceConversionDisabledMessage =
+    "In-place LayerToRenderScene conversion is temporarily disabled because "
+    "destructive source transfer is not implemented safely yet. Use "
+    "ConvertLayer or ConvertPrimSpec instead.";
+
 #if 0
 template<typename T>
 void MoveVector(std::vector<T>& src, std::vector<T>& dst) {
@@ -191,7 +196,7 @@ bool LayerToRenderSceneConverter::ConvertLayerInPlace(
     RenderScene* render_scene,
     std::string* warn,
     std::string* err) {
-  
+
   (void)warn;
   if (!layer || !render_scene) {
     if (err) {
@@ -205,74 +210,16 @@ bool LayerToRenderSceneConverter::ConvertLayerInPlace(
   if (config_.progress_callback) {
     config_.progress_callback("Starting in-place Layer to RenderScene conversion");
   }
-  
-  auto& primspecs = layer->primspecs();
-  std::vector<std::string> paths_to_remove;
-  
-  for (auto& item : primspecs) {
-    const std::string& path = item.first;
-    PrimSpec& primspec = item.second;
-    if (config_.progress_callback) {
-      config_.progress_callback("Processing: " + path);
-    }
-    
-    // Skip invalid primspecs if needed
-    
-    const std::string& typeName = primspec.typeName();
-    size_t memory_before = current_memory_usage_;
-    
-    if (typeName == "Mesh") {
-      RenderMesh mesh;
-      if (ConvertGeomMeshPrimSpec(&primspec, &mesh, true)) {
-        mesh.prim_name = primspec.name();
-        mesh.abs_path = path;
-        
-        int mesh_id = static_cast<int>(render_scene->meshes.size());
-        render_scene->meshes.push_back(std::move(mesh));
-        impl_->mesh_path_to_id[path] = mesh_id;
-        
-        paths_to_remove.push_back(path);
-      }
-    } else if (typeName == "Material") {
-      RenderMaterial material;
-      if (ConvertMaterialPrimSpec(&primspec, &material, true)) {
-        material.name = primspec.name();
-        material.abs_path = path;
-        
-        int material_id = static_cast<int>(render_scene->materials.size());
-        render_scene->materials.push_back(std::move(material));
-        impl_->material_path_to_id[path] = material_id;
-        
-        paths_to_remove.push_back(path);
-      }
-    } else if (typeName == "Xform" || typeName == "Scope") {
-      Node node;
-      if (ConvertXformPrimSpec(&primspec, &node, true)) {
-        node.prim_name = primspec.name();
-        node.abs_path = path;
-        render_scene->nodes.push_back(std::move(node));
-        
-        paths_to_remove.push_back(path);
-      }
-    }
-    
-    size_t memory_freed = memory_before - current_memory_usage_;
-    if (memory_freed > 0 && config_.memory_freed_callback) {
-      config_.memory_freed_callback(memory_freed);
-    }
+
+  if (err) {
+    *err = kInPlaceConversionDisabledMessage;
   }
-  
-  for (const auto& path : paths_to_remove) {
-    primspecs.erase(path);
-  }
-  
-  layer.reset();
-  
+
   if (config_.progress_callback) {
-    config_.progress_callback("In-place conversion complete");
+    config_.progress_callback("In-place conversion aborted: unsafe transfer path is disabled");
   }
-  
-  return true;
+
+  return false;
 }
 
 bool LayerToRenderSceneConverter::ConvertPrimSpec(
@@ -298,7 +245,7 @@ bool LayerToRenderSceneConverter::ConvertPrimSpecInPlace(
     RenderMesh* render_mesh,
     std::string* warn,
     std::string* err) {
-  
+
   (void)warn;
 
   if (!prim_spec || !render_mesh) {
@@ -307,12 +254,16 @@ bool LayerToRenderSceneConverter::ConvertPrimSpecInPlace(
     }
     return false;
   }
-  
-  bool result = ConvertGeomMeshPrimSpec(prim_spec.get(), render_mesh, true);
-  
-  prim_spec.reset();
-  
-  return result;
+
+  if (err) {
+    *err = kInPlaceConversionDisabledMessage;
+  }
+
+  if (config_.progress_callback) {
+    config_.progress_callback("In-place PrimSpec conversion aborted: unsafe transfer path is disabled");
+  }
+
+  return false;
 }
 
 bool LayerToRenderSceneConverter::ConvertGeomMeshPrimSpec(
