@@ -83,6 +83,45 @@ namespace tinyusdz {
 
 namespace ascii {
 
+#define TINYUSDZ_FOR_EACH_BINARY_TIMESAMPLE_TYPE(X) \
+  X(int32_t)                                        \
+  X(uint32_t)                                       \
+  X(int64_t)                                        \
+  X(uint64_t)                                       \
+  X(value::half)                                    \
+  X(value::half2)                                   \
+  X(value::half3)                                   \
+  X(value::half4)                                   \
+  X(float)                                          \
+  X(value::float2)                                  \
+  X(value::float3)                                  \
+  X(value::float4)                                  \
+  X(double)                                         \
+  X(value::double2)                                 \
+  X(value::double3)                                 \
+  X(value::double4)                                 \
+  X(value::int2)                                    \
+  X(value::int3)                                    \
+  X(value::int4)                                    \
+  X(value::quath)                                   \
+  X(value::quatf)                                   \
+  X(value::quatd)                                   \
+  X(value::color3f)                                 \
+  X(value::color4f)                                 \
+  X(value::color3d)                                 \
+  X(value::color4d)                                 \
+  X(value::vector3f)                                \
+  X(value::normal3f)                                \
+  X(value::point3f)                                 \
+  X(value::texcoord2f)                              \
+  X(value::texcoord3f)                              \
+  X(value::matrix2f)                                \
+  X(value::matrix3f)                                \
+  X(value::matrix4f)                                \
+  X(value::matrix2d)                                \
+  X(value::matrix3d)                                \
+  X(value::matrix4d)
+
 // Templated function to parse typed TimeSamples for types that use binary storage.
 template<typename T>
 bool AsciiParser::ParseTypedTimeSamples(value::TimeSamples *ts_out) {
@@ -368,54 +407,18 @@ bool AsciiParser::ParseTimeSamples(const std::string &type_name,
   // The typed path will consume the '{' if it tries to parse,
   // but we need to restore position for the generic fallback path
   uint64_t saved_cursor = CurrLoc();
-#define TRY_BINARY_TYPE(__type)                                     \
-  if (type_id.value() == value::TypeTraits<__type>::type_id()) {   \
-    if (ParseTypedTimeSamples<__type>(ts_out)) {                    \
-      return true;                                                  \
-    }                                                                \
-    /* typed path failed - restore cursor to original position */    \
-    /* so the generic fallback can parse from the beginning */ \
-    SeekTo(saved_cursor);                                           \
+#define TRY_BINARY_TYPE(__type)                                   \
+  if (type_id.value() == value::TypeTraits<__type>::type_id()) {  \
+    if (ParseTypedTimeSamples<__type>(ts_out)) {                  \
+      return true;                                                \
+    }                                                             \
+    /* typed path failed - restore cursor to original position */ \
+    /* so the generic fallback can parse from the beginning */    \
+    SeekTo(saved_cursor);                                         \
   }
 
-  // Try binary-serializable numeric, role, quaternion, and matrix types.
-  TRY_BINARY_TYPE(int32_t)
-  TRY_BINARY_TYPE(uint32_t)
-  TRY_BINARY_TYPE(int64_t)
-  TRY_BINARY_TYPE(uint64_t)
-  TRY_BINARY_TYPE(value::half)
-  TRY_BINARY_TYPE(value::half2)
-  TRY_BINARY_TYPE(value::half3)
-  TRY_BINARY_TYPE(value::half4)
-  TRY_BINARY_TYPE(float)
-  TRY_BINARY_TYPE(value::float2)
-  TRY_BINARY_TYPE(value::float3)
-  TRY_BINARY_TYPE(value::float4)
-  TRY_BINARY_TYPE(double)
-  TRY_BINARY_TYPE(value::double2)
-  TRY_BINARY_TYPE(value::double3)
-  TRY_BINARY_TYPE(value::double4)
-  TRY_BINARY_TYPE(value::int2)
-  TRY_BINARY_TYPE(value::int3)
-  TRY_BINARY_TYPE(value::int4)
-  TRY_BINARY_TYPE(value::quath)
-  TRY_BINARY_TYPE(value::quatf)
-  TRY_BINARY_TYPE(value::quatd)
-  TRY_BINARY_TYPE(value::color3f)
-  TRY_BINARY_TYPE(value::color4f)
-  TRY_BINARY_TYPE(value::color3d)
-  TRY_BINARY_TYPE(value::color4d)
-  TRY_BINARY_TYPE(value::vector3f)
-  TRY_BINARY_TYPE(value::normal3f)
-  TRY_BINARY_TYPE(value::point3f)
-  TRY_BINARY_TYPE(value::texcoord2f)
-  TRY_BINARY_TYPE(value::texcoord3f)
-  TRY_BINARY_TYPE(value::matrix2f)
-  TRY_BINARY_TYPE(value::matrix3f)
-  TRY_BINARY_TYPE(value::matrix4f)
-  TRY_BINARY_TYPE(value::matrix2d)
-  TRY_BINARY_TYPE(value::matrix3d)
-  TRY_BINARY_TYPE(value::matrix4d)
+  // Try binary-storage numeric, role, quaternion, and matrix types.
+  TINYUSDZ_FOR_EACH_BINARY_TIMESAMPLE_TYPE(TRY_BINARY_TYPE)
 
 #undef TRY_BINARY_TYPE
 
@@ -527,46 +530,14 @@ bool AsciiParser::ParseTimeSamples(const std::string &type_name,
   return true;
 }
 
-// Explicit template instantiations for binary-serializable types
-template bool AsciiParser::ParseTypedTimeSamples<bool>(value::TimeSamples*);
-template bool AsciiParser::ParseTypedTimeSamples<int32_t>(value::TimeSamples*);
-template bool AsciiParser::ParseTypedTimeSamples<uint32_t>(value::TimeSamples*);
-template bool AsciiParser::ParseTypedTimeSamples<int64_t>(value::TimeSamples*);
-template bool AsciiParser::ParseTypedTimeSamples<uint64_t>(value::TimeSamples*);
-template bool AsciiParser::ParseTypedTimeSamples<value::half>(value::TimeSamples*);
-template bool AsciiParser::ParseTypedTimeSamples<value::half2>(value::TimeSamples*);
-template bool AsciiParser::ParseTypedTimeSamples<value::half3>(value::TimeSamples*);
-template bool AsciiParser::ParseTypedTimeSamples<value::half4>(value::TimeSamples*);
-template bool AsciiParser::ParseTypedTimeSamples<float>(value::TimeSamples*);
-template bool AsciiParser::ParseTypedTimeSamples<value::float2>(value::TimeSamples*);
-template bool AsciiParser::ParseTypedTimeSamples<value::float3>(value::TimeSamples*);
-template bool AsciiParser::ParseTypedTimeSamples<value::float4>(value::TimeSamples*);
-template bool AsciiParser::ParseTypedTimeSamples<double>(value::TimeSamples*);
-template bool AsciiParser::ParseTypedTimeSamples<value::double2>(value::TimeSamples*);
-template bool AsciiParser::ParseTypedTimeSamples<value::double3>(value::TimeSamples*);
-template bool AsciiParser::ParseTypedTimeSamples<value::double4>(value::TimeSamples*);
-template bool AsciiParser::ParseTypedTimeSamples<value::int2>(value::TimeSamples*);
-template bool AsciiParser::ParseTypedTimeSamples<value::int3>(value::TimeSamples*);
-template bool AsciiParser::ParseTypedTimeSamples<value::int4>(value::TimeSamples*);
-template bool AsciiParser::ParseTypedTimeSamples<value::quath>(value::TimeSamples*);
-template bool AsciiParser::ParseTypedTimeSamples<value::quatf>(value::TimeSamples*);
-template bool AsciiParser::ParseTypedTimeSamples<value::quatd>(value::TimeSamples*);
-template bool AsciiParser::ParseTypedTimeSamples<value::color3f>(value::TimeSamples*);
-template bool AsciiParser::ParseTypedTimeSamples<value::color4f>(value::TimeSamples*);
-template bool AsciiParser::ParseTypedTimeSamples<value::color3d>(value::TimeSamples*);
-template bool AsciiParser::ParseTypedTimeSamples<value::color4d>(value::TimeSamples*);
-template bool AsciiParser::ParseTypedTimeSamples<value::vector3f>(value::TimeSamples*);
-template bool AsciiParser::ParseTypedTimeSamples<value::normal3f>(value::TimeSamples*);
-template bool AsciiParser::ParseTypedTimeSamples<value::point3f>(value::TimeSamples*);
-template bool AsciiParser::ParseTypedTimeSamples<value::texcoord2f>(value::TimeSamples*);
-template bool AsciiParser::ParseTypedTimeSamples<value::texcoord3f>(value::TimeSamples*);
-// Matrix types - now trivial with default constructors
-template bool AsciiParser::ParseTypedTimeSamples<value::matrix2f>(value::TimeSamples*);
-template bool AsciiParser::ParseTypedTimeSamples<value::matrix3f>(value::TimeSamples*);
-template bool AsciiParser::ParseTypedTimeSamples<value::matrix4f>(value::TimeSamples*);
-template bool AsciiParser::ParseTypedTimeSamples<value::matrix2d>(value::TimeSamples*);
-template bool AsciiParser::ParseTypedTimeSamples<value::matrix3d>(value::TimeSamples*);
-template bool AsciiParser::ParseTypedTimeSamples<value::matrix4d>(value::TimeSamples*);
+// Explicit template instantiations for binary-storage types.
+#define INSTANTIATE_BINARY_TIMESAMPLE_TYPE(__type) \
+  template bool AsciiParser::ParseTypedTimeSamples<__type>(value::TimeSamples*);
+
+TINYUSDZ_FOR_EACH_BINARY_TIMESAMPLE_TYPE(INSTANTIATE_BINARY_TIMESAMPLE_TYPE)
+
+#undef INSTANTIATE_BINARY_TIMESAMPLE_TYPE
+#undef TINYUSDZ_FOR_EACH_BINARY_TIMESAMPLE_TYPE
 
 }  // namespace ascii
 }  // namespace tinyusdz
