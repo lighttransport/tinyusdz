@@ -5406,10 +5406,14 @@ bool RenderSceneConverter::ConvertMesh(
             skelPath = mesh.skeleton.value().targetPathVector[0];
             hasSkelPath = true;
           } else {
-            PUSH_WARN("`skel:skeleton` has invalid definition.");
+            PUSH_ERROR_AND_RETURN(fmt::format(
+                "`skel:skeleton` has invalid definition for {}.",
+                abs_prim_path.full_path_name()));
           }
         } else {
-          PUSH_WARN("`skel:skeleton` has invalid definition.");
+          PUSH_ERROR_AND_RETURN(fmt::format(
+              "`skel:skeleton` has invalid definition for {}.",
+              abs_prim_path.full_path_name()));
         }
       }
 
@@ -11713,8 +11717,9 @@ bool RenderSceneConverter::ConvertToRenderScene(
       primName = primName.substr(lastSlash + 1);
     }
     if (!ConvertSkeletonFromPtr(env, Path(skelPathStr, ""), *skelPtr, primName, &skel)) {
-      PUSH_WARN("Failed to convert standalone skeleton: " + skelPathStr);
-      continue;
+      PushError(fmt::format("Failed to convert standalone skeleton: {}\n",
+                            skelPathStr));
+      return false;
     }
 
     _skelPathToIndex[skelPathStr] = skel_id;
@@ -12197,8 +12202,10 @@ bool RenderSceneConverter::ConvertAllSkelAnimations(const RenderSceneConverterEn
       AnimationClip anim;
 
       if (!ConvertSkelAnimation(env, animPath, *panimPtr, skeleton_id, &anim)) {
-        PUSH_WARN("Failed to convert SkelAnimation: " + animPathStr + " for skeleton " + std::to_string(skeleton_id));
-        continue;
+        PushError(fmt::format(
+            "Failed to convert SkelAnimation: {} for skeleton {}\n",
+            animPathStr, skeleton_id));
+        return false;
       }
 
       DCOUT("Converted SkelAnimation " << animPathStr << " for skeleton " << skeleton_id);
