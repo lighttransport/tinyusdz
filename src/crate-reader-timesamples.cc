@@ -570,7 +570,7 @@ add_array_sample_to_timesamples(value::TimeSamples *d, double time,
     }
 
     return d->add_sample(time, value::Value(arrval), err);
-  } else if constexpr (value::is_binary_serializable_v<T>) {
+  } else if constexpr (value::uses_binary_timesample_array_storage_v<T>) {
     if (d->is_using_binary_storage()) {
     // Check if this array valueRep has been seen before in this TimeSamples
       if (vrep) {
@@ -605,8 +605,7 @@ add_array_sample_to_timesamples(value::TimeSamples *d, double time,
   // The packed-pointer approach (add_typed_array_sample) has lifetime issues:
   // The TypedArrayImpl object may be destroyed before TimeSamples is printed,
   // leaving dangling pointers. Storing the data inline ensures it outlives TimeSamples.
-  if constexpr (value::is_binary_serializable_v<T> &&
-                !std::is_same<T, bool>::value) {
+  if constexpr (value::uses_binary_timesample_array_storage_v<T>) {
     if (d->is_using_binary_storage()) {
       // Check if this array valueRep has been seen before in this TimeSamples.
       if (vrep) {
