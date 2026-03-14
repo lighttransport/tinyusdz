@@ -1491,7 +1491,7 @@ int64_t CrateWriter::WriteValueData(const crate::CrateValue& value, std::string*
       } \
     } \
   }
-  // C. Matrices (POD struct, write as contiguous bytes)
+  // C. Matrices (binary-serializable struct, write as contiguous bytes)
 #define WRITE_MATRIX_SCALAR(Type, TypeName) \
   else if (auto* v = value.as<Type>()) { \
     if (!WriteBytes(v, sizeof(Type))) { \
@@ -2320,7 +2320,7 @@ int64_t CrateWriter::WriteValueData(const crate::CrateValue& value, std::string*
     // This ensures PackValue() writes out-of-line data AFTER our inline structure
     value_data_end_offset_ = Tell() + (num_samples * 8);  // Reserve space for ValueReps
 
-    // Get samples - this works for both POD and non-POD types
+    // Get samples - this works for both binary and generic value-backed types
     const auto& samples = timesamples_val->get_samples();
 
     if (samples.size() != num_samples) {

@@ -489,10 +489,10 @@ bool add_sample_to_timesamples(value::TimeSamples *d, double time, const T &val,
 }
 
 #if 0
-// TODO: Use pod path for array type.
+// TODO: Add a dedicated binary-storage path for generic vector samples.
 template<typename T>
 bool add_sample_to_timesamples(value::TimeSamples *d, double time, const std::vector<T>& val, std::string *err) {
-  //TUSDZ_LOG_I("arr non pod_ty: " << value::TypeTraits<T>::type_name());
+  //TUSDZ_LOG_I("arr generic_ty: " << value::TypeTraits<T>::type_name());
   return d->add_sample(time, value::Value(val), err);
 }
 #else
@@ -598,7 +598,6 @@ add_array_sample_to_timesamples(value::TimeSamples *d, double time,
 }
 
 template <typename T>
-//typename std::enable_if<is_pod_type<T>::value, bool>::type
 bool
 add_array_sample_to_timesamples(value::TimeSamples *d, double time,
                                 const TypedArray<T> &arrval, std::string *err,
@@ -606,32 +605,31 @@ add_array_sample_to_timesamples(value::TimeSamples *d, double time,
                                 const crate::ValueRep *vrep = nullptr) {
   // Store actual array data inline in TimeSamples, not packed pointers.
   // The packed-pointer approach (add_typed_array_sample) has lifetime issues:
-  // The TypedArrayImpl object may be destroyed before unified binary storage is printed,
-  // leaving dangling pointers. Storing the data inline ensures it outlives unified binary storage.
-  if (d->is_using_binary_storage()) {
-    // Check if this array valueRep has been seen before in this TimeSamples
-    if (vrep) {
-      auto key = std::make_pair(static_cast<void*>(d), vrep->GetPayload());
-      auto& dedup_map = get_timesamples_dedup_map();
-      auto it = dedup_map.find(key);
-      if (it != dedup_map.end()) {
-        // Deduplicated array - reuse offset from first occurrence
-        size_t ref_index = it->second;
-        DCOUT("Array dedup: reusing sample index " << ref_index);
-        return d->add_dedup_array_sample<T>(time, ref_index, err);
-      } else {
-        // First occurrence - store normally and remember the index
-        size_t current_index = d->size();
-        dedup_map[key] = current_index;
-        DCOUT("Array dedup: storing new sample at index " << current_index);
-        return d->add_array_sample<T>(time, arrval, err,
-                                      expected_total_samples);
+  // The TypedArrayImpl object may be destroyed before TimeSamples is printed,
+  // leaving dangling pointers. Storing the data inline ensures it outlives TimeSamples.
+  if constexpr (value::is_binary_serializable_v<T> &&
+                !std::is_same<T, bool>::value) {
+    if (d->is_using_binary_storage()) {
+      // Check if this array valueRep has been seen before in this TimeSamples.
+      if (vrep) {
+        auto key = std::make_pair(static_cast<void*>(d), vrep->GetPayload());
+        auto& dedup_map = get_timesamples_dedup_map();
+        auto it = dedup_map.find(key);
+        if (it != dedup_map.end()) {
+          size_t ref_index = it->second;
+          DCOUT("Array dedup: reusing sample index " << ref_index);
+          return d->add_dedup_array_sample<T>(time, ref_index, err);
+        } else {
+          size_t current_index = d->size();
+          dedup_map[key] = current_index;
+          DCOUT("Array dedup: storing new sample at index " << current_index);
+          return d->add_array_sample<T>(time, arrval, err,
+                                        expected_total_samples);
+        }
       }
-    } else {
-      // No ValueRep provided - store normally without dedup tracking
-      return d->add_array_sample<T>(time, arrval, err,
-                                    expected_total_samples);
     }
+
+    return d->add_array_sample<T>(time, arrval, err, expected_total_samples);
   } else {
     // Convert TypedArray to std::vector for generic Value storage.
     std::vector<T> vec(arrval.data(), arrval.data() + arrval.size());

@@ -820,8 +820,8 @@ class AsciiParser {
   bool ParseDict(std::map<std::string, MetaVariable> *out_dict);
 
   ///
-  /// Parse TimeSample data with concrete type for optimized POD storage.
-  /// This template function is optimized for POD types and uses direct
+  /// Parse TimeSample data with concrete type for optimized binary storage.
+  /// This template function is optimized for binary-serializable types and uses direct
   /// storage without value::Value wrapping for better performance.
   ///
   /// @tparam T The concrete type for time sample values
