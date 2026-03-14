@@ -13,6 +13,7 @@
 #include "prim-types.hh"
 #include "tydra/attribute-eval.hh"
 #include "tydra/layer-to-renderscene.hh"
+#include "tydra/render-data.hh"
 #include "tydra/scene-access.hh"
 #include "usdGeom.hh"
 
@@ -27,6 +28,11 @@ std::vector<Path> MakeMultiTargetConnections() {
 bool ContainsName(const std::vector<std::string> &names,
                   const std::string &name) {
   return std::find(names.begin(), names.end(), name) != names.end();
+}
+
+size_t CountName(const std::vector<std::string> &names,
+                 const std::string &name) {
+  return size_t(std::count(names.begin(), names.end(), name));
 }
 
 }  // namespace
@@ -612,5 +618,105 @@ void tydra_skel_scene_access_test(void) {
       TEST_CHECK(weights.value().size() == 1);
       TEST_CHECK(weights.value()[0] == 0.5f);
     }
+  }
+}
+
+void tydra_blendshape_resolution_test(void) {
+  std::string err;
+
+  {
+    Xform xform;
+    XformOp translate_op;
+    translate_op.op_type = XformOp::OpType::Translate;
+    translate_op.set_value(value::double3{1.0, 2.0, 3.0});
+    xform.xformOps.push_back(translate_op);
+
+    Prim prim("XformPrim", xform);
+    std::vector<std::string> prop_names;
+    TEST_CHECK(tydra::GetPropertyNames(prim, &prop_names, &err));
+    TEST_CHECK(err.empty());
+    TEST_CHECK(CountName(prop_names, "xformOp:translate") == 1);
+    TEST_CHECK(CountName(prop_names, "xformOpOrder") == 1);
+  }
+
+  {
+    Stage stage;
+
+    BlendShape shape_a;
+    shape_a.name = "ShapeA";
+    Prim shape_a_prim("ShapeA", shape_a);
+
+    BlendShape shape_b;
+    shape_b.name = "ShapeB";
+    Prim shape_b_prim("ShapeB", shape_b);
+
+    GeomMesh mesh;
+    mesh.points = Animatable<std::vector<value::point3f>>(
+        std::vector<value::point3f>{{0.0f, 0.0f, 0.0f},
+                                    {1.0f, 0.0f, 0.0f},
+                                    {0.0f, 1.0f, 0.0f}});
+    mesh.faceVertexCounts = Animatable<std::vector<int32_t>>(
+        std::vector<int32_t>{3});
+    mesh.faceVertexIndices = Animatable<std::vector<int32_t>>(
+        std::vector<int32_t>{0, 1, 2});
+    mesh.blendShapes = std::vector<value::token>{value::token("shapeA"),
+                                                 value::token("shapeB")};
+
+    Relationship targets_rel;
+    targets_rel.set(std::vector<Path>{Path("/ShapeA", ""), Path("/ShapeB", "")});
+    mesh.blendShapeTargets = targets_rel;
+
+    Prim mesh_prim("MeshPrim", mesh);
+
+    stage.add_root_prim(std::move(mesh_prim));
+    stage.add_root_prim(std::move(shape_a_prim));
+    stage.add_root_prim(std::move(shape_b_prim));
+
+    auto mesh_result = stage.GetPrimAtPath(Path("/MeshPrim", ""));
+    TEST_CHECK(mesh_result.has_value());
+    if (mesh_result) {
+      err.clear();
+      auto blendshapes = tydra::GetBlendShapes(stage, *mesh_result.value(), &err);
+      TEST_CHECK(err.empty());
+      TEST_CHECK(blendshapes.size() == 2);
+      if (blendshapes.size() == 2) {
+        TEST_CHECK(blendshapes[0].first == "shapeA");
+        TEST_CHECK(blendshapes[1].first == "shapeB");
+        TEST_CHECK(blendshapes[0].second != nullptr);
+        TEST_CHECK(blendshapes[1].second != nullptr);
+      }
+    }
+  }
+
+  {
+    Stage stage;
+
+    GeomMesh mesh;
+    mesh.points = Animatable<std::vector<value::point3f>>(
+        std::vector<value::point3f>{{0.0f, 0.0f, 0.0f},
+                                    {1.0f, 0.0f, 0.0f},
+                                    {0.0f, 1.0f, 0.0f}});
+    mesh.faceVertexCounts = Animatable<std::vector<int32_t>>(
+        std::vector<int32_t>{3});
+    mesh.faceVertexIndices = Animatable<std::vector<int32_t>>(
+        std::vector<int32_t>{0, 1, 2});
+    mesh.blendShapes = std::vector<value::token>{value::token("shapeA")};
+
+    Relationship invalid_targets_rel;
+    invalid_targets_rel.set(Path("/MissingBlendShape", ""));
+    mesh.blendShapeTargets = invalid_targets_rel;
+
+    Prim mesh_prim("MeshPrim", mesh);
+    stage.add_root_prim(std::move(mesh_prim));
+
+    tydra::RenderSceneConverterEnv env(stage);
+    tydra::RenderScene scene;
+    tydra::RenderSceneConverter converter;
+
+    TEST_CHECK(!converter.ConvertToRenderScene(env, &scene));
+    TEST_CHECK(converter.GetError().find("Failed to get BlendShapes prims") !=
+               std::string::npos);
+    TEST_CHECK(converter.GetError().find("/MissingBlendShape") !=
+               std::string::npos);
   }
 }
