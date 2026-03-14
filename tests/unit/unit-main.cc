@@ -94,6 +94,7 @@ TEST_LIST = {
   { "task_queue_clear_test", task_queue_clear_test },
   { "tydra_connection_validation_test", tydra_connection_validation_test },
   { "tydra_inplace_conversion_guard_test", tydra_inplace_conversion_guard_test },
+  { "tydra_geommesh_property_accessor_test", tydra_geommesh_property_accessor_test },
   // Temporarily disabled - unit-dedup needs API updates
   //{ "dedup_float_array_test", dedup_float_array_test },
   //{ "dedup_double_array_test", dedup_double_array_test },

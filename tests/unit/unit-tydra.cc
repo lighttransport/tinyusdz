@@ -11,6 +11,8 @@
 #include "prim-types.hh"
 #include "tydra/attribute-eval.hh"
 #include "tydra/layer-to-renderscene.hh"
+#include "tydra/scene-access.hh"
+#include "usdGeom.hh"
 
 using namespace tinyusdz;
 
@@ -147,5 +149,47 @@ void tydra_inplace_conversion_guard_test(void) {
     TEST_CHECK(!converter.ConvertPrimSpecInPlace(std::move(prim_spec), &mesh,
                                                  &warn, &err));
     TEST_CHECK(err.find("temporarily disabled") != std::string::npos);
+  }
+}
+
+void tydra_geommesh_property_accessor_test(void) {
+  GeomMesh mesh;
+  std::string err;
+  Prim prim("MeshPrim", mesh);
+
+  mesh.faceVertexCounts = Animatable<std::vector<int32_t>>(
+      std::vector<int32_t>{4, 4});
+  mesh.faceVertexIndices = Animatable<std::vector<int32_t>>(
+      std::vector<int32_t>{0, 1, 2, 3, 3, 2, 1, 0});
+  prim.set_primdata("MeshPrim", mesh);
+
+  {
+    Property prop;
+    err.clear();
+    TEST_CHECK(tydra::GetProperty(prim, "faceVertexCounts", &prop, &err));
+    TEST_CHECK(err.empty());
+    TEST_CHECK(prop.is_attribute());
+
+    const Attribute *attr = prop.get_attribute_or_null();
+    TEST_CHECK(attr != nullptr);
+    auto value = attr->get_value<std::vector<int32_t>>();
+    TEST_CHECK(value.has_value());
+    TEST_CHECK(value.value() == std::vector<int32_t>({4, 4}));
+  }
+
+  {
+    Property prop;
+    err.clear();
+    TEST_CHECK(tydra::GetProperty(prim, "faceVertexIndices", &prop, &err));
+    TEST_CHECK(err.empty());
+    TEST_CHECK(prop.is_attribute());
+
+    const Attribute *attr = prop.get_attribute_or_null();
+    TEST_CHECK(attr != nullptr);
+    auto value = attr->get_value<std::vector<int32_t>>();
+    TEST_CHECK(value.has_value());
+    TEST_CHECK(value.value() ==
+               std::vector<int32_t>({0, 1, 2, 3, 3, 2, 1, 0}));
+    TEST_CHECK(value.value() != std::vector<int32_t>({4, 4}));
   }
 }
