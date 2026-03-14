@@ -284,3 +284,119 @@ void tydra_scene_access_helper_test(void) {
     TEST_CHECK(rel.targetPath.prim_part() == "/Skeleton");
   }
 }
+
+void tydra_shader_scene_access_test(void) {
+  std::string err;
+
+  {
+    UsdPreviewSurface surface;
+    surface.diffuseColor.set_value(
+        Animatable<value::color3f>(value::color3f({0.8f, 0.2f, 0.1f})));
+    surface.outputsSurface.set_authored(true);
+
+    Shader shader;
+    shader.info_id = kUsdPreviewSurface;
+    shader.value = surface;
+
+    Prim prim("PreviewSurface", shader);
+
+    Property prop;
+    TEST_CHECK(tydra::GetProperty(prim, "info:id", &prop, &err));
+    TEST_CHECK(err.empty());
+    TEST_CHECK(prop.is_attribute());
+    {
+      const Attribute *attr = prop.get_attribute_or_null();
+      TEST_CHECK(attr != nullptr);
+      auto info_id = attr->get_value<value::token>();
+      TEST_CHECK(info_id.has_value());
+      TEST_CHECK(info_id.value().str() == kUsdPreviewSurface);
+    }
+
+    err.clear();
+    TEST_CHECK(tydra::GetProperty(prim, "inputs:diffuseColor", &prop, &err));
+    TEST_CHECK(err.empty());
+    TEST_CHECK(prop.is_attribute());
+    {
+      const Attribute *attr = prop.get_attribute_or_null();
+      TEST_CHECK(attr != nullptr);
+      auto diffuse = attr->get_value<value::color3f>();
+      TEST_CHECK(diffuse.has_value());
+      TEST_CHECK(diffuse.value()[0] == 0.8f);
+      TEST_CHECK(diffuse.value()[1] == 0.2f);
+      TEST_CHECK(diffuse.value()[2] == 0.1f);
+    }
+
+    err.clear();
+    TEST_CHECK(tydra::GetProperty(prim, "outputs:surface", &prop, &err));
+    TEST_CHECK(err.empty());
+    TEST_CHECK(prop.is_attribute());
+
+    std::vector<std::string> prop_names;
+    TEST_CHECK(tydra::GetPropertyNames(prim, &prop_names, &err));
+    TEST_CHECK(std::find(prop_names.begin(), prop_names.end(), "info:id") !=
+               prop_names.end());
+    TEST_CHECK(std::find(prop_names.begin(), prop_names.end(),
+                         "inputs:diffuseColor") != prop_names.end());
+    TEST_CHECK(std::find(prop_names.begin(), prop_names.end(),
+                         "outputs:surface") != prop_names.end());
+
+    std::vector<std::string> attr_names;
+    err.clear();
+    TEST_CHECK(tydra::GetAttributeNames(prim, &attr_names, &err));
+    TEST_CHECK(err.empty());
+    TEST_CHECK(std::find(attr_names.begin(), attr_names.end(), "info:id") !=
+               attr_names.end());
+    TEST_CHECK(std::find(attr_names.begin(), attr_names.end(),
+                         "inputs:diffuseColor") != attr_names.end());
+
+    std::vector<std::string> rel_names;
+    err.clear();
+    TEST_CHECK(tydra::GetRelationshipNames(prim, &rel_names, &err));
+    TEST_CHECK(err.empty());
+    TEST_CHECK(rel_names.empty());
+  }
+
+  {
+    UsdTransform2d tx;
+    tx.rotation.set_value(Animatable<float>(45.0f));
+    tx.result.set_authored(true);
+
+    Shader shader;
+    shader.info_id = kUsdTransform2d;
+    shader.value = tx;
+
+    Prim prim("Transform2d", shader);
+    Property prop;
+
+    err.clear();
+    TEST_CHECK(tydra::GetProperty(prim, "inputs:rotation", &prop, &err));
+    TEST_CHECK(err.empty());
+    TEST_CHECK(prop.is_attribute());
+
+    const Attribute *attr = prop.get_attribute_or_null();
+    TEST_CHECK(attr != nullptr);
+    auto rotation = attr->get_value<float>();
+    TEST_CHECK(rotation.has_value());
+    TEST_CHECK(rotation.value() == 45.0f);
+  }
+
+  {
+    Material material;
+    material.surface.set(Path("/PreviewSurface", "outputs:surface"));
+
+    Prim prim("Material", material);
+    std::vector<std::string> prop_names;
+    err.clear();
+    TEST_CHECK(tydra::GetPropertyNames(prim, &prop_names, &err));
+    TEST_CHECK(err.empty());
+    TEST_CHECK(std::find(prop_names.begin(), prop_names.end(),
+                         "outputs:surface") != prop_names.end());
+
+    std::vector<std::string> attr_names;
+    err.clear();
+    TEST_CHECK(tydra::GetAttributeNames(prim, &attr_names, &err));
+    TEST_CHECK(err.empty());
+    TEST_CHECK(std::find(attr_names.begin(), attr_names.end(),
+                         "outputs:surface") != attr_names.end());
+  }
+}
