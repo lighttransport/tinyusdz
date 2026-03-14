@@ -823,6 +823,7 @@ bool ToTokenProperty(const TypedAttributeWithFallback<Animatable<T>> &input,
 template <typename T>
 bool ToTokenProperty(const TypedAttributeWithFallback<T> &input,
                      Property &output, std::string *err) {
+  (void)err;
 
   Attribute attr;
   attr.variability() = Variability::Uniform;
@@ -837,29 +838,13 @@ bool ToTokenProperty(const TypedAttributeWithFallback<T> &input,
   }
 
   {
-    // Includes !authored()
-    // FIXME: Currently scalar only.
-    const Animatable<T> &v = input.get_value();
-
-    primvar::PrimVar pvar;
-
-    if (v.has_default()) {
-      T a;
-      if (v.get_scalar(&a)) {
-        // to token type
-        value::token tok(to_string(a));
-        value::Value val(tok);
-        pvar.set_value(val);
-      } else {
-        if (err) {
-          (*err) += "[InternalError] Invalid value.";
-        }
-        return false;
-      }
-
+    if (!input.is_value_empty()) {
+      primvar::PrimVar pvar;
+      value::token tok(to_string(input.get_value()));
+      value::Value val(tok);
+      pvar.set_value(val);
       attr.set_var(std::move(pvar));
     }
-
   }
 
   attr.metas() = input.metas();
@@ -923,6 +908,87 @@ bool XformOpToProperty(const XformOp &x, Property &prop) {
   prop = Property(attr, /* custom */ false);
 
   return true;
+}
+
+bool ToRelationshipProperty(const nonstd::optional<Relationship> &rel,
+                            Property *out_prop) {
+  if (!out_prop) {
+    return false;
+  }
+
+  if (!rel) {
+    return false;
+  }
+
+  (*out_prop) = Property(rel.value(), /* custom */ false);
+  return true;
+}
+
+bool GetXformablePropertyImpl(const Xformable &xformable,
+                              const std::map<std::string, Property> &props,
+                              const std::string &prop_name,
+                              Property *out_prop) {
+  if (!out_prop) {
+    return false;
+  }
+
+  if (prop_name == "xformOpOrder") {
+    std::vector<value::token> toks = xformable.xformOpOrder();
+    primvar::PrimVar pvar;
+    pvar.set_value(toks);
+
+    Attribute attr;
+    attr.set_var(std::move(pvar));
+    attr.variability() = Variability::Uniform;
+
+    Property prop;
+    prop.set_attribute(attr);
+    (*out_prop) = prop;
+    return true;
+  }
+
+  for (const auto &item : xformable.xformOps) {
+    std::string op_name = to_string(item.op_type);
+    if (!item.suffix.empty()) {
+      op_name += ":" + item.suffix;
+    }
+
+    if (op_name == prop_name) {
+      return XformOpToProperty(item, *out_prop);
+    }
+  }
+
+  const auto it = props.find(prop_name);
+  if (it == props.end()) {
+    return false;
+  }
+
+  (*out_prop) = it->second;
+  return true;
+}
+
+void AppendXformablePropertyNames(const Xformable &xformable,
+                                  std::vector<std::string> *prop_names) {
+  if (!prop_names) {
+    return;
+  }
+
+  for (const auto &xop : xformable.xformOps) {
+    if (xop.op_type == XformOp::OpType::ResetXformStack) {
+      continue;
+    }
+
+    std::string varname = to_string(xop.op_type);
+    if (!xop.suffix.empty()) {
+      varname += ":" + xop.suffix;
+    }
+
+    prop_names->push_back(varname);
+  }
+
+  if (!xformable.xformOps.empty()) {
+    prop_names->push_back("xformOpOrder");
+  }
 }
 
 #define TO_PROPERTY(__prop_name, __v)                                         \
@@ -992,6 +1058,18 @@ void AppendPropertyNamesFromCustomProps(const std::map<std::string, T> &props,
     } else if (attr_prop) {
       prop_names->push_back(prop.first);
     }
+  }
+}
+
+void AppendRelationshipPropertyNameIfAuthored(
+    const nonstd::optional<Relationship> &rel, const std::string &name,
+    std::vector<std::string> *prop_names) {
+  if (!prop_names) {
+    return;
+  }
+
+  if (rel) {
+    prop_names->push_back(name);
   }
 }
 
@@ -1095,41 +1173,8 @@ nonstd::expected<bool, std::string> GetPrimProperty(
         "[InternalError] nullptr in output Property is not allowed.");
   }
 
-  if (prop_name == "xformOpOrder") {
-    // To token[]
-    std::vector<value::token> toks = xform.xformOpOrder();
-    value::Value val(toks);
-    primvar::PrimVar pvar;
-    pvar.set_value(toks);
-
-    Attribute attr;
-    attr.set_var(std::move(pvar));
-    attr.variability() = Variability::Uniform;
-    Property prop;
-    prop.set_attribute(attr);
-
-    (*out_prop) = prop;
-
-  } else {
-    // XformOp?
-    for (const auto &item : xform.xformOps) {
-      std::string op_name = to_string(item.op_type);
-      if (item.suffix.size()) {
-        op_name += ":" + item.suffix;
-      }
-
-      if (op_name == prop_name) {
-        return XformOpToProperty(item, *out_prop);
-      }
-    }
-
-    const auto it = xform.props.find(prop_name);
-    if (it == xform.props.end()) {
-      // Attribute not found.
-      return false;
-    }
-
-    (*out_prop) = it->second;
+  if (!GetXformablePropertyImpl(xform, xform.props, prop_name, out_prop)) {
+    return false;
   }
 
   return true;
@@ -1538,14 +1583,27 @@ nonstd::expected<bool, std::string> GetPrimProperty(
   }
 
   DCOUT("prop_name = " << prop_name);
-  {
-    const auto it = skelroot.props.find(prop_name);
-    if (it == skelroot.props.end()) {
-      // Attribute not found.
+  std::string err;
+
+  TO_PROPERTY("extent", skelroot.extent)
+  TO_TOKEN_PROPERTY("purpose", skelroot.purpose)
+  TO_TOKEN_PROPERTY("visibility", skelroot.visibility)
+
+  if (prop_name == "proxyPrim") {
+    if (!ToRelationshipProperty(skelroot.proxyPrim, out_prop)) {
       return false;
     }
-
-    (*out_prop) = it->second;
+  } else if (prop_name == "animationSource") {
+    if (!ToRelationshipProperty(skelroot.animationSource, out_prop)) {
+      return false;
+    }
+  } else if (prop_name == "skeleton") {
+    if (!ToRelationshipProperty(skelroot.skeleton, out_prop)) {
+      return false;
+    }
+  } else if (!GetXformablePropertyImpl(skelroot, skelroot.props, prop_name,
+                                       out_prop)) {
+    return false;
   }
   DCOUT("Prop found: " << prop_name
                        << ", ty = " << out_prop->value_type_name());
@@ -1598,23 +1656,20 @@ nonstd::expected<bool, std::string> GetPrimProperty(
   TO_PROPERTY("jointNames", skel.jointNames)
   TO_PROPERTY("joints", skel.joints)
   TO_PROPERTY("restTransforms", skel.restTransforms)
+  TO_PROPERTY("extent", skel.extent)
+  TO_TOKEN_PROPERTY("purpose", skel.purpose)
+  TO_TOKEN_PROPERTY("visibility", skel.visibility)
 
-  if (prop_name == "animationSource") {
-    if (skel.animationSource) {
-      const Relationship &rel = skel.animationSource.value();
-      (*out_prop) = Property(rel, /* custom */ false);
-    } else {
-      // empty
+  if (prop_name == "proxyPrim") {
+    if (!ToRelationshipProperty(skel.proxyPrim, out_prop)) {
       return false;
     }
-  } else {
-    const auto it = skel.props.find(prop_name);
-    if (it == skel.props.end()) {
-      // Attribute not found.
+  } else if (prop_name == "animationSource") {
+    if (!ToRelationshipProperty(skel.animationSource, out_prop)) {
       return false;
     }
-
-    (*out_prop) = it->second;
+  } else if (!GetXformablePropertyImpl(skel, skel.props, prop_name, out_prop)) {
+    return false;
   }
   DCOUT("Prop found: " << prop_name
                        << ", ty = " << out_prop->value_type_name());
@@ -1876,8 +1931,8 @@ bool GetPrimPropertyNamesImpl(const Xform &xform,
     return false;
   }
 
-  if (attr_prop && !xform.xformOps.empty()) {
-    prop_names->push_back("xformOpOrder");
+  if (attr_prop) {
+    AppendXformablePropertyNames(xform, prop_names);
   }
 
   return true;
@@ -1986,6 +2041,113 @@ bool GetPrimPropertyNamesImpl(const GeomSubset &subset,
     prop_names->push_back("material:binding");
   }
 
+  return true;
+}
+
+template <>
+bool GetPrimPropertyNamesImpl(const SkelRoot &skelroot,
+                              std::vector<std::string> *prop_names,
+                              bool attr_prop, bool rel_prop) {
+  if (!prop_names) {
+    return false;
+  }
+
+  if (attr_prop) {
+    AppendPropertyNameIfAuthored(skelroot.extent, "extent", prop_names);
+    AppendPropertyNameIfAuthored(skelroot.purpose, "purpose", prop_names);
+    AppendPropertyNameIfAuthored(skelroot.visibility, "visibility",
+                                 prop_names);
+    AppendXformablePropertyNames(skelroot, prop_names);
+  }
+
+  if (rel_prop) {
+    AppendRelationshipPropertyNameIfAuthored(skelroot.proxyPrim, "proxyPrim",
+                                             prop_names);
+    AppendRelationshipPropertyNameIfAuthored(skelroot.animationSource,
+                                             "animationSource", prop_names);
+    AppendRelationshipPropertyNameIfAuthored(skelroot.skeleton, "skeleton",
+                                             prop_names);
+  }
+
+  AppendPropertyNamesFromCustomProps(skelroot.props, prop_names, attr_prop,
+                                     rel_prop);
+  return true;
+}
+
+template <>
+bool GetPrimPropertyNamesImpl(const BlendShape &blendshape,
+                              std::vector<std::string> *prop_names,
+                              bool attr_prop, bool rel_prop) {
+  if (!prop_names) {
+    return false;
+  }
+
+  if (attr_prop) {
+    AppendPropertyNameIfAuthored(blendshape.offsets, "offsets", prop_names);
+    AppendPropertyNameIfAuthored(blendshape.normalOffsets, "normalOffsets",
+                                 prop_names);
+    AppendPropertyNameIfAuthored(blendshape.pointIndices, "pointIndices",
+                                 prop_names);
+  }
+
+  AppendPropertyNamesFromCustomProps(blendshape.props, prop_names, attr_prop,
+                                     rel_prop);
+  return true;
+}
+
+template <>
+bool GetPrimPropertyNamesImpl(const Skeleton &skel,
+                              std::vector<std::string> *prop_names,
+                              bool attr_prop, bool rel_prop) {
+  if (!prop_names) {
+    return false;
+  }
+
+  if (attr_prop) {
+    AppendPropertyNameIfAuthored(skel.bindTransforms, "bindTransforms",
+                                 prop_names);
+    AppendPropertyNameIfAuthored(skel.jointNames, "jointNames", prop_names);
+    AppendPropertyNameIfAuthored(skel.joints, "joints", prop_names);
+    AppendPropertyNameIfAuthored(skel.restTransforms, "restTransforms",
+                                 prop_names);
+    AppendPropertyNameIfAuthored(skel.extent, "extent", prop_names);
+    AppendPropertyNameIfAuthored(skel.purpose, "purpose", prop_names);
+    AppendPropertyNameIfAuthored(skel.visibility, "visibility", prop_names);
+    AppendXformablePropertyNames(skel, prop_names);
+  }
+
+  if (rel_prop) {
+    AppendRelationshipPropertyNameIfAuthored(skel.proxyPrim, "proxyPrim",
+                                             prop_names);
+    AppendRelationshipPropertyNameIfAuthored(skel.animationSource,
+                                             "animationSource", prop_names);
+  }
+
+  AppendPropertyNamesFromCustomProps(skel.props, prop_names, attr_prop,
+                                     rel_prop);
+  return true;
+}
+
+template <>
+bool GetPrimPropertyNamesImpl(const SkelAnimation &anim,
+                              std::vector<std::string> *prop_names,
+                              bool attr_prop, bool rel_prop) {
+  if (!prop_names) {
+    return false;
+  }
+
+  if (attr_prop) {
+    AppendPropertyNameIfAuthored(anim.blendShapes, "blendShapes", prop_names);
+    AppendPropertyNameIfAuthored(anim.blendShapeWeights,
+                                 "blendShapeWeights", prop_names);
+    AppendPropertyNameIfAuthored(anim.joints, "joints", prop_names);
+    AppendPropertyNameIfAuthored(anim.rotations, "rotations", prop_names);
+    AppendPropertyNameIfAuthored(anim.scales, "scales", prop_names);
+    AppendPropertyNameIfAuthored(anim.translations, "translations", prop_names);
+  }
+
+  AppendPropertyNamesFromCustomProps(anim.props, prop_names, attr_prop,
+                                     rel_prop);
   return true;
 }
 
@@ -2366,10 +2528,10 @@ bool GetPropertyNames(const tinyusdz::Prim &prim,
   GET_PRIM_PROPERTY_NAMES(GeomSubset)
   GET_PRIM_PROPERTY_NAMES(Shader)
   GET_PRIM_PROPERTY_NAMES(Material)
-  // GET_PRIM_PROPERTY_NAMES(SkelRoot)
-  // GET_PRIM_PROPERTY_NAMES(BlendShape)
-  // GET_PRIM_PROPERTY_NAMES(Skeleton)
-  // GET_PRIM_PROPERTY_NAMES(SkelAnimation)
+  GET_PRIM_PROPERTY_NAMES(SkelRoot)
+  GET_PRIM_PROPERTY_NAMES(BlendShape)
+  GET_PRIM_PROPERTY_NAMES(Skeleton)
+  GET_PRIM_PROPERTY_NAMES(SkelAnimation)
   {
     PUSH_ERROR_AND_RETURN("TODO: Prim type " << prim.type_name());
   }
@@ -2399,7 +2561,11 @@ bool GetAttributeNames(const tinyusdz::Prim &prim,
   GET_PRIM_ATTRIBUTE_NAMES(GeomMesh)
   GET_PRIM_ATTRIBUTE_NAMES(GeomSubset)
   GET_PRIM_ATTRIBUTE_NAMES(Shader)
-  GET_PRIM_ATTRIBUTE_NAMES(Material) {
+  GET_PRIM_ATTRIBUTE_NAMES(Material)
+  GET_PRIM_ATTRIBUTE_NAMES(SkelRoot)
+  GET_PRIM_ATTRIBUTE_NAMES(BlendShape)
+  GET_PRIM_ATTRIBUTE_NAMES(Skeleton)
+  GET_PRIM_ATTRIBUTE_NAMES(SkelAnimation) {
     PUSH_ERROR_AND_RETURN("TODO: Prim type " << prim.type_name());
   }
 
@@ -2429,10 +2595,10 @@ bool GetRelationshipNames(const tinyusdz::Prim &prim,
   GET_PRIM_RELATIONSHIP_NAMES(GeomSubset)
   GET_PRIM_RELATIONSHIP_NAMES(Shader)
   GET_PRIM_RELATIONSHIP_NAMES(Material)
-  // GET_PRIM_RELATIONSHIP_NAMES(SkelRoot)
-  // GET_PRIM_RELATIONSHIP_NAMES(BlendShape)
-  // GET_PRIM_RELATIONSHIP_NAMES(Skeleton)
-  // GET_PRIM_RELATIONSHIP_NAMES(SkelAnimation)
+  GET_PRIM_RELATIONSHIP_NAMES(SkelRoot)
+  GET_PRIM_RELATIONSHIP_NAMES(BlendShape)
+  GET_PRIM_RELATIONSHIP_NAMES(Skeleton)
+  GET_PRIM_RELATIONSHIP_NAMES(SkelAnimation)
   {
     PUSH_ERROR_AND_RETURN("TODO: Prim type " << prim.type_name());
   }
