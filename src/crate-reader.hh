@@ -565,6 +565,17 @@ class CrateReader {
   // Read 64bit uint with range check
   bool ReadNum(uint64_t &n, uint64_t maxnum);
 
+  template <typename T>
+  bool ReadTimeSampleScalarValue(T *value, size_t nbytes,
+                                 const char *read_error) {
+    MEMORY_BUDGET_CHECK(memory_manager_, nbytes, "[Crate]");
+    if (!_sr->read(nbytes, nbytes, reinterpret_cast<uint8_t *>(value))) {
+      PushError(std::string(__func__) + "(): " + read_error);
+      return false;
+    }
+    return true;
+  }
+
   // Header(bootstrap)
   uint8_t _version[3] = {0, 0, 0};
 
