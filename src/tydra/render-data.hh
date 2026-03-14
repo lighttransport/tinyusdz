@@ -3174,6 +3174,7 @@ class RenderSceneConverter {
     bool found{false};
     Path materialPath;
     const Material *material{nullptr};
+    std::string error;
   };
   std::unordered_map<std::string, MaterialBindingCacheEntry> _materialBindingCache;
 
