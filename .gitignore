@@ -370,3 +370,6 @@ aousd/OpenUSD/
 aousd/dist*/
 .env
 .mcp.json
+
+# js assets
+web/js/assets/
