@@ -687,44 +687,25 @@ bool CrateReader::UnpackTimeSampleValue_BOOL(double t,
     if (rep.GetPayload() == 0) {  // empty array
       std::vector<bool> v_bool;  // empty bool array
       if (!add_array_sample_to_timesamples<bool>(&dst, t, v_bool, &_err,
-                                                    expected_total_samples)) {
+                                                 expected_total_samples)) {
         PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add sample to TimeSamples.");
       }
       return true;
     }
 
-    // Check deduplication cache for bool array
-    auto it = _dedup_array_cache.find(rep);
-    if (it != _dedup_array_cache.end()) {
-      // Reuse cached array via ref_index
-      size_t ref_index = it->second;
-      DCOUT("Reusing cached BOOL array at sample index " << ref_index);
+    if (!ReadArray(&v_uint8)) {
+      PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read bool array.");
+    }
 
-      if (!dst.add_dedup_sample(t, ref_index, &_err)) {
-        PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add dedup sample to TimeSamples.");
-      }
-    } else {
-      // First occurrence - read and cache array
-      if (!ReadArray(&v_uint8)) {
-        PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read bool array.");
-      }
+    std::vector<bool> v_bool;
+    v_bool.reserve(v_uint8.size());
+    for (uint8_t val : v_uint8) {
+      v_bool.push_back(val != 0);
+    }
 
-      // Convert uint8_t array to bool array
-      std::vector<bool> v_bool;
-      v_bool.reserve(v_uint8.size());
-      for (uint8_t val : v_uint8) {
-        v_bool.push_back(val != 0);
-      }
-
-      // Store current index before adding
-      size_t current_index = dst.size();
-      _dedup_array_cache[rep] = current_index;
-      DCOUT("Caching BOOL array at sample index " << current_index);
-
-      // Bool arrays stay on the generic Value path even in unified TimeSamples.
-      if (!dst.add_sample(t, value::Value(std::move(v_bool)), &_err)) {
-        PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add sample to TimeSamples.");
-      }
+    if (!add_array_sample_to_timesamples<bool>(&dst, t, v_bool, &_err,
+                                               expected_total_samples, &rep)) {
+      PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add sample to TimeSamples.");
     }
 
   } else {
@@ -785,40 +766,20 @@ bool CrateReader::UnpackTimeSampleValue_INT32(double t,
       return true;
     }
 
-    // Check if this array ValueRep has been seen before in this TimeSamples
-    auto key = std::make_pair(static_cast<void*>(&dst), rep.GetPayload());
-    auto& dedup_map = get_timesamples_dedup_map();
-    auto it = dedup_map.find(key);
+    if (!ReadIntArrayTyped(rep.IsCompressed(), &v)) {
+      PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read Int array.");
+    }
 
-    if (it != dedup_map.end()) {
-      // Deduplicated array - reuse value from first occurrence (no copy)
-      size_t ref_index = it->second;
-      DCOUT("INT32 array dedup: reusing sample index " << ref_index << " for ValueRep payload " << rep.GetPayload());
+    if (v.empty()) {
+      PUSH_ERROR_AND_RETURN_TAG(kTag, "Empty int array.");
+      return false;
+    }
 
-      if (!dst.add_dedup_sample(t, ref_index, &_err)) {
-        PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add dedup sample to TimeSamples.");
-      }
-    } else {
-      // First occurrence - read data, store as original and remember the index
-      if (!ReadIntArrayTyped(rep.IsCompressed(), &v)) {
-        PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read Int array.");
-      }
+    DCOUT("timeSamples.INT32 " << value::print_array_snipped(v));
 
-      if (v.empty()) {
-        PUSH_ERROR_AND_RETURN_TAG(kTag, "Empty int array.");
-        return false;
-      }
-
-      DCOUT("timeSamples.INT32 " << value::print_array_snipped(v));
-
-      size_t current_index = dst.size();
-      dedup_map[key] = current_index;
-
-      // Use value::Value array storage with dedup support (move, no copy)
-      std::vector<int32_t> vec(v.data(), v.data() + v.size());
-      if (!dst.add_value_array_sample(t, value::Value(std::move(vec)), &_err)) {
-        PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add sample to TimeSamples.");
-      }
+    if (!add_array_sample_to_timesamples<int32_t>(
+            &dst, t, v, &_err, expected_total_samples, &rep)) {
+      PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add sample to TimeSamples.");
     }
 
   } else {
@@ -881,37 +842,21 @@ bool CrateReader::UnpackTimeSampleValue_HALF(double t,
       return true;
     }
 
-    // Check deduplication cache for array
-    auto it = _dedup_array_cache.find(rep);
-    if (it != _dedup_array_cache.end()) {
-      // Deduplicated array - reuse value from first occurrence (no copy)
-      size_t ref_index = it->second;
-      DCOUT("Reusing cached HALF array at sample index " << ref_index);
+    std::vector<value::half> temp_v;
+    if (!ReadHalfArray(rep.IsCompressed(), &temp_v)) {
+      PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read half array.");
+    }
 
-      if (!dst.add_dedup_sample(t, ref_index, &_err)) {
-        PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add dedup sample to TimeSamples.");
-      }
-    } else {
-      // Read and cache array
-      std::vector<value::half> temp_v;
-      if (!ReadHalfArray(rep.IsCompressed(), &temp_v)) {
-        PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read half array.");
-      }
+    DCOUT("timeSamples.HALF " << value::print_array_snipped(temp_v));
 
-      DCOUT("timeSamples.HALF " << value::print_array_snipped(temp_v));
+    if (temp_v.empty()) {
+      PUSH_ERROR_AND_RETURN_TAG(kTag, "Empty half array.");
+      return false;
+    }
 
-      if (temp_v.empty()) {
-        PUSH_ERROR_AND_RETURN_TAG(kTag, "Empty half array.");
-        return false;
-      }
-
-      size_t current_index = dst.size();
-      _dedup_array_cache[rep] = current_index;
-
-      // Use value::Value array storage with dedup support (move, no copy)
-      if (!dst.add_value_array_sample(t, value::Value(std::move(temp_v)), &_err)) {
-        PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add sample to TimeSamples.");
-      }
+    if (!add_array_sample_to_timesamples<value::half>(
+            &dst, t, temp_v, &_err, expected_total_samples, &rep)) {
+      PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add sample to TimeSamples.");
     }
 
   } else {
@@ -986,31 +931,15 @@ bool CrateReader::UnpackTimeSampleValue_HALF2(double t,
       return true;
     }
 
-    // Check deduplication cache for array
-    auto it = _dedup_array_cache.find(rep);
-    if (it != _dedup_array_cache.end()) {
-      // Deduplicated array - reuse value from first occurrence (no copy)
-      size_t ref_index = it->second;
-      DCOUT("Reusing cached HALF2 array at sample index " << ref_index);
+    if (!ReadArray(&v)) {
+      PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read vec2 array.");
+    }
 
-      if (!dst.add_dedup_sample(t, ref_index, &_err)) {
-        PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add dedup sample to TimeSamples.");
-      }
-    } else {
-      // Read and cache array
-      if (!ReadArray(&v)) {
-        PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read vec2 array.");
-      }
+    DCOUT("timeSamples.VEC2H " << value::print_array_snipped(v));
 
-      DCOUT("timeSamples.VEC2H " << value::print_array_snipped(v));
-
-      size_t current_index = dst.size();
-      _dedup_array_cache[rep] = current_index;
-
-      // Use value::Value array storage with dedup support (move, no copy)
-      if (!dst.add_value_array_sample(t, value::Value(std::move(v)), &_err)) {
-        PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add sample to TimeSamples.");
-      }
+    if (!add_array_sample_to_timesamples<value::half2>(
+            &dst, t, v, &_err, expected_total_samples, &rep)) {
+      PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add sample to TimeSamples.");
     }
 
   } else {
@@ -1101,30 +1030,14 @@ bool CrateReader::UnpackTimeSampleValue_HALF3(double t,
       return true;
     }
 
-    // Check deduplication cache for array
-    auto it = _dedup_array_cache.find(rep);
-    if (it != _dedup_array_cache.end()) {
-      // Deduplicated array - reuse value from first occurrence (no copy)
-      size_t ref_index = it->second;
-      DCOUT("Reusing cached HALF3 array at sample index " << ref_index);
+    if (!ReadArray(&v)) {
+      PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read vec3 array.");
+    }
+    DCOUT("timeSamples.VEC3H " << value::print_array_snipped(v));
 
-      if (!dst.add_dedup_sample(t, ref_index, &_err)) {
-        PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add dedup sample to TimeSamples.");
-      }
-    } else {
-      // Read and cache array
-      if (!ReadArray(&v)) {
-        PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read vec3 array.");
-      }
-      DCOUT("timeSamples.VEC3H " << value::print_array_snipped(v));
-
-      size_t current_index = dst.size();
-      _dedup_array_cache[rep] = current_index;
-
-      // Use value::Value array storage with dedup support (move, no copy)
-      if (!dst.add_value_array_sample(t, value::Value(std::move(v)), &_err)) {
-        PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add sample to TimeSamples.");
-      }
+    if (!add_array_sample_to_timesamples<value::half3>(
+            &dst, t, v, &_err, expected_total_samples, &rep)) {
+      PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add sample to TimeSamples.");
     }
 
   } else {
@@ -1218,30 +1131,14 @@ bool CrateReader::UnpackTimeSampleValue_HALF4(double t,
       return true;
     }
 
-    // Check deduplication cache for array
-    auto it = _dedup_array_cache.find(rep);
-    if (it != _dedup_array_cache.end()) {
-      // Deduplicated array - reuse value from first occurrence (no copy)
-      size_t ref_index = it->second;
-      DCOUT("Reusing cached HALF4 array at sample index " << ref_index);
+    if (!ReadArray(&v)) {
+      PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read vec4 array.");
+    }
+    DCOUT("timeSamples.VEC4H " << value::print_array_snipped(v));
 
-      if (!dst.add_dedup_sample(t, ref_index, &_err)) {
-        PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add dedup sample to TimeSamples.");
-      }
-    } else {
-      // Read and cache array
-      if (!ReadArray(&v)) {
-        PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read vec4 array.");
-      }
-      DCOUT("timeSamples.VEC4H " << value::print_array_snipped(v));
-
-      size_t current_index = dst.size();
-      _dedup_array_cache[rep] = current_index;
-
-      // Use value::Value array storage with dedup support (move, no copy)
-      if (!dst.add_value_array_sample(t, value::Value(std::move(v)), &_err)) {
-        PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add sample to TimeSamples.");
-      }
+    if (!add_array_sample_to_timesamples<value::half4>(
+            &dst, t, v, &_err, expected_total_samples, &rep)) {
+      PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add sample to TimeSamples.");
     }
 
   } else {
@@ -1321,35 +1218,15 @@ bool CrateReader::UnpackTimeSampleValue_FLOAT(double t,
       return true;
     }
 
-    // Check if this array ValueRep has been seen before in this TimeSamples
-    auto key = std::make_pair(static_cast<void*>(&dst), rep.GetPayload());
-    auto& dedup_map = get_timesamples_dedup_map();
-    auto it = dedup_map.find(key);
+    if (!ReadFloatArrayTyped(rep.IsCompressed(), &v)) {
+      PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read Float array.");
+    }
 
-    if (it != dedup_map.end()) {
-      // Deduplicated array - reuse value from first occurrence (no copy)
-      size_t ref_index = it->second;
-      DCOUT("FLOAT array dedup: reusing sample index " << ref_index << " for ValueRep payload " << rep.GetPayload());
+    DCOUT("timeSamples.FLOAT " << value::print_array_snipped(v));
 
-      if (!dst.add_dedup_sample(t, ref_index, &_err)) {
-        PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add dedup sample to TimeSamples.");
-      }
-    } else {
-      // First occurrence - read data, store as original and remember the index
-      if (!ReadFloatArrayTyped(rep.IsCompressed(), &v)) {
-        PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read Float array.");
-      }
-
-      DCOUT("timeSamples.FLOAT " << value::print_array_snipped(v));
-
-      size_t current_index = dst.size();
-      dedup_map[key] = current_index;
-
-      // Use value::Value array storage with dedup support (move, no copy)
-      std::vector<float> vec(v.data(), v.data() + v.size());
-      if (!dst.add_value_array_sample(t, value::Value(std::move(vec)), &_err)) {
-        PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add sample to TimeSamples.");
-      }
+    if (!add_array_sample_to_timesamples<float>(
+            &dst, t, v, &_err, expected_total_samples, &rep)) {
+      PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add sample to TimeSamples.");
     }
 
   } else {
@@ -1443,35 +1320,15 @@ bool CrateReader::UnpackTimeSampleValue_FLOAT2(double t,
       return true;
     }
 
-    // Check if this array ValueRep has been seen before in this TimeSamples
-    auto key = std::make_pair(static_cast<void*>(&dst), rep.GetPayload());
-    auto& dedup_map = get_timesamples_dedup_map();
-    auto it = dedup_map.find(key);
+    if (!ReadFloat2ArrayTyped(&v)) {
+      PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read vec2 array.");
+    }
 
-    if (it != dedup_map.end()) {
-      // Deduplicated array - reuse value from first occurrence (no copy)
-      size_t ref_index = it->second;
-      DCOUT("FLOAT2 array dedup: reusing sample index " << ref_index << " for ValueRep payload " << rep.GetPayload());
+    DCOUT("timeSamples.FLOAT2 " << value::print_array_snipped(v));
 
-      if (!dst.add_dedup_sample(t, ref_index, &_err)) {
-        PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add dedup sample to TimeSamples.");
-      }
-    } else {
-      // First occurrence - read data, store as original and remember the index
-      if (!ReadFloat2ArrayTyped(&v)) {
-        PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read vec2 array.");
-      }
-
-      DCOUT("timeSamples.FLOAT2 " << value::print_array_snipped(v));
-
-      size_t current_index = dst.size();
-      dedup_map[key] = current_index;
-
-      // Use value::Value array storage with dedup support (move, no copy)
-      std::vector<value::float2> vec(v.data(), v.data() + v.size());
-      if (!dst.add_value_array_sample(t, value::Value(std::move(vec)), &_err)) {
-        PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add sample to TimeSamples.");
-      }
+    if (!add_array_sample_to_timesamples<value::float2>(
+            &dst, t, v, &_err, expected_total_samples, &rep)) {
+      PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add sample to TimeSamples.");
     }
 
   } else {
@@ -1539,31 +1396,15 @@ bool CrateReader::UnpackTimeSampleValue_QUATF(double t,
       return true;
     }
 
-    // Check deduplication cache for array
-    auto it = _dedup_array_cache.find(rep);
-    if (it != _dedup_array_cache.end()) {
-      // Deduplicated array - reuse value from first occurrence (no copy)
-      size_t ref_index = it->second;
-      DCOUT("Reusing cached QUATF array at sample index " << ref_index);
+    if (!ReadArray(&v)) {
+      PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read quatf array.");
+    }
 
-      if (!dst.add_dedup_sample(t, ref_index, &_err)) {
-        PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add dedup sample to TimeSamples.");
-      }
-    } else {
-      // Read and cache array
-      if (!ReadArray(&v)) {
-        PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read quatf array.");
-      }
+    DCOUT("timeSamples.QUATF " << value::print_array_snipped(v));
 
-      DCOUT("timeSamples.QUATF " << value::print_array_snipped(v));
-
-      size_t current_index = dst.size();
-      _dedup_array_cache[rep] = current_index;
-
-      // Use value::Value array storage with dedup support (move, no copy)
-      if (!dst.add_value_array_sample(t, value::Value(std::move(v)), &_err)) {
-        PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add sample to TimeSamples.");
-      }
+    if (!add_array_sample_to_timesamples<value::quatf>(
+            &dst, t, v, &_err, expected_total_samples, &rep)) {
+      PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add sample to TimeSamples.");
     }
 
   } else {
@@ -1915,31 +1756,15 @@ bool CrateReader::UnpackTimeSampleValue_FLOAT3(double t,
       return true;
     }
 
-    // Check deduplication cache for array
-    auto it = _dedup_array_cache.find(rep);
-    if (it != _dedup_array_cache.end()) {
-      // Deduplicated array - reuse value from first occurrence (no copy)
-      size_t ref_index = it->second;
-      DCOUT("Reusing cached FLOAT3 array at sample index " << ref_index);
+    if (!ReadArray(&v)) {
+      PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read float3 array.");
+    }
 
-      if (!dst.add_dedup_sample(t, ref_index, &_err)) {
-        PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add dedup sample to TimeSamples.");
-      }
-    } else {
-      // Read and cache array
-      if (!ReadArray(&v)) {
-        PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read float3 array.");
-      }
+    DCOUT("timeSamples.FLOAT3 " << value::print_array_snipped(v));
 
-      DCOUT("timeSamples.FLOAT3 " << value::print_array_snipped(v));
-
-      size_t current_index = dst.size();
-      _dedup_array_cache[rep] = current_index;
-
-      // Use value::Value array storage with dedup support (move, no copy)
-      if (!dst.add_value_array_sample(t, value::Value(std::move(v)), &_err)) {
-        PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add sample to TimeSamples.");
-      }
+    if (!add_array_sample_to_timesamples<value::float3>(
+            &dst, t, v, &_err, expected_total_samples, &rep)) {
+      PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add sample to TimeSamples.");
     }
   } else {
     if (rep.IsCompressed()) {
@@ -2028,31 +1853,15 @@ bool CrateReader::UnpackTimeSampleValue_FLOAT4(double t,
       return true;
     }
 
-    // Check deduplication cache for array
-    auto it = _dedup_array_cache.find(rep);
-    if (it != _dedup_array_cache.end()) {
-      // Deduplicated array - reuse value from first occurrence (no copy)
-      size_t ref_index = it->second;
-      DCOUT("Reusing cached FLOAT4 array at sample index " << ref_index);
+    if (!ReadArray(&v)) {
+      PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read float4 array.");
+    }
 
-      if (!dst.add_dedup_sample(t, ref_index, &_err)) {
-        PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add dedup sample to TimeSamples.");
-      }
-    } else {
-      // Read and cache array
-      if (!ReadArray(&v)) {
-        PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read float4 array.");
-      }
+    DCOUT("timeSamples.FLOAT4 " << value::print_array_snipped(v));
 
-      DCOUT("timeSamples.FLOAT4 " << value::print_array_snipped(v));
-
-      size_t current_index = dst.size();
-      _dedup_array_cache[rep] = current_index;
-
-      // Use value::Value array storage with dedup support (move, no copy)
-      if (!dst.add_value_array_sample(t, value::Value(std::move(v)), &_err)) {
-        PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add sample to TimeSamples.");
-      }
+    if (!add_array_sample_to_timesamples<value::float4>(
+            &dst, t, v, &_err, expected_total_samples, &rep)) {
+      PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add sample to TimeSamples.");
     }
   } else {
     if (rep.IsCompressed()) {
@@ -2137,29 +1946,13 @@ bool CrateReader::UnpackTimeSampleValue_DOUBLE2(double t,
       return true;
     }
 
-    // Check deduplication cache for array
-    auto it = _dedup_array_cache.find(rep);
-    if (it != _dedup_array_cache.end()) {
-      // Deduplicated array - reuse value from first occurrence (no copy)
-      size_t ref_index = it->second;
-      DCOUT("Reusing cached DOUBLE2 array at sample index " << ref_index);
+    if (!ReadArray(&v)) {
+      PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read double2 array.");
+    }
 
-      if (!dst.add_dedup_sample(t, ref_index, &_err)) {
-        PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add dedup sample to TimeSamples.");
-      }
-    } else {
-      // Read and cache array
-      if (!ReadArray(&v)) {
-        PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read double2 array.");
-      }
-
-      size_t current_index = dst.size();
-      _dedup_array_cache[rep] = current_index;
-
-      // Use value::Value array storage with dedup support (move, no copy)
-      if (!dst.add_value_array_sample(t, value::Value(std::move(v)), &_err)) {
-        PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add sample to TimeSamples.");
-      }
+    if (!add_array_sample_to_timesamples<value::double2>(
+            &dst, t, v, &_err, expected_total_samples, &rep)) {
+      PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add sample to TimeSamples.");
     }
   } else {
     if (rep.IsCompressed()) {
@@ -2245,29 +2038,13 @@ bool CrateReader::UnpackTimeSampleValue_DOUBLE3(double t,
       return true;
     }
 
-    // Check deduplication cache for array
-    auto it = _dedup_array_cache.find(rep);
-    if (it != _dedup_array_cache.end()) {
-      // Deduplicated array - reuse value from first occurrence (no copy)
-      size_t ref_index = it->second;
-      DCOUT("Reusing cached DOUBLE3 array at sample index " << ref_index);
+    if (!ReadArray(&v)) {
+      PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read double3 array.");
+    }
 
-      if (!dst.add_dedup_sample(t, ref_index, &_err)) {
-        PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add dedup sample to TimeSamples.");
-      }
-    } else {
-      // Read and cache array
-      if (!ReadArray(&v)) {
-        PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read double3 array.");
-      }
-
-      size_t current_index = dst.size();
-      _dedup_array_cache[rep] = current_index;
-
-      // Use value::Value array storage with dedup support (move, no copy)
-      if (!dst.add_value_array_sample(t, value::Value(std::move(v)), &_err)) {
-        PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add sample to TimeSamples.");
-      }
+    if (!add_array_sample_to_timesamples<value::double3>(
+            &dst, t, v, &_err, expected_total_samples, &rep)) {
+      PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add sample to TimeSamples.");
     }
   } else {
     if (rep.IsCompressed()) {
@@ -2354,29 +2131,13 @@ bool CrateReader::UnpackTimeSampleValue_DOUBLE4(double t,
       return true;
     }
 
-    // Check deduplication cache for array
-    auto it = _dedup_array_cache.find(rep);
-    if (it != _dedup_array_cache.end()) {
-      // Deduplicated array - reuse value from first occurrence (no copy)
-      size_t ref_index = it->second;
-      DCOUT("Reusing cached DOUBLE4 array at sample index " << ref_index);
+    if (!ReadArray(&v)) {
+      PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read double4 array.");
+    }
 
-      if (!dst.add_dedup_sample(t, ref_index, &_err)) {
-        PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add dedup sample to TimeSamples.");
-      }
-    } else {
-      // Read and cache array
-      if (!ReadArray(&v)) {
-        PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read double4 array.");
-      }
-
-      size_t current_index = dst.size();
-      _dedup_array_cache[rep] = current_index;
-
-      // Use value::Value array storage with dedup support (move, no copy)
-      if (!dst.add_value_array_sample(t, value::Value(std::move(v)), &_err)) {
-        PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add sample to TimeSamples.");
-      }
+    if (!add_array_sample_to_timesamples<value::double4>(
+            &dst, t, v, &_err, expected_total_samples, &rep)) {
+      PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add sample to TimeSamples.");
     }
   } else {
     if (rep.IsCompressed()) {
@@ -2443,31 +2204,15 @@ bool CrateReader::UnpackTimeSampleValue_QUATH(double t,
       return true;
     }
 
-    // Check deduplication cache for array
-    auto it = _dedup_array_cache.find(rep);
-    if (it != _dedup_array_cache.end()) {
-      // Deduplicated array - reuse value from first occurrence (no copy)
-      size_t ref_index = it->second;
-      DCOUT("Reusing cached QUATH array at sample index " << ref_index);
+    if (!ReadArray(&v)) {
+      PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read quath array.");
+    }
 
-      if (!dst.add_dedup_sample(t, ref_index, &_err)) {
-        PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add dedup sample to TimeSamples.");
-      }
-    } else {
-      // Read and cache array
-      if (!ReadArray(&v)) {
-        PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read quath array.");
-      }
+    DCOUT("timeSamples.QUATH " << value::print_array_snipped(v));
 
-      DCOUT("timeSamples.QUATH " << value::print_array_snipped(v));
-
-      size_t current_index = dst.size();
-      _dedup_array_cache[rep] = current_index;
-
-      // Use value::Value array storage with dedup support (move, no copy)
-      if (!dst.add_value_array_sample(t, value::Value(std::move(v)), &_err)) {
-        PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add sample to TimeSamples.");
-      }
+    if (!add_array_sample_to_timesamples<value::quath>(
+            &dst, t, v, &_err, expected_total_samples, &rep)) {
+      PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add sample to TimeSamples.");
     }
   } else {
     // Scalar (non-inlined, non-array) quath value
@@ -2534,31 +2279,15 @@ bool CrateReader::UnpackTimeSampleValue_QUATD(double t,
       return true;
     }
 
-    // Check deduplication cache for array
-    auto it = _dedup_array_cache.find(rep);
-    if (it != _dedup_array_cache.end()) {
-      // Deduplicated array - reuse value from first occurrence (no copy)
-      size_t ref_index = it->second;
-      DCOUT("Reusing cached QUATD array at sample index " << ref_index);
+    if (!ReadArray(&v)) {
+      PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read quatd array.");
+    }
 
-      if (!dst.add_dedup_sample(t, ref_index, &_err)) {
-        PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add dedup sample to TimeSamples.");
-      }
-    } else {
-      // Read and cache array
-      if (!ReadArray(&v)) {
-        PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read quatd array.");
-      }
+    DCOUT("timeSamples.QUATD " << value::print_array_snipped(v));
 
-      DCOUT("timeSamples.QUATD " << value::print_array_snipped(v));
-
-      size_t current_index = dst.size();
-      _dedup_array_cache[rep] = current_index;
-
-      // Use value::Value array storage with dedup support (move, no copy)
-      if (!dst.add_value_array_sample(t, value::Value(std::move(v)), &_err)) {
-        PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add sample to TimeSamples.");
-      }
+    if (!add_array_sample_to_timesamples<value::quatd>(
+            &dst, t, v, &_err, expected_total_samples, &rep)) {
+      PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add sample to TimeSamples.");
     }
   } else {
     // Scalar (non-inlined, non-array) quatd value
@@ -2841,32 +2570,15 @@ bool CrateReader::UnpackTimeSampleValue_UINT32(double t,
       return true;
     }
 
-    // Check deduplication cache for array
-    auto it = _dedup_array_cache.find(rep);
-    if (it != _dedup_array_cache.end()) {
-      // Deduplicated array - reuse value from first occurrence (no copy)
-      size_t ref_index = it->second;
-      DCOUT("Reusing cached UINT32 array at sample index " << ref_index);
+    if (!ReadIntArrayTyped(rep.IsCompressed(), &v)) {
+      PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read uint32 array.");
+    }
 
-      if (!dst.add_dedup_sample(t, ref_index, &_err)) {
-        PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add dedup sample to TimeSamples.");
-      }
-    } else {
-      // Read and cache array
-      if (!ReadIntArrayTyped(rep.IsCompressed(), &v)) {
-        PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read uint32 array.");
-      }
+    DCOUT("timeSamples.UINT32 " << value::print_array_snipped(v));
 
-      DCOUT("timeSamples.UINT32 " << value::print_array_snipped(v));
-
-      size_t current_index = dst.size();
-      _dedup_array_cache[rep] = current_index;
-
-      // Use value::Value array storage with dedup support (move, no copy)
-      std::vector<uint32_t> vec(v.data(), v.data() + v.size());
-      if (!dst.add_value_array_sample(t, value::Value(std::move(vec)), &_err)) {
-        PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add sample to TimeSamples.");
-      }
+    if (!add_array_sample_to_timesamples<uint32_t>(
+            &dst, t, v, &_err, expected_total_samples, &rep)) {
+      PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add sample to TimeSamples.");
     }
   } else {
     PUSH_ERROR_AND_RETURN_TAG(kTag, "Non-array value for uint32 is invalid.");
@@ -2926,32 +2638,15 @@ bool CrateReader::UnpackTimeSampleValue_INT64(double t,
       return true;
     }
 
-    // Check deduplication cache for array
-    auto it = _dedup_array_cache.find(rep);
-    if (it != _dedup_array_cache.end()) {
-      // Deduplicated array - reuse value from first occurrence (no copy)
-      size_t ref_index = it->second;
-      DCOUT("Reusing cached INT64 array at sample index " << ref_index);
+    if (!ReadIntArrayTyped(rep.IsCompressed(), &v)) {
+      PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read int64 array.");
+    }
 
-      if (!dst.add_dedup_sample(t, ref_index, &_err)) {
-        PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add dedup sample to TimeSamples.");
-      }
-    } else {
-      // Read and cache array
-      if (!ReadIntArrayTyped(rep.IsCompressed(), &v)) {
-        PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read int64 array.");
-      }
+    DCOUT("timeSamples.INT64 " << value::print_array_snipped(v));
 
-      DCOUT("timeSamples.INT64 " << value::print_array_snipped(v));
-
-      size_t current_index = dst.size();
-      _dedup_array_cache[rep] = current_index;
-
-      // Use value::Value array storage with dedup support (move, no copy)
-      std::vector<int64_t> vec(v.data(), v.data() + v.size());
-      if (!dst.add_value_array_sample(t, value::Value(std::move(vec)), &_err)) {
-        PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add sample to TimeSamples.");
-      }
+    if (!add_array_sample_to_timesamples<int64_t>(
+            &dst, t, v, &_err, expected_total_samples, &rep)) {
+      PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add sample to TimeSamples.");
     }
   } else {
     // Scalar (non-inlined, non-array) int64 value
@@ -3029,32 +2724,15 @@ bool CrateReader::UnpackTimeSampleValue_UINT64(double t,
       return true;
     }
 
-    // Check deduplication cache for array
-    auto it = _dedup_array_cache.find(rep);
-    if (it != _dedup_array_cache.end()) {
-      // Deduplicated array - reuse value from first occurrence (no copy)
-      size_t ref_index = it->second;
-      DCOUT("Reusing cached UINT64 array at sample index " << ref_index);
+    if (!ReadIntArrayTyped(rep.IsCompressed(), &v)) {
+      PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read uint64 array.");
+    }
 
-      if (!dst.add_dedup_sample(t, ref_index, &_err)) {
-        PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add dedup sample to TimeSamples.");
-      }
-    } else {
-      // Read and cache array
-      if (!ReadIntArrayTyped(rep.IsCompressed(), &v)) {
-        PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read uint64 array.");
-      }
+    DCOUT("timeSamples.UINT64 " << value::print_array_snipped(v));
 
-      DCOUT("timeSamples.UINT64 " << value::print_array_snipped(v));
-
-      size_t current_index = dst.size();
-      _dedup_array_cache[rep] = current_index;
-
-      // Use value::Value array storage with dedup support (move, no copy)
-      std::vector<uint64_t> vec(v.data(), v.data() + v.size());
-      if (!dst.add_value_array_sample(t, value::Value(std::move(vec)), &_err)) {
-        PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add sample to TimeSamples.");
-      }
+    if (!add_array_sample_to_timesamples<uint64_t>(
+            &dst, t, v, &_err, expected_total_samples, &rep)) {
+      PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add sample to TimeSamples.");
     }
   } else {
     // Scalar (non-inlined, non-array) uint64 value
@@ -3134,37 +2812,20 @@ bool CrateReader::UnpackTimeSampleValue_DOUBLE(double t,
       return true;
     }
 
-    // Check deduplication cache for array
-    auto it = _dedup_array_cache.find(rep);
-    if (it != _dedup_array_cache.end()) {
-      // Deduplicated array - reuse value from first occurrence (no copy)
-      size_t ref_index = it->second;
-      DCOUT("Reusing cached DOUBLE array at sample index " << ref_index);
+    if (!ReadDoubleArrayTyped(rep.IsCompressed(), &v)) {
+      PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read double array.");
+    }
 
-      if (!dst.add_dedup_sample(t, ref_index, &_err)) {
-        PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add dedup sample to TimeSamples.");
-      }
-    } else {
-      // Read and cache array using TypedArray
-      if (!ReadDoubleArrayTyped(rep.IsCompressed(), &v)) {
-        PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read double array.");
-      }
+    DCOUT("timeSamples.DOUBLE " << v.size() << " elements");
 
-      DCOUT("timeSamples.DOUBLE " << v.size() << " elements");
+    if (v.empty()) {
+      PUSH_ERROR_AND_RETURN_TAG(kTag, "Empty double array.");
+      return false;
+    }
 
-      if (v.empty()) {
-        PUSH_ERROR_AND_RETURN_TAG(kTag, "Empty double array.");
-        return false;
-      }
-
-      size_t current_index = dst.size();
-      _dedup_array_cache[rep] = current_index;
-
-      // Use value::Value array storage with dedup support (move, no copy)
-      std::vector<double> vec(v.data(), v.data() + v.size());
-      if (!dst.add_value_array_sample(t, value::Value(std::move(vec)), &_err)) {
-        PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add sample to TimeSamples.");
-      }
+    if (!add_array_sample_to_timesamples<double>(
+            &dst, t, v, &_err, expected_total_samples, &rep)) {
+      PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add sample to TimeSamples.");
     }
   } else {
     if (rep.IsCompressed()) {
@@ -3203,14 +2864,6 @@ bool CrateReader::UnpackValueRepsToTimeSamples(
   if (times.empty()) {
     return false;
   }
-
-  // Clear array dedup maps before each property's TimeSamples.
-  // These maps store sample indices (ref_index) that are specific to a
-  // particular TimeSamples `dst` object. If reused across different properties
-  // that share the same ValueRep (same file offset), the cached index is
-  // invalid for the new dst (e.g., ref_index=0 but dst has 0 samples).
-  // Scalar dedup maps are safe to keep — they cache decoded values, not indices.
-  _dedup_array_cache.clear();
 
   // Find the first non-VALUE_BLOCK element to determine the actual type
   crate::CrateDataTypeId crate_type_id =
