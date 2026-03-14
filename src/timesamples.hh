@@ -207,6 +207,18 @@ struct TimeSamples {
   }
 
  private:
+  template <typename T>
+  using timesample_storage_type_t = typename std::decay<T>::type;
+
+  template <typename T>
+  static constexpr bool uses_binary_scalar_storage_v =
+      value::is_binary_serializable_v<timesample_storage_type_t<T>> &&
+      !std::is_same<timesample_storage_type_t<T>, bool>::value;
+
+  template <typename T>
+  static constexpr bool uses_binary_array_storage_v =
+      uses_binary_scalar_storage_v<T>;
+
   enum class UnifiedStorageBackend : uint8_t {
     None,
     SmallScalar,
@@ -1225,8 +1237,7 @@ struct TimeSamples {
                   size_t expected_total_samples = 0) {
     (void)expected_total_samples;
 
-    if constexpr (value::is_binary_serializable_v<T> &&
-                  !std::is_same<typename std::decay<T>::type, bool>::value) {
+    if constexpr (uses_binary_scalar_storage_v<T>) {
       if (!is_initialized()) {
         init(value::TypeTraits<T>::type_id());
       }
@@ -1242,9 +1253,7 @@ struct TimeSamples {
                         size_t expected_total_samples = 0) {
     (void)expected_total_samples;
 
-    if constexpr (std::is_same<T, bool>::value) {
-      return add_sample(t, value::Value(value), err);
-    } else if constexpr (value::is_binary_serializable_v<T>) {
+    if constexpr (uses_binary_array_storage_v<T>) {
       if (!ensure_initialized_type(value::TypeTraits<std::vector<T>>::type_id(),
                                    err, "add_array_sample<std::vector>")) {
         return false;
@@ -1269,8 +1278,7 @@ struct TimeSamples {
                         size_t expected_total_samples = 0) {
     (void)expected_total_samples;
 
-    if constexpr (value::is_binary_serializable_v<T> &&
-                  !std::is_same<T, bool>::value) {
+    if constexpr (uses_binary_array_storage_v<T>) {
       if (!ensure_initialized_type(value::TypeTraits<TypedArray<T>>::type_id(),
                                    err, "add_array_sample<TypedArray>")) {
         return false;
@@ -1295,42 +1303,7 @@ struct TimeSamples {
   /// @param ref_index Index of the existing sample whose data/offset to reuse
   /// @param err Optional error string
   bool add_dedup_bool_array_sample(double t, size_t ref_index, std::string *err = nullptr) {
-    size_t new_idx = _times.size();
-
-    // Validate reference
-    if (ref_index >= new_idx) {
-      if (err) {
-        (*err) += "Invalid ref_index in add_dedup_bool_array_sample: " +
-                  std::to_string(ref_index) + " >= " + std::to_string(new_idx) + ".\n";
-      }
-      return false;
-    }
-
-    if (is_dedup(_offsets[ref_index])) {
-      if (err) {
-        (*err) += "Cannot deduplicate from deduplicated sample.\n";
-      }
-      return false;
-    }
-
-    _times.push_back(t);
-    _blocked.push_back(0);  // false = 0
-
-    // Copy array count from the referenced sample
-    size_t ref_array_count = (ref_index < _array_counts.size())
-                                 ? _array_counts[ref_index]
-                                 : _storage.uniform_count();
-    _array_counts.push_back(ref_array_count);
-
-    // Create dedup offset: bit 63=1 (dedup), bit 62=1 (array), bits 61-0=ref_index
-    uint64_t dedup_offset = make_dedup_offset(ref_index, true);
-    _offsets.push_back(dedup_offset);
-
-    update_array_metadata(ref_array_count, sizeof(uint8_t),
-                          ArrayLayoutKind::StdVector);
-    invalidate_reconstructed_samples_cache();
-    _dirty = true;
-    return true;
+    return add_dedup_sample(t, ref_index, err);
   }
 
   template<typename T>
@@ -1338,8 +1311,7 @@ struct TimeSamples {
                           size_t expected_total_samples = 0) {
     (void)expected_total_samples;
 
-    if constexpr (value::is_binary_serializable_v<T> &&
-                  !std::is_same<typename std::decay<T>::type, bool>::value) {
+    if constexpr (uses_binary_scalar_storage_v<T>) {
       if (!is_initialized()) {
         init(value::TypeTraits<T>::type_id());
       }
@@ -1747,8 +1719,8 @@ struct TimeSamples {
   /// Array data is stored in _array_values using unique_ptr for proper ownership semantics
   template<typename T>
   bool add_array_sample(double t, const T* values, size_t count, std::string* err = nullptr) {
-    static_assert(value::is_binary_serializable_v<T>,
-                  "add_array_sample requires binary-serializable element types");
+    static_assert(uses_binary_array_storage_v<T>,
+                  "add_array_sample requires binary-serializable element types except bool");
 
     // Auto-initialize on first sample
     if (!ensure_initialized_type(_type_id != 0 ? _type_id : value::TypeTraits<std::vector<T>>::type_id(),
@@ -1796,8 +1768,8 @@ struct TimeSamples {
   /// Add deduplicated array sample (Phase 2 path)
   template<typename T>
   bool add_dedup_array_sample(double t, size_t ref_index, std::string* err = nullptr) {
-    static_assert(value::is_binary_serializable_v<T>,
-                  "add_dedup_array_sample requires binary-serializable element types");
+    static_assert(uses_binary_array_storage_v<T>,
+                  "add_dedup_array_sample requires binary-serializable element types except bool");
 
     const ArrayLayoutKind layout =
         (_storage.array.layout == ArrayLayoutKind::None)
@@ -1863,41 +1835,7 @@ struct TimeSamples {
 
   bool add_bool_array_sample(double t, const std::vector<bool>& value,
                              std::string *err = nullptr) {
-    if (!ensure_initialized_type(value::TypeTraits<std::vector<bool>>::type_id(),
-                                 err, "add_bool_array_sample")) {
-      return false;
-    }
-
-    if (!ensure_array_storage_backend(UnifiedStorageBackend::ArrayOffset,
-                                      ArrayLayoutKind::StdVector,
-                                      sizeof(uint8_t), err,
-                                      "add_bool_array_sample")) {
-      return false;
-    }
-
-    std::vector<uint8_t> byte_array;
-    byte_array.reserve(value.size());
-    for (bool b : value) {
-      byte_array.push_back(b ? 1 : 0);
-    }
-
-    _times.push_back(t);
-    _blocked.push_back(0);
-    _array_counts.push_back(value.size());
-
-    size_t byte_offset = _values.size();
-    uint64_t encoded_offset = make_offset(byte_offset, true);
-    _offsets.push_back(encoded_offset);
-
-    size_t byte_size = sizeof(uint8_t) * byte_array.size();
-    _values.resize(_values.size() + byte_size);
-    std::memcpy(_values.data() + byte_offset, byte_array.data(), byte_size);
-
-    update_array_metadata(value.size(), sizeof(uint8_t),
-                          ArrayLayoutKind::StdVector);
-    invalidate_reconstructed_samples_cache();
-    _dirty = true;
-    return true;
+    return add_sample(t, value::Value(value), err);
   }
 
   //
@@ -1909,8 +1847,8 @@ struct TimeSamples {
   template<typename T>
   typename std::enable_if<(sizeof(T) <= 8), bool>::type
   add_binary_sample(double t, const T& value, std::string* err = nullptr) {
-    static_assert(value::is_binary_serializable_v<T>,
-                  "add_binary_sample requires binary-serializable types");
+    static_assert(uses_binary_scalar_storage_v<T>,
+                  "add_binary_sample requires binary-serializable types except bool");
 
     // Auto-initialize on first sample
     if (!ensure_initialized_type(value::TypeTraits<T>::type_id(), err,
@@ -1944,8 +1882,8 @@ struct TimeSamples {
   template<typename T>
   typename std::enable_if<(sizeof(T) > 8), bool>::type
   add_binary_sample(double t, const T& value, std::string* err = nullptr) {
-    static_assert(value::is_binary_serializable_v<T>,
-                  "add_binary_sample requires binary-serializable types");
+    static_assert(uses_binary_scalar_storage_v<T>,
+                  "add_binary_sample requires binary-serializable types except bool");
 
     // Auto-initialize on first sample
     if (!ensure_initialized_type(value::TypeTraits<T>::type_id(), err,
@@ -1981,8 +1919,8 @@ struct TimeSamples {
   /// Add a blocked binary-serializable scalar sample using unified storage.
   template<typename T>
   bool add_binary_blocked_sample(double t, std::string* err = nullptr) {
-    static_assert(value::is_binary_serializable_v<T>,
-                  "add_binary_blocked_sample requires binary-serializable types");
+    static_assert(uses_binary_scalar_storage_v<T>,
+                  "add_binary_blocked_sample requires binary-serializable types except bool");
 
     // Auto-initialize on first sample
     if (!ensure_initialized_type(value::TypeTraits<T>::type_id(), err,
@@ -2040,20 +1978,22 @@ struct TimeSamples {
       update();
     }
 
-    UnifiedArrayRef<T> ref;
-    if (resolve_unified_array_ref<T>(idx, value::TypeTraits<std::vector<T>>::type_id(), &ref)) {
-      if (ref.blocked) {
-        if (out_blocked) *out_blocked = true;
-        return false;
-      }
+    if constexpr (uses_binary_array_storage_v<T>) {
+      UnifiedArrayRef<T> ref;
+      if (resolve_unified_array_ref<T>(idx, value::TypeTraits<std::vector<T>>::type_id(), &ref)) {
+        if (ref.blocked) {
+          if (out_blocked) *out_blocked = true;
+          return false;
+        }
 
-      if (ref.count == 0) {
-        out_vec->clear();
-      } else {
-        out_vec->assign(ref.data, ref.data + ref.count);
+        if (ref.count == 0) {
+          out_vec->clear();
+        } else {
+          out_vec->assign(ref.data, ref.data + ref.count);
+        }
+        if (out_blocked) *out_blocked = false;
+        return true;
       }
-      if (out_blocked) *out_blocked = false;
-      return true;
     }
 
     // Check generic Value storage
@@ -2077,11 +2017,13 @@ struct TimeSamples {
     }
 
     // Try to get as TypedArray<T>
-    if (const TypedArray<T>* typed_array = sample.value.as<TypedArray<T>>()) {
-      if (typed_array->data() && typed_array->size() > 0) {
-        out_vec->assign(typed_array->data(), typed_array->data() + typed_array->size());
-        if (out_blocked) *out_blocked = false;
-        return true;
+    if constexpr (uses_binary_array_storage_v<T>) {
+      if (const TypedArray<T>* typed_array = sample.value.as<TypedArray<T>>()) {
+        if (typed_array->data() && typed_array->size() > 0) {
+          out_vec->assign(typed_array->data(), typed_array->data() + typed_array->size());
+          if (out_blocked) *out_blocked = false;
+          return true;
+        }
       }
     }
 
