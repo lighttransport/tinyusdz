@@ -948,13 +948,10 @@ bool CrateReader::UnpackTimeSampleValue_HALF2(double t,
           kTag, "Compressed half2 not supported for TimeSamples.");
     }
 
-    // Read scalar value directly without caching
-    // Scalar deduplication was removed - see FLOAT3 fix
     value::half2 v;
-    CHECK_MEMORY_USAGE(sizeof(value::half2));
-    if (!_sr->read(sizeof(value::half2), sizeof(value::half2),
-                   reinterpret_cast<uint8_t *>(&v))) {
-      PUSH_ERROR_AND_RETURN("Failed to read half2");
+    if (!ReadTimeSampleScalarValue(&v, sizeof(value::half2),
+                                   "Failed to read half2")) {
+      return false;
     }
     DCOUT("half2 = " << v);
 
@@ -1046,16 +1043,12 @@ bool CrateReader::UnpackTimeSampleValue_HALF3(double t,
           kTag, "Compressed half3 not supported for TimeSamples.");
     }
 
-    // Scalar deduplication was removed - see FLOAT3 fix
-    // Read scalar value directly without caching
-    // Scalar deduplication was removed - see FLOAT3 fix
     value::half3 v;
-    CHECK_MEMORY_USAGE(sizeof(value::half3));
-    if (!_sr->read(sizeof(value::half3), sizeof(value::half3),
-                   reinterpret_cast<uint8_t *>(&v))) {
-        PUSH_ERROR_AND_RETURN("Failed to read half3");
-      }
-      DCOUT("half3 = " << v);
+    if (!ReadTimeSampleScalarValue(&v, sizeof(value::half3),
+                                   "Failed to read half3")) {
+      return false;
+    }
+    DCOUT("half3 = " << v);
 
     if (!add_sample_to_timesamples<value::half3>(&dst, t, v, &_err,
                                                  expected_total_samples)) {
@@ -1147,16 +1140,12 @@ bool CrateReader::UnpackTimeSampleValue_HALF4(double t,
           kTag, "Compressed half4 not supported for TimeSamples.");
     }
 
-    // Scalar deduplication was removed - see FLOAT3 fix
-    // Read scalar value directly without caching
-    // Scalar deduplication was removed - see FLOAT3 fix
     value::half4 v;
-    CHECK_MEMORY_USAGE(sizeof(value::half4));
-    if (!_sr->read(sizeof(value::half4), sizeof(value::half4),
-                   reinterpret_cast<uint8_t *>(&v))) {
-        PUSH_ERROR_AND_RETURN("Failed to read half4");
-      }
-      DCOUT("half4 = " << v);
+    if (!ReadTimeSampleScalarValue(&v, sizeof(value::half4),
+                                   "Failed to read half4")) {
+      return false;
+    }
+    DCOUT("half4 = " << v);
 
     if (!add_sample_to_timesamples<value::half4>(&dst, t, v, &_err,
                                                  expected_total_samples)) {
@@ -1235,13 +1224,9 @@ bool CrateReader::UnpackTimeSampleValue_FLOAT(double t,
                                 "Compressed float not supported for TimeSamples.");
     }
 
-    // Read scalar value directly without caching
-    // Scalar deduplication was removed - see float3 fix
     float v;
-    CHECK_MEMORY_USAGE(sizeof(float));
-    if (!_sr->read(sizeof(float), sizeof(float),
-                   reinterpret_cast<uint8_t *>(&v))) {
-      PUSH_ERROR_AND_RETURN("Failed to read float");
+    if (!ReadTimeSampleScalarValue(&v, sizeof(float), "Failed to read float")) {
+      return false;
     }
     DCOUT("float = " << v);
 
@@ -1337,13 +1322,10 @@ bool CrateReader::UnpackTimeSampleValue_FLOAT2(double t,
           kTag, "Compressed float2 not supported for TimeSamples.");
     }
 
-    // Read scalar value directly without caching
-    // Scalar deduplication was removed - see FLOAT3 fix
     value::float2 v;
-    CHECK_MEMORY_USAGE(sizeof(value::float2));
-    if (!_sr->read(sizeof(value::float2), sizeof(value::float2),
-                   reinterpret_cast<uint8_t *>(&v))) {
-      PUSH_ERROR_AND_RETURN("Failed to read float2");
+    if (!ReadTimeSampleScalarValue(&v, sizeof(value::float2),
+                                   "Failed to read float2")) {
+      return false;
     }
     DCOUT("float2 = " << v);
 
@@ -1414,13 +1396,10 @@ bool CrateReader::UnpackTimeSampleValue_QUATF(double t,
                                 "Compressed quatf not supported for TimeSamples.");
     }
 
-    // Read scalar value directly without caching
-    // Scalar deduplication was removed - see FLOAT3 fix
     value::quatf val;
-    CHECK_MEMORY_USAGE(sizeof(float) * 4);  // quatf has 4 floats
-    if (!_sr->read(sizeof(float) * 4, sizeof(float) * 4,
-                   reinterpret_cast<uint8_t *>(&val))) {
-      PUSH_ERROR_AND_RETURN("Failed to read quatf value");
+    if (!ReadTimeSampleScalarValue(&val, sizeof(float) * 4,
+                                   "Failed to read quatf value")) {
+      return false;
     }
     DCOUT("quatf = [" << val[0] << ", " << val[1] << ", " << val[2] << ", " << val[3] << "]");
     if (!add_sample_to_timesamples<value::quatf>(&dst, t, val, &_err,
@@ -1772,15 +1751,10 @@ bool CrateReader::UnpackTimeSampleValue_FLOAT3(double t,
           kTag, "Compressed float3 not supported for TimeSamples.");
     }
 
-    // Read scalar value directly without caching
-    // Scalar deduplication was removed as it was causing incorrect global
-    // deduplication across different attributes. Each attribute's TimeSamples
-    // must independently store its values.
     value::float3 v;
-    CHECK_MEMORY_USAGE(sizeof(value::float3));
-    if (!_sr->read(sizeof(value::float3), sizeof(value::float3),
-                   reinterpret_cast<uint8_t *>(&v))) {
-      PUSH_ERROR_AND_RETURN("Failed to read float3");
+    if (!ReadTimeSampleScalarValue(&v, sizeof(value::float3),
+                                   "Failed to read float3")) {
+      return false;
     }
     DCOUT("float3 = " << v);
 
@@ -1869,13 +1843,10 @@ bool CrateReader::UnpackTimeSampleValue_FLOAT4(double t,
           kTag, "Compressed float4 not supported for TimeSamples.");
     }
 
-    // Read scalar value directly without caching
-    // Scalar deduplication was removed - see FLOAT3 fix
     value::float4 v;
-    CHECK_MEMORY_USAGE(sizeof(value::float4));
-    if (!_sr->read(sizeof(value::float4), sizeof(value::float4),
-                   reinterpret_cast<uint8_t *>(&v))) {
-      PUSH_ERROR_AND_RETURN("Failed to read float4");
+    if (!ReadTimeSampleScalarValue(&v, sizeof(value::float4),
+                                   "Failed to read float4")) {
+      return false;
     }
     DCOUT("float4 = " << v);
 
@@ -1960,13 +1931,10 @@ bool CrateReader::UnpackTimeSampleValue_DOUBLE2(double t,
           kTag, "Compressed double2 not supported for TimeSamples.");
     }
 
-    // Read scalar value directly without caching
-    // Scalar deduplication was removed - see FLOAT3 fix
     value::double2 v;
-    CHECK_MEMORY_USAGE(sizeof(value::double2));
-    if (!_sr->read(sizeof(value::double2), sizeof(value::double2),
-                   reinterpret_cast<uint8_t *>(&v))) {
-      PUSH_ERROR_AND_RETURN("Failed to read double2");
+    if (!ReadTimeSampleScalarValue(&v, sizeof(value::double2),
+                                   "Failed to read double2")) {
+      return false;
     }
     DCOUT("double2 = " << v);
 
@@ -2052,13 +2020,10 @@ bool CrateReader::UnpackTimeSampleValue_DOUBLE3(double t,
           kTag, "Compressed double3 not supported for TimeSamples.");
     }
 
-    // Read scalar value directly without caching
-    // Scalar deduplication was removed - see FLOAT3 fix
     value::double3 v;
-    CHECK_MEMORY_USAGE(sizeof(value::double3));
-    if (!_sr->read(sizeof(value::double3), sizeof(value::double3),
-                   reinterpret_cast<uint8_t *>(&v))) {
-      PUSH_ERROR_AND_RETURN("Failed to read double3");
+    if (!ReadTimeSampleScalarValue(&v, sizeof(value::double3),
+                                   "Failed to read double3")) {
+      return false;
     }
     DCOUT("double3 = " << v);
 
@@ -2145,13 +2110,10 @@ bool CrateReader::UnpackTimeSampleValue_DOUBLE4(double t,
           kTag, "Compressed double4 not supported for TimeSamples.");
     }
 
-    // Read scalar value directly without caching
-    // Scalar deduplication was removed - see FLOAT3 fix
     value::double4 v;
-    CHECK_MEMORY_USAGE(sizeof(value::double4));
-    if (!_sr->read(sizeof(value::double4), sizeof(value::double4),
-                   reinterpret_cast<uint8_t *>(&v))) {
-      PUSH_ERROR_AND_RETURN("Failed to read double4");
+    if (!ReadTimeSampleScalarValue(&v, sizeof(value::double4),
+                                   "Failed to read double4")) {
+      return false;
     }
     DCOUT("double4 = " << v);
 
@@ -2220,14 +2182,10 @@ bool CrateReader::UnpackTimeSampleValue_QUATH(double t,
       PUSH_ERROR_AND_RETURN_TAG(kTag,
                                 "Compressed quath not supported for TimeSamples.");
     }
-    // Read scalar value directly without caching
-    // Scalar deduplication was removed - see FLOAT3 fix
     value::quath val;
-    // quath has 4 halfs (half is 2 bytes)
-    CHECK_MEMORY_USAGE(sizeof(uint16_t) * 4);
-    if (!_sr->read(sizeof(uint16_t) * 4, sizeof(uint16_t) * 4,
-                   reinterpret_cast<uint8_t *>(&val))) {
-      PUSH_ERROR_AND_RETURN("Failed to read quath value");
+    if (!ReadTimeSampleScalarValue(&val, sizeof(uint16_t) * 4,
+                                   "Failed to read quath value")) {
+      return false;
     }
     DCOUT("quath = [" << val[0] << ", " << val[1] << ", " << val[2] << ", " << val[3] << "]");
     if (!add_sample_to_timesamples<value::quath>(&dst, t, val, &_err,
@@ -2296,15 +2254,10 @@ bool CrateReader::UnpackTimeSampleValue_QUATD(double t,
                                 "Compressed quatd not supported for TimeSamples.");
     }
 
-    // Scalar deduplication was removed - see FLOAT3 fix
-    // Read scalar value directly without caching
-    // Scalar deduplication was removed - see FLOAT3 fix
     value::quatd val;
-    // quatd has 4 doubles
-    CHECK_MEMORY_USAGE(sizeof(double) * 4);
-    if (!_sr->read(sizeof(double) * 4, sizeof(double) * 4,
-                   reinterpret_cast<uint8_t *>(&val))) {
-      PUSH_ERROR_AND_RETURN("Failed to read quatd value");
+    if (!ReadTimeSampleScalarValue(&val, sizeof(double) * 4,
+                                   "Failed to read quatd value")) {
+      return false;
     }
     DCOUT("quatd = [" << val[0] << ", " << val[1] << ", " << val[2] << ", " << val[3] << "]");
     if (!add_sample_to_timesamples<value::quatd>(&dst, t, val, &_err,
@@ -2655,13 +2608,10 @@ bool CrateReader::UnpackTimeSampleValue_INT64(double t,
                                 "Compressed int64 not supported for TimeSamples.");
     }
 
-    // Read scalar value directly without caching
-    // Scalar deduplication was removed - see FLOAT3 fix
     int64_t val;
-    CHECK_MEMORY_USAGE(sizeof(int64_t));
-    if (!_sr->read(sizeof(int64_t), sizeof(int64_t),
-                   reinterpret_cast<uint8_t *>(&val))) {
-      PUSH_ERROR_AND_RETURN("Failed to read int64 value");
+    if (!ReadTimeSampleScalarValue(&val, sizeof(int64_t),
+                                   "Failed to read int64 value")) {
+      return false;
     }
     DCOUT("int64 = " << val);
     if (!add_sample_to_timesamples<int64_t>(&dst, t, val, &_err,
@@ -2741,14 +2691,10 @@ bool CrateReader::UnpackTimeSampleValue_UINT64(double t,
                                 "Compressed uint64 not supported for TimeSamples.");
     }
 
-    // Scalar deduplication was removed - see FLOAT3 fix
-    // Read scalar value directly without caching
-    // Scalar deduplication was removed - see FLOAT3 fix
     uint64_t val;
-    CHECK_MEMORY_USAGE(sizeof(uint64_t));
-    if (!_sr->read(sizeof(uint64_t), sizeof(uint64_t),
-                   reinterpret_cast<uint8_t *>(&val))) {
-      PUSH_ERROR_AND_RETURN("Failed to read uint64 value");
+    if (!ReadTimeSampleScalarValue(&val, sizeof(uint64_t),
+                                   "Failed to read uint64 value")) {
+      return false;
     }
     DCOUT("uint64 = " << val);
     if (!add_sample_to_timesamples<uint64_t>(&dst, t, val, &_err,
@@ -2833,13 +2779,10 @@ bool CrateReader::UnpackTimeSampleValue_DOUBLE(double t,
                                 "Compressed double not supported for TimeSamples.");
     }
 
-    // Read scalar value directly without caching
-    // Scalar deduplication was removed - see FLOAT3 fix
     double v;
-    CHECK_MEMORY_USAGE(sizeof(double));
-    if (!_sr->read(sizeof(double), sizeof(double),
-                   reinterpret_cast<uint8_t *>(&v))) {
-      PUSH_ERROR_AND_RETURN("Failed to read double");
+    if (!ReadTimeSampleScalarValue(&v, sizeof(double),
+                                   "Failed to read double")) {
+      return false;
     }
     DCOUT("double = " << v);
 
