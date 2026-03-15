@@ -693,32 +693,7 @@ struct TimeSamples {
     return false;
   }
 
-  bool reconstruct_value_array_sample(size_t idx, Sample* sample) const {
-    if (!sample || idx >= _times.size()) {
-      return false;
-    }
-
-    sample->t = _times[idx];
-    sample->value = value::Value();
-    sample->blocked = true;
-
-    if (idx < _blocked.size() && (_blocked[idx] != 0)) {
-      return true;
-    }
-
-    if (idx >= _value_array_refs.size()) {
-      return true;
-    }
-
-    const size_t storage_idx = get_value_array_index(_value_array_refs[idx]);
-    if (storage_idx >= _value_array_storage.size()) {
-      return true;
-    }
-
-    sample->value = _value_array_storage[storage_idx];
-    sample->blocked = false;
-    return true;
-  }
+  bool reconstruct_value_array_sample(size_t idx, Sample* sample) const;  // Defined in timesamples.cc
 
   bool reconstruct_binary_sample(size_t idx, Sample* sample) const;  // Defined in timesamples.cc
   bool reconstruct_unified_sample(size_t idx, Sample* sample) const; // Defined in timesamples.cc
