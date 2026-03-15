@@ -130,6 +130,12 @@ bool CrateReader::ReadTimeSamples(value::TimeSamples *d) {
 
   // TODO: Enable Check if  type `double[]`
 
+  std::vector<double> times;
+  if (!UnpackTimeSampleTimes(times_rep, times)) {
+    PUSH_ERROR_AND_RETURN_TAG(
+        kTag, "Failed to unpack value of TimeSample's `times` element.");
+  }
+  DCOUT("MARK: timeSamples.times = " << times);
 
   //
   // Parse values(elements) of TimeSamples.

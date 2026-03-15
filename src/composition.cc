@@ -261,20 +261,6 @@ bool LoadAsset(AssetResolutionResolver &resolver,
           fmt::format("Failed to resolve asset path `{}`", asset_path));
     } else {
       PUSH_WARN(fmt::format("Asset not found: `{}`", asset_path));
-#if 0 // for debugging. print cwd.
-#if defined(__linux__)
-      char pathname[4096];
-      memset(pathname, 0, 4096);
-      char *pathname_p = getcwd(pathname, 4096);
-
-      if (pathname_p == nullptr) {
-        PUSH_ERROR_AND_RETURN(
-            "Getting current working directory failed.");
-      }
-
-      PUSH_WARN(fmt::format("  cwd = {}", std::string(pathname_p)));
-#endif
-#endif
       PUSH_WARN(
           fmt::format("  current working path: `{}`", current_working_path));
       PUSH_WARN(fmt::format("  resolver.current_working_path: `{}`",
@@ -626,70 +612,6 @@ bool CompositeSublayers(AssetResolutionResolver &resolver,
 
 namespace {
 
-#if 0
-static bool FindPrimSpecRec(const std::string &parent_path, const Path &path,
-                            const PrimSpec &parent,
-                            const PrimSpec **foundPrimSpec, uint32_t depth) {
-  if (depth > 1024 * 1024 * 256) {
-    return false;
-  }
-
-  std::string abs_path;
-  {
-    std::string elementName = parent.name();
-    abs_path = parent_path + "/" + elementName;
-    DCOUT(fmt::format("findPrimSpec: {}, abs_path {}", path.full_path_name(), abs_path));
-    if (abs_path == path.full_path_name()) {
-      (*foundPrimSpec) = &parent;
-      return true;
-    }
-  }
-
-  for (const auto &child : parent.children()) {
-    if (FindPrimSpecRec(abs_path, path, child, foundPrimSpec, depth + 1)) {
-      return true;
-    }
-  }
-
-  return false;
-}
-
-// TODO: cache result.
-static bool FindPrimSpecAt(const Path &path, const PrimSpec &rootPS,
-                           const PrimSpec **foundPS, std::string *err) {
-  if (!path.is_valid()) {
-    if (err) {
-      (*err) += "Path is invalid.\n";
-    }
-    return false;
-  }
-
-  if (path.is_relative_path()) {
-    if (err) {
-      (*err) += "TODO: Relative path.\n";
-    }
-    return false;
-  }
-
-  if (!path.is_absolute_path()) {
-    if (err) {
-      (*err) += "Path is not absolute: " + path.full_path_name() + "\n";
-    }
-    return false;
-  }
-
-  bool ret = FindPrimSpecRec("", path, rootPS, foundPS, 0);
-
-  if (!ret) {
-    if (err) {
-      (*err) += "Prim path " + path.full_path_name() +
-                " not found in given PrimSpec tree.\n";
-    }
-  }
-
-  return ret;
-}
-#endif
 
 bool CompositeReferencesRec(uint32_t depth, AssetResolutionResolver &resolver,
                             const std::vector<std::string> &asset_search_paths,
@@ -1699,35 +1621,6 @@ bool InheritPrimSpec(PrimSpec &dst, const PrimSpec &src, std::string *warn,
   return detail::InheritPrimSpecImpl(dst, src, warn, err);
 }
 
-#if 0
-bool ReferenceLayerToPrimSpec(PrimSpec &dst, const Layer &layer,
-                              const Path primPath,
-                              const LayerOffset layerOffset) {
-  if (layer.primspecs().empty()) {
-    // nothing to do
-    return true;
-  }
-
-  std::string src_root_prim_name = "";
-  if (!primPath.is_valid()) {
-    // Use the defaultPrim
-    if (!layer.metas().defaultPrim.str().empty()) {
-      src_root_prim_name = layer.metas().defaultPrim.str();
-    } else {
-      // Use the first Prim.
-      src_root_prim_name = (layer.primspecs().begin())->first;
-    }
-  } else {
-    src_root_prim_name = primPath.prim_part();
-  }
-
-  DCOUT("TODO");
-  (void)dst;
-  (void)layerOffset;
-
-  return false;
-}
-#endif
 
 bool HasReferences(const Layer &layer, const bool force_check,
                    const ReferencesCompositionOptions options) {
