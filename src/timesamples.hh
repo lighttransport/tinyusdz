@@ -26,7 +26,6 @@
 #include "nonstd/optional.hpp"
 #include "typed-array.hh"
 #include "value-types.hh"
-#include "logger.hh"
 #include "buffer-util.hh"
 
 // Enable SoA (Structure of Arrays) layout for TypedTimeSamples
