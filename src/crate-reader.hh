@@ -331,12 +331,6 @@ class CrateReader {
     return _live_fieldsets;
   }
 
-#if 0
-  // FIXME: May not need this
-  const std::vector<Path> &GetPaths() const {
-    return _paths;
-  }
-#endif
 
   const nonstd::optional<value::token> GetToken(crate::Index token_index) const;
   const nonstd::optional<value::token> GetStringToken(
@@ -503,13 +497,6 @@ class CrateReader {
 
   bool ReadTimeSamples(value::TimeSamples *d);
 
-#if 0
-  template<typename T>
-  bool CrateTypedTimeSamples(const std::vector<double> &times,
-                              const std::vector<crate::ValueRep> &value_reps,
-                              uint64_t vrep_start_offset,
-                              value::TimeSamples *d);
-#endif
 
   // integral array
   template <typename T>

@@ -131,19 +131,6 @@ inline std::string wquote(const std::string &s,
   return quote_lstr + s + quote_rstr;
 }
 
-#if 0
-template<typename It>
-inline It quote(const It& v, const std::string &quote_str = "\"") {
-
-  It dst;
-
-  for (typename It::const_iterator it = v.begin(); it != v.end(); ++it) {
-    dst.emplace_back(quote((*it), quote_str));
-  }
-
-  return dst;
-}
-#else
 inline std::vector<std::string> quote(const std::vector<std::string> &vs,
                                       const std::string &quote_str = "\"") {
   std::vector<std::string> dst;
@@ -154,7 +141,6 @@ inline std::vector<std::string> quote(const std::vector<std::string> &vs,
 
   return dst;
 }
-#endif
 
 // Python like join  ", ".join(v)
 template <typename It>
@@ -368,43 +354,8 @@ inline std::string codepoint_to_utf8(uint32_t code) {
 char *dtoa(float f, char *buf);
 char *dtoa(double f, char *buf);
 
-#if 0 // TODO
-///
-/// Convert UTF-8 code to UTF-8 char
-///
-/// Return empty string when input `code` is not a valid UTF-8 code.
-std::string to_utf8_char(const uint32_t code);
-#endif
 
-#if 0
-template<typename It>
-inline std::string quote_then_join(const std::string& sep, const It& v, const std::string &quote = "\"")
-{
-  std::ostringstream oss;
-  if (!v.empty()) {
-    typename It::const_iterator it = v.begin();
-    oss << wrap(*it++;
-    for (typename It::const_iterator e = v.end(); it != e; ++it)
-      oss << sep << *it;
-  }
-  return oss.str();
-}
-#endif
 
-#if 0
-template<typename It>
-inline std::string join(const std::string& sep, It& v)
-{
-  std::ostringstream oss;
-  if (!v.empty()) {
-    typename It::iterator it = v.begin();
-    oss << *it++;
-    for (typename It::iterator e = v.end(); it != e; ++it)
-      oss << sep << *it;
-  }
-  return oss.str();
-}
-#endif
 
 // Simple atof replacement
 // Returns qNaN for invalid input.
@@ -504,11 +455,6 @@ size_t print_double3(const value::double3& v, char* buffer);
 size_t print_double4(const value::double4& v, char* buffer);
 
 // Half precision functions - only available when linking with value-types
-#if 0
-size_t print_half2(const value::half2& v, char* buffer);
-size_t print_half3(const value::half3& v, char* buffer);
-size_t print_half4(const value::half4& v, char* buffer);
-#endif
 
 size_t print_matrix2d(const value::matrix2d& m, char* buffer);
 size_t print_matrix3d(const value::matrix3d& m, char* buffer);

@@ -875,17 +875,6 @@ class AsciiParser {
   ///
   bool ParseAssetIdentifier(value::AssetPath *out, bool *triple_deliminated);
 
-#if 0
-  ///
-  ///
-  ///
-  std::string GetDefaultPrimName() const;
-
-  ///
-  /// Get parsed toplevel "def" nodes(GPrim)
-  ///
-  std::vector<GPrim> GetGPrims();
-#endif
   class PrimIterator;
   using const_iterator = PrimIterator;
   const_iterator begin() const;
@@ -942,16 +931,6 @@ class AsciiParser {
   ///
   std::string GetErrorWithSourceContext(const std::string& filename, int context_lines = 2, int column_width = 40);
 
-#if 0
-  // Return the flag if the .usda is read from `references`
-  bool IsReferenced() { return _referenced; }
-
-  // Return the flag if the .usda is read from `subLayers`
-  bool IsSubLayered() { return _sub_layered; }
-
-  // Return the flag if the .usda is read from `payload`
-  bool IsPayloaded() { return _payloaded; }
-#endif
 
   // Return true if the .udsa is read in the top layer(stage)
   bool IsToplevel() {
