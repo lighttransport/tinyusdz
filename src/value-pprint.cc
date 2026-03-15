@@ -495,18 +495,6 @@ std::ostream &operator<<(std::ostream &ofs, const tinyusdz::value::token &tok) {
   return ofs;
 }
 
-#if 0
-std::ostream &operator<<(std::ostream &ofs, const tinyusdz::value::dict &m) {
-  ofs << "{\n";
-  for (const auto &item : m) {
-    ofs << item.first << " = " << tinyusdz::value::pprint_any(item.second)
-        << "\n";
-  }
-  ofs << "}";
-
-  return ofs;
-}
-#endif
 
 std::ostream &operator<<(std::ostream &ofs,
                          const tinyusdz::value::AssetPath &asset) {
