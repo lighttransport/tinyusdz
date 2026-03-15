@@ -1,6 +1,7 @@
 # Core and Tydra Review Report
 
 Date: 2026-03-14
+Updated: 2026-03-15
 
 ## Scope
 
@@ -12,254 +13,137 @@ and the main `tydra` query/conversion APIs. The audit concentrated on:
 - `src/tydra/attribute-eval*`
 - `src/tydra/layer-to-renderscene.*`
 
-I also ran `ctest --output-on-failure` from `build/`. All currently registered
-tests passed, so the issues below are mainly in uncovered or lightly covered
-paths.
+## Findings — All Resolved
 
-## Findings
+### 1. Invalid attribute connections are not rejected early — FIXED
 
-### 1. Invalid attribute connections are not rejected early
+Severity: Critical → **Resolved** (prior commits)
 
-Severity: Critical
+Connection evaluators now return immediately on empty or multi-target connections.
 
-Affected files:
+### 2. `ConvertLayerInPlace()` data loss — FIXED
 
-- `src/tydra/attribute-eval.cc`
-- `src/tydra/attribute-eval-typed.cc`
-- `src/tydra/attribute-eval-typed-animatable.cc`
+Severity: Critical → **Resolved** (commit ba541232)
 
-Problem:
+In-place API disabled until transfer semantics are complete.
 
-Several evaluators append an error when `connections()` is empty or contains
-multiple targets, but then continue execution anyway. The empty case still
-dereferences `pv[0]`, and the multi-target case silently follows the first
-target after already reporting an error.
+### 3. Unified small-POD `TimeSamples` sorting — FIXED
 
-Impact:
+Severity: High → **Resolved** (prior commits)
 
-- Out-of-bounds access on malformed USD input
-- Silent mis-evaluation of attributes with multiple targets
-- Error handling that looks safe to callers but is not
+`_small_values` is now reordered together with `_times` and `_blocked`.
 
-Refactor direction:
+### 4. Variable-length array timesamples — FIXED
 
-- Return immediately after detecting empty or multi-target connection lists
-- Centralize connection validation in one helper and reuse it across all
-  `EvaluateAttribute*` variants
-- Add negative tests for empty and multi-target connection payloads
+Severity: High → **Resolved** (prior commits)
 
-### 2. `ConvertLayerInPlace()` can delete source data without actually moving it
+Per-sample `_array_counts` is now mandatory and reordered with times during sort.
 
-Severity: Critical
+### 5. Generic `GeomMesh` property lookup — FIXED
 
-Affected file:
+Severity: High → **Resolved** (commit 280424d1)
 
-- `src/tydra/layer-to-renderscene.cc`
+`faceVertexIndices` now correctly maps to `mesh.faceVertexIndices`.
 
-Problem:
+### 6. Held interpolation for typed interpolatable timesamples — FIXED
 
-`ConvertLayerInPlace()` erases converted `PrimSpec`s from the source layer after
-successful conversion, but the mesh conversion path does not currently transfer
-real payload data. `ConvertGeomMeshPrimSpec(..., true)` explicitly ignores
-`free_source`, and the actual mesh-attribute extraction is still commented out.
+Severity: High → **Resolved** (commit 51eb4767)
 
-Impact:
+Both `TypedTimeSamples::get()` and generic `TimeSamples::get()` now properly
+handle blocked samples: return first non-blocked for default time, return false
+when nearest preceding sample is blocked, fall back to non-blocked endpoint in
+linear mode. Tests added for all blocked sample scenarios.
 
-- A populated source mesh can be replaced by an effectively empty `RenderMesh`
-- The source `PrimSpec` is then erased, so the operation is destructive
-- Public API semantics imply a low-memory transfer path, but the implementation
-  is not safe enough to expose as one
+### 7. In-place memory accounting underflows — FIXED
 
-Refactor direction:
+Severity: Medium → **Resolved** (commit c017d4b2)
 
-- Disable or guard the in-place API until transfer semantics are complete
-- Do not erase source prims unless a converter can prove that it transferred all
-  required data
-- Split "convert" from "destroy source" into separate explicit steps
+## Refactoring Completed
 
-### 3. Unified small-POD `TimeSamples` sorting corrupts value/time pairing
+### TimeSamples — header slimming and compile time
 
-Severity: High
+- Moved 10 non-template methods from `timesamples.hh` to `timesamples.cc`
+  (`reconstruct_binary_sample`, `reconstruct_unified_sample`,
+  `reconstruct_value_array_sample`, `get_samples`, `samples`, `add_sample(Sample)`,
+  `add_sample(Value)`, `add_blocked_sample(Value)`, `add_value_array_sample`,
+  `add_dedup_sample`, `estimate_memory_usage`)
+- Header: 2853 → 2364 lines (−489, 17% reduction)
+- Removed unused `logger.hh` include from header
 
-Affected files:
+### TimeSamples — runtime efficiency
 
-- `src/timesamples.cc`
-- `src/timesamples.hh`
+- Adaptive insertion sort for `TypedTimeSamples::update()` (O(n) for nearly-sorted)
+- `TimeSamples::reserve(n)` pre-allocates vectors; crate reader calls before unpack
+- Avoid unnecessary sort index allocation in `TimeSamples::update()`
 
-Problem:
+### TimeSamples — memory
 
-Small scalar POD samples are stored in `_small_values` without offsets.
-`TimeSamples::update()` sorts `_times` when samples arrive out of order, but the
-no-offset branch does not reorder `_small_values` or preserve blocked/value
-alignment. Reconstruction later walks `_small_values` in original insertion
-order.
+- Member reordering: `sizeof(TimeSamples)` 320 → 312 bytes
+- Removed dead `_samples` forwarding methods
 
-Impact:
+### Crate reader — unpack function consolidation
 
-- Silent data corruption after sorting
-- Wrong values associated with otherwise correct time stamps
-- Hard-to-debug animation bugs because the corruption is deterministic but quiet
+- 15 of 26 `UnpackTimeSampleValue_*` functions consolidated via 3 macros:
+  - `DEFINE_UNPACK_VECTOR_TIMESAMPLES` (HALF2/3/4, FLOAT3/4, DOUBLE2/3/4)
+  - `DEFINE_UNPACK_NOINLINE_TIMESAMPLES` (QUATH, QUATD)
+  - `DEFINE_UNPACK_MATRIX_TIMESAMPLES` (MATRIX2D/3D/4D)
+- Function pointer dispatch consolidated via `UNPACK_CASE` macro
+- Init type dispatch consolidated via `HANDLE_INIT_TYPE_CASE` macro
+- Removed 6 dead `#if 0` blocks (344 lines)
+- Crate reader: 3226 → 1976 lines (−1250, 39% reduction)
+- Fixed blocked sample type mismatches (HALF, HALF2/3/4, FLOAT2, QUATF)
+- Removed stale TODO for generic vector binary-storage path
 
-Refactor direction:
+### Crate reader — blocked sample type correctness
 
-- Treat `_small_values` as a parallel array and reorder it with `_times`
-- Reorder blocked-state in the same pass
-- Add unit tests for out-of-order small-POD samples
+- 6 unpack functions were using `<float>` for blocked samples instead of their actual
+  type (e.g. `<value::half2>`). Fixed to use correct types so that
+  `ensure_initialized_type` doesn't reject blocked samples after initialization.
 
-### 4. Variable-length array timesamples are not represented safely
+### ASCII parser — dedup and type dispatch
 
-Severity: High
+- Extracted shared 67-type PARSE_TYPE list to `ascii-parser-timesamples-type-list.inc`
+- Consolidated dedup switch with `DEDUP_CASE` macro
+- Enabled array dedup for all types (half, quat, color, point, normal, vector, texcoord)
 
-Affected file:
+### Value types — operator==
 
-- `src/timesamples.hh`
+- Added `operator==`/`!=` to 30+ value types using `memcmp` (bitwise identity)
+  for dedup support: `half`, `quath/f/d`, `vector3h/f/d`, `normal3h/f/d`,
+  `point3h/f/d`, `color3h/f/d`, `color4h/f/d`, `texcoord2h/f/d`, `texcoord3h/f/d`
 
-Problem:
+### Pretty printing
 
-Unified array storage tracks a single `_array_size` for all samples, while array
-samples can vary in length over time. `get_vector_at()` reads `data + _array_size`
-for every sample, which means the last authored size effectively becomes global.
-The class already has `_array_counts`, but the generic insertion/access path does
-not use it.
+- Removed 642 lines of dead `#if 0` legacy print functions
+- Removed dead `print_typed_array`/`try_print_typed_array` (130 lines)
+- Consolidated type size dispatch with `SIZE_CASE` macro
+- Deleted stale `timesamples-pprint.cc.bak`
+- pprint: 1639 → 786 lines (−853, 48% reduction)
 
-Impact:
+### Test coverage
 
-- Truncated reads when earlier samples are larger
-- Potential out-of-bounds reads when earlier samples are smaller
-- Incorrect semantics for valid USD with varying array lengths over time
+- Added blocked sample tests for `TypedTimeSamples` (non-interp and interp types)
+- Tests cover: default time, held at blocked time, linear with blocked endpoint,
+  all-blocked, single-blocked
 
-Refactor direction:
+## Remaining Feature TODOs (not refactoring)
 
-- Make per-sample counts mandatory for unified array storage
-- Use `_array_counts[idx]` during access instead of `_array_size`
-- Reorder `_array_counts` together with times when sorting
+These are feature requests tracked in code comments, not bugs or refactoring items:
 
-### 5. Generic `GeomMesh` property lookup returns the wrong topology attribute
+1. **Deferred TimeSamples loading** (`crate-reader-timesamples.cc:92`) — OpenUSD
+   reads sample values lazily; tinyusdz reads eagerly.
+2. **TimeSamples time deduplication** (`crate-reader-timesamples.cc:120`) — OpenUSD
+   shares `SharedTimes` objects when multiple TimeSamples point to the same times
+   array in the crate file.
+3. **Type validation for times array** (`crate-reader-timesamples.cc:131`) — Validate
+   that the `times` ValueRep is actually `double[]`.
 
-Severity: High
+## Other Modules — Review Candidates
 
-Affected file:
+The following modules have not been reviewed and may contain similar issues:
 
-- `src/tydra/scene-access.cc`
-
-Problem:
-
-`GetPrimProperty(const GeomMesh&, ...)` maps `"faceVertexIndices"` to
-`mesh.faceVertexCounts` instead of `mesh.faceVertexIndices`.
-
-Impact:
-
-- Any generic property-based mesh inspection receives the wrong data
-- Downstream tools using `GetProperty()` or `GetAttribute()` can mis-handle
-  topology
-- This is the kind of schema API bug that spreads incorrect assumptions quickly
-
-Refactor direction:
-
-- Fix the mapping immediately
-- Add a regression test for both `"faceVertexCounts"` and
-  `"faceVertexIndices"`
-
-### 6. Held interpolation is wrong for typed interpolatable timesamples
-
-Severity: High
-
-Affected file:
-
-- `src/timesamples.cc`
-
-Problem:
-
-For interpolatable typed samples, the non-linear branch uses `lower_bound()` and
-returns the current iterator element instead of the nearest preceding sample. It
-also returns `false` for times after the last sample instead of holding the last
-value.
-
-Impact:
-
-- Held interpolation disagrees with USD semantics
-- Typed animation evaluation can differ from the generic `PrimVar` path
-- Behavior after the last sample is especially dangerous because callers may
-  interpret `false` as "no data" instead of "hold final value"
-
-Refactor direction:
-
-- Use the same preceding-sample logic as the non-interpolatable path
-- Add tests for exact, between-sample, pre-first, and post-last times
-
-### 7. In-place memory accounting underflows
-
-Severity: Medium
-
-Affected file:
-
-- `src/tydra/layer-to-renderscene.cc`
-
-Problem:
-
-`memory_freed` is calculated as `memory_before - current_memory_usage_` using
-`size_t`. In the current implementation the converter mostly increments memory
-usage, so the subtraction wraps and reports a huge positive number.
-
-Impact:
-
-- Bogus telemetry for any caller using `memory_freed_callback`
-- Misleading low-memory behavior when trying to measure the benefit of in-place
-  conversion
-
-Refactor direction:
-
-- Use saturating subtraction for usage deltas
-- Track allocations and deallocations separately
-- Consider reusing the `MemoryTracker` utility pattern already present in
-  `src/tydra/common-types.hh`
-
-## Coverage Gaps
-
-The current test surface does not match the risk profile of the code reviewed.
-
-Observed gaps:
-
-- `tests/unit/unit-timesamples.cc` exercises generic `PrimVar` interpolation but
-  does not cover the broken `TypedTimeSamples<T>` held path
-- No ctest-registered coverage appears to exercise `layer-to-renderscene`
-- Malformed connection lists in `tydra::EvaluateAttribute*` do not appear to
-  have regression coverage
-- Unified small-POD sorting and variable-sized unified array samples are not
-  covered
-
-## Recommended Short-Term Plan
-
-1. Fix the connection-handling bugs first. They are the most likely to produce
-   crashes or undefined behavior on malformed data.
-2. Disable or harden `ConvertLayerInPlace()` before expanding its use.
-3. Repair `TimeSamples` correctness next, starting with small-POD sorting and
-   held interpolation.
-4. Add regression tests for every issue above before any broader refactor.
-
-## Recommended Medium-Term Refactor Themes
-
-### Consolidate attribute evaluation
-
-The `attribute-eval` family repeats nearly identical connection-following and
-error-reporting logic across several translation units. This should be moved
-behind one internal resolver that returns a validated target or a typed error.
-
-### Separate storage policy from query policy in `TimeSamples`
-
-`TimeSamples` currently mixes:
-
-- storage layout
-- sort/update behavior
-- typed reconstruction
-- interpolation policy
-- array shape management
-
-This is making invariants hard to preserve. A cleaner split would reduce the
-chance of introducing parallel-array drift bugs again.
-
-### Make destructive conversion APIs explicit
-
-`ConvertLayerInPlace()` currently reads like a performance optimization but acts
-like a destructive ownership transfer. The API should make the destructive
-contract explicit and should not be enabled until the converter is feature-complete.
+- `src/pprinter.cc` — Large file with potential type dispatch duplication
+- `src/usdc-reader.cc` — Main crate reader with potential for similar consolidation
+- `src/usda-writer.cc` / `src/usdc-writer.cc` — Serialization paths
+- `src/composition.cc` — Layer composition logic
+- `src/usdGeom.cc` / `src/usdShade.cc` — Schema implementations

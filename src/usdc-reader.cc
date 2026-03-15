@@ -574,117 +574,6 @@ class USDCReader::Impl {
 // -- Impl
 //
 
-#if 0
-
-bool USDCReader::Impl::ReconstructGeomSubset(
-    const Node &node, const FieldValuePairVector &fields,
-    const std::unordered_map<uint32_t, uint32_t> &path_index_to_spec_index_map,
-    GeomSubset *geom_subset) {
-
-  DCOUT("Reconstruct GeomSubset");
-
-  for (const auto &fv : fields) {
-    if (fv.first == "properties") {
-      FIELDVALUE_DATATYPE_CHECK(fv, "properties", crate::kTokenVector)
-
-      // for (size_t i = 0; i < fv.second.GetStringArray().size(); i++) {
-      //   // if (fv.second.GetStringArray()[i] == "points") {
-      //   // }
-      // }
-    }
-  }
-
-  for (size_t i = 0; i < node.GetChildren().size(); i++) {
-    int child_index = int(node.GetChildren()[i]);
-    if ((child_index < 0) || (child_index >= int(_nodes->size()))) {
-      PUSH_ERROR("Invalid child node id: " + std::to_string(child_index) +
-                 ". Must be in range [0, " + std::to_string(_nodes->size()) +
-                 ")");
-      return false;
-    }
-
-    // const Node &child_node = _nodes[size_t(child_index)];
-
-    if (!path_index_to_spec_index_map.count(uint32_t(child_index))) {
-      // No specifier assigned to this child node.
-      // TODO: Should we report an error?
-      continue;
-    }
-
-    uint32_t spec_index =
-        path_index_to_spec_index_map.at(uint32_t(child_index));
-    if (spec_index >= _specs->size()) {
-      PUSH_ERROR("Invalid specifier id: " + std::to_string(spec_index) +
-                 ". Must be in range [0, " + std::to_string(_specs->size()) +
-                 ")");
-      return false;
-    }
-
-    const crate::Spec &spec = (*_specs)[spec_index];
-
-    Path path = GetPath(spec.path_index);
-    DCOUT("Path prim part: " << path.prim_part()
-                             << ", prop part: " << path.prop_part()
-                             << ", spec_index = " << spec_index);
-
-    if (!_live_fieldsets->count(spec.fieldset_index)) {
-      _err += "FieldSet id: " + std::to_string(spec.fieldset_index.value) +
-              " must exist in live fieldsets.\n";
-      return false;
-    }
-
-    const FieldValuePairVector &child_fields =
-        _live_fieldsets->at(spec.fieldset_index);
-
-    {
-      std::string prop_name = path.prop_part();
-
-      Attribute attr;
-      bool ret = ParseAttribute(child_fields, &attr, prop_name);
-      DCOUT("prop: " << prop_name << ", ret = " << ret);
-
-      if (ret) {
-        // TODO(syoyo): Support more prop names
-        if (prop_name == "elementType") {
-          auto p = attr.var.get_value<tinyusdz::value::token>();
-          if (p) {
-            std::string str = p->str();
-            if (str == "face") {
-              geom_subset->elementType = GeomSubset::ElementType::Face;
-            } else {
-              PUSH_ERROR("`elementType` must be `face`, but got `" + str + "`");
-              return false;
-            }
-          } else {
-            PUSH_ERROR("`elementType` must be token type, but got " +
-                       value::GetTypeName(attr.var.type_id()));
-            return false;
-          }
-        } else if (prop_name == "faces") {
-          auto p = attr.var.get_value<std::vector<int>>();
-          if (p) {
-            geom_subset->faces = (*p);
-          }
-
-          DCOUT("faces.num = " << geom_subset->faces.size());
-
-        } else {
-          // Assume Primvar.
-          if (geom_subset->attribs.count(prop_name)) {
-            _err += "Duplicated property name found: " + prop_name + "\n";
-            return false;
-          }
-
-          geom_subset->attribs[prop_name] = std::move(attr);
-        }
-      }
-    }
-  }
-
-  return true;
-}
-
-#endif
 
 namespace {}
 
@@ -1203,9 +1092,8 @@ bool USDCReader::Impl::ParseProperty(const SpecType spec_type,
   // for relationship
   bool hasTargetPaths{false};
 
-  // metadata(ignore these for now)
-  bool hasConnectionChildren{false};
-  bool hasTargetChildren{false};
+  // metadata (hasConnectionChildren/hasTargetChildren removed — were only
+  // used by commented-out code)
 
   DCOUT("== List of Fields");
 
@@ -1509,8 +1397,6 @@ bool USDCReader::Impl::ParseProperty(const SpecType spec_type,
       // `targetChildren` seems optionally exist to validate the existence of
       // target Paths when `targetPaths` field exists.
       // TODO: validate path of `targetChildren`
-      hasTargetChildren = true;
-
       // Path vector
       if (auto pv = fv.second.get_value<std::vector<Path>>()) {
         DCOUT("targetChildren = " << pv.value());
@@ -1524,8 +1410,6 @@ bool USDCReader::Impl::ParseProperty(const SpecType spec_type,
       // `connectionChildren` seems optionally exist to validate the existence
       // of connection Paths when `connectiontPaths` field exists.
       // TODO: validate path of `connetionChildren`
-      hasConnectionChildren = true;
-
       // Path vector
       if (auto pv = fv.second.get_value<std::vector<Path>>()) {
         DCOUT("connectionChildren = " << pv.value());
@@ -1628,19 +1512,6 @@ bool USDCReader::Impl::ParseProperty(const SpecType spec_type,
   DCOUT("== End List of Fields");
 
   // Post check
-#if 0
-  if (hasConnectionChildren) {
-    // Validate existence of Path..
-  }
-
-  if (hasTargetChildren) {
-    // Validate existence of Path..
-  }
-#else
-  (void)hasTargetChildren;
-  (void)hasConnectionChildren;
-  (void)hasConnectionPaths;
-#endif
 
   // Do role type cast for default value.
   // (NOTE: role type cast for timeSamples is done earlier when processing timeSamples field)
