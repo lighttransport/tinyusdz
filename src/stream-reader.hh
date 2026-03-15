@@ -318,34 +318,6 @@ class StreamReader {
     return true;
   }
 
-#if 0
-  bool read_value(Value *inout) {
-    if (!inout) {
-      return false;
-    }
-
-    if (inout->Type() == VALUE_TYPE_FLOAT) {
-      float value;
-      if (!read_float(&value)) {
-        return false;
-      }
-
-      (*inout) = Value(value);
-    } else if (inout->Type() == VALUE_TYPE_INT) {
-      int value;
-      if (!read4(&value)) {
-        return false;
-      }
-
-      (*inout) = Value(value);
-    } else {
-      TINYVDBIO_ASSERT(0);
-      return false;
-    }
-
-    return true;
-  }
-#endif
 
   uint64_t tell() const { return uint64_t(idx_); }
   bool eof() const { return idx_ >= length_; }

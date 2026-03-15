@@ -71,13 +71,6 @@
   _memory_usage += _chk_nbytes; \
   } while(0)
 
-#if 0
-#define REDUCE_MEMORY_USAGE(__nbytes) do { \
-  if (_memory_usage >= (__nbytes)) { \
-    _memory_usage -= (__nbytes); \
-  } \
-  } while(0)
-#endif
 #include "io-util.hh"
 #include "pprinter.hh"
 #include "prim-types.hh"
@@ -4245,47 +4238,6 @@ bool AsciiParser::ParseBasicPrimAttr(bool array_qual,
       var.set_value(value);
     }
 
-#if 0
-  // FIXME: Disable duplicated parsing attribute connection here, since parsing attribute connection will be handled in ParsePrimProps().
-  } else if (hasConnect(primattr_name)) {
-    std::string value;  // TODO: Use Path
-    if (!ReadPathIdentifier(&value)) {
-      PUSH_ERROR_AND_RETURN("Failed to parse path identifier.");
-    }
-
-    // validate.
-    Path connectionPath = pathutil::FromString(value);
-    if (!connectionPath.is_valid()) {
-      PUSH_ERROR_AND_RETURN(fmt::format("Invalid connectionPath: {}.", value));
-    }
-
-    // Resolve relative path here.
-    // NOTE: Internally, USD(Crate) does not allow relative path.
-    Path base_prim_path(GetCurrentPrimPath(), "");
-    Path abs_path;
-    if (!pathutil::ResolveRelativePath(base_prim_path, connectionPath,
-                                       &abs_path)) {
-      PUSH_ERROR_AND_RETURN(fmt::format("Invalid relative Path: {}.", value));
-    }
-
-    // TODO: Use Path
-    var.set_value(abs_path.full_path_name());
-
-    // Check if attribute metadatum is not authored.
-    if (!SkipCommentAndWhitespaceAndNewline()) {
-      return false;
-    }
-
-    char c;
-    if (!LookChar1(&c)) {
-      return false;
-    }
-
-    if (c == '(') {
-      PUSH_ERROR_AND_RETURN(fmt::format("Attribute connection cannot have attribute metadataum: {}", primattr_name));
-    }
-
-#endif
   } else {
     nonstd::optional<T> value;
     if (!ReadBasicType(&value)) {
