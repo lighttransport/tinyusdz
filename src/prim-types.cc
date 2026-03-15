@@ -235,17 +235,6 @@ void Path::_update(const std::string &p, const std::string &prop) {
     // maybe relative(e.g. "./xform", "../xform")
     // FIXME: Support relative path fully
 
-#if 0
-    auto nslashes = std::count_if(p.begin(), p.end(), slash_fun);
-    if (nslashes > 0) {
-      _valid = false;
-      return;
-    }
-
-    _prop_part = p;
-    _prop_part = _prop_part.erase(0, 1);
-    _valid = true;
-#else
     _prim_part = p;
     if (prop.size()) {
       _prop_part = prop;
@@ -259,7 +248,6 @@ void Path::_update(const std::string &p, const std::string &prop) {
     }
     _valid = true;
 
-#endif
 
   } else {
     // prim.prop
@@ -850,72 +838,6 @@ nonstd::optional<std::string> GetPrimElementName(const value::Value &v) {
   // Since multiple get_value() call consumes lots of stack size(depends on
   // sizeof(T)?), Following code would produce 100KB of stack in debug build. So
   // use as() instead(as() => roughly 2000 bytes for stack size).
-#if 0
-  //
-  // TODO: Find a better C++ way... use a std::function?
-  //
-  if (auto pv = v.get_value<Model>()) {
-    return Path(pv.value().name, "");
-  }
-  if (auto pv = v.get_value<Scope>()) {
-    return Path(pv.value().name, "");
-  }
-  if (auto pv = v.get_value<Xform>()) {
-    return Path(pv.value().name, "");
-  }
-  if (auto pv = v.get_value<GPrim>()) {
-    return Path(pv.value().name, "");
-  }
-  if (auto pv = v.get_value<GeomMesh>()) {
-    return Path(pv.value().name, "");
-  }
-  if (auto pv = v.get_value<GeomBasisCurves>()) {
-    return Path(pv.value().name, "");
-  }
-  if (auto pv = v.get_value<GeomSphere>()) {
-    return Path(pv.value().name, "");
-  }
-  if (auto pv = v.get_value<GeomCube>()) {
-    return Path(pv.value().name, "");
-  }
-  if (auto pv = v.get_value<GeomCylinder>()) {
-    return Path(pv.value().name, "");
-  }
-  if (auto pv = v.get_value<GeomCapsule>()) {
-    return Path(pv.value().name, "");
-  }
-  if (auto pv = v.get_value<GeomCone>()) {
-    return Path(pv.value().name, "");
-  }
-  if (auto pv = v.get_value<GeomSubset>()) {
-    return Path(pv.value().name, "");
-  }
-  if (auto pv = v.get_value<GeomCamera>()) {
-    return Path(pv.value().name, "");
-  }
-
-  if (auto pv = v.get_value<DomeLight>()) {
-    return Path(pv.value().name, "");
-  }
-  if (auto pv = v.get_value<SphereLight>()) {
-    return Path(pv.value().name, "");
-  }
-  // if (auto pv = v.get_value<CylinderLight>()) { return
-  // Path(pv.value().name); } if (auto pv = v.get_value<DiskLight>()) {
-  // return Path(pv.value().name); }
-
-  if (auto pv = v.get_value<Material>()) {
-    return Path(pv.value().name, "");
-  }
-  if (auto pv = v.get_value<Shader>()) {
-    return Path(pv.value().name, "");
-  }
-  // if (auto pv = v.get_value<UVTexture>()) { return Path(pv.value().name); }
-  // if (auto pv = v.get_value<PrimvarReader()) { return Path(pv.value().name);
-  // }
-
-  return nonstd::nullopt;
-#else
 
   // Lookup name field of Prim class
 
@@ -972,7 +894,6 @@ nonstd::optional<std::string> GetPrimElementName(const value::Value &v) {
 
 #undef EXTRACT_NAME_AND_RETURN_PATH
 
-#endif
 }
 
 bool SetPrimElementName(value::Value &v, const std::string &elementName) {
