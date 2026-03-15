@@ -947,68 +947,7 @@ struct TimeSamples {
   /// @param t Time value for this sample
   /// @param ref_index Index of the existing sample (in _times) whose value to reuse
   /// @param err Optional error string
-  bool add_dedup_sample(double t, size_t ref_index, std::string *err = nullptr) {
-    // Check if using value array storage
-    if (_storage.uses_value_array()) {
-      // Validate reference
-      if (ref_index >= _times.size()) {
-        if (err) {
-          (*err) += "Invalid ref_index in add_dedup_sample: " +
-                    std::to_string(ref_index) + " >= " + std::to_string(_times.size()) + ".\n";
-        }
-        return false;
-      }
-
-      // Get the storage index from the referenced sample
-      uint64_t ref_entry = _value_array_refs[ref_index];
-      size_t storage_index = get_value_array_index(ref_entry);
-
-      // If the referenced sample is itself a dedup, follow the chain
-      // (though we should always reference original data)
-      if (is_value_array_dedup(ref_entry)) {
-        if (err) {
-          (*err) += "Cannot deduplicate from already deduplicated sample.\n";
-        }
-        return false;
-      }
-
-      // Add time and dedup reference
-      _times.push_back(t);
-      _blocked.push_back(0);
-      _value_array_refs.push_back(make_value_array_ref(storage_index, true));
-      const size_t ref_array_count =
-          (ref_index < _array_counts.size()) ? _array_counts[ref_index] : 0;
-      _array_counts.push_back(ref_array_count);
-
-      invalidate_reconstructed_samples_cache();
-      _dirty = true;
-      return true;
-    }
-
-    // Fallback to old _samples based storage
-    if (has_unified_samples()) {
-      if (err) {
-        (*err) += "add_dedup_sample cannot fall back to generic Value storage once unified storage is active.\n";
-      }
-      return false;
-    }
-    if (ref_index >= _samples.size()) {
-      if (err) {
-        (*err) += "Invalid ref_index in add_dedup_sample: " +
-                  std::to_string(ref_index) + " >= " + std::to_string(_samples.size()) + ".\n";
-      }
-      return false;
-    }
-
-    // Reuse the value from the referenced sample
-    Sample s;
-    s.t = t;
-    s.value = _samples[ref_index].value;  // Share the value::Value (copy, but underlying data may be shared)
-    s.blocked = _samples[ref_index].blocked;
-    _samples.push_back(s);
-    _dirty = true;
-    return true;
-  }
+  bool add_dedup_sample(double t, size_t ref_index, std::string *err = nullptr);  // Defined in timesamples.cc
 
   template <typename T,
             typename std::enable_if<
@@ -1230,44 +1169,7 @@ struct TimeSamples {
     return TypedArrayView<const T>();  // Empty view
   }
 
-  const std::vector<Sample> &get_samples() const {
-#ifdef __clang__
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Wexit-time-destructors"
-#endif
-
-    static const std::vector<Sample> empty;
-
-#ifdef __clang__
-#pragma clang diagnostic pop
-#endif
-
-    // If unified storage has data, convert to generic samples on demand.
-    if (!_times.empty() && _samples.empty()) {
-      if (_dirty) {
-        update();
-      }
-
-      _samples.clear();
-      _samples.reserve(_times.size());
-
-      for (size_t i = 0; i < _times.size(); ++i) {
-        Sample s;
-        if (!reconstruct_unified_sample(i, &s)) {
-          s.t = (i < _times.size()) ? _times[i] : 0.0;
-          s.value = value::Value();
-          s.blocked = true;
-        }
-        _samples.push_back(s);
-      }
-      return _samples;
-    }
-
-    if (_dirty) {
-      update();
-    }
-    return _samples;
-  }
+  const std::vector<Sample> &get_samples() const;  // Defined in timesamples.cc
 
   std::vector<Sample> &samples() {
 #ifdef __clang__
