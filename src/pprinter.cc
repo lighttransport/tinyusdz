@@ -197,6 +197,30 @@ void SetIndentString(const std::string &s) { sIndentString = s; }
 
 }  // namespace pprint
 
+// Helper: print ".connect = <path>" for any attribute with connections
+static std::string fmt_connections(const std::vector<Path> &paths) {
+  std::stringstream s;
+  if (paths.size() == 1) {
+    s << paths[0];
+  } else if (paths.empty()) {
+    s << "[InternalError]";
+  } else {
+    s << paths;
+  }
+  return s.str();
+}
+
+// Helper: print attribute metadata block
+static void print_attr_metas_block(std::stringstream &ss,
+                                    const AttrMeta &metas,
+                                    const uint32_t indent) {
+  if (metas.authored()) {
+    ss << " (\n"
+       << print_attr_metas(metas, indent + 1) << pprint::Indent(indent)
+       << ")";
+  }
+}
+
 template <typename T>
 std::string print_typed_timesamples(const TypedTimeSamples<T> &v,
                                     const uint32_t indent = 0) {
@@ -869,11 +893,7 @@ std::string print_typed_attr(const TypedAttribute<Animatable<T>> &attr,
       } else { // is_value_empty
       }
 
-      if (attr.metas().authored()) {
-        ss << "(\n"
-           << print_attr_metas(attr.metas(), indent + 1) << pprint::Indent(indent)
-           << ")";
-      }
+      print_attr_metas_block(ss, attr.metas(), indent);
       ss << "\n";
     }
 
@@ -892,16 +912,7 @@ std::string print_typed_attr(const TypedAttribute<Animatable<T>> &attr,
       ss << pprint::Indent(indent);
       ss << value::TypeTraits<T>::type_name() << " " << name;
 
-      ss << ".connect = ";
-      const std::vector<Path> &paths = attr.get_connections();
-      if (paths.size() == 1) {
-        ss << paths[0];
-      } else if (paths.size() == 0) {
-        ss << "[InternalError]";
-      } else {
-        ss << paths;
-      }
-      ss << "\n";
+      ss << ".connect = " << fmt_connections(attr.get_connections()) << "\n";
     }
 
   }
@@ -948,11 +959,7 @@ static std::string print_str_attr(
         }
       }
 
-      if (attr.metas().authored()) {
-        ss << "(\n"
-           << print_attr_metas(attr.metas(), indent + 1) << pprint::Indent(indent)
-           << ")";
-      }
+      print_attr_metas_block(ss, attr.metas(), indent);
       ss << "\n";
     }
 
@@ -1012,11 +1019,7 @@ std::string print_typed_attr(const TypedAttribute<T> &attr,
         }
       }
 
-      if (attr.metas().authored()) {
-        ss << " (\n"
-           << print_attr_metas(attr.metas(), indent + 1) << pprint::Indent(indent)
-           << ")";
-      }
+      print_attr_metas_block(ss, attr.metas(), indent);
       ss << "\n";
     }
 
@@ -1099,11 +1102,7 @@ std::string print_typed_attr(
         ss << value::TypeTraits<T>::type_name() << " " << name;
       }
 
-      if (attr.metas().authored()) {
-        ss << " (\n"
-           << print_attr_metas(attr.metas(), indent + 1) << pprint::Indent(indent)
-           << ")";
-      }
+      print_attr_metas_block(ss, attr.metas(), indent);
       ss << "\n";
     }
 
@@ -1183,11 +1182,7 @@ std::string print_typed_attr(const TypedAttributeWithFallback<T> &attr,
         ss << " = " << attr.get_value();
       }
 
-      if (attr.metas().authored()) {
-        ss << " (\n"
-           << print_attr_metas(attr.metas(), indent + 1) << pprint::Indent(indent)
-           << ")";
-      }
+      print_attr_metas_block(ss, attr.metas(), indent);
       ss << "\n";
     }
 
@@ -1235,11 +1230,7 @@ std::string print_typed_token_attr(
         }
       }
 
-      if (attr.metas().authored()) {
-        ss << " (\n"
-           << print_attr_metas(attr.metas(), indent + 1) << pprint::Indent(indent)
-           << ")";
-      }
+      print_attr_metas_block(ss, attr.metas(), indent);
       ss << "\n";
     }
 
@@ -1309,16 +1300,7 @@ std::string print_typed_token_attr(const TypedAttributeWithFallback<T> &attr,
 
       ss << "token " << name;
 
-      ss << ".connect = ";
-      const std::vector<Path> &paths = attr.get_connections();
-      if (paths.size() == 1) {
-        ss << paths[0];
-      } else if (paths.size() == 0) {
-        ss << "[InternalError]";
-      } else {
-        ss << paths;
-      }
-      ss << "\n";
+      ss << ".connect = " << fmt_connections(attr.get_connections()) << "\n";
     }
   }
 
@@ -2486,14 +2468,14 @@ std::string print_variantSetStmt(
                             nameTok.str()));
           const auto it = primNameTable.find(nameTok.str());
           if (it != primNameTable.end()) {
-            ss << print_prim_recurse(*(it->second), indent + 2);
+            ss << print_prim(*(it->second), indent + 2);
           } else {
             // TODO: Report warning?
           }
         }
       } else {
         for (const auto &child : variantPrimChildren) {
-          ss << print_prim_recurse(child, indent + 2);
+          ss << print_prim(child, indent + 2);
         }
       }
 
