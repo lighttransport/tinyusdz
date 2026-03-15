@@ -373,6 +373,235 @@ void TimeSamples::update() const {
   _dirty = false;
 }
 
+// ============================================================================
+// reconstruct_binary_sample / reconstruct_unified_sample
+// Moved from timesamples.hh to reduce header compilation cost.
+// These expand 80+ macro-generated type dispatch cases.
+// ============================================================================
+
+bool TimeSamples::reconstruct_binary_sample(size_t idx, Sample* sample) const {
+    if (!sample || idx >= _times.size() || idx >= _blocked.size()) {
+      return false;
+    }
+
+    sample->t = _times[idx];
+    sample->blocked = (_blocked[idx] != 0);
+    sample->value = value::Value();
+
+    if (sample->blocked) {
+      return true;
+    }
+
+    // Array sample reconstruction
+    if (_storage.is_array_backend()) {
+      if (_storage.uses_value_array()) {
+        return false;  // Handled by reconstruct_value_array_sample
+      }
+
+      const size_t array_count = get_array_count(idx);
+
+      // Reconstruct from array-specific storage
+      if (idx < _offsets.size()) {
+        const uint64_t encoded_offset = _offsets[idx];
+
+        // Check dedup flag
+        if (encoded_offset & OFFSET_DEDUP_FLAG) {
+          const size_t ref_idx = static_cast<size_t>(encoded_offset & OFFSET_VALUE_MASK);
+          if (ref_idx < _offsets.size() && ref_idx != idx) {
+            Sample ref_sample;
+            if (reconstruct_binary_sample(ref_idx, &ref_sample)) {
+              sample->value = ref_sample.value;
+              return true;
+            }
+          }
+          return true;
+        }
+
+        // Check array buffer flag
+        if (encoded_offset & OFFSET_ARRAY_BUFFER_FLAG) {
+          const size_t buf_idx = static_cast<size_t>(encoded_offset & OFFSET_VALUE_MASK);
+          if (buf_idx < _array_values.size() && _array_values[buf_idx]) {
+            const auto& buf = *_array_values[buf_idx];
+
+#define RECONSTRUCT_ARRAY_SAMPLE(TYPE)                                            \
+      if (reconstruct_unified_array_value<TYPE>(                                  \
+              idx, value::TypeTraits<std::vector<TYPE>>::type_id(),               \
+              &sample->value)) {                                                  \
+        return true;                                                              \
+      }                                                                           \
+      if (reconstruct_unified_array_value<TYPE>(                                  \
+              idx, value::TypeTraits<TypedArray<TYPE>>::type_id(),                \
+              &sample->value)) {                                                  \
+        return true;                                                              \
+      }
+
+            (void)buf;  // Used indirectly via reconstruct_unified_array_value
+            RECONSTRUCT_ARRAY_SAMPLE(float)
+            RECONSTRUCT_ARRAY_SAMPLE(double)
+            RECONSTRUCT_ARRAY_SAMPLE(int32_t)
+            RECONSTRUCT_ARRAY_SAMPLE(uint32_t)
+            RECONSTRUCT_ARRAY_SAMPLE(int64_t)
+            RECONSTRUCT_ARRAY_SAMPLE(uint64_t)
+            RECONSTRUCT_ARRAY_SAMPLE(value::half)
+            RECONSTRUCT_ARRAY_SAMPLE(value::half2)
+            RECONSTRUCT_ARRAY_SAMPLE(value::half3)
+            RECONSTRUCT_ARRAY_SAMPLE(value::half4)
+            RECONSTRUCT_ARRAY_SAMPLE(value::float2)
+            RECONSTRUCT_ARRAY_SAMPLE(value::float3)
+            RECONSTRUCT_ARRAY_SAMPLE(value::float4)
+            RECONSTRUCT_ARRAY_SAMPLE(value::double2)
+            RECONSTRUCT_ARRAY_SAMPLE(value::double3)
+            RECONSTRUCT_ARRAY_SAMPLE(value::double4)
+            RECONSTRUCT_ARRAY_SAMPLE(value::int2)
+            RECONSTRUCT_ARRAY_SAMPLE(value::int3)
+            RECONSTRUCT_ARRAY_SAMPLE(value::int4)
+            RECONSTRUCT_ARRAY_SAMPLE(value::quath)
+            RECONSTRUCT_ARRAY_SAMPLE(value::quatf)
+            RECONSTRUCT_ARRAY_SAMPLE(value::quatd)
+            RECONSTRUCT_ARRAY_SAMPLE(value::point3f)
+            RECONSTRUCT_ARRAY_SAMPLE(value::point3d)
+            RECONSTRUCT_ARRAY_SAMPLE(value::normal3f)
+            RECONSTRUCT_ARRAY_SAMPLE(value::normal3d)
+            RECONSTRUCT_ARRAY_SAMPLE(value::vector3f)
+            RECONSTRUCT_ARRAY_SAMPLE(value::vector3d)
+            RECONSTRUCT_ARRAY_SAMPLE(value::color3f)
+            RECONSTRUCT_ARRAY_SAMPLE(value::color3d)
+            RECONSTRUCT_ARRAY_SAMPLE(value::color4f)
+            RECONSTRUCT_ARRAY_SAMPLE(value::color4d)
+            RECONSTRUCT_ARRAY_SAMPLE(value::texcoord2f)
+            RECONSTRUCT_ARRAY_SAMPLE(value::texcoord2d)
+            RECONSTRUCT_ARRAY_SAMPLE(value::texcoord3f)
+            RECONSTRUCT_ARRAY_SAMPLE(value::texcoord3d)
+            RECONSTRUCT_ARRAY_SAMPLE(value::matrix2f)
+            RECONSTRUCT_ARRAY_SAMPLE(value::matrix2d)
+            RECONSTRUCT_ARRAY_SAMPLE(value::matrix3f)
+            RECONSTRUCT_ARRAY_SAMPLE(value::matrix3d)
+            RECONSTRUCT_ARRAY_SAMPLE(value::matrix4f)
+            RECONSTRUCT_ARRAY_SAMPLE(value::matrix4d)
+
+#undef RECONSTRUCT_ARRAY_SAMPLE
+            return true;
+          }
+        }
+
+        // Inline array from _values buffer
+        const size_t byte_offset = static_cast<size_t>(encoded_offset & OFFSET_VALUE_MASK);
+        if (array_count > 0) {
+          // Reconstruct typed vector from inline buffer
+          std::vector<uint8_t> raw(array_count * _storage.array.element_size);
+          if (byte_offset + raw.size() <= _values.size()) {
+            std::memcpy(raw.data(), _values.data() + byte_offset, raw.size());
+          }
+          // Store as raw bytes — type reconstruction happens at query time
+          sample->value = value::Value(std::move(raw));
+        }
+      }
+
+      return true;
+    }
+
+    // Scalar sample reconstruction
+    const uint32_t type_id = _type_id;
+    if (idx < _small_values.size()) {
+      uint64_t stored = _small_values[idx];
+
+#define RECONSTRUCT_SMALL_VALUE(TYPE) \
+      case value::TypeTraits<TYPE>::type_id(): { \
+        TYPE val; \
+        std::memcpy(&val, &stored, sizeof(TYPE)); \
+        sample->value = value::Value(val); \
+        break; \
+      }
+
+      switch (type_id) {
+        RECONSTRUCT_SMALL_VALUE(value::half)
+        RECONSTRUCT_SMALL_VALUE(float)
+        RECONSTRUCT_SMALL_VALUE(double)
+        RECONSTRUCT_SMALL_VALUE(int32_t)
+        RECONSTRUCT_SMALL_VALUE(uint32_t)
+        RECONSTRUCT_SMALL_VALUE(int64_t)
+        RECONSTRUCT_SMALL_VALUE(uint64_t)
+        case value::TypeTraits<bool>::type_id(): {
+          const bool bval = (stored != 0);
+          sample->value = value::Value(bval);
+          break;
+        }
+        default:
+          break;
+      }
+#undef RECONSTRUCT_SMALL_VALUE
+      return true;
+    }
+
+    if (idx >= _offsets.size()) {
+      return true;
+    }
+
+    const uint64_t encoded_offset = _offsets[idx];
+    const size_t byte_offset = static_cast<size_t>(encoded_offset & OFFSET_VALUE_MASK);
+
+#define RECONSTRUCT_VALUE(TYPE) \
+    case value::TypeTraits<TYPE>::type_id(): { \
+      if (byte_offset + sizeof(TYPE) <= _values.size()) { \
+        TYPE val; \
+        std::memcpy(&val, _values.data() + byte_offset, sizeof(TYPE)); \
+        sample->value = value::Value(val); \
+      } \
+      break; \
+    }
+
+    switch (type_id) {
+      RECONSTRUCT_VALUE(value::float2)
+      RECONSTRUCT_VALUE(value::float3)
+      RECONSTRUCT_VALUE(value::float4)
+      RECONSTRUCT_VALUE(value::double2)
+      RECONSTRUCT_VALUE(value::double3)
+      RECONSTRUCT_VALUE(value::double4)
+      RECONSTRUCT_VALUE(value::int2)
+      RECONSTRUCT_VALUE(value::int3)
+      RECONSTRUCT_VALUE(value::int4)
+      RECONSTRUCT_VALUE(value::half2)
+      RECONSTRUCT_VALUE(value::half3)
+      RECONSTRUCT_VALUE(value::half4)
+      RECONSTRUCT_VALUE(value::quath)
+      RECONSTRUCT_VALUE(value::quatf)
+      RECONSTRUCT_VALUE(value::quatd)
+      RECONSTRUCT_VALUE(value::point3f)
+      RECONSTRUCT_VALUE(value::point3d)
+      RECONSTRUCT_VALUE(value::normal3f)
+      RECONSTRUCT_VALUE(value::normal3d)
+      RECONSTRUCT_VALUE(value::vector3f)
+      RECONSTRUCT_VALUE(value::vector3d)
+      RECONSTRUCT_VALUE(value::color3f)
+      RECONSTRUCT_VALUE(value::color3d)
+      RECONSTRUCT_VALUE(value::color4f)
+      RECONSTRUCT_VALUE(value::color4d)
+      RECONSTRUCT_VALUE(value::texcoord2f)
+      RECONSTRUCT_VALUE(value::texcoord2d)
+      RECONSTRUCT_VALUE(value::texcoord3f)
+      RECONSTRUCT_VALUE(value::texcoord3d)
+      RECONSTRUCT_VALUE(value::matrix2f)
+      RECONSTRUCT_VALUE(value::matrix2d)
+      RECONSTRUCT_VALUE(value::matrix3f)
+      RECONSTRUCT_VALUE(value::matrix3d)
+      RECONSTRUCT_VALUE(value::matrix4f)
+      RECONSTRUCT_VALUE(value::matrix4d)
+      default:
+        break;
+    }
+
+#undef RECONSTRUCT_VALUE
+    return true;
+}
+
+bool TimeSamples::reconstruct_unified_sample(size_t idx, Sample* sample) const {
+    if (_storage.uses_value_array()) {
+      return reconstruct_value_array_sample(idx, sample);
+    }
+
+    return reconstruct_binary_sample(idx, sample);
+}
+
 } // namespace value
 
 //
