@@ -156,7 +156,7 @@ std::ostream &operator<<(std::ostream &ofs, const tinyusdz::SubLayer &v) {
 
 std::ostream &operator<<(std::ostream &ofs,
                          const tinyusdz::value::StringData &v) {
-
+   ofs << tinyusdz::buildEscapedAndQuotedStringForUSDA(v.value);
   return ofs;
 }
 
@@ -2441,22 +2441,6 @@ std::string to_string(tinyusdz::Extent e) {
   return ss.str();
 }
 
-
-
-  // Recursively print child prims
-  for (const auto &child : prim.children()) {
-    ss << print_prim_recurse(child, indent + 1);
-  }
-
-  // Print variantSets owned by the child prim itself
-  if (prim.variantSets().size()) {
-    ss << print_variantSetStmt(prim.variantSets(), indent + 1);
-  }
-
-  ss << pprint::Indent(indent) << "}\n";
-  return ss.str();
-}
-
 std::string print_variantSetStmt(
     const std::map<std::string, VariantSet> &vslist, const uint32_t indent) {
   std::stringstream ss;
@@ -2751,8 +2735,11 @@ std::string to_string(const GeomSphere &sphere, const uint32_t indent,
   }
   ss << pprint::Indent(indent) << "{\n";
 
-  std::set<std::string> table;
+  ss << print_typed_attr(sphere.radius, "radius", indent + 1);
 
+  ss << print_gprim_predefined(sphere, indent + 1);
+
+  ss << print_props(sphere.props, indent + 1);
 
   if (closing_brace) {
     ss << pprint::Indent(indent) << "}\n";
@@ -4728,10 +4715,11 @@ std::string print_prim(const Prim &prim, const uint32_t indent) {
       ss << "\n";
     }
 
+    ss << print_variantSetStmt(prim.variantSets(), indent + 1);
+
     // need to add blank line after VariantSet stmt and before child Prims,
     // so set require_newline true
     require_newline = true;
-
   }
 
   //
