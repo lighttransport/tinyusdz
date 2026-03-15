@@ -315,28 +315,29 @@ void TimeSamples::update() const {
       return;
     }
 
-    std::vector<size_t> indices = create_sort_indices(_times);
-
-    if (_storage.uses_value_array()) {
-      sort_with_value_array_refs(indices, _times, _blocked, _value_array_refs,
-                                 &_array_counts);
-    } else if (!_offsets.empty()) {
+    if (!_offsets.empty()) {
       const bool has_dedup = std::any_of(
           _offsets.begin(), _offsets.end(), [](uint64_t offset) {
             return (offset & value::TimeSamples::OFFSET_DEDUP_FLAG) != 0;
           });
-      const bool use_insertion_sort =
-          (!has_dedup && count_inversions(_times) * 20 < _times.size());
 
-      if (use_insertion_sort && !has_dedup) {
+      if (!has_dedup && count_inversions(_times) * 20 < _times.size()) {
         insertion_sort_with_offsets(_times, _blocked, _offsets, &_array_counts);
       } else {
+        std::vector<size_t> indices = create_sort_indices(_times);
         sort_with_offsets(indices, _times, _blocked, _offsets, &_array_counts);
       }
-    } else if (!_small_values.empty()) {
-      sort_with_small_values(indices, _times, _blocked, _small_values);
     } else {
-      sort_times_and_blocked(indices, _times, _blocked);
+      std::vector<size_t> indices = create_sort_indices(_times);
+
+      if (_storage.uses_value_array()) {
+        sort_with_value_array_refs(indices, _times, _blocked, _value_array_refs,
+                                   &_array_counts);
+      } else if (!_small_values.empty()) {
+        sort_with_small_values(indices, _times, _blocked, _small_values);
+      } else {
+        sort_times_and_blocked(indices, _times, _blocked);
+      }
     }
   } else if (!_samples.empty()) {
     // Legacy Sample-based storage
