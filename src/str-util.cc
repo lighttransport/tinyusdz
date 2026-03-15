@@ -661,17 +661,6 @@ uint32_t to_utf8_code(const std::string &s) {
 }
 
 
-#if 0
-std::string to_utf8_char(const uint32_t code) {
-
-  if (code < 128) {
-    std::string s = static_cast<char>(code);
-    return s;
-  }
-  // TODO
-
-}
-#endif
 
 bool is_valid_utf8(const std::string &str) {
   // TODO: Consider UTF-BOM?
@@ -1826,58 +1815,6 @@ size_t print_double4(const value::double4& v, char* buffer) {
 
 // Half vectors (convert to float for printing)
 // Note: These functions are only available when linking with value-types
-#if 0
-size_t print_half2(const value::half2& v, char* buffer) {
-  char* p = buffer;
-  *p++ = '(';
-
-  for (size_t i = 0; i < 2; i++) {
-    if (i > 0) {
-      *p++ = ',';
-      *p++ = ' ';
-    }
-    size_t len = dtos(value::half_to_float(v[i]), p);
-    p += len;
-  }
-
-  *p++ = ')';
-  return static_cast<size_t>(p - buffer);
-}
-
-size_t print_half3(const value::half3& v, char* buffer) {
-  char* p = buffer;
-  *p++ = '(';
-
-  for (size_t i = 0; i < 3; i++) {
-    if (i > 0) {
-      *p++ = ',';
-      *p++ = ' ';
-    }
-    size_t len = dtos(value::half_to_float(v[i]), p);
-    p += len;
-  }
-
-  *p++ = ')';
-  return static_cast<size_t>(p - buffer);
-}
-
-size_t print_half4(const value::half4& v, char* buffer) {
-  char* p = buffer;
-  *p++ = '(';
-
-  for (size_t i = 0; i < 4; i++) {
-    if (i > 0) {
-      *p++ = ',';
-      *p++ = ' ';
-    }
-    size_t len = dtos(value::half_to_float(v[i]), p);
-    p += len;
-  }
-
-  *p++ = ')';
-  return static_cast<size_t>(p - buffer);
-}
-#endif
 
 // Matrix printing: ( (row0), (row1), ... ) - with spaces for USD compatibility
 size_t print_matrix2d(const value::matrix2d& m, char* buffer) {

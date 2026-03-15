@@ -180,16 +180,6 @@ bool HasVariants(const Layer &layer);
 ///
 bool HasOver(const Layer &layer);
 
-#if 0 // deprecate it.
-///
-/// Load subLayer USD files in `layer`, and return composited(flattened) Layer
-/// to `composited_layer` Supply search_path with `base_dir`
-///
-bool CompositeSublayers(
-    const std::string &base_dir, const Layer &layer, Layer *composited_layer,
-    std::string *warn, std::string *err,
-    const SublayersCompositionOptions options = SublayersCompositionOptions());
-#endif
 
 ///
 /// Load subLayer USD files in `layer`, and return composited(flattened) Layer
@@ -292,13 +282,6 @@ bool OverridePrimSpec(PrimSpec &dst, const PrimSpec &src, std::string *warn,
 bool InheritPrimSpec(PrimSpec &dst, const PrimSpec &src, std::string *warn,
                      std::string *err);
 
-#if 0
-///
-/// Build USD Stage from Layer
-///
-bool LayerToStage(Layer &layer, Stage *stage, std::string *warn,
-                  std::string *err);
-#endif
 
 ///
 /// Build USD Stage from Layer
@@ -417,11 +400,5 @@ bool ExtractVariants(const Layer &layer, Dictionary *dict, std::string *err);
 ///
 bool ExtractVariants(const Stage &stage, Dictionary *dict, std::string *err);
 
-#if 0  // TODO
-///
-/// Implementation of `references`
-///
-bool ReferenceLayersToPrimSpec(PrimSpec &dst, const std::vector<Layer> &layers
-#endif
 
 }  // namespace tinyusdz
