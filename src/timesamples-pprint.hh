@@ -53,12 +53,6 @@ size_t get_binary_serializable_type_size(uint32_t type_id);
 ///
 /// Pretty print a TypedArray stored as a packed pointer
 ///
-/// @param data Pointer to the packed TypedArray pointer (uint64_t)
-/// @return String representation of the TypedArray
-///
-std::string print_typed_array(const uint8_t* data);
-
-///
 /// Pretty print generic Value TimeSamples with indentation support
 ///
 /// @param samples value::TimeSamples to print

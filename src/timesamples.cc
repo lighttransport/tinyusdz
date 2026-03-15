@@ -602,6 +602,33 @@ bool TimeSamples::reconstruct_unified_sample(size_t idx, Sample* sample) const {
     return reconstruct_binary_sample(idx, sample);
 }
 
+bool TimeSamples::add_sample(const Sample &s, std::string *err) {
+    if (has_unified_samples()) {
+      if (err) {
+        (*err) += "add_sample cannot append generic Value samples after unified storage samples.\n";
+      }
+      return false;
+    }
+
+    if (!is_initialized() && !s.value.is_none()) {
+      init(s.value.type_id());
+    } else if (!s.value.is_none() && is_initialized()) {
+      if (s.value.type_id() != _type_id) {
+        if (err) {
+          (*err) += "Type mismatch in TimeSamples: expected type_id " +
+                    std::to_string(_type_id) + " but got " +
+                    std::to_string(s.value.type_id()) + " (expected type: " +
+                    type_name() + ", got: " + s.value.type_name() + ").\n";
+        }
+        return false;
+      }
+    }
+
+    _samples.push_back(s);
+    _dirty = true;
+    return true;
+}
+
 bool TimeSamples::add_sample(double t, const value::Value &v, std::string *err) {
     if (has_unified_samples()) {
       if (err) {
@@ -1398,20 +1425,20 @@ namespace value {
 TimeSamples::TimeSamples(TimeSamples&& other) noexcept
     : _samples(std::move(other._samples)),
       _times(std::move(other._times)),
-      _blocked(std::move(other._blocked)),
       _small_values(std::move(other._small_values)),
-      _values(std::move(other._values)),
-      _array_values(std::move(other._array_values)),
       _offsets(std::move(other._offsets)),
+      _array_values(std::move(other._array_values)),
+      _blocked(std::move(other._blocked)),
+      _values(std::move(other._values)),
       _value_array_storage(std::move(other._value_array_storage)),
       _value_array_refs(std::move(other._value_array_refs)),
-      _type_id(other._type_id),
+      _array_counts(std::move(other._array_counts)),
       _storage(other._storage),
       _blocked_count(other._blocked_count),
-      _array_counts(std::move(other._array_counts)),
-      _dirty(other._dirty),
       _dirty_start(other._dirty_start),
-      _dirty_end(other._dirty_end) {
+      _dirty_end(other._dirty_end),
+      _type_id(other._type_id),
+      _dirty(other._dirty) {
   // Reset moved-from object to valid empty state
   other._type_id = 0;
   other._storage.clear();
@@ -1457,19 +1484,20 @@ TimeSamples& TimeSamples::operator=(TimeSamples&& other) noexcept {
 TimeSamples::TimeSamples(const TimeSamples& other)
     : _samples(other._samples),
       _times(other._times),
-      _blocked(other._blocked),
       _small_values(other._small_values),
-      _values(other._values),
       _offsets(other._offsets),
-      // _value_array_storage is copied in body to avoid TypeTraits issues
+      // _array_values deep-copied in body
+      _blocked(other._blocked),
+      _values(other._values),
+      // _value_array_storage copied in body to avoid TypeTraits issues
       _value_array_refs(other._value_array_refs),
-      _type_id(other._type_id),
+      _array_counts(other._array_counts),
       _storage(other._storage),
       _blocked_count(other._blocked_count),
-      _array_counts(other._array_counts),
-      _dirty(other._dirty),
       _dirty_start(other._dirty_start),
-      _dirty_end(other._dirty_end) {
+      _dirty_end(other._dirty_end),
+      _type_id(other._type_id),
+      _dirty(other._dirty) {
   // Copy value array storage in body to avoid TypeTraits instantiation issues
   _value_array_storage.reserve(other._value_array_storage.size());
   for (const auto& v : other._value_array_storage) {
