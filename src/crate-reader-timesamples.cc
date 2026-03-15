@@ -410,6 +410,9 @@ bool CrateReader::ReadTimeSamples(value::TimeSamples *d) {
   }
 
 #else
+  // Pre-allocate for the known number of samples to avoid repeated reallocation
+  d->reserve(times.size());
+
   if (!UnpackValueRepsToTimeSamples(times, value_reps, d)) {
     PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to unpack TimeSamples's values.");
     return false;

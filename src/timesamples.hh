@@ -164,6 +164,13 @@ struct TimeSamples {
 
   void clear();
 
+  /// Pre-allocate internal vectors for the expected number of samples.
+  /// Call before adding samples in a loop when the total count is known.
+  void reserve(size_t n) {
+    _times.reserve(n);
+    _blocked.reserve(n);
+  }
+
   /// Move constructor
   TimeSamples(TimeSamples&& other) noexcept;
 
@@ -956,7 +963,6 @@ struct TimeSamples {
                 int>::type = 0>
   bool add_sample(double t, const T& value, std::string *err = nullptr,
                   size_t expected_total_samples = 0) {
-    (void)expected_total_samples;
 
     if constexpr (value::uses_binary_timesample_scalar_storage_v<T>) {
       if (!is_initialized()) {
