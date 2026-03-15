@@ -808,35 +808,7 @@ struct TimeSamples {
     }
   }
 
-  bool add_sample(const Sample &s, std::string *err = nullptr) {
-    if (has_unified_samples()) {
-      if (err) {
-        (*err) += "add_sample cannot append generic Value samples after unified storage samples.\n";
-      }
-      return false;
-    }
-
-    // Auto-initialize on first sample
-    if (!is_initialized() && !s.value.is_none()) {
-      init(s.value.type_id());
-    } else if (!s.value.is_none() && is_initialized()) {
-      // Validate type_id matches on subsequent samples
-      if (s.value.type_id() != _type_id) {
-        if (err) {
-          (*err) += "Type mismatch in TimeSamples: expected type_id " +
-                    std::to_string(_type_id) + " but got " +
-                    std::to_string(s.value.type_id()) + " (expected type: " +
-                    type_name() + ", got: " + s.value.type_name() + ").\n";
-        }
-        return false;
-      }
-    }
-
-    // Add to generic Value storage
-    _samples.push_back(s);
-    _dirty = true;
-    return true;
-  }
+  bool add_sample(const Sample &s, std::string *err = nullptr);  // Defined in timesamples.cc
 
   // Value may be None(ValueBlock)
   bool add_sample(double t, const value::Value &v, std::string *err = nullptr);      // Defined in timesamples.cc
@@ -921,14 +893,6 @@ struct TimeSamples {
       std::vector<T> vec(value.data(), value.data() + value.size());
       return add_sample(t, value::Value(vec), err);
     }
-  }
-
-  /// Add a deduplicated bool array sample - reuses data from an existing sample.
-  /// @param t Time value for this sample
-  /// @param ref_index Index of the existing sample whose data/offset to reuse
-  /// @param err Optional error string
-  bool add_dedup_bool_array_sample(double t, size_t ref_index, std::string *err = nullptr) {
-    return add_dedup_sample(t, ref_index, err);
   }
 
   template<typename T>
