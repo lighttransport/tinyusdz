@@ -487,19 +487,6 @@ bool LoadLayerFromAsset(AssetResolutionResolver &resolver,
                        const USDLoadOptions &options = USDLoadOptions());
 
 
-#if 0  // TODO
-///
-/// Write stage as USDC to a file.
-///
-/// @param[in] filename USDC filename
-/// @param[out] err Error message(filled when the function returns false)
-/// @param[in] options Write options(optional)
-///
-/// @return true upon success
-///
-bool WriteAsUSDCToFile(const std::string &filename, std::string *err, const USDCWriteOptions &options = USDCWriteOptions());
-
-#endif
 
 // Test if input is any of USDA/USDC/USDZ format.
 // Optionally returns detected format("usda", "usdc", or "usdz") to
