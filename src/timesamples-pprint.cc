@@ -1251,156 +1251,84 @@ size_t get_binary_serializable_type_size(uint32_t type_id) {
     // Strip array bit - we want the element size
     type_id = type_id & (~TYPE_ID_1D_ARRAY_BIT);
 
+#define SIZE_CASE(__type) \
+    case TypeTraits<__type>::type_id(): return sizeof(__type);
+
     switch (type_id) {
-        case TYPE_ID_BOOL:
-            return sizeof(bool);
-        case TYPE_ID_CHAR:
-            return sizeof(char);
-        case TYPE_ID_CHAR2:
-            return sizeof(char) * 2;
-        case TYPE_ID_CHAR3:
-            return sizeof(char) * 3;
-        case TYPE_ID_CHAR4:
-            return sizeof(char) * 4;
-        case TYPE_ID_UCHAR:
-            return sizeof(uint8_t);
-        case TYPE_ID_UCHAR2:
-            return sizeof(uint8_t) * 2;
-        case TYPE_ID_UCHAR3:
-            return sizeof(uint8_t) * 3;
-        case TYPE_ID_UCHAR4:
-            return sizeof(uint8_t) * 4;
-        case TYPE_ID_SHORT:
-            return sizeof(int16_t);
-        case TYPE_ID_SHORT2:
-            return sizeof(int16_t) * 2;
-        case TYPE_ID_SHORT3:
-            return sizeof(int16_t) * 3;
-        case TYPE_ID_SHORT4:
-            return sizeof(int16_t) * 4;
-        case TYPE_ID_USHORT:
-            return sizeof(uint16_t);
-        case TYPE_ID_USHORT2:
-            return sizeof(uint16_t) * 2;
-        case TYPE_ID_USHORT3:
-            return sizeof(uint16_t) * 3;
-        case TYPE_ID_USHORT4:
-            return sizeof(uint16_t) * 4;
-        case TYPE_ID_INT32:
-            return sizeof(int32_t);
-        case TYPE_ID_INT2:
-            return sizeof(int32_t) * 2;
-        case TYPE_ID_INT3:
-            return sizeof(int32_t) * 3;
-        case TYPE_ID_INT4:
-            return sizeof(int32_t) * 4;
-        case TYPE_ID_UINT32:
-            return sizeof(uint32_t);
-        case TYPE_ID_UINT2:
-            return sizeof(uint32_t) * 2;
-        case TYPE_ID_UINT3:
-            return sizeof(uint32_t) * 3;
-        case TYPE_ID_UINT4:
-            return sizeof(uint32_t) * 4;
-        case TYPE_ID_INT64:
-            return sizeof(int64_t);
-        case TYPE_ID_UINT64:
-            return sizeof(uint64_t);
-        case TYPE_ID_HALF:
-            return sizeof(value::half);
-        case TYPE_ID_HALF2:
-            return sizeof(value::half2);
-        case TYPE_ID_HALF3:
-            return sizeof(value::half3);
-        case TYPE_ID_HALF4:
-            return sizeof(value::half4);
-        case TYPE_ID_FLOAT:
-            return sizeof(float);
-        case TYPE_ID_FLOAT2:
-            return sizeof(float) * 2;
-        case TYPE_ID_FLOAT3:
-            return sizeof(float) * 3;
-        case TYPE_ID_FLOAT4:
-            return sizeof(float) * 4;
-        case TYPE_ID_DOUBLE:
-            return sizeof(double);
-        case TYPE_ID_DOUBLE2:
-            return sizeof(double) * 2;
-        case TYPE_ID_DOUBLE3:
-            return sizeof(double) * 3;
-        case TYPE_ID_DOUBLE4:
-            return sizeof(double) * 4;
-        case TYPE_ID_QUATH:
-            return sizeof(value::quath);
-        case TYPE_ID_QUATF:
-            return sizeof(value::quatf);
-        case TYPE_ID_QUATD:
-            return sizeof(value::quatd);
-        case TYPE_ID_MATRIX2F:
-            return sizeof(value::matrix2f);
-        case TYPE_ID_MATRIX3F:
-            return sizeof(value::matrix3f);
-        case TYPE_ID_MATRIX4F:
-            return sizeof(value::matrix4f);
-        case TYPE_ID_MATRIX2D:
-            return sizeof(value::matrix2d);
-        case TYPE_ID_MATRIX3D:
-            return sizeof(value::matrix3d);
-        case TYPE_ID_MATRIX4D:
-            return sizeof(value::matrix4d);
-        case TYPE_ID_COLOR3H:
-            return sizeof(value::color3h);
-        case TYPE_ID_COLOR3F:
-            return sizeof(value::color3f);
-        case TYPE_ID_COLOR3D:
-            return sizeof(value::color3d);
-        case TYPE_ID_COLOR4H:
-            return sizeof(value::color4h);
-        case TYPE_ID_COLOR4F:
-            return sizeof(value::color4f);
-        case TYPE_ID_COLOR4D:
-            return sizeof(value::color4d);
-        case TYPE_ID_POINT3H:
-            return sizeof(value::point3h);
-        case TYPE_ID_POINT3F:
-            return sizeof(value::point3f);
-        case TYPE_ID_POINT3D:
-            return sizeof(value::point3d);
-        case TYPE_ID_NORMAL3H:
-            return sizeof(value::normal3h);
-        case TYPE_ID_NORMAL3F:
-            return sizeof(value::normal3f);
-        case TYPE_ID_NORMAL3D:
-            return sizeof(value::normal3d);
-        case TYPE_ID_VECTOR3H:
-            return sizeof(value::vector3h);
-        case TYPE_ID_VECTOR3F:
-            return sizeof(value::vector3f);
-        case TYPE_ID_VECTOR3D:
-            return sizeof(value::vector3d);
-        case TYPE_ID_FRAME4D:
-            return sizeof(value::frame4d);
-        case TYPE_ID_TEXCOORD2H:
-            return sizeof(value::texcoord2h);
-        case TYPE_ID_TEXCOORD2F:
-            return sizeof(value::texcoord2f);
-        case TYPE_ID_TEXCOORD2D:
-            return sizeof(value::texcoord2d);
-        case TYPE_ID_TEXCOORD3H:
-            return sizeof(value::texcoord3h);
-        case TYPE_ID_TEXCOORD3F:
-            return sizeof(value::texcoord3f);
-        case TYPE_ID_TEXCOORD3D:
-            return sizeof(value::texcoord3d);
-#if 0
-        case TYPE_ID_TYPED_TIMESAMPLE_VALUE:
-            return sizeof(uint64_t);
-        case TYPE_ID_TYPED_ARRAY_TIMESAMPLE_VALUE:
-            return sizeof(uint64_t);
-#endif
+        SIZE_CASE(bool)
+        SIZE_CASE(char)
+        SIZE_CASE(value::char2)
+        SIZE_CASE(value::char3)
+        SIZE_CASE(value::char4)
+        SIZE_CASE(uint8_t)
+        SIZE_CASE(value::uchar2)
+        SIZE_CASE(value::uchar3)
+        SIZE_CASE(value::uchar4)
+        SIZE_CASE(int16_t)
+        SIZE_CASE(value::short2)
+        SIZE_CASE(value::short3)
+        SIZE_CASE(value::short4)
+        SIZE_CASE(uint16_t)
+        SIZE_CASE(value::ushort2)
+        SIZE_CASE(value::ushort3)
+        SIZE_CASE(value::ushort4)
+        SIZE_CASE(int32_t)
+        SIZE_CASE(value::int2)
+        SIZE_CASE(value::int3)
+        SIZE_CASE(value::int4)
+        SIZE_CASE(uint32_t)
+        SIZE_CASE(value::uint2)
+        SIZE_CASE(value::uint3)
+        SIZE_CASE(value::uint4)
+        SIZE_CASE(int64_t)
+        SIZE_CASE(uint64_t)
+        SIZE_CASE(value::half)
+        SIZE_CASE(value::half2)
+        SIZE_CASE(value::half3)
+        SIZE_CASE(value::half4)
+        SIZE_CASE(float)
+        SIZE_CASE(value::float2)
+        SIZE_CASE(value::float3)
+        SIZE_CASE(value::float4)
+        SIZE_CASE(double)
+        SIZE_CASE(value::double2)
+        SIZE_CASE(value::double3)
+        SIZE_CASE(value::double4)
+        SIZE_CASE(value::quath)
+        SIZE_CASE(value::quatf)
+        SIZE_CASE(value::quatd)
+        SIZE_CASE(value::matrix2f)
+        SIZE_CASE(value::matrix3f)
+        SIZE_CASE(value::matrix4f)
+        SIZE_CASE(value::matrix2d)
+        SIZE_CASE(value::matrix3d)
+        SIZE_CASE(value::matrix4d)
+        SIZE_CASE(value::color3h)
+        SIZE_CASE(value::color3f)
+        SIZE_CASE(value::color3d)
+        SIZE_CASE(value::color4h)
+        SIZE_CASE(value::color4f)
+        SIZE_CASE(value::color4d)
+        SIZE_CASE(value::point3h)
+        SIZE_CASE(value::point3f)
+        SIZE_CASE(value::point3d)
+        SIZE_CASE(value::normal3h)
+        SIZE_CASE(value::normal3f)
+        SIZE_CASE(value::normal3d)
+        SIZE_CASE(value::vector3h)
+        SIZE_CASE(value::vector3f)
+        SIZE_CASE(value::vector3d)
+        SIZE_CASE(value::frame4d)
+        SIZE_CASE(value::texcoord2h)
+        SIZE_CASE(value::texcoord2f)
+        SIZE_CASE(value::texcoord2d)
+        SIZE_CASE(value::texcoord3h)
+        SIZE_CASE(value::texcoord3f)
+        SIZE_CASE(value::texcoord3d)
         default:
             return 0;  // Unknown type
     }
+#undef SIZE_CASE
 }
 
 
