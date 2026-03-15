@@ -14,7 +14,7 @@ value::TimeSamples BuildDescendingSmallScalarSamples(size_t sample_count) {
   value::TimeSamples ts;
   for (size_t i = 0; i < sample_count; ++i) {
     const double t = static_cast<double>(sample_count - i);
-    ts.add_sample_pod<float>(t, static_cast<float>(t));
+    ts.add_sample<float>(t, static_cast<float>(t));
   }
   return ts;
 }
@@ -27,7 +27,7 @@ value::TimeSamples BuildVariableArraySamples(size_t sample_count) {
     for (size_t j = 0; j < width; ++j) {
       values[j] = static_cast<float>((i * 10) + j);
     }
-    ts.add_array_sample_pod<float>(static_cast<double>(i), values);
+    ts.add_array_sample<float>(static_cast<double>(i), values);
   }
   return ts;
 }
@@ -40,7 +40,7 @@ value::TimeSamples BuildTypedArraySamples(size_t sample_count, size_t width) {
     for (size_t j = 0; j < width; ++j) {
       values[j] = static_cast<float>((i * width) + j);
     }
-    ts.add_array_sample_pod<float>(static_cast<double>(i), values);
+    ts.add_array_sample<float>(static_cast<double>(i), values);
   }
   return ts;
 }
