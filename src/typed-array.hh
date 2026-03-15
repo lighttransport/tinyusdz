@@ -1286,25 +1286,6 @@ class ChunkedTypedArray {
   // Destructor
   ~ChunkedTypedArray() = default;
 
-#if 0
-    // Explicit copy method - creates a deep copy of the chunked array
-    ChunkedTypedArray copy() const {
-        ChunkedTypedArray result;  // Use default constructor
-        result._chunk_size_bytes = _chunk_size_bytes;
-        result._elements_per_chunk = _elements_per_chunk;
-        result._total_size = _total_size;
-        result._front_offset = _front_offset;
-        result._use_fixed_chunk_size = _use_fixed_chunk_size;
-
-        // Deep copy each chunk
-        result._chunks.reserve(_chunks.size());
-        for (const auto& chunk : _chunks) {
-            result._chunks.push_back(chunk);
-        }
-
-        return result;
-    }
-#endif
 
   // Size operations
   size_type size() const noexcept { return _total_size; }

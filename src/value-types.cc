@@ -1044,20 +1044,6 @@ bool UpcastType(const std::string &reqType, value::Value &inout) {
   return false;
 }
 
-#if 0
-bool FlexibleTypeCast(const value::Value &src, value::Value &dst) {
-  uint32_t src_utype_id = src.type_id();
-  uint32_t dst_utype_id = src.type_id();
-
-  if (src_utype_id == value::TypeTraits<int32_t>::type_id()) {
-
-  }
-
-  // TODO
-
-  return false;
-}
-#endif
 
 // Get byte size for a given type_id
 static size_t GetTypeSize(uint32_t type_id) {
