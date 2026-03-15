@@ -1759,148 +1759,75 @@ DEFINE_UNPACK_VECTOR_TIMESAMPLES(DOUBLE2, value::double2, CRATE_DATA_TYPE_VEC2D,
 DEFINE_UNPACK_VECTOR_TIMESAMPLES(DOUBLE3, value::double3, CRATE_DATA_TYPE_VEC3D, INLINE_TO_DOUBLE, 3)
 DEFINE_UNPACK_VECTOR_TIMESAMPLES(DOUBLE4, value::double4, CRATE_DATA_TYPE_VEC4D, INLINE_TO_DOUBLE, 4)
 
-bool CrateReader::UnpackTimeSampleValue_QUATH(double t,
-                                              const crate::ValueRep &rep,
-                                              value::TimeSamples &dst,
-                                              size_t expected_total_samples) {
-  if (static_cast<crate::CrateDataTypeId>(rep.GetType()) ==
-      crate::CrateDataTypeId::CRATE_DATA_TYPE_VALUE_BLOCK) {
-    if (rep.IsInlined() || rep.IsCompressed() || rep.IsArray()) {
-      PUSH_ERROR_AND_RETURN_TAG(kTag,
-                                "Invalid blocked ValueRep in TimeSamples.");
-    }
-    if (!add_blocked_sample_to_timesamples<value::quath>(
-            &dst, t, &_err, expected_total_samples)) {
-      PUSH_ERROR_AND_RETURN_TAG(kTag,
-                                "Failed to add blocked sample to TimeSamples.");
-    }
-    return true;
-  }
-
-  if (static_cast<crate::CrateDataTypeId>(rep.GetType()) !=
-      crate::CrateDataTypeId::CRATE_DATA_TYPE_QUATH) {
-    PUSH_ERROR_AND_RETURN_TAG(kTag, "Invalid ValueRep type in TimeSamples.");
-  }
-
-  if (rep.IsInlined()) {
-    PUSH_ERROR_AND_RETURN_TAG(kTag, "Inlined quath is not allowed.");
-  } else if (rep.IsArray()) {
-    if (rep.IsCompressed()) {
-      PUSH_ERROR_AND_RETURN_TAG(
-          kTag, "Compressed quath not supported for TimeSamples.");
-    }
-
-    std::vector<value::quath> v;
-    if (rep.GetPayload() == 0) {
-      if (!add_array_sample_to_timesamples<value::quath>(
-              &dst, t, v, &_err, expected_total_samples)) {
-        PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add sample to TimeSamples.");
-      }
-      return true;
-    }
-
-    if (!ReadArray(&v)) {
-      PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read quath array.");
-    }
-
-    DCOUT("timeSamples.QUATH " << value::print_array_snipped(v));
-
-    if (!add_array_sample_to_timesamples<value::quath>(
-            &dst, t, v, &_err, expected_total_samples, &rep)) {
-      PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add sample to TimeSamples.");
-    }
-  } else {
-    // Scalar (non-inlined, non-array) quath value
-    if (rep.IsCompressed()) {
-      PUSH_ERROR_AND_RETURN_TAG(kTag,
-                                "Compressed quath not supported for TimeSamples.");
-    }
-    value::quath val;
-    if (!ReadTimeSampleScalarValue(&val, sizeof(uint16_t) * 4,
-                                   "Failed to read quath value")) {
-      return false;
-    }
-    DCOUT("quath = [" << val[0] << ", " << val[1] << ", " << val[2] << ", " << val[3] << "]");
-    if (!add_sample_to_timesamples<value::quath>(&dst, t, val, &_err,
-                                                 expected_total_samples)) {
-      PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add sample to TimeSamples.");
-    }
-  }
-
-  return true;
+// Macro for types that reject inlined values (quaternions).
+// Same as DEFINE_UNPACK_VECTOR_TIMESAMPLES but rejects inline instead of decoding.
+#define DEFINE_UNPACK_NOINLINE_TIMESAMPLES(FUNC_SUFFIX, CPP_TYPE, CRATE_TYPE,  \
+                                            SCALAR_SIZE)                       \
+bool CrateReader::UnpackTimeSampleValue_##FUNC_SUFFIX(                         \
+    double t, const crate::ValueRep &rep, value::TimeSamples &dst,             \
+    size_t expected_total_samples) {                                           \
+  if (static_cast<crate::CrateDataTypeId>(rep.GetType()) ==                    \
+      crate::CrateDataTypeId::CRATE_DATA_TYPE_VALUE_BLOCK) {                   \
+    if (rep.IsInlined() || rep.IsCompressed() || rep.IsArray()) {              \
+      PUSH_ERROR_AND_RETURN_TAG(kTag,                                          \
+                                "Invalid blocked ValueRep in TimeSamples.");   \
+    }                                                                          \
+    if (!add_blocked_sample_to_timesamples<CPP_TYPE>(                          \
+            &dst, t, &_err, expected_total_samples)) {                         \
+      PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add blocked sample.");       \
+    }                                                                          \
+    return true;                                                               \
+  }                                                                            \
+  if (static_cast<crate::CrateDataTypeId>(rep.GetType()) !=                    \
+      crate::CrateDataTypeId::CRATE_TYPE) {                                    \
+    PUSH_ERROR_AND_RETURN_TAG(kTag, "Invalid ValueRep type in TimeSamples.");  \
+  }                                                                            \
+  if (rep.IsInlined()) {                                                       \
+    PUSH_ERROR_AND_RETURN_TAG(kTag,                                            \
+        "Inlined " #FUNC_SUFFIX " is not allowed.");                           \
+  } else if (rep.IsArray()) {                                                  \
+    if (rep.IsCompressed()) {                                                  \
+      PUSH_ERROR_AND_RETURN_TAG(kTag,                                          \
+          "Compressed " #FUNC_SUFFIX " not supported for TimeSamples.");       \
+    }                                                                          \
+    std::vector<CPP_TYPE> v;                                                   \
+    if (rep.GetPayload() == 0) {                                               \
+      if (!add_array_sample_to_timesamples<CPP_TYPE>(                          \
+              &dst, t, v, &_err, expected_total_samples)) {                    \
+        PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add sample.");             \
+      }                                                                        \
+      return true;                                                             \
+    }                                                                          \
+    if (!ReadArray(&v)) {                                                      \
+      PUSH_ERROR_AND_RETURN_TAG(kTag,                                          \
+          "Failed to read " #FUNC_SUFFIX " array.");                           \
+    }                                                                          \
+    if (!add_array_sample_to_timesamples<CPP_TYPE>(                            \
+            &dst, t, v, &_err, expected_total_samples, &rep)) {                \
+      PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add sample.");               \
+    }                                                                          \
+  } else {                                                                     \
+    if (rep.IsCompressed()) {                                                  \
+      PUSH_ERROR_AND_RETURN_TAG(kTag,                                          \
+          "Compressed " #FUNC_SUFFIX " not supported for TimeSamples.");       \
+    }                                                                          \
+    CPP_TYPE val;                                                              \
+    if (!ReadTimeSampleScalarValue(&val, SCALAR_SIZE,                          \
+                                   "Failed to read " #FUNC_SUFFIX)) {         \
+      return false;                                                            \
+    }                                                                          \
+    if (!add_sample_to_timesamples<CPP_TYPE>(&dst, t, val, &_err,              \
+                                              expected_total_samples)) {       \
+      PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add sample.");               \
+    }                                                                          \
+  }                                                                            \
+  return true;                                                                 \
 }
 
-bool CrateReader::UnpackTimeSampleValue_QUATD(double t,
-                                              const crate::ValueRep &rep,
-                                              value::TimeSamples &dst,
-                                              size_t expected_total_samples) {
-  if (static_cast<crate::CrateDataTypeId>(rep.GetType()) ==
-      crate::CrateDataTypeId::CRATE_DATA_TYPE_VALUE_BLOCK) {
-    if (rep.IsInlined() || rep.IsCompressed() || rep.IsArray()) {
-      PUSH_ERROR_AND_RETURN_TAG(kTag,
-                                "Invalid blocked ValueRep in TimeSamples.");
-    }
-    if (!add_blocked_sample_to_timesamples<value::quatd>(
-            &dst, t, &_err, expected_total_samples)) {
-      PUSH_ERROR_AND_RETURN_TAG(kTag,
-                                "Failed to add blocked sample to TimeSamples.");
-    }
-    return true;
-  }
+DEFINE_UNPACK_NOINLINE_TIMESAMPLES(QUATH, value::quath, CRATE_DATA_TYPE_QUATH, sizeof(uint16_t) * 4)
+DEFINE_UNPACK_NOINLINE_TIMESAMPLES(QUATD, value::quatd, CRATE_DATA_TYPE_QUATD, sizeof(double) * 4)
 
-  if (static_cast<crate::CrateDataTypeId>(rep.GetType()) !=
-      crate::CrateDataTypeId::CRATE_DATA_TYPE_QUATD) {
-    PUSH_ERROR_AND_RETURN_TAG(kTag, "Invalid ValueRep type in TimeSamples.");
-  }
-
-  if (rep.IsInlined()) {
-    PUSH_ERROR_AND_RETURN_TAG(kTag, "Inlined quatd is not allowed.");
-  } else if (rep.IsArray()) {
-    if (rep.IsCompressed()) {
-      PUSH_ERROR_AND_RETURN_TAG(
-          kTag, "Compressed quatd not supported for TimeSamples.");
-    }
-
-    std::vector<value::quatd> v;
-    if (rep.GetPayload() == 0) {
-      if (!add_array_sample_to_timesamples<value::quatd>(
-              &dst, t, v, &_err, expected_total_samples)) {
-        PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add sample to TimeSamples.");
-      }
-      return true;
-    }
-
-    if (!ReadArray(&v)) {
-      PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read quatd array.");
-    }
-
-    DCOUT("timeSamples.QUATD " << value::print_array_snipped(v));
-
-    if (!add_array_sample_to_timesamples<value::quatd>(
-            &dst, t, v, &_err, expected_total_samples, &rep)) {
-      PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add sample to TimeSamples.");
-    }
-  } else {
-    // Scalar (non-inlined, non-array) quatd value
-    if (rep.IsCompressed()) {
-      PUSH_ERROR_AND_RETURN_TAG(kTag,
-                                "Compressed quatd not supported for TimeSamples.");
-    }
-
-    value::quatd val;
-    if (!ReadTimeSampleScalarValue(&val, sizeof(double) * 4,
-                                   "Failed to read quatd value")) {
-      return false;
-    }
-    DCOUT("quatd = [" << val[0] << ", " << val[1] << ", " << val[2] << ", " << val[3] << "]");
-    if (!add_sample_to_timesamples<value::quatd>(&dst, t, val, &_err,
-                                                 expected_total_samples)) {
-      PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add sample to TimeSamples.");
-    }
-  }
-
-  return true;
-}
+// QUATF has inline support so it's kept as a separate function.
 
 bool CrateReader::UnpackTimeSampleValue_MATRIX2D(
     double t, const crate::ValueRep &rep, value::TimeSamples &dst,
