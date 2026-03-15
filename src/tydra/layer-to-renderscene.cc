@@ -27,30 +27,7 @@ constexpr const char* kInPlaceConversionDisabledMessage =
     "destructive source transfer is not implemented safely yet. Use "
     "ConvertLayer or ConvertPrimSpec instead.";
 
-#if 0
-template<typename T>
-void MoveVector(std::vector<T>& src, std::vector<T>& dst) {
-  dst = std::move(src);
-  src.clear();
-  src.shrink_to_fit();
-}
-#endif
 
-#if 0
-template<typename T>
-void ExtractAndClearAnimatable(Animatable<T>& src, T* default_val, TypedTimeSamples<T>* ts) {
-  if (src.has_value() && default_val) {
-    src.get_scalar(default_val);
-  }
-  
-  if (src.has_timesamples() && ts) {
-    *ts = std::move(const_cast<TypedTimeSamples<T>&>(src.get_timesamples()));
-  }
-  
-  src.clear_scalar();
-  src.clear_timesamples();
-}
-#endif
 
 // TODO: Fix these functions once Property API is clarified
 // bool ConvertPrimvarToVertexAttribute(

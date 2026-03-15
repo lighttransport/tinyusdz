@@ -84,26 +84,3 @@ std::string format(const std::string &in) { return in; }
 }  // namespace fmt
 }  // namespace tinyusdz
 
-#if 0
-void test(const std::string &in) {
-  std::cout << tinyusdz::fmt::format(in) << "\n";
-  std::cout << tinyusdz::fmt::format(in, 1.0f) << "\n";
-  std::cout << tinyusdz::fmt::format(in, 1.0f, 2.0f) << "\n";
-  std::cout << tinyusdz::fmt::format(in, 1.0f, 2.0f, 3.0f) << "\n";
-}
-
-int main(int argc, char **argv) {
-  test("{}");
-  test("{");
-  test("}");
-  test("{{");
-  test("}}");
-  test("{a}");
-  test("bora {}");
-  test("{} dora");
-  test("{} dora{} bora muda {");
-  test("{} dora{} bora muda{}");
-
-  return 0;
-}
-#endif
