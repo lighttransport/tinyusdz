@@ -510,69 +510,36 @@ bool AsciiParser::ParseTimeSamplesOfArray(const std::string &type_name,
             bool dedup_added = false;
 
             // Call the appropriate typed dedup method based on element type
+#define DEDUP_CASE(__type)                                                     \
+  case value::TypeTraits<__type>::type_id():                                   \
+    dedup_added = ts.add_dedup_array_sample<__type>(timeVal, ref_index, &err); \
+    break;
+
             switch (elem_tid) {
-              case value::TYPE_ID_INT32:
-                dedup_added = ts.add_dedup_array_sample<int32_t>(timeVal, ref_index, &err);
-                break;
-              case value::TYPE_ID_UINT32:
-                dedup_added = ts.add_dedup_array_sample<uint32_t>(timeVal, ref_index, &err);
-                break;
-              case value::TYPE_ID_INT64:
-                dedup_added = ts.add_dedup_array_sample<int64_t>(timeVal, ref_index, &err);
-                break;
-              case value::TYPE_ID_UINT64:
-                dedup_added = ts.add_dedup_array_sample<uint64_t>(timeVal, ref_index, &err);
-                break;
-              case value::TYPE_ID_FLOAT:
-                dedup_added = ts.add_dedup_array_sample<float>(timeVal, ref_index, &err);
-                break;
-              case value::TYPE_ID_DOUBLE:
-                dedup_added = ts.add_dedup_array_sample<double>(timeVal, ref_index, &err);
-                break;
-              case value::TYPE_ID_FLOAT2:
-                dedup_added = ts.add_dedup_array_sample<value::float2>(timeVal, ref_index, &err);
-                break;
-              case value::TYPE_ID_FLOAT3:
-                dedup_added = ts.add_dedup_array_sample<value::float3>(timeVal, ref_index, &err);
-                break;
-              case value::TYPE_ID_FLOAT4:
-                dedup_added = ts.add_dedup_array_sample<value::float4>(timeVal, ref_index, &err);
-                break;
-              case value::TYPE_ID_DOUBLE2:
-                dedup_added = ts.add_dedup_array_sample<value::double2>(timeVal, ref_index, &err);
-                break;
-              case value::TYPE_ID_DOUBLE3:
-                dedup_added = ts.add_dedup_array_sample<value::double3>(timeVal, ref_index, &err);
-                break;
-              case value::TYPE_ID_DOUBLE4:
-                dedup_added = ts.add_dedup_array_sample<value::double4>(timeVal, ref_index, &err);
-                break;
-              // Matrix types - now trivial with default constructors and have operator==
-              case value::TYPE_ID_MATRIX2F:
-                dedup_added = ts.add_dedup_array_sample<value::matrix2f>(timeVal, ref_index, &err);
-                break;
-              case value::TYPE_ID_MATRIX3F:
-                dedup_added = ts.add_dedup_array_sample<value::matrix3f>(timeVal, ref_index, &err);
-                break;
-              case value::TYPE_ID_MATRIX4F:
-                dedup_added = ts.add_dedup_array_sample<value::matrix4f>(timeVal, ref_index, &err);
-                break;
-              case value::TYPE_ID_MATRIX2D:
-                dedup_added = ts.add_dedup_array_sample<value::matrix2d>(timeVal, ref_index, &err);
-                break;
-              case value::TYPE_ID_MATRIX3D:
-                dedup_added = ts.add_dedup_array_sample<value::matrix3d>(timeVal, ref_index, &err);
-                break;
-              case value::TYPE_ID_MATRIX4D:
-                dedup_added = ts.add_dedup_array_sample<value::matrix4d>(timeVal, ref_index, &err);
-                break;
-              // Note: Other types like half, quaternions, colors etc. would need operator==
-              // to be properly supported in arrays_equal comparison first
+              DEDUP_CASE(int32_t)
+              DEDUP_CASE(uint32_t)
+              DEDUP_CASE(int64_t)
+              DEDUP_CASE(uint64_t)
+              DEDUP_CASE(float)
+              DEDUP_CASE(double)
+              DEDUP_CASE(value::float2)
+              DEDUP_CASE(value::float3)
+              DEDUP_CASE(value::float4)
+              DEDUP_CASE(value::double2)
+              DEDUP_CASE(value::double3)
+              DEDUP_CASE(value::double4)
+              DEDUP_CASE(value::matrix2f)
+              DEDUP_CASE(value::matrix3f)
+              DEDUP_CASE(value::matrix4f)
+              DEDUP_CASE(value::matrix2d)
+              DEDUP_CASE(value::matrix3d)
+              DEDUP_CASE(value::matrix4d)
               default:
                 DCOUT("Array dedup (ASCII): unsupported binary storage type, falling back to regular sample");
                 ts.add_sample(timeVal, value, &err);
                 break;
             }
+#undef DEDUP_CASE
 
             if (dedup_added) {
               DCOUT("Array dedup (ASCII): successfully added dedup reference for time " << timeVal);
