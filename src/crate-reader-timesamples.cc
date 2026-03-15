@@ -798,7 +798,7 @@ bool CrateReader::UnpackTimeSampleValue_HALF(double t,
   if (static_cast<crate::CrateDataTypeId>(rep.GetType()) ==
       crate::CrateDataTypeId::CRATE_DATA_TYPE_VALUE_BLOCK) {
     // Blocked value - just add a blocked sample
-    if (!add_blocked_sample_to_timesamples<float>(&dst, t, &_err,
+    if (!add_blocked_sample_to_timesamples<value::half>(&dst, t, &_err,
                                                   expected_total_samples)) {
       PUSH_ERROR_AND_RETURN_TAG(kTag,
                                 "Failed to add blocked sample to TimeSamples.");
@@ -875,7 +875,7 @@ bool CrateReader::UnpackTimeSampleValue_HALF2(double t,
   if (static_cast<crate::CrateDataTypeId>(rep.GetType()) ==
       crate::CrateDataTypeId::CRATE_DATA_TYPE_VALUE_BLOCK) {
     // Blocked value - just add a blocked sample
-    if (!add_blocked_sample_to_timesamples<float>(&dst, t, &_err,
+    if (!add_blocked_sample_to_timesamples<value::half2>(&dst, t, &_err,
                                                   expected_total_samples)) {
       PUSH_ERROR_AND_RETURN_TAG(kTag,
                                 "Failed to add blocked sample to TimeSamples.");
@@ -971,7 +971,7 @@ bool CrateReader::UnpackTimeSampleValue_HALF3(double t,
   if (static_cast<crate::CrateDataTypeId>(rep.GetType()) ==
       crate::CrateDataTypeId::CRATE_DATA_TYPE_VALUE_BLOCK) {
     // Blocked value - just add a blocked sample
-    if (!add_blocked_sample_to_timesamples<float>(&dst, t, &_err,
+    if (!add_blocked_sample_to_timesamples<value::half3>(&dst, t, &_err,
                                                   expected_total_samples)) {
       PUSH_ERROR_AND_RETURN_TAG(kTag,
                                 "Failed to add blocked sample to TimeSamples.");
@@ -1066,7 +1066,7 @@ bool CrateReader::UnpackTimeSampleValue_HALF4(double t,
   if (static_cast<crate::CrateDataTypeId>(rep.GetType()) ==
       crate::CrateDataTypeId::CRATE_DATA_TYPE_VALUE_BLOCK) {
     // Blocked value - just add a blocked sample
-    if (!add_blocked_sample_to_timesamples<float>(&dst, t, &_err,
+    if (!add_blocked_sample_to_timesamples<value::half4>(&dst, t, &_err,
                                                   expected_total_samples)) {
       PUSH_ERROR_AND_RETURN_TAG(kTag,
                                 "Failed to add blocked sample to TimeSamples.");
@@ -1246,7 +1246,7 @@ bool CrateReader::UnpackTimeSampleValue_FLOAT2(double t,
   if (static_cast<crate::CrateDataTypeId>(rep.GetType()) ==
       crate::CrateDataTypeId::CRATE_DATA_TYPE_VALUE_BLOCK) {
     // Blocked value - just add a blocked sample
-    if (!add_blocked_sample_to_timesamples<float>(&dst, t, &_err,
+    if (!add_blocked_sample_to_timesamples<value::float2>(&dst, t, &_err,
                                                   expected_total_samples)) {
       PUSH_ERROR_AND_RETURN_TAG(kTag,
                                 "Failed to add blocked sample to TimeSamples.");
@@ -1345,7 +1345,7 @@ bool CrateReader::UnpackTimeSampleValue_QUATF(double t,
   if (static_cast<crate::CrateDataTypeId>(rep.GetType()) ==
       crate::CrateDataTypeId::CRATE_DATA_TYPE_VALUE_BLOCK) {
     // Blocked value - just add a blocked sample
-    if (!add_blocked_sample_to_timesamples<float>(&dst, t, &_err,
+    if (!add_blocked_sample_to_timesamples<value::quatf>(&dst, t, &_err,
                                                   expected_total_samples)) {
       PUSH_ERROR_AND_RETURN_TAG(kTag,
                                 "Failed to add blocked sample to TimeSamples.");

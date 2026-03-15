@@ -543,13 +543,18 @@ bool TypedTimeSamples<T>::get(T *dst, double t,
 #ifndef TINYUSDZ_USE_TIMESAMPLES_SOA
   // AoS layout implementation
   if (value::TimeCode(t).is_default()) {
-    // FIXME: Use the first item for now.
-    // TODO: Handle blocked
-    (*dst) = _samples[0].value;
-    return true;
+    // Return the first non-blocked sample.
+    for (const auto &s : _samples) {
+      if (!s.blocked) {
+        (*dst) = s.value;
+        return true;
+      }
+    }
+    return false;  // All samples are blocked.
   } else {
 
     if (_samples.size() == 1) {
+      if (_samples[0].blocked) return false;
       (*dst) = _samples[0].value;
       return true;
     }
@@ -559,21 +564,28 @@ bool TypedTimeSamples<T>::get(T *dst, double t,
       _samples.begin(), _samples.end(), t,
       [](double tval, const Sample &a) { return tval < a.t; });
 
-    const auto it_minus_1 = (it == _samples.begin()) ? _samples.begin() : (it - 1);
+    const auto it_held = (it == _samples.begin()) ? _samples.begin() : (it - 1);
 
-    (*dst) = it_minus_1->value;
+    if (it_held->blocked) {
+      return false;  // Nearest preceding sample is blocked (USD "None").
+    }
+    (*dst) = it_held->value;
     return true;
   }
 #else
   // SoA layout implementation
   if (value::TimeCode(t).is_default()) {
-    // FIXME: Use the first item for now.
-    // TODO: Handle blocked
-    (*dst) = _values[0];
-    return true;
+    for (size_t i = 0; i < _times.size(); ++i) {
+      if (!_blocked[i]) {
+        (*dst) = _values[i];
+        return true;
+      }
+    }
+    return false;
   } else {
 
     if (_times.size() == 1) {
+      if (_blocked[0]) return false;
       (*dst) = _values[0];
       return true;
     }
@@ -582,6 +594,9 @@ bool TypedTimeSamples<T>::get(T *dst, double t,
     auto it = std::upper_bound(_times.begin(), _times.end(), t);
     size_t idx = (it == _times.begin()) ? 0 : static_cast<size_t>(std::distance(_times.begin(), it) - 1);
 
+    if (_blocked[idx]) {
+      return false;
+    }
     (*dst) = _values[idx];
     return true;
   }
@@ -608,22 +623,27 @@ bool TypedTimeSamples<T>::get(T *dst, double t,
 #ifndef TINYUSDZ_USE_TIMESAMPLES_SOA
   // AoS layout implementation
   if (value::TimeCode(t).is_default()) {
-    // FIXME: Use the first item for now.
-    // TODO: Handle blocked
-    (*dst) = _samples[0].value;
-    return true;
+    // Return the first non-blocked sample.
+    for (const auto &s : _samples) {
+      if (!s.blocked) {
+        (*dst) = s.value;
+        return true;
+      }
+    }
+    return false;
   } else {
 
     if (_samples.size() == 1) {
+      if (_samples[0].blocked) return false;
       (*dst) = _samples[0].value;
       return true;
     }
 
-    auto it = std::lower_bound(
-      _samples.begin(), _samples.end(), t,
-      [](const Sample &a, double tval) { return a.t < tval; });
-
     if (interp == value::TimeSampleInterpolationType::Linear) {
+
+      auto it = std::lower_bound(
+        _samples.begin(), _samples.end(), t,
+        [](const Sample &a, double tval) { return a.t < tval; });
 
       // MS STL does not allow seek vector iterator before begin
       // Issue #110
@@ -636,6 +656,20 @@ bool TypedTimeSamples<T>::get(T *dst, double t,
       size_t idx1 =
           size_t((std::max)(int64_t(0), (std::min)(int64_t(_samples.size() - 1),
                                                int64_t(idx0) + 1)));
+
+      // If either endpoint is blocked, fall back to held interpolation
+      // at the non-blocked endpoint.
+      if (_samples[idx0].blocked && _samples[idx1].blocked) {
+        return false;
+      }
+      if (_samples[idx0].blocked) {
+        (*dst) = _samples[idx1].value;
+        return true;
+      }
+      if (_samples[idx1].blocked) {
+        (*dst) = _samples[idx0].value;
+        return true;
+      }
 
       double tl = _samples[idx0].t;
       double tu = _samples[idx1].t;
@@ -659,34 +693,42 @@ bool TypedTimeSamples<T>::get(T *dst, double t,
       (*dst) = std::move(p);
       return true;
     } else {
+      // Held interpolation
       auto held_it = std::upper_bound(
           _samples.begin(), _samples.end(), t,
           [](double tval, const Sample &a) { return tval < a.t; });
 
-      const auto it_minus_1 =
+      const auto it_held =
           (held_it == _samples.begin()) ? _samples.begin() : (held_it - 1);
 
-      (*dst) = it_minus_1->value;
+      if (it_held->blocked) {
+        return false;
+      }
+      (*dst) = it_held->value;
       return true;
     }
   }
 #else
   // SoA layout implementation
   if (value::TimeCode(t).is_default()) {
-    // FIXME: Use the first item for now.
-    // TODO: Handle blocked
-    (*dst) = _values[0];
-    return true;
+    for (size_t i = 0; i < _times.size(); ++i) {
+      if (!_blocked[i]) {
+        (*dst) = _values[i];
+        return true;
+      }
+    }
+    return false;
   } else {
 
     if (_times.size() == 1) {
+      if (_blocked[0]) return false;
       (*dst) = _values[0];
       return true;
     }
 
-    auto it = std::lower_bound(_times.begin(), _times.end(), t);
-
     if (interp == value::TimeSampleInterpolationType::Linear) {
+
+      auto it = std::lower_bound(_times.begin(), _times.end(), t);
 
       // MS STL does not allow seek vector iterator before begin
       // Issue #110
@@ -699,6 +741,18 @@ bool TypedTimeSamples<T>::get(T *dst, double t,
       size_t idx1 =
           size_t((std::max)(int64_t(0), (std::min)(int64_t(_times.size() - 1),
                                                int64_t(idx0) + 1)));
+
+      if (_blocked[idx0] && _blocked[idx1]) {
+        return false;
+      }
+      if (_blocked[idx0]) {
+        (*dst) = _values[idx1];
+        return true;
+      }
+      if (_blocked[idx1]) {
+        (*dst) = _values[idx0];
+        return true;
+      }
 
       double tl = _times[idx0];
       double tu = _times[idx1];
@@ -722,18 +776,21 @@ bool TypedTimeSamples<T>::get(T *dst, double t,
       (*dst) = std::move(p);
       return true;
     } else {
+      // Held interpolation
       auto held_it = std::upper_bound(_times.begin(), _times.end(), t);
       size_t idx =
           (held_it == _times.begin())
               ? 0
               : static_cast<size_t>(std::distance(_times.begin(), held_it) - 1);
+
+      if (_blocked[idx]) {
+        return false;
+      }
       (*dst) = _values[idx];
       return true;
     }
   }
 #endif
-
-  return false;
 }
 
 //
