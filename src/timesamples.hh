@@ -840,114 +840,12 @@ struct TimeSamples {
   }
 
   // Value may be None(ValueBlock)
-  bool add_sample(double t, const value::Value &v, std::string *err = nullptr) {
-    if (has_unified_samples()) {
-      if (err) {
-        (*err) += "add_sample cannot append generic Value samples after unified storage samples.\n";
-      }
-      return false;
-    }
-
-    // Auto-initialize on first sample
-    if (!is_initialized() && !v.is_none()) {
-      init(v.type_id());
-    } else if (!v.is_none() && is_initialized()) {
-      // Validate type_id matches on subsequent samples
-      if (v.type_id() != _type_id) {
-        if (err) {
-          (*err) += "Type mismatch in TimeSamples: expected type_id " +
-                    std::to_string(_type_id) + " but got " +
-                    std::to_string(v.type_id()) + " (expected type: " +
-                    type_name() + ", got: " + v.type_name() + ").\n";
-        }
-        return false;
-      }
-    }
-
-    // Add to generic Value storage
-    Sample s;
-    s.t = t;
-    s.value = v;
-    s.blocked = v.is_none();
-    _samples.push_back(s);
-    _dirty = true;
-    return true;
-  }
+  bool add_sample(double t, const value::Value &v, std::string *err = nullptr);      // Defined in timesamples.cc
 
   // We still need "dummy" value for type_name() and type_id()
-  bool add_blocked_sample(double t, const value::Value &v, std::string *err = nullptr) {
-    if (has_unified_samples()) {
-      if (err) {
-        (*err) += "add_blocked_sample cannot append generic Value samples after unified storage samples.\n";
-      }
-      return false;
-    }
+  bool add_blocked_sample(double t, const value::Value &v, std::string *err = nullptr);  // Defined in timesamples.cc
 
-    // Auto-initialize on first sample, but NOT if the value is uninitialized (type_id == 1)
-    // This allows deferred initialization for all-blocked TimeSamples
-    // Type ID 1 indicates an uninitialized/invalid Value
-    if (!is_initialized() && !v.is_none() && v.type_id() != 1) {
-      init(v.type_id());
-    } else if (!v.is_none() && is_initialized() && v.type_id() != 1) {
-      // Validate type_id matches on subsequent samples
-      if (v.type_id() != _type_id) {
-        if (err) {
-          (*err) += "Type mismatch in TimeSamples (blocked sample): expected type_id " +
-                    std::to_string(_type_id) + " but got " +
-                    std::to_string(v.type_id()) + ".\n";
-        }
-        return false;
-      }
-    }
-
-    // Add to generic Value storage
-    Sample s;
-    s.t = t;
-    s.value = v;
-    s.blocked = true;
-
-    _samples.emplace_back(s);
-    _dirty = true;
-    return true;
-  }
-
-  /// Add an array sample using value::Value storage with dedup support
-  /// This stores the value::Value in _value_array_storage and records the index
-  /// @param t Time value for this sample
-  /// @param v The array value to add (will be moved)
-  /// @param err Optional error string
-  bool add_value_array_sample(double t, value::Value &&v, std::string *err = nullptr) {
-    if (!v.is_array() || v.is_none()) {
-      if (err) {
-        (*err) += "add_value_array_sample requires a non-blocked array value.\n";
-      }
-      return false;
-    }
-
-    if (!ensure_initialized_type(v.type_id(), err, "add_value_array_sample")) {
-      return false;
-    }
-
-    if (!ensure_array_storage_backend(UnifiedStorageBackend::ValueArray,
-                                      ArrayLayoutKind::None, 0, err,
-                                      "add_value_array_sample")) {
-      return false;
-    }
-
-    // Store in value array storage
-    size_t storage_index = _value_array_storage.size();
-    _value_array_storage.push_back(std::move(v));
-
-    // Record time and reference
-    _times.push_back(t);
-    _blocked.push_back(0);
-    _value_array_refs.push_back(make_value_array_ref(storage_index, false));
-    _array_counts.push_back(_value_array_storage.back().array_size());
-
-    invalidate_reconstructed_samples_cache();
-    _dirty = true;
-    return true;
-  }
+  bool add_value_array_sample(double t, value::Value &&v, std::string *err = nullptr);   // Defined in timesamples.cc
 
   /// Add a deduplicated array sample that references an existing sample's value
   /// This uses the offset table to avoid copying value::Value
@@ -963,6 +861,7 @@ struct TimeSamples {
                 int>::type = 0>
   bool add_sample(double t, const T& value, std::string *err = nullptr,
                   size_t expected_total_samples = 0) {
+    (void)expected_total_samples;
 
     if constexpr (value::uses_binary_timesample_scalar_storage_v<T>) {
       if (!is_initialized()) {
@@ -1397,42 +1296,7 @@ struct TimeSamples {
     }
   }
 
-  size_t estimate_memory_usage() const {
-    size_t total = sizeof(TimeSamples);
-
-    // Account for unified storage
-    total += _times.capacity() * sizeof(double);
-    total += _blocked.capacity();
-    total += _values.capacity();
-    total += _offsets.capacity() * sizeof(uint64_t);
-    total += _small_values.capacity() * sizeof(uint64_t);
-
-    // _array_values vector overhead + each buffer
-    total += _array_values.capacity() * sizeof(std::unique_ptr<Buffer<16>>);
-    for (const auto& buf : _array_values) {
-      if (buf) {
-        total += sizeof(Buffer<16>) + buf->capacity();
-      }
-    }
-
-    // value::Value array storage (for generic Value array types)
-    total += _value_array_storage.capacity() * sizeof(value::Value);
-    for (const auto& val : _value_array_storage) {
-      total += val.estimate_memory_usage();
-    }
-    total += _value_array_refs.capacity() * sizeof(uint64_t);
-
-    // Per-sample array counts
-    total += _array_counts.capacity() * sizeof(size_t);
-
-    // Account for generic Value storage (_samples)
-    total += _samples.capacity() * sizeof(Sample);
-    for (const auto &sample : _samples) {
-      total += sample.value.estimate_memory_usage();
-    }
-
-    return total;
-  }
+  size_t estimate_memory_usage() const;  // Defined in timesamples.cc
 
   //
   // Unified array methods (work directly with TimeSamples storage)
