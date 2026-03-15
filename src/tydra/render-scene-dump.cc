@@ -349,24 +349,6 @@ std::string DumpSkeleton(const SkelHierarchy &skel, uint32_t indent) {
 
 namespace detail {
 
-#if 0 // unused
-template<typename T>
-std::string PrintAnimationSamples(const std::vector<AnimationSample<T>> &samples) {
-  std::stringstream ss;
-
-  ss << "[";
-  for (size_t i = 0; i < samples.size(); i++) {
-    if (i > 0) {
-      ss << ", ";
-    }
-
-    ss << "(" << samples[i].t << ", " << samples[i].value << ")";
-  }
-  ss << "]";
-
-  return ss.str();
-}
-#endif
 
 // void DumpAnimChannel(std::stringstream &ss, const std::string &name, const std::map<AnimationChannel::ChannelType, AnimationChannel> &channels, uint32_t indent) {
 // 

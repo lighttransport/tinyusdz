@@ -319,24 +319,6 @@ bool DirectBindingStrongerThanDescendants(
   return false;
 }
 
-#if 0 // TODO
-bool GetBoundMaterial(
-  const Stage &_stage,
-  const Prim &prim,
-  const std::string &purpose,
-  tinyusdz::Path *materialPath,
-  const Material **materiand,
-  std::string *err) {
-
-  if (materialPath == nullptr) {
-    return false;
-  }
-
-  if (material == nullptr) {
-    return false;
-  }
-}
-#endif
 
 bool GetBoundMaterial(
   const Stage &_stage,

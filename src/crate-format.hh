@@ -488,16 +488,6 @@ class CrateValue {
   SET_TYPE_LIST(SET_TYPE_CHUNKED_TYPED_ARRAY)
   SET_TYPE_LIST(MOVE_SET_TYPE_CHUNKED_TYPED_ARRAY)
 
-#if 0 // TODO: Unsafe so Remove
-  // Useful function to retrieve concrete value with type T.
-  // Undefined behavior(usually will triger segmentation fault) when
-  // type-mismatch. (We don't throw exception)
-  template <class T>
-  const T value() const {
-    //return (*reinterpret_cast<const T *>(value_.value()));
-    return value_.value<T>();
-  }
-#endif
 
   // Type-safe way to get concrete value.
   template <class T>

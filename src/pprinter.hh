@@ -70,23 +70,6 @@ std::string to_string(const std::vector<T> &v, const uint32_t level = 0) {
   return ss.str();
 }
 
-#if 0
-template<>
-std::string to_string(const std::vector<std::string> &v, const uint32_t level) {
-  std::stringstream ss;
-  ss << pprint::Indent(level) << "[";
-
-  // TODO(syoyo): indent for large array
-  for (size_t i = 0; i < v.size(); i++) {
-    ss << quote(v[i]);
-    if (i != (v.size() -1)) {
-      ss << ", ";
-    }
-  }
-  ss << "]";
-  return ss.str();
-}
-#endif
 
 template <typename T>
 std::string to_string(const ListOp<T> &op, const uint32_t indent_level = 0) {
