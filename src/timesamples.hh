@@ -1971,11 +1971,38 @@ struct TypedTimeSamples {
   bool empty() const { return _samples.empty(); }
 
   void update() const {
-    std::sort(_samples.begin(), _samples.end(),
-              [](const Sample &a, const Sample &b) { return a.t < b.t; });
+    if (_samples.size() < 2 ||
+        std::is_sorted(_samples.begin(), _samples.end(),
+                       [](const Sample &a, const Sample &b) { return a.t < b.t; })) {
+      _dirty = false;
+      return;
+    }
+
+    // Adaptive sort: use insertion sort for nearly-sorted data (common for animation)
+    size_t inversions = 0;
+    const size_t scan = std::min(_samples.size() - 1, size_t(100));
+    for (size_t i = 0; i < scan; ++i) {
+      if (_samples[i].t > _samples[i + 1].t) ++inversions;
+    }
+
+    if (inversions * 20 < _samples.size()) {
+      // Insertion sort — O(n) for nearly-sorted data
+      for (size_t i = 1; i < _samples.size(); ++i) {
+        if (_samples[i].t >= _samples[i - 1].t) continue;
+        Sample key = std::move(_samples[i]);
+        size_t j = i;
+        while (j > 0 && _samples[j - 1].t > key.t) {
+          _samples[j] = std::move(_samples[j - 1]);
+          --j;
+        }
+        _samples[j] = std::move(key);
+      }
+    } else {
+      std::sort(_samples.begin(), _samples.end(),
+                [](const Sample &a, const Sample &b) { return a.t < b.t; });
+    }
 
     _dirty = false;
-    return;
   }
 #else
   // SoA layout - Structure of Arrays
