@@ -562,6 +562,10 @@ struct timecode {
 
 struct half {
   uint16_t value;
+
+  // Bitwise comparison (matches OpenUSD GfHalf semantics).
+  bool operator==(const half &rhs) const { return value == rhs.value; }
+  bool operator!=(const half &rhs) const { return value != rhs.value; }
 };
 
 using half2 = std::array<half, 2>;
@@ -1127,6 +1131,8 @@ struct quath {
   half real;
   half operator[](size_t idx) const { return *(&imag[0] + idx); }
   half &operator[](size_t idx) { return *(&imag[0] + idx); }
+  bool operator==(const quath &rhs) const { return std::memcmp(this, &rhs, sizeof(*this)) == 0; }
+  bool operator!=(const quath &rhs) const { return !(*this == rhs); }
 };
 
 struct quatf {
@@ -1134,6 +1140,8 @@ struct quatf {
   float real;
   float operator[](size_t idx) const { return *(&imag[0] + idx); }
   float &operator[](size_t idx) { return *(&imag[0] + idx); }
+  bool operator==(const quatf &rhs) const { return std::memcmp(this, &rhs, sizeof(*this)) == 0; }
+  bool operator!=(const quatf &rhs) const { return !(*this == rhs); }
 };
 
 struct quatd {
@@ -1141,6 +1149,8 @@ struct quatd {
   double real;
   double operator[](size_t idx) const { return *(&imag[0] + idx); }
   double &operator[](size_t idx) { return *(&imag[0] + idx); }
+  bool operator==(const quatd &rhs) const { return std::memcmp(this, &rhs, sizeof(*this)) == 0; }
+  bool operator!=(const quatd &rhs) const { return !(*this == rhs); }
 };
 
 struct vector3h {
@@ -1148,6 +1158,8 @@ struct vector3h {
 
   half operator[](size_t idx) const { return *(&x + idx); }
   half &operator[](size_t idx) { return *(&x + idx); }
+  bool operator==(const vector3h &rhs) const { return std::memcmp(this, &rhs, sizeof(*this)) == 0; }
+  bool operator!=(const vector3h &rhs) const { return !(*this == rhs); }
 };
 
 struct vector3f {
@@ -1155,6 +1167,8 @@ struct vector3f {
 
   float operator[](size_t idx) const { return *(&x + idx); }
   float &operator[](size_t idx) { return *(&x + idx); }
+  bool operator==(const vector3f &rhs) const { return std::memcmp(this, &rhs, sizeof(*this)) == 0; }
+  bool operator!=(const vector3f &rhs) const { return !(*this == rhs); }
 };
 
 struct vector3d {
@@ -1162,6 +1176,8 @@ struct vector3d {
 
   double operator[](size_t idx) const { return *(&x + idx); }
   double &operator[](size_t idx) { return *(&x + idx); }
+  bool operator==(const vector3d &rhs) const { return std::memcmp(this, &rhs, sizeof(*this)) == 0; }
+  bool operator!=(const vector3d &rhs) const { return !(*this == rhs); }
 };
 
 struct normal3h {
@@ -1169,6 +1185,8 @@ struct normal3h {
 
   half operator[](size_t idx) const { return *(&x + idx); }
   half &operator[](size_t idx) { return *(&x + idx); }
+  bool operator==(const normal3h &rhs) const { return std::memcmp(this, &rhs, sizeof(*this)) == 0; }
+  bool operator!=(const normal3h &rhs) const { return !(*this == rhs); }
 };
 
 struct normal3f {
@@ -1176,6 +1194,8 @@ struct normal3f {
 
   float operator[](size_t idx) const { return *(&x + idx); }
   float &operator[](size_t idx) { return *(&x + idx); }
+  bool operator==(const normal3f &rhs) const { return std::memcmp(this, &rhs, sizeof(*this)) == 0; }
+  bool operator!=(const normal3f &rhs) const { return !(*this == rhs); }
 };
 
 struct normal3d {
@@ -1183,6 +1203,8 @@ struct normal3d {
 
   double operator[](size_t idx) const { return *(&x + idx); }
   double &operator[](size_t idx) { return *(&x + idx); }
+  bool operator==(const normal3d &rhs) const { return std::memcmp(this, &rhs, sizeof(*this)) == 0; }
+  bool operator!=(const normal3d &rhs) const { return !(*this == rhs); }
 };
 
 struct point3h {
@@ -1190,6 +1212,8 @@ struct point3h {
 
   half operator[](size_t idx) const { return *(&x + idx); }
   half &operator[](size_t idx) { return *(&x + idx); }
+  bool operator==(const point3h &rhs) const { return std::memcmp(this, &rhs, sizeof(*this)) == 0; }
+  bool operator!=(const point3h &rhs) const { return !(*this == rhs); }
 };
 
 #if 0 // move to value-eval-util.hh
@@ -1281,6 +1305,8 @@ struct point3f {
 
   float operator[](size_t idx) const { return *(&x + idx); }
   float &operator[](size_t idx) { return *(&x + idx); }
+  bool operator==(const point3f &rhs) const { return std::memcmp(this, &rhs, sizeof(*this)) == 0; }
+  bool operator!=(const point3f &rhs) const { return !(*this == rhs); }
 };
 
 #if 0
@@ -1371,6 +1397,8 @@ struct point3d {
 
   double operator[](size_t idx) const { return *(&x + idx); }
   double &operator[](size_t idx) { return *(&x + idx); }
+  bool operator==(const point3d &rhs) const { return std::memcmp(this, &rhs, sizeof(*this)) == 0; }
+  bool operator!=(const point3d &rhs) const { return !(*this == rhs); }
 };
 
 #if 0
@@ -1461,6 +1489,8 @@ struct color3h {
 
   half operator[](size_t idx) const { return *(&r + idx); }
   half &operator[](size_t idx) { return *(&r + idx); }
+  bool operator==(const color3h &rhs) const { return std::memcmp(this, &rhs, sizeof(*this)) == 0; }
+  bool operator!=(const color3h &rhs) const { return !(*this == rhs); }
 };
 
 struct color3f {
@@ -1468,6 +1498,8 @@ struct color3f {
 
   float operator[](size_t idx) const { return *(&r + idx); }
   float &operator[](size_t idx) { return *(&r + idx); }
+  bool operator==(const color3f &rhs) const { return std::memcmp(this, &rhs, sizeof(*this)) == 0; }
+  bool operator!=(const color3f &rhs) const { return !(*this == rhs); }
 };
 
 struct color4h {
@@ -1475,6 +1507,8 @@ struct color4h {
 
   half operator[](size_t idx) const { return *(&r + idx); }
   half &operator[](size_t idx) { return *(&r + idx); }
+  bool operator==(const color4h &rhs) const { return std::memcmp(this, &rhs, sizeof(*this)) == 0; }
+  bool operator!=(const color4h &rhs) const { return !(*this == rhs); }
 };
 
 struct color4f {
@@ -1482,6 +1516,8 @@ struct color4f {
 
   float operator[](size_t idx) const { return *(&r + idx); }
   float &operator[](size_t idx) { return *(&r + idx); }
+  bool operator==(const color4f &rhs) const { return std::memcmp(this, &rhs, sizeof(*this)) == 0; }
+  bool operator!=(const color4f &rhs) const { return !(*this == rhs); }
 };
 
 struct color3d {
@@ -1489,6 +1525,8 @@ struct color3d {
 
   double operator[](size_t idx) const { return *(&r + idx); }
   double &operator[](size_t idx) { return *(&r + idx); }
+  bool operator==(const color3d &rhs) const { return std::memcmp(this, &rhs, sizeof(*this)) == 0; }
+  bool operator!=(const color3d &rhs) const { return !(*this == rhs); }
 };
 
 struct color4d {
@@ -1496,42 +1534,56 @@ struct color4d {
 
   double operator[](size_t idx) const { return *(&r + idx); }
   double &operator[](size_t idx) { return *(&r + idx); }
+  bool operator==(const color4d &rhs) const { return std::memcmp(this, &rhs, sizeof(*this)) == 0; }
+  bool operator!=(const color4d &rhs) const { return !(*this == rhs); }
 };
 
 struct texcoord2h {
   half s, t;
   half operator[](size_t idx) const { return *(&s + idx); }
   half &operator[](size_t idx) { return *(&s + idx); }
+  bool operator==(const texcoord2h &rhs) const { return std::memcmp(this, &rhs, sizeof(*this)) == 0; }
+  bool operator!=(const texcoord2h &rhs) const { return !(*this == rhs); }
 };
 
 struct texcoord2f {
   float s, t;
   float operator[](size_t idx) const { return *(&s + idx); }
   float &operator[](size_t idx) { return *(&s + idx); }
+  bool operator==(const texcoord2f &rhs) const { return std::memcmp(this, &rhs, sizeof(*this)) == 0; }
+  bool operator!=(const texcoord2f &rhs) const { return !(*this == rhs); }
 };
 
 struct texcoord2d {
   double s, t;
   double operator[](size_t idx) const { return *(&s + idx); }
   double &operator[](size_t idx) { return *(&s + idx); }
+  bool operator==(const texcoord2d &rhs) const { return std::memcmp(this, &rhs, sizeof(*this)) == 0; }
+  bool operator!=(const texcoord2d &rhs) const { return !(*this == rhs); }
 };
 
 struct texcoord3h {
   half s, t, r;
   half operator[](size_t idx) const { return *(&s + idx); }
   half &operator[](size_t idx) { return *(&s + idx); }
+  bool operator==(const texcoord3h &rhs) const { return std::memcmp(this, &rhs, sizeof(*this)) == 0; }
+  bool operator!=(const texcoord3h &rhs) const { return !(*this == rhs); }
 };
 
 struct texcoord3f {
   float s, t, r;
   float operator[](size_t idx) const { return *(&s + idx); }
   float &operator[](size_t idx) { return *(&s + idx); }
+  bool operator==(const texcoord3f &rhs) const { return std::memcmp(this, &rhs, sizeof(*this)) == 0; }
+  bool operator!=(const texcoord3f &rhs) const { return !(*this == rhs); }
 };
 
 struct texcoord3d {
   double s, t, r;
   double operator[](size_t idx) const { return *(&s + idx); }
   double &operator[](size_t idx) { return *(&s + idx); }
+  bool operator==(const texcoord3d &rhs) const { return std::memcmp(this, &rhs, sizeof(*this)) == 0; }
+  bool operator!=(const texcoord3d &rhs) const { return !(*this == rhs); }
 };
 
 
