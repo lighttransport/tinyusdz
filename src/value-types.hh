@@ -438,11 +438,6 @@ enum TypeId {
   TYPE_ID_TIMESAMPLES,
   TYPE_ID_VARIANT_SELECION_MAP,
 
-#if 0
-  // tinyusdz specific.
-  TYPE_ID_TYPED_TIMESAMPLE_VALUE,
-  TYPE_ID_TYPED_ARRAY_TIMESAMPLE_VALUE,
-#endif
 
   // Types in crate-format.hh
   TYPE_ID_CRATE_BEGIN = 256,
@@ -1216,89 +1211,6 @@ struct point3h {
   bool operator!=(const point3h &rhs) const { return !(*this == rhs); }
 };
 
-#if 0 // move to value-eval-util.hh
-
-inline point3h operator+(const float a, const point3h &b) {
-  return {a + b.x, a + b.y, a + b.z};
-}
-
-inline point3h operator-(const float a, const point3h &b) {
-  return {a - b.x, a - b.y, a - b.z};
-}
-
-inline point3h operator*(const float a, const point3h &b) {
-  return {a * b.x, a * b.y, a * b.z};
-}
-
-// TODO: safe div
-inline point3h operator/(const float a, const point3h &b) {
-  return {a / b.x, a / b.y, a / b.z};
-}
-
-inline point3h operator+(const double a, const point3h &b) {
-  return {float(a) + b.x, float(a) + b.y, float(a) + b.z};
-}
-
-inline point3h operator-(const double a, const point3h &b) {
-  return {float(a) - b.x, float(a) - b.y, float(a) - b.z};
-}
-
-inline point3h operator*(const double a, const point3h &b) {
-  return {float(a) * b.x, float(a) * b.y, float(a) * b.z};
-}
-
-inline point3h operator/(const double a, const point3h &b) {
-  return {float(a) / b.x, float(a) / b.y, float(a) / b.z};
-}
-
-inline point3h operator+(const point3h &a, const float b) {
-  return {a.x + b, a.y + b, a.z + b};
-}
-
-inline point3h operator-(const point3h &a, const float b) {
-  return {a.x - b, a.y - b, a.z - b};
-}
-
-inline point3h operator*(const point3h &a, const float b) {
-  return {a.x * b, a.y * b, a.z * b};
-}
-
-inline point3h operator/(const point3h &a, const float b) {
-  return {a.x / b, a.y / b, a.z / b};
-}
-
-inline point3h operator+(const point3h &a, const double b) {
-  return {a.x + float(b), a.y + float(b), a.z + float(b)};
-}
-
-inline point3h operator-(const point3h &a, const double b) {
-  return {a.x - float(b), a.y - float(b), a.z - float(b)};
-}
-
-inline point3h operator*(const point3h &a, const double b) {
-  return {a.x * float(b), a.y * float(b), a.z * float(b)};
-}
-
-inline point3h operator/(const point3h &a, const double b) {
-  return {a.x / float(b), a.y / float(b), a.z / float(b)};
-}
-
-inline point3h operator+(const point3h &a, const point3h &b) {
-  return {a.x + b.x, a.y + b.y, a.z + b.z};
-}
-
-inline point3h operator-(const point3h &a, const point3h &b) {
-  return {a.x - b.x, a.y - b.y, a.z - b.z};
-}
-
-inline point3h operator*(const point3h &a, const point3h &b) {
-  return {a.x * b.x, a.y * b.y, a.z * b.z};
-}
-
-inline point3h operator/(const point3h &a, const point3h &b) {
-  return {a.x / b.x, a.y / b.y, a.z / b.z};
-}
-#endif
 
 struct point3f {
   float x, y, z;
@@ -1309,88 +1221,6 @@ struct point3f {
   bool operator!=(const point3f &rhs) const { return !(*this == rhs); }
 };
 
-#if 0
-inline point3f operator+(const float a, const point3f &b) {
-  return {a + b.x, a + b.y, a + b.z};
-}
-
-inline point3f operator-(const float a, const point3f &b) {
-  return {a - b.x, a - b.y, a - b.z};
-}
-
-inline point3f operator*(const float a, const point3f &b) {
-  return {a * b.x, a * b.y, a * b.z};
-}
-
-// TODO: safe div
-inline point3f operator/(const float a, const point3f &b) {
-  return {a / b.x, a / b.y, a / b.z};
-}
-
-inline point3f operator+(const double a, const point3f &b) {
-  return {float(a) + b.x, float(a) + b.y, float(a) + b.z};
-}
-
-inline point3f operator-(const double a, const point3f &b) {
-  return {float(a) - b.x, float(a) - b.y, float(a) - b.z};
-}
-
-inline point3f operator*(const double a, const point3f &b) {
-  return {float(a) * b.x, float(a) * b.y, float(a) * b.z};
-}
-
-inline point3f operator/(const double a, const point3f &b) {
-  return {float(a) / b.x, float(a) / b.y, float(a) / b.z};
-}
-
-inline point3f operator+(const point3f &a, const float b) {
-  return {a.x + b, a.y + b, a.z + b};
-}
-
-inline point3f operator-(const point3f &a, const float b) {
-  return {a.x - b, a.y - b, a.z - b};
-}
-
-inline point3f operator*(const point3f &a, const float b) {
-  return {a.x * b, a.y * b, a.z * b};
-}
-
-inline point3f operator/(const point3f &a, const float b) {
-  return {a.x / b, a.y / b, a.z / b};
-}
-
-inline point3f operator+(const point3f &a, const double b) {
-  return {a.x + float(b), a.y + float(b), a.z + float(b)};
-}
-
-inline point3f operator-(const point3f &a, const double b) {
-  return {a.x - float(b), a.y - float(b), a.z - float(b)};
-}
-
-inline point3f operator*(const point3f &a, const double b) {
-  return {a.x * float(b), a.y * float(b), a.z * float(b)};
-}
-
-inline point3f operator/(const point3f &a, const double b) {
-  return {a.x / float(b), a.y / float(b), a.z / float(b)};
-}
-
-inline point3f operator+(const point3f &a, const point3f &b) {
-  return {a.x + b.x, a.y + b.y, a.z + b.z};
-}
-
-inline point3f operator-(const point3f &a, const point3f &b) {
-  return {a.x - b.x, a.y - b.y, a.z - b.z};
-}
-
-inline point3f operator*(const point3f &a, const point3f &b) {
-  return {a.x * b.x, a.y * b.y, a.z * b.z};
-}
-
-inline point3f operator/(const point3f &a, const point3f &b) {
-  return {a.x / b.x, a.y / b.y, a.z / b.z};
-}
-#endif
 
 struct point3d {
   double x, y, z;
@@ -1401,88 +1231,6 @@ struct point3d {
   bool operator!=(const point3d &rhs) const { return !(*this == rhs); }
 };
 
-#if 0
-inline point3d operator+(const double a, const point3d &b) {
-  return {a + b.x, a + b.y, a + b.z};
-}
-
-inline point3d operator-(const double a, const point3d &b) {
-  return {a - b.x, a - b.y, a - b.z};
-}
-
-inline point3d operator*(const double a, const point3d &b) {
-  return {a * b.x, a * b.y, a * b.z};
-}
-
-// TODO: safe div
-inline point3d operator/(const double a, const point3d &b) {
-  return {a / b.x, a / b.y, a / b.z};
-}
-
-inline point3d operator+(const float a, const point3d &b) {
-  return {double(a) + b.x, double(a) + b.y, double(a) + b.z};
-}
-
-inline point3d operator-(const float a, const point3d &b) {
-  return {double(a) - b.x, double(a) - b.y, double(a) - b.z};
-}
-
-inline point3d operator*(const float a, const point3d &b) {
-  return {double(a) * b.x, double(a) * b.y, double(a) * b.z};
-}
-
-inline point3d operator/(const float a, const point3d &b) {
-  return {double(a) / b.x, double(a) / b.y, double(a) / b.z};
-}
-
-inline point3d operator+(const point3d &a, const double b) {
-  return {a.x + b, a.y + b, a.z + b};
-}
-
-inline point3d operator-(const point3d &a, const double b) {
-  return {a.x - b, a.y - b, a.z - b};
-}
-
-inline point3d operator*(const point3d &a, const double b) {
-  return {a.x * b, a.y * b, a.z * b};
-}
-
-inline point3d operator/(const point3d &a, const double b) {
-  return {a.x / b, a.y / b, a.z / b};
-}
-
-inline point3d operator+(const point3d &a, const float b) {
-  return {a.x + double(b), a.y + double(b), a.z + double(b)};
-}
-
-inline point3d operator-(const point3d &a, const float b) {
-  return {a.x - double(b), a.y - double(b), a.z - double(b)};
-}
-
-inline point3d operator*(const point3d &a, const float b) {
-  return {a.x * double(b), a.y * double(b), a.z * double(b)};
-}
-
-inline point3d operator/(const point3d &a, const float b) {
-  return {a.x / double(b), a.y / double(b), a.z / double(b)};
-}
-
-inline point3d operator+(const point3d &a, const point3d &b) {
-  return {a.x + b.x, a.y + b.y, a.z + b.z};
-}
-
-inline point3d operator-(const point3d &a, const point3d &b) {
-  return {a.x - b.x, a.y - b.y, a.z - b.z};
-}
-
-inline point3d operator*(const point3d &a, const point3d &b) {
-  return {a.x * b.x, a.y * b.y, a.z * b.z};
-}
-
-inline point3d operator/(const point3d &a, const point3d &b) {
-  return {a.x / b.x, a.y / b.y, a.z / b.z};
-}
-#endif
 
 struct color3h {
   half r, g, b;
@@ -1839,24 +1587,6 @@ struct TypeTraits<ChunkedTypedArray<T>> {
 };
 
 
-#if 0  // Current pxrUSD does not support 2D array
-// 2D Array
-// TODO(syoyo): support 3D array?
-template <typename T>
-struct TypeTraits<std::vector<std::vector<T>>> {
-  using value_type = std::vector<std::vector<T>>;
-  static constexpr uint32_t ndim = 2; /* array dim */
-  static constexpr uint32_t ncomp = TypeTraits<T>::ncomp;
-  static constexpr uint32_t type_id =
-      TypeTraits<T>::type_id | TYPE_ID_2D_ARRAY_BIT;
-  static constexpr uint32_t underlying_type_id =
-      TypeTraits<T>::underlying_type_id | TYPE_ID_2D_ARRAY_BIT;
-  static std::string type_name() { return TypeTraits<T>::type_name() + "[][]"; }
-  static std::string underlying_type_name() {
-    return TypeTraits<T>::underlying_type_name() + "[][]";
-  }
-};
-#endif
 
 // Lookup TypeTraits<T>::type_name from type_id
 // Return nullopt when the input is invalid type id.
@@ -2453,18 +2183,6 @@ class Value {
 
 
 
-#if 0
-  // Helper to log vector size
-  template <typename T>
-  static void log_vector_size(const std::vector<T>& vec) {
-    //TUSDZ_LOG_I("  vector size: " << vec.size());
-  }
-
-  template <typename T>
-  static void log_vector_size(const T&) {
-    // Non-vector type, do nothing
-  }
-#endif
 
   // Helper to check vector size bounds
   template <typename T>
@@ -2569,14 +2287,6 @@ class Value {
     return (*this);
   }
 
-#if 0
-  template <class T>
-  Value &operator=(T &&v) noexcept {
-    //TUSDZ_LOG_I("Value templated move assignment operator called with type: " << typeid(T).name());
-    v_ = v;
-    return (*this);
-  }
-#endif
 
   const any_value &get_raw() const { return v_; }
   any_value &get_raw_mutable() { return v_; }
@@ -3230,113 +2940,8 @@ bool RoleTypeCast(const uint32_t roleTyId, value::Value &inout);
 ///
 bool UpcastType(const std::string &toType, value::Value &inout);
 
-#if 0
-// simple linear interpolator
-template <typename T>
-struct LinearInterpolator {
-  static T interpolate(const T *values, const size_t n, const double _t) {
-    if (n == 0) {
-      return static_cast<T>(0);
-    } else if (n == 1) {
-      return values[0];
-    }
 
-    // [0.0, 1.0]
-    double t = std::fmin(0.0, std::fmax(_t, 1.0));
 
-    size_t idx0 = std::max(n - 1, size_t(t * double(n)));
-    size_t idx1 = std::max(n - 1, idx0 + 1);
-
-    return (1.0 - t) * values[idx0] + t * values[idx1];
-  }
-};
-
-// Explicitly typed version of `TimeSamples`
-//
-// `None` value and `deleted` items are omitted in this data struct.
-// e.g.
-//
-// double radius.timeSamples = { 0: 1.0, 1: None, 2: 3.0 }
-//
-// in .usd(or `TimeSamples` class), are stored as
-//
-// radius = { 0: 1.0, 2: 3.0 }
-//
-template <typename T>
-struct AnimatableValue {
-  std::vector<double> times;  // Assume sorted
-  std::vector<T> values;
-
-  bool is_scalar() const { return (times.size() == 0) && (values.size() == 1); }
-
-  bool is_timesample() const {
-    return (times.size() > 0) && (times.size() == values.size());
-  }
-
-  template <class Interpolator>
-  T Get(double time = 0.0) {
-    std::vector<double>::iterator it =
-        std::lower_bound(times.begin(), times.end(), time);
-
-    size_t idx0, idx1;
-    if (it != times.end()) {
-      idx0 = std::distance(times.begin(), it);
-      idx1 = std::min(idx0 + 1, times.size() - 1);
-    } else {
-      idx0 = idx1 = times.size() - 1;
-    }
-    double slope = times[idx1] - times[idx0];
-    if (slope < std::numeric_limits<double>::epsilon()) {
-      slope = 1.0;
-    }
-
-    const double t = (times[idx1] - time) / slope;
-
-    T val = Interpolator::interpolate(values.data(), values.size(), t);
-    return val;
-  }
-};
-#endif
-
-#if 0  // TODO: Remove? since not used so frequently at the moment.
-//
-// typecast from type_id
-// It does not throw exception.
-//
-template <uint32_t tid>
-struct typecast {};
-
-#define TYPECAST_BASETYPE(__tid, __ty)                   \
-  template <>                                            \
-  struct typecast<__tid> {                               \
-    static __ty to(const any_value &v) {                 \
-      return *reinterpret_cast<const __ty *>(v.value()); \
-    }                                                    \
-  }
-
-TYPECAST_BASETYPE(TYPE_ID_BOOL, bool);
-TYPECAST_BASETYPE(TYPE_ID_UCHAR, uint8_t);
-TYPECAST_BASETYPE(TYPE_ID_HALF, half);
-TYPECAST_BASETYPE(TYPE_ID_HALF2, half2);
-TYPECAST_BASETYPE(TYPE_ID_HALF3, half3);
-TYPECAST_BASETYPE(TYPE_ID_HALF4, half4);
-
-TYPECAST_BASETYPE(TYPE_ID_UINT32, uint32_t);
-TYPECAST_BASETYPE(TYPE_ID_FLOAT, float);
-TYPECAST_BASETYPE(TYPE_ID_DOUBLE, double);
-
-TYPECAST_BASETYPE(TYPE_ID_FLOAT | TYPE_ID_1D_ARRAY_BIT, std::vector<float>);
-
-// TODO(syoyo): Implement more types...
-
-#undef TYPECAST_BASETYPE
-#endif
-
-#if 0
-struct AttribMap {
-  std::map<std::string, Value> attribs;
-};
-#endif
 
 }  // namespace value
 
