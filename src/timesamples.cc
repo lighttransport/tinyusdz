@@ -602,6 +602,129 @@ bool TimeSamples::reconstruct_unified_sample(size_t idx, Sample* sample) const {
     return reconstruct_binary_sample(idx, sample);
 }
 
+bool TimeSamples::add_sample(double t, const value::Value &v, std::string *err) {
+    if (has_unified_samples()) {
+      if (err) {
+        (*err) += "add_sample cannot append generic Value samples after unified storage samples.\n";
+      }
+      return false;
+    }
+
+    if (!is_initialized() && !v.is_none()) {
+      init(v.type_id());
+    } else if (!v.is_none() && is_initialized()) {
+      if (v.type_id() != _type_id) {
+        if (err) {
+          (*err) += "Type mismatch in TimeSamples: expected type_id " +
+                    std::to_string(_type_id) + " but got " +
+                    std::to_string(v.type_id()) + " (expected type: " +
+                    type_name() + ", got: " + v.type_name() + ").\n";
+        }
+        return false;
+      }
+    }
+
+    Sample s;
+    s.t = t;
+    s.value = v;
+    s.blocked = v.is_none();
+    _samples.push_back(s);
+    _dirty = true;
+    return true;
+}
+
+bool TimeSamples::add_blocked_sample(double t, const value::Value &v, std::string *err) {
+    if (has_unified_samples()) {
+      if (err) {
+        (*err) += "add_blocked_sample cannot append generic Value samples after unified storage samples.\n";
+      }
+      return false;
+    }
+
+    if (!is_initialized() && !v.is_none() && v.type_id() != 1) {
+      init(v.type_id());
+    } else if (!v.is_none() && is_initialized() && v.type_id() != 1) {
+      if (v.type_id() != _type_id) {
+        if (err) {
+          (*err) += "Type mismatch in TimeSamples (blocked sample): expected type_id " +
+                    std::to_string(_type_id) + " but got " +
+                    std::to_string(v.type_id()) + ".\n";
+        }
+        return false;
+      }
+    }
+
+    Sample s;
+    s.t = t;
+    s.value = v;
+    s.blocked = true;
+    _samples.emplace_back(s);
+    _dirty = true;
+    return true;
+}
+
+bool TimeSamples::add_value_array_sample(double t, value::Value &&v, std::string *err) {
+    if (!v.is_array() || v.is_none()) {
+      if (err) {
+        (*err) += "add_value_array_sample requires a non-blocked array value.\n";
+      }
+      return false;
+    }
+
+    if (!ensure_initialized_type(v.type_id(), err, "add_value_array_sample")) {
+      return false;
+    }
+
+    if (!ensure_array_storage_backend(UnifiedStorageBackend::ValueArray,
+                                      ArrayLayoutKind::None, 0, err,
+                                      "add_value_array_sample")) {
+      return false;
+    }
+
+    size_t storage_index = _value_array_storage.size();
+    _value_array_storage.push_back(std::move(v));
+
+    _times.push_back(t);
+    _blocked.push_back(0);
+    _value_array_refs.push_back(make_value_array_ref(storage_index, false));
+    _array_counts.push_back(_value_array_storage.back().array_size());
+
+    invalidate_reconstructed_samples_cache();
+    _dirty = true;
+    return true;
+}
+
+size_t TimeSamples::estimate_memory_usage() const {
+    size_t total = sizeof(TimeSamples);
+
+    total += _times.capacity() * sizeof(double);
+    total += _blocked.capacity();
+    total += _values.capacity();
+    total += _offsets.capacity() * sizeof(uint64_t);
+    total += _small_values.capacity() * sizeof(uint64_t);
+
+    total += _array_values.capacity() * sizeof(std::unique_ptr<Buffer<16>>);
+    for (const auto& buf : _array_values) {
+      if (buf) {
+        total += sizeof(Buffer<16>) + buf->capacity();
+      }
+    }
+
+    total += _value_array_storage.capacity() * sizeof(value::Value);
+    for (const auto& val : _value_array_storage) {
+      total += val.estimate_memory_usage();
+    }
+    total += _value_array_refs.capacity() * sizeof(uint64_t);
+    total += _array_counts.capacity() * sizeof(size_t);
+
+    total += _samples.capacity() * sizeof(Sample);
+    for (const auto &sample : _samples) {
+      total += sample.value.estimate_memory_usage();
+    }
+
+    return total;
+}
+
 bool TimeSamples::add_dedup_sample(double t, size_t ref_index, std::string *err) {
     // Check if using value array storage
     if (_storage.uses_value_array()) {
